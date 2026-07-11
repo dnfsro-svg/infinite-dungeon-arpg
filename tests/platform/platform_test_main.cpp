@@ -3,11 +3,13 @@
 #include <cstdio>
 
 arpg::test::TestSuite combat_view_math_suite() noexcept;
+arpg::test::TestSuite combat_feedback_suite() noexcept;
 
 int main() {
-    constexpr int kExpectedCaseCount = 3;
+    constexpr int kExpectedCaseCount = 6;
     const arpg::test::TestSuite suites[] = {
         combat_view_math_suite(),
+        combat_feedback_suite(),
     };
 
     int failures = 0;

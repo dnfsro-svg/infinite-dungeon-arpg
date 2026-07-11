@@ -1,6 +1,8 @@
 #include "raylib_host.hpp"
 
 #include "combat/combat_world.hpp"
+#include "combat_audio.hpp"
+#include "combat_feedback.hpp"
 #include "combat_renderer.hpp"
 #include "core/fixed_step.hpp"
 
@@ -44,9 +46,13 @@ void submit_frame_actions(combat::CombatWorld& world) noexcept {
 
 void drain_events(
     combat::CombatWorld& world,
-    CombatRenderer& renderer) noexcept {
+    CombatRenderer& renderer,
+    CombatFeedback& feedback,
+    CombatAudio& audio) noexcept {
     while (const auto event = world.try_pop_event()) {
         renderer.consume_event(*event);
+        feedback.consume(*event);
+        audio.consume_event(*event);
     }
 }
 
@@ -72,6 +78,9 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
     combat::CombatSnapshot current = world.snapshot();
     combat::CombatSnapshot previous = current;
     CombatRenderer renderer;
+    CombatFeedback feedback;
+    CombatAudio audio;
+    const bool audio_ready = audio.initialize();
     bool draw_debug = false;
 
     while (!WindowShouldClose()) {
@@ -84,7 +93,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             world.reset();
             current = world.snapshot();
             previous = current;
-            drain_events(world, renderer);
+            drain_events(world, renderer, feedback, audio);
         }
 
         submit_frame_actions(world);
@@ -92,28 +101,34 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             key_direction(KEY_A, KEY_D),
             key_direction(KEY_W, KEY_S),
         };
-        const core::FixedStepFrame frame =
-            fixed_step.advance(static_cast<double>(GetFrameTime()));
+        const float frame_seconds = GetFrameTime();
+        feedback.update(frame_seconds);
+        const core::FixedStepFrame frame = fixed_step.advance(
+            static_cast<double>(frame_seconds));
 
         for (std::uint32_t step = 0; step < frame.steps; ++step) {
             previous = current;
             world.tick(movement);
             current = world.snapshot();
-            drain_events(world, renderer);
+            drain_events(world, renderer, feedback, audio);
         }
 
         BeginDrawing();
+        ClearBackground(Color{13, 17, 27, 255});
         renderer.draw(
             previous,
             current,
             static_cast<float>(frame.interpolation_alpha),
-            draw_debug);
+            draw_debug,
+            feedback,
+            audio_ready);
         if (take_screenshot) {
             TakeScreenshot("combat-lab.png");
         }
         EndDrawing();
     }
 
+    audio.shutdown();
     CloseWindow();
     return HostExitCode::success;
 }

@@ -199,6 +199,74 @@ void draw_projected_aabb(
         color);
 }
 
+void draw_effects(
+    const CombatFeedback& feedback,
+    float width,
+    float height,
+    bool foreground) noexcept {
+    for (const VisualEffect& effect : feedback.effects()) {
+        if (!effect.active) {
+            continue;
+        }
+        const bool is_foreground =
+            effect.kind == VisualEffectKind::spark
+            || effect.kind == VisualEffectKind::damage_number;
+        if (is_foreground != foreground) {
+            continue;
+        }
+
+        const float progress = effect.lifetime_seconds <= 0.0F
+            ? 1.0F
+            : std::clamp(
+                  effect.age_seconds / effect.lifetime_seconds,
+                  0.0F,
+                  1.0F);
+        const float opacity = 1.0F - progress;
+        const ScreenProjection projected = project_combat_position(
+            effect.position, width, height);
+        switch (effect.kind) {
+        case VisualEffectKind::weapon_trail:
+            DrawLineEx(
+                {projected.x - 36.0F * projected.scale,
+                 projected.y - 42.0F * projected.scale},
+                {projected.x + 44.0F * projected.scale,
+                 projected.y - 68.0F * projected.scale},
+                8.0F * projected.scale * opacity,
+                Fade(Color{105, 224, 255, 255}, opacity));
+            break;
+        case VisualEffectKind::dust:
+            DrawEllipse(
+                static_cast<int>(projected.x),
+                static_cast<int>(projected.ground_y),
+                (18.0F + progress * 24.0F) * projected.scale,
+                7.0F * projected.scale,
+                Fade(Color{185, 193, 207, 255}, opacity));
+            break;
+        case VisualEffectKind::spark:
+            DrawCircleLines(
+                static_cast<int>(projected.x),
+                static_cast<int>(projected.y - 42.0F * projected.scale),
+                (8.0F + progress * 18.0F) * projected.scale,
+                Fade(Color{255, 218, 96, 255}, opacity));
+            DrawLineEx(
+                {projected.x - 22.0F, projected.y - 54.0F},
+                {projected.x + 25.0F, projected.y - 30.0F},
+                3.0F,
+                Fade(Color{255, 248, 210, 255}, opacity));
+            break;
+        case VisualEffectKind::damage_number:
+            DrawText(
+                TextFormat("%d", effect.value),
+                static_cast<int>(projected.x + 8.0F),
+                static_cast<int>(
+                    projected.y - 90.0F - progress * 32.0F),
+                20,
+                Fade(Color{255, 238, 156, 255}, opacity));
+            break;
+        }
+    }
+}
+
 void draw_debug_volumes(
     const CombatSnapshot& snapshot,
     float width,
@@ -240,13 +308,6 @@ void draw_debug_volumes(
 }  // namespace
 
 void CombatRenderer::consume_event(const CombatEvent& event) noexcept {
-    if (event.kind == CombatEventKind::reset) {
-        flash_until_tick_.fill(0);
-    }
-    if (event.kind == CombatEventKind::hit
-        && event.target_index < flash_until_tick_.size()) {
-        flash_until_tick_[event.target_index] = event.tick + 2;
-    }
     last_event_ = event;
     has_last_event_ = true;
 }
@@ -255,10 +316,17 @@ void CombatRenderer::draw(
     const CombatSnapshot& previous,
     const CombatSnapshot& current,
     float interpolation_alpha,
-    bool draw_debug) const noexcept {
+    bool draw_debug,
+    const CombatFeedback& feedback,
+    bool audio_ready) const noexcept {
     const float width = static_cast<float>(GetScreenWidth());
     const float height = static_cast<float>(GetScreenHeight());
     const float alpha = std::clamp(interpolation_alpha, 0.0F, 1.0F);
+    const CameraOffset camera_offset = feedback.camera_offset();
+    Camera2D world_camera{};
+    world_camera.offset = {camera_offset.x, camera_offset.y};
+    world_camera.zoom = 1.0F;
+    BeginMode2D(world_camera);
     draw_graybox_room();
 
     std::array<Vec3, 4> positions{};
@@ -278,6 +346,8 @@ void CombatRenderer::draw(
         {positions[3], 3},
     }};
     sort_actor_draw_items(draw_items);
+
+    draw_effects(feedback, width, height, false);
 
     for (const ActorDrawItem& item : draw_items) {
         const Vec3 ground_position{item.position.x, item.position.y, 0.0F};
@@ -329,8 +399,7 @@ void CombatRenderer::draw(
                                                                    : 74.0F)
             * projected.scale;
         Color color = dummy_color(dummy.kind);
-        if (flash_until_tick_[dummy_index] != 0
-            && current.tick <= flash_until_tick_[dummy_index]) {
+        if (feedback.target_flash_seconds(dummy_index) > 0.0F) {
             color = Color{255, 250, 220, 255};
         }
         DrawRectangleRounded(
@@ -372,12 +441,16 @@ void CombatRenderer::draw(
             Color{225, 230, 239, 230});
     }
 
+    draw_effects(feedback, width, height, true);
+
     if (draw_debug) {
         draw_debug_volumes(current, width, height);
     }
 
+    EndMode2D();
+
     DrawRectangleRounded(
-        {16.0F, 14.0F, 430.0F, 218.0F},
+        {16.0F, 14.0F, 430.0F, 242.0F},
         0.06F,
         6,
         Color{7, 10, 17, 220});
@@ -409,6 +482,18 @@ void CombatRenderer::draw(
             ? TextFormat("Last event %s  target %u", event_name(last_event_.kind), last_event_.target_index)
             : "Last event None",
         30, y, 16, text);
+    y += 23;
+    DrawText(
+        TextFormat(
+            "FX %u  Dropped %u  Shake %.1f  Audio %s",
+            static_cast<unsigned>(feedback.active_count()),
+            feedback.dropped_count(),
+            feedback.shake_amplitude(),
+            audio_ready ? "Ready" : "Unavailable"),
+        30,
+        y,
+        16,
+        audio_ready ? text : Color{255, 151, 117, 255});
 
     DrawText(
         draw_debug ? "F1 DEBUG ON" : "F1 DEBUG OFF",
