@@ -16,6 +16,16 @@ void tick_n(CombatWorld& world, int count) noexcept {
     }
 }
 
+bool finish_attack(CombatWorld& world) noexcept {
+    for (int tick = 0; tick < 80; ++tick) {
+        if (world.snapshot().player.active_attack == AttackId::none) {
+            return true;
+        }
+        world.tick(MovementInput{});
+    }
+    return world.snapshot().player.active_attack == AttackId::none;
+}
+
 arpg::test::Failure inclusive_xyz_mirror_and_depth_are_deterministic() noexcept {
     constexpr Aabb local{{0.20F, -0.65F, 0.10F}, {1.50F, 0.65F, 1.50F}};
     const Aabb right = make_world_aabb(
@@ -93,28 +103,21 @@ arpg::test::Failure attack_assist_is_single_bounded_and_x_only() noexcept {
     ARPG_REQUIRE(arpg::test::near(snapshot.player.position.y, 0.0, 1.0e-4));
 
     CombatLabConfig defeated_config;
-    defeated_config.dummy_spawns = {{{2.30F, 0.0F, 0.0F},
-                                     {3.29F, 0.0F, 0.0F},
+    defeated_config.dummy_spawns = {{{2.13F, 0.0F, 0.0F},
+                                     {3.51F, 0.0F, 0.0F},
                                      {7.00F, 3.0F, 0.0F}}};
     CombatWorld defeated{defeated_config};
-    for (int attack = 0; attack < 4; ++attack) {
-        ARPG_REQUIRE(defeated.queue_action(Action::heavy));
+    for (int attack = 0; attack < 11; ++attack) {
+        ARPG_REQUIRE(defeated.queue_action(Action::light));
         defeated.tick(MovementInput{});
-        for (int tick = 0;
-             tick < 80
-             && defeated.snapshot().player.active_attack != AttackId::none;
-             ++tick) {
-            defeated.tick(MovementInput{});
-        }
-        ARPG_REQUIRE(
-            defeated.snapshot().player.active_attack == AttackId::none);
+        ARPG_REQUIRE(finish_attack(defeated));
     }
     ARPG_REQUIRE(defeated.snapshot().dummies[0].hp == 0);
     ARPG_REQUIRE(defeated.snapshot().dummies[1].hp > 0);
     ARPG_REQUIRE(defeated.queue_action(Action::light));
     defeated.tick(MovementInput{});
     ARPG_REQUIRE(arpg::test::near(
-        defeated.snapshot().player.position.x, 1.24, 1.0e-4));
+        defeated.snapshot().player.position.x, 1.46, 1.0e-4));
     return {};
 }
 

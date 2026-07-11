@@ -28,9 +28,13 @@ void CombatWorld::tick(MovementInput movement) noexcept {
         simulate_player(movement);
     }
 
-    for (DummyRuntime& dummy : dummies_) {
-        if (dummy.hit_stop_ticks != 0) {
+    for (std::size_t index = 0; index < dummies_.size(); ++index) {
+        DummyRuntime& dummy = dummies_[index];
+        const bool dummy_frozen = dummy.hit_stop_ticks != 0;
+        if (dummy_frozen) {
             --dummy.hit_stop_ticks;
+        } else {
+            simulate_target(index);
         }
     }
 

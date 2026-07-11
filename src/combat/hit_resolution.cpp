@@ -50,6 +50,8 @@ void CombatWorld::apply_attack_assist(
         const DummyRuntime& dummy = dummies_[index];
         const float relative_x = dummy.position.x - player_.position.x;
         if (dummy.hp <= 0
+            || dummy.reaction == ReactionState::defeated
+            || dummy.reaction == ReactionState::respawning
             || (facing_right && relative_x < 0.0F)
             || (!facing_right && relative_x > 0.0F)
             || std::fabs(dummy.position.y - player_.position.y)
@@ -96,7 +98,10 @@ void CombatWorld::resolve_attack_hits() noexcept {
     std::size_t hit_count = 0;
     for (std::size_t index = 0; index < dummies_.size(); ++index) {
         const DummyRuntime& dummy = dummies_[index];
-        if (attack_.hit_targets[index] || dummy.hp <= 0) {
+        if (attack_.hit_targets[index]
+            || dummy.hp <= 0
+            || dummy.reaction == ReactionState::defeated
+            || dummy.reaction == ReactionState::respawning) {
             continue;
         }
         if (overlaps_inclusive(
@@ -136,6 +141,7 @@ void CombatWorld::resolve_attack_hits() noexcept {
         hit.position = dummy.position;
         hit.value = definition->damage;
         emit_event(hit);
+        apply_dummy_impact(index, *definition);
     }
 
     player_.hit_stop_ticks = std::max(player_.hit_stop_ticks, hit_stop);

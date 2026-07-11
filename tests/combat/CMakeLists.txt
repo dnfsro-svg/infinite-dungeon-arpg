@@ -2,6 +2,7 @@ add_executable(arpg_combat_tests
     combat_test_main.cpp
     attack_catalog_tests.cpp
     attack_state_tests.cpp
+    dummy_reaction_tests.cpp
     hit_resolution_tests.cpp
     input_buffer_tests.cpp
     movement_jump_tests.cpp)

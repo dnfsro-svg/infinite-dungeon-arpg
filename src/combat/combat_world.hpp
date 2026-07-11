@@ -5,6 +5,7 @@
 #include "core/bounded_queue.hpp"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 
@@ -59,6 +60,11 @@ private:
     };
 
     void simulate_player(MovementInput movement) noexcept;
+    void simulate_target(std::size_t index) noexcept;
+    void apply_dummy_impact(
+        std::size_t index,
+        const AttackDefinition& definition) noexcept;
+    void respawn_dummy(std::size_t index) noexcept;
     void apply_attack_assist(const AttackDefinition& definition) noexcept;
     void resolve_attack_hits() noexcept;
     void emit_event(const CombatEvent& event) noexcept;
