@@ -127,10 +127,10 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             draw_debug,
             feedback,
             audio_ready);
+        EndDrawing();
         if (take_screenshot) {
             TakeScreenshot("room-loop.png");
         }
-        EndDrawing();
     }
 
     audio.shutdown();
