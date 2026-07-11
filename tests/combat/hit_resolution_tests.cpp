@@ -184,19 +184,22 @@ arpg::test::Failure three_targets_resolve_independently_with_one_summary() noexc
                             {1.20F, 0.0F, 0.0F},
                             {1.20F, 0.0F, 0.0F}}};
     CombatWorld world{config};
-    ARPG_REQUIRE(world.queue_action(Action::heavy));
+    ARPG_REQUIRE(world.queue_action(Action::launcher));
     world.tick(MovementInput{});
-    tick_n(world, 14);
+    tick_n(world, 7);
 
     const CombatSnapshot snapshot = world.snapshot();
-    ARPG_REQUIRE(snapshot.dummies[0].hp == 210);
-    ARPG_REQUIRE(snapshot.dummies[1].hp == 360);
-    ARPG_REQUIRE(snapshot.dummies[2].hp == 610);
-    ARPG_REQUIRE(snapshot.dummies[2].break_value == 80);
-    ARPG_REQUIRE(snapshot.player.hit_stop_ticks == 7);
-    ARPG_REQUIRE(snapshot.dummies[0].hit_stop_ticks == 7);
-    ARPG_REQUIRE(snapshot.dummies[1].hit_stop_ticks == 7);
-    ARPG_REQUIRE(snapshot.dummies[2].hit_stop_ticks == 7);
+    ARPG_REQUIRE(snapshot.dummies[0].hp == 262);
+    ARPG_REQUIRE(snapshot.dummies[1].hp == 412);
+    ARPG_REQUIRE(snapshot.dummies[2].hp == 662);
+    ARPG_REQUIRE(snapshot.dummies[2].break_value == 102);
+    ARPG_REQUIRE(snapshot.player.hit_stop_ticks == 5);
+    ARPG_REQUIRE(snapshot.dummies[0].hit_stop_ticks == 5);
+    ARPG_REQUIRE(snapshot.dummies[1].hit_stop_ticks == 5);
+    ARPG_REQUIRE(snapshot.dummies[2].hit_stop_ticks == 5);
+    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::airborne);
+    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::airborne);
+    ARPG_REQUIRE(snapshot.dummies[2].reaction == ReactionState::idle);
 
     std::array<std::uint8_t, kDummyCount> hit_order{{0xFF, 0xFF, 0xFF}};
     int hit_events = 0;
@@ -215,7 +218,7 @@ arpg::test::Failure three_targets_resolve_independently_with_one_summary() noexc
             ARPG_REQUIRE(event_index == 4);
             ++summaries;
             ARPG_REQUIRE(event->hit_count == 3);
-            ARPG_REQUIRE(event->feedback == FeedbackLevel::heavy);
+            ARPG_REQUIRE(event->feedback == FeedbackLevel::medium);
         } else {
             ARPG_REQUIRE(false);
         }

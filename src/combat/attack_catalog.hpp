@@ -7,7 +7,7 @@
 
 namespace arpg::combat {
 
-inline constexpr std::size_t kAttackCount = 6;
+inline constexpr std::size_t kAttackCount = 5;
 
 [[nodiscard]] const AttackDefinition* find_attack_definition(
     AttackId id) noexcept;

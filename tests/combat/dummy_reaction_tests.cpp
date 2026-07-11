@@ -252,24 +252,6 @@ arpg::test::Failure launcher_integrates_then_lands_in_knockdown() noexcept {
 }
 
 arpg::test::Failure knockdown_and_rising_have_exact_boundaries() noexcept {
-    CombatWorld heavy{normal_target_config()};
-    ARPG_REQUIRE(heavy.queue_action(Action::heavy));
-    heavy.tick(MovementInput{});
-    tick_n(heavy, 14);
-    CombatSnapshot snapshot = heavy.snapshot();
-    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::knockdown);
-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.x, 7.0, 1.0e-4));
-    tick_n(heavy, 7);
-    tick_n(heavy, 44);
-    ARPG_REQUIRE(
-        heavy.snapshot().dummies[1].reaction == ReactionState::knockdown);
-    heavy.tick(MovementInput{});
-    ARPG_REQUIRE(heavy.snapshot().dummies[1].reaction == ReactionState::rising);
-    tick_n(heavy, 29);
-    ARPG_REQUIRE(heavy.snapshot().dummies[1].reaction == ReactionState::rising);
-    heavy.tick(MovementInput{});
-    ARPG_REQUIRE(heavy.snapshot().dummies[1].reaction == ReactionState::idle);
-
     CombatWorld j3{normal_target_config()};
     ARPG_REQUIRE(start_j2_after_j1_hit(j3));
     tick_n(j3, 6);
@@ -280,25 +262,20 @@ arpg::test::Failure knockdown_and_rising_have_exact_boundaries() noexcept {
     j3.tick(MovementInput{});
     ARPG_REQUIRE(j3.snapshot().player.active_attack == AttackId::j3);
     tick_n(j3, 8);
-    snapshot = j3.snapshot();
+    CombatSnapshot snapshot = j3.snapshot();
     ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::knockdown);
     ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.x, 5.0, 1.0e-4));
-
-    CombatLabConfig edge_config;
-    edge_config.player_spawn = Vec3{6.0F, 0.0F, 0.0F};
-    edge_config.dummy_spawns = {{{-7.0F, 3.0F, 0.0F},
-                                 {7.2F, 0.0F, 0.0F},
-                                 {-7.0F, -3.0F, 0.0F}}};
-    CombatWorld edge{edge_config};
-    ARPG_REQUIRE(edge.queue_action(Action::heavy));
-    edge.tick(MovementInput{});
-    tick_n(edge, 14);
-    ARPG_REQUIRE(edge.snapshot().dummies[1].reaction == ReactionState::knockdown);
-    tick_n(edge, 7);
-    tick_n(edge, 20);
-    snapshot = edge.snapshot();
-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].position.x, 8.0));
-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.x, 0.0));
+    ARPG_REQUIRE(snapshot.dummies[1].hit_stop_ticks == 7);
+    tick_n(j3, 7);
+    tick_n(j3, 44);
+    ARPG_REQUIRE(
+        j3.snapshot().dummies[1].reaction == ReactionState::knockdown);
+    j3.tick(MovementInput{});
+    ARPG_REQUIRE(j3.snapshot().dummies[1].reaction == ReactionState::rising);
+    tick_n(j3, 29);
+    ARPG_REQUIRE(j3.snapshot().dummies[1].reaction == ReactionState::rising);
+    j3.tick(MovementInput{});
+    ARPG_REQUIRE(j3.snapshot().dummies[1].reaction == ReactionState::idle);
     return {};
 }
 

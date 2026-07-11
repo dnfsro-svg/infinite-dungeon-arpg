@@ -35,8 +35,7 @@ const char* attack_name(AttackId id) noexcept {
     case AttackId::j1: return "J1";
     case AttackId::j2: return "J2";
     case AttackId::j3: return "J3";
-    case AttackId::heavy: return "L";
-    case AttackId::launcher: return "U";
+    case AttackId::launcher: return "L";
     case AttackId::air_j: return "Air J";
     case AttackId::none: return "None";
     }

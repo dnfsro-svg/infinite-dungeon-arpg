@@ -9,7 +9,6 @@ namespace arpg::combat {
 enum class Action : std::uint8_t {
     light,
     jump,
-    heavy,
     launcher,
 };
 
