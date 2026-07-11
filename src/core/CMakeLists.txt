@@ -1,4 +1,6 @@
-add_library(arpg_core STATIC fixed_step.cpp)
+add_library(arpg_core STATIC
+    fixed_step.cpp
+    deterministic_rng.cpp)
 
 target_include_directories(arpg_core
     PUBLIC "${PROJECT_SOURCE_DIR}/src")
