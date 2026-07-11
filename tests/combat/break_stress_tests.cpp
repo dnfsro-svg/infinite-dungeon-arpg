@@ -1,4 +1,5 @@
 #include "allocation_probe.hpp"
+#include "combat_test_support.hpp"
 #include "test_framework.hpp"
 
 #include "combat/combat_world.hpp"
@@ -10,6 +11,9 @@
 namespace {
 
 using namespace arpg::combat;
+using arpg::test::drain_events;
+using arpg::test::finish_attack;
+using arpg::test::tick_n;
 
 CombatLabConfig heavy_target_config() noexcept {
     CombatLabConfig config;
@@ -18,22 +22,6 @@ CombatLabConfig heavy_target_config() noexcept {
                             {-7.0F, -3.0F, 0.0F},
                             {7.2F, 0.0F, 0.0F}}};
     return config;
-}
-
-void tick_n(CombatWorld& world, int count) noexcept {
-    for (int tick = 0; tick < count; ++tick) {
-        world.tick(MovementInput{});
-    }
-}
-
-bool finish_attack(CombatWorld& world) noexcept {
-    for (int tick = 0; tick < 100; ++tick) {
-        if (world.snapshot().player.active_attack == AttackId::none) {
-            return true;
-        }
-        world.tick(MovementInput{});
-    }
-    return world.snapshot().player.active_attack == AttackId::none;
 }
 
 bool start_action_and_reach_hit(
@@ -46,11 +34,6 @@ bool start_action_and_reach_hit(
     world.tick(MovementInput{});
     tick_n(world, startup_ticks);
     return true;
-}
-
-void drain_events(CombatWorld& world) noexcept {
-    while (world.try_pop_event().has_value()) {
-    }
 }
 
 bool vec_equal(const Vec3& lhs, const Vec3& rhs) noexcept {
@@ -132,7 +115,7 @@ bool launcher_hit_and_finish(CombatWorld& world) noexcept {
     if (!start_action_and_reach_hit(world, Action::launcher, 7)) {
         return false;
     }
-    return finish_attack(world);
+    return finish_attack(world, 100);
 }
 
 bool wait_for_target_grounded(

@@ -1,10 +1,13 @@
 #include "test_framework.hpp"
 
+#include "combat_test_support.hpp"
+
 #include "combat/combat_world.hpp"
 
 namespace {
 
 using namespace arpg::combat;
+using arpg::test::tick_n;
 
 constexpr double kFloatTolerance = 1.0e-4;
 
@@ -14,12 +17,6 @@ CombatLabConfig isolated_attack_config() noexcept {
                             {7.0F, -3.0F, 0.0F},
                             {-6.0F, 3.0F, 0.0F}}};
     return config;
-}
-
-void tick_n(CombatWorld& world, int count, MovementInput movement = {}) noexcept {
-    for (int tick = 0; tick < count; ++tick) {
-        world.tick(movement);
-    }
 }
 
 arpg::test::Failure ground_timelines_and_lunges_are_deterministic() noexcept {

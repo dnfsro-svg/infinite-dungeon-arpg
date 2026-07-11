@@ -1,5 +1,7 @@
 #include "test_framework.hpp"
 
+#include "combat_test_support.hpp"
+
 #include "combat/combat_collision.hpp"
 #include "combat/combat_world.hpp"
 
@@ -9,22 +11,8 @@
 namespace {
 
 using namespace arpg::combat;
-
-void tick_n(CombatWorld& world, int count) noexcept {
-    for (int tick = 0; tick < count; ++tick) {
-        world.tick(MovementInput{});
-    }
-}
-
-bool finish_attack(CombatWorld& world) noexcept {
-    for (int tick = 0; tick < 80; ++tick) {
-        if (world.snapshot().player.active_attack == AttackId::none) {
-            return true;
-        }
-        world.tick(MovementInput{});
-    }
-    return world.snapshot().player.active_attack == AttackId::none;
-}
+using arpg::test::finish_attack;
+using arpg::test::tick_n;
 
 arpg::test::Failure inclusive_xyz_mirror_and_depth_are_deterministic() noexcept {
     constexpr Aabb local{{0.20F, -0.65F, 0.10F}, {1.50F, 0.65F, 1.50F}};
@@ -126,7 +114,7 @@ arpg::test::Failure attack_assist_is_single_bounded_and_x_only() noexcept {
     for (int attack = 0; attack < 11; ++attack) {
         ARPG_REQUIRE(defeated.queue_action(Action::light));
         defeated.tick(MovementInput{});
-        ARPG_REQUIRE(finish_attack(defeated));
+        ARPG_REQUIRE(finish_attack(defeated, 80));
     }
     ARPG_REQUIRE(defeated.snapshot().dummies[0].hp == 0);
     ARPG_REQUIRE(defeated.snapshot().dummies[1].hp > 0);

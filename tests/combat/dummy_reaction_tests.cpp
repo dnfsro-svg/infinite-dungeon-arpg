@@ -1,5 +1,7 @@
 #include "test_framework.hpp"
 
+#include "combat_test_support.hpp"
+
 #include "combat/combat_world.hpp"
 
 #include <array>
@@ -8,12 +10,9 @@
 namespace {
 
 using namespace arpg::combat;
-
-void tick_n(CombatWorld& world, int count) noexcept {
-    for (int tick = 0; tick < count; ++tick) {
-        world.tick(MovementInput{});
-    }
-}
+using arpg::test::drain_events;
+using arpg::test::finish_attack;
+using arpg::test::tick_n;
 
 CombatLabConfig single_target_config() noexcept {
     CombatLabConfig config;
@@ -37,21 +36,6 @@ CombatLabConfig normal_target_config() noexcept {
                             {1.20F, 0.0F, 0.0F},
                             {7.00F, -3.0F, 0.0F}}};
     return config;
-}
-
-bool finish_attack(CombatWorld& world) noexcept {
-    for (int tick = 0; tick < 128; ++tick) {
-        if (world.snapshot().player.active_attack == AttackId::none) {
-            return true;
-        }
-        world.tick(MovementInput{});
-    }
-    return world.snapshot().player.active_attack == AttackId::none;
-}
-
-void drain_events(CombatWorld& world) noexcept {
-    while (world.try_pop_event().has_value()) {
-    }
 }
 
 bool start_j2_after_j1_hit(CombatWorld& world) noexcept {
@@ -192,7 +176,7 @@ arpg::test::Failure launcher_integrates_then_lands_in_knockdown() noexcept {
     ARPG_REQUIRE(airborne_followup.queue_action(Action::launcher));
     airborne_followup.tick(MovementInput{});
     tick_n(airborne_followup, 7);
-    ARPG_REQUIRE(finish_attack(airborne_followup));
+    ARPG_REQUIRE(finish_attack(airborne_followup, 128));
     ARPG_REQUIRE(
         airborne_followup.snapshot().dummies[1].reaction
         == ReactionState::airborne);
@@ -228,7 +212,7 @@ arpg::test::Failure launcher_integrates_then_lands_in_knockdown() noexcept {
     ARPG_REQUIRE(independent.queue_action(Action::launcher));
     independent.tick(MovementInput{});
     tick_n(independent, 7);
-    ARPG_REQUIRE(finish_attack(independent));
+    ARPG_REQUIRE(finish_attack(independent, 128));
     ARPG_REQUIRE(
         independent.snapshot().dummies[1].reaction
         == ReactionState::airborne);
@@ -283,14 +267,14 @@ arpg::test::Failure defeated_respawns_after_ninety_active_ticks() noexcept {
     CombatWorld world{single_target_config()};
     ARPG_REQUIRE(start_j2_after_j1_hit(world));
     tick_n(world, 6);
-    ARPG_REQUIRE(finish_attack(world));
+    ARPG_REQUIRE(finish_attack(world, 128));
     drain_events(world);
 
     for (int attack = 0; attack < 8; ++attack) {
         ARPG_REQUIRE(world.queue_action(Action::light));
         world.tick(MovementInput{});
         tick_n(world, 5);
-        ARPG_REQUIRE(finish_attack(world));
+        ARPG_REQUIRE(finish_attack(world, 128));
         drain_events(world);
     }
 
@@ -323,7 +307,7 @@ arpg::test::Failure defeated_respawns_after_ninety_active_ticks() noexcept {
     ARPG_REQUIRE(kinds[3] == CombatEventKind::impact_summary);
 
     tick_n(world, 3);
-    ARPG_REQUIRE(finish_attack(world));
+    ARPG_REQUIRE(finish_attack(world, 128));
     drain_events(world);
     ARPG_REQUIRE(world.queue_action(Action::light));
     world.tick(MovementInput{});
@@ -334,7 +318,7 @@ arpg::test::Failure defeated_respawns_after_ninety_active_ticks() noexcept {
     while (const auto event = world.try_pop_event()) {
         ARPG_REQUIRE(event->kind == CombatEventKind::swing);
     }
-    ARPG_REQUIRE(finish_attack(world));
+    ARPG_REQUIRE(finish_attack(world, 128));
     drain_events(world);
 
     tick_n(world, 53);
