@@ -126,6 +126,18 @@ void CombatAudio::consume_event(
     }
 }
 
+void CombatAudio::stop_all() noexcept {
+    if (!ready_) {
+        return;
+    }
+    StopSound(weapon_);
+    for (const Sound& voice : material_) {
+        StopSound(voice);
+    }
+    StopSound(low_);
+    material_voice_ = 0;
+}
+
 void CombatAudio::shutdown() noexcept {
     if (IsSoundValid(weapon_)) {
         UnloadSound(weapon_);

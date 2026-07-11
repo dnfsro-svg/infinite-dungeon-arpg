@@ -7,7 +7,7 @@ namespace arpg::platform {
 struct RaylibHostConfig final {
     int window_width{1280};
     int window_height{720};
-    const char* window_title{"Infinite Dungeon - Stage 1 Combat Lab"};
+    const char* window_title{"Infinite Dungeon - Stage 2 Room Loop"};
     std::uint64_t root_seed{0x6D30305F5241594CULL};
 };
 

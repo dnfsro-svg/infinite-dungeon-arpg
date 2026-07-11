@@ -37,6 +37,7 @@ public:
 
     [[nodiscard]] bool initialize() noexcept;
     void consume_event(const combat::CombatEvent& event) noexcept;
+    void stop_all() noexcept;
     void shutdown() noexcept;
     [[nodiscard]] bool ready() const noexcept;
 

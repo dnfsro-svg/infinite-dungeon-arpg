@@ -214,6 +214,9 @@ void CombatWorld::simulate_target(std::size_t index) noexcept {
         }
         return;
     case ReactionState::defeated:
+        if (!config_.respawn_defeated_dummies) {
+            return;
+        }
         if (dummy.reaction_ticks != 0) {
             --dummy.reaction_ticks;
         }
