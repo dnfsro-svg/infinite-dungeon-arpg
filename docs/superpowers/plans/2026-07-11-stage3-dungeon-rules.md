@@ -144,6 +144,7 @@
 - Modify: src/core/deterministic_rng.hpp
 - Modify: src/core/deterministic_rng.cpp
 - Modify: tests/core/deterministic_rng_tests.cpp
+- Modify: tests/core/test_main.cpp
 
 **Interfaces:**
 - Consumes: 已有 DeterministicRng::next_u64()。
