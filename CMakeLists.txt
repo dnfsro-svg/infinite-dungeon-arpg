@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(infinite_dungeon_arpg VERSION 0.1.0 LANGUAGES C CXX)
+include(cmake/NormalizeMsvcShowIncludes.cmake)
 
 option(ARPG_BUILD_GRAPHICS "Build the raylib host and game executable" ON)
 
