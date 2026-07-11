@@ -1,5 +1,7 @@
 # raylib Stage 1 DNF 式战斗实验室实施计划
 
+> 状态说明：本计划记录最初六攻击 Stage 1 的历史实施过程。当前键位与攻击目录已由 `2026-07-11-launcher-key-remap.md` 和 `../specs/2026-07-11-launcher-key-remap-design.md` 覆盖：重击已删除，L 为上挑，U 无绑定。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在 Stage 0 基线上交付一个可见、可操作、可无窗口验证的 DNF 式单房间战斗实验室，包含移动、跳跃、三段普攻、重击、上挑、单次空中攻击、命中停顿、硬直、击退、浮空、倒地、霸体、破韧和三种被动木桩。
