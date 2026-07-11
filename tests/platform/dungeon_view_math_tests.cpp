@@ -82,6 +82,8 @@ arpg::test::Failure cleanup_routing_and_labels_are_stable() noexcept {
 }
 
 arpg::test::Failure fade_alpha_clamps_to_transition_window() noexcept {
+    using arpg::platform::TransitionVisualState;
+
     ARPG_REQUIRE(arpg::test::near(
         arpg::platform::transition_overlay_alpha(-1.0F), 0.0, 1.0e-6));
     ARPG_REQUIRE(arpg::test::near(
@@ -92,6 +94,47 @@ arpg::test::Failure fade_alpha_clamps_to_transition_window() noexcept {
         arpg::platform::transition_overlay_alpha(0.12F), 1.0, 1.0e-6));
     ARPG_REQUIRE(arpg::test::near(
         arpg::platform::transition_overlay_alpha(1.0F), 1.0, 1.0e-6));
+
+    const TransitionVisualState destroyed =
+        arpg::platform::transition_after_dungeon_event(
+            {}, DungeonEventKind::room_destroyed);
+    ARPG_REQUIRE(arpg::test::near(
+        destroyed.seconds_left, 0.12, 1.0e-6));
+
+    const TransitionVisualState first_transition =
+        arpg::platform::transition_after_room_phase(
+            {}, RoomPhase::transitioning);
+    ARPG_REQUIRE(arpg::test::near(
+        first_transition.seconds_left, 0.12, 1.0e-6));
+    ARPG_REQUIRE(first_transition.transition_phase_seen);
+
+    const TransitionVisualState advanced =
+        arpg::platform::advance_transition(
+            first_transition, 0.05F);
+    ARPG_REQUIRE(arpg::test::near(
+        advanced.seconds_left, 0.07, 1.0e-6));
+    const TransitionVisualState repeated_transition =
+        arpg::platform::transition_after_room_phase(
+            advanced, RoomPhase::transitioning);
+    ARPG_REQUIRE(arpg::test::near(
+        repeated_transition.seconds_left, 0.07, 1.0e-6));
+
+    const TransitionVisualState left_transition =
+        arpg::platform::transition_after_room_phase(
+            repeated_transition, RoomPhase::combat);
+    ARPG_REQUIRE(!left_transition.transition_phase_seen);
+    const TransitionVisualState reentered_transition =
+        arpg::platform::transition_after_room_phase(
+            left_transition, RoomPhase::transitioning);
+    ARPG_REQUIRE(arpg::test::near(
+        reentered_transition.seconds_left, 0.12, 1.0e-6));
+
+    const TransitionVisualState reset =
+        arpg::platform::transition_after_dungeon_event(
+            reentered_transition, DungeonEventKind::room_reset);
+    ARPG_REQUIRE(arpg::test::near(
+        reset.seconds_left, 0.0, 1.0e-6));
+    ARPG_REQUIRE(!reset.transition_phase_seen);
     return {};
 }
 

@@ -369,9 +369,7 @@ void CombatRenderer::consume_event(const CombatEvent& event) noexcept {
 
 void CombatRenderer::consume_dungeon_event(
     const dungeon::DungeonEvent& event) noexcept {
-    if (event.kind == dungeon::DungeonEventKind::room_destroyed) {
-        transition_seconds_left_ = 0.12F;
-    }
+    transition_ = transition_after_dungeon_event(transition_, event.kind);
 }
 
 void CombatRenderer::clear_combat_transients() noexcept {
@@ -380,9 +378,7 @@ void CombatRenderer::clear_combat_transients() noexcept {
 }
 
 void CombatRenderer::update(float frame_seconds) noexcept {
-    transition_seconds_left_ = std::max(
-        0.0F,
-        transition_seconds_left_ - std::clamp(frame_seconds, 0.0F, 0.1F));
+    transition_ = advance_transition(transition_, frame_seconds);
 }
 
 void CombatRenderer::draw(
@@ -392,11 +388,7 @@ void CombatRenderer::draw(
     bool draw_debug,
     const CombatFeedback& feedback,
     bool audio_ready) noexcept {
-    const bool transitioning = current.phase == dungeon::RoomPhase::transitioning;
-    if (transitioning && !transition_phase_seen_) {
-        transition_seconds_left_ = 0.12F;
-    }
-    transition_phase_seen_ = transitioning;
+    transition_ = transition_after_room_phase(transition_, current.phase);
 
     const float width = static_cast<float>(GetScreenWidth());
     const float height = static_cast<float>(GetScreenHeight());
@@ -655,7 +647,7 @@ void CombatRenderer::draw(
         draw_debug ? Color{255, 126, 197, 255} : Color{142, 153, 170, 255});
 
     const float overlay_alpha = transition_overlay_alpha(
-        transition_seconds_left_);
+        transition_.seconds_left);
     if (overlay_alpha > 0.0F) {
         DrawRectangle(
             0,

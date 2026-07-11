@@ -1,7 +1,7 @@
 #pragma once
 
 #include "combat_feedback.hpp"
-#include "dungeon/dungeon_types.hpp"
+#include "dungeon_view_math.hpp"
 
 namespace arpg::platform {
 
@@ -22,8 +22,7 @@ public:
 private:
     combat::CombatEvent last_event_{};
     bool has_last_event_{};
-    float transition_seconds_left_{};
-    bool transition_phase_seen_{};
+    TransitionVisualState transition_{};
 };
 
 }  // namespace arpg::platform

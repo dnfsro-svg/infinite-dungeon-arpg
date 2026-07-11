@@ -62,6 +62,9 @@ arpg::test::Failure side_entries_mirror_spawn_and_facing() noexcept {
 
     const auto from_right = make_next_room(current, ExitDirection::left);
     ARPG_REQUIRE(from_right.has_value());
+    ARPG_REQUIRE(from_right->index == current.index + 1U);
+    ARPG_REQUIRE(from_right->seed == derive_next_room_seed(
+        current.seed, current.index + 1U, ExitDirection::left));
     ARPG_REQUIRE(from_right->entry == EntrySide::right);
     ARPG_REQUIRE(same_position(from_right->combat.player_spawn, 6.50F, 0.0F));
     ARPG_REQUIRE(from_right->combat.initial_facing == Facing::left);
@@ -72,6 +75,9 @@ arpg::test::Failure side_entries_mirror_spawn_and_facing() noexcept {
 
     const auto from_left = make_next_room(current, ExitDirection::right);
     ARPG_REQUIRE(from_left.has_value());
+    ARPG_REQUIRE(from_left->index == current.index + 1U);
+    ARPG_REQUIRE(from_left->seed == derive_next_room_seed(
+        current.seed, current.index + 1U, ExitDirection::right));
     ARPG_REQUIRE(from_left->entry == EntrySide::left);
     ARPG_REQUIRE(same_position(from_left->combat.player_spawn, -6.50F, 0.0F));
     ARPG_REQUIRE(from_left->combat.initial_facing == Facing::right);
@@ -89,6 +95,9 @@ arpg::test::Failure vertical_entries_use_horizontal_target_rows() noexcept {
 
     const auto from_bottom = make_next_room(current, ExitDirection::up);
     ARPG_REQUIRE(from_bottom.has_value());
+    ARPG_REQUIRE(from_bottom->index == current.index + 1U);
+    ARPG_REQUIRE(from_bottom->seed == derive_next_room_seed(
+        current.seed, current.index + 1U, ExitDirection::up));
     ARPG_REQUIRE(from_bottom->entry == EntrySide::bottom);
     ARPG_REQUIRE(same_position(from_bottom->combat.player_spawn, 0.0F, 2.75F));
     ARPG_REQUIRE(from_bottom->combat.initial_facing == Facing::right);
@@ -99,6 +108,9 @@ arpg::test::Failure vertical_entries_use_horizontal_target_rows() noexcept {
 
     const auto from_top = make_next_room(current, ExitDirection::down);
     ARPG_REQUIRE(from_top.has_value());
+    ARPG_REQUIRE(from_top->index == current.index + 1U);
+    ARPG_REQUIRE(from_top->seed == derive_next_room_seed(
+        current.seed, current.index + 1U, ExitDirection::down));
     ARPG_REQUIRE(from_top->entry == EntrySide::top);
     ARPG_REQUIRE(same_position(from_top->combat.player_spawn, 0.0F, -2.75F));
     ARPG_REQUIRE(from_top->combat.initial_facing == Facing::right);

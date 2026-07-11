@@ -3,6 +3,11 @@
 #include <algorithm>
 
 namespace arpg::platform {
+namespace {
+
+constexpr float kTransitionSeconds = 0.12F;
+
+}  // namespace
 
 DoorVisualMode door_visual_mode(
     dungeon::RoomPhase phase,
@@ -64,8 +69,38 @@ const char* exit_direction_label(dungeon::ExitDirection direction) noexcept {
     return "UNKNOWN";
 }
 
+TransitionVisualState transition_after_dungeon_event(
+    TransitionVisualState state,
+    dungeon::DungeonEventKind kind) noexcept {
+    if (kind == dungeon::DungeonEventKind::room_destroyed) {
+        state.seconds_left = kTransitionSeconds;
+    } else if (kind == dungeon::DungeonEventKind::room_reset) {
+        state = {};
+    }
+    return state;
+}
+
+TransitionVisualState transition_after_room_phase(
+    TransitionVisualState state,
+    dungeon::RoomPhase phase) noexcept {
+    const bool transitioning = phase == dungeon::RoomPhase::transitioning;
+    if (transitioning && !state.transition_phase_seen) {
+        state.seconds_left = kTransitionSeconds;
+    }
+    state.transition_phase_seen = transitioning;
+    return state;
+}
+
+TransitionVisualState advance_transition(
+    TransitionVisualState state,
+    float frame_seconds) noexcept {
+    state.seconds_left = std::max(
+        0.0F,
+        state.seconds_left - std::clamp(frame_seconds, 0.0F, 0.1F));
+    return state;
+}
+
 float transition_overlay_alpha(float seconds_left) noexcept {
-    constexpr float kTransitionSeconds = 0.12F;
     return std::clamp(seconds_left / kTransitionSeconds, 0.0F, 1.0F);
 }
 
