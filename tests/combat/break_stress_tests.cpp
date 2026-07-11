@@ -362,46 +362,36 @@ arpg::test::Failure reset_reconstructs_runtime_and_emits_once() noexcept {
     return {};
 }
 
-std::uint8_t expected_action_mask(int tick) noexcept {
-    std::uint8_t mask = 0;
-    if (tick % 37 == 0) {
-        mask |= 1U << 0U;
-    }
-    if (tick % 181 == 0) {
-        mask |= 1U << 1U;
-    }
-    if (tick % 251 == 0) {
-        mask |= 1U << 2U;
-    }
-    if (tick % 307 == 0) {
-        mask |= 1U << 3U;
-    }
-    return mask;
-}
+struct ScheduledAction final {
+    int period;
+    Action action;
+    std::uint8_t bit;
+};
 
-std::uint8_t schedule_actions(CombatWorld& world, int tick) noexcept {
-    std::uint8_t accepted = 0;
-    if (tick % 37 == 0) {
-        if (world.queue_action(Action::light)) {
-            accepted |= 1U << 0U;
+struct ScheduledActions final {
+    std::uint8_t requested{};
+    std::uint8_t accepted{};
+};
+
+constexpr std::array<ScheduledAction, 4> kScheduledActions{{
+    {37, Action::light, static_cast<std::uint8_t>(1U << 0U)},
+    {181, Action::jump, static_cast<std::uint8_t>(1U << 1U)},
+    {251, Action::launcher, static_cast<std::uint8_t>(1U << 2U)},
+    {307, Action::launcher, static_cast<std::uint8_t>(1U << 3U)},
+}};
+
+ScheduledActions schedule_actions(CombatWorld& world, int tick) noexcept {
+    ScheduledActions result{};
+    for (const auto& scheduled : kScheduledActions) {
+        if (tick % scheduled.period != 0) {
+            continue;
+        }
+        result.requested |= scheduled.bit;
+        if (world.queue_action(scheduled.action)) {
+            result.accepted |= scheduled.bit;
         }
     }
-    if (tick % 181 == 0) {
-        if (world.queue_action(Action::jump)) {
-            accepted |= 1U << 1U;
-        }
-    }
-    if (tick % 251 == 0) {
-        if (world.queue_action(Action::launcher)) {
-            accepted |= 1U << 2U;
-        }
-    }
-    if (tick % 307 == 0) {
-        if (world.queue_action(Action::launcher)) {
-            accepted |= 1U << 3U;
-        }
-    }
-    return accepted;
+    return result;
 }
 
 MovementInput scheduled_movement(int tick) noexcept {
@@ -415,10 +405,12 @@ arpg::test::Failure replay_and_stress_are_deterministic_without_allocations() no
     CombatWorld left;
     CombatWorld right;
     for (int tick = 0; tick < 2400; ++tick) {
-        const std::uint8_t left_accepted = schedule_actions(left, tick);
-        const std::uint8_t right_accepted = schedule_actions(right, tick);
-        ARPG_REQUIRE(left_accepted == right_accepted);
-        ARPG_REQUIRE(left_accepted == expected_action_mask(tick));
+        const ScheduledActions left_scheduled = schedule_actions(left, tick);
+        const ScheduledActions right_scheduled = schedule_actions(right, tick);
+        ARPG_REQUIRE(left_scheduled.requested == right_scheduled.requested);
+        ARPG_REQUIRE(left_scheduled.accepted == right_scheduled.accepted);
+        ARPG_REQUIRE(left_scheduled.accepted == left_scheduled.requested);
+        ARPG_REQUIRE(right_scheduled.accepted == right_scheduled.requested);
         left.tick(scheduled_movement(tick));
         right.tick(scheduled_movement(tick));
         ARPG_REQUIRE(snapshot_equal(left.snapshot(), right.snapshot()));
@@ -437,9 +429,8 @@ arpg::test::Failure replay_and_stress_are_deterministic_without_allocations() no
     std::uint32_t max_event_overflow = 0;
     const std::uint64_t allocations_before = arpg::test::allocation_count();
     for (int tick = 0; tick < 36000; ++tick) {
-        all_queued = schedule_actions(stress, tick)
-                == expected_action_mask(tick)
-            && all_queued;
+        const ScheduledActions scheduled = schedule_actions(stress, tick);
+        all_queued = scheduled.accepted == scheduled.requested && all_queued;
         stress.tick(scheduled_movement(tick));
         const CombatDiagnostics diagnostics = stress.snapshot().diagnostics;
         if (diagnostics.input_overflow_count > max_input_overflow) {
