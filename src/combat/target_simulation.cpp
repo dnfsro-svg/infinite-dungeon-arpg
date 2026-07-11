@@ -42,7 +42,6 @@ void CombatWorld::apply_dummy_impact(
         dummy.reaction_ticks = kRespawnTicks;
         dummy.break_window_ticks = 0;
         dummy.velocity = Vec3{};
-        dummy.has_pending_impact = false;
 
         CombatEvent defeated{};
         defeated.kind = CombatEventKind::defeated;
@@ -59,7 +58,6 @@ void CombatWorld::apply_dummy_impact(
     const float facing = player_.facing == Facing::right ? 1.0F : -1.0F;
     const bool already_airborne =
         dummy.reaction == ReactionState::airborne || dummy.position.z > 0.0F;
-    dummy.has_pending_impact = false;
 
     switch (definition.impact) {
     case ImpactKind::light_hitstun:
@@ -93,8 +91,6 @@ void CombatWorld::apply_dummy_impact(
         if (already_airborne) {
             dummy.reaction = ReactionState::airborne;
             dummy.reaction_ticks = 0;
-            dummy.pending_impact = ImpactKind::knockdown;
-            dummy.has_pending_impact = true;
         } else {
             dummy.velocity.z = 0.0F;
             dummy.reaction = ReactionState::knockdown;
@@ -108,8 +104,6 @@ void CombatWorld::apply_dummy_impact(
         dummy.velocity.z = definition.launch_speed * scale;
         dummy.reaction = ReactionState::airborne;
         dummy.reaction_ticks = 0;
-        dummy.pending_impact = ImpactKind::knockdown;
-        dummy.has_pending_impact = true;
         break;
     }
 }
@@ -125,8 +119,6 @@ void CombatWorld::respawn_dummy(std::size_t index) noexcept {
     dummy.reaction_ticks = 0;
     dummy.break_window_ticks = 0;
     dummy.hit_stop_ticks = 0;
-    dummy.pending_impact = ImpactKind::light_hitstun;
-    dummy.has_pending_impact = false;
     dummy.hp = dummy.max_hp;
     dummy.break_value = dummy.max_break;
 
@@ -191,7 +183,6 @@ void CombatWorld::simulate_target(std::size_t index) noexcept {
             dummy.reaction = ReactionState::knockdown;
             dummy.reaction_ticks = reaction_ticks(
                 dummy.kind, kKnockdownTicks);
-            dummy.has_pending_impact = false;
 
             CombatEvent landing{};
             landing.kind = CombatEventKind::landing;

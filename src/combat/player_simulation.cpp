@@ -95,10 +95,6 @@ void CombatWorld::simulate_player(MovementInput movement) noexcept {
 
         attack_.id = id;
         attack_.elapsed_ticks = 0;
-        ++attack_.serial;
-        if (attack_.serial == 0) {
-            ++attack_.serial;
-        }
         attack_.connected = false;
         attack_.impact_event_emitted = false;
         attack_.hit_targets.fill(false);
@@ -172,18 +168,15 @@ void CombatWorld::simulate_player(MovementInput movement) noexcept {
         }
 
         ++attack_.elapsed_ticks;
-        const std::uint32_t total_ticks =
-            static_cast<std::uint32_t>(definition->startup_ticks) +
-            static_cast<std::uint32_t>(definition->active_ticks) +
-            static_cast<std::uint32_t>(definition->recovery_ticks);
-        if (attack_.elapsed_ticks >= total_ticks) {
+        const AttackPhase phase =
+            attack_phase_at(*definition, attack_.elapsed_ticks);
+        if (phase == AttackPhase::finished) {
             finish_attack();
             advance_vertical(false);
             return;
         }
 
-        player_.state = state_for_phase(
-            attack_phase_at(*definition, attack_.elapsed_ticks));
+        player_.state = state_for_phase(phase);
         advance_vertical(true);
         return;
     }

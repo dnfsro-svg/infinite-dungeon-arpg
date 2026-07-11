@@ -159,8 +159,6 @@ void CombatWorld::resolve_attack_hits() noexcept {
         }
 
         if (dummy.hp == 0 || accepts_impact) {
-            dummy.pending_impact = definition->impact;
-            dummy.has_pending_impact = true;
             apply_dummy_impact(index, *definition);
         }
     }

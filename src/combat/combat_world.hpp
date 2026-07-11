@@ -42,8 +42,6 @@ private:
         std::uint16_t reaction_ticks{};
         std::uint16_t break_window_ticks{};
         std::uint16_t hit_stop_ticks{};
-        ImpactKind pending_impact{ImpactKind::light_hitstun};
-        bool has_pending_impact{};
         int hp{};
         int max_hp{};
         int break_value{};
@@ -53,7 +51,6 @@ private:
     struct AttackRuntime final {
         AttackId id{AttackId::none};
         std::uint16_t elapsed_ticks{};
-        std::uint64_t serial{};
         bool connected{};
         bool impact_event_emitted{};
         std::array<bool, kDummyCount> hit_targets{};

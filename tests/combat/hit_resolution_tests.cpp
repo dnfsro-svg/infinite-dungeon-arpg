@@ -273,7 +273,7 @@ constexpr arpg::test::TestCase kCases[] = {
      &inclusive_xyz_mirror_and_depth_are_deterministic},
     {"single bounded X-only attack assist",
      &attack_assist_is_single_bounded_and_x_only},
-    {"one target once per attack serial",
+    {"one target once per attack",
      &one_attack_hits_one_target_once_across_active_ticks},
     {"three targets and one impact summary",
      &three_targets_resolve_independently_with_one_summary},
