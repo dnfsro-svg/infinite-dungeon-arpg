@@ -307,10 +307,8 @@ function(arpg_source_has_forbidden_include SOURCE_TEXT OUT_FOUND OUT_LINE)
 
         if(_arpg_state STREQUAL STRING OR _arpg_state STREQUAL CHAR)
             if(_arpg_char STREQUAL "\\")
-                if(_arpg_next_char STREQUAL "\n")
-                    arpg_finish_scanned_source_line()
-                endif()
-                math(EXPR _arpg_index "${_arpg_index} + 2")
+                math(EXPR
+                    _arpg_index "${_arpg_logical_next_index} + 1")
                 continue()
             endif()
             if((_arpg_state STREQUAL STRING AND _arpg_char STREQUAL "\"")
@@ -394,6 +392,16 @@ arpg_expect_source_boundary(
 arpg_expect_source_boundary(
     "macro quoted header" TRUE [=[#define RL_HEADER "raymath.h"
 #include RL_HEADER]=])
+arpg_expect_source_boundary(
+    "string escape consumes logical quote across splice" TRUE
+    [=[const char* text = "a\\
+"b";
+#include <raylib.h>]=])
+arpg_expect_source_boundary(
+    "character escape consumes logical quote across splice" TRUE
+    [=[const char value = '\\
+'';
+#include <raymath.h>]=])
 
 arpg_expect_source_boundary(
     "line comment" FALSE [=[// #include <raylib.h>]=])
