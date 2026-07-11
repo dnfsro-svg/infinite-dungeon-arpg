@@ -55,6 +55,60 @@ function(arpg_source_has_forbidden_include SOURCE_TEXT OUT_FOUND OUT_LINE)
                 _arpg_after_next_char)
         endif()
 
+        set(_arpg_logical_next_index ${_arpg_next_index})
+        set(_arpg_logical_next_char "${_arpg_next_char}")
+        if(NOT _arpg_state STREQUAL RAW_STRING)
+            set(_arpg_logical_next_char "")
+            while(_arpg_logical_next_index LESS _arpg_source_length)
+                string(SUBSTRING
+                    "${SOURCE_TEXT}"
+                    ${_arpg_logical_next_index}
+                    1
+                    _arpg_logical_candidate)
+                if(_arpg_logical_candidate STREQUAL "\\")
+                    math(EXPR
+                        _arpg_splice_next_index
+                        "${_arpg_logical_next_index} + 1")
+                    set(_arpg_splice_next_char "")
+                    if(_arpg_splice_next_index LESS _arpg_source_length)
+                        string(SUBSTRING
+                            "${SOURCE_TEXT}"
+                            ${_arpg_splice_next_index}
+                            1
+                            _arpg_splice_next_char)
+                    endif()
+                    if(_arpg_splice_next_char STREQUAL "\n")
+                        math(EXPR
+                            _arpg_logical_next_index
+                            "${_arpg_logical_next_index} + 2")
+                        continue()
+                    endif()
+
+                    math(EXPR
+                        _arpg_splice_after_index
+                        "${_arpg_logical_next_index} + 2")
+                    set(_arpg_splice_after_char "")
+                    if(_arpg_splice_after_index LESS _arpg_source_length)
+                        string(SUBSTRING
+                            "${SOURCE_TEXT}"
+                            ${_arpg_splice_after_index}
+                            1
+                            _arpg_splice_after_char)
+                    endif()
+                    if(_arpg_splice_next_char STREQUAL "\r"
+                            AND _arpg_splice_after_char STREQUAL "\n")
+                        math(EXPR
+                            _arpg_logical_next_index
+                            "${_arpg_logical_next_index} + 3")
+                        continue()
+                    endif()
+                endif()
+
+                set(_arpg_logical_next_char "${_arpg_logical_candidate}")
+                break()
+            endwhile()
+        endif()
+
         if(NOT _arpg_state STREQUAL RAW_STRING
                 AND _arpg_char STREQUAL "\\")
             if(_arpg_next_char STREQUAL "\n")
@@ -69,21 +123,28 @@ function(arpg_source_has_forbidden_include SOURCE_TEXT OUT_FOUND OUT_LINE)
         endif()
 
         if(_arpg_state STREQUAL CODE)
-            if(_arpg_char STREQUAL "/" AND _arpg_next_char STREQUAL "/")
+            if(_arpg_char STREQUAL "/"
+                    AND _arpg_logical_next_char STREQUAL "/")
                 string(APPEND _arpg_line " ")
                 set(_arpg_state LINE_COMMENT)
-                math(EXPR _arpg_index "${_arpg_index} + 2")
+                math(EXPR
+                    _arpg_index "${_arpg_logical_next_index} + 1")
                 continue()
             endif()
-            if(_arpg_char STREQUAL "/" AND _arpg_next_char STREQUAL "*")
+            if(_arpg_char STREQUAL "/"
+                    AND _arpg_logical_next_char STREQUAL "*")
                 string(APPEND _arpg_line " ")
                 set(_arpg_state BLOCK_COMMENT)
-                math(EXPR _arpg_index "${_arpg_index} + 2")
+                math(EXPR
+                    _arpg_index "${_arpg_logical_next_index} + 1")
                 continue()
             endif()
 
-            if(_arpg_char STREQUAL "R" AND _arpg_next_char STREQUAL "\"")
-                math(EXPR _arpg_delimiter_index "${_arpg_index} + 2")
+            if(_arpg_char STREQUAL "R"
+                    AND _arpg_logical_next_char STREQUAL "\"")
+                math(EXPR
+                    _arpg_delimiter_index
+                    "${_arpg_logical_next_index} + 1")
                 set(_arpg_raw_delimiter "")
                 set(_arpg_valid_raw_opener FALSE)
                 while(_arpg_delimiter_index LESS _arpg_source_length)
@@ -92,6 +153,44 @@ function(arpg_source_has_forbidden_include SOURCE_TEXT OUT_FOUND OUT_LINE)
                         ${_arpg_delimiter_index}
                         1
                         _arpg_delimiter_char)
+                    if(_arpg_delimiter_char STREQUAL "\\")
+                        math(EXPR
+                            _arpg_delimiter_next_index
+                            "${_arpg_delimiter_index} + 1")
+                        set(_arpg_delimiter_next_char "")
+                        if(_arpg_delimiter_next_index LESS _arpg_source_length)
+                            string(SUBSTRING
+                                "${SOURCE_TEXT}"
+                                ${_arpg_delimiter_next_index}
+                                1
+                                _arpg_delimiter_next_char)
+                        endif()
+                        if(_arpg_delimiter_next_char STREQUAL "\n")
+                            math(EXPR
+                                _arpg_delimiter_index
+                                "${_arpg_delimiter_index} + 2")
+                            continue()
+                        endif()
+
+                        math(EXPR
+                            _arpg_delimiter_after_index
+                            "${_arpg_delimiter_index} + 2")
+                        set(_arpg_delimiter_after_char "")
+                        if(_arpg_delimiter_after_index LESS _arpg_source_length)
+                            string(SUBSTRING
+                                "${SOURCE_TEXT}"
+                                ${_arpg_delimiter_after_index}
+                                1
+                                _arpg_delimiter_after_char)
+                        endif()
+                        if(_arpg_delimiter_next_char STREQUAL "\r"
+                                AND _arpg_delimiter_after_char STREQUAL "\n")
+                            math(EXPR
+                                _arpg_delimiter_index
+                                "${_arpg_delimiter_index} + 3")
+                            continue()
+                        endif()
+                    endif()
                     if(_arpg_delimiter_char STREQUAL "(")
                         string(LENGTH
                             "${_arpg_raw_delimiter}" _arpg_delimiter_length)
@@ -166,9 +265,11 @@ function(arpg_source_has_forbidden_include SOURCE_TEXT OUT_FOUND OUT_LINE)
         endif()
 
         if(_arpg_state STREQUAL BLOCK_COMMENT)
-            if(_arpg_char STREQUAL "*" AND _arpg_next_char STREQUAL "/")
+            if(_arpg_char STREQUAL "*"
+                    AND _arpg_logical_next_char STREQUAL "/")
                 set(_arpg_state CODE)
-                math(EXPR _arpg_index "${_arpg_index} + 2")
+                math(EXPR
+                    _arpg_index "${_arpg_logical_next_index} + 1")
                 continue()
             endif()
             if(_arpg_char STREQUAL "\n")
@@ -276,6 +377,12 @@ arpg_expect_source_boundary(
 arpg_expect_source_boundary(
     "comment before header" TRUE [=[#include/**/<raylib.h>]=])
 arpg_expect_source_boundary(
+    "block comment opener across splice" TRUE [=[/\
+*comment*/ #include <raylib.h>]=])
+arpg_expect_source_boundary(
+    "block comment closer across splice" TRUE [=[/*comment*\
+/ #include <raymath.h>]=])
+arpg_expect_source_boundary(
     "continued directive token" TRUE [=[#inc\
 lude <raylib.h>]=])
 arpg_expect_source_boundary(
@@ -308,6 +415,14 @@ arpg_expect_source_boundary(
     [=[constexpr auto text = R"arpg_raw(
 #include <raylib.h>
 )arpg_raw";]=])
+arpg_expect_source_boundary(
+    "raw string preserves splice-shaped comment tokens" FALSE
+    [=[constexpr auto text = R"splice_raw(
+/\
+*comment*/ #include <raylib.h>
+/*comment*\
+/ #include <raymath.h>
+)splice_raw";]=])
 arpg_expect_source_boundary(
     "unrelated include" FALSE [=[#include <array>]=])
 arpg_expect_source_boundary(

@@ -1,7 +1,7 @@
 function(arpg_tokenize_dependency_value INPUT_VALUE OUT_TOKENS)
     set(_arpg_token_text "${INPUT_VALUE}")
     foreach(_arpg_delimiter IN ITEMS
-            "$" "<" ">" "{" "}" "(" ")" "," ":" "/" "\\")
+            "$" "<" ">" "{" "}" "(" ")" "," ":" "/" "\\" "\"" "'")
         string(REPLACE
             "${_arpg_delimiter}" ";" _arpg_token_text "${_arpg_token_text}")
     endforeach()
@@ -43,7 +43,7 @@ function(arpg_include_value_has_forbidden_dependency
     if(_arpg_value_lower MATCHES
             [=[(^|[;/\\])_deps[/\\]+raylib($|[-_/\\;>,])]=]
             OR _arpg_value_lower MATCHES
-            [=[(^|[;/\\])(raylib|raylib-cpp)[/\\]+include($|[/\\;>,])]=])
+            [=[(^|[;/\\])(raylib|raylib-cpp)[/\\]+(include|src)($|[/\\;>,])]=])
         set("${OUT_FOUND}" TRUE PARENT_SCOPE)
         set("${OUT_MATCH}" "raylib include path" PARENT_SCOPE)
         return()
@@ -244,6 +244,38 @@ function(arpg_walk_target_dependency_closure
 
         arpg_value_has_forbidden_dependency(
             "${_arpg_property_value}" _arpg_found _arpg_match)
+        if(_arpg_found)
+            set("${OUT_FOUND}" TRUE PARENT_SCOPE)
+            set("${OUT_REASON}"
+                "${TARGET_PATH} ${_arpg_property_name} contains '${_arpg_match}' in '${_arpg_property_value}'"
+                PARENT_SCOPE)
+            return()
+        endif()
+    endforeach()
+
+    foreach(_arpg_property_name IN ITEMS
+            COMPILE_OPTIONS
+            INTERFACE_COMPILE_OPTIONS)
+        get_target_property(
+            _arpg_property_value
+            "${_arpg_inspected_target}"
+            "${_arpg_property_name}")
+        if("${_arpg_property_value}" STREQUAL ""
+                OR "${_arpg_property_value}" MATCHES "-NOTFOUND$")
+            continue()
+        endif()
+
+        string(TOLOWER "${_arpg_property_value}" _arpg_option_value)
+        foreach(_arpg_msvc_prefix IN ITEMS "/fi" "/i" "/d")
+            string(REPLACE
+                "${_arpg_msvc_prefix}" ";" _arpg_option_value "${_arpg_option_value}")
+        endforeach()
+        arpg_definition_value_has_forbidden_dependency(
+            "${_arpg_option_value}" _arpg_found _arpg_match)
+        if(NOT _arpg_found)
+            arpg_include_value_has_forbidden_dependency(
+                "${_arpg_option_value}" _arpg_found _arpg_match)
+        endif()
         if(_arpg_found)
             set("${OUT_FOUND}" TRUE PARENT_SCOPE)
             set("${OUT_REASON}"
@@ -526,7 +558,8 @@ set(_arpg_remaining_boundary_failures "")
 foreach(_arpg_link_value IN ITEMS
         "raylib_static"
         "E:/vendor/raylibd.lib"
-        "-lraylib")
+        "-lraylib"
+        [=[/DEFAULTLIB:"raylib.lib"]=])
     arpg_value_has_forbidden_dependency(
         "${_arpg_link_value}" _arpg_found _arpg_reason)
     if(NOT _arpg_found)
@@ -538,7 +571,9 @@ endforeach()
 
 foreach(_arpg_include_value IN ITEMS
         "E:/vendor/raylib/include"
-        "E:/vendor/raylib-cpp/include")
+        "E:/vendor/raylib-cpp/include"
+        "E:/vendor/raylib/src"
+        "E:/vendor/raylib-cpp/src")
     arpg_include_value_has_forbidden_dependency(
         "${_arpg_include_value}" _arpg_found _arpg_reason)
     if(NOT _arpg_found)
@@ -620,6 +655,30 @@ if(NOT _arpg_found)
     list(APPEND
         _arpg_remaining_boundary_failures
         "compile-definitions:raylib-header")
+endif()
+
+add_library(arpg_boundary_forced_include_probe INTERFACE)
+target_compile_options(
+    arpg_boundary_forced_include_probe
+    INTERFACE "/FIE:/vendor/raylib/src/raylib.h")
+arpg_find_target_dependency_leak(
+    arpg_boundary_forced_include_probe _arpg_found _arpg_reason)
+if(NOT _arpg_found)
+    list(APPEND
+        _arpg_remaining_boundary_failures
+        "compile-options:forced-include")
+endif()
+
+add_library(arpg_boundary_deps_include_option_probe INTERFACE)
+target_compile_options(
+    arpg_boundary_deps_include_option_probe
+    INTERFACE "/IE:/build/_deps/raylib-src/src")
+arpg_find_target_dependency_leak(
+    arpg_boundary_deps_include_option_probe _arpg_found _arpg_reason)
+if(NOT _arpg_found)
+    list(APPEND
+        _arpg_remaining_boundary_failures
+        "compile-options:deps-include")
 endif()
 
 if(_arpg_remaining_boundary_failures)
