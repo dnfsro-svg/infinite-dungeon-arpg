@@ -1,6 +1,7 @@
 add_executable(arpg_combat_tests
     combat_test_main.cpp
-    attack_catalog_tests.cpp)
+    attack_catalog_tests.cpp
+    input_buffer_tests.cpp)
 
 target_compile_features(arpg_combat_tests PRIVATE cxx_std_17)
 target_include_directories(arpg_combat_tests

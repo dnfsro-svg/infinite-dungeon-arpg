@@ -3,16 +3,18 @@
 #include <cstdio>
 
 arpg::test::TestSuite attack_catalog_suite() noexcept;
+arpg::test::TestSuite input_buffer_suite() noexcept;
 
 namespace {
 
-constexpr int kExpectedCaseCount = 3;
+constexpr int kExpectedCaseCount = 7;
 
 }  // namespace
 
 int main() {
     const arpg::test::TestSuite suites[] = {
         attack_catalog_suite(),
+        input_buffer_suite(),
     };
 
     int failures = 0;
