@@ -29,31 +29,26 @@ bool DungeonSession::queue_action(combat::Action action) noexcept {
 }
 
 void DungeonSession::tick(combat::MovementInput movement) noexcept {
-    ++session_tick_;
-
     if (phase_ == RoomPhase::locked) {
         phase_ = RoomPhase::combat;
         emit(DungeonEventKind::room_entered);
         emit(DungeonEventKind::combat_started);
-        return;
+    } else if (phase_ != RoomPhase::transitioning && combat_.has_value()) {
+        if (phase_ == RoomPhase::cleared) {
+            phase_ = RoomPhase::awaiting_exit;
+        } else {
+            combat_->tick(movement);
+            relay_combat_events();
+
+            if (phase_ == RoomPhase::combat && remaining_targets() == 0U) {
+                phase_ = RoomPhase::cleared;
+                emit(DungeonEventKind::room_cleared);
+                emit(DungeonEventKind::exits_opened);
+            }
+        }
     }
 
-    if (phase_ == RoomPhase::transitioning || !combat_.has_value()) {
-        return;
-    }
-
-    if (phase_ == RoomPhase::cleared) {
-        phase_ = RoomPhase::awaiting_exit;
-    }
-
-    combat_->tick(movement);
-    relay_combat_events();
-
-    if (phase_ == RoomPhase::combat && remaining_targets() == 0U) {
-        phase_ = RoomPhase::cleared;
-        emit(DungeonEventKind::room_cleared);
-        emit(DungeonEventKind::exits_opened);
-    }
+    ++session_tick_;
 }
 
 void DungeonSession::reset_current_room() noexcept {

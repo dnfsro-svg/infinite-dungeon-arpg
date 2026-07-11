@@ -40,14 +40,17 @@ arpg::test::Failure construction_and_first_tick_are_staged() noexcept {
     ARPG_REQUIRE(started.combat.has_value());
     ARPG_REQUIRE(started.combat->tick == 0U);
 
-    test::EventSummary events;
-    test::drain_all_events(session, events);
-    ARPG_REQUIRE(events.dungeon_count == 2U);
-    ARPG_REQUIRE(events.dungeon_kinds[0]
-        == dungeon::DungeonEventKind::room_entered);
-    ARPG_REQUIRE(events.dungeon_kinds[1]
+    const auto entered = session.try_pop_event();
+    ARPG_REQUIRE(entered.has_value());
+    ARPG_REQUIRE(entered->kind == dungeon::DungeonEventKind::room_entered);
+    ARPG_REQUIRE(entered->session_tick == 0U);
+    const auto started_event = session.try_pop_event();
+    ARPG_REQUIRE(started_event.has_value());
+    ARPG_REQUIRE(started_event->kind
         == dungeon::DungeonEventKind::combat_started);
-    ARPG_REQUIRE(events.combat_count == 0U);
+    ARPG_REQUIRE(started_event->session_tick == 0U);
+    ARPG_REQUIRE(!session.try_pop_event().has_value());
+    ARPG_REQUIRE(!session.try_pop_combat_event().has_value());
     return {};
 }
 
@@ -93,8 +96,34 @@ arpg::test::Failure real_combat_clears_once_without_respawn() noexcept {
     ARPG_REQUIRE(events.exits_opened_count == 1U);
     ARPG_REQUIRE(events.defeated_count == combat::kDummyCount);
 
+    const std::uint64_t cleared_session_tick = cleared.session_tick;
     const std::uint64_t combat_tick = cleared.combat->tick;
     const float player_x = cleared.combat->player.position.x;
+    session.tick(combat::MovementInput{-1, 0});
+    test::drain_all_events(session, events);
+    const dungeon::DungeonSnapshot transitioned = session.snapshot();
+    ARPG_REQUIRE(transitioned.phase == dungeon::RoomPhase::awaiting_exit);
+    ARPG_REQUIRE(transitioned.session_tick == cleared_session_tick + 1U);
+    ARPG_REQUIRE(transitioned.combat->tick == cleared.combat->tick);
+    ARPG_REQUIRE(transitioned.combat->player.position.x
+        == cleared.combat->player.position.x);
+    ARPG_REQUIRE(transitioned.combat->player.position.y
+        == cleared.combat->player.position.y);
+    ARPG_REQUIRE(transitioned.combat->player.position.z
+        == cleared.combat->player.position.z);
+    ARPG_REQUIRE(transitioned.combat->player.state
+        == cleared.combat->player.state);
+    ARPG_REQUIRE(transitioned.combat->player.active_attack
+        == cleared.combat->player.active_attack);
+    ARPG_REQUIRE(transitioned.combat->player.attack_phase
+        == cleared.combat->player.attack_phase);
+    ARPG_REQUIRE(transitioned.combat->player.attack_elapsed_ticks
+        == cleared.combat->player.attack_elapsed_ticks);
+    ARPG_REQUIRE(transitioned.combat->player.combo_stage
+        == cleared.combat->player.combo_stage);
+    ARPG_REQUIRE(transitioned.combat->player.hit_stop_ticks
+        == cleared.combat->player.hit_stop_ticks);
+
     bool moved_while_awaiting_exit = false;
     for (int tick = 0; tick < 64; ++tick) {
         session.tick(combat::MovementInput{-1, 0});
