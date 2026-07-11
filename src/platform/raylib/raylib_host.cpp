@@ -55,23 +55,23 @@ void draw_graybox_room() noexcept {
 
     DrawTriangle(
         Vector2{0.0F, 0.0F},
-        back_left,
         floor_left,
+        back_left,
         Color{22, 27, 39, 255});
     DrawTriangle(
         Vector2{0.0F, 0.0F},
-        floor_left,
         Vector2{0.0F, height},
+        floor_left,
         Color{22, 27, 39, 255});
     DrawTriangle(
         Vector2{width, 0.0F},
-        floor_right,
         back_right,
+        floor_right,
         Color{22, 27, 39, 255});
     DrawTriangle(
         Vector2{width, 0.0F},
-        Vector2{width, height},
         floor_right,
+        Vector2{width, height},
         Color{22, 27, 39, 255});
 
     const Color floor{45, 51, 63, 255};
