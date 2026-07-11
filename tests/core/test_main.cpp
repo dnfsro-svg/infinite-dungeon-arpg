@@ -7,6 +7,12 @@ arpg::test::TestSuite deterministic_rng_suite() noexcept;
 arpg::test::TestSuite fixed_pool_suite() noexcept;
 arpg::test::TestSuite bounded_queue_suite() noexcept;
 
+namespace {
+
+constexpr int kExpectedCaseCount = 22;
+
+}  // namespace
+
 int main() {
     const arpg::test::TestSuite suites[] = {
         fixed_step_suite(),
@@ -33,6 +39,15 @@ int main() {
                     failure.line);
             }
         }
+    }
+
+    if (checks != kExpectedCaseCount) {
+        ++failures;
+        std::fprintf(
+            stderr,
+            "[FAIL] stage 0 case count: actual %d != expected %d\n",
+            checks,
+            kExpectedCaseCount);
     }
 
     std::printf("%d cases, %d failures\n", checks, failures);
