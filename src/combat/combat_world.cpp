@@ -59,6 +59,7 @@ void CombatWorld::reset() noexcept {
 void CombatWorld::initialize_runtime() noexcept {
     player_ = PlayerRuntime{};
     player_.position = config_.player_spawn;
+    player_.facing = config_.initial_facing;
 
     for (std::size_t index = 0; index < dummies_.size(); ++index) {
         DummyRuntime dummy{};

@@ -420,6 +420,114 @@ function(arpg_assert_target_dependency_boundary ROOT_TARGET)
     endif()
 endfunction()
 
+function(arpg_walk_target_reachability
+        TARGET_NAME FORBIDDEN_TARGET TARGET_PATH OUT_FOUND OUT_REASON)
+    if(NOT TARGET "${TARGET_NAME}" OR NOT TARGET "${FORBIDDEN_TARGET}")
+        set("${OUT_FOUND}" FALSE PARENT_SCOPE)
+        set("${OUT_REASON}" "" PARENT_SCOPE)
+        return()
+    endif()
+
+    get_target_property(_arpg_target_alias "${TARGET_NAME}" ALIASED_TARGET)
+    if(_arpg_target_alias)
+        set(_arpg_target "${_arpg_target_alias}")
+    else()
+        set(_arpg_target "${TARGET_NAME}")
+    endif()
+    get_target_property(
+        _arpg_forbidden_alias "${FORBIDDEN_TARGET}" ALIASED_TARGET)
+    if(_arpg_forbidden_alias)
+        set(_arpg_forbidden "${_arpg_forbidden_alias}")
+    else()
+        set(_arpg_forbidden "${FORBIDDEN_TARGET}")
+    endif()
+
+    if(_arpg_target STREQUAL _arpg_forbidden)
+        set("${OUT_FOUND}" TRUE PARENT_SCOPE)
+        set("${OUT_REASON}" "${TARGET_PATH}" PARENT_SCOPE)
+        return()
+    endif()
+
+    get_property(
+        _arpg_visited GLOBAL PROPERTY ARPG_REACHABILITY_VISITED_TARGETS)
+    list(FIND _arpg_visited "${_arpg_target}" _arpg_visited_index)
+    if(NOT _arpg_visited_index EQUAL -1)
+        set("${OUT_FOUND}" FALSE PARENT_SCOPE)
+        set("${OUT_REASON}" "" PARENT_SCOPE)
+        return()
+    endif()
+    set_property(
+        GLOBAL APPEND PROPERTY
+        ARPG_REACHABILITY_VISITED_TARGETS "${_arpg_target}")
+
+    set(_arpg_link_property_names LINK_LIBRARIES INTERFACE_LINK_LIBRARIES)
+    get_target_property(_arpg_is_imported "${_arpg_target}" IMPORTED)
+    if(_arpg_is_imported)
+        get_target_property(
+            _arpg_imported_configurations
+            "${_arpg_target}"
+            IMPORTED_CONFIGURATIONS)
+        if("${_arpg_imported_configurations}" MATCHES "-NOTFOUND$")
+            set(_arpg_imported_configurations "")
+        endif()
+        list(APPEND _arpg_imported_configurations
+            NOCONFIG DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
+        list(REMOVE_DUPLICATES _arpg_imported_configurations)
+        foreach(_arpg_property_base IN ITEMS
+                IMPORTED_LINK_INTERFACE_LIBRARIES
+                IMPORTED_LINK_DEPENDENT_LIBRARIES)
+            list(APPEND _arpg_link_property_names "${_arpg_property_base}")
+            foreach(_arpg_configuration IN LISTS _arpg_imported_configurations)
+                string(TOUPPER
+                    "${_arpg_configuration}" _arpg_configuration_upper)
+                list(APPEND _arpg_link_property_names
+                    "${_arpg_property_base}_${_arpg_configuration_upper}")
+            endforeach()
+        endforeach()
+    endif()
+
+    foreach(_arpg_property_name IN LISTS _arpg_link_property_names)
+        get_target_property(
+            _arpg_property_value "${_arpg_target}" "${_arpg_property_name}")
+        if("${_arpg_property_value}" STREQUAL ""
+                OR "${_arpg_property_value}" MATCHES "-NOTFOUND$")
+            continue()
+        endif()
+        arpg_extract_target_candidates(
+            "${_arpg_property_value}" _arpg_dependencies)
+        foreach(_arpg_dependency IN LISTS _arpg_dependencies)
+            arpg_walk_target_reachability(
+                "${_arpg_dependency}"
+                "${_arpg_forbidden}"
+                "${TARGET_PATH} -> ${_arpg_dependency}"
+                _arpg_nested_found
+                _arpg_nested_reason)
+            if(_arpg_nested_found)
+                set("${OUT_FOUND}" TRUE PARENT_SCOPE)
+                set("${OUT_REASON}" "${_arpg_nested_reason}" PARENT_SCOPE)
+                return()
+            endif()
+        endforeach()
+    endforeach()
+
+    set("${OUT_FOUND}" FALSE PARENT_SCOPE)
+    set("${OUT_REASON}" "" PARENT_SCOPE)
+endfunction()
+
+function(arpg_assert_target_not_reachable ROOT_TARGET FORBIDDEN_TARGET)
+    set_property(GLOBAL PROPERTY ARPG_REACHABILITY_VISITED_TARGETS "")
+    arpg_walk_target_reachability(
+        "${ROOT_TARGET}"
+        "${FORBIDDEN_TARGET}"
+        "${ROOT_TARGET}"
+        _arpg_found
+        _arpg_reason)
+    if(_arpg_found)
+        message(FATAL_ERROR
+            "${ROOT_TARGET} must not reach ${FORBIDDEN_TARGET}: ${_arpg_reason}")
+    endif()
+endfunction()
+
 foreach(_arpg_positive_value IN ITEMS
         "raylib"
         "raylib::raylib"
@@ -708,6 +816,8 @@ endif()
 
 arpg_assert_target_dependency_boundary(arpg_core)
 arpg_assert_target_dependency_boundary(arpg_combat)
+arpg_assert_target_dependency_boundary(arpg_dungeon)
+arpg_assert_target_not_reachable(arpg_combat arpg_dungeon)
 
 add_test(
     NAME architecture.core_no_raylib
@@ -727,4 +837,24 @@ add_test(
         -P "${CMAKE_CURRENT_SOURCE_DIR}/core_boundary_test.cmake")
 set_tests_properties(
     architecture.combat_no_raylib
+    PROPERTIES LABELS "headless;architecture")
+
+add_test(
+    NAME architecture.dungeon_no_raylib
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/dungeon"
+        "-DSOURCE_LABEL=Dungeon"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/core_boundary_test.cmake")
+set_tests_properties(
+    architecture.dungeon_no_raylib
+    PROPERTIES LABELS "headless;architecture")
+
+add_test(
+    NAME architecture.combat_no_dungeon
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/combat"
+        "-DSOURCE_LABEL=Combat"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/module_boundary_test.cmake")
+set_tests_properties(
+    architecture.combat_no_dungeon
     PROPERTIES LABELS "headless;architecture")

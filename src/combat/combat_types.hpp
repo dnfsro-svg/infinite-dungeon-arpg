@@ -135,6 +135,8 @@ struct CombatLabConfig final {
         {2.80F, 0.0F, 0.0F},
         {3.30F, 0.35F, 0.0F},
     }};
+    Facing initial_facing{Facing::right};
+    bool respawn_defeated_dummies{true};
 };
 
 struct PlayerSnapshot final {
