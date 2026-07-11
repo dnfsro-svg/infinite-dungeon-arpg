@@ -1,4 +1,5 @@
 add_library(arpg_dungeon STATIC
+    dungeon_session.cpp
     room_generation.cpp)
 
 target_include_directories(arpg_dungeon PUBLIC "${PROJECT_SOURCE_DIR}/src")
