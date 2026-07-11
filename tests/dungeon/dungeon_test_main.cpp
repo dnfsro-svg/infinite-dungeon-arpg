@@ -1,0 +1,11 @@
+#include "test_framework.hpp"
+
+arpg::test::TestSuite room_generation_suite() noexcept;
+
+int main() {
+    const arpg::test::TestSuite suites[] = {
+        room_generation_suite(),
+    };
+
+    return arpg::test::run_suites(suites, 5, "stage 2 dungeon");
+}
