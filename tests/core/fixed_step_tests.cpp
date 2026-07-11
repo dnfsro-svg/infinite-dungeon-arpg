@@ -137,13 +137,23 @@ arpg::test::Failure invalid_input_preserves_accumulator() noexcept {
 
 arpg::test::Failure huge_finite_input_is_bounded() noexcept {
     FixedStepRunner runner;
-    const auto frame =
-        runner.advance(std::numeric_limits<double>::max());
-    ARPG_REQUIRE(frame.steps == FixedStepRunner::kMaxStepsPerFrame);
-    ARPG_REQUIRE(frame.invalid_input_count == 0);
-    ARPG_REQUIRE(std::isfinite(frame.dropped_seconds));
-    ARPG_REQUIRE(frame.interpolation_alpha >= 0.0);
-    ARPG_REQUIRE(frame.interpolation_alpha < 1.0);
+    const double maximum = std::numeric_limits<double>::max();
+
+    const auto first = runner.advance(maximum);
+    ARPG_REQUIRE(first.steps == FixedStepRunner::kMaxStepsPerFrame);
+    ARPG_REQUIRE(first.invalid_input_count == 0);
+    ARPG_REQUIRE(first.dropped_seconds == maximum);
+    ARPG_REQUIRE(std::isfinite(first.dropped_seconds));
+    ARPG_REQUIRE(first.interpolation_alpha >= 0.0);
+    ARPG_REQUIRE(first.interpolation_alpha < 1.0);
+
+    const auto second = runner.advance(maximum);
+    ARPG_REQUIRE(second.steps == FixedStepRunner::kMaxStepsPerFrame);
+    ARPG_REQUIRE(second.invalid_input_count == 0);
+    ARPG_REQUIRE(second.dropped_seconds == maximum);
+    ARPG_REQUIRE(std::isfinite(second.dropped_seconds));
+    ARPG_REQUIRE(second.interpolation_alpha >= 0.0);
+    ARPG_REQUIRE(second.interpolation_alpha < 1.0);
     return {};
 }
 
