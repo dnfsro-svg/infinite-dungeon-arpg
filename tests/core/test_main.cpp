@@ -3,10 +3,12 @@
 #include <cstdio>
 
 arpg::test::TestSuite fixed_step_suite() noexcept;
+arpg::test::TestSuite deterministic_rng_suite() noexcept;
 
 int main() {
     const arpg::test::TestSuite suites[] = {
         fixed_step_suite(),
+        deterministic_rng_suite(),
     };
 
     int failures = 0;
