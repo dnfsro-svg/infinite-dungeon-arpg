@@ -200,6 +200,14 @@ arpg::test::Failure three_targets_resolve_independently_with_one_summary() noexc
     ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::airborne);
     ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::airborne);
     ARPG_REQUIRE(snapshot.dummies[2].reaction == ReactionState::idle);
+    ARPG_REQUIRE(
+        arpg::test::near(snapshot.dummies[0].velocity.x, 1.5, 1.0e-4));
+    ARPG_REQUIRE(
+        arpg::test::near(snapshot.dummies[0].velocity.z, 11.875, 1.0e-4));
+    ARPG_REQUIRE(
+        arpg::test::near(snapshot.dummies[1].velocity.x, 1.2, 1.0e-4));
+    ARPG_REQUIRE(
+        arpg::test::near(snapshot.dummies[1].velocity.z, 9.5, 1.0e-4));
 
     std::array<std::uint8_t, kDummyCount> hit_order{{0xFF, 0xFF, 0xFF}};
     int hit_events = 0;

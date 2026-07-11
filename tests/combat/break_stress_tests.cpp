@@ -304,7 +304,10 @@ arpg::test::Failure defeated_has_priority_over_break_recovery() noexcept {
         ARPG_REQUIRE(wait_for_target_grounded(world, 2));
         drain_events(world);
     }
-    ARPG_REQUIRE(world.snapshot().dummies[2].hp == 16);
+    const CombatSnapshot pre_defeat = world.snapshot();
+    ARPG_REQUIRE(pre_defeat.dummies[2].hp == 16);
+    ARPG_REQUIRE(pre_defeat.dummies[2].armor == ArmorState::broken);
+    ARPG_REQUIRE(pre_defeat.dummies[2].break_window_ticks > 0);
 
     ARPG_REQUIRE(start_action_and_reach_hit(world, Action::launcher, 7));
     const CombatSnapshot snapshot = world.snapshot();
@@ -329,8 +332,11 @@ arpg::test::Failure defeated_has_priority_over_break_recovery() noexcept {
 
     tick_n(world, 5);
     tick_n(world, 90);
-    ARPG_REQUIRE(world.snapshot().dummies[2].reaction
-                 == ReactionState::respawning);
+    const CombatSnapshot respawned = world.snapshot();
+    ARPG_REQUIRE(respawned.dummies[2].reaction == ReactionState::respawning);
+    ARPG_REQUIRE(respawned.dummies[2].armor == ArmorState::armored);
+    ARPG_REQUIRE(respawned.dummies[2].break_value == 120);
+    ARPG_REQUIRE(respawned.dummies[2].hp == 700);
     int respawn_events = 0;
     while (const auto event = world.try_pop_event()) {
         if (event->kind == CombatEventKind::respawned) {
