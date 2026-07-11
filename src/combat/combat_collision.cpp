@@ -42,6 +42,22 @@ Aabb make_dummy_hurtbox(DummyKind kind, Vec3 position) noexcept {
     };
 }
 
+Aabb make_attack_assist_volume(
+    const AttackDefinition& definition,
+    Vec3 player_position,
+    Facing facing) noexcept {
+    Aabb volume = make_world_aabb(
+        definition.local_hitbox, player_position, facing);
+    if (facing == Facing::right) {
+        volume.maximum.x += kAttackAssistMaxGap;
+    } else {
+        volume.minimum.x -= kAttackAssistMaxGap;
+    }
+    volume.minimum.y = player_position.y - kAttackAssistMaxDepth;
+    volume.maximum.y = player_position.y + kAttackAssistMaxDepth;
+    return volume;
+}
+
 bool overlaps_inclusive(const Aabb& lhs, const Aabb& rhs) noexcept {
     return lhs.minimum.x <= rhs.maximum.x
         && lhs.maximum.x >= rhs.minimum.x
