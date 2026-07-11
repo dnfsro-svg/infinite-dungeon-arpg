@@ -61,29 +61,6 @@ arpg::test::Failure ground_timelines_and_lunges_are_deterministic() noexcept {
     ARPG_REQUIRE(arpg::test::near(
         snapshot.player.position.x, 0.10, kFloatTolerance));
 
-    CombatWorld heavy{isolated_attack_config()};
-    ARPG_REQUIRE(heavy.queue_action(Action::heavy));
-    heavy.tick(MovementInput{});
-    snapshot = heavy.snapshot();
-    ARPG_REQUIRE(snapshot.player.active_attack == AttackId::heavy);
-    ARPG_REQUIRE(snapshot.player.attack_elapsed_ticks == 0);
-    ARPG_REQUIRE(arpg::test::near(
-        snapshot.player.position.x, 0.24, kFloatTolerance));
-    tick_n(heavy, 13);
-    ARPG_REQUIRE(heavy.snapshot().player.attack_phase == AttackPhase::startup);
-    heavy.tick(MovementInput{});
-    ARPG_REQUIRE(heavy.snapshot().player.attack_phase == AttackPhase::active);
-    tick_n(heavy, 4);
-    ARPG_REQUIRE(heavy.snapshot().player.attack_phase == AttackPhase::active);
-    heavy.tick(MovementInput{});
-    ARPG_REQUIRE(heavy.snapshot().player.attack_phase == AttackPhase::recovery);
-    tick_n(heavy, 21);
-    snapshot = heavy.snapshot();
-    ARPG_REQUIRE(snapshot.player.attack_elapsed_ticks == 40);
-    ARPG_REQUIRE(snapshot.player.attack_phase == AttackPhase::recovery);
-    heavy.tick(MovementInput{});
-    ARPG_REQUIRE(heavy.snapshot().player.active_attack == AttackId::none);
-
     CombatWorld launcher{isolated_attack_config()};
     ARPG_REQUIRE(launcher.queue_action(Action::launcher));
     launcher.tick(MovementInput{});
@@ -163,49 +140,38 @@ arpg::test::Failure action_priority_and_illegal_cancels_are_deterministic() noex
     CombatWorld all_actions{isolated_attack_config()};
     ARPG_REQUIRE(all_actions.queue_action(Action::light));
     ARPG_REQUIRE(all_actions.queue_action(Action::launcher));
-    ARPG_REQUIRE(all_actions.queue_action(Action::heavy));
     ARPG_REQUIRE(all_actions.queue_action(Action::jump));
     all_actions.tick(MovementInput{});
     CombatSnapshot snapshot = all_actions.snapshot();
     ARPG_REQUIRE(snapshot.player.state == PlayerState::jump_rise);
     ARPG_REQUIRE(snapshot.player.active_attack == AttackId::none);
-    ARPG_REQUIRE(snapshot.diagnostics.input_size == 3);
+    ARPG_REQUIRE(snapshot.diagnostics.input_size == 2);
 
     CombatWorld no_jump{isolated_attack_config()};
     ARPG_REQUIRE(no_jump.queue_action(Action::light));
     ARPG_REQUIRE(no_jump.queue_action(Action::launcher));
-    ARPG_REQUIRE(no_jump.queue_action(Action::heavy));
     no_jump.tick(MovementInput{});
     snapshot = no_jump.snapshot();
-    ARPG_REQUIRE(snapshot.player.active_attack == AttackId::heavy);
-    ARPG_REQUIRE(snapshot.diagnostics.input_size == 2);
-
-    CombatWorld no_jump_or_heavy{isolated_attack_config()};
-    ARPG_REQUIRE(no_jump_or_heavy.queue_action(Action::light));
-    ARPG_REQUIRE(no_jump_or_heavy.queue_action(Action::launcher));
-    no_jump_or_heavy.tick(MovementInput{});
-    snapshot = no_jump_or_heavy.snapshot();
     ARPG_REQUIRE(snapshot.player.active_attack == AttackId::launcher);
     ARPG_REQUIRE(snapshot.diagnostics.input_size == 1);
 
     CombatWorld blocked{isolated_attack_config()};
-    ARPG_REQUIRE(blocked.queue_action(Action::heavy));
+    ARPG_REQUIRE(blocked.queue_action(Action::launcher));
     blocked.tick(MovementInput{});
     ARPG_REQUIRE(blocked.queue_action(Action::jump));
-    ARPG_REQUIRE(blocked.queue_action(Action::heavy));
     ARPG_REQUIRE(blocked.queue_action(Action::launcher));
     ARPG_REQUIRE(blocked.queue_action(Action::light));
     blocked.tick(MovementInput{});
     snapshot = blocked.snapshot();
-    ARPG_REQUIRE(snapshot.player.active_attack == AttackId::heavy);
+    ARPG_REQUIRE(snapshot.player.active_attack == AttackId::launcher);
     ARPG_REQUIRE(snapshot.player.attack_elapsed_ticks == 1);
-    ARPG_REQUIRE(snapshot.diagnostics.input_size == 4);
+    ARPG_REQUIRE(snapshot.diagnostics.input_size == 3);
     tick_n(blocked, 7);
     snapshot = blocked.snapshot();
-    ARPG_REQUIRE(snapshot.player.active_attack == AttackId::heavy);
+    ARPG_REQUIRE(snapshot.player.active_attack == AttackId::launcher);
     ARPG_REQUIRE(snapshot.player.attack_elapsed_ticks == 8);
     ARPG_REQUIRE(snapshot.diagnostics.input_size == 0);
-    ARPG_REQUIRE(snapshot.diagnostics.input_expired_count == 4);
+    ARPG_REQUIRE(snapshot.diagnostics.input_expired_count == 3);
     return {};
 }
 
@@ -214,7 +180,6 @@ arpg::test::Failure air_j_is_limited_to_once_per_airtime() noexcept {
     ARPG_REQUIRE(world.queue_action(Action::jump));
     world.tick(MovementInput{});
     ARPG_REQUIRE(world.snapshot().player.air_attack_available);
-    ARPG_REQUIRE(world.queue_action(Action::heavy));
     ARPG_REQUIRE(world.queue_action(Action::launcher));
     ARPG_REQUIRE(world.queue_action(Action::light));
     world.tick(MovementInput{1, 0});
@@ -223,7 +188,7 @@ arpg::test::Failure air_j_is_limited_to_once_per_airtime() noexcept {
     ARPG_REQUIRE(snapshot.player.attack_elapsed_ticks == 0);
     ARPG_REQUIRE(snapshot.player.state == PlayerState::attack_startup);
     ARPG_REQUIRE(!snapshot.player.air_attack_available);
-    ARPG_REQUIRE(snapshot.diagnostics.input_size == 2);
+    ARPG_REQUIRE(snapshot.diagnostics.input_size == 1);
     ARPG_REQUIRE(arpg::test::near(
         snapshot.player.position.x, 0.08, kFloatTolerance));
 
@@ -243,7 +208,7 @@ arpg::test::Failure air_j_is_limited_to_once_per_airtime() noexcept {
     ARPG_REQUIRE(snapshot.player.active_attack == AttackId::none);
     ARPG_REQUIRE(snapshot.player.state == PlayerState::jump_fall);
     ARPG_REQUIRE(!snapshot.player.air_attack_available);
-    ARPG_REQUIRE(snapshot.diagnostics.input_expired_count == 2);
+    ARPG_REQUIRE(snapshot.diagnostics.input_expired_count == 1);
 
     ARPG_REQUIRE(world.queue_action(Action::light));
     world.tick(MovementInput{});

@@ -21,7 +21,6 @@ enum class AttackId : std::uint8_t {
     j1 = 0,
     j2,
     j3,
-    heavy,
     launcher,
     air_j,
     none = 0xFF,

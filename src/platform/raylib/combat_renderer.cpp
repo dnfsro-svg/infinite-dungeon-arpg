@@ -35,8 +35,7 @@ const char* attack_name(AttackId id) noexcept {
     case AttackId::j1: return "J1";
     case AttackId::j2: return "J2";
     case AttackId::j3: return "J3";
-    case AttackId::heavy: return "L";
-    case AttackId::launcher: return "U";
+    case AttackId::launcher: return "L";
     case AttackId::air_j: return "Air J";
     case AttackId::none: return "None";
     }
@@ -457,7 +456,7 @@ void CombatRenderer::draw(
     const Color text{218, 226, 239, 255};
     const Color accent{110, 207, 255, 255};
     int y = 28;
-    DrawText("WASD Move  J Light  K Jump  L Heavy  U Launcher", 30, y, 16, accent);
+    DrawText("WASD Move  J Light  K Jump  L Launcher", 30, y, 16, accent);
     y += 25;
     DrawText("R Reset  F1 Debug  F12 Screenshot  Esc Exit", 30, y, 16, accent);
     y += 28;

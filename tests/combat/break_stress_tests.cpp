@@ -128,44 +128,28 @@ bool drain_events_equal(CombatWorld& lhs, CombatWorld& rhs) noexcept {
     }
 }
 
-bool heavy_hit_and_finish(CombatWorld& world) noexcept {
-    if (!start_action_and_reach_hit(world, Action::heavy, 14)) {
+bool launcher_hit_and_finish(CombatWorld& world) noexcept {
+    if (!start_action_and_reach_hit(world, Action::launcher, 7)) {
         return false;
     }
     return finish_attack(world);
 }
 
-bool start_j1_j2_and_reach_second_hit(CombatWorld& world) noexcept {
-    if (!start_action_and_reach_hit(world, Action::light, 5)) {
-        return false;
+bool wait_for_target_grounded(
+    CombatWorld& world,
+    std::size_t target_index) noexcept {
+    for (int tick = 0; tick < 240; ++tick) {
+        const DummySnapshot& target =
+            world.snapshot().dummies[target_index];
+        if (target.position.z == 0.0F
+            && target.reaction != ReactionState::airborne) {
+            return true;
+        }
+        world.tick(MovementInput{});
     }
-    tick_n(world, 3);
-    tick_n(world, 3);
-    if (!world.queue_action(Action::light)) {
-        return false;
-    }
-    world.tick(MovementInput{});
-    if (world.snapshot().player.active_attack != AttackId::j2) {
-        return false;
-    }
-    tick_n(world, 6);
-    return true;
-}
-
-bool light_combo_and_finish(CombatWorld& world) noexcept {
-    if (!start_j1_j2_and_reach_second_hit(world)) {
-        return false;
-    }
-    tick_n(world, 5);
-    tick_n(world, 3);
-    if (!world.queue_action(Action::light)) {
-        return false;
-    }
-    world.tick(MovementInput{});
-    if (world.snapshot().player.active_attack != AttackId::j3) {
-        return false;
-    }
-    return finish_attack(world);
+    const DummySnapshot& target = world.snapshot().dummies[target_index];
+    return target.position.z == 0.0F
+        && target.reaction != ReactionState::airborne;
 }
 
 bool wait_for_armor_restore(CombatWorld& world) noexcept {
@@ -178,7 +162,7 @@ bool wait_for_armor_restore(CombatWorld& world) noexcept {
     return world.snapshot().dummies[2].armor == ArmorState::armored;
 }
 
-arpg::test::Failure armored_heavy_suppresses_control_before_break() noexcept {
+arpg::test::Failure armored_launcher_suppresses_control_before_break() noexcept {
     CombatWorld launcher{heavy_target_config()};
     ARPG_REQUIRE(start_action_and_reach_hit(launcher, Action::launcher, 7));
     CombatSnapshot snapshot = launcher.snapshot();
@@ -194,18 +178,18 @@ arpg::test::Failure armored_heavy_suppresses_control_before_break() noexcept {
         ARPG_REQUIRE(event->kind != CombatEventKind::break_started);
     }
 
-    CombatWorld heavy{heavy_target_config()};
-    ARPG_REQUIRE(heavy_hit_and_finish(heavy));
-    snapshot = heavy.snapshot();
-    ARPG_REQUIRE(snapshot.dummies[2].hp == 610);
-    ARPG_REQUIRE(snapshot.dummies[2].break_value == 80);
+    CombatWorld repeated{heavy_target_config()};
+    ARPG_REQUIRE(launcher_hit_and_finish(repeated));
+    snapshot = repeated.snapshot();
+    ARPG_REQUIRE(snapshot.dummies[2].hp == 662);
+    ARPG_REQUIRE(snapshot.dummies[2].break_value == 102);
     ARPG_REQUIRE(snapshot.dummies[2].reaction == ReactionState::idle);
     ARPG_REQUIRE(vec_equal(snapshot.dummies[2].velocity, Vec3{}));
-    drain_events(heavy);
-    ARPG_REQUIRE(heavy_hit_and_finish(heavy));
-    snapshot = heavy.snapshot();
-    ARPG_REQUIRE(snapshot.dummies[2].hp == 520);
-    ARPG_REQUIRE(snapshot.dummies[2].break_value == 40);
+    drain_events(repeated);
+    ARPG_REQUIRE(launcher_hit_and_finish(repeated));
+    snapshot = repeated.snapshot();
+    ARPG_REQUIRE(snapshot.dummies[2].hp == 624);
+    ARPG_REQUIRE(snapshot.dummies[2].break_value == 84);
     ARPG_REQUIRE(snapshot.dummies[2].armor == ArmorState::armored);
     ARPG_REQUIRE(snapshot.dummies[2].reaction == ReactionState::idle);
     ARPG_REQUIRE(vec_equal(snapshot.dummies[2].velocity, Vec3{}));
@@ -214,21 +198,27 @@ arpg::test::Failure armored_heavy_suppresses_control_before_break() noexcept {
 
 arpg::test::Failure breaking_blow_has_exact_local_window() noexcept {
     CombatWorld world{heavy_target_config()};
-    ARPG_REQUIRE(heavy_hit_and_finish(world));
-    drain_events(world);
-    ARPG_REQUIRE(heavy_hit_and_finish(world));
-    drain_events(world);
-
-    ARPG_REQUIRE(start_action_and_reach_hit(world, Action::heavy, 14));
+    for (int hit = 0; hit < 6; ++hit) {
+        ARPG_REQUIRE(launcher_hit_and_finish(world));
+        drain_events(world);
+    }
     CombatSnapshot snapshot = world.snapshot();
-    ARPG_REQUIRE(snapshot.dummies[2].hp == 430);
+    ARPG_REQUIRE(snapshot.dummies[2].hp == 472);
+    ARPG_REQUIRE(snapshot.dummies[2].break_value == 12);
+    ARPG_REQUIRE(snapshot.dummies[2].armor == ArmorState::armored);
+
+    ARPG_REQUIRE(start_action_and_reach_hit(world, Action::launcher, 7));
+    snapshot = world.snapshot();
+    ARPG_REQUIRE(snapshot.dummies[2].hp == 434);
     ARPG_REQUIRE(snapshot.dummies[2].break_value == 0);
     ARPG_REQUIRE(snapshot.dummies[2].armor == ArmorState::broken);
     ARPG_REQUIRE(snapshot.dummies[2].break_window_ticks == 180);
-    ARPG_REQUIRE(snapshot.dummies[2].reaction == ReactionState::knockdown);
+    ARPG_REQUIRE(snapshot.dummies[2].reaction == ReactionState::airborne);
     ARPG_REQUIRE(arpg::test::near(
-        snapshot.dummies[2].velocity.x, 7.0, 1.0e-4));
-    ARPG_REQUIRE(snapshot.dummies[2].hit_stop_ticks == 7);
+        snapshot.dummies[2].velocity.x, 1.2, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(
+        snapshot.dummies[2].velocity.z, 9.5, 1.0e-4));
+    ARPG_REQUIRE(snapshot.dummies[2].hit_stop_ticks == 5);
 
     std::array<CombatEventKind, 4> kinds{};
     int event_count = 0;
@@ -236,9 +226,9 @@ arpg::test::Failure breaking_blow_has_exact_local_window() noexcept {
         ARPG_REQUIRE(event_count < 4);
         kinds[static_cast<std::size_t>(event_count)] = event->kind;
         if (event->kind == CombatEventKind::break_started) {
-            ARPG_REQUIRE(event->attack == AttackId::heavy);
+            ARPG_REQUIRE(event->attack == AttackId::launcher);
             ARPG_REQUIRE(event->target_index == 2);
-            ARPG_REQUIRE(event->feedback == FeedbackLevel::heavy);
+            ARPG_REQUIRE(event->feedback == FeedbackLevel::medium);
             ARPG_REQUIRE(event->tick == snapshot.tick - 1);
         }
         ++event_count;
@@ -249,7 +239,7 @@ arpg::test::Failure breaking_blow_has_exact_local_window() noexcept {
     ARPG_REQUIRE(kinds[2] == CombatEventKind::break_started);
     ARPG_REQUIRE(kinds[3] == CombatEventKind::impact_summary);
 
-    tick_n(world, 7);
+    tick_n(world, 5);
     ARPG_REQUIRE(world.snapshot().dummies[2].break_window_ticks == 180);
     tick_n(world, 179);
     snapshot = world.snapshot();
@@ -264,12 +254,10 @@ arpg::test::Failure breaking_blow_has_exact_local_window() noexcept {
     CombatLabConfig independent_config = heavy_target_config();
     independent_config.dummy_spawns[0] = Vec3{4.0F, 0.0F, 0.0F};
     CombatWorld independent{independent_config};
-    ARPG_REQUIRE(heavy_hit_and_finish(independent));
-    drain_events(independent);
-    ARPG_REQUIRE(heavy_hit_and_finish(independent));
-    drain_events(independent);
-    ARPG_REQUIRE(heavy_hit_and_finish(independent));
-    drain_events(independent);
+    for (int hit = 0; hit < 7; ++hit) {
+        ARPG_REQUIRE(launcher_hit_and_finish(independent));
+        drain_events(independent);
+    }
     for (int tick = 0; tick < 24; ++tick) {
         independent.tick(MovementInput{-1, 0});
     }
@@ -288,12 +276,10 @@ arpg::test::Failure breaking_blow_has_exact_local_window() noexcept {
         == independent_window - 3);
 
     CombatWorld reaction{heavy_target_config()};
-    ARPG_REQUIRE(heavy_hit_and_finish(reaction));
-    drain_events(reaction);
-    ARPG_REQUIRE(heavy_hit_and_finish(reaction));
-    drain_events(reaction);
-    ARPG_REQUIRE(heavy_hit_and_finish(reaction));
-    drain_events(reaction);
+    for (int hit = 0; hit < 7; ++hit) {
+        ARPG_REQUIRE(launcher_hit_and_finish(reaction));
+        drain_events(reaction);
+    }
     for (int tick = 0; tick < 260; ++tick) {
         if (reaction.snapshot().dummies[2].break_window_ticks <= 22) {
             break;
@@ -302,37 +288,32 @@ arpg::test::Failure breaking_blow_has_exact_local_window() noexcept {
     }
     ARPG_REQUIRE(reaction.snapshot().dummies[2].break_window_ticks <= 22);
     ARPG_REQUIRE(reaction.snapshot().dummies[2].armor == ArmorState::broken);
-    ARPG_REQUIRE(start_action_and_reach_hit(reaction, Action::heavy, 14));
+    ARPG_REQUIRE(start_action_and_reach_hit(reaction, Action::launcher, 7));
     ARPG_REQUIRE(reaction.snapshot().dummies[2].reaction
-                 == ReactionState::knockdown);
+                 == ReactionState::airborne);
     ARPG_REQUIRE(wait_for_armor_restore(reaction));
     snapshot = reaction.snapshot();
-    ARPG_REQUIRE(snapshot.dummies[2].reaction == ReactionState::knockdown);
+    ARPG_REQUIRE(snapshot.dummies[2].reaction == ReactionState::airborne);
     return {};
 }
 
 arpg::test::Failure defeated_has_priority_over_break_recovery() noexcept {
     CombatWorld world{heavy_target_config()};
-    for (int cycle = 0; cycle < 2; ++cycle) {
-        for (int hit = 0; hit < 3; ++hit) {
-            ARPG_REQUIRE(heavy_hit_and_finish(world));
-            drain_events(world);
-        }
-        ARPG_REQUIRE(world.snapshot().dummies[2].armor == ArmorState::broken);
-        ARPG_REQUIRE(wait_for_armor_restore(world));
+    for (int hit = 0; hit < 18; ++hit) {
+        ARPG_REQUIRE(launcher_hit_and_finish(world));
+        ARPG_REQUIRE(wait_for_target_grounded(world, 2));
+        drain_events(world);
     }
-    ARPG_REQUIRE(world.snapshot().dummies[2].hp == 160);
-    ARPG_REQUIRE(heavy_hit_and_finish(world));
-    drain_events(world);
-    ARPG_REQUIRE(world.snapshot().dummies[2].hp == 70);
-    ARPG_REQUIRE(world.snapshot().dummies[2].break_value == 80);
+    const CombatSnapshot pre_defeat = world.snapshot();
+    ARPG_REQUIRE(pre_defeat.dummies[2].hp == 16);
+    ARPG_REQUIRE(pre_defeat.dummies[2].armor == ArmorState::broken);
+    ARPG_REQUIRE(pre_defeat.dummies[2].break_window_ticks > 0);
 
-    ARPG_REQUIRE(start_action_and_reach_hit(world, Action::heavy, 14));
+    ARPG_REQUIRE(start_action_and_reach_hit(world, Action::launcher, 7));
     const CombatSnapshot snapshot = world.snapshot();
     ARPG_REQUIRE(snapshot.dummies[2].hp == 0);
-    ARPG_REQUIRE(snapshot.dummies[2].break_value == 80);
-    ARPG_REQUIRE(snapshot.dummies[2].armor == ArmorState::armored);
     ARPG_REQUIRE(snapshot.dummies[2].reaction == ReactionState::defeated);
+    ARPG_REQUIRE(snapshot.dummies[2].break_window_ticks == 0);
     ARPG_REQUIRE(vec_equal(snapshot.dummies[2].velocity, Vec3{}));
 
     std::array<CombatEventKind, 4> kinds{};
@@ -349,61 +330,15 @@ arpg::test::Failure defeated_has_priority_over_break_recovery() noexcept {
     ARPG_REQUIRE(kinds[2] == CombatEventKind::defeated);
     ARPG_REQUIRE(kinds[3] == CombatEventKind::impact_summary);
 
-    CombatWorld broken_death{heavy_target_config()};
-    ARPG_REQUIRE(light_combo_and_finish(broken_death));
-    drain_events(broken_death);
-    ARPG_REQUIRE(light_combo_and_finish(broken_death));
-    drain_events(broken_death);
-    ARPG_REQUIRE(start_j1_j2_and_reach_second_hit(broken_death));
-    ARPG_REQUIRE(finish_attack(broken_death));
-    drain_events(broken_death);
-    ARPG_REQUIRE(broken_death.snapshot().dummies[2].hp == 410);
-    ARPG_REQUIRE(broken_death.snapshot().dummies[2].break_value == 14);
-
-    ARPG_REQUIRE(heavy_hit_and_finish(broken_death));
-    drain_events(broken_death);
-    ARPG_REQUIRE(broken_death.snapshot().dummies[2].armor
-                 == ArmorState::broken);
-    ARPG_REQUIRE(broken_death.snapshot().dummies[2].hp == 320);
-    for (int hit = 0; hit < 3; ++hit) {
-        ARPG_REQUIRE(heavy_hit_and_finish(broken_death));
-        drain_events(broken_death);
-    }
-    ARPG_REQUIRE(broken_death.snapshot().dummies[2].hp == 50);
-    ARPG_REQUIRE(broken_death.snapshot().dummies[2].armor
-                 == ArmorState::broken);
-    ARPG_REQUIRE(broken_death.snapshot().dummies[2].break_window_ticks > 0);
-
-    ARPG_REQUIRE(start_j1_j2_and_reach_second_hit(broken_death));
-    CombatSnapshot broken_snapshot = broken_death.snapshot();
-    ARPG_REQUIRE(broken_snapshot.dummies[2].hp == 0);
-    ARPG_REQUIRE(broken_snapshot.dummies[2].reaction
-                 == ReactionState::defeated);
-    ARPG_REQUIRE(broken_snapshot.dummies[2].armor == ArmorState::broken);
-    ARPG_REQUIRE(broken_snapshot.dummies[2].break_window_ticks == 0);
-    ARPG_REQUIRE(vec_equal(broken_snapshot.dummies[2].velocity, Vec3{}));
-    while (const auto event = broken_death.try_pop_event()) {
-        ARPG_REQUIRE(event->kind != CombatEventKind::break_started);
-    }
-
-    int defeated_ticks = 0;
-    while (defeated_ticks < 120
-           && broken_death.snapshot().dummies[2].reaction
-                  == ReactionState::defeated) {
-        broken_snapshot = broken_death.snapshot();
-        ARPG_REQUIRE(broken_snapshot.dummies[2].armor == ArmorState::broken);
-        ARPG_REQUIRE(broken_snapshot.dummies[2].break_window_ticks == 0);
-        broken_death.tick(MovementInput{});
-        ++defeated_ticks;
-    }
-    broken_snapshot = broken_death.snapshot();
-    ARPG_REQUIRE(broken_snapshot.dummies[2].reaction
-                 == ReactionState::respawning);
-    ARPG_REQUIRE(broken_snapshot.dummies[2].armor == ArmorState::armored);
-    ARPG_REQUIRE(broken_snapshot.dummies[2].break_value == 120);
-    ARPG_REQUIRE(broken_snapshot.dummies[2].hp == 700);
+    tick_n(world, 5);
+    tick_n(world, 90);
+    const CombatSnapshot respawned = world.snapshot();
+    ARPG_REQUIRE(respawned.dummies[2].reaction == ReactionState::respawning);
+    ARPG_REQUIRE(respawned.dummies[2].armor == ArmorState::armored);
+    ARPG_REQUIRE(respawned.dummies[2].break_value == 120);
+    ARPG_REQUIRE(respawned.dummies[2].hp == 700);
     int respawn_events = 0;
-    while (const auto event = broken_death.try_pop_event()) {
+    while (const auto event = world.try_pop_event()) {
         if (event->kind == CombatEventKind::respawned) {
             ++respawn_events;
         }
@@ -418,7 +353,7 @@ arpg::test::Failure reset_reconstructs_runtime_and_emits_once() noexcept {
     ARPG_REQUIRE(!fresh.try_pop_event().has_value());
 
     CombatWorld world{config};
-    ARPG_REQUIRE(start_action_and_reach_hit(world, Action::heavy, 14));
+    ARPG_REQUIRE(start_action_and_reach_hit(world, Action::launcher, 7));
     for (std::size_t index = 0; index < InputBuffer::kCapacity; ++index) {
         ARPG_REQUIRE(world.queue_action(Action::light));
     }
@@ -474,7 +409,7 @@ std::uint8_t schedule_actions(CombatWorld& world, int tick) noexcept {
         }
     }
     if (tick % 251 == 0) {
-        if (world.queue_action(Action::heavy)) {
+        if (world.queue_action(Action::launcher)) {
             accepted |= 1U << 2U;
         }
     }
@@ -545,7 +480,7 @@ arpg::test::Failure replay_and_stress_are_deterministic_without_allocations() no
 
 constexpr arpg::test::TestCase kCases[] = {
     {"armored suppression before break",
-     &armored_heavy_suppresses_control_before_break},
+     &armored_launcher_suppresses_control_before_break},
     {"breaking blow and exact local window",
      &breaking_blow_has_exact_local_window},
     {"Defeated priority over break recovery",

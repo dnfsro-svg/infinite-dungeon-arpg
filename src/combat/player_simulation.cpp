@@ -202,9 +202,6 @@ void CombatWorld::simulate_player(MovementInput movement) noexcept {
             player_.velocity.z = kJumpSpeed;
             player_.state = PlayerState::jump_rise;
             airborne = true;
-        } else if (input_buffer_.consume(Action::heavy)) {
-            start_attack(AttackId::heavy);
-            return;
         } else if (input_buffer_.consume(Action::launcher)) {
             start_attack(AttackId::launcher);
             return;

@@ -4,12 +4,14 @@
 
 arpg::test::TestSuite combat_view_math_suite() noexcept;
 arpg::test::TestSuite combat_feedback_suite() noexcept;
+arpg::test::TestSuite combat_key_bindings_suite() noexcept;
 
 int main() {
-    constexpr int kExpectedCaseCount = 6;
+    constexpr int kExpectedCaseCount = 7;
     const arpg::test::TestSuite suites[] = {
         combat_view_math_suite(),
         combat_feedback_suite(),
+        combat_key_bindings_suite(),
     };
 
     int failures = 0;

@@ -12,8 +12,6 @@ constexpr std::array<AttackDefinition, kAttackCount> kAttackDefinitions{{
      {{0.20F,-0.65F, 0.10F},{1.65F,0.65F,1.55F}},0.14F,2.2F,0.0F,FeedbackLevel::medium},
     {AttackId::j3,       8, 4, 16, 52, 20, ImpactKind::knockdown,
      {{0.15F,-0.70F, 0.05F},{1.90F,0.70F,1.65F}},0.20F,5.0F,0.0F,FeedbackLevel::heavy},
-    {AttackId::heavy,   14, 5, 22, 90, 40, ImpactKind::knockdown,
-     {{0.10F,-0.75F, 0.00F},{2.20F,0.75F,1.75F}},0.24F,7.0F,0.0F,FeedbackLevel::heavy},
     {AttackId::launcher, 7, 4, 17, 38, 18, ImpactKind::launch,
      {{0.10F,-0.65F, 0.00F},{1.40F,0.65F,1.90F}},0.12F,1.2F,9.5F,FeedbackLevel::medium},
     {AttackId::air_j,    4, 5, 12, 42, 15, ImpactKind::medium_hitstun,
