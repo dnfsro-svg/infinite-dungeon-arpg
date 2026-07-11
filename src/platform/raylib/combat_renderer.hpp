@@ -1,24 +1,29 @@
 #pragma once
 
-#include "combat/combat_types.hpp"
 #include "combat_feedback.hpp"
+#include "dungeon/dungeon_types.hpp"
 
 namespace arpg::platform {
 
 class CombatRenderer final {
 public:
     void consume_event(const combat::CombatEvent& event) noexcept;
+    void consume_dungeon_event(const dungeon::DungeonEvent& event) noexcept;
+    void clear_combat_transients() noexcept;
+    void update(float frame_seconds) noexcept;
     void draw(
-        const combat::CombatSnapshot& previous,
-        const combat::CombatSnapshot& current,
+        const dungeon::DungeonSnapshot& previous,
+        const dungeon::DungeonSnapshot& current,
         float interpolation_alpha,
         bool draw_debug,
         const CombatFeedback& feedback,
-        bool audio_ready) const noexcept;
+        bool audio_ready) noexcept;
 
 private:
     combat::CombatEvent last_event_{};
     bool has_last_event_{};
+    float transition_seconds_left_{};
+    bool transition_phase_seen_{};
 };
 
 }  // namespace arpg::platform
