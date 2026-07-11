@@ -74,6 +74,12 @@ void CombatWorld::simulate_player(MovementInput movement) noexcept {
             player_.velocity.z = 0.0F;
             player_.state = PlayerState::landing;
             player_.air_attack_available = true;
+
+            CombatEvent landing{};
+            landing.kind = CombatEventKind::landing;
+            landing.tick = tick_;
+            landing.position = player_.position;
+            emit_event(landing);
         } else if (!preserve_attack_state) {
             player_.state = player_.velocity.z > 0.0F
                                 ? PlayerState::jump_rise

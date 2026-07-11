@@ -3,6 +3,7 @@
 #include "combat/combat_world.hpp"
 
 #include <cmath>
+#include <cstdint>
 
 namespace {
 
@@ -126,11 +127,23 @@ arpg::test::Failure jump_arc_has_deterministic_apex_and_one_landing_tick() noexc
     ARPG_REQUIRE(arpg::test::near(snapshot.player.position.z, 0.0));
     ARPG_REQUIRE(arpg::test::near(snapshot.player.velocity.z, 0.0));
     ARPG_REQUIRE(landing_ticks == 1);
+    const std::uint64_t landing_snapshot_tick = snapshot.tick;
 
     world.tick(MovementInput{});
     snapshot = world.snapshot();
     ARPG_REQUIRE(snapshot.player.state == PlayerState::idle);
     ARPG_REQUIRE(landing_ticks == 1);
+
+    int landing_events = 0;
+    while (const auto event = world.try_pop_event()) {
+        if (event->kind == CombatEventKind::landing) {
+            ++landing_events;
+            ARPG_REQUIRE(event->target_index == 0xFF);
+            ARPG_REQUIRE(arpg::test::near(event->position.z, 0.0));
+            ARPG_REQUIRE(event->tick + 1 == landing_snapshot_tick);
+        }
+    }
+    ARPG_REQUIRE(landing_events == 1);
     return {};
 }
 
