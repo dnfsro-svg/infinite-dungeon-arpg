@@ -3,12 +3,15 @@
 #include "combat/attack_catalog.hpp"
 #include "combat/combat_collision.hpp"
 #include "combat_view_math.hpp"
+#include "dungeon_view_math.hpp"
 
 #include <raylib.h>
 
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 
 namespace arpg::platform {
 namespace {
@@ -148,6 +151,59 @@ void draw_graybox_room() noexcept {
             lerp(back_right, floor_right, perspective),
             1.0F,
             grid);
+    }
+}
+
+void draw_doors(
+    DoorVisualMode mode,
+    float width,
+    float height) noexcept {
+    if (mode == DoorVisualMode::hidden) {
+        return;
+    }
+
+    constexpr std::array<Vec3, 4> kDoorCenters{{
+        {0.0F, -3.5F, 0.0F},
+        {0.0F, 3.5F, 0.0F},
+        {-8.0F, 0.0F, 0.0F},
+        {8.0F, 0.0F, 0.0F},
+    }};
+    constexpr std::array<const char*, 4> kDoorArrows{{"^", "v", "<", ">"}};
+    const bool open = mode == DoorVisualMode::open;
+    const Color frame_color = open
+        ? Color{211, 244, 248, 255}
+        : Color{65, 70, 80, 255};
+
+    for (std::size_t index = 0; index < kDoorCenters.size(); ++index) {
+        const ScreenProjection projected = project_combat_position(
+            kDoorCenters[index], width, height);
+        const float door_width = 82.0F * projected.scale;
+        const float door_height = 70.0F * projected.scale;
+        const Rectangle frame{
+            projected.x - door_width * 0.5F,
+            projected.ground_y - door_height,
+            door_width,
+            door_height,
+        };
+        DrawRectangleLinesEx(frame, 5.0F * projected.scale, frame_color);
+        if (!open) {
+            DrawRectangleRec(
+                {frame.x + 7.0F * projected.scale,
+                 frame.y + 7.0F * projected.scale,
+                 frame.width - 14.0F * projected.scale,
+                 frame.height - 7.0F * projected.scale},
+                Color{177, 31, 46, 235});
+            continue;
+        }
+
+        const int font_size = static_cast<int>(28.0F * projected.scale);
+        const int arrow_width = MeasureText(kDoorArrows[index], font_size);
+        DrawText(
+            kDoorArrows[index],
+            static_cast<int>(projected.x) - arrow_width / 2,
+            static_cast<int>(frame.y + 17.0F * projected.scale),
+            font_size,
+            frame_color);
     }
 }
 
@@ -311,13 +367,37 @@ void CombatRenderer::consume_event(const CombatEvent& event) noexcept {
     has_last_event_ = true;
 }
 
+void CombatRenderer::consume_dungeon_event(
+    const dungeon::DungeonEvent& event) noexcept {
+    if (event.kind == dungeon::DungeonEventKind::room_destroyed) {
+        transition_seconds_left_ = 0.12F;
+    }
+}
+
+void CombatRenderer::clear_combat_transients() noexcept {
+    last_event_ = combat::CombatEvent{};
+    has_last_event_ = false;
+}
+
+void CombatRenderer::update(float frame_seconds) noexcept {
+    transition_seconds_left_ = std::max(
+        0.0F,
+        transition_seconds_left_ - std::clamp(frame_seconds, 0.0F, 0.1F));
+}
+
 void CombatRenderer::draw(
-    const CombatSnapshot& previous,
-    const CombatSnapshot& current,
+    const dungeon::DungeonSnapshot& previous,
+    const dungeon::DungeonSnapshot& current,
     float interpolation_alpha,
     bool draw_debug,
     const CombatFeedback& feedback,
-    bool audio_ready) const noexcept {
+    bool audio_ready) noexcept {
+    const bool transitioning = current.phase == dungeon::RoomPhase::transitioning;
+    if (transitioning && !transition_phase_seen_) {
+        transition_seconds_left_ = 0.12F;
+    }
+    transition_phase_seen_ = transitioning;
+
     const float width = static_cast<float>(GetScreenWidth());
     const float height = static_cast<float>(GetScreenHeight());
     const float alpha = std::clamp(interpolation_alpha, 0.0F, 1.0F);
@@ -327,129 +407,146 @@ void CombatRenderer::draw(
     world_camera.zoom = 1.0F;
     BeginMode2D(world_camera);
     draw_graybox_room();
+    draw_doors(door_visual_mode(current.phase, current.has_active_room), width, height);
 
-    std::array<Vec3, 4> positions{};
-    positions[0] = interpolate(
-        previous.player.position, current.player.position, alpha);
-    for (std::size_t index = 0; index < kDummyCount; ++index) {
-        positions[index + 1] = interpolate(
-            previous.dummies[index].position,
-            current.dummies[index].position,
+    if (current.combat.has_value()) {
+        const CombatSnapshot& current_combat = *current.combat;
+        const CombatSnapshot& previous_combat =
+            can_interpolate_room(previous, current)
+            ? *previous.combat
+            : current_combat;
+
+        std::array<Vec3, 4> positions{};
+        positions[0] = interpolate(
+            previous_combat.player.position,
+            current_combat.player.position,
             alpha);
-    }
+        for (std::size_t index = 0; index < kDummyCount; ++index) {
+            positions[index + 1] = interpolate(
+                previous_combat.dummies[index].position,
+                current_combat.dummies[index].position,
+                alpha);
+        }
 
-    std::array<ActorDrawItem, 4> draw_items{{
-        {positions[0], 0},
-        {positions[1], 1},
-        {positions[2], 2},
-        {positions[3], 3},
-    }};
-    sort_actor_draw_items(draw_items);
+        std::array<ActorDrawItem, 4> draw_items{{
+            {positions[0], 0},
+            {positions[1], 1},
+            {positions[2], 2},
+            {positions[3], 3},
+        }};
+        sort_actor_draw_items(draw_items);
 
-    draw_effects(feedback, width, height, false);
+        draw_effects(feedback, width, height, false);
 
-    for (const ActorDrawItem& item : draw_items) {
-        const Vec3 ground_position{item.position.x, item.position.y, 0.0F};
-        const ScreenProjection ground = project_combat_position(
-            ground_position, width, height);
-        const bool player = item.index == 0;
-        const float shadow_width = (player ? 48.0F : 54.0F) * ground.scale;
-        DrawEllipse(
-            static_cast<int>(ground.x),
-            static_cast<int>(ground.ground_y + 3.0F),
-            shadow_width,
-            10.0F * ground.scale,
-            Color{3, 5, 8, 125});
-    }
+        for (const ActorDrawItem& item : draw_items) {
+            const Vec3 ground_position{item.position.x, item.position.y, 0.0F};
+            const ScreenProjection ground = project_combat_position(
+                ground_position, width, height);
+            const bool player = item.index == 0;
+            const float shadow_width = (player ? 48.0F : 54.0F) * ground.scale;
+            DrawEllipse(
+                static_cast<int>(ground.x),
+                static_cast<int>(ground.ground_y + 3.0F),
+                shadow_width,
+                10.0F * ground.scale,
+                Color{3, 5, 8, 125});
+        }
 
-    for (const ActorDrawItem& item : draw_items) {
-        const ScreenProjection projected = project_combat_position(
-            item.position, width, height);
-        if (item.index == 0) {
-            const float body_width = 42.0F * projected.scale;
-            const float body_height = 82.0F * projected.scale;
+        for (const ActorDrawItem& item : draw_items) {
+            const ScreenProjection projected = project_combat_position(
+                item.position, width, height);
+            if (item.index == 0) {
+                const float body_width = 42.0F * projected.scale;
+                const float body_height = 82.0F * projected.scale;
+                DrawRectangleRounded(
+                    {projected.x - body_width * 0.5F,
+                     projected.y - body_height,
+                     body_width,
+                     body_height},
+                    0.20F,
+                    6,
+                    Color{65, 202, 223, 255});
+                DrawTriangle(
+                    {projected.x,
+                     projected.y - body_height - 16.0F * projected.scale},
+                    {projected.x - 12.0F * projected.scale,
+                     projected.y - body_height + 5.0F * projected.scale},
+                    {projected.x + 12.0F * projected.scale,
+                     projected.y - body_height + 5.0F * projected.scale},
+                    Color{134, 237, 255, 255});
+                continue;
+            }
+
+            const std::size_t dummy_index = item.index - 1;
+            const DummySnapshot& dummy = current_combat.dummies[dummy_index];
+            const float body_width = (dummy.kind == DummyKind::heavy ? 58.0F
+                                     : dummy.kind == DummyKind::normal ? 48.0F
+                                                                      : 40.0F)
+                * projected.scale;
+            const float body_height = (dummy.kind == DummyKind::heavy ? 96.0F
+                                      : dummy.kind == DummyKind::normal ? 84.0F
+                                                                       : 74.0F)
+                * projected.scale;
+            Color color = dummy_color(dummy.kind);
+            if (feedback.target_flash_seconds(dummy_index) > 0.0F) {
+                color = Color{255, 250, 220, 255};
+            }
             DrawRectangleRounded(
                 {projected.x - body_width * 0.5F,
                  projected.y - body_height,
                  body_width,
                  body_height},
-                0.20F,
+                0.16F,
                 6,
-                Color{65, 202, 223, 255});
-            DrawTriangle(
-                {projected.x,
-                 projected.y - body_height - 16.0F * projected.scale},
-                {projected.x - 12.0F * projected.scale,
-                 projected.y - body_height + 5.0F * projected.scale},
-                {projected.x + 12.0F * projected.scale,
-                 projected.y - body_height + 5.0F * projected.scale},
-                Color{134, 237, 255, 255});
-            continue;
-        }
-
-        const std::size_t dummy_index = item.index - 1;
-        const DummySnapshot& dummy = current.dummies[dummy_index];
-        const float body_width = (dummy.kind == DummyKind::heavy ? 58.0F
-                                 : dummy.kind == DummyKind::normal ? 48.0F
-                                                                  : 40.0F)
-            * projected.scale;
-        const float body_height = (dummy.kind == DummyKind::heavy ? 96.0F
-                                  : dummy.kind == DummyKind::normal ? 84.0F
-                                                                   : 74.0F)
-            * projected.scale;
-        Color color = dummy_color(dummy.kind);
-        if (feedback.target_flash_seconds(dummy_index) > 0.0F) {
-            color = Color{255, 250, 220, 255};
-        }
-        DrawRectangleRounded(
-            {projected.x - body_width * 0.5F,
-             projected.y - body_height,
-             body_width,
-             body_height},
-            0.16F,
-            6,
-            color);
-        const float bar_width = std::max(52.0F, body_width);
-        draw_bar(
-            projected.x - bar_width * 0.5F,
-            projected.y - body_height - 13.0F,
-            bar_width,
-            dummy.max_hp == 0
-                ? 0.0F
-                : static_cast<float>(dummy.hp)
-                    / static_cast<float>(dummy.max_hp),
-            Color{70, 221, 113, 255});
-        if (dummy.kind == DummyKind::heavy) {
+                color);
+            const float bar_width = std::max(52.0F, body_width);
             draw_bar(
                 projected.x - bar_width * 0.5F,
-                projected.y - body_height - 6.0F,
+                projected.y - body_height - 13.0F,
                 bar_width,
-                dummy.max_break == 0
+                dummy.max_hp == 0
                     ? 0.0F
-                    : static_cast<float>(dummy.break_value)
-                        / static_cast<float>(dummy.max_break),
-                dummy.armor == ArmorState::broken
-                    ? Color{255, 105, 190, 255}
-                    : Color{255, 167, 72, 255});
+                    : static_cast<float>(dummy.hp)
+                        / static_cast<float>(dummy.max_hp),
+                Color{70, 221, 113, 255});
+            if (dummy.kind == DummyKind::heavy) {
+                draw_bar(
+                    projected.x - bar_width * 0.5F,
+                    projected.y - body_height - 6.0F,
+                    bar_width,
+                    dummy.max_break == 0
+                        ? 0.0F
+                        : static_cast<float>(dummy.break_value)
+                            / static_cast<float>(dummy.max_break),
+                    dummy.armor == ArmorState::broken
+                        ? Color{255, 105, 190, 255}
+                        : Color{255, 167, 72, 255});
+            }
+            DrawText(
+                reaction_name(dummy.reaction),
+                static_cast<int>(projected.x - body_width * 0.5F),
+                static_cast<int>(projected.y + 7.0F),
+                12,
+                Color{225, 230, 239, 230});
         }
-        DrawText(
-            reaction_name(dummy.reaction),
-            static_cast<int>(projected.x - body_width * 0.5F),
-            static_cast<int>(projected.y + 7.0F),
-            12,
-            Color{225, 230, 239, 230});
-    }
 
-    draw_effects(feedback, width, height, true);
+        draw_effects(feedback, width, height, true);
 
-    if (draw_debug) {
-        draw_debug_volumes(current, width, height);
+        if (draw_debug) {
+            draw_debug_volumes(current_combat, width, height);
+        }
     }
 
     EndMode2D();
 
+    const std::uint64_t room_ordinal = current.room_index
+            == (std::numeric_limits<std::uint64_t>::max)()
+        ? current.room_index
+        : current.room_index + 1U;
+    const bool doors_open = current.phase == dungeon::RoomPhase::cleared
+        || current.phase == dungeon::RoomPhase::awaiting_exit;
     DrawRectangleRounded(
-        {16.0F, 14.0F, 430.0F, 242.0F},
+        {16.0F, 14.0F, 500.0F, draw_debug ? 378.0F : 150.0F},
         0.06F,
         6,
         Color{7, 10, 17, 220});
@@ -461,38 +558,94 @@ void CombatRenderer::draw(
     DrawText("R Reset  F1 Debug  F12 Screenshot  Esc Exit", 30, y, 16, accent);
     y += 28;
     DrawText(
-        TextFormat("Tick %llu  State %s", static_cast<unsigned long long>(current.tick), player_state_name(current.player.state)),
-        30, y, 16, text);
-    y += 23;
-    DrawText(
-        TextFormat("Action %s  %s  Combo %u", attack_name(current.player.active_attack), phase_name(current.player.attack_phase), current.player.combo_stage),
-        30, y, 16, text);
-    y += 23;
-    DrawText(
-        TextFormat("Input %u  Expired %u  Overflow %u", static_cast<unsigned>(current.diagnostics.input_size), current.diagnostics.input_expired_count, current.diagnostics.input_overflow_count),
-        30, y, 16, text);
-    y += 23;
-    DrawText(
-        TextFormat("Z %.2f  Hit Stop %u  Event overflow %u", current.player.position.z, current.player.hit_stop_ticks, current.diagnostics.event_overflow_count),
-        30, y, 16, text);
-    y += 23;
-    DrawText(
-        has_last_event_
-            ? TextFormat("Last event %s  target %u", event_name(last_event_.kind), last_event_.target_index)
-            : "Last event None",
+        TextFormat(
+            "Room %llu  Phase %s  Remaining %u",
+            static_cast<unsigned long long>(room_ordinal),
+            room_phase_label(current.phase),
+            static_cast<unsigned>(current.remaining_targets)),
         30, y, 16, text);
     y += 23;
     DrawText(
         TextFormat(
-            "FX %u  Dropped %u  Shake %.1f  Audio %s",
-            static_cast<unsigned>(feedback.active_count()),
-            feedback.dropped_count(),
-            feedback.shake_amplitude(),
-            audio_ready ? "Ready" : "Unavailable"),
-        30,
-        y,
-        16,
-        audio_ready ? text : Color{255, 151, 117, 255});
+            "Doors: %s  Last exit: %s",
+            doors_open ? "OPEN" : "LOCKED",
+            exit_direction_label(current.last_exit)),
+        30, y, 16, text);
+
+    if (draw_debug) {
+        y += 25;
+        DrawText(
+            TextFormat(
+                "Seed %016llX  Session tick %llu",
+                static_cast<unsigned long long>(current.room_seed),
+                static_cast<unsigned long long>(current.session_tick)),
+            30, y, 16, text);
+        y += 23;
+        DrawText(
+            TextFormat(
+                "Dungeon event %u  relay %u  rejected %u  index fault %s",
+                current.diagnostics.event_overflow_count,
+                current.diagnostics.combat_relay_overflow_count,
+                current.diagnostics.rejected_exit_count,
+                current.diagnostics.room_index_overflow ? "YES" : "NO"),
+            30, y, 16, text);
+
+        if (current.combat.has_value()) {
+            const CombatSnapshot& combat_state = *current.combat;
+            y += 23;
+            DrawText(
+                TextFormat(
+                    "Tick %llu  State %s  Z %.2f  Hit stop %u",
+                    static_cast<unsigned long long>(combat_state.tick),
+                    player_state_name(combat_state.player.state),
+                    combat_state.player.position.z,
+                    combat_state.player.hit_stop_ticks),
+                30, y, 16, text);
+            y += 23;
+            DrawText(
+                TextFormat(
+                    "Action %s  %s  Combo %u",
+                    attack_name(combat_state.player.active_attack),
+                    phase_name(combat_state.player.attack_phase),
+                    combat_state.player.combo_stage),
+                30, y, 16, text);
+            y += 23;
+            DrawText(
+                TextFormat(
+                    "Input %llu  expired %u  overflow %u  event overflow %u",
+                    static_cast<unsigned long long>(
+                        combat_state.diagnostics.input_size),
+                    combat_state.diagnostics.input_expired_count,
+                    combat_state.diagnostics.input_overflow_count,
+                    combat_state.diagnostics.event_overflow_count),
+                30, y, 16, text);
+        } else {
+            y += 23;
+            DrawText("Combat diagnostics unavailable during transition", 30, y, 16, text);
+        }
+
+        y += 23;
+        DrawText(
+            has_last_event_
+                ? TextFormat(
+                    "Last event %s  target %u",
+                    event_name(last_event_.kind),
+                    last_event_.target_index)
+                : "Last event None",
+            30, y, 16, text);
+        y += 23;
+        DrawText(
+            TextFormat(
+                "FX %u  Dropped %u  Shake %.1f  Audio %s",
+                static_cast<unsigned>(feedback.active_count()),
+                feedback.dropped_count(),
+                feedback.shake_amplitude(),
+                audio_ready ? "Ready" : "Unavailable"),
+            30,
+            y,
+            16,
+            audio_ready ? text : Color{255, 151, 117, 255});
+    }
 
     DrawText(
         draw_debug ? "F1 DEBUG ON" : "F1 DEBUG OFF",
@@ -500,6 +653,17 @@ void CombatRenderer::draw(
         20,
         16,
         draw_debug ? Color{255, 126, 197, 255} : Color{142, 153, 170, 255});
+
+    const float overlay_alpha = transition_overlay_alpha(
+        transition_seconds_left_);
+    if (overlay_alpha > 0.0F) {
+        DrawRectangle(
+            0,
+            0,
+            GetScreenWidth(),
+            GetScreenHeight(),
+            Fade(BLACK, overlay_alpha));
+    }
 }
 
 }  // namespace arpg::platform
