@@ -5,33 +5,264 @@ endif()
 set(ARPG_FORBIDDEN_SOURCE_INCLUDE_REGEX
     [=[^[ \t]*#[ \t]*include[ \t]*[<"]([^>"]*[/\\])?(raylib\.h|raymath\.h|rlgl\.h|raylib-cpp[^>"]*)[>"]]=])
 
-foreach(POSITIVE_INCLUDE IN ITEMS
-        "#include <raylib.h>"
-        "  # include \"vendor/raymath.h\""
-        "#include <rlgl.h>"
-        "#include <raylib-cpp/raylib-cpp.hpp>")
-    string(TOLOWER "${POSITIVE_INCLUDE}" POSITIVE_INCLUDE_LOWER)
-    if(NOT POSITIVE_INCLUDE_LOWER MATCHES
+function(arpg_line_has_forbidden_include INPUT_LINE OUT_FOUND)
+    string(TOLOWER "${INPUT_LINE}" _arpg_line_lower)
+    if(_arpg_line_lower MATCHES
             "${ARPG_FORBIDDEN_SOURCE_INCLUDE_REGEX}")
-        message(FATAL_ERROR
-            "Include regex self-test missed: ${POSITIVE_INCLUDE}")
+        set("${OUT_FOUND}" TRUE PARENT_SCOPE)
+    else()
+        set("${OUT_FOUND}" FALSE PARENT_SCOPE)
     endif()
-endforeach()
+endfunction()
 
-foreach(NEGATIVE_INCLUDE IN ITEMS
-        "// #include <raylib.h>"
-        "/* #include <raymath.h> */"
-        "const char* text = \"#include <rlgl.h>\""
-        "#include <array>"
-        "#include <my_raylib.h>"
-        "#include <raylib.hpp>")
-    string(TOLOWER "${NEGATIVE_INCLUDE}" NEGATIVE_INCLUDE_LOWER)
-    if(NEGATIVE_INCLUDE_LOWER MATCHES
-            "${ARPG_FORBIDDEN_SOURCE_INCLUDE_REGEX}")
-        message(FATAL_ERROR
-            "Include regex self-test false positive: ${NEGATIVE_INCLUDE}")
+macro(arpg_finish_scanned_source_line)
+    arpg_line_has_forbidden_include("${_arpg_line}" _arpg_line_found)
+    if(_arpg_line_found)
+        set("${OUT_FOUND}" TRUE PARENT_SCOPE)
+        set("${OUT_LINE}" "${_arpg_line}" PARENT_SCOPE)
+        return()
     endif()
-endforeach()
+    set(_arpg_line "")
+endmacro()
+
+function(arpg_source_has_forbidden_include SOURCE_TEXT OUT_FOUND OUT_LINE)
+    set(_arpg_state CODE)
+    set(_arpg_line "")
+    set(_arpg_raw_closer "")
+    string(LENGTH "${SOURCE_TEXT}" _arpg_source_length)
+    set(_arpg_index 0)
+
+    while(_arpg_index LESS _arpg_source_length)
+        string(SUBSTRING "${SOURCE_TEXT}" ${_arpg_index} 1 _arpg_char)
+        math(EXPR _arpg_next_index "${_arpg_index} + 1")
+        set(_arpg_next_char "")
+        if(_arpg_next_index LESS _arpg_source_length)
+            string(SUBSTRING
+                "${SOURCE_TEXT}" ${_arpg_next_index} 1 _arpg_next_char)
+        endif()
+
+        if(_arpg_state STREQUAL CODE)
+            if(_arpg_char STREQUAL "/" AND _arpg_next_char STREQUAL "/")
+                string(APPEND _arpg_line " ")
+                set(_arpg_state LINE_COMMENT)
+                math(EXPR _arpg_index "${_arpg_index} + 2")
+                continue()
+            endif()
+            if(_arpg_char STREQUAL "/" AND _arpg_next_char STREQUAL "*")
+                string(APPEND _arpg_line " ")
+                set(_arpg_state BLOCK_COMMENT)
+                math(EXPR _arpg_index "${_arpg_index} + 2")
+                continue()
+            endif()
+
+            if(_arpg_char STREQUAL "R" AND _arpg_next_char STREQUAL "\"")
+                math(EXPR _arpg_delimiter_index "${_arpg_index} + 2")
+                set(_arpg_raw_delimiter "")
+                set(_arpg_valid_raw_opener FALSE)
+                while(_arpg_delimiter_index LESS _arpg_source_length)
+                    string(SUBSTRING
+                        "${SOURCE_TEXT}"
+                        ${_arpg_delimiter_index}
+                        1
+                        _arpg_delimiter_char)
+                    if(_arpg_delimiter_char STREQUAL "(")
+                        string(LENGTH
+                            "${_arpg_raw_delimiter}" _arpg_delimiter_length)
+                        if(_arpg_delimiter_length LESS_EQUAL 16)
+                            set(_arpg_valid_raw_opener TRUE)
+                        endif()
+                        break()
+                    endif()
+                    if(_arpg_delimiter_char STREQUAL "\n"
+                            OR _arpg_delimiter_char STREQUAL "\r")
+                        break()
+                    endif()
+                    string(APPEND
+                        _arpg_raw_delimiter "${_arpg_delimiter_char}")
+                    string(LENGTH
+                        "${_arpg_raw_delimiter}" _arpg_delimiter_length)
+                    if(_arpg_delimiter_length GREATER 16)
+                        break()
+                    endif()
+                    math(EXPR
+                        _arpg_delimiter_index
+                        "${_arpg_delimiter_index} + 1")
+                endwhile()
+
+                if(_arpg_valid_raw_opener)
+                    string(APPEND _arpg_line " ")
+                    set(_arpg_raw_closer ")${_arpg_raw_delimiter}\"")
+                    set(_arpg_state RAW_STRING)
+                    math(EXPR _arpg_index "${_arpg_delimiter_index} + 1")
+                    continue()
+                endif()
+            endif()
+
+            if(_arpg_char STREQUAL "\"")
+                string(TOLOWER "${_arpg_line}" _arpg_line_lower)
+                if(_arpg_line_lower MATCHES
+                        "^[ \t]*#[ \t]*include[ \t]*$")
+                    string(APPEND _arpg_line "\"")
+                    set(_arpg_state INCLUDE_STRING)
+                else()
+                    string(APPEND _arpg_line " ")
+                    set(_arpg_state STRING)
+                endif()
+                set(_arpg_index ${_arpg_next_index})
+                continue()
+            endif()
+            if(_arpg_char STREQUAL "'")
+                string(APPEND _arpg_line " ")
+                set(_arpg_state CHAR)
+                set(_arpg_index ${_arpg_next_index})
+                continue()
+            endif()
+            if(_arpg_char STREQUAL "\n")
+                arpg_finish_scanned_source_line()
+                set(_arpg_index ${_arpg_next_index})
+                continue()
+            endif()
+            if(NOT _arpg_char STREQUAL "\r")
+                string(APPEND _arpg_line "${_arpg_char}")
+            endif()
+            set(_arpg_index ${_arpg_next_index})
+            continue()
+        endif()
+
+        if(_arpg_state STREQUAL LINE_COMMENT)
+            if(_arpg_char STREQUAL "\n")
+                arpg_finish_scanned_source_line()
+                set(_arpg_state CODE)
+            endif()
+            set(_arpg_index ${_arpg_next_index})
+            continue()
+        endif()
+
+        if(_arpg_state STREQUAL BLOCK_COMMENT)
+            if(_arpg_char STREQUAL "*" AND _arpg_next_char STREQUAL "/")
+                set(_arpg_state CODE)
+                math(EXPR _arpg_index "${_arpg_index} + 2")
+                continue()
+            endif()
+            if(_arpg_char STREQUAL "\n")
+                arpg_finish_scanned_source_line()
+            endif()
+            set(_arpg_index ${_arpg_next_index})
+            continue()
+        endif()
+
+        if(_arpg_state STREQUAL RAW_STRING)
+            string(LENGTH "${_arpg_raw_closer}" _arpg_closer_length)
+            math(EXPR
+                _arpg_remaining_length
+                "${_arpg_source_length} - ${_arpg_index}")
+            if(_arpg_remaining_length GREATER_EQUAL _arpg_closer_length)
+                string(SUBSTRING
+                    "${SOURCE_TEXT}"
+                    ${_arpg_index}
+                    ${_arpg_closer_length}
+                    _arpg_closer_candidate)
+                if(_arpg_closer_candidate STREQUAL _arpg_raw_closer)
+                    set(_arpg_state CODE)
+                    math(EXPR
+                        _arpg_index
+                        "${_arpg_index} + ${_arpg_closer_length}")
+                    continue()
+                endif()
+            endif()
+            if(_arpg_char STREQUAL "\n")
+                arpg_finish_scanned_source_line()
+            endif()
+            set(_arpg_index ${_arpg_next_index})
+            continue()
+        endif()
+
+        if(_arpg_state STREQUAL STRING OR _arpg_state STREQUAL CHAR)
+            if(_arpg_char STREQUAL "\\")
+                if(_arpg_next_char STREQUAL "\n")
+                    arpg_finish_scanned_source_line()
+                endif()
+                math(EXPR _arpg_index "${_arpg_index} + 2")
+                continue()
+            endif()
+            if((_arpg_state STREQUAL STRING AND _arpg_char STREQUAL "\"")
+                    OR (_arpg_state STREQUAL CHAR AND _arpg_char STREQUAL "'"))
+                set(_arpg_state CODE)
+                set(_arpg_index ${_arpg_next_index})
+                continue()
+            endif()
+            if(_arpg_char STREQUAL "\n")
+                arpg_finish_scanned_source_line()
+            endif()
+            set(_arpg_index ${_arpg_next_index})
+            continue()
+        endif()
+
+        if(_arpg_state STREQUAL INCLUDE_STRING)
+            if(_arpg_char STREQUAL "\n")
+                arpg_finish_scanned_source_line()
+                set(_arpg_state CODE)
+                set(_arpg_index ${_arpg_next_index})
+                continue()
+            endif()
+            string(APPEND _arpg_line "${_arpg_char}")
+            if(_arpg_char STREQUAL "\"")
+                set(_arpg_state CODE)
+            endif()
+            set(_arpg_index ${_arpg_next_index})
+        endif()
+    endwhile()
+
+    arpg_line_has_forbidden_include("${_arpg_line}" _arpg_line_found)
+    if(_arpg_line_found)
+        set("${OUT_FOUND}" TRUE PARENT_SCOPE)
+        set("${OUT_LINE}" "${_arpg_line}" PARENT_SCOPE)
+        return()
+    endif()
+    set("${OUT_FOUND}" FALSE PARENT_SCOPE)
+    set("${OUT_LINE}" "" PARENT_SCOPE)
+endfunction()
+
+function(arpg_expect_source_boundary LABEL EXPECTED_FOUND SOURCE_TEXT)
+    arpg_source_has_forbidden_include(
+        "${SOURCE_TEXT}" _arpg_found _arpg_line)
+    if(EXPECTED_FOUND AND NOT _arpg_found)
+        message(FATAL_ERROR "Source lexer self-test missed: ${LABEL}")
+    endif()
+    if(NOT EXPECTED_FOUND AND _arpg_found)
+        message(FATAL_ERROR
+            "Source lexer self-test false positive: ${LABEL}: ${_arpg_line}")
+    endif()
+endfunction()
+
+arpg_expect_source_boundary(
+    "real angle include" TRUE [=[#include <raylib.h>]=])
+arpg_expect_source_boundary(
+    "real quoted include" TRUE [=[  # include "vendor/raymath.h"]=])
+arpg_expect_source_boundary(
+    "comment-separated directive" TRUE [=[#/**/include <rlgl.h>]=])
+
+arpg_expect_source_boundary(
+    "line comment" FALSE [=[// #include <raylib.h>]=])
+arpg_expect_source_boundary(
+    "block comment" FALSE [=[/*
+#include <raymath.h>
+*/]=])
+arpg_expect_source_boundary(
+    "ordinary string" FALSE
+    [=[const char* text = "#include <rlgl.h>";]=])
+arpg_expect_source_boundary(
+    "character literal" FALSE
+    [=[const char hash = '#'; // #include <raylib.h>]=])
+arpg_expect_source_boundary(
+    "custom-delimiter raw string" FALSE
+    [=[constexpr auto text = R"arpg_raw(
+#include <raylib.h>
+)arpg_raw";]=])
+arpg_expect_source_boundary(
+    "unrelated include" FALSE [=[#include <array>]=])
+arpg_expect_source_boundary(
+    "similar header" FALSE [=[#include <my_raylib.h>]=])
 
 file(GLOB_RECURSE CORE_FILES
     LIST_DIRECTORIES FALSE
@@ -50,13 +281,11 @@ file(GLOB_RECURSE CORE_FILES
     "${CORE_DIR}/*.cppm")
 
 foreach(CORE_FILE IN LISTS CORE_FILES)
-    file(STRINGS "${CORE_FILE}" CORE_LINES)
-    foreach(CORE_LINE IN LISTS CORE_LINES)
-        string(TOLOWER "${CORE_LINE}" CORE_LINE_LOWER)
-        if(CORE_LINE_LOWER MATCHES
-                "${ARPG_FORBIDDEN_SOURCE_INCLUDE_REGEX}")
-            message(FATAL_ERROR
-                "Core file depends on raylib: ${CORE_FILE}: ${CORE_LINE}")
-        endif()
-    endforeach()
+    file(READ "${CORE_FILE}" CORE_CONTENT)
+    arpg_source_has_forbidden_include(
+        "${CORE_CONTENT}" CORE_HAS_FORBIDDEN_INCLUDE CORE_FORBIDDEN_LINE)
+    if(CORE_HAS_FORBIDDEN_INCLUDE)
+        message(FATAL_ERROR
+            "Core file depends on raylib: ${CORE_FILE}: ${CORE_FORBIDDEN_LINE}")
+    endif()
 endforeach()

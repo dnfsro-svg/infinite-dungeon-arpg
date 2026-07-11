@@ -21,13 +21,28 @@ function(arpg_value_has_forbidden_dependency
     string(TOLOWER "${INPUT_VALUE}" _arpg_value_lower)
     arpg_tokenize_dependency_value("${_arpg_value_lower}" _arpg_tokens)
     foreach(_arpg_token IN LISTS _arpg_tokens)
-        if(_arpg_token MATCHES
-                "^(lib)?(raylib|rlgl|raymath)([-_][a-z0-9.+-]+)?(\\.(lib|a))?$")
+        if(_arpg_token MATCHES "^(raylib|rlgl|raymath|raylib-cpp)$"
+                OR _arpg_token MATCHES
+                    "^(lib)?(raylib|rlgl|raymath|raylib-cpp)([-_][a-z0-9.+-]+)?\\.(lib|a)$")
             set("${OUT_FOUND}" TRUE PARENT_SCOPE)
             set("${OUT_MATCH}" "${_arpg_token}" PARENT_SCOPE)
             return()
         endif()
     endforeach()
+
+    set("${OUT_FOUND}" FALSE PARENT_SCOPE)
+    set("${OUT_MATCH}" "" PARENT_SCOPE)
+endfunction()
+
+function(arpg_include_value_has_forbidden_dependency
+        INPUT_VALUE OUT_FOUND OUT_MATCH)
+    string(TOLOWER "${INPUT_VALUE}" _arpg_value_lower)
+    if(_arpg_value_lower MATCHES
+            [=[(^|[;/\\])_deps[/\\]+raylib($|[-_/\\;>,])]=])
+        set("${OUT_FOUND}" TRUE PARENT_SCOPE)
+        set("${OUT_MATCH}" "_deps/raylib" PARENT_SCOPE)
+        return()
+    endif()
 
     set("${OUT_FOUND}" FALSE PARENT_SCOPE)
     set("${OUT_MATCH}" "" PARENT_SCOPE)
@@ -68,11 +83,31 @@ function(arpg_walk_target_dependency_closure
         return()
     endif()
 
+    arpg_value_has_forbidden_dependency(
+        "${TARGET_NAME}" _arpg_found _arpg_match)
+    if(_arpg_found)
+        set("${OUT_FOUND}" TRUE PARENT_SCOPE)
+        set("${OUT_REASON}"
+            "${TARGET_PATH} target name contains '${_arpg_match}'"
+            PARENT_SCOPE)
+        return()
+    endif()
+
     get_target_property(_arpg_aliased_target "${TARGET_NAME}" ALIASED_TARGET)
     if(_arpg_aliased_target)
         set(_arpg_inspected_target "${_arpg_aliased_target}")
     else()
         set(_arpg_inspected_target "${TARGET_NAME}")
+    endif()
+
+    arpg_value_has_forbidden_dependency(
+        "${_arpg_inspected_target}" _arpg_found _arpg_match)
+    if(_arpg_found)
+        set("${OUT_FOUND}" TRUE PARENT_SCOPE)
+        set("${OUT_REASON}"
+            "${TARGET_PATH} canonical target name contains '${_arpg_match}'"
+            PARENT_SCOPE)
+        return()
     endif()
 
     get_property(_arpg_visited GLOBAL PROPERTY ARPG_BOUNDARY_VISITED_TARGETS)
@@ -136,7 +171,7 @@ function(arpg_walk_target_dependency_closure
             continue()
         endif()
 
-        arpg_value_has_forbidden_dependency(
+        arpg_include_value_has_forbidden_dependency(
             "${_arpg_property_value}" _arpg_found _arpg_match)
         if(_arpg_found)
             set("${OUT_FOUND}" TRUE PARENT_SCOPE)
@@ -146,6 +181,70 @@ function(arpg_walk_target_dependency_closure
             return()
         endif()
     endforeach()
+
+    get_target_property(
+        _arpg_is_imported "${_arpg_inspected_target}" IMPORTED)
+    if(_arpg_is_imported)
+        foreach(_arpg_property_name IN ITEMS
+                IMPORTED_LOCATION
+                IMPORTED_IMPLIB)
+            get_target_property(
+                _arpg_property_value
+                "${_arpg_inspected_target}"
+                "${_arpg_property_name}")
+            if(NOT "${_arpg_property_value}" STREQUAL ""
+                    AND NOT "${_arpg_property_value}" MATCHES "-NOTFOUND$")
+                arpg_value_has_forbidden_dependency(
+                    "${_arpg_property_value}" _arpg_found _arpg_match)
+                if(_arpg_found)
+                    set("${OUT_FOUND}" TRUE PARENT_SCOPE)
+                    set("${OUT_REASON}"
+                        "${TARGET_PATH} ${_arpg_property_name} contains '${_arpg_match}' in '${_arpg_property_value}'"
+                        PARENT_SCOPE)
+                    return()
+                endif()
+            endif()
+        endforeach()
+
+        get_target_property(
+            _arpg_imported_configurations
+            "${_arpg_inspected_target}"
+            IMPORTED_CONFIGURATIONS)
+        if("${_arpg_imported_configurations}" MATCHES "-NOTFOUND$")
+            set(_arpg_imported_configurations "")
+        endif()
+        list(APPEND _arpg_imported_configurations
+            NOCONFIG DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
+        list(REMOVE_DUPLICATES _arpg_imported_configurations)
+
+        foreach(_arpg_configuration IN LISTS _arpg_imported_configurations)
+            string(TOUPPER
+                "${_arpg_configuration}" _arpg_configuration_upper)
+            foreach(_arpg_property_base IN ITEMS
+                    IMPORTED_LOCATION
+                    IMPORTED_IMPLIB)
+                set(_arpg_property_name
+                    "${_arpg_property_base}_${_arpg_configuration_upper}")
+                get_target_property(
+                    _arpg_property_value
+                    "${_arpg_inspected_target}"
+                    "${_arpg_property_name}")
+                if("${_arpg_property_value}" STREQUAL ""
+                        OR "${_arpg_property_value}" MATCHES "-NOTFOUND$")
+                    continue()
+                endif()
+                arpg_value_has_forbidden_dependency(
+                    "${_arpg_property_value}" _arpg_found _arpg_match)
+                if(_arpg_found)
+                    set("${OUT_FOUND}" TRUE PARENT_SCOPE)
+                    set("${OUT_REASON}"
+                        "${TARGET_PATH} ${_arpg_property_name} contains '${_arpg_match}' in '${_arpg_property_value}'"
+                        PARENT_SCOPE)
+                    return()
+                endif()
+            endforeach()
+        endforeach()
+    endif()
 
     set("${OUT_FOUND}" FALSE PARENT_SCOPE)
     set("${OUT_REASON}" "" PARENT_SCOPE)
@@ -177,8 +276,7 @@ foreach(_arpg_positive_value IN ITEMS
         "raymath"
         "raylib-cpp"
         "E:/vendor/raylib.lib"
-        "E:/vendor/libraylib.a"
-        "E:/build/_deps/raylib-src/include")
+        "E:/vendor/libraylib.a")
     arpg_value_has_forbidden_dependency(
         "${_arpg_positive_value}" _arpg_found _arpg_match)
     if(NOT _arpg_found)
@@ -193,6 +291,31 @@ if(_arpg_found)
     message(FATAL_ERROR
         "Boundary detector self-test falsely matched m00-raylib-host")
 endif()
+
+arpg_value_has_forbidden_dependency(
+    "E:/raylib-host/src" _arpg_found _arpg_match)
+if(_arpg_found)
+    message(FATAL_ERROR
+        "Boundary detector self-test falsely matched E:/raylib-host")
+endif()
+
+arpg_include_value_has_forbidden_dependency(
+    "E:/build/_deps/raylib-src/include" _arpg_found _arpg_match)
+if(NOT _arpg_found)
+    message(FATAL_ERROR
+        "Include detector self-test missed _deps/raylib")
+endif()
+
+foreach(_arpg_clean_include IN ITEMS
+        "E:/raylib-host/src"
+        "E:/game/.worktrees/m00-raylib-host/src")
+    arpg_include_value_has_forbidden_dependency(
+        "${_arpg_clean_include}" _arpg_found _arpg_match)
+    if(_arpg_found)
+        message(FATAL_ERROR
+            "Include detector self-test falsely matched: ${_arpg_clean_include}")
+    endif()
+endforeach()
 
 add_library(arpg_boundary_probe_leaf INTERFACE)
 target_link_libraries(arpg_boundary_probe_leaf INTERFACE raylib)
@@ -238,6 +361,61 @@ arpg_find_target_dependency_leak(
 if(NOT _arpg_found)
     message(FATAL_ERROR
         "Recursive boundary self-test missed _deps/raylib include path")
+endif()
+
+add_library(arpg_boundary_imported_binary UNKNOWN IMPORTED)
+set_target_properties(
+    arpg_boundary_imported_binary
+    PROPERTIES IMPORTED_LOCATION "E:/vendor/raylib.lib")
+add_library(
+    arpg_boundary_imported_alias ALIAS arpg_boundary_imported_binary)
+add_library(arpg_boundary_imported_leaf INTERFACE)
+target_link_libraries(
+    arpg_boundary_imported_leaf INTERFACE arpg_boundary_imported_alias)
+add_library(arpg_boundary_imported_mid INTERFACE)
+target_link_libraries(
+    arpg_boundary_imported_mid INTERFACE arpg_boundary_imported_leaf)
+arpg_find_target_dependency_leak(
+    arpg_boundary_imported_mid _arpg_found _arpg_reason)
+if(NOT _arpg_found)
+    message(FATAL_ERROR
+        "Recursive boundary self-test missed imported raylib location")
+endif()
+
+add_library(arpg_boundary_config_binary UNKNOWN IMPORTED)
+set_target_properties(
+    arpg_boundary_config_binary
+    PROPERTIES
+        IMPORTED_CONFIGURATIONS DEBUG
+        IMPORTED_LOCATION_DEBUG "E:/vendor/raylib.lib")
+arpg_find_target_dependency_leak(
+    arpg_boundary_config_binary _arpg_found _arpg_reason)
+if(NOT _arpg_found)
+    message(FATAL_ERROR
+        "Boundary self-test missed configured imported raylib location")
+endif()
+
+add_library(arpg_boundary_probe::rlgl UNKNOWN IMPORTED)
+set_target_properties(
+    arpg_boundary_probe::rlgl
+    PROPERTIES IMPORTED_LOCATION "E:/vendor/clean.lib")
+add_library(arpg_boundary_canonical_alias ALIAS arpg_boundary_probe::rlgl)
+arpg_find_target_dependency_leak(
+    arpg_boundary_canonical_alias _arpg_found _arpg_reason)
+if(NOT _arpg_found)
+    message(FATAL_ERROR
+        "Boundary self-test missed forbidden canonical target name")
+endif()
+
+add_library(arpg_boundary_cycle_a INTERFACE)
+add_library(arpg_boundary_cycle_b INTERFACE)
+target_link_libraries(arpg_boundary_cycle_a INTERFACE arpg_boundary_cycle_b)
+target_link_libraries(arpg_boundary_cycle_b INTERFACE arpg_boundary_cycle_a)
+arpg_find_target_dependency_leak(
+    arpg_boundary_cycle_a _arpg_found _arpg_reason)
+if(_arpg_found)
+    message(FATAL_ERROR
+        "Boundary cycle self-test produced a false positive: ${_arpg_reason}")
 endif()
 
 arpg_assert_target_dependency_boundary(arpg_core)
