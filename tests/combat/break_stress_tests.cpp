@@ -380,6 +380,22 @@ constexpr std::array<ScheduledAction, 4> kScheduledActions{{
     {307, Action::launcher, static_cast<std::uint8_t>(1U << 3U)},
 }};
 
+static_assert(
+    kScheduledActions.size() == 4U &&
+        kScheduledActions[0].period == 37 &&
+        kScheduledActions[0].action == Action::light &&
+        kScheduledActions[0].bit == static_cast<std::uint8_t>(1U << 0U) &&
+        kScheduledActions[1].period == 181 &&
+        kScheduledActions[1].action == Action::jump &&
+        kScheduledActions[1].bit == static_cast<std::uint8_t>(1U << 1U) &&
+        kScheduledActions[2].period == 251 &&
+        kScheduledActions[2].action == Action::launcher &&
+        kScheduledActions[2].bit == static_cast<std::uint8_t>(1U << 2U) &&
+        kScheduledActions[3].period == 307 &&
+        kScheduledActions[3].action == Action::launcher &&
+        kScheduledActions[3].bit == static_cast<std::uint8_t>(1U << 3U),
+    "stress action schedule contract changed");
+
 ScheduledActions schedule_actions(CombatWorld& world, int tick) noexcept {
     ScheduledActions result{};
     for (const auto& scheduled : kScheduledActions) {

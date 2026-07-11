@@ -12,7 +12,7 @@
 - 用 `make_suite()` 推导测试用例数量，删除手写 `sizeof` 表达式。
 - 提取战斗测试的 `tick_n`、`finish_attack`、`drain_events`。
 - 用一张 `constexpr` 表表达压力测试动作周期和位掩码。
-- 删除从未读取的运行时字段，复用现有 `attack_phase_at()` 判定攻击结束。
+- 删除 `AttackRuntime::serial`（它仅自增并自检回绕，未被其他状态、输出或业务逻辑消费）等冗余运行时字段，复用现有 `attack_phase_at()` 判定攻击结束。
 
 优点是变更机械、可由现有测试完整保护；缺点是会触及多个测试文件。
 
@@ -48,7 +48,7 @@
 
 ### 生产运行时
 
-删除只有写入、从未读取的 `AttackRuntime::serial`、`DummyRuntime::pending_impact` 和 `DummyRuntime::has_pending_impact` 及其赋值。攻击推进在递增 elapsed tick 后只调用一次 `attack_phase_at()`；当结果为 `finished` 时执行原有结束路径。
+删除 `AttackRuntime::serial`：该字段仅自增并自检回绕，未被其他状态、输出或业务逻辑消费；同时删除只有写入、从未读取的 `DummyRuntime::pending_impact` 和 `DummyRuntime::has_pending_impact` 及其赋值。攻击推进在递增 elapsed tick 后只调用一次 `attack_phase_at()`；当结果为 `finished` 时执行原有结束路径。
 
 ## 验证
 
