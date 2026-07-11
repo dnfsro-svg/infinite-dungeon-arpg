@@ -17,6 +17,7 @@ constexpr float kAssistMaxDepth = 0.45F;
 constexpr float kAssistMaxCorrection = 0.18F;
 constexpr float kRoomMinX = -8.0F;
 constexpr float kRoomMaxX = 8.0F;
+constexpr std::uint16_t kBreakWindowTicks = 180;
 
 std::uint16_t hit_stop_for(FeedbackLevel feedback) noexcept {
     switch (feedback) {
@@ -123,12 +124,18 @@ void CombatWorld::resolve_attack_hits() noexcept {
         attack_.hit_targets[index] = true;
         attack_.connected = true;
         dummy.hp = std::max(0, dummy.hp - definition->damage);
-        if (dummy.max_break != 0) {
+        bool starts_break = false;
+        bool accepts_impact = dummy.armor != ArmorState::armored;
+        if (dummy.hp != 0 && dummy.armor == ArmorState::armored) {
             dummy.break_value = std::max(
                 0, dummy.break_value - definition->break_damage);
+            if (dummy.break_value == 0) {
+                dummy.armor = ArmorState::broken;
+                dummy.break_window_ticks = kBreakWindowTicks;
+                starts_break = true;
+                accepts_impact = true;
+            }
         }
-        dummy.pending_impact = definition->impact;
-        dummy.has_pending_impact = true;
         dummy.hit_stop_ticks = std::max(dummy.hit_stop_ticks, hit_stop);
 
         CombatEvent hit{};
@@ -141,7 +148,23 @@ void CombatWorld::resolve_attack_hits() noexcept {
         hit.position = dummy.position;
         hit.value = definition->damage;
         emit_event(hit);
-        apply_dummy_impact(index, *definition);
+
+        if (starts_break) {
+            CombatEvent break_started{};
+            break_started.kind = CombatEventKind::break_started;
+            break_started.tick = tick_;
+            break_started.attack = definition->id;
+            break_started.target_index = static_cast<std::uint8_t>(index);
+            break_started.feedback = definition->feedback;
+            break_started.position = dummy.position;
+            emit_event(break_started);
+        }
+
+        if (dummy.hp == 0 || accepts_impact) {
+            dummy.pending_impact = definition->impact;
+            dummy.has_pending_impact = true;
+            apply_dummy_impact(index, *definition);
+        }
     }
 
     player_.hit_stop_ticks = std::max(player_.hit_stop_ticks, hit_stop);

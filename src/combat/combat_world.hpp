@@ -68,6 +68,7 @@ private:
     void apply_attack_assist(const AttackDefinition& definition) noexcept;
     void resolve_attack_hits() noexcept;
     void emit_event(const CombatEvent& event) noexcept;
+    void initialize_runtime() noexcept;
 
     CombatLabConfig config_{};
     PlayerRuntime player_{};

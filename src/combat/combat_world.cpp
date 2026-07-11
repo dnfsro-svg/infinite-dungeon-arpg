@@ -13,7 +13,7 @@ constexpr std::array<int, kDummyCount> kDummyBreakValues{{0, 0, 120}};
 }  // namespace
 
 CombatWorld::CombatWorld(CombatLabConfig config) noexcept : config_(config) {
-    reset();
+    initialize_runtime();
 }
 
 bool CombatWorld::queue_action(Action action) noexcept {
@@ -47,6 +47,16 @@ void CombatWorld::tick(MovementInput movement) noexcept {
 }
 
 void CombatWorld::reset() noexcept {
+    initialize_runtime();
+
+    CombatEvent reset_event{};
+    reset_event.kind = CombatEventKind::reset;
+    reset_event.tick = 0;
+    reset_event.position = player_.position;
+    emit_event(reset_event);
+}
+
+void CombatWorld::initialize_runtime() noexcept {
     player_ = PlayerRuntime{};
     player_.position = config_.player_spawn;
 

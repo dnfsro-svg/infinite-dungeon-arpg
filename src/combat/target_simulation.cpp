@@ -40,6 +40,7 @@ void CombatWorld::apply_dummy_impact(
     if (dummy.hp == 0) {
         dummy.reaction = ReactionState::defeated;
         dummy.reaction_ticks = kRespawnTicks;
+        dummy.break_window_ticks = 0;
         dummy.velocity = Vec3{};
         dummy.has_pending_impact = false;
 
@@ -139,6 +140,17 @@ void CombatWorld::respawn_dummy(std::size_t index) noexcept {
 
 void CombatWorld::simulate_target(std::size_t index) noexcept {
     DummyRuntime& dummy = dummies_[index];
+
+    if (dummy.armor == ArmorState::broken
+        && dummy.reaction != ReactionState::defeated
+        && dummy.reaction != ReactionState::respawning
+        && dummy.break_window_ticks != 0) {
+        --dummy.break_window_ticks;
+        if (dummy.break_window_ticks == 0) {
+            dummy.armor = ArmorState::armored;
+            dummy.break_value = dummy.max_break;
+        }
+    }
 
     const auto integrate_horizontal = [&dummy]() noexcept {
         dummy.position.x += dummy.velocity.x * kTickSeconds;

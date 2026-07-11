@@ -1,7 +1,9 @@
 add_executable(arpg_combat_tests
+    ../core/allocation_probe.cpp
     combat_test_main.cpp
     attack_catalog_tests.cpp
     attack_state_tests.cpp
+    break_stress_tests.cpp
     dummy_reaction_tests.cpp
     hit_resolution_tests.cpp
     input_buffer_tests.cpp
