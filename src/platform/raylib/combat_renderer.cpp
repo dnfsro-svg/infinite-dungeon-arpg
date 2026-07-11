@@ -457,7 +457,7 @@ void CombatRenderer::draw(
     const Color text{218, 226, 239, 255};
     const Color accent{110, 207, 255, 255};
     int y = 28;
-    DrawText("WASD Move  J Light  K Jump  L Heavy  U Launcher", 30, y, 16, accent);
+    DrawText("WASD Move  J Light  K Jump  L Launcher", 30, y, 16, accent);
     y += 25;
     DrawText("R Reset  F1 Debug  F12 Screenshot  Esc Exit", 30, y, 16, accent);
     y += 28;

@@ -3,6 +3,7 @@
 #include "combat/combat_world.hpp"
 #include "combat_audio.hpp"
 #include "combat_feedback.hpp"
+#include "combat_key_bindings.hpp"
 #include "combat_renderer.hpp"
 #include "core/fixed_step.hpp"
 
@@ -30,17 +31,10 @@ std::int8_t key_direction(int negative_key, int positive_key) noexcept {
 }
 
 void submit_frame_actions(combat::CombatWorld& world) noexcept {
-    if (IsKeyPressed(KEY_J)) {
-        static_cast<void>(world.queue_action(combat::Action::light));
-    }
-    if (IsKeyPressed(KEY_K)) {
-        static_cast<void>(world.queue_action(combat::Action::jump));
-    }
-    if (IsKeyPressed(KEY_L)) {
-        static_cast<void>(world.queue_action(combat::Action::heavy));
-    }
-    if (IsKeyPressed(KEY_U)) {
-        static_cast<void>(world.queue_action(combat::Action::launcher));
+    for (const CombatKeyBinding& binding : kCombatKeyBindings) {
+        if (IsKeyPressed(binding.key)) {
+            static_cast<void>(world.queue_action(binding.action));
+        }
     }
 }
 

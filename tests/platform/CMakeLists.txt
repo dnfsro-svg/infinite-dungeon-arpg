@@ -1,6 +1,7 @@
 if(TARGET arpg_raylib)
     add_executable(arpg_platform_tests
         platform_test_main.cpp
+        combat_key_bindings_tests.cpp
         combat_feedback_tests.cpp
         combat_view_math_tests.cpp)
     target_compile_features(arpg_platform_tests PRIVATE cxx_std_17)
