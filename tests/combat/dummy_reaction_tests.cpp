@@ -147,6 +147,7 @@ arpg::test::Failure launcher_integrates_then_lands_in_knockdown() noexcept {
     ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].position.z, 0.0));
     ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.x, 1.2, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.z, 9.5, 1.0e-4));
+    drain_events(world);
 
     tick_n(world, 5);
     snapshot = world.snapshot();
@@ -169,11 +170,84 @@ arpg::test::Failure launcher_integrates_then_lands_in_knockdown() noexcept {
     ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::knockdown);
     ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].position.z, 0.0));
     ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.z, 0.0));
+    int landing_events = 0;
+    while (const auto event = world.try_pop_event()) {
+        if (event->kind == CombatEventKind::landing) {
+            ++landing_events;
+            ARPG_REQUIRE(event->target_index == 1);
+            ARPG_REQUIRE(arpg::test::near(event->position.z, 0.0));
+        }
+    }
+    ARPG_REQUIRE(landing_events == 1);
     tick_n(world, 44);
     ARPG_REQUIRE(
         world.snapshot().dummies[1].reaction == ReactionState::knockdown);
     world.tick(MovementInput{});
     ARPG_REQUIRE(world.snapshot().dummies[1].reaction == ReactionState::rising);
+    while (const auto event = world.try_pop_event()) {
+        ARPG_REQUIRE(event->kind != CombatEventKind::landing);
+    }
+
+    CombatWorld airborne_followup{normal_target_config()};
+    ARPG_REQUIRE(airborne_followup.queue_action(Action::launcher));
+    airborne_followup.tick(MovementInput{});
+    tick_n(airborne_followup, 7);
+    ARPG_REQUIRE(finish_attack(airborne_followup));
+    ARPG_REQUIRE(
+        airborne_followup.snapshot().dummies[1].reaction
+        == ReactionState::airborne);
+    ARPG_REQUIRE(airborne_followup.queue_action(Action::light));
+    airborne_followup.tick(MovementInput{});
+    tick_n(airborne_followup, 5);
+    snapshot = airborne_followup.snapshot();
+    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::airborne);
+    ARPG_REQUIRE(snapshot.dummies[1].hit_stop_ticks == 3);
+    const float frozen_z = snapshot.dummies[1].position.z;
+    const float frozen_velocity_z = snapshot.dummies[1].velocity.z;
+    tick_n(airborne_followup, 3);
+    snapshot = airborne_followup.snapshot();
+    ARPG_REQUIRE(arpg::test::near(
+        snapshot.dummies[1].position.z, frozen_z, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(
+        snapshot.dummies[1].velocity.z, frozen_velocity_z, 1.0e-4));
+    airborne_followup.tick(MovementInput{});
+    snapshot = airborne_followup.snapshot();
+    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::airborne);
+    ARPG_REQUIRE(!arpg::test::near(
+        snapshot.dummies[1].position.z, frozen_z, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(
+        snapshot.dummies[1].velocity.z,
+        frozen_velocity_z - 24.0 / 60.0,
+        1.0e-4));
+
+    CombatLabConfig independent_config;
+    independent_config.dummy_spawns = {{{-1.20F, 0.0F, 0.0F},
+                                        {1.80F, 0.0F, 0.0F},
+                                        {7.00F, -3.0F, 0.0F}}};
+    CombatWorld independent{independent_config};
+    ARPG_REQUIRE(independent.queue_action(Action::launcher));
+    independent.tick(MovementInput{});
+    tick_n(independent, 7);
+    ARPG_REQUIRE(finish_attack(independent));
+    ARPG_REQUIRE(
+        independent.snapshot().dummies[1].reaction
+        == ReactionState::airborne);
+    independent.tick(MovementInput{-1, 0});
+    ARPG_REQUIRE(independent.snapshot().player.facing == Facing::left);
+    ARPG_REQUIRE(independent.queue_action(Action::light));
+    independent.tick(MovementInput{});
+    tick_n(independent, 5);
+    snapshot = independent.snapshot();
+    ARPG_REQUIRE(snapshot.dummies[0].hit_stop_ticks == 3);
+    ARPG_REQUIRE(snapshot.dummies[1].hit_stop_ticks == 0);
+    const float independent_z = snapshot.dummies[1].position.z;
+    tick_n(independent, 3);
+    snapshot = independent.snapshot();
+    ARPG_REQUIRE(snapshot.player.attack_elapsed_ticks == 5);
+    ARPG_REQUIRE(snapshot.dummies[0].hit_stop_ticks == 0);
+    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::airborne);
+    ARPG_REQUIRE(!arpg::test::near(
+        snapshot.dummies[1].position.z, independent_z, 1.0e-4));
     return {};
 }
 
@@ -209,6 +283,22 @@ arpg::test::Failure knockdown_and_rising_have_exact_boundaries() noexcept {
     snapshot = j3.snapshot();
     ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::knockdown);
     ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.x, 5.0, 1.0e-4));
+
+    CombatLabConfig edge_config;
+    edge_config.player_spawn = Vec3{6.0F, 0.0F, 0.0F};
+    edge_config.dummy_spawns = {{{-7.0F, 3.0F, 0.0F},
+                                 {7.2F, 0.0F, 0.0F},
+                                 {-7.0F, -3.0F, 0.0F}}};
+    CombatWorld edge{edge_config};
+    ARPG_REQUIRE(edge.queue_action(Action::heavy));
+    edge.tick(MovementInput{});
+    tick_n(edge, 14);
+    ARPG_REQUIRE(edge.snapshot().dummies[1].reaction == ReactionState::knockdown);
+    tick_n(edge, 7);
+    tick_n(edge, 20);
+    snapshot = edge.snapshot();
+    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].position.x, 8.0));
+    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.x, 0.0));
     return {};
 }
 
@@ -256,8 +346,26 @@ arpg::test::Failure defeated_respawns_after_ninety_active_ticks() noexcept {
     ARPG_REQUIRE(kinds[3] == CombatEventKind::impact_summary);
 
     tick_n(world, 3);
-    tick_n(world, 89);
-    ARPG_REQUIRE(world.snapshot().dummies[0].reaction == ReactionState::defeated);
+    ARPG_REQUIRE(finish_attack(world));
+    drain_events(world);
+    ARPG_REQUIRE(world.queue_action(Action::light));
+    world.tick(MovementInput{});
+    tick_n(world, 5);
+    snapshot = world.snapshot();
+    ARPG_REQUIRE(snapshot.dummies[0].hp == 0);
+    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::defeated);
+    while (const auto event = world.try_pop_event()) {
+        ARPG_REQUIRE(event->kind == CombatEventKind::swing);
+    }
+    ARPG_REQUIRE(finish_attack(world));
+    drain_events(world);
+
+    tick_n(world, 53);
+    ARPG_REQUIRE(world.queue_action(Action::light));
+    world.tick(MovementInput{});
+    tick_n(world, 5);
+    ARPG_REQUIRE(
+        world.snapshot().dummies[0].reaction == ReactionState::defeated);
     world.tick(MovementInput{});
     snapshot = world.snapshot();
     ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::respawning);
@@ -270,6 +378,7 @@ arpg::test::Failure defeated_respawns_after_ninety_active_ticks() noexcept {
         snapshot.dummies[0].position.z, 0.0, 1.0e-4));
 
     int respawn_events = 0;
+    int respawn_tick_hits = 0;
     while (const auto event = world.try_pop_event()) {
         if (event->kind == CombatEventKind::respawned) {
             ++respawn_events;
@@ -277,11 +386,16 @@ arpg::test::Failure defeated_respawns_after_ninety_active_ticks() noexcept {
             ARPG_REQUIRE(event->attack == AttackId::none);
             ARPG_REQUIRE(arpg::test::near(
                 event->position.x, 1.20, 1.0e-4));
+        } else if (event->kind == CombatEventKind::hit) {
+            ++respawn_tick_hits;
         }
     }
     ARPG_REQUIRE(respawn_events == 1);
+    ARPG_REQUIRE(respawn_tick_hits == 0);
     world.tick(MovementInput{});
-    ARPG_REQUIRE(world.snapshot().dummies[0].reaction == ReactionState::idle);
+    snapshot = world.snapshot();
+    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::hitstun);
+    ARPG_REQUIRE(snapshot.dummies[0].hp == 272);
     while (const auto event = world.try_pop_event()) {
         ARPG_REQUIRE(event->kind != CombatEventKind::respawned);
     }
