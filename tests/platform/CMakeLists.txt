@@ -690,12 +690,24 @@ if(_arpg_remaining_boundary_failures)
 endif()
 
 arpg_assert_target_dependency_boundary(arpg_core)
+arpg_assert_target_dependency_boundary(arpg_combat)
 
 add_test(
     NAME architecture.core_no_raylib
     COMMAND "${CMAKE_COMMAND}"
-        "-DCORE_DIR=${PROJECT_SOURCE_DIR}/src/core"
+        "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/core"
+        "-DSOURCE_LABEL=Core"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/core_boundary_test.cmake")
 set_tests_properties(
     architecture.core_no_raylib
+    PROPERTIES LABELS "headless;architecture")
+
+add_test(
+    NAME architecture.combat_no_raylib
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/combat"
+        "-DSOURCE_LABEL=Combat"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/core_boundary_test.cmake")
+set_tests_properties(
+    architecture.combat_no_raylib
     PROPERTIES LABELS "headless;architecture")
