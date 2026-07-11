@@ -1,5 +1,8 @@
-if(NOT DEFINED CORE_DIR)
-    message(FATAL_ERROR "CORE_DIR is required")
+if(NOT DEFINED SOURCE_DIR)
+    message(FATAL_ERROR "SOURCE_DIR is required")
+endif()
+if(NOT DEFINED SOURCE_LABEL)
+    message(FATAL_ERROR "SOURCE_LABEL is required")
 endif()
 
 set(ARPG_FORBIDDEN_SOURCE_INCLUDE_REGEX
@@ -447,31 +450,33 @@ if(ARPG_SOURCE_BOUNDARY_SELF_TEST_FAILURES)
         "Source lexer self-tests failed: ${ARPG_SOURCE_BOUNDARY_SELF_TEST_FAILURE_SUMMARY}")
 endif()
 
-file(GLOB_RECURSE CORE_FILES
+file(GLOB_RECURSE SOURCE_FILES
     LIST_DIRECTORIES FALSE
-    "${CORE_DIR}/*.h"
-    "${CORE_DIR}/*.hh"
-    "${CORE_DIR}/*.hpp"
-    "${CORE_DIR}/*.hxx"
-    "${CORE_DIR}/*.inl"
-    "${CORE_DIR}/*.inc"
-    "${CORE_DIR}/*.ipp"
-    "${CORE_DIR}/*.tpp"
-    "${CORE_DIR}/*.tcc"
-    "${CORE_DIR}/*.c"
-    "${CORE_DIR}/*.cc"
-    "${CORE_DIR}/*.cpp"
-    "${CORE_DIR}/*.cxx"
-    "${CORE_DIR}/*.ixx"
-    "${CORE_DIR}/*.cppm"
-    "${CORE_DIR}/*.mpp")
+    "${SOURCE_DIR}/*.h"
+    "${SOURCE_DIR}/*.hh"
+    "${SOURCE_DIR}/*.hpp"
+    "${SOURCE_DIR}/*.hxx"
+    "${SOURCE_DIR}/*.inl"
+    "${SOURCE_DIR}/*.inc"
+    "${SOURCE_DIR}/*.ipp"
+    "${SOURCE_DIR}/*.tpp"
+    "${SOURCE_DIR}/*.tcc"
+    "${SOURCE_DIR}/*.c"
+    "${SOURCE_DIR}/*.cc"
+    "${SOURCE_DIR}/*.cpp"
+    "${SOURCE_DIR}/*.cxx"
+    "${SOURCE_DIR}/*.ixx"
+    "${SOURCE_DIR}/*.cppm"
+    "${SOURCE_DIR}/*.mpp")
 
-foreach(CORE_FILE IN LISTS CORE_FILES)
-    file(READ "${CORE_FILE}" CORE_CONTENT)
+foreach(SOURCE_FILE IN LISTS SOURCE_FILES)
+    file(READ "${SOURCE_FILE}" SOURCE_CONTENT)
     arpg_source_has_forbidden_include(
-        "${CORE_CONTENT}" CORE_HAS_FORBIDDEN_INCLUDE CORE_FORBIDDEN_LINE)
-    if(CORE_HAS_FORBIDDEN_INCLUDE)
+        "${SOURCE_CONTENT}"
+        SOURCE_HAS_FORBIDDEN_INCLUDE
+        SOURCE_FORBIDDEN_LINE)
+    if(SOURCE_HAS_FORBIDDEN_INCLUDE)
         message(FATAL_ERROR
-            "Core file depends on raylib: ${CORE_FILE}: ${CORE_FORBIDDEN_LINE}")
+            "${SOURCE_LABEL} file depends on raylib: ${SOURCE_FILE}: ${SOURCE_FORBIDDEN_LINE}")
     endif()
 endforeach()
