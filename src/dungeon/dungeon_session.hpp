@@ -45,7 +45,7 @@ private:
     ExitDirection last_exit_{ExitDirection::none};
     std::uint64_t session_tick_{};
     DungeonDiagnostics diagnostics_{};
-    bool overflow_fault_emitted_{};
+    bool room_index_fault_emitted_{};
 };
 
 }  // namespace arpg::dungeon

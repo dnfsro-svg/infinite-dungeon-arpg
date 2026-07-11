@@ -1,6 +1,7 @@
 #include "dungeon/dungeon_session.hpp"
 
 #include "dungeon/room_generation.hpp"
+#include "dungeon/room_navigation.hpp"
 
 #include <cassert>
 #include <cstdint>
@@ -33,7 +34,13 @@ void DungeonSession::tick(combat::MovementInput movement) noexcept {
         phase_ = RoomPhase::combat;
         emit(DungeonEventKind::room_entered);
         emit(DungeonEventKind::combat_started);
-    } else if (phase_ != RoomPhase::transitioning && combat_.has_value()) {
+    } else if (phase_ == RoomPhase::transitioning) {
+        if (pending_room_.has_value()) {
+            current_room_ = *pending_room_;
+            pending_room_.reset();
+            construct_current_room();
+        }
+    } else if (combat_.has_value()) {
         if (phase_ == RoomPhase::cleared) {
             phase_ = RoomPhase::awaiting_exit;
         } else {
@@ -44,6 +51,14 @@ void DungeonSession::tick(combat::MovementInput movement) noexcept {
                 phase_ = RoomPhase::cleared;
                 emit(DungeonEventKind::room_cleared);
                 emit(DungeonEventKind::exits_opened);
+            }
+
+            if (phase_ == RoomPhase::awaiting_exit) {
+                const combat::CombatSnapshot state = combat_->snapshot();
+                if (const auto requested = requested_exit(
+                        state.player.position, movement)) {
+                    attempt_exit(*requested);
+                }
             }
         }
     }
@@ -107,14 +122,34 @@ void DungeonSession::relay_combat_events() noexcept {
         const bool relayed = combat_events_.try_push(*event);
         if (!relayed) {
             saturating_increment(diagnostics_.combat_relay_overflow_count);
-            overflow_fault_emitted_ = true;
             assert(relayed && "Dungeon combat event relay overflow");
         }
     }
 }
 
 void DungeonSession::attempt_exit(ExitDirection direction) noexcept {
-    static_cast<void>(direction);
+    if (phase_ != RoomPhase::awaiting_exit || !combat_.has_value()
+            || direction == ExitDirection::none || pending_room_.has_value()) {
+        saturating_increment(diagnostics_.rejected_exit_count);
+        return;
+    }
+
+    if (current_room_.index
+            == (std::numeric_limits<std::uint64_t>::max)()) {
+        diagnostics_.room_index_overflow = true;
+        if (!room_index_fault_emitted_) {
+            emit(DungeonEventKind::faulted, direction);
+            room_index_fault_emitted_ = true;
+        }
+        return;
+    }
+
+    pending_room_ = make_next_room(current_room_, direction);
+    last_exit_ = direction;
+    combat_.reset();
+    emit(DungeonEventKind::exit_committed, direction);
+    emit(DungeonEventKind::room_destroyed, direction);
+    phase_ = RoomPhase::transitioning;
 }
 
 void DungeonSession::emit(
@@ -130,7 +165,6 @@ void DungeonSession::emit(
     const bool emitted = events_.try_push(event);
     if (!emitted) {
         saturating_increment(diagnostics_.event_overflow_count);
-        overflow_fault_emitted_ = true;
         assert(emitted && "Dungeon event queue overflow");
     }
 }

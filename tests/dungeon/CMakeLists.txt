@@ -1,6 +1,9 @@
 add_executable(arpg_dungeon_tests
+    ../core/allocation_probe.cpp
     dungeon_test_main.cpp
     dungeon_lifecycle_tests.cpp
+    dungeon_navigation_tests.cpp
+    dungeon_stress_tests.cpp
     room_generation_tests.cpp)
 
 target_compile_features(arpg_dungeon_tests PRIVATE cxx_std_17)
