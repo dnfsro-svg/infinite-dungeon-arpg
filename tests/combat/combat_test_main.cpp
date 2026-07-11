@@ -3,18 +3,20 @@
 #include <cstdio>
 
 arpg::test::TestSuite attack_catalog_suite() noexcept;
+arpg::test::TestSuite attack_state_suite() noexcept;
 arpg::test::TestSuite input_buffer_suite() noexcept;
 arpg::test::TestSuite movement_jump_suite() noexcept;
 
 namespace {
 
-constexpr int kExpectedCaseCount = 11;
+constexpr int kExpectedCaseCount = 15;
 
 }  // namespace
 
 int main() {
     const arpg::test::TestSuite suites[] = {
         attack_catalog_suite(),
+        attack_state_suite(),
         input_buffer_suite(),
         movement_jump_suite(),
     };

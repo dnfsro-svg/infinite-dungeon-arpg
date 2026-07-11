@@ -1,7 +1,8 @@
 add_library(arpg_combat STATIC
     attack_catalog.cpp
     combat_world.cpp
-    input_buffer.cpp)
+    input_buffer.cpp
+    player_simulation.cpp)
 
 target_include_directories(arpg_combat
     PUBLIC "${PROJECT_SOURCE_DIR}/src")
