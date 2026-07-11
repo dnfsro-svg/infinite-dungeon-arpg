@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- 基线必须是 `milestone/m01-combat-lab` 的设计提交 `bacc15a1cd2488a657b8d5f3695b4c29b10b32ad`；该提交的父提交是已验收 Stage 0 `b4f4f89d2ca90592852b0fe6d14b4ab66dd162a9`。
+- 生产代码基线必须保持与设计提交 `bacc15a1cd2488a657b8d5f3695b4c29b10b32ad` 一致；该提交的父提交是已验收 Stage 0 `b4f4f89d2ca90592852b0fe6d14b4ab66dd162a9`。任务工作树从 `milestone/m01-combat-lab` 当前已提交文档的 HEAD 创建，以同时携带设计和本计划；后续文档提交不得预先修改生产代码。
 - `src/core/` 与 `src/combat/` 不得 include、链接或通过编译/链接选项间接依赖 raylib、raymath、rlgl 或 raylib-cpp。
 - 规则更新固定为 60 Hz；渲染帧率不得改变动作帧、轨迹、碰撞、输入消费或结果。
 - Combat Update 热路径不得调用堆分配；对象、输入、命中记录和事件容量全部固定。
