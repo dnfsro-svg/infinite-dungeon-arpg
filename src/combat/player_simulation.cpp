@@ -17,7 +17,9 @@ constexpr float kRoomMinX = -8.0F;
 constexpr float kRoomMaxX = 8.0F;
 constexpr float kRoomMinY = -3.5F;
 constexpr float kRoomMaxY = 3.5F;
+constexpr std::uint16_t kJ1HitCancelTick = 8;
 constexpr std::uint16_t kJ1WhiffCancelTick = 13;
+constexpr std::uint16_t kJ2HitCancelTick = 9;
 constexpr std::uint16_t kJ2WhiffCancelTick = 15;
 
 int direction(std::int8_t value) noexcept {
@@ -103,10 +105,19 @@ void CombatWorld::simulate_player(MovementInput movement) noexcept {
             player_.position.x + definition->lunge_distance * facing,
             kRoomMinX,
             kRoomMaxX);
+        apply_attack_assist(*definition);
         player_.state = PlayerState::attack_startup;
         if (id == AttackId::air_j) {
             player_.air_attack_available = false;
         }
+
+        CombatEvent swing{};
+        swing.kind = CombatEventKind::swing;
+        swing.tick = tick_;
+        swing.attack = id;
+        swing.feedback = definition->feedback;
+        swing.position = player_.position;
+        emit_event(swing);
     };
 
     const auto finish_attack = [this, &is_airborne]() noexcept {
@@ -131,14 +142,18 @@ void CombatWorld::simulate_player(MovementInput movement) noexcept {
         player_.velocity.x = 0.0F;
         player_.velocity.y = 0.0F;
 
-        const bool j1_whiff = attack_.id == AttackId::j1 &&
-                              !attack_.connected &&
-                              attack_.elapsed_ticks >= kJ1WhiffCancelTick;
-        const bool j2_whiff = attack_.id == AttackId::j2 &&
-                              !attack_.connected &&
-                              attack_.elapsed_ticks >= kJ2WhiffCancelTick;
-        if ((j1_whiff || j2_whiff) && input_buffer_.consume(Action::light)) {
-            start_attack(j1_whiff ? AttackId::j2 : AttackId::j3);
+        const bool j1_cancel = attack_.id == AttackId::j1
+                            && attack_.elapsed_ticks
+                                   >= (attack_.connected
+                                           ? kJ1HitCancelTick
+                                           : kJ1WhiffCancelTick);
+        const bool j2_cancel = attack_.id == AttackId::j2
+                            && attack_.elapsed_ticks
+                                   >= (attack_.connected
+                                           ? kJ2HitCancelTick
+                                           : kJ2WhiffCancelTick);
+        if ((j1_cancel || j2_cancel) && input_buffer_.consume(Action::light)) {
+            start_attack(j1_cancel ? AttackId::j2 : AttackId::j3);
             advance_vertical(true);
             return;
         }

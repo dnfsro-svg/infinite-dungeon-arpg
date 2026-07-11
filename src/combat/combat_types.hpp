@@ -47,6 +47,28 @@ enum class ImpactKind : std::uint8_t {
     launch,
 };
 
+enum class CombatEventKind : std::uint8_t {
+    swing,
+    hit,
+    impact_summary,
+    landing,
+    break_started,
+    defeated,
+    respawned,
+    reset,
+};
+
+struct CombatEvent final {
+    CombatEventKind kind{};
+    std::uint64_t tick{};
+    AttackId attack{AttackId::none};
+    std::uint8_t target_index{0xFF};
+    std::uint8_t hit_count{};
+    FeedbackLevel feedback{};
+    Vec3 position{};
+    int value{};
+};
+
 struct AttackDefinition final {
     AttackId id{AttackId::none};
     std::uint16_t startup_ticks{};

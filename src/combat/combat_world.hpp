@@ -2,9 +2,11 @@
 
 #include "combat/combat_types.hpp"
 #include "combat/input_buffer.hpp"
+#include "core/bounded_queue.hpp"
 
 #include <array>
 #include <cstdint>
+#include <optional>
 
 namespace arpg::combat {
 
@@ -16,6 +18,7 @@ public:
     void tick(MovementInput movement) noexcept;
     void reset() noexcept;
     [[nodiscard]] CombatSnapshot snapshot() const noexcept;
+    [[nodiscard]] std::optional<CombatEvent> try_pop_event() noexcept;
 
 private:
     struct PlayerRuntime final {
@@ -38,6 +41,8 @@ private:
         std::uint16_t reaction_ticks{};
         std::uint16_t break_window_ticks{};
         std::uint16_t hit_stop_ticks{};
+        ImpactKind pending_impact{ImpactKind::light_hitstun};
+        bool has_pending_impact{};
         int hp{};
         int max_hp{};
         int break_value{};
@@ -54,12 +59,16 @@ private:
     };
 
     void simulate_player(MovementInput movement) noexcept;
+    void apply_attack_assist(const AttackDefinition& definition) noexcept;
+    void resolve_attack_hits() noexcept;
+    void emit_event(const CombatEvent& event) noexcept;
 
     CombatLabConfig config_{};
     PlayerRuntime player_{};
     std::array<DummyRuntime, kDummyCount> dummies_{};
     AttackRuntime attack_{};
     InputBuffer input_buffer_{};
+    core::BoundedQueue<CombatEvent, 64> events_{};
     std::uint64_t tick_{};
     std::uint32_t event_overflow_count_{};
 };

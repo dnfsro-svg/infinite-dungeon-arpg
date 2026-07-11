@@ -21,7 +21,6 @@ bool CombatWorld::queue_action(Action action) noexcept {
 }
 
 void CombatWorld::tick(MovementInput movement) noexcept {
-    ++tick_;
     const bool player_frozen = player_.hit_stop_ticks != 0;
     if (player_frozen) {
         --player_.hit_stop_ticks;
@@ -29,7 +28,18 @@ void CombatWorld::tick(MovementInput movement) noexcept {
         simulate_player(movement);
     }
 
+    for (DummyRuntime& dummy : dummies_) {
+        if (dummy.hit_stop_ticks != 0) {
+            --dummy.hit_stop_ticks;
+        }
+    }
+
+    if (!player_frozen) {
+        resolve_attack_hits();
+    }
+
     input_buffer_.age(player_frozen);
+    ++tick_;
 }
 
 void CombatWorld::reset() noexcept {
@@ -52,8 +62,14 @@ void CombatWorld::reset() noexcept {
     attack_ = AttackRuntime{};
     input_buffer_.clear();
     input_buffer_.reset_diagnostics();
+    while (events_.try_pop().has_value()) {
+    }
     tick_ = 0;
     event_overflow_count_ = 0;
+}
+
+std::optional<CombatEvent> CombatWorld::try_pop_event() noexcept {
+    return events_.try_pop();
 }
 
 CombatSnapshot CombatWorld::snapshot() const noexcept {

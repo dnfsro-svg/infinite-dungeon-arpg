@@ -6,10 +6,11 @@ arpg::test::TestSuite attack_catalog_suite() noexcept;
 arpg::test::TestSuite attack_state_suite() noexcept;
 arpg::test::TestSuite input_buffer_suite() noexcept;
 arpg::test::TestSuite movement_jump_suite() noexcept;
+arpg::test::TestSuite hit_resolution_suite() noexcept;
 
 namespace {
 
-constexpr int kExpectedCaseCount = 15;
+constexpr int kExpectedCaseCount = 20;
 
 }  // namespace
 
@@ -19,6 +20,7 @@ int main() {
         attack_state_suite(),
         input_buffer_suite(),
         movement_jump_suite(),
+        hit_resolution_suite(),
     };
 
     int failures = 0;

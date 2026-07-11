@@ -8,6 +8,14 @@ using namespace arpg::combat;
 
 constexpr double kFloatTolerance = 1.0e-4;
 
+CombatLabConfig isolated_attack_config() noexcept {
+    CombatLabConfig config;
+    config.dummy_spawns = {{{6.0F, 3.0F, 0.0F},
+                            {7.0F, -3.0F, 0.0F},
+                            {-6.0F, 3.0F, 0.0F}}};
+    return config;
+}
+
 void tick_n(CombatWorld& world, int count, MovementInput movement = {}) noexcept {
     for (int tick = 0; tick < count; ++tick) {
         world.tick(movement);
@@ -15,7 +23,7 @@ void tick_n(CombatWorld& world, int count, MovementInput movement = {}) noexcept
 }
 
 arpg::test::Failure ground_timelines_and_lunges_are_deterministic() noexcept {
-    CombatWorld light;
+    CombatWorld light{isolated_attack_config()};
     ARPG_REQUIRE(light.queue_action(Action::light));
     light.tick(MovementInput{1, 1});
     CombatSnapshot snapshot = light.snapshot();
@@ -53,7 +61,7 @@ arpg::test::Failure ground_timelines_and_lunges_are_deterministic() noexcept {
     ARPG_REQUIRE(arpg::test::near(
         snapshot.player.position.x, 0.10, kFloatTolerance));
 
-    CombatWorld heavy;
+    CombatWorld heavy{isolated_attack_config()};
     ARPG_REQUIRE(heavy.queue_action(Action::heavy));
     heavy.tick(MovementInput{});
     snapshot = heavy.snapshot();
@@ -76,7 +84,7 @@ arpg::test::Failure ground_timelines_and_lunges_are_deterministic() noexcept {
     heavy.tick(MovementInput{});
     ARPG_REQUIRE(heavy.snapshot().player.active_attack == AttackId::none);
 
-    CombatWorld launcher;
+    CombatWorld launcher{isolated_attack_config()};
     ARPG_REQUIRE(launcher.queue_action(Action::launcher));
     launcher.tick(MovementInput{});
     snapshot = launcher.snapshot();
@@ -93,7 +101,7 @@ arpg::test::Failure ground_timelines_and_lunges_are_deterministic() noexcept {
 }
 
 arpg::test::Failure whiff_windows_chain_j1_j2_and_end_at_j3() noexcept {
-    CombatWorld world;
+    CombatWorld world{isolated_attack_config()};
     ARPG_REQUIRE(world.queue_action(Action::light));
     world.tick(MovementInput{});
 
@@ -152,7 +160,7 @@ arpg::test::Failure whiff_windows_chain_j1_j2_and_end_at_j3() noexcept {
 }
 
 arpg::test::Failure action_priority_and_illegal_cancels_are_deterministic() noexcept {
-    CombatWorld all_actions;
+    CombatWorld all_actions{isolated_attack_config()};
     ARPG_REQUIRE(all_actions.queue_action(Action::light));
     ARPG_REQUIRE(all_actions.queue_action(Action::launcher));
     ARPG_REQUIRE(all_actions.queue_action(Action::heavy));
@@ -163,7 +171,7 @@ arpg::test::Failure action_priority_and_illegal_cancels_are_deterministic() noex
     ARPG_REQUIRE(snapshot.player.active_attack == AttackId::none);
     ARPG_REQUIRE(snapshot.diagnostics.input_size == 3);
 
-    CombatWorld no_jump;
+    CombatWorld no_jump{isolated_attack_config()};
     ARPG_REQUIRE(no_jump.queue_action(Action::light));
     ARPG_REQUIRE(no_jump.queue_action(Action::launcher));
     ARPG_REQUIRE(no_jump.queue_action(Action::heavy));
@@ -172,7 +180,7 @@ arpg::test::Failure action_priority_and_illegal_cancels_are_deterministic() noex
     ARPG_REQUIRE(snapshot.player.active_attack == AttackId::heavy);
     ARPG_REQUIRE(snapshot.diagnostics.input_size == 2);
 
-    CombatWorld no_jump_or_heavy;
+    CombatWorld no_jump_or_heavy{isolated_attack_config()};
     ARPG_REQUIRE(no_jump_or_heavy.queue_action(Action::light));
     ARPG_REQUIRE(no_jump_or_heavy.queue_action(Action::launcher));
     no_jump_or_heavy.tick(MovementInput{});
@@ -180,7 +188,7 @@ arpg::test::Failure action_priority_and_illegal_cancels_are_deterministic() noex
     ARPG_REQUIRE(snapshot.player.active_attack == AttackId::launcher);
     ARPG_REQUIRE(snapshot.diagnostics.input_size == 1);
 
-    CombatWorld blocked;
+    CombatWorld blocked{isolated_attack_config()};
     ARPG_REQUIRE(blocked.queue_action(Action::heavy));
     blocked.tick(MovementInput{});
     ARPG_REQUIRE(blocked.queue_action(Action::jump));
@@ -202,7 +210,7 @@ arpg::test::Failure action_priority_and_illegal_cancels_are_deterministic() noex
 }
 
 arpg::test::Failure air_j_is_limited_to_once_per_airtime() noexcept {
-    CombatWorld world;
+    CombatWorld world{isolated_attack_config()};
     ARPG_REQUIRE(world.queue_action(Action::jump));
     world.tick(MovementInput{});
     ARPG_REQUIRE(world.snapshot().player.air_attack_available);
