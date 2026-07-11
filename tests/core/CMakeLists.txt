@@ -3,7 +3,8 @@ add_executable(arpg_core_tests
     allocation_probe.cpp
     fixed_step_tests.cpp
     deterministic_rng_tests.cpp
-    fixed_pool_tests.cpp)
+    fixed_pool_tests.cpp
+    bounded_queue_tests.cpp)
 
 target_compile_features(arpg_core_tests PRIVATE cxx_std_17)
 target_link_libraries(arpg_core_tests PRIVATE arpg_core)
