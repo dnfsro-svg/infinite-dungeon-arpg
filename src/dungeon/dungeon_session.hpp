@@ -29,7 +29,7 @@ private:
     void construct_current_room() noexcept;
     void relay_combat_events() noexcept;
     void attempt_exit(ExitDirection direction) noexcept;
-    void emit(
+    bool emit(
         DungeonEventKind kind,
         ExitDirection direction = ExitDirection::none) noexcept;
     [[nodiscard]] std::uint8_t remaining_targets() const noexcept;

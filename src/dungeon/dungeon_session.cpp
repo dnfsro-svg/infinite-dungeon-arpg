@@ -138,8 +138,8 @@ void DungeonSession::attempt_exit(ExitDirection direction) noexcept {
             == (std::numeric_limits<std::uint64_t>::max)()) {
         diagnostics_.room_index_overflow = true;
         if (!room_index_fault_emitted_) {
-            emit(DungeonEventKind::faulted, direction);
-            room_index_fault_emitted_ = true;
+            room_index_fault_emitted_ =
+                emit(DungeonEventKind::faulted, direction);
         }
         return;
     }
@@ -152,7 +152,7 @@ void DungeonSession::attempt_exit(ExitDirection direction) noexcept {
     phase_ = RoomPhase::transitioning;
 }
 
-void DungeonSession::emit(
+bool DungeonSession::emit(
     DungeonEventKind kind,
     ExitDirection direction) noexcept {
     const DungeonEvent event{
@@ -167,6 +167,7 @@ void DungeonSession::emit(
         saturating_increment(diagnostics_.event_overflow_count);
         assert(emitted && "Dungeon event queue overflow");
     }
+    return emitted;
 }
 
 std::uint8_t DungeonSession::remaining_targets() const noexcept {

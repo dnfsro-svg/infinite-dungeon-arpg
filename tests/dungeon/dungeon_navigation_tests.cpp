@@ -106,6 +106,86 @@ bool commit_exit(DungeonSession& session, ExitDirection direction) noexcept {
     return false;
 }
 
+#if defined(NDEBUG)
+bool clear_without_dungeon_drain(DungeonSession& session) noexcept {
+    for (int tick = 0; tick < 4096; ++tick) {
+        const DungeonSnapshot state = session.snapshot();
+        if (state.phase == RoomPhase::cleared) {
+            session.tick(MovementInput{});
+            drain_combat(session);
+            return session.snapshot().phase == RoomPhase::awaiting_exit;
+        }
+
+        MovementInput movement{};
+        if (state.phase == RoomPhase::combat && state.combat.has_value()) {
+            const auto* target = arpg::test::nearest_living_dummy(*state.combat);
+            if (target != nullptr) {
+                movement = arpg::test::movement_toward(
+                    state.combat->player.position, target->position);
+                if (arpg::test::in_light_attack_lane(
+                        state.combat->player, *target)
+                        && state.combat->player.active_attack
+                            == arpg::combat::AttackId::none) {
+                    static_cast<void>(
+                        session.queue_action(arpg::combat::Action::light));
+                }
+            }
+        }
+        session.tick(movement);
+        drain_combat(session);
+    }
+    return false;
+}
+
+bool request_without_dungeon_drain(
+    DungeonSession& session,
+    ExitDirection direction,
+    RoomPhase expected_phase) noexcept {
+    for (int tick = 0; tick < 256; ++tick) {
+        const DungeonSnapshot state = session.snapshot();
+        const MovementInput movement = alignment(state, direction);
+        if (movement.x == 0 && movement.y == 0) {
+            break;
+        }
+        session.tick(movement);
+        drain_combat(session);
+    }
+    for (int tick = 0; tick < 256; ++tick) {
+        session.tick(outward(direction));
+        drain_combat(session);
+        const DungeonSnapshot state = session.snapshot();
+        if (expected_phase == RoomPhase::transitioning
+                && state.phase == RoomPhase::transitioning) {
+            return true;
+        }
+        if (expected_phase == RoomPhase::awaiting_exit
+                && state.phase == RoomPhase::awaiting_exit
+                && state.diagnostics.room_index_overflow) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool advance_without_dungeon_drain(
+    DungeonSession& session,
+    ExitDirection direction) noexcept {
+    if (!clear_without_dungeon_drain(session)
+            || !request_without_dungeon_drain(
+                session, direction, RoomPhase::transitioning)) {
+        return false;
+    }
+    session.tick(outward(direction));
+    drain_combat(session);
+    if (session.snapshot().phase != RoomPhase::locked) {
+        return false;
+    }
+    session.tick(outward(direction));
+    drain_combat(session);
+    return session.snapshot().phase == RoomPhase::combat;
+}
+#endif
+
 arpg::test::Failure exact_apertures_accept_outward_input() noexcept {
     using arpg::dungeon::requested_exit;
     ARPG_REQUIRE(requested_exit(Vec3{-8.0F, 0.90F, 4.0F}, {-1, 0})
@@ -260,6 +340,50 @@ arpg::test::Failure maximum_index_faults_once_without_destroying() noexcept {
     ARPG_REQUIRE(repeated.count == 0U);
     ARPG_REQUIRE(session.snapshot().room_index
         == (std::numeric_limits<std::uint64_t>::max)());
+
+#if defined(NDEBUG)
+    arpg::dungeon::DungeonSessionConfig backlog_config;
+    backlog_config.initial_room_index =
+        (std::numeric_limits<std::uint64_t>::max)() - 5U;
+    DungeonSession backlog{backlog_config};
+    for (int room = 0; room < 5; ++room) {
+        ARPG_REQUIRE(advance_without_dungeon_drain(
+            backlog, ExitDirection::right));
+    }
+    ARPG_REQUIRE(backlog.snapshot().room_index
+        == (std::numeric_limits<std::uint64_t>::max)());
+    ARPG_REQUIRE(clear_without_dungeon_drain(backlog));
+    ARPG_REQUIRE(request_without_dungeon_drain(
+        backlog, ExitDirection::right, RoomPhase::awaiting_exit));
+    ARPG_REQUIRE(backlog.snapshot().diagnostics.event_overflow_count > 0U);
+    ARPG_REQUIRE(backlog.snapshot().diagnostics.room_index_overflow);
+
+    std::size_t queued_count = 0U;
+    std::size_t faulted_count = 0U;
+    while (const auto event = backlog.try_pop_event()) {
+        ++queued_count;
+        if (event->kind == DungeonEventKind::faulted) {
+            ++faulted_count;
+        }
+    }
+    ARPG_REQUIRE(queued_count == DungeonSession::kDungeonEventCapacity);
+    ARPG_REQUIRE(faulted_count == 0U);
+
+    backlog.tick(outward(ExitDirection::right));
+    drain_combat(backlog);
+    backlog.tick(outward(ExitDirection::right));
+    drain_combat(backlog);
+    while (const auto event = backlog.try_pop_event()) {
+        if (event->kind == DungeonEventKind::faulted) {
+            ++faulted_count;
+        }
+    }
+    ARPG_REQUIRE(faulted_count == 1U);
+    ARPG_REQUIRE(backlog.snapshot().phase == RoomPhase::awaiting_exit);
+    ARPG_REQUIRE(backlog.snapshot().has_active_room);
+    ARPG_REQUIRE(backlog.snapshot().room_index
+        == (std::numeric_limits<std::uint64_t>::max)());
+#endif
     return {};
 }
 
