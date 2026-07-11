@@ -119,9 +119,5 @@ constexpr arpg::test::TestCase kCases[] = {
 }  // namespace
 
 arpg::test::TestSuite deterministic_rng_suite() noexcept {
-    return {
-        "deterministic_rng",
-        kCases,
-        sizeof(kCases) / sizeof(kCases[0]),
-    };
+    return arpg::test::make_suite("deterministic_rng", kCases);
 }

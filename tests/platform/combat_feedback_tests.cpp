@@ -131,5 +131,5 @@ constexpr arpg::test::TestCase kCases[] = {
 }  // namespace
 
 arpg::test::TestSuite combat_feedback_suite() noexcept {
-    return {"combat_feedback", kCases, sizeof(kCases) / sizeof(kCases[0])};
+    return arpg::test::make_suite("combat_feedback", kCases);
 }

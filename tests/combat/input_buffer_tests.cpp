@@ -116,9 +116,5 @@ constexpr arpg::test::TestCase kCases[] = {
 }  // namespace
 
 arpg::test::TestSuite input_buffer_suite() noexcept {
-    return {
-        "input_buffer",
-        kCases,
-        sizeof(kCases) / sizeof(kCases[0]),
-    };
+    return arpg::test::make_suite("input_buffer", kCases);
 }

@@ -139,9 +139,5 @@ constexpr arpg::test::TestCase kCases[] = {
 }  // namespace
 
 arpg::test::TestSuite bounded_queue_suite() noexcept {
-    return {
-        "bounded_queue",
-        kCases,
-        sizeof(kCases) / sizeof(kCases[0]),
-    };
+    return arpg::test::make_suite("bounded_queue", kCases);
 }

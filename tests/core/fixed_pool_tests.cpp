@@ -172,9 +172,5 @@ constexpr arpg::test::TestCase kCases[] = {
 }  // namespace
 
 arpg::test::TestSuite fixed_pool_suite() noexcept {
-    return {
-        "fixed_pool",
-        kCases,
-        sizeof(kCases) / sizeof(kCases[0]),
-    };
+    return arpg::test::make_suite("fixed_pool", kCases);
 }

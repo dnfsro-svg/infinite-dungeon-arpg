@@ -31,9 +31,5 @@ constexpr test::TestCase kCases[] = {
 }  // namespace
 
 arpg::test::TestSuite combat_key_bindings_suite() noexcept {
-    return {
-        "combat_key_bindings",
-        kCases,
-        sizeof(kCases) / sizeof(kCases[0]),
-    };
+    return arpg::test::make_suite("combat_key_bindings", kCases);
 }

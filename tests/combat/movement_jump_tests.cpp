@@ -178,9 +178,5 @@ constexpr arpg::test::TestCase kCases[] = {
 }  // namespace
 
 arpg::test::TestSuite movement_jump_suite() noexcept {
-    return {
-        "movement_jump",
-        kCases,
-        sizeof(kCases) / sizeof(kCases[0]),
-    };
+    return arpg::test::make_suite("movement_jump", kCases);
 }

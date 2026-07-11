@@ -390,5 +390,5 @@ constexpr arpg::test::TestCase kCases[] = {
 }  // namespace
 
 arpg::test::TestSuite dummy_reaction_suite() noexcept {
-    return {"dummy_reaction", kCases, sizeof(kCases) / sizeof(kCases[0])};
+    return arpg::test::make_suite("dummy_reaction", kCases);
 }

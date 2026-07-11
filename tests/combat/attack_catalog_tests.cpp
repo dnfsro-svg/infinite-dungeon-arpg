@@ -64,9 +64,5 @@ constexpr arpg::test::TestCase kCases[] = {
 }  // namespace
 
 arpg::test::TestSuite attack_catalog_suite() noexcept {
-    return {
-        "attack_catalog",
-        kCases,
-        sizeof(kCases) / sizeof(kCases[0]),
-    };
+    return arpg::test::make_suite("attack_catalog", kCases);
 }

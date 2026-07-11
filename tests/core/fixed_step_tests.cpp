@@ -170,9 +170,5 @@ constexpr arpg::test::TestCase kCases[] = {
 }  // namespace
 
 arpg::test::TestSuite fixed_step_suite() noexcept {
-    return {
-        "fixed_step",
-        kCases,
-        sizeof(kCases) / sizeof(kCases[0]),
-    };
+    return arpg::test::make_suite("fixed_step", kCases);
 }

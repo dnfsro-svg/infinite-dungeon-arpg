@@ -77,5 +77,5 @@ constexpr arpg::test::TestCase kCases[] = {
 }  // namespace
 
 arpg::test::TestSuite combat_view_math_suite() noexcept {
-    return {"combat_view_math", kCases, sizeof(kCases) / sizeof(kCases[0])};
+    return arpg::test::make_suite("combat_view_math", kCases);
 }

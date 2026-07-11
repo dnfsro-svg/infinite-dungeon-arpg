@@ -252,9 +252,5 @@ constexpr arpg::test::TestCase kCases[] = {
 }  // namespace
 
 arpg::test::TestSuite attack_state_suite() noexcept {
-    return {
-        "attack_state",
-        kCases,
-        sizeof(kCases) / sizeof(kCases[0]),
-    };
+    return arpg::test::make_suite("attack_state", kCases);
 }

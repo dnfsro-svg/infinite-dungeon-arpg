@@ -296,5 +296,5 @@ constexpr arpg::test::TestCase kCases[] = {
 }  // namespace
 
 arpg::test::TestSuite hit_resolution_suite() noexcept {
-    return {"hit_resolution", kCases, sizeof(kCases) / sizeof(kCases[0])};
+    return arpg::test::make_suite("hit_resolution", kCases);
 }

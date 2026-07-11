@@ -494,5 +494,5 @@ constexpr arpg::test::TestCase kCases[] = {
 }  // namespace
 
 arpg::test::TestSuite break_stress_suite() noexcept {
-    return {"break_stress", kCases, sizeof(kCases) / sizeof(kCases[0])};
+    return arpg::test::make_suite("break_stress", kCases);
 }
