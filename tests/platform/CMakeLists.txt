@@ -6,7 +6,10 @@ foreach(PROPERTY_NAME IN ITEMS
     get_target_property(PROPERTY_VALUE arpg_core "${PROPERTY_NAME}")
     if(PROPERTY_VALUE)
         string(TOLOWER "${PROPERTY_VALUE}" PROPERTY_VALUE_LOWER)
-        if(PROPERTY_VALUE_LOWER MATCHES "raylib|_deps[/\\\\]raylib")
+        # Match a target or path component, not a parent directory whose
+        # name merely contains "raylib" (for example m00-raylib-host).
+        if(PROPERTY_VALUE_LOWER MATCHES
+                "(^|[;:/\\\\<])raylib($|[;:/\\\\>])|_deps[/\\\\]raylib")
             message(FATAL_ERROR
                 "arpg_core ${PROPERTY_NAME} leaks raylib: ${PROPERTY_VALUE}")
         endif()
