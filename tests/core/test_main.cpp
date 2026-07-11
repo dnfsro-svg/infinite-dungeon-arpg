@@ -4,11 +4,13 @@
 
 arpg::test::TestSuite fixed_step_suite() noexcept;
 arpg::test::TestSuite deterministic_rng_suite() noexcept;
+arpg::test::TestSuite fixed_pool_suite() noexcept;
 
 int main() {
     const arpg::test::TestSuite suites[] = {
         fixed_step_suite(),
         deterministic_rng_suite(),
+        fixed_pool_suite(),
     };
 
     int failures = 0;
