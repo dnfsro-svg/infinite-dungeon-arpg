@@ -22,14 +22,14 @@ bool CombatWorld::queue_action(Action action) noexcept {
 
 void CombatWorld::tick(MovementInput movement) noexcept {
     ++tick_;
-    if (player_.hit_stop_ticks != 0) {
+    const bool player_frozen = player_.hit_stop_ticks != 0;
+    if (player_frozen) {
         --player_.hit_stop_ticks;
-        input_buffer_.age(true);
-        return;
+    } else {
+        simulate_player(movement);
     }
 
-    simulate_player(movement);
-    input_buffer_.age(player_.hit_stop_ticks != 0);
+    input_buffer_.age(player_frozen);
 }
 
 void CombatWorld::reset() noexcept {
