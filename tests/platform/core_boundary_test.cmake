@@ -4,11 +4,15 @@ endif()
 
 set(ARPG_FORBIDDEN_SOURCE_INCLUDE_REGEX
     [=[^[ \t]*#[ \t]*include[ \t]*[<"]([^>"]*[/\\])?(raylib\.h|raymath\.h|rlgl\.h|raylib-cpp[^>"]*)[>"]]=])
+set(ARPG_FORBIDDEN_SOURCE_MACRO_REGEX
+    [=[^[ \t]*#[ \t]*define[ \t]+[a-z_][a-z0-9_]*[ \t]+[<"]([^>"]*[/\\])?(raylib\.h|raymath\.h|rlgl\.h|raylib-cpp[^>"]*)[>"]]=])
 
 function(arpg_line_has_forbidden_include INPUT_LINE OUT_FOUND)
     string(TOLOWER "${INPUT_LINE}" _arpg_line_lower)
     if(_arpg_line_lower MATCHES
-            "${ARPG_FORBIDDEN_SOURCE_INCLUDE_REGEX}")
+            "${ARPG_FORBIDDEN_SOURCE_INCLUDE_REGEX}"
+            OR _arpg_line_lower MATCHES
+            "${ARPG_FORBIDDEN_SOURCE_MACRO_REGEX}")
         set("${OUT_FOUND}" TRUE PARENT_SCOPE)
     else()
         set("${OUT_FOUND}" FALSE PARENT_SCOPE)
@@ -39,6 +43,29 @@ function(arpg_source_has_forbidden_include SOURCE_TEXT OUT_FOUND OUT_LINE)
         if(_arpg_next_index LESS _arpg_source_length)
             string(SUBSTRING
                 "${SOURCE_TEXT}" ${_arpg_next_index} 1 _arpg_next_char)
+        endif()
+
+        math(EXPR _arpg_after_next_index "${_arpg_index} + 2")
+        set(_arpg_after_next_char "")
+        if(_arpg_after_next_index LESS _arpg_source_length)
+            string(SUBSTRING
+                "${SOURCE_TEXT}"
+                ${_arpg_after_next_index}
+                1
+                _arpg_after_next_char)
+        endif()
+
+        if(NOT _arpg_state STREQUAL RAW_STRING
+                AND _arpg_char STREQUAL "\\")
+            if(_arpg_next_char STREQUAL "\n")
+                math(EXPR _arpg_index "${_arpg_index} + 2")
+                continue()
+            endif()
+            if(_arpg_next_char STREQUAL "\r"
+                    AND _arpg_after_next_char STREQUAL "\n")
+                math(EXPR _arpg_index "${_arpg_index} + 3")
+                continue()
+            endif()
         endif()
 
         if(_arpg_state STREQUAL CODE)
@@ -101,7 +128,7 @@ function(arpg_source_has_forbidden_include SOURCE_TEXT OUT_FOUND OUT_LINE)
             if(_arpg_char STREQUAL "\"")
                 string(TOLOWER "${_arpg_line}" _arpg_line_lower)
                 if(_arpg_line_lower MATCHES
-                        "^[ \t]*#[ \t]*include[ \t]*$")
+                        "^[ \t]*#[ \t]*(include[ \t]*|define[ \t]+[a-z_][a-z0-9_]*[ \t]+)$")
                     string(APPEND _arpg_line "\"")
                     set(_arpg_state INCLUDE_STRING)
                 else()
@@ -227,13 +254,18 @@ function(arpg_expect_source_boundary LABEL EXPECTED_FOUND SOURCE_TEXT)
     arpg_source_has_forbidden_include(
         "${SOURCE_TEXT}" _arpg_found _arpg_line)
     if(EXPECTED_FOUND AND NOT _arpg_found)
-        message(FATAL_ERROR "Source lexer self-test missed: ${LABEL}")
+        set_property(
+            GLOBAL APPEND PROPERTY
+            ARPG_SOURCE_BOUNDARY_SELF_TEST_FAILURES "missed:${LABEL}")
     endif()
     if(NOT EXPECTED_FOUND AND _arpg_found)
-        message(FATAL_ERROR
-            "Source lexer self-test false positive: ${LABEL}: ${_arpg_line}")
+        set_property(
+            GLOBAL APPEND PROPERTY
+            ARPG_SOURCE_BOUNDARY_SELF_TEST_FAILURES "false-positive:${LABEL}")
     endif()
 endfunction()
+
+set_property(GLOBAL PROPERTY ARPG_SOURCE_BOUNDARY_SELF_TEST_FAILURES "")
 
 arpg_expect_source_boundary(
     "real angle include" TRUE [=[#include <raylib.h>]=])
@@ -241,6 +273,20 @@ arpg_expect_source_boundary(
     "real quoted include" TRUE [=[  # include "vendor/raymath.h"]=])
 arpg_expect_source_boundary(
     "comment-separated directive" TRUE [=[#/**/include <rlgl.h>]=])
+arpg_expect_source_boundary(
+    "comment before header" TRUE [=[#include/**/<raylib.h>]=])
+arpg_expect_source_boundary(
+    "continued directive token" TRUE [=[#inc\
+lude <raylib.h>]=])
+arpg_expect_source_boundary(
+    "continued header" TRUE [=[#include \
+<raymath.h>]=])
+arpg_expect_source_boundary(
+    "macro angle header" TRUE [=[#define RL_HEADER <raylib.h>
+#include RL_HEADER]=])
+arpg_expect_source_boundary(
+    "macro quoted header" TRUE [=[#define RL_HEADER "raymath.h"
+#include RL_HEADER]=])
 
 arpg_expect_source_boundary(
     "line comment" FALSE [=[// #include <raylib.h>]=])
@@ -255,6 +301,9 @@ arpg_expect_source_boundary(
     "character literal" FALSE
     [=[const char hash = '#'; // #include <raylib.h>]=])
 arpg_expect_source_boundary(
+    "continued line comment" FALSE [=[// harmless \
+#include <raylib.h>]=])
+arpg_expect_source_boundary(
     "custom-delimiter raw string" FALSE
     [=[constexpr auto text = R"arpg_raw(
 #include <raylib.h>
@@ -264,6 +313,17 @@ arpg_expect_source_boundary(
 arpg_expect_source_boundary(
     "similar header" FALSE [=[#include <my_raylib.h>]=])
 
+get_property(
+    ARPG_SOURCE_BOUNDARY_SELF_TEST_FAILURES
+    GLOBAL PROPERTY ARPG_SOURCE_BOUNDARY_SELF_TEST_FAILURES)
+if(ARPG_SOURCE_BOUNDARY_SELF_TEST_FAILURES)
+    string(JOIN
+        ", " ARPG_SOURCE_BOUNDARY_SELF_TEST_FAILURE_SUMMARY
+        ${ARPG_SOURCE_BOUNDARY_SELF_TEST_FAILURES})
+    message(FATAL_ERROR
+        "Source lexer self-tests failed: ${ARPG_SOURCE_BOUNDARY_SELF_TEST_FAILURE_SUMMARY}")
+endif()
+
 file(GLOB_RECURSE CORE_FILES
     LIST_DIRECTORIES FALSE
     "${CORE_DIR}/*.h"
@@ -271,14 +331,17 @@ file(GLOB_RECURSE CORE_FILES
     "${CORE_DIR}/*.hpp"
     "${CORE_DIR}/*.hxx"
     "${CORE_DIR}/*.inl"
+    "${CORE_DIR}/*.inc"
     "${CORE_DIR}/*.ipp"
     "${CORE_DIR}/*.tpp"
+    "${CORE_DIR}/*.tcc"
     "${CORE_DIR}/*.c"
     "${CORE_DIR}/*.cc"
     "${CORE_DIR}/*.cpp"
     "${CORE_DIR}/*.cxx"
     "${CORE_DIR}/*.ixx"
-    "${CORE_DIR}/*.cppm")
+    "${CORE_DIR}/*.cppm"
+    "${CORE_DIR}/*.mpp")
 
 foreach(CORE_FILE IN LISTS CORE_FILES)
     file(READ "${CORE_FILE}" CORE_CONTENT)
