@@ -12,9 +12,6 @@
 namespace arpg::combat {
 namespace {
 
-constexpr float kAssistMaxGap = 0.35F;
-constexpr float kAssistMaxDepth = 0.45F;
-constexpr float kAssistMaxCorrection = 0.18F;
 constexpr float kRoomMinX = -8.0F;
 constexpr float kRoomMaxX = 8.0F;
 constexpr std::uint16_t kBreakWindowTicks = 180;
@@ -54,9 +51,9 @@ void CombatWorld::apply_attack_assist(
             || dummy.reaction == ReactionState::defeated
             || dummy.reaction == ReactionState::respawning
             || (facing_right && relative_x < 0.0F)
-            || (!facing_right && relative_x > 0.0F)
-            || std::fabs(dummy.position.y - player_.position.y)
-                > kAssistMaxDepth) {
+                || (!facing_right && relative_x > 0.0F)
+                || std::fabs(dummy.position.y - player_.position.y)
+                > kAttackAssistMaxDepth) {
             continue;
         }
 
@@ -66,12 +63,13 @@ void CombatWorld::apply_attack_assist(
                                                     - attack_box.maximum.x)
                               : std::max(0.0F, attack_box.minimum.x
                                                     - hurtbox.maximum.x);
-        if (gap > kAssistMaxGap || gap >= best_gap) {
+        if (gap > kAttackAssistMaxGap || gap >= best_gap) {
             continue;
         }
 
         best_gap = gap;
-        const float magnitude = std::min(gap, kAssistMaxCorrection);
+        const float magnitude = std::min(
+            gap, kAttackAssistMaxCorrection);
         best_correction = facing_right ? magnitude : -magnitude;
     }
 

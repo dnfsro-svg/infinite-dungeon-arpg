@@ -38,6 +38,22 @@ arpg::test::Failure inclusive_xyz_mirror_and_depth_are_deterministic() noexcept 
     ARPG_REQUIRE(arpg::test::near(left.minimum.x, -0.50, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(left.maximum.x, 0.80, 1.0e-4));
 
+    AttackDefinition assist_definition{};
+    assist_definition.local_hitbox = local;
+    const Aabb assist_right = make_attack_assist_volume(
+        assist_definition, Vec3{1.0F, 2.0F, 3.0F}, Facing::right);
+    ARPG_REQUIRE(arpg::test::near(assist_right.minimum.x, 1.20, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(assist_right.maximum.x, 2.85, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(assist_right.minimum.y, 1.55, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(assist_right.maximum.y, 2.45, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(assist_right.minimum.z, 3.10, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(assist_right.maximum.z, 4.50, 1.0e-4));
+
+    const Aabb assist_left = make_attack_assist_volume(
+        assist_definition, Vec3{1.0F, 2.0F, 3.0F}, Facing::left);
+    ARPG_REQUIRE(arpg::test::near(assist_left.minimum.x, -0.85, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(assist_left.maximum.x, 0.80, 1.0e-4));
+
     const Aabb boundary{
         {right.maximum.x, right.minimum.y, right.maximum.z},
         {right.maximum.x, right.minimum.y, right.maximum.z}};

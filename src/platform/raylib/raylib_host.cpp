@@ -1,5 +1,9 @@
 #include "raylib_host.hpp"
 
+#include "combat/combat_world.hpp"
+#include "combat_audio.hpp"
+#include "combat_feedback.hpp"
+#include "combat_renderer.hpp"
 #include "core/fixed_step.hpp"
 
 #include <raylib.h>
@@ -19,165 +23,37 @@ static_assert(RAYLIB_VERSION_PATCH == 0, "raylib 6.0.0 is required");
 namespace arpg::platform {
 namespace {
 
-[[nodiscard]] Vector2 lerp(
-    Vector2 from,
-    Vector2 to,
-    float amount) noexcept {
-    return {
-        from.x + (to.x - from.x) * amount,
-        from.y + (to.y - from.y) * amount,
-    };
+std::int8_t key_direction(int negative_key, int positive_key) noexcept {
+    const int negative = IsKeyDown(negative_key) ? 1 : 0;
+    const int positive = IsKeyDown(positive_key) ? 1 : 0;
+    return static_cast<std::int8_t>(positive - negative);
 }
 
-void draw_graybox_room() noexcept {
-    const float width = static_cast<float>(GetScreenWidth());
-    const float height = static_cast<float>(GetScreenHeight());
-
-    const Vector2 back_left{width * 0.20F, height * 0.22F};
-    const Vector2 back_right{width * 0.80F, height * 0.22F};
-    const Vector2 floor_left{width * 0.04F, height * 0.92F};
-    const Vector2 floor_right{width * 0.96F, height * 0.92F};
-
-    DrawRectangleGradientV(
-        0,
-        0,
-        GetScreenWidth(),
-        GetScreenHeight(),
-        Color{13, 17, 27, 255},
-        Color{28, 32, 43, 255});
-
-    DrawRectangle(
-        static_cast<int>(back_left.x),
-        0,
-        static_cast<int>(back_right.x - back_left.x),
-        static_cast<int>(back_left.y),
-        Color{31, 37, 51, 255});
-
-    DrawTriangle(
-        Vector2{0.0F, 0.0F},
-        floor_left,
-        back_left,
-        Color{22, 27, 39, 255});
-    DrawTriangle(
-        Vector2{0.0F, 0.0F},
-        Vector2{0.0F, height},
-        floor_left,
-        Color{22, 27, 39, 255});
-    DrawTriangle(
-        Vector2{width, 0.0F},
-        back_right,
-        floor_right,
-        Color{22, 27, 39, 255});
-    DrawTriangle(
-        Vector2{width, 0.0F},
-        floor_right,
-        Vector2{width, height},
-        Color{22, 27, 39, 255});
-
-    const Color floor{45, 51, 63, 255};
-    DrawTriangle(back_left, floor_left, floor_right, floor);
-    DrawTriangle(back_left, floor_right, back_right, floor);
-
-    const Color grid = Color{87, 99, 119, 110};
-    for (int column = 0; column <= 10; ++column) {
-        const float amount =
-            static_cast<float>(column) / 10.0F;
-        DrawLineEx(
-            lerp(back_left, back_right, amount),
-            lerp(floor_left, floor_right, amount),
-            1.0F,
-            grid);
+void submit_frame_actions(combat::CombatWorld& world) noexcept {
+    if (IsKeyPressed(KEY_J)) {
+        static_cast<void>(world.queue_action(combat::Action::light));
     }
-    for (int row = 0; row <= 8; ++row) {
-        const float linear =
-            static_cast<float>(row) / 8.0F;
-        const float perspective = linear * linear;
-        DrawLineEx(
-            lerp(back_left, floor_left, perspective),
-            lerp(back_right, floor_right, perspective),
-            1.0F,
-            grid);
+    if (IsKeyPressed(KEY_K)) {
+        static_cast<void>(world.queue_action(combat::Action::jump));
     }
-
-    DrawLineEx(back_left, back_right, 3.0F, Color{118, 130, 151, 255});
-    DrawLineEx(back_left, floor_left, 3.0F, Color{91, 103, 124, 255});
-    DrawLineEx(back_right, floor_right, 3.0F, Color{91, 103, 124, 255});
+    if (IsKeyPressed(KEY_L)) {
+        static_cast<void>(world.queue_action(combat::Action::heavy));
+    }
+    if (IsKeyPressed(KEY_U)) {
+        static_cast<void>(world.queue_action(combat::Action::launcher));
+    }
 }
 
-void draw_diagnostics(
-    const core::FixedStepFrame& frame,
-    std::uint64_t root_seed) noexcept {
-    DrawRectangleRounded(
-        Rectangle{20.0F, 20.0F, 390.0F, 228.0F},
-        0.08F,
-        6,
-        Color{7, 10, 17, 218});
-    DrawRectangleRoundedLines(
-        Rectangle{20.0F, 20.0F, 390.0F, 228.0F},
-        0.08F,
-        6,
-        Color{91, 114, 151, 255});
-
-    constexpr int x = 40;
-    constexpr int font_size = 20;
-    constexpr int line_height = 28;
-    int y = 38;
-    const Color text{218, 226, 239, 255};
-    const Color accent{110, 207, 255, 255};
-
-    DrawText(TextFormat("raylib %s", RAYLIB_VERSION), x, y, font_size, accent);
-    y += line_height;
-    DrawText(
-        TextFormat(
-            "seed 0x%016llX",
-            static_cast<unsigned long long>(root_seed)),
-        x,
-        y,
-        font_size,
-        text);
-    y += line_height;
-    DrawText(
-        TextFormat(
-            "tick %llu",
-            static_cast<unsigned long long>(frame.total_ticks)),
-        x,
-        y,
-        font_size,
-        text);
-    y += line_height;
-    DrawText(
-        TextFormat(
-            "fixed steps %u / %u",
-            frame.steps,
-            core::FixedStepRunner::kMaxStepsPerFrame),
-        x,
-        y,
-        font_size,
-        text);
-    y += line_height;
-    DrawText(
-        TextFormat("alpha %.3f", frame.interpolation_alpha),
-        x,
-        y,
-        font_size,
-        text);
-    y += line_height;
-    DrawText(
-        TextFormat("dropped %.6f s", frame.dropped_seconds),
-        x,
-        y,
-        font_size,
-        text);
-    y += line_height;
-    DrawText(
-        TextFormat(
-            "invalid dt %llu",
-            static_cast<unsigned long long>(
-                frame.invalid_input_count)),
-        x,
-        y,
-        font_size,
-        text);
+void drain_events(
+    combat::CombatWorld& world,
+    CombatRenderer& renderer,
+    CombatFeedback& feedback,
+    CombatAudio& audio) noexcept {
+    while (const auto event = world.try_pop_event()) {
+        renderer.consume_event(*event);
+        feedback.consume(*event);
+        audio.consume_event(*event);
+    }
 }
 
 }  // namespace
@@ -189,22 +65,70 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         TraceLog(LOG_ERROR, "raylib window initialization failed");
         return HostExitCode::window_initialization_failed;
     }
+    if (!ChangeDirectory(GetApplicationDirectory())) {
+        TraceLog(LOG_WARNING, "failed to use application directory");
+    }
 
     SetWindowMinSize(800, 450);
     SetExitKey(KEY_ESCAPE);
     SetTargetFPS(60);
 
     core::FixedStepRunner fixed_step;
+    combat::CombatWorld world;
+    combat::CombatSnapshot current = world.snapshot();
+    combat::CombatSnapshot previous = current;
+    CombatRenderer renderer;
+    CombatFeedback feedback;
+    CombatAudio audio;
+    const bool audio_ready = audio.initialize();
+    bool draw_debug = false;
+
     while (!WindowShouldClose()) {
-        const core::FixedStepFrame frame =
-            fixed_step.advance(static_cast<double>(GetFrameTime()));
+        const bool take_screenshot = IsKeyPressed(KEY_F12);
+        if (IsKeyPressed(KEY_F1)) {
+            draw_debug = !draw_debug;
+        }
+
+        if (IsKeyPressed(KEY_R)) {
+            world.reset();
+            current = world.snapshot();
+            previous = current;
+            drain_events(world, renderer, feedback, audio);
+        }
+
+        submit_frame_actions(world);
+        const combat::MovementInput movement{
+            key_direction(KEY_A, KEY_D),
+            key_direction(KEY_W, KEY_S),
+        };
+        const float frame_seconds = GetFrameTime();
+        feedback.update(frame_seconds);
+        const core::FixedStepFrame frame = fixed_step.advance(
+            static_cast<double>(frame_seconds));
+
+        for (std::uint32_t step = 0; step < frame.steps; ++step) {
+            previous = current;
+            world.tick(movement);
+            current = world.snapshot();
+            drain_events(world, renderer, feedback, audio);
+        }
 
         BeginDrawing();
-        draw_graybox_room();
-        draw_diagnostics(frame, config.root_seed);
+        ClearBackground(Color{13, 17, 27, 255});
+        renderer.draw(
+            previous,
+            current,
+            static_cast<float>(frame.interpolation_alpha),
+            draw_debug,
+            feedback,
+            audio_ready);
+        if (take_screenshot) {
+            TakeScreenshot("combat-lab.png");
+        }
         EndDrawing();
     }
 
+    audio.shutdown();
     CloseWindow();
     return HostExitCode::success;
 }

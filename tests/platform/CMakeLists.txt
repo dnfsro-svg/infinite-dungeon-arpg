@@ -1,3 +1,19 @@
+if(TARGET arpg_raylib)
+    add_executable(arpg_platform_tests
+        platform_test_main.cpp
+        combat_feedback_tests.cpp
+        combat_view_math_tests.cpp)
+    target_compile_features(arpg_platform_tests PRIVATE cxx_std_17)
+    target_include_directories(arpg_platform_tests
+        PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+    target_link_libraries(arpg_platform_tests PRIVATE arpg_raylib)
+    arpg_enable_project_warnings(arpg_platform_tests)
+
+    add_test(NAME platform.view_math COMMAND arpg_platform_tests)
+    set_tests_properties(
+        platform.view_math PROPERTIES LABELS "headless;platform")
+endif()
+
 function(arpg_tokenize_dependency_value INPUT_VALUE OUT_TOKENS)
     set(_arpg_token_text "${INPUT_VALUE}")
     foreach(_arpg_delimiter IN ITEMS
