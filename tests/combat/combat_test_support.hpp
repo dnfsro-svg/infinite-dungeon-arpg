@@ -50,6 +50,14 @@ struct CombatWorldTestAccess final {
         world.projectile_saturation_count_ = projectile;
         world.hazard_saturation_count_ = hazard;
     }
+
+    static void set_invalid_owner_counts(
+        combat::CombatWorld& world,
+        std::uint32_t projectile,
+        std::uint32_t hazard) noexcept {
+        world.projectile_invalid_owner_count_ = projectile;
+        world.hazard_invalid_owner_count_ = hazard;
+    }
 };
 
 inline void tick_n(

@@ -631,6 +631,24 @@ arpg::test::Failure full_pools_reject_without_mutation_and_saturate_diagnostics(
     ARPG_REQUIRE(same_hazards(hazards_before, hazards_after));
     ARPG_REQUIRE(hazards_after.diagnostics.hazard_saturation_count
         == (std::numeric_limits<std::uint32_t>::max)());
+
+    CombatWorld invalid_owner_world = all_roles_world();
+    const CombatSnapshot invalid_before = invalid_owner_world.snapshot();
+    const MonsterHandle invalid_owner{0xFFFFU, 0U};
+    arpg::test::CombatWorldTestAccess::set_invalid_owner_counts(
+        invalid_owner_world, (std::numeric_limits<std::uint32_t>::max)(),
+        (std::numeric_limits<std::uint32_t>::max)());
+    ARPG_REQUIRE(!arpg::test::CombatWorldTestAccess::spawn_projectile(
+        invalid_owner_world, invalid_owner));
+    ARPG_REQUIRE(!arpg::test::CombatWorldTestAccess::spawn_hazard(
+        invalid_owner_world, invalid_owner));
+    const CombatSnapshot invalid_after = invalid_owner_world.snapshot();
+    ARPG_REQUIRE(same_projectiles(invalid_before, invalid_after));
+    ARPG_REQUIRE(same_hazards(invalid_before, invalid_after));
+    ARPG_REQUIRE(invalid_after.diagnostics.projectile_invalid_owner_count
+        == (std::numeric_limits<std::uint32_t>::max)());
+    ARPG_REQUIRE(invalid_after.diagnostics.hazard_invalid_owner_count
+        == (std::numeric_limits<std::uint32_t>::max)());
     return {};
 }
 
