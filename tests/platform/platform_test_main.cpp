@@ -19,5 +19,5 @@ int main() {
         dungeon_runtime_suite(),
     };
 
-    return arpg::test::run_suites(suites, 40, "stage 5 platform");
+    return arpg::test::run_suites(suites, 41, "stage 5 platform");
 }

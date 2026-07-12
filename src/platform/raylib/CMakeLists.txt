@@ -1,12 +1,16 @@
 add_library(arpg_raylib STATIC
+    actor_renderer.cpp
     combat_audio.cpp
     combat_feedback.cpp
     combat_renderer.cpp
     combat_view_math.cpp
+    debug_renderer.cpp
     dungeon_view_math.cpp
     dungeon_runtime.cpp
     host_launch_options.cpp
-    raylib_host.cpp)
+    hud_renderer.cpp
+    raylib_host.cpp
+    room_renderer.cpp)
 
 target_include_directories(arpg_raylib
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")

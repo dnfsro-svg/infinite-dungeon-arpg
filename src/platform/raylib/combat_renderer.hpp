@@ -36,6 +36,27 @@ public:
         bool audio_ready) noexcept;
 
 private:
+    void draw_room(const dungeon::DungeonSnapshot& current) const noexcept;
+    void draw_actors(
+        const dungeon::DungeonSnapshot& previous,
+        const dungeon::DungeonSnapshot& current,
+        float interpolation_alpha,
+        bool draw_debug,
+        const CombatFeedback& feedback) const noexcept;
+    void draw_hud(
+        const dungeon::DungeonSnapshot& current,
+        const DungeonRenderStatus& runtime_status,
+        bool draw_debug) const noexcept;
+    void draw_debug_world_volumes(
+        const combat::CombatSnapshot& snapshot,
+        float width,
+        float height) const noexcept;
+    void draw_debug_overlay(
+        const dungeon::DungeonSnapshot& current,
+        const DungeonRenderStatus& runtime_status,
+        const CombatFeedback& feedback,
+        bool audio_ready) const noexcept;
+
     combat::CombatEvent last_event_{};
     bool has_last_event_{};
     TransitionVisualState transition_{};

@@ -31,6 +31,19 @@ std::int8_t key_direction(int negative_key, int positive_key) noexcept {
     return static_cast<std::int8_t>(positive - negative);
 }
 
+struct FrameToggleInput final {
+    bool take_screenshot{};
+    bool toggle_debug{};
+};
+
+FrameToggleInput sample_frame_toggle_input() noexcept {
+    return {IsKeyPressed(KEY_F12), IsKeyPressed(KEY_F1)};
+}
+
+combat::MovementInput sample_movement_input() noexcept {
+    return {key_direction(KEY_A, KEY_D), key_direction(KEY_W, KEY_S)};
+}
+
 void submit_frame_actions(dungeon::DungeonSession& session) noexcept {
     for (const CombatKeyBinding& binding : kCombatKeyBindings) {
         if (IsKeyPressed(binding.key)) {
@@ -113,8 +126,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         }
 
         while (!WindowShouldClose()) {
-            const bool take_screenshot = IsKeyPressed(KEY_F12);
-            if (IsKeyPressed(KEY_F1)) {
+            const FrameToggleInput frame_toggles = sample_frame_toggle_input();
+            if (frame_toggles.toggle_debug) {
                 draw_debug = !draw_debug;
             }
             if (recovery_requested(runtime.state() == DungeonRuntimeState::recovery_required,
@@ -127,7 +140,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             }
             if (runtime.state() == DungeonRuntimeState::recovery_required) {
                 draw_recovery_screen(runtime.render_status());
-                if (take_screenshot) {
+                if (frame_toggles.take_screenshot) {
                     TakeScreenshot("stage3-dungeon-rules.png");
                 }
                 continue;
@@ -151,8 +164,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 static_cast<void>(session->request_descent(in_range));
             }
 
-            const combat::MovementInput movement{key_direction(KEY_A, KEY_D),
-                key_direction(KEY_W, KEY_S)};
+            const combat::MovementInput movement = sample_movement_input();
             const float frame_seconds = GetFrameTime();
             feedback.update(frame_seconds);
             renderer.update(frame_seconds);
@@ -172,7 +184,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 static_cast<float>(frame.interpolation_alpha), draw_debug,
                 feedback, audio_ready);
             EndDrawing();
-            if (take_screenshot) {
+            if (frame_toggles.take_screenshot) {
                 TakeScreenshot("stage3-dungeon-rules.png");
             }
         }

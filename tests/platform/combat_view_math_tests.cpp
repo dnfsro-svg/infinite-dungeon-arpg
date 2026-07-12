@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 
 #include "combat_view_math.hpp"
+#include "render_layout.hpp"
 
 #include <array>
 
@@ -84,11 +85,41 @@ arpg::test::Failure actor_order_is_y_z_x_then_index() noexcept {
     return {};
 }
 
+arpg::test::Failure render_layout_keeps_baseline_projection_and_hud_values() noexcept {
+    using arpg::platform::RenderProjection;
+    const RenderProjection north = arpg::platform::project_render_world(
+        0.0F, -5.5F, 0.0F, 1280.0F, 720.0F);
+    ARPG_REQUIRE(arpg::test::near(north.x, 640.0, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(north.ground_y, 273.6, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(north.scale, 0.70, 1.0e-4));
+
+    const RenderProjection east = arpg::platform::project_render_world(
+        12.0F, 0.0F, 0.0F, 1280.0F, 720.0F);
+    ARPG_REQUIRE(arpg::test::near(east.x, 1140.48, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(east.ground_y, 453.6, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(east.scale, 0.85, 1.0e-4));
+
+    const auto normal = arpg::platform::render_layout(false);
+    ARPG_REQUIRE(arpg::test::near(normal.hud_x, 30.0, 1.0e-4));
+    ARPG_REQUIRE(normal.hud_first_line_y == 28);
+    ARPG_REQUIRE(normal.hud_second_instruction_y == 53);
+    ARPG_REQUIRE(normal.hud_status_y == 81);
+    ARPG_REQUIRE(normal.hud_line_step == 23);
+    ARPG_REQUIRE(normal.hud_debug_start_step == 25);
+    ARPG_REQUIRE(arpg::test::near(normal.hud_panel_height, 400.0, 1.0e-4));
+
+    const auto debug = arpg::platform::render_layout(true);
+    ARPG_REQUIRE(arpg::test::near(debug.hud_panel_height, 660.0, 1.0e-4));
+    ARPG_REQUIRE(arpg::platform::debug_overlay_start_y(265) == 290);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"back and front projection", &back_and_front_projection_are_exact},
     {"expanded room corners", &expanded_room_corners_remain_in_viewport},
     {"Z-only actor offset", &z_only_offsets_actor_screen_y},
     {"stable actor draw order", &actor_order_is_y_z_x_then_index},
+    {"render layout baseline", &render_layout_keeps_baseline_projection_and_hud_values},
 };
 
 }  // namespace
