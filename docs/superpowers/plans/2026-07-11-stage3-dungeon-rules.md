@@ -1594,7 +1594,7 @@ initialize 顺序：
 5. recovery_required：不创建 Session。
 6. blocked 或种子失败：faulted。
 
-service_pending_transition 取 pending、显示 saving、同步 Store::commit，再把 committed/not_committed/indeterminate 和 verified_state 回传 Session。indeterminate 不得自动重试。
+service_pending_transition 取 pending、显示 saving、同步 Store::commit，再把 committed/not_committed/indeterminate 和 verified_state 回传 Session。Host 内部的 SaveCommitResult→TransitionSaveResult 映射必须与 Task 8 测试中的 `to_session_result` 逐字段等价：committed/not_committed 分别映射同名 disposition，其余映射 indeterminate；generation 始终取 `saved.verified_state.commit_generation`，state 始终取 `saved.verified_state`。DungeonRuntime 测试必须覆盖三种映射结果。indeterminate 不得自动重试。
 
 recover_with_new_run 使用与 initialize 相同的种子优先级，调用 make_initial_run_state，再调用 archive_invalid_and_create；只有返回 ready 且 generation=1 才 emplace 新 Session。DungeonRenderStatus 每次 load/commit/recover 后同步更新。若 Session 自身进入 RoomPhase::faulted，DungeonRuntime::state 也必须返回 faulted。
 
