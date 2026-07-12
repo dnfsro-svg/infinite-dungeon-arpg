@@ -36,11 +36,11 @@
 git rev-parse --show-toplevel
 git status --short
 git worktree list
-git check-ignore .worktrees
+git check-ignore .worktrees/review-probe
 git rev-parse 3e4b861^{commit}
 ```
 
-Expected: 仓库有效、Stage 6 工作树干净、`.worktrees` 被忽略、基线提交存在。
+Expected: 仓库有效、Stage 6 工作树干净、`.worktrees/review-probe` 被 `/.worktrees/` 忽略规则匹配、基线提交存在。目录本身不作为 `git check-ignore` 探针，因为以斜杠结尾的目录规则需要对子路径进行匹配验证。
 
 - [ ] **Step 2: 创建独立工作树**
 
