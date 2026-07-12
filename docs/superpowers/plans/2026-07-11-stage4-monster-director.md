@@ -242,9 +242,9 @@ arpg::test::Failure director_budget_is_bounded_and_depth_driven() noexcept {
 }
 
 arpg::test::Failure encounter_plan_is_deterministic_and_legal() noexcept {
-    const auto a = build_encounter_plan(0xA11CEULL, 18U,
+    const auto a = build_encounter_plan(0xA11CEULL, 26U,
         DungeonElement::lightning, EncounterDirectorConfig{});
-    const auto b = build_encounter_plan(0xA11CEULL, 18U,
+    const auto b = build_encounter_plan(0xA11CEULL, 26U,
         DungeonElement::lightning, EncounterDirectorConfig{});
     ARPG_REQUIRE(a.fault == DungeonFault::none);
     ARPG_REQUIRE(same_encounter_plan(a.plan, b.plan));
@@ -254,7 +254,7 @@ arpg::test::Failure encounter_plan_is_deterministic_and_legal() noexcept {
 }
 ```
 
-Add a 4096-seed ecology distribution test asserting matching-element selections exceed off-element selections without requiring every spawn to match.
+Add a 4096-seed ecology A/B test: run the same seeds once with `matching_ecology_weight=1` and once with the approved default `4`, then assert the mean number of preferred-ecology spawns increases by a positive margin. Do not assert raw matching count exceeds off-element count, because role costs and support/direct-target safety constraints legitimately alter candidate counts.
 
 - [ ] **Step 2: Verify RED**
 
