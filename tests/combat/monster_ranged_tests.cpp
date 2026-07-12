@@ -6,25 +6,6 @@
 
 #include <cmath>
 
-namespace arpg::test {
-
-struct CombatWorldTestAccess final {
-    static void fill_projectiles(
-        combat::CombatWorld& world,
-        combat::MonsterHandle owner) noexcept {
-        for (std::size_t index = 0; index < combat::kProjectileCapacity;
-             ++index) {
-            static_cast<void>(world.spawn_projectile(
-                owner, combat::Vec3{}, combat::Vec3{0.01F, 0.0F, 0.0F},
-                1000U, 1, 0.1F));
-        }
-        static_cast<void>(world.spawn_projectile(
-            owner, combat::Vec3{}, combat::Vec3{}, 1000U, 1, 0.1F));
-    }
-};
-
-}  // namespace arpg::test
-
 namespace {
 
 using namespace arpg::combat;
