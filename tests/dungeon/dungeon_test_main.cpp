@@ -25,5 +25,5 @@ int main() {
         dungeon_progression_reward_suite(),
     };
 
-    return arpg::test::run_suites(suites, 69, "stage 5 task 2 dungeon");
+    return arpg::test::run_suites(suites, 70, "stage 5 task 2 dungeon");
 }

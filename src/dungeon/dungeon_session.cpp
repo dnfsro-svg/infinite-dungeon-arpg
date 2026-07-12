@@ -115,86 +115,9 @@ void DungeonSession::tick(combat::MovementInput movement) noexcept {
     ++session_tick_;
 }
 
-bool DungeonSession::request_descent(bool player_in_range) noexcept {
-    if (phase_ != RoomPhase::awaiting_exit || !combat_.has_value()
-            || !player_in_range || pending_.has_value()
-            || !stable_state_.current_room.has_hole) {
-        saturating_increment(diagnostics_.rejected_exit_count);
-        return false;
-    }
-
-    const RunStateBuildResult built = make_descent_transition(
-        stable_state_, rules_);
-    if (built.fault != DungeonFault::none) {
-        if (built.fault == DungeonFault::room_index_overflow) {
-            diagnostics_.room_index_overflow = true;
-        }
-        enter_fault(built.fault);
-        return false;
-    }
-
-    RunStateBuildResult next = built;
-    next.state.progression = room_progression_;
-    pending_ = PendingTransition{
-        TransitionKind::descent,
-        ExitDirection::none,
-        next.state.commit_generation,
-        next.state,
-    };
-    last_exit_ = ExitDirection::none;
-    phase_ = RoomPhase::committing;
-    const bool emitted = emit(
-        DungeonEventKind::transition_requested,
-        &stable_state_,
-        &pending_->next_state,
-        TransitionKind::descent,
-        ExitDirection::none);
-    return emitted && phase_ == RoomPhase::committing;
-}
-
 std::optional<PendingTransition>
 DungeonSession::pending_transition() const noexcept {
     return pending_;
-}
-
-void DungeonSession::resolve_pending_transition(
-    const TransitionSaveResult& result) noexcept {
-    if (phase_ != RoomPhase::committing || !pending_.has_value()) {
-        enter_fault(DungeonFault::save_receipt_mismatch);
-        return;
-    }
-    if (result.disposition == SaveDisposition::indeterminate) {
-        enter_fault(DungeonFault::save_commit_indeterminate);
-        return;
-    }
-    if (result.disposition == SaveDisposition::not_committed) {
-        const DungeonRunState next = pending_->next_state;
-        pending_.reset();
-        phase_ = RoomPhase::awaiting_exit;
-        saturating_increment(diagnostics_.save_failure_count);
-        static_cast<void>(emit(
-            DungeonEventKind::save_failed,
-            &stable_state_,
-            &next,
-            next.last_transition,
-            next.last_direction));
-        return;
-    }
-    if (result.generation != pending_->expected_generation
-            || pending_->expected_generation
-                != pending_->next_state.commit_generation
-            || !same_run_state(
-                result.verified_state, pending_->next_state)) {
-        enter_fault(DungeonFault::save_receipt_mismatch);
-        return;
-    }
-
-    const DungeonRunState previous = stable_state_;
-    stable_state_ = result.verified_state;
-    combat_.reset();
-    phase_ = RoomPhase::transitioning;
-    emit_committed(previous, stable_state_);
-    pending_.reset();
 }
 
 void DungeonSession::reset_current_room() noexcept {
@@ -212,50 +135,6 @@ void DungeonSession::reset_current_room() noexcept {
     pending_.reset();
     construct_current_room();
     static_cast<void>(emit(DungeonEventKind::room_reset));
-}
-
-DungeonSnapshot DungeonSession::snapshot() const noexcept {
-    DungeonSnapshot result{};
-    result.session_tick = session_tick_;
-    result.root_seed = stable_state_.root_seed;
-    result.commit_generation = stable_state_.commit_generation;
-    result.room_index = stable_state_.current_room.index;
-    result.room_seed = stable_state_.current_room.seed;
-    result.depth = stable_state_.current_room.depth;
-    result.floor_room_index = stable_state_.current_room.floor_room_index;
-    result.biases = stable_state_.biases;
-    result.phase = phase_;
-    result.has_active_room = combat_.has_value();
-    result.exits_open.fill(
-        phase_ == RoomPhase::cleared || phase_ == RoomPhase::awaiting_exit);
-    result.wave_index = wave_index_;
-    result.wave_count = encounter_plan_.wave_count;
-    result.wave_delay_ticks = wave_delay_ticks_;
-    result.remaining_targets = remaining_targets();
-    result.entry_side = stable_state_.current_room.entry;
-    result.last_exit = last_exit_;
-    result.last_transition = stable_state_.last_transition;
-    result.ecology = stable_state_.current_room.ecology;
-    result.has_hole = stable_state_.current_room.has_hole;
-    result.is_abyss = stable_state_.current_room.is_abyss;
-    result.has_pending_transition = pending_.has_value();
-    if (combat_.has_value()) {
-        result.combat.emplace(combat_->snapshot());
-    }
-    result.encounter.total_budget = encounter_plan_.total_budget;
-    result.encounter.plan_valid = encounter_plan_legal(
-        encounter_plan_, rules_.encounter);
-    if (wave_index_ < encounter_plan_.wave_count) {
-        const auto& wave = encounter_plan_.waves[wave_index_];
-        result.encounter.current_wave_budget = wave.spent_budget;
-        result.encounter.current_wave_spawn_count = wave.spawn_count;
-    }
-    result.diagnostics = diagnostics_;
-    result.progression = room_progression_;
-    result.pending_room_experience = pending_room_experience_;
-    result.last_room_experience = last_room_experience_;
-    result.last_levels_gained = last_levels_gained_;
-    return result;
 }
 
 std::optional<DungeonEvent> DungeonSession::try_pop_event() noexcept {
@@ -346,42 +225,6 @@ void DungeonSession::settle_room_experience() noexcept {
     room_progression_ = award.state;
     last_levels_gained_ = award.levels_gained;
     pending_room_experience_ = 0U;
-}
-
-void DungeonSession::attempt_exit(ExitDirection direction) noexcept {
-    if (phase_ != RoomPhase::awaiting_exit || !combat_.has_value()
-            || direction == ExitDirection::none || pending_.has_value()) {
-        saturating_increment(diagnostics_.rejected_exit_count);
-        return;
-    }
-
-    last_exit_ = direction;
-
-    const RunStateBuildResult built = make_door_transition(
-        stable_state_, direction, rules_);
-    if (built.fault != DungeonFault::none) {
-        if (built.fault == DungeonFault::room_index_overflow) {
-            diagnostics_.room_index_overflow = true;
-        }
-        enter_fault(built.fault);
-        return;
-    }
-
-    RunStateBuildResult next = built;
-    next.state.progression = room_progression_;
-    pending_ = PendingTransition{
-        TransitionKind::door,
-        direction,
-        next.state.commit_generation,
-        next.state,
-    };
-    phase_ = RoomPhase::committing;
-    static_cast<void>(emit(
-        DungeonEventKind::transition_requested,
-        &stable_state_,
-        &pending_->next_state,
-        TransitionKind::door,
-        direction));
 }
 
 void DungeonSession::enter_fault(DungeonFault fault) noexcept {

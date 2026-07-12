@@ -33,6 +33,92 @@ constexpr std::array<ExitDirection, 4> kRoute{{
     ExitDirection::left,
 }};
 
+constexpr std::size_t kGoldenTraceRoomCount = 256U;
+constexpr std::size_t kGoldenTraceMonsterCapacity =
+    arpg::combat::kEncounterWaveCapacity * arpg::combat::kEncounterSpawnCapacity;
+constexpr std::uint64_t kGoldenTraceHashOffset = 14695981039346656037ULL;
+constexpr std::uint64_t kGoldenTraceHashPrime = 1099511628211ULL;
+
+struct GoldenTraceEntry final {
+    std::uint64_t depth{};
+    checkpoint::DungeonElement ecology{};
+    std::array<arpg::combat::MonsterId, kGoldenTraceMonsterCapacity> monster_ids{};
+    std::uint8_t monster_count{};
+    bool has_hole{};
+    bool is_abyss{};
+    std::uint64_t next_seed{};
+};
+
+void append_golden_trace_value(
+    std::uint64_t& hash,
+    std::uint64_t value) noexcept {
+    for (std::size_t byte = 0U; byte < sizeof(value); ++byte) {
+        hash ^= value & 0xFFULL;
+        hash *= kGoldenTraceHashPrime;
+        value >>= 8U;
+    }
+}
+
+bool generate_golden_room_trace(
+    std::array<GoldenTraceEntry, kGoldenTraceRoomCount>& trace) noexcept {
+    constexpr std::uint64_t kRootSeed = 0x6d5a56da1234ULL;
+    const DungeonRules rules{};
+    auto built = arpg::dungeon::make_initial_run_state(kRootSeed, rules);
+    if (built.fault != arpg::dungeon::DungeonFault::none) {
+        return false;
+    }
+    for (std::size_t index = 0U; index < trace.size(); ++index) {
+        const auto plan = arpg::dungeon::build_encounter_plan(
+            built.state.current_room.seed,
+            built.state.current_room.depth,
+            built.state.current_room.ecology,
+            rules.encounter);
+        const auto next = arpg::dungeon::make_door_transition(
+            built.state, kRoute[index % kRoute.size()], rules);
+        if (plan.fault != arpg::dungeon::DungeonFault::none
+                || next.fault != arpg::dungeon::DungeonFault::none) {
+            return false;
+        }
+        GoldenTraceEntry& entry = trace[index];
+        entry.depth = built.state.current_room.depth;
+        entry.ecology = built.state.current_room.ecology;
+        entry.has_hole = built.state.current_room.has_hole;
+        entry.is_abyss = built.state.current_room.is_abyss;
+        entry.next_seed = next.state.current_room.seed;
+        for (std::size_t wave = 0U; wave < plan.plan.wave_count; ++wave) {
+            for (std::size_t spawn = 0U;
+                 spawn < plan.plan.waves[wave].spawn_count; ++spawn) {
+                if (entry.monster_count >= entry.monster_ids.size()) {
+                    return false;
+                }
+                entry.monster_ids[entry.monster_count++] =
+                    plan.plan.waves[wave].spawns[spawn].id;
+            }
+        }
+        built = next;
+    }
+    return true;
+}
+
+std::uint64_t golden_room_trace_hash(
+    const std::array<GoldenTraceEntry, kGoldenTraceRoomCount>& trace) noexcept {
+    std::uint64_t hash = kGoldenTraceHashOffset;
+    for (const GoldenTraceEntry& entry : trace) {
+        append_golden_trace_value(hash, entry.depth);
+        append_golden_trace_value(hash,
+            static_cast<std::uint64_t>(entry.ecology));
+        for (std::size_t monster = 0U; monster < entry.monster_count; ++monster) {
+            append_golden_trace_value(hash,
+                static_cast<std::uint64_t>(entry.monster_ids[monster]));
+        }
+        append_golden_trace_value(hash, entry.monster_count);
+        append_golden_trace_value(hash, entry.has_hole ? 1U : 0U);
+        append_golden_trace_value(hash, entry.is_abyss ? 1U : 0U);
+        append_golden_trace_value(hash, entry.next_seed);
+    }
+    return hash;
+}
+
 struct StressSummary final {
     std::uint32_t dungeon_events{};
     std::uint32_t combat_events{};
@@ -802,6 +888,46 @@ arpg::test::Failure one_changed_direction_changes_only_committed_room() noexcept
     return {};
 }
 
+arpg::test::Failure fixed_seed_room_trace_matches_baseline_golden() noexcept {
+    std::array<GoldenTraceEntry, kGoldenTraceRoomCount> trace{};
+    ARPG_REQUIRE(generate_golden_room_trace(trace));
+    ARPG_REQUIRE(golden_room_trace_hash(trace) == 0xb0233e1750ad0926ULL);
+
+    const GoldenTraceEntry& first = trace[0U];
+    ARPG_REQUIRE(first.depth == 1U);
+    ARPG_REQUIRE(first.ecology == checkpoint::DungeonElement::chaos);
+    ARPG_REQUIRE(first.monster_count == 3U);
+    ARPG_REQUIRE(first.monster_ids[0U] == arpg::combat::MonsterId::chaos_chaser);
+    ARPG_REQUIRE(first.monster_ids[1U] == arpg::combat::MonsterId::chaos_chaser);
+    ARPG_REQUIRE(first.monster_ids[2U] == arpg::combat::MonsterId::lightning_shooter);
+    ARPG_REQUIRE(!first.has_hole);
+    ARPG_REQUIRE(!first.is_abyss);
+    ARPG_REQUIRE(first.next_seed == 0x163aec04f68d8227ULL);
+
+    const GoldenTraceEntry& middle = trace[127U];
+    ARPG_REQUIRE(middle.depth == 1U);
+    ARPG_REQUIRE(middle.ecology == checkpoint::DungeonElement::fire);
+    ARPG_REQUIRE(middle.monster_count == 3U);
+    ARPG_REQUIRE(middle.monster_ids[0U] == arpg::combat::MonsterId::chaos_chaser);
+    ARPG_REQUIRE(middle.monster_ids[1U] == arpg::combat::MonsterId::fire_charger);
+    ARPG_REQUIRE(middle.monster_ids[2U] == arpg::combat::MonsterId::chaos_chaser);
+    ARPG_REQUIRE(!middle.has_hole);
+    ARPG_REQUIRE(!middle.is_abyss);
+    ARPG_REQUIRE(middle.next_seed == 0x67e35554c0918040ULL);
+
+    const GoldenTraceEntry& last = trace[255U];
+    ARPG_REQUIRE(last.depth == 1U);
+    ARPG_REQUIRE(last.ecology == checkpoint::DungeonElement::lightning);
+    ARPG_REQUIRE(last.monster_count == 3U);
+    ARPG_REQUIRE(last.monster_ids[0U] == arpg::combat::MonsterId::chaos_chaser);
+    ARPG_REQUIRE(last.monster_ids[1U] == arpg::combat::MonsterId::lightning_shooter);
+    ARPG_REQUIRE(last.monster_ids[2U] == arpg::combat::MonsterId::lightning_dasher);
+    ARPG_REQUIRE(!last.has_hole);
+    ARPG_REQUIRE(!last.is_abyss);
+    ARPG_REQUIRE(last.next_seed == 0x6c0eca473cb86cf2ULL);
+    return {};
+}
+
 arpg::test::Failure thousand_real_rooms_preserve_single_world_invariants() noexcept {
     DungeonSession session;
     StressSummary summary{};
@@ -864,6 +990,7 @@ constexpr arpg::test::TestCase kCases[] = {
      &ten_thousand_director_plans_are_legal_deterministic_and_allocation_free},
     {"identical seed and route are field equal", &identical_seed_and_route_are_field_equal},
     {"one changed direction changes only committed room", &one_changed_direction_changes_only_committed_room},
+    {"fixed seed room trace matches baseline golden", &fixed_seed_room_trace_matches_baseline_golden},
     {"thousand real rooms preserve single world invariants", &thousand_real_rooms_preserve_single_world_invariants},
     {"measured thousand rooms allocate nothing and never overflow", &measured_thousand_rooms_allocate_nothing_and_never_overflow},
 };

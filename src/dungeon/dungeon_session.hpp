@@ -46,6 +46,11 @@ private:
     void relay_combat_events() noexcept;
     void settle_room_experience() noexcept;
     void attempt_exit(ExitDirection direction) noexcept;
+    [[nodiscard]] bool prepare_transition(
+        TransitionKind kind,
+        ExitDirection direction) noexcept;
+    void commit_transition(const TransitionSaveResult& result) noexcept;
+    [[nodiscard]] DungeonSnapshot build_dungeon_snapshot() const noexcept;
     void enter_fault(DungeonFault fault) noexcept;
     void emit_committed(
         const DungeonRunState& previous,
