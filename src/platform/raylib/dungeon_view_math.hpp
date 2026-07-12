@@ -47,6 +47,9 @@ struct TransitionVisualState final {
     bool transition_phase_seen{};
 };
 
+inline constexpr combat::Vec3 kHoleCenter{0.0F, 3.5F, 0.0F};
+inline constexpr float kHoleInteractionRadius = 2.0F;
+
 [[nodiscard]] DoorVisualMode door_visual_mode(
     dungeon::RoomPhase phase,
     bool has_active_room) noexcept;
@@ -58,6 +61,9 @@ struct TransitionVisualState final {
     combat::Vec3 position,
     combat::Vec3 center,
     float radius) noexcept;
+[[nodiscard]] bool can_prompt_descent(
+    const dungeon::DungeonSnapshot& snapshot,
+    combat::Vec3 player_position) noexcept;
 [[nodiscard]] Rgba8 ecosystem_tint(
     dungeon::DungeonElement element) noexcept;
 [[nodiscard]] float abyss_pulse_alpha(float elapsed_seconds) noexcept;

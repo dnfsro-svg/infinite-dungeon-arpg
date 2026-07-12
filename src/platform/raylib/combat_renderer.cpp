@@ -1,5 +1,7 @@
 #include "combat_renderer.hpp"
 
+#include "combat/room_bounds.hpp"
+
 #include "combat/attack_catalog.hpp"
 #include "combat/combat_collision.hpp"
 #include "combat_view_math.hpp"
@@ -213,10 +215,10 @@ void draw_doors(const dungeon::DungeonSnapshot& snapshot,
     }
 
     constexpr std::array<Vec3, 4> kDoorCenters{{
-        {0.0F, -3.5F, 0.0F},
-        {0.0F, 3.5F, 0.0F},
-        {-8.0F, 0.0F, 0.0F},
-        {8.0F, 0.0F, 0.0F},
+        {0.0F, combat::room_bounds::min_y, 0.0F},
+        {0.0F, combat::room_bounds::max_y, 0.0F},
+        {combat::room_bounds::min_x, 0.0F, 0.0F},
+        {combat::room_bounds::max_x, 0.0F, 0.0F},
     }};
     constexpr std::array<dungeon::ExitDirection, 4> kDirections{{
         dungeon::ExitDirection::up, dungeon::ExitDirection::down,
@@ -281,8 +283,11 @@ void draw_hole(const dungeon::DungeonSnapshot& snapshot) noexcept {
     if (hole == HoleVisualMode::hidden) {
         return;
     }
-    const int x = GetScreenWidth() / 2;
-    const int y = static_cast<int>(GetScreenHeight() * 0.68F);
+    const ScreenProjection projected = project_combat_position(
+        kHoleCenter, static_cast<float>(GetScreenWidth()),
+        static_cast<float>(GetScreenHeight()));
+    const int x = static_cast<int>(projected.x);
+    const int y = static_cast<int>(projected.ground_y);
     Color color{43, 25, 55, 255};
     if (hole == HoleVisualMode::ready) {
         color = Color{230, 79, 186, 255};
@@ -295,6 +300,13 @@ void draw_hole(const dungeon::DungeonSnapshot& snapshot) noexcept {
         : hole == HoleVisualMode::ready ? "READY"
         : hole == HoleVisualMode::busy ? "SAVING" : "FAULTED";
     DrawText(label, x - MeasureText(label, 16) / 2, y - 8, 16, color);
+    const bool prompt = snapshot.combat.has_value()
+        && can_prompt_descent(snapshot, snapshot.combat->player.position);
+    if (prompt) {
+        constexpr const char* kPrompt = "Press E to descend";
+        DrawText(kPrompt, x - MeasureText(kPrompt, 18) / 2,
+            y + 34, 18, RAYWHITE);
+    }
 }
 
 void draw_bar(

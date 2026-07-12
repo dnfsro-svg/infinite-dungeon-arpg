@@ -1,5 +1,7 @@
 #include "combat_view_math.hpp"
 
+#include "combat/room_bounds.hpp"
+
 #include <algorithm>
 #include <cstddef>
 
@@ -28,11 +30,14 @@ ScreenProjection project_combat_position(
     float width,
     float height) noexcept {
     const float depth = std::clamp(
-        (position.y + 3.5F) / 7.0F, 0.0F, 1.0F);
+        (position.y - combat::room_bounds::min_y)
+            / combat::room_bounds::depth,
+        0.0F, 1.0F);
     const float scale = 0.70F + 0.30F * depth;
     const float ground_y = height * (0.38F + 0.50F * depth);
     return {
-        width * 0.50F + position.x * (width / 18.0F) * scale,
+        width * 0.50F + position.x
+            * (width * 0.46F / combat::room_bounds::max_x) * scale,
         ground_y - position.z * 70.0F * scale,
         ground_y,
         scale,

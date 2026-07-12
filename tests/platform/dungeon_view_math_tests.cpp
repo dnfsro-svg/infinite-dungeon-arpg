@@ -142,11 +142,11 @@ arpg::test::Failure hole_modes_follow_room_phase() noexcept {
 arpg::test::Failure player_hole_range_uses_xy_radius() noexcept {
     using arpg::combat::Vec3;
     const Vec3 center{4.0F, -2.0F, 5.0F};
-    ARPG_REQUIRE(arpg::platform::player_in_hole_range(center, center, 1.2F));
+    ARPG_REQUIRE(arpg::platform::player_in_hole_range(center, center, 2.0F));
     ARPG_REQUIRE(arpg::platform::player_in_hole_range(
-        Vec3{5.2F, -2.0F, -100.0F}, center, 1.2F));
+        Vec3{6.0F, -2.0F, -100.0F}, center, 2.0F));
     ARPG_REQUIRE(!arpg::platform::player_in_hole_range(
-        Vec3{5.21F, -2.0F, 0.0F}, center, 1.2F));
+        Vec3{6.01F, -2.0F, 0.0F}, center, 2.0F));
     ARPG_REQUIRE(!arpg::platform::player_in_hole_range(
         center, center, -1.0F));
     return {};

@@ -12,18 +12,34 @@ using arpg::platform::ScreenProjection;
 
 arpg::test::Failure back_and_front_projection_are_exact() noexcept {
     const ScreenProjection back = arpg::platform::project_combat_position(
-        Vec3{0.0F, -3.5F, 0.0F}, 1280.0F, 720.0F);
+        Vec3{0.0F, -5.5F, 0.0F}, 1280.0F, 720.0F);
     ARPG_REQUIRE(arpg::test::near(back.x, 640.0, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(back.ground_y, 273.6, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(back.y, back.ground_y, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(back.scale, 0.70, 1.0e-4));
 
     const ScreenProjection front = arpg::platform::project_combat_position(
-        Vec3{0.0F, 3.5F, 0.0F}, 1280.0F, 720.0F);
+        Vec3{0.0F, 5.5F, 0.0F}, 1280.0F, 720.0F);
     ARPG_REQUIRE(arpg::test::near(front.x, 640.0, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(front.ground_y, 633.6, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(front.y, front.ground_y, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(front.scale, 1.0, 1.0e-4));
+    return {};
+}
+
+arpg::test::Failure expanded_room_corners_remain_in_viewport() noexcept {
+    constexpr std::array<Vec3, 4> corners{{
+        {-12.0F, -5.5F, 0.0F}, {12.0F, -5.5F, 0.0F},
+        {-12.0F, 5.5F, 0.0F}, {12.0F, 5.5F, 0.0F},
+    }};
+    for (const Vec3 corner : corners) {
+        const ScreenProjection projected = arpg::platform::project_combat_position(
+            corner, 1280.0F, 720.0F);
+        ARPG_REQUIRE(projected.x >= 48.0F);
+        ARPG_REQUIRE(projected.x <= 1232.0F);
+        ARPG_REQUIRE(projected.ground_y >= 240.0F);
+        ARPG_REQUIRE(projected.ground_y <= 660.0F);
+    }
     return {};
 }
 
@@ -70,6 +86,7 @@ arpg::test::Failure actor_order_is_y_z_x_then_index() noexcept {
 
 constexpr arpg::test::TestCase kCases[] = {
     {"back and front projection", &back_and_front_projection_are_exact},
+    {"expanded room corners", &expanded_room_corners_remain_in_viewport},
     {"Z-only actor offset", &z_only_offsets_actor_screen_y},
     {"stable actor draw order", &actor_order_is_y_z_x_then_index},
 };

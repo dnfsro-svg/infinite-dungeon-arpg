@@ -19,5 +19,5 @@ int main() {
         dungeon_runtime_suite(),
     };
 
-    return arpg::test::run_suites(suites, 38, "platform");
+    return arpg::test::run_suites(suites, 39, "platform");
 }

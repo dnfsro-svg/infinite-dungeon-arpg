@@ -148,8 +148,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             if (IsKeyPressed(KEY_E)) {
                 const auto snapshot = session->snapshot();
                 const bool in_range = snapshot.combat.has_value()
-                    && player_in_hole_range(snapshot.combat->player.position,
-                        {0.0F, 2.0F, 0.0F}, 1.20F);
+                    && can_prompt_descent(
+                        snapshot, snapshot.combat->player.position);
                 static_cast<void>(session->request_descent(in_range));
             }
 

@@ -80,6 +80,14 @@ bool player_in_hole_range(
     return x * x + y * y <= radius * radius;
 }
 
+bool can_prompt_descent(
+    const dungeon::DungeonSnapshot& snapshot,
+    combat::Vec3 player_position) noexcept {
+    return hole_visual_mode(snapshot) == HoleVisualMode::ready
+        && player_in_hole_range(
+            player_position, kHoleCenter, kHoleInteractionRadius);
+}
+
 Rgba8 ecosystem_tint(dungeon::DungeonElement element) noexcept {
     switch (element) {
     case dungeon::DungeonElement::fire:
