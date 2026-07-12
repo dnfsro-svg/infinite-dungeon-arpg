@@ -36,6 +36,8 @@ AudioCueMask route_audio_cues(const combat::CombatEvent& event) noexcept {
         return event.feedback == combat::FeedbackLevel::heavy
             ? audio_cue_mask(AudioCue::low)
             : 0;
+    case combat::CombatEventKind::player_hit:
+        return audio_cue_mask(AudioCue::low);
     default:
         return 0;
     }

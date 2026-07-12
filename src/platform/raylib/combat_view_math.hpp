@@ -1,6 +1,7 @@
 #pragma once
 
 #include "combat/combat_types.hpp"
+#include "dungeon_view_math.hpp"
 
 #include <array>
 #include <cstdint>
@@ -19,6 +20,38 @@ struct ActorDrawItem final {
     std::uint8_t index{};
 };
 
+enum class MonsterShapeId : std::uint8_t {
+    bomber,
+    charger,
+    bulwark,
+    support,
+    shooter,
+    dasher,
+    chaser,
+    hazard_caster,
+};
+
+enum class MonsterWarningMode : std::uint8_t {
+    none,
+    telegraph,
+    active,
+};
+
+enum class HazardVisualMode : std::uint8_t {
+    hidden,
+    telegraph,
+    active,
+};
+
+struct MonsterVisual final {
+    Rgba8 body{};
+    Rgba8 accent{};
+    Rgba8 warning{};
+    MonsterShapeId shape{MonsterShapeId::chaser};
+    const char* role_label{"CHASER"};
+    MonsterWarningMode warning_mode{MonsterWarningMode::none};
+};
+
 [[nodiscard]] ScreenProjection project_combat_position(
     combat::Vec3 position,
     float width,
@@ -26,5 +59,26 @@ struct ActorDrawItem final {
 
 void sort_actor_draw_items(
     std::array<ActorDrawItem, 4>& items) noexcept;
+
+[[nodiscard]] Rgba8 monster_ecology_color(
+    dungeon::DungeonElement ecology) noexcept;
+[[nodiscard]] MonsterVisual monster_visual(
+    combat::MonsterId id,
+    combat::MonsterAiPhase phase,
+    dungeon::DungeonElement ecology) noexcept;
+[[nodiscard]] bool monster_visible(
+    const combat::MonsterSnapshot& monster) noexcept;
+[[nodiscard]] float player_hp_ratio(
+    const combat::PlayerSnapshot& player) noexcept;
+[[nodiscard]] HazardVisualMode hazard_visual_mode(
+    const combat::HazardSnapshot& hazard) noexcept;
+[[nodiscard]] ScreenProjection project_projectile_position(
+    const combat::ProjectileSnapshot& projectile,
+    float width,
+    float height) noexcept;
+[[nodiscard]] ScreenProjection project_hazard_center(
+    const combat::HazardSnapshot& hazard,
+    float width,
+    float height) noexcept;
 
 }  // namespace arpg::platform

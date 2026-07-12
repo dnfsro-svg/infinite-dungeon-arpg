@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 
+#include "../dungeon/dungeon_test_support.hpp"
 #include "dungeon_runtime.hpp"
 
 #include <array>
@@ -78,27 +79,10 @@ bool clear_and_await(dungeon::DungeonSession& session) noexcept {
             drain(session);
             continue;
         }
-        combat::MovementInput movement{};
-        if (snapshot.phase == dungeon::RoomPhase::combat
-            && snapshot.combat.has_value()) {
-            const auto& combat = *snapshot.combat;
-            for (const auto& target : combat.dummies) {
-                if (target.hp <= 0) {
-                    continue;
-                }
-                const float dx = target.position.x - combat.player.position.x;
-                const float dy = target.position.y - combat.player.position.y;
-                movement.x = dx > 1.45F ? 1 : (dx < -1.45F ? -1 : 0);
-                movement.y = dy > 0.30F ? 1 : (dy < -0.30F ? -1 : 0);
-                if (dx <= 1.75F && dx >= -1.75F
-                    && dy <= 0.60F && dy >= -0.60F
-                    && combat.player.active_attack == combat::AttackId::none) {
-                    static_cast<void>(session.queue_action(combat::Action::light));
-                }
-                break;
-            }
+        if (snapshot.phase == dungeon::RoomPhase::combat) {
+            arpg::test::force_defeat_current_wave(session);
         }
-        session.tick(movement);
+        session.tick({});
         drain(session);
     }
     return false;

@@ -51,11 +51,13 @@ void CombatFeedback::consume(const combat::CombatEvent& event) noexcept {
         return;
     }
 
-    if (event.kind != combat::CombatEventKind::hit) {
+    if (event.kind != combat::CombatEventKind::hit
+        && event.kind != combat::CombatEventKind::player_hit) {
         return;
     }
 
-    if (event.target_index < flash_seconds_.size()) {
+    if (event.kind == combat::CombatEventKind::hit
+        && event.target_index < flash_seconds_.size()) {
         flash_seconds_[event.target_index] = 2.0F / 60.0F;
     }
 

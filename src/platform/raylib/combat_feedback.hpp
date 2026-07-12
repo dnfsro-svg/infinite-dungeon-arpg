@@ -48,7 +48,7 @@ public:
 
 private:
     std::array<VisualEffect, kCapacity> effects_{};
-    std::array<float, combat::kDummyCount> flash_seconds_{};
+    std::array<float, combat::kMonsterCapacity> flash_seconds_{};
     float shake_amplitude_{};
     float shake_time_{};
     float shake_phase_{};
