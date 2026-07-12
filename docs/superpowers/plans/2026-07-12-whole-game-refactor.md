@@ -242,16 +242,17 @@ ctest --test-dir out/build/windows-msvc-debug -R 'dungeon.units' --output-on-fai
 
 - [ ] **Step 5: 拆分刷怪预算与选择**
 
-新增纯函数：
+新增私有纯函数（保留当前公式的真实输入）：
 
 ```cpp
-EncounterBudget compute_encounter_budget(
-    std::uint32_t depth,
-    std::uint32_t room_index,
-    RoomEcology ecology) noexcept;
+namespace arpg::dungeon::detail {
+[[nodiscard]] std::uint8_t compute_encounter_budget(
+    std::uint64_t depth,
+    const EncounterDirectorConfig& config) noexcept;
+}
 ```
 
-函数只搬运现有公式；`encounter_director.cpp` 保留候选过滤、稳定排序和 RNG 抽取，调用 RNG 的次数与顺序不得改变。
+函数只搬运现有预算纯算术；`encounter_director.cpp` 保留候选过滤、稳定排序和 RNG 抽取，调用 RNG 的次数与顺序不得改变。
 
 - [ ] **Step 6: 运行压力与全量测试并提交**
 

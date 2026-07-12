@@ -2,7 +2,6 @@
 
 #include "dungeon/dungeon_progression.hpp"
 
-#include <cassert>
 #include <cstdint>
 #include <limits>
 
