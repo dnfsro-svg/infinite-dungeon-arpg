@@ -72,6 +72,30 @@ arpg::test::Failure chaos_chaser_damages_only_once_per_active_serial() noexcept 
     return {};
 }
 
+arpg::test::Failure unsupported_monsters_remain_inert() noexcept {
+    CombatEncounterConfig config{};
+    config.wave.spawn_count = 2U;
+    config.wave.spawns[0] = MonsterSpawnSpec{
+        MonsterId::fire_bomber, Vec3{2.0F, 0.0F, 0.0F}};
+    config.wave.spawns[1] = MonsterSpawnSpec{
+        MonsterId::lightning_shooter, Vec3{3.0F, 0.0F, 0.0F}};
+    CombatWorld world{config};
+    const auto before = world.snapshot();
+    world.tick(MovementInput{});
+    const auto after = world.snapshot();
+    for (std::size_t index = 0; index < 2U; ++index) {
+        ARPG_REQUIRE(after.monsters[index].ai_phase == MonsterAiPhase::idle);
+        ARPG_REQUIRE(after.monsters[index].position.x
+                     == before.monsters[index].position.x);
+        ARPG_REQUIRE(after.monsters[index].position.y
+                     == before.monsters[index].position.y);
+        ARPG_REQUIRE(after.monsters[index].velocity.x == 0.0F);
+        ARPG_REQUIRE(after.monsters[index].velocity.y == 0.0F);
+        ARPG_REQUIRE(after.player.hp == after.player.max_hp);
+    }
+    return {};
+}
+
 arpg::test::Failure water_bulwark_is_slow_and_has_front_armor() noexcept {
     const MonsterDefinition* chaser =
         monster_definition(MonsterId::chaos_chaser);
@@ -164,6 +188,7 @@ arpg::test::Failure bulwark_accepts_normal_reaction_after_break() noexcept {
 constexpr arpg::test::TestCase kCases[] = {
     {"chaser move and telegraph stop", &chaos_chaser_moves_then_stops_for_telegraph},
     {"chaser active serial cooldown", &chaos_chaser_damages_only_once_per_active_serial},
+    {"unsupported monsters stay inert", &unsupported_monsters_remain_inert},
     {"bulwark slow armored profile", &water_bulwark_is_slow_and_has_front_armor},
     {"bulwark rear bypasses armor", &bulwark_back_hit_bypasses_front_armor},
     {"bulwark break reaction", &bulwark_accepts_normal_reaction_after_break},

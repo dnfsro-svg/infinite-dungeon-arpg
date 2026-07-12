@@ -55,7 +55,11 @@ void CombatWorld::apply_dummy_impact(
         return;
     }
 
-    dummy.ai_phase = MonsterAiPhase::move;
+    const bool melee_ai = dummy.id == MonsterId::chaos_chaser
+                       || dummy.id == MonsterId::water_bulwark;
+    dummy.ai_phase = !legacy_mode_ && !melee_ai
+                       ? MonsterAiPhase::idle
+                       : MonsterAiPhase::move;
     dummy.ai_ticks = 0;
     dummy.contact_attack_resolved = true;
 
