@@ -15,9 +15,10 @@ using arpg::test::tick_n;
 CombatEncounterConfig encounter_for(
     MonsterId id,
     float monster_x,
-    float player_x = 0.0F) noexcept {
+    float player_x = 0.0F,
+    float player_y = 0.0F) noexcept {
     CombatEncounterConfig config{};
-    config.player_spawn = Vec3{player_x, 0.0F, 0.0F};
+    config.player_spawn = Vec3{player_x, player_y, 0.0F};
     config.initial_facing = Facing::right;
     config.wave.spawn_count = 1U;
     config.wave.spawns[0] = MonsterSpawnSpec{
@@ -91,6 +92,38 @@ arpg::test::Failure water_bulwark_is_slow_and_has_front_armor() noexcept {
     return {};
 }
 
+arpg::test::Failure bulwark_back_hit_bypasses_front_armor() noexcept {
+    CombatWorld world{encounter_for(
+        MonsterId::water_bulwark, 1.20F, 0.0F, 2.1F)};
+    bool reached_active = false;
+    for (int tick = 0; tick < 120; ++tick) {
+        world.tick(MovementInput{});
+        if (world.snapshot().monsters[0].ai_phase == MonsterAiPhase::active) {
+            reached_active = true;
+            break;
+        }
+    }
+    ARPG_REQUIRE(reached_active);
+
+    // Cross to the monster's rear while active/recovery holds its facing.
+    tick_n(world, 4, MovementInput{1, 0});
+    tick_n(world, 13, MovementInput{1, -1});
+    world.tick(MovementInput{-1, 0});
+    const auto before = world.snapshot().monsters[0];
+    ARPG_REQUIRE(before.armor == ArmorState::armored);
+    const int before_break = before.break_value;
+    ARPG_REQUIRE(world.snapshot().player.position.x > before.position.x);
+    ARPG_REQUIRE(world.queue_action(Action::light));
+    world.tick(MovementInput{});
+    tick_n(world, 5);
+    const auto after = world.snapshot().monsters[0];
+    ARPG_REQUIRE(after.hp < before.hp);
+    ARPG_REQUIRE(after.reaction == ReactionState::hitstun);
+    ARPG_REQUIRE(after.armor == ArmorState::armored);
+    ARPG_REQUIRE(after.break_value == before_break);
+    return {};
+}
+
 arpg::test::Failure bulwark_accepts_normal_reaction_after_break() noexcept {
     CombatEncounterConfig config = encounter_for(
         MonsterId::water_bulwark, 0.90F);
@@ -132,6 +165,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"chaser move and telegraph stop", &chaos_chaser_moves_then_stops_for_telegraph},
     {"chaser active serial cooldown", &chaos_chaser_damages_only_once_per_active_serial},
     {"bulwark slow armored profile", &water_bulwark_is_slow_and_has_front_armor},
+    {"bulwark rear bypasses armor", &bulwark_back_hit_bypasses_front_armor},
     {"bulwark break reaction", &bulwark_accepts_normal_reaction_after_break},
 };
 

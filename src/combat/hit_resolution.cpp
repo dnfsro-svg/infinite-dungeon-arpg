@@ -123,8 +123,15 @@ void CombatWorld::resolve_attack_hits() noexcept {
         attack_.connected = true;
         dummy.hp = std::max(0, dummy.hp - definition->damage);
         bool starts_break = false;
-        bool accepts_impact = dummy.armor != ArmorState::armored;
-        if (dummy.hp != 0 && dummy.armor == ArmorState::armored) {
+        const float relative_x = player_.position.x - dummy.position.x;
+        const bool front_attack = legacy_mode_
+                                   || (dummy.facing == Facing::right
+                                           ? relative_x >= 0.0F
+                                           : relative_x <= 0.0F);
+        bool accepts_impact = dummy.armor != ArmorState::armored
+                              || !front_attack;
+        if (dummy.hp != 0 && dummy.armor == ArmorState::armored
+            && front_attack) {
             dummy.break_value = std::max(
                 0, dummy.break_value - definition->break_damage);
             if (dummy.break_value == 0) {
