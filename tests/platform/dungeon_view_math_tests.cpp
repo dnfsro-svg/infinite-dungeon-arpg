@@ -10,7 +10,11 @@ using arpg::dungeon::DungeonEventKind;
 using arpg::dungeon::DungeonSnapshot;
 using arpg::dungeon::ExitDirection;
 using arpg::dungeon::RoomPhase;
+using arpg::platform::DoorTheme;
 using arpg::platform::DoorVisualMode;
+using arpg::platform::HoleVisualMode;
+using arpg::platform::Rgba8;
+using arpg::platform::SaveIndicator;
 
 DungeonSnapshot active_snapshot(
     std::uint64_t room_index,
@@ -33,9 +37,132 @@ arpg::test::Failure door_modes_follow_room_lifecycle() noexcept {
     ARPG_REQUIRE(arpg::platform::door_visual_mode(
         RoomPhase::awaiting_exit, true) == DoorVisualMode::open);
     ARPG_REQUIRE(arpg::platform::door_visual_mode(
+        RoomPhase::committing, true) == DoorVisualMode::open);
+    ARPG_REQUIRE(arpg::platform::door_visual_mode(
+        RoomPhase::faulted, true) == DoorVisualMode::closed);
+    ARPG_REQUIRE(arpg::platform::door_visual_mode(
         RoomPhase::transitioning, true) == DoorVisualMode::hidden);
     ARPG_REQUIRE(arpg::platform::door_visual_mode(RoomPhase::combat, false)
         == DoorVisualMode::hidden);
+    return {};
+}
+
+bool rgba_equals(Rgba8 lhs, Rgba8 rhs) noexcept {
+    return lhs.r == rhs.r && lhs.g == rhs.g && lhs.b == rhs.b
+        && lhs.a == rhs.a;
+}
+
+arpg::test::Failure door_themes_match_directional_elements() noexcept {
+    const DoorTheme up = arpg::platform::door_theme(ExitDirection::up);
+    const DoorTheme down = arpg::platform::door_theme(ExitDirection::down);
+    const DoorTheme left = arpg::platform::door_theme(ExitDirection::left);
+    const DoorTheme right = arpg::platform::door_theme(ExitDirection::right);
+    ARPG_REQUIRE(up.element == arpg::dungeon::DungeonElement::fire);
+    ARPG_REQUIRE(down.element == arpg::dungeon::DungeonElement::water);
+    ARPG_REQUIRE(left.element == arpg::dungeon::DungeonElement::lightning);
+    ARPG_REQUIRE(right.element == arpg::dungeon::DungeonElement::chaos);
+    ARPG_REQUIRE(std::strcmp(up.arrow, "\xE2\x86\x91") == 0);
+    ARPG_REQUIRE(std::strcmp(down.arrow, "\xE2\x86\x93") == 0);
+    ARPG_REQUIRE(std::strcmp(left.arrow, "\xE2\x86\x90") == 0);
+    ARPG_REQUIRE(std::strcmp(right.arrow, "\xE2\x86\x92") == 0);
+    ARPG_REQUIRE(rgba_equals(up.frame, {236U, 92U, 54U, 255U}));
+    ARPG_REQUIRE(rgba_equals(down.frame, {64U, 156U, 236U, 255U}));
+    ARPG_REQUIRE(rgba_equals(left.frame, {236U, 218U, 72U, 255U}));
+    ARPG_REQUIRE(rgba_equals(right.frame, {154U, 76U, 210U, 255U}));
+    return {};
+}
+
+arpg::test::Failure ecosystem_tints_are_stable() noexcept {
+    const Rgba8 fire = arpg::platform::ecosystem_tint(
+        arpg::dungeon::DungeonElement::fire);
+    const Rgba8 water = arpg::platform::ecosystem_tint(
+        arpg::dungeon::DungeonElement::water);
+    const Rgba8 lightning = arpg::platform::ecosystem_tint(
+        arpg::dungeon::DungeonElement::lightning);
+    const Rgba8 chaos = arpg::platform::ecosystem_tint(
+        arpg::dungeon::DungeonElement::chaos);
+    ARPG_REQUIRE(rgba_equals(fire, {88U, 43U, 34U, 255U}));
+    ARPG_REQUIRE(rgba_equals(water, {35U, 70U, 104U, 255U}));
+    ARPG_REQUIRE(rgba_equals(lightning, {96U, 90U, 34U, 255U}));
+    ARPG_REQUIRE(rgba_equals(chaos, {73U, 43U, 99U, 255U}));
+    return {};
+}
+
+arpg::test::Failure abyss_pulse_is_bounded_and_periodic() noexcept {
+    const float negative = arpg::platform::abyss_pulse_alpha(-0.25F);
+    const float at_start = arpg::platform::abyss_pulse_alpha(0.0F);
+    const float at_cycle = arpg::platform::abyss_pulse_alpha(1.0F);
+    const float huge = arpg::platform::abyss_pulse_alpha(100000000.0F);
+    ARPG_REQUIRE(negative >= 0.0F && negative <= 1.0F);
+    ARPG_REQUIRE(at_start >= 0.0F && at_start <= 1.0F);
+    ARPG_REQUIRE(at_cycle >= 0.0F && at_cycle <= 1.0F);
+    ARPG_REQUIRE(huge >= 0.0F && huge <= 1.0F);
+    ARPG_REQUIRE(arpg::test::near(at_start, at_cycle, 1.0e-6));
+    return {};
+}
+
+arpg::test::Failure hole_modes_follow_room_phase() noexcept {
+    DungeonSnapshot snapshot = active_snapshot(1U, 2U);
+    ARPG_REQUIRE(arpg::platform::hole_visual_mode(snapshot)
+        == HoleVisualMode::hidden);
+    snapshot.has_hole = true;
+    snapshot.phase = RoomPhase::locked;
+    ARPG_REQUIRE(arpg::platform::hole_visual_mode(snapshot)
+        == HoleVisualMode::sealed);
+    snapshot.phase = RoomPhase::combat;
+    ARPG_REQUIRE(arpg::platform::hole_visual_mode(snapshot)
+        == HoleVisualMode::sealed);
+    snapshot.phase = RoomPhase::cleared;
+    ARPG_REQUIRE(arpg::platform::hole_visual_mode(snapshot)
+        == HoleVisualMode::ready);
+    snapshot.phase = RoomPhase::awaiting_exit;
+    ARPG_REQUIRE(arpg::platform::hole_visual_mode(snapshot)
+        == HoleVisualMode::ready);
+    snapshot.phase = RoomPhase::committing;
+    ARPG_REQUIRE(arpg::platform::hole_visual_mode(snapshot)
+        == HoleVisualMode::busy);
+    snapshot.phase = RoomPhase::faulted;
+    ARPG_REQUIRE(arpg::platform::hole_visual_mode(snapshot)
+        == HoleVisualMode::faulted);
+    return {};
+}
+
+arpg::test::Failure player_hole_range_uses_xy_radius() noexcept {
+    using arpg::combat::Vec3;
+    const Vec3 center{4.0F, -2.0F, 5.0F};
+    ARPG_REQUIRE(arpg::platform::player_in_hole_range(center, center, 1.2F));
+    ARPG_REQUIRE(arpg::platform::player_in_hole_range(
+        Vec3{5.2F, -2.0F, -100.0F}, center, 1.2F));
+    ARPG_REQUIRE(!arpg::platform::player_in_hole_range(
+        Vec3{5.21F, -2.0F, 0.0F}, center, 1.2F));
+    ARPG_REQUIRE(!arpg::platform::player_in_hole_range(
+        center, center, -1.0F));
+    return {};
+}
+
+arpg::test::Failure indicators_and_phase_labels_are_stable() noexcept {
+    ARPG_REQUIRE(std::strcmp(arpg::platform::save_indicator_label(
+        SaveIndicator::none), "") == 0);
+    ARPG_REQUIRE(std::strcmp(arpg::platform::save_indicator_label(
+        SaveIndicator::saving), "SAVING") == 0);
+    ARPG_REQUIRE(std::strcmp(arpg::platform::save_indicator_label(
+        SaveIndicator::saved), "SAVED") == 0);
+    ARPG_REQUIRE(std::strcmp(arpg::platform::save_indicator_label(
+        SaveIndicator::recovered), "RECOVERED") == 0);
+    ARPG_REQUIRE(std::strcmp(arpg::platform::save_indicator_label(
+        SaveIndicator::error), "SAVE ERROR") == 0);
+    ARPG_REQUIRE(std::strcmp(arpg::platform::room_phase_label(
+        RoomPhase::committing), "COMMITTING") == 0);
+    ARPG_REQUIRE(std::strcmp(arpg::platform::room_phase_label(
+        RoomPhase::faulted), "FAULTED") == 0);
+    return {};
+}
+
+arpg::test::Failure recovery_requires_fault_and_n_press() noexcept {
+    ARPG_REQUIRE(!arpg::platform::recovery_requested(false, false));
+    ARPG_REQUIRE(!arpg::platform::recovery_requested(false, true));
+    ARPG_REQUIRE(!arpg::platform::recovery_requested(true, false));
+    ARPG_REQUIRE(arpg::platform::recovery_requested(true, true));
     return {};
 }
 
@@ -144,6 +271,13 @@ constexpr arpg::test::TestCase kCases[] = {
     {"cross and missing room rejection", &cross_room_and_missing_room_reject_interpolation},
     {"cleanup routing and labels", &cleanup_routing_and_labels_are_stable},
     {"transition fade alpha", &fade_alpha_clamps_to_transition_window},
+    {"directional door themes", &door_themes_match_directional_elements},
+    {"ecosystem tints", &ecosystem_tints_are_stable},
+    {"abyss pulse bounds", &abyss_pulse_is_bounded_and_periodic},
+    {"hole visual modes", &hole_modes_follow_room_phase},
+    {"XY hole range", &player_hole_range_uses_xy_radius},
+    {"save indicators and labels", &indicators_and_phase_labels_are_stable},
+    {"recovery request gate", &recovery_requires_fault_and_n_press},
 };
 
 }  // namespace

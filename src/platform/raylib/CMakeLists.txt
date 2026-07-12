@@ -4,6 +4,7 @@ add_library(arpg_raylib STATIC
     combat_renderer.cpp
     combat_view_math.cpp
     dungeon_view_math.cpp
+    host_launch_options.cpp
     raylib_host.cpp)
 
 target_include_directories(arpg_raylib
