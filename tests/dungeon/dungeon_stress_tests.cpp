@@ -4,6 +4,7 @@
 #include "dungeon_test_support.hpp"
 
 #include "dungeon/room_generation.hpp"
+#include "dungeon/dungeon_progression.hpp"
 
 #include <array>
 #include <cstddef>
@@ -75,18 +76,31 @@ bool same_combat(const CombatSnapshot& lhs, const CombatSnapshot& rhs) noexcept 
 }
 
 bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexcept {
-    if (lhs.session_tick != rhs.session_tick || lhs.room_index != rhs.room_index
+    if (lhs.session_tick != rhs.session_tick || lhs.root_seed != rhs.root_seed
+            || lhs.commit_generation != rhs.commit_generation
+            || lhs.room_index != rhs.room_index
             || lhs.room_seed != rhs.room_seed || lhs.phase != rhs.phase
+            || lhs.depth != rhs.depth
+            || lhs.floor_room_index != rhs.floor_room_index
+            || lhs.biases != rhs.biases
             || lhs.has_active_room != rhs.has_active_room
             || lhs.exits_open != rhs.exits_open
             || lhs.remaining_targets != rhs.remaining_targets
             || lhs.entry_side != rhs.entry_side || lhs.last_exit != rhs.last_exit
+            || lhs.last_transition != rhs.last_transition
+            || lhs.ecology != rhs.ecology
+            || lhs.has_hole != rhs.has_hole
+            || lhs.is_abyss != rhs.is_abyss
+            || lhs.has_pending_transition != rhs.has_pending_transition
             || lhs.diagnostics.event_overflow_count
                 != rhs.diagnostics.event_overflow_count
             || lhs.diagnostics.combat_relay_overflow_count
                 != rhs.diagnostics.combat_relay_overflow_count
             || lhs.diagnostics.rejected_exit_count
                 != rhs.diagnostics.rejected_exit_count
+            || lhs.diagnostics.save_failure_count
+                != rhs.diagnostics.save_failure_count
+            || lhs.diagnostics.fault != rhs.diagnostics.fault
             || lhs.diagnostics.room_index_overflow
                 != rhs.diagnostics.room_index_overflow
             || lhs.combat.has_value() != rhs.combat.has_value()) {
@@ -98,6 +112,9 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
 bool same_event(const DungeonEvent& lhs, const DungeonEvent& rhs) noexcept {
     return lhs.kind == rhs.kind && lhs.session_tick == rhs.session_tick
         && lhs.room_index == rhs.room_index && lhs.room_seed == rhs.room_seed
+        && lhs.destination_room_index == rhs.destination_room_index
+        && lhs.destination_room_seed == rhs.destination_room_seed
+        && lhs.transition == rhs.transition
         && lhs.direction == rhs.direction;
 }
 
@@ -160,6 +177,46 @@ bool tick_equal(
             break;
         }
         if (!same_event(*a, *b)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool commit_equal(
+    DungeonSession& lhs,
+    DungeonSession& rhs) noexcept {
+    const auto a = lhs.pending_transition();
+    const auto b = rhs.pending_transition();
+    if (!a.has_value() || !b.has_value()
+            || a->kind != b->kind || a->direction != b->direction
+            || a->expected_generation != b->expected_generation
+            || !arpg::dungeon::same_run_state(a->next_state, b->next_state)) {
+        return false;
+    }
+    lhs.resolve_pending_transition({
+        arpg::dungeon::SaveDisposition::committed,
+        a->expected_generation,
+        a->next_state,
+    });
+    rhs.resolve_pending_transition({
+        arpg::dungeon::SaveDisposition::committed,
+        b->expected_generation,
+        b->next_state,
+    });
+    if (!same_snapshot(lhs.snapshot(), rhs.snapshot())) {
+        return false;
+    }
+    for (;;) {
+        const auto x = lhs.try_pop_event();
+        const auto y = rhs.try_pop_event();
+        if (x.has_value() != y.has_value()) {
+            return false;
+        }
+        if (!x.has_value()) {
+            break;
+        }
+        if (!same_event(*x, *y)) {
             return false;
         }
     }
@@ -235,6 +292,12 @@ bool drive_exit(
     for (int tick = 0; tick < 256; ++tick) {
         session.tick(outward(direction));
         drain(session, summary);
+        if (session.snapshot().phase == RoomPhase::committing) {
+            if (!arpg::test::commit_pending(session)) {
+                return false;
+            }
+            drain(session, summary);
+        }
         if (session.snapshot().phase == RoomPhase::transitioning) {
             break;
         }
@@ -256,7 +319,7 @@ bool drive_exit(
     const DungeonSnapshot combat = session.snapshot();
     return combat.phase == RoomPhase::combat && combat.has_active_room
         && combat.combat.has_value() && combat.combat->tick == 0U
-        && (!verify_phases || combat.room_index == transition.room_index + 1U);
+        && (!verify_phases || combat.room_index == transition.room_index);
 }
 
 bool drive_rooms(
@@ -307,6 +370,9 @@ arpg::test::Failure identical_seed_and_route_are_field_equal() noexcept {
         }
         const std::uint64_t before_index = state.room_index;
         ARPG_REQUIRE(tick_equal(lhs, rhs, movement));
+        if (lhs.snapshot().phase == RoomPhase::committing) {
+            ARPG_REQUIRE(commit_equal(lhs, rhs));
+        }
         if (lhs.snapshot().room_index == before_index + 1U) {
             ++exits;
         }

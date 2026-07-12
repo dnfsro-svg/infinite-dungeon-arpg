@@ -1,6 +1,7 @@
 #include "dungeon/dungeon_session.hpp"
 
-#include "dungeon/room_generation.hpp"
+#include "dungeon/dungeon_progression.hpp"
+#include "dungeon/room_combat_template.hpp"
 #include "dungeon/room_navigation.hpp"
 
 #include <cassert>
@@ -16,10 +17,32 @@ void saturating_increment(std::uint32_t& value) noexcept {
     }
 }
 
+[[nodiscard]] DungeonRunState initial_state_for(
+    const DungeonSessionConfig& config) noexcept {
+    DungeonRunState state = make_initial_run_state(
+        config.root_seed, DungeonRules{}).state;
+    if (state.current_room.index != config.initial_room_index) {
+        state.current_room.index = config.initial_room_index;
+        state.current_room.seed = derive_initial_room_seed(
+            config.root_seed, config.initial_room_index);
+    }
+    return state;
+}
+
 }  // namespace
 
 DungeonSession::DungeonSession(DungeonSessionConfig config) noexcept
-    : config_(config), current_room_(make_initial_room(config_)) {
+    : DungeonSession(DungeonRules{}, initial_state_for(config)) {}
+
+DungeonSession::DungeonSession(
+    DungeonRules rules,
+    DungeonRunState stable_state) noexcept
+    : rules_(rules), stable_state_(stable_state),
+      last_exit_(stable_state.last_direction) {
+    if (validate_rules(rules_) != DungeonFault::none) {
+        enter_fault(DungeonFault::invalid_rules);
+        return;
+    }
     construct_current_room();
 }
 
@@ -30,35 +53,41 @@ bool DungeonSession::queue_action(combat::Action action) noexcept {
 }
 
 void DungeonSession::tick(combat::MovementInput movement) noexcept {
+    if (phase_ == RoomPhase::committing || phase_ == RoomPhase::faulted) {
+        ++session_tick_;
+        return;
+    }
+
     if (phase_ == RoomPhase::locked) {
         phase_ = RoomPhase::combat;
-        emit(DungeonEventKind::room_entered);
-        emit(DungeonEventKind::combat_started);
-    } else if (phase_ == RoomPhase::transitioning) {
-        if (pending_room_.has_value()) {
-            current_room_ = *pending_room_;
-            pending_room_.reset();
-            construct_current_room();
+        if (emit(DungeonEventKind::room_entered)
+                && phase_ != RoomPhase::faulted) {
+            static_cast<void>(emit(DungeonEventKind::combat_started));
         }
+    } else if (phase_ == RoomPhase::transitioning) {
+        construct_current_room();
     } else if (combat_.has_value()) {
         if (phase_ == RoomPhase::cleared) {
             phase_ = RoomPhase::awaiting_exit;
-        } else {
+        } else if (phase_ == RoomPhase::combat
+                || phase_ == RoomPhase::awaiting_exit) {
             combat_->tick(movement);
             relay_combat_events();
 
             if (phase_ == RoomPhase::combat && remaining_targets() == 0U) {
                 phase_ = RoomPhase::cleared;
-                emit(DungeonEventKind::room_cleared);
-                emit(DungeonEventKind::exits_opened);
-            }
-
-            if (phase_ == RoomPhase::awaiting_exit) {
-                const combat::CombatSnapshot state = combat_->snapshot();
-                if (const auto requested = requested_exit(
-                        state.player.position, movement)) {
-                    attempt_exit(*requested);
+                if (emit(DungeonEventKind::room_cleared)
+                        && phase_ != RoomPhase::faulted) {
+                    static_cast<void>(emit(DungeonEventKind::exits_opened));
                 }
+            }
+        }
+
+        if (phase_ == RoomPhase::awaiting_exit) {
+            const combat::CombatSnapshot state = combat_->snapshot();
+            if (const auto requested = requested_exit(
+                    state.player.position, movement)) {
+                attempt_exit(*requested);
             }
         }
     }
@@ -66,8 +95,90 @@ void DungeonSession::tick(combat::MovementInput movement) noexcept {
     ++session_tick_;
 }
 
+bool DungeonSession::request_descent(bool player_in_range) noexcept {
+    if (phase_ != RoomPhase::awaiting_exit || !combat_.has_value()
+            || !player_in_range || pending_.has_value()
+            || !stable_state_.current_room.has_hole) {
+        saturating_increment(diagnostics_.rejected_exit_count);
+        return false;
+    }
+
+    const RunStateBuildResult built = make_descent_transition(
+        stable_state_, rules_);
+    if (built.fault != DungeonFault::none) {
+        if (built.fault == DungeonFault::room_index_overflow) {
+            diagnostics_.room_index_overflow = true;
+        }
+        enter_fault(built.fault);
+        return false;
+    }
+
+    pending_ = PendingTransition{
+        TransitionKind::descent,
+        ExitDirection::none,
+        built.state.commit_generation,
+        built.state,
+    };
+    last_exit_ = ExitDirection::none;
+    phase_ = RoomPhase::committing;
+    const bool emitted = emit(
+        DungeonEventKind::transition_requested,
+        &stable_state_,
+        &pending_->next_state,
+        TransitionKind::descent,
+        ExitDirection::none);
+    return emitted && phase_ == RoomPhase::committing;
+}
+
+std::optional<PendingTransition>
+DungeonSession::pending_transition() const noexcept {
+    return pending_;
+}
+
+void DungeonSession::resolve_pending_transition(
+    const TransitionSaveResult& result) noexcept {
+    if (phase_ != RoomPhase::committing || !pending_.has_value()) {
+        enter_fault(DungeonFault::save_receipt_mismatch);
+        return;
+    }
+    if (result.disposition == SaveDisposition::indeterminate) {
+        enter_fault(DungeonFault::save_commit_indeterminate);
+        return;
+    }
+    if (result.disposition == SaveDisposition::not_committed) {
+        const DungeonRunState next = pending_->next_state;
+        pending_.reset();
+        phase_ = RoomPhase::awaiting_exit;
+        saturating_increment(diagnostics_.save_failure_count);
+        static_cast<void>(emit(
+            DungeonEventKind::save_failed,
+            &stable_state_,
+            &next,
+            next.last_transition,
+            next.last_direction));
+        return;
+    }
+    if (result.generation != pending_->expected_generation
+            || pending_->expected_generation
+                != pending_->next_state.commit_generation
+            || !same_run_state(
+                result.verified_state, pending_->next_state)) {
+        enter_fault(DungeonFault::save_receipt_mismatch);
+        return;
+    }
+
+    const DungeonRunState previous = stable_state_;
+    stable_state_ = result.verified_state;
+    combat_.reset();
+    phase_ = RoomPhase::transitioning;
+    emit_committed(previous, stable_state_);
+    pending_.reset();
+}
+
 void DungeonSession::reset_current_room() noexcept {
-    if (phase_ == RoomPhase::transitioning) {
+    if (phase_ == RoomPhase::transitioning
+            || phase_ == RoomPhase::committing
+            || phase_ == RoomPhase::faulted) {
         return;
     }
 
@@ -76,23 +187,33 @@ void DungeonSession::reset_current_room() noexcept {
     while (combat_events_.try_pop().has_value()) {
     }
     combat_.reset();
-    pending_room_.reset();
+    pending_.reset();
     construct_current_room();
-    emit(DungeonEventKind::room_reset);
+    static_cast<void>(emit(DungeonEventKind::room_reset));
 }
 
 DungeonSnapshot DungeonSession::snapshot() const noexcept {
     DungeonSnapshot result{};
     result.session_tick = session_tick_;
-    result.room_index = current_room_.index;
-    result.room_seed = current_room_.seed;
+    result.root_seed = stable_state_.root_seed;
+    result.commit_generation = stable_state_.commit_generation;
+    result.room_index = stable_state_.current_room.index;
+    result.room_seed = stable_state_.current_room.seed;
+    result.depth = stable_state_.current_room.depth;
+    result.floor_room_index = stable_state_.current_room.floor_room_index;
+    result.biases = stable_state_.biases;
     result.phase = phase_;
     result.has_active_room = combat_.has_value();
     result.exits_open.fill(
         phase_ == RoomPhase::cleared || phase_ == RoomPhase::awaiting_exit);
     result.remaining_targets = remaining_targets();
-    result.entry_side = current_room_.entry;
+    result.entry_side = stable_state_.current_room.entry;
     result.last_exit = last_exit_;
+    result.last_transition = stable_state_.last_transition;
+    result.ecology = stable_state_.current_room.ecology;
+    result.has_hole = stable_state_.current_room.has_hole;
+    result.is_abyss = stable_state_.current_room.is_abyss;
+    result.has_pending_transition = pending_.has_value();
     if (combat_.has_value()) {
         result.combat.emplace(combat_->snapshot());
     }
@@ -110,7 +231,13 @@ DungeonSession::try_pop_combat_event() noexcept {
 }
 
 void DungeonSession::construct_current_room() noexcept {
-    combat_.emplace(current_room_.combat);
+    const auto config = make_combat_lab_config(
+        stable_state_.current_room.entry, rules_.rules_version);
+    if (!config.has_value()) {
+        enter_fault(DungeonFault::invalid_rules);
+        return;
+    }
+    combat_.emplace(*config);
     phase_ = RoomPhase::locked;
 }
 
@@ -122,49 +249,110 @@ void DungeonSession::relay_combat_events() noexcept {
         const bool relayed = combat_events_.try_push(*event);
         if (!relayed) {
             saturating_increment(diagnostics_.combat_relay_overflow_count);
+            enter_fault(DungeonFault::combat_relay_overflow);
             assert(relayed && "Dungeon combat event relay overflow");
+            return;
         }
     }
 }
 
 void DungeonSession::attempt_exit(ExitDirection direction) noexcept {
     if (phase_ != RoomPhase::awaiting_exit || !combat_.has_value()
-            || direction == ExitDirection::none || pending_room_.has_value()) {
+            || direction == ExitDirection::none || pending_.has_value()) {
         saturating_increment(diagnostics_.rejected_exit_count);
         return;
     }
 
-    if (current_room_.index
-            == (std::numeric_limits<std::uint64_t>::max)()) {
-        diagnostics_.room_index_overflow = true;
-        if (!room_index_fault_emitted_) {
-            room_index_fault_emitted_ =
-                emit(DungeonEventKind::faulted, direction);
+    last_exit_ = direction;
+
+    const RunStateBuildResult built = make_door_transition(
+        stable_state_, direction, rules_);
+    if (built.fault != DungeonFault::none) {
+        if (built.fault == DungeonFault::room_index_overflow) {
+            diagnostics_.room_index_overflow = true;
         }
+        enter_fault(built.fault);
         return;
     }
 
-    pending_room_ = make_next_room(current_room_, direction);
-    last_exit_ = direction;
-    combat_.reset();
-    emit(DungeonEventKind::exit_committed, direction);
-    emit(DungeonEventKind::room_destroyed, direction);
-    phase_ = RoomPhase::transitioning;
+    pending_ = PendingTransition{
+        TransitionKind::door,
+        direction,
+        built.state.commit_generation,
+        built.state,
+    };
+    phase_ = RoomPhase::committing;
+    static_cast<void>(emit(
+        DungeonEventKind::transition_requested,
+        &stable_state_,
+        &pending_->next_state,
+        TransitionKind::door,
+        direction));
+}
+
+void DungeonSession::enter_fault(DungeonFault fault) noexcept {
+    if (fault == DungeonFault::none) {
+        return;
+    }
+    diagnostics_.fault = fault;
+    phase_ = RoomPhase::faulted;
+
+    const DungeonEvent event{
+        DungeonEventKind::faulted,
+        session_tick_,
+        stable_state_.current_room.index,
+        stable_state_.current_room.seed,
+        0U,
+        0U,
+        TransitionKind::none,
+        last_exit_,
+    };
+    if (!events_.try_push(event)) {
+        saturating_increment(diagnostics_.event_overflow_count);
+    }
+}
+
+void DungeonSession::emit_committed(
+    const DungeonRunState& previous,
+    const DungeonRunState& current) noexcept {
+    if (!emit(
+        DungeonEventKind::transition_committed,
+        &previous,
+        &current,
+        current.last_transition,
+        current.last_direction)) {
+        return;
+    }
+    static_cast<void>(emit(
+        DungeonEventKind::room_destroyed,
+        &previous,
+        &current,
+        current.last_transition,
+        current.last_direction));
 }
 
 bool DungeonSession::emit(
     DungeonEventKind kind,
+    const DungeonRunState* subject,
+    const DungeonRunState* destination,
+    TransitionKind transition,
     ExitDirection direction) noexcept {
+    const DungeonRunState& subject_state = subject != nullptr
+        ? *subject : stable_state_;
     const DungeonEvent event{
         kind,
         session_tick_,
-        current_room_.index,
-        current_room_.seed,
+        subject_state.current_room.index,
+        subject_state.current_room.seed,
+        destination != nullptr ? destination->current_room.index : 0U,
+        destination != nullptr ? destination->current_room.seed : 0U,
+        transition,
         direction,
     };
     const bool emitted = events_.try_push(event);
     if (!emitted) {
         saturating_increment(diagnostics_.event_overflow_count);
+        enter_fault(DungeonFault::event_overflow);
         assert(emitted && "Dungeon event queue overflow");
     }
     return emitted;
