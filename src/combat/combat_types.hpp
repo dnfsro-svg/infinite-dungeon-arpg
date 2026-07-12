@@ -341,6 +341,10 @@ struct CombatDiagnostics final {
     std::uint32_t projectile_invalid_owner_count{};
     std::uint32_t hazard_saturation_count{};
     std::uint32_t hazard_invalid_owner_count{};
+    std::size_t effect_owner_count{};
+    std::size_t active_effect_count{};
+    std::uint32_t effect_overflow_count{};
+    std::uint32_t effect_command_overflow_count{};
 };
 
 struct CombatSnapshot final {

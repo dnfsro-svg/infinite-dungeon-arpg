@@ -3,6 +3,7 @@
 #include "combat/combat_types.hpp"
 #include "combat/input_buffer.hpp"
 #include "combat/monster_pool.hpp"
+#include "modifiers/effect_set.hpp"
 #include "core/bounded_queue.hpp"
 
 #include <array>
@@ -92,6 +93,8 @@ private:
 
     void initialize_player() noexcept;
     void initialize_legacy_monsters() noexcept;
+    modifiers::EffectSet* find_effects(std::size_t monster_slot) noexcept;
+    modifiers::EffectSet* ensure_effects(std::size_t monster_slot) noexcept;
 
     friend struct ::arpg::test::CombatWorldTestAccess;
     friend struct ::arpg::test::DungeonSessionTestAccess;
@@ -105,6 +108,13 @@ private:
     HazardPool hazards_{};
     AttackRuntime attack_{};
     InputBuffer input_buffer_{};
+    struct EffectOwner final {
+        std::size_t monster_slot{};
+        std::uint16_t generation{};
+        modifiers::EffectSet effects{};
+        bool occupied{};
+    };
+    std::array<EffectOwner, 8> effect_owners_{};
     core::BoundedQueue<CombatEvent, 64> events_{};
     std::uint64_t tick_{};
     std::uint32_t event_overflow_count_{};

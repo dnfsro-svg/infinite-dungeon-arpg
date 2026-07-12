@@ -177,11 +177,21 @@ void CombatWorld::simulate_monster(std::size_t slot) noexcept {
         return;
     }
 
-    if (monster.shield_ticks != 0) {
-        --monster.shield_ticks;
-        if (monster.shield_ticks == 0) {
-            monster.shield = 0;
+    if (modifiers::EffectSet* effects = find_effects(slot)) {
+        effects->tick();
+        modifiers::EffectCommand effect_command{};
+        while (effects->pop_command(effect_command)) {
+            if (effect_command.kind
+                == modifiers::EffectCommandKind::set_shield) {
+                monster.shield = std::min(monster.max_shield,
+                    static_cast<int>(effect_command.value));
+            } else if (effect_command.kind
+                == modifiers::EffectCommandKind::clear_shield) {
+                monster.shield = 0;
+            }
         }
+        monster.shield_ticks = static_cast<std::uint16_t>(
+            std::max(0, effects->remaining_ticks(1U)));
     }
 
     if (monster.reaction != ReactionState::idle) {
@@ -401,12 +411,32 @@ void CombatWorld::simulate_monster(std::size_t slot) noexcept {
                 }
                 if (target_index < monsters_.slots_.size()) {
                     MonsterRuntime& target = monsters_.slots_[target_index];
-                    target.shield = std::min(target.max_shield,
-                                             std::max(target.shield,
-                                                      target.max_shield));
-                    target.shield_ticks = std::min(
-                        target.max_shield_ticks,
-                        std::max(target.shield_ticks, target.max_shield_ticks));
+                    modifiers::EffectDefinition barrier{};
+                    barrier.id = 1U;
+                    barrier.duration_ticks = target.max_shield_ticks;
+                    barrier.refresh_rule =
+                        modifiers::RefreshRule::refresh_duration;
+                    barrier.max_stacks = 1;
+                    barrier.on_apply = {
+                        modifiers::EffectCommandKind::set_shield,
+                        target.max_shield};
+                    barrier.on_refresh = barrier.on_apply;
+                    barrier.on_expire = {
+                        modifiers::EffectCommandKind::clear_shield, 0};
+                    modifiers::EffectSet* effects = ensure_effects(target_index);
+                    if (effects != nullptr) {
+                        (void)effects->apply(barrier);
+                        modifiers::EffectCommand barrier_command{};
+                        while (effects->pop_command(barrier_command)) {
+                            if (barrier_command.kind
+                                == modifiers::EffectCommandKind::set_shield) {
+                                target.shield = std::min(target.max_shield,
+                                    static_cast<int>(barrier_command.value));
+                            }
+                        }
+                        target.shield_ticks = static_cast<std::uint16_t>(
+                            effects->remaining_ticks(barrier.id));
+                    }
                 } else {
                     // No legal ally: leave the support in a bounded fallback
                     // reposition/cooldown rather than targeting the player.

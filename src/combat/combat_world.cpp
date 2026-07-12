@@ -10,6 +10,32 @@
 #include <limits>
 
 namespace arpg::combat {
+
+modifiers::EffectSet* CombatWorld::find_effects(
+    std::size_t monster_slot) noexcept {
+    const auto& monster = monsters_.slots_[monster_slot];
+    for (auto& owner : effect_owners_) {
+        if (owner.occupied && owner.monster_slot == monster_slot
+            && owner.generation == monster.generation) {
+            return &owner.effects;
+        }
+    }
+    return nullptr;
+}
+
+modifiers::EffectSet* CombatWorld::ensure_effects(
+    std::size_t monster_slot) noexcept {
+    if (auto* existing = find_effects(monster_slot)) return existing;
+    for (auto& owner : effect_owners_) {
+        if (owner.occupied) continue;
+        owner.monster_slot = monster_slot;
+        owner.generation = monsters_.slots_[monster_slot].generation;
+        owner.effects.clear();
+        owner.occupied = true;
+        return &owner.effects;
+    }
+    return nullptr;
+}
 namespace {
 
 constexpr std::array<int, kDummyCount> kDummyHitPoints{{300, 450, 700}};
@@ -101,6 +127,7 @@ void CombatWorld::reset() noexcept {
 void CombatWorld::initialize_runtime() noexcept {
     initialize_player();
     monsters_.clear();
+    for (auto& owner : effect_owners_) owner = {};
     projectiles_.clear();
     hazards_.clear();
     if (legacy_mode_) {
@@ -168,6 +195,7 @@ bool CombatWorld::load_wave(
     }
 
     monsters_.clear();
+    for (auto& owner : effect_owners_) owner = {};
     projectiles_.clear();
     hazards_.clear();
     for (std::size_t index = 0; index < wave.spawn_count; ++index) {
@@ -341,6 +369,18 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
         ++compatibility_index;
     }
 
+    std::size_t effect_owner_count = 0;
+    std::size_t active_effect_count = 0;
+    std::uint32_t effect_overflow_count = 0;
+    std::uint32_t effect_command_overflow_count = 0;
+    for (const auto& owner : effect_owners_) {
+        if (!owner.occupied) continue;
+        ++effect_owner_count;
+        active_effect_count += owner.effects.active_count();
+        effect_overflow_count += owner.effects.diagnostics().effect_overflows;
+        effect_command_overflow_count +=
+            owner.effects.diagnostics().command_overflows;
+    }
     result.diagnostics = CombatDiagnostics{
         input_buffer_.size(),
         input_buffer_.expired_count(),
@@ -350,6 +390,10 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
         projectile_invalid_owner_count_,
         hazard_saturation_count_,
         hazard_invalid_owner_count_,
+        effect_owner_count,
+        active_effect_count,
+        effect_overflow_count,
+        effect_command_overflow_count,
     };
     return result;
 }

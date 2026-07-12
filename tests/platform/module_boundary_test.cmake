@@ -182,8 +182,14 @@ arpg_expect_module_boundary(
 arpg_expect_module_boundary(
     "ordinary string" FALSE
     "const char* text = \"#include <${FORBIDDEN_MODULE}/sample.hpp>\";")
+if(FORBIDDEN_MODULE STREQUAL "combat")
+    set(_arpg_unrelated_module "core")
+else()
+    set(_arpg_unrelated_module "combat")
+endif()
 arpg_expect_module_boundary(
-    "unrelated include" FALSE [=[#include <combat/combat_types.hpp>]=])
+    "unrelated include" FALSE
+    "#include <${_arpg_unrelated_module}/sample.hpp>")
 
 get_property(ARPG_MODULE_BOUNDARY_SELF_TEST_FAILURES
     GLOBAL PROPERTY ARPG_MODULE_BOUNDARY_SELF_TEST_FAILURES)

@@ -74,12 +74,30 @@ arpg::test::Failure command_overflow_is_bounded_and_reported() noexcept {
     return {};
 }
 
+arpg::test::Failure active_modifiers_are_exposed_in_slot_order() noexcept {
+    EffectSet set;
+    auto first = effect(8, 10);
+    first.has_modifier = true;
+    first.modifier = {80U, StatId::shield, ModifierOperation::flat, 20};
+    auto second = effect(2, 10);
+    second.has_modifier = true;
+    second.modifier = {20U, StatId::shield, ModifierOperation::flat, 10};
+    ARPG_REQUIRE(set.apply(first) == ApplyResult::applied);
+    ARPG_REQUIRE(set.apply(second) == ApplyResult::applied);
+    std::array<Modifier, EffectSet::kCapacity> modifiers{};
+    ARPG_REQUIRE(set.copy_modifiers(modifiers) == 2);
+    ARPG_REQUIRE(modifiers[0].id == 80U);
+    ARPG_REQUIRE(modifiers[1].id == 20U);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"fixed capacity", &capacity_is_fixed_and_reported},
     {"refresh duration", &refresh_restores_duration_without_duplication},
     {"stack cap", &add_stack_respects_maximum},
     {"expiry trigger", &expiry_emits_deterministic_command},
     {"command overflow", &command_overflow_is_bounded_and_reported},
+    {"active modifiers", &active_modifiers_are_exposed_in_slot_order},
 };
 
 }  // namespace

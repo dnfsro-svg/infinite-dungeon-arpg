@@ -40,8 +40,8 @@ struct EffectDefinition final {
     RefreshRule refresh_rule{RefreshRule::reject};
     std::uint8_t max_stacks{1};
     FixedValue strength{};
-    std::array<Modifier, 4> modifiers{};
-    std::uint8_t modifier_count{};
+    Modifier modifier{};
+    bool has_modifier{};
     EffectCommandTemplate on_apply{};
     EffectCommandTemplate on_refresh{};
     EffectCommandTemplate on_expire{};
@@ -79,13 +79,21 @@ public:
     [[nodiscard]] std::uint8_t stack_count(EffectId id) const noexcept;
     [[nodiscard]] std::size_t queued_command_count() const noexcept;
     [[nodiscard]] const EffectDiagnostics& diagnostics() const noexcept;
+    std::size_t copy_modifiers(
+        std::array<Modifier, kCapacity>& output) const noexcept;
     bool pop_command(EffectCommand& command) noexcept;
 
 private:
     struct ActiveEffect final {
-        EffectDefinition definition{};
+        EffectId id{};
         int remaining_ticks{};
         std::uint8_t stacks{};
+        std::uint8_t max_stacks{};
+        RefreshRule refresh_rule{RefreshRule::reject};
+        FixedValue strength{};
+        Modifier modifier{};
+        bool has_modifier{};
+        EffectCommandTemplate on_expire{};
         bool occupied{};
     };
 

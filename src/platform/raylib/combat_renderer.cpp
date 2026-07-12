@@ -932,6 +932,17 @@ void CombatRenderer::draw(
             y += 23;
             DrawText(
                 TextFormat(
+                    "Effects owners/active %llu/%llu  overflow %u  commands %u",
+                    static_cast<unsigned long long>(
+                        combat_state.diagnostics.effect_owner_count),
+                    static_cast<unsigned long long>(
+                        combat_state.diagnostics.active_effect_count),
+                    combat_state.diagnostics.effect_overflow_count,
+                    combat_state.diagnostics.effect_command_overflow_count),
+                30, y, 16, text);
+            y += 23;
+            DrawText(
+                TextFormat(
                     "Action %s  %s  Combo %u",
                     attack_name(combat_state.player.active_attack),
                     phase_name(combat_state.player.attack_phase),

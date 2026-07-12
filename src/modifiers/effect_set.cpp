@@ -6,14 +6,14 @@ namespace arpg::modifiers {
 
 EffectSet::ActiveEffect* EffectSet::find(EffectId id) noexcept {
     for (auto& effect : effects_) {
-        if (effect.occupied && effect.definition.id == id) return &effect;
+        if (effect.occupied && effect.id == id) return &effect;
     }
     return nullptr;
 }
 
 const EffectSet::ActiveEffect* EffectSet::find(EffectId id) const noexcept {
     for (const auto& effect : effects_) {
-        if (effect.occupied && effect.definition.id == id) return &effect;
+        if (effect.occupied && effect.id == id) return &effect;
     }
     return nullptr;
 }
@@ -32,8 +32,7 @@ void EffectSet::emit(EffectCommandTemplate command, EffectId id) noexcept {
 
 ApplyResult EffectSet::apply(const EffectDefinition& definition) noexcept {
     if (definition.id == 0 || definition.duration_ticks <= 0
-        || definition.max_stacks == 0
-        || definition.modifier_count > definition.modifiers.size()) {
+        || definition.max_stacks == 0) {
         return ApplyResult::rejected;
     }
     if (ActiveEffect* active = find(definition.id)) {
@@ -41,33 +40,47 @@ ApplyResult EffectSet::apply(const EffectDefinition& definition) noexcept {
         case RefreshRule::reject:
             return ApplyResult::rejected;
         case RefreshRule::refresh_duration:
-            active->definition = definition;
             active->remaining_ticks = definition.duration_ticks;
+            active->strength = definition.strength;
+            active->modifier = definition.modifier;
+            active->has_modifier = definition.has_modifier;
+            active->on_expire = definition.on_expire;
             emit(definition.on_refresh, definition.id);
             return ApplyResult::refreshed;
         case RefreshRule::add_stack:
-            if (active->stacks >= definition.max_stacks) {
+            if (active->stacks >= active->max_stacks) {
                 return ApplyResult::rejected;
             }
-            active->definition = definition;
             active->remaining_ticks = definition.duration_ticks;
             ++active->stacks;
             emit(definition.on_refresh, definition.id);
             return ApplyResult::stacked;
         case RefreshRule::replace_weaker:
-            if (definition.strength <= active->definition.strength) {
+            if (definition.strength <= active->strength) {
                 return ApplyResult::rejected;
             }
-            active->definition = definition;
             active->remaining_ticks = definition.duration_ticks;
             active->stacks = 1;
+            active->strength = definition.strength;
+            active->modifier = definition.modifier;
+            active->has_modifier = definition.has_modifier;
+            active->on_expire = definition.on_expire;
             emit(definition.on_refresh, definition.id);
             return ApplyResult::refreshed;
         }
     }
     for (auto& slot : effects_) {
         if (slot.occupied) continue;
-        slot = {definition, definition.duration_ticks, 1, true};
+        slot.id = definition.id;
+        slot.remaining_ticks = definition.duration_ticks;
+        slot.stacks = 1;
+        slot.max_stacks = definition.max_stacks;
+        slot.refresh_rule = definition.refresh_rule;
+        slot.strength = definition.strength;
+        slot.modifier = definition.modifier;
+        slot.has_modifier = definition.has_modifier;
+        slot.on_expire = definition.on_expire;
+        slot.occupied = true;
         emit(definition.on_apply, definition.id);
         return ApplyResult::applied;
     }
@@ -80,7 +93,7 @@ void EffectSet::tick() noexcept {
         if (!effect.occupied) continue;
         --effect.remaining_ticks;
         if (effect.remaining_ticks > 0) continue;
-        emit(effect.definition.on_expire, effect.definition.id);
+        emit(effect.on_expire, effect.id);
         effect = {};
     }
 }
@@ -88,7 +101,7 @@ void EffectSet::tick() noexcept {
 bool EffectSet::remove(EffectId id) noexcept {
     ActiveEffect* effect = find(id);
     if (effect == nullptr) return false;
-    emit(effect->definition.on_expire, id);
+    emit(effect->on_expire, id);
     *effect = {};
     return true;
 }
@@ -121,6 +134,16 @@ std::size_t EffectSet::queued_command_count() const noexcept {
 
 const EffectDiagnostics& EffectSet::diagnostics() const noexcept {
     return diagnostics_;
+}
+
+std::size_t EffectSet::copy_modifiers(
+    std::array<Modifier, kCapacity>& output) const noexcept {
+    std::size_t count = 0;
+    for (const auto& effect : effects_) {
+        if (!effect.occupied || !effect.has_modifier) continue;
+        output[count++] = effect.modifier;
+    }
+    return count;
 }
 
 bool EffectSet::pop_command(EffectCommand& command) noexcept {

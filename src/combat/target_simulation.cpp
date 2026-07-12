@@ -1,5 +1,6 @@
 #include "combat/combat_world.hpp"
 #include "combat/room_bounds.hpp"
+#include "modifiers/modifier_math.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -17,7 +18,20 @@ constexpr std::uint16_t kRespawnTicks = 90;
 constexpr std::uint16_t kLauncherHoverTicks = 30;
 
 float impulse_scale(DummyKind kind) noexcept {
-    return kind == DummyKind::light ? 1.25F : 1.0F;
+    modifiers::Modifier light_scale{1U, modifiers::StatId::impulse_scale,
+        modifiers::ModifierOperation::more, 12500};
+    light_scale.required_tags = modifiers::tag(
+        modifiers::ModifierTag::light_target);
+    modifiers::ModifierContext context{};
+    if (kind == DummyKind::light) {
+        context.tags = modifiers::tag(modifiers::ModifierTag::light_target);
+    }
+    const std::array<modifiers::Modifier, 1> values{{light_scale}};
+    const auto result = modifiers::evaluate_stat(
+        modifiers::kFixedOne, modifiers::StatId::impulse_scale,
+        values, context, {0, 100000});
+    return static_cast<float>(result.value)
+        / static_cast<float>(modifiers::kFixedOne);
 }
 
 std::uint16_t reaction_ticks(
