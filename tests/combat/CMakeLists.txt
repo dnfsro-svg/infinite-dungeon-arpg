@@ -11,6 +11,7 @@ add_executable(arpg_combat_tests
     monster_catalog_tests.cpp
     monster_melee_tests.cpp
     monster_ranged_tests.cpp
+    monster_special_tests.cpp
     monster_pool_tests.cpp
     movement_jump_tests.cpp
     player_health_tests.cpp)

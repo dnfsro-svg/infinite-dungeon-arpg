@@ -39,6 +39,7 @@ struct MonsterRuntime final {
     std::uint16_t hit_stop_ticks{};
     std::uint16_t owner_transient_counter{};
     Vec3 attack_target_position{};
+    Vec3 attack_vector{};
 };
 
 class MonsterPool final {
@@ -85,6 +86,38 @@ private:
     static void advance_generation(ProjectileRuntime& runtime) noexcept;
 
     std::array<ProjectileRuntime, kProjectileCapacity> slots_{};
+    std::size_t active_count_{};
+};
+
+struct HazardHandle final {
+    std::uint16_t index{0xFFFF};
+    std::uint16_t generation{};
+};
+
+class HazardPool final {
+public:
+    void clear() noexcept;
+    [[nodiscard]] std::optional<HazardHandle> spawn(
+        MonsterHandle owner,
+        Vec3 center,
+        float radius,
+        std::uint16_t telegraph_ticks,
+        std::uint16_t active_ticks,
+        std::uint16_t damage_interval_ticks,
+        int damage,
+        bool persists_after_owner_death = false) noexcept;
+    [[nodiscard]] bool destroy(HazardHandle handle) noexcept;
+    [[nodiscard]] std::size_t active_count() const noexcept;
+    [[nodiscard]] HazardRuntime* get(HazardHandle handle) noexcept;
+    [[nodiscard]] const HazardRuntime* get(HazardHandle handle) const noexcept;
+    [[nodiscard]] const std::array<HazardRuntime, kHazardCapacity>&
+    slots() const noexcept;
+    [[nodiscard]] std::array<HazardRuntime, kHazardCapacity>& slots() noexcept;
+
+private:
+    static void advance_generation(HazardRuntime& runtime) noexcept;
+
+    std::array<HazardRuntime, kHazardCapacity> slots_{};
     std::size_t active_count_{};
 };
 
