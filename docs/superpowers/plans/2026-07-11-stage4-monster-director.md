@@ -227,6 +227,8 @@ EncounterPlanResult build_encounter_plan(std::uint64_t room_seed,
     const EncounterDirectorConfig&) noexcept;
 ```
 
+`EncounterDirectorConfig` is declared in `dungeon_rules.hpp`; `encounter_director.hpp` includes that header and returns the existing `DungeonFault` type. `dungeon_rules.hpp` must not include `encounter_director.hpp`, preventing an include cycle.
+
 - [ ] **Step 1: Write RED tests for budget math, determinism, ecology and constraints**
 
 ```cpp
@@ -377,7 +379,7 @@ explicit CombatWorld(CombatEncounterConfig config) noexcept;
 [[nodiscard]] std::size_t active_monster_count() const noexcept;
 ```
 
-Keep the old `CombatLabConfig` constructor temporarily as a test compatibility adapter until Task 7 removes its dungeon use.
+Keep the old `CombatLabConfig` constructor temporarily as a test compatibility adapter until Task 8 removes its dungeon use.
 
 - [ ] **Step 4: Run combat tests**
 
