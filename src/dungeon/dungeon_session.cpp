@@ -19,6 +19,11 @@ void saturating_increment(std::uint32_t& value) noexcept {
     }
 }
 
+void saturating_add(std::uint64_t& value, std::uint64_t addition) noexcept {
+    const auto maximum = (std::numeric_limits<std::uint64_t>::max)();
+    value = addition > maximum - value ? maximum : value + addition;
+}
+
 [[nodiscard]] DungeonRunState initial_state_for(
     const DungeonSessionConfig& config) noexcept {
     DungeonRunState state = make_initial_run_state(
@@ -88,6 +93,7 @@ void DungeonSession::tick(combat::MovementInput movement) noexcept {
                     phase_ = RoomPhase::wave_delay;
                     wave_delay_ticks_ = kWaveDelayTicks;
                 } else {
+                    settle_room_experience();
                     phase_ = RoomPhase::cleared;
                     if (emit(DungeonEventKind::room_cleared)
                             && phase_ != RoomPhase::faulted) {
@@ -127,11 +133,13 @@ bool DungeonSession::request_descent(bool player_in_range) noexcept {
         return false;
     }
 
+    RunStateBuildResult next = built;
+    next.state.progression = room_progression_;
     pending_ = PendingTransition{
         TransitionKind::descent,
         ExitDirection::none,
-        built.state.commit_generation,
-        built.state,
+        next.state.commit_generation,
+        next.state,
     };
     last_exit_ = ExitDirection::none;
     phase_ = RoomPhase::committing;
@@ -243,6 +251,10 @@ DungeonSnapshot DungeonSession::snapshot() const noexcept {
         result.encounter.current_wave_spawn_count = wave.spawn_count;
     }
     result.diagnostics = diagnostics_;
+    result.progression = room_progression_;
+    result.pending_room_experience = pending_room_experience_;
+    result.last_room_experience = last_room_experience_;
+    result.last_levels_gained = last_levels_gained_;
     return result;
 }
 
@@ -256,6 +268,10 @@ DungeonSession::try_pop_combat_event() noexcept {
 }
 
 void DungeonSession::construct_current_room() noexcept {
+    room_progression_ = stable_state_.progression;
+    pending_room_experience_ = 0U;
+    last_room_experience_ = 0U;
+    last_levels_gained_ = 0U;
     const EncounterPlanResult plan = build_encounter_plan(
         stable_state_.current_room.seed,
         stable_state_.current_room.depth,
@@ -301,6 +317,16 @@ void DungeonSession::relay_combat_events() noexcept {
         return;
     }
     while (auto event = combat_->try_pop_event()) {
+        if (event->kind == combat::CombatEventKind::defeated
+            && event->target_index < combat_->snapshot().monsters.size()) {
+            const combat::MonsterId id = combat_->snapshot()
+                .monsters[event->target_index].id;
+            const std::size_t monster_index = static_cast<std::size_t>(id);
+            if (monster_index < progression_rules_.monster_experience.size()) {
+                saturating_add(pending_room_experience_,
+                    progression_rules_.monster_experience[monster_index]);
+            }
+        }
         const bool relayed = combat_events_.try_push(*event);
         if (!relayed) {
             saturating_increment(diagnostics_.combat_relay_overflow_count);
@@ -309,6 +335,17 @@ void DungeonSession::relay_combat_events() noexcept {
             return;
         }
     }
+}
+
+void DungeonSession::settle_room_experience() noexcept {
+    saturating_add(pending_room_experience_,
+        progression_rules_.room_clear_experience);
+    last_room_experience_ = pending_room_experience_;
+    const progression::ProgressionAward award = progression::apply_experience(
+        room_progression_, pending_room_experience_, progression_rules_);
+    room_progression_ = award.state;
+    last_levels_gained_ = award.levels_gained;
+    pending_room_experience_ = 0U;
 }
 
 void DungeonSession::attempt_exit(ExitDirection direction) noexcept {
@@ -330,11 +367,13 @@ void DungeonSession::attempt_exit(ExitDirection direction) noexcept {
         return;
     }
 
+    RunStateBuildResult next = built;
+    next.state.progression = room_progression_;
     pending_ = PendingTransition{
         TransitionKind::door,
         direction,
-        built.state.commit_generation,
-        built.state,
+        next.state.commit_generation,
+        next.state,
     };
     phase_ = RoomPhase::committing;
     static_cast<void>(emit(

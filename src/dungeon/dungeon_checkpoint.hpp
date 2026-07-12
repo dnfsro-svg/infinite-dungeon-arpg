@@ -1,5 +1,7 @@
 #pragma once
 
+#include "progression/progression_types.hpp"
+
 #include <array>
 #include <cstdint>
 
@@ -52,6 +54,7 @@ struct DungeonRunState final {
     RoomDescriptor current_room{};
     TransitionKind last_transition{TransitionKind::none};
     ExitDirection last_direction{ExitDirection::none};
+    progression::ProgressionState progression{};
 };
 
 }  // namespace arpg::dungeon::checkpoint

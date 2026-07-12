@@ -113,6 +113,10 @@ struct DungeonSnapshot final {
     std::optional<combat::CombatSnapshot> combat{};
     DungeonEncounterDiagnostics encounter{};
     DungeonDiagnostics diagnostics{};
+    progression::ProgressionState progression{};
+    std::uint64_t pending_room_experience{};
+    std::uint64_t last_room_experience{};
+    std::uint8_t last_levels_gained{};
 };
 
 struct PendingTransition final {

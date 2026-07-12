@@ -9,6 +9,7 @@ arpg::test::TestSuite dungeon_progression_suite() noexcept;
 arpg::test::TestSuite dungeon_transaction_suite() noexcept;
 arpg::test::TestSuite encounter_director_suite() noexcept;
 arpg::test::TestSuite dungeon_wave_suite() noexcept;
+arpg::test::TestSuite dungeon_progression_reward_suite() noexcept;
 
 int main() {
     const arpg::test::TestSuite suites[] = {
@@ -21,7 +22,8 @@ int main() {
         dungeon_transaction_suite(),
         encounter_director_suite(),
         dungeon_wave_suite(),
+        dungeon_progression_reward_suite(),
     };
 
-    return arpg::test::run_suites(suites, 67, "stage 4 task 10 dungeon");
+    return arpg::test::run_suites(suites, 69, "stage 5 task 2 dungeon");
 }

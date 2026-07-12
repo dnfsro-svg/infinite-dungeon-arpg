@@ -3,6 +3,7 @@
 #include "core/bounded_queue.hpp"
 #include "dungeon/encounter_director.hpp"
 #include "dungeon/dungeon_types.hpp"
+#include "progression/progression_rules.hpp"
 
 #include "combat/combat_world.hpp"
 
@@ -43,6 +44,7 @@ private:
     void construct_current_room() noexcept;
     void start_next_wave() noexcept;
     void relay_combat_events() noexcept;
+    void settle_room_experience() noexcept;
     void attempt_exit(ExitDirection direction) noexcept;
     void enter_fault(DungeonFault fault) noexcept;
     void emit_committed(
@@ -70,6 +72,12 @@ private:
     ExitDirection last_exit_{ExitDirection::none};
     std::uint64_t session_tick_{};
     DungeonDiagnostics diagnostics_{};
+    progression::ProgressionRules progression_rules_{
+        progression::default_progression_rules()};
+    progression::ProgressionState room_progression_{};
+    std::uint64_t pending_room_experience_{};
+    std::uint64_t last_room_experience_{};
+    std::uint8_t last_levels_gained_{};
 };
 
 }  // namespace arpg::dungeon
