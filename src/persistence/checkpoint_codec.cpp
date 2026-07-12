@@ -21,6 +21,38 @@ constexpr std::size_t kCrcHeaderOffset = 8U;
 constexpr std::size_t kCrcHeaderSize = 20U;
 constexpr std::size_t kCrcPayloadOffset = 32U;
 
+struct DecodeCursor final {
+    const std::byte* data{};
+    std::size_t size{};
+    std::size_t offset{};
+
+    bool read_u32(std::uint32_t& value) noexcept {
+        if (offset > size || size - offset < 4U) {
+            return false;
+        }
+        value = 0U;
+        const auto* source = reinterpret_cast<const std::uint8_t*>(data) + offset;
+        for (std::size_t index = 0; index < 4U; ++index) {
+            value |= static_cast<std::uint32_t>(source[index]) << (index * 8U);
+        }
+        offset += 4U;
+        return true;
+    }
+
+    bool read_u64(std::uint64_t& value) noexcept {
+        if (offset > size || size - offset < 8U) {
+            return false;
+        }
+        value = 0U;
+        const auto* source = reinterpret_cast<const std::uint8_t*>(data) + offset;
+        for (std::size_t index = 0; index < 8U; ++index) {
+            value |= static_cast<std::uint64_t>(source[index]) << (index * 8U);
+        }
+        offset += 8U;
+        return true;
+    }
+};
+
 void write_u32(std::uint8_t* destination, std::uint32_t value) noexcept {
     for (std::size_t index = 0; index < 4U; ++index) {
         destination[index] = static_cast<std::uint8_t>(value >> (index * 8U));
@@ -31,22 +63,6 @@ void write_u64(std::uint8_t* destination, std::uint64_t value) noexcept {
     for (std::size_t index = 0; index < 8U; ++index) {
         destination[index] = static_cast<std::uint8_t>(value >> (index * 8U));
     }
-}
-
-std::uint32_t read_u32(const std::uint8_t* source) noexcept {
-    std::uint32_t value = 0U;
-    for (std::size_t index = 0; index < 4U; ++index) {
-        value |= static_cast<std::uint32_t>(source[index]) << (index * 8U);
-    }
-    return value;
-}
-
-std::uint64_t read_u64(const std::uint8_t* source) noexcept {
-    std::uint64_t value = 0U;
-    for (std::size_t index = 0; index < 8U; ++index) {
-        value |= static_cast<std::uint64_t>(source[index]) << (index * 8U);
-    }
-    return value;
 }
 
 bool valid_entry(std::uint8_t value) noexcept {
@@ -151,21 +167,32 @@ DecodeResult decode_checkpoint(
     if (!std::equal(kMagic.begin(), kMagic.end(), bytes)) {
         return error_result(CodecError::bad_magic);
     }
-    const std::uint32_t format = read_u32(bytes + 8U);
+    DecodeCursor header{reinterpret_cast<const std::byte*>(bytes), size, 8U};
+    std::uint32_t format{};
+    std::uint32_t rules{};
+    std::uint64_t generation{};
+    std::uint32_t encoded_payload_size{};
+    std::uint32_t encoded_crc{};
+    if (!header.read_u32(format) || !header.read_u32(rules)
+            || !header.read_u64(generation)
+            || !header.read_u32(encoded_payload_size)
+            || !header.read_u32(encoded_crc)) {
+        return error_result(CodecError::wrong_size);
+    }
     if (format != kCheckpointFormatVersion
         && format != kLegacyFormatVersion) {
         return error_result(CodecError::unsupported_format);
     }
-    if (read_u32(bytes + 12U) != kCheckpointRulesVersion) {
+    if (rules != kCheckpointRulesVersion) {
         return error_result(CodecError::unsupported_rules);
     }
     const std::size_t payload_size = format == kLegacyFormatVersion
         ? kLegacyCheckpointPayloadSize : kCheckpointPayloadSize;
     const std::size_t encoded_size = kCheckpointHeaderSize + payload_size;
-    if (size != encoded_size || read_u32(bytes + 24U) != payload_size) {
+    if (size != encoded_size || encoded_payload_size != payload_size) {
         return error_result(CodecError::bad_payload_length);
     }
-    if (read_u32(bytes + 28U) != checkpoint_crc(bytes, payload_size)) {
+    if (encoded_crc != checkpoint_crc(bytes, payload_size)) {
         return error_result(CodecError::bad_crc);
     }
 
@@ -187,15 +214,22 @@ DecodeResult decode_checkpoint(
 
     DecodeResult result{};
     auto& state = result.state;
-    state.root_seed = read_u64(bytes + 32U);
-    for (std::size_t index = 0; index < state.biases.size(); ++index) {
-        state.biases[index] = read_u32(bytes + 40U + index * 4U);
+    DecodeCursor payload{reinterpret_cast<const std::byte*>(bytes), size, 32U};
+    if (!payload.read_u64(state.root_seed)) {
+        return error_result(CodecError::wrong_size);
     }
-    state.commit_generation = read_u64(bytes + 16U);
-    state.current_room.index = read_u64(bytes + 56U);
-    state.current_room.seed = read_u64(bytes + 64U);
-    state.current_room.depth = read_u64(bytes + 72U);
-    state.current_room.floor_room_index = read_u64(bytes + 80U);
+    for (std::size_t index = 0; index < state.biases.size(); ++index) {
+        if (!payload.read_u32(state.biases[index])) {
+            return error_result(CodecError::wrong_size);
+        }
+    }
+    state.commit_generation = generation;
+    if (!payload.read_u64(state.current_room.index)
+            || !payload.read_u64(state.current_room.seed)
+            || !payload.read_u64(state.current_room.depth)
+            || !payload.read_u64(state.current_room.floor_room_index)) {
+        return error_result(CodecError::wrong_size);
+    }
     state.current_room.entry = static_cast<EntrySide>(entry);
     state.current_room.ecology = static_cast<DungeonElement>(ecology);
     state.current_room.has_hole = has_hole != 0U;
@@ -211,7 +245,11 @@ DecodeResult decode_checkpoint(
         state.progression.level = bytes[94U];
         state.progression.earned_passive_points = bytes[95U];
         state.progression.unspent_passive_points = bytes[96U];
-        state.progression.experience = read_u64(bytes + 98U);
+        DecodeCursor progression{reinterpret_cast<const std::byte*>(bytes),
+            size, 98U};
+        if (!progression.read_u64(state.progression.experience)) {
+            return error_result(CodecError::wrong_size);
+        }
     }
     if (!valid_state(state)) {
         return error_result(CodecError::invalid_state);

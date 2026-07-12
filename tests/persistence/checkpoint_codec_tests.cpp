@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 
@@ -69,6 +70,50 @@ void refresh_crc(
     for (std::size_t index = 0; index < 4U; ++index) {
         bytes[28U + index] = static_cast<std::uint8_t>(checksum >> (index * 8U));
     }
+}
+
+std::uint64_t fnv1a64(const std::uint8_t* bytes, std::size_t size) noexcept {
+    std::uint64_t hash = 14695981039346656037ULL;
+    for (std::size_t index = 0U; index < size; ++index) {
+        hash ^= bytes[index];
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+arpg::test::Failure baseline_checkpoint_bytes_are_preserved() noexcept {
+    constexpr std::array<std::uint8_t, persistence::kEncodedCheckpointSize>
+        kBaselineBytes{{
+            0x49U, 0x41U, 0x52U, 0x50U, 0x47U, 0x53U, 0x30U, 0x33U,
+            0x02U, 0x00U, 0x00U, 0x00U, 0x01U, 0x00U, 0x00U, 0x00U,
+            0x18U, 0x17U, 0x16U, 0x15U, 0x14U, 0x13U, 0x12U, 0x11U,
+            0x50U, 0x00U, 0x00U, 0x00U, 0xC7U, 0x37U, 0x66U, 0x35U,
+            0x08U, 0x07U, 0x06U, 0x05U, 0x04U, 0x03U, 0x02U, 0x01U,
+            0x24U, 0x23U, 0x22U, 0x21U, 0x28U, 0x27U, 0x26U, 0x25U,
+            0x2CU, 0x2BU, 0x2AU, 0x29U, 0x30U, 0x2FU, 0x2EU, 0x2DU,
+            0x38U, 0x37U, 0x36U, 0x35U, 0x34U, 0x33U, 0x32U, 0x31U,
+            0x48U, 0x47U, 0x46U, 0x45U, 0x44U, 0x43U, 0x42U, 0x41U,
+            0x02U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U,
+            0x03U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U,
+            0x04U, 0x03U, 0x01U, 0x01U, 0x01U, 0x02U, 0x25U, 0x24U,
+            0x24U, 0x00U, 0x2AU, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U,
+            0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U,
+        }};
+    constexpr std::uint64_t kBaselineFnv1a64 = 0x7140C6EB37ABE1B4ULL;
+
+    std::array<std::uint8_t, persistence::kEncodedCheckpointSize> bytes{};
+    ARPG_REQUIRE(persistence::encode_checkpoint(make_fixture(), bytes));
+    ARPG_REQUIRE(bytes.size() == 112U);
+    ARPG_REQUIRE(bytes == kBaselineBytes);
+    ARPG_REQUIRE(fnv1a64(bytes.data(), bytes.size()) == kBaselineFnv1a64);
+    ARPG_REQUIRE(bytes[0U] == 0x49U && bytes[7U] == 0x33U);
+    ARPG_REQUIRE(bytes[106U] == 0x00U && bytes[111U] == 0x00U);
+
+    const auto decoded = persistence::decode_checkpoint(
+        kBaselineBytes.data(), kBaselineBytes.size());
+    ARPG_REQUIRE(decoded.error == persistence::CodecError::none);
+    ARPG_REQUIRE(same_state(decoded.state, make_fixture()));
+    return {};
 }
 
 arpg::test::Failure all_nonzero_fields_round_trip() noexcept {
@@ -233,6 +278,7 @@ arpg::test::Failure version_one_migrates_to_new_character_progression() noexcept
 }
 
 constexpr arpg::test::TestCase kCases[] = {
+    {"baseline checkpoint bytes are preserved", &baseline_checkpoint_bytes_are_preserved},
     {"all nonzero fields round trip", &all_nonzero_fields_round_trip},
     {"encoded sizes and generation are little endian", &encoded_sizes_and_generation_are_little_endian},
     {"crc32 known value and covered flip are detected", &crc32_known_value_and_covered_flip_are_detected},

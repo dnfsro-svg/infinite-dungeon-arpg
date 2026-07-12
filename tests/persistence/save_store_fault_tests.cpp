@@ -378,6 +378,60 @@ arpg::test::Failure archive_failure_blocks_and_preserves_corrupt_files() noexcep
     return {};
 }
 
+arpg::test::Failure baseline_fault_recovery_selects_recorded_slot_and_generation() noexcept {
+    struct CommitRecoveryExpectation final {
+        persistence::SaveFaultPoint point{};
+        persistence::SaveSlot slot{persistence::SaveSlot::none};
+        std::uint64_t generation{};
+    };
+    constexpr std::array<CommitRecoveryExpectation, 7U> kCommitExpectations{{
+        {persistence::SaveFaultPoint::before_temp_write,
+            persistence::SaveSlot::a, 17U},
+        {persistence::SaveFaultPoint::after_temp_write,
+            persistence::SaveSlot::a, 17U},
+        {persistence::SaveFaultPoint::after_temp_validation,
+            persistence::SaveSlot::a, 17U},
+        {persistence::SaveFaultPoint::before_publish,
+            persistence::SaveSlot::a, 17U},
+        {persistence::SaveFaultPoint::after_publish,
+            persistence::SaveSlot::b, 18U},
+        {persistence::SaveFaultPoint::final_scan_a,
+            persistence::SaveSlot::b, 18U},
+        {persistence::SaveFaultPoint::final_scan_b,
+            persistence::SaveSlot::b, 18U},
+    }};
+
+    for (const auto& expected : kCommitExpectations) {
+        TempDirectory directory;
+        auto healthy = make_store(directory.path);
+        ARPG_REQUIRE(healthy.commit(make_state(17U, 21U)).state
+            == persistence::SaveCommitState::committed);
+
+        FaultContext fault{expected.point, false, false};
+        auto faulty = make_store(directory.path, &fault);
+        static_cast<void>(faulty.commit(make_state(18U, 22U)));
+        const auto recovered = faulty.load();
+        ARPG_REQUIRE(recovered.state == persistence::SaveLoadState::ready);
+        ARPG_REQUIRE(recovered.active_slot == expected.slot);
+        ARPG_REQUIRE(recovered.checkpoint.commit_generation == expected.generation);
+    }
+
+    TempDirectory directory;
+    auto healthy = make_store(directory.path);
+    ARPG_REQUIRE(healthy.commit(make_state(17U, 23U)).state
+        == persistence::SaveCommitState::committed);
+    write_bytes(directory.path / "run_b.sav", {0x01U, 0x02U, 0x03U});
+    FaultContext fault{persistence::SaveFaultPoint::before_archive, false, false};
+    auto faulty = make_store(directory.path, &fault);
+    const auto blocked = faulty.load();
+    ARPG_REQUIRE(blocked.state == persistence::SaveLoadState::blocked);
+    const auto recovered = faulty.load();
+    ARPG_REQUIRE(recovered.state == persistence::SaveLoadState::ready);
+    ARPG_REQUIRE(recovered.active_slot == persistence::SaveSlot::a);
+    ARPG_REQUIRE(recovered.checkpoint.commit_generation == 17U);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"before temp write is not committed and old bytes unchanged", &before_temp_write_is_not_committed_and_old_bytes_unchanged},
     {"after temp validation before publish is not committed", &after_temp_validation_before_publish_is_not_committed},
@@ -386,6 +440,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"four invalid files are archived before new generation", &four_invalid_files_are_archived_before_new_generation},
     {"conflicting slots are archived before new generation", &conflicting_slots_are_archived_before_new_generation},
     {"archive failure blocks and preserves corrupt files", &archive_failure_blocks_and_preserves_corrupt_files},
+    {"baseline fault recovery selects recorded slot and generation", &baseline_fault_recovery_selects_recorded_slot_and_generation},
 };
 
 }  // namespace
