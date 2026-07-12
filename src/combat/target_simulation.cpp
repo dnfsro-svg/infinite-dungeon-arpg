@@ -36,7 +36,7 @@ std::uint16_t reaction_ticks(
 void CombatWorld::apply_dummy_impact(
     std::size_t index,
     const AttackDefinition& definition) noexcept {
-    MonsterRuntime& dummy = monsters_.slots()[index];
+    MonsterRuntime& dummy = monsters_.slots_[index];
     if (dummy.hp == 0) {
         dummy.reaction = ReactionState::defeated;
         dummy.reaction_ticks = kRespawnTicks;
@@ -109,7 +109,7 @@ void CombatWorld::apply_dummy_impact(
 }
 
 void CombatWorld::respawn_dummy(std::size_t index) noexcept {
-    MonsterRuntime& dummy = monsters_.slots()[index];
+    MonsterRuntime& dummy = monsters_.slots_[index];
     dummy.position = dummy.spawn;
     dummy.velocity = Vec3{};
     dummy.reaction = ReactionState::respawning;
@@ -131,7 +131,7 @@ void CombatWorld::respawn_dummy(std::size_t index) noexcept {
 }
 
 void CombatWorld::simulate_target(std::size_t index) noexcept {
-    MonsterRuntime& dummy = monsters_.slots()[index];
+    MonsterRuntime& dummy = monsters_.slots_[index];
 
     if (dummy.armor == ArmorState::broken
         && dummy.reaction != ReactionState::defeated

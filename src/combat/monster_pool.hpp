@@ -9,6 +9,8 @@
 
 namespace arpg::combat {
 
+class CombatWorld;
+
 struct MonsterRuntime final {
     bool active{};
     std::uint16_t generation{};
@@ -50,10 +52,9 @@ public:
     [[nodiscard]] const MonsterRuntime* get(MonsterHandle handle) const noexcept;
     [[nodiscard]] const std::array<MonsterRuntime, kMonsterCapacity>&
     slots() const noexcept;
-    [[nodiscard]] std::array<MonsterRuntime, kMonsterCapacity>&
-    slots() noexcept;
 
 private:
+    friend class CombatWorld;
     static void advance_generation(MonsterRuntime& runtime) noexcept;
 
     std::array<MonsterRuntime, kMonsterCapacity> slots_{};

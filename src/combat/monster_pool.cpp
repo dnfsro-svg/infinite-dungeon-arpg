@@ -127,8 +127,4 @@ const std::array<MonsterRuntime, kMonsterCapacity>& MonsterPool::slots() const n
     return slots_;
 }
 
-std::array<MonsterRuntime, kMonsterCapacity>& MonsterPool::slots() noexcept {
-    return slots_;
-}
-
 }  // namespace arpg::combat

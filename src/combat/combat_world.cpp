@@ -37,7 +37,7 @@ void CombatWorld::tick(MovementInput movement) noexcept {
         simulate_player(movement);
     }
 
-    for (MonsterRuntime& monster : monsters_.slots()) {
+    for (MonsterRuntime& monster : monsters_.slots_) {
         if (!monster.active) {
             continue;
         }
@@ -46,7 +46,7 @@ void CombatWorld::tick(MovementInput movement) noexcept {
             --monster.hit_stop_ticks;
         } else {
             const std::size_t index = static_cast<std::size_t>(
-                &monster - monsters_.slots().data());
+                &monster - monsters_.slots_.data());
             simulate_target(index);
         }
     }
@@ -136,6 +136,12 @@ bool CombatWorld::load_wave(const EncounterWave& wave) noexcept {
             return false;
         }
     }
+    attack_ = AttackRuntime{};
+    input_buffer_.clear();
+    input_buffer_.reset_diagnostics();
+    while (events_.try_pop().has_value()) {
+    }
+    event_overflow_count_ = 0U;
     encounter_config_.wave = wave;
     legacy_mode_ = false;
     return true;
@@ -143,6 +149,16 @@ bool CombatWorld::load_wave(const EncounterWave& wave) noexcept {
 
 std::size_t CombatWorld::active_monster_count() const noexcept {
     return monsters_.active_count();
+}
+
+bool CombatWorld::destroy_monster(MonsterHandle handle) noexcept {
+    if (!monsters_.destroy(handle)) {
+        return false;
+    }
+    if (handle.index < attack_.hit_targets.size()) {
+        attack_.hit_targets[handle.index] = false;
+    }
+    return true;
 }
 
 std::optional<CombatEvent> CombatWorld::try_pop_event() noexcept {
@@ -191,8 +207,16 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
     }
 
     result.monster_count = monsters_.active_count();
-    for (std::size_t index = 0; index < kDummyCount; ++index) {
-        result.dummies[index] = result.monsters[index];
+    std::size_t compatibility_index = 0U;
+    for (std::size_t index = 0;
+         index < monsters_.slots().size()
+             && compatibility_index < kDummyCount;
+         ++index) {
+        if (!result.monsters[index].active) {
+            continue;
+        }
+        result.dummies[compatibility_index] = result.monsters[index];
+        ++compatibility_index;
     }
 
     result.diagnostics = CombatDiagnostics{

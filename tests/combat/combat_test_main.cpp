@@ -25,5 +25,5 @@ int main() {
         monster_pool_suite(),
     };
 
-    return arpg::test::run_suites(suites, 39, "stage 4 task 3");
+    return arpg::test::run_suites(suites, 42, "stage 4 task 3");
 }

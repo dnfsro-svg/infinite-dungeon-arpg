@@ -21,6 +21,7 @@ public:
     void tick(MovementInput movement) noexcept;
     void reset() noexcept;
     [[nodiscard]] bool load_wave(const EncounterWave& wave) noexcept;
+    [[nodiscard]] bool destroy_monster(MonsterHandle handle) noexcept;
     [[nodiscard]] std::size_t active_monster_count() const noexcept;
     [[nodiscard]] CombatSnapshot snapshot() const noexcept;
     [[nodiscard]] std::optional<CombatEvent> try_pop_event() noexcept;
