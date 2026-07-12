@@ -6,11 +6,17 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
 
 namespace arpg::test {
 
 struct DungeonSessionTestAccess final {
+    static void damage_current_player(
+        dungeon::DungeonSession& session, int damage) noexcept {
+        if (session.combat_.has_value()) {
+            session.combat_->apply_player_damage(
+                damage, combat::Vec3{}, combat::FeedbackLevel::light);
+        }
+    }
     static void force_defeat_current_wave(
         dungeon::DungeonSession& session) noexcept {
         if (!session.combat_.has_value()) {
@@ -34,31 +40,9 @@ inline void force_defeat_current_wave(dungeon::DungeonSession& session) noexcept
     DungeonSessionTestAccess::force_defeat_current_wave(session);
 }
 
-inline void trace_wave_fixture(const char* label,
-    const dungeon::DungeonSnapshot& state) noexcept {
-    std::fprintf(stderr,
-        "[wave-trace] %s tick=%llu room=%llu phase=%u wave=%u/%u delay=%u targets=%u exits=%u%u%u%u hole=%u player=(%.2f,%.2f) hp=%d state=%u\n",
-        label, static_cast<unsigned long long>(state.session_tick),
-        static_cast<unsigned long long>(state.room_index),
-        static_cast<unsigned>(state.phase), static_cast<unsigned>(state.wave_index),
-        static_cast<unsigned>(state.wave_count),
-        static_cast<unsigned>(state.wave_delay_ticks),
-        static_cast<unsigned>(state.remaining_targets), state.exits_open[0],
-        state.exits_open[1], state.exits_open[2], state.exits_open[3],
-        state.has_hole, state.combat ? state.combat->player.position.x : 0.0F,
-        state.combat ? state.combat->player.position.y : 0.0F,
-        state.combat ? state.combat->player.hp : 0,
-        static_cast<unsigned>(state.combat ? state.combat->player.state
-                                           : combat::PlayerState::idle));
-    if (!state.combat) return;
-    for (const auto& monster : state.combat->monsters) {
-        if (monster.active) {
-            std::fprintf(stderr, "[wave-trace] monster id=%u hp=%d pos=(%.2f,%.2f) ai=%u\n",
-                static_cast<unsigned>(monster.id), monster.hp,
-                monster.position.x, monster.position.y,
-                static_cast<unsigned>(monster.ai_phase));
-        }
-    }
+inline void damage_current_player(
+    dungeon::DungeonSession& session, int damage) noexcept {
+    DungeonSessionTestAccess::damage_current_player(session, damage);
 }
 
 inline bool commit_pending(
@@ -185,12 +169,10 @@ inline bool drive_until_cleared(
     dungeon::DungeonSession& session,
     EventSummary& summary,
     int max_ticks = 4096) noexcept {
-    trace_wave_fixture("drive-start", session.snapshot());
     for (int tick = 0; tick < max_ticks; ++tick) {
         const dungeon::DungeonSnapshot state = session.snapshot();
         if (state.phase == dungeon::RoomPhase::cleared
                 || state.phase == dungeon::RoomPhase::awaiting_exit) {
-            trace_wave_fixture("drive-terminal", state);
             return true;
         }
         if (state.phase == dungeon::RoomPhase::combat) {
@@ -199,7 +181,6 @@ inline bool drive_until_cleared(
         session.tick({});
         drain_all_events(session, summary);
     }
-    trace_wave_fixture("drive-timeout", session.snapshot());
     return false;
 }
 

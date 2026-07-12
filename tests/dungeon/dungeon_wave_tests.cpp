@@ -205,6 +205,35 @@ arpg::test::Failure forced_defeat_advances_real_wave_lifecycle() noexcept {
     return {};
 }
 
+arpg::test::Failure wave_delay_freezes_combat_and_preserves_health_until_wave_one() noexcept {
+    const DungeonRules rules = two_wave_rules();
+    DungeonSession session{rules, state_for_seed(0x2A11CEU, rules)};
+    session.tick({});
+    arpg::test::damage_current_player(session, 100);
+    arpg::test::force_defeat_current_wave(session);
+    session.tick({});
+    const auto delay = session.snapshot();
+    ARPG_REQUIRE(delay.phase == RoomPhase::wave_delay);
+    const int hp = delay.combat->player.hp;
+    const auto player = delay.combat->player;
+    const auto combat_tick = delay.combat->tick;
+    for (int tick = 0; tick < 44; ++tick) {
+        session.tick({});
+        const auto frozen = session.snapshot();
+        ARPG_REQUIRE(frozen.phase == RoomPhase::wave_delay);
+        ARPG_REQUIRE(frozen.combat->tick == combat_tick);
+        ARPG_REQUIRE(frozen.combat->player.hp == hp);
+        ARPG_REQUIRE(frozen.combat->player.state == player.state);
+        ARPG_REQUIRE(all_exits_closed(frozen));
+    }
+    session.tick({});
+    const auto wave_one = session.snapshot();
+    ARPG_REQUIRE(wave_one.phase == RoomPhase::combat);
+    ARPG_REQUIRE(wave_one.wave_index == 1U);
+    ARPG_REQUIRE(wave_one.combat->player.hp == hp);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"two wave room keeps exits closed until last wave", &two_wave_room_keeps_exits_closed_until_last_wave},
     {"sealed hole stays closed through wave delay", &sealed_hole_stays_closed_through_wave_delay},
@@ -213,6 +242,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"four chaser fixture reaches awaiting exit", &four_chaser_fixture_reaches_awaiting_exit},
     {"shooter and chasers fixture reaches awaiting exit", &shooter_and_chasers_fixture_reaches_awaiting_exit},
     {"forced defeat advances real wave lifecycle", &forced_defeat_advances_real_wave_lifecycle},
+    {"wave delay freezes combat and preserves health", &wave_delay_freezes_combat_and_preserves_health_until_wave_one},
 };
 
 }  // namespace
