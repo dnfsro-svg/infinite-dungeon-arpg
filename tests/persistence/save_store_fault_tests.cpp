@@ -246,6 +246,18 @@ arpg::test::Failure truncated_temp_without_valid_slot_requires_recovery() noexce
     const auto loaded = store.load();
     ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::recovery_required);
     ARPG_REQUIRE(loaded.error == persistence::SaveError::read_failed);
+
+    TempDirectory dangling_directory;
+    std::error_code symlink_error;
+    std::filesystem::create_symlink(
+        std::filesystem::path(R"(\\.\NUL\child)"),
+        dangling_directory.path / "run_a.sav", symlink_error);
+    ARPG_REQUIRE(!symlink_error);
+    auto dangling_store = make_store(dangling_directory.path);
+    const auto dangling_loaded = dangling_store.load();
+    ARPG_REQUIRE(dangling_loaded.state == persistence::SaveLoadState::blocked);
+    ARPG_REQUIRE(dangling_loaded.error
+        == persistence::SaveError::directory_unavailable);
     return {};
 }
 

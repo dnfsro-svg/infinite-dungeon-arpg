@@ -114,14 +114,18 @@ ScanResult scan_directory(const SaveStoreConfig& config,
     bool final_scan) noexcept {
     ScanResult result{};
     try {
-        std::error_code error;
-        if (!std::filesystem::exists(config.directory, error)) {
-            if (error) {
+        std::error_code directory_exists_error;
+        if (!std::filesystem::exists(config.directory,
+                directory_exists_error)) {
+            if (directory_exists_error) {
                 result.directory_error = true;
             }
             return result;
         }
-        if (!std::filesystem::is_directory(config.directory, error) || error) {
+        std::error_code directory_type_error;
+        if (!std::filesystem::is_directory(config.directory,
+                directory_type_error)
+            || directory_type_error) {
             result.directory_error = true;
             return result;
         }
@@ -130,18 +134,22 @@ ScanResult scan_directory(const SaveStoreConfig& config,
         const auto b_path = config.directory / slot_name(SaveSlot::b);
         const auto a_tmp = config.directory / temp_name(SaveSlot::a);
         const auto b_tmp = config.directory / temp_name(SaveSlot::b);
-        result.any_file = std::filesystem::exists(a_path, error)
-            || std::filesystem::exists(b_path, error)
-            || std::filesystem::exists(a_tmp, error)
-            || std::filesystem::exists(b_tmp, error);
-        if (error) {
-            result.directory_error = true;
-            return result;
-        }
-        result.temp_a = std::filesystem::exists(a_tmp, error);
-        result.temp_b = std::filesystem::exists(b_tmp, error);
-        if (error) {
-            result.directory_error = true;
+        const auto probe_exists = [&result](
+            const std::filesystem::path& path) {
+            std::error_code path_error;
+            const auto present = std::filesystem::exists(path, path_error);
+            if (path_error) {
+                result.directory_error = true;
+            }
+            return present;
+        };
+        const auto slot_a_exists = probe_exists(a_path);
+        const auto slot_b_exists = probe_exists(b_path);
+        result.temp_a = probe_exists(a_tmp);
+        result.temp_b = probe_exists(b_tmp);
+        result.any_file = slot_a_exists || slot_b_exists
+            || result.temp_a || result.temp_b;
+        if (result.directory_error) {
             return result;
         }
 
@@ -282,13 +290,26 @@ std::vector<std::filesystem::path> invalid_files(
     return files;
 }
 
-void remove_temps(const SaveStoreConfig& config, const ScanResult& scan) {
-    std::error_code error;
-    if (scan.temp_a) {
-        std::filesystem::remove(config.directory / temp_name(SaveSlot::a), error);
-    }
-    if (scan.temp_b) {
-        std::filesystem::remove(config.directory / temp_name(SaveSlot::b), error);
+void remove_temps(const SaveStoreConfig& config, ScanResult& scan) noexcept {
+    try {
+        if (scan.temp_a) {
+            std::error_code error;
+            std::filesystem::remove(config.directory / temp_name(SaveSlot::a),
+                error);
+            if (error) {
+                scan.directory_error = true;
+            }
+        }
+        if (scan.temp_b) {
+            std::error_code error;
+            std::filesystem::remove(config.directory / temp_name(SaveSlot::b),
+                error);
+            if (error) {
+                scan.directory_error = true;
+            }
+        }
+    } catch (...) {
+        scan.directory_error = true;
     }
 }
 
@@ -343,6 +364,10 @@ SaveLoadResult SaveStore::load() noexcept {
                     SaveError::conflicting_slots, SaveSlot::none, false, {}};
             }
             remove_temps(config_, scan);
+            if (scan.directory_error) {
+                return {SaveLoadState::blocked,
+                    SaveError::directory_unavailable, SaveSlot::none, false, {}};
+            }
             return ready_result(scan, highest_slot(scan));
         }
 
@@ -362,9 +387,17 @@ SaveLoadResult SaveStore::load() noexcept {
                         SaveError::directory_unavailable, SaveSlot::none, false, {}};
                 }
                 remove_temps(config_, scan);
+                if (scan.directory_error) {
+                    return {SaveLoadState::blocked,
+                        SaveError::directory_unavailable, SaveSlot::none, false, {}};
+                }
                 return ready_result(scan, highest_slot(scan), true);
             }
             remove_temps(config_, scan);
+            if (scan.directory_error) {
+                return {SaveLoadState::blocked,
+                    SaveError::directory_unavailable, SaveSlot::none, false, {}};
+            }
             return ready_result(scan, highest_slot(scan));
         }
         if (!scan.any_file) {
