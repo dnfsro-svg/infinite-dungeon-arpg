@@ -24,6 +24,10 @@ constexpr std::uint16_t kLightHitstunTicks = 10;
 constexpr std::uint16_t kMediumHitstunTicks = 16;
 constexpr std::uint16_t kKnockdownTicks = 45;
 constexpr std::uint16_t kRisingTicks = 30;
+constexpr float kRangeSlack = 0.20F;
+constexpr std::uint16_t kSupportFallbackCooldown = 12;
+constexpr float kProjectileRadius = 0.16F;
+constexpr std::uint16_t kProjectileLifetime = 120;
 
 float reaction_scale(DummyKind kind) noexcept {
     return kind == DummyKind::light ? 1.25F : 1.0F;
@@ -63,6 +67,42 @@ void integrate_reaction(MonsterRuntime& monster) noexcept {
     monster.position.x += monster.velocity.x * kTickSeconds;
     monster.position.y += monster.velocity.y * kTickSeconds;
     clamp_position(monster.position);
+}
+
+bool has_tag(const MonsterDefinition& definition, MonsterTag tag) noexcept {
+    return (definition.tags & static_cast<std::uint16_t>(tag)) != 0U;
+}
+
+bool move_to_preferred_range(
+    MonsterRuntime& monster,
+    const MonsterDefinition& definition,
+    const Vec3& player) noexcept {
+    const float distance = target_distance(monster.position, player);
+    if (distance > definition.preferred_range + kRangeSlack
+        || distance < definition.preferred_range - kRangeSlack) {
+        float dx = player.x - monster.position.x;
+        float dy = player.y - monster.position.y;
+        if (distance < definition.preferred_range - kRangeSlack) {
+            dx = -dx;
+            dy = -dy;
+        }
+        if (distance <= 0.0001F) {
+            dx = monster.facing == Facing::right ? -1.0F : 1.0F;
+            dy = 0.0F;
+        }
+        const float magnitude = std::sqrt(dx * dx + dy * dy);
+        monster.velocity.x = dx / magnitude * definition.move_speed;
+        monster.velocity.y = dy / magnitude * definition.move_speed;
+        monster.position.x += monster.velocity.x;
+        monster.position.y += monster.velocity.y;
+        clamp_position(monster.position);
+        return true;
+    }
+    monster.velocity = Vec3{};
+    monster.ai_phase = MonsterAiPhase::telegraph;
+    monster.ai_ticks = definition.telegraph_ticks;
+    monster.attack_target_position = player;
+    return false;
 }
 
 }  // namespace
@@ -135,7 +175,16 @@ void CombatWorld::simulate_monster(std::size_t slot) noexcept {
     if (monster.hp <= 0 || monster.reaction == ReactionState::defeated) {
         monster.ai_phase = MonsterAiPhase::defeated;
         monster.velocity = Vec3{};
+        remove_owned_projectiles(MonsterHandle{
+            static_cast<std::uint16_t>(slot), monster.generation});
         return;
+    }
+
+    if (monster.shield_ticks != 0) {
+        --monster.shield_ticks;
+        if (monster.shield_ticks == 0) {
+            monster.shield = 0;
+        }
     }
 
     if (monster.reaction != ReactionState::idle) {
@@ -204,11 +253,13 @@ void CombatWorld::simulate_monster(std::size_t slot) noexcept {
         }
     }
 
-    // Task 5 owns only the two direct-target melee roles. Other encounter
-    // roles stay inert until their dedicated Task 6/7 implementations land,
-    // but their hit reactions above still need to tick to completion.
-    if (monster.id != MonsterId::chaos_chaser
-        && monster.id != MonsterId::water_bulwark) {
+    const bool is_shooter = monster.id == MonsterId::lightning_shooter;
+    const bool is_support = monster.id == MonsterId::water_support;
+    const bool is_melee = monster.id == MonsterId::chaos_chaser
+                       || monster.id == MonsterId::water_bulwark;
+    // Task 6 owns the ranged shooter and support roles. Remaining roles stay
+    // inert until their dedicated Task 7 implementations land.
+    if (!is_melee && !is_shooter && !is_support) {
         monster.velocity = Vec3{};
         monster.ai_phase = MonsterAiPhase::idle;
         monster.ai_ticks = 0;
@@ -224,6 +275,11 @@ void CombatWorld::simulate_monster(std::size_t slot) noexcept {
     switch (monster.ai_phase) {
     case MonsterAiPhase::move: {
         face_player(monster, player_.position);
+        if (is_shooter || is_support) {
+            static_cast<void>(move_to_preferred_range(
+                monster, *definition, player_.position));
+            return;
+        }
         const float distance = target_distance(monster.position, player_.position);
         if (distance > definition->preferred_range && distance > 0.0001F) {
             const float dx = player_.position.x - monster.position.x;
@@ -259,7 +315,75 @@ void CombatWorld::simulate_monster(std::size_t slot) noexcept {
     case MonsterAiPhase::active:
         monster.velocity = Vec3{};
         if (!monster.contact_attack_resolved) {
-            resolve_monster_contact_attack(slot);
+            if (is_shooter) {
+                const float dx = monster.attack_target_position.x
+                               - monster.position.x;
+                const float dy = monster.attack_target_position.y
+                               - monster.position.y;
+                const float magnitude = std::sqrt(dx * dx + dy * dy);
+                const float speed = definition->projectile_speed > 0.0F
+                    ? definition->projectile_speed : 0.14F;
+                Vec3 velocity{};
+                if (magnitude > 0.0001F) {
+                    velocity.x = dx / magnitude * speed;
+                    velocity.y = dy / magnitude * speed;
+                } else {
+                    velocity.x = monster.facing == Facing::right
+                        ? speed : -speed;
+                }
+                static_cast<void>(spawn_projectile(
+                    MonsterHandle{
+                        static_cast<std::uint16_t>(slot), monster.generation},
+                    monster.position, velocity, kProjectileLifetime,
+                    definition->contact_damage, kProjectileRadius));
+            } else if (is_support) {
+                std::size_t target_index = monsters_.slots_.size();
+                for (std::size_t index = 0; index < monsters_.slots_.size();
+                     ++index) {
+                    if (index == slot) {
+                        continue;
+                    }
+                    MonsterRuntime& candidate = monsters_.slots_[index];
+                    const MonsterDefinition* candidate_definition =
+                        monster_definition(candidate.id);
+                    if (!candidate.active || candidate.hp <= 0
+                        || candidate.shield != 0
+                        || candidate_definition == nullptr
+                        || has_tag(*candidate_definition, MonsterTag::support)) {
+                        continue;
+                    }
+                    target_index = index;
+                    break;
+                }
+                if (target_index < monsters_.slots_.size()) {
+                    MonsterRuntime& target = monsters_.slots_[target_index];
+                    target.shield = std::min(target.max_shield,
+                                             std::max(target.shield,
+                                                      target.max_shield));
+                    target.shield_ticks = std::min(
+                        target.max_shield_ticks,
+                        std::max(target.shield_ticks, target.max_shield_ticks));
+                } else {
+                    // No legal ally: leave the support in a bounded fallback
+                    // reposition/cooldown rather than targeting the player.
+                    const float distance = target_distance(
+                        monster.position, player_.position);
+                    if (distance < definition->preferred_range
+                        && distance > 0.0001F) {
+                        monster.position.x += (monster.position.x
+                            - player_.position.x) / distance
+                            * definition->move_speed;
+                        monster.position.y += (monster.position.y
+                            - player_.position.y) / distance
+                            * definition->move_speed;
+                        clamp_position(monster.position);
+                    }
+                    monster.ai_phase = MonsterAiPhase::cooldown;
+                    monster.ai_ticks = kSupportFallbackCooldown;
+                }
+            } else {
+                resolve_monster_contact_attack(slot);
+            }
             monster.contact_attack_resolved = true;
         }
         if (monster.ai_ticks != 0) {

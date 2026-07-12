@@ -121,7 +121,16 @@ void CombatWorld::resolve_attack_hits() noexcept {
         MonsterRuntime& dummy = monsters_.slots_[index];
         attack_.hit_targets[index] = true;
         attack_.connected = true;
-        dummy.hp = std::max(0, dummy.hp - definition->damage);
+        int hp_damage = definition->damage;
+        if (dummy.shield != 0 && hp_damage > 0) {
+            const int absorbed = std::min(dummy.shield, hp_damage);
+            dummy.shield -= absorbed;
+            hp_damage -= absorbed;
+            if (dummy.shield == 0) {
+                dummy.shield_ticks = 0;
+            }
+        }
+        dummy.hp = std::max(0, dummy.hp - hp_damage);
         bool starts_break = false;
         const float relative_x = player_.position.x - dummy.position.x;
         const bool front_attack = legacy_mode_

@@ -25,6 +25,7 @@ public:
         bool reset_player_health = true) noexcept;
     [[nodiscard]] bool destroy_monster(MonsterHandle handle) noexcept;
     [[nodiscard]] std::size_t active_monster_count() const noexcept;
+    [[nodiscard]] std::size_t active_projectile_count() const noexcept;
     [[nodiscard]] CombatSnapshot snapshot() const noexcept;
     [[nodiscard]] std::optional<CombatEvent> try_pop_event() noexcept;
 
@@ -54,6 +55,7 @@ private:
     void simulate_player(MovementInput movement) noexcept;
     void simulate_target(std::size_t index) noexcept;
     void simulate_monster(std::size_t slot) noexcept;
+    void simulate_projectiles() noexcept;
     void resolve_monster_contact_attack(std::size_t slot) noexcept;
     void apply_dummy_impact(
         std::size_t index,
@@ -63,6 +65,14 @@ private:
     void resolve_attack_hits() noexcept;
     void apply_player_damage(
         int damage, Vec3 source_position, FeedbackLevel feedback) noexcept;
+    [[nodiscard]] bool spawn_projectile(
+        MonsterHandle owner,
+        Vec3 position,
+        Vec3 velocity,
+        std::uint16_t lifetime_ticks,
+        int damage,
+        float radius) noexcept;
+    void remove_owned_projectiles(MonsterHandle owner) noexcept;
     void emit_event(const CombatEvent& event) noexcept;
     void initialize_runtime() noexcept;
 
@@ -76,11 +86,14 @@ private:
     bool legacy_mode_{true};
     PlayerRuntime player_{};
     MonsterPool monsters_{};
+    ProjectilePool projectiles_{};
     AttackRuntime attack_{};
     InputBuffer input_buffer_{};
     core::BoundedQueue<CombatEvent, 64> events_{};
     std::uint64_t tick_{};
     std::uint32_t event_overflow_count_{};
+    std::uint32_t projectile_saturation_count_{};
+    std::uint32_t projectile_invalid_owner_count_{};
 };
 
 }  // namespace arpg::combat
