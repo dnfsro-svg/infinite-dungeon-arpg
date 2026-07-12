@@ -2,6 +2,7 @@
 
 #include "host_launch_options.hpp"
 
+#include <cstdio>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -39,22 +40,34 @@ struct CurrentDirectoryGuard final {
 struct TemporaryDirectory final {
     std::filesystem::path path{};
     bool valid{};
+    bool owns_path{};
 
     TemporaryDirectory() noexcept {
         std::error_code error;
-        path = std::filesystem::temp_directory_path(error)
-            / ("arpg_host_launch_options_tests_" + std::to_string(
-                static_cast<unsigned long long>(
-                    std::hash<std::string>{}(std::to_string(
-                        reinterpret_cast<std::uintptr_t>(this))))));
+        const std::filesystem::path temporary_root =
+            std::filesystem::temp_directory_path(error);
         if (error) {
             return;
         }
-        std::filesystem::create_directories(path, error);
-        valid = !error;
+        path = temporary_root / ("arpg_host_launch_options_tests_"
+            + std::to_string(static_cast<unsigned long long>(
+                std::hash<std::string>{}(std::to_string(
+                    reinterpret_cast<std::uintptr_t>(this))))));
+        owns_path = std::filesystem::create_directories(path, error);
+        valid = !error && owns_path;
+    }
+
+    explicit TemporaryDirectory(const std::filesystem::path& requested_path)
+        noexcept : path(requested_path) {
+        std::error_code error;
+        owns_path = std::filesystem::create_directories(path, error);
+        valid = !error && owns_path;
     }
 
     ~TemporaryDirectory() noexcept {
+        if (!owns_path) {
+            return;
+        }
         std::error_code error;
         std::filesystem::remove_all(path, error);
     }
@@ -84,25 +97,57 @@ arpg::test::Failure decimal_and_hex_seeds_parse_to_same_value() noexcept {
 }
 
 arpg::test::Failure save_directory_with_spaces_is_frozen_absolute() noexcept {
-    TemporaryDirectory alternate_directory;
-    CurrentDirectoryGuard working_directory;
-    ARPG_REQUIRE(working_directory.valid);
-    ARPG_REQUIRE(alternate_directory.valid);
-    const char* const argv[] = {"arpg", "--save-dir", "slot saves"};
-    const HostArgumentResult result = parse(3, argv);
-    ARPG_REQUIRE(result.error == HostArgumentError::none);
-    ARPG_REQUIRE(result.options.save_directory.has_value());
-    ARPG_REQUIRE(result.options.save_directory->is_absolute());
-    ARPG_REQUIRE(result.options.save_directory->filename() == "slot saves");
-    const auto frozen = *result.options.save_directory;
-
     std::error_code error;
-    std::filesystem::current_path(alternate_directory.path, error);
+    std::filesystem::path original_directory;
+    {
+        TemporaryDirectory alternate_directory;
+        CurrentDirectoryGuard working_directory;
+        ARPG_REQUIRE(working_directory.valid);
+        ARPG_REQUIRE(alternate_directory.valid);
+        original_directory = working_directory.original;
+        const char* const argv[] = {"arpg", "--save-dir", "slot saves"};
+        const HostArgumentResult result = parse(3, argv);
+        ARPG_REQUIRE(result.error == HostArgumentError::none);
+        ARPG_REQUIRE(result.options.save_directory.has_value());
+        ARPG_REQUIRE(result.options.save_directory->is_absolute());
+        ARPG_REQUIRE(result.options.save_directory->filename() == "slot saves");
+        const auto frozen = *result.options.save_directory;
+
+        std::filesystem::current_path(alternate_directory.path, error);
+        ARPG_REQUIRE(!error);
+        ARPG_REQUIRE(std::filesystem::current_path(error)
+            == alternate_directory.path);
+        ARPG_REQUIRE(!error);
+        ARPG_REQUIRE(frozen == *result.options.save_directory);
+        ARPG_REQUIRE(frozen == working_directory.original / "slot saves");
+    }
+    ARPG_REQUIRE(std::filesystem::current_path(error) == original_directory);
     ARPG_REQUIRE(!error);
-    ARPG_REQUIRE(std::filesystem::current_path(error) == alternate_directory.path);
+    return {};
+}
+
+arpg::test::Failure failed_temporary_directory_never_removes_unowned_path()
+    noexcept {
+    TemporaryDirectory parent;
+    ARPG_REQUIRE(parent.valid);
+    const std::filesystem::path sentinel = parent.path / "unowned_sentinel";
+    const std::string sentinel_text = sentinel.string();
+    std::FILE* sentinel_file{};
+    ARPG_REQUIRE(::fopen_s(&sentinel_file, sentinel_text.c_str(), "wb") == 0);
+    ARPG_REQUIRE(sentinel_file != nullptr);
+    ARPG_REQUIRE(std::fputs("sentinel", sentinel_file) >= 0);
+    ARPG_REQUIRE(std::fclose(sentinel_file) == 0);
+    std::error_code error;
+    ARPG_REQUIRE(std::filesystem::is_regular_file(sentinel, error));
     ARPG_REQUIRE(!error);
-    ARPG_REQUIRE(frozen == *result.options.save_directory);
-    ARPG_REQUIRE(frozen == working_directory.original / "slot saves");
+    {
+        TemporaryDirectory failed(sentinel);
+        ARPG_REQUIRE(!failed.valid);
+        ARPG_REQUIRE(std::filesystem::is_regular_file(sentinel, error));
+        ARPG_REQUIRE(!error);
+    }
+    ARPG_REQUIRE(std::filesystem::is_regular_file(sentinel, error));
+    ARPG_REQUIRE(!error);
     return {};
 }
 
@@ -141,6 +186,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"no arguments", &no_arguments_leave_options_empty},
     {"decimal and hexadecimal seed", &decimal_and_hex_seeds_parse_to_same_value},
     {"absolute save directory", &save_directory_with_spaces_is_frozen_absolute},
+    {"failed temporary directory cleanup", &failed_temporary_directory_never_removes_unowned_path},
     {"duplicate and unknown options", &duplicate_and_unknown_options_are_rejected},
     {"missing and invalid seed", &missing_and_invalid_seed_values_are_rejected},
 };
