@@ -45,7 +45,7 @@ Expected: 仓库有效、Stage 6 工作树干净、`.worktrees` 被忽略、基�
 - [ ] **Step 2: 创建独立工作树**
 
 ```powershell
-git worktree add E:\game\.worktrees\whole-game-refactor -b milestone/whole-game-refactor 3e4b861
+git worktree add E:\game\.worktrees\whole-game-refactor -b milestone/whole-game-refactor 4abc386
 ```
 
 Expected: 新工作树位于指定路径，分支为 `milestone/whole-game-refactor`。
