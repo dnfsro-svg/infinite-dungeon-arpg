@@ -3,11 +3,13 @@
 #include "modifiers/modifier_math.hpp"
 
 #include <array>
-#include <limits>
+#include <cstdint>
 
 namespace {
 
 using namespace arpg::modifiers;
+
+static_assert(sizeof(FixedValue) == sizeof(std::int64_t));
 
 constexpr StatBounds kWideBounds{-1000000000LL, 1000000000LL};
 
@@ -38,8 +40,8 @@ arpg::test::Failure operation_order_is_flat_increased_then_more() noexcept {
         {4U, StatId::impulse_scale, ModifierOperation::flat, -1},
         {5U, StatId::impulse_scale, ModifierOperation::more, 20000},
     }};
-    constexpr FixedValue kMaximum = (std::numeric_limits<FixedValue>::max)();
-    constexpr FixedValue kMinimum = (std::numeric_limits<FixedValue>::min)();
+    constexpr FixedValue kMaximum = 9223372036854775807LL;
+    constexpr FixedValue kMinimum = (-9223372036854775807LL - 1LL);
     const StatBounds full_range{kMinimum, kMaximum};
     const auto maximum = evaluate_stat(
         kMaximum, StatId::impulse_scale, increase, {}, full_range);
