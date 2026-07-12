@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 
+#include "combat_renderer.hpp"
 #include "dungeon_view_math.hpp"
 
 #include <cstring>
@@ -69,6 +70,17 @@ arpg::test::Failure door_themes_match_directional_elements() noexcept {
     ARPG_REQUIRE(rgba_equals(down.frame, {64U, 156U, 236U, 255U}));
     ARPG_REQUIRE(rgba_equals(left.frame, {236U, 218U, 72U, 255U}));
     ARPG_REQUIRE(rgba_equals(right.frame, {154U, 76U, 210U, 255U}));
+
+    for (const ExitDirection direction : {ExitDirection::up,
+             ExitDirection::down, ExitDirection::left, ExitDirection::right}) {
+        const DoorTheme theme = arpg::platform::door_theme(direction);
+        const auto locked = arpg::platform::door_render_decision(
+            DoorVisualMode::closed, direction);
+        ARPG_REQUIRE(locked.draw_locked_interior);
+        ARPG_REQUIRE(std::strcmp(locked.label, theme.label) == 0);
+        ARPG_REQUIRE(std::strcmp(locked.arrow, theme.arrow) == 0);
+        ARPG_REQUIRE(rgba_equals(locked.frame, theme.frame));
+    }
     return {};
 }
 

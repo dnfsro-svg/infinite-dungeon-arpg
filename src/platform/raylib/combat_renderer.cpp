@@ -184,15 +184,15 @@ void draw_doors(const dungeon::DungeonSnapshot& snapshot,
     constexpr std::array<dungeon::ExitDirection, 4> kDirections{{
         dungeon::ExitDirection::up, dungeon::ExitDirection::down,
         dungeon::ExitDirection::left, dungeon::ExitDirection::right}};
-    const bool open = mode == DoorVisualMode::open;
-
     for (std::size_t index = 0; index < kDoorCenters.size(); ++index) {
         const ScreenProjection projected = project_combat_position(
             kDoorCenters[index], width, height);
-        const DoorTheme theme = door_theme(kDirections[index]);
-        const Color theme_color{theme.frame.r, theme.frame.g, theme.frame.b,
-            theme.frame.a};
-        const Color frame_color = open ? theme_color : Color{65, 70, 80, 255};
+        const DoorRenderDecision visual = door_render_decision(
+            mode, kDirections[index]);
+        const Color frame_color{visual.frame.r, visual.frame.g,
+            visual.frame.b, visual.frame.a};
+        const Color text_color{visual.text.r, visual.text.g, visual.text.b,
+            visual.text.a};
         const float door_width = 82.0F * projected.scale;
         const float door_height = 70.0F * projected.scale;
         const Rectangle frame{
@@ -202,27 +202,27 @@ void draw_doors(const dungeon::DungeonSnapshot& snapshot,
             door_height,
         };
         DrawRectangleLinesEx(frame, 5.0F * projected.scale, frame_color);
-        if (!open) {
+        if (visual.draw_locked_interior) {
             DrawRectangleRec(
                 {frame.x + 7.0F * projected.scale,
                  frame.y + 7.0F * projected.scale,
                  frame.width - 14.0F * projected.scale,
                  frame.height - 7.0F * projected.scale},
-                Color{177, 31, 46, 235});
-            continue;
+                Color{visual.locked_interior.r, visual.locked_interior.g,
+                    visual.locked_interior.b, visual.locked_interior.a});
         }
 
         const int font_size = static_cast<int>(22.0F * projected.scale);
-        const int arrow_width = MeasureText(theme.arrow, font_size);
+        const int arrow_width = MeasureText(visual.arrow, font_size);
         DrawText(
-            theme.arrow,
+            visual.arrow,
             static_cast<int>(projected.x) - arrow_width / 2,
             static_cast<int>(frame.y + 17.0F * projected.scale),
             font_size,
-            frame_color);
-        DrawText(theme.label, static_cast<int>(frame.x),
+            text_color);
+        DrawText(visual.label, static_cast<int>(frame.x),
             static_cast<int>(frame.y - 15.0F * projected.scale),
-            static_cast<int>(11.0F * projected.scale), frame_color);
+            static_cast<int>(11.0F * projected.scale), text_color);
     }
 }
 
@@ -414,6 +414,20 @@ void draw_debug_volumes(
 }
 
 }  // namespace
+
+DoorRenderDecision door_render_decision(
+    DoorVisualMode mode,
+    dungeon::ExitDirection direction) noexcept {
+    const DoorTheme theme = door_theme(direction);
+    return {
+        theme.label,
+        theme.arrow,
+        theme.frame,
+        theme.frame,
+        {177U, 31U, 46U, 235U},
+        mode == DoorVisualMode::closed,
+    };
+}
 
 void CombatRenderer::consume_event(const CombatEvent& event) noexcept {
     last_event_ = event;

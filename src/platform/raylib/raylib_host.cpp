@@ -129,6 +129,9 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             }
             if (runtime.state() == DungeonRuntimeState::recovery_required) {
                 draw_recovery_screen(runtime.render_status());
+                if (take_screenshot) {
+                    TakeScreenshot("stage3-dungeon-rules.png");
+                }
                 continue;
             }
             dungeon::DungeonSession* const session = runtime.session();
