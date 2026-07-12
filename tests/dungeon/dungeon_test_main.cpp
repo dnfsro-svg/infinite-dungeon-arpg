@@ -21,5 +21,5 @@ int main() {
         encounter_director_suite(),
     };
 
-    return arpg::test::run_suites(suites, 52, "stage 4 dungeon");
+    return arpg::test::run_suites(suites, 53, "stage 4 dungeon");
 }

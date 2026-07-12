@@ -253,6 +253,20 @@ arpg::test::Failure indivisible_small_two_wave_config_is_rejected() noexcept {
     return {};
 }
 
+arpg::test::Failure large_base_with_low_threshold_is_accepted() noexcept {
+    EncounterDirectorConfig config{};
+    config.base_budget = 8U;
+    config.max_budget = 24U;
+    config.two_wave_threshold = 2U;
+    ARPG_REQUIRE(validate_encounter_director_config(config)
+        == DungeonFault::none);
+    const auto result = build_encounter_plan(
+        77U, 1U, DungeonElement::water, config);
+    ARPG_REQUIRE(result.fault == DungeonFault::none);
+    ARPG_REQUIRE(result.plan.wave_count == 2U);
+    return {};
+}
+
 arpg::test::Failure fallback_config_keeps_a_direct_target() noexcept {
     EncounterDirectorConfig config{};
     config.base_budget = 2U;
@@ -277,6 +291,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"high budget limit applies to each wave", &high_budget_priority_limit_applies_to_each_wave},
     {"illegal wave budget or cost is rejected", &illegal_wave_budget_or_cost_is_rejected},
     {"indivisible small two-wave config is rejected", &indivisible_small_two_wave_config_is_rejected},
+    {"large base with low threshold is accepted", &large_base_with_low_threshold_is_accepted},
     {"fallback keeps a direct target", &fallback_config_keeps_a_direct_target},
 };
 

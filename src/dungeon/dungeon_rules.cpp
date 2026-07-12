@@ -84,11 +84,30 @@ DungeonFault validate_encounter_director_config(
             || config.off_ecology_weight == 0U) {
         return DungeonFault::invalid_rules;
     }
-    if (config.max_budget > config.two_wave_threshold
-            && config.two_wave_threshold
-                < static_cast<std::uint8_t>(
-                    2U * kMinimumDirectTargetCost - 1U)) {
-        return DungeonFault::invalid_rules;
+    if (config.max_budget > config.two_wave_threshold) {
+        const std::uint64_t first_increment = config.base_budget
+            > config.two_wave_threshold
+            ? 0U
+            : static_cast<std::uint64_t>(config.two_wave_threshold
+                - config.base_budget)
+                / config.budget_per_step + 1U;
+        const std::uint64_t added_budget = first_increment
+            > (std::numeric_limits<std::uint64_t>::max)()
+                / config.budget_per_step
+            ? (std::numeric_limits<std::uint64_t>::max)()
+            : first_increment * config.budget_per_step;
+        const std::uint64_t first_budget_unbounded =
+            static_cast<std::uint64_t>(config.base_budget)
+            > (std::numeric_limits<std::uint64_t>::max)() - added_budget
+            ? (std::numeric_limits<std::uint64_t>::max)()
+            : static_cast<std::uint64_t>(config.base_budget)
+                + added_budget;
+        const std::uint64_t first_budget = first_budget_unbounded
+            < config.max_budget ? first_budget_unbounded : config.max_budget;
+        if (first_budget > config.two_wave_threshold
+                && first_budget < 2U * kMinimumDirectTargetCost) {
+            return DungeonFault::invalid_rules;
+        }
     }
 
     constexpr std::uint8_t kCapacity = static_cast<std::uint8_t>(
