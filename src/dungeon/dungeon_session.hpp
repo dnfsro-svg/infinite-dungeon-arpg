@@ -17,8 +17,16 @@ public:
     static constexpr std::size_t kCombatRelayCapacity = 64;
 
     explicit DungeonSession(DungeonSessionConfig config = {}) noexcept;
+    explicit DungeonSession(
+        DungeonRules rules,
+        DungeonRunState stable_state) noexcept;
     [[nodiscard]] bool queue_action(combat::Action action) noexcept;
     void tick(combat::MovementInput movement) noexcept;
+    [[nodiscard]] bool request_descent(bool player_in_range) noexcept;
+    [[nodiscard]] std::optional<PendingTransition>
+    pending_transition() const noexcept;
+    void resolve_pending_transition(
+        const TransitionSaveResult& result) noexcept;
     void reset_current_room() noexcept;
     [[nodiscard]] DungeonSnapshot snapshot() const noexcept;
     [[nodiscard]] std::optional<DungeonEvent> try_pop_event() noexcept;
@@ -29,14 +37,21 @@ private:
     void construct_current_room() noexcept;
     void relay_combat_events() noexcept;
     void attempt_exit(ExitDirection direction) noexcept;
+    void enter_fault(DungeonFault fault) noexcept;
+    void emit_committed(
+        const DungeonRunState& previous,
+        const DungeonRunState& current) noexcept;
     bool emit(
         DungeonEventKind kind,
+        const DungeonRunState* subject = nullptr,
+        const DungeonRunState* destination = nullptr,
+        TransitionKind transition = TransitionKind::none,
         ExitDirection direction = ExitDirection::none) noexcept;
     [[nodiscard]] std::uint8_t remaining_targets() const noexcept;
 
-    DungeonSessionConfig config_{};
-    RoomDescriptor current_room_{};
-    std::optional<RoomDescriptor> pending_room_{};
+    DungeonRules rules_{};
+    DungeonRunState stable_state_{};
+    std::optional<PendingTransition> pending_{};
     std::optional<combat::CombatWorld> combat_{};
     core::BoundedQueue<DungeonEvent, kDungeonEventCapacity> events_{};
     core::BoundedQueue<combat::CombatEvent, kCombatRelayCapacity>
@@ -45,7 +60,6 @@ private:
     ExitDirection last_exit_{ExitDirection::none};
     std::uint64_t session_tick_{};
     DungeonDiagnostics diagnostics_{};
-    bool room_index_fault_emitted_{};
 };
 
 }  // namespace arpg::dungeon

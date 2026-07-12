@@ -9,6 +9,20 @@
 
 namespace arpg::test {
 
+inline bool commit_pending(
+    dungeon::DungeonSession& session) noexcept {
+    const auto pending = session.pending_transition();
+    if (!pending.has_value()) {
+        return false;
+    }
+    session.resolve_pending_transition({
+        dungeon::SaveDisposition::committed,
+        pending->next_state.commit_generation,
+        pending->next_state,
+    });
+    return true;
+}
+
 struct EventSummary final {
     static constexpr std::size_t kKindCapacity = 1024;
 
