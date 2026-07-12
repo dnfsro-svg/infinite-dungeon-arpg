@@ -39,6 +39,7 @@ void CombatWorld::apply_dummy_impact(
     MonsterRuntime& dummy = monsters_.slots_[index];
     if (dummy.hp == 0) {
         dummy.reaction = ReactionState::defeated;
+        dummy.ai_phase = MonsterAiPhase::defeated;
         dummy.reaction_ticks = kRespawnTicks;
         dummy.break_window_ticks = 0;
         dummy.velocity = Vec3{};
@@ -53,6 +54,10 @@ void CombatWorld::apply_dummy_impact(
         emit_event(defeated);
         return;
     }
+
+    dummy.ai_phase = MonsterAiPhase::move;
+    dummy.ai_ticks = 0;
+    dummy.contact_attack_resolved = true;
 
     const float scale = impulse_scale(dummy.kind);
     const float facing = player_.facing == Facing::right ? 1.0F : -1.0F;

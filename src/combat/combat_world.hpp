@@ -53,6 +53,8 @@ private:
 
     void simulate_player(MovementInput movement) noexcept;
     void simulate_target(std::size_t index) noexcept;
+    void simulate_monster(std::size_t slot) noexcept;
+    void resolve_monster_contact_attack(std::size_t slot) noexcept;
     void apply_dummy_impact(
         std::size_t index,
         const AttackDefinition& definition) noexcept;

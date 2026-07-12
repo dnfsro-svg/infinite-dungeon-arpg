@@ -23,8 +23,10 @@ struct MonsterRuntime final {
     ReactionState reaction{ReactionState::idle};
     ArmorState armor{ArmorState::none};
     std::uint16_t reaction_ticks{};
-    std::uint16_t ai_phase{};
+    MonsterAiPhase ai_phase{MonsterAiPhase::idle};
     std::uint16_t ai_ticks{};
+    std::uint32_t attack_serial{};
+    bool contact_attack_resolved{};
     int hp{};
     int max_hp{};
     int break_value{};
