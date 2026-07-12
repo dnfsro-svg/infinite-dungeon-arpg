@@ -6,8 +6,10 @@
 #include "dungeon/dungeon_session.hpp"
 #include "persistence/save_store.hpp"
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 
 namespace {
@@ -85,18 +87,18 @@ bool same_descriptor(const dungeon::DungeonSnapshot& snapshot,
     const dungeon::DungeonRunState& state) noexcept {
     const auto& room = state.current_room;
     return snapshot.root_seed == state.root_seed
-        && snapshot.commit_generation == state.commit_generation
         && snapshot.room_index == room.index
+        && snapshot.entry_side == room.entry
+        && snapshot.last_transition == state.last_transition
+        && snapshot.last_exit == state.last_direction
+        && snapshot.commit_generation == state.commit_generation
         && snapshot.room_seed == room.seed
         && snapshot.depth == room.depth
         && snapshot.floor_room_index == room.floor_room_index
         && snapshot.biases == state.biases
-        && snapshot.entry_side == room.entry
         && snapshot.ecology == room.ecology
         && snapshot.has_hole == room.has_hole
-        && snapshot.is_abyss == room.is_abyss
-        && snapshot.last_transition == state.last_transition
-        && snapshot.last_exit == state.last_direction;
+        && snapshot.is_abyss == room.is_abyss;
 }
 
 bool clear_and_await(dungeon::DungeonSession& session) noexcept {
@@ -300,6 +302,24 @@ arpg::test::Failure committed_descent_restarts_without_rerolling_hole_or_abyss()
     ARPG_REQUIRE(restarted.checkpoint.biases == zero_biases);
     ARPG_REQUIRE(dungeon::same_run_state(restarted.checkpoint,
         pending->next_state));
+    dungeon::DungeonSession restarted_session{
+        dungeon::DungeonRules{}, restarted.checkpoint};
+    const auto restarted_snapshot = restarted_session.snapshot();
+    ARPG_REQUIRE(restarted_snapshot.commit_generation
+        == pending->next_state.commit_generation);
+    ARPG_REQUIRE(restarted_snapshot.room_seed
+        == pending->next_state.current_room.seed);
+    ARPG_REQUIRE(restarted_snapshot.depth
+        == pending->next_state.current_room.depth);
+    ARPG_REQUIRE(restarted_snapshot.floor_room_index
+        == pending->next_state.current_room.floor_room_index);
+    ARPG_REQUIRE(restarted_snapshot.biases == pending->next_state.biases);
+    ARPG_REQUIRE(restarted_snapshot.ecology
+        == pending->next_state.current_room.ecology);
+    ARPG_REQUIRE(restarted_snapshot.has_hole
+        == pending->next_state.current_room.has_hole);
+    ARPG_REQUIRE(restarted_snapshot.is_abyss
+        == pending->next_state.current_room.is_abyss);
     return {};
 }
 
@@ -311,9 +331,22 @@ arpg::test::Failure reset_reopen_and_repeated_load_keep_persisted_room_fields() 
         == persistence::SaveCommitState::committed);
 
     dungeon::DungeonSession session{dungeon::DungeonRules{}, initial};
+    ARPG_REQUIRE(drive_door_pending(session, dungeon::ExitDirection::left));
+    const auto pending = session.pending_transition();
+    ARPG_REQUIRE(pending.has_value());
+    const auto saved = store.commit(pending->next_state);
+    ARPG_REQUIRE(saved.state == persistence::SaveCommitState::committed);
+    ARPG_REQUIRE(saved.verified_state.commit_generation != 1U);
+    session.resolve_pending_transition(to_session_result(saved));
+    session.tick({});
+    arpg::test::EventSummary summary;
+    arpg::test::drain_all_events(session, summary);
+    ARPG_REQUIRE(same_descriptor(session.snapshot(), saved.verified_state));
+
     const auto before_reset = session.snapshot();
     session.reset_current_room();
     const auto after_reset = session.snapshot();
+    ARPG_REQUIRE(after_reset.commit_generation == before_reset.commit_generation);
     ARPG_REQUIRE(after_reset.room_seed == before_reset.room_seed);
     ARPG_REQUIRE(after_reset.ecology == before_reset.ecology);
     ARPG_REQUIRE(after_reset.has_hole == before_reset.has_hole);
@@ -324,10 +357,15 @@ arpg::test::Failure reset_reopen_and_repeated_load_keep_persisted_room_fields() 
     const auto second_load = reopened_store.load();
     ARPG_REQUIRE(first_load.state == persistence::SaveLoadState::ready);
     ARPG_REQUIRE(second_load.state == persistence::SaveLoadState::ready);
-    ARPG_REQUIRE(dungeon::same_run_state(first_load.checkpoint, initial));
-    ARPG_REQUIRE(dungeon::same_run_state(second_load.checkpoint, initial));
+    ARPG_REQUIRE(dungeon::same_run_state(first_load.checkpoint,
+        saved.verified_state));
+    ARPG_REQUIRE(dungeon::same_run_state(second_load.checkpoint,
+        saved.verified_state));
     dungeon::DungeonSession reopened{dungeon::DungeonRules{}, first_load.checkpoint};
-    ARPG_REQUIRE(same_descriptor(reopened.snapshot(), initial));
+    dungeon::DungeonSession repeated{dungeon::DungeonRules{}, second_load.checkpoint};
+    ARPG_REQUIRE(same_descriptor(after_reset, saved.verified_state));
+    ARPG_REQUIRE(same_descriptor(reopened.snapshot(), saved.verified_state));
+    ARPG_REQUIRE(same_descriptor(repeated.snapshot(), saved.verified_state));
     return {};
 }
 
