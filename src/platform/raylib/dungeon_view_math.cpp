@@ -146,6 +146,8 @@ const char* room_phase_label(dungeon::RoomPhase phase) noexcept {
         return "LOCKED";
     case dungeon::RoomPhase::combat:
         return "COMBAT";
+    case dungeon::RoomPhase::wave_delay:
+        return "WAVE DELAY";
     case dungeon::RoomPhase::cleared:
         return "CLEARED";
     case dungeon::RoomPhase::awaiting_exit:

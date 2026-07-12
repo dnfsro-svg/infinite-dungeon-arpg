@@ -4,6 +4,7 @@ if(TARGET arpg_raylib)
         combat_key_bindings_tests.cpp
         combat_feedback_tests.cpp
         combat_view_math_tests.cpp
+        monster_view_tests.cpp
         dungeon_view_math_tests.cpp
         host_launch_options_tests.cpp
         dungeon_runtime_tests.cpp)
