@@ -1,5 +1,7 @@
 #pragma once
 
+#include "combat_view_math.hpp"
+
 namespace arpg::platform {
 
 struct RenderProjection final {
@@ -26,23 +28,13 @@ struct RenderLayout final {
     float world_z,
     float viewport_width,
     float viewport_height) noexcept {
-    constexpr float kMinimumY = -5.5F;
-    constexpr float kRoomDepth = 11.0F;
-    constexpr float kMaximumX = 12.0F;
-    float depth = (world_y - kMinimumY) / kRoomDepth;
-    if (depth < 0.0F) {
-        depth = 0.0F;
-    } else if (depth > 1.0F) {
-        depth = 1.0F;
-    }
-    const float scale = 0.70F + 0.30F * depth;
-    const float ground_y = viewport_height * (0.38F + 0.50F * depth);
+    const ScreenProjection projected = project_combat_position(
+        {world_x, world_y, world_z}, viewport_width, viewport_height);
     return {
-        viewport_width * 0.50F
-            + world_x * (viewport_width * 0.46F / kMaximumX) * scale,
-        ground_y - world_z * 70.0F * scale,
-        ground_y,
-        scale,
+        projected.x,
+        projected.y,
+        projected.ground_y,
+        projected.scale,
     };
 }
 
