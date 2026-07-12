@@ -1,5 +1,6 @@
 add_library(arpg_dungeon STATIC
     dungeon_rules.cpp
+    encounter_director.cpp
     dungeon_session.cpp
     dungeon_progression.cpp
     room_generation.cpp
