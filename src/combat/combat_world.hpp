@@ -95,6 +95,23 @@ private:
     void initialize_legacy_monsters() noexcept;
     modifiers::EffectSet* find_effects(std::size_t monster_slot) noexcept;
     modifiers::EffectSet* ensure_effects(std::size_t monster_slot) noexcept;
+    void apply_effect_commands(
+        MonsterRuntime& monster,
+        modifiers::EffectSet& effects) noexcept;
+    [[nodiscard]] modifiers::EffectDefinition water_barrier_effect(
+        const MonsterRuntime& target) const noexcept;
+    void simulate_melee_ai(
+        std::size_t slot,
+        MonsterRuntime& monster,
+        const MonsterDefinition& definition) noexcept;
+    void simulate_ranged_ai(
+        std::size_t slot,
+        MonsterRuntime& monster,
+        const MonsterDefinition& definition) noexcept;
+    void simulate_special_ai(
+        std::size_t slot,
+        MonsterRuntime& monster,
+        const MonsterDefinition& definition) noexcept;
 
     friend struct ::arpg::test::CombatWorldTestAccess;
     friend struct ::arpg::test::DungeonSessionTestAccess;

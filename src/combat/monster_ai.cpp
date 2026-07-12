@@ -1,6 +1,7 @@
 #include "combat/combat_world.hpp"
 
 #include "combat/combat_collision.hpp"
+#include "combat/monster_ai_common.hpp"
 #include "combat/monster_catalog.hpp"
 #include "combat/room_bounds.hpp"
 
@@ -21,10 +22,6 @@ constexpr std::uint16_t kLightHitstunTicks = 10;
 constexpr std::uint16_t kMediumHitstunTicks = 16;
 constexpr std::uint16_t kKnockdownTicks = 45;
 constexpr std::uint16_t kRisingTicks = 30;
-constexpr float kRangeSlack = 0.20F;
-constexpr std::uint16_t kSupportFallbackCooldown = 12;
-constexpr float kProjectileRadius = 0.16F;
-constexpr std::uint16_t kProjectileLifetime = 120;
 
 float reaction_scale(DummyKind kind) noexcept {
     return kind == DummyKind::light ? 1.25F : 1.0F;
@@ -46,60 +43,10 @@ void clamp_position(Vec3& position) noexcept {
     position.y = std::clamp(position.y, room_bounds::min_y, room_bounds::max_y);
 }
 
-float target_distance(const Vec3& source, const Vec3& target) noexcept {
-    const float dx = target.x - source.x;
-    const float dy = target.y - source.y;
-    return std::sqrt(dx * dx + dy * dy);
-}
-
-void face_player(MonsterRuntime& monster, const Vec3& player) noexcept {
-    if (player.x < monster.position.x) {
-        monster.facing = Facing::left;
-    } else if (player.x > monster.position.x) {
-        monster.facing = Facing::right;
-    }
-}
-
 void integrate_reaction(MonsterRuntime& monster) noexcept {
     monster.position.x += monster.velocity.x * kTickSeconds;
     monster.position.y += monster.velocity.y * kTickSeconds;
     clamp_position(monster.position);
-}
-
-bool has_tag(const MonsterDefinition& definition, MonsterTag tag) noexcept {
-    return (definition.tags & static_cast<std::uint16_t>(tag)) != 0U;
-}
-
-bool move_to_preferred_range(
-    MonsterRuntime& monster,
-    const MonsterDefinition& definition,
-    const Vec3& player) noexcept {
-    const float distance = target_distance(monster.position, player);
-    if (distance > definition.preferred_range + kRangeSlack
-        || distance < definition.preferred_range - kRangeSlack) {
-        float dx = player.x - monster.position.x;
-        float dy = player.y - monster.position.y;
-        if (distance < definition.preferred_range - kRangeSlack) {
-            dx = -dx;
-            dy = -dy;
-        }
-        if (distance <= 0.0001F) {
-            dx = monster.facing == Facing::right ? -1.0F : 1.0F;
-            dy = 0.0F;
-        }
-        const float magnitude = std::sqrt(dx * dx + dy * dy);
-        monster.velocity.x = dx / magnitude * definition.move_speed;
-        monster.velocity.y = dy / magnitude * definition.move_speed;
-        monster.position.x += monster.velocity.x;
-        monster.position.y += monster.velocity.y;
-        clamp_position(monster.position);
-        return true;
-    }
-    monster.velocity = Vec3{};
-    monster.ai_phase = MonsterAiPhase::telegraph;
-    monster.ai_ticks = definition.telegraph_ticks;
-    monster.attack_target_position = player;
-    return false;
 }
 
 }  // namespace
@@ -179,19 +126,7 @@ void CombatWorld::simulate_monster(std::size_t slot) noexcept {
 
     if (modifiers::EffectSet* effects = find_effects(slot)) {
         effects->tick();
-        modifiers::EffectCommand effect_command{};
-        while (effects->pop_command(effect_command)) {
-            if (effect_command.kind
-                == modifiers::EffectCommandKind::set_shield) {
-                monster.shield = std::min(monster.max_shield,
-                    static_cast<int>(effect_command.value));
-            } else if (effect_command.kind
-                == modifiers::EffectCommandKind::clear_shield) {
-                monster.shield = 0;
-            }
-        }
-        monster.shield_ticks = static_cast<std::uint16_t>(
-            std::max(0, effects->remaining_ticks(1U)));
+        apply_effect_commands(monster, *effects);
     }
 
     if (monster.reaction != ReactionState::idle) {
@@ -266,16 +201,15 @@ void CombatWorld::simulate_monster(std::size_t slot) noexcept {
         }
     }
 
-    const bool is_shooter = monster.id == MonsterId::lightning_shooter;
-    const bool is_support = monster.id == MonsterId::water_support;
     const bool is_melee = monster.id == MonsterId::chaos_chaser
                        || monster.id == MonsterId::water_bulwark;
-    const bool is_bomber = monster.id == MonsterId::fire_bomber;
-    const bool is_charger = monster.id == MonsterId::fire_charger;
-    const bool is_dasher = monster.id == MonsterId::lightning_dasher;
-    const bool is_hazard = monster.id == MonsterId::chaos_hazard;
-    if (!is_melee && !is_shooter && !is_support && !is_bomber
-        && !is_charger && !is_dasher && !is_hazard) {
+    const bool is_ranged = monster.id == MonsterId::lightning_shooter
+                        || monster.id == MonsterId::water_support;
+    const bool is_special = monster.id == MonsterId::fire_bomber
+                         || monster.id == MonsterId::fire_charger
+                         || monster.id == MonsterId::lightning_dasher
+                         || monster.id == MonsterId::chaos_hazard;
+    if (!is_melee && !is_ranged && !is_special) {
         monster.velocity = Vec3{};
         monster.ai_phase = MonsterAiPhase::idle;
         monster.ai_ticks = 0;
@@ -288,209 +222,12 @@ void CombatWorld::simulate_monster(std::size_t slot) noexcept {
         monster.ai_ticks = 0;
     }
 
-    switch (monster.ai_phase) {
-    case MonsterAiPhase::move: {
-        face_player(monster, player_.position);
-        if (is_shooter || is_support) {
-            static_cast<void>(move_to_preferred_range(
-                monster, *definition, player_.position));
-            return;
-        }
-        const float distance = target_distance(monster.position, player_.position);
-        if (distance > definition->preferred_range && distance > 0.0001F) {
-            const float dx = player_.position.x - monster.position.x;
-            const float dy = player_.position.y - monster.position.y;
-            const float speed = definition->move_speed;
-            monster.velocity.x = dx / distance * speed;
-            monster.velocity.y = dy / distance * speed;
-            monster.position.x += monster.velocity.x;
-            monster.position.y += monster.velocity.y;
-            clamp_position(monster.position);
-            return;
-        }
-
-        monster.velocity = Vec3{};
-        monster.ai_phase = MonsterAiPhase::telegraph;
-        monster.ai_ticks = definition->telegraph_ticks;
-        monster.attack_target_position = player_.position;
-        const float active_ticks = static_cast<float>(
-            std::max<std::uint16_t>(1U, definition->active_ticks));
-        monster.attack_vector = Vec3{
-            (monster.attack_target_position.x - monster.position.x) / active_ticks,
-            (monster.attack_target_position.y - monster.position.y) / active_ticks,
-            (monster.attack_target_position.z - monster.position.z) / active_ticks,
-        };
-        if (is_hazard) {
-            static_cast<void>(spawn_hazard(
-                MonsterHandle{static_cast<std::uint16_t>(slot), monster.generation},
-                monster.attack_target_position, 1.25F,
-                definition->telegraph_ticks, definition->hazard_ticks,
-                30U, definition->contact_damage));
-        }
-        return;
-    }
-    case MonsterAiPhase::telegraph:
-        if (!is_charger && !is_dasher) {
-            face_player(monster, player_.position);
-        }
-        monster.velocity = Vec3{};
-        if (monster.ai_ticks != 0) {
-            --monster.ai_ticks;
-        }
-        if (monster.ai_ticks == 0) {
-            monster.ai_phase = MonsterAiPhase::active;
-            monster.ai_ticks = std::max<std::uint16_t>(
-                1U, definition->active_ticks);
-            ++monster.attack_serial;
-            monster.contact_attack_resolved = false;
-        }
-        return;
-    case MonsterAiPhase::active:
-        monster.velocity = Vec3{};
-        if (is_bomber) {
-            if (!monster.contact_attack_resolved) {
-                const float distance = target_distance(
-                    monster.position, player_.position);
-                if (distance <= 1.60F) {
-                    apply_player_damage(definition->contact_damage,
-                                        monster.position, definition->feedback);
-                }
-                monster.contact_attack_resolved = true;
-                static_cast<void>(destroy_monster(MonsterHandle{
-                    static_cast<std::uint16_t>(slot), monster.generation}));
-            }
-            return;
-        }
-        if (is_charger || is_dasher) {
-            monster.velocity = monster.attack_vector;
-            monster.position.x += monster.attack_vector.x;
-            monster.position.y += monster.attack_vector.y;
-            monster.position.z += monster.attack_vector.z;
-            clamp_position(monster.position);
-        }
-        if (!monster.contact_attack_resolved) {
-            if (is_shooter) {
-                const float dx = monster.attack_target_position.x
-                               - monster.position.x;
-                const float dy = monster.attack_target_position.y
-                               - monster.position.y;
-                const float magnitude = std::sqrt(dx * dx + dy * dy);
-                const float speed = definition->projectile_speed > 0.0F
-                    ? definition->projectile_speed : 0.14F;
-                Vec3 velocity{};
-                if (magnitude > 0.0001F) {
-                    velocity.x = dx / magnitude * speed;
-                    velocity.y = dy / magnitude * speed;
-                } else {
-                    velocity.x = monster.facing == Facing::right
-                        ? speed : -speed;
-                }
-                static_cast<void>(spawn_projectile(
-                    MonsterHandle{
-                        static_cast<std::uint16_t>(slot), monster.generation},
-                    monster.position, velocity, kProjectileLifetime,
-                    definition->contact_damage, kProjectileRadius));
-            } else if (is_support) {
-                std::size_t target_index = monsters_.slots_.size();
-                for (std::size_t index = 0; index < monsters_.slots_.size();
-                     ++index) {
-                    if (index == slot) {
-                        continue;
-                    }
-                    MonsterRuntime& candidate = monsters_.slots_[index];
-                    const MonsterDefinition* candidate_definition =
-                        monster_definition(candidate.id);
-                    if (!candidate.active || candidate.hp <= 0
-                        || candidate.shield != 0
-                        || candidate_definition == nullptr
-                        || has_tag(*candidate_definition, MonsterTag::support)) {
-                        continue;
-                    }
-                    target_index = index;
-                    break;
-                }
-                if (target_index < monsters_.slots_.size()) {
-                    MonsterRuntime& target = monsters_.slots_[target_index];
-                    modifiers::EffectDefinition barrier{};
-                    barrier.id = 1U;
-                    barrier.duration_ticks = target.max_shield_ticks;
-                    barrier.refresh_rule =
-                        modifiers::RefreshRule::refresh_duration;
-                    barrier.max_stacks = 1;
-                    barrier.on_apply = {
-                        modifiers::EffectCommandKind::set_shield,
-                        target.max_shield};
-                    barrier.on_refresh = barrier.on_apply;
-                    barrier.on_expire = {
-                        modifiers::EffectCommandKind::clear_shield, 0};
-                    modifiers::EffectSet* effects = ensure_effects(target_index);
-                    if (effects != nullptr) {
-                        (void)effects->apply(barrier);
-                        modifiers::EffectCommand barrier_command{};
-                        while (effects->pop_command(barrier_command)) {
-                            if (barrier_command.kind
-                                == modifiers::EffectCommandKind::set_shield) {
-                                target.shield = std::min(target.max_shield,
-                                    static_cast<int>(barrier_command.value));
-                            }
-                        }
-                        target.shield_ticks = static_cast<std::uint16_t>(
-                            effects->remaining_ticks(barrier.id));
-                    }
-                } else {
-                    // No legal ally: leave the support in a bounded fallback
-                    // reposition/cooldown rather than targeting the player.
-                    const float distance = target_distance(
-                        monster.position, player_.position);
-                    if (distance < definition->preferred_range
-                        && distance > 0.0001F) {
-                        monster.position.x += (monster.position.x
-                            - player_.position.x) / distance
-                            * definition->move_speed;
-                        monster.position.y += (monster.position.y
-                            - player_.position.y) / distance
-                            * definition->move_speed;
-                        clamp_position(monster.position);
-                    }
-                    monster.ai_phase = MonsterAiPhase::cooldown;
-                    monster.ai_ticks = kSupportFallbackCooldown;
-                }
-            } else if (!is_hazard) {
-                resolve_monster_contact_attack(slot);
-            }
-            monster.contact_attack_resolved = true;
-        }
-        if (monster.ai_ticks != 0) {
-            --monster.ai_ticks;
-        }
-        if (monster.ai_ticks == 0) {
-            monster.ai_phase = MonsterAiPhase::recovery;
-            monster.ai_ticks = definition->recovery_ticks;
-        }
-        return;
-    case MonsterAiPhase::recovery:
-        monster.velocity = Vec3{};
-        if (monster.ai_ticks != 0) {
-            --monster.ai_ticks;
-        }
-        if (monster.ai_ticks == 0) {
-            monster.ai_phase = MonsterAiPhase::cooldown;
-            monster.ai_ticks = definition->cooldown_ticks;
-        }
-        return;
-    case MonsterAiPhase::cooldown:
-        face_player(monster, player_.position);
-        monster.velocity = Vec3{};
-        if (monster.ai_ticks != 0) {
-            --monster.ai_ticks;
-        }
-        if (monster.ai_ticks == 0) {
-            monster.ai_phase = MonsterAiPhase::move;
-        }
-        return;
-    case MonsterAiPhase::defeated:
-        monster.velocity = Vec3{};
-        return;
+    if (is_melee) {
+        simulate_melee_ai(slot, monster, *definition);
+    } else if (is_ranged) {
+        simulate_ranged_ai(slot, monster, *definition);
+    } else {
+        simulate_special_ai(slot, monster, *definition);
     }
 }
 
