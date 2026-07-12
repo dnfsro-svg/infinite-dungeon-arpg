@@ -3,6 +3,7 @@
 #include "modifiers/modifier_math.hpp"
 
 #include <array>
+#include <limits>
 
 namespace {
 
@@ -28,6 +29,26 @@ arpg::test::Failure operation_order_is_flat_increased_then_more() noexcept {
         1000000, StatId::impulse_scale, values, {}, kWideBounds);
     ARPG_REQUIRE(result.valid);
     ARPG_REQUIRE(result.value == 2160000);
+
+    const std::array<Modifier, 2> increase{{
+        {4U, StatId::impulse_scale, ModifierOperation::flat, 1},
+        {5U, StatId::impulse_scale, ModifierOperation::more, 20000},
+    }};
+    const std::array<Modifier, 2> decrease{{
+        {4U, StatId::impulse_scale, ModifierOperation::flat, -1},
+        {5U, StatId::impulse_scale, ModifierOperation::more, 20000},
+    }};
+    constexpr FixedValue kMaximum = (std::numeric_limits<FixedValue>::max)();
+    constexpr FixedValue kMinimum = (std::numeric_limits<FixedValue>::min)();
+    const StatBounds full_range{kMinimum, kMaximum};
+    const auto maximum = evaluate_stat(
+        kMaximum, StatId::impulse_scale, increase, {}, full_range);
+    const auto minimum = evaluate_stat(
+        kMinimum, StatId::impulse_scale, decrease, {}, full_range);
+    ARPG_REQUIRE(maximum.valid);
+    ARPG_REQUIRE(minimum.valid);
+    ARPG_REQUIRE(maximum.value == kMaximum);
+    ARPG_REQUIRE(minimum.value == kMinimum);
     return {};
 }
 

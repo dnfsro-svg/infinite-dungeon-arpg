@@ -84,6 +84,9 @@ arpg::test::Failure stale_and_invalid_handles_fail() noexcept {
     const auto fresh_handle = pool.try_emplace(9);
     ARPG_REQUIRE(fresh_handle.has_value());
     ARPG_REQUIRE(fresh_handle->index == old_handle->index);
+    ARPG_REQUIRE(fresh_handle->index == 0U);
+    ARPG_REQUIRE(old_handle->generation == 1U);
+    ARPG_REQUIRE(fresh_handle->generation == 2U);
     ARPG_REQUIRE(fresh_handle->generation != old_handle->generation);
     ARPG_REQUIRE(fresh_handle->generation != 0);
     ARPG_REQUIRE(pool.get(*fresh_handle) == old_address);

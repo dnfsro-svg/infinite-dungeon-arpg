@@ -58,6 +58,33 @@ bool precedes(const Modifier* left, const Modifier* right) noexcept {
         || (left->priority == right->priority && left->id < right->id);
 }
 
+template <std::size_t N>
+bool has_duplicate_id(
+    const std::array<const Modifier*, N>& values,
+    std::size_t count,
+    ModifierId id) noexcept {
+    for (std::size_t index = 0; index < count; ++index) {
+        if (values[index]->id == id) return true;
+    }
+    return false;
+}
+
+template <std::size_t N>
+void stable_sort_by_priority(
+    std::array<const Modifier*, N>& values,
+    std::size_t count) noexcept {
+    for (std::size_t index = 1U; index < count; ++index) {
+        const Modifier* value = values[index];
+        std::size_t insertion = index;
+        while (insertion != 0U
+            && precedes(value, values[insertion - 1U])) {
+            values[insertion] = values[insertion - 1U];
+            --insertion;
+        }
+        values[insertion] = value;
+    }
+}
+
 }  // namespace
 
 StatEvaluation evaluate_stat(
@@ -77,23 +104,12 @@ StatEvaluation evaluate_stat(
     for (std::size_t index = 0; index < modifiers.size; ++index) {
         const Modifier& candidate = modifiers.data[index];
         if (!matches(candidate, stat, context)) continue;
-        for (std::size_t seen = 0; seen < count; ++seen) {
-            if (active[seen]->id == candidate.id) {
-                return {base, false, true};
-            }
+        if (has_duplicate_id(active, count, candidate.id)) {
+            return {base, false, true};
         }
         active[count++] = &candidate;
     }
-    for (std::size_t index = 1U; index < count; ++index) {
-        const Modifier* value = active[index];
-        std::size_t insertion = index;
-        while (insertion != 0U
-            && precedes(value, active[insertion - 1U])) {
-            active[insertion] = active[insertion - 1U];
-            --insertion;
-        }
-        active[insertion] = value;
-    }
+    stable_sort_by_priority(active, count);
 
     FixedValue result = base;
     for (std::size_t index = 0; index < count; ++index) {
@@ -141,21 +157,10 @@ ConversionResult evaluate_conversions(
             || source == target || candidate.value < 0) {
             return result;
         }
-        for (std::size_t seen = 0; seen < count; ++seen) {
-            if (active[seen]->id == candidate.id) return result;
-        }
+        if (has_duplicate_id(active, count, candidate.id)) return result;
         active[count++] = &candidate;
     }
-    for (std::size_t index = 1U; index < count; ++index) {
-        const Modifier* value = active[index];
-        std::size_t insertion = index;
-        while (insertion != 0U
-            && precedes(value, active[insertion - 1U])) {
-            active[insertion] = active[insertion - 1U];
-            --insertion;
-        }
-        active[insertion] = value;
-    }
+    stable_sort_by_priority(active, count);
 
     const StatValues original = values;
     std::array<FixedValue,

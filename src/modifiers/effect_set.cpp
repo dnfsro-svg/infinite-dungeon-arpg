@@ -4,18 +4,25 @@
 
 namespace arpg::modifiers {
 
-EffectSet::ActiveEffect* EffectSet::find(EffectId id) noexcept {
-    for (auto& effect : effects_) {
+namespace {
+
+template <typename Effects>
+auto find_effect(Effects& effects, EffectId id) noexcept
+    -> decltype(&effects[0]) {
+    for (auto& effect : effects) {
         if (effect.occupied && effect.id == id) return &effect;
     }
     return nullptr;
 }
 
+}  // namespace
+
+EffectSet::ActiveEffect* EffectSet::find(EffectId id) noexcept {
+    return find_effect(effects_, id);
+}
+
 const EffectSet::ActiveEffect* EffectSet::find(EffectId id) const noexcept {
-    for (const auto& effect : effects_) {
-        if (effect.occupied && effect.id == id) return &effect;
-    }
-    return nullptr;
+    return find_effect(effects_, id);
 }
 
 void EffectSet::emit(EffectCommandTemplate command, EffectId id) noexcept {

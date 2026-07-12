@@ -67,6 +67,19 @@ arpg::test::Failure huge_award_saturates_at_level_one_hundred() noexcept {
     ARPG_REQUIRE(result.state.earned_passive_points == 99U);
     ARPG_REQUIRE(result.state.unspent_passive_points == 99U);
     ARPG_REQUIRE(result.levels_gained == 99U);
+
+    ProgressionState level_ninety_nine{};
+    level_ninety_nine.level = 99U;
+    level_ninety_nine.experience = 99U;
+    level_ninety_nine.earned_passive_points = 98U;
+    level_ninety_nine.unspent_passive_points = 98U;
+    const ProgressionAward capped = apply_experience(
+        level_ninety_nine, 1U, flat_rules());
+    ARPG_REQUIRE(capped.state.level == 100U);
+    ARPG_REQUIRE(capped.state.experience == 0U);
+    ARPG_REQUIRE(capped.state.earned_passive_points == 99U);
+    ARPG_REQUIRE(capped.state.unspent_passive_points == 99U);
+    ARPG_REQUIRE(capped.levels_gained == 1U);
     return {};
 }
 

@@ -89,6 +89,8 @@ arpg::test::Failure queue_is_fifo_and_wraps() noexcept {
     ARPG_REQUIRE(queue.try_pop().value() == 4);
     ARPG_REQUIRE(queue.try_pop().value() == 5);
     ARPG_REQUIRE(queue.empty());
+    ARPG_REQUIRE(queue.size() == 0U);
+    ARPG_REQUIRE(queue.front() == nullptr);
     return {};
 }
 

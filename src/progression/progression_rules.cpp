@@ -5,6 +5,16 @@
 
 namespace arpg::progression {
 
+namespace {
+
+std::uint64_t threshold_for_level(
+    const ProgressionRules& rules,
+    std::uint32_t level) noexcept {
+    return rules.experience_to_next[static_cast<std::size_t>(level - 1U)];
+}
+
+}  // namespace
+
 ProgressionRules default_progression_rules() noexcept {
     ProgressionRules rules{};
     rules.experience_to_next.fill(100U);
@@ -35,8 +45,7 @@ bool valid_progression_state(
     if (state.level == kMaximumLevel) {
         return state.experience == 0U;
     }
-    return state.experience
-        < rules.experience_to_next[static_cast<std::size_t>(state.level - 1U)];
+    return state.experience < threshold_for_level(rules, state.level);
 }
 
 ProgressionAward apply_experience(
@@ -53,8 +62,7 @@ ProgressionAward apply_experience(
     state.experience = award > maximum - state.experience
         ? maximum : state.experience + award;
     while (state.level < kMaximumLevel) {
-        const std::uint64_t required = rules.experience_to_next[
-            static_cast<std::size_t>(state.level - 1U)];
+        const std::uint64_t required = threshold_for_level(rules, state.level);
         if (state.experience < required) {
             break;
         }

@@ -18,6 +18,8 @@ EffectDefinition effect(EffectId id, int ticks,
 
 arpg::test::Failure capacity_is_fixed_and_reported() noexcept {
     EffectSet set;
+    ARPG_REQUIRE(EffectSet::capacity() == 8U);
+    ARPG_REQUIRE(EffectSet::command_capacity() == 16U);
     for (EffectId id = 1; id <= EffectSet::capacity(); ++id) {
         ARPG_REQUIRE(set.apply(effect(id, 10)) == ApplyResult::applied);
     }
@@ -71,6 +73,12 @@ arpg::test::Failure command_overflow_is_bounded_and_reported() noexcept {
     }
     ARPG_REQUIRE(set.queued_command_count() == EffectSet::command_capacity());
     ARPG_REQUIRE(set.diagnostics().command_overflows == 2);
+
+    for (EffectId id = 2; id <= EffectSet::capacity(); ++id) {
+        ARPG_REQUIRE(set.apply(effect(id, 20)) == ApplyResult::applied);
+    }
+    ARPG_REQUIRE(set.apply(effect(9, 20)) == ApplyResult::capacity_rejected);
+    ARPG_REQUIRE(set.diagnostics().effect_overflows == 1);
     return {};
 }
 
