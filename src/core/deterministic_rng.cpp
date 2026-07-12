@@ -49,6 +49,21 @@ std::uint64_t DeterministicRng::next_u64() noexcept {
     return result;
 }
 
+std::optional<std::uint64_t> DeterministicRng::next_bounded(
+    std::uint64_t bound) noexcept {
+    if (bound == 0U) {
+        return std::nullopt;
+    }
+    const std::uint64_t threshold =
+        (std::uint64_t{0} - bound) % bound;
+    for (;;) {
+        const std::uint64_t value = next_u64();
+        if (value >= threshold) {
+            return value % bound;
+        }
+    }
+}
+
 DeterministicRng DeterministicRng::derive_stream(
     std::uint64_t root_seed,
     std::uint64_t stream_id) noexcept {

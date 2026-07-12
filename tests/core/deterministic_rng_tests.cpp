@@ -45,6 +45,29 @@ arpg::test::Failure seed_one_golden_sequence() noexcept {
     return require_sequence(rng, expected);
 }
 
+arpg::test::Failure bounded_zero_and_golden_samples() noexcept {
+    DeterministicRng zero{1};
+    ARPG_REQUIRE(!zero.next_bounded(0).has_value());
+    ARPG_REQUIRE(zero.next_u64() == 0xB3F2AF6D0FC710C5ULL);
+
+    DeterministicRng samples{1};
+    ARPG_REQUIRE(samples.next_bounded(10000).value() == 9557U);
+    ARPG_REQUIRE(samples.next_bounded(425).value() == 97U);
+    ARPG_REQUIRE(samples.next_bounded(1).value() == 0U);
+    return {};
+}
+
+arpg::test::Failure bounded_rejection_path_is_fixed() noexcept {
+    DeterministicRng rng{1};
+    static_cast<void>(rng.next_u64());
+    static_cast<void>(rng.next_u64());
+    static_cast<void>(rng.next_u64());
+    ARPG_REQUIRE(
+        rng.next_bounded(0x8000000000000001ULL).value()
+        == 0x327A48E29A233672ULL);
+    return {};
+}
+
 arpg::test::Failure identical_seeds_remain_identical() noexcept {
     DeterministicRng lhs{0xA55AA55A12345678ULL};
     DeterministicRng rhs{0xA55AA55A12345678ULL};
@@ -111,6 +134,8 @@ arpg::test::Failure streams_are_isolated() noexcept {
 constexpr arpg::test::TestCase kCases[] = {
     {"seed zero golden", &seed_zero_golden_sequence},
     {"seed one golden", &seed_one_golden_sequence},
+    {"bounded zero and golden samples", &bounded_zero_and_golden_samples},
+    {"bounded rejection path", &bounded_rejection_path_is_fixed},
     {"identical seeds", &identical_seeds_remain_identical},
     {"derived streams golden", &derived_stream_golden_sequences},
     {"stream isolation", &streams_are_isolated},
