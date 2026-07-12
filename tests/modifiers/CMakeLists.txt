@@ -1,6 +1,7 @@
 add_executable(arpg_modifier_tests
     modifier_test_main.cpp
-    modifier_math_tests.cpp)
+    modifier_math_tests.cpp
+    effect_set_tests.cpp)
 
 target_include_directories(arpg_modifier_tests PRIVATE
     "${PROJECT_SOURCE_DIR}/tests/core"
