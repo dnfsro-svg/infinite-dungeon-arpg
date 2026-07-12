@@ -125,6 +125,22 @@ struct ProjectileRuntime final {
     float radius{};
 };
 
+struct HazardRuntime final {
+    bool active{};
+    std::uint16_t generation{};
+    MonsterHandle owner{};
+    Vec3 center{};
+    float radius{};
+    std::uint16_t telegraph_ticks{};
+    std::uint16_t active_ticks{};
+    std::uint16_t lifetime_ticks{};
+    std::uint16_t damage_interval_ticks{};
+    std::uint16_t damage_cooldown_ticks{};
+    bool player_latched{};
+    bool persists_after_owner_death{};
+    int damage{};
+};
+
 struct EncounterWave final {
     std::array<MonsterSpawnSpec, kEncounterSpawnCapacity> spawns{};
     std::uint8_t spawn_count{};
@@ -283,6 +299,8 @@ struct MonsterSnapshot final {
     std::uint16_t break_window_ticks{};
     std::uint16_t hit_stop_ticks{};
     MonsterAiPhase ai_phase{MonsterAiPhase::idle};
+    Vec3 attack_target_position{};
+    Vec3 attack_vector{};
 };
 
 struct ProjectileSnapshot final {
@@ -296,6 +314,20 @@ struct ProjectileSnapshot final {
     float radius{};
 };
 
+struct HazardSnapshot final {
+    bool active{};
+    std::uint16_t generation{};
+    MonsterHandle owner{};
+    Vec3 center{};
+    float radius{};
+    std::uint16_t telegraph_ticks{};
+    std::uint16_t active_ticks{};
+    std::uint16_t lifetime_ticks{};
+    std::uint16_t damage_interval_ticks{};
+    bool player_latched{};
+    int damage{};
+};
+
 // Temporary presentation alias for pre-Task 3 dungeon tests. Task 8 removes
 // this compatibility name after all consumers use MonsterSnapshot.
 using DummySnapshot = MonsterSnapshot;
@@ -307,6 +339,8 @@ struct CombatDiagnostics final {
     std::uint32_t event_overflow_count{};
     std::uint32_t projectile_saturation_count{};
     std::uint32_t projectile_invalid_owner_count{};
+    std::uint32_t hazard_saturation_count{};
+    std::uint32_t hazard_invalid_owner_count{};
 };
 
 struct CombatSnapshot final {
@@ -316,6 +350,8 @@ struct CombatSnapshot final {
     std::size_t monster_count{};
     std::array<ProjectileSnapshot, kProjectileCapacity> projectiles{};
     std::size_t projectile_count{};
+    std::array<HazardSnapshot, kHazardCapacity> hazards{};
+    std::size_t hazard_count{};
     // Compatibility projection only; runtime state is owned by monsters.
     std::array<DummySnapshot, kDummyCount> dummies{};
     CombatDiagnostics diagnostics{};

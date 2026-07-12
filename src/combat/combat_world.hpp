@@ -56,6 +56,7 @@ private:
     void simulate_target(std::size_t index) noexcept;
     void simulate_monster(std::size_t slot) noexcept;
     void simulate_projectiles() noexcept;
+    void simulate_hazards() noexcept;
     void resolve_monster_contact_attack(std::size_t slot) noexcept;
     void apply_dummy_impact(
         std::size_t index,
@@ -72,7 +73,16 @@ private:
         std::uint16_t lifetime_ticks,
         int damage,
         float radius) noexcept;
+    [[nodiscard]] bool spawn_hazard(
+        MonsterHandle owner,
+        Vec3 center,
+        float radius,
+        std::uint16_t telegraph_ticks,
+        std::uint16_t active_ticks,
+        std::uint16_t damage_interval_ticks,
+        int damage) noexcept;
     void remove_owned_projectiles(MonsterHandle owner) noexcept;
+    void remove_owned_hazards(MonsterHandle owner) noexcept;
     void emit_event(const CombatEvent& event) noexcept;
     void initialize_runtime() noexcept;
 
@@ -87,6 +97,7 @@ private:
     PlayerRuntime player_{};
     MonsterPool monsters_{};
     ProjectilePool projectiles_{};
+    HazardPool hazards_{};
     AttackRuntime attack_{};
     InputBuffer input_buffer_{};
     core::BoundedQueue<CombatEvent, 64> events_{};
@@ -94,6 +105,8 @@ private:
     std::uint32_t event_overflow_count_{};
     std::uint32_t projectile_saturation_count_{};
     std::uint32_t projectile_invalid_owner_count_{};
+    std::uint32_t hazard_saturation_count_{};
+    std::uint32_t hazard_invalid_owner_count_{};
 };
 
 }  // namespace arpg::combat

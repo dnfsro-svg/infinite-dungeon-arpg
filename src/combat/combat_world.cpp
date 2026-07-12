@@ -74,6 +74,7 @@ void CombatWorld::tick(MovementInput movement) noexcept {
     }
 
     simulate_projectiles();
+    simulate_hazards();
 
     input_buffer_.age(player_frozen || player_hurt);
     ++tick_;
@@ -93,6 +94,7 @@ void CombatWorld::initialize_runtime() noexcept {
     initialize_player();
     monsters_.clear();
     projectiles_.clear();
+    hazards_.clear();
     if (legacy_mode_) {
         initialize_legacy_monsters();
     } else {
@@ -109,6 +111,8 @@ void CombatWorld::initialize_runtime() noexcept {
     event_overflow_count_ = 0;
     projectile_saturation_count_ = 0;
     projectile_invalid_owner_count_ = 0;
+    hazard_saturation_count_ = 0;
+    hazard_invalid_owner_count_ = 0;
 }
 
 void CombatWorld::initialize_player() noexcept {
@@ -157,6 +161,7 @@ bool CombatWorld::load_wave(
 
     monsters_.clear();
     projectiles_.clear();
+    hazards_.clear();
     for (std::size_t index = 0; index < wave.spawn_count; ++index) {
         const auto handle = monsters_.spawn(
             wave.spawns[index].id, wave.spawns[index].position);
@@ -173,6 +178,8 @@ bool CombatWorld::load_wave(
     event_overflow_count_ = 0U;
     projectile_saturation_count_ = 0U;
     projectile_invalid_owner_count_ = 0U;
+    hazard_saturation_count_ = 0U;
+    hazard_invalid_owner_count_ = 0U;
     encounter_config_.wave = wave;
     encounter_config_.reset_player_health = reset_player_health;
     legacy_mode_ = false;
@@ -209,6 +216,7 @@ bool CombatWorld::destroy_monster(MonsterHandle handle) noexcept {
         return false;
     }
     remove_owned_projectiles(handle);
+    remove_owned_hazards(handle);
     if (handle.index < attack_.hit_targets.size()) {
         attack_.hit_targets[handle.index] = false;
     }
@@ -266,6 +274,8 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
             dummy.break_window_ticks,
             dummy.hit_stop_ticks,
             dummy.ai_phase,
+            dummy.attack_target_position,
+            dummy.attack_vector,
         };
     }
 
@@ -289,6 +299,28 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
         }
     }
     result.projectile_count = projectiles_.active_count();
+    if (hazards_.active_count() != 0U) {
+        for (std::size_t index = 0; index < hazards_.slots().size(); ++index) {
+            const HazardRuntime& hazard = hazards_.slots()[index];
+            if (!hazard.active) {
+                continue;
+            }
+            result.hazards[index] = HazardSnapshot{
+                hazard.active,
+                hazard.generation,
+                hazard.owner,
+                hazard.center,
+                hazard.radius,
+                hazard.telegraph_ticks,
+                hazard.active_ticks,
+                hazard.lifetime_ticks,
+                hazard.damage_interval_ticks,
+                hazard.player_latched,
+                hazard.damage,
+            };
+        }
+    }
+    result.hazard_count = hazards_.active_count();
     std::size_t compatibility_index = 0U;
     for (std::size_t index = 0;
          index < monsters_.slots().size()
@@ -308,6 +340,8 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
         event_overflow_count_,
         projectile_saturation_count_,
         projectile_invalid_owner_count_,
+        hazard_saturation_count_,
+        hazard_invalid_owner_count_,
     };
     return result;
 }
@@ -382,6 +416,39 @@ void CombatWorld::remove_owned_projectiles(MonsterHandle owner) noexcept {
     }
 }
 
+bool CombatWorld::spawn_hazard(
+    MonsterHandle owner,
+    Vec3 center,
+    float radius,
+    std::uint16_t telegraph_ticks,
+    std::uint16_t active_ticks,
+    std::uint16_t damage_interval_ticks,
+    int damage) noexcept {
+    if (monsters_.get(owner) == nullptr) {
+        ++hazard_invalid_owner_count_;
+        return false;
+    }
+    if (!hazards_.spawn(owner, center, radius, telegraph_ticks, active_ticks,
+                        damage_interval_ticks, damage).has_value()) {
+        ++hazard_saturation_count_;
+        return false;
+    }
+    return true;
+}
+
+void CombatWorld::remove_owned_hazards(MonsterHandle owner) noexcept {
+    for (std::size_t index = 0; index < kHazardCapacity; ++index) {
+        const HazardRuntime& hazard = hazards_.slots()[index];
+        if (!hazard.active || hazard.persists_after_owner_death
+            || hazard.owner.index != owner.index
+            || hazard.owner.generation != owner.generation) {
+            continue;
+        }
+        static_cast<void>(hazards_.destroy(HazardHandle{
+            static_cast<std::uint16_t>(index), hazard.generation}));
+    }
+}
+
 void CombatWorld::simulate_projectiles() noexcept {
     constexpr float room_min_x = -8.0F;
     constexpr float room_max_x = 8.0F;
@@ -436,6 +503,60 @@ void CombatWorld::simulate_projectiles() noexcept {
         if (hit_player || outside || expired) {
             static_cast<void>(projectiles_.destroy(ProjectileHandle{
                 static_cast<std::uint16_t>(index), projectile.generation}));
+        }
+    }
+}
+
+void CombatWorld::simulate_hazards() noexcept {
+    constexpr float kPlayerRadiusX = 0.45F;
+    constexpr float kPlayerRadiusY = 0.35F;
+    constexpr float kPlayerRadiusZ = 1.60F;
+    for (std::size_t index = 0; index < kHazardCapacity; ++index) {
+        HazardRuntime* active = hazards_.get(HazardHandle{
+            static_cast<std::uint16_t>(index), hazards_.slots()[index].generation});
+        if (active == nullptr) {
+            continue;
+        }
+        HazardRuntime& hazard = *active;
+        const MonsterRuntime* owner = monsters_.get(hazard.owner);
+        if ((!hazard.persists_after_owner_death &&
+             (owner == nullptr || owner->hp <= 0
+              || owner->reaction == ReactionState::defeated))) {
+            static_cast<void>(hazards_.destroy(HazardHandle{
+                static_cast<std::uint16_t>(index), hazard.generation}));
+            continue;
+        }
+        if (hazard.lifetime_ticks != 0U) {
+            --hazard.lifetime_ticks;
+        }
+        if (hazard.telegraph_ticks != 0U) {
+            --hazard.telegraph_ticks;
+        } else {
+            if (hazard.damage_cooldown_ticks != 0U) {
+                --hazard.damage_cooldown_ticks;
+                if (hazard.damage_cooldown_ticks == 0U) {
+                    hazard.player_latched = false;
+                }
+            }
+            const float dx = hazard.center.x - player_.position.x;
+            const float dy = hazard.center.y - player_.position.y;
+            const float dz = hazard.center.z - player_.position.z;
+            const bool intersects = std::fabs(dx) <= hazard.radius + kPlayerRadiusX
+                && std::fabs(dy) <= hazard.radius + kPlayerRadiusY
+                && std::fabs(dz) <= hazard.radius + kPlayerRadiusZ;
+            if (intersects && !hazard.player_latched) {
+                apply_player_damage(hazard.damage, hazard.center,
+                                    FeedbackLevel::heavy);
+                hazard.player_latched = true;
+                hazard.damage_cooldown_ticks = hazard.damage_interval_ticks;
+            }
+            if (hazard.active_ticks != 0U) {
+                --hazard.active_ticks;
+            }
+        }
+        if (hazard.lifetime_ticks == 0U || hazard.active_ticks == 0U) {
+            static_cast<void>(hazards_.destroy(HazardHandle{
+                static_cast<std::uint16_t>(index), hazard.generation}));
         }
     }
 }

@@ -201,8 +201,6 @@ arpg::test::Failure bulwark_accepts_normal_reaction_after_break() noexcept {
 constexpr arpg::test::TestCase kCases[] = {
     {"chaser move and telegraph stop", &chaos_chaser_moves_then_stops_for_telegraph},
     {"chaser active serial cooldown", &chaos_chaser_damages_only_once_per_active_serial},
-    {"unsupported monsters stay inert", &unsupported_monsters_remain_inert},
-    {"unsupported reaction recovers", &unsupported_monster_reaction_recovers},
     {"bulwark slow armored profile", &water_bulwark_is_slow_and_has_front_armor},
     {"bulwark rear bypasses armor", &bulwark_back_hit_bypasses_front_armor},
     {"bulwark break reaction", &bulwark_accepts_normal_reaction_after_break},

@@ -238,4 +238,112 @@ ProjectilePool::slots() noexcept {
     return slots_;
 }
 
+void HazardPool::advance_generation(HazardRuntime& runtime) noexcept {
+    if (runtime.generation == 0xFFFFU) {
+        runtime.generation = 1U;
+    } else {
+        ++runtime.generation;
+        if (runtime.generation == 0U) {
+            runtime.generation = 1U;
+        }
+    }
+}
+
+void HazardPool::clear() noexcept {
+    active_count_ = 0U;
+    for (HazardRuntime& runtime : slots_) {
+        advance_generation(runtime);
+        const std::uint16_t generation = runtime.generation;
+        runtime = HazardRuntime{};
+        runtime.generation = generation;
+    }
+}
+
+std::optional<HazardHandle> HazardPool::spawn(
+    MonsterHandle owner,
+    Vec3 center,
+    float radius,
+    std::uint16_t telegraph_ticks,
+    std::uint16_t active_ticks,
+    std::uint16_t damage_interval_ticks,
+    int damage,
+    bool persists_after_owner_death) noexcept {
+    if (owner.index >= kMonsterCapacity || owner.generation == 0U
+        || radius <= 0.0F || active_ticks == 0U || damage <= 0) {
+        return std::nullopt;
+    }
+    for (std::size_t index = 0; index < slots_.size(); ++index) {
+        HazardRuntime& runtime = slots_[index];
+        if (runtime.active) {
+            continue;
+        }
+        advance_generation(runtime);
+        const std::uint16_t generation = runtime.generation;
+        runtime = HazardRuntime{};
+        runtime.active = true;
+        runtime.generation = generation;
+        runtime.owner = owner;
+        runtime.center = center;
+        runtime.radius = radius;
+        runtime.telegraph_ticks = telegraph_ticks;
+        runtime.active_ticks = active_ticks;
+        runtime.lifetime_ticks = static_cast<std::uint16_t>(
+            telegraph_ticks + active_ticks);
+        runtime.damage_interval_ticks = damage_interval_ticks == 0U
+            ? 1U : damage_interval_ticks;
+        runtime.damage = damage;
+        runtime.persists_after_owner_death = persists_after_owner_death;
+        ++active_count_;
+        return HazardHandle{static_cast<std::uint16_t>(index), generation};
+    }
+    return std::nullopt;
+}
+
+bool HazardPool::destroy(HazardHandle handle) noexcept {
+    HazardRuntime* runtime = get(handle);
+    if (runtime == nullptr) {
+        return false;
+    }
+    advance_generation(*runtime);
+    const std::uint16_t generation = runtime->generation;
+    *runtime = HazardRuntime{};
+    runtime->generation = generation;
+    --active_count_;
+    return true;
+}
+
+std::size_t HazardPool::active_count() const noexcept {
+    return active_count_;
+}
+
+HazardRuntime* HazardPool::get(HazardHandle handle) noexcept {
+    if (handle.index >= slots_.size()) {
+        return nullptr;
+    }
+    HazardRuntime& runtime = slots_[handle.index];
+    if (!runtime.active || runtime.generation != handle.generation) {
+        return nullptr;
+    }
+    return &runtime;
+}
+
+const HazardRuntime* HazardPool::get(HazardHandle handle) const noexcept {
+    if (handle.index >= slots_.size()) {
+        return nullptr;
+    }
+    const HazardRuntime& runtime = slots_[handle.index];
+    if (!runtime.active || runtime.generation != handle.generation) {
+        return nullptr;
+    }
+    return &runtime;
+}
+
+const std::array<HazardRuntime, kHazardCapacity>& HazardPool::slots() const noexcept {
+    return slots_;
+}
+
+std::array<HazardRuntime, kHazardCapacity>& HazardPool::slots() noexcept {
+    return slots_;
+}
+
 }  // namespace arpg::combat
