@@ -35,7 +35,7 @@ DungeonFault validate_rules(const DungeonRules& rules) noexcept {
             return DungeonFault::invalid_rules;
         }
     }
-    return DungeonFault::none;
+    return validate_encounter_director_config(rules.encounter);
 }
 
 DungeonFault compute_ecology_weights(

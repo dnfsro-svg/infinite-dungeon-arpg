@@ -26,14 +26,6 @@ enum class DungeonFault : std::uint8_t {
     save_receipt_mismatch,
 };
 
-struct DungeonRules final {
-    std::array<std::uint32_t, 4> base_weights{{100, 100, 100, 100}};
-    std::uint32_t bias_weight_increment{25};
-    std::uint32_t hole_threshold{1000};
-    std::uint32_t abyss_threshold{100};
-    std::uint32_t rules_version{1};
-};
-
 // Gray-box encounter tuning is intentionally centralized here so later
 // balancing changes do not alter the director's algorithm or RNG contract.
 struct EncounterDirectorConfig final {
@@ -49,6 +41,15 @@ struct EncounterDirectorConfig final {
     std::uint8_t ranged_limit{4};
     std::uint8_t support_limit{2};
     std::uint8_t ground_hazard_limit{3};
+};
+
+struct DungeonRules final {
+    std::array<std::uint32_t, 4> base_weights{{100, 100, 100, 100}};
+    std::uint32_t bias_weight_increment{25};
+    std::uint32_t hole_threshold{1000};
+    std::uint32_t abyss_threshold{100};
+    std::uint32_t rules_version{1};
+    EncounterDirectorConfig encounter{};
 };
 
 [[nodiscard]] std::optional<checkpoint::DungeonElement> element_for_exit(

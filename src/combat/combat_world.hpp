@@ -10,6 +10,10 @@
 #include <cstdint>
 #include <optional>
 
+namespace arpg::test {
+struct DungeonSessionTestAccess;
+}
+
 namespace arpg::combat {
 
 class CombatWorld final {
@@ -90,6 +94,7 @@ private:
     void initialize_legacy_monsters() noexcept;
 
     friend struct ::arpg::test::CombatWorldTestAccess;
+    friend struct ::arpg::test::DungeonSessionTestAccess;
 
     CombatEncounterConfig encounter_config_{};
     CombatLabConfig legacy_config_{};

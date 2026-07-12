@@ -47,4 +47,21 @@ std::optional<combat::CombatLabConfig> make_combat_lab_config(
     return config;
 }
 
+std::optional<combat::CombatEncounterConfig> make_combat_encounter_config(
+    checkpoint::EntrySide entry,
+    std::uint32_t rules_version,
+    const combat::EncounterWave& wave,
+    bool reset_player_health) noexcept {
+    const auto legacy = make_combat_lab_config(entry, rules_version);
+    if (!legacy.has_value()) {
+        return std::nullopt;
+    }
+    combat::CombatEncounterConfig config{};
+    config.player_spawn = legacy->player_spawn;
+    config.initial_facing = legacy->initial_facing;
+    config.wave = wave;
+    config.reset_player_health = reset_player_health;
+    return config;
+}
+
 }  // namespace arpg::dungeon
