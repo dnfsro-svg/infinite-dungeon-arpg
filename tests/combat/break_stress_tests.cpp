@@ -562,6 +562,120 @@ bool same_hazards(
     return true;
 }
 
+bool same_snapshot(
+    const CombatSnapshot& lhs,
+    const CombatSnapshot& rhs) noexcept {
+    const PlayerSnapshot& left_player = lhs.player;
+    const PlayerSnapshot& right_player = rhs.player;
+    if (lhs.tick != rhs.tick
+        || !vec_equal(left_player.position, right_player.position)
+        || !vec_equal(left_player.velocity, right_player.velocity)
+        || left_player.facing != right_player.facing
+        || left_player.state != right_player.state
+        || left_player.active_attack != right_player.active_attack
+        || left_player.attack_phase != right_player.attack_phase
+        || left_player.attack_elapsed_ticks != right_player.attack_elapsed_ticks
+        || left_player.combo_stage != right_player.combo_stage
+        || left_player.hit_stop_ticks != right_player.hit_stop_ticks
+        || left_player.air_attack_available != right_player.air_attack_available
+        || left_player.hp != right_player.hp
+        || left_player.max_hp != right_player.max_hp
+        || left_player.hurt_ticks != right_player.hurt_ticks
+        || left_player.invulnerability_ticks != right_player.invulnerability_ticks
+        || lhs.monster_count != rhs.monster_count
+        || lhs.projectile_count != rhs.projectile_count
+        || lhs.hazard_count != rhs.hazard_count) {
+        return false;
+    }
+
+    for (std::size_t index = 0; index < lhs.monsters.size(); ++index) {
+        const MonsterSnapshot& left = lhs.monsters[index];
+        const MonsterSnapshot& right = rhs.monsters[index];
+        if (left.active != right.active || left.generation != right.generation
+            || left.id != right.id || !vec_equal(left.spawn, right.spawn)
+            || !vec_equal(left.position, right.position)
+            || !vec_equal(left.velocity, right.velocity)
+            || left.kind != right.kind || left.facing != right.facing
+            || left.reaction != right.reaction || left.armor != right.armor
+            || left.hp != right.hp || left.max_hp != right.max_hp
+            || left.break_value != right.break_value
+            || left.max_break != right.max_break || left.shield != right.shield
+            || left.max_shield != right.max_shield
+            || left.shield_ticks != right.shield_ticks
+            || left.max_shield_ticks != right.max_shield_ticks
+            || left.break_window_ticks != right.break_window_ticks
+            || left.hit_stop_ticks != right.hit_stop_ticks
+            || left.ai_phase != right.ai_phase
+            || !vec_equal(left.attack_target_position, right.attack_target_position)
+            || !vec_equal(left.attack_vector, right.attack_vector)) {
+            return false;
+        }
+    }
+
+    if (!same_projectiles(lhs, rhs) || !same_hazards(lhs, rhs)) {
+        return false;
+    }
+    for (std::size_t index = 0; index < lhs.dummies.size(); ++index) {
+        const MonsterSnapshot& left = lhs.dummies[index];
+        const MonsterSnapshot& right = rhs.dummies[index];
+        if (left.active != right.active || left.generation != right.generation
+            || left.id != right.id || !vec_equal(left.spawn, right.spawn)
+            || !vec_equal(left.position, right.position)
+            || !vec_equal(left.velocity, right.velocity)
+            || left.kind != right.kind || left.facing != right.facing
+            || left.reaction != right.reaction || left.armor != right.armor
+            || left.hp != right.hp || left.max_hp != right.max_hp
+            || left.break_value != right.break_value
+            || left.max_break != right.max_break || left.shield != right.shield
+            || left.max_shield != right.max_shield
+            || left.shield_ticks != right.shield_ticks
+            || left.max_shield_ticks != right.max_shield_ticks
+            || left.break_window_ticks != right.break_window_ticks
+            || left.hit_stop_ticks != right.hit_stop_ticks
+            || left.ai_phase != right.ai_phase
+            || !vec_equal(left.attack_target_position, right.attack_target_position)
+            || !vec_equal(left.attack_vector, right.attack_vector)) {
+            return false;
+        }
+    }
+
+    const CombatDiagnostics& left = lhs.diagnostics;
+    const CombatDiagnostics& right = rhs.diagnostics;
+    return left.input_size == right.input_size
+        && left.input_expired_count == right.input_expired_count
+        && left.input_overflow_count == right.input_overflow_count
+        && left.event_overflow_count == right.event_overflow_count
+        && left.projectile_saturation_count == right.projectile_saturation_count
+        && left.projectile_invalid_owner_count
+            == right.projectile_invalid_owner_count
+        && left.hazard_saturation_count == right.hazard_saturation_count
+        && left.hazard_invalid_owner_count == right.hazard_invalid_owner_count
+        && left.effect_owner_count == right.effect_owner_count
+        && left.active_effect_count == right.active_effect_count
+        && left.effect_overflow_count == right.effect_overflow_count
+        && left.effect_command_overflow_count
+            == right.effect_command_overflow_count;
+}
+
+arpg::test::Failure fixed_3600_tick_script_preserves_full_state() noexcept {
+    CombatWorld first;
+    CombatWorld second;
+    for (std::uint32_t tick = 0; tick < 3600U; ++tick) {
+        const bool pulse = tick % 41U == 0U;
+        if (pulse) {
+            ARPG_REQUIRE(first.queue_action(Action::light));
+            ARPG_REQUIRE(second.queue_action(Action::light));
+        }
+        const MovementInput movement{
+            static_cast<std::int8_t>(tick % 120U < 60U ? 1 : -1), 0};
+        first.tick(movement);
+        second.tick(movement);
+        ARPG_REQUIRE(same_snapshot(first.snapshot(), second.snapshot()));
+        ARPG_REQUIRE(drain_events_equal(first, second));
+    }
+    return {};
+}
+
 arpg::test::Failure all_monster_roles_tick_without_allocation_or_overflow() noexcept {
     CombatWorld world = all_roles_world();
     for (int tick = 0; tick < 180; ++tick) {
@@ -663,6 +777,8 @@ constexpr arpg::test::TestCase kCases[] = {
      &reset_reconstructs_runtime_and_emits_once},
     {"deterministic replay and allocation stress",
      &replay_and_stress_are_deterministic_without_allocations},
+    {"fixed 3600 tick script preserves full state",
+     &fixed_3600_tick_script_preserves_full_state},
     {"all monster roles tick without allocation or overflow",
      &all_monster_roles_tick_without_allocation_or_overflow},
     {"full pools reject without mutation and saturate diagnostics",

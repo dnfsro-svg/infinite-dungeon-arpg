@@ -1,10 +1,15 @@
 add_library(arpg_combat STATIC
     attack_catalog.cpp
     combat_collision.cpp
+    combat_effects.cpp
+    combat_snapshot.cpp
     combat_world.cpp
     hit_resolution.cpp
     input_buffer.cpp
     monster_ai.cpp
+    monster_ai_melee.cpp
+    monster_ai_ranged.cpp
+    monster_ai_special.cpp
     monster_catalog.cpp
     monster_pool.cpp
     player_simulation.cpp
