@@ -10,6 +10,9 @@ namespace {
 
 constexpr std::array<int, kDummyCount> kDummyHitPoints{{300, 450, 700}};
 constexpr std::array<int, kDummyCount> kDummyBreakValues{{0, 0, 120}};
+constexpr int kStage4PlayerMaxHp = 1000;
+constexpr std::uint16_t kPlayerHurtTicks = 12;
+constexpr std::uint16_t kPlayerInvulnerabilityTicks = 30;
 
 }  // namespace
 
@@ -31,10 +34,19 @@ bool CombatWorld::queue_action(Action action) noexcept {
 
 void CombatWorld::tick(MovementInput movement) noexcept {
     const bool player_frozen = player_.hit_stop_ticks != 0;
+    const bool player_hurt = player_.hurt_ticks != 0;
     if (player_frozen) {
         --player_.hit_stop_ticks;
-    } else {
+    }
+    if (player_hurt) {
+        --player_.hurt_ticks;
+    }
+    if (!player_frozen && !player_hurt) {
         simulate_player(movement);
+    }
+
+    if (player_.invulnerability_ticks != 0) {
+        --player_.invulnerability_ticks;
     }
 
     for (MonsterRuntime& monster : monsters_.slots_) {
@@ -51,11 +63,11 @@ void CombatWorld::tick(MovementInput movement) noexcept {
         }
     }
 
-    if (!player_frozen) {
+    if (!player_frozen && !player_hurt && player_.hurt_ticks == 0) {
         resolve_attack_hits();
     }
 
-    input_buffer_.age(player_frozen);
+    input_buffer_.age(player_frozen || player_hurt);
     ++tick_;
 }
 
@@ -75,7 +87,8 @@ void CombatWorld::initialize_runtime() noexcept {
     if (legacy_mode_) {
         initialize_legacy_monsters();
     } else {
-        static_cast<void>(load_wave(encounter_config_.wave));
+        static_cast<void>(load_wave(
+            encounter_config_.wave, encounter_config_.reset_player_health));
     }
 
     attack_ = AttackRuntime{};
@@ -91,6 +104,8 @@ void CombatWorld::initialize_player() noexcept {
     player_ = PlayerRuntime{};
     player_.position = encounter_config_.player_spawn;
     player_.facing = encounter_config_.initial_facing;
+    player_.max_hp = kStage4PlayerMaxHp;
+    player_.hp = player_.max_hp;
 }
 
 void CombatWorld::initialize_legacy_monsters() noexcept {
@@ -116,7 +131,9 @@ void CombatWorld::initialize_legacy_monsters() noexcept {
     }
 }
 
-bool CombatWorld::load_wave(const EncounterWave& wave) noexcept {
+bool CombatWorld::load_wave(
+    const EncounterWave& wave,
+    bool reset_player_health) noexcept {
     if (wave.spawn_count > kEncounterSpawnCapacity) {
         return false;
     }
@@ -143,7 +160,25 @@ bool CombatWorld::load_wave(const EncounterWave& wave) noexcept {
     }
     event_overflow_count_ = 0U;
     encounter_config_.wave = wave;
+    encounter_config_.reset_player_health = reset_player_health;
     legacy_mode_ = false;
+    if (reset_player_health) {
+        const bool health_changed = player_.hp != player_.max_hp
+                                 || player_.hurt_ticks != 0
+                                 || player_.invulnerability_ticks != 0;
+        player_.hp = player_.max_hp;
+        player_.hurt_ticks = 0;
+        player_.invulnerability_ticks = 0;
+
+        if (health_changed) {
+            CombatEvent health_reset{};
+            health_reset.kind = CombatEventKind::player_health_reset;
+            health_reset.tick = tick_;
+            health_reset.position = player_.position;
+            health_reset.value = player_.max_hp;
+            emit_event(health_reset);
+        }
+    }
     return true;
 }
 
@@ -182,6 +217,10 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
         player_.combo_stage,
         player_.hit_stop_ticks,
         player_.air_attack_available,
+        player_.hp,
+        player_.max_hp,
+        player_.hurt_ticks,
+        player_.invulnerability_ticks,
     };
 
     for (std::size_t index = 0; index < monsters_.slots().size(); ++index) {
@@ -226,6 +265,39 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
         event_overflow_count_,
     };
     return result;
+}
+
+void CombatWorld::apply_player_damage(
+    int damage,
+    Vec3 source_position,
+    FeedbackLevel feedback) noexcept {
+    if (damage <= 0 || player_.invulnerability_ticks != 0) {
+        return;
+    }
+
+    player_.hp = damage >= player_.hp ? 1 : player_.hp - damage;
+    player_.hurt_ticks = kPlayerHurtTicks;
+    player_.invulnerability_ticks = kPlayerInvulnerabilityTicks;
+    player_.velocity.x = 0.0F;
+    player_.velocity.y = 0.0F;
+
+    CombatEvent hit{};
+    hit.kind = CombatEventKind::player_hit;
+    hit.tick = tick_;
+    hit.hit_count = 1;
+    hit.feedback = feedback;
+    hit.position = source_position;
+    hit.value = damage;
+    emit_event(hit);
+
+    CombatEvent hurt_started{};
+    hurt_started.kind = CombatEventKind::player_hurt_started;
+    hurt_started.tick = tick_;
+    hurt_started.hit_count = 1;
+    hurt_started.feedback = feedback;
+    hurt_started.position = source_position;
+    hurt_started.value = damage;
+    emit_event(hurt_started);
 }
 
 }  // namespace arpg::combat
