@@ -95,6 +95,11 @@ struct FaultContext final {
     bool triggered{};
 };
 
+struct CorruptAfterPublishContext final {
+    std::filesystem::path directory{};
+    bool corrupted{};
+};
+
 struct ArchiveFaultContext final {
     std::size_t calls{};
     std::size_t fail_on_call{};
@@ -118,6 +123,26 @@ bool fail_at(persistence::SaveFaultPoint point, void* opaque) noexcept {
     if (context->persistent || !context->triggered) {
         context->triggered = true;
         return true;
+    }
+    return false;
+}
+
+bool corrupt_target_after_publish(persistence::SaveFaultPoint point,
+    void* opaque) noexcept {
+    auto* context = static_cast<CorruptAfterPublishContext*>(opaque);
+    if (point != persistence::SaveFaultPoint::after_publish
+            || context->corrupted) {
+        return false;
+    }
+    context->corrupted = true;
+    try {
+        std::ofstream output(context->directory / "run_b.sav",
+            std::ios::binary | std::ios::trunc);
+        const std::array<std::uint8_t, 3> invalid{{0x71U, 0x72U, 0x73U}};
+        output.write(reinterpret_cast<const char*>(invalid.data()),
+            static_cast<std::streamsize>(invalid.size()));
+    } catch (...) {
+        return false;
     }
     return false;
 }
@@ -176,7 +201,7 @@ arpg::test::Failure after_temp_validation_before_publish_is_not_committed() noex
     return {};
 }
 
-arpg::test::Failure publish_final_scan_fault_is_committed_when_expected_proven() noexcept {
+arpg::test::Failure publish_final_scan_fault_is_indeterminate() noexcept {
     TempDirectory directory;
     auto store = make_store(directory.path);
     ARPG_REQUIRE(store.commit(make_state(1U, 5U)).state == persistence::SaveCommitState::committed);
@@ -185,9 +210,9 @@ arpg::test::Failure publish_final_scan_fault_is_committed_when_expected_proven()
     auto faulty = make_store(directory.path, &fault);
     const auto expected = make_state(2U, 6U);
     const auto result = faulty.commit(expected);
-    ARPG_REQUIRE(result.state == persistence::SaveCommitState::committed);
-    ARPG_REQUIRE(result.active_slot == persistence::SaveSlot::b);
-    ARPG_REQUIRE(same_state(result.verified_state, expected));
+    ARPG_REQUIRE(result.state == persistence::SaveCommitState::indeterminate);
+    ARPG_REQUIRE(result.state != persistence::SaveCommitState::not_committed);
+    ARPG_REQUIRE(result.error == persistence::SaveError::final_scan_failed);
 
     FaultContext indeterminate_fault{persistence::SaveFaultPoint::final_scan_a, true, false};
     auto indeterminate = make_store(directory.path, &indeterminate_fault);
@@ -196,6 +221,21 @@ arpg::test::Failure publish_final_scan_fault_is_committed_when_expected_proven()
     const auto uncertain = indeterminate.commit(second);
     ARPG_REQUIRE(uncertain.state == persistence::SaveCommitState::indeterminate);
     ARPG_REQUIRE(uncertain.state != persistence::SaveCommitState::not_committed);
+
+    TempDirectory invalid_target_directory;
+    auto invalid_target_store = make_store(invalid_target_directory.path);
+    ARPG_REQUIRE(invalid_target_store.commit(make_state(1U, 11U)).state
+        == persistence::SaveCommitState::committed);
+    CorruptAfterPublishContext corrupt_context{
+        invalid_target_directory.path, false};
+    persistence::SaveStoreConfig corrupt_config{};
+    corrupt_config.directory = invalid_target_directory.path;
+    corrupt_config.fault_hook = &corrupt_target_after_publish;
+    corrupt_config.fault_context = &corrupt_context;
+    persistence::SaveStore corrupt_store(corrupt_config);
+    const auto invalid_target = corrupt_store.commit(make_state(2U, 12U));
+    ARPG_REQUIRE(invalid_target.state == persistence::SaveCommitState::not_committed);
+    ARPG_REQUIRE(invalid_target.active_slot == persistence::SaveSlot::a);
     return {};
 }
 
@@ -270,7 +310,7 @@ arpg::test::Failure archive_failure_blocks_and_preserves_corrupt_files() noexcep
 constexpr arpg::test::TestCase kCases[] = {
     {"before temp write is not committed and old bytes unchanged", &before_temp_write_is_not_committed_and_old_bytes_unchanged},
     {"after temp validation before publish is not committed", &after_temp_validation_before_publish_is_not_committed},
-    {"publish final scan fault is committed when expected proven", &publish_final_scan_fault_is_committed_when_expected_proven},
+    {"publish final scan fault is indeterminate", &publish_final_scan_fault_is_indeterminate},
     {"truncated temp without valid slot requires recovery", &truncated_temp_without_valid_slot_requires_recovery},
     {"four invalid files are archived before new generation", &four_invalid_files_are_archived_before_new_generation},
     {"archive failure blocks and preserves corrupt files", &archive_failure_blocks_and_preserves_corrupt_files},

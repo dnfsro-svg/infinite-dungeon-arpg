@@ -52,12 +52,6 @@ const std::filesystem::path& temp_name(SaveSlot slot) {
     return slot == SaveSlot::a ? a : b;
 }
 
-SaveFaultPoint final_scan_point(SaveSlot slot) noexcept {
-    return slot == SaveSlot::a
-        ? SaveFaultPoint::final_scan_a
-        : SaveFaultPoint::final_scan_b;
-}
-
 bool same_state(const checkpoint::DungeonRunState& lhs,
     const checkpoint::DungeonRunState& rhs) noexcept {
     return lhs.root_seed == rhs.root_seed
@@ -488,10 +482,18 @@ SaveCommitResult SaveStore::commit(
         const auto final_scan = scan_directory(config_, true);
         const auto& target_info = target == SaveSlot::a
             ? final_scan.a : final_scan.b;
+        const auto& other_info = target == SaveSlot::a
+            ? final_scan.b : final_scan.a;
+        const auto other_slot = target == SaveSlot::a
+            ? SaveSlot::b : SaveSlot::a;
+        if (final_scan.directory_error || final_scan.faulted
+                || target_info.state == SlotFileState::unavailable
+                || other_info.state == SlotFileState::unavailable) {
+            return commit_failure(SaveCommitState::indeterminate,
+                SaveError::final_scan_failed, target);
+        }
         if (target_info.state == SlotFileState::valid
                 && same_state(target_info.checkpoint, expected)) {
-            const auto& other_info = target == SaveSlot::a
-                ? final_scan.b : final_scan.a;
             if (other_info.state == SlotFileState::valid) {
                 if (other_info.checkpoint.commit_generation
                         > expected.commit_generation
@@ -507,6 +509,12 @@ SaveCommitResult SaveStore::commit(
             result.active_slot = target;
             result.verified_state = target_info.checkpoint;
             return result;
+        }
+        if (target_info.state == SlotFileState::invalid
+                && other_info.state == SlotFileState::valid
+                && active == other_slot) {
+            return commit_failure(SaveCommitState::not_committed,
+                SaveError::final_scan_failed, active);
         }
         return commit_failure(SaveCommitState::indeterminate,
             SaveError::final_scan_failed, target);
