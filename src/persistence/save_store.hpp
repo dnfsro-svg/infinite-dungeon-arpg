@@ -61,8 +61,8 @@ struct SaveLoadResult final {
     SaveLoadState state{SaveLoadState::blocked};
     SaveError error{SaveError::none};
     SaveSlot active_slot{SaveSlot::none};
-    dungeon::checkpoint::DungeonRunState checkpoint{};
     bool recovered{};
+    dungeon::checkpoint::DungeonRunState checkpoint{};
 };
 
 struct SaveCommitResult final {

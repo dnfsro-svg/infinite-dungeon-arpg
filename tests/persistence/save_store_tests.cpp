@@ -17,6 +17,14 @@ namespace {
 namespace checkpoint = arpg::dungeon::checkpoint;
 namespace persistence = arpg::persistence;
 
+constexpr persistence::SaveLoadResult kSaveLoadFieldOrderProbe{
+    persistence::SaveLoadState::ready,
+    persistence::SaveError::none,
+    persistence::SaveSlot::a,
+    true,
+    {}};
+static_assert(kSaveLoadFieldOrderProbe.recovered);
+
 struct TempDirectory final {
     std::filesystem::path path;
 

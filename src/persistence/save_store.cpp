@@ -40,13 +40,13 @@ struct ArchiveResult final {
     SaveError error{SaveError::archive_failed};
 };
 
-const std::filesystem::path& slot_name(SaveSlot slot) noexcept {
+const std::filesystem::path& slot_name(SaveSlot slot) {
     static const std::filesystem::path a{"run_a.sav"};
     static const std::filesystem::path b{"run_b.sav"};
     return slot == SaveSlot::a ? a : b;
 }
 
-const std::filesystem::path& temp_name(SaveSlot slot) noexcept {
+const std::filesystem::path& temp_name(SaveSlot slot) {
     static const std::filesystem::path a{"run_a.tmp"};
     static const std::filesystem::path b{"run_b.tmp"};
     return slot == SaveSlot::a ? a : b;
@@ -75,7 +75,7 @@ bool same_state(const checkpoint::DungeonRunState& lhs,
         && lhs.last_direction == rhs.last_direction;
 }
 
-SlotInfo read_slot(const std::filesystem::path& path) noexcept {
+SlotInfo read_slot(const std::filesystem::path& path) {
     SlotInfo info{};
     std::error_code error;
     if (!std::filesystem::exists(path, error)) {
@@ -215,13 +215,13 @@ ArchiveResult archive_files(const SaveStoreConfig& config,
     if (files.empty()) {
         return {true, SaveError::none};
     }
-    if (hook_failed(config, SaveFaultPoint::before_archive)) {
-        return {false, SaveError::archive_failed};
-    }
-
-    std::vector<std::filesystem::path> destinations;
-    std::vector<std::filesystem::path> copied;
+    struct MovedFile final {
+        std::filesystem::path source{};
+        std::filesystem::path destination{};
+    };
+    std::vector<MovedFile> moved;
     try {
+        moved.reserve(files.size());
         const auto stamp = archive_stamp(config);
         std::size_t suffix = 0U;
         for (const auto& source : files) {
@@ -233,33 +233,32 @@ ArchiveResult archive_files(const SaveStoreConfig& config,
                         + (suffix == 0U ? "" : "_" + std::to_string(suffix)));
                 ++suffix;
             } while (std::filesystem::exists(destination));
-            std::error_code error;
-            std::filesystem::copy_file(
-                source, destination,
-                std::filesystem::copy_options::none, error);
-            if (error) {
-                for (const auto& path : copied) {
-                    std::filesystem::remove(path, error);
+            if (hook_failed(config, SaveFaultPoint::before_archive)) {
+                std::error_code rollback_error;
+                for (auto it = moved.rbegin(); it != moved.rend(); ++it) {
+                    std::filesystem::rename(it->destination, it->source,
+                        rollback_error);
                 }
                 return {false, SaveError::archive_failed};
             }
-            destinations.push_back(destination);
-            copied.push_back(destination);
-        }
-        for (const auto& source : files) {
+            moved.push_back({source, destination});
             std::error_code error;
-            std::filesystem::remove(source, error);
+            std::filesystem::rename(source, destination, error);
             if (error) {
-                for (const auto& path : destinations) {
-                    std::filesystem::remove(path, error);
+                moved.pop_back();
+                std::error_code rollback_error;
+                for (auto it = moved.rbegin(); it != moved.rend(); ++it) {
+                    std::filesystem::rename(it->destination, it->source,
+                        rollback_error);
                 }
                 return {false, SaveError::archive_failed};
             }
         }
     } catch (...) {
-        std::error_code error;
-        for (const auto& path : copied) {
-            std::filesystem::remove(path, error);
+        std::error_code rollback_error;
+        for (auto it = moved.rbegin(); it != moved.rend(); ++it) {
+            std::filesystem::rename(it->destination, it->source,
+                rollback_error);
         }
         return {false, SaveError::archive_failed};
     }
@@ -289,7 +288,7 @@ std::vector<std::filesystem::path> invalid_files(
     return files;
 }
 
-void remove_temps(const SaveStoreConfig& config, const ScanResult& scan) noexcept {
+void remove_temps(const SaveStoreConfig& config, const ScanResult& scan) {
     std::error_code error;
     if (scan.temp_a) {
         std::filesystem::remove(config.directory / temp_name(SaveSlot::a), error);
@@ -334,12 +333,12 @@ SaveLoadResult SaveStore::load() noexcept {
     try {
         if (config_.directory.empty()) {
             return {SaveLoadState::blocked, SaveError::directory_unavailable,
-                SaveSlot::none, {}, false};
+                SaveSlot::none, false, {}};
         }
         auto scan = scan_directory(config_, false);
         if (scan.directory_error) {
             return {SaveLoadState::blocked, SaveError::directory_unavailable,
-                SaveSlot::none, {}, false};
+                SaveSlot::none, false, {}};
         }
         if (scan.a.state == SlotFileState::valid
                 && scan.b.state == SlotFileState::valid) {
@@ -347,7 +346,7 @@ SaveLoadResult SaveStore::load() noexcept {
                     == scan.b.checkpoint.commit_generation
                 && !same_state(scan.a.checkpoint, scan.b.checkpoint)) {
                 return {SaveLoadState::recovery_required,
-                    SaveError::conflicting_slots, SaveSlot::none, {}, false};
+                    SaveError::conflicting_slots, SaveSlot::none, false, {}};
             }
             remove_temps(config_, scan);
             return ready_result(scan, highest_slot(scan));
@@ -361,12 +360,12 @@ SaveLoadResult SaveStore::load() noexcept {
                 const auto archive = archive_files(config_, invalid);
                 if (!archive.ok) {
                     return {SaveLoadState::blocked, archive.error,
-                        SaveSlot::none, {}, false};
+                        SaveSlot::none, false, {}};
                 }
                 scan = scan_directory(config_, false);
                 if (scan.directory_error) {
                     return {SaveLoadState::blocked,
-                        SaveError::directory_unavailable, SaveSlot::none, {}, false};
+                        SaveError::directory_unavailable, SaveSlot::none, false, {}};
                 }
                 remove_temps(config_, scan);
                 return ready_result(scan, highest_slot(scan), true);
@@ -376,18 +375,20 @@ SaveLoadResult SaveStore::load() noexcept {
         }
         if (!scan.any_file) {
             return {SaveLoadState::empty, SaveError::none,
-                SaveSlot::none, {}, false};
+                SaveSlot::none, false, {}};
         }
         return {SaveLoadState::recovery_required, SaveError::read_failed,
-            SaveSlot::none, {}, false};
+            SaveSlot::none, false, {}};
     } catch (...) {
         return {SaveLoadState::blocked, SaveError::read_failed,
-            SaveSlot::none, {}, false};
+            SaveSlot::none, false, {}};
     }
 }
 
 SaveCommitResult SaveStore::commit(
     const checkpoint::DungeonRunState& expected) noexcept {
+    bool published = false;
+    SaveSlot published_slot = SaveSlot::none;
     try {
         std::array<std::uint8_t, kEncodedCheckpointSize> encoded_state{};
         if (!encode_checkpoint(expected, encoded_state)) {
@@ -477,6 +478,8 @@ SaveCommitResult SaveStore::commit(
             return commit_failure(SaveCommitState::not_committed,
                 SaveError::publish_failed, active);
         }
+        published = true;
+        published_slot = target;
         if (hook_failed(config_, SaveFaultPoint::after_publish)) {
             return commit_failure(SaveCommitState::indeterminate,
                 SaveError::publish_failed, target);
@@ -508,8 +511,12 @@ SaveCommitResult SaveStore::commit(
         return commit_failure(SaveCommitState::indeterminate,
             SaveError::final_scan_failed, target);
     } catch (...) {
-        return commit_failure(SaveCommitState::indeterminate,
-            SaveError::publish_failed);
+        return commit_failure(
+            published ? SaveCommitState::indeterminate
+                      : SaveCommitState::not_committed,
+            published ? SaveError::final_scan_failed
+                      : SaveError::publish_failed,
+            published_slot);
     }
 }
 
@@ -519,28 +526,28 @@ SaveLoadResult SaveStore::archive_invalid_and_create(
         std::array<std::uint8_t, kEncodedCheckpointSize> bytes{};
         if (!encode_checkpoint(initial, bytes)) {
             return {SaveLoadState::blocked, SaveError::invalid_checkpoint,
-                SaveSlot::none, {}, false};
+                SaveSlot::none, false, {}};
         }
         if (config_.directory.empty()) {
             return {SaveLoadState::blocked, SaveError::directory_unavailable,
-                SaveSlot::none, {}, false};
+                SaveSlot::none, false, {}};
         }
         std::error_code error;
         std::filesystem::create_directories(config_.directory, error);
         if (error) {
             return {SaveLoadState::blocked, SaveError::directory_unavailable,
-                SaveSlot::none, {}, false};
+                SaveSlot::none, false, {}};
         }
         const auto scan = scan_directory(config_, false);
         if (scan.directory_error) {
             return {SaveLoadState::blocked, SaveError::directory_unavailable,
-                SaveSlot::none, {}, false};
+                SaveSlot::none, false, {}};
         }
         const auto files = invalid_files(config_, scan, true);
         const auto archive = archive_files(config_, files);
         if (!archive.ok) {
             return {SaveLoadState::blocked, archive.error,
-                SaveSlot::none, {}, false};
+                SaveSlot::none, false, {}};
         }
         const auto commit_result = commit(initial);
         if (commit_result.state == SaveCommitState::committed) {
@@ -552,10 +559,10 @@ SaveLoadResult SaveStore::archive_invalid_and_create(
             return result;
         }
         return {SaveLoadState::blocked, commit_result.error,
-            commit_result.active_slot, {}, true};
+            commit_result.active_slot, true, {}};
     } catch (...) {
         return {SaveLoadState::blocked, SaveError::archive_failed,
-            SaveSlot::none, {}, false};
+            SaveSlot::none, false, {}};
     }
 }
 

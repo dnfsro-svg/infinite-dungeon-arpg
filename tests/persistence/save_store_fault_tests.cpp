@@ -95,6 +95,21 @@ struct FaultContext final {
     bool triggered{};
 };
 
+struct ArchiveFaultContext final {
+    std::size_t calls{};
+    std::size_t fail_on_call{};
+};
+
+bool fail_archive_on_call(persistence::SaveFaultPoint point,
+    void* opaque) noexcept {
+    auto* context = static_cast<ArchiveFaultContext*>(opaque);
+    if (point != persistence::SaveFaultPoint::before_archive) {
+        return false;
+    }
+    ++context->calls;
+    return context->calls == context->fail_on_call;
+}
+
 bool fail_at(persistence::SaveFaultPoint point, void* opaque) noexcept {
     auto* context = static_cast<FaultContext*>(opaque);
     if (point != context->point) {
@@ -115,6 +130,15 @@ persistence::SaveStore make_store(const std::filesystem::path& path,
         config.fault_hook = &fail_at;
         config.fault_context = fault;
     }
+    return persistence::SaveStore(config);
+}
+
+persistence::SaveStore make_archive_fault_store(
+    const std::filesystem::path& path, ArchiveFaultContext* fault) noexcept {
+    persistence::SaveStoreConfig config{};
+    config.directory = path;
+    config.fault_hook = &fail_archive_on_call;
+    config.fault_context = fault;
     return persistence::SaveStore(config);
 }
 
@@ -225,6 +249,21 @@ arpg::test::Failure archive_failure_blocks_and_preserves_corrupt_files() noexcep
     ARPG_REQUIRE(result.error == persistence::SaveError::archive_failed);
     ARPG_REQUIRE(read_bytes(directory.path / "run_a.sav") == invalid_a);
     ARPG_REQUIRE(read_bytes(directory.path / "run_b.sav") == invalid_b);
+
+    TempDirectory midway_directory;
+    const std::vector<std::uint8_t> midway_a{0x41U, 0x42U, 0x43U};
+    const std::vector<std::uint8_t> midway_b{0x51U, 0x52U, 0x53U};
+    write_bytes(midway_directory.path / "run_a.sav", midway_a);
+    write_bytes(midway_directory.path / "run_b.sav", midway_b);
+    ArchiveFaultContext midway_fault{0U, 2U};
+    auto midway_store = make_archive_fault_store(
+        midway_directory.path, &midway_fault);
+    const auto midway_result = midway_store.archive_invalid_and_create(
+        make_state(1U, 10U));
+    ARPG_REQUIRE(midway_result.state == persistence::SaveLoadState::blocked);
+    ARPG_REQUIRE(midway_result.error == persistence::SaveError::archive_failed);
+    ARPG_REQUIRE(read_bytes(midway_directory.path / "run_a.sav") == midway_a);
+    ARPG_REQUIRE(read_bytes(midway_directory.path / "run_b.sav") == midway_b);
     return {};
 }
 
