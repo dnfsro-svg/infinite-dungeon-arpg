@@ -192,25 +192,25 @@ bool advance_without_dungeon_drain(
 
 arpg::test::Failure exact_apertures_accept_outward_input() noexcept {
     using arpg::dungeon::requested_exit;
-    ARPG_REQUIRE(requested_exit(Vec3{-8.0F, 0.90F, 4.0F}, {-1, 0})
+    ARPG_REQUIRE(requested_exit(Vec3{-12.0F, 0.90F, 4.0F}, {-1, 0})
         == ExitDirection::left);
-    ARPG_REQUIRE(requested_exit(Vec3{8.0F, -0.90F, 0.0F}, {1, 0})
+    ARPG_REQUIRE(requested_exit(Vec3{12.0F, -0.90F, 0.0F}, {1, 0})
         == ExitDirection::right);
-    ARPG_REQUIRE(requested_exit(Vec3{1.50F, -3.5F, 0.0F}, {0, -1})
+    ARPG_REQUIRE(requested_exit(Vec3{1.50F, -5.5F, 0.0F}, {0, -1})
         == ExitDirection::up);
-    ARPG_REQUIRE(requested_exit(Vec3{-1.50F, 3.5F, 0.0F}, {0, 1})
+    ARPG_REQUIRE(requested_exit(Vec3{-1.50F, 5.5F, 0.0F}, {0, 1})
         == ExitDirection::down);
     return {};
 }
 
 arpg::test::Failure invalid_physical_requests_are_rejected() noexcept {
     using arpg::dungeon::requested_exit;
-    ARPG_REQUIRE(!requested_exit(Vec3{-8.0F, 0.0F, 0.0F}, {1, 0}));
-    ARPG_REQUIRE(!requested_exit(Vec3{-7.99F, 0.0F, 0.0F}, {-1, 0}));
-    ARPG_REQUIRE(!requested_exit(Vec3{-8.0F, 0.91F, 0.0F}, {-1, 0}));
-    ARPG_REQUIRE(!requested_exit(Vec3{8.0F, -0.91F, 0.0F}, {1, 0}));
-    ARPG_REQUIRE(!requested_exit(Vec3{1.51F, -3.5F, 0.0F}, {0, -1}));
-    ARPG_REQUIRE(!requested_exit(Vec3{-1.51F, 3.5F, 0.0F}, {0, 1}));
+    ARPG_REQUIRE(!requested_exit(Vec3{-12.0F, 0.0F, 0.0F}, {1, 0}));
+    ARPG_REQUIRE(!requested_exit(Vec3{-11.99F, 0.0F, 0.0F}, {-1, 0}));
+    ARPG_REQUIRE(!requested_exit(Vec3{-12.0F, 0.91F, 0.0F}, {-1, 0}));
+    ARPG_REQUIRE(!requested_exit(Vec3{12.0F, -0.91F, 0.0F}, {1, 0}));
+    ARPG_REQUIRE(!requested_exit(Vec3{1.51F, -5.5F, 0.0F}, {0, -1}));
+    ARPG_REQUIRE(!requested_exit(Vec3{-1.51F, 5.5F, 0.0F}, {0, 1}));
     return {};
 }
 
@@ -266,7 +266,7 @@ arpg::test::Failure transition_and_combat_start_are_separate_ticks() noexcept {
     ARPG_REQUIRE(locked.combat.has_value());
     ARPG_REQUIRE(locked.combat->tick == 0U);
     ARPG_REQUIRE(locked.combat->player.position.x == 0.0F);
-    ARPG_REQUIRE(locked.combat->player.position.y == 2.75F);
+    ARPG_REQUIRE(locked.combat->player.position.y == 4.75F);
 
     session.tick(outward(ExitDirection::up));
     const ExitEvents events = drain_dungeon(session);

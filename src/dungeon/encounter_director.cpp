@@ -1,6 +1,7 @@
 #include "dungeon/encounter_director.hpp"
 
 #include "combat/monster_catalog.hpp"
+#include "combat/room_bounds.hpp"
 #include "core/deterministic_rng.hpp"
 
 #include <algorithm>
@@ -16,10 +17,10 @@ constexpr std::uint64_t kEncounterDirectorDomain =
     0x454E434F554E5434ULL;
 constexpr std::uint64_t kEncounterPositionDomain =
     0x454E43504F534954ULL;
-constexpr float kRoomMinX = -8.0F;
-constexpr float kRoomMaxX = 8.0F;
-constexpr float kRoomMinY = -3.5F;
-constexpr float kRoomMaxY = 3.5F;
+constexpr float kRoomMinX = combat::room_bounds::min_x;
+constexpr float kRoomMaxX = combat::room_bounds::max_x;
+constexpr float kRoomMinY = combat::room_bounds::min_y;
+constexpr float kRoomMaxY = combat::room_bounds::max_y;
 
 constexpr std::uint16_t tag(combat::MonsterTag value) noexcept {
     return static_cast<std::uint16_t>(value);
@@ -93,8 +94,12 @@ void add_tag_counts(
     core::DeterministicRng& rng) noexcept {
     const std::uint64_t raw_x = rng.next_bounded(16001U).value_or(0U);
     const std::uint64_t raw_y = rng.next_bounded(7001U).value_or(0U);
-    const float x = -8.0F + static_cast<float>(raw_x) / 1000.0F;
-    const float y = -3.5F + static_cast<float>(raw_y) / 1000.0F;
+    const float x = kRoomMinX
+        + static_cast<float>(raw_x) / 1000.0F
+            * combat::room_bounds::width / 16.0F;
+    const float y = kRoomMinY
+        + static_cast<float>(raw_y) / 1000.0F
+            * combat::room_bounds::depth / 7.0F;
     return {
         std::clamp(x, kRoomMinX, kRoomMaxX),
         std::clamp(y, kRoomMinY, kRoomMaxY),

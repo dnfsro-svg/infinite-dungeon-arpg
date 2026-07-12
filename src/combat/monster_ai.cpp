@@ -2,6 +2,7 @@
 
 #include "combat/combat_collision.hpp"
 #include "combat/monster_catalog.hpp"
+#include "combat/room_bounds.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -11,10 +12,6 @@ namespace {
 
 constexpr float kTickSeconds = 1.0F / 60.0F;
 constexpr float kGravity = 24.0F;
-constexpr float kRoomMinX = -8.0F;
-constexpr float kRoomMaxX = 8.0F;
-constexpr float kRoomMinY = -3.5F;
-constexpr float kRoomMaxY = 3.5F;
 constexpr float kPlayerHalfWidth = 0.45F;
 constexpr float kPlayerHalfDepth = 0.35F;
 constexpr float kPlayerHalfHeight = 1.60F;
@@ -45,8 +42,8 @@ std::uint16_t reaction_ticks(
 }
 
 void clamp_position(Vec3& position) noexcept {
-    position.x = std::clamp(position.x, kRoomMinX, kRoomMaxX);
-    position.y = std::clamp(position.y, kRoomMinY, kRoomMaxY);
+    position.x = std::clamp(position.x, room_bounds::min_x, room_bounds::max_x);
+    position.y = std::clamp(position.y, room_bounds::min_y, room_bounds::max_y);
 }
 
 float target_distance(const Vec3& source, const Vec3& target) noexcept {

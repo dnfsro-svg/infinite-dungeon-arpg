@@ -1,4 +1,5 @@
 #include "combat/combat_world.hpp"
+#include "combat/room_bounds.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -8,8 +9,6 @@ namespace {
 
 constexpr float kTickSeconds = 1.0F / 60.0F;
 constexpr float kGravity = 24.0F;
-constexpr float kRoomMinX = -8.0F;
-constexpr float kRoomMaxX = 8.0F;
 constexpr std::uint16_t kLightHitstunTicks = 10;
 constexpr std::uint16_t kMediumHitstunTicks = 16;
 constexpr std::uint16_t kKnockdownTicks = 45;
@@ -155,13 +154,13 @@ void CombatWorld::simulate_target(std::size_t index) noexcept {
 
     const auto integrate_horizontal = [&dummy]() noexcept {
         dummy.position.x += dummy.velocity.x * kTickSeconds;
-        if (dummy.position.x <= kRoomMinX) {
-            dummy.position.x = kRoomMinX;
+        if (dummy.position.x <= room_bounds::min_x) {
+            dummy.position.x = room_bounds::min_x;
             if (dummy.velocity.x < 0.0F) {
                 dummy.velocity.x = 0.0F;
             }
-        } else if (dummy.position.x >= kRoomMaxX) {
-            dummy.position.x = kRoomMaxX;
+        } else if (dummy.position.x >= room_bounds::max_x) {
+            dummy.position.x = room_bounds::max_x;
             if (dummy.velocity.x > 0.0F) {
                 dummy.velocity.x = 0.0F;
             }

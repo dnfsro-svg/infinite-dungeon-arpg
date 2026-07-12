@@ -315,7 +315,7 @@ bool drive_exit(
     ExitDirection direction,
     StressSummary& summary,
     bool verify_phases) noexcept {
-    for (int tick = 0; tick < 256; ++tick) {
+    for (int tick = 0; tick < 512; ++tick) {
         const DungeonSnapshot state = session.snapshot();
         const MovementInput movement = align_center(state, direction);
         if (movement.x == 0 && movement.y == 0) {
@@ -324,7 +324,7 @@ bool drive_exit(
         session.tick(movement);
         drain(session, summary);
     }
-    for (int tick = 0; tick < 256; ++tick) {
+    for (int tick = 0; tick < 512; ++tick) {
         session.tick(outward(direction));
         drain(session, summary);
         if (session.snapshot().phase == RoomPhase::committing) {

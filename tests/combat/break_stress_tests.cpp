@@ -19,10 +19,10 @@ using arpg::test::tick_n;
 
 CombatLabConfig heavy_target_config() noexcept {
     CombatLabConfig config;
-    config.player_spawn = Vec3{6.0F, 0.0F, 0.0F};
-    config.dummy_spawns = {{{-7.0F, 3.0F, 0.0F},
-                            {-7.0F, -3.0F, 0.0F},
-                            {7.2F, 0.0F, 0.0F}}};
+    config.player_spawn = Vec3{10.6F, 0.0F, 0.0F};
+    config.dummy_spawns = {{{-11.0F, 5.0F, 0.0F},
+                            {-11.0F, -5.0F, 0.0F},
+                            {11.8F, 0.0F, 0.0F}}};
     return config;
 }
 
@@ -156,7 +156,7 @@ arpg::test::Failure armored_launcher_suppresses_control_before_break() noexcept 
     ARPG_REQUIRE(launched.break_value == 102);
     ARPG_REQUIRE(launched.armor == ArmorState::armored);
     ARPG_REQUIRE(launched.reaction == ReactionState::idle);
-    ARPG_REQUIRE(vec_equal(launched.position, Vec3{7.2F, 0.0F, 0.0F}));
+    ARPG_REQUIRE(vec_equal(launched.position, Vec3{11.8F, 0.0F, 0.0F}));
     ARPG_REQUIRE(vec_equal(launched.velocity, Vec3{}));
     ARPG_REQUIRE(launched.hit_stop_ticks == 5);
     while (const auto event = launcher.try_pop_event()) {
@@ -237,7 +237,7 @@ arpg::test::Failure breaking_blow_has_exact_local_window() noexcept {
     ARPG_REQUIRE(snapshot.monsters[2].break_window_ticks == 0);
 
     CombatLabConfig independent_config = heavy_target_config();
-    independent_config.dummy_spawns[0] = Vec3{4.0F, 0.0F, 0.0F};
+    independent_config.dummy_spawns[0] = Vec3{9.0F, 0.0F, 0.0F};
     CombatWorld independent{independent_config};
     for (int hit = 0; hit < 7; ++hit) {
         ARPG_REQUIRE(launcher_hit_and_finish(independent));

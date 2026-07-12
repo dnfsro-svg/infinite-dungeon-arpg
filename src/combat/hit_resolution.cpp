@@ -2,6 +2,7 @@
 
 #include "combat/attack_catalog.hpp"
 #include "combat/combat_collision.hpp"
+#include "combat/room_bounds.hpp"
 
 #include <algorithm>
 #include <array>
@@ -12,8 +13,6 @@
 namespace arpg::combat {
 namespace {
 
-constexpr float kRoomMinX = -8.0F;
-constexpr float kRoomMaxX = 8.0F;
 constexpr std::uint16_t kBreakWindowTicks = 180;
 
 std::uint16_t hit_stop_for(FeedbackLevel feedback) noexcept {
@@ -75,7 +74,8 @@ void CombatWorld::apply_attack_assist(
 
     if (best_gap != std::numeric_limits<float>::max()) {
         player_.position.x = std::clamp(
-            player_.position.x + best_correction, kRoomMinX, kRoomMaxX);
+            player_.position.x + best_correction,
+            room_bounds::min_x, room_bounds::max_x);
     }
 }
 

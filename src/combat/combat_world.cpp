@@ -2,6 +2,7 @@
 
 #include "combat/attack_catalog.hpp"
 #include "combat/monster_catalog.hpp"
+#include "combat/room_bounds.hpp"
 
 #include <array>
 #include <algorithm>
@@ -457,10 +458,6 @@ void CombatWorld::remove_owned_hazards(MonsterHandle owner) noexcept {
 }
 
 void CombatWorld::simulate_projectiles() noexcept {
-    constexpr float room_min_x = -8.0F;
-    constexpr float room_max_x = 8.0F;
-    constexpr float room_min_y = -3.5F;
-    constexpr float room_max_y = 3.5F;
     constexpr float player_radius_x = 0.45F;
     constexpr float player_radius_y = 0.35F;
     constexpr float player_radius_z = 1.60F;
@@ -497,10 +494,10 @@ void CombatWorld::simulate_projectiles() noexcept {
         const float rz = player_radius_z + projectile.radius;
         const bool hit_player = std::fabs(dx) <= rx && std::fabs(dy) <= ry
                               && std::fabs(dz) <= rz;
-        const bool outside = projectile.position.x < room_min_x
-                          || projectile.position.x > room_max_x
-                          || projectile.position.y < room_min_y
-                          || projectile.position.y > room_max_y;
+        const bool outside = projectile.position.x < room_bounds::min_x
+                          || projectile.position.x > room_bounds::max_x
+                          || projectile.position.y < room_bounds::min_y
+                          || projectile.position.y > room_bounds::max_y;
         const bool expired = projectile.lifetime_ticks == 0;
         if (hit_player) {
             apply_player_damage(

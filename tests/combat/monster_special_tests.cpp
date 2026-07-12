@@ -54,9 +54,9 @@ arpg::test::Failure bomber_warns_then_explodes_once_and_self_defeats() noexcept 
 
 arpg::test::Failure charger_captures_line_and_clamps_burst_to_room() noexcept {
     CombatWorld world{encounter_for(
-        MonsterId::fire_charger, Vec3{7.90F, 0.0F, 0.0F},
-        Vec3{-8.0F, 0.0F, 0.0F})};
-    ARPG_REQUIRE(reach_phase(world, MonsterAiPhase::telegraph));
+        MonsterId::fire_charger, Vec3{11.90F, 0.0F, 0.0F},
+        Vec3{-12.0F, 0.0F, 0.0F})};
+    ARPG_REQUIRE(reach_phase(world, MonsterAiPhase::telegraph, 800));
     const auto warning = world.snapshot().monsters[0];
     tick_n(world, 20, MovementInput{1, 1});
     ARPG_REQUIRE(world.snapshot().monsters[0].position.x == warning.position.x);
@@ -65,10 +65,10 @@ arpg::test::Failure charger_captures_line_and_clamps_burst_to_room() noexcept {
     for (int tick = 0; tick < 18; ++tick) {
         world.tick(MovementInput{1, 1});
         const auto charger = world.snapshot().monsters[0];
-        ARPG_REQUIRE(charger.position.x >= -8.0F);
-        ARPG_REQUIRE(charger.position.x <= 8.0F);
-        ARPG_REQUIRE(charger.position.y >= -3.5F);
-        ARPG_REQUIRE(charger.position.y <= 3.5F);
+        ARPG_REQUIRE(charger.position.x >= -12.0F);
+        ARPG_REQUIRE(charger.position.x <= 12.0F);
+        ARPG_REQUIRE(charger.position.y >= -5.5F);
+        ARPG_REQUIRE(charger.position.y <= 5.5F);
     }
     const auto complete = world.snapshot().monsters[0];
     ARPG_REQUIRE(complete.position.x < active_start_x);
