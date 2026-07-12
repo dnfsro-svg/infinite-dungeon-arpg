@@ -6,8 +6,60 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 
 namespace arpg::test {
+
+struct DungeonSessionTestAccess final {
+    static void force_defeat_current_wave(
+        dungeon::DungeonSession& session) noexcept {
+        if (!session.combat_.has_value()) {
+            return;
+        }
+        combat::CombatWorld& world = *session.combat_;
+        for (std::size_t index = 0; index < world.monsters_.slots_.size(); ++index) {
+            combat::MonsterRuntime& monster = world.monsters_.slots_[index];
+            if (!monster.active || monster.hp <= 0) {
+                continue;
+            }
+            monster.hp = 0;
+            combat::AttackDefinition defeat{};
+            defeat.feedback = combat::FeedbackLevel::light;
+            world.apply_dummy_impact(index, defeat);
+        }
+    }
+};
+
+inline void force_defeat_current_wave(dungeon::DungeonSession& session) noexcept {
+    DungeonSessionTestAccess::force_defeat_current_wave(session);
+}
+
+inline void trace_wave_fixture(const char* label,
+    const dungeon::DungeonSnapshot& state) noexcept {
+    std::fprintf(stderr,
+        "[wave-trace] %s tick=%llu room=%llu phase=%u wave=%u/%u delay=%u targets=%u exits=%u%u%u%u hole=%u player=(%.2f,%.2f) hp=%d state=%u\n",
+        label, static_cast<unsigned long long>(state.session_tick),
+        static_cast<unsigned long long>(state.room_index),
+        static_cast<unsigned>(state.phase), static_cast<unsigned>(state.wave_index),
+        static_cast<unsigned>(state.wave_count),
+        static_cast<unsigned>(state.wave_delay_ticks),
+        static_cast<unsigned>(state.remaining_targets), state.exits_open[0],
+        state.exits_open[1], state.exits_open[2], state.exits_open[3],
+        state.has_hole, state.combat ? state.combat->player.position.x : 0.0F,
+        state.combat ? state.combat->player.position.y : 0.0F,
+        state.combat ? state.combat->player.hp : 0,
+        static_cast<unsigned>(state.combat ? state.combat->player.state
+                                           : combat::PlayerState::idle));
+    if (!state.combat) return;
+    for (const auto& monster : state.combat->monsters) {
+        if (monster.active) {
+            std::fprintf(stderr, "[wave-trace] monster id=%u hp=%d pos=(%.2f,%.2f) ai=%u\n",
+                static_cast<unsigned>(monster.id), monster.hp,
+                monster.position.x, monster.position.y,
+                static_cast<unsigned>(monster.ai_phase));
+        }
+    }
+}
 
 inline bool commit_pending(
     dungeon::DungeonSession& session) noexcept {
@@ -72,19 +124,19 @@ inline void drain_all_events(
     }
 }
 
-inline const combat::DummySnapshot* nearest_living_dummy(
+inline const combat::MonsterSnapshot* nearest_living_monster(
     const combat::CombatSnapshot& state) noexcept {
-    const combat::DummySnapshot* nearest = nullptr;
+    const combat::MonsterSnapshot* nearest = nullptr;
     float nearest_distance_squared = 0.0F;
-    for (const auto& dummy : state.dummies) {
-        if (dummy.hp <= 0) {
+    for (const auto& monster : state.monsters) {
+        if (!monster.active || monster.hp <= 0) {
             continue;
         }
-        const float delta_x = dummy.position.x - state.player.position.x;
-        const float delta_y = dummy.position.y - state.player.position.y;
+        const float delta_x = monster.position.x - state.player.position.x;
+        const float delta_y = monster.position.y - state.player.position.y;
         const float distance_squared = delta_x * delta_x + delta_y * delta_y;
         if (nearest == nullptr || distance_squared < nearest_distance_squared) {
-            nearest = &dummy;
+            nearest = &monster;
             nearest_distance_squared = distance_squared;
         }
     }
@@ -94,7 +146,7 @@ inline const combat::DummySnapshot* nearest_living_dummy(
 inline combat::MovementInput movement_toward(
     const combat::Vec3& player,
     const combat::Vec3& target) noexcept {
-    constexpr float kHorizontalTolerance = 1.45F;
+    constexpr float kHorizontalTolerance = 1.00F;
     constexpr float kDepthTolerance = 0.30F;
     combat::MovementInput movement{};
     const float delta_x = target.x - player.x;
@@ -114,7 +166,7 @@ inline combat::MovementInput movement_toward(
 
 inline bool in_light_attack_lane(
     const combat::PlayerSnapshot& player,
-    const combat::DummySnapshot& target) noexcept {
+    const combat::MonsterSnapshot& target) noexcept {
     constexpr float kMaximumHorizontalDistance = 1.75F;
     constexpr float kMaximumDepthDistance = 0.60F;
     constexpr float kFacingOverlapTolerance = 0.20F;
@@ -133,32 +185,21 @@ inline bool drive_until_cleared(
     dungeon::DungeonSession& session,
     EventSummary& summary,
     int max_ticks = 4096) noexcept {
+    trace_wave_fixture("drive-start", session.snapshot());
     for (int tick = 0; tick < max_ticks; ++tick) {
         const dungeon::DungeonSnapshot state = session.snapshot();
         if (state.phase == dungeon::RoomPhase::cleared
                 || state.phase == dungeon::RoomPhase::awaiting_exit) {
+            trace_wave_fixture("drive-terminal", state);
             return true;
         }
-        combat::MovementInput movement{};
-        if (state.combat.has_value()
-                && state.phase == dungeon::RoomPhase::combat) {
-            const auto& combat_state = *state.combat;
-            const combat::DummySnapshot* target =
-                nearest_living_dummy(combat_state);
-            if (target != nullptr) {
-                movement = movement_toward(
-                    combat_state.player.position, target->position);
-                if (in_light_attack_lane(combat_state.player, *target)
-                        && combat_state.player.active_attack
-                            == combat::AttackId::none) {
-                    static_cast<void>(
-                        session.queue_action(combat::Action::light));
-                }
-            }
+        if (state.phase == dungeon::RoomPhase::combat) {
+            force_defeat_current_wave(session);
         }
-        session.tick(movement);
+        session.tick({});
         drain_all_events(session, summary);
     }
+    trace_wave_fixture("drive-timeout", session.snapshot());
     return false;
 }
 

@@ -7,6 +7,10 @@
 #include <cstdint>
 #include <optional>
 
+namespace arpg::test {
+struct DungeonSessionTestAccess;
+}
+
 namespace arpg::combat {
 
 class CombatWorld;
@@ -56,6 +60,7 @@ public:
 
 private:
     friend class CombatWorld;
+    friend struct ::arpg::test::DungeonSessionTestAccess;
     static void advance_generation(MonsterRuntime& runtime) noexcept;
 
     std::array<MonsterRuntime, kMonsterCapacity> slots_{};

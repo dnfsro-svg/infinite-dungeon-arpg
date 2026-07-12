@@ -19,6 +19,7 @@ using DungeonRunState = checkpoint::DungeonRunState;
 enum class RoomPhase : std::uint8_t {
     locked,
     combat,
+    wave_delay,
     cleared,
     awaiting_exit,
     committing,
@@ -67,6 +68,13 @@ struct DungeonDiagnostics final {
     bool room_index_overflow{};
 };
 
+struct DungeonEncounterDiagnostics final {
+    std::uint8_t total_budget{};
+    std::uint8_t current_wave_budget{};
+    std::uint8_t current_wave_spawn_count{};
+    bool plan_valid{};
+};
+
 struct DungeonSessionConfig final {
     std::uint64_t root_seed{0x6D30305F5241594CULL};
     std::uint64_t initial_room_index{};
@@ -91,6 +99,9 @@ struct DungeonSnapshot final {
     RoomPhase phase{RoomPhase::locked};
     bool has_active_room{};
     std::array<bool, 4> exits_open{};
+    std::uint8_t wave_index{};
+    std::uint8_t wave_count{};
+    std::uint16_t wave_delay_ticks{};
     std::uint8_t remaining_targets{};
     EntrySide entry_side{EntrySide::initial};
     ExitDirection last_exit{ExitDirection::none};
@@ -100,6 +111,7 @@ struct DungeonSnapshot final {
     bool is_abyss{};
     bool has_pending_transition{};
     std::optional<combat::CombatSnapshot> combat{};
+    DungeonEncounterDiagnostics encounter{};
     DungeonDiagnostics diagnostics{};
 };
 

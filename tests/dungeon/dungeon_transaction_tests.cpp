@@ -42,25 +42,26 @@ bool drive_to_open_door(
     if (!clear_and_await(session)) {
         return false;
     }
-    MovementInput movement{};
+    MovementInput outward{};
     switch (direction) {
     case ExitDirection::up:
-        movement = {0, -1};
+        outward = {0, -1};
         break;
     case ExitDirection::down:
-        movement = {0, 1};
+        outward = {0, 1};
         break;
     case ExitDirection::left:
-        movement = {-1, 0};
+        outward = {-1, 0};
         break;
     case ExitDirection::right:
-        movement = {1, 0};
+        outward = {1, 0};
         break;
     case ExitDirection::none:
         return false;
     }
     for (int tick = 0; tick < 256; ++tick) {
         const auto state = session.snapshot();
+        MovementInput movement{};
         if (!state.combat.has_value()) {
             return false;
         }
@@ -80,7 +81,7 @@ bool drive_to_open_door(
         arpg::test::drain_all_events(session, ignored);
     }
     for (int tick = 0; tick < 256; ++tick) {
-        session.tick(movement);
+        session.tick(outward);
         arpg::test::EventSummary ignored;
         arpg::test::drain_all_events(session, ignored);
         if (session.snapshot().phase == RoomPhase::committing) {
@@ -265,7 +266,7 @@ arpg::test::Failure queue_overflow_faults_without_release_propagation() noexcept
             const auto state = session.snapshot();
             MovementInput movement{};
             if (state.phase == RoomPhase::combat && state.combat.has_value()) {
-                const auto* target = arpg::test::nearest_living_dummy(
+                const auto* target = arpg::test::nearest_living_monster(
                     *state.combat);
                 if (target != nullptr) {
                     movement = arpg::test::movement_toward(

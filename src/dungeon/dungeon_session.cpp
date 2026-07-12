@@ -11,6 +11,8 @@
 namespace arpg::dungeon {
 namespace {
 
+constexpr std::uint16_t kWaveDelayTicks = 45U;
+
 void saturating_increment(std::uint32_t& value) noexcept {
     if (value != (std::numeric_limits<std::uint32_t>::max)()) {
         ++value;
@@ -69,16 +71,28 @@ void DungeonSession::tick(combat::MovementInput movement) noexcept {
     } else if (combat_.has_value()) {
         if (phase_ == RoomPhase::cleared) {
             phase_ = RoomPhase::awaiting_exit;
+        } else if (phase_ == RoomPhase::wave_delay) {
+            if (wave_delay_ticks_ != 0U) {
+                --wave_delay_ticks_;
+            }
+            if (wave_delay_ticks_ == 0U) {
+                start_next_wave();
+            }
         } else if (phase_ == RoomPhase::combat
                 || phase_ == RoomPhase::awaiting_exit) {
             combat_->tick(movement);
             relay_combat_events();
 
             if (phase_ == RoomPhase::combat && remaining_targets() == 0U) {
-                phase_ = RoomPhase::cleared;
-                if (emit(DungeonEventKind::room_cleared)
-                        && phase_ != RoomPhase::faulted) {
-                    static_cast<void>(emit(DungeonEventKind::exits_opened));
+                if (wave_index_ + 1U < encounter_plan_.wave_count) {
+                    phase_ = RoomPhase::wave_delay;
+                    wave_delay_ticks_ = kWaveDelayTicks;
+                } else {
+                    phase_ = RoomPhase::cleared;
+                    if (emit(DungeonEventKind::room_cleared)
+                            && phase_ != RoomPhase::faulted) {
+                        static_cast<void>(emit(DungeonEventKind::exits_opened));
+                    }
                 }
             }
         }
@@ -206,6 +220,9 @@ DungeonSnapshot DungeonSession::snapshot() const noexcept {
     result.has_active_room = combat_.has_value();
     result.exits_open.fill(
         phase_ == RoomPhase::cleared || phase_ == RoomPhase::awaiting_exit);
+    result.wave_index = wave_index_;
+    result.wave_count = encounter_plan_.wave_count;
+    result.wave_delay_ticks = wave_delay_ticks_;
     result.remaining_targets = remaining_targets();
     result.entry_side = stable_state_.current_room.entry;
     result.last_exit = last_exit_;
@@ -216,6 +233,14 @@ DungeonSnapshot DungeonSession::snapshot() const noexcept {
     result.has_pending_transition = pending_.has_value();
     if (combat_.has_value()) {
         result.combat.emplace(combat_->snapshot());
+    }
+    result.encounter.total_budget = encounter_plan_.total_budget;
+    result.encounter.plan_valid = encounter_plan_legal(
+        encounter_plan_, rules_.encounter);
+    if (wave_index_ < encounter_plan_.wave_count) {
+        const auto& wave = encounter_plan_.waves[wave_index_];
+        result.encounter.current_wave_budget = wave.spent_budget;
+        result.encounter.current_wave_spawn_count = wave.spawn_count;
     }
     result.diagnostics = diagnostics_;
     return result;
@@ -231,14 +256,44 @@ DungeonSession::try_pop_combat_event() noexcept {
 }
 
 void DungeonSession::construct_current_room() noexcept {
-    const auto config = make_combat_lab_config(
-        stable_state_.current_room.entry, rules_.rules_version);
+    const EncounterPlanResult plan = build_encounter_plan(
+        stable_state_.current_room.seed,
+        stable_state_.current_room.depth,
+        stable_state_.current_room.ecology,
+        rules_.encounter);
+    if (plan.fault != DungeonFault::none || plan.plan.wave_count == 0U) {
+        enter_fault(plan.fault == DungeonFault::none
+            ? DungeonFault::invalid_rules : plan.fault);
+        return;
+    }
+    const auto config = make_combat_encounter_config(
+        stable_state_.current_room.entry,
+        rules_.rules_version,
+        plan.plan.waves[0],
+        true);
     if (!config.has_value()) {
         enter_fault(DungeonFault::invalid_rules);
         return;
     }
+    encounter_plan_ = plan.plan;
+    wave_index_ = 0U;
+    wave_delay_ticks_ = 0U;
     combat_.emplace(*config);
     phase_ = RoomPhase::locked;
+}
+
+void DungeonSession::start_next_wave() noexcept {
+    if (!combat_.has_value() || wave_index_ + 1U >= encounter_plan_.wave_count) {
+        enter_fault(DungeonFault::invalid_rules);
+        return;
+    }
+    const std::uint8_t next_wave = static_cast<std::uint8_t>(wave_index_ + 1U);
+    if (!combat_->load_wave(encounter_plan_.waves[next_wave], false)) {
+        enter_fault(DungeonFault::invalid_rules);
+        return;
+    }
+    wave_index_ = next_wave;
+    phase_ = RoomPhase::combat;
 }
 
 void DungeonSession::relay_combat_events() noexcept {
@@ -362,11 +417,10 @@ std::uint8_t DungeonSession::remaining_targets() const noexcept {
     if (!combat_.has_value()) {
         return 0U;
     }
-
     std::uint8_t remaining = 0U;
     const combat::CombatSnapshot state = combat_->snapshot();
-    for (const auto& dummy : state.dummies) {
-        if (dummy.hp > 0) {
+    for (const auto& monster : state.monsters) {
+        if (monster.active && monster.hp > 0) {
             ++remaining;
         }
     }

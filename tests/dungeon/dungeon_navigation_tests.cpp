@@ -122,7 +122,7 @@ bool clear_without_dungeon_drain(DungeonSession& session) noexcept {
 
         MovementInput movement{};
         if (state.phase == RoomPhase::combat && state.combat.has_value()) {
-            const auto* target = arpg::test::nearest_living_dummy(*state.combat);
+            const auto* target = arpg::test::nearest_living_monster(*state.combat);
             if (target != nullptr) {
                 movement = arpg::test::movement_toward(
                     state.combat->player.position, target->position);

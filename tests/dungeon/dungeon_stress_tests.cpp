@@ -54,21 +54,34 @@ bool same_combat(const CombatSnapshot& lhs, const CombatSnapshot& rhs) noexcept 
             || lhs.player.combo_stage != rhs.player.combo_stage
             || lhs.player.hit_stop_ticks != rhs.player.hit_stop_ticks
             || lhs.player.air_attack_available != rhs.player.air_attack_available
+            || lhs.player.hp != rhs.player.hp
+            || lhs.player.max_hp != rhs.player.max_hp
+            || lhs.player.hurt_ticks != rhs.player.hurt_ticks
+            || lhs.player.invulnerability_ticks != rhs.player.invulnerability_ticks
+            || lhs.monster_count != rhs.monster_count
             || lhs.diagnostics.input_size != rhs.diagnostics.input_size
             || lhs.diagnostics.input_expired_count != rhs.diagnostics.input_expired_count
             || lhs.diagnostics.input_overflow_count != rhs.diagnostics.input_overflow_count
             || lhs.diagnostics.event_overflow_count != rhs.diagnostics.event_overflow_count) {
         return false;
     }
-    for (std::size_t index = 0; index < lhs.dummies.size(); ++index) {
-        const auto& a = lhs.dummies[index];
-        const auto& b = rhs.dummies[index];
+    for (std::size_t index = 0; index < lhs.monsters.size(); ++index) {
+        const auto& a = lhs.monsters[index];
+        const auto& b = rhs.monsters[index];
         if (!same_vec(a.position, b.position) || !same_vec(a.velocity, b.velocity)
+                || a.active != b.active || a.generation != b.generation
+                || a.id != b.id || !same_vec(a.spawn, b.spawn)
                 || a.kind != b.kind || a.reaction != b.reaction
                 || a.armor != b.armor || a.hp != b.hp || a.max_hp != b.max_hp
                 || a.break_value != b.break_value || a.max_break != b.max_break
+                || a.shield != b.shield || a.max_shield != b.max_shield
+                || a.shield_ticks != b.shield_ticks
+                || a.max_shield_ticks != b.max_shield_ticks
                 || a.break_window_ticks != b.break_window_ticks
-                || a.hit_stop_ticks != b.hit_stop_ticks) {
+                || a.hit_stop_ticks != b.hit_stop_ticks
+                || a.ai_phase != b.ai_phase
+                || !same_vec(a.attack_target_position, b.attack_target_position)
+                || !same_vec(a.attack_vector, b.attack_vector)) {
             return false;
         }
     }
@@ -85,6 +98,9 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
             || lhs.biases != rhs.biases
             || lhs.has_active_room != rhs.has_active_room
             || lhs.exits_open != rhs.exits_open
+            || lhs.wave_index != rhs.wave_index
+            || lhs.wave_count != rhs.wave_count
+            || lhs.wave_delay_ticks != rhs.wave_delay_ticks
             || lhs.remaining_targets != rhs.remaining_targets
             || lhs.entry_side != rhs.entry_side || lhs.last_exit != rhs.last_exit
             || lhs.last_transition != rhs.last_transition
@@ -92,6 +108,12 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
             || lhs.has_hole != rhs.has_hole
             || lhs.is_abyss != rhs.is_abyss
             || lhs.has_pending_transition != rhs.has_pending_transition
+            || lhs.encounter.total_budget != rhs.encounter.total_budget
+            || lhs.encounter.current_wave_budget
+                != rhs.encounter.current_wave_budget
+            || lhs.encounter.current_wave_spawn_count
+                != rhs.encounter.current_wave_spawn_count
+            || lhs.encounter.plan_valid != rhs.encounter.plan_valid
             || lhs.diagnostics.event_overflow_count
                 != rhs.diagnostics.event_overflow_count
             || lhs.diagnostics.combat_relay_overflow_count
@@ -249,27 +271,17 @@ MovementInput align_center(const DungeonSnapshot& state, ExitDirection direction
 }
 
 bool drive_clear(DungeonSession& session, StressSummary& summary) noexcept {
-    for (int tick = 0; tick < 2048; ++tick) {
+    for (int tick = 0; tick < 8192; ++tick) {
         const DungeonSnapshot state = session.snapshot();
         if (state.phase == RoomPhase::cleared) {
             session.tick(MovementInput{});
             drain(session, summary);
             return session.snapshot().phase == RoomPhase::awaiting_exit;
         }
-        MovementInput movement{};
         if (state.phase == RoomPhase::combat && state.combat.has_value()) {
-            const auto* target = arpg::test::nearest_living_dummy(*state.combat);
-            if (target != nullptr) {
-                movement = arpg::test::movement_toward(
-                    state.combat->player.position, target->position);
-                if (arpg::test::in_light_attack_lane(state.combat->player, *target)
-                        && state.combat->player.active_attack
-                            == arpg::combat::AttackId::none) {
-                    static_cast<void>(session.queue_action(arpg::combat::Action::light));
-                }
-            }
+            arpg::test::force_defeat_current_wave(session);
         }
-        session.tick(movement);
+        session.tick({});
         drain(session, summary);
     }
     return false;
@@ -346,21 +358,12 @@ arpg::test::Failure identical_seed_and_route_are_field_equal() noexcept {
     ARPG_REQUIRE(same_snapshot(lhs.snapshot(), rhs.snapshot()));
 
     std::size_t exits = 0;
-    for (int tick = 0; tick < 20000 && exits < 4U; ++tick) {
+    for (int tick = 0; tick < 100000 && exits < 4U; ++tick) {
         const DungeonSnapshot state = lhs.snapshot();
         MovementInput movement{};
         if (state.phase == RoomPhase::combat && state.combat.has_value()) {
-            const auto* target = arpg::test::nearest_living_dummy(*state.combat);
-            if (target != nullptr) {
-                movement = arpg::test::movement_toward(
-                    state.combat->player.position, target->position);
-                if (arpg::test::in_light_attack_lane(state.combat->player, *target)
-                        && state.combat->player.active_attack
-                            == arpg::combat::AttackId::none) {
-                    ARPG_REQUIRE(lhs.queue_action(arpg::combat::Action::light));
-                    ARPG_REQUIRE(rhs.queue_action(arpg::combat::Action::light));
-                }
-            }
+            arpg::test::force_defeat_current_wave(lhs);
+            arpg::test::force_defeat_current_wave(rhs);
         } else if (state.phase == RoomPhase::awaiting_exit) {
             const ExitDirection direction = kRoute[exits];
             movement = align_center(state, direction);

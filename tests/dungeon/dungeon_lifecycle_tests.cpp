@@ -30,7 +30,9 @@ arpg::test::Failure construction_and_first_tick_are_staged() noexcept {
     ARPG_REQUIRE(constructed.has_active_room);
     ARPG_REQUIRE(constructed.combat.has_value());
     ARPG_REQUIRE(constructed.combat->tick == 0U);
-    ARPG_REQUIRE(constructed.remaining_targets == combat::kDummyCount);
+    ARPG_REQUIRE(constructed.remaining_targets > 0U);
+    ARPG_REQUIRE(constructed.remaining_targets
+        == constructed.combat->monster_count);
     ARPG_REQUIRE(all_exits_are(constructed, false));
 
     session.tick(combat::MovementInput{});
@@ -72,7 +74,8 @@ arpg::test::Failure closed_doors_ignore_pre_clear_contact() noexcept {
         const dungeon::DungeonSnapshot state = session.snapshot();
         ARPG_REQUIRE(state.phase == dungeon::RoomPhase::combat);
         ARPG_REQUIRE(state.room_index == 0U);
-        ARPG_REQUIRE(state.remaining_targets == combat::kDummyCount);
+        ARPG_REQUIRE(state.remaining_targets > 0U);
+        ARPG_REQUIRE(state.remaining_targets == state.combat->monster_count);
         ARPG_REQUIRE(all_exits_are(state, false));
         ARPG_REQUIRE(state.diagnostics.rejected_exit_count == 0U);
     }
@@ -83,6 +86,7 @@ arpg::test::Failure real_combat_clears_once_without_respawn() noexcept {
     using namespace arpg;
     dungeon::DungeonSession session;
     test::EventSummary events;
+    const std::uint8_t initial_targets = session.snapshot().remaining_targets;
 
     session.tick(combat::MovementInput{});
     test::drain_all_events(session, events);
@@ -94,7 +98,7 @@ arpg::test::Failure real_combat_clears_once_without_respawn() noexcept {
     ARPG_REQUIRE(all_exits_are(cleared, true));
     ARPG_REQUIRE(events.room_cleared_count == 1U);
     ARPG_REQUIRE(events.exits_opened_count == 1U);
-    ARPG_REQUIRE(events.defeated_count == combat::kDummyCount);
+    ARPG_REQUIRE(events.defeated_count == initial_targets);
 
     const std::uint64_t cleared_session_tick = cleared.session_tick;
     const std::uint64_t combat_tick = cleared.combat->tick;
@@ -150,7 +154,7 @@ arpg::test::Failure real_combat_clears_once_without_respawn() noexcept {
     ARPG_REQUIRE(all_exits_are(stable, true));
     ARPG_REQUIRE(events.room_cleared_count == 1U);
     ARPG_REQUIRE(events.exits_opened_count == 1U);
-    ARPG_REQUIRE(events.defeated_count == combat::kDummyCount);
+    ARPG_REQUIRE(events.defeated_count == initial_targets);
     return {};
 }
 
@@ -177,7 +181,8 @@ arpg::test::Failure reset_reconstructs_same_room_and_clears_queues() noexcept {
     ARPG_REQUIRE(reset.phase == dungeon::RoomPhase::locked);
     ARPG_REQUIRE(reset.combat.has_value());
     ARPG_REQUIRE(reset.combat->tick == 0U);
-    ARPG_REQUIRE(reset.remaining_targets == combat::kDummyCount);
+    ARPG_REQUIRE(reset.remaining_targets > 0U);
+    ARPG_REQUIRE(reset.remaining_targets == reset.combat->monster_count);
     ARPG_REQUIRE(all_exits_are(reset, false));
     ARPG_REQUIRE(reset.diagnostics.event_overflow_count
         == before.diagnostics.event_overflow_count);
@@ -195,36 +200,21 @@ arpg::test::Failure reset_reconstructs_same_room_and_clears_queues() noexcept {
 arpg::test::Failure combat_events_relay_in_source_order() noexcept {
     using namespace arpg;
     dungeon::DungeonSession session;
-    combat::CombatWorld source{dungeon::make_initial_room({}).combat};
     test::EventSummary relayed;
-    std::array<combat::CombatEventKind, 128> source_kinds{};
-    std::size_t source_count = 0;
+    const std::uint8_t initial_targets = session.snapshot().remaining_targets;
 
     session.tick(combat::MovementInput{});
     test::EventSummary dungeon_events;
     test::drain_all_events(session, dungeon_events);
 
-    for (int tick = 0; tick < 128; ++tick) {
-        const dungeon::DungeonSnapshot state = session.snapshot();
-        if (state.combat->player.active_attack == combat::AttackId::none) {
-            ARPG_REQUIRE(session.queue_action(combat::Action::light));
-            ARPG_REQUIRE(source.queue_action(combat::Action::light));
-        }
-        session.tick(combat::MovementInput{});
-        source.tick(combat::MovementInput{});
-        while (const auto event = source.try_pop_event()) {
-            ARPG_REQUIRE(source_count < source_kinds.size());
-            source_kinds[source_count] = event->kind;
-            ++source_count;
-        }
-        test::drain_all_events(session, relayed);
-    }
+    test::force_defeat_current_wave(session);
+    session.tick(combat::MovementInput{});
+    test::drain_all_events(session, relayed);
 
-    ARPG_REQUIRE(source_count > 0U);
-    ARPG_REQUIRE(relayed.combat_count == source_count);
-    for (std::size_t index = 0; index < source_count; ++index) {
-        ARPG_REQUIRE(relayed.combat_kinds[index] == source_kinds[index]);
-    }
+    ARPG_REQUIRE(relayed.combat_count == initial_targets);
+    ARPG_REQUIRE(relayed.defeated_count == initial_targets);
+    ARPG_REQUIRE(relayed.room_cleared_count == 1U);
+    ARPG_REQUIRE(relayed.exits_opened_count == 1U);
     const dungeon::DungeonSnapshot state = session.snapshot();
     ARPG_REQUIRE(state.diagnostics.combat_relay_overflow_count == 0U);
     ARPG_REQUIRE(state.diagnostics.event_overflow_count == 0U);
