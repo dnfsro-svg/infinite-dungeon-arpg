@@ -1,7 +1,9 @@
 add_library(arpg_dungeon STATIC
     dungeon_rules.cpp
     dungeon_session.cpp
+    dungeon_progression.cpp
     room_generation.cpp
+    room_combat_template.cpp
     room_navigation.cpp)
 
 target_include_directories(arpg_dungeon PUBLIC "${PROJECT_SOURCE_DIR}/src")

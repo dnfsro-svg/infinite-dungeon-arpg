@@ -5,7 +5,8 @@ add_executable(arpg_dungeon_tests
     dungeon_navigation_tests.cpp
     dungeon_stress_tests.cpp
     room_generation_tests.cpp
-    dungeon_rules_tests.cpp)
+    dungeon_rules_tests.cpp
+    dungeon_progression_tests.cpp)
 
 target_compile_features(arpg_dungeon_tests PRIVATE cxx_std_17)
 target_include_directories(arpg_dungeon_tests
