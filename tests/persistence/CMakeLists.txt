@@ -1,6 +1,8 @@
 add_executable(arpg_persistence_tests
     persistence_test_main.cpp
-    checkpoint_codec_tests.cpp)
+    checkpoint_codec_tests.cpp
+    save_store_tests.cpp
+    save_store_fault_tests.cpp)
 
 target_compile_features(arpg_persistence_tests PRIVATE cxx_std_17)
 target_include_directories(arpg_persistence_tests
