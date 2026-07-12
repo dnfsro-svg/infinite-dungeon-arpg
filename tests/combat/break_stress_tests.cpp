@@ -657,7 +657,7 @@ bool same_snapshot(
             == right.effect_command_overflow_count;
 }
 
-arpg::test::Failure fixed_3600_tick_script_preserves_full_state() noexcept {
+arpg::test::Failure fixed_3600_tick_script_is_deterministic_replay() noexcept {
     CombatWorld first;
     CombatWorld second;
     for (std::uint32_t tick = 0; tick < 3600U; ++tick) {
@@ -673,6 +673,98 @@ arpg::test::Failure fixed_3600_tick_script_preserves_full_state() noexcept {
         ARPG_REQUIRE(same_snapshot(first.snapshot(), second.snapshot()));
         ARPG_REQUIRE(drain_events_equal(first, second));
     }
+    return {};
+}
+
+CombatEncounterConfig mixed_role_golden_config() noexcept {
+    CombatEncounterConfig config{};
+    config.wave.spawn_count = 5U;
+    config.wave.spawns[0] = MonsterSpawnSpec{
+        MonsterId::water_bulwark, Vec3{3.0F, 0.0F, 0.0F}};
+    config.wave.spawns[1] = MonsterSpawnSpec{
+        MonsterId::chaos_chaser, Vec3{1.5F, 1.0F, 0.0F}};
+    config.wave.spawns[2] = MonsterSpawnSpec{
+        MonsterId::lightning_shooter, Vec3{4.5F, 0.0F, 0.0F}};
+    config.wave.spawns[3] = MonsterSpawnSpec{
+        MonsterId::water_support, Vec3{4.0F, 2.0F, 0.0F}};
+    config.wave.spawns[4] = MonsterSpawnSpec{
+        MonsterId::chaos_hazard, Vec3{4.0F, -2.0F, 0.0F}};
+    return config;
+}
+
+arpg::test::Failure mixed_role_golden_replay_preserves_public_behavior() noexcept {
+    CombatWorld world{mixed_role_golden_config()};
+    std::array<CombatEvent, 8> early_events{};
+    std::size_t early_event_count = 0U;
+    CombatSnapshot tick_45{};
+    CombatSnapshot tick_180{};
+    for (std::uint32_t tick = 0; tick <= 180U; ++tick) {
+        if (tick % 90U == 0U) {
+            ARPG_REQUIRE(world.queue_action(Action::light));
+        }
+        world.tick(MovementInput{
+            static_cast<std::int8_t>(tick % 120U < 60U ? 1 : -1), 0});
+        while (const auto event = world.try_pop_event()) {
+            if (tick <= 45U) {
+                ARPG_REQUIRE(early_event_count < early_events.size());
+                early_events[early_event_count] = *event;
+                ++early_event_count;
+            }
+        }
+        if (tick == 45U) tick_45 = world.snapshot();
+        if (tick == 180U) tick_180 = world.snapshot();
+    }
+
+    ARPG_REQUIRE(early_event_count == 5U);
+    ARPG_REQUIRE(early_events[0].kind == CombatEventKind::swing);
+    ARPG_REQUIRE(early_events[0].tick == 0U);
+    ARPG_REQUIRE(early_events[1].kind == CombatEventKind::hit);
+    ARPG_REQUIRE(early_events[1].tick == 5U);
+    ARPG_REQUIRE(early_events[1].target_index == 1U);
+    ARPG_REQUIRE(early_events[1].value == 28);
+    ARPG_REQUIRE(early_events[2].kind == CombatEventKind::impact_summary);
+    ARPG_REQUIRE(early_events[2].tick == 5U);
+    ARPG_REQUIRE(early_events[3].kind == CombatEventKind::player_hit);
+    ARPG_REQUIRE(early_events[3].tick == 39U);
+    ARPG_REQUIRE(early_events[3].value == 45);
+    ARPG_REQUIRE(early_events[4].kind == CombatEventKind::player_hurt_started);
+    ARPG_REQUIRE(early_events[4].tick == 39U);
+    ARPG_REQUIRE(early_events[4].value == 45);
+
+    ARPG_REQUIRE(tick_45.tick == 46U);
+    ARPG_REQUIRE(tick_45.player.hp == 955);
+    ARPG_REQUIRE(tick_45.monster_count == 5U);
+    ARPG_REQUIRE(tick_45.monsters[0].id == MonsterId::water_bulwark);
+    ARPG_REQUIRE(tick_45.monsters[0].ai_phase == MonsterAiPhase::telegraph);
+    ARPG_REQUIRE(tick_45.monsters[0].shield == 90);
+    ARPG_REQUIRE(tick_45.monsters[0].shield_ticks == 119U);
+    ARPG_REQUIRE(tick_45.monsters[1].id == MonsterId::chaos_chaser);
+    ARPG_REQUIRE(tick_45.monsters[1].hp == 232);
+    ARPG_REQUIRE(tick_45.monsters[1].ai_phase == MonsterAiPhase::recovery);
+    ARPG_REQUIRE(tick_45.monsters[2].id == MonsterId::lightning_shooter);
+    ARPG_REQUIRE(tick_45.monsters[2].ai_phase == MonsterAiPhase::recovery);
+    ARPG_REQUIRE(tick_45.monsters[3].id == MonsterId::water_support);
+    ARPG_REQUIRE(tick_45.monsters[3].ai_phase == MonsterAiPhase::recovery);
+    ARPG_REQUIRE(tick_45.monsters[4].id == MonsterId::chaos_hazard);
+    ARPG_REQUIRE(tick_45.monsters[4].ai_phase == MonsterAiPhase::telegraph);
+    ARPG_REQUIRE(tick_45.hazard_count == 1U);
+    ARPG_REQUIRE(tick_45.hazards[0].active);
+    ARPG_REQUIRE(tick_45.hazards[0].owner.index == 4U);
+    ARPG_REQUIRE(tick_45.diagnostics.effect_owner_count == 1U);
+    ARPG_REQUIRE(tick_45.diagnostics.active_effect_count == 1U);
+    ARPG_REQUIRE(tick_45.diagnostics.effect_overflow_count == 0U);
+    ARPG_REQUIRE(tick_45.diagnostics.effect_command_overflow_count == 0U);
+
+    ARPG_REQUIRE(tick_180.tick == 181U);
+    ARPG_REQUIRE(tick_180.player.hp == 845);
+    ARPG_REQUIRE(tick_180.monsters[0].shield == 0);
+    ARPG_REQUIRE(tick_180.monsters[0].shield_ticks == 0U);
+    ARPG_REQUIRE(tick_180.hazard_count == 1U);
+    ARPG_REQUIRE(tick_180.diagnostics.effect_owner_count == 1U);
+    ARPG_REQUIRE(tick_180.diagnostics.active_effect_count == 0U);
+    ARPG_REQUIRE(tick_180.diagnostics.effect_overflow_count == 0U);
+    ARPG_REQUIRE(tick_180.diagnostics.effect_command_overflow_count == 0U);
+    ARPG_REQUIRE(tick_180.diagnostics.event_overflow_count == 0U);
     return {};
 }
 
@@ -777,8 +869,10 @@ constexpr arpg::test::TestCase kCases[] = {
      &reset_reconstructs_runtime_and_emits_once},
     {"deterministic replay and allocation stress",
      &replay_and_stress_are_deterministic_without_allocations},
-    {"fixed 3600 tick script preserves full state",
-     &fixed_3600_tick_script_preserves_full_state},
+    {"fixed 3600 tick script is deterministic replay",
+     &fixed_3600_tick_script_is_deterministic_replay},
+    {"mixed role golden replay preserves public behavior",
+     &mixed_role_golden_replay_preserves_public_behavior},
     {"all monster roles tick without allocation or overflow",
      &all_monster_roles_tick_without_allocation_or_overflow},
     {"full pools reject without mutation and saturate diagnostics",

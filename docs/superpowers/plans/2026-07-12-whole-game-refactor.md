@@ -115,17 +115,20 @@ git commit -m "docs: record whole-game refactor baseline"
 
 - [ ] **Step 1: 添加状态等价特征测试**
 
-在 `break_stress_tests.cpp` 增加固定输入脚本，分别运行两个世界 3600 tick，并逐字段比较 `CombatSnapshot`、事件序列和诊断计数：
+在 `break_stress_tests.cpp` 增加两类固定输入测试。第一类可保留两个世界运行 3600 tick 的确定性回放检查，但不得把它作为重构前后等价证据。第二类必须是单世界非 legacy 黄金测试：构造 `CombatEncounterConfig`，明确包含近战、远程/支援、特殊机制和水系护盾目标；以重构前基线记录的公开 `CombatSnapshot`、事件顺序与诊断值为固定断言。使用现有 `queue_action(Action)` 和 `tick(MovementInput)`，不新增公开 API：
 
 ```cpp
-for (std::uint32_t tick = 0; tick < 3600U; ++tick) {
-    const bool pulse = tick % 41U == 0U;
-    first.submit_input({pulse, false, tick % 120U < 60U, {}});
-    second.submit_input({pulse, false, tick % 120U < 60U, {}});
-    first.update();
-    second.update();
-    ARPG_REQUIRE(same_snapshot(first.snapshot(), second.snapshot()));
+CombatWorld world{mixed_role_golden_config()};
+for (std::uint32_t tick = 0; tick <= 180U; ++tick) {
+    if (tick % 90U == 0U) {
+        ARPG_REQUIRE(world.queue_action(Action::light));
+    }
+    world.tick(MovementInput{
+        static_cast<std::int8_t>(tick % 120U < 60U ? 1 : -1), 0});
 }
+ARPG_REQUIRE(tick_45.monsters[0].shield == 90);
+ARPG_REQUIRE(tick_45.hazard_count == 1U);
+ARPG_REQUIRE(tick_180.monsters[0].shield == 0);
 ```
 
 - [ ] **Step 2: 运行 Combat 特征测试基线**
