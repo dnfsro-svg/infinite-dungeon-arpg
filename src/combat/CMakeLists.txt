@@ -4,6 +4,7 @@ add_library(arpg_combat STATIC
     combat_world.cpp
     hit_resolution.cpp
     input_buffer.cpp
+    monster_catalog.cpp
     player_simulation.cpp
     target_simulation.cpp)
 

@@ -46,6 +46,64 @@ enum class ImpactKind : std::uint8_t {
     launch,
 };
 
+enum class MonsterId : std::uint8_t {
+    fire_bomber,
+    fire_charger,
+    water_bulwark,
+    water_support,
+    lightning_shooter,
+    lightning_dasher,
+    chaos_chaser,
+    chaos_hazard,
+    count,
+};
+
+enum class MonsterTag : std::uint16_t {
+    none = 0,
+    melee = 1U << 0U,
+    ranged = 1U << 1U,
+    support = 1U << 2U,
+    high_priority = 1U << 3U,
+    ground_hazard = 1U << 4U,
+    direct_target = 1U << 5U,
+};
+
+struct MonsterDefinition final {
+    MonsterId id{MonsterId::chaos_chaser};
+    std::uint8_t preferred_ecology{};
+    std::uint16_t tags{};
+    std::uint8_t threat_cost{1};
+    int max_hp{100};
+    int max_break{};
+    float move_speed{0.04F};
+    float preferred_range{1.0F};
+    std::uint16_t telegraph_ticks{20};
+    std::uint16_t active_ticks{4};
+    std::uint16_t recovery_ticks{20};
+    std::uint16_t cooldown_ticks{60};
+    int contact_damage{10};
+    float projectile_speed{};
+    std::uint16_t hazard_ticks{};
+    FeedbackLevel feedback{FeedbackLevel::light};
+};
+
+inline constexpr std::size_t kMonsterCapacity = 96;
+inline constexpr std::size_t kProjectileCapacity = 384;
+inline constexpr std::size_t kHazardCapacity = 96;
+inline constexpr std::size_t kEncounterWaveCapacity = 2;
+inline constexpr std::size_t kEncounterSpawnCapacity = 96;
+
+struct MonsterSpawnSpec final {
+    MonsterId id{MonsterId::chaos_chaser};
+    Vec3 position{};
+};
+
+struct EncounterWave final {
+    std::array<MonsterSpawnSpec, kEncounterSpawnCapacity> spawns{};
+    std::uint8_t spawn_count{};
+    std::uint8_t spent_budget{};
+};
+
 enum class CombatEventKind : std::uint8_t {
     swing,
     hit,
