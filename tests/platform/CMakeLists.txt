@@ -869,6 +869,16 @@ set_tests_properties(
     PROPERTIES LABELS "headless;architecture")
 
 add_test(
+    NAME architecture.progression_no_raylib
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/progression"
+        "-DSOURCE_LABEL=Progression"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/core_boundary_test.cmake")
+set_tests_properties(
+    architecture.progression_no_raylib
+    PROPERTIES LABELS "headless;architecture;progression")
+
+add_test(
     NAME architecture.combat_no_dungeon
     COMMAND "${CMAKE_COMMAND}"
         "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/combat"

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dungeon/dungeon_types.hpp"
+#include "progression/progression_rules.hpp"
 
 #include <cstdint>
 
@@ -47,6 +48,15 @@ struct TransitionVisualState final {
     bool transition_phase_seen{};
 };
 
+struct ProgressionHudValues final {
+    std::uint8_t level{};
+    std::uint64_t experience{};
+    std::uint64_t required_experience{};
+    std::uint8_t unspent_passive_points{};
+    std::uint64_t pending_room_experience{};
+    bool maximum_level{};
+};
+
 inline constexpr combat::Vec3 kHoleCenter{0.0F, 3.5F, 0.0F};
 inline constexpr float kHoleInteractionRadius = 2.0F;
 
@@ -91,5 +101,8 @@ inline constexpr float kHoleInteractionRadius = 2.0F;
     TransitionVisualState state,
     float frame_seconds) noexcept;
 [[nodiscard]] float transition_overlay_alpha(float seconds_left) noexcept;
+[[nodiscard]] ProgressionHudValues progression_hud_values(
+    const dungeon::DungeonSnapshot& snapshot,
+    const progression::ProgressionRules& rules) noexcept;
 
 }  // namespace arpg::platform

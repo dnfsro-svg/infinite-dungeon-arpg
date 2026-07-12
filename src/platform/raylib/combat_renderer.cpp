@@ -802,7 +802,7 @@ void CombatRenderer::draw(
     const bool doors_open = current.phase == dungeon::RoomPhase::cleared
         || current.phase == dungeon::RoomPhase::awaiting_exit;
     DrawRectangleRounded(
-        {16.0F, 14.0F, 570.0F, draw_debug ? 600.0F : 330.0F},
+        {16.0F, 14.0F, 570.0F, draw_debug ? 660.0F : 400.0F},
         0.06F,
         6,
         Color{7, 10, 17, 220});
@@ -833,6 +833,27 @@ void CombatRenderer::draw(
             combat_state.player.max_hp), 30, y, 16, text);
         draw_bar(126.0F, static_cast<float>(y + 5), 150.0F,
             player_hp_ratio(combat_state.player), Color{77, 215, 127, 255});
+        y += 23;
+        static const progression::ProgressionRules kProgressionRules =
+            progression::default_progression_rules();
+        const ProgressionHudValues progression = progression_hud_values(
+            current, kProgressionRules);
+        DrawText(TextFormat("Level %u/100  Passive Points %u",
+            static_cast<unsigned>(progression.level),
+            static_cast<unsigned>(progression.unspent_passive_points)),
+            30, y, 16, text);
+        y += 23;
+        if (progression.maximum_level) {
+            DrawText("XP MAX", 30, y, 16, accent);
+        } else {
+            DrawText(TextFormat("XP %llu/%llu  Room Pending +%llu",
+                static_cast<unsigned long long>(progression.experience),
+                static_cast<unsigned long long>(
+                    progression.required_experience),
+                static_cast<unsigned long long>(
+                    progression.pending_room_experience)),
+                30, y, 16, accent);
+        }
         y += 23;
         const unsigned wave_current = current.wave_count == 0U ? 0U
             : static_cast<unsigned>(current.wave_index) + 1U;

@@ -221,4 +221,22 @@ float transition_overlay_alpha(float seconds_left) noexcept {
     return std::clamp(seconds_left / kTransitionSeconds, 0.0F, 1.0F);
 }
 
+ProgressionHudValues progression_hud_values(
+    const dungeon::DungeonSnapshot& snapshot,
+    const progression::ProgressionRules& rules) noexcept {
+    ProgressionHudValues values{};
+    values.level = snapshot.progression.level;
+    values.experience = snapshot.progression.experience;
+    values.unspent_passive_points =
+        snapshot.progression.unspent_passive_points;
+    values.pending_room_experience = snapshot.pending_room_experience;
+    values.maximum_level = snapshot.progression.level
+        >= progression::kMaximumLevel;
+    if (!values.maximum_level && snapshot.progression.level != 0U) {
+        values.required_experience = rules.experience_to_next[
+            static_cast<std::size_t>(snapshot.progression.level - 1U)];
+    }
+    return values;
+}
+
 }  // namespace arpg::platform

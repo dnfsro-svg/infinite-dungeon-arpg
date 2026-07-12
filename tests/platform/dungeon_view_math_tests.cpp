@@ -2,6 +2,7 @@
 
 #include "combat_renderer.hpp"
 #include "dungeon_view_math.hpp"
+#include "progression/progression_rules.hpp"
 
 #include <cstring>
 
@@ -277,6 +278,26 @@ arpg::test::Failure fade_alpha_clamps_to_transition_window() noexcept {
     return {};
 }
 
+arpg::test::Failure progression_hud_values_follow_snapshot() noexcept {
+    arpg::dungeon::DungeonSnapshot snapshot{};
+    snapshot.progression = {37U, 42U, 36U, 36U};
+    snapshot.pending_room_experience = 25U;
+    const auto rules = arpg::progression::default_progression_rules();
+    const auto values = arpg::platform::progression_hud_values(snapshot, rules);
+    ARPG_REQUIRE(values.level == 37U);
+    ARPG_REQUIRE(values.experience == 42U);
+    ARPG_REQUIRE(values.required_experience == 100U);
+    ARPG_REQUIRE(values.unspent_passive_points == 36U);
+    ARPG_REQUIRE(values.pending_room_experience == 25U);
+    ARPG_REQUIRE(!values.maximum_level);
+
+    snapshot.progression = {100U, 0U, 99U, 99U};
+    const auto maximum = arpg::platform::progression_hud_values(snapshot, rules);
+    ARPG_REQUIRE(maximum.maximum_level);
+    ARPG_REQUIRE(maximum.required_experience == 0U);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"door lifecycle modes", &door_modes_follow_room_lifecycle},
     {"same room interpolation", &same_room_snapshots_can_interpolate},
@@ -290,6 +311,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"XY hole range", &player_hole_range_uses_xy_radius},
     {"save indicators and labels", &indicators_and_phase_labels_are_stable},
     {"recovery request gate", &recovery_requires_fault_and_n_press},
+    {"progression HUD values", &progression_hud_values_follow_snapshot},
 };
 
 }  // namespace
