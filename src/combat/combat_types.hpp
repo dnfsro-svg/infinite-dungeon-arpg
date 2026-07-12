@@ -197,6 +197,13 @@ struct CombatLabConfig final {
     bool respawn_defeated_dummies{true};
 };
 
+struct CombatEncounterConfig final {
+    Vec3 player_spawn{};
+    Facing initial_facing{Facing::right};
+    EncounterWave wave{};
+    bool reset_player_health{true};
+};
+
 struct PlayerSnapshot final {
     Vec3 position{};
     Vec3 velocity{};
@@ -210,10 +217,15 @@ struct PlayerSnapshot final {
     bool air_attack_available{true};
 };
 
-struct DummySnapshot final {
+struct MonsterSnapshot final {
+    bool active{};
+    std::uint16_t generation{};
+    MonsterId id{MonsterId::chaos_chaser};
+    Vec3 spawn{};
     Vec3 position{};
     Vec3 velocity{};
     DummyKind kind{DummyKind::light};
+    Facing facing{Facing::right};
     ReactionState reaction{ReactionState::idle};
     ArmorState armor{ArmorState::none};
     int hp{};
@@ -223,6 +235,10 @@ struct DummySnapshot final {
     std::uint16_t break_window_ticks{};
     std::uint16_t hit_stop_ticks{};
 };
+
+// Temporary presentation alias for pre-Task 3 dungeon tests. Task 8 removes
+// this compatibility name after all consumers use MonsterSnapshot.
+using DummySnapshot = MonsterSnapshot;
 
 struct CombatDiagnostics final {
     std::size_t input_size{};
@@ -234,6 +250,9 @@ struct CombatDiagnostics final {
 struct CombatSnapshot final {
     std::uint64_t tick{};
     PlayerSnapshot player{};
+    std::array<MonsterSnapshot, kMonsterCapacity> monsters{};
+    std::size_t monster_count{};
+    // Compatibility projection only; runtime state is owned by monsters.
     std::array<DummySnapshot, kDummyCount> dummies{};
     CombatDiagnostics diagnostics{};
 };

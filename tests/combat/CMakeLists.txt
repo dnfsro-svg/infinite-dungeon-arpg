@@ -9,6 +9,7 @@ add_executable(arpg_combat_tests
     hit_resolution_tests.cpp
     input_buffer_tests.cpp
     monster_catalog_tests.cpp
+    monster_pool_tests.cpp
     movement_jump_tests.cpp)
 
 target_compile_features(arpg_combat_tests PRIVATE cxx_std_17)

@@ -2,6 +2,7 @@
 
 #include "combat/combat_types.hpp"
 #include "combat/input_buffer.hpp"
+#include "combat/monster_pool.hpp"
 #include "core/bounded_queue.hpp"
 
 #include <array>
@@ -14,10 +15,13 @@ namespace arpg::combat {
 class CombatWorld final {
 public:
     explicit CombatWorld(CombatLabConfig config = {}) noexcept;
+    explicit CombatWorld(CombatEncounterConfig config) noexcept;
 
     [[nodiscard]] bool queue_action(Action action) noexcept;
     void tick(MovementInput movement) noexcept;
     void reset() noexcept;
+    [[nodiscard]] bool load_wave(const EncounterWave& wave) noexcept;
+    [[nodiscard]] std::size_t active_monster_count() const noexcept;
     [[nodiscard]] CombatSnapshot snapshot() const noexcept;
     [[nodiscard]] std::optional<CombatEvent> try_pop_event() noexcept;
 
@@ -32,28 +36,12 @@ private:
         bool air_attack_available{true};
     };
 
-    struct DummyRuntime final {
-        DummyKind kind{DummyKind::light};
-        Vec3 spawn{};
-        Vec3 position{};
-        Vec3 velocity{};
-        ReactionState reaction{ReactionState::idle};
-        ArmorState armor{ArmorState::none};
-        std::uint16_t reaction_ticks{};
-        std::uint16_t break_window_ticks{};
-        std::uint16_t hit_stop_ticks{};
-        int hp{};
-        int max_hp{};
-        int break_value{};
-        int max_break{};
-    };
-
     struct AttackRuntime final {
         AttackId id{AttackId::none};
         std::uint16_t elapsed_ticks{};
         bool connected{};
         bool impact_event_emitted{};
-        std::array<bool, kDummyCount> hit_targets{};
+        std::array<bool, kMonsterCapacity> hit_targets{};
     };
 
     void simulate_player(MovementInput movement) noexcept;
@@ -67,9 +55,14 @@ private:
     void emit_event(const CombatEvent& event) noexcept;
     void initialize_runtime() noexcept;
 
-    CombatLabConfig config_{};
+    void initialize_player() noexcept;
+    void initialize_legacy_monsters() noexcept;
+
+    CombatEncounterConfig encounter_config_{};
+    CombatLabConfig legacy_config_{};
+    bool legacy_mode_{true};
     PlayerRuntime player_{};
-    std::array<DummyRuntime, kDummyCount> dummies_{};
+    MonsterPool monsters_{};
     AttackRuntime attack_{};
     InputBuffer input_buffer_{};
     core::BoundedQueue<CombatEvent, 64> events_{};

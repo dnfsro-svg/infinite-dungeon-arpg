@@ -44,8 +44,8 @@ void CombatWorld::apply_attack_assist(
     float best_gap = std::numeric_limits<float>::max();
     float best_correction = 0.0F;
 
-    for (std::size_t index = 0; index < dummies_.size(); ++index) {
-        const DummyRuntime& dummy = dummies_[index];
+    for (std::size_t index = 0; index < monsters_.slots().size(); ++index) {
+        const MonsterRuntime& dummy = monsters_.slots()[index];
         const float relative_x = dummy.position.x - player_.position.x;
         if (dummy.hp <= 0
             || dummy.reaction == ReactionState::defeated
@@ -93,10 +93,10 @@ void CombatWorld::resolve_attack_hits() noexcept {
 
     const Aabb attack_box = make_world_aabb(
         definition->local_hitbox, player_.position, player_.facing);
-    std::array<std::uint8_t, kDummyCount> hit_indices{};
+    std::array<std::uint8_t, kMonsterCapacity> hit_indices{};
     std::size_t hit_count = 0;
-    for (std::size_t index = 0; index < dummies_.size(); ++index) {
-        const DummyRuntime& dummy = dummies_[index];
+    for (std::size_t index = 0; index < monsters_.slots().size(); ++index) {
+        const MonsterRuntime& dummy = monsters_.slots()[index];
         if (attack_.hit_targets[index]
             || dummy.hp <= 0
             || dummy.reaction == ReactionState::defeated
@@ -118,7 +118,7 @@ void CombatWorld::resolve_attack_hits() noexcept {
     const std::uint16_t hit_stop = hit_stop_for(definition->feedback);
     for (std::size_t collected = 0; collected < hit_count; ++collected) {
         const std::size_t index = hit_indices[collected];
-        DummyRuntime& dummy = dummies_[index];
+        MonsterRuntime& dummy = monsters_.slots()[index];
         attack_.hit_targets[index] = true;
         attack_.connected = true;
         dummy.hp = std::max(0, dummy.hp - definition->damage);
@@ -172,7 +172,7 @@ void CombatWorld::resolve_attack_hits() noexcept {
         summary.attack = definition->id;
         summary.hit_count = static_cast<std::uint8_t>(hit_count);
         summary.feedback = definition->feedback;
-        summary.position = dummies_[hit_indices[0]].position;
+        summary.position = monsters_.slots()[hit_indices[0]].position;
         emit_event(summary);
     }
 }

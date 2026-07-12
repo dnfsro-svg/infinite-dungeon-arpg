@@ -77,7 +77,7 @@ arpg::test::Failure room_clamps_facing_and_reset_are_stable() noexcept {
     ARPG_REQUIRE(snapshot.tick == 0);
     ARPG_REQUIRE(arpg::test::near(snapshot.player.position.x, 1.0));
     ARPG_REQUIRE(arpg::test::near(snapshot.player.position.y, -1.0));
-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[0].position.x, 2.0));
+    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[0].position.x, 2.0));
     ARPG_REQUIRE(snapshot.player.state == PlayerState::idle);
     ARPG_REQUIRE(snapshot.diagnostics.input_size == 0);
     ARPG_REQUIRE(snapshot.diagnostics.input_expired_count == 0);
