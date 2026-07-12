@@ -527,7 +527,7 @@ void draw_monster_silhouette(
     const Color accent = to_color(visual.accent);
     const float scale = projected.scale;
     const float x = projected.x;
-    const float y = projected.ground_y;
+    const float y = projected.y;
     switch (visual.shape) {
     case MonsterShapeId::bomber:
         DrawCircle(static_cast<int>(x), static_cast<int>(y - 43.0F * scale),
@@ -716,9 +716,8 @@ void CombatRenderer::draw(
 
         std::array<RenderActor, kMonsterCapacity + 1> draw_items{};
         std::size_t draw_count = 0;
-        draw_items[draw_count++] = {interpolate(
-            previous_combat.player.position, current_combat.player.position,
-            alpha), 0U, true};
+        draw_items[draw_count++] = {
+            current_combat.player.position, 0U, true};
         for (std::size_t index = 0; index < current_combat.monsters.size(); ++index) {
             const MonsterSnapshot& monster = current_combat.monsters[index];
             if (!monster_visible(monster)) {

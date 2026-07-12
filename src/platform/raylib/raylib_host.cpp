@@ -98,8 +98,6 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         }
         SetWindowMinSize(800, 450);
         SetExitKey(KEY_ESCAPE);
-        SetTargetFPS(60);
-
         core::FixedStepRunner fixed_step;
         CombatRenderer renderer;
         CombatFeedback feedback;

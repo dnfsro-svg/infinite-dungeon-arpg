@@ -913,3 +913,12 @@ add_test(
 set_tests_properties(
     architecture.persistence_checkpoint_only
     PROPERTIES LABELS "headless;architecture")
+
+add_test(
+    NAME platform.input_latency_source
+    COMMAND "${CMAKE_COMMAND}"
+        "-DRAYLIB_SOURCE_DIR=${PROJECT_SOURCE_DIR}/src/platform/raylib"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/input_latency_source_test.cmake")
+set_tests_properties(
+    platform.input_latency_source
+    PROPERTIES LABELS "headless;platform;architecture")
