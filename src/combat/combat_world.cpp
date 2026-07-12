@@ -59,7 +59,11 @@ void CombatWorld::tick(MovementInput movement) noexcept {
         } else {
             const std::size_t index = static_cast<std::size_t>(
                 &monster - monsters_.slots_.data());
-            simulate_target(index);
+            if (legacy_mode_) {
+                simulate_target(index);
+            } else {
+                simulate_monster(index);
+            }
         }
     }
 
@@ -242,6 +246,7 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
             dummy.max_break,
             dummy.break_window_ticks,
             dummy.hit_stop_ticks,
+            dummy.ai_phase,
         };
     }
 

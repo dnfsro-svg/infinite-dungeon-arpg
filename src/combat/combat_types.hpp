@@ -186,6 +186,16 @@ enum class ArmorState : std::uint8_t {
     broken,
 };
 
+enum class MonsterAiPhase : std::uint8_t {
+    idle,
+    move,
+    telegraph,
+    active,
+    recovery,
+    cooldown,
+    defeated,
+};
+
 struct MovementInput final {
     std::int8_t x{};
     std::int8_t y{};
@@ -245,6 +255,7 @@ struct MonsterSnapshot final {
     int max_break{};
     std::uint16_t break_window_ticks{};
     std::uint16_t hit_stop_ticks{};
+    MonsterAiPhase ai_phase{MonsterAiPhase::idle};
 };
 
 // Temporary presentation alias for pre-Task 3 dungeon tests. Task 8 removes
