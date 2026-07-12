@@ -23,5 +23,5 @@ int main() {
         dungeon_wave_suite(),
     };
 
-    return arpg::test::run_suites(suites, 63, "stage 4 dungeon");
+    return arpg::test::run_suites(suites, 64, "stage 4 task 10 dungeon");
 }

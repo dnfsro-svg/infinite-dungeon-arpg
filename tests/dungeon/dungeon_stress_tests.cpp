@@ -5,6 +5,7 @@
 
 #include "dungeon/room_generation.hpp"
 #include "dungeon/dungeon_progression.hpp"
+#include "dungeon/encounter_director.hpp"
 
 #include <array>
 #include <cstddef>
@@ -19,8 +20,10 @@ using arpg::combat::MovementInput;
 using arpg::dungeon::DungeonEvent;
 using arpg::dungeon::DungeonSession;
 using arpg::dungeon::DungeonSnapshot;
+using arpg::dungeon::EncounterDirectorConfig;
 using arpg::dungeon::ExitDirection;
 using arpg::dungeon::RoomPhase;
+namespace checkpoint = arpg::dungeon::checkpoint;
 
 constexpr std::array<ExitDirection, 4> kRoute{{
     ExitDirection::up,
@@ -287,6 +290,25 @@ bool drive_clear(DungeonSession& session, StressSummary& summary) noexcept {
     return false;
 }
 
+bool confirm_pending_save(DungeonSession& session) noexcept {
+    const auto pending = session.pending_transition();
+    if (!pending.has_value()) {
+        return false;
+    }
+    session.resolve_pending_transition({
+        arpg::dungeon::SaveDisposition::committed,
+        pending->expected_generation,
+        pending->next_state,
+    });
+    const DungeonSnapshot saved = session.snapshot();
+    return saved.phase == RoomPhase::transitioning
+        && !saved.has_pending_transition
+        && saved.commit_generation == pending->expected_generation
+        && saved.room_index == pending->next_state.current_room.index
+        && saved.room_seed == pending->next_state.current_room.seed
+        && !saved.has_active_room && !saved.combat.has_value();
+}
+
 bool drive_exit(
     DungeonSession& session,
     ExitDirection direction,
@@ -305,7 +327,7 @@ bool drive_exit(
         session.tick(outward(direction));
         drain(session, summary);
         if (session.snapshot().phase == RoomPhase::committing) {
-            if (!arpg::test::commit_pending(session)) {
+            if (!confirm_pending_save(session)) {
                 return false;
             }
             drain(session, summary);
@@ -348,6 +370,31 @@ bool drive_rooms(
         }
     }
     return true;
+}
+
+arpg::test::Failure ten_thousand_director_plans_are_legal_deterministic_and_allocation_free() noexcept {
+    const EncounterDirectorConfig config{};
+    const std::uint64_t allocations_before = arpg::test::allocation_count();
+    for (std::uint64_t index = 0; index < 10000U; ++index) {
+        const checkpoint::DungeonElement ecology =
+            static_cast<checkpoint::DungeonElement>(index % 4U);
+        const std::uint64_t seed = 0xD1EC70A000000000ULL + index * 7919U;
+        const std::uint64_t depth = 1U + index % 1000U;
+        const auto first = arpg::dungeon::build_encounter_plan(
+            seed, depth, ecology, config);
+        const auto second = arpg::dungeon::build_encounter_plan(
+            seed, depth, ecology, config);
+        ARPG_REQUIRE(first.fault == arpg::dungeon::DungeonFault::none);
+        ARPG_REQUIRE(second.fault == arpg::dungeon::DungeonFault::none);
+        ARPG_REQUIRE(arpg::test::same_encounter_plan(first.plan, second.plan));
+        ARPG_REQUIRE(arpg::dungeon::encounter_plan_legal(first.plan, config));
+        for (std::size_t wave = 0; wave < first.plan.wave_count; ++wave) {
+            ARPG_REQUIRE(first.plan.waves[wave].spawn_count
+                <= arpg::combat::kEncounterSpawnCapacity);
+        }
+    }
+    ARPG_REQUIRE(arpg::test::allocation_count() == allocations_before);
+    return {};
 }
 
 arpg::test::Failure identical_seed_and_route_are_field_equal() noexcept {
@@ -463,6 +510,8 @@ arpg::test::Failure measured_thousand_rooms_allocate_nothing_and_never_overflow(
 }
 
 constexpr arpg::test::TestCase kCases[] = {
+    {"ten thousand director plans are legal deterministic and allocation free",
+     &ten_thousand_director_plans_are_legal_deterministic_and_allocation_free},
     {"identical seed and route are field equal", &identical_seed_and_route_are_field_equal},
     {"one changed direction changes only committed room", &one_changed_direction_changes_only_committed_room},
     {"thousand real rooms preserve single world invariants", &thousand_real_rooms_preserve_single_world_invariants},

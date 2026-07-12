@@ -6,6 +6,7 @@
 #include <array>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace arpg::combat {
 namespace {
@@ -15,6 +16,12 @@ constexpr std::array<int, kDummyCount> kDummyBreakValues{{0, 0, 120}};
 constexpr int kStage4PlayerMaxHp = 1000;
 constexpr std::uint16_t kPlayerHurtTicks = 12;
 constexpr std::uint16_t kPlayerInvulnerabilityTicks = 30;
+
+void saturating_increment(std::uint32_t& counter) noexcept {
+    if (counter != (std::numeric_limits<std::uint32_t>::max)()) {
+        ++counter;
+    }
+}
 
 }  // namespace
 
@@ -387,13 +394,13 @@ bool CombatWorld::spawn_projectile(
     int damage,
     float radius) noexcept {
     if (monsters_.get(owner) == nullptr) {
-        ++projectile_invalid_owner_count_;
+        saturating_increment(projectile_invalid_owner_count_);
         return false;
     }
     if (!projectiles_.spawn(
             owner, position, velocity, lifetime_ticks, damage, radius)
              .has_value()) {
-        ++projectile_saturation_count_;
+        saturating_increment(projectile_saturation_count_);
         return false;
     }
     return true;
@@ -425,12 +432,12 @@ bool CombatWorld::spawn_hazard(
     std::uint16_t damage_interval_ticks,
     int damage) noexcept {
     if (monsters_.get(owner) == nullptr) {
-        ++hazard_invalid_owner_count_;
+        saturating_increment(hazard_invalid_owner_count_);
         return false;
     }
     if (!hazards_.spawn(owner, center, radius, telegraph_ticks, active_ticks,
                         damage_interval_ticks, damage).has_value()) {
-        ++hazard_saturation_count_;
+        saturating_increment(hazard_saturation_count_);
         return false;
     }
     return true;

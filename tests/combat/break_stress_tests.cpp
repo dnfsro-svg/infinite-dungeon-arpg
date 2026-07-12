@@ -3,10 +3,12 @@
 #include "test_framework.hpp"
 
 #include "combat/combat_world.hpp"
+#include "combat/monster_pool.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 namespace {
 
@@ -468,6 +470,170 @@ arpg::test::Failure replay_and_stress_are_deterministic_without_allocations() no
     return {};
 }
 
+CombatWorld all_roles_world() noexcept {
+    EncounterWave wave{};
+    wave.spawn_count = static_cast<std::uint8_t>(MonsterId::count);
+    for (std::size_t index = 0; index < wave.spawn_count; ++index) {
+        wave.spawns[index] = MonsterSpawnSpec{
+            static_cast<MonsterId>(index),
+            Vec3{2.0F + static_cast<float>(index % 4U) * 1.1F,
+                -1.5F + static_cast<float>(index / 4U) * 3.0F, 0.0F},
+        };
+    }
+    CombatEncounterConfig config{};
+    config.wave = wave;
+    return CombatWorld{config};
+}
+
+MonsterHandle first_active_owner(const CombatWorld& world) noexcept {
+    const CombatSnapshot snapshot = world.snapshot();
+    return {0U, snapshot.monsters[0].generation};
+}
+
+bool same_projectiles(
+    const CombatSnapshot& lhs,
+    const CombatSnapshot& rhs) noexcept {
+    if (lhs.projectile_count != rhs.projectile_count) {
+        return false;
+    }
+    for (std::size_t index = 0; index < lhs.projectiles.size(); ++index) {
+        const ProjectileSnapshot& a = lhs.projectiles[index];
+        const ProjectileSnapshot& b = rhs.projectiles[index];
+        if (a.active != b.active || a.generation != b.generation
+                || a.owner.index != b.owner.index
+                || a.owner.generation != b.owner.generation
+                || !vec_equal(a.position, b.position)
+                || !vec_equal(a.velocity, b.velocity)
+                || a.lifetime_ticks != b.lifetime_ticks
+                || a.damage != b.damage || a.radius != b.radius) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool same_monster_runtime(
+    const MonsterRuntime& lhs,
+    const MonsterRuntime& rhs) noexcept {
+    return lhs.active == rhs.active && lhs.generation == rhs.generation
+        && lhs.id == rhs.id && lhs.kind == rhs.kind
+        && vec_equal(lhs.spawn, rhs.spawn)
+        && vec_equal(lhs.position, rhs.position)
+        && vec_equal(lhs.velocity, rhs.velocity)
+        && lhs.facing == rhs.facing && lhs.reaction == rhs.reaction
+        && lhs.armor == rhs.armor && lhs.reaction_ticks == rhs.reaction_ticks
+        && lhs.ai_phase == rhs.ai_phase && lhs.ai_ticks == rhs.ai_ticks
+        && lhs.attack_serial == rhs.attack_serial
+        && lhs.contact_attack_resolved == rhs.contact_attack_resolved
+        && lhs.hp == rhs.hp && lhs.max_hp == rhs.max_hp
+        && lhs.break_value == rhs.break_value && lhs.max_break == rhs.max_break
+        && lhs.shield == rhs.shield && lhs.max_shield == rhs.max_shield
+        && lhs.shield_ticks == rhs.shield_ticks
+        && lhs.max_shield_ticks == rhs.max_shield_ticks
+        && lhs.break_window_ticks == rhs.break_window_ticks
+        && lhs.hit_stop_ticks == rhs.hit_stop_ticks
+        && lhs.owner_transient_counter == rhs.owner_transient_counter
+        && vec_equal(lhs.attack_target_position, rhs.attack_target_position)
+        && vec_equal(lhs.attack_vector, rhs.attack_vector);
+}
+
+bool same_hazards(
+    const CombatSnapshot& lhs,
+    const CombatSnapshot& rhs) noexcept {
+    if (lhs.hazard_count != rhs.hazard_count) {
+        return false;
+    }
+    for (std::size_t index = 0; index < lhs.hazards.size(); ++index) {
+        const HazardSnapshot& a = lhs.hazards[index];
+        const HazardSnapshot& b = rhs.hazards[index];
+        if (a.active != b.active || a.generation != b.generation
+                || a.owner.index != b.owner.index
+                || a.owner.generation != b.owner.generation
+                || !vec_equal(a.center, b.center) || a.radius != b.radius
+                || a.telegraph_ticks != b.telegraph_ticks
+                || a.active_ticks != b.active_ticks
+                || a.lifetime_ticks != b.lifetime_ticks
+                || a.damage_interval_ticks != b.damage_interval_ticks
+                || a.player_latched != b.player_latched
+                || a.damage != b.damage) {
+            return false;
+        }
+    }
+    return true;
+}
+
+arpg::test::Failure all_monster_roles_tick_without_allocation_or_overflow() noexcept {
+    CombatWorld world = all_roles_world();
+    for (int tick = 0; tick < 180; ++tick) {
+        world.tick(scheduled_movement(tick));
+        drain_events(world);
+    }
+
+    const std::uint64_t allocations_before = arpg::test::allocation_count();
+    for (int tick = 0; tick < 12000; ++tick) {
+        world.tick(scheduled_movement(tick));
+        drain_events(world);
+    }
+    const CombatSnapshot final = world.snapshot();
+    ARPG_REQUIRE(arpg::test::allocation_count() == allocations_before);
+    ARPG_REQUIRE(final.monster_count <= kMonsterCapacity);
+    ARPG_REQUIRE(final.projectile_count <= kProjectileCapacity);
+    ARPG_REQUIRE(final.hazard_count <= kHazardCapacity);
+    ARPG_REQUIRE(final.diagnostics.event_overflow_count == 0U);
+    ARPG_REQUIRE(final.diagnostics.projectile_saturation_count == 0U);
+    ARPG_REQUIRE(final.diagnostics.hazard_saturation_count == 0U);
+    ARPG_REQUIRE(final.diagnostics.projectile_invalid_owner_count == 0U);
+    ARPG_REQUIRE(final.diagnostics.hazard_invalid_owner_count == 0U);
+    return {};
+}
+
+arpg::test::Failure full_pools_reject_without_mutation_and_saturate_diagnostics() noexcept {
+    MonsterPool monsters;
+    for (std::size_t index = 0; index < kMonsterCapacity; ++index) {
+        ARPG_REQUIRE(monsters.spawn(MonsterId::chaos_chaser,
+            Vec3{static_cast<float>(index), 0.0F, 0.0F}).has_value());
+    }
+    const auto monster_slots = monsters.slots();
+    ARPG_REQUIRE(!monsters.spawn(MonsterId::fire_bomber, Vec3{}).has_value());
+    for (std::size_t index = 0; index < monster_slots.size(); ++index) {
+        ARPG_REQUIRE(same_monster_runtime(
+            monsters.slots()[index], monster_slots[index]));
+    }
+
+    CombatWorld projectile_world = all_roles_world();
+    const MonsterHandle projectile_owner = first_active_owner(projectile_world);
+    for (std::size_t index = 0; index < kProjectileCapacity; ++index) {
+        ARPG_REQUIRE(arpg::test::CombatWorldTestAccess::spawn_projectile(
+            projectile_world, projectile_owner));
+    }
+    const CombatSnapshot projectiles_before = projectile_world.snapshot();
+    arpg::test::CombatWorldTestAccess::set_saturation_counts(
+        projectile_world, (std::numeric_limits<std::uint32_t>::max)(), 0U);
+    ARPG_REQUIRE(!arpg::test::CombatWorldTestAccess::spawn_projectile(
+        projectile_world, projectile_owner));
+    const CombatSnapshot projectiles_after = projectile_world.snapshot();
+    ARPG_REQUIRE(same_projectiles(projectiles_before, projectiles_after));
+    ARPG_REQUIRE(projectiles_after.diagnostics.projectile_saturation_count
+        == (std::numeric_limits<std::uint32_t>::max)());
+
+    CombatWorld hazard_world = all_roles_world();
+    const MonsterHandle hazard_owner = first_active_owner(hazard_world);
+    for (std::size_t index = 0; index < kHazardCapacity; ++index) {
+        ARPG_REQUIRE(arpg::test::CombatWorldTestAccess::spawn_hazard(
+            hazard_world, hazard_owner));
+    }
+    const CombatSnapshot hazards_before = hazard_world.snapshot();
+    arpg::test::CombatWorldTestAccess::set_saturation_counts(
+        hazard_world, 0U, (std::numeric_limits<std::uint32_t>::max)());
+    ARPG_REQUIRE(!arpg::test::CombatWorldTestAccess::spawn_hazard(
+        hazard_world, hazard_owner));
+    const CombatSnapshot hazards_after = hazard_world.snapshot();
+    ARPG_REQUIRE(same_hazards(hazards_before, hazards_after));
+    ARPG_REQUIRE(hazards_after.diagnostics.hazard_saturation_count
+        == (std::numeric_limits<std::uint32_t>::max)());
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"armored suppression before break",
      &armored_launcher_suppresses_control_before_break},
@@ -479,6 +645,10 @@ constexpr arpg::test::TestCase kCases[] = {
      &reset_reconstructs_runtime_and_emits_once},
     {"deterministic replay and allocation stress",
      &replay_and_stress_are_deterministic_without_allocations},
+    {"all monster roles tick without allocation or overflow",
+     &all_monster_roles_tick_without_allocation_or_overflow},
+    {"full pools reject without mutation and saturate diagnostics",
+     &full_pools_reject_without_mutation_and_saturate_diagnostics},
 };
 
 }  // namespace

@@ -3,6 +3,7 @@
 #include "combat/combat_world.hpp"
 
 #include <cstddef>
+#include <cstdint>
 
 namespace arpg::test {
 
@@ -26,6 +27,28 @@ struct CombatWorldTestAccess final {
         }
         static_cast<void>(world.spawn_projectile(
             owner, combat::Vec3{}, combat::Vec3{}, 1000U, 1, 0.1F));
+    }
+
+    static bool spawn_projectile(
+        combat::CombatWorld& world,
+        combat::MonsterHandle owner) noexcept {
+        return world.spawn_projectile(
+            owner, combat::Vec3{}, combat::Vec3{}, 1000U, 1, 0.1F);
+    }
+
+    static bool spawn_hazard(
+        combat::CombatWorld& world,
+        combat::MonsterHandle owner) noexcept {
+        return world.spawn_hazard(owner, combat::Vec3{}, 1.0F,
+            1000U, 1000U, 30U, 1);
+    }
+
+    static void set_saturation_counts(
+        combat::CombatWorld& world,
+        std::uint32_t projectile,
+        std::uint32_t hazard) noexcept {
+        world.projectile_saturation_count_ = projectile;
+        world.hazard_saturation_count_ = hazard;
     }
 };
 
