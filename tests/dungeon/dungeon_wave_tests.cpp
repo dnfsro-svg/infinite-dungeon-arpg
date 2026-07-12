@@ -260,6 +260,45 @@ arpg::test::Failure hole_stays_rejected_for_every_delay_tick() noexcept {
     return {};
 }
 
+arpg::test::Failure rollback_keeps_health_but_committed_room_resets_it() noexcept {
+    DungeonRules rules;
+    auto state = state_for_seed(0x515151U, rules);
+    state.current_room.has_hole = true;
+    const auto reach_awaiting = [](DungeonSession& session) noexcept {
+        session.tick({});
+        arpg::test::force_defeat_current_wave(session);
+        session.tick({});
+        if (session.snapshot().phase == RoomPhase::cleared) session.tick({});
+        return session.snapshot().phase == RoomPhase::awaiting_exit;
+    };
+
+    DungeonSession rollback{rules, state};
+    ARPG_REQUIRE(reach_awaiting(rollback));
+    arpg::test::damage_current_player(rollback, 100);
+    const int damaged = rollback.snapshot().combat->player.hp;
+    ARPG_REQUIRE(damaged < rollback.snapshot().combat->player.max_hp);
+    ARPG_REQUIRE(rollback.request_descent(true));
+    const auto failed = rollback.pending_transition();
+    ARPG_REQUIRE(failed.has_value());
+    rollback.resolve_pending_transition({arpg::dungeon::SaveDisposition::not_committed, 0U, {}});
+    ARPG_REQUIRE(rollback.snapshot().room_seed == state.current_room.seed);
+    ARPG_REQUIRE(rollback.snapshot().combat->player.hp == damaged);
+
+    DungeonSession committed{rules, state};
+    ARPG_REQUIRE(reach_awaiting(committed));
+    arpg::test::damage_current_player(committed, 100);
+    ARPG_REQUIRE(committed.request_descent(true));
+    const auto pending = committed.pending_transition();
+    ARPG_REQUIRE(pending.has_value());
+    committed.resolve_pending_transition({arpg::dungeon::SaveDisposition::committed,
+        pending->next_state.commit_generation, pending->next_state});
+    committed.tick({});
+    const auto fresh = committed.snapshot();
+    ARPG_REQUIRE(fresh.room_seed != state.current_room.seed);
+    ARPG_REQUIRE(fresh.combat->player.hp == fresh.combat->player.max_hp);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"two wave room keeps exits closed until last wave", &two_wave_room_keeps_exits_closed_until_last_wave},
     {"sealed hole stays closed through wave delay", &sealed_hole_stays_closed_through_wave_delay},
@@ -270,6 +309,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"forced defeat advances real wave lifecycle", &forced_defeat_advances_real_wave_lifecycle},
     {"wave delay freezes combat and preserves health", &wave_delay_freezes_combat_and_preserves_health_until_wave_one},
     {"hole stays rejected for every delay tick", &hole_stays_rejected_for_every_delay_tick},
+    {"rollback keeps health but committed room resets it", &rollback_keeps_health_but_committed_room_resets_it},
 };
 
 }  // namespace
