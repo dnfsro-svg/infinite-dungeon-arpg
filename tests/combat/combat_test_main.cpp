@@ -29,5 +29,5 @@ int main() {
         player_health_suite(),
     };
 
-    return arpg::test::run_suites(suites, 52, "stage 4 task 5");
+    return arpg::test::run_suites(suites, 53, "stage 4 task 5");
 }

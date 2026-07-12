@@ -122,17 +122,6 @@ void CombatWorld::simulate_monster(std::size_t slot) noexcept {
         return;
     }
 
-    // Task 5 owns only the two direct-target melee roles. Other encounter
-    // roles stay inert until their dedicated Task 6/7 implementations land.
-    if (monster.id != MonsterId::chaos_chaser
-        && monster.id != MonsterId::water_bulwark) {
-        monster.velocity = Vec3{};
-        monster.ai_phase = MonsterAiPhase::idle;
-        monster.ai_ticks = 0;
-        monster.contact_attack_resolved = true;
-        return;
-    }
-
     if (monster.armor == ArmorState::broken
         && monster.reaction != ReactionState::defeated
         && monster.break_window_ticks != 0) {
@@ -213,6 +202,18 @@ void CombatWorld::simulate_monster(std::size_t slot) noexcept {
         case ReactionState::defeated:
             break;
         }
+    }
+
+    // Task 5 owns only the two direct-target melee roles. Other encounter
+    // roles stay inert until their dedicated Task 6/7 implementations land,
+    // but their hit reactions above still need to tick to completion.
+    if (monster.id != MonsterId::chaos_chaser
+        && monster.id != MonsterId::water_bulwark) {
+        monster.velocity = Vec3{};
+        monster.ai_phase = MonsterAiPhase::idle;
+        monster.ai_ticks = 0;
+        monster.contact_attack_resolved = true;
+        return;
     }
 
     if (monster.ai_phase == MonsterAiPhase::idle) {

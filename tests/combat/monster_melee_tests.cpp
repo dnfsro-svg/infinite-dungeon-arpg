@@ -96,6 +96,19 @@ arpg::test::Failure unsupported_monsters_remain_inert() noexcept {
     return {};
 }
 
+arpg::test::Failure unsupported_monster_reaction_recovers() noexcept {
+    CombatWorld world{encounter_for(MonsterId::fire_bomber, 1.20F)};
+    ARPG_REQUIRE(world.queue_action(Action::light));
+    world.tick(MovementInput{});
+    tick_n(world, 5);
+    ARPG_REQUIRE(world.snapshot().monsters[0].reaction
+                 == ReactionState::hitstun);
+    tick_n(world, 20);
+    ARPG_REQUIRE(world.snapshot().monsters[0].reaction == ReactionState::idle);
+    ARPG_REQUIRE(world.snapshot().monsters[0].ai_phase == MonsterAiPhase::idle);
+    return {};
+}
+
 arpg::test::Failure water_bulwark_is_slow_and_has_front_armor() noexcept {
     const MonsterDefinition* chaser =
         monster_definition(MonsterId::chaos_chaser);
@@ -189,6 +202,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"chaser move and telegraph stop", &chaos_chaser_moves_then_stops_for_telegraph},
     {"chaser active serial cooldown", &chaos_chaser_damages_only_once_per_active_serial},
     {"unsupported monsters stay inert", &unsupported_monsters_remain_inert},
+    {"unsupported reaction recovers", &unsupported_monster_reaction_recovers},
     {"bulwark slow armored profile", &water_bulwark_is_slow_and_has_front_armor},
     {"bulwark rear bypasses armor", &bulwark_back_hit_bypasses_front_armor},
     {"bulwark break reaction", &bulwark_accepts_normal_reaction_after_break},
