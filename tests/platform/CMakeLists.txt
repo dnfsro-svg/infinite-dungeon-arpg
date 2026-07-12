@@ -818,7 +818,12 @@ endif()
 arpg_assert_target_dependency_boundary(arpg_core)
 arpg_assert_target_dependency_boundary(arpg_combat)
 arpg_assert_target_dependency_boundary(arpg_dungeon)
+arpg_assert_target_dependency_boundary(arpg_persistence)
 arpg_assert_target_not_reachable(arpg_combat arpg_dungeon)
+arpg_assert_target_not_reachable(arpg_persistence arpg_dungeon)
+arpg_assert_target_not_reachable(arpg_persistence arpg_combat)
+arpg_assert_target_not_reachable(arpg_dungeon arpg_persistence)
+arpg_assert_target_not_reachable(arpg_combat arpg_persistence)
 
 add_test(
     NAME architecture.core_no_raylib
@@ -851,11 +856,57 @@ set_tests_properties(
     PROPERTIES LABELS "headless;architecture")
 
 add_test(
+    NAME architecture.persistence_no_raylib
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/persistence"
+        "-DSOURCE_LABEL=Persistence"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/core_boundary_test.cmake")
+set_tests_properties(
+    architecture.persistence_no_raylib
+    PROPERTIES LABELS "headless;architecture")
+
+add_test(
     NAME architecture.combat_no_dungeon
     COMMAND "${CMAKE_COMMAND}"
         "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/combat"
         "-DSOURCE_LABEL=Combat"
+        "-DFORBIDDEN_MODULE=dungeon"
+        "-DFORBIDDEN_LABEL=Dungeon"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/module_boundary_test.cmake")
 set_tests_properties(
     architecture.combat_no_dungeon
+    PROPERTIES LABELS "headless;architecture")
+
+add_test(
+    NAME architecture.dungeon_no_persistence
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/dungeon"
+        "-DSOURCE_LABEL=Dungeon"
+        "-DFORBIDDEN_MODULE=persistence"
+        "-DFORBIDDEN_LABEL=Persistence"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/module_boundary_test.cmake")
+set_tests_properties(
+    architecture.dungeon_no_persistence
+    PROPERTIES LABELS "headless;architecture")
+
+add_test(
+    NAME architecture.combat_no_persistence
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/combat"
+        "-DSOURCE_LABEL=Combat"
+        "-DFORBIDDEN_MODULE=persistence"
+        "-DFORBIDDEN_LABEL=Persistence"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/module_boundary_test.cmake")
+set_tests_properties(
+    architecture.combat_no_persistence
+    PROPERTIES LABELS "headless;architecture")
+
+add_test(
+    NAME architecture.persistence_checkpoint_only
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/persistence"
+        "-DSOURCE_LABEL=Persistence"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/persistence_boundary_test.cmake")
+set_tests_properties(
+    architecture.persistence_checkpoint_only
     PROPERTIES LABELS "headless;architecture")
