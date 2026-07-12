@@ -10,6 +10,7 @@ arpg::test::TestSuite movement_jump_suite() noexcept;
 arpg::test::TestSuite hit_resolution_suite() noexcept;
 arpg::test::TestSuite monster_catalog_suite() noexcept;
 arpg::test::TestSuite monster_melee_suite() noexcept;
+arpg::test::TestSuite monster_ranged_suite() noexcept;
 arpg::test::TestSuite monster_pool_suite() noexcept;
 arpg::test::TestSuite player_health_suite() noexcept;
 
@@ -25,9 +26,10 @@ int main() {
         hit_resolution_suite(),
         monster_catalog_suite(),
         monster_melee_suite(),
+        monster_ranged_suite(),
         monster_pool_suite(),
         player_health_suite(),
     };
 
-    return arpg::test::run_suites(suites, 53, "stage 4 task 5");
+    return arpg::test::run_suites(suites, 60, "stage 4 task 6");
 }

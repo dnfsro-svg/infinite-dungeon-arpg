@@ -6,20 +6,6 @@
 
 #include <cstddef>
 
-namespace arpg::test {
-
-struct CombatWorldTestAccess final {
-    static void apply_damage(
-        combat::CombatWorld& world,
-        int damage,
-        combat::Vec3 source_position,
-        combat::FeedbackLevel feedback) noexcept {
-        world.apply_player_damage(damage, source_position, feedback);
-    }
-};
-
-}  // namespace arpg::test
-
 namespace {
 
 using namespace arpg::combat;

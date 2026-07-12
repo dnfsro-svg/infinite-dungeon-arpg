@@ -89,6 +89,8 @@ struct MonsterDefinition final {
     float projectile_speed{};
     std::uint16_t hazard_ticks{};
     FeedbackLevel feedback{FeedbackLevel::light};
+    int shield_points{};
+    std::uint16_t shield_duration_ticks{};
 };
 
 inline constexpr std::size_t kMonsterCapacity = 96;
@@ -100,6 +102,27 @@ inline constexpr std::size_t kEncounterSpawnCapacity = 96;
 struct MonsterSpawnSpec final {
     MonsterId id{MonsterId::chaos_chaser};
     Vec3 position{};
+};
+
+struct MonsterHandle final {
+    std::uint16_t index{0xFFFF};
+    std::uint16_t generation{};
+};
+
+struct ProjectileHandle final {
+    std::uint16_t index{0xFFFF};
+    std::uint16_t generation{};
+};
+
+struct ProjectileRuntime final {
+    bool active{};
+    std::uint16_t generation{};
+    MonsterHandle owner{};
+    Vec3 position{};
+    Vec3 velocity{};
+    std::uint16_t lifetime_ticks{};
+    int damage{};
+    float radius{};
 };
 
 struct EncounterWave final {
@@ -253,9 +276,24 @@ struct MonsterSnapshot final {
     int max_hp{};
     int break_value{};
     int max_break{};
+    int shield{};
+    int max_shield{};
+    std::uint16_t shield_ticks{};
+    std::uint16_t max_shield_ticks{};
     std::uint16_t break_window_ticks{};
     std::uint16_t hit_stop_ticks{};
     MonsterAiPhase ai_phase{MonsterAiPhase::idle};
+};
+
+struct ProjectileSnapshot final {
+    bool active{};
+    std::uint16_t generation{};
+    MonsterHandle owner{};
+    Vec3 position{};
+    Vec3 velocity{};
+    std::uint16_t lifetime_ticks{};
+    int damage{};
+    float radius{};
 };
 
 // Temporary presentation alias for pre-Task 3 dungeon tests. Task 8 removes
@@ -267,6 +305,8 @@ struct CombatDiagnostics final {
     std::uint32_t input_expired_count{};
     std::uint32_t input_overflow_count{};
     std::uint32_t event_overflow_count{};
+    std::uint32_t projectile_saturation_count{};
+    std::uint32_t projectile_invalid_owner_count{};
 };
 
 struct CombatSnapshot final {
@@ -274,6 +314,8 @@ struct CombatSnapshot final {
     PlayerSnapshot player{};
     std::array<MonsterSnapshot, kMonsterCapacity> monsters{};
     std::size_t monster_count{};
+    std::array<ProjectileSnapshot, kProjectileCapacity> projectiles{};
+    std::size_t projectile_count{};
     // Compatibility projection only; runtime state is owned by monsters.
     std::array<DummySnapshot, kDummyCount> dummies{};
     CombatDiagnostics diagnostics{};

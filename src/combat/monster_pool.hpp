@@ -32,15 +32,13 @@ struct MonsterRuntime final {
     int break_value{};
     int max_break{};
     int shield{};
+    int max_shield{};
     std::uint16_t shield_ticks{};
+    std::uint16_t max_shield_ticks{};
     std::uint16_t break_window_ticks{};
     std::uint16_t hit_stop_ticks{};
     std::uint16_t owner_transient_counter{};
-};
-
-struct MonsterHandle final {
-    std::uint16_t index{0xFFFF};
-    std::uint16_t generation{};
+    Vec3 attack_target_position{};
 };
 
 class MonsterPool final {
@@ -60,6 +58,33 @@ private:
     static void advance_generation(MonsterRuntime& runtime) noexcept;
 
     std::array<MonsterRuntime, kMonsterCapacity> slots_{};
+    std::size_t active_count_{};
+};
+
+class ProjectilePool final {
+public:
+    void clear() noexcept;
+    [[nodiscard]] std::optional<ProjectileHandle> spawn(
+        MonsterHandle owner,
+        Vec3 position,
+        Vec3 velocity,
+        std::uint16_t lifetime_ticks,
+        int damage,
+        float radius) noexcept;
+    [[nodiscard]] bool destroy(ProjectileHandle handle) noexcept;
+    [[nodiscard]] std::size_t active_count() const noexcept;
+    [[nodiscard]] ProjectileRuntime* get(ProjectileHandle handle) noexcept;
+    [[nodiscard]] const ProjectileRuntime* get(
+        ProjectileHandle handle) const noexcept;
+    [[nodiscard]] const std::array<ProjectileRuntime, kProjectileCapacity>&
+    slots() const noexcept;
+    [[nodiscard]] std::array<ProjectileRuntime, kProjectileCapacity>&
+    slots() noexcept;
+
+private:
+    static void advance_generation(ProjectileRuntime& runtime) noexcept;
+
+    std::array<ProjectileRuntime, kProjectileCapacity> slots_{};
     std::size_t active_count_{};
 };
 

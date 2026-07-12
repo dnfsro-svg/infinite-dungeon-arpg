@@ -4,6 +4,8 @@
 #include "combat/monster_catalog.hpp"
 
 #include <array>
+#include <algorithm>
+#include <cmath>
 
 namespace arpg::combat {
 namespace {
@@ -71,6 +73,8 @@ void CombatWorld::tick(MovementInput movement) noexcept {
         resolve_attack_hits();
     }
 
+    simulate_projectiles();
+
     input_buffer_.age(player_frozen || player_hurt);
     ++tick_;
 }
@@ -88,6 +92,7 @@ void CombatWorld::reset() noexcept {
 void CombatWorld::initialize_runtime() noexcept {
     initialize_player();
     monsters_.clear();
+    projectiles_.clear();
     if (legacy_mode_) {
         initialize_legacy_monsters();
     } else {
@@ -102,6 +107,8 @@ void CombatWorld::initialize_runtime() noexcept {
     }
     tick_ = 0;
     event_overflow_count_ = 0;
+    projectile_saturation_count_ = 0;
+    projectile_invalid_owner_count_ = 0;
 }
 
 void CombatWorld::initialize_player() noexcept {
@@ -149,6 +156,7 @@ bool CombatWorld::load_wave(
     }
 
     monsters_.clear();
+    projectiles_.clear();
     for (std::size_t index = 0; index < wave.spawn_count; ++index) {
         const auto handle = monsters_.spawn(
             wave.spawns[index].id, wave.spawns[index].position);
@@ -163,6 +171,8 @@ bool CombatWorld::load_wave(
     while (events_.try_pop().has_value()) {
     }
     event_overflow_count_ = 0U;
+    projectile_saturation_count_ = 0U;
+    projectile_invalid_owner_count_ = 0U;
     encounter_config_.wave = wave;
     encounter_config_.reset_player_health = reset_player_health;
     legacy_mode_ = false;
@@ -190,10 +200,15 @@ std::size_t CombatWorld::active_monster_count() const noexcept {
     return monsters_.active_count();
 }
 
+std::size_t CombatWorld::active_projectile_count() const noexcept {
+    return projectiles_.active_count();
+}
+
 bool CombatWorld::destroy_monster(MonsterHandle handle) noexcept {
     if (!monsters_.destroy(handle)) {
         return false;
     }
+    remove_owned_projectiles(handle);
     if (handle.index < attack_.hit_targets.size()) {
         attack_.hit_targets[handle.index] = false;
     }
@@ -244,6 +259,10 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
             dummy.max_hp,
             dummy.break_value,
             dummy.max_break,
+            dummy.shield,
+            dummy.max_shield,
+            dummy.shield_ticks,
+            dummy.max_shield_ticks,
             dummy.break_window_ticks,
             dummy.hit_stop_ticks,
             dummy.ai_phase,
@@ -251,6 +270,25 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
     }
 
     result.monster_count = monsters_.active_count();
+    if (projectiles_.active_count() != 0U) {
+        for (std::size_t index = 0; index < projectiles_.slots().size(); ++index) {
+            const ProjectileRuntime& projectile = projectiles_.slots()[index];
+            if (!projectile.active) {
+                continue;
+            }
+            result.projectiles[index] = ProjectileSnapshot{
+                projectile.active,
+                projectile.generation,
+                projectile.owner,
+                projectile.position,
+                projectile.velocity,
+                projectile.lifetime_ticks,
+                projectile.damage,
+                projectile.radius,
+            };
+        }
+    }
+    result.projectile_count = projectiles_.active_count();
     std::size_t compatibility_index = 0U;
     for (std::size_t index = 0;
          index < monsters_.slots().size()
@@ -268,6 +306,8 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
         input_buffer_.expired_count(),
         input_buffer_.overflow_count(),
         event_overflow_count_,
+        projectile_saturation_count_,
+        projectile_invalid_owner_count_,
     };
     return result;
 }
@@ -303,6 +343,101 @@ void CombatWorld::apply_player_damage(
     hurt_started.position = source_position;
     hurt_started.value = damage;
     emit_event(hurt_started);
+}
+
+bool CombatWorld::spawn_projectile(
+    MonsterHandle owner,
+    Vec3 position,
+    Vec3 velocity,
+    std::uint16_t lifetime_ticks,
+    int damage,
+    float radius) noexcept {
+    if (monsters_.get(owner) == nullptr) {
+        ++projectile_invalid_owner_count_;
+        return false;
+    }
+    if (!projectiles_.spawn(
+            owner, position, velocity, lifetime_ticks, damage, radius)
+             .has_value()) {
+        ++projectile_saturation_count_;
+        return false;
+    }
+    return true;
+}
+
+void CombatWorld::remove_owned_projectiles(MonsterHandle owner) noexcept {
+    for (std::size_t index = 0; index < kProjectileCapacity; ++index) {
+        const ProjectileRuntime* projectile = projectiles_.get(ProjectileHandle{
+            static_cast<std::uint16_t>(index),
+            projectiles_.slots()[index].generation});
+        if (projectile == nullptr) {
+            continue;
+        }
+        if (projectile->owner.index != owner.index
+            || projectile->owner.generation != owner.generation) {
+            continue;
+        }
+        static_cast<void>(projectiles_.destroy(ProjectileHandle{
+            static_cast<std::uint16_t>(index), projectile->generation}));
+    }
+}
+
+void CombatWorld::simulate_projectiles() noexcept {
+    constexpr float room_min_x = -8.0F;
+    constexpr float room_max_x = 8.0F;
+    constexpr float room_min_y = -3.5F;
+    constexpr float room_max_y = 3.5F;
+    constexpr float player_radius_x = 0.45F;
+    constexpr float player_radius_y = 0.35F;
+    constexpr float player_radius_z = 1.60F;
+
+    for (std::size_t index = 0; index < kProjectileCapacity; ++index) {
+        ProjectileRuntime* active = projectiles_.get(ProjectileHandle{
+            static_cast<std::uint16_t>(index),
+            projectiles_.slots()[index].generation});
+        if (active == nullptr) {
+            continue;
+        }
+        ProjectileRuntime& projectile = *active;
+        const MonsterHandle owner = projectile.owner;
+        const MonsterRuntime* owner_runtime = monsters_.get(owner);
+        if (owner_runtime == nullptr || owner_runtime->hp <= 0
+            || owner_runtime->reaction == ReactionState::defeated) {
+            static_cast<void>(projectiles_.destroy(ProjectileHandle{
+                static_cast<std::uint16_t>(index), projectile.generation}));
+            continue;
+        }
+
+        projectile.position.x += projectile.velocity.x;
+        projectile.position.y += projectile.velocity.y;
+        projectile.position.z += projectile.velocity.z;
+        if (projectile.lifetime_ticks != 0) {
+            --projectile.lifetime_ticks;
+        }
+
+        const float dx = projectile.position.x - player_.position.x;
+        const float dy = projectile.position.y - player_.position.y;
+        const float dz = projectile.position.z - player_.position.z;
+        const float rx = player_radius_x + projectile.radius;
+        const float ry = player_radius_y + projectile.radius;
+        const float rz = player_radius_z + projectile.radius;
+        const bool hit_player = std::fabs(dx) <= rx && std::fabs(dy) <= ry
+                              && std::fabs(dz) <= rz;
+        const bool outside = projectile.position.x < room_min_x
+                          || projectile.position.x > room_max_x
+                          || projectile.position.y < room_min_y
+                          || projectile.position.y > room_max_y;
+        const bool expired = projectile.lifetime_ticks == 0;
+        if (hit_player) {
+            apply_player_damage(
+                projectile.damage, projectile.position,
+                FeedbackLevel::medium);
+        }
+        if (hit_player || outside || expired) {
+            static_cast<void>(projectiles_.destroy(ProjectileHandle{
+                static_cast<std::uint16_t>(index), projectile.generation}));
+        }
+    }
 }
 
 }  // namespace arpg::combat

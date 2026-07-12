@@ -78,7 +78,7 @@ arpg::test::Failure unsupported_monsters_remain_inert() noexcept {
     config.wave.spawns[0] = MonsterSpawnSpec{
         MonsterId::fire_bomber, Vec3{2.0F, 0.0F, 0.0F}};
     config.wave.spawns[1] = MonsterSpawnSpec{
-        MonsterId::lightning_shooter, Vec3{3.0F, 0.0F, 0.0F}};
+        MonsterId::lightning_dasher, Vec3{3.0F, 0.0F, 0.0F}};
     CombatWorld world{config};
     const auto before = world.snapshot();
     world.tick(MovementInput{});
