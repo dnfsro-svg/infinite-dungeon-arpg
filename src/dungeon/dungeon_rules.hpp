@@ -34,6 +34,23 @@ struct DungeonRules final {
     std::uint32_t rules_version{1};
 };
 
+// Gray-box encounter tuning is intentionally centralized here so later
+// balancing changes do not alter the director's algorithm or RNG contract.
+struct EncounterDirectorConfig final {
+    std::uint8_t base_budget{8};
+    std::uint8_t depth_step{5};
+    std::uint8_t budget_per_step{1};
+    std::uint8_t max_budget{24};
+    std::uint8_t two_wave_threshold{12};
+    std::uint8_t matching_ecology_weight{4};
+    std::uint8_t off_ecology_weight{1};
+    std::uint8_t normal_high_priority_limit{1};
+    std::uint8_t high_budget_priority_limit{2};
+    std::uint8_t ranged_limit{4};
+    std::uint8_t support_limit{2};
+    std::uint8_t ground_hazard_limit{3};
+};
+
 [[nodiscard]] std::optional<checkpoint::DungeonElement> element_for_exit(
     checkpoint::ExitDirection direction) noexcept;
 [[nodiscard]] DungeonFault validate_rules(
@@ -43,5 +60,7 @@ struct DungeonRules final {
     const std::array<std::uint32_t, 4>& biases,
     std::array<std::uint64_t, 4>& weights,
     std::uint64_t& total) noexcept;
+[[nodiscard]] DungeonFault validate_encounter_director_config(
+    const EncounterDirectorConfig& config) noexcept;
 
 }  // namespace arpg::dungeon

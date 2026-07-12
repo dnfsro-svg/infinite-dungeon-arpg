@@ -1,5 +1,7 @@
 #include "dungeon/dungeon_rules.hpp"
 
+#include "combat/combat_types.hpp"
+
 #include <limits>
 
 namespace arpg::dungeon {
@@ -68,6 +70,29 @@ DungeonFault compute_ecology_weights(
 
     weights = checked_weights;
     total = checked_total;
+    return DungeonFault::none;
+}
+
+DungeonFault validate_encounter_director_config(
+    const EncounterDirectorConfig& config) noexcept {
+    if (config.base_budget < 2U || config.depth_step == 0U
+            || config.budget_per_step == 0U || config.max_budget < 2U
+            || config.max_budget < config.base_budget
+            || config.two_wave_threshold == 0U
+            || config.matching_ecology_weight == 0U
+            || config.off_ecology_weight == 0U) {
+        return DungeonFault::invalid_rules;
+    }
+
+    constexpr std::uint8_t kCapacity = static_cast<std::uint8_t>(
+        combat::kEncounterSpawnCapacity);
+    if (config.normal_high_priority_limit > kCapacity
+            || config.high_budget_priority_limit > kCapacity
+            || config.ranged_limit > kCapacity
+            || config.support_limit > kCapacity
+            || config.ground_hazard_limit > kCapacity) {
+        return DungeonFault::invalid_rules;
+    }
     return DungeonFault::none;
 }
 
