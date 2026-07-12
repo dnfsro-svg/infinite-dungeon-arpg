@@ -10,6 +10,10 @@
 namespace arpg::test {
 
 struct DungeonSessionTestAccess final {
+    static const dungeon::RoomEncounterPlan& encounter_plan(
+        const dungeon::DungeonSession& session) noexcept {
+        return session.encounter_plan_;
+    }
     static void damage_current_player(
         dungeon::DungeonSession& session, int damage) noexcept {
         if (session.combat_.has_value()) {
@@ -43,6 +47,29 @@ inline void force_defeat_current_wave(dungeon::DungeonSession& session) noexcept
 inline void damage_current_player(
     dungeon::DungeonSession& session, int damage) noexcept {
     DungeonSessionTestAccess::damage_current_player(session, damage);
+}
+
+inline const dungeon::RoomEncounterPlan& encounter_plan(
+    const dungeon::DungeonSession& session) noexcept {
+    return DungeonSessionTestAccess::encounter_plan(session);
+}
+
+inline bool same_encounter_plan(const dungeon::RoomEncounterPlan& left,
+    const dungeon::RoomEncounterPlan& right) noexcept {
+    if (left.wave_count != right.wave_count
+            || left.total_budget != right.total_budget) return false;
+    for (std::size_t wave = 0; wave < left.wave_count; ++wave) {
+        const auto& a = left.waves[wave];
+        const auto& b = right.waves[wave];
+        if (a.spawn_count != b.spawn_count || a.spent_budget != b.spent_budget) return false;
+        for (std::size_t spawn = 0; spawn < a.spawn_count; ++spawn) {
+            if (a.spawns[spawn].id != b.spawns[spawn].id
+                    || a.spawns[spawn].position.x != b.spawns[spawn].position.x
+                    || a.spawns[spawn].position.y != b.spawns[spawn].position.y
+                    || a.spawns[spawn].position.z != b.spawns[spawn].position.z) return false;
+        }
+    }
+    return true;
 }
 
 inline bool commit_pending(

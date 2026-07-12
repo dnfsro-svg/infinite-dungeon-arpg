@@ -107,11 +107,16 @@ arpg::test::Failure reset_and_reload_rebuild_the_same_encounter_plan() noexcept 
     const DungeonRules rules = two_wave_rules();
     const DungeonRunState state = state_for_seed(0xC0FFEEU, rules);
     DungeonSession session{rules, state};
+    const auto plan = arpg::test::encounter_plan(session);
     const auto before = session.snapshot();
     session.reset_current_room();
     const auto after_reset = session.snapshot();
     DungeonSession reloaded{rules, state};
     const auto after_reload = reloaded.snapshot();
+    ARPG_REQUIRE(arpg::test::same_encounter_plan(
+        plan, arpg::test::encounter_plan(session)));
+    ARPG_REQUIRE(arpg::test::same_encounter_plan(
+        plan, arpg::test::encounter_plan(reloaded)));
 
     ARPG_REQUIRE(before.encounter.total_budget == after_reset.encounter.total_budget);
     ARPG_REQUIRE(before.encounter.total_budget == after_reload.encounter.total_budget);
@@ -234,6 +239,27 @@ arpg::test::Failure wave_delay_freezes_combat_and_preserves_health_until_wave_on
     return {};
 }
 
+arpg::test::Failure hole_stays_rejected_for_every_delay_tick() noexcept {
+    const DungeonRules rules = two_wave_rules();
+    auto state = state_for_seed(0x2A11CEU, rules);
+    state.current_room.has_hole = true;
+    DungeonSession session{rules, state};
+    session.tick({});
+    arpg::test::force_defeat_current_wave(session);
+    session.tick({});
+    for (int tick = 0; tick < 44; ++tick) {
+        const auto snapshot = session.snapshot();
+        ARPG_REQUIRE(snapshot.phase == RoomPhase::wave_delay);
+        ARPG_REQUIRE(snapshot.has_hole);
+        ARPG_REQUIRE(!session.request_descent(true));
+        ARPG_REQUIRE(!session.pending_transition().has_value());
+        session.tick({});
+    }
+    session.tick({});
+    ARPG_REQUIRE(session.snapshot().wave_index == 1U);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"two wave room keeps exits closed until last wave", &two_wave_room_keeps_exits_closed_until_last_wave},
     {"sealed hole stays closed through wave delay", &sealed_hole_stays_closed_through_wave_delay},
@@ -243,6 +269,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"shooter and chasers fixture reaches awaiting exit", &shooter_and_chasers_fixture_reaches_awaiting_exit},
     {"forced defeat advances real wave lifecycle", &forced_defeat_advances_real_wave_lifecycle},
     {"wave delay freezes combat and preserves health", &wave_delay_freezes_combat_and_preserves_health_until_wave_one},
+    {"hole stays rejected for every delay tick", &hole_stays_rejected_for_every_delay_tick},
 };
 
 }  // namespace
