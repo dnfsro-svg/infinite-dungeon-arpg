@@ -4,7 +4,9 @@ if(TARGET arpg_raylib)
         combat_key_bindings_tests.cpp
         combat_feedback_tests.cpp
         combat_view_math_tests.cpp
-        dungeon_view_math_tests.cpp)
+        dungeon_view_math_tests.cpp
+        host_launch_options_tests.cpp
+        dungeon_runtime_tests.cpp)
     target_compile_features(arpg_platform_tests PRIVATE cxx_std_17)
     target_include_directories(arpg_platform_tests
         PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
