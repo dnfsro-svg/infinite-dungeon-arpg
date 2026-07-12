@@ -1,6 +1,7 @@
 #pragma once
 
 #include "combat/combat_types.hpp"
+#include "dungeon/dungeon_checkpoint.hpp"
 
 #include <array>
 #include <cstdint>
@@ -8,21 +9,8 @@
 
 namespace arpg::dungeon {
 
-enum class ExitDirection : std::uint8_t {
-    up = 0,
-    down = 1,
-    left = 2,
-    right = 3,
-    none = 0xFF,
-};
-
-enum class EntrySide : std::uint8_t {
-    initial,
-    top,
-    bottom,
-    left,
-    right,
-};
+using ExitDirection = checkpoint::ExitDirection;
+using EntrySide = checkpoint::EntrySide;
 
 enum class RoomPhase : std::uint8_t {
     locked,
