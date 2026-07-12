@@ -106,6 +106,9 @@ bool DungeonSession::request_descent(bool player_in_range) noexcept {
     const RunStateBuildResult built = make_descent_transition(
         stable_state_, rules_);
     if (built.fault != DungeonFault::none) {
+        if (built.fault == DungeonFault::room_index_overflow) {
+            diagnostics_.room_index_overflow = true;
+        }
         enter_fault(built.fault);
         return false;
     }

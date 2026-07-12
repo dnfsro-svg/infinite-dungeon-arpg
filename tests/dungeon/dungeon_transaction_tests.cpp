@@ -5,6 +5,7 @@
 #include "dungeon/dungeon_progression.hpp"
 
 #include <cstdint>
+#include <limits>
 
 namespace {
 
@@ -232,6 +233,19 @@ arpg::test::Failure descent_requires_clear_hole_range_and_edge() noexcept {
     ARPG_REQUIRE(session.snapshot().phase == RoomPhase::committing);
     ARPG_REQUIRE(session.pending_transition()->kind
         == arpg::dungeon::TransitionKind::descent);
+
+    DungeonRunState max_index = initial_state();
+    max_index.current_room.index =
+        (std::numeric_limits<std::uint64_t>::max)();
+    max_index.current_room.has_hole = true;
+    DungeonSession overflow_session{DungeonRules{}, max_index};
+    ARPG_REQUIRE(clear_and_await(overflow_session));
+    ARPG_REQUIRE(!overflow_session.request_descent(true));
+    const DungeonSnapshot overflow_state = overflow_session.snapshot();
+    ARPG_REQUIRE(overflow_state.phase == RoomPhase::faulted);
+    ARPG_REQUIRE(overflow_state.diagnostics.fault
+        == DungeonFault::room_index_overflow);
+    ARPG_REQUIRE(overflow_state.diagnostics.room_index_overflow);
     return {};
 }
 
