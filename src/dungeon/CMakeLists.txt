@@ -1,4 +1,5 @@
 add_library(arpg_dungeon STATIC
+    dungeon_rules.cpp
     dungeon_session.cpp
     room_generation.cpp
     room_navigation.cpp)
