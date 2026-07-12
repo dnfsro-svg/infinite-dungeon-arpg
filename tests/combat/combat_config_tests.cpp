@@ -36,8 +36,8 @@ arpg::test::Failure disabled_respawn_stays_defeated() noexcept {
         world.tick(MovementInput{});
     }
     const CombatSnapshot snapshot = world.snapshot();
-    ARPG_REQUIRE(snapshot.dummies[0].hp == 0);
-    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::defeated);
+    ARPG_REQUIRE(snapshot.monsters[0].hp == 0);
+    ARPG_REQUIRE(snapshot.monsters[0].reaction == ReactionState::defeated);
     while (const auto event = world.try_pop_event()) {
         ARPG_REQUIRE(event->kind != CombatEventKind::respawned);
     }

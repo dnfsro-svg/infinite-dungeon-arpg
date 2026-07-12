@@ -61,35 +61,35 @@ arpg::test::Failure j1_hitstun_uses_local_frozen_ticks() noexcept {
     tick_n(world, 5);
 
     CombatSnapshot snapshot = world.snapshot();
-    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::hitstun);
-    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::hitstun);
-    ARPG_REQUIRE(snapshot.dummies[0].hit_stop_ticks == 3);
-    ARPG_REQUIRE(snapshot.dummies[1].hit_stop_ticks == 3);
+    ARPG_REQUIRE(snapshot.monsters[0].reaction == ReactionState::hitstun);
+    ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::hitstun);
+    ARPG_REQUIRE(snapshot.monsters[0].hit_stop_ticks == 3);
+    ARPG_REQUIRE(snapshot.monsters[1].hit_stop_ticks == 3);
     ARPG_REQUIRE(arpg::test::near(
-        snapshot.dummies[0].position.x, 1.20, 1.0e-4));
+        snapshot.monsters[0].position.x, 1.20, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(
-        snapshot.dummies[1].position.x, 1.20, 1.0e-4));
+        snapshot.monsters[1].position.x, 1.20, 1.0e-4));
 
     tick_n(world, 3);
     snapshot = world.snapshot();
-    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::hitstun);
-    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::hitstun);
-    ARPG_REQUIRE(snapshot.dummies[0].hit_stop_ticks == 0);
-    ARPG_REQUIRE(snapshot.dummies[1].hit_stop_ticks == 0);
+    ARPG_REQUIRE(snapshot.monsters[0].reaction == ReactionState::hitstun);
+    ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::hitstun);
+    ARPG_REQUIRE(snapshot.monsters[0].hit_stop_ticks == 0);
+    ARPG_REQUIRE(snapshot.monsters[1].hit_stop_ticks == 0);
 
     tick_n(world, 9);
     snapshot = world.snapshot();
-    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::hitstun);
-    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::hitstun);
+    ARPG_REQUIRE(snapshot.monsters[0].reaction == ReactionState::hitstun);
+    ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::hitstun);
     world.tick(MovementInput{});
     snapshot = world.snapshot();
-    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::hitstun);
-    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::idle);
+    ARPG_REQUIRE(snapshot.monsters[0].reaction == ReactionState::hitstun);
+    ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::idle);
     tick_n(world, 2);
     ARPG_REQUIRE(
-        world.snapshot().dummies[0].reaction == ReactionState::hitstun);
+        world.snapshot().monsters[0].reaction == ReactionState::hitstun);
     world.tick(MovementInput{});
-    ARPG_REQUIRE(world.snapshot().dummies[0].reaction == ReactionState::idle);
+    ARPG_REQUIRE(world.snapshot().monsters[0].reaction == ReactionState::idle);
     return {};
 }
 
@@ -99,23 +99,23 @@ arpg::test::Failure j2_knockback_scales_for_light_and_normal() noexcept {
     tick_n(world, 6);
 
     CombatSnapshot snapshot = world.snapshot();
-    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::hitstun);
-    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::hitstun);
-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[0].velocity.x, 2.75, 1.0e-4));
-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.x, 2.20, 1.0e-4));
-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[0].position.x, 1.20, 1.0e-4));
-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].position.x, 1.20, 1.0e-4));
+    ARPG_REQUIRE(snapshot.monsters[0].reaction == ReactionState::hitstun);
+    ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::hitstun);
+    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[0].velocity.x, 2.75, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[1].velocity.x, 2.20, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[0].position.x, 1.20, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[1].position.x, 1.20, 1.0e-4));
 
     tick_n(world, 5);
     snapshot = world.snapshot();
-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[0].position.x, 1.20, 1.0e-4));
-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].position.x, 1.20, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[0].position.x, 1.20, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[1].position.x, 1.20, 1.0e-4));
     world.tick(MovementInput{});
     snapshot = world.snapshot();
     ARPG_REQUIRE(arpg::test::near(
-        snapshot.dummies[0].position.x, 1.20 + 2.75 / 60.0, 1.0e-4));
+        snapshot.monsters[0].position.x, 1.20 + 2.75 / 60.0, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(
-        snapshot.dummies[1].position.x, 1.20 + 2.20 / 60.0, 1.0e-4));
+        snapshot.monsters[1].position.x, 1.20 + 2.20 / 60.0, 1.0e-4));
     return {};
 }
 
@@ -126,34 +126,34 @@ arpg::test::Failure launcher_integrates_then_lands_in_knockdown() noexcept {
     tick_n(world, 7);
 
     CombatSnapshot snapshot = world.snapshot();
-    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::airborne);
-    ARPG_REQUIRE(snapshot.dummies[1].hit_stop_ticks == 5);
-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].position.z, 0.0));
-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.x, 1.2, 1.0e-4));
-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.z, 9.5, 1.0e-4));
+    ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::airborne);
+    ARPG_REQUIRE(snapshot.monsters[1].hit_stop_ticks == 5);
+    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[1].position.z, 0.0));
+    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[1].velocity.x, 1.2, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[1].velocity.z, 9.5, 1.0e-4));
     drain_events(world);
 
     tick_n(world, 5);
     snapshot = world.snapshot();
-    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::airborne);
-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].position.z, 0.0));
-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.z, 9.5, 1.0e-4));
+    ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::airborne);
+    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[1].position.z, 0.0));
+    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[1].velocity.z, 9.5, 1.0e-4));
     world.tick(MovementInput{});
     snapshot = world.snapshot();
     ARPG_REQUIRE(arpg::test::near(
-        snapshot.dummies[1].position.z, 9.5 / 60.0, 1.0e-4));
-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.z, 9.1, 1.0e-4));
+        snapshot.monsters[1].position.z, 9.5 / 60.0, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[1].velocity.z, 9.1, 1.0e-4));
 
     for (int tick = 0;
          tick < 120
-         && world.snapshot().dummies[1].reaction != ReactionState::knockdown;
+         && world.snapshot().monsters[1].reaction != ReactionState::knockdown;
          ++tick) {
         world.tick(MovementInput{});
     }
     snapshot = world.snapshot();
-    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::knockdown);
-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].position.z, 0.0));
-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.z, 0.0));
+    ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::knockdown);
+    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[1].position.z, 0.0));
+    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[1].velocity.z, 0.0));
     int landing_events = 0;
     while (const auto event = world.try_pop_event()) {
         if (event->kind == CombatEventKind::landing) {
@@ -165,9 +165,9 @@ arpg::test::Failure launcher_integrates_then_lands_in_knockdown() noexcept {
     ARPG_REQUIRE(landing_events == 1);
     tick_n(world, 44);
     ARPG_REQUIRE(
-        world.snapshot().dummies[1].reaction == ReactionState::knockdown);
+        world.snapshot().monsters[1].reaction == ReactionState::knockdown);
     world.tick(MovementInput{});
-    ARPG_REQUIRE(world.snapshot().dummies[1].reaction == ReactionState::rising);
+    ARPG_REQUIRE(world.snapshot().monsters[1].reaction == ReactionState::rising);
     while (const auto event = world.try_pop_event()) {
         ARPG_REQUIRE(event->kind != CombatEventKind::landing);
     }
@@ -178,29 +178,29 @@ arpg::test::Failure launcher_integrates_then_lands_in_knockdown() noexcept {
     tick_n(airborne_followup, 7);
     ARPG_REQUIRE(finish_attack(airborne_followup, 128));
     ARPG_REQUIRE(
-        airborne_followup.snapshot().dummies[1].reaction
+        airborne_followup.snapshot().monsters[1].reaction
         == ReactionState::airborne);
     ARPG_REQUIRE(airborne_followup.queue_action(Action::light));
     airborne_followup.tick(MovementInput{});
     tick_n(airborne_followup, 5);
     snapshot = airborne_followup.snapshot();
-    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::airborne);
-    ARPG_REQUIRE(snapshot.dummies[1].hit_stop_ticks == 3);
-    const float frozen_z = snapshot.dummies[1].position.z;
-    const float frozen_velocity_z = snapshot.dummies[1].velocity.z;
+    ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::airborne);
+    ARPG_REQUIRE(snapshot.monsters[1].hit_stop_ticks == 3);
+    const float frozen_z = snapshot.monsters[1].position.z;
+    const float frozen_velocity_z = snapshot.monsters[1].velocity.z;
     tick_n(airborne_followup, 3);
     snapshot = airborne_followup.snapshot();
     ARPG_REQUIRE(arpg::test::near(
-        snapshot.dummies[1].position.z, frozen_z, 1.0e-4));
+        snapshot.monsters[1].position.z, frozen_z, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(
-        snapshot.dummies[1].velocity.z, frozen_velocity_z, 1.0e-4));
+        snapshot.monsters[1].velocity.z, frozen_velocity_z, 1.0e-4));
     airborne_followup.tick(MovementInput{});
     snapshot = airborne_followup.snapshot();
-    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::airborne);
+    ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::airborne);
     ARPG_REQUIRE(!arpg::test::near(
-        snapshot.dummies[1].position.z, frozen_z, 1.0e-4));
+        snapshot.monsters[1].position.z, frozen_z, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(
-        snapshot.dummies[1].velocity.z,
+        snapshot.monsters[1].velocity.z,
         frozen_velocity_z - 24.0 / 60.0,
         1.0e-4));
 
@@ -214,7 +214,7 @@ arpg::test::Failure launcher_integrates_then_lands_in_knockdown() noexcept {
     tick_n(independent, 7);
     ARPG_REQUIRE(finish_attack(independent, 128));
     ARPG_REQUIRE(
-        independent.snapshot().dummies[1].reaction
+        independent.snapshot().monsters[1].reaction
         == ReactionState::airborne);
     independent.tick(MovementInput{-1, 0});
     ARPG_REQUIRE(independent.snapshot().player.facing == Facing::left);
@@ -222,16 +222,16 @@ arpg::test::Failure launcher_integrates_then_lands_in_knockdown() noexcept {
     independent.tick(MovementInput{});
     tick_n(independent, 5);
     snapshot = independent.snapshot();
-    ARPG_REQUIRE(snapshot.dummies[0].hit_stop_ticks == 3);
-    ARPG_REQUIRE(snapshot.dummies[1].hit_stop_ticks == 0);
-    const float independent_z = snapshot.dummies[1].position.z;
+    ARPG_REQUIRE(snapshot.monsters[0].hit_stop_ticks == 3);
+    ARPG_REQUIRE(snapshot.monsters[1].hit_stop_ticks == 0);
+    const float independent_z = snapshot.monsters[1].position.z;
     tick_n(independent, 3);
     snapshot = independent.snapshot();
     ARPG_REQUIRE(snapshot.player.attack_elapsed_ticks == 5);
-    ARPG_REQUIRE(snapshot.dummies[0].hit_stop_ticks == 0);
-    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::airborne);
+    ARPG_REQUIRE(snapshot.monsters[0].hit_stop_ticks == 0);
+    ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::airborne);
     ARPG_REQUIRE(!arpg::test::near(
-        snapshot.dummies[1].position.z, independent_z, 1.0e-4));
+        snapshot.monsters[1].position.z, independent_z, 1.0e-4));
     return {};
 }
 
@@ -247,19 +247,19 @@ arpg::test::Failure knockdown_and_rising_have_exact_boundaries() noexcept {
     ARPG_REQUIRE(j3.snapshot().player.active_attack == AttackId::j3);
     tick_n(j3, 8);
     CombatSnapshot snapshot = j3.snapshot();
-    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::knockdown);
-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[1].velocity.x, 5.0, 1.0e-4));
-    ARPG_REQUIRE(snapshot.dummies[1].hit_stop_ticks == 7);
+    ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::knockdown);
+    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[1].velocity.x, 5.0, 1.0e-4));
+    ARPG_REQUIRE(snapshot.monsters[1].hit_stop_ticks == 7);
     tick_n(j3, 7);
     tick_n(j3, 44);
     ARPG_REQUIRE(
-        j3.snapshot().dummies[1].reaction == ReactionState::knockdown);
+        j3.snapshot().monsters[1].reaction == ReactionState::knockdown);
     j3.tick(MovementInput{});
-    ARPG_REQUIRE(j3.snapshot().dummies[1].reaction == ReactionState::rising);
+    ARPG_REQUIRE(j3.snapshot().monsters[1].reaction == ReactionState::rising);
     tick_n(j3, 29);
-    ARPG_REQUIRE(j3.snapshot().dummies[1].reaction == ReactionState::rising);
+    ARPG_REQUIRE(j3.snapshot().monsters[1].reaction == ReactionState::rising);
     j3.tick(MovementInput{});
-    ARPG_REQUIRE(j3.snapshot().dummies[1].reaction == ReactionState::idle);
+    ARPG_REQUIRE(j3.snapshot().monsters[1].reaction == ReactionState::idle);
     return {};
 }
 
@@ -278,16 +278,16 @@ arpg::test::Failure defeated_respawns_after_ninety_active_ticks() noexcept {
         drain_events(world);
     }
 
-    ARPG_REQUIRE(world.snapshot().dummies[0].hp == 14);
+    ARPG_REQUIRE(world.snapshot().monsters[0].hp == 14);
     ARPG_REQUIRE(world.queue_action(Action::light));
     world.tick(MovementInput{});
     tick_n(world, 5);
     CombatSnapshot snapshot = world.snapshot();
-    ARPG_REQUIRE(snapshot.dummies[0].hp == 0);
-    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::defeated);
-    ARPG_REQUIRE(snapshot.dummies[0].hit_stop_ticks == 3);
-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[0].velocity.x, 0.0));
-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[0].velocity.z, 0.0));
+    ARPG_REQUIRE(snapshot.monsters[0].hp == 0);
+    ARPG_REQUIRE(snapshot.monsters[0].reaction == ReactionState::defeated);
+    ARPG_REQUIRE(snapshot.monsters[0].hit_stop_ticks == 3);
+    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[0].velocity.x, 0.0));
+    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[0].velocity.z, 0.0));
 
     std::array<CombatEventKind, 4> kinds{};
     std::size_t event_count = 0;
@@ -313,8 +313,8 @@ arpg::test::Failure defeated_respawns_after_ninety_active_ticks() noexcept {
     world.tick(MovementInput{});
     tick_n(world, 5);
     snapshot = world.snapshot();
-    ARPG_REQUIRE(snapshot.dummies[0].hp == 0);
-    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::defeated);
+    ARPG_REQUIRE(snapshot.monsters[0].hp == 0);
+    ARPG_REQUIRE(snapshot.monsters[0].reaction == ReactionState::defeated);
     while (const auto event = world.try_pop_event()) {
         ARPG_REQUIRE(event->kind == CombatEventKind::swing);
     }
@@ -326,17 +326,17 @@ arpg::test::Failure defeated_respawns_after_ninety_active_ticks() noexcept {
     world.tick(MovementInput{});
     tick_n(world, 5);
     ARPG_REQUIRE(
-        world.snapshot().dummies[0].reaction == ReactionState::defeated);
+        world.snapshot().monsters[0].reaction == ReactionState::defeated);
     world.tick(MovementInput{});
     snapshot = world.snapshot();
-    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::respawning);
-    ARPG_REQUIRE(snapshot.dummies[0].hp == snapshot.dummies[0].max_hp);
+    ARPG_REQUIRE(snapshot.monsters[0].reaction == ReactionState::respawning);
+    ARPG_REQUIRE(snapshot.monsters[0].hp == snapshot.monsters[0].max_hp);
     ARPG_REQUIRE(arpg::test::near(
-        snapshot.dummies[0].position.x, 1.20, 1.0e-4));
+        snapshot.monsters[0].position.x, 1.20, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(
-        snapshot.dummies[0].position.y, 0.0, 1.0e-4));
+        snapshot.monsters[0].position.y, 0.0, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(
-        snapshot.dummies[0].position.z, 0.0, 1.0e-4));
+        snapshot.monsters[0].position.z, 0.0, 1.0e-4));
 
     int respawn_events = 0;
     int respawn_tick_hits = 0;
@@ -355,8 +355,8 @@ arpg::test::Failure defeated_respawns_after_ninety_active_ticks() noexcept {
     ARPG_REQUIRE(respawn_tick_hits == 0);
     world.tick(MovementInput{});
     snapshot = world.snapshot();
-    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::hitstun);
-    ARPG_REQUIRE(snapshot.dummies[0].hp == 272);
+    ARPG_REQUIRE(snapshot.monsters[0].reaction == ReactionState::hitstun);
+    ARPG_REQUIRE(snapshot.monsters[0].hp == 272);
     while (const auto event = world.try_pop_event()) {
         ARPG_REQUIRE(event->kind != CombatEventKind::respawned);
     }
