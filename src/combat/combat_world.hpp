@@ -20,7 +20,9 @@ public:
     [[nodiscard]] bool queue_action(Action action) noexcept;
     void tick(MovementInput movement) noexcept;
     void reset() noexcept;
-    [[nodiscard]] bool load_wave(const EncounterWave& wave) noexcept;
+    [[nodiscard]] bool load_wave(
+        const EncounterWave& wave,
+        bool reset_player_health = true) noexcept;
     [[nodiscard]] bool destroy_monster(MonsterHandle handle) noexcept;
     [[nodiscard]] std::size_t active_monster_count() const noexcept;
     [[nodiscard]] CombatSnapshot snapshot() const noexcept;
@@ -35,6 +37,10 @@ private:
         std::uint8_t combo_stage{};
         std::uint16_t hit_stop_ticks{};
         bool air_attack_available{true};
+        int hp{};
+        int max_hp{};
+        std::uint16_t hurt_ticks{};
+        std::uint16_t invulnerability_ticks{};
     };
 
     struct AttackRuntime final {
@@ -53,11 +59,15 @@ private:
     void respawn_dummy(std::size_t index) noexcept;
     void apply_attack_assist(const AttackDefinition& definition) noexcept;
     void resolve_attack_hits() noexcept;
+    void apply_player_damage(
+        int damage, Vec3 source_position, FeedbackLevel feedback) noexcept;
     void emit_event(const CombatEvent& event) noexcept;
     void initialize_runtime() noexcept;
 
     void initialize_player() noexcept;
     void initialize_legacy_monsters() noexcept;
+
+    friend struct ::arpg::test::CombatWorldTestAccess;
 
     CombatEncounterConfig encounter_config_{};
     CombatLabConfig legacy_config_{};

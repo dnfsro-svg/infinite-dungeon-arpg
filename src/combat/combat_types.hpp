@@ -4,6 +4,10 @@
 #include <cstddef>
 #include <cstdint>
 
+namespace arpg::test {
+struct CombatWorldTestAccess;
+}
+
 namespace arpg::combat {
 
 struct Vec3 final {
@@ -113,6 +117,9 @@ enum class CombatEventKind : std::uint8_t {
     defeated,
     respawned,
     reset,
+    player_hit,
+    player_hurt_started,
+    player_health_reset,
 };
 
 struct CombatEvent final {
@@ -215,6 +222,10 @@ struct PlayerSnapshot final {
     std::uint8_t combo_stage{};
     std::uint16_t hit_stop_ticks{};
     bool air_attack_available{true};
+    int hp{};
+    int max_hp{};
+    std::uint16_t hurt_ticks{};
+    std::uint16_t invulnerability_ticks{};
 };
 
 struct MonsterSnapshot final {
