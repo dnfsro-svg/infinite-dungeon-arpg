@@ -920,6 +920,8 @@ Expected: Dungeon 44 cases、0 failures；选择的 CTest 全绿。
 
 **Worktree:** E:\game\.worktrees\m03-persistence
 
+**Parallel boundary:** This worktree is based on the pre-Task-5 integration commit, so codec interfaces use `dungeon::checkpoint::DungeonRunState` directly. Task 8 may add the public `dungeon::DungeonRunState` alias when integrating the Session and persistence branches.
+
 **Files:**
 - Modify: CMakeLists.txt
 - Create: src/persistence/CMakeLists.txt
@@ -956,13 +958,13 @@ Expected: Dungeon 44 cases、0 failures；选择的 CTest 全绿。
 
     struct DecodeResult final {
         CodecError error{CodecError::none};
-        dungeon::DungeonRunState state{};
+        dungeon::checkpoint::DungeonRunState state{};
     };
 
     [[nodiscard]] std::uint32_t crc32(
         const std::uint8_t* bytes, std::size_t size) noexcept;
     [[nodiscard]] bool encode_checkpoint(
-        const dungeon::DungeonRunState& state,
+        const dungeon::checkpoint::DungeonRunState& state,
         std::array<std::uint8_t, kEncodedCheckpointSize>& out) noexcept;
     [[nodiscard]] DecodeResult decode_checkpoint(
         const std::uint8_t* bytes, std::size_t size) noexcept;
@@ -1073,6 +1075,8 @@ Expected: Core-only 12/12；Persistence 8 cases、0 failures。
 
 **Worktree:** E:\game\.worktrees\m03-persistence
 
+**Parallel boundary:** This branch remains persistence-only and uses `dungeon::checkpoint::DungeonRunState` directly; it must not depend on the Session migration or `arpg_dungeon`.
+
 **Files:**
 - Create: src/persistence/save_paths.hpp
 - Create: src/persistence/save_paths.cpp
@@ -1134,14 +1138,14 @@ Expected: Core-only 12/12；Persistence 8 cases、0 failures。
         SaveError error{SaveError::none};
         SaveSlot active_slot{SaveSlot::none};
         bool recovered{};
-        dungeon::DungeonRunState checkpoint{};
+        dungeon::checkpoint::DungeonRunState checkpoint{};
     };
 
     struct SaveCommitResult final {
         SaveCommitState state{SaveCommitState::indeterminate};
         SaveError error{SaveError::none};
         SaveSlot active_slot{SaveSlot::none};
-        dungeon::DungeonRunState verified_state{};
+        dungeon::checkpoint::DungeonRunState verified_state{};
     };
 
     class SaveStore final {
@@ -1149,9 +1153,9 @@ Expected: Core-only 12/12；Persistence 8 cases、0 failures。
         explicit SaveStore(SaveStoreConfig config);
         [[nodiscard]] SaveLoadResult load() noexcept;
         [[nodiscard]] SaveCommitResult commit(
-            const dungeon::DungeonRunState& expected) noexcept;
+            const dungeon::checkpoint::DungeonRunState& expected) noexcept;
         [[nodiscard]] SaveLoadResult archive_invalid_and_create(
-            const dungeon::DungeonRunState& initial) noexcept;
+            const dungeon::checkpoint::DungeonRunState& initial) noexcept;
     };
 
     [[nodiscard]] std::optional<std::filesystem::path>
