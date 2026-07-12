@@ -144,6 +144,11 @@ arpg::test::Failure launcher_integrates_then_lands_in_knockdown() noexcept {
         snapshot.monsters[1].position.z, 9.5 / 60.0, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(snapshot.monsters[1].velocity.z, 9.1, 1.0e-4));
 
+    tick_n(world, 55);
+    snapshot = world.snapshot();
+    ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::airborne);
+    ARPG_REQUIRE(snapshot.monsters[1].position.z > 0.0F);
+
     for (int tick = 0;
          tick < 120
          && world.snapshot().monsters[1].reaction != ReactionState::knockdown;
@@ -197,8 +202,6 @@ arpg::test::Failure launcher_integrates_then_lands_in_knockdown() noexcept {
     airborne_followup.tick(MovementInput{});
     snapshot = airborne_followup.snapshot();
     ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::airborne);
-    ARPG_REQUIRE(!arpg::test::near(
-        snapshot.monsters[1].position.z, frozen_z, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(
         snapshot.monsters[1].velocity.z,
         frozen_velocity_z - 24.0 / 60.0,
@@ -230,7 +233,7 @@ arpg::test::Failure launcher_integrates_then_lands_in_knockdown() noexcept {
     ARPG_REQUIRE(snapshot.player.attack_elapsed_ticks == 5);
     ARPG_REQUIRE(snapshot.monsters[0].hit_stop_ticks == 0);
     ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::airborne);
-    ARPG_REQUIRE(!arpg::test::near(
+    ARPG_REQUIRE(arpg::test::near(
         snapshot.monsters[1].position.z, independent_z, 1.0e-4));
     return {};
 }

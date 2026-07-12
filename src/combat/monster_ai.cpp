@@ -200,8 +200,14 @@ void CombatWorld::simulate_monster(std::size_t slot) noexcept {
             return;
         case ReactionState::airborne:
             integrate_reaction(monster);
-            monster.position.z += monster.velocity.z * kTickSeconds;
-            monster.velocity.z -= kGravity * kTickSeconds;
+            if (monster.velocity.z <= 0.0F
+                && monster.reaction_ticks != 0) {
+                --monster.reaction_ticks;
+                monster.velocity.z = 0.0F;
+            } else {
+                monster.position.z += monster.velocity.z * kTickSeconds;
+                monster.velocity.z -= kGravity * kTickSeconds;
+            }
             if (monster.position.z <= 0.0F) {
                 monster.position.z = 0.0F;
                 monster.velocity.z = 0.0F;

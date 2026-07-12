@@ -198,12 +198,27 @@ arpg::test::Failure bulwark_accepts_normal_reaction_after_break() noexcept {
     return {};
 }
 
+arpg::test::Failure launcher_gives_stage4_monster_minimum_airtime() noexcept {
+    CombatWorld world{encounter_for(MonsterId::chaos_chaser, 1.20F)};
+    ARPG_REQUIRE(world.queue_action(Action::launcher));
+    world.tick(MovementInput{});
+    tick_n(world, 7);
+    auto target = world.snapshot().monsters[0];
+    ARPG_REQUIRE(target.reaction == ReactionState::airborne);
+    tick_n(world, 60);
+    target = world.snapshot().monsters[0];
+    ARPG_REQUIRE(target.reaction == ReactionState::airborne);
+    ARPG_REQUIRE(target.position.z > 0.0F);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"chaser move and telegraph stop", &chaos_chaser_moves_then_stops_for_telegraph},
     {"chaser active serial cooldown", &chaos_chaser_damages_only_once_per_active_serial},
     {"bulwark slow armored profile", &water_bulwark_is_slow_and_has_front_armor},
     {"bulwark rear bypasses armor", &bulwark_back_hit_bypasses_front_armor},
     {"bulwark break reaction", &bulwark_accepts_normal_reaction_after_break},
+    {"launcher minimum airtime", &launcher_gives_stage4_monster_minimum_airtime},
 };
 
 }  // namespace

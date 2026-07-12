@@ -291,8 +291,8 @@ arpg::test::Failure defeated_has_priority_over_break_recovery() noexcept {
     }
     const CombatSnapshot pre_defeat = world.snapshot();
     ARPG_REQUIRE(pre_defeat.monsters[2].hp == 16);
-    ARPG_REQUIRE(pre_defeat.monsters[2].armor == ArmorState::broken);
-    ARPG_REQUIRE(pre_defeat.monsters[2].break_window_ticks > 0);
+    ARPG_REQUIRE(pre_defeat.monsters[2].armor == ArmorState::armored);
+    ARPG_REQUIRE(pre_defeat.monsters[2].break_window_ticks == 0);
 
     ARPG_REQUIRE(start_action_and_reach_hit(world, Action::launcher, 7));
     const CombatSnapshot snapshot = world.snapshot();

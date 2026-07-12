@@ -14,6 +14,7 @@ constexpr std::uint16_t kMediumHitstunTicks = 16;
 constexpr std::uint16_t kKnockdownTicks = 45;
 constexpr std::uint16_t kRisingTicks = 30;
 constexpr std::uint16_t kRespawnTicks = 90;
+constexpr std::uint16_t kLauncherHoverTicks = 30;
 
 float impulse_scale(DummyKind kind) noexcept {
     return kind == DummyKind::light ? 1.25F : 1.0F;
@@ -111,7 +112,7 @@ void CombatWorld::apply_dummy_impact(
             facing * definition.knockback_speed * scale;
         dummy.velocity.z = definition.launch_speed * scale;
         dummy.reaction = ReactionState::airborne;
-        dummy.reaction_ticks = 0;
+        dummy.reaction_ticks = kLauncherHoverTicks;
         break;
     }
 }
@@ -183,8 +184,13 @@ void CombatWorld::simulate_target(std::size_t index) noexcept {
         return;
     case ReactionState::airborne:
         integrate_horizontal();
-        dummy.position.z += dummy.velocity.z * kTickSeconds;
-        dummy.velocity.z -= kGravity * kTickSeconds;
+        if (dummy.velocity.z <= 0.0F && dummy.reaction_ticks != 0) {
+            --dummy.reaction_ticks;
+            dummy.velocity.z = 0.0F;
+        } else {
+            dummy.position.z += dummy.velocity.z * kTickSeconds;
+            dummy.velocity.z -= kGravity * kTickSeconds;
+        }
         if (dummy.position.z <= 0.0F) {
             dummy.position.z = 0.0F;
             dummy.velocity.z = 0.0F;
