@@ -6,6 +6,8 @@
 
 **Architecture:** dungeon 只产生确定性稳定状态和待提交事务，不访问文件系统；arpg_persistence 只包含无 Combat 依赖的 dungeon_checkpoint.hpp，负责 96 字节版本化检查点、CRC32 和双槽发布；raylib Host 负责把持久化三态结果回传 DungeonSession。门、洞、生态、深渊和存档表现都从已保存快照读取，不在渲染层重新投掷。
 
+**Transitional model boundary:** Task 2–3 place the stable wire DTOs in `arpg::dungeon::checkpoint` so the existing Stage 2 runtime `arpg::dungeon::RoomDescriptor::combat` API remains buildable. Task 3 keeps the legacy `make_initial_room`/`make_next_room` wrappers while adding pure checkpoint generation/progression. Task 5 performs the runtime migration and then exposes the stable types through the public `arpg::dungeon` aliases used by persistence and session code.
+
 **Tech Stack:** C++17、MSVC 19.44 x64、Windows SDK 10.0.26100.0、raylib 6.0.0 静态库、CMake 3.25、Ninja、CTest、PowerShell。
 
 ## Global Constraints
@@ -39,6 +41,7 @@
 - Modify: src/core/deterministic_rng.hpp
 - Modify: src/core/deterministic_rng.cpp
 - Modify: tests/core/deterministic_rng_tests.cpp
+- Modify: tests/core/test_main.cpp
 - Create: src/dungeon/dungeon_checkpoint.hpp
 - Create: src/dungeon/dungeon_rules.hpp
 - Create: src/dungeon/dungeon_rules.cpp
@@ -248,7 +251,7 @@ Expected: 24 cases, 0 failures。
 - Modify: tests/dungeon/CMakeLists.txt
 
 **Interfaces:**
-- dungeon_checkpoint.hpp 只能包含 array 与 cstdint，并产生：
+- dungeon_checkpoint.hpp 只能包含 array 与 cstdint，并在 `arpg::dungeon::checkpoint` 命名空间产生：
 
     enum class ExitDirection : std::uint8_t {
         up = 0, down = 1, left = 2, right = 3, none = 0xFF
@@ -314,8 +317,8 @@ Expected: 24 cases, 0 failures。
         std::uint32_t rules_version{1};
     };
 
-    [[nodiscard]] std::optional<DungeonElement> element_for_exit(
-        ExitDirection direction) noexcept;
+    [[nodiscard]] std::optional<checkpoint::DungeonElement> element_for_exit(
+        checkpoint::ExitDirection direction) noexcept;
     [[nodiscard]] DungeonFault validate_rules(
         const DungeonRules& rules) noexcept;
     [[nodiscard]] DungeonFault compute_ecology_weights(
@@ -360,6 +363,8 @@ dungeon_rules_tests.cpp 必须分别覆盖：
 
 注册 dungeon_rules_suite，并把阶段性 Dungeon 守卫从 20 改为 25。
 
+规则测试可在函数体内使用 `using namespace checkpoint;` 简化断言书写，但生产接口仍使用显式的 `checkpoint::` 类型。
+
 - [ ] **Step 2: 运行测试并观察 RED**
 
     .\scripts\Build.ps1 -Preset windows-msvc-core-debug
@@ -371,8 +376,8 @@ Expected: 编译失败，缺少 dungeon_checkpoint.hpp 与 dungeon_rules.hpp。
 
 实现要求：
 
-- 从 dungeon_types.hpp 移走 ExitDirection、EntrySide 与 RoomDescriptor，运行时头改为包含 dungeon_checkpoint.hpp。
-- RoomDescriptor 不得包含 CombatLabConfig、optional、string、filesystem 或 raylib 类型。
+- dungeon_types.hpp 改为包含 dungeon_checkpoint.hpp，并将 ExitDirection、EntrySide 别名到 checkpoint 命名空间；为保持 Stage 2 可独立编译，旧的运行时 RoomDescriptor（含 combat）暂时保留到 Task 5。
+- `checkpoint::RoomDescriptor` 不得包含 CombatLabConfig、optional、string、filesystem 或 raylib 类型；Task 2 不修改 room_generation/session 的旧运行时接口。
 - validate_rules 拒绝规则版本非 1、任一基础权重为 0、阈值大于 10000。
 - compute_ecology_weights 对乘法、逐项加法和总和都先检查再计算，失败时不得留下部分有效总和。
 - compute_ecology_weights 先写局部 weights/total，全部成功后才复制到输出；任何 fault 时输出保持调用前的全零状态。
@@ -427,6 +432,8 @@ Expected: 25 cases, 0 failures。
 - Modify: tests/dungeon/CMakeLists.txt
 
 **Interfaces:**
+- 本任务新增的 `RoomDescriptor`、`RoomGenerationResult` 和 `DungeonRunState` 均指 `arpg::dungeon::checkpoint` 中的稳定 DTO；现有 `make_initial_room`/`make_next_room` 继续返回旧运行时 RoomDescriptor，直到 Task 5 迁移完成。
+- 本节代码块中的 `ExitDirection`、`EntrySide`、`RoomDescriptor` 和 `DungeonRunState` 均为 `checkpoint::` 类型的简写。
 - room_generation.hpp 产生：
 
     struct RoomRandomSamples final {
@@ -629,7 +636,7 @@ Expected: 工作树干净；Core 24、Dungeon 35，0 failures；Core-only 7/7。
 - 门偏向先增加，再生成唯一下一房。
 - 洞口和深渊阈值边界与独立流。
 - 下坠清零偏向且 entry=initial。
-- RoomDescriptor 不再包含 CombatLabConfig。
+- `checkpoint::RoomDescriptor` 不包含 CombatLabConfig。
 - persistence 可单独包含 dungeon_checkpoint.hpp 而不引入 combat。
 
 代码质量评审重点检查：
