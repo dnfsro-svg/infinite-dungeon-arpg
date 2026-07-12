@@ -19,6 +19,8 @@ using arpg::dungeon::EncounterDirectorConfig;
 using arpg::dungeon::RoomEncounterPlan;
 using arpg::dungeon::build_encounter_plan;
 using arpg::dungeon::encounter_budget;
+using arpg::dungeon::encounter_plan_legal;
+using arpg::dungeon::validate_encounter_director_config;
 namespace checkpoint = arpg::dungeon::checkpoint;
 using checkpoint::DungeonElement;
 
@@ -201,6 +203,56 @@ arpg::test::Failure invalid_director_config_is_rejected() noexcept {
     return {};
 }
 
+arpg::test::Failure high_budget_priority_limit_applies_to_each_wave() noexcept {
+    RoomEncounterPlan plan{};
+    plan.wave_count = 2U;
+    plan.total_budget = 13U;
+    plan.waves[0].spawns[0].id = MonsterId::fire_bomber;
+    plan.waves[0].spawns[1].id = MonsterId::fire_charger;
+    plan.waves[0].spawn_count = 2U;
+    plan.waves[0].spent_budget = 7U;
+    plan.waves[1].spawns[0].id = MonsterId::chaos_chaser;
+    plan.waves[1].spawn_count = 1U;
+    plan.waves[1].spent_budget = 2U;
+    ARPG_REQUIRE(encounter_plan_legal(plan, EncounterDirectorConfig{}));
+    return {};
+}
+
+arpg::test::Failure illegal_wave_budget_or_cost_is_rejected() noexcept {
+    RoomEncounterPlan plan{};
+    plan.wave_count = 2U;
+    plan.total_budget = 13U;
+    plan.waves[0].spawns[0].id = MonsterId::fire_charger;
+    plan.waves[0].spawns[1].id = MonsterId::water_bulwark;
+    plan.waves[0].spawn_count = 2U;
+    plan.waves[0].spent_budget = 8U;
+    plan.waves[1].spawns[0].id = MonsterId::chaos_chaser;
+    plan.waves[1].spawn_count = 1U;
+    plan.waves[1].spent_budget = 2U;
+    ARPG_REQUIRE(!encounter_plan_legal(plan, EncounterDirectorConfig{}));
+    plan.waves[0].spent_budget = 7U;
+    ARPG_REQUIRE(!encounter_plan_legal(plan, EncounterDirectorConfig{}));
+    plan.wave_count = 0U;
+    ARPG_REQUIRE(!encounter_plan_legal(plan, EncounterDirectorConfig{}));
+    plan.wave_count = 3U;
+    ARPG_REQUIRE(!encounter_plan_legal(plan, EncounterDirectorConfig{}));
+    return {};
+}
+
+arpg::test::Failure indivisible_small_two_wave_config_is_rejected() noexcept {
+    EncounterDirectorConfig config{};
+    config.base_budget = 2U;
+    config.max_budget = 3U;
+    config.depth_step = 1U;
+    config.budget_per_step = 1U;
+    config.two_wave_threshold = 2U;
+    ARPG_REQUIRE(validate_encounter_director_config(config)
+        == DungeonFault::invalid_rules);
+    ARPG_REQUIRE(build_encounter_plan(77U, 2U, DungeonElement::water, config)
+        .fault == DungeonFault::invalid_rules);
+    return {};
+}
+
 arpg::test::Failure fallback_config_keeps_a_direct_target() noexcept {
     EncounterDirectorConfig config{};
     config.base_budget = 2U;
@@ -222,6 +274,9 @@ constexpr arpg::test::TestCase kCases[] = {
     {"plan is deterministic and legal", &encounter_plan_is_deterministic_and_legal},
     {"ecology weighting prefers matching elements", &ecology_weighting_prefers_matching_elements},
     {"invalid director config is rejected", &invalid_director_config_is_rejected},
+    {"high budget limit applies to each wave", &high_budget_priority_limit_applies_to_each_wave},
+    {"illegal wave budget or cost is rejected", &illegal_wave_budget_or_cost_is_rejected},
+    {"indivisible small two-wave config is rejected", &indivisible_small_two_wave_config_is_rejected},
     {"fallback keeps a direct target", &fallback_config_keeps_a_direct_target},
 };
 

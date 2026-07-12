@@ -48,9 +48,9 @@ struct Candidate final {
 }
 
 [[nodiscard]] std::uint8_t priority_limit(
-    std::uint8_t wave_budget,
+    std::uint8_t encounter_budget_value,
     const EncounterDirectorConfig& config) noexcept {
-    return wave_budget > config.two_wave_threshold
+    return encounter_budget_value > config.two_wave_threshold
         ? config.high_budget_priority_limit
         : config.normal_high_priority_limit;
 }
@@ -58,10 +58,11 @@ struct Candidate final {
 [[nodiscard]] bool fits_tag_limits(
     const combat::MonsterDefinition& definition,
     const TagCounts& counts,
-    std::uint8_t wave_budget,
+    std::uint8_t encounter_budget_value,
     const EncounterDirectorConfig& config) noexcept {
     if (has_tag(definition, combat::MonsterTag::high_priority)
-            && counts.high_priority >= priority_limit(wave_budget, config)) {
+            && counts.high_priority >= priority_limit(
+                encounter_budget_value, config)) {
         return false;
     }
     if (has_tag(definition, combat::MonsterTag::ranged)
@@ -115,6 +116,7 @@ void add_tag_counts(
 [[nodiscard]] bool append_cheapest_direct_target(
     combat::EncounterWave& wave,
     std::uint8_t wave_budget,
+    std::uint8_t encounter_budget_value,
     TagCounts& counts,
     const EncounterDirectorConfig& config,
     core::DeterministicRng& position_rng) noexcept {
@@ -126,7 +128,8 @@ void add_tag_counts(
         if (definition == nullptr
                 || !has_tag(*definition, combat::MonsterTag::direct_target)
                 || definition->threat_cost > wave_budget
-                || !fits_tag_limits(*definition, counts, wave_budget, config)) {
+                || !fits_tag_limits(
+                    *definition, counts, encounter_budget_value, config)) {
             continue;
         }
         if (best == nullptr || definition->threat_cost < best->threat_cost
@@ -147,13 +150,15 @@ void add_tag_counts(
 void fill_wave(
     combat::EncounterWave& wave,
     std::uint8_t wave_budget,
+    std::uint8_t encounter_budget_value,
     checkpoint::DungeonElement ecology,
     const EncounterDirectorConfig& config,
     core::DeterministicRng& selection_rng,
     core::DeterministicRng& position_rng) noexcept {
     TagCounts counts{};
     if (!append_cheapest_direct_target(
-            wave, wave_budget, counts, config, position_rng)) {
+            wave, wave_budget, encounter_budget_value, counts, config,
+            position_rng)) {
         const auto* fallback = combat::monster_definition(
             combat::MonsterId::chaos_chaser);
         if (fallback != nullptr && append_spawn(
@@ -176,7 +181,8 @@ void fill_wave(
             const auto id = static_cast<combat::MonsterId>(raw);
             const auto* definition = combat::monster_definition(id);
             if (definition == nullptr || definition->threat_cost > remaining
-                    || !fits_tag_limits(*definition, counts, wave_budget, config)) {
+                    || !fits_tag_limits(
+                        *definition, counts, encounter_budget_value, config)) {
                 continue;
             }
             const std::uint64_t weight = definition->preferred_ecology
@@ -289,16 +295,18 @@ bool encounter_plan_legal(
                 || has_tag(*definition, combat::MonsterTag::direct_target);
             add_tag_counts(*definition, counts);
         }
+        const std::uint8_t first_wave_budget =
+            plan.wave_count == 2U
+                ? static_cast<std::uint8_t>((plan.total_budget + 1U) / 2U)
+                : plan.total_budget;
+        const std::uint8_t wave_budget = wave_index == 0U
+            ? first_wave_budget
+            : static_cast<std::uint8_t>(
+                plan.total_budget - first_wave_budget);
         if (!has_direct_target || spent != wave.spent_budget
+                || spent > wave_budget
                 || counts.high_priority > priority_limit(
-                    plan.wave_count == 2U
-                        ? static_cast<std::uint8_t>(
-                            wave_index == 0U
-                                ? (plan.total_budget + 1U) / 2U
-                                : plan.total_budget
-                                    - (plan.total_budget + 1U) / 2U)
-                        : plan.total_budget,
-                    config)
+                    plan.total_budget, config)
                 || counts.ranged > config.ranged_limit
                 || counts.support > config.support_limit
                 || counts.ground_hazard > config.ground_hazard_limit) {
@@ -338,11 +346,11 @@ EncounterPlanResult build_encounter_plan(
         room_seed, kEncounterDirectorDomain);
     auto position_rng = core::DeterministicRng::derive_stream(
         room_seed, kEncounterPositionDomain);
-    fill_wave(result.plan.waves[0], first_wave_budget, ecology, config,
+    fill_wave(result.plan.waves[0], first_wave_budget, budget, ecology, config,
         selection_rng, position_rng);
     if (result.plan.wave_count == 2U) {
-        fill_wave(result.plan.waves[1], second_wave_budget, ecology, config,
-            selection_rng, position_rng);
+        fill_wave(result.plan.waves[1], second_wave_budget, budget, ecology,
+            config, selection_rng, position_rng);
     }
     if (!encounter_plan_legal(result.plan, config)) {
         result.fault = DungeonFault::invalid_rules;

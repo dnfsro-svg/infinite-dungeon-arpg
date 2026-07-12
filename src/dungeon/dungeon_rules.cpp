@@ -75,12 +75,19 @@ DungeonFault compute_ecology_weights(
 
 DungeonFault validate_encounter_director_config(
     const EncounterDirectorConfig& config) noexcept {
+    constexpr std::uint8_t kMinimumDirectTargetCost = 2U;
     if (config.base_budget < 2U || config.depth_step == 0U
             || config.budget_per_step == 0U || config.max_budget < 2U
             || config.max_budget < config.base_budget
             || config.two_wave_threshold == 0U
             || config.matching_ecology_weight == 0U
             || config.off_ecology_weight == 0U) {
+        return DungeonFault::invalid_rules;
+    }
+    if (config.max_budget > config.two_wave_threshold
+            && config.two_wave_threshold
+                < static_cast<std::uint8_t>(
+                    2U * kMinimumDirectTargetCost - 1U)) {
         return DungeonFault::invalid_rules;
     }
 
