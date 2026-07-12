@@ -5,6 +5,7 @@ arpg::test::TestSuite combat_feedback_suite() noexcept;
 arpg::test::TestSuite combat_key_bindings_suite() noexcept;
 arpg::test::TestSuite dungeon_view_math_suite() noexcept;
 arpg::test::TestSuite host_launch_options_suite() noexcept;
+arpg::test::TestSuite dungeon_runtime_suite() noexcept;
 
 int main() {
     const arpg::test::TestSuite suites[] = {
@@ -13,7 +14,8 @@ int main() {
         combat_key_bindings_suite(),
         dungeon_view_math_suite(),
         host_launch_options_suite(),
+        dungeon_runtime_suite(),
     };
 
-    return arpg::test::run_suites(suites, 24, "platform");
+    return arpg::test::run_suites(suites, 32, "platform");
 }

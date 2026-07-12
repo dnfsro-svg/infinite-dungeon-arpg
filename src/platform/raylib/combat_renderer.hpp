@@ -5,6 +5,8 @@
 
 namespace arpg::platform {
 
+struct DungeonRenderStatus;
+
 class CombatRenderer final {
 public:
     void consume_event(const combat::CombatEvent& event) noexcept;
@@ -14,6 +16,7 @@ public:
     void draw(
         const dungeon::DungeonSnapshot& previous,
         const dungeon::DungeonSnapshot& current,
+        const DungeonRenderStatus& runtime_status,
         float interpolation_alpha,
         bool draw_debug,
         const CombatFeedback& feedback,

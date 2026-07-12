@@ -4,6 +4,7 @@
 #include "combat/combat_collision.hpp"
 #include "combat_view_math.hpp"
 #include "dungeon_view_math.hpp"
+#include "dungeon_runtime.hpp"
 
 #include <raylib.h>
 
@@ -96,6 +97,16 @@ const char* event_name(CombatEventKind kind) noexcept {
     return "?";
 }
 
+const char* ecology_name(dungeon::DungeonElement element) noexcept {
+    switch (element) {
+    case dungeon::DungeonElement::fire: return "FIRE";
+    case dungeon::DungeonElement::water: return "WATER";
+    case dungeon::DungeonElement::lightning: return "LIGHTNING";
+    case dungeon::DungeonElement::chaos: return "CHAOS";
+    }
+    return "UNKNOWN";
+}
+
 Color dummy_color(DummyKind kind) noexcept {
     switch (kind) {
     case DummyKind::light: return Color{76, 205, 122, 255};
@@ -105,7 +116,7 @@ Color dummy_color(DummyKind kind) noexcept {
     return MAGENTA;
 }
 
-void draw_graybox_room() noexcept {
+void draw_graybox_room(dungeon::DungeonElement ecology) noexcept {
     const float width = static_cast<float>(GetScreenWidth());
     const float height = static_cast<float>(GetScreenHeight());
     const Vector2 back_left{width * 0.20F, height * 0.22F};
@@ -130,7 +141,8 @@ void draw_graybox_room() noexcept {
     DrawTriangle({0.0F, 0.0F}, {0.0F, height}, floor_left, Color{22, 27, 39, 255});
     DrawTriangle({width, 0.0F}, back_right, floor_right, Color{22, 27, 39, 255});
     DrawTriangle({width, 0.0F}, floor_right, {width, height}, Color{22, 27, 39, 255});
-    const Color floor{45, 51, 63, 255};
+    const Rgba8 tint = ecosystem_tint(ecology);
+    const Color floor{tint.r, tint.g, tint.b, 255};
     DrawTriangle(back_left, floor_left, floor_right, floor);
     DrawTriangle(back_left, floor_right, back_right, floor);
 
@@ -154,10 +166,11 @@ void draw_graybox_room() noexcept {
     }
 }
 
-void draw_doors(
-    DoorVisualMode mode,
+void draw_doors(const dungeon::DungeonSnapshot& snapshot,
     float width,
     float height) noexcept {
+    const DoorVisualMode mode = door_visual_mode(
+        snapshot.phase, snapshot.has_active_room);
     if (mode == DoorVisualMode::hidden) {
         return;
     }
@@ -168,15 +181,18 @@ void draw_doors(
         {-8.0F, 0.0F, 0.0F},
         {8.0F, 0.0F, 0.0F},
     }};
-    constexpr std::array<const char*, 4> kDoorArrows{{"^", "v", "<", ">"}};
+    constexpr std::array<dungeon::ExitDirection, 4> kDirections{{
+        dungeon::ExitDirection::up, dungeon::ExitDirection::down,
+        dungeon::ExitDirection::left, dungeon::ExitDirection::right}};
     const bool open = mode == DoorVisualMode::open;
-    const Color frame_color = open
-        ? Color{211, 244, 248, 255}
-        : Color{65, 70, 80, 255};
 
     for (std::size_t index = 0; index < kDoorCenters.size(); ++index) {
         const ScreenProjection projected = project_combat_position(
             kDoorCenters[index], width, height);
+        const DoorTheme theme = door_theme(kDirections[index]);
+        const Color theme_color{theme.frame.r, theme.frame.g, theme.frame.b,
+            theme.frame.a};
+        const Color frame_color = open ? theme_color : Color{65, 70, 80, 255};
         const float door_width = 82.0F * projected.scale;
         const float door_height = 70.0F * projected.scale;
         const Rectangle frame{
@@ -196,15 +212,52 @@ void draw_doors(
             continue;
         }
 
-        const int font_size = static_cast<int>(28.0F * projected.scale);
-        const int arrow_width = MeasureText(kDoorArrows[index], font_size);
+        const int font_size = static_cast<int>(22.0F * projected.scale);
+        const int arrow_width = MeasureText(theme.arrow, font_size);
         DrawText(
-            kDoorArrows[index],
+            theme.arrow,
             static_cast<int>(projected.x) - arrow_width / 2,
             static_cast<int>(frame.y + 17.0F * projected.scale),
             font_size,
             frame_color);
+        DrawText(theme.label, static_cast<int>(frame.x),
+            static_cast<int>(frame.y - 15.0F * projected.scale),
+            static_cast<int>(11.0F * projected.scale), frame_color);
     }
+}
+
+void draw_abyss(const dungeon::DungeonSnapshot& snapshot,
+    float elapsed_seconds) noexcept {
+    if (snapshot.is_abyss) {
+        const float pulse = abyss_pulse_alpha(elapsed_seconds);
+        DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
+            Fade(Color{125, 19, 92, 255}, 0.12F + pulse * 0.16F));
+        DrawRectangleLinesEx({8.0F, 8.0F,
+            static_cast<float>(GetScreenWidth() - 16),
+            static_cast<float>(GetScreenHeight() - 16)}, 8.0F,
+            Fade(Color{225, 47, 160, 255}, 0.20F + pulse * 0.45F));
+    }
+}
+
+void draw_hole(const dungeon::DungeonSnapshot& snapshot) noexcept {
+    const HoleVisualMode hole = hole_visual_mode(snapshot);
+    if (hole == HoleVisualMode::hidden) {
+        return;
+    }
+    const int x = GetScreenWidth() / 2;
+    const int y = static_cast<int>(GetScreenHeight() * 0.68F);
+    Color color{43, 25, 55, 255};
+    if (hole == HoleVisualMode::ready) {
+        color = Color{230, 79, 186, 255};
+    } else if (hole == HoleVisualMode::busy) {
+        color = Color{255, 194, 74, 255};
+    }
+    DrawEllipse(x, y, 74.0F, 25.0F, Color{5, 2, 9, 235});
+    DrawEllipseLines(x, y, 74.0F, 25.0F, color);
+    const char* label = hole == HoleVisualMode::sealed ? "SEALED"
+        : hole == HoleVisualMode::ready ? "READY"
+        : hole == HoleVisualMode::busy ? "SAVING" : "FAULTED";
+    DrawText(label, x - MeasureText(label, 16) / 2, y - 8, 16, color);
 }
 
 void draw_bar(
@@ -384,6 +437,7 @@ void CombatRenderer::update(float frame_seconds) noexcept {
 void CombatRenderer::draw(
     const dungeon::DungeonSnapshot& previous,
     const dungeon::DungeonSnapshot& current,
+    const DungeonRenderStatus& runtime_status,
     float interpolation_alpha,
     bool draw_debug,
     const CombatFeedback& feedback,
@@ -398,8 +452,10 @@ void CombatRenderer::draw(
     world_camera.offset = {camera_offset.x, camera_offset.y};
     world_camera.zoom = 1.0F;
     BeginMode2D(world_camera);
-    draw_graybox_room();
-    draw_doors(door_visual_mode(current.phase, current.has_active_room), width, height);
+    draw_graybox_room(current.ecology);
+    draw_abyss(current, static_cast<float>(GetTime()));
+    draw_doors(current, width, height);
+    draw_hole(current);
 
     if (current.combat.has_value()) {
         const CombatSnapshot& current_combat = *current.combat;
@@ -538,39 +594,56 @@ void CombatRenderer::draw(
     const bool doors_open = current.phase == dungeon::RoomPhase::cleared
         || current.phase == dungeon::RoomPhase::awaiting_exit;
     DrawRectangleRounded(
-        {16.0F, 14.0F, 500.0F, draw_debug ? 378.0F : 150.0F},
+        {16.0F, 14.0F, 570.0F, draw_debug ? 470.0F : 210.0F},
         0.06F,
         6,
         Color{7, 10, 17, 220});
     const Color text{218, 226, 239, 255};
     const Color accent{110, 207, 255, 255};
     int y = 28;
-    DrawText("WASD Move  J Light  K Jump  L Launcher", 30, y, 16, accent);
+    DrawText("WASD Move  J Light  K Jump  L Launcher  E Descend", 30, y, 16, accent);
     y += 25;
     DrawText("R Reset  F1 Debug  F12 Screenshot  Esc Exit", 30, y, 16, accent);
     y += 28;
     DrawText(
-        TextFormat(
-            "Room %llu  Phase %s  Remaining %u",
-            static_cast<unsigned long long>(room_ordinal),
-            room_phase_label(current.phase),
-            static_cast<unsigned>(current.remaining_targets)),
+        TextFormat("Depth %llu  Floor Room %llu  Global Room %llu",
+            static_cast<unsigned long long>(current.depth),
+            static_cast<unsigned long long>(current.floor_room_index),
+            static_cast<unsigned long long>(room_ordinal)),
         30, y, 16, text);
     y += 23;
     DrawText(
-        TextFormat(
-            "Doors: %s  Last exit: %s",
-            doors_open ? "OPEN" : "LOCKED",
-            exit_direction_label(current.last_exit)),
+        TextFormat("Ecology %s  F/W/L/C bias %u/%u/%u/%u",
+            ecology_name(current.ecology),
+            current.biases[0], current.biases[1], current.biases[2],
+            current.biases[3]),
         30, y, 16, text);
+    y += 23;
+    DrawText(TextFormat("ABYSS %s  Hole %s  Autosave %s",
+        current.is_abyss ? "YES" : "NO",
+        current.has_hole ? (current.phase == dungeon::RoomPhase::committing
+                ? "SAVING" : doors_open ? "READY" : "SEALED") : "NONE",
+        save_indicator_label(runtime_status.indicator)), 30, y, 16,
+        runtime_status.indicator == SaveIndicator::error
+            ? Color{255, 120, 120, 255} : text);
 
     if (draw_debug) {
         y += 25;
         DrawText(
             TextFormat(
-                "Seed %016llX  Session tick %llu",
+                "Root %016llX Room %016llX Generation %llu",
+                static_cast<unsigned long long>(current.root_seed),
                 static_cast<unsigned long long>(current.room_seed),
-                static_cast<unsigned long long>(current.session_tick)),
+                static_cast<unsigned long long>(current.commit_generation)),
+            30, y, 16, text);
+        y += 23;
+        DrawText(
+            TextFormat("Saved ecology %s hole %s abyss %s slot %u error %u fault %u",
+                ecology_name(current.ecology),
+                current.has_hole ? "YES" : "NO", current.is_abyss ? "YES" : "NO",
+                static_cast<unsigned>(runtime_status.active_slot),
+                static_cast<unsigned>(runtime_status.error),
+                static_cast<unsigned>(current.diagnostics.fault)),
             30, y, 16, text);
         y += 23;
         DrawText(
