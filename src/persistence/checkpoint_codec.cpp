@@ -1,5 +1,7 @@
 #include "persistence/checkpoint_codec.hpp"
 
+#include "progression/progression_rules.hpp"
+
 #include <algorithm>
 
 namespace arpg::persistence {
@@ -13,11 +15,11 @@ using checkpoint::TransitionKind;
 
 constexpr std::array<std::uint8_t, 8> kMagic{{
     'I', 'A', 'R', 'P', 'G', 'S', '0', '3'}};
-constexpr std::size_t kCrcCoverageSize = 84U;
+constexpr std::uint32_t kLegacyFormatVersion = 1U;
+constexpr std::size_t kMaximumCrcCoverageSize = 100U;
 constexpr std::size_t kCrcHeaderOffset = 8U;
 constexpr std::size_t kCrcHeaderSize = 20U;
 constexpr std::size_t kCrcPayloadOffset = 32U;
-constexpr std::size_t kCrcPayloadSize = 64U;
 
 void write_u32(std::uint8_t* destination, std::uint32_t value) noexcept {
     for (std::size_t index = 0; index < 4U; ++index) {
@@ -73,21 +75,24 @@ bool valid_state(const dungeon::checkpoint::DungeonRunState& state) noexcept {
         && valid_entry(static_cast<std::uint8_t>(state.current_room.entry))
         && valid_element(static_cast<std::uint8_t>(state.current_room.ecology))
         && valid_transition(static_cast<std::uint8_t>(state.last_transition))
-        && valid_direction(static_cast<std::uint8_t>(state.last_direction));
+        && valid_direction(static_cast<std::uint8_t>(state.last_direction))
+        && progression::valid_progression_state(
+            state.progression, progression::default_progression_rules());
 }
 
 std::uint32_t checkpoint_crc(
-    const std::uint8_t* bytes) noexcept {
-    std::array<std::uint8_t, kCrcCoverageSize> covered{};
+    const std::uint8_t* bytes,
+    std::size_t payload_size) noexcept {
+    std::array<std::uint8_t, kMaximumCrcCoverageSize> covered{};
     std::copy_n(
         bytes + kCrcHeaderOffset,
         kCrcHeaderSize,
         covered.begin());
     std::copy_n(
         bytes + kCrcPayloadOffset,
-        kCrcPayloadSize,
+        payload_size,
         covered.begin() + kCrcHeaderSize);
-    return crc32(covered.data(), covered.size());
+    return crc32(covered.data(), kCrcHeaderSize + payload_size);
 }
 
 DecodeResult error_result(CodecError error) noexcept {
@@ -126,29 +131,41 @@ bool encode_checkpoint(
     out[91U] = state.current_room.is_abyss ? 1U : 0U;
     out[92U] = static_cast<std::uint8_t>(state.last_transition);
     out[93U] = static_cast<std::uint8_t>(state.last_direction);
+    out[94U] = state.progression.level;
+    out[95U] = state.progression.earned_passive_points;
+    out[96U] = state.progression.unspent_passive_points;
+    write_u64(out.data() + 98U, state.progression.experience);
 
-    write_u32(out.data() + 28U, checkpoint_crc(out.data()));
+    write_u32(out.data() + 28U,
+        checkpoint_crc(out.data(), kCheckpointPayloadSize));
     return true;
 }
 
 DecodeResult decode_checkpoint(
     const std::uint8_t* bytes, std::size_t size) noexcept {
-    if (bytes == nullptr || size != kEncodedCheckpointSize) {
+    if (bytes == nullptr
+        || (size != kEncodedCheckpointSize
+            && size != kLegacyEncodedCheckpointSize)) {
         return error_result(CodecError::wrong_size);
     }
     if (!std::equal(kMagic.begin(), kMagic.end(), bytes)) {
         return error_result(CodecError::bad_magic);
     }
-    if (read_u32(bytes + 8U) != kCheckpointFormatVersion) {
+    const std::uint32_t format = read_u32(bytes + 8U);
+    if (format != kCheckpointFormatVersion
+        && format != kLegacyFormatVersion) {
         return error_result(CodecError::unsupported_format);
     }
     if (read_u32(bytes + 12U) != kCheckpointRulesVersion) {
         return error_result(CodecError::unsupported_rules);
     }
-    if (read_u32(bytes + 24U) != kCheckpointPayloadSize) {
+    const std::size_t payload_size = format == kLegacyFormatVersion
+        ? kLegacyCheckpointPayloadSize : kCheckpointPayloadSize;
+    const std::size_t encoded_size = kCheckpointHeaderSize + payload_size;
+    if (size != encoded_size || read_u32(bytes + 24U) != payload_size) {
         return error_result(CodecError::bad_payload_length);
     }
-    if (read_u32(bytes + 28U) != checkpoint_crc(bytes)) {
+    if (read_u32(bytes + 28U) != checkpoint_crc(bytes, payload_size)) {
         return error_result(CodecError::bad_crc);
     }
 
@@ -166,9 +183,6 @@ DecodeResult decode_checkpoint(
     }
     if (has_hole > 1U || is_abyss > 1U) {
         return error_result(CodecError::invalid_boolean);
-    }
-    if (bytes[94U] != 0U || bytes[95U] != 0U) {
-        return error_result(CodecError::invalid_state);
     }
 
     DecodeResult result{};
@@ -188,6 +202,17 @@ DecodeResult decode_checkpoint(
     state.current_room.is_abyss = is_abyss != 0U;
     state.last_transition = static_cast<TransitionKind>(transition);
     state.last_direction = static_cast<ExitDirection>(direction);
+    if (format == kCheckpointFormatVersion) {
+        if (bytes[97U] != 0U
+            || !std::all_of(bytes + 106U, bytes + 112U,
+                [](std::uint8_t value) noexcept { return value == 0U; })) {
+            return error_result(CodecError::invalid_state);
+        }
+        state.progression.level = bytes[94U];
+        state.progression.earned_passive_points = bytes[95U];
+        state.progression.unspent_passive_points = bytes[96U];
+        state.progression.experience = read_u64(bytes + 98U);
+    }
     if (!valid_state(state)) {
         return error_result(CodecError::invalid_state);
     }

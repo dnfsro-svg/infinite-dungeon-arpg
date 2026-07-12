@@ -76,6 +76,12 @@ bool same_state(const checkpoint::DungeonRunState& lhs,
         && lhs.current_room.ecology == rhs.current_room.ecology
         && lhs.current_room.has_hole == rhs.current_room.has_hole
         && lhs.current_room.is_abyss == rhs.current_room.is_abyss
+        && lhs.progression.level == rhs.progression.level
+        && lhs.progression.experience == rhs.progression.experience
+        && lhs.progression.earned_passive_points
+            == rhs.progression.earned_passive_points
+        && lhs.progression.unspent_passive_points
+            == rhs.progression.unspent_passive_points
         && lhs.last_transition == rhs.last_transition
         && lhs.last_direction == rhs.last_direction;
 }
@@ -232,7 +238,8 @@ arpg::test::Failure conflicting_equal_generation_requires_recovery() noexcept {
     std::array<std::uint8_t, persistence::kEncodedCheckpointSize> bytes{};
     std::ifstream input(directory.path / "run_b.sav", std::ios::binary);
     input.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-    auto altered = make_state(1U, 13U);
+    auto altered = make_state(1U, 12U);
+    altered.progression = {2U, 0U, 1U, 1U};
     ARPG_REQUIRE(persistence::encode_checkpoint(altered, bytes));
     write_bytes(directory.path / "run_b.sav",
         std::vector<std::uint8_t>(bytes.begin(), bytes.end()));

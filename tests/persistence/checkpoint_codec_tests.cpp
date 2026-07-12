@@ -27,6 +27,7 @@ checkpoint::DungeonRunState make_fixture() noexcept {
     state.current_room.is_abyss = true;
     state.last_transition = checkpoint::TransitionKind::descent;
     state.last_direction = checkpoint::ExitDirection::left;
+    state.progression = {37U, 42U, 36U, 36U};
     return state;
 }
 
@@ -44,6 +45,12 @@ bool same_state(
         && lhs.current_room.ecology == rhs.current_room.ecology
         && lhs.current_room.has_hole == rhs.current_room.has_hole
         && lhs.current_room.is_abyss == rhs.current_room.is_abyss
+        && lhs.progression.level == rhs.progression.level
+        && lhs.progression.experience == rhs.progression.experience
+        && lhs.progression.earned_passive_points
+            == rhs.progression.earned_passive_points
+        && lhs.progression.unspent_passive_points
+            == rhs.progression.unspent_passive_points
         && lhs.last_transition == rhs.last_transition
         && lhs.last_direction == rhs.last_direction;
 }
@@ -55,9 +62,9 @@ bool encoded_fixture(
 
 void refresh_crc(
     std::array<std::uint8_t, persistence::kEncodedCheckpointSize>& bytes) noexcept {
-    std::array<std::uint8_t, 84U> covered{};
+    std::array<std::uint8_t, 100U> covered{};
     std::copy_n(bytes.begin() + 8U, 20U, covered.begin());
-    std::copy_n(bytes.begin() + 32U, 64U, covered.begin() + 20U);
+    std::copy_n(bytes.begin() + 32U, 80U, covered.begin() + 20U);
     const auto checksum = persistence::crc32(covered.data(), covered.size());
     for (std::size_t index = 0; index < 4U; ++index) {
         bytes[28U + index] = static_cast<std::uint8_t>(checksum >> (index * 8U));
@@ -75,12 +82,12 @@ arpg::test::Failure all_nonzero_fields_round_trip() noexcept {
 
 arpg::test::Failure encoded_sizes_and_generation_are_little_endian() noexcept {
     static_assert(persistence::kCheckpointHeaderSize == 32U);
-    static_assert(persistence::kCheckpointPayloadSize == 64U);
-    static_assert(persistence::kEncodedCheckpointSize == 96U);
+    static_assert(persistence::kCheckpointPayloadSize == 80U);
+    static_assert(persistence::kEncodedCheckpointSize == 112U);
 
     std::array<std::uint8_t, persistence::kEncodedCheckpointSize> bytes{};
     ARPG_REQUIRE(encoded_fixture(bytes));
-    ARPG_REQUIRE(bytes.size() == 96U);
+    ARPG_REQUIRE(bytes.size() == 112U);
     ARPG_REQUIRE(bytes[16] == 0x18U);
     ARPG_REQUIRE(bytes[17] == 0x17U);
     ARPG_REQUIRE(bytes[18] == 0x16U);
@@ -117,7 +124,7 @@ arpg::test::Failure wrong_magic_is_rejected() noexcept {
 arpg::test::Failure unsupported_format_and_rules_are_rejected() noexcept {
     std::array<std::uint8_t, persistence::kEncodedCheckpointSize> bytes{};
     ARPG_REQUIRE(encoded_fixture(bytes));
-    bytes[8] = 2U;
+    bytes[8] = 3U;
     auto decoded = persistence::decode_checkpoint(bytes.data(), bytes.size());
     ARPG_REQUIRE(decoded.error == persistence::CodecError::unsupported_format);
 
@@ -174,6 +181,57 @@ arpg::test::Failure invalid_booleans_and_zero_state_are_rejected() noexcept {
     return {};
 }
 
+std::array<std::uint8_t, persistence::kLegacyEncodedCheckpointSize>
+legacy_fixture() noexcept {
+    checkpoint::DungeonRunState legacy_state = make_fixture();
+    legacy_state.progression = {};
+    std::array<std::uint8_t, persistence::kEncodedCheckpointSize> current{};
+    static_cast<void>(persistence::encode_checkpoint(legacy_state, current));
+    std::array<std::uint8_t, persistence::kLegacyEncodedCheckpointSize> legacy{};
+    std::copy_n(current.begin(), legacy.size(), legacy.begin());
+    legacy[8U] = 1U;
+    legacy[9U] = legacy[10U] = legacy[11U] = 0U;
+    legacy[24U] = 64U;
+    legacy[25U] = legacy[26U] = legacy[27U] = 0U;
+    legacy[94U] = legacy[95U] = 0U;
+    std::array<std::uint8_t, 84U> covered{};
+    std::copy_n(legacy.begin() + 8U, 20U, covered.begin());
+    std::copy_n(legacy.begin() + 32U, 64U, covered.begin() + 20U);
+    const auto checksum = persistence::crc32(covered.data(), covered.size());
+    for (std::size_t index = 0; index < 4U; ++index) {
+        legacy[28U + index] = static_cast<std::uint8_t>(
+            checksum >> (index * 8U));
+    }
+    return legacy;
+}
+
+arpg::test::Failure invalid_progression_is_rejected() noexcept {
+    std::array<std::uint8_t, persistence::kEncodedCheckpointSize> bytes{};
+    ARPG_REQUIRE(encoded_fixture(bytes));
+    bytes[94U] = 0U;
+    refresh_crc(bytes);
+    ARPG_REQUIRE(persistence::decode_checkpoint(bytes.data(), bytes.size()).error
+        == persistence::CodecError::invalid_state);
+
+    ARPG_REQUIRE(encoded_fixture(bytes));
+    bytes[95U] = 35U;
+    refresh_crc(bytes);
+    ARPG_REQUIRE(persistence::decode_checkpoint(bytes.data(), bytes.size()).error
+        == persistence::CodecError::invalid_state);
+    return {};
+}
+
+arpg::test::Failure version_one_migrates_to_new_character_progression() noexcept {
+    const auto bytes = legacy_fixture();
+    const auto decoded = persistence::decode_checkpoint(bytes.data(), bytes.size());
+    ARPG_REQUIRE(decoded.error == persistence::CodecError::none);
+    ARPG_REQUIRE(decoded.state.progression.level == 1U);
+    ARPG_REQUIRE(decoded.state.progression.experience == 0U);
+    ARPG_REQUIRE(decoded.state.progression.earned_passive_points == 0U);
+    ARPG_REQUIRE(decoded.state.progression.unspent_passive_points == 0U);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"all nonzero fields round trip", &all_nonzero_fields_round_trip},
     {"encoded sizes and generation are little endian", &encoded_sizes_and_generation_are_little_endian},
@@ -183,6 +241,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"invalid payload length is rejected", &invalid_payload_length_is_rejected},
     {"invalid enum values are rejected", &invalid_enum_values_are_rejected},
     {"invalid booleans and zero state are rejected", &invalid_booleans_and_zero_state_are_rejected},
+    {"invalid progression is rejected", &invalid_progression_is_rejected},
+    {"version one progression migration", &version_one_migrates_to_new_character_progression},
 };
 
 }  // namespace

@@ -65,6 +65,12 @@ bool same_state(const checkpoint::DungeonRunState& lhs,
         && lhs.current_room.ecology == rhs.current_room.ecology
         && lhs.current_room.has_hole == rhs.current_room.has_hole
         && lhs.current_room.is_abyss == rhs.current_room.is_abyss
+        && lhs.progression.level == rhs.progression.level
+        && lhs.progression.experience == rhs.progression.experience
+        && lhs.progression.earned_passive_points
+            == rhs.progression.earned_passive_points
+        && lhs.progression.unspent_passive_points
+            == rhs.progression.unspent_passive_points
         && lhs.last_transition == rhs.last_transition
         && lhs.last_direction == rhs.last_direction;
 }
