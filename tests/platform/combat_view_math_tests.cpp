@@ -92,6 +92,7 @@ arpg::test::Failure render_layout_keeps_baseline_projection_and_hud_values() noe
     const ScreenProjection expected_north = arpg::platform::project_combat_position(
         Vec3{0.0F, -5.5F, 0.0F}, 1280.0F, 720.0F);
     ARPG_REQUIRE(arpg::test::near(north.x, expected_north.x, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(north.y, expected_north.y, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(
         north.ground_y, expected_north.ground_y, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(north.scale, expected_north.scale, 1.0e-4));
@@ -101,6 +102,7 @@ arpg::test::Failure render_layout_keeps_baseline_projection_and_hud_values() noe
     const ScreenProjection expected_east = arpg::platform::project_combat_position(
         Vec3{12.0F, 0.0F, 0.0F}, 1280.0F, 720.0F);
     ARPG_REQUIRE(arpg::test::near(east.x, expected_east.x, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(east.y, expected_east.y, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(
         east.ground_y, expected_east.ground_y, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(east.scale, expected_east.scale, 1.0e-4));
