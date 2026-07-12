@@ -2,8 +2,11 @@
 
 #include "host_launch_options.hpp"
 
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <functional>
+#include <string>
 
 namespace {
 
@@ -13,6 +16,49 @@ using arpg::platform::HostArgumentResult;
 HostArgumentResult parse(int argc, const char* const* argv) noexcept {
     return arpg::platform::parse_host_arguments(argc, argv);
 }
+
+struct CurrentDirectoryGuard final {
+    std::filesystem::path original{};
+    bool valid{};
+
+    CurrentDirectoryGuard() noexcept {
+        std::error_code error;
+        original = std::filesystem::current_path(error);
+        valid = !error;
+    }
+
+    ~CurrentDirectoryGuard() noexcept {
+        if (!valid) {
+            return;
+        }
+        std::error_code error;
+        std::filesystem::current_path(original, error);
+    }
+};
+
+struct TemporaryDirectory final {
+    std::filesystem::path path{};
+    bool valid{};
+
+    TemporaryDirectory() noexcept {
+        std::error_code error;
+        path = std::filesystem::temp_directory_path(error)
+            / ("arpg_host_launch_options_tests_" + std::to_string(
+                static_cast<unsigned long long>(
+                    std::hash<std::string>{}(std::to_string(
+                        reinterpret_cast<std::uintptr_t>(this))))));
+        if (error) {
+            return;
+        }
+        std::filesystem::create_directories(path, error);
+        valid = !error;
+    }
+
+    ~TemporaryDirectory() noexcept {
+        std::error_code error;
+        std::filesystem::remove_all(path, error);
+    }
+};
 
 arpg::test::Failure no_arguments_leave_options_empty() noexcept {
     const char* const argv[] = {"arpg"};
@@ -38,12 +84,25 @@ arpg::test::Failure decimal_and_hex_seeds_parse_to_same_value() noexcept {
 }
 
 arpg::test::Failure save_directory_with_spaces_is_frozen_absolute() noexcept {
+    TemporaryDirectory alternate_directory;
+    CurrentDirectoryGuard working_directory;
+    ARPG_REQUIRE(working_directory.valid);
+    ARPG_REQUIRE(alternate_directory.valid);
     const char* const argv[] = {"arpg", "--save-dir", "slot saves"};
     const HostArgumentResult result = parse(3, argv);
     ARPG_REQUIRE(result.error == HostArgumentError::none);
     ARPG_REQUIRE(result.options.save_directory.has_value());
     ARPG_REQUIRE(result.options.save_directory->is_absolute());
     ARPG_REQUIRE(result.options.save_directory->filename() == "slot saves");
+    const auto frozen = *result.options.save_directory;
+
+    std::error_code error;
+    std::filesystem::current_path(alternate_directory.path, error);
+    ARPG_REQUIRE(!error);
+    ARPG_REQUIRE(std::filesystem::current_path(error) == alternate_directory.path);
+    ARPG_REQUIRE(!error);
+    ARPG_REQUIRE(frozen == *result.options.save_directory);
+    ARPG_REQUIRE(frozen == working_directory.original / "slot saves");
     return {};
 }
 

@@ -230,9 +230,9 @@ ArchiveResult archive_files(const SaveStoreConfig& config,
             std::filesystem::path destination;
             do {
                 destination = config.directory
-                    / ("corrupt_" + std::to_string(stamp) + "_"
-                        + source.filename().string()
-                        + (suffix == 0U ? "" : "_" + std::to_string(suffix)));
+                    / (source.filename().string() + ".corrupt."
+                        + std::to_string(stamp)
+                        + (suffix == 0U ? "" : "." + std::to_string(suffix)));
                 ++suffix;
             } while (std::filesystem::exists(destination));
             if (hook_failed(config, SaveFaultPoint::before_archive)) {
@@ -585,7 +585,17 @@ SaveLoadResult SaveStore::archive_invalid_and_create(
                 SaveSlot::none, false, {}};
         }
         const auto files = invalid_files(config_, scan, true);
-        const auto archive = archive_files(config_, files);
+        auto files_to_archive = files;
+        const bool conflicting_slots = scan.a.state == SlotFileState::valid
+            && scan.b.state == SlotFileState::valid
+            && scan.a.checkpoint.commit_generation
+                == scan.b.checkpoint.commit_generation
+            && !same_state(scan.a.checkpoint, scan.b.checkpoint);
+        if (conflicting_slots) {
+            files_to_archive.push_back(config_.directory / slot_name(SaveSlot::a));
+            files_to_archive.push_back(config_.directory / slot_name(SaveSlot::b));
+        }
+        const auto archive = archive_files(config_, files_to_archive);
         if (!archive.ok) {
             return {SaveLoadState::blocked, archive.error,
                 SaveSlot::none, false, {}};

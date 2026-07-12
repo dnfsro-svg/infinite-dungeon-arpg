@@ -110,7 +110,7 @@ bool has_only_allowed_files(const std::filesystem::path& directory) noexcept {
         if (name == "run_a.sav" || name == "run_b.sav") {
             continue;
         }
-        if (name.find("corrupt_") == 0U) {
+        if (name.find(".corrupt.") != std::string::npos) {
             continue;
         }
         if (name.find("run_a.tmp") == 0U || name.find("run_b.tmp") == 0U) {
@@ -209,7 +209,7 @@ arpg::test::Failure damaged_slot_is_archived_before_two_saves() noexcept {
     ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::ready);
     bool archived = false;
     for (const auto& entry : std::filesystem::directory_iterator(directory.path, error)) {
-        if (entry.path().filename().string().find("corrupt_") == 0U) {
+        if (entry.path().filename().string().find(".corrupt.") != std::string::npos) {
             archived = true;
         }
     }

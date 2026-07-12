@@ -89,6 +89,11 @@ std::vector<std::uint8_t> encoded(const checkpoint::DungeonRunState& state) {
     return std::vector<std::uint8_t>(bytes.begin(), bytes.end());
 }
 
+bool is_corrupt_archive(const std::filesystem::path& path) noexcept {
+    const auto name = path.filename().string();
+    return name.find(".corrupt.") != std::string::npos;
+}
+
 struct FaultContext final {
     persistence::SaveFaultPoint point{};
     bool persistent{};
@@ -278,13 +283,61 @@ arpg::test::Failure four_invalid_files_are_archived_before_new_generation() noex
     std::size_t archive_count = 0U;
     std::error_code error;
     for (const auto& entry : std::filesystem::directory_iterator(directory.path, error)) {
-        if (entry.path().filename().string().find("corrupt_") == 0U) {
+        if (is_corrupt_archive(entry.path())) {
             ++archive_count;
         }
     }
     ARPG_REQUIRE(archive_count == 4U);
     ARPG_REQUIRE(!std::filesystem::exists(directory.path / "run_a.tmp"));
     ARPG_REQUIRE(!std::filesystem::exists(directory.path / "run_b.tmp"));
+    return {};
+}
+
+arpg::test::Failure conflicting_slots_are_archived_before_new_generation() noexcept {
+    TempDirectory directory;
+    auto store = make_store(directory.path);
+    ARPG_REQUIRE(store.commit(make_state(1U, 13U)).state
+        == persistence::SaveCommitState::committed);
+
+    std::error_code error;
+    std::filesystem::copy_file(directory.path / "run_a.sav",
+        directory.path / "run_b.sav",
+        std::filesystem::copy_options::overwrite_existing, error);
+    ARPG_REQUIRE(!error);
+    write_bytes(directory.path / "run_b.sav", encoded(make_state(1U, 14U)));
+    const auto blocked = store.load();
+    ARPG_REQUIRE(blocked.state == persistence::SaveLoadState::recovery_required);
+    ARPG_REQUIRE(blocked.error == persistence::SaveError::conflicting_slots);
+
+    const auto initial = make_state(1U, 15U);
+    const auto created = store.archive_invalid_and_create(initial);
+    ARPG_REQUIRE(created.state == persistence::SaveLoadState::ready);
+    ARPG_REQUIRE(created.active_slot == persistence::SaveSlot::a);
+    ARPG_REQUIRE(created.recovered);
+    ARPG_REQUIRE(same_state(created.checkpoint, initial));
+
+    const auto reloaded = store.load();
+    ARPG_REQUIRE(reloaded.state == persistence::SaveLoadState::ready);
+    ARPG_REQUIRE(reloaded.active_slot == persistence::SaveSlot::a);
+    ARPG_REQUIRE(same_state(reloaded.checkpoint, initial));
+    ARPG_REQUIRE(std::filesystem::exists(directory.path / "run_a.sav"));
+    ARPG_REQUIRE(!std::filesystem::exists(directory.path / "run_b.sav"));
+
+    std::size_t archive_count = 0U;
+    bool archived_a = false;
+    bool archived_b = false;
+    for (const auto& entry : std::filesystem::directory_iterator(directory.path, error)) {
+        const auto name = entry.path().filename().string();
+        if (is_corrupt_archive(entry.path())) {
+            ++archive_count;
+            archived_a = archived_a || name.find("run_a.sav.corrupt.") == 0U;
+            archived_b = archived_b || name.find("run_b.sav.corrupt.") == 0U;
+        }
+    }
+    ARPG_REQUIRE(!error);
+    ARPG_REQUIRE(archive_count == 2U);
+    ARPG_REQUIRE(archived_a);
+    ARPG_REQUIRE(archived_b);
     return {};
 }
 
@@ -325,6 +378,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"publish final scan fault is indeterminate", &publish_final_scan_fault_is_indeterminate},
     {"truncated temp without valid slot requires recovery", &truncated_temp_without_valid_slot_requires_recovery},
     {"four invalid files are archived before new generation", &four_invalid_files_are_archived_before_new_generation},
+    {"conflicting slots are archived before new generation", &conflicting_slots_are_archived_before_new_generation},
     {"archive failure blocks and preserves corrupt files", &archive_failure_blocks_and_preserves_corrupt_files},
 };
 
