@@ -344,7 +344,7 @@ public:
 };
 ```
 
-`CombatSnapshot` changes from a fixed `dummies[3]` presentation to `monsters[96]` plus `monster_count`. All existing combat tests are migrated in this task to use active monster slots; no duplicate legacy snapshot is retained.
+`CombatSnapshot` gains `monsters[96]` plus `monster_count`. During the migration window it also retains a derived `dummies[3]` compatibility projection so existing dungeon/core targets remain buildable; the projection is not runtime state and must be removed by Task 8 after dungeon wave integration. All existing combat tests are migrated in this task to use active monster slots.
 
 - [ ] **Step 1: Write RED pool tests**
 
