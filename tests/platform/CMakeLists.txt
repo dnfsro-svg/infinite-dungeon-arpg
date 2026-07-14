@@ -823,11 +823,15 @@ arpg_assert_target_dependency_boundary(arpg_combat)
 arpg_assert_target_dependency_boundary(arpg_dungeon)
 arpg_assert_target_dependency_boundary(arpg_persistence)
 arpg_assert_target_dependency_boundary(arpg_modifiers)
+arpg_assert_target_dependency_boundary(arpg_passives)
 arpg_assert_target_not_reachable(arpg_combat arpg_dungeon)
 arpg_assert_target_not_reachable(arpg_persistence arpg_dungeon)
 arpg_assert_target_not_reachable(arpg_persistence arpg_combat)
 arpg_assert_target_not_reachable(arpg_dungeon arpg_persistence)
 arpg_assert_target_not_reachable(arpg_combat arpg_persistence)
+arpg_assert_target_not_reachable(arpg_passives arpg_combat)
+arpg_assert_target_not_reachable(arpg_passives arpg_dungeon)
+arpg_assert_target_not_reachable(arpg_passives arpg_persistence)
 
 add_test(
     NAME architecture.core_no_raylib
@@ -888,6 +892,37 @@ add_test(
 set_tests_properties(
     architecture.modifiers_no_raylib
     PROPERTIES LABELS "headless;architecture;modifiers")
+
+add_test(
+    NAME architecture.passives_no_raylib
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/passives"
+        "-DSOURCE_LABEL=Passives"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/core_boundary_test.cmake")
+set_tests_properties(
+    architecture.passives_no_raylib
+    PROPERTIES LABELS "headless;architecture;passives")
+
+foreach(_arpg_passives_forbidden_module IN ITEMS combat dungeon persistence)
+    if(_arpg_passives_forbidden_module STREQUAL "combat")
+        set(_arpg_passives_forbidden_label "Combat")
+    elseif(_arpg_passives_forbidden_module STREQUAL "dungeon")
+        set(_arpg_passives_forbidden_label "Dungeon")
+    else()
+        set(_arpg_passives_forbidden_label "Persistence")
+    endif()
+    add_test(
+        NAME architecture.passives_no_${_arpg_passives_forbidden_module}
+        COMMAND "${CMAKE_COMMAND}"
+            "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/passives"
+            "-DSOURCE_LABEL=Passives"
+            "-DFORBIDDEN_MODULE=${_arpg_passives_forbidden_module}"
+            "-DFORBIDDEN_LABEL=${_arpg_passives_forbidden_label}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/module_boundary_test.cmake")
+    set_tests_properties(
+        architecture.passives_no_${_arpg_passives_forbidden_module}
+        PROPERTIES LABELS "headless;architecture;passives")
+endforeach()
 
 foreach(_arpg_forbidden_module IN ITEMS combat dungeon progression persistence)
     if(_arpg_forbidden_module STREQUAL "combat")

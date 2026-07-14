@@ -76,6 +76,8 @@ struct ModifierSpan final {
     std::size_t size{};
 
     constexpr ModifierSpan() noexcept = default;
+    constexpr ModifierSpan(const Modifier* values, std::size_t count) noexcept
+        : data(values), size(count) {}
     template <std::size_t N>
     constexpr ModifierSpan(const std::array<Modifier, N>& values) noexcept
         : data(values.data()), size(N) {}

@@ -93,7 +93,7 @@ StatEvaluation evaluate_stat(
     ModifierSpan modifiers,
     ModifierContext context,
     StatBounds bounds) noexcept {
-    constexpr std::size_t kCapacity = 32U;
+    constexpr std::size_t kCapacity = 128U;
     if (bounds.minimum > bounds.maximum || modifiers.size > kCapacity
         || (modifiers.size != 0U && modifiers.data == nullptr)) {
         return {base, false, false};
@@ -137,7 +137,7 @@ ConversionResult evaluate_conversions(
     StatValues values,
     ModifierSpan modifiers,
     ModifierContext context) noexcept {
-    constexpr std::size_t kCapacity = 32U;
+    constexpr std::size_t kCapacity = 128U;
     ConversionResult result{values, false, 0};
     if (modifiers.size > kCapacity
         || (modifiers.size != 0U && modifiers.data == nullptr)) {
