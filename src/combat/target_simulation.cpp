@@ -77,7 +77,10 @@ void CombatWorld::apply_dummy_impact(
     dummy.ai_ticks = 0;
     dummy.contact_attack_resolved = true;
 
-    const float scale = impulse_scale(dummy.kind);
+    const float player_scale = static_cast<float>(
+        encounter_config_.player_build.values.impulse_scale)
+        / static_cast<float>(modifiers::kFixedOne);
+    const float scale = impulse_scale(dummy.kind) * player_scale;
     const float facing = player_.facing == Facing::right ? 1.0F : -1.0F;
     const bool already_airborne =
         dummy.reaction == ReactionState::airborne || dummy.position.z > 0.0F;

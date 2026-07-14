@@ -75,6 +75,13 @@ public:
         Vec3 position,
         Vec3 velocity,
         std::uint16_t lifetime_ticks,
+        DamagePacket damage,
+        float radius) noexcept;
+    [[nodiscard]] std::optional<ProjectileHandle> spawn(
+        MonsterHandle owner,
+        Vec3 position,
+        Vec3 velocity,
+        std::uint16_t lifetime_ticks,
         int damage,
         float radius) noexcept;
     [[nodiscard]] bool destroy(ProjectileHandle handle) noexcept;
@@ -102,6 +109,15 @@ struct HazardHandle final {
 class HazardPool final {
 public:
     void clear() noexcept;
+    [[nodiscard]] std::optional<HazardHandle> spawn(
+        MonsterHandle owner,
+        Vec3 center,
+        float radius,
+        std::uint16_t telegraph_ticks,
+        std::uint16_t active_ticks,
+        std::uint16_t damage_interval_ticks,
+        DamagePacket damage,
+        bool persists_after_owner_death = false) noexcept;
     [[nodiscard]] std::optional<HazardHandle> spawn(
         MonsterHandle owner,
         Vec3 center,

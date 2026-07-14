@@ -13,9 +13,11 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
         attack_.id == AttackId::none
             ? AttackPhase::finished
             : attack_phase_at(
-                  *find_attack_definition(attack_.id), attack_.elapsed_ticks),
+                  *find_attack_definition(attack_.id), attack_.elapsed_ticks,
+                  attack_.startup_ticks, attack_.recovery_ticks),
         attack_.elapsed_ticks, player_.combo_stage, player_.hit_stop_ticks,
         player_.air_attack_available, player_.hp, player_.max_hp,
+        player_.barrier, player_.max_barrier, player_.resistance,
         player_.hurt_ticks, player_.invulnerability_ticks,
     };
     for (std::size_t index = 0; index < monsters_.slots().size(); ++index) {

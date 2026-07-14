@@ -16,6 +16,14 @@ struct CombatWorldTestAccess final {
         world.apply_player_damage(damage, source_position, feedback);
     }
 
+    static void apply_damage(
+        combat::CombatWorld& world,
+        combat::DamagePacket packet,
+        combat::Vec3 source_position,
+        combat::FeedbackLevel feedback) noexcept {
+        world.apply_player_damage(packet, source_position, feedback);
+    }
+
     static void fill_projectiles(
         combat::CombatWorld& world,
         combat::MonsterHandle owner) noexcept {

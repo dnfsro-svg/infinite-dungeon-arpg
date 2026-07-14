@@ -86,7 +86,8 @@ void CombatWorld::resolve_attack_hits() noexcept {
 
     const AttackDefinition* definition = find_attack_definition(attack_.id);
     if (definition == nullptr
-        || attack_phase_at(*definition, attack_.elapsed_ticks)
+        || attack_phase_at(*definition, attack_.elapsed_ticks,
+                           attack_.startup_ticks, attack_.recovery_ticks)
                != AttackPhase::active) {
         return;
     }
@@ -121,7 +122,10 @@ void CombatWorld::resolve_attack_hits() noexcept {
         MonsterRuntime& dummy = monsters_.slots_[index];
         attack_.hit_targets[index] = true;
         attack_.connected = true;
-        int hp_damage = definition->damage;
+        const DamagePacket packet = build_player_hit_packet(
+            definition->damage, encounter_config_.player_build);
+        int hp_damage = 0;
+        for (const int value : packet.amount) hp_damage += std::max(0, value);
         if (dummy.shield != 0 && hp_damage > 0) {
             const int absorbed = std::min(dummy.shield, hp_damage);
             dummy.shield -= absorbed;
@@ -160,7 +164,7 @@ void CombatWorld::resolve_attack_hits() noexcept {
         hit.hit_count = 1;
         hit.feedback = definition->feedback;
         hit.position = dummy.position;
-        hit.value = definition->damage;
+        hit.value = hp_damage;
         emit_event(hit);
 
         if (starts_break) {
