@@ -12,9 +12,13 @@ namespace arpg::persistence {
 inline constexpr std::size_t kCheckpointHeaderSize = 32U;
 inline constexpr std::size_t kLegacyCheckpointPayloadSize = 64U;
 inline constexpr std::size_t kLegacyEncodedCheckpointSize = 96U;
-inline constexpr std::size_t kCheckpointPayloadSize = 80U;
-inline constexpr std::size_t kEncodedCheckpointSize = 112U;
-inline constexpr std::uint32_t kCheckpointFormatVersion = 2U;
+inline constexpr std::size_t kPreviousCheckpointPayloadSize = 80U;
+inline constexpr std::size_t kPreviousEncodedCheckpointSize = 112U;
+inline constexpr std::size_t kCheckpointPayloadSize = 88U;
+inline constexpr std::size_t kEncodedCheckpointSize = 120U;
+inline constexpr std::uint32_t kLegacyCheckpointFormatVersion = 1U;
+inline constexpr std::uint32_t kPreviousCheckpointFormatVersion = 2U;
+inline constexpr std::uint32_t kCheckpointFormatVersion = 3U;
 inline constexpr std::uint32_t kCheckpointRulesVersion = 1U;
 
 enum class CodecError : std::uint8_t {

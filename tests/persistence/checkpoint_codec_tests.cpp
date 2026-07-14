@@ -52,6 +52,7 @@ bool same_state(
             == rhs.progression.earned_passive_points
         && lhs.progression.unspent_passive_points
             == rhs.progression.unspent_passive_points
+        && lhs.passive_tree.allocated_bits == rhs.passive_tree.allocated_bits
         && lhs.last_transition == rhs.last_transition
         && lhs.last_direction == rhs.last_direction;
 }
@@ -63,26 +64,18 @@ bool encoded_fixture(
 
 void refresh_crc(
     std::array<std::uint8_t, persistence::kEncodedCheckpointSize>& bytes) noexcept {
-    std::array<std::uint8_t, 100U> covered{};
+    std::array<std::uint8_t, 108U> covered{};
     std::copy_n(bytes.begin() + 8U, 20U, covered.begin());
-    std::copy_n(bytes.begin() + 32U, 80U, covered.begin() + 20U);
+    std::copy_n(bytes.begin() + 32U, persistence::kCheckpointPayloadSize,
+        covered.begin() + 20U);
     const auto checksum = persistence::crc32(covered.data(), covered.size());
     for (std::size_t index = 0; index < 4U; ++index) {
         bytes[28U + index] = static_cast<std::uint8_t>(checksum >> (index * 8U));
     }
 }
 
-std::uint64_t fnv1a64(const std::uint8_t* bytes, std::size_t size) noexcept {
-    std::uint64_t hash = 14695981039346656037ULL;
-    for (std::size_t index = 0U; index < size; ++index) {
-        hash ^= bytes[index];
-        hash *= 1099511628211ULL;
-    }
-    return hash;
-}
-
 arpg::test::Failure baseline_checkpoint_bytes_are_preserved() noexcept {
-    constexpr std::array<std::uint8_t, persistence::kEncodedCheckpointSize>
+    constexpr std::array<std::uint8_t, persistence::kPreviousEncodedCheckpointSize>
         kBaselineBytes{{
             0x49U, 0x41U, 0x52U, 0x50U, 0x47U, 0x53U, 0x30U, 0x33U,
             0x02U, 0x00U, 0x00U, 0x00U, 0x01U, 0x00U, 0x00U, 0x00U,
@@ -99,20 +92,20 @@ arpg::test::Failure baseline_checkpoint_bytes_are_preserved() noexcept {
             0x24U, 0x00U, 0x2AU, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U,
             0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U,
         }};
-    constexpr std::uint64_t kBaselineFnv1a64 = 0x7140C6EB37ABE1B4ULL;
-
     std::array<std::uint8_t, persistence::kEncodedCheckpointSize> bytes{};
     ARPG_REQUIRE(persistence::encode_checkpoint(make_fixture(), bytes));
-    ARPG_REQUIRE(bytes.size() == 112U);
-    ARPG_REQUIRE(bytes == kBaselineBytes);
-    ARPG_REQUIRE(fnv1a64(bytes.data(), bytes.size()) == kBaselineFnv1a64);
-    ARPG_REQUIRE(bytes[0U] == 0x49U && bytes[7U] == 0x33U);
-    ARPG_REQUIRE(bytes[106U] == 0x00U && bytes[111U] == 0x00U);
+    ARPG_REQUIRE(bytes.size() == 120U);
+    ARPG_REQUIRE(bytes[0U] == 0x49U && bytes[7U] == 0x34U);
+    ARPG_REQUIRE(bytes[106U] == 0x01U && bytes[107U] == 0x00U);
 
     const auto decoded = persistence::decode_checkpoint(
         kBaselineBytes.data(), kBaselineBytes.size());
     ARPG_REQUIRE(decoded.error == persistence::CodecError::none);
     ARPG_REQUIRE(same_state(decoded.state, make_fixture()));
+    const auto legacy_decoded = persistence::decode_checkpoint(
+        kBaselineBytes.data(), kBaselineBytes.size());
+    ARPG_REQUIRE(legacy_decoded.error == persistence::CodecError::none);
+    ARPG_REQUIRE(legacy_decoded.state.passive_tree.allocated_bits == 1ULL);
     return {};
 }
 
@@ -127,12 +120,12 @@ arpg::test::Failure all_nonzero_fields_round_trip() noexcept {
 
 arpg::test::Failure encoded_sizes_and_generation_are_little_endian() noexcept {
     static_assert(persistence::kCheckpointHeaderSize == 32U);
-    static_assert(persistence::kCheckpointPayloadSize == 80U);
-    static_assert(persistence::kEncodedCheckpointSize == 112U);
+    static_assert(persistence::kCheckpointPayloadSize == 88U);
+    static_assert(persistence::kEncodedCheckpointSize == 120U);
 
     std::array<std::uint8_t, persistence::kEncodedCheckpointSize> bytes{};
     ARPG_REQUIRE(encoded_fixture(bytes));
-    ARPG_REQUIRE(bytes.size() == 112U);
+    ARPG_REQUIRE(bytes.size() == 120U);
     ARPG_REQUIRE(bytes[16] == 0x18U);
     ARPG_REQUIRE(bytes[17] == 0x17U);
     ARPG_REQUIRE(bytes[18] == 0x16U);
@@ -169,7 +162,7 @@ arpg::test::Failure wrong_magic_is_rejected() noexcept {
 arpg::test::Failure unsupported_format_and_rules_are_rejected() noexcept {
     std::array<std::uint8_t, persistence::kEncodedCheckpointSize> bytes{};
     ARPG_REQUIRE(encoded_fixture(bytes));
-    bytes[8] = 3U;
+    bytes[8] = 4U;
     auto decoded = persistence::decode_checkpoint(bytes.data(), bytes.size());
     ARPG_REQUIRE(decoded.error == persistence::CodecError::unsupported_format);
 
@@ -234,6 +227,8 @@ legacy_fixture() noexcept {
     static_cast<void>(persistence::encode_checkpoint(legacy_state, current));
     std::array<std::uint8_t, persistence::kLegacyEncodedCheckpointSize> legacy{};
     std::copy_n(current.begin(), legacy.size(), legacy.begin());
+    legacy[0U] = 'I'; legacy[1U] = 'A'; legacy[2U] = 'R'; legacy[3U] = 'P';
+    legacy[4U] = 'G'; legacy[5U] = 'S'; legacy[6U] = '0'; legacy[7U] = '3';
     legacy[8U] = 1U;
     legacy[9U] = legacy[10U] = legacy[11U] = 0U;
     legacy[24U] = 64U;

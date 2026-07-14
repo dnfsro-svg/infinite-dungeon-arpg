@@ -1,5 +1,6 @@
 #pragma once
 
+#include "passives/passive_tree_types.hpp"
 #include "progression/progression_types.hpp"
 
 #include <array>
@@ -55,6 +56,7 @@ struct DungeonRunState final {
     TransitionKind last_transition{TransitionKind::none};
     ExitDirection last_direction{ExitDirection::none};
     progression::ProgressionState progression{};
+    passives::PassiveTreeState passive_tree{};
 };
 
 }  // namespace arpg::dungeon::checkpoint

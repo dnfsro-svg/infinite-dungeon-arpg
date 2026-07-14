@@ -1,5 +1,6 @@
 #include "persistence/checkpoint_codec.hpp"
 
+#include "passives/passive_tree_rules.hpp"
 #include "progression/progression_rules.hpp"
 
 #include <algorithm>
@@ -13,10 +14,11 @@ using checkpoint::EntrySide;
 using checkpoint::ExitDirection;
 using checkpoint::TransitionKind;
 
-constexpr std::array<std::uint8_t, 8> kMagic{{
+constexpr std::array<std::uint8_t, 8> kCurrentMagic{{
+    'I', 'A', 'R', 'P', 'G', 'S', '0', '4'}};
+constexpr std::array<std::uint8_t, 8> kLegacyMagic{{
     'I', 'A', 'R', 'P', 'G', 'S', '0', '3'}};
-constexpr std::uint32_t kLegacyFormatVersion = 1U;
-constexpr std::size_t kMaximumCrcCoverageSize = 100U;
+constexpr std::size_t kMaximumCrcCoverageSize = 108U;
 constexpr std::size_t kCrcHeaderOffset = 8U;
 constexpr std::size_t kCrcHeaderSize = 20U;
 constexpr std::size_t kCrcPayloadOffset = 32U;
@@ -93,7 +95,9 @@ bool valid_state(const dungeon::checkpoint::DungeonRunState& state) noexcept {
         && valid_transition(static_cast<std::uint8_t>(state.last_transition))
         && valid_direction(static_cast<std::uint8_t>(state.last_direction))
         && progression::valid_progression_state(
-            state.progression, progression::default_progression_rules());
+            state.progression, progression::default_progression_rules())
+        && passives::valid_passive_tree_state(
+            state.passive_tree, state.progression);
 }
 
 std::uint32_t checkpoint_crc(
@@ -127,7 +131,7 @@ bool encode_checkpoint(
     }
 
     out.fill(0U);
-    std::copy(kMagic.begin(), kMagic.end(), out.begin());
+    std::copy(kCurrentMagic.begin(), kCurrentMagic.end(), out.begin());
     write_u32(out.data() + 8U, kCheckpointFormatVersion);
     write_u32(out.data() + 12U, kCheckpointRulesVersion);
     write_u64(out.data() + 16U, state.commit_generation);
@@ -151,6 +155,7 @@ bool encode_checkpoint(
     out[95U] = state.progression.earned_passive_points;
     out[96U] = state.progression.unspent_passive_points;
     write_u64(out.data() + 98U, state.progression.experience);
+    write_u64(out.data() + 106U, state.passive_tree.allocated_bits);
 
     write_u32(out.data() + 28U,
         checkpoint_crc(out.data(), kCheckpointPayloadSize));
@@ -161,10 +166,15 @@ DecodeResult decode_checkpoint(
     const std::uint8_t* bytes, std::size_t size) noexcept {
     if (bytes == nullptr
         || (size != kEncodedCheckpointSize
+            && size != kPreviousEncodedCheckpointSize
             && size != kLegacyEncodedCheckpointSize)) {
         return error_result(CodecError::wrong_size);
     }
-    if (!std::equal(kMagic.begin(), kMagic.end(), bytes)) {
+    const bool current_magic = std::equal(
+        kCurrentMagic.begin(), kCurrentMagic.end(), bytes);
+    const bool legacy_magic = std::equal(
+        kLegacyMagic.begin(), kLegacyMagic.end(), bytes);
+    if (!current_magic && !legacy_magic) {
         return error_result(CodecError::bad_magic);
     }
     DecodeCursor header{reinterpret_cast<const std::byte*>(bytes), size, 8U};
@@ -180,14 +190,21 @@ DecodeResult decode_checkpoint(
         return error_result(CodecError::wrong_size);
     }
     if (format != kCheckpointFormatVersion
-        && format != kLegacyFormatVersion) {
+        && format != kPreviousCheckpointFormatVersion
+        && format != kLegacyCheckpointFormatVersion) {
+        return error_result(CodecError::unsupported_format);
+    }
+    if ((format == kCheckpointFormatVersion) != current_magic
+        || (format != kCheckpointFormatVersion) != legacy_magic) {
         return error_result(CodecError::unsupported_format);
     }
     if (rules != kCheckpointRulesVersion) {
         return error_result(CodecError::unsupported_rules);
     }
-    const std::size_t payload_size = format == kLegacyFormatVersion
-        ? kLegacyCheckpointPayloadSize : kCheckpointPayloadSize;
+    const std::size_t payload_size = format == kLegacyCheckpointFormatVersion
+        ? kLegacyCheckpointPayloadSize
+        : format == kPreviousCheckpointFormatVersion
+            ? kPreviousCheckpointPayloadSize : kCheckpointPayloadSize;
     const std::size_t encoded_size = kCheckpointHeaderSize + payload_size;
     if (size != encoded_size || encoded_payload_size != payload_size) {
         return error_result(CodecError::bad_payload_length);
@@ -236,9 +253,24 @@ DecodeResult decode_checkpoint(
     state.current_room.is_abyss = is_abyss != 0U;
     state.last_transition = static_cast<TransitionKind>(transition);
     state.last_direction = static_cast<ExitDirection>(direction);
-    if (format == kCheckpointFormatVersion) {
+    if (format == kPreviousCheckpointFormatVersion) {
         if (bytes[97U] != 0U
             || !std::all_of(bytes + 106U, bytes + 112U,
+                [](std::uint8_t value) noexcept { return value == 0U; })) {
+            return error_result(CodecError::invalid_state);
+        }
+        state.passive_tree = passives::PassiveTreeState{1ULL};
+        state.progression.level = bytes[94U];
+        state.progression.earned_passive_points = bytes[95U];
+        state.progression.unspent_passive_points = bytes[96U];
+        DecodeCursor progression{reinterpret_cast<const std::byte*>(bytes),
+            size, 98U};
+        if (!progression.read_u64(state.progression.experience)) {
+            return error_result(CodecError::wrong_size);
+        }
+    } else if (format == kCheckpointFormatVersion) {
+        if (bytes[97U] != 0U
+            || !std::all_of(bytes + 114U, bytes + 120U,
                 [](std::uint8_t value) noexcept { return value == 0U; })) {
             return error_result(CodecError::invalid_state);
         }
@@ -250,6 +282,13 @@ DecodeResult decode_checkpoint(
         if (!progression.read_u64(state.progression.experience)) {
             return error_result(CodecError::wrong_size);
         }
+        DecodeCursor passive_tree{reinterpret_cast<const std::byte*>(bytes),
+            size, 106U};
+        if (!passive_tree.read_u64(state.passive_tree.allocated_bits)) {
+            return error_result(CodecError::wrong_size);
+        }
+    } else {
+        state.passive_tree = passives::PassiveTreeState{1ULL};
     }
     if (!valid_state(state)) {
         return error_result(CodecError::invalid_state);
