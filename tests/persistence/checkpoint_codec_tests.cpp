@@ -102,10 +102,7 @@ arpg::test::Failure baseline_checkpoint_bytes_are_preserved() noexcept {
         kBaselineBytes.data(), kBaselineBytes.size());
     ARPG_REQUIRE(decoded.error == persistence::CodecError::none);
     ARPG_REQUIRE(same_state(decoded.state, make_fixture()));
-    const auto legacy_decoded = persistence::decode_checkpoint(
-        kBaselineBytes.data(), kBaselineBytes.size());
-    ARPG_REQUIRE(legacy_decoded.error == persistence::CodecError::none);
-    ARPG_REQUIRE(legacy_decoded.state.passive_tree.allocated_bits == 1ULL);
+    ARPG_REQUIRE(decoded.state.passive_tree.allocated_bits == 1ULL);
     return {};
 }
 
@@ -269,6 +266,7 @@ arpg::test::Failure version_one_migrates_to_new_character_progression() noexcept
     ARPG_REQUIRE(decoded.state.progression.experience == 0U);
     ARPG_REQUIRE(decoded.state.progression.earned_passive_points == 0U);
     ARPG_REQUIRE(decoded.state.progression.unspent_passive_points == 0U);
+    ARPG_REQUIRE(decoded.state.passive_tree.allocated_bits == 1ULL);
     return {};
 }
 

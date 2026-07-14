@@ -138,6 +138,10 @@ arpg::test::Failure save_store_fault_recovery_preserves_passive_bits() noexcept 
 
     auto next = make_fixture();
     next.commit_generation = 8U;
+    next.passive_tree.allocated_bits = (1ULL << 0U) | (1ULL << 1U)
+        | (1ULL << 2U) | (1ULL << 3U);
+    ARPG_REQUIRE(next.passive_tree.allocated_bits
+        != initial.passive_tree.allocated_bits);
     persistence::SaveStoreConfig faulty_config{};
     faulty_config.directory = directory;
     faulty_config.fault_hook = &fail_final_scan_a;
