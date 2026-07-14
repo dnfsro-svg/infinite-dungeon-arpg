@@ -4,6 +4,9 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "modifiers/damage_types.hpp"
+#include "modifiers/player_modifier_values.hpp"
+
 namespace arpg::test {
 struct CombatWorldTestAccess;
 }
@@ -42,6 +45,39 @@ enum class FeedbackLevel : std::uint8_t {
     medium,
     heavy,
 };
+
+struct DamagePacket final {
+    std::array<int, modifiers::kDamageTypeCount> amount{};
+
+    constexpr DamagePacket() noexcept = default;
+    constexpr DamagePacket(int physical) noexcept {
+        amount[modifiers::damage_index(modifiers::DamageType::physical)] =
+            physical;
+    }
+    constexpr DamagePacket(
+        std::array<int, modifiers::kDamageTypeCount> values) noexcept
+        : amount(values) {}
+
+    friend bool operator==(
+        const DamagePacket& left, const DamagePacket& right) noexcept {
+        return left.amount == right.amount;
+    }
+    friend bool operator!=(
+        const DamagePacket& left, const DamagePacket& right) noexcept {
+        return !(left == right);
+    }
+};
+
+struct PlayerCombatBuild final {
+    modifiers::PlayerModifierValues values{};
+};
+
+[[nodiscard]] DamagePacket build_player_hit_packet(
+    int base_physical, const PlayerCombatBuild& build) noexcept;
+[[nodiscard]] int resolve_player_damage(
+    DamagePacket packet, const PlayerCombatBuild& build) noexcept;
+[[nodiscard]] std::uint16_t scaled_phase_ticks(
+    std::uint16_t base, modifiers::FixedValue attack_speed) noexcept;
 
 enum class ImpactKind : std::uint8_t {
     light_hitstun,
@@ -85,7 +121,7 @@ struct MonsterDefinition final {
     std::uint16_t active_ticks{4};
     std::uint16_t recovery_ticks{20};
     std::uint16_t cooldown_ticks{60};
-    int contact_damage{10};
+    DamagePacket contact_damage{10};
     float projectile_speed{};
     std::uint16_t hazard_ticks{};
     FeedbackLevel feedback{FeedbackLevel::light};
@@ -121,7 +157,7 @@ struct ProjectileRuntime final {
     Vec3 position{};
     Vec3 velocity{};
     std::uint16_t lifetime_ticks{};
-    int damage{};
+    DamagePacket damage{};
     float radius{};
 };
 
@@ -138,7 +174,7 @@ struct HazardRuntime final {
     std::uint16_t damage_cooldown_ticks{};
     bool player_latched{};
     bool persists_after_owner_death{};
-    int damage{};
+    DamagePacket damage{};
 };
 
 struct EncounterWave final {
@@ -258,6 +294,7 @@ struct CombatEncounterConfig final {
     Facing initial_facing{Facing::right};
     EncounterWave wave{};
     bool reset_player_health{true};
+    PlayerCombatBuild player_build{};
 };
 
 struct PlayerSnapshot final {
@@ -273,6 +310,9 @@ struct PlayerSnapshot final {
     bool air_attack_available{true};
     int hp{};
     int max_hp{};
+    int barrier{};
+    int max_barrier{};
+    std::array<int, modifiers::kElementCount> resistance{};
     std::uint16_t hurt_ticks{};
     std::uint16_t invulnerability_ticks{};
 };
@@ -310,7 +350,7 @@ struct ProjectileSnapshot final {
     Vec3 position{};
     Vec3 velocity{};
     std::uint16_t lifetime_ticks{};
-    int damage{};
+    DamagePacket damage{};
     float radius{};
 };
 
@@ -325,7 +365,7 @@ struct HazardSnapshot final {
     std::uint16_t lifetime_ticks{};
     std::uint16_t damage_interval_ticks{};
     bool player_latched{};
-    int damage{};
+    DamagePacket damage{};
 };
 
 // Temporary presentation alias for pre-Task 3 dungeon tests. Task 8 removes

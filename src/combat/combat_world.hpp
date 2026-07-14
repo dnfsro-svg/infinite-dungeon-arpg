@@ -45,6 +45,9 @@ private:
         bool air_attack_available{true};
         int hp{};
         int max_hp{};
+        int barrier{};
+        int max_barrier{};
+        std::array<int, modifiers::kElementCount> resistance{};
         std::uint16_t hurt_ticks{};
         std::uint16_t invulnerability_ticks{};
     };
@@ -52,6 +55,8 @@ private:
     struct AttackRuntime final {
         AttackId id{AttackId::none};
         std::uint16_t elapsed_ticks{};
+        std::uint16_t startup_ticks{};
+        std::uint16_t recovery_ticks{};
         bool connected{};
         bool impact_event_emitted{};
         std::array<bool, kMonsterCapacity> hit_targets{};
@@ -70,7 +75,18 @@ private:
     void apply_attack_assist(const AttackDefinition& definition) noexcept;
     void resolve_attack_hits() noexcept;
     void apply_player_damage(
+        DamagePacket damage,
+        Vec3 source_position,
+        FeedbackLevel feedback) noexcept;
+    void apply_player_damage(
         int damage, Vec3 source_position, FeedbackLevel feedback) noexcept;
+    [[nodiscard]] bool spawn_projectile(
+        MonsterHandle owner,
+        Vec3 position,
+        Vec3 velocity,
+        std::uint16_t lifetime_ticks,
+        DamagePacket damage,
+        float radius) noexcept;
     [[nodiscard]] bool spawn_projectile(
         MonsterHandle owner,
         Vec3 position,
@@ -78,6 +94,14 @@ private:
         std::uint16_t lifetime_ticks,
         int damage,
         float radius) noexcept;
+    [[nodiscard]] bool spawn_hazard(
+        MonsterHandle owner,
+        Vec3 center,
+        float radius,
+        std::uint16_t telegraph_ticks,
+        std::uint16_t active_ticks,
+        std::uint16_t damage_interval_ticks,
+        DamagePacket damage) noexcept;
     [[nodiscard]] bool spawn_hazard(
         MonsterHandle owner,
         Vec3 center,

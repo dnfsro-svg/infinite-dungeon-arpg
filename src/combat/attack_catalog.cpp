@@ -68,12 +68,21 @@ const AttackDefinition* find_attack_definition(AttackId id) noexcept {
 AttackPhase attack_phase_at(
     const AttackDefinition& definition,
     std::uint32_t elapsed_ticks) noexcept {
-    const auto active_start =
-        static_cast<std::uint32_t>(definition.startup_ticks);
+    return attack_phase_at(definition, elapsed_ticks,
+                           definition.startup_ticks,
+                           definition.recovery_ticks);
+}
+
+AttackPhase attack_phase_at(
+    const AttackDefinition& definition,
+    std::uint32_t elapsed_ticks,
+    std::uint16_t startup_ticks,
+    std::uint16_t recovery_ticks) noexcept {
+    const auto active_start = static_cast<std::uint32_t>(startup_ticks);
     const auto recovery_start =
         active_start + static_cast<std::uint32_t>(definition.active_ticks);
     const auto finished_start =
-        recovery_start + static_cast<std::uint32_t>(definition.recovery_ticks);
+        recovery_start + static_cast<std::uint32_t>(recovery_ticks);
 
     if (elapsed_ticks < active_start) {
         return AttackPhase::startup;
