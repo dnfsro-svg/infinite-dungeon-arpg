@@ -25,19 +25,38 @@ arpg::test::Failure fire_and_generic_values_are_independent() noexcept {
 }
 
 arpg::test::Failure resistance_and_reduction_are_clamped() noexcept {
-    const std::array<Modifier, 2> values{{
+    const std::array<Modifier, 3> values{{
         {201U, StatId::lightning_resistance, ModifierOperation::flat, 10000},
         {202U, StatId::damage_taken, ModifierOperation::increased, -9000},
+        {203U, StatId::water_resistance, ModifierOperation::flat, -9000},
     }};
     const PlayerModifierValues result = evaluate_player_modifiers(values);
     ARPG_REQUIRE(result.resistance[element_index(DamageType::lightning)] == 7500);
+    ARPG_REQUIRE(result.resistance[element_index(DamageType::water)] == -6000);
     ARPG_REQUIRE(result.damage_taken == 5000);
+    return {};
+}
+
+arpg::test::Failure melee_damage_is_not_projected_to_physical_twice() noexcept {
+    const std::array<Modifier, 1> values{{
+        {301U, StatId::melee_damage, ModifierOperation::increased, 600},
+    }};
+    const PlayerModifierValues result = evaluate_player_modifiers(values);
+    ARPG_REQUIRE(result.melee_damage == 10600);
+    ARPG_REQUIRE(result.damage_increased[damage_index(DamageType::physical)]
+        == kFixedOne);
+
+    const PlayerModifierValues defaults = evaluate_player_modifiers({});
+    ARPG_REQUIRE(defaults.damage_increased[damage_index(DamageType::physical)]
+        == kFixedOne);
+    ARPG_REQUIRE(defaults.resistance[element_index(DamageType::fire)] == 0);
     return {};
 }
 
 constexpr arpg::test::TestCase kCases[] = {
     {"independent element and generic values", &fire_and_generic_values_are_independent},
     {"resistance and damage taken clamps", &resistance_and_reduction_are_clamped},
+    {"melee damage is applied once", &melee_damage_is_not_projected_to_physical_twice},
 };
 
 }  // namespace
@@ -45,4 +64,3 @@ constexpr arpg::test::TestCase kCases[] = {
 arpg::test::TestSuite player_modifier_values_suite() noexcept {
     return arpg::test::make_suite("player_modifier_values", kCases);
 }
-

@@ -7,5 +7,5 @@ arpg::test::TestSuite player_modifier_values_suite() noexcept;
 int main() {
     const arpg::test::TestSuite suites[] = {
         modifier_math_suite(), effect_set_suite(), player_modifier_values_suite()};
-    return arpg::test::run_suites(suites, 15, "stage 7 task 1");
+    return arpg::test::run_suites(suites, 16, "stage 7 task 1");
 }

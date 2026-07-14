@@ -44,8 +44,6 @@ PlayerModifierValues evaluate_player_modifiers(
     result.flat_damage[damage_index(DamageType::chaos)] = evaluate(
         0, StatId::chaos_flat_damage, modifiers, kUnbounded, result.valid);
 
-    result.damage_increased[damage_index(DamageType::physical)] = evaluate(
-        kFixedOne, StatId::melee_damage, modifiers, kNonNegative, result.valid);
     result.damage_increased[damage_index(DamageType::fire)] = evaluate(
         kFixedOne, StatId::fire_damage, modifiers, kNonNegative, result.valid);
     result.damage_increased[damage_index(DamageType::water)] = evaluate(
