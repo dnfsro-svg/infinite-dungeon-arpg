@@ -83,6 +83,13 @@ dungeon::DungeonRunState initial_state(std::uint64_t seed) noexcept {
     return dungeon::make_initial_run_state(seed, dungeon::DungeonRules{}).state;
 }
 
+dungeon::DungeonRunState initial_state_with_passive_points(
+    std::uint64_t seed) noexcept {
+    auto state = initial_state(seed);
+    state.progression = {4U, 0U, 3U, 3U};
+    return state;
+}
+
 bool same_descriptor(const dungeon::DungeonSnapshot& snapshot,
     const dungeon::DungeonRunState& state) noexcept {
     const auto& room = state.current_room;
@@ -164,6 +171,30 @@ bool drive_door_pending(dungeon::DungeonSession& session,
         }
     }
     return false;
+}
+
+bool commit_pending_passive(dungeon::DungeonSession& session,
+    persistence::SaveStore& store) noexcept {
+    const auto pending = session.pending_save();
+    if (!pending.has_value()
+            || pending->kind != dungeon::PendingSaveKind::passive_tree) {
+        return false;
+    }
+    const auto saved = store.commit(pending->next_state);
+    session.resolve_pending_save(to_session_result(saved));
+    const auto snapshot = session.snapshot();
+    return saved.state == persistence::SaveCommitState::committed
+        && !snapshot.passive_save_pending
+        && snapshot.passive_tree.allocated_bits
+            == pending->next_state.passive_tree.allocated_bits
+        && snapshot.progression.unspent_passive_points
+            == pending->next_state.progression.unspent_passive_points;
+}
+
+bool allocate_committed(dungeon::DungeonSession& session,
+    persistence::SaveStore& store, std::uint8_t node) noexcept {
+    return session.request_passive_allocation(node)
+        && commit_pending_passive(session, store);
 }
 
 arpg::test::Failure initial_generation_one_round_trips_descriptor() noexcept {
@@ -369,6 +400,72 @@ arpg::test::Failure reset_reopen_and_repeated_load_keep_persisted_room_fields() 
     return {};
 }
 
+arpg::test::Failure passive_fault_recovery_never_persists_partial_points_or_bits() noexcept {
+    constexpr std::uint64_t kTwoNodes = (1ULL << 0U) | (1ULL << 8U)
+        | (1ULL << 9U);
+    constexpr std::uint64_t kThreeNodes = kTwoNodes | (1ULL << 10U);
+
+    {
+        TempDirectory directory;
+        auto store = make_store(directory.path);
+        const auto initial = initial_state_with_passive_points(0x8110U);
+        ARPG_REQUIRE(store.commit(initial).state
+            == persistence::SaveCommitState::committed);
+        dungeon::DungeonSession session{dungeon::DungeonRules{}, initial};
+        ARPG_REQUIRE(clear_and_await(session));
+        ARPG_REQUIRE(allocate_committed(session, store, 8U));
+        ARPG_REQUIRE(allocate_committed(session, store, 9U));
+        const auto before = session.snapshot();
+        ARPG_REQUIRE(before.passive_tree.allocated_bits == kTwoNodes);
+        ARPG_REQUIRE(session.request_passive_allocation(10U));
+        const auto pending = *session.pending_save();
+        FaultContext fault{persistence::SaveFaultPoint::before_publish, false};
+        auto faulty = make_store(directory.path, &fault);
+        const auto saved = faulty.commit(pending.next_state);
+        ARPG_REQUIRE(saved.state == persistence::SaveCommitState::not_committed);
+        session.resolve_pending_save(to_session_result(saved));
+        const auto after = session.snapshot();
+        ARPG_REQUIRE(after.passive_tree.allocated_bits == before.passive_tree.allocated_bits);
+        ARPG_REQUIRE(after.progression.unspent_passive_points
+            == before.progression.unspent_passive_points);
+        auto restarted_store = make_store(directory.path);
+        const auto restarted = restarted_store.load();
+        ARPG_REQUIRE(restarted.state == persistence::SaveLoadState::ready);
+        ARPG_REQUIRE(restarted.checkpoint.passive_tree.allocated_bits == kTwoNodes);
+        ARPG_REQUIRE(restarted.checkpoint.progression.unspent_passive_points
+            == before.progression.unspent_passive_points);
+    }
+
+    {
+        TempDirectory directory;
+        auto store = make_store(directory.path);
+        const auto initial = initial_state_with_passive_points(0x8111U);
+        ARPG_REQUIRE(store.commit(initial).state
+            == persistence::SaveCommitState::committed);
+        dungeon::DungeonSession session{dungeon::DungeonRules{}, initial};
+        ARPG_REQUIRE(clear_and_await(session));
+        ARPG_REQUIRE(allocate_committed(session, store, 8U));
+        ARPG_REQUIRE(allocate_committed(session, store, 9U));
+        ARPG_REQUIRE(session.request_passive_allocation(10U));
+        const auto pending = *session.pending_save();
+        FaultContext fault{persistence::SaveFaultPoint::after_publish, false};
+        auto faulty = make_store(directory.path, &fault);
+        const auto saved = faulty.commit(pending.next_state);
+        ARPG_REQUIRE(saved.state == persistence::SaveCommitState::indeterminate);
+        session.resolve_pending_save(to_session_result(saved));
+        ARPG_REQUIRE(session.snapshot().phase == dungeon::RoomPhase::faulted);
+        auto restarted_store = make_store(directory.path);
+        const auto restarted = restarted_store.load();
+        ARPG_REQUIRE(restarted.state == persistence::SaveLoadState::ready);
+        ARPG_REQUIRE(restarted.checkpoint.passive_tree.allocated_bits == kThreeNodes);
+        ARPG_REQUIRE(restarted.checkpoint.progression.unspent_passive_points
+            == pending.next_state.progression.unspent_passive_points);
+        ARPG_REQUIRE(dungeon::same_run_state(restarted.checkpoint,
+            pending.next_state));
+    }
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"initial generation one round trips descriptor", &initial_generation_one_round_trips_descriptor},
     {"committed door transition restarts in next room", &committed_door_transition_restarts_in_next_room},
@@ -376,6 +473,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"lost post publish receipt faults session but restart uses new room", &lost_post_publish_receipt_faults_session_but_restart_uses_new_room},
     {"committed descent restarts without rerolling hole or abyss", &committed_descent_restarts_without_rerolling_hole_or_abyss},
     {"reset reopen and repeated load keep persisted room fields", &reset_reopen_and_repeated_load_keep_persisted_room_fields},
+    {"passive fault recovery never persists partial points or bits", &passive_fault_recovery_never_persists_partial_points_or_bits},
 };
 
 }  // namespace

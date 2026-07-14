@@ -6,6 +6,7 @@
 #include "dungeon/room_generation.hpp"
 #include "dungeon/dungeon_progression.hpp"
 #include "dungeon/encounter_director.hpp"
+#include "passives/passive_tree_catalog.hpp"
 
 #include <array>
 #include <cstddef>
@@ -453,6 +454,131 @@ bool drive_rooms(
         if (!drive_clear(session, summary)
                 || !drive_exit(session, kRoute[index % kRoute.size()], summary,
                     verify_phases)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+constexpr std::array<arpg::passives::PassiveNodeId, 12U> kPassiveRouteCycle{{
+    8U, 9U, 10U, 22U, 23U, 24U, 36U, 37U, 38U, 50U, 51U, 52U,
+}};
+
+struct PassiveStressRecord final {
+    std::uint64_t room_seed{};
+    std::uint64_t allocated_bits{};
+    std::uint64_t generation{};
+    int hp{};
+    int barrier{};
+};
+
+bool same_record(const PassiveStressRecord& left,
+    const PassiveStressRecord& right) noexcept {
+    return left.room_seed == right.room_seed
+        && left.allocated_bits == right.allocated_bits
+        && left.generation == right.generation
+        && left.hp == right.hp && left.barrier == right.barrier;
+}
+
+bool node_is_allocated(std::uint64_t bits,
+    arpg::passives::PassiveNodeId node) noexcept {
+    return (bits & (std::uint64_t{1U} << node)) != 0U;
+}
+
+bool has_allocated_neighbor(std::uint64_t bits,
+    const arpg::passives::PassiveNode& node) noexcept {
+    for (std::size_t index = 0U; index < node.neighbor_count; ++index) {
+        if (node_is_allocated(bits, node.neighbors[index])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool commit_passive_receipt(DungeonSession& session) noexcept {
+    const auto pending = session.pending_save();
+    if (!pending.has_value()
+            || pending->kind != arpg::dungeon::PendingSaveKind::passive_tree) {
+        return false;
+    }
+    session.resolve_pending_save({
+        arpg::dungeon::SaveDisposition::committed,
+        pending->expected_generation,
+        pending->next_state,
+    });
+    const DungeonSnapshot committed = session.snapshot();
+    return !committed.passive_save_pending
+        && committed.commit_generation == pending->expected_generation
+        && committed.passive_tree.allocated_bits
+            == pending->next_state.passive_tree.allocated_bits;
+}
+
+bool allocate_route_node(DungeonSession& session,
+    arpg::passives::PassiveNodeId requested) noexcept {
+    const DungeonSnapshot before = session.snapshot();
+    const auto& nodes = arpg::passives::passive_nodes();
+    const auto& target = nodes[requested];
+    arpg::passives::PassiveNodeId chosen = requested;
+    bool found = !node_is_allocated(before.passive_tree.allocated_bits, requested)
+        && has_allocated_neighbor(before.passive_tree.allocated_bits, target);
+    if (!found) {
+        bool has_candidate = false;
+        for (std::size_t index = 0U; index < target.neighbor_count; ++index) {
+            const auto neighbor = target.neighbors[index];
+            if (node_is_allocated(before.passive_tree.allocated_bits, neighbor)
+                    || !has_allocated_neighbor(before.passive_tree.allocated_bits,
+                        nodes[neighbor])) {
+                continue;
+            }
+            if (!has_candidate || neighbor < chosen) {
+                chosen = neighbor;
+                has_candidate = true;
+            }
+        }
+        found = has_candidate;
+    }
+    if (!found) {
+        return true;
+    }
+    return session.request_passive_allocation(chosen)
+        && commit_passive_receipt(session);
+}
+
+DungeonSession passive_trace_session(std::uint64_t root_seed) noexcept {
+    auto built = arpg::dungeon::make_initial_run_state(root_seed, DungeonRules{});
+    built.state.progression = {64U, 0U, 63U, 63U};
+    return DungeonSession(DungeonRules{}, built.state);
+}
+
+bool generate_passive_stress_trace(
+    std::array<PassiveStressRecord, 1000U>& trace) noexcept {
+    DungeonSession session = passive_trace_session(0x7A6E4F1B2C3DULL);
+    StressSummary summary{};
+    for (std::size_t room_index = 0U; room_index < trace.size(); ++room_index) {
+        if (!drive_clear(session, summary)) {
+            return false;
+        }
+        if (room_index % 25U == 0U) {
+            const auto next = kPassiveRouteCycle[(room_index / 25U)
+                % kPassiveRouteCycle.size()];
+            if (!allocate_route_node(session, next)) {
+                return false;
+            }
+        }
+        const DungeonSnapshot snapshot = session.snapshot();
+        if (!snapshot.combat.has_value()
+                || snapshot.passive_tree.allocated_bits == 0U
+                || snapshot.commit_generation == 0U) {
+            return false;
+        }
+        trace[room_index] = {
+            snapshot.room_seed,
+            snapshot.passive_tree.allocated_bits,
+            snapshot.commit_generation,
+            snapshot.combat->player.hp,
+            snapshot.combat->player.barrier,
+        };
+        if (!drive_exit(session, kRoute[room_index % kRoute.size()], summary, true)) {
             return false;
         }
     }
@@ -979,6 +1105,19 @@ arpg::test::Failure measured_thousand_rooms_allocate_nothing_and_never_overflow(
     return {};
 }
 
+arpg::test::Failure passive_star_chart_end_to_end_trace_is_deterministic() noexcept {
+    std::array<PassiveStressRecord, 1000U> first{};
+    std::array<PassiveStressRecord, 1000U> second{};
+    ARPG_REQUIRE(generate_passive_stress_trace(first));
+    ARPG_REQUIRE(generate_passive_stress_trace(second));
+    for (std::size_t index = 0U; index < first.size(); ++index) {
+        ARPG_REQUIRE(same_record(first[index], second[index]));
+        ARPG_REQUIRE(first[index].allocated_bits != 0U);
+        ARPG_REQUIRE(first[index].generation != 0U);
+    }
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"launcher robot clears room38 reverse deadband regression",
      &launcher_robot_clears_room38_reverse_deadband_regression},
@@ -993,6 +1132,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"fixed seed room trace matches baseline golden", &fixed_seed_room_trace_matches_baseline_golden},
     {"thousand real rooms preserve single world invariants", &thousand_real_rooms_preserve_single_world_invariants},
     {"measured thousand rooms allocate nothing and never overflow", &measured_thousand_rooms_allocate_nothing_and_never_overflow},
+    {"passive star chart end to end trace is deterministic", &passive_star_chart_end_to_end_trace_is_deterministic},
 };
 
 }  // namespace

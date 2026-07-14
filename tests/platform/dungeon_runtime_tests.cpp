@@ -184,6 +184,46 @@ arpg::test::Failure committed_passive_save_survives_runtime_restart() noexcept {
     return {};
 }
 
+arpg::test::Failure committed_route_and_refund_survive_runtime_restart() noexcept {
+    TempDirectory directory;
+    auto config = config_for(directory);
+    persistence::SaveStore seed_store(config.save);
+    auto initial = dungeon::make_initial_run_state(8U, config.rules).state;
+    initial.progression = {4U, 0U, 3U, 3U};
+    ARPG_REQUIRE(seed_store.commit(initial).state
+        == persistence::SaveCommitState::committed);
+
+    platform::DungeonRuntime runtime(config);
+    ARPG_REQUIRE(runtime.initialize());
+    ARPG_REQUIRE(clear_and_await(*runtime.session()));
+    const auto before = runtime.session()->snapshot();
+    for (const std::uint8_t node : {std::uint8_t{8U}, std::uint8_t{9U},
+            std::uint8_t{10U}}) {
+        ARPG_REQUIRE(runtime.session()->request_passive_allocation(node));
+        runtime.service_pending_save();
+        ARPG_REQUIRE(!runtime.session()->snapshot().passive_save_pending);
+        ARPG_REQUIRE(runtime.render_status().indicator == platform::SaveIndicator::saved);
+    }
+    ARPG_REQUIRE(runtime.session()->request_passive_refund(10U));
+    runtime.service_pending_save();
+    const auto saved = runtime.session()->snapshot();
+    constexpr std::uint64_t kExpectedBits = (1ULL << 0U) | (1ULL << 8U)
+        | (1ULL << 9U);
+    ARPG_REQUIRE(saved.passive_tree.allocated_bits == kExpectedBits);
+    ARPG_REQUIRE(saved.progression.unspent_passive_points
+        == before.progression.unspent_passive_points - 2U);
+    ARPG_REQUIRE(!saved.passive_save_pending);
+
+    platform::DungeonRuntime resumed(config_for(directory, 999U));
+    ARPG_REQUIRE(resumed.initialize());
+    const auto restored = resumed.session()->snapshot();
+    ARPG_REQUIRE(restored.passive_tree.allocated_bits == kExpectedBits);
+    ARPG_REQUIRE(restored.progression.unspent_passive_points
+        == saved.progression.unspent_passive_points);
+    ARPG_REQUIRE(!restored.passive_save_pending);
+    return {};
+}
+
 arpg::test::Failure passive_pre_publish_failure_keeps_old_tree_and_retryable_runtime() noexcept {
     TempDirectory directory;
     FaultContext fault{persistence::SaveFaultPoint::before_publish, false};
@@ -358,6 +398,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"valid save ignores new run seed override", &valid_save_ignores_new_run_seed_override},
     {"committed pending transition maps verified state and saved indicator", &committed_pending_transition_maps_verified_state_and_saved_indicator},
     {"committed passive save survives runtime restart", &committed_passive_save_survives_runtime_restart},
+    {"committed route and refund survive runtime restart", &committed_route_and_refund_survive_runtime_restart},
     {"passive pre publish failure keeps old tree and retryable runtime", &passive_pre_publish_failure_keeps_old_tree_and_retryable_runtime},
     {"indeterminate passive save faults runtime", &indeterminate_passive_save_faults_runtime},
     {"passive pending rejects door and descent requests", &passive_pending_rejects_door_and_descent_requests},
