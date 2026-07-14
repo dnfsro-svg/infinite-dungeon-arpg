@@ -4,7 +4,10 @@ if(TARGET arpg_raylib)
         combat_key_bindings_tests.cpp
         combat_feedback_tests.cpp
         combat_view_math_tests.cpp
-        dungeon_view_math_tests.cpp)
+        monster_view_tests.cpp
+        dungeon_view_math_tests.cpp
+        host_launch_options_tests.cpp
+        dungeon_runtime_tests.cpp)
     target_compile_features(arpg_platform_tests PRIVATE cxx_std_17)
     target_include_directories(arpg_platform_tests
         PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
@@ -818,7 +821,13 @@ endif()
 arpg_assert_target_dependency_boundary(arpg_core)
 arpg_assert_target_dependency_boundary(arpg_combat)
 arpg_assert_target_dependency_boundary(arpg_dungeon)
+arpg_assert_target_dependency_boundary(arpg_persistence)
+arpg_assert_target_dependency_boundary(arpg_modifiers)
 arpg_assert_target_not_reachable(arpg_combat arpg_dungeon)
+arpg_assert_target_not_reachable(arpg_persistence arpg_dungeon)
+arpg_assert_target_not_reachable(arpg_persistence arpg_combat)
+arpg_assert_target_not_reachable(arpg_dungeon arpg_persistence)
+arpg_assert_target_not_reachable(arpg_combat arpg_persistence)
 
 add_test(
     NAME architecture.core_no_raylib
@@ -851,11 +860,109 @@ set_tests_properties(
     PROPERTIES LABELS "headless;architecture")
 
 add_test(
+    NAME architecture.persistence_no_raylib
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/persistence"
+        "-DSOURCE_LABEL=Persistence"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/core_boundary_test.cmake")
+set_tests_properties(
+    architecture.persistence_no_raylib
+    PROPERTIES LABELS "headless;architecture")
+
+add_test(
+    NAME architecture.progression_no_raylib
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/progression"
+        "-DSOURCE_LABEL=Progression"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/core_boundary_test.cmake")
+set_tests_properties(
+    architecture.progression_no_raylib
+    PROPERTIES LABELS "headless;architecture;progression")
+
+add_test(
+    NAME architecture.modifiers_no_raylib
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/modifiers"
+        "-DSOURCE_LABEL=Modifiers"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/core_boundary_test.cmake")
+set_tests_properties(
+    architecture.modifiers_no_raylib
+    PROPERTIES LABELS "headless;architecture;modifiers")
+
+foreach(_arpg_forbidden_module IN ITEMS combat dungeon progression persistence)
+    if(_arpg_forbidden_module STREQUAL "combat")
+        set(_arpg_forbidden_label "Combat")
+    elseif(_arpg_forbidden_module STREQUAL "dungeon")
+        set(_arpg_forbidden_label "Dungeon")
+    elseif(_arpg_forbidden_module STREQUAL "progression")
+        set(_arpg_forbidden_label "Progression")
+    else()
+        set(_arpg_forbidden_label "Persistence")
+    endif()
+    add_test(
+        NAME architecture.modifiers_no_${_arpg_forbidden_module}
+        COMMAND "${CMAKE_COMMAND}"
+            "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/modifiers"
+            "-DSOURCE_LABEL=Modifiers"
+            "-DFORBIDDEN_MODULE=${_arpg_forbidden_module}"
+            "-DFORBIDDEN_LABEL=${_arpg_forbidden_label}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/module_boundary_test.cmake")
+    set_tests_properties(
+        architecture.modifiers_no_${_arpg_forbidden_module}
+        PROPERTIES LABELS "headless;architecture;modifiers")
+endforeach()
+
+add_test(
     NAME architecture.combat_no_dungeon
     COMMAND "${CMAKE_COMMAND}"
         "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/combat"
         "-DSOURCE_LABEL=Combat"
+        "-DFORBIDDEN_MODULE=dungeon"
+        "-DFORBIDDEN_LABEL=Dungeon"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/module_boundary_test.cmake")
 set_tests_properties(
     architecture.combat_no_dungeon
     PROPERTIES LABELS "headless;architecture")
+
+add_test(
+    NAME architecture.dungeon_no_persistence
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/dungeon"
+        "-DSOURCE_LABEL=Dungeon"
+        "-DFORBIDDEN_MODULE=persistence"
+        "-DFORBIDDEN_LABEL=Persistence"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/module_boundary_test.cmake")
+set_tests_properties(
+    architecture.dungeon_no_persistence
+    PROPERTIES LABELS "headless;architecture")
+
+add_test(
+    NAME architecture.combat_no_persistence
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/combat"
+        "-DSOURCE_LABEL=Combat"
+        "-DFORBIDDEN_MODULE=persistence"
+        "-DFORBIDDEN_LABEL=Persistence"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/module_boundary_test.cmake")
+set_tests_properties(
+    architecture.combat_no_persistence
+    PROPERTIES LABELS "headless;architecture")
+
+add_test(
+    NAME architecture.persistence_checkpoint_only
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/persistence"
+        "-DSOURCE_LABEL=Persistence"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/persistence_boundary_test.cmake")
+set_tests_properties(
+    architecture.persistence_checkpoint_only
+    PROPERTIES LABELS "headless;architecture")
+
+add_test(
+    NAME platform.input_latency_source
+    COMMAND "${CMAKE_COMMAND}"
+        "-DRAYLIB_SOURCE_DIR=${PROJECT_SOURCE_DIR}/src/platform/raylib"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/input_latency_source_test.cmake")
+set_tests_properties(
+    platform.input_latency_source
+    PROPERTIES LABELS "headless;platform;architecture")

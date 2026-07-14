@@ -38,7 +38,7 @@ public:
         }
 
         slots_[tail_].emplace(std::forward<Args>(args)...);
-        tail_ = (tail_ + 1) % N;
+        tail_ = next_index(tail_);
         ++size_;
         return true;
     }
@@ -64,7 +64,7 @@ public:
         std::optional<T> result{
             std::move(*slots_[head_])};
         slots_[head_].reset();
-        head_ = (head_ + 1) % N;
+        head_ = next_index(head_);
         --size_;
         return result;
     }
@@ -90,6 +90,11 @@ public:
     }
 
 private:
+    [[nodiscard]] static constexpr std::size_t next_index(
+        std::size_t index) noexcept {
+        return (index + 1U) % N;
+    }
+
     std::array<std::optional<T>, N> slots_{};
     std::size_t head_{0};
     std::size_t tail_{0};

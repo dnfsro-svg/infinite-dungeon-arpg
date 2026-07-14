@@ -1,5 +1,7 @@
 #include "dungeon/room_navigation.hpp"
 
+#include "combat/room_bounds.hpp"
+
 #include <cmath>
 
 namespace arpg::dungeon {
@@ -7,10 +9,10 @@ namespace arpg::dungeon {
 std::optional<ExitDirection> requested_exit(
     combat::Vec3 position,
     combat::MovementInput movement) noexcept {
-    constexpr float kLeftBoundary = -8.0F;
-    constexpr float kRightBoundary = 8.0F;
-    constexpr float kTopBoundary = -3.5F;
-    constexpr float kBottomBoundary = 3.5F;
+    constexpr float kLeftBoundary = combat::room_bounds::min_x;
+    constexpr float kRightBoundary = combat::room_bounds::max_x;
+    constexpr float kTopBoundary = combat::room_bounds::min_y;
+    constexpr float kBottomBoundary = combat::room_bounds::max_y;
     constexpr float kSideDoorHalfWidth = 0.90F;
     constexpr float kVerticalDoorHalfWidth = 1.50F;
 

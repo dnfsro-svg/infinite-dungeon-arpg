@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 
 namespace arpg::core {
 
@@ -10,6 +11,9 @@ public:
     explicit DeterministicRng(std::uint64_t seed) noexcept;
 
     [[nodiscard]] std::uint64_t next_u64() noexcept;
+
+    [[nodiscard]] std::optional<std::uint64_t> next_bounded(
+        std::uint64_t bound) noexcept;
 
     [[nodiscard]] static DeterministicRng derive_stream(
         std::uint64_t root_seed,

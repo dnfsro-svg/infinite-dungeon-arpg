@@ -1,9 +1,10 @@
 #include "test_framework.hpp"
 
+#include "dungeon/room_combat_template.hpp"
 #include "dungeon/room_generation.hpp"
 
+#include <array>
 #include <cstdint>
-#include <limits>
 
 namespace {
 
@@ -15,142 +16,174 @@ bool same_position(
     return actual.x == x && actual.y == y && actual.z == z;
 }
 
-arpg::test::Failure direction_ids_and_opposite_entries_are_fixed() noexcept {
+arpg::test::Failure golden_seed_chain_is_stable() noexcept {
     using namespace arpg::dungeon;
-    std::uint8_t up_id = static_cast<std::uint8_t>(ExitDirection::up);
-    std::uint8_t down_id = static_cast<std::uint8_t>(ExitDirection::down);
-    std::uint8_t left_id = static_cast<std::uint8_t>(ExitDirection::left);
-    std::uint8_t right_id = static_cast<std::uint8_t>(ExitDirection::right);
-    std::uint8_t none_id = static_cast<std::uint8_t>(ExitDirection::none);
-    ARPG_REQUIRE(up_id == 0U);
-    ARPG_REQUIRE(down_id == 1U);
-    ARPG_REQUIRE(left_id == 2U);
-    ARPG_REQUIRE(right_id == 3U);
-    ARPG_REQUIRE(none_id == 0xFFU);
-    ARPG_REQUIRE(entry_side_for_exit(ExitDirection::up) == EntrySide::bottom);
-    ARPG_REQUIRE(entry_side_for_exit(ExitDirection::down) == EntrySide::top);
-    ARPG_REQUIRE(entry_side_for_exit(ExitDirection::left) == EntrySide::right);
-    ARPG_REQUIRE(entry_side_for_exit(ExitDirection::right) == EntrySide::left);
+    constexpr std::uint64_t root = 0x0123456789ABCDEFULL;
+    const auto initial = derive_initial_room_seed(root, 0U);
+    ARPG_REQUIRE(initial == 0xCA5A07A71C3153C4ULL);
+    const auto up = derive_door_room_seed(
+        initial, 1U, ExitDirection::up);
+    ARPG_REQUIRE(up == 0xCF92F9DC3E32DA47ULL);
+    const auto right = derive_door_room_seed(
+        up, 2U, ExitDirection::right);
+    ARPG_REQUIRE(right == 0xF71A3E545FA8D5CCULL);
+    ARPG_REQUIRE(derive_descent_room_seed(right, 3U)
+        == 0x21DD351FA20839E8ULL);
+    ARPG_REQUIRE(derive_next_room_seed(initial, 1U, ExitDirection::up)
+        == up);
     return {};
 }
 
-arpg::test::Failure initial_descriptor_uses_stage_two_template() noexcept {
+arpg::test::Failure ecology_and_three_stream_samples_are_fixed() noexcept {
+    using namespace arpg::dungeon;
+    using namespace arpg::dungeon::checkpoint;
+    DungeonRules rules;
+    const auto result = generate_room_descriptor(
+        0xCF92F9DC3E32DA47ULL,
+        2U,
+        1U,
+        2U,
+        EntrySide::initial,
+        std::array<std::uint32_t, 4>{{1U, 0U, 0U, 0U}},
+        rules);
+    ARPG_REQUIRE(result.fault == DungeonFault::none);
+    ARPG_REQUIRE(result.samples.ecology == 83U);
+    ARPG_REQUIRE(result.samples.hole == 7295U);
+    ARPG_REQUIRE(result.samples.abyss == 8629U);
+    ARPG_REQUIRE(result.room.ecology == DungeonElement::fire);
+    return {};
+}
+
+arpg::test::Failure hole_threshold_boundary_is_left_closed() noexcept {
+    using namespace arpg::dungeon;
+    using namespace arpg::dungeon::checkpoint;
+    DungeonRules rules;
+    const auto included = generate_room_descriptor(
+        0xAA3ULL, 0U, 1U, 1U, EntrySide::initial, {}, rules);
+    const auto excluded = generate_room_descriptor(
+        0x2D80ULL, 0U, 1U, 1U, EntrySide::initial, {}, rules);
+    ARPG_REQUIRE(included.samples.hole == 999U);
+    ARPG_REQUIRE(included.room.has_hole);
+    ARPG_REQUIRE(excluded.samples.hole == 1000U);
+    ARPG_REQUIRE(!excluded.room.has_hole);
+    return {};
+}
+
+arpg::test::Failure abyss_threshold_boundary_is_left_closed() noexcept {
+    using namespace arpg::dungeon;
+    using namespace arpg::dungeon::checkpoint;
+    DungeonRules rules;
+    const auto included = generate_room_descriptor(
+        0x11E9ULL, 0U, 1U, 1U, EntrySide::initial, {}, rules);
+    const auto excluded = generate_room_descriptor(
+        0x38ULL, 0U, 1U, 1U, EntrySide::initial, {}, rules);
+    ARPG_REQUIRE(included.samples.abyss == 99U);
+    ARPG_REQUIRE(included.room.is_abyss);
+    ARPG_REQUIRE(excluded.samples.abyss == 100U);
+    ARPG_REQUIRE(!excluded.room.is_abyss);
+    return {};
+}
+
+arpg::test::Failure hole_and_abyss_can_coexist() noexcept {
+    using namespace arpg::dungeon;
+    using namespace arpg::dungeon::checkpoint;
+    const auto result = generate_room_descriptor(
+        0x747ULL, 0U, 1U, 1U, EntrySide::initial, {}, DungeonRules{});
+    ARPG_REQUIRE(result.fault == DungeonFault::none);
+    ARPG_REQUIRE(result.samples.hole == 210U);
+    ARPG_REQUIRE(result.samples.abyss == 47U);
+    ARPG_REQUIRE(result.room.has_hole);
+    ARPG_REQUIRE(result.room.is_abyss);
+    return {};
+}
+
+arpg::test::Failure bias_only_changes_ecology_stream() noexcept {
+    using namespace arpg::dungeon;
+    using namespace arpg::dungeon::checkpoint;
+    const auto unbiased = generate_room_descriptor(
+        0xCF92F9DC3E32DA47ULL,
+        2U,
+        1U,
+        2U,
+        EntrySide::initial,
+        {},
+        DungeonRules{});
+    const auto biased = generate_room_descriptor(
+        0xCF92F9DC3E32DA47ULL,
+        2U,
+        1U,
+        2U,
+        EntrySide::initial,
+        std::array<std::uint32_t, 4>{{1U, 0U, 0U, 0U}},
+        DungeonRules{});
+    ARPG_REQUIRE(unbiased.fault == DungeonFault::none);
+    ARPG_REQUIRE(biased.fault == DungeonFault::none);
+    ARPG_REQUIRE(unbiased.samples.hole == biased.samples.hole);
+    ARPG_REQUIRE(unbiased.samples.abyss == biased.samples.abyss);
+    ARPG_REQUIRE(unbiased.room.has_hole == biased.room.has_hole);
+    ARPG_REQUIRE(unbiased.room.is_abyss == biased.room.is_abyss);
+    return {};
+}
+
+arpg::test::Failure entry_templates_preserve_stage_two_layout() noexcept {
     using namespace arpg::combat;
     using namespace arpg::dungeon;
-    DungeonSessionConfig config;
-    config.root_seed = 0x123456789ABCDEF0ULL;
-    config.initial_room_index = 7U;
-
-    const RoomDescriptor room = make_initial_room(config);
-    ARPG_REQUIRE(room.index == config.initial_room_index);
-    ARPG_REQUIRE(room.seed == derive_initial_room_seed(
-        config.root_seed, config.initial_room_index));
-    ARPG_REQUIRE(room.entry == EntrySide::initial);
-    ARPG_REQUIRE(same_position(room.combat.player_spawn, 0.0F, 0.0F));
-    ARPG_REQUIRE(same_position(room.combat.dummy_spawns[0], 2.30F, -0.35F));
-    ARPG_REQUIRE(same_position(room.combat.dummy_spawns[1], 2.80F, 0.0F));
-    ARPG_REQUIRE(same_position(room.combat.dummy_spawns[2], 3.30F, 0.35F));
-    ARPG_REQUIRE(room.combat.initial_facing == Facing::right);
-    ARPG_REQUIRE(!room.combat.respawn_defeated_dummies);
+    using namespace arpg::dungeon::checkpoint;
+    const auto initial = make_combat_lab_config(EntrySide::initial, 1U);
+    const auto left = make_combat_lab_config(EntrySide::left, 1U);
+    const auto right = make_combat_lab_config(EntrySide::right, 1U);
+    const auto top = make_combat_lab_config(EntrySide::top, 1U);
+    const auto bottom = make_combat_lab_config(EntrySide::bottom, 1U);
+    ARPG_REQUIRE(initial.has_value() && left.has_value() && right.has_value()
+        && top.has_value() && bottom.has_value());
+    ARPG_REQUIRE(same_position(initial->player_spawn, 0.0F, 0.0F));
+    ARPG_REQUIRE(initial->initial_facing == Facing::right);
+    ARPG_REQUIRE(same_position(initial->dummy_spawns[0], 2.30F, -0.35F));
+    ARPG_REQUIRE(same_position(initial->dummy_spawns[1], 2.80F, 0.0F));
+    ARPG_REQUIRE(same_position(initial->dummy_spawns[2], 3.30F, 0.35F));
+    ARPG_REQUIRE(same_position(left->player_spawn, -10.50F, 0.0F));
+    ARPG_REQUIRE(left->initial_facing == Facing::right);
+    ARPG_REQUIRE(same_position(left->dummy_spawns[0], 2.30F, -0.35F));
+    ARPG_REQUIRE(same_position(left->dummy_spawns[1], 2.80F, 0.0F));
+    ARPG_REQUIRE(same_position(left->dummy_spawns[2], 3.30F, 0.35F));
+    ARPG_REQUIRE(same_position(right->player_spawn, 10.50F, 0.0F));
+    ARPG_REQUIRE(right->initial_facing == Facing::left);
+    ARPG_REQUIRE(same_position(right->dummy_spawns[0], -2.30F, -0.35F));
+    ARPG_REQUIRE(same_position(right->dummy_spawns[1], -2.80F, 0.0F));
+    ARPG_REQUIRE(same_position(right->dummy_spawns[2], -3.30F, 0.35F));
+    ARPG_REQUIRE(same_position(top->player_spawn, 0.0F, -4.75F));
+    ARPG_REQUIRE(same_position(top->dummy_spawns[0], 2.30F, 2.30F));
+    ARPG_REQUIRE(same_position(top->dummy_spawns[1], 2.80F, 2.30F));
+    ARPG_REQUIRE(same_position(top->dummy_spawns[2], 3.30F, 2.30F));
+    ARPG_REQUIRE(same_position(bottom->player_spawn, 0.0F, 4.75F));
+    ARPG_REQUIRE(same_position(bottom->dummy_spawns[0], 2.30F, -2.30F));
+    ARPG_REQUIRE(same_position(bottom->dummy_spawns[1], 2.80F, -2.30F));
+    ARPG_REQUIRE(same_position(bottom->dummy_spawns[2], 3.30F, -2.30F));
+    ARPG_REQUIRE(!initial->respawn_defeated_dummies);
+    ARPG_REQUIRE(!left->respawn_defeated_dummies);
+    ARPG_REQUIRE(!right->respawn_defeated_dummies);
+    ARPG_REQUIRE(!top->respawn_defeated_dummies);
+    ARPG_REQUIRE(!bottom->respawn_defeated_dummies);
     return {};
 }
 
-arpg::test::Failure side_entries_mirror_spawn_and_facing() noexcept {
-    using namespace arpg::combat;
+arpg::test::Failure non_v1_combat_template_is_rejected() noexcept {
     using namespace arpg::dungeon;
-    const RoomDescriptor current = make_initial_room({});
-
-    const auto from_right = make_next_room(current, ExitDirection::left);
-    ARPG_REQUIRE(from_right.has_value());
-    ARPG_REQUIRE(from_right->index == current.index + 1U);
-    ARPG_REQUIRE(from_right->seed == derive_next_room_seed(
-        current.seed, current.index + 1U, ExitDirection::left));
-    ARPG_REQUIRE(from_right->entry == EntrySide::right);
-    ARPG_REQUIRE(same_position(from_right->combat.player_spawn, 6.50F, 0.0F));
-    ARPG_REQUIRE(from_right->combat.initial_facing == Facing::left);
-    ARPG_REQUIRE(same_position(from_right->combat.dummy_spawns[0], -2.30F, -0.35F));
-    ARPG_REQUIRE(same_position(from_right->combat.dummy_spawns[1], -2.80F, 0.0F));
-    ARPG_REQUIRE(same_position(from_right->combat.dummy_spawns[2], -3.30F, 0.35F));
-    ARPG_REQUIRE(!from_right->combat.respawn_defeated_dummies);
-
-    const auto from_left = make_next_room(current, ExitDirection::right);
-    ARPG_REQUIRE(from_left.has_value());
-    ARPG_REQUIRE(from_left->index == current.index + 1U);
-    ARPG_REQUIRE(from_left->seed == derive_next_room_seed(
-        current.seed, current.index + 1U, ExitDirection::right));
-    ARPG_REQUIRE(from_left->entry == EntrySide::left);
-    ARPG_REQUIRE(same_position(from_left->combat.player_spawn, -6.50F, 0.0F));
-    ARPG_REQUIRE(from_left->combat.initial_facing == Facing::right);
-    ARPG_REQUIRE(same_position(from_left->combat.dummy_spawns[0], 2.30F, -0.35F));
-    ARPG_REQUIRE(same_position(from_left->combat.dummy_spawns[1], 2.80F, 0.0F));
-    ARPG_REQUIRE(same_position(from_left->combat.dummy_spawns[2], 3.30F, 0.35F));
-    ARPG_REQUIRE(!from_left->combat.respawn_defeated_dummies);
-    return {};
-}
-
-arpg::test::Failure vertical_entries_use_horizontal_target_rows() noexcept {
-    using namespace arpg::combat;
-    using namespace arpg::dungeon;
-    const RoomDescriptor current = make_initial_room({});
-
-    const auto from_bottom = make_next_room(current, ExitDirection::up);
-    ARPG_REQUIRE(from_bottom.has_value());
-    ARPG_REQUIRE(from_bottom->index == current.index + 1U);
-    ARPG_REQUIRE(from_bottom->seed == derive_next_room_seed(
-        current.seed, current.index + 1U, ExitDirection::up));
-    ARPG_REQUIRE(from_bottom->entry == EntrySide::bottom);
-    ARPG_REQUIRE(same_position(from_bottom->combat.player_spawn, 0.0F, 2.75F));
-    ARPG_REQUIRE(from_bottom->combat.initial_facing == Facing::right);
-    ARPG_REQUIRE(same_position(from_bottom->combat.dummy_spawns[0], 2.30F, -2.30F));
-    ARPG_REQUIRE(same_position(from_bottom->combat.dummy_spawns[1], 2.80F, -2.30F));
-    ARPG_REQUIRE(same_position(from_bottom->combat.dummy_spawns[2], 3.30F, -2.30F));
-    ARPG_REQUIRE(!from_bottom->combat.respawn_defeated_dummies);
-
-    const auto from_top = make_next_room(current, ExitDirection::down);
-    ARPG_REQUIRE(from_top.has_value());
-    ARPG_REQUIRE(from_top->index == current.index + 1U);
-    ARPG_REQUIRE(from_top->seed == derive_next_room_seed(
-        current.seed, current.index + 1U, ExitDirection::down));
-    ARPG_REQUIRE(from_top->entry == EntrySide::top);
-    ARPG_REQUIRE(same_position(from_top->combat.player_spawn, 0.0F, -2.75F));
-    ARPG_REQUIRE(from_top->combat.initial_facing == Facing::right);
-    ARPG_REQUIRE(same_position(from_top->combat.dummy_spawns[0], 2.30F, 2.30F));
-    ARPG_REQUIRE(same_position(from_top->combat.dummy_spawns[1], 2.80F, 2.30F));
-    ARPG_REQUIRE(same_position(from_top->combat.dummy_spawns[2], 3.30F, 2.30F));
-    ARPG_REQUIRE(!from_top->combat.respawn_defeated_dummies);
-    return {};
-}
-
-arpg::test::Failure seed_derivation_is_deterministic_and_complete() noexcept {
-    using namespace arpg::dungeon;
-    constexpr std::uint64_t root_seed = 0x0102030405060708ULL;
-    constexpr std::uint64_t high_bit = std::uint64_t{1} << 63U;
-
-    const auto initial = derive_initial_room_seed(root_seed, 9U);
-    ARPG_REQUIRE(initial == derive_initial_room_seed(root_seed, 9U));
-    ARPG_REQUIRE(initial != derive_initial_room_seed(root_seed, high_bit | 9U));
-    ARPG_REQUIRE(derive_next_room_seed(initial, 10U, ExitDirection::up)
-        == derive_next_room_seed(initial, 10U, ExitDirection::up));
-    ARPG_REQUIRE(derive_next_room_seed(initial, 10U, ExitDirection::up)
-        != derive_next_room_seed(initial, 10U, ExitDirection::down));
-    ARPG_REQUIRE(derive_next_room_seed(initial, 10U, ExitDirection::left)
-        != derive_next_room_seed(initial, 10U, ExitDirection::right));
-    ARPG_REQUIRE(derive_next_room_seed(initial, 10U, ExitDirection::up)
-        != derive_next_room_seed(initial, high_bit | 10U, ExitDirection::up));
-
-    RoomDescriptor maximum = make_initial_room({});
-    maximum.index = (std::numeric_limits<std::uint64_t>::max)();
-    ARPG_REQUIRE(!make_next_room(maximum, ExitDirection::right).has_value());
-    ARPG_REQUIRE(!make_next_room(make_initial_room({}), ExitDirection::none).has_value());
+    using namespace arpg::dungeon::checkpoint;
+    ARPG_REQUIRE(!make_combat_lab_config(EntrySide::initial, 0U).has_value());
+    ARPG_REQUIRE(!make_combat_lab_config(EntrySide::initial, 2U).has_value());
     return {};
 }
 
 constexpr arpg::test::TestCase kCases[] = {
-    {"direction ids and opposite entries are fixed", &direction_ids_and_opposite_entries_are_fixed},
-    {"initial descriptor uses stage two template", &initial_descriptor_uses_stage_two_template},
-    {"side entries mirror spawn and facing", &side_entries_mirror_spawn_and_facing},
-    {"vertical entries use horizontal target rows", &vertical_entries_use_horizontal_target_rows},
-    {"seed derivation is deterministic and complete", &seed_derivation_is_deterministic_and_complete},
+    {"golden seed chain is stable", &golden_seed_chain_is_stable},
+    {"ecology and three stream samples are fixed", &ecology_and_three_stream_samples_are_fixed},
+    {"hole threshold boundary is left closed", &hole_threshold_boundary_is_left_closed},
+    {"abyss threshold boundary is left closed", &abyss_threshold_boundary_is_left_closed},
+    {"hole and abyss can coexist", &hole_and_abyss_can_coexist},
+    {"bias only changes ecology stream", &bias_only_changes_ecology_stream},
+    {"entry templates preserve stage two layout", &entry_templates_preserve_stage_two_layout},
+    {"non v1 combat template is rejected", &non_v1_combat_template_is_rejected},
 };
 
 }  // namespace

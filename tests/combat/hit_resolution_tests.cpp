@@ -116,8 +116,8 @@ arpg::test::Failure attack_assist_is_single_bounded_and_x_only() noexcept {
         defeated.tick(MovementInput{});
         ARPG_REQUIRE(finish_attack(defeated, 80));
     }
-    ARPG_REQUIRE(defeated.snapshot().dummies[0].hp == 0);
-    ARPG_REQUIRE(defeated.snapshot().dummies[1].hp > 0);
+    ARPG_REQUIRE(defeated.snapshot().monsters[0].hp == 0);
+    ARPG_REQUIRE(defeated.snapshot().monsters[1].hp > 0);
     ARPG_REQUIRE(defeated.queue_action(Action::light));
     defeated.tick(MovementInput{});
     ARPG_REQUIRE(arpg::test::near(
@@ -136,9 +136,9 @@ arpg::test::Failure one_attack_hits_one_target_once_across_active_ticks() noexce
     tick_n(world, 5);
 
     CombatSnapshot snapshot = world.snapshot();
-    ARPG_REQUIRE(snapshot.dummies[0].hp == 272);
+    ARPG_REQUIRE(snapshot.monsters[0].hp == 272);
     ARPG_REQUIRE(snapshot.player.hit_stop_ticks == 3);
-    ARPG_REQUIRE(snapshot.dummies[0].hit_stop_ticks == 3);
+    ARPG_REQUIRE(snapshot.monsters[0].hit_stop_ticks == 3);
 
     int hit_events = 0;
     int summaries = 0;
@@ -158,7 +158,7 @@ arpg::test::Failure one_attack_hits_one_target_once_across_active_ticks() noexce
 
     tick_n(world, 8);
     snapshot = world.snapshot();
-    ARPG_REQUIRE(snapshot.dummies[0].hp == 272);
+    ARPG_REQUIRE(snapshot.monsters[0].hp == 272);
     while (const auto event = world.try_pop_event()) {
         ARPG_REQUIRE(event->kind != CombatEventKind::hit);
         ARPG_REQUIRE(event->kind != CombatEventKind::impact_summary);
@@ -177,25 +177,25 @@ arpg::test::Failure three_targets_resolve_independently_with_one_summary() noexc
     tick_n(world, 7);
 
     const CombatSnapshot snapshot = world.snapshot();
-    ARPG_REQUIRE(snapshot.dummies[0].hp == 262);
-    ARPG_REQUIRE(snapshot.dummies[1].hp == 412);
-    ARPG_REQUIRE(snapshot.dummies[2].hp == 662);
-    ARPG_REQUIRE(snapshot.dummies[2].break_value == 102);
+    ARPG_REQUIRE(snapshot.monsters[0].hp == 262);
+    ARPG_REQUIRE(snapshot.monsters[1].hp == 412);
+    ARPG_REQUIRE(snapshot.monsters[2].hp == 662);
+    ARPG_REQUIRE(snapshot.monsters[2].break_value == 102);
     ARPG_REQUIRE(snapshot.player.hit_stop_ticks == 5);
-    ARPG_REQUIRE(snapshot.dummies[0].hit_stop_ticks == 5);
-    ARPG_REQUIRE(snapshot.dummies[1].hit_stop_ticks == 5);
-    ARPG_REQUIRE(snapshot.dummies[2].hit_stop_ticks == 5);
-    ARPG_REQUIRE(snapshot.dummies[0].reaction == ReactionState::airborne);
-    ARPG_REQUIRE(snapshot.dummies[1].reaction == ReactionState::airborne);
-    ARPG_REQUIRE(snapshot.dummies[2].reaction == ReactionState::idle);
+    ARPG_REQUIRE(snapshot.monsters[0].hit_stop_ticks == 5);
+    ARPG_REQUIRE(snapshot.monsters[1].hit_stop_ticks == 5);
+    ARPG_REQUIRE(snapshot.monsters[2].hit_stop_ticks == 5);
+    ARPG_REQUIRE(snapshot.monsters[0].reaction == ReactionState::airborne);
+    ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::airborne);
+    ARPG_REQUIRE(snapshot.monsters[2].reaction == ReactionState::idle);
     ARPG_REQUIRE(
-        arpg::test::near(snapshot.dummies[0].velocity.x, 1.5, 1.0e-4));
+        arpg::test::near(snapshot.monsters[0].velocity.x, 1.5, 1.0e-4));
     ARPG_REQUIRE(
-        arpg::test::near(snapshot.dummies[0].velocity.z, 11.875, 1.0e-4));
+        arpg::test::near(snapshot.monsters[0].velocity.z, 11.875, 1.0e-4));
     ARPG_REQUIRE(
-        arpg::test::near(snapshot.dummies[1].velocity.x, 1.2, 1.0e-4));
+        arpg::test::near(snapshot.monsters[1].velocity.x, 1.2, 1.0e-4));
     ARPG_REQUIRE(
-        arpg::test::near(snapshot.dummies[1].velocity.z, 9.5, 1.0e-4));
+        arpg::test::near(snapshot.monsters[1].velocity.z, 9.5, 1.0e-4));
 
     std::array<std::uint8_t, kDummyCount> hit_order{{0xFF, 0xFF, 0xFF}};
     int hit_events = 0;
@@ -239,7 +239,7 @@ arpg::test::Failure hit_confirm_opens_j1_cancel_at_eight_not_thirteen() noexcept
     hit.tick(MovementInput{});
     tick_n(hit, 5);
     ARPG_REQUIRE(hit.snapshot().player.attack_elapsed_ticks == 5);
-    ARPG_REQUIRE(hit.snapshot().dummies[0].hp == 272);
+    ARPG_REQUIRE(hit.snapshot().monsters[0].hp == 272);
     tick_n(hit, 3);
     tick_n(hit, 3);
     ARPG_REQUIRE(hit.snapshot().player.attack_elapsed_ticks == 8);

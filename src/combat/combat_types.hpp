@@ -4,6 +4,10 @@
 #include <cstddef>
 #include <cstdint>
 
+namespace arpg::test {
+struct CombatWorldTestAccess;
+}
+
 namespace arpg::combat {
 
 struct Vec3 final {
@@ -46,6 +50,103 @@ enum class ImpactKind : std::uint8_t {
     launch,
 };
 
+enum class MonsterId : std::uint8_t {
+    fire_bomber,
+    fire_charger,
+    water_bulwark,
+    water_support,
+    lightning_shooter,
+    lightning_dasher,
+    chaos_chaser,
+    chaos_hazard,
+    count,
+};
+
+enum class MonsterTag : std::uint16_t {
+    none = 0,
+    melee = 1U << 0U,
+    ranged = 1U << 1U,
+    support = 1U << 2U,
+    high_priority = 1U << 3U,
+    ground_hazard = 1U << 4U,
+    direct_target = 1U << 5U,
+};
+
+struct MonsterDefinition final {
+    MonsterId id{MonsterId::chaos_chaser};
+    std::uint8_t preferred_ecology{};
+    std::uint16_t tags{};
+    std::uint8_t threat_cost{1};
+    int max_hp{100};
+    int max_break{};
+    float move_speed{0.04F};
+    float preferred_range{1.0F};
+    std::uint16_t telegraph_ticks{20};
+    std::uint16_t active_ticks{4};
+    std::uint16_t recovery_ticks{20};
+    std::uint16_t cooldown_ticks{60};
+    int contact_damage{10};
+    float projectile_speed{};
+    std::uint16_t hazard_ticks{};
+    FeedbackLevel feedback{FeedbackLevel::light};
+    int shield_points{};
+    std::uint16_t shield_duration_ticks{};
+};
+
+inline constexpr std::size_t kMonsterCapacity = 96;
+inline constexpr std::size_t kProjectileCapacity = 384;
+inline constexpr std::size_t kHazardCapacity = 96;
+inline constexpr std::size_t kEncounterWaveCapacity = 2;
+inline constexpr std::size_t kEncounterSpawnCapacity = 96;
+
+struct MonsterSpawnSpec final {
+    MonsterId id{MonsterId::chaos_chaser};
+    Vec3 position{};
+};
+
+struct MonsterHandle final {
+    std::uint16_t index{0xFFFF};
+    std::uint16_t generation{};
+};
+
+struct ProjectileHandle final {
+    std::uint16_t index{0xFFFF};
+    std::uint16_t generation{};
+};
+
+struct ProjectileRuntime final {
+    bool active{};
+    std::uint16_t generation{};
+    MonsterHandle owner{};
+    Vec3 position{};
+    Vec3 velocity{};
+    std::uint16_t lifetime_ticks{};
+    int damage{};
+    float radius{};
+};
+
+struct HazardRuntime final {
+    bool active{};
+    std::uint16_t generation{};
+    MonsterHandle owner{};
+    Vec3 center{};
+    float radius{};
+    std::uint16_t telegraph_ticks{};
+    std::uint16_t active_ticks{};
+    std::uint16_t lifetime_ticks{};
+    std::uint16_t damage_interval_ticks{};
+    std::uint16_t damage_cooldown_ticks{};
+    bool player_latched{};
+    bool persists_after_owner_death{};
+    int damage{};
+};
+
+struct EncounterWave final {
+    std::array<MonsterSpawnSpec, kEncounterSpawnCapacity> spawns{};
+    std::uint8_t spawn_count{};
+    std::uint8_t spent_budget{};
+};
+
 enum class CombatEventKind : std::uint8_t {
     swing,
     hit,
@@ -55,6 +156,9 @@ enum class CombatEventKind : std::uint8_t {
     defeated,
     respawned,
     reset,
+    player_hit,
+    player_hurt_started,
+    player_health_reset,
 };
 
 struct CombatEvent final {
@@ -121,6 +225,16 @@ enum class ArmorState : std::uint8_t {
     broken,
 };
 
+enum class MonsterAiPhase : std::uint8_t {
+    idle,
+    move,
+    telegraph,
+    active,
+    recovery,
+    cooldown,
+    defeated,
+};
+
 struct MovementInput final {
     std::int8_t x{};
     std::int8_t y{};
@@ -139,6 +253,13 @@ struct CombatLabConfig final {
     bool respawn_defeated_dummies{true};
 };
 
+struct CombatEncounterConfig final {
+    Vec3 player_spawn{};
+    Facing initial_facing{Facing::right};
+    EncounterWave wave{};
+    bool reset_player_health{true};
+};
+
 struct PlayerSnapshot final {
     Vec3 position{};
     Vec3 velocity{};
@@ -150,32 +271,92 @@ struct PlayerSnapshot final {
     std::uint8_t combo_stage{};
     std::uint16_t hit_stop_ticks{};
     bool air_attack_available{true};
+    int hp{};
+    int max_hp{};
+    std::uint16_t hurt_ticks{};
+    std::uint16_t invulnerability_ticks{};
 };
 
-struct DummySnapshot final {
+struct MonsterSnapshot final {
+    bool active{};
+    std::uint16_t generation{};
+    MonsterId id{MonsterId::chaos_chaser};
+    Vec3 spawn{};
     Vec3 position{};
     Vec3 velocity{};
     DummyKind kind{DummyKind::light};
+    Facing facing{Facing::right};
     ReactionState reaction{ReactionState::idle};
     ArmorState armor{ArmorState::none};
     int hp{};
     int max_hp{};
     int break_value{};
     int max_break{};
+    int shield{};
+    int max_shield{};
+    std::uint16_t shield_ticks{};
+    std::uint16_t max_shield_ticks{};
     std::uint16_t break_window_ticks{};
     std::uint16_t hit_stop_ticks{};
+    MonsterAiPhase ai_phase{MonsterAiPhase::idle};
+    Vec3 attack_target_position{};
+    Vec3 attack_vector{};
 };
+
+struct ProjectileSnapshot final {
+    bool active{};
+    std::uint16_t generation{};
+    MonsterHandle owner{};
+    Vec3 position{};
+    Vec3 velocity{};
+    std::uint16_t lifetime_ticks{};
+    int damage{};
+    float radius{};
+};
+
+struct HazardSnapshot final {
+    bool active{};
+    std::uint16_t generation{};
+    MonsterHandle owner{};
+    Vec3 center{};
+    float radius{};
+    std::uint16_t telegraph_ticks{};
+    std::uint16_t active_ticks{};
+    std::uint16_t lifetime_ticks{};
+    std::uint16_t damage_interval_ticks{};
+    bool player_latched{};
+    int damage{};
+};
+
+// Temporary presentation alias for pre-Task 3 dungeon tests. Task 8 removes
+// this compatibility name after all consumers use MonsterSnapshot.
+using DummySnapshot = MonsterSnapshot;
 
 struct CombatDiagnostics final {
     std::size_t input_size{};
     std::uint32_t input_expired_count{};
     std::uint32_t input_overflow_count{};
     std::uint32_t event_overflow_count{};
+    std::uint32_t projectile_saturation_count{};
+    std::uint32_t projectile_invalid_owner_count{};
+    std::uint32_t hazard_saturation_count{};
+    std::uint32_t hazard_invalid_owner_count{};
+    std::size_t effect_owner_count{};
+    std::size_t active_effect_count{};
+    std::uint32_t effect_overflow_count{};
+    std::uint32_t effect_command_overflow_count{};
 };
 
 struct CombatSnapshot final {
     std::uint64_t tick{};
     PlayerSnapshot player{};
+    std::array<MonsterSnapshot, kMonsterCapacity> monsters{};
+    std::size_t monster_count{};
+    std::array<ProjectileSnapshot, kProjectileCapacity> projectiles{};
+    std::size_t projectile_count{};
+    std::array<HazardSnapshot, kHazardCapacity> hazards{};
+    std::size_t hazard_count{};
+    // Compatibility projection only; runtime state is owned by monsters.
     std::array<DummySnapshot, kDummyCount> dummies{};
     CombatDiagnostics diagnostics{};
 };

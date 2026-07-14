@@ -13,5 +13,5 @@ int main() {
         bounded_queue_suite(),
     };
 
-    return arpg::test::run_suites(suites, 22, "stage 0");
+    return arpg::test::run_suites(suites, 24, "stage 0");
 }

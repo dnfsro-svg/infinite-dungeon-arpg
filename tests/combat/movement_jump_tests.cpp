@@ -54,16 +54,16 @@ arpg::test::Failure room_clamps_facing_and_reset_are_stable() noexcept {
         world.tick(MovementInput{1, 1});
     }
     CombatSnapshot snapshot = world.snapshot();
-    ARPG_REQUIRE(arpg::test::near(snapshot.player.position.x, 8.0));
-    ARPG_REQUIRE(arpg::test::near(snapshot.player.position.y, 3.5));
+    ARPG_REQUIRE(arpg::test::near(snapshot.player.position.x, 12.0));
+    ARPG_REQUIRE(arpg::test::near(snapshot.player.position.y, 5.5));
 
     for (int tick = 0; tick < 400; ++tick) {
         world.tick(MovementInput{-1, -1});
     }
     world.tick(MovementInput{0, 1});
     snapshot = world.snapshot();
-    ARPG_REQUIRE(arpg::test::near(snapshot.player.position.x, -8.0));
-    ARPG_REQUIRE(snapshot.player.position.y > -3.5F);
+    ARPG_REQUIRE(arpg::test::near(snapshot.player.position.x, -12.0));
+    ARPG_REQUIRE(snapshot.player.position.y > -5.5F);
     ARPG_REQUIRE(snapshot.player.facing == Facing::left);
 
     for (int action = 0; action < 32; ++action) {
@@ -77,7 +77,7 @@ arpg::test::Failure room_clamps_facing_and_reset_are_stable() noexcept {
     ARPG_REQUIRE(snapshot.tick == 0);
     ARPG_REQUIRE(arpg::test::near(snapshot.player.position.x, 1.0));
     ARPG_REQUIRE(arpg::test::near(snapshot.player.position.y, -1.0));
-    ARPG_REQUIRE(arpg::test::near(snapshot.dummies[0].position.x, 2.0));
+    ARPG_REQUIRE(arpg::test::near(snapshot.monsters[0].position.x, 2.0));
     ARPG_REQUIRE(snapshot.player.state == PlayerState::idle);
     ARPG_REQUIRE(snapshot.diagnostics.input_size == 0);
     ARPG_REQUIRE(snapshot.diagnostics.input_expired_count == 0);

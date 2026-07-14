@@ -1,4 +1,6 @@
 #include "combat/combat_world.hpp"
+#include "combat/room_bounds.hpp"
+#include "modifiers/modifier_math.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -8,16 +10,28 @@ namespace {
 
 constexpr float kTickSeconds = 1.0F / 60.0F;
 constexpr float kGravity = 24.0F;
-constexpr float kRoomMinX = -8.0F;
-constexpr float kRoomMaxX = 8.0F;
 constexpr std::uint16_t kLightHitstunTicks = 10;
 constexpr std::uint16_t kMediumHitstunTicks = 16;
 constexpr std::uint16_t kKnockdownTicks = 45;
 constexpr std::uint16_t kRisingTicks = 30;
 constexpr std::uint16_t kRespawnTicks = 90;
+constexpr std::uint16_t kLauncherHoverTicks = 30;
 
 float impulse_scale(DummyKind kind) noexcept {
-    return kind == DummyKind::light ? 1.25F : 1.0F;
+    modifiers::Modifier light_scale{1U, modifiers::StatId::impulse_scale,
+        modifiers::ModifierOperation::more, 12500};
+    light_scale.required_tags = modifiers::tag(
+        modifiers::ModifierTag::light_target);
+    modifiers::ModifierContext context{};
+    if (kind == DummyKind::light) {
+        context.tags = modifiers::tag(modifiers::ModifierTag::light_target);
+    }
+    const std::array<modifiers::Modifier, 1> values{{light_scale}};
+    const auto result = modifiers::evaluate_stat(
+        modifiers::kFixedOne, modifiers::StatId::impulse_scale,
+        values, context, {0, 100000});
+    return static_cast<float>(result.value)
+        / static_cast<float>(modifiers::kFixedOne);
 }
 
 std::uint16_t reaction_ticks(
@@ -36,9 +50,10 @@ std::uint16_t reaction_ticks(
 void CombatWorld::apply_dummy_impact(
     std::size_t index,
     const AttackDefinition& definition) noexcept {
-    DummyRuntime& dummy = dummies_[index];
+    MonsterRuntime& dummy = monsters_.slots_[index];
     if (dummy.hp == 0) {
         dummy.reaction = ReactionState::defeated;
+        dummy.ai_phase = MonsterAiPhase::defeated;
         dummy.reaction_ticks = kRespawnTicks;
         dummy.break_window_ticks = 0;
         dummy.velocity = Vec3{};
@@ -53,6 +68,14 @@ void CombatWorld::apply_dummy_impact(
         emit_event(defeated);
         return;
     }
+
+    const bool melee_ai = dummy.id == MonsterId::chaos_chaser
+                       || dummy.id == MonsterId::water_bulwark;
+    dummy.ai_phase = !legacy_mode_ && !melee_ai
+                       ? MonsterAiPhase::idle
+                       : MonsterAiPhase::move;
+    dummy.ai_ticks = 0;
+    dummy.contact_attack_resolved = true;
 
     const float scale = impulse_scale(dummy.kind);
     const float facing = player_.facing == Facing::right ? 1.0F : -1.0F;
@@ -103,13 +126,13 @@ void CombatWorld::apply_dummy_impact(
             facing * definition.knockback_speed * scale;
         dummy.velocity.z = definition.launch_speed * scale;
         dummy.reaction = ReactionState::airborne;
-        dummy.reaction_ticks = 0;
+        dummy.reaction_ticks = kLauncherHoverTicks;
         break;
     }
 }
 
 void CombatWorld::respawn_dummy(std::size_t index) noexcept {
-    DummyRuntime& dummy = dummies_[index];
+    MonsterRuntime& dummy = monsters_.slots_[index];
     dummy.position = dummy.spawn;
     dummy.velocity = Vec3{};
     dummy.reaction = ReactionState::respawning;
@@ -131,7 +154,7 @@ void CombatWorld::respawn_dummy(std::size_t index) noexcept {
 }
 
 void CombatWorld::simulate_target(std::size_t index) noexcept {
-    DummyRuntime& dummy = dummies_[index];
+    MonsterRuntime& dummy = monsters_.slots_[index];
 
     if (dummy.armor == ArmorState::broken
         && dummy.reaction != ReactionState::defeated
@@ -146,13 +169,13 @@ void CombatWorld::simulate_target(std::size_t index) noexcept {
 
     const auto integrate_horizontal = [&dummy]() noexcept {
         dummy.position.x += dummy.velocity.x * kTickSeconds;
-        if (dummy.position.x <= kRoomMinX) {
-            dummy.position.x = kRoomMinX;
+        if (dummy.position.x <= room_bounds::min_x) {
+            dummy.position.x = room_bounds::min_x;
             if (dummy.velocity.x < 0.0F) {
                 dummy.velocity.x = 0.0F;
             }
-        } else if (dummy.position.x >= kRoomMaxX) {
-            dummy.position.x = kRoomMaxX;
+        } else if (dummy.position.x >= room_bounds::max_x) {
+            dummy.position.x = room_bounds::max_x;
             if (dummy.velocity.x > 0.0F) {
                 dummy.velocity.x = 0.0F;
             }
@@ -175,8 +198,13 @@ void CombatWorld::simulate_target(std::size_t index) noexcept {
         return;
     case ReactionState::airborne:
         integrate_horizontal();
-        dummy.position.z += dummy.velocity.z * kTickSeconds;
-        dummy.velocity.z -= kGravity * kTickSeconds;
+        if (dummy.velocity.z <= 0.0F && dummy.reaction_ticks != 0) {
+            --dummy.reaction_ticks;
+            dummy.velocity.z = 0.0F;
+        } else {
+            dummy.position.z += dummy.velocity.z * kTickSeconds;
+            dummy.velocity.z -= kGravity * kTickSeconds;
+        }
         if (dummy.position.z <= 0.0F) {
             dummy.position.z = 0.0F;
             dummy.velocity.z = 0.0F;
@@ -214,7 +242,7 @@ void CombatWorld::simulate_target(std::size_t index) noexcept {
         }
         return;
     case ReactionState::defeated:
-        if (!config_.respawn_defeated_dummies) {
+        if (!legacy_mode_ || !legacy_config_.respawn_defeated_dummies) {
             return;
         }
         if (dummy.reaction_ticks != 0) {

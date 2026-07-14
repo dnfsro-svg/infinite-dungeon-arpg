@@ -4,13 +4,19 @@ endif()
 if(NOT DEFINED SOURCE_LABEL)
     message(FATAL_ERROR "SOURCE_LABEL is required")
 endif()
+if(NOT DEFINED FORBIDDEN_MODULE)
+    set(FORBIDDEN_MODULE "dungeon")
+endif()
+if(NOT DEFINED FORBIDDEN_LABEL)
+    set(FORBIDDEN_LABEL "Dungeon")
+endif()
 
-set(ARPG_DUNGEON_INCLUDE_REGEX
-    [=[^[ \t]*#[ \t]*include[ \t]*[<"]dungeon[/\\][^>"]+[>"]]=])
+set(ARPG_MODULE_INCLUDE_REGEX
+    "^[ \\t]*#[ \\t]*include[ \\t]*[<\"]${FORBIDDEN_MODULE}[/\\\\][^>\"]+[>\"]")
 
-function(arpg_line_has_dungeon_include INPUT_LINE OUT_FOUND)
+function(arpg_line_has_module_include INPUT_LINE OUT_FOUND)
     string(TOLOWER "${INPUT_LINE}" _arpg_line_lower)
-    if(_arpg_line_lower MATCHES "${ARPG_DUNGEON_INCLUDE_REGEX}")
+    if(_arpg_line_lower MATCHES "${ARPG_MODULE_INCLUDE_REGEX}")
         set("${OUT_FOUND}" TRUE PARENT_SCOPE)
     else()
         set("${OUT_FOUND}" FALSE PARENT_SCOPE)
@@ -18,7 +24,7 @@ function(arpg_line_has_dungeon_include INPUT_LINE OUT_FOUND)
 endfunction()
 
 macro(arpg_finish_module_source_line)
-    arpg_line_has_dungeon_include("${_arpg_line}" _arpg_line_found)
+    arpg_line_has_module_include("${_arpg_line}" _arpg_line_found)
     if(_arpg_line_found)
         set("${OUT_FOUND}" TRUE PARENT_SCOPE)
         set("${OUT_LINE}" "${_arpg_line}" PARENT_SCOPE)
@@ -27,7 +33,7 @@ macro(arpg_finish_module_source_line)
     set(_arpg_line "")
 endmacro()
 
-function(arpg_source_has_dungeon_include SOURCE_TEXT OUT_FOUND OUT_LINE)
+function(arpg_source_has_module_include SOURCE_TEXT OUT_FOUND OUT_LINE)
     set(_arpg_state CODE)
     set(_arpg_line "")
     string(LENGTH "${SOURCE_TEXT}" _arpg_source_length)
@@ -139,7 +145,7 @@ function(arpg_source_has_dungeon_include SOURCE_TEXT OUT_FOUND OUT_LINE)
         endif()
     endwhile()
 
-    arpg_line_has_dungeon_include("${_arpg_line}" _arpg_line_found)
+    arpg_line_has_module_include("${_arpg_line}" _arpg_line_found)
     if(_arpg_line_found)
         set("${OUT_FOUND}" TRUE PARENT_SCOPE)
         set("${OUT_LINE}" "${_arpg_line}" PARENT_SCOPE)
@@ -150,7 +156,7 @@ function(arpg_source_has_dungeon_include SOURCE_TEXT OUT_FOUND OUT_LINE)
 endfunction()
 
 function(arpg_expect_module_boundary LABEL EXPECTED_FOUND SOURCE_TEXT)
-    arpg_source_has_dungeon_include(
+    arpg_source_has_module_include(
         "${SOURCE_TEXT}" _arpg_found _arpg_line)
     if(EXPECTED_FOUND AND NOT _arpg_found)
         set_property(GLOBAL APPEND PROPERTY
@@ -164,20 +170,26 @@ endfunction()
 
 set_property(GLOBAL PROPERTY ARPG_MODULE_BOUNDARY_SELF_TEST_FAILURES "")
 arpg_expect_module_boundary(
-    "real angle include" TRUE [=[#include <dungeon/dungeon_types.hpp>]=])
+    "real angle include" TRUE "#include <${FORBIDDEN_MODULE}/sample.hpp>")
 arpg_expect_module_boundary(
-    "real quoted include" TRUE [=[#include "dungeon/dungeon_session.hpp"]=])
+    "real quoted include" TRUE "#include \"${FORBIDDEN_MODULE}/sample.hpp\"")
 arpg_expect_module_boundary(
-    "line comment" FALSE [=[// #include <dungeon/dungeon_types.hpp>]=])
+    "line comment" FALSE "// #include <${FORBIDDEN_MODULE}/sample.hpp>")
 arpg_expect_module_boundary(
     "block comment" FALSE [=[/*
-#include "dungeon/dungeon_session.hpp"
+#include "${FORBIDDEN_MODULE}/sample.hpp"
 */]=])
 arpg_expect_module_boundary(
     "ordinary string" FALSE
-    [=[const char* text = "#include <dungeon/dungeon_types.hpp>";]=])
+    "const char* text = \"#include <${FORBIDDEN_MODULE}/sample.hpp>\";")
+if(FORBIDDEN_MODULE STREQUAL "combat")
+    set(_arpg_unrelated_module "core")
+else()
+    set(_arpg_unrelated_module "combat")
+endif()
 arpg_expect_module_boundary(
-    "unrelated include" FALSE [=[#include <combat/combat_types.hpp>]=])
+    "unrelated include" FALSE
+    "#include <${_arpg_unrelated_module}/sample.hpp>")
 
 get_property(ARPG_MODULE_BOUNDARY_SELF_TEST_FAILURES
     GLOBAL PROPERTY ARPG_MODULE_BOUNDARY_SELF_TEST_FAILURES)
@@ -209,10 +221,10 @@ file(GLOB_RECURSE SOURCE_FILES
 
 foreach(SOURCE_FILE IN LISTS SOURCE_FILES)
     file(READ "${SOURCE_FILE}" SOURCE_CONTENT)
-    arpg_source_has_dungeon_include(
-        "${SOURCE_CONTENT}" SOURCE_HAS_DUNGEON_INCLUDE SOURCE_DUNGEON_LINE)
-    if(SOURCE_HAS_DUNGEON_INCLUDE)
+    arpg_source_has_module_include(
+        "${SOURCE_CONTENT}" SOURCE_HAS_MODULE_INCLUDE SOURCE_MODULE_LINE)
+    if(SOURCE_HAS_MODULE_INCLUDE)
         message(FATAL_ERROR
-            "${SOURCE_LABEL} file depends on Dungeon: ${SOURCE_FILE}: ${SOURCE_DUNGEON_LINE}")
+            "${SOURCE_LABEL} file depends on ${FORBIDDEN_LABEL}: ${SOURCE_FILE}: ${SOURCE_MODULE_LINE}")
     endif()
 endforeach()

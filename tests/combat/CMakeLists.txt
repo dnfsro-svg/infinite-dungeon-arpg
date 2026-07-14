@@ -8,7 +8,13 @@ add_executable(arpg_combat_tests
     dummy_reaction_tests.cpp
     hit_resolution_tests.cpp
     input_buffer_tests.cpp
-    movement_jump_tests.cpp)
+    monster_catalog_tests.cpp
+    monster_melee_tests.cpp
+    monster_ranged_tests.cpp
+    monster_special_tests.cpp
+    monster_pool_tests.cpp
+    movement_jump_tests.cpp
+    player_health_tests.cpp)
 
 target_compile_features(arpg_combat_tests PRIVATE cxx_std_17)
 target_include_directories(arpg_combat_tests

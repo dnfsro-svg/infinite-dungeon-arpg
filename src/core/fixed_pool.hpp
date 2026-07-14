@@ -75,7 +75,7 @@ public:
 
         assert(free_head_ < N);
         const index_type index = free_head_;
-        Slot& slot = slots_[index];
+        Slot& slot = slot_at(index);
         free_head_ = slot.next_free;
         slot.next_free = invalid_index;
         slot.value.emplace(std::forward<Args>(args)...);
@@ -89,7 +89,7 @@ public:
             return false;
         }
 
-        Slot& slot = slots_[handle.index];
+        Slot& slot = slot_at(handle.index);
         slot.value.reset();
         ++slot.generation;
         if (slot.generation == 0) {
@@ -104,21 +104,21 @@ public:
 
     [[nodiscard]] T* get(Handle handle) noexcept {
         return contains(handle)
-            ? &(*slots_[handle.index].value)
+            ? &(*slot_at(handle.index).value)
             : nullptr;
     }
 
     [[nodiscard]] const T* get(Handle handle) const noexcept {
         return contains(handle)
-            ? &(*slots_[handle.index].value)
+            ? &(*slot_at(handle.index).value)
             : nullptr;
     }
 
     [[nodiscard]] bool contains(Handle handle) const noexcept {
         return handle.index < N &&
             handle.generation != 0 &&
-            slots_[handle.index].generation == handle.generation &&
-            slots_[handle.index].value.has_value();
+            slot_at(handle.index).generation == handle.generation &&
+            slot_at(handle.index).value.has_value();
     }
 
     [[nodiscard]] std::size_t size() const noexcept {
@@ -143,6 +143,16 @@ private:
         generation_type generation{1};
         index_type next_free{invalid_index};
     };
+
+    [[nodiscard]] Slot& slot_at(index_type index) noexcept {
+        assert(index < N);
+        return slots_[index];
+    }
+
+    [[nodiscard]] const Slot& slot_at(index_type index) const noexcept {
+        assert(index < N);
+        return slots_[index];
+    }
 
     std::array<Slot, N> slots_{};
     index_type free_head_{0};

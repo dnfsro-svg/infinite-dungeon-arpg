@@ -9,6 +9,83 @@
 
 namespace arpg::test {
 
+struct DungeonSessionTestAccess final {
+    static const dungeon::RoomEncounterPlan& encounter_plan(
+        const dungeon::DungeonSession& session) noexcept {
+        return session.encounter_plan_;
+    }
+    static void damage_current_player(
+        dungeon::DungeonSession& session, int damage) noexcept {
+        if (session.combat_.has_value()) {
+            session.combat_->apply_player_damage(
+                damage, combat::Vec3{}, combat::FeedbackLevel::light);
+        }
+    }
+    static void force_defeat_current_wave(
+        dungeon::DungeonSession& session) noexcept {
+        if (!session.combat_.has_value()) {
+            return;
+        }
+        combat::CombatWorld& world = *session.combat_;
+        for (std::size_t index = 0; index < world.monsters_.slots_.size(); ++index) {
+            combat::MonsterRuntime& monster = world.monsters_.slots_[index];
+            if (!monster.active || monster.hp <= 0) {
+                continue;
+            }
+            monster.hp = 0;
+            combat::AttackDefinition defeat{};
+            defeat.feedback = combat::FeedbackLevel::light;
+            world.apply_dummy_impact(index, defeat);
+        }
+    }
+};
+
+inline void force_defeat_current_wave(dungeon::DungeonSession& session) noexcept {
+    DungeonSessionTestAccess::force_defeat_current_wave(session);
+}
+
+inline void damage_current_player(
+    dungeon::DungeonSession& session, int damage) noexcept {
+    DungeonSessionTestAccess::damage_current_player(session, damage);
+}
+
+inline const dungeon::RoomEncounterPlan& encounter_plan(
+    const dungeon::DungeonSession& session) noexcept {
+    return DungeonSessionTestAccess::encounter_plan(session);
+}
+
+inline bool same_encounter_plan(const dungeon::RoomEncounterPlan& left,
+    const dungeon::RoomEncounterPlan& right) noexcept {
+    if (left.wave_count != right.wave_count
+            || left.total_budget != right.total_budget) return false;
+    for (std::size_t wave = 0; wave < left.wave_count; ++wave) {
+        const auto& a = left.waves[wave];
+        const auto& b = right.waves[wave];
+        if (a.spawn_count != b.spawn_count || a.spent_budget != b.spent_budget) return false;
+        for (std::size_t spawn = 0; spawn < a.spawn_count; ++spawn) {
+            if (a.spawns[spawn].id != b.spawns[spawn].id
+                    || a.spawns[spawn].position.x != b.spawns[spawn].position.x
+                    || a.spawns[spawn].position.y != b.spawns[spawn].position.y
+                    || a.spawns[spawn].position.z != b.spawns[spawn].position.z) return false;
+        }
+    }
+    return true;
+}
+
+inline bool commit_pending(
+    dungeon::DungeonSession& session) noexcept {
+    const auto pending = session.pending_transition();
+    if (!pending.has_value()) {
+        return false;
+    }
+    session.resolve_pending_transition({
+        dungeon::SaveDisposition::committed,
+        pending->next_state.commit_generation,
+        pending->next_state,
+    });
+    return true;
+}
+
 struct EventSummary final {
     static constexpr std::size_t kKindCapacity = 1024;
 
@@ -58,19 +135,19 @@ inline void drain_all_events(
     }
 }
 
-inline const combat::DummySnapshot* nearest_living_dummy(
+inline const combat::MonsterSnapshot* nearest_living_monster(
     const combat::CombatSnapshot& state) noexcept {
-    const combat::DummySnapshot* nearest = nullptr;
+    const combat::MonsterSnapshot* nearest = nullptr;
     float nearest_distance_squared = 0.0F;
-    for (const auto& dummy : state.dummies) {
-        if (dummy.hp <= 0) {
+    for (const auto& monster : state.monsters) {
+        if (!monster.active || monster.hp <= 0) {
             continue;
         }
-        const float delta_x = dummy.position.x - state.player.position.x;
-        const float delta_y = dummy.position.y - state.player.position.y;
+        const float delta_x = monster.position.x - state.player.position.x;
+        const float delta_y = monster.position.y - state.player.position.y;
         const float distance_squared = delta_x * delta_x + delta_y * delta_y;
         if (nearest == nullptr || distance_squared < nearest_distance_squared) {
-            nearest = &dummy;
+            nearest = &monster;
             nearest_distance_squared = distance_squared;
         }
     }
@@ -80,7 +157,7 @@ inline const combat::DummySnapshot* nearest_living_dummy(
 inline combat::MovementInput movement_toward(
     const combat::Vec3& player,
     const combat::Vec3& target) noexcept {
-    constexpr float kHorizontalTolerance = 1.45F;
+    constexpr float kHorizontalTolerance = 1.00F;
     constexpr float kDepthTolerance = 0.30F;
     combat::MovementInput movement{};
     const float delta_x = target.x - player.x;
@@ -100,7 +177,7 @@ inline combat::MovementInput movement_toward(
 
 inline bool in_light_attack_lane(
     const combat::PlayerSnapshot& player,
-    const combat::DummySnapshot& target) noexcept {
+    const combat::MonsterSnapshot& target) noexcept {
     constexpr float kMaximumHorizontalDistance = 1.75F;
     constexpr float kMaximumDepthDistance = 0.60F;
     constexpr float kFacingOverlapTolerance = 0.20F;
@@ -125,24 +202,10 @@ inline bool drive_until_cleared(
                 || state.phase == dungeon::RoomPhase::awaiting_exit) {
             return true;
         }
-        combat::MovementInput movement{};
-        if (state.combat.has_value()
-                && state.phase == dungeon::RoomPhase::combat) {
-            const auto& combat_state = *state.combat;
-            const combat::DummySnapshot* target =
-                nearest_living_dummy(combat_state);
-            if (target != nullptr) {
-                movement = movement_toward(
-                    combat_state.player.position, target->position);
-                if (in_light_attack_lane(combat_state.player, *target)
-                        && combat_state.player.active_attack
-                            == combat::AttackId::none) {
-                    static_cast<void>(
-                        session.queue_action(combat::Action::light));
-                }
-            }
+        if (state.phase == dungeon::RoomPhase::combat) {
+            force_defeat_current_wave(session);
         }
-        session.tick(movement);
+        session.tick({});
         drain_all_events(session, summary);
     }
     return false;

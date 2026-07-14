@@ -1,6 +1,7 @@
 #include "combat/combat_world.hpp"
 
 #include "combat/attack_catalog.hpp"
+#include "combat/room_bounds.hpp"
 
 #include <algorithm>
 
@@ -13,10 +14,6 @@ constexpr float kAirRatio = 0.70F;
 constexpr float kJumpSpeed = 8.5F;
 constexpr float kGravity = 24.0F;
 constexpr float kDiagonal = 0.7071067811865475F;
-constexpr float kRoomMinX = -8.0F;
-constexpr float kRoomMaxX = 8.0F;
-constexpr float kRoomMinY = -3.5F;
-constexpr float kRoomMaxY = 3.5F;
 constexpr std::uint16_t kJ1HitCancelTick = 8;
 constexpr std::uint16_t kJ1WhiffCancelTick = 13;
 constexpr std::uint16_t kJ2HitCancelTick = 9;
@@ -105,8 +102,8 @@ void CombatWorld::simulate_player(MovementInput movement) noexcept {
         const float facing = player_.facing == Facing::right ? 1.0F : -1.0F;
         player_.position.x = std::clamp(
             player_.position.x + definition->lunge_distance * facing,
-            kRoomMinX,
-            kRoomMaxX);
+            room_bounds::min_x,
+            room_bounds::max_x);
         apply_attack_assist(*definition);
         player_.state = PlayerState::attack_startup;
         if (id == AttackId::air_j) {
@@ -220,12 +217,12 @@ void CombatWorld::simulate_player(MovementInput movement) noexcept {
 
     player_.position.x = std::clamp(
         player_.position.x + player_.velocity.x * kTickSeconds,
-        kRoomMinX,
-        kRoomMaxX);
+        room_bounds::min_x,
+        room_bounds::max_x);
     player_.position.y = std::clamp(
         player_.position.y + player_.velocity.y * kTickSeconds,
-        kRoomMinY,
-        kRoomMaxY);
+        room_bounds::min_y,
+        room_bounds::max_y);
 
     if (airborne) {
         advance_vertical(false);

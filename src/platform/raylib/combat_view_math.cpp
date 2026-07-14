@@ -1,5 +1,7 @@
 #include "combat_view_math.hpp"
 
+#include "combat/room_bounds.hpp"
+
 #include <algorithm>
 #include <cstddef>
 
@@ -28,11 +30,14 @@ ScreenProjection project_combat_position(
     float width,
     float height) noexcept {
     const float depth = std::clamp(
-        (position.y + 3.5F) / 7.0F, 0.0F, 1.0F);
+        (position.y - combat::room_bounds::min_y)
+            / combat::room_bounds::depth,
+        0.0F, 1.0F);
     const float scale = 0.70F + 0.30F * depth;
     const float ground_y = height * (0.38F + 0.50F * depth);
     return {
-        width * 0.50F + position.x * (width / 18.0F) * scale,
+        width * 0.50F + position.x
+            * (width * 0.46F / combat::room_bounds::max_x) * scale,
         ground_y - position.z * 70.0F * scale,
         ground_y,
         scale,
@@ -51,6 +56,111 @@ void sort_actor_draw_items(
         }
         items[insertion] = value;
     }
+}
+
+Rgba8 monster_ecology_color(dungeon::DungeonElement ecology) noexcept {
+    switch (ecology) {
+    case dungeon::DungeonElement::fire: return {236U, 92U, 54U, 255U};
+    case dungeon::DungeonElement::water: return {64U, 156U, 236U, 255U};
+    case dungeon::DungeonElement::lightning: return {236U, 218U, 72U, 255U};
+    case dungeon::DungeonElement::chaos: return {154U, 76U, 210U, 255U};
+    }
+    return {154U, 76U, 210U, 255U};
+}
+
+MonsterVisual monster_visual(
+    combat::MonsterId id,
+    combat::MonsterAiPhase phase,
+    dungeon::DungeonElement ecology) noexcept {
+    MonsterVisual visual{};
+    visual.accent = monster_ecology_color(ecology);
+    visual.warning = {255U, 106U, 92U, 255U};
+    switch (id) {
+    case combat::MonsterId::fire_bomber:
+        visual = {{195U, 65U, 54U, 255U}, visual.accent, visual.warning,
+            MonsterShapeId::bomber, "BOMBER", MonsterWarningMode::none};
+        break;
+    case combat::MonsterId::fire_charger:
+        visual = {{173U, 79U, 49U, 255U}, visual.accent, visual.warning,
+            MonsterShapeId::charger, "CHARGER", MonsterWarningMode::none};
+        break;
+    case combat::MonsterId::water_bulwark:
+        visual = {{54U, 117U, 173U, 255U}, visual.accent, visual.warning,
+            MonsterShapeId::bulwark, "BULWARK", MonsterWarningMode::none};
+        break;
+    case combat::MonsterId::water_support:
+        visual = {{72U, 142U, 190U, 255U}, visual.accent, visual.warning,
+            MonsterShapeId::support, "SUPPORT", MonsterWarningMode::none};
+        break;
+    case combat::MonsterId::lightning_shooter:
+        visual = {{191U, 171U, 58U, 255U}, visual.accent, visual.warning,
+            MonsterShapeId::shooter, "SHOOTER", MonsterWarningMode::none};
+        break;
+    case combat::MonsterId::lightning_dasher:
+        visual = {{209U, 188U, 65U, 255U}, visual.accent, visual.warning,
+            MonsterShapeId::dasher, "DASHER", MonsterWarningMode::none};
+        break;
+    case combat::MonsterId::chaos_chaser:
+        visual = {{121U, 67U, 173U, 255U}, visual.accent, visual.warning,
+            MonsterShapeId::chaser, "CHASER", MonsterWarningMode::none};
+        break;
+    case combat::MonsterId::chaos_hazard:
+        visual = {{145U, 70U, 183U, 255U}, visual.accent, visual.warning,
+            MonsterShapeId::hazard_caster, "HAZARD", MonsterWarningMode::none};
+        break;
+    case combat::MonsterId::count:
+        break;
+    }
+
+    const bool priority = id == combat::MonsterId::fire_bomber
+        || id == combat::MonsterId::fire_charger
+        || id == combat::MonsterId::lightning_dasher
+        || id == combat::MonsterId::chaos_hazard;
+    if (priority && phase == combat::MonsterAiPhase::telegraph) {
+        visual.warning_mode = MonsterWarningMode::telegraph;
+    } else if (priority && phase == combat::MonsterAiPhase::active) {
+        visual.warning_mode = MonsterWarningMode::active;
+    }
+    return visual;
+}
+
+bool monster_visible(const combat::MonsterSnapshot& monster) noexcept {
+    return monster.active
+        && monster.ai_phase != combat::MonsterAiPhase::defeated;
+}
+
+float player_hp_ratio(const combat::PlayerSnapshot& player) noexcept {
+    if (player.max_hp <= 0) {
+        return 0.0F;
+    }
+    return std::clamp(static_cast<float>(player.hp)
+            / static_cast<float>(player.max_hp),
+        0.0F, 1.0F);
+}
+
+HazardVisualMode hazard_visual_mode(
+    const combat::HazardSnapshot& hazard) noexcept {
+    if (!hazard.active) {
+        return HazardVisualMode::hidden;
+    }
+    return hazard.telegraph_ticks != 0U
+        ? HazardVisualMode::telegraph
+        : hazard.active_ticks != 0U
+            ? HazardVisualMode::active : HazardVisualMode::hidden;
+}
+
+ScreenProjection project_projectile_position(
+    const combat::ProjectileSnapshot& projectile,
+    float width,
+    float height) noexcept {
+    return project_combat_position(projectile.position, width, height);
+}
+
+ScreenProjection project_hazard_center(
+    const combat::HazardSnapshot& hazard,
+    float width,
+    float height) noexcept {
+    return project_combat_position(hazard.center, width, height);
 }
 
 }  // namespace arpg::platform
