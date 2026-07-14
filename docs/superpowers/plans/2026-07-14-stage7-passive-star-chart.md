@@ -126,7 +126,7 @@ inline constexpr std::size_t kElementCount = 4U;
 }
 ```
 
-把 `StatId` 扩展为：`melee_damage`、`fire_flat_damage`、`water_flat_damage`、`lightning_flat_damage`、`chaos_flat_damage`、四个元素伤害提高、四个元素抗性、`max_health`、`max_barrier`、`damage_taken`、`move_speed`、`attack_speed`、`jump_speed`、`air_control`，保留已有 `impulse_scale` 和怪物 `shield`。`PlayerModifierValues` 的乘数默认 `kFixedOne`、抗性/平坦值默认 0，并以 `evaluate_stat()` 得出值；抗性钳制 `[-6000, 7500]`，`damage_taken` 钳制 `[5000, 20000]`，其余速度/冲量下限为 0。所有固定生命、护盾和附加伤害均以 `kFixedOne == 10000` 为单位：例如 +20 HP 写作 `200000`，+10 barrier 写作 `100000`，+3 火伤写作 `30000`；combat 只在投影时向下转换为整数游戏数值。
+把 `StatId` 扩展为：`melee_damage`、`fire_flat_damage`、`water_flat_damage`、`lightning_flat_damage`、`chaos_flat_damage`、四个元素伤害提高、四个元素抗性、`max_health`、`max_health_more`、`max_barrier`、`damage_taken`、`move_speed`、`attack_speed`、`jump_speed`、`air_control`，保留已有 `impulse_scale` 和怪物 `shield`。`PlayerModifierValues` 的乘数默认 `kFixedOne`、抗性/平坦值默认 0，并以 `evaluate_stat()` 得出值；抗性钳制 `[-6000, 7500]`，`damage_taken` 钳制 `[5000, 20000]`，其余速度/冲量下限为 0。所有固定生命、护盾和附加伤害均以 `kFixedOne == 10000` 为单位：例如 +20 HP 写作 `200000`，+10 barrier 写作 `100000`，+3 火伤写作 `30000`；combat 只在投影时向下转换为整数游戏数值。
 
 ```cpp
 struct PlayerModifierValues final {
@@ -135,6 +135,7 @@ struct PlayerModifierValues final {
     std::array<FixedValue, kElementCount> resistance{};
     FixedValue melee_damage{kFixedOne};
     FixedValue max_health{};
+    FixedValue max_health_more{kFixedOne};
     FixedValue max_barrier{};
     FixedValue damage_taken{kFixedOne};
     FixedValue movement_speed{kFixedOne};
@@ -216,7 +217,7 @@ arpg::test::Failure allocation_requires_adjacency_and_refund_keeps_connectivity(
 }
 ```
 
-为两个 suite 的总 case 数设置为 9：目录 4 个、规则 5 个，包含重复节点、无点、未知 ID、断链、相同位图的确定性投影。
+为两个 suite 的总 case 数设置为 9 组：目录组除形状外逐项黄金断言 64 个节点的类型、名称、所有邻接和所有 Modifier；规则组 5 个，包含重复节点、无点、未知 ID、断链、相同位图的确定性投影。`catalog_is_valid()` 还必须拒绝自环、重复邻居、非对称边和超出邻接容量的目录。
 
 - [ ] **Step 2: 运行 RED 测试**
 
@@ -262,7 +263,7 @@ struct PassiveNode final {
 
 在 `passive_tree_catalog.cpp` 按已批准规格建立：中央 ID 0–7，路线入口 8/22/36/50，每条路线 `B+0..B+13`，关键节点 21/35/49/63。以 [已批准设计第 3.1–3.2 节](../specs/2026-07-14-stage7-passive-star-chart-design.md) 的两张节点表为唯一数据来源：0 同时连接 1–7 和四个路线入口；每条路线严格采用 `B+1` 的三叉、`B+2→3→4→10→13`、`B+5→6→7→11`、`B+8→9→12` 的无环路径，中央及路线数值、关键节点收益和代价逐项照表编码，不作改名或调参。每条边在两端同时出现，所有 Modifier ID 由 `1000U + node_id * 3U + local_index` 生成并唯一。
 
-`passive_tree_rules.cpp` 用 `std::array<PassiveNodeId, 64>` 与 `std::array<bool, 64>` 实现 BFS，不使用 `vector`。`valid_passive_tree_state()` 检查 bit 0、没有超范围位、节点定义与已分配集合连通、以及 `popcount(bits & ~1ULL) + unspent == earned`。`evaluate_passive_tree()` 按节点 ID 顺序写入固定 `std::array<Modifier, 128>`，再调用 Task 1 的 `evaluate_player_modifiers()`。
+`passive_tree_rules.cpp` 用 `std::array<PassiveNodeId, 64>` 与 `std::array<bool, 64>` 实现 BFS，不使用 `vector`。`valid_passive_tree_state()` 检查 bit 0、没有超范围位、节点定义与已分配集合连通、以及 `popcount(bits & ~1ULL) + unspent == earned`。`evaluate_passive_tree()` 按节点 ID 顺序写入固定 `std::array<Modifier, 128>`，再调用 Task 1 的 `evaluate_player_modifiers()`；目录测试必须逐项锁定 64 个节点和每条边，避免“看起来正确”但数值漂移。
 
 增加根 CMake 的 `add_subdirectory(src/passives)`，在 `src/modifiers` 后、`src/dungeon` 前；添加 `tests/passives`，并在平台架构 CMake 增加 `architecture.passives_no_raylib` 和 passives 不可达 combat/dungeon/persistence 的边界断言。
 
@@ -392,7 +393,7 @@ static void apply_damage(
 
 把 `AttackRuntime` 增加缓存的 `startup_ticks`、`recovery_ticks`。`start_attack()` 以 `scaled_phase_ticks()` 只计算这两项，至少为 1；`active_ticks` 继续使用目录的原值。为 `attack_phase_at()` 增加接收实际 startup/recovery 的重载，`simulate_player()`、`hit_resolution.cpp` 和 snapshot 都用该重载，确保同一攻击的 active tick 数和命中窗口不变。移动、跳跃、空中机动从 `build.values` 缩放；`target_simulation.cpp` 的水平击退和垂直 launch 共用同一 `impulse_scale`。
 
-在 `hit_resolution.cpp` 用 `build_player_hit_packet(definition->damage, encounter_config_.player_build)` 扣怪物 HP，`CombatEvent::value` 写 packet 总值。
+在 `hit_resolution.cpp` 用 `build_player_hit_packet(definition->damage, encounter_config_.player_build)` 扣怪物 HP，`CombatEvent::value` 写 packet 总值。玩家最大生命必须按 `floor((base_hp + fixed_floor(values.max_health)) * values.max_health_more / kFixedOne)` 计算，确保 Stormstep 的 8000 乘数将基础生命降低 20%，而 core_vitality 的平坦生命仍独立生效。
 
 - [ ] **Step 4: 验证 Combat 默认回归和新行为**
 
