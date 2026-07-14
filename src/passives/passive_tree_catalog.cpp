@@ -182,7 +182,7 @@ std::array<PassiveNode, kPassiveNodeCount> make_catalog() noexcept {
                 ModifierOperation::increased, 1200);
             add_modifier(nodes[base + 13], StatId::attack_speed,
                 ModifierOperation::increased, 1200);
-            add_modifier(nodes[base + 13], StatId::max_health,
+            add_modifier(nodes[base + 13], StatId::max_health_more,
                 ModifierOperation::more, 8000);
         } else {
             add_modifier(nodes[base + 13], StatId::chaos_damage,
@@ -253,6 +253,8 @@ bool catalog_is_valid() noexcept {
         for (std::size_t neighbor = 0; neighbor < node.neighbor_count; ++neighbor) {
             const auto other = node.neighbors[neighbor];
             if (other >= nodes.size() || other == node.id) return false;
+            for (std::size_t prior = 0; prior < neighbor; ++prior)
+                if (node.neighbors[prior] == other) return false;
             bool reverse = false;
             for (std::size_t candidate = 0; candidate < nodes[other].neighbor_count; ++candidate)
                 reverse = reverse || nodes[other].neighbors[candidate] == node.id;

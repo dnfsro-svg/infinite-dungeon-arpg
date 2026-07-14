@@ -66,6 +66,19 @@ arpg::test::Failure projection_is_deterministic_for_same_bitmap() noexcept {
     ARPG_REQUIRE(first.flat_damage[arpg::modifiers::damage_index(
         arpg::modifiers::DamageType::fire)] == 3 * arpg::modifiers::kFixedOne);
     ARPG_REQUIRE(first.melee_damage == arpg::modifiers::kFixedOne);
+
+    const auto unallocated = evaluate_passive_tree(PassiveTreeState{});
+    ARPG_REQUIRE(unallocated.max_health_more == arpg::modifiers::kFixedOne);
+    PassiveTreeState stormstep{};
+    for (PassiveNodeId id = 36U; id <= 49U; ++id)
+        stormstep.allocated_bits |= std::uint64_t{1U} << id;
+    const auto storm_values = evaluate_passive_tree(stormstep);
+    ARPG_REQUIRE(storm_values.max_health_more == 8000);
+    PassiveTreeState vitality{};
+    vitality.allocated_bits |= std::uint64_t{1U} << 1U;
+    const auto vitality_values = evaluate_passive_tree(vitality);
+    ARPG_REQUIRE(vitality_values.max_health == 20 * arpg::modifiers::kFixedOne);
+    ARPG_REQUIRE(vitality_values.max_health_more == arpg::modifiers::kFixedOne);
     return {};
 }
 

@@ -14,6 +14,7 @@ struct PlayerModifierValues final {
     std::array<FixedValue, kElementCount> resistance{};
     FixedValue melee_damage{kFixedOne};
     FixedValue max_health{};
+    FixedValue max_health_more{kFixedOne};
     FixedValue max_barrier{};
     FixedValue damage_taken{kFixedOne};
     FixedValue movement_speed{kFixedOne};
@@ -28,4 +29,3 @@ struct PlayerModifierValues final {
     ModifierSpan modifiers) noexcept;
 
 }  // namespace arpg::modifiers
-

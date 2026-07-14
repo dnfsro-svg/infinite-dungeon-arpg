@@ -27,6 +27,7 @@ enum class StatId : std::uint16_t {
     lightning_resistance,
     chaos_resistance,
     max_health,
+    max_health_more,
     max_barrier,
     damage_taken,
     move_speed,

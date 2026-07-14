@@ -66,6 +66,8 @@ PlayerModifierValues evaluate_player_modifiers(
         kFixedOne, StatId::melee_damage, modifiers, kNonNegative, result.valid);
     result.max_health = evaluate(
         0, StatId::max_health, modifiers, kNonNegative, result.valid);
+    result.max_health_more = evaluate(
+        kFixedOne, StatId::max_health_more, modifiers, kNonNegative, result.valid);
     result.max_barrier = evaluate(
         0, StatId::max_barrier, modifiers, kNonNegative, result.valid);
     result.damage_taken = evaluate(
