@@ -7,6 +7,8 @@
 #include "core/fixed_step.hpp"
 #include "dungeon_runtime.hpp"
 #include "dungeon_view_math.hpp"
+#include "passive_tree_renderer.hpp"
+#include "passive_tree_view_math.hpp"
 #include "persistence/save_paths.hpp"
 
 #include <raylib.h>
@@ -117,6 +119,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         CombatAudio audio;
         const bool audio_ready = audio.initialize();
         bool draw_debug = false;
+        bool passive_overlay_open = false;
         dungeon::DungeonSnapshot current{};
         dungeon::DungeonSnapshot previous{};
         if (runtime.session() != nullptr) {
@@ -149,14 +152,37 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             if (session == nullptr) {
                 break;
             }
-            if (IsKeyPressed(KEY_R)) {
+            if (!passive_tree_can_open(current)) {
+                passive_overlay_open = false;
+            }
+            if (IsKeyPressed(KEY_P) && passive_tree_can_open(current)) {
+                passive_overlay_open = !passive_overlay_open;
+            }
+            const PassiveOverlayInputGate input_gate = passive_overlay_input_gate(
+                passive_overlay_open);
+            if (input_gate.forward_actions && IsKeyPressed(KEY_R)) {
                 session->reset_current_room();
                 current = session->snapshot();
                 previous = current;
                 drain_events(*session, renderer, feedback, audio);
             }
-            submit_frame_actions(*session);
-            if (IsKeyPressed(KEY_E)) {
+            if (passive_overlay_open && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                const auto selected = hit_test_passive_node(
+                    {GetMousePosition().x, GetMousePosition().y},
+                    static_cast<float>(GetScreenWidth()), static_cast<float>(GetScreenHeight()));
+                if (selected.has_value()) {
+                    const bool allocated = (current.passive_tree.allocated_bits
+                        & (1ULL << *selected)) != 0U;
+                    static_cast<void>(allocated
+                        ? session->request_passive_refund(*selected)
+                        : session->request_passive_allocation(*selected));
+                    current = session->snapshot();
+                }
+            }
+            if (input_gate.forward_actions) {
+                submit_frame_actions(*session);
+            }
+            if (input_gate.forward_descent && IsKeyPressed(KEY_E)) {
                 const auto snapshot = session->snapshot();
                 const bool in_range = snapshot.combat.has_value()
                     && can_prompt_descent(
@@ -164,7 +190,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 static_cast<void>(session->request_descent(in_range));
             }
 
-            const combat::MovementInput movement = sample_movement_input();
+            const combat::MovementInput movement = input_gate.forward_movement
+                ? sample_movement_input() : combat::MovementInput{};
             const float frame_seconds = GetFrameTime();
             feedback.update(frame_seconds);
             renderer.update(frame_seconds);
@@ -173,8 +200,11 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             for (std::uint32_t step = 0; step < frame.steps; ++step) {
                 previous = current;
                 session->tick(movement);
-                runtime.service_pending_transition();
+                runtime.service_pending_save();
                 current = session->snapshot();
+                if (!passive_tree_can_open(current)) {
+                    passive_overlay_open = false;
+                }
                 drain_events(*session, renderer, feedback, audio);
             }
 
@@ -183,6 +213,9 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             renderer.draw(previous, current, runtime.render_status(),
                 static_cast<float>(frame.interpolation_alpha), draw_debug,
                 feedback, audio_ready);
+            if (passive_overlay_open) {
+                draw_passive_tree_overlay(current, runtime.render_status());
+            }
             EndDrawing();
             if (frame_toggles.take_screenshot) {
                 TakeScreenshot("stage3-dungeon-rules.png");

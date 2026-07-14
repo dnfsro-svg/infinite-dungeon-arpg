@@ -6,6 +6,7 @@ if(TARGET arpg_raylib)
         combat_view_math_tests.cpp
         monster_view_tests.cpp
         dungeon_view_math_tests.cpp
+        passive_tree_view_tests.cpp
         host_launch_options_tests.cpp
         dungeon_runtime_tests.cpp)
     target_compile_features(arpg_platform_tests PRIVATE cxx_std_17)
