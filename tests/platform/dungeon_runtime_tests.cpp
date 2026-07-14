@@ -199,10 +199,17 @@ arpg::test::Failure passive_pre_publish_failure_keeps_old_tree_and_retryable_run
     runtime.service_pending_save();
     const auto after = runtime.session()->snapshot();
     ARPG_REQUIRE(after.passive_tree.allocated_bits == before.passive_tree.allocated_bits);
+    ARPG_REQUIRE(after.commit_generation == before.commit_generation);
     ARPG_REQUIRE(after.phase == dungeon::RoomPhase::awaiting_exit);
     ARPG_REQUIRE(!after.passive_save_pending);
     ARPG_REQUIRE(runtime.state() == platform::DungeonRuntimeState::running);
     ARPG_REQUIRE(runtime.render_status().indicator == platform::SaveIndicator::error);
+    platform::DungeonRuntime resumed(config_for(directory, 999U));
+    ARPG_REQUIRE(resumed.initialize());
+    const auto restored = resumed.session()->snapshot();
+    ARPG_REQUIRE(restored.passive_tree.allocated_bits
+        == before.passive_tree.allocated_bits);
+    ARPG_REQUIRE(restored.commit_generation == before.commit_generation);
     return {};
 }
 
@@ -233,11 +240,14 @@ arpg::test::Failure passive_pending_rejects_door_and_descent_requests() noexcept
     ARPG_REQUIRE(pending.has_value());
     ARPG_REQUIRE(pending->kind == dungeon::PendingSaveKind::passive_tree);
     ARPG_REQUIRE(!runtime.session()->request_descent(true));
-    runtime.session()->tick({1, 0});
+    const auto before_door = runtime.session()->snapshot();
+    arpg::test::attempt_exit(*runtime.session(), dungeon::ExitDirection::right);
     const auto snapshot = runtime.session()->snapshot();
     ARPG_REQUIRE(snapshot.phase == dungeon::RoomPhase::committing);
     ARPG_REQUIRE(snapshot.passive_save_pending);
     ARPG_REQUIRE(!snapshot.has_pending_transition);
+    ARPG_REQUIRE(snapshot.diagnostics.rejected_exit_count
+        == before_door.diagnostics.rejected_exit_count + 1U);
     return {};
 }
 

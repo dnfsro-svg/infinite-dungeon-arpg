@@ -26,6 +26,10 @@ struct DungeonSessionTestAccess final {
         dungeon::DungeonSession& session, bool has_hole) noexcept {
         session.stable_state_.current_room.has_hole = has_hole;
     }
+    static void attempt_exit(dungeon::DungeonSession& session,
+        dungeon::ExitDirection direction) noexcept {
+        session.attempt_exit(direction);
+    }
     static void damage_current_player(
         dungeon::DungeonSession& session, int damage) noexcept {
         if (session.combat_.has_value()) {
@@ -79,6 +83,11 @@ inline const combat::CombatWorld* combat_world_address(
 inline void set_current_room_hole(
     dungeon::DungeonSession& session, bool has_hole) noexcept {
     DungeonSessionTestAccess::set_current_room_hole(session, has_hole);
+}
+
+inline void attempt_exit(dungeon::DungeonSession& session,
+    dungeon::ExitDirection direction) noexcept {
+    DungeonSessionTestAccess::attempt_exit(session, direction);
 }
 
 inline bool same_encounter_plan(const dungeon::RoomEncounterPlan& left,
