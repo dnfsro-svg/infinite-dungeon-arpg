@@ -265,12 +265,12 @@ bool CombatWorld::load_wave(
     encounter_config_.wave = wave;
     encounter_config_.reset_player_health = reset_player_health;
     legacy_mode_ = false;
-    player_.barrier = player_.max_barrier;
     if (reset_player_health) {
         const bool health_changed = player_.hp != player_.max_hp
                                  || player_.hurt_ticks != 0
                                  || player_.invulnerability_ticks != 0;
         player_.hp = player_.max_hp;
+        player_.barrier = player_.max_barrier;
         player_.hurt_ticks = 0;
         player_.invulnerability_ticks = 0;
 

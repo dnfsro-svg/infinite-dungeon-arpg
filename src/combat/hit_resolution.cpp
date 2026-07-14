@@ -126,6 +126,7 @@ void CombatWorld::resolve_attack_hits() noexcept {
             definition->damage, encounter_config_.player_build);
         int hp_damage = 0;
         for (const int value : packet.amount) hp_damage += std::max(0, value);
+        const int packet_total = hp_damage;
         if (dummy.shield != 0 && hp_damage > 0) {
             const int absorbed = std::min(dummy.shield, hp_damage);
             dummy.shield -= absorbed;
@@ -164,7 +165,7 @@ void CombatWorld::resolve_attack_hits() noexcept {
         hit.hit_count = 1;
         hit.feedback = definition->feedback;
         hit.position = dummy.position;
-        hit.value = hp_damage;
+        hit.value = packet_total;
         emit_event(hit);
 
         if (starts_break) {

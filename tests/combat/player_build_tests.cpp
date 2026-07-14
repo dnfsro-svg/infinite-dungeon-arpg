@@ -101,6 +101,58 @@ arpg::test::Failure impulse_scale_affects_knockback_and_launch() noexcept {
     return {};
 }
 
+arpg::test::Failure wave_load_preserves_barrier_without_health_reset() noexcept {
+    PlayerCombatBuild build{};
+    build.values.max_barrier = 100000;
+    CombatEncounterConfig config = one_monster_config();
+    config.player_build = build;
+    CombatWorld world{config};
+    arpg::test::CombatWorldTestAccess::apply_damage(
+        world, 4, Vec3{}, FeedbackLevel::light);
+    const int remaining = world.snapshot().player.barrier;
+    ARPG_REQUIRE(remaining == 6);
+
+    EncounterWave next_wave{};
+    next_wave.spawn_count = 1U;
+    next_wave.spawns[0] = MonsterSpawnSpec{
+        MonsterId::chaos_chaser, Vec3{2.0F, 0.0F, 0.0F}};
+    ARPG_REQUIRE(world.load_wave(next_wave, false));
+    ARPG_REQUIRE(world.snapshot().player.barrier == remaining);
+
+    ARPG_REQUIRE(world.load_wave(next_wave, true));
+    ARPG_REQUIRE(world.snapshot().player.barrier == 10);
+    return {};
+}
+
+arpg::test::Failure hit_event_keeps_packet_total_when_monster_shield_absorbs() noexcept {
+    PlayerCombatBuild build{};
+    build.values.flat_damage[damage_index(DamageType::fire)] = 30000;
+    CombatEncounterConfig config{};
+    config.player_build = build;
+    config.wave.spawn_count = 1U;
+    config.wave.spawns[0] = MonsterSpawnSpec{
+        MonsterId::water_bulwark, Vec3{1.0F, 0.0F, 0.0F}};
+    CombatWorld world{config};
+    arpg::test::drain_events(world);
+    arpg::test::CombatWorldTestAccess::set_monster_shield(world, 0, 20);
+    ARPG_REQUIRE(world.queue_action(Action::light));
+    for (int tick = 0; tick < 20; ++tick) {
+        world.tick(MovementInput{});
+    }
+
+    bool saw_hit = false;
+    while (const auto event = world.try_pop_event()) {
+        if (event->kind != CombatEventKind::hit) continue;
+        saw_hit = true;
+        ARPG_REQUIRE(event->value == 31);
+        break;
+    }
+    ARPG_REQUIRE(saw_hit);
+    ARPG_REQUIRE(world.snapshot().monsters[0].hp == 689);
+    ARPG_REQUIRE(world.snapshot().monsters[0].shield == 0);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"fire resistance and barrier", &fire_resistance_then_barrier_absorbs_damage},
     {"elemental add does not convert physical", &player_attack_adds_element_without_converting_physical},
@@ -109,6 +161,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"default j1 damage", &default_build_preserves_j1_damage},
     {"attack speed phase scaling", &attack_speed_scales_only_startup_and_recovery},
     {"impulse scale", &impulse_scale_affects_knockback_and_launch},
+    {"wave load barrier policy", &wave_load_preserves_barrier_without_health_reset},
+    {"shield preserves packet event total", &hit_event_keeps_packet_total_when_monster_shield_absorbs},
 };
 
 }  // namespace

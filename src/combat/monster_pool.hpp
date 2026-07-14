@@ -8,6 +8,7 @@
 #include <optional>
 
 namespace arpg::test {
+struct CombatWorldTestAccess;
 struct DungeonSessionTestAccess;
 }
 
@@ -60,6 +61,7 @@ public:
 
 private:
     friend class CombatWorld;
+    friend struct ::arpg::test::CombatWorldTestAccess;
     friend struct ::arpg::test::DungeonSessionTestAccess;
     static void advance_generation(MonsterRuntime& runtime) noexcept;
 

@@ -35,5 +35,5 @@ int main() {
         player_build_suite(),
     };
 
-    return arpg::test::run_suites(suites, 74, "stage 7 task 3");
+    return arpg::test::run_suites(suites, 76, "stage 7 task 3");
 }

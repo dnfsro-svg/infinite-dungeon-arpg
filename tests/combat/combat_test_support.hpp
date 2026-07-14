@@ -66,6 +66,15 @@ struct CombatWorldTestAccess final {
         world.projectile_invalid_owner_count_ = projectile;
         world.hazard_invalid_owner_count_ = hazard;
     }
+
+    static void set_monster_shield(
+        combat::CombatWorld& world,
+        std::size_t index,
+        int shield) noexcept {
+        if (index < world.monsters_.slots_.size()) {
+            world.monsters_.slots_[index].shield = shield;
+        }
+    }
 };
 
 inline void tick_n(
