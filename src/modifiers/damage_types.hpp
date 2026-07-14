@@ -31,4 +31,3 @@ inline constexpr std::size_t kElementCount = 4U;
 }
 
 }  // namespace arpg::modifiers
-
