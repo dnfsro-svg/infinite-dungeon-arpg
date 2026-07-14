@@ -18,6 +18,10 @@ struct DungeonSessionTestAccess final {
         const dungeon::DungeonSession& session) noexcept {
         return session.combat_->encounter_config_.player_build;
     }
+    static const combat::CombatWorld* combat_world_address(
+        const dungeon::DungeonSession& session) noexcept {
+        return session.combat_.has_value() ? &*session.combat_ : nullptr;
+    }
     static void set_current_room_hole(
         dungeon::DungeonSession& session, bool has_hole) noexcept {
         session.stable_state_.current_room.has_hole = has_hole;
@@ -65,6 +69,11 @@ inline const dungeon::RoomEncounterPlan& encounter_plan(
 inline const combat::PlayerCombatBuild& player_build(
     const dungeon::DungeonSession& session) noexcept {
     return DungeonSessionTestAccess::player_build(session);
+}
+
+inline const combat::CombatWorld* combat_world_address(
+    const dungeon::DungeonSession& session) noexcept {
+    return DungeonSessionTestAccess::combat_world_address(session);
 }
 
 inline void set_current_room_hole(
