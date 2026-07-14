@@ -34,10 +34,10 @@ float node_radius(passives::PassiveNodeType type) noexcept {
 PassiveScreenPoint route_layout_offset(passives::PassiveNodeId node) noexcept {
     if (node < 8U || node >= passives::kPassiveNodeCount) return {};
     switch ((node - 8U) / 14U) {
-    case 0U: return {-180.0F, -175.0F};
-    case 1U: return {180.0F, -175.0F};
-    case 2U: return {-180.0F, 175.0F};
-    case 3U: return {180.0F, 175.0F};
+    case 0U: return {-200.0F, -175.0F};
+    case 1U: return {200.0F, -175.0F};
+    case 2U: return {-200.0F, 175.0F};
+    case 3U: return {200.0F, 175.0F};
     default: return {};
     }
 }

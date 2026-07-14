@@ -2,6 +2,7 @@
 
 #include "test_framework.hpp"
 
+#include <cmath>
 #include <optional>
 
 namespace {
@@ -49,22 +50,29 @@ arpg::test::Failure distinct_landmarks_keep_distinct_projections() noexcept {
 }
 
 arpg::test::Failure route_nodes_have_unique_projections_and_hit_themselves() noexcept {
-    constexpr float kWidth = 1280.0F;
-    constexpr float kHeight = 720.0F;
-    for (unsigned value = 8U; value < 64U; ++value) {
-        const auto node = static_cast<PassiveNodeId>(value);
-        const auto projection = arpg::platform::project_passive_node(node, kWidth, kHeight);
-        ARPG_REQUIRE(projection.visible);
-        ARPG_REQUIRE(arpg::platform::hit_test_passive_node(
-            projection.center, kWidth, kHeight) == std::optional<PassiveNodeId>{node});
-        const unsigned route = (value - 8U) / 14U;
-        for (unsigned other_value = value + 1U; other_value < 64U; ++other_value) {
-            const unsigned other_route = (other_value - 8U) / 14U;
-            if (route == other_route) continue;
-            const auto other = arpg::platform::project_passive_node(
-                static_cast<PassiveNodeId>(other_value), kWidth, kHeight);
-            ARPG_REQUIRE(projection.center.x != other.center.x
-                || projection.center.y != other.center.y);
+    struct Viewport final { float width{}; float height{}; };
+    constexpr Viewport kViewports[] = {{1280.0F, 720.0F}, {800.0F, 450.0F}};
+    constexpr float kHitMargin = 4.0F;
+    for (const Viewport viewport : kViewports) {
+        for (unsigned value = 8U; value < 64U; ++value) {
+            const auto node = static_cast<PassiveNodeId>(value);
+            const auto projection = arpg::platform::project_passive_node(
+                node, viewport.width, viewport.height);
+            ARPG_REQUIRE(projection.visible);
+            ARPG_REQUIRE(arpg::platform::hit_test_passive_node(
+                projection.center, viewport.width, viewport.height)
+                == std::optional<PassiveNodeId>{node});
+            const unsigned route = (value - 8U) / 14U;
+            for (unsigned other_value = value + 1U; other_value < 64U; ++other_value) {
+                const unsigned other_route = (other_value - 8U) / 14U;
+                if (route == other_route) continue;
+                const auto other = arpg::platform::project_passive_node(
+                    static_cast<PassiveNodeId>(other_value), viewport.width, viewport.height);
+                const float dx = projection.center.x - other.center.x;
+                const float dy = projection.center.y - other.center.y;
+                ARPG_REQUIRE(std::sqrt(dx * dx + dy * dy)
+                    > projection.radius + other.radius + kHitMargin);
+            }
         }
     }
     return {};
