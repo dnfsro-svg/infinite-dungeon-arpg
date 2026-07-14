@@ -230,7 +230,7 @@ Expected: CMake 失败，因为 `src/passives/CMakeLists.txt` 和 target `arpg_p
 
 - [ ] **Step 3: 实现固定目录和规则 API**
 
-建立以下公开类型。邻接数组固定为 4 条边，`neighbor_count` 指定有效前缀：
+建立以下公开类型。邻接数组固定为 12 条边，`neighbor_count` 指定有效前缀；容量 12 足以编码起点的 11 条直接边，同时仍是固定容量栈数组：
 
 ```cpp
 inline constexpr std::size_t kPassiveNodeCount = 64U;
@@ -253,7 +253,7 @@ struct PassiveNode final {
     const char* name{};
     std::int16_t x{};
     std::int16_t y{};
-    std::array<PassiveNodeId, 4> neighbors{};
+    std::array<PassiveNodeId, 12> neighbors{};
     std::uint8_t neighbor_count{};
     std::array<modifiers::Modifier, 3> modifiers{};
     std::uint8_t modifier_count{};
