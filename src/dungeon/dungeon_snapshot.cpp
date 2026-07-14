@@ -30,7 +30,12 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
     result.ecology = stable_state_.current_room.ecology;
     result.has_hole = stable_state_.current_room.has_hole;
     result.is_abyss = stable_state_.current_room.is_abyss;
-    result.has_pending_transition = pending_.has_value();
+    result.has_pending_transition = pending_save_.has_value()
+        && pending_save_->kind == PendingSaveKind::transition;
+    result.passive_tree = stable_state_.passive_tree;
+    result.passive_save_pending = pending_save_.has_value()
+        && pending_save_->kind == PendingSaveKind::passive_tree;
+    result.passive_tree_error = last_passive_tree_error_;
     if (combat_.has_value()) {
         result.combat.emplace(combat_->snapshot());
     }

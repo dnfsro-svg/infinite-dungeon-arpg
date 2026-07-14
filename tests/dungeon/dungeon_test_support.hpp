@@ -14,6 +14,14 @@ struct DungeonSessionTestAccess final {
         const dungeon::DungeonSession& session) noexcept {
         return session.encounter_plan_;
     }
+    static const combat::PlayerCombatBuild& player_build(
+        const dungeon::DungeonSession& session) noexcept {
+        return session.combat_->encounter_config_.player_build;
+    }
+    static void set_current_room_hole(
+        dungeon::DungeonSession& session, bool has_hole) noexcept {
+        session.stable_state_.current_room.has_hole = has_hole;
+    }
     static void damage_current_player(
         dungeon::DungeonSession& session, int damage) noexcept {
         if (session.combat_.has_value()) {
@@ -52,6 +60,16 @@ inline void damage_current_player(
 inline const dungeon::RoomEncounterPlan& encounter_plan(
     const dungeon::DungeonSession& session) noexcept {
     return DungeonSessionTestAccess::encounter_plan(session);
+}
+
+inline const combat::PlayerCombatBuild& player_build(
+    const dungeon::DungeonSession& session) noexcept {
+    return DungeonSessionTestAccess::player_build(session);
+}
+
+inline void set_current_room_hole(
+    dungeon::DungeonSession& session, bool has_hole) noexcept {
+    DungeonSessionTestAccess::set_current_room_hole(session, has_hole);
 }
 
 inline bool same_encounter_plan(const dungeon::RoomEncounterPlan& left,

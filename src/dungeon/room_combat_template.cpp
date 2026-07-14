@@ -51,7 +51,8 @@ std::optional<combat::CombatEncounterConfig> make_combat_encounter_config(
     checkpoint::EntrySide entry,
     std::uint32_t rules_version,
     const combat::EncounterWave& wave,
-    bool reset_player_health) noexcept {
+    bool reset_player_health,
+    combat::PlayerCombatBuild player_build) noexcept {
     const auto legacy = make_combat_lab_config(entry, rules_version);
     if (!legacy.has_value()) {
         return std::nullopt;
@@ -61,6 +62,7 @@ std::optional<combat::CombatEncounterConfig> make_combat_encounter_config(
     config.initial_facing = legacy->initial_facing;
     config.wave = wave;
     config.reset_player_health = reset_player_health;
+    config.player_build = player_build;
     return config;
 }
 

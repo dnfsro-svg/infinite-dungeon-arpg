@@ -3,6 +3,7 @@
 #include "dungeon/dungeon_progression.hpp"
 #include "dungeon/room_combat_template.hpp"
 #include "dungeon/room_navigation.hpp"
+#include "passives/passive_tree_rules.hpp"
 
 #include <cassert>
 #include <cstdint>
@@ -117,7 +118,20 @@ void DungeonSession::tick(combat::MovementInput movement) noexcept {
 
 std::optional<PendingTransition>
 DungeonSession::pending_transition() const noexcept {
-    return pending_;
+    if (!pending_save_.has_value()
+            || pending_save_->kind != PendingSaveKind::transition) {
+        return std::nullopt;
+    }
+    return PendingTransition{
+        pending_save_->transition,
+        pending_save_->direction,
+        pending_save_->expected_generation,
+        pending_save_->next_state,
+    };
+}
+
+std::optional<PendingSave> DungeonSession::pending_save() const noexcept {
+    return pending_save_;
 }
 
 void DungeonSession::reset_current_room() noexcept {
@@ -132,7 +146,8 @@ void DungeonSession::reset_current_room() noexcept {
     while (combat_events_.try_pop().has_value()) {
     }
     combat_.reset();
-    pending_.reset();
+    pending_save_.reset();
+    last_passive_tree_error_ = passives::PassiveTreeError::none;
     construct_current_room();
     static_cast<void>(emit(DungeonEventKind::room_reset));
 }
@@ -161,11 +176,18 @@ void DungeonSession::construct_current_room() noexcept {
             ? DungeonFault::invalid_rules : plan.fault);
         return;
     }
+    const modifiers::PlayerModifierValues passive_values =
+        passives::evaluate_passive_tree(stable_state_.passive_tree);
+    if (!passive_values.valid) {
+        enter_fault(DungeonFault::invalid_rules);
+        return;
+    }
     const auto config = make_combat_encounter_config(
         stable_state_.current_room.entry,
         rules_.rules_version,
         plan.plan.waves[0],
-        true);
+        true,
+        combat::PlayerCombatBuild{passive_values});
     if (!config.has_value()) {
         enter_fault(DungeonFault::invalid_rules);
         return;

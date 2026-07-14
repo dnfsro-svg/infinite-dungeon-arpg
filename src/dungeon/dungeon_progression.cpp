@@ -176,6 +176,7 @@ bool same_run_state(
             == rhs.progression.earned_passive_points
         && lhs.progression.unspent_passive_points
             == rhs.progression.unspent_passive_points
+        && lhs.passive_tree.allocated_bits == rhs.passive_tree.allocated_bits
         && lhs.last_transition == rhs.last_transition
         && lhs.last_direction == rhs.last_direction;
 }

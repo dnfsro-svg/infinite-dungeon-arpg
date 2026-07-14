@@ -7,6 +7,7 @@ add_executable(arpg_dungeon_tests
     room_generation_tests.cpp
     dungeon_rules_tests.cpp
     dungeon_progression_tests.cpp
+    dungeon_passive_tree_tests.cpp
     dungeon_transaction_tests.cpp
     encounter_director_tests.cpp
     dungeon_wave_tests.cpp)

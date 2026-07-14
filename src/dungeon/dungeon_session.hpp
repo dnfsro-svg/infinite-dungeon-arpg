@@ -29,6 +29,12 @@ public:
     [[nodiscard]] bool queue_action(combat::Action action) noexcept;
     void tick(combat::MovementInput movement) noexcept;
     [[nodiscard]] bool request_descent(bool player_in_range) noexcept;
+    [[nodiscard]] bool request_passive_allocation(
+        passives::PassiveNodeId node) noexcept;
+    [[nodiscard]] bool request_passive_refund(
+        passives::PassiveNodeId node) noexcept;
+    [[nodiscard]] std::optional<PendingSave> pending_save() const noexcept;
+    void resolve_pending_save(const PendingSaveResult& result) noexcept;
     [[nodiscard]] std::optional<PendingTransition>
     pending_transition() const noexcept;
     void resolve_pending_transition(
@@ -49,7 +55,9 @@ private:
     [[nodiscard]] bool prepare_transition(
         TransitionKind kind,
         ExitDirection direction) noexcept;
-    void commit_transition(const TransitionSaveResult& result) noexcept;
+    [[nodiscard]] bool prepare_passive_mutation(
+        passives::PassiveNodeId node, bool refund) noexcept;
+    void commit_pending_save(const PendingSaveResult& result) noexcept;
     [[nodiscard]] DungeonSnapshot build_dungeon_snapshot() const noexcept;
     void enter_fault(DungeonFault fault) noexcept;
     void emit_committed(
@@ -65,7 +73,7 @@ private:
 
     DungeonRules rules_{};
     DungeonRunState stable_state_{};
-    std::optional<PendingTransition> pending_{};
+    std::optional<PendingSave> pending_save_{};
     std::optional<combat::CombatWorld> combat_{};
     RoomEncounterPlan encounter_plan_{};
     std::uint8_t wave_index_{};
@@ -83,6 +91,8 @@ private:
     std::uint64_t pending_room_experience_{};
     std::uint64_t last_room_experience_{};
     std::uint8_t last_levels_gained_{};
+    passives::PassiveTreeError last_passive_tree_error_{
+        passives::PassiveTreeError::none};
 };
 
 }  // namespace arpg::dungeon

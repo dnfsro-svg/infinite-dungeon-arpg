@@ -110,6 +110,10 @@ struct DungeonSnapshot final {
     bool has_hole{};
     bool is_abyss{};
     bool has_pending_transition{};
+    passives::PassiveTreeState passive_tree{};
+    bool passive_save_pending{};
+    passives::PassiveTreeError passive_tree_error{
+        passives::PassiveTreeError::none};
     std::optional<combat::CombatSnapshot> combat{};
     DungeonEncounterDiagnostics encounter{};
     DungeonDiagnostics diagnostics{};
@@ -126,10 +130,25 @@ struct PendingTransition final {
     DungeonRunState next_state{};
 };
 
-struct TransitionSaveResult final {
+enum class PendingSaveKind : std::uint8_t {
+    transition,
+    passive_tree,
+};
+
+struct PendingSave final {
+    PendingSaveKind kind{PendingSaveKind::transition};
+    std::uint64_t expected_generation{};
+    DungeonRunState next_state{};
+    TransitionKind transition{TransitionKind::none};
+    ExitDirection direction{ExitDirection::none};
+};
+
+struct PendingSaveResult final {
     SaveDisposition disposition{SaveDisposition::indeterminate};
     std::uint64_t generation{};
     DungeonRunState verified_state{};
 };
+
+using TransitionSaveResult = PendingSaveResult;
 
 }  // namespace arpg::dungeon
