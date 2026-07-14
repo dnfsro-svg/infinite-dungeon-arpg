@@ -31,6 +31,17 @@ float node_radius(passives::PassiveNodeType type) noexcept {
     return 0.0F;
 }
 
+PassiveScreenPoint route_layout_offset(passives::PassiveNodeId node) noexcept {
+    if (node < 8U || node >= passives::kPassiveNodeCount) return {};
+    switch ((node - 8U) / 14U) {
+    case 0U: return {-180.0F, -175.0F};
+    case 1U: return {180.0F, -175.0F};
+    case 2U: return {-180.0F, 175.0F};
+    case 3U: return {180.0F, 175.0F};
+    default: return {};
+    }
+}
+
 bool node_is_allocated(const passives::PassiveTreeState& state,
     passives::PassiveNodeId node) noexcept {
     return node < passives::kPassiveNodeCount
@@ -61,8 +72,9 @@ PassiveNodeProjection project_passive_node(passives::PassiveNodeId node,
     const float offset_x = (width - kDesignWidth * scale) * 0.5F;
     const float offset_y = (height - kDesignHeight * scale) * 0.5F;
     const passives::PassiveNode& source = passives::passive_nodes()[node];
-    return {{offset_x + (kDesignCenterX + source.x) * scale,
-                offset_y + (kDesignCenterY + source.y) * scale},
+    const PassiveScreenPoint route_offset = route_layout_offset(node);
+    return {{offset_x + (kDesignCenterX + source.x + route_offset.x) * scale,
+                offset_y + (kDesignCenterY + source.y + route_offset.y) * scale},
         node_radius(source.type) * scale, true};
 }
 

@@ -32,6 +32,74 @@ Color state_color(PassiveNodeVisualState state,
     return GRAY;
 }
 
+std::size_t route_index(passives::PassiveNodeId node) noexcept {
+    return node < 8U ? 0U : static_cast<std::size_t>((node - 8U) / 14U);
+}
+
+const char* passive_benefit_text(passives::PassiveNodeId node) noexcept {
+    constexpr const char* kFlat[] = {
+        u8"\u6536\u76ca: +3 Fire damage", u8"\u6536\u76ca: +3 Water damage",
+        u8"\u6536\u76ca: +3 Lightning damage", u8"\u6536\u76ca: +3 Chaos damage"};
+    constexpr const char* kDamage[] = {
+        u8"\u6536\u76ca: +8% Fire damage", u8"\u6536\u76ca: +8% Water damage",
+        u8"\u6536\u76ca: +8% Lightning damage", u8"\u6536\u76ca: +8% Chaos damage"};
+    constexpr const char* kResistance[] = {
+        u8"\u6536\u76ca: +7% Fire resistance", u8"\u6536\u76ca: +7% Water resistance",
+        u8"\u6536\u76ca: +7% Lightning resistance", u8"\u6536\u76ca: +7% Chaos resistance"};
+    constexpr const char* kNotableDamage[] = {
+        u8"\u6536\u76ca: +8 Fire, +15% Fire damage", u8"\u6536\u76ca: +8 Water, +15% Water damage",
+        u8"\u6536\u76ca: +8 Lightning, +15% Lightning damage", u8"\u6536\u76ca: +8 Chaos, +15% Chaos damage"};
+    constexpr const char* kNotableResistance[] = {
+        u8"\u6536\u76ca: +15% Fire resistance, +8 barrier",
+        u8"\u6536\u76ca: +15% Water resistance, +8 barrier",
+        u8"\u6536\u76ca: +15% Lightning resistance, +8 barrier",
+        u8"\u6536\u76ca: +15% Chaos resistance, +8 barrier"};
+    constexpr const char* kKeystone[] = {
+        u8"\u6536\u76ca: +30% Fire damage", u8"\u6536\u76ca: +25% Water damage, +24 barrier",
+        u8"\u6536\u76ca: +25% Lightning damage, +12% move/attack speed",
+        u8"\u6536\u76ca: +30% Chaos damage"};
+    switch (node) {
+    case 0U: return u8"\u6536\u76ca: \u8d77\u59cb\u8282\u70b9";
+    case 1U: return u8"\u6536\u76ca: +20 maximum health";
+    case 2U: return u8"\u6536\u76ca: +10 barrier, -3% damage taken";
+    case 3U: return u8"\u6536\u76ca: +6% melee damage";
+    case 4U: return u8"\u6536\u76ca: +5% attack speed";
+    case 5U: return u8"\u6536\u76ca: +10% knockback and launch";
+    case 6U: return u8"\u6536\u76ca: +6% move speed";
+    case 7U: return u8"\u6536\u76ca: +10% jump and air control";
+    default: break;
+    }
+    if (node < 8U || node >= passives::kPassiveNodeCount) return u8"\u6536\u76ca: \u65e0";
+    const std::size_t route = route_index(node);
+    switch ((node - 8U) % 14U) {
+    case 0U:
+    case 1U: return u8"\u6536\u76ca: \u8def\u7ebf\u8fde\u63a5";
+    case 2U:
+    case 3U: return kFlat[route];
+    case 4U:
+    case 7U: return kDamage[route];
+    case 5U:
+    case 6U: return kResistance[route];
+    case 8U: return u8"\u6536\u76ca: +4% melee damage";
+    case 9U: return u8"\u6536\u76ca: -2% damage taken";
+    case 10U: return kNotableDamage[route];
+    case 11U: return kNotableResistance[route];
+    case 12U: return u8"\u6536\u76ca: +12 maximum health, +3% move speed";
+    case 13U: return kKeystone[route];
+    default: return u8"\u6536\u76ca: \u65e0";
+    }
+}
+
+const char* passive_cost_text(passives::PassiveNodeId node) noexcept {
+    switch (node) {
+    case 21U: return u8"\u4ee3\u4ef7: -20% Water resistance";
+    case 35U: return u8"\u4ee3\u4ef7: -15% melee damage";
+    case 49U: return u8"\u4ee3\u4ef7: -20 maximum health";
+    case 63U: return u8"\u4ee3\u4ef7: +15% damage taken";
+    default: return u8"\u4ee3\u4ef7: \u65e0";
+    }
+}
+
 const char* type_label(passives::PassiveNodeType type) noexcept {
     switch (type) {
     case passives::PassiveNodeType::start: return "START";
@@ -43,21 +111,13 @@ const char* type_label(passives::PassiveNodeType type) noexcept {
     return "NODE";
 }
 
-const char* keystone_cost(passives::PassiveNodeId node) noexcept {
-    switch (node) {
-    case 21U: return "Cost: -20% Water resistance";
-    case 35U: return "Cost: -15% melee damage";
-    case 49U: return "Cost: -20 maximum life";
-    case 63U: return "Cost: +15% damage taken";
-    default: return "Cost: none";
-    }
-}
-
 void draw_node_tooltip(const dungeon::DungeonSnapshot& snapshot,
     passives::PassiveNodeId node) noexcept {
     const passives::PassiveNode& source = passives::passive_nodes()[node];
     const int panel_width = 290;
-    const int panel_height = source.type == passives::PassiveNodeType::keystone ? 112 : 90;
+    const bool detailed = source.type == passives::PassiveNodeType::notable
+        || source.type == passives::PassiveNodeType::keystone;
+    const int panel_height = detailed ? 112 : 90;
     const int x = std::max(16, GetScreenWidth() - panel_width - 24);
     const int y = std::max(76, GetScreenHeight() - panel_height - 26);
     DrawRectangleRounded({static_cast<float>(x), static_cast<float>(y),
@@ -68,10 +128,11 @@ void draw_node_tooltip(const dungeon::DungeonSnapshot& snapshot,
         2.0F, route_color(node));
     DrawText(source.name, x + 14, y + 12, 20, RAYWHITE);
     DrawText(type_label(source.type), x + 14, y + 38, 13, route_color(node));
-    DrawText(TextFormat("Benefit: %u modifiers", static_cast<unsigned>(source.modifier_count)),
+    DrawText(passive_benefit_text(node),
         x + 14, y + 56, 14, Color{188, 222, 196, 255});
-    if (source.type == passives::PassiveNodeType::keystone) {
-        DrawText(keystone_cost(node), x + 14, y + 76, 14, Color{255, 174, 150, 255});
+    if (detailed) {
+        DrawText(passive_cost_text(node), x + 14, y + 76, 14,
+            Color{255, 174, 150, 255});
     } else if (passive_node_visual_state(snapshot, node)
         == PassiveNodeVisualState::allocated) {
         DrawText("Click to refund (autosaves)", x + 14, y + 72, 13,
@@ -118,16 +179,24 @@ void draw_passive_tree_overlay(const dungeon::DungeonSnapshot& snapshot,
             projection.radius, color);
         if (node.type == passives::PassiveNodeType::notable
             || node.type == passives::PassiveNodeType::keystone) {
-            const int font_size = node.type == passives::PassiveNodeType::keystone ? 14 : 12;
-            const int label_width = MeasureText(node.name, font_size);
+            constexpr int kNameFontSize = 12;
+            const int label_width = MeasureText(node.name, kNameFontSize);
             DrawText(node.name, static_cast<int>(projection.center.x) - label_width / 2,
+                static_cast<int>(projection.center.y - projection.radius - 18.0F),
+                kNameFontSize, color);
+            const int benefit_font_size = node.type == passives::PassiveNodeType::keystone
+                ? 10 : 9;
+            const char* benefit = passive_benefit_text(node.id);
+            DrawText(benefit, static_cast<int>(projection.center.x)
+                    - MeasureText(benefit, benefit_font_size) / 2,
                 static_cast<int>(projection.center.y + projection.radius + 7.0F),
-                font_size, color);
+                benefit_font_size, Color{188, 222, 196, 255});
             if (node.type == passives::PassiveNodeType::keystone) {
-                const char* cost = keystone_cost(node.id);
-                DrawText(cost, static_cast<int>(projection.center.x) - MeasureText(cost, 11) / 2,
-                    static_cast<int>(projection.center.y + projection.radius + 22.0F),
-                    11, Color{248, 166, 145, 255});
+                const char* cost = passive_cost_text(node.id);
+                DrawText(cost, static_cast<int>(projection.center.x)
+                        - MeasureText(cost, benefit_font_size) / 2,
+                    static_cast<int>(projection.center.y + projection.radius + 20.0F),
+                    benefit_font_size, Color{248, 166, 145, 255});
             }
         }
     }

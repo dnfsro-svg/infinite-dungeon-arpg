@@ -48,6 +48,28 @@ arpg::test::Failure distinct_landmarks_keep_distinct_projections() noexcept {
     return {};
 }
 
+arpg::test::Failure route_nodes_have_unique_projections_and_hit_themselves() noexcept {
+    constexpr float kWidth = 1280.0F;
+    constexpr float kHeight = 720.0F;
+    for (unsigned value = 8U; value < 64U; ++value) {
+        const auto node = static_cast<PassiveNodeId>(value);
+        const auto projection = arpg::platform::project_passive_node(node, kWidth, kHeight);
+        ARPG_REQUIRE(projection.visible);
+        ARPG_REQUIRE(arpg::platform::hit_test_passive_node(
+            projection.center, kWidth, kHeight) == std::optional<PassiveNodeId>{node});
+        const unsigned route = (value - 8U) / 14U;
+        for (unsigned other_value = value + 1U; other_value < 64U; ++other_value) {
+            const unsigned other_route = (other_value - 8U) / 14U;
+            if (route == other_route) continue;
+            const auto other = arpg::platform::project_passive_node(
+                static_cast<PassiveNodeId>(other_value), kWidth, kHeight);
+            ARPG_REQUIRE(projection.center.x != other.center.x
+                || projection.center.y != other.center.y);
+        }
+    }
+    return {};
+}
+
 arpg::test::Failure visual_state_reports_locked_available_allocated_and_feedback() noexcept {
     DungeonSnapshot snapshot{};
     snapshot.phase = RoomPhase::awaiting_exit;
@@ -86,6 +108,7 @@ const arpg::test::TestCase kCases[] = {
     {"opens only for clean exit", &overlay_only_opens_for_clean_awaiting_exit},
     {"projects and hits nodes", &node_projection_and_hit_test_are_stable},
     {"keeps landmarks distinct", &distinct_landmarks_keep_distinct_projections},
+    {"separates route nodes and hits each", &route_nodes_have_unique_projections_and_hit_themselves},
     {"reports visual states", &visual_state_reports_locked_available_allocated_and_feedback},
     {"captures gameplay input", &overlay_captures_all_gameplay_input},
 };
