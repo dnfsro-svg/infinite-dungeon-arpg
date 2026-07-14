@@ -42,7 +42,7 @@ void DungeonRuntime::sync_commit_status(
         ? SaveIndicator::saved : SaveIndicator::error;
 }
 
-dungeon::TransitionSaveResult DungeonRuntime::to_session_result(
+dungeon::PendingSaveResult DungeonRuntime::to_session_result(
     const persistence::SaveCommitResult& saved) noexcept {
     dungeon::SaveDisposition disposition = dungeon::SaveDisposition::indeterminate;
     if (saved.state == persistence::SaveCommitState::committed) {
@@ -120,21 +120,25 @@ DungeonRenderStatus DungeonRuntime::render_status() const noexcept {
     return status_;
 }
 
-void DungeonRuntime::service_pending_transition() noexcept {
+void DungeonRuntime::service_pending_save() noexcept {
     if (state() != DungeonRuntimeState::running || !session_.has_value()) {
         return;
     }
-    const auto pending = session_->pending_transition();
+    const auto pending = session_->pending_save();
     if (!pending.has_value()) {
         return;
     }
     status_.indicator = SaveIndicator::saving;
     const persistence::SaveCommitResult saved = store_.commit(pending->next_state);
     sync_commit_status(saved);
-    session_->resolve_pending_transition(to_session_result(saved));
+    session_->resolve_pending_save(to_session_result(saved));
     if (session_->snapshot().phase == dungeon::RoomPhase::faulted) {
         state_ = DungeonRuntimeState::faulted;
     }
+}
+
+void DungeonRuntime::service_pending_transition() noexcept {
+    service_pending_save();
 }
 
 bool DungeonRuntime::recover_with_new_run() noexcept {

@@ -42,6 +42,8 @@ public:
     [[nodiscard]] dungeon::DungeonSession* session() noexcept;
     [[nodiscard]] const dungeon::DungeonSession* session() const noexcept;
     [[nodiscard]] DungeonRenderStatus render_status() const noexcept;
+    void service_pending_save() noexcept;
+    // Kept until the host is migrated to the generic pending-save entry point.
     void service_pending_transition() noexcept;
     [[nodiscard]] bool recover_with_new_run() noexcept;
 
@@ -49,7 +51,7 @@ private:
     [[nodiscard]] std::optional<std::uint64_t> select_new_run_seed() const noexcept;
     void sync_load_status(const persistence::SaveLoadResult& result) noexcept;
     void sync_commit_status(const persistence::SaveCommitResult& result) noexcept;
-    [[nodiscard]] static dungeon::TransitionSaveResult to_session_result(
+    [[nodiscard]] static dungeon::PendingSaveResult to_session_result(
         const persistence::SaveCommitResult& saved) noexcept;
 
     DungeonRuntimeConfig config_{};

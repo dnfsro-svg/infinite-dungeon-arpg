@@ -164,6 +164,83 @@ arpg::test::Failure committed_pending_transition_maps_verified_state_and_saved_i
     return {};
 }
 
+arpg::test::Failure committed_passive_save_survives_runtime_restart() noexcept {
+    TempDirectory directory;
+    platform::DungeonRuntime runtime(config_for(directory));
+    ARPG_REQUIRE(runtime.initialize());
+    ARPG_REQUIRE(clear_and_await(*runtime.session()));
+    ARPG_REQUIRE(runtime.session()->request_passive_allocation(8U));
+    runtime.service_pending_save();
+    const auto saved = runtime.session()->snapshot();
+    ARPG_REQUIRE(saved.passive_tree.allocated_bits == ((1ULL << 0U) | (1ULL << 8U)));
+    ARPG_REQUIRE(!saved.passive_save_pending);
+    const auto generation = saved.commit_generation;
+    runtime.service_pending_save();
+    ARPG_REQUIRE(runtime.session()->snapshot().commit_generation == generation);
+    platform::DungeonRuntime resumed(config_for(directory, 999U));
+    ARPG_REQUIRE(resumed.initialize());
+    ARPG_REQUIRE(resumed.session()->snapshot().passive_tree.allocated_bits
+        == saved.passive_tree.allocated_bits);
+    return {};
+}
+
+arpg::test::Failure passive_pre_publish_failure_keeps_old_tree_and_retryable_runtime() noexcept {
+    TempDirectory directory;
+    FaultContext fault{persistence::SaveFaultPoint::before_publish, false};
+    auto config = config_for(directory);
+    config.save.fault_hook = &fail_when_enabled;
+    config.save.fault_context = &fault;
+    platform::DungeonRuntime runtime(config);
+    ARPG_REQUIRE(runtime.initialize());
+    ARPG_REQUIRE(clear_and_await(*runtime.session()));
+    const auto before = runtime.session()->snapshot();
+    ARPG_REQUIRE(runtime.session()->request_passive_allocation(8U));
+    fault.enabled = true;
+    runtime.service_pending_save();
+    const auto after = runtime.session()->snapshot();
+    ARPG_REQUIRE(after.passive_tree.allocated_bits == before.passive_tree.allocated_bits);
+    ARPG_REQUIRE(after.phase == dungeon::RoomPhase::awaiting_exit);
+    ARPG_REQUIRE(!after.passive_save_pending);
+    ARPG_REQUIRE(runtime.state() == platform::DungeonRuntimeState::running);
+    ARPG_REQUIRE(runtime.render_status().indicator == platform::SaveIndicator::error);
+    return {};
+}
+
+arpg::test::Failure indeterminate_passive_save_faults_runtime() noexcept {
+    TempDirectory directory;
+    FaultContext fault{persistence::SaveFaultPoint::after_publish, false};
+    auto config = config_for(directory);
+    config.save.fault_hook = &fail_when_enabled;
+    config.save.fault_context = &fault;
+    platform::DungeonRuntime runtime(config);
+    ARPG_REQUIRE(runtime.initialize());
+    ARPG_REQUIRE(clear_and_await(*runtime.session()));
+    ARPG_REQUIRE(runtime.session()->request_passive_allocation(8U));
+    fault.enabled = true;
+    runtime.service_pending_save();
+    ARPG_REQUIRE(runtime.session()->snapshot().phase == dungeon::RoomPhase::faulted);
+    ARPG_REQUIRE(runtime.state() == platform::DungeonRuntimeState::faulted);
+    return {};
+}
+
+arpg::test::Failure passive_pending_rejects_door_and_descent_requests() noexcept {
+    TempDirectory directory;
+    platform::DungeonRuntime runtime(config_for(directory));
+    ARPG_REQUIRE(runtime.initialize());
+    ARPG_REQUIRE(clear_and_await(*runtime.session()));
+    ARPG_REQUIRE(runtime.session()->request_passive_allocation(8U));
+    const auto pending = runtime.session()->pending_save();
+    ARPG_REQUIRE(pending.has_value());
+    ARPG_REQUIRE(pending->kind == dungeon::PendingSaveKind::passive_tree);
+    ARPG_REQUIRE(!runtime.session()->request_descent(true));
+    runtime.session()->tick({1, 0});
+    const auto snapshot = runtime.session()->snapshot();
+    ARPG_REQUIRE(snapshot.phase == dungeon::RoomPhase::committing);
+    ARPG_REQUIRE(snapshot.passive_save_pending);
+    ARPG_REQUIRE(!snapshot.has_pending_transition);
+    return {};
+}
+
 arpg::test::Failure pre_publish_not_committed_maps_to_retryable_error() noexcept {
     TempDirectory directory;
     FaultContext fault{persistence::SaveFaultPoint::before_publish, false};
@@ -270,6 +347,10 @@ constexpr arpg::test::TestCase kCases[] = {
     {"empty directory commits seeded generation one before running", &empty_directory_commits_seeded_generation_one_before_running},
     {"valid save ignores new run seed override", &valid_save_ignores_new_run_seed_override},
     {"committed pending transition maps verified state and saved indicator", &committed_pending_transition_maps_verified_state_and_saved_indicator},
+    {"committed passive save survives runtime restart", &committed_passive_save_survives_runtime_restart},
+    {"passive pre publish failure keeps old tree and retryable runtime", &passive_pre_publish_failure_keeps_old_tree_and_retryable_runtime},
+    {"indeterminate passive save faults runtime", &indeterminate_passive_save_faults_runtime},
+    {"passive pending rejects door and descent requests", &passive_pending_rejects_door_and_descent_requests},
     {"pre publish not committed maps to retryable error", &pre_publish_not_committed_maps_to_retryable_error},
     {"indeterminate maps to faulted runtime and blocks selection", &indeterminate_maps_to_faulted_runtime_and_blocks_selection},
     {"dual slot corruption requires recovery then archives new run", &dual_slot_corruption_requires_recovery_then_archives_new_run},
