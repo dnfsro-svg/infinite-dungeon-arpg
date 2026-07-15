@@ -147,6 +147,21 @@ arpg::test::Failure projection_validates_ownership_and_ignores_unequipped() noex
     return {};
 }
 
+arpg::test::Failure detailed_projection_distinguishes_invalid_state() noexcept {
+    ItemOwnershipState state{};
+    state.items.push_back(normal_item(31U, 2U));
+    state.equipment.equipped_ids[1] = 999U;
+    const auto invalid = project_equipment_detailed(state);
+    ARPG_REQUIRE(invalid.status == EquipmentProjectionStatus::invalid_state);
+    ARPG_REQUIRE(!invalid.projection.valid);
+
+    state.equipment.equipped_ids[1] = 31U;
+    const auto valid = project_equipment_detailed(state);
+    ARPG_REQUIRE(valid.status == EquipmentProjectionStatus::valid);
+    ARPG_REQUIRE(valid.projection.valid);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"weapon local floor formula", &weapon_local_values_use_frozen_floor_order},
     {"base intrinsic projection",
@@ -155,6 +170,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &slot_dependent_and_variant_affixes_map_globally},
     {"ownership validation and equipped-only projection",
         &projection_validates_ownership_and_ignores_unequipped},
+    {"detailed projection status",
+        &detailed_projection_distinguishes_invalid_state},
 };
 
 }  // namespace

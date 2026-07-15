@@ -180,10 +180,17 @@ bool checked_weapon_formula(std::int64_t base_and_flat,
 
 }  // namespace
 
-EquipmentProjection project_equipment(
+EquipmentProjectionResult project_equipment_detailed(
     const ItemOwnershipState& state) noexcept {
-    EquipmentProjection projection{};
-    if (!validate_ownership(state)) return projection;
+    EquipmentProjectionResult result{};
+    const OwnershipValidationResult validation =
+        validate_ownership_detailed(state);
+    if (validation == OwnershipValidationResult::allocation_failure) {
+        result.status = EquipmentProjectionStatus::allocation_failure;
+        return result;
+    }
+    if (validation != OwnershipValidationResult::valid) return result;
+    EquipmentProjection& projection = result.projection;
 
     std::int64_t local_flat = 0;
     std::int64_t local_increased = 0;
@@ -192,36 +199,42 @@ EquipmentProjection project_equipment(
         const std::uint64_t id = state.equipment.equipped_ids[slot_index];
         if (id == 0U) continue;
         const ItemInstance* item = equipped_item(state, id);
-        if (item == nullptr) return EquipmentProjection{};
+        if (item == nullptr) return {};
         const BaseDefinition* base = base_definition(item->base_id);
-        if (base == nullptr) return EquipmentProjection{};
+        if (base == nullptr) return {};
         const ItemSlot slot = static_cast<ItemSlot>(slot_index);
         const std::size_t base_value_index = value_index(item->item_level);
         if (!apply_effect(projection, slot, base->effect, base->stat,
                 base->operation, base->values[base_value_index], 0xFFU,
                 kBaseSourceStart, local_flat, local_increased))
-            return EquipmentProjection{};
+            return {};
 
         for (std::size_t affix_index = 0U;
              affix_index < item->affix_count; ++affix_index) {
             const AffixRoll& roll = item->affixes[affix_index];
             const AffixDefinition* affix = affix_definition(roll.affix_id);
-            if (affix == nullptr) return EquipmentProjection{};
+            if (affix == nullptr) return {};
             const std::size_t index = static_cast<std::size_t>(8U - roll.tier);
             const std::uint16_t source = static_cast<std::uint16_t>(
                 kAffixSourceStart + affix_index * kSourceStride);
             if (!apply_effect(projection, slot, affix->effect, affix->stat,
                     affix->operation, affix->values[index], roll.variant,
                     source, local_flat, local_increased))
-                return EquipmentProjection{};
+                return {};
         }
     }
 
     if (!checked_weapon_formula(
             local_flat, local_increased, projection.weapon_physical))
-        return EquipmentProjection{};
+        return {};
     projection.valid = true;
-    return projection;
+    result.status = EquipmentProjectionStatus::valid;
+    return result;
+}
+
+EquipmentProjection project_equipment(
+    const ItemOwnershipState& state) noexcept {
+    return project_equipment_detailed(state).projection;
 }
 
 }  // namespace arpg::items

@@ -17,6 +17,21 @@ struct EquipmentProjection final {
     bool valid{};
 };
 
+enum class EquipmentProjectionStatus : std::uint8_t {
+    valid,
+    invalid_state,
+    allocation_failure,
+};
+
+struct EquipmentProjectionResult final {
+    EquipmentProjection projection{};
+    EquipmentProjectionStatus status{
+        EquipmentProjectionStatus::invalid_state};
+};
+
+[[nodiscard]] EquipmentProjectionResult project_equipment_detailed(
+    const ItemOwnershipState& state) noexcept;
+
 [[nodiscard]] EquipmentProjection project_equipment(
     const ItemOwnershipState& state) noexcept;
 

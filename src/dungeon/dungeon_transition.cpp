@@ -184,8 +184,13 @@ RequestResult DungeonSession::prepare_item_save(
         enter_fault(DungeonFault::invalid_item_state);
         return RequestResult::faulted;
     }
-    if (!build_for(next).has_value()) {
+    const PlayerBuildResult candidate_build = build_for(next);
+    if (candidate_build.status == PlayerBuildStatus::allocation_failure) {
         return RequestResult::rejected;
+    }
+    if (candidate_build.status != PlayerBuildStatus::valid) {
+        enter_fault(DungeonFault::invalid_item_state);
+        return RequestResult::faulted;
     }
     if (next.commit_generation
             == (std::numeric_limits<std::uint64_t>::max)()) {
@@ -393,7 +398,7 @@ void DungeonSession::commit_pending_save(
     }
 
     const PendingSaveKind kind = pending_save_->kind;
-    std::optional<combat::PlayerCombatBuild> published_build{};
+    PlayerBuildResult published_build{};
     if (kind == PendingSaveKind::equipment
             || kind == PendingSaveKind::recipe) {
         if (!combat_.has_value()) {
@@ -401,7 +406,7 @@ void DungeonSession::commit_pending_save(
             return;
         }
         published_build = build_for(result.verified_state);
-        if (!published_build.has_value()) {
+        if (published_build.status != PlayerBuildStatus::valid) {
             enter_fault(DungeonFault::invalid_item_state);
             return;
         }
@@ -418,8 +423,8 @@ void DungeonSession::commit_pending_save(
         return;
     }
     room_progression_ = stable_state_.progression;
-    if (published_build.has_value()) {
-        combat_->apply_player_build(*published_build);
+    if (published_build.status == PlayerBuildStatus::valid) {
+        combat_->apply_player_build(published_build.build);
         phase_ = resume_phase;
         return;
     }

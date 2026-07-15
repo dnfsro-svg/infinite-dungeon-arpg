@@ -188,7 +188,7 @@ void DungeonSession::construct_current_room() noexcept {
         return;
     }
     const auto player_build = build_for(stable_state_);
-    if (!player_build.has_value()) {
+    if (player_build.status != PlayerBuildStatus::valid) {
         enter_fault(DungeonFault::invalid_item_state);
         return;
     }
@@ -199,7 +199,7 @@ void DungeonSession::construct_current_room() noexcept {
         rules_.rules_version,
         plan.plan.waves[0],
         true,
-        *player_build,
+        player_build.build,
         evasion_stream.next_u64());
     if (!config.has_value()) {
         enter_fault(DungeonFault::invalid_rules);
@@ -212,26 +212,32 @@ void DungeonSession::construct_current_room() noexcept {
     phase_ = RoomPhase::locked;
 }
 
-std::optional<combat::PlayerCombatBuild> DungeonSession::build_for(
+DungeonSession::PlayerBuildResult DungeonSession::build_for(
     const checkpoint::DungeonRunState& state) const noexcept {
     if (!passives::valid_passive_tree_state(
-            state.passive_tree, state.progression)
-            || items::validate_ownership_detailed(state.item_ownership)
-                != items::OwnershipValidationResult::valid) {
-        return std::nullopt;
+            state.passive_tree, state.progression)) {
+        return {};
     }
+    const items::EquipmentProjectionResult equipment_result =
+        items::project_equipment_detailed(state.item_ownership);
+    if (equipment_result.status
+            == items::EquipmentProjectionStatus::allocation_failure) {
+        return {{}, PlayerBuildStatus::allocation_failure};
+    }
+    if (equipment_result.status != items::EquipmentProjectionStatus::valid) {
+        return {};
+    }
+    const items::EquipmentProjection& equipment =
+        equipment_result.projection;
     std::array<modifiers::Modifier, 256> modifiers{};
     std::size_t modifier_count = 0U;
     if (!passives::append_passive_modifiers(state.passive_tree,
             modifiers.data(), modifiers.size(), modifier_count)) {
-        return std::nullopt;
+        return {};
     }
-
-    const items::EquipmentProjection equipment =
-        items::project_equipment(state.item_ownership);
     if (!equipment.valid
             || equipment.modifier_count > modifiers.size() - modifier_count) {
-        return std::nullopt;
+        return {};
     }
     for (std::size_t index = 0U;
          index < equipment.modifier_count; ++index) {
@@ -244,9 +250,9 @@ std::optional<combat::PlayerCombatBuild> DungeonSession::build_for(
     build.weapon_physical = equipment.weapon_physical;
     build.local_attack_speed_bp = equipment.local_attack_speed_bp;
     if (!combat::build_player_hit_packet(0, build).has_value()) {
-        return std::nullopt;
+        return {};
     }
-    return build;
+    return {build, PlayerBuildStatus::valid};
 }
 
 void DungeonSession::start_next_wave() noexcept {

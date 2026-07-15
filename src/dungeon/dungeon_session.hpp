@@ -55,6 +55,15 @@ public:
 
 private:
     friend struct ::arpg::test::DungeonSessionTestAccess;
+    enum class PlayerBuildStatus : std::uint8_t {
+        valid,
+        invalid_state,
+        allocation_failure,
+    };
+    struct PlayerBuildResult final {
+        combat::PlayerCombatBuild build{};
+        PlayerBuildStatus status{PlayerBuildStatus::invalid_state};
+    };
     void construct_current_room() noexcept;
     void start_next_wave() noexcept;
     void relay_combat_events() noexcept;
@@ -69,7 +78,7 @@ private:
         DungeonRunState&& next,
         PendingSaveKind kind,
         RoomPhase resume_phase) noexcept;
-    [[nodiscard]] std::optional<combat::PlayerCombatBuild> build_for(
+    [[nodiscard]] PlayerBuildResult build_for(
         const checkpoint::DungeonRunState& state) const noexcept;
     void commit_pending_save(const PendingSaveResult& result) noexcept;
     [[nodiscard]] DungeonSnapshot build_dungeon_snapshot() const noexcept;
