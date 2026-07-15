@@ -178,6 +178,10 @@ std::optional<PendingSave> DungeonSession::pending_save() const noexcept {
     return pending_save_;
 }
 
+const PendingSave* DungeonSession::pending_save_view() const noexcept {
+    return pending_save_.has_value() ? &*pending_save_ : nullptr;
+}
+
 const items::ItemOwnershipState& DungeonSession::item_state() const noexcept {
     return stable_state_.item_ownership;
 }

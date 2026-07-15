@@ -45,6 +45,7 @@ public:
     void request_nearby_pickups(
         combat::Vec3 player_position) noexcept;
     [[nodiscard]] const items::ItemOwnershipState& item_state() const noexcept;
+    [[nodiscard]] const PendingSave* pending_save_view() const noexcept;
     [[nodiscard]] std::optional<PendingSave> pending_save() const noexcept;
     void resolve_pending_save(const PendingSaveResult& result) noexcept;
     [[nodiscard]] std::optional<PendingTransition>

@@ -1,5 +1,6 @@
 if(TARGET arpg_raylib)
     add_executable(arpg_platform_tests
+        ../core/allocation_probe.cpp
         platform_test_main.cpp
         combat_key_bindings_tests.cpp
         combat_feedback_tests.cpp

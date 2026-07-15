@@ -8,6 +8,7 @@
 
 #include <array>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <functional>
 #include <string>
@@ -16,6 +17,56 @@ namespace {
 
 namespace dungeon = arpg::dungeon;
 namespace persistence = arpg::persistence;
+namespace items = arpg::items;
+namespace combat = arpg::combat;
+
+items::ItemInstance normal_weapon(std::uint64_t id) noexcept {
+    items::ItemInstance item{};
+    item.id = id;
+    item.base_id = 1U;
+    item.rarity = items::ItemRarity::normal;
+    item.item_level = 1U;
+    item.required_level = 1U;
+    return item;
+}
+
+bool same_ownership(const items::ItemOwnershipState& left,
+    const items::ItemOwnershipState& right) noexcept {
+    if (left.items.size() != right.items.size()
+            || left.equipment.equipped_ids != right.equipment.equipped_ids
+            || left.claimed_drop_bits != right.claimed_drop_bits
+            || left.next_item_sequence != right.next_item_sequence) {
+        return false;
+    }
+    for (std::size_t index = 0U; index < left.items.size(); ++index) {
+        if (std::memcmp(&left.items[index], &right.items[index],
+                sizeof(items::ItemInstance)) != 0) return false;
+    }
+    return true;
+}
+
+bool same_build(const combat::PlayerCombatBuild& left,
+    const combat::PlayerCombatBuild& right) noexcept {
+    const auto& a = left.values;
+    const auto& b = right.values;
+    return left.weapon_physical == right.weapon_physical
+        && left.local_attack_speed_bp == right.local_attack_speed_bp
+        && a.flat_damage == b.flat_damage
+        && a.damage_increased == b.damage_increased
+        && a.damage_reduction == b.damage_reduction
+        && a.damage_reduction_cap_bonus == b.damage_reduction_cap_bonus
+        && a.armor == b.armor && a.evasion == b.evasion
+        && a.melee_damage == b.melee_damage
+        && a.max_health == b.max_health
+        && a.max_health_more == b.max_health_more
+        && a.max_barrier == b.max_barrier
+        && a.damage_taken == b.damage_taken
+        && a.movement_speed == b.movement_speed
+        && a.attack_speed == b.attack_speed
+        && a.impulse_scale == b.impulse_scale
+        && a.jump_speed == b.jump_speed
+        && a.air_control == b.air_control && a.valid == b.valid;
+}
 
 struct TempDirectory final {
     std::filesystem::path path;
@@ -466,6 +517,77 @@ arpg::test::Failure passive_fault_recovery_never_persists_partial_points_or_bits
     return {};
 }
 
+arpg::test::Failure equipment_dispositions_restart_with_exact_disk_winner() noexcept {
+    constexpr std::array<persistence::SaveCommitState, 3> kDispositions{{
+        persistence::SaveCommitState::committed,
+        persistence::SaveCommitState::not_committed,
+        persistence::SaveCommitState::indeterminate,
+    }};
+    for (const auto disposition : kDispositions) {
+        TempDirectory directory;
+        auto initial = initial_state(0x8120U);
+        initial.item_ownership.items.push_back(normal_weapon(501U));
+        initial.item_ownership.claimed_drop_bits[1] = 0x400U;
+        initial.item_ownership.next_item_sequence = 77U;
+        auto healthy = make_store(directory.path);
+        ARPG_REQUIRE(healthy.commit(initial).state
+            == persistence::SaveCommitState::committed);
+
+        dungeon::DungeonSession session{{}, initial};
+        const auto before_build = arpg::test::player_build(session);
+        ARPG_REQUIRE(session.request_equip(501U)
+            == dungeon::RequestResult::accepted);
+        const dungeon::PendingSave* const pending = session.pending_save_view();
+        ARPG_REQUIRE(pending != nullptr);
+        const dungeon::DungeonRunState expected = pending->next_state;
+        dungeon::DungeonSession expected_session{{}, expected};
+        const auto expected_build = arpg::test::player_build(expected_session);
+
+        persistence::SaveCommitResult saved{};
+        if (disposition == persistence::SaveCommitState::committed) {
+            saved = healthy.commit(expected);
+        } else {
+            FaultContext fault{
+                disposition == persistence::SaveCommitState::not_committed
+                    ? persistence::SaveFaultPoint::before_publish
+                    : persistence::SaveFaultPoint::after_publish,
+                false,
+            };
+            auto faulty = make_store(directory.path, &fault);
+            saved = faulty.commit(expected);
+        }
+        ARPG_REQUIRE(saved.state == disposition);
+        session.resolve_pending_save(to_session_result(saved));
+        ARPG_REQUIRE(session.snapshot().phase
+            == (disposition == persistence::SaveCommitState::indeterminate
+                ? dungeon::RoomPhase::faulted : dungeon::RoomPhase::locked));
+        ARPG_REQUIRE(same_ownership(session.item_state(),
+            disposition == persistence::SaveCommitState::committed
+                ? expected.item_ownership : initial.item_ownership));
+        ARPG_REQUIRE(same_build(arpg::test::player_build(session),
+            disposition == persistence::SaveCommitState::committed
+                ? expected_build : before_build));
+
+        auto restarted_store = make_store(directory.path);
+        const auto loaded = restarted_store.load();
+        ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::ready);
+        const auto& disk_winner =
+            disposition == persistence::SaveCommitState::not_committed
+                ? initial : expected;
+        ARPG_REQUIRE(loaded.checkpoint.commit_generation
+            == disk_winner.commit_generation);
+        ARPG_REQUIRE(same_ownership(
+            loaded.checkpoint.item_ownership, disk_winner.item_ownership));
+        dungeon::DungeonSession restarted{{}, loaded.checkpoint};
+        ARPG_REQUIRE(same_ownership(
+            restarted.item_state(), disk_winner.item_ownership));
+        ARPG_REQUIRE(same_build(arpg::test::player_build(restarted),
+            disposition == persistence::SaveCommitState::not_committed
+                ? before_build : expected_build));
+    }
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"initial generation one round trips descriptor", &initial_generation_one_round_trips_descriptor},
     {"committed door transition restarts in next room", &committed_door_transition_restarts_in_next_room},
@@ -474,6 +596,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"committed descent restarts without rerolling hole or abyss", &committed_descent_restarts_without_rerolling_hole_or_abyss},
     {"reset reopen and repeated load keep persisted room fields", &reset_reopen_and_repeated_load_keep_persisted_room_fields},
     {"passive fault recovery never persists partial points or bits", &passive_fault_recovery_never_persists_partial_points_or_bits},
+    {"equipment dispositions restart with exact disk winner", &equipment_dispositions_restart_with_exact_disk_winner},
 };
 
 }  // namespace

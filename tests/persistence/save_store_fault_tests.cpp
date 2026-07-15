@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -69,7 +70,30 @@ checkpoint::DungeonRunState with_items(checkpoint::DungeonRunState state,
     for (std::size_t index = 0U; index < count; ++index)
         state.item_ownership.items.push_back(normal_item(index + 1U));
     state.item_ownership.next_item_sequence = count + 1U;
+    if (count != 0U) {
+        state.item_ownership.equipment.equipped_ids[0] = 1U;
+        state.item_ownership.claimed_drop_bits = {{
+            static_cast<std::uint64_t>(count),
+            static_cast<std::uint64_t>(count << 1U),
+            static_cast<std::uint64_t>(count << 2U),
+        }};
+    }
     return state;
+}
+
+bool same_ownership(const items::ItemOwnershipState& lhs,
+    const items::ItemOwnershipState& rhs) noexcept {
+    if (lhs.items.size() != rhs.items.size()
+            || lhs.equipment.equipped_ids != rhs.equipment.equipped_ids
+            || lhs.claimed_drop_bits != rhs.claimed_drop_bits
+            || lhs.next_item_sequence != rhs.next_item_sequence) {
+        return false;
+    }
+    for (std::size_t index = 0U; index < lhs.items.size(); ++index) {
+        if (std::memcmp(&lhs.items[index], &rhs.items[index],
+                sizeof(items::ItemInstance)) != 0) return false;
+    }
+    return true;
 }
 
 bool same_state(const checkpoint::DungeonRunState& lhs,
@@ -485,6 +509,11 @@ arpg::test::Failure variable_length_faults_preserve_atomic_slot_semantics() noex
             == expectation.item_count);
         ARPG_REQUIRE(loaded.checkpoint.item_ownership.next_item_sequence
             == expectation.item_count + 1U);
+        const auto& expected_state = expectation.generation == 31U
+            ? large : small;
+        ARPG_REQUIRE(same_ownership(
+            loaded.checkpoint.item_ownership,
+            expected_state.item_ownership));
     }
     return {};
 }
