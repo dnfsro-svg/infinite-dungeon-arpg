@@ -35,8 +35,14 @@ struct MonsterAffixDefinition final {
         static_cast<std::size_t>(MonsterAffixTier::count)> tiers{};
 };
 
+using MonsterAffixCatalog = std::array<MonsterAffixDefinition,
+    static_cast<std::size_t>(MonsterAffixId::count)>;
+
 [[nodiscard]] const MonsterAffixDefinition* monster_affix_definition(
     MonsterAffixId id) noexcept;
+[[nodiscard]] const MonsterAffixCatalog& monster_affix_catalog() noexcept;
 [[nodiscard]] bool monster_affix_catalog_valid() noexcept;
+[[nodiscard]] bool monster_affix_catalog_valid(
+    const MonsterAffixCatalog& catalog) noexcept;
 
 }  // namespace arpg::combat

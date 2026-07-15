@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 
 #include "combat/monster_affix_generation.hpp"
+#include "combat/monster_affix_catalog.hpp"
 #include "combat/monster_catalog.hpp"
 
 #include <array>
@@ -106,10 +107,95 @@ arpg::test::Failure applicability_rules_and_three_high_risk_are_preserved() noex
         if (shooter_set->count == 3U
                 && monster_affix_danger_score(*shooter_set) == 27U) {
             found_three_high = true;
-            break;
         }
     }
     ARPG_REQUIRE(found_three_high);
+    return {};
+}
+
+arpg::test::Failure malformed_catalogs_are_rejected_explicitly() noexcept {
+    MonsterAffixCatalog catalog = monster_affix_catalog();
+    catalog[1].id = MonsterAffixId::mighty;
+    ARPG_REQUIRE(!monster_affix_catalog_valid(catalog));
+
+    catalog = monster_affix_catalog();
+    catalog[0].weight = 99U;
+    ARPG_REQUIRE(!monster_affix_catalog_valid(catalog));
+
+    catalog = monster_affix_catalog();
+    catalog[0].danger = static_cast<MonsterAffixDanger>(3U);
+    ARPG_REQUIRE(!monster_affix_catalog_valid(catalog));
+
+    catalog = monster_affix_catalog();
+    catalog[0].required_tags = 0x8000U;
+    ARPG_REQUIRE(!monster_affix_catalog_valid(catalog));
+
+    catalog = monster_affix_catalog();
+    catalog[0].conflict_mask = 0x8000U;
+    ARPG_REQUIRE(!monster_affix_catalog_valid(catalog));
+
+    catalog = monster_affix_catalog();
+    catalog[0].conflict_mask = 1U;
+    ARPG_REQUIRE(!monster_affix_catalog_valid(catalog));
+    return {};
+}
+
+arpg::test::Failure malformed_catalog_fails_before_zero_affix_sampling() noexcept {
+    const MonsterDefinition* const monster =
+        monster_definition(MonsterId::chaos_chaser);
+    ARPG_REQUIRE(monster != nullptr);
+
+    MonsterAffixCatalog malformed = monster_affix_catalog();
+    malformed[0].weight = 0U;
+    bool found_zero_affix_roll = false;
+    for (std::uint64_t seed = 0U; seed < 1024U; ++seed) {
+        const auto canonical = generate_monster_affixes(seed, 3U, 0U, 0U,
+            *monster);
+        ARPG_REQUIRE(canonical.has_value());
+        if (canonical->count == 0U) {
+            found_zero_affix_roll = true;
+            ARPG_REQUIRE(!generate_monster_affixes_with_catalog(seed, 3U,
+                0U, 0U, *monster, malformed).has_value());
+        }
+    }
+    ARPG_REQUIRE(found_zero_affix_roll);
+    return {};
+}
+
+arpg::test::Failure insufficient_candidates_fail_explicitly() noexcept {
+    const MonsterDefinition* const monster =
+        monster_definition(MonsterId::chaos_chaser);
+    ARPG_REQUIRE(monster != nullptr);
+
+    MonsterAffixCatalog constrained = monster_affix_catalog();
+    for (std::size_t index = 1U; index < constrained.size(); ++index) {
+        constrained[index].required_tags = static_cast<std::uint16_t>(
+            MonsterTag::projectile_capable);
+    }
+    ARPG_REQUIRE(monster_affix_catalog_valid(constrained));
+
+    bool found_multi_affix_roll = false;
+    for (std::uint64_t seed = 0U; seed < 1024U; ++seed) {
+        const auto canonical = generate_monster_affixes(seed, 40U, 0U, 0U,
+            *monster);
+        ARPG_REQUIRE(canonical.has_value());
+        if (canonical->count >= 2U) {
+            found_multi_affix_roll = true;
+            ARPG_REQUIRE(!generate_monster_affixes_with_catalog(seed, 40U,
+                0U, 0U, *monster, constrained).has_value());
+        }
+    }
+    ARPG_REQUIRE(found_multi_affix_roll);
+    return {};
+}
+
+arpg::test::Failure context_derivation_has_no_depth_wave_alias() noexcept {
+    constexpr std::uint64_t kRoomSeed = 0xC0111DEULL;
+    const std::uint64_t base = monster_affix_context_seed(kRoomSeed, 0U,
+        0U, 0U);
+    const std::uint64_t old_alias = monster_affix_context_seed(kRoomSeed,
+        std::uint64_t{1} << 48U, 1U, 0U);
+    ARPG_REQUIRE(base != old_alias);
     return {};
 }
 
@@ -126,6 +212,12 @@ constexpr arpg::test::TestCase kCases[] = {
     {"deterministic unique generation and score",
         &generation_is_deterministic_unique_and_scored},
     {"applicability and three high risk", &applicability_rules_and_three_high_risk_are_preserved},
+    {"malformed catalogs fail explicitly", &malformed_catalogs_are_rejected_explicitly},
+    {"malformed catalog fails before zero affix sampling",
+        &malformed_catalog_fails_before_zero_affix_sampling},
+    {"insufficient candidates fail explicitly",
+        &insufficient_candidates_fail_explicitly},
+    {"context has no depth wave alias", &context_derivation_has_no_depth_wave_alias},
     {"invalid monster fails explicitly", &invalid_monster_definition_fails_explicitly},
 };
 

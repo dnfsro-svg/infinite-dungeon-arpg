@@ -13,6 +13,9 @@
 namespace {
 
 using arpg::combat::EncounterWave;
+using arpg::combat::MonsterAffixCatalog;
+using arpg::combat::MonsterAffixId;
+using arpg::combat::MonsterAffixTier;
 using arpg::combat::MonsterId;
 using arpg::combat::MonsterTag;
 using arpg::combat::kEncounterWaveCapacity;
@@ -313,6 +316,35 @@ arpg::test::Failure invalid_spawn_ordinal_is_rejected() noexcept {
     return {};
 }
 
+arpg::test::Failure mutually_conflicting_affixes_are_rejected_by_plan_legality() noexcept {
+    RoomEncounterPlan plan{};
+    plan.wave_count = 1U;
+    plan.total_budget = 8U;
+    auto& spawn = plan.waves[0].spawns[0];
+    spawn.id = MonsterId::chaos_chaser;
+    spawn.spawn_ordinal = 0U;
+    spawn.affixes.values[0] = {MonsterAffixId::mighty, MonsterAffixTier::m1};
+    spawn.affixes.values[1] = {MonsterAffixId::frenzy, MonsterAffixTier::m1};
+    spawn.affixes.count = 2U;
+    plan.waves[0].spawn_count = 1U;
+    plan.waves[0].spent_budget = 2U;
+
+    MonsterAffixCatalog catalog = arpg::combat::monster_affix_catalog();
+    catalog[static_cast<std::size_t>(MonsterAffixId::mighty)].conflict_mask =
+        static_cast<std::uint16_t>(1U << static_cast<std::uint8_t>(
+            MonsterAffixId::frenzy));
+    ARPG_REQUIRE(arpg::combat::monster_affix_catalog_valid(catalog));
+    ARPG_REQUIRE(!encounter_plan_legal_with_affix_catalog(plan,
+        EncounterDirectorConfig{}, catalog));
+    const auto first = plan.waves[0].spawns[0].affixes.values[0];
+    plan.waves[0].spawns[0].affixes.values[0] =
+        plan.waves[0].spawns[0].affixes.values[1];
+    plan.waves[0].spawns[0].affixes.values[1] = first;
+    ARPG_REQUIRE(!encounter_plan_legal_with_affix_catalog(plan,
+        EncounterDirectorConfig{}, catalog));
+    return {};
+}
+
 arpg::test::Failure indivisible_small_two_wave_config_is_rejected() noexcept {
     EncounterDirectorConfig config{};
     config.base_budget = 2U;
@@ -367,6 +399,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"high budget limit applies to each wave", &high_budget_priority_limit_applies_to_each_wave},
     {"illegal wave budget or cost is rejected", &illegal_wave_budget_or_cost_is_rejected},
     {"invalid spawn ordinal is rejected", &invalid_spawn_ordinal_is_rejected},
+    {"mutually conflicting affixes are rejected",
+        &mutually_conflicting_affixes_are_rejected_by_plan_legality},
     {"indivisible small two-wave config is rejected", &indivisible_small_two_wave_config_is_rejected},
     {"large base with low threshold is accepted", &large_base_with_low_threshold_is_accepted},
     {"fallback keeps a direct target", &fallback_config_keeps_a_direct_target},

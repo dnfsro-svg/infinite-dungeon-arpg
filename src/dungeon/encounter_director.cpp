@@ -231,24 +231,36 @@ void fill_wave(
 
 [[nodiscard]] bool affix_set_legal_for_monster(
     const combat::MonsterAffixSet& set,
-    const combat::MonsterDefinition& monster) noexcept {
+    const combat::MonsterDefinition& monster,
+    const combat::MonsterAffixCatalog& catalog) noexcept {
     if (set.count > set.values.size()) return false;
     for (std::size_t index = 0U; index < set.count; ++index) {
         const combat::MonsterAffixInstance& instance = set.values[index];
-        const auto* definition = combat::monster_affix_definition(instance.id);
-        if (definition == nullptr
+        const std::size_t id = static_cast<std::size_t>(instance.id);
+        if (id >= catalog.size()
                 || static_cast<std::uint8_t>(instance.tier)
                     >= static_cast<std::uint8_t>(combat::MonsterAffixTier::count)
-                || (monster.tags & definition->required_tags)
-                    != definition->required_tags
-                || (monster.tags & definition->forbidden_tags) != 0U) {
+                || (monster.tags & catalog[id].required_tags)
+                    != catalog[id].required_tags
+                || (monster.tags & catalog[id].forbidden_tags) != 0U) {
             return false;
         }
         for (std::size_t previous = 0U; previous < index; ++previous) {
             if (set.values[previous].id == instance.id) return false;
+            const std::size_t previous_id = static_cast<std::size_t>(
+                set.values[previous].id);
+            if (previous_id >= catalog.size()) return false;
+            const std::uint16_t current_bit = static_cast<std::uint16_t>(
+                std::uint16_t{1} << id);
+            const std::uint16_t previous_bit = static_cast<std::uint16_t>(
+                std::uint16_t{1} << previous_id);
+            if ((catalog[id].conflict_mask & previous_bit) != 0U
+                    || (catalog[previous_id].conflict_mask & current_bit) != 0U) {
+                return false;
+            }
         }
     }
-    return combat::monster_affix_danger_score(set) <= 27U;
+    return combat::monster_affix_danger_score_with_catalog(set, catalog) <= 27U;
 }
 
 [[nodiscard]] bool apply_generated_affixes(
@@ -283,10 +295,12 @@ std::uint8_t encounter_budget(
     return detail::compute_encounter_budget(depth, config);
 }
 
-bool encounter_plan_legal(
+bool encounter_plan_legal_with_affix_catalog(
     const RoomEncounterPlan& plan,
-    const EncounterDirectorConfig& config) noexcept {
-    if (validate_encounter_director_config(config) != DungeonFault::none
+    const EncounterDirectorConfig& config,
+    const combat::MonsterAffixCatalog& catalog) noexcept {
+    if (!combat::monster_affix_catalog_valid(catalog)
+            || validate_encounter_director_config(config) != DungeonFault::none
             || plan.wave_count == 0U
             || plan.wave_count > plan.waves.size()
             || plan.total_budget == 0U
@@ -327,7 +341,7 @@ bool encounter_plan_legal(
             if (spawn.spawn_ordinal != static_cast<std::uint16_t>(wave_index
                     * combat::kEncounterSpawnCapacity + spawn_index)
                     || !affix_set_legal_for_monster(spawn.affixes,
-                        *definition)) {
+                        *definition, catalog)) {
                 return false;
             }
             add_tag_counts(*definition, counts);
@@ -352,6 +366,13 @@ bool encounter_plan_legal(
         total_spent = static_cast<std::uint16_t>(total_spent + spent);
     }
     return total_spent <= plan.total_budget;
+}
+
+bool encounter_plan_legal(
+    const RoomEncounterPlan& plan,
+    const EncounterDirectorConfig& config) noexcept {
+    return encounter_plan_legal_with_affix_catalog(plan, config,
+        combat::monster_affix_catalog());
 }
 
 EncounterPlanResult build_encounter_plan(

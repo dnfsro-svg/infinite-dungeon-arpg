@@ -36,6 +36,13 @@ struct Candidate final {
     const MonsterAffixDefinition* definition{};
 };
 
+[[nodiscard]] const MonsterAffixDefinition* catalog_definition(
+    const MonsterAffixCatalog& catalog, MonsterAffixId id) noexcept {
+    const std::size_t index = static_cast<std::size_t>(id);
+    return index < catalog.size() && catalog[index].id == id
+        ? &catalog[index] : nullptr;
+}
+
 [[nodiscard]] const AffixDepthBand& depth_band(std::uint64_t depth) noexcept {
     for (const AffixDepthBand& band : kAffixDepthBands) {
         if (depth <= band.maximum_depth) return band;
@@ -81,11 +88,12 @@ template <std::size_t N>
 
 [[nodiscard]] bool conflicts_with_selection(
     const MonsterAffixSet& set,
-    const MonsterAffixDefinition& candidate) noexcept {
+    const MonsterAffixDefinition& candidate,
+    const MonsterAffixCatalog& catalog) noexcept {
     const std::uint16_t candidate_bit = static_cast<std::uint16_t>(
         1U << static_cast<std::uint8_t>(candidate.id));
     for (std::size_t index = 0U; index < set.count; ++index) {
-        const MonsterAffixDefinition* selected = monster_affix_definition(
+        const MonsterAffixDefinition* selected = catalog_definition(catalog,
             set.values[index].id);
         if (selected == nullptr || (candidate.conflict_mask
                 & static_cast<std::uint16_t>(1U << static_cast<std::uint8_t>(
@@ -100,33 +108,23 @@ template <std::size_t N>
 [[nodiscard]] std::size_t collect_candidates(
     const MonsterDefinition& monster,
     const MonsterAffixSet& selected,
+    const MonsterAffixCatalog& catalog,
     std::array<Candidate, static_cast<std::size_t>(MonsterAffixId::count)>&
         candidates) noexcept {
     std::size_t count = 0U;
     for (std::uint8_t raw = 0U;
          raw < static_cast<std::uint8_t>(MonsterAffixId::count); ++raw) {
-        const MonsterAffixDefinition* definition = monster_affix_definition(
+        const MonsterAffixDefinition* definition = catalog_definition(catalog,
             static_cast<MonsterAffixId>(raw));
         if (definition == nullptr || definition->weight == 0U
                 || selected_contains(selected, definition->id)
                 || !compatible_with_monster(*definition, monster)
-                || conflicts_with_selection(selected, *definition)) {
+                || conflicts_with_selection(selected, *definition, catalog)) {
             continue;
         }
         candidates[count++].definition = definition;
     }
     return count;
-}
-
-[[nodiscard]] std::uint64_t context_seed(
-    std::uint64_t room_seed,
-    std::uint64_t depth,
-    std::uint8_t wave_index,
-    std::uint8_t spawn_index) noexcept {
-    auto context = core::DeterministicRng::derive_stream(room_seed,
-        kAffixContextDomain ^ depth ^ (static_cast<std::uint64_t>(wave_index)
-            << 48U) ^ (static_cast<std::uint64_t>(spawn_index) << 56U));
-    return context.next_u64();
 }
 
 [[nodiscard]] std::uint16_t danger_value(MonsterAffixDanger danger) noexcept {
@@ -150,18 +148,45 @@ std::array<std::uint16_t, 3> affix_tier_weights(
     return depth_band(depth).tier_weights;
 }
 
+std::uint64_t monster_affix_context_seed(
+    std::uint64_t room_seed,
+    std::uint64_t depth,
+    std::uint8_t wave_index,
+    std::uint8_t spawn_index) noexcept {
+    auto context = core::DeterministicRng::derive_stream(room_seed,
+        kAffixContextDomain);
+    context = core::DeterministicRng::derive_stream(context.next_u64(), depth);
+    context = core::DeterministicRng::derive_stream(context.next_u64(),
+        static_cast<std::uint64_t>(wave_index));
+    context = core::DeterministicRng::derive_stream(context.next_u64(),
+        static_cast<std::uint64_t>(spawn_index));
+    return context.next_u64();
+}
+
 std::optional<MonsterAffixSet> generate_monster_affixes(
     std::uint64_t room_seed,
     std::uint64_t depth,
     std::uint8_t wave_index,
     std::uint8_t spawn_index,
     const MonsterDefinition& monster) noexcept {
+    return generate_monster_affixes_with_catalog(room_seed, depth, wave_index,
+        spawn_index, monster, monster_affix_catalog());
+}
+
+std::optional<MonsterAffixSet> generate_monster_affixes_with_catalog(
+    std::uint64_t room_seed,
+    std::uint64_t depth,
+    std::uint8_t wave_index,
+    std::uint8_t spawn_index,
+    const MonsterDefinition& monster,
+    const MonsterAffixCatalog& catalog) noexcept {
+    if (!monster_affix_catalog_valid(catalog)) return std::nullopt;
     const MonsterDefinition* const canonical = monster_definition(monster.id);
     if (canonical == nullptr || canonical->tags != monster.tags) {
         return std::nullopt;
     }
-    const std::uint64_t seed = context_seed(room_seed, depth, wave_index,
-        spawn_index);
+    const std::uint64_t seed = monster_affix_context_seed(room_seed, depth,
+        wave_index, spawn_index);
     auto count_rng = core::DeterministicRng::derive_stream(seed,
         kAffixCountDomain);
     auto selection_rng = core::DeterministicRng::derive_stream(seed,
@@ -179,7 +204,7 @@ std::optional<MonsterAffixSet> generate_monster_affixes(
         std::array<Candidate, static_cast<std::size_t>(MonsterAffixId::count)>
             candidates{};
         const std::size_t candidate_count = collect_candidates(monster, result,
-            candidates);
+            catalog, candidates);
         if (candidate_count == 0U) return std::nullopt;
         std::array<std::uint16_t,
             static_cast<std::size_t>(MonsterAffixId::count)> weights{};
@@ -207,11 +232,18 @@ std::optional<MonsterAffixSet> generate_monster_affixes(
 
 std::uint16_t monster_affix_danger_score(
     const MonsterAffixSet& set) noexcept {
+    return monster_affix_danger_score_with_catalog(set, monster_affix_catalog());
+}
+
+std::uint16_t monster_affix_danger_score_with_catalog(
+    const MonsterAffixSet& set,
+    const MonsterAffixCatalog& catalog) noexcept {
+    if (!monster_affix_catalog_valid(catalog)) return 0U;
     if (set.count > set.values.size()) return 0U;
     std::uint16_t score = 0U;
     for (std::size_t index = 0U; index < set.count; ++index) {
         const MonsterAffixInstance& instance = set.values[index];
-        const MonsterAffixDefinition* definition = monster_affix_definition(
+        const MonsterAffixDefinition* definition = catalog_definition(catalog,
             instance.id);
         const std::uint8_t tier = static_cast<std::uint8_t>(instance.tier);
         if (definition == nullptr
