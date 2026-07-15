@@ -11,8 +11,13 @@ if(NOT DEFINED FORBIDDEN_LABEL)
     set(FORBIDDEN_LABEL "Dungeon")
 endif()
 
-set(ARPG_MODULE_INCLUDE_REGEX
-    "^[ \\t]*#[ \\t]*include[ \\t]*[<\"]${FORBIDDEN_MODULE}[/\\\\][^>\"]+[>\"]")
+if(FORBIDDEN_MODULE STREQUAL "raylib")
+    set(ARPG_MODULE_INCLUDE_REGEX
+        "^[ \\t]*#[ \\t]*include[ \\t]*[<\"]((raylib|raylib-cpp)[/\\\\][^>\"]+|(raylib|raymath|rlgl)\\.h|raylib-cpp[^>\"]*)[>\"]")
+else()
+    set(ARPG_MODULE_INCLUDE_REGEX
+        "^[ \\t]*#[ \\t]*include[ \\t]*[<\"]${FORBIDDEN_MODULE}[/\\\\][^>\"]+[>\"]")
+endif()
 
 function(arpg_line_has_module_include INPUT_LINE OUT_FOUND)
     string(TOLOWER "${INPUT_LINE}" _arpg_line_lower)
@@ -173,6 +178,12 @@ arpg_expect_module_boundary(
     "real angle include" TRUE "#include <${FORBIDDEN_MODULE}/sample.hpp>")
 arpg_expect_module_boundary(
     "real quoted include" TRUE "#include \"${FORBIDDEN_MODULE}/sample.hpp\"")
+if(FORBIDDEN_MODULE STREQUAL "raylib")
+    arpg_expect_module_boundary(
+        "real raylib root header" TRUE "#include <raylib.h>")
+    arpg_expect_module_boundary(
+        "real raymath root header" TRUE "#include \"raymath.h\"")
+endif()
 arpg_expect_module_boundary(
     "line comment" FALSE "// #include <${FORBIDDEN_MODULE}/sample.hpp>")
 arpg_expect_module_boundary(
