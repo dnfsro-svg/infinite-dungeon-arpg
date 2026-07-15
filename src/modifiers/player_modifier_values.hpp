@@ -4,14 +4,18 @@
 #include "modifiers/modifier_math.hpp"
 
 #include <array>
+#include <cstdint>
 
 namespace arpg::modifiers {
 
 struct PlayerModifierValues final {
-    std::array<FixedValue, kDamageTypeCount> flat_damage{};
-    std::array<FixedValue, kDamageTypeCount> damage_increased{{
+    std::array<std::int64_t, 5> flat_damage{};
+    std::array<std::int32_t, 5> damage_increased{{
         kFixedOne, kFixedOne, kFixedOne, kFixedOne, kFixedOne}};
-    std::array<FixedValue, kElementCount> resistance{};
+    std::array<std::int32_t, 4> damage_reduction{};
+    std::array<std::int32_t, 4> damage_reduction_cap_bonus{};
+    std::int64_t armor{};
+    std::int64_t evasion{};
     FixedValue melee_damage{kFixedOne};
     FixedValue max_health{};
     FixedValue max_health_more{kFixedOne};
@@ -27,5 +31,7 @@ struct PlayerModifierValues final {
 
 [[nodiscard]] PlayerModifierValues evaluate_player_modifiers(
     ModifierSpan modifiers) noexcept;
+[[nodiscard]] std::int32_t rating_to_basis_points(
+    std::int64_t value) noexcept;
 
 }  // namespace arpg::modifiers

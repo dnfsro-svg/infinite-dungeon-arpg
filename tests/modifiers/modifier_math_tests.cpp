@@ -1,9 +1,10 @@
 #include "test_framework.hpp"
 
-#include "modifiers/modifier_math.hpp"
+#include "modifiers/player_modifier_values.hpp"
 
 #include <array>
 #include <cstdint>
+#include <limits>
 
 namespace {
 
@@ -32,25 +33,76 @@ arpg::test::Failure operation_order_is_flat_increased_then_more() noexcept {
     ARPG_REQUIRE(result.valid);
     ARPG_REQUIRE(result.value == 2160000);
 
-    const std::array<Modifier, 2> increase{{
+    return {};
+}
+
+arpg::test::Failure addition_overflow_is_invalid() noexcept {
+    constexpr FixedValue kMaximum = (std::numeric_limits<FixedValue>::max)();
+    const std::array<Modifier, 1> values{{
         {4U, StatId::impulse_scale, ModifierOperation::flat, 1},
-        {5U, StatId::impulse_scale, ModifierOperation::more, 20000},
     }};
-    const std::array<Modifier, 2> decrease{{
-        {4U, StatId::impulse_scale, ModifierOperation::flat, -1},
-        {5U, StatId::impulse_scale, ModifierOperation::more, 20000},
-    }};
-    constexpr FixedValue kMaximum = 9223372036854775807LL;
-    constexpr FixedValue kMinimum = (-9223372036854775807LL - 1LL);
-    const StatBounds full_range{kMinimum, kMaximum};
-    const auto maximum = evaluate_stat(
-        kMaximum, StatId::impulse_scale, increase, {}, full_range);
-    const auto minimum = evaluate_stat(
-        kMinimum, StatId::impulse_scale, decrease, {}, full_range);
-    ARPG_REQUIRE(maximum.valid);
-    ARPG_REQUIRE(minimum.valid);
-    ARPG_REQUIRE(maximum.value == kMaximum);
-    ARPG_REQUIRE(minimum.value == kMinimum);
+    const StatBounds full_range{
+        (std::numeric_limits<FixedValue>::min)(), kMaximum};
+    const auto result = evaluate_stat(
+        kMaximum, StatId::impulse_scale, values, {}, full_range);
+    ARPG_REQUIRE(!result.valid);
+    return {};
+}
+
+arpg::test::Failure player_modifier_capacity_is_256() noexcept {
+    std::array<Modifier, 256> accepted{};
+    for (std::size_t index = 0; index < accepted.size(); ++index) {
+        accepted[index] = Modifier{static_cast<ModifierId>(index + 1U),
+            StatId::impulse_scale, ModifierOperation::flat, 0};
+    }
+    const auto at_capacity = evaluate_stat(
+        1, StatId::impulse_scale, accepted, {}, kWideBounds);
+    ARPG_REQUIRE(at_capacity.valid);
+
+    std::array<Modifier, 257> rejected{};
+    for (std::size_t index = 0; index < rejected.size(); ++index) {
+        rejected[index] = Modifier{static_cast<ModifierId>(index + 1U),
+            StatId::impulse_scale, ModifierOperation::flat, 0};
+    }
+    const auto over_capacity = evaluate_stat(
+        1, StatId::impulse_scale, rejected, {}, kWideBounds);
+    ARPG_REQUIRE(!over_capacity.valid);
+    return {};
+}
+
+arpg::test::Failure rating_curve_hits_all_anchors() noexcept {
+    ARPG_REQUIRE(rating_to_basis_points(0) == 0);
+    ARPG_REQUIRE(rating_to_basis_points(100) == 2000);
+    ARPG_REQUIRE(rating_to_basis_points(1000) == 4000);
+    ARPG_REQUIRE(rating_to_basis_points(10000) == 6000);
+    ARPG_REQUIRE(rating_to_basis_points(100000) == 8000);
+    ARPG_REQUIRE(rating_to_basis_points(1000000) == 9900);
+    ARPG_REQUIRE(rating_to_basis_points(10000000) == 9990);
+    return {};
+}
+
+arpg::test::Failure rating_curve_is_monotonic_within_each_segment() noexcept {
+    constexpr std::array<std::int64_t, 7> ratings{{
+        0, 100, 1000, 10000, 100000, 1000000, 10000000}};
+    for (std::size_t index = 1; index < ratings.size(); ++index) {
+        const std::int64_t first = ratings[index - 1U];
+        const std::int64_t last = ratings[index];
+        const std::int64_t middle = first + (last - first) / 2;
+        ARPG_REQUIRE(rating_to_basis_points(first)
+            <= rating_to_basis_points(middle));
+        ARPG_REQUIRE(rating_to_basis_points(middle)
+            <= rating_to_basis_points(last));
+    }
+    return {};
+}
+
+arpg::test::Failure rating_curve_handles_negative_and_tail_values() noexcept {
+    ARPG_REQUIRE(rating_to_basis_points(-1) == 0);
+    ARPG_REQUIRE(rating_to_basis_points(10000001) == 9990);
+    ARPG_REQUIRE(rating_to_basis_points(
+        (std::numeric_limits<std::int64_t>::max)()) == 9999);
+    ARPG_REQUIRE(rating_to_basis_points(
+        (std::numeric_limits<std::int64_t>::max)()) < 10000);
     return {};
 }
 
@@ -144,6 +196,12 @@ arpg::test::Failure converted_value_does_not_convert_again() noexcept {
 constexpr arpg::test::TestCase kCases[] = {
     {"identity", &empty_modifier_list_is_identity},
     {"operation order", &operation_order_is_flat_increased_then_more},
+    {"addition overflow", &addition_overflow_is_invalid},
+    {"player modifier capacity", &player_modifier_capacity_is_256},
+    {"rating curve anchors", &rating_curve_hits_all_anchors},
+    {"rating curve segment monotonicity",
+        &rating_curve_is_monotonic_within_each_segment},
+    {"rating curve tail", &rating_curve_handles_negative_and_tail_values},
     {"context gates", &conditions_and_forbidden_tags_gate_modifiers},
     {"order independence", &insertion_order_does_not_change_result},
     {"duplicate IDs", &duplicate_ids_are_rejected},

@@ -49,13 +49,13 @@ StatId increased_stat(DamageType type) noexcept {
     }
 }
 
-StatId resistance_stat(DamageType type) noexcept {
+StatId damage_reduction_stat(DamageType type) noexcept {
     switch (type) {
-    case DamageType::fire: return StatId::fire_resistance;
-    case DamageType::water: return StatId::water_resistance;
-    case DamageType::lightning: return StatId::lightning_resistance;
-    case DamageType::chaos: return StatId::chaos_resistance;
-    default: return StatId::fire_resistance;
+    case DamageType::fire: return StatId::fire_damage_reduction;
+    case DamageType::water: return StatId::water_damage_reduction;
+    case DamageType::lightning: return StatId::lightning_damage_reduction;
+    case DamageType::chaos: return StatId::chaos_damage_reduction;
+    default: return StatId::fire_damage_reduction;
     }
 }
 
@@ -140,9 +140,9 @@ std::array<PassiveNode, kPassiveNodeCount> make_catalog() noexcept {
             ModifierOperation::flat, 3 * kOne);
         add_modifier(nodes[base + 4], increased_stat(route.damage),
             ModifierOperation::increased, 800);
-        add_modifier(nodes[base + 5], resistance_stat(route.damage),
+        add_modifier(nodes[base + 5], damage_reduction_stat(route.damage),
             ModifierOperation::flat, 700);
-        add_modifier(nodes[base + 6], resistance_stat(route.damage),
+        add_modifier(nodes[base + 6], damage_reduction_stat(route.damage),
             ModifierOperation::flat, 700);
         add_modifier(nodes[base + 7], increased_stat(route.damage),
             ModifierOperation::increased, 800);
@@ -154,7 +154,7 @@ std::array<PassiveNode, kPassiveNodeCount> make_catalog() noexcept {
             ModifierOperation::flat, 8 * kOne);
         add_modifier(nodes[base + 10], increased_stat(route.damage),
             ModifierOperation::increased, 1500);
-        add_modifier(nodes[base + 11], resistance_stat(route.damage),
+        add_modifier(nodes[base + 11], damage_reduction_stat(route.damage),
             ModifierOperation::flat, 1500);
         add_modifier(nodes[base + 11], StatId::max_barrier,
             ModifierOperation::flat, 8 * kOne);
@@ -166,7 +166,7 @@ std::array<PassiveNode, kPassiveNodeCount> make_catalog() noexcept {
         if (index == 0U) {
             add_modifier(nodes[base + 13], StatId::fire_damage,
                 ModifierOperation::more, 13000);
-            add_modifier(nodes[base + 13], StatId::water_resistance,
+            add_modifier(nodes[base + 13], StatId::water_damage_reduction,
                 ModifierOperation::flat, -2000);
         } else if (index == 1U) {
             add_modifier(nodes[base + 13], StatId::water_damage,

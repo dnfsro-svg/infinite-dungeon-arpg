@@ -139,9 +139,9 @@ arpg::test::Failure central_and_keystone_modifiers_match_spec() noexcept {
         StatId::chaos_flat_damage}};
     const std::array<StatId, 4> damage_stats{{StatId::fire_damage,
         StatId::water_damage, StatId::lightning_damage, StatId::chaos_damage}};
-    const std::array<StatId, 4> resistance_stats{{StatId::fire_resistance,
-        StatId::water_resistance, StatId::lightning_resistance,
-        StatId::chaos_resistance}};
+    const std::array<StatId, 4> damage_reduction_stats{{
+        StatId::fire_damage_reduction, StatId::water_damage_reduction,
+        StatId::lightning_damage_reduction, StatId::chaos_damage_reduction}};
     const std::array<PassiveNodeId, 4> route_bases{{8U, 22U, 36U, 50U}};
     for (std::size_t route = 0; route < route_bases.size(); ++route) {
         const auto base = route_bases[route];
@@ -152,9 +152,11 @@ arpg::test::Failure central_and_keystone_modifiers_match_spec() noexcept {
             ModifierOperation::flat, 3 * arpg::modifiers::kFixedOne));
         ARPG_REQUIRE(modifier_matches(nodes[base + 4U], 0U, damage_stats[route],
             ModifierOperation::increased, 800));
-        ARPG_REQUIRE(modifier_matches(nodes[base + 5U], 0U, resistance_stats[route],
+        ARPG_REQUIRE(modifier_matches(nodes[base + 5U], 0U,
+            damage_reduction_stats[route],
             ModifierOperation::flat, 700));
-        ARPG_REQUIRE(modifier_matches(nodes[base + 6U], 0U, resistance_stats[route],
+        ARPG_REQUIRE(modifier_matches(nodes[base + 6U], 0U,
+            damage_reduction_stats[route],
             ModifierOperation::flat, 700));
         ARPG_REQUIRE(modifier_matches(nodes[base + 7U], 0U, damage_stats[route],
             ModifierOperation::increased, 800));
@@ -168,7 +170,8 @@ arpg::test::Failure central_and_keystone_modifiers_match_spec() noexcept {
         ARPG_REQUIRE(modifier_matches(nodes[base + 10U], 1U, damage_stats[route],
             ModifierOperation::increased, 1500));
         ARPG_REQUIRE(nodes[base + 11U].modifier_count == 2U);
-        ARPG_REQUIRE(modifier_matches(nodes[base + 11U], 0U, resistance_stats[route],
+        ARPG_REQUIRE(modifier_matches(nodes[base + 11U], 0U,
+            damage_reduction_stats[route],
             ModifierOperation::flat, 1500));
         ARPG_REQUIRE(modifier_matches(nodes[base + 11U], 1U, StatId::max_barrier,
             ModifierOperation::flat, 8 * arpg::modifiers::kFixedOne));
@@ -180,7 +183,8 @@ arpg::test::Failure central_and_keystone_modifiers_match_spec() noexcept {
     ARPG_REQUIRE(nodes[21].modifier_count == 2U);
     ARPG_REQUIRE(modifier_matches(nodes[21], 0U, StatId::fire_damage,
         ModifierOperation::more, 13000));
-    ARPG_REQUIRE(modifier_matches(nodes[21], 1U, StatId::water_resistance,
+    ARPG_REQUIRE(modifier_matches(nodes[21], 1U,
+        StatId::water_damage_reduction,
         ModifierOperation::flat, -2000));
     ARPG_REQUIRE(nodes[35].modifier_count == 3U);
     ARPG_REQUIRE(modifier_matches(nodes[35], 0U, StatId::water_damage,

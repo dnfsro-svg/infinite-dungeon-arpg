@@ -44,9 +44,11 @@ int resolve_player_damage(
     total += std::max(0, packet.amount[
         modifiers::damage_index(modifiers::DamageType::physical)]);
     for (std::size_t element = 0; element < modifiers::kElementCount; ++element) {
-        const auto resistance = std::clamp(build.values.resistance[element],
-                                           modifiers::FixedValue{-6000},
-                                           modifiers::FixedValue{7500});
+        const auto resistance = std::clamp(
+            static_cast<modifiers::FixedValue>(
+                build.values.damage_reduction[element]),
+            modifiers::FixedValue{-6000},
+            modifiers::FixedValue{7500});
         const auto multiplier = modifiers::kFixedOne - resistance;
         const int raw = std::max(0, packet.amount[element + 1U]);
         total += static_cast<std::int64_t>(raw) * multiplier
@@ -197,7 +199,8 @@ void CombatWorld::initialize_player() noexcept {
     player_.max_barrier = std::max(0, fixed_floor(values.max_barrier));
     for (std::size_t index = 0; index < modifiers::kElementCount; ++index) {
         player_.resistance[index] = static_cast<int>(std::clamp(
-            values.resistance[index], modifiers::FixedValue{-6000},
+            static_cast<modifiers::FixedValue>(values.damage_reduction[index]),
+            modifiers::FixedValue{-6000},
             modifiers::FixedValue{7500}));
     }
     player_.barrier = player_.max_barrier;

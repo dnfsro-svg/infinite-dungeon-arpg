@@ -18,9 +18,9 @@ CombatEncounterConfig one_monster_config() noexcept {
     return config;
 }
 
-arpg::test::Failure fire_resistance_then_barrier_absorbs_damage() noexcept {
+arpg::test::Failure fire_damage_reduction_then_barrier_absorbs_damage() noexcept {
     PlayerCombatBuild build{};
-    build.values.resistance[element_index(DamageType::fire)] = 7500;
+    build.values.damage_reduction[element_index(DamageType::fire)] = 7500;
     build.values.max_barrier = 100000;
     CombatEncounterConfig config = one_monster_config();
     config.player_build = build;
@@ -42,15 +42,15 @@ arpg::test::Failure player_attack_adds_element_without_converting_physical() noe
     return {};
 }
 
-arpg::test::Failure negative_water_resistance_increases_damage() noexcept {
+arpg::test::Failure negative_water_damage_reduction_increases_damage() noexcept {
     PlayerCombatBuild build{};
-    build.values.resistance[element_index(DamageType::water)] = -5000;
+    build.values.damage_reduction[element_index(DamageType::water)] = -5000;
     const DamagePacket packet{{0, 0, 20, 0, 0}};
     ARPG_REQUIRE(resolve_player_damage(packet, build) == 30);
     return {};
 }
 
-arpg::test::Failure chaos_more_damage_taken_is_applied_after_resistance() noexcept {
+arpg::test::Failure chaos_more_damage_taken_is_applied_after_reduction() noexcept {
     PlayerCombatBuild build{};
     build.values.damage_taken = 11500;
     const DamagePacket packet{{0, 0, 0, 0, 20}};
@@ -154,10 +154,13 @@ arpg::test::Failure hit_event_keeps_packet_total_when_monster_shield_absorbs() n
 }
 
 constexpr arpg::test::TestCase kCases[] = {
-    {"fire resistance and barrier", &fire_resistance_then_barrier_absorbs_damage},
+    {"fire damage reduction and barrier",
+        &fire_damage_reduction_then_barrier_absorbs_damage},
     {"elemental add does not convert physical", &player_attack_adds_element_without_converting_physical},
-    {"negative water resistance", &negative_water_resistance_increases_damage},
-    {"chaos damage taken", &chaos_more_damage_taken_is_applied_after_resistance},
+    {"negative water damage reduction",
+        &negative_water_damage_reduction_increases_damage},
+    {"chaos damage taken",
+        &chaos_more_damage_taken_is_applied_after_reduction},
     {"default j1 damage", &default_build_preserves_j1_damage},
     {"attack speed phase scaling", &attack_speed_scales_only_startup_and_recovery},
     {"impulse scale", &impulse_scale_affects_knockback_and_launch},
