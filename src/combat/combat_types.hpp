@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 #include "modifiers/damage_types.hpp"
 #include "modifiers/player_modifier_values.hpp"
@@ -68,16 +69,23 @@ struct DamagePacket final {
     }
 };
 
-struct PlayerCombatBuild final {
-    modifiers::PlayerModifierValues values{};
+enum class DamageDelivery : std::uint8_t {
+    direct,
+    ground_or_environment,
 };
 
-[[nodiscard]] DamagePacket build_player_hit_packet(
+struct PlayerCombatBuild final {
+    modifiers::PlayerModifierValues values{};
+    std::int64_t weapon_physical{};
+    std::int32_t local_attack_speed_bp{};
+};
+
+[[nodiscard]] std::optional<DamagePacket> build_player_hit_packet(
     int base_physical, const PlayerCombatBuild& build) noexcept;
-[[nodiscard]] int resolve_player_damage(
+[[nodiscard]] std::optional<int> resolve_player_damage(
     DamagePacket packet, const PlayerCombatBuild& build) noexcept;
 [[nodiscard]] std::uint16_t scaled_phase_ticks(
-    std::uint16_t base, modifiers::FixedValue attack_speed) noexcept;
+    std::uint16_t base, std::int64_t attack_speed) noexcept;
 
 enum class ImpactKind : std::uint8_t {
     light_hitstun,
@@ -295,6 +303,7 @@ struct CombatEncounterConfig final {
     EncounterWave wave{};
     bool reset_player_health{true};
     PlayerCombatBuild player_build{};
+    std::uint64_t evasion_seed{};
 };
 
 struct PlayerSnapshot final {
@@ -312,7 +321,12 @@ struct PlayerSnapshot final {
     int max_hp{};
     int barrier{};
     int max_barrier{};
-    std::array<int, modifiers::kElementCount> resistance{};
+    std::array<std::int32_t, modifiers::kElementCount> damage_reduction{};
+    std::array<std::int32_t, modifiers::kElementCount> damage_reduction_cap{};
+    std::int64_t armor{};
+    std::int64_t evasion{};
+    std::int32_t armor_reduction_bp{};
+    std::int32_t evasion_rate_bp{};
     std::uint16_t hurt_ticks{};
     std::uint16_t invulnerability_ticks{};
 };

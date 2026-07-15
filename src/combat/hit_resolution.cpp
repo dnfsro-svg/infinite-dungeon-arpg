@@ -120,10 +120,12 @@ void CombatWorld::resolve_attack_hits() noexcept {
     for (std::size_t collected = 0; collected < hit_count; ++collected) {
         const std::size_t index = hit_indices[collected];
         MonsterRuntime& dummy = monsters_.slots_[index];
+        const auto resolved_packet = build_player_hit_packet(
+            definition->damage, encounter_config_.player_build);
+        if (!resolved_packet.has_value()) continue;
+        const DamagePacket& packet = *resolved_packet;
         attack_.hit_targets[index] = true;
         attack_.connected = true;
-        const DamagePacket packet = build_player_hit_packet(
-            definition->damage, encounter_config_.player_build);
         int hp_damage = 0;
         for (const int value : packet.amount) hp_damage += std::max(0, value);
         const int packet_total = hp_damage;

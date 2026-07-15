@@ -19,9 +19,19 @@ struct CombatWorldTestAccess final {
     static void apply_damage(
         combat::CombatWorld& world,
         combat::DamagePacket packet,
+        combat::DamageDelivery delivery,
         combat::Vec3 source_position,
         combat::FeedbackLevel feedback) noexcept {
-        world.apply_player_damage(packet, source_position, feedback);
+        world.apply_player_damage(packet, delivery, source_position, feedback);
+    }
+
+    static void apply_damage(
+        combat::CombatWorld& world,
+        combat::DamagePacket packet,
+        combat::Vec3 source_position,
+        combat::FeedbackLevel feedback) noexcept {
+        apply_damage(world, packet, combat::DamageDelivery::direct,
+                     source_position, feedback);
     }
 
     static void fill_projectiles(

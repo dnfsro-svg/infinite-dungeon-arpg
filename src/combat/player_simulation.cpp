@@ -92,12 +92,16 @@ void CombatWorld::simulate_player(MovementInput movement) noexcept {
 
         attack_.id = id;
         attack_.elapsed_ticks = 0;
+        const auto& build = encounter_config_.player_build;
+        const std::int64_t local_multiplier = modifiers::kFixedOne
+            + static_cast<std::int64_t>(build.local_attack_speed_bp);
+        const std::int64_t attack_speed =
+            build.values.attack_speed * local_multiplier
+            / modifiers::kFixedOne;
         attack_.startup_ticks = scaled_phase_ticks(
-            definition->startup_ticks,
-            encounter_config_.player_build.values.attack_speed);
+            definition->startup_ticks, attack_speed);
         attack_.recovery_ticks = scaled_phase_ticks(
-            definition->recovery_ticks,
-            encounter_config_.player_build.values.attack_speed);
+            definition->recovery_ticks, attack_speed);
         attack_.connected = false;
         attack_.impact_event_emitted = false;
         attack_.hit_targets.fill(false);

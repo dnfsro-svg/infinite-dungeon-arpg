@@ -15,6 +15,7 @@ arpg::test::TestSuite monster_special_suite() noexcept;
 arpg::test::TestSuite monster_pool_suite() noexcept;
 arpg::test::TestSuite player_health_suite() noexcept;
 arpg::test::TestSuite player_build_suite() noexcept;
+arpg::test::TestSuite player_defense_suite() noexcept;
 
 int main() {
     const arpg::test::TestSuite suites[] = {
@@ -33,7 +34,8 @@ int main() {
         monster_pool_suite(),
         player_health_suite(),
         player_build_suite(),
+        player_defense_suite(),
     };
 
-    return arpg::test::run_suites(suites, 76, "stage 7 task 3");
+    return arpg::test::run_suites(suites, 95, "stage 8 task 4");
 }

@@ -88,7 +88,8 @@ void CombatWorld::resolve_monster_contact_attack(
     };
     if (overlaps_inclusive(contact, player_hurtbox)) {
         apply_player_damage(
-            definition->contact_damage, monster.position,
+            definition->contact_damage, DamageDelivery::direct,
+            monster.position,
             definition->feedback);
     }
 }

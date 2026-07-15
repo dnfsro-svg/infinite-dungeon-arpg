@@ -17,7 +17,9 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
                   attack_.startup_ticks, attack_.recovery_ticks),
         attack_.elapsed_ticks, player_.combo_stage, player_.hit_stop_ticks,
         player_.air_attack_available, player_.hp, player_.max_hp,
-        player_.barrier, player_.max_barrier, player_.resistance,
+        player_.barrier, player_.max_barrier, player_.damage_reduction,
+        player_.damage_reduction_cap, player_.armor, player_.evasion,
+        player_.armor_reduction_bp, player_.evasion_rate_bp,
         player_.hurt_ticks, player_.invulnerability_ticks,
     };
     for (std::size_t index = 0; index < monsters_.slots().size(); ++index) {

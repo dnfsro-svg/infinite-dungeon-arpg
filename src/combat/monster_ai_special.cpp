@@ -74,7 +74,8 @@ void CombatWorld::simulate_special_ai(
         if (is_bomber) {
             if (!monster.contact_attack_resolved) {
                 if (target_distance(monster.position, player_.position) <= 1.60F) {
-                    apply_player_damage(definition.contact_damage, monster.position,
+                    apply_player_damage(definition.contact_damage,
+                                        DamageDelivery::direct, monster.position,
                                         definition.feedback);
                 }
                 monster.contact_attack_resolved = true;

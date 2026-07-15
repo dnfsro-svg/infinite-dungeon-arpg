@@ -13,61 +13,173 @@ namespace arpg::combat {
 
 namespace {
 
-constexpr int fixed_floor(modifiers::FixedValue value) noexcept {
-    return static_cast<int>(value / modifiers::kFixedOne);
+constexpr std::int64_t fixed_floor(std::int64_t value) noexcept {
+    const std::int64_t quotient = value / modifiers::kFixedOne;
+    return quotient - (value < 0 && value % modifiers::kFixedOne != 0 ? 1 : 0);
 }
 
-int fixed_scale(int value, modifiers::FixedValue factor) noexcept {
-    const auto product = static_cast<std::int64_t>(value) * factor;
-    return static_cast<int>(product / modifiers::kFixedOne);
+bool checked_add(
+    std::int64_t left, std::int64_t right, std::int64_t& result) noexcept {
+    const auto maximum = (std::numeric_limits<std::int64_t>::max)();
+    const auto minimum = (std::numeric_limits<std::int64_t>::min)();
+    if ((right > 0 && left > maximum - right)
+        || (right < 0 && left < minimum - right)) {
+        return false;
+    }
+    result = left + right;
+    return true;
 }
+
+bool checked_multiply(
+    std::int64_t left, std::int64_t right, std::int64_t& result) noexcept {
+    const auto maximum = (std::numeric_limits<std::int64_t>::max)();
+    const auto minimum = (std::numeric_limits<std::int64_t>::min)();
+    if (left == 0 || right == 0) {
+        result = 0;
+        return true;
+    }
+    if ((left == -1 && right == minimum)
+        || (right == -1 && left == minimum)) {
+        return false;
+    }
+    if (left > 0) {
+        if ((right > 0 && left > maximum / right)
+            || (right < 0 && right < minimum / left)) return false;
+    } else if ((right > 0 && left < minimum / right)
+               || (right < 0 && left < maximum / right)) {
+        return false;
+    }
+    result = left * right;
+    return true;
+}
+
+std::optional<std::int64_t> fixed_scale_floor(
+    std::int64_t value, std::int64_t factor) noexcept {
+    std::int64_t product{};
+    if (!checked_multiply(value, factor, product)) return std::nullopt;
+    return fixed_floor(product);
+}
+
+bool valid_player_build(const PlayerCombatBuild& build) noexcept;
 
 }  // namespace
 
-DamagePacket build_player_hit_packet(
+std::optional<DamagePacket> build_player_hit_packet(
     int base_physical, const PlayerCombatBuild& build) noexcept {
+    if (base_physical < 0 || !build.values.valid
+        || build.weapon_physical < 0 || build.local_attack_speed_bp < 0
+        || build.values.melee_damage < 0) {
+        return std::nullopt;
+    }
+    for (const auto factor : build.values.damage_increased) {
+        if (factor < 0) return std::nullopt;
+    }
+
     DamagePacket packet{};
     const auto& values = build.values;
+    std::int64_t physical{};
+    if (!checked_add(base_physical, build.weapon_physical, physical)
+        || !checked_add(physical,
+                        fixed_floor(values.flat_damage[
+                            modifiers::damage_index(
+                                modifiers::DamageType::physical)]),
+                        physical)) {
+        return std::nullopt;
+    }
+    auto scaled = fixed_scale_floor(
+        physical, values.damage_increased[
+                      modifiers::damage_index(modifiers::DamageType::physical)]);
+    if (!scaled.has_value()) return std::nullopt;
+    scaled = fixed_scale_floor(*scaled, values.melee_damage);
+    if (!scaled.has_value()) return std::nullopt;
+    if (*scaled < (std::numeric_limits<int>::min)()
+        || *scaled > (std::numeric_limits<int>::max)()) {
+        return std::nullopt;
+    }
     packet.amount[modifiers::damage_index(modifiers::DamageType::physical)] =
-        fixed_scale(std::max(0, base_physical), values.melee_damage);
+        static_cast<int>(*scaled);
     for (std::size_t index = 1; index < modifiers::kDamageTypeCount; ++index) {
-        const int flat = fixed_floor(values.flat_damage[index]);
-        const int increased = fixed_scale(flat, values.damage_increased[index]);
-        packet.amount[index] = fixed_scale(increased, values.melee_damage);
+        scaled = fixed_scale_floor(
+            fixed_floor(values.flat_damage[index]),
+            values.damage_increased[index]);
+        if (!scaled.has_value()) return std::nullopt;
+        scaled = fixed_scale_floor(*scaled, values.melee_damage);
+        if (!scaled.has_value()
+            || *scaled < (std::numeric_limits<int>::min)()
+            || *scaled > (std::numeric_limits<int>::max)()) {
+            return std::nullopt;
+        }
+        packet.amount[index] = static_cast<int>(*scaled);
     }
     return packet;
 }
 
-int resolve_player_damage(
+std::optional<int> resolve_player_damage(
     DamagePacket packet, const PlayerCombatBuild& build) noexcept {
+    if (!valid_player_build(build)) return std::nullopt;
+
+    const auto checked_add = [](std::int64_t left, std::int64_t right,
+                                std::int64_t& result) noexcept {
+        const auto maximum = (std::numeric_limits<std::int64_t>::max)();
+        if (right > 0 && left > maximum - right) return false;
+        result = left + right;
+        return true;
+    };
+    const auto checked_multiply = [](std::int64_t left, std::int64_t right,
+                                     std::int64_t& result) noexcept {
+        const auto maximum = (std::numeric_limits<std::int64_t>::max)();
+        if (left != 0 && right > maximum / left) return false;
+        result = left * right;
+        return true;
+    };
+    const auto reduced_component = [&checked_multiply](
+        int raw, std::int32_t reduction) noexcept -> std::optional<std::int64_t> {
+        if (raw <= 0) return std::int64_t{0};
+        const std::int64_t multiplier = modifiers::kFixedOne - reduction;
+        std::int64_t product{};
+        if (!checked_multiply(raw, multiplier, product)) return std::nullopt;
+        return product / modifiers::kFixedOne
+            + (product % modifiers::kFixedOne != 0 ? 1 : 0);
+    };
+
     std::int64_t total = 0;
-    total += std::max(0, packet.amount[
-        modifiers::damage_index(modifiers::DamageType::physical)]);
+    const auto physical = reduced_component(
+        packet.amount[modifiers::damage_index(modifiers::DamageType::physical)],
+        modifiers::rating_to_basis_points(build.values.armor));
+    if (!physical.has_value() || !checked_add(total, *physical, total)) {
+        return std::nullopt;
+    }
     for (std::size_t element = 0; element < modifiers::kElementCount; ++element) {
-        const auto resistance = std::clamp(
-            static_cast<modifiers::FixedValue>(
-                build.values.damage_reduction[element]),
-            modifiers::FixedValue{-6000},
-            modifiers::FixedValue{7500});
-        const auto multiplier = modifiers::kFixedOne - resistance;
-        const int raw = std::max(0, packet.amount[element + 1U]);
-        total += static_cast<std::int64_t>(raw) * multiplier
-            / modifiers::kFixedOne;
+        if (build.values.damage_reduction_cap_bonus[element] < 0) {
+            return std::nullopt;
+        }
+        const std::int64_t uncapped = std::int64_t{7500}
+            + build.values.damage_reduction_cap_bonus[element];
+        const auto cap = static_cast<std::int32_t>(
+            std::min<std::int64_t>(9500, uncapped));
+        const auto reduction = std::clamp(
+            build.values.damage_reduction[element], std::int32_t{-6000}, cap);
+        const auto component = reduced_component(
+            packet.amount[element + 1U], reduction);
+        if (!component.has_value()
+            || !checked_add(total, *component, total)) {
+            return std::nullopt;
+        }
     }
-    total = total * std::max<modifiers::FixedValue>(
-        0, build.values.damage_taken) / modifiers::kFixedOne;
-    if (total <= 0) return 0;
-    if (total > std::numeric_limits<int>::max()) {
-        return std::numeric_limits<int>::max();
+    if (build.values.damage_taken < 0) return std::nullopt;
+    std::int64_t scaled{};
+    if (!checked_multiply(total, build.values.damage_taken, scaled)) {
+        return std::nullopt;
     }
-    return static_cast<int>(total);
+    scaled /= modifiers::kFixedOne;
+    if (scaled > (std::numeric_limits<int>::max)()) return std::nullopt;
+    return static_cast<int>(scaled);
 }
 
 std::uint16_t scaled_phase_ticks(
-    std::uint16_t base, modifiers::FixedValue attack_speed) noexcept {
+    std::uint16_t base, std::int64_t attack_speed) noexcept {
     if (base == 0U) return 1U;
-    const auto speed = std::max<modifiers::FixedValue>(
-        1, attack_speed);
+    const auto speed = std::max<std::int64_t>(1, attack_speed);
     const auto scaled = static_cast<std::int64_t>(base)
         * modifiers::kFixedOne / speed;
     return static_cast<std::uint16_t>(std::max<std::int64_t>(1, scaled));
@@ -80,6 +192,122 @@ constexpr std::array<int, kDummyCount> kDummyBreakValues{{0, 0, 120}};
 constexpr int kStage4PlayerMaxHp = 1000;
 constexpr std::uint16_t kPlayerHurtTicks = 12;
 constexpr std::uint16_t kPlayerInvulnerabilityTicks = 30;
+
+struct DerivedPlayerBuild final {
+    int max_hp{};
+    int max_barrier{};
+    std::array<std::int32_t, modifiers::kElementCount> damage_reduction{};
+    std::array<std::int32_t, modifiers::kElementCount> damage_reduction_cap{};
+    std::int64_t armor{};
+    std::int64_t evasion{};
+    std::int32_t armor_reduction_bp{};
+    std::int32_t evasion_rate_bp{};
+};
+
+bool checked_nonnegative_multiply(
+    std::int64_t left, std::int64_t right, std::int64_t& result) noexcept {
+    if (left < 0 || right < 0) return false;
+    const auto maximum = (std::numeric_limits<std::int64_t>::max)();
+    if (left != 0 && right > maximum / left) return false;
+    result = left * right;
+    return true;
+}
+
+bool derive_player_build(
+    const PlayerCombatBuild& build, DerivedPlayerBuild& result) noexcept {
+    const auto& values = build.values;
+    if (!values.valid || build.weapon_physical < 0
+        || build.local_attack_speed_bp < 0 || values.armor < 0
+        || values.evasion < 0 || values.melee_damage < 0
+        || values.max_health < 0 || values.max_health_more < 0
+        || values.max_barrier < 0 || values.damage_taken < 0
+        || values.movement_speed < 0 || values.attack_speed < 0
+        || values.impulse_scale < 0 || values.jump_speed < 0
+        || values.air_control < 0) {
+        return false;
+    }
+    for (std::size_t index = 0; index < modifiers::kDamageTypeCount; ++index) {
+        if (values.damage_increased[index] < 0) return false;
+    }
+    for (const auto bonus : values.damage_reduction_cap_bonus) {
+        if (bonus < 0) return false;
+    }
+
+    const std::int64_t health_flat = values.max_health / modifiers::kFixedOne;
+    if (health_flat > (std::numeric_limits<std::int64_t>::max)()
+                          - kStage4PlayerMaxHp) {
+        return false;
+    }
+    const std::int64_t health_base = kStage4PlayerMaxHp + health_flat;
+    std::int64_t health_product{};
+    if (!checked_nonnegative_multiply(
+            health_base, values.max_health_more, health_product)) {
+        return false;
+    }
+    const std::int64_t scaled_health =
+        health_product / modifiers::kFixedOne;
+    if (scaled_health > (std::numeric_limits<int>::max)()) return false;
+    result.max_hp = static_cast<int>(std::max<std::int64_t>(1, scaled_health));
+
+    const std::int64_t barrier = values.max_barrier / modifiers::kFixedOne;
+    if (barrier > (std::numeric_limits<int>::max)()) return false;
+    result.max_barrier = static_cast<int>(barrier);
+
+    const std::int64_t local_multiplier = modifiers::kFixedOne
+        + static_cast<std::int64_t>(build.local_attack_speed_bp);
+    std::int64_t attack_speed_product{};
+    if (!checked_nonnegative_multiply(
+            values.attack_speed, local_multiplier, attack_speed_product)) {
+        return false;
+    }
+    const std::int64_t effective_attack_speed = std::max<std::int64_t>(
+        1, attack_speed_product / modifiers::kFixedOne);
+
+    constexpr std::array<AttackId, 5> attack_ids{{
+        AttackId::j1, AttackId::j2, AttackId::j3,
+        AttackId::launcher, AttackId::air_j}};
+    for (const AttackId id : attack_ids) {
+        const AttackDefinition* definition = find_attack_definition(id);
+        if (definition == nullptr) return false;
+        const auto phase_ticks_fit = [effective_attack_speed](
+            std::uint16_t base) noexcept {
+            const std::int64_t scaled = static_cast<std::int64_t>(base)
+                * modifiers::kFixedOne / effective_attack_speed;
+            return scaled <= (std::numeric_limits<std::uint16_t>::max)();
+        };
+        if (!phase_ticks_fit(definition->startup_ticks)
+            || !phase_ticks_fit(definition->recovery_ticks)) {
+            return false;
+        }
+        const auto packet = build_player_hit_packet(definition->damage, build);
+        if (!packet.has_value()) return false;
+        std::int64_t packet_total = 0;
+        for (const int amount : packet->amount) {
+            if (amount <= 0) continue;
+            if (!checked_add(packet_total, amount, packet_total)) return false;
+        }
+        if (packet_total > (std::numeric_limits<int>::max)()) return false;
+    }
+
+    result.armor = values.armor;
+    result.evasion = values.evasion;
+    result.armor_reduction_bp = modifiers::rating_to_basis_points(values.armor);
+    result.evasion_rate_bp = modifiers::rating_to_basis_points(values.evasion);
+    for (std::size_t index = 0; index < modifiers::kElementCount; ++index) {
+        const std::int64_t cap = std::min<std::int64_t>(
+            9500, std::int64_t{7500} + values.damage_reduction_cap_bonus[index]);
+        result.damage_reduction_cap[index] = static_cast<std::int32_t>(cap);
+        result.damage_reduction[index] = std::clamp(
+            values.damage_reduction[index], std::int32_t{-6000},
+            result.damage_reduction_cap[index]);
+    }
+    return true;
+}
+
+bool valid_player_build(const PlayerCombatBuild& build) noexcept {
+    DerivedPlayerBuild ignored{};
+    return derive_player_build(build, ignored);
+}
 
 void saturating_increment(std::uint32_t& counter) noexcept {
     if (counter != (std::numeric_limits<std::uint32_t>::max)()) {
@@ -98,6 +326,10 @@ CombatWorld::CombatWorld(CombatLabConfig config) noexcept
 
 CombatWorld::CombatWorld(CombatEncounterConfig config) noexcept
     : encounter_config_(config), legacy_mode_(false) {
+    DerivedPlayerBuild derived{};
+    if (!derive_player_build(encounter_config_.player_build, derived)) {
+        encounter_config_.player_build = PlayerCombatBuild{};
+    }
     initialize_runtime();
 }
 
@@ -161,7 +393,25 @@ void CombatWorld::reset() noexcept {
     emit_event(reset_event);
 }
 
+void CombatWorld::apply_player_build(PlayerCombatBuild build) noexcept {
+    DerivedPlayerBuild derived{};
+    if (!derive_player_build(build, derived)) return;
+
+    encounter_config_.player_build = build;
+    player_.max_hp = derived.max_hp;
+    player_.max_barrier = derived.max_barrier;
+    player_.damage_reduction = derived.damage_reduction;
+    player_.damage_reduction_cap = derived.damage_reduction_cap;
+    player_.armor = derived.armor;
+    player_.evasion = derived.evasion;
+    player_.armor_reduction_bp = derived.armor_reduction_bp;
+    player_.evasion_rate_bp = derived.evasion_rate_bp;
+    player_.hp = std::clamp(player_.hp, 0, player_.max_hp);
+    player_.barrier = std::clamp(player_.barrier, 0, player_.max_barrier);
+}
+
 void CombatWorld::initialize_runtime() noexcept {
+    evasion_rng_ = core::DeterministicRng{encounter_config_.evasion_seed};
     initialize_player();
     monsters_.clear();
     for (auto& owner : effect_owners_) owner = {};
@@ -191,18 +441,20 @@ void CombatWorld::initialize_player() noexcept {
     player_ = PlayerRuntime{};
     player_.position = encounter_config_.player_spawn;
     player_.facing = encounter_config_.initial_facing;
-    const auto& values = encounter_config_.player_build.values;
-    player_.max_hp = std::max(
-        1, fixed_scale(kStage4PlayerMaxHp + fixed_floor(values.max_health),
-                       std::max<modifiers::FixedValue>(0,
-                                                        values.max_health_more)));
-    player_.max_barrier = std::max(0, fixed_floor(values.max_barrier));
-    for (std::size_t index = 0; index < modifiers::kElementCount; ++index) {
-        player_.resistance[index] = static_cast<int>(std::clamp(
-            static_cast<modifiers::FixedValue>(values.damage_reduction[index]),
-            modifiers::FixedValue{-6000},
-            modifiers::FixedValue{7500}));
+    DerivedPlayerBuild derived{};
+    if (!derive_player_build(encounter_config_.player_build, derived)) {
+        encounter_config_.player_build = PlayerCombatBuild{};
+        static_cast<void>(derive_player_build(
+            encounter_config_.player_build, derived));
     }
+    player_.max_hp = derived.max_hp;
+    player_.max_barrier = derived.max_barrier;
+    player_.damage_reduction = derived.damage_reduction;
+    player_.damage_reduction_cap = derived.damage_reduction_cap;
+    player_.armor = derived.armor;
+    player_.evasion = derived.evasion;
+    player_.armor_reduction_bp = derived.armor_reduction_bp;
+    player_.evasion_rate_bp = derived.evasion_rate_bp;
     player_.barrier = player_.max_barrier;
     player_.hp = player_.max_hp;
 }
@@ -315,13 +567,29 @@ std::optional<CombatEvent> CombatWorld::try_pop_event() noexcept {
 
 void CombatWorld::apply_player_damage(
     DamagePacket packet,
+    DamageDelivery delivery,
     Vec3 source_position,
     FeedbackLevel feedback) noexcept {
-    const int damage = resolve_player_damage(packet,
-                                              encounter_config_.player_build);
-    if (damage <= 0 || player_.invulnerability_ticks != 0) {
+    const bool has_positive_component = std::any_of(
+        packet.amount.begin(), packet.amount.end(), [](int value) noexcept {
+            return value > 0;
+        });
+    if (delivery == DamageDelivery::direct && has_positive_component
+        && player_.evasion_rate_bp > 0) {
+        const auto roll = evasion_rng_.next_bounded(modifiers::kFixedOne);
+        if (roll.has_value()
+            && *roll < static_cast<std::uint64_t>(player_.evasion_rate_bp)) {
+            return;
+        }
+    }
+
+    const auto resolved = resolve_player_damage(
+        packet, encounter_config_.player_build);
+    if (!resolved.has_value() || *resolved <= 0
+        || player_.invulnerability_ticks != 0) {
         return;
     }
+    const int damage = *resolved;
 
     const int absorbed = std::min(player_.barrier, damage);
     player_.barrier -= absorbed;
@@ -355,7 +623,8 @@ void CombatWorld::apply_player_damage(
     int damage,
     Vec3 source_position,
     FeedbackLevel feedback) noexcept {
-    apply_player_damage(DamagePacket{damage}, source_position, feedback);
+    apply_player_damage(DamagePacket{damage}, DamageDelivery::direct,
+                        source_position, feedback);
 }
 
 bool CombatWorld::spawn_projectile(
@@ -495,7 +764,8 @@ void CombatWorld::simulate_projectiles() noexcept {
         const bool expired = projectile.lifetime_ticks == 0;
         if (hit_player) {
             apply_player_damage(
-                projectile.damage, projectile.position,
+                projectile.damage, DamageDelivery::direct,
+                projectile.position,
                 FeedbackLevel::medium);
         }
         if (hit_player || outside || expired) {
@@ -543,7 +813,9 @@ void CombatWorld::simulate_hazards() noexcept {
                 && std::fabs(dy) <= hazard.radius + kPlayerRadiusY
                 && std::fabs(dz) <= hazard.radius + kPlayerRadiusZ;
             if (intersects && !hazard.player_latched) {
-                apply_player_damage(hazard.damage, hazard.center,
+                apply_player_damage(hazard.damage,
+                                    DamageDelivery::ground_or_environment,
+                                    hazard.center,
                                     FeedbackLevel::heavy);
                 hazard.player_latched = true;
                 hazard.damage_cooldown_ticks = hazard.damage_interval_ticks;

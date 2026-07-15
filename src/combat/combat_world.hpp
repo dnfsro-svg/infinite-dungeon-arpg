@@ -3,6 +3,7 @@
 #include "combat/combat_types.hpp"
 #include "combat/input_buffer.hpp"
 #include "combat/monster_pool.hpp"
+#include "core/deterministic_rng.hpp"
 #include "modifiers/effect_set.hpp"
 #include "core/bounded_queue.hpp"
 
@@ -25,6 +26,7 @@ public:
     [[nodiscard]] bool queue_action(Action action) noexcept;
     void tick(MovementInput movement) noexcept;
     void reset() noexcept;
+    void apply_player_build(PlayerCombatBuild build) noexcept;
     [[nodiscard]] bool load_wave(
         const EncounterWave& wave,
         bool reset_player_health = true) noexcept;
@@ -47,7 +49,12 @@ private:
         int max_hp{};
         int barrier{};
         int max_barrier{};
-        std::array<int, modifiers::kElementCount> resistance{};
+        std::array<std::int32_t, modifiers::kElementCount> damage_reduction{};
+        std::array<std::int32_t, modifiers::kElementCount> damage_reduction_cap{};
+        std::int64_t armor{};
+        std::int64_t evasion{};
+        std::int32_t armor_reduction_bp{};
+        std::int32_t evasion_rate_bp{};
         std::uint16_t hurt_ticks{};
         std::uint16_t invulnerability_ticks{};
     };
@@ -76,6 +83,7 @@ private:
     void resolve_attack_hits() noexcept;
     void apply_player_damage(
         DamagePacket damage,
+        DamageDelivery delivery,
         Vec3 source_position,
         FeedbackLevel feedback) noexcept;
     void apply_player_damage(
@@ -163,6 +171,7 @@ private:
     std::uint32_t projectile_invalid_owner_count_{};
     std::uint32_t hazard_saturation_count_{};
     std::uint32_t hazard_invalid_owner_count_{};
+    core::DeterministicRng evasion_rng_{0};
 };
 
 }  // namespace arpg::combat
