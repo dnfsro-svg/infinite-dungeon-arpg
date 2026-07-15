@@ -10,6 +10,7 @@ add_library(arpg_combat STATIC
     monster_ai_melee.cpp
     monster_ai_ranged.cpp
     monster_ai_special.cpp
+    monster_affix_catalog.cpp
     monster_catalog.cpp
     monster_pool.cpp
     player_simulation.cpp

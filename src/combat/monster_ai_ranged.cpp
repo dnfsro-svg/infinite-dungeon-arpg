@@ -20,10 +20,6 @@ void clamp_position(Vec3& position) noexcept {
     position.y = std::clamp(position.y, room_bounds::min_y, room_bounds::max_y);
 }
 
-bool has_tag(const MonsterDefinition& definition, MonsterTag tag) noexcept {
-    return (definition.tags & static_cast<std::uint16_t>(tag)) != 0U;
-}
-
 bool move_to_preferred_range(
     MonsterRuntime& monster,
     const MonsterDefinition& definition,

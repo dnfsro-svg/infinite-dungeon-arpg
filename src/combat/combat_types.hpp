@@ -114,6 +114,7 @@ enum class MonsterTag : std::uint16_t {
     high_priority = 1U << 3U,
     ground_hazard = 1U << 4U,
     direct_target = 1U << 5U,
+    projectile_capable = 1U << 6U,
 };
 
 struct MonsterDefinition final {
@@ -136,6 +137,11 @@ struct MonsterDefinition final {
     int shield_points{};
     std::uint16_t shield_duration_ticks{};
 };
+
+[[nodiscard]] constexpr bool has_tag(
+    const MonsterDefinition& definition, MonsterTag value) noexcept {
+    return (definition.tags & static_cast<std::uint16_t>(value)) != 0U;
+}
 
 inline constexpr std::size_t kMonsterCapacity = 96;
 inline constexpr std::size_t kProjectileCapacity = 384;

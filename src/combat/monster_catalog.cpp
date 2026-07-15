@@ -58,7 +58,7 @@ constexpr std::array<MonsterDefinition, 8> kCatalog{{
      elemental_damage(modifiers::DamageType::water, 0), 0.0F, 0,
      FeedbackLevel::medium, 90, 120},
     {MonsterId::lightning_shooter, 2, tags(MonsterTag::ranged,
-         MonsterTag::direct_target), 3, 240, 0, 0.035F, 4.5F,
+         MonsterTag::direct_target, MonsterTag::projectile_capable), 3, 240, 0, 0.035F, 4.5F,
      30, 1, 20, 75,
      elemental_damage(modifiers::DamageType::lightning, 40), 0.14F, 0,
      FeedbackLevel::medium},
@@ -77,12 +77,6 @@ constexpr std::array<MonsterDefinition, 8> kCatalog{{
      45, 1, 25, 120, elemental_damage(modifiers::DamageType::chaos, 35),
      0.0F, 180, FeedbackLevel::heavy},
 }};
-
-constexpr bool has_tag(
-    const MonsterDefinition& definition,
-    MonsterTag value) noexcept {
-    return (definition.tags & tag(value)) != 0U;
-}
 
 constexpr bool validate_catalog() noexcept {
     bool has_direct_target = false;
