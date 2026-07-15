@@ -7,7 +7,7 @@ namespace arpg::persistence::detail {
 
 TransactionResult write_transaction(const SaveStoreConfig& config,
     SaveSlot active, const checkpoint::DungeonRunState& expected,
-    const std::array<std::uint8_t, kEncodedCheckpointSize>& encoded_state) noexcept {
+    const std::vector<std::uint8_t>& encoded_state) noexcept {
     bool published = false;
     const auto target = active == SaveSlot::a ? SaveSlot::b : SaveSlot::a;
     try {

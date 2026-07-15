@@ -14,6 +14,7 @@ namespace {
 
 namespace checkpoint = arpg::dungeon::checkpoint;
 namespace persistence = arpg::persistence;
+namespace items = arpg::items;
 
 struct TempDirectory final {
     std::filesystem::path path;
@@ -49,6 +50,25 @@ checkpoint::DungeonRunState make_state(std::uint64_t generation,
     state.current_room.ecology = checkpoint::DungeonElement::water;
     state.last_transition = checkpoint::TransitionKind::none;
     state.last_direction = checkpoint::ExitDirection::none;
+    return state;
+}
+
+items::ItemInstance normal_item(std::uint64_t id) noexcept {
+    items::ItemInstance item{};
+    item.id = id;
+    item.base_id = 1U;
+    item.rarity = items::ItemRarity::normal;
+    item.item_level = 1U;
+    item.required_level = 1U;
+    return item;
+}
+
+checkpoint::DungeonRunState with_items(checkpoint::DungeonRunState state,
+    std::size_t count) {
+    state.item_ownership.items.reserve(count);
+    for (std::size_t index = 0U; index < count; ++index)
+        state.item_ownership.items.push_back(normal_item(index + 1U));
+    state.item_ownership.next_item_sequence = count + 1U;
     return state;
 }
 
@@ -89,10 +109,8 @@ void write_bytes(const std::filesystem::path& path,
 }
 
 std::vector<std::uint8_t> encoded(const checkpoint::DungeonRunState& state) {
-    std::array<std::uint8_t, persistence::kEncodedCheckpointSize> bytes{};
-    const auto ok = persistence::encode_checkpoint(state, bytes);
-    (void)ok;
-    return std::vector<std::uint8_t>(bytes.begin(), bytes.end());
+    const auto bytes = persistence::encode_checkpoint(state);
+    return bytes.has_value() ? *bytes : std::vector<std::uint8_t>{};
 }
 
 bool is_corrupt_archive(const std::filesystem::path& path) noexcept {
@@ -432,6 +450,45 @@ arpg::test::Failure baseline_fault_recovery_selects_recorded_slot_and_generation
     return {};
 }
 
+arpg::test::Failure variable_length_faults_preserve_atomic_slot_semantics() noexcept {
+    struct Expectation final {
+        persistence::SaveFaultPoint point{};
+        std::uint64_t generation{};
+        std::size_t item_count{};
+    };
+    constexpr std::array<Expectation, 7U> kExpectations{{
+        {persistence::SaveFaultPoint::before_temp_write, 31U, 33U},
+        {persistence::SaveFaultPoint::after_temp_write, 31U, 33U},
+        {persistence::SaveFaultPoint::after_temp_validation, 31U, 33U},
+        {persistence::SaveFaultPoint::before_publish, 31U, 33U},
+        {persistence::SaveFaultPoint::after_publish, 32U, 1U},
+        {persistence::SaveFaultPoint::final_scan_a, 32U, 1U},
+        {persistence::SaveFaultPoint::final_scan_b, 32U, 1U},
+    }};
+
+    for (const auto& expectation : kExpectations) {
+        TempDirectory directory;
+        auto healthy = make_store(directory.path);
+        const auto large = with_items(make_state(31U, 31U), 33U);
+        ARPG_REQUIRE(healthy.commit(large).state
+            == persistence::SaveCommitState::committed);
+
+        FaultContext fault{expectation.point, false, false};
+        auto faulty = make_store(directory.path, &fault);
+        const auto small = with_items(make_state(32U, 32U), 1U);
+        static_cast<void>(faulty.commit(small));
+        const auto loaded = faulty.load();
+        ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::ready);
+        ARPG_REQUIRE(loaded.checkpoint.commit_generation
+            == expectation.generation);
+        ARPG_REQUIRE(loaded.checkpoint.item_ownership.items.size()
+            == expectation.item_count);
+        ARPG_REQUIRE(loaded.checkpoint.item_ownership.next_item_sequence
+            == expectation.item_count + 1U);
+    }
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"before temp write is not committed and old bytes unchanged", &before_temp_write_is_not_committed_and_old_bytes_unchanged},
     {"after temp validation before publish is not committed", &after_temp_validation_before_publish_is_not_committed},
@@ -441,6 +498,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"conflicting slots are archived before new generation", &conflicting_slots_are_archived_before_new_generation},
     {"archive failure blocks and preserves corrupt files", &archive_failure_blocks_and_preserves_corrupt_files},
     {"baseline fault recovery selects recorded slot and generation", &baseline_fault_recovery_selects_recorded_slot_and_generation},
+    {"variable length faults preserve atomic slot semantics", &variable_length_faults_preserve_atomic_slot_semantics},
 };
 
 }  // namespace

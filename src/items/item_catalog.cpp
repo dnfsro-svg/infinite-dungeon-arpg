@@ -285,7 +285,7 @@ bool validate_item(const ItemInstance& item) noexcept {
 }
 
 bool validate_ownership(const ItemOwnershipState& state) noexcept {
-    if (state.items.size() > 65535U)
+    if (state.next_item_sequence == 0U || state.items.size() > 65535U)
         return false;
 
     const std::size_t item_count = state.items.size();

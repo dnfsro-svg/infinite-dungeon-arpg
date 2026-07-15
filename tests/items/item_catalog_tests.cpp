@@ -464,6 +464,14 @@ arpg::test::Failure ownership_enforces_exact_capacity_boundary() noexcept {
     return {};
 }
 
+arpg::test::Failure ownership_requires_nonzero_next_item_sequence() noexcept {
+    ItemOwnershipState state{};
+    ARPG_REQUIRE(validate_ownership(state));
+    state.next_item_sequence = 0U;
+    ARPG_REQUIRE(!validate_ownership(state));
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"stable item type defaults", &stable_item_types_have_required_defaults},
     {"persistent tier constants", &tier_constants_use_persistent_tier_encoding},
@@ -482,6 +490,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"ownership identity and equipment validation",
         &ownership_enforces_ids_and_equipment_references},
     {"ownership capacity", &ownership_enforces_exact_capacity_boundary},
+    {"ownership sequence", &ownership_requires_nonzero_next_item_sequence},
 };
 
 }  // namespace

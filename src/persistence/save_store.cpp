@@ -4,7 +4,6 @@
 #include "persistence/save_paths.hpp"
 #include "persistence/save_store_detail.hpp"
 
-#include <array>
 #include <system_error>
 #include <utility>
 
@@ -32,8 +31,8 @@ SaveLoadResult SaveStore::load() noexcept {
 SaveCommitResult SaveStore::commit(
     const checkpoint::DungeonRunState& expected) noexcept {
     try {
-        std::array<std::uint8_t, kEncodedCheckpointSize> encoded_state{};
-        if (!encode_checkpoint(expected, encoded_state)) {
+        const auto encoded_state = encode_checkpoint(expected);
+        if (!encoded_state.has_value()) {
             return detail::commit_failure(SaveCommitState::not_committed,
                 SaveError::invalid_checkpoint);
         }
@@ -59,7 +58,7 @@ SaveCommitResult SaveStore::commit(
         const auto active = loaded.active_slot;
         const auto target = active == SaveSlot::a ? SaveSlot::b : SaveSlot::a;
         const auto transaction = detail::write_transaction(
-            config_, active, expected, encoded_state);
+            config_, active, expected, *encoded_state);
         if (!transaction.needs_final_scan) {
             return transaction.result;
         }
@@ -74,8 +73,8 @@ SaveCommitResult SaveStore::commit(
 SaveLoadResult SaveStore::archive_invalid_and_create(
     const checkpoint::DungeonRunState& initial) noexcept {
     try {
-        std::array<std::uint8_t, kEncodedCheckpointSize> bytes{};
-        if (!encode_checkpoint(initial, bytes)) {
+        const auto bytes = encode_checkpoint(initial);
+        if (!bytes.has_value()) {
             return {SaveLoadState::blocked, SaveError::invalid_checkpoint,
                 SaveSlot::none, false, {}};
         }

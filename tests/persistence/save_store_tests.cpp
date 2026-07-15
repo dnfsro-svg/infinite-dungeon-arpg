@@ -2,6 +2,7 @@
 
 #include "persistence/checkpoint_codec.hpp"
 #include "persistence/save_store.hpp"
+#include "persistence/save_store_detail.hpp"
 
 #include <array>
 #include <cstdint>
@@ -16,14 +17,14 @@ namespace {
 
 namespace checkpoint = arpg::dungeon::checkpoint;
 namespace persistence = arpg::persistence;
+namespace items = arpg::items;
 
-constexpr persistence::SaveLoadResult kSaveLoadFieldOrderProbe{
+[[maybe_unused]] const persistence::SaveLoadResult kSaveLoadFieldOrderProbe{
     persistence::SaveLoadState::ready,
     persistence::SaveError::none,
     persistence::SaveSlot::a,
     true,
     {}};
-static_assert(kSaveLoadFieldOrderProbe.recovered);
 
 struct TempDirectory final {
     std::filesystem::path path;
@@ -60,6 +61,26 @@ checkpoint::DungeonRunState make_state(std::uint64_t generation,
     state.current_room.ecology = checkpoint::DungeonElement::fire;
     state.last_transition = checkpoint::TransitionKind::none;
     state.last_direction = checkpoint::ExitDirection::none;
+    return state;
+}
+
+items::ItemInstance normal_item(std::uint64_t id,
+    std::uint8_t base_id = 1U) noexcept {
+    items::ItemInstance item{};
+    item.id = id;
+    item.base_id = base_id;
+    item.rarity = items::ItemRarity::normal;
+    item.item_level = 1U;
+    item.required_level = 1U;
+    return item;
+}
+
+checkpoint::DungeonRunState with_items(checkpoint::DungeonRunState state,
+    std::size_t count) {
+    state.item_ownership.items.reserve(count);
+    for (std::size_t index = 0U; index < count; ++index)
+        state.item_ownership.items.push_back(normal_item(index + 1U));
+    state.item_ownership.next_item_sequence = count + 1U;
     return state;
 }
 
@@ -100,10 +121,8 @@ void write_bytes(const std::filesystem::path& path,
 }
 
 std::vector<std::uint8_t> encoded(const checkpoint::DungeonRunState& state) {
-    std::array<std::uint8_t, persistence::kEncodedCheckpointSize> bytes{};
-    const auto ok = persistence::encode_checkpoint(state, bytes);
-    (void)ok;
-    return std::vector<std::uint8_t>(bytes.begin(), bytes.end());
+    const auto bytes = persistence::encode_checkpoint(state);
+    return bytes.has_value() ? *bytes : std::vector<std::uint8_t>{};
 }
 
 bool has_only_allowed_files(const std::filesystem::path& directory) noexcept {
@@ -235,14 +254,11 @@ arpg::test::Failure conflicting_equal_generation_requires_recovery() noexcept {
         directory.path / "run_b.sav",
         std::filesystem::copy_options::overwrite_existing, error);
     ARPG_REQUIRE(!error);
-    std::array<std::uint8_t, persistence::kEncodedCheckpointSize> bytes{};
-    std::ifstream input(directory.path / "run_b.sav", std::ios::binary);
-    input.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
     auto altered = make_state(1U, 12U);
     altered.progression = {2U, 0U, 1U, 1U};
-    ARPG_REQUIRE(persistence::encode_checkpoint(altered, bytes));
-    write_bytes(directory.path / "run_b.sav",
-        std::vector<std::uint8_t>(bytes.begin(), bytes.end()));
+    const auto encoded_altered = persistence::encode_checkpoint(altered);
+    ARPG_REQUIRE(encoded_altered.has_value());
+    write_bytes(directory.path / "run_b.sav", *encoded_altered);
     const auto loaded = store.load();
     ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::recovery_required);
     ARPG_REQUIRE(loaded.error == persistence::SaveError::conflicting_slots);
@@ -264,6 +280,63 @@ arpg::test::Failure temp_files_do_not_participate_in_load() noexcept {
     return {};
 }
 
+arpg::test::Failure variable_length_slots_rotate_large_then_small() noexcept {
+    TempDirectory directory;
+    auto store = make_store(directory.path);
+    const auto large = with_items(make_state(1U, 20U), 257U);
+    ARPG_REQUIRE(store.commit(large).state
+        == persistence::SaveCommitState::committed);
+    ARPG_REQUIRE(std::filesystem::file_size(directory.path / "run_a.sav")
+        == 204U + 40U * 257U);
+
+    const auto small = with_items(make_state(2U, 21U), 1U);
+    ARPG_REQUIRE(store.commit(small).state
+        == persistence::SaveCommitState::committed);
+    ARPG_REQUIRE(std::filesystem::file_size(directory.path / "run_b.sav")
+        == 244U);
+    const auto loaded = store.load();
+    ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::ready);
+    ARPG_REQUIRE(loaded.active_slot == persistence::SaveSlot::b);
+    ARPG_REQUIRE(loaded.checkpoint.commit_generation == 2U);
+    ARPG_REQUIRE(loaded.checkpoint.item_ownership.items.size() == 1U);
+    ARPG_REQUIRE(loaded.checkpoint.item_ownership.items[0].id == 1U);
+    return {};
+}
+
+arpg::test::Failure same_state_includes_all_ownership_bytes_and_order() noexcept {
+    auto lhs = with_items(make_state(9U, 22U), 2U);
+    auto rhs = lhs;
+    std::swap(rhs.item_ownership.items[0], rhs.item_ownership.items[1]);
+    ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+    rhs = lhs;
+    rhs.item_ownership.items[0].reserved[2] = 1U;
+    ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+    rhs = lhs;
+    rhs.item_ownership.items[0].affixes[5].variant = 1U;
+    ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+    rhs = lhs;
+    rhs.item_ownership.equipment.equipped_ids[0] = 1U;
+    ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+    rhs = lhs;
+    rhs.item_ownership.claimed_drop_bits[2] = 8U;
+    ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+    rhs = lhs;
+    ++rhs.item_ownership.next_item_sequence;
+    ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+
+    TempDirectory directory;
+    write_bytes(directory.path / "run_a.sav", encoded(lhs));
+    rhs = lhs;
+    rhs.item_ownership.items[0].id = 99U;
+    rhs.item_ownership.next_item_sequence = 100U;
+    write_bytes(directory.path / "run_b.sav", encoded(rhs));
+    auto store = make_store(directory.path);
+    const auto loaded = store.load();
+    ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::recovery_required);
+    ARPG_REQUIRE(loaded.error == persistence::SaveError::conflicting_slots);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"empty commit and reload", &empty_commit_and_reload},
     {"highest generation wins and alternates", &highest_generation_wins_and_alternates},
@@ -272,6 +345,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"damaged slot is archived before two saves", &damaged_slot_is_archived_before_two_saves},
     {"conflicting equal generation requires recovery", &conflicting_equal_generation_requires_recovery},
     {"temp files do not participate in load", &temp_files_do_not_participate_in_load},
+    {"variable length slots rotate large then small", &variable_length_slots_rotate_large_then_small},
+    {"same state includes ownership bytes and order", &same_state_includes_all_ownership_bytes_and_order},
 };
 
 }  // namespace

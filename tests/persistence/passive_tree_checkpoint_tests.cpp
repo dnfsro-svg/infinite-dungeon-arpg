@@ -44,10 +44,8 @@ checkpoint::DungeonRunState make_fixture() noexcept {
 }
 
 void refresh_crc(std::uint8_t* bytes, std::size_t payload_size) noexcept {
-    std::array<std::uint8_t, 128U> covered{};
-    std::copy_n(bytes + 8U, 20U, covered.begin());
-    std::copy_n(bytes + 32U, payload_size, covered.begin() + 20U);
-    const auto checksum = persistence::crc32(covered.data(), 20U + payload_size);
+    auto checksum = persistence::crc32_update(0U, bytes + 8U, 20U);
+    checksum = persistence::crc32_update(checksum, bytes + 32U, payload_size);
     for (std::size_t index = 0U; index < 4U; ++index) {
         bytes[28U + index] = static_cast<std::uint8_t>(
             checksum >> (index * 8U));
@@ -59,10 +57,11 @@ legacy_format_two_fixture() noexcept {
     checkpoint::DungeonRunState state = make_fixture();
     state.progression = {7U, 0U, 6U, 6U};
     state.passive_tree.allocated_bits = 1ULL;
-    std::array<std::uint8_t, persistence::kEncodedCheckpointSize> current{};
-    static_cast<void>(persistence::encode_checkpoint(state, current));
+    const auto current = persistence::encode_checkpoint(state);
+    if (!current.has_value())
+        return {};
     std::array<std::uint8_t, persistence::kPreviousEncodedCheckpointSize> legacy{};
-    std::copy_n(current.begin(), legacy.size(), legacy.begin());
+    std::copy_n(current->begin(), legacy.size(), legacy.begin());
     legacy[0U] = 'I'; legacy[1U] = 'A'; legacy[2U] = 'R'; legacy[3U] = 'P';
     legacy[4U] = 'G'; legacy[5U] = 'S'; legacy[6U] = '0'; legacy[7U] = '3';
     legacy[8U] = 2U;
@@ -77,12 +76,12 @@ legacy_format_two_fixture() noexcept {
 
 arpg::test::Failure passive_bits_round_trip_at_little_endian_offset_106() noexcept {
     const auto state = make_fixture();
-    std::array<std::uint8_t, persistence::kEncodedCheckpointSize> bytes{};
-    ARPG_REQUIRE(persistence::encode_checkpoint(state, bytes));
-    ARPG_REQUIRE(bytes.size() == 120U);
-    ARPG_REQUIRE(bytes[0U] == 'I' && bytes[7U] == '4');
-    ARPG_REQUIRE(bytes[106U] == 0x01U && bytes[107U] == 0x07U);
-    const auto decoded = persistence::decode_checkpoint(bytes.data(), bytes.size());
+    const auto bytes = persistence::encode_checkpoint(state);
+    ARPG_REQUIRE(bytes.has_value());
+    ARPG_REQUIRE(bytes->size() == 204U);
+    ARPG_REQUIRE((*bytes)[0U] == 'I' && (*bytes)[7U] == '5');
+    ARPG_REQUIRE((*bytes)[106U] == 0x01U && (*bytes)[107U] == 0x07U);
+    const auto decoded = persistence::decode_checkpoint(bytes->data(), bytes->size());
     ARPG_REQUIRE(decoded.error == persistence::CodecError::none);
     ARPG_REQUIRE(decoded.state.passive_tree.allocated_bits
         == state.passive_tree.allocated_bits);
@@ -94,6 +93,10 @@ arpg::test::Failure format_two_migrates_to_start_only_passive_tree() noexcept {
     const auto decoded = persistence::decode_checkpoint(bytes.data(), bytes.size());
     ARPG_REQUIRE(decoded.error == persistence::CodecError::none);
     ARPG_REQUIRE(decoded.state.passive_tree.allocated_bits == 1ULL);
+    ARPG_REQUIRE(decoded.state.item_ownership.items.empty());
+    ARPG_REQUIRE(decoded.state.item_ownership.equipment.equipped_ids
+        == arpg::items::EquipmentState{}.equipped_ids);
+    ARPG_REQUIRE(decoded.state.item_ownership.next_item_sequence == 1U);
     return {};
 }
 
@@ -104,21 +107,21 @@ arpg::test::Failure invalid_passive_bits_are_rejected() noexcept {
              [](std::uint8_t* bytes) noexcept {
                  bytes[106U] = 0x01U; bytes[107U] = 0x08U;
              }}) {
-        std::array<std::uint8_t, persistence::kEncodedCheckpointSize> bytes{};
-        ARPG_REQUIRE(persistence::encode_checkpoint(make_fixture(), bytes));
-        mutate(bytes.data());
-        refresh_crc(bytes.data(), 88U);
-        ARPG_REQUIRE(persistence::decode_checkpoint(bytes.data(), bytes.size()).error
+        auto bytes = persistence::encode_checkpoint(make_fixture());
+        ARPG_REQUIRE(bytes.has_value());
+        mutate(bytes->data());
+        refresh_crc(bytes->data(), 172U);
+        ARPG_REQUIRE(persistence::decode_checkpoint(bytes->data(), bytes->size()).error
             == persistence::CodecError::invalid_state);
     }
     return {};
 }
 
 arpg::test::Failure crc_covers_passive_bits() noexcept {
-    std::array<std::uint8_t, persistence::kEncodedCheckpointSize> bytes{};
-    ARPG_REQUIRE(persistence::encode_checkpoint(make_fixture(), bytes));
-    bytes[106U] ^= 0x08U;
-    ARPG_REQUIRE(persistence::decode_checkpoint(bytes.data(), bytes.size()).error
+    auto bytes = persistence::encode_checkpoint(make_fixture());
+    ARPG_REQUIRE(bytes.has_value());
+    (*bytes)[106U] ^= 0x08U;
+    ARPG_REQUIRE(persistence::decode_checkpoint(bytes->data(), bytes->size()).error
         == persistence::CodecError::bad_crc);
     return {};
 }
