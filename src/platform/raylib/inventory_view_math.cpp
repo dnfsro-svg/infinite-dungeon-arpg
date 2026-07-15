@@ -362,13 +362,19 @@ ItemAttributeLabel item_attribute_label(items::ItemEffectKind effect,
         default: name = "Element DR cap"; break;
         }
     }
-    const bool percent = operation != modifiers::ModifierOperation::flat
+    const bool semantic_increased = effect
+        == items::ItemEffectKind::local_weapon_physical_increased;
+    const bool semantic_percent = semantic_increased
+        || effect == items::ItemEffectKind::slot_dependent_attack_speed;
+    const bool percent = semantic_percent
+        || operation != modifiers::ModifierOperation::flat
         || percent_stat(stat)
         || effect == items::ItemEffectKind::all_element_damage_reduction
         || effect
             == items::ItemEffectKind::variant_element_damage_reduction_cap;
     const char* qualifier = "";
-    if (operation == modifiers::ModifierOperation::increased) {
+    if (semantic_increased
+        || operation == modifiers::ModifierOperation::increased) {
         qualifier = " inc";
     } else if (operation == modifiers::ModifierOperation::more) {
         qualifier = " more";

@@ -265,15 +265,34 @@ test::Failure view_cache_never_rescans_stable_maximum_inventory() noexcept {
 }
 
 test::Failure attribute_labels_are_human_readable_and_scoped() noexcept {
+    const items::AffixDefinition* const physical =
+        items::affix_definition(2U);
+    ARPG_REQUIRE(physical != nullptr);
     const auto local = platform::item_attribute_label(
-        items::ItemEffectKind::local_weapon_physical_increased,
-        modifiers::StatId::physical_flat_damage,
-        modifiers::ModifierOperation::increased,
+        physical->effect, physical->stat, physical->operation,
         items::ItemSlot::weapon, 0xFFU);
     ARPG_REQUIRE(std::string_view{local.name} == "Weapon physical");
     ARPG_REQUIRE(std::string_view{local.scope} == "LOCAL");
     ARPG_REQUIRE(std::string_view{local.suffix} == "%");
     ARPG_REQUIRE(std::string_view{local.qualifier} == " inc");
+    ARPG_REQUIRE(test::near(platform::item_attribute_display_value(
+        physical->values[7], local), 42.0));
+
+    const items::AffixDefinition* const attack_speed =
+        items::affix_definition(101U);
+    ARPG_REQUIRE(attack_speed != nullptr);
+    const auto weapon_speed = platform::item_attribute_label(
+        attack_speed->effect, attack_speed->stat, attack_speed->operation,
+        items::ItemSlot::weapon, 0xFFU);
+    const auto glove_speed = platform::item_attribute_label(
+        attack_speed->effect, attack_speed->stat, attack_speed->operation,
+        items::ItemSlot::gloves, 0xFFU);
+    ARPG_REQUIRE(std::string_view{weapon_speed.scope} == "LOCAL");
+    ARPG_REQUIRE(std::string_view{glove_speed.scope} == "GLOBAL");
+    ARPG_REQUIRE(std::string_view{weapon_speed.suffix} == "%");
+    ARPG_REQUIRE(std::string_view{glove_speed.suffix} == "%");
+    ARPG_REQUIRE(test::near(platform::item_attribute_display_value(
+        attack_speed->values[7], weapon_speed), 12.0));
 
     const auto global = platform::item_attribute_label(
         items::ItemEffectKind::global_modifier,
@@ -298,6 +317,44 @@ test::Failure attribute_labels_are_human_readable_and_scoped() noexcept {
         platform::item_attribute_display_value(2000, variant), 20.0));
     ARPG_REQUIRE(test::near(
         platform::item_attribute_display_value(46, global), 46.0));
+    return {};
+}
+
+test::Failure all_catalog_affixes_use_semantic_value_units() noexcept {
+    constexpr std::array<std::uint16_t, 24> kIds{{
+        1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U, 9U, 10U, 11U, 12U,
+        101U, 102U, 103U, 104U, 105U, 106U, 107U, 108U, 109U,
+        110U, 111U, 112U,
+    }};
+    constexpr std::array<bool, 24> kPercent{{
+        false, true, false, false, false, false,
+        true, true, true, true, false, false,
+        true, true, false, false, true, true,
+        true, true, true, true, true, true,
+    }};
+    for (std::size_t index = 0U; index < kIds.size(); ++index) {
+        const items::AffixDefinition* const affix =
+            items::affix_definition(kIds[index]);
+        ARPG_REQUIRE(affix != nullptr);
+        items::ItemSlot slot = items::ItemSlot::weapon;
+        while ((affix->slot_mask & items::slot_bit(slot)) == 0U) {
+            slot = static_cast<items::ItemSlot>(
+                static_cast<std::uint8_t>(slot) + 1U);
+        }
+        const auto label = platform::item_attribute_label(
+            affix->effect, affix->stat, affix->operation, slot,
+            affix->id == 112U ? 3U : 0xFFU);
+        ARPG_REQUIRE(label.name != nullptr);
+        ARPG_REQUIRE(std::string_view{label.name} != "Attribute");
+        ARPG_REQUIRE((std::string_view{label.suffix} == "%")
+            == kPercent[index]);
+        const double displayed = platform::item_attribute_display_value(
+            affix->values[7], label);
+        const double expected = kPercent[index]
+            ? static_cast<double>(affix->values[7]) / 100.0
+            : static_cast<double>(affix->values[7]);
+        ARPG_REQUIRE(test::near(displayed, expected));
+    }
     return {};
 }
 
@@ -343,6 +400,8 @@ constexpr test::TestCase kCases[] = {
         &view_cache_never_rescans_stable_maximum_inventory},
     {"inventory readable attribute labels",
         &attribute_labels_are_human_readable_and_scoped},
+    {"inventory catalog attribute units",
+        &all_catalog_affixes_use_semantic_value_units},
     {"inventory detail content boundaries",
         &detail_content_stays_inside_all_required_viewports},
 };
