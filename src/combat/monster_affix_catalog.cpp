@@ -134,8 +134,12 @@ const MonsterAffixCatalog& monster_affix_catalog() noexcept { return kCatalog; }
 
 bool monster_affix_catalog_valid() noexcept { return catalog_valid(kCatalog); }
 
+namespace detail {
+
 bool monster_affix_catalog_valid(const MonsterAffixCatalog& catalog) noexcept {
     return catalog_valid(catalog);
 }
+
+}  // namespace detail
 
 }  // namespace arpg::combat

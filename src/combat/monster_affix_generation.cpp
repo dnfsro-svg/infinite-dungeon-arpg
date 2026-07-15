@@ -10,6 +10,24 @@
 #include <limits>
 
 namespace arpg::combat {
+namespace detail {
+
+[[nodiscard]] bool monster_affix_catalog_valid(
+    const MonsterAffixCatalog& catalog) noexcept;
+[[nodiscard]] std::uint64_t monster_affix_context_seed(
+    std::uint64_t room_seed, std::uint64_t depth,
+    std::uint8_t wave_index, std::uint8_t spawn_index) noexcept;
+[[nodiscard]] std::optional<MonsterAffixSet>
+generate_monster_affixes_with_catalog(
+    std::uint64_t room_seed, std::uint64_t depth,
+    std::uint8_t wave_index, std::uint8_t spawn_index,
+    const MonsterDefinition& monster,
+    const MonsterAffixCatalog& catalog) noexcept;
+[[nodiscard]] std::uint16_t monster_affix_danger_score_with_catalog(
+    const MonsterAffixSet& set,
+    const MonsterAffixCatalog& catalog) noexcept;
+
+}  // namespace detail
 namespace {
 
 struct AffixDepthBand final {
@@ -148,7 +166,7 @@ std::array<std::uint16_t, 3> affix_tier_weights(
     return depth_band(depth).tier_weights;
 }
 
-std::uint64_t monster_affix_context_seed(
+std::uint64_t detail::monster_affix_context_seed(
     std::uint64_t room_seed,
     std::uint64_t depth,
     std::uint8_t wave_index,
@@ -169,9 +187,11 @@ std::optional<MonsterAffixSet> generate_monster_affixes(
     std::uint8_t wave_index,
     std::uint8_t spawn_index,
     const MonsterDefinition& monster) noexcept {
-    return generate_monster_affixes_with_catalog(room_seed, depth, wave_index,
+    return detail::generate_monster_affixes_with_catalog(room_seed, depth, wave_index,
         spawn_index, monster, monster_affix_catalog());
 }
+
+namespace detail {
 
 std::optional<MonsterAffixSet> generate_monster_affixes_with_catalog(
     std::uint64_t room_seed,
@@ -180,7 +200,7 @@ std::optional<MonsterAffixSet> generate_monster_affixes_with_catalog(
     std::uint8_t spawn_index,
     const MonsterDefinition& monster,
     const MonsterAffixCatalog& catalog) noexcept {
-    if (!monster_affix_catalog_valid(catalog)) return std::nullopt;
+    if (!detail::monster_affix_catalog_valid(catalog)) return std::nullopt;
     const MonsterDefinition* const canonical = monster_definition(monster.id);
     if (canonical == nullptr || canonical->tags != monster.tags) {
         return std::nullopt;
@@ -230,15 +250,10 @@ std::optional<MonsterAffixSet> generate_monster_affixes_with_catalog(
     return result;
 }
 
-std::uint16_t monster_affix_danger_score(
-    const MonsterAffixSet& set) noexcept {
-    return monster_affix_danger_score_with_catalog(set, monster_affix_catalog());
-}
-
 std::uint16_t monster_affix_danger_score_with_catalog(
     const MonsterAffixSet& set,
     const MonsterAffixCatalog& catalog) noexcept {
-    if (!monster_affix_catalog_valid(catalog)) return 0U;
+    if (!detail::monster_affix_catalog_valid(catalog)) return 0U;
     if (set.count > set.values.size()) return 0U;
     std::uint16_t score = 0U;
     for (std::size_t index = 0U; index < set.count; ++index) {
@@ -258,4 +273,60 @@ std::uint16_t monster_affix_danger_score_with_catalog(
     return score;
 }
 
+}  // namespace detail
+
+std::uint16_t monster_affix_danger_score(
+    const MonsterAffixSet& set) noexcept {
+    return detail::monster_affix_danger_score_with_catalog(set,
+        monster_affix_catalog());
+}
+
 }  // namespace arpg::combat
+
+namespace arpg::combat::test_support {
+
+bool monster_affix_catalog_valid(const MonsterAffixCatalog& catalog) noexcept {
+    return detail::monster_affix_catalog_valid(catalog);
+}
+
+std::optional<MonsterAffixSet> generate_monster_affixes_with_catalog(
+    std::uint64_t room_seed, std::uint64_t depth,
+    std::uint8_t wave_index, std::uint8_t spawn_index,
+    const MonsterDefinition& monster,
+    const MonsterAffixCatalog& catalog) noexcept {
+    return detail::generate_monster_affixes_with_catalog(room_seed, depth,
+        wave_index, spawn_index, monster, catalog);
+}
+
+std::uint64_t monster_affix_context_seed(
+    std::uint64_t room_seed, std::uint64_t depth,
+    std::uint8_t wave_index, std::uint8_t spawn_index) noexcept {
+    return detail::monster_affix_context_seed(room_seed, depth, wave_index,
+        spawn_index);
+}
+
+std::uint64_t monster_affix_count_seed(
+    std::uint64_t room_seed, std::uint64_t depth,
+    std::uint8_t wave_index, std::uint8_t spawn_index) noexcept {
+    return core::DeterministicRng::derive_stream(
+        detail::monster_affix_context_seed(room_seed, depth, wave_index,
+            spawn_index), kAffixCountDomain).next_u64();
+}
+
+std::uint64_t monster_affix_selection_seed(
+    std::uint64_t room_seed, std::uint64_t depth,
+    std::uint8_t wave_index, std::uint8_t spawn_index) noexcept {
+    return core::DeterministicRng::derive_stream(
+        detail::monster_affix_context_seed(room_seed, depth, wave_index,
+            spawn_index), kAffixSelectionDomain).next_u64();
+}
+
+std::uint64_t monster_affix_tier_seed(
+    std::uint64_t room_seed, std::uint64_t depth,
+    std::uint8_t wave_index, std::uint8_t spawn_index) noexcept {
+    return core::DeterministicRng::derive_stream(
+        detail::monster_affix_context_seed(room_seed, depth, wave_index,
+            spawn_index), kAffixTierDomain).next_u64();
+}
+
+}  // namespace arpg::combat::test_support

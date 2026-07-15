@@ -1,6 +1,5 @@
 #pragma once
 
-#include "combat/monster_affix_catalog.hpp"
 #include "combat/combat_types.hpp"
 #include "dungeon/dungeon_rules.hpp"
 
@@ -27,10 +26,6 @@ struct EncounterPlanResult final {
 [[nodiscard]] bool encounter_plan_legal(
     const RoomEncounterPlan& plan,
     const EncounterDirectorConfig& config) noexcept;
-[[nodiscard]] bool encounter_plan_legal_with_affix_catalog(
-    const RoomEncounterPlan& plan,
-    const EncounterDirectorConfig& config,
-    const combat::MonsterAffixCatalog& catalog) noexcept;
 
 [[nodiscard]] EncounterPlanResult build_encounter_plan(
     std::uint64_t room_seed,

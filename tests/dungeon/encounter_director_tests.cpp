@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 
+#include "../combat/monster_affix_test_support.hpp"
 #include "combat/monster_catalog.hpp"
 #include "combat/monster_affix_catalog.hpp"
 #include "combat/monster_affix_generation.hpp"
@@ -333,14 +334,14 @@ arpg::test::Failure mutually_conflicting_affixes_are_rejected_by_plan_legality()
     catalog[static_cast<std::size_t>(MonsterAffixId::mighty)].conflict_mask =
         static_cast<std::uint16_t>(1U << static_cast<std::uint8_t>(
             MonsterAffixId::frenzy));
-    ARPG_REQUIRE(arpg::combat::monster_affix_catalog_valid(catalog));
-    ARPG_REQUIRE(!encounter_plan_legal_with_affix_catalog(plan,
+    ARPG_REQUIRE(arpg::combat::test_support::monster_affix_catalog_valid(catalog));
+    ARPG_REQUIRE(!arpg::dungeon::test_support::encounter_plan_legal_with_affix_catalog(plan,
         EncounterDirectorConfig{}, catalog));
     const auto first = plan.waves[0].spawns[0].affixes.values[0];
     plan.waves[0].spawns[0].affixes.values[0] =
         plan.waves[0].spawns[0].affixes.values[1];
     plan.waves[0].spawns[0].affixes.values[1] = first;
-    ARPG_REQUIRE(!encounter_plan_legal_with_affix_catalog(plan,
+    ARPG_REQUIRE(!arpg::dungeon::test_support::encounter_plan_legal_with_affix_catalog(plan,
         EncounterDirectorConfig{}, catalog));
     return {};
 }

@@ -17,8 +17,22 @@ namespace arpg::dungeon::detail {
 [[nodiscard]] std::uint8_t compute_encounter_budget(
     std::uint64_t depth,
     const EncounterDirectorConfig& config) noexcept;
+[[nodiscard]] bool encounter_plan_legal_with_affix_catalog(
+    const RoomEncounterPlan& plan,
+    const EncounterDirectorConfig& config,
+    const combat::MonsterAffixCatalog& catalog) noexcept;
 
 }  // namespace arpg::dungeon::detail
+
+namespace arpg::combat::detail {
+
+[[nodiscard]] bool monster_affix_catalog_valid(
+    const MonsterAffixCatalog& catalog) noexcept;
+[[nodiscard]] std::uint16_t monster_affix_danger_score_with_catalog(
+    const MonsterAffixSet& set,
+    const MonsterAffixCatalog& catalog) noexcept;
+
+}  // namespace arpg::combat::detail
 
 namespace arpg::dungeon {
 namespace {
@@ -260,7 +274,8 @@ void fill_wave(
             }
         }
     }
-    return combat::monster_affix_danger_score_with_catalog(set, catalog) <= 27U;
+    return combat::detail::monster_affix_danger_score_with_catalog(set, catalog)
+        <= 27U;
 }
 
 [[nodiscard]] bool apply_generated_affixes(
@@ -295,11 +310,11 @@ std::uint8_t encounter_budget(
     return detail::compute_encounter_budget(depth, config);
 }
 
-bool encounter_plan_legal_with_affix_catalog(
+bool detail::encounter_plan_legal_with_affix_catalog(
     const RoomEncounterPlan& plan,
     const EncounterDirectorConfig& config,
     const combat::MonsterAffixCatalog& catalog) noexcept {
-    if (!combat::monster_affix_catalog_valid(catalog)
+    if (!combat::detail::monster_affix_catalog_valid(catalog)
             || validate_encounter_director_config(config) != DungeonFault::none
             || plan.wave_count == 0U
             || plan.wave_count > plan.waves.size()
@@ -371,7 +386,7 @@ bool encounter_plan_legal_with_affix_catalog(
 bool encounter_plan_legal(
     const RoomEncounterPlan& plan,
     const EncounterDirectorConfig& config) noexcept {
-    return encounter_plan_legal_with_affix_catalog(plan, config,
+    return detail::encounter_plan_legal_with_affix_catalog(plan, config,
         combat::monster_affix_catalog());
 }
 
@@ -423,3 +438,14 @@ EncounterPlanResult build_encounter_plan(
 }
 
 }  // namespace arpg::dungeon
+
+namespace arpg::dungeon::test_support {
+
+bool encounter_plan_legal_with_affix_catalog(
+    const RoomEncounterPlan& plan,
+    const EncounterDirectorConfig& config,
+    const combat::MonsterAffixCatalog& catalog) noexcept {
+    return detail::encounter_plan_legal_with_affix_catalog(plan, config, catalog);
+}
+
+}  // namespace arpg::dungeon::test_support

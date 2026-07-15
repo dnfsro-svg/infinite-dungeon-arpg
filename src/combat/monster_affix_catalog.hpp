@@ -42,7 +42,5 @@ using MonsterAffixCatalog = std::array<MonsterAffixDefinition,
     MonsterAffixId id) noexcept;
 [[nodiscard]] const MonsterAffixCatalog& monster_affix_catalog() noexcept;
 [[nodiscard]] bool monster_affix_catalog_valid() noexcept;
-[[nodiscard]] bool monster_affix_catalog_valid(
-    const MonsterAffixCatalog& catalog) noexcept;
 
 }  // namespace arpg::combat

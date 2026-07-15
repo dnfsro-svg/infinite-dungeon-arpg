@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 
+#include "monster_affix_test_support.hpp"
 #include "combat/monster_affix_generation.hpp"
 #include "combat/monster_affix_catalog.hpp"
 #include "combat/monster_catalog.hpp"
@@ -116,27 +117,27 @@ arpg::test::Failure applicability_rules_and_three_high_risk_are_preserved() noex
 arpg::test::Failure malformed_catalogs_are_rejected_explicitly() noexcept {
     MonsterAffixCatalog catalog = monster_affix_catalog();
     catalog[1].id = MonsterAffixId::mighty;
-    ARPG_REQUIRE(!monster_affix_catalog_valid(catalog));
+    ARPG_REQUIRE(!test_support::monster_affix_catalog_valid(catalog));
 
     catalog = monster_affix_catalog();
     catalog[0].weight = 99U;
-    ARPG_REQUIRE(!monster_affix_catalog_valid(catalog));
+    ARPG_REQUIRE(!test_support::monster_affix_catalog_valid(catalog));
 
     catalog = monster_affix_catalog();
     catalog[0].danger = static_cast<MonsterAffixDanger>(3U);
-    ARPG_REQUIRE(!monster_affix_catalog_valid(catalog));
+    ARPG_REQUIRE(!test_support::monster_affix_catalog_valid(catalog));
 
     catalog = monster_affix_catalog();
     catalog[0].required_tags = 0x8000U;
-    ARPG_REQUIRE(!monster_affix_catalog_valid(catalog));
+    ARPG_REQUIRE(!test_support::monster_affix_catalog_valid(catalog));
 
     catalog = monster_affix_catalog();
     catalog[0].conflict_mask = 0x8000U;
-    ARPG_REQUIRE(!monster_affix_catalog_valid(catalog));
+    ARPG_REQUIRE(!test_support::monster_affix_catalog_valid(catalog));
 
     catalog = monster_affix_catalog();
     catalog[0].conflict_mask = 1U;
-    ARPG_REQUIRE(!monster_affix_catalog_valid(catalog));
+    ARPG_REQUIRE(!test_support::monster_affix_catalog_valid(catalog));
     return {};
 }
 
@@ -154,7 +155,7 @@ arpg::test::Failure malformed_catalog_fails_before_zero_affix_sampling() noexcep
         ARPG_REQUIRE(canonical.has_value());
         if (canonical->count == 0U) {
             found_zero_affix_roll = true;
-            ARPG_REQUIRE(!generate_monster_affixes_with_catalog(seed, 3U,
+            ARPG_REQUIRE(!test_support::generate_monster_affixes_with_catalog(seed, 3U,
                 0U, 0U, *monster, malformed).has_value());
         }
     }
@@ -172,7 +173,7 @@ arpg::test::Failure insufficient_candidates_fail_explicitly() noexcept {
         constrained[index].required_tags = static_cast<std::uint16_t>(
             MonsterTag::projectile_capable);
     }
-    ARPG_REQUIRE(monster_affix_catalog_valid(constrained));
+    ARPG_REQUIRE(test_support::monster_affix_catalog_valid(constrained));
 
     bool found_multi_affix_roll = false;
     for (std::uint64_t seed = 0U; seed < 1024U; ++seed) {
@@ -181,7 +182,7 @@ arpg::test::Failure insufficient_candidates_fail_explicitly() noexcept {
         ARPG_REQUIRE(canonical.has_value());
         if (canonical->count >= 2U) {
             found_multi_affix_roll = true;
-            ARPG_REQUIRE(!generate_monster_affixes_with_catalog(seed, 40U,
+            ARPG_REQUIRE(!test_support::generate_monster_affixes_with_catalog(seed, 40U,
                 0U, 0U, *monster, constrained).has_value());
         }
     }
@@ -189,13 +190,27 @@ arpg::test::Failure insufficient_candidates_fail_explicitly() noexcept {
     return {};
 }
 
-arpg::test::Failure context_derivation_has_no_depth_wave_alias() noexcept {
+arpg::test::Failure context_derivation_has_no_depth_wave_or_spawn_alias() noexcept {
     constexpr std::uint64_t kRoomSeed = 0xC0111DEULL;
-    const std::uint64_t base = monster_affix_context_seed(kRoomSeed, 0U,
-        0U, 0U);
-    const std::uint64_t old_alias = monster_affix_context_seed(kRoomSeed,
-        std::uint64_t{1} << 48U, 1U, 0U);
-    ARPG_REQUIRE(base != old_alias);
+    const std::uint64_t base = test_support::monster_affix_context_seed(
+        kRoomSeed, 0U, 0U, 0U);
+    const std::uint64_t depth_wave_alias =
+        test_support::monster_affix_context_seed(kRoomSeed,
+            std::uint64_t{1} << 48U, 1U, 0U);
+    const std::uint64_t depth_spawn_alias =
+        test_support::monster_affix_context_seed(kRoomSeed,
+            std::uint64_t{1} << 56U, 0U, 1U);
+    ARPG_REQUIRE(base != depth_wave_alias);
+    ARPG_REQUIRE(base != depth_spawn_alias);
+    const std::uint64_t count = test_support::monster_affix_count_seed(
+        kRoomSeed, 40U, 1U, 7U);
+    const std::uint64_t selection =
+        test_support::monster_affix_selection_seed(kRoomSeed, 40U, 1U, 7U);
+    const std::uint64_t tier = test_support::monster_affix_tier_seed(
+        kRoomSeed, 40U, 1U, 7U);
+    ARPG_REQUIRE(count != selection);
+    ARPG_REQUIRE(count != tier);
+    ARPG_REQUIRE(selection != tier);
     return {};
 }
 
@@ -217,7 +232,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &malformed_catalog_fails_before_zero_affix_sampling},
     {"insufficient candidates fail explicitly",
         &insufficient_candidates_fail_explicitly},
-    {"context has no depth wave alias", &context_derivation_has_no_depth_wave_alias},
+    {"context has no depth wave or spawn alias",
+        &context_derivation_has_no_depth_wave_or_spawn_alias},
     {"invalid monster fails explicitly", &invalid_monster_definition_fails_explicitly},
 };
 
