@@ -3,6 +3,8 @@
 #include "modifiers/player_modifier_values.hpp"
 #include "passives/passive_tree_catalog.hpp"
 
+#include <cstddef>
+
 namespace arpg::passives {
 
 [[nodiscard]] bool valid_passive_tree_state(
@@ -21,5 +23,11 @@ namespace arpg::passives {
 
 [[nodiscard]] modifiers::PlayerModifierValues evaluate_passive_tree(
     const PassiveTreeState& state) noexcept;
+
+[[nodiscard]] bool append_passive_modifiers(
+    const PassiveTreeState& tree,
+    modifiers::Modifier* output,
+    std::size_t capacity,
+    std::size_t& count) noexcept;
 
 }  // namespace arpg::passives

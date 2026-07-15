@@ -1,6 +1,9 @@
 add_executable(arpg_item_tests
     item_test_main.cpp
-    item_catalog_tests.cpp)
+    item_catalog_tests.cpp
+    item_generation_tests.cpp
+    item_modifier_tests.cpp
+    item_recipe_tests.cpp)
 
 target_include_directories(arpg_item_tests PRIVATE
     "${PROJECT_SOURCE_DIR}/tests/core"

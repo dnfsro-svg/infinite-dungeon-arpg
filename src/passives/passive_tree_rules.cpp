@@ -101,27 +101,42 @@ PassiveTreeResult refund_node(PassiveTreeState& state,
 
 modifiers::PlayerModifierValues evaluate_passive_tree(
     const PassiveTreeState& state) noexcept {
-    if ((state.allocated_bits & 1U) == 0U || !connected(state)) {
+    std::array<modifiers::Modifier, 128U> collected{};
+    std::size_t count = 0U;
+    if (!append_passive_modifiers(
+            state, collected.data(), collected.size(), count)) {
         modifiers::PlayerModifierValues invalid{};
         invalid.valid = false;
         return invalid;
     }
-    std::array<modifiers::Modifier, 128U> modifiers{};
-    std::size_t count = 0U;
-    for (const auto& node : passive_nodes()) {
-        if (!allocated(state, node.id)) continue;
-        for (std::size_t index = 0; index < node.modifier_count; ++index) {
-            if (count >= modifiers.size()) {
-                modifiers::PlayerModifierValues invalid{};
-                invalid.valid = false;
-                return invalid;
-            }
-            modifiers[count++] = node.modifiers[index];
-        }
+    return modifiers::evaluate_player_modifiers(
+        modifiers::ModifierSpan{collected.data(), count});
+}
+
+bool append_passive_modifiers(
+    const PassiveTreeState& tree,
+    modifiers::Modifier* output,
+    std::size_t capacity,
+    std::size_t& count) noexcept {
+    if (count > capacity || (output == nullptr && capacity != 0U)
+        || (tree.allocated_bits & 1U) == 0U || !catalog_is_valid()
+        || !connected(tree)) {
+        return false;
     }
-    const auto result = modifiers::evaluate_player_modifiers(
-        modifiers::ModifierSpan{modifiers.data(), count});
-    return result;
+    std::size_t appended = 0U;
+    for (const auto& node : passive_nodes()) {
+        if (!allocated(tree, node.id)) continue;
+        if (node.modifier_count > capacity - count - appended) return false;
+        appended += node.modifier_count;
+    }
+    std::size_t write = count;
+    for (const auto& node : passive_nodes()) {
+        if (!allocated(tree, node.id)) continue;
+        for (std::size_t index = 0U; index < node.modifier_count; ++index)
+            output[write++] = node.modifiers[index];
+    }
+    count = write;
+    return true;
 }
 
 }  // namespace arpg::passives

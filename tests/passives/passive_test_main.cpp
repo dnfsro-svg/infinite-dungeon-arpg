@@ -6,5 +6,5 @@ arpg::test::TestSuite passive_tree_rules_suite() noexcept;
 int main() {
     const arpg::test::TestSuite suites[] = {
         passive_tree_catalog_suite(), passive_tree_rules_suite()};
-    return arpg::test::run_suites(suites, 9, "stage 7 task 2");
+    return arpg::test::run_suites(suites, 12, "stage 8 task 3");
 }

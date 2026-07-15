@@ -2,6 +2,10 @@
 
 #include "passives/passive_tree_rules.hpp"
 
+#include <array>
+#include <cstddef>
+#include <cstring>
+
 namespace {
 
 using namespace arpg::passives;
@@ -82,12 +86,80 @@ arpg::test::Failure projection_is_deterministic_for_same_bitmap() noexcept {
     return {};
 }
 
+arpg::test::Failure raw_modifiers_append_after_existing_prefix() noexcept {
+    PassiveTreeState state{};
+    state.allocated_bits |= std::uint64_t{1U} << 1U;
+    std::array<arpg::modifiers::Modifier, 4> output{};
+    output[0] = {42U, arpg::modifiers::StatId::armor,
+        arpg::modifiers::ModifierOperation::flat, 123U};
+    const arpg::modifiers::Modifier prefix = output[0];
+    std::size_t count = 1U;
+    ARPG_REQUIRE(append_passive_modifiers(
+        state, output.data(), output.size(), count));
+    ARPG_REQUIRE(count == 2U);
+    ARPG_REQUIRE(std::memcmp(&output[0], &prefix, sizeof(prefix)) == 0);
+    ARPG_REQUIRE(output[1].id == 1003U);
+    ARPG_REQUIRE(output[1].stat == arpg::modifiers::StatId::max_health);
+    ARPG_REQUIRE(output[1].value == 20 * arpg::modifiers::kFixedOne);
+    const auto values = arpg::modifiers::evaluate_player_modifiers(
+        {output.data() + 1U, count - 1U});
+    const auto compatibility = evaluate_passive_tree(state);
+    ARPG_REQUIRE(values.valid && compatibility.valid);
+    ARPG_REQUIRE(values.max_health == compatibility.max_health);
+    return {};
+}
+
+arpg::test::Failure append_failure_is_transactional() noexcept {
+    PassiveTreeState state{};
+    state.allocated_bits |= std::uint64_t{1U} << 1U;
+    std::array<arpg::modifiers::Modifier, 2> output{{
+        {51U, arpg::modifiers::StatId::armor,
+            arpg::modifiers::ModifierOperation::flat, 1U},
+        {52U, arpg::modifiers::StatId::evasion,
+            arpg::modifiers::ModifierOperation::flat, 2U},
+    }};
+    const auto before = output;
+    std::size_t count = output.size();
+    ARPG_REQUIRE(!append_passive_modifiers(
+        state, output.data(), output.size(), count));
+    ARPG_REQUIRE(count == output.size());
+    ARPG_REQUIRE(std::memcmp(output.data(), before.data(),
+        sizeof(output)) == 0);
+
+    count = 1U;
+    ARPG_REQUIRE(!append_passive_modifiers(state, nullptr, 2U, count));
+    ARPG_REQUIRE(count == 1U);
+    PassiveTreeState invalid{};
+    invalid.allocated_bits = std::uint64_t{1U} << 1U;
+    ARPG_REQUIRE(!append_passive_modifiers(
+        invalid, output.data(), output.size(), count));
+    ARPG_REQUIRE(count == 1U);
+    ARPG_REQUIRE(std::memcmp(output.data(), before.data(),
+        sizeof(output)) == 0);
+    return {};
+}
+
+arpg::test::Failure null_zero_capacity_accepts_empty_tree_output() noexcept {
+    PassiveTreeState state{};
+    std::size_t count = 0U;
+    ARPG_REQUIRE(append_passive_modifiers(state, nullptr, 0U, count));
+    ARPG_REQUIRE(count == 0U);
+    count = 1U;
+    ARPG_REQUIRE(!append_passive_modifiers(state, nullptr, 0U, count));
+    ARPG_REQUIRE(count == 1U);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"allocation requires adjacency and connected refund", &allocation_requires_adjacency_and_refund_keeps_connectivity},
     {"duplicate no-points and unknown nodes are rejected", &duplicate_no_points_and_unknown_nodes_are_rejected},
     {"invalid state rejects disconnected bits", &invalid_state_rejects_disconnected_bits},
     {"point conservation is checked", &point_conservation_is_checked},
     {"projection is deterministic", &projection_is_deterministic_for_same_bitmap},
+    {"raw modifier prefix append", &raw_modifiers_append_after_existing_prefix},
+    {"transactional append failure", &append_failure_is_transactional},
+    {"null zero-capacity empty append",
+        &null_zero_capacity_accepts_empty_tree_output},
 };
 
 }  // namespace
