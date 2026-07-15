@@ -162,6 +162,31 @@ arpg::test::Failure detailed_projection_distinguishes_invalid_state() noexcept {
     return {};
 }
 
+arpg::test::Failure equipment_override_projects_without_copying_ownership() noexcept {
+    ItemOwnershipState state{};
+    state.items.push_back(normal_item(41U, 1U));
+    state.items.push_back(normal_item(42U, 2U));
+    const ItemInstance* const original_data = state.items.data();
+    EquipmentState override_equipment{};
+    override_equipment.equipped_ids[0] = 41U;
+    override_equipment.equipped_ids[1] = 42U;
+    const auto projection = project_equipment_detailed(
+        state, override_equipment);
+    ARPG_REQUIRE(projection.status == EquipmentProjectionStatus::valid);
+    ARPG_REQUIRE(projection.projection.valid);
+    ARPG_REQUIRE(projection.projection.weapon_physical == 16);
+    ARPG_REQUIRE(find_modifier(projection.projection,
+        StatId::max_health, ModifierOperation::flat) != nullptr);
+    ARPG_REQUIRE(state.items.data() == original_data);
+    ARPG_REQUIRE(state.equipment.equipped_ids[0] == 0U);
+
+    override_equipment.equipped_ids[2] = 42U;
+    const auto duplicate = project_equipment_detailed(
+        state, override_equipment);
+    ARPG_REQUIRE(duplicate.status == EquipmentProjectionStatus::invalid_state);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"weapon local floor formula", &weapon_local_values_use_frozen_floor_order},
     {"base intrinsic projection",
@@ -172,6 +197,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &projection_validates_ownership_and_ignores_unequipped},
     {"detailed projection status",
         &detailed_projection_distinguishes_invalid_state},
+    {"equipment override projection",
+        &equipment_override_projects_without_copying_ownership},
 };
 
 }  // namespace

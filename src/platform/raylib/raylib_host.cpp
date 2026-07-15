@@ -7,6 +7,7 @@
 #include "core/fixed_step.hpp"
 #include "dungeon_runtime.hpp"
 #include "dungeon_view_math.hpp"
+#include "inventory_renderer.hpp"
 #include "passive_tree_renderer.hpp"
 #include "passive_tree_view_math.hpp"
 #include "persistence/save_paths.hpp"
@@ -112,14 +113,16 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             TraceLog(LOG_WARNING, "failed to use application directory");
         }
         SetWindowMinSize(800, 450);
-        SetExitKey(KEY_ESCAPE);
+        SetExitKey(KEY_NULL);
         core::FixedStepRunner fixed_step;
         CombatRenderer renderer;
         CombatFeedback feedback;
         CombatAudio audio;
+        InventoryRenderer inventory;
         const bool audio_ready = audio.initialize();
         bool draw_debug = false;
         bool passive_overlay_open = false;
+        bool exit_requested = false;
         dungeon::DungeonSnapshot current{};
         dungeon::DungeonSnapshot previous{};
         if (runtime.session() != nullptr) {
@@ -128,11 +131,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             drain_events(*runtime.session(), renderer, feedback, audio);
         }
 
-        while (!WindowShouldClose()) {
+        while (!WindowShouldClose() && !exit_requested) {
             const FrameToggleInput frame_toggles = sample_frame_toggle_input();
-            if (frame_toggles.toggle_debug) {
-                draw_debug = !draw_debug;
-            }
             if (recovery_requested(runtime.state() == DungeonRuntimeState::recovery_required,
                     IsKeyPressed(KEY_N))) {
                 if (runtime.recover_with_new_run() && runtime.session() != nullptr) {
@@ -142,6 +142,14 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 }
             }
             if (runtime.state() == DungeonRuntimeState::recovery_required) {
+                if (inventory.is_open()) {
+                    inventory.close();
+                    fixed_step.clear_accumulator();
+                }
+                if (IsKeyPressed(KEY_ESCAPE)) {
+                    exit_requested = true;
+                    continue;
+                }
                 draw_recovery_screen(runtime.render_status());
                 if (frame_toggles.take_screenshot) {
                     TakeScreenshot("stage3-dungeon-rules.png");
@@ -152,15 +160,73 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             if (session == nullptr) {
                 break;
             }
+            bool inventory_toggled_this_frame = false;
+            if (runtime.state() != DungeonRuntimeState::running
+                && inventory.is_open()) {
+                inventory.close();
+                fixed_step.clear_accumulator();
+                inventory_toggled_this_frame = true;
+            }
             if (!passive_tree_can_open(current)) {
                 passive_overlay_open = false;
             }
-            if (IsKeyPressed(KEY_P) && passive_tree_can_open(current)) {
+            if (IsKeyPressed(KEY_ESCAPE)) {
+                if (inventory.is_open()) {
+                    inventory.close();
+                    fixed_step.clear_accumulator();
+                    inventory_toggled_this_frame = true;
+                } else if (passive_overlay_open) {
+                    passive_overlay_open = false;
+                } else {
+                    exit_requested = true;
+                    continue;
+                }
+            } else if (IsKeyPressed(kInventoryKey)) {
+                if (inventory.is_open()) {
+                    inventory.close();
+                    fixed_step.clear_accumulator();
+                    inventory_toggled_this_frame = true;
+                } else if (inventory_can_open(
+                        runtime.state() == DungeonRuntimeState::running,
+                        passive_overlay_open)) {
+                    inventory.open(*session, current);
+                    fixed_step.clear_accumulator();
+                    previous = current;
+                    inventory_toggled_this_frame = true;
+                }
+            }
+            if (!inventory.is_open() && !inventory_toggled_this_frame
+                && IsKeyPressed(kPassiveOverlayKey)
+                && passive_overlay_can_toggle(inventory.is_open())
+                && passive_tree_can_open(current)) {
                 passive_overlay_open = !passive_overlay_open;
             }
-            const PassiveOverlayInputGate input_gate = passive_overlay_input_gate(
+            if (!inventory.is_open() && frame_toggles.toggle_debug) {
+                draw_debug = !draw_debug;
+            }
+            if (inventory.is_open()
+                && inventory.process_input(runtime, current)) {
+                current = session->snapshot();
+                previous = current;
+                drain_events(*session, renderer, feedback, audio);
+                if (runtime.state() != DungeonRuntimeState::running) {
+                    inventory.close();
+                    fixed_step.clear_accumulator();
+                    inventory_toggled_this_frame = true;
+                }
+            }
+            const PassiveOverlayInputGate passive_input_gate = passive_overlay_input_gate(
                 passive_overlay_open);
-            if (input_gate.forward_actions && IsKeyPressed(KEY_R)) {
+            const InventoryInputGate inventory_gate = inventory_input_gate(
+                inventory.is_open() || inventory_toggled_this_frame);
+            const bool forward_actions = passive_input_gate.forward_actions
+                && inventory_gate.forward_actions;
+            const bool forward_movement = passive_input_gate.forward_movement
+                && inventory_gate.forward_movement;
+            const bool forward_descent = passive_input_gate.forward_descent
+                && inventory_gate.forward_descent;
+            if (forward_actions && inventory_gate.forward_room_reset
+                && IsKeyPressed(KEY_R)) {
                 session->reset_current_room();
                 current = session->snapshot();
                 previous = current;
@@ -179,10 +245,10 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     current = session->snapshot();
                 }
             }
-            if (input_gate.forward_actions) {
+            if (forward_actions) {
                 submit_frame_actions(*session);
             }
-            if (input_gate.forward_descent && IsKeyPressed(KEY_E)) {
+            if (forward_descent && IsKeyPressed(KEY_E)) {
                 const auto snapshot = session->snapshot();
                 const bool in_range = snapshot.combat.has_value()
                     && can_prompt_descent(
@@ -190,13 +256,17 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 static_cast<void>(session->request_descent(in_range));
             }
 
-            const combat::MovementInput movement = input_gate.forward_movement
+            const combat::MovementInput movement = forward_movement
                 ? sample_movement_input() : combat::MovementInput{};
             const float frame_seconds = GetFrameTime();
             feedback.update(frame_seconds);
             renderer.update(frame_seconds);
-            const core::FixedStepFrame frame = fixed_step.advance(
-                static_cast<double>(frame_seconds));
+            core::FixedStepFrame frame{};
+            if (!inventory.is_open() && !inventory_toggled_this_frame) {
+                frame = fixed_step.advance(static_cast<double>(frame_seconds));
+            } else {
+                previous = current;
+            }
             for (std::uint32_t step = 0; step < frame.steps; ++step) {
                 previous = current;
                 session->tick(movement);
@@ -204,6 +274,11 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 current = session->snapshot();
                 if (!passive_tree_can_open(current)) {
                     passive_overlay_open = false;
+                }
+                if (runtime.state() != DungeonRuntimeState::running
+                    && inventory.is_open()) {
+                    inventory.close();
+                    fixed_step.clear_accumulator();
                 }
                 drain_events(*session, renderer, feedback, audio);
             }
@@ -216,8 +291,11 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             if (passive_overlay_open) {
                 draw_passive_tree_overlay(current, runtime.render_status());
             }
+            if (inventory.is_open()) {
+                inventory.draw(*session, current, runtime.render_status());
+            }
             EndDrawing();
-            if (frame_toggles.take_screenshot) {
+            if (!inventory.is_open() && frame_toggles.take_screenshot) {
                 TakeScreenshot("stage3-dungeon-rules.png");
             }
         }

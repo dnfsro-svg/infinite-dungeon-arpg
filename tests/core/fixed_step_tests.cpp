@@ -157,6 +157,27 @@ arpg::test::Failure huge_finite_input_is_bounded() noexcept {
     return {};
 }
 
+arpg::test::Failure clear_accumulator_discards_only_fraction() noexcept {
+    FixedStepRunner runner;
+    static_cast<void>(runner.advance(FixedStepRunner::kStepSeconds * 10.5));
+    static_cast<void>(runner.advance(-1.0));
+    const auto before = runner.advance(0.0);
+    ARPG_REQUIRE(before.total_ticks == FixedStepRunner::kMaxStepsPerFrame);
+    ARPG_REQUIRE(before.invalid_input_count == 1U);
+    ARPG_REQUIRE(before.dropped_seconds > 0.0);
+    ARPG_REQUIRE(arpg::test::near(before.interpolation_alpha, 0.5));
+
+    runner.clear_accumulator();
+    const auto after_half = runner.advance(FixedStepRunner::kStepSeconds * 0.5);
+    ARPG_REQUIRE(after_half.steps == 0U);
+    ARPG_REQUIRE(after_half.total_ticks == before.total_ticks);
+    ARPG_REQUIRE(after_half.invalid_input_count == before.invalid_input_count);
+    ARPG_REQUIRE(arpg::test::near(
+        after_half.dropped_seconds, before.dropped_seconds));
+    ARPG_REQUIRE(arpg::test::near(after_half.interpolation_alpha, 0.5));
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"one full step", &one_full_step},
     {"two half steps", &two_half_steps},
@@ -165,6 +186,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"one second regression", &one_second_drops_fifty_two_steps},
     {"invalid input", &invalid_input_preserves_accumulator},
     {"huge finite input", &huge_finite_input_is_bounded},
+    {"clear accumulator preserves diagnostics",
+        &clear_accumulator_discards_only_fraction},
 };
 
 }  // namespace

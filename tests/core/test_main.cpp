@@ -15,5 +15,5 @@ int main() {
         allocation_probe_suite(),
     };
 
-    return arpg::test::run_suites(suites, 25, "stage 8 allocation probe");
+    return arpg::test::run_suites(suites, 26, "stage 8 task 9 core");
 }

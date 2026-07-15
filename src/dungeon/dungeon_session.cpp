@@ -261,13 +261,16 @@ void DungeonSession::construct_current_room() noexcept {
 }
 
 DungeonSession::PlayerBuildResult DungeonSession::build_for(
-    const checkpoint::DungeonRunState& state) const noexcept {
+    const checkpoint::DungeonRunState& state,
+    const items::EquipmentState* equipment_override) const noexcept {
     if (!passives::valid_passive_tree_state(
             state.passive_tree, state.progression)) {
         return {};
     }
-    const items::EquipmentProjectionResult equipment_result =
-        items::project_equipment_detailed(state.item_ownership);
+    const items::EquipmentProjectionResult equipment_result = equipment_override == nullptr
+        ? items::project_equipment_detailed(state.item_ownership)
+        : items::project_equipment_detailed(state.item_ownership,
+            *equipment_override);
     if (equipment_result.status
             == items::EquipmentProjectionStatus::allocation_failure) {
         return {{}, PlayerBuildStatus::allocation_failure};
@@ -301,6 +304,15 @@ DungeonSession::PlayerBuildResult DungeonSession::build_for(
         return {};
     }
     return {build, PlayerBuildStatus::valid};
+}
+
+std::optional<combat::PlayerCombatBuild>
+DungeonSession::preview_equipment_build(
+    const items::EquipmentState& equipment) const noexcept {
+    const PlayerBuildResult result = build_for(stable_state_, &equipment);
+    return result.status == PlayerBuildStatus::valid
+        ? std::optional<combat::PlayerCombatBuild>{result.build}
+        : std::nullopt;
 }
 
 void DungeonSession::start_next_wave() noexcept {

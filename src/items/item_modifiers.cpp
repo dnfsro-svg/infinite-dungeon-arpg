@@ -161,6 +161,24 @@ const ItemInstance* equipped_item(const ItemOwnershipState& state,
     return nullptr;
 }
 
+bool valid_equipment_override(const ItemOwnershipState& state,
+    const EquipmentState& equipment) noexcept {
+    for (std::size_t slot_index = 0U;
+         slot_index < equipment.equipped_ids.size(); ++slot_index) {
+        const std::uint64_t id = equipment.equipped_ids[slot_index];
+        if (id == 0U) continue;
+        for (std::size_t prior = 0U; prior < slot_index; ++prior) {
+            if (equipment.equipped_ids[prior] == id) return false;
+        }
+        const ItemInstance* const item = equipped_item(state, id);
+        const BaseDefinition* const base = item == nullptr
+            ? nullptr : base_definition(item->base_id);
+        if (base == nullptr
+            || base->slot != static_cast<ItemSlot>(slot_index)) return false;
+    }
+    return true;
+}
+
 bool checked_weapon_formula(std::int64_t base_and_flat,
     std::int64_t local_increased,
     std::int64_t& output) noexcept {
@@ -180,8 +198,11 @@ bool checked_weapon_formula(std::int64_t base_and_flat,
 
 }  // namespace
 
-EquipmentProjectionResult project_equipment_detailed(
-    const ItemOwnershipState& state) noexcept {
+namespace {
+
+EquipmentProjectionResult project_equipment_with_state(
+    const ItemOwnershipState& state,
+    const EquipmentState& equipment) noexcept {
     EquipmentProjectionResult result{};
     const OwnershipValidationResult validation =
         validate_ownership_detailed(state);
@@ -190,13 +211,14 @@ EquipmentProjectionResult project_equipment_detailed(
         return result;
     }
     if (validation != OwnershipValidationResult::valid) return result;
+    if (!valid_equipment_override(state, equipment)) return result;
     EquipmentProjection& projection = result.projection;
 
     std::int64_t local_flat = 0;
     std::int64_t local_increased = 0;
     for (std::size_t slot_index = 0U;
-         slot_index < state.equipment.equipped_ids.size(); ++slot_index) {
-        const std::uint64_t id = state.equipment.equipped_ids[slot_index];
+         slot_index < equipment.equipped_ids.size(); ++slot_index) {
+        const std::uint64_t id = equipment.equipped_ids[slot_index];
         if (id == 0U) continue;
         const ItemInstance* item = equipped_item(state, id);
         if (item == nullptr) return {};
@@ -230,6 +252,19 @@ EquipmentProjectionResult project_equipment_detailed(
     projection.valid = true;
     result.status = EquipmentProjectionStatus::valid;
     return result;
+}
+
+}  // namespace
+
+EquipmentProjectionResult project_equipment_detailed(
+    const ItemOwnershipState& state) noexcept {
+    return project_equipment_with_state(state, state.equipment);
+}
+
+EquipmentProjectionResult project_equipment_detailed(
+    const ItemOwnershipState& state,
+    const EquipmentState& equipment_override) noexcept {
+    return project_equipment_with_state(state, equipment_override);
 }
 
 EquipmentProjection project_equipment(

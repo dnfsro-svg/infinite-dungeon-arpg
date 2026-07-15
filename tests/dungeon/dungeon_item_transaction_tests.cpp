@@ -572,6 +572,26 @@ arpg::test::Failure same_run_state_compares_all_item_ownership_fields() noexcept
     return {};
 }
 
+arpg::test::Failure equipment_preview_uses_passives_without_mutating_state() noexcept {
+    DungeonRunState state = state_with_items({normal_item(131U, 2U)});
+    state.progression = {2U, 0U, 1U, 0U};
+    state.passive_tree.allocated_bits =
+        (std::uint64_t{1U} << 0U) | (std::uint64_t{1U} << 2U);
+    DungeonSession session{DungeonRules{}, state};
+    const auto current = session.preview_equipment_build(
+        state.item_ownership.equipment);
+    ARPG_REQUIRE(current.has_value());
+    arpg::items::EquipmentState equipped{};
+    equipped.equipped_ids[1] = 131U;
+    const auto candidate = session.preview_equipment_build(equipped);
+    ARPG_REQUIRE(candidate.has_value());
+    ARPG_REQUIRE(candidate->values.max_barrier == current->values.max_barrier);
+    ARPG_REQUIRE(candidate->values.max_health
+        == current->values.max_health + 38 * arpg::modifiers::kFixedOne);
+    ARPG_REQUIRE(session.item_state().equipment.equipped_ids[1] == 0U);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"item snapshot lightweight pending fields",
         &item_snapshot_is_lightweight_and_reports_pending_kind},
@@ -596,6 +616,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &room_build_combines_passives_and_equipment},
     {"same run state compares item ownership",
         &same_run_state_compares_all_item_ownership_fields},
+    {"equipment preview combines passive build",
+        &equipment_preview_uses_passives_without_mutating_state},
     {"ownership scratch oom is atomic",
         &ownership_scratch_oom_rejects_atomically},
     {"stable vector copy oom is atomic",

@@ -121,4 +121,8 @@ FixedStepFrame FixedStepRunner::advance(double frame_seconds) noexcept {
     };
 }
 
+void FixedStepRunner::clear_accumulator() noexcept {
+    accumulator_seconds_ = 0.0;
+}
+
 }  // namespace arpg::core

@@ -46,10 +46,10 @@ void CombatRenderer::draw_hud(
     const Color text{218, 226, 239, 255};
     const Color accent{110, 207, 255, 255};
     int y = layout.hud_first_line_y;
-    DrawText("WASD Move  J Light  K Jump  L Launcher  E Descend",
+    DrawText("WASD Move  J Light  K Jump  L Launcher  E Descend  I Inventory",
         static_cast<int>(layout.hud_x), y, 16, accent);
     y = layout.hud_second_instruction_y;
-    DrawText("P Star Chart after clear  R Reset  F1 Debug  F12 Screenshot  Esc Exit",
+    DrawText("P Star Chart after clear  R Reset  F1 Debug  F12 Screenshot  Esc Close/Exit",
         static_cast<int>(layout.hud_x), y, 16, accent);
     y = layout.hud_status_y;
     DrawText(TextFormat("Depth %llu  Floor Room %llu  Global Room %llu",
@@ -61,6 +61,11 @@ void CombatRenderer::draw_hud(
     DrawText(TextFormat("Ecology %s  F/W/L/C bias %u/%u/%u/%u",
         ecology_name(current.ecology), current.biases[0], current.biases[1],
         current.biases[2], current.biases[3]), static_cast<int>(layout.hud_x), y, 16, text);
+    y += layout.hud_line_step;
+    DrawText(TextFormat("Inventory %u  Ground items %u",
+        static_cast<unsigned>(current.inventory_count),
+        static_cast<unsigned>(current.ground_item_count)),
+        static_cast<int>(layout.hud_x), y, 16, text);
     y += layout.hud_line_step;
     if (current.combat.has_value()) {
         const combat::CombatSnapshot& combat_state = *current.combat;

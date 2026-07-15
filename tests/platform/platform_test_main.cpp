@@ -8,6 +8,7 @@ arpg::test::TestSuite dungeon_view_math_suite() noexcept;
 arpg::test::TestSuite passive_tree_view_suite() noexcept;
 arpg::test::TestSuite host_launch_options_suite() noexcept;
 arpg::test::TestSuite dungeon_runtime_suite() noexcept;
+arpg::test::TestSuite inventory_view_math_suite() noexcept;
 
 int main() {
     const arpg::test::TestSuite suites[] = {
@@ -19,7 +20,8 @@ int main() {
         passive_tree_view_suite(),
         host_launch_options_suite(),
         dungeon_runtime_suite(),
+        inventory_view_math_suite(),
     };
 
-    return arpg::test::run_suites(suites, 56, "stage 8 task 8 platform");
+    return arpg::test::run_suites(suites, 65, "stage 8 task 9 platform");
 }

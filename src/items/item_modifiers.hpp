@@ -31,6 +31,9 @@ struct EquipmentProjectionResult final {
 
 [[nodiscard]] EquipmentProjectionResult project_equipment_detailed(
     const ItemOwnershipState& state) noexcept;
+[[nodiscard]] EquipmentProjectionResult project_equipment_detailed(
+    const ItemOwnershipState& state,
+    const EquipmentState& equipment_override) noexcept;
 
 [[nodiscard]] EquipmentProjection project_equipment(
     const ItemOwnershipState& state) noexcept;

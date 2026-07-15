@@ -19,4 +19,7 @@ inline constexpr std::array<CombatKeyBinding, 3> kCombatKeyBindings{{
     {KEY_L, combat::Action::launcher},
 }};
 
+inline constexpr int kInventoryKey = KEY_I;
+inline constexpr int kPassiveOverlayKey = KEY_P;
+
 }  // namespace arpg::platform

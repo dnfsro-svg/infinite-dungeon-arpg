@@ -9,6 +9,8 @@ add_library(arpg_raylib STATIC
     dungeon_runtime.cpp
     host_launch_options.cpp
     hud_renderer.cpp
+    inventory_renderer.cpp
+    inventory_view_math.cpp
     passive_tree_renderer.cpp
     passive_tree_view_math.cpp
     raylib_host.cpp

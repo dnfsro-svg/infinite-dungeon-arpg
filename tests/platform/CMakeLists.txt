@@ -10,15 +10,16 @@ if(TARGET arpg_raylib)
         passive_tree_view_tests.cpp
         host_launch_options_tests.cpp
         dungeon_runtime_tests.cpp)
+    target_sources(arpg_platform_tests PRIVATE inventory_view_math_tests.cpp)
     target_compile_features(arpg_platform_tests PRIVATE cxx_std_17)
     target_include_directories(arpg_platform_tests
         PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
     target_link_libraries(arpg_platform_tests PRIVATE arpg_raylib)
     arpg_enable_project_warnings(arpg_platform_tests)
 
-    add_test(NAME platform.view_math COMMAND arpg_platform_tests)
+    add_test(NAME platform.units COMMAND arpg_platform_tests)
     set_tests_properties(
-        platform.view_math PROPERTIES LABELS "headless;platform")
+        platform.units PROPERTIES LABELS "headless;platform")
 endif()
 
 function(arpg_tokenize_dependency_value INPUT_VALUE OUT_TOKENS)

@@ -6,6 +6,10 @@ namespace {
 
 using namespace arpg;
 
+static_assert(platform::kInventoryKey == KEY_I);
+static_assert(platform::kPassiveOverlayKey == KEY_P);
+static_assert(platform::kInventoryKey != platform::kPassiveOverlayKey);
+
 test::Failure combat_keys_are_j_k_and_l_without_u() noexcept {
     ARPG_REQUIRE(platform::kCombatKeyBindings.size() == 3);
     ARPG_REQUIRE(platform::kCombatKeyBindings[0].key == KEY_J);
@@ -24,8 +28,13 @@ test::Failure combat_keys_are_j_k_and_l_without_u() noexcept {
     return {};
 }
 
+test::Failure overlay_keys_are_i_and_p() noexcept {
+    return {};
+}
+
 constexpr test::TestCase kCases[] = {
     {"J K L bindings without U", &combat_keys_are_j_k_and_l_without_u},
+    {"I P overlay bindings", &overlay_keys_are_i_and_p},
 };
 
 }  // namespace

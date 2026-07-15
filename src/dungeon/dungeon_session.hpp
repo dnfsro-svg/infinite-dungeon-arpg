@@ -45,6 +45,9 @@ public:
     void request_nearby_pickups(
         combat::Vec3 player_position) noexcept;
     [[nodiscard]] const items::ItemOwnershipState& item_state() const noexcept;
+    [[nodiscard]] std::optional<combat::PlayerCombatBuild>
+    preview_equipment_build(
+        const items::EquipmentState& equipment) const noexcept;
     [[nodiscard]] const PendingSave* pending_save_view() const noexcept;
     [[nodiscard]] std::optional<PendingSave> pending_save() const noexcept;
     void resolve_pending_save(const PendingSaveResult& result) noexcept;
@@ -85,7 +88,8 @@ private:
         PendingSaveKind kind,
         RoomPhase resume_phase) noexcept;
     [[nodiscard]] PlayerBuildResult build_for(
-        const checkpoint::DungeonRunState& state) const noexcept;
+        const checkpoint::DungeonRunState& state,
+        const items::EquipmentState* equipment_override = nullptr) const noexcept;
     [[nodiscard]] bool pending_item_cache_consistent() const noexcept;
     void commit_pending_save(const PendingSaveResult& result) noexcept;
     [[nodiscard]] DungeonSnapshot build_dungeon_snapshot() const noexcept;
