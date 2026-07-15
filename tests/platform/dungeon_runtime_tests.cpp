@@ -19,6 +19,12 @@ namespace platform = arpg::platform;
 namespace combat = arpg::combat;
 namespace items = arpg::items;
 
+#if defined(_ITERATOR_DEBUG_LEVEL) && _ITERATOR_DEBUG_LEVEL != 0
+constexpr std::uint64_t kRuntimeVectorProxyAllocations = 1U;
+#else
+constexpr std::uint64_t kRuntimeVectorProxyAllocations = 0U;
+#endif
+
 items::ItemInstance normal_item(std::uint64_t id,
     std::uint8_t base_id = 1U) noexcept {
     items::ItemInstance item{};
@@ -606,7 +612,16 @@ arpg::test::Failure generic_service_adds_no_large_state_copies() noexcept {
         arpg::test::allocation_count() - runtime_before;
     ARPG_REQUIRE(runtime.state() == platform::DungeonRuntimeState::running);
     ARPG_REQUIRE(runtime.render_status().indicator == platform::SaveIndicator::saved);
-    ARPG_REQUIRE(runtime_allocations == direct_allocations);
+    const std::uint64_t allowed_allocations = direct_allocations
+        + kRuntimeVectorProxyAllocations;
+    if (runtime_allocations > allowed_allocations) {
+        std::fprintf(stderr,
+            "runtime save allocations=%llu allowed=%llu direct=%llu\n",
+            static_cast<unsigned long long>(runtime_allocations),
+            static_cast<unsigned long long>(allowed_allocations),
+            static_cast<unsigned long long>(direct_allocations));
+    }
+    ARPG_REQUIRE(runtime_allocations <= allowed_allocations);
     ARPG_REQUIRE(same_ownership(*runtime.item_state(), expected.item_ownership));
     return {};
 }

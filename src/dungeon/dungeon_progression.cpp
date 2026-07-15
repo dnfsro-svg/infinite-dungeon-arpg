@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <utility>
 
 namespace arpg::dungeon {
 namespace {
@@ -150,7 +151,7 @@ RunStateBuildResult make_door_transition(
     next.current_room = generated.room;
     next.last_transition = checkpoint::TransitionKind::door;
     next.last_direction = direction;
-    return {DungeonFault::none, next, generated.samples};
+    return {DungeonFault::none, std::move(next), generated.samples};
 }
 
 RunStateBuildResult make_descent_transition(
@@ -191,7 +192,7 @@ RunStateBuildResult make_descent_transition(
     next.current_room = generated.room;
     next.last_transition = checkpoint::TransitionKind::descent;
     next.last_direction = checkpoint::ExitDirection::none;
-    return {DungeonFault::none, next, generated.samples};
+    return {DungeonFault::none, std::move(next), generated.samples};
 }
 
 bool same_run_state(

@@ -15,6 +15,12 @@
 namespace {
 int gAllocationsBeforeFailure = -1;
 
+#if defined(_ITERATOR_DEBUG_LEVEL) && _ITERATOR_DEBUG_LEVEL != 0
+constexpr int kVectorProxyAllocations = 1;
+#else
+constexpr int kVectorProxyAllocations = 0;
+#endif
+
 bool fail_test_allocation() noexcept {
     if (gAllocationsBeforeFailure < 0)
         return false;
@@ -657,29 +663,31 @@ arpg::test::Failure codec_allocation_failures_do_not_escape_noexcept() noexcept 
     auto excessive_count = *encoded;
     write_u32(excessive_count, 120U, 65536U);
     refresh_crc(excessive_count);
-    gAllocationsBeforeFailure = 0;
+    gAllocationsBeforeFailure = kVectorProxyAllocations == 0 ? 0 : -1;
     const auto rejected_before_allocation = persistence::decode_checkpoint(
         excessive_count.data(), excessive_count.size());
     ARPG_REQUIRE(rejected_before_allocation.error
         == persistence::CodecError::bad_payload_length);
-    ARPG_REQUIRE(gAllocationsBeforeFailure == 0);
+    if constexpr (kVectorProxyAllocations == 0)
+        ARPG_REQUIRE(gAllocationsBeforeFailure == 0);
     gAllocationsBeforeFailure = -1;
 
-    gAllocationsBeforeFailure = 1;
+    gAllocationsBeforeFailure = 1 + kVectorProxyAllocations;
     const auto scratch_failure = persistence::decode_checkpoint(
         encoded->data(), encoded->size());
     ARPG_REQUIRE(scratch_failure.error
         == persistence::CodecError::allocation_failure);
     ARPG_REQUIRE(gAllocationsBeforeFailure == -1);
 
-    gAllocationsBeforeFailure = 0;
+    gAllocationsBeforeFailure = kVectorProxyAllocations;
     const auto decoded = persistence::decode_checkpoint(
         encoded->data(), encoded->size());
     ARPG_REQUIRE(decoded.error == persistence::CodecError::allocation_failure);
     ARPG_REQUIRE(gAllocationsBeforeFailure == -1);
 
-    gAllocationsBeforeFailure = 0;
-    const auto failed_encode = persistence::encode_checkpoint(make_fixture());
+    const auto encode_fixture = make_fixture();
+    gAllocationsBeforeFailure = kVectorProxyAllocations;
+    const auto failed_encode = persistence::encode_checkpoint(encode_fixture);
     ARPG_REQUIRE(!failed_encode.has_value());
     ARPG_REQUIRE(gAllocationsBeforeFailure == -1);
     return {};

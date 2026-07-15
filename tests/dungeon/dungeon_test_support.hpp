@@ -125,6 +125,15 @@ struct DungeonSessionTestAccess final {
         const dungeon::DungeonSession& session) noexcept {
         return session.rolled_drop_bits_;
     }
+    static const dungeon::DungeonRunState& stable_state(
+        const dungeon::DungeonSession& session) noexcept {
+        return session.stable_state_;
+    }
+    static const std::array<dungeon::GroundItem,
+        dungeon::kGroundDropCapacity>& ground_items(
+        const dungeon::DungeonSession& session) noexcept {
+        return session.ground_items_;
+    }
 };
 
 inline void force_defeat_current_wave(dungeon::DungeonSession& session) noexcept {
@@ -218,6 +227,17 @@ inline void set_pending_pickup_ordinal(
 inline const std::array<std::uint64_t, 3>& rolled_drop_bits(
     const dungeon::DungeonSession& session) noexcept {
     return DungeonSessionTestAccess::rolled_drop_bits(session);
+}
+
+inline const dungeon::DungeonRunState& stable_state(
+    const dungeon::DungeonSession& session) noexcept {
+    return DungeonSessionTestAccess::stable_state(session);
+}
+
+inline const std::array<dungeon::GroundItem,
+    dungeon::kGroundDropCapacity>& ground_items(
+    const dungeon::DungeonSession& session) noexcept {
+    return DungeonSessionTestAccess::ground_items(session);
 }
 
 inline bool same_encounter_plan(const dungeon::RoomEncounterPlan& left,

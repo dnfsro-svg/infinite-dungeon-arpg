@@ -11,10 +11,13 @@
 #include "passive_tree_renderer.hpp"
 #include "passive_tree_view_math.hpp"
 #include "persistence/save_paths.hpp"
+#include "raylib_input.hpp"
 
 #include <raylib.h>
 
 #include <cstdint>
+#include <filesystem>
+#include <string>
 
 #if !defined(RAYLIB_VERSION_MAJOR) || !defined(RAYLIB_VERSION_MINOR) \
     || !defined(RAYLIB_VERSION_PATCH)
@@ -29,8 +32,8 @@ namespace arpg::platform {
 namespace {
 
 std::int8_t key_direction(int negative_key, int positive_key) noexcept {
-    const int negative = IsKeyDown(negative_key) ? 1 : 0;
-    const int positive = IsKeyDown(positive_key) ? 1 : 0;
+    const int negative = platform_key_down(negative_key) ? 1 : 0;
+    const int positive = platform_key_down(positive_key) ? 1 : 0;
     return static_cast<std::int8_t>(positive - negative);
 }
 
@@ -40,7 +43,8 @@ struct FrameToggleInput final {
 };
 
 FrameToggleInput sample_frame_toggle_input() noexcept {
-    return {IsKeyPressed(KEY_F12), IsKeyPressed(KEY_F1)};
+    return {platform_key_pressed(KEY_F12) || platform_key_pressed(KEY_V),
+        platform_key_pressed(KEY_F1)};
 }
 
 combat::MovementInput sample_movement_input() noexcept {
@@ -49,7 +53,7 @@ combat::MovementInput sample_movement_input() noexcept {
 
 void submit_frame_actions(dungeon::DungeonSession& session) noexcept {
     for (const CombatKeyBinding& binding : kCombatKeyBindings) {
-        if (IsKeyPressed(binding.key)) {
+        if (platform_key_pressed(binding.key)) {
             static_cast<void>(session.queue_action(binding.action));
         }
     }
@@ -83,6 +87,23 @@ void draw_recovery_screen(const DungeonRenderStatus& status) noexcept {
     EndDrawing();
 }
 
+void export_screenshot(const char* path) noexcept {
+    Image image = LoadImageFromScreen();
+    if (image.data == nullptr) return;
+    static_cast<void>(ExportImage(image, path));
+    UnloadImage(image);
+}
+
+void take_host_screenshot() noexcept {
+    try {
+        const std::string path = (std::filesystem::path{
+            GetApplicationDirectory()} / "stage8-equipment-loot.png").string();
+        export_screenshot(path.c_str());
+    } catch (...) {
+        TraceLog(LOG_WARNING, "failed to construct screenshot path");
+    }
+}
+
 }  // namespace
 
 HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
@@ -109,8 +130,11 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             TraceLog(LOG_ERROR, "raylib window initialization failed");
             return HostExitCode::window_initialization_failed;
         }
-        if (!ChangeDirectory(GetApplicationDirectory())) {
-            TraceLog(LOG_WARNING, "failed to use application directory");
+        const bool directory_changed = config.validation_capture
+            ? ChangeDirectory(save_directory->string().c_str())
+            : ChangeDirectory(GetApplicationDirectory());
+        if (!directory_changed) {
+            TraceLog(LOG_WARNING, "failed to use screenshot working directory");
         }
         SetWindowMinSize(800, 450);
         SetExitKey(KEY_NULL);
@@ -123,6 +147,22 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         bool draw_debug = false;
         bool passive_overlay_open = false;
         bool exit_requested = false;
+        unsigned validation_capture_tick = 0U;
+        unsigned validation_capture_count = 0U;
+        const std::string validation_capture_prefix = config.validation_capture
+            ? (*save_directory / "stage8-validation-").string()
+            : std::string{};
+        const auto capture_validation_frame = [&]() noexcept {
+            if (!config.validation_capture
+                    || validation_capture_count >= 2000U
+                    || ++validation_capture_tick < 60U) {
+                return;
+            }
+            validation_capture_tick = 0U;
+            ++validation_capture_count;
+            export_screenshot(TextFormat("%s%03u.png",
+                validation_capture_prefix.c_str(), validation_capture_count));
+        };
         dungeon::DungeonSnapshot current{};
         dungeon::DungeonSnapshot previous{};
         if (runtime.session() != nullptr) {
@@ -134,7 +174,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         while (!WindowShouldClose() && !exit_requested) {
             const FrameToggleInput frame_toggles = sample_frame_toggle_input();
             if (recovery_requested(runtime.state() == DungeonRuntimeState::recovery_required,
-                    IsKeyPressed(KEY_N))) {
+                    platform_key_pressed(KEY_N))) {
                 if (runtime.recover_with_new_run() && runtime.session() != nullptr) {
                     current = runtime.session()->snapshot();
                     previous = current;
@@ -146,13 +186,14 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     inventory.close();
                     fixed_step.clear_accumulator();
                 }
-                if (IsKeyPressed(KEY_ESCAPE)) {
+                if (platform_key_pressed(KEY_ESCAPE)) {
                     exit_requested = true;
                     continue;
                 }
                 draw_recovery_screen(runtime.render_status());
+                capture_validation_frame();
                 if (frame_toggles.take_screenshot) {
-                    TakeScreenshot("stage3-dungeon-rules.png");
+                    take_host_screenshot();
                 }
                 continue;
             }
@@ -170,7 +211,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             if (!passive_tree_can_open(current)) {
                 passive_overlay_open = false;
             }
-            if (IsKeyPressed(KEY_ESCAPE)) {
+            if (platform_key_pressed(KEY_ESCAPE)) {
                 if (inventory.is_open()) {
                     inventory.close();
                     fixed_step.clear_accumulator();
@@ -181,7 +222,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     exit_requested = true;
                     continue;
                 }
-            } else if (IsKeyPressed(kInventoryKey)) {
+            } else if (platform_key_pressed(kInventoryKey)) {
                 if (inventory.is_open()) {
                     inventory.close();
                     fixed_step.clear_accumulator();
@@ -196,7 +237,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 }
             }
             if (!inventory.is_open() && !inventory_toggled_this_frame
-                && IsKeyPressed(kPassiveOverlayKey)
+                && platform_key_pressed(kPassiveOverlayKey)
                 && passive_overlay_can_toggle(inventory.is_open())
                 && passive_tree_can_open(current)) {
                 passive_overlay_open = !passive_overlay_open;
@@ -226,7 +267,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             const bool forward_descent = passive_input_gate.forward_descent
                 && inventory_gate.forward_descent;
             if (forward_actions && inventory_gate.forward_room_reset
-                && IsKeyPressed(KEY_R)) {
+                && platform_key_pressed(KEY_R)) {
                 session->reset_current_room();
                 current = session->snapshot();
                 previous = current;
@@ -248,7 +289,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             if (forward_actions) {
                 submit_frame_actions(*session);
             }
-            if (forward_descent && IsKeyPressed(KEY_E)) {
+            if (forward_descent && platform_key_pressed(KEY_E)) {
                 const auto snapshot = session->snapshot();
                 const bool in_range = snapshot.combat.has_value()
                     && can_prompt_descent(
@@ -295,8 +336,9 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 inventory.draw(*session, current, runtime.render_status());
             }
             EndDrawing();
-            if (!inventory.is_open() && frame_toggles.take_screenshot) {
-                TakeScreenshot("stage3-dungeon-rules.png");
+            capture_validation_frame();
+            if (frame_toggles.take_screenshot) {
+                take_host_screenshot();
             }
         }
         audio.shutdown();

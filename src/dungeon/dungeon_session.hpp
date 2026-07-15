@@ -95,7 +95,7 @@ private:
     [[nodiscard]] DungeonSnapshot build_dungeon_snapshot() const noexcept;
     void enter_fault(DungeonFault fault) noexcept;
     void emit_committed(
-        const DungeonRunState& previous,
+        const checkpoint::RoomDescriptor& previous_room,
         const DungeonRunState& current) noexcept;
     bool emit(
         DungeonEventKind kind,

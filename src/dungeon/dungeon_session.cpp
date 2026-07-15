@@ -459,22 +459,27 @@ void DungeonSession::enter_fault(DungeonFault fault) noexcept {
 }
 
 void DungeonSession::emit_committed(
-    const DungeonRunState& previous,
+    const checkpoint::RoomDescriptor& previous_room,
     const DungeonRunState& current) noexcept {
-    if (!emit(
-        DungeonEventKind::transition_committed,
-        &previous,
-        &current,
-        current.last_transition,
-        current.last_direction)) {
-        return;
+    const auto push = [&](DungeonEventKind kind) noexcept {
+        const DungeonEvent event{
+            kind,
+            session_tick_,
+            previous_room.index,
+            previous_room.seed,
+            current.current_room.index,
+            current.current_room.seed,
+            current.last_transition,
+            current.last_direction,
+        };
+        if (events_.try_push(event)) return true;
+        saturating_increment(diagnostics_.event_overflow_count);
+        enter_fault(DungeonFault::event_overflow);
+        return false;
+    };
+    if (push(DungeonEventKind::transition_committed)) {
+        static_cast<void>(push(DungeonEventKind::room_destroyed));
     }
-    static_cast<void>(emit(
-        DungeonEventKind::room_destroyed,
-        &previous,
-        &current,
-        current.last_transition,
-        current.last_direction));
 }
 
 bool DungeonSession::emit(

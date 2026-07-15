@@ -143,27 +143,27 @@ bool DungeonSession::prepare_transition(
         enter_fault(DungeonFault::save_receipt_mismatch);
         return false;
     }
-    const RunStateBuildResult built = kind == TransitionKind::descent
+    RunStateBuildResult next = kind == TransitionKind::descent
         ? make_descent_transition(stable_state_, rules_)
         : make_door_transition(stable_state_, direction, rules_);
-    if (built.fault != DungeonFault::none) {
-        if (built.fault == DungeonFault::room_index_overflow) {
+    if (next.fault != DungeonFault::none) {
+        if (next.fault == DungeonFault::room_index_overflow) {
             diagnostics_.room_index_overflow = true;
         }
-        enter_fault(built.fault);
+        enter_fault(next.fault);
         return false;
     }
 
-    RunStateBuildResult next = built;
     next.state.progression = room_progression_;
     next.state.item_ownership.claimed_drop_bits = {};
     if (kind == TransitionKind::descent) {
         last_exit_ = ExitDirection::none;
     }
+    const std::uint64_t expected_generation = next.state.commit_generation;
     pending_save_ = PendingSave{
         PendingSaveKind::transition,
-        next.state.commit_generation,
-        next.state,
+        expected_generation,
+        std::move(next.state),
         kind,
         direction,
         RoomPhase::awaiting_exit,
@@ -606,7 +606,8 @@ void DungeonSession::commit_pending_save(
         published_build = *pending_item_build_;
     }
 
-    DungeonRunState previous = std::move(stable_state_);
+    const checkpoint::RoomDescriptor previous_room =
+        stable_state_.current_room;
     stable_state_ = std::move(pending_save_->next_state);
     const RoomPhase resume_phase = pending_save_->resume_phase;
     pending_save_.reset();
@@ -616,7 +617,7 @@ void DungeonSession::commit_pending_save(
         rolled_drop_bits_ = {};
         combat_.reset();
         phase_ = RoomPhase::transitioning;
-        emit_committed(previous, stable_state_);
+        emit_committed(previous_room, stable_state_);
         return;
     }
     room_progression_ = stable_state_.progression;

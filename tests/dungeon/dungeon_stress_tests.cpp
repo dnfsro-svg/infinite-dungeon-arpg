@@ -364,9 +364,9 @@ bool tick_equal(
 bool commit_equal(
     DungeonSession& lhs,
     DungeonSession& rhs) noexcept {
-    const auto a = lhs.pending_save();
-    const auto b = rhs.pending_save();
-    if (!a.has_value() || !b.has_value()
+    const auto* const a = lhs.pending_save_view();
+    const auto* const b = rhs.pending_save_view();
+    if (a == nullptr || b == nullptr
             || a->kind != b->kind
             || a->transition != b->transition
             || a->direction != b->direction
@@ -409,30 +409,34 @@ bool confirm_pending_save(
     DungeonSession& session,
     StressSummary& summary) noexcept {
     const std::uint64_t before = arpg::test::allocation_count();
-    const auto pending = session.pending_save();
-    if (!pending.has_value()) {
+    const auto* const pending = session.pending_save_view();
+    if (pending == nullptr) {
         record_allocations(summary, before, false);
         return false;
     }
     const auto kind = pending->kind;
+    const auto resume_phase = pending->resume_phase;
+    const auto expected_generation = pending->expected_generation;
+    const auto next_room_index = pending->next_state.current_room.index;
+    const auto next_room_seed = pending->next_state.current_room.seed;
     session.resolve_pending_save({
         arpg::dungeon::SaveDisposition::committed,
-        pending->expected_generation,
+        expected_generation,
         pending->next_state,
     });
     const DungeonSnapshot saved = session.snapshot();
     record_allocations(summary, before, true);
     if (kind == arpg::dungeon::PendingSaveKind::loot_pickup) {
-        return saved.phase == pending->resume_phase
+        return saved.phase == resume_phase
             && !saved.pending_save_kind.has_value()
-            && saved.commit_generation == pending->expected_generation;
+            && saved.commit_generation == expected_generation;
     }
     return kind == arpg::dungeon::PendingSaveKind::transition
         && saved.phase == RoomPhase::transitioning
         && !saved.has_pending_transition
-        && saved.commit_generation == pending->expected_generation
-        && saved.room_index == pending->next_state.current_room.index
-        && saved.room_seed == pending->next_state.current_room.seed
+        && saved.commit_generation == expected_generation
+        && saved.room_index == next_room_index
+        && saved.room_seed == next_room_seed
         && !saved.has_active_room && !saved.combat.has_value();
 }
 
@@ -594,23 +598,25 @@ bool commit_passive_receipt(
     DungeonSession& session,
     StressSummary& summary) noexcept {
     const std::uint64_t allocation_before = arpg::test::allocation_count();
-    const auto pending = session.pending_save();
-    if (!pending.has_value()
+    const auto* const pending = session.pending_save_view();
+    if (pending == nullptr
             || pending->kind != arpg::dungeon::PendingSaveKind::passive_tree) {
         record_allocations(summary, allocation_before, false);
         return false;
     }
+    const auto expected_generation = pending->expected_generation;
+    const auto allocated_bits = pending->next_state.passive_tree.allocated_bits;
     session.resolve_pending_save({
         arpg::dungeon::SaveDisposition::committed,
-        pending->expected_generation,
+        expected_generation,
         pending->next_state,
     });
     const DungeonSnapshot committed = session.snapshot();
     record_allocations(summary, allocation_before, true);
     return !committed.passive_save_pending
-        && committed.commit_generation == pending->expected_generation
+        && committed.commit_generation == expected_generation
         && committed.passive_tree.allocated_bits
-            == pending->next_state.passive_tree.allocated_bits;
+            == allocated_bits;
 }
 
 bool allocate_route_node(DungeonSession& session,

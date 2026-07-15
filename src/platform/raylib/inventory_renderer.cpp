@@ -1,5 +1,7 @@
 #include "inventory_renderer.hpp"
 
+#include "raylib_input.hpp"
+
 #include "dungeon/dungeon_session.hpp"
 #include "dungeon_runtime.hpp"
 #include "items/item_catalog.hpp"
@@ -208,9 +210,11 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
         scroll_rows_ = clamp_inventory_scroll_rows(view_cache_.filtered_indices.size(), columns,
             scroll_rows_ - wheel, viewport.height, kCellHeight);
     }
-    if (!IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) return false;
+    const bool left_pressed = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+    const bool right_pressed = IsMouseButtonPressed(MOUSE_BUTTON_RIGHT);
+    if (!left_pressed && !right_pressed) return false;
     const Vector2 mouse = GetMousePosition();
-    if (contains(slot_filter_button(layout.grid), mouse)) {
+    if (left_pressed && contains(slot_filter_button(layout.grid), mouse)) {
         if (!filter_.slot.has_value()) filter_.slot = items::ItemSlot::weapon;
         else if (*filter_.slot == items::ItemSlot::accessory) filter_.slot.reset();
         else filter_.slot = static_cast<items::ItemSlot>(
@@ -219,7 +223,7 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
         scroll_rows_ = 0.0F;
         return false;
     }
-    if (contains(rarity_filter_button(layout.grid), mouse)) {
+    if (left_pressed && contains(rarity_filter_button(layout.grid), mouse)) {
         if (!filter_.rarity.has_value()) filter_.rarity = items::ItemRarity::normal;
         else if (*filter_.rarity == items::ItemRarity::rare) filter_.rarity.reset();
         else filter_.rarity = static_cast<items::ItemRarity>(
@@ -230,15 +234,19 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
     }
     const bool requests_enabled = !snapshot.pending_save_kind.has_value()
         && runtime.state() == DungeonRuntimeState::running;
-    if (const auto slot = hit_test_equipped_slot(mouse, layout, state.equipment)) {
-        if (requests_enabled
-            && runtime.request_unequip(*slot) == dungeon::RequestResult::accepted) {
-            runtime.service_pending_save();
-            return true;
+    if (left_pressed) {
+        if (const auto slot = hit_test_equipped_slot(
+                mouse, layout, state.equipment)) {
+            if (requests_enabled
+                && runtime.request_unequip(*slot)
+                    == dungeon::RequestResult::accepted) {
+                runtime.service_pending_save();
+                return true;
+            }
+            return false;
         }
-        return false;
     }
-    if (contains(combine_button(layout.grid), mouse)) {
+    if (left_pressed && contains(combine_button(layout.grid), mouse)) {
         if (requests_enabled && recipe_ready()
             && runtime.request_recipe(recipe_.ids) == dungeon::RequestResult::accepted) {
             runtime.service_pending_save();
@@ -256,8 +264,9 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
         const items::ItemInstance& item = state.items[
             view_cache_.filtered_indices[filtered_position]];
         selected_item_id_ = item.id;
-        const bool recipe_toggle = IsKeyDown(KEY_LEFT_CONTROL)
-            || IsKeyDown(KEY_RIGHT_CONTROL);
+        const bool recipe_toggle = right_pressed
+            || platform_key_down(KEY_LEFT_CONTROL)
+            || platform_key_down(KEY_RIGHT_CONTROL);
         if (recipe_toggle) {
             static_cast<void>(toggle_recipe_selection(recipe_, item.id));
         }
