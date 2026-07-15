@@ -9,6 +9,7 @@ add_executable(arpg_dungeon_tests
     dungeon_progression_tests.cpp
     dungeon_passive_tree_tests.cpp
     dungeon_item_transaction_tests.cpp
+    dungeon_loot_drop_tests.cpp
     dungeon_transaction_tests.cpp
     encounter_director_tests.cpp
     dungeon_wave_tests.cpp)

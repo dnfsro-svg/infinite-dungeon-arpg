@@ -8,6 +8,7 @@ arpg::test::TestSuite dungeon_rules_suite() noexcept;
 arpg::test::TestSuite dungeon_progression_suite() noexcept;
 arpg::test::TestSuite dungeon_passive_tree_suite() noexcept;
 arpg::test::TestSuite dungeon_item_transaction_suite() noexcept;
+arpg::test::TestSuite dungeon_loot_drop_suite() noexcept;
 arpg::test::TestSuite dungeon_transaction_suite() noexcept;
 arpg::test::TestSuite encounter_director_suite() noexcept;
 arpg::test::TestSuite dungeon_wave_suite() noexcept;
@@ -23,11 +24,12 @@ int main() {
         dungeon_progression_suite(),
         dungeon_passive_tree_suite(),
         dungeon_item_transaction_suite(),
+        dungeon_loot_drop_suite(),
         dungeon_transaction_suite(),
         encounter_director_suite(),
         dungeon_wave_suite(),
         dungeon_progression_reward_suite(),
     };
 
-    return arpg::test::run_suites(suites, 100, "stage 8 task 6 dungeon");
+    return arpg::test::run_suites(suites, 116, "stage 8 task 7 dungeon");
 }

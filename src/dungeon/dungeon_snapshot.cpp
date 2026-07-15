@@ -1,5 +1,7 @@
 #include "dungeon/dungeon_session.hpp"
 
+#include "items/item_catalog.hpp"
+
 namespace arpg::dungeon {
 namespace {
 
@@ -52,6 +54,18 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
         if (!equipped(stable_state_.item_ownership.equipment, item.id)) {
             ++result.inventory_count;
         }
+    }
+    for (const GroundItem& ground : ground_items_) {
+        if (!ground.active) continue;
+        GroundItemSnapshot& packed =
+            result.ground_items[result.ground_item_count++];
+        packed.ordinal = ground.drop_ordinal;
+        packed.position = ground.position;
+        packed.item_id = ground.item.id;
+        const items::BaseDefinition* base =
+            items::base_definition(ground.item.base_id);
+        if (base != nullptr) packed.slot = base->slot;
+        packed.rarity = ground.item.rarity;
     }
     if (pending_save_.has_value()) {
         result.pending_save_kind = pending_save_->kind;

@@ -97,6 +97,14 @@ struct RoomDescriptor final {
 };
 
 inline constexpr std::size_t kGroundDropCapacity = 192U;
+inline constexpr float kPickupRadius = 1.5F;
+
+struct GroundItem final {
+    bool active{};
+    std::uint16_t drop_ordinal{};
+    combat::Vec3 position{};
+    items::ItemInstance item{};
+};
 
 struct GroundItemSnapshot final {
     std::uint16_t ordinal{};
@@ -169,6 +177,7 @@ struct PendingSave final {
     TransitionKind transition{TransitionKind::none};
     ExitDirection direction{ExitDirection::none};
     RoomPhase resume_phase{RoomPhase::awaiting_exit};
+    std::uint16_t pickup_ordinal{0xFFFFU};
 };
 
 struct PendingSaveResult final {

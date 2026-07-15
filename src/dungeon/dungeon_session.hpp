@@ -40,6 +40,10 @@ public:
         items::ItemSlot slot) noexcept;
     [[nodiscard]] RequestResult request_recipe(
         const std::array<std::uint64_t, 3>& item_ids) noexcept;
+    [[nodiscard]] RequestResult request_pickup(
+        std::uint16_t drop_ordinal) noexcept;
+    void request_nearby_pickups(
+        combat::Vec3 player_position) noexcept;
     [[nodiscard]] const items::ItemOwnershipState& item_state() const noexcept;
     [[nodiscard]] std::optional<PendingSave> pending_save() const noexcept;
     void resolve_pending_save(const PendingSaveResult& result) noexcept;
@@ -67,6 +71,7 @@ private:
     void construct_current_room() noexcept;
     void start_next_wave() noexcept;
     void relay_combat_events() noexcept;
+    void roll_ground_drop(const combat::CombatEvent& event) noexcept;
     void settle_room_experience() noexcept;
     void attempt_exit(ExitDirection direction) noexcept;
     [[nodiscard]] bool prepare_transition(
@@ -100,6 +105,8 @@ private:
     std::optional<PendingSave> pending_save_{};
     std::optional<combat::PlayerCombatBuild> pending_item_build_{};
     std::optional<combat::CombatWorld> combat_{};
+    std::array<GroundItem, kGroundDropCapacity> ground_items_{};
+    std::array<std::uint64_t, 3> rolled_drop_bits_{};
     RoomEncounterPlan encounter_plan_{};
     std::uint8_t wave_index_{};
     std::uint16_t wave_delay_ticks_{};

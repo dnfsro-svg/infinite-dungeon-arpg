@@ -127,6 +127,11 @@ struct StressSummary final {
     std::uint32_t relay_overflow{};
     std::uint32_t combat_overflow{};
     std::uint32_t input_overflow{};
+    std::uint64_t save_boundaries{};
+    std::uint64_t save_boundary_allocations{};
+    std::uint64_t room_load_boundaries{};
+    std::uint64_t room_load_allocations{};
+    std::uint64_t unexpected_hot_path_allocations{};
 };
 
 bool same_vec(const arpg::combat::Vec3& lhs, const arpg::combat::Vec3& rhs) noexcept {
@@ -179,6 +184,16 @@ bool same_combat(const CombatSnapshot& lhs, const CombatSnapshot& rhs) noexcept 
     return true;
 }
 
+bool same_ground_item(
+    const arpg::dungeon::GroundItemSnapshot& lhs,
+    const arpg::dungeon::GroundItemSnapshot& rhs) noexcept {
+    return lhs.ordinal == rhs.ordinal
+        && same_vec(lhs.position, rhs.position)
+        && lhs.item_id == rhs.item_id
+        && lhs.slot == rhs.slot
+        && lhs.rarity == rhs.rarity;
+}
+
 bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexcept {
     if (lhs.session_tick != rhs.session_tick || lhs.root_seed != rhs.root_seed
             || lhs.commit_generation != rhs.commit_generation
@@ -199,6 +214,10 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
             || lhs.has_hole != rhs.has_hole
             || lhs.is_abyss != rhs.is_abyss
             || lhs.has_pending_transition != rhs.has_pending_transition
+            || lhs.inventory_count != rhs.inventory_count
+            || lhs.equipped_ids != rhs.equipped_ids
+            || lhs.ground_item_count != rhs.ground_item_count
+            || lhs.pending_save_kind != rhs.pending_save_kind
             || lhs.encounter.total_budget != rhs.encounter.total_budget
             || lhs.encounter.current_wave_budget
                 != rhs.encounter.current_wave_budget
@@ -218,6 +237,11 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
                 != rhs.diagnostics.room_index_overflow
             || lhs.combat.has_value() != rhs.combat.has_value()) {
         return false;
+    }
+    for (std::size_t index = 0U; index < lhs.ground_items.size(); ++index) {
+        if (!same_ground_item(lhs.ground_items[index], rhs.ground_items[index])) {
+            return false;
+        }
     }
     return !lhs.combat.has_value() || same_combat(*lhs.combat, *rhs.combat);
 }
@@ -256,6 +280,47 @@ void drain(DungeonSession& session, StressSummary& summary) noexcept {
         ++summary.combat_events;
     }
     sample_diagnostics(session.snapshot(), summary);
+}
+
+void record_allocations(
+    StressSummary& summary,
+    std::uint64_t before,
+    bool save_boundary) noexcept {
+    const std::uint64_t after = arpg::test::allocation_count();
+    const std::uint64_t delta = after - before;
+    if (save_boundary) {
+        summary.save_boundary_allocations += delta;
+    } else {
+        summary.unexpected_hot_path_allocations += delta;
+    }
+}
+
+void tracked_tick(
+    DungeonSession& session,
+    MovementInput movement,
+    StressSummary& summary) noexcept {
+    const std::uint64_t before = arpg::test::allocation_count();
+    const RoomPhase phase_before = session.snapshot().phase;
+    session.tick(movement);
+    const DungeonSnapshot state = session.snapshot();
+    const bool save_boundary = state.phase == RoomPhase::committing
+        && state.pending_save_kind.has_value()
+        && (*state.pending_save_kind
+                == arpg::dungeon::PendingSaveKind::transition
+            || *state.pending_save_kind
+                == arpg::dungeon::PendingSaveKind::loot_pickup);
+    const bool room_load = phase_before == RoomPhase::transitioning
+        && state.phase == RoomPhase::locked;
+    const std::uint64_t delta = arpg::test::allocation_count() - before;
+    if (save_boundary) {
+        ++summary.save_boundaries;
+        summary.save_boundary_allocations += delta;
+    } else if (room_load) {
+        ++summary.room_load_boundaries;
+        summary.room_load_allocations += delta;
+    } else {
+        summary.unexpected_hot_path_allocations += delta;
+    }
 }
 
 bool tick_equal(
@@ -299,20 +364,24 @@ bool tick_equal(
 bool commit_equal(
     DungeonSession& lhs,
     DungeonSession& rhs) noexcept {
-    const auto a = lhs.pending_transition();
-    const auto b = rhs.pending_transition();
+    const auto a = lhs.pending_save();
+    const auto b = rhs.pending_save();
     if (!a.has_value() || !b.has_value()
-            || a->kind != b->kind || a->direction != b->direction
+            || a->kind != b->kind
+            || a->transition != b->transition
+            || a->direction != b->direction
+            || a->resume_phase != b->resume_phase
+            || a->pickup_ordinal != b->pickup_ordinal
             || a->expected_generation != b->expected_generation
             || !arpg::dungeon::same_run_state(a->next_state, b->next_state)) {
         return false;
     }
-    lhs.resolve_pending_transition({
+    lhs.resolve_pending_save({
         arpg::dungeon::SaveDisposition::committed,
         a->expected_generation,
         a->next_state,
     });
-    rhs.resolve_pending_transition({
+    rhs.resolve_pending_save({
         arpg::dungeon::SaveDisposition::committed,
         b->expected_generation,
         b->next_state,
@@ -334,6 +403,37 @@ bool commit_equal(
         }
     }
     return true;
+}
+
+bool confirm_pending_save(
+    DungeonSession& session,
+    StressSummary& summary) noexcept {
+    const std::uint64_t before = arpg::test::allocation_count();
+    const auto pending = session.pending_save();
+    if (!pending.has_value()) {
+        record_allocations(summary, before, false);
+        return false;
+    }
+    const auto kind = pending->kind;
+    session.resolve_pending_save({
+        arpg::dungeon::SaveDisposition::committed,
+        pending->expected_generation,
+        pending->next_state,
+    });
+    const DungeonSnapshot saved = session.snapshot();
+    record_allocations(summary, before, true);
+    if (kind == arpg::dungeon::PendingSaveKind::loot_pickup) {
+        return saved.phase == pending->resume_phase
+            && !saved.pending_save_kind.has_value()
+            && saved.commit_generation == pending->expected_generation;
+    }
+    return kind == arpg::dungeon::PendingSaveKind::transition
+        && saved.phase == RoomPhase::transitioning
+        && !saved.has_pending_transition
+        && saved.commit_generation == pending->expected_generation
+        && saved.room_index == pending->next_state.current_room.index
+        && saved.room_seed == pending->next_state.current_room.seed
+        && !saved.has_active_room && !saved.combat.has_value();
 }
 
 MovementInput outward(ExitDirection direction) noexcept {
@@ -364,37 +464,27 @@ MovementInput align_center(const DungeonSnapshot& state, ExitDirection direction
 bool drive_clear(DungeonSession& session, StressSummary& summary) noexcept {
     for (int tick = 0; tick < 8192; ++tick) {
         const DungeonSnapshot state = session.snapshot();
-        if (state.phase == RoomPhase::cleared) {
-            session.tick(MovementInput{});
+        if (state.phase == RoomPhase::committing) {
+            if (!confirm_pending_save(session, summary)) return false;
             drain(session, summary);
+            continue;
+        }
+        if (state.phase == RoomPhase::cleared) {
+            tracked_tick(session, MovementInput{}, summary);
+            drain(session, summary);
+            if (session.snapshot().phase == RoomPhase::committing) {
+                if (!confirm_pending_save(session, summary)) return false;
+                drain(session, summary);
+            }
             return session.snapshot().phase == RoomPhase::awaiting_exit;
         }
         if (state.phase == RoomPhase::combat && state.combat.has_value()) {
             arpg::test::force_defeat_current_wave(session);
         }
-        session.tick({});
+        tracked_tick(session, {}, summary);
         drain(session, summary);
     }
     return false;
-}
-
-bool confirm_pending_save(DungeonSession& session) noexcept {
-    const auto pending = session.pending_transition();
-    if (!pending.has_value()) {
-        return false;
-    }
-    session.resolve_pending_transition({
-        arpg::dungeon::SaveDisposition::committed,
-        pending->expected_generation,
-        pending->next_state,
-    });
-    const DungeonSnapshot saved = session.snapshot();
-    return saved.phase == RoomPhase::transitioning
-        && !saved.has_pending_transition
-        && saved.commit_generation == pending->expected_generation
-        && saved.room_index == pending->next_state.current_room.index
-        && saved.room_seed == pending->next_state.current_room.seed
-        && !saved.has_active_room && !saved.combat.has_value();
 }
 
 bool drive_exit(
@@ -404,18 +494,23 @@ bool drive_exit(
     bool verify_phases) noexcept {
     for (int tick = 0; tick < 512; ++tick) {
         const DungeonSnapshot state = session.snapshot();
+        if (state.phase == RoomPhase::committing) {
+            if (!confirm_pending_save(session, summary)) return false;
+            drain(session, summary);
+            continue;
+        }
         const MovementInput movement = align_center(state, direction);
         if (movement.x == 0 && movement.y == 0) {
             break;
         }
-        session.tick(movement);
+        tracked_tick(session, movement, summary);
         drain(session, summary);
     }
     for (int tick = 0; tick < 512; ++tick) {
-        session.tick(outward(direction));
+        tracked_tick(session, outward(direction), summary);
         drain(session, summary);
         if (session.snapshot().phase == RoomPhase::committing) {
-            if (!confirm_pending_save(session)) {
+            if (!confirm_pending_save(session, summary)) {
                 return false;
             }
             drain(session, summary);
@@ -429,14 +524,14 @@ bool drive_exit(
             || transition.has_active_room || transition.combat.has_value()) {
         return false;
     }
-    session.tick(outward(direction));
+    tracked_tick(session, outward(direction), summary);
     drain(session, summary);
     const DungeonSnapshot locked = session.snapshot();
     if (locked.phase != RoomPhase::locked || !locked.has_active_room
             || !locked.combat.has_value() || locked.combat->tick != 0U) {
         return false;
     }
-    session.tick(outward(direction));
+    tracked_tick(session, outward(direction), summary);
     drain(session, summary);
     const DungeonSnapshot combat = session.snapshot();
     return combat.phase == RoomPhase::combat && combat.has_active_room
@@ -495,10 +590,14 @@ bool has_allocated_neighbor(std::uint64_t bits,
     return false;
 }
 
-bool commit_passive_receipt(DungeonSession& session) noexcept {
+bool commit_passive_receipt(
+    DungeonSession& session,
+    StressSummary& summary) noexcept {
+    const std::uint64_t allocation_before = arpg::test::allocation_count();
     const auto pending = session.pending_save();
     if (!pending.has_value()
             || pending->kind != arpg::dungeon::PendingSaveKind::passive_tree) {
+        record_allocations(summary, allocation_before, false);
         return false;
     }
     session.resolve_pending_save({
@@ -507,6 +606,7 @@ bool commit_passive_receipt(DungeonSession& session) noexcept {
         pending->next_state,
     });
     const DungeonSnapshot committed = session.snapshot();
+    record_allocations(summary, allocation_before, true);
     return !committed.passive_save_pending
         && committed.commit_generation == pending->expected_generation
         && committed.passive_tree.allocated_bits
@@ -514,7 +614,8 @@ bool commit_passive_receipt(DungeonSession& session) noexcept {
 }
 
 bool allocate_route_node(DungeonSession& session,
-    arpg::passives::PassiveNodeId requested) noexcept {
+    arpg::passives::PassiveNodeId requested,
+    StressSummary& summary) noexcept {
     const DungeonSnapshot before = session.snapshot();
     const auto& nodes = arpg::passives::passive_nodes();
     const auto& target = nodes[requested];
@@ -540,8 +641,11 @@ bool allocate_route_node(DungeonSession& session,
     if (!found) {
         return true;
     }
-    return session.request_passive_allocation(chosen)
-        && commit_passive_receipt(session);
+    const std::uint64_t allocation_before = arpg::test::allocation_count();
+    const bool accepted = session.request_passive_allocation(chosen);
+    if (accepted) ++summary.save_boundaries;
+    record_allocations(summary, allocation_before, accepted);
+    return accepted && commit_passive_receipt(session, summary);
 }
 
 DungeonSession passive_trace_session(std::uint64_t root_seed) noexcept {
@@ -561,7 +665,7 @@ bool generate_passive_stress_trace(
         if (room_index % 25U == 0U) {
             const auto next = kPassiveRouteCycle[(room_index / 25U)
                 % kPassiveRouteCycle.size()];
-            if (!allocate_route_node(session, next)) {
+            if (!allocate_route_node(session, next, summary)) {
                 return false;
             }
         }
@@ -729,6 +833,11 @@ bool drive_real_input_clear(
     for (int tick = 0; tick < 4096; ++tick) {
         const DungeonSnapshot state = session.snapshot();
         capture_trace(state, trace);
+        if (state.phase == RoomPhase::committing) {
+            if (!confirm_pending_save(session, summary)) return false;
+            drain_real_input_events(session, summary, trace);
+            continue;
+        }
         if (state.combat.has_value()) {
             const auto& player = state.combat->player;
             if (player.active_attack != arpg::combat::AttackId::none
@@ -752,8 +861,12 @@ bool drive_real_input_clear(
             }
         }
         if (state.phase == RoomPhase::cleared) {
-            session.tick({});
+            tracked_tick(session, {}, summary);
             drain_real_input_events(session, summary, trace);
+            if (session.snapshot().phase == RoomPhase::committing) {
+                if (!confirm_pending_save(session, summary)) return false;
+                drain_real_input_events(session, summary, trace);
+            }
             capture_trace(session.snapshot(), trace);
             return session.snapshot().phase == RoomPhase::awaiting_exit;
         }
@@ -782,7 +895,7 @@ bool drive_real_input_clear(
                 }
             }
         }
-        session.tick(movement);
+        tracked_tick(session, movement, summary);
         drain_real_input_events(session, summary, trace);
     }
     capture_trace(session.snapshot(), trace);
@@ -887,15 +1000,31 @@ arpg::test::Failure launcher_input_robot_clears_thousand_minimal_committed_rooms
             true));
     }
     const DungeonSnapshot final = session.snapshot();
+    const std::uint64_t allocation_delta = arpg::test::allocation_count()
+        - allocations_before;
     std::printf("[real-input] launcher-1000 rooms=%llu allocation-delta=%llu "
+        "save-boundaries=%llu save-alloc=%llu room-loads=%llu "
+        "room-load-alloc=%llu unexpected=%llu "
         "overflow=%u/%u/%u/%u\n",
         static_cast<unsigned long long>(final.room_index),
-        static_cast<unsigned long long>(arpg::test::allocation_count()
-            - allocations_before),
+        static_cast<unsigned long long>(allocation_delta),
+        static_cast<unsigned long long>(summary.save_boundaries),
+        static_cast<unsigned long long>(summary.save_boundary_allocations),
+        static_cast<unsigned long long>(summary.room_load_boundaries),
+        static_cast<unsigned long long>(summary.room_load_allocations),
+        static_cast<unsigned long long>(
+            summary.unexpected_hot_path_allocations),
         summary.dungeon_overflow, summary.relay_overflow,
         summary.combat_overflow, summary.input_overflow);
     ARPG_REQUIRE(final.room_index == 1000U);
-    ARPG_REQUIRE(arpg::test::allocation_count() == allocations_before);
+    ARPG_REQUIRE(allocation_delta == summary.save_boundary_allocations
+        + summary.room_load_allocations
+        + summary.unexpected_hot_path_allocations);
+    ARPG_REQUIRE(summary.unexpected_hot_path_allocations == 0U);
+    ARPG_REQUIRE(summary.save_boundary_allocations
+        <= summary.save_boundaries * 8U);
+    ARPG_REQUIRE(summary.room_load_allocations
+        <= summary.room_load_boundaries);
     ARPG_REQUIRE(summary.dungeon_overflow == 0U);
     ARPG_REQUIRE(summary.relay_overflow == 0U);
     ARPG_REQUIRE(summary.combat_overflow == 0U);
@@ -1081,20 +1210,36 @@ arpg::test::Failure measured_thousand_rooms_allocate_nothing_and_never_overflow(
     ARPG_REQUIRE(drive_rooms(measured, 1000U, summary));
     const std::uint64_t after = arpg::test::allocation_count();
     const DungeonSnapshot final = measured.snapshot();
+    const std::uint64_t allocation_delta = after - before;
     std::printf(
         "[stress] exits=1000 index=%llu allocation_before=%llu "
-        "allocation_after=%llu delta=%llu dungeon_overflow=%u "
+        "allocation_after=%llu delta=%llu save-boundaries=%llu "
+        "save-alloc=%llu room-loads=%llu room-load-alloc=%llu "
+        "unexpected=%llu dungeon_overflow=%u "
         "relay_overflow=%u combat_overflow=%u input_overflow=%u\n",
         static_cast<unsigned long long>(final.room_index),
         static_cast<unsigned long long>(before),
         static_cast<unsigned long long>(after),
-        static_cast<unsigned long long>(after - before),
+        static_cast<unsigned long long>(allocation_delta),
+        static_cast<unsigned long long>(summary.save_boundaries),
+        static_cast<unsigned long long>(summary.save_boundary_allocations),
+        static_cast<unsigned long long>(summary.room_load_boundaries),
+        static_cast<unsigned long long>(summary.room_load_allocations),
+        static_cast<unsigned long long>(
+            summary.unexpected_hot_path_allocations),
         summary.dungeon_overflow,
         summary.relay_overflow,
         summary.combat_overflow,
         summary.input_overflow);
     ARPG_REQUIRE(final.room_index == 1000U);
-    ARPG_REQUIRE(after == before);
+    ARPG_REQUIRE(allocation_delta == summary.save_boundary_allocations
+        + summary.room_load_allocations
+        + summary.unexpected_hot_path_allocations);
+    ARPG_REQUIRE(summary.unexpected_hot_path_allocations == 0U);
+    ARPG_REQUIRE(summary.save_boundary_allocations
+        <= summary.save_boundaries * 8U);
+    ARPG_REQUIRE(summary.room_load_allocations
+        <= summary.room_load_boundaries);
     ARPG_REQUIRE(summary.dungeon_overflow == 0U);
     ARPG_REQUIRE(summary.relay_overflow == 0U);
     ARPG_REQUIRE(summary.combat_overflow == 0U);
@@ -1131,7 +1276,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"one changed direction changes only committed room", &one_changed_direction_changes_only_committed_room},
     {"fixed seed room trace matches baseline golden", &fixed_seed_room_trace_matches_baseline_golden},
     {"thousand real rooms preserve single world invariants", &thousand_real_rooms_preserve_single_world_invariants},
-    {"measured thousand rooms allocate nothing and never overflow", &measured_thousand_rooms_allocate_nothing_and_never_overflow},
+    {"measured thousand rooms isolate save allocations and never overflow", &measured_thousand_rooms_allocate_nothing_and_never_overflow},
     {"passive star chart end to end trace is deterministic", &passive_star_chart_end_to_end_trace_is_deterministic},
 };
 

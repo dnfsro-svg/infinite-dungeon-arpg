@@ -51,6 +51,53 @@ bool contains_id(
     return ids[0] == id || ids[1] == id || ids[2] == id;
 }
 
+bool bit_is_set(
+    const std::array<std::uint64_t, 3>& bits,
+    std::uint16_t ordinal) noexcept {
+    const std::size_t word = ordinal / 64U;
+    const std::uint8_t bit = static_cast<std::uint8_t>(ordinal % 64U);
+    return word < bits.size()
+        && (bits[word] & (std::uint64_t{1U} << bit)) != 0U;
+}
+
+void set_bit(
+    std::array<std::uint64_t, 3>& bits,
+    std::uint16_t ordinal) noexcept {
+    const std::size_t word = ordinal / 64U;
+    const std::uint8_t bit = static_cast<std::uint8_t>(ordinal % 64U);
+    if (word < bits.size()) bits[word] |= std::uint64_t{1U} << bit;
+}
+
+bool pickup_distance_ok(
+    combat::Vec3 player,
+    combat::Vec3 item) noexcept {
+    const float x = player.x - item.x;
+    const float y = player.y - item.y;
+    return x * x + y * y <= kPickupRadius * kPickupRadius;
+}
+
+bool same_item(
+    const items::ItemInstance& left,
+    const items::ItemInstance& right) noexcept {
+    if (left.id != right.id || left.base_id != right.base_id
+            || left.rarity != right.rarity
+            || left.item_level != right.item_level
+            || left.required_level != right.required_level
+            || left.affix_count != right.affix_count
+            || left.reserved != right.reserved) {
+        return false;
+    }
+    for (std::size_t index = 0U; index < left.affixes.size(); ++index) {
+        const items::AffixRoll& a = left.affixes[index];
+        const items::AffixRoll& b = right.affixes[index];
+        if (a.affix_id != b.affix_id || a.tier != b.tier
+                || a.variant != b.variant) {
+            return false;
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 bool DungeonSession::request_descent(bool player_in_range) noexcept {
@@ -109,6 +156,7 @@ bool DungeonSession::prepare_transition(
 
     RunStateBuildResult next = built;
     next.state.progression = room_progression_;
+    next.state.item_ownership.claimed_drop_bits = {};
     if (kind == TransitionKind::descent) {
         last_exit_ = ExitDirection::none;
     }
@@ -397,6 +445,98 @@ RequestResult DungeonSession::request_recipe(
     }
 }
 
+RequestResult DungeonSession::request_pickup(
+    std::uint16_t drop_ordinal) noexcept {
+    if (!pending_item_cache_consistent()) {
+        enter_fault(DungeonFault::save_receipt_mismatch);
+        return RequestResult::faulted;
+    }
+    if (!item_request_phase(phase_) || !combat_.has_value()
+            || pending_save_.has_value()
+            || drop_ordinal >= ground_items_.size()) {
+        return RequestResult::rejected;
+    }
+    const GroundItem& ground = ground_items_[drop_ordinal];
+    if (!ground.active || ground.drop_ordinal != drop_ordinal
+            || !pickup_distance_ok(
+                combat_->snapshot().player.position, ground.position)) {
+        return RequestResult::rejected;
+    }
+    const items::OwnershipValidationResult stable_validation =
+        items::validate_ownership_detailed(stable_state_.item_ownership);
+    if (stable_validation
+            == items::OwnershipValidationResult::allocation_failure) {
+        return RequestResult::rejected;
+    }
+    if (stable_validation != items::OwnershipValidationResult::valid
+            || !items::validate_item(ground.item)
+            || !passives::valid_passive_tree_state(
+                stable_state_.passive_tree, room_progression_)) {
+        enter_fault(DungeonFault::invalid_item_state);
+        return RequestResult::faulted;
+    }
+    if (find_item(stable_state_.item_ownership, ground.item.id) != nullptr) {
+        enter_fault(DungeonFault::item_id_collision);
+        return RequestResult::faulted;
+    }
+    if (stable_state_.commit_generation
+            == (std::numeric_limits<std::uint64_t>::max)()) {
+        enter_fault(DungeonFault::commit_generation_overflow);
+        return RequestResult::faulted;
+    }
+
+    try {
+        DungeonRunState next = stable_state_;
+        next.progression = room_progression_;
+        next.item_ownership.items.push_back(ground.item);
+        set_bit(next.item_ownership.claimed_drop_bits, drop_ordinal);
+        const items::OwnershipValidationResult validation =
+            items::validate_ownership_detailed(next.item_ownership);
+        if (validation == items::OwnershipValidationResult::allocation_failure) {
+            return RequestResult::rejected;
+        }
+        if (validation != items::OwnershipValidationResult::valid) {
+            enter_fault(DungeonFault::invalid_item_state);
+            return RequestResult::faulted;
+        }
+        ++next.commit_generation;
+        const std::uint64_t expected_generation = next.commit_generation;
+        pending_save_.emplace(PendingSave{
+            PendingSaveKind::loot_pickup,
+            expected_generation,
+            std::move(next),
+            TransitionKind::none,
+            ExitDirection::none,
+            phase_,
+            drop_ordinal,
+        });
+        phase_ = RoomPhase::committing;
+        return RequestResult::accepted;
+    } catch (const std::bad_alloc&) {
+        return RequestResult::rejected;
+    } catch (...) {
+        return RequestResult::rejected;
+    }
+}
+
+void DungeonSession::request_nearby_pickups(
+    combat::Vec3 player_position) noexcept {
+    if (!item_request_phase(phase_) || !combat_.has_value()
+            || pending_save_.has_value()) {
+        return;
+    }
+    for (std::uint16_t ordinal = 0U;
+         ordinal < ground_items_.size(); ++ordinal) {
+        const GroundItem& ground = ground_items_[ordinal];
+        if (!ground.active
+                || !pickup_distance_ok(player_position, ground.position)) {
+            continue;
+        }
+        const RequestResult result = request_pickup(ordinal);
+        if (result != RequestResult::rejected) return;
+    }
+}
+
 void DungeonSession::commit_pending_save(
     const PendingSaveResult& result) noexcept {
     if (phase_ != RoomPhase::committing || !pending_save_.has_value()) {
@@ -437,6 +577,26 @@ void DungeonSession::commit_pending_save(
     const PendingSaveKind kind = pending_save_->kind;
     const bool item_commit = kind == PendingSaveKind::equipment
         || kind == PendingSaveKind::recipe;
+    const bool pickup_commit = kind == PendingSaveKind::loot_pickup;
+    const std::uint16_t pickup_ordinal = pending_save_->pickup_ordinal;
+    if (pickup_commit) {
+        if (pickup_ordinal >= ground_items_.size()) {
+            enter_fault(DungeonFault::save_receipt_mismatch);
+            return;
+        }
+        const GroundItem& ground = ground_items_[pickup_ordinal];
+        const items::ItemInstance* published = find_item(
+            pending_save_->next_state.item_ownership, ground.item.id);
+        if (!ground.active || ground.drop_ordinal != pickup_ordinal
+                || published == nullptr
+                || !same_item(*published, ground.item)
+                || !bit_is_set(
+                    pending_save_->next_state.item_ownership.claimed_drop_bits,
+                    pickup_ordinal)) {
+            enter_fault(DungeonFault::save_receipt_mismatch);
+            return;
+        }
+    }
     combat::PlayerCombatBuild published_build{};
     if (item_commit) {
         if (!combat_.has_value()) {
@@ -452,6 +612,8 @@ void DungeonSession::commit_pending_save(
     pending_save_.reset();
     pending_item_build_.reset();
     if (kind == PendingSaveKind::transition) {
+        ground_items_ = {};
+        rolled_drop_bits_ = {};
         combat_.reset();
         phase_ = RoomPhase::transitioning;
         emit_committed(previous, stable_state_);
@@ -460,6 +622,11 @@ void DungeonSession::commit_pending_save(
     room_progression_ = stable_state_.progression;
     if (item_commit) {
         combat_->apply_player_build(published_build);
+        phase_ = resume_phase;
+        return;
+    }
+    if (pickup_commit) {
+        ground_items_[pickup_ordinal] = GroundItem{};
         phase_ = resume_phase;
         return;
     }
