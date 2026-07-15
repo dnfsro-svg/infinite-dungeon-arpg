@@ -9,5 +9,5 @@ int main() {
     const arpg::test::TestSuite suites[] = {
         item_catalog_suite(), item_generation_suite(), item_modifier_suite(),
         item_recipe_suite()};
-    return arpg::test::run_suites(suites, 25, "stage 8 task 3 items");
+    return arpg::test::run_suites(suites, 26, "stage 8 task 3 items");
 }

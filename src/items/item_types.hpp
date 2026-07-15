@@ -1,7 +1,9 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
+#include <type_traits>
 #include <vector>
 
 namespace arpg::items {
@@ -48,7 +50,15 @@ struct ItemInstance final {
     std::uint8_t required_level{};
     std::array<AffixRoll, 6> affixes{};
     std::uint8_t affix_count{};
+    std::array<std::uint8_t, 3> reserved{};
 };
+
+static_assert(std::is_standard_layout_v<ItemInstance>);
+static_assert(std::is_trivially_copyable_v<ItemInstance>);
+static_assert(sizeof(ItemInstance) == 40U);
+static_assert(offsetof(ItemInstance, affixes) == 12U);
+static_assert(offsetof(ItemInstance, affix_count) == 36U);
+static_assert(offsetof(ItemInstance, reserved) == 37U);
 
 struct EquipmentState final {
     std::array<std::uint64_t, 6> equipped_ids{};

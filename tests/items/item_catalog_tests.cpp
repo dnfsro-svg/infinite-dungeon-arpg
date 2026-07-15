@@ -27,6 +27,15 @@ static_assert(std::is_same_v<decltype(ItemInstance::id), std::uint64_t>);
 static_assert(std::is_same_v<
     decltype(ItemInstance::affixes), std::array<AffixRoll, 6>>);
 static_assert(std::is_same_v<
+    decltype(ItemInstance::reserved), std::array<std::uint8_t, 3>>);
+static_assert(std::is_standard_layout_v<ItemInstance>);
+static_assert(std::is_trivially_copyable_v<ItemInstance>);
+static_assert(sizeof(ItemInstance) == 40U);
+static_assert(offsetof(ItemInstance, id) == 0U);
+static_assert(offsetof(ItemInstance, affixes) == 12U);
+static_assert(offsetof(ItemInstance, affix_count) == 36U);
+static_assert(offsetof(ItemInstance, reserved) == 37U);
+static_assert(std::is_same_v<
     decltype(EquipmentState::equipped_ids), std::array<std::uint64_t, 6>>);
 static_assert(std::is_same_v<
     decltype(ItemOwnershipState::claimed_drop_bits),
@@ -395,6 +404,18 @@ arpg::test::Failure item_requires_unused_rolls_to_be_zero() noexcept {
     return {};
 }
 
+arpg::test::Failure item_requires_reserved_bytes_to_be_zero() noexcept {
+    ItemInstance item = valid_magic_weapon();
+    ARPG_REQUIRE(validate_item(item));
+    for (std::size_t index = 0U; index < item.reserved.size(); ++index) {
+        item.reserved[index] = static_cast<std::uint8_t>(index + 1U);
+        ARPG_REQUIRE(!validate_item(item));
+        item.reserved[index] = 0U;
+    }
+    ARPG_REQUIRE(validate_item(item));
+    return {};
+}
+
 arpg::test::Failure valid_normal_magic_and_rare_items_are_accepted() noexcept {
     ARPG_REQUIRE(validate_item(normal_item(0U, 1U)));
     ARPG_REQUIRE(validate_item(valid_magic_weapon()));
@@ -455,6 +476,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"tier variant and level validation",
         &item_enforces_tier_variant_and_required_level},
     {"unused roll zero validation", &item_requires_unused_rolls_to_be_zero},
+    {"reserved byte zero validation",
+        &item_requires_reserved_bytes_to_be_zero},
     {"valid item acceptance", &valid_normal_magic_and_rare_items_are_accepted},
     {"ownership identity and equipment validation",
         &ownership_enforces_ids_and_equipment_references},
