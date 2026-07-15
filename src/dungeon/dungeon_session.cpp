@@ -3,9 +3,15 @@
 #include "dungeon/dungeon_progression.hpp"
 #include "dungeon/room_combat_template.hpp"
 #include "dungeon/room_navigation.hpp"
+#include "core/deterministic_rng.hpp"
+#include "items/item_catalog.hpp"
+#include "items/item_modifiers.hpp"
+#include "modifiers/player_modifier_values.hpp"
 #include "passives/passive_tree_rules.hpp"
 
+#include <array>
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 
@@ -13,6 +19,7 @@ namespace arpg::dungeon {
 namespace {
 
 constexpr std::uint16_t kWaveDelayTicks = 45U;
+constexpr std::uint64_t kPlayerEvasionSeedDomain = 0x45564153494F4E31ULL;
 
 void saturating_increment(std::uint32_t& value) noexcept {
     if (value != (std::numeric_limits<std::uint32_t>::max)()) {
@@ -134,6 +141,10 @@ std::optional<PendingSave> DungeonSession::pending_save() const noexcept {
     return pending_save_;
 }
 
+const items::ItemOwnershipState& DungeonSession::item_state() const noexcept {
+    return stable_state_.item_ownership;
+}
+
 void DungeonSession::reset_current_room() noexcept {
     if (phase_ == RoomPhase::transitioning
             || phase_ == RoomPhase::committing
@@ -176,18 +187,20 @@ void DungeonSession::construct_current_room() noexcept {
             ? DungeonFault::invalid_rules : plan.fault);
         return;
     }
-    const modifiers::PlayerModifierValues passive_values =
-        passives::evaluate_passive_tree(stable_state_.passive_tree);
-    if (!passive_values.valid) {
-        enter_fault(DungeonFault::invalid_rules);
+    const auto player_build = build_for(stable_state_);
+    if (!player_build.has_value()) {
+        enter_fault(DungeonFault::invalid_item_state);
         return;
     }
+    auto evasion_stream = core::DeterministicRng::derive_stream(
+        stable_state_.current_room.seed, kPlayerEvasionSeedDomain);
     const auto config = make_combat_encounter_config(
         stable_state_.current_room.entry,
         rules_.rules_version,
         plan.plan.waves[0],
         true,
-        combat::PlayerCombatBuild{passive_values});
+        *player_build,
+        evasion_stream.next_u64());
     if (!config.has_value()) {
         enter_fault(DungeonFault::invalid_rules);
         return;
@@ -197,6 +210,43 @@ void DungeonSession::construct_current_room() noexcept {
     wave_delay_ticks_ = 0U;
     combat_.emplace(*config);
     phase_ = RoomPhase::locked;
+}
+
+std::optional<combat::PlayerCombatBuild> DungeonSession::build_for(
+    const checkpoint::DungeonRunState& state) const noexcept {
+    if (!passives::valid_passive_tree_state(
+            state.passive_tree, state.progression)
+            || items::validate_ownership_detailed(state.item_ownership)
+                != items::OwnershipValidationResult::valid) {
+        return std::nullopt;
+    }
+    std::array<modifiers::Modifier, 256> modifiers{};
+    std::size_t modifier_count = 0U;
+    if (!passives::append_passive_modifiers(state.passive_tree,
+            modifiers.data(), modifiers.size(), modifier_count)) {
+        return std::nullopt;
+    }
+
+    const items::EquipmentProjection equipment =
+        items::project_equipment(state.item_ownership);
+    if (!equipment.valid
+            || equipment.modifier_count > modifiers.size() - modifier_count) {
+        return std::nullopt;
+    }
+    for (std::size_t index = 0U;
+         index < equipment.modifier_count; ++index) {
+        modifiers[modifier_count++] = equipment.modifiers[index];
+    }
+
+    combat::PlayerCombatBuild build{};
+    build.values = modifiers::evaluate_player_modifiers(
+        {modifiers.data(), modifier_count});
+    build.weapon_physical = equipment.weapon_physical;
+    build.local_attack_speed_bp = equipment.local_attack_speed_bp;
+    if (!combat::build_player_hit_packet(0, build).has_value()) {
+        return std::nullopt;
+    }
+    return build;
 }
 
 void DungeonSession::start_next_wave() noexcept {

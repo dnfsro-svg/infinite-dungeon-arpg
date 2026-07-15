@@ -1,5 +1,6 @@
 #include "dungeon/dungeon_progression.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 
@@ -22,6 +23,43 @@ namespace {
         return false;
     }
     next = value + 1U;
+    return true;
+}
+
+[[nodiscard]] bool same_item(
+    const items::ItemInstance& lhs,
+    const items::ItemInstance& rhs) noexcept {
+    if (lhs.id != rhs.id || lhs.base_id != rhs.base_id
+            || lhs.rarity != rhs.rarity
+            || lhs.item_level != rhs.item_level
+            || lhs.required_level != rhs.required_level
+            || lhs.affix_count != rhs.affix_count
+            || lhs.reserved != rhs.reserved) {
+        return false;
+    }
+    for (std::size_t index = 0U; index < lhs.affixes.size(); ++index) {
+        const items::AffixRoll& a = lhs.affixes[index];
+        const items::AffixRoll& b = rhs.affixes[index];
+        if (a.affix_id != b.affix_id || a.tier != b.tier
+                || a.variant != b.variant) {
+            return false;
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] bool same_item_ownership(
+    const items::ItemOwnershipState& lhs,
+    const items::ItemOwnershipState& rhs) noexcept {
+    if (lhs.items.size() != rhs.items.size()
+            || lhs.equipment.equipped_ids != rhs.equipment.equipped_ids
+            || lhs.claimed_drop_bits != rhs.claimed_drop_bits
+            || lhs.next_item_sequence != rhs.next_item_sequence) {
+        return false;
+    }
+    for (std::size_t index = 0U; index < lhs.items.size(); ++index) {
+        if (!same_item(lhs.items[index], rhs.items[index])) return false;
+    }
     return true;
 }
 
@@ -177,6 +215,7 @@ bool same_run_state(
         && lhs.progression.unspent_passive_points
             == rhs.progression.unspent_passive_points
         && lhs.passive_tree.allocated_bits == rhs.passive_tree.allocated_bits
+        && same_item_ownership(lhs.item_ownership, rhs.item_ownership)
         && lhs.last_transition == rhs.last_transition
         && lhs.last_direction == rhs.last_direction;
 }

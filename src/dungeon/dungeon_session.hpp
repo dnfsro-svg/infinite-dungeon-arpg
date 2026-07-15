@@ -9,6 +9,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <array>
 #include <optional>
 
 namespace arpg::test {
@@ -33,6 +34,13 @@ public:
         passives::PassiveNodeId node) noexcept;
     [[nodiscard]] bool request_passive_refund(
         passives::PassiveNodeId node) noexcept;
+    [[nodiscard]] RequestResult request_equip(
+        std::uint64_t item_id) noexcept;
+    [[nodiscard]] RequestResult request_unequip(
+        items::ItemSlot slot) noexcept;
+    [[nodiscard]] RequestResult request_recipe(
+        const std::array<std::uint64_t, 3>& item_ids) noexcept;
+    [[nodiscard]] const items::ItemOwnershipState& item_state() const noexcept;
     [[nodiscard]] std::optional<PendingSave> pending_save() const noexcept;
     void resolve_pending_save(const PendingSaveResult& result) noexcept;
     [[nodiscard]] std::optional<PendingTransition>
@@ -57,6 +65,12 @@ private:
         ExitDirection direction) noexcept;
     [[nodiscard]] bool prepare_passive_mutation(
         passives::PassiveNodeId node, bool refund) noexcept;
+    [[nodiscard]] RequestResult prepare_item_save(
+        DungeonRunState&& next,
+        PendingSaveKind kind,
+        RoomPhase resume_phase) noexcept;
+    [[nodiscard]] std::optional<combat::PlayerCombatBuild> build_for(
+        const checkpoint::DungeonRunState& state) const noexcept;
     void commit_pending_save(const PendingSaveResult& result) noexcept;
     [[nodiscard]] DungeonSnapshot build_dungeon_snapshot() const noexcept;
     void enter_fault(DungeonFault fault) noexcept;

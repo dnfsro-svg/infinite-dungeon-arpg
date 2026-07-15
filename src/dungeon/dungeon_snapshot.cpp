@@ -1,6 +1,17 @@
 #include "dungeon/dungeon_session.hpp"
 
 namespace arpg::dungeon {
+namespace {
+
+bool equipped(const items::EquipmentState& equipment,
+    std::uint64_t item_id) noexcept {
+    for (const std::uint64_t equipped_id : equipment.equipped_ids) {
+        if (equipped_id == item_id) return true;
+    }
+    return false;
+}
+
+}  // namespace
 
 DungeonSnapshot DungeonSession::snapshot() const noexcept {
     return build_dungeon_snapshot();
@@ -36,6 +47,15 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
     result.passive_save_pending = pending_save_.has_value()
         && pending_save_->kind == PendingSaveKind::passive_tree;
     result.passive_tree_error = last_passive_tree_error_;
+    result.equipped_ids = stable_state_.item_ownership.equipment.equipped_ids;
+    for (const items::ItemInstance& item : stable_state_.item_ownership.items) {
+        if (!equipped(stable_state_.item_ownership.equipment, item.id)) {
+            ++result.inventory_count;
+        }
+    }
+    if (pending_save_.has_value()) {
+        result.pending_save_kind = pending_save_->kind;
+    }
     if (combat_.has_value()) {
         result.combat.emplace(combat_->snapshot());
     }

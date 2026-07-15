@@ -1,10 +1,16 @@
 #include "dungeon/dungeon_session.hpp"
 
 #include "dungeon/dungeon_progression.hpp"
+#include "items/item_catalog.hpp"
+#include "items/item_generation.hpp"
 #include "passives/passive_tree_rules.hpp"
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <new>
+#include <utility>
 
 namespace arpg::dungeon {
 namespace {
@@ -13,6 +19,36 @@ void saturating_increment(std::uint32_t& value) noexcept {
     if (value != (std::numeric_limits<std::uint32_t>::max)()) {
         ++value;
     }
+}
+
+bool item_request_phase(RoomPhase phase) noexcept {
+    return phase == RoomPhase::locked || phase == RoomPhase::combat
+        || phase == RoomPhase::wave_delay || phase == RoomPhase::cleared
+        || phase == RoomPhase::awaiting_exit;
+}
+
+const items::ItemInstance* find_item(
+    const items::ItemOwnershipState& state,
+    std::uint64_t id) noexcept {
+    for (const items::ItemInstance& item : state.items) {
+        if (item.id == id) return &item;
+    }
+    return nullptr;
+}
+
+bool is_equipped(
+    const items::ItemOwnershipState& state,
+    std::uint64_t id) noexcept {
+    for (const std::uint64_t equipped : state.equipment.equipped_ids) {
+        if (equipped == id) return true;
+    }
+    return false;
+}
+
+bool contains_id(
+    const std::array<std::uint64_t, 3>& ids,
+    std::uint64_t id) noexcept {
+    return ids[0] == id || ids[1] == id || ids[2] == id;
 }
 
 }  // namespace
@@ -78,6 +114,7 @@ bool DungeonSession::prepare_transition(
         next.state,
         kind,
         direction,
+        RoomPhase::awaiting_exit,
     };
     phase_ = RoomPhase::committing;
     const bool emitted = emit(
@@ -126,9 +163,201 @@ bool DungeonSession::prepare_passive_mutation(
         next,
         TransitionKind::none,
         ExitDirection::none,
+        RoomPhase::awaiting_exit,
     };
     phase_ = RoomPhase::committing;
     return true;
+}
+
+RequestResult DungeonSession::prepare_item_save(
+    DungeonRunState&& next,
+    PendingSaveKind kind,
+    RoomPhase resume_phase) noexcept {
+    const items::OwnershipValidationResult validation =
+        items::validate_ownership_detailed(next.item_ownership);
+    if (validation == items::OwnershipValidationResult::allocation_failure) {
+        return RequestResult::rejected;
+    }
+    if (validation != items::OwnershipValidationResult::valid
+            || !passives::valid_passive_tree_state(
+                next.passive_tree, next.progression)) {
+        enter_fault(DungeonFault::invalid_item_state);
+        return RequestResult::faulted;
+    }
+    if (!build_for(next).has_value()) {
+        return RequestResult::rejected;
+    }
+    if (next.commit_generation
+            == (std::numeric_limits<std::uint64_t>::max)()) {
+        enter_fault(DungeonFault::commit_generation_overflow);
+        return RequestResult::faulted;
+    }
+    ++next.commit_generation;
+    const std::uint64_t expected_generation = next.commit_generation;
+    pending_save_.emplace(PendingSave{
+        kind,
+        expected_generation,
+        std::move(next),
+        TransitionKind::none,
+        ExitDirection::none,
+        resume_phase,
+    });
+    phase_ = RoomPhase::committing;
+    return RequestResult::accepted;
+}
+
+RequestResult DungeonSession::request_equip(std::uint64_t item_id) noexcept {
+    if (!item_request_phase(phase_) || !combat_.has_value()
+            || pending_save_.has_value() || item_id == 0U) {
+        return RequestResult::rejected;
+    }
+    const items::OwnershipValidationResult stable_validation =
+        items::validate_ownership_detailed(stable_state_.item_ownership);
+    if (stable_validation == items::OwnershipValidationResult::allocation_failure) {
+        return RequestResult::rejected;
+    }
+    if (stable_validation != items::OwnershipValidationResult::valid) {
+        enter_fault(DungeonFault::invalid_item_state);
+        return RequestResult::faulted;
+    }
+    const items::ItemInstance* item = find_item(
+        stable_state_.item_ownership, item_id);
+    const items::BaseDefinition* base = item == nullptr
+        ? nullptr : items::base_definition(item->base_id);
+    if (item == nullptr || base == nullptr
+            || item->required_level > room_progression_.level) {
+        return RequestResult::rejected;
+    }
+    const std::size_t slot = static_cast<std::size_t>(base->slot);
+    if (slot >= stable_state_.item_ownership.equipment.equipped_ids.size()
+            || stable_state_.item_ownership.equipment.equipped_ids[slot]
+                == item_id) {
+        return RequestResult::rejected;
+    }
+
+    try {
+        DungeonRunState next = stable_state_;
+        next.progression = room_progression_;
+        next.item_ownership.equipment.equipped_ids[slot] = item_id;
+        return prepare_item_save(
+            std::move(next), PendingSaveKind::equipment, phase_);
+    } catch (const std::bad_alloc&) {
+        return RequestResult::rejected;
+    } catch (...) {
+        return RequestResult::rejected;
+    }
+}
+
+RequestResult DungeonSession::request_unequip(items::ItemSlot slot) noexcept {
+    const std::size_t slot_index = static_cast<std::size_t>(slot);
+    if (!item_request_phase(phase_) || !combat_.has_value()
+            || pending_save_.has_value()
+            || slot_index >= static_cast<std::size_t>(items::ItemSlot::count)) {
+        return RequestResult::rejected;
+    }
+    const items::OwnershipValidationResult stable_validation =
+        items::validate_ownership_detailed(stable_state_.item_ownership);
+    if (stable_validation == items::OwnershipValidationResult::allocation_failure) {
+        return RequestResult::rejected;
+    }
+    if (stable_validation != items::OwnershipValidationResult::valid) {
+        enter_fault(DungeonFault::invalid_item_state);
+        return RequestResult::faulted;
+    }
+    if (stable_state_.item_ownership.equipment.equipped_ids[slot_index] == 0U) {
+        return RequestResult::rejected;
+    }
+
+    try {
+        DungeonRunState next = stable_state_;
+        next.progression = room_progression_;
+        next.item_ownership.equipment.equipped_ids[slot_index] = 0U;
+        return prepare_item_save(
+            std::move(next), PendingSaveKind::equipment, phase_);
+    } catch (const std::bad_alloc&) {
+        return RequestResult::rejected;
+    } catch (...) {
+        return RequestResult::rejected;
+    }
+}
+
+RequestResult DungeonSession::request_recipe(
+    const std::array<std::uint64_t, 3>& item_ids) noexcept {
+    if (!item_request_phase(phase_) || !combat_.has_value()
+            || pending_save_.has_value() || item_ids[0] == 0U
+            || item_ids[1] == 0U || item_ids[2] == 0U
+            || item_ids[0] == item_ids[1] || item_ids[0] == item_ids[2]
+            || item_ids[1] == item_ids[2]) {
+        return RequestResult::rejected;
+    }
+    const items::OwnershipValidationResult stable_validation =
+        items::validate_ownership_detailed(stable_state_.item_ownership);
+    if (stable_validation == items::OwnershipValidationResult::allocation_failure) {
+        return RequestResult::rejected;
+    }
+    if (stable_validation != items::OwnershipValidationResult::valid) {
+        enter_fault(DungeonFault::invalid_item_state);
+        return RequestResult::faulted;
+    }
+    const items::ItemInstance* a = find_item(
+        stable_state_.item_ownership, item_ids[0]);
+    const items::ItemInstance* b = find_item(
+        stable_state_.item_ownership, item_ids[1]);
+    const items::ItemInstance* c = find_item(
+        stable_state_.item_ownership, item_ids[2]);
+    if (a == nullptr || b == nullptr || c == nullptr
+            || is_equipped(stable_state_.item_ownership, a->id)
+            || is_equipped(stable_state_.item_ownership, b->id)
+            || is_equipped(stable_state_.item_ownership, c->id)) {
+        return RequestResult::rejected;
+    }
+    const items::BaseDefinition* a_base = items::base_definition(a->base_id);
+    const items::BaseDefinition* b_base = items::base_definition(b->base_id);
+    const items::BaseDefinition* c_base = items::base_definition(c->base_id);
+    if (a_base == nullptr || b_base == nullptr || c_base == nullptr
+            || a_base->slot != b_base->slot || a_base->slot != c_base->slot
+            || a->rarity != b->rarity || a->rarity != c->rarity) {
+        return RequestResult::rejected;
+    }
+    if (stable_state_.item_ownership.next_item_sequence
+            == (std::numeric_limits<std::uint64_t>::max)()) {
+        enter_fault(DungeonFault::item_sequence_overflow);
+        return RequestResult::faulted;
+    }
+    const auto product = items::generate_recipe_item(
+        stable_state_.root_seed,
+        stable_state_.item_ownership.next_item_sequence,
+        *a, *b, *c);
+    if (!product.has_value()) {
+        enter_fault(DungeonFault::item_id_collision);
+        return RequestResult::faulted;
+    }
+    if (find_item(stable_state_.item_ownership, product->id) != nullptr) {
+        enter_fault(DungeonFault::item_id_collision);
+        return RequestResult::faulted;
+    }
+
+    try {
+        DungeonRunState next = stable_state_;
+        next.progression = room_progression_;
+        auto& owned = next.item_ownership.items;
+        std::size_t write = 0U;
+        for (std::size_t read = 0U; read < owned.size(); ++read) {
+            if (!contains_id(item_ids, owned[read].id)) {
+                if (write != read) owned[write] = owned[read];
+                ++write;
+            }
+        }
+        owned.resize(write);
+        owned.push_back(*product);
+        ++next.item_ownership.next_item_sequence;
+        return prepare_item_save(
+            std::move(next), PendingSaveKind::recipe, phase_);
+    } catch (const std::bad_alloc&) {
+        return RequestResult::rejected;
+    } catch (...) {
+        return RequestResult::rejected;
+    }
 }
 
 void DungeonSession::commit_pending_save(
@@ -142,16 +371,16 @@ void DungeonSession::commit_pending_save(
         return;
     }
     if (result.disposition == SaveDisposition::not_committed) {
-        const DungeonRunState next = pending_save_->next_state;
-        pending_save_.reset();
-        phase_ = RoomPhase::awaiting_exit;
+        const RoomPhase resume_phase = pending_save_->resume_phase;
+        phase_ = resume_phase;
         saturating_increment(diagnostics_.save_failure_count);
         static_cast<void>(emit(
             DungeonEventKind::save_failed,
             &stable_state_,
-            &next,
-            next.last_transition,
-            next.last_direction));
+            &pending_save_->next_state,
+            pending_save_->next_state.last_transition,
+            pending_save_->next_state.last_direction));
+        pending_save_.reset();
         return;
     }
     if (result.generation != pending_save_->expected_generation
@@ -163,9 +392,24 @@ void DungeonSession::commit_pending_save(
         return;
     }
 
-    const DungeonRunState previous = stable_state_;
-    stable_state_ = result.verified_state;
     const PendingSaveKind kind = pending_save_->kind;
+    std::optional<combat::PlayerCombatBuild> published_build{};
+    if (kind == PendingSaveKind::equipment
+            || kind == PendingSaveKind::recipe) {
+        if (!combat_.has_value()) {
+            enter_fault(DungeonFault::invalid_item_state);
+            return;
+        }
+        published_build = build_for(result.verified_state);
+        if (!published_build.has_value()) {
+            enter_fault(DungeonFault::invalid_item_state);
+            return;
+        }
+    }
+
+    DungeonRunState previous = std::move(stable_state_);
+    stable_state_ = std::move(pending_save_->next_state);
+    const RoomPhase resume_phase = pending_save_->resume_phase;
     pending_save_.reset();
     if (kind == PendingSaveKind::transition) {
         combat_.reset();
@@ -174,6 +418,11 @@ void DungeonSession::commit_pending_save(
         return;
     }
     room_progression_ = stable_state_.progression;
+    if (published_build.has_value()) {
+        combat_->apply_player_build(*published_build);
+        phase_ = resume_phase;
+        return;
+    }
     phase_ = RoomPhase::awaiting_exit;
 }
 
