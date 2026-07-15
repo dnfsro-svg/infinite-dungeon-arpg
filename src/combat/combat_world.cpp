@@ -60,19 +60,35 @@ std::optional<std::int64_t> fixed_scale_floor(
     return fixed_floor(product);
 }
 
+bool validate_player_build_fields(const PlayerCombatBuild& build) noexcept {
+    const auto& values = build.values;
+    if (!values.valid || build.weapon_physical < 0
+        || build.local_attack_speed_bp < 0 || values.armor < 0
+        || values.evasion < 0 || values.melee_damage < 0
+        || values.max_health < 0 || values.max_health_more < 0
+        || values.max_barrier < 0 || values.damage_taken < 0
+        || values.movement_speed < 0 || values.attack_speed < 0
+        || values.impulse_scale < 0 || values.jump_speed < 0
+        || values.air_control < 0) {
+        return false;
+    }
+    for (const auto factor : values.damage_increased) {
+        if (factor < 0) return false;
+    }
+    for (const auto bonus : values.damage_reduction_cap_bonus) {
+        if (bonus < 0) return false;
+    }
+    return true;
+}
+
 bool valid_player_build(const PlayerCombatBuild& build) noexcept;
 
 }  // namespace
 
 std::optional<DamagePacket> build_player_hit_packet(
     int base_physical, const PlayerCombatBuild& build) noexcept {
-    if (base_physical < 0 || !build.values.valid
-        || build.weapon_physical < 0 || build.local_attack_speed_bp < 0
-        || build.values.melee_damage < 0) {
+    if (base_physical < 0 || !validate_player_build_fields(build)) {
         return std::nullopt;
-    }
-    for (const auto factor : build.values.damage_increased) {
-        if (factor < 0) return std::nullopt;
     }
 
     DamagePacket packet{};
@@ -116,7 +132,9 @@ std::optional<DamagePacket> build_player_hit_packet(
 
 std::optional<int> resolve_player_damage(
     DamagePacket packet, const PlayerCombatBuild& build) noexcept {
-    if (!valid_player_build(build)) return std::nullopt;
+    if (!validate_player_build_fields(build) || !valid_player_build(build)) {
+        return std::nullopt;
+    }
 
     const auto checked_add = [](std::int64_t left, std::int64_t right,
                                 std::int64_t& result) noexcept {
@@ -216,22 +234,7 @@ bool checked_nonnegative_multiply(
 bool derive_player_build(
     const PlayerCombatBuild& build, DerivedPlayerBuild& result) noexcept {
     const auto& values = build.values;
-    if (!values.valid || build.weapon_physical < 0
-        || build.local_attack_speed_bp < 0 || values.armor < 0
-        || values.evasion < 0 || values.melee_damage < 0
-        || values.max_health < 0 || values.max_health_more < 0
-        || values.max_barrier < 0 || values.damage_taken < 0
-        || values.movement_speed < 0 || values.attack_speed < 0
-        || values.impulse_scale < 0 || values.jump_speed < 0
-        || values.air_control < 0) {
-        return false;
-    }
-    for (std::size_t index = 0; index < modifiers::kDamageTypeCount; ++index) {
-        if (values.damage_increased[index] < 0) return false;
-    }
-    for (const auto bonus : values.damage_reduction_cap_bonus) {
-        if (bonus < 0) return false;
-    }
+    if (!validate_player_build_fields(build)) return false;
 
     const std::int64_t health_flat = values.max_health / modifiers::kFixedOne;
     if (health_flat > (std::numeric_limits<std::int64_t>::max)()
@@ -574,6 +577,10 @@ void CombatWorld::apply_player_damage(
         packet.amount.begin(), packet.amount.end(), [](int value) noexcept {
             return value > 0;
         });
+    const auto resolved = resolve_player_damage(
+        packet, encounter_config_.player_build);
+    if (!resolved.has_value()) return;
+
     if (delivery == DamageDelivery::direct && has_positive_component
         && player_.evasion_rate_bp > 0) {
         const auto roll = evasion_rng_.next_bounded(modifiers::kFixedOne);
@@ -583,10 +590,7 @@ void CombatWorld::apply_player_damage(
         }
     }
 
-    const auto resolved = resolve_player_damage(
-        packet, encounter_config_.player_build);
-    if (!resolved.has_value() || *resolved <= 0
-        || player_.invulnerability_ticks != 0) {
+    if (*resolved <= 0 || player_.invulnerability_ticks != 0) {
         return;
     }
     const int damage = *resolved;

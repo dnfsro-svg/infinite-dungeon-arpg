@@ -39,6 +39,36 @@ void wait_for_protection(CombatWorld& world) noexcept {
     arpg::test::tick_n(world, 30);
 }
 
+bool same_player_snapshot(
+    const PlayerSnapshot& left, const PlayerSnapshot& right) noexcept {
+    return left.position.x == right.position.x
+        && left.position.y == right.position.y
+        && left.position.z == right.position.z
+        && left.velocity.x == right.velocity.x
+        && left.velocity.y == right.velocity.y
+        && left.velocity.z == right.velocity.z
+        && left.facing == right.facing
+        && left.state == right.state
+        && left.active_attack == right.active_attack
+        && left.attack_phase == right.attack_phase
+        && left.attack_elapsed_ticks == right.attack_elapsed_ticks
+        && left.combo_stage == right.combo_stage
+        && left.hit_stop_ticks == right.hit_stop_ticks
+        && left.air_attack_available == right.air_attack_available
+        && left.hp == right.hp
+        && left.max_hp == right.max_hp
+        && left.barrier == right.barrier
+        && left.max_barrier == right.max_barrier
+        && left.damage_reduction == right.damage_reduction
+        && left.damage_reduction_cap == right.damage_reduction_cap
+        && left.armor == right.armor
+        && left.evasion == right.evasion
+        && left.armor_reduction_bp == right.armor_reduction_bp
+        && left.evasion_rate_bp == right.evasion_rate_bp
+        && left.hurt_ticks == right.hurt_ticks
+        && left.invulnerability_ticks == right.invulnerability_ticks;
+}
+
 arpg::test::Failure armor_and_each_element_resolve_independently() noexcept {
     PlayerCombatBuild build{};
     build.values.armor = 100;
@@ -104,6 +134,51 @@ arpg::test::Failure invalid_resolution_is_distinct_from_legal_zero() noexcept {
     ARPG_REQUIRE(!resolve_player_damage(
         DamagePacket{{maximum, maximum, maximum, maximum, maximum}},
         overflowing).has_value());
+    return {};
+}
+
+arpg::test::Failure invalid_direct_packet_does_not_advance_evasion_rng() noexcept {
+    PlayerCombatBuild build{};
+    build.values.evasion = 50;
+    CombatWorld with_invalid{defense_config(build)};
+    CombatWorld control{defense_config(build)};
+    arpg::test::drain_events(with_invalid);
+    arpg::test::drain_events(control);
+
+    const auto before = with_invalid.snapshot();
+    constexpr int maximum = (std::numeric_limits<int>::max)();
+    arpg::test::CombatWorldTestAccess::apply_damage(
+        with_invalid,
+        DamagePacket{{maximum, maximum, maximum, maximum, maximum}},
+        DamageDelivery::direct, Vec3{}, FeedbackLevel::heavy);
+    const auto after_invalid = with_invalid.snapshot();
+    ARPG_REQUIRE(after_invalid.tick == before.tick);
+    ARPG_REQUIRE(same_player_snapshot(after_invalid.player, before.player));
+    ARPG_REQUIRE(!with_invalid.try_pop_event().has_value());
+
+    arpg::test::CombatWorldTestAccess::apply_damage(
+        with_invalid, DamagePacket{10}, DamageDelivery::direct,
+        Vec3{}, FeedbackLevel::light);
+    arpg::test::CombatWorldTestAccess::apply_damage(
+        control, DamagePacket{10}, DamageDelivery::direct,
+        Vec3{}, FeedbackLevel::light);
+    ARPG_REQUIRE(with_invalid.snapshot().player.hp
+                 == control.snapshot().player.hp);
+    ARPG_REQUIRE(with_invalid.snapshot().player.hp
+                 == before.player.max_hp - 10);
+
+    wait_for_protection(with_invalid);
+    wait_for_protection(control);
+    arpg::test::CombatWorldTestAccess::apply_damage(
+        with_invalid, DamagePacket{10}, DamageDelivery::direct,
+        Vec3{}, FeedbackLevel::light);
+    arpg::test::CombatWorldTestAccess::apply_damage(
+        control, DamagePacket{10}, DamageDelivery::direct,
+        Vec3{}, FeedbackLevel::light);
+    ARPG_REQUIRE(with_invalid.snapshot().player.hp
+                 == control.snapshot().player.hp);
+    ARPG_REQUIRE(with_invalid.snapshot().player.hp
+                 == before.player.max_hp - 10);
     return {};
 }
 
@@ -283,6 +358,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"elemental cap bonus", &elemental_cap_defaults_to_7500_and_can_reach_9500},
     {"positive component ceil", &positive_component_uses_ceil_and_stays_at_least_one},
     {"invalid versus zero", &invalid_resolution_is_distinct_from_legal_zero},
+    {"invalid direct does not roll", &invalid_direct_packet_does_not_advance_evasion_rng},
     {"zero evasion does not roll", &zero_evasion_does_not_advance_future_evasion_stream},
     {"identical seed and trace", &identical_seed_and_trace_produce_identical_damage},
     {"real hazard bypasses evasion", &real_ground_hazard_bypasses_evasion},
