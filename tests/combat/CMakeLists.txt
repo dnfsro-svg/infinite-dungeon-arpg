@@ -9,6 +9,7 @@ add_executable(arpg_combat_tests
     hit_resolution_tests.cpp
     input_buffer_tests.cpp
     monster_affix_catalog_tests.cpp
+    monster_affix_generation_tests.cpp
     monster_catalog_tests.cpp
     monster_melee_tests.cpp
     monster_ranged_tests.cpp

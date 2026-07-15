@@ -47,5 +47,5 @@ int main() {
         dungeon_progression_reward_suite(),
     };
 
-    return arpg::test::run_suites(suites, 119, "stage 8 task 10 dungeon");
+    return arpg::test::run_suites(suites, 121, "stage 9 task 2 dungeon");
 }

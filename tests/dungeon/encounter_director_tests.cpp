@@ -1,6 +1,8 @@
 #include "test_framework.hpp"
 
 #include "combat/monster_catalog.hpp"
+#include "combat/monster_affix_catalog.hpp"
+#include "combat/monster_affix_generation.hpp"
 #include "dungeon/dungeon_checkpoint.hpp"
 #include "dungeon/encounter_director.hpp"
 
@@ -24,14 +26,10 @@ using arpg::dungeon::validate_encounter_director_config;
 namespace checkpoint = arpg::dungeon::checkpoint;
 using checkpoint::DungeonElement;
 
-constexpr std::uint16_t tag(MonsterTag value) noexcept {
-    return static_cast<std::uint16_t>(value);
-}
-
-constexpr bool has_tag(
+constexpr bool test_has_tag(
     const arpg::combat::MonsterDefinition& definition,
     MonsterTag value) noexcept {
-    return (definition.tags & tag(value)) != 0U;
+    return (definition.tags & static_cast<std::uint16_t>(value)) != 0U;
 }
 
 bool same_encounter_plan(
@@ -55,7 +53,9 @@ bool same_encounter_plan(
             const auto& b = right.spawns[spawn_index];
             if (a.id != b.id || a.position.x != b.position.x
                     || a.position.y != b.position.y
-                    || a.position.z != b.position.z) {
+                    || a.position.z != b.position.z
+                    || !(a.affixes == b.affixes)
+                    || a.spawn_ordinal != b.spawn_ordinal) {
                 return false;
             }
         }
@@ -98,11 +98,11 @@ bool test_encounter_plan_legal(
                 return false;
             }
             spent = static_cast<std::uint16_t>(spent + definition->threat_cost);
-            direct_count += has_tag(*definition, MonsterTag::direct_target);
-            high_priority_count += has_tag(*definition, MonsterTag::high_priority);
-            ranged_count += has_tag(*definition, MonsterTag::ranged);
-            support_count += has_tag(*definition, MonsterTag::support);
-            hazard_count += has_tag(*definition, MonsterTag::ground_hazard);
+            direct_count += test_has_tag(*definition, MonsterTag::direct_target);
+            high_priority_count += test_has_tag(*definition, MonsterTag::high_priority);
+            ranged_count += test_has_tag(*definition, MonsterTag::ranged);
+            support_count += test_has_tag(*definition, MonsterTag::support);
+            hazard_count += test_has_tag(*definition, MonsterTag::ground_hazard);
             if (spawn.position.x < -8.0F || spawn.position.x > 8.0F
                     || spawn.position.y < -3.5F || spawn.position.y > 3.5F
                     || spawn.position.z != 0.0F) {
@@ -145,6 +145,62 @@ arpg::test::Failure encounter_plan_is_deterministic_and_legal() noexcept {
     ARPG_REQUIRE(same_encounter_plan(a.plan, b.plan));
     ARPG_REQUIRE(test_encounter_plan_legal(a.plan, EncounterDirectorConfig{}));
     ARPG_REQUIRE(a.plan.wave_count == 2U);
+    struct ExpectedBaseSpawn final {
+        MonsterId id{};
+        float x{};
+        float y{};
+    };
+    constexpr std::array<ExpectedBaseSpawn, 4> kStage8BaseTrace{{
+        {MonsterId::chaos_chaser, -1.898F, -3.159F},
+        {MonsterId::fire_charger, 5.914F, 3.418F},
+        {MonsterId::chaos_chaser, -1.935F, -3.361F},
+        {MonsterId::lightning_dasher, -2.939F, 0.850F},
+    }};
+    for (std::size_t wave_index = 0U; wave_index < a.plan.wave_count;
+         ++wave_index) {
+        const auto& wave = a.plan.waves[wave_index];
+        ARPG_REQUIRE(wave.spawn_count == 2U);
+        for (std::size_t spawn_index = 0U; spawn_index < wave.spawn_count;
+             ++spawn_index) {
+            const auto& actual = wave.spawns[spawn_index];
+            const auto& expected = kStage8BaseTrace[wave_index * 2U + spawn_index];
+            ARPG_REQUIRE(actual.id == expected.id);
+            ARPG_REQUIRE(arpg::test::near(actual.position.x, expected.x,
+                0.002));
+            ARPG_REQUIRE(arpg::test::near(actual.position.y, expected.y,
+                0.002));
+            ARPG_REQUIRE(actual.position.z == 0.0F);
+        }
+    }
+    return {};
+}
+
+arpg::test::Failure generated_spawns_have_stable_ordinals_and_legal_affixes() noexcept {
+    const auto result = build_encounter_plan(0xD19E5EEDULL, 40U,
+        DungeonElement::lightning, EncounterDirectorConfig{});
+    ARPG_REQUIRE(result.fault == DungeonFault::none);
+    for (std::size_t wave_index = 0U; wave_index < result.plan.wave_count;
+         ++wave_index) {
+        const auto& wave = result.plan.waves[wave_index];
+        for (std::size_t spawn_index = 0U; spawn_index < wave.spawn_count;
+             ++spawn_index) {
+            const auto& spawn = wave.spawns[spawn_index];
+            ARPG_REQUIRE(spawn.spawn_ordinal == static_cast<std::uint16_t>(
+                wave_index * arpg::combat::kEncounterSpawnCapacity + spawn_index));
+            ARPG_REQUIRE(spawn.affixes.count <= spawn.affixes.values.size());
+            const auto* definition = arpg::combat::monster_definition(spawn.id);
+            ARPG_REQUIRE(definition != nullptr);
+            for (std::size_t affix_index = 0U;
+                 affix_index < spawn.affixes.count; ++affix_index) {
+                const auto* affix = arpg::combat::monster_affix_definition(
+                    spawn.affixes.values[affix_index].id);
+                ARPG_REQUIRE(affix != nullptr);
+                ARPG_REQUIRE((definition->tags & affix->required_tags)
+                    == affix->required_tags);
+                ARPG_REQUIRE((definition->tags & affix->forbidden_tags) == 0U);
+            }
+        }
+    }
     return {};
 }
 
@@ -208,10 +264,13 @@ arpg::test::Failure high_budget_priority_limit_applies_to_each_wave() noexcept {
     plan.wave_count = 2U;
     plan.total_budget = 13U;
     plan.waves[0].spawns[0].id = MonsterId::fire_bomber;
+    plan.waves[0].spawns[0].spawn_ordinal = 0U;
     plan.waves[0].spawns[1].id = MonsterId::fire_charger;
+    plan.waves[0].spawns[1].spawn_ordinal = 1U;
     plan.waves[0].spawn_count = 2U;
     plan.waves[0].spent_budget = 7U;
     plan.waves[1].spawns[0].id = MonsterId::chaos_chaser;
+    plan.waves[1].spawns[0].spawn_ordinal = 96U;
     plan.waves[1].spawn_count = 1U;
     plan.waves[1].spent_budget = 2U;
     ARPG_REQUIRE(encounter_plan_legal(plan, EncounterDirectorConfig{}));
@@ -223,10 +282,13 @@ arpg::test::Failure illegal_wave_budget_or_cost_is_rejected() noexcept {
     plan.wave_count = 2U;
     plan.total_budget = 13U;
     plan.waves[0].spawns[0].id = MonsterId::fire_charger;
+    plan.waves[0].spawns[0].spawn_ordinal = 0U;
     plan.waves[0].spawns[1].id = MonsterId::water_bulwark;
+    plan.waves[0].spawns[1].spawn_ordinal = 1U;
     plan.waves[0].spawn_count = 2U;
     plan.waves[0].spent_budget = 8U;
     plan.waves[1].spawns[0].id = MonsterId::chaos_chaser;
+    plan.waves[1].spawns[0].spawn_ordinal = 96U;
     plan.waves[1].spawn_count = 1U;
     plan.waves[1].spent_budget = 2U;
     ARPG_REQUIRE(!encounter_plan_legal(plan, EncounterDirectorConfig{}));
@@ -235,6 +297,18 @@ arpg::test::Failure illegal_wave_budget_or_cost_is_rejected() noexcept {
     plan.wave_count = 0U;
     ARPG_REQUIRE(!encounter_plan_legal(plan, EncounterDirectorConfig{}));
     plan.wave_count = 3U;
+    ARPG_REQUIRE(!encounter_plan_legal(plan, EncounterDirectorConfig{}));
+    return {};
+}
+
+arpg::test::Failure invalid_spawn_ordinal_is_rejected() noexcept {
+    RoomEncounterPlan plan{};
+    plan.wave_count = 1U;
+    plan.total_budget = 8U;
+    plan.waves[0].spawns[0].id = MonsterId::chaos_chaser;
+    plan.waves[0].spawns[0].spawn_ordinal = 1U;
+    plan.waves[0].spawn_count = 1U;
+    plan.waves[0].spent_budget = 2U;
     ARPG_REQUIRE(!encounter_plan_legal(plan, EncounterDirectorConfig{}));
     return {};
 }
@@ -286,10 +360,13 @@ arpg::test::Failure fallback_config_keeps_a_direct_target() noexcept {
 constexpr arpg::test::TestCase kCases[] = {
     {"budget is bounded and depth driven", &director_budget_is_bounded_and_depth_driven},
     {"plan is deterministic and legal", &encounter_plan_is_deterministic_and_legal},
+    {"generated spawn ordinals and affixes",
+        &generated_spawns_have_stable_ordinals_and_legal_affixes},
     {"ecology weighting prefers matching elements", &ecology_weighting_prefers_matching_elements},
     {"invalid director config is rejected", &invalid_director_config_is_rejected},
     {"high budget limit applies to each wave", &high_budget_priority_limit_applies_to_each_wave},
     {"illegal wave budget or cost is rejected", &illegal_wave_budget_or_cost_is_rejected},
+    {"invalid spawn ordinal is rejected", &invalid_spawn_ordinal_is_rejected},
     {"indivisible small two-wave config is rejected", &indivisible_small_two_wave_config_is_rejected},
     {"large base with low threshold is accepted", &large_base_with_low_threshold_is_accepted},
     {"fallback keeps a direct target", &fallback_config_keeps_a_direct_target},

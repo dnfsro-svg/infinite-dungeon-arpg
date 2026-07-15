@@ -10,6 +10,7 @@ arpg::test::TestSuite movement_jump_suite() noexcept;
 arpg::test::TestSuite hit_resolution_suite() noexcept;
 arpg::test::TestSuite monster_catalog_suite() noexcept;
 arpg::test::TestSuite monster_affix_catalog_suite() noexcept;
+arpg::test::TestSuite monster_affix_generation_suite() noexcept;
 arpg::test::TestSuite monster_melee_suite() noexcept;
 arpg::test::TestSuite monster_ranged_suite() noexcept;
 arpg::test::TestSuite monster_special_suite() noexcept;
@@ -30,6 +31,7 @@ int main() {
         hit_resolution_suite(),
         monster_catalog_suite(),
         monster_affix_catalog_suite(),
+        monster_affix_generation_suite(),
         monster_melee_suite(),
         monster_ranged_suite(),
         monster_special_suite(),
@@ -39,5 +41,5 @@ int main() {
         player_defense_suite(),
     };
 
-    return arpg::test::run_suites(suites, 101, "stage 9 task 1");
+    return arpg::test::run_suites(suites, 105, "stage 9 task 2");
 }

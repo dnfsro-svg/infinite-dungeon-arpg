@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <optional>
 
+#include "combat/monster_affix_types.hpp"
 #include "modifiers/damage_types.hpp"
 #include "modifiers/player_modifier_values.hpp"
 
@@ -152,6 +153,8 @@ inline constexpr std::size_t kEncounterSpawnCapacity = 96;
 struct MonsterSpawnSpec final {
     MonsterId id{MonsterId::chaos_chaser};
     Vec3 position{};
+    MonsterAffixSet affixes{};
+    std::uint16_t spawn_ordinal{};
 };
 
 struct MonsterHandle final {
