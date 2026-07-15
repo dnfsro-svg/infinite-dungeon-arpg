@@ -284,26 +284,27 @@ bool validate_item(const ItemInstance& item) noexcept {
         && item.item_level >= required_level;
 }
 
-bool validate_ownership(const ItemOwnershipState& state) noexcept {
+OwnershipValidationResult validate_ownership_detailed(
+    const ItemOwnershipState& state) noexcept {
     if (state.next_item_sequence == 0U || state.items.size() > 65535U)
-        return false;
+        return OwnershipValidationResult::invalid_state;
 
     const std::size_t item_count = state.items.size();
     const std::unique_ptr<std::uint64_t[]> ids{item_count == 0U
         ? nullptr : new (std::nothrow) std::uint64_t[item_count]};
     if (item_count != 0U && !ids)
-        return false;
+        return OwnershipValidationResult::allocation_failure;
     for (std::size_t index = 0U; index < item_count; ++index) {
         const ItemInstance& item = state.items[index];
         if (item.id == 0U || !validate_item(item))
-            return false;
+            return OwnershipValidationResult::invalid_state;
         ids[index] = item.id;
     }
     if (item_count > 1U)
         std::sort(ids.get(), ids.get() + item_count);
     for (std::size_t index = 1U; index < item_count; ++index) {
         if (ids[index - 1U] == ids[index])
-            return false;
+            return OwnershipValidationResult::invalid_state;
     }
 
     for (std::size_t slot = 0U; slot < state.equipment.equipped_ids.size(); ++slot) {
@@ -312,7 +313,7 @@ bool validate_ownership(const ItemOwnershipState& state) noexcept {
             continue;
         for (std::size_t prior = 0U; prior < slot; ++prior) {
             if (state.equipment.equipped_ids[prior] == equipped_id)
-                return false;
+                return OwnershipValidationResult::invalid_state;
         }
         const ItemInstance* equipped_item = nullptr;
         for (const ItemInstance& item : state.items) {
@@ -322,12 +323,16 @@ bool validate_ownership(const ItemOwnershipState& state) noexcept {
             }
         }
         if (equipped_item == nullptr)
-            return false;
+            return OwnershipValidationResult::invalid_state;
         const BaseDefinition* base = base_definition(equipped_item->base_id);
         if (base == nullptr || base->slot != static_cast<ItemSlot>(slot))
-            return false;
+            return OwnershipValidationResult::invalid_state;
     }
-    return true;
+    return OwnershipValidationResult::valid;
+}
+
+bool validate_ownership(const ItemOwnershipState& state) noexcept {
+    return validate_ownership_detailed(state) == OwnershipValidationResult::valid;
 }
 
 }  // namespace arpg::items

@@ -96,6 +96,9 @@ arpg::test::Failure format_two_migrates_to_start_only_passive_tree() noexcept {
     ARPG_REQUIRE(decoded.state.item_ownership.items.empty());
     ARPG_REQUIRE(decoded.state.item_ownership.equipment.equipped_ids
         == arpg::items::EquipmentState{}.equipped_ids);
+    const std::array<std::uint64_t, 3U> no_claimed_drops{};
+    ARPG_REQUIRE(decoded.state.item_ownership.claimed_drop_bits
+        == no_claimed_drops);
     ARPG_REQUIRE(decoded.state.item_ownership.next_item_sequence == 1U);
     return {};
 }

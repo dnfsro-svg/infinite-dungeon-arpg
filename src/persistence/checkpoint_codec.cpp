@@ -113,7 +113,8 @@ bool valid_direction(std::uint8_t value) noexcept {
         || value == static_cast<std::uint8_t>(ExitDirection::none);
 }
 
-bool valid_state(const dungeon::checkpoint::DungeonRunState& state) noexcept {
+bool valid_checkpoint_fields(
+    const dungeon::checkpoint::DungeonRunState& state) noexcept {
     return state.commit_generation != 0U
         && state.current_room.depth != 0U
         && state.current_room.floor_room_index != 0U
@@ -124,8 +125,7 @@ bool valid_state(const dungeon::checkpoint::DungeonRunState& state) noexcept {
         && progression::valid_progression_state(
             state.progression, progression::default_progression_rules())
         && passives::valid_passive_tree_state(
-            state.passive_tree, state.progression)
-        && items::validate_ownership(state.item_ownership);
+            state.passive_tree, state.progression);
 }
 
 std::uint32_t checkpoint_crc(
@@ -147,8 +147,11 @@ DecodeResult error_result(CodecError error) noexcept {
 
 std::optional<EncodedCheckpoint> encode_checkpoint(
     const dungeon::checkpoint::DungeonRunState& state) noexcept {
-    if (!valid_state(state))
+    if (!valid_checkpoint_fields(state)
+        || items::validate_ownership_detailed(state.item_ownership)
+            != items::OwnershipValidationResult::valid) {
         return std::nullopt;
+    }
     const auto item_count = state.item_ownership.items.size();
     if (item_count > kMaximumCheckpointItemCount
         || item_count > (std::numeric_limits<std::size_t>::max()
@@ -444,9 +447,15 @@ DecodeResult decode_checkpoint(
             }
         }
     }
-    if (!valid_state(state)) {
+    if (!valid_checkpoint_fields(state)) {
         return error_result(CodecError::invalid_state);
     }
+    const auto ownership_validation =
+        items::validate_ownership_detailed(state.item_ownership);
+    if (ownership_validation == items::OwnershipValidationResult::allocation_failure)
+        return error_result(CodecError::allocation_failure);
+    if (ownership_validation != items::OwnershipValidationResult::valid)
+        return error_result(CodecError::invalid_state);
     return result;
 }
 

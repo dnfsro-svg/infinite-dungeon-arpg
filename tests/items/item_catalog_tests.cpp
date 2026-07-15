@@ -466,8 +466,12 @@ arpg::test::Failure ownership_enforces_exact_capacity_boundary() noexcept {
 
 arpg::test::Failure ownership_requires_nonzero_next_item_sequence() noexcept {
     ItemOwnershipState state{};
+    ARPG_REQUIRE(validate_ownership_detailed(state)
+        == OwnershipValidationResult::valid);
     ARPG_REQUIRE(validate_ownership(state));
     state.next_item_sequence = 0U;
+    ARPG_REQUIRE(validate_ownership_detailed(state)
+        == OwnershipValidationResult::invalid_state);
     ARPG_REQUIRE(!validate_ownership(state));
     return {};
 }

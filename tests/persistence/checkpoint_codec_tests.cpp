@@ -13,17 +13,34 @@
 #include <vector>
 
 namespace {
-bool gFailNextAllocation = false;
+int gAllocationsBeforeFailure = -1;
+
+bool fail_test_allocation() noexcept {
+    if (gAllocationsBeforeFailure < 0)
+        return false;
+    if (gAllocationsBeforeFailure == 0) {
+        gAllocationsBeforeFailure = -1;
+        return true;
+    }
+    --gAllocationsBeforeFailure;
+    return false;
 }
 
-void* operator new(std::size_t size) {
-    if (gFailNextAllocation) {
-        gFailNextAllocation = false;
+void* allocate_for_test(std::size_t size) {
+    if (fail_test_allocation())
         throw std::bad_alloc{};
-    }
     if (void* memory = std::malloc(size == 0U ? 1U : size))
         return memory;
     throw std::bad_alloc{};
+}
+}
+
+void* operator new(std::size_t size) {
+    return allocate_for_test(size);
+}
+
+void* operator new[](std::size_t size) {
+    return allocate_for_test(size);
 }
 
 void operator delete(void* memory) noexcept {
@@ -31,6 +48,14 @@ void operator delete(void* memory) noexcept {
 }
 
 void operator delete(void* memory, std::size_t) noexcept {
+    std::free(memory);
+}
+
+void operator delete[](void* memory) noexcept {
+    std::free(memory);
+}
+
+void operator delete[](void* memory, std::size_t) noexcept {
     std::free(memory);
 }
 
@@ -171,6 +196,60 @@ arpg::test::Failure v4_golden_layout_and_items_round_trip() noexcept {
     return {};
 }
 
+arpg::test::Failure v4_complete_ownership_and_six_roll_record_are_golden() noexcept {
+    auto state = make_fixture();
+    auto item = normal_item(0x0102030405060708ULL, 6U);
+    item.rarity = items::ItemRarity::rare;
+    item.item_level = 95U;
+    item.required_level = 95U;
+    item.affix_count = 6U;
+    item.affixes[0] = {7U, 1U, 0xFFU};
+    item.affixes[1] = {8U, 2U, 0xFFU};
+    item.affixes[2] = {11U, 3U, 0xFFU};
+    item.affixes[3] = {101U, 4U, 0xFFU};
+    item.affixes[4] = {111U, 5U, 0xFFU};
+    item.affixes[5] = {112U, 6U, 2U};
+    state.item_ownership.items = {item};
+    state.item_ownership.next_item_sequence = 0x1112131415161718ULL;
+    state.item_ownership.claimed_drop_bits = {{
+        0x2122232425262728ULL,
+        0x3132333435363738ULL,
+        0x4142434445464748ULL}};
+    state.item_ownership.equipment.equipped_ids[5] = item.id;
+
+    const auto encoded = persistence::encode_checkpoint(state);
+    ARPG_REQUIRE(encoded.has_value());
+    ARPG_REQUIRE(encoded->size() == 244U);
+    constexpr std::array<std::uint8_t, 84U> kExpectedOwnership{{
+        0x01U, 0x00U, 0x00U, 0x00U,
+        0x18U, 0x17U, 0x16U, 0x15U, 0x14U, 0x13U, 0x12U, 0x11U,
+        0x28U, 0x27U, 0x26U, 0x25U, 0x24U, 0x23U, 0x22U, 0x21U,
+        0x38U, 0x37U, 0x36U, 0x35U, 0x34U, 0x33U, 0x32U, 0x31U,
+        0x48U, 0x47U, 0x46U, 0x45U, 0x44U, 0x43U, 0x42U, 0x41U,
+        0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U,
+        0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U,
+        0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U,
+        0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U,
+        0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U,
+        0x08U, 0x07U, 0x06U, 0x05U, 0x04U, 0x03U, 0x02U, 0x01U,
+    }};
+    constexpr std::array<std::uint8_t, 40U> kExpectedRecord{{
+        0x08U, 0x07U, 0x06U, 0x05U, 0x04U, 0x03U, 0x02U, 0x01U,
+        0x06U, 0x02U, 0x5FU, 0x5FU, 0x06U, 0x00U, 0x00U, 0x00U,
+        0x07U, 0x00U, 0x01U, 0xFFU,
+        0x08U, 0x00U, 0x02U, 0xFFU,
+        0x0BU, 0x00U, 0x03U, 0xFFU,
+        0x65U, 0x00U, 0x04U, 0xFFU,
+        0x6FU, 0x00U, 0x05U, 0xFFU,
+        0x70U, 0x00U, 0x06U, 0x02U,
+    }};
+    ARPG_REQUIRE(std::equal(kExpectedOwnership.begin(), kExpectedOwnership.end(),
+        encoded->begin() + 120U));
+    ARPG_REQUIRE(std::equal(kExpectedRecord.begin(), kExpectedRecord.end(),
+        encoded->begin() + 204U));
+    return {};
+}
+
 bool same_state(
     const checkpoint::DungeonRunState& lhs,
     const checkpoint::DungeonRunState& rhs) noexcept {
@@ -253,6 +332,11 @@ arpg::test::Failure baseline_checkpoint_bytes_are_preserved() noexcept {
         format_three.data(), format_three.size());
     ARPG_REQUIRE(migrated_three.error == persistence::CodecError::none);
     ARPG_REQUIRE(migrated_three.state.item_ownership.items.empty());
+    ARPG_REQUIRE(migrated_three.state.item_ownership.equipment.equipped_ids
+        == items::EquipmentState{}.equipped_ids);
+    const std::array<std::uint64_t, 3U> no_format_three_claims{};
+    ARPG_REQUIRE(migrated_three.state.item_ownership.claimed_drop_bits
+        == no_format_three_claims);
     ARPG_REQUIRE(migrated_three.state.item_ownership.next_item_sequence == 1U);
     return {};
 }
@@ -474,6 +558,13 @@ arpg::test::Failure v4_length_count_crc_and_capacity_are_bounded() noexcept {
         excessive_count.data(), excessive_count.size()).error
         == persistence::CodecError::bad_payload_length);
 
+    auto mismatched_count = *encoded;
+    write_u32(mismatched_count, 120U, 2U);
+    refresh_crc(mismatched_count);
+    ARPG_REQUIRE(persistence::decode_checkpoint(
+        mismatched_count.data(), mismatched_count.size()).error
+        == persistence::CodecError::bad_payload_length);
+
     auto overflowing_length = *encoded;
     write_u32(overflowing_length, 24U, 0xFFFFFFFFU);
     ARPG_REQUIRE(persistence::decode_checkpoint(
@@ -555,37 +646,64 @@ arpg::test::Failure v4_corrupt_item_semantics_are_rejected() noexcept {
 }
 
 arpg::test::Failure codec_allocation_failures_do_not_escape_noexcept() noexcept {
+    struct ResetAllocationFailure final {
+        ~ResetAllocationFailure() noexcept {
+            gAllocationsBeforeFailure = -1;
+        }
+    } reset_allocation_failure;
     const auto encoded = persistence::encode_checkpoint(make_owned_fixture());
     ARPG_REQUIRE(encoded.has_value());
 
     auto excessive_count = *encoded;
     write_u32(excessive_count, 120U, 65536U);
     refresh_crc(excessive_count);
-    gFailNextAllocation = true;
+    gAllocationsBeforeFailure = 0;
     const auto rejected_before_allocation = persistence::decode_checkpoint(
         excessive_count.data(), excessive_count.size());
     ARPG_REQUIRE(rejected_before_allocation.error
         == persistence::CodecError::bad_payload_length);
-    ARPG_REQUIRE(gFailNextAllocation);
-    gFailNextAllocation = false;
+    ARPG_REQUIRE(gAllocationsBeforeFailure == 0);
+    gAllocationsBeforeFailure = -1;
 
-    gFailNextAllocation = true;
+    gAllocationsBeforeFailure = 1;
+    const auto scratch_failure = persistence::decode_checkpoint(
+        encoded->data(), encoded->size());
+    ARPG_REQUIRE(scratch_failure.error
+        == persistence::CodecError::allocation_failure);
+    ARPG_REQUIRE(gAllocationsBeforeFailure == -1);
+
+    gAllocationsBeforeFailure = 0;
     const auto decoded = persistence::decode_checkpoint(
         encoded->data(), encoded->size());
     ARPG_REQUIRE(decoded.error == persistence::CodecError::allocation_failure);
-    ARPG_REQUIRE(!gFailNextAllocation);
+    ARPG_REQUIRE(gAllocationsBeforeFailure == -1);
 
-    gFailNextAllocation = true;
+    gAllocationsBeforeFailure = 0;
     const auto failed_encode = persistence::encode_checkpoint(make_fixture());
     ARPG_REQUIRE(!failed_encode.has_value());
-    ARPG_REQUIRE(!gFailNextAllocation);
+    ARPG_REQUIRE(gAllocationsBeforeFailure == -1);
+    return {};
+}
+
+arpg::test::Failure v4_unified_validator_rejects_semantic_state() noexcept {
+    const auto encoded = persistence::encode_checkpoint(make_owned_fixture());
+    ARPG_REQUIRE(encoded.has_value());
+    auto zero_sequence = *encoded;
+    std::fill(zero_sequence.begin() + 124U, zero_sequence.begin() + 132U,
+        static_cast<std::uint8_t>(0U));
+    refresh_crc(zero_sequence);
+    ARPG_REQUIRE(persistence::decode_checkpoint(
+        zero_sequence.data(), zero_sequence.size()).error
+        == persistence::CodecError::invalid_state);
     return {};
 }
 
 constexpr arpg::test::TestCase kCases[] = {
     {"v4 golden layout and items round trip", &v4_golden_layout_and_items_round_trip},
+    {"v4 complete ownership and six roll record are golden", &v4_complete_ownership_and_six_roll_record_are_golden},
     {"v4 length count crc and capacity are bounded", &v4_length_count_crc_and_capacity_are_bounded},
     {"v4 corrupt item semantics are rejected", &v4_corrupt_item_semantics_are_rejected},
+    {"v4 unified validator rejects semantic state", &v4_unified_validator_rejects_semantic_state},
     {"codec allocation failures do not escape noexcept", &codec_allocation_failures_do_not_escape_noexcept},
     {"baseline checkpoint bytes are preserved", &baseline_checkpoint_bytes_are_preserved},
     {"all nonzero fields round trip", &all_nonzero_fields_round_trip},
