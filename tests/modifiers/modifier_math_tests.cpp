@@ -193,6 +193,20 @@ arpg::test::Failure converted_value_does_not_convert_again() noexcept {
     return {};
 }
 
+arpg::test::Failure minimum_int64_conversion_is_invalid() noexcept {
+    Modifier conversion{3U, StatId::impulse_scale,
+        ModifierOperation::conversion, kFixedOne};
+    conversion.conversion_target = StatId::shield;
+    const std::array<Modifier, 1> modifiers{{conversion}};
+    StatValues values{};
+    values[static_cast<std::size_t>(StatId::impulse_scale)] =
+        (std::numeric_limits<std::int64_t>::min)();
+
+    const ConversionResult result = evaluate_conversions(values, modifiers, {});
+    ARPG_REQUIRE(!result.valid);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"identity", &empty_modifier_list_is_identity},
     {"operation order", &operation_order_is_flat_increased_then_more},
@@ -207,6 +221,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"duplicate IDs", &duplicate_ids_are_rejected},
     {"conversion cap", &conversion_is_capped_at_one_hundred_percent},
     {"single conversion pass", &converted_value_does_not_convert_again},
+    {"minimum int64 conversion", &minimum_int64_conversion_is_invalid},
 };
 
 }  // namespace

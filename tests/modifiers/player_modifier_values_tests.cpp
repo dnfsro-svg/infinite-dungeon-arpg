@@ -120,6 +120,47 @@ arpg::test::Failure addition_overflow_invalidates_player_values() noexcept {
     return {};
 }
 
+arpg::test::Failure damage_increased_must_fit_int32() noexcept {
+    constexpr std::int64_t kMaximum =
+        (std::numeric_limits<std::int32_t>::max)();
+    const std::array<Modifier, 1> at_limit{{
+        {601U, StatId::fire_damage, ModifierOperation::increased,
+            kMaximum - kFixedOne},
+    }};
+    const PlayerModifierValues valid = evaluate_player_modifiers(at_limit);
+    ARPG_REQUIRE(valid.valid);
+    ARPG_REQUIRE(valid.damage_increased[damage_index(DamageType::fire)]
+        == (std::numeric_limits<std::int32_t>::max)());
+
+    const std::array<Modifier, 1> over_limit{{
+        {602U, StatId::fire_damage, ModifierOperation::increased,
+            kMaximum - kFixedOne + 1},
+    }};
+    ARPG_REQUIRE(!evaluate_player_modifiers(over_limit).valid);
+    return {};
+}
+
+arpg::test::Failure damage_reduction_cap_bonus_must_fit_int32() noexcept {
+    constexpr std::int64_t kMaximum =
+        (std::numeric_limits<std::int32_t>::max)();
+    const std::array<Modifier, 1> at_limit{{
+        {701U, StatId::fire_damage_reduction_cap,
+            ModifierOperation::flat, kMaximum},
+    }};
+    const PlayerModifierValues valid = evaluate_player_modifiers(at_limit);
+    ARPG_REQUIRE(valid.valid);
+    ARPG_REQUIRE(valid.damage_reduction_cap_bonus[
+        element_index(DamageType::fire)]
+        == (std::numeric_limits<std::int32_t>::max)());
+
+    const std::array<Modifier, 1> over_limit{{
+        {702U, StatId::fire_damage_reduction_cap,
+            ModifierOperation::flat, kMaximum + 1},
+    }};
+    ARPG_REQUIRE(!evaluate_player_modifiers(over_limit).valid);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"independent equipment values", &equipment_values_are_independent},
     {"damage reduction and damage taken clamps",
@@ -128,6 +169,9 @@ constexpr arpg::test::TestCase kCases[] = {
     {"negative armor and evasion", &negative_armor_or_evasion_is_invalid},
     {"addition overflow invalidates values",
         &addition_overflow_invalidates_player_values},
+    {"damage increased int32 boundary", &damage_increased_must_fit_int32},
+    {"damage reduction cap int32 boundary",
+        &damage_reduction_cap_bonus_must_fit_int32},
 };
 
 }  // namespace

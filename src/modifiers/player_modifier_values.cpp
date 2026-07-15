@@ -18,10 +18,6 @@ constexpr StatBounds kNonNegative{
     (std::numeric_limits<FixedValue>::max)(),
 };
 constexpr StatBounds kDamageReduction{-6000, 7500};
-constexpr StatBounds kNonNegativeBasisPoints{
-    0,
-    (std::numeric_limits<std::int32_t>::max)(),
-};
 constexpr StatBounds kDamageTaken{5000, 20000};
 
 FixedValue evaluate(
@@ -34,6 +30,22 @@ FixedValue evaluate(
         base, stat, modifiers, {}, bounds);
     valid = valid && result.valid;
     return result.value;
+}
+
+std::int32_t evaluate_int32(
+    FixedValue base,
+    StatId stat,
+    ModifierSpan modifiers,
+    StatBounds bounds,
+    bool& valid) noexcept {
+    const FixedValue value = evaluate(
+        base, stat, modifiers, bounds, valid);
+    if (value < (std::numeric_limits<std::int32_t>::min)()
+        || value > (std::numeric_limits<std::int32_t>::max)()) {
+        valid = false;
+        return 0;
+    }
+    return static_cast<std::int32_t>(value);
 }
 
 }  // namespace
@@ -53,48 +65,41 @@ PlayerModifierValues evaluate_player_modifiers(
     result.flat_damage[damage_index(DamageType::chaos)] = evaluate(
         0, StatId::chaos_flat_damage, modifiers, kUnbounded, result.valid);
 
-    result.damage_increased[damage_index(DamageType::fire)] =
-        static_cast<std::int32_t>(evaluate(kFixedOne, StatId::fire_damage,
-            modifiers, kNonNegativeBasisPoints, result.valid));
-    result.damage_increased[damage_index(DamageType::water)] =
-        static_cast<std::int32_t>(evaluate(kFixedOne, StatId::water_damage,
-            modifiers, kNonNegativeBasisPoints, result.valid));
-    result.damage_increased[damage_index(DamageType::lightning)] =
-        static_cast<std::int32_t>(evaluate(kFixedOne, StatId::lightning_damage,
-            modifiers, kNonNegativeBasisPoints, result.valid));
-    result.damage_increased[damage_index(DamageType::chaos)] =
-        static_cast<std::int32_t>(evaluate(kFixedOne, StatId::chaos_damage,
-            modifiers, kNonNegativeBasisPoints, result.valid));
+    result.damage_increased[damage_index(DamageType::fire)] = evaluate_int32(
+        kFixedOne, StatId::fire_damage, modifiers, kNonNegative, result.valid);
+    result.damage_increased[damage_index(DamageType::water)] = evaluate_int32(
+        kFixedOne, StatId::water_damage, modifiers, kNonNegative, result.valid);
+    result.damage_increased[damage_index(DamageType::lightning)] = evaluate_int32(
+        kFixedOne, StatId::lightning_damage,
+        modifiers, kNonNegative, result.valid);
+    result.damage_increased[damage_index(DamageType::chaos)] = evaluate_int32(
+        kFixedOne, StatId::chaos_damage, modifiers, kNonNegative, result.valid);
 
     result.damage_reduction[element_index(DamageType::fire)] =
-        static_cast<std::int32_t>(evaluate(0, StatId::fire_damage_reduction,
-            modifiers, kDamageReduction, result.valid));
+        evaluate_int32(0, StatId::fire_damage_reduction,
+            modifiers, kDamageReduction, result.valid);
     result.damage_reduction[element_index(DamageType::water)] =
-        static_cast<std::int32_t>(evaluate(0, StatId::water_damage_reduction,
-            modifiers, kDamageReduction, result.valid));
+        evaluate_int32(0, StatId::water_damage_reduction,
+            modifiers, kDamageReduction, result.valid);
     result.damage_reduction[element_index(DamageType::lightning)] =
-        static_cast<std::int32_t>(evaluate(0, StatId::lightning_damage_reduction,
-            modifiers, kDamageReduction, result.valid));
+        evaluate_int32(0, StatId::lightning_damage_reduction,
+            modifiers, kDamageReduction, result.valid);
     result.damage_reduction[element_index(DamageType::chaos)] =
-        static_cast<std::int32_t>(evaluate(0, StatId::chaos_damage_reduction,
-            modifiers, kDamageReduction, result.valid));
+        evaluate_int32(0, StatId::chaos_damage_reduction,
+            modifiers, kDamageReduction, result.valid);
 
     result.damage_reduction_cap_bonus[element_index(DamageType::fire)] =
-        static_cast<std::int32_t>(evaluate(0,
-            StatId::fire_damage_reduction_cap, modifiers,
-            kNonNegativeBasisPoints, result.valid));
+        evaluate_int32(0, StatId::fire_damage_reduction_cap,
+            modifiers, kNonNegative, result.valid);
     result.damage_reduction_cap_bonus[element_index(DamageType::water)] =
-        static_cast<std::int32_t>(evaluate(0,
-            StatId::water_damage_reduction_cap, modifiers,
-            kNonNegativeBasisPoints, result.valid));
+        evaluate_int32(0, StatId::water_damage_reduction_cap,
+            modifiers, kNonNegative, result.valid);
     result.damage_reduction_cap_bonus[element_index(DamageType::lightning)] =
-        static_cast<std::int32_t>(evaluate(0,
-            StatId::lightning_damage_reduction_cap, modifiers,
-            kNonNegativeBasisPoints, result.valid));
+        evaluate_int32(0, StatId::lightning_damage_reduction_cap,
+            modifiers, kNonNegative, result.valid);
     result.damage_reduction_cap_bonus[element_index(DamageType::chaos)] =
-        static_cast<std::int32_t>(evaluate(0,
-            StatId::chaos_damage_reduction_cap, modifiers,
-            kNonNegativeBasisPoints, result.valid));
+        evaluate_int32(0, StatId::chaos_damage_reduction_cap,
+            modifiers, kNonNegative, result.valid);
 
     result.armor = evaluate(
         0, StatId::armor, modifiers, kUnbounded, result.valid);

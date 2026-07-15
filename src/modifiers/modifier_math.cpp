@@ -28,6 +28,24 @@ bool checked_add(
     return true;
 }
 
+bool checked_subtract(
+    FixedValue left,
+    FixedValue right,
+    FixedValue& result) noexcept {
+    const auto maximum = (std::numeric_limits<FixedValue>::max)();
+    const auto minimum = (std::numeric_limits<FixedValue>::min)();
+    if (right > 0 && left < minimum + right) {
+        result = minimum;
+        return false;
+    }
+    if (right < 0 && left > maximum + right) {
+        result = maximum;
+        return false;
+    }
+    result = left - right;
+    return true;
+}
+
 FixedValue saturating_multiply(FixedValue left, FixedValue right) noexcept {
     const auto maximum = (std::numeric_limits<FixedValue>::max)();
     const auto minimum = (std::numeric_limits<FixedValue>::min)();
@@ -206,7 +224,8 @@ ConversionResult evaluate_conversions(
         const FixedValue amount = saturating_mul_div(
             original[source], applied, valid);
         if (!valid
-            || !checked_add(result.values[source], -amount,
+            || amount == (std::numeric_limits<FixedValue>::min)()
+            || !checked_subtract(result.values[source], amount,
                 result.values[source])
             || !checked_add(result.values[target], amount,
                 result.values[target])) {
