@@ -158,6 +158,7 @@ void DungeonSession::reset_current_room() noexcept {
     }
     combat_.reset();
     pending_save_.reset();
+    pending_item_build_.reset();
     last_passive_tree_error_ = passives::PassiveTreeError::none;
     construct_current_room();
     static_cast<void>(emit(DungeonEventKind::room_reset));
@@ -311,6 +312,7 @@ void DungeonSession::enter_fault(DungeonFault fault) noexcept {
     }
     diagnostics_.fault = fault;
     phase_ = RoomPhase::faulted;
+    pending_item_build_.reset();
 
     const DungeonEvent event{
         DungeonEventKind::faulted,

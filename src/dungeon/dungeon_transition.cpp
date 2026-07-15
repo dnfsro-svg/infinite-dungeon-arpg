@@ -92,6 +92,10 @@ void DungeonSession::attempt_exit(ExitDirection direction) noexcept {
 bool DungeonSession::prepare_transition(
     TransitionKind kind,
     ExitDirection direction) noexcept {
+    if (!pending_item_cache_consistent()) {
+        enter_fault(DungeonFault::save_receipt_mismatch);
+        return false;
+    }
     const RunStateBuildResult built = kind == TransitionKind::descent
         ? make_descent_transition(stable_state_, rules_)
         : make_door_transition(stable_state_, direction, rules_);
@@ -138,6 +142,10 @@ bool DungeonSession::request_passive_refund(
 
 bool DungeonSession::prepare_passive_mutation(
     passives::PassiveNodeId node, bool refund) noexcept {
+    if (!pending_item_cache_consistent()) {
+        enter_fault(DungeonFault::save_receipt_mismatch);
+        return false;
+    }
     if (phase_ != RoomPhase::awaiting_exit || !combat_.has_value()
             || pending_save_.has_value()) {
         return false;
@@ -173,6 +181,10 @@ RequestResult DungeonSession::prepare_item_save(
     DungeonRunState&& next,
     PendingSaveKind kind,
     RoomPhase resume_phase) noexcept {
+    if (!pending_item_cache_consistent()) {
+        enter_fault(DungeonFault::save_receipt_mismatch);
+        return RequestResult::faulted;
+    }
     const items::OwnershipValidationResult validation =
         items::validate_ownership_detailed(next.item_ownership);
     if (validation == items::OwnershipValidationResult::allocation_failure) {
@@ -207,11 +219,23 @@ RequestResult DungeonSession::prepare_item_save(
         ExitDirection::none,
         resume_phase,
     });
+    pending_item_build_.emplace(candidate_build.build);
     phase_ = RoomPhase::committing;
     return RequestResult::accepted;
 }
 
+bool DungeonSession::pending_item_cache_consistent() const noexcept {
+    const bool item_pending = pending_save_.has_value()
+        && (pending_save_->kind == PendingSaveKind::equipment
+            || pending_save_->kind == PendingSaveKind::recipe);
+    return item_pending == pending_item_build_.has_value();
+}
+
 RequestResult DungeonSession::request_equip(std::uint64_t item_id) noexcept {
+    if (!pending_item_cache_consistent()) {
+        enter_fault(DungeonFault::save_receipt_mismatch);
+        return RequestResult::faulted;
+    }
     if (!item_request_phase(phase_) || !combat_.has_value()
             || pending_save_.has_value() || item_id == 0U) {
         return RequestResult::rejected;
@@ -254,6 +278,10 @@ RequestResult DungeonSession::request_equip(std::uint64_t item_id) noexcept {
 }
 
 RequestResult DungeonSession::request_unequip(items::ItemSlot slot) noexcept {
+    if (!pending_item_cache_consistent()) {
+        enter_fault(DungeonFault::save_receipt_mismatch);
+        return RequestResult::faulted;
+    }
     const std::size_t slot_index = static_cast<std::size_t>(slot);
     if (!item_request_phase(phase_) || !combat_.has_value()
             || pending_save_.has_value()
@@ -288,6 +316,10 @@ RequestResult DungeonSession::request_unequip(items::ItemSlot slot) noexcept {
 
 RequestResult DungeonSession::request_recipe(
     const std::array<std::uint64_t, 3>& item_ids) noexcept {
+    if (!pending_item_cache_consistent()) {
+        enter_fault(DungeonFault::save_receipt_mismatch);
+        return RequestResult::faulted;
+    }
     if (!item_request_phase(phase_) || !combat_.has_value()
             || pending_save_.has_value() || item_ids[0] == 0U
             || item_ids[1] == 0U || item_ids[2] == 0U
@@ -371,6 +403,10 @@ void DungeonSession::commit_pending_save(
         enter_fault(DungeonFault::save_receipt_mismatch);
         return;
     }
+    if (!pending_item_cache_consistent()) {
+        enter_fault(DungeonFault::save_receipt_mismatch);
+        return;
+    }
     if (result.disposition == SaveDisposition::indeterminate) {
         enter_fault(DungeonFault::save_commit_indeterminate);
         return;
@@ -386,6 +422,7 @@ void DungeonSession::commit_pending_save(
             pending_save_->next_state.last_transition,
             pending_save_->next_state.last_direction));
         pending_save_.reset();
+        pending_item_build_.reset();
         return;
     }
     if (result.generation != pending_save_->expected_generation
@@ -398,24 +435,22 @@ void DungeonSession::commit_pending_save(
     }
 
     const PendingSaveKind kind = pending_save_->kind;
-    PlayerBuildResult published_build{};
-    if (kind == PendingSaveKind::equipment
-            || kind == PendingSaveKind::recipe) {
+    const bool item_commit = kind == PendingSaveKind::equipment
+        || kind == PendingSaveKind::recipe;
+    combat::PlayerCombatBuild published_build{};
+    if (item_commit) {
         if (!combat_.has_value()) {
             enter_fault(DungeonFault::invalid_item_state);
             return;
         }
-        published_build = build_for(result.verified_state);
-        if (published_build.status != PlayerBuildStatus::valid) {
-            enter_fault(DungeonFault::invalid_item_state);
-            return;
-        }
+        published_build = *pending_item_build_;
     }
 
     DungeonRunState previous = std::move(stable_state_);
     stable_state_ = std::move(pending_save_->next_state);
     const RoomPhase resume_phase = pending_save_->resume_phase;
     pending_save_.reset();
+    pending_item_build_.reset();
     if (kind == PendingSaveKind::transition) {
         combat_.reset();
         phase_ = RoomPhase::transitioning;
@@ -423,8 +458,8 @@ void DungeonSession::commit_pending_save(
         return;
     }
     room_progression_ = stable_state_.progression;
-    if (published_build.status == PlayerBuildStatus::valid) {
-        combat_->apply_player_build(published_build.build);
+    if (item_commit) {
+        combat_->apply_player_build(published_build);
         phase_ = resume_phase;
         return;
     }

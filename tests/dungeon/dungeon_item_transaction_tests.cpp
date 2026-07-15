@@ -305,6 +305,48 @@ arpg::test::Failure build_projection_scratch_oom_rejects_atomically() noexcept {
     return {};
 }
 
+arpg::test::Failure committed_receipt_publishes_without_allocation() noexcept {
+    DungeonSession session{DungeonRules{},
+        state_with_items({normal_item(165U, 2U)})};
+    session.tick({});
+    arpg::test::damage_current_player(session, 30);
+    const auto before = session.snapshot();
+    ARPG_REQUIRE(before.phase == RoomPhase::combat);
+    ARPG_REQUIRE(before.combat.has_value());
+    const int hp_before = before.combat->player.hp;
+    const int barrier_before = before.combat->player.barrier;
+    const int max_hp_before = before.combat->player.max_hp;
+    const int max_barrier_before = before.combat->player.max_barrier;
+
+    ARPG_REQUIRE(session.request_equip(165U) == RequestResult::accepted);
+    const auto pending = *session.pending_save();
+    const arpg::dungeon::PendingSaveResult receipt{
+        SaveDisposition::committed,
+        pending.expected_generation,
+        pending.next_state,
+    };
+    const std::uint64_t allocations_before =
+        arpg::test::allocation_count();
+    {
+        arpg::test::ScopedAllocationFailure fail{0U};
+        session.resolve_pending_save(receipt);
+    }
+    ARPG_REQUIRE(arpg::test::allocation_count() == allocations_before);
+    const auto after = session.snapshot();
+    ARPG_REQUIRE(after.phase == RoomPhase::combat);
+    ARPG_REQUIRE(!after.pending_save_kind.has_value());
+    ARPG_REQUIRE(session.item_state().equipment.equipped_ids[1] == 165U);
+    ARPG_REQUIRE(after.commit_generation == pending.expected_generation);
+    ARPG_REQUIRE(after.combat.has_value());
+    ARPG_REQUIRE(after.combat->player.max_hp == max_hp_before + 38);
+    ARPG_REQUIRE(after.combat->player.hp == hp_before);
+    ARPG_REQUIRE(after.combat->player.max_barrier == max_barrier_before);
+    ARPG_REQUIRE(after.combat->player.barrier == barrier_before);
+    ARPG_REQUIRE(arpg::test::player_build(session).values.max_health
+        == 38 * arpg::modifiers::kFixedOne);
+    return {};
+}
+
 arpg::test::Failure commit_generation_overflow_faults_without_publish() noexcept {
     DungeonRunState state = state_with_items({normal_item(171U, 2U)});
     state.commit_generation = (std::numeric_limits<std::uint64_t>::max)();
@@ -347,7 +389,7 @@ arpg::test::Failure item_transactions_restore_locked_and_awaiting_phases() noexc
     return {};
 }
 
-arpg::test::Failure invalid_combined_build_faults() noexcept {
+arpg::test::Failure invalid_loaded_equipment_ownership_faults() noexcept {
     DungeonRunState state = state_with_items({normal_item(191U, 2U)});
     state.progression = {2U, 0U, 1U, 0U};
     state.passive_tree.allocated_bits =
@@ -566,8 +608,10 @@ constexpr arpg::test::TestCase kCases[] = {
         &commit_generation_overflow_faults_without_publish},
     {"item transaction phase restoration",
         &item_transactions_restore_locked_and_awaiting_phases},
-    {"invalid combined build faults",
-        &invalid_combined_build_faults},
+    {"invalid loaded equipment ownership faults",
+        &invalid_loaded_equipment_ownership_faults},
+    {"committed receipt publishes without allocation",
+        &committed_receipt_publishes_without_allocation},
 };
 
 }  // namespace

@@ -80,6 +80,7 @@ private:
         RoomPhase resume_phase) noexcept;
     [[nodiscard]] PlayerBuildResult build_for(
         const checkpoint::DungeonRunState& state) const noexcept;
+    [[nodiscard]] bool pending_item_cache_consistent() const noexcept;
     void commit_pending_save(const PendingSaveResult& result) noexcept;
     [[nodiscard]] DungeonSnapshot build_dungeon_snapshot() const noexcept;
     void enter_fault(DungeonFault fault) noexcept;
@@ -97,6 +98,7 @@ private:
     DungeonRules rules_{};
     DungeonRunState stable_state_{};
     std::optional<PendingSave> pending_save_{};
+    std::optional<combat::PlayerCombatBuild> pending_item_build_{};
     std::optional<combat::CombatWorld> combat_{};
     RoomEncounterPlan encounter_plan_{};
     std::uint8_t wave_index_{};
