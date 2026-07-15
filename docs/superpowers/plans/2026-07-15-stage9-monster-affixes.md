@@ -51,6 +51,25 @@ enum class MonsterAffixDanger : std::uint8_t { low = 1, medium = 2, high = 3 };
 
 危险级依次为：低 `mighty, armored`；中 `frenzy, swift, shielding, chilling, chaos_corrosion`；高 `multishot, burning_ground, chain_lightning, blink_assault, death_blast`。
 
+首批目录所有词缀的生成权重固定为 `100`，`conflict_mask` 固定为 `0`。适用标签和表现文本固定如下：
+
+| ID | name | short_name | required tag |
+|---:|---|---|---|
+| 0 | Mighty | MGT | none |
+| 1 | Frenzy | FRZ | none |
+| 2 | Swift | SWF | none |
+| 3 | Armored | ARM | none |
+| 4 | Shielding | SHD | none |
+| 5 | Multishot | MULTI | projectile_capable |
+| 6 | Burning Ground | BURN | none |
+| 7 | Chilling | CHILL | direct_target |
+| 8 | Chain Lightning | CHAIN | direct_target |
+| 9 | Chaos Corrosion | CORR | direct_target |
+| 10 | Blink Assault | BLINK | melee |
+| 11 | Death Blast | DEATH | none |
+
+所有 `forbidden_tags` 固定为 `none`。首批目录不存在定义级互斥；理论无解保护由后续生成器验证候选集合是否足够完成目标数量。
+
 ### Depth tables
 
 ```cpp
@@ -82,7 +101,7 @@ inline constexpr std::array<AffixDepthBand, 5> kAffixDepthBands{{
 | shielding | HP-derived shield `2000`, delay `180` | `3500 / 150` | `5000 / 120` |
 | multishot | count `2`, each `7500` | `3 / 6000` | `4 / 5000` |
 | burning_ground | spawn `180`, radius `.75`, active `120`, tick damage `25` | `150/.90/180/35` | `120/1.05/240/45` |
-| chilling | water damage `11500`, slow `1500/60` | `12500/2500/90` | `13500/3500/120` |
+| chilling | added water damage `1500`, slow `1500/60` | `2500/2500/90` | `3500/3500/120` |
 | chain_lightning | delay `42`, radius `.65`, lightning `70` | `42/.80/110` | `42/.95/160` |
 | chaos_corrosion | per-second chaos `20`, duration `120` | `30/180` | `45/240` |
 | blink_assault | cooldown `480`, warning `42`, next hit `12000` | `360/36/13500` | `240/30/15000` |
