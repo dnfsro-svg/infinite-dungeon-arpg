@@ -120,12 +120,6 @@ bool equipment_equal(const items::EquipmentState& left,
     return left.equipped_ids == right.equipped_ids;
 }
 
-bool item_equipped(const items::EquipmentState& equipment,
-    std::uint64_t id) noexcept {
-    return std::find(equipment.equipped_ids.begin(),
-        equipment.equipped_ids.end(), id) != equipment.equipped_ids.end();
-}
-
 std::size_t base_value_index(std::uint8_t item_level) noexcept {
     for (std::uint8_t tier = 1U; tier <= 8U; ++tier) {
         if (item_level >= items::tier_minimum_level(tier)) {
@@ -133,15 +127,6 @@ std::size_t base_value_index(std::uint8_t item_level) noexcept {
         }
     }
     return 0U;
-}
-
-const char* effect_scope(items::ItemEffectKind effect,
-    items::ItemSlot slot) noexcept {
-    return effect == items::ItemEffectKind::local_weapon_physical_flat
-            || effect == items::ItemEffectKind::local_weapon_physical_increased
-            || (effect == items::ItemEffectKind::slot_dependent_attack_speed
-                && slot == items::ItemSlot::weapon)
-        ? "LOCAL" : "GLOBAL";
 }
 
 }  // namespace
@@ -161,39 +146,7 @@ bool InventoryRenderer::is_open() const noexcept { return open_; }
 
 const items::ItemInstance* InventoryRenderer::selected_item(
     const items::ItemOwnershipState& state) const noexcept {
-    for (const items::ItemInstance& item : state.items) {
-        if (item.id == selected_item_id_) return &item;
-    }
-    return nullptr;
-}
-
-void InventoryRenderer::prune_selection(
-    const items::ItemOwnershipState& state) noexcept {
-    if (selected_item(state) == nullptr) selected_item_id_ = 0U;
-    for (std::size_t index = 0U; index < recipe_.count;) {
-        bool exists = false;
-        for (const items::ItemInstance& item : state.items) {
-            if (item.id == recipe_.ids[index]
-                && !item_equipped(state.equipment, item.id)) {
-                exists = true;
-                break;
-            }
-        }
-        if (exists) {
-            ++index;
-            continue;
-        }
-        for (std::size_t move = index + 1U; move < recipe_.count; ++move) {
-            recipe_.ids[move - 1U] = recipe_.ids[move];
-        }
-        recipe_.ids[--recipe_.count] = 0U;
-    }
-}
-
-void InventoryRenderer::rebuild_filter(
-    const items::ItemOwnershipState& state) {
-    filtered_indices_ = filtered_inventory_indices(state, filter_);
-    filtered_equipment_ = state.equipment;
+    return cached_selected_item(view_cache_, state);
 }
 
 void InventoryRenderer::refresh_comparison(
@@ -223,41 +176,22 @@ void InventoryRenderer::refresh_comparison(
 void InventoryRenderer::sync(const dungeon::DungeonSession& session,
     const dungeon::DungeonSnapshot& snapshot) {
     const items::ItemOwnershipState& state = session.item_state();
-    const bool stable_state_changed =
-        filtered_generation_ != snapshot.commit_generation
-        || !equipment_equal(filtered_equipment_, state.equipment);
-    if (stable_state_changed) {
-        prune_selection(state);
-        rebuild_filter(state);
-        filtered_generation_ = snapshot.commit_generation;
+    refresh_inventory_view_cache(view_cache_, state,
+        snapshot.commit_generation, filter_, selected_item_id_, recipe_);
+    if (selected_item_id_ != 0U && selected_item(state) == nullptr) {
+        selected_item_id_ = 0U;
+        view_cache_.selected_item_id = 0U;
+    }
+    if (recipe_.ids != view_cache_.resolved_recipe.ids
+        || recipe_.count != view_cache_.resolved_recipe.count) {
+        recipe_ = view_cache_.resolved_recipe;
+        view_cache_.requested_recipe = recipe_;
     }
     refresh_comparison(session, snapshot);
 }
 
-bool InventoryRenderer::recipe_ready(
-    const items::ItemOwnershipState& state) const noexcept {
-    if (recipe_.count != 3U) return false;
-    const items::ItemInstance* first = nullptr;
-    items::ItemSlot slot = items::ItemSlot::count;
-    for (std::size_t selected = 0U; selected < recipe_.count; ++selected) {
-        const items::ItemInstance* found = nullptr;
-        for (const items::ItemInstance& item : state.items) {
-            if (item.id == recipe_.ids[selected]) {
-                found = &item;
-                break;
-            }
-        }
-        if (found == nullptr || item_equipped(state.equipment, found->id)) return false;
-        const items::BaseDefinition* const base = items::base_definition(found->base_id);
-        if (base == nullptr) return false;
-        if (first == nullptr) {
-            first = found;
-            slot = base->slot;
-        } else if (found->rarity != first->rarity || base->slot != slot) {
-            return false;
-        }
-    }
-    return true;
+bool InventoryRenderer::recipe_ready() const noexcept {
+    return cached_recipe_ready(view_cache_);
 }
 
 bool InventoryRenderer::process_input(DungeonRuntime& runtime,
@@ -271,7 +205,7 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
     const int columns = grid_columns(layout.grid);
     const float wheel = GetMouseWheelMove();
     if (wheel != 0.0F) {
-        scroll_rows_ = clamp_inventory_scroll_rows(filtered_indices_.size(), columns,
+        scroll_rows_ = clamp_inventory_scroll_rows(view_cache_.filtered_indices.size(), columns,
             scroll_rows_ - wheel, viewport.height, kCellHeight);
     }
     if (!IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) return false;
@@ -281,8 +215,7 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
         else if (*filter_.slot == items::ItemSlot::accessory) filter_.slot.reset();
         else filter_.slot = static_cast<items::ItemSlot>(
             static_cast<std::uint8_t>(*filter_.slot) + 1U);
-        rebuild_filter(state);
-        filtered_generation_ = snapshot.commit_generation;
+        sync(session, snapshot);
         scroll_rows_ = 0.0F;
         return false;
     }
@@ -291,8 +224,7 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
         else if (*filter_.rarity == items::ItemRarity::rare) filter_.rarity.reset();
         else filter_.rarity = static_cast<items::ItemRarity>(
             static_cast<std::uint8_t>(*filter_.rarity) + 1U);
-        rebuild_filter(state);
-        filtered_generation_ = snapshot.commit_generation;
+        sync(session, snapshot);
         scroll_rows_ = 0.0F;
         return false;
     }
@@ -307,14 +239,14 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
         return false;
     }
     if (contains(combine_button(layout.grid), mouse)) {
-        if (requests_enabled && recipe_ready(state)
+        if (requests_enabled && recipe_ready()
             && runtime.request_recipe(recipe_.ids) == dungeon::RequestResult::accepted) {
             runtime.service_pending_save();
             return true;
         }
         return false;
     }
-    const VisibleGridRange visible = visible_grid_range(filtered_indices_.size(),
+    const VisibleGridRange visible = visible_grid_range(view_cache_.filtered_indices.size(),
         columns, scroll_rows_, viewport.height, kCellHeight);
     for (std::size_t offset = 0U; offset < visible.count; ++offset) {
         const std::size_t filtered_position = visible.first + offset;
@@ -322,12 +254,16 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
             filtered_position, scroll_rows_);
         if (!contains(cell, mouse)) continue;
         const items::ItemInstance& item = state.items[
-            filtered_indices_[filtered_position]];
+            view_cache_.filtered_indices[filtered_position]];
         selected_item_id_ = item.id;
-        comparison_generation_ = ~std::uint64_t{0U};
-        refresh_comparison(session, snapshot);
-        if (IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL)) {
+        const bool recipe_toggle = IsKeyDown(KEY_LEFT_CONTROL)
+            || IsKeyDown(KEY_RIGHT_CONTROL);
+        if (recipe_toggle) {
             static_cast<void>(toggle_recipe_selection(recipe_, item.id));
+        }
+        comparison_generation_ = ~std::uint64_t{0U};
+        sync(session, snapshot);
+        if (recipe_toggle) {
             click_tracker_ = {};
             return false;
         }
@@ -434,14 +370,14 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     BeginScissorMode(static_cast<int>(viewport.x), static_cast<int>(viewport.y),
         static_cast<int>(viewport.width), static_cast<int>(viewport.height));
     const int columns = grid_columns(layout.grid);
-    scroll_rows_ = clamp_inventory_scroll_rows(filtered_indices_.size(), columns,
+    scroll_rows_ = clamp_inventory_scroll_rows(view_cache_.filtered_indices.size(), columns,
         scroll_rows_, viewport.height, kCellHeight);
-    const VisibleGridRange visible = visible_grid_range(filtered_indices_.size(),
+    const VisibleGridRange visible = visible_grid_range(view_cache_.filtered_indices.size(),
         columns, scroll_rows_, viewport.height, kCellHeight);
     for (std::size_t offset = 0U; offset < visible.count; ++offset) {
         const std::size_t filtered_position = visible.first + offset;
         const items::ItemInstance& item = state.items[
-            filtered_indices_[filtered_position]];
+            view_cache_.filtered_indices[filtered_position]];
         const items::BaseDefinition* const base = items::base_definition(item.base_id);
         const Rectangle cell = grid_item_rectangle(viewport, columns,
             filtered_position, scroll_rows_);
@@ -464,7 +400,7 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     }
     EndScissorMode();
     const bool enabled = !snapshot.pending_save_kind.has_value()
-        && recipe_ready(state);
+        && recipe_ready();
     draw_button(combine_button(layout.grid), TextFormat("Combine (%u/3)",
         static_cast<unsigned>(recipe_.count)), enabled);
     if (snapshot.pending_save_kind.has_value()) {
@@ -475,8 +411,9 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     }
 
     const items::ItemInstance* const item = selected_item(state);
-    int detail_y = static_cast<int>(layout.detail.y + 42.0F);
-    const int detail_x = static_cast<int>(layout.detail.x + 12.0F);
+    const Rectangle first_detail_line = detail_line_rectangle(layout, 0U);
+    const int detail_x = static_cast<int>(first_detail_line.x);
+    const int detail_y = static_cast<int>(first_detail_line.y);
     if (item == nullptr) {
         DrawText("Click an item to inspect.", detail_x, detail_y, 15,
             Color{166, 175, 191, 255});
@@ -484,77 +421,90 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     }
     const items::BaseDefinition* const base = items::base_definition(item->base_id);
     if (base == nullptr) return;
-    DrawText(TextFormat("%s %s", rarity_name(item->rarity), base->name.data()),
-        detail_x, detail_y, 18, rarity_color(item->rarity));
-    detail_y += 25;
-    DrawText(TextFormat("Item level %u   Required level %u",
+    BeginScissorMode(static_cast<int>(layout.detail.x),
+        static_cast<int>(layout.detail.y), static_cast<int>(layout.detail.width),
+        static_cast<int>(layout.detail.height));
+    std::size_t detail_line = 0U;
+    const auto draw_detail_line = [&](const char* text, Color color) noexcept {
+        const Rectangle line = detail_line_rectangle(layout, detail_line++);
+        DrawText(text, static_cast<int>(line.x), static_cast<int>(line.y),
+            10, color);
+    };
+    draw_detail_line(TextFormat("%s %s", rarity_name(item->rarity),
+        base->name.data()), rarity_color(item->rarity));
+    draw_detail_line(TextFormat("iLvl %u  Required %u",
         static_cast<unsigned>(item->item_level),
-        static_cast<unsigned>(item->required_level)), detail_x, detail_y, 14,
-        RAYWHITE);
-    detail_y += 22;
-    DrawText(TextFormat("INHERENT [%s] %+d", effect_scope(base->effect, base->slot),
-        base->values[base_value_index(item->item_level)]),
-        detail_x, detail_y, 14, Color{150, 210, 255, 255});
-    detail_y += 24;
+        static_cast<unsigned>(item->required_level)), RAYWHITE);
+    const ItemAttributeLabel inherent = item_attribute_label(base->effect,
+        base->stat, base->operation, base->slot, 0xFFU);
+    const std::int32_t inherent_raw =
+        base->values[base_value_index(item->item_level)];
+    draw_detail_line(TextFormat("Base [%s] %s %+g%s%s", inherent.scope,
+        inherent.name, item_attribute_display_value(inherent_raw, inherent),
+        inherent.suffix, inherent.qualifier), Color{150, 210, 255, 255});
     for (std::size_t index = 0U; index < item->affix_count; ++index) {
         const items::AffixRoll& roll = item->affixes[index];
         const items::AffixDefinition* const affix = items::affix_definition(roll.affix_id);
         if (affix == nullptr) continue;
-        const char* const kind = affix->kind == items::AffixKind::prefix
-            ? "P" : "S";
-        if (roll.variant < 4U) {
-            DrawText(TextFormat("T%u %s#%u [%s] %+d E%u",
-                static_cast<unsigned>(roll.tier), kind,
-                static_cast<unsigned>(roll.affix_id),
-                effect_scope(affix->effect, base->slot),
-                affix->values[static_cast<std::size_t>(8U - roll.tier)],
-                static_cast<unsigned>(roll.variant)),
-                detail_x, detail_y, 12, Color{216, 222, 234, 255});
-        } else {
-            DrawText(TextFormat("T%u %s#%u [%s] %+d",
+        const ItemAttributeLabel label = item_attribute_label(affix->effect,
+            affix->stat, affix->operation, base->slot, roll.variant);
+        const std::int32_t affix_raw =
+            affix->values[static_cast<std::size_t>(8U - roll.tier)];
+        draw_detail_line(TextFormat("T%u %s [%s] %s %+g%s%s",
             static_cast<unsigned>(roll.tier),
-                kind, static_cast<unsigned>(roll.affix_id),
-                effect_scope(affix->effect, base->slot),
-                affix->values[static_cast<std::size_t>(8U - roll.tier)]),
-                detail_x, detail_y, 12, Color{216, 222, 234, 255});
-        }
-        detail_y += 19;
+            affix->kind == items::AffixKind::prefix ? "Pre" : "Suf",
+            label.scope, label.name,
+            item_attribute_display_value(affix_raw, label),
+            label.suffix, label.qualifier), Color{216, 222, 234, 255});
     }
-    detail_y += 8;
-    DrawText("FULL BUILD DIFFERENCE", detail_x, detail_y, 15,
-        Color{242, 183, 255, 255});
-    detail_y += 21;
+    draw_detail_line("FULL BUILD DIFFERENCE", Color{242, 183, 255, 255});
     if (!difference_.has_value()) {
-        DrawText("Preview unavailable", detail_x, detail_y, 13,
-            Color{255, 126, 126, 255});
-        return;
+        draw_detail_line("Preview unavailable", Color{255, 126, 126, 255});
+    } else {
+        const BuildDifference& diff = *difference_;
+        draw_detail_line(TextFormat("HP %+g  Barrier %+g",
+            diff.max_health / static_cast<double>(modifiers::kFixedOne),
+            diff.max_barrier / static_cast<double>(modifiers::kFixedOne)), RAYWHITE);
+        draw_detail_line(TextFormat("Flat P/F/W %+g/%+g/%+g",
+            diff.flat_damage[0] / static_cast<double>(modifiers::kFixedOne),
+            diff.flat_damage[1] / static_cast<double>(modifiers::kFixedOne),
+            diff.flat_damage[2] / static_cast<double>(modifiers::kFixedOne)), RAYWHITE);
+        draw_detail_line(TextFormat("Flat L/C %+g/%+g",
+            diff.flat_damage[3] / static_cast<double>(modifiers::kFixedOne),
+            diff.flat_damage[4] / static_cast<double>(modifiers::kFixedOne)), RAYWHITE);
+        draw_detail_line(TextFormat("Inc P/F/W %+g/%+g/%+g%%",
+            diff.damage_increased[0] / 100.0, diff.damage_increased[1] / 100.0,
+            diff.damage_increased[2] / 100.0), RAYWHITE);
+        draw_detail_line(TextFormat("Inc L/C %+g/%+g%%",
+            diff.damage_increased[3] / 100.0,
+            diff.damage_increased[4] / 100.0), RAYWHITE);
+        draw_detail_line(TextFormat("Melee/Knock %+g/%+g%%",
+            diff.melee_damage / 100.0, diff.impulse_scale / 100.0), RAYWHITE);
+        draw_detail_line(TextFormat("Move/Attack %+g/%+g%%",
+            diff.move_speed / 100.0, diff.attack_speed / 100.0), RAYWHITE);
+        draw_detail_line(TextFormat("LocalAtk %+g%%  Weapon %+g",
+            diff.local_attack_speed_bp / 100.0,
+            static_cast<double>(diff.weapon_physical)), RAYWHITE);
+        draw_detail_line(TextFormat("Armor %+g  DR %+g%%",
+            static_cast<double>(diff.armor), diff.armor_reduction_bp / 100.0),
+            RAYWHITE);
+        draw_detail_line(TextFormat("Evasion %+g  Chance %+g%%",
+            static_cast<double>(diff.evasion), diff.evasion_rate_bp / 100.0),
+            RAYWHITE);
+        draw_detail_line(TextFormat("F/W DR %+g/%+g%%",
+            diff.damage_reduction[0] / 100.0,
+            diff.damage_reduction[1] / 100.0), RAYWHITE);
+        draw_detail_line(TextFormat("L/C DR %+g/%+g%%",
+            diff.damage_reduction[2] / 100.0,
+            diff.damage_reduction[3] / 100.0), RAYWHITE);
+        draw_detail_line(TextFormat("F/W cap %+g/%+g%%",
+            diff.damage_reduction_cap_bonus[0] / 100.0,
+            diff.damage_reduction_cap_bonus[1] / 100.0), RAYWHITE);
+        draw_detail_line(TextFormat("L/C cap %+g/%+g%%",
+            diff.damage_reduction_cap_bonus[2] / 100.0,
+            diff.damage_reduction_cap_bonus[3] / 100.0), RAYWHITE);
     }
-    const BuildDifference& diff = *difference_;
-    DrawText(TextFormat("HP %+lld  Barrier %+lld  Armor %+lld  Evasion %+lld",
-        static_cast<long long>(diff.max_health / modifiers::kFixedOne),
-        static_cast<long long>(diff.max_barrier / modifiers::kFixedOne),
-        static_cast<long long>(diff.armor), static_cast<long long>(diff.evasion)),
-        detail_x, detail_y, 13, RAYWHITE);
-    detail_y += 19;
-    DrawText(TextFormat("Move %+g%%  Attack %+g%%  Weapon %+lld",
-        diff.move_speed / 100.0, diff.attack_speed / 100.0,
-        static_cast<long long>(diff.weapon_physical)),
-        detail_x, detail_y, 13, RAYWHITE);
-    detail_y += 19;
-    DrawText(TextFormat("F/W/L/C DR %+g/%+g/%+g/%+g%%",
-        diff.damage_reduction[0] / 100.0, diff.damage_reduction[1] / 100.0,
-        diff.damage_reduction[2] / 100.0, diff.damage_reduction[3] / 100.0),
-        detail_x, detail_y, 13, RAYWHITE);
-    detail_y += 19;
-    DrawText(TextFormat("F/W cap %+g/%+g%%",
-        diff.damage_reduction_cap_bonus[0] / 100.0,
-        diff.damage_reduction_cap_bonus[1] / 100.0),
-        detail_x, detail_y, 12, RAYWHITE);
-    detail_y += 18;
-    DrawText(TextFormat("L/C cap %+g/%+g%%",
-        diff.damage_reduction_cap_bonus[2] / 100.0,
-        diff.damage_reduction_cap_bonus[3] / 100.0),
-        detail_x, detail_y, 12, RAYWHITE);
+    EndScissorMode();
 }
 
 }  // namespace arpg::platform

@@ -7,6 +7,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -87,14 +88,13 @@ test::Failure filtering_preserves_acquisition_order_and_excludes_equipped() noex
         make_item(13U, 1U, items::ItemRarity::rare),
         make_item(14U, 2U, items::ItemRarity::magic),
     };
-    state.equipment.equipped_ids[0] = 11U;
+    state.equipment.equipped_ids[1] = 12U;
     const platform::InventoryFilter filter{
         items::ItemSlot::helmet, items::ItemRarity::magic};
     const std::vector<std::size_t> indices =
         platform::filtered_inventory_indices(state, filter);
-    ARPG_REQUIRE(indices.size() == 2U);
-    ARPG_REQUIRE(indices[0] == 1U);
-    ARPG_REQUIRE(indices[1] == 3U);
+    ARPG_REQUIRE(indices.size() == 1U);
+    ARPG_REQUIRE(indices[0] == 3U);
     return {};
 }
 
@@ -176,6 +176,12 @@ test::Failure comparison_uses_full_build_fields() noexcept {
     current.values.damage_reduction[0] = 1200;
     current.values.damage_reduction_cap_bonus[0] = 100;
     current.values.attack_speed = 10000;
+    current.values.melee_damage = 10300;
+    current.values.impulse_scale = 9700;
+    for (std::size_t index = 0U; index < 5U; ++index) {
+        current.values.flat_damage[index] = 1000 + static_cast<std::int64_t>(index);
+        current.values.damage_increased[index] = 10000 + static_cast<std::int32_t>(index);
+    }
     current.weapon_physical = 20000;
     current.local_attack_speed_bp = 500;
     combat::PlayerCombatBuild candidate = current;
@@ -185,6 +191,12 @@ test::Failure comparison_uses_full_build_fields() noexcept {
     candidate.values.damage_reduction[0] = 1500;
     candidate.values.damage_reduction_cap_bonus[0] = 300;
     candidate.values.attack_speed = 11200;
+    candidate.values.melee_damage = 11100;
+    candidate.values.impulse_scale = 10400;
+    for (std::size_t index = 0U; index < 5U; ++index) {
+        candidate.values.flat_damage[index] += static_cast<std::int64_t>(10U + index);
+        candidate.values.damage_increased[index] += static_cast<std::int32_t>(20U + index);
+    }
     candidate.weapon_physical = 35000;
     candidate.local_attack_speed_bp = 900;
 
@@ -198,6 +210,123 @@ test::Failure comparison_uses_full_build_fields() noexcept {
     ARPG_REQUIRE(difference.attack_speed == 1200);
     ARPG_REQUIRE(difference.weapon_physical == 15000);
     ARPG_REQUIRE(difference.local_attack_speed_bp == 400);
+    ARPG_REQUIRE(difference.melee_damage == 800);
+    ARPG_REQUIRE(difference.impulse_scale == 700);
+    for (std::size_t index = 0U; index < 5U; ++index) {
+        ARPG_REQUIRE(difference.flat_damage[index]
+            == static_cast<std::int64_t>(10U + index));
+        ARPG_REQUIRE(difference.damage_increased[index]
+            == static_cast<std::int64_t>(20U + index));
+    }
+    ARPG_REQUIRE(difference.armor_reduction_bp
+        == modifiers::rating_to_basis_points(candidate.values.armor)
+            - modifiers::rating_to_basis_points(current.values.armor));
+    ARPG_REQUIRE(difference.evasion_rate_bp
+        == modifiers::rating_to_basis_points(candidate.values.evasion)
+            - modifiers::rating_to_basis_points(current.values.evasion));
+    return {};
+}
+
+test::Failure view_cache_never_rescans_stable_maximum_inventory() noexcept {
+    items::ItemOwnershipState state{};
+    state.items.reserve(65535U);
+    for (std::uint64_t id = 1U; id <= 65535U; ++id) {
+        state.items.push_back(make_item(id,
+            static_cast<std::uint8_t>((id - 1U) % 6U + 1U),
+            id % 3U == 0U ? items::ItemRarity::magic
+                          : items::ItemRarity::normal));
+    }
+    platform::RecipeSelection recipe{};
+    recipe.ids = {65521U, 65527U, 65533U};
+    recipe.count = 3U;
+    platform::InventoryViewCache cache{};
+    platform::refresh_inventory_view_cache(cache, state, 77U, {},
+        65535U, recipe);
+    ARPG_REQUIRE(cache.item_inspection_count == 65535U);
+    ARPG_REQUIRE(cache.refresh_count == 1U);
+    const std::size_t after_refresh = cache.item_inspection_count;
+    for (int frame = 0; frame < 1000; ++frame) {
+        ARPG_REQUIRE(platform::cached_selected_item(cache, state) != nullptr);
+        ARPG_REQUIRE(platform::cached_recipe_ready(cache));
+        const auto range = platform::visible_grid_range(
+            cache.filtered_indices.size(), 4, 0.0F, 170.0F, 50.0F);
+        ARPG_REQUIRE(range.count == 16U);
+        platform::refresh_inventory_view_cache(cache, state, 77U, {},
+            65535U, recipe);
+    }
+    ARPG_REQUIRE(cache.item_inspection_count == after_refresh);
+    ARPG_REQUIRE(cache.refresh_count == 1U);
+
+    platform::refresh_inventory_view_cache(cache, state, 77U, {},
+        65534U, recipe);
+    ARPG_REQUIRE(cache.item_inspection_count == after_refresh + 65535U);
+    ARPG_REQUIRE(cache.refresh_count == 2U);
+    return {};
+}
+
+test::Failure attribute_labels_are_human_readable_and_scoped() noexcept {
+    const auto local = platform::item_attribute_label(
+        items::ItemEffectKind::local_weapon_physical_increased,
+        modifiers::StatId::physical_flat_damage,
+        modifiers::ModifierOperation::increased,
+        items::ItemSlot::weapon, 0xFFU);
+    ARPG_REQUIRE(std::string_view{local.name} == "Weapon physical");
+    ARPG_REQUIRE(std::string_view{local.scope} == "LOCAL");
+    ARPG_REQUIRE(std::string_view{local.suffix} == "%");
+    ARPG_REQUIRE(std::string_view{local.qualifier} == " inc");
+
+    const auto global = platform::item_attribute_label(
+        items::ItemEffectKind::global_modifier,
+        modifiers::StatId::max_health,
+        modifiers::ModifierOperation::flat,
+        items::ItemSlot::helmet, 0xFFU);
+    ARPG_REQUIRE(std::string_view{global.name} == "Maximum health");
+    ARPG_REQUIRE(std::string_view{global.scope} == "GLOBAL");
+    ARPG_REQUIRE(std::string_view{global.suffix}.empty());
+    ARPG_REQUIRE(std::string_view{global.qualifier}.empty());
+
+    const auto variant = platform::item_attribute_label(
+        items::ItemEffectKind::variant_element_damage_reduction_cap,
+        modifiers::StatId::fire_damage_reduction_cap,
+        modifiers::ModifierOperation::flat,
+        items::ItemSlot::accessory, 2U);
+    ARPG_REQUIRE(std::string_view{variant.name} == "Lightning DR cap");
+    ARPG_REQUIRE(std::string_view{variant.scope} == "GLOBAL");
+    ARPG_REQUIRE(std::string_view{variant.suffix} == "%");
+    ARPG_REQUIRE(std::string_view{variant.qualifier}.empty());
+    ARPG_REQUIRE(test::near(
+        platform::item_attribute_display_value(2000, variant), 20.0));
+    ARPG_REQUIRE(test::near(
+        platform::item_attribute_display_value(46, global), 46.0));
+    return {};
+}
+
+test::Failure detail_content_stays_inside_all_required_viewports() noexcept {
+    constexpr std::array<std::array<int, 2>, 3> kSizes{{
+        {{800, 450}}, {{1280, 720}}, {{1920, 1080}},
+    }};
+    for (const auto& size : kSizes) {
+        const platform::InventoryLayout layout =
+            platform::inventory_layout(size[0], size[1]);
+        ARPG_REQUIRE(platform::detail_content_fits(layout, 27U));
+        for (std::size_t line = 0U; line < 27U; ++line) {
+            const Rectangle rectangle =
+                platform::detail_line_rectangle(layout, line);
+            ARPG_REQUIRE(inside(rectangle, layout.detail));
+            ARPG_REQUIRE(rectangle.width >= 211.0F);
+        }
+        ARPG_REQUIRE(platform::detail_line_character_capacity(layout) >= 35U);
+        constexpr std::array<std::string_view, 5> kLongestLines{{
+            "T1 Suf [GLOBAL] Lightning DR cap +6%",
+            "T1 Pre [GLOBAL] Fire damage +42% inc",
+            "Base [GLOBAL] All element DR +10%",
+            "LocalAtk +999.9%  Weapon +1e+18",
+            "Evasion -1e+18  Chance -99.99%",
+        }};
+        for (const std::string_view line : kLongestLines) {
+            ARPG_REQUIRE(platform::detail_text_fits(layout, line));
+        }
+    }
     return {};
 }
 
@@ -210,6 +339,12 @@ constexpr test::TestCase kCases[] = {
     {"inventory equipment hit", &equipped_slot_hit_requires_an_occupied_slot},
     {"inventory overlay gates", &inventory_and_passive_overlays_are_mutually_exclusive},
     {"inventory build comparison", &comparison_uses_full_build_fields},
+    {"inventory maximum cache complexity",
+        &view_cache_never_rescans_stable_maximum_inventory},
+    {"inventory readable attribute labels",
+        &attribute_labels_are_human_readable_and_scoped},
+    {"inventory detail content boundaries",
+        &detail_content_stays_inside_all_required_viewports},
 };
 
 }  // namespace

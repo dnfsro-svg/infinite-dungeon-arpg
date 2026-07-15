@@ -1,7 +1,7 @@
 #pragma once
 
 #include "combat/combat_types.hpp"
-#include "items/item_types.hpp"
+#include "items/item_catalog.hpp"
 
 #include <raylib.h>
 
@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string_view>
 #include <vector>
 
 namespace arpg::platform {
@@ -56,14 +57,44 @@ struct BuildDifference final {
     std::int64_t max_health{};
     std::int64_t max_barrier{};
     std::int64_t melee_damage{};
+    std::int64_t impulse_scale{};
     std::int64_t move_speed{};
     std::int64_t attack_speed{};
     std::int64_t armor{};
     std::int64_t evasion{};
+    std::array<std::int64_t, 5> flat_damage{};
+    std::array<std::int64_t, 5> damage_increased{};
     std::array<std::int64_t, 4> damage_reduction{};
     std::array<std::int64_t, 4> damage_reduction_cap_bonus{};
     std::int64_t weapon_physical{};
     std::int64_t local_attack_speed_bp{};
+    std::int32_t armor_reduction_bp{};
+    std::int32_t evasion_rate_bp{};
+};
+
+struct InventoryViewCache final {
+    static constexpr std::size_t kInvalidIndex = ~std::size_t{0U};
+
+    std::uint64_t generation{~std::uint64_t{0U}};
+    items::EquipmentState equipment{};
+    InventoryFilter filter{};
+    std::uint64_t selected_item_id{};
+    RecipeSelection requested_recipe{};
+    RecipeSelection resolved_recipe{};
+    std::vector<std::size_t> filtered_indices{};
+    std::size_t selected_index{kInvalidIndex};
+    std::array<std::size_t, 3> recipe_indices{{
+        kInvalidIndex, kInvalidIndex, kInvalidIndex}};
+    bool recipe_ready{};
+    std::size_t refresh_count{};
+    std::size_t item_inspection_count{};
+};
+
+struct ItemAttributeLabel final {
+    const char* name{};
+    const char* scope{};
+    const char* suffix{};
+    const char* qualifier{};
 };
 
 [[nodiscard]] InventoryLayout inventory_layout(int width, int height) noexcept;
@@ -93,5 +124,28 @@ struct BuildDifference final {
 [[nodiscard]] BuildDifference compare_player_builds(
     const combat::PlayerCombatBuild& current,
     const combat::PlayerCombatBuild& candidate) noexcept;
+void refresh_inventory_view_cache(InventoryViewCache& cache,
+    const items::ItemOwnershipState& state, std::uint64_t generation,
+    InventoryFilter filter, std::uint64_t selected_item_id,
+    RecipeSelection recipe);
+[[nodiscard]] const items::ItemInstance* cached_selected_item(
+    const InventoryViewCache& cache,
+    const items::ItemOwnershipState& state) noexcept;
+[[nodiscard]] bool cached_recipe_ready(
+    const InventoryViewCache& cache) noexcept;
+[[nodiscard]] ItemAttributeLabel item_attribute_label(
+    items::ItemEffectKind effect, modifiers::StatId stat,
+    modifiers::ModifierOperation operation, items::ItemSlot slot,
+    std::uint8_t variant) noexcept;
+[[nodiscard]] double item_attribute_display_value(
+    std::int32_t raw_value, ItemAttributeLabel label) noexcept;
+[[nodiscard]] Rectangle detail_line_rectangle(
+    InventoryLayout layout, std::size_t line) noexcept;
+[[nodiscard]] bool detail_content_fits(
+    InventoryLayout layout, std::size_t line_count) noexcept;
+[[nodiscard]] std::size_t detail_line_character_capacity(
+    InventoryLayout layout) noexcept;
+[[nodiscard]] bool detail_text_fits(InventoryLayout layout,
+    std::string_view text) noexcept;
 
 }  // namespace arpg::platform

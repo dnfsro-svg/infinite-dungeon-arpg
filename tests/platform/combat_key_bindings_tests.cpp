@@ -29,6 +29,11 @@ test::Failure combat_keys_are_j_k_and_l_without_u() noexcept {
 }
 
 test::Failure overlay_keys_are_i_and_p() noexcept {
+    volatile int inventory_key = platform::kInventoryKey;
+    volatile int passive_key = platform::kPassiveOverlayKey;
+    ARPG_REQUIRE(inventory_key == KEY_I);
+    ARPG_REQUIRE(passive_key == KEY_P);
+    ARPG_REQUIRE(inventory_key != passive_key);
     return {};
 }
 

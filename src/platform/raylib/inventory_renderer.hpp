@@ -4,7 +4,6 @@
 
 #include <cstdint>
 #include <optional>
-#include <vector>
 
 namespace arpg::dungeon {
 class DungeonSession;
@@ -31,14 +30,11 @@ public:
 private:
     void sync(const dungeon::DungeonSession& session,
         const dungeon::DungeonSnapshot& snapshot);
-    void rebuild_filter(const items::ItemOwnershipState& state);
     void refresh_comparison(const dungeon::DungeonSession& session,
         const dungeon::DungeonSnapshot& snapshot);
-    void prune_selection(const items::ItemOwnershipState& state) noexcept;
     [[nodiscard]] const items::ItemInstance* selected_item(
         const items::ItemOwnershipState& state) const noexcept;
-    [[nodiscard]] bool recipe_ready(
-        const items::ItemOwnershipState& state) const noexcept;
+    [[nodiscard]] bool recipe_ready() const noexcept;
 
     bool open_{};
     InventoryFilter filter_{};
@@ -46,9 +42,7 @@ private:
     std::uint64_t selected_item_id_{};
     RecipeSelection recipe_{};
     InventoryClickTracker click_tracker_{};
-    std::vector<std::size_t> filtered_indices_{};
-    std::uint64_t filtered_generation_{~std::uint64_t{0U}};
-    items::EquipmentState filtered_equipment_{};
+    InventoryViewCache view_cache_{};
     std::uint64_t comparison_generation_{~std::uint64_t{0U}};
     std::uint64_t comparison_item_id_{};
     items::EquipmentState comparison_equipment_{};
