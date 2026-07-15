@@ -83,13 +83,9 @@ bool validate_player_build_fields(const PlayerCombatBuild& build) noexcept {
 
 bool valid_player_build(const PlayerCombatBuild& build) noexcept;
 
-}  // namespace
-
-std::optional<DamagePacket> build_player_hit_packet(
+std::optional<DamagePacket> build_player_hit_packet_checked_unvalidated(
     int base_physical, const PlayerCombatBuild& build) noexcept {
-    if (base_physical < 0 || !validate_player_build_fields(build)) {
-        return std::nullopt;
-    }
+    if (base_physical < 0) return std::nullopt;
 
     DamagePacket packet{};
     const auto& values = build.values;
@@ -130,11 +126,17 @@ std::optional<DamagePacket> build_player_hit_packet(
     return packet;
 }
 
+}  // namespace
+
+std::optional<DamagePacket> build_player_hit_packet(
+    int base_physical, const PlayerCombatBuild& build) noexcept {
+    if (!valid_player_build(build)) return std::nullopt;
+    return build_player_hit_packet_checked_unvalidated(base_physical, build);
+}
+
 std::optional<int> resolve_player_damage(
     DamagePacket packet, const PlayerCombatBuild& build) noexcept {
-    if (!validate_player_build_fields(build) || !valid_player_build(build)) {
-        return std::nullopt;
-    }
+    if (!valid_player_build(build)) return std::nullopt;
 
     const auto checked_add = [](std::int64_t left, std::int64_t right,
                                 std::int64_t& result) noexcept {
@@ -282,7 +284,8 @@ bool derive_player_build(
             || !phase_ticks_fit(definition->recovery_ticks)) {
             return false;
         }
-        const auto packet = build_player_hit_packet(definition->damage, build);
+        const auto packet = build_player_hit_packet_checked_unvalidated(
+            definition->damage, build);
         if (!packet.has_value()) return false;
         std::int64_t packet_total = 0;
         for (const int amount : packet->amount) {

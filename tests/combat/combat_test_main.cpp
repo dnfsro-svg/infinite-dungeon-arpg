@@ -37,5 +37,5 @@ int main() {
         player_defense_suite(),
     };
 
-    return arpg::test::run_suites(suites, 97, "stage 8 task 4");
+    return arpg::test::run_suites(suites, 99, "stage 8 task 4");
 }

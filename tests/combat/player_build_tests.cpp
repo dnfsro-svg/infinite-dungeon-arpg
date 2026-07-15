@@ -333,6 +333,44 @@ arpg::test::Failure unrelated_invalid_build_field_is_rejected_consistently() noe
     return {};
 }
 
+arpg::test::Failure overflowing_health_build_is_rejected_consistently() noexcept {
+    PlayerCombatBuild invalid{};
+    invalid.values.max_health =
+        (std::numeric_limits<std::int64_t>::max)();
+    ARPG_REQUIRE(!build_player_hit_packet(28, invalid).has_value());
+    ARPG_REQUIRE(!resolve_player_damage(DamagePacket{10}, invalid).has_value());
+
+    CombatEncounterConfig config{};
+    config.player_build = invalid;
+    CombatWorld constructed{config};
+    ARPG_REQUIRE(constructed.snapshot().player.max_hp == 1000);
+
+    CombatWorld hot_swap{CombatEncounterConfig{}};
+    const auto before = hot_swap.snapshot().player;
+    hot_swap.apply_player_build(invalid);
+    ARPG_REQUIRE(same_player_state(before, hot_swap.snapshot().player));
+    return {};
+}
+
+arpg::test::Failure unrepresentable_speed_build_is_rejected_consistently() noexcept {
+    PlayerCombatBuild invalid{};
+    invalid.values.attack_speed = 1;
+    ARPG_REQUIRE(!build_player_hit_packet(28, invalid).has_value());
+    ARPG_REQUIRE(!resolve_player_damage(DamagePacket{10}, invalid).has_value());
+
+    CombatEncounterConfig config{};
+    config.player_build = invalid;
+    CombatWorld constructed{config};
+    ARPG_REQUIRE(constructed.snapshot().player.max_hp == 1000);
+    ARPG_REQUIRE(constructed.snapshot().player.evasion_rate_bp == 0);
+
+    CombatWorld hot_swap{CombatEncounterConfig{}};
+    const auto before = hot_swap.snapshot().player;
+    hot_swap.apply_player_build(invalid);
+    ARPG_REQUIRE(same_player_state(before, hot_swap.snapshot().player));
+    return {};
+}
+
 arpg::test::Failure weapon_physical_is_applied_by_real_melee_hit() noexcept {
     PlayerCombatBuild build{};
     build.weapon_physical = 50;
@@ -415,6 +453,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"weapon physical evaluation", &weapon_physical_uses_physical_flat_increased_and_more},
     {"hit packet invalid semantics", &hit_packet_reports_zero_and_invalid_without_partial_packet},
     {"unrelated invalid build field", &unrelated_invalid_build_field_is_rejected_consistently},
+    {"overflowing health build consistency", &overflowing_health_build_is_rejected_consistently},
+    {"unrepresentable speed build consistency", &unrepresentable_speed_build_is_rejected_consistently},
     {"weapon physical real hit", &weapon_physical_is_applied_by_real_melee_hit},
     {"local and global attack speed", &local_attack_speed_multiplies_global_without_scaling_active},
     {"overflowing weapon build", &overflowing_weapon_build_is_rejected_atomically},
