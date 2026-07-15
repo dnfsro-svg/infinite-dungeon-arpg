@@ -171,7 +171,7 @@ arpg::test::Failure next_room_uses_committed_passive_player_build() noexcept {
     const auto snapshot = session.snapshot();
     ARPG_REQUIRE(snapshot.combat.has_value());
     ARPG_REQUIRE(snapshot.combat->player.max_barrier == 10);
-    ARPG_REQUIRE(snapshot.combat->player.resistance[0] == 700);
+    ARPG_REQUIRE(snapshot.combat->player.damage_reduction[0] == 700);
     const auto& build = arpg::test::player_build(session);
     ARPG_REQUIRE(build.values.flat_damage[
         arpg::modifiers::damage_index(arpg::modifiers::DamageType::fire)]
@@ -189,7 +189,7 @@ arpg::test::Failure current_room_keeps_old_build_until_transition() noexcept {
     ARPG_REQUIRE(before.combat->tick != 0U);
     ARPG_REQUIRE(before.combat->player.max_barrier == 0);
     ARPG_REQUIRE(before.combat->player.barrier == 0);
-    ARPG_REQUIRE(before.combat->player.resistance[0] == 0);
+    ARPG_REQUIRE(before.combat->player.damage_reduction[0] == 0);
 
     ARPG_REQUIRE(session.request_passive_allocation(2U));
     ARPG_REQUIRE(commit_passive_save(session));
@@ -201,8 +201,8 @@ arpg::test::Failure current_room_keeps_old_build_until_transition() noexcept {
         == before.combat->player.max_barrier);
     ARPG_REQUIRE(after_commit.combat->player.barrier
         == before.combat->player.barrier);
-    ARPG_REQUIRE(after_commit.combat->player.resistance
-        == before.combat->player.resistance);
+    ARPG_REQUIRE(after_commit.combat->player.damage_reduction
+        == before.combat->player.damage_reduction);
 
     arpg::test::set_current_room_hole(session, true);
     ARPG_REQUIRE(session.request_descent(true));
@@ -214,7 +214,7 @@ arpg::test::Failure current_room_keeps_old_build_until_transition() noexcept {
     ARPG_REQUIRE(next_room.combat.has_value());
     ARPG_REQUIRE(next_room.combat->player.max_barrier == 10);
     ARPG_REQUIRE(next_room.combat->player.barrier == 10);
-    ARPG_REQUIRE(next_room.combat->player.resistance[0] == 0);
+    ARPG_REQUIRE(next_room.combat->player.damage_reduction[0] == 0);
     return {};
 }
 
