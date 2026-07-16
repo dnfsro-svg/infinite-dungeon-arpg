@@ -6,7 +6,9 @@
 
 #include <raylib.h>
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 
 namespace arpg::platform {
@@ -93,9 +95,56 @@ void draw_doors(const dungeon::DungeonSnapshot& snapshot,
         const int arrow_width = MeasureText(visual.arrow, font_size);
         DrawText(visual.arrow, static_cast<int>(projected.x) - arrow_width / 2,
             static_cast<int>(frame.y + 17.0F * projected.scale), font_size, text_color);
+        if (abyss_door_marker(snapshot, kDirections[index])) {
+            const Vector2 marker{
+                frame.x + frame.width - 12.0F * projected.scale,
+                frame.y + 13.0F * projected.scale,
+            };
+            DrawPoly(marker, 4, 9.0F * projected.scale, 45.0F,
+                Color{231, 46, 157, 245});
+            DrawPolyLinesEx(marker, 4, 9.0F * projected.scale, 45.0F,
+                2.0F * projected.scale, Color{255, 155, 221, 255});
+        }
         DrawText(visual.label, static_cast<int>(frame.x),
             static_cast<int>(frame.y - 15.0F * projected.scale),
             static_cast<int>(11.0F * projected.scale), text_color);
+    }
+}
+
+void draw_environment_hazards(const dungeon::DungeonSnapshot& snapshot,
+    float width, float height) noexcept {
+    if (!snapshot.combat.has_value()) return;
+    for (const combat::HazardSnapshot& hazard : snapshot.combat->hazards) {
+        const EnvironmentHazardVisual visual =
+            environment_hazard_visual(hazard);
+        if (visual.mode == EnvironmentHazardVisualMode::hidden) continue;
+
+        const RenderProjection center = project_render_world(
+            visual.center.x, visual.center.y, 0.0F, width, height);
+        const RenderProjection x_edge = project_render_world(
+            visual.center.x + visual.radius, visual.center.y, 0.0F,
+            width, height);
+        const RenderProjection y_edge = project_render_world(
+            visual.center.x, visual.center.y + visual.radius, 0.0F,
+            width, height);
+        const float radius_x = std::max(
+            1.0F, std::fabs(x_edge.x - center.x));
+        const float radius_y = std::max(
+            1.0F, std::fabs(y_edge.ground_y - center.ground_y));
+        const Color fill{visual.fill.r, visual.fill.g,
+            visual.fill.b, visual.fill.a};
+        const Color outline{visual.outline.r, visual.outline.g,
+            visual.outline.b, visual.outline.a};
+        DrawEllipse(static_cast<int>(center.x),
+            static_cast<int>(center.ground_y), radius_x, radius_y, fill);
+        DrawEllipseLines(static_cast<int>(center.x),
+            static_cast<int>(center.ground_y), radius_x, radius_y, outline);
+        if (visual.mode == EnvironmentHazardVisualMode::warning) {
+            DrawEllipseLines(static_cast<int>(center.x),
+                static_cast<int>(center.ground_y),
+                std::max(1.0F, radius_x - 4.0F),
+                std::max(1.0F, radius_y - 2.0F), outline);
+        }
     }
 }
 
@@ -182,6 +231,14 @@ void draw_abyss(const dungeon::DungeonSnapshot& snapshot, float elapsed_seconds)
     DrawRectangleLinesEx({8.0F, 8.0F, static_cast<float>(GetScreenWidth() - 16),
         static_cast<float>(GetScreenHeight() - 16)}, 8.0F,
         Fade(Color{225, 47, 160, 255}, 0.20F + pulse * 0.45F));
+    const AbyssHudValues values = abyss_hud_values(snapshot);
+    if (values.visible) {
+        const char* label = TextFormat("%s  |  %s",
+            values.danger_label, values.rule_label);
+        const int font_size = 20;
+        DrawText(label, GetScreenWidth() / 2 - MeasureText(label, font_size) / 2,
+            18, font_size, Color{255, 164, 221, 255});
+    }
 }
 
 void draw_hole(const dungeon::DungeonSnapshot& snapshot) noexcept {
@@ -217,6 +274,7 @@ void CombatRenderer::draw_room(const dungeon::DungeonSnapshot& current) const no
     const float height = static_cast<float>(GetScreenHeight());
     draw_graybox_room(current.ecology);
     draw_abyss(current, static_cast<float>(GetTime()));
+    draw_environment_hazards(current, width, height);
     draw_ground_items(current, width, height);
     draw_doors(current, width, height);
     draw_hole(current);

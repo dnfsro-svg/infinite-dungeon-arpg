@@ -47,6 +47,11 @@ private:
         const dungeon::DungeonSnapshot& current,
         const DungeonRenderStatus& runtime_status,
         bool draw_debug) const noexcept;
+    void draw_abyss_hud(
+        const dungeon::DungeonSnapshot& current,
+        float x,
+        int& y,
+        int line_step) const noexcept;
     void draw_debug_world_volumes(
         const combat::CombatSnapshot& snapshot,
         float width,

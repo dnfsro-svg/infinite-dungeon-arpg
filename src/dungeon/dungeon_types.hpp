@@ -157,6 +157,8 @@ struct DungeonSnapshot final {
     DungeonElement ecology{DungeonElement::fire};
     bool has_hole{};
     bool is_abyss{};
+    abyss::AbyssDanger abyss_danger{abyss::AbyssDanger::low};
+    abyss::AbyssRuleId abyss_rule{abyss::AbyssRuleId::none};
     std::uint8_t abyss_pending_rewards{};
     std::uint8_t abyss_unpicked_rewards{};
     bool abyss_exit_confirmation_armed{};

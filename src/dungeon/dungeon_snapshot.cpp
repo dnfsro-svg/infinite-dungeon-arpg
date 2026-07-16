@@ -45,6 +45,10 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
     result.ecology = stable_state_.current_room.ecology;
     result.has_hole = stable_state_.current_room.has_hole;
     result.is_abyss = stable_state_.current_room.is_abyss;
+    if (result.is_abyss) {
+        result.abyss_danger = stable_state_.abyss.danger;
+        result.abyss_rule = stable_state_.abyss.rule;
+    }
     result.abyss_pending_rewards = abyss_pending_reward_count();
     result.abyss_unpicked_rewards = abyss_unpicked_reward_count();
     result.abyss_exit_confirmation_armed = abyss_exit_confirmation_.armed;

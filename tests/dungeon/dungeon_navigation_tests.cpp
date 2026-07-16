@@ -380,6 +380,28 @@ arpg::test::Failure snapshot_exposes_only_boolean_door_preview() noexcept {
     ARPG_REQUIRE(snapshot.abyss_doors
         == arpg::dungeon::preview_abyss_doors(
             arpg::test::stable_state(session).current_room));
+    ARPG_REQUIRE(snapshot.abyss_rule == arpg::abyss::AbyssRuleId::none);
+    ARPG_REQUIRE(snapshot.abyss_danger == arpg::abyss::AbyssDanger::low);
+
+    auto state = arpg::dungeon::make_initial_run_state(
+        7U, arpg::dungeon::DungeonRules{}).state;
+    state.current_room.index = 1U;
+    state.current_room.entry = arpg::dungeon::EntrySide::top;
+    while (!arpg::abyss::is_abyss_roll(state.current_room.seed)) {
+        ++state.current_room.seed;
+    }
+    const auto selection = arpg::abyss::select_abyss_rule(
+        state.current_room.seed, state.current_room.depth);
+    ARPG_REQUIRE(selection.has_value());
+    state.current_room.is_abyss = true;
+    state.abyss.lifecycle = arpg::abyss::AbyssLifecycle::available;
+    state.abyss.rule = selection->rule;
+    state.abyss.danger = selection->danger;
+    state.abyss.rules_version = selection->rules_version;
+    DungeonSession abyss_session{arpg::dungeon::DungeonRules{}, state};
+    const DungeonSnapshot abyss_snapshot = abyss_session.snapshot();
+    ARPG_REQUIRE(abyss_snapshot.abyss_rule == state.abyss.rule);
+    ARPG_REQUIRE(abyss_snapshot.abyss_danger == state.abyss.danger);
     return {};
 }
 

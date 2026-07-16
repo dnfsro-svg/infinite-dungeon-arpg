@@ -31,6 +31,63 @@ void draw_bar(float x, float y, float width, float ratio, Color color) noexcept 
 
 }  // namespace
 
+void CombatRenderer::draw_abyss_hud(
+    const dungeon::DungeonSnapshot& current,
+    float x,
+    int& y,
+    int line_step) const noexcept {
+    const AbyssHudValues abyss = abyss_hud_values(current);
+    if (!abyss.visible) return;
+
+    constexpr Color kAbyss{255, 126, 206, 255};
+    constexpr Color kReward{255, 211, 111, 255};
+    DrawText(TextFormat("%s  Rule %s",
+        abyss.danger_label, abyss.rule_label),
+        static_cast<int>(x), y, 16, kAbyss);
+    y += line_step;
+    DrawText(abyss.effect_label, static_cast<int>(x), y, 14,
+        Color{232, 190, 220, 255});
+    y += line_step;
+    DrawText(TextFormat("Reward pending %u / unpicked %u",
+        static_cast<unsigned>(abyss.pending_rewards),
+        static_cast<unsigned>(abyss.unpicked_rewards)),
+        static_cast<int>(x), y, 16, kReward);
+    y += line_step;
+
+    if (!abyss.confirmation_visible) return;
+    const int font_size = 18;
+    const bool door_confirmation = abyss.confirmation_transition
+        == dungeon::TransitionKind::door;
+    const char* direction = door_confirmation
+        ? exit_direction_label(abyss.confirmation_direction) : "";
+    constexpr const char* kDoorSeparator = " door: ";
+    const int direction_width = door_confirmation
+        ? MeasureText(direction, font_size) : 0;
+    const int separator_width = door_confirmation
+        ? MeasureText(kDoorSeparator, font_size) : 0;
+    const int prompt_width = direction_width + separator_width
+        + MeasureText(abyss.confirmation_label, font_size);
+    const float panel_width = static_cast<float>(prompt_width + 36);
+    const float panel_x = (static_cast<float>(GetScreenWidth()) - panel_width)
+        * 0.5F;
+    const float panel_y = static_cast<float>(GetScreenHeight() - 72);
+    DrawRectangleRounded({panel_x, panel_y, panel_width, 42.0F},
+        0.18F, 6, Color{45, 8, 34, 238});
+    DrawRectangleRoundedLines({panel_x, panel_y, panel_width, 42.0F},
+        0.18F, 6, Color{255, 98, 190, 255});
+    int prompt_x = static_cast<int>(panel_x + 18.0F);
+    if (door_confirmation) {
+        DrawText(direction, prompt_x, static_cast<int>(panel_y + 11.0F),
+            font_size, kAbyss);
+        prompt_x += direction_width;
+        DrawText(kDoorSeparator, prompt_x,
+            static_cast<int>(panel_y + 11.0F), font_size, RAYWHITE);
+        prompt_x += separator_width;
+    }
+    DrawText(abyss.confirmation_label, prompt_x,
+        static_cast<int>(panel_y + 11.0F), font_size, RAYWHITE);
+}
+
 void CombatRenderer::draw_hud(
     const dungeon::DungeonSnapshot& current,
     const DungeonRenderStatus& runtime_status,
@@ -131,6 +188,7 @@ void CombatRenderer::draw_hud(
             static_cast<int>(layout.hud_x), y, 16, Color{255, 151, 117, 255});
         y += layout.hud_line_step;
     }
+    draw_abyss_hud(current, layout.hud_x, y, layout.hud_line_step);
     DrawText(TextFormat("ABYSS %s  Hole %s  Autosave %s",
         current.is_abyss ? "YES" : "NO", current.has_hole
             ? (current.phase == dungeon::RoomPhase::committing ? "SAVING"
