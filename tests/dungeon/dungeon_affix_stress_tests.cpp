@@ -371,6 +371,10 @@ bool transition_room(DungeonSession& session, std::size_t room) noexcept {
     }};
     arpg::test::set_phase(session, RoomPhase::awaiting_exit);
     arpg::test::attempt_exit(session, kDirections[room % kDirections.size()]);
+    if (session.snapshot().abyss_exit_confirmation_armed) {
+        arpg::test::attempt_exit(
+            session, kDirections[room % kDirections.size()]);
+    }
     if (!commit_pending(session)) return false;
     session.tick({});
     if (session.snapshot().phase == RoomPhase::committing

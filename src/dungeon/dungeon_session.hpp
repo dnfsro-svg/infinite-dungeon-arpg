@@ -110,7 +110,17 @@ private:
     void attempt_exit(ExitDirection direction) noexcept;
     [[nodiscard]] bool prepare_transition(
         TransitionKind kind,
-        ExitDirection direction) noexcept;
+        ExitDirection direction,
+        bool abandon_abyss = false) noexcept;
+    [[nodiscard]] bool confirm_abyss_exit(
+        TransitionKind kind, ExitDirection direction) noexcept;
+    [[nodiscard]] bool finalize_abyss_exit(
+        DungeonRunState& next, bool abandon) const noexcept;
+    void clear_abyss_exit_confirmation() noexcept;
+    void update_abyss_exit_confirmation_range(
+        combat::Vec3 player_position) noexcept;
+    [[nodiscard]] std::uint8_t abyss_pending_reward_count() const noexcept;
+    [[nodiscard]] std::uint8_t abyss_unpicked_reward_count() const noexcept;
     [[nodiscard]] bool prepare_passive_mutation(
         passives::PassiveNodeId node, bool refund) noexcept;
     [[nodiscard]] RequestResult prepare_item_save(
@@ -123,6 +133,7 @@ private:
     [[nodiscard]] bool pending_item_cache_consistent() const noexcept;
     [[nodiscard]] bool pending_abyss_cache_consistent() const noexcept;
     [[nodiscard]] bool pending_abyss_reward_cache_consistent() const noexcept;
+    [[nodiscard]] bool pending_abyss_claim_cache_consistent() const noexcept;
     void commit_pending_save(const PendingSaveResult& result) noexcept;
     [[nodiscard]] DungeonSnapshot build_dungeon_snapshot() const noexcept;
     void enter_fault(DungeonFault fault) noexcept;
@@ -143,6 +154,7 @@ private:
     std::optional<combat::PlayerCombatBuild> pending_item_build_{};
     std::optional<combat::CombatEncounterConfig> pending_abyss_combat_{};
     std::optional<PendingAbyssReward> pending_abyss_reward_{};
+    AbyssExitConfirmation abyss_exit_confirmation_{};
     std::optional<combat::CombatWorld> combat_{};
     std::array<GroundItem, kGroundDropCapacity> ground_items_{};
     std::array<std::uint64_t, 3> rolled_drop_bits_{};

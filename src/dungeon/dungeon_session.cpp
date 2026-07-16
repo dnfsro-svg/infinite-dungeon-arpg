@@ -137,8 +137,6 @@ void DungeonSession::tick(combat::MovementInput movement) noexcept {
         ++session_tick_;
         return;
     }
-    const bool awaiting_at_tick_start = phase_ == RoomPhase::awaiting_exit;
-
     if (phase_ == RoomPhase::locked) {
         phase_ = RoomPhase::combat;
         if (emit(DungeonEventKind::room_entered)
@@ -176,10 +174,18 @@ void DungeonSession::tick(combat::MovementInput movement) noexcept {
 
     }
 
+    if (abyss_exit_confirmation_.armed) {
+        if (combat_.has_value() && phase_ == RoomPhase::awaiting_exit) {
+            update_abyss_exit_confirmation_range(
+                combat_->snapshot().player.position);
+        } else {
+            clear_abyss_exit_confirmation();
+        }
+    }
+
     if (stable_state_.abyss.lifecycle == abyss::AbyssLifecycle::cleared
             && (phase_ == RoomPhase::cleared
-                || phase_ == RoomPhase::awaiting_exit)
-            && (awaiting_at_tick_start || !combat_.has_value())) {
+                || phase_ == RoomPhase::awaiting_exit)) {
         rebuild_committed_abyss_rewards();
         if (phase_ != RoomPhase::faulted && !pending_save_.has_value()) {
             attempt_abyss_reward_materialization();
@@ -206,7 +212,8 @@ void DungeonSession::tick(combat::MovementInput movement) noexcept {
 std::optional<PendingTransition>
 DungeonSession::pending_transition() const noexcept {
     if (!pending_save_.has_value()
-            || pending_save_->kind != PendingSaveKind::transition) {
+            || (pending_save_->kind != PendingSaveKind::transition
+                && pending_save_->kind != PendingSaveKind::abyss_abandon)) {
         return std::nullopt;
     }
     return PendingTransition{
@@ -338,7 +345,27 @@ void DungeonSession::construct_cleared_abyss_room() noexcept {
         enter_fault(DungeonFault::invalid_abyss_state);
         return;
     }
-    combat_.reset();
+    const PlayerBuildResult player_build = build_for(stable_state_);
+    if (player_build.status != PlayerBuildStatus::valid) {
+        enter_fault(DungeonFault::invalid_item_state);
+        return;
+    }
+    auto evasion_stream = core::DeterministicRng::derive_stream(
+        stable_state_.current_room.seed, kPlayerEvasionSeedDomain);
+    const combat::EncounterWave empty_wave{};
+    const auto navigation_config = make_combat_encounter_config(
+        stable_state_.current_room.entry,
+        rules_.rules_version,
+        empty_wave,
+        true,
+        abyss::combat_config_for(abyss::AbyssRuleId::none),
+        player_build.build,
+        evasion_stream.next_u64());
+    if (!navigation_config.has_value()) {
+        enter_fault(DungeonFault::invalid_rules);
+        return;
+    }
+    combat_.emplace(*navigation_config);
     encounter_plan_ = {};
     wave_index_ = 0U;
     wave_delay_ticks_ = 0U;
@@ -471,6 +498,7 @@ void DungeonSession::attempt_abyss_reward_materialization() noexcept {
         return;
     }
 
+    clear_abyss_exit_confirmation();
     try {
         DungeonRunState next = stable_state_;
         ++next.commit_generation;
@@ -547,6 +575,7 @@ void DungeonSession::reset_to_normal_room(bool clear_queues) noexcept {
     pending_item_build_.reset();
     pending_abyss_combat_.reset();
     pending_abyss_reward_.reset();
+    clear_abyss_exit_confirmation();
     last_passive_tree_error_ = passives::PassiveTreeError::none;
     construct_current_room();
     if (phase_ != RoomPhase::faulted) {
@@ -946,6 +975,7 @@ void DungeonSession::enter_fault(DungeonFault fault) noexcept {
     }
     diagnostics_.fault = fault;
     phase_ = RoomPhase::faulted;
+    clear_abyss_exit_confirmation();
     pending_item_build_.reset();
     pending_abyss_combat_.reset();
 

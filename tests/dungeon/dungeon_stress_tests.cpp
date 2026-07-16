@@ -227,6 +227,14 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
             || lhs.ecology != rhs.ecology
             || lhs.has_hole != rhs.has_hole
             || lhs.is_abyss != rhs.is_abyss
+            || lhs.abyss_pending_rewards != rhs.abyss_pending_rewards
+            || lhs.abyss_unpicked_rewards != rhs.abyss_unpicked_rewards
+            || lhs.abyss_exit_confirmation_armed
+                != rhs.abyss_exit_confirmation_armed
+            || lhs.abyss_exit_confirmation_transition
+                != rhs.abyss_exit_confirmation_transition
+            || lhs.abyss_exit_confirmation_direction
+                != rhs.abyss_exit_confirmation_direction
             || lhs.has_pending_transition != rhs.has_pending_transition
             || lhs.inventory_count != rhs.inventory_count
             || lhs.equipped_ids != rhs.equipped_ids
@@ -266,7 +274,9 @@ bool same_event(const DungeonEvent& lhs, const DungeonEvent& rhs) noexcept {
         && lhs.destination_room_index == rhs.destination_room_index
         && lhs.destination_room_seed == rhs.destination_room_seed
         && lhs.transition == rhs.transition
-        && lhs.direction == rhs.direction;
+        && lhs.direction == rhs.direction
+        && lhs.abyss_pending_rewards == rhs.abyss_pending_rewards
+        && lhs.abyss_unpicked_rewards == rhs.abyss_unpicked_rewards;
 }
 
 bool same_event(const CombatEvent& lhs, const CombatEvent& rhs) noexcept {
@@ -329,6 +339,12 @@ void tracked_tick(
                 == arpg::dungeon::PendingSaveKind::abyss_clear
             || *state.pending_save_kind
                 == arpg::dungeon::PendingSaveKind::abyss_reward_materialized);
+    const bool protected_abyss_boundary = state.phase == RoomPhase::committing
+        && state.pending_save_kind.has_value()
+        && (*state.pending_save_kind
+                == arpg::dungeon::PendingSaveKind::abyss_reward_claim
+            || *state.pending_save_kind
+                == arpg::dungeon::PendingSaveKind::abyss_abandon);
     const bool room_load = phase_before == RoomPhase::transitioning
         && (state.phase == RoomPhase::locked
             || (state.phase == RoomPhase::committing
@@ -336,7 +352,7 @@ void tracked_tick(
                 && *state.pending_save_kind
                     == arpg::dungeon::PendingSaveKind::abyss_start));
     const std::uint64_t delta = arpg::test::allocation_count() - before;
-    if (save_boundary) {
+    if (save_boundary || protected_abyss_boundary) {
         ++summary.save_boundaries;
         summary.save_boundary_allocations += delta;
     } else if (room_load) {
@@ -450,7 +466,8 @@ bool confirm_pending_save(
     });
     const DungeonSnapshot saved = session.snapshot();
     record_allocations(summary, before, true);
-    if (kind == arpg::dungeon::PendingSaveKind::loot_pickup) {
+    if (kind == arpg::dungeon::PendingSaveKind::loot_pickup
+            || kind == arpg::dungeon::PendingSaveKind::abyss_reward_claim) {
         return saved.phase == resume_phase
             && !saved.pending_save_kind.has_value()
             && saved.commit_generation == expected_generation;
@@ -473,7 +490,8 @@ bool confirm_pending_save(
             && !saved.pending_save_kind.has_value()
             && saved.commit_generation == expected_generation;
     }
-    return kind == arpg::dungeon::PendingSaveKind::transition
+    return (kind == arpg::dungeon::PendingSaveKind::transition
+            || kind == arpg::dungeon::PendingSaveKind::abyss_abandon)
         && saved.phase == RoomPhase::transitioning
         && !saved.has_pending_transition
         && saved.commit_generation == expected_generation

@@ -47,6 +47,7 @@ enum class DungeonEventKind : std::uint8_t {
     combat_started,
     room_cleared,
     exits_opened,
+    abyss_exit_warning,
     transition_requested,
     transition_committed,
     save_failed,
@@ -66,6 +67,15 @@ struct DungeonEvent final {
     std::uint64_t destination_room_seed{};
     TransitionKind transition{TransitionKind::none};
     ExitDirection direction{ExitDirection::none};
+    std::uint8_t abyss_pending_rewards{};
+    std::uint8_t abyss_unpicked_rewards{};
+};
+
+struct AbyssExitConfirmation final {
+    bool armed{};
+    TransitionKind transition{TransitionKind::none};
+    ExitDirection direction{ExitDirection::none};
+    std::uint32_t reward_revision{};
 };
 
 struct DungeonDiagnostics final {
@@ -146,6 +156,11 @@ struct DungeonSnapshot final {
     DungeonElement ecology{DungeonElement::fire};
     bool has_hole{};
     bool is_abyss{};
+    std::uint8_t abyss_pending_rewards{};
+    std::uint8_t abyss_unpicked_rewards{};
+    bool abyss_exit_confirmation_armed{};
+    TransitionKind abyss_exit_confirmation_transition{TransitionKind::none};
+    ExitDirection abyss_exit_confirmation_direction{ExitDirection::none};
     bool has_pending_transition{};
     passives::PassiveTreeState passive_tree{};
     bool passive_save_pending{};

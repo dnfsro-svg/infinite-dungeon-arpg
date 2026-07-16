@@ -91,10 +91,10 @@ int main() {
         const arpg::test::TestSuite reward_only[] = {
             dungeon_abyss_reward_suite(),
         };
-        return arpg::test::run_suites(reward_only, 16,
+        return arpg::test::run_suites(reward_only, 24,
             "stage 10 task 9 abyss rewards");
     }
 
-    return arpg::test::run_suites(suites, 186,
+    return arpg::test::run_suites(suites, 194,
         "stage 10 task 9 deterministic abyss rewards");
 }

@@ -233,6 +233,11 @@ arpg::test::Failure abyss_clear_is_atomic_and_restores_life_resources() noexcept
     ARPG_REQUIRE(events.dungeon_kinds[events.dungeon_count - 1U]
         == dungeon::DungeonEventKind::exits_opened);
     session.tick({});
+    if (session.snapshot().phase == dungeon::RoomPhase::committing) {
+        ARPG_REQUIRE(session.pending_save()->kind
+            == dungeon::PendingSaveKind::abyss_reward_materialized);
+        ARPG_REQUIRE(test::commit_pending(session));
+    }
     ARPG_REQUIRE(session.snapshot().phase == dungeon::RoomPhase::awaiting_exit);
     return {};
 }
