@@ -19,6 +19,7 @@ arpg::test::TestSuite dungeon_equipment_stress_suite() noexcept;
 arpg::test::TestSuite dungeon_loot_drop_suite() noexcept;
 arpg::test::TestSuite dungeon_transaction_suite() noexcept;
 arpg::test::TestSuite dungeon_abyss_reward_suite() noexcept;
+arpg::test::TestSuite dungeon_abyss_stress_suite() noexcept;
 arpg::test::TestSuite encounter_director_suite() noexcept;
 arpg::test::TestSuite dungeon_wave_suite() noexcept;
 arpg::test::TestSuite dungeon_progression_reward_suite() noexcept;
@@ -42,6 +43,16 @@ bool stage10_abyss_reward_only() noexcept {
     std::size_t length = 0U;
     const errno_t error = _dupenv_s(&value, &length,
         "ARPG_STAGE10_ABYSS_REWARD_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
+bool stage10_abyss_stress_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_STAGE10_ABYSS_STRESS_ONLY");
     const bool enabled = error == 0 && value != nullptr;
     std::free(value);
     return enabled;
@@ -72,6 +83,7 @@ int main() {
         dungeon_loot_drop_suite(),
         dungeon_transaction_suite(),
         dungeon_abyss_reward_suite(),
+        dungeon_abyss_stress_suite(),
         encounter_director_suite(),
         dungeon_wave_suite(),
         dungeon_progression_reward_suite(),
@@ -95,6 +107,15 @@ int main() {
             "stage 10 task 9 abyss rewards");
     }
 
-    return arpg::test::run_suites(suites, 197,
-        "stage 10 task 9 deterministic abyss rewards");
+
+    if (stage10_abyss_stress_only()) {
+        const arpg::test::TestSuite stress_only[] = {
+            dungeon_abyss_stress_suite(),
+        };
+        return arpg::test::run_suites(stress_only, 2,
+            "stage 10 task 12 abyss stress");
+    }
+
+    return arpg::test::run_suites(suites, 199,
+        "stage 10 task 12 abyss stress validation");
 }

@@ -6,6 +6,22 @@
 
 namespace arpg::platform {
 
+enum class Stage10ValidationScenario : std::uint8_t {
+    none,
+    abyss_door,
+    thunderstorm_warning,
+    hunting_flames_warning,
+    chaos_expansion,
+    reward_chest,
+    pending_reward,
+    exit_confirmation,
+    player_death,
+    room_reset,
+    leave_started,
+    restarted_failed,
+    abyss_hole_descent,
+};
+
 struct RaylibHostConfig final {
     int window_width{1280};
     int window_height{720};
@@ -14,6 +30,11 @@ struct RaylibHostConfig final {
     std::optional<std::uint64_t> new_run_seed{};
     bool validation_capture{};
     std::uint32_t validation_exit_after_presented_frames{};
+    Stage10ValidationScenario stage10_validation{
+        Stage10ValidationScenario::none};
+    std::uint8_t validation_abyss_direction{0xFFU};
+    std::uint32_t validation_steps_per_frame{};
+    std::optional<std::filesystem::path> validation_capture_file{};
 };
 
 enum class HostExitCode : int {

@@ -16,6 +16,7 @@
 #include <raylib.h>
 
 #include <cstdint>
+#include <cmath>
 #include <filesystem>
 #include <string>
 
@@ -104,6 +105,221 @@ void take_host_screenshot() noexcept {
     }
 }
 
+struct Stage10ValidationState final {
+    bool entered_abyss{};
+    bool reset_requested{};
+    bool descent_warning_seen{};
+    std::uint32_t chaos_presented_frames{};
+};
+
+const combat::MonsterSnapshot* nearest_living_monster(
+    const combat::CombatSnapshot& state) noexcept {
+    const combat::MonsterSnapshot* best = nullptr;
+    float best_distance = 0.0F;
+    for (const combat::MonsterSnapshot& monster : state.monsters) {
+        if (!monster.active || monster.hp <= 0) continue;
+        const float x = monster.position.x - state.player.position.x;
+        const float y = monster.position.y - state.player.position.y;
+        const float distance = x * x + y * y;
+        if (best == nullptr || distance < best_distance) {
+            best = &monster;
+            best_distance = distance;
+        }
+    }
+    return best;
+}
+
+combat::MovementInput validation_movement_toward(
+    combat::Vec3 from, combat::Vec3 to) noexcept {
+    combat::MovementInput movement{};
+    if (to.x - from.x > 0.45F) movement.x = 1;
+    else if (to.x - from.x < -0.45F) movement.x = -1;
+    if (to.y - from.y > 0.25F) movement.y = 1;
+    else if (to.y - from.y < -0.25F) movement.y = -1;
+    return movement;
+}
+
+combat::Vec3 validation_door_position(
+    dungeon::ExitDirection direction) noexcept {
+    switch (direction) {
+    case dungeon::ExitDirection::up: return {0.0F, -5.5F, 0.0F};
+    case dungeon::ExitDirection::down: return {0.0F, 5.5F, 0.0F};
+    case dungeon::ExitDirection::left: return {-12.0F, 0.0F, 0.0F};
+    case dungeon::ExitDirection::right: return {12.0F, 0.0F, 0.0F};
+    case dungeon::ExitDirection::none: return {};
+    }
+    return {};
+}
+
+combat::MovementInput validation_exit_movement(
+    combat::Vec3 player,
+    dungeon::ExitDirection direction) noexcept {
+    combat::MovementInput movement = validation_movement_toward(
+        player, validation_door_position(direction));
+    switch (direction) {
+    case dungeon::ExitDirection::up: movement.y = -1; break;
+    case dungeon::ExitDirection::down: movement.y = 1; break;
+    case dungeon::ExitDirection::left: movement.x = -1; break;
+    case dungeon::ExitDirection::right: movement.x = 1; break;
+    case dungeon::ExitDirection::none: break;
+    }
+    return movement;
+}
+
+bool validation_attack_lane(
+    const combat::CombatSnapshot& state,
+    const combat::MonsterSnapshot& target) noexcept {
+    const float x = target.position.x - state.player.position.x;
+    const float y = target.position.y - state.player.position.y;
+    const bool facing = std::fabs(x) <= 0.20F
+        || (x > 0.0F && state.player.facing == combat::Facing::right)
+        || (x < 0.0F && state.player.facing == combat::Facing::left);
+    return facing && std::fabs(x) <= 1.70F && std::fabs(y) <= 0.55F;
+}
+
+dungeon::ExitDirection validation_direction(
+    const RaylibHostConfig& config) noexcept {
+    return config.validation_abyss_direction < 4U
+        ? static_cast<dungeon::ExitDirection>(
+            config.validation_abyss_direction)
+        : dungeon::ExitDirection::none;
+}
+
+combat::MovementInput stage10_validation_input(
+    dungeon::DungeonSession& session,
+    const dungeon::DungeonSnapshot& snapshot,
+    const RaylibHostConfig& config,
+    Stage10ValidationState& state) noexcept {
+    const Stage10ValidationScenario scenario = config.stage10_validation;
+    state.entered_abyss = state.entered_abyss || snapshot.is_abyss;
+    if (scenario == Stage10ValidationScenario::room_reset
+            && snapshot.is_abyss
+            && snapshot.phase == dungeon::RoomPhase::combat
+            && !state.reset_requested) {
+        state.reset_requested = session.reset_current_room()
+            != dungeon::RequestResult::rejected;
+        return {};
+    }
+    if (scenario == Stage10ValidationScenario::player_death
+            && snapshot.is_abyss) {
+        return {};
+    }
+    if (!snapshot.combat.has_value()) return {};
+    if (snapshot.phase == dungeon::RoomPhase::combat) {
+        const auto* const target = nearest_living_monster(*snapshot.combat);
+        if (target == nullptr) return {};
+        if (scenario == Stage10ValidationScenario::abyss_hole_descent
+                && snapshot.is_abyss && snapshot.remaining_targets == 1U) {
+            const auto& monster = target->position;
+            const float x = monster.x - kHoleCenter.x;
+            const float y = monster.y - kHoleCenter.y;
+            if (x * x + y * y > 1.44F) {
+                return validation_movement_toward(
+                    snapshot.combat->player.position, kHoleCenter);
+            }
+        }
+        const auto movement = validation_movement_toward(
+            snapshot.combat->player.position, target->position);
+        if (snapshot.combat->player.hurt_ticks == 0U
+                && snapshot.combat->player.active_attack
+                    == combat::AttackId::none
+                && snapshot.combat->diagnostics.input_size == 0U
+                && validation_attack_lane(*snapshot.combat, *target)) {
+            static_cast<void>(session.queue_action(combat::Action::light));
+        }
+        return movement;
+    }
+    if (snapshot.phase != dungeon::RoomPhase::awaiting_exit) return {};
+    if (!snapshot.is_abyss) {
+        return validation_exit_movement(snapshot.combat->player.position,
+            validation_direction(config));
+    }
+    if (scenario == Stage10ValidationScenario::exit_confirmation) {
+        return snapshot.abyss_exit_confirmation_armed
+            ? combat::MovementInput{}
+            : validation_exit_movement(snapshot.combat->player.position,
+                dungeon::ExitDirection::right);
+    }
+    if (scenario == Stage10ValidationScenario::abyss_hole_descent) {
+        state.descent_warning_seen = state.descent_warning_seen
+            || snapshot.abyss_exit_confirmation_armed;
+        const combat::MovementInput movement = validation_movement_toward(
+            snapshot.combat->player.position, kHoleCenter);
+        if (can_prompt_descent(snapshot, snapshot.combat->player.position)) {
+            static_cast<void>(session.request_descent(true));
+        }
+        return movement;
+    }
+    return {};
+}
+
+bool has_environment_visual(
+    const dungeon::DungeonSnapshot& snapshot,
+    combat::HazardKind kind,
+    bool require_warning) noexcept {
+    if (!snapshot.combat.has_value()) return false;
+    for (std::size_t index = 0U;
+         index < snapshot.combat->hazard_count; ++index) {
+        const combat::HazardSnapshot& hazard = snapshot.combat->hazards[index];
+        if (hazard.active
+                && hazard.source == combat::HazardSource::abyss_environment
+                && hazard.kind == kind
+                && (!require_warning || hazard.telegraph_ticks != 0U)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool stage10_validation_reached(
+    const dungeon::DungeonSnapshot& snapshot,
+    const RaylibHostConfig& config,
+    const Stage10ValidationState& state) noexcept {
+    switch (config.stage10_validation) {
+    case Stage10ValidationScenario::none:
+        return false;
+    case Stage10ValidationScenario::abyss_door: {
+        const auto direction = validation_direction(config);
+        const std::size_t index = static_cast<std::size_t>(direction);
+        return !snapshot.is_abyss
+            && snapshot.phase == dungeon::RoomPhase::awaiting_exit
+            && index < snapshot.abyss_doors.size()
+            && snapshot.abyss_doors[index];
+    }
+    case Stage10ValidationScenario::thunderstorm_warning:
+        return snapshot.abyss_rule == abyss::AbyssRuleId::thunderstorm
+            && has_environment_visual(snapshot,
+                combat::HazardKind::thunderstorm, true);
+    case Stage10ValidationScenario::hunting_flames_warning:
+        return snapshot.abyss_rule == abyss::AbyssRuleId::hunting_flames
+            && has_environment_visual(snapshot,
+                combat::HazardKind::hunting_flame, true);
+    case Stage10ValidationScenario::chaos_expansion:
+        return snapshot.abyss_rule == abyss::AbyssRuleId::chaos_expansion
+            && has_environment_visual(snapshot,
+                combat::HazardKind::chaos_expansion, false);
+    case Stage10ValidationScenario::reward_chest:
+        return snapshot.is_abyss && snapshot.ground_item_count != 0U;
+    case Stage10ValidationScenario::pending_reward:
+        return snapshot.is_abyss && snapshot.abyss_pending_rewards != 0U;
+    case Stage10ValidationScenario::exit_confirmation:
+        return snapshot.is_abyss
+            && snapshot.abyss_exit_confirmation_armed;
+    case Stage10ValidationScenario::player_death:
+    case Stage10ValidationScenario::room_reset:
+        return state.entered_abyss && !snapshot.is_abyss;
+    case Stage10ValidationScenario::leave_started:
+        return snapshot.is_abyss
+            && snapshot.phase == dungeon::RoomPhase::combat;
+    case Stage10ValidationScenario::restarted_failed:
+        return !snapshot.is_abyss && snapshot.room_index == 1U;
+    case Stage10ValidationScenario::abyss_hole_descent:
+        return state.entered_abyss && state.descent_warning_seen
+            && snapshot.depth > 1U;
+    }
+    return false;
+}
+
 }  // namespace
 
 HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
@@ -150,6 +366,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         std::uint32_t presented_frame_count = 0U;
         unsigned validation_capture_tick = 0U;
         unsigned validation_capture_count = 0U;
+        Stage10ValidationState stage10_validation_state{};
+        bool stage10_validation_captured = false;
         const std::string validation_capture_prefix = config.validation_capture
             ? (*save_directory / "stage8-validation-").string()
             : std::string{};
@@ -309,12 +527,24 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             core::FixedStepFrame frame{};
             if (!inventory.is_open() && !inventory_toggled_this_frame) {
                 frame = fixed_step.advance(static_cast<double>(frame_seconds));
+                if (config.stage10_validation
+                            != Stage10ValidationScenario::none
+                        && config.validation_steps_per_frame != 0U) {
+                    frame.steps = config.validation_steps_per_frame;
+                    frame.interpolation_alpha = 0.0;
+                }
             } else {
                 previous = current;
             }
             for (std::uint32_t step = 0; step < frame.steps; ++step) {
                 previous = current;
-                session->tick(movement);
+                const combat::MovementInput step_movement =
+                    config.stage10_validation
+                            == Stage10ValidationScenario::none
+                        ? movement
+                        : stage10_validation_input(*session, current,
+                            config, stage10_validation_state);
+                session->tick(step_movement);
                 runtime.service_pending_save();
                 current = session->snapshot();
                 if (!passive_tree_can_open(current)) {
@@ -326,6 +556,10 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     fixed_step.clear_accumulator();
                 }
                 drain_events(*session, renderer, feedback, audio);
+                if (stage10_validation_reached(
+                        current, config, stage10_validation_state)) {
+                    break;
+                }
             }
 
             BeginDrawing();
@@ -341,6 +575,23 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             }
             EndDrawing();
             ++presented_frame_count;
+            const bool stage10_target_visible = stage10_validation_reached(
+                current, config, stage10_validation_state);
+            if (config.stage10_validation
+                    == Stage10ValidationScenario::chaos_expansion
+                    && stage10_target_visible) {
+                ++stage10_validation_state.chaos_presented_frames;
+            }
+            const bool stage10_reached = stage10_target_visible
+                && (config.stage10_validation
+                        != Stage10ValidationScenario::chaos_expansion
+                    || stage10_validation_state.chaos_presented_frames >= 16U);
+            if (stage10_reached && !stage10_validation_captured
+                    && config.validation_capture_file.has_value()) {
+                export_screenshot(
+                    config.validation_capture_file->string().c_str());
+                stage10_validation_captured = true;
+            }
             capture_validation_frame();
             if (frame_toggles.take_screenshot) {
                 take_host_screenshot();
@@ -348,6 +599,11 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             if (config.validation_exit_after_presented_frames != 0U
                     && presented_frame_count
                         >= config.validation_exit_after_presented_frames) {
+                exit_requested = true;
+            }
+            if (stage10_reached
+                    && (!config.validation_capture_file.has_value()
+                        || stage10_validation_captured)) {
                 exit_requested = true;
             }
         }
