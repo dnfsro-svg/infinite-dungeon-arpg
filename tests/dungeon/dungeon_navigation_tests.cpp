@@ -440,6 +440,22 @@ arpg::test::Failure abyss_door_target_persists_selected_checkpoint() noexcept {
     ARPG_REQUIRE(pending->next_state.abyss.danger == selection->danger);
     ARPG_REQUIRE(pending->next_state.abyss.rules_version
         == selection->rules_version);
+
+    DungeonRunState mismatched = pending->next_state;
+    mismatched.abyss.rules_version += 1U;
+    ARPG_REQUIRE(!same_run_state(mismatched, pending->next_state));
+    mismatched = pending->next_state;
+    mismatched.last_abyss_resolution.valid = true;
+    ARPG_REQUIRE(!same_run_state(mismatched, pending->next_state));
+
+    session.resolve_pending_transition({
+        SaveDisposition::committed,
+        pending->next_state.commit_generation,
+        mismatched,
+    });
+    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::faulted);
+    ARPG_REQUIRE(session.snapshot().diagnostics.fault
+        == DungeonFault::save_receipt_mismatch);
     return {};
 }
 

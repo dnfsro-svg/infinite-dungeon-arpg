@@ -216,6 +216,29 @@ bool same_run_state(
         && lhs.current_room.ecology == rhs.current_room.ecology
         && lhs.current_room.has_hole == rhs.current_room.has_hole
         && lhs.current_room.is_abyss == rhs.current_room.is_abyss
+        && lhs.abyss.lifecycle == rhs.abyss.lifecycle
+        && lhs.abyss.danger == rhs.abyss.danger
+        && lhs.abyss.rule == rhs.abyss.rule
+        && lhs.abyss.rules_version == rhs.abyss.rules_version
+        && lhs.abyss.reward_total == rhs.abyss.reward_total
+        && lhs.abyss.generated_mask == rhs.abyss.generated_mask
+        && lhs.abyss.claimed_mask == rhs.abyss.claimed_mask
+        && lhs.abyss.abandoned_mask == rhs.abyss.abandoned_mask
+        && lhs.abyss.reward_revision == rhs.abyss.reward_revision
+        && lhs.last_abyss_resolution.valid
+            == rhs.last_abyss_resolution.valid
+        && lhs.last_abyss_resolution.room_seed
+            == rhs.last_abyss_resolution.room_seed
+        && lhs.last_abyss_resolution.rule
+            == rhs.last_abyss_resolution.rule
+        && lhs.last_abyss_resolution.total
+            == rhs.last_abyss_resolution.total
+        && lhs.last_abyss_resolution.generated
+            == rhs.last_abyss_resolution.generated
+        && lhs.last_abyss_resolution.claimed
+            == rhs.last_abyss_resolution.claimed
+        && lhs.last_abyss_resolution.abandoned
+            == rhs.last_abyss_resolution.abandoned
         && lhs.progression.level == rhs.progression.level
         && lhs.progression.experience == rhs.progression.experience
         && lhs.progression.earned_passive_points
