@@ -483,7 +483,10 @@ void DungeonSession::attempt_abyss_reward_materialization() noexcept {
             break;
         }
     }
-    if (free_index == 0xFFFFU) return;
+    if (free_index == 0xFFFFU) {
+        saturating_increment(diagnostics_.ground_saturation_count);
+        return;
+    }
     const std::uint8_t base_item_level = static_cast<std::uint8_t>(
         std::min<std::uint64_t>(stable_state_.current_room.depth, 100U));
     const auto ground = derive_abyss_ground_item(

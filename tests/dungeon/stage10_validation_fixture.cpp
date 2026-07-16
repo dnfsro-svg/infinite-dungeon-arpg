@@ -42,6 +42,16 @@ struct EnvironmentEvidence final {
     bool active_damage_seen{};
 };
 
+struct AbandonEvidence final {
+    bool warning_event{};
+    bool armed{};
+    bool neutral_release{};
+    arpg::dungeon::checkpoint::AbyssCheckpoint before{};
+    std::uint32_t inventory_before{};
+    std::uint16_t ground_before{};
+    std::uint16_t abyss_ground_before{};
+};
+
 DungeonRules validation_rules() noexcept {
     return {};
 }
@@ -333,13 +343,16 @@ MovementInput exit_movement(Vec3 player, ExitDirection direction) noexcept {
 
 bool abandon_through_door(DungeonSession& session,
     arpg::persistence::SaveStore& store,
-    ExitDirection direction) noexcept {
-    bool warned = false;
+    ExitDirection direction,
+    AbandonEvidence& evidence) noexcept {
     bool released = false;
     for (int tick = 0; tick < 2000; ++tick) {
         if (!service_pending(session, store)) return false;
         const auto state = session.snapshot();
-        if (state.room_index > 1U) return true;
+        if (state.room_index > 1U) {
+            return evidence.warning_event && evidence.armed
+                && evidence.neutral_release && released;
+        }
         if (state.phase == RoomPhase::faulted || !state.combat.has_value()) {
             std::cerr << "abandon stopped phase="
                       << static_cast<unsigned>(state.phase)
@@ -350,10 +363,32 @@ bool abandon_through_door(DungeonSession& session,
             return false;
         }
         if (state.abyss_exit_confirmation_armed) {
-            warned = true;
+            evidence.armed = true;
+            while (const auto event = session.try_pop_event()) {
+                evidence.warning_event = evidence.warning_event
+                    || (event->kind
+                        == arpg::dungeon::DungeonEventKind::abyss_exit_warning
+                        && event->transition
+                            == arpg::dungeon::TransitionKind::door
+                        && event->direction == direction);
+            }
             if (!released) {
+                const auto loaded = store.load();
+                if (loaded.state != arpg::persistence::SaveLoadState::ready) {
+                    return false;
+                }
+                evidence.before = loaded.checkpoint.abyss;
+                evidence.inventory_before = state.inventory_count;
+                evidence.ground_before = state.ground_item_count;
+                for (const auto& ground : state.ground_items) {
+                    evidence.abyss_ground_before +=
+                        ground.source
+                        == arpg::dungeon::GroundItemSource::abyss_chest;
+                }
                 session.tick({});
                 released = true;
+                evidence.neutral_release =
+                    session.snapshot().abyss_exit_confirmation_armed;
                 continue;
             }
         }
@@ -367,7 +402,16 @@ bool abandon_through_door(DungeonSession& session,
               << " armed=" << failed.abyss_exit_confirmation_armed
               << " pending=" << failed.abyss_pending_rewards
               << " unpicked=" << failed.abyss_unpicked_rewards << '\n';
-    return warned && false;
+    return false;
+}
+
+std::uint8_t popcount8(std::uint8_t value) noexcept {
+    std::uint8_t result = 0U;
+    while (value != 0U) {
+        result = static_cast<std::uint8_t>(result + (value & 1U));
+        value = static_cast<std::uint8_t>(value >> 1U);
+    }
+    return result;
 }
 
 std::optional<EnvironmentEvidence> run_environment_probe(
@@ -517,14 +561,38 @@ int main(int argc, char** argv) {
             abandon_initial_hp, abandon_minimum_hp,
             abandon_clear_generation,
             arpg::abyss::AbyssRuleId::life_sacrifice)) return 14;
-    if (!abandon_through_door(
-            abandon_session, abandon_store, ExitDirection::right)) return 15;
+    AbandonEvidence abandon_evidence{};
+    if (!abandon_through_door(abandon_session, abandon_store,
+            ExitDirection::right, abandon_evidence)) return 15;
     const auto abandoned = abandon_store.load();
     if (abandoned.state != arpg::persistence::SaveLoadState::ready
             || !abandoned.checkpoint.last_abyss_resolution.valid) return 16;
+    const std::uint8_t valid_mask = static_cast<std::uint8_t>(
+        (1U << abandon_evidence.before.reward_total) - 1U);
+    const std::uint8_t expected_generated = popcount8(static_cast<std::uint8_t>(
+        abandon_evidence.before.generated_mask & valid_mask));
+    const std::uint8_t expected_claimed = popcount8(static_cast<std::uint8_t>(
+        abandon_evidence.before.claimed_mask & valid_mask));
+    const std::uint8_t expected_abandoned = popcount8(static_cast<std::uint8_t>(
+        valid_mask & static_cast<std::uint8_t>(
+            ~abandon_evidence.before.generated_mask)));
+    const auto& resolution = abandoned.checkpoint.last_abyss_resolution;
+    if (!abandon_evidence.warning_event || !abandon_evidence.armed
+            || !abandon_evidence.neutral_release
+            || resolution.total != abandon_evidence.before.reward_total
+            || resolution.generated != expected_generated
+            || resolution.claimed != expected_claimed
+            || resolution.abandoned != expected_abandoned
+            || abandon_evidence.abyss_ground_before
+                != static_cast<std::uint16_t>(
+                    expected_generated - expected_claimed)
+            || abandon_evidence.ground_before
+                < abandon_evidence.abyss_ground_before
+            || abandoned.checkpoint.item_ownership.items.size()
+                != abandon_evidence.inventory_before + 6U) return 17;
     const auto environment = run_environment_probe(
         save_directory / "environment");
-    if (!environment.has_value()) return 17;
+    if (!environment.has_value()) return 18;
 
     const auto preview = arpg::dungeon::preview_abyss_doors(
         entry->source.current_room);
@@ -576,5 +644,5 @@ int main(int argc, char** argv) {
             && reward_ids[0] != 0U && reward_ids[1] != 0U
             && reward_ids[2] != 0U
             && loaded.checkpoint.abyss.claimed_mask != 0U
-        ? 0 : 18;
+        ? 0 : 19;
 }

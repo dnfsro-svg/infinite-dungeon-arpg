@@ -2,6 +2,7 @@
 
 #include "allocation_probe.hpp"
 #include "combat_test_support.hpp"
+#include "dungeon_test_support.hpp"
 
 #include "abyss/abyss_rewards.hpp"
 #include "abyss/abyss_rules.hpp"
@@ -11,6 +12,7 @@
 #include "dungeon/encounter_director.hpp"
 #include "dungeon/room_generation.hpp"
 #include "persistence/checkpoint_codec.hpp"
+#include "items/item_generation.hpp"
 
 #include <array>
 #include <cstddef>
@@ -210,7 +212,108 @@ bool encode_decode(checkpoint::DungeonRunState& state) noexcept {
     return true;
 }
 
-bool generate_long_trace(LongTrace& trace) noexcept {
+bool commit_pending(arpg::dungeon::DungeonSession& session) noexcept {
+    const auto pending = session.pending_save();
+    if (!pending.has_value()) return false;
+    session.resolve_pending_save({
+        arpg::dungeon::SaveDisposition::committed,
+        pending->expected_generation,
+        pending->next_state,
+    });
+    return session.snapshot().phase != arpg::dungeon::RoomPhase::faulted;
+}
+
+arpg::items::ItemInstance ground_prototype() noexcept {
+    return arpg::items::generate_item({
+        0xD10A600DULL,
+        arpg::items::ItemSlot::weapon,
+        1U,
+        0xD100000000000001ULL,
+        arpg::items::ItemRarity::normal,
+    }).value();
+}
+
+ResolutionTrace production_resolution(
+    checkpoint::DungeonRunState& state,
+    const arpg::dungeon::DungeonRules& rules) noexcept {
+    const auto fail = [&state](int step) noexcept {
+        std::fprintf(stderr,
+            "[stage10-production-resolution] step=%d seed=%llu\n", step,
+            static_cast<unsigned long long>(state.current_room.seed));
+        return ResolutionTrace{};
+    };
+    const auto profile = arpg::abyss::reward_profile_for(
+        state.abyss.danger,
+        static_cast<std::uint8_t>((std::min)(
+            state.current_room.depth, std::uint64_t{100U})));
+    if (profile.item_count == 0U || profile.item_count > 3U) return fail(1);
+    state.abyss.lifecycle = arpg::abyss::AbyssLifecycle::cleared;
+    state.abyss.reward_total = profile.item_count;
+    state.abyss.generated_mask = 0U;
+    state.abyss.claimed_mask = 0U;
+    state.abyss.abandoned_mask = 0U;
+    state.abyss.reward_revision = 0U;
+
+    arpg::dungeon::DungeonSession session{rules, state};
+    session.tick({});
+    if (!commit_pending(session)) return fail(2);
+    const auto materialized = session.snapshot();
+    if (materialized.abyss_unpicked_rewards != 1U
+            || materialized.abyss_pending_rewards
+                != static_cast<std::uint8_t>(profile.item_count - 1U)) {
+        return fail(3);
+    }
+
+    if (profile.item_count > 1U) {
+        std::uint16_t reward_index = 0xFFFFU;
+        arpg::combat::Vec3 reward_position{};
+        for (std::size_t index = 0U;
+             index < materialized.ground_item_count; ++index) {
+            if (materialized.ground_items[index].source
+                    == arpg::dungeon::GroundItemSource::abyss_chest) {
+                reward_index = materialized.ground_items[index].ordinal;
+                reward_position = materialized.ground_items[index].position;
+                break;
+            }
+        }
+        arpg::test::set_player_position(session, reward_position);
+        if (reward_index == 0xFFFFU
+                || session.request_pickup(reward_index)
+                    != arpg::dungeon::RequestResult::accepted
+                || !commit_pending(session)) {
+            return fail(4);
+        }
+    }
+
+    arpg::test::fill_ground_pool(session, ground_prototype());
+    arpg::test::set_player_position(session, {12.0F, 0.0F, 0.0F});
+    session.tick({1, 0});
+    const auto warned = session.snapshot();
+    bool warning_event = false;
+    while (const auto event = session.try_pop_event()) {
+        if (event->kind == arpg::dungeon::DungeonEventKind::abyss_exit_warning
+                && event->transition
+                    == arpg::dungeon::TransitionKind::door
+                && event->direction
+                    == arpg::dungeon::ExitDirection::right) {
+            warning_event = true;
+        }
+    }
+    if (!warning_event || !warned.abyss_exit_confirmation_armed) return fail(5);
+    session.tick({});
+    if (!session.snapshot().abyss_exit_confirmation_armed) return fail(6);
+    session.tick({1, 0});
+    if (!session.pending_save().has_value() || !commit_pending(session)) {
+        return fail(7);
+    }
+    state = arpg::test::stable_state(session);
+    const auto& resolution = state.last_abyss_resolution;
+    return {resolution.valid, resolution.room_seed, resolution.rule,
+        resolution.total, resolution.generated, resolution.claimed,
+        resolution.abandoned};
+}
+
+bool generate_long_trace(LongTrace& trace, std::size_t restart_interval) noexcept {
     const arpg::dungeon::DungeonRules rules{};
     auto initial = arpg::dungeon::make_initial_run_state(kRootSeed, rules);
     if (initial.fault != arpg::dungeon::DungeonFault::none) return false;
@@ -272,14 +375,30 @@ bool generate_long_trace(LongTrace& trace) noexcept {
                     reward->item_slot, reward->rarity, reward->item_level,
                     reward->item_seed, reward->item_id};
             }
-            const std::uint8_t claimed = room.reward_count > 1U ? 1U : 0U;
-            room.resolution = {true, state.current_room.seed,
-                selected->rule, room.reward_count, claimed, claimed,
-                static_cast<std::uint8_t>(room.reward_count - claimed)};
+            room.resolution = production_resolution(state, rules);
+            if (!room.resolution.valid
+                    || room.resolution.room_seed != room.descriptor.seed
+                    || room.resolution.rule != selected->rule
+                    || room.resolution.total != room.reward_count) {
+                std::fprintf(stderr,
+                    "[stage10-resolution-fail] room=%zu seed=%llu valid=%u "
+                    "resolution_seed=%llu rule=%u/%u total=%u/%u\n",
+                    room_index,
+                    static_cast<unsigned long long>(room.descriptor.seed),
+                    static_cast<unsigned>(room.resolution.valid),
+                    static_cast<unsigned long long>(
+                        room.resolution.room_seed),
+                    static_cast<unsigned>(room.resolution.rule),
+                    static_cast<unsigned>(selected->rule),
+                    static_cast<unsigned>(room.resolution.total),
+                    static_cast<unsigned>(room.reward_count));
+                return false;
+            }
         }
         fold_room(trace, room);
 
-        if ((room_index + 1U) % 37U == 0U) {
+        if (restart_interval != 0U
+                && (room_index + 1U) % restart_interval == 0U) {
             if (!encode_decode(state)) return false;
             ++trace.reload_count;
         }
@@ -291,7 +410,6 @@ bool generate_long_trace(LongTrace& trace) noexcept {
 bool same_long_trace(const LongTrace& lhs, const LongTrace& rhs) noexcept {
     if (lhs.door_trials != rhs.door_trials
             || lhs.door_hits != rhs.door_hits
-            || lhs.reload_count != rhs.reload_count
             || lhs.hash != rhs.hash || lhs.complete != rhs.complete) return false;
     for (std::size_t room = 0U; room < kRoomCount; ++room) {
         if (!same_room_trace(lhs.rooms[room], rhs.rooms[room])) return false;
@@ -313,7 +431,7 @@ arpg::combat::MonsterAffixSet extreme_affixes() noexcept {
     return result;
 }
 
-arpg::combat::CombatWorld make_extreme_world() noexcept {
+arpg::combat::CombatEncounterConfig extreme_config() noexcept {
     arpg::combat::CombatEncounterConfig config{};
     config.abyss = arpg::abyss::combat_config_for(
         arpg::abyss::AbyssRuleId::chaos_expansion);
@@ -326,30 +444,38 @@ arpg::combat::CombatWorld make_extreme_world() noexcept {
              4.0F + static_cast<float>(index / 12U), 0.0F},
             extreme_affixes(), static_cast<std::uint16_t>(index)};
     }
-    return arpg::combat::CombatWorld{config};
+    return config;
 }
 
-std::array<arpg::dungeon::GroundItem,
-    arpg::dungeon::kGroundDropCapacity> make_full_ground_pool() noexcept {
-    std::array<arpg::dungeon::GroundItem,
-        arpg::dungeon::kGroundDropCapacity> result{};
-    for (std::size_t index = 0U; index < result.size(); ++index) {
-        arpg::items::ItemInstance item{};
-        item.id = 0xA800000000000000ULL + index + 1U;
-        item.item_level = 1U;
-        result[index] = {true, static_cast<std::uint16_t>(index),
-            arpg::dungeon::GroundItemSource::monster_drop, 0xFFU,
-            {100.0F + static_cast<float>(index), 100.0F, 0.0F}, item};
+checkpoint::DungeonRunState extreme_cleared_state() noexcept {
+    auto state = arpg::dungeon::make_initial_run_state(
+        0xA8E600DULL, arpg::dungeon::DungeonRules{}).state;
+    for (std::uint64_t seed = 1U; seed != 0U; ++seed) {
+        const auto selected = arpg::abyss::select_abyss_rule(seed, 1U);
+        if (!selected.has_value()
+                || selected->rule
+                    != arpg::abyss::AbyssRuleId::chaos_expansion) {
+            continue;
+        }
+        state.current_room.seed = seed;
+        state.current_room.is_abyss = true;
+        state.abyss.lifecycle = arpg::abyss::AbyssLifecycle::cleared;
+        state.abyss.danger = selected->danger;
+        state.abyss.rule = selected->rule;
+        state.abyss.rules_version = selected->rules_version;
+        state.abyss.reward_total = 3U;
+        return state;
     }
-    return result;
+    return {};
 }
 
 arpg::test::Failure thousand_room_abyss_trace_matches_golden_and_reload() noexcept {
     auto first = std::make_unique<LongTrace>();
     auto second = std::make_unique<LongTrace>();
-    ARPG_REQUIRE(generate_long_trace(*first));
-    ARPG_REQUIRE(generate_long_trace(*second));
-    ARPG_REQUIRE(first->complete && first->reload_count == 27U);
+    ARPG_REQUIRE(generate_long_trace(*first, 0U));
+    ARPG_REQUIRE(generate_long_trace(*second, 37U));
+    ARPG_REQUIRE(first->complete && first->reload_count == 0U);
+    ARPG_REQUIRE(second->complete && second->reload_count == 27U);
     ARPG_REQUIRE(same_long_trace(*first, *second));
 
     const std::uint32_t total_trials = first->door_trials[0]
@@ -360,70 +486,90 @@ arpg::test::Failure thousand_room_abyss_trace_matches_golden_and_reload() noexce
     std::printf("[stage10-abyss-stress] hits=%u/%u directions=%u/%u/%u/%u "
         "reloads=%u hash=0x%016llx\n", total_hits, total_trials,
         first->door_hits[0], first->door_hits[1], first->door_hits[2],
-        first->door_hits[3], first->reload_count,
+        first->door_hits[3], second->reload_count,
         static_cast<unsigned long long>(first->hash));
 
     ARPG_REQUIRE(total_trials == 4000U);
     ARPG_REQUIRE(total_hits >= 20U && total_hits <= 70U);
     constexpr std::array<std::uint32_t, 4> kGoldenTrials{{
         1000U, 1000U, 1000U, 1000U}};
-    constexpr std::array<std::uint32_t, 4> kGoldenHits{{12U, 6U, 5U, 8U}};
+    constexpr std::array<std::uint32_t, 4> kGoldenHits{{9U, 11U, 9U, 7U}};
     ARPG_REQUIRE(first->door_trials == kGoldenTrials);
     ARPG_REQUIRE(first->door_hits == kGoldenHits);
-    ARPG_REQUIRE(first->hash == 0x51b4ebccf356d01bULL);
+    ARPG_REQUIRE(first->hash == 0xe102b17e6423351bULL);
     return {};
 }
 
 arpg::test::Failure extreme_abyss_pools_run_600_ticks_without_allocation() noexcept {
-    arpg::combat::CombatWorld world = make_extreme_world();
-    auto ground = make_full_ground_pool();
-    const auto initial = world.snapshot();
-    ARPG_REQUIRE(initial.monster_count == arpg::combat::kMonsterCapacity);
+    arpg::dungeon::DungeonSession session{
+        arpg::dungeon::DungeonRules{}, extreme_cleared_state()};
+    arpg::test::install_combat_world(session, extreme_config());
+    arpg::combat::CombatWorld* const world =
+        arpg::test::mutable_combat_world(session);
+    ARPG_REQUIRE(world != nullptr);
+    const auto initial_world = world->snapshot();
+    ARPG_REQUIRE(initial_world.monster_count
+        == arpg::combat::kMonsterCapacity);
     const arpg::combat::MonsterHandle owner{
-        0U, initial.monsters[0].generation};
-    arpg::test::CombatWorldTestAccess::fill_projectiles(world, owner);
-    arpg::test::CombatWorldTestAccess::fill_hazards(world, owner);
-    const auto saturated = world.snapshot();
-    ARPG_REQUIRE(saturated.projectile_count
+        0U, initial_world.monsters[0].generation};
+    arpg::test::CombatWorldTestAccess::fill_projectiles(*world, owner);
+    arpg::test::CombatWorldTestAccess::fill_hazards(*world, owner);
+    arpg::test::fill_ground_pool(session, ground_prototype());
+    session.tick({});
+    const auto saturated = session.snapshot();
+    ARPG_REQUIRE(saturated.combat.has_value());
+    ARPG_REQUIRE(saturated.combat->monster_count
+        == arpg::combat::kMonsterCapacity);
+    ARPG_REQUIRE(saturated.combat->projectile_count
         == arpg::combat::kProjectileCapacity);
-    ARPG_REQUIRE(saturated.hazard_count == arpg::combat::kHazardCapacity);
-    for (std::size_t index = 0U; index < ground.size(); ++index) {
-        ARPG_REQUIRE(ground[index].active);
-        ARPG_REQUIRE(ground[index].drop_ordinal == index);
+    ARPG_REQUIRE(saturated.combat->hazard_count
+        == arpg::combat::kHazardCapacity);
+    std::size_t ground_count = 0U;
+    for (const auto& ground : arpg::test::ground_items(session)) {
+        ground_count += ground.active;
     }
+    ARPG_REQUIRE(ground_count == arpg::dungeon::kGroundDropCapacity);
 
     const std::uint32_t projectile_saturation_before =
-        saturated.diagnostics.projectile_saturation_count;
+        saturated.combat->diagnostics.projectile_saturation_count;
     const std::uint32_t hazard_saturation_before =
-        saturated.diagnostics.hazard_saturation_count;
+        saturated.combat->diagnostics.hazard_saturation_count;
+    const std::uint32_t ground_saturation_before =
+        saturated.diagnostics.ground_saturation_count;
     const std::uint64_t before = arpg::test::allocation_count();
-    for (int tick = 0; tick < 600; ++tick) world.tick({});
+    for (int tick = 0; tick < 600; ++tick) session.tick({});
     const std::uint64_t allocations = arpg::test::allocation_count() - before;
-    const auto after = world.snapshot();
+    const auto after = session.snapshot();
 
     ARPG_REQUIRE(allocations == 0U);
-    ARPG_REQUIRE(after.monster_count <= arpg::combat::kMonsterCapacity);
-    ARPG_REQUIRE(after.projectile_count
+    ARPG_REQUIRE(after.combat.has_value());
+    ARPG_REQUIRE(after.combat->monster_count <= arpg::combat::kMonsterCapacity);
+    ARPG_REQUIRE(after.combat->projectile_count
         == arpg::combat::kProjectileCapacity);
-    ARPG_REQUIRE(after.hazard_count == arpg::combat::kHazardCapacity);
-    ARPG_REQUIRE(after.diagnostics.projectile_saturation_count
+    ARPG_REQUIRE(after.combat->hazard_count == arpg::combat::kHazardCapacity);
+    ARPG_REQUIRE(after.combat->diagnostics.projectile_saturation_count
         > projectile_saturation_before);
-    ARPG_REQUIRE(after.diagnostics.hazard_saturation_count
+    ARPG_REQUIRE(after.combat->diagnostics.hazard_saturation_count
         > hazard_saturation_before);
-    ARPG_REQUIRE(after.diagnostics.projectile_invalid_owner_count == 0U);
-    ARPG_REQUIRE(after.diagnostics.hazard_invalid_owner_count == 0U);
-    ARPG_REQUIRE(after.diagnostics.event_overflow_count == 0U);
-    for (std::size_t index = 0U; index < ground.size(); ++index) {
-        ARPG_REQUIRE(ground[index].active);
-        ARPG_REQUIRE(ground[index].item.id
-            == 0xA800000000000000ULL + index + 1U);
+    ARPG_REQUIRE(after.diagnostics.ground_saturation_count
+        > ground_saturation_before);
+    ARPG_REQUIRE(after.combat->diagnostics.projectile_invalid_owner_count == 0U);
+    ARPG_REQUIRE(after.combat->diagnostics.hazard_invalid_owner_count == 0U);
+    ARPG_REQUIRE(after.combat->diagnostics.event_overflow_count == 0U);
+    ground_count = 0U;
+    for (const auto& ground : arpg::test::ground_items(session)) {
+        ground_count += ground.active;
     }
+    ARPG_REQUIRE(ground_count == arpg::dungeon::kGroundDropCapacity);
+    ARPG_REQUIRE(after.abyss_pending_rewards == 3U);
     std::printf("[stage10-abyss-stress] ticks=600 allocations=%llu "
-        "pools=%zu/%zu/%zu saturation=%u/%u\n",
-        static_cast<unsigned long long>(allocations), after.monster_count,
-        after.projectile_count, after.hazard_count,
-        after.diagnostics.projectile_saturation_count,
-        after.diagnostics.hazard_saturation_count);
+        "pools=%zu/%zu/%zu/%zu saturation=%u/%u/%u\n",
+        static_cast<unsigned long long>(allocations),
+        after.combat->monster_count, after.combat->projectile_count,
+        after.combat->hazard_count, ground_count,
+        after.combat->diagnostics.projectile_saturation_count,
+        after.combat->diagnostics.hazard_saturation_count,
+        after.diagnostics.ground_saturation_count);
     return {};
 }
 

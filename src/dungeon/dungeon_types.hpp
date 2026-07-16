@@ -84,6 +84,7 @@ struct DungeonDiagnostics final {
     std::uint32_t combat_relay_overflow_count{};
     std::uint32_t rejected_exit_count{};
     std::uint32_t save_failure_count{};
+    std::uint32_t ground_saturation_count{};
     DungeonFault fault{DungeonFault::none};
     bool room_index_overflow{};
 };

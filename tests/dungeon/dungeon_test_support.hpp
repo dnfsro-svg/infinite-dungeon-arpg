@@ -196,6 +196,28 @@ struct DungeonSessionTestAccess final {
                 reward_ordinal, position, item};
         }
     }
+    static combat::CombatWorld* mutable_combat_world(
+        dungeon::DungeonSession& session) noexcept {
+        return session.combat_.has_value() ? &*session.combat_ : nullptr;
+    }
+    static void install_combat_world(
+        dungeon::DungeonSession& session,
+        const combat::CombatEncounterConfig& config) noexcept {
+        session.combat_.emplace(config);
+    }
+    static void fill_ground_pool(
+        dungeon::DungeonSession& session,
+        const items::ItemInstance& prototype) noexcept {
+        for (std::uint16_t index = 0U;
+             index < session.ground_items_.size(); ++index) {
+            items::ItemInstance item = prototype;
+            item.id += index;
+            session.ground_items_[index] = {
+                true, index, dungeon::GroundItemSource::monster_drop,
+                0xFFU, {100.0F + static_cast<float>(index),
+                    100.0F, 0.0F}, item};
+        }
+    }
     static void set_pending_pickup_ordinal(
         dungeon::DungeonSession& session,
         std::uint16_t ordinal) noexcept {
@@ -332,6 +354,24 @@ inline void install_abyss_ground_item(
     combat::Vec3 position) noexcept {
     DungeonSessionTestAccess::install_abyss_ground_item(
         session, ordinal, reward_ordinal, item, position);
+}
+
+inline void install_combat_world(
+    dungeon::DungeonSession& session,
+    const combat::CombatEncounterConfig& config) noexcept {
+    DungeonSessionTestAccess::install_combat_world(
+        session, config);
+}
+
+inline combat::CombatWorld* mutable_combat_world(
+    dungeon::DungeonSession& session) noexcept {
+    return DungeonSessionTestAccess::mutable_combat_world(session);
+}
+
+inline void fill_ground_pool(
+    dungeon::DungeonSession& session,
+    const items::ItemInstance& prototype) noexcept {
+    DungeonSessionTestAccess::fill_ground_pool(session, prototype);
 }
 
 inline void set_pending_pickup_ordinal(

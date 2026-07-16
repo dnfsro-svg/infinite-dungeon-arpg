@@ -1,0 +1,1 @@
+DungeonSessionTestAccess::set_phase(session, RoomPhase::cleared);

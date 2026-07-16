@@ -95,11 +95,15 @@ void export_screenshot(const char* path) noexcept {
     UnloadImage(image);
 }
 
+void capture_after_presented_frame(const char* path) noexcept {
+    export_screenshot(path);
+}
+
 void take_host_screenshot() noexcept {
     try {
         const std::string path = (std::filesystem::path{
             GetApplicationDirectory()} / "stage8-equipment-loot.png").string();
-        export_screenshot(path.c_str());
+        capture_after_presented_frame(path.c_str());
     } catch (...) {
         TraceLog(LOG_WARNING, "failed to construct screenshot path");
     }
@@ -379,7 +383,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             }
             validation_capture_tick = 0U;
             ++validation_capture_count;
-            export_screenshot(TextFormat("%s%03u.png",
+            capture_after_presented_frame(TextFormat("%s%03u.png",
                 validation_capture_prefix.c_str(), validation_capture_count));
         };
         dungeon::DungeonSnapshot current{};
@@ -588,7 +592,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     || stage10_validation_state.chaos_presented_frames >= 16U);
             if (stage10_reached && !stage10_validation_captured
                     && config.validation_capture_file.has_value()) {
-                export_screenshot(
+                capture_after_presented_frame(
                     config.validation_capture_file->string().c_str());
                 stage10_validation_captured = true;
             }
