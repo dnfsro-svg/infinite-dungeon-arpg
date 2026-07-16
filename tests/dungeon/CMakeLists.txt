@@ -202,3 +202,18 @@ add_test(NAME stage10.evidence.rejects_pre_present_capture
 set_tests_properties(stage10.evidence.rejects_pre_present_capture PROPERTIES
     LABELS "headless;dungeon;stage10;evidence;negative"
     WILL_FAIL TRUE)
+
+add_test(NAME stage10.evidence.rejects_pre_capture_with_post_dummy
+    COMMAND ${CMAKE_COMMAND}
+        -DFIXTURE_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_fixture.cpp
+        -DVALIDATION_GAME_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_game.cpp
+        -DFORMAL_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_formal_game_validation.cpp
+        -DCAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_capture_test.ps1
+        -DFORMAL_CAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage10_formal_game_capture_test.ps1
+        -DSTRESS_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/dungeon_abyss_stress_tests.cpp
+        -DHOST_HEADER=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.hpp
+        -DHOST_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_evidence_bad_pre_capture_with_dummy.txt
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/stage10_evidence_guard_test.cmake)
+set_tests_properties(stage10.evidence.rejects_pre_capture_with_post_dummy PROPERTIES
+    LABELS "headless;dungeon;stage10;evidence;negative"
+    WILL_FAIL TRUE)

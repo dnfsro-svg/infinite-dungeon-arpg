@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <cmath>
 #include <filesystem>
+#include <optional>
 #include <string>
 
 #if !defined(RAYLIB_VERSION_MAJOR) || !defined(RAYLIB_VERSION_MINOR) \
@@ -85,27 +86,24 @@ void draw_recovery_screen(const DungeonRenderStatus& status) noexcept {
         48, 122, 18, RAYWHITE);
     DrawText(TextFormat("Save error %u", static_cast<unsigned>(status.error)),
         48, 156, 16, Color{255, 202, 126, 255});
-    EndDrawing();
 }
 
-void export_screenshot(const char* path) noexcept {
+void present_frame_and_maybe_capture(const char* path) noexcept {
+    EndDrawing();
+    if (path == nullptr) return;
     Image image = LoadImageFromScreen();
     if (image.data == nullptr) return;
     static_cast<void>(ExportImage(image, path));
     UnloadImage(image);
 }
 
-void capture_after_presented_frame(const char* path) noexcept {
-    export_screenshot(path);
-}
-
-void take_host_screenshot() noexcept {
+std::optional<std::string> host_screenshot_path() noexcept {
     try {
-        const std::string path = (std::filesystem::path{
+        return (std::filesystem::path{
             GetApplicationDirectory()} / "stage8-equipment-loot.png").string();
-        capture_after_presented_frame(path.c_str());
     } catch (...) {
         TraceLog(LOG_WARNING, "failed to construct screenshot path");
+        return std::nullopt;
     }
 }
 
@@ -375,16 +373,17 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         const std::string validation_capture_prefix = config.validation_capture
             ? (*save_directory / "stage8-validation-").string()
             : std::string{};
-        const auto capture_validation_frame = [&]() noexcept {
+        const auto validation_capture_path = [&]() noexcept
+                -> std::optional<std::string> {
             if (!config.validation_capture
                     || validation_capture_count >= 2000U
                     || ++validation_capture_tick < 60U) {
-                return;
+                return std::nullopt;
             }
             validation_capture_tick = 0U;
             ++validation_capture_count;
-            capture_after_presented_frame(TextFormat("%s%03u.png",
-                validation_capture_prefix.c_str(), validation_capture_count));
+            return std::string{TextFormat("%s%03u.png",
+                validation_capture_prefix.c_str(), validation_capture_count)};
         };
         dungeon::DungeonSnapshot current{};
         dungeon::DungeonSnapshot previous{};
@@ -414,10 +413,14 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     continue;
                 }
                 draw_recovery_screen(runtime.render_status());
-                capture_validation_frame();
+                std::optional<std::string> capture_path =
+                    validation_capture_path();
                 if (frame_toggles.take_screenshot) {
-                    take_host_screenshot();
+                    capture_path = host_screenshot_path();
                 }
+                present_frame_and_maybe_capture(capture_path.has_value()
+                    ? capture_path->c_str() : nullptr);
+                ++presented_frame_count;
                 continue;
             }
             dungeon::DungeonSession* const session = runtime.session();
@@ -577,8 +580,6 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             if (inventory.is_open()) {
                 inventory.draw(*session, current, runtime.render_status());
             }
-            EndDrawing();
-            ++presented_frame_count;
             const bool stage10_target_visible = stage10_validation_reached(
                 current, config, stage10_validation_state);
             if (config.stage10_validation
@@ -590,16 +591,24 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 && (config.stage10_validation
                         != Stage10ValidationScenario::chaos_expansion
                     || stage10_validation_state.chaos_presented_frames >= 16U);
+            std::optional<std::string> capture_path{};
+            bool captured_stage10_target = false;
             if (stage10_reached && !stage10_validation_captured
                     && config.validation_capture_file.has_value()) {
-                capture_after_presented_frame(
-                    config.validation_capture_file->string().c_str());
-                stage10_validation_captured = true;
+                capture_path = config.validation_capture_file->string();
+                captured_stage10_target = true;
             }
-            capture_validation_frame();
             if (frame_toggles.take_screenshot) {
-                take_host_screenshot();
+                capture_path = host_screenshot_path();
+                captured_stage10_target = false;
+            } else if (!capture_path.has_value()) {
+                capture_path = validation_capture_path();
             }
+            present_frame_and_maybe_capture(capture_path.has_value()
+                ? capture_path->c_str() : nullptr);
+            ++presented_frame_count;
+            stage10_validation_captured = stage10_validation_captured
+                || captured_stage10_target;
             if (config.validation_exit_after_presented_frames != 0U
                     && presented_frame_count
                         >= config.validation_exit_after_presented_frames) {

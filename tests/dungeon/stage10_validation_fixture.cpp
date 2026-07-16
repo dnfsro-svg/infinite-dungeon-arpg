@@ -580,6 +580,8 @@ int main(int argc, char** argv) {
     if (!abandon_evidence.warning_event || !abandon_evidence.armed
             || !abandon_evidence.neutral_release
             || resolution.total != abandon_evidence.before.reward_total
+            || resolution.room_seed != entry->target.current_room.seed
+            || resolution.rule != arpg::abyss::AbyssRuleId::life_sacrifice
             || resolution.generated != expected_generated
             || resolution.claimed != expected_claimed
             || resolution.abandoned != expected_abandoned

@@ -233,6 +233,35 @@ arpg::items::ItemInstance ground_prototype() noexcept {
     }).value();
 }
 
+bool same_item(const arpg::items::ItemInstance& left,
+    const arpg::items::ItemInstance& right) noexcept {
+    if (left.id != right.id || left.base_id != right.base_id
+            || left.rarity != right.rarity
+            || left.item_level != right.item_level
+            || left.required_level != right.required_level
+            || left.affix_count != right.affix_count
+            || left.reserved != right.reserved) return false;
+    for (std::size_t index = 0U; index < left.affixes.size(); ++index) {
+        if (left.affixes[index].affix_id != right.affixes[index].affix_id
+                || left.affixes[index].tier != right.affixes[index].tier
+                || left.affixes[index].variant
+                    != right.affixes[index].variant) return false;
+    }
+    return true;
+}
+
+bool exactly_same_ground_item(const arpg::dungeon::GroundItem& left,
+    const arpg::dungeon::GroundItem& right) noexcept {
+    return left.active == right.active
+        && left.drop_ordinal == right.drop_ordinal
+        && left.source == right.source
+        && left.abyss_reward_ordinal == right.abyss_reward_ordinal
+        && left.position.x == right.position.x
+        && left.position.y == right.position.y
+        && left.position.z == right.position.z
+        && same_item(left.item, right.item);
+}
+
 ResolutionTrace production_resolution(
     checkpoint::DungeonRunState& state,
     const arpg::dungeon::DungeonRules& rules) noexcept {
@@ -536,6 +565,7 @@ arpg::test::Failure extreme_abyss_pools_run_600_ticks_without_allocation() noexc
         saturated.combat->diagnostics.hazard_saturation_count;
     const std::uint32_t ground_saturation_before =
         saturated.diagnostics.ground_saturation_count;
+    const auto ground_before = arpg::test::ground_items(session);
     const std::uint64_t before = arpg::test::allocation_count();
     for (int tick = 0; tick < 600; ++tick) session.tick({});
     const std::uint64_t allocations = arpg::test::allocation_count() - before;
@@ -552,12 +582,17 @@ arpg::test::Failure extreme_abyss_pools_run_600_ticks_without_allocation() noexc
     ARPG_REQUIRE(after.combat->diagnostics.hazard_saturation_count
         > hazard_saturation_before);
     ARPG_REQUIRE(after.diagnostics.ground_saturation_count
-        > ground_saturation_before);
+        - ground_saturation_before == 600U);
     ARPG_REQUIRE(after.combat->diagnostics.projectile_invalid_owner_count == 0U);
     ARPG_REQUIRE(after.combat->diagnostics.hazard_invalid_owner_count == 0U);
     ARPG_REQUIRE(after.combat->diagnostics.event_overflow_count == 0U);
     ground_count = 0U;
-    for (const auto& ground : arpg::test::ground_items(session)) {
+    const auto& ground_after = arpg::test::ground_items(session);
+    for (std::size_t index = 0U; index < ground_after.size(); ++index) {
+        ARPG_REQUIRE(exactly_same_ground_item(
+            ground_before[index], ground_after[index]));
+    }
+    for (const auto& ground : ground_after) {
         ground_count += ground.active;
     }
     ARPG_REQUIRE(ground_count == arpg::dungeon::kGroundDropCapacity);

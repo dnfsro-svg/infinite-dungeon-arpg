@@ -13,7 +13,7 @@ file(READ "${FORMAL_CAPTURE_SCRIPT}" formal_capture_script)
 file(READ "${STRESS_SOURCE}" stress_source)
 file(READ "${HOST_HEADER}" host_header)
 file(READ "${HOST_SOURCE}" host_source)
-set(formal_evidence "${fixture_source}\n${validation_game_source}\n${formal_source}\n${capture_script}\n${formal_capture_script}\n${host_source}")
+set(formal_evidence "${fixture_source}\n${validation_game_source}\n${formal_source}\n${capture_script}\n${formal_capture_script}\n${host_header}\n${host_source}")
 
 foreach(forbidden
         "DungeonSessionTestAccess"
@@ -36,6 +36,8 @@ if(NOT fixture_source MATCHES "SaveStore"
         OR NOT fixture_source MATCHES "request_pickup"
         OR NOT fixture_source MATCHES "abyss_exit_warning"
         OR NOT fixture_source MATCHES "abyss_exit_confirmation_armed"
+        OR NOT fixture_source MATCHES "resolution.room_seed"
+        OR NOT fixture_source MATCHES "resolution.rule"
         OR NOT fixture_source MATCHES "MovementInput")
     message(FATAL_ERROR "Stage 10 fixture must use real save, pickup, warning, confirmation, and movement APIs")
 endif()
@@ -57,6 +59,9 @@ if(NOT stress_source MATCHES "DungeonSession"
         OR NOT stress_source MATCHES "ground_items\\(session\\)"
         OR NOT stress_source MATCHES "session.tick\\("
         OR NOT stress_source MATCHES "ground_saturation_count"
+        OR NOT stress_source MATCHES "ground_saturation_count[\r\n ]*-[\r\n ]*ground_saturation_before[\r\n ]*==[\r\n ]*600U"
+        OR NOT stress_source MATCHES "exactly_same_ground_item"
+        OR NOT stress_source MATCHES "ground_before"
         OR NOT stress_source MATCHES "production_resolution"
         OR NOT stress_source MATCHES "last_abyss_resolution"
         OR NOT stress_source MATCHES "encode_checkpoint"
@@ -72,34 +77,35 @@ string(REPLACE " " "" host_compact "${host_source}")
 string(REPLACE "${whitespace_tab}" "" host_compact "${host_compact}")
 string(REPLACE "${whitespace_lf}" "" host_compact "${host_compact}")
 string(REPLACE "${whitespace_cr}" "" host_compact "${host_compact}")
-set(capture_helper
-    "voidcapture_after_presented_frame(constchar*path)noexcept{")
-string(FIND "${host_compact}" "${capture_helper}" capture_helper_index)
-set(helper_export_index -1)
-if(NOT capture_helper_index EQUAL -1)
-    string(SUBSTRING "${host_compact}" ${capture_helper_index} 160 capture_helper_body)
-    string(FIND "${capture_helper_body}" "export_screenshot(path)" helper_export_index)
-endif()
-set(after_present_anchor "EndDrawing();++presented_frame_count;")
-string(FIND "${host_compact}" "${after_present_anchor}" after_present_index)
-set(capture_after_present_index -1)
-if(NOT after_present_index EQUAL -1)
-    string(SUBSTRING "${host_compact}" ${after_present_index} -1 host_after_present)
-    string(FIND "${host_after_present}"
-        "capture_after_presented_frame(" capture_after_present_index)
-endif()
+set(present_helper
+    "voidpresent_frame_and_maybe_capture(constchar*path)noexcept{EndDrawing();if(path==nullptr)return;Imageimage=LoadImageFromScreen();if(image.data==nullptr)return;static_cast<void>(ExportImage(image,path));UnloadImage(image);}")
+string(FIND "${host_compact}" "${present_helper}" present_helper_index)
+string(REGEX MATCHALL "EndDrawing\\(\\)" end_drawing_calls "${host_compact}")
+string(REGEX MATCHALL "LoadImageFromScreen\\(\\)" screen_load_calls "${host_compact}")
+string(REGEX MATCHALL "ExportImage\\(" export_image_calls "${host_compact}")
+string(REGEX MATCHALL "present_frame_and_maybe_capture\\("
+    present_helper_mentions "${host_compact}")
+list(LENGTH end_drawing_calls end_drawing_count)
+list(LENGTH screen_load_calls screen_load_count)
+list(LENGTH export_image_calls export_image_count)
+list(LENGTH present_helper_mentions present_helper_mention_count)
 if(NOT host_header MATCHES "validation_exit_after_presented_frames")
     message(FATAL_ERROR "Stage 10 host lacks presented-frame exit control")
 endif()
-if(capture_helper_index EQUAL -1 OR helper_export_index EQUAL -1)
-    message(FATAL_ERROR
-        "Stage 10 host lacks the post-present capture helper "
-        "(helper=${capture_helper_index}, export=${helper_export_index})")
+if(host_source MATCHES "export_screenshot"
+        OR host_source MATCHES "capture_after_presented_frame")
+    message(FATAL_ERROR "Stage 10 host may not expose a detached screenshot helper")
 endif()
-if(after_present_index EQUAL -1 OR capture_after_present_index EQUAL -1)
+if(present_helper_index EQUAL -1
+        OR NOT end_drawing_count EQUAL 1
+        OR NOT screen_load_count EQUAL 1
+        OR NOT export_image_count EQUAL 1
+        OR present_helper_mention_count LESS 3)
     message(FATAL_ERROR
-        "Stage 10 screenshot capture is not structurally after EndDrawing "
-        "(present=${after_present_index}, capture=${capture_after_present_index})")
+        "Stage 10 presentation and capture must be owned by one helper "
+        "(helper=${present_helper_index}, end=${end_drawing_count}, "
+        "load=${screen_load_count}, export=${export_image_count}, "
+        "mentions=${present_helper_mention_count})")
 endif()
 
 foreach(script_text capture_script formal_capture_script)

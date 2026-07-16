@@ -254,6 +254,8 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
                 != rhs.diagnostics.rejected_exit_count
             || lhs.diagnostics.save_failure_count
                 != rhs.diagnostics.save_failure_count
+            || lhs.diagnostics.ground_saturation_count
+                != rhs.diagnostics.ground_saturation_count
             || lhs.diagnostics.fault != rhs.diagnostics.fault
             || lhs.diagnostics.room_index_overflow
                 != rhs.diagnostics.room_index_overflow
