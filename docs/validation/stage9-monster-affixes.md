@@ -45,10 +45,16 @@ v4_reload_consistent=1
 
 | 项目 | 结果 | 证据 |
 | --- | --- | --- |
-| 测试专用固定 12 词缀/M1-M3 窗口启动 | PASS | `docs/validation/evidence/stage9/01-fixed-affix-room.png` |
+| 测试专用固定 12 词缀/M1-M3 窗口启动 | PASS | 窗口标题 `Infinite Dungeon - Stage 9 Fixed Affix Validation`、`Responding=True`；`docs/validation/evidence/stage9/01-fixed-affix-room-render.png` |
 | 正式游戏窗口启动 | PASS | `docs/validation/evidence/stage9/02-formal-game-initial.png` |
-| GPU 画面像素级截图 | FAIL（环境） | 两个 raylib/OpenGL 窗口在桌面截图中均为白色画布，窗口标题和进程均正常；不是 Stage 9 规则失败 |
-| 浅层 M1、深 40 M2/M3、四种高危预警、L 上挑、高危掉落、重载领取与极端池的人工观察 | 未判定 | 受上述 GPU framebuffer 截图限制；自动化 Trace/fixture 已覆盖可重复的数据契约 |
+| Stage 9 提交后第 60 帧 GPU framebuffer | PASS | `stage9.validation_game.capture_after_present` 以 `--capture-at-frame-60-and-exit` 运行，通过后导出 1280x720 图像；左上角为 RGB `13,17,27`，并检测到 152 个白色 UI 采样像素。证据图为 `docs/validation/evidence/stage9/01-fixed-affix-room-render.png` |
+| 浅层 M1、深 40 M2/M3、四种高危预警、L 上挑、高危掉落、重载领取与极端池 | 不适用（本测试专用固定词缀窗口） | 这些是规则/数据契约，不由固定展示窗口人工驱动；本页上方的压力 Trace 与 fixture 输出覆盖相应数据。 |
+
+窗口证据入口先前在 `EndDrawing()` 前调用 `TakeScreenshot(绝对路径)`。raylib 会将
+`TakeScreenshot` 参数再次拼接到其工作目录，导致绝对路径无效；该入口现在和正式
+host 一样在提交帧后使用 `LoadImageFromScreen/ExportImage`，并在 `InitWindow` 前设置
+`FLAG_VSYNC_HINT | FLAG_WINDOW_RESIZABLE`。新增的图形验收用例固定验证提交后的第 60 帧，
+避免首帧假阳性。
 
 ## 双配置与范围检查
 
@@ -56,6 +62,7 @@ v4_reload_consistent=1
 
 ```text
 cmake --build build-release --target arpg_dungeon_tests arpg_stage9_validation_fixture arpg_stage9_validation_game
+ctest --test-dir build-release -R '^stage9\.validation_game\.capture_after_present$' --output-on-failure
 ```
 
 完整 Debug/Release `ctest` 和最终 `git diff --exit-code 7b54370 -- src/persistence` 需在本机 raylib framebuffer 可用的图形会话中继续执行；本次未将它们标记为通过。

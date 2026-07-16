@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <string_view>
 
 namespace {
 
@@ -25,9 +26,22 @@ arpg::combat::MonsterAffixSet one_affix(
     return result;
 }
 
+bool export_presented_frame(const std::filesystem::path& path) noexcept {
+    Image image = LoadImageFromScreen();
+    if (image.data == nullptr) return false;
+    const bool exported = ExportImage(image, path.string().c_str());
+    UnloadImage(image);
+    return exported;
+}
+
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc < 1 || argv == nullptr || argv[0] == nullptr) return 2;
+    const bool capture_at_frame_60_and_exit = argc == 2
+        && std::string_view{argv[1]} == "--capture-at-frame-60-and-exit";
+    if (argc > 1 && !capture_at_frame_60_and_exit) return 2;
+
     constexpr std::array<FixedAffixDisplay, 12> kAffixes{{
         {"MIGHTY", arpg::combat::MonsterAffixId::mighty,
             arpg::combat::MonsterAffixTier::m1, {235, 179, 81, 255}},
@@ -55,16 +69,19 @@ int main() {
             arpg::combat::MonsterAffixTier::m3, {255, 73, 73, 255}},
     }};
 
+    SetConfigFlags(FLAG_VSYNC_HINT | FLAG_WINDOW_RESIZABLE);
     InitWindow(1280, 720, "Infinite Dungeon - Stage 9 Fixed Affix Validation");
     if (!IsWindowReady()) return 2;
     SetTargetFPS(60);
-    std::error_code directory_error;
-    const auto evidence_directory = std::filesystem::path{
-        GetApplicationDirectory()}.parent_path().parent_path()
+    const std::filesystem::path executable = std::filesystem::absolute(argv[0]);
+    const auto evidence_directory = executable.parent_path().parent_path().parent_path()
         / "docs" / "validation" / "evidence" / "stage9";
+    std::error_code directory_error;
     std::filesystem::create_directories(evidence_directory, directory_error);
-    const std::string automatic_capture = (evidence_directory
-        / "01-fixed-affix-room-render.png").string();
+    const auto automatic_capture = capture_at_frame_60_and_exit
+        ? std::filesystem::path{GetApplicationDirectory()}
+            / "stage9-validation-capture.png"
+        : evidence_directory / "01-fixed-affix-room-render.png";
     int rendered_frames = 0;
     while (!WindowShouldClose()) {
         BeginDrawing();
@@ -93,10 +110,19 @@ int main() {
         }
         DrawText("Esc closes | F12 captures validation screen", 44, 666, 18,
             {170, 190, 210, 255});
-        if (++rendered_frames == 60 || IsKeyPressed(KEY_F12)) {
-            TakeScreenshot(automatic_capture.c_str());
-        }
+        const bool capture_requested = ++rendered_frames == 60 || IsKeyPressed(KEY_F12);
         EndDrawing();
+        if (capture_requested && !export_presented_frame(automatic_capture)) {
+            TraceLog(LOG_WARNING, "failed to export Stage 9 validation frame");
+            if (capture_at_frame_60_and_exit) {
+                CloseWindow();
+                return 3;
+            }
+        }
+        if (capture_at_frame_60_and_exit && capture_requested) {
+            CloseWindow();
+            return 0;
+        }
     }
     CloseWindow();
     return 0;

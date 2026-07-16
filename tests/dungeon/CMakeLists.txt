@@ -54,6 +54,15 @@ if(TARGET arpg_raylib)
     target_compile_features(arpg_stage9_validation_game PRIVATE cxx_std_17)
     target_link_libraries(arpg_stage9_validation_game PRIVATE arpg_raylib)
     arpg_enable_project_warnings(arpg_stage9_validation_game)
+
+    add_test(NAME stage9.validation_game.capture_after_present
+        COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+            -File "${CMAKE_CURRENT_SOURCE_DIR}/stage9_validation_capture_test.ps1"
+            -Executable "$<TARGET_FILE:arpg_stage9_validation_game>"
+            -CapturePath "$<TARGET_FILE_DIR:arpg_stage9_validation_game>/stage9-validation-capture.png")
+    set_tests_properties(stage9.validation_game.capture_after_present PROPERTIES
+        LABELS "graphics;stage9;validation"
+        TIMEOUT 5)
 endif()
 
 if(WIN32)
