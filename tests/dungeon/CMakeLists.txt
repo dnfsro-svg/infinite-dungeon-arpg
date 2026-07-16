@@ -16,11 +16,14 @@ add_executable(arpg_dungeon_tests
     dungeon_wave_tests.cpp)
 target_sources(arpg_dungeon_tests PRIVATE
     dungeon_progression_reward_tests.cpp
-    dungeon_affix_reward_tests.cpp)
+    dungeon_affix_reward_tests.cpp
+    dungeon_affix_stress_tests.cpp)
 
 target_compile_features(arpg_dungeon_tests PRIVATE cxx_std_17)
 target_include_directories(arpg_dungeon_tests
-    PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+    PRIVATE
+        "${PROJECT_SOURCE_DIR}/tests/core"
+        "${PROJECT_SOURCE_DIR}/tests/combat")
 target_link_libraries(arpg_dungeon_tests PRIVATE arpg_dungeon arpg_persistence)
 arpg_enable_project_warnings(arpg_dungeon_tests)
 
@@ -33,12 +36,24 @@ target_link_libraries(arpg_stage8_validation_fixture
     PRIVATE arpg_dungeon arpg_persistence)
 arpg_enable_project_warnings(arpg_stage8_validation_fixture)
 
+add_executable(arpg_stage9_validation_fixture
+    stage9_validation_fixture.cpp)
+target_compile_features(arpg_stage9_validation_fixture PRIVATE cxx_std_17)
+target_link_libraries(arpg_stage9_validation_fixture PRIVATE arpg_dungeon arpg_persistence)
+arpg_enable_project_warnings(arpg_stage9_validation_fixture)
+
 if(TARGET arpg_raylib)
     add_executable(arpg_stage8_validation_game
         stage8_validation_game.cpp)
     target_compile_features(arpg_stage8_validation_game PRIVATE cxx_std_17)
     target_link_libraries(arpg_stage8_validation_game PRIVATE arpg_raylib)
     arpg_enable_project_warnings(arpg_stage8_validation_game)
+
+    add_executable(arpg_stage9_validation_game
+        stage9_validation_game.cpp)
+    target_compile_features(arpg_stage9_validation_game PRIVATE cxx_std_17)
+    target_link_libraries(arpg_stage9_validation_game PRIVATE arpg_raylib)
+    arpg_enable_project_warnings(arpg_stage9_validation_game)
 endif()
 
 if(WIN32)

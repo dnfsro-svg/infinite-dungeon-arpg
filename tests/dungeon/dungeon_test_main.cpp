@@ -1,5 +1,7 @@
 #include "test_framework.hpp"
 
+#include <cstdlib>
+
 #if defined(_WIN32) && defined(_DEBUG)
 #include <crtdbg.h>
 #include <cstdlib>
@@ -20,6 +22,21 @@ arpg::test::TestSuite encounter_director_suite() noexcept;
 arpg::test::TestSuite dungeon_wave_suite() noexcept;
 arpg::test::TestSuite dungeon_progression_reward_suite() noexcept;
 arpg::test::TestSuite dungeon_affix_reward_suite() noexcept;
+arpg::test::TestSuite dungeon_affix_stress_suite() noexcept;
+
+namespace {
+
+bool stage9_affix_stress_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_STAGE9_AFFIX_STRESS_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
+}  // namespace
 
 int main() {
 #if defined(_WIN32) && defined(_DEBUG)
@@ -47,7 +64,16 @@ int main() {
         dungeon_wave_suite(),
         dungeon_progression_reward_suite(),
         dungeon_affix_reward_suite(),
+        dungeon_affix_stress_suite(),
     };
 
-    return arpg::test::run_suites(suites, 127, "stage 9 task 2 dungeon");
+    if (stage9_affix_stress_only()) {
+        const arpg::test::TestSuite stress_only[] = {
+            dungeon_affix_stress_suite(),
+        };
+        return arpg::test::run_suites(stress_only, 2,
+            "stage 9 task 10 affix stress");
+    }
+
+    return arpg::test::run_suites(suites, 129, "stage 9 task 10 dungeon");
 }
