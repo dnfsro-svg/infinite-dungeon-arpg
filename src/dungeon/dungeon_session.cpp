@@ -335,7 +335,8 @@ void DungeonSession::construct_current_room() noexcept {
 }
 
 void DungeonSession::construct_cleared_abyss_room() noexcept {
-    if (!stable_state_.current_room.is_abyss
+    if (!checkpoint::valid_abyss_door_origin(stable_state_,
+            abyss::is_abyss_roll(stable_state_.current_room.seed))
             || stable_state_.abyss.rules_version != abyss::kAbyssRulesVersion) {
         enter_fault(DungeonFault::invalid_abyss_state);
         return;

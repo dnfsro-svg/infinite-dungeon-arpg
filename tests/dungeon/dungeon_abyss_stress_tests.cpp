@@ -481,13 +481,17 @@ checkpoint::DungeonRunState extreme_cleared_state() noexcept {
         0xA8E600DULL, arpg::dungeon::DungeonRules{}).state;
     for (std::uint64_t seed = 1U; seed != 0U; ++seed) {
         const auto selected = arpg::abyss::select_abyss_rule(seed, 1U);
-        if (!selected.has_value()
+        if (!arpg::abyss::is_abyss_roll(seed)
+                || !selected.has_value()
                 || selected->rule
                     != arpg::abyss::AbyssRuleId::chaos_expansion) {
             continue;
         }
         state.current_room.seed = seed;
+        state.current_room.entry = checkpoint::EntrySide::left;
         state.current_room.is_abyss = true;
+        state.last_transition = checkpoint::TransitionKind::door;
+        state.last_direction = checkpoint::ExitDirection::right;
         state.abyss.lifecycle = arpg::abyss::AbyssLifecycle::cleared;
         state.abyss.danger = selected->danger;
         state.abyss.rule = selected->rule;

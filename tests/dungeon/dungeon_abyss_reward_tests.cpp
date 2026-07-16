@@ -35,11 +35,15 @@ arpg::dungeon::DungeonRunState cleared_abyss_state(
         0xA9B9555EEDULL, DungeonRules{}).state;
     for (std::uint64_t seed = 1U; seed != 0U; ++seed) {
         const auto selection = arpg::abyss::select_abyss_rule(seed, depth);
-        if (!selection.has_value() || selection->danger != wanted) continue;
+        if (!arpg::abyss::is_abyss_roll(seed)
+                || !selection.has_value() || selection->danger != wanted) continue;
         state.current_room.seed = seed;
         state.current_room.depth = depth;
+        state.current_room.entry = arpg::dungeon::EntrySide::left;
         state.current_room.is_abyss = true;
         state.current_room.has_hole = true;
+        state.last_transition = arpg::dungeon::TransitionKind::door;
+        state.last_direction = arpg::dungeon::ExitDirection::right;
         state.abyss.lifecycle = arpg::abyss::AbyssLifecycle::cleared;
         state.abyss.danger = selection->danger;
         state.abyss.rule = selection->rule;
@@ -47,6 +51,28 @@ arpg::dungeon::DungeonRunState cleared_abyss_state(
         state.abyss.reward_total = arpg::abyss::reward_profile_for(
             selection->danger, 1U).item_count;
         return state;
+    }
+    return {};
+}
+
+arpg::test::Failure cleared_abyss_requires_a_door_origin_on_load() noexcept {
+    using arpg::dungeon::EntrySide;
+    using arpg::dungeon::ExitDirection;
+    using arpg::dungeon::TransitionKind;
+    const DungeonRunState valid = cleared_abyss_state(AbyssDanger::low);
+    ARPG_REQUIRE(arpg::abyss::is_abyss_roll(valid.current_room.seed));
+
+    for (const auto transition : std::array<TransitionKind, 2U>{{
+             TransitionKind::none, TransitionKind::descent}}) {
+        DungeonRunState impossible = valid;
+        impossible.current_room.entry = EntrySide::initial;
+        impossible.last_transition = transition;
+        impossible.last_direction = ExitDirection::none;
+        DungeonSession session{DungeonRules{}, impossible};
+        ARPG_REQUIRE(session.snapshot().phase == RoomPhase::faulted);
+        ARPG_REQUIRE(session.snapshot().diagnostics.fault
+            == DungeonFault::invalid_abyss_state);
+        ARPG_REQUIRE(!session.pending_save().has_value());
     }
     return {};
 }
@@ -273,6 +299,7 @@ arpg::test::Failure full_pool_waits_without_advancing_then_continues() noexcept 
     ARPG_REQUIRE(session.pending_save().has_value());
     ARPG_REQUIRE(commit_pending(session));
     ARPG_REQUIRE(abyss_ground(session, 0U)->drop_ordinal == 42U);
+    set_player_position(session, abyss_ground(session, 0U)->position);
     session.tick({});
     ARPG_REQUIRE(session.pending_save().has_value());
     ARPG_REQUIRE(session.pending_save()->kind
@@ -373,6 +400,7 @@ arpg::test::Failure reload_rebuilds_exact_items_without_save_or_combat() noexcep
     ARPG_REQUIRE(same_ground(second, *abyss_ground(reloaded, 1U)));
     ARPG_REQUIRE(arpg::test::stable_state(reloaded).abyss.generated_mask == 3U);
     ARPG_REQUIRE(arpg::test::stable_state(reloaded).abyss.reward_revision == 2U);
+    set_player_position(reloaded, abyss_ground(reloaded, 0U)->position);
     reloaded.tick({});
     ARPG_REQUIRE(reloaded.pending_save().has_value());
     ARPG_REQUIRE(reloaded.pending_save()->kind
@@ -446,6 +474,7 @@ arpg::test::Failure abyss_pickup_prepares_claim_without_consuming_sequence() noe
     ARPG_REQUIRE(reward != nullptr);
     const std::uint16_t ground_ordinal = reward->drop_ordinal;
     const std::uint64_t item_id = reward->item.id;
+    set_player_position(session, reward->position);
 
     ARPG_REQUIRE(session.request_pickup(ground_ordinal)
         == arpg::dungeon::RequestResult::accepted);
@@ -479,6 +508,7 @@ arpg::test::Failure abyss_claims_commit_in_any_order_and_fail_closed() noexcept 
         const GroundItem* reward = abyss_ground(ordered, reward_ordinal);
         ARPG_REQUIRE(reward != nullptr);
         const std::uint16_t ground_ordinal = reward->drop_ordinal;
+        set_player_position(ordered, reward->position);
         expected_claimed |= static_cast<std::uint8_t>(1U << reward_ordinal);
         ARPG_REQUIRE(ordered.request_pickup(ground_ordinal)
             == arpg::dungeon::RequestResult::accepted);
@@ -500,7 +530,9 @@ arpg::test::Failure abyss_claims_commit_in_any_order_and_fail_closed() noexcept 
         one.abyss.reward_revision = 1U;
         DungeonSession failed{DungeonRules{}, one};
         const GroundItem* reward = abyss_ground(failed, 0U);
-        if (reward == nullptr || failed.request_pickup(reward->drop_ordinal)
+        if (reward == nullptr) return false;
+        set_player_position(failed, reward->position);
+        if (failed.request_pickup(reward->drop_ordinal)
                 != arpg::dungeon::RequestResult::accepted) return false;
         const auto pending = *failed.pending_save();
         DungeonRunState verified = pending.next_state;
@@ -546,6 +578,8 @@ arpg::test::Failure abyss_claim_full_oom_overflow_and_exact_receipt_are_atomic()
     retryable.item_ownership.items.push_back(normal_item(0x777777U));
     DungeonSession oom{DungeonRules{}, retryable};
     const std::uint16_t oom_ordinal = abyss_ground(oom, 0U)->drop_ordinal;
+    set_player_position(oom,
+        arpg::test::ground_items(oom)[oom_ordinal].position);
     {
         arpg::test::ScopedAllocationFailure fail{0U};
         ARPG_REQUIRE(oom.request_pickup(oom_ordinal)
@@ -575,6 +609,8 @@ arpg::test::Failure abyss_claim_full_oom_overflow_and_exact_receipt_are_atomic()
         (std::numeric_limits<std::uint32_t>::max)();
     DungeonSession revision{DungeonRules{}, overflow};
     const std::uint16_t revision_ordinal = abyss_ground(revision, 0U)->drop_ordinal;
+    set_player_position(revision,
+        arpg::test::ground_items(revision)[revision_ordinal].position);
     ARPG_REQUIRE(revision.request_pickup(revision_ordinal)
         == arpg::dungeon::RequestResult::faulted);
     ARPG_REQUIRE(revision.snapshot().diagnostics.fault
@@ -608,6 +644,7 @@ arpg::test::Failure structurally_invalid_abyss_ground_faults_in_place() noexcept
     auto& position_ground = const_cast<GroundItem&>(
         arpg::test::ground_items(invalid_position)[position_ordinal]);
     position_ground.position.x += 0.25F;
+    set_player_position(invalid_position, position_ground.position);
     ARPG_REQUIRE(invalid_position.request_pickup(position_ordinal)
         == arpg::dungeon::RequestResult::faulted);
     ARPG_REQUIRE(invalid_position.snapshot().diagnostics.fault
@@ -690,6 +727,7 @@ arpg::test::Failure reloaded_cleared_abyss_is_navigable_and_auto_claims() noexce
     auto_state.abyss.generated_mask = 1U;
     auto_state.abyss.reward_revision = 1U;
     DungeonSession automatic{DungeonRules{}, auto_state};
+    set_player_position(automatic, abyss_ground(automatic, 0U)->position);
     automatic.tick({});
     automatic.tick({});
     ARPG_REQUIRE(automatic.pending_save().has_value());
@@ -1063,6 +1101,8 @@ arpg::test::Failure committed_reward_waits_for_reload_pool_space() noexcept {
     session.tick({});
     ARPG_REQUIRE(abyss_ground(session, 0U) != nullptr);
     ARPG_REQUIRE(abyss_ground(session, 0U)->drop_ordinal == 88U);
+    set_player_position(session, abyss_ground(session, 0U)->position);
+    session.tick({});
     ARPG_REQUIRE(session.pending_save().has_value());
     ARPG_REQUIRE(session.pending_save()->kind
         == PendingSaveKind::abyss_reward_claim);
@@ -1123,6 +1163,8 @@ arpg::test::Failure recipe_product_colliding_with_abyss_ground_is_atomic() noexc
 }
 
 constexpr arpg::test::TestCase kCases[] = {
+    {"cleared abyss requires door origin",
+        &cleared_abyss_requires_a_door_origin_on_load},
     {"reward profiles levels and ordinals", &reward_profiles_levels_and_ordinals_are_exact},
     {"shifted rarity danger ordering", &shifted_rarity_rolls_follow_danger_ordering},
     {"stable independent ordinal streams", &ordinal_streams_are_stable_and_allow_repeated_slots},
