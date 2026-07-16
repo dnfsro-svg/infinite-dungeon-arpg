@@ -2,6 +2,7 @@
 
 #include "combat_audio.hpp"
 #include "combat_view_math.hpp"
+#include "combat/monster_affix_catalog.hpp"
 #include "dungeon_view_math.hpp"
 
 #include <array>
@@ -11,6 +12,10 @@ namespace {
 
 using arpg::combat::HazardSnapshot;
 using arpg::combat::MonsterAiPhase;
+using arpg::combat::MonsterAffixDanger;
+using arpg::combat::MonsterAffixId;
+using arpg::combat::MonsterAffixInstance;
+using arpg::combat::MonsterAffixTier;
 using arpg::combat::MonsterId;
 using arpg::combat::MonsterSnapshot;
 using arpg::combat::PlayerSnapshot;
@@ -131,6 +136,107 @@ arpg::test::Failure monster_attack_audio_emits_one_low_layer() noexcept {
     return {};
 }
 
+arpg::test::Failure affix_badges_consume_catalog_names_tiers_and_danger() noexcept {
+    constexpr std::array<MonsterAffixId, 12> kAffixes{{
+        MonsterAffixId::mighty, MonsterAffixId::frenzy,
+        MonsterAffixId::swift, MonsterAffixId::armored,
+        MonsterAffixId::shielding, MonsterAffixId::multishot,
+        MonsterAffixId::burning_ground, MonsterAffixId::chilling,
+        MonsterAffixId::chain_lightning, MonsterAffixId::chaos_corrosion,
+        MonsterAffixId::blink_assault, MonsterAffixId::death_blast,
+    }};
+    constexpr std::array<const char*, 12> kNames{{
+        "MGT", "FRZ", "SWF", "ARM", "SHD", "MULTI", "BURN", "CHILL",
+        "CHAIN", "CORR", "BLINK", "DEATH",
+    }};
+    for (std::size_t index = 0U; index < kAffixes.size(); ++index) {
+        const auto badge = arpg::platform::monster_affix_badge(
+            {kAffixes[index], MonsterAffixTier::m1});
+        ARPG_REQUIRE(std::strcmp(badge.short_name, kNames[index]) == 0);
+        ARPG_REQUIRE(std::strcmp(badge.tier_text, "M1") == 0);
+        ARPG_REQUIRE(badge.danger
+            == arpg::combat::monster_affix_definition(kAffixes[index])->danger);
+    }
+    const auto tier_two = arpg::platform::monster_affix_badge(
+        {MonsterAffixId::mighty, MonsterAffixTier::m2});
+    const auto tier_three = arpg::platform::monster_affix_badge(
+        {MonsterAffixId::death_blast, MonsterAffixTier::m3});
+    ARPG_REQUIRE(std::strcmp(tier_two.tier_text, "M2") == 0);
+    ARPG_REQUIRE(std::strcmp(tier_three.tier_text, "M3") == 0);
+    ARPG_REQUIRE(tier_three.danger == MonsterAffixDanger::high);
+    return {};
+}
+
+arpg::test::Failure affix_presentation_has_category_colors_and_high_danger_pulse() noexcept {
+    const auto base = arpg::platform::monster_affix_badge(
+        {MonsterAffixId::mighty, MonsterAffixTier::m1});
+    const auto defense = arpg::platform::monster_affix_badge(
+        {MonsterAffixId::armored, MonsterAffixTier::m1});
+    const auto fire = arpg::platform::monster_affix_badge(
+        {MonsterAffixId::burning_ground, MonsterAffixTier::m1});
+    const auto water = arpg::platform::monster_affix_badge(
+        {MonsterAffixId::chilling, MonsterAffixTier::m1});
+    const auto lightning = arpg::platform::monster_affix_badge(
+        {MonsterAffixId::chain_lightning, MonsterAffixTier::m1});
+    const auto chaos = arpg::platform::monster_affix_badge(
+        {MonsterAffixId::chaos_corrosion, MonsterAffixTier::m1});
+    ARPG_REQUIRE(!same_color(base.color, defense.color));
+    ARPG_REQUIRE(!same_color(base.color, fire.color));
+    ARPG_REQUIRE(!same_color(base.color, water.color));
+    ARPG_REQUIRE(!same_color(base.color, lightning.color));
+    ARPG_REQUIRE(!same_color(base.color, chaos.color));
+    ARPG_REQUIRE(!same_color(defense.color, fire.color));
+    ARPG_REQUIRE(!same_color(fire.color, water.color));
+    ARPG_REQUIRE(!same_color(water.color, lightning.color));
+    ARPG_REQUIRE(!same_color(lightning.color, chaos.color));
+
+    const auto high = arpg::platform::monster_affix_outline(
+        {MonsterAffixId::death_blast, MonsterAffixTier::m3}, 0U);
+    const auto high_later = arpg::platform::monster_affix_outline(
+        {MonsterAffixId::death_blast, MonsterAffixTier::m3}, 15U);
+    const auto low = arpg::platform::monster_affix_outline(
+        {MonsterAffixId::mighty, MonsterAffixTier::m1}, 0U);
+    ARPG_REQUIRE(high.color.r > high.color.g);
+    ARPG_REQUIRE(high.color.r > high.color.b);
+    ARPG_REQUIRE(high.alpha != high_later.alpha);
+    ARPG_REQUIRE(low.alpha == 255U);
+    return {};
+}
+
+arpg::test::Failure hazards_and_affix_warning_audio_are_distinct_and_throttled() noexcept {
+    const auto native = arpg::platform::hazard_color(arpg::combat::HazardKind::native);
+    const auto burning = arpg::platform::hazard_color(arpg::combat::HazardKind::burning);
+    const auto chain = arpg::platform::hazard_color(arpg::combat::HazardKind::chain_lightning);
+    const auto death = arpg::platform::hazard_color(arpg::combat::HazardKind::death_blast);
+    ARPG_REQUIRE(!same_color(native, burning));
+    ARPG_REQUIRE(!same_color(native, chain));
+    ARPG_REQUIRE(!same_color(native, death));
+    ARPG_REQUIRE(!same_color(burning, chain));
+    ARPG_REQUIRE(!same_color(chain, death));
+
+    arpg::combat::CombatEvent blink{};
+    blink.kind = arpg::combat::CombatEventKind::affix_blink_warning;
+    arpg::combat::CombatEvent chain_event{};
+    chain_event.kind = arpg::combat::CombatEventKind::affix_chain_warning;
+    arpg::combat::CombatEvent death_event{};
+    death_event.kind = arpg::combat::CombatEventKind::affix_death_warning;
+    ARPG_REQUIRE(arpg::platform::route_audio_cues(blink)
+        == arpg::platform::audio_cue_mask(arpg::platform::AudioCue::blink_warning));
+    ARPG_REQUIRE(arpg::platform::route_audio_cues(chain_event)
+        == arpg::platform::audio_cue_mask(arpg::platform::AudioCue::chain_warning));
+    ARPG_REQUIRE(arpg::platform::route_audio_cues(death_event)
+        == arpg::platform::audio_cue_mask(arpg::platform::AudioCue::death_warning));
+
+    arpg::platform::WarningAudioThrottle throttle{};
+    ARPG_REQUIRE(throttle.allow(arpg::platform::AudioCue::blink_warning, 24U));
+    ARPG_REQUIRE(!throttle.allow(arpg::platform::AudioCue::blink_warning, 24U));
+    ARPG_REQUIRE(!throttle.allow(arpg::platform::AudioCue::blink_warning, 35U));
+    ARPG_REQUIRE(throttle.allow(arpg::platform::AudioCue::blink_warning, 36U));
+    ARPG_REQUIRE(throttle.allow(arpg::platform::AudioCue::chain_warning, 24U));
+    ARPG_REQUIRE(throttle.allow(arpg::platform::AudioCue::blink_warning, 2U));
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"unique monster labels and ecology accent",
      &all_monster_roles_have_unique_labels_and_ecology_accent},
@@ -140,6 +246,9 @@ constexpr arpg::test::TestCase kCases[] = {
     {"hazard modes and effect projection",
      &hazard_modes_and_projected_effects_are_explicit},
     {"monster attack audio aggregation", &monster_attack_audio_emits_one_low_layer},
+    {"affix badges consume catalog", &affix_badges_consume_catalog_names_tiers_and_danger},
+    {"affix presentation categories and pulse", &affix_presentation_has_category_colors_and_high_danger_pulse},
+    {"hazard colors and affix warning audio", &hazards_and_affix_warning_audio_are_distinct_and_throttled},
 };
 
 }  // namespace

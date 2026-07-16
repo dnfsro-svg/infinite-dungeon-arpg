@@ -104,14 +104,15 @@ void draw_hazards(const CombatSnapshot& snapshot, float width, float height) noe
         if (mode == HazardVisualMode::hidden) continue;
         const ScreenProjection projected = project_hazard_center(hazard, width, height);
         const float radius = std::max(9.0F, hazard.radius * 58.0F) * projected.scale;
-        const Color color = mode == HazardVisualMode::telegraph
-            ? Color{255, 190, 76, 230} : Color{190, 73, 229, 150};
+        const Color color = to_color(hazard_color(hazard.kind));
+        const Color draw_color = mode == HazardVisualMode::telegraph
+            ? Fade(color, 0.82F) : color;
         if (mode == HazardVisualMode::active) {
             DrawEllipse(static_cast<int>(projected.x), static_cast<int>(projected.ground_y),
-                radius, radius * 0.36F, color);
+                radius, radius * 0.36F, draw_color);
         }
         DrawEllipseLines(static_cast<int>(projected.x), static_cast<int>(projected.ground_y),
-            radius, radius * 0.36F, color);
+            radius, radius * 0.36F, draw_color);
     }
 }
 
@@ -151,7 +152,8 @@ void draw_monster_warning(const MonsterSnapshot& monster, Vec3 position,
 
 void draw_monster_silhouette(const MonsterSnapshot& monster, Vec3 position,
     dungeon::DungeonElement ecology, float width, float height,
-    const CombatFeedback& feedback, std::size_t monster_index) noexcept {
+    const CombatFeedback& feedback, std::size_t monster_index,
+    std::uint64_t tick) noexcept {
     const ScreenProjection projected = project_combat_position(position, width, height);
     const MonsterVisual visual = monster_visual(monster.id, monster.ai_phase, ecology);
     Color body = to_color(visual.body);
@@ -189,11 +191,29 @@ void draw_monster_silhouette(const MonsterSnapshot& monster, Vec3 position,
         DrawLineEx({x + 12.0F * scale, y - 15.0F * scale}, {x + 25.0F * scale, y - 84.0F * scale}, 4.0F * scale, accent);
         DrawCircleLines(static_cast<int>(x + 25.0F * scale), static_cast<int>(y - 88.0F * scale), 8.0F * scale, accent); break;
     }
+
+    const std::size_t affix_count = std::min<std::size_t>(
+        monster.affixes.count, monster.affixes.values.size());
+    for (std::size_t index = 0U; index < affix_count; ++index) {
+        const AffixOutline outline = monster_affix_outline(
+            monster.affixes.values[index], tick);
+        const float radius = (35.0F + static_cast<float>(index) * 4.0F) * scale;
+        DrawEllipseLines(static_cast<int>(x), static_cast<int>(y - 42.0F * scale),
+            radius, radius * 1.18F,
+            Fade(to_color(outline.color), static_cast<float>(outline.alpha) / 255.0F));
+    }
     const float bar_width = 54.0F * scale;
     draw_bar(x - bar_width * .5F, y - 102.0F * scale, bar_width,
         monster.max_hp <= 0 ? 0.0F : static_cast<float>(monster.hp) / static_cast<float>(monster.max_hp), Color{78, 219, 120, 255});
     if (monster.max_shield > 0) draw_bar(x - bar_width * .5F, y - 95.0F * scale, bar_width,
         static_cast<float>(monster.shield) / static_cast<float>(monster.max_shield), accent);
+    for (std::size_t index = 0U; index < affix_count; ++index) {
+        const AffixBadge badge = monster_affix_badge(monster.affixes.values[index]);
+        DrawText(TextFormat("%s %s", badge.short_name, badge.tier_text),
+            static_cast<int>(x - bar_width * .5F),
+            static_cast<int>(y - (87.0F - static_cast<float>(index) * 10.0F) * scale),
+            9, to_color(badge.color));
+    }
     DrawText(visual.role_label, static_cast<int>(x - bar_width * .5F), static_cast<int>(y + 7.0F), 11, Color{225, 230, 239, 230});
     DrawText(monster_phase_name(monster.ai_phase), static_cast<int>(x - bar_width * .5F), static_cast<int>(y + 19.0F), 10, Color{184, 196, 213, 220});
 }
@@ -244,7 +264,8 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
                 {projected.x + 12.0F * projected.scale, projected.y - body_height + 5.0F * projected.scale}, Color{134, 237, 255, 255});
         } else {
             draw_monster_silhouette(current_combat.monsters[item.monster_index], item.position,
-                current.ecology, width, height, feedback, item.monster_index);
+                current.ecology, width, height, feedback, item.monster_index,
+                current_combat.tick);
         }
     }
     draw_effects(feedback, width, height, true);

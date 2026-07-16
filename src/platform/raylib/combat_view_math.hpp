@@ -1,6 +1,7 @@
 #pragma once
 
 #include "combat/combat_types.hpp"
+#include "combat/monster_affix_catalog.hpp"
 #include "dungeon_view_math.hpp"
 
 #include <array>
@@ -52,6 +53,18 @@ struct MonsterVisual final {
     MonsterWarningMode warning_mode{MonsterWarningMode::none};
 };
 
+struct AffixBadge final {
+    const char* short_name{"?"};
+    const char* tier_text{"M1"};
+    combat::MonsterAffixDanger danger{combat::MonsterAffixDanger::low};
+    Rgba8 color{};
+};
+
+struct AffixOutline final {
+    Rgba8 color{};
+    std::uint8_t alpha{255U};
+};
+
 [[nodiscard]] ScreenProjection project_combat_position(
     combat::Vec3 position,
     float width,
@@ -66,12 +79,18 @@ void sort_actor_draw_items(
     combat::MonsterId id,
     combat::MonsterAiPhase phase,
     dungeon::DungeonElement ecology) noexcept;
+[[nodiscard]] AffixBadge monster_affix_badge(
+    combat::MonsterAffixInstance affix) noexcept;
+[[nodiscard]] AffixOutline monster_affix_outline(
+    combat::MonsterAffixInstance affix,
+    std::uint64_t tick) noexcept;
 [[nodiscard]] bool monster_visible(
     const combat::MonsterSnapshot& monster) noexcept;
 [[nodiscard]] float player_hp_ratio(
     const combat::PlayerSnapshot& player) noexcept;
 [[nodiscard]] HazardVisualMode hazard_visual_mode(
     const combat::HazardSnapshot& hazard) noexcept;
+[[nodiscard]] Rgba8 hazard_color(combat::HazardKind kind) noexcept;
 [[nodiscard]] ScreenProjection project_projectile_position(
     const combat::ProjectileSnapshot& projectile,
     float width,

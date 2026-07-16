@@ -24,6 +24,15 @@ bool has_cue(AudioCueMask mask, AudioCue cue) noexcept {
     return (mask & audio_cue_mask(cue)) != 0;
 }
 
+std::size_t warning_cue_index(AudioCue cue) noexcept {
+    switch (cue) {
+    case AudioCue::blink_warning: return 0U;
+    case AudioCue::chain_warning: return 1U;
+    case AudioCue::death_warning: return 2U;
+    default: return 3U;
+    }
+}
+
 }  // namespace
 
 AudioCueMask route_audio_cues(const combat::CombatEvent& event) noexcept {
@@ -38,9 +47,29 @@ AudioCueMask route_audio_cues(const combat::CombatEvent& event) noexcept {
             : 0;
     case combat::CombatEventKind::player_hit:
         return audio_cue_mask(AudioCue::low);
+    case combat::CombatEventKind::affix_blink_warning:
+        return audio_cue_mask(AudioCue::blink_warning);
+    case combat::CombatEventKind::affix_chain_warning:
+        return audio_cue_mask(AudioCue::chain_warning);
+    case combat::CombatEventKind::affix_death_warning:
+        return audio_cue_mask(AudioCue::death_warning);
     default:
         return 0;
     }
+}
+
+bool WarningAudioThrottle::allow(AudioCue cue, std::uint64_t tick) noexcept {
+    const std::size_t index = warning_cue_index(cue);
+    if (index >= last_ticks_.size()) {
+        return false;
+    }
+    if (!has_last_tick_[index] || tick >= last_ticks_[index] + 12U
+        || tick < last_ticks_[index]) {
+        last_ticks_[index] = tick;
+        has_last_tick_[index] = true;
+        return true;
+    }
+    return false;
 }
 
 CombatAudio::~CombatAudio() noexcept {
@@ -95,12 +124,43 @@ bool CombatAudio::initialize() noexcept {
             * envelope * 12000.0F);
     }
 
+    for (std::size_t index = 0; index < blink_warning_samples_.size(); ++index) {
+        const float progress = static_cast<float>(index)
+            / static_cast<float>(blink_warning_samples_.size());
+        blink_warning_samples_[index] = static_cast<std::int16_t>(
+            std::sin(2.0F * kPi * 880.0F * static_cast<float>(index)
+                / static_cast<float>(kSampleRate))
+            * (1.0F - progress) * 9500.0F);
+    }
+    for (std::size_t index = 0; index < chain_warning_samples_.size(); ++index) {
+        const float progress = static_cast<float>(index)
+            / static_cast<float>(chain_warning_samples_.size());
+        const float time = static_cast<float>(index) / static_cast<float>(kSampleRate);
+        chain_warning_samples_[index] = static_cast<std::int16_t>(
+            (std::sin(2.0F * kPi * 480.0F * time)
+                + std::sin(2.0F * kPi * 960.0F * time) * 0.45F)
+            * (1.0F - progress) * 7500.0F);
+    }
+    for (std::size_t index = 0; index < death_warning_samples_.size(); ++index) {
+        const float progress = static_cast<float>(index)
+            / static_cast<float>(death_warning_samples_.size());
+        death_warning_samples_[index] = static_cast<std::int16_t>(
+            std::sin(2.0F * kPi * 130.0F * static_cast<float>(index)
+                / static_cast<float>(kSampleRate))
+            * (1.0F - progress) * 11500.0F);
+    }
+
     weapon_ = LoadSoundFromWave(make_wave(weapon_samples_));
     for (Sound& voice : material_) {
         voice = LoadSoundFromWave(make_wave(material_samples_));
     }
     low_ = LoadSoundFromWave(make_wave(low_samples_));
-    ready_ = IsSoundValid(weapon_) && IsSoundValid(low_);
+    blink_warning_ = LoadSoundFromWave(make_wave(blink_warning_samples_));
+    chain_warning_ = LoadSoundFromWave(make_wave(chain_warning_samples_));
+    death_warning_ = LoadSoundFromWave(make_wave(death_warning_samples_));
+    ready_ = IsSoundValid(weapon_) && IsSoundValid(low_)
+        && IsSoundValid(blink_warning_) && IsSoundValid(chain_warning_)
+        && IsSoundValid(death_warning_);
     for (const Sound& voice : material_) {
         ready_ = ready_ && IsSoundValid(voice);
     }
@@ -126,6 +186,18 @@ void CombatAudio::consume_event(
     if (has_cue(cues, AudioCue::low)) {
         PlaySound(low_);
     }
+    if (has_cue(cues, AudioCue::blink_warning)
+        && warning_throttle_.allow(AudioCue::blink_warning, event.tick)) {
+        PlaySound(blink_warning_);
+    }
+    if (has_cue(cues, AudioCue::chain_warning)
+        && warning_throttle_.allow(AudioCue::chain_warning, event.tick)) {
+        PlaySound(chain_warning_);
+    }
+    if (has_cue(cues, AudioCue::death_warning)
+        && warning_throttle_.allow(AudioCue::death_warning, event.tick)) {
+        PlaySound(death_warning_);
+    }
 }
 
 void CombatAudio::stop_all() noexcept {
@@ -137,6 +209,9 @@ void CombatAudio::stop_all() noexcept {
         StopSound(voice);
     }
     StopSound(low_);
+    StopSound(blink_warning_);
+    StopSound(chain_warning_);
+    StopSound(death_warning_);
     material_voice_ = 0;
 }
 
@@ -153,8 +228,20 @@ void CombatAudio::shutdown() noexcept {
     if (IsSoundValid(low_)) {
         UnloadSound(low_);
     }
+    if (IsSoundValid(blink_warning_)) {
+        UnloadSound(blink_warning_);
+    }
+    if (IsSoundValid(chain_warning_)) {
+        UnloadSound(chain_warning_);
+    }
+    if (IsSoundValid(death_warning_)) {
+        UnloadSound(death_warning_);
+    }
     weapon_ = Sound{};
     low_ = Sound{};
+    blink_warning_ = Sound{};
+    chain_warning_ = Sound{};
+    death_warning_ = Sound{};
     material_voice_ = 0;
     ready_ = false;
     if (owns_device_ && IsAudioDeviceReady()) {
