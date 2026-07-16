@@ -75,6 +75,14 @@ enum class DamageDelivery : std::uint8_t {
     ground_or_environment,
 };
 
+struct PlayerStatusRuntime final {
+    std::int32_t slow_bp{};
+    std::uint16_t slow_ticks{};
+    int corrosion_damage_per_second{};
+    std::uint16_t corrosion_ticks{};
+    std::uint8_t corrosion_tick_phase{};
+};
+
 struct PlayerCombatBuild final {
     modifiers::PlayerModifierValues values{};
     std::int64_t weapon_physical{};
@@ -345,6 +353,11 @@ struct PlayerSnapshot final {
     std::int32_t evasion_rate_bp{};
     std::uint16_t hurt_ticks{};
     std::uint16_t invulnerability_ticks{};
+    std::int32_t slow_bp{};
+    std::uint16_t slow_ticks{};
+    int corrosion_damage_per_second{};
+    std::uint16_t corrosion_ticks{};
+    std::uint8_t corrosion_tick_phase{};
 };
 
 struct MonsterSnapshot final {

@@ -227,7 +227,9 @@ void CombatWorld::simulate_player(MovementInput movement) noexcept {
     const float air_scale = static_cast<float>(values.air_control)
         / static_cast<float>(modifiers::kFixedOne);
     const float speed = kGroundSpeed * movement_scale
-        * (airborne ? kAirRatio * air_scale : 1.0F);
+        * (airborne ? kAirRatio * air_scale : 1.0F)
+        * static_cast<float>(10000 - std::clamp(player_.status.slow_bp, 0, 10000))
+        / 10000.0F;
     player_.velocity.x = static_cast<float>(x_direction) * speed * diagonal;
     player_.velocity.y = static_cast<float>(y_direction) * speed * diagonal;
     if (x_direction < 0) {

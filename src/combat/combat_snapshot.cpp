@@ -21,6 +21,9 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
         player_.damage_reduction_cap, player_.armor, player_.evasion,
         player_.armor_reduction_bp, player_.evasion_rate_bp,
         player_.hurt_ticks, player_.invulnerability_ticks,
+        player_.status.slow_bp, player_.status.slow_ticks,
+        player_.status.corrosion_damage_per_second,
+        player_.status.corrosion_ticks, player_.status.corrosion_tick_phase,
     };
     for (std::size_t index = 0; index < monsters_.slots().size(); ++index) {
         const MonsterRuntime& monster = monsters_.slots()[index];

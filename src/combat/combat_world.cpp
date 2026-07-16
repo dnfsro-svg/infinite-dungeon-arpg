@@ -1,6 +1,7 @@
 #include "combat/combat_world.hpp"
 
 #include "combat/attack_catalog.hpp"
+#include "combat/monster_affix_catalog.hpp"
 #include "combat/monster_catalog.hpp"
 #include "combat/room_bounds.hpp"
 
@@ -321,6 +322,58 @@ void saturating_increment(std::uint32_t& counter) noexcept {
     }
 }
 
+struct DirectHitAffixValues final {
+    std::int32_t added_water_bp{};
+    std::int32_t slow_bp{};
+    std::uint16_t slow_ticks{};
+    int corrosion_damage{};
+    std::uint16_t corrosion_ticks{};
+};
+
+[[nodiscard]] DirectHitAffixValues direct_hit_affix_values(
+    const MonsterAffixSet& affixes) noexcept {
+    DirectHitAffixValues result{};
+    const std::size_t count = std::min<std::size_t>(
+        affixes.count, affixes.values.size());
+    for (std::size_t index = 0U; index < count; ++index) {
+        const MonsterAffixInstance& instance = affixes.values[index];
+        const MonsterAffixDefinition* definition = monster_affix_definition(
+            instance.id);
+        const std::size_t tier = static_cast<std::size_t>(instance.tier);
+        if (definition == nullptr || tier >= definition->tiers.size()) continue;
+        const MonsterAffixTierValues& values = definition->tiers[tier];
+        if (instance.id == MonsterAffixId::chilling
+            && values.secondary_bp >= result.slow_bp) {
+            result.added_water_bp = values.primary_bp;
+            result.slow_bp = values.secondary_bp;
+            result.slow_ticks = values.duration_ticks;
+        } else if (instance.id == MonsterAffixId::chaos_corrosion
+                   && values.damage >= result.corrosion_damage) {
+            result.corrosion_damage = values.damage;
+            result.corrosion_ticks = values.duration_ticks;
+        }
+    }
+    return result;
+}
+
+[[nodiscard]] int positive_packet_total(DamagePacket packet) noexcept {
+    std::int64_t total{};
+    for (const int amount : packet.amount) {
+        total += std::max(amount, 0);
+    }
+    return static_cast<int>(std::min<std::int64_t>(total,
+        (std::numeric_limits<int>::max)()));
+}
+
+[[nodiscard]] int ceil_basis_points(int value, std::int32_t basis_points) noexcept {
+    if (value <= 0 || basis_points <= 0) return 0;
+    const std::int64_t product = static_cast<std::int64_t>(value)
+        * static_cast<std::int64_t>(basis_points);
+    const std::int64_t rounded = (product + 9999) / 10000;
+    return static_cast<int>(std::min<std::int64_t>(rounded,
+        (std::numeric_limits<int>::max)()));
+}
+
 }  // namespace
 
 CombatWorld::CombatWorld(CombatLabConfig config) noexcept
@@ -344,6 +397,7 @@ bool CombatWorld::queue_action(Action action) noexcept {
 }
 
 void CombatWorld::tick(MovementInput movement) noexcept {
+    tick_player_status();
     const bool player_frozen = player_.hit_stop_ticks != 0;
     const bool player_hurt = player_.hurt_ticks != 0;
     if (player_frozen) {
@@ -571,7 +625,7 @@ std::optional<CombatEvent> CombatWorld::try_pop_event() noexcept {
     return events_.try_pop();
 }
 
-void CombatWorld::apply_player_damage(
+bool CombatWorld::apply_player_damage(
     DamagePacket packet,
     DamageDelivery delivery,
     Vec3 source_position,
@@ -582,19 +636,19 @@ void CombatWorld::apply_player_damage(
         });
     const auto resolved = resolve_player_damage(
         packet, encounter_config_.player_build);
-    if (!resolved.has_value()) return;
+    if (!resolved.has_value()) return false;
 
     if (delivery == DamageDelivery::direct && has_positive_component
         && player_.evasion_rate_bp > 0) {
         const auto roll = evasion_rng_.next_bounded(modifiers::kFixedOne);
         if (roll.has_value()
             && *roll < static_cast<std::uint64_t>(player_.evasion_rate_bp)) {
-            return;
+            return false;
         }
     }
 
     if (*resolved <= 0 || player_.invulnerability_ticks != 0) {
-        return;
+        return false;
     }
     const int damage = *resolved;
 
@@ -624,14 +678,88 @@ void CombatWorld::apply_player_damage(
     hurt_started.position = source_position;
     hurt_started.value = damage;
     emit_event(hurt_started);
+    return true;
 }
 
-void CombatWorld::apply_player_damage(
+bool CombatWorld::apply_player_damage(
     int damage,
     Vec3 source_position,
     FeedbackLevel feedback) noexcept {
-    apply_player_damage(DamagePacket{damage}, DamageDelivery::direct,
-                        source_position, feedback);
+    return apply_player_damage(DamagePacket{damage}, DamageDelivery::direct,
+                               source_position, feedback);
+}
+
+void CombatWorld::apply_monster_direct_hit(
+    std::size_t slot,
+    DamagePacket packet,
+    Vec3 source_position,
+    FeedbackLevel feedback) noexcept {
+    if (slot >= monsters_.slots_.size()) return;
+    const MonsterRuntime& monster = monsters_.slots_[slot];
+    if (!monster.active || monster.hp <= 0
+        || monster.reaction == ReactionState::defeated) return;
+
+    const DirectHitAffixValues values = direct_hit_affix_values(monster.affixes);
+    const int raw_total = positive_packet_total(packet);
+    const int added_water = ceil_basis_points(raw_total, values.added_water_bp);
+    const std::size_t water = modifiers::damage_index(modifiers::DamageType::water);
+    const std::int64_t water_total = static_cast<std::int64_t>(packet.amount[water])
+        + static_cast<std::int64_t>(added_water);
+    packet.amount[water] = static_cast<int>(std::clamp(water_total,
+        static_cast<std::int64_t>((std::numeric_limits<int>::min)()),
+        static_cast<std::int64_t>((std::numeric_limits<int>::max)())));
+
+    if (!apply_player_damage(packet, DamageDelivery::direct, source_position,
+                             feedback)) {
+        return;
+    }
+
+    if (values.slow_bp > player_.status.slow_bp) {
+        player_.status.slow_bp = values.slow_bp;
+        player_.status.slow_ticks = values.slow_ticks;
+    } else if (values.slow_bp == player_.status.slow_bp && values.slow_bp > 0) {
+        player_.status.slow_ticks = values.slow_ticks;
+    } else if (values.slow_bp > 0) {
+        player_.status.slow_ticks = std::max(player_.status.slow_ticks,
+                                             values.slow_ticks);
+    }
+
+    if (values.corrosion_damage > player_.status.corrosion_damage_per_second) {
+        player_.status.corrosion_damage_per_second = values.corrosion_damage;
+        player_.status.corrosion_ticks = values.corrosion_ticks;
+        player_.status.corrosion_tick_phase = 0U;
+    } else if (values.corrosion_damage
+                   == player_.status.corrosion_damage_per_second
+               && values.corrosion_damage > 0) {
+        player_.status.corrosion_ticks = values.corrosion_ticks;
+        player_.status.corrosion_tick_phase = 0U;
+    } else if (values.corrosion_damage > 0) {
+        player_.status.corrosion_ticks = std::max(player_.status.corrosion_ticks,
+                                                   values.corrosion_ticks);
+    }
+}
+
+void CombatWorld::tick_player_status() noexcept {
+    if (player_.status.slow_ticks != 0U) {
+        --player_.status.slow_ticks;
+        if (player_.status.slow_ticks == 0U) player_.status.slow_bp = 0;
+    }
+
+    if (player_.status.corrosion_ticks == 0U) return;
+    --player_.status.corrosion_ticks;
+    ++player_.status.corrosion_tick_phase;
+    if (player_.status.corrosion_tick_phase == 60U) {
+        player_.status.corrosion_tick_phase = 0U;
+        static_cast<void>(apply_player_damage(
+            DamagePacket{{0, 0, 0, 0,
+                player_.status.corrosion_damage_per_second}},
+            DamageDelivery::ground_or_environment, player_.position,
+            FeedbackLevel::medium));
+    }
+    if (player_.status.corrosion_ticks == 0U) {
+        player_.status.corrosion_damage_per_second = 0;
+        player_.status.corrosion_tick_phase = 0U;
+    }
 }
 
 bool CombatWorld::spawn_projectile(
@@ -770,10 +898,9 @@ void CombatWorld::simulate_projectiles() noexcept {
                           || projectile.position.y > room_bounds::max_y;
         const bool expired = projectile.lifetime_ticks == 0;
         if (hit_player) {
-            apply_player_damage(
-                projectile.damage, DamageDelivery::direct,
-                projectile.position,
-                FeedbackLevel::medium);
+            apply_monster_direct_hit(
+                static_cast<std::size_t>(owner.index), projectile.damage,
+                projectile.position, FeedbackLevel::medium);
         }
         if (hit_player || outside || expired) {
             static_cast<void>(projectiles_.destroy(ProjectileHandle{

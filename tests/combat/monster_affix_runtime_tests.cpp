@@ -50,6 +50,21 @@ CombatEncounterConfig normal_encounter(
     return config;
 }
 
+CombatEncounterConfig dual_affixed_encounter(
+    MonsterAffixId id,
+    MonsterAffixTier first_tier,
+    MonsterAffixTier second_tier) noexcept {
+    CombatEncounterConfig config{};
+    config.wave.spawn_count = 2U;
+    config.wave.spawns[0] = MonsterSpawnSpec{
+        MonsterId::chaos_chaser, Vec3{1.0F, 0.0F, 0.0F},
+        one_affix(id, first_tier)};
+    config.wave.spawns[1] = MonsterSpawnSpec{
+        MonsterId::chaos_chaser, Vec3{2.0F, 0.0F, 0.0F},
+        one_affix(id, second_tier)};
+    return config;
+}
+
 void resolve_player_attack(
     CombatWorld& world, Action action = Action::light) noexcept {
     static_cast<void>(world.queue_action(action));
@@ -114,6 +129,16 @@ bool shielding_refills_after_delay(
     world.tick(MovementInput{});
     return world.snapshot().monsters[0].shield
         == world.snapshot().monsters[0].max_shield;
+}
+
+bool wait_for_player_hit(CombatWorld& world, int maximum_ticks) noexcept {
+    for (int tick = 0; tick < maximum_ticks; ++tick) {
+        const PlayerSnapshot before = world.snapshot().player;
+        world.tick(MovementInput{});
+        const PlayerSnapshot after = world.snapshot().player;
+        if (after.hp < before.hp || after.barrier < before.barrier) return true;
+    }
+    return false;
 }
 
 arpg::test::Failure mighty_scales_only_horizontal_launch_impulse() noexcept {
@@ -304,6 +329,80 @@ arpg::test::Failure spawn_spec_is_copied_to_runtime_and_snapshot() noexcept {
     return {};
 }
 
+arpg::test::Failure chilling_direct_hit_adds_water_damage_and_slows_movement() noexcept {
+    CombatWorld world{affixed_encounter(
+        MonsterAffixId::chilling, MonsterAffixTier::m3,
+        MonsterId::chaos_chaser, 0.90F)};
+    const int maximum_hp = world.snapshot().player.max_hp;
+    ARPG_REQUIRE(wait_for_player_hit(world, 30));
+    ARPG_REQUIRE(world.snapshot().player.hp == maximum_hp - 61);
+    ARPG_REQUIRE(world.snapshot().player.slow_bp == 3500);
+    ARPG_REQUIRE(world.snapshot().player.slow_ticks == 120U);
+
+    arpg::test::tick_n(world, 30);
+    const float start_x = world.snapshot().player.position.x;
+    world.tick(MovementInput{1, 0});
+    ARPG_REQUIRE(arpg::test::near(
+        world.snapshot().player.position.x - start_x, 0.0585F, 1.0e-4F));
+
+    CombatWorld refresh{dual_affixed_encounter(
+        MonsterAffixId::chilling, MonsterAffixTier::m1,
+        MonsterAffixTier::m3)};
+    arpg::test::CombatWorldTestAccess::apply_monster_direct_hit(
+        refresh, 0U, DamagePacket{45}, Vec3{}, FeedbackLevel::light);
+    ARPG_REQUIRE(refresh.snapshot().player.slow_bp == 1500);
+    ARPG_REQUIRE(refresh.snapshot().player.slow_ticks == 60U);
+    arpg::test::tick_n(refresh, 30);
+    arpg::test::CombatWorldTestAccess::apply_monster_direct_hit(
+        refresh, 1U, DamagePacket{45}, Vec3{}, FeedbackLevel::light);
+    ARPG_REQUIRE(refresh.snapshot().player.slow_bp == 3500);
+    ARPG_REQUIRE(refresh.snapshot().player.slow_ticks == 120U);
+    arpg::test::tick_n(refresh, 30);
+    arpg::test::CombatWorldTestAccess::apply_monster_direct_hit(
+        refresh, 0U, DamagePacket{45}, Vec3{}, FeedbackLevel::light);
+    ARPG_REQUIRE(refresh.snapshot().player.slow_bp == 3500);
+    ARPG_REQUIRE(refresh.snapshot().player.slow_ticks == 90U);
+    return {};
+}
+
+arpg::test::Failure corrosion_dot_bypasses_evasion_and_uses_chaos_reduction() noexcept {
+    CombatWorld world{affixed_encounter(
+        MonsterAffixId::chaos_corrosion, MonsterAffixTier::m3,
+        MonsterId::chaos_chaser, 0.90F)};
+    const int maximum_hp = world.snapshot().player.max_hp;
+    ARPG_REQUIRE(wait_for_player_hit(world, 30));
+    ARPG_REQUIRE(world.snapshot().player.hp == maximum_hp - 45);
+    ARPG_REQUIRE(world.snapshot().player.corrosion_damage_per_second == 45);
+    ARPG_REQUIRE(world.snapshot().player.corrosion_ticks == 240U);
+
+    PlayerCombatBuild protected_build{};
+    protected_build.values.evasion = 1000000;
+    protected_build.values.damage_reduction[
+        arpg::modifiers::element_index(arpg::modifiers::DamageType::chaos)] = 5000;
+    world.apply_player_build(protected_build);
+    arpg::test::tick_n(world, 60);
+    ARPG_REQUIRE(world.snapshot().player.hp == maximum_hp - 68);
+
+    CombatWorld refresh{dual_affixed_encounter(
+        MonsterAffixId::chaos_corrosion, MonsterAffixTier::m1,
+        MonsterAffixTier::m3)};
+    arpg::test::CombatWorldTestAccess::apply_monster_direct_hit(
+        refresh, 0U, DamagePacket{45}, Vec3{}, FeedbackLevel::light);
+    ARPG_REQUIRE(refresh.snapshot().player.corrosion_damage_per_second == 20);
+    ARPG_REQUIRE(refresh.snapshot().player.corrosion_ticks == 120U);
+    arpg::test::tick_n(refresh, 30);
+    arpg::test::CombatWorldTestAccess::apply_monster_direct_hit(
+        refresh, 1U, DamagePacket{45}, Vec3{}, FeedbackLevel::light);
+    ARPG_REQUIRE(refresh.snapshot().player.corrosion_damage_per_second == 45);
+    ARPG_REQUIRE(refresh.snapshot().player.corrosion_ticks == 240U);
+    arpg::test::tick_n(refresh, 30);
+    arpg::test::CombatWorldTestAccess::apply_monster_direct_hit(
+        refresh, 0U, DamagePacket{45}, Vec3{}, FeedbackLevel::light);
+    ARPG_REQUIRE(refresh.snapshot().player.corrosion_damage_per_second == 45);
+    ARPG_REQUIRE(refresh.snapshot().player.corrosion_ticks == 210U);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"mighty horizontal launch only", &mighty_scales_only_horizontal_launch_impulse},
     {"frenzy damage and non-active timing", &frenzy_scales_damage_and_only_non_active_timing},
@@ -312,6 +411,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"shielding recharge delay and reset", &shielding_recharges_once_after_tier_delay_and_hit_resets_timer},
     {"frozen static affix projection", &frozen_catalog_projects_static_affix_values},
     {"spawn spec runtime snapshot copy", &spawn_spec_is_copied_to_runtime_and_snapshot},
+    {"chilling direct water and slow", &chilling_direct_hit_adds_water_damage_and_slows_movement},
+    {"corrosion dot delivery and reduction", &corrosion_dot_bypasses_evasion_and_uses_chaos_reduction},
 };
 
 }  // namespace

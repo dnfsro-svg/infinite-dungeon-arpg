@@ -85,6 +85,15 @@ struct CombatWorldTestAccess final {
             world.monsters_.slots_[index].shield = shield;
         }
     }
+
+    static void apply_monster_direct_hit(
+        combat::CombatWorld& world,
+        std::size_t slot,
+        combat::DamagePacket packet,
+        combat::Vec3 source_position,
+        combat::FeedbackLevel feedback) noexcept {
+        world.apply_monster_direct_hit(slot, packet, source_position, feedback);
+    }
 };
 
 inline void tick_n(

@@ -57,6 +57,7 @@ private:
         std::int32_t evasion_rate_bp{};
         std::uint16_t hurt_ticks{};
         std::uint16_t invulnerability_ticks{};
+        PlayerStatusRuntime status{};
     };
 
     struct AttackRuntime final {
@@ -81,13 +82,19 @@ private:
     void respawn_dummy(std::size_t index) noexcept;
     void apply_attack_assist(const AttackDefinition& definition) noexcept;
     void resolve_attack_hits() noexcept;
-    void apply_player_damage(
+    bool apply_player_damage(
         DamagePacket damage,
         DamageDelivery delivery,
         Vec3 source_position,
         FeedbackLevel feedback) noexcept;
-    void apply_player_damage(
+    bool apply_player_damage(
         int damage, Vec3 source_position, FeedbackLevel feedback) noexcept;
+    void apply_monster_direct_hit(
+        std::size_t slot,
+        DamagePacket packet,
+        Vec3 source_position,
+        FeedbackLevel feedback) noexcept;
+    void tick_player_status() noexcept;
     [[nodiscard]] bool spawn_projectile(
         MonsterHandle owner,
         Vec3 position,
