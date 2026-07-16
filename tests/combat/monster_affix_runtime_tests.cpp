@@ -8,6 +8,7 @@
 #include "combat/monster_pool.hpp"
 #include "modifiers/damage_types.hpp"
 
+#include <array>
 #include <cmath>
 #include <type_traits>
 
@@ -55,16 +56,6 @@ void resolve_player_attack(
     arpg::test::tick_n(world, 20);
 }
 
-int ticks_until_active(CombatWorld& world) noexcept {
-    for (int tick = 0; tick < 100; ++tick) {
-        world.tick(MovementInput{});
-        if (world.snapshot().monsters[0].ai_phase == MonsterAiPhase::active) {
-            return tick + 1;
-        }
-    }
-    return 0;
-}
-
 bool hit_monster_once(CombatWorld& world) noexcept {
     const int hp_before = world.snapshot().monsters[0].hp;
     if (!world.queue_action(Action::light)) return false;
@@ -73,6 +64,41 @@ bool hit_monster_once(CombatWorld& world) noexcept {
         if (world.snapshot().monsters[0].hp < hp_before) return true;
     }
     return false;
+}
+
+bool has_phase_timing(
+    MonsterAffixId id,
+    MonsterAffixTier tier,
+    std::uint16_t telegraph_ticks,
+    std::uint16_t active_ticks,
+    std::uint16_t recovery_ticks,
+    std::uint16_t cooldown_ticks) noexcept {
+    CombatWorld world{affixed_encounter(id, tier, MonsterId::chaos_chaser, 0.90F)};
+    world.tick(MovementInput{});
+    const auto ticks_in_phase = [&world](MonsterAiPhase expected) noexcept {
+        int ticks = 0;
+        while (ticks < 200
+               && world.snapshot().monsters[0].ai_phase == expected) {
+            world.tick(MovementInput{});
+            ++ticks;
+        }
+        return ticks;
+    };
+    if (world.snapshot().monsters[0].ai_phase != MonsterAiPhase::telegraph
+        || ticks_in_phase(MonsterAiPhase::telegraph) != telegraph_ticks
+        || world.snapshot().monsters[0].ai_phase != MonsterAiPhase::active) {
+        return false;
+    }
+    if (ticks_in_phase(MonsterAiPhase::active) != active_ticks
+        || world.snapshot().monsters[0].ai_phase != MonsterAiPhase::recovery) {
+        return false;
+    }
+    if (ticks_in_phase(MonsterAiPhase::recovery) != recovery_ticks
+        || world.snapshot().monsters[0].ai_phase != MonsterAiPhase::cooldown) {
+        return false;
+    }
+    return ticks_in_phase(MonsterAiPhase::cooldown) == cooldown_ticks
+        && world.snapshot().monsters[0].ai_phase == MonsterAiPhase::move;
 }
 
 bool shielding_refills_after_delay(
@@ -108,62 +134,86 @@ arpg::test::Failure mighty_scales_only_horizontal_launch_impulse() noexcept {
 }
 
 arpg::test::Failure frenzy_scales_damage_and_only_non_active_timing() noexcept {
-    CombatWorld normal{normal_encounter(MonsterId::chaos_chaser, 0.90F)};
-    CombatWorld m1{affixed_encounter(
-        MonsterAffixId::frenzy, MonsterAffixTier::m1, MonsterId::chaos_chaser,
-        0.90F)};
-    CombatWorld m2{affixed_encounter(
-        MonsterAffixId::frenzy, MonsterAffixTier::m2, MonsterId::chaos_chaser,
-        0.90F)};
-    CombatWorld m3{affixed_encounter(
-        MonsterAffixId::frenzy, MonsterAffixTier::m3, MonsterId::chaos_chaser,
-        0.90F)};
-    ARPG_REQUIRE(ticks_until_active(normal) == 13);
-    ARPG_REQUIRE(ticks_until_active(m1) == 12);
-    ARPG_REQUIRE(ticks_until_active(m2) == 11);
-    ARPG_REQUIRE(ticks_until_active(m3) == 10);
-    arpg::test::tick_n(normal, 7);
-    arpg::test::tick_n(m1, 7);
-    arpg::test::tick_n(m2, 7);
-    arpg::test::tick_n(m3, 7);
-    ARPG_REQUIRE(normal.snapshot().player.max_hp - normal.snapshot().player.hp == 45);
-    ARPG_REQUIRE(m1.snapshot().player.max_hp - m1.snapshot().player.hp == 51);
-    ARPG_REQUIRE(m2.snapshot().player.max_hp - m2.snapshot().player.hp == 58);
-    ARPG_REQUIRE(m3.snapshot().player.max_hp - m3.snapshot().player.hp == 67);
+    const MonsterDefinition* const chaser = monster_definition(
+        MonsterId::chaos_chaser);
+    ARPG_REQUIRE(chaser != nullptr);
+    const MonsterAffixProfile m1 = evaluate_monster_affixes(
+        *chaser, one_affix(MonsterAffixId::frenzy, MonsterAffixTier::m1));
+    const MonsterAffixProfile m2 = evaluate_monster_affixes(
+        *chaser, one_affix(MonsterAffixId::frenzy, MonsterAffixTier::m2));
+    const MonsterAffixProfile m3 = evaluate_monster_affixes(
+        *chaser, one_affix(MonsterAffixId::frenzy, MonsterAffixTier::m3));
+    ARPG_REQUIRE(scaled_monster_damage(100, m1) == 115);
+    ARPG_REQUIRE(scaled_monster_damage(100, m2) == 130);
+    ARPG_REQUIRE(scaled_monster_damage(100, m3) == 150);
+    ARPG_REQUIRE(has_phase_timing(
+        MonsterAffixId::frenzy, MonsterAffixTier::m1, 11U, 4U, 17U, 38U));
+    ARPG_REQUIRE(has_phase_timing(
+        MonsterAffixId::frenzy, MonsterAffixTier::m2, 10U, 4U, 15U, 34U));
+    ARPG_REQUIRE(has_phase_timing(
+        MonsterAffixId::frenzy, MonsterAffixTier::m3, 9U, 4U, 13U, 30U));
     return {};
 }
 
 arpg::test::Failure swift_scales_only_move_and_cooldown() noexcept {
-    CombatWorld normal{normal_encounter(MonsterId::chaos_chaser, 3.0F)};
-    CombatWorld swift{affixed_encounter(
-        MonsterAffixId::swift, MonsterAffixTier::m3, MonsterId::chaos_chaser,
-        3.0F)};
-    const float normal_start = normal.snapshot().monsters[0].position.x;
-    const float swift_start = swift.snapshot().monsters[0].position.x;
-    normal.tick(MovementInput{});
-    swift.tick(MovementInput{});
-    const MonsterSnapshot normal_after = normal.snapshot().monsters[0];
-    const MonsterSnapshot swift_after = swift.snapshot().monsters[0];
-    ARPG_REQUIRE(arpg::test::near(
-        swift_start - swift_after.position.x,
-        (normal_start - normal_after.position.x) * 1.45F, 1.0e-4));
-    ARPG_REQUIRE(normal_after.ai_phase == MonsterAiPhase::move);
-    ARPG_REQUIRE(swift_after.ai_phase == MonsterAiPhase::move);
+    constexpr std::array<MonsterAffixTier, 3> kTiers{{
+        MonsterAffixTier::m1, MonsterAffixTier::m2, MonsterAffixTier::m3}};
+    constexpr std::array<float, 3> kMoveMultipliers{{1.15F, 1.30F, 1.45F}};
+    constexpr std::array<std::uint16_t, 3> kCooldownTicks{{39U, 36U, 32U}};
+    for (std::size_t index = 0U; index < kTiers.size(); ++index) {
+        CombatWorld normal{normal_encounter(MonsterId::chaos_chaser, 3.0F)};
+        CombatWorld swift{affixed_encounter(
+            MonsterAffixId::swift, kTiers[index], MonsterId::chaos_chaser,
+            3.0F)};
+        const float normal_start = normal.snapshot().monsters[0].position.x;
+        const float swift_start = swift.snapshot().monsters[0].position.x;
+        normal.tick(MovementInput{});
+        swift.tick(MovementInput{});
+        const MonsterSnapshot normal_after = normal.snapshot().monsters[0];
+        const MonsterSnapshot swift_after = swift.snapshot().monsters[0];
+        ARPG_REQUIRE(arpg::test::near(
+            swift_start - swift_after.position.x,
+            (normal_start - normal_after.position.x) * kMoveMultipliers[index],
+            1.0e-4));
+        ARPG_REQUIRE(normal_after.ai_phase == MonsterAiPhase::move);
+        ARPG_REQUIRE(swift_after.ai_phase == MonsterAiPhase::move);
+        ARPG_REQUIRE(has_phase_timing(
+            MonsterAffixId::swift, kTiers[index], 12U, 4U, 18U,
+            kCooldownTicks[index]));
+    }
     return {};
 }
 
 arpg::test::Failure armored_reduces_only_physical_hp_damage() noexcept {
-    CombatWorld physical_normal{normal_encounter()};
-    CombatWorld physical_armored{affixed_encounter(
-        MonsterAffixId::armored, MonsterAffixTier::m3)};
+    CombatEncounterConfig physical_config = normal_encounter();
+    physical_config.player_build.weapon_physical = 17;
+    CombatEncounterConfig physical_armored_config = physical_config;
+    physical_armored_config.wave.spawns[0].affixes = one_affix(
+        MonsterAffixId::armored, MonsterAffixTier::m3);
+    CombatWorld physical_normal{physical_config};
+    CombatWorld physical_armored{physical_armored_config};
     resolve_player_attack(physical_normal);
     resolve_player_attack(physical_armored);
     const MonsterSnapshot normal_after = physical_normal.snapshot().monsters[0];
     const MonsterSnapshot armored_after = physical_armored.snapshot().monsters[0];
+    ARPG_REQUIRE(normal_after.max_hp - normal_after.hp == 45);
+    ARPG_REQUIRE(armored_after.max_hp - armored_after.hp == 30);
     ARPG_REQUIRE(armored_after.break_value == normal_after.break_value);
-    ARPG_REQUIRE(armored_after.hp > normal_after.hp);
+    ARPG_REQUIRE(armored_after.hp == normal_after.hp + 15);
 
-    CombatEncounterConfig elemental_config = normal_encounter();
+    CombatEncounterConfig break_config = normal_encounter(MonsterId::water_bulwark);
+    break_config.player_build.weapon_physical = 17;
+    CombatEncounterConfig break_armored_config = break_config;
+    break_armored_config.wave.spawns[0].affixes = one_affix(
+        MonsterAffixId::armored, MonsterAffixTier::m3);
+    CombatWorld break_normal{break_config};
+    CombatWorld break_armored{break_armored_config};
+    resolve_player_attack(break_normal);
+    resolve_player_attack(break_armored);
+    ARPG_REQUIRE(break_normal.snapshot().monsters[0].break_value == 110);
+    ARPG_REQUIRE(break_armored.snapshot().monsters[0].break_value == 110);
+
+    CombatEncounterConfig elemental_config = physical_config;
     elemental_config.player_build.values.flat_damage[
         arpg::modifiers::damage_index(arpg::modifiers::DamageType::fire)] = 100000;
     CombatEncounterConfig elemental_armored_config = elemental_config;
@@ -173,10 +223,12 @@ arpg::test::Failure armored_reduces_only_physical_hp_damage() noexcept {
     CombatWorld elemental_armored{elemental_armored_config};
     resolve_player_attack(elemental_normal);
     resolve_player_attack(elemental_armored);
-    const int physical_reduction = normal_after.hp - armored_after.hp;
-    ARPG_REQUIRE(elemental_normal.snapshot().monsters[0].hp
-                 - elemental_armored.snapshot().monsters[0].hp
-                 == physical_reduction);
+    ARPG_REQUIRE(elemental_normal.snapshot().monsters[0].max_hp
+                 - elemental_normal.snapshot().monsters[0].hp == 55);
+    ARPG_REQUIRE(elemental_armored.snapshot().monsters[0].max_hp
+                 - elemental_armored.snapshot().monsters[0].hp == 40);
+    ARPG_REQUIRE(elemental_normal.snapshot().monsters[0].break_value
+                 == elemental_armored.snapshot().monsters[0].break_value);
     return {};
 }
 

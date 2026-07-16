@@ -17,10 +17,9 @@ namespace {
 constexpr std::uint16_t kBreakWindowTicks = 180;
 constexpr std::int32_t kBasisPoints = 10000;
 
-int ceil_divide(int value, std::int32_t divisor) noexcept {
-    if (value <= 0 || divisor <= 0) return 0;
-    return static_cast<int>((static_cast<std::int64_t>(value)
-        + divisor - 1) / divisor);
+int ceil_divide(std::int64_t numerator, std::int32_t divisor) noexcept {
+    if (numerator <= 0 || divisor <= 0) return 0;
+    return static_cast<int>((numerator + divisor - 1) / divisor);
 }
 
 std::uint16_t hit_stop_for(FeedbackLevel feedback) noexcept {
@@ -145,8 +144,11 @@ void CombatWorld::resolve_attack_hits() noexcept {
                 const std::int32_t reduction_bp =
                     arpg::modifiers::rating_to_basis_points(
                         dummy.affix_profile.armor_rating);
-                value = ceil_divide(value,
-                    kBasisPoints - std::clamp(reduction_bp, 0, kBasisPoints));
+                const std::int32_t remaining_bp = kBasisPoints
+                    - std::clamp(reduction_bp, 0, kBasisPoints);
+                value = ceil_divide(
+                    static_cast<std::int64_t>(value) * remaining_bp,
+                    kBasisPoints);
             }
             hp_damage += value;
         }
