@@ -308,6 +308,15 @@ bool valid_abyss_source_detail(std::uint16_t detail_id) noexcept {
         abyss::AbyssRuleId::life_sacrifice);
 }
 
+bool valid_hazard_source_detail(std::uint16_t detail_id) noexcept {
+    return detail_id <= static_cast<std::uint16_t>(
+        HazardKind::chaos_expansion);
+}
+
+bool valid_affix_source_detail(std::uint16_t detail_id) noexcept {
+    return detail_id < static_cast<std::uint16_t>(MonsterAffixId::count);
+}
+
 PlayerDamageSource canonical_player_damage_source(
     PlayerDamageSource source) noexcept {
     switch (source.kind) {
@@ -317,8 +326,12 @@ PlayerDamageSource canonical_player_damage_source(
         source.detail_id = 0U;
         return source;
     case PlayerDamageSourceKind::ground_hazard:
+        return valid_monster_source(source.monster)
+            && valid_hazard_source_detail(source.detail_id)
+            ? source : PlayerDamageSource{};
     case PlayerDamageSourceKind::monster_affix:
         return valid_monster_source(source.monster)
+            && valid_affix_source_detail(source.detail_id)
             ? source : PlayerDamageSource{};
     case PlayerDamageSourceKind::abyss_environment:
         if (!valid_abyss_source_detail(source.detail_id)) return {};

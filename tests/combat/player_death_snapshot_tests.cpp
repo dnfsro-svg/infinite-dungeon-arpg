@@ -284,6 +284,26 @@ arpg::test::Failure malformed_sources_are_canonicalized_at_entry() noexcept {
     return {};
 }
 
+arpg::test::Failure invalid_ground_hazard_detail_is_unknown() noexcept {
+    const PlayerDamageSource actual = canonicalized(source(
+        PlayerDamageSourceKind::ground_hazard,
+        MonsterId::chaos_hazard, 0xFFFFU));
+    ARPG_REQUIRE(actual.kind == PlayerDamageSourceKind::unknown);
+    ARPG_REQUIRE(actual.monster == MonsterId::count);
+    ARPG_REQUIRE(actual.detail_id == 0U);
+    return {};
+}
+
+arpg::test::Failure invalid_monster_affix_detail_is_unknown() noexcept {
+    const PlayerDamageSource actual = canonicalized(source(
+        PlayerDamageSourceKind::monster_affix,
+        MonsterId::fire_charger, 0xFFFFU));
+    ARPG_REQUIRE(actual.kind == PlayerDamageSourceKind::unknown);
+    ARPG_REQUIRE(actual.monster == MonsterId::count);
+    ARPG_REQUIRE(actual.detail_id == 0U);
+    return {};
+}
+
 arpg::test::Failure invalid_projectile_owner_never_damages_player() noexcept {
     CombatWorld world{one_monster(
         MonsterId::lightning_shooter, Vec3{4.0F, 0.0F, 0.0F})};
@@ -559,6 +579,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"death blast real source", &death_blast_reports_defeated_owner_source},
     {"abyss real source", &abyss_environment_reports_rule_and_no_monster},
     {"canonical malformed sources", &malformed_sources_are_canonicalized_at_entry},
+    {"invalid ground hazard detail", &invalid_ground_hazard_detail_is_unknown},
+    {"invalid monster affix detail", &invalid_monster_affix_detail_is_unknown},
     {"invalid projectile owner", &invalid_projectile_owner_never_damages_player},
     {"evasion excluded from history", &evasion_does_not_enter_recent_damage},
     {"corrosion keeps source", &delayed_corrosion_keeps_the_affix_owner_source},
