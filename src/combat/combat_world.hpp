@@ -79,6 +79,10 @@ private:
     void simulate_projectiles() noexcept;
     void simulate_hazards() noexcept;
     void simulate_abyss_environment() noexcept;
+    [[nodiscard]] static DamagePacket environment_damage_packet(
+        int actual_max_hp,
+        std::uint16_t basis_points,
+        modifiers::DamageType damage_type) noexcept;
     void resolve_monster_contact_attack(std::size_t slot) noexcept;
     void apply_dummy_impact(
         std::size_t index,
@@ -147,7 +151,9 @@ private:
         std::uint16_t telegraph_ticks,
         std::uint16_t active_ticks,
         std::uint16_t damage_interval_ticks,
-        DamagePacket damage) noexcept;
+        DamagePacket damage,
+        std::uint16_t environment_damage_bp,
+        modifiers::DamageType environment_damage_type) noexcept;
     void remove_monster_hazards() noexcept;
     void remove_environment_hazards() noexcept;
     void tick_active_affixes(std::size_t slot, MonsterRuntime& monster) noexcept;

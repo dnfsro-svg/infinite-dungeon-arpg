@@ -49,6 +49,25 @@ std::size_t drain_player_hits(
     return count;
 }
 
+std::size_t drain_player_hit_values(
+    CombatWorld& world,
+    std::array<int, 16U>& values) noexcept {
+    std::size_t count = 0U;
+    while (const auto event = world.try_pop_event()) {
+        if (event->kind != CombatEventKind::player_hit) continue;
+        if (count < values.size()) values[count] = event->value;
+        ++count;
+    }
+    return count;
+}
+
+PlayerCombatBuild build_for_max_hp(int maximum) noexcept {
+    PlayerCombatBuild build{};
+    build.values.max_health = static_cast<std::int64_t>(maximum - 1000)
+        * arpg::modifiers::kFixedOne;
+    return build;
+}
+
 CombatEncounterConfig environment_encounter(
     arpg::abyss::AbyssRuleId rule) noexcept {
     CombatEncounterConfig config{};
@@ -81,6 +100,9 @@ arpg::test::Failure chaos_region_exists_when_challenge_begins() noexcept {
     ARPG_REQUIRE(hazard->lifetime_ticks
         == (std::numeric_limits<std::uint16_t>::max)());
     ARPG_REQUIRE(hazard->damage_interval_ticks == 60U);
+    ARPG_REQUIRE(hazard->environment_damage_bp == 800U);
+    ARPG_REQUIRE(hazard->environment_damage_type
+        == arpg::modifiers::DamageType::chaos);
     const std::size_t chaos = arpg::modifiers::damage_index(
         arpg::modifiers::DamageType::chaos);
     for (std::size_t index = 0U; index < hazard->damage.amount.size(); ++index) {
@@ -88,6 +110,128 @@ arpg::test::Failure chaos_region_exists_when_challenge_begins() noexcept {
             == (index == chaos ? 8 : 0));
     }
     static_assert(std::is_trivially_copyable_v<AbyssEnvironmentRuntime>);
+    return {};
+}
+
+arpg::test::Failure chaos_damage_tracks_current_actual_max_hp() noexcept {
+    CombatEncounterConfig config{};
+    config.abyss = arpg::abyss::combat_config_for(
+        arpg::abyss::AbyssRuleId::chaos_expansion);
+    config.player_build = build_for_max_hp(1001);
+    CombatWorld world{config};
+    std::array<int, 16U> values{};
+
+    world.tick({});
+    ARPG_REQUIRE(drain_player_hit_values(world, values) == 1U);
+    ARPG_REQUIRE(values[0] == 81);
+
+    world.apply_player_build(build_for_max_hp(1101));
+    const HazardSnapshot* raised = find_environment_hazard(
+        world.snapshot(), HazardKind::chaos_expansion);
+    ARPG_REQUIRE(raised != nullptr);
+    ARPG_REQUIRE(raised->damage.amount[arpg::modifiers::damage_index(
+        arpg::modifiers::DamageType::chaos)] == 89);
+    arpg::test::tick_n(world, 59);
+    world.tick({});
+    ARPG_REQUIRE(drain_player_hit_values(world, values) == 1U);
+    ARPG_REQUIRE(values[0] == 89);
+
+    world.apply_player_build(build_for_max_hp(1001));
+    arpg::test::tick_n(world, 59);
+    world.tick({});
+    ARPG_REQUIRE(drain_player_hit_values(world, values) == 1U);
+    ARPG_REQUIRE(values[0] == 81);
+    return {};
+}
+
+arpg::test::Failure warning_damage_tracks_activation_max_hp() noexcept {
+    CombatEncounterConfig hunting{};
+    hunting.abyss = arpg::abyss::combat_config_for(
+        arpg::abyss::AbyssRuleId::hunting_flames);
+    hunting.player_build = build_for_max_hp(1001);
+    CombatWorld hunting_world{hunting};
+    arpg::test::tick_n(hunting_world, 240);
+    hunting_world.tick({});
+    hunting_world.apply_player_build(build_for_max_hp(1101));
+    const HazardSnapshot* hunting_warning = find_environment_hazard(
+        hunting_world.snapshot(), HazardKind::hunting_flame);
+    ARPG_REQUIRE(hunting_warning != nullptr);
+    ARPG_REQUIRE(hunting_warning->environment_damage_bp == 1000U);
+    ARPG_REQUIRE(hunting_warning->environment_damage_type
+        == arpg::modifiers::DamageType::fire);
+    ARPG_REQUIRE(hunting_warning->damage.amount[
+        arpg::modifiers::damage_index(arpg::modifiers::DamageType::fire)]
+        == 111);
+    arpg::test::tick_n(hunting_world, 44);
+    hunting_world.tick({});
+    std::array<int, 16U> values{};
+    ARPG_REQUIRE(drain_player_hit_values(hunting_world, values) == 1U);
+    ARPG_REQUIRE(values[0] == 111);
+
+    CombatEncounterConfig thunder{};
+    thunder.abyss = arpg::abyss::combat_config_for(
+        arpg::abyss::AbyssRuleId::thunderstorm);
+    thunder.player_build = build_for_max_hp(1101);
+    CombatWorld thunder_world{thunder};
+    arpg::test::tick_n(thunder_world, 180);
+    thunder_world.tick({});
+    thunder_world.apply_player_build(build_for_max_hp(1001));
+    const HazardSnapshot* thunder_warning = find_environment_hazard(
+        thunder_world.snapshot(), HazardKind::thunderstorm);
+    ARPG_REQUIRE(thunder_warning != nullptr);
+    ARPG_REQUIRE(thunder_warning->environment_damage_bp == 1500U);
+    ARPG_REQUIRE(thunder_warning->environment_damage_type
+        == arpg::modifiers::DamageType::lightning);
+    ARPG_REQUIRE(thunder_warning->damage.amount[
+        arpg::modifiers::damage_index(arpg::modifiers::DamageType::lightning)]
+        == 151);
+    arpg::test::tick_n(thunder_world, 44);
+    thunder_world.tick({});
+    ARPG_REQUIRE(drain_player_hit_values(thunder_world, values) == 1U);
+    ARPG_REQUIRE(values[0] == 151);
+    return {};
+}
+
+bool environment_point_hits(float radius, Vec3 point) noexcept {
+    CombatEncounterConfig config{};
+    config.player_spawn = point;
+    config.abyss = arpg::abyss::combat_config_for(
+        arpg::abyss::AbyssRuleId::chaos_expansion);
+    config.abyss.player_max_health_bp = 1000U;
+    config.abyss.environment.radius_milliunits[0] =
+        static_cast<std::uint16_t>(radius * 1000.0F);
+    CombatWorld world{config};
+    world.tick({});
+    std::array<int, 16U> values{};
+    return drain_player_hit_values(world, values) == 1U;
+}
+
+arpg::test::Failure environment_uses_ground_plane_circle() noexcept {
+    struct RadiusCase final {
+        float radius;
+        float diagonal;
+    };
+    constexpr std::array<RadiusCase, 3U> cases{{
+        {0.8F, 0.6F}, {1.0F, 0.8F}, {6.2F, 4.4F}}};
+    for (const RadiusCase test : cases) {
+        ARPG_REQUIRE(environment_point_hits(
+            test.radius, Vec3{test.radius - 0.01F, 0.0F, 0.0F}));
+        ARPG_REQUIRE(!environment_point_hits(
+            test.radius, Vec3{test.radius + 0.01F, 0.0F, 0.0F}));
+        ARPG_REQUIRE(!environment_point_hits(
+            test.radius, Vec3{test.diagonal, test.diagonal, 0.0F}));
+    }
+    return {};
+}
+
+arpg::test::Failure hazard_pool_rejects_invalid_source_enum() noexcept {
+    HazardPool pool{};
+    const auto handle = pool.spawn(
+        static_cast<HazardSource>(0xFFU), MonsterHandle{},
+        HazardKind::native, Vec3{}, 1.0F, 0U, 1U, 1U,
+        DamagePacket{1}, false);
+    ARPG_REQUIRE(!handle.has_value());
+    ARPG_REQUIRE(pool.active_count() == 0U);
     return {};
 }
 
@@ -307,6 +451,69 @@ arpg::test::Failure full_pool_rejects_once_then_next_cycle_spawns() noexcept {
     return {};
 }
 
+void fill_monster_hazard_world(CombatWorld& world) noexcept {
+    arpg::test::CombatWorldTestAccess::freeze_monster_ai(world, 0U, 1000U);
+    const MonsterSnapshot monster = world.snapshot().monsters[0];
+    arpg::test::CombatWorldTestAccess::fill_hazards(
+        world, MonsterHandle{0U, monster.generation});
+}
+
+arpg::test::Failure chaos_full_at_zero_retries_at_first_expansion() noexcept {
+    CombatEncounterConfig config{};
+    config.wave.spawn_count = 1U;
+    config.wave.spawns[0] = MonsterSpawnSpec{
+        MonsterId::chaos_chaser, Vec3{8.0F, 3.0F, 0.0F}};
+    CombatWorld world{config};
+    fill_monster_hazard_world(world);
+    arpg::test::CombatWorldTestAccess::activate_abyss_environment(
+        world, arpg::abyss::combat_config_for(
+            arpg::abyss::AbyssRuleId::chaos_expansion));
+    ARPG_REQUIRE(world.snapshot().hazard_count == kHazardCapacity);
+    ARPG_REQUIRE(environment_hazard_count(world.snapshot()) == 0U);
+    ARPG_REQUIRE(world.snapshot().diagnostics.hazard_saturation_count == 1U);
+
+    ARPG_REQUIRE(arpg::test::CombatWorldTestAccess::destroy_hazard_at(
+        world, 0U));
+    arpg::test::tick_n(world, 180);
+    ARPG_REQUIRE(environment_hazard_count(world.snapshot()) == 0U);
+    world.tick({});
+    const CombatSnapshot recovered = world.snapshot();
+    ARPG_REQUIRE(recovered.diagnostics.hazard_saturation_count == 1U);
+    const HazardSnapshot* chaos = find_environment_hazard(
+        recovered, HazardKind::chaos_expansion);
+    ARPG_REQUIRE(chaos != nullptr);
+    ARPG_REQUIRE(chaos->radius == 2.3F);
+    return {};
+}
+
+arpg::test::Failure hunting_full_at_240_recovers_at_480() noexcept {
+    CombatEncounterConfig config = environment_encounter(
+        arpg::abyss::AbyssRuleId::hunting_flames);
+    config.wave.spawn_count = 1U;
+    config.wave.spawns[0] = MonsterSpawnSpec{
+        MonsterId::chaos_chaser, Vec3{8.0F, 3.0F, 0.0F}};
+    CombatWorld world{config};
+    arpg::test::CombatWorldTestAccess::freeze_monster_ai(world, 0U, 1000U);
+    const MonsterSnapshot monster = world.snapshot().monsters[0];
+    arpg::test::CombatWorldTestAccess::fill_hazards(
+        world, MonsterHandle{0U, monster.generation});
+
+    arpg::test::tick_n(world, 240);
+    world.tick({});
+    ARPG_REQUIRE(environment_hazard_count(world.snapshot()) == 0U);
+    ARPG_REQUIRE(world.snapshot().diagnostics.hazard_saturation_count == 1U);
+    ARPG_REQUIRE(arpg::test::CombatWorldTestAccess::destroy_hazard_at(
+        world, 0U));
+    arpg::test::tick_n(world, 239);
+    ARPG_REQUIRE(environment_hazard_count(world.snapshot()) == 0U);
+    world.tick({});
+    const CombatSnapshot recovered = world.snapshot();
+    ARPG_REQUIRE(recovered.diagnostics.hazard_saturation_count == 1U);
+    ARPG_REQUIRE(find_environment_hazard(
+        recovered, HazardKind::hunting_flame) != nullptr);
+    return {};
+}
+
 arpg::test::Failure monster_cleanup_keeps_environment_hazard() noexcept {
     CombatEncounterConfig config = environment_encounter(
         arpg::abyss::AbyssRuleId::chaos_expansion);
@@ -357,20 +564,39 @@ arpg::test::Failure clear_api_stops_and_removes_environment() noexcept {
 }
 
 arpg::test::Failure six_hundred_ticks_allocate_nothing() noexcept {
-    CombatWorld world{environment_encounter(
-        arpg::abyss::AbyssRuleId::chaos_expansion)};
+    CombatEncounterConfig config = environment_encounter(
+        arpg::abyss::AbyssRuleId::hunting_flames);
+    config.wave.spawn_count = 1U;
+    config.wave.spawns[0] = MonsterSpawnSpec{
+        MonsterId::chaos_chaser, Vec3{8.0F, 3.0F, 0.0F}};
+    CombatWorld world{config};
+    arpg::test::CombatWorldTestAccess::freeze_monster_ai(world, 0U, 1000U);
+    const MonsterSnapshot monster = world.snapshot().monsters[0];
+    arpg::test::CombatWorldTestAccess::fill_hazards(
+        world, MonsterHandle{0U, monster.generation}, kHazardCapacity - 1U);
     const std::uint64_t before = arpg::test::allocation_count();
     for (int tick = 0; tick < 600; ++tick) {
         world.tick({});
         static_cast<void>(world.snapshot());
     }
     ARPG_REQUIRE(arpg::test::allocation_count() == before);
+    ARPG_REQUIRE(world.snapshot().hazard_count == kHazardCapacity);
+    ARPG_REQUIRE(environment_hazard_count(world.snapshot()) == 1U);
+    ARPG_REQUIRE(world.snapshot().diagnostics.hazard_saturation_count == 0U);
     return {};
 }
 
 constexpr arpg::test::TestCase kCases[] = {
     {"chaos region exists at tick zero",
      &chaos_region_exists_when_challenge_begins},
+    {"chaos tracks current actual max hp",
+     &chaos_damage_tracks_current_actual_max_hp},
+    {"warning tracks activation max hp",
+     &warning_damage_tracks_activation_max_hp},
+    {"environment ground plane circle",
+     &environment_uses_ground_plane_circle},
+    {"hazard pool rejects invalid source",
+     &hazard_pool_rejects_invalid_source_enum},
     {"chaos expands and damages on fixed ticks",
      &chaos_expands_and_damages_on_locked_ticks},
     {"thunderstorm fixed warning hit and end",
@@ -383,6 +609,10 @@ constexpr arpg::test::TestCase kCases[] = {
      &runtime_consumes_environment_config_values},
     {"full pool rejects then next cycle spawns",
      &full_pool_rejects_once_then_next_cycle_spawns},
+    {"chaos full at zero retries at expansion",
+     &chaos_full_at_zero_retries_at_first_expansion},
+    {"hunting full at 240 recovers at 480",
+     &hunting_full_at_240_recovers_at_480},
     {"monster cleanup keeps environment",
      &monster_cleanup_keeps_environment_hazard},
     {"wave reload keeps environment",

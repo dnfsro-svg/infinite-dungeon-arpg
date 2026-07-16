@@ -111,7 +111,9 @@ bool same_hazard(
         && left.damage_interval_ticks == right.damage_interval_ticks
         && left.player_latched == right.player_latched
         && left.persists_after_owner_death == right.persists_after_owner_death
-        && same_packet(left.damage, right.damage);
+        && same_packet(left.damage, right.damage)
+        && left.environment_damage_bp == right.environment_damage_bp
+        && left.environment_damage_type == right.environment_damage_type;
 }
 
 template <std::size_t Count>

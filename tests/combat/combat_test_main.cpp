@@ -47,5 +47,5 @@ int main() {
         player_defense_suite(),
     };
 
-    return arpg::test::run_suites(suites, 161, "stage 10 task 7 abyss environment");
+    return arpg::test::run_suites(suites, 168, "stage 10 task 7 abyss environment");
 }

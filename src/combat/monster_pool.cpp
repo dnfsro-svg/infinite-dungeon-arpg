@@ -323,8 +323,12 @@ std::optional<HazardHandle> HazardPool::spawn(
     std::uint16_t active_ticks,
     std::uint16_t damage_interval_ticks,
     DamagePacket damage,
-    bool persists_after_owner_death) noexcept {
-    if ((source == HazardSource::monster
+    bool persists_after_owner_death,
+    std::uint16_t environment_damage_bp,
+    modifiers::DamageType environment_damage_type) noexcept {
+    if ((source != HazardSource::monster
+         && source != HazardSource::abyss_environment)
+        || (source == HazardSource::monster
          && (owner.index >= kMonsterCapacity || owner.generation == 0U))
         || radius <= 0.0F || active_ticks == 0U) {
         return std::nullopt;
@@ -355,6 +359,8 @@ std::optional<HazardHandle> HazardPool::spawn(
             ? 1U : damage_interval_ticks;
         runtime.damage = damage;
         runtime.persists_after_owner_death = persists_after_owner_death;
+        runtime.environment_damage_bp = environment_damage_bp;
+        runtime.environment_damage_type = environment_damage_type;
         ++active_count_;
         return HazardHandle{static_cast<std::uint16_t>(index), generation};
     }

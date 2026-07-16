@@ -88,12 +88,29 @@ struct CombatWorldTestAccess final {
     static void fill_hazards(
         combat::CombatWorld& world,
         combat::MonsterHandle owner) noexcept {
-        for (std::size_t index = 0; index < combat::kHazardCapacity;
-             ++index) {
+        fill_hazards(world, owner, combat::kHazardCapacity);
+    }
+
+    static void fill_hazards(
+        combat::CombatWorld& world,
+        combat::MonsterHandle owner,
+        std::size_t count) noexcept {
+        for (std::size_t index = 0; index < count; ++index) {
             static_cast<void>(world.spawn_hazard(
                 owner, combat::HazardKind::native, combat::Vec3{}, 1.0F,
                 1000U, 1000U, 30U, 1));
         }
+    }
+
+    static void activate_abyss_environment(
+        combat::CombatWorld& world,
+        abyss::AbyssCombatConfig config) noexcept {
+        world.encounter_config_.abyss = config;
+        world.abyss_environment_ = {};
+        world.abyss_environment_.rule = config.rule;
+        world.abyss_environment_.active = config.environment.active;
+        world.abyss_environment_.expansion_stage = 0xFFU;
+        world.simulate_abyss_environment();
     }
 
     static void set_saturation_counts(

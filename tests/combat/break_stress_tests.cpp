@@ -549,17 +549,46 @@ bool same_hazards(
         if (a.active != b.active || a.generation != b.generation
                 || a.owner.index != b.owner.index
                 || a.owner.generation != b.owner.generation
+                || a.source != b.source || a.kind != b.kind
                 || !vec_equal(a.center, b.center) || a.radius != b.radius
                 || a.telegraph_ticks != b.telegraph_ticks
                 || a.active_ticks != b.active_ticks
                 || a.lifetime_ticks != b.lifetime_ticks
                 || a.damage_interval_ticks != b.damage_interval_ticks
                 || a.player_latched != b.player_latched
+                || a.persists_after_owner_death
+                    != b.persists_after_owner_death
+                || a.environment_damage_bp != b.environment_damage_bp
+                || a.environment_damage_type != b.environment_damage_type
                 || a.damage != b.damage) {
             return false;
         }
     }
     return true;
+}
+
+arpg::test::Failure hazard_snapshot_comparison_covers_public_fields() noexcept {
+    CombatSnapshot left{};
+    left.hazard_count = 1U;
+    left.hazards[0].active = true;
+    CombatSnapshot right = left;
+
+    right.hazards[0].source = HazardSource::abyss_environment;
+    ARPG_REQUIRE(!same_hazards(left, right));
+    right = left;
+    right.hazards[0].kind = HazardKind::thunderstorm;
+    ARPG_REQUIRE(!same_hazards(left, right));
+    right = left;
+    right.hazards[0].persists_after_owner_death = true;
+    ARPG_REQUIRE(!same_hazards(left, right));
+    right = left;
+    right.hazards[0].environment_damage_bp = 1500U;
+    ARPG_REQUIRE(!same_hazards(left, right));
+    right = left;
+    right.hazards[0].environment_damage_type =
+        arpg::modifiers::DamageType::lightning;
+    ARPG_REQUIRE(!same_hazards(left, right));
+    return {};
 }
 
 bool same_snapshot(
@@ -877,6 +906,8 @@ constexpr arpg::test::TestCase kCases[] = {
      &all_monster_roles_tick_without_allocation_or_overflow},
     {"full pools reject without mutation and saturate diagnostics",
      &full_pools_reject_without_mutation_and_saturate_diagnostics},
+    {"hazard snapshot comparison covers public fields",
+     &hazard_snapshot_comparison_covers_public_fields},
 };
 
 }  // namespace

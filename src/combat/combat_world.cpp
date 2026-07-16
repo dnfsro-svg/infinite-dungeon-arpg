@@ -1254,10 +1254,19 @@ void CombatWorld::simulate_hazards() noexcept {
             const float dx = hazard.center.x - player_.position.x;
             const float dy = hazard.center.y - player_.position.y;
             const float dz = hazard.center.z - player_.position.z;
-            const bool intersects = std::fabs(dx) <= hazard.radius + kPlayerRadiusX
-                && std::fabs(dy) <= hazard.radius + kPlayerRadiusY
-                && std::fabs(dz) <= hazard.radius + kPlayerRadiusZ;
+            const bool intersects = hazard.source
+                    == HazardSource::abyss_environment
+                ? player_.position.z == 0.0F
+                    && dx * dx + dy * dy <= hazard.radius * hazard.radius
+                : std::fabs(dx) <= hazard.radius + kPlayerRadiusX
+                    && std::fabs(dy) <= hazard.radius + kPlayerRadiusY
+                    && std::fabs(dz) <= hazard.radius + kPlayerRadiusZ;
             if (intersects && !hazard.player_latched) {
+                if (hazard.source == HazardSource::abyss_environment) {
+                    hazard.damage = environment_damage_packet(
+                        player_.max_hp, hazard.environment_damage_bp,
+                        hazard.environment_damage_type);
+                }
                 apply_player_damage(hazard.damage,
                                     DamageDelivery::ground_or_environment,
                                     hazard.center,

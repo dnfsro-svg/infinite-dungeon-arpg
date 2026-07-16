@@ -120,3 +120,59 @@ CombatWorld 在处理逻辑 tick `T` 后把 snapshot 的 `tick` 增为 `T+1`。�
 - 无已知 Task 7 功能缺口。
 - 本任务没有把 clear API 接到 dungeon clear lifecycle；这是 Task 8 范围。
 - renderer/UI 尚未消费新增 snapshot 字段；这是 Task 11 范围。
+
+---
+
+## 审查修复：动态 maxHP、圆形环境边界与覆盖补强
+
+### 审查结论与范围
+
+- 修复 2 个 Important：环境伤害从 spawn 时固化改为每次真实相交尝试按当前 actual maxHP 重算；environment source 从 monster AABB 分离为接地平面圆。
+- 修复 3 个 Minor：拒绝非法 `HazardSource`；补 Chaos/Hunting 饱和恢复与近满池 600 tick；补 break-stress hazard snapshot 全字段比较。
+- 未提前接 Dungeon clear lifecycle 或 renderer；Task 8/11 边界不变。
+
+### TDD RED 证据
+
+1. renderer-facing API RED：新增测试先引用 `HazardSnapshot::environment_damage_bp` 与 `environment_damage_type`，MSVC 明确因两个成员不存在而编译失败。
+2. 加入固定字段透传、但未改行为后的 RED：`165 cases, 4 failures`：
+   - Chaos 换装到 maxHP 1101 后 snapshot 仍显示旧 1001 maxHP 的 81，而非 89。
+   - Hunting warning 期间换装后仍显示旧 fire packet，而非激活时应有的 111。
+   - radius 外轴点仍被旧 player-extent AABB 命中。
+   - `static_cast<HazardSource>(0xFF)` 仍能绕过 monster owner 验证并占池。
+3. Minor comparator RED：先加入饱和/近满池测试并撤回 comparator 修复；输出 `168 cases, 1 failure`，`same_hazards` 把 source 不同的 snapshot 误判为相同。
+
+### GREEN：动态伤害与 snapshot 契约
+
+- `HazardRuntime` 与 `HazardSnapshot` 固定保存 `environment_damage_bp` 和 `environment_damage_type`；monster source 默认是 `0/physical`，不改变既有缓存 packet。
+- 环境 hazard 每次满足圆形相交且 interval latch 已释放时，先调用 Task 1 的 `percent_of_actual_max_hp(current player_.max_hp, bp)` 重建严格单元素 packet，再进入统一 `apply_player_damage`。
+- 即便命中被共享 invulnerability 拦截，本次“尝试”也使用当前 maxHP packet 并照常进入 interval latch，语义与此前 i-frame 约束一致。
+- `CombatWorld::snapshot()` 对 environment source 也按当前 `player_.max_hp` 生成 `visible_damage`，并同时暴露 bp/type；Task 11 无需从 rule ID 猜伤害。
+- 动态测试锁定：
+  - Chaos actual maxHP `1001 -> 1101 -> 1001`，相邻 60 tick 成功事件值 `81 -> 89 -> 81`。
+  - Hunting t240 warning 后 `1001 -> 1101`，warning snapshot 与 t285 激活均为 fire `111`。
+  - Thunder t180 warning 后 `1101 -> 1001`，warning snapshot 与 t225 激活均为 lightning `151`，覆盖 ceil rounding。
+
+### GREEN：环境圆形碰撞
+
+- monster source 保留原有 player extents + 三轴 AABB，Stage 9 行为不漂移。
+- environment source 要求玩家 `z == 0`，并只计算 ground-plane `dx*dx + dy*dy <= radius*radius`；z 不作为平面距离，player capsule extents 不膨胀环境半径。
+- 对 `0.8 / 1.0 / 6.2` 三档分别测试：轴上 `radius-0.01` 命中、`radius+0.01` 不命中，以及矩形内但圆外的对角点不命中。
+
+### GREEN：pool、饱和与零分配
+
+- `HazardPool::spawn` 仅接受 `monster` 与 `abyss_environment` 两个 source 枚举；未知值在 owner/pool mutation 前直接 `nullopt`，active count 保持 0。
+- Chaos tick0 满池：仅 saturation `+1`；释放槽后 t1..179 不重试，t180 以 radius 2.3 正常恢复，计数仍为 1。
+- Hunting t240 满池：仅 saturation `+1`；释放槽后 t241..479 不重试，t480 正常生成 warning，计数仍为 1。
+- 600 tick allocation probe 改为真实 near-full 场景：95 个 monster hazards + Hunting t240 spawn、t464 end、t480 repeat；每 tick 同时调用 `tick()`/`snapshot()`，allocation delta 仍为 0，最终 96 槽、1 个 environment、0 saturation。
+
+### GREEN：snapshot comparator
+
+- `break_stress_tests.cpp::same_hazards` 现在比较 owner、source、kind、center/radius、全部时序字段、latch、`persists_after_owner_death`、damage、environment bp/type。
+- 独立测试逐项变更 source、kind、persistence、bp、type，均必须判为不相等。
+- `monster_affix_trigger_tests.cpp` 的固定数组 comparator 同步比较 bp/type。
+
+### 审查修复验证
+
+- Combat fresh：`arpg_combat_tests.exe`，`168 cases, 0 failures`，exit 0。
+- Dungeon fresh：完整 executable 回归含 1000-room stress，`161 cases, 0 failures`，exit 0。
+- Architecture fresh：`ctest -L architecture --output-on-failure`，`20/20` passed，0 failures，exit 0。

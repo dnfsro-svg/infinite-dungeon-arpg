@@ -227,6 +227,9 @@ struct HazardRuntime final {
     bool player_latched{};
     bool persists_after_owner_death{};
     DamagePacket damage{};
+    std::uint16_t environment_damage_bp{};
+    modifiers::DamageType environment_damage_type{
+        modifiers::DamageType::physical};
 };
 
 struct AbyssEnvironmentRuntime final {
@@ -464,6 +467,9 @@ struct HazardSnapshot final {
     bool player_latched{};
     bool persists_after_owner_death{};
     DamagePacket damage{};
+    std::uint16_t environment_damage_bp{};
+    modifiers::DamageType environment_damage_type{
+        modifiers::DamageType::physical};
 };
 
 // Temporary presentation alias for pre-Task 3 dungeon tests. Task 8 removes

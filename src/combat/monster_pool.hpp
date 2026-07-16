@@ -140,7 +140,10 @@ public:
         std::uint16_t active_ticks,
         std::uint16_t damage_interval_ticks,
         DamagePacket damage,
-        bool persists_after_owner_death = false) noexcept;
+        bool persists_after_owner_death = false,
+        std::uint16_t environment_damage_bp = 0U,
+        modifiers::DamageType environment_damage_type =
+            modifiers::DamageType::physical) noexcept;
     [[nodiscard]] std::optional<HazardHandle> spawn(
         MonsterHandle owner,
         HazardKind kind,
