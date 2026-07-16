@@ -2,7 +2,7 @@
 
 - 验证日期：2026-07-16
 - 分支：`codex/stage10-abyss-combat`
-- 验证基线：`a7e0fc6`
+- 最终代码与测试基线：`9269811`
 - 工具链：MSVC 19.44.35228.0、Windows SDK 10.0.26100.0、CMake/Ninja、raylib 6.0.0
 - 范围：设计文档第 4～14 节；Task 13 简报中的“第 4～18 节”是过时编号，源规格不存在第 15～18 节，因此本记录按实际源规格完整审计到第 14 节，不虚构额外章节。
 
@@ -17,7 +17,7 @@ rg -n '#include <raylib.h>|#include "raylib.h"' src/core src/abyss src/combat sr
 
 ## CTest 清单与双配置全量结果
 
-`ctest --preset windows-msvc-debug -N` 与配置完成后的 Release 清单均为 42 项。Stage 9 / `main` 基线有 33 项；Stage 10 增加 6 个正向项（Task 1 的 `abyss.units`，以及 Task 12 的 fixture、validation game、formal game、stress、正向 evidence guard），Task 12 后续再增加 3 个 `WILL_FAIL` 反向守卫，因此实际总数为 `33 + 6 + 3 = 42`。旧计划的 38 漏算了 Task 1 的 `abyss.units`，也未包含后增的 3 个负向项。证据守卫共四项：
+`ctest --preset windows-msvc-debug -N` 与配置完成后的 Release 清单均为 43 项。Stage 9 / `main` 基线有 33 项；Stage 10 增加 7 个正向项（Task 1 的 `abyss.units`，Task 12 的 fixture、validation game、formal game、stress、正向 evidence guard，以及最终审查新增的截图内容验证器），另有 3 个 `WILL_FAIL` 反向守卫，因此实际总数为 `33 + 7 + 3 = 43`。旧计划的 38 漏算了 Task 1 的 `abyss.units`，也未包含后增的 3 个负向项和截图内容验证器。证据守卫仍为四项，另有一项正向内容验证器 `stage10.formal_game.capture_content_validator`：
 
 - `stage10.evidence.no_private_injection`
 - `stage10.evidence.rejects_private_injection`
@@ -36,12 +36,12 @@ cmake --build --preset windows-msvc-release
 ctest --preset windows-msvc-release --output-on-failure
 ```
 
-| 配置 | 配置耗时 | 全构建 | 全量 CTest | 结果 |
+| 配置 | 配置 | 构建 | 全量 CTest | 结果 |
 | --- | ---: | ---: | ---: | --- |
-| Debug | 1.29s | 1.53s | 238.70s | 42/42，0 失败 |
-| Release | 3.34s | 48.69s（fresh，220 步） | 161.80s | 42/42，0 失败 |
+| Debug | 成功 | 成功（目标已是最新） | 231.59s | 43/43，0 失败 |
+| Release | 成功 | 成功（最终修复后重建 17 步） | 157.05s | 43/43，0 失败 |
 
-Debug/Release 均为完整构建，不是目标子集。Debug 最慢项 `dungeon.units` 为 147.49s；Release 为 79.50s。
+Debug/Release 均通过仓库固定脚本重新配置、构建并运行完整清单，不是目标子集。Debug 最慢项 `dungeon.units` 为 147.79s；Release 为 78.50s。Stage 10 标签在两种配置下均为 9/9。
 
 ## 独立压力与正式 raylib 证据
 
@@ -53,7 +53,7 @@ Debug/Release 均为完整构建，不是目标子集。Debug 最慢项 `dungeon
 ctest --preset windows-msvc-debug -R '^stage10\.abyss_stress\.determinism_and_zero_alloc$' -V
 ```
 
-- 退出码：0；外部计时：0.12s；CTest 测试时间：0.07s。
+- 退出码：0；最终 Debug 全量中的 CTest 测试时间：0.06s。
 - 两个同根 session 运行 1000 房；每 37 房做 V5 encode/decode，共 27 次重载。
 - 四向深渊命中：`9/11/9/7`，合计 `36/4000`；概率宽护栏为 `20..70`。
 - 最终 golden hash：`0xe102b17e6423351b`。
@@ -68,20 +68,20 @@ ctest --preset windows-msvc-debug -R '^stage10\.abyss_stress\.determinism_and_ze
 ctest --preset windows-msvc-debug -R '^stage10\.formal_game\.capture_after_present$' -V
 ```
 
-- 退出码：0；外部计时：12.53s；CTest 测试时间：12.49s。
+- 退出码：0；最终 Debug 全量中的 CTest 测试时间：10.13s。
 - 真实路径：死亡 `PASS`、R 重置 `PASS`、`started` 重启失败 `PASS`、深渊与下层洞共存并下层 `PASS`。
 - 截图目录：`E:\game\.worktrees\stage10-abyss-combat\out\build\windows-msvc-debug\bin\stage10-formal-game-validation`。
-- 护栏：每图必须是刚生成的 1280×720 PNG；按 16 像素步长采样至少 20 种颜色且至少 100 个非背景样本。
+- 护栏：每图必须是刚生成的 1280×720 PNG；按 16 像素步长采样至少 100 个非背景样本，并满足至少 20 种颜色，或满足低色深场景的复合结构判据（至少 8 色、200 次空间转变、亮度范围至少 12000）。独立内容验证器同时证明 19 色结构图被接受、真实背景空白图以非零退出码被拒绝。
 
-| 截图 | 内容 | 采样色 | 非背景样本 |
-| --- | --- | ---: | ---: |
-| `01-abyss-door.png` | 四向门深渊标记 | 31 | 3461 |
-| `02-thunderstorm-warning.png` | 雷暴预警 | 21 | 3600 |
-| `03-hunting-flames-warning.png` | 追猎烈焰预警 | 28 | 3600 |
-| `04-chaos-expansion.png` | 混沌扩散区域 | 44 | 3600 |
-| `05-reward-chest.png` | 宝箱奖励 | 42 | 3600 |
-| `06-pending-reward.png` | 待生成奖励提示 | 42 | 3600 |
-| `07-exit-confirmation.png` | 离房二次确认 | 52 | 3600 |
+| 截图 | 内容 | 采样色 | 非背景样本 | 空间转变 | 亮度范围 |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `01-abyss-door.png` | 四向门深渊标记 | 33 | 3504 | 882 | 234860 |
+| `02-thunderstorm-warning.png` | 雷暴预警 | 21 | 3600 | 949 | 36729 |
+| `03-hunting-flames-warning.png` | 追猎烈焰预警 | 26 | 3600 | 887 | 61458 |
+| `04-chaos-expansion.png` | 混沌扩散区域 | 43 | 3600 | 1060 | 218434 |
+| `05-reward-chest.png` | 宝箱奖励 | 38 | 3600 | 874 | 133705 |
+| `06-pending-reward.png` | 待生成奖励提示 | 40 | 3600 | 893 | 150662 |
+| `07-exit-confirmation.png` | 离房二次确认 | 41 | 3600 | 956 | 190049 |
 
 洞路径落盘摘要为：`depth=2`、`is_abyss=0`、`last_transition=descent`、`resolution_valid=1`、`total=2`、`generated=2`、`claimed=0`、`abandoned=0`。
 
@@ -96,7 +96,7 @@ ctest --preset windows-msvc-debug -R '^stage10\.formal_game\.capture_after_prese
 
 四张截图均位于被忽略的 `out/manual-qa-20260716`，不提交。路径动作本身由自动化正式 raylib 窗口执行；人工环节是独立复核最终落盘状态和基本输入，不声称人工完整重演死亡、R、started 重启与洞下层四条动作。
 
-真实事务 fixture 另以以下命令独立重跑，退出码 0、0.12s：
+真实事务 fixture 另以以下命令独立重跑；最终 Debug 全量中退出码 0、CTest 测试时间 0.07s：
 
 ```powershell
 ctest --preset windows-msvc-debug -R '^stage10\.validation_fixture\.real_abyss_transactions$' -V
@@ -117,8 +117,8 @@ ctest --preset windows-msvc-debug -R '^stage10\.validation_fixture\.real_abyss_t
 | §10 模块边界 | abyss 纯计算；dungeon 编排；combat 不读存档；persistence 仅 checkpoint；raylib 只读快照 | 18 个 `architecture.*` 加 1 个 `platform.module_boundary`，合计 19 个模块边界 CTest；`platform.input_latency_source` 另行保护输入延迟源码约束；两条静态 include 扫描；`stage10.evidence.no_private_injection` |
 | §11 原子性与故障矩阵 | start/fail/异常重载/clear/claim/abandon 的失败与不确定发布 | `persistence.units` 的 `abyss start fault matrix is atomic`、`abyss fail fault matrix is atomic`、`abyss claim abandon faults are old or new`；`dungeon.units` 的 start/clear receipt mismatch、not committed、indeterminate、generation/state mismatch 用例 |
 | §12 确定性、容量、性能 | 独立随机域；普通随机不漂移；1000 房重载一致；600 tick 零分配；满池降级 | 独立 stress 的 36/4000、27 次 codec、golden hash；96/384/96/192、600 tick、0 分配；`room_generation.golden seed chain is stable` 与 Stage 9 全量回归 |
-| §13 测试与验收 | 双配置、长程、正式窗口、人工复核 | Debug/Release 42/42；fixture、stress、自动化 formal 正式窗口路径；4 项证据守卫；人工仅独立复核 Release 基本输入和四条路径的最终落盘 HUD，不冒充完整人工重演 |
-| §14 完成边界 | 不进入首领、专属物品、召唤、光环或 Stage 11 | 静态范围扫描、分支日志和本次提交清单；Task 13 只新增 README 与验证记录 |
+| §13 测试与验收 | 双配置、长程、正式窗口、人工复核 | Debug/Release 43/43；fixture、stress、自动化 formal 正式窗口路径；4 项证据守卫与 1 项截图内容验证器；人工仅独立复核 Release 基本输入和四条路径的最终落盘 HUD，不冒充完整人工重演 |
+| §14 完成边界 | 不进入首领、专属物品、召唤、光环或 Stage 11 | 静态范围扫描、分支日志和本次提交清单；最终审查修复仅补强 Stage 10 边界，不扩展 Stage 11 |
 
 ## 十项硬审计
 
@@ -146,4 +146,4 @@ git log --oneline main..HEAD
 git diff --name-only main..HEAD | rg '(^|/)(out|build-release|\.scratch)(/|$)|task3_trace_probe\.obj$|\.png$'
 ```
 
-构建目录、临时存档和正式截图均位于被忽略的 `out/`，不纳入提交。Stage 10 没有发现需要修改 Tasks 1～12 代码的真实缺陷；本 Task 只创建顶层 README（仓库此前不存在 README）和本验证记录。分支停在 Stage 10，不合并 `main`，不推进 Stage 11。
+构建目录、临时存档和正式截图均位于被忽略的 `out/`，不纳入提交。最终全分支审查补强了 V5/Session 深渊来源校验、cleared 房重置防御、提交期间门视觉、共享深渊规则、深层遭遇合法性和 cleared 直接构造防御；Release 验收另推动截图内容验证器改为可证明低色深结构图与真实空白图的复合判据。修复后复审为 Critical/Important/Minor 均 0。分支停在 Stage 10，不合并 `main`，不推进 Stage 11。

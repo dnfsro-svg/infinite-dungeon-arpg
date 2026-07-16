@@ -9,7 +9,7 @@ Stage 10：正式深渊房间战斗。
 - 四扇门分别以固定 1% 概率预告目标深渊房；初始房和下层洞目标不会成为深渊。
 - 深渊采用一次机会生命周期，进入、失败、清场、奖励领取和离房放弃均通过原子存档事务提交。
 - 深渊包含 9 条房间规则、强化遭遇、1～3 件确定性宝箱装备、地面池续发和同门二次离房确认。
-- Debug 与 Release 的 42 项 CTest 均已通过；完整证据见 [Stage 10 验证记录](docs/validation/stage10-abyss-combat.md)。
+- Debug 与 Release 的 43 项 CTest 均已通过；完整证据见 [Stage 10 验证记录](docs/validation/stage10-abyss-combat.md)。
 
 本分支只完成 Stage 10，不包含深渊首领、专属装备/材料、召唤、光环或 Stage 11 内容。
 
