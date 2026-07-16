@@ -49,12 +49,14 @@ void MonsterPool::clear() noexcept {
 }
 
 std::optional<MonsterHandle> MonsterPool::spawn(
-    MonsterId id,
-    Vec3 position) noexcept {
-    const MonsterDefinition* definition = monster_definition(id);
+    const MonsterSpawnSpec& spec) noexcept {
+    const MonsterDefinition* definition = monster_definition(spec.id);
     if (definition == nullptr) {
         return std::nullopt;
     }
+
+    const MonsterAffixProfile profile = evaluate_monster_affixes(
+        *definition, spec.affixes);
 
     for (std::size_t index = 0; index < slots_.size(); ++index) {
         MonsterRuntime& runtime = slots_[index];
@@ -67,18 +69,24 @@ std::optional<MonsterHandle> MonsterPool::spawn(
         runtime = MonsterRuntime{};
         runtime.active = true;
         runtime.generation = generation;
-        runtime.id = id;
-        runtime.kind = kind_for(id);
-        runtime.spawn = position;
-        runtime.position = position;
-        runtime.max_hp = definition->max_hp;
-        runtime.hp = definition->max_hp;
+        runtime.id = spec.id;
+        runtime.affixes = spec.affixes;
+        runtime.spawn_ordinal = spec.spawn_ordinal;
+        runtime.affix_profile = profile;
+        runtime.kind = kind_for(spec.id);
+        runtime.spawn = spec.position;
+        runtime.position = spec.position;
+        runtime.max_hp = profile.max_hp;
+        runtime.hp = profile.max_hp;
         runtime.max_break = definition->max_break;
         runtime.break_value = definition->max_break;
-        runtime.max_shield = definition->shield_points != 0
-            ? definition->shield_points : 90;
-        runtime.max_shield_ticks = definition->shield_duration_ticks != 0
-            ? definition->shield_duration_ticks : 120;
+        runtime.max_shield = profile.max_shield != 0
+            ? profile.max_shield
+            : definition->shield_points != 0 ? definition->shield_points : 90;
+        runtime.max_shield_ticks = profile.shield_recharge_delay_ticks != 0U
+            ? profile.shield_recharge_delay_ticks
+            : definition->shield_duration_ticks != 0
+                ? definition->shield_duration_ticks : 120;
         runtime.shield = 0;
         runtime.shield_ticks = 0;
         runtime.armor = definition->max_break > 0
@@ -88,6 +96,15 @@ std::optional<MonsterHandle> MonsterPool::spawn(
             static_cast<std::uint16_t>(index), generation};
     }
     return std::nullopt;
+}
+
+std::optional<MonsterHandle> MonsterPool::spawn(
+    MonsterId id,
+    Vec3 position) noexcept {
+    MonsterSpawnSpec spec{};
+    spec.id = id;
+    spec.position = position;
+    return spawn(spec);
 }
 
 bool MonsterPool::destroy(MonsterHandle handle) noexcept {

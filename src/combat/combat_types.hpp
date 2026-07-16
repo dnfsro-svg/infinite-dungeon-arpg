@@ -157,6 +157,13 @@ struct MonsterSpawnSpec final {
     std::uint16_t spawn_ordinal{};
 };
 
+enum class MonsterAffixWarning : std::uint8_t {
+    none,
+    blink,
+    chain_lightning,
+    death_blast,
+};
+
 struct MonsterHandle final {
     std::uint16_t index{0xFFFF};
     std::uint16_t generation{};
@@ -344,6 +351,8 @@ struct MonsterSnapshot final {
     bool active{};
     std::uint16_t generation{};
     MonsterId id{MonsterId::chaos_chaser};
+    MonsterAffixSet affixes{};
+    std::uint16_t spawn_ordinal{};
     Vec3 spawn{};
     Vec3 position{};
     Vec3 velocity{};
@@ -364,6 +373,8 @@ struct MonsterSnapshot final {
     MonsterAiPhase ai_phase{MonsterAiPhase::idle};
     Vec3 attack_target_position{};
     Vec3 attack_vector{};
+    MonsterAffixWarning affix_warning{MonsterAffixWarning::none};
+    std::uint16_t affix_warning_ticks{};
 };
 
 struct ProjectileSnapshot final {

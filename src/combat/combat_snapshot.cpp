@@ -25,13 +25,15 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
     for (std::size_t index = 0; index < monsters_.slots().size(); ++index) {
         const MonsterRuntime& monster = monsters_.slots()[index];
         result.monsters[index] = MonsterSnapshot{
-            monster.active, monster.generation, monster.id, monster.spawn,
+            monster.active, monster.generation, monster.id, monster.affixes,
+            monster.spawn_ordinal, monster.spawn,
             monster.position, monster.velocity, monster.kind, monster.facing,
             monster.reaction, monster.armor, monster.hp, monster.max_hp,
             monster.break_value, monster.max_break, monster.shield,
             monster.max_shield, monster.shield_ticks, monster.max_shield_ticks,
             monster.break_window_ticks, monster.hit_stop_ticks, monster.ai_phase,
             monster.attack_target_position, monster.attack_vector,
+            monster.affix_warning, monster.affix_warning_ticks,
         };
     }
     result.monster_count = monsters_.active_count();

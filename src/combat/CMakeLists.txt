@@ -12,6 +12,7 @@ add_library(arpg_combat STATIC
     monster_ai_special.cpp
     monster_affix_catalog.cpp
     monster_affix_generation.cpp
+    monster_affix_runtime.cpp
     monster_catalog.cpp
     monster_pool.cpp
     player_simulation.cpp

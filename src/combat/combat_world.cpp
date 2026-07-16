@@ -506,8 +506,7 @@ bool CombatWorld::load_wave(
     projectiles_.clear();
     hazards_.clear();
     for (std::size_t index = 0; index < wave.spawn_count; ++index) {
-        const auto handle = monsters_.spawn(
-            wave.spawns[index].id, wave.spawns[index].position);
+        const auto handle = monsters_.spawn(wave.spawns[index]);
         if (!handle.has_value()) {
             monsters_.clear();
             return false;

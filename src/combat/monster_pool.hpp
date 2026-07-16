@@ -1,6 +1,7 @@
 #pragma once
 
 #include "combat/combat_types.hpp"
+#include "combat/monster_affix_runtime.hpp"
 
 #include <array>
 #include <cstddef>
@@ -20,6 +21,9 @@ struct MonsterRuntime final {
     bool active{};
     std::uint16_t generation{};
     MonsterId id{MonsterId::chaos_chaser};
+    MonsterAffixSet affixes{};
+    std::uint16_t spawn_ordinal{};
+    MonsterAffixProfile affix_profile{};
     DummyKind kind{DummyKind::normal};
     Vec3 spawn{};
     Vec3 position{};
@@ -40,16 +44,23 @@ struct MonsterRuntime final {
     int max_shield{};
     std::uint16_t shield_ticks{};
     std::uint16_t max_shield_ticks{};
+    std::uint16_t shield_recharge_ticks{};
     std::uint16_t break_window_ticks{};
     std::uint16_t hit_stop_ticks{};
     std::uint16_t owner_transient_counter{};
+    std::uint16_t burning_ground_ticks{};
+    std::uint16_t blink_assault_ticks{};
     Vec3 attack_target_position{};
     Vec3 attack_vector{};
+    MonsterAffixWarning affix_warning{MonsterAffixWarning::none};
+    std::uint16_t affix_warning_ticks{};
 };
 
 class MonsterPool final {
 public:
     void clear() noexcept;
+    [[nodiscard]] std::optional<MonsterHandle> spawn(
+        const MonsterSpawnSpec& spec) noexcept;
     [[nodiscard]] std::optional<MonsterHandle> spawn(
         MonsterId id, Vec3 position) noexcept;
     [[nodiscard]] bool destroy(MonsterHandle handle) noexcept;
