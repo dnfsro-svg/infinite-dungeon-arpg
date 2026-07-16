@@ -1,6 +1,7 @@
 #include "persistence/checkpoint_codec.hpp"
 
 #include "abyss/abyss_rules.hpp"
+#include "abyss/abyss_rewards.hpp"
 #include "passives/passive_tree_rules.hpp"
 #include "progression/progression_rules.hpp"
 #include "items/item_catalog.hpp"
@@ -187,7 +188,8 @@ bool valid_abyss_checkpoint(
             && value.abandoned_mask == 0U
             && value.reward_revision == 0U;
     }
-    return value.reward_total != 0U;
+    return value.reward_total
+        == abyss::reward_profile_for(value.danger, 1U).item_count;
 }
 
 bool valid_last_resolution(
@@ -202,9 +204,14 @@ bool valid_last_resolution(
             && value.claimed == 0U
             && value.abandoned == 0U;
     }
+    const auto danger = abyss::danger_for_rule(value.rule);
+    if (!danger.has_value())
+        return false;
+    const auto expected_total = abyss::reward_profile_for(*danger, 1U).item_count;
     return value.rule != AbyssRuleId::none
         && value.total != 0U
         && value.total <= 3U
+        && value.total == expected_total
         && value.generated <= value.total
         && value.claimed <= value.generated
         && value.abandoned <= value.total

@@ -101,6 +101,27 @@ arpg::test::Failure stable_public_values_and_defaults() noexcept {
     ARPG_REQUIRE(!config.environment.active);
     ARPG_REQUIRE(config.environment.damage_type
         == arpg::modifiers::DamageType::physical);
+    ARPG_REQUIRE(arpg::abyss::danger_for_rule(AbyssRuleId::thunderstorm)
+        == AbyssDanger::low);
+    ARPG_REQUIRE(arpg::abyss::danger_for_rule(AbyssRuleId::swift_pursuit)
+        == AbyssDanger::low);
+    ARPG_REQUIRE(arpg::abyss::danger_for_rule(AbyssRuleId::heavy_steps)
+        == AbyssDanger::low);
+    ARPG_REQUIRE(arpg::abyss::danger_for_rule(AbyssRuleId::hunting_flames)
+        == AbyssDanger::medium);
+    ARPG_REQUIRE(arpg::abyss::danger_for_rule(AbyssRuleId::abyss_bulwark)
+        == AbyssDanger::medium);
+    ARPG_REQUIRE(arpg::abyss::danger_for_rule(AbyssRuleId::exhausted_recovery)
+        == AbyssDanger::medium);
+    ARPG_REQUIRE(arpg::abyss::danger_for_rule(AbyssRuleId::chaos_expansion)
+        == AbyssDanger::high);
+    ARPG_REQUIRE(arpg::abyss::danger_for_rule(AbyssRuleId::abyss_fury)
+        == AbyssDanger::high);
+    ARPG_REQUIRE(arpg::abyss::danger_for_rule(AbyssRuleId::life_sacrifice)
+        == AbyssDanger::high);
+    ARPG_REQUIRE(!arpg::abyss::danger_for_rule(AbyssRuleId::none).has_value());
+    ARPG_REQUIRE(!arpg::abyss::danger_for_rule(
+        static_cast<AbyssRuleId>(99U)).has_value());
     return {};
 }
 

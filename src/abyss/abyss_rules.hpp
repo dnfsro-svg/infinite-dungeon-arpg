@@ -11,6 +11,8 @@ namespace arpg::abyss {
 [[nodiscard]] std::optional<AbyssSelection> select_abyss_rule(
     std::uint64_t room_seed,
     std::uint64_t depth) noexcept;
+[[nodiscard]] std::optional<AbyssDanger> danger_for_rule(
+    AbyssRuleId rule) noexcept;
 [[nodiscard]] std::uint8_t abyss_encounter_budget(
     std::uint8_t normal_budget) noexcept;
 [[nodiscard]] std::uint8_t minimum_abyss_affixes(

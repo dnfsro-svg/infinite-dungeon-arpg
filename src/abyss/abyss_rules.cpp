@@ -60,25 +60,6 @@ bool valid_rule(AbyssRuleId rule) noexcept {
         <= static_cast<std::uint8_t>(AbyssRuleId::life_sacrifice);
 }
 
-AbyssDanger danger_for_rule(AbyssRuleId rule) noexcept {
-    switch (rule) {
-    case AbyssRuleId::thunderstorm:
-    case AbyssRuleId::swift_pursuit:
-    case AbyssRuleId::heavy_steps:
-        return AbyssDanger::low;
-    case AbyssRuleId::hunting_flames:
-    case AbyssRuleId::abyss_bulwark:
-    case AbyssRuleId::exhausted_recovery:
-        return AbyssDanger::medium;
-    case AbyssRuleId::chaos_expansion:
-    case AbyssRuleId::abyss_fury:
-    case AbyssRuleId::life_sacrifice:
-        return AbyssDanger::high;
-    default:
-        return AbyssDanger::low;
-    }
-}
-
 }  // namespace
 
 bool is_abyss_roll(std::uint64_t room_seed) noexcept {
@@ -107,6 +88,25 @@ std::optional<AbyssSelection> select_abyss_rule(
         danger_roll, weights_for_depth(depth));
     return AbyssSelection{
         danger, rule_for_slot(danger, rule_slot), kAbyssRulesVersion};
+}
+
+std::optional<AbyssDanger> danger_for_rule(AbyssRuleId rule) noexcept {
+    switch (rule) {
+    case AbyssRuleId::thunderstorm:
+    case AbyssRuleId::swift_pursuit:
+    case AbyssRuleId::heavy_steps:
+        return AbyssDanger::low;
+    case AbyssRuleId::hunting_flames:
+    case AbyssRuleId::abyss_bulwark:
+    case AbyssRuleId::exhausted_recovery:
+        return AbyssDanger::medium;
+    case AbyssRuleId::chaos_expansion:
+    case AbyssRuleId::abyss_fury:
+    case AbyssRuleId::life_sacrifice:
+        return AbyssDanger::high;
+    default:
+        return std::nullopt;
+    }
 }
 
 std::uint8_t abyss_encounter_budget(
@@ -159,7 +159,7 @@ AbyssCombatConfig combat_config_for(AbyssRuleId rule) noexcept {
     AbyssCombatConfig config{};
     if (!valid_rule(rule)) return config;
     config.rule = rule;
-    config.danger = danger_for_rule(rule);
+    config.danger = danger_for_rule(rule).value_or(AbyssDanger::low);
     switch (rule) {
     case AbyssRuleId::thunderstorm:
         config.environment.active = true;
