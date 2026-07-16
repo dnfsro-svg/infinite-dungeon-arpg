@@ -18,6 +18,13 @@ struct DungeonSessionTestAccess;
 
 namespace arpg::dungeon {
 
+[[nodiscard]] std::uint16_t affix_drop_chance_bp(
+    std::uint16_t score) noexcept;
+[[nodiscard]] std::uint8_t affix_item_level(
+    std::uint64_t depth, std::uint16_t score) noexcept;
+[[nodiscard]] std::uint64_t affix_experience(
+    std::uint64_t base_experience, std::uint16_t score) noexcept;
+
 class DungeonSession final {
 public:
     static constexpr std::size_t kDungeonEventCapacity = 32;
@@ -75,6 +82,8 @@ private:
     void construct_current_room() noexcept;
     void start_next_wave() noexcept;
     void relay_combat_events() noexcept;
+    [[nodiscard]] bool claim_defeat_reward(
+        const combat::CombatEvent& event) noexcept;
     void roll_ground_drop(const combat::CombatEvent& event) noexcept;
     void settle_room_experience() noexcept;
     void attempt_exit(ExitDirection direction) noexcept;

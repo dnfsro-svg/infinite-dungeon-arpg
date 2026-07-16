@@ -14,7 +14,9 @@ add_executable(arpg_dungeon_tests
     dungeon_transaction_tests.cpp
     encounter_director_tests.cpp
     dungeon_wave_tests.cpp)
-target_sources(arpg_dungeon_tests PRIVATE dungeon_progression_reward_tests.cpp)
+target_sources(arpg_dungeon_tests PRIVATE
+    dungeon_progression_reward_tests.cpp
+    dungeon_affix_reward_tests.cpp)
 
 target_compile_features(arpg_dungeon_tests PRIVATE cxx_std_17)
 target_include_directories(arpg_dungeon_tests

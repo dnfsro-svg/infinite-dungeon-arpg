@@ -76,6 +76,36 @@ void saturating_add(std::uint64_t& value, std::uint64_t addition) noexcept {
 
 }  // namespace
 
+std::uint16_t affix_drop_chance_bp(std::uint16_t score) noexcept {
+    const std::uint32_t chance = 100U
+        + static_cast<std::uint32_t>(score) * 150U;
+    return static_cast<std::uint16_t>(chance > 5000U ? 5000U : chance);
+}
+
+std::uint8_t affix_item_level(
+    std::uint64_t depth, std::uint16_t score) noexcept {
+    if (depth >= 100U) return 100U;
+    const std::uint64_t bonus = std::min<std::uint64_t>(10U,
+        (static_cast<std::uint32_t>(score) + 2U) / 3U);
+    const std::uint64_t level = depth + bonus;
+    return static_cast<std::uint8_t>(level > 100U ? 100U : level);
+}
+
+std::uint64_t affix_experience(
+    std::uint64_t base_experience, std::uint16_t score) noexcept {
+    constexpr std::uint64_t kPercent = 100U;
+    const std::uint64_t multiplier = kPercent
+        + static_cast<std::uint64_t>(score) * 10U;
+    const std::uint64_t whole = base_experience / kPercent;
+    const std::uint64_t remainder = base_experience % kPercent;
+    const std::uint64_t maximum = (std::numeric_limits<std::uint64_t>::max)();
+    if (whole > maximum / multiplier) return maximum;
+    const std::uint64_t scaled_whole = whole * multiplier;
+    const std::uint64_t scaled_remainder = remainder * multiplier / kPercent;
+    return scaled_remainder > maximum - scaled_whole
+        ? maximum : scaled_whole + scaled_remainder;
+}
+
 DungeonSession::DungeonSession(DungeonSessionConfig config) noexcept
     : DungeonSession(DungeonRules{}, initial_state_for(config)) {}
 
@@ -335,18 +365,16 @@ void DungeonSession::relay_combat_events() noexcept {
     }
     while (auto event = combat_->try_pop_event()) {
         if (event->kind == combat::CombatEventKind::defeated
-            && event->reward_eligible) {
-            roll_ground_drop(*event);
-        }
-        if (event->kind == combat::CombatEventKind::defeated
             && event->reward_eligible
-            && event->target_index < combat_->snapshot().monsters.size()) {
-            const combat::MonsterId id = combat_->snapshot()
-                .monsters[event->target_index].id;
-            const std::size_t monster_index = static_cast<std::size_t>(id);
+            && claim_defeat_reward(*event)) {
+            roll_ground_drop(*event);
+            const std::size_t monster_index = static_cast<std::size_t>(
+                event->monster_id);
             if (monster_index < progression_rules_.monster_experience.size()) {
                 saturating_add(pending_room_experience_,
-                    progression_rules_.monster_experience[monster_index]);
+                    affix_experience(
+                        progression_rules_.monster_experience[monster_index],
+                        event->affix_score));
             }
         }
         const bool relayed = combat_events_.try_push(*event);
@@ -359,24 +387,31 @@ void DungeonSession::relay_combat_events() noexcept {
     }
 }
 
-void DungeonSession::roll_ground_drop(
+bool DungeonSession::claim_defeat_reward(
     const combat::CombatEvent& event) noexcept {
-    if (wave_index_ >= encounter_plan_.wave_count) return;
-    const auto& wave = encounter_plan_.waves[wave_index_];
-    if (event.target_index >= wave.spawn_count) return;
-    const std::uint16_t ordinal = static_cast<std::uint16_t>(
-        static_cast<std::uint16_t>(wave_index_) * 96U
-        + event.target_index);
+    const std::uint16_t ordinal = event.spawn_ordinal;
     if (ordinal >= kGroundDropCapacity
             || bit_is_set(stable_state_.item_ownership.claimed_drop_bits, ordinal)
             || bit_is_set(rolled_drop_bits_, ordinal)) {
-        return;
+        return false;
     }
     set_bit(rolled_drop_bits_, ordinal);
+    return true;
+}
+
+void DungeonSession::roll_ground_drop(
+    const combat::CombatEvent& event) noexcept {
+    const std::uint16_t ordinal = event.spawn_ordinal;
+    if (ordinal >= kGroundDropCapacity) return;
 
     auto chance = drop_stream(
         stable_state_.current_room.seed, ordinal, kDropChanceDomain);
-    if (chance.next_bounded(100U).value() != 0U) return;
+    if (event.affix_score == 0U) {
+        if (chance.next_bounded(100U).value() != 0U) return;
+    } else if (chance.next_bounded(10000U).value()
+            >= affix_drop_chance_bp(event.affix_score)) {
+        return;
+    }
 
     auto slot = drop_stream(
         stable_state_.current_room.seed, ordinal, kDropSlotDomain);
@@ -410,7 +445,7 @@ void DungeonSession::roll_ground_drop(
     const auto generated = items::generate_item({
         content.next_u64(),
         static_cast<items::ItemSlot>(slot.next_bounded(6U).value()),
-        static_cast<std::uint8_t>(depth > 100U ? 100U : depth),
+        affix_item_level(depth, event.affix_score),
         item_id,
         std::nullopt,
     });
