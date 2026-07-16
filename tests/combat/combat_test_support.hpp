@@ -28,9 +28,21 @@ struct CombatWorldTestAccess final {
         combat::CombatWorld& world,
         combat::DamagePacket packet,
         combat::DamageDelivery delivery,
+        combat::PlayerDamageSource source,
         combat::Vec3 source_position,
         combat::FeedbackLevel feedback) noexcept {
-        world.apply_player_damage(packet, delivery, source_position, feedback);
+        world.apply_player_damage(
+            packet, delivery, source, source_position, feedback);
+    }
+
+    static void apply_damage(
+        combat::CombatWorld& world,
+        combat::DamagePacket packet,
+        combat::DamageDelivery delivery,
+        combat::Vec3 source_position,
+        combat::FeedbackLevel feedback) noexcept {
+        apply_damage(world, packet, delivery, combat::PlayerDamageSource{},
+                     source_position, feedback);
     }
 
     static void apply_damage(
@@ -157,6 +169,32 @@ struct CombatWorldTestAccess final {
     static void set_player_evasion_rate_bp(
         combat::CombatWorld& world, std::int32_t basis_points) noexcept {
         world.player_.evasion_rate_bp = basis_points;
+    }
+
+    static void set_player_status(
+        combat::CombatWorld& world,
+        combat::PlayerStatusRuntime status) noexcept {
+        world.player_.status = status;
+    }
+
+    static void invalidate_first_hazard_owner(
+        combat::CombatWorld& world) noexcept {
+        for (auto& hazard : world.hazards_.slots()) {
+            if (hazard.active) {
+                hazard.owner = combat::MonsterHandle{};
+                return;
+            }
+        }
+    }
+
+    static bool spawn_hazard(
+        combat::CombatWorld& world,
+        combat::MonsterHandle owner,
+        combat::HazardKind kind,
+        combat::DamagePacket damage,
+        bool persists_after_owner_death = false) noexcept {
+        return world.spawn_hazard(owner, kind, combat::Vec3{}, 2.0F,
+            0U, 10U, 30U, damage, persists_after_owner_death);
     }
 
     static const abyss::AbyssCombatConfig& abyss_config(

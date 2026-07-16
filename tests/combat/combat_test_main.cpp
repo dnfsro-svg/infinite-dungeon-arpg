@@ -21,6 +21,7 @@ arpg::test::TestSuite monster_pool_suite() noexcept;
 arpg::test::TestSuite player_health_suite() noexcept;
 arpg::test::TestSuite player_build_suite() noexcept;
 arpg::test::TestSuite player_damage_history_suite() noexcept;
+arpg::test::TestSuite player_death_snapshot_suite() noexcept;
 arpg::test::TestSuite player_defense_suite() noexcept;
 
 int main() {
@@ -46,8 +47,9 @@ int main() {
         player_health_suite(),
         player_build_suite(),
         player_damage_history_suite(),
+        player_death_snapshot_suite(),
         player_defense_suite(),
     };
 
-    return arpg::test::run_suites(suites, 178, "stage 11-a task 1 player damage history");
+    return arpg::test::run_suites(suites, 188, "stage 11-a task 2 death snapshot");
 }

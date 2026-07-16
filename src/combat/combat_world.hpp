@@ -3,6 +3,7 @@
 #include "combat/combat_types.hpp"
 #include "combat/input_buffer.hpp"
 #include "combat/monster_pool.hpp"
+#include "combat/player_damage_history.hpp"
 #include "core/deterministic_rng.hpp"
 #include "modifiers/effect_set.hpp"
 #include "core/bounded_queue.hpp"
@@ -38,6 +39,8 @@ public:
     [[nodiscard]] CombatSnapshot snapshot() const noexcept;
     [[nodiscard]] std::optional<CombatEvent> try_pop_event() noexcept;
     [[nodiscard]] bool player_defeated() const noexcept;
+    [[nodiscard]] const std::optional<CombatDeathSnapshot>&
+    death_snapshot() const noexcept;
 
 private:
     struct PlayerRuntime final {
@@ -95,6 +98,7 @@ private:
     bool apply_player_damage(
         DamagePacket damage,
         DamageDelivery delivery,
+        PlayerDamageSource source,
         Vec3 source_position,
         FeedbackLevel feedback) noexcept;
     bool apply_player_damage(
@@ -104,7 +108,9 @@ private:
         DamagePacket packet,
         Vec3 source_position,
         FeedbackLevel feedback,
-        bool trigger_chain = true) noexcept;
+        bool trigger_chain = true,
+        PlayerDamageSourceKind source_kind =
+            PlayerDamageSourceKind::monster_attack) noexcept;
     void tick_player_status() noexcept;
     [[nodiscard]] bool spawn_projectile(
         MonsterHandle owner,
@@ -214,6 +220,8 @@ private:
     std::uint32_t hazard_saturation_count_{};
     std::uint32_t hazard_invalid_owner_count_{};
     core::DeterministicRng evasion_rng_{0};
+    PlayerDamageHistory player_damage_history_{};
+    std::optional<CombatDeathSnapshot> death_snapshot_{};
 };
 
 }  // namespace arpg::combat

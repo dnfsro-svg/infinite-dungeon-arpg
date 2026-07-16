@@ -483,6 +483,11 @@ bool CombatWorld::queue_action(Action action) noexcept {
 }
 
 void CombatWorld::tick(MovementInput movement) noexcept {
+    if (death_snapshot_.has_value()) {
+        ++tick_;
+        return;
+    }
+    player_damage_history_.begin_tick(tick_);
     if (player_.hp == 0) {
         attack_ = AttackRuntime{};
         input_buffer_.clear();
@@ -490,6 +495,10 @@ void CombatWorld::tick(MovementInput movement) noexcept {
         return;
     }
     tick_player_status();
+    if (death_snapshot_.has_value()) {
+        ++tick_;
+        return;
+    }
     const bool player_frozen = player_.hit_stop_ticks != 0;
     const bool player_hurt = player_.hurt_ticks != 0;
     if (player_frozen) {
@@ -537,6 +546,10 @@ void CombatWorld::tick(MovementInput movement) noexcept {
             } else {
                 simulate_monster(index);
             }
+            if (death_snapshot_.has_value()) {
+                ++tick_;
+                return;
+            }
         }
     }
 
@@ -545,8 +558,20 @@ void CombatWorld::tick(MovementInput movement) noexcept {
     }
 
     simulate_abyss_environment();
+    if (death_snapshot_.has_value()) {
+        ++tick_;
+        return;
+    }
     simulate_projectiles();
+    if (death_snapshot_.has_value()) {
+        ++tick_;
+        return;
+    }
     simulate_hazards();
+    if (death_snapshot_.has_value()) {
+        ++tick_;
+        return;
+    }
 
     input_buffer_.age(player_frozen || player_hurt);
     ++tick_;
@@ -625,6 +650,8 @@ void CombatWorld::clear_abyss_rule_preserving_resources() noexcept {
 
 void CombatWorld::initialize_runtime() noexcept {
     evasion_rng_ = core::DeterministicRng{encounter_config_.evasion_seed};
+    player_damage_history_ = PlayerDamageHistory{};
+    death_snapshot_.reset();
     initialize_player();
     monsters_.clear();
     for (auto& owner : effect_owners_) owner = {};
@@ -756,6 +783,9 @@ bool CombatWorld::load_wave(
         restore_player_resources(player_.max_hp, player_.max_barrier);
         player_.hurt_ticks = 0;
         player_.invulnerability_ticks = 0;
+        player_damage_history_ = PlayerDamageHistory{};
+        player_damage_history_.begin_tick(tick_);
+        death_snapshot_.reset();
 
         if (health_changed) {
             CombatEvent health_reset{};
@@ -794,19 +824,27 @@ std::optional<CombatEvent> CombatWorld::try_pop_event() noexcept {
 }
 
 bool CombatWorld::player_defeated() const noexcept {
-    return player_.hp == 0;
+    return death_snapshot_.has_value() || player_.hp == 0;
+}
+
+const std::optional<CombatDeathSnapshot>&
+CombatWorld::death_snapshot() const noexcept {
+    return death_snapshot_;
 }
 
 bool CombatWorld::apply_player_damage(
     DamagePacket packet,
     DamageDelivery delivery,
+    PlayerDamageSource source,
     Vec3 source_position,
     FeedbackLevel feedback) noexcept {
+    if (death_snapshot_.has_value()) return false;
+    player_damage_history_.begin_tick(tick_);
     const bool has_positive_component = std::any_of(
         packet.amount.begin(), packet.amount.end(), [](int value) noexcept {
             return value > 0;
         });
-    const auto resolved = resolve_player_damage(
+    const auto resolved = resolve_player_damage_packet(
         packet, encounter_config_.player_build);
     if (!resolved.has_value()) return false;
 
@@ -819,16 +857,41 @@ bool CombatWorld::apply_player_damage(
         }
     }
 
-    if (*resolved <= 0 || player_.hp == 0
+    if (resolved->total == 0U || player_.hp == 0
             || player_.invulnerability_ticks != 0) {
         return false;
     }
-    const int damage = *resolved;
 
-    const int absorbed = std::min(player_.barrier, damage);
-    player_.barrier -= absorbed;
-    const int hp_damage = damage - absorbed;
-    player_.hp = hp_damage >= player_.hp ? 0 : player_.hp - hp_damage;
+    const std::uint64_t barrier_available = static_cast<std::uint64_t>(
+        std::max(0, player_.barrier));
+    const std::uint64_t health_available = static_cast<std::uint64_t>(
+        std::max(0, player_.hp));
+    const std::uint64_t resources = barrier_available + health_available;
+    const std::uint64_t actual_total = std::min(resolved->total, resources);
+    if (actual_total == 0U) return false;
+
+    ResolvedPlayerDamage actual{};
+    for (std::size_t index = 0U; index < actual.by_type.size(); ++index) {
+        actual.by_type[index] = multiply_divide_floor_u64(
+            resolved->by_type[index], actual_total, resolved->total);
+        actual.total += actual.by_type[index];
+    }
+    std::uint64_t remainder = actual_total - actual.total;
+    for (std::size_t index = 0U;
+         index < actual.by_type.size() && remainder != 0U; ++index) {
+        if (actual.by_type[index] >= resolved->by_type[index]) continue;
+        ++actual.by_type[index];
+        ++actual.total;
+        --remainder;
+    }
+    if (remainder != 0U) return false;
+
+    const std::uint64_t barrier_loss = std::min(
+        barrier_available, actual_total);
+    const std::uint64_t health_loss = actual_total - barrier_loss;
+    player_.barrier -= static_cast<int>(barrier_loss);
+    player_.hp -= static_cast<int>(health_loss);
+    player_damage_history_.record(actual);
     if (player_.hp == 0) {
         attack_ = AttackRuntime{};
         input_buffer_.clear();
@@ -844,7 +907,9 @@ bool CombatWorld::apply_player_damage(
     hit.hit_count = 1;
     hit.feedback = feedback;
     hit.position = source_position;
-    hit.value = damage;
+    hit.value = static_cast<int>(std::min<std::uint64_t>(
+        actual_total, static_cast<std::uint64_t>(
+            (std::numeric_limits<int>::max)())));
     emit_event(hit);
 
     CombatEvent hurt_started{};
@@ -853,10 +918,44 @@ bool CombatWorld::apply_player_damage(
     hurt_started.hit_count = 1;
     hurt_started.feedback = feedback;
     hurt_started.position = source_position;
-    hurt_started.value = damage;
+    hurt_started.value = hit.value;
     emit_event(hurt_started);
 
     if (player_.hp == 0) {
+        CombatDeathSnapshot snapshot{};
+        snapshot.tick = tick_;
+        snapshot.source = source;
+        snapshot.raw_damage = 0U;
+        for (const int component : packet.amount) {
+            if (component <= 0) continue;
+            const auto value = static_cast<std::uint64_t>(component);
+            const auto maximum = (std::numeric_limits<std::uint64_t>::max)();
+            snapshot.raw_damage = snapshot.raw_damage > maximum - value
+                ? maximum : snapshot.raw_damage + value;
+        }
+        snapshot.barrier_loss = barrier_loss;
+        snapshot.health_loss = health_loss;
+        snapshot.final_damage = actual_total;
+        snapshot.recent_damage = player_damage_history_.totals();
+        std::size_t primary_index = 0U;
+        for (std::size_t index = 1U; index < actual.by_type.size(); ++index) {
+            if (actual.by_type[index] > actual.by_type[primary_index]) {
+                primary_index = index;
+            }
+        }
+        snapshot.primary_type = static_cast<modifiers::DamageType>(primary_index);
+        snapshot.defense.hp = player_.hp;
+        snapshot.defense.max_hp = player_.max_hp;
+        snapshot.defense.barrier = player_.barrier;
+        snapshot.defense.max_barrier = player_.max_barrier;
+        snapshot.defense.armor = player_.armor;
+        snapshot.defense.evasion = player_.evasion;
+        snapshot.defense.armor_reduction_bp = player_.armor_reduction_bp;
+        snapshot.defense.evasion_rate_bp = player_.evasion_rate_bp;
+        snapshot.defense.damage_reduction = player_.damage_reduction;
+        snapshot.defense.damage_reduction_cap = player_.damage_reduction_cap;
+        death_snapshot_ = snapshot;
+
         CombatEvent defeated{};
         defeated.kind = CombatEventKind::player_defeated;
         defeated.tick = tick_;
@@ -931,7 +1030,7 @@ bool CombatWorld::apply_player_damage(
     Vec3 source_position,
     FeedbackLevel feedback) noexcept {
     return apply_player_damage(DamagePacket{damage}, DamageDelivery::direct,
-                               source_position, feedback);
+                               PlayerDamageSource{}, source_position, feedback);
 }
 
 bool CombatWorld::apply_monster_direct_hit(
@@ -939,7 +1038,8 @@ bool CombatWorld::apply_monster_direct_hit(
     DamagePacket packet,
     Vec3 source_position,
     FeedbackLevel feedback,
-    bool trigger_chain) noexcept {
+    bool trigger_chain,
+    PlayerDamageSourceKind source_kind) noexcept {
     if (slot >= monsters_.slots_.size()) return false;
     const MonsterRuntime& monster = monsters_.slots_[slot];
     if (!monster.active || monster.hp <= 0
@@ -957,10 +1057,12 @@ bool CombatWorld::apply_monster_direct_hit(
     packet = scale_monster_outgoing_damage(
         packet, encounter_config_.abyss.monster_damage_bp);
 
-    if (!apply_player_damage(packet, DamageDelivery::direct, source_position,
-                             feedback)) {
+    if (!apply_player_damage(packet, DamageDelivery::direct,
+                             PlayerDamageSource{source_kind, monster.id, 0U},
+                             source_position, feedback)) {
         return false;
     }
+    if (death_snapshot_.has_value()) return true;
 
     if (values.slow_bp > player_.status.slow_bp) {
         player_.status.slow_bp = values.slow_bp;
@@ -978,11 +1080,17 @@ bool CombatWorld::apply_monster_direct_hit(
         player_.status.corrosion_damage_per_second = corrosion_damage;
         player_.status.corrosion_ticks = values.corrosion_ticks;
         player_.status.corrosion_tick_phase = 0U;
+        player_.status.corrosion_source = PlayerDamageSource{
+            PlayerDamageSourceKind::monster_affix, monster.id,
+            static_cast<std::uint16_t>(MonsterAffixId::chaos_corrosion)};
     } else if (corrosion_damage
                    == player_.status.corrosion_damage_per_second
                && corrosion_damage > 0) {
         player_.status.corrosion_ticks = values.corrosion_ticks;
         player_.status.corrosion_tick_phase = 0U;
+        player_.status.corrosion_source = PlayerDamageSource{
+            PlayerDamageSourceKind::monster_affix, monster.id,
+            static_cast<std::uint16_t>(MonsterAffixId::chaos_corrosion)};
     } else if (corrosion_damage > 0) {
         player_.status.corrosion_ticks = std::max(player_.status.corrosion_ticks,
                                                    values.corrosion_ticks);
@@ -1009,12 +1117,15 @@ void CombatWorld::tick_player_status() noexcept {
         static_cast<void>(apply_player_damage(
             DamagePacket{{0, 0, 0, 0,
                 player_.status.corrosion_damage_per_second}},
-            DamageDelivery::ground_or_environment, player_.position,
+            DamageDelivery::ground_or_environment,
+            player_.status.corrosion_source, player_.position,
             FeedbackLevel::medium));
+        if (death_snapshot_.has_value()) return;
     }
     if (player_.status.corrosion_ticks == 0U) {
         player_.status.corrosion_damage_per_second = 0;
         player_.status.corrosion_tick_phase = 0U;
+        player_.status.corrosion_source = PlayerDamageSource{};
     }
 }
 
@@ -1262,7 +1373,9 @@ void CombatWorld::simulate_projectiles() noexcept {
         if (hit_player) {
             apply_monster_direct_hit(
                 static_cast<std::size_t>(owner.index), projectile.damage,
-                projectile.position, FeedbackLevel::medium, false);
+                projectile.position, FeedbackLevel::medium, false,
+                PlayerDamageSourceKind::projectile);
+            if (death_snapshot_.has_value()) return;
         }
         if (hit_player || outside || expired) {
             if (projectile.trigger_chain_on_end) {
@@ -1332,10 +1445,45 @@ void CombatWorld::simulate_hazards() noexcept {
                         player_.max_hp, hazard.environment_damage_bp,
                         hazard.environment_damage_type);
                 }
+                PlayerDamageSource damage_source{};
+                if (hazard.source == HazardSource::abyss_environment) {
+                    damage_source.kind =
+                        PlayerDamageSourceKind::abyss_environment;
+                    damage_source.detail_id = static_cast<std::uint16_t>(
+                        abyss_environment_.rule);
+                } else if (owner != nullptr) {
+                    damage_source.monster = owner->id;
+                    switch (hazard.kind) {
+                    case HazardKind::burning:
+                        damage_source.kind =
+                            PlayerDamageSourceKind::monster_affix;
+                        damage_source.detail_id = static_cast<std::uint16_t>(
+                            MonsterAffixId::burning_ground);
+                        break;
+                    case HazardKind::chain_lightning:
+                        damage_source.kind =
+                            PlayerDamageSourceKind::monster_affix;
+                        damage_source.detail_id = static_cast<std::uint16_t>(
+                            MonsterAffixId::chain_lightning);
+                        break;
+                    case HazardKind::death_blast:
+                        damage_source.kind =
+                            PlayerDamageSourceKind::monster_affix;
+                        damage_source.detail_id = static_cast<std::uint16_t>(
+                            MonsterAffixId::death_blast);
+                        break;
+                    default:
+                        damage_source.kind =
+                            PlayerDamageSourceKind::ground_hazard;
+                        damage_source.detail_id = static_cast<std::uint16_t>(
+                            hazard.kind);
+                        break;
+                    }
+                }
                 apply_player_damage(hazard.damage,
-                                    DamageDelivery::ground_or_environment,
-                                    hazard.center,
-                                    FeedbackLevel::heavy);
+                    DamageDelivery::ground_or_environment, damage_source,
+                    hazard.center, FeedbackLevel::heavy);
+                if (death_snapshot_.has_value()) return;
                 hazard.player_latched = true;
                 hazard.damage_cooldown_ticks = hazard.damage_interval_ticks;
             }

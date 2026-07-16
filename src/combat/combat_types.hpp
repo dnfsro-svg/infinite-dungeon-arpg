@@ -76,14 +76,6 @@ enum class DamageDelivery : std::uint8_t {
     ground_or_environment,
 };
 
-struct PlayerStatusRuntime final {
-    std::int32_t slow_bp{};
-    std::uint16_t slow_ticks{};
-    int corrosion_damage_per_second{};
-    std::uint16_t corrosion_ticks{};
-    std::uint8_t corrosion_tick_phase{};
-};
-
 struct PlayerCombatBuild final {
     modifiers::PlayerModifierValues values{};
     std::int64_t weapon_physical{};
@@ -122,6 +114,55 @@ enum class MonsterId : std::uint8_t {
     chaos_chaser,
     chaos_hazard,
     count,
+};
+
+enum class PlayerDamageSourceKind : std::uint8_t {
+    monster_attack,
+    projectile,
+    ground_hazard,
+    monster_affix,
+    abyss_environment,
+    unknown,
+};
+
+struct PlayerDamageSource final {
+    PlayerDamageSourceKind kind{PlayerDamageSourceKind::unknown};
+    MonsterId monster{MonsterId::count};
+    std::uint16_t detail_id{};
+};
+
+struct PlayerDefenseSnapshot final {
+    int hp{};
+    int max_hp{};
+    int barrier{};
+    int max_barrier{};
+    std::int64_t armor{};
+    std::int64_t evasion{};
+    std::int32_t armor_reduction_bp{};
+    std::int32_t evasion_rate_bp{};
+    std::array<std::int32_t, modifiers::kElementCount> damage_reduction{};
+    std::array<std::int32_t, modifiers::kElementCount> damage_reduction_cap{};
+};
+
+struct CombatDeathSnapshot final {
+    std::uint64_t tick{};
+    PlayerDamageSource source{};
+    modifiers::DamageType primary_type{modifiers::DamageType::physical};
+    std::uint64_t raw_damage{};
+    std::uint64_t barrier_loss{};
+    std::uint64_t health_loss{};
+    std::uint64_t final_damage{};
+    std::array<std::uint64_t, modifiers::kDamageTypeCount> recent_damage{};
+    PlayerDefenseSnapshot defense{};
+};
+
+struct PlayerStatusRuntime final {
+    std::int32_t slow_bp{};
+    std::uint16_t slow_ticks{};
+    int corrosion_damage_per_second{};
+    std::uint16_t corrosion_ticks{};
+    std::uint8_t corrosion_tick_phase{};
+    PlayerDamageSource corrosion_source{};
 };
 
 enum class MonsterTag : std::uint16_t {
