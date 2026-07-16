@@ -16,6 +16,7 @@ add_library(arpg_combat STATIC
     monster_affix_runtime.cpp
     monster_catalog.cpp
     monster_pool.cpp
+    player_damage_history.cpp
     player_simulation.cpp
     target_simulation.cpp)
 

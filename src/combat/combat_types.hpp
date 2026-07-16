@@ -90,8 +90,16 @@ struct PlayerCombatBuild final {
     std::int32_t local_attack_speed_bp{};
 };
 
+struct ResolvedPlayerDamage final {
+    std::array<std::uint64_t, modifiers::kDamageTypeCount> by_type{};
+    std::uint64_t total{};
+};
+
 [[nodiscard]] std::optional<DamagePacket> build_player_hit_packet(
     int base_physical, const PlayerCombatBuild& build) noexcept;
+[[nodiscard]] std::optional<ResolvedPlayerDamage>
+resolve_player_damage_packet(
+    DamagePacket packet, const PlayerCombatBuild& build) noexcept;
 [[nodiscard]] std::optional<int> resolve_player_damage(
     DamagePacket packet, const PlayerCombatBuild& build) noexcept;
 [[nodiscard]] std::uint16_t scaled_phase_ticks(

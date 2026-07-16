@@ -20,6 +20,7 @@ arpg::test::TestSuite monster_special_suite() noexcept;
 arpg::test::TestSuite monster_pool_suite() noexcept;
 arpg::test::TestSuite player_health_suite() noexcept;
 arpg::test::TestSuite player_build_suite() noexcept;
+arpg::test::TestSuite player_damage_history_suite() noexcept;
 arpg::test::TestSuite player_defense_suite() noexcept;
 
 int main() {
@@ -44,8 +45,9 @@ int main() {
         monster_pool_suite(),
         player_health_suite(),
         player_build_suite(),
+        player_damage_history_suite(),
         player_defense_suite(),
     };
 
-    return arpg::test::run_suites(suites, 168, "stage 10 task 7 abyss environment");
+    return arpg::test::run_suites(suites, 177, "stage 11-a task 1 player damage history");
 }

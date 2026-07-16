@@ -154,41 +154,41 @@ std::optional<DamagePacket> build_player_hit_packet(
     return build_player_hit_packet_checked_unvalidated(base_physical, build);
 }
 
-std::optional<int> resolve_player_damage(
+std::optional<ResolvedPlayerDamage> resolve_player_damage_packet(
     DamagePacket packet, const PlayerCombatBuild& build) noexcept {
     if (!valid_player_build(build)) return std::nullopt;
 
-    const auto checked_add = [](std::int64_t left, std::int64_t right,
-                                std::int64_t& result) noexcept {
-        const auto maximum = (std::numeric_limits<std::int64_t>::max)();
-        if (right > 0 && left > maximum - right) return false;
-        result = left + right;
-        return true;
+    const auto saturating_add = [](
+        std::uint64_t left, std::uint64_t right) noexcept {
+        const auto maximum = (std::numeric_limits<std::uint64_t>::max)();
+        return left > maximum - right ? maximum : left + right;
     };
-    const auto checked_multiply = [](std::int64_t left, std::int64_t right,
-                                     std::int64_t& result) noexcept {
-        const auto maximum = (std::numeric_limits<std::int64_t>::max)();
-        if (left != 0 && right > maximum / left) return false;
-        result = left * right;
-        return true;
-    };
-    const auto reduced_component = [&checked_multiply](
-        int raw, std::int32_t reduction) noexcept -> std::optional<std::int64_t> {
+    const auto resolved_component = [&build](
+        int raw, std::int32_t reduction) noexcept -> std::optional<std::uint64_t> {
         if (raw <= 0) return std::int64_t{0};
         const std::int64_t multiplier = modifiers::kFixedOne - reduction;
-        std::int64_t product{};
-        if (!checked_multiply(raw, multiplier, product)) return std::nullopt;
-        return product / modifiers::kFixedOne
-            + (product % modifiers::kFixedOne != 0 ? 1 : 0);
+        std::int64_t reduced_product{};
+        if (!checked_multiply(raw, multiplier, reduced_product)) {
+            return std::nullopt;
+        }
+        const std::int64_t reduced = reduced_product / modifiers::kFixedOne
+            + (reduced_product % modifiers::kFixedOne != 0 ? 1 : 0);
+        std::int64_t final_product{};
+        if (!checked_multiply(
+                reduced, build.values.damage_taken, final_product)) {
+            return std::nullopt;
+        }
+        return static_cast<std::uint64_t>(
+            final_product / modifiers::kFixedOne);
     };
 
-    std::int64_t total = 0;
-    const auto physical = reduced_component(
+    ResolvedPlayerDamage result{};
+    const auto physical = resolved_component(
         packet.amount[modifiers::damage_index(modifiers::DamageType::physical)],
         modifiers::rating_to_basis_points(build.values.armor));
-    if (!physical.has_value() || !checked_add(total, *physical, total)) {
-        return std::nullopt;
-    }
+    if (!physical.has_value()) return std::nullopt;
+    result.by_type[modifiers::damage_index(modifiers::DamageType::physical)] =
+        *physical;
     for (std::size_t element = 0; element < modifiers::kElementCount; ++element) {
         if (build.values.damage_reduction_cap_bonus[element] < 0) {
             return std::nullopt;
@@ -199,21 +199,26 @@ std::optional<int> resolve_player_damage(
             std::min<std::int64_t>(9500, uncapped));
         const auto reduction = std::clamp(
             build.values.damage_reduction[element], std::int32_t{-6000}, cap);
-        const auto component = reduced_component(
+        const auto component = resolved_component(
             packet.amount[element + 1U], reduction);
-        if (!component.has_value()
-            || !checked_add(total, *component, total)) {
-            return std::nullopt;
-        }
+        if (!component.has_value()) return std::nullopt;
+        result.by_type[element + 1U] = *component;
     }
-    if (build.values.damage_taken < 0) return std::nullopt;
-    std::int64_t scaled{};
-    if (!checked_multiply(total, build.values.damage_taken, scaled)) {
+    for (const std::uint64_t component : result.by_type) {
+        result.total = saturating_add(result.total, component);
+    }
+    return result;
+}
+
+std::optional<int> resolve_player_damage(
+    DamagePacket packet, const PlayerCombatBuild& build) noexcept {
+    const auto resolved = resolve_player_damage_packet(packet, build);
+    if (!resolved.has_value()
+        || resolved->total > static_cast<std::uint64_t>(
+            (std::numeric_limits<int>::max)())) {
         return std::nullopt;
     }
-    scaled /= modifiers::kFixedOne;
-    if (scaled > (std::numeric_limits<int>::max)()) return std::nullopt;
-    return static_cast<int>(scaled);
+    return static_cast<int>(resolved->total);
 }
 
 std::uint16_t scaled_phase_ticks(

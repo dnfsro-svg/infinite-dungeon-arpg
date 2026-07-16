@@ -21,6 +21,7 @@ add_executable(arpg_combat_tests
     movement_jump_tests.cpp
     player_health_tests.cpp
     player_build_tests.cpp
+    player_damage_history_tests.cpp
     player_defense_tests.cpp)
 
 target_compile_features(arpg_combat_tests PRIVATE cxx_std_17)
