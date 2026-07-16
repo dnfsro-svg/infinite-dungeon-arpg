@@ -18,6 +18,11 @@ constexpr std::uint64_t kRewardSlotDomain = 0x41425953534C5431ULL;
 constexpr std::uint64_t kRewardRarityDomain = 0x4142595352525431ULL;
 constexpr std::uint64_t kRewardItemSeedDomain = 0x4142595353454431ULL;
 constexpr std::uint64_t kRewardItemIdDomain = 0x4142595349544431ULL;
+constexpr std::array<combat::Vec3, 3> kRewardPositions{{
+    {-0.75F, 0.0F, 0.0F},
+    {0.0F, 0.0F, 0.0F},
+    {0.75F, 0.0F, 0.0F},
+}};
 
 std::uint64_t ordinal_root(
     std::uint64_t room_seed,
@@ -43,6 +48,28 @@ items::ItemRarity roll_rarity(
     if (roll < static_cast<std::uint64_t>(weights.normal) + weights.magic)
         return items::ItemRarity::magic;
     return items::ItemRarity::rare;
+}
+
+bool same_item_instance(
+    const items::ItemInstance& left,
+    const items::ItemInstance& right) noexcept {
+    if (left.id != right.id || left.base_id != right.base_id
+            || left.rarity != right.rarity
+            || left.item_level != right.item_level
+            || left.required_level != right.required_level
+            || left.affix_count != right.affix_count
+            || left.reserved != right.reserved) {
+        return false;
+    }
+    for (std::size_t index = 0U; index < left.affixes.size(); ++index) {
+        if (left.affixes[index].affix_id != right.affixes[index].affix_id
+                || left.affixes[index].tier != right.affixes[index].tier
+                || left.affixes[index].variant
+                    != right.affixes[index].variant) {
+            return false;
+        }
+    }
+    return true;
 }
 
 }  // namespace
@@ -81,6 +108,53 @@ std::optional<AbyssRewardSlot> derive_abyss_reward_slot(
         seed_stream.next_u64(),
         item_id,
     };
+}
+
+std::optional<combat::Vec3> abyss_reward_position(
+    std::uint8_t reward_ordinal) noexcept {
+    if (reward_ordinal >= kRewardPositions.size()) return std::nullopt;
+    return kRewardPositions[reward_ordinal];
+}
+
+std::optional<GroundItem> derive_abyss_ground_item(
+    std::uint64_t room_seed,
+    abyss::AbyssDanger danger,
+    std::uint8_t base_item_level,
+    std::uint8_t reward_ordinal,
+    std::uint16_t ground_index) noexcept {
+    const auto slot = derive_abyss_reward_slot(
+        room_seed, danger, base_item_level, reward_ordinal);
+    const auto position = abyss_reward_position(reward_ordinal);
+    if (!slot.has_value() || !position.has_value()) return std::nullopt;
+    const auto item = items::generate_item({
+        slot->item_seed,
+        slot->item_slot,
+        slot->item_level,
+        slot->item_id,
+        slot->rarity,
+    });
+    if (!item.has_value()) return std::nullopt;
+    return GroundItem{
+        true,
+        ground_index,
+        GroundItemSource::abyss_chest,
+        reward_ordinal,
+        *position,
+        *item,
+    };
+}
+
+bool same_ground_item(
+    const GroundItem& left,
+    const GroundItem& right) noexcept {
+    return left.active == right.active
+        && left.drop_ordinal == right.drop_ordinal
+        && left.source == right.source
+        && left.abyss_reward_ordinal == right.abyss_reward_ordinal
+        && left.position.x == right.position.x
+        && left.position.y == right.position.y
+        && left.position.z == right.position.z
+        && same_item_instance(left.item, right.item);
 }
 
 }  // namespace arpg::dungeon

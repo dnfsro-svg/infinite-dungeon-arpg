@@ -328,23 +328,14 @@ bool DungeonSession::pending_abyss_reward_cache_consistent() const noexcept {
     }
     const std::uint8_t base_item_level = static_cast<std::uint8_t>(
         (std::min)(stable_state_.current_room.depth, std::uint64_t{100U}));
-    const auto slot = derive_abyss_reward_slot(
+    const auto expected = derive_abyss_ground_item(
         stable_state_.current_room.seed, stable_state_.abyss.danger,
-        base_item_level, cache.reward_ordinal);
-    if (!slot.has_value()) return false;
-    const auto expected = items::generate_item({
-        slot->item_seed, slot->item_slot, slot->item_level,
-        slot->item_id, slot->rarity});
-    if (!expected.has_value() || !same_item(*expected, cache.ground.item))
+        base_item_level, cache.reward_ordinal, cache.ground_index);
+    if (!expected.has_value()
+            || !same_ground_item(*expected, cache.ground))
         return false;
-    for (const items::ItemInstance& owned
-         : stable_state_.item_ownership.items) {
-        if (owned.id == expected->id) return false;
-    }
-    for (const GroundItem& ground : ground_items_) {
-        if (ground.active && ground.item.id == expected->id) return false;
-    }
-    return true;
+    return !item_id_in_use(stable_state_.item_ownership, ground_items_,
+        expected->item.id);
 }
 
 RequestResult DungeonSession::request_equip(std::uint64_t item_id) noexcept {
@@ -485,7 +476,8 @@ RequestResult DungeonSession::request_recipe(
         enter_fault(DungeonFault::item_id_collision);
         return RequestResult::faulted;
     }
-    if (find_item(stable_state_.item_ownership, product->id) != nullptr) {
+    if (item_id_in_use(stable_state_.item_ownership,
+            ground_items_, product->id)) {
         enter_fault(DungeonFault::item_id_collision);
         return RequestResult::faulted;
     }
@@ -544,7 +536,8 @@ RequestResult DungeonSession::request_pickup(
         enter_fault(DungeonFault::invalid_item_state);
         return RequestResult::faulted;
     }
-    if (find_item(stable_state_.item_ownership, ground.item.id) != nullptr) {
+    if (item_id_in_use(stable_state_.item_ownership, ground_items_,
+            ground.item.id, drop_ordinal)) {
         enter_fault(DungeonFault::item_id_collision);
         return RequestResult::faulted;
     }

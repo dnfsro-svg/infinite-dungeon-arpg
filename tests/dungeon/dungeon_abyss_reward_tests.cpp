@@ -121,6 +121,17 @@ void fill_ground_pool(DungeonSession& session,
 }
 
 arpg::test::Failure reward_profiles_levels_and_ordinals_are_exact() noexcept {
+    const auto left = arpg::dungeon::abyss_reward_position(0U);
+    const auto center = arpg::dungeon::abyss_reward_position(1U);
+    const auto right = arpg::dungeon::abyss_reward_position(2U);
+    ARPG_REQUIRE(left.has_value() && center.has_value() && right.has_value());
+    ARPG_REQUIRE(left->x == -0.75F && left->y == 0.0F && left->z == 0.0F);
+    ARPG_REQUIRE(center->x == 0.0F && center->y == 0.0F
+        && center->z == 0.0F);
+    ARPG_REQUIRE(right->x == 0.75F && right->y == 0.0F
+        && right->z == 0.0F);
+    ARPG_REQUIRE(!arpg::dungeon::abyss_reward_position(3U).has_value());
+
     constexpr std::array<AbyssDanger, 3> dangers{{
         AbyssDanger::low, AbyssDanger::medium, AbyssDanger::high}};
     constexpr std::array<std::uint8_t, 3> counts{{1U, 2U, 3U}};
@@ -470,6 +481,58 @@ arpg::test::Failure committed_reward_waits_for_reload_pool_space() noexcept {
     return {};
 }
 
+arpg::test::Failure tampered_cached_position_rejects_exact_receipt() noexcept {
+    DungeonSession session{DungeonRules{}, cleared_abyss_state(AbyssDanger::low)};
+    session.tick({});
+    const auto pending = *session.pending_save();
+    arpg::test::offset_pending_abyss_reward_position(
+        session, {0.25F, -0.5F, 1.0F});
+
+    session.resolve_pending_save({SaveDisposition::committed,
+        pending.expected_generation, pending.next_state});
+
+    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::faulted);
+    ARPG_REQUIRE(session.snapshot().diagnostics.fault
+        == DungeonFault::save_receipt_mismatch);
+    ARPG_REQUIRE(session.snapshot().ground_item_count == 0U);
+    ARPG_REQUIRE(arpg::test::stable_state(session).abyss.generated_mask == 0U);
+    ARPG_REQUIRE(arpg::test::stable_state(session).abyss.reward_revision == 0U);
+    return {};
+}
+
+arpg::test::Failure recipe_product_colliding_with_abyss_ground_is_atomic() noexcept {
+    DungeonRunState state = arpg::dungeon::make_initial_run_state(
+        0x51515151ULL, DungeonRules{}).state;
+    const auto a = normal_item(0x5101U);
+    const auto b = normal_item(0x5102U);
+    const auto c = normal_item(0x5103U);
+    state.item_ownership.items = {a, b, c};
+    state.item_ownership.next_item_sequence = 9U;
+    const auto product = arpg::items::generate_recipe_item(
+        state.root_seed, state.item_ownership.next_item_sequence, a, b, c);
+    ARPG_REQUIRE(product.has_value());
+
+    DungeonSession session{DungeonRules{}, state};
+    arpg::test::install_abyss_ground_item(
+        session, 17U, 0U, normal_item(product->id), {8.0F, 4.0F, 0.0F});
+
+    ARPG_REQUIRE(session.request_recipe({{a.id, b.id, c.id}})
+        == arpg::dungeon::RequestResult::faulted);
+    ARPG_REQUIRE(session.snapshot().diagnostics.fault
+        == DungeonFault::item_id_collision);
+    ARPG_REQUIRE(!session.pending_save().has_value());
+    ARPG_REQUIRE(session.item_state().items.size() == 3U);
+    ARPG_REQUIRE(session.item_state().items[0].id == a.id);
+    ARPG_REQUIRE(session.item_state().items[1].id == b.id);
+    ARPG_REQUIRE(session.item_state().items[2].id == c.id);
+    ARPG_REQUIRE(session.item_state().next_item_sequence == 9U);
+    ARPG_REQUIRE(arpg::test::ground_items(session)[17U].active);
+    ARPG_REQUIRE(arpg::test::ground_items(session)[17U].item.id == product->id);
+    ARPG_REQUIRE(arpg::test::ground_items(session)[17U].source
+        == GroundItemSource::abyss_chest);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"reward profiles levels and ordinals", &reward_profiles_levels_and_ordinals_are_exact},
     {"shifted rarity danger ordering", &shifted_rarity_rolls_follow_danger_ordering},
@@ -485,6 +548,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"abyss pickup reserved", &abyss_pickup_is_reserved_for_task_ten},
     {"allocation failure retryable", &allocation_failure_is_hidden_and_retryable},
     {"reload pool space wait", &committed_reward_waits_for_reload_pool_space},
+    {"tampered cached position", &tampered_cached_position_rejects_exact_receipt},
+    {"recipe collides with abyss ground", &recipe_product_colliding_with_abyss_ground_is_atomic},
 };
 
 }  // namespace

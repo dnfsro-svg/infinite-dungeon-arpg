@@ -30,11 +30,6 @@ constexpr std::uint64_t kDropChanceDomain = 0x44524F505F43484EULL;
 constexpr std::uint64_t kDropSlotDomain = 0x44524F505F534C54ULL;
 constexpr std::uint64_t kDropContentDomain = 0x44524F505F49544DULL;
 constexpr std::uint64_t kDropItemIdDomain = 0x44524F505F49445FULL;
-constexpr std::array<combat::Vec3, 3> kAbyssRewardPositions{{
-    {-0.75F, 0.0F, 0.0F},
-    {0.0F, 0.0F, 0.0F},
-    {0.75F, 0.0F, 0.0F},
-}};
 
 [[nodiscard]] core::DeterministicRng drop_stream(
     std::uint64_t seed,
@@ -258,59 +253,24 @@ RequestResult DungeonSession::reset_current_room() noexcept {
         ? RequestResult::faulted : RequestResult::accepted;
 }
 
-namespace {
-
-[[nodiscard]] bool same_item_instance(
-    const items::ItemInstance& left,
-    const items::ItemInstance& right) noexcept {
-    if (left.id != right.id || left.base_id != right.base_id
-            || left.rarity != right.rarity
-            || left.item_level != right.item_level
-            || left.required_level != right.required_level
-            || left.affix_count != right.affix_count
-            || left.reserved != right.reserved) {
-        return false;
+bool item_id_in_use(
+    const items::ItemOwnershipState& ownership,
+    const std::array<GroundItem, kGroundDropCapacity>& ground_items,
+    std::uint64_t item_id,
+    std::uint16_t ignored_ground_index) noexcept {
+    if (item_id == 0U) return true;
+    for (const items::ItemInstance& item : ownership.items) {
+        if (item.id == item_id) return true;
     }
-    for (std::size_t index = 0U; index < left.affixes.size(); ++index) {
-        if (left.affixes[index].affix_id != right.affixes[index].affix_id
-                || left.affixes[index].tier != right.affixes[index].tier
-                || left.affixes[index].variant
-                    != right.affixes[index].variant) {
-            return false;
+    for (std::uint16_t index = 0U; index < ground_items.size(); ++index) {
+        const GroundItem& ground = ground_items[index];
+        if (index != ignored_ground_index && ground.active
+                && ground.item.id == item_id) {
+            return true;
         }
     }
-    return true;
+    return false;
 }
-
-[[nodiscard]] std::optional<GroundItem> make_abyss_reward_ground(
-    const checkpoint::DungeonRunState& state,
-    std::uint16_t ground_index,
-    std::uint8_t reward_ordinal) noexcept {
-    const std::uint8_t base_item_level = static_cast<std::uint8_t>(
-        std::min<std::uint64_t>(state.current_room.depth, 100U));
-    const auto slot = derive_abyss_reward_slot(
-        state.current_room.seed, state.abyss.danger,
-        base_item_level, reward_ordinal);
-    if (!slot.has_value()) return std::nullopt;
-    const auto item = items::generate_item({
-        slot->item_seed,
-        slot->item_slot,
-        slot->item_level,
-        slot->item_id,
-        slot->rarity,
-    });
-    if (!item.has_value()) return std::nullopt;
-    return GroundItem{
-        true,
-        ground_index,
-        GroundItemSource::abyss_chest,
-        reward_ordinal,
-        kAbyssRewardPositions[reward_ordinal],
-        *item,
-    };
-}
-
-}  // namespace
 
 std::optional<DungeonEvent> DungeonSession::try_pop_event() noexcept {
     return events_.try_pop();
@@ -410,54 +370,52 @@ void DungeonSession::rebuild_committed_abyss_rewards() noexcept {
                 break;
             }
         }
-        const std::uint16_t candidate_index = existing == nullptr
-            ? static_cast<std::uint16_t>(ground_items_.size())
-            : existing->drop_ordinal;
-        const auto expected = make_abyss_reward_ground(
-            stable_state_, candidate_index, reward_ordinal);
+        std::uint16_t target_index = existing == nullptr
+            ? 0xFFFFU : existing->drop_ordinal;
+        if (existing == nullptr) {
+            for (std::uint16_t index = 0U;
+                 index < ground_items_.size(); ++index) {
+                if (!ground_items_[index].active) {
+                    target_index = index;
+                    break;
+                }
+            }
+            if (target_index == 0xFFFFU) return;
+        }
+        const std::uint8_t base_item_level = static_cast<std::uint8_t>(
+            std::min<std::uint64_t>(stable_state_.current_room.depth, 100U));
+        const auto expected = derive_abyss_ground_item(
+            stable_state_.current_room.seed, stable_state_.abyss.danger,
+            base_item_level, reward_ordinal, target_index);
         if (!expected.has_value()) {
             enter_fault(DungeonFault::abyss_generation_failed);
             return;
         }
-        for (const items::ItemInstance& owned
-             : stable_state_.item_ownership.items) {
-            if (owned.id == expected->item.id) {
-                enter_fault(DungeonFault::abyss_reward_collision);
-                return;
-            }
+        const std::uint16_t ignored_index = existing == nullptr
+            ? 0xFFFFU : existing->drop_ordinal;
+        if (item_id_in_use(stable_state_.item_ownership, ground_items_,
+                expected->item.id, ignored_index)) {
+            enter_fault(DungeonFault::abyss_reward_collision);
+            return;
         }
         for (const GroundItem& ground : ground_items_) {
             if (!ground.active || &ground == existing) continue;
-            if (ground.item.id == expected->item.id
-                    || (ground.source == GroundItemSource::abyss_chest
-                        && ground.abyss_reward_ordinal == reward_ordinal)) {
+            if (ground.source == GroundItemSource::abyss_chest
+                    && ground.abyss_reward_ordinal == reward_ordinal) {
                 enter_fault(DungeonFault::abyss_reward_collision);
                 return;
             }
         }
         if (existing != nullptr) {
             if (existing->drop_ordinal >= ground_items_.size()
-                    || !same_item_instance(existing->item, expected->item)
-                    || existing->position.x != expected->position.x
-                    || existing->position.y != expected->position.y
-                    || existing->position.z != expected->position.z) {
+                    || !same_ground_item(*existing, *expected)) {
                 enter_fault(DungeonFault::abyss_reward_collision);
                 return;
             }
             continue;
         }
 
-        std::uint16_t free_index = 0xFFFFU;
-        for (std::uint16_t index = 0U; index < ground_items_.size(); ++index) {
-            if (!ground_items_[index].active) {
-                free_index = index;
-                break;
-            }
-        }
-        if (free_index == 0xFFFFU) return;
-        GroundItem published = *expected;
-        published.drop_ordinal = free_index;
-        ground_items_[free_index] = published;
+        ground_items_[target_index] = *expected;
     }
 }
 
@@ -488,24 +446,19 @@ void DungeonSession::attempt_abyss_reward_materialization() noexcept {
         }
     }
     if (free_index == 0xFFFFU) return;
-    const auto ground = make_abyss_reward_ground(
-        stable_state_, free_index, reward_ordinal);
+    const std::uint8_t base_item_level = static_cast<std::uint8_t>(
+        std::min<std::uint64_t>(stable_state_.current_room.depth, 100U));
+    const auto ground = derive_abyss_ground_item(
+        stable_state_.current_room.seed, stable_state_.abyss.danger,
+        base_item_level, reward_ordinal, free_index);
     if (!ground.has_value()) {
         enter_fault(DungeonFault::abyss_generation_failed);
         return;
     }
-    for (const items::ItemInstance& owned
-         : stable_state_.item_ownership.items) {
-        if (owned.id == ground->item.id) {
-            enter_fault(DungeonFault::abyss_reward_collision);
-            return;
-        }
-    }
-    for (const GroundItem& existing : ground_items_) {
-        if (existing.active && existing.item.id == ground->item.id) {
-            enter_fault(DungeonFault::abyss_reward_collision);
-            return;
-        }
+    if (item_id_in_use(stable_state_.item_ownership, ground_items_,
+            ground->item.id)) {
+        enter_fault(DungeonFault::abyss_reward_collision);
+        return;
     }
     if (stable_state_.abyss.reward_revision
             == (std::numeric_limits<std::uint32_t>::max)()) {
@@ -869,17 +822,9 @@ void DungeonSession::roll_ground_drop(
     std::uint64_t item_id = item_id_stream.next_u64();
     if (item_id == 0U) item_id = 1U;
 
-    for (const items::ItemInstance& item : stable_state_.item_ownership.items) {
-        if (item.id == item_id) {
-            enter_fault(DungeonFault::item_id_collision);
-            return;
-        }
-    }
-    for (const GroundItem& ground : ground_items_) {
-        if (ground.active && ground.item.id == item_id) {
-            enter_fault(DungeonFault::item_id_collision);
-            return;
-        }
+    if (item_id_in_use(stable_state_.item_ownership, ground_items_, item_id)) {
+        enter_fault(DungeonFault::item_id_collision);
+        return;
     }
 
     const std::uint64_t depth = stable_state_.current_room.depth;

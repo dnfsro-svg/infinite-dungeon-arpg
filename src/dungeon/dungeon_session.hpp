@@ -24,6 +24,11 @@ namespace arpg::dungeon {
     std::uint64_t depth, std::uint16_t score) noexcept;
 [[nodiscard]] std::uint64_t affix_experience(
     std::uint64_t base_experience, std::uint16_t score) noexcept;
+[[nodiscard]] bool item_id_in_use(
+    const items::ItemOwnershipState& ownership,
+    const std::array<GroundItem, kGroundDropCapacity>& ground_items,
+    std::uint64_t item_id,
+    std::uint16_t ignored_ground_index = 0xFFFFU) noexcept;
 
 class DungeonSession final {
 public:

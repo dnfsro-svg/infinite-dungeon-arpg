@@ -203,6 +203,16 @@ struct DungeonSessionTestAccess final {
             session.pending_save_->pickup_ordinal = ordinal;
         }
     }
+    static void offset_pending_abyss_reward_position(
+        dungeon::DungeonSession& session,
+        combat::Vec3 offset) noexcept {
+        if (session.pending_abyss_reward_.has_value()) {
+            auto& position = session.pending_abyss_reward_->ground.position;
+            position.x += offset.x;
+            position.y += offset.y;
+            position.z += offset.z;
+        }
+    }
     static const std::array<std::uint64_t, 3>& rolled_drop_bits(
         const dungeon::DungeonSession& session) noexcept {
         return session.rolled_drop_bits_;
@@ -328,6 +338,13 @@ inline void set_pending_pickup_ordinal(
     dungeon::DungeonSession& session,
     std::uint16_t ordinal) noexcept {
     DungeonSessionTestAccess::set_pending_pickup_ordinal(session, ordinal);
+}
+
+inline void offset_pending_abyss_reward_position(
+    dungeon::DungeonSession& session,
+    combat::Vec3 offset) noexcept {
+    DungeonSessionTestAccess::offset_pending_abyss_reward_position(
+        session, offset);
 }
 
 inline const std::array<std::uint64_t, 3>& rolled_drop_bits(

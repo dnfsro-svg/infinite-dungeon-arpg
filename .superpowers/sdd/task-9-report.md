@@ -81,3 +81,25 @@
 - Task 9 故意拒绝 `abyss_chest` pickup；Task 10 必须用 `abyss_reward_claim` 原子更新 ownership + claimed mask，并在 exact receipt 后移除 ground item。
 - Task 10 必须在离房前处理未 generated/未 claimed/未 abandoned 位；本任务不永久决定 abandon 或离房策略。
 - 保存 API 的 `DungeonRunState` 含 vector，资格准备在 ownership 非空时可能分配；已保证 OOM 不发布、不推进并可重试，exact receipt 发布路径经 allocation probe 证明不分配。
+
+## 复审 Important 修复（追加）
+
+### Important 1：cache position 完整语义
+
+- 新增公开纯函数 `abyss_reward_position(reward_ordinal)`，三个中心偏移只在 `abyss_reward.cpp` 的单一常量表中定义；ordinal 3 及以上返回空。
+- 新增纯 `derive_abyss_ground_item(...)`。prepare、cleared reload 和 exact receipt cache consistency 全部调用它，统一产生 `active`、实际 ground index、`abyss_chest` source、reward ordinal、position 和最终 item。
+- 新增 `same_ground_item`，exact receipt 前逐字段比较 active/index/source/reward ordinal、position 三个 float，以及完整 `ItemInstance`。任何 cache 漂移都在采用 pending next state 之前 fail closed。
+- RED：测试访问器同时篡改 cached position 的 x/y/z；旧实现仍提交，测试失败。GREEN：统一 helper 后返回 `save_receipt_mismatch`，stable generated mask/revision 保持 0，ground 不发布。
+
+### Important 2：统一 ID 冲突门禁
+
+- 新增统一 `item_id_in_use(ownership, ground_items, item_id, ignored_ground_index)`：扫描全部 ownership 和全部 active ground，可在 pickup/reload 验证时忽略当前槽。
+- normal monster drop、recipe、abyss prepare、abyss reload、abyss receipt cache 和 pickup 发布边界均使用该 helper。普通掉落 ID 派生、概率、seed 和 golden 行为未变。
+- recipe 在删除材料、递增 sequence 或创建 pending 之前检查全部 active ground，包括 `monster_drop` 和 `abyss_chest`；冲突进入既有 `item_id_collision`，不重投。
+- RED：先纯调用 `generate_recipe_item` 得到预期 product ID，再安装同 ID 的未拾取 `abyss_chest` ground。旧实现接受 recipe；GREEN 后请求 fault，三个材料、sequence、ground 和 stable ownership 原样保留。
+
+### 复审验证
+
+- Task 9 专用：16 cases，0 failures。
+- Fresh `dungeon.units|items.units|persistence.units`：3/3，0 failures；`dungeon.units` 186 cases，含千房 stress 和普通掉落 golden。
+- Fresh architecture：18/18，0 failures。
