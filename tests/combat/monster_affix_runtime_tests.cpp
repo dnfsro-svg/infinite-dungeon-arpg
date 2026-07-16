@@ -1,10 +1,14 @@
 #include "test_framework.hpp"
 
+#include "combat_test_support.hpp"
+
 #include "combat/combat_world.hpp"
 #include "combat/monster_affix_runtime.hpp"
 #include "combat/monster_catalog.hpp"
 #include "combat/monster_pool.hpp"
+#include "modifiers/damage_types.hpp"
 
+#include <cmath>
 #include <type_traits>
 
 namespace {
@@ -21,6 +25,166 @@ MonsterAffixSet one_affix(
     result.values[0] = {id, tier};
     result.count = 1U;
     return result;
+}
+
+CombatEncounterConfig affixed_encounter(
+    MonsterAffixId id,
+    MonsterAffixTier tier,
+    MonsterId monster = MonsterId::chaos_chaser,
+    float monster_x = 1.0F) noexcept {
+    CombatEncounterConfig config{};
+    config.wave.spawn_count = 1U;
+    config.wave.spawns[0] = MonsterSpawnSpec{
+        monster, Vec3{monster_x, 0.0F, 0.0F}, one_affix(id, tier)};
+    return config;
+}
+
+CombatEncounterConfig normal_encounter(
+    MonsterId monster = MonsterId::chaos_chaser,
+    float monster_x = 1.0F) noexcept {
+    CombatEncounterConfig config{};
+    config.wave.spawn_count = 1U;
+    config.wave.spawns[0] = MonsterSpawnSpec{
+        monster, Vec3{monster_x, 0.0F, 0.0F}};
+    return config;
+}
+
+void resolve_player_attack(
+    CombatWorld& world, Action action = Action::light) noexcept {
+    static_cast<void>(world.queue_action(action));
+    arpg::test::tick_n(world, 20);
+}
+
+int ticks_until_active(CombatWorld& world) noexcept {
+    for (int tick = 0; tick < 100; ++tick) {
+        world.tick(MovementInput{});
+        if (world.snapshot().monsters[0].ai_phase == MonsterAiPhase::active) {
+            return tick + 1;
+        }
+    }
+    return 0;
+}
+
+bool hit_monster_once(CombatWorld& world) noexcept {
+    const int hp_before = world.snapshot().monsters[0].hp;
+    if (!world.queue_action(Action::light)) return false;
+    for (int tick = 0; tick < 40; ++tick) {
+        world.tick(MovementInput{});
+        if (world.snapshot().monsters[0].hp < hp_before) return true;
+    }
+    return false;
+}
+
+bool shielding_refills_after_delay(
+    MonsterAffixTier tier, int delay) noexcept {
+    CombatWorld world{affixed_encounter(MonsterAffixId::shielding, tier)};
+    if (!hit_monster_once(world) || world.snapshot().monsters[0].shield != 0) {
+        return false;
+    }
+    arpg::test::tick_n(world, 50);
+    if (!hit_monster_once(world)) return false;
+    arpg::test::tick_n(world, delay - 1);
+    if (world.snapshot().monsters[0].shield != 0) return false;
+    world.tick(MovementInput{});
+    return world.snapshot().monsters[0].shield
+        == world.snapshot().monsters[0].max_shield;
+}
+
+arpg::test::Failure mighty_scales_only_horizontal_launch_impulse() noexcept {
+    CombatWorld normal{normal_encounter()};
+    CombatWorld strong{affixed_encounter(
+        MonsterAffixId::mighty, MonsterAffixTier::m3)};
+    ARPG_REQUIRE(normal.queue_action(Action::launcher));
+    ARPG_REQUIRE(strong.queue_action(Action::launcher));
+    arpg::test::tick_n(normal, 8);
+    arpg::test::tick_n(strong, 8);
+
+    const MonsterSnapshot normal_after = normal.snapshot().monsters[0];
+    const MonsterSnapshot strong_after = strong.snapshot().monsters[0];
+    ARPG_REQUIRE(strong_after.velocity.z == normal_after.velocity.z);
+    ARPG_REQUIRE(arpg::test::near(std::fabs(strong_after.velocity.x),
+        std::fabs(normal_after.velocity.x) * 0.55F, 1.0e-4));
+    return {};
+}
+
+arpg::test::Failure frenzy_scales_damage_and_only_non_active_timing() noexcept {
+    CombatWorld normal{normal_encounter(MonsterId::chaos_chaser, 0.90F)};
+    CombatWorld m1{affixed_encounter(
+        MonsterAffixId::frenzy, MonsterAffixTier::m1, MonsterId::chaos_chaser,
+        0.90F)};
+    CombatWorld m2{affixed_encounter(
+        MonsterAffixId::frenzy, MonsterAffixTier::m2, MonsterId::chaos_chaser,
+        0.90F)};
+    CombatWorld m3{affixed_encounter(
+        MonsterAffixId::frenzy, MonsterAffixTier::m3, MonsterId::chaos_chaser,
+        0.90F)};
+    ARPG_REQUIRE(ticks_until_active(normal) == 13);
+    ARPG_REQUIRE(ticks_until_active(m1) == 12);
+    ARPG_REQUIRE(ticks_until_active(m2) == 11);
+    ARPG_REQUIRE(ticks_until_active(m3) == 10);
+    arpg::test::tick_n(normal, 7);
+    arpg::test::tick_n(m1, 7);
+    arpg::test::tick_n(m2, 7);
+    arpg::test::tick_n(m3, 7);
+    ARPG_REQUIRE(normal.snapshot().player.max_hp - normal.snapshot().player.hp == 45);
+    ARPG_REQUIRE(m1.snapshot().player.max_hp - m1.snapshot().player.hp == 51);
+    ARPG_REQUIRE(m2.snapshot().player.max_hp - m2.snapshot().player.hp == 58);
+    ARPG_REQUIRE(m3.snapshot().player.max_hp - m3.snapshot().player.hp == 67);
+    return {};
+}
+
+arpg::test::Failure swift_scales_only_move_and_cooldown() noexcept {
+    CombatWorld normal{normal_encounter(MonsterId::chaos_chaser, 3.0F)};
+    CombatWorld swift{affixed_encounter(
+        MonsterAffixId::swift, MonsterAffixTier::m3, MonsterId::chaos_chaser,
+        3.0F)};
+    const float normal_start = normal.snapshot().monsters[0].position.x;
+    const float swift_start = swift.snapshot().monsters[0].position.x;
+    normal.tick(MovementInput{});
+    swift.tick(MovementInput{});
+    const MonsterSnapshot normal_after = normal.snapshot().monsters[0];
+    const MonsterSnapshot swift_after = swift.snapshot().monsters[0];
+    ARPG_REQUIRE(arpg::test::near(
+        swift_start - swift_after.position.x,
+        (normal_start - normal_after.position.x) * 1.45F, 1.0e-4));
+    ARPG_REQUIRE(normal_after.ai_phase == MonsterAiPhase::move);
+    ARPG_REQUIRE(swift_after.ai_phase == MonsterAiPhase::move);
+    return {};
+}
+
+arpg::test::Failure armored_reduces_only_physical_hp_damage() noexcept {
+    CombatWorld physical_normal{normal_encounter()};
+    CombatWorld physical_armored{affixed_encounter(
+        MonsterAffixId::armored, MonsterAffixTier::m3)};
+    resolve_player_attack(physical_normal);
+    resolve_player_attack(physical_armored);
+    const MonsterSnapshot normal_after = physical_normal.snapshot().monsters[0];
+    const MonsterSnapshot armored_after = physical_armored.snapshot().monsters[0];
+    ARPG_REQUIRE(armored_after.break_value == normal_after.break_value);
+    ARPG_REQUIRE(armored_after.hp > normal_after.hp);
+
+    CombatEncounterConfig elemental_config = normal_encounter();
+    elemental_config.player_build.values.flat_damage[
+        arpg::modifiers::damage_index(arpg::modifiers::DamageType::fire)] = 100000;
+    CombatEncounterConfig elemental_armored_config = elemental_config;
+    elemental_armored_config.wave.spawns[0].affixes = one_affix(
+        MonsterAffixId::armored, MonsterAffixTier::m3);
+    CombatWorld elemental_normal{elemental_config};
+    CombatWorld elemental_armored{elemental_armored_config};
+    resolve_player_attack(elemental_normal);
+    resolve_player_attack(elemental_armored);
+    const int physical_reduction = normal_after.hp - armored_after.hp;
+    ARPG_REQUIRE(elemental_normal.snapshot().monsters[0].hp
+                 - elemental_armored.snapshot().monsters[0].hp
+                 == physical_reduction);
+    return {};
+}
+
+arpg::test::Failure shielding_recharges_once_after_tier_delay_and_hit_resets_timer() noexcept {
+    ARPG_REQUIRE(shielding_refills_after_delay(MonsterAffixTier::m1, 180));
+    ARPG_REQUIRE(shielding_refills_after_delay(MonsterAffixTier::m2, 150));
+    ARPG_REQUIRE(shielding_refills_after_delay(MonsterAffixTier::m3, 120));
+    return {};
 }
 
 arpg::test::Failure frozen_catalog_projects_static_affix_values() noexcept {
@@ -89,6 +253,11 @@ arpg::test::Failure spawn_spec_is_copied_to_runtime_and_snapshot() noexcept {
 }
 
 constexpr arpg::test::TestCase kCases[] = {
+    {"mighty horizontal launch only", &mighty_scales_only_horizontal_launch_impulse},
+    {"frenzy damage and non-active timing", &frenzy_scales_damage_and_only_non_active_timing},
+    {"swift move and cooldown only", &swift_scales_only_move_and_cooldown},
+    {"armored physical hp only", &armored_reduces_only_physical_hp_damage},
+    {"shielding recharge delay and reset", &shielding_recharges_once_after_tier_delay_and_hit_resets_timer},
     {"frozen static affix projection", &frozen_catalog_projects_static_affix_values},
     {"spawn spec runtime snapshot copy", &spawn_spec_is_copied_to_runtime_and_snapshot},
 };

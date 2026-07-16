@@ -49,6 +49,14 @@ void integrate_reaction(MonsterRuntime& monster) noexcept {
     clamp_position(monster.position);
 }
 
+DamagePacket scaled_monster_packet(
+    DamagePacket packet, const MonsterAffixProfile& profile) noexcept {
+    for (int& amount : packet.amount) {
+        amount = scaled_monster_damage(amount, profile);
+    }
+    return packet;
+}
+
 }  // namespace
 
 void CombatWorld::resolve_monster_contact_attack(
@@ -88,7 +96,8 @@ void CombatWorld::resolve_monster_contact_attack(
     };
     if (overlaps_inclusive(contact, player_hurtbox)) {
         apply_player_damage(
-            definition->contact_damage, DamageDelivery::direct,
+            scaled_monster_packet(definition->contact_damage,
+                                  monster.affix_profile), DamageDelivery::direct,
             monster.position,
             definition->feedback);
     }

@@ -364,6 +364,7 @@ void CombatWorld::tick(MovementInput movement) noexcept {
         if (!monster.active) {
             continue;
         }
+        tick_monster_affix_resources(monster);
         const bool dummy_frozen = monster.hit_stop_ticks != 0;
         if (dummy_frozen) {
             --monster.hit_stop_ticks;

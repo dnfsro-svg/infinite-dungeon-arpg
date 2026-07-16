@@ -1,6 +1,7 @@
 #include "combat/monster_affix_runtime.hpp"
 
 #include "combat/monster_affix_catalog.hpp"
+#include "combat/monster_pool.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -25,6 +26,17 @@ constexpr std::int32_t kBasisPoints = 10000;
         * static_cast<std::int64_t>(right) / kBasisPoints;
     return static_cast<std::int32_t>(std::clamp(product, std::int64_t{0},
         static_cast<std::int64_t>(std::numeric_limits<std::int32_t>::max())));
+}
+
+[[nodiscard]] std::uint16_t ceil_scaled_ticks(
+    std::uint16_t base, std::int32_t basis_points) noexcept {
+    if (base == 0U) return 0U;
+    const std::uint64_t product = static_cast<std::uint64_t>(base)
+        * static_cast<std::uint64_t>(std::max(0, basis_points));
+    const std::uint64_t scaled = (product + kBasisPoints - 1U) / kBasisPoints;
+    return static_cast<std::uint16_t>(std::clamp<std::uint64_t>(
+        std::max<std::uint64_t>(1U, scaled), 1U,
+        (std::numeric_limits<std::uint16_t>::max)()));
 }
 
 }  // namespace
@@ -89,6 +101,37 @@ MonsterAffixProfile evaluate_monster_affixes(
         result.max_shield = scale_value(result.max_hp, shield_percent_bp);
     }
     return result;
+}
+
+int scaled_monster_damage(
+    int base, const MonsterAffixProfile& profile) noexcept {
+    return scale_value(base, profile.damage_bp);
+}
+
+std::uint16_t scaled_monster_ticks(
+    std::uint16_t base, std::int32_t timing_bp) noexcept {
+    return ceil_scaled_ticks(base, timing_bp);
+}
+
+float monster_move_step(
+    float base, const MonsterAffixProfile& profile) noexcept {
+    return base * static_cast<float>(profile.move_bp)
+        / static_cast<float>(kBasisPoints);
+}
+
+void tick_monster_affix_resources(MonsterRuntime& monster) noexcept {
+    if (monster.affix_profile.shield_recharge_delay_ticks == 0U
+        || monster.max_shield <= 0 || monster.shield >= monster.max_shield) {
+        return;
+    }
+    if (monster.shield_recharge_ticks == 0U) {
+        return;
+    }
+    --monster.shield_recharge_ticks;
+    if (monster.shield_recharge_ticks == 0U) {
+        monster.shield = monster.max_shield;
+        monster.shield_ticks = monster.max_shield_ticks;
+    }
 }
 
 }  // namespace arpg::combat

@@ -6,6 +6,8 @@
 
 namespace arpg::combat {
 
+struct MonsterRuntime;
+
 struct MonsterAffixProfile final {
     int max_hp{};
     int armor_rating{};
@@ -21,5 +23,13 @@ struct MonsterAffixProfile final {
 [[nodiscard]] MonsterAffixProfile evaluate_monster_affixes(
     const MonsterDefinition& monster,
     const MonsterAffixSet& affixes) noexcept;
+
+[[nodiscard]] int scaled_monster_damage(
+    int base, const MonsterAffixProfile& profile) noexcept;
+[[nodiscard]] std::uint16_t scaled_monster_ticks(
+    std::uint16_t base, std::int32_t timing_bp) noexcept;
+[[nodiscard]] float monster_move_step(
+    float base, const MonsterAffixProfile& profile) noexcept;
+void tick_monster_affix_resources(MonsterRuntime& monster) noexcept;
 
 }  // namespace arpg::combat

@@ -20,6 +20,25 @@ void clamp_position(Vec3& position) noexcept {
     position.y = std::clamp(position.y, room_bounds::min_y, room_bounds::max_y);
 }
 
+std::uint16_t frenzy_ticks(
+    std::uint16_t base, const MonsterRuntime& monster) noexcept {
+    return scaled_monster_ticks(base, monster.affix_profile.attack_timing_bp);
+}
+
+std::uint16_t cooldown_ticks(
+    std::uint16_t base, const MonsterRuntime& monster) noexcept {
+    return scaled_monster_ticks(frenzy_ticks(base, monster),
+                                monster.affix_profile.cooldown_bp);
+}
+
+DamagePacket scaled_packet(
+    DamagePacket packet, const MonsterRuntime& monster) noexcept {
+    for (int& amount : packet.amount) {
+        amount = scaled_monster_damage(amount, monster.affix_profile);
+    }
+    return packet;
+}
+
 bool move_to_preferred_range(
     MonsterRuntime& monster,
     const MonsterDefinition& definition,
@@ -38,8 +57,10 @@ bool move_to_preferred_range(
             dy = 0.0F;
         }
         const float magnitude = std::sqrt(dx * dx + dy * dy);
-        monster.velocity.x = dx / magnitude * definition.move_speed;
-        monster.velocity.y = dy / magnitude * definition.move_speed;
+        const float speed = monster_move_step(
+            definition.move_speed, monster.affix_profile);
+        monster.velocity.x = dx / magnitude * speed;
+        monster.velocity.y = dy / magnitude * speed;
         monster.position.x += monster.velocity.x;
         monster.position.y += monster.velocity.y;
         clamp_position(monster.position);
@@ -47,7 +68,7 @@ bool move_to_preferred_range(
     }
     monster.velocity = Vec3{};
     monster.ai_phase = MonsterAiPhase::telegraph;
-    monster.ai_ticks = definition.telegraph_ticks;
+    monster.ai_ticks = frenzy_ticks(definition.telegraph_ticks, monster);
     monster.attack_target_position = player;
     return false;
 }
@@ -93,7 +114,8 @@ void CombatWorld::simulate_ranged_ai(
                 static_cast<void>(spawn_projectile(
                     MonsterHandle{static_cast<std::uint16_t>(slot), monster.generation},
                     monster.position, velocity, kProjectileLifetime,
-                    definition.contact_damage, kProjectileRadius));
+                    scaled_packet(definition.contact_damage, monster),
+                    kProjectileRadius));
             } else {
                 std::size_t target_index = monsters_.slots_.size();
                 for (std::size_t index = 0; index < monsters_.slots_.size(); ++index) {
@@ -121,27 +143,30 @@ void CombatWorld::simulate_ranged_ai(
                     const float distance = target_distance(monster.position, player_.position);
                     if (distance < definition.preferred_range && distance > 0.0001F) {
                         monster.position.x += (monster.position.x - player_.position.x)
-                            / distance * definition.move_speed;
+                            / distance * monster_move_step(
+                                definition.move_speed, monster.affix_profile);
                         monster.position.y += (monster.position.y - player_.position.y)
-                            / distance * definition.move_speed;
+                            / distance * monster_move_step(
+                                definition.move_speed, monster.affix_profile);
                         clamp_position(monster.position);
                     }
                     monster.ai_phase = MonsterAiPhase::cooldown;
-                    monster.ai_ticks = kSupportFallbackCooldown;
+                    monster.ai_ticks = cooldown_ticks(
+                        kSupportFallbackCooldown, monster);
                 }
             }
             monster.contact_attack_resolved = true;
         }
         if (tick_down(monster.ai_ticks)) {
             monster.ai_phase = MonsterAiPhase::recovery;
-            monster.ai_ticks = definition.recovery_ticks;
+            monster.ai_ticks = frenzy_ticks(definition.recovery_ticks, monster);
         }
         return;
     case MonsterAiPhase::recovery:
         monster.velocity = Vec3{};
         if (tick_down(monster.ai_ticks)) {
             monster.ai_phase = MonsterAiPhase::cooldown;
-            monster.ai_ticks = definition.cooldown_ticks;
+            monster.ai_ticks = cooldown_ticks(definition.cooldown_ticks, monster);
         }
         return;
     case MonsterAiPhase::cooldown:
