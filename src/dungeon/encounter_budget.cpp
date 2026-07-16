@@ -6,12 +6,6 @@
 
 namespace arpg::dungeon::detail {
 
-std::uint16_t compute_abyss_encounter_budget(
-    std::uint8_t normal_budget) noexcept {
-    return static_cast<std::uint16_t>(
-        (static_cast<std::uint16_t>(normal_budget) * 3U + 1U) / 2U);
-}
-
 std::uint8_t compute_encounter_budget(
     std::uint64_t depth,
     const EncounterDirectorConfig& config) noexcept {

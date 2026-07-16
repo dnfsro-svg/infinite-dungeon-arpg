@@ -34,7 +34,7 @@ checkpoint::DungeonRunState make_fixture() noexcept {
     state.current_room.entry = checkpoint::EntrySide::right;
     state.current_room.ecology = checkpoint::DungeonElement::chaos;
     state.current_room.has_hole = true;
-    state.current_room.is_abyss = true;
+    state.current_room.is_abyss = false;
     state.last_transition = checkpoint::TransitionKind::descent;
     state.last_direction = checkpoint::ExitDirection::left;
     state.progression = {10U, 0U, 9U, 6U};

@@ -111,11 +111,16 @@ std::optional<AbyssDanger> danger_for_rule(AbyssRuleId rule) noexcept {
 
 std::uint8_t abyss_encounter_budget(
     std::uint8_t normal_budget) noexcept {
-    const std::uint64_t scaled =
-        (static_cast<std::uint64_t>(normal_budget) * 3U + 1U) / 2U;
+    const std::uint16_t scaled = abyss_encounter_budget_wide(normal_budget);
     return static_cast<std::uint8_t>((std::min)(
         scaled,
-        static_cast<std::uint64_t>((std::numeric_limits<std::uint8_t>::max)())));
+        static_cast<std::uint16_t>((std::numeric_limits<std::uint8_t>::max)())));
+}
+
+std::uint16_t abyss_encounter_budget_wide(
+    std::uint8_t normal_budget) noexcept {
+    return static_cast<std::uint16_t>(
+        (static_cast<std::uint16_t>(normal_budget) * 3U + 1U) / 2U);
 }
 
 std::uint8_t minimum_abyss_affixes(std::uint64_t depth) noexcept {

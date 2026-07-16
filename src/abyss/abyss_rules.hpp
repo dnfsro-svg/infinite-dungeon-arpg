@@ -15,6 +15,8 @@ namespace arpg::abyss {
     AbyssRuleId rule) noexcept;
 [[nodiscard]] std::uint8_t abyss_encounter_budget(
     std::uint8_t normal_budget) noexcept;
+[[nodiscard]] std::uint16_t abyss_encounter_budget_wide(
+    std::uint8_t normal_budget) noexcept;
 [[nodiscard]] std::uint8_t minimum_abyss_affixes(
     std::uint64_t depth) noexcept;
 [[nodiscard]] std::optional<int> map_resource_ratio(

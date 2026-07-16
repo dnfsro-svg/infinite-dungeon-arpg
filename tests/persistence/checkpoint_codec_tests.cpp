@@ -91,7 +91,7 @@ checkpoint::DungeonRunState make_fixture() noexcept {
     state.current_room.entry = checkpoint::EntrySide::right;
     state.current_room.ecology = checkpoint::DungeonElement::chaos;
     state.current_room.has_hole = true;
-    state.current_room.is_abyss = true;
+    state.current_room.is_abyss = false;
     state.last_transition = checkpoint::TransitionKind::descent;
     state.last_direction = checkpoint::ExitDirection::left;
     state.progression = {37U, 42U, 36U, 36U};
@@ -319,24 +319,92 @@ std::vector<std::uint8_t> as_v4_golden(
     return v4;
 }
 
+std::uint8_t reward_total_for_test(abyss::AbyssDanger danger) noexcept;
+checkpoint::DungeonRunState state_for_danger(
+    abyss::AbyssDanger danger,
+    abyss::AbyssLifecycle lifecycle) noexcept;
+
 void set_abyss(checkpoint::DungeonRunState& state,
     abyss::AbyssLifecycle lifecycle) noexcept {
+    while (!abyss::is_abyss_roll(state.current_room.seed)) {
+        ++state.current_room.seed;
+    }
     const auto selection = abyss::select_abyss_rule(
         state.current_room.seed, state.current_room.depth);
     if (!selection.has_value())
         return;
     state.current_room.is_abyss = true;
+    state.current_room.entry = checkpoint::EntrySide::right;
+    state.last_transition = checkpoint::TransitionKind::door;
+    state.last_direction = checkpoint::ExitDirection::left;
     state.abyss.lifecycle = lifecycle;
     state.abyss.danger = selection->danger;
     state.abyss.rule = selection->rule;
     state.abyss.rules_version = selection->rules_version;
 }
 
+arpg::test::Failure v5_abyss_origin_requires_a_matching_door() noexcept {
+    const auto valid = state_for_danger(
+        abyss::AbyssDanger::low, abyss::AbyssLifecycle::available);
+    ARPG_REQUIRE(persistence::encode_checkpoint(valid).has_value());
+
+    for (const auto lifecycle : std::array<abyss::AbyssLifecycle, 3U>{{
+             abyss::AbyssLifecycle::available,
+             abyss::AbyssLifecycle::started,
+             abyss::AbyssLifecycle::cleared}}) {
+        auto initial = valid;
+        set_abyss(initial, lifecycle);
+        initial.current_room.entry = checkpoint::EntrySide::initial;
+        initial.last_transition = checkpoint::TransitionKind::none;
+        initial.last_direction = checkpoint::ExitDirection::none;
+        if (lifecycle == abyss::AbyssLifecycle::cleared) {
+            initial.abyss.reward_total = reward_total_for_test(
+                initial.abyss.danger);
+        }
+        ARPG_REQUIRE(!persistence::encode_checkpoint(initial).has_value());
+
+        auto descent = initial;
+        descent.current_room.entry = checkpoint::EntrySide::initial;
+        descent.last_transition = checkpoint::TransitionKind::descent;
+        ARPG_REQUIRE(!persistence::encode_checkpoint(descent).has_value());
+
+        auto mismatched = initial;
+        mismatched.current_room.entry = checkpoint::EntrySide::left;
+        mismatched.last_transition = checkpoint::TransitionKind::door;
+        mismatched.last_direction = checkpoint::ExitDirection::left;
+        ARPG_REQUIRE(!persistence::encode_checkpoint(mismatched).has_value());
+    }
+
+    auto none = make_fixture();
+    none.current_room.is_abyss = true;
+    ARPG_REQUIRE(!persistence::encode_checkpoint(none).has_value());
+
+    auto failed = valid;
+    failed.abyss.lifecycle = abyss::AbyssLifecycle::failed;
+    failed.current_room.is_abyss = true;
+    ARPG_REQUIRE(!persistence::encode_checkpoint(failed).has_value());
+
+    const auto encoded = persistence::encode_checkpoint(valid);
+    ARPG_REQUIRE(encoded.has_value());
+    auto impossible_decode = *encoded;
+    impossible_decode[88U] = static_cast<std::uint8_t>(
+        checkpoint::EntrySide::initial);
+    impossible_decode[92U] = static_cast<std::uint8_t>(
+        checkpoint::TransitionKind::descent);
+    impossible_decode[93U] = static_cast<std::uint8_t>(
+        checkpoint::ExitDirection::none);
+    refresh_crc(impossible_decode);
+    ARPG_REQUIRE(persistence::decode_checkpoint(impossible_decode.data(),
+        impossible_decode.size()).error == persistence::CodecError::invalid_state);
+    return {};
+}
+
 std::uint64_t seed_for_danger(abyss::AbyssDanger danger,
     std::uint64_t depth = 40U) noexcept {
     for (std::uint64_t seed = 1U; seed < 100000U; ++seed) {
         const auto selection = abyss::select_abyss_rule(seed, depth);
-        if (selection.has_value() && selection->danger == danger)
+        if (abyss::is_abyss_roll(seed)
+                && selection.has_value() && selection->danger == danger)
             return seed;
     }
     return 0U;
@@ -855,7 +923,9 @@ arpg::test::Failure baseline_checkpoint_bytes_are_preserved() noexcept {
     const auto decoded = persistence::decode_checkpoint(
         kBaselineBytes.data(), kBaselineBytes.size());
     ARPG_REQUIRE(decoded.error == persistence::CodecError::none);
-    ARPG_REQUIRE(same_state(decoded.state, make_fixture()));
+    auto legacy_expected = make_fixture();
+    legacy_expected.current_room.is_abyss = true;
+    ARPG_REQUIRE(same_state(decoded.state, legacy_expected));
     ARPG_REQUIRE(decoded.state.passive_tree.allocated_bits == 1ULL);
 
     std::vector<std::uint8_t> format_three(bytes->begin(), bytes->begin() + 120U);
@@ -1248,6 +1318,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"v5 claimed and abandoned masks are consistent", &v5_claimed_and_abandoned_masks_are_consistent},
     {"v5 rule and danger match deterministic selection", &v5_rule_and_danger_must_match_deterministic_selection},
     {"v5 lifecycle requires matching room state", &v5_lifecycle_requires_matching_room_state},
+    {"v5 abyss origin requires matching door", &v5_abyss_origin_requires_a_matching_door},
     {"v5 resolution counts are validated", &v5_resolution_counts_are_validated},
     {"v5 crc covers abyss fields", &v5_crc_covers_abyss_fields},
     {"legacy door abyss migrates deterministically", &legacy_door_abyss_migrates_deterministically},

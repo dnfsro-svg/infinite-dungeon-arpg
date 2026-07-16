@@ -32,8 +32,15 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
     result.biases = stable_state_.biases;
     result.phase = phase_;
     result.has_active_room = combat_.has_value();
-    result.exits_open.fill(
-        phase_ == RoomPhase::cleared || phase_ == RoomPhase::awaiting_exit);
+    bool exits_open = phase_ == RoomPhase::cleared
+        || phase_ == RoomPhase::awaiting_exit;
+    if (!exits_open && phase_ == RoomPhase::committing
+            && pending_save_.has_value()
+            && pending_save_->kind != PendingSaveKind::abyss_clear) {
+        exits_open = pending_save_->resume_phase == RoomPhase::cleared
+            || pending_save_->resume_phase == RoomPhase::awaiting_exit;
+    }
+    result.exits_open.fill(exits_open);
     result.abyss_doors = preview_abyss_doors(stable_state_.current_room);
     result.wave_index = wave_index_;
     result.wave_count = encounter_plan_.wave_count;
@@ -90,8 +97,14 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
         result.combat.emplace(combat_->snapshot());
     }
     result.encounter.total_budget = encounter_plan_.total_budget;
-    result.encounter.plan_valid = encounter_plan_legal(
-        encounter_plan_, rules_.encounter);
+    if (stable_state_.current_room.is_abyss) {
+        const auto legality = abyss_encounter_legality_config(rules_.encounter);
+        result.encounter.plan_valid = legality.has_value()
+            && encounter_plan_legal(encounter_plan_, *legality);
+    } else {
+        result.encounter.plan_valid = encounter_plan_legal(
+            encounter_plan_, rules_.encounter);
+    }
     if (wave_index_ < encounter_plan_.wave_count) {
         const auto& wave = encounter_plan_.waves[wave_index_];
         result.encounter.current_wave_budget = wave.spent_budget;

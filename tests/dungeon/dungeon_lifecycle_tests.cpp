@@ -524,6 +524,43 @@ arpg::test::Failure invalid_available_checkpoint_faults() noexcept {
     return {};
 }
 
+arpg::test::Failure impossible_available_abyss_origin_faults_before_start() noexcept {
+    using namespace arpg;
+    for (const auto transition : std::array<dungeon::TransitionKind, 2U>{{
+             dungeon::TransitionKind::none,
+             dungeon::TransitionKind::descent}}) {
+        auto state = lifecycle_available_state();
+        state.current_room.entry = dungeon::EntrySide::initial;
+        state.last_transition = transition;
+        state.last_direction = dungeon::ExitDirection::none;
+        dungeon::DungeonSession session{{}, state};
+        ARPG_REQUIRE(session.snapshot().phase == dungeon::RoomPhase::faulted);
+        ARPG_REQUIRE(session.snapshot().diagnostics.fault
+            == dungeon::DungeonFault::invalid_abyss_state);
+        ARPG_REQUIRE(!session.pending_save().has_value());
+    }
+    return {};
+}
+
+arpg::test::Failure deep_abyss_snapshot_uses_expanded_budget_legality() noexcept {
+    using namespace arpg;
+    auto state = lifecycle_available_state();
+    state.current_room.depth = 1000U;
+    const auto selected = abyss::select_abyss_rule(
+        state.current_room.seed, state.current_room.depth);
+    ARPG_REQUIRE(selected.has_value());
+    state.abyss.danger = selected->danger;
+    state.abyss.rule = selected->rule;
+    state.abyss.rules_version = selected->rules_version;
+    dungeon::DungeonSession session{{}, state};
+    ARPG_REQUIRE(commit_abyss_start(session));
+    const auto snapshot = session.snapshot();
+    ARPG_REQUIRE(snapshot.encounter.total_budget
+        > dungeon::DungeonRules{}.encounter.max_budget);
+    ARPG_REQUIRE(snapshot.encounter.plan_valid);
+    return {};
+}
+
 arpg::test::Failure construction_and_first_tick_are_staged() noexcept {
     using namespace arpg;
     dungeon::DungeonSession session;
@@ -744,6 +781,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"abyss defeat does not depend on event delivery", &abyss_player_defeat_does_not_depend_on_event_delivery},
     {"relay overflow fault precedes durable defeat", &relay_overflow_fault_precedes_durable_defeat},
     {"invalid available checkpoint faults", &invalid_available_checkpoint_faults},
+    {"impossible available origin faults", &impossible_available_abyss_origin_faults_before_start},
+    {"deep abyss snapshot expanded legality", &deep_abyss_snapshot_uses_expanded_budget_legality},
     {"construction and first tick are staged", &construction_and_first_tick_are_staged},
     {"closed doors ignore pre-clear contact", &closed_doors_ignore_pre_clear_contact},
     {"real combat clears once without respawn", &real_combat_clears_once_without_respawn},

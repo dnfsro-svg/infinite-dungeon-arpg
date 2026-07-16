@@ -86,4 +86,26 @@ struct DungeonRunState final {
     items::ItemOwnershipState item_ownership{};
 };
 
+[[nodiscard]] constexpr bool valid_abyss_door_origin(
+    const DungeonRunState& state,
+    bool rolled) noexcept {
+    if (!rolled || !state.current_room.is_abyss
+            || state.last_transition != TransitionKind::door) {
+        return false;
+    }
+    switch (state.last_direction) {
+    case ExitDirection::up:
+        return state.current_room.entry == EntrySide::bottom;
+    case ExitDirection::down:
+        return state.current_room.entry == EntrySide::top;
+    case ExitDirection::left:
+        return state.current_room.entry == EntrySide::right;
+    case ExitDirection::right:
+        return state.current_room.entry == EntrySide::left;
+    case ExitDirection::none:
+        return false;
+    }
+    return false;
+}
+
 }  // namespace arpg::dungeon::checkpoint

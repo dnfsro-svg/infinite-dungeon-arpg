@@ -31,21 +31,23 @@ DungeonSnapshot active_snapshot(
 }
 
 arpg::test::Failure door_modes_follow_room_lifecycle() noexcept {
-    ARPG_REQUIRE(arpg::platform::door_visual_mode(RoomPhase::locked, true)
+    ARPG_REQUIRE(arpg::platform::door_visual_mode(RoomPhase::locked, true, false)
         == DoorVisualMode::closed);
-    ARPG_REQUIRE(arpg::platform::door_visual_mode(RoomPhase::combat, true)
+    ARPG_REQUIRE(arpg::platform::door_visual_mode(RoomPhase::combat, true, false)
         == DoorVisualMode::closed);
-    ARPG_REQUIRE(arpg::platform::door_visual_mode(RoomPhase::cleared, true)
+    ARPG_REQUIRE(arpg::platform::door_visual_mode(RoomPhase::cleared, true, true)
         == DoorVisualMode::open);
     ARPG_REQUIRE(arpg::platform::door_visual_mode(
-        RoomPhase::awaiting_exit, true) == DoorVisualMode::open);
+        RoomPhase::awaiting_exit, true, true) == DoorVisualMode::open);
     ARPG_REQUIRE(arpg::platform::door_visual_mode(
-        RoomPhase::committing, true) == DoorVisualMode::open);
+        RoomPhase::committing, true, false) == DoorVisualMode::closed);
     ARPG_REQUIRE(arpg::platform::door_visual_mode(
-        RoomPhase::faulted, true) == DoorVisualMode::closed);
+        RoomPhase::committing, true, true) == DoorVisualMode::open);
     ARPG_REQUIRE(arpg::platform::door_visual_mode(
-        RoomPhase::transitioning, true) == DoorVisualMode::hidden);
-    ARPG_REQUIRE(arpg::platform::door_visual_mode(RoomPhase::combat, false)
+        RoomPhase::faulted, true, false) == DoorVisualMode::closed);
+    ARPG_REQUIRE(arpg::platform::door_visual_mode(
+        RoomPhase::transitioning, true, false) == DoorVisualMode::hidden);
+    ARPG_REQUIRE(arpg::platform::door_visual_mode(RoomPhase::combat, false, false)
         == DoorVisualMode::hidden);
     return {};
 }

@@ -250,6 +250,7 @@ arpg::test::Failure encounter_budget_uses_ceiling_three_halves() noexcept {
     ARPG_REQUIRE(arpg::abyss::abyss_encounter_budget(169U) == 254U);
     ARPG_REQUIRE(arpg::abyss::abyss_encounter_budget(170U) == 255U);
     ARPG_REQUIRE(arpg::abyss::abyss_encounter_budget(255U) == 255U);
+    ARPG_REQUIRE(arpg::abyss::abyss_encounter_budget_wide(255U) == 383U);
     return {};
 }
 

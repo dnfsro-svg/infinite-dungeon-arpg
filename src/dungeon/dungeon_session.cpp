@@ -259,6 +259,11 @@ RequestResult DungeonSession::reset_current_room() noexcept {
         return prepare_abyss_failure();
     }
     if (stable_state_.current_room.is_abyss
+            && stable_state_.abyss.lifecycle
+                == abyss::AbyssLifecycle::cleared) {
+        return RequestResult::rejected;
+    }
+    if (stable_state_.current_room.is_abyss
             || (stable_state_.abyss.lifecycle
                     != abyss::AbyssLifecycle::none
                 && stable_state_.abyss.lifecycle
@@ -599,10 +604,10 @@ void DungeonSession::reset_to_normal_room(bool clear_queues) noexcept {
 
 bool DungeonSession::prepare_abyss_start() noexcept {
     if (pending_save_.has_value() || combat_.has_value()
-            || !stable_state_.current_room.is_abyss
+            || !checkpoint::valid_abyss_door_origin(stable_state_,
+                abyss::is_abyss_roll(stable_state_.current_room.seed))
             || stable_state_.abyss.lifecycle
-                != abyss::AbyssLifecycle::available
-            || !abyss::is_abyss_roll(stable_state_.current_room.seed)) {
+                != abyss::AbyssLifecycle::available) {
         enter_fault(DungeonFault::invalid_abyss_state);
         return false;
     }

@@ -103,7 +103,7 @@ int main() {
         const arpg::test::TestSuite reward_only[] = {
             dungeon_abyss_reward_suite(),
         };
-        return arpg::test::run_suites(reward_only, 27,
+        return arpg::test::run_suites(reward_only, 28,
             "stage 10 task 9 abyss rewards");
     }
 
@@ -116,6 +116,6 @@ int main() {
             "stage 10 task 12 abyss stress");
     }
 
-    return arpg::test::run_suites(suites, 199,
+    return arpg::test::run_suites(suites, 202,
         "stage 10 task 12 abyss stress validation");
 }

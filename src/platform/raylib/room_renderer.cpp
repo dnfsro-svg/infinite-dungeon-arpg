@@ -58,7 +58,7 @@ void draw_graybox_room(dungeon::DungeonElement ecology) noexcept {
 void draw_doors(const dungeon::DungeonSnapshot& snapshot,
     float width, float height) noexcept {
     const DoorVisualMode mode = door_visual_mode(snapshot.phase,
-        snapshot.has_active_room);
+        snapshot.has_active_room, snapshot.exits_open[0]);
     if (mode == DoorVisualMode::hidden) {
         return;
     }

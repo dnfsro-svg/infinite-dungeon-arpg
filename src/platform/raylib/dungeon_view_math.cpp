@@ -18,13 +18,12 @@ constexpr Rgba8 kChaosFrame{154U, 76U, 210U, 255U};
 
 DoorVisualMode door_visual_mode(
     dungeon::RoomPhase phase,
-    bool has_active_room) noexcept {
+    bool has_active_room,
+    bool exits_open) noexcept {
     if (!has_active_room || phase == dungeon::RoomPhase::transitioning) {
         return DoorVisualMode::hidden;
     }
-    if (phase == dungeon::RoomPhase::cleared
-        || phase == dungeon::RoomPhase::awaiting_exit
-        || phase == dungeon::RoomPhase::committing) {
+    if (exits_open) {
         return DoorVisualMode::open;
     }
     return DoorVisualMode::closed;

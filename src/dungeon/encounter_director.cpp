@@ -1,5 +1,6 @@
 #include "dungeon/encounter_director.hpp"
 
+#include "abyss/abyss_rules.hpp"
 #include "combat/monster_catalog.hpp"
 #include "combat/monster_affix_catalog.hpp"
 #include "combat/monster_affix_generation.hpp"
@@ -17,8 +18,6 @@ namespace arpg::dungeon::detail {
 [[nodiscard]] std::uint8_t compute_encounter_budget(
     std::uint64_t depth,
     const EncounterDirectorConfig& config) noexcept;
-[[nodiscard]] std::uint16_t compute_abyss_encounter_budget(
-    std::uint8_t normal_budget) noexcept;
 [[nodiscard]] bool encounter_plan_legal_with_affix_catalog(
     const RoomEncounterPlan& plan,
     const EncounterDirectorConfig& config,
@@ -468,6 +467,24 @@ EncounterPlanResult build_encounter_plan(
         config, encounter_budget(depth, config));
 }
 
+std::optional<EncounterDirectorConfig> abyss_encounter_legality_config(
+    const EncounterDirectorConfig& config) noexcept {
+    if (validate_encounter_director_config(config) != DungeonFault::none) {
+        return std::nullopt;
+    }
+    const std::uint16_t abyss_max = abyss::abyss_encounter_budget_wide(
+        config.max_budget);
+    if (abyss_max > (std::numeric_limits<std::uint8_t>::max)()) {
+        return std::nullopt;
+    }
+    EncounterDirectorConfig legality = config;
+    legality.max_budget = static_cast<std::uint8_t>(abyss_max);
+    if (validate_encounter_director_config(legality) != DungeonFault::none) {
+        return std::nullopt;
+    }
+    return legality;
+}
+
 EncounterPlanResult build_abyss_encounter_plan(
     std::uint64_t room_seed,
     std::uint64_t depth,
@@ -477,28 +494,21 @@ EncounterPlanResult build_abyss_encounter_plan(
             || !valid_ecology(ecology)) {
         return {DungeonFault::invalid_rules, {}};
     }
-    const std::uint16_t abyss_budget = detail::compute_abyss_encounter_budget(
+    const std::uint16_t abyss_budget = abyss::abyss_encounter_budget_wide(
         encounter_budget(depth, config));
-    const std::uint16_t abyss_max = detail::compute_abyss_encounter_budget(
-        config.max_budget);
+    const auto legality_config = abyss_encounter_legality_config(config);
     if (abyss_budget == 0U
             || abyss_budget > (std::numeric_limits<std::uint8_t>::max)()
-            || abyss_max > (std::numeric_limits<std::uint8_t>::max)()) {
-        return {DungeonFault::invalid_rules, {}};
-    }
-    EncounterDirectorConfig legality_config = config;
-    legality_config.max_budget = static_cast<std::uint8_t>(abyss_max);
-    if (validate_encounter_director_config(legality_config)
-            != DungeonFault::none) {
+            || !legality_config.has_value()) {
         return {DungeonFault::invalid_rules, {}};
     }
     EncounterPlanResult result = build_encounter_plan_with_budget(room_seed,
-        depth, ecology, config, legality_config,
+        depth, ecology, config, *legality_config,
         static_cast<std::uint8_t>(abyss_budget));
     if (result.fault != DungeonFault::none) return result;
     if (!supplement_abyss_plan_affixes(result.plan, room_seed, depth)
             || !detail::encounter_plan_legal_with_affix_catalog(result.plan,
-                legality_config, combat::monster_affix_catalog())) {
+                *legality_config, combat::monster_affix_catalog())) {
         return {DungeonFault::invalid_rules, {}};
     }
     return result;

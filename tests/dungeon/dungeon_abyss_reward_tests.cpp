@@ -234,6 +234,7 @@ arpg::test::Failure cleared_abyss_starts_hidden_reward_transaction() noexcept {
     ARPG_REQUIRE(session.pending_save().has_value());
     ARPG_REQUIRE(session.pending_save()->kind
         == PendingSaveKind::abyss_reward_materialized);
+    ARPG_REQUIRE(session.snapshot().exits_open[0]);
     ARPG_REQUIRE(session.snapshot().ground_item_count == 0U);
     const auto& stable = arpg::test::stable_state(session);
     ARPG_REQUIRE(stable.abyss.generated_mask == 0U);
@@ -448,6 +449,7 @@ arpg::test::Failure abyss_pickup_prepares_claim_without_consuming_sequence() noe
 
     ARPG_REQUIRE(session.request_pickup(ground_ordinal)
         == arpg::dungeon::RequestResult::accepted);
+    ARPG_REQUIRE(session.snapshot().exits_open[0]);
     const auto pending = session.pending_save();
     ARPG_REQUIRE(pending.has_value());
     ARPG_REQUIRE(pending->kind == PendingSaveKind::abyss_reward_claim);
@@ -694,6 +696,63 @@ arpg::test::Failure reloaded_cleared_abyss_is_navigable_and_auto_claims() noexce
     ARPG_REQUIRE(automatic.pending_save()->kind
         == PendingSaveKind::abyss_reward_claim);
     ARPG_REQUIRE(abyss_ground(automatic, 0U) != nullptr);
+    return {};
+}
+
+arpg::test::Failure cleared_abyss_reset_is_rejected_without_state_drift() noexcept {
+    constexpr std::array<std::uint8_t, 3U> kGenerated{{0U, 1U, 1U}};
+    constexpr std::array<std::uint8_t, 3U> kClaimed{{0U, 0U, 1U}};
+    for (std::size_t index = 0U; index < kGenerated.size(); ++index) {
+        DungeonRunState state = cleared_abyss_state(AbyssDanger::low);
+        state.abyss.generated_mask = kGenerated[index];
+        state.abyss.claimed_mask = kClaimed[index];
+        state.abyss.reward_revision = kGenerated[index] + kClaimed[index];
+        DungeonSession session{DungeonRules{}, state};
+        const auto before_snapshot = session.snapshot();
+        const auto before_state = arpg::test::stable_state(session);
+        const auto before_ground = arpg::test::ground_items(session);
+
+        ARPG_REQUIRE(session.reset_current_room()
+            == arpg::dungeon::RequestResult::rejected);
+        const auto after = session.snapshot();
+        const auto& after_state = arpg::test::stable_state(session);
+        ARPG_REQUIRE(after.phase == before_snapshot.phase);
+        ARPG_REQUIRE(after.diagnostics.fault == DungeonFault::none);
+        ARPG_REQUIRE(after_state.commit_generation
+            == before_state.commit_generation);
+        ARPG_REQUIRE(after_state.abyss.generated_mask
+            == before_state.abyss.generated_mask);
+        ARPG_REQUIRE(after_state.abyss.claimed_mask
+            == before_state.abyss.claimed_mask);
+        ARPG_REQUIRE(after_state.abyss.abandoned_mask
+            == before_state.abyss.abandoned_mask);
+        ARPG_REQUIRE(after_state.abyss.reward_revision
+            == before_state.abyss.reward_revision);
+        for (std::size_t ground = 0U; ground < before_ground.size(); ++ground) {
+            ARPG_REQUIRE(same_ground(
+                arpg::test::ground_items(session)[ground], before_ground[ground]));
+        }
+
+        if (index == 0U) {
+            session.tick({});
+            ARPG_REQUIRE(session.pending_save().has_value());
+            ARPG_REQUIRE(session.pending_save()->kind
+                == PendingSaveKind::abyss_reward_materialized);
+        } else if (index == 1U) {
+            const GroundItem* reward = abyss_ground(session, 0U);
+            ARPG_REQUIRE(reward != nullptr);
+            set_player_position(session, reward->position);
+            ARPG_REQUIRE(session.request_pickup(reward->drop_ordinal)
+                == arpg::dungeon::RequestResult::accepted);
+        } else {
+            arpg::test::set_phase(session, RoomPhase::awaiting_exit);
+            set_player_position(session, {-12.0F, 0.0F, 0.0F});
+            attempt_exit(session, arpg::dungeon::ExitDirection::left);
+            ARPG_REQUIRE(session.pending_save().has_value());
+            ARPG_REQUIRE(session.pending_save()->kind
+                == PendingSaveKind::transition);
+        }
+    }
     return {};
 }
 
@@ -1089,6 +1148,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &generated_unrebuilt_reward_still_counts_and_warns},
     {"reloaded cleared abyss navigable",
         &reloaded_cleared_abyss_is_navigable_and_auto_claims},
+    {"cleared abyss reset rejected atomically",
+        &cleared_abyss_reset_is_rejected_without_state_drift},
     {"abyss door confirmation abandon",
         &abyss_door_confirmation_warns_and_abandons_atomically},
     {"abyss door abandon excludes generated unclaimed",

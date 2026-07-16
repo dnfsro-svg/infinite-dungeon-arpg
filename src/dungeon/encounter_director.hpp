@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 
 namespace arpg::dungeon {
 
@@ -31,6 +32,10 @@ struct EncounterPlanResult final {
     std::uint64_t room_seed,
     std::uint64_t depth,
     checkpoint::DungeonElement ecology,
+    const EncounterDirectorConfig& config) noexcept;
+
+[[nodiscard]] std::optional<EncounterDirectorConfig>
+abyss_encounter_legality_config(
     const EncounterDirectorConfig& config) noexcept;
 
 [[nodiscard]] EncounterPlanResult build_abyss_encounter_plan(

@@ -396,6 +396,7 @@ arpg::test::Failure door_request_freezes_old_combat_until_commit() noexcept {
     ARPG_REQUIRE(pending->expected_generation
         == pending->next_state.commit_generation);
     ARPG_REQUIRE(session.snapshot().phase == RoomPhase::committing);
+    ARPG_REQUIRE(session.snapshot().exits_open[0]);
     ARPG_REQUIRE(session.snapshot().combat.has_value());
     ARPG_REQUIRE(session.snapshot().room_index == before.room_index);
     const auto frozen = session.snapshot().combat->tick;

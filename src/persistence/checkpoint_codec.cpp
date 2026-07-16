@@ -157,7 +157,8 @@ bool valid_abyss_checkpoint(
     }
 
     if (value.lifecycle == AbyssLifecycle::none) {
-        return value.danger == AbyssDanger::low
+        return !state.current_room.is_abyss
+            && value.danger == AbyssDanger::low
             && value.rule == AbyssRuleId::none
             && value.rules_version == 0U
             && value.reward_total == 0U
@@ -173,6 +174,13 @@ bool valid_abyss_checkpoint(
         || value.rules_version != abyss::kAbyssRulesVersion
         || value.danger != selection->danger
         || value.rule != selection->rule) {
+        return false;
+    }
+    if (value.lifecycle == AbyssLifecycle::failed) {
+        if (state.current_room.is_abyss)
+            return false;
+    } else if (!checkpoint::valid_abyss_door_origin(
+            state, abyss::is_abyss_roll(state.current_room.seed))) {
         return false;
     }
     if ((value.lifecycle == AbyssLifecycle::available

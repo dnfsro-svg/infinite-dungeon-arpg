@@ -114,12 +114,19 @@ void write_u32(std::vector<std::uint8_t>& bytes, std::size_t offset,
 
 std::vector<std::uint8_t> encode_v4(
     const dungeon::DungeonRunState& state) {
-    const auto encoded = persistence::encode_checkpoint(state);
+    auto encodable = state;
+    encodable.current_room.is_abyss = false;
+    encodable.abyss = {};
+    const auto encoded = persistence::encode_checkpoint(encodable);
     if (!encoded.has_value() || encoded->size() < 152U) return {};
     std::vector<std::uint8_t> v4(encoded->size() - 32U, 0U);
     std::copy_n(encoded->begin(), 120U, v4.begin());
     std::copy(encoded->begin() + 152U, encoded->end(), v4.begin() + 120U);
     v4[7U] = '5';
+    v4[88U] = static_cast<std::uint8_t>(state.current_room.entry);
+    v4[91U] = state.current_room.is_abyss ? 1U : 0U;
+    v4[92U] = static_cast<std::uint8_t>(state.last_transition);
+    v4[93U] = static_cast<std::uint8_t>(state.last_direction);
     write_u32(v4, 8U, 4U);
     write_u32(v4, 24U, static_cast<std::uint32_t>(v4.size() - 32U));
     auto checksum = persistence::crc32_update(0U, v4.data() + 8U, 20U);

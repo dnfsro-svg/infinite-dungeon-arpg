@@ -1,5 +1,6 @@
 #include "combat/monster_affix_generation.hpp"
 
+#include "abyss/abyss_rules.hpp"
 #include "combat/monster_affix_catalog.hpp"
 #include "combat/monster_catalog.hpp"
 #include "core/deterministic_rng.hpp"
@@ -172,13 +173,6 @@ template <std::size_t N>
     return 0U;
 }
 
-[[nodiscard]] std::uint8_t abyss_affix_minimum(
-    std::uint64_t depth) noexcept {
-    if (depth >= 40U) return 3U;
-    if (depth >= 20U) return 2U;
-    return 1U;
-}
-
 [[nodiscard]] bool affix_set_valid_for_monster(
     const MonsterAffixSet& set,
     const MonsterDefinition& monster,
@@ -322,7 +316,7 @@ std::optional<MonsterAffixSet> supplement_abyss_affixes_with_catalog(
             || !affix_set_valid_for_monster(normal, monster, catalog)) {
         return std::nullopt;
     }
-    const std::uint8_t target_count = abyss_affix_minimum(depth);
+    const std::uint8_t target_count = abyss::minimum_abyss_affixes(depth);
     if (normal.count >= target_count) return normal;
 
     const std::uint64_t seed = monster_affix_context_seed(room_seed, depth,

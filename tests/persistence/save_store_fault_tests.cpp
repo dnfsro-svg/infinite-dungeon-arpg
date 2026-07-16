@@ -533,11 +533,15 @@ checkpoint::DungeonRunState cleared_abyss_for_faults(
     constexpr std::uint64_t kDepth = 20U;
     for (std::uint64_t seed = 1U; seed != 0U; ++seed) {
         const auto selection = arpg::abyss::select_abyss_rule(seed, kDepth);
-        if (!selection.has_value() || selection->danger != wanted) continue;
+        if (!arpg::abyss::is_abyss_roll(seed)
+                || !selection.has_value() || selection->danger != wanted) continue;
         state.current_room.seed = seed;
         state.current_room.depth = kDepth;
+        state.current_room.entry = checkpoint::EntrySide::left;
         state.current_room.is_abyss = true;
         state.current_room.has_hole = true;
+        state.last_transition = checkpoint::TransitionKind::door;
+        state.last_direction = checkpoint::ExitDirection::right;
         state.abyss.lifecycle = arpg::abyss::AbyssLifecycle::cleared;
         state.abyss.danger = selection->danger;
         state.abyss.rule = selection->rule;

@@ -3,27 +3,6 @@
 #include "abyss/abyss_rules.hpp"
 
 namespace arpg::dungeon {
-namespace {
-
-bool valid_door_entry(
-    checkpoint::ExitDirection direction,
-    checkpoint::EntrySide entry) noexcept {
-    switch (direction) {
-    case checkpoint::ExitDirection::up:
-        return entry == checkpoint::EntrySide::bottom;
-    case checkpoint::ExitDirection::down:
-        return entry == checkpoint::EntrySide::top;
-    case checkpoint::ExitDirection::left:
-        return entry == checkpoint::EntrySide::right;
-    case checkpoint::ExitDirection::right:
-        return entry == checkpoint::EntrySide::left;
-    case checkpoint::ExitDirection::none:
-        return false;
-    }
-    return false;
-}
-
-}  // namespace
 
 checkpoint::DungeonRunState migrate_legacy_abyss_checkpoint(
     const checkpoint::DungeonRunState& legacy) {
@@ -31,11 +10,8 @@ checkpoint::DungeonRunState migrate_legacy_abyss_checkpoint(
     migrated.abyss = {};
     migrated.last_abyss_resolution = {};
 
-    const bool legal_door_target = legacy.current_room.is_abyss
-        && legacy.last_transition == checkpoint::TransitionKind::door
-        && valid_door_entry(
-            legacy.last_direction, legacy.current_room.entry)
-        && abyss::is_abyss_roll(legacy.current_room.seed);
+    const bool legal_door_target = checkpoint::valid_abyss_door_origin(
+        legacy, abyss::is_abyss_roll(legacy.current_room.seed));
     if (!legal_door_target) {
         migrated.current_room.is_abyss = false;
         return migrated;

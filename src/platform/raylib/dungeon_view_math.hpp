@@ -91,7 +91,8 @@ inline constexpr float kHoleInteractionRadius = 2.0F;
 
 [[nodiscard]] DoorVisualMode door_visual_mode(
     dungeon::RoomPhase phase,
-    bool has_active_room) noexcept;
+    bool has_active_room,
+    bool exits_open) noexcept;
 [[nodiscard]] DoorTheme door_theme(
     dungeon::ExitDirection direction) noexcept;
 [[nodiscard]] bool abyss_door_marker(
