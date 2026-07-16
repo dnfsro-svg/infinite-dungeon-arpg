@@ -260,6 +260,12 @@ arpg::test::Failure transition_and_combat_start_are_separate_ticks() noexcept {
 
     session.tick(outward(ExitDirection::up));
     drain_dungeon(session);
+    if (session.snapshot().phase == RoomPhase::committing) {
+        ARPG_REQUIRE(session.pending_save_view() != nullptr);
+        ARPG_REQUIRE(session.pending_save_view()->kind
+            == arpg::dungeon::PendingSaveKind::abyss_start);
+        ARPG_REQUIRE(arpg::test::commit_pending(session));
+    }
     const DungeonSnapshot locked = session.snapshot();
     ARPG_REQUIRE(locked.session_tick == transition.session_tick + 1U);
     ARPG_REQUIRE(locked.phase == RoomPhase::locked);
@@ -292,7 +298,7 @@ arpg::test::Failure contact_and_held_inputs_never_duplicate_rooms() noexcept {
     ARPG_REQUIRE(session.snapshot().room_index == 0U);
     ARPG_REQUIRE(session.snapshot().diagnostics.rejected_exit_count == 0U);
 
-    session.reset_current_room();
+    static_cast<void>(session.reset_current_room());
     drain_dungeon(session);
     ARPG_REQUIRE(clear_and_await(session));
     ARPG_REQUIRE(commit_exit(session, ExitDirection::right));
@@ -307,7 +313,7 @@ arpg::test::Failure contact_and_held_inputs_never_duplicate_rooms() noexcept {
     ARPG_REQUIRE(session.snapshot().room_index == 1U);
     ARPG_REQUIRE(session.snapshot().phase == RoomPhase::combat);
 
-    session.reset_current_room();
+    static_cast<void>(session.reset_current_room());
     drain_dungeon(session);
     ARPG_REQUIRE(clear_and_await(session));
     ARPG_REQUIRE(commit_exit(session, ExitDirection::left));

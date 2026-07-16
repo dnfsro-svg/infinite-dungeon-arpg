@@ -4,6 +4,7 @@
 
 #include "dungeon/dungeon_progression.hpp"
 #include "dungeon/dungeon_session.hpp"
+#include "abyss/abyss_rules.hpp"
 #include "persistence/save_store.hpp"
 
 #include <array>
@@ -132,6 +133,112 @@ dungeon::TransitionSaveResult to_session_result(
 
 dungeon::DungeonRunState initial_state(std::uint64_t seed) noexcept {
     return dungeon::make_initial_run_state(seed, dungeon::DungeonRules{}).state;
+}
+
+dungeon::DungeonRunState available_state(std::uint64_t seed = 1U) noexcept {
+    auto state = initial_state(0xAB155EEDULL);
+    while (!arpg::abyss::is_abyss_roll(seed)) ++seed;
+    state.current_room.seed = seed;
+    state.current_room.depth = 40U;
+    state.current_room.entry = dungeon::EntrySide::left;
+    state.current_room.ecology = dungeon::DungeonElement::lightning;
+    state.current_room.has_hole = true;
+    state.current_room.is_abyss = true;
+    state.last_transition = dungeon::TransitionKind::door;
+    state.last_direction = dungeon::ExitDirection::right;
+    const auto selected = arpg::abyss::select_abyss_rule(seed, 40U);
+    if (selected.has_value()) {
+        state.abyss.lifecycle = arpg::abyss::AbyssLifecycle::available;
+        state.abyss.danger = selected->danger;
+        state.abyss.rule = selected->rule;
+        state.abyss.rules_version = selected->rules_version;
+    }
+    return state;
+}
+
+constexpr std::array<persistence::SaveFaultPoint, 8U> kAllFaultPoints{{
+    persistence::SaveFaultPoint::before_temp_write,
+    persistence::SaveFaultPoint::after_temp_write,
+    persistence::SaveFaultPoint::after_temp_validation,
+    persistence::SaveFaultPoint::before_publish,
+    persistence::SaveFaultPoint::after_publish,
+    persistence::SaveFaultPoint::final_scan_a,
+    persistence::SaveFaultPoint::final_scan_b,
+    persistence::SaveFaultPoint::before_archive,
+}};
+
+arpg::test::Failure abyss_start_fault_matrix_is_atomic() noexcept {
+    for (const auto point : kAllFaultPoints) {
+        TempDirectory directory;
+        auto healthy = make_store(directory.path);
+        const auto available = available_state();
+        ARPG_REQUIRE(healthy.commit(available).state
+            == persistence::SaveCommitState::committed);
+        dungeon::DungeonSession session{{}, available};
+        const auto pending = *session.pending_save();
+        ARPG_REQUIRE(pending.kind == dungeon::PendingSaveKind::abyss_start);
+        ARPG_REQUIRE(!session.snapshot().combat.has_value());
+        FaultContext fault{point, false};
+        auto faulty = make_store(directory.path, &fault);
+        const auto saved = faulty.commit(pending.next_state);
+        session.resolve_pending_save(to_session_result(saved));
+        const auto disk = healthy.load();
+        ARPG_REQUIRE(disk.state == persistence::SaveLoadState::ready);
+        const bool disk_old = dungeon::same_run_state(
+            disk.checkpoint, available);
+        const bool disk_new = dungeon::same_run_state(
+            disk.checkpoint, pending.next_state);
+        ARPG_REQUIRE(disk_old || disk_new);
+        if (saved.state == persistence::SaveCommitState::committed) {
+            ARPG_REQUIRE(session.snapshot().phase == dungeon::RoomPhase::locked);
+            ARPG_REQUIRE(session.snapshot().combat.has_value());
+            ARPG_REQUIRE(disk_new);
+        } else {
+            ARPG_REQUIRE(session.snapshot().phase == dungeon::RoomPhase::faulted);
+            ARPG_REQUIRE(!session.snapshot().combat.has_value());
+        }
+    }
+    return {};
+}
+
+arpg::test::Failure abyss_fail_fault_matrix_is_atomic() noexcept {
+    for (const auto point : kAllFaultPoints) {
+        TempDirectory directory;
+        auto healthy = make_store(directory.path);
+        const auto available = available_state();
+        ARPG_REQUIRE(healthy.commit(available).state
+            == persistence::SaveCommitState::committed);
+        dungeon::DungeonSession session{{}, available};
+        const auto start = *session.pending_save();
+        const auto started_saved = healthy.commit(start.next_state);
+        ARPG_REQUIRE(started_saved.state
+            == persistence::SaveCommitState::committed);
+        session.resolve_pending_save(to_session_result(started_saved));
+        const auto started = start.next_state;
+        ARPG_REQUIRE(session.reset_current_room()
+            == dungeon::RequestResult::accepted);
+        const auto failure = *session.pending_save();
+        ARPG_REQUIRE(failure.kind == dungeon::PendingSaveKind::abyss_fail);
+        FaultContext fault{point, false};
+        auto faulty = make_store(directory.path, &fault);
+        const auto saved = faulty.commit(failure.next_state);
+        session.resolve_pending_save(to_session_result(saved));
+        const auto disk = healthy.load();
+        ARPG_REQUIRE(disk.state == persistence::SaveLoadState::ready);
+        const bool disk_old = dungeon::same_run_state(disk.checkpoint, started);
+        const bool disk_new = dungeon::same_run_state(
+            disk.checkpoint, failure.next_state);
+        ARPG_REQUIRE(disk_old || disk_new);
+        if (saved.state == persistence::SaveCommitState::committed) {
+            ARPG_REQUIRE(session.snapshot().phase == dungeon::RoomPhase::locked);
+            ARPG_REQUIRE(session.snapshot().combat.has_value());
+            ARPG_REQUIRE(!session.snapshot().is_abyss);
+            ARPG_REQUIRE(disk_new);
+        } else {
+            ARPG_REQUIRE(session.snapshot().phase == dungeon::RoomPhase::faulted);
+        }
+    }
+    return {};
 }
 
 dungeon::DungeonRunState initial_state_with_passive_points(
@@ -399,12 +506,11 @@ arpg::test::Failure lost_post_publish_receipt_faults_session_but_restart_uses_ne
     return {};
 }
 
-arpg::test::Failure committed_descent_restarts_without_rerolling_hole_or_abyss() noexcept {
+arpg::test::Failure committed_descent_restarts_without_rerolling_hole() noexcept {
     TempDirectory directory;
     auto store = make_store(directory.path);
     auto initial = initial_state(0x8105U);
     initial.current_room.has_hole = true;
-    initial.current_room.is_abyss = true;
     ARPG_REQUIRE(store.commit(initial).state
         == persistence::SaveCommitState::committed);
 
@@ -470,7 +576,7 @@ arpg::test::Failure reset_reopen_and_repeated_load_keep_persisted_room_fields() 
     ARPG_REQUIRE(same_descriptor(session.snapshot(), saved.verified_state));
 
     const auto before_reset = session.snapshot();
-    session.reset_current_room();
+    static_cast<void>(session.reset_current_room());
     const auto after_reset = session.snapshot();
     ARPG_REQUIRE(after_reset.commit_generation == before_reset.commit_generation);
     ARPG_REQUIRE(after_reset.room_seed == before_reset.room_seed);
@@ -633,13 +739,15 @@ arpg::test::Failure equipment_dispositions_restart_with_exact_disk_winner() noex
 }
 
 constexpr arpg::test::TestCase kCases[] = {
+    {"abyss start fault matrix is atomic", &abyss_start_fault_matrix_is_atomic},
+    {"abyss fail fault matrix is atomic", &abyss_fail_fault_matrix_is_atomic},
     {"affix drop reload claim semantics",
         &affix_drop_is_stable_before_claim_and_absent_after_reload},
     {"initial generation one round trips descriptor", &initial_generation_one_round_trips_descriptor},
     {"committed door transition restarts in next room", &committed_door_transition_restarts_in_next_room},
     {"pre publish failure keeps old room in memory and on disk", &pre_publish_failure_keeps_old_room_in_memory_and_on_disk},
     {"lost post publish receipt faults session but restart uses new room", &lost_post_publish_receipt_faults_session_but_restart_uses_new_room},
-    {"committed descent restarts without rerolling hole or abyss", &committed_descent_restarts_without_rerolling_hole_or_abyss},
+    {"committed descent restarts without rerolling hole", &committed_descent_restarts_without_rerolling_hole},
     {"reset reopen and repeated load keep persisted room fields", &reset_reopen_and_repeated_load_keep_persisted_room_fields},
     {"passive fault recovery never persists partial points or bits", &passive_fault_recovery_never_persists_partial_points_or_bits},
     {"equipment dispositions restart with exact disk winner", &equipment_dispositions_restart_with_exact_disk_winner},

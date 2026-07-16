@@ -1,7 +1,9 @@
 #include "dungeon_runtime.hpp"
 
+#include "dungeon/abyss_checkpoint_migration.hpp"
 #include "persistence/save_paths.hpp"
 
+#include <limits>
 #include <utility>
 
 namespace arpg::platform {
@@ -62,10 +64,63 @@ bool DungeonRuntime::initialize() noexcept {
         return false;
     }
 
-    const persistence::SaveLoadResult loaded = store_.load();
+    persistence::SaveLoadResult loaded = store_.load();
     sync_load_status(loaded);
     if (loaded.state == persistence::SaveLoadState::ready) {
-        session_.emplace(config_.rules, loaded.checkpoint);
+        dungeon::DungeonRunState checkpoint = std::move(loaded.checkpoint);
+        if (loaded.migrated) {
+            if (checkpoint.commit_generation
+                    == (std::numeric_limits<std::uint64_t>::max)()) {
+                state_ = DungeonRuntimeState::faulted;
+                return false;
+            }
+            try {
+                checkpoint = dungeon::migrate_legacy_abyss_checkpoint(
+                    checkpoint);
+            } catch (...) {
+                state_ = DungeonRuntimeState::faulted;
+                return false;
+            }
+            ++checkpoint.commit_generation;
+            persistence::SaveCommitResult migrated =
+                store_.commit(checkpoint);
+            sync_commit_status(migrated);
+            if (migrated.state != persistence::SaveCommitState::committed
+                    || migrated.verified_state.commit_generation
+                        != checkpoint.commit_generation
+                    || !dungeon::same_run_state(
+                        migrated.verified_state, checkpoint)) {
+                state_ = DungeonRuntimeState::faulted;
+                return false;
+            }
+            checkpoint = std::move(migrated.verified_state);
+        }
+        if (checkpoint.abyss.lifecycle
+                == abyss::AbyssLifecycle::started) {
+            if (!checkpoint.current_room.is_abyss
+                    || checkpoint.commit_generation
+                        == (std::numeric_limits<std::uint64_t>::max)()) {
+                state_ = DungeonRuntimeState::faulted;
+                return false;
+            }
+            dungeon::DungeonRunState failed = std::move(checkpoint);
+            ++failed.commit_generation;
+            failed.current_room.is_abyss = false;
+            failed.abyss.lifecycle = abyss::AbyssLifecycle::failed;
+            persistence::SaveCommitResult published =
+                store_.commit(failed);
+            sync_commit_status(published);
+            if (published.state != persistence::SaveCommitState::committed
+                    || published.verified_state.commit_generation
+                        != failed.commit_generation
+                    || !dungeon::same_run_state(
+                        published.verified_state, failed)) {
+                state_ = DungeonRuntimeState::faulted;
+                return false;
+            }
+            checkpoint = std::move(published.verified_state);
+        }
+        session_.emplace(config_.rules, std::move(checkpoint));
         state_ = DungeonRuntimeState::running;
         return true;
     }

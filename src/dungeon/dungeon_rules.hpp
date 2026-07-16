@@ -27,6 +27,10 @@ enum class DungeonFault : std::uint8_t {
     item_id_collision,
     item_sequence_overflow,
     invalid_item_state,
+    invalid_abyss_state,
+    abyss_generation_failed,
+    abyss_reward_collision,
+    abyss_reward_revision_overflow,
 };
 
 // Gray-box encounter tuning is intentionally centralized here so later

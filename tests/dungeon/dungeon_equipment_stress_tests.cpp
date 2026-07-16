@@ -271,6 +271,10 @@ bool transition_room(
     if (!commit_pending(left) || !commit_pending(right)) return false;
     left.tick({});
     right.tick({});
+    if (left.snapshot().phase == RoomPhase::committing
+            || right.snapshot().phase == RoomPhase::committing) {
+        if (!commit_pending(left) || !commit_pending(right)) return false;
+    }
     drain_observable_events(left);
     drain_observable_events(right);
     return left.snapshot().phase == RoomPhase::locked

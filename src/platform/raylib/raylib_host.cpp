@@ -269,10 +269,13 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 && inventory_gate.forward_descent;
             if (forward_actions && inventory_gate.forward_room_reset
                 && platform_key_pressed(KEY_R)) {
-                session->reset_current_room();
-                current = session->snapshot();
-                previous = current;
-                drain_events(*session, renderer, feedback, audio);
+                const dungeon::RequestResult reset =
+                    session->reset_current_room();
+                if (reset != dungeon::RequestResult::rejected) {
+                    current = session->snapshot();
+                    previous = current;
+                    drain_events(*session, renderer, feedback, audio);
+                }
             }
             if (passive_overlay_open && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                 const auto selected = hit_test_passive_node(

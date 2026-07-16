@@ -543,7 +543,7 @@ arpg::test::Failure miss_is_rolled_once_until_room_reset() noexcept {
     arpg::test::set_current_room_seed(session, hit_seed);
     ARPG_REQUIRE(inject_drop(session, miss, {10.0F, 20.0F, 30.0F}));
     ARPG_REQUIRE(session.snapshot().ground_item_count == 0U);
-    session.reset_current_room();
+    static_cast<void>(session.reset_current_room());
     ARPG_REQUIRE(inject_drop(session, miss, {10.0F, 20.0F, 30.0F}));
     ARPG_REQUIRE(session.snapshot().ground_item_count == 1U);
     return {};

@@ -34,6 +34,20 @@ constexpr std::array<ExitDirection, 4> kRoute{{
     ExitDirection::left,
 }};
 
+ExitDirection ordinary_direction(
+    const DungeonSnapshot& state,
+    ExitDirection preferred) noexcept {
+    if (!state.abyss_doors[static_cast<std::size_t>(preferred)]) {
+        return preferred;
+    }
+    for (std::size_t index = 0U; index < state.abyss_doors.size(); ++index) {
+        if (!state.abyss_doors[index]) {
+            return static_cast<ExitDirection>(index);
+        }
+    }
+    return preferred;
+}
+
 constexpr std::size_t kGoldenTraceRoomCount = 256U;
 constexpr std::size_t kGoldenTraceMonsterCapacity =
     arpg::combat::kEncounterWaveCapacity * arpg::combat::kEncounterSpawnCapacity;
@@ -308,9 +322,15 @@ void tracked_tick(
         && (*state.pending_save_kind
                 == arpg::dungeon::PendingSaveKind::transition
             || *state.pending_save_kind
-                == arpg::dungeon::PendingSaveKind::loot_pickup);
+                == arpg::dungeon::PendingSaveKind::loot_pickup
+            || *state.pending_save_kind
+                == arpg::dungeon::PendingSaveKind::abyss_start);
     const bool room_load = phase_before == RoomPhase::transitioning
-        && state.phase == RoomPhase::locked;
+        && (state.phase == RoomPhase::locked
+            || (state.phase == RoomPhase::committing
+                && state.pending_save_kind.has_value()
+                && *state.pending_save_kind
+                    == arpg::dungeon::PendingSaveKind::abyss_start));
     const std::uint64_t delta = arpg::test::allocation_count() - before;
     if (save_boundary) {
         ++summary.save_boundaries;
@@ -431,6 +451,12 @@ bool confirm_pending_save(
             && !saved.pending_save_kind.has_value()
             && saved.commit_generation == expected_generation;
     }
+    if (kind == arpg::dungeon::PendingSaveKind::abyss_start) {
+        return saved.phase == RoomPhase::locked
+            && saved.has_active_room && saved.combat.has_value()
+            && !saved.pending_save_kind.has_value()
+            && saved.commit_generation == expected_generation;
+    }
     return kind == arpg::dungeon::PendingSaveKind::transition
         && saved.phase == RoomPhase::transitioning
         && !saved.has_pending_transition
@@ -530,6 +556,10 @@ bool drive_exit(
     }
     tracked_tick(session, outward(direction), summary);
     drain(session, summary);
+    if (session.snapshot().phase == RoomPhase::committing) {
+        if (!confirm_pending_save(session, summary)) return false;
+        drain(session, summary);
+    }
     const DungeonSnapshot locked = session.snapshot();
     if (locked.phase != RoomPhase::locked || !locked.has_active_room
             || !locked.combat.has_value() || locked.combat->tick != 0U) {
@@ -975,8 +1005,24 @@ arpg::test::Failure launcher_input_robot_clears_ten_minimal_committed_rooms() no
                 trace.monster_hits, trace.player_hits);
         }
         ARPG_REQUIRE(cleared);
-        ARPG_REQUIRE(drive_exit(session, kRoute[room % kRoute.size()], summary,
-            true));
+        const bool exited = drive_exit(session,
+            ordinary_direction(session.snapshot(),
+                kRoute[room % kRoute.size()]), summary, true);
+        if (!exited) {
+            const auto failed = session.snapshot();
+            std::fprintf(stderr,
+                "[launcher-exit-failure] loop=%llu room=%llu phase=%u "
+                "fault=%u pending=%u abyss=%u\n",
+                static_cast<unsigned long long>(room),
+                static_cast<unsigned long long>(failed.room_index),
+                static_cast<unsigned>(failed.phase),
+                static_cast<unsigned>(failed.diagnostics.fault),
+                static_cast<unsigned>(failed.pending_save_kind.has_value()
+                    ? *failed.pending_save_kind
+                    : arpg::dungeon::PendingSaveKind::transition),
+                static_cast<unsigned>(failed.is_abyss));
+        }
+        ARPG_REQUIRE(exited);
     }
     ARPG_REQUIRE(session.snapshot().room_index == 10U);
     ARPG_REQUIRE(summary.dungeon_overflow == 0U);
@@ -1002,8 +1048,24 @@ arpg::test::Failure launcher_input_robot_clears_thousand_minimal_committed_rooms
             print_real_input_trace("launcher-1000-failure", trace, false);
         }
         ARPG_REQUIRE(cleared);
-        ARPG_REQUIRE(drive_exit(session, kRoute[room % kRoute.size()], summary,
-            true));
+        const bool exited = drive_exit(session,
+            ordinary_direction(session.snapshot(),
+                kRoute[room % kRoute.size()]), summary, true);
+        if (!exited) {
+            const auto failed = session.snapshot();
+            std::fprintf(stderr,
+                "[launcher-1000-exit-failure] loop=%llu room=%llu phase=%u "
+                "fault=%u pending=%u abyss=%u\n",
+                static_cast<unsigned long long>(room),
+                static_cast<unsigned long long>(failed.room_index),
+                static_cast<unsigned>(failed.phase),
+                static_cast<unsigned>(failed.diagnostics.fault),
+                static_cast<unsigned>(failed.pending_save_kind.has_value()
+                    ? *failed.pending_save_kind
+                    : arpg::dungeon::PendingSaveKind::transition),
+                static_cast<unsigned>(failed.is_abyss));
+        }
+        ARPG_REQUIRE(exited);
     }
     const DungeonSnapshot final = session.snapshot();
     const std::uint64_t allocation_delta = arpg::test::allocation_count()

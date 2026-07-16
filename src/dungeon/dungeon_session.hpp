@@ -62,7 +62,7 @@ public:
     pending_transition() const noexcept;
     void resolve_pending_transition(
         const TransitionSaveResult& result) noexcept;
-    void reset_current_room() noexcept;
+    [[nodiscard]] RequestResult reset_current_room() noexcept;
     [[nodiscard]] DungeonSnapshot snapshot() const noexcept;
     [[nodiscard]] std::optional<DungeonEvent> try_pop_event() noexcept;
     [[nodiscard]] std::optional<combat::CombatEvent>
@@ -80,6 +80,10 @@ private:
         PlayerBuildStatus status{PlayerBuildStatus::invalid_state};
     };
     void construct_current_room() noexcept;
+    void construct_normal_room() noexcept;
+    void reset_to_normal_room(bool clear_queues) noexcept;
+    [[nodiscard]] bool prepare_abyss_start() noexcept;
+    [[nodiscard]] RequestResult prepare_abyss_failure() noexcept;
     void start_next_wave() noexcept;
     void relay_combat_events() noexcept;
     [[nodiscard]] bool claim_defeat_reward(
@@ -100,6 +104,7 @@ private:
         const checkpoint::DungeonRunState& state,
         const items::EquipmentState* equipment_override = nullptr) const noexcept;
     [[nodiscard]] bool pending_item_cache_consistent() const noexcept;
+    [[nodiscard]] bool pending_abyss_cache_consistent() const noexcept;
     void commit_pending_save(const PendingSaveResult& result) noexcept;
     [[nodiscard]] DungeonSnapshot build_dungeon_snapshot() const noexcept;
     void enter_fault(DungeonFault fault) noexcept;
@@ -118,6 +123,7 @@ private:
     DungeonRunState stable_state_{};
     std::optional<PendingSave> pending_save_{};
     std::optional<combat::PlayerCombatBuild> pending_item_build_{};
+    std::optional<combat::CombatEncounterConfig> pending_abyss_combat_{};
     std::optional<combat::CombatWorld> combat_{};
     std::array<GroundItem, kGroundDropCapacity> ground_items_{};
     std::array<std::uint64_t, 3> rolled_drop_bits_{};

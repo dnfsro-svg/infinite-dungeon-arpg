@@ -237,6 +237,7 @@ enum class CombatEventKind : std::uint8_t {
     player_hit,
     player_hurt_started,
     player_health_reset,
+    player_defeated,
     affix_blink_warning,
     affix_chain_warning,
     affix_death_warning,

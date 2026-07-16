@@ -194,7 +194,14 @@ bool reload_v4(std::unique_ptr<DungeonSession>& session,
     const auto decoded = arpg::persistence::decode_checkpoint(
         encoded->data(), encoded->size());
     if (decoded.error != arpg::persistence::CodecError::none) return false;
-    session = std::make_unique<DungeonSession>(rules, decoded.state);
+    auto restored = decoded.state;
+    if (restored.abyss.lifecycle
+            == arpg::abyss::AbyssLifecycle::started) {
+        ++restored.commit_generation;
+        restored.current_room.is_abyss = false;
+        restored.abyss.lifecycle = arpg::abyss::AbyssLifecycle::failed;
+    }
+    session = std::make_unique<DungeonSession>(rules, restored);
     return session->snapshot().phase == RoomPhase::locked;
 }
 
@@ -366,6 +373,8 @@ bool transition_room(DungeonSession& session, std::size_t room) noexcept {
     arpg::test::attempt_exit(session, kDirections[room % kDirections.size()]);
     if (!commit_pending(session)) return false;
     session.tick({});
+    if (session.snapshot().phase == RoomPhase::committing
+            && !commit_pending(session)) return false;
     drain_events(session);
     return session.snapshot().phase == RoomPhase::locked;
 }

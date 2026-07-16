@@ -279,6 +279,12 @@ bool DungeonSession::pending_item_cache_consistent() const noexcept {
     return item_pending == pending_item_build_.has_value();
 }
 
+bool DungeonSession::pending_abyss_cache_consistent() const noexcept {
+    const bool start_pending = pending_save_.has_value()
+        && pending_save_->kind == PendingSaveKind::abyss_start;
+    return start_pending == pending_abyss_combat_.has_value();
+}
+
 RequestResult DungeonSession::request_equip(std::uint64_t item_id) noexcept {
     if (!pending_item_cache_consistent()) {
         enter_fault(DungeonFault::save_receipt_mismatch);
@@ -547,8 +553,18 @@ void DungeonSession::commit_pending_save(
         enter_fault(DungeonFault::save_receipt_mismatch);
         return;
     }
+    if (!pending_abyss_cache_consistent()) {
+        enter_fault(DungeonFault::save_receipt_mismatch);
+        return;
+    }
     if (result.disposition == SaveDisposition::indeterminate) {
         enter_fault(DungeonFault::save_commit_indeterminate);
+        return;
+    }
+    const bool abyss_commit = pending_save_->kind == PendingSaveKind::abyss_start
+        || pending_save_->kind == PendingSaveKind::abyss_fail;
+    if (result.disposition == SaveDisposition::not_committed && abyss_commit) {
+        enter_fault(DungeonFault::save_receipt_mismatch);
         return;
     }
     if (result.disposition == SaveDisposition::not_committed) {
@@ -578,6 +594,8 @@ void DungeonSession::commit_pending_save(
     const bool item_commit = kind == PendingSaveKind::equipment
         || kind == PendingSaveKind::recipe;
     const bool pickup_commit = kind == PendingSaveKind::loot_pickup;
+    const bool start_commit = kind == PendingSaveKind::abyss_start;
+    const bool fail_commit = kind == PendingSaveKind::abyss_fail;
     const std::uint16_t pickup_ordinal = pending_save_->pickup_ordinal;
     if (pickup_commit) {
         if (pickup_ordinal >= ground_items_.size()) {
@@ -612,6 +630,18 @@ void DungeonSession::commit_pending_save(
     const RoomPhase resume_phase = pending_save_->resume_phase;
     pending_save_.reset();
     pending_item_build_.reset();
+    if (start_commit) {
+        combat_.emplace(*pending_abyss_combat_);
+        pending_abyss_combat_.reset();
+        room_progression_ = stable_state_.progression;
+        phase_ = RoomPhase::locked;
+        return;
+    }
+    pending_abyss_combat_.reset();
+    if (fail_commit) {
+        reset_to_normal_room(false);
+        return;
+    }
     if (kind == PendingSaveKind::transition) {
         ground_items_ = {};
         rolled_drop_bits_ = {};

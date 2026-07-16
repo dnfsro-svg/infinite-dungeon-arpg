@@ -298,13 +298,13 @@ inline bool same_encounter_plan(const dungeon::RoomEncounterPlan& left,
 
 inline bool commit_pending(
     dungeon::DungeonSession& session) noexcept {
-    const auto pending = session.pending_transition();
+    const auto pending = session.pending_save();
     if (!pending.has_value()) {
         return false;
     }
-    session.resolve_pending_transition({
+    session.resolve_pending_save({
         dungeon::SaveDisposition::committed,
-        pending->next_state.commit_generation,
+        pending->expected_generation,
         pending->next_state,
     });
     return true;

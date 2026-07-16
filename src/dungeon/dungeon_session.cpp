@@ -3,6 +3,8 @@
 #include "dungeon/dungeon_progression.hpp"
 #include "dungeon/room_combat_template.hpp"
 #include "dungeon/room_navigation.hpp"
+#include "abyss/abyss_rewards.hpp"
+#include "abyss/abyss_rules.hpp"
 #include "core/deterministic_rng.hpp"
 #include "items/item_catalog.hpp"
 #include "items/item_generation.hpp"
@@ -15,6 +17,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <utility>
 
 namespace arpg::dungeon {
 namespace {
@@ -112,8 +115,8 @@ DungeonSession::DungeonSession(DungeonSessionConfig config) noexcept
 DungeonSession::DungeonSession(
     DungeonRules rules,
     DungeonRunState stable_state) noexcept
-    : rules_(rules), stable_state_(stable_state),
-      last_exit_(stable_state.last_direction) {
+    : rules_(rules), stable_state_(std::move(stable_state)),
+      last_exit_(stable_state_.last_direction) {
     if (validate_rules(rules_) != DungeonFault::none) {
         enter_fault(DungeonFault::invalid_rules);
         return;
@@ -216,23 +219,28 @@ const items::ItemOwnershipState& DungeonSession::item_state() const noexcept {
     return stable_state_.item_ownership;
 }
 
-void DungeonSession::reset_current_room() noexcept {
+RequestResult DungeonSession::reset_current_room() noexcept {
     if (phase_ == RoomPhase::transitioning
             || phase_ == RoomPhase::committing
             || phase_ == RoomPhase::faulted) {
-        return;
+        return RequestResult::rejected;
     }
-
-    while (events_.try_pop().has_value()) {
+    if (stable_state_.current_room.is_abyss
+            && stable_state_.abyss.lifecycle
+                == abyss::AbyssLifecycle::started) {
+        return prepare_abyss_failure();
     }
-    while (combat_events_.try_pop().has_value()) {
+    if (stable_state_.current_room.is_abyss
+            || (stable_state_.abyss.lifecycle
+                    != abyss::AbyssLifecycle::none
+                && stable_state_.abyss.lifecycle
+                    != abyss::AbyssLifecycle::failed)) {
+        enter_fault(DungeonFault::invalid_abyss_state);
+        return RequestResult::faulted;
     }
-    combat_.reset();
-    pending_save_.reset();
-    pending_item_build_.reset();
-    last_passive_tree_error_ = passives::PassiveTreeError::none;
-    construct_current_room();
-    static_cast<void>(emit(DungeonEventKind::room_reset));
+    reset_to_normal_room(true);
+    return phase_ == RoomPhase::faulted
+        ? RequestResult::faulted : RequestResult::accepted;
 }
 
 std::optional<DungeonEvent> DungeonSession::try_pop_event() noexcept {
@@ -255,6 +263,22 @@ void DungeonSession::construct_current_room() noexcept {
     pending_room_experience_ = 0U;
     last_room_experience_ = 0U;
     last_levels_gained_ = 0U;
+    if (stable_state_.abyss.lifecycle == abyss::AbyssLifecycle::available) {
+        static_cast<void>(prepare_abyss_start());
+        return;
+    }
+    if (stable_state_.current_room.is_abyss
+            || (stable_state_.abyss.lifecycle
+                    != abyss::AbyssLifecycle::none
+                && stable_state_.abyss.lifecycle
+                    != abyss::AbyssLifecycle::failed)) {
+        enter_fault(DungeonFault::invalid_abyss_state);
+        return;
+    }
+    construct_normal_room();
+}
+
+void DungeonSession::construct_normal_room() noexcept {
     const EncounterPlanResult plan = build_encounter_plan(
         stable_state_.current_room.seed,
         stable_state_.current_room.depth,
@@ -288,6 +312,143 @@ void DungeonSession::construct_current_room() noexcept {
     wave_delay_ticks_ = 0U;
     combat_.emplace(*config);
     phase_ = RoomPhase::locked;
+}
+
+void DungeonSession::reset_to_normal_room(bool clear_queues) noexcept {
+    if (clear_queues) {
+        while (events_.try_pop().has_value()) {
+        }
+        while (combat_events_.try_pop().has_value()) {
+        }
+    }
+    combat_.reset();
+    pending_save_.reset();
+    pending_item_build_.reset();
+    pending_abyss_combat_.reset();
+    last_passive_tree_error_ = passives::PassiveTreeError::none;
+    construct_current_room();
+    if (phase_ != RoomPhase::faulted) {
+        static_cast<void>(emit(DungeonEventKind::room_reset));
+    }
+}
+
+bool DungeonSession::prepare_abyss_start() noexcept {
+    if (pending_save_.has_value() || combat_.has_value()
+            || !stable_state_.current_room.is_abyss
+            || stable_state_.abyss.lifecycle
+                != abyss::AbyssLifecycle::available
+            || !abyss::is_abyss_roll(stable_state_.current_room.seed)) {
+        enter_fault(DungeonFault::invalid_abyss_state);
+        return false;
+    }
+    const auto selection = abyss::select_abyss_rule(
+        stable_state_.current_room.seed, stable_state_.current_room.depth);
+    if (!selection.has_value()
+            || selection->danger != stable_state_.abyss.danger
+            || selection->rule != stable_state_.abyss.rule
+            || selection->rules_version != stable_state_.abyss.rules_version) {
+        enter_fault(DungeonFault::invalid_abyss_state);
+        return false;
+    }
+
+    EncounterPlanResult built = build_abyss_encounter_plan(
+        stable_state_.current_room.seed,
+        stable_state_.current_room.depth,
+        stable_state_.current_room.ecology,
+        rules_.encounter);
+    if (built.fault != DungeonFault::none || built.plan.wave_count == 0U) {
+        enter_fault(DungeonFault::abyss_generation_failed);
+        return false;
+    }
+    const std::uint8_t base_item_level = static_cast<std::uint8_t>(
+        std::min<std::uint64_t>(stable_state_.current_room.depth, 100U));
+    const abyss::AbyssRewardProfile reward = abyss::reward_profile_for(
+        stable_state_.abyss.danger, base_item_level);
+    if (reward.item_count == 0U || reward.item_count > 3U
+            || reward.item_level == 0U) {
+        enter_fault(DungeonFault::abyss_generation_failed);
+        return false;
+    }
+    const PlayerBuildResult player_build = build_for(stable_state_);
+    if (player_build.status != PlayerBuildStatus::valid) {
+        enter_fault(DungeonFault::invalid_item_state);
+        return false;
+    }
+    auto evasion_stream = core::DeterministicRng::derive_stream(
+        stable_state_.current_room.seed, kPlayerEvasionSeedDomain);
+    const auto combat_config = make_combat_encounter_config(
+        stable_state_.current_room.entry,
+        rules_.rules_version,
+        built.plan.waves[0],
+        true,
+        player_build.build,
+        evasion_stream.next_u64());
+    if (!combat_config.has_value()) {
+        enter_fault(DungeonFault::abyss_generation_failed);
+        return false;
+    }
+    if (stable_state_.commit_generation
+            == (std::numeric_limits<std::uint64_t>::max)()) {
+        enter_fault(DungeonFault::commit_generation_overflow);
+        return false;
+    }
+
+    try {
+        DungeonRunState next = stable_state_;
+        ++next.commit_generation;
+        next.abyss.lifecycle = abyss::AbyssLifecycle::started;
+        encounter_plan_ = built.plan;
+        wave_index_ = 0U;
+        wave_delay_ticks_ = 0U;
+        pending_abyss_combat_ = *combat_config;
+        pending_save_ = PendingSave{
+            PendingSaveKind::abyss_start,
+            next.commit_generation,
+            std::move(next),
+            TransitionKind::none,
+            ExitDirection::none,
+            RoomPhase::locked,
+        };
+    } catch (...) {
+        pending_abyss_combat_.reset();
+        enter_fault(DungeonFault::abyss_generation_failed);
+        return false;
+    }
+    phase_ = RoomPhase::committing;
+    return true;
+}
+
+RequestResult DungeonSession::prepare_abyss_failure() noexcept {
+    if (pending_save_.has_value() || !combat_.has_value()
+            || !stable_state_.current_room.is_abyss
+            || stable_state_.abyss.lifecycle
+                != abyss::AbyssLifecycle::started) {
+        return RequestResult::rejected;
+    }
+    if (stable_state_.commit_generation
+            == (std::numeric_limits<std::uint64_t>::max)()) {
+        enter_fault(DungeonFault::commit_generation_overflow);
+        return RequestResult::faulted;
+    }
+    try {
+        DungeonRunState next = stable_state_;
+        ++next.commit_generation;
+        next.current_room.is_abyss = false;
+        next.abyss.lifecycle = abyss::AbyssLifecycle::failed;
+        pending_save_ = PendingSave{
+            PendingSaveKind::abyss_fail,
+            next.commit_generation,
+            std::move(next),
+            TransitionKind::none,
+            ExitDirection::none,
+            RoomPhase::locked,
+        };
+    } catch (...) {
+        enter_fault(DungeonFault::invalid_abyss_state);
+        return RequestResult::faulted;
+    }
+    phase_ = RoomPhase::committing;
+    return RequestResult::accepted;
 }
 
 DungeonSession::PlayerBuildResult DungeonSession::build_for(
@@ -382,6 +543,16 @@ void DungeonSession::relay_combat_events() noexcept {
             saturating_increment(diagnostics_.combat_relay_overflow_count);
             enter_fault(DungeonFault::combat_relay_overflow);
             assert(relayed && "Dungeon combat event relay overflow");
+            return;
+        }
+        if (event->kind == combat::CombatEventKind::player_defeated) {
+            if (stable_state_.current_room.is_abyss
+                    && stable_state_.abyss.lifecycle
+                        == abyss::AbyssLifecycle::started) {
+                static_cast<void>(prepare_abyss_failure());
+            } else {
+                reset_to_normal_room(false);
+            }
             return;
         }
     }
@@ -479,6 +650,7 @@ void DungeonSession::enter_fault(DungeonFault fault) noexcept {
     diagnostics_.fault = fault;
     phase_ = RoomPhase::faulted;
     pending_item_build_.reset();
+    pending_abyss_combat_.reset();
 
     const DungeonEvent event{
         DungeonEventKind::faulted,

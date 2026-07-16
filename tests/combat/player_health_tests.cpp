@@ -27,7 +27,7 @@ void drain_events(CombatWorld& world) noexcept {
     }
 }
 
-arpg::test::Failure player_damage_clamps_at_one_and_uses_protection() noexcept {
+arpg::test::Failure player_damage_reaches_zero() noexcept {
     CombatWorld world{single_chaser_encounter()};
     drain_events(world);
     const int max_hp = world.snapshot().player.max_hp;
@@ -45,7 +45,7 @@ arpg::test::Failure player_damage_clamps_at_one_and_uses_protection() noexcept {
     tick_n(world, 30);
     arpg::test::CombatWorldTestAccess::apply_damage(
         world, max_hp, Vec3{1.0F, 0.0F, 0.0F}, FeedbackLevel::heavy);
-    ARPG_REQUIRE(world.snapshot().player.hp == 1);
+    ARPG_REQUIRE(world.snapshot().player.hp == 0);
     return {};
 }
 
@@ -67,6 +67,34 @@ arpg::test::Failure accepted_hit_emits_payload_and_hurt_started() noexcept {
     ARPG_REQUIRE(hurt->kind == CombatEventKind::player_hurt_started);
     ARPG_REQUIRE(hurt->value == 125);
     ARPG_REQUIRE(hurt->feedback == FeedbackLevel::medium);
+    ARPG_REQUIRE(!world.try_pop_event().has_value());
+    return {};
+}
+
+arpg::test::Failure player_defeat_event_emits_once() noexcept {
+    CombatEncounterConfig config = single_chaser_encounter();
+    config.wave = {};
+    CombatWorld world{config};
+    drain_events(world);
+    const int max_hp = world.snapshot().player.max_hp;
+    arpg::test::CombatWorldTestAccess::apply_damage(
+        world, max_hp, Vec3{1.0F, 0.0F, 0.0F}, FeedbackLevel::heavy);
+
+    const auto hit = world.try_pop_event();
+    const auto hurt = world.try_pop_event();
+    const auto defeated = world.try_pop_event();
+    ARPG_REQUIRE(hit.has_value());
+    ARPG_REQUIRE(hurt.has_value());
+    ARPG_REQUIRE(defeated.has_value());
+    ARPG_REQUIRE(hit->kind == CombatEventKind::player_hit);
+    ARPG_REQUIRE(hurt->kind == CombatEventKind::player_hurt_started);
+    ARPG_REQUIRE(defeated->kind == CombatEventKind::player_defeated);
+    ARPG_REQUIRE(!world.try_pop_event().has_value());
+
+    tick_n(world, 30);
+    arpg::test::CombatWorldTestAccess::apply_damage(
+        world, 1, Vec3{1.0F, 0.0F, 0.0F}, FeedbackLevel::light);
+    ARPG_REQUIRE(world.snapshot().player.hp == 0);
     ARPG_REQUIRE(!world.try_pop_event().has_value());
     return {};
 }
@@ -109,8 +137,9 @@ arpg::test::Failure load_wave_reset_restores_full_health() noexcept {
 }
 
 constexpr arpg::test::TestCase kCases[] = {
-    {"damage clamp and protection", &player_damage_clamps_at_one_and_uses_protection},
+    {"damage reaches zero", &player_damage_reaches_zero},
     {"accepted hit payload and hurt event", &accepted_hit_emits_payload_and_hurt_started},
+    {"player defeat event emits once", &player_defeat_event_emits_once},
     {"hurt movement lock", &hurt_ticks_lock_movement_until_expired},
     {"wave load restores full health", &load_wave_reset_restores_full_health},
 };

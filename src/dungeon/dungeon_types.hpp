@@ -169,6 +169,12 @@ enum class PendingSaveKind : std::uint8_t {
     loot_pickup,
     equipment,
     recipe,
+    abyss_start,
+    abyss_fail,
+    abyss_clear,
+    abyss_reward_materialized,
+    abyss_reward_claim,
+    abyss_abandon,
 };
 
 struct PendingSave final {

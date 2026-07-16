@@ -3,6 +3,7 @@
 #include "dungeon_test_support.hpp"
 
 #include "dungeon/dungeon_progression.hpp"
+#include "abyss/abyss_rules.hpp"
 
 #include <cstdint>
 #include <limits>
@@ -23,6 +24,117 @@ using arpg::dungeon::SaveDisposition;
 DungeonRunState initial_state(
     std::uint64_t seed = 0xA11CE5EEDULL) noexcept {
     return arpg::dungeon::make_initial_run_state(seed, DungeonRules{}).state;
+}
+
+DungeonRunState available_state(std::uint64_t seed = 1U) noexcept {
+    DungeonRunState state = initial_state(0xAB155EEDULL);
+    while (!arpg::abyss::is_abyss_roll(seed)) ++seed;
+    state.current_room.seed = seed;
+    state.current_room.depth = 40U;
+    state.current_room.entry = arpg::dungeon::EntrySide::left;
+    state.current_room.ecology = arpg::dungeon::DungeonElement::chaos;
+    state.current_room.has_hole = true;
+    state.current_room.is_abyss = true;
+    state.last_transition = arpg::dungeon::TransitionKind::door;
+    state.last_direction = ExitDirection::right;
+    const auto selection = arpg::abyss::select_abyss_rule(
+        state.current_room.seed, state.current_room.depth);
+    if (selection.has_value()) {
+        state.abyss.lifecycle = arpg::abyss::AbyssLifecycle::available;
+        state.abyss.danger = selection->danger;
+        state.abyss.rule = selection->rule;
+        state.abyss.rules_version = selection->rules_version;
+    }
+    return state;
+}
+
+arpg::test::Failure available_room_precomputes_then_queues_start() noexcept {
+    const DungeonRunState available = available_state();
+    DungeonSession session{DungeonRules{}, available};
+    const auto snapshot = session.snapshot();
+    const auto pending = session.pending_save();
+    ARPG_REQUIRE(snapshot.phase == RoomPhase::committing);
+    ARPG_REQUIRE(!snapshot.combat.has_value());
+    ARPG_REQUIRE(pending.has_value());
+    ARPG_REQUIRE(pending->kind == arpg::dungeon::PendingSaveKind::abyss_start);
+    ARPG_REQUIRE(pending->next_state.current_room.seed
+        == available.current_room.seed);
+    ARPG_REQUIRE(pending->next_state.abyss.lifecycle
+        == arpg::abyss::AbyssLifecycle::started);
+    ARPG_REQUIRE(pending->expected_generation
+        == available.commit_generation + 1U);
+
+    const auto& plan = arpg::test::DungeonSessionTestAccess::encounter_plan(
+        session);
+    ARPG_REQUIRE(plan.wave_count > 0U);
+    const auto minimum = arpg::abyss::minimum_abyss_affixes(
+        available.current_room.depth);
+    for (std::size_t wave = 0U; wave < plan.wave_count; ++wave) {
+        for (std::size_t spawn = 0U;
+             spawn < plan.waves[wave].spawn_count; ++spawn) {
+            ARPG_REQUIRE(plan.waves[wave].spawns[spawn].affixes.count
+                >= minimum);
+        }
+    }
+    return {};
+}
+
+arpg::test::Failure abyss_start_not_committed_faults_without_combat() noexcept {
+    DungeonSession session{DungeonRules{}, available_state()};
+    session.resolve_pending_save({SaveDisposition::not_committed, 0U, {}});
+    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::faulted);
+    ARPG_REQUIRE(!session.snapshot().combat.has_value());
+    return {};
+}
+
+arpg::test::Failure abyss_start_indeterminate_faults_without_combat() noexcept {
+    DungeonSession session{DungeonRules{}, available_state()};
+    session.resolve_pending_save({SaveDisposition::indeterminate, 0U, {}});
+    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::faulted);
+    ARPG_REQUIRE(!session.snapshot().combat.has_value());
+    ARPG_REQUIRE(session.snapshot().diagnostics.fault
+        == DungeonFault::save_commit_indeterminate);
+    return {};
+}
+
+arpg::test::Failure abyss_start_generation_mismatch_faults() noexcept {
+    DungeonSession session{DungeonRules{}, available_state()};
+    const auto pending = *session.pending_save();
+    session.resolve_pending_save({SaveDisposition::committed,
+        pending.expected_generation + 1U, pending.next_state});
+    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::faulted);
+    ARPG_REQUIRE(session.snapshot().diagnostics.fault
+        == DungeonFault::save_receipt_mismatch);
+    ARPG_REQUIRE(!session.snapshot().combat.has_value());
+    return {};
+}
+
+arpg::test::Failure abyss_start_state_mismatch_faults() noexcept {
+    DungeonSession session{DungeonRules{}, available_state()};
+    const auto pending = *session.pending_save();
+    DungeonRunState wrong = pending.next_state;
+    wrong.current_room.has_hole = !wrong.current_room.has_hole;
+    session.resolve_pending_save({SaveDisposition::committed,
+        pending.expected_generation, wrong});
+    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::faulted);
+    ARPG_REQUIRE(session.snapshot().diagnostics.fault
+        == DungeonFault::save_receipt_mismatch);
+    ARPG_REQUIRE(!session.snapshot().combat.has_value());
+    return {};
+}
+
+arpg::test::Failure abyss_start_commit_creates_combat_after_receipt() noexcept {
+    DungeonSession session{DungeonRules{}, available_state()};
+    const auto pending = *session.pending_save();
+    session.resolve_pending_save({SaveDisposition::committed,
+        pending.expected_generation, pending.next_state});
+    const auto snapshot = session.snapshot();
+    ARPG_REQUIRE(snapshot.phase == RoomPhase::locked);
+    ARPG_REQUIRE(snapshot.combat.has_value());
+    ARPG_REQUIRE(snapshot.commit_generation == pending.expected_generation);
+    ARPG_REQUIRE(arpg::test::DungeonSessionTestAccess::stable_state(session)
+        .abyss.lifecycle == arpg::abyss::AbyssLifecycle::started);
+    return {};
 }
 
 bool clear_and_await(DungeonSession& session) noexcept {
@@ -308,6 +420,12 @@ arpg::test::Failure queue_overflow_faults_without_release_propagation() noexcept
 }
 
 constexpr arpg::test::TestCase kCases[] = {
+    {"available room precomputes then queues start", &available_room_precomputes_then_queues_start},
+    {"abyss start not committed faults without combat", &abyss_start_not_committed_faults_without_combat},
+    {"abyss start indeterminate faults without combat", &abyss_start_indeterminate_faults_without_combat},
+    {"abyss start generation mismatch faults", &abyss_start_generation_mismatch_faults},
+    {"abyss start state mismatch faults", &abyss_start_state_mismatch_faults},
+    {"abyss start commit creates combat after receipt", &abyss_start_commit_creates_combat_after_receipt},
     {"constructor uses saved room descriptor", &constructor_uses_saved_room_descriptor},
     {"door request freezes old combat until commit", &door_request_freezes_old_combat_until_commit},
     {"exact commit adopts verified state and destroys old room", &exact_commit_adopts_verified_state_and_destroys_old_room},

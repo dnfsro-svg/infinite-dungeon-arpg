@@ -681,7 +681,8 @@ bool CombatWorld::apply_player_damage(
         }
     }
 
-    if (*resolved <= 0 || player_.invulnerability_ticks != 0) {
+    if (*resolved <= 0 || player_.hp == 0
+            || player_.invulnerability_ticks != 0) {
         return false;
     }
     const int damage = *resolved;
@@ -689,7 +690,7 @@ bool CombatWorld::apply_player_damage(
     const int absorbed = std::min(player_.barrier, damage);
     player_.barrier -= absorbed;
     const int hp_damage = damage - absorbed;
-    player_.hp = hp_damage >= player_.hp ? 1 : player_.hp - hp_damage;
+    player_.hp = hp_damage >= player_.hp ? 0 : player_.hp - hp_damage;
     player_.hurt_ticks = kPlayerHurtTicks;
     player_.invulnerability_ticks = kPlayerInvulnerabilityTicks;
     player_.velocity.x = 0.0F;
@@ -712,6 +713,14 @@ bool CombatWorld::apply_player_damage(
     hurt_started.position = source_position;
     hurt_started.value = damage;
     emit_event(hurt_started);
+
+    if (player_.hp == 0) {
+        CombatEvent defeated{};
+        defeated.kind = CombatEventKind::player_defeated;
+        defeated.tick = tick_;
+        defeated.position = player_.position;
+        emit_event(defeated);
+    }
     return true;
 }
 
