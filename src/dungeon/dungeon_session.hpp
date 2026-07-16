@@ -93,6 +93,7 @@ private:
     void prepare_room_clear() noexcept;
     void publish_room_clear() noexcept;
     void settle_room_experience() noexcept;
+    [[nodiscard]] bool can_emit(std::size_t count) const noexcept;
     void attempt_exit(ExitDirection direction) noexcept;
     [[nodiscard]] bool prepare_transition(
         TransitionKind kind,

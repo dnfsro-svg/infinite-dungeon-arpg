@@ -75,5 +75,6 @@ int main() {
             "stage 9 task 10 affix stress");
     }
 
-    return arpg::test::run_suites(suites, 168, "stage 10 task 8 abyss clear");
+    return arpg::test::run_suites(suites, 170,
+        "stage 10 task 8 abyss clear event reservation");
 }

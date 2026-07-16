@@ -58,6 +58,16 @@ struct DungeonSessionTestAccess final {
             session.combat_->emit_event(event);
         }
     }
+    static std::size_t fill_dungeon_events(
+        dungeon::DungeonSession& session, std::size_t count) noexcept {
+        dungeon::DungeonEvent event{};
+        event.kind = dungeon::DungeonEventKind::room_reset;
+        std::size_t pushed = 0U;
+        while (pushed < count && session.events_.try_push(event)) {
+            ++pushed;
+        }
+        return pushed;
+    }
     static void force_fault(
         dungeon::DungeonSession& session,
         dungeon::DungeonFault fault) noexcept {
@@ -206,6 +216,11 @@ inline bool defeat_next_live_monster(dungeon::DungeonSession& session) noexcept 
 inline void damage_current_player(
     dungeon::DungeonSession& session, int damage) noexcept {
     DungeonSessionTestAccess::damage_current_player(session, damage);
+}
+
+inline std::size_t fill_dungeon_events(
+    dungeon::DungeonSession& session, std::size_t count) noexcept {
+    return DungeonSessionTestAccess::fill_dungeon_events(session, count);
 }
 
 inline const dungeon::RoomEncounterPlan& encounter_plan(

@@ -648,6 +648,8 @@ void DungeonSession::commit_pending_save(
         settle_room_experience();
         room_progression_ = stable_state_.progression;
         combat_->clear_abyss_rule_preserving_resources();
+        // prepare_room_clear reserved both publication slots. While committing,
+        // tick() is frozen and no other dungeon-event producer can consume them.
         publish_room_clear();
         return;
     }

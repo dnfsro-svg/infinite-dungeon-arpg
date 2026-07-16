@@ -77,3 +77,33 @@ ctest --preset windows-msvc-debug -R "dungeon.units|persistence.units" --output-
 
 - Task 8 只保存 cleared/reward_total，不实现 cleared checkpoint 重载后的宝箱物化或领取；该生命周期继续由 Task 9 接管。
 - 本任务没有生成任何深渊宝箱 ground item，也没有改变奖励 ID/sequence；Task 9 必须继续保持 exact-receipt 和幂等语义。
+
+## Important 复审修复：清场事件容量预留
+
+### 根因
+
+原实现的 exact receipt 分支会先采用已持久化的 cleared state、结算 XP、清除深渊规则，再逐个发送 `room_cleared` 与 `exits_opened`。如果 dungeon event queue 只余 0 或 1 个槽，发布会全部或部分失败，造成持久化已 cleared、运行时却 faulted 且事件不完整。
+
+### RED
+
+- 新增安全预填助手，直接向测试会话的 dungeon event queue 放入无副作用的 `room_reset` 占位事件，不触发 Debug assert。
+- 先写两个边界测试：
+  - 只剩 0/1 槽：必须在创建 `abyss_clear` pending 前 fault；
+  - 恰剩 2 槽：允许 pending，exact receipt 后两个事件必须按顺序完整发布。
+- 旧实现下第一个测试在 `faulted.phase == RoomPhase::faulted` 明确失败，实际仍进入 `abyss_clear` committing；第二个测试通过，证明边界正好位于两个槽。
+
+### GREEN 与不变量
+
+- 增加 `can_emit(count)` 容量检查。
+- started 深渊的 `prepare_room_clear()` 在构造 next state、投影 XP、创建 pending 之前先要求至少两个空槽。
+- 只剩 0/1 槽时：记录 event overflow 并进入 `DungeonFault::event_overflow`；不创建 pending，stable lifecycle 保持 `started`，stable XP 不变，pending XP、规则和 environment hazard 保留，门/洞继续封闭。
+- 恰剩 2 槽时：允许进入 committing。committing 期间 `tick()` 冻结，且没有其他 dungeon-event producer，因此两个槽一直保留到 receipt；`publish_room_clear()` 仍保留原有 defensive fault 行为。
+- 普通房同步清场路径和队列容量均未修改。
+
+### Fresh 验证
+
+```powershell
+ctest --preset windows-msvc-debug -R "dungeon.units|persistence.units" --output-on-failure
+```
+
+最终提交前复跑结果：2/2 通过，0 失败；`dungeon.units` 145.27 秒，`persistence.units` 0.25 秒，总计 145.52 秒。

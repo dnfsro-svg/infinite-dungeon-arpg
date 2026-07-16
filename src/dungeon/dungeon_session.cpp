@@ -658,6 +658,12 @@ void DungeonSession::prepare_room_clear() noexcept {
         enter_fault(DungeonFault::invalid_abyss_state);
         return;
     }
+    constexpr std::size_t kClearPublicationEventCount = 2U;
+    if (!can_emit(kClearPublicationEventCount)) {
+        saturating_increment(diagnostics_.event_overflow_count);
+        enter_fault(DungeonFault::event_overflow);
+        return;
+    }
     if (stable_state_.commit_generation
             == (std::numeric_limits<std::uint64_t>::max)()) {
         enter_fault(DungeonFault::commit_generation_overflow);
@@ -710,6 +716,10 @@ void DungeonSession::publish_room_clear() noexcept {
             && phase_ != RoomPhase::faulted) {
         static_cast<void>(emit(DungeonEventKind::exits_opened));
     }
+}
+
+bool DungeonSession::can_emit(std::size_t count) const noexcept {
+    return count <= events_.capacity() - events_.size();
 }
 
 void DungeonSession::enter_fault(DungeonFault fault) noexcept {
