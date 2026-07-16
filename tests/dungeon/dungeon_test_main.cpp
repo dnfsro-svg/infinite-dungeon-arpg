@@ -8,6 +8,7 @@
 #endif
 
 arpg::test::TestSuite room_generation_suite() noexcept;
+arpg::test::TestSuite death_checkpoint_suite() noexcept;
 arpg::test::TestSuite dungeon_lifecycle_suite() noexcept;
 arpg::test::TestSuite dungeon_navigation_suite() noexcept;
 arpg::test::TestSuite dungeon_stress_suite() noexcept;
@@ -72,6 +73,7 @@ int main() {
 #endif
     const arpg::test::TestSuite suites[] = {
         room_generation_suite(),
+        death_checkpoint_suite(),
         dungeon_lifecycle_suite(),
         dungeon_navigation_suite(),
         dungeon_stress_suite(),
@@ -116,6 +118,6 @@ int main() {
             "stage 10 task 12 abyss stress");
     }
 
-    return arpg::test::run_suites(suites, 203,
+    return arpg::test::run_suites(suites, 213,
         "stage 10 task 12 abyss stress validation");
 }

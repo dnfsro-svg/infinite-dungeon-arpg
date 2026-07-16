@@ -39,6 +39,16 @@ struct RoomGenerationResult final {
     RoomRandomSamples samples{};
 };
 
+struct DeathRetreatTargetResult final {
+    DungeonFault fault{DungeonFault::none};
+    checkpoint::RoomDescriptor room{};
+};
+
+[[nodiscard]] DeathRetreatTargetResult make_death_retreat_target(
+    const checkpoint::DungeonRunState& current,
+    std::uint64_t next_death_sequence,
+    const DungeonRules& rules) noexcept;
+
 [[nodiscard]] RoomGenerationResult generate_room_descriptor(
     std::uint64_t seed,
     std::uint64_t global_index,

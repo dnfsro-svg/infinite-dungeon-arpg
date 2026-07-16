@@ -1,6 +1,7 @@
 add_executable(arpg_dungeon_tests
     ../core/allocation_probe.cpp
     dungeon_test_main.cpp
+    death_checkpoint_tests.cpp
     dungeon_lifecycle_tests.cpp
     dungeon_navigation_tests.cpp
     dungeon_stress_tests.cpp
@@ -28,6 +29,9 @@ target_include_directories(arpg_dungeon_tests
         "${PROJECT_SOURCE_DIR}/tests/combat")
 target_link_libraries(arpg_dungeon_tests PRIVATE arpg_dungeon arpg_persistence)
 arpg_enable_project_warnings(arpg_dungeon_tests)
+if(MSVC)
+    target_link_options(arpg_dungeon_tests PRIVATE /STACK:4194304)
+endif()
 
 add_test(NAME dungeon.units COMMAND arpg_dungeon_tests)
 
