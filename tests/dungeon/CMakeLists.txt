@@ -12,6 +12,7 @@ add_executable(arpg_dungeon_tests
     dungeon_equipment_stress_tests.cpp
     dungeon_loot_drop_tests.cpp
     dungeon_transaction_tests.cpp
+    dungeon_abyss_reward_tests.cpp
     encounter_director_tests.cpp
     dungeon_wave_tests.cpp)
 target_sources(arpg_dungeon_tests PRIVATE

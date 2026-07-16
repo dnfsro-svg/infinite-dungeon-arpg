@@ -99,15 +99,24 @@ struct RoomDescriptor final {
 inline constexpr std::size_t kGroundDropCapacity = 192U;
 inline constexpr float kPickupRadius = 1.5F;
 
+enum class GroundItemSource : std::uint8_t {
+    monster_drop,
+    abyss_chest,
+};
+
 struct GroundItem final {
     bool active{};
     std::uint16_t drop_ordinal{};
+    GroundItemSource source{GroundItemSource::monster_drop};
+    std::uint8_t abyss_reward_ordinal{0xFFU};
     combat::Vec3 position{};
     items::ItemInstance item{};
 };
 
 struct GroundItemSnapshot final {
     std::uint16_t ordinal{};
+    GroundItemSource source{GroundItemSource::monster_drop};
+    std::uint8_t abyss_reward_ordinal{0xFFU};
     combat::Vec3 position{};
     std::uint64_t item_id{};
     items::ItemSlot slot{items::ItemSlot::weapon};

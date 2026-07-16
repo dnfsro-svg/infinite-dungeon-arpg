@@ -326,7 +326,9 @@ void tracked_tick(
             || *state.pending_save_kind
                 == arpg::dungeon::PendingSaveKind::abyss_start
             || *state.pending_save_kind
-                == arpg::dungeon::PendingSaveKind::abyss_clear);
+                == arpg::dungeon::PendingSaveKind::abyss_clear
+            || *state.pending_save_kind
+                == arpg::dungeon::PendingSaveKind::abyss_reward_materialized);
     const bool room_load = phase_before == RoomPhase::transitioning
         && (state.phase == RoomPhase::locked
             || (state.phase == RoomPhase::committing
@@ -462,6 +464,12 @@ bool confirm_pending_save(
     if (kind == arpg::dungeon::PendingSaveKind::abyss_clear) {
         return saved.phase == RoomPhase::cleared
             && saved.has_active_room && saved.combat.has_value()
+            && !saved.pending_save_kind.has_value()
+            && saved.commit_generation == expected_generation;
+    }
+    if (kind
+            == arpg::dungeon::PendingSaveKind::abyss_reward_materialized) {
+        return saved.phase == resume_phase
             && !saved.pending_save_kind.has_value()
             && saved.commit_generation == expected_generation;
     }

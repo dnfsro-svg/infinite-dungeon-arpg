@@ -79,7 +79,15 @@ private:
         combat::PlayerCombatBuild build{};
         PlayerBuildStatus status{PlayerBuildStatus::invalid_state};
     };
+    struct PendingAbyssReward final {
+        std::uint16_t ground_index{0xFFFFU};
+        std::uint8_t reward_ordinal{0xFFU};
+        GroundItem ground{};
+    };
     void construct_current_room() noexcept;
+    void construct_cleared_abyss_room() noexcept;
+    void rebuild_committed_abyss_rewards() noexcept;
+    void attempt_abyss_reward_materialization() noexcept;
     void construct_normal_room() noexcept;
     void reset_to_normal_room(bool clear_queues) noexcept;
     [[nodiscard]] bool prepare_abyss_start() noexcept;
@@ -109,6 +117,7 @@ private:
         const items::EquipmentState* equipment_override = nullptr) const noexcept;
     [[nodiscard]] bool pending_item_cache_consistent() const noexcept;
     [[nodiscard]] bool pending_abyss_cache_consistent() const noexcept;
+    [[nodiscard]] bool pending_abyss_reward_cache_consistent() const noexcept;
     void commit_pending_save(const PendingSaveResult& result) noexcept;
     [[nodiscard]] DungeonSnapshot build_dungeon_snapshot() const noexcept;
     void enter_fault(DungeonFault fault) noexcept;
@@ -128,6 +137,7 @@ private:
     std::optional<PendingSave> pending_save_{};
     std::optional<combat::PlayerCombatBuild> pending_item_build_{};
     std::optional<combat::CombatEncounterConfig> pending_abyss_combat_{};
+    std::optional<PendingAbyssReward> pending_abyss_reward_{};
     std::optional<combat::CombatWorld> combat_{};
     std::array<GroundItem, kGroundDropCapacity> ground_items_{};
     std::array<std::uint64_t, 3> rolled_drop_bits_{};

@@ -1,4 +1,5 @@
 add_library(arpg_dungeon STATIC
+    abyss_reward.cpp
     abyss_checkpoint_migration.cpp
     dungeon_rules.cpp
     encounter_director.cpp

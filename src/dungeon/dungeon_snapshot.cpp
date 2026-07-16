@@ -62,6 +62,8 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
         GroundItemSnapshot& packed =
             result.ground_items[result.ground_item_count++];
         packed.ordinal = ground.drop_ordinal;
+        packed.source = ground.source;
+        packed.abyss_reward_ordinal = ground.abyss_reward_ordinal;
         packed.position = ground.position;
         packed.item_id = ground.item.id;
         const items::BaseDefinition* base =

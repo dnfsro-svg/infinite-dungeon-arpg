@@ -180,7 +180,20 @@ struct DungeonSessionTestAccess final {
         combat::Vec3 position) noexcept {
         if (ordinal < session.ground_items_.size()) {
             session.ground_items_[ordinal] = {
-                true, ordinal, position, item};
+                true, ordinal, dungeon::GroundItemSource::monster_drop,
+                0xFFU, position, item};
+        }
+    }
+    static void install_abyss_ground_item(
+        dungeon::DungeonSession& session,
+        std::uint16_t ordinal,
+        std::uint8_t reward_ordinal,
+        const items::ItemInstance& item,
+        combat::Vec3 position) noexcept {
+        if (ordinal < session.ground_items_.size()) {
+            session.ground_items_[ordinal] = {
+                true, ordinal, dungeon::GroundItemSource::abyss_chest,
+                reward_ordinal, position, item};
         }
     }
     static void set_pending_pickup_ordinal(
@@ -299,6 +312,16 @@ inline void install_ground_item(
     combat::Vec3 position) noexcept {
     DungeonSessionTestAccess::install_ground_item(
         session, ordinal, item, position);
+}
+
+inline void install_abyss_ground_item(
+    dungeon::DungeonSession& session,
+    std::uint16_t ordinal,
+    std::uint8_t reward_ordinal,
+    const items::ItemInstance& item,
+    combat::Vec3 position) noexcept {
+    DungeonSessionTestAccess::install_abyss_ground_item(
+        session, ordinal, reward_ordinal, item, position);
 }
 
 inline void set_pending_pickup_ordinal(
