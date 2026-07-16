@@ -162,7 +162,8 @@ AbyssCombatConfig combat_config_for(AbyssRuleId rule) noexcept {
     config.danger = danger_for_rule(rule);
     switch (rule) {
     case AbyssRuleId::thunderstorm:
-        config.environment.damage_type = AbyssDamageType::lightning;
+        config.environment.active = true;
+        config.environment.damage_type = modifiers::DamageType::lightning;
         config.environment.damage_bp = 1500U;
         config.environment.cycle_ticks = 180U;
         config.environment.warning_ticks = 45U;
@@ -170,7 +171,8 @@ AbyssCombatConfig combat_config_for(AbyssRuleId rule) noexcept {
         config.environment.radius_count = 1U;
         break;
     case AbyssRuleId::hunting_flames:
-        config.environment.damage_type = AbyssDamageType::fire;
+        config.environment.active = true;
+        config.environment.damage_type = modifiers::DamageType::fire;
         config.environment.damage_bp = 1000U;
         config.environment.cycle_ticks = 240U;
         config.environment.warning_ticks = 45U;
@@ -180,7 +182,8 @@ AbyssCombatConfig combat_config_for(AbyssRuleId rule) noexcept {
         config.environment.radius_count = 1U;
         break;
     case AbyssRuleId::chaos_expansion:
-        config.environment.damage_type = AbyssDamageType::chaos;
+        config.environment.active = true;
+        config.environment.damage_type = modifiers::DamageType::chaos;
         config.environment.damage_bp = 800U;
         config.environment.damage_interval_ticks = 60U;
         config.environment.expansion_interval_ticks = 180U;

@@ -2,6 +2,7 @@
 
 #include "abyss/abyss_rules.hpp"
 #include "core/deterministic_rng.hpp"
+#include "modifiers/damage_types.hpp"
 
 #include <array>
 #include <cstddef>
@@ -97,8 +98,9 @@ arpg::test::Failure stable_public_values_and_defaults() noexcept {
     ARPG_REQUIRE(config.rule == AbyssRuleId::none);
     ARPG_REQUIRE(config.player_ground_move_bp == 10000U);
     ARPG_REQUIRE(config.monster_extra_shield_bp == 0U);
+    ARPG_REQUIRE(!config.environment.active);
     ARPG_REQUIRE(config.environment.damage_type
-        == arpg::abyss::AbyssDamageType::none);
+        == arpg::modifiers::DamageType::physical);
     return {};
 }
 
@@ -315,11 +317,12 @@ arpg::test::Failure combat_stat_config_catalog_matches_six_rules() noexcept {
 }
 
 arpg::test::Failure thunderstorm_environment_is_fully_evaluated() noexcept {
-    using arpg::abyss::AbyssDamageType;
+    using arpg::modifiers::DamageType;
     const auto config = arpg::abyss::combat_config_for(
         AbyssRuleId::thunderstorm);
     ARPG_REQUIRE(config.danger == AbyssDanger::low);
-    ARPG_REQUIRE(config.environment.damage_type == AbyssDamageType::lightning);
+    ARPG_REQUIRE(config.environment.active);
+    ARPG_REQUIRE(config.environment.damage_type == DamageType::lightning);
     ARPG_REQUIRE(config.environment.damage_bp == 1500U);
     ARPG_REQUIRE(config.environment.cycle_ticks == 180U);
     ARPG_REQUIRE(config.environment.warning_ticks == 45U);
@@ -332,11 +335,12 @@ arpg::test::Failure thunderstorm_environment_is_fully_evaluated() noexcept {
 }
 
 arpg::test::Failure hunting_flames_environment_is_fully_evaluated() noexcept {
-    using arpg::abyss::AbyssDamageType;
+    using arpg::modifiers::DamageType;
     const auto config = arpg::abyss::combat_config_for(
         AbyssRuleId::hunting_flames);
     ARPG_REQUIRE(config.danger == AbyssDanger::medium);
-    ARPG_REQUIRE(config.environment.damage_type == AbyssDamageType::fire);
+    ARPG_REQUIRE(config.environment.active);
+    ARPG_REQUIRE(config.environment.damage_type == DamageType::fire);
     ARPG_REQUIRE(config.environment.damage_bp == 1000U);
     ARPG_REQUIRE(config.environment.cycle_ticks == 240U);
     ARPG_REQUIRE(config.environment.warning_ticks == 45U);
@@ -349,11 +353,12 @@ arpg::test::Failure hunting_flames_environment_is_fully_evaluated() noexcept {
 }
 
 arpg::test::Failure chaos_expansion_environment_is_fully_evaluated() noexcept {
-    using arpg::abyss::AbyssDamageType;
+    using arpg::modifiers::DamageType;
     const auto config = arpg::abyss::combat_config_for(
         AbyssRuleId::chaos_expansion);
     ARPG_REQUIRE(config.danger == AbyssDanger::high);
-    ARPG_REQUIRE(config.environment.damage_type == AbyssDamageType::chaos);
+    ARPG_REQUIRE(config.environment.active);
+    ARPG_REQUIRE(config.environment.damage_type == DamageType::chaos);
     ARPG_REQUIRE(config.environment.damage_bp == 800U);
     ARPG_REQUIRE(config.environment.cycle_ticks == 0U);
     ARPG_REQUIRE(config.environment.warning_ticks == 0U);
@@ -369,7 +374,6 @@ arpg::test::Failure chaos_expansion_environment_is_fully_evaluated() noexcept {
 }
 
 arpg::test::Failure non_environment_rules_have_explicit_sentinel() noexcept {
-    using arpg::abyss::AbyssDamageType;
     constexpr std::array<AbyssRuleId, 6> rules{{
         AbyssRuleId::swift_pursuit,
         AbyssRuleId::abyss_bulwark,
@@ -381,7 +385,7 @@ arpg::test::Failure non_environment_rules_have_explicit_sentinel() noexcept {
     constexpr std::array<std::uint16_t, 5> no_radii{};
     for (const AbyssRuleId rule : rules) {
         const auto environment = arpg::abyss::combat_config_for(rule).environment;
-        ARPG_REQUIRE(environment.damage_type == AbyssDamageType::none);
+        ARPG_REQUIRE(!environment.active);
         ARPG_REQUIRE(environment.damage_bp == 0U);
         ARPG_REQUIRE(environment.cycle_ticks == 0U);
         ARPG_REQUIRE(environment.warning_ticks == 0U);

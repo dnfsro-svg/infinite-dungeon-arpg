@@ -1,5 +1,7 @@
 #pragma once
 
+#include "modifiers/damage_types.hpp"
+
 #include <array>
 #include <cstdint>
 
@@ -34,15 +36,9 @@ enum class AbyssLifecycle : std::uint8_t {
     failed = 4,
 };
 
-enum class AbyssDamageType : std::uint8_t {
-    none = 0,
-    fire = 1,
-    lightning = 2,
-    chaos = 3,
-};
-
 struct AbyssEnvironmentConfig final {
-    AbyssDamageType damage_type{AbyssDamageType::none};
+    bool active{};
+    modifiers::DamageType damage_type{modifiers::DamageType::physical};
     std::uint16_t damage_bp{};
     std::uint16_t cycle_ticks{};
     std::uint16_t warning_ticks{};
