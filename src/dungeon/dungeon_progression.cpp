@@ -1,5 +1,7 @@
 #include "dungeon/dungeon_progression.hpp"
 
+#include "abyss/abyss_rules.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -151,9 +153,21 @@ RunStateBuildResult make_door_transition(
     }
 
     next.current_room = generated.room;
+    next.abyss = {};
     const auto preview = preview_abyss_doors(current.current_room);
     next.current_room.is_abyss = preview[
         static_cast<std::size_t>(direction)];
+    if (next.current_room.is_abyss) {
+        const auto selection = abyss::select_abyss_rule(
+            next.current_room.seed, next.current_room.depth);
+        if (!selection.has_value()) {
+            return unchanged(DungeonFault::invalid_rules, current);
+        }
+        next.abyss.lifecycle = abyss::AbyssLifecycle::available;
+        next.abyss.danger = selection->danger;
+        next.abyss.rule = selection->rule;
+        next.abyss.rules_version = selection->rules_version;
+    }
     next.last_transition = checkpoint::TransitionKind::door;
     next.last_direction = direction;
     return {DungeonFault::none, std::move(next), generated.samples};

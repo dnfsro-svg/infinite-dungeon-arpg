@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 
+#include "abyss/abyss_rules.hpp"
 #include "dungeon/dungeon_progression.hpp"
 
 #include <array>
@@ -189,6 +190,147 @@ arpg::test::Failure uncalled_door_domains_do_not_change_selected_samples() noexc
     return {};
 }
 
+arpg::test::Failure ordinary_door_builder_clears_previous_abyss_checkpoint() noexcept {
+    auto current = dungeon::make_initial_run_state(7U, DungeonRules{}).state;
+    current.current_room.index = 0U;
+    current.current_room.seed = 0U;
+    current.abyss.lifecycle = arpg::abyss::AbyssLifecycle::cleared;
+    current.abyss.danger = arpg::abyss::AbyssDanger::high;
+    current.abyss.rule = arpg::abyss::AbyssRuleId::life_sacrifice;
+    current.abyss.rules_version = arpg::abyss::kAbyssRulesVersion;
+    current.abyss.reward_total = 3U;
+    current.abyss.generated_mask = 7U;
+    current.abyss.claimed_mask = 3U;
+    current.abyss.abandoned_mask = 4U;
+    current.abyss.reward_revision = 9U;
+
+    const auto next = dungeon::make_door_transition(
+        current, ExitDirection::right, DungeonRules{});
+    ARPG_REQUIRE(next.fault == DungeonFault::none);
+    ARPG_REQUIRE(!next.state.current_room.is_abyss);
+    ARPG_REQUIRE(next.state.abyss.lifecycle
+        == arpg::abyss::AbyssLifecycle::none);
+    ARPG_REQUIRE(next.state.abyss.rule == arpg::abyss::AbyssRuleId::none);
+    ARPG_REQUIRE(next.state.abyss.rules_version == 0U);
+    ARPG_REQUIRE(next.state.abyss.reward_total == 0U);
+    ARPG_REQUIRE(next.state.abyss.generated_mask == 0U);
+    ARPG_REQUIRE(next.state.abyss.claimed_mask == 0U);
+    ARPG_REQUIRE(next.state.abyss.abandoned_mask == 0U);
+    ARPG_REQUIRE(next.state.abyss.reward_revision == 0U);
+    return {};
+}
+
+arpg::test::Failure abyss_door_builder_produces_complete_selection() noexcept {
+    auto current = dungeon::make_initial_run_state(7U, DungeonRules{}).state;
+    current.current_room.index = 0U;
+    current.current_room.seed = 0x150U;
+    current.current_room.depth = 27U;
+    current.abyss.lifecycle = arpg::abyss::AbyssLifecycle::failed;
+    current.abyss.rule = arpg::abyss::AbyssRuleId::abyss_fury;
+    const auto preview = dungeon::preview_abyss_doors(current.current_room);
+    ExitDirection selected = ExitDirection::none;
+    for (std::size_t index = 0U; index < preview.size(); ++index) {
+        if (preview[index]) selected = static_cast<ExitDirection>(index);
+    }
+    ARPG_REQUIRE(selected != ExitDirection::none);
+
+    const auto next = dungeon::make_door_transition(
+        current, selected, DungeonRules{});
+    ARPG_REQUIRE(next.fault == DungeonFault::none);
+    ARPG_REQUIRE(next.state.current_room.is_abyss);
+    const auto selection = arpg::abyss::select_abyss_rule(
+        next.state.current_room.seed, next.state.current_room.depth);
+    ARPG_REQUIRE(selection.has_value());
+    ARPG_REQUIRE(next.state.abyss.lifecycle
+        == arpg::abyss::AbyssLifecycle::available);
+    ARPG_REQUIRE(next.state.abyss.danger == selection->danger);
+    ARPG_REQUIRE(next.state.abyss.rule == selection->rule);
+    ARPG_REQUIRE(next.state.abyss.rules_version == selection->rules_version);
+    ARPG_REQUIRE(next.state.abyss.reward_total == 0U);
+    ARPG_REQUIRE(next.state.abyss.generated_mask == 0U);
+    ARPG_REQUIRE(next.state.abyss.claimed_mask == 0U);
+    ARPG_REQUIRE(next.state.abyss.abandoned_mask == 0U);
+    ARPG_REQUIRE(next.state.abyss.reward_revision == 0U);
+    return {};
+}
+
+arpg::test::Failure same_run_state_compares_all_abyss_fields() noexcept {
+    using State = checkpoint::DungeonRunState;
+    using Mutation = void (*)(State&) noexcept;
+    struct Case final {
+        const char* name;
+        Mutation mutate;
+    };
+    State original = dungeon::make_initial_run_state(7U, DungeonRules{}).state;
+    original.current_room.is_abyss = true;
+    original.abyss.lifecycle = arpg::abyss::AbyssLifecycle::started;
+    original.abyss.danger = arpg::abyss::AbyssDanger::medium;
+    original.abyss.rule = arpg::abyss::AbyssRuleId::abyss_bulwark;
+    original.abyss.rules_version = arpg::abyss::kAbyssRulesVersion;
+    original.abyss.reward_total = 2U;
+    original.abyss.generated_mask = 1U;
+    original.abyss.claimed_mask = 1U;
+    original.abyss.abandoned_mask = 2U;
+    original.abyss.reward_revision = 4U;
+    original.last_abyss_resolution = {
+        true, 9U, arpg::abyss::AbyssRuleId::thunderstorm, 3U, 2U, 1U, 1U};
+    constexpr std::array<Case, 16U> cases{{
+        {"lifecycle", [](State& s) noexcept {
+            s.abyss.lifecycle = arpg::abyss::AbyssLifecycle::cleared;
+        }},
+        {"danger", [](State& s) noexcept {
+            s.abyss.danger = arpg::abyss::AbyssDanger::high;
+        }},
+        {"rule", [](State& s) noexcept {
+            s.abyss.rule = arpg::abyss::AbyssRuleId::exhausted_recovery;
+        }},
+        {"rules version", [](State& s) noexcept { ++s.abyss.rules_version; }},
+        {"reward total", [](State& s) noexcept {
+            s.abyss.reward_total = 3U;
+        }},
+        {"generated mask", [](State& s) noexcept {
+            s.abyss.generated_mask = 3U;
+        }},
+        {"claimed mask", [](State& s) noexcept {
+            s.abyss.claimed_mask = 0U;
+        }},
+        {"abandoned mask", [](State& s) noexcept {
+            s.abyss.abandoned_mask = 0U;
+        }},
+        {"reward revision", [](State& s) noexcept { ++s.abyss.reward_revision; }},
+        {"resolution valid", [](State& s) noexcept {
+            s.last_abyss_resolution.valid = false;
+        }},
+        {"resolution seed", [](State& s) noexcept {
+            ++s.last_abyss_resolution.room_seed;
+        }},
+        {"resolution rule", [](State& s) noexcept {
+            s.last_abyss_resolution.rule =
+                arpg::abyss::AbyssRuleId::swift_pursuit;
+        }},
+        {"resolution total", [](State& s) noexcept {
+            s.last_abyss_resolution.total = 2U;
+        }},
+        {"resolution generated", [](State& s) noexcept {
+            s.last_abyss_resolution.generated = 3U;
+        }},
+        {"resolution claimed", [](State& s) noexcept {
+            s.last_abyss_resolution.claimed = 0U;
+        }},
+        {"resolution abandoned", [](State& s) noexcept {
+            s.last_abyss_resolution.abandoned = 0U;
+        }},
+    }};
+    ARPG_REQUIRE(dungeon::same_run_state(original, original));
+    for (const Case& entry : cases) {
+        static_cast<void>(entry.name);
+        State changed = original;
+        entry.mutate(changed);
+        ARPG_REQUIRE(!dungeon::same_run_state(original, changed));
+    }
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"initial state is one commit and three samples", &initial_state_is_one_commit_and_three_samples},
     {"each door advances counters and bias", &each_door_advances_counters_and_bias},
@@ -197,6 +339,9 @@ constexpr arpg::test::TestCase kCases[] = {
     {"checked limits preserve input state", &checked_limits_preserve_input_state},
     {"same root and route are replayable", &same_root_and_route_are_replayable},
     {"uncalled door domains do not change selected samples", &uncalled_door_domains_do_not_change_selected_samples},
+    {"ordinary door builder clears previous abyss checkpoint", &ordinary_door_builder_clears_previous_abyss_checkpoint},
+    {"abyss door builder produces complete selection", &abyss_door_builder_produces_complete_selection},
+    {"same run state compares all abyss fields", &same_run_state_compares_all_abyss_fields},
 };
 
 }  // namespace

@@ -658,6 +658,8 @@ arpg::test::Failure legacy_door_abyss_migrates_deterministically() noexcept {
         {checkpoint::ExitDirection::right, checkpoint::EntrySide::left}}};
     for (const auto& door : kDoors) {
         auto legacy = make_fixture();
+        legacy.current_room.seed = 0x11E9U;
+        ARPG_REQUIRE(abyss::is_abyss_roll(legacy.current_room.seed));
         legacy.current_room.entry = door.opposite;
         legacy.last_transition = checkpoint::TransitionKind::door;
         legacy.last_direction = door.direction;
@@ -673,6 +675,39 @@ arpg::test::Failure legacy_door_abyss_migrates_deterministically() noexcept {
         ARPG_REQUIRE(migrated.abyss.rules_version == abyss::kAbyssRulesVersion);
         ARPG_REQUIRE(migrated.current_room.is_abyss);
     }
+    return {};
+}
+
+arpg::test::Failure legacy_door_abyss_requires_new_domain_roll() noexcept {
+    auto legacy = make_owned_fixture();
+    legacy.current_room.seed = 0x4142434445464748ULL;
+    ARPG_REQUIRE(!abyss::is_abyss_roll(legacy.current_room.seed));
+    legacy.current_room.entry = checkpoint::EntrySide::bottom;
+    legacy.last_transition = checkpoint::TransitionKind::door;
+    legacy.last_direction = checkpoint::ExitDirection::up;
+    legacy.current_room.is_abyss = true;
+    legacy.abyss.lifecycle = abyss::AbyssLifecycle::cleared;
+    legacy.abyss.rule = abyss::AbyssRuleId::life_sacrifice;
+    legacy.last_abyss_resolution.valid = true;
+
+    auto expected = legacy;
+    expected.current_room.is_abyss = false;
+    expected.abyss = {};
+    expected.last_abyss_resolution = {};
+    const auto migrated = dungeon::migrate_legacy_abyss_checkpoint(legacy);
+    ARPG_REQUIRE(same_state(migrated, expected));
+    ARPG_REQUIRE(migrated.item_ownership.items.size()
+        == expected.item_ownership.items.size());
+    ARPG_REQUIRE(migrated.item_ownership.items[0].id
+        == expected.item_ownership.items[0].id);
+    ARPG_REQUIRE(migrated.item_ownership.equipment.equipped_ids
+        == expected.item_ownership.equipment.equipped_ids);
+    ARPG_REQUIRE(migrated.item_ownership.claimed_drop_bits
+        == expected.item_ownership.claimed_drop_bits);
+    ARPG_REQUIRE(migrated.item_ownership.next_item_sequence
+        == expected.item_ownership.next_item_sequence);
+    ARPG_REQUIRE(migrated.abyss.lifecycle == abyss::AbyssLifecycle::none);
+    ARPG_REQUIRE(!migrated.last_abyss_resolution.valid);
     return {};
 }
 
@@ -1216,6 +1251,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"v5 resolution counts are validated", &v5_resolution_counts_are_validated},
     {"v5 crc covers abyss fields", &v5_crc_covers_abyss_fields},
     {"legacy door abyss migrates deterministically", &legacy_door_abyss_migrates_deterministically},
+    {"legacy door abyss requires new domain roll", &legacy_door_abyss_requires_new_domain_roll},
     {"legacy door migration rejects missing or mismatched direction", &legacy_door_migration_rejects_missing_or_mismatched_direction},
     {"legacy initial and descent abyss clear without drift", &legacy_initial_and_descent_abyss_are_cleared_without_drift},
     {"v1 through v4 decode migrated and v5 does not", &v1_through_v4_decode_as_migrated_but_v5_does_not},

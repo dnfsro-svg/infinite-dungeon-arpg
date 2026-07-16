@@ -34,7 +34,8 @@ checkpoint::DungeonRunState migrate_legacy_abyss_checkpoint(
     const bool legal_door_target = legacy.current_room.is_abyss
         && legacy.last_transition == checkpoint::TransitionKind::door
         && valid_door_entry(
-            legacy.last_direction, legacy.current_room.entry);
+            legacy.last_direction, legacy.current_room.entry)
+        && abyss::is_abyss_roll(legacy.current_room.seed);
     if (!legal_door_target) {
         migrated.current_room.is_abyss = false;
         return migrated;

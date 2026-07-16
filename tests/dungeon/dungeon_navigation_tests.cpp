@@ -444,10 +444,6 @@ arpg::test::Failure abyss_door_target_persists_selected_checkpoint() noexcept {
     DungeonRunState mismatched = pending->next_state;
     mismatched.abyss.rules_version += 1U;
     ARPG_REQUIRE(!same_run_state(mismatched, pending->next_state));
-    mismatched = pending->next_state;
-    mismatched.last_abyss_resolution.valid = true;
-    ARPG_REQUIRE(!same_run_state(mismatched, pending->next_state));
-
     session.resolve_pending_transition({
         SaveDisposition::committed,
         pending->next_state.commit_generation,
@@ -455,6 +451,24 @@ arpg::test::Failure abyss_door_target_persists_selected_checkpoint() noexcept {
     });
     ARPG_REQUIRE(session.snapshot().phase == RoomPhase::faulted);
     ARPG_REQUIRE(session.snapshot().diagnostics.fault
+        == DungeonFault::save_receipt_mismatch);
+
+    DungeonSession resolution_session{DungeonRules{}, state};
+    arpg::test::set_phase(resolution_session, RoomPhase::awaiting_exit);
+    arpg::test::attempt_exit(resolution_session, selected_direction);
+    const auto resolution_pending = resolution_session.pending_transition();
+    ARPG_REQUIRE(resolution_pending.has_value());
+    mismatched = resolution_pending->next_state;
+    mismatched.last_abyss_resolution.valid = true;
+    ARPG_REQUIRE(!same_run_state(
+        mismatched, resolution_pending->next_state));
+    resolution_session.resolve_pending_transition({
+        SaveDisposition::committed,
+        resolution_pending->next_state.commit_generation,
+        mismatched,
+    });
+    ARPG_REQUIRE(resolution_session.snapshot().phase == RoomPhase::faulted);
+    ARPG_REQUIRE(resolution_session.snapshot().diagnostics.fault
         == DungeonFault::save_receipt_mismatch);
     return {};
 }

@@ -1,6 +1,5 @@
 #include "dungeon/dungeon_session.hpp"
 
-#include "abyss/abyss_rules.hpp"
 #include "dungeon/dungeon_progression.hpp"
 #include "items/item_catalog.hpp"
 #include "items/item_generation.hpp"
@@ -153,30 +152,6 @@ bool DungeonSession::prepare_transition(
         }
         enter_fault(next.fault);
         return false;
-    }
-
-    next.state.current_room.is_abyss = false;
-    next.state.abyss = {};
-    if (kind == TransitionKind::door) {
-        const auto preview = preview_abyss_doors(stable_state_.current_room);
-        const std::size_t direction_index =
-            static_cast<std::size_t>(direction);
-        const bool is_abyss = direction_index < preview.size()
-            && preview[direction_index];
-        next.state.current_room.is_abyss = is_abyss;
-        if (is_abyss) {
-            const auto selection = abyss::select_abyss_rule(
-                next.state.current_room.seed,
-                next.state.current_room.depth);
-            if (!selection.has_value()) {
-                enter_fault(DungeonFault::invalid_rules);
-                return false;
-            }
-            next.state.abyss.lifecycle = abyss::AbyssLifecycle::available;
-            next.state.abyss.danger = selection->danger;
-            next.state.abyss.rule = selection->rule;
-            next.state.abyss.rules_version = selection->rules_version;
-        }
     }
 
     next.state.progression = room_progression_;
