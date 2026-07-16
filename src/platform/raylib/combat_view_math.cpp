@@ -224,6 +224,12 @@ HazardVisualMode hazard_visual_mode(
             ? HazardVisualMode::active : HazardVisualMode::hidden;
 }
 
+bool uses_generic_hazard_pass(
+    const combat::HazardSnapshot& hazard) noexcept {
+    return hazard.active
+        && hazard.source == combat::HazardSource::monster;
+}
+
 Rgba8 hazard_color(combat::HazardKind kind) noexcept {
     switch (kind) {
     case combat::HazardKind::native: return {190U, 73U, 229U, 150U};

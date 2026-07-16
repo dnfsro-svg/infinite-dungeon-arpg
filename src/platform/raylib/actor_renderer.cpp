@@ -100,6 +100,7 @@ void draw_effects(const CombatFeedback& feedback, float width, float height,
 
 void draw_hazards(const CombatSnapshot& snapshot, float width, float height) noexcept {
     for (const HazardSnapshot& hazard : snapshot.hazards) {
+        if (!uses_generic_hazard_pass(hazard)) continue;
         const HazardVisualMode mode = hazard_visual_mode(hazard);
         if (mode == HazardVisualMode::hidden) continue;
         const ScreenProjection projected = project_hazard_center(hazard, width, height);

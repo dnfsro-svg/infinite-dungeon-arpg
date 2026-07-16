@@ -37,5 +37,5 @@ int main() {
         inventory_view_math_suite(),
     };
 
-    return arpg::test::run_suites(suites, 84, "stage 10 task 11 abyss visuals");
+    return arpg::test::run_suites(suites, 85, "stage 10 task 11 abyss visuals");
 }

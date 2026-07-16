@@ -96,6 +96,8 @@ void sort_actor_draw_items(
     const combat::PlayerSnapshot& player) noexcept;
 [[nodiscard]] HazardVisualMode hazard_visual_mode(
     const combat::HazardSnapshot& hazard) noexcept;
+[[nodiscard]] bool uses_generic_hazard_pass(
+    const combat::HazardSnapshot& hazard) noexcept;
 [[nodiscard]] Rgba8 hazard_color(combat::HazardKind kind) noexcept;
 [[nodiscard]] ScreenProjection project_projectile_position(
     const combat::ProjectileSnapshot& projectile,

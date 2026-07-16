@@ -122,12 +122,28 @@ arpg::test::Failure render_layout_keeps_baseline_projection_and_hud_values() noe
     return {};
 }
 
+arpg::test::Failure generic_hazard_pass_excludes_abyss_environment() noexcept {
+    arpg::combat::HazardSnapshot hazard{};
+    hazard.active = true;
+    hazard.source = arpg::combat::HazardSource::monster;
+    ARPG_REQUIRE(arpg::platform::uses_generic_hazard_pass(hazard));
+
+    hazard.source = arpg::combat::HazardSource::abyss_environment;
+    ARPG_REQUIRE(!arpg::platform::uses_generic_hazard_pass(hazard));
+
+    hazard.active = false;
+    hazard.source = arpg::combat::HazardSource::monster;
+    ARPG_REQUIRE(!arpg::platform::uses_generic_hazard_pass(hazard));
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"back and front projection", &back_and_front_projection_are_exact},
     {"expanded room corners", &expanded_room_corners_remain_in_viewport},
     {"Z-only actor offset", &z_only_offsets_actor_screen_y},
     {"stable actor draw order", &actor_order_is_y_z_x_then_index},
     {"render layout baseline", &render_layout_keeps_baseline_projection_and_hud_values},
+    {"generic hazard pass routing", &generic_hazard_pass_excludes_abyss_environment},
 };
 
 }  // namespace
