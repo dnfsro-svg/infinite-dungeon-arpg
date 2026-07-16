@@ -1,103 +1,66 @@
-# Stage 9 怪物词缀验收
+# Stage 9 怪物词缀验收（Task 10 证据修复）
 
-构建基线：`80bce30`。本验收只新增测试与测试专用入口；`src/persistence` 未修改。
+本页只记录可重跑证据。`src/persistence` 未修改；本 Task 不实现 Stage 10 内容。
 
-## 自动化验收
+## 1000 房：计划 Trace 与真实 Combat/奖励链
 
-压力 Trace 先以失败方式接入。首次独立运行在第一个新增 case 以
-`0xC00000FD` 退出；定位为测试记录把 1,000 个完整固定房间数组放在栈上。
-记录改为堆上的固定容量数组后，逐字段相等比较保持不变，复跑通过：
+`dungeon_affix_stress.1000 room affix trace is deterministic` 保留 1000 房计划 Trace：两份同根种子 session 对比房间 seed、怪物 ID/位置、词缀 ID/等级/危险分、累计经验、掉落、领取位和物品摘要；每 37 房执行 V4 encode/decode 后重建 session。
+
+此前它为每只怪直接注入 `CombatEvent::defeated`，不能证明实战链。现在同一 Trace 逐只调用真实 `CombatWorld::defeat_monster`，经 `DungeonSession::tick()` 的 `relay_combat_events()` 进入奖励逻辑；逐字段记录实际 defeat payload（kind/tick/attack/target/feedback/位置/monster/ordinal/危险分/资格）、经验、掉落及领取。真实掉落自动领取产生的 pending-save 也按正式 runtime 提交。守卫 `stage9.evidence.no_injected_defeat_trace` 会拒绝再次出现 `relay_all_defeats`、`relay_defeated` 或 fixture 的硬编码一致性输出。
 
 ```text
 ARPG_STAGE9_AFFIX_STRESS_ONLY=1 ARPG_TEST_TRACE=1 build-release/bin/arpg_dungeon_tests.exe
 [RUN] dungeon_affix_stress.1000 room affix trace is deterministic
 [RUN] dungeon_affix_stress.saturated high risk affix world allocates nothing
 2 cases, 0 failures
-EXIT=0
 ```
 
-- PASS：两个独立 session 使用同一根种子连续 1,000 房。
-- PASS：Trace 显式保存并逐字段比较房间 seed、怪物 ID/位置、词缀 ID/等级/危险分、累计经验、掉落 ordinal 与物品 ID/等级/稀有度、领取位和最终物品摘要。
-- PASS：每 37 房使用 V4 `encode_checkpoint/decode_checkpoint` 重新构造 session 后继续。
-- PASS：96 怪、384 弹体、96 区域、三高危组合连续 600 tick，`allocation_count` 增量为零。
+第二条是独立的高压 CombatWorld Trace：96 怪、384 弹体、96 区域与 MULTI-M3/BURN-M3/CHAIN-M3 连续 600 tick，断言零分配。它是极端池压力证据，不冒充 1000 房实战逐怪压力。
 
-fixture 命令：
+## 深 40 真实掉落、领取与 V4 fixture
+
+命令（完整输出写入仓库证据文件）：
+
+```powershell
+build-release/bin/arpg_stage9_validation_fixture.exe |
+  Tee-Object docs/validation/evidence/stage9/task10-fixture-full.log
+```
+
+以下是**摘录**；完整逐怪计划、词缀、真实 defeat payload、掉落、领取位和比较行见 [task10-fixture-full.log](evidence/stage9/task10-fixture-full.log)。fixture 从深40固定根种子选择真实有词缀且命中掉落的一例，调用 `CombatWorld::defeat_monster`、领取后再 V4 encode/decode 并重建 `DungeonSession`。只有 state、计划及词缀、掉落和领取位都比较成功时，最后一行才为 `consistent=1`。
 
 ```text
-build-release/bin/arpg_stage9_validation_fixture.exe
+deep40 root=2 room_index=39 room_seed=2972536108632698802 depth=40
+defeat kind=5 tick=2 target=2 monster=6 ordinal=2 score=17 reward_eligible=1
+drop ordinal=2 item_id=12564799626640217584 item_level=46 rarity=0
+claim ordinal=2 claimed_bits=4,0,0 item_count=1
+v4 state_equal=1 plan_and_affixes_equal=1 drop_equal=1 claim_equal=1 consistent=1
 ```
 
-fixture 输出：
+## 正式玩法窗口与 Step 6
 
-```text
-shallow_seed=10829911648371452629 depth=1 waves=1 budget=8
-deep40_seed=10829911648371452629 depth=40 waves=2 budget=15
-  wave=0 spawn=0 affixes=CHAIN-M2,BURN-M3 score=15
-  wave=1 spawn=2 affixes=CHAIN-M3,DEATH-M3,SHD-M2 score=22
-high_risk=MULTI-M3,BURN-M3,CHAIN-M3 score=27
-rewards score=27 drop_bp=4150 item_level=49 experience=148
-v4_reload_consistent=1
-```
+`arpg_stage9_formal_game_validation` 直接调用正式 `arpg::platform::run_raylib_host`（即 `arpg_game` 使用的公开 host/renderer），固定 seed 2，在**已提交的第 60 帧**自动退出和导出。它使用专用目录 `build-release/bin/stage9-formal-game-validation/`，不使用默认存档，也不修改正式地下城规则。`validation_exit_after_presented_frames` 默认为 0，仅该测试入口设置为 60。
 
-## 窗口验收
+截图 [03-formal-game-submitted-frame.png](evidence/stage9/03-formal-game-submitted-frame.png) 是正式游戏的已提交帧，不是静态 12 卡窗口；验收脚本检查 1280x720、至少 24 种采样色、200 个非背景采样点和 12 个亮采样点。本次实际值为 `colors=31 non_background=6339 bright=64`。旧 `02-formal-game-initial.png` 可能为白画布，**不作为内容证据**。
 
-已启动 `arpg_stage9_validation_game.exe` 和正式 `arpg_game.exe`；测试专用窗口提供 12 个固定词缀、M1/M2/M3 和危险分，不读取或写入正式存档，也不改变正式地下城规则。
-
-| 项目 | 结果 | 证据 |
+| Step 6 项目 | 结果 | 可重跑证据 |
 | --- | --- | --- |
-| 测试专用固定 12 词缀/M1-M3 窗口启动 | PASS | 窗口标题 `Infinite Dungeon - Stage 9 Fixed Affix Validation`、`Responding=True`；`docs/validation/evidence/stage9/01-fixed-affix-room-render.png` |
-| 正式游戏窗口启动 | PASS | `docs/validation/evidence/stage9/02-formal-game-initial.png` |
-| Stage 9 提交后第 60 帧 GPU framebuffer | PASS | `stage9.validation_game.capture_after_present` 以 `--capture-at-frame-60-and-exit` 运行，通过后导出 1280x720 图像；左上角为 RGB `13,17,27`，并检测到 152 个白色 UI 采样像素。证据图为 `docs/validation/evidence/stage9/01-fixed-affix-room-render.png` |
-| 浅层 M1、深 40 M2/M3、四种高危预警、L 上挑、高危掉落、重载领取与极端池 | 不适用（本测试专用固定词缀窗口） | 这些是规则/数据契约，不由固定展示窗口人工驱动；本页上方的压力 Trace 与 fixture 输出覆盖相应数据。 |
+| 正式玩法渲染帧 | PASS | `stage9.formal_game.capture_after_present`；上方正式 host 截图及非白画布检查。 |
+| 浅层 M1 | PASS（自动数据） | `monster_affix_generation.frozen depth bands` 冻结深度 1～3 的 M1-only 权重；正式 host 截图证明同一正式 renderer 可提交内容，但不把截图当成该概率的证明。 |
+| 深40 M2/M3 | PASS（真实 session） | fixture 完整计划包含 M2/M3；见完整日志及 `stage9.validation_fixture.real_v4_reward_reload`。 |
+| 多重投射、燃烧、连锁、闪现、死亡爆破预警 | PASS（自动 Combat） | `monster_affix_triggers.multishot fanned projectiles`、`burning ground periodic hazard`、`chain lightning direct-hit warning`、`blink warning clamp empower`、`death blast cleans owner transients and persists`。 |
+| L 上挑强壮怪 | PASS（自动 Combat） | `monster_affix_runtime.mighty horizontal launch only`，验证只缩放水平击退而不改变上挑垂直轨迹。 |
+| 高危死亡掉落 | PASS（真实 Combat→Dungeon） | fixture `defeat … score=17`、真实 `drop ordinal=2` 与物品字段；不是注入事件。 |
+| 领取后的重载 | PASS（V4） | fixture 的 `state_equal/plan_and_affixes_equal/drop_equal/claim_equal=1`，以及 1000 房 Trace 每 37 房重建。 |
+| 极端组合与满池 | PASS（自动 Combat） | `dungeon_affix_stress.saturated high risk affix world allocates nothing`；96/384/96 与三高危组合 600 tick。 |
 
-窗口证据入口先前在 `EndDrawing()` 前调用 `TakeScreenshot(绝对路径)`。raylib 会将
-`TakeScreenshot` 参数再次拼接到其工作目录，导致绝对路径无效；该入口现在和正式
-host 一样在提交帧后使用 `LoadImageFromScreen/ExportImage`，并在 `InitWindow` 前设置
-`FLAG_VSYNC_HINT | FLAG_WINDOW_RESIZABLE`。新增的图形验收用例固定验证提交后的第 60 帧，
-避免首帧假阳性。
+测试专用固定 12 词缀窗口仍由 `stage9.validation_game.capture_after_present` 覆盖，只用于目录展示，不替代正式玩法证据。
 
-## 双配置与范围检查
-
-在 VS 2022 Build Tools x64、Windows SDK `10.0.26100.0` 与 Ninja 环境中完成双配置全量验证。
-`E:/game/.deps/raylib-6.0` 在本机不存在，但工程的 `cmake/Dependencies.cmake` 使用固定
-SHA256 的 raylib 6.0 FetchContent 源码包；两套配置均成功使用该固定依赖。Debug 配置另有
-`ARPG_FETCH_RAYLIB` 未被项目使用的 CMake 警告，不影响配置结果。
-
-Debug：
+## 本次最小验证集
 
 ```text
-cmake -S . -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DARPG_FETCH_RAYLIB=OFF -DCMAKE_PREFIX_PATH=E:/game/.deps/raylib-6.0
-cmake --build build-debug --parallel
-ctest --test-dir build-debug --output-on-failure
+ctest --test-dir build-release -R "^stage9\\." --output-on-failure
+# 4/4 passed: fixture、反注入守卫、固定展示窗、正式 host 捕获
+
+ARPG_STAGE9_AFFIX_STRESS_ONLY=1 ARPG_TEST_TRACE=1 build-release/bin/arpg_dungeon_tests.exe
+# 2 cases, 0 failures
 ```
-
-配置 exit 0；构建 `199/199`、exit 0；CTest `30/30` 通过、`0` 失败，真实耗时 `240.05 sec`。
-其中 `dungeon.units` 通过，耗时 `181.89 sec`。
-
-Release：
-
-```text
-cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DARPG_FETCH_RAYLIB=OFF -DCMAKE_PREFIX_PATH=E:/game/.deps/raylib-6.0
-cmake --build build-release --parallel
-ctest --test-dir build-release --output-on-failure
-```
-
-配置 exit 0；构建 exit 0；CTest `30/30` 通过、`0` 失败，真实耗时 `205.13 sec`。
-其中 `dungeon.units` 通过，耗时 `146.70 sec`。
-
-差异检查：
-
-```text
-git diff --check
-git diff --exit-code 7b54370 -- src/persistence
-```
-
-两项命令均为 exit 0：无空白错误，且 `src/persistence` 相对 `7b54370` 无差异。
-
-范围扫描：
-
-```text
-rg -n "abyss_affix|summon_affix|aura_affix|Stage 10" src tests
-```
-
-无命中（`rg` exit 1 表示无匹配）；本 Task 未实现深渊、召唤或光环词缀，也未进入 Stage 10。

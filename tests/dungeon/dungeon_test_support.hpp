@@ -54,6 +54,24 @@ struct DungeonSessionTestAccess final {
             world.apply_dummy_impact(index, defeat);
         }
     }
+    static bool defeat_next_live_monster(
+        dungeon::DungeonSession& session) noexcept {
+        if (!session.combat_.has_value()) {
+            return false;
+        }
+        combat::CombatWorld& world = *session.combat_;
+        for (std::size_t index = 0U; index < world.monsters_.slots_.size(); ++index) {
+            combat::MonsterRuntime& monster = world.monsters_.slots_[index];
+            if (!monster.active || monster.hp <= 0
+                    || monster.reaction == combat::ReactionState::defeated) {
+                continue;
+            }
+            monster.hp = 0;
+            world.defeat_monster(index, combat::AttackId::j1, true);
+            return true;
+        }
+        return false;
+    }
     static bool relay_defeated(
         dungeon::DungeonSession& session,
         std::uint8_t wave_index,
@@ -149,6 +167,10 @@ struct DungeonSessionTestAccess final {
 
 inline void force_defeat_current_wave(dungeon::DungeonSession& session) noexcept {
     DungeonSessionTestAccess::force_defeat_current_wave(session);
+}
+
+inline bool defeat_next_live_monster(dungeon::DungeonSession& session) noexcept {
+    return DungeonSessionTestAccess::defeat_next_live_monster(session);
 }
 
 inline void damage_current_player(

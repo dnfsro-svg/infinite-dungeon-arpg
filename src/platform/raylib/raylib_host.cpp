@@ -147,6 +147,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         bool draw_debug = false;
         bool passive_overlay_open = false;
         bool exit_requested = false;
+        std::uint32_t presented_frame_count = 0U;
         unsigned validation_capture_tick = 0U;
         unsigned validation_capture_count = 0U;
         const std::string validation_capture_prefix = config.validation_capture
@@ -336,9 +337,15 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 inventory.draw(*session, current, runtime.render_status());
             }
             EndDrawing();
+            ++presented_frame_count;
             capture_validation_frame();
             if (frame_toggles.take_screenshot) {
                 take_host_screenshot();
+            }
+            if (config.validation_exit_after_presented_frames != 0U
+                    && presented_frame_count
+                        >= config.validation_exit_after_presented_frames) {
+                exit_requested = true;
             }
         }
         audio.shutdown();

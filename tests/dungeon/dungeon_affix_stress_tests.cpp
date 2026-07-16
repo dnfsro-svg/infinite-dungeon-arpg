@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <cstdio>
 #include <memory>
 
 namespace {
@@ -51,6 +52,7 @@ private:
 
 struct MonsterTrace final {
     MonsterId id{MonsterId::count};
+    std::uint16_t spawn_ordinal{};
     std::uint32_t position_x{};
     std::uint32_t position_y{};
     std::uint32_t position_z{};
@@ -58,17 +60,44 @@ struct MonsterTrace final {
     std::array<MonsterAffixTier, 3> affix_tiers{};
     std::uint8_t affix_count{};
     std::uint16_t danger_score{};
+    bool defeat_seen{};
+    arpg::combat::CombatEventKind defeat_kind{};
+    std::uint64_t defeat_tick{};
+    arpg::combat::AttackId defeat_attack{arpg::combat::AttackId::none};
+    std::uint8_t defeat_target_index{0xFFU};
+    arpg::combat::FeedbackLevel defeat_feedback{};
+    std::uint32_t defeat_position_x{};
+    std::uint32_t defeat_position_y{};
+    std::uint32_t defeat_position_z{};
+    MonsterId defeat_monster_id{MonsterId::count};
+    std::uint16_t defeat_spawn_ordinal{};
+    std::uint16_t defeat_affix_score{};
+    bool defeat_reward_eligible{};
 
     friend bool operator==(const MonsterTrace& left,
         const MonsterTrace& right) noexcept {
         return left.id == right.id
+            && left.spawn_ordinal == right.spawn_ordinal
             && left.position_x == right.position_x
             && left.position_y == right.position_y
             && left.position_z == right.position_z
             && left.affix_ids == right.affix_ids
             && left.affix_tiers == right.affix_tiers
             && left.affix_count == right.affix_count
-            && left.danger_score == right.danger_score;
+            && left.danger_score == right.danger_score
+            && left.defeat_seen == right.defeat_seen
+            && left.defeat_kind == right.defeat_kind
+            && left.defeat_tick == right.defeat_tick
+            && left.defeat_attack == right.defeat_attack
+            && left.defeat_target_index == right.defeat_target_index
+            && left.defeat_feedback == right.defeat_feedback
+            && left.defeat_position_x == right.defeat_position_x
+            && left.defeat_position_y == right.defeat_position_y
+            && left.defeat_position_z == right.defeat_position_z
+            && left.defeat_monster_id == right.defeat_monster_id
+            && left.defeat_spawn_ordinal == right.defeat_spawn_ordinal
+            && left.defeat_affix_score == right.defeat_affix_score
+            && left.defeat_reward_eligible == right.defeat_reward_eligible;
     }
 };
 
@@ -192,6 +221,7 @@ bool record_room_plan(RoomTrace& trace, const DungeonSession& session) noexcept 
             const MonsterSpawnSpec& source = entries.spawns[index];
             MonsterTrace& target = trace.monsters[trace.monster_count++];
             target.id = source.id;
+            target.spawn_ordinal = source.spawn_ordinal;
             target.position_x = float_bits(source.position.x);
             target.position_y = float_bits(source.position.y);
             target.position_z = float_bits(source.position.z);
@@ -207,24 +237,99 @@ bool record_room_plan(RoomTrace& trace, const DungeonSession& session) noexcept 
     return true;
 }
 
-bool relay_all_defeats(DungeonSession& session) noexcept {
-    const auto& plan = arpg::test::encounter_plan(session);
-    for (std::uint8_t wave = 0U; wave < plan.wave_count; ++wave) {
-        const auto& entries = plan.waves[wave];
-        for (std::uint8_t index = 0U; index < entries.spawn_count; ++index) {
-            const MonsterSpawnSpec& spawn = entries.spawns[index];
-            const std::uint16_t ordinal = static_cast<std::uint16_t>(
-                static_cast<std::uint16_t>(wave) * arpg::combat::kEncounterSpawnCapacity
-                + index);
-            if (!arpg::test::relay_defeated(session, wave, index, spawn.position,
-                    true, spawn.id, ordinal,
-                    arpg::combat::monster_affix_danger_score(spawn.affixes))) {
-                return false;
-            }
-            drain_events(session);
+bool record_defeat_payload(RoomTrace& trace,
+    const arpg::combat::CombatEvent& event) noexcept {
+    if (event.kind != arpg::combat::CombatEventKind::defeated) return true;
+    for (std::uint16_t index = 0U; index < trace.monster_count; ++index) {
+        MonsterTrace& monster = trace.monsters[index];
+        if (monster.spawn_ordinal != event.spawn_ordinal) continue;
+        if (monster.defeat_seen || monster.id != event.monster_id
+                || monster.danger_score != event.affix_score) {
+            return false;
+        }
+        monster.defeat_seen = true;
+        monster.defeat_kind = event.kind;
+        monster.defeat_tick = event.tick;
+        monster.defeat_attack = event.attack;
+        monster.defeat_target_index = event.target_index;
+        monster.defeat_feedback = event.feedback;
+        monster.defeat_position_x = float_bits(event.position.x);
+        monster.defeat_position_y = float_bits(event.position.y);
+        monster.defeat_position_z = float_bits(event.position.z);
+        monster.defeat_monster_id = event.monster_id;
+        monster.defeat_spawn_ordinal = event.spawn_ordinal;
+        monster.defeat_affix_score = event.affix_score;
+        monster.defeat_reward_eligible = event.reward_eligible;
+        return true;
+    }
+    return false;
+}
+
+bool all_defeat_payloads_recorded(const RoomTrace& trace) noexcept {
+    for (std::uint16_t index = 0U; index < trace.monster_count; ++index) {
+        const MonsterTrace& monster = trace.monsters[index];
+        if (!monster.defeat_seen
+                || monster.defeat_kind != arpg::combat::CombatEventKind::defeated
+                || monster.defeat_monster_id != monster.id
+                || monster.defeat_spawn_ordinal != monster.spawn_ordinal
+                || monster.defeat_affix_score != monster.danger_score
+                || !monster.defeat_reward_eligible) {
+            return false;
         }
     }
     return true;
+}
+
+bool defeat_all_generated_monsters(DungeonSession& session,
+    RoomTrace& trace) noexcept {
+    constexpr int kMaximumTicks = 4096;
+    for (int tick = 0; tick < kMaximumTicks; ++tick) {
+        const auto snapshot = session.snapshot();
+        if (snapshot.phase == RoomPhase::cleared
+                || snapshot.phase == RoomPhase::awaiting_exit) {
+            drain_events(session);
+            const bool recorded = all_defeat_payloads_recorded(trace);
+            if (!recorded && arpg::test::trace_enabled()) {
+                std::fprintf(stderr, "[TRACE] defeated payload mismatch room monsters=%u phase=%u tick=%d\n",
+                    static_cast<unsigned>(trace.monster_count),
+                    static_cast<unsigned>(snapshot.phase), tick);
+            }
+            return recorded;
+        }
+        if (snapshot.phase == RoomPhase::faulted
+                || snapshot.phase == RoomPhase::committing) {
+            if (arpg::test::trace_enabled()) {
+                std::fprintf(stderr, "[TRACE] combat trace stopped phase=%u tick=%d\n",
+                    static_cast<unsigned>(snapshot.phase), tick);
+            }
+            return false;
+        }
+        if (snapshot.phase == RoomPhase::combat
+                && !arpg::test::defeat_next_live_monster(session)) {
+            if (arpg::test::trace_enabled()) {
+                std::fprintf(stderr, "[TRACE] no live monster phase=%u tick=%d\n",
+                    static_cast<unsigned>(snapshot.phase), tick);
+            }
+            return false;
+        }
+        session.tick({});
+        if (session.pending_save_view() != nullptr && !commit_pending(session)) {
+            return false;
+        }
+        while (const auto event = session.try_pop_combat_event()) {
+            if (!record_defeat_payload(trace, *event)) {
+                if (arpg::test::trace_enabled()) {
+                    std::fprintf(stderr, "[TRACE] rejected combat event kind=%u ordinal=%u score=%u tick=%d\n",
+                        static_cast<unsigned>(event->kind),
+                        static_cast<unsigned>(event->spawn_ordinal),
+                        static_cast<unsigned>(event->affix_score), tick);
+                }
+                return false;
+            }
+        }
+        while (session.try_pop_event().has_value()) {}
+    }
+    return false;
 }
 
 bool record_drops_and_claim(RoomTrace& trace, DungeonSession& session,
@@ -274,8 +379,8 @@ Stage9Trace run_stage9_trace(std::unique_ptr<DungeonSession>& session,
     for (std::size_t room = 0U; room < room_count; ++room) {
         RoomTrace& trace = (*result.rooms)[room];
         if (!record_room_plan(trace, *session)
-                || !relay_all_defeats(*session)) return result;
-        cumulative_experience += session->snapshot().pending_room_experience;
+                || !defeat_all_generated_monsters(*session, trace)) return result;
+        cumulative_experience += session->snapshot().last_room_experience;
         trace.cumulative_experience = cumulative_experience;
         if (!record_drops_and_claim(trace, *session, room)
                 || !transition_room(*session, room)) return result;
