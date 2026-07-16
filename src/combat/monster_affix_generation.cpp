@@ -337,20 +337,4 @@ std::uint64_t monster_affix_tier_seed(
             spawn_index), kAffixTierDomain).next_u64();
 }
 
-std::uint64_t monster_affix_selection_output_seed(
-    std::uint64_t room_seed, std::uint64_t depth,
-    std::uint8_t wave_index, std::uint8_t spawn_index,
-    std::uint8_t output_index) noexcept {
-    return affix_output_rng(detail::monster_affix_context_seed(room_seed, depth,
-        wave_index, spawn_index), kAffixSelectionDomain, output_index).next_u64();
-}
-
-std::uint64_t monster_affix_tier_output_seed(
-    std::uint64_t room_seed, std::uint64_t depth,
-    std::uint8_t wave_index, std::uint8_t spawn_index,
-    std::uint8_t output_index) noexcept {
-    return affix_output_rng(detail::monster_affix_context_seed(room_seed, depth,
-        wave_index, spawn_index), kAffixTierDomain, output_index).next_u64();
-}
-
 }  // namespace arpg::combat::test_support

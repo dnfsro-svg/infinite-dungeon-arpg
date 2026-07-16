@@ -4,14 +4,183 @@
 #include "combat/monster_affix_generation.hpp"
 #include "combat/monster_affix_catalog.hpp"
 #include "combat/monster_catalog.hpp"
+#include "core/deterministic_rng.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 namespace {
 
 using namespace arpg::combat;
+
+constexpr std::uint64_t kReferenceAffixCountDomain = 0x41464658434E5431ULL;
+constexpr std::uint64_t kReferenceAffixSelectionDomain = 0x4146465853454C31ULL;
+constexpr std::uint64_t kReferenceAffixTierDomain = 0x4146465854494552ULL;
+constexpr std::uint64_t kReferenceAffixContextDomain = 0x4146465843545831ULL;
+
+std::uint64_t reference_context_seed(
+    std::uint64_t room_seed, std::uint64_t depth,
+    std::uint8_t wave_index, std::uint8_t spawn_index) noexcept {
+    auto context = arpg::core::DeterministicRng::derive_stream(room_seed,
+        kReferenceAffixContextDomain);
+    context = arpg::core::DeterministicRng::derive_stream(context.next_u64(),
+        depth);
+    context = arpg::core::DeterministicRng::derive_stream(context.next_u64(),
+        static_cast<std::uint64_t>(wave_index));
+    context = arpg::core::DeterministicRng::derive_stream(context.next_u64(),
+        static_cast<std::uint64_t>(spawn_index));
+    return context.next_u64();
+}
+
+arpg::core::DeterministicRng reference_output_rng(
+    std::uint64_t context_seed, std::uint64_t domain,
+    std::size_t output_index) noexcept {
+    auto domain_rng = arpg::core::DeterministicRng::derive_stream(context_seed,
+        domain);
+    return arpg::core::DeterministicRng::derive_stream(domain_rng.next_u64(),
+        static_cast<std::uint64_t>(output_index));
+}
+
+template <std::size_t N>
+std::size_t reference_weighted_index(
+    arpg::core::DeterministicRng& rng,
+    const std::array<std::uint16_t, N>& weights) noexcept {
+    std::uint64_t total = 0U;
+    for (const std::uint16_t weight : weights) total += weight;
+    if (total == 0U) return weights.size();
+    std::uint64_t cursor = rng.next_bounded(total).value_or(total);
+    for (std::size_t index = 0U; index < weights.size(); ++index) {
+        if (cursor < weights[index]) return index;
+        cursor -= weights[index];
+    }
+    return weights.size();
+}
+
+const MonsterAffixDefinition* reference_definition(MonsterAffixId id) noexcept {
+    const MonsterAffixCatalog& catalog = monster_affix_catalog();
+    const std::size_t index = static_cast<std::size_t>(id);
+    return index < catalog.size() && catalog[index].id == id
+        ? &catalog[index] : nullptr;
+}
+
+bool reference_contains(const MonsterAffixSet& set, MonsterAffixId id) noexcept {
+    for (std::size_t index = 0U; index < set.count; ++index) {
+        if (set.values[index].id == id) return true;
+    }
+    return false;
+}
+
+bool reference_conflicts(const MonsterAffixSet& set,
+    const MonsterAffixDefinition& candidate) noexcept {
+    const std::uint16_t candidate_bit = static_cast<std::uint16_t>(
+        1U << static_cast<std::uint8_t>(candidate.id));
+    for (std::size_t index = 0U; index < set.count; ++index) {
+        const MonsterAffixDefinition* const selected = reference_definition(
+            set.values[index].id);
+        if (selected == nullptr || (candidate.conflict_mask
+                & static_cast<std::uint16_t>(1U << static_cast<std::uint8_t>(
+                    selected->id))) != 0U
+            || (selected->conflict_mask & candidate_bit) != 0U) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::size_t reference_candidates(const MonsterDefinition& monster,
+    const MonsterAffixSet& selected,
+    std::array<const MonsterAffixDefinition*,
+        static_cast<std::size_t>(MonsterAffixId::count)>& candidates) noexcept {
+    std::size_t count = 0U;
+    for (std::uint8_t raw = 0U;
+         raw < static_cast<std::uint8_t>(MonsterAffixId::count); ++raw) {
+        const MonsterAffixDefinition* const definition = reference_definition(
+            static_cast<MonsterAffixId>(raw));
+        if (definition == nullptr || definition->weight == 0U
+                || reference_contains(selected, definition->id)
+                || (monster.tags & definition->required_tags)
+                    != definition->required_tags
+                || (monster.tags & definition->forbidden_tags) != 0U
+                || reference_conflicts(selected, *definition)) {
+            continue;
+        }
+        candidates[count++] = definition;
+    }
+    return count;
+}
+
+enum class ReferenceSampling final {
+    indexed,
+    shared_sequential,
+};
+
+std::optional<MonsterAffixSet> reference_generate_affixes(
+    std::uint64_t room_seed, std::uint64_t depth,
+    std::uint8_t wave_index, std::uint8_t spawn_index,
+    const MonsterDefinition& monster, ReferenceSampling sampling,
+    bool consume_position_zero_randomness) noexcept {
+    const std::uint64_t seed = reference_context_seed(room_seed, depth,
+        wave_index, spawn_index);
+    if (consume_position_zero_randomness) {
+        auto selection_rng = reference_output_rng(seed,
+            kReferenceAffixSelectionDomain, 0U);
+        auto tier_rng = reference_output_rng(seed, kReferenceAffixTierDomain,
+            0U);
+        static_cast<void>(selection_rng.next_u64());
+        static_cast<void>(tier_rng.next_u64());
+    }
+    auto count_rng = arpg::core::DeterministicRng::derive_stream(seed,
+        kReferenceAffixCountDomain);
+    const std::size_t target_count = reference_weighted_index(count_rng,
+        affix_count_weights(depth));
+    if (target_count > 3U) return std::nullopt;
+
+    auto shared_selection_rng = arpg::core::DeterministicRng::derive_stream(
+        seed, kReferenceAffixSelectionDomain);
+    auto shared_tier_rng = arpg::core::DeterministicRng::derive_stream(seed,
+        kReferenceAffixTierDomain);
+    const auto tier_weights = affix_tier_weights(depth);
+    MonsterAffixSet result{};
+    for (std::size_t output_index = 0U; output_index < target_count;
+         ++output_index) {
+        std::array<const MonsterAffixDefinition*,
+            static_cast<std::size_t>(MonsterAffixId::count)> candidates{};
+        const std::size_t candidate_count = reference_candidates(monster, result,
+            candidates);
+        if (candidate_count == 0U) return std::nullopt;
+        std::array<std::uint16_t,
+            static_cast<std::size_t>(MonsterAffixId::count)> weights{};
+        for (std::size_t index = 0U; index < candidate_count; ++index) {
+            weights[index] = candidates[index]->weight;
+        }
+        arpg::core::DeterministicRng selection_rng = sampling
+                == ReferenceSampling::indexed
+            ? reference_output_rng(seed, kReferenceAffixSelectionDomain,
+                output_index)
+            : shared_selection_rng;
+        const std::size_t selected_index = reference_weighted_index(selection_rng,
+            weights);
+        if (selected_index >= candidate_count) return std::nullopt;
+        if (sampling == ReferenceSampling::shared_sequential) {
+            shared_selection_rng = selection_rng;
+        }
+        arpg::core::DeterministicRng tier_rng = sampling
+                == ReferenceSampling::indexed
+            ? reference_output_rng(seed, kReferenceAffixTierDomain, output_index)
+            : shared_tier_rng;
+        const std::size_t tier_index = reference_weighted_index(tier_rng,
+            tier_weights);
+        if (tier_index >= tier_weights.size()) return std::nullopt;
+        if (sampling == ReferenceSampling::shared_sequential) {
+            shared_tier_rng = tier_rng;
+        }
+        result.values[result.count++] = {candidates[selected_index]->id,
+            static_cast<MonsterAffixTier>(tier_index)};
+    }
+    return result;
+}
 
 bool has_affix(const MonsterAffixSet& set, MonsterAffixId id) noexcept {
     for (std::size_t index = 0U; index < set.count; ++index) {
@@ -214,37 +383,39 @@ arpg::test::Failure context_derivation_has_no_depth_wave_or_spawn_alias() noexce
     return {};
 }
 
-arpg::test::Failure output_position_substreams_isolate_selection_and_tier_sampling() noexcept {
-    constexpr std::uint64_t kRoomSeed = 0xC0111DEULL;
-    constexpr std::uint64_t kDepth = 40U;
-    constexpr std::uint8_t kWaveIndex = 1U;
-    constexpr std::uint8_t kSpawnIndex = 7U;
+arpg::test::Failure output_position_substreams_isolate_real_generation() noexcept {
+    const MonsterDefinition* const monster =
+        monster_definition(MonsterId::lightning_shooter);
+    ARPG_REQUIRE(monster != nullptr);
 
-    const std::uint64_t selection_second_before =
-        test_support::monster_affix_selection_output_seed(kRoomSeed, kDepth,
-            kWaveIndex, kSpawnIndex, 1U);
-    const std::uint64_t tier_second_before =
-        test_support::monster_affix_tier_output_seed(kRoomSeed, kDepth,
-            kWaveIndex, kSpawnIndex, 1U);
+    bool found_shared_stream_counterexample = false;
+    for (std::uint64_t room_seed = 0U; room_seed < 4096U; ++room_seed) {
+        const auto indexed = reference_generate_affixes(room_seed, 40U, 1U, 7U,
+            *monster, ReferenceSampling::indexed, false);
+        const auto indexed_after_position_zero_consumption =
+            reference_generate_affixes(room_seed, 40U, 1U, 7U, *monster,
+                ReferenceSampling::indexed, true);
+        const auto shared = reference_generate_affixes(room_seed, 40U, 1U, 7U,
+            *monster, ReferenceSampling::shared_sequential, false);
+        const auto actual = generate_monster_affixes(room_seed, 40U, 1U, 7U,
+            *monster);
+        ARPG_REQUIRE(indexed.has_value());
+        ARPG_REQUIRE(indexed_after_position_zero_consumption.has_value());
+        ARPG_REQUIRE(shared.has_value());
+        ARPG_REQUIRE(actual.has_value());
+        if (indexed->count < 2U || *indexed == *shared) continue;
 
-    const std::uint64_t selection_first =
-        test_support::monster_affix_selection_output_seed(kRoomSeed, kDepth,
-            kWaveIndex, kSpawnIndex, 0U);
-    const std::uint64_t tier_first =
-        test_support::monster_affix_tier_output_seed(kRoomSeed, kDepth,
-            kWaveIndex, kSpawnIndex, 0U);
-    ARPG_REQUIRE(selection_first != selection_second_before);
-    ARPG_REQUIRE(tier_first != tier_second_before);
-    ARPG_REQUIRE(selection_first != tier_first);
-
-    const std::uint64_t selection_second_after =
-        test_support::monster_affix_selection_output_seed(kRoomSeed, kDepth,
-            kWaveIndex, kSpawnIndex, 1U);
-    const std::uint64_t tier_second_after =
-        test_support::monster_affix_tier_output_seed(kRoomSeed, kDepth,
-            kWaveIndex, kSpawnIndex, 1U);
-    ARPG_REQUIRE(selection_second_before == selection_second_after);
-    ARPG_REQUIRE(tier_second_before == tier_second_after);
+        // Extra selection/tier consumption at position 0 leaves the independent
+        // position 1 prediction unchanged. A shared sequential generator yields
+        // the distinct `shared` result for this same real generation input.
+        ARPG_REQUIRE(*indexed == *indexed_after_position_zero_consumption);
+        ARPG_REQUIRE(*actual == *indexed);
+        ARPG_REQUIRE(actual->values[1] == indexed->values[1]);
+        ARPG_REQUIRE(!(actual->values[1] == shared->values[1]));
+        found_shared_stream_counterexample = true;
+        break;
+    }
+    ARPG_REQUIRE(found_shared_stream_counterexample);
     return {};
 }
 
@@ -268,8 +439,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &insufficient_candidates_fail_explicitly},
     {"context has no depth wave or spawn alias",
         &context_derivation_has_no_depth_wave_or_spawn_alias},
-    {"output position substreams isolate selection and tier sampling",
-        &output_position_substreams_isolate_selection_and_tier_sampling},
+    {"output position substreams isolate real generation",
+        &output_position_substreams_isolate_real_generation},
     {"invalid monster fails explicitly", &invalid_monster_definition_fails_explicitly},
 };
 
