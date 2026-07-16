@@ -53,6 +53,7 @@ SaveLoadResult ready_result(const ScanResult& scan, SaveSlot slot,
     result.active_slot = slot;
     result.recovered = recovered;
     result.checkpoint = slot == SaveSlot::a ? scan.a.checkpoint : scan.b.checkpoint;
+    result.migrated = slot == SaveSlot::a ? scan.a.migrated : scan.b.migrated;
     return result;
 }
 

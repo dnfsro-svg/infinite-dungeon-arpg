@@ -261,7 +261,12 @@ arpg::test::Failure publish_final_scan_fault_is_indeterminate() noexcept {
 
     FaultContext fault{persistence::SaveFaultPoint::final_scan_a, true, false};
     auto faulty = make_store(directory.path, &fault);
-    const auto expected = make_state(2U, 6U);
+    auto expected = make_state(2U, 6U);
+    expected.last_abyss_resolution.valid = true;
+    expected.last_abyss_resolution.room_seed = expected.current_room.seed;
+    expected.last_abyss_resolution.rule = arpg::abyss::AbyssRuleId::thunderstorm;
+    expected.last_abyss_resolution.total = 1U;
+    expected.last_abyss_resolution.generated = 1U;
     const auto result = faulty.commit(expected);
     ARPG_REQUIRE(result.state == persistence::SaveCommitState::indeterminate);
     ARPG_REQUIRE(result.state != persistence::SaveCommitState::not_committed);

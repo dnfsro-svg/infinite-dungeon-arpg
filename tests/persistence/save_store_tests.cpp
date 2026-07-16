@@ -24,6 +24,7 @@ namespace items = arpg::items;
     persistence::SaveError::none,
     persistence::SaveSlot::a,
     true,
+    false,
     {}};
 
 struct TempDirectory final {
@@ -123,6 +124,30 @@ void write_bytes(const std::filesystem::path& path,
 std::vector<std::uint8_t> encoded(const checkpoint::DungeonRunState& state) {
     const auto bytes = persistence::encode_checkpoint(state);
     return bytes.has_value() ? *bytes : std::vector<std::uint8_t>{};
+}
+
+void write_u32(std::vector<std::uint8_t>& bytes, std::size_t offset,
+    std::uint32_t value) noexcept {
+    for (std::size_t index = 0U; index < 4U; ++index)
+        bytes[offset + index] = static_cast<std::uint8_t>(value >> (index * 8U));
+}
+
+std::vector<std::uint8_t> encoded_v4(
+    const checkpoint::DungeonRunState& state) {
+    const auto v5 = encoded(state);
+    if (v5.size() < 152U)
+        return {};
+    std::vector<std::uint8_t> v4(v5.size() - 32U, 0U);
+    std::copy_n(v5.begin(), 120U, v4.begin());
+    std::copy(v5.begin() + 152U, v5.end(), v4.begin() + 120U);
+    v4[7U] = '5';
+    write_u32(v4, 8U, 4U);
+    write_u32(v4, 24U, static_cast<std::uint32_t>(v4.size() - 32U));
+    auto checksum = persistence::crc32_update(0U, v4.data() + 8U, 20U);
+    checksum = persistence::crc32_update(
+        checksum, v4.data() + 32U, v4.size() - 32U);
+    write_u32(v4, 28U, checksum);
+    return v4;
 }
 
 bool has_only_allowed_files(const std::filesystem::path& directory) noexcept {
@@ -287,13 +312,13 @@ arpg::test::Failure variable_length_slots_rotate_large_then_small() noexcept {
     ARPG_REQUIRE(store.commit(large).state
         == persistence::SaveCommitState::committed);
     ARPG_REQUIRE(std::filesystem::file_size(directory.path / "run_a.sav")
-        == 204U + 40U * 257U);
+        == 236U + 40U * 257U);
 
     const auto small = with_items(make_state(2U, 21U), 1U);
     ARPG_REQUIRE(store.commit(small).state
         == persistence::SaveCommitState::committed);
     ARPG_REQUIRE(std::filesystem::file_size(directory.path / "run_b.sav")
-        == 244U);
+        == 276U);
     const auto loaded = store.load();
     ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::ready);
     ARPG_REQUIRE(loaded.active_slot == persistence::SaveSlot::b);
@@ -323,6 +348,12 @@ arpg::test::Failure same_state_includes_all_ownership_bytes_and_order() noexcept
     rhs = lhs;
     ++rhs.item_ownership.next_item_sequence;
     ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+    rhs = lhs;
+    ++rhs.abyss.reward_revision;
+    ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+    rhs = lhs;
+    rhs.last_abyss_resolution.room_seed = 1U;
+    ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
 
     TempDirectory directory;
     write_bytes(directory.path / "run_a.sav", encoded(lhs));
@@ -337,6 +368,38 @@ arpg::test::Failure same_state_includes_all_ownership_bytes_and_order() noexcept
     return {};
 }
 
+arpg::test::Failure migrated_flag_follows_the_selected_ab_slot() noexcept {
+    TempDirectory directory;
+    write_bytes(directory.path / "run_a.sav", encoded_v4(make_state(1U, 40U)));
+    write_bytes(directory.path / "run_b.sav", encoded(make_state(2U, 41U)));
+    auto store = make_store(directory.path);
+    auto loaded = store.load();
+    ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::ready);
+    ARPG_REQUIRE(loaded.active_slot == persistence::SaveSlot::b);
+    ARPG_REQUIRE(!loaded.migrated);
+
+    write_bytes(directory.path / "run_b.sav", encoded(make_state(1U, 41U)));
+    write_bytes(directory.path / "run_a.sav", encoded_v4(make_state(2U, 40U)));
+    loaded = store.load();
+    ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::ready);
+    ARPG_REQUIRE(loaded.active_slot == persistence::SaveSlot::a);
+    ARPG_REQUIRE(loaded.migrated);
+    return {};
+}
+
+arpg::test::Failure migrated_flag_survives_invalid_slot_recovery() noexcept {
+    TempDirectory directory;
+    write_bytes(directory.path / "run_a.sav", encoded_v4(make_state(7U, 42U)));
+    write_bytes(directory.path / "run_b.sav", {0x01U, 0x02U, 0x03U});
+    auto store = make_store(directory.path);
+    const auto loaded = store.load();
+    ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::ready);
+    ARPG_REQUIRE(loaded.active_slot == persistence::SaveSlot::a);
+    ARPG_REQUIRE(loaded.recovered);
+    ARPG_REQUIRE(loaded.migrated);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"empty commit and reload", &empty_commit_and_reload},
     {"highest generation wins and alternates", &highest_generation_wins_and_alternates},
@@ -347,6 +410,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"temp files do not participate in load", &temp_files_do_not_participate_in_load},
     {"variable length slots rotate large then small", &variable_length_slots_rotate_large_then_small},
     {"same state includes ownership bytes and order", &same_state_includes_all_ownership_bytes_and_order},
+    {"migrated flag follows selected ab slot", &migrated_flag_follows_the_selected_ab_slot},
+    {"migrated flag survives invalid slot recovery", &migrated_flag_survives_invalid_slot_recovery},
 };
 
 }  // namespace

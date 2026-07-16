@@ -1,4 +1,5 @@
 add_library(arpg_dungeon STATIC
+    abyss_checkpoint_migration.cpp
     dungeon_rules.cpp
     encounter_director.cpp
     encounter_budget.cpp
@@ -12,7 +13,7 @@ add_library(arpg_dungeon STATIC
 
 target_include_directories(arpg_dungeon PUBLIC "${PROJECT_SOURCE_DIR}/src")
 target_compile_features(arpg_dungeon PUBLIC cxx_std_17)
-target_link_libraries(arpg_dungeon PUBLIC arpg_combat arpg_progression arpg_passives arpg_items PRIVATE arpg_core)
+target_link_libraries(arpg_dungeon PUBLIC arpg_combat arpg_progression arpg_passives arpg_items PRIVATE arpg_core arpg_abyss)
 arpg_enable_project_warnings(arpg_dungeon)
 if(MSVC)
     target_compile_options(arpg_dungeon PUBLIC /EHsc)

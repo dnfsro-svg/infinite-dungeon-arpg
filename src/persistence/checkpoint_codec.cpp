@@ -1,5 +1,6 @@
 #include "persistence/checkpoint_codec.hpp"
 
+#include "abyss/abyss_rules.hpp"
 #include "passives/passive_tree_rules.hpp"
 #include "progression/progression_rules.hpp"
 #include "items/item_catalog.hpp"
@@ -16,12 +17,17 @@ using checkpoint::DungeonElement;
 using checkpoint::EntrySide;
 using checkpoint::ExitDirection;
 using checkpoint::TransitionKind;
+using abyss::AbyssDanger;
+using abyss::AbyssLifecycle;
+using abyss::AbyssRuleId;
 
-constexpr std::array<std::uint8_t, 8> kCurrentMagic{{
+constexpr std::array<std::uint8_t, 8> kV5Magic{{
+    'I', 'A', 'R', 'P', 'G', 'S', '0', '6'}};
+constexpr std::array<std::uint8_t, 8> kV4Magic{{
     'I', 'A', 'R', 'P', 'G', 'S', '0', '5'}};
-constexpr std::array<std::uint8_t, 8> kThirdMagic{{
+constexpr std::array<std::uint8_t, 8> kV3Magic{{
     'I', 'A', 'R', 'P', 'G', 'S', '0', '4'}};
-constexpr std::array<std::uint8_t, 8> kLegacyMagic{{
+constexpr std::array<std::uint8_t, 8> kV1V2Magic{{
     'I', 'A', 'R', 'P', 'G', 'S', '0', '3'}};
 constexpr std::size_t kCrcHeaderOffset = 8U;
 constexpr std::size_t kCrcHeaderSize = 20U;
@@ -113,6 +119,99 @@ bool valid_direction(std::uint8_t value) noexcept {
         || value == static_cast<std::uint8_t>(ExitDirection::none);
 }
 
+bool valid_abyss_lifecycle(std::uint8_t value) noexcept {
+    return value <= static_cast<std::uint8_t>(AbyssLifecycle::failed);
+}
+
+bool valid_abyss_danger(std::uint8_t value) noexcept {
+    return value <= static_cast<std::uint8_t>(AbyssDanger::high);
+}
+
+bool valid_abyss_rule(std::uint8_t value) noexcept {
+    return value <= static_cast<std::uint8_t>(AbyssRuleId::life_sacrifice)
+        || value == static_cast<std::uint8_t>(AbyssRuleId::none);
+}
+
+bool valid_reward_masks(const checkpoint::AbyssCheckpoint& value) noexcept {
+    if (value.reward_total > 3U)
+        return false;
+    const auto valid_bits = static_cast<std::uint8_t>(
+        value.reward_total == 0U ? 0U : (1U << value.reward_total) - 1U);
+    const auto all = static_cast<std::uint8_t>(value.generated_mask
+        | value.claimed_mask | value.abandoned_mask);
+    return (all & static_cast<std::uint8_t>(~valid_bits)) == 0U
+        && (value.claimed_mask & static_cast<std::uint8_t>(
+            ~value.generated_mask)) == 0U
+        && (value.abandoned_mask & value.generated_mask) == 0U;
+}
+
+bool valid_abyss_checkpoint(
+    const checkpoint::DungeonRunState& state) noexcept {
+    const auto& value = state.abyss;
+    if (!valid_abyss_lifecycle(static_cast<std::uint8_t>(value.lifecycle))
+        || !valid_abyss_danger(static_cast<std::uint8_t>(value.danger))
+        || !valid_abyss_rule(static_cast<std::uint8_t>(value.rule))
+        || !valid_reward_masks(value)) {
+        return false;
+    }
+
+    if (value.lifecycle == AbyssLifecycle::none) {
+        return value.danger == AbyssDanger::low
+            && value.rule == AbyssRuleId::none
+            && value.rules_version == 0U
+            && value.reward_total == 0U
+            && value.generated_mask == 0U
+            && value.claimed_mask == 0U
+            && value.abandoned_mask == 0U
+            && value.reward_revision == 0U;
+    }
+
+    const auto selection = abyss::select_abyss_rule(
+        state.current_room.seed, state.current_room.depth);
+    if (!selection.has_value()
+        || value.rules_version != abyss::kAbyssRulesVersion
+        || value.danger != selection->danger
+        || value.rule != selection->rule) {
+        return false;
+    }
+    if ((value.lifecycle == AbyssLifecycle::available
+            || value.lifecycle == AbyssLifecycle::started
+            || value.lifecycle == AbyssLifecycle::cleared)
+        && !state.current_room.is_abyss) {
+        return false;
+    }
+    if (value.lifecycle != AbyssLifecycle::cleared) {
+        return value.reward_total == 0U
+            && value.generated_mask == 0U
+            && value.claimed_mask == 0U
+            && value.abandoned_mask == 0U
+            && value.reward_revision == 0U;
+    }
+    return value.reward_total != 0U;
+}
+
+bool valid_last_resolution(
+    const checkpoint::LastAbyssResolution& value) noexcept {
+    if (!valid_abyss_rule(static_cast<std::uint8_t>(value.rule)))
+        return false;
+    if (!value.valid) {
+        return value.room_seed == 0U
+            && value.rule == AbyssRuleId::none
+            && value.total == 0U
+            && value.generated == 0U
+            && value.claimed == 0U
+            && value.abandoned == 0U;
+    }
+    return value.rule != AbyssRuleId::none
+        && value.total != 0U
+        && value.total <= 3U
+        && value.generated <= value.total
+        && value.claimed <= value.generated
+        && value.abandoned <= value.total
+        && static_cast<std::uint16_t>(value.generated)
+            + static_cast<std::uint16_t>(value.abandoned) == value.total;
+}
+
 bool valid_checkpoint_fields(
     const dungeon::checkpoint::DungeonRunState& state) noexcept {
     return state.commit_generation != 0U
@@ -148,6 +247,8 @@ DecodeResult error_result(CodecError error) noexcept {
 std::optional<EncodedCheckpoint> encode_checkpoint(
     const dungeon::checkpoint::DungeonRunState& state) noexcept {
     if (!valid_checkpoint_fields(state)
+        || !valid_abyss_checkpoint(state)
+        || !valid_last_resolution(state.last_abyss_resolution)
         || items::validate_ownership_detailed(state.item_ownership)
             != items::OwnershipValidationResult::valid) {
         return std::nullopt;
@@ -155,10 +256,10 @@ std::optional<EncodedCheckpoint> encode_checkpoint(
     const auto item_count = state.item_ownership.items.size();
     if (item_count > kMaximumCheckpointItemCount
         || item_count > (std::numeric_limits<std::size_t>::max()
-                - kV4BasePayloadSize) / kV4ItemRecordSize) {
+                - kV5BasePayloadSize) / kV4ItemRecordSize) {
         return std::nullopt;
     }
-    const auto payload_size = kV4BasePayloadSize
+    const auto payload_size = kV5BasePayloadSize
         + item_count * kV4ItemRecordSize;
     if (payload_size > std::numeric_limits<std::size_t>::max()
             - kCheckpointHeaderSize) {
@@ -174,7 +275,7 @@ std::optional<EncodedCheckpoint> encode_checkpoint(
         return std::nullopt;
     }
 
-    std::copy(kCurrentMagic.begin(), kCurrentMagic.end(), out.begin());
+    std::copy(kV5Magic.begin(), kV5Magic.end(), out.begin());
     write_u32(out.data() + 8U, kCheckpointFormatVersion);
     write_u32(out.data() + 12U, kCheckpointRulesVersion);
     write_u64(out.data() + 16U, state.commit_generation);
@@ -200,21 +301,39 @@ std::optional<EncodedCheckpoint> encode_checkpoint(
     write_u64(out.data() + 98U, state.progression.experience);
     write_u64(out.data() + 106U, state.passive_tree.allocated_bits);
 
-    write_u32(out.data() + 120U, static_cast<std::uint32_t>(item_count));
-    write_u64(out.data() + 124U, state.item_ownership.next_item_sequence);
+    out[120U] = static_cast<std::uint8_t>(state.abyss.lifecycle);
+    out[121U] = static_cast<std::uint8_t>(state.abyss.danger);
+    out[122U] = static_cast<std::uint8_t>(state.abyss.rule);
+    write_u32(out.data() + 124U, state.abyss.rules_version);
+    out[128U] = state.abyss.reward_total;
+    out[129U] = state.abyss.generated_mask;
+    out[130U] = state.abyss.claimed_mask;
+    out[131U] = state.abyss.abandoned_mask;
+    write_u32(out.data() + 132U, state.abyss.reward_revision);
+    out[136U] = state.last_abyss_resolution.valid ? 1U : 0U;
+    write_u64(out.data() + 137U, state.last_abyss_resolution.room_seed);
+    out[145U] = static_cast<std::uint8_t>(state.last_abyss_resolution.rule);
+    out[146U] = state.last_abyss_resolution.total;
+    out[147U] = state.last_abyss_resolution.generated;
+    out[148U] = state.last_abyss_resolution.claimed;
+    out[149U] = state.last_abyss_resolution.abandoned;
+
+    write_u32(out.data() + 152U, static_cast<std::uint32_t>(item_count));
+    write_u64(out.data() + 156U, state.item_ownership.next_item_sequence);
     for (std::size_t index = 0U;
             index < state.item_ownership.claimed_drop_bits.size(); ++index) {
-        write_u64(out.data() + 132U + index * 8U,
+        write_u64(out.data() + 164U + index * 8U,
             state.item_ownership.claimed_drop_bits[index]);
     }
     for (std::size_t index = 0U;
             index < state.item_ownership.equipment.equipped_ids.size(); ++index) {
-        write_u64(out.data() + 156U + index * 8U,
+        write_u64(out.data() + 188U + index * 8U,
             state.item_ownership.equipment.equipped_ids[index]);
     }
     for (std::size_t item_index = 0U; item_index < item_count; ++item_index) {
         const auto& item = state.item_ownership.items[item_index];
-        auto* record = out.data() + 204U + item_index * kV4ItemRecordSize;
+        auto* record = out.data() + kV5BaseEncodedCheckpointSize
+            + item_index * kV4ItemRecordSize;
         write_u64(record, item.id);
         record[8U] = item.base_id;
         record[9U] = static_cast<std::uint8_t>(item.rarity);
@@ -242,12 +361,14 @@ DecodeResult decode_checkpoint(
         return error_result(CodecError::wrong_size);
     }
     const bool current_magic = std::equal(
-        kCurrentMagic.begin(), kCurrentMagic.end(), bytes);
+        kV5Magic.begin(), kV5Magic.end(), bytes);
+    const bool fourth_magic = std::equal(
+        kV4Magic.begin(), kV4Magic.end(), bytes);
     const bool third_magic = std::equal(
-        kThirdMagic.begin(), kThirdMagic.end(), bytes);
+        kV3Magic.begin(), kV3Magic.end(), bytes);
     const bool legacy_magic = std::equal(
-        kLegacyMagic.begin(), kLegacyMagic.end(), bytes);
-    if (!current_magic && !third_magic && !legacy_magic) {
+        kV1V2Magic.begin(), kV1V2Magic.end(), bytes);
+    if (!current_magic && !fourth_magic && !third_magic && !legacy_magic) {
         return error_result(CodecError::bad_magic);
     }
     DecodeCursor header{reinterpret_cast<const std::byte*>(bytes), size, 8U};
@@ -263,6 +384,7 @@ DecodeResult decode_checkpoint(
         return error_result(CodecError::wrong_size);
     }
     if (format != kCheckpointFormatVersion
+        && format != kFourthCheckpointFormatVersion
         && format != kThirdCheckpointFormatVersion
         && format != kPreviousCheckpointFormatVersion
         && format != kLegacyCheckpointFormatVersion) {
@@ -270,6 +392,7 @@ DecodeResult decode_checkpoint(
     }
     const bool matching_magic =
         (format == kCheckpointFormatVersion && current_magic)
+        || (format == kFourthCheckpointFormatVersion && fourth_magic)
         || (format == kThirdCheckpointFormatVersion && third_magic)
         || ((format == kPreviousCheckpointFormatVersion
                 || format == kLegacyCheckpointFormatVersion) && legacy_magic);
@@ -291,8 +414,10 @@ DecodeResult decode_checkpoint(
             && payload_size != kPreviousCheckpointPayloadSize)
         || (format == kThirdCheckpointFormatVersion
             && payload_size != kCheckpointPayloadSize)
+        || (format == kFourthCheckpointFormatVersion
+            && payload_size < kV4BasePayloadSize)
         || (format == kCheckpointFormatVersion
-            && payload_size < kV4BasePayloadSize)) {
+            && payload_size < kV5BasePayloadSize)) {
         return error_result(CodecError::bad_payload_length);
     }
     if (encoded_crc != checkpoint_crc(bytes, payload_size)) {
@@ -300,18 +425,23 @@ DecodeResult decode_checkpoint(
     }
 
     std::uint32_t item_count{};
-    if (format == kCheckpointFormatVersion) {
+    if (format == kFourthCheckpointFormatVersion
+            || format == kCheckpointFormatVersion) {
+        const auto count_offset = format == kCheckpointFormatVersion
+            ? 152U : 120U;
         DecodeCursor count_cursor{
-            reinterpret_cast<const std::byte*>(bytes), size, 120U};
+            reinterpret_cast<const std::byte*>(bytes), size, count_offset};
         if (!count_cursor.read_u32(item_count)
             || item_count > kMaximumCheckpointItemCount) {
             return error_result(CodecError::bad_payload_length);
         }
+        const auto base_payload_size = format == kCheckpointFormatVersion
+            ? kV5BasePayloadSize : kV4BasePayloadSize;
         if (item_count > (std::numeric_limits<std::size_t>::max()
-                - kV4BasePayloadSize) / kV4ItemRecordSize) {
+                - base_payload_size) / kV4ItemRecordSize) {
             return error_result(CodecError::bad_payload_length);
         }
-        const auto expected_payload_size = kV4BasePayloadSize
+        const auto expected_payload_size = base_payload_size
             + static_cast<std::size_t>(item_count) * kV4ItemRecordSize;
         if (payload_size != expected_payload_size)
             return error_result(CodecError::bad_payload_length);
@@ -383,6 +513,7 @@ DecodeResult decode_checkpoint(
             return error_result(CodecError::wrong_size);
         }
     } else if (format == kThirdCheckpointFormatVersion
+            || format == kFourthCheckpointFormatVersion
             || format == kCheckpointFormatVersion) {
         if (bytes[97U] != 0U
             || !std::all_of(bytes + 114U, bytes + 120U,
@@ -406,8 +537,55 @@ DecodeResult decode_checkpoint(
         state.passive_tree = passives::PassiveTreeState{1ULL};
     }
     if (format == kCheckpointFormatVersion) {
-        DecodeCursor ownership{
+        const auto lifecycle = bytes[120U];
+        const auto danger = bytes[121U];
+        const auto rule = bytes[122U];
+        const auto resolution_valid = bytes[136U];
+        const auto resolution_rule = bytes[145U];
+        if (!valid_abyss_lifecycle(lifecycle)
+            || !valid_abyss_danger(danger)
+            || !valid_abyss_rule(rule)
+            || !valid_abyss_rule(resolution_rule)) {
+            return error_result(CodecError::invalid_enum);
+        }
+        if (resolution_valid > 1U)
+            return error_result(CodecError::invalid_boolean);
+        if (bytes[123U] != 0U || bytes[150U] != 0U || bytes[151U] != 0U)
+            return error_result(CodecError::invalid_state);
+
+        state.abyss.lifecycle = static_cast<AbyssLifecycle>(lifecycle);
+        state.abyss.danger = static_cast<AbyssDanger>(danger);
+        state.abyss.rule = static_cast<AbyssRuleId>(rule);
+        DecodeCursor abyss_fields{
             reinterpret_cast<const std::byte*>(bytes), size, 124U};
+        if (!abyss_fields.read_u32(state.abyss.rules_version))
+            return error_result(CodecError::wrong_size);
+        state.abyss.reward_total = bytes[128U];
+        state.abyss.generated_mask = bytes[129U];
+        state.abyss.claimed_mask = bytes[130U];
+        state.abyss.abandoned_mask = bytes[131U];
+        DecodeCursor reward_revision{
+            reinterpret_cast<const std::byte*>(bytes), size, 132U};
+        if (!reward_revision.read_u32(state.abyss.reward_revision))
+            return error_result(CodecError::wrong_size);
+        state.last_abyss_resolution.valid = resolution_valid != 0U;
+        DecodeCursor resolution_seed{
+            reinterpret_cast<const std::byte*>(bytes), size, 137U};
+        if (!resolution_seed.read_u64(state.last_abyss_resolution.room_seed))
+            return error_result(CodecError::wrong_size);
+        state.last_abyss_resolution.rule = static_cast<AbyssRuleId>(
+            resolution_rule);
+        state.last_abyss_resolution.total = bytes[146U];
+        state.last_abyss_resolution.generated = bytes[147U];
+        state.last_abyss_resolution.claimed = bytes[148U];
+        state.last_abyss_resolution.abandoned = bytes[149U];
+    }
+    if (format == kFourthCheckpointFormatVersion
+            || format == kCheckpointFormatVersion) {
+        const auto ownership_offset = format == kCheckpointFormatVersion
+            ? 156U : 124U;
+        DecodeCursor ownership{
+            reinterpret_cast<const std::byte*>(bytes), size, ownership_offset};
         if (!ownership.read_u64(state.item_ownership.next_item_sequence))
             return error_result(CodecError::wrong_size);
         for (auto& claimed : state.item_ownership.claimed_drop_bits) {
@@ -450,12 +628,18 @@ DecodeResult decode_checkpoint(
     if (!valid_checkpoint_fields(state)) {
         return error_result(CodecError::invalid_state);
     }
+    if (format == kCheckpointFormatVersion
+        && (!valid_abyss_checkpoint(state)
+            || !valid_last_resolution(state.last_abyss_resolution))) {
+        return error_result(CodecError::invalid_state);
+    }
     const auto ownership_validation =
         items::validate_ownership_detailed(state.item_ownership);
     if (ownership_validation == items::OwnershipValidationResult::allocation_failure)
         return error_result(CodecError::allocation_failure);
     if (ownership_validation != items::OwnershipValidationResult::valid)
         return error_result(CodecError::invalid_state);
+    result.migrated = format != kCheckpointFormatVersion;
     return result;
 }
 

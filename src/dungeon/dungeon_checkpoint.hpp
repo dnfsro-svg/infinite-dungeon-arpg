@@ -1,5 +1,6 @@
 #pragma once
 
+#include "abyss/abyss_types.hpp"
 #include "passives/passive_tree_types.hpp"
 #include "progression/progression_types.hpp"
 #include "items/item_types.hpp"
@@ -49,11 +50,35 @@ struct RoomDescriptor final {
     bool is_abyss{};
 };
 
+struct AbyssCheckpoint final {
+    abyss::AbyssLifecycle lifecycle{abyss::AbyssLifecycle::none};
+    abyss::AbyssDanger danger{abyss::AbyssDanger::low};
+    abyss::AbyssRuleId rule{abyss::AbyssRuleId::none};
+    std::uint32_t rules_version{};
+    std::uint8_t reward_total{};
+    std::uint8_t generated_mask{};
+    std::uint8_t claimed_mask{};
+    std::uint8_t abandoned_mask{};
+    std::uint32_t reward_revision{};
+};
+
+struct LastAbyssResolution final {
+    bool valid{};
+    std::uint64_t room_seed{};
+    abyss::AbyssRuleId rule{abyss::AbyssRuleId::none};
+    std::uint8_t total{};
+    std::uint8_t generated{};
+    std::uint8_t claimed{};
+    std::uint8_t abandoned{};
+};
+
 struct DungeonRunState final {
     std::uint64_t root_seed{};
     std::uint64_t commit_generation{1};
     std::array<std::uint32_t, 4> biases{};
     RoomDescriptor current_room{};
+    AbyssCheckpoint abyss{};
+    LastAbyssResolution last_abyss_resolution{};
     TransitionKind last_transition{TransitionKind::none};
     ExitDirection last_direction{ExitDirection::none};
     progression::ProgressionState progression{};
