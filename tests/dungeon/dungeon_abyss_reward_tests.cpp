@@ -615,6 +615,58 @@ arpg::test::Failure structurally_invalid_abyss_ground_faults_in_place() noexcept
     return {};
 }
 
+arpg::test::Failure abyss_claim_requires_navigation_world_and_pickup_range() noexcept {
+    DungeonRunState state = cleared_abyss_state(AbyssDanger::low);
+    state.current_room.entry = arpg::dungeon::EntrySide::left;
+    state.abyss.generated_mask = 1U;
+    state.abyss.reward_revision = 1U;
+    DungeonSession session{DungeonRules{}, state};
+    const GroundItem* reward = abyss_ground(session, 0U);
+    ARPG_REQUIRE(reward != nullptr);
+    const std::uint16_t ordinal = reward->drop_ordinal;
+    const auto player = session.snapshot().combat->player.position;
+    ARPG_REQUIRE(player.x < -9.0F);
+
+    ARPG_REQUIRE(session.request_pickup(ordinal)
+        == arpg::dungeon::RequestResult::rejected);
+    ARPG_REQUIRE(!session.pending_save().has_value());
+    ARPG_REQUIRE(arpg::test::ground_items(session)[ordinal].active);
+    ARPG_REQUIRE(arpg::test::stable_state(session).abyss.claimed_mask == 0U);
+
+    set_player_position(session, reward->position);
+    ARPG_REQUIRE(session.request_pickup(ordinal)
+        == arpg::dungeon::RequestResult::accepted);
+    ARPG_REQUIRE(session.pending_save()->kind
+        == PendingSaveKind::abyss_reward_claim);
+    return {};
+}
+
+arpg::test::Failure generated_unrebuilt_reward_still_counts_and_warns() noexcept {
+    using arpg::dungeon::ExitDirection;
+    DungeonRunState state = cleared_abyss_state(AbyssDanger::low);
+    state.abyss.generated_mask = 1U;
+    state.abyss.reward_revision = 1U;
+    DungeonSession session{DungeonRules{}, state};
+    const GroundItem* reward = abyss_ground(session, 0U);
+    ARPG_REQUIRE(reward != nullptr);
+    arpg::test::clear_ground_item(session, reward->drop_ordinal);
+    fill_ground_pool(session);
+    arpg::test::set_phase(session, RoomPhase::awaiting_exit);
+    set_player_position(session, {-12.0F, 0.0F, 0.0F});
+
+    ARPG_REQUIRE(session.snapshot().abyss_pending_rewards == 0U);
+    ARPG_REQUIRE(session.snapshot().abyss_unpicked_rewards == 1U);
+    attempt_exit(session, ExitDirection::left);
+    ARPG_REQUIRE(session.snapshot().abyss_exit_confirmation_armed);
+    const auto warning = session.try_pop_event();
+    ARPG_REQUIRE(warning.has_value());
+    ARPG_REQUIRE(warning->kind
+        == arpg::dungeon::DungeonEventKind::abyss_exit_warning);
+    ARPG_REQUIRE(warning->abyss_pending_rewards == 0U);
+    ARPG_REQUIRE(warning->abyss_unpicked_rewards == 1U);
+    return {};
+}
+
 arpg::test::Failure reloaded_cleared_abyss_is_navigable_and_auto_claims() noexcept {
     DungeonRunState navigable = cleared_abyss_state(AbyssDanger::low);
     navigable.abyss.generated_mask = 1U;
@@ -649,16 +701,17 @@ arpg::test::Failure abyss_door_confirmation_warns_and_abandons_atomically() noex
     using arpg::dungeon::ExitDirection;
     using arpg::dungeon::TransitionKind;
     DungeonRunState state = cleared_abyss_state(AbyssDanger::high);
-    state.abyss.generated_mask = 1U;
-    state.abyss.reward_revision = 1U;
+    state.abyss.generated_mask = 7U;
+    state.abyss.reward_revision = 3U;
     DungeonSession session{DungeonRules{}, state};
     arpg::test::set_phase(session, RoomPhase::awaiting_exit);
+    set_player_position(session, {-12.0F, 0.0F, 0.0F});
 
     attempt_exit(session, ExitDirection::left);
     const auto armed = session.snapshot();
     ARPG_REQUIRE(!session.pending_save().has_value());
-    ARPG_REQUIRE(armed.abyss_pending_rewards == 2U);
-    ARPG_REQUIRE(armed.abyss_unpicked_rewards == 1U);
+    ARPG_REQUIRE(armed.abyss_pending_rewards == 0U);
+    ARPG_REQUIRE(armed.abyss_unpicked_rewards == 3U);
     ARPG_REQUIRE(armed.abyss_exit_confirmation_armed);
     ARPG_REQUIRE(armed.abyss_exit_confirmation_transition
         == TransitionKind::door);
@@ -668,10 +721,18 @@ arpg::test::Failure abyss_door_confirmation_warns_and_abandons_atomically() noex
     ARPG_REQUIRE(warning.has_value());
     ARPG_REQUIRE(warning->kind
         == arpg::dungeon::DungeonEventKind::abyss_exit_warning);
-    ARPG_REQUIRE(warning->abyss_pending_rewards == 2U);
-    ARPG_REQUIRE(warning->abyss_unpicked_rewards == 1U);
+    ARPG_REQUIRE(warning->abyss_pending_rewards == 0U);
+    ARPG_REQUIRE(warning->abyss_unpicked_rewards == 3U);
 
-    attempt_exit(session, ExitDirection::left);
+    for (int held = 0; held < 3; ++held) {
+        session.tick({-1, 0});
+        ARPG_REQUIRE(!session.pending_save().has_value());
+        ARPG_REQUIRE(session.snapshot().abyss_exit_confirmation_armed);
+    }
+    session.tick({});
+    ARPG_REQUIRE(!session.pending_save().has_value());
+    ARPG_REQUIRE(session.snapshot().abyss_exit_confirmation_armed);
+    session.tick({-1, 0});
     ARPG_REQUIRE(session.pending_save().has_value());
     ARPG_REQUIRE(session.pending_save()->kind == PendingSaveKind::abyss_abandon);
     const auto pending = *session.pending_save();
@@ -681,9 +742,9 @@ arpg::test::Failure abyss_door_confirmation_warns_and_abandons_atomically() noex
     ARPG_REQUIRE(pending.next_state.last_abyss_resolution.room_seed
         == state.current_room.seed);
     ARPG_REQUIRE(pending.next_state.last_abyss_resolution.total == 3U);
-    ARPG_REQUIRE(pending.next_state.last_abyss_resolution.generated == 1U);
+    ARPG_REQUIRE(pending.next_state.last_abyss_resolution.generated == 3U);
     ARPG_REQUIRE(pending.next_state.last_abyss_resolution.claimed == 0U);
-    ARPG_REQUIRE(pending.next_state.last_abyss_resolution.abandoned == 2U);
+    ARPG_REQUIRE(pending.next_state.last_abyss_resolution.abandoned == 0U);
     ARPG_REQUIRE(pending.next_state.abyss.lifecycle
         != arpg::abyss::AbyssLifecycle::cleared);
     ARPG_REQUIRE(abyss_ground(session, 0U) != nullptr);
@@ -694,7 +755,7 @@ arpg::test::Failure abyss_door_confirmation_warns_and_abandons_atomically() noex
     ARPG_REQUIRE(session.snapshot().ground_item_count == 0U);
     ARPG_REQUIRE(!session.snapshot().abyss_exit_confirmation_armed);
     ARPG_REQUIRE(arpg::test::stable_state(session)
-        .last_abyss_resolution.abandoned == 2U);
+        .last_abyss_resolution.abandoned == 0U);
     return {};
 }
 
@@ -726,6 +787,8 @@ arpg::test::Failure abyss_confirmation_invalidates_on_key_range_revision_and_cap
     set_player_position(revision, {-12.0F, 0.0F, 0.0F});
     attempt_exit(revision, ExitDirection::left);
     const std::uint16_t claim = abyss_ground(revision, 0U)->drop_ordinal;
+    set_player_position(revision,
+        arpg::test::ground_items(revision)[claim].position);
     ARPG_REQUIRE(revision.request_pickup(claim)
         == arpg::dungeon::RequestResult::accepted);
     ARPG_REQUIRE(!revision.snapshot().abyss_exit_confirmation_armed);
@@ -795,8 +858,8 @@ arpg::test::Failure abyss_hole_confirmation_leaves_range_and_descends_on_second_
 arpg::test::Failure abyss_abandon_failure_stays_and_next_resolution_overwrites() noexcept {
     using arpg::dungeon::ExitDirection;
     DungeonRunState state = cleared_abyss_state(AbyssDanger::medium);
-    state.abyss.generated_mask = 1U;
-    state.abyss.reward_revision = 1U;
+    state.abyss.generated_mask = 3U;
+    state.abyss.reward_revision = 2U;
     state.last_abyss_resolution.valid = true;
     state.last_abyss_resolution.room_seed = 0xBADU;
     state.last_abyss_resolution.total = 3U;
@@ -805,7 +868,9 @@ arpg::test::Failure abyss_abandon_failure_stays_and_next_resolution_overwrites()
 
     DungeonSession failed{DungeonRules{}, state};
     arpg::test::set_phase(failed, RoomPhase::awaiting_exit);
+    set_player_position(failed, {12.0F, 0.0F, 0.0F});
     attempt_exit(failed, ExitDirection::right);
+    failed.tick({});
     attempt_exit(failed, ExitDirection::right);
     const auto pending = *failed.pending_save();
     failed.resolve_pending_save({SaveDisposition::not_committed,
@@ -813,7 +878,7 @@ arpg::test::Failure abyss_abandon_failure_stays_and_next_resolution_overwrites()
     ARPG_REQUIRE(failed.snapshot().phase == RoomPhase::faulted);
     ARPG_REQUIRE(failed.snapshot().room_seed == state.current_room.seed);
     ARPG_REQUIRE(abyss_ground(failed, 0U) != nullptr);
-    ARPG_REQUIRE(arpg::test::stable_state(failed).abyss.generated_mask == 1U);
+    ARPG_REQUIRE(arpg::test::stable_state(failed).abyss.generated_mask == 3U);
     ARPG_REQUIRE(arpg::test::stable_state(failed)
         .last_abyss_resolution.room_seed == 0xBADU);
 
@@ -958,6 +1023,10 @@ constexpr arpg::test::TestCase kCases[] = {
         &abyss_claim_full_oom_overflow_and_exact_receipt_are_atomic},
     {"invalid abyss ground faults in place",
         &structurally_invalid_abyss_ground_faults_in_place},
+    {"abyss claim requires pickup range",
+        &abyss_claim_requires_navigation_world_and_pickup_range},
+    {"unrebuilt generated reward still warns",
+        &generated_unrebuilt_reward_still_counts_and_warns},
     {"reloaded cleared abyss navigable",
         &reloaded_cleared_abyss_is_navigable_and_auto_claims},
     {"abyss door confirmation abandon",

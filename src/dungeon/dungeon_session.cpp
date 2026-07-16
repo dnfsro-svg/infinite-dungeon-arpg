@@ -174,13 +174,10 @@ void DungeonSession::tick(combat::MovementInput movement) noexcept {
 
     }
 
-    if (abyss_exit_confirmation_.armed) {
-        if (combat_.has_value() && phase_ == RoomPhase::awaiting_exit) {
-            update_abyss_exit_confirmation_range(
-                combat_->snapshot().player.position);
-        } else {
-            clear_abyss_exit_confirmation();
-        }
+    if (abyss_exit_confirmation_.armed
+            && (!combat_.has_value()
+                || phase_ != RoomPhase::awaiting_exit)) {
+        clear_abyss_exit_confirmation();
     }
 
     if (stable_state_.abyss.lifecycle == abyss::AbyssLifecycle::cleared
@@ -195,14 +192,28 @@ void DungeonSession::tick(combat::MovementInput movement) noexcept {
     if (combat_.has_value() && phase_ != RoomPhase::committing
             && phase_ != RoomPhase::transitioning
             && phase_ != RoomPhase::faulted) {
-        request_nearby_pickups(combat_->snapshot().player.position);
-    }
-
-    if (combat_.has_value() && phase_ == RoomPhase::awaiting_exit) {
         const combat::CombatSnapshot state = combat_->snapshot();
-        if (const auto requested = requested_exit(
-                state.player.position, movement)) {
-            attempt_exit(*requested);
+        if (phase_ == RoomPhase::awaiting_exit) {
+            update_abyss_exit_confirmation_range(state.player.position);
+            const auto requested = requested_exit(
+                state.player.position, movement);
+            if (abyss_exit_confirmation_.armed
+                    && abyss_exit_confirmation_.transition
+                        == TransitionKind::door) {
+                if (!requested.has_value()) {
+                    abyss_exit_confirmation_.door_input_released = true;
+                } else if (*requested
+                        != abyss_exit_confirmation_.direction) {
+                    clear_abyss_exit_confirmation();
+                }
+            }
+            request_nearby_pickups(state.player.position);
+            if (phase_ == RoomPhase::awaiting_exit
+                    && requested.has_value()) {
+                attempt_exit(*requested);
+            }
+        } else {
+            request_nearby_pickups(state.player.position);
         }
     }
 

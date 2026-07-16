@@ -579,6 +579,15 @@ bool drive_exit(
             }
             drain(session, summary);
         }
+        if (session.snapshot().abyss_exit_confirmation_armed) {
+            tracked_tick(session, {}, summary);
+            drain(session, summary);
+            if (session.snapshot().phase == RoomPhase::committing) {
+                if (!confirm_pending_save(session, summary)) return false;
+                drain(session, summary);
+            }
+            continue;
+        }
         if (session.snapshot().phase == RoomPhase::transitioning) {
             break;
         }

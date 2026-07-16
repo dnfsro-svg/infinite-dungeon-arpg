@@ -75,6 +75,7 @@ struct AbyssExitConfirmation final {
     bool armed{};
     TransitionKind transition{TransitionKind::none};
     ExitDirection direction{ExitDirection::none};
+    bool door_input_released{};
     std::uint32_t reward_revision{};
 };
 

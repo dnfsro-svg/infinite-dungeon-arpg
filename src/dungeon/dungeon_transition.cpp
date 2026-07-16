@@ -178,25 +178,16 @@ std::uint8_t DungeonSession::abyss_pending_reward_count() const noexcept {
 std::uint8_t DungeonSession::abyss_unpicked_reward_count() const noexcept {
     if (!stable_state_.current_room.is_abyss
             || stable_state_.abyss.lifecycle
-                != abyss::AbyssLifecycle::cleared) {
+                != abyss::AbyssLifecycle::cleared
+            || stable_state_.abyss.reward_total == 0U
+            || stable_state_.abyss.reward_total > 3U) {
         return 0U;
     }
-    std::uint8_t count = 0U;
-    for (const GroundItem& ground : ground_items_) {
-        if (!ground.active || ground.source != GroundItemSource::abyss_chest
-                || ground.abyss_reward_ordinal >= 3U
-                || ground.abyss_reward_ordinal
-                    >= stable_state_.abyss.reward_total) {
-            continue;
-        }
-        const std::uint8_t bit = static_cast<std::uint8_t>(
-            1U << ground.abyss_reward_ordinal);
-        if ((stable_state_.abyss.generated_mask & bit) != 0U
-                && (stable_state_.abyss.claimed_mask & bit) == 0U) {
-            ++count;
-        }
-    }
-    return count;
+    const std::uint8_t valid = static_cast<std::uint8_t>(
+        (1U << stable_state_.abyss.reward_total) - 1U);
+    return popcount8(static_cast<std::uint8_t>(valid
+        & stable_state_.abyss.generated_mask
+        & static_cast<std::uint8_t>(~stable_state_.abyss.claimed_mask)));
 }
 
 void DungeonSession::clear_abyss_exit_confirmation() noexcept {
@@ -218,6 +209,10 @@ bool DungeonSession::confirm_abyss_exit(
                 || abyss_exit_confirmation_.transition != kind
                 || abyss_exit_confirmation_.direction != direction) {
             clear_abyss_exit_confirmation();
+            return false;
+        }
+        if (kind == TransitionKind::door
+                && !abyss_exit_confirmation_.door_input_released) {
             return false;
         }
         clear_abyss_exit_confirmation();
@@ -246,7 +241,7 @@ bool DungeonSession::confirm_abyss_exit(
         return false;
     }
     abyss_exit_confirmation_ = {
-        true, kind, direction, stable_state_.abyss.reward_revision};
+        true, kind, direction, false, stable_state_.abyss.reward_revision};
     return false;
 }
 
@@ -295,7 +290,9 @@ void DungeonSession::update_abyss_exit_confirmation_range(
             break;
         }
     }
-    if (!in_range) clear_abyss_exit_confirmation();
+    if (!in_range) {
+        clear_abyss_exit_confirmation();
+    }
 }
 
 bool DungeonSession::finalize_abyss_exit(
@@ -788,9 +785,8 @@ RequestResult DungeonSession::request_pickup(
         return RequestResult::faulted;
     }
     const bool abyss_claim = ground.source == GroundItemSource::abyss_chest;
-    if (!abyss_claim && (!combat_.has_value()
-            || !pickup_distance_ok(
-                combat_->snapshot().player.position, ground.position))) {
+    if (!combat_.has_value() || !pickup_distance_ok(
+            combat_->snapshot().player.position, ground.position)) {
         return RequestResult::rejected;
     }
     const items::OwnershipValidationResult stable_validation =
