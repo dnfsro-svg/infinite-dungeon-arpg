@@ -479,6 +479,7 @@ void CombatWorld::tick(MovementInput movement) noexcept {
         resolve_attack_hits();
     }
 
+    simulate_abyss_environment();
     simulate_projectiles();
     simulate_hazards();
 
@@ -540,6 +541,8 @@ void CombatWorld::clear_abyss_rule_preserving_resources() noexcept {
     const int old_max_hp = player_.max_hp;
     const int old_hp = player_.hp;
     const bool alive = old_hp > 0;
+    remove_environment_hazards();
+    abyss_environment_ = AbyssEnvironmentRuntime{};
     encounter_config_.abyss = {};
     player_.max_hp = derived.max_hp;
     player_.max_barrier = derived.max_barrier;
@@ -562,6 +565,7 @@ void CombatWorld::initialize_runtime() noexcept {
     for (auto& owner : effect_owners_) owner = {};
     projectiles_.clear();
     hazards_.clear();
+    abyss_environment_ = AbyssEnvironmentRuntime{};
     if (legacy_mode_) {
         initialize_legacy_monsters();
     } else {
@@ -580,6 +584,10 @@ void CombatWorld::initialize_runtime() noexcept {
     projectile_invalid_owner_count_ = 0;
     hazard_saturation_count_ = 0;
     hazard_invalid_owner_count_ = 0;
+    abyss_environment_.rule = encounter_config_.abyss.rule;
+    abyss_environment_.active = encounter_config_.abyss.environment.active;
+    abyss_environment_.expansion_stage = 0xFFU;
+    simulate_abyss_environment();
 }
 
 void CombatWorld::initialize_player() noexcept {
@@ -652,7 +660,7 @@ bool CombatWorld::load_wave(
     monsters_.clear();
     for (auto& owner : effect_owners_) owner = {};
     projectiles_.clear();
-    hazards_.clear();
+    remove_monster_hazards();
     for (std::size_t index = 0; index < wave.spawn_count; ++index) {
         const auto handle = monsters_.spawn(
             wave.spawns[index], encounter_config_.abyss);
@@ -1133,7 +1141,8 @@ void CombatWorld::tick_active_affixes(
 void CombatWorld::remove_owned_hazards(MonsterHandle owner) noexcept {
     for (std::size_t index = 0; index < kHazardCapacity; ++index) {
         const HazardRuntime& hazard = hazards_.slots()[index];
-        if (!hazard.active || hazard.kind == HazardKind::death_blast
+        if (!hazard.active || hazard.source != HazardSource::monster
+            || hazard.kind == HazardKind::death_blast
             || hazard.owner.index != owner.index
             || hazard.owner.generation != owner.generation) {
             continue;
@@ -1212,20 +1221,30 @@ void CombatWorld::simulate_hazards() noexcept {
             continue;
         }
         HazardRuntime& hazard = *active;
-        const MonsterRuntime* owner = monsters_.get(hazard.owner);
-        if ((!hazard.persists_after_owner_death &&
+        const MonsterRuntime* owner = hazard.source == HazardSource::monster
+            ? monsters_.get(hazard.owner) : nullptr;
+        if (hazard.source == HazardSource::monster
+            && (!hazard.persists_after_owner_death &&
              (owner == nullptr || owner->hp <= 0
               || owner->reaction == ReactionState::defeated))) {
             static_cast<void>(hazards_.destroy(HazardHandle{
                 static_cast<std::uint16_t>(index), hazard.generation}));
             continue;
         }
-        if (hazard.lifetime_ticks != 0U) {
+        const bool persistent_environment =
+            hazard.source == HazardSource::abyss_environment
+            && hazard.kind == HazardKind::chaos_expansion;
+        if (!persistent_environment && hazard.lifetime_ticks != 0U) {
             --hazard.lifetime_ticks;
         }
         if (hazard.telegraph_ticks != 0U) {
             --hazard.telegraph_ticks;
-        } else {
+            if (hazard.telegraph_ticks != 0U
+                || hazard.source == HazardSource::monster) {
+                continue;
+            }
+        }
+        {
             if (hazard.damage_cooldown_ticks != 0U) {
                 --hazard.damage_cooldown_ticks;
                 if (hazard.damage_cooldown_ticks == 0U) {
@@ -1246,11 +1265,12 @@ void CombatWorld::simulate_hazards() noexcept {
                 hazard.player_latched = true;
                 hazard.damage_cooldown_ticks = hazard.damage_interval_ticks;
             }
-            if (hazard.active_ticks != 0U) {
+            if (!persistent_environment && hazard.active_ticks != 0U) {
                 --hazard.active_ticks;
             }
         }
-        if (hazard.lifetime_ticks == 0U || hazard.active_ticks == 0U) {
+        if (!persistent_environment
+            && (hazard.lifetime_ticks == 0U || hazard.active_ticks == 0U)) {
             static_cast<void>(hazards_.destroy(HazardHandle{
                 static_cast<std::uint16_t>(index), hazard.generation}));
         }

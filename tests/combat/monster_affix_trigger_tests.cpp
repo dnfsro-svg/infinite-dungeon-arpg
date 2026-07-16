@@ -102,6 +102,7 @@ bool same_hazard(
     return left.active == right.active && left.generation == right.generation
         && left.owner.index == right.owner.index
         && left.owner.generation == right.owner.generation
+        && left.source == right.source
         && left.kind == right.kind && same_vec(left.center, right.center)
         && left.radius == right.radius
         && left.telegraph_ticks == right.telegraph_ticks

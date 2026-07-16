@@ -1,4 +1,5 @@
 add_library(arpg_combat STATIC
+    abyss_environment.cpp
     attack_catalog.cpp
     combat_collision.cpp
     combat_effects.cpp

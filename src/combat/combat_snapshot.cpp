@@ -59,7 +59,8 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
             const HazardRuntime& hazard = hazards_.slots()[index];
             if (!hazard.active) continue;
             result.hazards[index] = HazardSnapshot{
-                hazard.active, hazard.generation, hazard.owner, hazard.kind, hazard.center,
+                hazard.active, hazard.generation, hazard.owner, hazard.source,
+                hazard.kind, hazard.center,
                 hazard.radius, hazard.telegraph_ticks, hazard.active_ticks,
                 hazard.lifetime_ticks, hazard.damage_interval_ticks,
                 hazard.player_latched, hazard.persists_after_owner_death, hazard.damage,

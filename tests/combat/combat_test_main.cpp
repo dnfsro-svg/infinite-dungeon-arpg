@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 
 arpg::test::TestSuite attack_catalog_suite() noexcept;
+arpg::test::TestSuite abyss_environment_suite() noexcept;
 arpg::test::TestSuite attack_state_suite() noexcept;
 arpg::test::TestSuite break_stress_suite() noexcept;
 arpg::test::TestSuite combat_config_suite() noexcept;
@@ -24,6 +25,7 @@ arpg::test::TestSuite player_defense_suite() noexcept;
 int main() {
     const arpg::test::TestSuite suites[] = {
         attack_catalog_suite(),
+        abyss_environment_suite(),
         attack_state_suite(),
         break_stress_suite(),
         combat_config_suite(),
@@ -45,5 +47,5 @@ int main() {
         player_defense_suite(),
     };
 
-    return arpg::test::run_suites(suites, 150, "stage 10 task 6 abyss combat rules");
+    return arpg::test::run_suites(suites, 161, "stage 10 task 7 abyss environment");
 }

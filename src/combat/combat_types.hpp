@@ -178,6 +178,14 @@ enum class HazardKind : std::uint8_t {
     burning,
     chain_lightning,
     death_blast,
+    thunderstorm,
+    hunting_flame,
+    chaos_expansion,
+};
+
+enum class HazardSource : std::uint8_t {
+    monster,
+    abyss_environment,
 };
 
 struct MonsterHandle final {
@@ -207,6 +215,7 @@ struct HazardRuntime final {
     bool active{};
     std::uint16_t generation{};
     MonsterHandle owner{};
+    HazardSource source{HazardSource::monster};
     HazardKind kind{HazardKind::native};
     Vec3 center{};
     float radius{};
@@ -218,6 +227,16 @@ struct HazardRuntime final {
     bool player_latched{};
     bool persists_after_owner_death{};
     DamagePacket damage{};
+};
+
+struct AbyssEnvironmentRuntime final {
+    abyss::AbyssRuleId rule{abyss::AbyssRuleId::none};
+    std::uint16_t cycle_tick{};
+    std::uint16_t stage_tick{};
+    Vec3 locked_center{};
+    std::uint8_t expansion_stage{};
+    bool warning{};
+    bool active{};
 };
 
 struct EncounterWave final {
@@ -434,6 +453,7 @@ struct HazardSnapshot final {
     bool active{};
     std::uint16_t generation{};
     MonsterHandle owner{};
+    HazardSource source{HazardSource::monster};
     HazardKind kind{HazardKind::native};
     Vec3 center{};
     float radius{};

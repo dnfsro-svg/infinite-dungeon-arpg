@@ -137,6 +137,11 @@ struct CombatWorldTestAccess final {
         world.player_.barrier = barrier;
     }
 
+    static void set_player_evasion_rate_bp(
+        combat::CombatWorld& world, std::int32_t basis_points) noexcept {
+        world.player_.evasion_rate_bp = basis_points;
+    }
+
     static const abyss::AbyssCombatConfig& abyss_config(
         const combat::CombatWorld& world) noexcept {
         return world.encounter_config_.abyss;
@@ -188,6 +193,14 @@ struct CombatWorldTestAccess final {
         if (slot < world.monsters_.slots_.size()) {
             world.monsters_.slots_[slot].blink_empowered = empowered;
         }
+    }
+
+    static bool destroy_hazard_at(
+        combat::CombatWorld& world, std::size_t index) noexcept {
+        if (index >= world.hazards_.slots().size()) return false;
+        const auto& hazard = world.hazards_.slots()[index];
+        return world.hazards_.destroy(combat::HazardHandle{
+            static_cast<std::uint16_t>(index), hazard.generation});
     }
 
     static void tick_active_affixes(

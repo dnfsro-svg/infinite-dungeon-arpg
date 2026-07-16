@@ -1,6 +1,7 @@
 add_executable(arpg_combat_tests
     ../core/allocation_probe.cpp
     combat_test_main.cpp
+    abyss_environment_tests.cpp
     attack_catalog_tests.cpp
     attack_state_tests.cpp
     break_stress_tests.cpp

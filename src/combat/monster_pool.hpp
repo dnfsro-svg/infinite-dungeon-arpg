@@ -131,6 +131,17 @@ class HazardPool final {
 public:
     void clear() noexcept;
     [[nodiscard]] std::optional<HazardHandle> spawn(
+        HazardSource source,
+        MonsterHandle owner,
+        HazardKind kind,
+        Vec3 center,
+        float radius,
+        std::uint16_t telegraph_ticks,
+        std::uint16_t active_ticks,
+        std::uint16_t damage_interval_ticks,
+        DamagePacket damage,
+        bool persists_after_owner_death = false) noexcept;
+    [[nodiscard]] std::optional<HazardHandle> spawn(
         MonsterHandle owner,
         HazardKind kind,
         Vec3 center,
