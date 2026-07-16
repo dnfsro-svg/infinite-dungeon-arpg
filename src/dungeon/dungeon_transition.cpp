@@ -562,7 +562,8 @@ void DungeonSession::commit_pending_save(
         return;
     }
     const bool abyss_commit = pending_save_->kind == PendingSaveKind::abyss_start
-        || pending_save_->kind == PendingSaveKind::abyss_fail;
+        || pending_save_->kind == PendingSaveKind::abyss_fail
+        || pending_save_->kind == PendingSaveKind::abyss_clear;
     if (result.disposition == SaveDisposition::not_committed && abyss_commit) {
         enter_fault(DungeonFault::save_receipt_mismatch);
         return;
@@ -596,6 +597,7 @@ void DungeonSession::commit_pending_save(
     const bool pickup_commit = kind == PendingSaveKind::loot_pickup;
     const bool start_commit = kind == PendingSaveKind::abyss_start;
     const bool fail_commit = kind == PendingSaveKind::abyss_fail;
+    const bool clear_commit = kind == PendingSaveKind::abyss_clear;
     const std::uint16_t pickup_ordinal = pending_save_->pickup_ordinal;
     if (pickup_commit) {
         if (pickup_ordinal >= ground_items_.size()) {
@@ -640,6 +642,13 @@ void DungeonSession::commit_pending_save(
     pending_abyss_combat_.reset();
     if (fail_commit) {
         reset_to_normal_room(false);
+        return;
+    }
+    if (clear_commit) {
+        settle_room_experience();
+        room_progression_ = stable_state_.progression;
+        combat_->clear_abyss_rule_preserving_resources();
+        publish_room_clear();
         return;
     }
     if (kind == PendingSaveKind::transition) {

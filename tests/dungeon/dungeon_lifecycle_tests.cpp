@@ -5,6 +5,7 @@
 #include "dungeon/room_generation.hpp"
 #include "dungeon/dungeon_progression.hpp"
 #include "abyss/abyss_rules.hpp"
+#include "items/item_types.hpp"
 
 #include <array>
 #include <cstddef>
@@ -56,6 +57,183 @@ bool commit_abyss_start(arpg::dungeon::DungeonSession& session) noexcept {
         pending->expected_generation, pending->next_state});
     return session.snapshot().phase == arpg::dungeon::RoomPhase::locked
         && session.snapshot().combat.has_value();
+}
+
+arpg::dungeon::DungeonRunState lifecycle_state_for_rule(
+    arpg::abyss::AbyssRuleId rule) noexcept {
+    std::uint64_t seed = 1U;
+    for (;;) {
+        auto state = lifecycle_available_state(seed);
+        if (state.abyss.rule == rule) return state;
+        seed = state.current_room.seed + 1U;
+    }
+}
+
+bool drive_to_abyss_clear_pending(
+    arpg::dungeon::DungeonSession& session,
+    arpg::test::EventSummary& events) noexcept {
+    if (session.snapshot().phase == arpg::dungeon::RoomPhase::locked) {
+        session.tick({});
+        arpg::test::drain_all_events(session, events);
+    }
+    for (int tick = 0; tick < 4096; ++tick) {
+        const auto state = session.snapshot();
+        if (state.phase == arpg::dungeon::RoomPhase::committing) {
+            const auto pending = session.pending_save();
+            return pending.has_value()
+                && pending->kind
+                    == arpg::dungeon::PendingSaveKind::abyss_clear;
+        }
+        if (state.phase == arpg::dungeon::RoomPhase::combat) {
+            arpg::test::force_defeat_current_wave(session);
+        }
+        session.tick({});
+        arpg::test::drain_all_events(session, events);
+    }
+    return false;
+}
+
+std::size_t environment_hazard_count(
+    const arpg::combat::CombatSnapshot& state) noexcept {
+    std::size_t count = 0U;
+    for (const auto& hazard : state.hazards) {
+        if (hazard.active
+                && hazard.source
+                    == arpg::combat::HazardSource::abyss_environment) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+arpg::test::Failure abyss_clear_is_atomic_and_restores_life_resources() noexcept {
+    using namespace arpg;
+    dungeon::DungeonRunState state = lifecycle_state_for_rule(
+        abyss::AbyssRuleId::life_sacrifice);
+    items::ItemInstance barrier_item{};
+    barrier_item.id = 0xBABB1EULL;
+    barrier_item.base_id = 3U;
+    barrier_item.rarity = items::ItemRarity::normal;
+    barrier_item.item_level = 40U;
+    barrier_item.required_level = 1U;
+    state.item_ownership.items.push_back(barrier_item);
+    state.item_ownership.equipment.equipped_ids[2] = barrier_item.id;
+    const auto stable_before = state;
+
+    dungeon::DungeonSession session{{}, state};
+    ARPG_REQUIRE(commit_abyss_start(session));
+    session.tick({});
+    while (session.try_pop_event().has_value()) {
+    }
+    const auto entered = session.snapshot();
+    ARPG_REQUIRE(entered.combat->player.max_hp < 1000);
+    ARPG_REQUIRE(entered.combat->player.max_barrier > 0);
+    test::damage_current_player(session,
+        entered.combat->player.max_barrier + 100);
+    const auto damaged = session.snapshot();
+    ARPG_REQUIRE(damaged.combat->player.hp < damaged.combat->player.max_hp);
+    ARPG_REQUIRE(damaged.combat->player.barrier == 0);
+
+    test::EventSummary events{};
+    ARPG_REQUIRE(drive_to_abyss_clear_pending(session, events));
+    const auto frozen = session.snapshot();
+    const auto pending = session.pending_save();
+    ARPG_REQUIRE(frozen.phase == dungeon::RoomPhase::committing);
+    ARPG_REQUIRE(frozen.pending_save_kind == dungeon::PendingSaveKind::abyss_clear);
+    ARPG_REQUIRE(frozen.has_hole);
+    ARPG_REQUIRE(all_exits_are(frozen, false));
+    ARPG_REQUIRE(!session.request_descent(true));
+    ARPG_REQUIRE(!session.queue_action(combat::Action::light));
+    ARPG_REQUIRE(pending.has_value());
+    ARPG_REQUIRE(pending->next_state.current_room.is_abyss);
+    ARPG_REQUIRE(pending->next_state.current_room.has_hole);
+    ARPG_REQUIRE(pending->next_state.abyss.lifecycle
+        == abyss::AbyssLifecycle::cleared);
+    ARPG_REQUIRE(pending->next_state.abyss.rule == stable_before.abyss.rule);
+    ARPG_REQUIRE(pending->next_state.abyss.danger == stable_before.abyss.danger);
+    ARPG_REQUIRE(pending->next_state.abyss.rules_version
+        == stable_before.abyss.rules_version);
+    ARPG_REQUIRE(pending->next_state.abyss.generated_mask == 0U);
+    ARPG_REQUIRE(pending->next_state.abyss.claimed_mask == 0U);
+    ARPG_REQUIRE(pending->next_state.abyss.abandoned_mask == 0U);
+    ARPG_REQUIRE(pending->next_state.abyss.reward_revision == 0U);
+    ARPG_REQUIRE(pending->next_state.item_ownership.next_item_sequence
+        == stable_before.item_ownership.next_item_sequence);
+    ARPG_REQUIRE(pending->next_state.item_ownership.items.size()
+        == stable_before.item_ownership.items.size());
+    ARPG_REQUIRE(events.room_cleared_count == 0U);
+    ARPG_REQUIRE(events.exits_opened_count == 0U);
+    ARPG_REQUIRE(test::stable_state(session).progression.experience
+        == stable_before.progression.experience);
+    ARPG_REQUIRE(frozen.pending_room_experience > 0U);
+    const auto* active_rule = test::DungeonSessionTestAccess::active_abyss_config(
+        session);
+    ARPG_REQUIRE(active_rule != nullptr);
+    ARPG_REQUIRE(active_rule->rule == abyss::AbyssRuleId::life_sacrifice);
+
+    const int frozen_hp = frozen.combat->player.hp;
+    const int frozen_max_hp = frozen.combat->player.max_hp;
+    const int frozen_barrier = frozen.combat->player.barrier;
+    const auto expected_hp = abyss::map_resource_ratio(
+        frozen_hp, frozen_max_hp, 1000, frozen_hp > 0);
+    ARPG_REQUIRE(expected_hp.has_value());
+    session.resolve_pending_save({dungeon::SaveDisposition::committed,
+        pending->expected_generation, pending->next_state});
+
+    const auto cleared = session.snapshot();
+    ARPG_REQUIRE(cleared.phase == dungeon::RoomPhase::cleared);
+    ARPG_REQUIRE(cleared.is_abyss);
+    ARPG_REQUIRE(cleared.has_hole);
+    ARPG_REQUIRE(all_exits_are(cleared, true));
+    ARPG_REQUIRE(cleared.combat->player.max_hp == 1000);
+    ARPG_REQUIRE(cleared.combat->player.hp == *expected_hp);
+    ARPG_REQUIRE(cleared.combat->player.barrier == frozen_barrier);
+    ARPG_REQUIRE(cleared.combat->player.barrier
+        < cleared.combat->player.max_barrier);
+    ARPG_REQUIRE(cleared.pending_room_experience == 0U);
+    ARPG_REQUIRE(cleared.last_room_experience > 0U);
+    ARPG_REQUIRE(cleared.progression.experience
+        == pending->next_state.progression.experience);
+    ARPG_REQUIRE(test::stable_state(session).abyss.lifecycle
+        == abyss::AbyssLifecycle::cleared);
+    const auto* cleared_rule = test::DungeonSessionTestAccess::active_abyss_config(
+        session);
+    ARPG_REQUIRE(cleared_rule != nullptr);
+    ARPG_REQUIRE(cleared_rule->rule == abyss::AbyssRuleId::none);
+    ARPG_REQUIRE(cleared_rule->monster_damage_bp == 10000U);
+    ARPG_REQUIRE(cleared_rule->monster_armor_bp == 10000U);
+    test::drain_all_events(session, events);
+    ARPG_REQUIRE(events.room_cleared_count == 1U);
+    ARPG_REQUIRE(events.exits_opened_count == 1U);
+    ARPG_REQUIRE(events.dungeon_count >= 2U);
+    ARPG_REQUIRE(events.dungeon_kinds[events.dungeon_count - 2U]
+        == dungeon::DungeonEventKind::room_cleared);
+    ARPG_REQUIRE(events.dungeon_kinds[events.dungeon_count - 1U]
+        == dungeon::DungeonEventKind::exits_opened);
+    session.tick({});
+    ARPG_REQUIRE(session.snapshot().phase == dungeon::RoomPhase::awaiting_exit);
+    return {};
+}
+
+arpg::test::Failure abyss_clear_removes_environment_hazard_after_commit() noexcept {
+    using namespace arpg;
+    dungeon::DungeonSession session{{}, lifecycle_state_for_rule(
+        abyss::AbyssRuleId::chaos_expansion)};
+    ARPG_REQUIRE(commit_abyss_start(session));
+    session.tick({});
+    session.tick({});
+    ARPG_REQUIRE(environment_hazard_count(*session.snapshot().combat) > 0U);
+
+    test::EventSummary events{};
+    ARPG_REQUIRE(drive_to_abyss_clear_pending(session, events));
+    ARPG_REQUIRE(environment_hazard_count(*session.snapshot().combat) > 0U);
+    const auto pending = *session.pending_save();
+    session.resolve_pending_save({dungeon::SaveDisposition::committed,
+        pending.expected_generation, pending.next_state});
+    ARPG_REQUIRE(environment_hazard_count(*session.snapshot().combat) == 0U);
+    ARPG_REQUIRE(test::DungeonSessionTestAccess::active_abyss_config(session)
+        ->rule == abyss::AbyssRuleId::none);
+    return {};
 }
 
 arpg::test::Failure abyss_reset_queues_fail_and_rejects_reentry() noexcept {
@@ -325,6 +503,11 @@ arpg::test::Failure real_combat_clears_once_without_respawn() noexcept {
     ARPG_REQUIRE(events.room_cleared_count == 1U);
     ARPG_REQUIRE(events.exits_opened_count == 1U);
     ARPG_REQUIRE(events.defeated_count == initial_targets);
+    ARPG_REQUIRE(events.dungeon_count >= 2U);
+    ARPG_REQUIRE(events.dungeon_kinds[events.dungeon_count - 2U]
+        == dungeon::DungeonEventKind::room_cleared);
+    ARPG_REQUIRE(events.dungeon_kinds[events.dungeon_count - 1U]
+        == dungeon::DungeonEventKind::exits_opened);
 
     const std::uint64_t cleared_session_tick = cleared.session_tick;
     const std::uint64_t combat_tick = cleared.combat->tick;
@@ -448,6 +631,8 @@ arpg::test::Failure combat_events_relay_in_source_order() noexcept {
 }
 
 constexpr arpg::test::TestCase kCases[] = {
+    {"abyss clear is atomic and restores life resources", &abyss_clear_is_atomic_and_restores_life_resources},
+    {"abyss clear removes environment hazard after commit", &abyss_clear_removes_environment_hazard_after_commit},
     {"abyss reset queues fail and rejects reentry", &abyss_reset_queues_fail_and_rejects_reentry},
     {"abyss fail not committed faults", &abyss_fail_not_committed_faults},
     {"abyss fail receipt mismatch faults", &abyss_fail_receipt_mismatch_faults},

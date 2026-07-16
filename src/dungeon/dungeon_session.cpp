@@ -166,12 +166,7 @@ void DungeonSession::tick(combat::MovementInput movement) noexcept {
                     phase_ = RoomPhase::wave_delay;
                     wave_delay_ticks_ = kWaveDelayTicks;
                 } else {
-                    settle_room_experience();
-                    phase_ = RoomPhase::cleared;
-                    if (emit(DungeonEventKind::room_cleared)
-                            && phase_ != RoomPhase::faulted) {
-                        static_cast<void>(emit(DungeonEventKind::exits_opened));
-                    }
+                    prepare_room_clear();
                 }
             }
         }
@@ -649,6 +644,72 @@ void DungeonSession::settle_room_experience() noexcept {
     room_progression_ = award.state;
     last_levels_gained_ = award.levels_gained;
     pending_room_experience_ = 0U;
+}
+
+void DungeonSession::prepare_room_clear() noexcept {
+    const bool started_abyss = stable_state_.current_room.is_abyss
+        && stable_state_.abyss.lifecycle == abyss::AbyssLifecycle::started;
+    if (!started_abyss) {
+        settle_room_experience();
+        publish_room_clear();
+        return;
+    }
+    if (!combat_.has_value() || pending_save_.has_value()) {
+        enter_fault(DungeonFault::invalid_abyss_state);
+        return;
+    }
+    if (stable_state_.commit_generation
+            == (std::numeric_limits<std::uint64_t>::max)()) {
+        enter_fault(DungeonFault::commit_generation_overflow);
+        return;
+    }
+
+    const std::uint8_t base_item_level = static_cast<std::uint8_t>(
+        std::min<std::uint64_t>(stable_state_.current_room.depth, 100U));
+    const abyss::AbyssRewardProfile reward = abyss::reward_profile_for(
+        stable_state_.abyss.danger, base_item_level);
+    if (reward.item_count == 0U || reward.item_count > 3U) {
+        enter_fault(DungeonFault::invalid_abyss_state);
+        return;
+    }
+
+    std::uint64_t total_experience = pending_room_experience_;
+    saturating_add(total_experience,
+        progression_rules_.room_clear_experience);
+    const progression::ProgressionAward projected =
+        progression::apply_experience(
+            room_progression_, total_experience, progression_rules_);
+    try {
+        DungeonRunState next = stable_state_;
+        ++next.commit_generation;
+        next.progression = projected.state;
+        next.abyss.lifecycle = abyss::AbyssLifecycle::cleared;
+        next.abyss.reward_total = reward.item_count;
+        next.abyss.generated_mask = 0U;
+        next.abyss.claimed_mask = 0U;
+        next.abyss.abandoned_mask = 0U;
+        next.abyss.reward_revision = 0U;
+        pending_save_ = PendingSave{
+            PendingSaveKind::abyss_clear,
+            next.commit_generation,
+            std::move(next),
+            TransitionKind::none,
+            ExitDirection::none,
+            RoomPhase::cleared,
+        };
+    } catch (...) {
+        enter_fault(DungeonFault::invalid_abyss_state);
+        return;
+    }
+    phase_ = RoomPhase::committing;
+}
+
+void DungeonSession::publish_room_clear() noexcept {
+    phase_ = RoomPhase::cleared;
+    if (emit(DungeonEventKind::room_cleared)
+            && phase_ != RoomPhase::faulted) {
+        static_cast<void>(emit(DungeonEventKind::exits_opened));
+    }
 }
 
 void DungeonSession::enter_fault(DungeonFault fault) noexcept {

@@ -90,6 +90,8 @@ private:
     [[nodiscard]] bool claim_defeat_reward(
         const combat::CombatEvent& event) noexcept;
     void roll_ground_drop(const combat::CombatEvent& event) noexcept;
+    void prepare_room_clear() noexcept;
+    void publish_room_clear() noexcept;
     void settle_room_experience() noexcept;
     void attempt_exit(ExitDirection direction) noexcept;
     [[nodiscard]] bool prepare_transition(
