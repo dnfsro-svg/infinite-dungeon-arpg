@@ -13,6 +13,34 @@ inline constexpr FixedValue kFixedOne = 10000;
 enum class StatId : std::uint16_t {
     impulse_scale,
     shield,
+    melee_damage,
+    physical_flat_damage,
+    fire_flat_damage,
+    water_flat_damage,
+    lightning_flat_damage,
+    chaos_flat_damage,
+    fire_damage,
+    water_damage,
+    lightning_damage,
+    chaos_damage,
+    fire_damage_reduction,
+    water_damage_reduction,
+    lightning_damage_reduction,
+    chaos_damage_reduction,
+    fire_damage_reduction_cap,
+    water_damage_reduction_cap,
+    lightning_damage_reduction_cap,
+    chaos_damage_reduction_cap,
+    armor,
+    evasion,
+    max_health,
+    max_health_more,
+    max_barrier,
+    damage_taken,
+    move_speed,
+    attack_speed,
+    jump_speed,
+    air_control,
     count,
 };
 
@@ -56,6 +84,8 @@ struct ModifierSpan final {
     std::size_t size{};
 
     constexpr ModifierSpan() noexcept = default;
+    constexpr ModifierSpan(const Modifier* values, std::size_t count) noexcept
+        : data(values), size(count) {}
     template <std::size_t N>
     constexpr ModifierSpan(const std::array<Modifier, N>& values) noexcept
         : data(values.data()), size(N) {}

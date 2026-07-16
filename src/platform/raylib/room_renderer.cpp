@@ -99,6 +99,79 @@ void draw_doors(const dungeon::DungeonSnapshot& snapshot,
     }
 }
 
+Color ground_item_color(items::ItemRarity rarity) noexcept {
+    switch (rarity) {
+    case items::ItemRarity::normal: return Color{222, 228, 236, 255};
+    case items::ItemRarity::magic: return Color{70, 139, 255, 255};
+    case items::ItemRarity::rare: return Color{255, 193, 52, 255};
+    }
+    return RAYWHITE;
+}
+
+void draw_ground_item_shape(items::ItemSlot slot, Vector2 center,
+    float scale, Color color) noexcept {
+    const float size = 11.0F * scale;
+    switch (slot) {
+    case items::ItemSlot::weapon:
+        DrawLineEx({center.x - size, center.y + size},
+            {center.x + size, center.y - size}, 4.0F * scale, color);
+        DrawLineEx({center.x - size * 0.65F, center.y + size * 0.15F},
+            {center.x - size * 0.1F, center.y + size * 0.7F},
+            3.0F * scale, color);
+        break;
+    case items::ItemSlot::helmet:
+        DrawCircleLines(static_cast<int>(center.x), static_cast<int>(center.y),
+            size, color);
+        DrawLineEx({center.x - size, center.y + size * 0.25F},
+            {center.x + size, center.y + size * 0.25F}, 3.0F * scale, color);
+        break;
+    case items::ItemSlot::chest:
+        DrawRectangleLinesEx({center.x - size, center.y - size * 0.8F,
+            size * 2.0F, size * 1.6F}, 3.0F * scale, color);
+        DrawLineEx({center.x, center.y - size * 0.8F},
+            {center.x, center.y + size * 0.8F}, 2.0F * scale, color);
+        break;
+    case items::ItemSlot::gloves:
+        DrawCircleLines(static_cast<int>(center.x - size * 0.45F),
+            static_cast<int>(center.y), size * 0.55F, color);
+        DrawCircleLines(static_cast<int>(center.x + size * 0.45F),
+            static_cast<int>(center.y), size * 0.55F, color);
+        break;
+    case items::ItemSlot::boots:
+        DrawLineEx({center.x - size * 0.55F, center.y - size},
+            {center.x - size * 0.55F, center.y + size * 0.55F},
+            5.0F * scale, color);
+        DrawLineEx({center.x - size * 0.55F, center.y + size * 0.55F},
+            {center.x + size, center.y + size * 0.55F},
+            5.0F * scale, color);
+        break;
+    case items::ItemSlot::accessory:
+        DrawPolyLines(center, 4, size, 45.0F, color);
+        DrawCircleV(center, 2.0F * scale, color);
+        break;
+    case items::ItemSlot::count:
+        break;
+    }
+}
+
+void draw_ground_items(const dungeon::DungeonSnapshot& snapshot,
+    float width, float height) noexcept {
+    for (std::size_t index = 0U; index < snapshot.ground_item_count; ++index) {
+        const dungeon::GroundItemSnapshot& item = snapshot.ground_items[index];
+        const RenderProjection projected = project_render_world(
+            item.position.x, item.position.y, item.position.z,
+            width, height);
+        const Vector2 center{projected.x,
+            projected.ground_y - 13.0F * projected.scale};
+        const Color color = ground_item_color(item.rarity);
+        DrawEllipse(static_cast<int>(projected.x),
+            static_cast<int>(projected.ground_y + 2.0F),
+            17.0F * projected.scale, 6.0F * projected.scale,
+            Fade(color, 0.24F));
+        draw_ground_item_shape(item.slot, center, projected.scale, color);
+    }
+}
+
 void draw_abyss(const dungeon::DungeonSnapshot& snapshot, float elapsed_seconds) noexcept {
     if (!snapshot.is_abyss) {
         return;
@@ -144,6 +217,7 @@ void CombatRenderer::draw_room(const dungeon::DungeonSnapshot& current) const no
     const float height = static_cast<float>(GetScreenHeight());
     draw_graybox_room(current.ecology);
     draw_abyss(current, static_cast<float>(GetTime()));
+    draw_ground_items(current, width, height);
     draw_doors(current, width, height);
     draw_hole(current);
 }

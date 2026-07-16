@@ -3,6 +3,7 @@
 #include "combat/attack_catalog.hpp"
 #include "combat/combat_collision.hpp"
 #include "combat/room_bounds.hpp"
+#include "modifiers/damage_types.hpp"
 
 #include <algorithm>
 #include <array>
@@ -14,6 +15,12 @@ namespace arpg::combat {
 namespace {
 
 constexpr std::uint16_t kBreakWindowTicks = 180;
+constexpr std::int32_t kBasisPoints = 10000;
+
+int ceil_divide(std::int64_t numerator, std::int32_t divisor) noexcept {
+    if (numerator <= 0 || divisor <= 0) return 0;
+    return static_cast<int>((numerator + divisor - 1) / divisor);
+}
 
 std::uint16_t hit_stop_for(FeedbackLevel feedback) noexcept {
     switch (feedback) {
@@ -86,7 +93,8 @@ void CombatWorld::resolve_attack_hits() noexcept {
 
     const AttackDefinition* definition = find_attack_definition(attack_.id);
     if (definition == nullptr
-        || attack_phase_at(*definition, attack_.elapsed_ticks)
+        || attack_phase_at(*definition, attack_.elapsed_ticks,
+                           attack_.startup_ticks, attack_.recovery_ticks)
                != AttackPhase::active) {
         return;
     }
@@ -119,9 +127,32 @@ void CombatWorld::resolve_attack_hits() noexcept {
     for (std::size_t collected = 0; collected < hit_count; ++collected) {
         const std::size_t index = hit_indices[collected];
         MonsterRuntime& dummy = monsters_.slots_[index];
+        const auto resolved_packet = build_player_hit_packet(
+            definition->damage, encounter_config_.player_build);
+        if (!resolved_packet.has_value()) continue;
+        const DamagePacket& packet = *resolved_packet;
         attack_.hit_targets[index] = true;
         attack_.connected = true;
-        int hp_damage = definition->damage;
+        const std::size_t physical_index = arpg::modifiers::damage_index(
+            arpg::modifiers::DamageType::physical);
+        int hp_damage = 0;
+        for (std::size_t component = 0U; component < packet.amount.size();
+             ++component) {
+            int value = std::max(0, packet.amount[component]);
+            if (component == physical_index
+                && dummy.affix_profile.armor_rating > 0) {
+                const std::int32_t reduction_bp =
+                    arpg::modifiers::rating_to_basis_points(
+                        dummy.affix_profile.armor_rating);
+                const std::int32_t remaining_bp = kBasisPoints
+                    - std::clamp(reduction_bp, 0, kBasisPoints);
+                value = ceil_divide(
+                    static_cast<std::int64_t>(value) * remaining_bp,
+                    kBasisPoints);
+            }
+            hp_damage += value;
+        }
+        const int packet_total = hp_damage;
         if (dummy.shield != 0 && hp_damage > 0) {
             const int absorbed = std::min(dummy.shield, hp_damage);
             dummy.shield -= absorbed;
@@ -129,6 +160,10 @@ void CombatWorld::resolve_attack_hits() noexcept {
             if (dummy.shield == 0) {
                 dummy.shield_ticks = 0;
             }
+        }
+        if (dummy.affix_profile.shield_recharge_delay_ticks != 0U) {
+            dummy.shield_recharge_ticks =
+                dummy.affix_profile.shield_recharge_delay_ticks;
         }
         dummy.hp = std::max(0, dummy.hp - hp_damage);
         bool starts_break = false;
@@ -160,7 +195,7 @@ void CombatWorld::resolve_attack_hits() noexcept {
         hit.hit_count = 1;
         hit.feedback = definition->feedback;
         hit.position = dummy.position;
-        hit.value = definition->damage;
+        hit.value = packet_total;
         emit_event(hit);
 
         if (starts_break) {

@@ -9,6 +9,11 @@ add_library(arpg_raylib STATIC
     dungeon_runtime.cpp
     host_launch_options.cpp
     hud_renderer.cpp
+    inventory_renderer.cpp
+    inventory_view_math.cpp
+    passive_tree_renderer.cpp
+    passive_tree_view_math.cpp
+    raylib_input.cpp
     raylib_host.cpp
     room_renderer.cpp)
 
@@ -18,5 +23,8 @@ target_compile_features(arpg_raylib PUBLIC cxx_std_17)
 target_link_libraries(arpg_raylib
     PUBLIC arpg_dungeon arpg_persistence raylib
     PRIVATE arpg_core)
+if(WIN32)
+    target_link_libraries(arpg_raylib PRIVATE user32)
+endif()
 
 arpg_enable_project_warnings(arpg_raylib)

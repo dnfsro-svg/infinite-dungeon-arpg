@@ -5,6 +5,7 @@
 #include "dungeon/dungeon_rules.hpp"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 
@@ -31,6 +32,14 @@ enum class SaveDisposition : std::uint8_t {
     committed,
     not_committed,
     indeterminate,
+};
+
+enum class PendingSaveKind : std::uint8_t;
+
+enum class RequestResult : std::uint8_t {
+    accepted,
+    rejected,
+    faulted,
 };
 
 enum class DungeonEventKind : std::uint8_t {
@@ -87,6 +96,24 @@ struct RoomDescriptor final {
     combat::CombatLabConfig combat{};
 };
 
+inline constexpr std::size_t kGroundDropCapacity = 192U;
+inline constexpr float kPickupRadius = 1.5F;
+
+struct GroundItem final {
+    bool active{};
+    std::uint16_t drop_ordinal{};
+    combat::Vec3 position{};
+    items::ItemInstance item{};
+};
+
+struct GroundItemSnapshot final {
+    std::uint16_t ordinal{};
+    combat::Vec3 position{};
+    std::uint64_t item_id{};
+    items::ItemSlot slot{items::ItemSlot::weapon};
+    items::ItemRarity rarity{items::ItemRarity::normal};
+};
+
 struct DungeonSnapshot final {
     std::uint64_t session_tick{};
     std::uint64_t root_seed{};
@@ -110,6 +137,15 @@ struct DungeonSnapshot final {
     bool has_hole{};
     bool is_abyss{};
     bool has_pending_transition{};
+    passives::PassiveTreeState passive_tree{};
+    bool passive_save_pending{};
+    passives::PassiveTreeError passive_tree_error{
+        passives::PassiveTreeError::none};
+    std::uint32_t inventory_count{};
+    std::array<std::uint64_t, 6> equipped_ids{};
+    std::uint16_t ground_item_count{};
+    std::array<GroundItemSnapshot, kGroundDropCapacity> ground_items{};
+    std::optional<PendingSaveKind> pending_save_kind{};
     std::optional<combat::CombatSnapshot> combat{};
     DungeonEncounterDiagnostics encounter{};
     DungeonDiagnostics diagnostics{};
@@ -126,10 +162,30 @@ struct PendingTransition final {
     DungeonRunState next_state{};
 };
 
-struct TransitionSaveResult final {
+enum class PendingSaveKind : std::uint8_t {
+    transition,
+    passive_tree,
+    loot_pickup,
+    equipment,
+    recipe,
+};
+
+struct PendingSave final {
+    PendingSaveKind kind{PendingSaveKind::transition};
+    std::uint64_t expected_generation{};
+    DungeonRunState next_state{};
+    TransitionKind transition{TransitionKind::none};
+    ExitDirection direction{ExitDirection::none};
+    RoomPhase resume_phase{RoomPhase::awaiting_exit};
+    std::uint16_t pickup_ordinal{0xFFFFU};
+};
+
+struct PendingSaveResult final {
     SaveDisposition disposition{SaveDisposition::indeterminate};
     std::uint64_t generation{};
     DungeonRunState verified_state{};
 };
+
+using TransitionSaveResult = PendingSaveResult;
 
 }  // namespace arpg::dungeon

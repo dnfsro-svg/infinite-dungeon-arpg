@@ -1,10 +1,12 @@
 #include "combat/combat_world.hpp"
 
 #include "combat/monster_ai_common.hpp"
+#include "combat/monster_affix_catalog.hpp"
 #include "combat/monster_catalog.hpp"
 #include "combat/room_bounds.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace arpg::combat {
@@ -20,8 +22,48 @@ void clamp_position(Vec3& position) noexcept {
     position.y = std::clamp(position.y, room_bounds::min_y, room_bounds::max_y);
 }
 
-bool has_tag(const MonsterDefinition& definition, MonsterTag tag) noexcept {
-    return (definition.tags & static_cast<std::uint16_t>(tag)) != 0U;
+std::uint16_t frenzy_ticks(
+    std::uint16_t base, const MonsterRuntime& monster) noexcept {
+    return scaled_monster_ticks(base, monster.affix_profile.attack_timing_bp);
+}
+
+std::uint16_t cooldown_ticks(
+    std::uint16_t base, const MonsterRuntime& monster) noexcept {
+    return scaled_monster_ticks(frenzy_ticks(base, monster),
+                                monster.affix_profile.cooldown_bp);
+}
+
+DamagePacket scaled_packet(
+    DamagePacket packet, const MonsterRuntime& monster) noexcept {
+    for (int& amount : packet.amount) {
+        amount = scaled_monster_damage(amount, monster.affix_profile);
+    }
+    return packet;
+}
+
+const MonsterAffixTierValues* affix_values(
+    const MonsterAffixSet& affixes, MonsterAffixId id) noexcept {
+    for (std::size_t index = 0; index < affixes.count
+         && index < affixes.values.size(); ++index) {
+        const MonsterAffixInstance& instance = affixes.values[index];
+        if (instance.id != id) continue;
+        const MonsterAffixDefinition* definition =
+            monster_affix_definition(instance.id);
+        const std::size_t tier = static_cast<std::size_t>(instance.tier);
+        if (definition != nullptr && tier < definition->tiers.size()) {
+            return &definition->tiers[tier];
+        }
+    }
+    return nullptr;
+}
+
+DamagePacket scaled_multishot_packet(
+    DamagePacket packet, std::int32_t percentage_bp) noexcept {
+    for (int& amount : packet.amount) {
+        amount = static_cast<int>((static_cast<std::int64_t>(amount)
+            * percentage_bp) / 10000);
+    }
+    return packet;
 }
 
 bool move_to_preferred_range(
@@ -42,8 +84,10 @@ bool move_to_preferred_range(
             dy = 0.0F;
         }
         const float magnitude = std::sqrt(dx * dx + dy * dy);
-        monster.velocity.x = dx / magnitude * definition.move_speed;
-        monster.velocity.y = dy / magnitude * definition.move_speed;
+        const float speed = monster_move_step(
+            definition.move_speed, monster.affix_profile);
+        monster.velocity.x = dx / magnitude * speed;
+        monster.velocity.y = dy / magnitude * speed;
         monster.position.x += monster.velocity.x;
         monster.position.y += monster.velocity.y;
         clamp_position(monster.position);
@@ -51,7 +95,7 @@ bool move_to_preferred_range(
     }
     monster.velocity = Vec3{};
     monster.ai_phase = MonsterAiPhase::telegraph;
-    monster.ai_ticks = definition.telegraph_ticks;
+    monster.ai_ticks = frenzy_ticks(definition.telegraph_ticks, monster);
     monster.attack_target_position = player;
     return false;
 }
@@ -94,10 +138,46 @@ void CombatWorld::simulate_ranged_ai(
                 } else {
                     velocity.x = monster.facing == Facing::right ? speed : -speed;
                 }
-                static_cast<void>(spawn_projectile(
-                    MonsterHandle{static_cast<std::uint16_t>(slot), monster.generation},
-                    monster.position, velocity, kProjectileLifetime,
-                    definition.contact_damage, kProjectileRadius));
+                const MonsterAffixTierValues* multishot = affix_values(
+                    monster.affixes, MonsterAffixId::multishot);
+                const MonsterAffixTierValues* chain = affix_values(
+                    monster.affixes, MonsterAffixId::chain_lightning);
+                const std::uint8_t count = multishot == nullptr ? 1U
+                    : multishot->projectile_count;
+                std::array<Vec3, 4> fanned_velocities{};
+                for (std::size_t projectile_index = 0U;
+                     projectile_index < count
+                         && projectile_index < fanned_velocities.size();
+                     ++projectile_index) {
+                    const float centered_index = static_cast<float>(projectile_index)
+                        - (static_cast<float>(count) - 1.0F) * 0.5F;
+                    const float angle = centered_index * 0.20F;
+                    const float cosine = std::cos(angle);
+                    const float sine = std::sin(angle);
+                    fanned_velocities[projectile_index] = Vec3{
+                        velocity.x * cosine - velocity.y * sine,
+                        velocity.x * sine + velocity.y * cosine,
+                        velocity.z};
+                }
+                for (std::size_t projectile_index = 0U;
+                     projectile_index < count
+                         && projectile_index < fanned_velocities.size();
+                     ++projectile_index) {
+                    DamagePacket packet = scaled_packet(
+                        definition.contact_damage, monster);
+                    if (multishot != nullptr) {
+                        packet = scaled_multishot_packet(
+                            packet, multishot->primary_bp);
+                    }
+                    if (!spawn_projectile(
+                            MonsterHandle{static_cast<std::uint16_t>(slot),
+                                          monster.generation},
+                            monster.position, fanned_velocities[projectile_index],
+                            kProjectileLifetime, packet, kProjectileRadius,
+                            chain != nullptr, monster.affixes)) {
+                        break;
+                    }
+                }
             } else {
                 std::size_t target_index = monsters_.slots_.size();
                 for (std::size_t index = 0; index < monsters_.slots_.size(); ++index) {
@@ -125,27 +205,30 @@ void CombatWorld::simulate_ranged_ai(
                     const float distance = target_distance(monster.position, player_.position);
                     if (distance < definition.preferred_range && distance > 0.0001F) {
                         monster.position.x += (monster.position.x - player_.position.x)
-                            / distance * definition.move_speed;
+                            / distance * monster_move_step(
+                                definition.move_speed, monster.affix_profile);
                         monster.position.y += (monster.position.y - player_.position.y)
-                            / distance * definition.move_speed;
+                            / distance * monster_move_step(
+                                definition.move_speed, monster.affix_profile);
                         clamp_position(monster.position);
                     }
                     monster.ai_phase = MonsterAiPhase::cooldown;
-                    monster.ai_ticks = kSupportFallbackCooldown;
+                    monster.ai_ticks = cooldown_ticks(
+                        kSupportFallbackCooldown, monster);
                 }
             }
             monster.contact_attack_resolved = true;
         }
         if (tick_down(monster.ai_ticks)) {
             monster.ai_phase = MonsterAiPhase::recovery;
-            monster.ai_ticks = definition.recovery_ticks;
+            monster.ai_ticks = frenzy_ticks(definition.recovery_ticks, monster);
         }
         return;
     case MonsterAiPhase::recovery:
         monster.velocity = Vec3{};
         if (tick_down(monster.ai_ticks)) {
             monster.ai_phase = MonsterAiPhase::cooldown;
-            monster.ai_ticks = definition.cooldown_ticks;
+            monster.ai_ticks = cooldown_ticks(definition.cooldown_ticks, monster);
         }
         return;
     case MonsterAiPhase::cooldown:

@@ -8,6 +8,7 @@
 
 #include <array>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <functional>
 #include <string>
@@ -16,6 +17,56 @@ namespace {
 
 namespace dungeon = arpg::dungeon;
 namespace persistence = arpg::persistence;
+namespace items = arpg::items;
+namespace combat = arpg::combat;
+
+items::ItemInstance normal_weapon(std::uint64_t id) noexcept {
+    items::ItemInstance item{};
+    item.id = id;
+    item.base_id = 1U;
+    item.rarity = items::ItemRarity::normal;
+    item.item_level = 1U;
+    item.required_level = 1U;
+    return item;
+}
+
+bool same_ownership(const items::ItemOwnershipState& left,
+    const items::ItemOwnershipState& right) noexcept {
+    if (left.items.size() != right.items.size()
+            || left.equipment.equipped_ids != right.equipment.equipped_ids
+            || left.claimed_drop_bits != right.claimed_drop_bits
+            || left.next_item_sequence != right.next_item_sequence) {
+        return false;
+    }
+    for (std::size_t index = 0U; index < left.items.size(); ++index) {
+        if (std::memcmp(&left.items[index], &right.items[index],
+                sizeof(items::ItemInstance)) != 0) return false;
+    }
+    return true;
+}
+
+bool same_build(const combat::PlayerCombatBuild& left,
+    const combat::PlayerCombatBuild& right) noexcept {
+    const auto& a = left.values;
+    const auto& b = right.values;
+    return left.weapon_physical == right.weapon_physical
+        && left.local_attack_speed_bp == right.local_attack_speed_bp
+        && a.flat_damage == b.flat_damage
+        && a.damage_increased == b.damage_increased
+        && a.damage_reduction == b.damage_reduction
+        && a.damage_reduction_cap_bonus == b.damage_reduction_cap_bonus
+        && a.armor == b.armor && a.evasion == b.evasion
+        && a.melee_damage == b.melee_damage
+        && a.max_health == b.max_health
+        && a.max_health_more == b.max_health_more
+        && a.max_barrier == b.max_barrier
+        && a.damage_taken == b.damage_taken
+        && a.movement_speed == b.movement_speed
+        && a.attack_speed == b.attack_speed
+        && a.impulse_scale == b.impulse_scale
+        && a.jump_speed == b.jump_speed
+        && a.air_control == b.air_control && a.valid == b.valid;
+}
 
 struct TempDirectory final {
     std::filesystem::path path;
@@ -81,6 +132,13 @@ dungeon::TransitionSaveResult to_session_result(
 
 dungeon::DungeonRunState initial_state(std::uint64_t seed) noexcept {
     return dungeon::make_initial_run_state(seed, dungeon::DungeonRules{}).state;
+}
+
+dungeon::DungeonRunState initial_state_with_passive_points(
+    std::uint64_t seed) noexcept {
+    auto state = initial_state(seed);
+    state.progression = {4U, 0U, 3U, 3U};
+    return state;
 }
 
 bool same_descriptor(const dungeon::DungeonSnapshot& snapshot,
@@ -164,6 +222,74 @@ bool drive_door_pending(dungeon::DungeonSession& session,
         }
     }
     return false;
+}
+
+bool commit_pending_passive(dungeon::DungeonSession& session,
+    persistence::SaveStore& store) noexcept {
+    const auto pending = session.pending_save();
+    if (!pending.has_value()
+            || pending->kind != dungeon::PendingSaveKind::passive_tree) {
+        return false;
+    }
+    const auto saved = store.commit(pending->next_state);
+    session.resolve_pending_save(to_session_result(saved));
+    const auto snapshot = session.snapshot();
+    return saved.state == persistence::SaveCommitState::committed
+        && !snapshot.passive_save_pending
+        && snapshot.passive_tree.allocated_bits
+            == pending->next_state.passive_tree.allocated_bits
+        && snapshot.progression.unspent_passive_points
+            == pending->next_state.progression.unspent_passive_points;
+}
+
+bool allocate_committed(dungeon::DungeonSession& session,
+    persistence::SaveStore& store, std::uint8_t node) noexcept {
+    return session.request_passive_allocation(node)
+        && commit_pending_passive(session, store);
+}
+
+arpg::test::Failure affix_drop_is_stable_before_claim_and_absent_after_reload() noexcept {
+    constexpr std::uint64_t kRootSeed = 1U;
+    constexpr std::uint16_t kScore = 27U;
+    constexpr std::uint16_t kOrdinal = 6U;
+    TempDirectory directory;
+    auto store = make_store(directory.path);
+    const dungeon::DungeonRunState initial = initial_state(kRootSeed);
+    dungeon::DungeonSession first{dungeon::DungeonRules{}, initial};
+    dungeon::DungeonSession rebuilt{dungeon::DungeonRules{}, initial};
+    const auto position = first.snapshot().combat->player.position;
+    ARPG_REQUIRE(arpg::test::relay_defeated(first, 0U, kOrdinal, position,
+        true, combat::MonsterId::fire_bomber, kOrdinal, kScore));
+    ARPG_REQUIRE(arpg::test::relay_defeated(rebuilt, 0U, kOrdinal, position,
+        true, combat::MonsterId::fire_bomber, kOrdinal, kScore));
+    ARPG_REQUIRE(first.snapshot().ground_item_count == 1U);
+    ARPG_REQUIRE(rebuilt.snapshot().ground_item_count == 1U);
+    const auto& first_drop = arpg::test::ground_items(first)[kOrdinal];
+    const auto& rebuilt_drop = arpg::test::ground_items(rebuilt)[kOrdinal];
+    ARPG_REQUIRE(first_drop.active && rebuilt_drop.active);
+    ARPG_REQUIRE(first_drop.drop_ordinal == kOrdinal);
+    ARPG_REQUIRE(rebuilt_drop.drop_ordinal == kOrdinal);
+    ARPG_REQUIRE(std::memcmp(&first_drop.item, &rebuilt_drop.item,
+        sizeof(items::ItemInstance)) == 0);
+
+    ARPG_REQUIRE(first.request_pickup(kOrdinal)
+        == dungeon::RequestResult::accepted);
+    const auto pending = first.pending_save();
+    ARPG_REQUIRE(pending.has_value());
+    ARPG_REQUIRE(pending->kind == dungeon::PendingSaveKind::loot_pickup);
+    ARPG_REQUIRE(std::memcmp(&pending->next_state.item_ownership.items.back(),
+        &first_drop.item, sizeof(items::ItemInstance)) == 0);
+    const auto saved = store.commit(pending->next_state);
+    ARPG_REQUIRE(saved.state == persistence::SaveCommitState::committed);
+    first.resolve_pending_save(to_session_result(saved));
+
+    const auto loaded = store.load();
+    ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::ready);
+    dungeon::DungeonSession reloaded{dungeon::DungeonRules{}, loaded.checkpoint};
+    ARPG_REQUIRE(arpg::test::relay_defeated(reloaded, 0U, kOrdinal, position,
+        true, combat::MonsterId::fire_bomber, kOrdinal, kScore));
+    ARPG_REQUIRE(reloaded.snapshot().ground_item_count == 0U);
+    return {};
 }
 
 arpg::test::Failure initial_generation_one_round_trips_descriptor() noexcept {
@@ -369,13 +495,154 @@ arpg::test::Failure reset_reopen_and_repeated_load_keep_persisted_room_fields() 
     return {};
 }
 
+arpg::test::Failure passive_fault_recovery_never_persists_partial_points_or_bits() noexcept {
+    constexpr std::uint64_t kTwoNodes = (1ULL << 0U) | (1ULL << 8U)
+        | (1ULL << 9U);
+    constexpr std::uint64_t kThreeNodes = kTwoNodes | (1ULL << 10U);
+
+    {
+        TempDirectory directory;
+        auto store = make_store(directory.path);
+        const auto initial = initial_state_with_passive_points(0x8110U);
+        ARPG_REQUIRE(store.commit(initial).state
+            == persistence::SaveCommitState::committed);
+        dungeon::DungeonSession session{dungeon::DungeonRules{}, initial};
+        ARPG_REQUIRE(clear_and_await(session));
+        ARPG_REQUIRE(allocate_committed(session, store, 8U));
+        ARPG_REQUIRE(allocate_committed(session, store, 9U));
+        const auto before = session.snapshot();
+        ARPG_REQUIRE(before.passive_tree.allocated_bits == kTwoNodes);
+        ARPG_REQUIRE(session.request_passive_allocation(10U));
+        const auto pending = *session.pending_save();
+        FaultContext fault{persistence::SaveFaultPoint::before_publish, false};
+        auto faulty = make_store(directory.path, &fault);
+        const auto saved = faulty.commit(pending.next_state);
+        ARPG_REQUIRE(saved.state == persistence::SaveCommitState::not_committed);
+        session.resolve_pending_save(to_session_result(saved));
+        const auto after = session.snapshot();
+        ARPG_REQUIRE(after.passive_tree.allocated_bits == before.passive_tree.allocated_bits);
+        ARPG_REQUIRE(after.progression.unspent_passive_points
+            == before.progression.unspent_passive_points);
+        auto restarted_store = make_store(directory.path);
+        const auto restarted = restarted_store.load();
+        ARPG_REQUIRE(restarted.state == persistence::SaveLoadState::ready);
+        ARPG_REQUIRE(restarted.checkpoint.passive_tree.allocated_bits == kTwoNodes);
+        ARPG_REQUIRE(restarted.checkpoint.progression.unspent_passive_points
+            == before.progression.unspent_passive_points);
+    }
+
+    {
+        TempDirectory directory;
+        auto store = make_store(directory.path);
+        const auto initial = initial_state_with_passive_points(0x8111U);
+        ARPG_REQUIRE(store.commit(initial).state
+            == persistence::SaveCommitState::committed);
+        dungeon::DungeonSession session{dungeon::DungeonRules{}, initial};
+        ARPG_REQUIRE(clear_and_await(session));
+        ARPG_REQUIRE(allocate_committed(session, store, 8U));
+        ARPG_REQUIRE(allocate_committed(session, store, 9U));
+        ARPG_REQUIRE(session.request_passive_allocation(10U));
+        const auto pending = *session.pending_save();
+        FaultContext fault{persistence::SaveFaultPoint::after_publish, false};
+        auto faulty = make_store(directory.path, &fault);
+        const auto saved = faulty.commit(pending.next_state);
+        ARPG_REQUIRE(saved.state == persistence::SaveCommitState::indeterminate);
+        session.resolve_pending_save(to_session_result(saved));
+        ARPG_REQUIRE(session.snapshot().phase == dungeon::RoomPhase::faulted);
+        auto restarted_store = make_store(directory.path);
+        const auto restarted = restarted_store.load();
+        ARPG_REQUIRE(restarted.state == persistence::SaveLoadState::ready);
+        ARPG_REQUIRE(restarted.checkpoint.passive_tree.allocated_bits == kThreeNodes);
+        ARPG_REQUIRE(restarted.checkpoint.progression.unspent_passive_points
+            == pending.next_state.progression.unspent_passive_points);
+        ARPG_REQUIRE(dungeon::same_run_state(restarted.checkpoint,
+            pending.next_state));
+    }
+    return {};
+}
+
+arpg::test::Failure equipment_dispositions_restart_with_exact_disk_winner() noexcept {
+    constexpr std::array<persistence::SaveCommitState, 3> kDispositions{{
+        persistence::SaveCommitState::committed,
+        persistence::SaveCommitState::not_committed,
+        persistence::SaveCommitState::indeterminate,
+    }};
+    for (const auto disposition : kDispositions) {
+        TempDirectory directory;
+        auto initial = initial_state(0x8120U);
+        initial.item_ownership.items.push_back(normal_weapon(501U));
+        initial.item_ownership.claimed_drop_bits[1] = 0x400U;
+        initial.item_ownership.next_item_sequence = 77U;
+        auto healthy = make_store(directory.path);
+        ARPG_REQUIRE(healthy.commit(initial).state
+            == persistence::SaveCommitState::committed);
+
+        dungeon::DungeonSession session{{}, initial};
+        const auto before_build = arpg::test::player_build(session);
+        ARPG_REQUIRE(session.request_equip(501U)
+            == dungeon::RequestResult::accepted);
+        const dungeon::PendingSave* const pending = session.pending_save_view();
+        ARPG_REQUIRE(pending != nullptr);
+        const dungeon::DungeonRunState expected = pending->next_state;
+        dungeon::DungeonSession expected_session{{}, expected};
+        const auto expected_build = arpg::test::player_build(expected_session);
+
+        persistence::SaveCommitResult saved{};
+        if (disposition == persistence::SaveCommitState::committed) {
+            saved = healthy.commit(expected);
+        } else {
+            FaultContext fault{
+                disposition == persistence::SaveCommitState::not_committed
+                    ? persistence::SaveFaultPoint::before_publish
+                    : persistence::SaveFaultPoint::after_publish,
+                false,
+            };
+            auto faulty = make_store(directory.path, &fault);
+            saved = faulty.commit(expected);
+        }
+        ARPG_REQUIRE(saved.state == disposition);
+        session.resolve_pending_save(to_session_result(saved));
+        ARPG_REQUIRE(session.snapshot().phase
+            == (disposition == persistence::SaveCommitState::indeterminate
+                ? dungeon::RoomPhase::faulted : dungeon::RoomPhase::locked));
+        ARPG_REQUIRE(same_ownership(session.item_state(),
+            disposition == persistence::SaveCommitState::committed
+                ? expected.item_ownership : initial.item_ownership));
+        ARPG_REQUIRE(same_build(arpg::test::player_build(session),
+            disposition == persistence::SaveCommitState::committed
+                ? expected_build : before_build));
+
+        auto restarted_store = make_store(directory.path);
+        const auto loaded = restarted_store.load();
+        ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::ready);
+        const auto& disk_winner =
+            disposition == persistence::SaveCommitState::not_committed
+                ? initial : expected;
+        ARPG_REQUIRE(loaded.checkpoint.commit_generation
+            == disk_winner.commit_generation);
+        ARPG_REQUIRE(same_ownership(
+            loaded.checkpoint.item_ownership, disk_winner.item_ownership));
+        dungeon::DungeonSession restarted{{}, loaded.checkpoint};
+        ARPG_REQUIRE(same_ownership(
+            restarted.item_state(), disk_winner.item_ownership));
+        ARPG_REQUIRE(same_build(arpg::test::player_build(restarted),
+            disposition == persistence::SaveCommitState::not_committed
+                ? before_build : expected_build));
+    }
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
+    {"affix drop reload claim semantics",
+        &affix_drop_is_stable_before_claim_and_absent_after_reload},
     {"initial generation one round trips descriptor", &initial_generation_one_round_trips_descriptor},
     {"committed door transition restarts in next room", &committed_door_transition_restarts_in_next_room},
     {"pre publish failure keeps old room in memory and on disk", &pre_publish_failure_keeps_old_room_in_memory_and_on_disk},
     {"lost post publish receipt faults session but restart uses new room", &lost_post_publish_receipt_faults_session_but_restart_uses_new_room},
     {"committed descent restarts without rerolling hole or abyss", &committed_descent_restarts_without_rerolling_hole_or_abyss},
     {"reset reopen and repeated load keep persisted room fields", &reset_reopen_and_repeated_load_keep_persisted_room_fields},
+    {"passive fault recovery never persists partial points or bits", &passive_fault_recovery_never_persists_partial_points_or_bits},
+    {"equipment dispositions restart with exact disk winner", &equipment_dispositions_restart_with_exact_disk_winner},
 };
 
 }  // namespace

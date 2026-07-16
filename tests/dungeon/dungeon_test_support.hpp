@@ -14,6 +14,22 @@ struct DungeonSessionTestAccess final {
         const dungeon::DungeonSession& session) noexcept {
         return session.encounter_plan_;
     }
+    static const combat::PlayerCombatBuild& player_build(
+        const dungeon::DungeonSession& session) noexcept {
+        return session.combat_->encounter_config_.player_build;
+    }
+    static const combat::CombatWorld* combat_world_address(
+        const dungeon::DungeonSession& session) noexcept {
+        return session.combat_.has_value() ? &*session.combat_ : nullptr;
+    }
+    static void set_current_room_hole(
+        dungeon::DungeonSession& session, bool has_hole) noexcept {
+        session.stable_state_.current_room.has_hole = has_hole;
+    }
+    static void attempt_exit(dungeon::DungeonSession& session,
+        dungeon::ExitDirection direction) noexcept {
+        session.attempt_exit(direction);
+    }
     static void damage_current_player(
         dungeon::DungeonSession& session, int damage) noexcept {
         if (session.combat_.has_value()) {
@@ -38,10 +54,123 @@ struct DungeonSessionTestAccess final {
             world.apply_dummy_impact(index, defeat);
         }
     }
+    static bool defeat_next_live_monster(
+        dungeon::DungeonSession& session) noexcept {
+        if (!session.combat_.has_value()) {
+            return false;
+        }
+        combat::CombatWorld& world = *session.combat_;
+        for (std::size_t index = 0U; index < world.monsters_.slots_.size(); ++index) {
+            combat::MonsterRuntime& monster = world.monsters_.slots_[index];
+            if (!monster.active || monster.hp <= 0
+                    || monster.reaction == combat::ReactionState::defeated) {
+                continue;
+            }
+            monster.hp = 0;
+            world.defeat_monster(index, combat::AttackId::j1, true);
+            return true;
+        }
+        return false;
+    }
+    static bool relay_defeated(
+        dungeon::DungeonSession& session,
+        std::uint8_t wave_index,
+        std::uint8_t target_index,
+        combat::Vec3 position,
+        bool reward_eligible = true,
+        combat::MonsterId monster_id = combat::MonsterId::fire_bomber,
+        std::uint16_t spawn_ordinal = 0xFFFFU,
+        std::uint16_t affix_score = 0U) noexcept {
+        if (!session.combat_.has_value() || wave_index >= 2U) {
+            return false;
+        }
+        session.encounter_plan_.wave_count = 2U;
+        session.encounter_plan_.waves[wave_index].spawn_count = 96U;
+        session.wave_index_ = wave_index;
+        combat::CombatEvent event{};
+        event.kind = combat::CombatEventKind::defeated;
+        event.target_index = target_index;
+        event.position = position;
+        event.monster_id = monster_id;
+        event.spawn_ordinal = spawn_ordinal == 0xFFFFU
+            ? static_cast<std::uint16_t>(
+                static_cast<std::uint16_t>(wave_index) * 96U + target_index)
+            : spawn_ordinal;
+        event.affix_score = affix_score;
+        event.reward_eligible = reward_eligible;
+        if (!session.combat_->events_.try_push(event)) {
+            return false;
+        }
+        session.relay_combat_events();
+        return true;
+    }
+    static void set_current_room_seed(
+        dungeon::DungeonSession& session,
+        std::uint64_t seed) noexcept {
+        session.stable_state_.current_room.seed = seed;
+    }
+    static void set_current_room_depth(
+        dungeon::DungeonSession& session,
+        std::uint64_t depth) noexcept {
+        session.stable_state_.current_room.depth = depth;
+    }
+    static void set_phase(
+        dungeon::DungeonSession& session,
+        dungeon::RoomPhase phase) noexcept {
+        session.phase_ = phase;
+    }
+    static void set_player_position(
+        dungeon::DungeonSession& session,
+        combat::Vec3 position) noexcept {
+        if (session.combat_.has_value()) {
+            session.combat_->player_.position = position;
+        }
+    }
+    static void clear_ground_item(
+        dungeon::DungeonSession& session,
+        std::uint16_t ordinal) noexcept {
+        if (ordinal < session.ground_items_.size()) {
+            session.ground_items_[ordinal] = {};
+        }
+    }
+    static void install_ground_item(
+        dungeon::DungeonSession& session,
+        std::uint16_t ordinal,
+        const items::ItemInstance& item,
+        combat::Vec3 position) noexcept {
+        if (ordinal < session.ground_items_.size()) {
+            session.ground_items_[ordinal] = {
+                true, ordinal, position, item};
+        }
+    }
+    static void set_pending_pickup_ordinal(
+        dungeon::DungeonSession& session,
+        std::uint16_t ordinal) noexcept {
+        if (session.pending_save_.has_value()) {
+            session.pending_save_->pickup_ordinal = ordinal;
+        }
+    }
+    static const std::array<std::uint64_t, 3>& rolled_drop_bits(
+        const dungeon::DungeonSession& session) noexcept {
+        return session.rolled_drop_bits_;
+    }
+    static const dungeon::DungeonRunState& stable_state(
+        const dungeon::DungeonSession& session) noexcept {
+        return session.stable_state_;
+    }
+    static const std::array<dungeon::GroundItem,
+        dungeon::kGroundDropCapacity>& ground_items(
+        const dungeon::DungeonSession& session) noexcept {
+        return session.ground_items_;
+    }
 };
 
 inline void force_defeat_current_wave(dungeon::DungeonSession& session) noexcept {
     DungeonSessionTestAccess::force_defeat_current_wave(session);
+}
+
+inline bool defeat_next_live_monster(dungeon::DungeonSession& session) noexcept {
+    return DungeonSessionTestAccess::defeat_next_live_monster(session);
 }
 
 inline void damage_current_player(
@@ -52,6 +181,101 @@ inline void damage_current_player(
 inline const dungeon::RoomEncounterPlan& encounter_plan(
     const dungeon::DungeonSession& session) noexcept {
     return DungeonSessionTestAccess::encounter_plan(session);
+}
+
+inline const combat::PlayerCombatBuild& player_build(
+    const dungeon::DungeonSession& session) noexcept {
+    return DungeonSessionTestAccess::player_build(session);
+}
+
+inline const combat::CombatWorld* combat_world_address(
+    const dungeon::DungeonSession& session) noexcept {
+    return DungeonSessionTestAccess::combat_world_address(session);
+}
+
+inline void set_current_room_hole(
+    dungeon::DungeonSession& session, bool has_hole) noexcept {
+    DungeonSessionTestAccess::set_current_room_hole(session, has_hole);
+}
+
+inline void attempt_exit(dungeon::DungeonSession& session,
+    dungeon::ExitDirection direction) noexcept {
+    DungeonSessionTestAccess::attempt_exit(session, direction);
+}
+
+inline bool relay_defeated(
+    dungeon::DungeonSession& session,
+    std::uint8_t wave_index,
+    std::uint8_t target_index,
+    combat::Vec3 position,
+    bool reward_eligible = true,
+    combat::MonsterId monster_id = combat::MonsterId::fire_bomber,
+    std::uint16_t spawn_ordinal = 0xFFFFU,
+    std::uint16_t affix_score = 0U) noexcept {
+    return DungeonSessionTestAccess::relay_defeated(
+        session, wave_index, target_index, position, reward_eligible,
+        monster_id, spawn_ordinal, affix_score);
+}
+
+inline void set_current_room_seed(
+    dungeon::DungeonSession& session,
+    std::uint64_t seed) noexcept {
+    DungeonSessionTestAccess::set_current_room_seed(session, seed);
+}
+
+inline void set_current_room_depth(
+    dungeon::DungeonSession& session,
+    std::uint64_t depth) noexcept {
+    DungeonSessionTestAccess::set_current_room_depth(session, depth);
+}
+
+inline void set_phase(
+    dungeon::DungeonSession& session,
+    dungeon::RoomPhase phase) noexcept {
+    DungeonSessionTestAccess::set_phase(session, phase);
+}
+
+inline void set_player_position(
+    dungeon::DungeonSession& session,
+    combat::Vec3 position) noexcept {
+    DungeonSessionTestAccess::set_player_position(session, position);
+}
+
+inline void clear_ground_item(
+    dungeon::DungeonSession& session,
+    std::uint16_t ordinal) noexcept {
+    DungeonSessionTestAccess::clear_ground_item(session, ordinal);
+}
+
+inline void install_ground_item(
+    dungeon::DungeonSession& session,
+    std::uint16_t ordinal,
+    const items::ItemInstance& item,
+    combat::Vec3 position) noexcept {
+    DungeonSessionTestAccess::install_ground_item(
+        session, ordinal, item, position);
+}
+
+inline void set_pending_pickup_ordinal(
+    dungeon::DungeonSession& session,
+    std::uint16_t ordinal) noexcept {
+    DungeonSessionTestAccess::set_pending_pickup_ordinal(session, ordinal);
+}
+
+inline const std::array<std::uint64_t, 3>& rolled_drop_bits(
+    const dungeon::DungeonSession& session) noexcept {
+    return DungeonSessionTestAccess::rolled_drop_bits(session);
+}
+
+inline const dungeon::DungeonRunState& stable_state(
+    const dungeon::DungeonSession& session) noexcept {
+    return DungeonSessionTestAccess::stable_state(session);
+}
+
+inline const std::array<dungeon::GroundItem,
+    dungeon::kGroundDropCapacity>& ground_items(
+    const dungeon::DungeonSession& session) noexcept {
+    return DungeonSessionTestAccess::ground_items(session);
 }
 
 inline bool same_encounter_plan(const dungeon::RoomEncounterPlan& left,

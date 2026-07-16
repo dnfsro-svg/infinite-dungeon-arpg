@@ -12,6 +12,8 @@ struct RaylibHostConfig final {
     const char* window_title{"Infinite Dungeon - Stage 3 Dungeon Rules"};
     std::optional<std::filesystem::path> save_directory{};
     std::optional<std::uint64_t> new_run_seed{};
+    bool validation_capture{};
+    std::uint32_t validation_exit_after_presented_frames{};
 };
 
 enum class HostExitCode : int {

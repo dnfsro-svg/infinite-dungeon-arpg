@@ -14,6 +14,11 @@ inline constexpr std::size_t kAttackCount = 5;
 [[nodiscard]] AttackPhase attack_phase_at(
     const AttackDefinition& definition,
     std::uint32_t elapsed_ticks) noexcept;
+[[nodiscard]] AttackPhase attack_phase_at(
+    const AttackDefinition& definition,
+    std::uint32_t elapsed_ticks,
+    std::uint16_t startup_ticks,
+    std::uint16_t recovery_ticks) noexcept;
 [[nodiscard]] bool validate_attack_catalog() noexcept;
 
 }  // namespace arpg::combat

@@ -24,6 +24,9 @@ enum class DungeonFault : std::uint8_t {
     combat_relay_overflow,
     save_commit_indeterminate,
     save_receipt_mismatch,
+    item_id_collision,
+    item_sequence_overflow,
+    invalid_item_state,
 };
 
 // Gray-box encounter tuning is intentionally centralized here so later

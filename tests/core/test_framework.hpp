@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
+#include <cstdlib>
 
 namespace arpg::test {
 
@@ -25,6 +26,19 @@ struct TestSuite final {
     std::size_t count;
 };
 
+[[nodiscard]] inline bool trace_enabled() noexcept {
+#if defined(_MSC_VER)
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length, "ARPG_TEST_TRACE");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+#else
+    return std::getenv("ARPG_TEST_TRACE") != nullptr;
+#endif
+}
+
 template <std::size_t CaseCount>
 [[nodiscard]] constexpr TestSuite make_suite(
     const char* name,
@@ -39,9 +53,15 @@ int run_suites(
     const char* case_count_label) noexcept {
     int failures = 0;
     int checks = 0;
+    const bool trace = trace_enabled();
     for (const auto& suite : suites) {
         for (std::size_t index = 0; index < suite.count; ++index) {
             ++checks;
+            if (trace) {
+                std::fprintf(stderr, "[RUN] %s.%s\n",
+                    suite.name, suite.cases[index].name);
+                std::fflush(stderr);
+            }
             const auto failure = suite.cases[index].function();
             if (failure.expression != nullptr) {
                 ++failures;

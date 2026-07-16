@@ -1,6 +1,7 @@
 add_executable(arpg_persistence_tests
     persistence_test_main.cpp
     checkpoint_codec_tests.cpp
+    passive_tree_checkpoint_tests.cpp
     save_store_tests.cpp
     save_store_fault_tests.cpp
     dungeon_save_integration_tests.cpp)

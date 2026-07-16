@@ -92,6 +92,16 @@ void CombatWorld::simulate_player(MovementInput movement) noexcept {
 
         attack_.id = id;
         attack_.elapsed_ticks = 0;
+        const auto& build = encounter_config_.player_build;
+        const std::int64_t local_multiplier = modifiers::kFixedOne
+            + static_cast<std::int64_t>(build.local_attack_speed_bp);
+        const std::int64_t attack_speed =
+            build.values.attack_speed * local_multiplier
+            / modifiers::kFixedOne;
+        attack_.startup_ticks = scaled_phase_ticks(
+            definition->startup_ticks, attack_speed);
+        attack_.recovery_ticks = scaled_phase_ticks(
+            definition->recovery_ticks, attack_speed);
         attack_.connected = false;
         attack_.impact_event_emitted = false;
         attack_.hit_targets.fill(false);
@@ -122,6 +132,8 @@ void CombatWorld::simulate_player(MovementInput movement) noexcept {
     const auto finish_attack = [this, &is_airborne]() noexcept {
         attack_.id = AttackId::none;
         attack_.elapsed_ticks = 0;
+        attack_.startup_ticks = 0;
+        attack_.recovery_ticks = 0;
         attack_.connected = false;
         attack_.impact_event_emitted = false;
         attack_.hit_targets.fill(false);
@@ -166,7 +178,8 @@ void CombatWorld::simulate_player(MovementInput movement) noexcept {
 
         ++attack_.elapsed_ticks;
         const AttackPhase phase =
-            attack_phase_at(*definition, attack_.elapsed_ticks);
+            attack_phase_at(*definition, attack_.elapsed_ticks,
+                            attack_.startup_ticks, attack_.recovery_ticks);
         if (phase == AttackPhase::finished) {
             finish_attack();
             advance_vertical(false);
@@ -189,7 +202,9 @@ void CombatWorld::simulate_player(MovementInput movement) noexcept {
     } else if (player_.state == PlayerState::idle ||
                player_.state == PlayerState::move) {
         if (input_buffer_.consume(Action::jump)) {
-            player_.velocity.z = kJumpSpeed;
+            player_.velocity.z = kJumpSpeed * static_cast<float>(
+                encounter_config_.player_build.values.jump_speed)
+                / static_cast<float>(modifiers::kFixedOne);
             player_.state = PlayerState::jump_rise;
             airborne = true;
         } else if (input_buffer_.consume(Action::launcher)) {
@@ -206,7 +221,15 @@ void CombatWorld::simulate_player(MovementInput movement) noexcept {
     const float diagonal = x_direction != 0 && y_direction != 0
                                ? kDiagonal
                                : 1.0F;
-    const float speed = kGroundSpeed * (airborne ? kAirRatio : 1.0F);
+    const auto& values = encounter_config_.player_build.values;
+    const float movement_scale = static_cast<float>(values.movement_speed)
+        / static_cast<float>(modifiers::kFixedOne);
+    const float air_scale = static_cast<float>(values.air_control)
+        / static_cast<float>(modifiers::kFixedOne);
+    const float speed = kGroundSpeed * movement_scale
+        * (airborne ? kAirRatio * air_scale : 1.0F)
+        * static_cast<float>(10000 - std::clamp(player_.status.slow_bp, 0, 10000))
+        / 10000.0F;
     player_.velocity.x = static_cast<float>(x_direction) * speed * diagonal;
     player_.velocity.y = static_cast<float>(y_direction) * speed * diagonal;
     if (x_direction < 0) {

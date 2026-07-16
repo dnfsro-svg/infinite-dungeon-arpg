@@ -1,6 +1,8 @@
 #pragma once
 
+#include "passives/passive_tree_types.hpp"
 #include "progression/progression_types.hpp"
+#include "items/item_types.hpp"
 
 #include <array>
 #include <cstdint>
@@ -55,6 +57,8 @@ struct DungeonRunState final {
     TransitionKind last_transition{TransitionKind::none};
     ExitDirection last_direction{ExitDirection::none};
     progression::ProgressionState progression{};
+    passives::PassiveTreeState passive_tree{};
+    items::ItemOwnershipState item_ownership{};
 };
 
 }  // namespace arpg::dungeon::checkpoint

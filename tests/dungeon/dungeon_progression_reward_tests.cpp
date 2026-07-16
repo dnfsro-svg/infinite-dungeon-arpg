@@ -2,9 +2,29 @@
 
 #include "dungeon_test_support.hpp"
 
+#include "core/deterministic_rng.hpp"
+#include "dungeon/dungeon_progression.hpp"
+
+#include <cstdint>
+
 namespace {
 
 using namespace arpg::dungeon;
+
+constexpr std::uint64_t kDropChanceDomain = 0x44524F505F43484EULL;
+
+DungeonRunState state_with_first_ordinal_drop() noexcept {
+    DungeonRules rules;
+    for (std::uint64_t root = 1U; root < 10000U; ++root) {
+        const DungeonRunState state = make_initial_run_state(root, rules).state;
+        auto ordinal_stream = arpg::core::DeterministicRng::derive_stream(
+            state.current_room.seed, 0U);
+        auto chance = arpg::core::DeterministicRng::derive_stream(
+            ordinal_stream.next_u64(), kDropChanceDomain);
+        if (chance.next_bounded(100U).value() == 0U) return state;
+    }
+    return {};
+}
 
 arpg::test::Failure reset_discards_unsettled_room_experience() noexcept {
     DungeonSession session;
@@ -47,9 +67,29 @@ arpg::test::Failure clear_settles_once_and_transition_carries_progression() noex
     return {};
 }
 
+arpg::test::Failure reward_ineligible_defeat_relays_without_player_rewards() noexcept {
+    const DungeonRunState state = state_with_first_ordinal_drop();
+    ARPG_REQUIRE(state.current_room.depth != 0U);
+    DungeonSession session{DungeonRules{}, state};
+    const DungeonSnapshot before = session.snapshot();
+
+    ARPG_REQUIRE(arpg::test::relay_defeated(
+        session, 0U, 0U, {7.0F, 3.0F, 0.0F}, false));
+
+    const DungeonSnapshot after = session.snapshot();
+    ARPG_REQUIRE(after.ground_item_count == 0U);
+    ARPG_REQUIRE(after.pending_room_experience == before.pending_room_experience);
+    const auto event = session.try_pop_combat_event();
+    ARPG_REQUIRE(event.has_value());
+    ARPG_REQUIRE(event->kind == arpg::combat::CombatEventKind::defeated);
+    ARPG_REQUIRE(!event->reward_eligible);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"reset discards pending XP", &reset_discards_unsettled_room_experience},
     {"clear settles XP once", &clear_settles_once_and_transition_carries_progression},
+    {"reward-ineligible defeats do not reward player", &reward_ineligible_defeat_relays_without_player_rewards},
 };
 
 }  // namespace

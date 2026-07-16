@@ -3,6 +3,11 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
+
+#include "combat/monster_affix_types.hpp"
+#include "modifiers/damage_types.hpp"
+#include "modifiers/player_modifier_values.hpp"
 
 namespace arpg::test {
 struct CombatWorldTestAccess;
@@ -43,6 +48,54 @@ enum class FeedbackLevel : std::uint8_t {
     heavy,
 };
 
+struct DamagePacket final {
+    std::array<int, modifiers::kDamageTypeCount> amount{};
+
+    constexpr DamagePacket() noexcept = default;
+    constexpr DamagePacket(int physical) noexcept {
+        amount[modifiers::damage_index(modifiers::DamageType::physical)] =
+            physical;
+    }
+    constexpr DamagePacket(
+        std::array<int, modifiers::kDamageTypeCount> values) noexcept
+        : amount(values) {}
+
+    friend bool operator==(
+        const DamagePacket& left, const DamagePacket& right) noexcept {
+        return left.amount == right.amount;
+    }
+    friend bool operator!=(
+        const DamagePacket& left, const DamagePacket& right) noexcept {
+        return !(left == right);
+    }
+};
+
+enum class DamageDelivery : std::uint8_t {
+    direct,
+    ground_or_environment,
+};
+
+struct PlayerStatusRuntime final {
+    std::int32_t slow_bp{};
+    std::uint16_t slow_ticks{};
+    int corrosion_damage_per_second{};
+    std::uint16_t corrosion_ticks{};
+    std::uint8_t corrosion_tick_phase{};
+};
+
+struct PlayerCombatBuild final {
+    modifiers::PlayerModifierValues values{};
+    std::int64_t weapon_physical{};
+    std::int32_t local_attack_speed_bp{};
+};
+
+[[nodiscard]] std::optional<DamagePacket> build_player_hit_packet(
+    int base_physical, const PlayerCombatBuild& build) noexcept;
+[[nodiscard]] std::optional<int> resolve_player_damage(
+    DamagePacket packet, const PlayerCombatBuild& build) noexcept;
+[[nodiscard]] std::uint16_t scaled_phase_ticks(
+    std::uint16_t base, std::int64_t attack_speed) noexcept;
+
 enum class ImpactKind : std::uint8_t {
     light_hitstun,
     medium_hitstun,
@@ -70,6 +123,7 @@ enum class MonsterTag : std::uint16_t {
     high_priority = 1U << 3U,
     ground_hazard = 1U << 4U,
     direct_target = 1U << 5U,
+    projectile_capable = 1U << 6U,
 };
 
 struct MonsterDefinition final {
@@ -85,13 +139,18 @@ struct MonsterDefinition final {
     std::uint16_t active_ticks{4};
     std::uint16_t recovery_ticks{20};
     std::uint16_t cooldown_ticks{60};
-    int contact_damage{10};
+    DamagePacket contact_damage{10};
     float projectile_speed{};
     std::uint16_t hazard_ticks{};
     FeedbackLevel feedback{FeedbackLevel::light};
     int shield_points{};
     std::uint16_t shield_duration_ticks{};
 };
+
+[[nodiscard]] constexpr bool has_tag(
+    const MonsterDefinition& definition, MonsterTag value) noexcept {
+    return (definition.tags & static_cast<std::uint16_t>(value)) != 0U;
+}
 
 inline constexpr std::size_t kMonsterCapacity = 96;
 inline constexpr std::size_t kProjectileCapacity = 384;
@@ -102,6 +161,22 @@ inline constexpr std::size_t kEncounterSpawnCapacity = 96;
 struct MonsterSpawnSpec final {
     MonsterId id{MonsterId::chaos_chaser};
     Vec3 position{};
+    MonsterAffixSet affixes{};
+    std::uint16_t spawn_ordinal{};
+};
+
+enum class MonsterAffixWarning : std::uint8_t {
+    none,
+    blink,
+    chain_lightning,
+    death_blast,
+};
+
+enum class HazardKind : std::uint8_t {
+    native,
+    burning,
+    chain_lightning,
+    death_blast,
 };
 
 struct MonsterHandle final {
@@ -121,14 +196,17 @@ struct ProjectileRuntime final {
     Vec3 position{};
     Vec3 velocity{};
     std::uint16_t lifetime_ticks{};
-    int damage{};
+    DamagePacket damage{};
     float radius{};
+    bool trigger_chain_on_end{};
+    MonsterAffixSet owner_affixes{};
 };
 
 struct HazardRuntime final {
     bool active{};
     std::uint16_t generation{};
     MonsterHandle owner{};
+    HazardKind kind{HazardKind::native};
     Vec3 center{};
     float radius{};
     std::uint16_t telegraph_ticks{};
@@ -138,7 +216,7 @@ struct HazardRuntime final {
     std::uint16_t damage_cooldown_ticks{};
     bool player_latched{};
     bool persists_after_owner_death{};
-    int damage{};
+    DamagePacket damage{};
 };
 
 struct EncounterWave final {
@@ -159,6 +237,16 @@ enum class CombatEventKind : std::uint8_t {
     player_hit,
     player_hurt_started,
     player_health_reset,
+    affix_blink_warning,
+    affix_chain_warning,
+    affix_death_warning,
+};
+
+struct DefeatPayload final {
+    MonsterId monster_id{MonsterId::count};
+    std::uint16_t spawn_ordinal{};
+    std::uint16_t affix_score{};
+    bool reward_eligible{};
 };
 
 struct CombatEvent final {
@@ -170,6 +258,10 @@ struct CombatEvent final {
     FeedbackLevel feedback{};
     Vec3 position{};
     int value{};
+    MonsterId monster_id{MonsterId::count};
+    std::uint16_t spawn_ordinal{};
+    std::uint16_t affix_score{};
+    bool reward_eligible{};
 };
 
 struct AttackDefinition final {
@@ -258,6 +350,8 @@ struct CombatEncounterConfig final {
     Facing initial_facing{Facing::right};
     EncounterWave wave{};
     bool reset_player_health{true};
+    PlayerCombatBuild player_build{};
+    std::uint64_t evasion_seed{};
 };
 
 struct PlayerSnapshot final {
@@ -273,14 +367,29 @@ struct PlayerSnapshot final {
     bool air_attack_available{true};
     int hp{};
     int max_hp{};
+    int barrier{};
+    int max_barrier{};
+    std::array<std::int32_t, modifiers::kElementCount> damage_reduction{};
+    std::array<std::int32_t, modifiers::kElementCount> damage_reduction_cap{};
+    std::int64_t armor{};
+    std::int64_t evasion{};
+    std::int32_t armor_reduction_bp{};
+    std::int32_t evasion_rate_bp{};
     std::uint16_t hurt_ticks{};
     std::uint16_t invulnerability_ticks{};
+    std::int32_t slow_bp{};
+    std::uint16_t slow_ticks{};
+    int corrosion_damage_per_second{};
+    std::uint16_t corrosion_ticks{};
+    std::uint8_t corrosion_tick_phase{};
 };
 
 struct MonsterSnapshot final {
     bool active{};
     std::uint16_t generation{};
     MonsterId id{MonsterId::chaos_chaser};
+    MonsterAffixSet affixes{};
+    std::uint16_t spawn_ordinal{};
     Vec3 spawn{};
     Vec3 position{};
     Vec3 velocity{};
@@ -301,6 +410,9 @@ struct MonsterSnapshot final {
     MonsterAiPhase ai_phase{MonsterAiPhase::idle};
     Vec3 attack_target_position{};
     Vec3 attack_vector{};
+    MonsterAffixWarning affix_warning{MonsterAffixWarning::none};
+    std::uint16_t affix_warning_ticks{};
+    bool blink_empowered{};
 };
 
 struct ProjectileSnapshot final {
@@ -310,14 +422,16 @@ struct ProjectileSnapshot final {
     Vec3 position{};
     Vec3 velocity{};
     std::uint16_t lifetime_ticks{};
-    int damage{};
+    DamagePacket damage{};
     float radius{};
+    bool trigger_chain_on_end{};
 };
 
 struct HazardSnapshot final {
     bool active{};
     std::uint16_t generation{};
     MonsterHandle owner{};
+    HazardKind kind{HazardKind::native};
     Vec3 center{};
     float radius{};
     std::uint16_t telegraph_ticks{};
@@ -325,7 +439,8 @@ struct HazardSnapshot final {
     std::uint16_t lifetime_ticks{};
     std::uint16_t damage_interval_ticks{};
     bool player_latched{};
-    int damage{};
+    bool persists_after_owner_death{};
+    DamagePacket damage{};
 };
 
 // Temporary presentation alias for pre-Task 3 dungeon tests. Task 8 removes

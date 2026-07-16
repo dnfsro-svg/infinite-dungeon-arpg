@@ -9,11 +9,17 @@ arpg::test::TestSuite input_buffer_suite() noexcept;
 arpg::test::TestSuite movement_jump_suite() noexcept;
 arpg::test::TestSuite hit_resolution_suite() noexcept;
 arpg::test::TestSuite monster_catalog_suite() noexcept;
+arpg::test::TestSuite monster_affix_catalog_suite() noexcept;
+arpg::test::TestSuite monster_affix_generation_suite() noexcept;
+arpg::test::TestSuite monster_affix_runtime_suite() noexcept;
+arpg::test::TestSuite monster_affix_trigger_suite() noexcept;
 arpg::test::TestSuite monster_melee_suite() noexcept;
 arpg::test::TestSuite monster_ranged_suite() noexcept;
 arpg::test::TestSuite monster_special_suite() noexcept;
 arpg::test::TestSuite monster_pool_suite() noexcept;
 arpg::test::TestSuite player_health_suite() noexcept;
+arpg::test::TestSuite player_build_suite() noexcept;
+arpg::test::TestSuite player_defense_suite() noexcept;
 
 int main() {
     const arpg::test::TestSuite suites[] = {
@@ -26,12 +32,18 @@ int main() {
         movement_jump_suite(),
         hit_resolution_suite(),
         monster_catalog_suite(),
+        monster_affix_catalog_suite(),
+        monster_affix_generation_suite(),
+        monster_affix_runtime_suite(),
+        monster_affix_trigger_suite(),
         monster_melee_suite(),
         monster_ranged_suite(),
         monster_special_suite(),
         monster_pool_suite(),
         player_health_suite(),
+        player_build_suite(),
+        player_defense_suite(),
     };
 
-    return arpg::test::run_suites(suites, 67, "stage 4 task 10");
+    return arpg::test::run_suites(suites, 132, "stage 9 task 7");
 }

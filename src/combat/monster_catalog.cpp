@@ -32,41 +32,51 @@ constexpr std::uint16_t tags(
     return static_cast<std::uint16_t>(tags(first, second, third) | tag(fourth));
 }
 
+constexpr DamagePacket elemental_damage(
+    modifiers::DamageType type, int amount) noexcept {
+    DamagePacket packet{};
+    packet.amount[modifiers::damage_index(type)] = amount;
+    return packet;
+}
+
 constexpr std::array<MonsterDefinition, 8> kCatalog{{
     {MonsterId::fire_bomber, 0, tags(MonsterTag::high_priority,
          MonsterTag::direct_target), 3, 220, 0, 0.040F, 1.2F,
-     60, 1, 0, 0, 120, 0.0F, 0, FeedbackLevel::heavy},
+     60, 1, 0, 0, elemental_damage(modifiers::DamageType::fire, 120),
+     0.0F, 0, FeedbackLevel::heavy},
     {MonsterId::fire_charger, 0, tags(MonsterTag::melee,
          MonsterTag::high_priority, MonsterTag::direct_target),
-     4, 420, 60, 0.030F, 5.0F, 45, 18, 35, 100, 90, 0.0F, 0,
+     4, 420, 60, 0.030F, 5.0F, 45, 18, 35, 100,
+     elemental_damage(modifiers::DamageType::fire, 90), 0.0F, 0,
      FeedbackLevel::heavy},
     {MonsterId::water_bulwark, 1, tags(MonsterTag::melee,
          MonsterTag::direct_target), 4, 700, 120, 0.025F, 1.0F,
-     24, 6, 30, 72, 70, 0.0F, 0, FeedbackLevel::heavy},
+     24, 6, 30, 72, elemental_damage(modifiers::DamageType::water, 70),
+     0.0F, 0, FeedbackLevel::heavy},
     {MonsterId::water_support, 1, tag(MonsterTag::support),
-     3, 300, 0, 0.030F, 4.0F, 36, 1, 24, 120, 0, 0.0F, 0,
+     3, 300, 0, 0.030F, 4.0F, 36, 1, 24, 120,
+     elemental_damage(modifiers::DamageType::water, 0), 0.0F, 0,
      FeedbackLevel::medium, 90, 120},
     {MonsterId::lightning_shooter, 2, tags(MonsterTag::ranged,
-         MonsterTag::direct_target), 3, 240, 0, 0.035F, 4.5F,
-     30, 1, 20, 75, 40, 0.14F, 0, FeedbackLevel::medium},
+         MonsterTag::direct_target, MonsterTag::projectile_capable), 3, 240, 0, 0.035F, 4.5F,
+     30, 1, 20, 75,
+     elemental_damage(modifiers::DamageType::lightning, 40), 0.14F, 0,
+     FeedbackLevel::medium},
     {MonsterId::lightning_dasher, 2, tags(MonsterTag::melee,
          MonsterTag::high_priority, MonsterTag::direct_target),
-     3, 280, 0, 0.050F, 3.0F, 24, 12, 30, 80, 60, 0.0F, 0,
+     3, 280, 0, 0.050F, 3.0F, 24, 12, 30, 80,
+     elemental_damage(modifiers::DamageType::lightning, 60), 0.0F, 0,
      FeedbackLevel::medium},
     {MonsterId::chaos_chaser, 3, tags(MonsterTag::melee,
          MonsterTag::direct_target), 2, 260, 0, 0.045F, 0.9F,
-     12, 4, 18, 42, 45, 0.0F, 0, FeedbackLevel::light},
+     12, 4, 18, 42, elemental_damage(modifiers::DamageType::chaos, 45),
+     0.0F, 0, FeedbackLevel::light},
     {MonsterId::chaos_hazard, 3, tags(MonsterTag::ranged,
          MonsterTag::high_priority, MonsterTag::ground_hazard,
          MonsterTag::direct_target), 4, 320, 0, 0.030F, 4.0F,
-     45, 1, 25, 120, 35, 0.0F, 180, FeedbackLevel::heavy},
+     45, 1, 25, 120, elemental_damage(modifiers::DamageType::chaos, 35),
+     0.0F, 180, FeedbackLevel::heavy},
 }};
-
-constexpr bool has_tag(
-    const MonsterDefinition& definition,
-    MonsterTag value) noexcept {
-    return (definition.tags & tag(value)) != 0U;
-}
 
 constexpr bool validate_catalog() noexcept {
     bool has_direct_target = false;

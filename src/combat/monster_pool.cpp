@@ -49,12 +49,14 @@ void MonsterPool::clear() noexcept {
 }
 
 std::optional<MonsterHandle> MonsterPool::spawn(
-    MonsterId id,
-    Vec3 position) noexcept {
-    const MonsterDefinition* definition = monster_definition(id);
+    const MonsterSpawnSpec& spec) noexcept {
+    const MonsterDefinition* definition = monster_definition(spec.id);
     if (definition == nullptr) {
         return std::nullopt;
     }
+
+    const MonsterAffixProfile profile = evaluate_monster_affixes(
+        *definition, spec.affixes);
 
     for (std::size_t index = 0; index < slots_.size(); ++index) {
         MonsterRuntime& runtime = slots_[index];
@@ -67,18 +69,24 @@ std::optional<MonsterHandle> MonsterPool::spawn(
         runtime = MonsterRuntime{};
         runtime.active = true;
         runtime.generation = generation;
-        runtime.id = id;
-        runtime.kind = kind_for(id);
-        runtime.spawn = position;
-        runtime.position = position;
-        runtime.max_hp = definition->max_hp;
-        runtime.hp = definition->max_hp;
+        runtime.id = spec.id;
+        runtime.affixes = spec.affixes;
+        runtime.spawn_ordinal = spec.spawn_ordinal;
+        runtime.affix_profile = profile;
+        runtime.kind = kind_for(spec.id);
+        runtime.spawn = spec.position;
+        runtime.position = spec.position;
+        runtime.max_hp = profile.max_hp;
+        runtime.hp = profile.max_hp;
         runtime.max_break = definition->max_break;
         runtime.break_value = definition->max_break;
-        runtime.max_shield = definition->shield_points != 0
-            ? definition->shield_points : 90;
-        runtime.max_shield_ticks = definition->shield_duration_ticks != 0
-            ? definition->shield_duration_ticks : 120;
+        runtime.max_shield = profile.max_shield != 0
+            ? profile.max_shield
+            : definition->shield_points != 0 ? definition->shield_points : 90;
+        runtime.max_shield_ticks = profile.shield_recharge_delay_ticks != 0U
+            ? profile.shield_recharge_delay_ticks
+            : definition->shield_duration_ticks != 0
+                ? definition->shield_duration_ticks : 120;
         runtime.shield = 0;
         runtime.shield_ticks = 0;
         runtime.armor = definition->max_break > 0
@@ -88,6 +96,15 @@ std::optional<MonsterHandle> MonsterPool::spawn(
             static_cast<std::uint16_t>(index), generation};
     }
     return std::nullopt;
+}
+
+std::optional<MonsterHandle> MonsterPool::spawn(
+    MonsterId id,
+    Vec3 position) noexcept {
+    MonsterSpawnSpec spec{};
+    spec.id = id;
+    spec.position = position;
+    return spawn(spec);
 }
 
 bool MonsterPool::destroy(MonsterHandle handle) noexcept {
@@ -159,8 +176,10 @@ std::optional<ProjectileHandle> ProjectilePool::spawn(
     Vec3 position,
     Vec3 velocity,
     std::uint16_t lifetime_ticks,
-    int damage,
-    float radius) noexcept {
+    DamagePacket damage,
+    float radius,
+    bool trigger_chain_on_end,
+    MonsterAffixSet owner_affixes) noexcept {
     if (owner.index >= kMonsterCapacity || owner.generation == 0U) {
         return std::nullopt;
     }
@@ -181,11 +200,27 @@ std::optional<ProjectileHandle> ProjectilePool::spawn(
         runtime.lifetime_ticks = lifetime_ticks;
         runtime.damage = damage;
         runtime.radius = radius;
+        runtime.trigger_chain_on_end = trigger_chain_on_end;
+        runtime.owner_affixes = owner_affixes;
         ++active_count_;
         return ProjectileHandle{
             static_cast<std::uint16_t>(index), generation};
     }
     return std::nullopt;
+}
+
+std::optional<ProjectileHandle> ProjectilePool::spawn(
+    MonsterHandle owner,
+    Vec3 position,
+    Vec3 velocity,
+    std::uint16_t lifetime_ticks,
+    int damage,
+    float radius,
+    bool trigger_chain_on_end,
+    MonsterAffixSet owner_affixes) noexcept {
+    return spawn(owner, position, velocity, lifetime_ticks,
+                 DamagePacket{damage}, radius, trigger_chain_on_end,
+                 owner_affixes);
 }
 
 bool ProjectilePool::destroy(ProjectileHandle handle) noexcept {
@@ -261,17 +296,21 @@ void HazardPool::clear() noexcept {
 
 std::optional<HazardHandle> HazardPool::spawn(
     MonsterHandle owner,
+    HazardKind kind,
     Vec3 center,
     float radius,
     std::uint16_t telegraph_ticks,
     std::uint16_t active_ticks,
     std::uint16_t damage_interval_ticks,
-    int damage,
+    DamagePacket damage,
     bool persists_after_owner_death) noexcept {
     if (owner.index >= kMonsterCapacity || owner.generation == 0U
-        || radius <= 0.0F || active_ticks == 0U || damage <= 0) {
+        || radius <= 0.0F || active_ticks == 0U) {
         return std::nullopt;
     }
+    bool has_damage = false;
+    for (const int value : damage.amount) has_damage = has_damage || value > 0;
+    if (!has_damage) return std::nullopt;
     for (std::size_t index = 0; index < slots_.size(); ++index) {
         HazardRuntime& runtime = slots_[index];
         if (runtime.active) {
@@ -283,6 +322,7 @@ std::optional<HazardHandle> HazardPool::spawn(
         runtime.active = true;
         runtime.generation = generation;
         runtime.owner = owner;
+        runtime.kind = kind;
         runtime.center = center;
         runtime.radius = radius;
         runtime.telegraph_ticks = telegraph_ticks;
@@ -297,6 +337,21 @@ std::optional<HazardHandle> HazardPool::spawn(
         return HazardHandle{static_cast<std::uint16_t>(index), generation};
     }
     return std::nullopt;
+}
+
+std::optional<HazardHandle> HazardPool::spawn(
+    MonsterHandle owner,
+    HazardKind kind,
+    Vec3 center,
+    float radius,
+    std::uint16_t telegraph_ticks,
+    std::uint16_t active_ticks,
+    std::uint16_t damage_interval_ticks,
+    int damage,
+    bool persists_after_owner_death) noexcept {
+    return spawn(owner, kind, center, radius, telegraph_ticks, active_ticks,
+                 damage_interval_ticks, DamagePacket{damage},
+                 persists_after_owner_death);
 }
 
 bool HazardPool::destroy(HazardHandle handle) noexcept {

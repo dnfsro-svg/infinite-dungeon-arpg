@@ -18,6 +18,8 @@ make_combat_encounter_config(
     checkpoint::EntrySide entry,
     std::uint32_t rules_version,
     const combat::EncounterWave& wave,
-    bool reset_player_health) noexcept;
+    bool reset_player_health,
+    combat::PlayerCombatBuild player_build = {},
+    std::uint64_t evasion_seed = 0U) noexcept;
 
 }  // namespace arpg::dungeon

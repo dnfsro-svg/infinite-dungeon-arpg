@@ -9,6 +9,44 @@
 
 namespace arpg::persistence::detail {
 
+namespace {
+
+bool same_item(const items::ItemInstance& lhs,
+    const items::ItemInstance& rhs) noexcept {
+    if (lhs.id != rhs.id || lhs.base_id != rhs.base_id
+        || lhs.rarity != rhs.rarity || lhs.item_level != rhs.item_level
+        || lhs.required_level != rhs.required_level
+        || lhs.affix_count != rhs.affix_count
+        || lhs.reserved != rhs.reserved) {
+        return false;
+    }
+    for (std::size_t index = 0U; index < lhs.affixes.size(); ++index) {
+        if (lhs.affixes[index].affix_id != rhs.affixes[index].affix_id
+            || lhs.affixes[index].tier != rhs.affixes[index].tier
+            || lhs.affixes[index].variant != rhs.affixes[index].variant) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool same_ownership(const items::ItemOwnershipState& lhs,
+    const items::ItemOwnershipState& rhs) noexcept {
+    if (lhs.items.size() != rhs.items.size()
+        || lhs.equipment.equipped_ids != rhs.equipment.equipped_ids
+        || lhs.claimed_drop_bits != rhs.claimed_drop_bits
+        || lhs.next_item_sequence != rhs.next_item_sequence) {
+        return false;
+    }
+    for (std::size_t index = 0U; index < lhs.items.size(); ++index) {
+        if (!same_item(lhs.items[index], rhs.items[index]))
+            return false;
+    }
+    return true;
+}
+
+}  // namespace
+
 const std::filesystem::path& slot_name(SaveSlot slot) {
     static const std::filesystem::path a{"run_a.sav"};
     static const std::filesystem::path b{"run_b.sav"};
@@ -40,8 +78,10 @@ bool same_state(const checkpoint::DungeonRunState& lhs,
             == rhs.progression.earned_passive_points
         && lhs.progression.unspent_passive_points
             == rhs.progression.unspent_passive_points
+        && lhs.passive_tree.allocated_bits == rhs.passive_tree.allocated_bits
         && lhs.last_transition == rhs.last_transition
-        && lhs.last_direction == rhs.last_direction;
+        && lhs.last_direction == rhs.last_direction
+        && same_ownership(lhs.item_ownership, rhs.item_ownership);
 }
 
 SlotInfo read_slot(const std::filesystem::path& path) {

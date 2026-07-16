@@ -23,6 +23,41 @@ bool actor_precedes(
     return lhs.index < rhs.index;
 }
 
+Rgba8 affix_category_color(combat::MonsterAffixId id) noexcept {
+    switch (id) {
+    case combat::MonsterAffixId::armored:
+    case combat::MonsterAffixId::shielding:
+        return {144U, 167U, 196U, 255U};
+    case combat::MonsterAffixId::burning_ground:
+        return {244U, 104U, 57U, 255U};
+    case combat::MonsterAffixId::chilling:
+        return {87U, 188U, 246U, 255U};
+    case combat::MonsterAffixId::chain_lightning:
+        return {250U, 223U, 76U, 255U};
+    case combat::MonsterAffixId::chaos_corrosion:
+        return {179U, 87U, 223U, 255U};
+    case combat::MonsterAffixId::mighty:
+    case combat::MonsterAffixId::frenzy:
+    case combat::MonsterAffixId::swift:
+    case combat::MonsterAffixId::multishot:
+    case combat::MonsterAffixId::blink_assault:
+    case combat::MonsterAffixId::death_blast:
+    case combat::MonsterAffixId::count:
+        return {224U, 231U, 241U, 255U};
+    }
+    return {224U, 231U, 241U, 255U};
+}
+
+const char* affix_tier_text(combat::MonsterAffixTier tier) noexcept {
+    switch (tier) {
+    case combat::MonsterAffixTier::m1: return "M1";
+    case combat::MonsterAffixTier::m2: return "M2";
+    case combat::MonsterAffixTier::m3: return "M3";
+    case combat::MonsterAffixTier::count: return "M1";
+    }
+    return "M1";
+}
+
 }  // namespace
 
 ScreenProjection project_combat_position(
@@ -124,6 +159,46 @@ MonsterVisual monster_visual(
     return visual;
 }
 
+AffixBadge monster_affix_badge(combat::MonsterAffixInstance affix) noexcept {
+    const combat::MonsterAffixDefinition* const definition =
+        combat::monster_affix_definition(affix.id);
+    if (definition == nullptr) {
+        return {"?", affix_tier_text(affix.tier),
+            combat::MonsterAffixDanger::low, {224U, 231U, 241U, 255U}};
+    }
+    return {definition->short_name.data(), affix_tier_text(affix.tier),
+        definition->danger, affix_category_color(affix.id)};
+}
+
+AffixOutline monster_affix_outline(
+    combat::MonsterAffixInstance affix,
+    std::uint64_t tick) noexcept {
+    const AffixBadge badge = monster_affix_badge(affix);
+    if (badge.danger != combat::MonsterAffixDanger::high) {
+        return {badge.color, 255U};
+    }
+    const std::uint64_t phase = tick % 30U;
+    const std::uint64_t ramp = phase <= 15U ? phase : 30U - phase;
+    return {{255U, 78U, 78U, 255U},
+        static_cast<std::uint8_t>(160U + ramp * 6U)};
+}
+
+bool blink_affix_warning_visible(
+    const combat::MonsterSnapshot& monster) noexcept {
+    return monster.affix_warning == combat::MonsterAffixWarning::blink
+        && monster.affix_warning_ticks != 0U;
+}
+
+float blink_affix_warning_actor_radius(
+    const combat::MonsterSnapshot& monster) noexcept {
+    return blink_affix_warning_visible(monster) ? 16.0F : 0.0F;
+}
+
+float blink_affix_warning_ground_radius(
+    const combat::MonsterSnapshot& monster) noexcept {
+    return blink_affix_warning_visible(monster) ? 28.0F : 0.0F;
+}
+
 bool monster_visible(const combat::MonsterSnapshot& monster) noexcept {
     return monster.active
         && monster.ai_phase != combat::MonsterAiPhase::defeated;
@@ -147,6 +222,16 @@ HazardVisualMode hazard_visual_mode(
         ? HazardVisualMode::telegraph
         : hazard.active_ticks != 0U
             ? HazardVisualMode::active : HazardVisualMode::hidden;
+}
+
+Rgba8 hazard_color(combat::HazardKind kind) noexcept {
+    switch (kind) {
+    case combat::HazardKind::native: return {190U, 73U, 229U, 150U};
+    case combat::HazardKind::burning: return {242U, 92U, 54U, 210U};
+    case combat::HazardKind::chain_lightning: return {255U, 218U, 72U, 210U};
+    case combat::HazardKind::death_blast: return {245U, 68U, 68U, 220U};
+    }
+    return {190U, 73U, 229U, 150U};
 }
 
 ScreenProjection project_projectile_position(

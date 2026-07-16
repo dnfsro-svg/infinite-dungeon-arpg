@@ -3,7 +3,6 @@
 #include "persistence/checkpoint_codec.hpp"
 #include "persistence/save_store.hpp"
 
-#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <vector>
@@ -65,6 +64,6 @@ SaveCommitResult verify_published_transaction(const SaveStoreConfig& config,
 
 TransactionResult write_transaction(const SaveStoreConfig& config,
     SaveSlot active, const checkpoint::DungeonRunState& expected,
-    const std::array<std::uint8_t, kEncodedCheckpointSize>& encoded_state) noexcept;
+    const std::vector<std::uint8_t>& encoded_state) noexcept;
 
 }  // namespace arpg::persistence::detail

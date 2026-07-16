@@ -42,8 +42,8 @@ void DungeonRuntime::sync_commit_status(
         ? SaveIndicator::saved : SaveIndicator::error;
 }
 
-dungeon::TransitionSaveResult DungeonRuntime::to_session_result(
-    const persistence::SaveCommitResult& saved) noexcept {
+dungeon::PendingSaveResult DungeonRuntime::to_session_result(
+    persistence::SaveCommitResult&& saved) noexcept {
     dungeon::SaveDisposition disposition = dungeon::SaveDisposition::indeterminate;
     if (saved.state == persistence::SaveCommitState::committed) {
         disposition = dungeon::SaveDisposition::committed;
@@ -51,7 +51,7 @@ dungeon::TransitionSaveResult DungeonRuntime::to_session_result(
         disposition = dungeon::SaveDisposition::not_committed;
     }
     return {disposition, saved.verified_state.commit_generation,
-        saved.verified_state};
+        std::move(saved.verified_state)};
 }
 
 bool DungeonRuntime::initialize() noexcept {
@@ -116,25 +116,62 @@ const dungeon::DungeonSession* DungeonRuntime::session() const noexcept {
     return session_.has_value() ? &*session_ : nullptr;
 }
 
+dungeon::RequestResult DungeonRuntime::request_pickup(
+    std::uint16_t drop_ordinal) noexcept {
+    return state() == DungeonRuntimeState::running && session_.has_value()
+        ? session_->request_pickup(drop_ordinal)
+        : dungeon::RequestResult::rejected;
+}
+
+dungeon::RequestResult DungeonRuntime::request_equip(
+    std::uint64_t item_id) noexcept {
+    return state() == DungeonRuntimeState::running && session_.has_value()
+        ? session_->request_equip(item_id)
+        : dungeon::RequestResult::rejected;
+}
+
+dungeon::RequestResult DungeonRuntime::request_unequip(
+    items::ItemSlot slot) noexcept {
+    return state() == DungeonRuntimeState::running && session_.has_value()
+        ? session_->request_unequip(slot)
+        : dungeon::RequestResult::rejected;
+}
+
+dungeon::RequestResult DungeonRuntime::request_recipe(
+    const std::array<std::uint64_t, 3>& item_ids) noexcept {
+    return state() == DungeonRuntimeState::running && session_.has_value()
+        ? session_->request_recipe(item_ids)
+        : dungeon::RequestResult::rejected;
+}
+
+const items::ItemOwnershipState* DungeonRuntime::item_state() const noexcept {
+    return session_.has_value() ? &session_->item_state() : nullptr;
+}
+
 DungeonRenderStatus DungeonRuntime::render_status() const noexcept {
     return status_;
 }
 
-void DungeonRuntime::service_pending_transition() noexcept {
+void DungeonRuntime::service_pending_save() noexcept {
     if (state() != DungeonRuntimeState::running || !session_.has_value()) {
         return;
     }
-    const auto pending = session_->pending_transition();
-    if (!pending.has_value()) {
+    const dungeon::PendingSave* const pending = session_->pending_save_view();
+    if (pending == nullptr) {
         return;
     }
     status_.indicator = SaveIndicator::saving;
-    const persistence::SaveCommitResult saved = store_.commit(pending->next_state);
+    persistence::SaveCommitResult saved = store_.commit(pending->next_state);
     sync_commit_status(saved);
-    session_->resolve_pending_transition(to_session_result(saved));
+    dungeon::PendingSaveResult result = to_session_result(std::move(saved));
+    session_->resolve_pending_save(result);
     if (session_->snapshot().phase == dungeon::RoomPhase::faulted) {
         state_ = DungeonRuntimeState::faulted;
     }
+}
+
+void DungeonRuntime::service_pending_transition() noexcept {
+    service_pending_save();
 }
 
 bool DungeonRuntime::recover_with_new_run() noexcept {

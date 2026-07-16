@@ -52,20 +52,7 @@ void CombatWorld::apply_dummy_impact(
     const AttackDefinition& definition) noexcept {
     MonsterRuntime& dummy = monsters_.slots_[index];
     if (dummy.hp == 0) {
-        dummy.reaction = ReactionState::defeated;
-        dummy.ai_phase = MonsterAiPhase::defeated;
-        dummy.reaction_ticks = kRespawnTicks;
-        dummy.break_window_ticks = 0;
-        dummy.velocity = Vec3{};
-
-        CombatEvent defeated{};
-        defeated.kind = CombatEventKind::defeated;
-        defeated.tick = tick_;
-        defeated.attack = definition.id;
-        defeated.target_index = static_cast<std::uint8_t>(index);
-        defeated.feedback = definition.feedback;
-        defeated.position = dummy.position;
-        emit_event(defeated);
+        defeat_monster(index, definition.id, true);
         return;
     }
 
@@ -77,7 +64,12 @@ void CombatWorld::apply_dummy_impact(
     dummy.ai_ticks = 0;
     dummy.contact_attack_resolved = true;
 
-    const float scale = impulse_scale(dummy.kind);
+    const float player_scale = static_cast<float>(
+        encounter_config_.player_build.values.impulse_scale)
+        / static_cast<float>(modifiers::kFixedOne);
+    const float scale = impulse_scale(dummy.kind) * player_scale;
+    const float horizontal_scale = static_cast<float>(
+        dummy.affix_profile.horizontal_impulse_bp) / 10000.0F;
     const float facing = player_.facing == Facing::right ? 1.0F : -1.0F;
     const bool already_airborne =
         dummy.reaction == ReactionState::airborne || dummy.position.z > 0.0F;
@@ -97,7 +89,7 @@ void CombatWorld::apply_dummy_impact(
         break;
     case ImpactKind::medium_hitstun:
         dummy.velocity.x =
-            facing * definition.knockback_speed * scale;
+            facing * definition.knockback_speed * scale * horizontal_scale;
         if (already_airborne) {
             dummy.reaction = ReactionState::airborne;
             dummy.reaction_ticks = 0;
@@ -110,7 +102,7 @@ void CombatWorld::apply_dummy_impact(
         break;
     case ImpactKind::knockdown:
         dummy.velocity.x =
-            facing * definition.knockback_speed * scale;
+            facing * definition.knockback_speed * scale * horizontal_scale;
         if (already_airborne) {
             dummy.reaction = ReactionState::airborne;
             dummy.reaction_ticks = 0;
@@ -123,7 +115,7 @@ void CombatWorld::apply_dummy_impact(
         break;
     case ImpactKind::launch:
         dummy.velocity.x =
-            facing * definition.knockback_speed * scale;
+            facing * definition.knockback_speed * scale * horizontal_scale;
         dummy.velocity.z = definition.launch_speed * scale;
         dummy.reaction = ReactionState::airborne;
         dummy.reaction_ticks = kLauncherHoverTicks;

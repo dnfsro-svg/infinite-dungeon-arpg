@@ -46,10 +46,10 @@ void CombatRenderer::draw_hud(
     const Color text{218, 226, 239, 255};
     const Color accent{110, 207, 255, 255};
     int y = layout.hud_first_line_y;
-    DrawText("WASD Move  J Light  K Jump  L Launcher  E Descend",
+    DrawText("WASD Move  J Light  K Jump  L Launcher  E Descend  I Inventory",
         static_cast<int>(layout.hud_x), y, 16, accent);
     y = layout.hud_second_instruction_y;
-    DrawText("R Reset  F1 Debug  F12 Screenshot  Esc Exit",
+    DrawText("P Star Chart after clear  R Reset  F1 Debug  F12 Screenshot  Esc Close/Exit",
         static_cast<int>(layout.hud_x), y, 16, accent);
     y = layout.hud_status_y;
     DrawText(TextFormat("Depth %llu  Floor Room %llu  Global Room %llu",
@@ -62,6 +62,11 @@ void CombatRenderer::draw_hud(
         ecology_name(current.ecology), current.biases[0], current.biases[1],
         current.biases[2], current.biases[3]), static_cast<int>(layout.hud_x), y, 16, text);
     y += layout.hud_line_step;
+    DrawText(TextFormat("Inventory %u  Ground items %u",
+        static_cast<unsigned>(current.inventory_count),
+        static_cast<unsigned>(current.ground_item_count)),
+        static_cast<int>(layout.hud_x), y, 16, text);
+    y += layout.hud_line_step;
     if (current.combat.has_value()) {
         const combat::CombatSnapshot& combat_state = *current.combat;
         DrawText(TextFormat("HP %d/%d", combat_state.player.hp,
@@ -69,6 +74,17 @@ void CombatRenderer::draw_hud(
         draw_bar(126.0F, static_cast<float>(y + 5), 150.0F,
             player_hp_ratio(combat_state.player), Color{77, 215, 127, 255});
         y += layout.hud_line_step;
+        if (combat_state.player.max_barrier > 0) {
+            DrawText(TextFormat("Barrier %d/%d", combat_state.player.barrier,
+                combat_state.player.max_barrier), static_cast<int>(layout.hud_x), y, 16,
+                Color{119, 191, 255, 255});
+            draw_bar(126.0F, static_cast<float>(y + 5), 150.0F,
+                combat_state.player.max_barrier <= 0 ? 0.0F
+                    : static_cast<float>(combat_state.player.barrier)
+                        / static_cast<float>(combat_state.player.max_barrier),
+                Color{119, 191, 255, 255});
+            y += layout.hud_line_step;
+        }
         static const progression::ProgressionRules kProgressionRules =
             progression::default_progression_rules();
         const ProgressionHudValues progression = progression_hud_values(current,

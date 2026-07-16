@@ -18,6 +18,7 @@ public:
     static constexpr std::uint32_t kMaxStepsPerFrame = 8;
 
     [[nodiscard]] FixedStepFrame advance(double frame_seconds) noexcept;
+    void clear_accumulator() noexcept;
 
 private:
     double accumulator_seconds_{};

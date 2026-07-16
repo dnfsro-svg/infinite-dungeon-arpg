@@ -2,12 +2,11 @@
 
 namespace arpg::persistence {
 
-std::uint32_t crc32(
+std::uint32_t crc32_update(std::uint32_t state,
     const std::uint8_t* bytes, std::size_t size) noexcept {
-    std::uint32_t crc = 0xFFFFFFFFU;
-    if (bytes == nullptr) {
-        return crc ^ 0xFFFFFFFFU;
-    }
+    if (bytes == nullptr || size == 0U)
+        return state;
+    std::uint32_t crc = state ^ 0xFFFFFFFFU;
 
     for (std::size_t index = 0; index < size; ++index) {
         crc ^= bytes[index];
@@ -18,6 +17,11 @@ std::uint32_t crc32(
         }
     }
     return crc ^ 0xFFFFFFFFU;
+}
+
+std::uint32_t crc32(
+    const std::uint8_t* bytes, std::size_t size) noexcept {
+    return crc32_update(0U, bytes, size);
 }
 
 }  // namespace arpg::persistence

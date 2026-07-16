@@ -46,7 +46,16 @@ arpg::test::Failure bomber_warns_then_explodes_once_and_self_defeats() noexcept 
     world.tick(MovementInput{});
     const int after_explosion = world.snapshot().player.hp;
     ARPG_REQUIRE(after_explosion < initial_hp);
-    ARPG_REQUIRE(world.snapshot().monster_count == 0U);
+    ARPG_REQUIRE(world.snapshot().monsters[0].hp == 0);
+    ARPG_REQUIRE(world.snapshot().monsters[0].reaction == ReactionState::defeated);
+    bool saw_self_defeat = false;
+    while (const auto event = world.try_pop_event()) {
+        if (event->kind != CombatEventKind::defeated) continue;
+        saw_self_defeat = true;
+        ARPG_REQUIRE(event->monster_id == MonsterId::fire_bomber);
+        ARPG_REQUIRE(!event->reward_eligible);
+    }
+    ARPG_REQUIRE(saw_self_defeat);
     tick_n(world, 90);
     ARPG_REQUIRE(world.snapshot().player.hp == after_explosion);
     return {};

@@ -8,12 +8,42 @@ namespace arpg::modifiers {
 
 namespace {
 
-FixedValue saturating_add(FixedValue left, FixedValue right) noexcept {
+inline constexpr std::size_t kPlayerModifierCapacity = 256U;
+
+bool checked_add(
+    FixedValue left,
+    FixedValue right,
+    FixedValue& result) noexcept {
     const auto maximum = (std::numeric_limits<FixedValue>::max)();
     const auto minimum = (std::numeric_limits<FixedValue>::min)();
-    if (right > 0 && left > maximum - right) return maximum;
-    if (right < 0 && left < minimum - right) return minimum;
-    return left + right;
+    if (right > 0 && left > maximum - right) {
+        result = maximum;
+        return false;
+    }
+    if (right < 0 && left < minimum - right) {
+        result = minimum;
+        return false;
+    }
+    result = left + right;
+    return true;
+}
+
+bool checked_subtract(
+    FixedValue left,
+    FixedValue right,
+    FixedValue& result) noexcept {
+    const auto maximum = (std::numeric_limits<FixedValue>::max)();
+    const auto minimum = (std::numeric_limits<FixedValue>::min)();
+    if (right > 0 && left < minimum + right) {
+        result = minimum;
+        return false;
+    }
+    if (right < 0 && left > maximum + right) {
+        result = maximum;
+        return false;
+    }
+    result = left - right;
+    return true;
 }
 
 FixedValue saturating_multiply(FixedValue left, FixedValue right) noexcept {
@@ -36,11 +66,14 @@ FixedValue saturating_multiply(FixedValue left, FixedValue right) noexcept {
 
 FixedValue saturating_mul_div(
     FixedValue value,
-    FixedValue factor) noexcept {
+    FixedValue factor,
+    bool& valid) noexcept {
     const FixedValue whole = saturating_multiply(value / kFixedOne, factor);
     const FixedValue remainder = saturating_multiply(value % kFixedOne, factor)
         / kFixedOne;
-    return saturating_add(whole, remainder);
+    FixedValue result{};
+    valid = checked_add(whole, remainder, result) && valid;
+    return result;
 }
 
 bool matches(const Modifier& modifier,
@@ -93,13 +126,13 @@ StatEvaluation evaluate_stat(
     ModifierSpan modifiers,
     ModifierContext context,
     StatBounds bounds) noexcept {
-    constexpr std::size_t kCapacity = 32U;
-    if (bounds.minimum > bounds.maximum || modifiers.size > kCapacity
+    if (bounds.minimum > bounds.maximum
+        || modifiers.size > kPlayerModifierCapacity
         || (modifiers.size != 0U && modifiers.data == nullptr)) {
         return {base, false, false};
     }
 
-    std::array<const Modifier*, kCapacity> active{};
+    std::array<const Modifier*, kPlayerModifierCapacity> active{};
     std::size_t count = 0U;
     for (std::size_t index = 0; index < modifiers.size; ++index) {
         const Modifier& candidate = modifiers.data[index];
@@ -114,20 +147,30 @@ StatEvaluation evaluate_stat(
     FixedValue result = base;
     for (std::size_t index = 0; index < count; ++index) {
         if (active[index]->operation == ModifierOperation::flat) {
-            result = saturating_add(result, active[index]->value);
+            if (!checked_add(result, active[index]->value, result)) {
+                return {result, false, false};
+            }
         }
     }
     FixedValue increased = 0;
     for (std::size_t index = 0; index < count; ++index) {
         if (active[index]->operation == ModifierOperation::increased) {
-            increased = saturating_add(increased, active[index]->value);
+            if (!checked_add(increased, active[index]->value, increased)) {
+                return {result, false, false};
+            }
         }
     }
-    result = saturating_mul_div(result,
-        saturating_add(kFixedOne, increased));
+    FixedValue increased_factor{};
+    if (!checked_add(kFixedOne, increased, increased_factor)) {
+        return {result, false, false};
+    }
+    bool valid = true;
+    result = saturating_mul_div(result, increased_factor, valid);
+    if (!valid) return {result, false, false};
     for (std::size_t index = 0; index < count; ++index) {
         if (active[index]->operation == ModifierOperation::more) {
-            result = saturating_mul_div(result, active[index]->value);
+            result = saturating_mul_div(result, active[index]->value, valid);
+            if (!valid) return {result, false, false};
         }
     }
     return {std::clamp(result, bounds.minimum, bounds.maximum), true, false};
@@ -137,13 +180,12 @@ ConversionResult evaluate_conversions(
     StatValues values,
     ModifierSpan modifiers,
     ModifierContext context) noexcept {
-    constexpr std::size_t kCapacity = 32U;
     ConversionResult result{values, false, 0};
-    if (modifiers.size > kCapacity
+    if (modifiers.size > kPlayerModifierCapacity
         || (modifiers.size != 0U && modifiers.data == nullptr)) {
         return result;
     }
-    std::array<const Modifier*, kCapacity> active{};
+    std::array<const Modifier*, kPlayerModifierCapacity> active{};
     std::size_t count = 0U;
     for (std::size_t index = 0; index < modifiers.size; ++index) {
         const Modifier& candidate = modifiers.data[index];
@@ -172,12 +214,23 @@ ConversionResult evaluate_conversions(
         const auto target = static_cast<std::size_t>(conversion.conversion_target);
         const FixedValue applied = std::min(
             conversion.value, remaining[source]);
-        result.truncated_basis_points = saturating_add(
-            result.truncated_basis_points, conversion.value - applied);
+        if (!checked_add(result.truncated_basis_points,
+                conversion.value - applied,
+                result.truncated_basis_points)) {
+            return result;
+        }
         remaining[source] -= applied;
-        const FixedValue amount = saturating_mul_div(original[source], applied);
-        result.values[source] = saturating_add(result.values[source], -amount);
-        result.values[target] = saturating_add(result.values[target], amount);
+        bool valid = true;
+        const FixedValue amount = saturating_mul_div(
+            original[source], applied, valid);
+        if (!valid
+            || amount == (std::numeric_limits<FixedValue>::min)()
+            || !checked_subtract(result.values[source], amount,
+                result.values[source])
+            || !checked_add(result.values[target], amount,
+                result.values[target])) {
+            return result;
+        }
     }
     result.valid = true;
     return result;
