@@ -172,6 +172,13 @@ enum class MonsterAffixWarning : std::uint8_t {
     death_blast,
 };
 
+enum class HazardKind : std::uint8_t {
+    native,
+    burning,
+    chain_lightning,
+    death_blast,
+};
+
 struct MonsterHandle final {
     std::uint16_t index{0xFFFF};
     std::uint16_t generation{};
@@ -191,12 +198,15 @@ struct ProjectileRuntime final {
     std::uint16_t lifetime_ticks{};
     DamagePacket damage{};
     float radius{};
+    bool trigger_chain_on_end{};
+    MonsterAffixSet owner_affixes{};
 };
 
 struct HazardRuntime final {
     bool active{};
     std::uint16_t generation{};
     MonsterHandle owner{};
+    HazardKind kind{HazardKind::native};
     Vec3 center{};
     float radius{};
     std::uint16_t telegraph_ticks{};
@@ -227,6 +237,8 @@ enum class CombatEventKind : std::uint8_t {
     player_hit,
     player_hurt_started,
     player_health_reset,
+    affix_blink_warning,
+    affix_chain_warning,
 };
 
 struct CombatEvent final {
@@ -388,6 +400,7 @@ struct MonsterSnapshot final {
     Vec3 attack_vector{};
     MonsterAffixWarning affix_warning{MonsterAffixWarning::none};
     std::uint16_t affix_warning_ticks{};
+    bool blink_empowered{};
 };
 
 struct ProjectileSnapshot final {
@@ -399,12 +412,14 @@ struct ProjectileSnapshot final {
     std::uint16_t lifetime_ticks{};
     DamagePacket damage{};
     float radius{};
+    bool trigger_chain_on_end{};
 };
 
 struct HazardSnapshot final {
     bool active{};
     std::uint16_t generation{};
     MonsterHandle owner{};
+    HazardKind kind{HazardKind::native};
     Vec3 center{};
     float radius{};
     std::uint16_t telegraph_ticks{};
@@ -412,6 +427,7 @@ struct HazardSnapshot final {
     std::uint16_t lifetime_ticks{};
     std::uint16_t damage_interval_ticks{};
     bool player_latched{};
+    bool persists_after_owner_death{};
     DamagePacket damage{};
 };
 

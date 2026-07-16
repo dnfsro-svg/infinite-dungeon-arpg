@@ -37,6 +37,7 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
             monster.break_window_ticks, monster.hit_stop_ticks, monster.ai_phase,
             monster.attack_target_position, monster.attack_vector,
             monster.affix_warning, monster.affix_warning_ticks,
+            monster.blink_empowered,
         };
     }
     result.monster_count = monsters_.active_count();
@@ -48,6 +49,7 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
                 projectile.active, projectile.generation, projectile.owner,
                 projectile.position, projectile.velocity, projectile.lifetime_ticks,
                 projectile.damage, projectile.radius,
+                projectile.trigger_chain_on_end,
             };
         }
     }
@@ -57,10 +59,10 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
             const HazardRuntime& hazard = hazards_.slots()[index];
             if (!hazard.active) continue;
             result.hazards[index] = HazardSnapshot{
-                hazard.active, hazard.generation, hazard.owner, hazard.center,
+                hazard.active, hazard.generation, hazard.owner, hazard.kind, hazard.center,
                 hazard.radius, hazard.telegraph_ticks, hazard.active_ticks,
                 hazard.lifetime_ticks, hazard.damage_interval_ticks,
-                hazard.player_latched, hazard.damage,
+                hazard.player_latched, hazard.persists_after_owner_death, hazard.damage,
             };
         }
     }

@@ -50,6 +50,7 @@ struct MonsterRuntime final {
     std::uint16_t owner_transient_counter{};
     std::uint16_t burning_ground_ticks{};
     std::uint16_t blink_assault_ticks{};
+    bool blink_empowered{};
     Vec3 attack_target_position{};
     Vec3 attack_vector{};
     MonsterAffixWarning affix_warning{MonsterAffixWarning::none};
@@ -89,14 +90,18 @@ public:
         Vec3 velocity,
         std::uint16_t lifetime_ticks,
         DamagePacket damage,
-        float radius) noexcept;
+        float radius,
+        bool trigger_chain_on_end = false,
+        MonsterAffixSet owner_affixes = {}) noexcept;
     [[nodiscard]] std::optional<ProjectileHandle> spawn(
         MonsterHandle owner,
         Vec3 position,
         Vec3 velocity,
         std::uint16_t lifetime_ticks,
         int damage,
-        float radius) noexcept;
+        float radius,
+        bool trigger_chain_on_end = false,
+        MonsterAffixSet owner_affixes = {}) noexcept;
     [[nodiscard]] bool destroy(ProjectileHandle handle) noexcept;
     [[nodiscard]] std::size_t active_count() const noexcept;
     [[nodiscard]] ProjectileRuntime* get(ProjectileHandle handle) noexcept;
@@ -124,6 +129,7 @@ public:
     void clear() noexcept;
     [[nodiscard]] std::optional<HazardHandle> spawn(
         MonsterHandle owner,
+        HazardKind kind,
         Vec3 center,
         float radius,
         std::uint16_t telegraph_ticks,
@@ -133,6 +139,7 @@ public:
         bool persists_after_owner_death = false) noexcept;
     [[nodiscard]] std::optional<HazardHandle> spawn(
         MonsterHandle owner,
+        HazardKind kind,
         Vec3 center,
         float radius,
         std::uint16_t telegraph_ticks,

@@ -40,11 +40,12 @@ struct CombatWorldTestAccess final {
         for (std::size_t index = 0; index < combat::kProjectileCapacity;
              ++index) {
             static_cast<void>(world.spawn_projectile(
-                owner, combat::Vec3{}, combat::Vec3{0.01F, 0.0F, 0.0F},
+                owner, combat::Vec3{10.0F, 5.0F, 0.0F}, combat::Vec3{},
                 1000U, 1, 0.1F));
         }
         static_cast<void>(world.spawn_projectile(
-            owner, combat::Vec3{}, combat::Vec3{}, 1000U, 1, 0.1F));
+            owner, combat::Vec3{10.0F, 5.0F, 0.0F}, combat::Vec3{},
+            1000U, 1, 0.1F));
     }
 
     static bool spawn_projectile(
@@ -57,8 +58,20 @@ struct CombatWorldTestAccess final {
     static bool spawn_hazard(
         combat::CombatWorld& world,
         combat::MonsterHandle owner) noexcept {
-        return world.spawn_hazard(owner, combat::Vec3{}, 1.0F,
+        return world.spawn_hazard(owner, combat::HazardKind::native,
+            combat::Vec3{}, 1.0F,
             1000U, 1000U, 30U, 1);
+    }
+
+    static void fill_hazards(
+        combat::CombatWorld& world,
+        combat::MonsterHandle owner) noexcept {
+        for (std::size_t index = 0; index < combat::kHazardCapacity;
+             ++index) {
+            static_cast<void>(world.spawn_hazard(
+                owner, combat::HazardKind::native, combat::Vec3{}, 1.0F,
+                1000U, 1000U, 30U, 1));
+        }
     }
 
     static void set_saturation_counts(

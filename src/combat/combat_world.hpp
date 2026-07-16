@@ -89,11 +89,12 @@ private:
         FeedbackLevel feedback) noexcept;
     bool apply_player_damage(
         int damage, Vec3 source_position, FeedbackLevel feedback) noexcept;
-    void apply_monster_direct_hit(
+    bool apply_monster_direct_hit(
         std::size_t slot,
         DamagePacket packet,
         Vec3 source_position,
-        FeedbackLevel feedback) noexcept;
+        FeedbackLevel feedback,
+        bool trigger_chain = true) noexcept;
     void tick_player_status() noexcept;
     [[nodiscard]] bool spawn_projectile(
         MonsterHandle owner,
@@ -101,30 +102,41 @@ private:
         Vec3 velocity,
         std::uint16_t lifetime_ticks,
         DamagePacket damage,
-        float radius) noexcept;
+        float radius,
+        bool trigger_chain_on_end = false,
+        MonsterAffixSet owner_affixes = {}) noexcept;
     [[nodiscard]] bool spawn_projectile(
         MonsterHandle owner,
         Vec3 position,
         Vec3 velocity,
         std::uint16_t lifetime_ticks,
         int damage,
-        float radius) noexcept;
+        float radius,
+        bool trigger_chain_on_end = false,
+        MonsterAffixSet owner_affixes = {}) noexcept;
     [[nodiscard]] bool spawn_hazard(
         MonsterHandle owner,
+        HazardKind kind,
         Vec3 center,
         float radius,
         std::uint16_t telegraph_ticks,
         std::uint16_t active_ticks,
         std::uint16_t damage_interval_ticks,
-        DamagePacket damage) noexcept;
+        DamagePacket damage,
+        bool persists_after_owner_death = false) noexcept;
     [[nodiscard]] bool spawn_hazard(
         MonsterHandle owner,
+        HazardKind kind,
         Vec3 center,
         float radius,
         std::uint16_t telegraph_ticks,
         std::uint16_t active_ticks,
         std::uint16_t damage_interval_ticks,
-        int damage) noexcept;
+        int damage,
+        bool persists_after_owner_death = false) noexcept;
+    void tick_active_affixes(std::size_t slot, MonsterRuntime& monster) noexcept;
+    [[nodiscard]] bool trigger_chain_lightning(
+        MonsterHandle owner, MonsterAffixSet affixes, Vec3 center) noexcept;
     void remove_owned_projectiles(MonsterHandle owner) noexcept;
     void remove_owned_hazards(MonsterHandle owner) noexcept;
     void emit_event(const CombatEvent& event) noexcept;
