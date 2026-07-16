@@ -45,5 +45,5 @@ int main() {
         player_defense_suite(),
     };
 
-    return arpg::test::run_suites(suites, 139, "stage 10 task 4 review fixes");
+    return arpg::test::run_suites(suites, 148, "stage 10 task 6 abyss combat rules");
 }

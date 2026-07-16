@@ -63,6 +63,9 @@ public:
     [[nodiscard]] std::optional<MonsterHandle> spawn(
         const MonsterSpawnSpec& spec) noexcept;
     [[nodiscard]] std::optional<MonsterHandle> spawn(
+        const MonsterSpawnSpec& spec,
+        const abyss::AbyssCombatConfig& abyss_config) noexcept;
+    [[nodiscard]] std::optional<MonsterHandle> spawn(
         MonsterId id, Vec3 position) noexcept;
     [[nodiscard]] bool destroy(MonsterHandle handle) noexcept;
     [[nodiscard]] std::size_t active_count() const noexcept;

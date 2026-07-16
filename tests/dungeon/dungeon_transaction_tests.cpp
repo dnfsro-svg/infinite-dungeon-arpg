@@ -48,6 +48,16 @@ DungeonRunState available_state(std::uint64_t seed = 1U) noexcept {
     return state;
 }
 
+DungeonRunState available_state_for_rule(
+    arpg::abyss::AbyssRuleId rule) noexcept {
+    std::uint64_t seed = 1U;
+    for (;;) {
+        DungeonRunState state = available_state(seed);
+        if (state.abyss.rule == rule) return state;
+        seed = state.current_room.seed + 1U;
+    }
+}
+
 arpg::test::Failure available_room_precomputes_then_queues_start() noexcept {
     const DungeonRunState available = available_state();
     DungeonSession session{DungeonRules{}, available};
@@ -124,7 +134,16 @@ arpg::test::Failure abyss_start_state_mismatch_faults() noexcept {
 }
 
 arpg::test::Failure abyss_start_commit_creates_combat_after_receipt() noexcept {
-    DungeonSession session{DungeonRules{}, available_state()};
+    const DungeonRunState available = available_state_for_rule(
+        arpg::abyss::AbyssRuleId::abyss_fury);
+    DungeonSession session{DungeonRules{}, available};
+    const auto* pending_config =
+        arpg::test::DungeonSessionTestAccess::pending_abyss_config(session);
+    ARPG_REQUIRE(pending_config != nullptr);
+    ARPG_REQUIRE(pending_config->rule == available.abyss.rule);
+    ARPG_REQUIRE(pending_config->danger == available.abyss.danger);
+    ARPG_REQUIRE(pending_config->monster_damage_bp == 14500U);
+    ARPG_REQUIRE(pending_config->monster_attack_speed_bp == 14500U);
     const auto pending = *session.pending_save();
     session.resolve_pending_save({SaveDisposition::committed,
         pending.expected_generation, pending.next_state});
@@ -134,6 +153,12 @@ arpg::test::Failure abyss_start_commit_creates_combat_after_receipt() noexcept {
     ARPG_REQUIRE(snapshot.commit_generation == pending.expected_generation);
     ARPG_REQUIRE(arpg::test::DungeonSessionTestAccess::stable_state(session)
         .abyss.lifecycle == arpg::abyss::AbyssLifecycle::started);
+    const auto* active_config =
+        arpg::test::DungeonSessionTestAccess::active_abyss_config(session);
+    ARPG_REQUIRE(active_config != nullptr);
+    ARPG_REQUIRE(active_config->rule == available.abyss.rule);
+    ARPG_REQUIRE(active_config->monster_damage_bp == 14500U);
+    ARPG_REQUIRE(active_config->monster_attack_speed_bp == 14500U);
     return {};
 }
 

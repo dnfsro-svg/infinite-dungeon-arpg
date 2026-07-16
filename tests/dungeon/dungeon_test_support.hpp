@@ -37,6 +37,18 @@ struct DungeonSessionTestAccess final {
                 damage, combat::Vec3{}, combat::FeedbackLevel::light);
         }
     }
+    static const abyss::AbyssCombatConfig* pending_abyss_config(
+        const dungeon::DungeonSession& session) noexcept {
+        return session.pending_abyss_combat_.has_value()
+            ? &session.pending_abyss_combat_->abyss
+            : nullptr;
+    }
+    static const abyss::AbyssCombatConfig* active_abyss_config(
+        const dungeon::DungeonSession& session) noexcept {
+        return session.combat_.has_value()
+            ? &session.combat_->encounter_config_.abyss
+            : nullptr;
+    }
     static void fill_current_combat_events(
         dungeon::DungeonSession& session, std::size_t count) noexcept {
         if (!session.combat_.has_value()) return;

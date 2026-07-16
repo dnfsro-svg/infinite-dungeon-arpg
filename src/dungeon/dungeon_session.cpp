@@ -303,6 +303,7 @@ void DungeonSession::construct_normal_room() noexcept {
         rules_.rules_version,
         plan.plan.waves[0],
         true,
+        abyss::combat_config_for(abyss::AbyssRuleId::none),
         player_build.build,
         evasion_stream.next_u64());
     if (!config.has_value()) {
@@ -383,6 +384,7 @@ bool DungeonSession::prepare_abyss_start() noexcept {
         rules_.rules_version,
         built.plan.waves[0],
         true,
+        abyss::combat_config_for(selection->rule),
         player_build.build,
         evasion_stream.next_u64());
     if (!combat_config.has_value()) {

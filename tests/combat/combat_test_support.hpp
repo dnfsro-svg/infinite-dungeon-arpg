@@ -121,6 +121,27 @@ struct CombatWorldTestAccess final {
         }
     }
 
+    static combat::MonsterAffixProfile monster_affix_profile(
+        const combat::CombatWorld& world,
+        std::size_t index) noexcept {
+        return index < world.monsters_.slots_.size()
+            ? world.monsters_.slots_[index].affix_profile
+            : combat::MonsterAffixProfile{};
+    }
+
+    static void set_player_resources(
+        combat::CombatWorld& world,
+        int hp,
+        int barrier) noexcept {
+        world.player_.hp = hp;
+        world.player_.barrier = barrier;
+    }
+
+    static const abyss::AbyssCombatConfig& abyss_config(
+        const combat::CombatWorld& world) noexcept {
+        return world.encounter_config_.abyss;
+    }
+
     static void apply_monster_direct_hit(
         combat::CombatWorld& world,
         std::size_t slot,

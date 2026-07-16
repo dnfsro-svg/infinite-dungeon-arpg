@@ -1,8 +1,11 @@
 #include "combat/monster_pool.hpp"
 
 #include "combat/monster_catalog.hpp"
+#include "combat/monster_ai_common.hpp"
 
+#include <algorithm>
 #include <cstddef>
+#include <limits>
 
 namespace arpg::combat {
 namespace {
@@ -50,13 +53,21 @@ void MonsterPool::clear() noexcept {
 
 std::optional<MonsterHandle> MonsterPool::spawn(
     const MonsterSpawnSpec& spec) noexcept {
+    return spawn(spec, abyss::AbyssCombatConfig{});
+}
+
+std::optional<MonsterHandle> MonsterPool::spawn(
+    const MonsterSpawnSpec& spec,
+    const abyss::AbyssCombatConfig& abyss_config) noexcept {
     const MonsterDefinition* definition = monster_definition(spec.id);
     if (definition == nullptr) {
         return std::nullopt;
     }
 
-    const MonsterAffixProfile profile = evaluate_monster_affixes(
+    MonsterAffixProfile profile = evaluate_monster_affixes(
         *definition, spec.affixes);
+    profile.armor_rating = scale_basis_points(
+        profile.armor_rating, abyss_config.monster_armor_bp);
 
     for (std::size_t index = 0; index < slots_.size(); ++index) {
         MonsterRuntime& runtime = slots_[index];
@@ -87,7 +98,15 @@ std::optional<MonsterHandle> MonsterPool::spawn(
             ? profile.shield_recharge_delay_ticks
             : definition->shield_duration_ticks != 0
                 ? definition->shield_duration_ticks : 120;
-        runtime.shield = 0;
+        const int extra_shield = scale_basis_points(
+            runtime.max_hp,
+            abyss_config.monster_extra_shield_bp,
+            BasisPointRounding::ceil);
+        runtime.max_shield = extra_shield
+                > (std::numeric_limits<int>::max)() - runtime.max_shield
+            ? (std::numeric_limits<int>::max)()
+            : runtime.max_shield + extra_shield;
+        runtime.shield = extra_shield;
         runtime.shield_ticks = 0;
         runtime.armor = definition->max_break > 0
             ? ArmorState::armored : ArmorState::none;

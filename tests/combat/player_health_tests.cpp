@@ -4,6 +4,8 @@
 
 #include "combat/combat_world.hpp"
 
+#include "abyss/abyss_rules.hpp"
+
 #include <cstddef>
 
 namespace {
@@ -181,6 +183,72 @@ arpg::test::Failure load_wave_reset_restores_full_health() noexcept {
     return {};
 }
 
+arpg::test::Failure exhausted_recovery_caps_initial_resources_once() noexcept {
+    CombatEncounterConfig config = single_chaser_encounter();
+    config.player_build.values.max_barrier = 1010000;
+    config.abyss = arpg::abyss::combat_config_for(
+        arpg::abyss::AbyssRuleId::exhausted_recovery);
+    CombatWorld world{config};
+    ARPG_REQUIRE(world.snapshot().player.max_hp == 1000);
+    ARPG_REQUIRE(world.snapshot().player.hp == 700);
+    ARPG_REQUIRE(world.snapshot().player.max_barrier == 101);
+    ARPG_REQUIRE(world.snapshot().player.barrier == 71);
+
+    arpg::test::CombatWorldTestAccess::apply_damage(
+        world, 100, Vec3{}, FeedbackLevel::light);
+    const PlayerSnapshot damaged = world.snapshot().player;
+    EncounterWave next = config.wave;
+    next.spawns[0].position.x = 3.0F;
+    ARPG_REQUIRE(world.load_wave(next, false));
+    ARPG_REQUIRE(world.snapshot().player.hp == damaged.hp);
+    ARPG_REQUIRE(world.snapshot().player.barrier == damaged.barrier);
+    return {};
+}
+
+arpg::test::Failure exhausted_recovery_scales_explicit_and_wave_restore() noexcept {
+    CombatEncounterConfig config = single_chaser_encounter();
+    config.player_build.values.max_barrier = 1010000;
+    config.abyss = arpg::abyss::combat_config_for(
+        arpg::abyss::AbyssRuleId::exhausted_recovery);
+    CombatWorld world{config};
+    arpg::test::CombatWorldTestAccess::set_player_resources(world, 600, 50);
+    world.restore_player_resources(1, 1);
+    ARPG_REQUIRE(world.snapshot().player.hp == 601);
+    ARPG_REQUIRE(world.snapshot().player.barrier == 51);
+    world.restore_player_resources(10, 10);
+    ARPG_REQUIRE(world.snapshot().player.hp == 608);
+    ARPG_REQUIRE(world.snapshot().player.barrier == 58);
+
+    ARPG_REQUIRE(world.load_wave(config.wave, true));
+    ARPG_REQUIRE(world.snapshot().player.hp == 700);
+    ARPG_REQUIRE(world.snapshot().player.barrier == 71);
+    return {};
+}
+
+arpg::test::Failure life_sacrifice_maps_ratio_and_clear_does_not_refill() noexcept {
+    CombatEncounterConfig config = single_chaser_encounter();
+    config.wave = {};
+    config.player_build.values.max_health = 10000;
+    config.player_build.values.max_barrier = 1010000;
+    config.abyss = arpg::abyss::combat_config_for(
+        arpg::abyss::AbyssRuleId::life_sacrifice);
+    CombatWorld world{config};
+    ARPG_REQUIRE(world.snapshot().player.max_hp == 551);
+    ARPG_REQUIRE(world.snapshot().player.hp == 551);
+    ARPG_REQUIRE(world.snapshot().player.max_barrier == 101);
+    ARPG_REQUIRE(world.snapshot().player.barrier == 101);
+
+    arpg::test::CombatWorldTestAccess::set_player_resources(world, 276, 37);
+    world.clear_abyss_rule_preserving_resources();
+    ARPG_REQUIRE(world.snapshot().player.max_hp == 1001);
+    ARPG_REQUIRE(world.snapshot().player.hp == 501);
+    ARPG_REQUIRE(world.snapshot().player.max_barrier == 101);
+    ARPG_REQUIRE(world.snapshot().player.barrier == 37);
+    ARPG_REQUIRE(arpg::test::CombatWorldTestAccess::abyss_config(world).rule
+                 == arpg::abyss::AbyssRuleId::none);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"damage reaches zero", &player_damage_reaches_zero},
     {"accepted hit payload and hurt event", &accepted_hit_emits_payload_and_hurt_started},
@@ -189,6 +257,12 @@ constexpr arpg::test::TestCase kCases[] = {
     {"defeated player rejects and discards input", &defeated_player_rejects_and_discards_input},
     {"hurt movement lock", &hurt_ticks_lock_movement_until_expired},
     {"wave load restores full health", &load_wave_reset_restores_full_health},
+    {"exhausted initial cap applied once",
+     &exhausted_recovery_caps_initial_resources_once},
+    {"exhausted explicit and wave restore",
+     &exhausted_recovery_scales_explicit_and_wave_restore},
+    {"life sacrifice ratio and clear",
+     &life_sacrifice_maps_ratio_and_clear_does_not_refill},
 };
 
 }  // namespace

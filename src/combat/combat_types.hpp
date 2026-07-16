@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <optional>
 
+#include "abyss/abyss_types.hpp"
 #include "combat/monster_affix_types.hpp"
 #include "modifiers/damage_types.hpp"
 #include "modifiers/player_modifier_values.hpp"
@@ -353,6 +354,7 @@ struct CombatEncounterConfig final {
     bool reset_player_health{true};
     PlayerCombatBuild player_build{};
     std::uint64_t evasion_seed{};
+    abyss::AbyssCombatConfig abyss{};
 };
 
 struct PlayerSnapshot final {

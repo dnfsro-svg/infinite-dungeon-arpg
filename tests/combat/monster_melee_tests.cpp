@@ -5,6 +5,9 @@
 #include "combat/combat_world.hpp"
 #include "combat/monster_catalog.hpp"
 
+#include "abyss/abyss_rules.hpp"
+#include "combat/monster_affix_runtime.hpp"
+
 #include <cmath>
 
 namespace {
@@ -24,6 +27,41 @@ CombatEncounterConfig encounter_for(
     config.wave.spawns[0] = MonsterSpawnSpec{
         id, Vec3{monster_x, 0.0F, 0.0F}};
     return config;
+}
+
+MonsterAffixSet one_affix(
+    MonsterAffixId id,
+    MonsterAffixTier tier) noexcept {
+    MonsterAffixSet result{};
+    result.values[0] = {id, tier};
+    result.count = 1U;
+    return result;
+}
+
+int ticks_in_phase(CombatWorld& world, MonsterAiPhase phase) noexcept {
+    int ticks = 0;
+    while (ticks < 300
+           && world.snapshot().monsters[0].ai_phase == phase) {
+        world.tick({});
+        ++ticks;
+    }
+    return ticks;
+}
+
+bool has_abyss_phase_timing(
+    CombatEncounterConfig config,
+    std::uint16_t telegraph,
+    std::uint16_t active,
+    std::uint16_t recovery,
+    std::uint16_t cooldown) noexcept {
+    config.wave.spawns[0].position = Vec3{0.90F, 0.0F, 0.0F};
+    CombatWorld world{config};
+    world.tick({});
+    return world.snapshot().monsters[0].ai_phase == MonsterAiPhase::telegraph
+        && ticks_in_phase(world, MonsterAiPhase::telegraph) == telegraph
+        && ticks_in_phase(world, MonsterAiPhase::active) == active
+        && ticks_in_phase(world, MonsterAiPhase::recovery) == recovery
+        && ticks_in_phase(world, MonsterAiPhase::cooldown) == cooldown;
 }
 
 arpg::test::Failure chaos_chaser_moves_then_stops_for_telegraph() noexcept {
@@ -212,6 +250,124 @@ arpg::test::Failure launcher_gives_stage4_monster_minimum_airtime() noexcept {
     return {};
 }
 
+arpg::test::Failure swift_pursuit_composes_move_and_cooldown() noexcept {
+    CombatEncounterConfig normal_config = encounter_for(
+        MonsterId::chaos_chaser, 3.0F);
+    CombatEncounterConfig swift_config = normal_config;
+    swift_config.abyss = arpg::abyss::combat_config_for(
+        arpg::abyss::AbyssRuleId::swift_pursuit);
+    CombatWorld normal{normal_config};
+    CombatWorld swift{swift_config};
+    const float normal_start = normal.snapshot().monsters[0].position.x;
+    const float swift_start = swift.snapshot().monsters[0].position.x;
+    normal.tick({});
+    swift.tick({});
+    ARPG_REQUIRE(arpg::test::near(
+        swift_start - swift.snapshot().monsters[0].position.x,
+        (normal_start - normal.snapshot().monsters[0].position.x) * 1.15F,
+        1.0e-5));
+
+    CombatEncounterConfig timing = encounter_for(
+        MonsterId::chaos_chaser, 0.90F);
+    timing.abyss = swift_config.abyss;
+    ARPG_REQUIRE(has_abyss_phase_timing(timing, 12U, 4U, 18U, 36U));
+
+    timing.wave.spawns[0].affixes = one_affix(
+        MonsterAffixId::swift, MonsterAffixTier::m3);
+    ARPG_REQUIRE(has_abyss_phase_timing(timing, 12U, 4U, 18U, 28U));
+    return {};
+}
+
+arpg::test::Failure abyss_bulwark_adds_to_stage9_profile() noexcept {
+    CombatEncounterConfig config = encounter_for(
+        MonsterId::chaos_chaser, 2.0F);
+    config.abyss = arpg::abyss::combat_config_for(
+        arpg::abyss::AbyssRuleId::abyss_bulwark);
+    config.wave.spawns[0].affixes = one_affix(
+        MonsterAffixId::armored, MonsterAffixTier::m3);
+    CombatWorld armored{config};
+    const MonsterAffixProfile armored_profile =
+        arpg::test::CombatWorldTestAccess::monster_affix_profile(armored, 0U);
+    ARPG_REQUIRE(armored_profile.armor_rating == 1007);
+    ARPG_REQUIRE(armored.snapshot().monsters[0].max_shield == 168);
+    ARPG_REQUIRE(armored.snapshot().monsters[0].shield == 78);
+
+    config.wave.spawns[0].affixes = one_affix(
+        MonsterAffixId::mighty, MonsterAffixTier::m3);
+    CombatWorld mighty{config};
+    ARPG_REQUIRE(mighty.snapshot().monsters[0].max_hp == 520);
+    ARPG_REQUIRE(mighty.snapshot().monsters[0].max_shield == 246);
+    ARPG_REQUIRE(mighty.snapshot().monsters[0].shield == 156);
+
+    config.wave.spawns[0].affixes = one_affix(
+        MonsterAffixId::shielding, MonsterAffixTier::m2);
+    CombatWorld shielding{config};
+    ARPG_REQUIRE(shielding.snapshot().monsters[0].max_shield == 169);
+    ARPG_REQUIRE(shielding.snapshot().monsters[0].shield == 78);
+
+    config.wave.spawns[0].affixes = {};
+    CombatWorld zero_armor{config};
+    ARPG_REQUIRE(arpg::test::CombatWorldTestAccess::monster_affix_profile(
+        zero_armor, 0U).armor_rating == 0);
+    return {};
+}
+
+arpg::test::Failure abyss_fury_scales_all_monster_paths_once() noexcept {
+    CombatEncounterConfig melee = encounter_for(
+        MonsterId::chaos_chaser, 0.0F);
+    melee.abyss = arpg::abyss::combat_config_for(
+        arpg::abyss::AbyssRuleId::abyss_fury);
+    CombatWorld contact{melee};
+    arpg::test::CombatWorldTestAccess::arm_monster_active_attack(contact, 0U);
+    const int contact_before = contact.snapshot().player.hp;
+    arpg::test::CombatWorldTestAccess::simulate_monster(contact, 0U);
+    ARPG_REQUIRE(contact_before - contact.snapshot().player.hp == 65);
+
+    CombatEncounterConfig projectile = encounter_for(
+        MonsterId::lightning_shooter, 4.0F);
+    projectile.abyss = melee.abyss;
+    CombatWorld shooter{projectile};
+    arpg::test::CombatWorldTestAccess::arm_monster_active_attack(shooter, 0U);
+    arpg::test::CombatWorldTestAccess::simulate_monster(shooter, 0U);
+    ARPG_REQUIRE(shooter.snapshot().projectile_count == 1U);
+    ARPG_REQUIRE(shooter.snapshot().projectiles[0].damage.amount[
+        arpg::modifiers::damage_index(
+            arpg::modifiers::DamageType::lightning)] == 58);
+
+    CombatEncounterConfig hazard = encounter_for(
+        MonsterId::chaos_hazard, 0.0F);
+    hazard.abyss = melee.abyss;
+    CombatWorld hazard_world{hazard};
+    hazard_world.tick({});
+    ARPG_REQUIRE(hazard_world.snapshot().hazard_count == 1U);
+    ARPG_REQUIRE(hazard_world.snapshot().hazards[0].damage.amount[
+        arpg::modifiers::damage_index(
+            arpg::modifiers::DamageType::chaos)] == 50);
+
+    CombatEncounterConfig death = melee;
+    death.wave.spawns[0].position = Vec3{2.0F, 0.0F, 0.0F};
+    death.wave.spawns[0].affixes = one_affix(
+        MonsterAffixId::death_blast, MonsterAffixTier::m1);
+    CombatWorld death_world{death};
+    arpg::test::CombatWorldTestAccess::defeat_monster(death_world, 0U, true);
+    ARPG_REQUIRE(death_world.snapshot().hazard_count == 1U);
+    ARPG_REQUIRE(death_world.snapshot().hazards[0].damage.amount[
+        arpg::modifiers::damage_index(
+            arpg::modifiers::DamageType::physical)] == 174);
+
+    CombatEncounterConfig frenzy = melee;
+    frenzy.wave.spawns[0].affixes = one_affix(
+        MonsterAffixId::frenzy, MonsterAffixTier::m3);
+    CombatWorld composed_damage{frenzy};
+    arpg::test::CombatWorldTestAccess::arm_monster_active_attack(
+        composed_damage, 0U);
+    const int composed_before = composed_damage.snapshot().player.hp;
+    arpg::test::CombatWorldTestAccess::simulate_monster(composed_damage, 0U);
+    ARPG_REQUIRE(composed_before - composed_damage.snapshot().player.hp == 97);
+    ARPG_REQUIRE(has_abyss_phase_timing(frenzy, 7U, 4U, 9U, 21U));
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"chaser move and telegraph stop", &chaos_chaser_moves_then_stops_for_telegraph},
     {"chaser active serial cooldown", &chaos_chaser_damages_only_once_per_active_serial},
@@ -219,6 +375,11 @@ constexpr arpg::test::TestCase kCases[] = {
     {"bulwark rear bypasses armor", &bulwark_back_hit_bypasses_front_armor},
     {"bulwark break reaction", &bulwark_accepts_normal_reaction_after_break},
     {"launcher minimum airtime", &launcher_gives_stage4_monster_minimum_airtime},
+    {"swift pursuit composes move and cooldown",
+     &swift_pursuit_composes_move_and_cooldown},
+    {"abyss bulwark composes profile", &abyss_bulwark_adds_to_stage9_profile},
+    {"abyss fury scales outgoing paths once",
+     &abyss_fury_scales_all_monster_paths_once},
 };
 
 }  // namespace

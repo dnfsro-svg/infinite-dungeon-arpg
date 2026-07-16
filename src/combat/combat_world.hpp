@@ -27,6 +27,8 @@ public:
     void tick(MovementInput movement) noexcept;
     void reset() noexcept;
     void apply_player_build(PlayerCombatBuild build) noexcept;
+    void restore_player_resources(int hp, int barrier) noexcept;
+    void clear_abyss_rule_preserving_resources() noexcept;
     [[nodiscard]] bool load_wave(
         const EncounterWave& wave,
         bool reset_player_health = true) noexcept;

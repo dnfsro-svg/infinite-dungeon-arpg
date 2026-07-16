@@ -15,25 +15,6 @@ void clamp_position(Vec3& position) noexcept {
     position.y = std::clamp(position.y, room_bounds::min_y, room_bounds::max_y);
 }
 
-std::uint16_t frenzy_ticks(
-    std::uint16_t base, const MonsterRuntime& monster) noexcept {
-    return scaled_monster_ticks(base, monster.affix_profile.attack_timing_bp);
-}
-
-std::uint16_t cooldown_ticks(
-    std::uint16_t base, const MonsterRuntime& monster) noexcept {
-    return scaled_monster_ticks(frenzy_ticks(base, monster),
-                                monster.affix_profile.cooldown_bp);
-}
-
-DamagePacket scaled_packet(
-    DamagePacket packet, const MonsterRuntime& monster) noexcept {
-    for (int& amount : packet.amount) {
-        amount = scaled_monster_damage(amount, monster.affix_profile);
-    }
-    return packet;
-}
-
 }  // namespace
 
 void CombatWorld::simulate_special_ai(
@@ -50,11 +31,13 @@ void CombatWorld::simulate_special_ai(
         const float distance = target_distance(monster.position, player_.position);
         if (distance > definition.preferred_range && distance > 0.0001F) {
             monster.velocity.x = (player_.position.x - monster.position.x)
-                / distance * monster_move_step(
-                    definition.move_speed, monster.affix_profile);
+                / distance * abyss_monster_move_step(
+                    definition.move_speed, monster.affix_profile,
+                    encounter_config_.abyss);
             monster.velocity.y = (player_.position.y - monster.position.y)
-                / distance * monster_move_step(
-                    definition.move_speed, monster.affix_profile);
+                / distance * abyss_monster_move_step(
+                    definition.move_speed, monster.affix_profile,
+                    encounter_config_.abyss);
             monster.position.x += monster.velocity.x;
             monster.position.y += monster.velocity.y;
             clamp_position(monster.position);
@@ -62,7 +45,9 @@ void CombatWorld::simulate_special_ai(
         }
         monster.velocity = Vec3{};
         monster.ai_phase = MonsterAiPhase::telegraph;
-        monster.ai_ticks = frenzy_ticks(definition.telegraph_ticks, monster);
+        monster.ai_ticks = abyss_monster_attack_ticks(
+            definition.telegraph_ticks, monster.affix_profile,
+            encounter_config_.abyss);
         monster.attack_target_position = player_.position;
         const float active_ticks = static_cast<float>(
             std::max<std::uint16_t>(1U, definition.active_ticks));
@@ -75,9 +60,14 @@ void CombatWorld::simulate_special_ai(
             static_cast<void>(spawn_hazard(
                 MonsterHandle{static_cast<std::uint16_t>(slot), monster.generation},
                 HazardKind::native, monster.attack_target_position, 1.25F,
-                frenzy_ticks(definition.telegraph_ticks, monster),
+                abyss_monster_attack_ticks(
+                    definition.telegraph_ticks, monster.affix_profile,
+                    encounter_config_.abyss),
                 definition.hazard_ticks, kHazardDamageIntervalTicks,
-                scaled_packet(definition.contact_damage, monster)));
+                scale_monster_outgoing_damage(
+                    scale_monster_affix_damage(
+                        definition.contact_damage, monster.affix_profile),
+                    encounter_config_.abyss.monster_damage_bp)));
         }
         return;
     }
@@ -96,8 +86,11 @@ void CombatWorld::simulate_special_ai(
         if (is_bomber) {
             if (!monster.contact_attack_resolved) {
                 if (target_distance(monster.position, player_.position) <= 1.60F) {
-                    apply_monster_direct_hit(slot, scaled_packet(
-                                                definition.contact_damage, monster),
+                    apply_monster_direct_hit(slot, scale_monster_outgoing_damage(
+                                                scale_monster_affix_damage(
+                                                    definition.contact_damage,
+                                                    monster.affix_profile),
+                                                encounter_config_.abyss.monster_damage_bp),
                                              monster.position, definition.feedback);
                 }
                 monster.contact_attack_resolved = true;
@@ -119,14 +112,18 @@ void CombatWorld::simulate_special_ai(
         }
         if (tick_down(monster.ai_ticks)) {
             monster.ai_phase = MonsterAiPhase::recovery;
-            monster.ai_ticks = frenzy_ticks(definition.recovery_ticks, monster);
+            monster.ai_ticks = abyss_monster_attack_ticks(
+                definition.recovery_ticks, monster.affix_profile,
+                encounter_config_.abyss);
         }
         return;
     case MonsterAiPhase::recovery:
         monster.velocity = Vec3{};
         if (tick_down(monster.ai_ticks)) {
             monster.ai_phase = MonsterAiPhase::cooldown;
-            monster.ai_ticks = cooldown_ticks(definition.cooldown_ticks, monster);
+            monster.ai_ticks = abyss_monster_cooldown_ticks(
+                definition.cooldown_ticks, monster.affix_profile,
+                encounter_config_.abyss);
         }
         return;
     case MonsterAiPhase::cooldown:

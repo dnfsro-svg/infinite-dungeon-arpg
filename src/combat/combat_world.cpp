@@ -1,9 +1,11 @@
 #include "combat/combat_world.hpp"
 
+#include "abyss/abyss_rules.hpp"
 #include "combat/attack_catalog.hpp"
 #include "combat/monster_affix_catalog.hpp"
 #include "combat/monster_affix_generation.hpp"
 #include "combat/monster_catalog.hpp"
+#include "combat/monster_ai_common.hpp"
 #include "combat/room_bounds.hpp"
 
 #include <array>
@@ -499,7 +501,10 @@ void CombatWorld::apply_player_build(PlayerCombatBuild build) noexcept {
     if (!derive_player_build(build, derived)) return;
 
     encounter_config_.player_build = build;
-    player_.max_hp = derived.max_hp;
+    player_.max_hp = scale_basis_points(
+        derived.max_hp,
+        encounter_config_.abyss.player_max_health_bp,
+        BasisPointRounding::ceil);
     player_.max_barrier = derived.max_barrier;
     player_.damage_reduction = derived.damage_reduction;
     player_.damage_reduction_cap = derived.damage_reduction_cap;
@@ -508,6 +513,45 @@ void CombatWorld::apply_player_build(PlayerCombatBuild build) noexcept {
     player_.armor_reduction_bp = derived.armor_reduction_bp;
     player_.evasion_rate_bp = derived.evasion_rate_bp;
     player_.hp = std::clamp(player_.hp, 0, player_.max_hp);
+    player_.barrier = std::clamp(player_.barrier, 0, player_.max_barrier);
+}
+
+void CombatWorld::restore_player_resources(int hp, int barrier) noexcept {
+    const int restored_hp = scale_basis_points(
+        hp,
+        encounter_config_.abyss.player_resource_restore_bp,
+        BasisPointRounding::ceil);
+    const int restored_barrier = scale_basis_points(
+        barrier,
+        encounter_config_.abyss.player_resource_restore_bp,
+        BasisPointRounding::ceil);
+    player_.hp = restored_hp >= player_.max_hp - player_.hp
+        ? player_.max_hp
+        : player_.hp + restored_hp;
+    player_.barrier = restored_barrier >= player_.max_barrier - player_.barrier
+        ? player_.max_barrier
+        : player_.barrier + restored_barrier;
+}
+
+void CombatWorld::clear_abyss_rule_preserving_resources() noexcept {
+    DerivedPlayerBuild derived{};
+    if (!derive_player_build(encounter_config_.player_build, derived)) return;
+
+    const int old_max_hp = player_.max_hp;
+    const int old_hp = player_.hp;
+    const bool alive = old_hp > 0;
+    encounter_config_.abyss = {};
+    player_.max_hp = derived.max_hp;
+    player_.max_barrier = derived.max_barrier;
+    player_.damage_reduction = derived.damage_reduction;
+    player_.damage_reduction_cap = derived.damage_reduction_cap;
+    player_.armor = derived.armor;
+    player_.evasion = derived.evasion;
+    player_.armor_reduction_bp = derived.armor_reduction_bp;
+    player_.evasion_rate_bp = derived.evasion_rate_bp;
+    player_.hp = abyss::map_resource_ratio(
+        old_hp, old_max_hp, player_.max_hp, alive).value_or(
+            std::clamp(old_hp, 0, player_.max_hp));
     player_.barrier = std::clamp(player_.barrier, 0, player_.max_barrier);
 }
 
@@ -548,7 +592,11 @@ void CombatWorld::initialize_player() noexcept {
         static_cast<void>(derive_player_build(
             encounter_config_.player_build, derived));
     }
-    player_.max_hp = derived.max_hp;
+    const int base_max_hp = derived.max_hp;
+    player_.max_hp = scale_basis_points(
+        base_max_hp,
+        encounter_config_.abyss.player_max_health_bp,
+        BasisPointRounding::ceil);
     player_.max_barrier = derived.max_barrier;
     player_.damage_reduction = derived.damage_reduction;
     player_.damage_reduction_cap = derived.damage_reduction_cap;
@@ -556,8 +604,13 @@ void CombatWorld::initialize_player() noexcept {
     player_.evasion = derived.evasion;
     player_.armor_reduction_bp = derived.armor_reduction_bp;
     player_.evasion_rate_bp = derived.evasion_rate_bp;
-    player_.barrier = player_.max_barrier;
-    player_.hp = player_.max_hp;
+    player_.barrier = 0;
+    player_.hp = abyss::map_resource_ratio(
+        base_max_hp, base_max_hp, player_.max_hp, true).value_or(
+            player_.max_hp);
+    const int mapped_hp = player_.hp;
+    player_.hp = 0;
+    restore_player_resources(mapped_hp, player_.max_barrier);
 }
 
 void CombatWorld::initialize_legacy_monsters() noexcept {
@@ -601,7 +654,8 @@ bool CombatWorld::load_wave(
     projectiles_.clear();
     hazards_.clear();
     for (std::size_t index = 0; index < wave.spawn_count; ++index) {
-        const auto handle = monsters_.spawn(wave.spawns[index]);
+        const auto handle = monsters_.spawn(
+            wave.spawns[index], encounter_config_.abyss);
         if (!handle.has_value()) {
             monsters_.clear();
             return false;
@@ -624,8 +678,9 @@ bool CombatWorld::load_wave(
         const bool health_changed = player_.hp != player_.max_hp
                                  || player_.hurt_ticks != 0
                                  || player_.invulnerability_ticks != 0;
-        player_.hp = player_.max_hp;
-        player_.barrier = player_.max_barrier;
+        player_.hp = 0;
+        player_.barrier = 0;
+        restore_player_resources(player_.max_hp, player_.max_barrier);
         player_.hurt_ticks = 0;
         player_.invulnerability_ticks = 0;
 
@@ -634,7 +689,7 @@ bool CombatWorld::load_wave(
             health_reset.kind = CombatEventKind::player_health_reset;
             health_reset.tick = tick_;
             health_reset.position = player_.position;
-            health_reset.value = player_.max_hp;
+            health_reset.value = player_.hp;
             emit_event(health_reset);
         }
     }
@@ -756,6 +811,8 @@ void CombatWorld::defeat_monster(
         DamagePacket damage{};
         damage.amount[modifiers::damage_index(modifiers::DamageType::physical)] =
             death->damage;
+        damage = scale_monster_outgoing_damage(
+            damage, encounter_config_.abyss.monster_damage_bp);
         if (spawn_hazard(owner, HazardKind::death_blast, position,
                          death->radius, death->interval_ticks, 1U, 1U,
                          damage, true)) {
@@ -984,6 +1041,8 @@ bool CombatWorld::trigger_chain_lightning(
     DamagePacket damage{};
     damage.amount[modifiers::damage_index(modifiers::DamageType::lightning)] =
         values->damage;
+    damage = scale_monster_outgoing_damage(
+        damage, encounter_config_.abyss.monster_damage_bp);
     if (!spawn_hazard(owner, HazardKind::chain_lightning, center,
                       values->radius,
                       static_cast<std::uint16_t>(values->interval_ticks + 1U),
@@ -1013,6 +1072,8 @@ void CombatWorld::tick_active_affixes(
             DamagePacket damage{};
             damage.amount[modifiers::damage_index(modifiers::DamageType::fire)] =
                 burning->damage;
+            damage = scale_monster_outgoing_damage(
+                damage, encounter_config_.abyss.monster_damage_bp);
             static_cast<void>(spawn_hazard(owner, HazardKind::burning,
                 monster.position, burning->radius, 0U, burning->duration_ticks,
                 30U, damage));
