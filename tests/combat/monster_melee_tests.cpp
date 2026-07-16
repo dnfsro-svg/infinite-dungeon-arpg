@@ -38,6 +38,18 @@ MonsterAffixSet one_affix(
     return result;
 }
 
+MonsterAffixSet two_affixes(
+    MonsterAffixId first,
+    MonsterAffixTier first_tier,
+    MonsterAffixId second,
+    MonsterAffixTier second_tier) noexcept {
+    MonsterAffixSet result{};
+    result.values[0] = {first, first_tier};
+    result.values[1] = {second, second_tier};
+    result.count = 2U;
+    return result;
+}
+
 int ticks_in_phase(CombatWorld& world, MonsterAiPhase phase) noexcept {
     int ticks = 0;
     while (ticks < 300
@@ -332,7 +344,7 @@ arpg::test::Failure abyss_fury_scales_all_monster_paths_once() noexcept {
     ARPG_REQUIRE(shooter.snapshot().projectile_count == 1U);
     ARPG_REQUIRE(shooter.snapshot().projectiles[0].damage.amount[
         arpg::modifiers::damage_index(
-            arpg::modifiers::DamageType::lightning)] == 58);
+            arpg::modifiers::DamageType::lightning)] == 40);
 
     CombatEncounterConfig hazard = encounter_for(
         MonsterId::chaos_hazard, 0.0F);
@@ -368,6 +380,42 @@ arpg::test::Failure abyss_fury_scales_all_monster_paths_once() noexcept {
     return {};
 }
 
+arpg::test::Failure abyss_fury_scales_final_chilling_contact_and_projectile() noexcept {
+    CombatEncounterConfig contact = encounter_for(
+        MonsterId::chaos_chaser, 0.0F);
+    contact.abyss = arpg::abyss::combat_config_for(
+        arpg::abyss::AbyssRuleId::abyss_fury);
+    contact.wave.spawns[0].affixes = two_affixes(
+        MonsterAffixId::chilling, MonsterAffixTier::m1,
+        MonsterAffixId::blink_assault, MonsterAffixTier::m1);
+    CombatWorld contact_world{contact};
+    arpg::test::CombatWorldTestAccess::set_blink_empowered(
+        contact_world, 0U, true);
+    arpg::test::CombatWorldTestAccess::arm_monster_active_attack(
+        contact_world, 0U);
+    const int contact_before = contact_world.snapshot().player.hp;
+    arpg::test::CombatWorldTestAccess::simulate_monster(contact_world, 0U);
+    ARPG_REQUIRE(contact_before - contact_world.snapshot().player.hp == 91);
+
+    CombatEncounterConfig projectile = encounter_for(
+        MonsterId::lightning_shooter, 0.0F);
+    projectile.abyss = contact.abyss;
+    projectile.wave.spawns[0].affixes = one_affix(
+        MonsterAffixId::chilling, MonsterAffixTier::m1);
+    CombatWorld projectile_world{projectile};
+    arpg::test::CombatWorldTestAccess::arm_monster_active_attack(
+        projectile_world, 0U);
+    arpg::test::CombatWorldTestAccess::simulate_monster(projectile_world, 0U);
+    ARPG_REQUIRE(projectile_world.snapshot().projectile_count == 1U);
+    ARPG_REQUIRE(projectile_world.snapshot().projectiles[0].damage.amount[
+        arpg::modifiers::damage_index(
+            arpg::modifiers::DamageType::lightning)] == 40);
+    const int projectile_before = projectile_world.snapshot().player.hp;
+    projectile_world.tick({});
+    ARPG_REQUIRE(projectile_before - projectile_world.snapshot().player.hp == 66);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"chaser move and telegraph stop", &chaos_chaser_moves_then_stops_for_telegraph},
     {"chaser active serial cooldown", &chaos_chaser_damages_only_once_per_active_serial},
@@ -380,6 +428,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"abyss bulwark composes profile", &abyss_bulwark_adds_to_stage9_profile},
     {"abyss fury scales outgoing paths once",
      &abyss_fury_scales_all_monster_paths_once},
+    {"abyss fury scales final chilling damage",
+     &abyss_fury_scales_final_chilling_contact_and_projectile},
 };
 
 }  // namespace

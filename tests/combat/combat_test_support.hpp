@@ -181,6 +181,15 @@ struct CombatWorldTestAccess final {
         }
     }
 
+    static void set_blink_empowered(
+        combat::CombatWorld& world,
+        std::size_t slot,
+        bool empowered) noexcept {
+        if (slot < world.monsters_.slots_.size()) {
+            world.monsters_.slots_[slot].blink_empowered = empowered;
+        }
+    }
+
     static void tick_active_affixes(
         combat::CombatWorld& world,
         std::size_t slot) noexcept {

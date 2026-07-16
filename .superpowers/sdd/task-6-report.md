@@ -28,7 +28,7 @@
 3. 正整数资源/盾值需要上取整时使用统一 ceil helper；armor 与 damage 延续整数 floor。
 4. tick 统一使用 ceil，非零 base 的结果至少为 1 tick。
 
-统一 helper 位于 `monster_ai_common.hpp`：`scale_basis_points`、`scale_ticks_ratio`、Stage 9 packet 缩放、Abyss outgoing damage boundary、move/attack/cooldown 组合函数。三个 AI 文件不再各自复制 tick/packet 浮点逻辑。
+统一基础 helper 位于 `combat_scaling.hpp`：`scale_basis_points`、`scale_ticks_ratio`、Stage 9 packet 缩放与 Abyss outgoing damage boundary；`monster_ai_common.hpp` 只保留 move/attack/cooldown 的 AI/profile 组合包装。三个 AI 文件不再各自复制 tick/packet 浮点逻辑。
 
 ## 六条规则精确证据
 
@@ -49,12 +49,12 @@
 ### Abyss Fury
 
 - 接触：`floor(45 * 1.45) = 65`。
-- projectile：`floor(40 * 1.45) = 58`。
+- projectile：生成时保留 Stage 9 packet `40`，direct-hit 最终边界得到 `floor(40 * 1.45) = 58`。
 - native monster hazard：`floor(35 * 1.45) = 50`。
 - death-blast affix hazard：`floor(120 * 1.45) = 174`；chain/burning 也在生成边界走同一函数。
 - Stage 9 Frenzy M3 先算 `floor(45 * 1.5) = 67`，再算 `floor(67 * 1.45) = 97`。
 - telegraph/active/recovery/cooldown：`7/4/9/21`（Frenzy M3 后再除 Fury 1.45）；active ticks 保持 `4`。
-- damage 只在生成/出手边界乘一次，projectile/hazard 命中时不再乘；environment 未接入该边界。
+- damage 只乘一次：contact/projectile/bomber 在 direct-hit 最终边界乘；native/death/chain/burning hazard 因不走 direct-hit，在生成边界乘；environment 未接入该边界。
 
 ### Heavy Steps
 
@@ -84,7 +84,7 @@
 ## 修改文件
 
 - Combat public config/API/CMake：`combat_types.hpp`、`combat_world.hpp/.cpp`、`CMakeLists.txt`。
-- 统一缩放与运行路径：`monster_ai_common.hpp`、三个 monster AI、`monster_ai.cpp`、`monster_pool.hpp/.cpp`、`player_simulation.cpp`。
+- 统一缩放与运行路径：`combat_scaling.hpp`、`monster_ai_common.hpp`、三个 monster AI、`monster_ai.cpp`、`monster_pool.hpp/.cpp`、`player_simulation.cpp`。
 - Dungeon config/cached receipt 接线：`room_combat_template.hpp/.cpp`、`dungeon_session.cpp`。
 - 测试：combat config/health/movement/melee/support/main，以及 Dungeon transaction/support。
 
@@ -101,3 +101,33 @@
 - 无已知 Task 6 功能缺口。
 - Task 7 的三条 environment runtime 仍未实现；当前 Fury boundary 不会误缩放未来 environment damage。
 - Task 8 必须显式调用 `clear_abyss_rule_preserving_resources()`；本任务只提供并测试 API，没有提前接清房 lifecycle。
+
+## 审查修复：Fury 最终伤害边界与 helper 下沉
+
+### RED
+
+- actual contact 使用 Blink Assault M1 把 Stage 9 contact packet 从 `45` 变为 `54`，再叠 Chilling M1：旧实现先 Fury 后 Chilling，结果为 `90`；期望先 `ceil(54 * 0.15) = 9` 合入 packet，再 final Fury，结果 `floor(63 * 1.45) = 91`。
+- actual projectile 使用基础 lightning `40` 与 Chilling M1：旧顺序得到 `floor(40 * 1.45) + ceil(58 * 0.15) = 67`；期望先加入 `ceil(40 * 0.15) = 6`，再 final Fury 得 `floor(46 * 1.45) = 66`。
+- Fury + Chaos Corrosion 三档旧实现仍写入原值 `20/30/45`；期望 final DoT `29/43/65`。
+- RED 输出：`150 cases, 2 failures`，分别命中 contact `91` 断言与 Corrosion 三档断言。
+
+### GREEN 与 exactly-once 审计
+
+- `apply_monster_direct_hit` 先完整合入 Chilling 水伤，再对最终 packet 每个元素 floor 乘 `monster_damage_bp`；AI contact、projectile 与 bomber 不再提前乘 Fury。
+- projectile runtime 中保存 Stage 9 packet，命中 direct-hit 后只乘一次；Chilling M1 测试锁定 packet `40`、最终玩家伤害 `66`。
+- Corrosion 在最终写入 `PlayerStatusRuntime` 前 floor 乘一次：M1/M2/M3 为 `29/43/65`；相同测试同时锁定无 Fury 时仍为 `20/30/45`，排除无条件缩放与双乘。
+- native monster hazard 以及 death/chain/burning affix hazard 不经过 direct-hit，继续只在生成边界乘 Fury；environment 仍未实现且未接入。
+- GREEN 输出：`150 cases, 0 failures`。
+
+### Minor Refactor
+
+- 新增窄头 `src/combat/combat_scaling.hpp`，集中整数 basis-point、tick ratio、Stage 9 packet 与 outgoing packet 缩放。
+- `monster_ai_common.hpp` 只保留 AI/profile 的 move/attack/cooldown 组合包装。
+- `combat_world.cpp`、`monster_pool.cpp`、`player_simulation.cpp` 与 scaling 单测直接 include `combat_scaling.hpp`，不再 include AI common；没有复制 helper 实现。
+
+### 审查修复后的 fresh 验证
+
+- `ctest --preset windows-msvc-debug -R "combat.units|dungeon.units" --output-on-failure`
+  - 2/2 tests，0 failures，总耗时 `143.81 sec`。
+- `ctest --preset windows-msvc-debug -R '^abyss.units$|^architecture\.' --output-on-failure`
+  - 19/19 tests，0 failures，总耗时 `53.55 sec`。

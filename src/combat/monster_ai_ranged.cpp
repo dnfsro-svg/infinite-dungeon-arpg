@@ -155,8 +155,6 @@ void CombatWorld::simulate_ranged_ai(
                         packet = scaled_multishot_packet(
                             packet, multishot->primary_bp);
                     }
-                    packet = scale_monster_outgoing_damage(
-                        packet, encounter_config_.abyss.monster_damage_bp);
                     if (!spawn_projectile(
                             MonsterHandle{static_cast<std::uint16_t>(slot),
                                           monster.generation},

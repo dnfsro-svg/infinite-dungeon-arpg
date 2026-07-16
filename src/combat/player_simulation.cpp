@@ -1,7 +1,7 @@
 #include "combat/combat_world.hpp"
 
 #include "combat/attack_catalog.hpp"
-#include "combat/monster_ai_common.hpp"
+#include "combat/combat_scaling.hpp"
 #include "combat/room_bounds.hpp"
 
 #include <algorithm>

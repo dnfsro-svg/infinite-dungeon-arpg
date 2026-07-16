@@ -111,8 +111,6 @@ void CombatWorld::resolve_monster_contact_attack(
                     * blink_damage_bp(monster.affixes)) / 10000);
             }
         }
-        packet = scale_monster_outgoing_damage(
-            packet, encounter_config_.abyss.monster_damage_bp);
         if (apply_monster_direct_hit(slot, packet,
             monster.position,
             definition->feedback)) {

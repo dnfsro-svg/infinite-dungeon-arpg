@@ -2,8 +2,8 @@
 
 #include "combat_test_support.hpp"
 
+#include "combat/combat_scaling.hpp"
 #include "combat/combat_world.hpp"
-#include "combat/monster_ai_common.hpp"
 
 #include "abyss/abyss_rules.hpp"
 

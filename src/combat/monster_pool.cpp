@@ -1,7 +1,7 @@
 #include "combat/monster_pool.hpp"
 
+#include "combat/combat_scaling.hpp"
 #include "combat/monster_catalog.hpp"
-#include "combat/monster_ai_common.hpp"
 
 #include <algorithm>
 #include <cstddef>

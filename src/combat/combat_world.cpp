@@ -2,10 +2,10 @@
 
 #include "abyss/abyss_rules.hpp"
 #include "combat/attack_catalog.hpp"
+#include "combat/combat_scaling.hpp"
 #include "combat/monster_affix_catalog.hpp"
 #include "combat/monster_affix_generation.hpp"
 #include "combat/monster_catalog.hpp"
-#include "combat/monster_ai_common.hpp"
 #include "combat/room_bounds.hpp"
 
 #include <array>
@@ -881,6 +881,8 @@ bool CombatWorld::apply_monster_direct_hit(
     packet.amount[water] = static_cast<int>(std::clamp(water_total,
         static_cast<std::int64_t>((std::numeric_limits<int>::min)()),
         static_cast<std::int64_t>((std::numeric_limits<int>::max)())));
+    packet = scale_monster_outgoing_damage(
+        packet, encounter_config_.abyss.monster_damage_bp);
 
     if (!apply_player_damage(packet, DamageDelivery::direct, source_position,
                              feedback)) {
@@ -897,16 +899,18 @@ bool CombatWorld::apply_monster_direct_hit(
                                              values.slow_ticks);
     }
 
-    if (values.corrosion_damage > player_.status.corrosion_damage_per_second) {
-        player_.status.corrosion_damage_per_second = values.corrosion_damage;
+    const int corrosion_damage = scale_basis_points(
+        values.corrosion_damage, encounter_config_.abyss.monster_damage_bp);
+    if (corrosion_damage > player_.status.corrosion_damage_per_second) {
+        player_.status.corrosion_damage_per_second = corrosion_damage;
         player_.status.corrosion_ticks = values.corrosion_ticks;
         player_.status.corrosion_tick_phase = 0U;
-    } else if (values.corrosion_damage
+    } else if (corrosion_damage
                    == player_.status.corrosion_damage_per_second
-               && values.corrosion_damage > 0) {
+               && corrosion_damage > 0) {
         player_.status.corrosion_ticks = values.corrosion_ticks;
         player_.status.corrosion_tick_phase = 0U;
-    } else if (values.corrosion_damage > 0) {
+    } else if (corrosion_damage > 0) {
         player_.status.corrosion_ticks = std::max(player_.status.corrosion_ticks,
                                                    values.corrosion_ticks);
     }
