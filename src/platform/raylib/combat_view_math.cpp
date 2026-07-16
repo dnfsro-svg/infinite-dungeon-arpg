@@ -183,6 +183,22 @@ AffixOutline monster_affix_outline(
         static_cast<std::uint8_t>(160U + ramp * 6U)};
 }
 
+bool blink_affix_warning_visible(
+    const combat::MonsterSnapshot& monster) noexcept {
+    return monster.affix_warning == combat::MonsterAffixWarning::blink
+        && monster.affix_warning_ticks != 0U;
+}
+
+float blink_affix_warning_actor_radius(
+    const combat::MonsterSnapshot& monster) noexcept {
+    return blink_affix_warning_visible(monster) ? 16.0F : 0.0F;
+}
+
+float blink_affix_warning_ground_radius(
+    const combat::MonsterSnapshot& monster) noexcept {
+    return blink_affix_warning_visible(monster) ? 28.0F : 0.0F;
+}
+
 bool monster_visible(const combat::MonsterSnapshot& monster) noexcept {
     return monster.active
         && monster.ai_phase != combat::MonsterAiPhase::defeated;

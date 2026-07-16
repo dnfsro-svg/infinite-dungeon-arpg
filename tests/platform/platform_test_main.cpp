@@ -37,5 +37,5 @@ int main() {
         inventory_view_math_suite(),
     };
 
-    return arpg::test::run_suites(suites, 72, "stage 8 task 9 review fixes");
+    return arpg::test::run_suites(suites, 73, "stage 8 task 9 review fixes");
 }

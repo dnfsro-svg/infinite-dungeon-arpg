@@ -150,6 +150,19 @@ void draw_monster_warning(const MonsterSnapshot& monster, Vec3 position,
     DrawCircleLines(static_cast<int>(projected.x), static_cast<int>(projected.ground_y - size), size, warning);
 }
 
+void draw_blink_affix_warning(const MonsterSnapshot& monster, Vec3 position,
+    float width, float height) noexcept {
+    if (!blink_affix_warning_visible(monster)) return;
+    const ScreenProjection projected = project_combat_position(position, width, height);
+    const Color warning{255, 86, 214, 235};
+    const float actor_radius = blink_affix_warning_actor_radius(monster) * projected.scale;
+    const float ground_radius = blink_affix_warning_ground_radius(monster) * projected.scale;
+    DrawCircleLines(static_cast<int>(projected.x),
+        static_cast<int>(projected.y - 44.0F * projected.scale), actor_radius, warning);
+    DrawEllipseLines(static_cast<int>(projected.x), static_cast<int>(projected.ground_y),
+        ground_radius, ground_radius * 0.38F, warning);
+}
+
 void draw_monster_silhouette(const MonsterSnapshot& monster, Vec3 position,
     dungeon::DungeonElement ecology, float width, float height,
     const CombatFeedback& feedback, std::size_t monster_index,
@@ -241,6 +254,7 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
             && monster_visible(previous_monster)) position = interpolate(previous_monster.position, monster.position, alpha);
         draw_items[draw_count++] = {position, static_cast<std::uint8_t>(index), false};
         draw_monster_warning(monster, position, current.ecology, width, height);
+        draw_blink_affix_warning(monster, position, width, height);
     }
     sort_render_actors(draw_items, draw_count);
     draw_hazards(current_combat, width, height);

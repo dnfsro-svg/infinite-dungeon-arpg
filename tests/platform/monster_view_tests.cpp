@@ -7,6 +7,7 @@
 
 #include <array>
 #include <cstring>
+#include <cstdint>
 
 namespace {
 
@@ -16,6 +17,7 @@ using arpg::combat::MonsterAffixDanger;
 using arpg::combat::MonsterAffixId;
 using arpg::combat::MonsterAffixInstance;
 using arpg::combat::MonsterAffixTier;
+using arpg::combat::MonsterAffixWarning;
 using arpg::combat::MonsterId;
 using arpg::combat::MonsterSnapshot;
 using arpg::combat::PlayerSnapshot;
@@ -203,6 +205,31 @@ arpg::test::Failure affix_presentation_has_category_colors_and_high_danger_pulse
     return {};
 }
 
+arpg::test::Failure blink_affix_warning_uses_snapshot_ticks_not_ai_phase() noexcept {
+    MonsterSnapshot warning{};
+    warning.affix_warning = MonsterAffixWarning::blink;
+    warning.affix_warning_ticks = 30U;
+    warning.ai_phase = MonsterAiPhase::move;
+    ARPG_REQUIRE(arpg::platform::blink_affix_warning_visible(warning));
+    ARPG_REQUIRE(arpg::platform::blink_affix_warning_actor_radius(warning) > 0.0F);
+    ARPG_REQUIRE(arpg::platform::blink_affix_warning_ground_radius(warning) > 0.0F);
+
+    const float actor_radius = arpg::platform::blink_affix_warning_actor_radius(warning);
+    const float ground_radius = arpg::platform::blink_affix_warning_ground_radius(warning);
+    warning.ai_phase = MonsterAiPhase::recovery;
+    ARPG_REQUIRE(arpg::platform::blink_affix_warning_visible(warning));
+    ARPG_REQUIRE(arpg::test::near(
+        arpg::platform::blink_affix_warning_actor_radius(warning), actor_radius, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(
+        arpg::platform::blink_affix_warning_ground_radius(warning), ground_radius, 1.0e-4));
+
+    warning.affix_warning_ticks = 0U;
+    ARPG_REQUIRE(!arpg::platform::blink_affix_warning_visible(warning));
+    ARPG_REQUIRE(arpg::platform::blink_affix_warning_actor_radius(warning) == 0.0F);
+    ARPG_REQUIRE(arpg::platform::blink_affix_warning_ground_radius(warning) == 0.0F);
+    return {};
+}
+
 arpg::test::Failure hazards_and_affix_warning_audio_are_distinct_and_throttled() noexcept {
     const auto native = arpg::platform::hazard_color(arpg::combat::HazardKind::native);
     const auto burning = arpg::platform::hazard_color(arpg::combat::HazardKind::burning);
@@ -230,10 +257,17 @@ arpg::test::Failure hazards_and_affix_warning_audio_are_distinct_and_throttled()
     arpg::platform::WarningAudioThrottle throttle{};
     ARPG_REQUIRE(throttle.allow(arpg::platform::AudioCue::blink_warning, 24U));
     ARPG_REQUIRE(!throttle.allow(arpg::platform::AudioCue::blink_warning, 24U));
+    ARPG_REQUIRE(!throttle.allow(arpg::platform::AudioCue::blink_warning, 28U));
     ARPG_REQUIRE(!throttle.allow(arpg::platform::AudioCue::blink_warning, 35U));
     ARPG_REQUIRE(throttle.allow(arpg::platform::AudioCue::blink_warning, 36U));
     ARPG_REQUIRE(throttle.allow(arpg::platform::AudioCue::chain_warning, 24U));
     ARPG_REQUIRE(throttle.allow(arpg::platform::AudioCue::blink_warning, 2U));
+
+    arpg::platform::WarningAudioThrottle near_wrap{};
+    constexpr std::uint64_t kMax = UINT64_MAX;
+    ARPG_REQUIRE(near_wrap.allow(arpg::platform::AudioCue::blink_warning, kMax - 5U));
+    ARPG_REQUIRE(!near_wrap.allow(arpg::platform::AudioCue::blink_warning, kMax - 1U));
+    ARPG_REQUIRE(near_wrap.allow(arpg::platform::AudioCue::blink_warning, 2U));
     return {};
 }
 
@@ -248,6 +282,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"monster attack audio aggregation", &monster_attack_audio_emits_one_low_layer},
     {"affix badges consume catalog", &affix_badges_consume_catalog_names_tiers_and_danger},
     {"affix presentation categories and pulse", &affix_presentation_has_category_colors_and_high_danger_pulse},
+    {"blink affix warning consumes snapshot ticks", &blink_affix_warning_uses_snapshot_ticks_not_ai_phase},
     {"hazard colors and affix warning audio", &hazards_and_affix_warning_audio_are_distinct_and_throttled},
 };
 

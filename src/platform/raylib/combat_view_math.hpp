@@ -84,6 +84,12 @@ void sort_actor_draw_items(
 [[nodiscard]] AffixOutline monster_affix_outline(
     combat::MonsterAffixInstance affix,
     std::uint64_t tick) noexcept;
+[[nodiscard]] bool blink_affix_warning_visible(
+    const combat::MonsterSnapshot& monster) noexcept;
+[[nodiscard]] float blink_affix_warning_actor_radius(
+    const combat::MonsterSnapshot& monster) noexcept;
+[[nodiscard]] float blink_affix_warning_ground_radius(
+    const combat::MonsterSnapshot& monster) noexcept;
 [[nodiscard]] bool monster_visible(
     const combat::MonsterSnapshot& monster) noexcept;
 [[nodiscard]] float player_hp_ratio(

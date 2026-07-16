@@ -63,8 +63,8 @@ bool WarningAudioThrottle::allow(AudioCue cue, std::uint64_t tick) noexcept {
     if (index >= last_ticks_.size()) {
         return false;
     }
-    if (!has_last_tick_[index] || tick >= last_ticks_[index] + 12U
-        || tick < last_ticks_[index]) {
+    if (!has_last_tick_[index] || tick < last_ticks_[index]
+        || tick - last_ticks_[index] >= 12U) {
         last_ticks_[index] = tick;
         has_last_tick_[index] = true;
         return true;
