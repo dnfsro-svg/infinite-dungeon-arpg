@@ -49,5 +49,5 @@ int main() {
         player_defense_suite(),
     };
 
-    return arpg::test::run_suites(suites, 177, "stage 11-a task 1 player damage history");
+    return arpg::test::run_suites(suites, 178, "stage 11-a task 1 player damage history");
 }

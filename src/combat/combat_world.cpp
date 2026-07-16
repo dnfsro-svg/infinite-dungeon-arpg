@@ -73,6 +73,35 @@ bool checked_multiply(
     return true;
 }
 
+std::uint64_t multiply_divide_floor_u64(
+    std::uint64_t left,
+    std::uint64_t right,
+    std::uint64_t divisor) noexcept {
+    std::uint64_t quotient{};
+    std::uint64_t remainder{};
+    std::uint64_t add_quotient = right / divisor;
+    std::uint64_t add_remainder = right % divisor;
+    while (left != 0U) {
+        if ((left & 1U) != 0U) {
+            quotient += add_quotient;
+            remainder += add_remainder;
+            if (remainder >= divisor) {
+                remainder -= divisor;
+                ++quotient;
+            }
+        }
+        left >>= 1U;
+        if (left == 0U) break;
+        add_quotient *= 2U;
+        add_remainder *= 2U;
+        if (add_remainder >= divisor) {
+            add_remainder -= divisor;
+            ++add_quotient;
+        }
+    }
+    return quotient;
+}
+
 std::optional<std::int64_t> fixed_scale_floor(
     std::int64_t value, std::int64_t factor) noexcept {
     std::int64_t product{};
@@ -163,9 +192,9 @@ std::optional<ResolvedPlayerDamage> resolve_player_damage_packet(
         const auto maximum = (std::numeric_limits<std::uint64_t>::max)();
         return left > maximum - right ? maximum : left + right;
     };
-    const auto resolved_component = [&build](
+    const auto reduced_component = [](
         int raw, std::int32_t reduction) noexcept -> std::optional<std::uint64_t> {
-        if (raw <= 0) return std::int64_t{0};
+        if (raw <= 0) return std::uint64_t{0};
         const std::int64_t multiplier = modifiers::kFixedOne - reduction;
         std::int64_t reduced_product{};
         if (!checked_multiply(raw, multiplier, reduced_product)) {
@@ -173,21 +202,16 @@ std::optional<ResolvedPlayerDamage> resolve_player_damage_packet(
         }
         const std::int64_t reduced = reduced_product / modifiers::kFixedOne
             + (reduced_product % modifiers::kFixedOne != 0 ? 1 : 0);
-        std::int64_t final_product{};
-        if (!checked_multiply(
-                reduced, build.values.damage_taken, final_product)) {
-            return std::nullopt;
-        }
-        return static_cast<std::uint64_t>(
-            final_product / modifiers::kFixedOne);
+        return static_cast<std::uint64_t>(reduced);
     };
 
+    std::array<std::uint64_t, modifiers::kDamageTypeCount> reduced{};
     ResolvedPlayerDamage result{};
-    const auto physical = resolved_component(
+    const auto physical = reduced_component(
         packet.amount[modifiers::damage_index(modifiers::DamageType::physical)],
         modifiers::rating_to_basis_points(build.values.armor));
     if (!physical.has_value()) return std::nullopt;
-    result.by_type[modifiers::damage_index(modifiers::DamageType::physical)] =
+    reduced[modifiers::damage_index(modifiers::DamageType::physical)] =
         *physical;
     for (std::size_t element = 0; element < modifiers::kElementCount; ++element) {
         if (build.values.damage_reduction_cap_bonus[element] < 0) {
@@ -199,11 +223,47 @@ std::optional<ResolvedPlayerDamage> resolve_player_damage_packet(
             std::min<std::int64_t>(9500, uncapped));
         const auto reduction = std::clamp(
             build.values.damage_reduction[element], std::int32_t{-6000}, cap);
-        const auto component = resolved_component(
+        const auto component = reduced_component(
             packet.amount[element + 1U], reduction);
         if (!component.has_value()) return std::nullopt;
-        result.by_type[element + 1U] = *component;
+        reduced[element + 1U] = *component;
     }
+
+    std::uint64_t reduced_total{};
+    for (const std::uint64_t component : reduced) {
+        reduced_total = saturating_add(reduced_total, component);
+    }
+    if (reduced_total == 0U) return result;
+    if (reduced_total > static_cast<std::uint64_t>(
+            (std::numeric_limits<std::int64_t>::max)())) {
+        return std::nullopt;
+    }
+    std::int64_t scaled_total{};
+    if (!checked_multiply(
+            static_cast<std::int64_t>(reduced_total),
+            build.values.damage_taken,
+            scaled_total)) {
+        return std::nullopt;
+    }
+    const std::uint64_t compatible_total = static_cast<std::uint64_t>(
+        scaled_total / modifiers::kFixedOne);
+
+    std::uint64_t distributed_total{};
+    for (std::size_t index = 0; index < reduced.size(); ++index) {
+        result.by_type[index] = multiply_divide_floor_u64(
+            reduced[index], compatible_total, reduced_total);
+        distributed_total = saturating_add(
+            distributed_total, result.by_type[index]);
+    }
+    std::uint64_t remainder = compatible_total - distributed_total;
+    for (std::size_t index = 0;
+         index < reduced.size() && remainder != 0U;
+         ++index) {
+        if (reduced[index] == 0U) continue;
+        ++result.by_type[index];
+        --remainder;
+    }
+    if (remainder != 0U) return std::nullopt;
     for (const std::uint64_t component : result.by_type) {
         result.total = saturating_add(result.total, component);
     }

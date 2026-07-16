@@ -60,7 +60,25 @@ arpg::test::Failure packet_resolution_handles_int_max_without_wrapping() noexcep
     return {};
 }
 
-arpg::test::Failure history_records_only_the_already_clipped_damage() noexcept {
+arpg::test::Failure damage_taken_preserves_total_and_distributes_remainder() noexcept {
+    PlayerCombatBuild build{};
+    build.values.damage_taken = 5000;
+
+    const auto resolved = resolve_player_damage_packet(
+        DamagePacket{{1, 1, 0, 0, 0}}, build);
+    ARPG_REQUIRE(resolved.has_value());
+    ARPG_REQUIRE(resolved->total == 1U);
+    ARPG_REQUIRE(resolved->by_type[kPhysical] == 1U);
+    ARPG_REQUIRE(resolved->by_type[kFire] == 0U);
+    ARPG_REQUIRE(resolved->by_type[kWater] == 0U);
+    ARPG_REQUIRE(resolved->by_type[kLightning] == 0U);
+    ARPG_REQUIRE(resolved->by_type[kChaos] == 0U);
+    ARPG_REQUIRE(resolve_player_damage(
+        DamagePacket{{1, 1, 0, 0, 0}}, build) == 1);
+    return {};
+}
+
+arpg::test::Failure history_records_caller_provided_damage() noexcept {
     PlayerDamageHistory history{};
     history.begin_tick(42U);
     ResolvedPlayerDamage actual_damage{};
@@ -152,7 +170,8 @@ arpg::test::Failure history_hot_path_performs_no_heap_allocations() noexcept {
 constexpr arpg::test::TestCase kCases[] = {
     {"packet resolution preserves types", &packet_resolution_preserves_final_damage_by_type},
     {"packet resolution handles int max", &packet_resolution_handles_int_max_without_wrapping},
-    {"history records clipped damage", &history_records_only_the_already_clipped_damage},
+    {"damage taken distributes remainder", &damage_taken_preserves_total_and_distributes_remainder},
+    {"history records caller provided damage", &history_records_caller_provided_damage},
     {"same tick records accumulate", &same_tick_records_accumulate_by_type},
     {"300 tick inclusive window", &history_keeps_300_ticks_and_evicts_on_tick_301},
     {"backward tick resets history", &backward_tick_resets_the_entire_history},
