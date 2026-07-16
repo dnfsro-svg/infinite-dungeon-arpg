@@ -55,6 +55,20 @@ struct CombatWorldTestAccess final {
             owner, combat::Vec3{}, combat::Vec3{}, 1000U, 1, 0.1F);
     }
 
+    static bool spawn_projectile(
+        combat::CombatWorld& world,
+        combat::MonsterHandle owner,
+        combat::Vec3 position,
+        combat::Vec3 velocity,
+        std::uint16_t lifetime_ticks,
+        combat::DamagePacket damage,
+        float radius,
+        bool trigger_chain_on_end,
+        combat::MonsterAffixSet owner_affixes) noexcept {
+        return world.spawn_projectile(owner, position, velocity, lifetime_ticks,
+            damage, radius, trigger_chain_on_end, owner_affixes);
+    }
+
     static bool spawn_hazard(
         combat::CombatWorld& world,
         combat::MonsterHandle owner) noexcept {
@@ -106,6 +120,52 @@ struct CombatWorldTestAccess final {
         combat::Vec3 source_position,
         combat::FeedbackLevel feedback) noexcept {
         world.apply_monster_direct_hit(slot, packet, source_position, feedback);
+    }
+
+    static void freeze_monster_ai(
+        combat::CombatWorld& world,
+        std::size_t slot,
+        std::uint16_t ticks) noexcept {
+        if (slot < world.monsters_.slots_.size()) {
+            world.monsters_.slots_[slot].hit_stop_ticks = ticks;
+        }
+    }
+
+    static void set_active_affix_ticks(
+        combat::CombatWorld& world,
+        std::size_t slot,
+        std::uint16_t burning_ticks,
+        std::uint16_t blink_ticks) noexcept {
+        if (slot < world.monsters_.slots_.size()) {
+            world.monsters_.slots_[slot].burning_ground_ticks = burning_ticks;
+            world.monsters_.slots_[slot].blink_assault_ticks = blink_ticks;
+        }
+    }
+
+    static void tick_active_affixes(
+        combat::CombatWorld& world,
+        std::size_t slot) noexcept {
+        if (slot < world.monsters_.slots_.size()) {
+            world.tick_active_affixes(slot, world.monsters_.slots_[slot]);
+        }
+    }
+
+    static void arm_monster_active_attack(
+        combat::CombatWorld& world,
+        std::size_t slot) noexcept {
+        if (slot < world.monsters_.slots_.size()) {
+            auto& monster = world.monsters_.slots_[slot];
+            monster.ai_phase = combat::MonsterAiPhase::active;
+            monster.ai_ticks = 1U;
+            monster.contact_attack_resolved = false;
+            monster.attack_target_position = world.player_.position;
+        }
+    }
+
+    static void simulate_monster(
+        combat::CombatWorld& world,
+        std::size_t slot) noexcept {
+        world.simulate_monster(slot);
     }
 };
 
