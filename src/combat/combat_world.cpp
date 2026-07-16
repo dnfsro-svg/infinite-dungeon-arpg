@@ -14,6 +14,22 @@ namespace arpg::combat {
 
 namespace {
 
+const MonsterAffixTierValues* affix_values(
+    const MonsterAffixSet& affixes, MonsterAffixId id) noexcept {
+    for (std::size_t index = 0; index < affixes.count
+         && index < affixes.values.size(); ++index) {
+        const MonsterAffixInstance& instance = affixes.values[index];
+        if (instance.id != id) continue;
+        const MonsterAffixDefinition* definition =
+            monster_affix_definition(instance.id);
+        const std::size_t tier = static_cast<std::size_t>(instance.tier);
+        if (definition != nullptr && tier < definition->tiers.size()) {
+            return &definition->tiers[tier];
+        }
+    }
+    return nullptr;
+}
+
 constexpr std::int64_t fixed_floor(std::int64_t value) noexcept {
     const std::int64_t quotient = value / modifiers::kFixedOne;
     return quotient - (value < 0 && value % modifiers::kFixedOne != 0 ? 1 : 0);
@@ -419,12 +435,16 @@ void CombatWorld::tick(MovementInput movement) noexcept {
             continue;
         }
         tick_monster_affix_resources(monster);
+        const std::size_t index = static_cast<std::size_t>(
+            &monster - monsters_.slots_.data());
+        tick_active_affixes(index, monster);
+        if (monster.affix_warning == MonsterAffixWarning::blink) {
+            continue;
+        }
         const bool dummy_frozen = monster.hit_stop_ticks != 0;
         if (dummy_frozen) {
             --monster.hit_stop_ticks;
         } else {
-            const std::size_t index = static_cast<std::size_t>(
-                &monster - monsters_.slots_.data());
             if (legacy_mode_) {
                 simulate_target(index);
             } else {
@@ -689,15 +709,16 @@ bool CombatWorld::apply_player_damage(
                                source_position, feedback);
 }
 
-void CombatWorld::apply_monster_direct_hit(
+bool CombatWorld::apply_monster_direct_hit(
     std::size_t slot,
     DamagePacket packet,
     Vec3 source_position,
-    FeedbackLevel feedback) noexcept {
-    if (slot >= monsters_.slots_.size()) return;
+    FeedbackLevel feedback,
+    bool trigger_chain) noexcept {
+    if (slot >= monsters_.slots_.size()) return false;
     const MonsterRuntime& monster = monsters_.slots_[slot];
     if (!monster.active || monster.hp <= 0
-        || monster.reaction == ReactionState::defeated) return;
+        || monster.reaction == ReactionState::defeated) return false;
 
     const DirectHitAffixValues values = direct_hit_affix_values(monster.affixes);
     const int raw_total = positive_packet_total(packet);
@@ -711,7 +732,7 @@ void CombatWorld::apply_monster_direct_hit(
 
     if (!apply_player_damage(packet, DamageDelivery::direct, source_position,
                              feedback)) {
-        return;
+        return false;
     }
 
     if (values.slow_bp > player_.status.slow_bp) {
@@ -737,6 +758,12 @@ void CombatWorld::apply_monster_direct_hit(
         player_.status.corrosion_ticks = std::max(player_.status.corrosion_ticks,
                                                    values.corrosion_ticks);
     }
+    if (trigger_chain) {
+        static_cast<void>(trigger_chain_lightning(MonsterHandle{
+            static_cast<std::uint16_t>(slot), monster.generation},
+            monster.affixes, source_position));
+    }
+    return true;
 }
 
 void CombatWorld::tick_player_status() noexcept {
@@ -768,13 +795,16 @@ bool CombatWorld::spawn_projectile(
     Vec3 velocity,
     std::uint16_t lifetime_ticks,
     DamagePacket damage,
-    float radius) noexcept {
+    float radius,
+    bool trigger_chain_on_end,
+    MonsterAffixSet owner_affixes) noexcept {
     if (monsters_.get(owner) == nullptr) {
         saturating_increment(projectile_invalid_owner_count_);
         return false;
     }
     if (!projectiles_.spawn(
-            owner, position, velocity, lifetime_ticks, damage, radius)
+            owner, position, velocity, lifetime_ticks, damage, radius,
+            trigger_chain_on_end, owner_affixes)
              .has_value()) {
         saturating_increment(projectile_saturation_count_);
         return false;
@@ -788,9 +818,12 @@ bool CombatWorld::spawn_projectile(
     Vec3 velocity,
     std::uint16_t lifetime_ticks,
     int damage,
-    float radius) noexcept {
+    float radius,
+    bool trigger_chain_on_end,
+    MonsterAffixSet owner_affixes) noexcept {
     return spawn_projectile(owner, position, velocity, lifetime_ticks,
-                            DamagePacket{damage}, radius);
+                            DamagePacket{damage}, radius, trigger_chain_on_end,
+                            owner_affixes);
 }
 
 void CombatWorld::remove_owned_projectiles(MonsterHandle owner) noexcept {
@@ -812,18 +845,21 @@ void CombatWorld::remove_owned_projectiles(MonsterHandle owner) noexcept {
 
 bool CombatWorld::spawn_hazard(
     MonsterHandle owner,
+    HazardKind kind,
     Vec3 center,
     float radius,
     std::uint16_t telegraph_ticks,
     std::uint16_t active_ticks,
     std::uint16_t damage_interval_ticks,
-    DamagePacket damage) noexcept {
+    DamagePacket damage,
+    bool persists_after_owner_death) noexcept {
     if (monsters_.get(owner) == nullptr) {
         saturating_increment(hazard_invalid_owner_count_);
         return false;
     }
-    if (!hazards_.spawn(owner, center, radius, telegraph_ticks, active_ticks,
-                        damage_interval_ticks, damage).has_value()) {
+    if (!hazards_.spawn(owner, kind, center, radius, telegraph_ticks, active_ticks,
+                        damage_interval_ticks, damage,
+                        persists_after_owner_death).has_value()) {
         saturating_increment(hazard_saturation_count_);
         return false;
     }
@@ -832,14 +868,106 @@ bool CombatWorld::spawn_hazard(
 
 bool CombatWorld::spawn_hazard(
     MonsterHandle owner,
+    HazardKind kind,
     Vec3 center,
     float radius,
     std::uint16_t telegraph_ticks,
     std::uint16_t active_ticks,
     std::uint16_t damage_interval_ticks,
-    int damage) noexcept {
-    return spawn_hazard(owner, center, radius, telegraph_ticks, active_ticks,
-                        damage_interval_ticks, DamagePacket{damage});
+    int damage,
+    bool persists_after_owner_death) noexcept {
+    return spawn_hazard(owner, kind, center, radius, telegraph_ticks, active_ticks,
+                        damage_interval_ticks, DamagePacket{damage},
+                        persists_after_owner_death);
+}
+
+bool CombatWorld::trigger_chain_lightning(
+    MonsterHandle owner, MonsterAffixSet affixes, Vec3 center) noexcept {
+    const MonsterAffixTierValues* values = affix_values(
+        affixes, MonsterAffixId::chain_lightning);
+    if (values == nullptr) return false;
+    DamagePacket damage{};
+    damage.amount[modifiers::damage_index(modifiers::DamageType::lightning)] =
+        values->damage;
+    if (!spawn_hazard(owner, HazardKind::chain_lightning, center,
+                      values->radius,
+                      static_cast<std::uint16_t>(values->interval_ticks + 1U),
+                      1U, 1U,
+                      damage)) {
+        return false;
+    }
+    CombatEvent warning{};
+    warning.kind = CombatEventKind::affix_chain_warning;
+    warning.tick = tick_;
+    warning.position = center;
+    emit_event(warning);
+    return true;
+}
+
+void CombatWorld::tick_active_affixes(
+    std::size_t slot, MonsterRuntime& monster) noexcept {
+    const MonsterHandle owner{static_cast<std::uint16_t>(slot),
+                              monster.generation};
+    if (const MonsterAffixTierValues* burning = affix_values(
+            monster.affixes, MonsterAffixId::burning_ground)) {
+        if (monster.burning_ground_ticks < burning->interval_ticks) {
+            ++monster.burning_ground_ticks;
+        }
+        if (monster.burning_ground_ticks >= burning->interval_ticks) {
+            monster.burning_ground_ticks = 0U;
+            DamagePacket damage{};
+            damage.amount[modifiers::damage_index(modifiers::DamageType::fire)] =
+                burning->damage;
+            static_cast<void>(spawn_hazard(owner, HazardKind::burning,
+                monster.position, burning->radius, 0U, burning->duration_ticks,
+                30U, damage));
+        }
+    }
+
+    const MonsterAffixTierValues* blink = affix_values(
+        monster.affixes, MonsterAffixId::blink_assault);
+    if (blink == nullptr) return;
+    if (monster.affix_warning == MonsterAffixWarning::blink) {
+        if (monster.affix_warning_ticks != 0U) {
+            --monster.affix_warning_ticks;
+        }
+        if (monster.affix_warning_ticks == 0U) {
+            float dx = player_.position.x - monster.position.x;
+            float dy = player_.position.y - monster.position.y;
+            const float distance = std::sqrt(dx * dx + dy * dy);
+            if (distance <= 0.0001F) {
+                dx = monster.facing == Facing::right ? 1.0F : -1.0F;
+                dy = 0.0F;
+            } else {
+                dx /= distance;
+                dy /= distance;
+            }
+            monster.position = Vec3{player_.position.x - dx,
+                                    player_.position.y - dy,
+                                    player_.position.z};
+            monster.position.x = std::clamp(monster.position.x,
+                room_bounds::min_x, room_bounds::max_x);
+            monster.position.y = std::clamp(monster.position.y,
+                room_bounds::min_y, room_bounds::max_y);
+            monster.velocity = Vec3{};
+            monster.blink_empowered = true;
+            monster.affix_warning = MonsterAffixWarning::none;
+        }
+        return;
+    }
+    if (monster.blink_assault_ticks < blink->interval_ticks) {
+        ++monster.blink_assault_ticks;
+    }
+    if (monster.blink_assault_ticks < blink->interval_ticks) return;
+    monster.blink_assault_ticks = 0U;
+    monster.affix_warning = MonsterAffixWarning::blink;
+    monster.affix_warning_ticks = blink->duration_ticks;
+    CombatEvent warning{};
+    warning.kind = CombatEventKind::affix_blink_warning;
+    warning.tick = tick_;
+    warning.target_index = static_cast<std::uint8_t>(slot);
+    warning.position = monster.position;
+    emit_event(warning);
 }
 
 void CombatWorld::remove_owned_hazards(MonsterHandle owner) noexcept {
@@ -900,9 +1028,13 @@ void CombatWorld::simulate_projectiles() noexcept {
         if (hit_player) {
             apply_monster_direct_hit(
                 static_cast<std::size_t>(owner.index), projectile.damage,
-                projectile.position, FeedbackLevel::medium);
+                projectile.position, FeedbackLevel::medium, false);
         }
         if (hit_player || outside || expired) {
+            if (projectile.trigger_chain_on_end) {
+                static_cast<void>(trigger_chain_lightning(owner,
+                    projectile.owner_affixes, projectile.position));
+            }
             static_cast<void>(projectiles_.destroy(ProjectileHandle{
                 static_cast<std::uint16_t>(index), projectile.generation}));
         }

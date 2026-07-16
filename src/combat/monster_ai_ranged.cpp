@@ -1,10 +1,12 @@
 #include "combat/combat_world.hpp"
 
 #include "combat/monster_ai_common.hpp"
+#include "combat/monster_affix_catalog.hpp"
 #include "combat/monster_catalog.hpp"
 #include "combat/room_bounds.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace arpg::combat {
@@ -35,6 +37,31 @@ DamagePacket scaled_packet(
     DamagePacket packet, const MonsterRuntime& monster) noexcept {
     for (int& amount : packet.amount) {
         amount = scaled_monster_damage(amount, monster.affix_profile);
+    }
+    return packet;
+}
+
+const MonsterAffixTierValues* affix_values(
+    const MonsterAffixSet& affixes, MonsterAffixId id) noexcept {
+    for (std::size_t index = 0; index < affixes.count
+         && index < affixes.values.size(); ++index) {
+        const MonsterAffixInstance& instance = affixes.values[index];
+        if (instance.id != id) continue;
+        const MonsterAffixDefinition* definition =
+            monster_affix_definition(instance.id);
+        const std::size_t tier = static_cast<std::size_t>(instance.tier);
+        if (definition != nullptr && tier < definition->tiers.size()) {
+            return &definition->tiers[tier];
+        }
+    }
+    return nullptr;
+}
+
+DamagePacket scaled_multishot_packet(
+    DamagePacket packet, std::int32_t percentage_bp) noexcept {
+    for (int& amount : packet.amount) {
+        amount = static_cast<int>((static_cast<std::int64_t>(amount)
+            * percentage_bp) / 10000);
     }
     return packet;
 }
@@ -111,11 +138,46 @@ void CombatWorld::simulate_ranged_ai(
                 } else {
                     velocity.x = monster.facing == Facing::right ? speed : -speed;
                 }
-                static_cast<void>(spawn_projectile(
-                    MonsterHandle{static_cast<std::uint16_t>(slot), monster.generation},
-                    monster.position, velocity, kProjectileLifetime,
-                    scaled_packet(definition.contact_damage, monster),
-                    kProjectileRadius));
+                const MonsterAffixTierValues* multishot = affix_values(
+                    monster.affixes, MonsterAffixId::multishot);
+                const MonsterAffixTierValues* chain = affix_values(
+                    monster.affixes, MonsterAffixId::chain_lightning);
+                const std::uint8_t count = multishot == nullptr ? 1U
+                    : multishot->projectile_count;
+                std::array<Vec3, 4> fanned_velocities{};
+                for (std::size_t projectile_index = 0U;
+                     projectile_index < count
+                         && projectile_index < fanned_velocities.size();
+                     ++projectile_index) {
+                    const float centered_index = static_cast<float>(projectile_index)
+                        - (static_cast<float>(count) - 1.0F) * 0.5F;
+                    const float angle = centered_index * 0.20F;
+                    const float cosine = std::cos(angle);
+                    const float sine = std::sin(angle);
+                    fanned_velocities[projectile_index] = Vec3{
+                        velocity.x * cosine - velocity.y * sine,
+                        velocity.x * sine + velocity.y * cosine,
+                        velocity.z};
+                }
+                for (std::size_t projectile_index = 0U;
+                     projectile_index < count
+                         && projectile_index < fanned_velocities.size();
+                     ++projectile_index) {
+                    DamagePacket packet = scaled_packet(
+                        definition.contact_damage, monster);
+                    if (multishot != nullptr) {
+                        packet = scaled_multishot_packet(
+                            packet, multishot->primary_bp);
+                    }
+                    if (!spawn_projectile(
+                            MonsterHandle{static_cast<std::uint16_t>(slot),
+                                          monster.generation},
+                            monster.position, fanned_velocities[projectile_index],
+                            kProjectileLifetime, packet, kProjectileRadius,
+                            chain != nullptr, monster.affixes)) {
+                        break;
+                    }
+                }
             } else {
                 std::size_t target_index = monsters_.slots_.size();
                 for (std::size_t index = 0; index < monsters_.slots_.size(); ++index) {

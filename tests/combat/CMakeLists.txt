@@ -11,6 +11,7 @@ add_executable(arpg_combat_tests
     monster_affix_catalog_tests.cpp
     monster_affix_generation_tests.cpp
     monster_affix_runtime_tests.cpp
+    monster_affix_trigger_tests.cpp
     monster_catalog_tests.cpp
     monster_melee_tests.cpp
     monster_ranged_tests.cpp

@@ -2,6 +2,7 @@
 
 #include "combat/combat_collision.hpp"
 #include "combat/monster_ai_common.hpp"
+#include "combat/monster_affix_catalog.hpp"
 #include "combat/monster_catalog.hpp"
 #include "combat/room_bounds.hpp"
 
@@ -49,6 +50,21 @@ void integrate_reaction(MonsterRuntime& monster) noexcept {
     clamp_position(monster.position);
 }
 
+std::int32_t blink_damage_bp(const MonsterAffixSet& affixes) noexcept {
+    for (std::size_t index = 0; index < affixes.count
+         && index < affixes.values.size(); ++index) {
+        const MonsterAffixInstance& instance = affixes.values[index];
+        if (instance.id != MonsterAffixId::blink_assault) continue;
+        const MonsterAffixDefinition* definition =
+            monster_affix_definition(instance.id);
+        const std::size_t tier = static_cast<std::size_t>(instance.tier);
+        if (definition != nullptr && tier < definition->tiers.size()) {
+            return definition->tiers[tier].primary_bp;
+        }
+    }
+    return 10000;
+}
+
 }  // namespace
 
 void CombatWorld::resolve_monster_contact_attack(
@@ -90,10 +106,16 @@ void CombatWorld::resolve_monster_contact_attack(
         DamagePacket packet = definition->contact_damage;
         for (int& amount : packet.amount) {
             amount = scaled_monster_damage(amount, monster.affix_profile);
+            if (monster.blink_empowered) {
+                amount = static_cast<int>((static_cast<std::int64_t>(amount)
+                    * blink_damage_bp(monster.affixes)) / 10000);
+            }
         }
-        apply_monster_direct_hit(slot, packet,
+        if (apply_monster_direct_hit(slot, packet,
             monster.position,
-            definition->feedback);
+            definition->feedback)) {
+            monster.blink_empowered = false;
+        }
     }
 }
 

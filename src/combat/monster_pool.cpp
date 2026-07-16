@@ -177,7 +177,9 @@ std::optional<ProjectileHandle> ProjectilePool::spawn(
     Vec3 velocity,
     std::uint16_t lifetime_ticks,
     DamagePacket damage,
-    float radius) noexcept {
+    float radius,
+    bool trigger_chain_on_end,
+    MonsterAffixSet owner_affixes) noexcept {
     if (owner.index >= kMonsterCapacity || owner.generation == 0U) {
         return std::nullopt;
     }
@@ -196,8 +198,10 @@ std::optional<ProjectileHandle> ProjectilePool::spawn(
         runtime.position = position;
         runtime.velocity = velocity;
         runtime.lifetime_ticks = lifetime_ticks;
-    runtime.damage = damage;
+        runtime.damage = damage;
         runtime.radius = radius;
+        runtime.trigger_chain_on_end = trigger_chain_on_end;
+        runtime.owner_affixes = owner_affixes;
         ++active_count_;
         return ProjectileHandle{
             static_cast<std::uint16_t>(index), generation};
@@ -211,9 +215,12 @@ std::optional<ProjectileHandle> ProjectilePool::spawn(
     Vec3 velocity,
     std::uint16_t lifetime_ticks,
     int damage,
-    float radius) noexcept {
+    float radius,
+    bool trigger_chain_on_end,
+    MonsterAffixSet owner_affixes) noexcept {
     return spawn(owner, position, velocity, lifetime_ticks,
-                 DamagePacket{damage}, radius);
+                 DamagePacket{damage}, radius, trigger_chain_on_end,
+                 owner_affixes);
 }
 
 bool ProjectilePool::destroy(ProjectileHandle handle) noexcept {
@@ -289,6 +296,7 @@ void HazardPool::clear() noexcept {
 
 std::optional<HazardHandle> HazardPool::spawn(
     MonsterHandle owner,
+    HazardKind kind,
     Vec3 center,
     float radius,
     std::uint16_t telegraph_ticks,
@@ -314,6 +322,7 @@ std::optional<HazardHandle> HazardPool::spawn(
         runtime.active = true;
         runtime.generation = generation;
         runtime.owner = owner;
+        runtime.kind = kind;
         runtime.center = center;
         runtime.radius = radius;
         runtime.telegraph_ticks = telegraph_ticks;
@@ -332,6 +341,7 @@ std::optional<HazardHandle> HazardPool::spawn(
 
 std::optional<HazardHandle> HazardPool::spawn(
     MonsterHandle owner,
+    HazardKind kind,
     Vec3 center,
     float radius,
     std::uint16_t telegraph_ticks,
@@ -339,7 +349,7 @@ std::optional<HazardHandle> HazardPool::spawn(
     std::uint16_t damage_interval_ticks,
     int damage,
     bool persists_after_owner_death) noexcept {
-    return spawn(owner, center, radius, telegraph_ticks, active_ticks,
+    return spawn(owner, kind, center, radius, telegraph_ticks, active_ticks,
                  damage_interval_ticks, DamagePacket{damage},
                  persists_after_owner_death);
 }

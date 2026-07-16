@@ -74,7 +74,7 @@ void CombatWorld::simulate_special_ai(
         if (is_hazard) {
             static_cast<void>(spawn_hazard(
                 MonsterHandle{static_cast<std::uint16_t>(slot), monster.generation},
-                monster.attack_target_position, 1.25F,
+                HazardKind::native, monster.attack_target_position, 1.25F,
                 frenzy_ticks(definition.telegraph_ticks, monster),
                 definition.hazard_ticks, kHazardDamageIntervalTicks,
                 scaled_packet(definition.contact_damage, monster)));
