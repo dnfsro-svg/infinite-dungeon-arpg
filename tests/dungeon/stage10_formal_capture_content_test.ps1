@@ -47,18 +47,29 @@ function New-TestCapture {
 New-TestCapture -Path $validPath -Blank $false
 New-TestCapture -Path $blankPath -Blank $true
 
-& $ValidatorScript -ValidateOnlyPath $validPath
-if ($LASTEXITCODE -ne 0) {
-    throw "Low-color submitted scene was rejected with code $LASTEXITCODE"
+$powershell = (Get-Command powershell.exe -ErrorAction Stop).Source
+$validArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass',
+    '-File', $ValidatorScript, '-ValidateOnlyPath', $validPath)
+$validOutput = & $powershell @validArguments 2>&1
+$validExitCode = $LASTEXITCODE
+if ($validExitCode -ne 0 -or
+        ($validOutput -join "`n") -notmatch 'stage10_capture_content=PASS') {
+    throw "Low-color submitted scene was rejected or lacked PASS marker: exit=$validExitCode output=$($validOutput -join ' | ')"
 }
+Write-Output "stage10_capture_valid_accepted=PASS exit=$validExitCode"
 
-$blankRejected = $false
+$blankArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass',
+    '-File', $ValidatorScript, '-ValidateOnlyPath', $blankPath)
 try {
-    & $ValidatorScript -ValidateOnlyPath $blankPath
-} catch {
-    $blankRejected = $true
+    $ErrorActionPreference = 'Continue'
+    $blankOutput = & $powershell @blankArguments 2>&1
+} finally {
+    $ErrorActionPreference = 'Stop'
 }
-if (-not $blankRejected) {
-    throw 'True blank capture was accepted'
+$blankExitCode = $LASTEXITCODE
+if ($blankExitCode -eq 0 -or
+        ($blankOutput -join "`n") -notmatch 'Formal capture is blank') {
+    throw "True blank rejection was not observed: exit=$blankExitCode output=$($blankOutput -join ' | ')"
 }
+Write-Output "stage10_capture_blank_rejected=PASS exit=$blankExitCode"
 Write-Output 'stage10_capture_content_regression=PASS'

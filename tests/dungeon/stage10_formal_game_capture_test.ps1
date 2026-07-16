@@ -61,7 +61,7 @@ Add-Type -AssemblyName System.Drawing
 if ($ValidateOnlyPath) {
     Test-Stage10CaptureContent -Path $ValidateOnlyPath
     Write-Output "stage10_capture_content=PASS path=$ValidateOnlyPath"
-    exit 0
+    return
 }
 if (-not $Executable -or -not $EvidenceDirectory) {
     throw 'Executable and EvidenceDirectory are required outside validation-only mode'
