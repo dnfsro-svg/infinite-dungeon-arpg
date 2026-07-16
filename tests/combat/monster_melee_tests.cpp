@@ -324,7 +324,7 @@ arpg::test::Failure abyss_bulwark_adds_to_stage9_profile() noexcept {
     return {};
 }
 
-arpg::test::Failure abyss_fury_scales_all_monster_paths_once() noexcept {
+arpg::test::Failure abyss_fury_scales_contact_once() noexcept {
     CombatEncounterConfig melee = encounter_for(
         MonsterId::chaos_chaser, 0.0F);
     melee.abyss = arpg::abyss::combat_config_for(
@@ -334,10 +334,14 @@ arpg::test::Failure abyss_fury_scales_all_monster_paths_once() noexcept {
     const int contact_before = contact.snapshot().player.hp;
     arpg::test::CombatWorldTestAccess::simulate_monster(contact, 0U);
     ARPG_REQUIRE(contact_before - contact.snapshot().player.hp == 65);
+    return {};
+}
 
+arpg::test::Failure abyss_fury_scales_projectile_once() noexcept {
     CombatEncounterConfig projectile = encounter_for(
         MonsterId::lightning_shooter, 4.0F);
-    projectile.abyss = melee.abyss;
+    projectile.abyss = arpg::abyss::combat_config_for(
+        arpg::abyss::AbyssRuleId::abyss_fury);
     CombatWorld shooter{projectile};
     arpg::test::CombatWorldTestAccess::arm_monster_active_attack(shooter, 0U);
     arpg::test::CombatWorldTestAccess::simulate_monster(shooter, 0U);
@@ -345,18 +349,28 @@ arpg::test::Failure abyss_fury_scales_all_monster_paths_once() noexcept {
     ARPG_REQUIRE(shooter.snapshot().projectiles[0].damage.amount[
         arpg::modifiers::damage_index(
             arpg::modifiers::DamageType::lightning)] == 40);
+    return {};
+}
 
+arpg::test::Failure abyss_fury_scales_hazard_once() noexcept {
     CombatEncounterConfig hazard = encounter_for(
         MonsterId::chaos_hazard, 0.0F);
-    hazard.abyss = melee.abyss;
+    hazard.abyss = arpg::abyss::combat_config_for(
+        arpg::abyss::AbyssRuleId::abyss_fury);
     CombatWorld hazard_world{hazard};
     hazard_world.tick({});
     ARPG_REQUIRE(hazard_world.snapshot().hazard_count == 1U);
     ARPG_REQUIRE(hazard_world.snapshot().hazards[0].damage.amount[
         arpg::modifiers::damage_index(
             arpg::modifiers::DamageType::chaos)] == 50);
+    return {};
+}
 
-    CombatEncounterConfig death = melee;
+arpg::test::Failure abyss_fury_scales_death_blast_once() noexcept {
+    CombatEncounterConfig death = encounter_for(
+        MonsterId::chaos_chaser, 2.0F);
+    death.abyss = arpg::abyss::combat_config_for(
+        arpg::abyss::AbyssRuleId::abyss_fury);
     death.wave.spawns[0].position = Vec3{2.0F, 0.0F, 0.0F};
     death.wave.spawns[0].affixes = one_affix(
         MonsterAffixId::death_blast, MonsterAffixTier::m1);
@@ -366,8 +380,14 @@ arpg::test::Failure abyss_fury_scales_all_monster_paths_once() noexcept {
     ARPG_REQUIRE(death_world.snapshot().hazards[0].damage.amount[
         arpg::modifiers::damage_index(
             arpg::modifiers::DamageType::physical)] == 174);
+    return {};
+}
 
-    CombatEncounterConfig frenzy = melee;
+arpg::test::Failure abyss_fury_composes_with_frenzy_once() noexcept {
+    CombatEncounterConfig frenzy = encounter_for(
+        MonsterId::chaos_chaser, 0.0F);
+    frenzy.abyss = arpg::abyss::combat_config_for(
+        arpg::abyss::AbyssRuleId::abyss_fury);
     frenzy.wave.spawns[0].affixes = one_affix(
         MonsterAffixId::frenzy, MonsterAffixTier::m3);
     CombatWorld composed_damage{frenzy};
@@ -426,8 +446,11 @@ constexpr arpg::test::TestCase kCases[] = {
     {"swift pursuit composes move and cooldown",
      &swift_pursuit_composes_move_and_cooldown},
     {"abyss bulwark composes profile", &abyss_bulwark_adds_to_stage9_profile},
-    {"abyss fury scales outgoing paths once",
-     &abyss_fury_scales_all_monster_paths_once},
+    {"abyss fury scales contact once", &abyss_fury_scales_contact_once},
+    {"abyss fury scales projectile once", &abyss_fury_scales_projectile_once},
+    {"abyss fury scales hazard once", &abyss_fury_scales_hazard_once},
+    {"abyss fury scales death blast once", &abyss_fury_scales_death_blast_once},
+    {"abyss fury composes frenzy once", &abyss_fury_composes_with_frenzy_once},
     {"abyss fury scales final chilling damage",
      &abyss_fury_scales_final_chilling_contact_and_projectile},
 };

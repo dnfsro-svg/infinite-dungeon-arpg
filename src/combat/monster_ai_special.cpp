@@ -90,6 +90,7 @@ void CombatWorld::simulate_special_ai(
                                                 definition.contact_damage,
                                                 monster.affix_profile),
                                              monster.position, definition.feedback);
+                    if (death_snapshot_.has_value()) return;
                 }
                 monster.contact_attack_resolved = true;
                 monster.hp = 0;
@@ -106,6 +107,7 @@ void CombatWorld::simulate_special_ai(
         }
         if (!monster.contact_attack_resolved) {
             if (!is_hazard) resolve_monster_contact_attack(slot);
+            if (death_snapshot_.has_value()) return;
             monster.contact_attack_resolved = true;
         }
         if (tick_down(monster.ai_ticks)) {

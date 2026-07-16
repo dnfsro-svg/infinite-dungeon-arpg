@@ -298,6 +298,38 @@ constexpr int kStage4PlayerMaxHp = 1000;
 constexpr std::uint16_t kPlayerHurtTicks = 12;
 constexpr std::uint16_t kPlayerInvulnerabilityTicks = 30;
 
+bool valid_monster_source(MonsterId monster) noexcept {
+    return static_cast<std::uint8_t>(monster)
+        < static_cast<std::uint8_t>(MonsterId::count);
+}
+
+bool valid_abyss_source_detail(std::uint16_t detail_id) noexcept {
+    return detail_id <= static_cast<std::uint16_t>(
+        abyss::AbyssRuleId::life_sacrifice);
+}
+
+PlayerDamageSource canonical_player_damage_source(
+    PlayerDamageSource source) noexcept {
+    switch (source.kind) {
+    case PlayerDamageSourceKind::monster_attack:
+    case PlayerDamageSourceKind::projectile:
+        if (!valid_monster_source(source.monster)) return {};
+        source.detail_id = 0U;
+        return source;
+    case PlayerDamageSourceKind::ground_hazard:
+    case PlayerDamageSourceKind::monster_affix:
+        return valid_monster_source(source.monster)
+            ? source : PlayerDamageSource{};
+    case PlayerDamageSourceKind::abyss_environment:
+        if (!valid_abyss_source_detail(source.detail_id)) return {};
+        source.monster = MonsterId::count;
+        return source;
+    case PlayerDamageSourceKind::unknown:
+    default:
+        return {};
+    }
+}
+
 struct DerivedPlayerBuild final {
     int max_hp{};
     int max_barrier{};
@@ -839,6 +871,7 @@ bool CombatWorld::apply_player_damage(
     Vec3 source_position,
     FeedbackLevel feedback) noexcept {
     if (death_snapshot_.has_value()) return false;
+    source = canonical_player_damage_source(source);
     player_damage_history_.begin_tick(tick_);
     const bool has_positive_component = std::any_of(
         packet.amount.begin(), packet.amount.end(), [](int value) noexcept {

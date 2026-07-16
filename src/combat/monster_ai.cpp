@@ -114,6 +114,7 @@ void CombatWorld::resolve_monster_contact_attack(
         if (apply_monster_direct_hit(slot, packet,
             monster.position,
             definition->feedback)) {
+            if (death_snapshot_.has_value()) return;
             monster.blink_empowered = false;
         }
     }

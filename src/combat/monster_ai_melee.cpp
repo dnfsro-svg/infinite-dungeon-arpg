@@ -65,6 +65,7 @@ void CombatWorld::simulate_melee_ai(
         monster.velocity = Vec3{};
         if (!monster.contact_attack_resolved) {
             resolve_monster_contact_attack(slot);
+            if (death_snapshot_.has_value()) return;
             monster.contact_attack_resolved = true;
         }
         if (tick_down(monster.ai_ticks)) {

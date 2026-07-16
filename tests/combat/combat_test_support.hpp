@@ -171,30 +171,18 @@ struct CombatWorldTestAccess final {
         world.player_.evasion_rate_bp = basis_points;
     }
 
-    static void set_player_status(
-        combat::CombatWorld& world,
-        combat::PlayerStatusRuntime status) noexcept {
-        world.player_.status = status;
+    static bool monster_contact_resolved(
+        const combat::CombatWorld& world,
+        std::size_t index) noexcept {
+        return index < world.monsters_.slots_.size()
+            && world.monsters_.slots_[index].contact_attack_resolved;
     }
 
-    static void invalidate_first_hazard_owner(
-        combat::CombatWorld& world) noexcept {
-        for (auto& hazard : world.hazards_.slots()) {
-            if (hazard.active) {
-                hazard.owner = combat::MonsterHandle{};
-                return;
-            }
-        }
-    }
-
-    static bool spawn_hazard(
-        combat::CombatWorld& world,
-        combat::MonsterHandle owner,
-        combat::HazardKind kind,
-        combat::DamagePacket damage,
-        bool persists_after_owner_death = false) noexcept {
-        return world.spawn_hazard(owner, kind, combat::Vec3{}, 2.0F,
-            0U, 10U, 30U, damage, persists_after_owner_death);
+    static std::uint16_t monster_ai_ticks(
+        const combat::CombatWorld& world,
+        std::size_t index) noexcept {
+        return index < world.monsters_.slots_.size()
+            ? world.monsters_.slots_[index].ai_ticks : 0U;
     }
 
     static const abyss::AbyssCombatConfig& abyss_config(
