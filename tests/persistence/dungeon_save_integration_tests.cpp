@@ -248,6 +248,50 @@ bool allocate_committed(dungeon::DungeonSession& session,
         && commit_pending_passive(session, store);
 }
 
+arpg::test::Failure affix_drop_is_stable_before_claim_and_absent_after_reload() noexcept {
+    constexpr std::uint64_t kRootSeed = 1U;
+    constexpr std::uint16_t kScore = 27U;
+    constexpr std::uint16_t kOrdinal = 6U;
+    TempDirectory directory;
+    auto store = make_store(directory.path);
+    const dungeon::DungeonRunState initial = initial_state(kRootSeed);
+    dungeon::DungeonSession first{dungeon::DungeonRules{}, initial};
+    dungeon::DungeonSession rebuilt{dungeon::DungeonRules{}, initial};
+    const auto position = first.snapshot().combat->player.position;
+    ARPG_REQUIRE(arpg::test::relay_defeated(first, 0U, kOrdinal, position,
+        true, combat::MonsterId::fire_bomber, kOrdinal, kScore));
+    ARPG_REQUIRE(arpg::test::relay_defeated(rebuilt, 0U, kOrdinal, position,
+        true, combat::MonsterId::fire_bomber, kOrdinal, kScore));
+    ARPG_REQUIRE(first.snapshot().ground_item_count == 1U);
+    ARPG_REQUIRE(rebuilt.snapshot().ground_item_count == 1U);
+    const auto& first_drop = arpg::test::ground_items(first)[kOrdinal];
+    const auto& rebuilt_drop = arpg::test::ground_items(rebuilt)[kOrdinal];
+    ARPG_REQUIRE(first_drop.active && rebuilt_drop.active);
+    ARPG_REQUIRE(first_drop.drop_ordinal == kOrdinal);
+    ARPG_REQUIRE(rebuilt_drop.drop_ordinal == kOrdinal);
+    ARPG_REQUIRE(std::memcmp(&first_drop.item, &rebuilt_drop.item,
+        sizeof(items::ItemInstance)) == 0);
+
+    ARPG_REQUIRE(first.request_pickup(kOrdinal)
+        == dungeon::RequestResult::accepted);
+    const auto pending = first.pending_save();
+    ARPG_REQUIRE(pending.has_value());
+    ARPG_REQUIRE(pending->kind == dungeon::PendingSaveKind::loot_pickup);
+    ARPG_REQUIRE(std::memcmp(&pending->next_state.item_ownership.items.back(),
+        &first_drop.item, sizeof(items::ItemInstance)) == 0);
+    const auto saved = store.commit(pending->next_state);
+    ARPG_REQUIRE(saved.state == persistence::SaveCommitState::committed);
+    first.resolve_pending_save(to_session_result(saved));
+
+    const auto loaded = store.load();
+    ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::ready);
+    dungeon::DungeonSession reloaded{dungeon::DungeonRules{}, loaded.checkpoint};
+    ARPG_REQUIRE(arpg::test::relay_defeated(reloaded, 0U, kOrdinal, position,
+        true, combat::MonsterId::fire_bomber, kOrdinal, kScore));
+    ARPG_REQUIRE(reloaded.snapshot().ground_item_count == 0U);
+    return {};
+}
+
 arpg::test::Failure initial_generation_one_round_trips_descriptor() noexcept {
     TempDirectory directory;
     auto store = make_store(directory.path);
@@ -589,6 +633,8 @@ arpg::test::Failure equipment_dispositions_restart_with_exact_disk_winner() noex
 }
 
 constexpr arpg::test::TestCase kCases[] = {
+    {"affix drop reload claim semantics",
+        &affix_drop_is_stable_before_claim_and_absent_after_reload},
     {"initial generation one round trips descriptor", &initial_generation_one_round_trips_descriptor},
     {"committed door transition restarts in next room", &committed_door_transition_restarts_in_next_room},
     {"pre publish failure keeps old room in memory and on disk", &pre_publish_failure_keeps_old_room_in_memory_and_on_disk},

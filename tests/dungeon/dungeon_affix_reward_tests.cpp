@@ -16,24 +16,29 @@ using arpg::dungeon::DungeonRunState;
 using arpg::dungeon::DungeonSession;
 
 constexpr std::uint64_t kDropChanceDomain = 0x44524F505F43484EULL;
+constexpr std::uint64_t kPositiveAffixTraceRootSeed = 1U;
+constexpr std::uint16_t kPositiveAffixScore = 27U;
+constexpr std::uint16_t kPositiveAffixHitOrdinal = 6U;
+constexpr std::uint16_t kPositiveAffixMissOrdinal = 0U;
 
-bool affix_drop_hits(const DungeonRunState& state,
-    std::uint16_t ordinal, std::uint16_t score) noexcept {
+std::uint64_t drop_roll(const DungeonRunState& state,
+    std::uint16_t ordinal, std::uint64_t bound) noexcept {
     auto ordinal_stream = arpg::core::DeterministicRng::derive_stream(
         state.current_room.seed, ordinal);
     auto chance = arpg::core::DeterministicRng::derive_stream(
         ordinal_stream.next_u64(), kDropChanceDomain);
-    return chance.next_bounded(10000U).value()
+    return chance.next_bounded(bound).value();
+}
+
+bool affix_drop_hits(const DungeonRunState& state,
+    std::uint16_t ordinal, std::uint16_t score) noexcept {
+    return drop_roll(state, ordinal, 10000U)
         < arpg::dungeon::affix_drop_chance_bp(score);
 }
 
 bool legacy_drop_hits(const DungeonRunState& state,
     std::uint16_t ordinal) noexcept {
-    auto ordinal_stream = arpg::core::DeterministicRng::derive_stream(
-        state.current_room.seed, ordinal);
-    auto chance = arpg::core::DeterministicRng::derive_stream(
-        ordinal_stream.next_u64(), kDropChanceDomain);
-    return chance.next_bounded(100U).value() == 0U;
+    return drop_roll(state, ordinal, 100U) == 0U;
 }
 
 DungeonRunState state_for_direct_ordinal_trace(
@@ -69,6 +74,42 @@ arpg::test::Failure dangerous_affix_reward_formulas_are_frozen() noexcept {
     ARPG_REQUIRE(affix_experience(40U, 27U) == 148U);
     ARPG_REQUIRE(affix_experience((std::numeric_limits<std::uint64_t>::max)(),
         27U) == (std::numeric_limits<std::uint64_t>::max)());
+    return {};
+}
+
+arpg::test::Failure positive_affix_drop_uses_bp_roll_and_can_miss() noexcept {
+    const DungeonRules rules;
+    const DungeonRunState state = arpg::dungeon::make_initial_run_state(
+        kPositiveAffixTraceRootSeed, rules).state;
+    constexpr std::uint16_t kChanceBp = 4150U;
+    ARPG_REQUIRE(state.root_seed == kPositiveAffixTraceRootSeed);
+    ARPG_REQUIRE(arpg::dungeon::affix_drop_chance_bp(kPositiveAffixScore)
+        == kChanceBp);
+    ARPG_REQUIRE(drop_roll(state, kPositiveAffixHitOrdinal, 10000U) == 279U);
+    ARPG_REQUIRE(drop_roll(state, kPositiveAffixHitOrdinal, 100U) == 79U);
+    ARPG_REQUIRE(drop_roll(state, kPositiveAffixHitOrdinal, 10000U)
+        < kChanceBp);
+    ARPG_REQUIRE(drop_roll(state, kPositiveAffixHitOrdinal, 100U)
+        >= kChanceBp / 100U);
+    ARPG_REQUIRE(drop_roll(state, kPositiveAffixMissOrdinal, 10000U)
+        == 7592U);
+    ARPG_REQUIRE(drop_roll(state, kPositiveAffixMissOrdinal, 10000U)
+        >= kChanceBp);
+
+    DungeonSession session{rules, state};
+    const auto player = session.snapshot().combat->player.position;
+    ARPG_REQUIRE(arpg::test::relay_defeated(session, 0U,
+        kPositiveAffixHitOrdinal, player, true,
+        arpg::combat::MonsterId::fire_bomber,
+        kPositiveAffixHitOrdinal, kPositiveAffixScore));
+    ARPG_REQUIRE(session.snapshot().ground_item_count == 1U);
+    ARPG_REQUIRE(session.snapshot().ground_items[0].ordinal
+        == kPositiveAffixHitOrdinal);
+    ARPG_REQUIRE(arpg::test::relay_defeated(session, 0U,
+        kPositiveAffixMissOrdinal, player, true,
+        arpg::combat::MonsterId::fire_bomber,
+        kPositiveAffixMissOrdinal, kPositiveAffixScore));
+    ARPG_REQUIRE(session.snapshot().ground_item_count == 1U);
     return {};
 }
 
@@ -115,6 +156,8 @@ arpg::test::Failure duplicate_event_and_ineligible_event_do_not_reward_twice() n
 
 constexpr arpg::test::TestCase kCases[] = {
     {"affix reward formulas", &dangerous_affix_reward_formulas_are_frozen},
+    {"positive affix drop bp roll and miss",
+        &positive_affix_drop_uses_bp_roll_and_can_miss},
     {"affix rewards use event fields", &defeat_reward_uses_only_stable_event_fields},
     {"affix rewards relay once", &duplicate_event_and_ineligible_event_do_not_reward_twice},
 };

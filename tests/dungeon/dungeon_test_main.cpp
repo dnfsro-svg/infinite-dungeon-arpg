@@ -49,5 +49,5 @@ int main() {
         dungeon_affix_reward_suite(),
     };
 
-    return arpg::test::run_suites(suites, 126, "stage 9 task 2 dungeon");
+    return arpg::test::run_suites(suites, 127, "stage 9 task 2 dungeon");
 }
