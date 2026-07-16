@@ -52,20 +52,7 @@ void CombatWorld::apply_dummy_impact(
     const AttackDefinition& definition) noexcept {
     MonsterRuntime& dummy = monsters_.slots_[index];
     if (dummy.hp == 0) {
-        dummy.reaction = ReactionState::defeated;
-        dummy.ai_phase = MonsterAiPhase::defeated;
-        dummy.reaction_ticks = kRespawnTicks;
-        dummy.break_window_ticks = 0;
-        dummy.velocity = Vec3{};
-
-        CombatEvent defeated{};
-        defeated.kind = CombatEventKind::defeated;
-        defeated.tick = tick_;
-        defeated.attack = definition.id;
-        defeated.target_index = static_cast<std::uint8_t>(index);
-        defeated.feedback = definition.feedback;
-        defeated.position = dummy.position;
-        emit_event(defeated);
+        defeat_monster(index, definition.id, true);
         return;
     }
 

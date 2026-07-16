@@ -79,6 +79,8 @@ private:
     void apply_dummy_impact(
         std::size_t index,
         const AttackDefinition& definition) noexcept;
+    void defeat_monster(
+        std::size_t slot, AttackId attack, bool reward_eligible) noexcept;
     void respawn_dummy(std::size_t index) noexcept;
     void apply_attack_assist(const AttackDefinition& definition) noexcept;
     void resolve_attack_hits() noexcept;

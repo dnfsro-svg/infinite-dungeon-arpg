@@ -12,6 +12,27 @@ namespace {
 
 using namespace arpg::combat;
 
+const HazardSnapshot* find_hazard(
+    const CombatSnapshot& state, HazardKind kind) noexcept {
+    for (const HazardSnapshot& hazard : state.hazards) {
+        if (hazard.active && hazard.kind == kind) return &hazard;
+    }
+    return nullptr;
+}
+
+bool defeat_with_player(CombatWorld& world) noexcept {
+    for (int attack = 0; attack < 12; ++attack) {
+        if (world.snapshot().monsters[0].hp == 0) return true;
+        if (!world.queue_action(Action::light)) return false;
+        for (int tick = 0; tick < 80; ++tick) {
+            world.tick(MovementInput{});
+            if (world.snapshot().monsters[0].hp == 0) return true;
+            if (world.snapshot().player.active_attack == AttackId::none) break;
+        }
+    }
+    return world.snapshot().monsters[0].hp == 0;
+}
+
 MonsterAffixSet one_affix(
     MonsterAffixId id, MonsterAffixTier tier) noexcept {
     MonsterAffixSet result{};
@@ -305,6 +326,76 @@ arpg::test::Failure full_pools_degrade_affix_triggers_once_without_overwrite() n
     return {};
 }
 
+arpg::test::Failure death_blast_cleans_owner_transients_and_persists() noexcept {
+    CombatEncounterConfig config{};
+    config.wave.spawn_count = 1U;
+    config.wave.spawns[0] = MonsterSpawnSpec{
+        MonsterId::chaos_chaser, Vec3{1.50F, 0.0F, 0.0F},
+        two_affixes(MonsterAffixId::death_blast, MonsterAffixTier::m1,
+                    MonsterAffixId::burning_ground, MonsterAffixTier::m1)};
+    config.wave.spawns[0].affixes.values[2] = MonsterAffixInstance{
+        MonsterAffixId::chain_lightning, MonsterAffixTier::m1};
+    config.wave.spawns[0].affixes.count = 3U;
+    CombatWorld world{config};
+    const MonsterSnapshot initial = world.snapshot().monsters[0];
+    const MonsterHandle owner{0U, initial.generation};
+    arpg::test::CombatWorldTestAccess::freeze_monster_ai(world, 0U, 1000U);
+    ARPG_REQUIRE(arpg::test::CombatWorldTestAccess::spawn_projectile(
+        world, owner, Vec3{8.0F, 0.0F, 0.0F}, Vec3{}, 1000U,
+        DamagePacket{1}, 0.10F, false, initial.affixes));
+    arpg::test::CombatWorldTestAccess::set_active_affix_ticks(
+        world, 0U, 179U, 0U);
+    arpg::test::CombatWorldTestAccess::tick_active_affixes(world, 0U);
+    arpg::test::CombatWorldTestAccess::apply_monster_direct_hit(
+        world, 0U, DamagePacket{1}, Vec3{}, FeedbackLevel::light);
+    ARPG_REQUIRE(find_hazard(world.snapshot(), HazardKind::burning) != nullptr);
+    ARPG_REQUIRE(find_hazard(world.snapshot(), HazardKind::chain_lightning) != nullptr);
+
+    arpg::test::tick_n(world, 12);
+
+    ARPG_REQUIRE(defeat_with_player(world));
+    const CombatSnapshot after = world.snapshot();
+    ARPG_REQUIRE(after.projectile_count == 0U);
+    ARPG_REQUIRE(find_hazard(after, HazardKind::burning) == nullptr);
+    ARPG_REQUIRE(find_hazard(after, HazardKind::chain_lightning) == nullptr);
+    const HazardSnapshot* death = find_hazard(after, HazardKind::death_blast);
+    ARPG_REQUIRE(death != nullptr);
+    ARPG_REQUIRE(death->persists_after_owner_death);
+    ARPG_REQUIRE(death->telegraph_ticks == 65U);
+    ARPG_REQUIRE(death->lifetime_ticks == 66U);
+    ARPG_REQUIRE(death->radius == 0.90F);
+    ARPG_REQUIRE(death->damage.amount[arpg::modifiers::damage_index(
+        arpg::modifiers::DamageType::physical)] == 120);
+    ARPG_REQUIRE(after.monsters[0].hp == 0);
+    ARPG_REQUIRE(after.monsters[0].reaction == ReactionState::defeated);
+
+    int death_warning_count = 0;
+    int defeat_count = 0;
+    while (const auto event = world.try_pop_event()) {
+        if (event->kind == CombatEventKind::affix_death_warning) {
+            ++death_warning_count;
+            ARPG_REQUIRE(event->target_index == 0U);
+        }
+        if (event->kind == CombatEventKind::defeated) {
+            ++defeat_count;
+            ARPG_REQUIRE(event->monster_id == MonsterId::chaos_chaser);
+            ARPG_REQUIRE(event->spawn_ordinal == 0U);
+            ARPG_REQUIRE(event->affix_score == 9U);
+            ARPG_REQUIRE(event->reward_eligible);
+        }
+    }
+    ARPG_REQUIRE(death_warning_count == 1);
+    ARPG_REQUIRE(defeat_count == 1);
+
+    const int hp_before_blast = world.snapshot().player.hp;
+    arpg::test::tick_n(world, 66);
+    ARPG_REQUIRE(world.snapshot().player.hp == hp_before_blast - 120);
+    ARPG_REQUIRE(find_hazard(world.snapshot(), HazardKind::death_blast) == nullptr);
+    ARPG_REQUIRE(drain_events_of_kind(
+        world, CombatEventKind::affix_death_warning) == 0);
+    return {};
+}
+
 arpg::test::Failure blink_assault_warns_then_clamps_and_empowers() noexcept {
     CombatWorld world{affixed_encounter(
         MonsterId::chaos_chaser, MonsterAffixId::blink_assault,
@@ -430,6 +521,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"tiered multishot and burning values", &tiered_multishot_and_burning_values_are_frozen},
     {"tiered blink cooldowns and warnings", &tiered_blink_cooldowns_and_warnings_are_frozen},
     {"full pools degrade affix triggers", &full_pools_degrade_affix_triggers_once_without_overwrite},
+    {"death blast cleans owner transients and persists", &death_blast_cleans_owner_transients_and_persists},
 };
 
 }  // namespace

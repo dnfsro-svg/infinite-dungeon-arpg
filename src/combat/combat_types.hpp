@@ -239,6 +239,14 @@ enum class CombatEventKind : std::uint8_t {
     player_health_reset,
     affix_blink_warning,
     affix_chain_warning,
+    affix_death_warning,
+};
+
+struct DefeatPayload final {
+    MonsterId monster_id{MonsterId::count};
+    std::uint16_t spawn_ordinal{};
+    std::uint16_t affix_score{};
+    bool reward_eligible{};
 };
 
 struct CombatEvent final {
@@ -250,6 +258,10 @@ struct CombatEvent final {
     FeedbackLevel feedback{};
     Vec3 position{};
     int value{};
+    MonsterId monster_id{MonsterId::count};
+    std::uint16_t spawn_ordinal{};
+    std::uint16_t affix_score{};
+    bool reward_eligible{};
 };
 
 struct AttackDefinition final {

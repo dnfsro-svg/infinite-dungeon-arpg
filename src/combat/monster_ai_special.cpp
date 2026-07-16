@@ -101,8 +101,8 @@ void CombatWorld::simulate_special_ai(
                                              monster.position, definition.feedback);
                 }
                 monster.contact_attack_resolved = true;
-                static_cast<void>(destroy_monster(MonsterHandle{
-                    static_cast<std::uint16_t>(slot), monster.generation}));
+                monster.hp = 0;
+                defeat_monster(slot, AttackId::none, false);
             }
             return;
         }

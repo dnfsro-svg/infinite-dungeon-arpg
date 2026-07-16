@@ -2,6 +2,7 @@
 
 #include "combat/attack_catalog.hpp"
 #include "combat/monster_affix_catalog.hpp"
+#include "combat/monster_affix_generation.hpp"
 #include "combat/monster_catalog.hpp"
 #include "combat/room_bounds.hpp"
 
@@ -337,6 +338,8 @@ void saturating_increment(std::uint32_t& counter) noexcept {
         ++counter;
     }
 }
+
+constexpr std::uint16_t kDefeatedRespawnTicks = 90U;
 
 struct DirectHitAffixValues final {
     std::int32_t added_water_bp{};
@@ -701,6 +704,64 @@ bool CombatWorld::apply_player_damage(
     return true;
 }
 
+void CombatWorld::defeat_monster(
+    std::size_t slot, AttackId attack, bool reward_eligible) noexcept {
+    if (slot >= monsters_.slots_.size()) return;
+    MonsterRuntime& monster = monsters_.slots_[slot];
+    if (!monster.active || monster.reaction == ReactionState::defeated) return;
+
+    const MonsterHandle owner{static_cast<std::uint16_t>(slot),
+                              monster.generation};
+    const DefeatPayload payload{
+        monster.id, monster.spawn_ordinal,
+        monster_affix_danger_score(monster.affixes), reward_eligible};
+    const Vec3 position = monster.position;
+
+    if (const MonsterAffixTierValues* death = affix_values(
+            monster.affixes, MonsterAffixId::death_blast)) {
+        DamagePacket damage{};
+        damage.amount[modifiers::damage_index(modifiers::DamageType::physical)] =
+            death->damage;
+        if (spawn_hazard(owner, HazardKind::death_blast, position,
+                         death->radius, death->interval_ticks, 1U, 1U,
+                         damage, true)) {
+            CombatEvent warning{};
+            warning.kind = CombatEventKind::affix_death_warning;
+            warning.tick = tick_;
+            warning.target_index = static_cast<std::uint8_t>(slot);
+            warning.position = position;
+            warning.monster_id = payload.monster_id;
+            warning.spawn_ordinal = payload.spawn_ordinal;
+            warning.affix_score = payload.affix_score;
+            warning.reward_eligible = payload.reward_eligible;
+            emit_event(warning);
+        }
+    }
+
+    remove_owned_projectiles(owner);
+    remove_owned_hazards(owner);
+    monster.reaction = ReactionState::defeated;
+    monster.ai_phase = MonsterAiPhase::defeated;
+    monster.reaction_ticks = kDefeatedRespawnTicks;
+    monster.break_window_ticks = 0U;
+    monster.velocity = Vec3{};
+
+    CombatEvent defeated{};
+    defeated.kind = CombatEventKind::defeated;
+    defeated.tick = tick_;
+    defeated.attack = attack;
+    defeated.target_index = static_cast<std::uint8_t>(slot);
+    if (const AttackDefinition* definition = find_attack_definition(attack)) {
+        defeated.feedback = definition->feedback;
+    }
+    defeated.position = position;
+    defeated.monster_id = payload.monster_id;
+    defeated.spawn_ordinal = payload.spawn_ordinal;
+    defeated.affix_score = payload.affix_score;
+    defeated.reward_eligible = payload.reward_eligible;
+    emit_event(defeated);
+}
+
 bool CombatWorld::apply_player_damage(
     int damage,
     Vec3 source_position,
@@ -973,7 +1034,7 @@ void CombatWorld::tick_active_affixes(
 void CombatWorld::remove_owned_hazards(MonsterHandle owner) noexcept {
     for (std::size_t index = 0; index < kHazardCapacity; ++index) {
         const HazardRuntime& hazard = hazards_.slots()[index];
-        if (!hazard.active || hazard.persists_after_owner_death
+        if (!hazard.active || hazard.kind == HazardKind::death_blast
             || hazard.owner.index != owner.index
             || hazard.owner.generation != owner.generation) {
             continue;

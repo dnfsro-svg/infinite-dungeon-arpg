@@ -142,11 +142,13 @@ void CombatWorld::simulate_monster(std::size_t slot) noexcept {
         }
     }
 
-    if (monster.hp <= 0 || monster.reaction == ReactionState::defeated) {
+    if (monster.hp <= 0) {
+        defeat_monster(slot, AttackId::none, true);
+        return;
+    }
+    if (monster.reaction == ReactionState::defeated) {
         monster.ai_phase = MonsterAiPhase::defeated;
         monster.velocity = Vec3{};
-        remove_owned_projectiles(MonsterHandle{
-            static_cast<std::uint16_t>(slot), monster.generation});
         return;
     }
 
