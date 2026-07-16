@@ -23,6 +23,12 @@ generate_monster_affixes_with_catalog(
     std::uint8_t wave_index, std::uint8_t spawn_index,
     const MonsterDefinition& monster,
     const MonsterAffixCatalog& catalog) noexcept;
+[[nodiscard]] std::optional<MonsterAffixSet>
+supplement_abyss_affixes_with_catalog(
+    std::uint64_t room_seed, std::uint64_t depth,
+    std::uint8_t wave_index, std::uint8_t spawn_index,
+    const MonsterDefinition& monster, MonsterAffixSet normal,
+    const MonsterAffixCatalog& catalog) noexcept;
 [[nodiscard]] std::uint16_t monster_affix_danger_score_with_catalog(
     const MonsterAffixSet& set,
     const MonsterAffixCatalog& catalog) noexcept;
@@ -49,6 +55,9 @@ constexpr std::uint64_t kAffixCountDomain = 0x41464658434E5431ULL;
 constexpr std::uint64_t kAffixSelectionDomain = 0x4146465853454C31ULL;
 constexpr std::uint64_t kAffixTierDomain = 0x4146465854494552ULL;
 constexpr std::uint64_t kAffixContextDomain = 0x4146465843545831ULL;
+constexpr std::uint64_t kAbyssAffixSelectionDomain =
+    0x41425953454C3031ULL;
+constexpr std::uint64_t kAbyssAffixTierDomain = 0x4142595449455231ULL;
 
 struct Candidate final {
     const MonsterAffixDefinition* definition{};
@@ -163,6 +172,36 @@ template <std::size_t N>
     return 0U;
 }
 
+[[nodiscard]] std::uint8_t abyss_affix_minimum(
+    std::uint64_t depth) noexcept {
+    if (depth >= 40U) return 3U;
+    if (depth >= 20U) return 2U;
+    return 1U;
+}
+
+[[nodiscard]] bool affix_set_valid_for_monster(
+    const MonsterAffixSet& set,
+    const MonsterDefinition& monster,
+    const MonsterAffixCatalog& catalog) noexcept {
+    if (set.count > set.values.size()) return false;
+    MonsterAffixSet selected{};
+    for (std::size_t index = 0U; index < set.count; ++index) {
+        const MonsterAffixInstance instance = set.values[index];
+        const MonsterAffixDefinition* const definition = catalog_definition(
+            catalog, instance.id);
+        if (definition == nullptr
+                || static_cast<std::uint8_t>(instance.tier)
+                    >= static_cast<std::uint8_t>(MonsterAffixTier::count)
+                || !compatible_with_monster(*definition, monster)
+                || selected_contains(selected, instance.id)
+                || conflicts_with_selection(selected, *definition, catalog)) {
+            return false;
+        }
+        selected.values[selected.count++] = instance;
+    }
+    return true;
+}
+
 }  // namespace
 
 std::array<std::uint16_t, 4> affix_count_weights(
@@ -198,6 +237,17 @@ std::optional<MonsterAffixSet> generate_monster_affixes(
     const MonsterDefinition& monster) noexcept {
     return detail::generate_monster_affixes_with_catalog(room_seed, depth, wave_index,
         spawn_index, monster, monster_affix_catalog());
+}
+
+std::optional<MonsterAffixSet> supplement_abyss_affixes(
+    std::uint64_t room_seed,
+    std::uint64_t depth,
+    std::uint8_t wave_index,
+    std::uint8_t spawn_index,
+    const MonsterDefinition& monster,
+    MonsterAffixSet normal) noexcept {
+    return detail::supplement_abyss_affixes_with_catalog(room_seed, depth,
+        wave_index, spawn_index, monster, normal, monster_affix_catalog());
 }
 
 namespace detail {
@@ -258,6 +308,63 @@ std::optional<MonsterAffixSet> generate_monster_affixes_with_catalog(
     return result;
 }
 
+std::optional<MonsterAffixSet> supplement_abyss_affixes_with_catalog(
+    std::uint64_t room_seed,
+    std::uint64_t depth,
+    std::uint8_t wave_index,
+    std::uint8_t spawn_index,
+    const MonsterDefinition& monster,
+    MonsterAffixSet normal,
+    const MonsterAffixCatalog& catalog) noexcept {
+    if (!detail::monster_affix_catalog_valid(catalog)) return std::nullopt;
+    const MonsterDefinition* const canonical = monster_definition(monster.id);
+    if (canonical == nullptr || canonical->tags != monster.tags
+            || !affix_set_valid_for_monster(normal, monster, catalog)) {
+        return std::nullopt;
+    }
+    const std::uint8_t target_count = abyss_affix_minimum(depth);
+    if (normal.count >= target_count) return normal;
+
+    const std::uint64_t seed = monster_affix_context_seed(room_seed, depth,
+        wave_index, spawn_index);
+    const auto tier_weights = affix_tier_weights(depth);
+    for (std::size_t output_index = normal.count;
+         output_index < target_count; ++output_index) {
+        std::array<Candidate, static_cast<std::size_t>(MonsterAffixId::count)>
+            candidates{};
+        const std::size_t candidate_count = collect_candidates(monster, normal,
+            catalog, candidates);
+        if (candidate_count == 0U) return std::nullopt;
+        std::array<std::uint16_t,
+            static_cast<std::size_t>(MonsterAffixId::count)> weights{};
+        for (std::size_t index = 0U; index < candidate_count; ++index) {
+            weights[index] = candidates[index].definition->weight;
+        }
+        const std::uint64_t selection_total = total_weight(weights.data(),
+            candidate_count);
+        if (selection_total == 0U) return std::nullopt;
+        auto selection_rng = affix_output_rng(seed,
+            kAbyssAffixSelectionDomain, output_index);
+        std::uint64_t cursor = selection_rng.next_bounded(selection_total)
+            .value_or(selection_total);
+        std::size_t selected_index = 0U;
+        for (; selected_index < candidate_count; ++selected_index) {
+            if (cursor < weights[selected_index]) break;
+            cursor -= weights[selected_index];
+        }
+        if (selected_index >= candidate_count) return std::nullopt;
+        auto tier_rng = affix_output_rng(seed, kAbyssAffixTierDomain,
+            output_index);
+        const std::size_t tier_index = weighted_index(tier_rng, tier_weights);
+        if (tier_index >= tier_weights.size()) return std::nullopt;
+        normal.values[normal.count++] = {
+            candidates[selected_index].definition->id,
+            static_cast<MonsterAffixTier>(tier_index),
+        };
+    }
+    return normal;
+}
+
 std::uint16_t monster_affix_danger_score_with_catalog(
     const MonsterAffixSet& set,
     const MonsterAffixCatalog& catalog) noexcept {
@@ -304,6 +411,15 @@ std::optional<MonsterAffixSet> generate_monster_affixes_with_catalog(
     const MonsterAffixCatalog& catalog) noexcept {
     return detail::generate_monster_affixes_with_catalog(room_seed, depth,
         wave_index, spawn_index, monster, catalog);
+}
+
+std::optional<MonsterAffixSet> supplement_abyss_affixes_with_catalog(
+    std::uint64_t room_seed, std::uint64_t depth,
+    std::uint8_t wave_index, std::uint8_t spawn_index,
+    const MonsterDefinition& monster, MonsterAffixSet normal,
+    const MonsterAffixCatalog& catalog) noexcept {
+    return detail::supplement_abyss_affixes_with_catalog(room_seed, depth,
+        wave_index, spawn_index, monster, normal, catalog);
 }
 
 std::uint64_t monster_affix_context_seed(

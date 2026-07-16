@@ -18,6 +18,10 @@ namespace arpg::combat {
     std::uint64_t room_seed, std::uint64_t depth,
     std::uint8_t wave_index, std::uint8_t spawn_index,
     const MonsterDefinition& monster) noexcept;
+[[nodiscard]] std::optional<MonsterAffixSet> supplement_abyss_affixes(
+    std::uint64_t room_seed, std::uint64_t depth,
+    std::uint8_t wave_index, std::uint8_t spawn_index,
+    const MonsterDefinition& monster, MonsterAffixSet normal) noexcept;
 [[nodiscard]] std::uint16_t monster_affix_danger_score(
     const MonsterAffixSet& set) noexcept;
 

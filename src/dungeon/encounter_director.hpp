@@ -33,4 +33,10 @@ struct EncounterPlanResult final {
     checkpoint::DungeonElement ecology,
     const EncounterDirectorConfig& config) noexcept;
 
+[[nodiscard]] EncounterPlanResult build_abyss_encounter_plan(
+    std::uint64_t room_seed,
+    std::uint64_t depth,
+    checkpoint::DungeonElement ecology,
+    const EncounterDirectorConfig& config) noexcept;
+
 }  // namespace arpg::dungeon

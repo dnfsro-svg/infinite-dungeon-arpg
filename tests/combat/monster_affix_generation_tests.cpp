@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 
+#include "allocation_probe.hpp"
 #include "monster_affix_test_support.hpp"
 #include "combat/monster_affix_generation.hpp"
 #include "combat/monster_affix_catalog.hpp"
@@ -197,6 +198,98 @@ bool affixes_are_unique(const MonsterAffixSet& set) noexcept {
         }
     }
     return true;
+}
+
+arpg::test::Failure abyss_supplement_enforces_depth_minimums_and_preserves_prefix() noexcept {
+    const MonsterDefinition* const monster =
+        monster_definition(MonsterId::lightning_shooter);
+    ARPG_REQUIRE(monster != nullptr);
+    struct Case final {
+        std::uint64_t depth{};
+        std::uint8_t minimum{};
+    };
+    constexpr std::array<Case, 6> kCases{{
+        {1U, 1U}, {19U, 1U}, {20U, 2U},
+        {39U, 2U}, {40U, 3U}, {(std::numeric_limits<std::uint64_t>::max)(), 3U},
+    }};
+
+    for (const Case value : kCases) {
+        for (std::uint64_t seed = 0U; seed < 256U; ++seed) {
+            const auto normal = generate_monster_affixes(seed, value.depth,
+                1U, 7U, *monster);
+            ARPG_REQUIRE(normal.has_value());
+            const auto supplemented = supplement_abyss_affixes(seed,
+                value.depth, 1U, 7U, *monster, *normal);
+            ARPG_REQUIRE(supplemented.has_value());
+            ARPG_REQUIRE(supplemented->count >= value.minimum);
+            ARPG_REQUIRE(supplemented->count <= supplemented->values.size());
+            ARPG_REQUIRE(affixes_are_unique(*supplemented));
+            for (std::size_t index = 0U; index < normal->count; ++index) {
+                ARPG_REQUIRE(supplemented->values[index]
+                    == normal->values[index]);
+            }
+        }
+    }
+    return {};
+}
+
+arpg::test::Failure abyss_supplement_is_stable_and_leaves_satisfied_bytes_unchanged() noexcept {
+    const MonsterDefinition* const monster =
+        monster_definition(MonsterId::chaos_chaser);
+    ARPG_REQUIRE(monster != nullptr);
+
+    MonsterAffixSet satisfied{};
+    satisfied.values[0] = {MonsterAffixId::mighty, MonsterAffixTier::m2};
+    satisfied.values[1] = {MonsterAffixId::death_blast, MonsterAffixTier::m3};
+    satisfied.values[2] = {MonsterAffixId::swift, MonsterAffixTier::m1};
+    satisfied.count = 1U;
+    const auto unchanged = supplement_abyss_affixes(9U, 19U, 0U, 0U,
+        *monster, satisfied);
+    ARPG_REQUIRE(unchanged.has_value());
+    ARPG_REQUIRE(*unchanged == satisfied);
+
+    MonsterAffixSet empty{};
+    const auto first = supplement_abyss_affixes(0xAB155ULL, 40U, 1U, 7U,
+        *monster, empty);
+    const auto second = supplement_abyss_affixes(0xAB155ULL, 40U, 1U, 7U,
+        *monster, empty);
+    ARPG_REQUIRE(first.has_value());
+    ARPG_REQUIRE(second.has_value());
+    ARPG_REQUIRE(*first == *second);
+    ARPG_REQUIRE(first->count == first->values.size());
+    return {};
+}
+
+arpg::test::Failure abyss_supplement_fails_when_compatible_candidates_run_out() noexcept {
+    const MonsterDefinition* const monster =
+        monster_definition(MonsterId::chaos_chaser);
+    ARPG_REQUIRE(monster != nullptr);
+    MonsterAffixCatalog constrained = monster_affix_catalog();
+    for (std::size_t index = 1U; index < constrained.size(); ++index) {
+        constrained[index].required_tags = static_cast<std::uint16_t>(
+            constrained[index].required_tags
+            | static_cast<std::uint16_t>(MonsterTag::projectile_capable));
+    }
+    ARPG_REQUIRE(test_support::monster_affix_catalog_valid(constrained));
+    ARPG_REQUIRE(!test_support::supplement_abyss_affixes_with_catalog(
+        0xBADULL, 20U, 0U, 0U, *monster, MonsterAffixSet{}, constrained)
+        .has_value());
+    return {};
+}
+
+arpg::test::Failure abyss_supplement_allocates_nothing() noexcept {
+    const MonsterDefinition* const monster =
+        monster_definition(MonsterId::chaos_chaser);
+    ARPG_REQUIRE(monster != nullptr);
+    const std::uint64_t before = arpg::test::allocation_count();
+    for (std::uint64_t seed = 0U; seed < 4096U; ++seed) {
+        const auto result = supplement_abyss_affixes(seed, 40U, 1U, 7U,
+            *monster, MonsterAffixSet{});
+        ARPG_REQUIRE(result.has_value());
+        ARPG_REQUIRE(result->count == 3U);
+    }
+    ARPG_REQUIRE(arpg::test::allocation_count() == before);
+    return {};
 }
 
 arpg::test::Failure depth_bands_match_frozen_weights() noexcept {
@@ -428,6 +521,13 @@ arpg::test::Failure invalid_monster_definition_fails_explicitly() noexcept {
 }
 
 constexpr arpg::test::TestCase kCases[] = {
+    {"abyss supplement depth minimums and prefix",
+        &abyss_supplement_enforces_depth_minimums_and_preserves_prefix},
+    {"abyss supplement stable and satisfied bytes unchanged",
+        &abyss_supplement_is_stable_and_leaves_satisfied_bytes_unchanged},
+    {"abyss supplement insufficient candidates fail",
+        &abyss_supplement_fails_when_compatible_candidates_run_out},
+    {"abyss supplement no allocations", &abyss_supplement_allocates_nothing},
     {"frozen depth bands", &depth_bands_match_frozen_weights},
     {"deterministic unique generation and score",
         &generation_is_deterministic_unique_and_scored},

@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 
+#include "allocation_probe.hpp"
 #include "../combat/monster_affix_test_support.hpp"
 #include "combat/monster_catalog.hpp"
 #include "combat/monster_affix_catalog.hpp"
@@ -24,6 +25,7 @@ using arpg::dungeon::DungeonFault;
 using arpg::dungeon::EncounterDirectorConfig;
 using arpg::dungeon::RoomEncounterPlan;
 using arpg::dungeon::build_encounter_plan;
+using arpg::dungeon::build_abyss_encounter_plan;
 using arpg::dungeon::encounter_budget;
 using arpg::dungeon::encounter_plan_legal;
 using arpg::dungeon::validate_encounter_director_config;
@@ -137,6 +139,85 @@ arpg::test::Failure director_budget_is_bounded_and_depth_driven() noexcept {
     ARPG_REQUIRE(encounter_budget(5U, config) == 8U);
     ARPG_REQUIRE(encounter_budget(6U, config) == 9U);
     ARPG_REQUIRE(encounter_budget(10000U, config) == 24U);
+    return {};
+}
+
+arpg::test::Failure abyss_budget_is_ceil_three_halves_and_scaled_max_is_legal() noexcept {
+    const EncounterDirectorConfig config{};
+    const auto budget_8 = build_abyss_encounter_plan(1U, 1U,
+        DungeonElement::chaos, config);
+    const auto budget_9 = build_abyss_encounter_plan(1U, 6U,
+        DungeonElement::chaos, config);
+    const auto budget_24 = build_abyss_encounter_plan(1U, 10000U,
+        DungeonElement::chaos, config);
+    ARPG_REQUIRE(budget_8.fault == DungeonFault::none);
+    ARPG_REQUIRE(budget_9.fault == DungeonFault::none);
+    ARPG_REQUIRE(budget_24.fault == DungeonFault::none);
+    ARPG_REQUIRE(budget_8.plan.total_budget == 12U);
+    ARPG_REQUIRE(budget_9.plan.total_budget == 14U);
+    ARPG_REQUIRE(budget_24.plan.total_budget == 36U);
+    return {};
+}
+
+arpg::test::Failure abyss_plan_keeps_normal_affix_prefix_and_is_allocation_free() noexcept {
+    const std::uint64_t before = arpg::test::allocation_count();
+    for (std::uint64_t seed = 0U; seed < 1024U; ++seed) {
+        const auto result = build_abyss_encounter_plan(seed, 40U,
+            DungeonElement::lightning, EncounterDirectorConfig{});
+        ARPG_REQUIRE(result.fault == DungeonFault::none);
+        ARPG_REQUIRE(result.plan.total_budget == 23U);
+        for (std::size_t wave_index = 0U;
+             wave_index < result.plan.wave_count; ++wave_index) {
+            const auto& wave = result.plan.waves[wave_index];
+            ARPG_REQUIRE(wave.spawn_count <= wave.spawns.size());
+            for (std::size_t spawn_index = 0U;
+                 spawn_index < wave.spawn_count; ++spawn_index) {
+                const auto& spawn = wave.spawns[spawn_index];
+                const auto* monster = arpg::combat::monster_definition(spawn.id);
+                ARPG_REQUIRE(monster != nullptr);
+                const auto normal = arpg::combat::generate_monster_affixes(
+                    seed, 40U, static_cast<std::uint8_t>(wave_index),
+                    static_cast<std::uint8_t>(spawn_index), *monster);
+                ARPG_REQUIRE(normal.has_value());
+                ARPG_REQUIRE(spawn.affixes.count == 3U);
+                for (std::size_t index = 0U; index < normal->count; ++index) {
+                    ARPG_REQUIRE(spawn.affixes.values[index]
+                        == normal->values[index]);
+                }
+            }
+        }
+    }
+    ARPG_REQUIRE(arpg::test::allocation_count() == before);
+    return {};
+}
+
+arpg::test::Failure abyss_budget_capacity_boundary_is_legal_and_overflow_fails() noexcept {
+    EncounterDirectorConfig boundary{};
+    boundary.base_budget = 170U;
+    boundary.max_budget = 170U;
+    boundary.two_wave_threshold = 255U;
+    boundary.matching_ecology_weight = 255U;
+    boundary.normal_high_priority_limit = 0U;
+    boundary.high_budget_priority_limit = 0U;
+    boundary.ranged_limit = 0U;
+    boundary.support_limit = 0U;
+    boundary.ground_hazard_limit = 0U;
+    const auto legal = build_abyss_encounter_plan(0x96ULL, 1U,
+        DungeonElement::chaos, boundary);
+    ARPG_REQUIRE(legal.fault == DungeonFault::none);
+    ARPG_REQUIRE(legal.plan.total_budget == 255U);
+    ARPG_REQUIRE(legal.plan.wave_count == 1U);
+    ARPG_REQUIRE(legal.plan.waves[0].spawn_count
+        == arpg::combat::kEncounterSpawnCapacity);
+
+    EncounterDirectorConfig overflow = boundary;
+    overflow.base_budget = 171U;
+    overflow.max_budget = 171U;
+    overflow.two_wave_threshold = 255U;
+    const auto rejected = build_abyss_encounter_plan(0x96ULL, 1U,
+        DungeonElement::chaos, overflow);
+    ARPG_REQUIRE(rejected.fault == DungeonFault::invalid_rules);
+    ARPG_REQUIRE(rejected.plan.wave_count == 0U);
     return {};
 }
 
@@ -391,6 +472,12 @@ arpg::test::Failure fallback_config_keeps_a_direct_target() noexcept {
 }
 
 constexpr arpg::test::TestCase kCases[] = {
+    {"abyss budget scales and max is legal",
+        &abyss_budget_is_ceil_three_halves_and_scaled_max_is_legal},
+    {"abyss plan keeps normal affix prefix and allocates nothing",
+        &abyss_plan_keeps_normal_affix_prefix_and_is_allocation_free},
+    {"abyss budget capacity boundary and overflow",
+        &abyss_budget_capacity_boundary_is_legal_and_overflow_fails},
     {"budget is bounded and depth driven", &director_budget_is_bounded_and_depth_driven},
     {"plan is deterministic and legal", &encounter_plan_is_deterministic_and_legal},
     {"generated spawn ordinals and affixes",
