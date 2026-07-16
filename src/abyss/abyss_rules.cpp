@@ -60,6 +60,25 @@ bool valid_rule(AbyssRuleId rule) noexcept {
         <= static_cast<std::uint8_t>(AbyssRuleId::life_sacrifice);
 }
 
+AbyssDanger danger_for_rule(AbyssRuleId rule) noexcept {
+    switch (rule) {
+    case AbyssRuleId::thunderstorm:
+    case AbyssRuleId::swift_pursuit:
+    case AbyssRuleId::heavy_steps:
+        return AbyssDanger::low;
+    case AbyssRuleId::hunting_flames:
+    case AbyssRuleId::abyss_bulwark:
+    case AbyssRuleId::exhausted_recovery:
+        return AbyssDanger::medium;
+    case AbyssRuleId::chaos_expansion:
+    case AbyssRuleId::abyss_fury:
+    case AbyssRuleId::life_sacrifice:
+        return AbyssDanger::high;
+    default:
+        return AbyssDanger::low;
+    }
+}
+
 }  // namespace
 
 bool is_abyss_roll(std::uint64_t room_seed) noexcept {
@@ -140,7 +159,35 @@ AbyssCombatConfig combat_config_for(AbyssRuleId rule) noexcept {
     AbyssCombatConfig config{};
     if (!valid_rule(rule)) return config;
     config.rule = rule;
+    config.danger = danger_for_rule(rule);
     switch (rule) {
+    case AbyssRuleId::thunderstorm:
+        config.environment.damage_type = AbyssDamageType::lightning;
+        config.environment.damage_bp = 1500U;
+        config.environment.cycle_ticks = 180U;
+        config.environment.warning_ticks = 45U;
+        config.environment.radius_milliunits[0] = 800U;
+        config.environment.radius_count = 1U;
+        break;
+    case AbyssRuleId::hunting_flames:
+        config.environment.damage_type = AbyssDamageType::fire;
+        config.environment.damage_bp = 1000U;
+        config.environment.cycle_ticks = 240U;
+        config.environment.warning_ticks = 45U;
+        config.environment.duration_ticks = 180U;
+        config.environment.damage_interval_ticks = 60U;
+        config.environment.radius_milliunits[0] = 1000U;
+        config.environment.radius_count = 1U;
+        break;
+    case AbyssRuleId::chaos_expansion:
+        config.environment.damage_type = AbyssDamageType::chaos;
+        config.environment.damage_bp = 800U;
+        config.environment.damage_interval_ticks = 60U;
+        config.environment.expansion_interval_ticks = 180U;
+        config.environment.radius_milliunits = {
+            1000U, 2300U, 3600U, 4900U, 6200U};
+        config.environment.radius_count = 5U;
+        break;
     case AbyssRuleId::swift_pursuit:
         config.monster_move_bp = 11500U;
         config.monster_cooldown_bp = 8500U;

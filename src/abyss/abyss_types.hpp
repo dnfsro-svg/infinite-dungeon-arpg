@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 
 namespace arpg::abyss {
@@ -33,8 +34,29 @@ enum class AbyssLifecycle : std::uint8_t {
     failed = 4,
 };
 
+enum class AbyssDamageType : std::uint8_t {
+    none = 0,
+    fire = 1,
+    lightning = 2,
+    chaos = 3,
+};
+
+struct AbyssEnvironmentConfig final {
+    AbyssDamageType damage_type{AbyssDamageType::none};
+    std::uint16_t damage_bp{};
+    std::uint16_t cycle_ticks{};
+    std::uint16_t warning_ticks{};
+    std::uint16_t duration_ticks{};
+    std::uint16_t damage_interval_ticks{};
+    std::uint16_t expansion_interval_ticks{};
+    std::array<std::uint16_t, 5> radius_milliunits{};
+    std::uint8_t radius_count{};
+};
+
 struct AbyssCombatConfig final {
     AbyssRuleId rule{AbyssRuleId::none};
+    AbyssDanger danger{AbyssDanger::low};
+    AbyssEnvironmentConfig environment{};
     std::uint16_t player_ground_move_bp{10000};
     std::uint16_t player_resource_restore_bp{10000};
     std::uint16_t player_max_health_bp{10000};

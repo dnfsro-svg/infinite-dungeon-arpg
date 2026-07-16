@@ -8,5 +8,5 @@ int main() {
         abyss_rules_suite(),
         abyss_rewards_suite(),
     };
-    return arpg::test::run_suites(suites, 28, "stage 10 task 1 abyss");
+    return arpg::test::run_suites(suites, 32, "stage 10 task 1 abyss");
 }

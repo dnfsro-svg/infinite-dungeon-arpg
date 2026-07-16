@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <type_traits>
 
 namespace {
 
@@ -63,7 +64,7 @@ arpg::test::Failure verify_danger_band(
     return {};
 }
 
-std::uint8_t rule_slot(AbyssRuleId rule) noexcept {
+std::uint8_t rule_category(AbyssRuleId rule) noexcept {
     return static_cast<std::uint8_t>(rule) / 3U;
 }
 
@@ -89,9 +90,15 @@ arpg::test::Failure stable_public_values_and_defaults() noexcept {
     static_assert(static_cast<std::uint8_t>(AbyssLifecycle::cleared) == 3U);
     static_assert(static_cast<std::uint8_t>(AbyssLifecycle::failed) == 4U);
     const arpg::abyss::AbyssCombatConfig config{};
+    static_assert(std::is_trivially_copyable_v<
+        arpg::abyss::AbyssEnvironmentConfig>);
+    static_assert(std::is_trivially_copyable_v<
+        arpg::abyss::AbyssCombatConfig>);
     ARPG_REQUIRE(config.rule == AbyssRuleId::none);
     ARPG_REQUIRE(config.player_ground_move_bp == 10000U);
     ARPG_REQUIRE(config.monster_extra_shield_bp == 0U);
+    ARPG_REQUIRE(config.environment.damage_type
+        == arpg::abyss::AbyssDamageType::none);
     return {};
 }
 
@@ -144,28 +151,51 @@ arpg::test::Failure weights_depth_max() noexcept {
 
 arpg::test::Failure rules_for_danger_are_reachable(
     AbyssDanger wanted,
-    std::uint64_t depth) noexcept {
-    std::array<bool, 3> slots{};
+    std::uint64_t depth,
+    const std::array<AbyssRuleId, 3>& expected) noexcept {
+    std::array<bool, 3> observed{};
     for (std::uint64_t seed = 0U; seed < 10000U; ++seed) {
         const auto selected = arpg::abyss::select_abyss_rule(seed, depth);
         ARPG_REQUIRE(selected.has_value());
-        if (selected->danger == wanted)
-            slots[rule_slot(selected->rule)] = true;
+        if (selected->danger != wanted) continue;
+        bool belongs_to_exact_set = false;
+        for (std::size_t index = 0U; index < expected.size(); ++index) {
+            if (selected->rule == expected[index]) {
+                observed[index] = true;
+                belongs_to_exact_set = true;
+            }
+        }
+        ARPG_REQUIRE(belongs_to_exact_set);
     }
-    ARPG_REQUIRE(slots[0]);
-    ARPG_REQUIRE(slots[1]);
-    ARPG_REQUIRE(slots[2]);
+    ARPG_REQUIRE(observed[0]);
+    ARPG_REQUIRE(observed[1]);
+    ARPG_REQUIRE(observed[2]);
     return {};
 }
 
 arpg::test::Failure low_rules_are_reachable() noexcept {
-    return rules_for_danger_are_reachable(AbyssDanger::low, 1U);
+    constexpr std::array<AbyssRuleId, 3> expected{{
+        AbyssRuleId::thunderstorm,
+        AbyssRuleId::swift_pursuit,
+        AbyssRuleId::heavy_steps,
+    }};
+    return rules_for_danger_are_reachable(AbyssDanger::low, 1U, expected);
 }
 arpg::test::Failure medium_rules_are_reachable() noexcept {
-    return rules_for_danger_are_reachable(AbyssDanger::medium, 20U);
+    constexpr std::array<AbyssRuleId, 3> expected{{
+        AbyssRuleId::hunting_flames,
+        AbyssRuleId::abyss_bulwark,
+        AbyssRuleId::exhausted_recovery,
+    }};
+    return rules_for_danger_are_reachable(AbyssDanger::medium, 20U, expected);
 }
 arpg::test::Failure high_rules_are_reachable() noexcept {
-    return rules_for_danger_are_reachable(AbyssDanger::high, 40U);
+    constexpr std::array<AbyssRuleId, 3> expected{{
+        AbyssRuleId::chaos_expansion,
+        AbyssRuleId::abyss_fury,
+        AbyssRuleId::life_sacrifice,
+    }};
+    return rules_for_danger_are_reachable(AbyssDanger::high, 40U, expected);
 }
 
 arpg::test::Failure selection_is_stable_for_identical_inputs() noexcept {
@@ -183,7 +213,7 @@ arpg::test::Failure named_domains_are_independent() noexcept {
     for (std::uint64_t seed = 0U; seed < 4096U; ++seed) {
         const auto selected = arpg::abyss::select_abyss_rule(seed, 20U);
         ARPG_REQUIRE(selected.has_value());
-        ARPG_REQUIRE(rule_slot(selected->rule) == expected_rule_slot(seed));
+        ARPG_REQUIRE(rule_category(selected->rule) == expected_rule_slot(seed));
         ARPG_REQUIRE(selected->danger == expected_danger(
             expected_danger_roll(seed), 25U, 45U));
     }
@@ -247,43 +277,120 @@ arpg::test::Failure percent_damage_uses_ceiling_and_minimum_one() noexcept {
     return {};
 }
 
-arpg::test::Failure combat_config_catalog_matches_nine_rules() noexcept {
-    const auto thunder = arpg::abyss::combat_config_for(AbyssRuleId::thunderstorm);
-    ARPG_REQUIRE(thunder.rule == AbyssRuleId::thunderstorm);
-    ARPG_REQUIRE(thunder.player_ground_move_bp == 10000U);
-    ARPG_REQUIRE(thunder.monster_damage_bp == 10000U);
-
+arpg::test::Failure combat_stat_config_catalog_matches_six_rules() noexcept {
     const auto swift = arpg::abyss::combat_config_for(AbyssRuleId::swift_pursuit);
     ARPG_REQUIRE(swift.rule == AbyssRuleId::swift_pursuit);
+    ARPG_REQUIRE(swift.danger == AbyssDanger::low);
     ARPG_REQUIRE(swift.monster_move_bp == 11500U);
     ARPG_REQUIRE(swift.monster_cooldown_bp == 8500U);
 
     const auto bulwark = arpg::abyss::combat_config_for(AbyssRuleId::abyss_bulwark);
+    ARPG_REQUIRE(bulwark.danger == AbyssDanger::medium);
     ARPG_REQUIRE(bulwark.monster_armor_bp == 13000U);
     ARPG_REQUIRE(bulwark.monster_extra_shield_bp == 3000U);
 
     const auto fury = arpg::abyss::combat_config_for(AbyssRuleId::abyss_fury);
+    ARPG_REQUIRE(fury.danger == AbyssDanger::high);
     ARPG_REQUIRE(fury.monster_damage_bp == 14500U);
     ARPG_REQUIRE(fury.monster_attack_speed_bp == 14500U);
 
     const auto heavy = arpg::abyss::combat_config_for(AbyssRuleId::heavy_steps);
+    ARPG_REQUIRE(heavy.danger == AbyssDanger::low);
     ARPG_REQUIRE(heavy.player_ground_move_bp == 8500U);
 
     const auto exhausted = arpg::abyss::combat_config_for(
         AbyssRuleId::exhausted_recovery);
+    ARPG_REQUIRE(exhausted.danger == AbyssDanger::medium);
     ARPG_REQUIRE(exhausted.player_resource_restore_bp == 7000U);
 
     const auto sacrifice = arpg::abyss::combat_config_for(AbyssRuleId::life_sacrifice);
+    ARPG_REQUIRE(sacrifice.danger == AbyssDanger::high);
     ARPG_REQUIRE(sacrifice.player_max_health_bp == 5500U);
 
-    const auto flames = arpg::abyss::combat_config_for(AbyssRuleId::hunting_flames);
-    const auto chaos = arpg::abyss::combat_config_for(AbyssRuleId::chaos_expansion);
-    ARPG_REQUIRE(flames.rule == AbyssRuleId::hunting_flames);
-    ARPG_REQUIRE(chaos.rule == AbyssRuleId::chaos_expansion);
     ARPG_REQUIRE(arpg::abyss::combat_config_for(AbyssRuleId::none).rule
         == AbyssRuleId::none);
     ARPG_REQUIRE(arpg::abyss::combat_config_for(
         static_cast<AbyssRuleId>(99U)).rule == AbyssRuleId::none);
+    return {};
+}
+
+arpg::test::Failure thunderstorm_environment_is_fully_evaluated() noexcept {
+    using arpg::abyss::AbyssDamageType;
+    const auto config = arpg::abyss::combat_config_for(
+        AbyssRuleId::thunderstorm);
+    ARPG_REQUIRE(config.danger == AbyssDanger::low);
+    ARPG_REQUIRE(config.environment.damage_type == AbyssDamageType::lightning);
+    ARPG_REQUIRE(config.environment.damage_bp == 1500U);
+    ARPG_REQUIRE(config.environment.cycle_ticks == 180U);
+    ARPG_REQUIRE(config.environment.warning_ticks == 45U);
+    ARPG_REQUIRE(config.environment.duration_ticks == 0U);
+    ARPG_REQUIRE(config.environment.damage_interval_ticks == 0U);
+    ARPG_REQUIRE(config.environment.expansion_interval_ticks == 0U);
+    ARPG_REQUIRE(config.environment.radius_count == 1U);
+    ARPG_REQUIRE(config.environment.radius_milliunits[0] == 800U);
+    return {};
+}
+
+arpg::test::Failure hunting_flames_environment_is_fully_evaluated() noexcept {
+    using arpg::abyss::AbyssDamageType;
+    const auto config = arpg::abyss::combat_config_for(
+        AbyssRuleId::hunting_flames);
+    ARPG_REQUIRE(config.danger == AbyssDanger::medium);
+    ARPG_REQUIRE(config.environment.damage_type == AbyssDamageType::fire);
+    ARPG_REQUIRE(config.environment.damage_bp == 1000U);
+    ARPG_REQUIRE(config.environment.cycle_ticks == 240U);
+    ARPG_REQUIRE(config.environment.warning_ticks == 45U);
+    ARPG_REQUIRE(config.environment.duration_ticks == 180U);
+    ARPG_REQUIRE(config.environment.damage_interval_ticks == 60U);
+    ARPG_REQUIRE(config.environment.expansion_interval_ticks == 0U);
+    ARPG_REQUIRE(config.environment.radius_count == 1U);
+    ARPG_REQUIRE(config.environment.radius_milliunits[0] == 1000U);
+    return {};
+}
+
+arpg::test::Failure chaos_expansion_environment_is_fully_evaluated() noexcept {
+    using arpg::abyss::AbyssDamageType;
+    const auto config = arpg::abyss::combat_config_for(
+        AbyssRuleId::chaos_expansion);
+    ARPG_REQUIRE(config.danger == AbyssDanger::high);
+    ARPG_REQUIRE(config.environment.damage_type == AbyssDamageType::chaos);
+    ARPG_REQUIRE(config.environment.damage_bp == 800U);
+    ARPG_REQUIRE(config.environment.cycle_ticks == 0U);
+    ARPG_REQUIRE(config.environment.warning_ticks == 0U);
+    ARPG_REQUIRE(config.environment.duration_ticks == 0U);
+    ARPG_REQUIRE(config.environment.damage_interval_ticks == 60U);
+    ARPG_REQUIRE(config.environment.expansion_interval_ticks == 180U);
+    ARPG_REQUIRE(config.environment.radius_count == 5U);
+    constexpr std::array<std::uint16_t, 5> expected{{
+        1000U, 2300U, 3600U, 4900U, 6200U,
+    }};
+    ARPG_REQUIRE(config.environment.radius_milliunits == expected);
+    return {};
+}
+
+arpg::test::Failure non_environment_rules_have_explicit_sentinel() noexcept {
+    using arpg::abyss::AbyssDamageType;
+    constexpr std::array<AbyssRuleId, 6> rules{{
+        AbyssRuleId::swift_pursuit,
+        AbyssRuleId::abyss_bulwark,
+        AbyssRuleId::abyss_fury,
+        AbyssRuleId::heavy_steps,
+        AbyssRuleId::exhausted_recovery,
+        AbyssRuleId::life_sacrifice,
+    }};
+    constexpr std::array<std::uint16_t, 5> no_radii{};
+    for (const AbyssRuleId rule : rules) {
+        const auto environment = arpg::abyss::combat_config_for(rule).environment;
+        ARPG_REQUIRE(environment.damage_type == AbyssDamageType::none);
+        ARPG_REQUIRE(environment.damage_bp == 0U);
+        ARPG_REQUIRE(environment.cycle_ticks == 0U);
+        ARPG_REQUIRE(environment.warning_ticks == 0U);
+        ARPG_REQUIRE(environment.duration_ticks == 0U);
+        ARPG_REQUIRE(environment.damage_interval_ticks == 0U);
+        ARPG_REQUIRE(environment.expansion_interval_ticks == 0U);
+        ARPG_REQUIRE(environment.radius_count == 0U);
+        ARPG_REQUIRE(environment.radius_milliunits == no_radii);
+    }
     return {};
 }
 
@@ -310,7 +417,11 @@ constexpr arpg::test::TestCase kCases[] = {
     {"resource ratio exact", &resource_ratio_rounds_and_clamps_exactly},
     {"percent damage invalid", &percent_damage_rejects_invalid_values},
     {"percent damage exact", &percent_damage_uses_ceiling_and_minimum_one},
-    {"combat config catalog", &combat_config_catalog_matches_nine_rules},
+    {"combat stat config catalog", &combat_stat_config_catalog_matches_six_rules},
+    {"thunderstorm environment", &thunderstorm_environment_is_fully_evaluated},
+    {"hunting flames environment", &hunting_flames_environment_is_fully_evaluated},
+    {"chaos expansion environment", &chaos_expansion_environment_is_fully_evaluated},
+    {"non environment sentinel", &non_environment_rules_have_explicit_sentinel},
 };
 
 }  // namespace
