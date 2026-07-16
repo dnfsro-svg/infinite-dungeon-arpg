@@ -58,7 +58,8 @@ struct DungeonSessionTestAccess final {
         dungeon::DungeonSession& session,
         std::uint8_t wave_index,
         std::uint8_t target_index,
-        combat::Vec3 position) noexcept {
+        combat::Vec3 position,
+        bool reward_eligible = true) noexcept {
         if (!session.combat_.has_value() || wave_index >= 2U) {
             return false;
         }
@@ -69,6 +70,7 @@ struct DungeonSessionTestAccess final {
         event.kind = combat::CombatEventKind::defeated;
         event.target_index = target_index;
         event.position = position;
+        event.reward_eligible = reward_eligible;
         if (!session.combat_->events_.try_push(event)) {
             return false;
         }
@@ -174,9 +176,10 @@ inline bool relay_defeated(
     dungeon::DungeonSession& session,
     std::uint8_t wave_index,
     std::uint8_t target_index,
-    combat::Vec3 position) noexcept {
+    combat::Vec3 position,
+    bool reward_eligible = true) noexcept {
     return DungeonSessionTestAccess::relay_defeated(
-        session, wave_index, target_index, position);
+        session, wave_index, target_index, position, reward_eligible);
 }
 
 inline void set_current_room_seed(

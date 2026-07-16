@@ -122,6 +122,16 @@ struct CombatWorldTestAccess final {
         world.apply_monster_direct_hit(slot, packet, source_position, feedback);
     }
 
+    static void defeat_monster(
+        combat::CombatWorld& world,
+        std::size_t slot,
+        bool reward_eligible) noexcept {
+        if (slot < world.monsters_.slots_.size()) {
+            world.monsters_.slots_[slot].hp = 0;
+            world.defeat_monster(slot, combat::AttackId::j1, reward_eligible);
+        }
+    }
+
     static void freeze_monster_ai(
         combat::CombatWorld& world,
         std::size_t slot,

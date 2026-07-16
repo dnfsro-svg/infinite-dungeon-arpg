@@ -334,10 +334,12 @@ void DungeonSession::relay_combat_events() noexcept {
         return;
     }
     while (auto event = combat_->try_pop_event()) {
-        if (event->kind == combat::CombatEventKind::defeated) {
+        if (event->kind == combat::CombatEventKind::defeated
+            && event->reward_eligible) {
             roll_ground_drop(*event);
         }
         if (event->kind == combat::CombatEventKind::defeated
+            && event->reward_eligible
             && event->target_index < combat_->snapshot().monsters.size()) {
             const combat::MonsterId id = combat_->snapshot()
                 .monsters[event->target_index].id;

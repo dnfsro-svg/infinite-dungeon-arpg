@@ -437,9 +437,20 @@ void CombatWorld::tick(MovementInput movement) noexcept {
         if (!monster.active) {
             continue;
         }
-        tick_monster_affix_resources(monster);
         const std::size_t index = static_cast<std::size_t>(
             &monster - monsters_.slots_.data());
+        if (monster.reaction == ReactionState::defeated
+            || monster.ai_phase == MonsterAiPhase::defeated) {
+            if (legacy_mode_) {
+                if (monster.hit_stop_ticks != 0U) {
+                    --monster.hit_stop_ticks;
+                } else {
+                    simulate_target(index);
+                }
+            }
+            continue;
+        }
+        tick_monster_affix_resources(monster);
         tick_active_affixes(index, monster);
         if (monster.affix_warning == MonsterAffixWarning::blink) {
             continue;
