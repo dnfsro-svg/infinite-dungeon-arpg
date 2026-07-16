@@ -97,6 +97,8 @@ RunStateBuildResult make_initial_run_state(
     state.commit_generation = 1U;
     state.biases = biases;
     state.current_room = generated.room;
+    state.current_room.is_abyss = false;
+    state.abyss = {};
     state.last_transition = checkpoint::TransitionKind::none;
     state.last_direction = checkpoint::ExitDirection::none;
     return {DungeonFault::none, state, generated.samples};
@@ -149,6 +151,9 @@ RunStateBuildResult make_door_transition(
     }
 
     next.current_room = generated.room;
+    const auto preview = preview_abyss_doors(current.current_room);
+    next.current_room.is_abyss = preview[
+        static_cast<std::size_t>(direction)];
     next.last_transition = checkpoint::TransitionKind::door;
     next.last_direction = direction;
     return {DungeonFault::none, std::move(next), generated.samples};
@@ -190,6 +195,8 @@ RunStateBuildResult make_descent_transition(
     }
 
     next.current_room = generated.room;
+    next.current_room.is_abyss = false;
+    next.abyss = {};
     next.last_transition = checkpoint::TransitionKind::descent;
     next.last_direction = checkpoint::ExitDirection::none;
     return {DungeonFault::none, std::move(next), generated.samples};

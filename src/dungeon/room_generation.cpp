@@ -1,5 +1,6 @@
 #include "dungeon/room_generation.hpp"
 
+#include "abyss/abyss_rules.hpp"
 #include "core/deterministic_rng.hpp"
 #include "dungeon/room_combat_template.hpp"
 
@@ -71,6 +72,28 @@ std::uint64_t derive_descent_room_seed(
         static_cast<std::uint64_t>(ExitDirection::none));
 }
 
+std::array<bool, 4> preview_abyss_doors(
+    const checkpoint::RoomDescriptor& current) noexcept {
+    std::array<bool, 4> preview{};
+    if (current.index == (std::numeric_limits<std::uint64_t>::max)()) {
+        return preview;
+    }
+
+    constexpr std::array<checkpoint::ExitDirection, 4> directions{{
+        checkpoint::ExitDirection::up,
+        checkpoint::ExitDirection::down,
+        checkpoint::ExitDirection::left,
+        checkpoint::ExitDirection::right,
+    }};
+    const std::uint64_t next_index = current.index + 1U;
+    for (std::size_t index = 0U; index < directions.size(); ++index) {
+        const std::uint64_t target_seed = derive_door_room_seed(
+            current.seed, next_index, directions[index]);
+        preview[index] = abyss::is_abyss_roll(target_seed);
+    }
+    return preview;
+}
+
 RoomGenerationResult generate_room_descriptor(
     std::uint64_t seed,
     std::uint64_t global_index,
@@ -120,7 +143,7 @@ RoomGenerationResult generate_room_descriptor(
     room.entry = entry;
     room.ecology = ecology;
     room.has_hole = hole_value.value() < rules.hole_threshold;
-    room.is_abyss = abyss_value.value() < rules.abyss_threshold;
+    room.is_abyss = false;
 
     RoomRandomSamples samples;
     samples.ecology = ecology_value.value();

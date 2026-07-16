@@ -75,5 +75,5 @@ int main() {
             "stage 9 task 10 affix stress");
     }
 
-    return arpg::test::run_suites(suites, 129, "stage 9 task 10 dungeon");
+    return arpg::test::run_suites(suites, 139, "stage 10 task 3 dungeon");
 }

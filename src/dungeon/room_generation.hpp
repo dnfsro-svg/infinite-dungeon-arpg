@@ -24,6 +24,9 @@ namespace arpg::dungeon {
     std::uint64_t current_seed,
     std::uint64_t next_serial) noexcept;
 
+[[nodiscard]] std::array<bool, 4> preview_abyss_doors(
+    const checkpoint::RoomDescriptor& current) noexcept;
+
 struct RoomRandomSamples final {
     std::uint64_t ecology{};
     std::uint32_t hole{};

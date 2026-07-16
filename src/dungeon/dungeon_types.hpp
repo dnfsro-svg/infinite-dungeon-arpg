@@ -126,6 +126,7 @@ struct DungeonSnapshot final {
     RoomPhase phase{RoomPhase::locked};
     bool has_active_room{};
     std::array<bool, 4> exits_open{};
+    std::array<bool, 4> abyss_doors{};
     std::uint8_t wave_index{};
     std::uint8_t wave_count{};
     std::uint16_t wave_delay_ticks{};

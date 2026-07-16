@@ -1,5 +1,6 @@
 #include "dungeon/dungeon_session.hpp"
 
+#include "dungeon/room_generation.hpp"
 #include "items/item_catalog.hpp"
 
 namespace arpg::dungeon {
@@ -33,6 +34,7 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
     result.has_active_room = combat_.has_value();
     result.exits_open.fill(
         phase_ == RoomPhase::cleared || phase_ == RoomPhase::awaiting_exit);
+    result.abyss_doors = preview_abyss_doors(stable_state_.current_room);
     result.wave_index = wave_index_;
     result.wave_count = encounter_plan_.wave_count;
     result.wave_delay_ticks = wave_delay_ticks_;

@@ -2,12 +2,15 @@
 
 #include "dungeon_test_support.hpp"
 
+#include "abyss/abyss_rules.hpp"
+#include "dungeon/dungeon_progression.hpp"
 #include "dungeon/room_generation.hpp"
 #include "dungeon/room_navigation.hpp"
 
 #include <array>
 #include <cstdint>
 #include <limits>
+#include <type_traits>
 
 namespace {
 
@@ -362,6 +365,136 @@ arpg::test::Failure maximum_index_faults_once_without_destroying() noexcept {
     return {};
 }
 
+arpg::test::Failure snapshot_exposes_only_boolean_door_preview() noexcept {
+    static_assert(std::is_same_v<
+        decltype(DungeonSnapshot{}.abyss_doors),
+        std::array<bool, 4>>);
+    DungeonSession session;
+    const DungeonSnapshot snapshot = session.snapshot();
+    ARPG_REQUIRE(snapshot.abyss_doors
+        == arpg::dungeon::preview_abyss_doors(
+            arpg::test::stable_state(session).current_room));
+    return {};
+}
+
+arpg::test::Failure ordinary_door_preview_matches_pending_target() noexcept {
+    using namespace arpg::dungeon;
+    auto state = make_initial_run_state(7U, DungeonRules{}).state;
+    state.current_room.index = 0U;
+    state.current_room.seed = 0U;
+    state.current_room.depth = 27U;
+    state.current_room.floor_room_index = 1U;
+    state.current_room.is_abyss = false;
+    state.abyss = {};
+    DungeonSession session{DungeonRules{}, state};
+    arpg::test::set_phase(session, RoomPhase::awaiting_exit);
+    const DungeonSnapshot preview = session.snapshot();
+    ARPG_REQUIRE(!preview.abyss_doors[
+        static_cast<std::size_t>(ExitDirection::right)]);
+
+    arpg::test::attempt_exit(session, ExitDirection::right);
+    const auto pending = session.pending_transition();
+    ARPG_REQUIRE(pending.has_value());
+    ARPG_REQUIRE(!pending->next_state.current_room.is_abyss);
+    ARPG_REQUIRE(pending->next_state.abyss.lifecycle
+        == arpg::abyss::AbyssLifecycle::none);
+    ARPG_REQUIRE(pending->next_state.abyss.rule
+        == arpg::abyss::AbyssRuleId::none);
+    return {};
+}
+
+arpg::test::Failure abyss_door_target_persists_selected_checkpoint() noexcept {
+    using namespace arpg::dungeon;
+    auto state = make_initial_run_state(7U, DungeonRules{}).state;
+    state.current_room.index = 0U;
+    state.current_room.seed = 0x150U;
+    state.current_room.depth = 27U;
+    state.current_room.floor_room_index = 1U;
+    state.current_room.is_abyss = false;
+    state.abyss = {};
+    DungeonSession session{DungeonRules{}, state};
+    arpg::test::set_phase(session, RoomPhase::awaiting_exit);
+    const DungeonSnapshot preview = session.snapshot();
+
+    std::size_t preview_count = 0U;
+    ExitDirection selected_direction = ExitDirection::none;
+    for (std::size_t index = 0U; index < preview.abyss_doors.size(); ++index) {
+        if (!preview.abyss_doors[index]) continue;
+        ++preview_count;
+        selected_direction = static_cast<ExitDirection>(index);
+    }
+    ARPG_REQUIRE(preview_count == 1U);
+    ARPG_REQUIRE(selected_direction != ExitDirection::none);
+    arpg::test::attempt_exit(session, selected_direction);
+    const auto pending = session.pending_transition();
+    ARPG_REQUIRE(pending.has_value());
+    ARPG_REQUIRE(pending->next_state.current_room.is_abyss);
+
+    const auto selection = arpg::abyss::select_abyss_rule(
+        pending->next_state.current_room.seed,
+        pending->next_state.current_room.depth);
+    ARPG_REQUIRE(selection.has_value());
+    ARPG_REQUIRE(pending->next_state.abyss.lifecycle
+        == arpg::abyss::AbyssLifecycle::available);
+    ARPG_REQUIRE(pending->next_state.abyss.rule == selection->rule);
+    ARPG_REQUIRE(pending->next_state.abyss.danger == selection->danger);
+    ARPG_REQUIRE(pending->next_state.abyss.rules_version
+        == selection->rules_version);
+    return {};
+}
+
+arpg::test::Failure abyss_door_target_can_keep_its_hole() noexcept {
+    using namespace arpg::dungeon;
+    auto state = make_initial_run_state(7U, DungeonRules{}).state;
+    state.current_room.index = 0U;
+    state.current_room.seed = 0x25EU;
+    state.current_room.depth = 4U;
+    state.current_room.floor_room_index = 1U;
+    state.current_room.is_abyss = false;
+    state.abyss = {};
+    DungeonSession session{DungeonRules{}, state};
+    arpg::test::set_phase(session, RoomPhase::awaiting_exit);
+    const DungeonSnapshot preview = session.snapshot();
+    ARPG_REQUIRE(preview.abyss_doors[
+        static_cast<std::size_t>(ExitDirection::left)]);
+
+    arpg::test::attempt_exit(session, ExitDirection::left);
+    const auto pending = session.pending_transition();
+    ARPG_REQUIRE(pending.has_value());
+    ARPG_REQUIRE(pending->next_state.current_room.seed
+        == 0xB279FFA75D264269ULL);
+    ARPG_REQUIRE(pending->next_state.current_room.is_abyss);
+    ARPG_REQUIRE(pending->next_state.current_room.has_hole);
+    ARPG_REQUIRE(pending->next_state.abyss.lifecycle
+        == arpg::abyss::AbyssLifecycle::available);
+    return {};
+}
+
+arpg::test::Failure descent_target_rejects_matching_legacy_abyss_roll() noexcept {
+    using namespace arpg::dungeon;
+    auto state = make_initial_run_state(7U, DungeonRules{}).state;
+    state.current_room.index = 0U;
+    state.current_room.seed = 0x17U;
+    state.current_room.depth = 4U;
+    state.current_room.floor_room_index = 3U;
+    state.current_room.has_hole = true;
+    state.current_room.is_abyss = false;
+    state.abyss = {};
+    DungeonSession session{DungeonRules{}, state};
+    arpg::test::set_phase(session, RoomPhase::awaiting_exit);
+    ARPG_REQUIRE(session.request_descent(true));
+    const auto pending = session.pending_transition();
+    ARPG_REQUIRE(pending.has_value());
+    ARPG_REQUIRE(pending->next_state.current_room.seed
+        == 0xA8CCB855C5CE46BDULL);
+    ARPG_REQUIRE(!pending->next_state.current_room.is_abyss);
+    ARPG_REQUIRE(pending->next_state.abyss.lifecycle
+        == arpg::abyss::AbyssLifecycle::none);
+    ARPG_REQUIRE(pending->next_state.abyss.rule
+        == arpg::abyss::AbyssRuleId::none);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"exact apertures accept outward input", &exact_apertures_accept_outward_input},
     {"invalid physical requests are rejected", &invalid_physical_requests_are_rejected},
@@ -369,6 +502,11 @@ constexpr arpg::test::TestCase kCases[] = {
     {"transition and combat start are separate ticks", &transition_and_combat_start_are_separate_ticks},
     {"contact and held inputs never duplicate rooms", &contact_and_held_inputs_never_duplicate_rooms},
     {"maximum index faults once without destroying", &maximum_index_faults_once_without_destroying},
+    {"snapshot exposes only boolean door preview", &snapshot_exposes_only_boolean_door_preview},
+    {"ordinary door preview matches pending target", &ordinary_door_preview_matches_pending_target},
+    {"abyss door target persists selected checkpoint", &abyss_door_target_persists_selected_checkpoint},
+    {"abyss door target can keep its hole", &abyss_door_target_can_keep_its_hole},
+    {"descent target rejects matching legacy abyss roll", &descent_target_rejects_matching_legacy_abyss_roll},
 };
 
 }  // namespace
