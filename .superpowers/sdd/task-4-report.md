@@ -92,3 +92,45 @@ platform 80 cases, architecture 18 tests
 
 - `abyss_generation_failed` 对不可组成 1.5x 精确预算的自定义 director 配置是硬 fault，按简报不得降级或重投；普通兼容压力测试因此显式避开 abyss 门。
 - Task 8/9 接管 cleared/reward；Task 6/7 接管六条数值规则与三种环境效果。本提交没有提前实现这些行为。
+
+## 独立审查修复：不可丢失死亡与死亡输入门禁
+
+### 根因
+
+- 原实现按 `player_hit -> player_hurt_started -> player_defeated` 将三项表现事件 best-effort 写入 64 槽队列；只剩两槽时 HP 已归零，但第三项可溢出。
+- DungeonSession 原来只在 relay 收到 `player_defeated` 时排 `abyss_fail`，因此表现队列容量错误地影响一次机会资格。
+- CombatWorld 的 `queue_action()` 与 `tick()` 原来没有 HP=0 门禁，死亡后仍可接受或消费缓冲攻击。
+
+### RED
+
+```text
+cmake --build --preset windows-msvc-debug \
+  --target arpg_combat_tests arpg_dungeon_tests
+
+player_health_tests.cpp: error C2039:
+"player_defeated": not a member of CombatWorld
+```
+
+该 RED 来自三个先写测试：事件队列预填 62/64 后致死、死亡输入冻结、Dungeon started 深渊丢失表现 defeat event 后仍必须排 fail。
+
+### GREEN 与断言
+
+- `CombatWorld::player_defeated()` 以 `player_.hp == 0` 作为 durable truth，不读取事件队列且无副作用。
+- 致死时立即清空 `AttackRuntime` 与 `InputBuffer`；HP=0 后 `queue_action()` 返回 false。
+- dead tick 只递增 combat tick，不移动、不进入 attack、不消费/产生 swing；load_wave/reset 清理后旧 action 不穿透。
+- `player_defeated` 表现事件在有容量时仍 exactly once；队列预填 62 后该事件溢出时，durable latch 仍 true，`event_overflow_count == 1`。
+- DungeonSession 在 combat tick relay 后直接检查 durable truth；started 深渊即使 relay 中 defeat event 数量为 0，仍只排一个 `abyss_fail`。
+- Durable handler 不覆盖已进入的 `faulted`；combat relay overflow 的 fault 优先，且不会创建 `abyss_fail` pending。
+
+```text
+ctest --preset windows-msvc-debug -R combat.units --output-on-failure
+1/1 passed; 139 cases, 0 failures
+
+ctest --preset windows-msvc-debug -R dungeon.units --output-on-failure
+1/1 passed; 161 cases, 0 failures; final fresh 141.56s
+
+ctest --preset windows-msvc-debug \
+  -R "combat.units|persistence.units|platform.units|architecture" \
+  --output-on-failure
+21/21 passed; final fresh 58.58s
+```

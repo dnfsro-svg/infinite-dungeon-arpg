@@ -8,6 +8,14 @@
 namespace arpg::test {
 
 struct CombatWorldTestAccess final {
+    static void fill_event_queue(
+        combat::CombatWorld& world, std::size_t count) noexcept {
+        combat::CombatEvent event{};
+        event.kind = combat::CombatEventKind::reset;
+        for (std::size_t index = 0U; index < count; ++index) {
+            world.emit_event(event);
+        }
+    }
     static void apply_damage(
         combat::CombatWorld& world,
         int damage,

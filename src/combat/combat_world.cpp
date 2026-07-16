@@ -412,10 +412,16 @@ CombatWorld::CombatWorld(CombatEncounterConfig config) noexcept
 }
 
 bool CombatWorld::queue_action(Action action) noexcept {
-    return input_buffer_.push(action);
+    return player_.hp > 0 && input_buffer_.push(action);
 }
 
 void CombatWorld::tick(MovementInput movement) noexcept {
+    if (player_.hp == 0) {
+        attack_ = AttackRuntime{};
+        input_buffer_.clear();
+        ++tick_;
+        return;
+    }
     tick_player_status();
     const bool player_frozen = player_.hit_stop_ticks != 0;
     const bool player_hurt = player_.hurt_ticks != 0;
@@ -659,6 +665,10 @@ std::optional<CombatEvent> CombatWorld::try_pop_event() noexcept {
     return events_.try_pop();
 }
 
+bool CombatWorld::player_defeated() const noexcept {
+    return player_.hp == 0;
+}
+
 bool CombatWorld::apply_player_damage(
     DamagePacket packet,
     DamageDelivery delivery,
@@ -691,6 +701,10 @@ bool CombatWorld::apply_player_damage(
     player_.barrier -= absorbed;
     const int hp_damage = damage - absorbed;
     player_.hp = hp_damage >= player_.hp ? 0 : player_.hp - hp_damage;
+    if (player_.hp == 0) {
+        attack_ = AttackRuntime{};
+        input_buffer_.clear();
+    }
     player_.hurt_ticks = kPlayerHurtTicks;
     player_.invulnerability_ticks = kPlayerInvulnerabilityTicks;
     player_.velocity.x = 0.0F;

@@ -159,6 +159,8 @@ void DungeonSession::tick(combat::MovementInput movement) noexcept {
             combat_->tick(movement);
             relay_combat_events();
 
+            handle_player_defeat();
+
             if (phase_ == RoomPhase::combat && remaining_targets() == 0U) {
                 if (wave_index_ + 1U < encounter_plan_.wave_count) {
                     phase_ = RoomPhase::wave_delay;
@@ -545,16 +547,20 @@ void DungeonSession::relay_combat_events() noexcept {
             assert(relayed && "Dungeon combat event relay overflow");
             return;
         }
-        if (event->kind == combat::CombatEventKind::player_defeated) {
-            if (stable_state_.current_room.is_abyss
-                    && stable_state_.abyss.lifecycle
-                        == abyss::AbyssLifecycle::started) {
-                static_cast<void>(prepare_abyss_failure());
-            } else {
-                reset_to_normal_room(false);
-            }
-            return;
-        }
+    }
+}
+
+void DungeonSession::handle_player_defeat() noexcept {
+    if (phase_ == RoomPhase::faulted || !combat_.has_value()
+            || !combat_->player_defeated()) {
+        return;
+    }
+    if (stable_state_.current_room.is_abyss
+            && stable_state_.abyss.lifecycle
+                == abyss::AbyssLifecycle::started) {
+        static_cast<void>(prepare_abyss_failure());
+    } else {
+        reset_to_normal_room(false);
     }
 }
 

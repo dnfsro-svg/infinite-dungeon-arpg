@@ -37,6 +37,24 @@ struct DungeonSessionTestAccess final {
                 damage, combat::Vec3{}, combat::FeedbackLevel::light);
         }
     }
+    static void fill_current_combat_events(
+        dungeon::DungeonSession& session, std::size_t count) noexcept {
+        if (!session.combat_.has_value()) return;
+        combat::CombatEvent event{};
+        event.kind = combat::CombatEventKind::reset;
+        for (std::size_t index = 0U; index < count; ++index) {
+            session.combat_->emit_event(event);
+        }
+    }
+    static void force_fault(
+        dungeon::DungeonSession& session,
+        dungeon::DungeonFault fault) noexcept {
+        session.enter_fault(fault);
+    }
+    static void handle_player_defeat(
+        dungeon::DungeonSession& session) noexcept {
+        session.handle_player_defeat();
+    }
     static void force_defeat_current_wave(
         dungeon::DungeonSession& session) noexcept {
         if (!session.combat_.has_value()) {

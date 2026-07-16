@@ -99,6 +99,51 @@ arpg::test::Failure player_defeat_event_emits_once() noexcept {
     return {};
 }
 
+arpg::test::Failure player_defeat_latch_survives_event_overflow() noexcept {
+    CombatEncounterConfig config = single_chaser_encounter();
+    config.wave = {};
+    CombatWorld world{config};
+    drain_events(world);
+    arpg::test::CombatWorldTestAccess::fill_event_queue(world, 62U);
+    arpg::test::CombatWorldTestAccess::apply_damage(
+        world, world.snapshot().player.max_hp,
+        Vec3{1.0F, 0.0F, 0.0F}, FeedbackLevel::heavy);
+    ARPG_REQUIRE(world.snapshot().player.hp == 0);
+    ARPG_REQUIRE(world.player_defeated());
+    ARPG_REQUIRE(world.snapshot().diagnostics.event_overflow_count == 1U);
+    return {};
+}
+
+arpg::test::Failure defeated_player_rejects_and_discards_input() noexcept {
+    CombatEncounterConfig config = single_chaser_encounter();
+    config.wave = {};
+    CombatWorld world{config};
+    drain_events(world);
+    ARPG_REQUIRE(world.queue_action(Action::light));
+    arpg::test::CombatWorldTestAccess::apply_damage(
+        world, world.snapshot().player.max_hp,
+        Vec3{1.0F, 0.0F, 0.0F}, FeedbackLevel::heavy);
+    drain_events(world);
+    ARPG_REQUIRE(!world.queue_action(Action::launcher));
+    const Vec3 defeated_position = world.snapshot().player.position;
+    world.tick(MovementInput{1, 1});
+    const auto dead = world.snapshot();
+    ARPG_REQUIRE(dead.player.position.x == defeated_position.x);
+    ARPG_REQUIRE(dead.player.position.y == defeated_position.y);
+    ARPG_REQUIRE(dead.player.active_attack == AttackId::none);
+    ARPG_REQUIRE(dead.diagnostics.input_size == 0U);
+    ARPG_REQUIRE(!world.try_pop_event().has_value());
+
+    EncounterWave empty{};
+    ARPG_REQUIRE(world.load_wave(empty, true));
+    world.tick({});
+    ARPG_REQUIRE(world.snapshot().player.active_attack == AttackId::none);
+    while (const auto event = world.try_pop_event()) {
+        ARPG_REQUIRE(event->kind != CombatEventKind::swing);
+    }
+    return {};
+}
+
 arpg::test::Failure hurt_ticks_lock_movement_until_expired() noexcept {
     CombatWorld world{single_chaser_encounter()};
     drain_events(world);
@@ -140,6 +185,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"damage reaches zero", &player_damage_reaches_zero},
     {"accepted hit payload and hurt event", &accepted_hit_emits_payload_and_hurt_started},
     {"player defeat event emits once", &player_defeat_event_emits_once},
+    {"player defeat latch survives event overflow", &player_defeat_latch_survives_event_overflow},
+    {"defeated player rejects and discards input", &defeated_player_rejects_and_discards_input},
     {"hurt movement lock", &hurt_ticks_lock_movement_until_expired},
     {"wave load restores full health", &load_wave_reset_restores_full_health},
 };

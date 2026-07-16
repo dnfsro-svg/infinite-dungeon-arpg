@@ -86,6 +86,7 @@ private:
     [[nodiscard]] RequestResult prepare_abyss_failure() noexcept;
     void start_next_wave() noexcept;
     void relay_combat_events() noexcept;
+    void handle_player_defeat() noexcept;
     [[nodiscard]] bool claim_defeat_reward(
         const combat::CombatEvent& event) noexcept;
     void roll_ground_drop(const combat::CombatEvent& event) noexcept;

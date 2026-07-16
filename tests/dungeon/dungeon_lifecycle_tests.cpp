@@ -187,6 +187,53 @@ arpg::test::Failure abyss_player_defeat_queues_one_fail() noexcept {
     return {};
 }
 
+arpg::test::Failure abyss_player_defeat_does_not_depend_on_event_delivery() noexcept {
+    using namespace arpg;
+    dungeon::DungeonSession session{{}, lifecycle_available_state()};
+    ARPG_REQUIRE(commit_abyss_start(session));
+    session.tick({});
+    while (session.try_pop_event().has_value()) {
+    }
+    while (session.try_pop_combat_event().has_value()) {
+    }
+    test::DungeonSessionTestAccess::fill_current_combat_events(session, 62U);
+    test::DungeonSessionTestAccess::damage_current_player(
+        session, session.snapshot().combat->player.max_hp);
+    ARPG_REQUIRE(session.snapshot().combat->player.hp == 0);
+    session.tick({});
+    const auto pending = session.pending_save();
+    ARPG_REQUIRE(pending.has_value());
+    ARPG_REQUIRE(pending->kind == dungeon::PendingSaveKind::abyss_fail);
+    ARPG_REQUIRE(session.snapshot().phase == dungeon::RoomPhase::committing);
+    std::uint32_t defeat_events = 0U;
+    while (const auto event = session.try_pop_combat_event()) {
+        if (event->kind == combat::CombatEventKind::player_defeated) {
+            ++defeat_events;
+        }
+    }
+    ARPG_REQUIRE(defeat_events == 0U);
+    return {};
+}
+
+arpg::test::Failure relay_overflow_fault_precedes_durable_defeat() noexcept {
+    using namespace arpg;
+    dungeon::DungeonSession session{{}, lifecycle_available_state()};
+    ARPG_REQUIRE(commit_abyss_start(session));
+    session.tick({});
+    while (session.try_pop_event().has_value()) {
+    }
+    test::DungeonSessionTestAccess::damage_current_player(
+        session, session.snapshot().combat->player.max_hp);
+    test::DungeonSessionTestAccess::force_fault(
+        session, dungeon::DungeonFault::combat_relay_overflow);
+    test::DungeonSessionTestAccess::handle_player_defeat(session);
+    ARPG_REQUIRE(session.snapshot().phase == dungeon::RoomPhase::faulted);
+    ARPG_REQUIRE(session.snapshot().diagnostics.fault
+        == dungeon::DungeonFault::combat_relay_overflow);
+    ARPG_REQUIRE(!session.pending_save().has_value());
+    return {};
+}
+
 arpg::test::Failure invalid_available_checkpoint_faults() noexcept {
     auto invalid = lifecycle_available_state();
     invalid.abyss.rule = invalid.abyss.rule == arpg::abyss::AbyssRuleId::thunderstorm
@@ -408,6 +455,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"ordinary reset returns accepted", &ordinary_reset_returns_accepted},
     {"ordinary player defeat uses normal reset", &ordinary_player_defeat_uses_normal_reset},
     {"abyss player defeat queues one fail", &abyss_player_defeat_queues_one_fail},
+    {"abyss defeat does not depend on event delivery", &abyss_player_defeat_does_not_depend_on_event_delivery},
+    {"relay overflow fault precedes durable defeat", &relay_overflow_fault_precedes_durable_defeat},
     {"invalid available checkpoint faults", &invalid_available_checkpoint_faults},
     {"construction and first tick are staged", &construction_and_first_tick_are_staged},
     {"closed doors ignore pre-clear contact", &closed_doors_ignore_pre_clear_contact},

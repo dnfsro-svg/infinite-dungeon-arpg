@@ -35,6 +35,7 @@ public:
     [[nodiscard]] std::size_t active_projectile_count() const noexcept;
     [[nodiscard]] CombatSnapshot snapshot() const noexcept;
     [[nodiscard]] std::optional<CombatEvent> try_pop_event() noexcept;
+    [[nodiscard]] bool player_defeated() const noexcept;
 
 private:
     struct PlayerRuntime final {
