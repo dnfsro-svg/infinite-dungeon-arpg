@@ -7,12 +7,23 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+$runStartedUtc = [DateTime]::UtcNow
+if (Test-Path -LiteralPath $CapturePath -PathType Leaf) {
+    Remove-Item -LiteralPath $CapturePath -Force
+} elseif (Test-Path -LiteralPath $CapturePath) {
+    throw "Formal game capture path is not a file: $CapturePath"
+}
+
 & $Executable
 if ($LASTEXITCODE -ne 0) {
     throw "Stage 9 formal game validation exited with code $LASTEXITCODE"
 }
 if (-not (Test-Path -LiteralPath $CapturePath)) {
     throw "Formal game did not capture its submitted frame: $CapturePath"
+}
+$captureItem = Get-Item -LiteralPath $CapturePath
+if ($captureItem.LastWriteTimeUtc -lt $runStartedUtc) {
+    throw "Formal game capture was not created during this run: $CapturePath"
 }
 
 Add-Type -AssemblyName System.Drawing

@@ -214,6 +214,40 @@ arpg::test::Failure context_derivation_has_no_depth_wave_or_spawn_alias() noexce
     return {};
 }
 
+arpg::test::Failure output_position_substreams_isolate_selection_and_tier_sampling() noexcept {
+    constexpr std::uint64_t kRoomSeed = 0xC0111DEULL;
+    constexpr std::uint64_t kDepth = 40U;
+    constexpr std::uint8_t kWaveIndex = 1U;
+    constexpr std::uint8_t kSpawnIndex = 7U;
+
+    const std::uint64_t selection_second_before =
+        test_support::monster_affix_selection_output_seed(kRoomSeed, kDepth,
+            kWaveIndex, kSpawnIndex, 1U);
+    const std::uint64_t tier_second_before =
+        test_support::monster_affix_tier_output_seed(kRoomSeed, kDepth,
+            kWaveIndex, kSpawnIndex, 1U);
+
+    const std::uint64_t selection_first =
+        test_support::monster_affix_selection_output_seed(kRoomSeed, kDepth,
+            kWaveIndex, kSpawnIndex, 0U);
+    const std::uint64_t tier_first =
+        test_support::monster_affix_tier_output_seed(kRoomSeed, kDepth,
+            kWaveIndex, kSpawnIndex, 0U);
+    ARPG_REQUIRE(selection_first != selection_second_before);
+    ARPG_REQUIRE(tier_first != tier_second_before);
+    ARPG_REQUIRE(selection_first != tier_first);
+
+    const std::uint64_t selection_second_after =
+        test_support::monster_affix_selection_output_seed(kRoomSeed, kDepth,
+            kWaveIndex, kSpawnIndex, 1U);
+    const std::uint64_t tier_second_after =
+        test_support::monster_affix_tier_output_seed(kRoomSeed, kDepth,
+            kWaveIndex, kSpawnIndex, 1U);
+    ARPG_REQUIRE(selection_second_before == selection_second_after);
+    ARPG_REQUIRE(tier_second_before == tier_second_after);
+    return {};
+}
+
 arpg::test::Failure invalid_monster_definition_fails_explicitly() noexcept {
     MonsterDefinition invalid{};
     invalid.id = MonsterId::count;
@@ -234,6 +268,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &insufficient_candidates_fail_explicitly},
     {"context has no depth wave or spawn alias",
         &context_derivation_has_no_depth_wave_or_spawn_alias},
+    {"output position substreams isolate selection and tier sampling",
+        &output_position_substreams_isolate_selection_and_tier_sampling},
     {"invalid monster fails explicitly", &invalid_monster_definition_fails_explicitly},
 };
 

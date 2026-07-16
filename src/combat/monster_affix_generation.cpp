@@ -75,6 +75,15 @@ struct Candidate final {
     return total;
 }
 
+[[nodiscard]] core::DeterministicRng affix_output_rng(
+    std::uint64_t context_seed, std::uint64_t domain,
+    std::size_t output_index) noexcept {
+    auto domain_rng = core::DeterministicRng::derive_stream(context_seed,
+        domain);
+    return core::DeterministicRng::derive_stream(domain_rng.next_u64(),
+        static_cast<std::uint64_t>(output_index));
+}
+
 template <std::size_t N>
 [[nodiscard]] std::size_t weighted_index(
     core::DeterministicRng& rng,
@@ -209,10 +218,6 @@ std::optional<MonsterAffixSet> generate_monster_affixes_with_catalog(
         wave_index, spawn_index);
     auto count_rng = core::DeterministicRng::derive_stream(seed,
         kAffixCountDomain);
-    auto selection_rng = core::DeterministicRng::derive_stream(seed,
-        kAffixSelectionDomain);
-    auto tier_rng = core::DeterministicRng::derive_stream(seed,
-        kAffixTierDomain);
     const std::size_t target_count = weighted_index(count_rng,
         affix_count_weights(depth));
     if (target_count > 3U) return std::nullopt;
@@ -234,6 +239,8 @@ std::optional<MonsterAffixSet> generate_monster_affixes_with_catalog(
         const std::uint64_t selection_total = total_weight(weights.data(),
             candidate_count);
         if (selection_total == 0U) return std::nullopt;
+        auto selection_rng = affix_output_rng(seed, kAffixSelectionDomain,
+            output_index);
         std::uint64_t cursor = selection_rng.next_bounded(selection_total)
             .value_or(selection_total);
         std::size_t selected_index = 0U;
@@ -242,6 +249,7 @@ std::optional<MonsterAffixSet> generate_monster_affixes_with_catalog(
             cursor -= weights[selected_index];
         }
         if (selected_index >= candidate_count) return std::nullopt;
+        auto tier_rng = affix_output_rng(seed, kAffixTierDomain, output_index);
         const std::size_t tier_index = weighted_index(tier_rng, tier_weights);
         if (tier_index >= tier_weights.size()) return std::nullopt;
         result.values[result.count++] = {candidates[selected_index].definition->id,
@@ -327,6 +335,22 @@ std::uint64_t monster_affix_tier_seed(
     return core::DeterministicRng::derive_stream(
         detail::monster_affix_context_seed(room_seed, depth, wave_index,
             spawn_index), kAffixTierDomain).next_u64();
+}
+
+std::uint64_t monster_affix_selection_output_seed(
+    std::uint64_t room_seed, std::uint64_t depth,
+    std::uint8_t wave_index, std::uint8_t spawn_index,
+    std::uint8_t output_index) noexcept {
+    return affix_output_rng(detail::monster_affix_context_seed(room_seed, depth,
+        wave_index, spawn_index), kAffixSelectionDomain, output_index).next_u64();
+}
+
+std::uint64_t monster_affix_tier_output_seed(
+    std::uint64_t room_seed, std::uint64_t depth,
+    std::uint8_t wave_index, std::uint8_t spawn_index,
+    std::uint8_t output_index) noexcept {
+    return affix_output_rng(detail::monster_affix_context_seed(room_seed, depth,
+        wave_index, spawn_index), kAffixTierDomain, output_index).next_u64();
 }
 
 }  // namespace arpg::combat::test_support

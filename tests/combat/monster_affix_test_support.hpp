@@ -30,6 +30,14 @@ generate_monster_affixes_with_catalog(
 [[nodiscard]] std::uint64_t monster_affix_tier_seed(
     std::uint64_t room_seed, std::uint64_t depth,
     std::uint8_t wave_index, std::uint8_t spawn_index) noexcept;
+[[nodiscard]] std::uint64_t monster_affix_selection_output_seed(
+    std::uint64_t room_seed, std::uint64_t depth,
+    std::uint8_t wave_index, std::uint8_t spawn_index,
+    std::uint8_t output_index) noexcept;
+[[nodiscard]] std::uint64_t monster_affix_tier_output_seed(
+    std::uint64_t room_seed, std::uint64_t depth,
+    std::uint8_t wave_index, std::uint8_t spawn_index,
+    std::uint8_t output_index) noexcept;
 
 }  // namespace arpg::combat::test_support
 
