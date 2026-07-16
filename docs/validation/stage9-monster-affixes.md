@@ -58,19 +58,46 @@ host 一样在提交帧后使用 `LoadImageFromScreen/ExportImage`，并在 `Ini
 
 ## 双配置与范围检查
 
-已运行 Release 目标构建：
+在 VS 2022 Build Tools x64、Windows SDK `10.0.26100.0` 与 Ninja 环境中完成双配置全量验证。
+`E:/game/.deps/raylib-6.0` 在本机不存在，但工程的 `cmake/Dependencies.cmake` 使用固定
+SHA256 的 raylib 6.0 FetchContent 源码包；两套配置均成功使用该固定依赖。Debug 配置另有
+`ARPG_FETCH_RAYLIB` 未被项目使用的 CMake 警告，不影响配置结果。
+
+Debug：
 
 ```text
-cmake --build build-release --target arpg_dungeon_tests arpg_stage9_validation_fixture arpg_stage9_validation_game
-ctest --test-dir build-release -R '^stage9\.validation_game\.capture_after_present$' --output-on-failure
+cmake -S . -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DARPG_FETCH_RAYLIB=OFF -DCMAKE_PREFIX_PATH=E:/game/.deps/raylib-6.0
+cmake --build build-debug --parallel
+ctest --test-dir build-debug --output-on-failure
 ```
 
-完整 Debug/Release `ctest` 和最终 `git diff --exit-code 7b54370 -- src/persistence` 需在本机 raylib framebuffer 可用的图形会话中继续执行；本次未将它们标记为通过。
+配置 exit 0；构建 `199/199`、exit 0；CTest `30/30` 通过、`0` 失败，真实耗时 `240.05 sec`。
+其中 `dungeon.units` 通过，耗时 `181.89 sec`。
 
-范围扫描要求：
+Release：
+
+```text
+cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DARPG_FETCH_RAYLIB=OFF -DCMAKE_PREFIX_PATH=E:/game/.deps/raylib-6.0
+cmake --build build-release --parallel
+ctest --test-dir build-release --output-on-failure
+```
+
+配置 exit 0；构建 exit 0；CTest `30/30` 通过、`0` 失败，真实耗时 `205.13 sec`。
+其中 `dungeon.units` 通过，耗时 `146.70 sec`。
+
+差异检查：
+
+```text
+git diff --check
+git diff --exit-code 7b54370 -- src/persistence
+```
+
+两项命令均为 exit 0：无空白错误，且 `src/persistence` 相对 `7b54370` 无差异。
+
+范围扫描：
 
 ```text
 rg -n "abyss_affix|summon_affix|aura_affix|Stage 10" src tests
 ```
 
-结果应为空；本 Task 未实现深渊、召唤或光环词缀，也未进入 Stage 10。
+无命中（`rg` exit 1 表示无匹配）；本 Task 未实现深渊、召唤或光环词缀，也未进入 Stage 10。
