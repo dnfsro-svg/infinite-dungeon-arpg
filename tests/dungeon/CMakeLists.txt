@@ -141,6 +141,15 @@ if(TARGET arpg_raylib)
     set_tests_properties(stage10.formal_game.capture_after_present PROPERTIES
         LABELS "graphics;stage10;validation;formal-game"
         TIMEOUT 180)
+
+    add_test(NAME stage10.formal_game.capture_content_validator
+        COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+            -File "${CMAKE_CURRENT_SOURCE_DIR}/stage10_formal_capture_content_test.ps1"
+            -ValidatorScript "${CMAKE_CURRENT_SOURCE_DIR}/stage10_formal_game_capture_test.ps1"
+            -ScratchDirectory "$<TARGET_FILE_DIR:arpg_stage10_formal_game_validation>/stage10-capture-content-test")
+    set_tests_properties(stage10.formal_game.capture_content_validator PROPERTIES
+        LABELS "headless;stage10;validation;formal-game;evidence"
+        TIMEOUT 60)
 endif()
 
 if(WIN32)
