@@ -19,6 +19,7 @@ arpg::test::TestSuite dungeon_transaction_suite() noexcept;
 arpg::test::TestSuite encounter_director_suite() noexcept;
 arpg::test::TestSuite dungeon_wave_suite() noexcept;
 arpg::test::TestSuite dungeon_progression_reward_suite() noexcept;
+arpg::test::TestSuite dungeon_affix_reward_suite() noexcept;
 
 int main() {
 #if defined(_WIN32) && defined(_DEBUG)
@@ -45,7 +46,8 @@ int main() {
         encounter_director_suite(),
         dungeon_wave_suite(),
         dungeon_progression_reward_suite(),
+        dungeon_affix_reward_suite(),
     };
 
-    return arpg::test::run_suites(suites, 123, "stage 9 task 2 dungeon");
+    return arpg::test::run_suites(suites, 126, "stage 9 task 2 dungeon");
 }

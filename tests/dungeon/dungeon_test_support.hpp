@@ -59,7 +59,10 @@ struct DungeonSessionTestAccess final {
         std::uint8_t wave_index,
         std::uint8_t target_index,
         combat::Vec3 position,
-        bool reward_eligible = true) noexcept {
+        bool reward_eligible = true,
+        combat::MonsterId monster_id = combat::MonsterId::fire_bomber,
+        std::uint16_t spawn_ordinal = 0xFFFFU,
+        std::uint16_t affix_score = 0U) noexcept {
         if (!session.combat_.has_value() || wave_index >= 2U) {
             return false;
         }
@@ -70,6 +73,12 @@ struct DungeonSessionTestAccess final {
         event.kind = combat::CombatEventKind::defeated;
         event.target_index = target_index;
         event.position = position;
+        event.monster_id = monster_id;
+        event.spawn_ordinal = spawn_ordinal == 0xFFFFU
+            ? static_cast<std::uint16_t>(
+                static_cast<std::uint16_t>(wave_index) * 96U + target_index)
+            : spawn_ordinal;
+        event.affix_score = affix_score;
         event.reward_eligible = reward_eligible;
         if (!session.combat_->events_.try_push(event)) {
             return false;
@@ -177,9 +186,13 @@ inline bool relay_defeated(
     std::uint8_t wave_index,
     std::uint8_t target_index,
     combat::Vec3 position,
-    bool reward_eligible = true) noexcept {
+    bool reward_eligible = true,
+    combat::MonsterId monster_id = combat::MonsterId::fire_bomber,
+    std::uint16_t spawn_ordinal = 0xFFFFU,
+    std::uint16_t affix_score = 0U) noexcept {
     return DungeonSessionTestAccess::relay_defeated(
-        session, wave_index, target_index, position, reward_eligible);
+        session, wave_index, target_index, position, reward_eligible,
+        monster_id, spawn_ordinal, affix_score);
 }
 
 inline void set_current_room_seed(
