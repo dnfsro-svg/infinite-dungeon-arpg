@@ -23,7 +23,8 @@ add_library(arpg_raylib STATIC
     raylib_input.cpp
     raylib_host.cpp
     room_renderer.cpp
-    stable_key_raylib.cpp)
+    stable_key_raylib.cpp
+    window_settings.cpp)
 
 target_include_directories(arpg_raylib
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")

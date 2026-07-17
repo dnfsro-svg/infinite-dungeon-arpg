@@ -12,6 +12,7 @@ if(TARGET arpg_raylib)
         dungeon_runtime_tests.cpp
         pause_menu_state_tests.cpp
         pause_menu_view_tests.cpp
+        window_settings_tests.cpp
         death_input_gate_tests.cpp
         death_overlay_view_tests.cpp)
     target_sources(arpg_platform_tests PRIVATE inventory_view_math_tests.cpp)
