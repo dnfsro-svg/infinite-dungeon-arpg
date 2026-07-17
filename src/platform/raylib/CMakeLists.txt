@@ -18,6 +18,8 @@ add_library(arpg_raylib STATIC
     passive_tree_renderer.cpp
     passive_tree_view_math.cpp
     pause_menu_state.cpp
+    pause_menu_view.cpp
+    pause_menu_renderer.cpp
     raylib_input.cpp
     raylib_host.cpp
     room_renderer.cpp

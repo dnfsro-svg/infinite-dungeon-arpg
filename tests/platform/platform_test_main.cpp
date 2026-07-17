@@ -17,6 +17,7 @@ arpg::test::TestSuite inventory_view_math_suite() noexcept;
 arpg::test::TestSuite death_input_gate_suite() noexcept;
 arpg::test::TestSuite death_overlay_view_suite() noexcept;
 arpg::test::TestSuite pause_menu_state_suite() noexcept;
+arpg::test::TestSuite pause_menu_view_suite() noexcept;
 
 int main() {
 #if defined(_WIN32) && defined(_DEBUG)
@@ -41,7 +42,8 @@ int main() {
         death_input_gate_suite(),
         death_overlay_view_suite(),
         pause_menu_state_suite(),
+        pause_menu_view_suite(),
     };
 
-    return arpg::test::run_suites(suites, 143, "stage 11b task 5 pause state");
+    return arpg::test::run_suites(suites, 150, "stage 11b task 6 pause view");
 }
