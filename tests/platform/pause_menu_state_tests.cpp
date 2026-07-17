@@ -475,16 +475,161 @@ test::Failure non_action_inputs_do_not_mutate_settings() noexcept {
 
 test::Failure state_machine_performs_no_heap_allocations() noexcept {
     auto state = make_state();
+    constexpr ContextOwner kBlockingOwners[] = {
+        ContextOwner::death,
+        ContextOwner::recovery,
+        ContextOwner::inventory,
+        ContextOwner::passive,
+        ContextOwner::pending_save,
+    };
+    constexpr char kRetryMessage[] = "retry save";
     const std::uint64_t before = test::allocation_count();
-    for (int iteration = 0; iteration < 1000; ++iteration) {
-        state.screen = platform::PauseScreen::closed;
+
+    for (std::uint64_t iteration = 0U; iteration < 64U; ++iteration) {
+        for (const ContextOwner owner : kBlockingOwners) {
+            state = make_state();
+            ARPG_REQUIRE(update(
+                state, input_for(InputKind::escape), context_for(owner)) ==
+                platform::PauseCommand::none);
+            ARPG_REQUIRE(state.screen == platform::PauseScreen::closed);
+        }
+
+        state = make_state();
         ARPG_REQUIRE(update(state, input_for(InputKind::escape)) == platform::PauseCommand::none);
+        ARPG_REQUIRE(state.screen == platform::PauseScreen::root);
+
+        state = make_state();
+        state.screen = platform::PauseScreen::root;
+        ARPG_REQUIRE(update(state, input_for(InputKind::up)) == platform::PauseCommand::none);
+        ARPG_REQUIRE(state.selected_row == 2U);
+        ARPG_REQUIRE(update(state, input_for(InputKind::down)) == platform::PauseCommand::none);
+        ARPG_REQUIRE(state.selected_row == 0U);
+        ARPG_REQUIRE(update(state, input_for(InputKind::enter)) == platform::PauseCommand::resume);
+
+        state = make_state();
+        state.screen = platform::PauseScreen::root;
         state.selected_row = 1U;
         ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::none);
+        ARPG_REQUIRE(state.screen == platform::PauseScreen::settings);
+
+        state = make_state();
+        state.screen = platform::PauseScreen::root;
+        state.selected_row = 2U;
+        ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::none);
+        ARPG_REQUIRE(state.screen == platform::PauseScreen::quit_confirm);
+        ARPG_REQUIRE(state.selected_row == 1U);
+
+        state = make_state();
+        state.screen = platform::PauseScreen::settings;
         state.selected_row = 0U;
-        ARPG_REQUIRE(update(state, input_for(InputKind::left)) != platform::PauseCommand::apply);
-        ARPG_REQUIRE(update(state, input_for(InputKind::escape)) == platform::PauseCommand::rollback);
+        ARPG_REQUIRE(update(state, input_for(InputKind::left)) == platform::PauseCommand::preview);
+
+        state = make_state();
+        state.screen = platform::PauseScreen::settings;
+        state.selected_row = 1U;
+        ARPG_REQUIRE(update(state, input_for(InputKind::right)) == platform::PauseCommand::preview);
+
+        state = make_state();
+        state.screen = platform::PauseScreen::settings;
+        state.selected_row = 2U;
+        ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::preview);
+
+        state = make_state();
+        state.screen = platform::PauseScreen::settings;
+        state.selected_row = 13U;
+        state.draft.master_sfx_percent = 50U;
+        state.draft.revision = iteration;
+        ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::preview);
+        ARPG_REQUIRE(state.draft.revision == iteration);
+
+        state = make_state();
+        state.screen = platform::PauseScreen::settings;
+        state.selected_row = 14U;
+        state.committed.revision = iteration;
+        state.draft = state.committed;
+        state.message = kRetryMessage;
+        ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::apply);
+        ARPG_REQUIRE(state.draft.revision == iteration + 1U);
+        ARPG_REQUIRE(state.message == kRetryMessage);
+
+        state = make_state();
+        state.screen = platform::PauseScreen::settings;
+        state.selected_row = 14U;
+        state.draft.master_sfx_percent = 53U;
+        ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::none);
+        ARPG_REQUIRE(state.message != nullptr);
+
+        state = make_state();
+        state.screen = platform::PauseScreen::settings;
+        state.selected_row = 14U;
+        state.committed.revision = std::numeric_limits<std::uint64_t>::max();
+        ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::none);
+        ARPG_REQUIRE(state.message != nullptr);
+
+        state = make_state();
+        state.screen = platform::PauseScreen::settings;
+        state.selected_row = 15U;
+        state.draft.master_sfx_percent = 25U;
+        ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::rollback);
+        ARPG_REQUIRE(state.screen == platform::PauseScreen::root);
+
+        for (std::size_t action = 0U;
+             action < static_cast<std::size_t>(settings::SettingAction::count);
+             ++action) {
+            state = make_state();
+            state.screen = platform::PauseScreen::capture_binding;
+            state.capture_action = static_cast<settings::SettingAction>(action);
+            ARPG_REQUIRE(update(state, capture_input(settings::StableKey::q)) ==
+                platform::PauseCommand::none);
+            ARPG_REQUIRE(state.screen == platform::PauseScreen::settings);
+        }
+
+        state = make_state();
+        state.screen = platform::PauseScreen::capture_binding;
+        state.capture_action = settings::SettingAction::light_attack;
+        ARPG_REQUIRE(update(state, capture_input(settings::StableKey::k)) ==
+            platform::PauseCommand::none);
+        ARPG_REQUIRE(settings::binding_for(
+            state.draft, settings::SettingAction::jump) == settings::StableKey::j);
+
+        state = make_state();
+        state.screen = platform::PauseScreen::capture_binding;
+        state.capture_action = settings::SettingAction::light_attack;
+        ARPG_REQUIRE(update(state, capture_input(settings::StableKey::v)) ==
+            platform::PauseCommand::none);
+        ARPG_REQUIRE(state.screen == platform::PauseScreen::capture_binding);
+
+        state = make_state();
+        state.screen = platform::PauseScreen::capture_binding;
+        state.capture_action = settings::SettingAction::light_attack;
+        ARPG_REQUIRE(update(state, capture_input(settings::StableKey::count)) ==
+            platform::PauseCommand::none);
+        ARPG_REQUIRE(state.screen == platform::PauseScreen::capture_binding);
+
+        state = make_state();
+        state.screen = platform::PauseScreen::capture_binding;
+        state.capture_action = settings::SettingAction::light_attack;
+        ARPG_REQUIRE(update(state, {}, unfocused_context()) == platform::PauseCommand::none);
+        ARPG_REQUIRE(state.screen == platform::PauseScreen::settings);
+
+        state = make_state();
+        state.screen = platform::PauseScreen::capture_binding;
+        state.capture_action = settings::SettingAction::light_attack;
+        ARPG_REQUIRE(update(state, input_for(InputKind::escape)) == platform::PauseCommand::none);
+        ARPG_REQUIRE(state.screen == platform::PauseScreen::settings);
+
+        state = make_state();
+        state.screen = platform::PauseScreen::quit_confirm;
+        state.selected_row = 0U;
+        ARPG_REQUIRE(update(state, input_for(InputKind::enter)) == platform::PauseCommand::quit);
+
+        state = make_state();
+        state.screen = platform::PauseScreen::quit_confirm;
+        state.selected_row = 1U;
+        ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::none);
+        ARPG_REQUIRE(state.screen == platform::PauseScreen::root);
     }
+
     ARPG_REQUIRE(test::allocation_count() == before);
     return {};
 }
