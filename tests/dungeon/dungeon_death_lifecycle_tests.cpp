@@ -610,6 +610,85 @@ arpg::test::Failure death_event_overflow_publishes_no_pending_save() noexcept {
     return {};
 }
 
+arpg::test::Failure first_death_reserves_detected_and_terminal_events() noexcept {
+    DungeonSession session{DungeonRules{}, dungeon::make_initial_run_state(
+        0xD34DE0U, DungeonRules{}).state};
+    session.tick({});
+    arpg::test::EventSummary ignored{};
+    arpg::test::drain_all_events(session, ignored);
+    ARPG_REQUIRE(arpg::test::fill_dungeon_events(
+        session, DungeonSession::kDungeonEventCapacity - 1U)
+        == DungeonSession::kDungeonEventCapacity - 1U);
+    ARPG_REQUIRE(arpg::test::kill_current_player_through_combat(session));
+    session.tick({});
+    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::faulted);
+    ARPG_REQUIRE(session.snapshot().diagnostics.fault
+        == dungeon::DungeonFault::event_overflow);
+    ARPG_REQUIRE(!session.pending_save().has_value());
+    ARPG_REQUIRE(arpg::test::stable_state(session).death.lifecycle
+        == DeathLifecycle::none);
+    return {};
+}
+
+arpg::test::Failure death_commit_consumes_reserved_terminal_slot() noexcept {
+    DungeonSession session{DungeonRules{}, dungeon::make_initial_run_state(
+        0xD34DE1U, DungeonRules{}).state};
+    session.tick({});
+    arpg::test::EventSummary ignored{};
+    arpg::test::drain_all_events(session, ignored);
+    ARPG_REQUIRE(arpg::test::fill_dungeon_events(
+        session, DungeonSession::kDungeonEventCapacity - 2U)
+        == DungeonSession::kDungeonEventCapacity - 2U);
+    ARPG_REQUIRE(arpg::test::kill_current_player_through_combat(session));
+    session.tick({});
+    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::committing);
+    const auto pending = *session.pending_save();
+    session.resolve_pending_save({SaveDisposition::committed,
+        pending.expected_generation, pending.next_state,
+        PendingSaveKind::death_retreat});
+    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::death_pending);
+    ARPG_REQUIRE(session.snapshot().diagnostics.fault
+        == dungeon::DungeonFault::none);
+    return {};
+}
+
+arpg::test::Failure death_not_committed_and_retry_reserve_terminal_slot() noexcept {
+    DungeonSession session{DungeonRules{}, dungeon::make_initial_run_state(
+        0xD34DE2U, DungeonRules{}).state};
+    session.tick({});
+    arpg::test::EventSummary ignored{};
+    arpg::test::drain_all_events(session, ignored);
+    ARPG_REQUIRE(arpg::test::fill_dungeon_events(
+        session, DungeonSession::kDungeonEventCapacity - 2U)
+        == DungeonSession::kDungeonEventCapacity - 2U);
+    ARPG_REQUIRE(arpg::test::kill_current_player_through_combat(session));
+    session.tick({});
+    const auto first = *session.pending_save();
+    session.resolve_pending_save({SaveDisposition::not_committed, 0U, {},
+        PendingSaveKind::death_retreat});
+    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::combat);
+    ARPG_REQUIRE(session.snapshot().diagnostics.fault
+        == dungeon::DungeonFault::none);
+    ARPG_REQUIRE(!session.pending_save().has_value());
+
+    arpg::test::drain_all_events(session, ignored);
+    ARPG_REQUIRE(arpg::test::fill_dungeon_events(
+        session, DungeonSession::kDungeonEventCapacity - 1U)
+        == DungeonSession::kDungeonEventCapacity - 1U);
+    session.tick({});
+    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::committing);
+    const auto retry = *session.pending_save();
+    ARPG_REQUIRE(retry.expected_generation == first.expected_generation);
+    ARPG_REQUIRE(dungeon::same_run_state(retry.next_state, first.next_state));
+    session.resolve_pending_save({SaveDisposition::not_committed, 0U, {},
+        PendingSaveKind::death_retreat});
+    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::combat);
+    ARPG_REQUIRE(session.snapshot().diagnostics.fault
+        == dungeon::DungeonFault::none);
+    ARPG_REQUIRE(!session.pending_save().has_value());
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"ordinary pending load is read only", &ordinary_pending_load_is_read_only},
     {"depth one and abyss pending loads are valid", &depth_one_and_abyss_pending_loads_are_valid},
@@ -629,6 +708,9 @@ constexpr arpg::test::TestCase kCases[] = {
     {"death overflows fault before pending", &death_overflows_fault_before_pending_publication},
     {"death wins same tick and events exactly once", &death_wins_same_tick_and_events_are_exactly_once},
     {"death event overflow publishes no pending", &death_event_overflow_publishes_no_pending_save},
+    {"first death reserves two event slots", &first_death_reserves_detected_and_terminal_events},
+    {"death commit consumes reserved slot", &death_commit_consumes_reserved_terminal_slot},
+    {"death retry reserves terminal slot", &death_not_committed_and_retry_reserve_terminal_slot},
 };
 
 }  // namespace

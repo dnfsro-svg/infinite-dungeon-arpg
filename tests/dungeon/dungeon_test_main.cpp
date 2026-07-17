@@ -120,6 +120,6 @@ int main() {
             "stage 10 task 12 abyss stress");
     }
 
-    return arpg::test::run_suites(suites, 241,
+    return arpg::test::run_suites(suites, 244,
         "stage 11a task 6 death retreat validation");
 }

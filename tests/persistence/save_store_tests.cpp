@@ -411,12 +411,25 @@ arpg::test::Failure same_state_includes_all_ownership_bytes_and_order() noexcept
     return {};
 }
 
-arpg::test::Failure equal_generation_death_difference_conflicts() noexcept {
+arpg::test::Failure equal_generation_death_sequence_difference_conflicts() noexcept {
     TempDirectory directory;
     const auto lhs = with_pending_death(make_state(7U, 77U));
     auto rhs = lhs;
+    ++rhs.death_sequence;
+    write_bytes(directory.path / "run_a.sav", encoded(lhs));
+    write_bytes(directory.path / "run_b.sav", encoded(rhs));
+    auto store = make_store(directory.path);
+    const auto loaded = store.load();
+    ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::recovery_required);
+    ARPG_REQUIRE(loaded.error == persistence::SaveError::conflicting_slots);
+    return {};
+}
+
+arpg::test::Failure equal_generation_death_field_difference_conflicts() noexcept {
+    TempDirectory directory;
+    const auto lhs = with_pending_death(make_state(7U, 78U));
+    auto rhs = lhs;
     ++rhs.death.raw_damage;
-    ++rhs.death.recent_damage[0];
     write_bytes(directory.path / "run_a.sav", encoded(lhs));
     write_bytes(directory.path / "run_b.sav", encoded(rhs));
     auto store = make_store(directory.path);
@@ -468,7 +481,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"temp files do not participate in load", &temp_files_do_not_participate_in_load},
     {"variable length slots rotate large then small", &variable_length_slots_rotate_large_then_small},
     {"same state includes ownership bytes and order", &same_state_includes_all_ownership_bytes_and_order},
-    {"equal generation death difference conflicts", &equal_generation_death_difference_conflicts},
+    {"equal generation death sequence difference conflicts", &equal_generation_death_sequence_difference_conflicts},
+    {"equal generation death field difference conflicts", &equal_generation_death_field_difference_conflicts},
     {"migrated flag follows selected ab slot", &migrated_flag_follows_the_selected_ab_slot},
     {"migrated flag survives invalid slot recovery", &migrated_flag_survives_invalid_slot_recovery},
 };

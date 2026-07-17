@@ -1040,7 +1040,8 @@ bool DungeonSession::prepare_death_retreat() noexcept {
         enter_fault(DungeonFault::room_index_overflow);
         return false;
     }
-    if (!death_detected_emitted_ && !can_emit(1U)) {
+    const std::size_t required_event_slots = death_detected_emitted_ ? 1U : 2U;
+    if (!can_emit(required_event_slots)) {
         enter_fault(DungeonFault::event_overflow);
         return false;
     }
