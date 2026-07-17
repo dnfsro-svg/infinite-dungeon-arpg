@@ -74,7 +74,7 @@ if(DEFINED STAGE11_GUARD_MUTATION_KIND
     set(_death_stress_source "${STAGE11_GUARD_MUTATION_FILE}")
 endif()
 arpg_assert_files_exclude("Death stress private-access loophole"
-    "(DungeonSessionTestAccess|CombatWorldTestAccess|kill_current_player_through_combat|fill_ground_pool|handle_player_defeat|stable_state_[^A-Za-z0-9]|pending_save_[^A-Za-z0-9])"
+    "(DungeonSessionTestAccess|CombatWorldTestAccess|kill_current_player_through_combat|fill_ground_pool|handle_player_defeat|pending_save_[^A-Za-z0-9])"
     ${_death_stress_source})
 
 file(READ "${_death_stress_source}" _death_stress_text)
@@ -93,11 +93,23 @@ endif()
 string(REGEX MATCHALL "session\\.[A-Za-z_][A-Za-z0-9_]*"
     _fixture_session_accesses "${_fixture_body}")
 foreach(_access IN LISTS _fixture_session_accesses)
-    if(NOT _access STREQUAL "session.ground_items_")
+    if(NOT _access STREQUAL "session.ground_items_"
+            AND NOT _access STREQUAL "session.stable_state_")
         message(FATAL_ERROR
             "Death stress fixture private access is not allowed: ${_access}")
     endif()
 endforeach()
+if(_fixture_body MATCHES
+        "session[.]stable_state_[^;\r\n]*(=|[+*/%|&^-]=|<<=|>>=)")
+    message(FATAL_ERROR
+        "Death stress stable-state fixture access must remain read-only")
+endif()
+string(REPLACE "${_fixture_body}" "" _death_stress_outside_fixture
+    "${_death_stress_text}")
+if(_death_stress_outside_fixture MATCHES "stable_state_[^A-Za-z0-9]")
+    message(FATAL_ERROR
+        "Death stress stable-state private access must stay inside its fixture")
+endif()
 
 if(NOT DEFINED STAGE11_GUARD_MUTATION_MODE)
     if(NOT DEFINED GUARD_TEST_ROOT)
@@ -149,6 +161,12 @@ if(NOT DEFINED STAGE11_GUARD_MUTATION_MODE)
         "struct DungeonDeathStressFixture final {\n"
         " static void bad(dungeon::DungeonSession& session) {\n"
         "  session.diagnostics_ = {};\n"
+        " }\n"
+        "};\n")
+    arpg_expect_guard_rejects(fixture_stable_state_write fixture
+        "struct DungeonDeathStressFixture final {\n"
+        " static void bad(dungeon::DungeonSession& session) {\n"
+        "  session.stable_state_.death_sequence = 0U;\n"
         " }\n"
         "};\n")
 endif()

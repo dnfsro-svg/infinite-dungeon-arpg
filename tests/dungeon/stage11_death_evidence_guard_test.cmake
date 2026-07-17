@@ -62,12 +62,67 @@ foreach(required_host "stage11_validation_input" "queue_action"
         message(FATAL_ERROR "Formal host lacks production input/save path: ${required_host}")
     endif()
 endforeach()
+string(ASCII 9 host_tab)
+string(ASCII 10 host_lf)
+string(ASCII 13 host_cr)
+string(REPLACE " " "" host_compact "${host_source}")
+string(REPLACE "${host_tab}" "" host_compact "${host_compact}")
+string(REPLACE "${host_lf}" "" host_compact "${host_compact}")
+string(REPLACE "${host_cr}" "" host_compact "${host_compact}")
+string(REGEX MATCHALL "if\\(death_gate[.]continue_death\\)\\{"
+    exact_death_gate_conditions "${host_compact}")
+list(LENGTH exact_death_gate_conditions exact_death_gate_condition_count)
+if(NOT exact_death_gate_condition_count EQUAL 1)
+    message(FATAL_ERROR
+        "Formal death continue condition must be exactly death_gate.continue_death")
+endif()
 string(REGEX MATCHALL "runtime[.]request_death_continue[ \t\r\n]*[(][ \t\r\n]*[)]"
     host_continue_requests "${host_source}")
 list(LENGTH host_continue_requests host_continue_request_count)
 if(NOT host_continue_request_count EQUAL 1)
     message(FATAL_ERROR
         "Formal validation continue must use the single death input gate request path")
+endif()
+set(death_gate_scope_prefix "if(death_gate.continue_death){")
+string(FIND "${host_compact}" "${death_gate_scope_prefix}"
+    death_gate_scope_begin)
+string(LENGTH "${death_gate_scope_prefix}" death_gate_scope_prefix_length)
+math(EXPR death_gate_open_brace
+    "${death_gate_scope_begin} + ${death_gate_scope_prefix_length} - 1")
+string(LENGTH "${host_compact}" host_compact_length)
+math(EXPR host_compact_last "${host_compact_length} - 1")
+set(death_gate_depth 0)
+set(death_gate_scope_end -1)
+foreach(character_index RANGE ${death_gate_open_brace} ${host_compact_last})
+    string(SUBSTRING "${host_compact}" ${character_index} 1 character)
+    if(character STREQUAL "{")
+        math(EXPR death_gate_depth "${death_gate_depth} + 1")
+    elseif(character STREQUAL "}")
+        math(EXPR death_gate_depth "${death_gate_depth} - 1")
+        if(death_gate_depth EQUAL 0)
+            set(death_gate_scope_end ${character_index})
+            break()
+        endif()
+    endif()
+endforeach()
+if(death_gate_scope_end EQUAL -1)
+    message(FATAL_ERROR "Formal death continue gate scope is unbalanced")
+endif()
+math(EXPR death_gate_scope_length
+    "${death_gate_scope_end} - ${death_gate_scope_begin} + 1")
+string(SUBSTRING "${host_compact}" ${death_gate_scope_begin}
+    ${death_gate_scope_length} death_gate_scope)
+string(FIND "${death_gate_scope}" "runtime.request_death_continue()"
+    scoped_continue_request)
+if(scoped_continue_request EQUAL -1)
+    message(FATAL_ERROR
+        "Formal death continue request must be inside the explicit death input gate scope")
+endif()
+string(FIND "${death_gate_scope}" "validation_continue"
+    scoped_validation_continue)
+if(NOT scoped_validation_continue EQUAL -1)
+    message(FATAL_ERROR
+        "Formal validation_continue must remain outside the death input gate scope")
 endif()
 if(NOT formal_source MATCHES "run_raylib_host"
         OR NOT formal_source MATCHES "SaveStore"

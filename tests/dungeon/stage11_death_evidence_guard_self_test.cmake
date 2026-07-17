@@ -105,4 +105,42 @@ expect_guard_rejection(validation_continue_bypass "${VALID_FIXTURE}"
     "Formal validation continue must use the single death input gate")
 file(REMOVE "${validation_bypass_file}")
 
+foreach(gate_condition IN ITEMS
+        "death_gate.continue_death || validation_continue"
+        "validation_continue")
+    string(MAKE_C_IDENTIFIER "${gate_condition}" mutation_suffix)
+    set(condition_mutation_file
+        "${CMAKE_CURRENT_BINARY_DIR}/stage11_bad_gate_${mutation_suffix}.txt")
+    string(REPLACE
+        "if (death_gate.continue_death) {"
+        "if (${gate_condition}) {"
+        condition_mutation_source "${valid_host_source}")
+    if(condition_mutation_source STREQUAL valid_host_source)
+        message(FATAL_ERROR
+            "death gate condition mutation did not find the production condition")
+    endif()
+    file(WRITE "${condition_mutation_file}" "${condition_mutation_source}")
+    expect_guard_rejection("death_gate_${mutation_suffix}"
+        "${VALID_FIXTURE}" "${condition_mutation_file}"
+        "Formal death continue condition must be exactly death_gate.continue_death")
+    file(REMOVE "${condition_mutation_file}")
+endforeach()
+
+set(validation_scope_mutation_file
+    "${CMAKE_CURRENT_BINARY_DIR}/stage11_bad_validation_continue_scope.txt")
+string(REPLACE
+    "if (death_continue_result\n                        != dungeon::RequestResult::rejected) {"
+    "if (validation_continue && death_continue_result\n                        != dungeon::RequestResult::rejected) {"
+    validation_scope_mutation_source "${valid_host_source}")
+if(validation_scope_mutation_source STREQUAL valid_host_source)
+    message(FATAL_ERROR
+        "validation scope mutation did not find the request result condition")
+endif()
+file(WRITE "${validation_scope_mutation_file}"
+    "${validation_scope_mutation_source}")
+expect_guard_rejection(validation_continue_in_gate_scope "${VALID_FIXTURE}"
+    "${validation_scope_mutation_file}"
+    "Formal validation_continue must remain outside the death input gate scope")
+file(REMOVE "${validation_scope_mutation_file}")
+
 message(STATUS "Stage 11 guard mutation self-test passed")

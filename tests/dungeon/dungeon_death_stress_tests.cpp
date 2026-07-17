@@ -6,6 +6,7 @@
 #include "dungeon/dungeon_progression.hpp"
 #include "dungeon/dungeon_session.hpp"
 #include "dungeon/room_generation.hpp"
+#include "items/item_catalog.hpp"
 #include "items/item_types.hpp"
 #include "persistence/checkpoint_codec.hpp"
 
@@ -27,6 +28,11 @@
 namespace arpg::test {
 
 struct DungeonDeathStressFixture final {
+    static const dungeon::DungeonRunState& stable_state_view(
+        const dungeon::DungeonSession& session) noexcept {
+        return session.stable_state_;
+    }
+
     static void saturate_ground_pool(
         dungeon::DungeonSession& session,
         const items::ItemInstance& prototype) noexcept {
@@ -239,6 +245,16 @@ arpg::items::ItemInstance ground_prototype() noexcept {
     return item;
 }
 
+arpg::items::ItemInstance baseline_weapon() noexcept {
+    arpg::items::ItemInstance item{};
+    item.id = 0xB451E11E00000011ULL;
+    item.base_id = 1U;
+    item.rarity = arpg::items::ItemRarity::normal;
+    item.item_level = 8U;
+    item.required_level = 1U;
+    return item;
+}
+
 combat::MovementInput move_toward_nearest_monster(
     const dungeon::DungeonSnapshot& snapshot) noexcept {
     if (!snapshot.combat.has_value()) return {};
@@ -300,6 +316,14 @@ bool run_trace(Trace& trace, bool restart_rhythm) noexcept {
     state.progression = {2U, 7U, 1U, 1U};
     state.item_ownership.claimed_drop_bits = {{1U, 2U, 4U}};
     state.item_ownership.next_item_sequence = 17U;
+    state.item_ownership.items.push_back(baseline_weapon());
+    state.item_ownership.equipment.equipped_ids[0] =
+        state.item_ownership.items.front().id;
+    if (state.item_ownership.items.size() != 1U
+            || state.item_ownership.equipment.equipped_ids[0] == 0U
+            || !arpg::items::validate_ownership(state.item_ownership)) {
+        return false;
+    }
     const checkpoint::DungeonRunState permanent_baseline = state;
     auto session = std::make_unique<dungeon::DungeonSession>(rules, state);
     const dungeon::PendingSave* const abyss_start =
@@ -433,7 +457,13 @@ bool run_trace(Trace& trace, bool restart_rhythm) noexcept {
             arpg::test::allocation_count() - commit_before;
         trace.dungeon_commit_allocations += commit_delta;
         if (commit_delta != 0U) return fail("death-commit-allocation");
-        state = death_pending->next_state;
+        const checkpoint::DungeonRunState& published_death =
+            arpg::test::DungeonDeathStressFixture::stable_state_view(*session);
+        if (!dungeon::same_run_state(
+                published_death, death_receipt.verified_state)) {
+            return fail("death-published-state");
+        }
+        state = published_death;
         if (session->snapshot().phase == dungeon::RoomPhase::faulted) {
             return fail("death-commit");
         }
@@ -478,8 +508,6 @@ bool run_trace(Trace& trace, bool restart_rhythm) noexcept {
             return fail("continue-pending");
         }
         const auto continue_receipt = committed_receipt(*continue_pending);
-        checkpoint::DungeonRunState continued_state =
-            continue_pending->next_state;
         const std::uint64_t continue_commit_before =
             arpg::test::allocation_count();
         resolve_committed(*session, continue_receipt);
@@ -489,7 +517,13 @@ bool run_trace(Trace& trace, bool restart_rhythm) noexcept {
         if (continue_commit_delta != 0U) {
             return fail("continue-commit-allocation");
         }
-        state = std::move(continued_state);
+        const checkpoint::DungeonRunState& published_continue =
+            arpg::test::DungeonDeathStressFixture::stable_state_view(*session);
+        if (!dungeon::same_run_state(
+                published_continue, continue_receipt.verified_state)) {
+            return fail("continue-published-state");
+        }
+        state = published_continue;
         if (session->snapshot().phase == dungeon::RoomPhase::faulted) {
             return fail("continue-commit");
         }
@@ -509,7 +543,8 @@ bool run_trace(Trace& trace, bool restart_rhythm) noexcept {
             ++trace.continue_restarts;
         }
     }
-    trace.final_state = state;
+    trace.final_state =
+        arpg::test::DungeonDeathStressFixture::stable_state_view(*session);
     trace.complete = true;
     return true;
 }

@@ -67,11 +67,11 @@ out/build/windows-msvc-debug/bin/stage11-death-formal-validation/
 out/build/windows-msvc-release/bin/stage11-death-formal-validation/
 ```
 
-每个目录还包含独立存档目录和 `formal-path-summary.txt`。PowerShell validator 检查截图新鲜度、尺寸、可见内容、死亡 panel、普通/重启 panel hash 一致性，以及五条 summary marker。`stage11.death_evidence.production_paths` 和其余四项负向/变异 guard 防止私有注入、公开死亡注入、Present 前截图或字段校验被移除。
+每个目录还包含独立存档目录和 `formal-path-summary.txt`。PowerShell validator 检查截图新鲜度、尺寸、可见内容、死亡 panel、普通/重启 panel hash 一致性，以及五条 summary marker。`stage11.death_evidence.production_paths` 和其余四项负向/变异 guard 防止私有注入、公开死亡注入、Present 前截图或字段校验被移除。continue guard 还会匹配唯一 `runtime.request_death_continue()` 的明确花括号作用域，要求条件严格为 `death_gate.continue_death`，并拒绝 `validation_continue` 出现在该条件或作用域内；self-test 覆盖“或 validation”“仅 validation”和作用域内 validation 三种突变。
 
 ## 1000 次死亡压力
 
-`stage11.death_stress.determinism_zero_alloc` 的 direct/restart 两条 trace 都从同一个稳定状态开始，各自在同一个持续演进的状态链上执行 1000 次死亡与继续；`death_sequence` 必须逐次从 1 增加到 1000。restart trace 分别按 17、31、43 的间隔执行 codec round-trip 或重建 Session。测试要求两条 trace 的每个死亡检查点、退层 seed、累计 hash、最终完整稳定状态与非默认永久角色字段一致。继续 prepare 的 allocation counter 只包围 `request_death_continue()`，随后通过 `pending_save_view()` 检查结果，避免测试副本污染计数；死亡 prepare、两次 commit 与继续 prepare 的受测路径均要求零堆分配。普通掉落随机流保持 Stage 10 golden 不变。
+`stage11.death_stress.determinism_zero_alloc` 的 direct/restart 两条 trace 都从同一个稳定状态开始；基线包含一件通过目录校验的 normal weapon，且其 ID 真实装备在 weapon slot。两条 trace 各自在同一个持续演进的状态链上执行 1000 次死亡与继续，`death_sequence` 必须逐次从 1 增加到 1000。restart trace 分别按 17、31、43 的间隔执行 codec round-trip 或重建 Session。每次 death/continue receipt 提交后，测试都通过只读且限定于 stress fixture 的访问器读取 Session 实际发布稳定状态，并与 receipt 的完整预期状态逐字段比较；后续 trace 状态与 `final_state` 也只取这个实际发布状态，因此 publication 漏字段会立即失败。测试还要求两条 trace 的每个死亡检查点、退层 seed、累计 hash、最终完整稳定状态与非默认永久角色字段（包括非空 item vector 和有效 equipped ID）一致。继续 prepare 的 allocation counter 只包围非空物品路径上的 `request_death_continue()`，随后通过 `pending_save_view()` 检查结果，避免测试副本污染计数；死亡 prepare、两次 commit 与继续 prepare 的受测路径均要求零堆分配。普通掉落随机流保持 Stage 10 golden 不变。
 
 ## 需求到测试名映射
 
@@ -102,6 +102,8 @@ out/build/windows-msvc-release/bin/stage11-death-formal-validation/
 Release fresh 源码头声明 raylib 6.0.0，配置和 host 编译期断言均验证该版本；最终 Ninja 链接边包含静态 `lib/raylib.lib`，`dumpbin /dependents` 不含 raylib DLL。Release 正式测试重新生成了五张截图和 `formal-path-summary.txt`，五条 marker 全部为 `PASS`。
 
 最终审查增强验证后，Debug 定向复验结果为：演进状态版 1000 次 stress 通过（150.19 秒），真实 raylib 五路径 1/1 通过（7.06 秒），Stage 11 evidence guards 5/5 通过，Platform 3/3 通过，Architecture 21/21 通过。stress 相比收口基线的 123.05 秒增加 27.14 秒（约 22%），原因是每条 trace 不再重建 1000 个独立根状态，而是运行真实连续房间链、消费公共事件并比较最终完整状态。
+
+第二轮最终证据加固后，Debug 定向复验结果为：非空装备与实际发布状态版 1000 次 stress 1/1 通过（160.97 秒），真实 raylib 五路径 1/1 通过（5.37 秒），Stage 11 evidence guards 5/5 通过（0.56 秒），Platform 3/3 通过（4.65 秒），Architecture 21/21 通过（96.42 秒）。相对上一轮 stress 增加 10.78 秒（约 7.2%），新增覆盖来自非空 item vector 的 prepare/publication 路径，以及每次 receipt 后的实际 Session 完整状态核对。
 
 ## 从头复现
 

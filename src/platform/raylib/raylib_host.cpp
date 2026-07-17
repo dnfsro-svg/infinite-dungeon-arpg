@@ -556,16 +556,20 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 exit_requested = true;
                 continue;
             }
+            dungeon::RequestResult death_continue_result =
+                dungeon::RequestResult::rejected;
             if (death_gate.continue_death) {
-                const dungeon::RequestResult requested =
-                    runtime.request_death_continue();
-                if (requested != dungeon::RequestResult::rejected) {
-                    if (validation_continue) {
-                        stage11_validation_state.continue_requested = true;
-                    }
+                death_continue_result = runtime.request_death_continue();
+                if (death_continue_result
+                        != dungeon::RequestResult::rejected) {
                     previous = current;
                     current = session->snapshot();
                 }
+            }
+            if (validation_continue
+                    && death_continue_result
+                        != dungeon::RequestResult::rejected) {
+                stage11_validation_state.continue_requested = true;
             }
             if (death_gate.forward_gameplay && frame_input.keys.escape) {
                 if (inventory.is_open()) {
