@@ -64,6 +64,9 @@ SettingsValidationError validate_settings(const SettingsData& settings) noexcept
         if (!valid_key(settings.bindings[index])) {
             return SettingsValidationError::key_range;
         }
+        if (settings.bindings[index] == StableKey::v) {
+            return SettingsValidationError::reserved_key;
+        }
         for (std::size_t other = index + 1U; other < settings.bindings.size(); ++other) {
             if (settings.bindings[index] == settings.bindings[other]) {
                 return SettingsValidationError::duplicate_key;
@@ -80,7 +83,7 @@ StableKey binding_for(const SettingsData& settings, SettingAction action) noexce
 
 bool assign_or_swap(SettingsData& settings, SettingAction action, StableKey key) noexcept {
     const std::size_t target = action_index(action);
-    if (target >= settings.bindings.size() || !valid_key(key)) {
+    if (target >= settings.bindings.size() || !valid_key(key) || key == StableKey::v) {
         return false;
     }
 

@@ -9,5 +9,5 @@ int main() {
         settings_types_suite(),
         settings_codec_suite(),
         settings_store_suite()};
-    return arpg::test::run_suites(suites, 32, "stage 11b task 3 settings store");
+    return arpg::test::run_suites(suites, 35, "stage 11b reserved V invariant");
 }

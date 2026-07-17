@@ -180,6 +180,15 @@ arpg::test::Failure invalid_and_duplicate_bindings_are_rejected() noexcept {
     return {};
 }
 
+arpg::test::Failure reserved_v_binding_is_rejected_after_crc_refresh() noexcept {
+    auto bytes = arpg::settings::encode_settings(golden_settings());
+    bytes[24] = static_cast<std::uint8_t>(StableKey::v);
+    refresh_crc(bytes);
+    ARPG_REQUIRE(arpg::settings::decode_settings(bytes.data(), bytes.size()).error ==
+        SettingsCodecError::invalid_settings);
+    return {};
+}
+
 constexpr arpg::test::TestCase cases[] = {
     {"fixed layout matches golden bytes and CRC", fixed_layout_matches_golden_bytes},
     {"valid records round trip", valid_records_round_trip},
@@ -188,7 +197,8 @@ constexpr arpg::test::TestCase cases[] = {
     {"header and CRC errors are classified", header_and_crc_errors_are_classified},
     {"every reserved byte must be zero", every_reserved_byte_must_be_zero},
     {"invalid scalar fields are rejected", invalid_scalar_fields_are_rejected},
-    {"invalid and duplicate bindings are rejected", invalid_and_duplicate_bindings_are_rejected}};
+    {"invalid and duplicate bindings are rejected", invalid_and_duplicate_bindings_are_rejected},
+    {"reserved V binding with valid CRC is rejected", reserved_v_binding_is_rejected_after_crc_refresh}};
 
 }  // namespace
 

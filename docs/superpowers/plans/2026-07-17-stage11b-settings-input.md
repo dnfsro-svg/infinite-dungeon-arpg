@@ -80,7 +80,7 @@ struct SettingsData final {
     std::uint64_t revision{};
 };
 enum class SettingsValidationError : std::uint8_t {
-    none, volume_range, volume_step, window_mode, key_range, duplicate_key
+    none, volume_range, volume_step, window_mode, key_range, reserved_key, duplicate_key
 };
 [[nodiscard]] SettingsData default_settings() noexcept;
 [[nodiscard]] SettingsValidationError validate_settings(const SettingsData&) noexcept;
@@ -109,7 +109,7 @@ Expected: compilation fails because `settings_types.hpp` and `arpg_settings` do 
 
 - [ ] **Step 3: Implement the minimal stable schema and validation**
 
-Use a fixed default array and an O(10²) duplicate scan; this runs only at load/apply and needs no dynamic allocation. `assign_or_swap` must find the owner of the new key and swap its old key into that owner.
+Use a fixed default array and an O(10²) duplicate scan; this runs only at load/apply and needs no dynamic allocation. The stable vocabulary retains `V` so the raylib adapter can sample the global screenshot command, but gameplay settings validation and `assign_or_swap` must reject `StableKey::v`. `assign_or_swap` must find the owner of any other new key and swap its old key into that owner.
 
 - [ ] **Step 4: Run focused and boundary regression**
 

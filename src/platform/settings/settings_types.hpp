@@ -88,6 +88,7 @@ enum class SettingsValidationError : std::uint8_t {
     volume_step,
     window_mode,
     key_range,
+    reserved_key,
     duplicate_key
 };
 
