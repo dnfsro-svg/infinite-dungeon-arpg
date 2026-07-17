@@ -146,11 +146,14 @@ arpg::test::Failure v6_layout_and_full_round_trip() noexcept {
     ARPG_REQUIRE(decoded.state.death_sequence == state.death_sequence);
     ARPG_REQUIRE(same_death(decoded.state.death, state.death));
 
-    const auto none_encoded = persistence::encode_checkpoint(make_state());
+    auto none_state = make_state();
+    none_state.death_sequence = 77U;
+    const auto none_encoded = persistence::encode_checkpoint(none_state);
     ARPG_REQUIRE(none_encoded.has_value());
     const auto none_decoded = persistence::decode_checkpoint(
         none_encoded->data(), none_encoded->size());
     ARPG_REQUIRE(none_decoded.error == persistence::CodecError::none);
+    ARPG_REQUIRE(none_decoded.state.death_sequence == 77U);
     ARPG_REQUIRE(same_death(none_decoded.state.death, checkpoint::DeathCheckpoint{}));
     return {};
 }
