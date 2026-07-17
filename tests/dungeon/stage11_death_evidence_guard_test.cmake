@@ -10,6 +10,22 @@ file(READ "${HOST_HEADER}" host_header)
 file(READ "${HOST_SOURCE}" host_source)
 set(all_evidence "${fixture_source}\n${formal_source}\n${host_header}\n${host_source}")
 
+set(public_death_mutation_scan "${all_evidence}")
+string(REPLACE "==" "__stage11_eq__" public_death_mutation_scan
+    "${public_death_mutation_scan}")
+string(REPLACE "!=" "__stage11_ne__" public_death_mutation_scan
+    "${public_death_mutation_scan}")
+string(REPLACE "<=" "__stage11_le__" public_death_mutation_scan
+    "${public_death_mutation_scan}")
+string(REPLACE ">=" "__stage11_ge__" public_death_mutation_scan
+    "${public_death_mutation_scan}")
+set(public_death_field_mutation
+    "([.]|->)[ \t\r\n]*death([ \t\r\n]*[.][ \t\r\n]*[A-Za-z_][A-Za-z0-9_]*|[ \t\r\n]*\\[[^]]*\\])+[ \t\r\n]*(=|[+*/%|&^-]=|<<=|>>=)")
+if(public_death_mutation_scan MATCHES "${public_death_field_mutation}")
+    message(FATAL_ERROR
+        "Forbidden Stage 11 public death injection: death subfield mutation")
+endif()
+
 foreach(public_death_injection
         "[.]death[ \t\r\n]*="
         "->[ \t\r\n]*death[ \t\r\n]*="
@@ -19,7 +35,7 @@ foreach(public_death_injection
         "death_checkpoint[ \t\r\n]*="
         "death_checkpoint[ \t\r\n]*[.]emplace[ \t\r\n]*\\("
         "make_death_checkpoint[ \t\r\n]*\\(")
-    if(all_evidence MATCHES "${public_death_injection}")
+    if(public_death_mutation_scan MATCHES "${public_death_injection}")
         message(FATAL_ERROR
             "Forbidden Stage 11 public death injection: ${public_death_injection}")
     endif()

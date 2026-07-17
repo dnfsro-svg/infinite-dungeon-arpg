@@ -28,6 +28,24 @@ function(expect_guard_rejection name fixture host expected)
     endif()
 endfunction()
 
+function(expect_guard_acceptance name fixture host)
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}"
+            -DFIXTURE_SOURCE=${fixture}
+            -DFORMAL_SOURCE=${VALID_FORMAL}
+            -DCAPTURE_SCRIPT=${VALID_CAPTURE}
+            -DHOST_HEADER=${VALID_HOST_HEADER}
+            -DHOST_SOURCE=${host}
+            -P ${GUARD_SCRIPT}
+        RESULT_VARIABLE result
+        OUTPUT_VARIABLE output
+        ERROR_VARIABLE error)
+    if(NOT result EQUAL 0)
+        message(FATAL_ERROR
+            "${name}: read-only evidence was rejected: ${output}\n${error}")
+    endif()
+endfunction()
+
 expect_guard_rejection(test_access "${BAD_TEST_ACCESS}" "${VALID_HOST_SOURCE}"
     "Forbidden Stage 11 evidence injection: DungeonSessionTestAccess")
 set(public_mutations
@@ -37,7 +55,13 @@ set(public_mutations
     "death_snapshot = fabricated_death"
     "death_checkpoint.emplace(fabricated_death)"
     "death_checkpoint = fabricated_death"
-    "auto death = make_death_checkpoint(fabricated_combat, room, target)")
+    "auto death = make_death_checkpoint(fabricated_combat, room, target)"
+    "checkpoint.death.lifecycle = pending_continue"
+    "checkpoint.death.target_room.seed = 42"
+    "checkpoint_ptr->death.final_damage = 0"
+    "checkpoint.death.recent_damage[0] += 1"
+    "checkpoint.death.final_damage -= 1"
+    "checkpoint_ptr->death.target_room.seed |= 1")
 set(public_index 0)
 foreach(public_mutation IN LISTS public_mutations)
     math(EXPR public_index "${public_index} + 1")
@@ -48,6 +72,19 @@ foreach(public_mutation IN LISTS public_mutations)
         "${VALID_HOST_SOURCE}" "Forbidden Stage 11 public death injection")
     file(REMOVE "${mutation_file}")
 endforeach()
+
+file(READ "${VALID_FIXTURE}" valid_fixture_source)
+set(read_only_file
+    "${CMAKE_CURRENT_BINARY_DIR}/stage11_read_only_death_comparisons.txt")
+file(WRITE "${read_only_file}" "${valid_fixture_source}\n"
+    "// checkpoint.death == expected_death\n"
+    "// checkpoint.death != other_death\n"
+    "// checkpoint.death.lifecycle == pending_continue\n"
+    "// checkpoint.death.target_room.seed != expected_seed\n")
+expect_guard_acceptance(read_only_death_comparisons "${read_only_file}"
+    "${VALID_HOST_SOURCE}")
+file(REMOVE "${read_only_file}")
+
 expect_guard_rejection(capture_order "${VALID_FIXTURE}" "${BAD_CAPTURE_ORDER}"
     "Capture must occur once after EndDrawing")
 
