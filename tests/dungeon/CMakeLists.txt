@@ -296,3 +296,28 @@ add_test(NAME stage11.death_evidence.rejects_pre_present_capture
         -P ${CMAKE_CURRENT_SOURCE_DIR}/stage11_death_evidence_guard_test.cmake)
 set_tests_properties(stage11.death_evidence.rejects_pre_present_capture PROPERTIES
     LABELS "headless;dungeon;stage11;evidence;negative" WILL_FAIL TRUE)
+
+add_test(NAME stage11.death_evidence.rejects_public_death_injection
+    COMMAND ${CMAKE_COMMAND}
+        -DFIXTURE_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage11_evidence_bad_public_death_injection.txt
+        -DFORMAL_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage11_death_formal_game_validation.cpp
+        -DCAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage11_death_formal_capture_test.ps1
+        -DHOST_HEADER=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.hpp
+        -DHOST_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.cpp
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/stage11_death_evidence_guard_test.cmake)
+set_tests_properties(stage11.death_evidence.rejects_public_death_injection PROPERTIES
+    LABELS "headless;dungeon;stage11;evidence;negative" WILL_FAIL TRUE)
+
+add_test(NAME stage11.death_evidence.mutation_self_test
+    COMMAND ${CMAKE_COMMAND}
+        -DGUARD_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage11_death_evidence_guard_test.cmake
+        -DVALID_FIXTURE=${CMAKE_CURRENT_SOURCE_DIR}/stage11_death_validation_fixture.cpp
+        -DVALID_FORMAL=${CMAKE_CURRENT_SOURCE_DIR}/stage11_death_formal_game_validation.cpp
+        -DVALID_CAPTURE=${CMAKE_CURRENT_SOURCE_DIR}/stage11_death_formal_capture_test.ps1
+        -DVALID_HOST_HEADER=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.hpp
+        -DVALID_HOST_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.cpp
+        -DBAD_TEST_ACCESS=${CMAKE_CURRENT_SOURCE_DIR}/stage11_evidence_bad_injection.txt
+        -DBAD_CAPTURE_ORDER=${CMAKE_CURRENT_SOURCE_DIR}/stage11_evidence_bad_capture_order.txt
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/stage11_death_evidence_guard_self_test.cmake)
+set_tests_properties(stage11.death_evidence.mutation_self_test PROPERTIES
+    LABELS "headless;dungeon;stage11;evidence")

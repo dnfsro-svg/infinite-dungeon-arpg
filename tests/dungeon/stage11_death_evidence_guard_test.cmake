@@ -10,9 +10,24 @@ file(READ "${HOST_HEADER}" host_header)
 file(READ "${HOST_SOURCE}" host_source)
 set(all_evidence "${fixture_source}\n${formal_source}\n${host_header}\n${host_source}")
 
+foreach(public_death_injection
+        "[.]death[ \t\r\n]*="
+        "->[ \t\r\n]*death[ \t\r\n]*="
+        "[.]death[ \t\r\n]*[.]emplace[ \t\r\n]*\\("
+        "death_snapshot[ \t\r\n]*="
+        "death_snapshot[ \t\r\n]*[.]emplace[ \t\r\n]*\\("
+        "death_checkpoint[ \t\r\n]*="
+        "death_checkpoint[ \t\r\n]*[.]emplace[ \t\r\n]*\\("
+        "make_death_checkpoint[ \t\r\n]*\\(")
+    if(all_evidence MATCHES "${public_death_injection}")
+        message(FATAL_ERROR
+            "Forbidden Stage 11 public death injection: ${public_death_injection}")
+    endif()
+endforeach()
+
 foreach(forbidden "DungeonSessionTestAccess" "CombatWorldTestAccess"
         "force_defeat" "stable_state_" "phase_[ \t]*="
-        "death_checkpoint[ \t]*=" "pending_save_[ \t]*=")
+        "pending_save_[ \t]*=")
     if(all_evidence MATCHES "${forbidden}")
         message(FATAL_ERROR "Forbidden Stage 11 evidence injection: ${forbidden}")
     endif()

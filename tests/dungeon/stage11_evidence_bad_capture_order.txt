@@ -1,1 +1,9 @@
-LoadImageFromScreen(); ExportImage(image, path); EndDrawing();
+void stage11_validation_input() {
+    MovementInput movement{};
+    session.queue_action(Action::light);
+    runtime.fixed_tick(movement);
+    runtime.request_death_continue();
+    Image image = LoadImageFromScreen();
+    ExportImage(image, path);
+    EndDrawing();
+}

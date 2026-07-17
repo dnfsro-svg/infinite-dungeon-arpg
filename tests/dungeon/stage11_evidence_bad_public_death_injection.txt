@@ -1,0 +1,1 @@
+checkpoint.next_state.death = fabricated_death;
