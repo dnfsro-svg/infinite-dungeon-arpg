@@ -153,7 +153,7 @@ int main() {
         const arpg::test::TestSuite stress_only[] = {
             dungeon_death_stress_suite(),
         };
-        return arpg::test::run_suites(stress_only, 1,
+        return arpg::test::run_suites(stress_only, 2,
             "stage 11a task 11 death stress");
     }
 

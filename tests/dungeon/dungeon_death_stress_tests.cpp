@@ -381,6 +381,20 @@ bool run_trace(Trace& trace, bool restart_rhythm) noexcept {
     return true;
 }
 
+std::array<std::uint64_t, 3U> golden_drop_triplet(
+    std::uint64_t seed,
+    std::uint16_t ordinal) noexcept {
+    auto ordinal_stream = core::DeterministicRng::derive_stream(seed, ordinal);
+    const std::uint64_t ordinal_key = ordinal_stream.next_u64();
+    auto chance = core::DeterministicRng::derive_stream(
+        ordinal_key, kDropChanceDomain);
+    auto slot = core::DeterministicRng::derive_stream(
+        ordinal_key, kDropSlotDomain);
+    auto content = core::DeterministicRng::derive_stream(
+        ordinal_key, kDropContentDomain);
+    return {{chance.next_u64(), slot.next_u64(), content.next_u64()}};
+}
+
 std::uint64_t golden_stream_hash() noexcept {
     std::uint64_t hash = kHashOffset;
     const auto initial = dungeon::make_initial_run_state(
@@ -401,17 +415,11 @@ std::uint64_t golden_stream_hash() noexcept {
         const auto abyss_doors = dungeon::preview_abyss_doors(room);
         for (const bool value : abyss_doors) fold(hash, value);
 
-        auto ordinal_stream = core::DeterministicRng::derive_stream(
-            room.seed, ordinal);
-        auto chance = core::DeterministicRng::derive_stream(
-            ordinal_stream.next_u64(), kDropChanceDomain);
-        auto slot = core::DeterministicRng::derive_stream(
-            ordinal_stream.next_u64(), kDropSlotDomain);
-        auto content = core::DeterministicRng::derive_stream(
-            ordinal_stream.next_u64(), kDropContentDomain);
-        fold(hash, chance.next_u64());
-        fold(hash, slot.next_u64());
-        fold(hash, content.next_u64());
+        const auto drop = golden_drop_triplet(
+            room.seed, static_cast<std::uint16_t>(ordinal));
+        fold(hash, drop[0]);
+        fold(hash, drop[1]);
+        fold(hash, drop[2]);
 
         room.seed = dungeon::derive_door_room_seed(
             room.seed, room.index + 1U, direction);
@@ -434,7 +442,7 @@ std::size_t working_set_bytes() noexcept {
 }
 
 arpg::test::Failure thousand_deaths_are_deterministic_through_restarts() noexcept {
-    constexpr std::uint64_t kGoldenStreams = 0xcf472b0e7d8ea761ULL;
+    constexpr std::uint64_t kGoldenStreams = 0xe999456db183d756ULL;
     const std::uint64_t streams_before = golden_stream_hash();
     std::printf("[stage11-death-streams] hash=0x%016llx\n",
         static_cast<unsigned long long>(streams_before));
@@ -476,7 +484,19 @@ arpg::test::Failure thousand_deaths_are_deterministic_through_restarts() noexcep
     return {};
 }
 
+arpg::test::Failure drop_golden_uses_production_ordinal_key() noexcept {
+    constexpr std::array<std::uint64_t, 3U> kExpected{{
+        0x7af3c1e15bc7b138ULL,
+        0x563976ed1fc9f0c6ULL,
+        0xa9e93dbac431f276ULL,
+    }};
+    ARPG_REQUIRE(golden_drop_triplet(1U, 0U) == kExpected);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
+    {"drop golden uses production ordinal key",
+        &drop_golden_uses_production_ordinal_key},
     {"1000 deaths deterministic through 17 31 43 restarts",
         &thousand_deaths_are_deterministic_through_restarts},
 };

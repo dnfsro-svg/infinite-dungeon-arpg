@@ -865,6 +865,7 @@ add_test(
     NAME stage11.architecture.death_boundaries
     COMMAND "${CMAKE_COMMAND}"
         "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}/src"
+        "-DGUARD_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/stage11-guard-mutations"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11_architecture_guard_test.cmake")
 set_tests_properties(
     stage11.architecture.death_boundaries
