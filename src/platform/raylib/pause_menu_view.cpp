@@ -44,6 +44,12 @@ void write_row(
     return enabled ? "On" : "Off";
 }
 
+[[nodiscard]] std::size_t clamp_selected_row(
+    std::size_t selected_row,
+    std::size_t row_count) noexcept {
+    return selected_row < row_count ? selected_row : row_count - 1U;
+}
+
 void build_settings_rows(
     PauseMenuView& view,
     const PauseMenuState& state) noexcept {
@@ -110,7 +116,8 @@ PauseMenuView make_pause_menu_view(const PauseMenuState& state) noexcept {
         case PauseScreen::root:
             view.title = "PAUSED";
             view.row_count = 3U;
-            view.selected_row = state.selected_row;
+            view.selected_row = clamp_selected_row(
+                state.selected_row, view.row_count);
             write_row(view, 0U, "%s", "Continue");
             write_row(view, 1U, "%s", "Settings");
             write_row(view, 2U, "%s", "Quit Game");
@@ -118,7 +125,8 @@ PauseMenuView make_pause_menu_view(const PauseMenuState& state) noexcept {
         case PauseScreen::settings:
             view.title = "SETTINGS";
             view.row_count = kPauseMenuRowCapacity;
-            view.selected_row = state.selected_row;
+            view.selected_row = clamp_selected_row(
+                state.selected_row, view.row_count);
             build_settings_rows(view, state);
             return view;
         case PauseScreen::capture_binding: {
@@ -135,7 +143,8 @@ PauseMenuView make_pause_menu_view(const PauseMenuState& state) noexcept {
         case PauseScreen::quit_confirm:
             view.title = "QUIT GAME?";
             view.row_count = 2U;
-            view.selected_row = state.selected_row;
+            view.selected_row = clamp_selected_row(
+                state.selected_row, view.row_count);
             write_row(view, 0U, "%s", "Quit Game");
             write_row(view, 1U, "%s", "Back");
             return view;

@@ -45,5 +45,5 @@ int main() {
         pause_menu_view_suite(),
     };
 
-    return arpg::test::run_suites(suites, 150, "stage 11b task 6 pause view");
+    return arpg::test::run_suites(suites, 154, "stage 11b task 6 pause view");
 }
