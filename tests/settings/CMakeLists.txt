@@ -1,7 +1,8 @@
 add_executable(arpg_settings_tests
     settings_test_main.cpp
     settings_types_tests.cpp
-    settings_codec_tests.cpp)
+    settings_codec_tests.cpp
+    settings_store_tests.cpp)
 
 target_include_directories(arpg_settings_tests PRIVATE
     "${PROJECT_SOURCE_DIR}/tests/core"
