@@ -134,6 +134,13 @@ struct Stage10ValidationState final {
     std::uint32_t chaos_presented_frames{};
 };
 
+struct Stage11ValidationState final {
+    bool entered_abyss{};
+    bool saw_depth_two{};
+    bool continue_requested{};
+    std::uint32_t target_presented_frames{};
+};
+
 const combat::MonsterSnapshot* nearest_living_monster(
     const combat::CombatSnapshot& state) noexcept {
     const combat::MonsterSnapshot* best = nullptr;
@@ -275,6 +282,72 @@ combat::MovementInput stage10_validation_input(
     return {};
 }
 
+combat::MovementInput stage11_validation_input(
+    dungeon::DungeonSession& session,
+    const dungeon::DungeonSnapshot& snapshot,
+    const RaylibHostConfig& config,
+    Stage11ValidationState& state) noexcept {
+    state.entered_abyss = state.entered_abyss || snapshot.is_abyss;
+    state.saw_depth_two = state.saw_depth_two || snapshot.depth > 1U;
+    const auto scenario = config.stage11_validation;
+    const bool drive_to_abyss = scenario
+        == Stage11ValidationScenario::abyss_death_recap
+        && !state.entered_abyss;
+    const bool drive_to_depth = scenario
+        == Stage11ValidationScenario::deep_continue
+        && !state.saw_depth_two;
+    if (!drive_to_abyss && !drive_to_depth) return {};
+    if (!snapshot.combat.has_value()) return {};
+    if (snapshot.phase == dungeon::RoomPhase::combat) {
+        const auto* const target = nearest_living_monster(*snapshot.combat);
+        if (target == nullptr) return {};
+        const auto movement = validation_movement_toward(
+            snapshot.combat->player.position, target->position);
+        if (snapshot.combat->diagnostics.input_size == 0U
+                && validation_attack_lane(*snapshot.combat, *target)) {
+            static_cast<void>(session.queue_action(combat::Action::light));
+        }
+        return movement;
+    }
+    if (snapshot.phase != dungeon::RoomPhase::awaiting_exit) return {};
+    if (drive_to_abyss) {
+        return validation_exit_movement(snapshot.combat->player.position,
+            validation_direction(config));
+    }
+    const auto movement = validation_movement_toward(
+        snapshot.combat->player.position, kHoleCenter);
+    if (can_prompt_descent(snapshot, snapshot.combat->player.position)) {
+        static_cast<void>(session.request_descent(true));
+    }
+    return movement;
+}
+
+bool stage11_validation_reached(const dungeon::DungeonSnapshot& snapshot,
+    const RaylibHostConfig& config,
+    const Stage11ValidationState& state) noexcept {
+    const bool pending = snapshot.death.has_value()
+        && snapshot.death->can_continue && !snapshot.death->saving;
+    switch (config.stage11_validation) {
+    case Stage11ValidationScenario::none: return false;
+    case Stage11ValidationScenario::normal_death_recap:
+    case Stage11ValidationScenario::restart_same_recap:
+        return pending && !snapshot.death->checkpoint.death_was_abyss;
+    case Stage11ValidationScenario::abyss_death_recap:
+        return pending && state.entered_abyss
+            && snapshot.death->checkpoint.death_was_abyss;
+    case Stage11ValidationScenario::deep_continue:
+        return state.continue_requested && state.saw_depth_two
+            && !snapshot.death.has_value() && snapshot.depth == 1U
+            && snapshot.combat.has_value()
+            && snapshot.combat->player.hp > 0;
+    case Stage11ValidationScenario::floor_one_continue:
+        return state.continue_requested && !snapshot.death.has_value()
+            && snapshot.depth == 1U && snapshot.combat.has_value()
+            && snapshot.combat->player.hp > 0;
+    }
+    return false;
+}
+
 bool has_environment_visual(
     const dungeon::DungeonSnapshot& snapshot,
     combat::HazardKind kind,
@@ -390,6 +463,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         unsigned validation_capture_tick = 0U;
         unsigned validation_capture_count = 0U;
         Stage10ValidationState stage10_validation_state{};
+        Stage11ValidationState stage11_validation_state{};
         bool stage10_validation_captured = false;
         const std::string validation_capture_prefix = config.validation_capture
             ? (*save_directory / "stage8-validation-").string()
@@ -477,6 +551,22 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 const dungeon::RequestResult requested =
                     runtime.request_death_continue();
                 if (requested != dungeon::RequestResult::rejected) {
+                    previous = current;
+                    current = session->snapshot();
+                }
+            }
+            const bool validation_continue = current.death.has_value()
+                && current.death->can_continue
+                && (config.stage11_validation
+                        == Stage11ValidationScenario::deep_continue
+                    || config.stage11_validation
+                        == Stage11ValidationScenario::floor_one_continue);
+            if (validation_continue
+                    && !stage11_validation_state.continue_requested) {
+                const dungeon::RequestResult requested =
+                    runtime.request_death_continue();
+                if (requested != dungeon::RequestResult::rejected) {
+                    stage11_validation_state.continue_requested = true;
                     previous = current;
                     current = session->snapshot();
                 }
@@ -587,9 +677,12 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 frame = fixed_step.advance(static_cast<double>(frame_seconds));
                 if (config.stage10_validation
                             != Stage10ValidationScenario::none
-                        && config.validation_steps_per_frame != 0U) {
-                    frame.steps = config.validation_steps_per_frame;
-                    frame.interpolation_alpha = 0.0;
+                        || config.stage11_validation
+                            != Stage11ValidationScenario::none) {
+                    if (config.validation_steps_per_frame != 0U) {
+                        frame.steps = config.validation_steps_per_frame;
+                        frame.interpolation_alpha = 0.0;
+                    }
                 }
             } else {
                 previous = current;
@@ -597,13 +690,20 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             for (std::uint32_t step = 0; step < frame.steps; ++step) {
                 previous = current;
                 const bool step_death = current.death.has_value();
-                const combat::MovementInput step_movement = step_death
-                    ? combat::MovementInput{}
-                    : config.stage10_validation
-                            == Stage10ValidationScenario::none
-                        ? movement
-                        : stage10_validation_input(*session, current,
-                            config, stage10_validation_state);
+                combat::MovementInput step_movement{};
+                if (!step_death) {
+                    if (config.stage11_validation
+                            != Stage11ValidationScenario::none) {
+                        step_movement = stage11_validation_input(*session,
+                            current, config, stage11_validation_state);
+                    } else if (config.stage10_validation
+                            != Stage10ValidationScenario::none) {
+                        step_movement = stage10_validation_input(*session,
+                            current, config, stage10_validation_state);
+                    } else {
+                        step_movement = movement;
+                    }
+                }
                 runtime.fixed_tick(step_movement);
                 current = session->snapshot();
                 if (current.death.has_value()) {
@@ -623,6 +723,10 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                         current, config, stage10_validation_state)) {
                     break;
                 }
+                if (stage11_validation_reached(
+                        current, config, stage11_validation_state)) {
+                    break;
+                }
             }
 
             BeginDrawing();
@@ -638,6 +742,13 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             }
             const bool stage10_target_visible = stage10_validation_reached(
                 current, config, stage10_validation_state);
+            const bool stage11_target_visible = stage11_validation_reached(
+                current, config, stage11_validation_state);
+            if (stage11_target_visible) {
+                ++stage11_validation_state.target_presented_frames;
+            } else {
+                stage11_validation_state.target_presented_frames = 0U;
+            }
             if (config.stage10_validation
                     == Stage10ValidationScenario::chaos_expansion
                     && stage10_target_visible) {
@@ -647,9 +758,12 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 && (config.stage10_validation
                         != Stage10ValidationScenario::chaos_expansion
                     || stage10_validation_state.chaos_presented_frames >= 16U);
+            const bool stage11_reached = stage11_target_visible
+                && stage11_validation_state.target_presented_frames >= 4U;
+            const bool validation_reached = stage10_reached || stage11_reached;
             std::optional<std::string> capture_path{};
             bool captured_stage10_target = false;
-            if (stage10_reached && !stage10_validation_captured
+            if (validation_reached && !stage10_validation_captured
                     && config.validation_capture_file.has_value()) {
                 capture_path = config.validation_capture_file->string();
                 captured_stage10_target = true;
@@ -670,7 +784,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                         >= config.validation_exit_after_presented_frames) {
                 exit_requested = true;
             }
-            if (stage10_reached
+            if (validation_reached
                     && (!config.validation_capture_file.has_value()
                         || stage10_validation_captured)) {
                 exit_requested = true;

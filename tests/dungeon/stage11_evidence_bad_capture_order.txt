@@ -1,0 +1,1 @@
+LoadImageFromScreen(); ExportImage(image, path); EndDrawing();

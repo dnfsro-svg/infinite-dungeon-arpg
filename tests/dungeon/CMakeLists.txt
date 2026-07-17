@@ -236,3 +236,63 @@ add_test(NAME stage10.evidence.rejects_pre_capture_with_post_dummy
 set_tests_properties(stage10.evidence.rejects_pre_capture_with_post_dummy PROPERTIES
     LABELS "headless;dungeon;stage10;evidence;negative"
     WILL_FAIL TRUE)
+
+add_executable(arpg_stage11_death_validation_fixture
+    stage11_death_validation_fixture.cpp)
+target_compile_features(arpg_stage11_death_validation_fixture PRIVATE cxx_std_17)
+target_link_libraries(arpg_stage11_death_validation_fixture
+    PRIVATE arpg_dungeon arpg_persistence)
+arpg_enable_project_warnings(arpg_stage11_death_validation_fixture)
+add_test(NAME stage11.death_fixture.transactions
+    COMMAND arpg_stage11_death_validation_fixture)
+set_tests_properties(stage11.death_fixture.transactions PROPERTIES
+    LABELS "headless;dungeon;stage11;validation" TIMEOUT 120)
+
+if(TARGET arpg_raylib)
+    add_executable(arpg_stage11_death_formal_game_validation
+        stage11_death_formal_game_validation.cpp)
+    target_compile_features(arpg_stage11_death_formal_game_validation PRIVATE cxx_std_17)
+    target_link_libraries(arpg_stage11_death_formal_game_validation
+        PRIVATE arpg_raylib arpg_persistence)
+    arpg_enable_project_warnings(arpg_stage11_death_formal_game_validation)
+    add_test(NAME stage11.death_formal.five_paths
+        COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+            -File "${CMAKE_CURRENT_SOURCE_DIR}/stage11_death_formal_capture_test.ps1"
+            -Executable "$<TARGET_FILE:arpg_stage11_death_formal_game_validation>"
+            -EvidenceDirectory "$<TARGET_FILE_DIR:arpg_stage11_death_formal_game_validation>/stage11-death-formal-validation")
+    set_tests_properties(stage11.death_formal.five_paths PROPERTIES
+        LABELS "graphics;stage11;validation;formal-game;evidence" TIMEOUT 300)
+endif()
+
+add_test(NAME stage11.death_evidence.production_paths
+    COMMAND ${CMAKE_COMMAND}
+        -DFIXTURE_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage11_death_validation_fixture.cpp
+        -DFORMAL_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage11_death_formal_game_validation.cpp
+        -DCAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage11_death_formal_capture_test.ps1
+        -DHOST_HEADER=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.hpp
+        -DHOST_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.cpp
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/stage11_death_evidence_guard_test.cmake)
+set_tests_properties(stage11.death_evidence.production_paths PROPERTIES
+    LABELS "headless;dungeon;stage11;evidence")
+
+add_test(NAME stage11.death_evidence.rejects_private_injection
+    COMMAND ${CMAKE_COMMAND}
+        -DFIXTURE_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage11_evidence_bad_injection.txt
+        -DFORMAL_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage11_death_formal_game_validation.cpp
+        -DCAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage11_death_formal_capture_test.ps1
+        -DHOST_HEADER=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.hpp
+        -DHOST_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.cpp
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/stage11_death_evidence_guard_test.cmake)
+set_tests_properties(stage11.death_evidence.rejects_private_injection PROPERTIES
+    LABELS "headless;dungeon;stage11;evidence;negative" WILL_FAIL TRUE)
+
+add_test(NAME stage11.death_evidence.rejects_pre_present_capture
+    COMMAND ${CMAKE_COMMAND}
+        -DFIXTURE_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage11_death_validation_fixture.cpp
+        -DFORMAL_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage11_death_formal_game_validation.cpp
+        -DCAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage11_death_formal_capture_test.ps1
+        -DHOST_HEADER=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.hpp
+        -DHOST_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage11_evidence_bad_capture_order.txt
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/stage11_death_evidence_guard_test.cmake)
+set_tests_properties(stage11.death_evidence.rejects_pre_present_capture PROPERTIES
+    LABELS "headless;dungeon;stage11;evidence;negative" WILL_FAIL TRUE)

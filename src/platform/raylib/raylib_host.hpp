@@ -22,6 +22,15 @@ enum class Stage10ValidationScenario : std::uint8_t {
     abyss_hole_descent,
 };
 
+enum class Stage11ValidationScenario : std::uint8_t {
+    none,
+    normal_death_recap,
+    restart_same_recap,
+    deep_continue,
+    floor_one_continue,
+    abyss_death_recap,
+};
+
 struct RaylibHostConfig final {
     int window_width{1280};
     int window_height{720};
@@ -32,6 +41,8 @@ struct RaylibHostConfig final {
     std::uint32_t validation_exit_after_presented_frames{};
     Stage10ValidationScenario stage10_validation{
         Stage10ValidationScenario::none};
+    Stage11ValidationScenario stage11_validation{
+        Stage11ValidationScenario::none};
     std::uint8_t validation_abyss_direction{0xFFU};
     std::uint32_t validation_steps_per_frame{};
     std::optional<std::filesystem::path> validation_capture_file{};
