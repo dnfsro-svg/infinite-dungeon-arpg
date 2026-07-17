@@ -4,6 +4,7 @@ add_library(arpg_raylib STATIC
     combat_feedback.cpp
     combat_renderer.cpp
     combat_view_math.cpp
+    death_overlay_font.cpp
     death_overlay_renderer.cpp
     death_overlay_view.cpp
     debug_renderer.cpp

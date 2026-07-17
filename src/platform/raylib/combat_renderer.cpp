@@ -1,13 +1,20 @@
 #include "combat_renderer.hpp"
 
 #include "dungeon_runtime.hpp"
-#include "death_overlay_renderer.hpp"
 
 #include <raylib.h>
 
 #include <algorithm>
 
 namespace arpg::platform {
+
+bool CombatRenderer::initialize_resources() noexcept {
+    return death_overlay_.initialize();
+}
+
+void CombatRenderer::shutdown_resources() noexcept {
+    death_overlay_.shutdown();
+}
 
 DoorRenderDecision door_render_decision(
     DoorVisualMode mode,
@@ -75,7 +82,7 @@ void CombatRenderer::draw(
         DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
             Fade(BLACK, overlay_alpha));
     }
-    draw_death_overlay(current);
+    death_overlay_.draw(current);
 }
 
 }  // namespace arpg::platform

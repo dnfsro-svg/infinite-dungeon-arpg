@@ -1,9 +1,7 @@
 #include "death_overlay_view.hpp"
 
-#include "combat/monster_affix_catalog.hpp"
-#include "combat_view_math.hpp"
-
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstring>
 
@@ -45,39 +43,48 @@ const char* damage_name(DeathDamageType type) noexcept {
 }
 
 const char* monster_name(std::uint8_t id) noexcept {
-    if (id >= static_cast<std::uint8_t>(combat::MonsterId::count)) {
-        return nullptr;
-    }
-    return monster_visual(static_cast<combat::MonsterId>(id),
-        combat::MonsterAiPhase::idle, checkpoint::DungeonElement::fire)
-        .role_label;
+    constexpr std::array<const char*,
+        static_cast<std::size_t>(combat::MonsterId::count)> kNames{{
+        "火焰投弹者", "火焰冲锋者", "水之壁垒", "水之支援者",
+        "闪电射手", "闪电突袭者", "混沌追猎者", "混沌灾术师",
+    }};
+    return id < kNames.size() ? kNames[id] : nullptr;
 }
 
 const char* hazard_name(std::uint16_t id) noexcept {
     switch (static_cast<combat::HazardKind>(id)) {
-    case combat::HazardKind::native: return "Native Hazard";
-    case combat::HazardKind::burning: return "Burning Ground";
-    case combat::HazardKind::chain_lightning: return "Chain Lightning";
-    case combat::HazardKind::death_blast: return "Death Blast";
-    case combat::HazardKind::thunderstorm: return "Thunderstorm";
-    case combat::HazardKind::hunting_flame: return "Hunting Flames";
-    case combat::HazardKind::chaos_expansion: return "Chaos Expansion";
+    case combat::HazardKind::native: return "原生地面危险";
+    case combat::HazardKind::burning: return "燃烧地面";
+    case combat::HazardKind::chain_lightning: return "连锁闪电";
+    case combat::HazardKind::death_blast: return "死亡爆破";
+    case combat::HazardKind::thunderstorm: return "雷暴";
+    case combat::HazardKind::hunting_flame: return "猎杀之焰";
+    case combat::HazardKind::chaos_expansion: return "混沌扩张";
     }
     return nullptr;
 }
 
+const char* affix_name(std::uint16_t id) noexcept {
+    constexpr std::array<const char*,
+        static_cast<std::size_t>(combat::MonsterAffixId::count)> kNames{{
+        "强力", "狂热", "迅捷", "装甲", "护盾", "多重投射",
+        "燃烧地面", "寒冷", "连锁闪电", "混沌腐蚀", "闪现突袭", "死亡爆破",
+    }};
+    return id < kNames.size() ? kNames[id] : nullptr;
+}
+
 const char* abyss_rule_name(std::uint16_t id) noexcept {
     switch (static_cast<abyss::AbyssRuleId>(id)) {
-    case abyss::AbyssRuleId::none: return "No Rule";
-    case abyss::AbyssRuleId::thunderstorm: return "Thunderstorm";
-    case abyss::AbyssRuleId::hunting_flames: return "Hunting Flames";
-    case abyss::AbyssRuleId::chaos_expansion: return "Chaos Expansion";
-    case abyss::AbyssRuleId::swift_pursuit: return "Swift Pursuit";
-    case abyss::AbyssRuleId::abyss_bulwark: return "Abyss Bulwark";
-    case abyss::AbyssRuleId::abyss_fury: return "Abyss Fury";
-    case abyss::AbyssRuleId::heavy_steps: return "Heavy Steps";
-    case abyss::AbyssRuleId::exhausted_recovery: return "Exhausted Recovery";
-    case abyss::AbyssRuleId::life_sacrifice: return "Life Sacrifice";
+    case abyss::AbyssRuleId::none: return nullptr;
+    case abyss::AbyssRuleId::thunderstorm: return "雷暴";
+    case abyss::AbyssRuleId::hunting_flames: return "猎杀之焰";
+    case abyss::AbyssRuleId::chaos_expansion: return "混沌扩张";
+    case abyss::AbyssRuleId::swift_pursuit: return "迅捷追猎";
+    case abyss::AbyssRuleId::abyss_bulwark: return "深渊壁垒";
+    case abyss::AbyssRuleId::abyss_fury: return "深渊狂怒";
+    case abyss::AbyssRuleId::heavy_steps: return "沉重脚步";
+    case abyss::AbyssRuleId::exhausted_recovery: return "疲惫恢复";
+    case abyss::AbyssRuleId::life_sacrifice: return "生命献祭";
     }
     return nullptr;
 }
@@ -113,9 +120,7 @@ void add_source_line(
         break;
     case DeathSourceKind::monster_affix: {
         kind = "怪物词缀";
-        const auto* definition = combat::monster_affix_definition(
-            static_cast<combat::MonsterAffixId>(death.source_detail_id));
-        detail = definition == nullptr ? nullptr : definition->name.data();
+        detail = affix_name(death.source_detail_id);
         break;
     }
     case DeathSourceKind::abyss_environment:

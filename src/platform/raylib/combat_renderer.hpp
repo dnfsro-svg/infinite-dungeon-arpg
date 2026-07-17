@@ -1,6 +1,7 @@
 #pragma once
 
 #include "combat_feedback.hpp"
+#include "death_overlay_renderer.hpp"
 #include "dungeon_view_math.hpp"
 
 namespace arpg::platform {
@@ -22,6 +23,8 @@ struct DoorRenderDecision final {
 
 class CombatRenderer final {
 public:
+    [[nodiscard]] bool initialize_resources() noexcept;
+    void shutdown_resources() noexcept;
     void consume_event(const combat::CombatEvent& event) noexcept;
     void consume_dungeon_event(const dungeon::DungeonEvent& event) noexcept;
     void clear_combat_transients() noexcept;
@@ -65,6 +68,7 @@ private:
     combat::CombatEvent last_event_{};
     bool has_last_event_{};
     TransitionVisualState transition_{};
+    DeathOverlayRenderer death_overlay_{};
 };
 
 }  // namespace arpg::platform

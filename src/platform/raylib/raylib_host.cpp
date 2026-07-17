@@ -378,6 +378,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         SetExitKey(KEY_NULL);
         core::FixedStepRunner fixed_step;
         CombatRenderer renderer;
+        static_cast<void>(renderer.initialize_resources());
         CombatFeedback feedback;
         CombatAudio audio;
         InventoryRenderer inventory;
@@ -676,6 +677,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             }
         }
         audio.shutdown();
+        renderer.shutdown_resources();
         CloseWindow();
         return HostExitCode::success;
     } catch (...) {
