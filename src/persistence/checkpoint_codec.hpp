@@ -23,12 +23,16 @@ inline constexpr std::size_t kV4BaseEncodedCheckpointSize = 204U;
 inline constexpr std::size_t kV5AbyssPayloadSize = 32U;
 inline constexpr std::size_t kV5BasePayloadSize = 204U;
 inline constexpr std::size_t kV5BaseEncodedCheckpointSize = 236U;
+inline constexpr std::size_t kV6DeathPayloadSize = 224U;
+inline constexpr std::size_t kV6BasePayloadSize = 428U;
+inline constexpr std::size_t kV6BaseEncodedCheckpointSize = 460U;
 inline constexpr std::size_t kMaximumCheckpointItemCount = 65535U;
 inline constexpr std::uint32_t kLegacyCheckpointFormatVersion = 1U;
 inline constexpr std::uint32_t kPreviousCheckpointFormatVersion = 2U;
 inline constexpr std::uint32_t kThirdCheckpointFormatVersion = 3U;
 inline constexpr std::uint32_t kFourthCheckpointFormatVersion = 4U;
-inline constexpr std::uint32_t kCheckpointFormatVersion = 5U;
+inline constexpr std::uint32_t kFifthCheckpointFormatVersion = 5U;
+inline constexpr std::uint32_t kCheckpointFormatVersion = 6U;
 inline constexpr std::uint32_t kCheckpointRulesVersion = 1U;
 
 enum class CodecError : std::uint8_t {

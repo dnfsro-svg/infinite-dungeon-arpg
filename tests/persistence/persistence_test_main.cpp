@@ -6,6 +6,7 @@
 #endif
 
 arpg::test::TestSuite checkpoint_codec_suite() noexcept;
+arpg::test::TestSuite death_checkpoint_codec_suite() noexcept;
 arpg::test::TestSuite passive_tree_checkpoint_suite() noexcept;
 arpg::test::TestSuite save_store_suite() noexcept;
 arpg::test::TestSuite save_store_fault_suite() noexcept;
@@ -23,11 +24,12 @@ int main() {
 #endif
     const arpg::test::TestSuite suites[] = {
         checkpoint_codec_suite(),
+        death_checkpoint_codec_suite(),
         passive_tree_checkpoint_suite(),
         save_store_suite(),
         save_store_fault_suite(),
         dungeon_save_integration_suite(),
     };
 
-    return arpg::test::run_suites(suites, 72, "stage 10 task 10 persistence");
+    return arpg::test::run_suites(suites, 76, "stage 11a task 4 persistence");
 }

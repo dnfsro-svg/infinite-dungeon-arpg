@@ -134,7 +134,14 @@ void write_u32(std::vector<std::uint8_t>& bytes, std::size_t offset,
 
 std::vector<std::uint8_t> encoded_v4(
     const checkpoint::DungeonRunState& state) {
-    const auto v5 = encoded(state);
+    auto v5 = encoded(state);
+    if (v5.size() < 460U)
+        return {};
+    v5.erase(v5.begin() + 236U, v5.begin() + 460U);
+    v5[0U] = 'I'; v5[1U] = 'A'; v5[2U] = 'R'; v5[3U] = 'P';
+    v5[4U] = 'G'; v5[5U] = 'S'; v5[6U] = '0'; v5[7U] = '6';
+    write_u32(v5, 8U, 5U);
+    write_u32(v5, 24U, static_cast<std::uint32_t>(v5.size() - 32U));
     if (v5.size() < 152U)
         return {};
     std::vector<std::uint8_t> v4(v5.size() - 32U, 0U);
@@ -312,13 +319,13 @@ arpg::test::Failure variable_length_slots_rotate_large_then_small() noexcept {
     ARPG_REQUIRE(store.commit(large).state
         == persistence::SaveCommitState::committed);
     ARPG_REQUIRE(std::filesystem::file_size(directory.path / "run_a.sav")
-        == 236U + 40U * 257U);
+        == 460U + 40U * 257U);
 
     const auto small = with_items(make_state(2U, 21U), 1U);
     ARPG_REQUIRE(store.commit(small).state
         == persistence::SaveCommitState::committed);
     ARPG_REQUIRE(std::filesystem::file_size(directory.path / "run_b.sav")
-        == 276U);
+        == 500U);
     const auto loaded = store.load();
     ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::ready);
     ARPG_REQUIRE(loaded.active_slot == persistence::SaveSlot::b);

@@ -168,19 +168,19 @@ arpg::test::Failure v5_golden_layout_and_items_round_trip() noexcept {
     const auto encoded = persistence::encode_checkpoint(state);
     ARPG_REQUIRE(encoded.has_value());
     const auto& bytes = *encoded;
-    ARPG_REQUIRE(bytes.size() == 356U);
+    ARPG_REQUIRE(bytes.size() == 580U);
     ARPG_REQUIRE(std::equal(bytes.begin(), bytes.begin() + 8U,
-        std::array<std::uint8_t, 8U>{{'I','A','R','P','G','S','0','6'}}.begin()));
-    ARPG_REQUIRE(read_u32(bytes, 8U) == 5U);
+        std::array<std::uint8_t, 8U>{{'A','R','P','G','S','V','6','\0'}}.begin()));
+    ARPG_REQUIRE(read_u32(bytes, 8U) == 6U);
     ARPG_REQUIRE(read_u32(bytes, 12U) == 1U);
-    ARPG_REQUIRE(read_u32(bytes, 24U) == 324U);
+    ARPG_REQUIRE(read_u32(bytes, 24U) == 548U);
     ARPG_REQUIRE(read_u32(bytes, 152U) == 3U);
     ARPG_REQUIRE(read_u64(bytes, 156U) == state.item_ownership.next_item_sequence);
     ARPG_REQUIRE(read_u64(bytes, 164U) == state.item_ownership.claimed_drop_bits[0]);
     ARPG_REQUIRE(read_u64(bytes, 188U) == state.item_ownership.equipment.equipped_ids[0]);
     ARPG_REQUIRE(read_u64(bytes, 228U) == state.item_ownership.equipment.equipped_ids[5]);
 
-    constexpr std::size_t kRecord = 236U;
+    constexpr std::size_t kRecord = 460U;
     ARPG_REQUIRE(read_u64(bytes, kRecord) == state.item_ownership.items[0].id);
     ARPG_REQUIRE(bytes[kRecord + 8U] == 2U);
     ARPG_REQUIRE(bytes[kRecord + 9U] == 0U);
@@ -233,7 +233,7 @@ arpg::test::Failure v5_complete_ownership_and_six_roll_record_are_golden() noexc
 
     const auto encoded = persistence::encode_checkpoint(state);
     ARPG_REQUIRE(encoded.has_value());
-    ARPG_REQUIRE(encoded->size() == 276U);
+    ARPG_REQUIRE(encoded->size() == 500U);
     constexpr std::array<std::uint8_t, 84U> kExpectedOwnership{{
         0x01U, 0x00U, 0x00U, 0x00U,
         0x18U, 0x17U, 0x16U, 0x15U, 0x14U, 0x13U, 0x12U, 0x11U,
@@ -260,7 +260,7 @@ arpg::test::Failure v5_complete_ownership_and_six_roll_record_are_golden() noexc
     ARPG_REQUIRE(std::equal(kExpectedOwnership.begin(), kExpectedOwnership.end(),
         encoded->begin() + 152U));
     ARPG_REQUIRE(std::equal(kExpectedRecord.begin(), kExpectedRecord.end(),
-        encoded->begin() + 236U));
+        encoded->begin() + 460U));
     return {};
 }
 
@@ -308,7 +308,14 @@ void refresh_crc(std::vector<std::uint8_t>& bytes) noexcept {
 }
 
 std::vector<std::uint8_t> as_v4_golden(
-    const std::vector<std::uint8_t>& v5) {
+    const std::vector<std::uint8_t>& v6) {
+    auto v5 = v6;
+    v5.erase(v5.begin() + 236U, v5.begin() + 460U);
+    v5[0U] = 'I'; v5[1U] = 'A'; v5[2U] = 'R'; v5[3U] = 'P';
+    v5[4U] = 'G'; v5[5U] = 'S'; v5[6U] = '0'; v5[7U] = '6';
+    write_u32(v5, 8U, 5U);
+    write_u32(v5, 24U, static_cast<std::uint32_t>(v5.size() - 32U));
+    refresh_crc(v5);
     std::vector<std::uint8_t> v4(v5.size() - 32U, 0U);
     std::copy_n(v5.begin(), 120U, v4.begin());
     std::copy(v5.begin() + 152U, v5.end(), v4.begin() + 120U);
@@ -448,10 +455,10 @@ arpg::test::Failure v5_full_abyss_state_and_resolution_round_trip() noexcept {
 
     const auto encoded = persistence::encode_checkpoint(state);
     ARPG_REQUIRE(encoded.has_value());
-    ARPG_REQUIRE(encoded->size() == persistence::kV5BaseEncodedCheckpointSize);
-    ARPG_REQUIRE((*encoded)[7U] == '6');
-    ARPG_REQUIRE(read_u32(*encoded, 8U) == 5U);
-    ARPG_REQUIRE(read_u32(*encoded, 24U) == persistence::kV5BasePayloadSize);
+    ARPG_REQUIRE(encoded->size() == persistence::kV6BaseEncodedCheckpointSize);
+    ARPG_REQUIRE((*encoded)[7U] == '\0');
+    ARPG_REQUIRE(read_u32(*encoded, 8U) == 6U);
+    ARPG_REQUIRE(read_u32(*encoded, 24U) == persistence::kV6BasePayloadSize);
     ARPG_REQUIRE((*encoded)[120U]
         == static_cast<std::uint8_t>(abyss::AbyssLifecycle::cleared));
     ARPG_REQUIRE((*encoded)[121U]
@@ -853,7 +860,10 @@ arpg::test::Failure legacy_initial_and_descent_abyss_are_cleared_without_drift()
 
 arpg::test::Failure v1_through_v4_decode_as_migrated_but_v5_does_not() noexcept {
     const auto v1 = legacy_fixture();
-    ARPG_REQUIRE(persistence::decode_checkpoint(v1.data(), v1.size()).migrated);
+    const auto decoded_v1 = persistence::decode_checkpoint(v1.data(), v1.size());
+    ARPG_REQUIRE(decoded_v1.migrated);
+    ARPG_REQUIRE(decoded_v1.state.death_sequence == 0U);
+    ARPG_REQUIRE(checkpoint::valid_death_checkpoint_structural(decoded_v1.state.death));
 
     constexpr std::array<std::uint8_t, persistence::kPreviousEncodedCheckpointSize>
         v2{{
@@ -871,18 +881,28 @@ arpg::test::Failure v1_through_v4_decode_as_migrated_but_v5_does_not() noexcept 
             0x04U,0x03U,0x01U,0x01U,0x01U,0x02U,0x25U,0x24U,
             0x24U,0x00U,0x2AU,0x00U,0x00U,0x00U,0x00U,0x00U,
             0x00U,0x00U,0x00U,0x00U,0x00U,0x00U,0x00U,0x00U}};
-    ARPG_REQUIRE(persistence::decode_checkpoint(v2.data(), v2.size()).migrated);
+    const auto decoded_v2 = persistence::decode_checkpoint(v2.data(), v2.size());
+    ARPG_REQUIRE(decoded_v2.migrated);
+    ARPG_REQUIRE(decoded_v2.state.death_sequence == 0U);
+    ARPG_REQUIRE(checkpoint::valid_death_checkpoint_structural(decoded_v2.state.death));
 
     auto current = persistence::encode_checkpoint(make_fixture());
     ARPG_REQUIRE(current.has_value());
     auto v3 = std::vector<std::uint8_t>(current->begin(), current->begin() + 120U);
-    v3[7U] = '4';
+    const std::array<std::uint8_t, 8U> v3_magic{{'I','A','R','P','G','S','0','4'}};
+    std::copy(v3_magic.begin(), v3_magic.end(), v3.begin());
     write_u32(v3, 8U, 3U);
     write_u32(v3, 24U, 88U);
     refresh_crc(v3);
-    ARPG_REQUIRE(persistence::decode_checkpoint(v3.data(), v3.size()).migrated);
+    const auto decoded_v3 = persistence::decode_checkpoint(v3.data(), v3.size());
+    ARPG_REQUIRE(decoded_v3.migrated);
+    ARPG_REQUIRE(decoded_v3.state.death_sequence == 0U);
+    ARPG_REQUIRE(checkpoint::valid_death_checkpoint_structural(decoded_v3.state.death));
     const auto v4 = as_v4_golden(*current);
-    ARPG_REQUIRE(persistence::decode_checkpoint(v4.data(), v4.size()).migrated);
+    const auto decoded_v4 = persistence::decode_checkpoint(v4.data(), v4.size());
+    ARPG_REQUIRE(decoded_v4.migrated);
+    ARPG_REQUIRE(decoded_v4.state.death_sequence == 0U);
+    ARPG_REQUIRE(checkpoint::valid_death_checkpoint_structural(decoded_v4.state.death));
     const auto current_owned = persistence::encode_checkpoint(make_owned_fixture());
     ARPG_REQUIRE(current_owned.has_value());
     const auto v4_owned = as_v4_golden(*current_owned);
@@ -916,8 +936,8 @@ arpg::test::Failure baseline_checkpoint_bytes_are_preserved() noexcept {
         }};
     const auto bytes = persistence::encode_checkpoint(make_fixture());
     ARPG_REQUIRE(bytes.has_value());
-    ARPG_REQUIRE(bytes->size() == 236U);
-    ARPG_REQUIRE((*bytes)[0U] == 0x49U && (*bytes)[7U] == 0x36U);
+    ARPG_REQUIRE(bytes->size() == 460U);
+    ARPG_REQUIRE((*bytes)[0U] == 'A' && (*bytes)[7U] == 0U);
     ARPG_REQUIRE((*bytes)[106U] == 0x01U && (*bytes)[107U] == 0x00U);
 
     const auto decoded = persistence::decode_checkpoint(
@@ -929,7 +949,8 @@ arpg::test::Failure baseline_checkpoint_bytes_are_preserved() noexcept {
     ARPG_REQUIRE(decoded.state.passive_tree.allocated_bits == 1ULL);
 
     std::vector<std::uint8_t> format_three(bytes->begin(), bytes->begin() + 120U);
-    format_three[7U] = '4';
+    const std::array<std::uint8_t, 8U> v3_magic{{'I','A','R','P','G','S','0','4'}};
+    std::copy(v3_magic.begin(), v3_magic.end(), format_three.begin());
     write_u32(format_three, 8U, 3U);
     write_u32(format_three, 24U, 88U);
     refresh_crc(format_three);
@@ -961,10 +982,12 @@ arpg::test::Failure encoded_sizes_and_generation_are_little_endian() noexcept {
     static_assert(persistence::kV4BaseEncodedCheckpointSize == 204U);
     static_assert(persistence::kV5BasePayloadSize == 204U);
     static_assert(persistence::kV5BaseEncodedCheckpointSize == 236U);
+    static_assert(persistence::kV6BasePayloadSize == 428U);
+    static_assert(persistence::kV6BaseEncodedCheckpointSize == 460U);
 
     std::vector<std::uint8_t> bytes;
     ARPG_REQUIRE(encoded_fixture(bytes));
-    ARPG_REQUIRE(bytes.size() == 236U);
+    ARPG_REQUIRE(bytes.size() == 460U);
     ARPG_REQUIRE(bytes[16] == 0x18U);
     ARPG_REQUIRE(bytes[17] == 0x17U);
     ARPG_REQUIRE(bytes[18] == 0x16U);
@@ -1007,7 +1030,7 @@ arpg::test::Failure wrong_magic_is_rejected() noexcept {
 arpg::test::Failure unsupported_format_and_rules_are_rejected() noexcept {
     std::vector<std::uint8_t> bytes;
     ARPG_REQUIRE(encoded_fixture(bytes));
-    bytes[8] = 6U;
+    bytes[8] = 7U;
     auto decoded = persistence::decode_checkpoint(bytes.data(), bytes.size());
     ARPG_REQUIRE(decoded.error == persistence::CodecError::unsupported_format);
 
@@ -1185,7 +1208,7 @@ arpg::test::Failure v5_length_count_crc_and_capacity_are_bounded() noexcept {
     maximum.item_ownership.next_item_sequence = 65536U;
     const auto maximum_encoded = persistence::encode_checkpoint(maximum);
     ARPG_REQUIRE(maximum_encoded.has_value());
-    ARPG_REQUIRE(maximum_encoded->size() == 2621636U);
+    ARPG_REQUIRE(maximum_encoded->size() == 2621860U);
     const auto maximum_decoded = persistence::decode_checkpoint(
         maximum_encoded->data(), maximum_encoded->size());
     ARPG_REQUIRE(maximum_decoded.error == persistence::CodecError::none);
@@ -1209,16 +1232,16 @@ arpg::test::Failure v5_corrupt_item_semantics_are_rejected() noexcept {
             == persistence::CodecError::invalid_state;
     };
 
-    ARPG_REQUIRE(rejects(249U, 1U));
-    ARPG_REQUIRE(rejects(252U, 1U));
-    ARPG_REQUIRE(rejects(236U, 0U));
-    ARPG_REQUIRE(rejects(276U, 101U));
-    ARPG_REQUIRE(rejects(244U, 0U));
-    ARPG_REQUIRE(rejects(246U, 0U));
-    ARPG_REQUIRE(rejects(247U, 96U));
-    ARPG_REQUIRE(rejects(336U, 7U));
-    ARPG_REQUIRE(rejects(293U, 7U));
-    ARPG_REQUIRE(rejects(343U, 4U));
+    ARPG_REQUIRE(rejects(473U, 1U));
+    ARPG_REQUIRE(rejects(476U, 1U));
+    ARPG_REQUIRE(rejects(460U, 0U));
+    ARPG_REQUIRE(rejects(500U, 101U));
+    ARPG_REQUIRE(rejects(468U, 0U));
+    ARPG_REQUIRE(rejects(470U, 0U));
+    ARPG_REQUIRE(rejects(471U, 96U));
+    ARPG_REQUIRE(rejects(560U, 7U));
+    ARPG_REQUIRE(rejects(517U, 7U));
+    ARPG_REQUIRE(rejects(567U, 4U));
 
     auto dangling = *encoded;
     dangling[188U] = 0xFEU;
