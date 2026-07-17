@@ -49,6 +49,13 @@ struct DeathRetreatTargetResult final {
     std::uint64_t next_death_sequence,
     const DungeonRules& rules) noexcept;
 
+[[nodiscard]] DeathRetreatTargetResult make_death_retreat_target(
+    const checkpoint::RoomDescriptor& current_room,
+    std::uint64_t commit_generation,
+    std::uint64_t death_sequence,
+    std::uint64_t next_death_sequence,
+    const DungeonRules& rules) noexcept;
+
 [[nodiscard]] RoomGenerationResult generate_room_descriptor(
     std::uint64_t seed,
     std::uint64_t global_index,

@@ -11,9 +11,11 @@
 #include <cstdint>
 #include <array>
 #include <optional>
+#include <utility>
 
 namespace arpg::test {
 struct DungeonSessionTestAccess;
+struct DungeonDeathStressFixture;
 }
 
 namespace arpg::dungeon {
@@ -29,6 +31,54 @@ namespace arpg::dungeon {
     const std::array<GroundItem, kGroundDropCapacity>& ground_items,
     std::uint64_t item_id,
     std::uint16_t ignored_ground_index = 0xFFFFU) noexcept;
+
+class ReusablePendingSave final {
+public:
+    [[nodiscard]] bool has_value() const noexcept { return engaged_; }
+    [[nodiscard]] PendingSave& operator*() noexcept { return value_; }
+    [[nodiscard]] const PendingSave& operator*() const noexcept {
+        return value_;
+    }
+    [[nodiscard]] PendingSave* operator->() noexcept { return &value_; }
+    [[nodiscard]] const PendingSave* operator->() const noexcept {
+        return &value_;
+    }
+    void reset() noexcept { engaged_ = false; }
+    [[nodiscard]] PendingSave& prepare() noexcept {
+        engaged_ = true;
+        return value_;
+    }
+    [[nodiscard]] bool reserve_items(std::size_t count) noexcept {
+        try {
+            value_.next_state.item_ownership.items.reserve(
+                count == 0U ? 1U : count);
+            return true;
+        } catch (...) {
+            return false;
+        }
+    }
+    ReusablePendingSave& operator=(PendingSave&& pending) noexcept {
+        value_ = std::move(pending);
+        engaged_ = true;
+        return *this;
+    }
+    PendingSave& emplace(PendingSave&& pending) noexcept {
+        *this = std::move(pending);
+        return value_;
+    }
+    [[nodiscard]] std::optional<PendingSave> copy() const noexcept {
+        if (!engaged_) return std::nullopt;
+        try {
+            return value_;
+        } catch (...) {
+            return std::nullopt;
+        }
+    }
+
+private:
+    PendingSave value_{};
+    bool engaged_{};
+};
 
 class DungeonSession final {
 public:
@@ -76,6 +126,7 @@ public:
 
 private:
     friend struct ::arpg::test::DungeonSessionTestAccess;
+    friend struct ::arpg::test::DungeonDeathStressFixture;
     enum class PlayerBuildStatus : std::uint8_t {
         valid,
         invalid_state,
@@ -106,6 +157,12 @@ private:
     [[nodiscard]] bool prepare_death_retreat() noexcept;
     [[nodiscard]] bool build_death_continue_next(
         DungeonRunState& next) const noexcept;
+    [[nodiscard]] static bool copy_run_state_reusing_items(
+        DungeonRunState& destination,
+        const DungeonRunState& source) noexcept;
+    static void publish_run_state_reusing_items(
+        DungeonRunState& destination,
+        DungeonRunState& source) noexcept;
     [[nodiscard]] bool claim_defeat_reward(
         const combat::CombatEvent& event) noexcept;
     void roll_ground_drop(const combat::CombatEvent& event) noexcept;
@@ -157,7 +214,8 @@ private:
 
     DungeonRules rules_{};
     DungeonRunState stable_state_{};
-    std::optional<PendingSave> pending_save_{};
+    ReusablePendingSave pending_save_{};
+    mutable DungeonRunState death_validation_scratch_{};
     std::optional<combat::PlayerCombatBuild> pending_item_build_{};
     std::optional<combat::CombatEncounterConfig> pending_abyss_combat_{};
     std::optional<PendingAbyssReward> pending_abyss_reward_{};

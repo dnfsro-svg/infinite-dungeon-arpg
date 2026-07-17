@@ -123,12 +123,9 @@ bool valid_death_checkpoint_dungeon(
         || next_death_sequence == 0U) {
         return false;
     }
-    checkpoint::DungeonRunState input{};
-    input.commit_generation = commit_generation;
-    input.current_room = death_room;
-    input.death_sequence = next_death_sequence - 1U;
     const DeathRetreatTargetResult regenerated = make_death_retreat_target(
-        input, next_death_sequence, rules);
+        death_room, commit_generation, next_death_sequence - 1U,
+        next_death_sequence, rules);
     return regenerated.fault == DungeonFault::none
         && same_room(regenerated.room, death.target_room);
 }

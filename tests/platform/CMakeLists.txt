@@ -862,6 +862,15 @@ set_tests_properties(
     PROPERTIES LABELS "headless;architecture")
 
 add_test(
+    NAME stage11.architecture.death_boundaries
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}/src"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11_architecture_guard_test.cmake")
+set_tests_properties(
+    stage11.architecture.death_boundaries
+    PROPERTIES LABELS "headless;architecture;stage11")
+
+add_test(
     NAME architecture.dungeon_no_raylib
     COMMAND "${CMAKE_COMMAND}"
         "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/dungeon"

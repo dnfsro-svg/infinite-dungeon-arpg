@@ -10,6 +10,7 @@
 arpg::test::TestSuite room_generation_suite() noexcept;
 arpg::test::TestSuite death_checkpoint_suite() noexcept;
 arpg::test::TestSuite dungeon_death_lifecycle_suite() noexcept;
+arpg::test::TestSuite dungeon_death_stress_suite() noexcept;
 arpg::test::TestSuite dungeon_lifecycle_suite() noexcept;
 arpg::test::TestSuite dungeon_navigation_suite() noexcept;
 arpg::test::TestSuite dungeon_stress_suite() noexcept;
@@ -65,6 +66,16 @@ bool stage11_death_only() noexcept {
     std::size_t length = 0U;
     const errno_t error = _dupenv_s(&value, &length,
         "ARPG_STAGE11_DEATH_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
+bool stage11_death_stress_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_STAGE11_DEATH_STRESS_ONLY");
     const bool enabled = error == 0 && value != nullptr;
     std::free(value);
     return enabled;
@@ -136,6 +147,14 @@ int main() {
         };
         return arpg::test::run_suites(death_only, 31,
             "stage 11a task 8 focused death lifecycle");
+    }
+
+    if (stage11_death_stress_only()) {
+        const arpg::test::TestSuite stress_only[] = {
+            dungeon_death_stress_suite(),
+        };
+        return arpg::test::run_suites(stress_only, 1,
+            "stage 11a task 11 death stress");
     }
 
     return arpg::test::run_suites(suites, 254,

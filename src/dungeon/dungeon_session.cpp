@@ -164,11 +164,36 @@ void saturating_add(std::uint64_t& value, std::uint64_t addition) noexcept {
 [[nodiscard]] bool same_death_checkpoint(
     const checkpoint::DeathCheckpoint& lhs,
     const checkpoint::DeathCheckpoint& rhs) noexcept {
-    checkpoint::DungeonRunState left{};
-    checkpoint::DungeonRunState right{};
-    left.death = lhs;
-    right.death = rhs;
-    return same_run_state(left, right);
+    const auto& a = lhs.target_room;
+    const auto& b = rhs.target_room;
+    return lhs.lifecycle == rhs.lifecycle
+        && lhs.data_version == rhs.data_version
+        && lhs.death_depth == rhs.death_depth
+        && lhs.death_floor_room_index == rhs.death_floor_room_index
+        && lhs.death_ecology == rhs.death_ecology
+        && lhs.death_was_abyss == rhs.death_was_abyss
+        && lhs.source_kind == rhs.source_kind
+        && lhs.source_monster_id == rhs.source_monster_id
+        && lhs.source_detail_id == rhs.source_detail_id
+        && lhs.damage_type == rhs.damage_type
+        && lhs.raw_damage == rhs.raw_damage
+        && lhs.barrier_loss == rhs.barrier_loss
+        && lhs.health_loss == rhs.health_loss
+        && lhs.final_damage == rhs.final_damage
+        && lhs.recent_damage == rhs.recent_damage
+        && lhs.hp == rhs.hp && lhs.max_hp == rhs.max_hp
+        && lhs.barrier == rhs.barrier
+        && lhs.max_barrier == rhs.max_barrier
+        && lhs.armor == rhs.armor && lhs.evasion == rhs.evasion
+        && lhs.armor_reduction_bp == rhs.armor_reduction_bp
+        && lhs.evasion_rate_bp == rhs.evasion_rate_bp
+        && lhs.damage_reduction == rhs.damage_reduction
+        && lhs.damage_reduction_cap == rhs.damage_reduction_cap
+        && a.index == b.index && a.seed == b.seed
+        && a.depth == b.depth
+        && a.floor_room_index == b.floor_room_index
+        && a.entry == b.entry && a.ecology == b.ecology
+        && a.has_hole == b.has_hole && a.is_abyss == b.is_abyss;
 }
 
 }  // namespace
@@ -211,6 +236,19 @@ DungeonSession::DungeonSession(
     DungeonRunState stable_state) noexcept
     : rules_(rules), stable_state_(std::move(stable_state)),
       last_exit_(stable_state_.last_direction) {
+    try {
+        death_validation_scratch_.item_ownership.items.reserve(
+            stable_state_.item_ownership.items.empty()
+                ? 1U : stable_state_.item_ownership.items.size());
+    } catch (...) {
+        enter_fault(DungeonFault::invalid_item_state);
+        return;
+    }
+    if (!pending_save_.reserve_items(
+            stable_state_.item_ownership.items.size())) {
+        enter_fault(DungeonFault::invalid_item_state);
+        return;
+    }
     if (validate_rules(rules_) != DungeonFault::none) {
         enter_fault(DungeonFault::invalid_rules);
         return;
@@ -330,7 +368,7 @@ DungeonSession::pending_transition() const noexcept {
 }
 
 std::optional<PendingSave> DungeonSession::pending_save() const noexcept {
-    return pending_save_;
+    return pending_save_.copy();
 }
 
 const PendingSave* DungeonSession::pending_save_view() const noexcept {
@@ -1054,13 +1092,13 @@ bool DungeonSession::prepare_death_retreat() noexcept {
         return false;
     }
 
-    DungeonRunState next{};
-    try {
-        next = stable_state_;
-    } catch (...) {
+    PendingSave& pending = pending_save_.prepare();
+    if (!copy_run_state_reusing_items(pending.next_state, stable_state_)) {
+        pending_save_.reset();
         enter_fault(DungeonFault::invalid_item_state);
         return false;
     }
+    DungeonRunState& next = pending.next_state;
     ++next.commit_generation;
     next.death_sequence = next_sequence;
     next.biases = {};
@@ -1077,25 +1115,17 @@ bool DungeonSession::prepare_death_retreat() noexcept {
     if (!valid_death_checkpoint_dungeon(
             next.death, stable_state_.current_room,
             stable_state_.commit_generation, next_sequence, rules_)) {
+        pending_save_.reset();
         enter_fault(DungeonFault::death_sequence_mismatch);
         return false;
     }
-
-    try {
-        pending_save_.emplace(PendingSave{
-            PendingSaveKind::death_retreat,
-            next.commit_generation,
-            std::move(next),
-            TransitionKind::death_retreat,
-            ExitDirection::none,
-            RoomPhase::combat,
-            0xFFFFU,
-            frozen,
-        });
-    } catch (...) {
-        enter_fault(DungeonFault::invalid_item_state);
-        return false;
-    }
+    pending.kind = PendingSaveKind::death_retreat;
+    pending.expected_generation = next.commit_generation;
+    pending.transition = TransitionKind::death_retreat;
+    pending.direction = ExitDirection::none;
+    pending.resume_phase = RoomPhase::combat;
+    pending.pickup_ordinal = 0xFFFFU;
+    pending.death_snapshot = frozen;
     phase_ = RoomPhase::committing;
     if (!death_detected_emitted_) {
         if (!emit(DungeonEventKind::death_detected,
@@ -1119,16 +1149,63 @@ bool DungeonSession::build_death_continue_next(
             || !validate_pending_death_state()) {
         return false;
     }
-    try {
-        next = stable_state_;
-    } catch (...) {
-        return false;
-    }
+    if (!copy_run_state_reusing_items(next, stable_state_)) return false;
     ++next.commit_generation;
     next.current_room = stable_state_.death.target_room;
     next.abyss = {};
     next.death = {};
     return checkpoint::valid_death_checkpoint_structural(next.death);
+}
+
+bool DungeonSession::copy_run_state_reusing_items(
+    DungeonRunState& destination,
+    const DungeonRunState& source) noexcept {
+    auto& destination_items = destination.item_ownership.items;
+    const auto& source_items = source.item_ownership.items;
+    if (destination_items.capacity() < source_items.size()) return false;
+    destination.root_seed = source.root_seed;
+    destination.commit_generation = source.commit_generation;
+    destination.biases = source.biases;
+    destination.current_room = source.current_room;
+    destination.abyss = source.abyss;
+    destination.last_abyss_resolution = source.last_abyss_resolution;
+    destination.last_transition = source.last_transition;
+    destination.last_direction = source.last_direction;
+    destination.progression = source.progression;
+    destination.passive_tree = source.passive_tree;
+    if (source_items.empty()) destination_items.clear();
+    else destination_items.assign(source_items.begin(), source_items.end());
+    destination.item_ownership.equipment = source.item_ownership.equipment;
+    destination.item_ownership.claimed_drop_bits =
+        source.item_ownership.claimed_drop_bits;
+    destination.item_ownership.next_item_sequence =
+        source.item_ownership.next_item_sequence;
+    destination.death_sequence = source.death_sequence;
+    destination.death = source.death;
+    return true;
+}
+
+void DungeonSession::publish_run_state_reusing_items(
+    DungeonRunState& destination,
+    DungeonRunState& source) noexcept {
+    destination.item_ownership.items.swap(source.item_ownership.items);
+    destination.root_seed = source.root_seed;
+    destination.commit_generation = source.commit_generation;
+    destination.biases = source.biases;
+    destination.current_room = source.current_room;
+    destination.abyss = source.abyss;
+    destination.last_abyss_resolution = source.last_abyss_resolution;
+    destination.last_transition = source.last_transition;
+    destination.last_direction = source.last_direction;
+    destination.progression = source.progression;
+    destination.passive_tree = source.passive_tree;
+    destination.item_ownership.equipment = source.item_ownership.equipment;
+    destination.item_ownership.claimed_drop_bits =
+        source.item_ownership.claimed_drop_bits;
+    destination.item_ownership.next_item_sequence =
+        source.item_ownership.next_item_sequence;
+    destination.death_sequence = source.death_sequence;
+    destination.death = source.death;
 }
 
 RequestResult DungeonSession::request_death_continue() noexcept {
@@ -1153,26 +1230,19 @@ RequestResult DungeonSession::request_death_continue() noexcept {
         return RequestResult::faulted;
     }
 
-    DungeonRunState next{};
-    if (!build_death_continue_next(next)) {
+    PendingSave& pending = pending_save_.prepare();
+    if (!build_death_continue_next(pending.next_state)) {
+        pending_save_.reset();
         enter_fault(DungeonFault::invalid_item_state);
         return RequestResult::faulted;
     }
-    try {
-        pending_save_.emplace(PendingSave{
-            PendingSaveKind::death_continue,
-            next.commit_generation,
-            std::move(next),
-            TransitionKind::death_retreat,
-            ExitDirection::none,
-            RoomPhase::death_pending,
-            0xFFFFU,
-            std::nullopt,
-        });
-    } catch (...) {
-        enter_fault(DungeonFault::invalid_item_state);
-        return RequestResult::faulted;
-    }
+    pending.kind = PendingSaveKind::death_continue;
+    pending.expected_generation = pending.next_state.commit_generation;
+    pending.transition = TransitionKind::death_retreat;
+    pending.direction = ExitDirection::none;
+    pending.resume_phase = RoomPhase::death_pending;
+    pending.pickup_ordinal = 0xFFFFU;
+    pending.death_snapshot.reset();
     death_continue_failed_ = false;
     phase_ = RoomPhase::committing;
     if (!emit(DungeonEventKind::death_continue_requested,
@@ -1195,7 +1265,7 @@ bool DungeonSession::pending_death_cache_consistent() const noexcept {
                 || pending_save_->pickup_ordinal != 0xFFFFU) {
             return false;
         }
-        DungeonRunState exact{};
+        DungeonRunState& exact = death_validation_scratch_;
         return build_death_continue_next(exact)
             && pending_save_->expected_generation
                 == exact.commit_generation
@@ -1224,12 +1294,8 @@ bool DungeonSession::pending_death_cache_consistent() const noexcept {
                 == (std::numeric_limits<std::uint64_t>::max)()) {
         return false;
     }
-    DungeonRunState exact{};
-    try {
-        exact = stable_state_;
-    } catch (...) {
-        return false;
-    }
+    DungeonRunState& exact = death_validation_scratch_;
+    if (!copy_run_state_reusing_items(exact, stable_state_)) return false;
     ++exact.commit_generation;
     ++exact.death_sequence;
     exact.biases = {};

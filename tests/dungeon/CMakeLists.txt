@@ -3,6 +3,7 @@ add_executable(arpg_dungeon_tests
     dungeon_test_main.cpp
     death_checkpoint_tests.cpp
     dungeon_death_lifecycle_tests.cpp
+    dungeon_death_stress_tests.cpp
     dungeon_lifecycle_tests.cpp
     dungeon_navigation_tests.cpp
     dungeon_stress_tests.cpp
@@ -32,6 +33,13 @@ target_link_libraries(arpg_dungeon_tests PRIVATE arpg_dungeon arpg_persistence)
 arpg_enable_project_warnings(arpg_dungeon_tests)
 
 add_test(NAME dungeon.units COMMAND arpg_dungeon_tests)
+
+add_test(NAME stage11.death_stress.determinism_zero_alloc
+    COMMAND arpg_dungeon_tests)
+set_tests_properties(stage11.death_stress.determinism_zero_alloc PROPERTIES
+    ENVIRONMENT "ARPG_STAGE11_DEATH_STRESS_ONLY=1"
+    LABELS "headless;dungeon;stage11;stress"
+    TIMEOUT 300)
 
 add_executable(arpg_stage8_validation_fixture
     stage8_validation_fixture.cpp)

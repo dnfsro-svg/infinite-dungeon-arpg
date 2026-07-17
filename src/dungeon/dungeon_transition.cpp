@@ -451,6 +451,13 @@ RequestResult DungeonSession::prepare_item_save(
         enter_fault(DungeonFault::commit_generation_overflow);
         return RequestResult::faulted;
     }
+    try {
+        const std::size_t item_count = next.item_ownership.items.size();
+        stable_state_.item_ownership.items.reserve(item_count);
+        death_validation_scratch_.item_ownership.items.reserve(item_count);
+    } catch (...) {
+        return RequestResult::rejected;
+    }
     ++next.commit_generation;
     const std::uint64_t expected_generation = next.commit_generation;
     pending_save_.emplace(PendingSave{
@@ -870,6 +877,9 @@ RequestResult DungeonSession::request_pickup(
             enter_fault(DungeonFault::invalid_item_state);
             return RequestResult::faulted;
         }
+        const std::size_t item_count = next.item_ownership.items.size();
+        stable_state_.item_ownership.items.reserve(item_count);
+        death_validation_scratch_.item_ownership.items.reserve(item_count);
         ++next.commit_generation;
         const std::uint64_t expected_generation = next.commit_generation;
         pending_save_.emplace(PendingSave{
@@ -1037,7 +1047,8 @@ void DungeonSession::commit_pending_save(
 
     const checkpoint::RoomDescriptor previous_room =
         stable_state_.current_room;
-    stable_state_ = std::move(pending_save_->next_state);
+    publish_run_state_reusing_items(
+        stable_state_, pending_save_->next_state);
     const RoomPhase resume_phase = pending_save_->resume_phase;
     pending_save_.reset();
     pending_item_build_.reset();
