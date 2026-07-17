@@ -52,6 +52,9 @@ const char* monster_name(std::uint8_t id) noexcept {
 }
 
 const char* hazard_name(std::uint16_t id) noexcept {
+    if (id > static_cast<std::uint16_t>(combat::HazardKind::chaos_expansion)) {
+        return nullptr;
+    }
     switch (static_cast<combat::HazardKind>(id)) {
     case combat::HazardKind::native: return "原生地面危险";
     case combat::HazardKind::burning: return "燃烧地面";
@@ -74,6 +77,9 @@ const char* affix_name(std::uint16_t id) noexcept {
 }
 
 const char* abyss_rule_name(std::uint16_t id) noexcept {
+    if (id > static_cast<std::uint16_t>(abyss::AbyssRuleId::life_sacrifice)) {
+        return nullptr;
+    }
     switch (static_cast<abyss::AbyssRuleId>(id)) {
     case abyss::AbyssRuleId::none: return nullptr;
     case abyss::AbyssRuleId::thunderstorm: return "雷暴";
@@ -87,6 +93,63 @@ const char* abyss_rule_name(std::uint16_t id) noexcept {
     case abyss::AbyssRuleId::life_sacrifice: return "生命献祭";
     }
     return nullptr;
+}
+
+const char* ascii_ecology_name(checkpoint::DungeonElement ecology) noexcept {
+    switch (ecology) {
+    case checkpoint::DungeonElement::fire: return "FIRE";
+    case checkpoint::DungeonElement::water: return "WATER";
+    case checkpoint::DungeonElement::lightning: return "LIGHTNING";
+    case checkpoint::DungeonElement::chaos: return "CHAOS";
+    }
+    return "UNKNOWN";
+}
+
+const char* ascii_damage_name(DeathDamageType type) noexcept {
+    switch (type) {
+    case DeathDamageType::physical: return "PHYSICAL DAMAGE";
+    case DeathDamageType::fire: return "FIRE DAMAGE";
+    case DeathDamageType::water: return "WATER DAMAGE";
+    case DeathDamageType::lightning: return "LIGHTNING DAMAGE";
+    case DeathDamageType::chaos: return "CHAOS DAMAGE";
+    }
+    return "UNKNOWN DAMAGE";
+}
+
+const char* ascii_monster_name(std::uint8_t id) noexcept {
+    constexpr std::array<const char*,
+        static_cast<std::size_t>(combat::MonsterId::count)> kNames{{
+        "FIRE BOMBER", "FIRE CHARGER", "WATER BULWARK", "WATER SUPPORT",
+        "LIGHTNING SHOOTER", "LIGHTNING DASHER", "CHAOS CHASER", "CHAOS HAZARD",
+    }};
+    return id < kNames.size() ? kNames[id] : nullptr;
+}
+
+const char* ascii_hazard_name(std::uint16_t id) noexcept {
+    constexpr std::array<const char*, 7U> kNames{{
+        "NATIVE HAZARD", "BURNING GROUND", "CHAIN LIGHTNING", "DEATH BLAST",
+        "THUNDERSTORM", "HUNTING FLAMES", "CHAOS EXPANSION",
+    }};
+    return id < kNames.size() ? kNames[id] : nullptr;
+}
+
+const char* ascii_affix_name(std::uint16_t id) noexcept {
+    constexpr std::array<const char*,
+        static_cast<std::size_t>(combat::MonsterAffixId::count)> kNames{{
+        "MIGHTY", "FRENZY", "SWIFT", "ARMORED", "SHIELDING", "MULTISHOT",
+        "BURNING GROUND", "CHILLING", "CHAIN LIGHTNING", "CHAOS CORROSION",
+        "BLINK ASSAULT", "DEATH BLAST",
+    }};
+    return id < kNames.size() ? kNames[id] : nullptr;
+}
+
+const char* ascii_abyss_rule_name(std::uint16_t id) noexcept {
+    constexpr std::array<const char*, 9U> kNames{{
+        "THUNDERSTORM", "HUNTING FLAMES", "CHAOS EXPANSION", "SWIFT PURSUIT",
+        "ABYSS BULWARK", "ABYSS FURY", "HEAVY STEPS", "EXHAUSTED RECOVERY",
+        "LIFE SACRIFICE",
+    }};
+    return id < kNames.size() ? kNames[id] : nullptr;
 }
 
 void add_line(DeathOverlayView& view, DeathOverlayColumn column,
@@ -141,6 +204,52 @@ void add_source_line(
     } else {
         std::snprintf(text, sizeof(text), "致死来源：%s / %s / %s",
             kind, detail, damage_name(death.damage_type));
+    }
+    add_line(view, DeathOverlayColumn::full, text);
+}
+
+void add_ascii_source_line(
+    DeathOverlayView& view,
+    const DeathCheckpoint& death) noexcept {
+    char text[kDeathOverlayTextCapacity]{};
+    const char* kind = "UNKNOWN";
+    const char* detail = nullptr;
+    const char* monster = ascii_monster_name(death.source_monster_id);
+    switch (death.source_kind) {
+    case DeathSourceKind::monster_attack:
+        kind = "MONSTER ATTACK";
+        detail = monster;
+        break;
+    case DeathSourceKind::projectile:
+        kind = "PROJECTILE";
+        detail = monster;
+        break;
+    case DeathSourceKind::ground_hazard:
+        kind = "GROUND HAZARD";
+        detail = ascii_hazard_name(death.source_detail_id);
+        break;
+    case DeathSourceKind::monster_affix:
+        kind = "MONSTER AFFIX";
+        detail = ascii_affix_name(death.source_detail_id);
+        break;
+    case DeathSourceKind::abyss_environment:
+        kind = "ABYSS ENVIRONMENT";
+        detail = ascii_abyss_rule_name(death.source_detail_id);
+        break;
+    case DeathSourceKind::unknown:
+        break;
+    }
+    if (detail == nullptr) detail = "UNKNOWN";
+    const bool include_monster = monster != nullptr
+        && death.source_kind != DeathSourceKind::monster_attack
+        && death.source_kind != DeathSourceKind::projectile
+        && death.source_kind != DeathSourceKind::abyss_environment;
+    if (include_monster) {
+        std::snprintf(text, sizeof(text), "Source: %s / %s / %s / %s",
+            kind, detail, monster, ascii_damage_name(death.damage_type));
+    } else {
+        std::snprintf(text, sizeof(text), "Source: %s / %s / %s",
+            kind, detail, ascii_damage_name(death.damage_type));
     }
     add_line(view, DeathOverlayColumn::full, text);
 }
@@ -230,6 +339,92 @@ DeathOverlayView build_death_overlay_view(
         copy_text(view.prompt, "保存失败，请重试");
     } else if (state.can_continue) {
         copy_text(view.prompt, "E 继续");
+    }
+    return view;
+}
+
+DeathOverlayView build_death_overlay_ascii_view(
+    const dungeon::DungeonSnapshot& snapshot) noexcept {
+    DeathOverlayView view{};
+    if (!snapshot.death.has_value()) return view;
+
+    view.visible = true;
+    copy_text(view.title, "DEATH RECAP");
+    const auto& state = *snapshot.death;
+    const DeathCheckpoint& death = state.checkpoint;
+    char text[kDeathOverlayTextCapacity]{};
+
+    std::snprintf(text, sizeof(text), "Depth %llu | Room %llu | %s | %s",
+        static_cast<unsigned long long>(death.death_depth),
+        static_cast<unsigned long long>(death.death_floor_room_index),
+        ascii_ecology_name(death.death_ecology),
+        death.death_was_abyss ? "ABYSS" : "NORMAL");
+    add_line(view, DeathOverlayColumn::full, text);
+    add_ascii_source_line(view, death);
+    std::snprintf(text, sizeof(text), "Depth %llu -> Depth %llu",
+        static_cast<unsigned long long>(death.death_depth),
+        static_cast<unsigned long long>(death.target_room.depth));
+    add_line(view, DeathOverlayColumn::full, text);
+
+    add_line(view, DeathOverlayColumn::left, "Last hit", true);
+    std::snprintf(text, sizeof(text), "Raw %llu",
+        static_cast<unsigned long long>(death.raw_damage));
+    add_line(view, DeathOverlayColumn::left, text);
+    std::snprintf(text, sizeof(text), "Barrier loss %llu",
+        static_cast<unsigned long long>(death.barrier_loss));
+    add_line(view, DeathOverlayColumn::left, text);
+    std::snprintf(text, sizeof(text), "HP loss %llu",
+        static_cast<unsigned long long>(death.health_loss));
+    add_line(view, DeathOverlayColumn::left, text);
+    std::snprintf(text, sizeof(text), "Final %llu",
+        static_cast<unsigned long long>(death.final_damage));
+    add_line(view, DeathOverlayColumn::left, text);
+    add_line(view, DeathOverlayColumn::left, "Recent 5s damage", true);
+    constexpr const char* kRecentLabels[] = {
+        "Physical", "Fire", "Water", "Lightning", "Chaos",
+    };
+    for (std::size_t index = 0U; index < death.recent_damage.size(); ++index) {
+        std::snprintf(text, sizeof(text), "%s %llu", kRecentLabels[index],
+            static_cast<unsigned long long>(death.recent_damage[index]));
+        add_line(view, DeathOverlayColumn::left, text);
+    }
+
+    add_line(view, DeathOverlayColumn::right, "Defense at death", true);
+    std::snprintf(text, sizeof(text), "HP %d/%d", death.hp, death.max_hp);
+    add_line(view, DeathOverlayColumn::right, text);
+    std::snprintf(text, sizeof(text), "Barrier %d/%d",
+        death.barrier, death.max_barrier);
+    add_line(view, DeathOverlayColumn::right, text);
+    std::snprintf(text, sizeof(text), "Armor %lld",
+        static_cast<long long>(death.armor));
+    add_line(view, DeathOverlayColumn::right, text);
+    std::snprintf(text, sizeof(text), "Armor reduction %.2f%%",
+        static_cast<double>(death.armor_reduction_bp) / 100.0);
+    add_line(view, DeathOverlayColumn::right, text);
+    std::snprintf(text, sizeof(text), "Evasion %lld",
+        static_cast<long long>(death.evasion));
+    add_line(view, DeathOverlayColumn::right, text);
+    std::snprintf(text, sizeof(text), "Evasion rate %.2f%%",
+        static_cast<double>(death.evasion_rate_bp) / 100.0);
+    add_line(view, DeathOverlayColumn::right, text);
+    add_line(view, DeathOverlayColumn::right, "Element reduction/cap", true);
+    constexpr const char* kElementLabels[] = {
+        "Fire", "Water", "Lightning", "Chaos",
+    };
+    for (std::size_t index = 0U; index < death.damage_reduction.size(); ++index) {
+        std::snprintf(text, sizeof(text), "%s %.2f%%/%.2f%%",
+            kElementLabels[index],
+            static_cast<double>(death.damage_reduction[index]) / 100.0,
+            static_cast<double>(death.damage_reduction_cap[index]) / 100.0);
+        add_line(view, DeathOverlayColumn::right, text);
+    }
+
+    if (state.saving) {
+        copy_text(view.prompt, "Saving death...");
+    } else if (state.continue_failed) {
+        copy_text(view.prompt, "Save failed - press E to retry");
+    } else if (state.can_continue) {
+        copy_text(view.prompt, "E Continue");
     }
     return view;
 }

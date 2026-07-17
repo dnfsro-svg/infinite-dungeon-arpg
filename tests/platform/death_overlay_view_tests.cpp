@@ -69,6 +69,14 @@ bool contains(
     return false;
 }
 
+bool ascii_only(const char* text) noexcept {
+    for (const auto* byte = reinterpret_cast<const unsigned char*>(text);
+         *byte != 0U; ++byte) {
+        if (*byte > 0x7FU) return false;
+    }
+    return true;
+}
+
 arpg::test::Failure hidden_without_death_and_maps_complete_recap() noexcept {
     dungeon::DungeonSnapshot live{};
     ARPG_REQUIRE(!platform::build_death_overlay_view(live).visible);
@@ -195,6 +203,85 @@ arpg::test::Failure all_source_catalog_ids_have_stable_chinese_names() noexcept 
     return {};
 }
 
+arpg::test::Failure wide_catalog_ids_never_alias_valid_entries() noexcept {
+    constexpr std::uint16_t kWideIds[] = {
+        256U, 257U, 512U, 513U, 0xFFFFU,
+    };
+    for (const std::uint16_t id : kWideIds) {
+        auto hazard = death_snapshot(checkpoint::DeathSourceKind::ground_hazard);
+        hazard.death->checkpoint.source_detail_id = id;
+        ARPG_REQUIRE(contains(platform::build_death_overlay_view(hazard),
+            "未知来源"));
+
+        auto abyss = death_snapshot(checkpoint::DeathSourceKind::abyss_environment);
+        abyss.death->checkpoint.source_monster_id = 0xFFU;
+        abyss.death->checkpoint.source_detail_id = id;
+        ARPG_REQUIRE(contains(platform::build_death_overlay_view(abyss),
+            "未知来源"));
+    }
+    return {};
+}
+
+arpg::test::Failure ascii_fallback_maps_complete_recap_and_prompts() noexcept {
+    auto snapshot = death_snapshot(checkpoint::DeathSourceKind::monster_affix);
+    const auto view = platform::build_death_overlay_ascii_view(snapshot);
+    ARPG_REQUIRE(view.visible);
+    ARPG_REQUIRE(std::strcmp(view.title.data(), "DEATH RECAP") == 0);
+    ARPG_REQUIRE(view.line_count == platform::kDeathOverlayLineCapacity);
+    ARPG_REQUIRE(contains(view, "Depth 12"));
+    ARPG_REQUIRE(contains(view, "Room 7"));
+    ARPG_REQUIRE(contains(view, "LIGHTNING"));
+    ARPG_REQUIRE(contains(view, "NORMAL"));
+    ARPG_REQUIRE(contains(view, "MONSTER AFFIX"));
+    ARPG_REQUIRE(contains(view, "BURNING GROUND"));
+    ARPG_REQUIRE(contains(view, "FIRE CHARGER"));
+    ARPG_REQUIRE(contains(view, "FIRE DAMAGE"));
+    ARPG_REQUIRE(contains(view, "Raw 123"));
+    ARPG_REQUIRE(contains(view, "Barrier loss 23"));
+    ARPG_REQUIRE(contains(view, "HP loss 77"));
+    ARPG_REQUIRE(contains(view, "Final 100"));
+    ARPG_REQUIRE(contains(view, "Physical 11"));
+    ARPG_REQUIRE(contains(view, "Fire 22"));
+    ARPG_REQUIRE(contains(view, "Water 33"));
+    ARPG_REQUIRE(contains(view, "Lightning 44"));
+    ARPG_REQUIRE(contains(view, "Chaos 55"));
+    ARPG_REQUIRE(contains(view, "HP 0/500"));
+    ARPG_REQUIRE(contains(view, "Barrier 0/200"));
+    ARPG_REQUIRE(contains(view, "Armor 1000"));
+    ARPG_REQUIRE(contains(view, "Armor reduction 40.00%"));
+    ARPG_REQUIRE(contains(view, "Evasion 2000"));
+    ARPG_REQUIRE(contains(view, "Evasion rate 35.00%"));
+    ARPG_REQUIRE(contains(view, "Fire 10.00%/75.00%"));
+    ARPG_REQUIRE(contains(view, "Water 20.00%/76.00%"));
+    ARPG_REQUIRE(contains(view, "Lightning 30.00%/77.00%"));
+    ARPG_REQUIRE(contains(view, "Chaos 40.00%/78.00%"));
+    ARPG_REQUIRE(contains(view, "Depth 12 -> Depth 11"));
+    ARPG_REQUIRE(std::strcmp(view.prompt.data(), "E Continue") == 0);
+    ARPG_REQUIRE(ascii_only(view.title.data()));
+    ARPG_REQUIRE(ascii_only(view.prompt.data()));
+    for (std::size_t index = 0U; index < view.line_count; ++index) {
+        ARPG_REQUIRE(ascii_only(view.lines[index].text.data()));
+    }
+
+    auto unknown = death_snapshot(checkpoint::DeathSourceKind::ground_hazard, true);
+    unknown.death->checkpoint.source_monster_id = 0xFFU;
+    unknown.death->checkpoint.source_detail_id = 256U;
+    const auto unknown_view = platform::build_death_overlay_ascii_view(unknown);
+    ARPG_REQUIRE(contains(unknown_view, "ABYSS"));
+    ARPG_REQUIRE(contains(unknown_view, "GROUND HAZARD / UNKNOWN / FIRE DAMAGE"));
+
+    auto saving = snapshot;
+    saving.death->saving = true;
+    saving.death->can_continue = false;
+    ARPG_REQUIRE(std::strcmp(platform::build_death_overlay_ascii_view(saving)
+        .prompt.data(), "Saving death...") == 0);
+    auto failed = snapshot;
+    failed.death->continue_failed = true;
+    ARPG_REQUIRE(std::strcmp(platform::build_death_overlay_ascii_view(failed)
+        .prompt.data(), "Save failed - press E to retry") == 0);
+    return {};
+}
+
 arpg::test::Failure font_plan_covers_all_overlay_text_and_ascii() noexcept {
     const auto plan = platform::death_overlay_font_plan();
     ARPG_REQUIRE(plan.codepoint_count > 95U);
@@ -294,6 +381,13 @@ arpg::test::Failure worst_case_values_fit_compact_columns() noexcept {
             ARPG_REQUIRE(utf8_glyph_count(view.lines[index].text.data()) <= 36U);
         }
     }
+    const auto ascii_view = platform::build_death_overlay_ascii_view(snapshot);
+    for (std::size_t index = 0U; index < ascii_view.line_count; ++index) {
+        if (ascii_view.lines[index].column != platform::DeathOverlayColumn::full) {
+            ARPG_REQUIRE(utf8_glyph_count(
+                ascii_view.lines[index].text.data()) <= 36U);
+        }
+    }
     return {};
 }
 
@@ -301,6 +395,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"hidden and complete recap mapping", &hidden_without_death_and_maps_complete_recap},
     {"abyss unknown and prompt states", &maps_abyss_unknown_and_all_prompt_states},
     {"all source ids have Chinese names", &all_source_catalog_ids_have_stable_chinese_names},
+    {"wide source ids never alias", &wide_catalog_ids_never_alias_valid_entries},
+    {"ASCII fallback maps complete recap", &ascii_fallback_maps_complete_recap_and_prompts},
     {"font plan covers overlay text", &font_plan_covers_all_overlay_text_and_ascii},
     {"layouts fit supported windows", &layouts_stay_in_bounds_and_clear_of_prompt},
     {"worst case values fit compact columns", &worst_case_values_fit_compact_columns},

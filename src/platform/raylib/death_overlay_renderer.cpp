@@ -34,28 +34,6 @@ void draw_panel(const DeathOverlayLayout& layout) noexcept {
         Color{176, 63, 77, 255});
 }
 
-void draw_font_fallback(Font font, const dungeon::DeathSnapshot& death,
-    const DeathOverlayLayout& layout) noexcept {
-    draw_text(font, "DEATH RECAP", layout.title, layout.title_font_size,
-        Color{255, 190, 176, 255}, true);
-    draw_text(font, "CJK font unavailable; install Noto Sans SC or SimHei.",
-        layout.line_bounds[0], layout.body_font_size,
-        Color{255, 150, 120, 255});
-    draw_text(font, TextFormat("Depth %llu -> %llu | Room %llu",
-        static_cast<unsigned long long>(death.checkpoint.death_depth),
-        static_cast<unsigned long long>(death.checkpoint.target_room.depth),
-        static_cast<unsigned long long>(death.checkpoint.death_floor_room_index)),
-        layout.line_bounds[1], layout.body_font_size,
-        Color{222, 228, 239, 255});
-    const char* prompt = death.saving ? "Saving death..."
-        : death.continue_failed ? "Save failed - press E to retry"
-        : "E Continue";
-    draw_text(font, prompt, layout.prompt, layout.prompt_font_size,
-        death.continue_failed ? Color{255, 116, 116, 255}
-                              : Color{255, 222, 146, 255},
-        true);
-}
-
 }  // namespace
 
 DeathOverlayRenderer::~DeathOverlayRenderer() noexcept {
@@ -95,16 +73,14 @@ void DeathOverlayRenderer::shutdown() noexcept {
 
 void DeathOverlayRenderer::draw(
     const dungeon::DungeonSnapshot& snapshot) const noexcept {
-    const DeathOverlayView view = build_death_overlay_view(snapshot);
+    const DeathOverlayView view = owns_font_
+        ? build_death_overlay_view(snapshot)
+        : build_death_overlay_ascii_view(snapshot);
     if (!view.visible) return;
     const DeathOverlayLayout layout = death_overlay_layout(
         GetScreenWidth(), GetScreenHeight());
     draw_panel(layout);
     const Font draw_font = IsFontValid(font_) ? font_ : GetFontDefault();
-    if (!owns_font_) {
-        draw_font_fallback(draw_font, *snapshot.death, layout);
-        return;
-    }
     draw_text(draw_font, view.title.data(), layout.title,
         layout.title_font_size, Color{255, 190, 176, 255}, true);
     for (std::size_t index = 0U; index < view.line_count; ++index) {

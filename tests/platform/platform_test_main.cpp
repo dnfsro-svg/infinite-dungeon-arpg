@@ -41,5 +41,5 @@ int main() {
         death_overlay_view_suite(),
     };
 
-    return arpg::test::run_suites(suites, 102, "stage 11a task 10 death overlay");
+    return arpg::test::run_suites(suites, 104, "stage 11a task 10 death overlay");
 }

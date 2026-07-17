@@ -50,6 +50,9 @@ struct DeathOverlayLayout final {
 [[nodiscard]] DeathOverlayView build_death_overlay_view(
     const dungeon::DungeonSnapshot& snapshot) noexcept;
 
+[[nodiscard]] DeathOverlayView build_death_overlay_ascii_view(
+    const dungeon::DungeonSnapshot& snapshot) noexcept;
+
 [[nodiscard]] DeathOverlayLayout death_overlay_layout(
     int screen_width,
     int screen_height) noexcept;
