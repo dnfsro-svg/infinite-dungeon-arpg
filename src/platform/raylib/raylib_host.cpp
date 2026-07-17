@@ -564,7 +564,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 draw_debug = !draw_debug;
             }
             if (death_gate.forward_gameplay && inventory.is_open()
-                && inventory.process_input(runtime, current)) {
+                && inventory.process_input(runtime, current, frame_input)) {
                 current = session->snapshot();
                 previous = current;
                 drain_events(*session, renderer, feedback, audio);

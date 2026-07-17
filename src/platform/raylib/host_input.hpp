@@ -26,7 +26,9 @@ struct PhysicalKeySnapshot final {
     bool f12{};
     bool v{};
     bool mouse_left{};
+    bool mouse_right{};
     bool focus_lost{};
+    float mouse_wheel{};
     Vector2 mouse_position{};
 };
 
@@ -34,6 +36,10 @@ struct HostFrameInput final {
     FrameKeyState keys{};
     combat::MovementInput movement{};
     std::array<bool, 3> combat_actions{};
+    bool mouse_left_pressed{};
+    bool mouse_right_pressed{};
+    bool control_down{};
+    float mouse_wheel{};
     Vector2 mouse_position{};
 };
 
@@ -42,7 +48,9 @@ struct PhysicalKeySource final {
     bool (*pressed)(void*, int) noexcept{};
     bool (*down)(void*, int) noexcept{};
     bool (*mouse_left_pressed)(void*) noexcept{};
+    bool (*mouse_right_pressed)(void*) noexcept{};
     Vector2 (*mouse_position)(void*) noexcept{};
+    float (*mouse_wheel)(void*) noexcept{};
     bool (*focus_lost)(void*) noexcept{};
 };
 

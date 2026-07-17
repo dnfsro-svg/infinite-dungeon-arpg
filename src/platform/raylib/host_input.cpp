@@ -30,8 +30,16 @@ constexpr std::size_t kStableKeyCount =
     return IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
 }
 
+[[nodiscard]] bool default_mouse_right_pressed(void*) noexcept {
+    return IsMouseButtonPressed(MOUSE_BUTTON_RIGHT);
+}
+
 [[nodiscard]] Vector2 default_mouse_position(void*) noexcept {
     return GetMousePosition();
+}
+
+[[nodiscard]] float default_mouse_wheel(void*) noexcept {
+    return GetMouseWheelMove();
 }
 
 [[nodiscard]] bool default_focus_lost(void*) noexcept {
@@ -76,7 +84,9 @@ PhysicalKeySnapshot sample_physical_keys() noexcept {
         &default_pressed,
         &default_down,
         &default_mouse_left_pressed,
+        &default_mouse_right_pressed,
         &default_mouse_position,
+        &default_mouse_wheel,
         &default_focus_lost,
     };
     return sample_physical_keys(source);
@@ -100,8 +110,13 @@ PhysicalKeySnapshot sample_physical_keys(
     snapshot.v = snapshot.pressed[stable_index(settings::StableKey::v)];
     snapshot.mouse_left = source.mouse_left_pressed != nullptr
         && source.mouse_left_pressed(source.context);
-    if (snapshot.mouse_left && source.mouse_position != nullptr) {
+    snapshot.mouse_right = source.mouse_right_pressed != nullptr
+        && source.mouse_right_pressed(source.context);
+    if (source.mouse_position != nullptr) {
         snapshot.mouse_position = source.mouse_position(source.context);
+    }
+    if (source.mouse_wheel != nullptr) {
+        snapshot.mouse_wheel = source.mouse_wheel(source.context);
     }
     snapshot.focus_lost = source.focus_lost != nullptr
         && source.focus_lost(source.context);
@@ -153,6 +168,11 @@ HostFrameInput map_host_frame_input(
     input.keys.v = snapshot.v;
     input.keys.mouse_gameplay = snapshot.mouse_left;
     input.keys.focus_lost = snapshot.focus_lost;
+    input.mouse_left_pressed = snapshot.mouse_left;
+    input.mouse_right_pressed = snapshot.mouse_right;
+    input.control_down = down(snapshot, settings::StableKey::left_control)
+        || down(snapshot, settings::StableKey::right_control);
+    input.mouse_wheel = snapshot.mouse_wheel;
     input.mouse_position = snapshot.mouse_position;
     return input;
 }

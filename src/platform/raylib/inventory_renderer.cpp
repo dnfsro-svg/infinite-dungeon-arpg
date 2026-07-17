@@ -1,6 +1,6 @@
 #include "inventory_renderer.hpp"
 
-#include "raylib_input.hpp"
+#include "host_input.hpp"
 
 #include "dungeon/dungeon_session.hpp"
 #include "dungeon_runtime.hpp"
@@ -197,7 +197,8 @@ bool InventoryRenderer::recipe_ready() const noexcept {
 }
 
 bool InventoryRenderer::process_input(DungeonRuntime& runtime,
-    const dungeon::DungeonSnapshot& snapshot) {
+    const dungeon::DungeonSnapshot& snapshot,
+    const HostFrameInput& input) {
     if (!open_ || runtime.session() == nullptr) return false;
     dungeon::DungeonSession& session = *runtime.session();
     sync(session, snapshot);
@@ -205,15 +206,15 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
     const InventoryLayout layout = inventory_layout(GetScreenWidth(), GetScreenHeight());
     const Rectangle viewport = grid_viewport(layout.grid);
     const int columns = grid_columns(layout.grid);
-    const float wheel = GetMouseWheelMove();
+    const float wheel = input.mouse_wheel;
     if (wheel != 0.0F) {
         scroll_rows_ = clamp_inventory_scroll_rows(view_cache_.filtered_indices.size(), columns,
             scroll_rows_ - wheel, viewport.height, kCellHeight);
     }
-    const bool left_pressed = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
-    const bool right_pressed = IsMouseButtonPressed(MOUSE_BUTTON_RIGHT);
+    const bool left_pressed = input.mouse_left_pressed;
+    const bool right_pressed = input.mouse_right_pressed;
     if (!left_pressed && !right_pressed) return false;
-    const Vector2 mouse = GetMousePosition();
+    const Vector2 mouse = input.mouse_position;
     if (left_pressed && contains(slot_filter_button(layout.grid), mouse)) {
         if (!filter_.slot.has_value()) filter_.slot = items::ItemSlot::weapon;
         else if (*filter_.slot == items::ItemSlot::accessory) filter_.slot.reset();
@@ -264,9 +265,7 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
         const items::ItemInstance& item = state.items[
             view_cache_.filtered_indices[filtered_position]];
         selected_item_id_ = item.id;
-        const bool recipe_toggle = right_pressed
-            || platform_key_down(KEY_LEFT_CONTROL)
-            || platform_key_down(KEY_RIGHT_CONTROL);
+        const bool recipe_toggle = right_pressed || input.control_down;
         if (recipe_toggle) {
             static_cast<void>(toggle_recipe_selection(recipe_, item.id));
         }

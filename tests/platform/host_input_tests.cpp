@@ -85,8 +85,10 @@ test::Failure adapter_rejects_unknown_values() noexcept {
 struct QueryLog final {
     std::array<unsigned, 512> pressed{};
     std::array<unsigned, 512> down{};
-    unsigned mouse_pressed{};
+    unsigned mouse_left_pressed{};
+    unsigned mouse_right_pressed{};
     unsigned mouse_position{};
+    unsigned mouse_wheel{};
     unsigned focus_lost{};
 };
 
@@ -99,17 +101,27 @@ bool query_pressed(void* context, int key) noexcept {
 bool query_down(void* context, int key) noexcept {
     auto& log = *static_cast<QueryLog*>(context);
     ++log.down[static_cast<std::size_t>(key)];
-    return key == KEY_W;
+    return key == KEY_W || key == KEY_LEFT_CONTROL;
 }
 
-bool query_mouse_pressed(void* context) noexcept {
-    ++static_cast<QueryLog*>(context)->mouse_pressed;
+bool query_mouse_left_pressed(void* context) noexcept {
+    ++static_cast<QueryLog*>(context)->mouse_left_pressed;
+    return true;
+}
+
+bool query_mouse_right_pressed(void* context) noexcept {
+    ++static_cast<QueryLog*>(context)->mouse_right_pressed;
     return true;
 }
 
 Vector2 query_mouse_position(void* context) noexcept {
     ++static_cast<QueryLog*>(context)->mouse_position;
     return {123.0F, 456.0F};
+}
+
+float query_mouse_wheel(void* context) noexcept {
+    ++static_cast<QueryLog*>(context)->mouse_wheel;
+    return 2.5F;
 }
 
 bool query_focus_lost(void* context) noexcept {
@@ -123,8 +135,10 @@ test::Failure sampler_queries_every_stable_key_once_per_state() noexcept {
         &log,
         &query_pressed,
         &query_down,
-        &query_mouse_pressed,
+        &query_mouse_left_pressed,
+        &query_mouse_right_pressed,
         &query_mouse_position,
+        &query_mouse_wheel,
         &query_focus_lost,
     };
     const platform::PhysicalKeySnapshot snapshot =
@@ -142,11 +156,16 @@ test::Failure sampler_queries_every_stable_key_once_per_state() noexcept {
     ARPG_REQUIRE(log.pressed[KEY_V] == 1U);
     ARPG_REQUIRE(log.pressed[KEY_R] == 1U);
     ARPG_REQUIRE(log.pressed[KEY_N] == 1U);
-    ARPG_REQUIRE(log.mouse_pressed == 1U);
+    ARPG_REQUIRE(log.mouse_left_pressed == 1U);
+    ARPG_REQUIRE(log.mouse_right_pressed == 1U);
     ARPG_REQUIRE(log.mouse_position == 1U);
+    ARPG_REQUIRE(log.mouse_wheel == 1U);
     ARPG_REQUIRE(log.focus_lost == 1U);
     ARPG_REQUIRE(snapshot.v);
     ARPG_REQUIRE(snapshot.mouse_left);
+    ARPG_REQUIRE(snapshot.mouse_right);
+    ARPG_REQUIRE(snapshot.mouse_wheel == 2.5F);
+    ARPG_REQUIRE(snapshot.down[key_index(settings::StableKey::left_control)]);
     ARPG_REQUIRE(snapshot.focus_lost);
     ARPG_REQUIRE(snapshot.mouse_position.x == 123.0F);
     ARPG_REQUIRE(snapshot.mouse_position.y == 456.0F);
@@ -177,6 +196,43 @@ test::Failure default_bindings_map_movement_actions_and_overlays() noexcept {
     ARPG_REQUIRE(input.keys.e);
     ARPG_REQUIRE(input.keys.inventory);
     ARPG_REQUIRE(input.keys.passives);
+    return {};
+}
+
+test::Failure every_setting_action_maps_only_to_its_expected_output() noexcept {
+    const settings::SettingsData settings = settings::default_settings();
+    constexpr std::size_t kActionCount =
+        static_cast<std::size_t>(settings::SettingAction::count);
+    for (std::size_t action_index = 0U; action_index < kActionCount;
+            ++action_index) {
+        const auto action = static_cast<settings::SettingAction>(action_index);
+        const settings::StableKey binding = settings::binding_for(settings, action);
+        platform::PhysicalKeySnapshot snapshot{};
+        if (action_index < 4U) hold(snapshot, binding);
+        else press(snapshot, binding);
+
+        const platform::HostFrameInput input =
+            platform::map_host_frame_input(settings, snapshot);
+        constexpr std::array<std::int8_t, 4> kExpectedX{{0, 0, -1, 1}};
+        constexpr std::array<std::int8_t, 4> kExpectedY{{-1, 1, 0, 0}};
+        const std::int8_t expected_x = action_index < 4U
+            ? kExpectedX[action_index] : 0;
+        const std::int8_t expected_y = action_index < 4U
+            ? kExpectedY[action_index] : 0;
+        ARPG_REQUIRE(input.movement.x == expected_x);
+        ARPG_REQUIRE(input.movement.y == expected_y);
+        ARPG_REQUIRE(input.keys.movement == (action_index < 4U));
+        for (std::size_t combat_index = 0U; combat_index < 3U;
+                ++combat_index) {
+            ARPG_REQUIRE(input.combat_actions[combat_index]
+                == (action_index == combat_index + 4U));
+        }
+        ARPG_REQUIRE(input.keys.attack
+            == (action_index >= 4U && action_index <= 6U));
+        ARPG_REQUIRE(input.keys.e == (action_index == 7U));
+        ARPG_REQUIRE(input.keys.inventory == (action_index == 8U));
+        ARPG_REQUIRE(input.keys.passives == (action_index == 9U));
+    }
     return {};
 }
 
@@ -262,6 +318,9 @@ test::Failure global_keys_and_mouse_are_binding_independent() noexcept {
     snapshot.f12 = true;
     snapshot.v = true;
     snapshot.mouse_left = true;
+    snapshot.mouse_right = true;
+    snapshot.mouse_wheel = -3.0F;
+    snapshot.down[key_index(settings::StableKey::right_control)] = true;
     snapshot.focus_lost = true;
     snapshot.mouse_position = {17.0F, 29.0F};
 
@@ -273,6 +332,10 @@ test::Failure global_keys_and_mouse_are_binding_independent() noexcept {
     ARPG_REQUIRE(input.keys.f12);
     ARPG_REQUIRE(input.keys.v);
     ARPG_REQUIRE(input.keys.mouse_gameplay);
+    ARPG_REQUIRE(input.mouse_left_pressed);
+    ARPG_REQUIRE(input.mouse_right_pressed);
+    ARPG_REQUIRE(input.mouse_wheel == -3.0F);
+    ARPG_REQUIRE(input.control_down);
     ARPG_REQUIRE(input.keys.focus_lost);
     ARPG_REQUIRE(input.mouse_position.x == 17.0F);
     ARPG_REQUIRE(input.mouse_position.y == 29.0F);
@@ -385,6 +448,8 @@ constexpr test::TestCase kCases[] = {
     {"unknown adapter values rejected", &adapter_rejects_unknown_values},
     {"stable keys sampled once per state", &sampler_queries_every_stable_key_once_per_state},
     {"default logical bindings", &default_bindings_map_movement_actions_and_overlays},
+    {"all setting actions map exhaustively",
+        &every_setting_action_maps_only_to_its_expected_output},
     {"swapped logical bindings", &swapped_bindings_drive_the_new_logical_owners},
     {"movement down and action pressed", &movement_uses_down_and_actions_use_pressed},
     {"global input binding independent", &global_keys_and_mouse_are_binding_independent},

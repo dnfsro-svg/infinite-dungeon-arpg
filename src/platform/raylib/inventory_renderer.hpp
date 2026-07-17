@@ -14,6 +14,7 @@ namespace arpg::platform {
 
 class DungeonRuntime;
 struct DungeonRenderStatus;
+struct HostFrameInput;
 
 class InventoryRenderer final {
 public:
@@ -22,7 +23,8 @@ public:
     void close() noexcept;
     [[nodiscard]] bool is_open() const noexcept;
     [[nodiscard]] bool process_input(DungeonRuntime& runtime,
-        const dungeon::DungeonSnapshot& snapshot);
+        const dungeon::DungeonSnapshot& snapshot,
+        const HostFrameInput& input);
     void draw(const dungeon::DungeonSession& session,
         const dungeon::DungeonSnapshot& snapshot,
         const DungeonRenderStatus& status);

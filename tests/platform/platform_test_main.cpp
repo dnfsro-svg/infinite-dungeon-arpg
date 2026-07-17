@@ -41,5 +41,5 @@ int main() {
         death_overlay_view_suite(),
     };
 
-    return arpg::test::run_suites(suites, 114, "stage 11b task 4 host input");
+    return arpg::test::run_suites(suites, 115, "stage 11b task 4 host input");
 }
