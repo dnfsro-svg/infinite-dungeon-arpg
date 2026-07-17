@@ -88,4 +88,21 @@ file(REMOVE "${read_only_file}")
 expect_guard_rejection(capture_order "${VALID_FIXTURE}" "${BAD_CAPTURE_ORDER}"
     "Capture must occur once after EndDrawing")
 
+file(READ "${VALID_HOST_SOURCE}" valid_host_source)
+set(validation_bypass_file
+    "${CMAKE_CURRENT_BINARY_DIR}/stage11_bad_validation_continue_bypass.txt")
+string(REPLACE
+    "const DeathInputGate death_gate = death_input_gate("
+    "static_cast<void>(runtime.request_death_continue());\n            const DeathInputGate death_gate = death_input_gate("
+    validation_bypass_source "${valid_host_source}")
+if(validation_bypass_source STREQUAL valid_host_source)
+    message(FATAL_ERROR
+        "validation bypass mutation did not find the death input gate")
+endif()
+file(WRITE "${validation_bypass_file}" "${validation_bypass_source}")
+expect_guard_rejection(validation_continue_bypass "${VALID_FIXTURE}"
+    "${validation_bypass_file}"
+    "Formal validation continue must use the single death input gate")
+file(REMOVE "${validation_bypass_file}")
+
 message(STATUS "Stage 11 guard mutation self-test passed")

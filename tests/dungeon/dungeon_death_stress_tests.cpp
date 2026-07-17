@@ -22,6 +22,7 @@
 #include <cstdio>
 #include <limits>
 #include <memory>
+#include <utility>
 
 namespace arpg::test {
 
@@ -122,6 +123,51 @@ bool same_death(
     return dungeon::same_run_state(a, b);
 }
 
+bool same_permanent_player_state(
+    const checkpoint::DungeonRunState& left,
+    const checkpoint::DungeonRunState& right) noexcept {
+    if (left.root_seed != right.root_seed
+            || left.progression.level != right.progression.level
+            || left.progression.experience != right.progression.experience
+            || left.progression.earned_passive_points
+                != right.progression.earned_passive_points
+            || left.progression.unspent_passive_points
+                != right.progression.unspent_passive_points
+            || left.passive_tree.allocated_bits
+                != right.passive_tree.allocated_bits
+            || left.item_ownership.items.size()
+                != right.item_ownership.items.size()
+            || left.item_ownership.equipment.equipped_ids
+                != right.item_ownership.equipment.equipped_ids
+            || left.item_ownership.claimed_drop_bits
+                != right.item_ownership.claimed_drop_bits
+            || left.item_ownership.next_item_sequence
+                != right.item_ownership.next_item_sequence) {
+        return false;
+    }
+    for (std::size_t index = 0U;
+         index < left.item_ownership.items.size(); ++index) {
+        const auto& a = left.item_ownership.items[index];
+        const auto& b = right.item_ownership.items[index];
+        if (a.id != b.id || a.base_id != b.base_id || a.rarity != b.rarity
+                || a.item_level != b.item_level
+                || a.required_level != b.required_level
+                || a.affix_count != b.affix_count
+                || a.reserved != b.reserved) {
+            return false;
+        }
+        for (std::size_t affix = 0U; affix < a.affixes.size(); ++affix) {
+            if (a.affixes[affix].affix_id != b.affixes[affix].affix_id
+                    || a.affixes[affix].tier != b.affixes[affix].tier
+                    || a.affixes[affix].variant
+                        != b.affixes[affix].variant) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 bool codec_round_trip(checkpoint::DungeonRunState& state) noexcept {
     const auto encoded = persistence::encode_checkpoint(state);
     if (!encoded.has_value()) return false;
@@ -193,15 +239,45 @@ arpg::items::ItemInstance ground_prototype() noexcept {
     return item;
 }
 
+combat::MovementInput move_toward_nearest_monster(
+    const dungeon::DungeonSnapshot& snapshot) noexcept {
+    if (!snapshot.combat.has_value()) return {};
+    const combat::Vec3 player = snapshot.combat->player.position;
+    const combat::MonsterSnapshot* nearest = nullptr;
+    float nearest_distance = 0.0F;
+    for (const auto& monster : snapshot.combat->monsters) {
+        if (!monster.active || monster.hp <= 0) continue;
+        const float dx = monster.position.x - player.x;
+        const float dy = monster.position.y - player.y;
+        const float distance = dx * dx + dy * dy;
+        if (nearest == nullptr || distance < nearest_distance) {
+            nearest = &monster;
+            nearest_distance = distance;
+        }
+    }
+    if (nearest == nullptr) return {};
+    combat::MovementInput movement{};
+    const float dx = nearest->position.x - player.x;
+    const float dy = nearest->position.y - player.y;
+    if (dx > 0.25F) movement.x = 1;
+    else if (dx < -0.25F) movement.x = -1;
+    if (dy > 0.20F) movement.y = 1;
+    else if (dy < -0.20F) movement.y = -1;
+    return movement;
+}
+
 struct Trace final {
     std::array<checkpoint::DeathCheckpoint, kDeathCount> deaths{};
+    std::array<std::uint64_t, kDeathCount> death_sequences{};
     std::uint64_t cumulative_hash{kHashOffset};
     std::uint64_t combat_allocations{};
     std::uint64_t dungeon_prepare_allocations{};
+    std::uint64_t continue_prepare_allocations{};
     std::uint64_t dungeon_commit_allocations{};
     std::uint32_t codec_round_trips{};
     std::uint32_t pending_restarts{};
     std::uint32_t continue_restarts{};
+    checkpoint::DungeonRunState final_state{};
     bool complete{};
 };
 
@@ -219,6 +295,25 @@ dungeon::PendingSaveResult committed_receipt(
 
 bool run_trace(Trace& trace, bool restart_rhythm) noexcept {
     const dungeon::DungeonRules rules{};
+    checkpoint::DungeonRunState state = case_root(2U, true);
+    if (state.root_seed == 0U || state.current_room.seed == 0U) return false;
+    state.progression = {2U, 7U, 1U, 1U};
+    state.item_ownership.claimed_drop_bits = {{1U, 2U, 4U}};
+    state.item_ownership.next_item_sequence = 17U;
+    const checkpoint::DungeonRunState permanent_baseline = state;
+    auto session = std::make_unique<dungeon::DungeonSession>(rules, state);
+    const dungeon::PendingSave* const abyss_start =
+        session->pending_save_view();
+    if (abyss_start == nullptr
+            || abyss_start->kind != dungeon::PendingSaveKind::abyss_start) {
+        return false;
+    }
+    const auto abyss_start_receipt = committed_receipt(*abyss_start);
+    checkpoint::DungeonRunState started_state = abyss_start->next_state;
+    resolve_committed(*session, abyss_start_receipt);
+    state = std::move(started_state);
+    if (session->snapshot().phase == dungeon::RoomPhase::faulted) return false;
+
     for (std::size_t index = 0U; index < kDeathCount; ++index) {
         const auto fail = [index](const char* step) noexcept {
             std::fprintf(stderr,
@@ -226,25 +321,20 @@ bool run_trace(Trace& trace, bool restart_rhythm) noexcept {
                 index, step);
             return false;
         };
-        const bool abyss_death = index % 3U == 2U;
-        checkpoint::DungeonRunState state = case_root(index, abyss_death);
-        if (state.root_seed == 0U || state.current_room.seed == 0U) {
-            return fail("case-root");
-        }
-        auto session = std::make_unique<dungeon::DungeonSession>(rules, state);
+        const bool abyss_death = index == 0U;
 
-        if (abyss_death) {
-            const auto start = session->pending_save();
-            const auto receipt = start.has_value()
-                ? committed_receipt(*start) : dungeon::PendingSaveResult{};
-            if (!start.has_value()
-                    || start->kind != dungeon::PendingSaveKind::abyss_start) {
-                return fail("abyss-start");
+        std::uint32_t room_start_ticks = 0U;
+        while (session->snapshot().phase != dungeon::RoomPhase::combat
+                && room_start_ticks < 3U) {
+            session->tick({});
+            while (session->try_pop_event().has_value()) {
             }
-            resolve_committed(*session, receipt);
-            if (session->snapshot().phase == dungeon::RoomPhase::faulted) {
-                return fail("abyss-start-commit");
+            while (session->try_pop_combat_event().has_value()) {
             }
+            ++room_start_ticks;
+        }
+        if (session->snapshot().phase != dungeon::RoomPhase::combat) {
+            return fail("room-start");
         }
 
         const bool saturated = index == 499U;
@@ -261,9 +351,16 @@ bool run_trace(Trace& trace, bool restart_rhythm) noexcept {
 
         const std::uint64_t combat_before = arpg::test::allocation_count();
         std::uint32_t combat_ticks = 0U;
+        combat::MovementInput combat_movement{};
         while (session->pending_save_view() == nullptr
                 && combat_ticks < 20000U) {
-            session->tick({});
+            if (combat_ticks % 15U == 0U) {
+                combat_movement =
+                    move_toward_nearest_monster(session->snapshot());
+            }
+            session->tick(combat_movement);
+            while (session->try_pop_event().has_value()) {
+            }
             while (session->try_pop_combat_event().has_value()) {
             }
             ++combat_ticks;
@@ -273,6 +370,16 @@ bool run_trace(Trace& trace, bool restart_rhythm) noexcept {
         trace.combat_allocations += combat_delta;
         if (combat_delta != 0U) return fail("combat-allocation");
         if (session->pending_save_view() == nullptr) {
+            const auto timeout = session->snapshot();
+            std::fprintf(stderr,
+                "[stage11-death-timeout] phase=%u hp=%d remaining=%u "
+                "room=%llu seed=%llu depth=%llu\n",
+                static_cast<unsigned>(timeout.phase),
+                timeout.combat.has_value() ? timeout.combat->player.hp : -1,
+                timeout.remaining_targets,
+                static_cast<unsigned long long>(timeout.room_index),
+                static_cast<unsigned long long>(state.current_room.seed),
+                static_cast<unsigned long long>(timeout.depth));
             return fail("public-combat-death-timeout");
         }
         trace.dungeon_prepare_allocations += combat_delta;
@@ -305,6 +412,15 @@ bool run_trace(Trace& trace, bool restart_rhythm) noexcept {
             }
         }
         trace.deaths[index] = death_pending->next_state.death;
+        trace.death_sequences[index] =
+            death_pending->next_state.death_sequence;
+        if (trace.death_sequences[index] != index + 1U) {
+            return fail("death-sequence");
+        }
+        if (!same_permanent_player_state(
+                permanent_baseline, death_pending->next_state)) {
+            return fail("death-permanent-state");
+        }
         const std::uint64_t current_death_hash = death_hash(trace.deaths[index]);
         fold(trace.cumulative_hash, current_death_hash);
         fold(trace.cumulative_hash,
@@ -339,12 +455,22 @@ bool run_trace(Trace& trace, bool restart_rhythm) noexcept {
             ++trace.pending_restarts;
         }
 
-        if (session->request_death_continue()
-                != dungeon::RequestResult::accepted) {
+        const std::uint64_t continue_prepare_before =
+            arpg::test::allocation_count();
+        const dungeon::RequestResult continue_result =
+            session->request_death_continue();
+        const std::uint64_t continue_prepare_delta =
+            arpg::test::allocation_count() - continue_prepare_before;
+        trace.continue_prepare_allocations += continue_prepare_delta;
+        if (continue_prepare_delta != 0U) {
+            return fail("continue-prepare-allocation");
+        }
+        if (continue_result != dungeon::RequestResult::accepted) {
             return fail("continue-request");
         }
-        const auto continue_pending = session->pending_save();
-        if (!continue_pending.has_value()
+        const dungeon::PendingSave* const continue_pending =
+            session->pending_save_view();
+        if (continue_pending == nullptr
                 || continue_pending->kind
                     != dungeon::PendingSaveKind::death_continue
                 || continue_pending->next_state.death.lifecycle
@@ -352,6 +478,8 @@ bool run_trace(Trace& trace, bool restart_rhythm) noexcept {
             return fail("continue-pending");
         }
         const auto continue_receipt = committed_receipt(*continue_pending);
+        checkpoint::DungeonRunState continued_state =
+            continue_pending->next_state;
         const std::uint64_t continue_commit_before =
             arpg::test::allocation_count();
         resolve_committed(*session, continue_receipt);
@@ -361,9 +489,13 @@ bool run_trace(Trace& trace, bool restart_rhythm) noexcept {
         if (continue_commit_delta != 0U) {
             return fail("continue-commit-allocation");
         }
-        state = continue_pending->next_state;
+        state = std::move(continued_state);
         if (session->snapshot().phase == dungeon::RoomPhase::faulted) {
             return fail("continue-commit");
+        }
+        if (state.death_sequence != index + 1U
+                || !same_permanent_player_state(permanent_baseline, state)) {
+            return fail("continue-stable-state");
         }
         fold(trace.cumulative_hash, state.current_room.seed);
         fold(trace.cumulative_hash, state.commit_generation);
@@ -377,6 +509,7 @@ bool run_trace(Trace& trace, bool restart_rhythm) noexcept {
             ++trace.continue_restarts;
         }
     }
+    trace.final_state = state;
     trace.complete = true;
     return true;
 }
@@ -454,21 +587,57 @@ arpg::test::Failure thousand_deaths_are_deterministic_through_restarts() noexcep
     ARPG_REQUIRE(run_trace(*direct, false));
     ARPG_REQUIRE(run_trace(*restarted, true));
     ARPG_REQUIRE(direct->complete && restarted->complete);
-    ARPG_REQUIRE(restarted->codec_round_trips == 58U);
-    ARPG_REQUIRE(restarted->pending_restarts == 32U);
-    ARPG_REQUIRE(restarted->continue_restarts == 23U);
-    ARPG_REQUIRE(direct->cumulative_hash == restarted->cumulative_hash);
+    ARPG_REQUIRE(restarted->codec_round_trips == kDeathCount / 17U);
+    ARPG_REQUIRE(restarted->pending_restarts == kDeathCount / 31U);
+    ARPG_REQUIRE(restarted->continue_restarts == kDeathCount / 43U);
     for (std::size_t index = 0U; index < kDeathCount; ++index) {
+        if (!same_death(direct->deaths[index], restarted->deaths[index])) {
+            const auto& a = direct->deaths[index];
+            const auto& b = restarted->deaths[index];
+            std::fprintf(stderr,
+                "[stage11-death-divergence] index=%zu direct=0x%016llx "
+                "restarted=0x%016llx target=%llu/%llu raw=%llu/%llu "
+                "loss=%llu/%llu source=%u/%u detail=%u/%u "
+                "hp=%d/%d armor=%lld/%lld recent0=%llu/%llu\n",
+                index,
+                static_cast<unsigned long long>(
+                    death_hash(direct->deaths[index])),
+                static_cast<unsigned long long>(
+                    death_hash(restarted->deaths[index])),
+                static_cast<unsigned long long>(a.target_room.seed),
+                static_cast<unsigned long long>(b.target_room.seed),
+                static_cast<unsigned long long>(a.raw_damage),
+                static_cast<unsigned long long>(b.raw_damage),
+                static_cast<unsigned long long>(a.final_damage),
+                static_cast<unsigned long long>(b.final_damage),
+                static_cast<unsigned>(a.source_kind),
+                static_cast<unsigned>(b.source_kind),
+                static_cast<unsigned>(a.source_detail_id),
+                static_cast<unsigned>(b.source_detail_id),
+                a.max_hp, b.max_hp,
+                static_cast<long long>(a.armor),
+                static_cast<long long>(b.armor),
+                static_cast<unsigned long long>(a.recent_damage[0]),
+                static_cast<unsigned long long>(b.recent_damage[0]));
+        }
         ARPG_REQUIRE(same_death(direct->deaths[index],
             restarted->deaths[index]));
         ARPG_REQUIRE(direct->deaths[index].target_room.seed
             == restarted->deaths[index].target_room.seed);
+        ARPG_REQUIRE(direct->death_sequences[index] == index + 1U);
+        ARPG_REQUIRE(restarted->death_sequences[index] == index + 1U);
     }
+    ARPG_REQUIRE(direct->cumulative_hash == restarted->cumulative_hash);
+    ARPG_REQUIRE(dungeon::same_run_state(
+        direct->final_state, restarted->final_state));
+    ARPG_REQUIRE(direct->final_state.death_sequence == kDeathCount);
+    ARPG_REQUIRE(direct->final_state.death.lifecycle
+        == checkpoint::DeathLifecycle::none);
     ARPG_REQUIRE(golden_stream_hash() == streams_before);
 
     const std::size_t working_after = working_set_bytes();
     std::printf("[stage11-death-stress] deaths=%zu hash=0x%016llx "
-        "reloads=%u/%u/%u allocations=%llu/%llu/%llu "
+        "reloads=%u/%u/%u allocations=%llu/%llu/%llu/%llu "
         "working-set=%zu->%zu\n",
         kDeathCount,
         static_cast<unsigned long long>(direct->cumulative_hash),
@@ -478,6 +647,8 @@ arpg::test::Failure thousand_deaths_are_deterministic_through_restarts() noexcep
             direct->combat_allocations + restarted->combat_allocations),
         static_cast<unsigned long long>(direct->dungeon_prepare_allocations
             + restarted->dungeon_prepare_allocations),
+        static_cast<unsigned long long>(direct->continue_prepare_allocations
+            + restarted->continue_prepare_allocations),
         static_cast<unsigned long long>(direct->dungeon_commit_allocations
             + restarted->dungeon_commit_allocations),
         working_before, working_after);

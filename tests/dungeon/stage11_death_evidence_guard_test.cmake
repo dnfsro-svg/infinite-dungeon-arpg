@@ -56,11 +56,19 @@ foreach(required_fixture "SaveStore" "session.tick" "pending_save_view"
     endif()
 endforeach()
 foreach(required_host "stage11_validation_input" "queue_action"
-        "MovementInput" "runtime.fixed_tick" "request_death_continue")
+        "MovementInput" "runtime.fixed_tick" "request_death_continue"
+        "frame_input.keys.e = true")
     if(NOT host_source MATCHES "${required_host}")
         message(FATAL_ERROR "Formal host lacks production input/save path: ${required_host}")
     endif()
 endforeach()
+string(REGEX MATCHALL "runtime[.]request_death_continue[ \t\r\n]*[(][ \t\r\n]*[)]"
+    host_continue_requests "${host_source}")
+list(LENGTH host_continue_requests host_continue_request_count)
+if(NOT host_continue_request_count EQUAL 1)
+    message(FATAL_ERROR
+        "Formal validation continue must use the single death input gate request path")
+endif()
 if(NOT formal_source MATCHES "run_raylib_host"
         OR NOT formal_source MATCHES "SaveStore"
         OR NOT formal_source MATCHES "formal-path-summary.txt")

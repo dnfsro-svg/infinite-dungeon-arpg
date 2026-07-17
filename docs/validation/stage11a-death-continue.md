@@ -50,7 +50,7 @@ V6 magic 为 8 字节 `ARPGSV6\0`，format 为 6。V5 的 204-byte base payload 
 
 ## 正式五路径与证据
 
-`stage11.death_formal.five_paths` 启动真实 `run_raylib_host`，在 1280x720 窗口经生产输入/战斗/存档路径生成并校验五张 fresh 截图：
+`stage11.death_formal.five_paths` 启动真实 `run_raylib_host`，在 1280x720 窗口经生产输入/战斗/存档路径生成并校验五张 fresh 截图。deep/floor-one 的自动继续只把 `FrameKeyState.e` 置位，随后与玩家输入共用 `death_input_gate`、唯一的 continue request 分支和 `runtime.fixed_tick` 提交链：
 
 | 路径 | 证据 | 验证点 |
 | --- | --- | --- |
@@ -71,7 +71,7 @@ out/build/windows-msvc-release/bin/stage11-death-formal-validation/
 
 ## 1000 次死亡压力
 
-`stage11.death_stress.determinism_zero_alloc` 在生产 Session/事务路径执行 1000 次死亡与继续，并分别按 17、31、43 的间隔重建 Session。测试要求直接运行和重启运行的每个死亡检查点、退层 seed、累计 hash、最终稳定状态与永久角色状态一致；同时验证死亡准备、commit、继续准备和继续 commit 的受测路径零堆分配，普通掉落随机流保持 Stage 10 golden 不变。
+`stage11.death_stress.determinism_zero_alloc` 的 direct/restart 两条 trace 都从同一个稳定状态开始，各自在同一个持续演进的状态链上执行 1000 次死亡与继续；`death_sequence` 必须逐次从 1 增加到 1000。restart trace 分别按 17、31、43 的间隔执行 codec round-trip 或重建 Session。测试要求两条 trace 的每个死亡检查点、退层 seed、累计 hash、最终完整稳定状态与非默认永久角色字段一致。继续 prepare 的 allocation counter 只包围 `request_death_continue()`，随后通过 `pending_save_view()` 检查结果，避免测试副本污染计数；死亡 prepare、两次 commit 与继续 prepare 的受测路径均要求零堆分配。普通掉落随机流保持 Stage 10 golden 不变。
 
 ## 需求到测试名映射
 
@@ -92,7 +92,7 @@ out/build/windows-msvc-release/bin/stage11-death-formal-validation/
 
 ## 全量验证结果
 
-2026-07-17 在 MSVC 19.44.35228.0、Windows SDK 10.0.26100.0 环境中按下一节命令从头验证：
+2026-07-17 在 MSVC 19.44.35228.0、Windows SDK 10.0.26100.0 环境中按下一节命令从头验证。下表是最终审查修复前、文档收口提交 `a0c7395` 的完整基线：
 
 | 配置 | clean-first 构建 | 完整 CTest | 总耗时 | Stage 11 stress | Stage 11 五路径 |
 | --- | --- | --- | ---: | ---: | ---: |
@@ -100,6 +100,8 @@ out/build/windows-msvc-release/bin/stage11-death-formal-validation/
 | Release | 237/237 | 52/52，0 失败 | 282.57 秒 | 35.67 秒 | 6.62 秒 |
 
 Release fresh 源码头声明 raylib 6.0.0，配置和 host 编译期断言均验证该版本；最终 Ninja 链接边包含静态 `lib/raylib.lib`，`dumpbin /dependents` 不含 raylib DLL。Release 正式测试重新生成了五张截图和 `formal-path-summary.txt`，五条 marker 全部为 `PASS`。
+
+最终审查增强验证后，Debug 定向复验结果为：演进状态版 1000 次 stress 通过（150.19 秒），真实 raylib 五路径 1/1 通过（7.06 秒），Stage 11 evidence guards 5/5 通过，Platform 3/3 通过，Architecture 21/21 通过。stress 相比收口基线的 123.05 秒增加 27.14 秒（约 22%），原因是每条 trace 不再重建 1000 个独立根状态，而是运行真实连续房间链、消费公共事件并比较最终完整状态。
 
 ## 从头复现
 

@@ -489,7 +489,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         }
 
         while (!WindowShouldClose() && !exit_requested) {
-            const HostFrameInput frame_input = sample_host_frame_input();
+            HostFrameInput frame_input = sample_host_frame_input();
             if (recovery_requested(runtime.state() == DungeonRuntimeState::recovery_required,
                     platform_key_pressed(KEY_N))) {
                 if (runtime.recover_with_new_run() && runtime.session() != nullptr) {
@@ -533,6 +533,15 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 && current.death->saving;
             const bool death_pending = current.death.has_value()
                 && current.death->can_continue;
+            const bool validation_continue = death_pending
+                && (config.stage11_validation
+                        == Stage11ValidationScenario::deep_continue
+                    || config.stage11_validation
+                        == Stage11ValidationScenario::floor_one_continue);
+            if (validation_continue
+                    && !stage11_validation_state.continue_requested) {
+                frame_input.keys.e = true;
+            }
             const DeathInputGate death_gate = death_input_gate(
                 death_saving, death_pending, frame_input.keys);
             if (!death_gate.forward_gameplay) {
@@ -551,22 +560,9 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 const dungeon::RequestResult requested =
                     runtime.request_death_continue();
                 if (requested != dungeon::RequestResult::rejected) {
-                    previous = current;
-                    current = session->snapshot();
-                }
-            }
-            const bool validation_continue = current.death.has_value()
-                && current.death->can_continue
-                && (config.stage11_validation
-                        == Stage11ValidationScenario::deep_continue
-                    || config.stage11_validation
-                        == Stage11ValidationScenario::floor_one_continue);
-            if (validation_continue
-                    && !stage11_validation_state.continue_requested) {
-                const dungeon::RequestResult requested =
-                    runtime.request_death_continue();
-                if (requested != dungeon::RequestResult::rejected) {
-                    stage11_validation_state.continue_requested = true;
+                    if (validation_continue) {
+                        stage11_validation_state.continue_requested = true;
+                    }
                     previous = current;
                     current = session->snapshot();
                 }
