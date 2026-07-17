@@ -936,9 +936,10 @@ void DungeonSession::commit_pending_save(
         return;
     }
     const bool death_pending = pending_save_->kind
-        == PendingSaveKind::death_retreat;
+            == PendingSaveKind::death_retreat
+        || pending_save_->kind == PendingSaveKind::death_continue;
     if (death_pending && (!result.kind.has_value()
-            || *result.kind != PendingSaveKind::death_retreat)) {
+            || *result.kind != pending_save_->kind)) {
         enter_fault(DungeonFault::save_receipt_mismatch);
         return;
     }
@@ -995,7 +996,9 @@ void DungeonSession::commit_pending_save(
     const bool clear_commit = kind == PendingSaveKind::abyss_clear;
     const bool reward_commit = kind
         == PendingSaveKind::abyss_reward_materialized;
-    const bool death_commit = kind == PendingSaveKind::death_retreat;
+    const bool death_retreat_commit = kind == PendingSaveKind::death_retreat;
+    const bool death_continue_commit = kind == PendingSaveKind::death_continue;
+    const bool death_commit = death_retreat_commit || death_continue_commit;
     const std::uint16_t pickup_ordinal = pending_save_->pickup_ordinal;
     if (pickup_commit) {
         if (pickup_ordinal >= ground_items_.size()) {
@@ -1045,11 +1048,21 @@ void DungeonSession::commit_pending_save(
         return;
     }
     pending_abyss_combat_.reset();
-    if (death_commit) {
+    if (death_retreat_commit) {
         clear_transient_room_state();
         phase_ = RoomPhase::death_pending;
         static_cast<void>(emit(
             DungeonEventKind::death_retreat_committed,
+            &stable_state_, nullptr,
+            TransitionKind::death_retreat,
+            ExitDirection::none));
+        return;
+    }
+    if (death_continue_commit) {
+        clear_transient_room_state();
+        phase_ = RoomPhase::transitioning;
+        static_cast<void>(emit(
+            DungeonEventKind::death_continued,
             &stable_state_, nullptr,
             TransitionKind::death_retreat,
             ExitDirection::none));

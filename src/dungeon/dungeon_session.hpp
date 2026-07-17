@@ -54,6 +54,7 @@ public:
         const std::array<std::uint64_t, 3>& item_ids) noexcept;
     [[nodiscard]] RequestResult request_pickup(
         std::uint16_t drop_ordinal) noexcept;
+    [[nodiscard]] RequestResult request_death_continue() noexcept;
     void request_nearby_pickups(
         combat::Vec3 player_position) noexcept;
     [[nodiscard]] const items::ItemOwnershipState& item_state() const noexcept;
@@ -103,6 +104,8 @@ private:
     void relay_combat_events() noexcept;
     void handle_player_defeat() noexcept;
     [[nodiscard]] bool prepare_death_retreat() noexcept;
+    [[nodiscard]] bool build_death_continue_next(
+        DungeonRunState& next) const noexcept;
     [[nodiscard]] bool claim_defeat_reward(
         const combat::CombatEvent& event) noexcept;
     void roll_ground_drop(const combat::CombatEvent& event) noexcept;

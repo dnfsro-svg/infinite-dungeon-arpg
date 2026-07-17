@@ -11,7 +11,9 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <functional>
+#include <optional>
 #include <string>
 
 namespace {
@@ -115,7 +117,8 @@ persistence::SaveStore make_store(const std::filesystem::path& directory,
 }
 
 dungeon::TransitionSaveResult to_session_result(
-    const persistence::SaveCommitResult& saved) noexcept {
+    const persistence::SaveCommitResult& saved,
+    std::optional<dungeon::PendingSaveKind> kind = std::nullopt) noexcept {
     using persistence::SaveCommitState;
     dungeon::SaveDisposition disposition =
         dungeon::SaveDisposition::indeterminate;
@@ -128,6 +131,7 @@ dungeon::TransitionSaveResult to_session_result(
         disposition,
         saved.verified_state.commit_generation,
         saved.verified_state,
+        kind,
     };
 }
 
@@ -738,6 +742,159 @@ arpg::test::Failure equipment_dispositions_restart_with_exact_disk_winner() noex
     return {};
 }
 
+bool persist_real_death_retreat(
+    dungeon::DungeonSession& session,
+    persistence::SaveStore& store,
+    dungeon::DungeonRunState& death_state) noexcept {
+    session.tick({});
+    if (!arpg::test::kill_current_player_through_combat(session)) return false;
+    session.tick({});
+    const auto pending = session.pending_save();
+    if (!pending.has_value()
+            || pending->kind != dungeon::PendingSaveKind::death_retreat) {
+        return false;
+    }
+    const auto saved = store.commit(pending->next_state);
+    if (saved.state != persistence::SaveCommitState::committed) return false;
+    session.resolve_pending_save(to_session_result(saved, pending->kind));
+    if (session.snapshot().phase != dungeon::RoomPhase::death_pending) {
+        return false;
+    }
+    death_state = saved.verified_state;
+    return true;
+}
+
+arpg::test::Failure death_continue_survives_two_real_store_restarts() noexcept {
+    for (const std::uint64_t depth : std::array<std::uint64_t, 2U>{{1U, 9U}}) {
+        TempDirectory directory;
+        auto store = make_store(directory.path);
+        auto initial = initial_state(0xD347C000U + depth);
+        initial.current_room.depth = depth;
+        initial.current_room.floor_room_index = depth == 1U ? 1U : 7U;
+        initial.current_room.index = 100U + depth;
+        initial.current_room.seed = 0xD347D000U + depth;
+        ARPG_REQUIRE(store.commit(initial).state
+            == persistence::SaveCommitState::committed);
+
+        dungeon::DungeonSession first{dungeon::DungeonRules{}, initial};
+        dungeon::DungeonRunState death_state{};
+        ARPG_REQUIRE(persist_real_death_retreat(first, store, death_state));
+        ARPG_REQUIRE(death_state.death.lifecycle
+            == dungeon::checkpoint::DeathLifecycle::pending_continue);
+        ARPG_REQUIRE(death_state.death.target_room.depth
+            == (depth == 1U ? 1U : depth - 1U));
+        ARPG_REQUIRE(death_state.death.target_room.seed != 0U);
+        ARPG_REQUIRE(death_state.death.target_room.seed
+            != initial.current_room.seed);
+
+        auto restarted_store = make_store(directory.path);
+        const auto loaded_death = restarted_store.load();
+        ARPG_REQUIRE(loaded_death.state
+            == persistence::SaveLoadState::ready);
+        ARPG_REQUIRE(dungeon::same_run_state(
+            loaded_death.checkpoint, death_state));
+        dungeon::DungeonSession death_screen{
+            dungeon::DungeonRules{}, loaded_death.checkpoint};
+        ARPG_REQUIRE(death_screen.snapshot().phase
+            == dungeon::RoomPhase::death_pending);
+        ARPG_REQUIRE(death_screen.snapshot().death.has_value());
+        ARPG_REQUIRE(death_screen.snapshot().death->checkpoint.target_room.seed
+            == death_state.death.target_room.seed);
+
+        ARPG_REQUIRE(death_screen.request_death_continue()
+            == dungeon::RequestResult::accepted);
+        const auto pending = *death_screen.pending_save();
+        ARPG_REQUIRE(pending.kind
+            == dungeon::PendingSaveKind::death_continue);
+        ARPG_REQUIRE(pending.next_state.current_room.seed
+            == death_state.death.target_room.seed);
+        const auto continued_saved = restarted_store.commit(pending.next_state);
+        ARPG_REQUIRE(continued_saved.state
+            == persistence::SaveCommitState::committed);
+        death_screen.resolve_pending_save(
+            to_session_result(continued_saved, pending.kind));
+        ARPG_REQUIRE(death_screen.snapshot().phase
+            == dungeon::RoomPhase::transitioning);
+
+        auto final_store = make_store(directory.path);
+        const auto loaded_continue = final_store.load();
+        ARPG_REQUIRE(loaded_continue.state
+            == persistence::SaveLoadState::ready);
+        ARPG_REQUIRE(dungeon::same_run_state(
+            loaded_continue.checkpoint, pending.next_state));
+        dungeon::DungeonSession continued{
+            dungeon::DungeonRules{}, loaded_continue.checkpoint};
+        const auto entered = continued.snapshot();
+        ARPG_REQUIRE(entered.phase == dungeon::RoomPhase::locked);
+        ARPG_REQUIRE(entered.combat.has_value());
+        ARPG_REQUIRE(!entered.death.has_value());
+        ARPG_REQUIRE(entered.room_seed == death_state.death.target_room.seed);
+        ARPG_REQUIRE(entered.depth == (depth == 1U ? 1U : depth - 1U));
+        ARPG_REQUIRE(entered.floor_room_index == 0U);
+        ARPG_REQUIRE(!entered.is_abyss);
+    }
+    return {};
+}
+
+arpg::test::Failure death_continue_fault_and_corruption_keep_latest_legal_death() noexcept {
+    TempDirectory directory;
+    auto healthy = make_store(directory.path);
+    auto initial = initial_state(0xD347C0FFU);
+    initial.current_room.depth = 8U;
+    initial.current_room.floor_room_index = 5U;
+    initial.current_room.index = 108U;
+    initial.current_room.seed = 0xD347D0FFU;
+    ARPG_REQUIRE(healthy.commit(initial).state
+        == persistence::SaveCommitState::committed);
+    dungeon::DungeonSession first{dungeon::DungeonRules{}, initial};
+    dungeon::DungeonRunState death_state{};
+    ARPG_REQUIRE(persist_real_death_retreat(first, healthy, death_state));
+
+    dungeon::DungeonSession death_screen{dungeon::DungeonRules{}, death_state};
+    ARPG_REQUIRE(death_screen.request_death_continue()
+        == dungeon::RequestResult::accepted);
+    const auto pending = *death_screen.pending_save();
+    FaultContext fault{persistence::SaveFaultPoint::before_publish, false};
+    auto faulty = make_store(directory.path, &fault);
+    const auto failed = faulty.commit(pending.next_state);
+    ARPG_REQUIRE(failed.state
+        == persistence::SaveCommitState::not_committed);
+    death_screen.resolve_pending_save(to_session_result(failed, pending.kind));
+    ARPG_REQUIRE(death_screen.snapshot().phase
+        == dungeon::RoomPhase::death_pending);
+    const auto after_failure = healthy.load();
+    ARPG_REQUIRE(after_failure.state == persistence::SaveLoadState::ready);
+    ARPG_REQUIRE(dungeon::same_run_state(
+        after_failure.checkpoint, death_state));
+
+    ARPG_REQUIRE(death_screen.request_death_continue()
+        == dungeon::RequestResult::accepted);
+    const auto retry = *death_screen.pending_save();
+    ARPG_REQUIRE(dungeon::same_run_state(retry.next_state, pending.next_state));
+    const auto committed = healthy.commit(retry.next_state);
+    ARPG_REQUIRE(committed.state == persistence::SaveCommitState::committed);
+    const char* slot_name = committed.active_slot == persistence::SaveSlot::a
+        ? "run_a.sav" : "run_b.sav";
+    {
+        std::ofstream corrupt(directory.path / slot_name,
+            std::ios::binary | std::ios::trunc);
+        const std::array<char, 3U> invalid{{'b', 'a', 'd'}};
+        corrupt.write(invalid.data(), static_cast<std::streamsize>(invalid.size()));
+    }
+    auto recovered_store = make_store(directory.path);
+    const auto recovered = recovered_store.load();
+    ARPG_REQUIRE(recovered.state == persistence::SaveLoadState::ready);
+    ARPG_REQUIRE(recovered.checkpoint.commit_generation
+        == death_state.commit_generation);
+    ARPG_REQUIRE(dungeon::same_run_state(recovered.checkpoint, death_state));
+    dungeon::DungeonSession recovered_session{
+        dungeon::DungeonRules{}, recovered.checkpoint};
+    ARPG_REQUIRE(recovered_session.snapshot().phase
+        == dungeon::RoomPhase::death_pending);
+    ARPG_REQUIRE(recovered_session.snapshot().death.has_value());
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"abyss start fault matrix is atomic", &abyss_start_fault_matrix_is_atomic},
     {"abyss fail fault matrix is atomic", &abyss_fail_fault_matrix_is_atomic},
@@ -751,6 +908,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"reset reopen and repeated load keep persisted room fields", &reset_reopen_and_repeated_load_keep_persisted_room_fields},
     {"passive fault recovery never persists partial points or bits", &passive_fault_recovery_never_persists_partial_points_or_bits},
     {"equipment dispositions restart with exact disk winner", &equipment_dispositions_restart_with_exact_disk_winner},
+    {"death continue survives two real store restarts", &death_continue_survives_two_real_store_restarts},
+    {"death continue fault and corruption keep latest death", &death_continue_fault_and_corruption_keep_latest_legal_death},
 };
 
 }  // namespace

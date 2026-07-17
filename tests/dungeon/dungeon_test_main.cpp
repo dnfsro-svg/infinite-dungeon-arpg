@@ -60,6 +60,16 @@ bool stage10_abyss_stress_only() noexcept {
     return enabled;
 }
 
+bool stage11_death_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_STAGE11_DEATH_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
 }  // namespace
 
 int main() {
@@ -120,6 +130,14 @@ int main() {
             "stage 10 task 12 abyss stress");
     }
 
-    return arpg::test::run_suites(suites, 247,
-        "stage 11a task 7 abyss death retreat validation");
+    if (stage11_death_only()) {
+        const arpg::test::TestSuite death_only[] = {
+            dungeon_death_lifecycle_suite(),
+        };
+        return arpg::test::run_suites(death_only, 31,
+            "stage 11a task 8 focused death lifecycle");
+    }
+
+    return arpg::test::run_suites(suites, 254,
+        "stage 11a task 8 death continue validation");
 }

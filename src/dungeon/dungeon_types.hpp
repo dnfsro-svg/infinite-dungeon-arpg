@@ -59,6 +59,8 @@ enum class DungeonEventKind : std::uint8_t {
     faulted,
     death_detected,
     death_retreat_committed,
+    death_continue_requested,
+    death_continued,
 };
 
 struct DungeonEvent final {
@@ -214,6 +216,7 @@ enum class PendingSaveKind : std::uint8_t {
     abyss_reward_claim,
     abyss_abandon,
     death_retreat,
+    death_continue,
 };
 
 struct PendingSave final {

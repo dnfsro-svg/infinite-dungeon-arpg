@@ -1108,17 +1108,104 @@ bool DungeonSession::prepare_death_retreat() noexcept {
     return true;
 }
 
-bool DungeonSession::pending_death_cache_consistent() const noexcept {
-    const bool death_pending = pending_save_.has_value()
-        && pending_save_->kind == PendingSaveKind::death_retreat;
-    if (death_pending != (pending_save_.has_value()
-            && pending_save_->death_snapshot.has_value())) {
+bool DungeonSession::build_death_continue_next(
+    DungeonRunState& next) const noexcept {
+    if (stable_state_.commit_generation
+            == (std::numeric_limits<std::uint64_t>::max)()
+            || stable_state_.death.lifecycle
+                != checkpoint::DeathLifecycle::pending_continue
+            || combat_.has_value()
+            || !validate_pending_death_state()) {
         return false;
     }
+    try {
+        next = stable_state_;
+    } catch (...) {
+        return false;
+    }
+    ++next.commit_generation;
+    next.current_room = stable_state_.death.target_room;
+    next.abyss = {};
+    next.death = {};
+    return checkpoint::valid_death_checkpoint_structural(next.death);
+}
+
+RequestResult DungeonSession::request_death_continue() noexcept {
+    if (phase_ == RoomPhase::faulted) return RequestResult::faulted;
+    if (phase_ != RoomPhase::death_pending || pending_save_.has_value()
+            || combat_.has_value()
+            || stable_state_.death.lifecycle
+                != checkpoint::DeathLifecycle::pending_continue) {
+        return RequestResult::rejected;
+    }
+    if (stable_state_.commit_generation
+            == (std::numeric_limits<std::uint64_t>::max)()) {
+        enter_fault(DungeonFault::commit_generation_overflow);
+        return RequestResult::faulted;
+    }
+    if (!validate_pending_death_state()) {
+        enter_fault(DungeonFault::death_sequence_mismatch);
+        return RequestResult::faulted;
+    }
+    if (!can_emit(2U)) {
+        enter_fault(DungeonFault::event_overflow);
+        return RequestResult::faulted;
+    }
+
+    DungeonRunState next{};
+    if (!build_death_continue_next(next)) {
+        enter_fault(DungeonFault::invalid_item_state);
+        return RequestResult::faulted;
+    }
+    try {
+        pending_save_.emplace(PendingSave{
+            PendingSaveKind::death_continue,
+            next.commit_generation,
+            std::move(next),
+            TransitionKind::death_retreat,
+            ExitDirection::none,
+            RoomPhase::death_pending,
+            0xFFFFU,
+            std::nullopt,
+        });
+    } catch (...) {
+        enter_fault(DungeonFault::invalid_item_state);
+        return RequestResult::faulted;
+    }
+    phase_ = RoomPhase::committing;
+    if (!emit(DungeonEventKind::death_continue_requested,
+            &stable_state_, &pending_save_->next_state,
+            TransitionKind::death_retreat, ExitDirection::none)) {
+        pending_save_.reset();
+        return RequestResult::faulted;
+    }
+    return RequestResult::accepted;
+}
+
+bool DungeonSession::pending_death_cache_consistent() const noexcept {
+    if (!pending_save_.has_value()) return true;
+    if (pending_save_->kind == PendingSaveKind::death_continue) {
+        if (pending_save_->death_snapshot.has_value()
+                || combat_.has_value()
+                || pending_save_->transition != TransitionKind::death_retreat
+                || pending_save_->direction != ExitDirection::none
+                || pending_save_->resume_phase != RoomPhase::death_pending
+                || pending_save_->pickup_ordinal != 0xFFFFU) {
+            return false;
+        }
+        DungeonRunState exact{};
+        return build_death_continue_next(exact)
+            && pending_save_->expected_generation
+                == exact.commit_generation
+            && same_run_state(pending_save_->next_state, exact);
+    }
+    const bool death_pending = pending_save_->kind
+        == PendingSaveKind::death_retreat;
     if (!death_pending) {
         return !pending_save_.has_value()
             || !pending_save_->death_snapshot.has_value();
     }
+    if (!pending_save_->death_snapshot.has_value()) return false;
     if (!combat_.has_value() || !combat_->death_snapshot().has_value()
             || !same_combat_death_snapshot(
                 *pending_save_->death_snapshot, *combat_->death_snapshot())) {

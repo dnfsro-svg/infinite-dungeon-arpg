@@ -39,6 +39,12 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
                 == checkpoint::DeathLifecycle::pending_continue) {
         visible_death = &pending_save_->next_state.death;
         death_saving = true;
+    } else if (pending_save_.has_value()
+            && pending_save_->kind == PendingSaveKind::death_continue
+            && stable_state_.death.lifecycle
+                == checkpoint::DeathLifecycle::pending_continue) {
+        visible_death = &stable_state_.death;
+        death_saving = true;
     } else if (stable_state_.death.lifecycle
             == checkpoint::DeathLifecycle::pending_continue) {
         visible_death = &stable_state_.death;
