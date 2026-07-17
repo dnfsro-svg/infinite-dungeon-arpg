@@ -314,7 +314,7 @@ arpg::test::Failure full_pool_waits_without_advancing_then_continues() noexcept 
     return {};
 }
 
-arpg::test::Failure reward_receipts_fail_closed_without_publication() noexcept {
+arpg::test::Failure not_committed_reward_receipt_fails_closed() noexcept {
     const auto state = cleared_abyss_state(AbyssDanger::low);
     DungeonSession not_committed{DungeonRules{}, state};
     not_committed.tick({});
@@ -326,14 +326,22 @@ arpg::test::Failure reward_receipts_fail_closed_without_publication() noexcept {
         == DungeonFault::save_receipt_mismatch);
     ARPG_REQUIRE(not_committed.snapshot().ground_item_count == 0U);
     ARPG_REQUIRE(arpg::test::stable_state(not_committed).abyss.generated_mask == 0U);
+    return {};
+}
 
+arpg::test::Failure indeterminate_reward_receipt_fails_closed() noexcept {
+    const auto state = cleared_abyss_state(AbyssDanger::low);
     DungeonSession indeterminate{DungeonRules{}, state};
     indeterminate.tick({});
     indeterminate.resolve_pending_save({SaveDisposition::indeterminate, 0U, {}});
     ARPG_REQUIRE(indeterminate.snapshot().diagnostics.fault
         == DungeonFault::save_commit_indeterminate);
     ARPG_REQUIRE(indeterminate.snapshot().ground_item_count == 0U);
+    return {};
+}
 
+arpg::test::Failure mismatched_reward_receipt_fails_closed() noexcept {
+    const auto state = cleared_abyss_state(AbyssDanger::low);
     DungeonSession mismatch{DungeonRules{}, state};
     mismatch.tick({});
     auto wrong = *mismatch.pending_save();
@@ -343,7 +351,11 @@ arpg::test::Failure reward_receipts_fail_closed_without_publication() noexcept {
     ARPG_REQUIRE(mismatch.snapshot().diagnostics.fault
         == DungeonFault::save_receipt_mismatch);
     ARPG_REQUIRE(mismatch.snapshot().ground_item_count == 0U);
+    return {};
+}
 
+arpg::test::Failure occupied_reward_slot_fails_closed() noexcept {
+    const auto state = cleared_abyss_state(AbyssDanger::low);
     DungeonSession occupied{DungeonRules{}, state};
     occupied.tick({});
     const auto exact = *occupied.pending_save();
@@ -1171,7 +1183,13 @@ constexpr arpg::test::TestCase kCases[] = {
     {"cleared starts hidden transaction", &cleared_abyss_starts_hidden_reward_transaction},
     {"partial pool uses free index", &partial_pool_uses_actual_free_ground_index},
     {"full pool waits and continues", &full_pool_waits_without_advancing_then_continues},
-    {"reward receipts fail closed", &reward_receipts_fail_closed_without_publication},
+    {"not committed reward receipt fails closed",
+        &not_committed_reward_receipt_fails_closed},
+    {"indeterminate reward receipt fails closed",
+        &indeterminate_reward_receipt_fails_closed},
+    {"mismatched reward receipt fails closed",
+        &mismatched_reward_receipt_fails_closed},
+    {"occupied reward slot fails closed", &occupied_reward_slot_fails_closed},
     {"exact receipt no allocation", &exact_receipt_publishes_without_allocation},
     {"reload rebuilds exact items", &reload_rebuilds_exact_items_without_save_or_combat},
     {"retry content stable", &retry_content_is_independent_of_pool_and_runtime_state},

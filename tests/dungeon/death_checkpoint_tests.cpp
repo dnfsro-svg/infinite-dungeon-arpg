@@ -162,6 +162,52 @@ arpg::test::Failure structural_validation_checks_pending_payload() noexcept {
     return {};
 }
 
+arpg::test::Failure structural_validation_rejects_negative_armor() noexcept {
+    DeathCheckpoint changed = valid_pending();
+    changed.armor = -1;
+    ARPG_REQUIRE(!checkpoint::valid_death_checkpoint_structural(changed));
+    return {};
+}
+
+arpg::test::Failure structural_validation_rejects_negative_evasion() noexcept {
+    DeathCheckpoint changed = valid_pending();
+    changed.evasion = -1;
+    ARPG_REQUIRE(!checkpoint::valid_death_checkpoint_structural(changed));
+    return {};
+}
+
+arpg::test::Failure structural_validation_rejects_wrong_target_depth() noexcept {
+    DeathCheckpoint changed = valid_pending();
+    changed.target_room.depth = changed.death_depth;
+    ARPG_REQUIRE(!checkpoint::valid_death_checkpoint_structural(changed));
+    return {};
+}
+
+arpg::test::Failure pending_death_allows_floor_zero() noexcept {
+    DeathCheckpoint death = valid_pending();
+    death.death_floor_room_index = 0U;
+    ARPG_REQUIRE(checkpoint::valid_death_checkpoint_structural(death));
+    return {};
+}
+
+arpg::test::Failure structural_validation_rejects_impossible_barrier_loss() noexcept {
+    DeathCheckpoint changed = valid_pending();
+    changed.barrier_loss = 51U;
+    changed.final_damage = 71U;
+    changed.recent_damage = {{0U, 71U, 0U, 0U, 0U}};
+    ARPG_REQUIRE(!checkpoint::valid_death_checkpoint_structural(changed));
+    return {};
+}
+
+arpg::test::Failure structural_validation_rejects_impossible_health_loss() noexcept {
+    DeathCheckpoint changed = valid_pending();
+    changed.health_loss = 101U;
+    changed.final_damage = 111U;
+    changed.recent_damage = {{0U, 111U, 0U, 0U, 0U}};
+    ARPG_REQUIRE(!checkpoint::valid_death_checkpoint_structural(changed));
+    return {};
+}
+
 arpg::test::Failure combat_snapshot_converts_without_combat_types_leaking() noexcept {
     combat::CombatDeathSnapshot snapshot{};
     snapshot.source = {combat::PlayerDamageSourceKind::monster_affix,
@@ -315,6 +361,23 @@ arpg::test::Failure retreat_overflows_are_explicit_and_readable() noexcept {
     return {};
 }
 
+arpg::test::Failure retreat_rejects_zero_same_and_skipped_sequences() noexcept {
+    auto current = dungeon::make_initial_run_state(7U, DungeonRules{}).state;
+    current.death_sequence = 5U;
+    constexpr std::array<std::uint64_t, 3U> invalid{{0U, 5U, 7U}};
+    for (const std::uint64_t next : invalid) {
+        const auto result = dungeon::make_death_retreat_target(
+            current, next, DungeonRules{});
+        ARPG_REQUIRE(result.fault == DungeonFault::death_sequence_mismatch);
+        ARPG_REQUIRE(result.room.index == 0U);
+        ARPG_REQUIRE(result.room.seed == 0U);
+    }
+    ARPG_REQUIRE(dungeon::dungeon_fault_name(
+        DungeonFault::death_sequence_mismatch)
+        == std::string_view{"death_sequence_mismatch"});
+    return {};
+}
+
 arpg::test::Failure dungeon_semantics_validate_catalogs_and_regeneration() noexcept {
     auto current = dungeon::make_initial_run_state(7U, DungeonRules{}).state;
     current.current_room.index = 10U;
@@ -362,11 +425,18 @@ constexpr arpg::test::TestCase kCases[] = {
     {"canonical none is header only and zeroed", &canonical_none_is_header_only_and_zeroed},
     {"structural rejects noncanonical none", &structural_validation_rejects_noncanonical_none},
     {"structural checks pending payload", &structural_validation_checks_pending_payload},
+    {"structural rejects negative armor", &structural_validation_rejects_negative_armor},
+    {"structural rejects negative evasion", &structural_validation_rejects_negative_evasion},
+    {"structural rejects wrong target depth", &structural_validation_rejects_wrong_target_depth},
+    {"pending death allows floor zero", &pending_death_allows_floor_zero},
+    {"structural rejects impossible barrier loss", &structural_validation_rejects_impossible_barrier_loss},
+    {"structural rejects impossible health loss", &structural_validation_rejects_impossible_health_loss},
     {"combat snapshot converts to stable checkpoint", &combat_snapshot_converts_without_combat_types_leaking},
     {"retreat clamps depth and uses named stream", &retreat_target_clamps_depth_and_uses_named_stream},
     {"retreat replay and ordinary streams", &retreat_target_is_replayable_and_preserves_ordinary_streams},
     {"each retreat input changes stream", &each_retreat_input_changes_the_named_stream},
     {"retreat overflow faults are explicit", &retreat_overflows_are_explicit_and_readable},
+    {"retreat rejects incorrect next sequences", &retreat_rejects_zero_same_and_skipped_sequences},
     {"dungeon semantics validate catalogs and target", &dungeon_semantics_validate_catalogs_and_regeneration},
 };
 

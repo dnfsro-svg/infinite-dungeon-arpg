@@ -168,6 +168,9 @@ DeathRetreatTargetResult make_death_retreat_target(
     if (current.death_sequence == maximum) {
         return {DungeonFault::death_sequence_overflow, {}};
     }
+    if (next_death_sequence != current.death_sequence + 1U) {
+        return {DungeonFault::death_sequence_mismatch, {}};
+    }
 
     const std::uint64_t target_depth = current.current_room.depth > 1U
         ? current.current_room.depth - 1U : 1U;

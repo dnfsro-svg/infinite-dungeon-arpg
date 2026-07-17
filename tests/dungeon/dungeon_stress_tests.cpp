@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <memory>
 
 namespace {
 
@@ -553,11 +554,11 @@ bool drive_clear(DungeonSession& session, StressSummary& summary) noexcept {
     return false;
 }
 
-bool drive_exit(
+bool drive_to_transition(
     DungeonSession& session,
     ExitDirection direction,
     StressSummary& summary,
-    bool verify_phases) noexcept {
+    std::uint64_t& transition_room_index) noexcept {
     for (int tick = 0; tick < 512; ++tick) {
         const DungeonSnapshot state = session.snapshot();
         if (state.phase == RoomPhase::committing) {
@@ -599,6 +600,14 @@ bool drive_exit(
             || transition.has_active_room || transition.combat.has_value()) {
         return false;
     }
+    transition_room_index = transition.room_index;
+    return true;
+}
+
+bool drive_to_locked(
+    DungeonSession& session,
+    ExitDirection direction,
+    StressSummary& summary) noexcept {
     tracked_tick(session, outward(direction), summary);
     drain(session, summary);
     if (session.snapshot().phase == RoomPhase::committing) {
@@ -610,12 +619,34 @@ bool drive_exit(
             || !locked.combat.has_value() || locked.combat->tick != 0U) {
         return false;
     }
+    return true;
+}
+
+bool drive_to_combat(
+    DungeonSession& session,
+    ExitDirection direction,
+    StressSummary& summary,
+    std::uint64_t transition_room_index,
+    bool verify_phases) noexcept {
     tracked_tick(session, outward(direction), summary);
     drain(session, summary);
     const DungeonSnapshot combat = session.snapshot();
     return combat.phase == RoomPhase::combat && combat.has_active_room
         && combat.combat.has_value() && combat.combat->tick == 0U
-        && (!verify_phases || combat.room_index == transition.room_index);
+        && (!verify_phases || combat.room_index == transition_room_index);
+}
+
+bool drive_exit(
+    DungeonSession& session,
+    ExitDirection direction,
+    StressSummary& summary,
+    bool verify_phases) noexcept {
+    std::uint64_t transition_room_index{};
+    return drive_to_transition(
+            session, direction, summary, transition_room_index)
+        && drive_to_locked(session, direction, summary)
+        && drive_to_combat(session, direction, summary,
+            transition_room_index, verify_phases);
 }
 
 bool drive_rooms(
@@ -1198,17 +1229,17 @@ arpg::test::Failure ten_thousand_director_plans_are_legal_deterministic_and_allo
 arpg::test::Failure identical_seed_and_route_are_field_equal() noexcept {
     arpg::dungeon::DungeonSessionConfig config;
     config.root_seed = 0x1020304050607080ULL;
-    DungeonSession lhs{config};
-    DungeonSession rhs{config};
-    ARPG_REQUIRE(same_snapshot(lhs.snapshot(), rhs.snapshot()));
+    auto lhs = std::make_unique<DungeonSession>(config);
+    auto rhs = std::make_unique<DungeonSession>(config);
+    ARPG_REQUIRE(same_snapshot(lhs->snapshot(), rhs->snapshot()));
 
     std::size_t exits = 0;
     for (int tick = 0; tick < 100000 && exits < 4U; ++tick) {
-        const DungeonSnapshot state = lhs.snapshot();
+        const DungeonSnapshot state = lhs->snapshot();
         MovementInput movement{};
         if (state.phase == RoomPhase::combat && state.combat.has_value()) {
-            arpg::test::force_defeat_current_wave(lhs);
-            arpg::test::force_defeat_current_wave(rhs);
+            arpg::test::force_defeat_current_wave(*lhs);
+            arpg::test::force_defeat_current_wave(*rhs);
         } else if (state.phase == RoomPhase::awaiting_exit) {
             const ExitDirection direction = kRoute[exits];
             movement = align_center(state, direction);
@@ -1217,11 +1248,11 @@ arpg::test::Failure identical_seed_and_route_are_field_equal() noexcept {
             }
         }
         const std::uint64_t before_index = state.room_index;
-        ARPG_REQUIRE(tick_equal(lhs, rhs, movement));
-        if (lhs.snapshot().phase == RoomPhase::committing) {
-            ARPG_REQUIRE(commit_equal(lhs, rhs));
+        ARPG_REQUIRE(tick_equal(*lhs, *rhs, movement));
+        if (lhs->snapshot().phase == RoomPhase::committing) {
+            ARPG_REQUIRE(commit_equal(*lhs, *rhs));
         }
-        if (lhs.snapshot().room_index == before_index + 1U) {
+        if (lhs->snapshot().room_index == before_index + 1U) {
             ++exits;
         }
     }
@@ -1232,16 +1263,16 @@ arpg::test::Failure identical_seed_and_route_are_field_equal() noexcept {
 arpg::test::Failure one_changed_direction_changes_only_committed_room() noexcept {
     arpg::dungeon::DungeonSessionConfig config;
     config.root_seed = 0x9988776655443322ULL;
-    DungeonSession up{config};
-    DungeonSession right{config};
+    auto up = std::make_unique<DungeonSession>(config);
+    auto right = std::make_unique<DungeonSession>(config);
     StressSummary up_summary{};
     StressSummary right_summary{};
-    ARPG_REQUIRE(drive_clear(up, up_summary));
-    ARPG_REQUIRE(drive_clear(right, right_summary));
-    ARPG_REQUIRE(drive_exit(up, ExitDirection::up, up_summary, true));
-    ARPG_REQUIRE(drive_exit(right, ExitDirection::right, right_summary, true));
-    const DungeonSnapshot a = up.snapshot();
-    const DungeonSnapshot b = right.snapshot();
+    ARPG_REQUIRE(drive_clear(*up, up_summary));
+    ARPG_REQUIRE(drive_clear(*right, right_summary));
+    ARPG_REQUIRE(drive_exit(*up, ExitDirection::up, up_summary, true));
+    ARPG_REQUIRE(drive_exit(*right, ExitDirection::right, right_summary, true));
+    const DungeonSnapshot a = up->snapshot();
+    const DungeonSnapshot b = right->snapshot();
     ARPG_REQUIRE(a.room_index == 1U && b.room_index == 1U);
     ARPG_REQUIRE(a.room_seed != b.room_seed);
     ARPG_REQUIRE(a.room_seed == arpg::dungeon::derive_next_room_seed(

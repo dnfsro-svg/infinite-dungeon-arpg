@@ -33,6 +33,7 @@ enum class DungeonFault : std::uint8_t {
     abyss_reward_collision,
     abyss_reward_revision_overflow,
     death_sequence_overflow,
+    death_sequence_mismatch,
 };
 
 [[nodiscard]] constexpr std::string_view dungeon_fault_name(
@@ -65,6 +66,8 @@ enum class DungeonFault : std::uint8_t {
         return "abyss_reward_revision_overflow";
     case DungeonFault::death_sequence_overflow:
         return "death_sequence_overflow";
+    case DungeonFault::death_sequence_mismatch:
+        return "death_sequence_mismatch";
     }
     return "unknown_dungeon_fault";
 }

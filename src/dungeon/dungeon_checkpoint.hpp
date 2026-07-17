@@ -186,7 +186,6 @@ namespace detail {
     if (death.lifecycle != DeathLifecycle::pending_continue
         || death.data_version != kDeathCheckpointDataVersion
         || death.death_depth == 0U
-        || death.death_floor_room_index == 0U
         || !detail::valid_death_element(death.death_ecology)
         || !detail::valid_death_source_kind(death.source_kind)
         || !detail::valid_death_damage_type(death.damage_type)) {
@@ -230,10 +229,15 @@ namespace detail {
     if (recent_total < death.final_damage
         || death.hp != 0 || death.max_hp <= 0
         || death.barrier != 0 || death.max_barrier < 0
+        || death.armor < 0 || death.evasion < 0
         || death.armor_reduction_bp < 0
         || death.armor_reduction_bp > 10000
         || death.evasion_rate_bp < 0
         || death.evasion_rate_bp > 10000) {
+        return false;
+    }
+    if (death.barrier_loss > static_cast<std::uint64_t>(death.max_barrier)
+        || death.health_loss > static_cast<std::uint64_t>(death.max_hp)) {
         return false;
     }
     for (std::size_t index = 0U;
@@ -246,9 +250,11 @@ namespace detail {
             return false;
         }
     }
+    const std::uint64_t expected_target_depth = death.death_depth > 1U
+        ? death.death_depth - 1U : 1U;
     return death.target_room.index != 0U
         && death.target_room.seed != 0U
-        && death.target_room.depth != 0U
+        && death.target_room.depth == expected_target_depth
         && death.target_room.floor_room_index == 0U
         && death.target_room.entry == EntrySide::initial
         && detail::valid_death_element(death.target_room.ecology)

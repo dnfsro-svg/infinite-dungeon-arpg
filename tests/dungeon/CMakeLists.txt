@@ -29,9 +29,6 @@ target_include_directories(arpg_dungeon_tests
         "${PROJECT_SOURCE_DIR}/tests/combat")
 target_link_libraries(arpg_dungeon_tests PRIVATE arpg_dungeon arpg_persistence)
 arpg_enable_project_warnings(arpg_dungeon_tests)
-if(MSVC)
-    target_link_options(arpg_dungeon_tests PRIVATE /STACK:4194304)
-endif()
 
 add_test(NAME dungeon.units COMMAND arpg_dungeon_tests)
 
