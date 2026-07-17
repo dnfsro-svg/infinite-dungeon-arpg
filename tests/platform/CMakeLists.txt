@@ -10,6 +10,7 @@ if(TARGET arpg_raylib)
         passive_tree_view_tests.cpp
         host_launch_options_tests.cpp
         dungeon_runtime_tests.cpp
+        pause_menu_state_tests.cpp
         death_input_gate_tests.cpp
         death_overlay_view_tests.cpp)
     target_sources(arpg_platform_tests PRIVATE inventory_view_math_tests.cpp)
@@ -25,6 +26,16 @@ if(TARGET arpg_raylib)
     add_test(NAME platform.units COMMAND arpg_platform_tests)
     set_tests_properties(
         platform.units PROPERTIES LABELS "headless;platform")
+
+    add_test(
+        NAME platform.pause_menu_state_boundary
+        COMMAND "${CMAKE_COMMAND}"
+            "-DPAUSE_STATE_HEADER=${PROJECT_SOURCE_DIR}/src/platform/raylib/pause_menu_state.hpp"
+            "-DPAUSE_STATE_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/pause_menu_state.cpp"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/pause_menu_state_boundary_test.cmake")
+    set_tests_properties(
+        platform.pause_menu_state_boundary
+        PROPERTIES LABELS "headless;platform;architecture;stage11b")
 endif()
 
 function(arpg_tokenize_dependency_value INPUT_VALUE OUT_TOKENS)
