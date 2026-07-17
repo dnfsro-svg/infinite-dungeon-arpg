@@ -39,24 +39,44 @@ std::int8_t key_direction(int negative_key, int positive_key) noexcept {
     return static_cast<std::int8_t>(positive - negative);
 }
 
-struct FrameToggleInput final {
-    bool take_screenshot{};
-    bool toggle_debug{};
+struct HostFrameInput final {
+    FrameKeyState keys{};
+    combat::MovementInput movement{};
+    std::array<bool, kCombatKeyBindings.size()> actions{};
+    Vector2 mouse_position{};
 };
-
-FrameToggleInput sample_frame_toggle_input() noexcept {
-    return {platform_key_pressed(KEY_F12) || platform_key_pressed(KEY_V),
-        platform_key_pressed(KEY_F1)};
-}
 
 combat::MovementInput sample_movement_input() noexcept {
     return {key_direction(KEY_A, KEY_D), key_direction(KEY_W, KEY_S)};
 }
 
-void submit_frame_actions(dungeon::DungeonSession& session) noexcept {
-    for (const CombatKeyBinding& binding : kCombatKeyBindings) {
-        if (platform_key_pressed(binding.key)) {
-            static_cast<void>(session.queue_action(binding.action));
+HostFrameInput sample_host_frame_input() noexcept {
+    HostFrameInput input{};
+    input.keys.e = platform_key_pressed(KEY_E);
+    input.keys.f12 = platform_key_pressed(KEY_F12);
+    input.keys.v = platform_key_pressed(KEY_V);
+    input.keys.f1 = platform_key_pressed(KEY_F1);
+    input.keys.escape = platform_key_pressed(KEY_ESCAPE);
+    input.movement = sample_movement_input();
+    input.keys.movement = input.movement.x != 0 || input.movement.y != 0;
+    for (std::size_t index = 0U; index < kCombatKeyBindings.size(); ++index) {
+        input.actions[index] = platform_key_pressed(kCombatKeyBindings[index].key);
+        input.keys.attack = input.keys.attack || input.actions[index];
+    }
+    input.keys.reset = platform_key_pressed(KEY_R);
+    input.keys.inventory = platform_key_pressed(kInventoryKey);
+    input.keys.passives = platform_key_pressed(kPassiveOverlayKey);
+    input.keys.mouse_gameplay = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+    if (input.keys.mouse_gameplay) input.mouse_position = GetMousePosition();
+    return input;
+}
+
+void submit_frame_actions(dungeon::DungeonSession& session,
+    const HostFrameInput& input) noexcept {
+    for (std::size_t index = 0U; index < kCombatKeyBindings.size(); ++index) {
+        if (input.actions[index]) {
+            static_cast<void>(session.queue_action(
+                kCombatKeyBindings[index].action));
         }
     }
 }
@@ -394,7 +414,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         }
 
         while (!WindowShouldClose() && !exit_requested) {
-            const FrameToggleInput frame_toggles = sample_frame_toggle_input();
+            const HostFrameInput frame_input = sample_host_frame_input();
             if (recovery_requested(runtime.state() == DungeonRuntimeState::recovery_required,
                     platform_key_pressed(KEY_N))) {
                 if (runtime.recover_with_new_run() && runtime.session() != nullptr) {
@@ -408,14 +428,14 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     inventory.close();
                     fixed_step.clear_accumulator();
                 }
-                if (platform_key_pressed(KEY_ESCAPE)) {
+                if (frame_input.keys.escape) {
                     exit_requested = true;
                     continue;
                 }
                 draw_recovery_screen(runtime.render_status());
                 std::optional<std::string> capture_path =
                     validation_capture_path();
-                if (frame_toggles.take_screenshot) {
+                if (frame_input.keys.f12 || frame_input.keys.v) {
                     capture_path = host_screenshot_path();
                 }
                 present_frame_and_maybe_capture(capture_path.has_value()
@@ -434,10 +454,33 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 fixed_step.clear_accumulator();
                 inventory_toggled_this_frame = true;
             }
+            const bool death_saving = current.death.has_value()
+                && current.death->saving;
+            const bool death_pending = current.death.has_value()
+                && current.death->can_continue;
+            const DeathInputGate death_gate = death_input_gate(
+                death_saving, death_pending, frame_input.keys);
+            if (!death_gate.forward_gameplay) {
+                if (inventory.is_open()) inventory.close();
+                passive_overlay_open = false;
+                inventory_toggled_this_frame = false;
+            }
             if (!passive_tree_can_open(current)) {
                 passive_overlay_open = false;
             }
-            if (platform_key_pressed(KEY_ESCAPE)) {
+            if (death_gate.exit && !death_gate.forward_gameplay) {
+                exit_requested = true;
+                continue;
+            }
+            if (death_gate.continue_death) {
+                const dungeon::RequestResult requested =
+                    runtime.request_death_continue();
+                if (requested != dungeon::RequestResult::rejected) {
+                    previous = current;
+                    current = session->snapshot();
+                }
+            }
+            if (death_gate.forward_gameplay && frame_input.keys.escape) {
                 if (inventory.is_open()) {
                     inventory.close();
                     fixed_step.clear_accumulator();
@@ -448,7 +491,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     exit_requested = true;
                     continue;
                 }
-            } else if (platform_key_pressed(kInventoryKey)) {
+            } else if (death_gate.forward_gameplay
+                    && frame_input.keys.inventory) {
                 if (inventory.is_open()) {
                     inventory.close();
                     fixed_step.clear_accumulator();
@@ -462,16 +506,18 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     inventory_toggled_this_frame = true;
                 }
             }
-            if (!inventory.is_open() && !inventory_toggled_this_frame
-                && platform_key_pressed(kPassiveOverlayKey)
+            if (death_gate.forward_gameplay
+                && !inventory.is_open() && !inventory_toggled_this_frame
+                && frame_input.keys.passives
                 && passive_overlay_can_toggle(inventory.is_open())
                 && passive_tree_can_open(current)) {
                 passive_overlay_open = !passive_overlay_open;
             }
-            if (!inventory.is_open() && frame_toggles.toggle_debug) {
+            if ((!inventory.is_open() || !death_gate.forward_gameplay)
+                    && death_gate.debug_toggle) {
                 draw_debug = !draw_debug;
             }
-            if (inventory.is_open()
+            if (death_gate.forward_gameplay && inventory.is_open()
                 && inventory.process_input(runtime, current)) {
                 current = session->snapshot();
                 previous = current;
@@ -487,13 +533,16 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             const InventoryInputGate inventory_gate = inventory_input_gate(
                 inventory.is_open() || inventory_toggled_this_frame);
             const bool forward_actions = passive_input_gate.forward_actions
-                && inventory_gate.forward_actions;
+                && inventory_gate.forward_actions
+                && death_gate.forward_gameplay;
             const bool forward_movement = passive_input_gate.forward_movement
-                && inventory_gate.forward_movement;
+                && inventory_gate.forward_movement
+                && death_gate.forward_gameplay;
             const bool forward_descent = passive_input_gate.forward_descent
-                && inventory_gate.forward_descent;
+                && inventory_gate.forward_descent
+                && death_gate.forward_gameplay;
             if (forward_actions && inventory_gate.forward_room_reset
-                && platform_key_pressed(KEY_R)) {
+                && frame_input.keys.reset) {
                 const dungeon::RequestResult reset =
                     session->reset_current_room();
                 if (reset != dungeon::RequestResult::rejected) {
@@ -502,9 +551,10 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     drain_events(*session, renderer, feedback, audio);
                 }
             }
-            if (passive_overlay_open && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            if (death_gate.forward_gameplay && passive_overlay_open
+                    && frame_input.keys.mouse_gameplay) {
                 const auto selected = hit_test_passive_node(
-                    {GetMousePosition().x, GetMousePosition().y},
+                    {frame_input.mouse_position.x, frame_input.mouse_position.y},
                     static_cast<float>(GetScreenWidth()), static_cast<float>(GetScreenHeight()));
                 if (selected.has_value()) {
                     const bool allocated = (current.passive_tree.allocated_bits
@@ -516,9 +566,9 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 }
             }
             if (forward_actions) {
-                submit_frame_actions(*session);
+                submit_frame_actions(*session, frame_input);
             }
-            if (forward_descent && platform_key_pressed(KEY_E)) {
+            if (forward_descent && frame_input.keys.e) {
                 const auto snapshot = session->snapshot();
                 const bool in_range = snapshot.combat.has_value()
                     && can_prompt_descent(
@@ -527,7 +577,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             }
 
             const combat::MovementInput movement = forward_movement
-                ? sample_movement_input() : combat::MovementInput{};
+                ? frame_input.movement : combat::MovementInput{};
             const float frame_seconds = GetFrameTime();
             feedback.update(frame_seconds);
             renderer.update(frame_seconds);
@@ -545,15 +595,20 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             }
             for (std::uint32_t step = 0; step < frame.steps; ++step) {
                 previous = current;
-                const combat::MovementInput step_movement =
-                    config.stage10_validation
+                const bool step_death = current.death.has_value();
+                const combat::MovementInput step_movement = step_death
+                    ? combat::MovementInput{}
+                    : config.stage10_validation
                             == Stage10ValidationScenario::none
                         ? movement
                         : stage10_validation_input(*session, current,
                             config, stage10_validation_state);
-                session->tick(step_movement);
-                runtime.service_pending_save();
+                runtime.fixed_tick(step_movement);
                 current = session->snapshot();
+                if (current.death.has_value()) {
+                    if (inventory.is_open()) inventory.close();
+                    passive_overlay_open = false;
+                }
                 if (!passive_tree_can_open(current)) {
                     passive_overlay_open = false;
                 }
@@ -598,7 +653,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 capture_path = config.validation_capture_file->string();
                 captured_stage10_target = true;
             }
-            if (frame_toggles.take_screenshot) {
+            if (death_gate.screenshot) {
                 capture_path = host_screenshot_path();
                 captured_stage10_target = false;
             } else if (!capture_path.has_value()) {

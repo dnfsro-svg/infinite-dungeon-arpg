@@ -199,12 +199,26 @@ dungeon::RequestResult DungeonRuntime::request_recipe(
         : dungeon::RequestResult::rejected;
 }
 
+dungeon::RequestResult DungeonRuntime::request_death_continue() noexcept {
+    return state() == DungeonRuntimeState::running && session_.has_value()
+        ? session_->request_death_continue()
+        : dungeon::RequestResult::rejected;
+}
+
 const items::ItemOwnershipState* DungeonRuntime::item_state() const noexcept {
     return session_.has_value() ? &session_->item_state() : nullptr;
 }
 
 DungeonRenderStatus DungeonRuntime::render_status() const noexcept {
     return status_;
+}
+
+void DungeonRuntime::fixed_tick(combat::MovementInput movement) noexcept {
+    if (state() != DungeonRuntimeState::running || !session_.has_value()) {
+        return;
+    }
+    session_->tick(movement);
+    service_pending_save();
 }
 
 void DungeonRuntime::service_pending_save() noexcept {

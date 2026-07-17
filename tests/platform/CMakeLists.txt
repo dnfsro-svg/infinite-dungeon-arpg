@@ -9,7 +9,8 @@ if(TARGET arpg_raylib)
         dungeon_view_math_tests.cpp
         passive_tree_view_tests.cpp
         host_launch_options_tests.cpp
-        dungeon_runtime_tests.cpp)
+        dungeon_runtime_tests.cpp
+        death_input_gate_tests.cpp)
     target_sources(arpg_platform_tests PRIVATE inventory_view_math_tests.cpp)
     target_compile_features(arpg_platform_tests PRIVATE cxx_std_17)
     target_include_directories(arpg_platform_tests

@@ -50,8 +50,10 @@ public:
         items::ItemSlot slot) noexcept;
     [[nodiscard]] dungeon::RequestResult request_recipe(
         const std::array<std::uint64_t, 3>& item_ids) noexcept;
+    [[nodiscard]] dungeon::RequestResult request_death_continue() noexcept;
     [[nodiscard]] const items::ItemOwnershipState* item_state() const noexcept;
     [[nodiscard]] DungeonRenderStatus render_status() const noexcept;
+    void fixed_tick(combat::MovementInput movement) noexcept;
     void service_pending_save() noexcept;
     // Kept until the host is migrated to the generic pending-save entry point.
     void service_pending_transition() noexcept;

@@ -1,7 +1,10 @@
 #include "dungeon/dungeon_session.hpp"
 
+#include "dungeon/death_checkpoint.hpp"
 #include "dungeon/room_generation.hpp"
 #include "items/item_catalog.hpp"
+
+#include <limits>
 
 namespace arpg::dungeon {
 namespace {
@@ -33,6 +36,7 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
     result.phase = phase_;
     result.has_active_room = combat_.has_value();
     const checkpoint::DeathCheckpoint* visible_death = nullptr;
+    checkpoint::DeathCheckpoint retry_death{};
     bool death_saving = false;
     if (pending_save_.has_value()
             && pending_save_->next_state.death.lifecycle
@@ -48,6 +52,17 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
     } else if (stable_state_.death.lifecycle
             == checkpoint::DeathLifecycle::pending_continue) {
         visible_death = &stable_state_.death;
+    } else if (combat_.has_value() && combat_->death_snapshot().has_value()
+            && stable_state_.death_sequence
+                != (std::numeric_limits<std::uint64_t>::max)()) {
+        const auto target = make_death_retreat_target(stable_state_,
+            stable_state_.death_sequence + 1U, rules_);
+        if (target.fault == DungeonFault::none) {
+            retry_death = make_death_checkpoint(*combat_->death_snapshot(),
+                stable_state_.current_room, target.room);
+            visible_death = &retry_death;
+            death_saving = true;
+        }
     }
     if (visible_death != nullptr) {
         result.death.emplace(DeathSnapshot{

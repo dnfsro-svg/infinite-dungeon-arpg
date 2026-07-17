@@ -14,6 +14,7 @@ arpg::test::TestSuite passive_tree_view_suite() noexcept;
 arpg::test::TestSuite host_launch_options_suite() noexcept;
 arpg::test::TestSuite dungeon_runtime_suite() noexcept;
 arpg::test::TestSuite inventory_view_math_suite() noexcept;
+arpg::test::TestSuite death_input_gate_suite() noexcept;
 
 int main() {
 #if defined(_WIN32) && defined(_DEBUG)
@@ -35,7 +36,8 @@ int main() {
         host_launch_options_suite(),
         dungeon_runtime_suite(),
         inventory_view_math_suite(),
+        death_input_gate_suite(),
     };
 
-    return arpg::test::run_suites(suites, 86, "stage 11a task 6 runtime");
+    return arpg::test::run_suites(suites, 96, "stage 11a task 9 runtime input");
 }

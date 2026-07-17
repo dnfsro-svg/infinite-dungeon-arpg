@@ -84,4 +84,16 @@ bool platform_key_down(int key) noexcept {
 #endif
 }
 
+DeathInputGate death_input_gate(bool death_saving, bool death_pending,
+    const FrameKeyState& keys) noexcept {
+    const bool death_active = death_saving || death_pending;
+    return {
+        !death_saving && death_pending && keys.e,
+        keys.f12 || keys.v,
+        keys.f1,
+        keys.escape,
+        !death_active,
+    };
+}
+
 }  // namespace arpg::platform
