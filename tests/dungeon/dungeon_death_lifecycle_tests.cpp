@@ -404,6 +404,186 @@ bool drive_ordinary_death(DungeonSession& session) noexcept {
     return session.snapshot().phase == RoomPhase::committing;
 }
 
+checkpoint::DungeonRunState available_abyss_state() noexcept {
+    checkpoint::DungeonRunState state = dungeon::make_initial_run_state(
+        0xA8175EEDU, DungeonRules{}).state;
+    std::uint64_t seed = 1U;
+    while (!abyss::is_abyss_roll(seed)) ++seed;
+    state.current_room.index = 29U;
+    state.current_room.seed = seed;
+    state.current_room.depth = 12U;
+    state.current_room.floor_room_index = 4U;
+    state.current_room.entry = checkpoint::EntrySide::right;
+    state.current_room.ecology = checkpoint::DungeonElement::chaos;
+    state.current_room.has_hole = true;
+    state.current_room.is_abyss = true;
+    state.last_transition = checkpoint::TransitionKind::door;
+    state.last_direction = checkpoint::ExitDirection::left;
+    const auto selection = abyss::select_abyss_rule(
+        state.current_room.seed, state.current_room.depth);
+    if (!selection.has_value()) return {};
+    state.abyss.lifecycle = abyss::AbyssLifecycle::available;
+    state.abyss.danger = selection->danger;
+    state.abyss.rule = selection->rule;
+    state.abyss.rules_version = selection->rules_version;
+    return state;
+}
+
+bool drive_started_abyss_death(
+    DungeonSession& session,
+    checkpoint::DungeonRunState& started) noexcept {
+    const auto start = session.pending_save();
+    if (!start.has_value()
+            || start->kind != PendingSaveKind::abyss_start
+            || start->next_state.abyss.lifecycle
+                != abyss::AbyssLifecycle::started) {
+        return false;
+    }
+    started = start->next_state;
+    session.resolve_pending_save({SaveDisposition::committed,
+        start->expected_generation, start->next_state});
+    if (session.snapshot().phase != RoomPhase::locked
+            || !session.snapshot().combat.has_value()) {
+        return false;
+    }
+    session.tick({});
+    if (!arpg::test::kill_current_player_through_combat(session)) return false;
+    session.tick({});
+    return session.snapshot().phase == RoomPhase::committing;
+}
+
+arpg::test::Failure abyss_death_prepares_one_atomic_retreat() noexcept {
+    DungeonSession session{DungeonRules{}, available_abyss_state()};
+    checkpoint::DungeonRunState started{};
+    ARPG_REQUIRE(drive_started_abyss_death(session, started));
+    const auto pending = session.pending_save();
+    ARPG_REQUIRE(pending.has_value());
+    ARPG_REQUIRE(pending->kind == PendingSaveKind::death_retreat);
+    ARPG_REQUIRE(pending->death_snapshot.has_value());
+    ARPG_REQUIRE(pending->expected_generation
+        == started.commit_generation + 1U);
+    ARPG_REQUIRE(pending->next_state.death_sequence
+        == started.death_sequence + 1U);
+    ARPG_REQUIRE(pending->next_state.death.lifecycle
+        == DeathLifecycle::pending_continue);
+    ARPG_REQUIRE(pending->next_state.death.death_was_abyss);
+    ARPG_REQUIRE(pending->next_state.death.death_depth
+        == started.current_room.depth);
+    ARPG_REQUIRE(pending->next_state.death.death_floor_room_index
+        == started.current_room.floor_room_index);
+    ARPG_REQUIRE(pending->next_state.death.death_ecology
+        == started.current_room.ecology);
+    ARPG_REQUIRE(!pending->next_state.current_room.is_abyss);
+    ARPG_REQUIRE(pending->next_state.abyss.lifecycle
+        == abyss::AbyssLifecycle::failed);
+    const auto total = abyss::reward_profile_for(
+        started.abyss.danger, 1U).item_count;
+    const auto& resolution = pending->next_state.last_abyss_resolution;
+    ARPG_REQUIRE(resolution.valid);
+    ARPG_REQUIRE(resolution.room_seed == started.current_room.seed);
+    ARPG_REQUIRE(resolution.rule == started.abyss.rule);
+    ARPG_REQUIRE(resolution.total == total);
+    ARPG_REQUIRE(resolution.generated == 0U);
+    ARPG_REQUIRE(resolution.claimed == 0U);
+    ARPG_REQUIRE(resolution.abandoned == total);
+    ARPG_REQUIRE(dungeon::same_run_state(
+        arpg::test::stable_state(session), started));
+    return {};
+}
+
+arpg::test::Failure abyss_death_retry_and_reload_preserve_exact_state() noexcept {
+    DungeonSession session{DungeonRules{}, available_abyss_state()};
+    checkpoint::DungeonRunState started{};
+    ARPG_REQUIRE(drive_started_abyss_death(session, started));
+    const auto first = *session.pending_save();
+    ARPG_REQUIRE(first.death_snapshot.has_value());
+
+    session.resolve_pending_save({SaveDisposition::not_committed, 0U, {},
+        PendingSaveKind::death_retreat});
+    auto snapshot = session.snapshot();
+    ARPG_REQUIRE(snapshot.phase == RoomPhase::combat);
+    ARPG_REQUIRE(snapshot.combat.has_value());
+    ARPG_REQUIRE(snapshot.combat->player.hp == 0);
+    ARPG_REQUIRE(snapshot.is_abyss);
+    ARPG_REQUIRE(dungeon::same_run_state(
+        arpg::test::stable_state(session), started));
+
+    session.tick({});
+    const auto retry = *session.pending_save();
+    ARPG_REQUIRE(retry.kind == PendingSaveKind::death_retreat);
+    ARPG_REQUIRE(retry.expected_generation == first.expected_generation);
+    ARPG_REQUIRE(dungeon::same_run_state(retry.next_state, first.next_state));
+    ARPG_REQUIRE(retry.death_snapshot.has_value());
+    ARPG_REQUIRE(retry.death_snapshot->tick == first.death_snapshot->tick);
+    ARPG_REQUIRE(retry.death_snapshot->source.kind
+        == first.death_snapshot->source.kind);
+    ARPG_REQUIRE(retry.death_snapshot->source.monster
+        == first.death_snapshot->source.monster);
+    ARPG_REQUIRE(retry.death_snapshot->source.detail_id
+        == first.death_snapshot->source.detail_id);
+    ARPG_REQUIRE(retry.death_snapshot->final_damage
+        == first.death_snapshot->final_damage);
+    ARPG_REQUIRE(retry.death_snapshot->recent_damage
+        == first.death_snapshot->recent_damage);
+    ARPG_REQUIRE(retry.death_snapshot->defense.damage_reduction
+        == first.death_snapshot->defense.damage_reduction);
+
+    session.resolve_pending_save({SaveDisposition::committed,
+        retry.expected_generation, retry.next_state,
+        PendingSaveKind::death_retreat});
+    snapshot = session.snapshot();
+    ARPG_REQUIRE(snapshot.phase == RoomPhase::death_pending);
+    ARPG_REQUIRE(snapshot.death.has_value());
+    ARPG_REQUIRE(snapshot.death->checkpoint.death_was_abyss);
+    ARPG_REQUIRE(!snapshot.combat.has_value());
+    ARPG_REQUIRE(snapshot.ground_item_count == 0U);
+    ARPG_REQUIRE(snapshot.abyss_pending_rewards == 0U);
+    ARPG_REQUIRE(snapshot.abyss_unpicked_rewards == 0U);
+    ARPG_REQUIRE(snapshot.pending_room_experience == 0U);
+
+    DungeonSession reloaded{DungeonRules{}, retry.next_state};
+    const auto restored = reloaded.snapshot();
+    ARPG_REQUIRE(restored.phase == RoomPhase::death_pending);
+    ARPG_REQUIRE(restored.death.has_value());
+    ARPG_REQUIRE(death_equals(
+        restored.death->checkpoint, retry.next_state.death));
+    ARPG_REQUIRE(!restored.combat.has_value());
+    ARPG_REQUIRE(restored.ground_item_count == 0U);
+    ARPG_REQUIRE(!reloaded.pending_save().has_value());
+    return {};
+}
+
+arpg::test::Failure abyss_death_receipt_mutations_fail_closed() noexcept {
+    for (std::uint8_t mutation = 0U; mutation < 4U; ++mutation) {
+        DungeonSession session{DungeonRules{}, available_abyss_state()};
+        checkpoint::DungeonRunState started{};
+        ARPG_REQUIRE(drive_started_abyss_death(session, started));
+        const auto pending = *session.pending_save();
+        auto verified = pending.next_state;
+        switch (mutation) {
+        case 0U:
+            verified.abyss.lifecycle = abyss::AbyssLifecycle::started;
+            break;
+        case 1U:
+            ++verified.last_abyss_resolution.room_seed;
+            break;
+        case 2U:
+            verified.death.death_was_abyss = false;
+            break;
+        case 3U:
+            verified.current_room.is_abyss = true;
+            break;
+        }
+        session.resolve_pending_save({SaveDisposition::committed,
+            pending.expected_generation, std::move(verified),
+            PendingSaveKind::death_retreat});
+        ARPG_REQUIRE(session.snapshot().phase == RoomPhase::faulted);
+        ARPG_REQUIRE(session.snapshot().diagnostics.fault
+            == dungeon::DungeonFault::save_receipt_mismatch);
+    }
+    return {};
+}
+
 arpg::test::Failure ordinary_death_prepares_atomic_retreat() noexcept {
     DungeonSession session{DungeonRules{}, dungeon::make_initial_run_state(
         0xD34D6U, DungeonRules{}).state};
@@ -701,6 +881,9 @@ constexpr arpg::test::TestCase kCases[] = {
     {"ordinary death preserves historical resolution", &ordinary_death_preserves_valid_historical_resolution},
     {"death pending rejects gameplay requests", &death_pending_rejects_every_gameplay_request},
     {"ordinary death prepares atomic retreat", &ordinary_death_prepares_atomic_retreat},
+    {"abyss death prepares one atomic retreat", &abyss_death_prepares_one_atomic_retreat},
+    {"abyss death retry and reload preserve exact state", &abyss_death_retry_and_reload_preserve_exact_state},
+    {"abyss death receipt mutations fail closed", &abyss_death_receipt_mutations_fail_closed},
     {"ordinary death receipts bind kind", &ordinary_death_receipts_are_bound_to_kind},
     {"ordinary death commits and duplicate faults", &ordinary_death_commits_then_duplicate_faults},
     {"ordinary death not committed retries identically", &ordinary_death_not_committed_retries_identically},

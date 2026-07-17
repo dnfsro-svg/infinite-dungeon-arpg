@@ -883,8 +883,10 @@ RequestResult DungeonSession::prepare_abyss_failure() noexcept {
     try {
         DungeonRunState next = stable_state_;
         ++next.commit_generation;
-        next.current_room.is_abyss = false;
-        next.abyss.lifecycle = abyss::AbyssLifecycle::failed;
+        if (!apply_abyss_failure_resolution(next, stable_state_)) {
+            enter_fault(DungeonFault::invalid_abyss_state);
+            return RequestResult::faulted;
+        }
         pending_save_ = PendingSave{
             PendingSaveKind::abyss_fail,
             next.commit_generation,
@@ -1003,20 +1005,16 @@ void DungeonSession::handle_player_defeat() noexcept {
             || !combat_->player_defeated()) {
         return;
     }
-    if (stable_state_.current_room.is_abyss
-            && stable_state_.abyss.lifecycle
-                == abyss::AbyssLifecycle::started) {
-        static_cast<void>(prepare_abyss_failure());
-    } else {
-        static_cast<void>(prepare_death_retreat());
-    }
+    static_cast<void>(prepare_death_retreat());
 }
 
 bool DungeonSession::prepare_death_retreat() noexcept {
+    const bool abyss_death = stable_state_.current_room.is_abyss
+        && stable_state_.abyss.lifecycle == abyss::AbyssLifecycle::started;
     if (phase_ != RoomPhase::combat || pending_save_.has_value()
             || !combat_.has_value()
             || !combat_->death_snapshot().has_value()
-            || stable_state_.current_room.is_abyss
+            || (stable_state_.current_room.is_abyss && !abyss_death)
             || stable_state_.death.lifecycle
                 != checkpoint::DeathLifecycle::none
             || !checkpoint::valid_death_checkpoint_structural(
@@ -1065,6 +1063,11 @@ bool DungeonSession::prepare_death_retreat() noexcept {
     ++next.commit_generation;
     next.death_sequence = next_sequence;
     next.biases = {};
+    if (abyss_death
+            && !apply_abyss_failure_resolution(next, stable_state_)) {
+        enter_fault(DungeonFault::invalid_abyss_state);
+        return false;
+    }
     next.current_room.is_abyss = false;
     next.last_transition = TransitionKind::death_retreat;
     next.last_direction = ExitDirection::none;
@@ -1141,6 +1144,10 @@ bool DungeonSession::pending_death_cache_consistent() const noexcept {
     ++exact.commit_generation;
     ++exact.death_sequence;
     exact.biases = {};
+    if (stable_state_.current_room.is_abyss
+            && !apply_abyss_failure_resolution(exact, stable_state_)) {
+        return false;
+    }
     exact.current_room.is_abyss = false;
     exact.last_transition = TransitionKind::death_retreat;
     exact.last_direction = ExitDirection::none;

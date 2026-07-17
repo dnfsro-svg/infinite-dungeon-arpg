@@ -34,5 +34,8 @@ struct AbyssRewardSlot final {
 [[nodiscard]] bool same_ground_item(
     const GroundItem& left,
     const GroundItem& right) noexcept;
+[[nodiscard]] bool apply_abyss_failure_resolution(
+    DungeonRunState& next,
+    const DungeonRunState& previous) noexcept;
 
 }  // namespace arpg::dungeon

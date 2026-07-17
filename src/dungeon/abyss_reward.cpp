@@ -1,6 +1,7 @@
 #include "dungeon/abyss_reward.hpp"
 
 #include "abyss/abyss_rewards.hpp"
+#include "abyss/abyss_rules.hpp"
 #include "core/deterministic_rng.hpp"
 #include "items/item_generation.hpp"
 
@@ -155,6 +156,45 @@ bool same_ground_item(
         && left.position.y == right.position.y
         && left.position.z == right.position.z
         && same_item_instance(left.item, right.item);
+}
+
+bool apply_abyss_failure_resolution(
+    DungeonRunState& next,
+    const DungeonRunState& previous) noexcept {
+    if (!previous.current_room.is_abyss
+            || previous.abyss.lifecycle != abyss::AbyssLifecycle::started) {
+        return false;
+    }
+    const auto selection = abyss::select_abyss_rule(
+        previous.current_room.seed, previous.current_room.depth);
+    if (!selection.has_value()
+            || previous.abyss.danger != selection->danger
+            || previous.abyss.rule != selection->rule
+            || previous.abyss.rules_version != selection->rules_version) {
+        return false;
+    }
+    const std::uint8_t total = abyss::reward_profile_for(
+        previous.abyss.danger, 1U).item_count;
+    if (total == 0U || total > 3U) return false;
+
+    next.current_room.is_abyss = false;
+    next.abyss = previous.abyss;
+    next.abyss.lifecycle = abyss::AbyssLifecycle::failed;
+    next.abyss.reward_total = 0U;
+    next.abyss.generated_mask = 0U;
+    next.abyss.claimed_mask = 0U;
+    next.abyss.abandoned_mask = 0U;
+    next.abyss.reward_revision = 0U;
+    next.last_abyss_resolution = {
+        true,
+        previous.current_room.seed,
+        previous.abyss.rule,
+        total,
+        0U,
+        0U,
+        total,
+    };
+    return true;
 }
 
 }  // namespace arpg::dungeon

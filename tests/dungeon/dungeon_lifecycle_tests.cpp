@@ -353,6 +353,15 @@ arpg::test::Failure abyss_reset_queues_fail_and_rejects_reentry() noexcept {
     ARPG_REQUIRE(!pending->next_state.current_room.is_abyss);
     ARPG_REQUIRE(pending->next_state.abyss.lifecycle
         == abyss::AbyssLifecycle::failed);
+    ARPG_REQUIRE(pending->next_state.last_abyss_resolution.valid);
+    ARPG_REQUIRE(pending->next_state.last_abyss_resolution.room_seed
+        == before.room_seed);
+    ARPG_REQUIRE(pending->next_state.last_abyss_resolution.rule
+        == pending->next_state.abyss.rule);
+    ARPG_REQUIRE(pending->next_state.last_abyss_resolution.generated == 0U);
+    ARPG_REQUIRE(pending->next_state.last_abyss_resolution.claimed == 0U);
+    ARPG_REQUIRE(pending->next_state.last_abyss_resolution.abandoned
+        == pending->next_state.last_abyss_resolution.total);
     ARPG_REQUIRE(session.reset_current_room()
         == dungeon::RequestResult::rejected);
     ARPG_REQUIRE(session.pending_save()->expected_generation
@@ -436,7 +445,7 @@ arpg::test::Failure ordinary_player_defeat_queues_death_retreat() noexcept {
     return {};
 }
 
-arpg::test::Failure abyss_player_defeat_queues_one_fail() noexcept {
+arpg::test::Failure abyss_player_defeat_queues_one_death_retreat() noexcept {
     using namespace arpg;
     dungeon::DungeonSession session{{}, lifecycle_available_state()};
     ARPG_REQUIRE(commit_abyss_start(session));
@@ -450,7 +459,10 @@ arpg::test::Failure abyss_player_defeat_queues_one_fail() noexcept {
     session.tick({});
     const auto first = session.pending_save();
     ARPG_REQUIRE(first.has_value());
-    ARPG_REQUIRE(first->kind == dungeon::PendingSaveKind::abyss_fail);
+    ARPG_REQUIRE(first->kind == dungeon::PendingSaveKind::death_retreat);
+    ARPG_REQUIRE(first->next_state.death.death_was_abyss);
+    ARPG_REQUIRE(first->next_state.abyss.lifecycle
+        == abyss::AbyssLifecycle::failed);
     ARPG_REQUIRE(session.snapshot().phase == dungeon::RoomPhase::committing);
     ARPG_REQUIRE(session.reset_current_room() == dungeon::RequestResult::rejected);
     session.tick({});
@@ -480,7 +492,8 @@ arpg::test::Failure abyss_player_defeat_does_not_depend_on_event_delivery() noex
     session.tick({});
     const auto pending = session.pending_save();
     ARPG_REQUIRE(pending.has_value());
-    ARPG_REQUIRE(pending->kind == dungeon::PendingSaveKind::abyss_fail);
+    ARPG_REQUIRE(pending->kind == dungeon::PendingSaveKind::death_retreat);
+    ARPG_REQUIRE(pending->next_state.death.death_was_abyss);
     ARPG_REQUIRE(session.snapshot().phase == dungeon::RoomPhase::committing);
     std::uint32_t defeat_events = 0U;
     while (const auto event = session.try_pop_combat_event()) {
@@ -777,7 +790,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"abyss fail commit rebuilds same normal room", &abyss_fail_commit_rebuilds_same_normal_room},
     {"ordinary reset returns accepted", &ordinary_reset_returns_accepted},
     {"ordinary player defeat queues death retreat", &ordinary_player_defeat_queues_death_retreat},
-    {"abyss player defeat queues one fail", &abyss_player_defeat_queues_one_fail},
+    {"abyss player defeat queues one death retreat", &abyss_player_defeat_queues_one_death_retreat},
     {"abyss defeat does not depend on event delivery", &abyss_player_defeat_does_not_depend_on_event_delivery},
     {"relay overflow fault precedes durable defeat", &relay_overflow_fault_precedes_durable_defeat},
     {"invalid available checkpoint faults", &invalid_available_checkpoint_faults},
