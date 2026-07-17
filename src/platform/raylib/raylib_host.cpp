@@ -21,6 +21,11 @@
 #include <optional>
 #include <string>
 
+#include "direct_input_poison.hpp"
+
+static_assert(arpg::platform::direct_input_poison::active,
+    "direct input poison must be active in raylib_host.cpp");
+
 #if !defined(RAYLIB_VERSION_MAJOR) || !defined(RAYLIB_VERSION_MINOR) \
     || !defined(RAYLIB_VERSION_PATCH)
 #error "raylib version macros are unavailable"

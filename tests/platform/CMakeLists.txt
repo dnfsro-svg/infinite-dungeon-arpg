@@ -1020,6 +1020,57 @@ set_tests_properties(
     platform.input_latency_source
     PROPERTIES LABELS "headless;platform;architecture")
 
+function(arpg_verify_direct_input_poison)
+    include(CheckCXXSourceCompiles)
+    set(CMAKE_CXX_STANDARD 17)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+    set(CMAKE_REQUIRED_INCLUDES
+        "${PROJECT_SOURCE_DIR}/src/platform/raylib")
+    set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+
+    unset(ARPG_DIRECT_INPUT_POISON_ACTIVE_COMPILES CACHE)
+    check_cxx_source_compiles([=[
+        #include "direct_input_poison.hpp"
+        static_assert(
+            ::arpg::platform::direct_input_poison::active,
+            "direct input poison must be active");
+        int main() { return 0; }
+    ]=] ARPG_DIRECT_INPUT_POISON_ACTIVE_COMPILES)
+    if(NOT ARPG_DIRECT_INPUT_POISON_ACTIVE_COMPILES)
+        message(FATAL_ERROR
+            "direct input poison must expose a compilable active sentinel")
+    endif()
+
+    set(_arpg_poison_probes
+        "KEY|IsKeyDown(0)"
+        "MOUSE|IsMouseButtonDown(0)"
+        "FOCUS|IsWindowFocused()"
+        "PLATFORM_WRAPPER|platform_key_down(0)"
+        "ADDRESS|&IsKeyDown")
+    foreach(_arpg_poison_probe IN LISTS _arpg_poison_probes)
+        string(REPLACE "|" ";" _arpg_poison_parts
+            "${_arpg_poison_probe}")
+        list(GET _arpg_poison_parts 0 _arpg_poison_label)
+        list(GET _arpg_poison_parts 1 _arpg_poison_expression)
+        set(_arpg_poison_result
+            "ARPG_DIRECT_INPUT_POISON_${_arpg_poison_label}_COMPILES")
+        unset("${_arpg_poison_result}" CACHE)
+        check_cxx_source_compiles("
+            #include \"direct_input_poison.hpp\"
+            int main() {
+                static_cast<void>(${_arpg_poison_expression});
+                return 0;
+            }
+        " "${_arpg_poison_result}")
+        if(${_arpg_poison_result})
+            message(FATAL_ERROR
+                "direct input poison compile probe unexpectedly accepted ${_arpg_poison_label}")
+        endif()
+    endforeach()
+endfunction()
+
+arpg_verify_direct_input_poison()
+
 add_test(
     NAME platform.host_input_source
     COMMAND "${CMAKE_COMMAND}"

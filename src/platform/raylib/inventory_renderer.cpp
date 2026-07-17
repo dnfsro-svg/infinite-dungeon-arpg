@@ -14,6 +14,11 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "direct_input_poison.hpp"
+
+static_assert(arpg::platform::direct_input_poison::active,
+    "direct input poison must be active in inventory_renderer.cpp");
+
 namespace arpg::platform {
 namespace {
 
