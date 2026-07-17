@@ -46,6 +46,8 @@ struct SettingsFileOps final {
 
 class SettingsStore final {
 public:
+    // An empty directory disables all file I/O: load reports corrupt defaults
+    // and save reports write_failed while preserving the caller's committed value.
     explicit SettingsStore(
         std::filesystem::path directory,
         SettingsFileOps file_ops = native_settings_file_ops());

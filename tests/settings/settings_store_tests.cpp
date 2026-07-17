@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <filesystem>
 #include <limits>
+#include <new>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -22,11 +24,17 @@ using arpg::settings::SettingsStore;
 
 struct FakeFiles final {
     enum class ReplaceFault : std::uint8_t { none, write, publish };
+    enum class ReadFault : std::uint8_t {
+        none,
+        bad_alloc_after_replace,
+        runtime_error_after_replace
+    };
 
     std::unordered_map<std::string, std::vector<std::uint8_t>> files{};
     std::vector<std::string> reads{};
     std::vector<std::string> replacements{};
     ReplaceFault replace_fault{ReplaceFault::none};
+    ReadFault read_fault{ReadFault::none};
     bool fail_readback{};
     bool corrupt_readback{};
     bool replacement_completed{};
@@ -43,6 +51,14 @@ bool fake_read(
     auto& fake = *static_cast<FakeFiles*>(context);
     const std::string name = file_name(path);
     fake.reads.push_back(name);
+    if (fake.replacement_completed) {
+        if (fake.read_fault == FakeFiles::ReadFault::bad_alloc_after_replace) {
+            throw std::bad_alloc{};
+        }
+        if (fake.read_fault == FakeFiles::ReadFault::runtime_error_after_replace) {
+            throw std::runtime_error{"injected readback failure"};
+        }
+    }
     if (fake.replacement_completed && fake.fail_readback) {
         return false;
     }
@@ -288,6 +304,60 @@ arpg::test::Failure readback_failure_does_not_publish_to_caller() noexcept {
     return {};
 }
 
+arpg::test::Failure readback_exceptions_are_not_classified_as_write_failures() noexcept {
+    for (const auto fault : {FakeFiles::ReadFault::bad_alloc_after_replace,
+             FakeFiles::ReadFault::runtime_error_after_replace}) {
+        FakeFiles fake{};
+        fake.read_fault = fault;
+        const SettingsData committed = settings_at(8U, 80U);
+        put(fake, "settings-b.bin", committed);
+        SettingsData draft = committed;
+        draft.master_sfx_percent = 90U;
+
+        const auto result =
+            SettingsStore{"C:/settings", fake_ops(fake)}.save(committed, draft);
+
+        ARPG_REQUIRE(result.status == SettingsSaveStatus::readback_failed);
+        ARPG_REQUIRE(same_settings(result.settings, committed));
+        ARPG_REQUIRE(fake.files.count("settings-a.bin") == 1U);
+        const auto published = arpg::settings::decode_settings(
+            fake.files["settings-a.bin"].data(), fake.files["settings-a.bin"].size());
+        ARPG_REQUIRE(published.error == arpg::settings::SettingsCodecError::none);
+        ARPG_REQUIRE(published.settings.revision == 9U);
+        ARPG_REQUIRE(published.settings.master_sfx_percent == 90U);
+    }
+    return {};
+}
+
+arpg::test::Failure empty_directory_loads_corrupt_defaults_without_io() noexcept {
+    FakeFiles fake{};
+
+    const auto result = SettingsStore{
+        std::filesystem::path{}, fake_ops(fake)}.load();
+
+    ARPG_REQUIRE(result.status == SettingsLoadStatus::defaults_corrupt);
+    ARPG_REQUIRE(same_settings(result.settings, arpg::settings::default_settings()));
+    ARPG_REQUIRE(fake.reads.empty());
+    ARPG_REQUIRE(fake.replacements.empty());
+    return {};
+}
+
+arpg::test::Failure empty_directory_save_fails_without_io() noexcept {
+    FakeFiles fake{};
+    const SettingsData committed = settings_at(8U, 80U);
+    SettingsData draft = committed;
+    draft.master_sfx_percent = 90U;
+
+    const auto result = SettingsStore{
+        std::filesystem::path{}, fake_ops(fake)}.save(committed, draft);
+
+    ARPG_REQUIRE(result.status == SettingsSaveStatus::write_failed);
+    ARPG_REQUIRE(same_settings(result.settings, committed));
+    ARPG_REQUIRE(fake.reads.empty());
+    ARPG_REQUIRE(fake.replacements.empty());
+    return {};
+}
+
 constexpr arpg::test::TestCase cases[] = {
     {"missing slots load defaults without writes", missing_slots_load_defaults_without_writes},
     {"newest A or B slot is selected", newest_slot_is_selected_in_either_position},
@@ -300,7 +370,10 @@ constexpr arpg::test::TestCase cases[] = {
     {"save rejects revision overflow without I/O", save_rejects_revision_overflow_without_io},
     {"save writes older slot and returns readback value", save_writes_older_slot_and_returns_readback_value},
     {"write and publish failures preserve last valid slot", write_and_publish_failures_preserve_last_valid_slot},
-    {"readback failure does not publish to caller", readback_failure_does_not_publish_to_caller}};
+    {"readback failure does not publish to caller", readback_failure_does_not_publish_to_caller},
+    {"readback exceptions are not classified as write failures", readback_exceptions_are_not_classified_as_write_failures},
+    {"empty directory loads corrupt defaults without I/O", empty_directory_loads_corrupt_defaults_without_io},
+    {"empty directory save fails without I/O", empty_directory_save_fails_without_io}};
 
 }  // namespace
 

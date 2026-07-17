@@ -211,6 +211,9 @@ SettingsStore::SettingsStore(
     : directory_(std::move(directory)), file_ops_(file_ops) {}
 
 SettingsLoadResult SettingsStore::load() const {
+    if (directory_.empty()) {
+        return {SettingsLoadStatus::defaults_corrupt, default_settings()};
+    }
     try {
         const SlotRecord a = read_slot(file_ops_, directory_ / slot_a_name);
         const SlotRecord b = read_slot(file_ops_, directory_ / slot_b_name);
@@ -222,6 +225,9 @@ SettingsLoadResult SettingsStore::load() const {
 
 SettingsSaveResult SettingsStore::save(
     const SettingsData& committed, SettingsData draft) const {
+    if (directory_.empty()) {
+        return {SettingsSaveStatus::write_failed, committed};
+    }
     if (draft.revision != committed.revision) {
         return {SettingsSaveStatus::stale_revision, committed};
     }
@@ -233,17 +239,22 @@ SettingsSaveResult SettingsStore::save(
         return {SettingsSaveStatus::invalid_settings, committed};
     }
 
+    std::filesystem::path target{};
     try {
         const SlotRecord a = read_slot(file_ops_, directory_ / slot_a_name);
         const SlotRecord b = read_slot(file_ops_, directory_ / slot_b_name);
-        const std::filesystem::path target =
-            directory_ / target_slot_name(a, b);
+        target = directory_ / target_slot_name(a, b);
         const auto encoded = encode_settings(draft);
         if (file_ops_.replace == nullptr ||
                 !file_ops_.replace(file_ops_.context, target,
                     encoded.data(), encoded.size())) {
             return {SettingsSaveStatus::write_failed, committed};
         }
+    } catch (...) {
+        return {SettingsSaveStatus::write_failed, committed};
+    }
+
+    try {
         const SlotRecord published = read_slot(file_ops_, target);
         if (!is_valid(published) ||
                 !same_settings(published.settings, draft)) {
@@ -251,7 +262,7 @@ SettingsSaveResult SettingsStore::save(
         }
         return {SettingsSaveStatus::committed, published.settings};
     } catch (...) {
-        return {SettingsSaveStatus::write_failed, committed};
+        return {SettingsSaveStatus::readback_failed, committed};
     }
 }
 
