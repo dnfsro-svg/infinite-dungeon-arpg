@@ -25,6 +25,7 @@ enum class RoomPhase : std::uint8_t {
     awaiting_exit,
     committing,
     transitioning,
+    death_pending,
     faulted,
 };
 
@@ -135,6 +136,12 @@ struct GroundItemSnapshot final {
     items::ItemRarity rarity{items::ItemRarity::normal};
 };
 
+struct DeathSnapshot final {
+    checkpoint::DeathCheckpoint checkpoint{};
+    bool saving{};
+    bool can_continue{};
+};
+
 struct DungeonSnapshot final {
     std::uint64_t session_tick{};
     std::uint64_t root_seed{};
@@ -175,6 +182,7 @@ struct DungeonSnapshot final {
     std::uint16_t ground_item_count{};
     std::array<GroundItemSnapshot, kGroundDropCapacity> ground_items{};
     std::optional<PendingSaveKind> pending_save_kind{};
+    std::optional<DeathSnapshot> death{};
     std::optional<combat::CombatSnapshot> combat{};
     DungeonEncounterDiagnostics encounter{};
     DungeonDiagnostics diagnostics{};

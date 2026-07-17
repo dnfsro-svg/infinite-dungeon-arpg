@@ -1330,6 +1330,99 @@ arpg::test::Failure v5_unified_validator_rejects_semantic_state() noexcept {
     return {};
 }
 
+arpg::test::Failure v6_death_retreat_transition_round_trips() noexcept {
+    auto state = make_fixture();
+    state.last_transition = checkpoint::TransitionKind::death_retreat;
+    state.last_direction = checkpoint::ExitDirection::none;
+    const auto encoded = persistence::encode_checkpoint(state);
+    ARPG_REQUIRE(encoded.has_value());
+    const auto decoded = persistence::decode_checkpoint(
+        encoded->data(), encoded->size());
+    ARPG_REQUIRE(decoded.error == persistence::CodecError::none);
+    ARPG_REQUIRE(decoded.state.last_transition
+        == checkpoint::TransitionKind::death_retreat);
+    ARPG_REQUIRE(!decoded.migrated);
+
+    auto v5 = *encoded;
+    v5.erase(v5.begin() + 236U, v5.begin() + 460U);
+    const std::array<std::uint8_t, 8U> v5_magic{{
+        'I','A','R','P','G','S','0','6'}};
+    std::copy(v5_magic.begin(), v5_magic.end(), v5.begin());
+    write_u32(v5, 8U, 5U);
+    write_u32(v5, 24U, static_cast<std::uint32_t>(v5.size() - 32U));
+    refresh_crc(v5);
+    ARPG_REQUIRE(persistence::decode_checkpoint(v5.data(), v5.size()).error
+        == persistence::CodecError::invalid_enum);
+    return {};
+}
+
+arpg::test::Failure v6_pending_death_floor_zero_round_trips() noexcept {
+    auto state = make_fixture();
+    state.current_room.floor_room_index = 0U;
+    state.last_transition = checkpoint::TransitionKind::death_retreat;
+    state.last_direction = checkpoint::ExitDirection::none;
+    state.death_sequence = 1U;
+    state.death.lifecycle = checkpoint::DeathLifecycle::pending_continue;
+    state.death.data_version = checkpoint::kDeathCheckpointDataVersion;
+    state.death.death_depth = state.current_room.depth;
+    state.death.death_floor_room_index = 0U;
+    state.death.death_ecology = state.current_room.ecology;
+    state.death.source_kind = checkpoint::DeathSourceKind::unknown;
+    state.death.source_monster_id = 0xFFU;
+    state.death.damage_type = checkpoint::DeathDamageType::physical;
+    state.death.raw_damage = 10U;
+    state.death.health_loss = 10U;
+    state.death.final_damage = 10U;
+    state.death.recent_damage[0] = 10U;
+    state.death.max_hp = 100;
+    state.death.damage_reduction_cap = {{7500, 7500, 7500, 7500}};
+    state.death.target_room = {
+        state.current_room.index + 1U, 0x12345678U, 1U, 0U,
+        checkpoint::EntrySide::initial,
+        checkpoint::DungeonElement::water, true, false};
+
+    const auto encoded = persistence::encode_checkpoint(state);
+    ARPG_REQUIRE(encoded.has_value());
+    const auto decoded = persistence::decode_checkpoint(
+        encoded->data(), encoded->size());
+    ARPG_REQUIRE(decoded.error == persistence::CodecError::none);
+    ARPG_REQUIRE(decoded.state.current_room.floor_room_index == 0U);
+    ARPG_REQUIRE(decoded.state.death.lifecycle
+        == checkpoint::DeathLifecycle::pending_continue);
+    ARPG_REQUIRE(decoded.state.death.death_floor_room_index == 0U);
+    ARPG_REQUIRE(decoded.state.last_transition
+        == checkpoint::TransitionKind::death_retreat);
+
+    auto wrong_transition = state;
+    wrong_transition.last_transition = checkpoint::TransitionKind::door;
+    ARPG_REQUIRE(!persistence::encode_checkpoint(wrong_transition).has_value());
+    auto wrong_direction = state;
+    wrong_direction.last_direction = checkpoint::ExitDirection::left;
+    ARPG_REQUIRE(!persistence::encode_checkpoint(wrong_direction).has_value());
+    return {};
+}
+
+arpg::test::Failure v6_continued_target_floor_zero_round_trips() noexcept {
+    auto state = make_fixture();
+    state.current_room.floor_room_index = 0U;
+    state.last_transition = checkpoint::TransitionKind::death_retreat;
+    state.last_direction = checkpoint::ExitDirection::none;
+    state.death_sequence = 1U;
+    ARPG_REQUIRE(state.death.lifecycle == checkpoint::DeathLifecycle::none);
+
+    const auto encoded = persistence::encode_checkpoint(state);
+    ARPG_REQUIRE(encoded.has_value());
+    const auto decoded = persistence::decode_checkpoint(
+        encoded->data(), encoded->size());
+    ARPG_REQUIRE(decoded.error == persistence::CodecError::none);
+    ARPG_REQUIRE(decoded.state.current_room.floor_room_index == 0U);
+    ARPG_REQUIRE(decoded.state.death.lifecycle
+        == checkpoint::DeathLifecycle::none);
+    ARPG_REQUIRE(decoded.state.last_transition
+        == checkpoint::TransitionKind::death_retreat);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"v5 full abyss state and resolution round trip", &v5_full_abyss_state_and_resolution_round_trip},
     {"v5 cleared reward total matches each danger", &v5_cleared_reward_total_matches_each_danger},
@@ -1354,6 +1447,9 @@ constexpr arpg::test::TestCase kCases[] = {
     {"v5 length count crc and capacity are bounded", &v5_length_count_crc_and_capacity_are_bounded},
     {"v5 corrupt item semantics are rejected", &v5_corrupt_item_semantics_are_rejected},
     {"v5 unified validator rejects semantic state", &v5_unified_validator_rejects_semantic_state},
+    {"v6 death retreat transition round trips", &v6_death_retreat_transition_round_trips},
+    {"v6 pending death floor zero round trips", &v6_pending_death_floor_zero_round_trips},
+    {"v6 continued target floor zero round trips", &v6_continued_target_floor_zero_round_trips},
     {"codec allocation failures do not escape noexcept", &codec_allocation_failures_do_not_escape_noexcept},
     {"baseline checkpoint bytes are preserved", &baseline_checkpoint_bytes_are_preserved},
     {"all nonzero fields round trip", &all_nonzero_fields_round_trip},

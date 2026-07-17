@@ -2,6 +2,7 @@ add_executable(arpg_dungeon_tests
     ../core/allocation_probe.cpp
     dungeon_test_main.cpp
     death_checkpoint_tests.cpp
+    dungeon_death_lifecycle_tests.cpp
     dungeon_lifecycle_tests.cpp
     dungeon_navigation_tests.cpp
     dungeon_stress_tests.cpp

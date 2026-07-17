@@ -1,6 +1,7 @@
 #include "dungeon/dungeon_session.hpp"
 
 #include "dungeon/abyss_reward.hpp"
+#include "dungeon/death_checkpoint.hpp"
 #include "dungeon/dungeon_progression.hpp"
 #include "dungeon/room_combat_template.hpp"
 #include "dungeon/room_navigation.hpp"
@@ -79,6 +80,61 @@ void saturating_add(std::uint64_t& value, std::uint64_t addition) noexcept {
     return state;
 }
 
+[[nodiscard]] bool valid_last_abyss_resolution(
+    const checkpoint::LastAbyssResolution& value) noexcept {
+    if (!value.valid) {
+        return value.room_seed == 0U
+            && value.rule == abyss::AbyssRuleId::none
+            && value.total == 0U
+            && value.generated == 0U
+            && value.claimed == 0U
+            && value.abandoned == 0U;
+    }
+    const auto danger = abyss::danger_for_rule(value.rule);
+    if (value.room_seed == 0U || !danger.has_value()) return false;
+    const std::uint8_t expected_total = abyss::reward_profile_for(
+        *danger, 1U).item_count;
+    return value.total == expected_total
+        && value.total != 0U && value.total <= 3U
+        && value.generated <= value.total
+        && value.claimed <= value.generated
+        && value.abandoned <= value.total
+        && static_cast<std::uint16_t>(value.generated)
+            + static_cast<std::uint16_t>(value.abandoned) == value.total;
+}
+
+[[nodiscard]] bool canonical_empty_abyss(
+    const checkpoint::AbyssCheckpoint& value) noexcept {
+    return value.lifecycle == abyss::AbyssLifecycle::none
+        && value.danger == abyss::AbyssDanger::low
+        && value.rule == abyss::AbyssRuleId::none
+        && value.rules_version == 0U
+        && value.reward_total == 0U
+        && value.generated_mask == 0U
+        && value.claimed_mask == 0U
+        && value.abandoned_mask == 0U
+        && value.reward_revision == 0U;
+}
+
+[[nodiscard]] bool valid_failed_abyss(
+    const checkpoint::DungeonRunState& state) noexcept {
+    if (state.abyss.lifecycle != abyss::AbyssLifecycle::failed
+            || state.current_room.is_abyss
+            || state.abyss.reward_total != 0U
+            || state.abyss.generated_mask != 0U
+            || state.abyss.claimed_mask != 0U
+            || state.abyss.abandoned_mask != 0U
+            || state.abyss.reward_revision != 0U) {
+        return false;
+    }
+    const auto selection = abyss::select_abyss_rule(
+        state.current_room.seed, state.current_room.depth);
+    return selection.has_value()
+        && state.abyss.danger == selection->danger
+        && state.abyss.rule == selection->rule
+        && state.abyss.rules_version == selection->rules_version;
+}
+
 }  // namespace
 
 std::uint16_t affix_drop_chance_bp(std::uint16_t score) noexcept {
@@ -133,7 +189,9 @@ bool DungeonSession::queue_action(combat::Action action) noexcept {
 }
 
 void DungeonSession::tick(combat::MovementInput movement) noexcept {
-    if (phase_ == RoomPhase::committing || phase_ == RoomPhase::faulted) {
+    if (phase_ == RoomPhase::committing
+            || phase_ == RoomPhase::death_pending
+            || phase_ == RoomPhase::faulted) {
         ++session_tick_;
         return;
     }
@@ -250,6 +308,7 @@ const items::ItemOwnershipState& DungeonSession::item_state() const noexcept {
 RequestResult DungeonSession::reset_current_room() noexcept {
     if (phase_ == RoomPhase::transitioning
             || phase_ == RoomPhase::committing
+            || phase_ == RoomPhase::death_pending
             || phase_ == RoomPhase::faulted) {
         return RequestResult::rejected;
     }
@@ -305,6 +364,22 @@ DungeonSession::try_pop_combat_event() noexcept {
 }
 
 void DungeonSession::construct_current_room() noexcept {
+    if (stable_state_.death.lifecycle
+            == checkpoint::DeathLifecycle::pending_continue) {
+        clear_transient_room_state();
+        if (!validate_pending_death_state()) {
+            enter_fault(DungeonFault::death_sequence_mismatch);
+            return;
+        }
+        phase_ = RoomPhase::death_pending;
+        return;
+    }
+    if (!checkpoint::valid_death_checkpoint_structural(
+            stable_state_.death)) {
+        clear_transient_room_state();
+        enter_fault(DungeonFault::death_sequence_mismatch);
+        return;
+    }
     ground_items_ = {};
     rolled_drop_bits_ = {};
     if (stable_state_.current_room.depth == 0U) {
@@ -332,6 +407,72 @@ void DungeonSession::construct_current_room() noexcept {
         return;
     }
     construct_normal_room();
+}
+
+bool DungeonSession::validate_pending_death_state() const noexcept {
+    const auto& state = stable_state_;
+    const auto& death = state.death;
+    if (state.commit_generation == 0U || state.death_sequence == 0U
+            || state.current_room.is_abyss
+            || static_cast<std::uint8_t>(state.current_room.entry)
+                > static_cast<std::uint8_t>(EntrySide::right)
+            || state.biases != std::array<std::uint32_t, 4>{}
+            || state.last_transition != TransitionKind::death_retreat
+            || state.last_direction != ExitDirection::none
+            || death.death_depth != state.current_room.depth
+            || death.death_floor_room_index
+                != state.current_room.floor_room_index
+            || death.death_ecology != state.current_room.ecology
+            || (death.source_kind
+                    == checkpoint::DeathSourceKind::abyss_environment
+                && !death.death_was_abyss)
+            || !valid_last_abyss_resolution(
+                state.last_abyss_resolution)) {
+        return false;
+    }
+
+    checkpoint::RoomDescriptor death_anchor = state.current_room;
+    death_anchor.is_abyss = death.death_was_abyss;
+    if (!valid_death_checkpoint_dungeon(
+            death, death_anchor, state.commit_generation - 1U,
+            state.death_sequence, rules_)) {
+        return false;
+    }
+
+    if (!death.death_was_abyss) {
+        return canonical_empty_abyss(state.abyss)
+            || valid_failed_abyss(state);
+    }
+    if (!valid_failed_abyss(state)) return false;
+    const std::uint8_t total = abyss::reward_profile_for(
+        state.abyss.danger, 1U).item_count;
+    return state.last_abyss_resolution.valid
+        && state.last_abyss_resolution.room_seed
+            == state.current_room.seed
+        && state.last_abyss_resolution.rule == state.abyss.rule
+        && state.last_abyss_resolution.total == total
+        && state.last_abyss_resolution.generated == 0U
+        && state.last_abyss_resolution.claimed == 0U
+        && state.last_abyss_resolution.abandoned == total;
+}
+
+void DungeonSession::clear_transient_room_state() noexcept {
+    combat_.reset();
+    ground_items_ = {};
+    rolled_drop_bits_ = {};
+    encounter_plan_ = {};
+    wave_index_ = 0U;
+    wave_delay_ticks_ = 0U;
+    pending_save_.reset();
+    pending_item_build_.reset();
+    pending_abyss_combat_.reset();
+    pending_abyss_reward_.reset();
+    clear_abyss_exit_confirmation();
+    room_progression_ = stable_state_.progression;
+    pending_room_experience_ = 0U;
+    last_room_experience_ = 0U;
+    last_levels_gained_ = 0U;
+    last_passive_tree_error_ = passives::PassiveTreeError::none;
 }
 
 void DungeonSession::construct_cleared_abyss_room() noexcept {

@@ -143,9 +143,12 @@ bool valid_element(std::uint8_t value) noexcept {
     return value <= static_cast<std::uint8_t>(DungeonElement::chaos);
 }
 
-bool valid_transition(std::uint8_t value) noexcept {
+bool valid_transition(std::uint8_t value, bool allow_death_retreat) noexcept {
     return value == static_cast<std::uint8_t>(TransitionKind::door)
         || value == static_cast<std::uint8_t>(TransitionKind::descent)
+        || (allow_death_retreat
+            && value == static_cast<std::uint8_t>(
+                TransitionKind::death_retreat))
         || value == static_cast<std::uint8_t>(TransitionKind::none);
 }
 
@@ -262,13 +265,18 @@ bool valid_last_resolution(
 }
 
 bool valid_checkpoint_fields(
-    const dungeon::checkpoint::DungeonRunState& state) noexcept {
+    const dungeon::checkpoint::DungeonRunState& state,
+    bool allow_death_retreat) noexcept {
     return state.commit_generation != 0U
         && state.current_room.depth != 0U
-        && state.current_room.floor_room_index != 0U
+        && (state.current_room.floor_room_index != 0U
+            || (allow_death_retreat
+                && state.last_transition == TransitionKind::death_retreat
+                && state.last_direction == ExitDirection::none))
         && valid_entry(static_cast<std::uint8_t>(state.current_room.entry))
         && valid_element(static_cast<std::uint8_t>(state.current_room.ecology))
-        && valid_transition(static_cast<std::uint8_t>(state.last_transition))
+        && valid_transition(static_cast<std::uint8_t>(state.last_transition),
+            allow_death_retreat)
         && valid_direction(static_cast<std::uint8_t>(state.last_direction))
         && progression::valid_progression_state(
             state.progression, progression::default_progression_rules())
@@ -295,7 +303,7 @@ DecodeResult error_result(CodecError error) noexcept {
 
 std::optional<EncodedCheckpoint> encode_checkpoint(
     const dungeon::checkpoint::DungeonRunState& state) noexcept {
-    if (!valid_checkpoint_fields(state)
+    if (!valid_checkpoint_fields(state, true)
         || !valid_abyss_checkpoint(state)
         || !valid_last_resolution(state.last_abyss_resolution)
         || !checkpoint::valid_death_checkpoint_structural(state.death)
@@ -568,7 +576,8 @@ DecodeResult decode_checkpoint(
     const auto direction = bytes[93U];
     if (!valid_entry(entry)
             || !valid_element(ecology)
-            || !valid_transition(transition)
+            || !valid_transition(transition,
+                format == kCheckpointFormatVersion)
             || !valid_direction(direction)) {
         return error_result(CodecError::invalid_enum);
     }
@@ -821,7 +830,8 @@ DecodeResult decode_checkpoint(
             }
         }
     }
-    if (!valid_checkpoint_fields(state)) {
+    if (!valid_checkpoint_fields(
+            state, format == kCheckpointFormatVersion)) {
         return error_result(CodecError::invalid_state);
     }
     if ((format == kFifthCheckpointFormatVersion

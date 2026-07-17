@@ -32,6 +32,24 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
     result.biases = stable_state_.biases;
     result.phase = phase_;
     result.has_active_room = combat_.has_value();
+    const checkpoint::DeathCheckpoint* visible_death = nullptr;
+    bool death_saving = false;
+    if (pending_save_.has_value()
+            && pending_save_->next_state.death.lifecycle
+                == checkpoint::DeathLifecycle::pending_continue) {
+        visible_death = &pending_save_->next_state.death;
+        death_saving = true;
+    } else if (stable_state_.death.lifecycle
+            == checkpoint::DeathLifecycle::pending_continue) {
+        visible_death = &stable_state_.death;
+    }
+    if (visible_death != nullptr) {
+        result.death.emplace(DeathSnapshot{
+            *visible_death,
+            death_saving,
+            !death_saving && phase_ == RoomPhase::death_pending,
+        });
+    }
     bool exits_open = phase_ == RoomPhase::cleared
         || phase_ == RoomPhase::awaiting_exit;
     if (!exits_open && phase_ == RoomPhase::committing
@@ -41,7 +59,9 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
             || pending_save_->resume_phase == RoomPhase::awaiting_exit;
     }
     result.exits_open.fill(exits_open);
-    result.abyss_doors = preview_abyss_doors(stable_state_.current_room);
+    result.abyss_doors = visible_death == nullptr
+        ? preview_abyss_doors(stable_state_.current_room)
+        : std::array<bool, 4>{};
     result.wave_index = wave_index_;
     result.wave_count = encounter_plan_.wave_count;
     result.wave_delay_ticks = wave_delay_ticks_;

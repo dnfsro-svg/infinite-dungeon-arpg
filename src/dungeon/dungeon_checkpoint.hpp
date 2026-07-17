@@ -37,6 +37,7 @@ enum class DungeonElement : std::uint8_t {
 enum class TransitionKind : std::uint8_t {
     door = 0,
     descent = 1,
+    death_retreat = 2,
     none = 0xFF,
 };
 

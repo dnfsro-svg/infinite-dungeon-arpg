@@ -90,6 +90,8 @@ private:
         GroundItem ground{};
     };
     void construct_current_room() noexcept;
+    [[nodiscard]] bool validate_pending_death_state() const noexcept;
+    void clear_transient_room_state() noexcept;
     void construct_cleared_abyss_room() noexcept;
     void rebuild_committed_abyss_rewards() noexcept;
     void attempt_abyss_reward_materialization() noexcept;
