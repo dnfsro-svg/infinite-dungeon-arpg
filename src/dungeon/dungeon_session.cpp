@@ -508,6 +508,7 @@ void DungeonSession::clear_transient_room_state() noexcept {
     pending_room_experience_ = 0U;
     last_room_experience_ = 0U;
     last_levels_gained_ = 0U;
+    death_continue_failed_ = false;
     death_detected_emitted_ = false;
     last_passive_tree_error_ = passives::PassiveTreeError::none;
 }
@@ -1172,6 +1173,7 @@ RequestResult DungeonSession::request_death_continue() noexcept {
         enter_fault(DungeonFault::invalid_item_state);
         return RequestResult::faulted;
     }
+    death_continue_failed_ = false;
     phase_ = RoomPhase::committing;
     if (!emit(DungeonEventKind::death_continue_requested,
             &stable_state_, &pending_save_->next_state,

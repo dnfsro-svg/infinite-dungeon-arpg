@@ -965,6 +965,8 @@ void DungeonSession::commit_pending_save(
     }
     if (result.disposition == SaveDisposition::not_committed) {
         const RoomPhase resume_phase = pending_save_->resume_phase;
+        death_continue_failed_ = pending_save_->kind
+            == PendingSaveKind::death_continue;
         phase_ = resume_phase;
         saturating_increment(diagnostics_.save_failure_count);
         static_cast<void>(emit(

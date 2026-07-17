@@ -4,6 +4,8 @@ add_library(arpg_raylib STATIC
     combat_feedback.cpp
     combat_renderer.cpp
     combat_view_math.cpp
+    death_overlay_renderer.cpp
+    death_overlay_view.cpp
     debug_renderer.cpp
     dungeon_view_math.cpp
     dungeon_runtime.cpp
@@ -28,3 +30,6 @@ if(WIN32)
 endif()
 
 arpg_enable_project_warnings(arpg_raylib)
+if(MSVC)
+    target_compile_options(arpg_raylib PRIVATE /utf-8)
+endif()

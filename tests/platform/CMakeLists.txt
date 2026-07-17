@@ -10,12 +10,16 @@ if(TARGET arpg_raylib)
         passive_tree_view_tests.cpp
         host_launch_options_tests.cpp
         dungeon_runtime_tests.cpp
-        death_input_gate_tests.cpp)
+        death_input_gate_tests.cpp
+        death_overlay_view_tests.cpp)
     target_sources(arpg_platform_tests PRIVATE inventory_view_math_tests.cpp)
     target_compile_features(arpg_platform_tests PRIVATE cxx_std_17)
     target_include_directories(arpg_platform_tests
         PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
     target_link_libraries(arpg_platform_tests PRIVATE arpg_raylib)
+    if(MSVC)
+        target_compile_options(arpg_platform_tests PRIVATE /utf-8)
+    endif()
     arpg_enable_project_warnings(arpg_platform_tests)
 
     add_test(NAME platform.units COMMAND arpg_platform_tests)

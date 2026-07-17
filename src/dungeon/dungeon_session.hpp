@@ -182,6 +182,7 @@ private:
     std::uint64_t last_room_experience_{};
     std::uint8_t last_levels_gained_{};
     bool death_detected_emitted_{};
+    bool death_continue_failed_{};
     passives::PassiveTreeError last_passive_tree_error_{
         passives::PassiveTreeError::none};
 };

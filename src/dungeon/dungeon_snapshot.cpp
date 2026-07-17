@@ -69,6 +69,7 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
             *visible_death,
             death_saving,
             !death_saving && phase_ == RoomPhase::death_pending,
+            !death_saving && death_continue_failed_,
         });
     }
     bool exits_open = phase_ == RoomPhase::cleared

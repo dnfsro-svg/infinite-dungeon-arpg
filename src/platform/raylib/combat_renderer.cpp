@@ -1,6 +1,7 @@
 #include "combat_renderer.hpp"
 
 #include "dungeon_runtime.hpp"
+#include "death_overlay_renderer.hpp"
 
 #include <raylib.h>
 
@@ -74,6 +75,7 @@ void CombatRenderer::draw(
         DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
             Fade(BLACK, overlay_alpha));
     }
+    draw_death_overlay(current);
 }
 
 }  // namespace arpg::platform

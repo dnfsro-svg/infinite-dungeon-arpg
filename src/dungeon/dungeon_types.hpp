@@ -144,6 +144,7 @@ struct DeathSnapshot final {
     checkpoint::DeathCheckpoint checkpoint{};
     bool saving{};
     bool can_continue{};
+    bool continue_failed{};
 };
 
 struct DungeonSnapshot final {

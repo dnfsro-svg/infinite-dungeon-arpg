@@ -164,6 +164,7 @@ arpg::test::Failure ordinary_pending_load_is_read_only() noexcept {
     ARPG_REQUIRE(snapshot.death.has_value());
     ARPG_REQUIRE(!snapshot.death->saving);
     ARPG_REQUIRE(snapshot.death->can_continue);
+    ARPG_REQUIRE(!snapshot.death->continue_failed);
     ARPG_REQUIRE(death_equals(snapshot.death->checkpoint, expected.death));
     ARPG_REQUIRE(!snapshot.has_active_room);
     ARPG_REQUIRE(!snapshot.combat.has_value());
@@ -667,6 +668,7 @@ arpg::test::Failure ordinary_death_not_committed_retries_identically() noexcept 
         PendingSaveKind::death_retreat});
     ARPG_REQUIRE(session.snapshot().phase == RoomPhase::combat);
     ARPG_REQUIRE(session.snapshot().combat.has_value());
+    ARPG_REQUIRE(!session.snapshot().death->continue_failed);
     ARPG_REQUIRE(!session.pending_save().has_value());
     session.tick({});
     const auto second = *session.pending_save();
@@ -962,12 +964,16 @@ arpg::test::Failure death_continue_not_committed_retries_exactly() noexcept {
     ARPG_REQUIRE(snapshot.phase == RoomPhase::death_pending);
     ARPG_REQUIRE(snapshot.death.has_value());
     ARPG_REQUIRE(snapshot.death->can_continue);
+    ARPG_REQUIRE(snapshot.death->continue_failed);
     ARPG_REQUIRE(snapshot.diagnostics.save_failure_count == 1U);
     ARPG_REQUIRE(!session.pending_save().has_value());
     ARPG_REQUIRE(dungeon::same_run_state(
         arpg::test::stable_state(session), persisted));
+    DungeonSession restarted{DungeonRules{}, persisted};
+    ARPG_REQUIRE(!restarted.snapshot().death->continue_failed);
 
     ARPG_REQUIRE(session.request_death_continue() == RequestResult::accepted);
+    ARPG_REQUIRE(!session.snapshot().death->continue_failed);
     const auto second = *session.pending_save();
     ARPG_REQUIRE(second.kind == first.kind);
     ARPG_REQUIRE(second.expected_generation == first.expected_generation);
