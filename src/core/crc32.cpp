@@ -1,6 +1,6 @@
-#include "persistence/crc32.hpp"
+#include "core/crc32.hpp"
 
-namespace arpg::persistence {
+namespace arpg::core {
 
 std::uint32_t crc32_update(std::uint32_t state,
     const std::uint8_t* bytes, std::size_t size) noexcept {
@@ -24,4 +24,4 @@ std::uint32_t crc32(
     return crc32_update(0U, bytes, size);
 }
 
-}  // namespace arpg::persistence
+}  // namespace arpg::core

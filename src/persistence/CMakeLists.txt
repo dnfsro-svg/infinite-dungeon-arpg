@@ -1,5 +1,4 @@
 add_library(arpg_persistence STATIC
-    crc32.cpp
     checkpoint_codec.cpp
     save_paths.cpp
     save_slot.cpp
@@ -13,4 +12,4 @@ if(MSVC)
     target_compile_options(arpg_persistence PUBLIC /EHsc)
 endif()
 arpg_enable_project_warnings(arpg_persistence)
-target_link_libraries(arpg_persistence PUBLIC arpg_progression arpg_passives PRIVATE arpg_items arpg_abyss)
+target_link_libraries(arpg_persistence PUBLIC arpg_progression arpg_passives PRIVATE arpg_items arpg_abyss arpg_core)
