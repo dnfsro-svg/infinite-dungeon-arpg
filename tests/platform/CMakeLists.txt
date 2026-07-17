@@ -2,7 +2,7 @@ if(TARGET arpg_raylib)
     add_executable(arpg_platform_tests
         ../core/allocation_probe.cpp
         platform_test_main.cpp
-        combat_key_bindings_tests.cpp
+        host_input_tests.cpp
         combat_feedback_tests.cpp
         combat_view_math_tests.cpp
         monster_view_tests.cpp
@@ -1018,4 +1018,13 @@ add_test(
         -P "${CMAKE_CURRENT_SOURCE_DIR}/input_latency_source_test.cmake")
 set_tests_properties(
     platform.input_latency_source
+    PROPERTIES LABELS "headless;platform;architecture")
+
+add_test(
+    NAME platform.host_input_source
+    COMMAND "${CMAKE_COMMAND}"
+        "-DRAYLIB_SOURCE_DIR=${PROJECT_SOURCE_DIR}/src/platform/raylib"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/host_input_source_test.cmake")
+set_tests_properties(
+    platform.host_input_source
     PROPERTIES LABELS "headless;platform;architecture")

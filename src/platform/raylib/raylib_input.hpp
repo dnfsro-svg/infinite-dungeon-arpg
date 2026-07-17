@@ -22,6 +22,9 @@ struct FrameKeyState final {
     bool inventory{};
     bool passives{};
     bool mouse_gameplay{};
+    bool enter{};
+    bool recovery{};
+    bool focus_lost{};
 };
 
 [[nodiscard]] bool platform_key_pressed(int raylib_key) noexcept;

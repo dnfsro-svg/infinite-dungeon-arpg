@@ -2,16 +2,16 @@
 
 #include "combat_audio.hpp"
 #include "combat_feedback.hpp"
-#include "combat_key_bindings.hpp"
 #include "combat_renderer.hpp"
 #include "core/fixed_step.hpp"
 #include "dungeon_runtime.hpp"
 #include "dungeon_view_math.hpp"
+#include "host_input.hpp"
 #include "inventory_renderer.hpp"
 #include "passive_tree_renderer.hpp"
 #include "passive_tree_view_math.hpp"
 #include "persistence/save_paths.hpp"
-#include "raylib_input.hpp"
+#include "platform/settings/settings_types.hpp"
 
 #include <raylib.h>
 
@@ -32,54 +32,6 @@ static_assert(RAYLIB_VERSION_PATCH == 0, "raylib 6.0.0 is required");
 
 namespace arpg::platform {
 namespace {
-
-std::int8_t key_direction(int negative_key, int positive_key) noexcept {
-    const int negative = platform_key_down(negative_key) ? 1 : 0;
-    const int positive = platform_key_down(positive_key) ? 1 : 0;
-    return static_cast<std::int8_t>(positive - negative);
-}
-
-struct HostFrameInput final {
-    FrameKeyState keys{};
-    combat::MovementInput movement{};
-    std::array<bool, kCombatKeyBindings.size()> actions{};
-    Vector2 mouse_position{};
-};
-
-combat::MovementInput sample_movement_input() noexcept {
-    return {key_direction(KEY_A, KEY_D), key_direction(KEY_W, KEY_S)};
-}
-
-HostFrameInput sample_host_frame_input() noexcept {
-    HostFrameInput input{};
-    input.keys.e = platform_key_pressed(KEY_E);
-    input.keys.f12 = platform_key_pressed(KEY_F12);
-    input.keys.v = platform_key_pressed(KEY_V);
-    input.keys.f1 = platform_key_pressed(KEY_F1);
-    input.keys.escape = platform_key_pressed(KEY_ESCAPE);
-    input.movement = sample_movement_input();
-    input.keys.movement = input.movement.x != 0 || input.movement.y != 0;
-    for (std::size_t index = 0U; index < kCombatKeyBindings.size(); ++index) {
-        input.actions[index] = platform_key_pressed(kCombatKeyBindings[index].key);
-        input.keys.attack = input.keys.attack || input.actions[index];
-    }
-    input.keys.reset = platform_key_pressed(KEY_R);
-    input.keys.inventory = platform_key_pressed(kInventoryKey);
-    input.keys.passives = platform_key_pressed(kPassiveOverlayKey);
-    input.keys.mouse_gameplay = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
-    if (input.keys.mouse_gameplay) input.mouse_position = GetMousePosition();
-    return input;
-}
-
-void submit_frame_actions(dungeon::DungeonSession& session,
-    const HostFrameInput& input) noexcept {
-    for (std::size_t index = 0U; index < kCombatKeyBindings.size(); ++index) {
-        if (input.actions[index]) {
-            static_cast<void>(session.queue_action(
-                kCombatKeyBindings[index].action));
-        }
-    }
-}
 
 void drain_events(dungeon::DungeonSession& session, CombatRenderer& renderer,
     CombatFeedback& feedback, CombatAudio& audio) noexcept {
@@ -464,6 +416,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         unsigned validation_capture_count = 0U;
         Stage10ValidationState stage10_validation_state{};
         Stage11ValidationState stage11_validation_state{};
+        const settings::SettingsData input_settings = settings::default_settings();
         bool stage10_validation_captured = false;
         const std::string validation_capture_prefix = config.validation_capture
             ? (*save_directory / "stage8-validation-").string()
@@ -489,9 +442,11 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         }
 
         while (!WindowShouldClose() && !exit_requested) {
-            HostFrameInput frame_input = sample_host_frame_input();
+            const PhysicalKeySnapshot physical_keys = sample_physical_keys();
+            HostFrameInput frame_input = map_host_frame_input(
+                input_settings, physical_keys);
             if (recovery_requested(runtime.state() == DungeonRuntimeState::recovery_required,
-                    platform_key_pressed(KEY_N))) {
+                    frame_input.keys.recovery)) {
                 if (runtime.recover_with_new_run() && runtime.session() != nullptr) {
                     current = runtime.session()->snapshot();
                     previous = current;

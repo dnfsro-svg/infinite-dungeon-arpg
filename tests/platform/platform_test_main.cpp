@@ -8,7 +8,7 @@
 arpg::test::TestSuite combat_view_math_suite() noexcept;
 arpg::test::TestSuite monster_view_suite() noexcept;
 arpg::test::TestSuite combat_feedback_suite() noexcept;
-arpg::test::TestSuite combat_key_bindings_suite() noexcept;
+arpg::test::TestSuite host_input_suite() noexcept;
 arpg::test::TestSuite dungeon_view_math_suite() noexcept;
 arpg::test::TestSuite passive_tree_view_suite() noexcept;
 arpg::test::TestSuite host_launch_options_suite() noexcept;
@@ -31,7 +31,7 @@ int main() {
         combat_view_math_suite(),
         monster_view_suite(),
         combat_feedback_suite(),
-        combat_key_bindings_suite(),
+        host_input_suite(),
         dungeon_view_math_suite(),
         passive_tree_view_suite(),
         host_launch_options_suite(),
@@ -41,5 +41,5 @@ int main() {
         death_overlay_view_suite(),
     };
 
-    return arpg::test::run_suites(suites, 104, "stage 11a task 10 death overlay");
+    return arpg::test::run_suites(suites, 114, "stage 11b task 4 host input");
 }
