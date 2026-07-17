@@ -1041,21 +1041,45 @@ function(arpg_verify_direct_input_poison)
             "direct input poison must expose a compilable active sentinel")
     endif()
 
-    set(_arpg_poison_probes
-        "KEY|IsKeyDown(0)"
-        "MOUSE|IsMouseButtonDown(0)"
-        "FOCUS|IsWindowFocused()"
-        "PLATFORM_WRAPPER|platform_key_down(0)"
-        "ADDRESS|&IsKeyDown")
-    foreach(_arpg_poison_probe IN LISTS _arpg_poison_probes)
-        string(REPLACE "|" ";" _arpg_poison_parts
-            "${_arpg_poison_probe}")
-        list(GET _arpg_poison_parts 0 _arpg_poison_label)
-        list(GET _arpg_poison_parts 1 _arpg_poison_expression)
+    foreach(_arpg_poison_label IN ITEMS
+            KEY MOUSE FOCUS PLATFORM_WRAPPER ADDRESS)
+        if(_arpg_poison_label STREQUAL "KEY")
+            set(_arpg_poison_declaration "bool IsKeyDown(int);")
+            set(_arpg_poison_expression "IsKeyDown(0)")
+        elseif(_arpg_poison_label STREQUAL "MOUSE")
+            set(_arpg_poison_declaration "bool IsMouseButtonDown(int);")
+            set(_arpg_poison_expression "IsMouseButtonDown(0)")
+        elseif(_arpg_poison_label STREQUAL "FOCUS")
+            set(_arpg_poison_declaration "bool IsWindowFocused();")
+            set(_arpg_poison_expression "IsWindowFocused()")
+        elseif(_arpg_poison_label STREQUAL "PLATFORM_WRAPPER")
+            set(_arpg_poison_declaration
+                "namespace arpg::platform { bool platform_key_down(int) noexcept; }\nusing arpg::platform::platform_key_down;")
+            set(_arpg_poison_expression "platform_key_down(0)")
+        else()
+            set(_arpg_poison_declaration "bool IsKeyDown(int);")
+            set(_arpg_poison_expression "&IsKeyDown")
+        endif()
+
         set(_arpg_poison_result
             "ARPG_DIRECT_INPUT_POISON_${_arpg_poison_label}_COMPILES")
+        set(_arpg_control_result
+            "ARPG_DIRECT_INPUT_CONTROL_${_arpg_poison_label}_COMPILES")
+        unset("${_arpg_control_result}" CACHE)
+        check_cxx_source_compiles("
+            ${_arpg_poison_declaration}
+            int main() {
+                static_cast<void>(${_arpg_poison_expression});
+                return 0;
+            }
+        " "${_arpg_control_result}")
+        if(NOT ${_arpg_control_result})
+            message(FATAL_ERROR
+                "direct input control probe must compile for ${_arpg_poison_label}")
+        endif()
         unset("${_arpg_poison_result}" CACHE)
         check_cxx_source_compiles("
+            ${_arpg_poison_declaration}
             #include \"direct_input_poison.hpp\"
             int main() {
                 static_cast<void>(${_arpg_poison_expression});
