@@ -320,18 +320,28 @@ arpg::test::Failure each_retreat_input_changes_the_named_stream() noexcept {
 
     auto changed = current;
     ++changed.current_room.seed;
-    ARPG_REQUIRE(dungeon::make_death_retreat_target(
-        changed, 41U, DungeonRules{}).room.seed != base.room.seed);
+    const auto changed_seed = dungeon::make_death_retreat_target(
+        changed, 41U, DungeonRules{});
+    ARPG_REQUIRE(changed_seed.fault == DungeonFault::none);
+    ARPG_REQUIRE(changed_seed.room.seed != base.room.seed);
     changed = current;
     ++changed.commit_generation;
-    ARPG_REQUIRE(dungeon::make_death_retreat_target(
-        changed, 41U, DungeonRules{}).room.seed != base.room.seed);
-    ARPG_REQUIRE(dungeon::make_death_retreat_target(
-        current, 42U, DungeonRules{}).room.seed != base.room.seed);
+    const auto changed_generation = dungeon::make_death_retreat_target(
+        changed, 41U, DungeonRules{});
+    ARPG_REQUIRE(changed_generation.fault == DungeonFault::none);
+    ARPG_REQUIRE(changed_generation.room.seed != base.room.seed);
+    changed = current;
+    ++changed.death_sequence;
+    const auto changed_sequence = dungeon::make_death_retreat_target(
+        changed, 42U, DungeonRules{});
+    ARPG_REQUIRE(changed_sequence.fault == DungeonFault::none);
+    ARPG_REQUIRE(changed_sequence.room.seed != base.room.seed);
     changed = current;
     ++changed.current_room.depth;
-    ARPG_REQUIRE(dungeon::make_death_retreat_target(
-        changed, 41U, DungeonRules{}).room.seed != base.room.seed);
+    const auto changed_depth = dungeon::make_death_retreat_target(
+        changed, 41U, DungeonRules{});
+    ARPG_REQUIRE(changed_depth.fault == DungeonFault::none);
+    ARPG_REQUIRE(changed_depth.room.seed != base.room.seed);
     return {};
 }
 
