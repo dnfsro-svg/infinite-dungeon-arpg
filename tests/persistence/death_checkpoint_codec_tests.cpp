@@ -1,4 +1,5 @@
 #include "test_framework.hpp"
+#include "v5_golden_fixture.hpp"
 
 #include "persistence/checkpoint_codec.hpp"
 
@@ -29,18 +30,6 @@ void refresh_crc(std::vector<std::uint8_t>& bytes) noexcept {
     write_u32(bytes, 28U, checksum);
 }
 
-std::vector<std::uint8_t> as_v5_fixture(
-    const std::vector<std::uint8_t>& v6) {
-    auto v5 = v6;
-    v5.erase(v5.begin() + 236U, v5.begin() + 460U);
-    const std::array<std::uint8_t, 8U> magic{{'I','A','R','P','G','S','0','6'}};
-    std::copy(magic.begin(), magic.end(), v5.begin());
-    write_u32(v5, 8U, 5U);
-    write_u32(v5, 24U, static_cast<std::uint32_t>(v5.size() - 32U));
-    refresh_crc(v5);
-    return v5;
-}
-
 checkpoint::DungeonRunState make_state() noexcept {
     checkpoint::DungeonRunState state{};
     state.root_seed = 0x1020304050607080ULL;
@@ -57,30 +46,34 @@ checkpoint::DeathCheckpoint make_pending_death() noexcept {
     checkpoint::DeathCheckpoint death{};
     death.lifecycle = checkpoint::DeathLifecycle::pending_continue;
     death.data_version = checkpoint::kDeathCheckpointDataVersion;
-    death.death_depth = 5U;
-    death.death_floor_room_index = 7U;
+    death.death_depth = 0x0102030405060708ULL;
+    death.death_floor_room_index = 0x1112131415161718ULL;
     death.death_ecology = checkpoint::DungeonElement::chaos;
     death.death_was_abyss = true;
     death.source_kind = checkpoint::DeathSourceKind::ground_hazard;
-    death.source_monster_id = 3U;
-    death.source_detail_id = 41U;
+    death.source_monster_id = 0x4BU;
+    death.source_detail_id = 0xA1B2U;
     death.damage_type = checkpoint::DeathDamageType::lightning;
-    death.raw_damage = 90U;
-    death.barrier_loss = 10U;
-    death.health_loss = 40U;
-    death.final_damage = 50U;
-    death.recent_damage = {{1U, 2U, 3U, 50U, 5U}};
+    death.raw_damage = 0x2122232425262728ULL;
+    death.barrier_loss = 0x0102U;
+    death.health_loss = 0x0304U;
+    death.final_damage = 0x0406U;
+    death.recent_damage = {{
+        0x0102030405060708ULL, 0x1112131415161718ULL,
+        0x2122232425262728ULL, 0x3132333435363738ULL,
+        0x4142434445464748ULL}};
     death.hp = 0;
-    death.max_hp = 100;
+    death.max_hp = 0x01020304;
     death.barrier = 0;
-    death.max_barrier = 20;
-    death.armor = 1234;
-    death.evasion = 5678;
-    death.armor_reduction_bp = 2345;
-    death.evasion_rate_bp = 3456;
-    death.damage_reduction = {{-1000, 1000, 2000, 3000}};
+    death.max_barrier = 0x11121314;
+    death.armor = 0x0102030405060708LL;
+    death.evasion = 0x1112131415161718LL;
+    death.armor_reduction_bp = 0x1234;
+    death.evasion_rate_bp = 0x2345;
+    death.damage_reduction = {{-0x0102, 0x0304, 0x0506, 0x0708}};
     death.damage_reduction_cap = {{7500, 8000, 8500, 9000}};
-    death.target_room = {18U, 0x0FEDCBA987654321ULL, 4U, 0U,
+    death.target_room = {0x5152535455565758ULL,
+        0x6162636465666768ULL, 0x0102030405060707ULL, 0U,
         checkpoint::EntrySide::initial, checkpoint::DungeonElement::water,
         true, false};
     return death;
@@ -120,6 +113,13 @@ bool same_death(const checkpoint::DeathCheckpoint& left,
         && left.target_room.is_abyss == right.target_room.is_abyss;
 }
 
+template <std::size_t Size>
+bool bytes_at(const std::vector<std::uint8_t>& bytes, std::size_t offset,
+    const std::array<std::uint8_t, Size>& expected) noexcept {
+    return offset <= bytes.size() && bytes.size() - offset >= Size
+        && std::equal(expected.begin(), expected.end(), bytes.begin() + offset);
+}
+
 arpg::test::Failure v6_layout_and_full_round_trip() noexcept {
     static_assert(persistence::kV6DeathPayloadSize == 224U);
     static_assert(persistence::kV6BasePayloadSize == 428U);
@@ -136,8 +136,47 @@ arpg::test::Failure v6_layout_and_full_round_trip() noexcept {
     ARPG_REQUIRE((*encoded)[24U] == 0xACU && (*encoded)[25U] == 0x01U);
     ARPG_REQUIRE((*encoded)[236U] == 12U);
     ARPG_REQUIRE((*encoded)[244U] == 1U);
-    ARPG_REQUIRE((*encoded)[249U] == 0U && (*encoded)[254U] == 0U
-        && (*encoded)[255U] == 0U);
+    ARPG_REQUIRE(bytes_at(*encoded, 245U,
+        std::array<std::uint8_t, 9U>{{
+            0x01U, 0x02U, 0x03U, 0x4BU, 0x00U,
+            0xB2U, 0xA1U, 0x01U, 0x03U}}));
+    ARPG_REQUIRE(bytes_at(*encoded, 254U,
+        std::array<std::uint8_t, 2U>{{0x00U, 0x00U}}));
+    ARPG_REQUIRE(bytes_at(*encoded, 256U,
+        std::array<std::uint8_t, 48U>{{
+            0x08U,0x07U,0x06U,0x05U,0x04U,0x03U,0x02U,0x01U,
+            0x18U,0x17U,0x16U,0x15U,0x14U,0x13U,0x12U,0x11U,
+            0x28U,0x27U,0x26U,0x25U,0x24U,0x23U,0x22U,0x21U,
+            0x02U,0x01U,0x00U,0x00U,0x00U,0x00U,0x00U,0x00U,
+            0x04U,0x03U,0x00U,0x00U,0x00U,0x00U,0x00U,0x00U,
+            0x06U,0x04U,0x00U,0x00U,0x00U,0x00U,0x00U,0x00U}}));
+    ARPG_REQUIRE(bytes_at(*encoded, 304U,
+        std::array<std::uint8_t, 40U>{{
+            0x08U,0x07U,0x06U,0x05U,0x04U,0x03U,0x02U,0x01U,
+            0x18U,0x17U,0x16U,0x15U,0x14U,0x13U,0x12U,0x11U,
+            0x28U,0x27U,0x26U,0x25U,0x24U,0x23U,0x22U,0x21U,
+            0x38U,0x37U,0x36U,0x35U,0x34U,0x33U,0x32U,0x31U,
+            0x48U,0x47U,0x46U,0x45U,0x44U,0x43U,0x42U,0x41U}}));
+    ARPG_REQUIRE(bytes_at(*encoded, 344U,
+        std::array<std::uint8_t, 40U>{{
+            0x00U,0x00U,0x00U,0x00U, 0x04U,0x03U,0x02U,0x01U,
+            0x00U,0x00U,0x00U,0x00U, 0x14U,0x13U,0x12U,0x11U,
+            0x08U,0x07U,0x06U,0x05U,0x04U,0x03U,0x02U,0x01U,
+            0x18U,0x17U,0x16U,0x15U,0x14U,0x13U,0x12U,0x11U,
+            0x34U,0x12U,0x00U,0x00U, 0x45U,0x23U,0x00U,0x00U}}));
+    ARPG_REQUIRE(bytes_at(*encoded, 384U,
+        std::array<std::uint8_t, 32U>{{
+            0xFEU,0xFEU,0xFFU,0xFFU, 0x04U,0x03U,0x00U,0x00U,
+            0x06U,0x05U,0x00U,0x00U, 0x08U,0x07U,0x00U,0x00U,
+            0x4CU,0x1DU,0x00U,0x00U, 0x40U,0x1FU,0x00U,0x00U,
+            0x34U,0x21U,0x00U,0x00U, 0x28U,0x23U,0x00U,0x00U}}));
+    ARPG_REQUIRE(bytes_at(*encoded, 416U,
+        std::array<std::uint8_t, 36U>{{
+            0x58U,0x57U,0x56U,0x55U,0x54U,0x53U,0x52U,0x51U,
+            0x68U,0x67U,0x66U,0x65U,0x64U,0x63U,0x62U,0x61U,
+            0x07U,0x07U,0x06U,0x05U,0x04U,0x03U,0x02U,0x01U,
+            0x00U,0x00U,0x00U,0x00U,0x00U,0x00U,0x00U,0x00U,
+            0x00U,0x01U,0x01U,0x00U}}));
     ARPG_REQUIRE(std::all_of(encoded->begin() + 452U,
         encoded->begin() + 460U, [](std::uint8_t value) { return value == 0U; }));
     const auto decoded = persistence::decode_checkpoint(encoded->data(), encoded->size());
@@ -159,32 +198,102 @@ arpg::test::Failure v6_layout_and_full_round_trip() noexcept {
 }
 
 arpg::test::Failure v5_fixture_migrates_to_canonical_none() noexcept {
-    auto state = make_state();
-    arpg::items::ItemInstance item{};
-    item.id = 17U;
-    item.base_id = 1U;
-    item.rarity = arpg::items::ItemRarity::normal;
-    item.item_level = 1U;
-    item.required_level = 1U;
-    state.item_ownership.items.push_back(item);
-    state.item_ownership.equipment.equipped_ids[0] = item.id;
-    state.item_ownership.claimed_drop_bits = {{1U, 2U, 4U}};
-    state.item_ownership.next_item_sequence = 18U;
-    const auto current = persistence::encode_checkpoint(state);
-    ARPG_REQUIRE(current.has_value());
-    const auto v5 = as_v5_fixture(*current);
-    ARPG_REQUIRE(v5.size() == 276U);
+    const auto& v5 = arpg::test::fixtures::kV5FullState;
     const auto decoded = persistence::decode_checkpoint(v5.data(), v5.size());
     ARPG_REQUIRE(decoded.error == persistence::CodecError::none);
     ARPG_REQUIRE(decoded.migrated);
-    ARPG_REQUIRE(decoded.state.root_seed == state.root_seed);
-    ARPG_REQUIRE(decoded.state.current_room.seed == state.current_room.seed);
-    ARPG_REQUIRE(decoded.state.item_ownership.items.size() == 1U);
-    ARPG_REQUIRE(decoded.state.item_ownership.items[0].id == item.id);
-    ARPG_REQUIRE(decoded.state.item_ownership.equipment.equipped_ids[0] == item.id);
-    ARPG_REQUIRE(decoded.state.item_ownership.claimed_drop_bits
-        == state.item_ownership.claimed_drop_bits);
-    ARPG_REQUIRE(decoded.state.item_ownership.next_item_sequence == 18U);
+    const auto& state = decoded.state;
+    ARPG_REQUIRE(state.root_seed == 0x0102030405060708ULL);
+    ARPG_REQUIRE(state.commit_generation == 0x1112131415161718ULL);
+    ARPG_REQUIRE((state.biases == std::array<std::uint32_t, 4U>{{
+        0x21222324U, 0x25262728U, 0x292A2B2CU, 0x2D2E2F30U}}));
+    ARPG_REQUIRE(state.current_room.index == 0x3132333435363738ULL);
+    ARPG_REQUIRE(state.current_room.seed == 321U);
+    ARPG_REQUIRE(state.current_room.depth == 40U);
+    ARPG_REQUIRE(state.current_room.floor_room_index
+        == 0x4142434445464748ULL);
+    ARPG_REQUIRE(state.current_room.entry == checkpoint::EntrySide::right);
+    ARPG_REQUIRE(state.current_room.ecology == checkpoint::DungeonElement::chaos);
+    ARPG_REQUIRE(state.current_room.has_hole && state.current_room.is_abyss);
+    ARPG_REQUIRE(state.last_transition == checkpoint::TransitionKind::door);
+    ARPG_REQUIRE(state.last_direction == checkpoint::ExitDirection::left);
+    ARPG_REQUIRE(state.progression.level == 10U);
+    ARPG_REQUIRE(state.progression.experience == 0U);
+    ARPG_REQUIRE(state.progression.earned_passive_points == 9U);
+    ARPG_REQUIRE(state.progression.unspent_passive_points == 6U);
+    ARPG_REQUIRE(state.passive_tree.allocated_bits == 0x701ULL);
+    ARPG_REQUIRE(state.abyss.lifecycle == arpg::abyss::AbyssLifecycle::cleared);
+    ARPG_REQUIRE(state.abyss.danger == arpg::abyss::AbyssDanger::high);
+    ARPG_REQUIRE(state.abyss.rule == arpg::abyss::AbyssRuleId::chaos_expansion);
+    ARPG_REQUIRE(state.abyss.rules_version == 1U);
+    ARPG_REQUIRE(state.abyss.reward_total == 3U);
+    ARPG_REQUIRE(state.abyss.generated_mask == 3U);
+    ARPG_REQUIRE(state.abyss.claimed_mask == 1U);
+    ARPG_REQUIRE(state.abyss.abandoned_mask == 4U);
+    ARPG_REQUIRE(state.abyss.reward_revision == 0x11223344U);
+    ARPG_REQUIRE(state.last_abyss_resolution.valid);
+    ARPG_REQUIRE(state.last_abyss_resolution.room_seed == 321U);
+    ARPG_REQUIRE(state.last_abyss_resolution.rule
+        == arpg::abyss::AbyssRuleId::chaos_expansion);
+    ARPG_REQUIRE(state.last_abyss_resolution.total == 3U);
+    ARPG_REQUIRE(state.last_abyss_resolution.generated == 2U);
+    ARPG_REQUIRE(state.last_abyss_resolution.claimed == 1U);
+    ARPG_REQUIRE(state.last_abyss_resolution.abandoned == 1U);
+
+    ARPG_REQUIRE(state.item_ownership.items.size() == 3U);
+    ARPG_REQUIRE(state.item_ownership.next_item_sequence
+        == 0x8182838485868788ULL);
+    ARPG_REQUIRE((state.item_ownership.claimed_drop_bits
+        == std::array<std::uint64_t, 3U>{{
+            0x9192939495969798ULL, 0xA1A2A3A4A5A6A7A8ULL,
+            0xB1B2B3B4B5B6B7B8ULL}}));
+    ARPG_REQUIRE((state.item_ownership.equipment.equipped_ids
+        == std::array<std::uint64_t, 6U>{{
+            0x6162636465666768ULL, 0U, 0U, 0U, 0U,
+            0x7172737475767778ULL}}));
+    const auto& normal = state.item_ownership.items[0];
+    ARPG_REQUIRE(normal.id == 0x5152535455565758ULL && normal.base_id == 2U);
+    ARPG_REQUIRE(normal.rarity == arpg::items::ItemRarity::normal
+        && normal.item_level == 1U && normal.required_level == 1U
+        && normal.affix_count == 0U);
+    const auto& magic = state.item_ownership.items[1];
+    ARPG_REQUIRE(magic.id == 0x6162636465666768ULL && magic.base_id == 1U);
+    ARPG_REQUIRE(magic.rarity == arpg::items::ItemRarity::magic
+        && magic.item_level == 1U && magic.required_level == 1U
+        && magic.affix_count == 1U);
+    ARPG_REQUIRE(magic.affixes[0].affix_id == 1U
+        && magic.affixes[0].tier == 8U && magic.affixes[0].variant == 0xFFU);
+    const auto& rare = state.item_ownership.items[2];
+    ARPG_REQUIRE(rare.id == 0x7172737475767778ULL && rare.base_id == 6U);
+    ARPG_REQUIRE(rare.rarity == arpg::items::ItemRarity::rare
+        && rare.item_level == 1U && rare.required_level == 1U
+        && rare.affix_count == 3U);
+    ARPG_REQUIRE(rare.affixes[0].affix_id == 7U
+        && rare.affixes[0].tier == 8U && rare.affixes[0].variant == 0xFFU);
+    ARPG_REQUIRE(rare.affixes[1].affix_id == 111U
+        && rare.affixes[1].tier == 8U && rare.affixes[1].variant == 0xFFU);
+    ARPG_REQUIRE(rare.affixes[2].affix_id == 112U
+        && rare.affixes[2].tier == 8U && rare.affixes[2].variant == 3U);
+    for (const auto& roll : normal.affixes) {
+        ARPG_REQUIRE(roll.affix_id == 0U
+            && roll.tier == 0U && roll.variant == 0U);
+    }
+    for (std::size_t index = 1U; index < magic.affixes.size(); ++index) {
+        ARPG_REQUIRE(magic.affixes[index].affix_id == 0U
+            && magic.affixes[index].tier == 0U
+            && magic.affixes[index].variant == 0U);
+    }
+    for (std::size_t index = 3U; index < rare.affixes.size(); ++index) {
+        ARPG_REQUIRE(rare.affixes[index].affix_id == 0U
+            && rare.affixes[index].tier == 0U
+            && rare.affixes[index].variant == 0U);
+    }
+    ARPG_REQUIRE(std::all_of(normal.reserved.begin(), normal.reserved.end(),
+        [](std::uint8_t value) noexcept { return value == 0U; }));
+    ARPG_REQUIRE(std::all_of(magic.reserved.begin(), magic.reserved.end(),
+        [](std::uint8_t value) noexcept { return value == 0U; }));
+    ARPG_REQUIRE(std::all_of(rare.reserved.begin(), rare.reserved.end(),
+        [](std::uint8_t value) noexcept { return value == 0U; }));
     ARPG_REQUIRE(decoded.state.death_sequence == 0U);
     ARPG_REQUIRE(same_death(decoded.state.death, checkpoint::DeathCheckpoint{}));
     return {};
@@ -212,12 +321,14 @@ arpg::test::Failure v6_death_enum_boolean_reserved_and_state_errors() noexcept {
     ARPG_REQUIRE(rejects(252U, 2U, persistence::CodecError::invalid_boolean));
     ARPG_REQUIRE(rejects(450U, 2U, persistence::CodecError::invalid_boolean));
     ARPG_REQUIRE(rejects(451U, 2U, persistence::CodecError::invalid_boolean));
-    ARPG_REQUIRE(rejects(249U, 1U, persistence::CodecError::invalid_state));
-    ARPG_REQUIRE(rejects(254U, 1U, persistence::CodecError::invalid_state));
-    ARPG_REQUIRE(rejects(452U, 1U, persistence::CodecError::invalid_state));
+    for (const std::size_t offset : std::array<std::size_t, 11U>{{
+             249U, 254U, 255U, 452U, 453U, 454U, 455U,
+             456U, 457U, 458U, 459U}}) {
+        ARPG_REQUIRE(rejects(
+            offset, 1U, persistence::CodecError::invalid_state));
+    }
     ARPG_REQUIRE(rejects(296U, 49U, persistence::CodecError::invalid_state));
     ARPG_REQUIRE(rejects(248U, 0xFFU, persistence::CodecError::invalid_state));
-    ARPG_REQUIRE(rejects(348U, 0U, persistence::CodecError::invalid_state));
     ARPG_REQUIRE(rejects(367U, 0x80U, persistence::CodecError::invalid_state));
     ARPG_REQUIRE(rejects(377U, 0xFFU, persistence::CodecError::invalid_state));
     ARPG_REQUIRE(rejects(440U, 1U, persistence::CodecError::invalid_state));
@@ -227,6 +338,13 @@ arpg::test::Failure v6_death_enum_boolean_reserved_and_state_errors() noexcept {
     refresh_crc(recent_overflow);
     ARPG_REQUIRE(persistence::decode_checkpoint(
         recent_overflow.data(), recent_overflow.size()).error
+        == persistence::CodecError::invalid_state);
+    auto max_hp_zero = *encoded;
+    std::fill(max_hp_zero.begin() + 348U, max_hp_zero.begin() + 352U,
+        static_cast<std::uint8_t>(0U));
+    refresh_crc(max_hp_zero);
+    ARPG_REQUIRE(persistence::decode_checkpoint(
+        max_hp_zero.data(), max_hp_zero.size()).error
         == persistence::CodecError::invalid_state);
 
     auto invalid = state;
