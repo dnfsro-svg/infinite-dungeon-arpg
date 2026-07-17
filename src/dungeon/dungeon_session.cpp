@@ -412,7 +412,7 @@ void DungeonSession::construct_current_room() noexcept {
 bool DungeonSession::validate_pending_death_state() const noexcept {
     const auto& state = stable_state_;
     const auto& death = state.death;
-    if (state.commit_generation == 0U || state.death_sequence == 0U
+    if (state.commit_generation < 2U || state.death_sequence == 0U
             || state.current_room.is_abyss
             || static_cast<std::uint8_t>(state.current_room.entry)
                 > static_cast<std::uint8_t>(EntrySide::right)

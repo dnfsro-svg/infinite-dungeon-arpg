@@ -254,6 +254,26 @@ arpg::test::Failure sequence_generation_and_anchor_mutations_fail_closed() noexc
     return {};
 }
 
+arpg::test::Failure first_generation_cannot_claim_a_committed_death() noexcept {
+    auto state = pending_state();
+    state.commit_generation = 1U;
+    state.death_sequence = 1U;
+
+    checkpoint::DungeonRunState pre_commit = state;
+    pre_commit.commit_generation = 0U;
+    pre_commit.death_sequence = 0U;
+    pre_commit.death = {};
+    const auto target = dungeon::make_death_retreat_target(
+        pre_commit, 1U, DungeonRules{});
+    ARPG_REQUIRE(target.fault == dungeon::DungeonFault::none);
+    state.death.target_room = target.room;
+
+    DungeonSession session{DungeonRules{}, state};
+    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::faulted);
+    ARPG_REQUIRE(!session.snapshot().combat.has_value());
+    return {};
+}
+
 arpg::test::Failure source_catalog_accepts_only_canonical_ids() noexcept {
     constexpr std::array<DeathSourceKind, 6U> kinds{{
         DeathSourceKind::monster_attack,
@@ -379,6 +399,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"none lifecycle constructs existing room", &none_lifecycle_constructs_the_existing_room},
     {"target regeneration mutations fail closed", &target_regeneration_mutations_fail_closed},
     {"sequence generation and anchor mutations fail closed", &sequence_generation_and_anchor_mutations_fail_closed},
+    {"first generation cannot claim committed death", &first_generation_cannot_claim_a_committed_death},
     {"source catalog accepts canonical ids", &source_catalog_accepts_only_canonical_ids},
     {"abyss failure relationships are defended", &abyss_failure_relationships_are_defended},
     {"ordinary death preserves historical resolution", &ordinary_death_preserves_valid_historical_resolution},
