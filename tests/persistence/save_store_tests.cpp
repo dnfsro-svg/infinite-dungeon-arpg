@@ -65,6 +65,35 @@ checkpoint::DungeonRunState make_state(std::uint64_t generation,
     return state;
 }
 
+checkpoint::DungeonRunState with_pending_death(
+    checkpoint::DungeonRunState state) noexcept {
+    state.death_sequence = 1U;
+    state.biases = {};
+    state.current_room.is_abyss = false;
+    state.last_transition = checkpoint::TransitionKind::death_retreat;
+    state.last_direction = checkpoint::ExitDirection::none;
+    auto& death = state.death;
+    death.lifecycle = checkpoint::DeathLifecycle::pending_continue;
+    death.data_version = checkpoint::kDeathCheckpointDataVersion;
+    death.death_depth = state.current_room.depth;
+    death.death_floor_room_index = state.current_room.floor_room_index;
+    death.death_ecology = state.current_room.ecology;
+    death.source_kind = checkpoint::DeathSourceKind::unknown;
+    death.source_monster_id = 0xFFU;
+    death.damage_type = checkpoint::DeathDamageType::physical;
+    death.raw_damage = 10U;
+    death.health_loss = 10U;
+    death.final_damage = 10U;
+    death.recent_damage[0] = 10U;
+    death.max_hp = 10;
+    death.damage_reduction_cap = {{7500, 7500, 7500, 7500}};
+    death.target_room = {state.current_room.index + 1U, 0xD34DULL,
+        state.current_room.depth > 1U ? state.current_room.depth - 1U : 1U,
+        0U, checkpoint::EntrySide::initial,
+        checkpoint::DungeonElement::water, false, false};
+    return state;
+}
+
 items::ItemInstance normal_item(std::uint64_t id,
     std::uint8_t base_id = 1U) noexcept {
     items::ItemInstance item{};
@@ -361,12 +390,34 @@ arpg::test::Failure same_state_includes_all_ownership_bytes_and_order() noexcept
     rhs = lhs;
     rhs.last_abyss_resolution.room_seed = 1U;
     ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+    rhs = lhs;
+    ++rhs.death_sequence;
+    ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+    lhs = with_pending_death(lhs);
+    rhs = lhs;
+    ++rhs.death.raw_damage;
+    ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
 
     TempDirectory directory;
     write_bytes(directory.path / "run_a.sav", encoded(lhs));
     rhs = lhs;
     rhs.item_ownership.items[0].id = 99U;
     rhs.item_ownership.next_item_sequence = 100U;
+    write_bytes(directory.path / "run_b.sav", encoded(rhs));
+    auto store = make_store(directory.path);
+    const auto loaded = store.load();
+    ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::recovery_required);
+    ARPG_REQUIRE(loaded.error == persistence::SaveError::conflicting_slots);
+    return {};
+}
+
+arpg::test::Failure equal_generation_death_difference_conflicts() noexcept {
+    TempDirectory directory;
+    const auto lhs = with_pending_death(make_state(7U, 77U));
+    auto rhs = lhs;
+    ++rhs.death.raw_damage;
+    ++rhs.death.recent_damage[0];
+    write_bytes(directory.path / "run_a.sav", encoded(lhs));
     write_bytes(directory.path / "run_b.sav", encoded(rhs));
     auto store = make_store(directory.path);
     const auto loaded = store.load();
@@ -417,6 +468,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"temp files do not participate in load", &temp_files_do_not_participate_in_load},
     {"variable length slots rotate large then small", &variable_length_slots_rotate_large_then_small},
     {"same state includes ownership bytes and order", &same_state_includes_all_ownership_bytes_and_order},
+    {"equal generation death difference conflicts", &equal_generation_death_difference_conflicts},
     {"migrated flag follows selected ab slot", &migrated_flag_follows_the_selected_ab_slot},
     {"migrated flag survives invalid slot recovery", &migrated_flag_survives_invalid_slot_recovery},
 };

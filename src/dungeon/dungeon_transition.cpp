@@ -931,6 +931,17 @@ void DungeonSession::commit_pending_save(
         enter_fault(DungeonFault::save_receipt_mismatch);
         return;
     }
+    if (!pending_death_cache_consistent()) {
+        enter_fault(DungeonFault::save_receipt_mismatch);
+        return;
+    }
+    const bool death_pending = pending_save_->kind
+        == PendingSaveKind::death_retreat;
+    if (death_pending && (!result.kind.has_value()
+            || *result.kind != PendingSaveKind::death_retreat)) {
+        enter_fault(DungeonFault::save_receipt_mismatch);
+        return;
+    }
     if (result.disposition == SaveDisposition::indeterminate) {
         enter_fault(DungeonFault::save_commit_indeterminate);
         return;
@@ -984,6 +995,7 @@ void DungeonSession::commit_pending_save(
     const bool clear_commit = kind == PendingSaveKind::abyss_clear;
     const bool reward_commit = kind
         == PendingSaveKind::abyss_reward_materialized;
+    const bool death_commit = kind == PendingSaveKind::death_retreat;
     const std::uint16_t pickup_ordinal = pending_save_->pickup_ordinal;
     if (pickup_commit) {
         if (pickup_ordinal >= ground_items_.size()) {
@@ -1013,6 +1025,10 @@ void DungeonSession::commit_pending_save(
     }
     PendingAbyssReward published_reward{};
     if (reward_commit) published_reward = *pending_abyss_reward_;
+    if (death_commit && !can_emit(1U)) {
+        enter_fault(DungeonFault::event_overflow);
+        return;
+    }
 
     const checkpoint::RoomDescriptor previous_room =
         stable_state_.current_room;
@@ -1029,6 +1045,16 @@ void DungeonSession::commit_pending_save(
         return;
     }
     pending_abyss_combat_.reset();
+    if (death_commit) {
+        clear_transient_room_state();
+        phase_ = RoomPhase::death_pending;
+        static_cast<void>(emit(
+            DungeonEventKind::death_retreat_committed,
+            &stable_state_, nullptr,
+            TransitionKind::death_retreat,
+            ExitDirection::none));
+        return;
+    }
     if (fail_commit) {
         reset_to_normal_room(false);
         return;

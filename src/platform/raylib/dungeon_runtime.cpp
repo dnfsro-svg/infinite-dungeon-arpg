@@ -53,7 +53,7 @@ dungeon::PendingSaveResult DungeonRuntime::to_session_result(
         disposition = dungeon::SaveDisposition::not_committed;
     }
     return {disposition, saved.verified_state.commit_generation,
-        std::move(saved.verified_state)};
+        std::move(saved.verified_state), std::nullopt};
 }
 
 bool DungeonRuntime::initialize() noexcept {
@@ -215,10 +215,12 @@ void DungeonRuntime::service_pending_save() noexcept {
     if (pending == nullptr) {
         return;
     }
+    const dungeon::PendingSaveKind pending_kind = pending->kind;
     status_.indicator = SaveIndicator::saving;
     persistence::SaveCommitResult saved = store_.commit(pending->next_state);
     sync_commit_status(saved);
     dungeon::PendingSaveResult result = to_session_result(std::move(saved));
+    result.kind = pending_kind;
     session_->resolve_pending_save(result);
     if (session_->snapshot().phase == dungeon::RoomPhase::faulted) {
         state_ = DungeonRuntimeState::faulted;

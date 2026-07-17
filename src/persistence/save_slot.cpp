@@ -45,6 +45,43 @@ bool same_ownership(const items::ItemOwnershipState& lhs,
     return true;
 }
 
+bool same_room(const checkpoint::RoomDescriptor& lhs,
+    const checkpoint::RoomDescriptor& rhs) noexcept {
+    return lhs.index == rhs.index && lhs.seed == rhs.seed
+        && lhs.depth == rhs.depth
+        && lhs.floor_room_index == rhs.floor_room_index
+        && lhs.entry == rhs.entry && lhs.ecology == rhs.ecology
+        && lhs.has_hole == rhs.has_hole && lhs.is_abyss == rhs.is_abyss;
+}
+
+bool same_death(const checkpoint::DeathCheckpoint& lhs,
+    const checkpoint::DeathCheckpoint& rhs) noexcept {
+    return lhs.lifecycle == rhs.lifecycle
+        && lhs.data_version == rhs.data_version
+        && lhs.death_depth == rhs.death_depth
+        && lhs.death_floor_room_index == rhs.death_floor_room_index
+        && lhs.death_ecology == rhs.death_ecology
+        && lhs.death_was_abyss == rhs.death_was_abyss
+        && lhs.source_kind == rhs.source_kind
+        && lhs.source_monster_id == rhs.source_monster_id
+        && lhs.source_detail_id == rhs.source_detail_id
+        && lhs.damage_type == rhs.damage_type
+        && lhs.raw_damage == rhs.raw_damage
+        && lhs.barrier_loss == rhs.barrier_loss
+        && lhs.health_loss == rhs.health_loss
+        && lhs.final_damage == rhs.final_damage
+        && lhs.recent_damage == rhs.recent_damage
+        && lhs.hp == rhs.hp && lhs.max_hp == rhs.max_hp
+        && lhs.barrier == rhs.barrier
+        && lhs.max_barrier == rhs.max_barrier
+        && lhs.armor == rhs.armor && lhs.evasion == rhs.evasion
+        && lhs.armor_reduction_bp == rhs.armor_reduction_bp
+        && lhs.evasion_rate_bp == rhs.evasion_rate_bp
+        && lhs.damage_reduction == rhs.damage_reduction
+        && lhs.damage_reduction_cap == rhs.damage_reduction_cap
+        && same_room(lhs.target_room, rhs.target_room);
+}
+
 }  // namespace
 
 const std::filesystem::path& slot_name(SaveSlot slot) {
@@ -92,6 +129,8 @@ bool same_state(const checkpoint::DungeonRunState& lhs,
             == rhs.last_abyss_resolution.claimed
         && lhs.last_abyss_resolution.abandoned
             == rhs.last_abyss_resolution.abandoned
+        && lhs.death_sequence == rhs.death_sequence
+        && same_death(lhs.death, rhs.death)
         && lhs.progression.level == rhs.progression.level
         && lhs.progression.experience == rhs.progression.experience
         && lhs.progression.earned_passive_points

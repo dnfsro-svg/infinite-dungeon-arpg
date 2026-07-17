@@ -419,20 +419,20 @@ arpg::test::Failure ordinary_reset_returns_accepted() noexcept {
     return {};
 }
 
-arpg::test::Failure ordinary_player_defeat_uses_normal_reset() noexcept {
+arpg::test::Failure ordinary_player_defeat_queues_death_retreat() noexcept {
     using namespace arpg;
     dungeon::DungeonSession session;
     session.tick({});
     while (session.try_pop_event().has_value()) {
     }
-    test::DungeonSessionTestAccess::damage_current_player(
-        session, session.snapshot().combat->player.max_hp);
+    ARPG_REQUIRE(test::kill_current_player_through_combat(session));
     session.tick({});
-    ARPG_REQUIRE(session.snapshot().phase == dungeon::RoomPhase::locked);
-    ARPG_REQUIRE(session.snapshot().combat->player.hp
-        == session.snapshot().combat->player.max_hp);
+    ARPG_REQUIRE(session.snapshot().phase == dungeon::RoomPhase::committing);
+    ARPG_REQUIRE(session.snapshot().combat->player.hp == 0);
     ARPG_REQUIRE(!session.snapshot().is_abyss);
-    ARPG_REQUIRE(!session.pending_save().has_value());
+    ARPG_REQUIRE(session.pending_save().has_value());
+    ARPG_REQUIRE(session.pending_save()->kind
+        == dungeon::PendingSaveKind::death_retreat);
     return {};
 }
 
@@ -776,7 +776,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"abyss fail receipt mismatch faults", &abyss_fail_receipt_mismatch_faults},
     {"abyss fail commit rebuilds same normal room", &abyss_fail_commit_rebuilds_same_normal_room},
     {"ordinary reset returns accepted", &ordinary_reset_returns_accepted},
-    {"ordinary player defeat uses normal reset", &ordinary_player_defeat_uses_normal_reset},
+    {"ordinary player defeat queues death retreat", &ordinary_player_defeat_queues_death_retreat},
     {"abyss player defeat queues one fail", &abyss_player_defeat_queues_one_fail},
     {"abyss defeat does not depend on event delivery", &abyss_player_defeat_does_not_depend_on_event_delivery},
     {"relay overflow fault precedes durable defeat", &relay_overflow_fault_precedes_durable_defeat},

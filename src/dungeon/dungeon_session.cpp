@@ -135,6 +135,42 @@ void saturating_add(std::uint64_t& value, std::uint64_t addition) noexcept {
         && state.abyss.rules_version == selection->rules_version;
 }
 
+[[nodiscard]] bool same_combat_death_snapshot(
+    const combat::CombatDeathSnapshot& lhs,
+    const combat::CombatDeathSnapshot& rhs) noexcept {
+    return lhs.tick == rhs.tick
+        && lhs.source.kind == rhs.source.kind
+        && lhs.source.monster == rhs.source.monster
+        && lhs.source.detail_id == rhs.source.detail_id
+        && lhs.primary_type == rhs.primary_type
+        && lhs.raw_damage == rhs.raw_damage
+        && lhs.barrier_loss == rhs.barrier_loss
+        && lhs.health_loss == rhs.health_loss
+        && lhs.final_damage == rhs.final_damage
+        && lhs.recent_damage == rhs.recent_damage
+        && lhs.defense.hp == rhs.defense.hp
+        && lhs.defense.max_hp == rhs.defense.max_hp
+        && lhs.defense.barrier == rhs.defense.barrier
+        && lhs.defense.max_barrier == rhs.defense.max_barrier
+        && lhs.defense.armor == rhs.defense.armor
+        && lhs.defense.evasion == rhs.defense.evasion
+        && lhs.defense.armor_reduction_bp == rhs.defense.armor_reduction_bp
+        && lhs.defense.evasion_rate_bp == rhs.defense.evasion_rate_bp
+        && lhs.defense.damage_reduction == rhs.defense.damage_reduction
+        && lhs.defense.damage_reduction_cap
+            == rhs.defense.damage_reduction_cap;
+}
+
+[[nodiscard]] bool same_death_checkpoint(
+    const checkpoint::DeathCheckpoint& lhs,
+    const checkpoint::DeathCheckpoint& rhs) noexcept {
+    checkpoint::DungeonRunState left{};
+    checkpoint::DungeonRunState right{};
+    left.death = lhs;
+    right.death = rhs;
+    return same_run_state(left, right);
+}
+
 }  // namespace
 
 std::uint16_t affix_drop_chance_bp(std::uint16_t score) noexcept {
@@ -472,6 +508,7 @@ void DungeonSession::clear_transient_room_state() noexcept {
     pending_room_experience_ = 0U;
     last_room_experience_ = 0U;
     last_levels_gained_ = 0U;
+    death_detected_emitted_ = false;
     last_passive_tree_error_ = passives::PassiveTreeError::none;
 }
 
@@ -971,8 +1008,146 @@ void DungeonSession::handle_player_defeat() noexcept {
                 == abyss::AbyssLifecycle::started) {
         static_cast<void>(prepare_abyss_failure());
     } else {
-        reset_to_normal_room(false);
+        static_cast<void>(prepare_death_retreat());
     }
+}
+
+bool DungeonSession::prepare_death_retreat() noexcept {
+    if (phase_ != RoomPhase::combat || pending_save_.has_value()
+            || !combat_.has_value()
+            || !combat_->death_snapshot().has_value()
+            || stable_state_.current_room.is_abyss
+            || stable_state_.death.lifecycle
+                != checkpoint::DeathLifecycle::none
+            || !checkpoint::valid_death_checkpoint_structural(
+                stable_state_.death)) {
+        enter_fault(DungeonFault::death_sequence_mismatch);
+        return false;
+    }
+    if (stable_state_.commit_generation
+            == (std::numeric_limits<std::uint64_t>::max)()) {
+        enter_fault(DungeonFault::commit_generation_overflow);
+        return false;
+    }
+    if (stable_state_.death_sequence
+            == (std::numeric_limits<std::uint64_t>::max)()) {
+        enter_fault(DungeonFault::death_sequence_overflow);
+        return false;
+    }
+    if (stable_state_.current_room.index
+            == (std::numeric_limits<std::uint64_t>::max)()) {
+        diagnostics_.room_index_overflow = true;
+        enter_fault(DungeonFault::room_index_overflow);
+        return false;
+    }
+    if (!death_detected_emitted_ && !can_emit(1U)) {
+        enter_fault(DungeonFault::event_overflow);
+        return false;
+    }
+
+    const combat::CombatDeathSnapshot frozen = *combat_->death_snapshot();
+    const std::uint64_t next_sequence = stable_state_.death_sequence + 1U;
+    const DeathRetreatTargetResult target = make_death_retreat_target(
+        stable_state_, next_sequence, rules_);
+    if (target.fault != DungeonFault::none) {
+        enter_fault(target.fault);
+        return false;
+    }
+
+    DungeonRunState next{};
+    try {
+        next = stable_state_;
+    } catch (...) {
+        enter_fault(DungeonFault::invalid_item_state);
+        return false;
+    }
+    ++next.commit_generation;
+    next.death_sequence = next_sequence;
+    next.biases = {};
+    next.current_room.is_abyss = false;
+    next.last_transition = TransitionKind::death_retreat;
+    next.last_direction = ExitDirection::none;
+    next.death = make_death_checkpoint(
+        frozen, stable_state_.current_room, target.room);
+    if (!valid_death_checkpoint_dungeon(
+            next.death, stable_state_.current_room,
+            stable_state_.commit_generation, next_sequence, rules_)) {
+        enter_fault(DungeonFault::death_sequence_mismatch);
+        return false;
+    }
+
+    try {
+        pending_save_.emplace(PendingSave{
+            PendingSaveKind::death_retreat,
+            next.commit_generation,
+            std::move(next),
+            TransitionKind::death_retreat,
+            ExitDirection::none,
+            RoomPhase::combat,
+            0xFFFFU,
+            frozen,
+        });
+    } catch (...) {
+        enter_fault(DungeonFault::invalid_item_state);
+        return false;
+    }
+    phase_ = RoomPhase::committing;
+    if (!death_detected_emitted_) {
+        if (!emit(DungeonEventKind::death_detected,
+                &stable_state_, &pending_save_->next_state,
+                TransitionKind::death_retreat, ExitDirection::none)) {
+            pending_save_.reset();
+            return false;
+        }
+        death_detected_emitted_ = true;
+    }
+    return true;
+}
+
+bool DungeonSession::pending_death_cache_consistent() const noexcept {
+    const bool death_pending = pending_save_.has_value()
+        && pending_save_->kind == PendingSaveKind::death_retreat;
+    if (death_pending != (pending_save_.has_value()
+            && pending_save_->death_snapshot.has_value())) {
+        return false;
+    }
+    if (!death_pending) {
+        return !pending_save_.has_value()
+            || !pending_save_->death_snapshot.has_value();
+    }
+    if (!combat_.has_value() || !combat_->death_snapshot().has_value()
+            || !same_combat_death_snapshot(
+                *pending_save_->death_snapshot, *combat_->death_snapshot())) {
+        return false;
+    }
+    const auto& next = pending_save_->next_state;
+    const checkpoint::DeathCheckpoint expected = make_death_checkpoint(
+        *pending_save_->death_snapshot, stable_state_.current_room,
+        next.death.target_room);
+    if (!same_death_checkpoint(expected, next.death)
+            || stable_state_.death_sequence
+                == (std::numeric_limits<std::uint64_t>::max)()
+            || stable_state_.commit_generation
+                == (std::numeric_limits<std::uint64_t>::max)()) {
+        return false;
+    }
+    DungeonRunState exact{};
+    try {
+        exact = stable_state_;
+    } catch (...) {
+        return false;
+    }
+    ++exact.commit_generation;
+    ++exact.death_sequence;
+    exact.biases = {};
+    exact.current_room.is_abyss = false;
+    exact.last_transition = TransitionKind::death_retreat;
+    exact.last_direction = ExitDirection::none;
+    exact.death = expected;
+    return same_run_state(next, exact)
+        && valid_death_checkpoint_dungeon(
+            next.death, stable_state_.current_room,
+            stable_state_.commit_generation, next.death_sequence, rules_);
 }
 
 bool DungeonSession::claim_defeat_reward(

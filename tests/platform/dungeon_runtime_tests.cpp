@@ -118,10 +118,14 @@ std::vector<std::uint8_t> encode_v4(
     encodable.current_room.is_abyss = false;
     encodable.abyss = {};
     const auto encoded = persistence::encode_checkpoint(encodable);
-    if (!encoded.has_value() || encoded->size() < 152U) return {};
-    std::vector<std::uint8_t> v4(encoded->size() - 32U, 0U);
-    std::copy_n(encoded->begin(), 120U, v4.begin());
-    std::copy(encoded->begin() + 152U, encoded->end(), v4.begin() + 120U);
+    if (!encoded.has_value() || encoded->size() < 460U) return {};
+    auto v5 = *encoded;
+    v5.erase(v5.begin() + 236U, v5.begin() + 460U);
+    v5[0U] = 'I'; v5[1U] = 'A'; v5[2U] = 'R'; v5[3U] = 'P';
+    v5[4U] = 'G'; v5[5U] = 'S'; v5[6U] = '0'; v5[7U] = '6';
+    std::vector<std::uint8_t> v4(v5.size() - 32U, 0U);
+    std::copy_n(v5.begin(), 120U, v4.begin());
+    std::copy(v5.begin() + 152U, v5.end(), v4.begin() + 120U);
     v4[7U] = '5';
     v4[88U] = static_cast<std::uint8_t>(state.current_room.entry);
     v4[91U] = state.current_room.is_abyss ? 1U : 0U;
@@ -837,6 +841,27 @@ arpg::test::Failure generic_service_adds_no_large_state_copies() noexcept {
     return {};
 }
 
+arpg::test::Failure runtime_echoes_death_pending_kind() noexcept {
+    TempDirectory directory;
+    auto config = config_for(directory, 0xD34D10U);
+    platform::DungeonRuntime runtime(config);
+    ARPG_REQUIRE(runtime.initialize());
+    auto* const session = runtime.session();
+    ARPG_REQUIRE(session != nullptr);
+    session->tick({});
+    ARPG_REQUIRE(arpg::test::kill_current_player_through_combat(*session));
+    session->tick({});
+    ARPG_REQUIRE(session->pending_save_view() != nullptr);
+    ARPG_REQUIRE(session->pending_save_view()->kind
+        == dungeon::PendingSaveKind::death_retreat);
+    runtime.service_pending_save();
+    ARPG_REQUIRE(runtime.state() == platform::DungeonRuntimeState::running);
+    ARPG_REQUIRE(session->snapshot().phase == dungeon::RoomPhase::death_pending);
+    ARPG_REQUIRE(session->snapshot().death.has_value());
+    ARPG_REQUIRE(session->snapshot().death->can_continue);
+    return {};
+}
+
 arpg::test::Failure item_request_fault_matrix_is_atomic_and_restart_consistent() noexcept {
     constexpr std::array<ItemRequestKind, 4> kKinds{{
         ItemRequestKind::pickup,
@@ -986,6 +1011,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"runtime exposes narrow item requests and stable item view", &runtime_exposes_narrow_item_requests_and_stable_item_view},
     {"large inventory snapshot and views do not allocate", &large_inventory_snapshot_and_views_do_not_allocate},
     {"generic service adds no large state copies", &generic_service_adds_no_large_state_copies},
+    {"runtime echoes death pending kind", &runtime_echoes_death_pending_kind},
     {"item request fault matrix is atomic and restart consistent", &item_request_fault_matrix_is_atomic_and_restart_consistent},
 };
 

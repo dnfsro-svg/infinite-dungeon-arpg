@@ -57,6 +57,8 @@ enum class DungeonEventKind : std::uint8_t {
     room_destroyed,
     room_reset,
     faulted,
+    death_detected,
+    death_retreat_committed,
 };
 
 struct DungeonEvent final {
@@ -211,6 +213,7 @@ enum class PendingSaveKind : std::uint8_t {
     abyss_reward_materialized,
     abyss_reward_claim,
     abyss_abandon,
+    death_retreat,
 };
 
 struct PendingSave final {
@@ -221,12 +224,14 @@ struct PendingSave final {
     ExitDirection direction{ExitDirection::none};
     RoomPhase resume_phase{RoomPhase::awaiting_exit};
     std::uint16_t pickup_ordinal{0xFFFFU};
+    std::optional<combat::CombatDeathSnapshot> death_snapshot{};
 };
 
 struct PendingSaveResult final {
     SaveDisposition disposition{SaveDisposition::indeterminate};
     std::uint64_t generation{};
     DungeonRunState verified_state{};
+    std::optional<PendingSaveKind> kind{};
 };
 
 using TransitionSaveResult = PendingSaveResult;

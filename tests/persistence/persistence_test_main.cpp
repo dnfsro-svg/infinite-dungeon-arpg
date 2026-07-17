@@ -31,5 +31,5 @@ int main() {
         dungeon_save_integration_suite(),
     };
 
-    return arpg::test::run_suites(suites, 79, "stage 11a task 5 persistence");
+    return arpg::test::run_suites(suites, 80, "stage 11a task 6 persistence");
 }

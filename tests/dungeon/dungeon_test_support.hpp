@@ -37,6 +37,19 @@ struct DungeonSessionTestAccess final {
                 damage, combat::Vec3{}, combat::FeedbackLevel::light);
         }
     }
+    static bool kill_current_player_through_combat(
+        dungeon::DungeonSession& session) noexcept {
+        if (!session.combat_.has_value()) return false;
+        const combat::PlayerDamageSource source{
+            combat::PlayerDamageSourceKind::ground_hazard,
+            combat::MonsterId::fire_bomber,
+            static_cast<std::uint16_t>(combat::HazardKind::burning),
+        };
+        return session.combat_->apply_player_damage(
+            combat::DamagePacket{1000000},
+            combat::DamageDelivery::ground_or_environment,
+            source, combat::Vec3{}, combat::FeedbackLevel::heavy);
+    }
     static const abyss::AbyssCombatConfig* pending_abyss_config(
         const dungeon::DungeonSession& session) noexcept {
         return session.pending_abyss_combat_.has_value()
@@ -261,6 +274,12 @@ inline bool defeat_next_live_monster(dungeon::DungeonSession& session) noexcept 
 inline void damage_current_player(
     dungeon::DungeonSession& session, int damage) noexcept {
     DungeonSessionTestAccess::damage_current_player(session, damage);
+}
+
+inline bool kill_current_player_through_combat(
+    dungeon::DungeonSession& session) noexcept {
+    return DungeonSessionTestAccess::kill_current_player_through_combat(
+        session);
 }
 
 inline std::size_t fill_dungeon_events(

@@ -102,6 +102,7 @@ private:
     void start_next_wave() noexcept;
     void relay_combat_events() noexcept;
     void handle_player_defeat() noexcept;
+    [[nodiscard]] bool prepare_death_retreat() noexcept;
     [[nodiscard]] bool claim_defeat_reward(
         const combat::CombatEvent& event) noexcept;
     void roll_ground_drop(const combat::CombatEvent& event) noexcept;
@@ -136,6 +137,7 @@ private:
     [[nodiscard]] bool pending_abyss_cache_consistent() const noexcept;
     [[nodiscard]] bool pending_abyss_reward_cache_consistent() const noexcept;
     [[nodiscard]] bool pending_abyss_claim_cache_consistent() const noexcept;
+    [[nodiscard]] bool pending_death_cache_consistent() const noexcept;
     void commit_pending_save(const PendingSaveResult& result) noexcept;
     [[nodiscard]] DungeonSnapshot build_dungeon_snapshot() const noexcept;
     void enter_fault(DungeonFault fault) noexcept;
@@ -176,6 +178,7 @@ private:
     std::uint64_t pending_room_experience_{};
     std::uint64_t last_room_experience_{};
     std::uint8_t last_levels_gained_{};
+    bool death_detected_emitted_{};
     passives::PassiveTreeError last_passive_tree_error_{
         passives::PassiveTreeError::none};
 };
