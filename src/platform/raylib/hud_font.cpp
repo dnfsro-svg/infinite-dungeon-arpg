@@ -28,4 +28,10 @@ HudFontDrawMode hud_font_draw_mode(bool cjk_font_ready) noexcept {
                           : HudFontDrawMode::fallback;
 }
 
+HudFontSelectionPlan make_hud_font_selection_plan(bool cjk_font_ready) noexcept {
+    const HudFontDrawMode mode = hud_font_draw_mode(cjk_font_ready);
+    return {mode, mode == HudFontDrawMode::fallback,
+        mode == HudFontDrawMode::cjk_ready};
+}
+
 }  // namespace arpg::platform

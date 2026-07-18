@@ -63,5 +63,5 @@ int main() {
         hud_host_integration_suite(),
     };
 
-    return arpg::test::run_suites(suites, 235, "stage 11c task 7 host hud integration");
+    return arpg::test::run_suites(suites, 236, "stage 11c task 7 host hud integration");
 }

@@ -86,6 +86,7 @@ DebugOverlayDiagnosticsPlan make_debug_overlay_diagnostics_plan(
     plan.total_budget = current.encounter.total_budget;
     plan.current_wave_budget = current.encounter.current_wave_budget;
     plan.ground_saturation = current.diagnostics.ground_saturation_count;
+    plan.room_index_overflow = current.diagnostics.room_index_overflow;
     if (current.combat.has_value()) {
         const combat::CombatSnapshot& combat = *current.combat;
         plan.active_monsters = combat.monster_count;
@@ -131,11 +132,12 @@ void DebugOverlayRenderer::draw(const dungeon::DungeonSnapshot& current,
         static_cast<unsigned long long>(diagnostics.active_hazards)),
         static_cast<int>(layout.hud_x), y, 16, text);
     y += layout.hud_line_step;
-    DrawText(TextFormat("Dungeon event %u relay %u rejected %u ground saturation %u",
+    DrawText(TextFormat("Dungeon event %u relay %u rejected %u ground saturation %u index overflow %s",
         current.diagnostics.event_overflow_count,
         current.diagnostics.combat_relay_overflow_count,
         current.diagnostics.rejected_exit_count,
-        diagnostics.ground_saturation),
+        diagnostics.ground_saturation,
+        diagnostics.room_index_overflow ? "YES" : "NO"),
         static_cast<int>(layout.hud_x), y, 16, text);
     if (current.combat.has_value()) {
         const combat::CombatSnapshot& state = *current.combat;

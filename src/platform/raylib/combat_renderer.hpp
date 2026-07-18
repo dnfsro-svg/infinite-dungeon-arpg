@@ -9,12 +9,22 @@
 
 #include <cstdint>
 #include <array>
+#include <optional>
+#include <cstddef>
 
 namespace arpg::platform {
 
 struct DungeonRenderStatus;
 struct ControlHints;
-enum class HudPresentedFrame : std::uint8_t { normal, recovery, death_overlay };
+enum class HudPresentedFrame : std::uint8_t {
+    normal,
+    recovery,
+    death_overlay,
+    count,
+};
+
+[[nodiscard]] std::optional<std::size_t> hud_presented_frame_index(
+    HudPresentedFrame) noexcept;
 
 struct DoorRenderDecision final {
     const char* label{};
@@ -96,7 +106,8 @@ private:
     HudLayout hud_layout_{};
     std::uint64_t hud_binding_revision_{};
     std::uint64_t hud_observation_count_{};
-    std::array<std::uint64_t, 3> hud_presented_frame_counts_{};
+    std::array<std::uint64_t,
+        static_cast<std::size_t>(HudPresentedFrame::count)> hud_presented_frame_counts_{};
 };
 
 }  // namespace arpg::platform

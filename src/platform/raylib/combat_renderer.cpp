@@ -9,6 +9,13 @@
 
 namespace arpg::platform {
 
+std::optional<std::size_t> hud_presented_frame_index(
+    HudPresentedFrame frame) noexcept {
+    const std::size_t index = static_cast<std::size_t>(frame);
+    return index < static_cast<std::size_t>(HudPresentedFrame::count)
+        ? std::optional<std::size_t>{index} : std::nullopt;
+}
+
 bool CombatRenderer::initialize_resources() noexcept {
     const bool death_font_ready = death_overlay_.initialize();
     const bool hud_font_ready = hud_renderer_.initialize();
@@ -87,7 +94,9 @@ void CombatRenderer::observe_presented_hud_frame(
     float frame_seconds,
     bool paused) noexcept {
     observe_hud(previous, current, runtime_status, control_hints, frame_seconds, paused);
-    ++hud_presented_frame_counts_[static_cast<std::size_t>(frame)];
+    if (const auto index = hud_presented_frame_index(frame)) {
+        ++hud_presented_frame_counts_[*index];
+    }
 }
 
 const HudViewModel& CombatRenderer::hud_model() const noexcept {
@@ -108,7 +117,8 @@ std::uint64_t CombatRenderer::hud_observation_count() const noexcept {
 
 std::uint64_t CombatRenderer::hud_presented_frame_count(
     HudPresentedFrame frame) const noexcept {
-    return hud_presented_frame_counts_[static_cast<std::size_t>(frame)];
+    const auto index = hud_presented_frame_index(frame);
+    return index.has_value() ? hud_presented_frame_counts_[*index] : 0U;
 }
 
 void CombatRenderer::draw(

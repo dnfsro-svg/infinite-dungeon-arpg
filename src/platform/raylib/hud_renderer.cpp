@@ -355,7 +355,9 @@ bool HudRenderer::initialize() noexcept {
 }
 
 void HudRenderer::shutdown() noexcept {
-    if (font_ready_ && IsWindowReady()) UnloadFont(font_);
+    const HudFontSelectionPlan selection =
+        make_hud_font_selection_plan(font_ready_);
+    if (selection.owns_loaded_font && IsWindowReady()) UnloadFont(font_);
     font_ = {};
     font_ready_ = false;
 }
@@ -367,7 +369,9 @@ bool HudRenderer::font_ready() const noexcept {
 void HudRenderer::draw(const HudViewModel& view,
     const HudLayout& layout) const noexcept {
     if (!IsWindowReady()) return;
-    const Font draw_font = font_ready_ ? font_ : GetFontDefault();
+    const HudFontSelectionPlan selection =
+        make_hud_font_selection_plan(font_ready_);
+    const Font draw_font = selection.use_default_font ? GetFontDefault() : font_;
     const PlayerPanelPlan plan = make_player_panel_plan(view.player, layout,
         static_cast<float>(GetTime()));
     const ObjectivePanelPlan objective = make_objective_panel_plan(view.room, layout);

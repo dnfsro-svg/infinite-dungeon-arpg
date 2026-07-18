@@ -96,11 +96,29 @@ arpg::test::Failure production_presentation_seam_observes_normal_recovery_and_de
     return {};
 }
 
+arpg::test::Failure presentation_frame_sentinel_rejects_invalid_enum_values() noexcept {
+    const dungeon::DungeonSnapshot value = snapshot();
+    platform::CombatRenderer renderer{};
+    const auto invalid = static_cast<platform::HudPresentedFrame>(255U);
+
+    ARPG_REQUIRE(!platform::hud_presented_frame_index(invalid).has_value());
+    ARPG_REQUIRE(!platform::hud_presented_frame_index(
+        platform::HudPresentedFrame::count).has_value());
+    renderer.observe_presented_hud_frame(invalid, value, value, saved_status(),
+        committed_hints(14U), 0.1F, false);
+    ARPG_REQUIRE(renderer.hud_observation_count() == 1U);
+    ARPG_REQUIRE(renderer.hud_presented_frame_count(invalid) == 0U);
+    ARPG_REQUIRE(renderer.hud_presented_frame_count(
+        platform::HudPresentedFrame::count) == 0U);
+    return {};
+}
+
 arpg::test::Failure debug_diagnostics_plan_carries_all_f1_only_counters() noexcept {
     dungeon::DungeonSnapshot value = snapshot();
     value.encounter.total_budget = 88U;
     value.encounter.current_wave_budget = 21U;
     value.diagnostics.ground_saturation_count = 5U;
+    value.diagnostics.room_index_overflow = true;
     value.combat.emplace();
     value.combat->monster_count = 7U;
     value.combat->projectile_count = 9U;
@@ -130,6 +148,7 @@ arpg::test::Failure debug_diagnostics_plan_carries_all_f1_only_counters() noexce
     ARPG_REQUIRE(plan.hazard_saturation == 6U);
     ARPG_REQUIRE(plan.hazard_invalid_owner == 8U);
     ARPG_REQUIRE(plan.ground_saturation == 5U);
+    ARPG_REQUIRE(plan.room_index_overflow);
     ARPG_REQUIRE(plan.notice_drops == 10U);
     ARPG_REQUIRE(plan.binding_revision == 99U);
     ARPG_REQUIRE(plan.has_last_event);
@@ -138,11 +157,18 @@ arpg::test::Failure debug_diagnostics_plan_carries_all_f1_only_counters() noexce
     return {};
 }
 
-arpg::test::Failure fallback_font_mode_remains_drawable_without_complete_cjk() noexcept {
-    ARPG_REQUIRE(platform::hud_font_draw_mode(false)
-        == platform::HudFontDrawMode::fallback);
-    ARPG_REQUIRE(platform::hud_font_draw_mode(true)
-        == platform::HudFontDrawMode::cjk_ready);
+arpg::test::Failure fallback_font_selection_matches_actual_draw_and_shutdown_ownership() noexcept {
+    const platform::HudFontSelectionPlan fallback =
+        platform::make_hud_font_selection_plan(false);
+    ARPG_REQUIRE(fallback.draw_mode == platform::HudFontDrawMode::fallback);
+    ARPG_REQUIRE(fallback.use_default_font);
+    ARPG_REQUIRE(!fallback.owns_loaded_font);
+
+    const platform::HudFontSelectionPlan cjk =
+        platform::make_hud_font_selection_plan(true);
+    ARPG_REQUIRE(cjk.draw_mode == platform::HudFontDrawMode::cjk_ready);
+    ARPG_REQUIRE(!cjk.use_default_font);
+    ARPG_REQUIRE(cjk.owns_loaded_font);
     return {};
 }
 
@@ -191,8 +217,9 @@ arpg::test::Failure observation_publishes_the_prebuilt_hud_model() noexcept {
 constexpr arpg::test::TestCase kCases[] = {
     {"observes every presented frame read only", &observation_is_once_per_presented_frame_and_read_only},
     {"production presentation seam covers all owners", &production_presentation_seam_observes_normal_recovery_and_death},
+    {"presentation frame sentinel is safe", &presentation_frame_sentinel_rejects_invalid_enum_values},
     {"debug diagnostics plan covers F1 counters", &debug_diagnostics_plan_carries_all_f1_only_counters},
-    {"fallback font draw mode", &fallback_font_mode_remains_drawable_without_complete_cjk},
+    {"fallback font selection owns no default font", &fallback_font_selection_matches_actual_draw_and_shutdown_ownership},
     {"paused hud notices freeze", &paused_frames_freeze_hud_notice_time},
     {"settings apply uses committed hints", &committed_settings_hints_and_revision_are_used_after_apply},
     {"observation publishes prebuilt hud model", &observation_publishes_the_prebuilt_hud_model},

@@ -20,6 +20,7 @@ struct DebugOverlayDiagnosticsPlan final {
     std::uint32_t hazard_saturation{};
     std::uint32_t hazard_invalid_owner{};
     std::uint32_t ground_saturation{};
+    bool room_index_overflow{};
     HudBuildDiagnostics hud{};
     std::uint32_t notice_drops{};
     std::uint64_t binding_revision{};

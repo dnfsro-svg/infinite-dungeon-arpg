@@ -132,24 +132,89 @@ require_match_count(
     1
     "host logical mapping calls")
 
-# Every host path that presents through the shared EndDrawing helper must use
-# the production HUD presentation seam exactly once.  This binds normal,
-# recovery and death-overlay ownership without registering a Task8 guard.
-require_match_count(
-    "${HOST_SOURCE}"
-    "renderer\\.observe_presented_hud_frame\\("
-    2
-    "host presented HUD observation seam calls")
-require_match_count(
-    "${HOST_SOURCE}"
-    "HudPresentedFrame::recovery"
-    1
-    "host recovery HUD observation owner")
-require_match_count(
-    "${HOST_SOURCE}"
-    "HudPresentedFrame::death_overlay"
-    1
-    "host death HUD observation owner")
+function(strip_cpp_noncode SOURCE OUT_VARIABLE)
+    set(CODE "${SOURCE}")
+    string(REGEX REPLACE "/\\*([^*]|\\*[^/])*\\*/" "" CODE "${CODE}")
+    string(REGEX REPLACE "//[^\r\n]*" "" CODE "${CODE}")
+    string(REGEX REPLACE "\"[^\"]*\"" "\"\"" CODE "${CODE}")
+    set("${OUT_VARIABLE}" "${CODE}" PARENT_SCOPE)
+endfunction()
+
+function(hud_present_structure_valid SOURCE OUT_VARIABLE)
+    strip_cpp_noncode("${SOURCE}" CODE)
+    string(REGEX MATCHALL "renderer\\.observe_presented_hud_frame\\(" OBSERVES "${CODE}")
+    list(LENGTH OBSERVES OBSERVE_COUNT)
+    string(REGEX MATCHALL "present_frame_and_maybe_capture\\(" PRESENTS "${CODE}")
+    list(LENGTH PRESENTS PRESENT_COUNT)
+    if(NOT OBSERVE_COUNT EQUAL 2 OR NOT PRESENT_COUNT EQUAL 3)
+        set("${OUT_VARIABLE}" FALSE PARENT_SCOPE)
+        return()
+    endif()
+
+    string(FIND "${CODE}" "if (runtime.state() == DungeonRuntimeState::recovery_required)" RECOVERY_START)
+    string(FIND "${CODE}" "draw_recovery_screen(runtime.render_status());" RECOVERY_DRAW)
+    string(FIND "${CODE}" "present_frame_and_maybe_capture(capture_path.has_value()" RECOVERY_PRESENT)
+    string(FIND "${CODE}" "renderer.observe_presented_hud_frame(" FIRST_OBSERVE)
+    if(RECOVERY_START LESS 0 OR RECOVERY_DRAW LESS 0 OR RECOVERY_PRESENT LESS 0
+            OR FIRST_OBSERVE LESS RECOVERY_START OR FIRST_OBSERVE GREATER RECOVERY_DRAW
+            OR RECOVERY_DRAW GREATER RECOVERY_PRESENT)
+        set("${OUT_VARIABLE}" FALSE PARENT_SCOPE)
+        return()
+    endif()
+
+    math(EXPR AFTER_FIRST_OBSERVE "${FIRST_OBSERVE} + 1")
+    string(SUBSTRING "${CODE}" ${AFTER_FIRST_OBSERVE} -1 AFTER_FIRST_OBSERVE_CODE)
+    string(FIND "${AFTER_FIRST_OBSERVE_CODE}" "renderer.observe_presented_hud_frame(" SECOND_OBSERVE_RELATIVE)
+    if(SECOND_OBSERVE_RELATIVE LESS 0)
+        set("${OUT_VARIABLE}" FALSE PARENT_SCOPE)
+        return()
+    endif()
+    math(EXPR SECOND_OBSERVE "${AFTER_FIRST_OBSERVE} + ${SECOND_OBSERVE_RELATIVE}")
+    math(EXPR AFTER_RECOVERY_PRESENT "${RECOVERY_PRESENT} + 1")
+    string(SUBSTRING "${CODE}" ${AFTER_RECOVERY_PRESENT} -1 AFTER_RECOVERY_CODE)
+    string(FIND "${AFTER_RECOVERY_CODE}" "BeginDrawing();" NORMAL_BEGIN_RELATIVE)
+    string(FIND "${AFTER_RECOVERY_CODE}" "present_frame_and_maybe_capture(capture_path.has_value()" NORMAL_PRESENT_RELATIVE)
+    if(NORMAL_BEGIN_RELATIVE LESS 0 OR NORMAL_PRESENT_RELATIVE LESS 0)
+        set("${OUT_VARIABLE}" FALSE PARENT_SCOPE)
+        return()
+    endif()
+    math(EXPR NORMAL_BEGIN "${AFTER_RECOVERY_PRESENT} + ${NORMAL_BEGIN_RELATIVE}")
+    math(EXPR NORMAL_PRESENT "${AFTER_RECOVERY_PRESENT} + ${NORMAL_PRESENT_RELATIVE}")
+    if(SECOND_OBSERVE LESS RECOVERY_PRESENT OR SECOND_OBSERVE GREATER NORMAL_BEGIN
+            OR NORMAL_BEGIN GREATER NORMAL_PRESENT)
+        set("${OUT_VARIABLE}" FALSE PARENT_SCOPE)
+        return()
+    endif()
+    set("${OUT_VARIABLE}" TRUE PARENT_SCOPE)
+endfunction()
+
+# Bind exactly two actual paths to the production seam after stripping comments
+# and strings. Self fixtures reject a third present, a post-BeginDrawing seam,
+# and comment-only tokens without registering a separate Task8 guard.
+hud_present_structure_valid("${HOST_SOURCE}" HOST_PRESENT_STRUCTURE_VALID)
+if(NOT HOST_PRESENT_STRUCTURE_VALID)
+    message(FATAL_ERROR "host HUD presentation seam structure is invalid")
+endif()
+set(COMMENT_ONLY_HUD_PRESENT [=[
+// renderer.observe_presented_hud_frame(HudPresentedFrame::recovery);
+// present_frame_and_maybe_capture(capture_path.has_value() ? path : nullptr);
+]=])
+hud_present_structure_valid("${COMMENT_ONLY_HUD_PRESENT}" COMMENT_ONLY_HUD_PRESENT_VALID)
+if(COMMENT_ONLY_HUD_PRESENT_VALID)
+    message(FATAL_ERROR "comment-only HUD presentation tokens must not validate")
+endif()
+set(THIRD_PRESENT_HUD_SOURCE "${HOST_SOURCE}\npresent_frame_and_maybe_capture(nullptr);")
+hud_present_structure_valid("${THIRD_PRESENT_HUD_SOURCE}" THIRD_PRESENT_HUD_VALID)
+if(THIRD_PRESENT_HUD_VALID)
+    message(FATAL_ERROR "third HUD present path must not validate")
+endif()
+string(REPLACE "renderer.observe_presented_hud_frame(hud_presented_frame,"
+    "BeginDrawing();\nrenderer.observe_presented_hud_frame(hud_presented_frame,"
+    MOVED_HUD_OBSERVE_SOURCE "${HOST_SOURCE}")
+hud_present_structure_valid("${MOVED_HUD_OBSERVE_SOURCE}" MOVED_HUD_OBSERVE_VALID)
+if(MOVED_HUD_OBSERVE_VALID)
+    message(FATAL_ERROR "HUD seam after BeginDrawing must not validate")
+endif()
 
 set(POISON_TARGET
     "::arpg::platform::direct_input_poison::blocked")
