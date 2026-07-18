@@ -134,6 +134,17 @@ if(TARGET arpg_raylib)
         LABELS "graphics;stage9;validation;formal-game"
         TIMEOUT 15)
 
+    add_test(NAME stage9.formal_game.capture_validator_self_test
+        COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+            -File "${CMAKE_CURRENT_SOURCE_DIR}/stage9_formal_game_capture_validator_self_test.ps1"
+            -Validator "${CMAKE_CURRENT_SOURCE_DIR}/stage9_formal_game_capture_test.ps1"
+            -ReferenceImage "$<TARGET_FILE_DIR:arpg_stage9_formal_game_validation>/stage9-formal-game-validation/stage8-validation-001.png"
+            -MutationRoot "${CMAKE_CURRENT_BINARY_DIR}/stage9-formal-capture-validator-mutations")
+    set_tests_properties(stage9.formal_game.capture_validator_self_test PROPERTIES
+        DEPENDS stage9.formal_game.capture_after_present
+        LABELS "graphics;stage9;validation;formal-game;negative"
+        TIMEOUT 120)
+
     add_test(NAME stage10.validation_game.capture_after_present
         COMMAND powershell -NoProfile -ExecutionPolicy Bypass
             -File "${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_capture_test.ps1"
