@@ -44,12 +44,25 @@ foreach(_required IN ITEMS
 endforeach()
 
 foreach(_forbidden IN ITEMS "TestAccess" "validation_input_setter"
-        "queue_action" "pause_menu.committed =")
+        "queue_action" "pause_menu.committed =" "LoadImageFromScreen()")
     string(FIND "${_formal_text}" "${_forbidden}" _found)
     if(NOT _found EQUAL -1)
         message(FATAL_ERROR "Stage11B evidence guard rejected forbidden token: ${_forbidden}")
     endif()
 endforeach()
+
+string(FIND "${_formal_text}" "platform::run_raylib_host(config)"
+    _formal_host_call)
+if(_formal_host_call EQUAL -1)
+    message(FATAL_ERROR
+        "Stage11B evidence guard requires formal harness to invoke platform::run_raylib_host(config)")
+endif()
+string(FIND "${_formal_text}" "std::system(command.c_str())"
+    _formal_child_call)
+if(_formal_child_call EQUAL -1)
+    message(FATAL_ERROR
+        "Stage11B evidence guard requires independent child-process invocation via std::system(command.c_str())")
+endif()
 
 foreach(_host_forbidden IN ITEMS
         "pause_input.focus_lost = false"
