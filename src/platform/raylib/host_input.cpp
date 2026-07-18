@@ -177,7 +177,7 @@ HostFrameInput map_host_frame_input(
     return input;
 }
 
-void submit_frame_actions(
+std::array<bool, 3> submit_frame_actions(
     dungeon::DungeonSession& session,
     const HostFrameInput& input) noexcept {
     constexpr std::array<combat::Action, 3> actions{{
@@ -185,11 +185,13 @@ void submit_frame_actions(
         combat::Action::jump,
         combat::Action::launcher,
     }};
+    std::array<bool, actions.size()> accepted{};
     for (std::size_t index = 0U; index < actions.size(); ++index) {
         if (input.combat_actions[index]) {
-            static_cast<void>(session.queue_action(actions[index]));
+            accepted[index] = session.queue_action(actions[index]);
         }
     }
+    return accepted;
 }
 
 }  // namespace arpg::platform

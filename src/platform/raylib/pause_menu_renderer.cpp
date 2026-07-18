@@ -1,5 +1,6 @@
 #include "pause_menu_renderer.hpp"
 
+#include "death_overlay_font.hpp"
 #include "pause_menu_view.hpp"
 
 #include <raylib.h>
@@ -10,16 +11,20 @@ namespace arpg::platform {
 namespace {
 
 void draw_centered_text(
+    Font font,
     const char* text,
     Rectangle bounds,
     int font_size,
     Color color) noexcept {
-    const int text_width = MeasureText(text, font_size);
+    constexpr float kSpacing = 1.0F;
+    const int text_width = static_cast<int>(MeasureTextEx(
+        font, text, static_cast<float>(font_size), kSpacing).x);
     const int x = static_cast<int>(
         bounds.x + (bounds.width - static_cast<float>(text_width)) * 0.5F);
     const int y = static_cast<int>(
         bounds.y + (bounds.height - static_cast<float>(font_size)) * 0.5F);
-    DrawText(text, x, y, font_size, color);
+    DrawTextEx(font, text, {static_cast<float>(x), static_cast<float>(y)},
+        static_cast<float>(font_size), kSpacing, color);
 }
 
 }  // namespace
@@ -52,7 +57,8 @@ PauseMenuRenderPlan make_pause_menu_render_plan(
     return plan;
 }
 
-void draw_pause_menu(const PauseMenuState& state) noexcept {
+void draw_pause_menu_with_font(
+    const PauseMenuState& state, Font font) noexcept {
     const PauseMenuView view = make_pause_menu_view(state);
     const PauseMenuRenderPlan plan = make_pause_menu_render_plan(view);
     if (plan.op_count == 0U) return;
@@ -83,7 +89,7 @@ void draw_pause_menu(const PauseMenuState& state) noexcept {
                     Color{94, 159, 206, 255});
                 break;
             case PauseMenuRenderOpKind::title:
-                draw_centered_text(view.title, title_bounds, 28,
+                draw_centered_text(font, view.title, title_bounds, 28,
                     Color{191, 225, 255, 255});
                 break;
             case PauseMenuRenderOpKind::row: {
@@ -95,17 +101,15 @@ void draw_pause_menu(const PauseMenuState& state) noexcept {
                         bounds, 0.18F, 5, 1.0F,
                         Color{121, 197, 244, 255});
                 }
-                DrawText(view.rows[op.row_index].data(),
-                    static_cast<int>(bounds.x + 10.0F),
-                    static_cast<int>(bounds.y + 3.0F),
-                    16,
+                DrawTextEx(font, view.rows[op.row_index].data(),
+                    {bounds.x + 10.0F, bounds.y + 3.0F}, 16.0F, 1.0F,
                     op.selected
                         ? Color{244, 249, 255, 255}
                         : Color{207, 218, 231, 255});
                 break;
             }
             case PauseMenuRenderOpKind::message:
-                draw_centered_text(view.message, layout.footer, 16,
+                draw_centered_text(font, view.message, layout.footer, 16,
                     Color{255, 139, 139, 255});
                 break;
             case PauseMenuRenderOpKind::footer:
@@ -117,7 +121,7 @@ void draw_pause_menu(const PauseMenuState& state) noexcept {
                     static_cast<int>(layout.footer.y - 5.0F),
                     Color{75, 86, 104, 220});
                 if (!plan.has_message) {
-                    draw_centered_text(
+                    draw_centered_text(font,
                         "Arrow keys navigate | Enter select | Esc back",
                         layout.footer,
                         16,
@@ -126,6 +130,45 @@ void draw_pause_menu(const PauseMenuState& state) noexcept {
                 break;
         }
     }
+}
+
+PauseMenuRenderer::~PauseMenuRenderer() noexcept {
+    shutdown();
+}
+
+bool PauseMenuRenderer::initialize() noexcept {
+    shutdown();
+    const DeathOverlayFontPlan plan = death_overlay_font_plan();
+    for (std::size_t index = 0U; index < plan.candidate_count; ++index) {
+        const char* path = plan.candidate_paths[index];
+        if (path == nullptr || !FileExists(path)) continue;
+        Font candidate = LoadFontEx(path, 32, plan.codepoints.data(),
+            static_cast<int>(plan.codepoint_count));
+        if (IsFontValid(candidate)
+                && candidate.glyphCount == static_cast<int>(plan.codepoint_count)) {
+            font_ = candidate;
+            owns_font_ = true;
+            return true;
+        }
+        if (IsFontValid(candidate)) UnloadFont(candidate);
+    }
+    font_ = GetFontDefault();
+    return false;
+}
+
+void PauseMenuRenderer::shutdown() noexcept {
+    if (owns_font_ && IsWindowReady()) UnloadFont(font_);
+    font_ = {};
+    owns_font_ = false;
+}
+
+void PauseMenuRenderer::draw(const PauseMenuState& state) const noexcept {
+    draw_pause_menu_with_font(state,
+        IsFontValid(font_) ? font_ : GetFontDefault());
+}
+
+void draw_pause_menu(const PauseMenuState& state) noexcept {
+    draw_pause_menu_with_font(state, GetFontDefault());
 }
 
 }  // namespace arpg::platform

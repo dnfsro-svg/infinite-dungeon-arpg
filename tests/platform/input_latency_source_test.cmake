@@ -288,7 +288,7 @@ if(HOST_FRAME_INDEX EQUAL -1 OR FIXED_TICK_INDEX EQUAL -1
     message(FATAL_ERROR "runtime.fixed_tick must consume only the gated frame steps")
 endif()
 
-string(FIND "${HOST_ENTRY_SOURCE}" "draw_pause_menu(pause_menu)" PAUSE_DRAW_INDEX)
+string(FIND "${HOST_ENTRY_SOURCE}" "pause_menu_renderer.draw(pause_menu)" PAUSE_DRAW_INDEX)
 if(PAUSE_DRAW_INDEX EQUAL -1)
     message(FATAL_ERROR "pause overlay draw is missing")
 endif()

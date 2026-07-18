@@ -65,3 +65,24 @@ endif()
 if(NOT "${_host_stdout}${_host_stderr}" MATCHES "rejected host bypass")
     message(FATAL_ERROR "host bypass mutation failed for the wrong reason: ${_host_stdout}${_host_stderr}")
 endif()
+
+foreach(_mutation IN ITEMS
+        "Image image = LoadImageFromScreen();|requires exactly one post-Present screen capture"
+        "runtime.fixed_tick({});|requires exactly one pause-gated runtime.fixed_tick path")
+    string(REPLACE "|" ";" _parts "${_mutation}")
+    list(GET _parts 0 _source_mutation)
+    list(GET _parts 1 _expected_failure)
+    set(_mutated_host "${GUARD_TEST_ROOT}/host-count-${_expected_failure}.cpp")
+    file(COPY_FILE "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp" "${_mutated_host}")
+    file(APPEND "${_mutated_host}" "\n// copied count mutation\n${_source_mutation}\n")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+            "-DHOST_OVERRIDE=${_mutated_host}" -P "${_guard}"
+        RESULT_VARIABLE _mutation_result OUTPUT_VARIABLE _mutation_stdout ERROR_VARIABLE _mutation_stderr)
+    if(_mutation_result EQUAL 0)
+        message(FATAL_ERROR "evidence guard self-test accepted count mutation: ${_source_mutation}")
+    endif()
+    if(NOT "${_mutation_stdout}${_mutation_stderr}" MATCHES "${_expected_failure}")
+        message(FATAL_ERROR "count mutation failed for wrong reason: ${_source_mutation}: ${_mutation_stdout}${_mutation_stderr}")
+    endif()
+endforeach()

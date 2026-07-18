@@ -40,7 +40,7 @@ if(TARGET arpg_raylib)
     add_test(
         NAME stage11b.settings_formal
         COMMAND "$<TARGET_FILE:arpg_stage11b_settings_formal>"
-            "${CMAKE_CURRENT_BINARY_DIR}/stage11b-settings-evidence")
+            "${CMAKE_CURRENT_BINARY_DIR}/stage11b settings evidence")
     set_tests_properties(
         stage11b.settings_formal
         PROPERTIES LABELS "platform;raylib;stage11b"
@@ -50,7 +50,7 @@ if(TARGET arpg_raylib)
         NAME stage11b.settings_evidence_validator
         COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
             "${CMAKE_CURRENT_SOURCE_DIR}/stage11b_settings_formal_validator.ps1"
-            -EvidenceDirectory "${CMAKE_CURRENT_BINARY_DIR}/stage11b-settings-evidence")
+            -EvidenceDirectory "${CMAKE_CURRENT_BINARY_DIR}/stage11b settings evidence")
     set_tests_properties(
         stage11b.settings_evidence_validator
         PROPERTIES LABELS "platform;raylib;stage11b"

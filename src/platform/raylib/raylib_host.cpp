@@ -160,11 +160,16 @@ struct Stage11BValidationState final {
     std::uint64_t fixed_ticks{};
     std::uint64_t paused_ticks_before{};
     std::uint64_t paused_ticks_after{};
+    std::uint64_t resume_ticks_before{};
+    std::uint64_t resume_ticks_after{};
     std::uint64_t player_monster_hash_before{};
     std::uint64_t player_monster_hash_after{};
     std::uint32_t old_attack_count{};
     std::uint32_t new_attack_count{};
     bool old_attack_checked{};
+    bool resume_input_injected{};
+    bool resume_observed{};
+    bool recovery_notice_visible{};
     settings::SettingsLoadStatus load_status{
         settings::SettingsLoadStatus::defaults_missing};
 };
@@ -197,7 +202,11 @@ void inject_stage11b_open_settings(PhysicalKeySnapshot& snapshot,
     const std::uint32_t frame = ++state.injected_frame;
     switch (config.stage11b_validation) {
     case Stage11BValidationScenario::paused_freeze:
-        if (frame == 1U) snapshot.escape = true;
+        if (frame == 2U || (state.paused_presented >= 120U
+                && !state.resume_input_injected)) {
+            snapshot.escape = true;
+            state.resume_input_injected = frame != 2U;
+        }
         break;
     case Stage11BValidationScenario::settings_page:
     case Stage11BValidationScenario::restarted_settings:
@@ -243,7 +252,8 @@ void inject_stage11b_open_settings(PhysicalKeySnapshot& snapshot,
     switch (config.stage11b_validation) {
     case Stage11BValidationScenario::none: return false;
     case Stage11BValidationScenario::paused_freeze:
-        return state.paused_presented >= 120U;
+        return state.paused_presented >= 120U && state.resume_observed
+            && state.resume_ticks_after == state.resume_ticks_before + 1U;
     case Stage11BValidationScenario::settings_page:
     case Stage11BValidationScenario::restarted_settings:
     case Stage11BValidationScenario::single_slot_recovery:
@@ -302,11 +312,15 @@ void write_stage11b_validation_summary(const RaylibHostConfig& config,
                << "injected_frame=" << state.injected_frame << '\n'
                << "paused_tick_before=" << state.paused_ticks_before << '\n'
                << "paused_tick_after=" << state.paused_ticks_after << '\n'
+               << "resume_tick_before=" << state.resume_ticks_before << '\n'
+               << "resume_tick_after=" << state.resume_ticks_after << '\n'
                << "player_monster_hash_before=" << state.player_monster_hash_before << '\n'
                << "player_monster_hash_after=" << state.player_monster_hash_after << '\n'
                << "committed_revision=" << pause_menu.committed.revision << '\n'
                << "old_attack_count=" << state.old_attack_count << '\n'
                << "new_attack_count=" << state.new_attack_count << '\n'
+               << "recovery_notice_visible="
+               << (state.recovery_notice_visible ? 1 : 0) << '\n'
                << "pause_screen=" << static_cast<unsigned>(pause_menu.screen) << '\n'
                << "pause_row=" << pause_menu.selected_row << '\n'
                << "light_attack=" << stable_key_label(light) << '\n'
@@ -767,6 +781,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         core::FixedStepRunner fixed_step;
         CombatRenderer renderer;
         static_cast<void>(renderer.initialize_resources());
+        PauseMenuRenderer pause_menu_renderer;
+        static_cast<void>(pause_menu_renderer.initialize());
         CombatFeedback feedback;
         CombatAudio audio;
         InventoryRenderer inventory;
@@ -1001,6 +1017,14 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             }
             const bool pause_open = pause_menu.screen != PauseScreen::closed;
             const bool pause_blocks_gameplay = pause_open || pause_was_open;
+            if (config.stage11b_validation
+                    == Stage11BValidationScenario::paused_freeze
+                && pause_was_open && !pause_open
+                && stage11b_validation_state.resume_input_injected) {
+                stage11b_validation_state.resume_observed = true;
+                stage11b_validation_state.resume_ticks_before =
+                    stage11b_validation_state.fixed_ticks;
+            }
             const float frame_seconds = GetFrameTime();
             HostFrameGateResult host_gate{};
             if (pause_open) {
@@ -1056,18 +1080,18 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 }
             }
             if (forward_actions) {
-                submit_frame_actions(*session, frame_input);
-            }
-            if (config.stage11b_validation
-                    == Stage11BValidationScenario::rebound_attack) {
-                if (stage11b_validation_state.injected_frame == 23U) {
-                    stage11b_validation_state.old_attack_checked = true;
-                    if (forward_actions && frame_input.combat_actions[0]) {
-                        ++stage11b_validation_state.old_attack_count;
+                const std::array<bool, 3> accepted_actions =
+                    submit_frame_actions(*session, frame_input);
+                if (config.stage11b_validation
+                        == Stage11BValidationScenario::rebound_attack) {
+                    if (stage11b_validation_state.injected_frame == 23U) {
+                        stage11b_validation_state.old_attack_checked = true;
+                        stage11b_validation_state.old_attack_count +=
+                            accepted_actions[0] ? 1U : 0U;
+                    } else if (stage11b_validation_state.injected_frame == 24U) {
+                        stage11b_validation_state.new_attack_count +=
+                            accepted_actions[0] ? 1U : 0U;
                     }
-                } else if (stage11b_validation_state.injected_frame == 24U
-                    && forward_actions && frame_input.combat_actions[0]) {
-                    ++stage11b_validation_state.new_attack_count;
                 }
             }
             if (forward_descent && frame_input.keys.e) {
@@ -1087,7 +1111,9 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 if (config.stage10_validation
                             != Stage10ValidationScenario::none
                         || config.stage11_validation
-                            != Stage11ValidationScenario::none) {
+                            != Stage11ValidationScenario::none
+                        || config.stage11b_validation
+                            != Stage11BValidationScenario::none) {
                     if (config.validation_steps_per_frame != 0U) {
                         frame.steps = config.validation_steps_per_frame;
                         frame.interpolation_alpha = 0.0;
@@ -1148,8 +1174,18 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             if (inventory.is_open()) {
                 inventory.draw(*session, current, runtime.render_status());
             }
+            if (stage11b_validation_state.resume_observed) {
+                stage11b_validation_state.resume_ticks_after =
+                    stage11b_validation_state.fixed_ticks;
+            }
             if (pause_menu.screen != PauseScreen::closed) {
-                draw_pause_menu(pause_menu);
+                pause_menu_renderer.draw(pause_menu);
+                if (config.stage11b_validation
+                        == Stage11BValidationScenario::corrupt_defaults
+                    && pause_menu.message == kSettingsRecoveredDefaults
+                    && pause_menu_renderer.has_cjk_font()) {
+                    stage11b_validation_state.recovery_notice_visible = true;
+                }
             }
             if (config.stage11b_validation
                     == Stage11BValidationScenario::paused_freeze
@@ -1228,6 +1264,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             pause_menu);
         audio.shutdown();
         renderer.shutdown_resources();
+        pause_menu_renderer.shutdown();
         CloseWindow();
         return HostExitCode::success;
     } catch (const std::exception& exception) {

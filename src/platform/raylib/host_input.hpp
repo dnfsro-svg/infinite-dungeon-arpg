@@ -60,7 +60,7 @@ struct PhysicalKeySource final {
 [[nodiscard]] HostFrameInput map_host_frame_input(
     const settings::SettingsData& settings,
     const PhysicalKeySnapshot& snapshot) noexcept;
-void submit_frame_actions(
+[[nodiscard]] std::array<bool, 3> submit_frame_actions(
     dungeon::DungeonSession& session,
     const HostFrameInput& input) noexcept;
 

@@ -3,22 +3,28 @@
 #include "allocation_probe.hpp"
 #include "control_hints.hpp"
 #include "host_input.hpp"
+#include "dungeon_runtime.hpp"
+#include "persistence/save_store.hpp"
 #include "platform/settings/settings_codec.hpp"
 #include "platform/settings/settings_store.hpp"
 #include "platform/settings/settings_types.hpp"
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <string>
 #include <vector>
 
 namespace {
 
 namespace platform = arpg::platform;
+namespace persistence = arpg::persistence;
 namespace settings = arpg::settings;
 
 // Independently derived from the documented 1,000-step mutation sequence and
@@ -86,6 +92,43 @@ bool memory_replace(void* context, const std::filesystem::path& path,
         value *= 1099511628211ULL;
     }
     return value;
+}
+
+struct V6Fingerprint final {
+    std::uint64_t hash{};
+    std::uintmax_t size{};
+    bool valid{};
+};
+
+[[nodiscard]] V6Fingerprint v6_fingerprint(const std::filesystem::path& path) {
+    std::error_code error{};
+    const std::uintmax_t size = std::filesystem::file_size(path, error);
+    if (error || size == 0U) return {};
+    std::ifstream stream(path, std::ios::binary);
+    std::uint64_t hash = 1469598103934665603ULL;
+    char byte{};
+    while (stream.get(byte)) {
+        hash ^= static_cast<unsigned char>(byte);
+        hash *= 1099511628211ULL;
+    }
+    return {hash, size, true};
+}
+
+[[nodiscard]] bool establish_v6_slots(const std::filesystem::path& directory) {
+    platform::DungeonRuntimeConfig config{};
+    config.save.directory = directory;
+    config.new_run_seed = 0x11B11BULL;
+    platform::DungeonRuntime runtime(config);
+    if (!runtime.initialize()) return false;
+    persistence::SaveStore store({directory});
+    const persistence::SaveLoadResult loaded = store.load();
+    if (loaded.state != persistence::SaveLoadState::ready
+            || loaded.checkpoint.commit_generation == UINT64_MAX) {
+        return false;
+    }
+    auto second = loaded.checkpoint;
+    ++second.commit_generation;
+    return store.commit(second).state == persistence::SaveCommitState::committed;
 }
 
 struct StressOutcome final {
@@ -169,6 +212,27 @@ arpg::test::Failure thousand_atomic_reload_cycles_are_restart_stable() noexcept 
     return {};
 }
 
+arpg::test::Failure real_v6_slots_are_unchanged_by_thousand_settings_cycles() noexcept {
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const std::filesystem::path directory = std::filesystem::temp_directory_path()
+        / ("arpg-stage11b-v6-settings-" + std::to_string(stamp));
+    std::error_code error{};
+    std::filesystem::create_directories(directory, error);
+    ARPG_REQUIRE(!error);
+    ARPG_REQUIRE(establish_v6_slots(directory));
+    const V6Fingerprint before_a = v6_fingerprint(directory / "run_a.sav");
+    const V6Fingerprint before_b = v6_fingerprint(directory / "run_b.sav");
+    const StressOutcome stress = run_stress_cycles();
+    const V6Fingerprint after_a = v6_fingerprint(directory / "run_a.sav");
+    const V6Fingerprint after_b = v6_fingerprint(directory / "run_b.sav");
+    ARPG_REQUIRE(stress.success);
+    ARPG_REQUIRE(before_a.valid && before_b.valid);
+    ARPG_REQUIRE(after_a.valid && after_b.valid);
+    ARPG_REQUIRE(before_a.hash == after_a.hash && before_a.size == after_a.size);
+    ARPG_REQUIRE(before_b.hash == after_b.hash && before_b.size == after_b.size);
+    return {};
+}
+
 arpg::test::Failure settings_hot_paths_and_cached_frame_paths_allocate_nothing() noexcept {
     settings::SettingsData values = settings::default_settings();
     platform::PhysicalKeySnapshot snapshot{};
@@ -199,6 +263,7 @@ arpg::test::Failure settings_hot_paths_and_cached_frame_paths_allocate_nothing()
 
 constexpr arpg::test::TestCase kCases[] = {
     {"1000 atomic reload cycles", &thousand_atomic_reload_cycles_are_restart_stable},
+    {"real V6 slots survive 1000 settings cycles", &real_v6_slots_are_unchanged_by_thousand_settings_cycles},
     {"settings hot paths allocate nothing", &settings_hot_paths_and_cached_frame_paths_allocate_nothing},
 };
 
@@ -226,5 +291,5 @@ int main() {
     const arpg::test::TestSuite suites[] = {
         arpg::test::make_suite("settings_stress", kCases),
     };
-    return arpg::test::run_suites(suites, 2, "stage 11b settings stress");
+    return arpg::test::run_suites(suites, 3, "stage 11b settings stress");
 }

@@ -78,19 +78,21 @@ store 不引用 raylib、Combat、Dungeon、Items、角色 Persistence codec 或
 `sample_physical_keys → Stage 11-B physical-edge injection → map_host_frame_input → pause gate → submit_frame_actions`。它在
 `EndDrawing()` 后的唯一捕获 helper 生成以下 fresh 1280×720 PNG：
 
-- `out/build/windows-msvc-release/tests/platform/stage11b-settings-evidence/pause.png`
-- `out/build/windows-msvc-release/tests/platform/stage11b-settings-evidence/settings.png`
-- `out/build/windows-msvc-release/tests/platform/stage11b-settings-evidence/rebound.png`
-- `out/build/windows-msvc-release/tests/platform/stage11b-settings-evidence/swap.png`
-- `out/build/windows-msvc-release/tests/platform/stage11b-settings-evidence/restart.png`
-- `out/build/windows-msvc-release/tests/platform/stage11b-settings-evidence/single-slot.png`
-- `out/build/windows-msvc-release/tests/platform/stage11b-settings-evidence/corrupt.png`
+- `out/build/windows-msvc-release/tests/platform/stage11b settings evidence/pause.png`
+- `out/build/windows-msvc-release/tests/platform/stage11b settings evidence/settings.png`
+- `out/build/windows-msvc-release/tests/platform/stage11b settings evidence/rebound.png`
+- `out/build/windows-msvc-release/tests/platform/stage11b settings evidence/swap.png`
+- `out/build/windows-msvc-release/tests/platform/stage11b settings evidence/restart.png`
+- `out/build/windows-msvc-release/tests/platform/stage11b settings evidence/single-slot.png`
+- `out/build/windows-msvc-release/tests/platform/stage11b settings evidence/corrupt.png`
 
-同目录的 `stage11b-settings-evidence.txt` 记录 120 presented frames 的暂停前后 tick 和
-玩家/怪物 hash、旧/新攻击数、交换对、committed revision、重启绑定、单槽/双槽恢复状态及
-前后相等的角色存档 hash。`stage11b.settings_evidence_validator` 检查这些字段和 PNG 尺寸；
-`stage11b.settings_evidence_guard[_self_test]` 拒绝逻辑动作直接注入、直接写 committed 设置、
-Present 前截图、绕过暂停 gate 或测试专用 setter。
+同目录的 `stage11b-settings-evidence.txt` 记录真实 V6 `run_a.sav`/`run_b.sav` 的字节
+hash 与大小、暂停前/后 tick、恢复前/后 tick、玩家/怪物 hash、旧/新攻击的生产
+`queue_action` 接受数、交换对、committed revision、重启绑定、单槽/双槽恢复状态与中文
+“设置已恢复默认值”可见性。正式子进程以带空格的证据目录运行，并通过受控 `.cmd` 中的逐项
+双引号引用启动。`stage11b.settings_evidence_validator` 检查这些字段和四张 PNG 尺寸；
+`stage11b.settings_evidence_guard[_self_test]` 还强制 `LoadImageFromScreen` 与
+`runtime.fixed_tick` 各只有一条受控生产路径，并以 Present 前截图和额外 tick 源码突变验证拒绝。
 
 ## Task 12 交付门禁
 
@@ -112,9 +114,11 @@ ctest --preset windows-msvc-release --output-on-failure
   最终日志结束于 09:33:15。
 - Release：fresh configure、clean-first **263** 个构建目标成功，完整 CTest **61/61** 通过；
   最终日志结束于 09:38:29。
-- Release 的七张 Stage 11-B 正式 PNG 均为 1280×720，生成于 09:37:04–09:37:08；摘要显示
-  暂停前后 tick `0/0`、玩家/怪物 hash 不变、旧 `J` 攻击 `0`、新 `U` 攻击 `1`、revision `1`、
-  restart binding `U`、单槽恢复状态 `2`、损坏回默认状态 `3`、角色存档 hash 前后相等。
+- 后续整改的 Debug formal 证据位于带空格目录 `stage11b settings evidence`：真实 V6 双槽
+  `run_a.sav`/`run_b.sav` 分别为 460 bytes，前后 hash 相等；暂停先推进 1 tick，再冻结 120
+  presented frames（`1/1`），恢复后恰推进 1 tick（`1→2`，无 catch-up）；旧 `J` 接受数 `0`、
+  新 `U` 接受数 `1`。`corrupt.png` 可见红色中文“设置已恢复默认值”，并由字体加载状态和正式
+  验证器共同确认。
 
 Release CTest 会重新运行 `stage11b.settings_formal`，因此上述 Release 证据不是 Debug 产物的复用。
 
