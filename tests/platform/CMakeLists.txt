@@ -887,6 +887,19 @@ set_tests_properties(
     PROPERTIES LABELS "headless;architecture;stage11")
 
 add_test(
+    NAME stage11b.architecture.settings_boundaries
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}/src"
+        "-DGUARD_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/stage11b-settings-guard-mutations"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11b_architecture_guard_test.cmake")
+set_tests_properties(
+    stage11b.architecture.settings_boundaries
+    PROPERTIES
+        ENVIRONMENT "ARPG_TEST_FILTER=stage11b.architecture"
+        LABELS "headless;platform;architecture;stage11b"
+        TIMEOUT 300)
+
+add_test(
     NAME architecture.dungeon_no_raylib
     COMMAND "${CMAKE_COMMAND}"
         "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/dungeon"
