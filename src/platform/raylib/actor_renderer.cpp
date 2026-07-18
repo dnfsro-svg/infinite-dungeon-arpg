@@ -64,6 +64,12 @@ void draw_bar(float x, float y, float width, float ratio, Color color) noexcept 
     DrawRectangleRec({x + 1.0F, y + 1.0F, (width - 2.0F) * ratio, 3.0F}, color);
 }
 
+[[nodiscard]] float monster_bar_ratio(int value, int maximum) noexcept {
+    if (maximum <= 0) return 0.0F;
+    return std::clamp(static_cast<float>(value) / static_cast<float>(maximum),
+        0.0F, 1.0F);
+}
+
 void draw_effects(const CombatFeedback& feedback, float width, float height,
     bool foreground) noexcept {
     for (const VisualEffect& effect : feedback.effects()) {
@@ -217,17 +223,16 @@ void draw_monster_silhouette(const MonsterSnapshot& monster, Vec3 position,
             radius, radius * 1.18F,
             Fade(to_color(outline.color), static_cast<float>(outline.alpha) / 255.0F));
     }
-    const MonsterBarVisualPlan bar_visual = monster_bar_visual_plan();
+    const MonsterBarVisualPlan bar_visual =
+        make_monster_bar_visual_plan(monster);
     const float bar_width = 54.0F * scale;
-    draw_bar(x - bar_width * .5F, y - 102.0F * scale, bar_width,
-        monster.max_hp <= 0 ? 0.0F : static_cast<float>(monster.hp) / static_cast<float>(monster.max_hp),
-        hud_palette_color(bar_visual.palette_ids[0]));
-    if (monster.max_shield > 0) draw_bar(x - bar_width * .5F, y - 95.0F * scale, bar_width,
-        static_cast<float>(monster.shield) / static_cast<float>(monster.max_shield),
-        hud_palette_color(bar_visual.palette_ids[1]));
-    if (monster.max_break > 0) draw_bar(x - bar_width * .5F, y - 88.0F * scale, bar_width,
-        static_cast<float>(monster.break_value) / static_cast<float>(monster.max_break),
-        hud_palette_color(bar_visual.palette_ids[2]));
+    constexpr float kBarOffsets[] = {102.0F, 95.0F, 88.0F};
+    for (std::size_t index = 0U; index < bar_visual.bars.size(); ++index) {
+        const MonsterBarPlan& bar = bar_visual.bars[index];
+        if (!bar.visible) continue;
+        draw_bar(x - bar_width * .5F, y - kBarOffsets[index] * scale,
+            bar_width, bar.ratio, hud_palette_color(bar.palette_id));
+    }
     for (std::size_t index = 0U; index < affix_count; ++index) {
         const AffixBadge badge = monster_affix_badge(monster.affixes.values[index]);
         DrawText(TextFormat("%s %s", badge.short_name, badge.tier_text),
@@ -241,12 +246,18 @@ void draw_monster_silhouette(const MonsterSnapshot& monster, Vec3 position,
 
 }  // namespace
 
-MonsterBarVisualPlan monster_bar_visual_plan() noexcept {
-    return {{
-        HudPaletteId::health,
-        HudPaletteId::barrier,
-        HudPaletteId::experience,
-    }, 3U, true};
+MonsterBarVisualPlan make_monster_bar_visual_plan(
+    const combat::MonsterSnapshot& monster) noexcept {
+    MonsterBarVisualPlan plan{};
+    plan.bars[0] = {true, monster_bar_ratio(monster.hp, monster.max_hp),
+        HudPaletteId::health};
+    plan.bars[1] = {monster.max_shield > 0,
+        monster_bar_ratio(monster.shield, monster.max_shield),
+        HudPaletteId::barrier};
+    plan.bars[2] = {monster.max_break > 0,
+        monster_bar_ratio(monster.break_value, monster.max_break),
+        HudPaletteId::experience};
+    return plan;
 }
 
 void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,

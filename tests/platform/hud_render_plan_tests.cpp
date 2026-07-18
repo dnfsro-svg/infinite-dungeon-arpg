@@ -1,12 +1,15 @@
 #include "test_framework.hpp"
 
+#include "combat/combat_types.hpp"
 #include "hud_renderer.hpp"
 
 #include <array>
+#include <limits>
 
 namespace {
 
 namespace platform = arpg::platform;
+namespace combat = arpg::combat;
 
 [[nodiscard]] platform::PlayerHudModel player_model() noexcept {
     platform::PlayerHudModel model{};
@@ -150,15 +153,64 @@ arpg::test::Failure plan_clamps_ratios_and_keeps_stable_bounds() noexcept {
     return {};
 }
 
-arpg::test::Failure monster_resource_bars_share_palette_ids_and_remain_world_space() noexcept {
-    const platform::MonsterBarVisualPlan plan =
-        platform::monster_bar_visual_plan();
+arpg::test::Failure nonfinite_player_ratios_fall_back_to_zero_without_low_health_pulse() noexcept {
+    constexpr std::array<float, 3> kNonfinite{{
+        (std::numeric_limits<float>::quiet_NaN)(),
+        (std::numeric_limits<float>::infinity)(),
+        -(std::numeric_limits<float>::infinity)(),
+    }};
+    for (const float nonfinite : kNonfinite) {
+        platform::PlayerHudModel model = player_model();
+        model.hp_ratio = nonfinite;
+        model.barrier_ratio = nonfinite;
+        model.experience_ratio = nonfinite;
+        model.barrier = 5;
+        model.max_barrier = 10;
+        const platform::PlayerPanelPlan plan = platform::make_player_panel_plan(
+            model, player_layout(), 0.0F);
 
-    ARPG_REQUIRE(plan.world_space);
-    ARPG_REQUIRE(plan.bar_count == 3U);
-    ARPG_REQUIRE(plan.palette_ids[0] == platform::HudPaletteId::health);
-    ARPG_REQUIRE(plan.palette_ids[1] == platform::HudPaletteId::barrier);
-    ARPG_REQUIRE(plan.palette_ids[2] == platform::HudPaletteId::experience);
+        ARPG_REQUIRE(plan.bar_count == 3U);
+        ARPG_REQUIRE(arpg::test::near(plan.bars[0].ratio, 0.0F));
+        ARPG_REQUIRE(arpg::test::near(plan.bars[1].ratio, 0.0F));
+        ARPG_REQUIRE(arpg::test::near(plan.bars[2].ratio, 0.0F));
+        ARPG_REQUIRE(!plan.low_health_emphasis);
+    }
+    return {};
+}
+
+arpg::test::Failure monster_resource_plan_consumes_snapshot_values_and_palette_ids() noexcept {
+    combat::MonsterSnapshot without_resources{};
+    without_resources.hp = 150;
+    without_resources.max_hp = 100;
+    const platform::MonsterBarVisualPlan bare =
+        platform::make_monster_bar_visual_plan(without_resources);
+
+    ARPG_REQUIRE(bare.world_space);
+    ARPG_REQUIRE(bare.bars[0].visible);
+    ARPG_REQUIRE(arpg::test::near(bare.bars[0].ratio, 1.0F));
+    ARPG_REQUIRE(bare.bars[0].palette_id == platform::HudPaletteId::health);
+    ARPG_REQUIRE(!bare.bars[1].visible);
+    ARPG_REQUIRE(!bare.bars[2].visible);
+
+    combat::MonsterSnapshot with_resources{};
+    with_resources.hp = 25;
+    with_resources.max_hp = 100;
+    with_resources.shield = -5;
+    with_resources.max_shield = 20;
+    with_resources.break_value = 30;
+    with_resources.max_break = 60;
+    const platform::MonsterBarVisualPlan full =
+        platform::make_monster_bar_visual_plan(with_resources);
+
+    ARPG_REQUIRE(full.world_space);
+    ARPG_REQUIRE(full.bars[0].visible);
+    ARPG_REQUIRE(arpg::test::near(full.bars[0].ratio, 0.25F));
+    ARPG_REQUIRE(full.bars[1].visible);
+    ARPG_REQUIRE(arpg::test::near(full.bars[1].ratio, 0.0F));
+    ARPG_REQUIRE(full.bars[1].palette_id == platform::HudPaletteId::barrier);
+    ARPG_REQUIRE(full.bars[2].visible);
+    ARPG_REQUIRE(arpg::test::near(full.bars[2].ratio, 0.5F));
+    ARPG_REQUIRE(full.bars[2].palette_id == platform::HudPaletteId::experience);
     return {};
 }
 
@@ -169,7 +221,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"low health presentation frequency", &low_health_emphasis_is_presentation_time_bounded_to_two_hz},
     {"three status tags", &player_plan_preserves_at_most_three_snapshot_status_tags},
     {"clamped stable bar bounds", &plan_clamps_ratios_and_keeps_stable_bounds},
-    {"monster palette world space", &monster_resource_bars_share_palette_ids_and_remain_world_space},
+    {"nonfinite ratios", &nonfinite_player_ratios_fall_back_to_zero_without_low_health_pulse},
+    {"monster snapshot palette world space", &monster_resource_plan_consumes_snapshot_values_and_palette_ids},
 };
 
 }  // namespace

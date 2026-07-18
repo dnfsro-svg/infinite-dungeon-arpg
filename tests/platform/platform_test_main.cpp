@@ -61,5 +61,5 @@ int main() {
         hud_render_plan_suite(),
     };
 
-    return arpg::test::run_suites(suites, 217, "stage 11c task 5 combat bars");
+    return arpg::test::run_suites(suites, 218, "stage 11c task 5 combat bars");
 }

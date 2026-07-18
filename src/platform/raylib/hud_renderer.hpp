@@ -8,6 +8,10 @@
 #include <array>
 #include <cstdint>
 
+namespace arpg::combat {
+struct MonsterSnapshot;
+}
+
 namespace arpg::platform {
 
 enum class HudBarKind : std::uint8_t { health, barrier, experience };
@@ -29,15 +33,21 @@ struct PlayerPanelPlan final {
 
 enum class HudPaletteId : std::uint8_t { health, barrier, experience };
 
+struct MonsterBarPlan final {
+    bool visible{};
+    float ratio{};
+    HudPaletteId palette_id{HudPaletteId::health};
+};
+
 struct MonsterBarVisualPlan final {
-    std::array<HudPaletteId, 3> palette_ids{};
-    std::uint8_t bar_count{};
-    bool world_space{};
+    std::array<MonsterBarPlan, 3> bars{};
+    bool world_space{true};
 };
 
 [[nodiscard]] PlayerPanelPlan make_player_panel_plan(
     const PlayerHudModel&, const HudLayout&, float presentation_seconds) noexcept;
-[[nodiscard]] MonsterBarVisualPlan monster_bar_visual_plan() noexcept;
+[[nodiscard]] MonsterBarVisualPlan make_monster_bar_visual_plan(
+    const combat::MonsterSnapshot&) noexcept;
 [[nodiscard]] Color hud_palette_color(HudPaletteId palette_id) noexcept;
 
 class HudRenderer final {

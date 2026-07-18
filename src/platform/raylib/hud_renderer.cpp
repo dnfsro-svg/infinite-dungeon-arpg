@@ -58,6 +58,7 @@ bool has_requested_glyphs(Font font,
 }
 
 [[nodiscard]] float clamped_ratio(float ratio) noexcept {
+    if (!std::isfinite(ratio)) return 0.0F;
     return std::clamp(ratio, 0.0F, 1.0F);
 }
 
@@ -147,7 +148,8 @@ PlayerPanelPlan make_player_panel_plan(const PlayerHudModel& player,
 
     const float seconds = std::max(0.0F, presentation_seconds);
     const float pulse_phase = std::fmod(seconds, 0.5F);
-    plan.low_health_emphasis = clamped_ratio(player.hp_ratio) < 0.25F
+    plan.low_health_emphasis = std::isfinite(player.hp_ratio)
+        && clamped_ratio(player.hp_ratio) < 0.25F
         && pulse_phase < 0.25F;
     return plan;
 }
