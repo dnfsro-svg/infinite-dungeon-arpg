@@ -93,10 +93,10 @@ void CombatRenderer::observe_presented_hud_frame(
     const ControlHints& control_hints,
     float frame_seconds,
     bool paused) noexcept {
+    const auto index = hud_presented_frame_index(frame);
+    if (!index.has_value()) return;
     observe_hud(previous, current, runtime_status, control_hints, frame_seconds, paused);
-    if (const auto index = hud_presented_frame_index(frame)) {
-        ++hud_presented_frame_counts_[*index];
-    }
+    ++hud_presented_frame_counts_[*index];
 }
 
 const HudViewModel& CombatRenderer::hud_model() const noexcept {

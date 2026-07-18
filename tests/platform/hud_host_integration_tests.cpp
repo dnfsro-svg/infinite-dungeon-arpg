@@ -98,18 +98,31 @@ arpg::test::Failure production_presentation_seam_observes_normal_recovery_and_de
 
 arpg::test::Failure presentation_frame_sentinel_rejects_invalid_enum_values() noexcept {
     const dungeon::DungeonSnapshot value = snapshot();
+    dungeon::DungeonSnapshot changed = value;
+    changed.depth = 99U;
     platform::CombatRenderer renderer{};
     const auto invalid = static_cast<platform::HudPresentedFrame>(255U);
 
+    renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
+        value, value, saved_status(), committed_hints(14U), 0.1F, false);
+    const platform::HudViewModel model_before = renderer.hud_model();
+    const platform::HudNoticeView notices_before = renderer.hud_notice_view();
+    const std::uint64_t observations_before = renderer.hud_observation_count();
+    const std::uint64_t revision_before = renderer.hud_binding_revision();
     ARPG_REQUIRE(!platform::hud_presented_frame_index(invalid).has_value());
     ARPG_REQUIRE(!platform::hud_presented_frame_index(
         platform::HudPresentedFrame::count).has_value());
-    renderer.observe_presented_hud_frame(invalid, value, value, saved_status(),
-        committed_hints(14U), 0.1F, false);
-    ARPG_REQUIRE(renderer.hud_observation_count() == 1U);
+    renderer.observe_presented_hud_frame(invalid, value, changed, saved_status(),
+        committed_hints(15U), 0.1F, false);
+    ARPG_REQUIRE(renderer.hud_observation_count() == observations_before);
     ARPG_REQUIRE(renderer.hud_presented_frame_count(invalid) == 0U);
     ARPG_REQUIRE(renderer.hud_presented_frame_count(
         platform::HudPresentedFrame::count) == 0U);
+    ARPG_REQUIRE(renderer.hud_binding_revision() == revision_before);
+    ARPG_REQUIRE(renderer.hud_model().navigation.depth
+        == model_before.navigation.depth);
+    ARPG_REQUIRE(renderer.hud_notice_view().primary.kind
+        == notices_before.primary.kind);
     return {};
 }
 

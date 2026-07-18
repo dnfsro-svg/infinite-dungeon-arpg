@@ -185,6 +185,24 @@ function(hud_present_structure_valid SOURCE OUT_VARIABLE)
         set("${OUT_VARIABLE}" FALSE PARENT_SCOPE)
         return()
     endif()
+    math(EXPR RECOVERY_LENGTH "${RECOVERY_PRESENT} - ${RECOVERY_START}")
+    string(SUBSTRING "${CODE}" ${RECOVERY_START} ${RECOVERY_LENGTH} RECOVERY_BRANCH)
+    string(REGEX MATCH
+        "renderer\\.observe_presented_hud_frame\\([ \t\r\n]*HudPresentedFrame::recovery"
+        RECOVERY_OWNER_MATCH "${RECOVERY_BRANCH}")
+    math(EXPR NORMAL_LENGTH "${NORMAL_PRESENT} - ${AFTER_RECOVERY_PRESENT}")
+    string(SUBSTRING "${CODE}" ${AFTER_RECOVERY_PRESENT} ${NORMAL_LENGTH} NORMAL_BRANCH)
+    string(REGEX MATCH
+        "current\\.death\\.has_value\\(\\)[ \t\r\n]*\\?[ \t\r\n]*HudPresentedFrame::death_overlay[ \t\r\n]*:[ \t\r\n]*HudPresentedFrame::normal"
+        NORMAL_DEATH_OWNER_MATCH "${NORMAL_BRANCH}")
+    string(REGEX MATCH
+        "renderer\\.observe_presented_hud_frame\\([ \t\r\n]*hud_presented_frame"
+        NORMAL_OBSERVE_OWNER_MATCH "${NORMAL_BRANCH}")
+    if(RECOVERY_OWNER_MATCH STREQUAL "" OR NORMAL_DEATH_OWNER_MATCH STREQUAL ""
+            OR NORMAL_OBSERVE_OWNER_MATCH STREQUAL "")
+        set("${OUT_VARIABLE}" FALSE PARENT_SCOPE)
+        return()
+    endif()
     set("${OUT_VARIABLE}" TRUE PARENT_SCOPE)
 endfunction()
 
@@ -214,6 +232,25 @@ string(REPLACE "renderer.observe_presented_hud_frame(hud_presented_frame,"
 hud_present_structure_valid("${MOVED_HUD_OBSERVE_SOURCE}" MOVED_HUD_OBSERVE_VALID)
 if(MOVED_HUD_OBSERVE_VALID)
     message(FATAL_ERROR "HUD seam after BeginDrawing must not validate")
+endif()
+string(REPLACE "HudPresentedFrame::recovery" "HudPresentedFrame::normal"
+    RECOVERY_OWNER_MUTATION_SOURCE "${HOST_SOURCE}")
+hud_present_structure_valid("${RECOVERY_OWNER_MUTATION_SOURCE}" RECOVERY_OWNER_MUTATION_VALID)
+if(RECOVERY_OWNER_MUTATION_VALID)
+    message(FATAL_ERROR "recovery owner mutation must not validate")
+endif()
+string(REPLACE "HudPresentedFrame::death_overlay" "HudPresentedFrame::normal"
+    DEATH_OWNER_MUTATION_SOURCE "${HOST_SOURCE}")
+hud_present_structure_valid("${DEATH_OWNER_MUTATION_SOURCE}" DEATH_OWNER_MUTATION_VALID)
+if(DEATH_OWNER_MUTATION_VALID)
+    message(FATAL_ERROR "death owner mutation must not validate")
+endif()
+string(REPLACE "? HudPresentedFrame::death_overlay : HudPresentedFrame::normal"
+    "? HudPresentedFrame::normal : HudPresentedFrame::death_overlay"
+    TERNARY_OWNER_MUTATION_SOURCE "${HOST_SOURCE}")
+hud_present_structure_valid("${TERNARY_OWNER_MUTATION_SOURCE}" TERNARY_OWNER_MUTATION_VALID)
+if(TERNARY_OWNER_MUTATION_VALID)
+    message(FATAL_ERROR "death owner ternary mutation must not validate")
 endif()
 
 set(POISON_TARGET
