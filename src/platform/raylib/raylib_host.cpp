@@ -167,6 +167,7 @@ struct Stage11BValidationState final {
     std::uint32_t old_attack_count{};
     std::uint32_t new_attack_count{};
     bool old_attack_checked{};
+    bool pause_capture_while_paused{};
     bool resume_input_injected{};
     bool resume_observed{};
     bool recovery_notice_visible{};
@@ -252,7 +253,8 @@ void inject_stage11b_open_settings(PhysicalKeySnapshot& snapshot,
     switch (config.stage11b_validation) {
     case Stage11BValidationScenario::none: return false;
     case Stage11BValidationScenario::paused_freeze:
-        return state.paused_presented >= 120U && state.resume_observed
+        return state.paused_presented >= 120U && state.pause_capture_while_paused
+            && state.resume_observed
             && state.resume_ticks_after == state.resume_ticks_before + 1U;
     case Stage11BValidationScenario::settings_page:
     case Stage11BValidationScenario::restarted_settings:
@@ -312,6 +314,8 @@ void write_stage11b_validation_summary(const RaylibHostConfig& config,
                << "injected_frame=" << state.injected_frame << '\n'
                << "paused_tick_before=" << state.paused_ticks_before << '\n'
                << "paused_tick_after=" << state.paused_ticks_after << '\n'
+               << "pause_capture_while_paused="
+               << (state.pause_capture_while_paused ? 1 : 0) << '\n'
                << "resume_tick_before=" << state.resume_ticks_before << '\n'
                << "resume_tick_after=" << state.resume_ticks_after << '\n'
                << "player_monster_hash_before=" << state.player_monster_hash_before << '\n'
@@ -1228,15 +1232,23 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 (config.stage11b_validation == Stage11BValidationScenario::rebound_attack
                     || config.stage11b_validation == Stage11BValidationScenario::conflict_swap)
                 && stage11b_validation_state.injected_frame == 20U;
+            const bool stage11b_paused_visible_capture =
+                config.stage11b_validation == Stage11BValidationScenario::paused_freeze
+                && pause_menu.screen != PauseScreen::closed
+                && stage11b_validation_state.paused_presented >= 120U
+                && !stage11b_validation_state.pause_capture_while_paused;
             const bool validation_reached = stage10_reached || stage11_reached
                 || stage11b_reached;
             std::optional<std::string> capture_path{};
             bool captured_stage10_target = false;
-            if ((validation_reached || stage11b_visible_capture)
+            if ((validation_reached || stage11b_visible_capture
+                    || stage11b_paused_visible_capture)
                     && !stage10_validation_captured
                     && config.validation_capture_file.has_value()) {
                 capture_path = config.validation_capture_file->string();
                 captured_stage10_target = true;
+                stage11b_validation_state.pause_capture_while_paused =
+                    stage11b_paused_visible_capture;
             }
             if (death_gate.screenshot) {
                 capture_path = host_screenshot_path();

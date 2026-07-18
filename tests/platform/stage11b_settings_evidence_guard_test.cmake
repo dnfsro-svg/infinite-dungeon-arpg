@@ -128,6 +128,30 @@ string(FIND "${_host_text}" "accepted_actions[0] ? 1U : 0U" _accepted_attack_cou
 if(_accepted_actions EQUAL -1 OR _accepted_attack_count EQUAL -1)
     message(FATAL_ERROR "Stage11B evidence guard requires accepted queue_action evidence")
 endif()
+string(FIND "${_host_text}" "const bool stage11b_paused_visible_capture ="
+    _paused_capture_declaration)
+string(FIND "${_host_text}"
+    "&& pause_menu.screen != PauseScreen::closed"
+    _paused_capture_menu_visible)
+string(FIND "${_host_text}"
+    "&& stage11b_validation_state.paused_presented >= 120U"
+    _paused_capture_freeze_count)
+string(FIND "${_host_text}"
+    "stage11b_validation_state.pause_capture_while_paused ="
+    _paused_capture_recorded)
+if(_paused_capture_declaration EQUAL -1 OR _paused_capture_menu_visible EQUAL -1
+        OR _paused_capture_freeze_count EQUAL -1 OR _paused_capture_recorded EQUAL -1)
+    message(FATAL_ERROR
+        "Stage11B evidence guard requires paused screenshot before resume and Present")
+endif()
+string(SUBSTRING "${_host_text}" ${_paused_capture_declaration} -1
+    _paused_capture_tail)
+string(FIND "${_paused_capture_tail}" "present_frame_and_maybe_capture("
+    _paused_capture_present_call)
+if(_paused_capture_present_call EQUAL -1)
+    message(FATAL_ERROR
+        "Stage11B evidence guard requires paused screenshot before resume and Present")
+endif()
 
 foreach(_ordered IN ITEMS
         "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();"

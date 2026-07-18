@@ -116,7 +116,8 @@ ctest --preset windows-msvc-release --output-on-failure
   最终日志结束于 09:38:29。
 - 后续整改的 Release formal 证据位于带空格目录 `stage11b settings evidence`：真实 V6 双槽
   `run_a.sav`/`run_b.sav` 分别为 460 bytes：`run_a` 的前后 FNV-1a hash 均为
-  `16395907754423809155`，`run_b` 的前后 hash 均为 `1222458592949165727`。暂停先推进 1 tick，
+  `16395907754423809155`，`run_b` 的前后 hash 均为 `1222458592949165727`。`pause.png` 在暂停菜单
+  仍可见的第 120 个冻结 presented frame 后捕获，摘要 `pause_capture_while_paused=1`；暂停先推进 1 tick，
   再冻结 120 presented frames（`1/1`），恢复后恰推进 1 tick（`1→2`，无 catch-up）；生产
   `queue_action` 接受计数为旧 `J=0`、新 `U=1`。`corrupt.png` 可见红色中文“设置已恢复默认值”，
   并由字体加载状态和正式验证器共同确认。

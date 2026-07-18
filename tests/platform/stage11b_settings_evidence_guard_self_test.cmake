@@ -30,6 +30,24 @@ foreach(_fixture_forbidden IN ITEMS
         message(FATAL_ERROR "fixture mutation failed for the wrong reason: ${_fixture_forbidden}: ${_fixture_stdout}${_fixture_stderr}")
     endif()
 endforeach()
+set(_paused_capture_mutation "${GUARD_TEST_ROOT}/host-paused-capture.cpp")
+file(COPY_FILE "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp" "${_paused_capture_mutation}")
+file(READ "${_paused_capture_mutation}" _paused_capture_source)
+string(REPLACE "&& pause_menu.screen != PauseScreen::closed"
+    "&& pause_menu.screen == PauseScreen::closed"
+    _paused_capture_source "${_paused_capture_source}")
+file(WRITE "${_paused_capture_mutation}" "${_paused_capture_source}")
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+        "-DHOST_OVERRIDE=${_paused_capture_mutation}" -P "${_guard}"
+    RESULT_VARIABLE _paused_capture_result OUTPUT_VARIABLE _paused_capture_stdout ERROR_VARIABLE _paused_capture_stderr)
+if(_paused_capture_result EQUAL 0)
+    message(FATAL_ERROR "evidence guard self-test accepted resume-after pause capture mutation")
+endif()
+if(NOT "${_paused_capture_stdout}${_paused_capture_stderr}" MATCHES
+        "paused screenshot")
+    message(FATAL_ERROR "paused capture mutation failed for wrong reason: ${_paused_capture_stdout}${_paused_capture_stderr}")
+endif()
 set(_call_index 0)
 foreach(_replacement_pair IN ITEMS
         "platform::run_raylib_host(config)|platform::run_raylib_host_removed(config)"

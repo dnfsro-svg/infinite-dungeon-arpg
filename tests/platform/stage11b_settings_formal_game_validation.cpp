@@ -250,6 +250,7 @@ int main(int argc, char** argv) {
     ok = ok && equals(pause, "paused_tick_before",
         value_or_empty(pause, "paused_tick_after").c_str())
         && nonzero(pause, "paused_tick_before")
+        && equals(pause, "pause_capture_while_paused", "1")
         && value_or_empty(pause, "resume_tick_after")
             == std::to_string(std::stoull(value_or_empty(pause,
                 "resume_tick_before")) + 1U)
@@ -279,6 +280,8 @@ int main(int argc, char** argv) {
            << "rebound_new_attack=" << value_or_empty(rebound, "new_attack_count") << '\n'
            << "paused_tick_before=" << value_or_empty(pause, "paused_tick_before") << '\n'
            << "paused_tick_after=" << value_or_empty(pause, "paused_tick_after") << '\n'
+           << "pause_capture_while_paused="
+           << value_or_empty(pause, "pause_capture_while_paused") << '\n'
            << "resume_tick_before=" << value_or_empty(pause, "resume_tick_before") << '\n'
            << "resume_tick_after=" << value_or_empty(pause, "resume_tick_after") << '\n'
            << "player_monster_hash_before=" << value_or_empty(pause, "player_monster_hash_before") << '\n'
