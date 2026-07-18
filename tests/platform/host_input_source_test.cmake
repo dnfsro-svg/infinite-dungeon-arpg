@@ -31,7 +31,9 @@ set(ANY_INCLUDE_LINE_PATTERN
 set(ACTIVE_ASSERT_PATTERN
     "${SOURCE_LINE_START}static_assert[ \t]*\\([ \t]*arpg::platform::direct_input_poison::active[ \t]*(,|\\))")
 set(SAMPLE_CALL_LINE_PATTERN
-    "${SOURCE_LINE_START}const[ \t]+PhysicalKeySnapshot[ \t]+physical_keys[ \t]*=[ \t]*sample_physical_keys[ \t]*\\([ \t]*\\)")
+    "${SOURCE_LINE_START}const[ \t]+PhysicalKeySnapshot[ \t]+sampled_physical_keys[ \t]*=[ \t]*sample_physical_keys[ \t]*\\([ \t]*\\)")
+set(INJECT_CALL_LINE_PATTERN
+    "${SOURCE_LINE_START}const[ \t]+PhysicalKeySnapshot[ \t]+physical_keys[ \t]*=[ \t]*inject_stage11b_physical_edges[ \t]*\\(")
 set(MAP_CALL_LINE_PATTERN
     "${SOURCE_LINE_START}HostFrameInput[ \t]+frame_input[ \t]*=[ \t]*map_host_frame_input[ \t]*\\(")
 set(ACTIVE_SENTINEL_PATTERN
@@ -46,14 +48,18 @@ endfunction()
 set(COMMENT_ONLY_STRUCTURE [=[
 // #include "direct_input_poison.hpp"
 // static_assert(arpg::platform::direct_input_poison::active);
-// const PhysicalKeySnapshot physical_keys = sample_physical_keys();
+// const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();
+// const PhysicalKeySnapshot physical_keys = inject_stage11b_physical_edges(
+//     sampled_physical_keys, config, stage11b_validation_state);
 // HostFrameInput frame_input = map_host_frame_input(settings, physical_keys);
 // #define IsKeyDown ::arpg::platform::direct_input_poison::blocked
 ]=])
 set(REAL_STRUCTURE [=[
 #include "direct_input_poison.hpp"
 static_assert(arpg::platform::direct_input_poison::active, "active");
-const PhysicalKeySnapshot physical_keys = sample_physical_keys();
+const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();
+const PhysicalKeySnapshot physical_keys = inject_stage11b_physical_edges(
+    sampled_physical_keys, config, stage11b_validation_state);
 HostFrameInput frame_input = map_host_frame_input(settings, physical_keys);
 #define IsKeyDown ::arpg::platform::direct_input_poison::blocked
 ]=])
@@ -62,6 +68,7 @@ foreach(STRUCTURE_PATTERN IN ITEMS
         POISON_INCLUDE_LINE_PATTERN
         ACTIVE_ASSERT_PATTERN
         SAMPLE_CALL_LINE_PATTERN
+        INJECT_CALL_LINE_PATTERN
         MAP_CALL_LINE_PATTERN
         SELF_TEST_MACRO_PATTERN)
     require_match_count(
@@ -114,6 +121,11 @@ require_match_count(
     "${SAMPLE_CALL_LINE_PATTERN}"
     1
     "host physical snapshot calls")
+require_match_count(
+    "${HOST_SOURCE}"
+    "${INJECT_CALL_LINE_PATTERN}"
+    1
+    "host stage11b physical injection calls")
 require_match_count(
     "${HOST_SOURCE}"
     "${MAP_CALL_LINE_PATTERN}"
