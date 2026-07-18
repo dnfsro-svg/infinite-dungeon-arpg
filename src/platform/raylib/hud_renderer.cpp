@@ -130,6 +130,10 @@ PlayerPanelPlan make_player_panel_plan(const PlayerHudModel& player,
         player_bar_bounds(layout, 78.0F),
         plan.experience_maxed ? 1.0F : clamped_ratio(player.experience_ratio),
         HudBarKind::experience};
+    static_cast<void>(std::snprintf(plan.progression_text.bytes.data(),
+        plan.progression_text.bytes.size(), u8"LV %u · 未分配点 %u",
+        static_cast<unsigned>(player.level),
+        static_cast<unsigned>(player.unspent_passive_points)));
 
     plan.tag_count = std::min<std::uint8_t>(player.status_tag_count,
         static_cast<std::uint8_t>(plan.tags.size()));
@@ -418,15 +422,19 @@ void HudRenderer::draw(const HudViewModel& view,
                 2.0F * layout.scale,
                 palette.health);
         }
+        DrawTextEx(draw_font, plan.progression_text.bytes.data(),
+            {layout.player_panel.x + (12.0F * layout.scale),
+                layout.player_panel.y + (102.0F * layout.scale)},
+            13.0F * layout.scale, 1.0F * layout.scale, palette.text);
         for (std::size_t index = 0U; index < plan.tag_count; ++index) {
             const float tag_x = layout.player_panel.x
                 + ((12.0F + static_cast<float>(index) * 64.0F) * layout.scale);
-            const float tag_y = layout.player_panel.y + (110.0F * layout.scale);
+            const float tag_y = layout.player_panel.y + (122.0F * layout.scale);
             DrawRectangleRounded({tag_x, tag_y, 56.0F * layout.scale,
-                20.0F * layout.scale}, 0.18F, 4, Color{30, 39, 55, 235});
+                18.0F * layout.scale}, 0.18F, 4, Color{30, 39, 55, 235});
             DrawTextEx(draw_font, status_tag_label(plan.tags[index]),
-                {tag_x + (8.0F * layout.scale), tag_y + (2.0F * layout.scale)},
-                13.0F * layout.scale, 1.0F * layout.scale, palette.text);
+                {tag_x + (8.0F * layout.scale), tag_y + (1.0F * layout.scale)},
+                12.0F * layout.scale, 1.0F * layout.scale, palette.text);
         }
     }
     if (objective.visible) {

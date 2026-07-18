@@ -23,7 +23,7 @@ bool CombatRenderer::initialize_resources() noexcept {
         TraceLog(LOG_WARNING,
             "HUD overlays are using a fallback font; formal CJK validation will fail");
     }
-    return true;
+    return death_font_ready && hud_font_ready;
 }
 
 void CombatRenderer::shutdown_resources() noexcept {

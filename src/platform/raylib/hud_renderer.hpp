@@ -26,6 +26,7 @@ struct HudBarPlan final {
 struct PlayerPanelPlan final {
     std::array<HudBarPlan, 3> bars{};
     std::uint8_t bar_count{};
+    HudText96 progression_text{};
     bool low_health_emphasis{};
     std::array<HudStatusTagKind, 3> tags{};
     std::uint8_t tag_count{};

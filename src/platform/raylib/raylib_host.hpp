@@ -58,6 +58,16 @@ enum class Stage11BValidationScenario : std::uint8_t {
     corrupt_defaults,
 };
 
+enum class Stage11CHudValidationScenario : std::uint8_t {
+    none,
+    normal_combat,
+    low_health_status,
+    cleared_exit,
+    abyss_abandon,
+    level_up_points,
+    debug_overlay,
+};
+
 struct RaylibHostConfig final {
     int window_width{1280};
     int window_height{720};
@@ -73,6 +83,8 @@ struct RaylibHostConfig final {
         Stage11ValidationScenario::none};
     Stage11BValidationScenario stage11b_validation{
         Stage11BValidationScenario::none};
+    Stage11CHudValidationScenario stage11c_hud_validation{
+        Stage11CHudValidationScenario::none};
     std::uint8_t validation_abyss_direction{0xFFU};
     std::uint32_t validation_steps_per_frame{};
     std::optional<std::filesystem::path> validation_capture_file{};

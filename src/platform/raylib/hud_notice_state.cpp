@@ -265,7 +265,11 @@ void HudNoticeState::observe(const dungeon::DungeonSnapshot& previous,
     set_persistent(notices_, dropped_count_, HudNoticeKind::recovery_required,
         kRecoveryPriority, recovery_required, "Recovery required");
 
-    if (context_changed && current.abyss_exit_confirmation_armed) {
+    const bool abyss_confirmation_started =
+        !last_abyss_confirmation_armed_
+        && current.abyss_exit_confirmation_armed;
+    if ((context_changed && current.abyss_exit_confirmation_armed)
+            || abyss_confirmation_started) {
         add_abyss_confirmation_notice(notices_, dropped_count_, current, hints);
     }
     const bool awaiting_exit = current.has_active_room
@@ -298,14 +302,25 @@ void HudNoticeState::observe(const dungeon::DungeonSnapshot& previous,
             static_cast<unsigned long long>(current.last_room_experience));
         enqueue(notices_, dropped_count_, notice);
     }
-    if (current.progression.level > previous.progression.level
-        && current.progression.level != last_level_) {
+    const bool level_started_between_ticks =
+        current.progression.level > previous.progression.level
+        && current.progression.level != last_level_;
+    const bool level_started_between_presented_frames = has_observation_
+        && current.progression.level > last_level_;
+    if (level_started_between_ticks
+            || level_started_between_presented_frames) {
         HudNotice notice{};
         notice.kind = HudNoticeKind::level_up;
         notice.priority = kLevelPriority;
         notice.seconds_left = kTransientSeconds;
         format_notice(notice, "Level %u", static_cast<unsigned>(current.progression.level));
         enqueue(notices_, dropped_count_, notice);
+    }
+    if (has_observation_
+            && current.progression.unspent_passive_points
+                > last_unspent_passive_points_) {
+        add_transient(notices_, dropped_count_, HudNoticeKind::passive_points,
+            kPassivePointsPriority, "Passive points available");
     }
     if (context_changed && current.progression.unspent_passive_points != 0U) {
         add_transient(notices_, dropped_count_, HudNoticeKind::passive_points,
@@ -325,6 +340,10 @@ void HudNoticeState::observe(const dungeon::DungeonSnapshot& previous,
     last_room_index_ = current.room_index;
     last_room_experience_ = current.last_room_experience;
     last_level_ = current.progression.level;
+    last_unspent_passive_points_ =
+        current.progression.unspent_passive_points;
+    last_abyss_confirmation_armed_ =
+        current.abyss_exit_confirmation_armed;
     has_observation_ = true;
 }
 
@@ -360,6 +379,7 @@ void HudNoticeState::clear_room_context() noexcept {
     while (write < notices_.size()) {
         notices_[write++] = {};
     }
+    last_abyss_confirmation_armed_ = false;
     has_observation_ = false;
 }
 

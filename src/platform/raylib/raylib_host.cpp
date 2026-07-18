@@ -175,6 +175,18 @@ struct Stage11BValidationState final {
         settings::SettingsLoadStatus::defaults_missing};
 };
 
+struct Stage11CHudValidationState final {
+    std::uint32_t injected_frames{};
+    std::uint32_t target_presented_frames{};
+    std::uint64_t production_snapshot_hash{};
+    HudViewModel model{};
+    HudNoticeView notices{};
+    HudLayout layout{};
+    bool cjk_font_ready{};
+    bool debug_visible{};
+    bool captured{};
+};
+
 void inject_stage11b_pressed(PhysicalKeySnapshot& snapshot,
     settings::StableKey key) noexcept {
     const std::size_t index = static_cast<std::size_t>(key);
@@ -388,6 +400,242 @@ combat::MovementInput validation_exit_movement(
     case dungeon::ExitDirection::none: break;
     }
     return movement;
+}
+
+bool validation_attack_lane(
+    const combat::CombatSnapshot& state,
+    const combat::MonsterSnapshot& target) noexcept;
+dungeon::ExitDirection validation_direction(
+    const RaylibHostConfig& config) noexcept;
+
+void inject_stage11c_binding(PhysicalKeySnapshot& snapshot,
+    const settings::SettingsData& settings_data,
+    settings::SettingAction action, bool pressed) noexcept {
+    const settings::StableKey key = settings::binding_for(settings_data, action);
+    const std::size_t index = static_cast<std::size_t>(key);
+    if (index >= snapshot.down.size()) return;
+    snapshot.down[index] = true;
+    if (pressed) snapshot.pressed[index] = true;
+}
+
+void inject_stage11c_movement(PhysicalKeySnapshot& snapshot,
+    const settings::SettingsData& settings_data,
+    combat::MovementInput movement) noexcept {
+    if (movement.x < 0) {
+        inject_stage11c_binding(snapshot, settings_data,
+            settings::SettingAction::move_left, false);
+    } else if (movement.x > 0) {
+        inject_stage11c_binding(snapshot, settings_data,
+            settings::SettingAction::move_right, false);
+    }
+    if (movement.y < 0) {
+        inject_stage11c_binding(snapshot, settings_data,
+            settings::SettingAction::move_up, false);
+    } else if (movement.y > 0) {
+        inject_stage11c_binding(snapshot, settings_data,
+            settings::SettingAction::move_down, false);
+    }
+}
+
+[[nodiscard]] PhysicalKeySnapshot inject_stage11c_physical_edges(
+    PhysicalKeySnapshot snapshot, const RaylibHostConfig& config,
+    const settings::SettingsData& settings_data,
+    const dungeon::DungeonSnapshot& current,
+    Stage11CHudValidationState& state) noexcept {
+    using Scenario = Stage11CHudValidationScenario;
+    if (config.stage11c_hud_validation == Scenario::none
+            || snapshot.focus_lost) {
+        return snapshot;
+    }
+    ++state.injected_frames;
+    if (config.stage11c_hud_validation == Scenario::debug_overlay) {
+        if (!state.debug_visible) snapshot.f1 = true;
+        return snapshot;
+    }
+    if (!current.combat.has_value()) return snapshot;
+    const combat::CombatSnapshot& combat_snapshot = *current.combat;
+    if (current.phase == dungeon::RoomPhase::combat) {
+        const combat::MonsterSnapshot* const target =
+            nearest_living_monster(combat_snapshot);
+        if (target == nullptr) return snapshot;
+        const bool clears_room = config.stage11c_hud_validation
+                == Scenario::cleared_exit
+            || config.stage11c_hud_validation == Scenario::level_up_points
+            || config.stage11c_hud_validation == Scenario::abyss_abandon;
+        combat::Vec3 destination = target->position;
+        if (clears_room) {
+            destination.x += combat_snapshot.player.position.x
+                    <= target->position.x ? -1.0F : 1.0F;
+        }
+        inject_stage11c_movement(snapshot, settings_data,
+            validation_movement_toward(
+                combat_snapshot.player.position, destination));
+        if (clears_room && validation_attack_lane(combat_snapshot, *target)) {
+            inject_stage11c_binding(snapshot, settings_data,
+                settings::SettingAction::light_attack, true);
+        }
+        return snapshot;
+    }
+    if (config.stage11c_hud_validation != Scenario::abyss_abandon
+            || current.phase != dungeon::RoomPhase::awaiting_exit) {
+        return snapshot;
+    }
+    const dungeon::ExitDirection direction = current.is_abyss
+        ? dungeon::ExitDirection::right : validation_direction(config);
+    inject_stage11c_movement(snapshot, settings_data,
+        validation_exit_movement(combat_snapshot.player.position, direction));
+    return snapshot;
+}
+
+[[nodiscard]] std::uint64_t stage11c_production_snapshot_hash(
+    const dungeon::DungeonSnapshot& snapshot) noexcept {
+    std::uint64_t hash = 1469598103934665603ULL;
+    const auto mix = [&hash](std::uint64_t value) noexcept {
+        hash ^= value;
+        hash *= 1099511628211ULL;
+    };
+    mix(snapshot.session_tick);
+    mix(snapshot.root_seed);
+    mix(snapshot.commit_generation);
+    mix(snapshot.room_index);
+    mix(snapshot.room_seed);
+    mix(snapshot.depth);
+    mix(snapshot.floor_room_index);
+    mix(static_cast<std::uint64_t>(snapshot.phase));
+    mix(snapshot.is_abyss ? 1U : 0U);
+    mix(snapshot.abyss_exit_confirmation_armed ? 1U : 0U);
+    mix(snapshot.remaining_targets);
+    mix(snapshot.progression.level);
+    mix(snapshot.progression.experience);
+    mix(snapshot.progression.unspent_passive_points);
+    if (snapshot.combat.has_value()) {
+        const combat::PlayerSnapshot& player = snapshot.combat->player;
+        mix(static_cast<std::uint64_t>(player.hp));
+        mix(static_cast<std::uint64_t>(player.max_hp));
+        mix(static_cast<std::uint64_t>(player.barrier));
+        mix(player.slow_ticks);
+        mix(player.corrosion_ticks);
+        mix(player.invulnerability_ticks);
+        for (const combat::MonsterSnapshot& monster : snapshot.combat->monsters) {
+            mix(monster.active ? 1U : 0U);
+            mix(static_cast<std::uint64_t>(monster.hp));
+            mix(monster.spawn_ordinal);
+        }
+    }
+    return hash;
+}
+
+[[nodiscard]] const char* stage11c_scenario_name(
+    Stage11CHudValidationScenario scenario) noexcept {
+    switch (scenario) {
+    case Stage11CHudValidationScenario::none: return "none";
+    case Stage11CHudValidationScenario::normal_combat: return "normal_combat";
+    case Stage11CHudValidationScenario::low_health_status: return "low_health_status";
+    case Stage11CHudValidationScenario::cleared_exit: return "cleared_exit";
+    case Stage11CHudValidationScenario::abyss_abandon: return "abyss_abandon";
+    case Stage11CHudValidationScenario::level_up_points: return "level_up_points";
+    case Stage11CHudValidationScenario::debug_overlay: return "debug_overlay";
+    }
+    return "invalid";
+}
+
+[[nodiscard]] bool stage11c_hud_validation_reached(
+    const dungeon::DungeonSnapshot& snapshot,
+    Stage11CHudValidationScenario scenario,
+    const Stage11CHudValidationState& state, bool draw_debug) noexcept {
+    using Scenario = Stage11CHudValidationScenario;
+    if (!snapshot.combat.has_value()) return false;
+    const combat::PlayerSnapshot& player = snapshot.combat->player;
+    switch (scenario) {
+    case Scenario::none:
+        return false;
+    case Scenario::normal_combat:
+        return state.injected_frames >= 4U
+            && snapshot.phase == dungeon::RoomPhase::combat
+            && snapshot.remaining_targets != 0U;
+    case Scenario::low_health_status:
+        return player.hp > 0 && player.max_hp > 0
+            && static_cast<std::int64_t>(player.hp) * 4
+                <= static_cast<std::int64_t>(player.max_hp)
+            && (player.slow_ticks != 0U || player.corrosion_ticks != 0U
+                || player.invulnerability_ticks != 0U);
+    case Scenario::cleared_exit:
+        return snapshot.phase == dungeon::RoomPhase::awaiting_exit
+            && snapshot.progression.level > 1U;
+    case Scenario::abyss_abandon:
+        return snapshot.is_abyss
+            && snapshot.phase == dungeon::RoomPhase::awaiting_exit
+            && snapshot.abyss_exit_confirmation_armed;
+    case Scenario::level_up_points:
+        return snapshot.phase == dungeon::RoomPhase::awaiting_exit
+            && snapshot.last_levels_gained != 0U
+            && snapshot.progression.unspent_passive_points != 0U;
+    case Scenario::debug_overlay:
+        return state.injected_frames >= 4U && draw_debug;
+    }
+    return false;
+}
+
+void write_stage11c_rect(std::ostream& stream, const char* name,
+    HudRect rect) {
+    stream << name << '=' << rect.x << ',' << rect.y << ','
+           << rect.width << ',' << rect.height << '\n';
+}
+
+void write_stage11c_hud_validation_summary(const RaylibHostConfig& config,
+    const Stage11CHudValidationState& state) noexcept {
+    if (!config.validation_summary_file.has_value()
+            || config.stage11c_hud_validation
+                == Stage11CHudValidationScenario::none) {
+        return;
+    }
+    try {
+        std::ofstream stream(*config.validation_summary_file,
+            std::ios::out | std::ios::trunc);
+        if (!stream) return;
+        stream << "scenario="
+               << stage11c_scenario_name(config.stage11c_hud_validation) << '\n';
+        write_stage11c_rect(stream, "safe_rect", state.layout.safe_area);
+        write_stage11c_rect(stream, "player_rect", state.layout.player_panel);
+        write_stage11c_rect(stream, "objective_rect", state.layout.objective_panel);
+        write_stage11c_rect(stream, "navigation_rect", state.layout.navigation_panel);
+        write_stage11c_rect(stream, "primary_notice_rect", state.layout.primary_notice);
+        write_stage11c_rect(stream, "secondary_notice_rect", state.layout.secondary_notice);
+        write_stage11c_rect(stream, "debug_rect", state.layout.debug_panel);
+        const PlayerHudModel& player = state.model.player;
+        stream << "player_values=" << player.hp << ',' << player.max_hp << ','
+               << player.barrier << ',' << player.max_barrier << ','
+               << static_cast<unsigned>(player.level) << ','
+               << player.experience << ',' << player.required_experience << ','
+               << static_cast<unsigned>(player.unspent_passive_points) << '\n'
+               << "status_tags=";
+        for (std::uint8_t index = 0U; index < player.status_tag_count; ++index) {
+            if (index != 0U) stream << ',';
+            stream << static_cast<unsigned>(player.status_tags[index]);
+        }
+        stream << '\n'
+               << "objective=" << state.model.room.objective.bytes.data() << '\n'
+               << "notice_kinds="
+               << static_cast<unsigned>(state.notices.primary.kind) << ','
+               << static_cast<unsigned>(state.notices.secondary.kind) << '\n'
+               << "navigation_values=" << state.model.navigation.depth << ','
+               << state.model.navigation.floor_room << ','
+               << static_cast<unsigned>(state.model.navigation.ecology);
+        for (std::uint32_t bias : state.model.navigation.biases) {
+            stream << ',' << bias;
+        }
+        const bool stage11c_validation_result = state.captured
+            && state.cjk_font_ready && state.production_snapshot_hash != 0U;
+        stream << '\n'
+               << "font_ready=" << (state.cjk_font_ready ? 1 : 0) << '\n'
+               << "f1=" << (state.debug_visible ? 1 : 0) << '\n'
+               << "production_snapshot_hash="
+               << state.production_snapshot_hash << '\n'
+               << "result="
+               << (stage11c_validation_result ? "pass" : "fail") << '\n';
+    } catch (...) {
+        TraceLog(LOG_WARNING, "failed to write stage11c HUD validation summary");
+    }
 }
 
 bool validation_attack_lane(
@@ -778,13 +1026,15 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         SetWindowMinSize(800, 450);
         SetExitKey(KEY_NULL);
 #ifdef _WIN32
-        if (config.stage11b_validation != Stage11BValidationScenario::none) {
+        if (config.stage11b_validation != Stage11BValidationScenario::none
+                || config.stage11c_hud_validation
+                    != Stage11CHudValidationScenario::none) {
             static_cast<void>(SetForegroundWindow(GetWindowHandle()));
         }
 #endif
         core::FixedStepRunner fixed_step;
         CombatRenderer renderer;
-        static_cast<void>(renderer.initialize_resources());
+        const bool hud_resources_ready = renderer.initialize_resources();
         PauseMenuRenderer pause_menu_renderer;
         static_cast<void>(pause_menu_renderer.initialize());
         CombatFeedback feedback;
@@ -815,6 +1065,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         Stage11ValidationState stage11_validation_state{};
         Stage11BValidationState stage11b_validation_state{};
         stage11b_validation_state.load_status = loaded.status;
+        Stage11CHudValidationState stage11c_validation_state{};
+        stage11c_validation_state.cjk_font_ready = hud_resources_ready;
         bool stage10_validation_captured = false;
         const std::string validation_capture_prefix = config.validation_capture
             ? (*save_directory / "stage8-validation-").string()
@@ -842,8 +1094,12 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         while (!exit_requested) {
             const bool window_close_requested = WindowShouldClose();
             const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();
-            const PhysicalKeySnapshot physical_keys = inject_stage11b_physical_edges(
+            const PhysicalKeySnapshot stage11b_physical_keys =
+                inject_stage11b_physical_edges(
                 sampled_physical_keys, config, stage11b_validation_state);
+            const PhysicalKeySnapshot physical_keys = inject_stage11c_physical_edges(
+                stage11b_physical_keys, config, input_settings, current,
+                stage11c_validation_state);
             HostFrameInput frame_input = map_host_frame_input(
                 input_settings, physical_keys);
             if (recovery_requested(runtime.state() == DungeonRuntimeState::recovery_required,
@@ -974,6 +1230,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             if ((!inventory.is_open() || !death_gate.forward_gameplay)
                     && death_gate.debug_toggle) {
                 draw_debug = !draw_debug;
+                stage11c_validation_state.debug_visible = draw_debug;
             }
             if (death_gate.forward_gameplay
                 && pause_menu.screen == PauseScreen::closed
@@ -1122,7 +1379,9 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                         || config.stage11_validation
                             != Stage11ValidationScenario::none
                         || config.stage11b_validation
-                            != Stage11BValidationScenario::none) {
+                            != Stage11BValidationScenario::none
+                        || config.stage11c_hud_validation
+                            != Stage11CHudValidationScenario::none) {
                     if (config.validation_steps_per_frame != 0U) {
                         frame.steps = config.validation_steps_per_frame;
                         frame.interpolation_alpha = 0.0;
@@ -1179,6 +1438,21 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             renderer.observe_presented_hud_frame(hud_presented_frame,
                 previous, current, runtime.render_status(), control_hints,
                 frame_seconds, pause_blocks_gameplay);
+            const bool stage11c_target_visible = stage11c_hud_validation_reached(
+                current, config.stage11c_hud_validation,
+                stage11c_validation_state, draw_debug);
+            if (stage11c_target_visible) {
+                ++stage11c_validation_state.target_presented_frames;
+                stage11c_validation_state.production_snapshot_hash =
+                    stage11c_production_snapshot_hash(current);
+                stage11c_validation_state.model = renderer.hud_model();
+                stage11c_validation_state.notices = renderer.hud_notice_view();
+                stage11c_validation_state.layout = make_hud_layout(
+                    GetScreenWidth(), GetScreenHeight(), draw_debug);
+                stage11c_validation_state.debug_visible = draw_debug;
+            } else {
+                stage11c_validation_state.target_presented_frames = 0U;
+            }
             BeginDrawing();
             ClearBackground(Color{13, 17, 27, 255});
             renderer.draw(previous, current, runtime.render_status(),
@@ -1240,6 +1514,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 && stage11_validation_state.target_presented_frames >= 4U;
             const bool stage11b_reached = stage11b_validation_complete(
                 config, stage11b_validation_state, pause_menu);
+            const bool stage11c_reached = stage11c_target_visible
+                && stage11c_validation_state.target_presented_frames >= 4U;
             const bool stage11b_visible_capture =
                 (config.stage11b_validation == Stage11BValidationScenario::rebound_attack
                     || config.stage11b_validation == Stage11BValidationScenario::conflict_swap)
@@ -1250,7 +1526,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 && stage11b_validation_state.paused_presented >= 120U
                 && !stage11b_validation_state.pause_capture_while_paused;
             const bool validation_reached = stage10_reached || stage11_reached
-                || stage11b_reached;
+                || stage11b_reached || stage11c_reached;
             std::optional<std::string> capture_path{};
             bool captured_stage10_target = false;
             if ((validation_reached || stage11b_visible_capture
@@ -1271,6 +1547,9 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             present_frame_and_maybe_capture(capture_path.has_value()
                 ? capture_path->c_str() : nullptr);
             ++presented_frame_count;
+            if (captured_stage10_target && stage11c_reached) {
+                stage11c_validation_state.captured = true;
+            }
             stage10_validation_captured = stage10_validation_captured
                 || captured_stage10_target;
             if (config.validation_exit_after_presented_frames != 0U
@@ -1286,6 +1565,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         }
         write_stage11b_validation_summary(config, stage11b_validation_state,
             pause_menu);
+        write_stage11c_hud_validation_summary(config,
+            stage11c_validation_state);
         audio.shutdown();
         renderer.shutdown_resources();
         pause_menu_renderer.shutdown();

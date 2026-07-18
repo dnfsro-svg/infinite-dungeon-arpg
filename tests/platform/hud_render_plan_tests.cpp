@@ -6,6 +6,7 @@
 #include "hud_renderer.hpp"
 
 #include <array>
+#include <cstring>
 #include <limits>
 
 namespace {
@@ -84,6 +85,18 @@ arpg::test::Failure max_level_experience_uses_the_max_presentation() noexcept {
     ARPG_REQUIRE(plan.bar_count == 2U);
     ARPG_REQUIRE(plan.bars[1].kind == platform::HudBarKind::experience);
     ARPG_REQUIRE(arpg::test::near(plan.bars[1].ratio, 1.0F));
+    return {};
+}
+
+arpg::test::Failure player_plan_exposes_level_and_unspent_points_text() noexcept {
+    platform::PlayerHudModel model = player_model();
+    model.level = 12U;
+    model.unspent_passive_points = 7U;
+    const platform::PlayerPanelPlan plan = platform::make_player_panel_plan(
+        model, player_layout(), 0.0F);
+
+    ARPG_REQUIRE(std::strcmp(plan.progression_text.bytes.data(),
+        u8"LV 12 · 未分配点 7") == 0);
     return {};
 }
 
@@ -335,6 +348,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"health first", &health_is_always_the_first_visible_player_bar},
     {"conditional barrier", &barrier_bar_is_visible_only_with_a_positive_maximum},
     {"XP max", &max_level_experience_uses_the_max_presentation},
+    {"level and passive points text", &player_plan_exposes_level_and_unspent_points_text},
     {"low health presentation frequency", &low_health_emphasis_is_presentation_time_bounded_to_two_hz},
     {"three status tags", &player_plan_preserves_at_most_three_snapshot_status_tags},
     {"clamped stable bar bounds", &plan_clamps_ratios_and_keeps_stable_bounds},

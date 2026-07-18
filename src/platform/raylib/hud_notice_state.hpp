@@ -38,7 +38,9 @@ private:
     std::uint64_t last_room_index_{};
     std::uint64_t last_room_experience_{};
     std::uint8_t last_level_{};
+    std::uint8_t last_unspent_passive_points_{};
     std::uint64_t last_room_clear_room_index_{};
+    bool last_abyss_confirmation_armed_{};
     bool has_observation_{};
     bool has_room_clear_observation_{};
 };

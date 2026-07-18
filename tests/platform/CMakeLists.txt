@@ -84,6 +84,34 @@ if(TARGET arpg_raylib)
         PROPERTIES LABELS "platform;raylib;stage11b"
             TIMEOUT 60 FIXTURES_REQUIRED stage11b_settings_evidence)
 
+    add_executable(arpg_stage11c_hud_formal
+        stage11c_hud_formal_game_validation.cpp)
+    target_compile_features(arpg_stage11c_hud_formal PRIVATE cxx_std_17)
+    target_link_libraries(arpg_stage11c_hud_formal PRIVATE arpg_raylib)
+    if(MSVC)
+        target_compile_options(arpg_stage11c_hud_formal PRIVATE /utf-8)
+    endif()
+    arpg_enable_project_warnings(arpg_stage11c_hud_formal)
+
+    add_test(
+        NAME stage11c.hud_formal
+        COMMAND "$<TARGET_FILE:arpg_stage11c_hud_formal>"
+            "${CMAKE_CURRENT_BINARY_DIR}/stage11c hud evidence")
+    set_tests_properties(
+        stage11c.hud_formal
+        PROPERTIES LABELS "platform;raylib;stage11c"
+            TIMEOUT 600 FIXTURES_SETUP stage11c_hud_evidence)
+
+    add_test(
+        NAME stage11c.hud_evidence_validator
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/stage11c_hud_formal_validator.ps1"
+            -EvidenceDirectory "${CMAKE_CURRENT_BINARY_DIR}/stage11c hud evidence")
+    set_tests_properties(
+        stage11c.hud_evidence_validator
+        PROPERTIES LABELS "platform;raylib;stage11c"
+            TIMEOUT 60 FIXTURES_REQUIRED stage11c_hud_evidence)
+
     add_test(
         NAME platform.pause_menu_state_boundary
         COMMAND "${CMAKE_COMMAND}"
@@ -1231,3 +1259,22 @@ add_test(
 set_tests_properties(
     stage11b.settings_evidence_guard_self_test
     PROPERTIES LABELS "headless;platform;architecture;stage11b")
+
+add_test(
+    NAME stage11c.hud_evidence_guard
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11c_hud_evidence_guard_test.cmake")
+set_tests_properties(
+    stage11c.hud_evidence_guard
+    PROPERTIES LABELS "headless;platform;architecture;stage11c")
+
+add_test(
+    NAME stage11c.hud_evidence_guard_self_test
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        "-DGUARD_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/stage11c-hud-evidence-mutations"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11c_hud_evidence_guard_self_test.cmake")
+set_tests_properties(
+    stage11c.hud_evidence_guard_self_test
+    PROPERTIES LABELS "headless;platform;architecture;stage11c" TIMEOUT 300)
