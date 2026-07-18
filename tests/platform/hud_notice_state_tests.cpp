@@ -1,5 +1,7 @@
 #include "test_framework.hpp"
 
+#include "death_overlay_font.hpp"
+#include "hud_font.hpp"
 #include "hud_notice_state.hpp"
 
 #include <cmath>
@@ -320,6 +322,119 @@ arpg::test::Failure rebound_labels_and_non_terminated_arrays_are_bounded() noexc
     return {};
 }
 
+arpg::test::Failure production_visible_notices_are_chinese_first_and_font_covered() noexcept {
+    const dungeon::DungeonSnapshot previous = baseline_snapshot();
+    const platform::ControlHints hints = rebound_hints();
+    const platform::HudFontPlan font = platform::hud_font_plan();
+    const auto require_primary = [&](const dungeon::DungeonSnapshot& current,
+                                     platform::DungeonRenderStatus status,
+                                     bool recovery,
+                                     const char* expected) noexcept {
+        platform::HudNoticeState state{};
+        state.observe(previous, current, status, hints, recovery);
+        return std::strcmp(state.view().primary.text.bytes.data(), expected) == 0
+            && platform::death_overlay_font_covers_text(font.shared, expected);
+    };
+
+    ARPG_REQUIRE(require_primary(previous, error_status(), false, u8"保存失败"));
+    ARPG_REQUIRE(require_primary(previous, saved_status(), true, u8"需要恢复存档"));
+
+    dungeon::DungeonSnapshot current = previous;
+    current.is_abyss = true;
+    current.abyss_rule = arpg::abyss::AbyssRuleId::abyss_fury;
+    current.abyss_exit_confirmation_armed = true;
+    current.abyss_exit_confirmation_transition = dungeon::TransitionKind::door;
+    ARPG_REQUIRE(require_primary(current, saved_status(), false,
+        u8"Q 再次触碰同一出口以放弃全部剩余奖励"));
+
+    current = previous;
+    current.phase = dungeon::RoomPhase::awaiting_exit;
+    current.has_hole = true;
+    ARPG_REQUIRE(require_primary(current, saved_status(), false, u8"Q 进入下一层"));
+
+    current = previous;
+    current.phase = dungeon::RoomPhase::awaiting_exit;
+    current.exits_open[0] = true;
+    ARPG_REQUIRE(require_primary(current, saved_status(), false, u8"Q 进入出口"));
+
+    current = previous;
+    current.phase = dungeon::RoomPhase::cleared;
+    current.remaining_targets = 0U;
+    ARPG_REQUIRE(require_primary(current, saved_status(), false, u8"房间已清理"));
+
+    current = previous;
+    current.last_room_experience = 25U;
+    ARPG_REQUIRE(require_primary(current, saved_status(), false, u8"奖励 +25 XP"));
+
+    current = previous;
+    current.progression.level = 5U;
+    ARPG_REQUIRE(require_primary(current, saved_status(), false, u8"升级至 5 级"));
+
+    current = previous;
+    current.progression.unspent_passive_points = 1U;
+    ARPG_REQUIRE(require_primary(current, saved_status(), false, u8"有未分配被动点"));
+
+    current = previous;
+    current.inventory_count = 1U;
+    ARPG_REQUIRE(require_primary(current, saved_status(), false, u8"O 打开背包"));
+
+    current = previous;
+    current.phase = dungeon::RoomPhase::awaiting_exit;
+    current.progression.unspent_passive_points = 1U;
+    platform::HudNoticeState tree_state{};
+    tree_state.observe(previous, current, saved_status(), hints, false);
+    ARPG_REQUIRE(std::strcmp(tree_state.view().secondary.text.bytes.data(),
+        u8"T 打开被动树") == 0);
+    ARPG_REQUIRE(platform::death_overlay_font_covers_text(font.shared,
+        tree_state.view().secondary.text.bytes.data()));
+    return {};
+}
+
+arpg::test::Failure abyss_confirmation_between_presented_frames_enqueues_once() noexcept {
+    const dungeon::DungeonSnapshot baseline = baseline_snapshot();
+    platform::HudNoticeState state{};
+    state.observe(baseline, baseline, saved_status(), rebound_hints(), false);
+
+    dungeon::DungeonSnapshot armed = baseline;
+    armed.is_abyss = true;
+    armed.abyss_rule = arpg::abyss::AbyssRuleId::abyss_fury;
+    armed.abyss_exit_confirmation_armed = true;
+    state.observe(armed, armed, saved_status(), rebound_hints(), false);
+    ARPG_REQUIRE(state.view().primary.kind == platform::HudNoticeKind::abyss_abandon);
+    state.update(1.0F, false);
+    const float after_one_second = state.view().primary.seconds_left;
+    state.observe(armed, armed, saved_status(), rebound_hints(), false);
+    ARPG_REQUIRE(arpg::test::near(
+        state.view().primary.seconds_left, after_one_second));
+    state.update(after_one_second, false);
+    state.observe(armed, armed, saved_status(), rebound_hints(), false);
+    ARPG_REQUIRE(state.view().primary.kind == platform::HudNoticeKind::none);
+    return {};
+}
+
+arpg::test::Failure progression_between_presented_frames_enqueues_each_edge_once() noexcept {
+    const dungeon::DungeonSnapshot baseline = baseline_snapshot();
+    platform::HudNoticeState state{};
+    state.observe(baseline, baseline, saved_status(), rebound_hints(), false);
+
+    dungeon::DungeonSnapshot progressed = baseline;
+    progressed.progression.level = baseline.progression.level + 1U;
+    progressed.progression.unspent_passive_points = 1U;
+    state.observe(progressed, progressed, saved_status(), rebound_hints(), false);
+    ARPG_REQUIRE(state.view().primary.kind == platform::HudNoticeKind::level_up);
+    ARPG_REQUIRE(state.view().secondary.kind == platform::HudNoticeKind::passive_points);
+    state.update(1.0F, false);
+    const float level_time = state.view().primary.seconds_left;
+    const float points_time = state.view().secondary.seconds_left;
+    state.observe(progressed, progressed, saved_status(), rebound_hints(), false);
+    ARPG_REQUIRE(arpg::test::near(state.view().primary.seconds_left, level_time));
+    ARPG_REQUIRE(arpg::test::near(state.view().secondary.seconds_left, points_time));
+    state.update(level_time, false);
+    state.observe(progressed, progressed, saved_status(), rebound_hints(), false);
+    ARPG_REQUIRE(state.view().primary.kind == platform::HudNoticeKind::none);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"priority order and two-line limit", &priority_order_and_two_line_limit_are_deterministic},
     {"complete priority order", &complete_priority_order_is_exposed_by_each_trigger},
@@ -332,6 +447,9 @@ constexpr arpg::test::TestCase kCases[] = {
     {"room zero context transition", &room_zero_context_clears_on_next_room},
     {"persistent save and recovery ownership", &save_error_and_recovery_are_persistent_and_state_owned},
     {"rebound bounded control hints", &rebound_labels_and_non_terminated_arrays_are_bounded},
+    {"production Chinese notice corpus", &production_visible_notices_are_chinese_first_and_font_covered},
+    {"abyss confirmation presented edge once", &abyss_confirmation_between_presented_frames_enqueues_once},
+    {"progression presented edges once", &progression_between_presented_frames_enqueues_each_edge_once},
 };
 
 }  // namespace

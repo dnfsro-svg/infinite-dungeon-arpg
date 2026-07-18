@@ -113,6 +113,18 @@ if(TARGET arpg_raylib)
             TIMEOUT 60 FIXTURES_REQUIRED stage11c_hud_evidence)
 
     add_test(
+        NAME stage11c.hud_evidence_validator_self_test
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/stage11c_hud_formal_validator_self_test.ps1"
+            -EvidenceDirectory "${CMAKE_CURRENT_BINARY_DIR}/stage11c hud evidence"
+            -Validator "${CMAKE_CURRENT_SOURCE_DIR}/stage11c_hud_formal_validator.ps1"
+            -MutationRoot "${CMAKE_CURRENT_BINARY_DIR}/stage11c-hud-validator-mutations")
+    set_tests_properties(
+        stage11c.hud_evidence_validator_self_test
+        PROPERTIES LABELS "platform;raylib;stage11c"
+            TIMEOUT 120 FIXTURES_REQUIRED stage11c_hud_evidence)
+
+    add_test(
         NAME platform.pause_menu_state_boundary
         COMMAND "${CMAKE_COMMAND}"
             "-DPAUSE_STATE_HEADER=${PROJECT_SOURCE_DIR}/src/platform/raylib/pause_menu_state.hpp"

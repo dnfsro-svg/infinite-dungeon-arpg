@@ -197,11 +197,11 @@ std::filesystem::path g_executable_path{};
 [[nodiscard]] bool summary_has_required_fields(
     const std::map<std::string, std::string>& values,
     const ScenarioSpec& spec) {
-    constexpr std::array<const char*, 17> required{{
+    constexpr std::array<const char*, 18> required{{
         "scenario", "safe_rect", "player_rect", "objective_rect",
         "navigation_rect", "primary_notice_rect", "secondary_notice_rect",
         "debug_rect", "player_values", "status_tags", "objective",
-        "notice_kinds", "navigation_values", "font_ready", "f1",
+        "notice_kinds", "notice_texts", "navigation_values", "font_ready", "f1",
         "production_snapshot_hash", "result",
     }};
     for (const char* key : required) {

@@ -32,7 +32,7 @@ foreach(_required IN ITEMS
         "stage11c_production_snapshot_hash"
         "production_snapshot_hash"
         "present_frame_and_maybe_capture"
-        "font_ready" "status_tags" "notice_kinds" "navigation_values")
+        "font_ready" "status_tags" "notice_kinds" "notice_texts" "navigation_values")
     string(FIND "${_combined}" "${_required}" _found)
     if(_found EQUAL -1)
         message(FATAL_ERROR "Stage11C evidence guard missing required production token: ${_required}")
@@ -79,6 +79,69 @@ foreach(_forbidden IN ITEMS ".queue_action(" "request_descent(" "request_passive
         message(FATAL_ERROR "Stage11C evidence guard rejected non-physical scenario driver: ${_forbidden}")
     endif()
 endforeach()
+
+string(FIND "${_host_text}"
+    "Stage11CHudValidationState stage11c_validation_state{};"
+    _stage11c_runtime_begin)
+string(FIND "${_host_text}"
+    "write_stage11c_hud_validation_summary(config,"
+    _stage11c_runtime_end)
+if(_stage11c_runtime_begin EQUAL -1 OR _stage11c_runtime_end EQUAL -1
+        OR NOT _stage11c_runtime_begin LESS _stage11c_runtime_end)
+    message(FATAL_ERROR "Stage11C evidence guard cannot bind complete host capture surface")
+endif()
+math(EXPR _stage11c_runtime_length
+    "${_stage11c_runtime_end} - ${_stage11c_runtime_begin} + 160")
+string(SUBSTRING "${_host_text}" ${_stage11c_runtime_begin}
+    ${_stage11c_runtime_length} _stage11c_runtime)
+set(_stage11c_host_surface "${_stage11c_driver}\n${_stage11c_runtime}")
+
+string(REGEX MATCHALL
+    "stage11c_validation_state\\.model[ \t\r\n]*="
+    _stage11c_model_assignments "${_stage11c_host_surface}")
+list(LENGTH _stage11c_model_assignments _stage11c_model_assignment_count)
+if(NOT _stage11c_model_assignment_count EQUAL 1)
+    message(FATAL_ERROR "Stage11C evidence guard rejected direct model overwrite")
+endif()
+string(REGEX MATCH
+    "stage11c_validation_state\\.model[ \t\r\n]*\\.[A-Za-z_]"
+    _stage11c_model_member_overwrite "${_stage11c_host_surface}")
+if(_stage11c_model_member_overwrite)
+    message(FATAL_ERROR "Stage11C evidence guard rejected direct model overwrite")
+endif()
+
+string(REGEX MATCHALL
+    "stage11c_validation_state\\.production_snapshot_hash[ \t\r\n]*="
+    _stage11c_hash_assignments "${_stage11c_host_surface}")
+list(LENGTH _stage11c_hash_assignments _stage11c_hash_assignment_count)
+if(NOT _stage11c_hash_assignment_count EQUAL 1)
+    message(FATAL_ERROR "Stage11C evidence guard rejected fake snapshot hash")
+endif()
+string(FIND "${_stage11c_runtime}"
+    "stage11c_validation_state.production_snapshot_hash =\n                    stage11c_production_snapshot_hash(current);"
+    _stage11c_real_hash)
+if(_stage11c_real_hash EQUAL -1)
+    message(FATAL_ERROR "Stage11C evidence guard rejected fake snapshot hash")
+endif()
+
+string(FIND "${_stage11c_driver}"
+    "const bool stage11c_validation_result = state.captured\n            && state.cjk_font_ready && state.production_snapshot_hash != 0U;"
+    _stage11c_summary_gate)
+if(_stage11c_summary_gate EQUAL -1)
+    message(FATAL_ERROR "Stage11C evidence guard rejected fake summary state")
+endif()
+
+string(REGEX MATCH
+    "(current|previous|snapshot|state)\\.progression\\.[A-Za-z_]+[ \t\r\n]*=[^=]"
+    _stage11c_progression_bypass "${_stage11c_host_surface}")
+if(NOT _stage11c_progression_bypass)
+    string(REGEX MATCH
+        "(current|previous|snapshot|state)\\.progression[ \t\r\n]*=[^=]"
+        _stage11c_progression_bypass "${_stage11c_host_surface}")
+endif()
+if(_stage11c_progression_bypass)
+    message(FATAL_ERROR "Stage11C evidence guard rejected bypassed Session progression")
+endif()
 
 unset(_previous_order)
 foreach(_ordered IN ITEMS
@@ -128,7 +191,9 @@ endforeach()
 
 foreach(_required IN ITEMS
         "137,80,78,71,13,10,26,10" "1280" "720" "LastWriteTimeUtc"
-        "GetPixel" "font_ready" "production_snapshot_hash")
+        "Measure-HudTextRegion" "HollowBoxes" "notice_texts"
+        "non-positive HUD rect" "snapshot hash mismatch"
+        "font_ready" "production_snapshot_hash")
     string(FIND "${_validator_text}" "${_required}" _found)
     if(_found EQUAL -1)
         message(FATAL_ERROR "Stage11C evidence validator missing check: ${_required}")

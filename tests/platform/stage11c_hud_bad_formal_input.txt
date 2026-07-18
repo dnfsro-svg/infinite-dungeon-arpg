@@ -5,3 +5,7 @@ pre_present_capture: Image image = LoadImageFromScreen()
 fake_font_ready: stage11c_validation_state.cjk_font_ready = true
 fake_result_pass: result=pass
 bypassed_session_progression: state.progression = {}
+host_direct_model_overwrite: stage11c_validation_state.model = {}
+host_fake_snapshot_hash: stage11c_validation_state.production_snapshot_hash = 1U
+host_fake_summary_state: true || state.captured
+host_bypassed_session_progression: current.progression.level = 99U

@@ -73,3 +73,53 @@ endif()
 if(NOT "${_font_stdout}${_font_stderr}" MATCHES "fake font-ready")
     message(FATAL_ERROR "named mutation fake_font_ready failed for wrong reason: ${_font_stdout}${_font_stderr}")
 endif()
+
+function(stage11c_expect_host_rejection LABEL NEEDLE REPLACEMENT EXPECTED)
+    string(FIND "${_bad_source}" "${LABEL}:" _named)
+    if(_named EQUAL -1)
+        message(FATAL_ERROR "bad formal input is missing named mutation: ${LABEL}")
+    endif()
+    string(FIND "${_host_source}" "${NEEDLE}" _needle_found)
+    if(_needle_found EQUAL -1)
+        message(FATAL_ERROR "host mutation ${LABEL} cannot find production replacement site")
+    endif()
+    string(REPLACE "${NEEDLE}" "${REPLACEMENT}" _mutated "${_host_source}")
+    if(_mutated STREQUAL _host_source)
+        message(FATAL_ERROR "host mutation ${LABEL} did not change production source")
+    endif()
+    set(_mutation "${GUARD_TEST_ROOT}/host-${LABEL}.cpp")
+    file(WRITE "${_mutation}" "${_mutated}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+            "-DHOST_OVERRIDE=${_mutation}" -P "${_guard}"
+        RESULT_VARIABLE _result OUTPUT_VARIABLE _stdout ERROR_VARIABLE _stderr)
+    if(_result EQUAL 0)
+        message(FATAL_ERROR "Stage11C evidence guard accepted named host mutation: ${LABEL}")
+    endif()
+    if(NOT "${_stdout}${_stderr}" MATCHES "${EXPECTED}")
+        message(FATAL_ERROR "named host mutation ${LABEL} failed for wrong reason: ${_stdout}${_stderr}")
+    endif()
+endfunction()
+
+set(_model_copy "stage11c_validation_state.model = renderer.hud_model();")
+stage11c_expect_host_rejection(host_direct_model_overwrite
+    "${_model_copy}"
+    "${_model_copy}\n                stage11c_validation_state.model = {};"
+    "direct model overwrite")
+
+set(_hash_copy "stage11c_validation_state.production_snapshot_hash =\n                    stage11c_production_snapshot_hash(current);")
+stage11c_expect_host_rejection(host_fake_snapshot_hash
+    "${_hash_copy}"
+    "${_hash_copy}\n                stage11c_validation_state.production_snapshot_hash = 1U;"
+    "fake snapshot hash")
+
+set(_summary_gate "const bool stage11c_validation_result = state.captured")
+stage11c_expect_host_rejection(host_fake_summary_state
+    "${_summary_gate}"
+    "const bool stage11c_validation_result = true || state.captured"
+    "fake summary state")
+
+stage11c_expect_host_rejection(host_bypassed_session_progression
+    "${_model_copy}"
+    "${_model_copy}\n                current.progression.level = 99U;"
+    "bypassed Session progression")

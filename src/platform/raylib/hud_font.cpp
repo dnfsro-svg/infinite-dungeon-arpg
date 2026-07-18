@@ -12,6 +12,10 @@ HudFontPlan hud_font_plan() noexcept {
         u8"第", u8"波", u8"下一波即将开始", u8"待领奖励", u8"未领取",
         u8"正在保存房间", u8"正在处理撤退", u8"房间状态异常", u8"深渊",
         u8"目标", u8"个敌人", u8"待结算经验",
+        u8"需要恢复存档", u8"再次触碰同一出口以放弃全部剩余奖励",
+        u8"再次交互，放弃剩余奖励并下降", u8"进入下一层", u8"进入出口",
+        u8"房间已清理", u8"奖励", u8"升级至级", u8"有未分配被动点",
+        u8"打开背包", u8"打开被动树",
     };
     plan.covers_required_text = true;
     for (const char* text : kRequiredText) {

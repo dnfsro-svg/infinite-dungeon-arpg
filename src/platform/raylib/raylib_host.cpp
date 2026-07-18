@@ -618,6 +618,9 @@ void write_stage11c_hud_validation_summary(const RaylibHostConfig& config,
                << "notice_kinds="
                << static_cast<unsigned>(state.notices.primary.kind) << ','
                << static_cast<unsigned>(state.notices.secondary.kind) << '\n'
+               << "notice_texts="
+               << state.notices.primary.text.bytes.data() << '|'
+               << state.notices.secondary.text.bytes.data() << '\n'
                << "navigation_values=" << state.model.navigation.depth << ','
                << state.model.navigation.floor_room << ','
                << static_cast<unsigned>(state.model.navigation.ecology);
@@ -1447,8 +1450,10 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     stage11c_production_snapshot_hash(current);
                 stage11c_validation_state.model = renderer.hud_model();
                 stage11c_validation_state.notices = renderer.hud_notice_view();
+                // Evidence records every formal HUD slot, including the F1 slot
+                // while hidden; f1 remains the authoritative visibility flag.
                 stage11c_validation_state.layout = make_hud_layout(
-                    GetScreenWidth(), GetScreenHeight(), draw_debug);
+                    GetScreenWidth(), GetScreenHeight(), true);
                 stage11c_validation_state.debug_visible = draw_debug;
             } else {
                 stage11c_validation_state.target_presented_frames = 0U;

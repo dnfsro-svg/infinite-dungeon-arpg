@@ -223,7 +223,7 @@ void add_abyss_confirmation_notice(std::array<HudNotice, 4>& notices,
     const AbyssHudValues values = abyss_hud_values(current);
     if (!values.confirmation_visible) {
         add_action_notice(notices, dropped_count, HudNoticeKind::abyss_abandon,
-            kAbyssPriority, hints, "Interact", "again to abandon rewards");
+            kAbyssPriority, hints, "Interact", u8"再次交互以放弃奖励");
         return;
     }
 
@@ -233,12 +233,15 @@ void add_abyss_confirmation_notice(std::array<HudNotice, 4>& notices,
     notice.seconds_left = kTransientSeconds;
     char key[32]{};
     if (!action_key(key, sizeof(key), hints, "Interact")) {
-        format_notice(notice, "%s", values.confirmation_label);
-    } else if (values.confirmation_transition == dungeon::TransitionKind::descent
-        && std::strncmp(values.confirmation_label, "Press E ", 8U) == 0) {
-        format_notice(notice, "%s %s", key, values.confirmation_label + 8U);
+        if (values.confirmation_transition == dungeon::TransitionKind::descent) {
+            format_notice(notice, u8"再次交互，放弃剩余奖励并下降");
+        } else {
+            format_notice(notice, u8"再次触碰同一出口以放弃全部剩余奖励");
+        }
+    } else if (values.confirmation_transition == dungeon::TransitionKind::descent) {
+        format_notice(notice, u8"%s 再次交互，放弃剩余奖励并下降", key);
     } else {
-        format_notice(notice, "%s again: %s", key, values.confirmation_label);
+        format_notice(notice, u8"%s 再次触碰同一出口以放弃全部剩余奖励", key);
     }
     enqueue(notices, dropped_count, notice);
 }
@@ -261,9 +264,9 @@ void HudNoticeState::observe(const dungeon::DungeonSnapshot& previous,
 
     set_persistent(notices_, dropped_count_, HudNoticeKind::save_error,
         kSaveErrorPriority, status.indicator == SaveIndicator::error,
-        "Save failed");
+        u8"保存失败");
     set_persistent(notices_, dropped_count_, HudNoticeKind::recovery_required,
-        kRecoveryPriority, recovery_required, "Recovery required");
+        kRecoveryPriority, recovery_required, u8"需要恢复存档");
 
     const bool abyss_confirmation_started =
         !last_abyss_confirmation_armed_
@@ -276,11 +279,11 @@ void HudNoticeState::observe(const dungeon::DungeonSnapshot& previous,
         && current.phase == dungeon::RoomPhase::awaiting_exit;
     if (context_changed && awaiting_exit && current.has_hole) {
         add_action_notice(notices_, dropped_count_, HudNoticeKind::hole_interact,
-            kHolePriority, hints, "Interact", "to descend");
+            kHolePriority, hints, "Interact", u8"进入下一层");
     }
     if (context_changed && awaiting_exit && has_open_exit(current)) {
         add_action_notice(notices_, dropped_count_, HudNoticeKind::exit_ready,
-            kExitPriority, hints, "Interact", "to enter exit");
+            kExitPriority, hints, "Interact", u8"进入出口");
     }
     if (current.phase == dungeon::RoomPhase::cleared
         && current.remaining_targets == 0U
@@ -288,7 +291,7 @@ void HudNoticeState::observe(const dungeon::DungeonSnapshot& previous,
         && (!has_room_clear_observation_
             || last_room_clear_room_index_ != current.room_index)) {
         add_transient(notices_, dropped_count_, HudNoticeKind::room_clear,
-            kRoomClearPriority, "Room clear");
+            kRoomClearPriority, u8"房间已清理");
         last_room_clear_room_index_ = current.room_index;
         has_room_clear_observation_ = true;
     }
@@ -298,7 +301,7 @@ void HudNoticeState::observe(const dungeon::DungeonSnapshot& previous,
         notice.kind = HudNoticeKind::reward;
         notice.priority = kRewardPriority;
         notice.seconds_left = kTransientSeconds;
-        format_notice(notice, "Reward +%llu XP",
+        format_notice(notice, u8"奖励 +%llu XP",
             static_cast<unsigned long long>(current.last_room_experience));
         enqueue(notices_, dropped_count_, notice);
     }
@@ -313,27 +316,28 @@ void HudNoticeState::observe(const dungeon::DungeonSnapshot& previous,
         notice.kind = HudNoticeKind::level_up;
         notice.priority = kLevelPriority;
         notice.seconds_left = kTransientSeconds;
-        format_notice(notice, "Level %u", static_cast<unsigned>(current.progression.level));
+        format_notice(notice, u8"升级至 %u 级",
+            static_cast<unsigned>(current.progression.level));
         enqueue(notices_, dropped_count_, notice);
     }
     if (has_observation_
             && current.progression.unspent_passive_points
                 > last_unspent_passive_points_) {
         add_transient(notices_, dropped_count_, HudNoticeKind::passive_points,
-            kPassivePointsPriority, "Passive points available");
+            kPassivePointsPriority, u8"有未分配被动点");
     }
     if (context_changed && current.progression.unspent_passive_points != 0U) {
         add_transient(notices_, dropped_count_, HudNoticeKind::passive_points,
-            kPassivePointsPriority, "Passive points available");
+            kPassivePointsPriority, u8"有未分配被动点");
     }
     if (context_changed && current.inventory_count != 0U) {
         add_action_notice(notices_, dropped_count_, HudNoticeKind::inventory,
-            kInventoryPriority, hints, "Inventory", "to open inventory");
+            kInventoryPriority, hints, "Inventory", u8"打开背包");
     }
     if (context_changed && awaiting_exit
         && current.progression.unspent_passive_points != 0U) {
         add_action_notice(notices_, dropped_count_, HudNoticeKind::passive_tree,
-            kPassiveTreePriority, hints, "Passive Tree", "to open passive tree");
+            kPassiveTreePriority, hints, "Passive Tree", u8"打开被动树");
     }
 
     last_commit_generation_ = current.commit_generation;
