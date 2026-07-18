@@ -31,6 +31,31 @@ if(TARGET arpg_raylib)
     set_tests_properties(
         platform.units PROPERTIES LABELS "headless;platform")
 
+    add_executable(arpg_stage11b_settings_formal
+        stage11b_settings_formal_game_validation.cpp)
+    target_compile_features(arpg_stage11b_settings_formal PRIVATE cxx_std_17)
+    target_link_libraries(arpg_stage11b_settings_formal PRIVATE arpg_raylib)
+    arpg_enable_project_warnings(arpg_stage11b_settings_formal)
+
+    add_test(
+        NAME stage11b.settings_formal
+        COMMAND "$<TARGET_FILE:arpg_stage11b_settings_formal>"
+            "${CMAKE_CURRENT_BINARY_DIR}/stage11b-settings-evidence")
+    set_tests_properties(
+        stage11b.settings_formal
+        PROPERTIES LABELS "platform;raylib;stage11b"
+            TIMEOUT 300 FIXTURES_SETUP stage11b_settings_evidence)
+
+    add_test(
+        NAME stage11b.settings_evidence_validator
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/stage11b_settings_formal_validator.ps1"
+            -EvidenceDirectory "${CMAKE_CURRENT_BINARY_DIR}/stage11b-settings-evidence")
+    set_tests_properties(
+        stage11b.settings_evidence_validator
+        PROPERTIES LABELS "platform;raylib;stage11b"
+            TIMEOUT 60 FIXTURES_REQUIRED stage11b_settings_evidence)
+
     add_test(
         NAME platform.pause_menu_state_boundary
         COMMAND "${CMAKE_COMMAND}"
@@ -1131,3 +1156,27 @@ add_test(
 set_tests_properties(
     platform.host_input_source
     PROPERTIES LABELS "headless;platform;architecture")
+
+# Task 11 deliberately registers the real-host evidence gate before the
+# harness exists.  This keeps the first execution red instead of silently
+# accepting an unvalidated settings path.
+add_test(
+    NAME stage11b.settings_evidence_guard
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        "-DGUARD_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/stage11b-evidence-guard"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11b_settings_evidence_guard_test.cmake")
+set_tests_properties(
+    stage11b.settings_evidence_guard
+    PROPERTIES LABELS "headless;platform;architecture;stage11b")
+
+
+add_test(
+    NAME stage11b.settings_evidence_guard_self_test
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        "-DGUARD_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/stage11b-evidence-guard-mutations"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11b_settings_evidence_guard_self_test.cmake")
+set_tests_properties(
+    stage11b.settings_evidence_guard_self_test
+    PROPERTIES LABELS "headless;platform;architecture;stage11b")

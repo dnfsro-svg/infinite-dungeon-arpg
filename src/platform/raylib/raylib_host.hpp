@@ -47,6 +47,17 @@ enum class Stage11ValidationScenario : std::uint8_t {
     abyss_death_recap,
 };
 
+enum class Stage11BValidationScenario : std::uint8_t {
+    none,
+    paused_freeze,
+    settings_page,
+    rebound_attack,
+    conflict_swap,
+    restarted_settings,
+    single_slot_recovery,
+    corrupt_defaults,
+};
+
 struct RaylibHostConfig final {
     int window_width{1280};
     int window_height{720};
@@ -60,9 +71,12 @@ struct RaylibHostConfig final {
         Stage10ValidationScenario::none};
     Stage11ValidationScenario stage11_validation{
         Stage11ValidationScenario::none};
+    Stage11BValidationScenario stage11b_validation{
+        Stage11BValidationScenario::none};
     std::uint8_t validation_abyss_direction{0xFFU};
     std::uint32_t validation_steps_per_frame{};
     std::optional<std::filesystem::path> validation_capture_file{};
+    std::optional<std::filesystem::path> validation_summary_file{};
 };
 
 struct HostFrameGateResult final {
