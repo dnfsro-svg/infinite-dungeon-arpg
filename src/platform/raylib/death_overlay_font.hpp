@@ -6,7 +6,7 @@
 namespace arpg::platform {
 
 inline constexpr std::size_t kDeathOverlayFontCandidateCapacity = 4U;
-inline constexpr std::size_t kDeathOverlayCodepointCapacity = 320U;
+inline constexpr std::size_t kDeathOverlayCodepointCapacity = 384U;
 
 struct DeathOverlayFontPlan final {
     std::array<const char*, kDeathOverlayFontCandidateCapacity>

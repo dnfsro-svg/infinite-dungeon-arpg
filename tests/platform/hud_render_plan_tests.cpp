@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 
+#include "allocation_probe.hpp"
 #include "combat/combat_types.hpp"
 #include "hud_palette.hpp"
 #include "hud_renderer.hpp"
@@ -258,6 +259,35 @@ float monospace_measure(const char* text, float font_size, void*) noexcept {
     return static_cast<float>(count) * font_size * 0.6F;
 }
 
+bool is_valid_utf8(const char* text) noexcept {
+    if (text == nullptr) return false;
+    const auto* bytes = reinterpret_cast<const unsigned char*>(text);
+    for (std::size_t index{}; bytes[index] != 0U;) {
+        const unsigned char first = bytes[index++];
+        if (first < 0x80U) continue;
+        std::size_t continuation{};
+        std::uint32_t codepoint{};
+        std::uint32_t minimum{};
+        if ((first & 0xE0U) == 0xC0U) {
+            continuation = 1U; codepoint = first & 0x1FU; minimum = 0x80U;
+        } else if ((first & 0xF0U) == 0xE0U) {
+            continuation = 2U; codepoint = first & 0x0FU; minimum = 0x800U;
+        } else if ((first & 0xF8U) == 0xF0U) {
+            continuation = 3U; codepoint = first & 0x07U; minimum = 0x10000U;
+        } else {
+            return false;
+        }
+        for (std::size_t offset{}; offset < continuation; ++offset) {
+            const unsigned char next = bytes[index++];
+            if ((next & 0xC0U) != 0x80U) return false;
+            codepoint = (codepoint << 6U) | (next & 0x3FU);
+        }
+        if (codepoint < minimum || codepoint > 0x10FFFFU
+            || (codepoint >= 0xD800U && codepoint <= 0xDFFFU)) return false;
+    }
+    return true;
+}
+
 arpg::test::Failure navigation_element_colors_use_the_authoritative_hud_palette() noexcept {
     platform::NavigationHudModel navigation{};
     navigation.primary.bytes[0] = 'x';
@@ -285,8 +315,10 @@ arpg::test::Failure maximum_navigation_text_has_a_measured_bounded_draw_plan() n
     platform::HudText96 text{};
     static_cast<void>(std::snprintf(text.bytes.data(), text.bytes.size(),
         u8"深度 18446744073709551615 · 层房间 18446744073709551615"));
+    const std::uint64_t before = arpg::test::allocation_count();
     const platform::HudTextDrawPlan plan = platform::make_hud_text_draw_plan(
         text, 270.0F, 16.0F, 11.0F, &monospace_measure, nullptr);
+    ARPG_REQUIRE(arpg::test::allocation_count() == before);
 
     ARPG_REQUIRE(plan.visible);
     ARPG_REQUIRE(plan.font_size >= 11.0F);
@@ -295,6 +327,7 @@ arpg::test::Failure maximum_navigation_text_has_a_measured_bounded_draw_plan() n
         <= 270.0F);
     ARPG_REQUIRE(plan.truncated || plan.font_size < 16.0F);
     ARPG_REQUIRE(plan.text.bytes.back() == '\0');
+    ARPG_REQUIRE(is_valid_utf8(plan.text.bytes.data()));
     return {};
 }
 

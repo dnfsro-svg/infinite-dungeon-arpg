@@ -61,5 +61,5 @@ int main() {
         hud_render_plan_suite(),
     };
 
-    return arpg::test::run_suites(suites, 227, "stage 11c task 6 context hud");
+    return arpg::test::run_suites(suites, 228, "stage 11c task 6 context hud");
 }

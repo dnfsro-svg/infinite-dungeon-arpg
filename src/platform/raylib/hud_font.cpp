@@ -11,6 +11,7 @@ HudFontPlan hud_font_plan() noexcept {
         u8"减速", u8"腐蚀", u8"无敌", u8"深度", u8"层房间", u8"生态",
         u8"第", u8"波", u8"下一波即将开始", u8"待领奖励", u8"未领取",
         u8"正在保存房间", u8"正在处理撤退", u8"房间状态异常", u8"深渊",
+        u8"目标", u8"个敌人", u8"待结算经验",
     };
     plan.covers_required_text = true;
     for (const char* text : kRequiredText) {

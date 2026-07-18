@@ -326,7 +326,7 @@ arpg::test::Failure abyss_confirmation_context_preserves_descent_and_door_meanin
     previous.abyss_rule = arpg::abyss::AbyssRuleId::abyss_fury;
     platform::ControlHints hints{};
     static_cast<void>(std::snprintf(hints.secondary.data(), hints.secondary.size(),
-        "E Interact"));
+        "F Interact"));
 
     dungeon::DungeonSnapshot descent = previous;
     descent.abyss_exit_confirmation_armed = true;
@@ -337,7 +337,7 @@ arpg::test::Failure abyss_confirmation_context_preserves_descent_and_door_meanin
     platform::build_hud_view_model(output, descent, {}, hints);
     platform::attach_notice_view(output, descent_notices.view());
     ARPG_REQUIRE(output.context.primary_kind == platform::HudNoticeKind::abyss_abandon);
-    ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), "E") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), "F") != nullptr);
     ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(),
         "abandon remaining rewards") != nullptr);
     ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), "descend") != nullptr);
@@ -351,7 +351,7 @@ arpg::test::Failure abyss_confirmation_context_preserves_descent_and_door_meanin
     platform::build_hud_view_model(output, door, {}, hints);
     platform::attach_notice_view(output, door_notices.view());
     ARPG_REQUIRE(output.context.primary_kind == platform::HudNoticeKind::abyss_abandon);
-    ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), "E") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), "F") != nullptr);
     ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), "SAME door") != nullptr);
     ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), "ALL remaining rewards") != nullptr);
     return {};

@@ -4,8 +4,10 @@
 #include "hud_font.hpp"
 #include "hud_palette.hpp"
 #include "hud_renderer.hpp"
+#include "hud_view_model.hpp"
 
 #include <cstddef>
+#include <cstdio>
 
 namespace {
 
@@ -14,6 +16,84 @@ namespace platform = arpg::platform;
 bool same_color(Color lhs, Color rhs) noexcept {
     return lhs.r == rhs.r && lhs.g == rhs.g && lhs.b == rhs.b
         && lhs.a == rhs.a;
+}
+
+[[nodiscard]] bool model_texts_are_covered(const platform::HudFontPlan& plan,
+    const platform::HudViewModel& model) noexcept {
+    const platform::HudText96* const texts[] = {
+        &model.room.objective, &model.room.secondary,
+        &model.navigation.primary, &model.navigation.ecology_label,
+        &model.navigation.elements[0].label, &model.navigation.elements[1].label,
+        &model.navigation.elements[2].label, &model.navigation.elements[3].label,
+    };
+    for (const platform::HudText96* const text : texts) {
+        if (text->bytes[0] != '\0'
+            && !platform::death_overlay_font_covers_text(plan.shared,
+                text->bytes.data())) {
+            return false;
+        }
+    }
+    return true;
+}
+
+arpg::test::Failure production_view_model_texts_and_player_labels_are_covered() noexcept {
+    const platform::HudFontPlan plan = platform::hud_font_plan();
+    platform::ControlHints hints{};
+    static_cast<void>(std::snprintf(hints.primary.data(), hints.primary.size(),
+        "W Move Up"));
+    static_cast<void>(std::snprintf(hints.secondary.data(), hints.secondary.size(),
+        "F Interact"));
+    arpg::dungeon::DungeonSnapshot snapshot{};
+    snapshot.depth = 9U;
+    snapshot.floor_room_index = 7U;
+    snapshot.ecology = arpg::dungeon::DungeonElement::chaos;
+    snapshot.biases = {{1U, 2U, 3U, 4U}};
+    snapshot.remaining_targets = 6U;
+    snapshot.pending_room_experience = 99U;
+    snapshot.wave_count = 3U;
+    snapshot.wave_index = 1U;
+    snapshot.combat.emplace();
+    snapshot.combat->player.hp = 1;
+    snapshot.combat->player.max_hp = 1;
+    snapshot.combat->player.barrier = 1;
+    snapshot.combat->player.max_barrier = 1;
+    snapshot.combat->player.slow_bp = 1;
+    snapshot.combat->player.slow_ticks = 1U;
+    snapshot.combat->player.corrosion_damage_per_second = 1;
+    snapshot.combat->player.corrosion_ticks = 1U;
+    snapshot.combat->player.invulnerability_ticks = 1U;
+
+    const arpg::dungeon::RoomPhase phases[] = {
+        arpg::dungeon::RoomPhase::locked,
+        arpg::dungeon::RoomPhase::combat,
+        arpg::dungeon::RoomPhase::wave_delay,
+        arpg::dungeon::RoomPhase::cleared,
+        arpg::dungeon::RoomPhase::committing,
+        arpg::dungeon::RoomPhase::death_pending,
+        arpg::dungeon::RoomPhase::faulted,
+    };
+    for (const arpg::dungeon::RoomPhase phase : phases) {
+        snapshot.phase = phase;
+        platform::HudViewModel model{};
+        platform::build_hud_view_model(model, snapshot, {}, hints);
+        ARPG_REQUIRE(model_texts_are_covered(plan, model));
+    }
+
+    snapshot.is_abyss = true;
+    snapshot.abyss_rule = arpg::abyss::AbyssRuleId::abyss_fury;
+    platform::HudViewModel abyss{};
+    platform::build_hud_view_model(abyss, snapshot, {}, hints);
+    ARPG_REQUIRE(model_texts_are_covered(plan, abyss));
+
+    constexpr const char* kRendererLabels[] = {
+        u8"生命 HP 1/1", u8"护盾 1/1", "XP MAX",
+        u8"减速", u8"腐蚀", u8"无敌",
+    };
+    for (const char* text : kRendererLabels) {
+        ARPG_REQUIRE(platform::death_overlay_font_covers_text(plan.shared, text));
+    }
+    ARPG_REQUIRE(plan.shared.codepoint_count < plan.shared.codepoints.size());
+    return {};
 }
 
 arpg::test::Failure required_hud_text_is_covered_by_shared_font_plan() noexcept {
@@ -93,6 +173,7 @@ arpg::test::Failure renderer_shutdown_is_safe_before_initialization() noexcept {
 constexpr arpg::test::TestCase kCases[] = {
     {"required Chinese coverage", &required_hud_text_is_covered_by_shared_font_plan},
     {"Task6 Chinese coverage has capacity", &task6_visible_chinese_text_is_covered_without_exhausting_shared_capacity},
+    {"production ViewModel text coverage", &production_view_model_texts_and_player_labels_are_covered},
     {"fixed unique shared codepoints", &shared_codepoints_are_unique_and_fixed_capacity},
     {"opaque distinct HUD palette", &hud_palette_key_colors_are_opaque_and_distinct},
     {"safe uninitialized renderer shutdown", &renderer_shutdown_is_safe_before_initialization},
