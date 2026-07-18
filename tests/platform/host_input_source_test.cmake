@@ -71,23 +71,42 @@ const PhysicalKeySnapshot stage11b_physical_keys =
 const PhysicalKeySnapshot physical_keys = inject_stage11c_physical_edges(
     stage11b_physical_keys, config, input_settings, current,
     stage11c_validation_state);
-HostFrameInput frame_input = map_host_frame_input(settings, physical_keys);
+HostFrameInput frame_input = map_host_frame_input(input_settings, physical_keys);
 DeathInputGate death_gate = host_death_input_gate(
     death_saving, death_pending, frame_input.keys, physical_keys);
 const bool pause_blocks_gameplay = pause_open || pause_was_open;
 HostFrameGateResult host_gate{};
+if (pause_open) {
+    host_gate = gate_host_frame(fixed_step, pause_latched, true,
+        static_cast<double>(frame_seconds));
+} else if (!inventory.is_open() && !inventory_toggled_this_frame) {
+    host_gate = gate_host_frame(fixed_step, pause_latched, false,
+        static_cast<double>(frame_seconds));
+}
 const PassiveOverlayInputGate passive_input_gate = passive_overlay_input_gate(
     passive_overlay_open);
-const InventoryInputGate inventory_gate = inventory_input_gate(inventory.is_open());
+const InventoryInputGate inventory_gate = inventory_input_gate(
+    inventory.is_open() || inventory_toggled_this_frame);
 const bool forward_actions = passive_input_gate.forward_actions
     && inventory_gate.forward_actions
+    && death_gate.forward_gameplay
+    && host_gate.forward_gameplay && !pause_blocks_gameplay;
+const bool forward_descent = passive_input_gate.forward_descent
+    && inventory_gate.forward_descent
     && death_gate.forward_gameplay
     && host_gate.forward_gameplay && !pause_blocks_gameplay;
 if (forward_actions) {
     const std::array<bool, 3> accepted_actions =
         submit_frame_actions(*session, frame_input);
 }
-if (forward_descent && frame_input.keys.e) {}
+if (forward_descent && frame_input.keys.e) {
+    const auto snapshot = session->snapshot();
+    const bool in_range = snapshot.combat.has_value()
+        && can_prompt_descent(snapshot, snapshot.combat->player.position);
+    static_cast<void>(session->request_descent(in_range));
+}
+const combat::MovementInput movement = forward_movement
+    ? frame_input.movement : combat::MovementInput{};
 #define IsKeyDown ::arpg::platform::direct_input_poison::blocked
 ]=])
 poison_macro_line_pattern(IsKeyDown SELF_TEST_MACRO_PATTERN)
@@ -167,96 +186,90 @@ require_match_count(
 
 function(physical_input_chain_valid SOURCE OUT_VARIABLE)
     arpg_sanitize_cpp_source("${SOURCE}" SOURCE)
-    string(FIND "${SOURCE}"
-        "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys()"
-        SAMPLE_INDEX)
-    string(FIND "${SOURCE}"
-        "const PhysicalKeySnapshot stage11b_physical_keys ="
-        STAGE11B_INDEX)
-    string(FIND "${SOURCE}"
-        "const PhysicalKeySnapshot physical_keys = inject_stage11c_physical_edges("
-        STAGE11C_INDEX)
-    string(FIND "${SOURCE}"
-        "HostFrameInput frame_input = map_host_frame_input("
-        MAP_INDEX)
-    string(FIND "${SOURCE}"
-        "DeathInputGate death_gate = host_death_input_gate("
-        DEATH_GATE_INDEX)
-    string(FIND "${SOURCE}"
-        "const bool pause_blocks_gameplay ="
-        PAUSE_BLOCK_INDEX)
-    string(FIND "${SOURCE}" "HostFrameGateResult host_gate{}"
-        HOST_GATE_INDEX)
-    string(FIND "${SOURCE}"
-        "const PassiveOverlayInputGate passive_input_gate ="
-        PASSIVE_GATE_INDEX)
-    string(FIND "${SOURCE}"
-        "const InventoryInputGate inventory_gate ="
-        INVENTORY_GATE_INDEX)
-    string(FIND "${SOURCE}" "const bool forward_actions ="
-        FORWARD_ACTIONS_INDEX)
-    string(FIND "${SOURCE}" "if (forward_actions) {"
-        FORWARD_ACTIONS_IF_INDEX)
-    string(FIND "${SOURCE}" "submit_frame_actions(*session, frame_input)"
-        SUBMIT_ACTIONS_INDEX)
-    string(FIND "${SOURCE}" "if (forward_descent && frame_input.keys.e)"
-        FORWARD_DESCENT_INDEX)
-    if(SAMPLE_INDEX EQUAL -1 OR STAGE11B_INDEX EQUAL -1
-            OR STAGE11C_INDEX EQUAL -1 OR MAP_INDEX EQUAL -1
-            OR DEATH_GATE_INDEX EQUAL -1 OR PAUSE_BLOCK_INDEX EQUAL -1
-            OR HOST_GATE_INDEX EQUAL -1 OR PASSIVE_GATE_INDEX EQUAL -1
-            OR INVENTORY_GATE_INDEX EQUAL -1 OR FORWARD_ACTIONS_INDEX EQUAL -1
+    set(WS "[ \t\r\n]*")
+    set(WS1 "[ \t\r\n]+")
+    string(FIND "${SOURCE}" "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys()" SAMPLE_INDEX)
+    string(FIND "${SOURCE}" "const PhysicalKeySnapshot stage11b_physical_keys =" STAGE11B_INDEX)
+    string(FIND "${SOURCE}" "const PhysicalKeySnapshot physical_keys = inject_stage11c_physical_edges(" STAGE11C_INDEX)
+    string(FIND "${SOURCE}" "HostFrameInput frame_input = map_host_frame_input(" MAP_INDEX)
+    string(FIND "${SOURCE}" "DeathInputGate death_gate = host_death_input_gate(" DEATH_GATE_INDEX)
+    string(FIND "${SOURCE}" "const bool pause_blocks_gameplay =" PAUSE_BLOCK_INDEX)
+    string(FIND "${SOURCE}" "HostFrameGateResult host_gate{}" HOST_GATE_INDEX)
+    string(FIND "${SOURCE}" "const PassiveOverlayInputGate passive_input_gate =" PASSIVE_GATE_INDEX)
+    string(FIND "${SOURCE}" "const InventoryInputGate inventory_gate =" INVENTORY_GATE_INDEX)
+    string(FIND "${SOURCE}" "const bool forward_actions =" FORWARD_ACTIONS_INDEX)
+    string(FIND "${SOURCE}" "const bool forward_descent =" FORWARD_DESCENT_DECL_INDEX)
+    string(FIND "${SOURCE}" "if (forward_actions) {" FORWARD_ACTIONS_IF_INDEX)
+    string(FIND "${SOURCE}" "submit_frame_actions(*session, frame_input)" SUBMIT_ACTIONS_INDEX)
+    string(FIND "${SOURCE}" "if (forward_descent && frame_input.keys.e)" FORWARD_DESCENT_INDEX)
+    string(FIND "${SOURCE}" "session->request_descent(in_range)" REQUEST_DESCENT_INDEX)
+    string(FIND "${SOURCE}" "const combat::MovementInput movement = forward_movement" MOVEMENT_INPUT_INDEX)
+    if(SAMPLE_INDEX EQUAL -1 OR STAGE11B_INDEX EQUAL -1 OR STAGE11C_INDEX EQUAL -1
+            OR MAP_INDEX EQUAL -1 OR DEATH_GATE_INDEX EQUAL -1 OR PAUSE_BLOCK_INDEX EQUAL -1
+            OR HOST_GATE_INDEX EQUAL -1 OR PASSIVE_GATE_INDEX EQUAL -1 OR INVENTORY_GATE_INDEX EQUAL -1
+            OR FORWARD_ACTIONS_INDEX EQUAL -1 OR FORWARD_DESCENT_DECL_INDEX EQUAL -1
             OR FORWARD_ACTIONS_IF_INDEX EQUAL -1 OR SUBMIT_ACTIONS_INDEX EQUAL -1
-            OR FORWARD_DESCENT_INDEX EQUAL -1
-            OR NOT SAMPLE_INDEX LESS STAGE11B_INDEX
-            OR NOT STAGE11B_INDEX LESS STAGE11C_INDEX
-            OR NOT STAGE11C_INDEX LESS MAP_INDEX
-            OR NOT MAP_INDEX LESS DEATH_GATE_INDEX
-            OR NOT DEATH_GATE_INDEX LESS PAUSE_BLOCK_INDEX
-            OR NOT PAUSE_BLOCK_INDEX LESS HOST_GATE_INDEX
-            OR NOT HOST_GATE_INDEX LESS PASSIVE_GATE_INDEX
-            OR NOT PASSIVE_GATE_INDEX LESS INVENTORY_GATE_INDEX
+            OR FORWARD_DESCENT_INDEX EQUAL -1 OR REQUEST_DESCENT_INDEX EQUAL -1
+            OR MOVEMENT_INPUT_INDEX EQUAL -1
+            OR NOT SAMPLE_INDEX LESS STAGE11B_INDEX OR NOT STAGE11B_INDEX LESS STAGE11C_INDEX
+            OR NOT STAGE11C_INDEX LESS MAP_INDEX OR NOT MAP_INDEX LESS DEATH_GATE_INDEX
+            OR NOT DEATH_GATE_INDEX LESS PAUSE_BLOCK_INDEX OR NOT PAUSE_BLOCK_INDEX LESS HOST_GATE_INDEX
+            OR NOT HOST_GATE_INDEX LESS PASSIVE_GATE_INDEX OR NOT PASSIVE_GATE_INDEX LESS INVENTORY_GATE_INDEX
             OR NOT INVENTORY_GATE_INDEX LESS FORWARD_ACTIONS_INDEX
-            OR NOT FORWARD_ACTIONS_INDEX LESS FORWARD_ACTIONS_IF_INDEX
+            OR NOT FORWARD_ACTIONS_INDEX LESS FORWARD_DESCENT_DECL_INDEX
+            OR NOT FORWARD_DESCENT_DECL_INDEX LESS FORWARD_ACTIONS_IF_INDEX
             OR NOT FORWARD_ACTIONS_IF_INDEX LESS SUBMIT_ACTIONS_INDEX
-            OR NOT SUBMIT_ACTIONS_INDEX LESS FORWARD_DESCENT_INDEX)
+            OR NOT SUBMIT_ACTIONS_INDEX LESS FORWARD_DESCENT_INDEX
+            OR NOT FORWARD_DESCENT_INDEX LESS REQUEST_DESCENT_INDEX
+            OR NOT REQUEST_DESCENT_INDEX LESS MOVEMENT_INPUT_INDEX)
         set("${OUT_VARIABLE}" FALSE PARENT_SCOPE)
         return()
     endif()
+
     math(EXPR STAGE11B_LENGTH "${STAGE11C_INDEX} - ${STAGE11B_INDEX}")
-    string(SUBSTRING "${SOURCE}" ${STAGE11B_INDEX} ${STAGE11B_LENGTH}
-        STAGE11B_SOURCE)
+    string(SUBSTRING "${SOURCE}" ${STAGE11B_INDEX} ${STAGE11B_LENGTH} STAGE11B_SOURCE)
     math(EXPR STAGE11C_LENGTH "${MAP_INDEX} - ${STAGE11C_INDEX}")
-    string(SUBSTRING "${SOURCE}" ${STAGE11C_INDEX} ${STAGE11C_LENGTH}
-        STAGE11C_SOURCE)
+    string(SUBSTRING "${SOURCE}" ${STAGE11C_INDEX} ${STAGE11C_LENGTH} STAGE11C_SOURCE)
     string(SUBSTRING "${SOURCE}" ${MAP_INDEX} -1 MAP_SOURCE)
-    string(FIND "${STAGE11B_SOURCE}"
-        "sampled_physical_keys, config, stage11b_validation_state)"
-        STAGE11B_INPUT_INDEX)
-    string(FIND "${STAGE11C_SOURCE}"
-        "stage11b_physical_keys, config, input_settings, current,"
-        STAGE11C_INPUT_INDEX)
-    string(FIND "${STAGE11C_SOURCE}" "stage11c_validation_state)"
-        STAGE11C_STATE_INDEX)
-    string(FIND "${MAP_SOURCE}" "physical_keys)" MAP_INPUT_INDEX)
-    math(EXPR FORWARD_ACTIONS_LENGTH
-        "${FORWARD_ACTIONS_IF_INDEX} - ${FORWARD_ACTIONS_INDEX}")
-    string(SUBSTRING "${SOURCE}" ${FORWARD_ACTIONS_INDEX}
-        ${FORWARD_ACTIONS_LENGTH} FORWARD_ACTIONS_SOURCE)
-    math(EXPR CONTROLLED_SUBMIT_LENGTH
-        "${FORWARD_DESCENT_INDEX} - ${FORWARD_ACTIONS_IF_INDEX}")
-    string(SUBSTRING "${SOURCE}" ${FORWARD_ACTIONS_IF_INDEX}
-        ${CONTROLLED_SUBMIT_LENGTH} CONTROLLED_SUBMIT_SOURCE)
-    string(REGEX MATCHALL "submit_frame_actions[ \t\r\n]*\\("
-        SUBMIT_ACTION_CALLS "${SOURCE}")
+    math(EXPR HOST_GATE_LENGTH "${PASSIVE_GATE_INDEX} - ${HOST_GATE_INDEX}")
+    string(SUBSTRING "${SOURCE}" ${HOST_GATE_INDEX} ${HOST_GATE_LENGTH} HOST_GATE_SOURCE)
+    math(EXPR HOST_CHAIN_LENGTH "${MOVEMENT_INPUT_INDEX} - ${MAP_INDEX}")
+    string(SUBSTRING "${SOURCE}" ${MAP_INDEX} ${HOST_CHAIN_LENGTH} HOST_CHAIN_SOURCE)
+    math(EXPR FORWARD_ACTIONS_LENGTH "${FORWARD_ACTIONS_IF_INDEX} - ${FORWARD_ACTIONS_INDEX}")
+    string(SUBSTRING "${SOURCE}" ${FORWARD_ACTIONS_INDEX} ${FORWARD_ACTIONS_LENGTH} FORWARD_ACTIONS_SOURCE)
+    math(EXPR CONTROLLED_SUBMIT_LENGTH "${FORWARD_DESCENT_INDEX} - ${FORWARD_ACTIONS_IF_INDEX}")
+    string(SUBSTRING "${SOURCE}" ${FORWARD_ACTIONS_IF_INDEX} ${CONTROLLED_SUBMIT_LENGTH} CONTROLLED_SUBMIT_SOURCE)
+    math(EXPR FORWARD_DESCENT_LENGTH "${FORWARD_DESCENT_INDEX} - ${FORWARD_DESCENT_DECL_INDEX}")
+    string(SUBSTRING "${SOURCE}" ${FORWARD_DESCENT_DECL_INDEX} ${FORWARD_DESCENT_LENGTH} FORWARD_DESCENT_SOURCE)
+    math(EXPR CONTROLLED_DESCENT_LENGTH "${MOVEMENT_INPUT_INDEX} - ${FORWARD_DESCENT_INDEX}")
+    string(SUBSTRING "${SOURCE}" ${FORWARD_DESCENT_INDEX} ${CONTROLLED_DESCENT_LENGTH} CONTROLLED_DESCENT_SOURCE)
+
+    string(REGEX MATCHALL "submit_frame_actions${WS}\\(" SUBMIT_ACTION_CALLS "${SOURCE}")
     list(LENGTH SUBMIT_ACTION_CALLS SUBMIT_ACTION_CALL_COUNT)
-    if(STAGE11B_INPUT_INDEX EQUAL -1 OR STAGE11C_INPUT_INDEX EQUAL -1
-            OR STAGE11C_STATE_INDEX EQUAL -1 OR MAP_INPUT_INDEX EQUAL -1
+    string(REGEX MATCHALL "host_gate${WS}=${WS}gate_host_frame${WS}\\(" HOST_GATE_CALLS "${HOST_GATE_SOURCE}")
+    list(LENGTH HOST_GATE_CALLS HOST_GATE_CALL_COUNT)
+    string(REGEX MATCHALL "session->request_descent${WS}\\(" REQUEST_DESCENT_CALLS "${SOURCE}")
+    list(LENGTH REQUEST_DESCENT_CALLS REQUEST_DESCENT_CALL_COUNT)
+    string(REGEX MATCHALL "forward_descent${WS}=" FORWARD_DESCENT_ASSIGNMENTS "${HOST_CHAIN_SOURCE}")
+    list(LENGTH FORWARD_DESCENT_ASSIGNMENTS FORWARD_DESCENT_ASSIGNMENT_COUNT)
+
+    if(NOT STAGE11B_SOURCE MATCHES "inject_stage11b_physical_edges${WS}\\(${WS}sampled_physical_keys,${WS}config,${WS}stage11b_validation_state${WS}\\)"
+            OR NOT STAGE11C_SOURCE MATCHES "inject_stage11c_physical_edges${WS}\\(${WS}stage11b_physical_keys,${WS}config,${WS}input_settings,${WS}current,${WS}stage11c_validation_state${WS}\\)"
+            OR NOT MAP_SOURCE MATCHES "map_host_frame_input${WS}\\(${WS}input_settings,${WS}physical_keys${WS}\\)"
+            OR NOT SOURCE MATCHES "DeathInputGate death_gate =${WS}host_death_input_gate${WS}\\(${WS}death_saving,${WS}death_pending,${WS}frame_input\\.keys,${WS}physical_keys${WS}\\)${WS};"
+            OR NOT HOST_GATE_CALL_COUNT EQUAL 2
+            OR NOT HOST_GATE_SOURCE MATCHES "if${WS}\\(${WS}pause_open${WS}\\)${WS}\\{${WS}host_gate${WS}=${WS}gate_host_frame${WS}\\(${WS}fixed_step,${WS}pause_latched,${WS}true,${WS}static_cast<double>${WS}\\(${WS}frame_seconds${WS}\\)${WS}\\)${WS};"
+            OR NOT HOST_GATE_SOURCE MATCHES "else${WS1}if${WS}\\(${WS}!inventory\\.is_open${WS}\\(${WS}\\)${WS}&&${WS}!inventory_toggled_this_frame${WS}\\)${WS}\\{${WS}host_gate${WS}=${WS}gate_host_frame${WS}\\(${WS}fixed_step,${WS}pause_latched,${WS}false,${WS}static_cast<double>${WS}\\(${WS}frame_seconds${WS}\\)${WS}\\)${WS};"
+            OR HOST_CHAIN_SOURCE MATCHES "host_gate\\.forward_gameplay${WS}=${WS}[^=]"
+            OR NOT SOURCE MATCHES "const PassiveOverlayInputGate passive_input_gate =${WS}passive_overlay_input_gate${WS}\\(${WS}passive_overlay_open${WS}\\)${WS};"
+            OR NOT SOURCE MATCHES "const InventoryInputGate inventory_gate =${WS}inventory_input_gate${WS}\\(${WS}inventory\\.is_open${WS}\\(${WS}\\)${WS}\\|\\|${WS}inventory_toggled_this_frame${WS}\\)${WS};"
             OR NOT SUBMIT_ACTION_CALL_COUNT EQUAL 1
-            OR NOT FORWARD_ACTIONS_SOURCE MATCHES
-                "const bool forward_actions =[ \t\r\n]*passive_input_gate\\.forward_actions[ \t\r\n]*&&[ \t\r\n]*inventory_gate\\.forward_actions[ \t\r\n]*&&[ \t\r\n]*death_gate\\.forward_gameplay[ \t\r\n]*&&[ \t\r\n]*host_gate\\.forward_gameplay[ \t\r\n]*&&[ \t\r\n]*!pause_blocks_gameplay[ \t\r\n]*;"
-            OR NOT CONTROLLED_SUBMIT_SOURCE MATCHES
-                "if[ \t\r\n]*\\([ \t\r\n]*forward_actions[ \t\r\n]*\\)[ \t\r\n]*\\{[ \t\r\n]*const[ \t]+std::array<bool,[ \t]*3>[ \t]+accepted_actions[ \t\r\n]*=[ \t\r\n]*submit_frame_actions[ \t\r\n]*\\([ \t\r\n]*\\*session,[ \t\r\n]*frame_input[ \t\r\n]*\\)[ \t\r\n]*;")
+            OR NOT FORWARD_ACTIONS_SOURCE MATCHES "const bool forward_actions =${WS}passive_input_gate\\.forward_actions${WS}&&${WS}inventory_gate\\.forward_actions${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS};"
+            OR NOT CONTROLLED_SUBMIT_SOURCE MATCHES "if${WS}\\(${WS}forward_actions${WS}\\)${WS}\\{${WS}const${WS1}std::array<bool,${WS}3>${WS1}accepted_actions${WS}=${WS}submit_frame_actions${WS}\\(${WS}\\*session,${WS}frame_input${WS}\\)${WS};"
+            OR NOT FORWARD_DESCENT_ASSIGNMENT_COUNT EQUAL 1
+            OR NOT FORWARD_DESCENT_SOURCE MATCHES "const bool forward_descent =${WS}passive_input_gate\\.forward_descent${WS}&&${WS}inventory_gate\\.forward_descent${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS};"
+            OR NOT REQUEST_DESCENT_CALL_COUNT EQUAL 1
+            OR NOT CONTROLLED_DESCENT_SOURCE MATCHES "if${WS}\\(${WS}forward_descent${WS}&&${WS}frame_input\\.keys\\.e${WS}\\)${WS}\\{${WS}const auto snapshot =${WS}session->snapshot${WS}\\(${WS}\\)${WS};${WS}const bool in_range =${WS}snapshot\\.combat\\.has_value${WS}\\(${WS}\\)${WS}&&${WS}can_prompt_descent${WS}\\(${WS}snapshot,${WS}snapshot\\.combat->player\\.position${WS}\\)${WS};${WS}static_cast<void>${WS}\\(${WS}session->request_descent${WS}\\(${WS}in_range${WS}\\)${WS}\\)${WS};")
         set("${OUT_VARIABLE}" FALSE PARENT_SCOPE)
         return()
     endif()
@@ -344,6 +357,52 @@ if(ACCEPTED_SUBMIT_MUTATIONS)
     list(JOIN ACCEPTED_SUBMIT_MUTATIONS ", " ACCEPTED_SUBMIT_MUTATION_NAMES)
     message(FATAL_ERROR
         "host input chain accepted mutations: ${ACCEPTED_SUBMIT_MUTATION_NAMES}")
+endif()
+
+set(HOST_GATE_TRUE_ASSIGNMENT [=[
+                host_gate = gate_host_frame(fixed_step, pause_latched, true,
+                    static_cast<double>(frame_seconds));
+]=])
+set(HOST_GATE_FALSE_ASSIGNMENT [=[
+                host_gate = gate_host_frame(fixed_step, pause_latched, false,
+                    static_cast<double>(frame_seconds));
+]=])
+string(REPLACE "${HOST_GATE_TRUE_ASSIGNMENT}"
+    "                host_gate.forward_gameplay = true;"
+    HOST_GATE_BYPASS_STRUCTURE "${HOST_SOURCE}")
+string(REPLACE "${HOST_GATE_FALSE_ASSIGNMENT}"
+    "                host_gate.forward_gameplay = true;"
+    HOST_GATE_BYPASS_STRUCTURE "${HOST_GATE_BYPASS_STRUCTURE}")
+set(FORWARD_DESCENT_DECLARATION [=[
+            const bool forward_descent = passive_input_gate.forward_descent
+                && inventory_gate.forward_descent
+                && death_gate.forward_gameplay
+                && host_gate.forward_gameplay && !pause_blocks_gameplay;
+]=])
+string(REPLACE "${FORWARD_DESCENT_DECLARATION}"
+    "            const bool forward_descent = true;"
+    UNCONDITIONAL_DESCENT_STRUCTURE "${HOST_SOURCE}")
+if(HOST_GATE_BYPASS_STRUCTURE STREQUAL HOST_SOURCE
+        OR UNCONDITIONAL_DESCENT_STRUCTURE STREQUAL HOST_SOURCE)
+    message(FATAL_ERROR "host gate/descent mutation setup did not modify production source")
+endif()
+set(ACCEPTED_GATE_DESCENT_MUTATIONS)
+physical_input_chain_valid("${HOST_GATE_BYPASS_STRUCTURE}"
+    HOST_GATE_BYPASS_STRUCTURE_VALID)
+if(HOST_GATE_BYPASS_STRUCTURE_VALID)
+    list(APPEND ACCEPTED_GATE_DESCENT_MUTATIONS "host-gate-bypass")
+endif()
+physical_input_chain_valid("${UNCONDITIONAL_DESCENT_STRUCTURE}"
+    UNCONDITIONAL_DESCENT_STRUCTURE_VALID)
+if(UNCONDITIONAL_DESCENT_STRUCTURE_VALID)
+    list(APPEND ACCEPTED_GATE_DESCENT_MUTATIONS
+        "unconditional-descent-bypass")
+endif()
+if(ACCEPTED_GATE_DESCENT_MUTATIONS)
+    list(JOIN ACCEPTED_GATE_DESCENT_MUTATIONS ", "
+        ACCEPTED_GATE_DESCENT_MUTATION_NAMES)
+    message(FATAL_ERROR
+        "host input chain accepted mutations: ${ACCEPTED_GATE_DESCENT_MUTATION_NAMES}")
 endif()
 
 function(strip_cpp_noncode SOURCE OUT_VARIABLE)
