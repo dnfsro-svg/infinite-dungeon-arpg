@@ -214,6 +214,38 @@ arpg::test::Failure monster_resource_plan_consumes_snapshot_values_and_palette_i
     return {};
 }
 
+arpg::test::Failure objective_navigation_and_context_plans_stay_in_their_layout_panels() noexcept {
+    const platform::HudLayout layout = player_layout();
+    platform::RoomHudModel room{};
+    static_cast<void>(std::snprintf(room.objective.bytes.data(), room.objective.bytes.size(),
+        u8"第 1/2 波 · 剩余 3"));
+    platform::NavigationHudModel navigation{};
+    static_cast<void>(std::snprintf(navigation.primary.bytes.data(), navigation.primary.bytes.size(),
+        u8"深度 1 · 层房间 2"));
+    platform::ContextHudModel context{};
+    context.primary_kind = platform::HudNoticeKind::exit_ready;
+    static_cast<void>(std::snprintf(context.primary.bytes.data(), context.primary.bytes.size(),
+        "E to enter exit"));
+
+    const platform::ObjectivePanelPlan objective =
+        platform::make_objective_panel_plan(room, layout);
+    const platform::NavigationPanelPlan navigation_plan =
+        platform::make_navigation_panel_plan(navigation, layout);
+    const platform::ContextPanelPlan context_plan =
+        platform::make_context_panel_plan(context, layout);
+
+    ARPG_REQUIRE(objective.visible);
+    ARPG_REQUIRE(objective.primary.bytes == room.objective.bytes);
+    ARPG_REQUIRE(rect_inside(objective.bounds, layout.objective_panel));
+    ARPG_REQUIRE(navigation_plan.visible);
+    ARPG_REQUIRE(navigation_plan.primary.bytes == navigation.primary.bytes);
+    ARPG_REQUIRE(rect_inside(navigation_plan.bounds, layout.navigation_panel));
+    ARPG_REQUIRE(context_plan.primary_visible);
+    ARPG_REQUIRE(context_plan.primary_kind == platform::HudNoticeKind::exit_ready);
+    ARPG_REQUIRE(rect_inside(context_plan.primary_bounds, layout.primary_notice));
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"health first", &health_is_always_the_first_visible_player_bar},
     {"conditional barrier", &barrier_bar_is_visible_only_with_a_positive_maximum},
@@ -223,6 +255,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"clamped stable bar bounds", &plan_clamps_ratios_and_keeps_stable_bounds},
     {"nonfinite ratios", &nonfinite_player_ratios_fall_back_to_zero_without_low_health_pulse},
     {"monster snapshot palette world space", &monster_resource_plan_consumes_snapshot_values_and_palette_ids},
+    {"objective navigation context plans", &objective_navigation_and_context_plans_stay_in_their_layout_panels},
 };
 
 }  // namespace

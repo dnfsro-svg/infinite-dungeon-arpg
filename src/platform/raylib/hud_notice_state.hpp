@@ -7,12 +7,6 @@
 
 namespace arpg::platform {
 
-enum class HudNoticeKind : std::uint8_t {
-    none, save_error, recovery_required, abyss_abandon,
-    hole_interact, exit_ready, room_clear, reward, level_up,
-    passive_points, inventory, passive_tree
-};
-
 struct HudNotice final {
     HudNoticeKind kind{HudNoticeKind::none};
     std::uint8_t priority{};

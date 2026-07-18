@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 
 #include "hud_view_model.hpp"
+#include "hud_notice_state.hpp"
 
 #include <cstring>
 #include <limits>
@@ -188,6 +189,131 @@ arpg::test::Failure truncated_secondary_text_remains_nul_terminated() noexcept {
     return {};
 }
 
+arpg::test::Failure objective_describes_every_player_visible_room_state() noexcept {
+    dungeon::DungeonSnapshot snapshot = normal_snapshot();
+    snapshot.wave_index = 1U;
+    snapshot.wave_count = 3U;
+    platform::HudViewModel output{};
+
+    snapshot.phase = dungeon::RoomPhase::combat;
+    platform::build_hud_view_model(output, snapshot, {}, default_hints());
+    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"第 2/3 波") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"剩余 5") != nullptr);
+
+    snapshot.phase = dungeon::RoomPhase::wave_delay;
+    platform::build_hud_view_model(output, snapshot, {}, default_hints());
+    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"下一波") != nullptr);
+
+    snapshot.phase = dungeon::RoomPhase::cleared;
+    platform::build_hud_view_model(output, snapshot, {}, default_hints());
+    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"出口已开放") != nullptr);
+
+    snapshot.phase = dungeon::RoomPhase::committing;
+    platform::build_hud_view_model(output, snapshot, {}, default_hints());
+    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"正在保存") != nullptr);
+
+    snapshot.is_abyss = true;
+    snapshot.abyss_danger = arpg::abyss::AbyssDanger::high;
+    snapshot.abyss_rule = arpg::abyss::AbyssRuleId::abyss_fury;
+    platform::build_hud_view_model(output, snapshot, {}, default_hints());
+    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"深渊") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), "ABYSS HIGH") != nullptr);
+    return {};
+}
+
+arpg::test::Failure navigation_formats_extremes_and_four_shared_element_visuals() noexcept {
+    dungeon::DungeonSnapshot snapshot = normal_snapshot();
+    snapshot.depth = (std::numeric_limits<std::uint64_t>::max)();
+    snapshot.floor_room_index = (std::numeric_limits<std::uint64_t>::max)();
+    snapshot.biases.fill((std::numeric_limits<std::uint32_t>::max)());
+    platform::HudViewModel output{};
+    platform::build_hud_view_model(output, snapshot, {}, default_hints());
+
+    ARPG_REQUIRE(std::strstr(output.navigation.primary.bytes.data(), u8"深度") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.navigation.primary.bytes.data(), "18446744073709551615") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.navigation.primary.bytes.data(), u8"层房间") != nullptr);
+    ARPG_REQUIRE(output.navigation.element_count == 4U);
+    ARPG_REQUIRE(std::strstr(output.navigation.elements[0].label.bytes.data(), u8"火") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.navigation.elements[1].label.bytes.data(), u8"水") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.navigation.elements[2].label.bytes.data(), u8"电") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.navigation.elements[3].label.bytes.data(), u8"混沌") != nullptr);
+    ARPG_REQUIRE(output.navigation.elements[0].color.r == 227U);
+    ARPG_REQUIRE(output.navigation.elements[1].color.b == 222U);
+    ARPG_REQUIRE(output.navigation.elements[2].color.g == 211U);
+    ARPG_REQUIRE(output.navigation.elements[3].color.r == 166U);
+    return {};
+}
+
+arpg::test::Failure context_attaches_notice_priority_without_changing_abyss_values() noexcept {
+    dungeon::DungeonSnapshot snapshot = normal_snapshot();
+    snapshot.is_abyss = true;
+    snapshot.abyss_rule = arpg::abyss::AbyssRuleId::abyss_fury;
+    snapshot.abyss_exit_confirmation_armed = true;
+    snapshot.abyss_exit_confirmation_transition = dungeon::TransitionKind::descent;
+    const auto before = arpg::platform::abyss_hud_values(snapshot);
+    platform::HudNoticeView notice{};
+    notice.primary.kind = platform::HudNoticeKind::abyss_abandon;
+    static_cast<void>(std::snprintf(notice.primary.text.bytes.data(),
+        notice.primary.text.bytes.size(), "E %s", before.confirmation_label));
+    notice.secondary.kind = platform::HudNoticeKind::hole_interact;
+    static_cast<void>(std::snprintf(notice.secondary.text.bytes.data(),
+        notice.secondary.text.bytes.size(), "E to descend"));
+    platform::HudViewModel output{};
+    platform::build_hud_view_model(output, snapshot, {}, default_hints());
+    platform::attach_notice_view(output, notice);
+
+    ARPG_REQUIRE(output.context.primary_kind == platform::HudNoticeKind::abyss_abandon);
+    ARPG_REQUIRE(output.context.secondary_kind == platform::HudNoticeKind::hole_interact);
+    ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), "Press E again") != nullptr);
+    const auto after = arpg::platform::abyss_hud_values(snapshot);
+    ARPG_REQUIRE(after.confirmation_visible == before.confirmation_visible);
+    ARPG_REQUIRE(after.confirmation_label == before.confirmation_label);
+    return {};
+}
+
+arpg::test::Failure rebound_context_hints_use_committed_e_i_and_p_labels() noexcept {
+    dungeon::DungeonSnapshot previous{};
+    dungeon::DungeonSnapshot current = normal_snapshot();
+    current.has_active_room = true;
+    current.phase = dungeon::RoomPhase::awaiting_exit;
+    current.has_hole = true;
+    platform::ControlHints hints{};
+    static_cast<void>(std::snprintf(hints.secondary.data(), hints.secondary.size(),
+        "E Interact  I Inventory  P Passive Tree"));
+    platform::HudNoticeState notices{};
+    notices.observe(previous, current, {}, hints, false);
+    platform::HudViewModel output{};
+    platform::build_hud_view_model(output, current, {}, hints);
+    platform::attach_notice_view(output, notices.view());
+
+    ARPG_REQUIRE(output.context.primary_kind == platform::HudNoticeKind::hole_interact);
+    ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), "E ") != nullptr);
+
+    current = normal_snapshot();
+    current.inventory_count = 1U;
+    current.progression.level = 0U;
+    current.progression.unspent_passive_points = 0U;
+    platform::HudNoticeState inventory_notices{};
+    inventory_notices.observe(previous, current, {}, hints, false);
+    platform::build_hud_view_model(output, current, {}, hints);
+    platform::attach_notice_view(output, inventory_notices.view());
+    ARPG_REQUIRE(output.context.primary_kind == platform::HudNoticeKind::inventory);
+    ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), "I ") != nullptr);
+
+    current = normal_snapshot();
+    current.has_active_room = true;
+    current.phase = dungeon::RoomPhase::awaiting_exit;
+    current.progression.level = 0U;
+    current.progression.unspent_passive_points = 1U;
+    platform::HudNoticeState passive_notices{};
+    passive_notices.observe(previous, current, {}, hints, false);
+    platform::build_hud_view_model(output, current, {}, hints);
+    platform::attach_notice_view(output, passive_notices.view());
+    ARPG_REQUIRE(output.context.secondary_kind == platform::HudNoticeKind::passive_tree);
+    ARPG_REQUIRE(std::strstr(output.context.secondary.bytes.data(), "P ") != nullptr);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"normal combat projection", &normal_combat_projects_snapshot_values},
     {"missing combat snapshot", &absent_combat_snapshot_is_reported},
@@ -199,6 +325,10 @@ constexpr arpg::test::TestCase kCases[] = {
     {"Chinese objective text", &objective_uses_chinese_target_text},
     {"non-terminated hint buffers", &non_terminated_hint_buffers_are_bounded_and_terminated},
     {"truncated secondary text", &truncated_secondary_text_remains_nul_terminated},
+    {"room objective states", &objective_describes_every_player_visible_room_state},
+    {"navigation extremes and elements", &navigation_formats_extremes_and_four_shared_element_visuals},
+    {"abyss context attachment", &context_attaches_notice_priority_without_changing_abyss_values},
+    {"rebound context hints", &rebound_context_hints_use_committed_e_i_and_p_labels},
 };
 
 }  // namespace

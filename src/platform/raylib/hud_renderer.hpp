@@ -44,11 +44,45 @@ struct MonsterBarVisualPlan final {
     bool world_space{true};
 };
 
+struct ObjectivePanelPlan final {
+    bool visible{};
+    bool abyss{};
+    HudRect bounds{};
+    HudText96 primary{};
+    HudText96 secondary{};
+};
+
+struct NavigationPanelPlan final {
+    bool visible{};
+    HudRect bounds{};
+    HudText96 primary{};
+    HudText96 ecology{};
+    std::array<NavigationHudModel::Element, 4> elements{};
+    std::uint8_t element_count{};
+};
+
+struct ContextPanelPlan final {
+    bool primary_visible{};
+    bool secondary_visible{};
+    HudRect primary_bounds{};
+    HudRect secondary_bounds{};
+    HudText96 primary{};
+    HudText96 secondary{};
+    HudNoticeKind primary_kind{HudNoticeKind::none};
+    HudNoticeKind secondary_kind{HudNoticeKind::none};
+};
+
 [[nodiscard]] PlayerPanelPlan make_player_panel_plan(
     const PlayerHudModel&, const HudLayout&, float presentation_seconds) noexcept;
 [[nodiscard]] MonsterBarVisualPlan make_monster_bar_visual_plan(
     const combat::MonsterSnapshot&) noexcept;
 [[nodiscard]] Color hud_palette_color(HudPaletteId palette_id) noexcept;
+[[nodiscard]] ObjectivePanelPlan make_objective_panel_plan(
+    const RoomHudModel&, const HudLayout&) noexcept;
+[[nodiscard]] NavigationPanelPlan make_navigation_panel_plan(
+    const NavigationHudModel&, const HudLayout&) noexcept;
+[[nodiscard]] ContextPanelPlan make_context_panel_plan(
+    const ContextHudModel&, const HudLayout&) noexcept;
 
 class HudRenderer final {
 public:

@@ -154,6 +154,92 @@ PlayerPanelPlan make_player_panel_plan(const PlayerHudModel& player,
     return plan;
 }
 
+ObjectivePanelPlan make_objective_panel_plan(const RoomHudModel& room,
+    const HudLayout& layout) noexcept {
+    ObjectivePanelPlan plan{};
+    if (layout.objective_panel.width <= 0.0F
+        || layout.objective_panel.height <= 0.0F
+        || room.objective.bytes[0] == '\0') {
+        return plan;
+    }
+    plan.visible = true;
+    plan.abyss = room.abyss;
+    plan.bounds = layout.objective_panel;
+    plan.primary = room.objective;
+    plan.secondary = room.secondary;
+    return plan;
+}
+
+NavigationPanelPlan make_navigation_panel_plan(const NavigationHudModel& navigation,
+    const HudLayout& layout) noexcept {
+    NavigationPanelPlan plan{};
+    if (layout.navigation_panel.width <= 0.0F
+        || layout.navigation_panel.height <= 0.0F
+        || navigation.primary.bytes[0] == '\0') {
+        return plan;
+    }
+    plan.visible = true;
+    plan.bounds = layout.navigation_panel;
+    plan.primary = navigation.primary;
+    plan.ecology = navigation.ecology_label;
+    plan.element_count = std::min<std::uint8_t>(navigation.element_count,
+        static_cast<std::uint8_t>(plan.elements.size()));
+    for (std::size_t index{}; index < plan.element_count; ++index) {
+        plan.elements[index] = navigation.elements[index];
+    }
+    return plan;
+}
+
+ContextPanelPlan make_context_panel_plan(const ContextHudModel& context,
+    const HudLayout& layout) noexcept {
+    ContextPanelPlan plan{};
+    plan.primary_bounds = layout.primary_notice;
+    plan.secondary_bounds = layout.secondary_notice;
+    plan.primary = context.primary;
+    plan.secondary = context.secondary;
+    plan.primary_kind = context.primary_kind;
+    plan.secondary_kind = context.secondary_kind;
+    plan.primary_visible = context.primary_kind != HudNoticeKind::none
+        && context.primary.bytes[0] != '\0'
+        && layout.primary_notice.width > 0.0F
+        && layout.primary_notice.height > 0.0F;
+    plan.secondary_visible = context.secondary_kind != HudNoticeKind::none
+        && context.secondary.bytes[0] != '\0'
+        && layout.secondary_notice.width > 0.0F
+        && layout.secondary_notice.height > 0.0F;
+    return plan;
+}
+
+namespace {
+
+[[nodiscard]] Color element_color(const NavigationHudModel::Element::Color& color)
+    noexcept {
+    return {color.r, color.g, color.b, color.a};
+}
+
+void draw_panel_text(Font font, const HudRect& bounds, const HudText96& text,
+    float size, Color color) noexcept {
+    if (text.bytes[0] == '\0') return;
+    DrawTextEx(font, text.bytes.data(),
+        {bounds.x + 10.0F, bounds.y + 7.0F}, size, 1.0F, color);
+}
+
+void draw_context_notice(Font font, const HudRect& bounds,
+    const HudText96& text, HudNoticeKind kind, Color color) noexcept {
+    if (kind == HudNoticeKind::none || text.bytes[0] == '\0') return;
+    const bool urgent = kind == HudNoticeKind::save_error
+        || kind == HudNoticeKind::recovery_required
+        || kind == HudNoticeKind::abyss_abandon;
+    const Color fill = urgent ? Color{54, 18, 31, 238} : Color{15, 22, 33, 232};
+    DrawRectangleRounded({bounds.x, bounds.y, bounds.width, bounds.height},
+        0.18F, 6, fill);
+    DrawRectangleLinesEx({bounds.x, bounds.y, bounds.width, bounds.height},
+        1.0F, color);
+    draw_panel_text(font, bounds, text, 16.0F, color);
+}
+
+}  // namespace
+
 HudRenderer::~HudRenderer() noexcept {
     shutdown();
 }
@@ -203,56 +289,94 @@ void HudRenderer::draw(const HudViewModel& view,
     if (!font_ready_ || !IsWindowReady()) return;
     const PlayerPanelPlan plan = make_player_panel_plan(view.player, layout,
         static_cast<float>(GetTime()));
-    if (plan.bar_count == 0U) return;
+    const ObjectivePanelPlan objective = make_objective_panel_plan(view.room, layout);
+    const NavigationPanelPlan navigation = make_navigation_panel_plan(
+        view.navigation, layout);
+    const ContextPanelPlan context = make_context_panel_plan(view.context, layout);
 
     const HudPalette palette = hud_palette();
-    DrawRectangleRounded({layout.player_panel.x, layout.player_panel.y,
-        layout.player_panel.width, layout.player_panel.height}, 0.08F, 6,
-        Color{7, 10, 17, 220});
+    if (plan.bar_count != 0U) {
+        DrawRectangleRounded({layout.player_panel.x, layout.player_panel.y,
+            layout.player_panel.width, layout.player_panel.height}, 0.08F, 6,
+            Color{7, 10, 17, 220});
 
-    char text[96]{};
-    for (std::size_t index = 0U; index < plan.bar_count; ++index) {
-        const HudBarPlan& bar = plan.bars[index];
-        switch (bar.kind) {
-        case HudBarKind::health:
-            std::snprintf(text, sizeof(text), u8"生命 HP %d/%d", view.player.hp,
-                view.player.max_hp);
-            break;
-        case HudBarKind::barrier:
-            std::snprintf(text, sizeof(text), u8"护盾 %d/%d", view.player.barrier,
-                view.player.max_barrier);
-            break;
-        case HudBarKind::experience:
-            if (plan.experience_maxed) {
-                std::snprintf(text, sizeof(text), "XP MAX");
-            } else {
-                std::snprintf(text, sizeof(text), "XP %llu/%llu",
-                    static_cast<unsigned long long>(view.player.experience),
-                    static_cast<unsigned long long>(view.player.required_experience));
+        char text[96]{};
+        for (std::size_t index = 0U; index < plan.bar_count; ++index) {
+            const HudBarPlan& bar = plan.bars[index];
+            switch (bar.kind) {
+            case HudBarKind::health:
+                std::snprintf(text, sizeof(text), u8"生命 HP %d/%d", view.player.hp,
+                    view.player.max_hp);
+                break;
+            case HudBarKind::barrier:
+                std::snprintf(text, sizeof(text), u8"护盾 %d/%d", view.player.barrier,
+                    view.player.max_barrier);
+                break;
+            case HudBarKind::experience:
+                if (plan.experience_maxed) {
+                    std::snprintf(text, sizeof(text), "XP MAX");
+                } else {
+                    std::snprintf(text, sizeof(text), "XP %llu/%llu",
+                        static_cast<unsigned long long>(view.player.experience),
+                        static_cast<unsigned long long>(view.player.required_experience));
+                }
+                break;
             }
-            break;
+            DrawTextEx(font_, text, {layout.player_panel.x + (12.0F * layout.scale),
+                bar.bounds.y - (2.0F * layout.scale)}, 15.0F * layout.scale,
+                1.0F * layout.scale, palette.text);
+            draw_player_bar(bar);
         }
-        DrawTextEx(font_, text, {layout.player_panel.x + (12.0F * layout.scale),
-            bar.bounds.y - (2.0F * layout.scale)}, 15.0F * layout.scale,
-            1.0F * layout.scale, palette.text);
-        draw_player_bar(bar);
+        if (plan.low_health_emphasis) {
+            DrawRectangleLinesEx({layout.player_panel.x, layout.player_panel.y,
+                layout.player_panel.width, layout.player_panel.height},
+                2.0F * layout.scale,
+                palette.health);
+        }
+        for (std::size_t index = 0U; index < plan.tag_count; ++index) {
+            const float tag_x = layout.player_panel.x
+                + ((12.0F + static_cast<float>(index) * 64.0F) * layout.scale);
+            const float tag_y = layout.player_panel.y + (110.0F * layout.scale);
+            DrawRectangleRounded({tag_x, tag_y, 56.0F * layout.scale,
+                20.0F * layout.scale}, 0.18F, 4, Color{30, 39, 55, 235});
+            DrawTextEx(font_, status_tag_label(plan.tags[index]),
+                {tag_x + (8.0F * layout.scale), tag_y + (2.0F * layout.scale)},
+                13.0F * layout.scale, 1.0F * layout.scale, palette.text);
+        }
     }
-    if (plan.low_health_emphasis) {
-        DrawRectangleLinesEx({layout.player_panel.x, layout.player_panel.y,
-            layout.player_panel.width, layout.player_panel.height},
-            2.0F * layout.scale,
-            palette.health);
+    if (objective.visible) {
+        DrawRectangleRounded({objective.bounds.x, objective.bounds.y,
+            objective.bounds.width, objective.bounds.height}, 0.12F, 6,
+            objective.abyss ? Color{47, 18, 47, 228} : Color{7, 10, 17, 220});
+        draw_panel_text(font_, objective.bounds, objective.primary,
+            18.0F * layout.scale, objective.abyss ? palette.chaos : palette.text);
+        HudRect secondary = objective.bounds;
+        secondary.y += 28.0F * layout.scale;
+        draw_panel_text(font_, secondary, objective.secondary,
+            14.0F * layout.scale, palette.text);
     }
-    for (std::size_t index = 0U; index < plan.tag_count; ++index) {
-        const float tag_x = layout.player_panel.x
-            + ((12.0F + static_cast<float>(index) * 64.0F) * layout.scale);
-        const float tag_y = layout.player_panel.y + (110.0F * layout.scale);
-        DrawRectangleRounded({tag_x, tag_y, 56.0F * layout.scale,
-            20.0F * layout.scale}, 0.18F, 4, Color{30, 39, 55, 235});
-        DrawTextEx(font_, status_tag_label(plan.tags[index]),
-            {tag_x + (8.0F * layout.scale), tag_y + (2.0F * layout.scale)},
-            13.0F * layout.scale, 1.0F * layout.scale, palette.text);
+    if (navigation.visible) {
+        DrawRectangleRounded({navigation.bounds.x, navigation.bounds.y,
+            navigation.bounds.width, navigation.bounds.height}, 0.12F, 6,
+            Color{7, 10, 17, 220});
+        draw_panel_text(font_, navigation.bounds, navigation.primary,
+            16.0F * layout.scale, palette.text);
+        HudRect ecology = navigation.bounds;
+        ecology.y += 22.0F * layout.scale;
+        draw_panel_text(font_, ecology, navigation.ecology,
+            14.0F * layout.scale, palette.text);
+        for (std::size_t index{}; index < navigation.element_count; ++index) {
+            HudRect element = navigation.bounds;
+            element.y += (42.0F + static_cast<float>(index) * 17.0F) * layout.scale;
+            draw_panel_text(font_, element, navigation.elements[index].label,
+                13.0F * layout.scale, element_color(navigation.elements[index].color));
+        }
     }
+    draw_context_notice(font_, context.primary_bounds, context.primary,
+        context.primary_kind, context.primary_kind == HudNoticeKind::save_error
+            ? palette.error : palette.text);
+    draw_context_notice(font_, context.secondary_bounds, context.secondary,
+        context.secondary_kind, palette.text);
 }
 
 void CombatRenderer::draw_abyss_hud(
@@ -260,56 +384,12 @@ void CombatRenderer::draw_abyss_hud(
     float x,
     int& y,
     int line_step) const noexcept {
-    const AbyssHudValues abyss = abyss_hud_values(current);
-    if (!abyss.visible) return;
-
-    constexpr Color kAbyss{255, 126, 206, 255};
-    constexpr Color kReward{255, 211, 111, 255};
-    DrawText(TextFormat("%s  Rule %s",
-        abyss.danger_label, abyss.rule_label),
-        static_cast<int>(x), y, 16, kAbyss);
-    y += line_step;
-    DrawText(abyss.effect_label, static_cast<int>(x), y, 14,
-        Color{232, 190, 220, 255});
-    y += line_step;
-    DrawText(TextFormat("Reward pending %u / unpicked %u",
-        static_cast<unsigned>(abyss.pending_rewards),
-        static_cast<unsigned>(abyss.unpicked_rewards)),
-        static_cast<int>(x), y, 16, kReward);
-    y += line_step;
-
-    if (!abyss.confirmation_visible) return;
-    const int font_size = 18;
-    const bool door_confirmation = abyss.confirmation_transition
-        == dungeon::TransitionKind::door;
-    const char* direction = door_confirmation
-        ? exit_direction_label(abyss.confirmation_direction) : "";
-    constexpr const char* kDoorSeparator = " door: ";
-    const int direction_width = door_confirmation
-        ? MeasureText(direction, font_size) : 0;
-    const int separator_width = door_confirmation
-        ? MeasureText(kDoorSeparator, font_size) : 0;
-    const int prompt_width = direction_width + separator_width
-        + MeasureText(abyss.confirmation_label, font_size);
-    const float panel_width = static_cast<float>(prompt_width + 36);
-    const float panel_x = (static_cast<float>(GetScreenWidth()) - panel_width)
-        * 0.5F;
-    const float panel_y = static_cast<float>(GetScreenHeight() - 72);
-    DrawRectangleRounded({panel_x, panel_y, panel_width, 42.0F},
-        0.18F, 6, Color{45, 8, 34, 238});
-    DrawRectangleRoundedLines({panel_x, panel_y, panel_width, 42.0F},
-        0.18F, 6, Color{255, 98, 190, 255});
-    int prompt_x = static_cast<int>(panel_x + 18.0F);
-    if (door_confirmation) {
-        DrawText(direction, prompt_x, static_cast<int>(panel_y + 11.0F),
-            font_size, kAbyss);
-        prompt_x += direction_width;
-        DrawText(kDoorSeparator, prompt_x,
-            static_cast<int>(panel_y + 11.0F), font_size, RAYWHITE);
-        prompt_x += separator_width;
-    }
-    DrawText(abyss.confirmation_label, prompt_x,
-        static_cast<int>(panel_y + 11.0F), font_size, RAYWHITE);
+    // Task 6 routes the confirmation into ContextHudModel.  Host composition
+    // of that model is deliberately deferred to Task 7.
+    static_cast<void>(current);
+    static_cast<void>(x);
+    static_cast<void>(y);
+    static_cast<void>(line_step);
 }
 
 void CombatRenderer::draw_hud(
@@ -317,110 +397,19 @@ void CombatRenderer::draw_hud(
     const DungeonRenderStatus& runtime_status,
     bool draw_debug,
     const ControlHints& control_hints) const noexcept {
-    const RenderLayout layout = render_layout(draw_debug);
-    const std::uint64_t room_ordinal = current.room_index
-            == (std::numeric_limits<std::uint64_t>::max)()
-        ? current.room_index : current.room_index + 1U;
-    const bool doors_open = current.phase == dungeon::RoomPhase::cleared
-        || current.phase == dungeon::RoomPhase::awaiting_exit;
-    DrawRectangleRounded({16.0F, 14.0F, layout.hud_panel_width,
-        layout.hud_panel_height}, 0.06F, 6, Color{7, 10, 17, 220});
-    const Color text{218, 226, 239, 255};
-    const Color accent{110, 207, 255, 255};
-    int y = layout.hud_first_line_y;
-    DrawText(control_hints.primary.data(),
-        static_cast<int>(layout.hud_x), y, 16, accent);
-    y = layout.hud_second_instruction_y;
-    DrawText(control_hints.secondary.data(),
-        static_cast<int>(layout.hud_x), y, 16, accent);
-    y = layout.hud_status_y;
-    DrawText(TextFormat("Depth %llu  Floor Room %llu  Global Room %llu",
-        static_cast<unsigned long long>(current.depth),
-        static_cast<unsigned long long>(current.floor_room_index),
-        static_cast<unsigned long long>(room_ordinal)),
-        static_cast<int>(layout.hud_x), y, 16, text);
-    y += layout.hud_line_step;
-    DrawText(TextFormat("Ecology %s  F/W/L/C bias %u/%u/%u/%u",
-        ecology_name(current.ecology), current.biases[0], current.biases[1],
-        current.biases[2], current.biases[3]), static_cast<int>(layout.hud_x), y, 16, text);
-    y += layout.hud_line_step;
-    DrawText(TextFormat("Inventory %u  Ground items %u",
-        static_cast<unsigned>(current.inventory_count),
-        static_cast<unsigned>(current.ground_item_count)),
-        static_cast<int>(layout.hud_x), y, 16, text);
-    y += layout.hud_line_step;
-    if (current.combat.has_value()) {
-        const combat::CombatSnapshot& combat_state = *current.combat;
-        DrawText(TextFormat("HP %d/%d", combat_state.player.hp,
-            combat_state.player.max_hp), static_cast<int>(layout.hud_x), y, 16, text);
-        draw_bar(126.0F, static_cast<float>(y + 5), 150.0F,
-            player_hp_ratio(combat_state.player), Color{77, 215, 127, 255});
-        y += layout.hud_line_step;
-        if (combat_state.player.max_barrier > 0) {
-            DrawText(TextFormat("Barrier %d/%d", combat_state.player.barrier,
-                combat_state.player.max_barrier), static_cast<int>(layout.hud_x), y, 16,
-                Color{119, 191, 255, 255});
-            draw_bar(126.0F, static_cast<float>(y + 5), 150.0F,
-                combat_state.player.max_barrier <= 0 ? 0.0F
-                    : static_cast<float>(combat_state.player.barrier)
-                        / static_cast<float>(combat_state.player.max_barrier),
-                Color{119, 191, 255, 255});
-            y += layout.hud_line_step;
-        }
-        static const progression::ProgressionRules kProgressionRules =
-            progression::default_progression_rules();
-        const ProgressionHudValues progression = progression_hud_values(current,
-            kProgressionRules);
-        DrawText(TextFormat("Level %u/100  Passive Points %u",
-            static_cast<unsigned>(progression.level),
-            static_cast<unsigned>(progression.unspent_passive_points)),
-            static_cast<int>(layout.hud_x), y, 16, text);
-        y += layout.hud_line_step;
-        if (progression.maximum_level) {
-            DrawText("XP MAX", static_cast<int>(layout.hud_x), y, 16, accent);
-        } else {
-            DrawText(TextFormat("XP %llu/%llu  Room Pending +%llu",
-                static_cast<unsigned long long>(progression.experience),
-                static_cast<unsigned long long>(progression.required_experience),
-                static_cast<unsigned long long>(progression.pending_room_experience)),
-                static_cast<int>(layout.hud_x), y, 16, accent);
-        }
-        y += layout.hud_line_step;
-        const unsigned wave_current = current.wave_count == 0U ? 0U
-            : static_cast<unsigned>(current.wave_index) + 1U;
-        DrawText(TextFormat("Wave %u/%u  Budget %u/%u  Targets %u", wave_current,
-            static_cast<unsigned>(current.wave_count),
-            static_cast<unsigned>(current.encounter.current_wave_budget),
-            static_cast<unsigned>(current.encounter.total_budget),
-            static_cast<unsigned>(current.remaining_targets)),
-            static_cast<int>(layout.hud_x), y, 16, text);
-        y += layout.hud_line_step;
-        DrawText(TextFormat("Active M/P/H %u/%u/%u",
-            static_cast<unsigned>(combat_state.monster_count),
-            static_cast<unsigned>(combat_state.projectile_count),
-            static_cast<unsigned>(combat_state.hazard_count)),
-            static_cast<int>(layout.hud_x), y, 16, text);
-        y += layout.hud_line_step;
-        DrawText(TextFormat("Saturation P/H %u/%u  Invalid owner P/H %u/%u",
-            combat_state.diagnostics.projectile_saturation_count,
-            combat_state.diagnostics.hazard_saturation_count,
-            combat_state.diagnostics.projectile_invalid_owner_count,
-            combat_state.diagnostics.hazard_invalid_owner_count),
-            static_cast<int>(layout.hud_x), y, 16, text);
-        y += layout.hud_line_step;
-    } else {
-        DrawText("HP / wave / encounter diagnostics unavailable",
-            static_cast<int>(layout.hud_x), y, 16, Color{255, 151, 117, 255});
-        y += layout.hud_line_step;
-    }
-    draw_abyss_hud(current, layout.hud_x, y, layout.hud_line_step);
-    DrawText(TextFormat("ABYSS %s  Hole %s  Autosave %s",
-        current.is_abyss ? "YES" : "NO", current.has_hole
-            ? (current.phase == dungeon::RoomPhase::committing ? "SAVING"
-                : doors_open ? "READY" : "SEALED") : "NONE",
-        save_indicator_label(runtime_status.indicator)),
-        static_cast<int>(layout.hud_x), y, 16,
-        runtime_status.indicator == SaveIndicator::error ? Color{255, 120, 120, 255} : text);
+    static_cast<void>(draw_debug);
+    HudViewModel model{};
+    build_hud_view_model(model, current, runtime_status, control_hints);
+    const RenderLayout legacy = render_layout(false);
+    DrawRectangleRounded({16.0F, 14.0F, legacy.hud_panel_width,
+        72.0F}, 0.06F, 6, Color{7, 10, 17, 220});
+    DrawText(model.room.objective.bytes.data(), static_cast<int>(legacy.hud_x),
+        legacy.hud_first_line_y, 16, Color{218, 226, 239, 255});
+    DrawText(model.navigation.primary.bytes.data(), static_cast<int>(legacy.hud_x),
+        legacy.hud_second_instruction_y, 16, Color{110, 207, 255, 255});
+    DrawText(model.navigation.ecology_label.bytes.data(),
+        static_cast<int>(legacy.hud_x), legacy.hud_status_y, 16,
+        Color{218, 226, 239, 255});
 }
 
 }  // namespace arpg::platform
