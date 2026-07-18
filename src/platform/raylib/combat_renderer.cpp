@@ -75,7 +75,7 @@ void CombatRenderer::observe_hud(
         runtime_status.recovery_required);
     hud_notices_.update(frame_seconds, paused);
     HudViewModel model{};
-    build_hud_view_model(model, current, runtime_status, control_hints);
+    hud_projector_.build(model, current, runtime_status, control_hints);
     attach_notice_view(model, hud_notices_.view());
     hud_model_ = model;
     hud_layout_ = IsWindowReady()
@@ -113,6 +113,11 @@ std::uint64_t CombatRenderer::hud_binding_revision() const noexcept {
 
 std::uint64_t CombatRenderer::hud_observation_count() const noexcept {
     return hud_observation_count_;
+}
+
+HudStaticFormattingDiagnostics
+CombatRenderer::hud_static_formatting_diagnostics() const noexcept {
+    return hud_projector_.static_formatting_diagnostics();
 }
 
 std::uint64_t CombatRenderer::hud_presented_frame_count(

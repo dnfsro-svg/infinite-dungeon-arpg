@@ -88,6 +88,64 @@ struct HudViewModel final {
     HudBuildDiagnostics diagnostics{};
 };
 
+struct HudStaticFormattingDiagnostics final {
+    std::uint64_t objective_rebuilds{};
+    std::uint64_t navigation_rebuilds{};
+    std::uint64_t control_hint_rebuilds{};
+};
+
+[[nodiscard]] constexpr bool operator==(
+    const HudStaticFormattingDiagnostics& lhs,
+    const HudStaticFormattingDiagnostics& rhs) noexcept {
+    return lhs.objective_rebuilds == rhs.objective_rebuilds
+        && lhs.navigation_rebuilds == rhs.navigation_rebuilds
+        && lhs.control_hint_rebuilds == rhs.control_hint_rebuilds;
+}
+
+class HudViewModelProjector final {
+public:
+    void build(HudViewModel& output,
+        const dungeon::DungeonSnapshot& snapshot,
+        const DungeonRenderStatus& runtime_status,
+        const ControlHints& hints) noexcept;
+    [[nodiscard]] HudStaticFormattingDiagnostics
+        static_formatting_diagnostics() const noexcept;
+
+private:
+    struct ObjectiveKey final {
+        bool is_abyss{};
+        dungeon::RoomPhase phase{dungeon::RoomPhase::locked};
+        std::uint8_t wave_index{};
+        std::uint8_t wave_count{};
+        std::uint8_t remaining_targets{};
+        abyss::AbyssDanger abyss_danger{abyss::AbyssDanger::low};
+        abyss::AbyssRuleId abyss_rule{abyss::AbyssRuleId::none};
+        std::uint8_t abyss_pending_rewards{};
+        std::uint8_t abyss_unpicked_rewards{};
+    };
+
+    struct NavigationKey final {
+        std::uint64_t depth{};
+        std::uint64_t floor_room{};
+        dungeon::DungeonElement ecology{dungeon::DungeonElement::fire};
+        std::array<std::uint32_t, 4> biases{};
+    };
+
+    bool objective_ready_{};
+    bool navigation_ready_{};
+    bool control_hints_ready_{};
+    ObjectiveKey objective_key_{};
+    NavigationKey navigation_key_{};
+    std::uint64_t control_hints_revision_{};
+    RoomHudModel cached_objective_{};
+    NavigationHudModel cached_navigation_{};
+    HudText96 cached_control_hint_suffix_{};
+    std::uint32_t cached_objective_truncations_{};
+    std::uint32_t cached_navigation_truncations_{};
+    std::uint32_t cached_control_hint_truncations_{};
+    HudStaticFormattingDiagnostics static_formatting_diagnostics_{};
+};
+
 void build_hud_view_model(HudViewModel& output,
     const dungeon::DungeonSnapshot& snapshot,
     const DungeonRenderStatus& runtime_status,

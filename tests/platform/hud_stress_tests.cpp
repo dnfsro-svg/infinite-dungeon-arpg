@@ -222,6 +222,7 @@ void fold_output(std::uint64_t& checksum, std::uint64_t value) noexcept {
 
 struct ExerciseResult final {
     bool unchanged_refresh_preserved{true};
+    bool unchanged_static_formatting_preserved{true};
     bool overflowed_once{true};
     bool debug_counters_valid{true};
 };
@@ -230,6 +231,7 @@ struct ExerciseResult final {
     const StressScenario& scenario,
     const dungeon::DungeonSnapshot& current,
     platform::HudNoticeState& notices,
+    platform::HudViewModelProjector& projector,
     float presentation_seconds,
     bool require_unchanged_refresh,
     bool require_overflow,
@@ -251,9 +253,16 @@ struct ExerciseResult final {
     notices.update(1.0F / 60.0F, false);
     const platform::HudNoticeView notice_view = notices.view();
 
+    const platform::HudStaticFormattingDiagnostics formatting_before =
+        projector.static_formatting_diagnostics();
     platform::HudViewModel model{};
-    platform::build_hud_view_model(model, current,
-        scenario.status, scenario.hints);
+    projector.build(model, current, scenario.status, scenario.hints);
+    const platform::HudStaticFormattingDiagnostics formatting_after =
+        projector.static_formatting_diagnostics();
+    if (require_unchanged_refresh) {
+        result.unchanged_static_formatting_preserved =
+            formatting_after == formatting_before;
+    }
     platform::attach_notice_view(model, notice_view);
     const platform::HudLayout layout = platform::make_hud_layout(
         scenario.width, scenario.height, scenario.debug_visible);
@@ -330,6 +339,9 @@ struct ExerciseResult final {
     fold_output(output_checksum, debug.last_event.hit_count);
     fold_output(output_checksum, debug.has_last_event);
     fold_output(output_checksum, debug.cjk_font_ready);
+    fold_output(output_checksum, formatting_after.objective_rebuilds);
+    fold_output(output_checksum, formatting_after.navigation_rebuilds);
+    fold_output(output_checksum, formatting_after.control_hint_rebuilds);
     return result;
 }
 
@@ -365,6 +377,7 @@ int main() {
     initialize_scenarios();
     const std::uint64_t inputs_before = input_hash();
     std::array<platform::HudNoticeState, kScenarioCount> notice_states{};
+    std::array<platform::HudViewModelProjector, kScenarioCount> projectors{};
     std::uint64_t output_checksum = kHashOffset;
 
     // The first allocation baseline is taken before any HUD pure path. This
@@ -373,7 +386,7 @@ int main() {
         arpg::test::allocation_count();
     for (std::size_t index{}; index < kScenarioCount; ++index) {
         const ExerciseResult cold = exercise_all_pure_paths(g_scenarios[index],
-            g_scenarios[index].current, notice_states[index], 0.0F,
+            g_scenarios[index].current, notice_states[index], projectors[index], 0.0F,
             false, index == 4U, output_checksum);
         if (!cold.overflowed_once || !cold.debug_counters_valid) {
             return fail("first five-scenario pure-path semantics changed");
@@ -404,11 +417,14 @@ int main() {
             && (visits[scenario_index] & 1U) != 0U
             ? scenario.alternate : scenario.current;
         const ExerciseResult result = exercise_all_pure_paths(scenario,
-            current, notice_states[scenario_index],
+            current, notice_states[scenario_index], projectors[scenario_index],
             static_cast<float>(iteration) / 60.0F,
             scenario_index == 0U, overflow_visit, output_checksum);
         if (!result.unchanged_refresh_preserved) {
             return fail("unchanged same-revision notice refresh requeued or reset state");
+        }
+        if (!result.unchanged_static_formatting_preserved) {
+            return fail("unchanged snapshot rebuilt cached static HUD text");
         }
         if (!result.overflowed_once) {
             return fail("persistent overflow state did not produce one real drop");

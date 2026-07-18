@@ -66,6 +66,8 @@ public:
     [[nodiscard]] HudNoticeView hud_notice_view() const noexcept;
     [[nodiscard]] std::uint64_t hud_binding_revision() const noexcept;
     [[nodiscard]] std::uint64_t hud_observation_count() const noexcept;
+    [[nodiscard]] HudStaticFormattingDiagnostics
+        hud_static_formatting_diagnostics() const noexcept;
     [[nodiscard]] std::uint64_t hud_presented_frame_count(
         HudPresentedFrame) const noexcept;
     void draw(
@@ -102,6 +104,7 @@ private:
     HudRenderer hud_renderer_{};
     DebugOverlayRenderer debug_overlay_{};
     HudNoticeState hud_notices_{};
+    HudViewModelProjector hud_projector_{};
     HudViewModel hud_model_{};
     HudLayout hud_layout_{};
     std::uint64_t hud_binding_revision_{};

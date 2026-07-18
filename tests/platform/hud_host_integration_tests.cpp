@@ -227,6 +227,83 @@ arpg::test::Failure observation_publishes_the_prebuilt_hud_model() noexcept {
     return {};
 }
 
+arpg::test::Failure static_text_cache_rebuilds_only_changed_fragments() noexcept {
+    dungeon::DungeonSnapshot previous = snapshot();
+    previous.combat.emplace();
+    previous.combat->player.hp = 90;
+    previous.combat->player.max_hp = 100;
+    dungeon::DungeonSnapshot current = previous;
+    platform::CombatRenderer renderer{};
+    const platform::ControlHints hints = committed_hints(21U);
+
+    renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
+        previous, current, saved_status(), hints, 0.1F, false);
+    const platform::HudStaticFormattingDiagnostics initial =
+        renderer.hud_static_formatting_diagnostics();
+    ARPG_REQUIRE(initial.objective_rebuilds == 1U);
+    ARPG_REQUIRE(initial.navigation_rebuilds == 1U);
+    ARPG_REQUIRE(initial.control_hint_rebuilds == 1U);
+
+    // The three valid frame owners share one production projection cache.
+    renderer.observe_presented_hud_frame(platform::HudPresentedFrame::recovery,
+        current, current, recovery_status(), hints, 0.1F, true);
+    renderer.observe_presented_hud_frame(platform::HudPresentedFrame::death_overlay,
+        current, current, saved_status(), hints, 0.1F, false);
+    ARPG_REQUIRE(renderer.hud_static_formatting_diagnostics()
+        == initial);
+
+    // Dynamic player values still refresh without rebuilding static fragments.
+    dungeon::DungeonSnapshot dynamic = current;
+    dynamic.combat->player.hp = 31;
+    renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
+        current, dynamic, saved_status(), hints, 0.1F, false);
+    ARPG_REQUIRE(renderer.hud_model().player.hp == 31);
+    ARPG_REQUIRE(renderer.hud_static_formatting_diagnostics()
+        == initial);
+
+    // Objective, navigation and committed bindings invalidate independently.
+    dungeon::DungeonSnapshot changed_objective = dynamic;
+    changed_objective.remaining_targets = 1U;
+    renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
+        dynamic, changed_objective, saved_status(), hints, 0.1F, false);
+    platform::HudStaticFormattingDiagnostics expected = initial;
+    ++expected.objective_rebuilds;
+    ARPG_REQUIRE(renderer.hud_model().room.remaining_targets == 1U);
+    ARPG_REQUIRE(renderer.hud_static_formatting_diagnostics() == expected);
+
+    dungeon::DungeonSnapshot changed_navigation = changed_objective;
+    changed_navigation.depth = 22U;
+    renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
+        changed_objective, changed_navigation, saved_status(), hints, 0.1F, false);
+    ++expected.navigation_rebuilds;
+    ARPG_REQUIRE(renderer.hud_model().navigation.depth == 22U);
+    ARPG_REQUIRE(renderer.hud_static_formatting_diagnostics() == expected);
+
+    platform::ControlHints rebound = hints;
+    rebound.revision = 22U;
+    renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
+        changed_navigation, changed_navigation, saved_status(), rebound,
+        0.1F, false);
+    ++expected.control_hint_rebuilds;
+    ARPG_REQUIRE(renderer.hud_static_formatting_diagnostics() == expected);
+
+    // Presentation-only notices remain live, while an invalid owner is inert.
+    dungeon::DungeonSnapshot rewarded = changed_navigation;
+    rewarded.last_room_experience = 25U;
+    renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
+        changed_navigation, rewarded, saved_status(), rebound, 0.1F, false);
+    ARPG_REQUIRE(renderer.hud_notice_view().primary.kind
+        == platform::HudNoticeKind::reward);
+    ARPG_REQUIRE(renderer.hud_static_formatting_diagnostics() == expected);
+
+    const auto invalid = static_cast<platform::HudPresentedFrame>(255U);
+    renderer.observe_presented_hud_frame(invalid, rewarded, current,
+        recovery_status(), committed_hints(999U), 0.1F, false);
+    ARPG_REQUIRE(renderer.hud_static_formatting_diagnostics() == expected);
+    ARPG_REQUIRE(renderer.hud_model().navigation.depth == 22U);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"observes every presented frame read only", &observation_is_once_per_presented_frame_and_read_only},
     {"production presentation seam covers all owners", &production_presentation_seam_observes_normal_recovery_and_death},
@@ -236,6 +313,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"paused hud notices freeze", &paused_frames_freeze_hud_notice_time},
     {"settings apply uses committed hints", &committed_settings_hints_and_revision_are_used_after_apply},
     {"observation publishes prebuilt hud model", &observation_publishes_the_prebuilt_hud_model},
+    {"static HUD text cache invalidates by fragment", &static_text_cache_rebuilds_only_changed_fragments},
 };
 
 }  // namespace

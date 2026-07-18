@@ -142,24 +142,124 @@ void build_navigation(NavigationHudModel& navigation,
     }
 }
 
+void append_text(HudText96& output,
+    HudBuildDiagnostics& diagnostics,
+    const HudText96& suffix) noexcept {
+    std::size_t destination{};
+    while (destination + 1U < output.bytes.size()
+        && output.bytes[destination] != '\0') {
+        ++destination;
+    }
+    std::size_t source{};
+    while (suffix.bytes[source] != '\0'
+        && destination + 1U < output.bytes.size()) {
+        output.bytes[destination++] = suffix.bytes[source++];
+    }
+    output.bytes[destination] = '\0';
+    if (suffix.bytes[source] != '\0') {
+        if (!output.truncated) {
+            ++diagnostics.truncated_texts;
+        }
+        output.truncated = true;
+    }
+}
+
+void increment_saturating(std::uint64_t& value) noexcept {
+    if (value != (std::numeric_limits<std::uint64_t>::max)()) {
+        ++value;
+    }
+}
+
 }  // namespace
 
-void build_hud_view_model(HudViewModel& output,
+void HudViewModelProjector::build(HudViewModel& output,
     const dungeon::DungeonSnapshot& snapshot,
     const DungeonRenderStatus& runtime_status,
     const ControlHints& hints) noexcept {
     output = {};
 
+    const ObjectiveKey objective_key{
+        snapshot.is_abyss,
+        snapshot.phase,
+        snapshot.wave_index,
+        snapshot.wave_count,
+        snapshot.remaining_targets,
+        snapshot.abyss_danger,
+        snapshot.abyss_rule,
+        snapshot.abyss_pending_rewards,
+        snapshot.abyss_unpicked_rewards,
+    };
+    const bool objective_changed = !objective_ready_
+        || objective_key_.is_abyss != objective_key.is_abyss
+        || objective_key_.phase != objective_key.phase
+        || objective_key_.wave_index != objective_key.wave_index
+        || objective_key_.wave_count != objective_key.wave_count
+        || objective_key_.remaining_targets != objective_key.remaining_targets
+        || objective_key_.abyss_danger != objective_key.abyss_danger
+        || objective_key_.abyss_rule != objective_key.abyss_rule
+        || objective_key_.abyss_pending_rewards
+            != objective_key.abyss_pending_rewards
+        || objective_key_.abyss_unpicked_rewards
+            != objective_key.abyss_unpicked_rewards;
+    if (objective_changed) {
+        cached_objective_ = {};
+        HudBuildDiagnostics diagnostics{};
+        build_room_objective(cached_objective_, diagnostics, snapshot);
+        cached_objective_truncations_ = diagnostics.truncated_texts;
+        objective_key_ = objective_key;
+        objective_ready_ = true;
+        increment_saturating(
+            static_formatting_diagnostics_.objective_rebuilds);
+    }
+    output.room = cached_objective_;
     output.room.abyss = snapshot.is_abyss;
     output.room.remaining_targets = snapshot.remaining_targets;
-    build_room_objective(output.room, output.diagnostics, snapshot);
+    output.diagnostics.truncated_texts += cached_objective_truncations_;
+
+    if (!control_hints_ready_
+        || control_hints_revision_ != hints.revision) {
+        cached_control_hint_suffix_ = {};
+        HudBuildDiagnostics diagnostics{};
+        format_text(cached_control_hint_suffix_, diagnostics,
+            u8" | %.32s | %.32s", hints.primary.data(), hints.secondary.data());
+        cached_control_hint_truncations_ = diagnostics.truncated_texts;
+        control_hints_revision_ = hints.revision;
+        control_hints_ready_ = true;
+        increment_saturating(
+            static_formatting_diagnostics_.control_hint_rebuilds);
+    }
+    output.diagnostics.truncated_texts += cached_control_hint_truncations_;
     if (!output.room.abyss) {
         format_text(output.room.secondary, output.diagnostics,
-            u8"待结算经验 +%llu | %.32s | %.32s",
-            static_cast<unsigned long long>(snapshot.pending_room_experience),
-            hints.primary.data(), hints.secondary.data());
+            u8"待结算经验 +%llu",
+            static_cast<unsigned long long>(snapshot.pending_room_experience));
+        append_text(output.room.secondary, output.diagnostics,
+            cached_control_hint_suffix_);
     }
-    build_navigation(output.navigation, output.diagnostics, snapshot);
+
+    const NavigationKey navigation_key{
+        snapshot.depth,
+        snapshot.floor_room_index,
+        snapshot.ecology,
+        snapshot.biases,
+    };
+    const bool navigation_changed = !navigation_ready_
+        || navigation_key_.depth != navigation_key.depth
+        || navigation_key_.floor_room != navigation_key.floor_room
+        || navigation_key_.ecology != navigation_key.ecology
+        || navigation_key_.biases != navigation_key.biases;
+    if (navigation_changed) {
+        cached_navigation_ = {};
+        HudBuildDiagnostics diagnostics{};
+        build_navigation(cached_navigation_, diagnostics, snapshot);
+        cached_navigation_truncations_ = diagnostics.truncated_texts;
+        navigation_key_ = navigation_key;
+        navigation_ready_ = true;
+        increment_saturating(
+            static_formatting_diagnostics_.navigation_rebuilds);
+    }
+    output.navigation = cached_navigation_;
+    output.diagnostics.truncated_texts += cached_navigation_truncations_;
 
     static_cast<void>(runtime_status);
     if (!snapshot.combat.has_value()) {
@@ -206,6 +306,19 @@ void build_hud_view_model(HudViewModel& output,
     if (player.invulnerability_ticks != 0U) {
         append_status_tag(output.player, HudStatusTagKind::invulnerable);
     }
+}
+
+HudStaticFormattingDiagnostics
+HudViewModelProjector::static_formatting_diagnostics() const noexcept {
+    return static_formatting_diagnostics_;
+}
+
+void build_hud_view_model(HudViewModel& output,
+    const dungeon::DungeonSnapshot& snapshot,
+    const DungeonRenderStatus& runtime_status,
+    const ControlHints& hints) noexcept {
+    HudViewModelProjector projector{};
+    projector.build(output, snapshot, runtime_status, hints);
 }
 
 void attach_notice_view(HudViewModel& output,
