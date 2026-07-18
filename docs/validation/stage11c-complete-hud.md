@@ -116,15 +116,19 @@ Fresh Debug 中 Stage 11-C 压力/正式画面/证据验证/验证器自测/架�
 9.57/8.69 秒，host 输入源码门禁分别为 0.04/0.04 秒；既有死亡、设置、持久化、
 地下城和 240 项平台单元场景全部保留在 70 项完整门禁中。
 
-Task 10 review 修复提交 `c2fd48d` 后，未改变 CMake 测试注册或生产构建产物，因此直接在
+Task 10 两轮 review 修复提交 `c2fd48d`、`a36ce94` 后，未改变 CMake 测试注册或生产构建
+产物，因此直接在
 最终分支再次执行完整 Debug `ctest --preset windows-msvc-debug --output-on-failure`：
-70/70、0 failed、432.70 秒。该次最终复跑的 Stage 11-C 压力/正式画面/证据验证/
-验证器自测/架构门禁/架构自测分别为 0.62/15.24/4.24/9.44/0.03/0.25 秒；强化后的
-input latency/host input 完整链门禁分别为 15.41/24.05 秒。两项门禁先清除注释与字符串，
+70/70、0 failed、438.50 秒。该次最终复跑的 Stage 11-C 压力/正式画面/证据验证/
+验证器自测/架构门禁/架构自测分别为 0.57/16.87/3.97/9.21/0.03/0.23 秒；强化后的
+input latency/host input 完整链门禁分别为 19.09/34.46 秒。两项门禁先清除注释与字符串，
 再要求唯一提交严格位于 physical sample、Stage 11-B 注入、Stage 11-C 注入、逻辑映射、
 死亡/暂停/覆盖层门禁及 `forward_actions` 合取之后，并由 `if (forward_actions)` 控制；
 原位 mutation 会拒绝 map-before-Stage11C、Stage11C bypass、submit-before-gate、
-unconditional-submit-bypass，以及 comment-only/string-only 伪造链。
+unconditional-submit-bypass、host-gate-bypass、unconditional-descent-bypass，以及
+comment-only/string-only 伪造链。host gate 还要求 `pause_open` 的 true 调用与非背包覆盖
+分支的 false 调用各一次并绑定真实参数；`forward_descent` 合取和条件内
+`request_descent(in_range)` 尾链同样纳入验证。
 
 构建配置输出明确为 `Building raylib static library`。Release 源码头声明
 `RAYLIB_VERSION_MAJOR/MINOR/PATCH = 6/0/0`，生成
