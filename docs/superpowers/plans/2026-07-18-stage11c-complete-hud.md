@@ -497,13 +497,13 @@ public:
 };
 ```
 
-- [ ] **Step 1: Write integration RED tests and source guard**
+- [ ] **Step 1: Write integration RED tests**
 
-Assert one HUD observation per presented frame including frames owned by recovery/death overlays, no gameplay state changes from that observation, notification timers freeze while paused, settings Apply refreshes committed hints, and `CombatRenderer::draw` consumes prebuilt models without Session/input calls. Add a CMake source test rejecting old normal HUD strings and direct input/RNG/Store/fixed_tick tokens in HUD files.
+Assert one HUD observation per presented frame including frames owned by recovery/death overlays, no gameplay state changes from that observation, notification timers freeze while paused, settings Apply refreshes committed hints, and `CombatRenderer::draw` consumes prebuilt models without Session/input calls. Task 8 owns the source-level architecture guard so this task does not register a second guard with the same name.
 
 - [ ] **Step 2: Run RED**
 
-Run `platform.units` and the new `stage11c.architecture.hud_boundaries`; expected missing test/API failure.
+Run `platform.units`; expected missing `observe_hud`/renderer integration API failure.
 
 - [ ] **Step 3: Integrate lifecycle and move diagnostics**
 
@@ -514,10 +514,10 @@ Initialize/shutdown `HudRenderer` beside `DeathOverlayRenderer`; observe snapsho
 Run:
 
 ```powershell
-ctest --test-dir out/build/windows-msvc-debug -R "^(platform.units|platform.host_input_source|platform.input_latency_source|stage11.death_formal.five_paths|stage11b.settings_formal|stage11c.architecture.hud_boundaries)$" --output-on-failure
+ctest --test-dir out/build/windows-msvc-debug -R "^(platform.units|platform.host_input_source|platform.input_latency_source|stage11.death_formal.five_paths|stage11b.settings_formal)$" --output-on-failure
 ```
 
-Expected: 6/6 pass.
+Expected: 5/5 pass.
 
 - [ ] **Step 5: Commit**
 
@@ -538,8 +538,9 @@ git commit -m "feat: integrate production hud and debug overlay"
 - Modify: `tests/platform/CMakeLists.txt`
 
 **Interfaces:**
+- Produces executable `arpg_stage11c_hud_stress` from `hud_stress_tests.cpp` plus `tests/core/allocation_probe.cpp`.
 - Produces CTest `stage11c.hud_stress.zero_alloc_100k`.
-- Produces CTest `stage11c.architecture.hud_boundaries` and mutation self-test.
+- Produces CTest `stage11c.architecture.hud_boundaries` and `stage11c.architecture.hud_boundaries_self_test`.
 
 - [ ] **Step 1: Write RED stress and guard registrations**
 
@@ -553,7 +554,7 @@ Run the two new names before implementation. Expected: missing target/guard fixt
 
 - [ ] **Step 3: Implement stress filter and mutation self-checks**
 
-Use `ARPG_STAGE11C_HUD_STRESS=1` as the dedicated environment filter and a 300-second timeout. The self-test copies production HUD sources, applies one mutation at a time, invokes the main guard, and checks the named rejection reason.
+Register the stress executable only when `ARPG_STAGE11C_HUD_STRESS=1` is present in its process environment; without the value it exits with a named failure so the CTest property is authoritative. Set that environment on `stage11c.hud_stress.zero_alloc_100k` and give it a 300-second timeout. The self-test copies production HUD sources, applies one mutation at a time, invokes the main guard, and checks the named rejection reason.
 
 - [ ] **Step 4: Run focused tests**
 
@@ -673,15 +674,24 @@ git ls-files | rg "(^|/)(out|build)/|\.png$|\.log$|\.sav$|settings-[ab]\.bin$"
 
 Expected: clean status, no generated Stage 11-C artifact tracked, and only HUD source/tests/docs in scope.
 
-- [ ] **Step 5: Two independent full-diff reviews**
+- [ ] **Step 5: Commit completed documentation**
 
-Both reviewers inspect `bd8c8be..HEAD`, the design, ViewModel data boundary, notice priority, three resolutions, zero allocation, input/death/settings regression, Chinese font, formal screenshots and mutation coverage. Fix every Critical/Important/Minor finding in separate commits, rerun focused tests, then rerun complete Debug CTest after the final fix.
-
-- [ ] **Step 6: Commit docs and stop**
+After filling the documentation with the actual Debug/Release commands, counts and evidence paths:
 
 ```powershell
 git add README.md docs/validation/stage11c-complete-hud.md
 git commit -m "docs: complete stage 11c hud milestone"
+```
+
+- [ ] **Step 6: Two independent full-diff reviews**
+
+Both reviewers inspect `bd8c8be..HEAD`, the design, ViewModel data boundary, notice priority, three resolutions, zero allocation, input/death/settings regression, Chinese font, formal screenshots and mutation coverage. Fix every Critical/Important/Minor finding in separate commits, rerun focused tests, then rerun complete Debug CTest after the final fix.
+
+- [ ] **Step 7: Stop at the clean milestone**
+
+```powershell
+git status --short
+git log -1 --oneline
 ```
 
 Expected: worktree clean on `codex/stage11c-complete-hud`; do not merge `main` or start Stage 11-D.
