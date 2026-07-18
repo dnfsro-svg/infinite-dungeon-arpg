@@ -6,7 +6,21 @@
 #include <filesystem>
 #include <optional>
 
+namespace arpg::settings {
+enum class SettingsLoadStatus : std::uint8_t;
+struct SettingsData;
+class SettingsStore;
+}
+
 namespace arpg::platform {
+
+struct DeathInputGate;
+struct FrameKeyState;
+struct PhysicalKeySnapshot;
+enum class PauseCommand : std::uint8_t;
+enum class PauseScreen : std::uint8_t;
+struct PauseMenuState;
+struct WindowSettingsBackend;
 
 enum class Stage10ValidationScenario : std::uint8_t {
     none,
@@ -61,6 +75,32 @@ struct HostFrameGateResult final {
     bool& pause_latched,
     bool paused,
     double frame_seconds) noexcept;
+
+[[nodiscard]] DeathInputGate host_death_input_gate(
+    bool death_saving,
+    bool death_pending,
+    FrameKeyState keys,
+    const PhysicalKeySnapshot& physical_keys) noexcept;
+
+struct HostSettingsNotice final {
+    bool recovered_defaults_pending{};
+};
+
+[[nodiscard]] HostSettingsNotice make_host_settings_notice(
+    settings::SettingsLoadStatus status) noexcept;
+void consume_host_settings_notice(
+    HostSettingsNotice& notice,
+    PauseScreen previous_screen,
+    PauseMenuState& pause_menu) noexcept;
+
+[[nodiscard]] bool settle_host_pause_command(
+    PauseCommand command,
+    bool window_close_requested,
+    PauseMenuState& pause_menu,
+    settings::SettingsData& live_settings,
+    settings::SettingsData& input_settings,
+    const settings::SettingsStore& settings_store,
+    WindowSettingsBackend settings_backend);
 
 enum class HostExitCode : int {
     success = 0,

@@ -49,5 +49,5 @@ int main() {
         window_settings_suite(),
     };
 
-    return arpg::test::run_suites(suites, 169, "stage 11b task 8 host integration");
+    return arpg::test::run_suites(suites, 174, "stage 11b task 8 review fixes");
 }

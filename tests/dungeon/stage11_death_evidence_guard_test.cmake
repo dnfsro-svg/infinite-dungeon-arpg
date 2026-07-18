@@ -57,7 +57,8 @@ foreach(required_fixture "SaveStore" "session.tick" "pending_save_view"
 endforeach()
 foreach(required_host "stage11_validation_input" "queue_action"
         "MovementInput" "runtime.fixed_tick" "request_death_continue"
-        "frame_input.keys.e = true")
+        "host_death_input_gate" "settings::StableKey::e"
+        "death_gate.continue_death = true")
     if(NOT host_source MATCHES "${required_host}")
         message(FATAL_ERROR "Formal host lacks production input/save path: ${required_host}")
     endif()

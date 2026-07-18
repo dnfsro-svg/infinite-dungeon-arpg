@@ -30,6 +30,10 @@ string(FIND
     "${HOST_SANITIZED_SOURCE}"
     "HostExitCode run_raylib_host"
     HOST_ENTRY_START)
+string(FIND
+    "${HOST_SANITIZED_SOURCE}"
+    "bool settle_host_pause_command"
+    SETTINGS_SETTLE_START)
 if(PAUSE_GATE_START EQUAL -1 OR HOST_ENTRY_START EQUAL -1
         OR NOT PAUSE_GATE_START LESS HOST_ENTRY_START)
     message(FATAL_ERROR "raylib host pause frame gate is missing")
@@ -62,6 +66,22 @@ if(NOT PAUSE_CLEAR_INDEX LESS PAUSE_ADVANCE_INDEX)
     message(FATAL_ERROR "fixed_step.advance must remain outside paused branch")
 endif()
 
+string(FIND "${HOST_SANITIZED_SOURCE}"
+    "DeathInputGate host_death_input_gate" DEATH_HELPER_START)
+string(FIND "${HOST_SANITIZED_SOURCE}"
+    "HostSettingsNotice make_host_settings_notice" NOTICE_HELPER_START)
+if(DEATH_HELPER_START EQUAL -1 OR NOTICE_HELPER_START EQUAL -1
+        OR NOT DEATH_HELPER_START LESS NOTICE_HELPER_START)
+    message(FATAL_ERROR "fixed-E death input helper is missing")
+endif()
+math(EXPR DEATH_HELPER_LENGTH "${NOTICE_HELPER_START} - ${DEATH_HELPER_START}")
+string(SUBSTRING "${HOST_SANITIZED_SOURCE}" ${DEATH_HELPER_START}
+    ${DEATH_HELPER_LENGTH} DEATH_HELPER_SOURCE)
+if(NOT DEATH_HELPER_SOURCE MATCHES
+        "stable_pressed[ \\t\\n]*\\([ \\t\\n]*physical_keys[ \\t\\n]*,[ \\t\\n]*settings::StableKey::e")
+    message(FATAL_ERROR "death continue must use fixed StableKey::e from the frame snapshot")
+endif()
+
 string(SUBSTRING "${HOST_SANITIZED_SOURCE}" ${HOST_ENTRY_START} -1 HOST_ENTRY_SOURCE)
 string(REGEX MATCHALL "sample_physical_keys[ \\t\\n]*\\(" SAMPLE_CALLS
     "${HOST_ENTRY_SOURCE}")
@@ -71,14 +91,23 @@ if(NOT SAMPLE_CALL_COUNT EQUAL 1)
 endif()
 
 string(FIND "${HOST_ENTRY_SOURCE}" "settings_store.load()" SETTINGS_LOAD_INDEX)
+string(FIND "${HOST_ENTRY_SOURCE}" "make_host_settings_notice(loaded.status)"
+    SETTINGS_NOTICE_INDEX)
 string(FIND "${HOST_ENTRY_SOURCE}" "SetConfigFlags(initial_window_flags(committed_settings))"
     INITIAL_FLAGS_INDEX)
 string(FIND "${HOST_ENTRY_SOURCE}" "InitWindow(" INIT_WINDOW_INDEX)
-if(SETTINGS_LOAD_INDEX EQUAL -1 OR INITIAL_FLAGS_INDEX EQUAL -1
+if(SETTINGS_LOAD_INDEX EQUAL -1 OR SETTINGS_NOTICE_INDEX EQUAL -1
+        OR INITIAL_FLAGS_INDEX EQUAL -1
         OR INIT_WINDOW_INDEX EQUAL -1
+        OR NOT SETTINGS_LOAD_INDEX LESS SETTINGS_NOTICE_INDEX
         OR NOT SETTINGS_LOAD_INDEX LESS INITIAL_FLAGS_INDEX
         OR NOT INITIAL_FLAGS_INDEX LESS INIT_WINDOW_INDEX)
     message(FATAL_ERROR "settings must load before initial flags and InitWindow")
+endif()
+
+if(HOST_ENTRY_SOURCE MATCHES
+        "frame_input\\.keys\\.e[ \\t\\n]*=[ \\t\\n]*true")
+    message(FATAL_ERROR "death continue must not mutate mapped interact input")
 endif()
 
 string(FIND "${HOST_ENTRY_SOURCE}" "DeathInputGate death_gate" DEATH_GATE_INDEX)
@@ -99,14 +128,24 @@ if(NOT ESCAPE_GATE_SOURCE MATCHES "inventory\\.close[ \\t\\n]*\\("
     message(FATAL_ERROR "inventory/passive Esc must be consumed before normal pause")
 endif()
 
-string(FIND "${HOST_ENTRY_SOURCE}" "case PauseCommand::apply:" APPLY_CASE_INDEX)
-string(FIND "${HOST_ENTRY_SOURCE}" "case PauseCommand::rollback:" ROLLBACK_CASE_INDEX)
+if(SETTINGS_SETTLE_START EQUAL -1
+        OR NOT SETTINGS_SETTLE_START LESS HOST_ENTRY_START)
+    message(FATAL_ERROR "pause Apply transaction is missing")
+endif()
+math(EXPR SETTINGS_SETTLE_LENGTH
+    "${HOST_ENTRY_START} - ${SETTINGS_SETTLE_START}")
+string(SUBSTRING "${HOST_SANITIZED_SOURCE}" ${SETTINGS_SETTLE_START}
+    ${SETTINGS_SETTLE_LENGTH} SETTINGS_SETTLE_SOURCE)
+string(FIND "${SETTINGS_SETTLE_SOURCE}" "case PauseCommand::apply:"
+    APPLY_CASE_INDEX)
+string(FIND "${SETTINGS_SETTLE_SOURCE}" "case PauseCommand::rollback:"
+    ROLLBACK_CASE_INDEX)
 if(APPLY_CASE_INDEX EQUAL -1 OR ROLLBACK_CASE_INDEX EQUAL -1
         OR NOT APPLY_CASE_INDEX LESS ROLLBACK_CASE_INDEX)
     message(FATAL_ERROR "pause Apply transaction is missing")
 endif()
 math(EXPR APPLY_CASE_LENGTH "${ROLLBACK_CASE_INDEX} - ${APPLY_CASE_INDEX}")
-string(SUBSTRING "${HOST_ENTRY_SOURCE}" ${APPLY_CASE_INDEX}
+string(SUBSTRING "${SETTINGS_SETTLE_SOURCE}" ${APPLY_CASE_INDEX}
     ${APPLY_CASE_LENGTH} APPLY_CASE_SOURCE)
 string(FIND "${APPLY_CASE_SOURCE}" "apply_live_settings(" APPLY_LIVE_INDEX)
 string(FIND "${APPLY_CASE_SOURCE}" "settings_store.save(" APPLY_SAVE_INDEX)
@@ -120,6 +159,25 @@ if(APPLY_LIVE_INDEX EQUAL -1 OR APPLY_SAVE_INDEX EQUAL -1
         OR NOT APPLY_SAVE_INDEX LESS APPLY_SUCCESS_INDEX
         OR NOT APPLY_SUCCESS_INDEX LESS APPLY_PUBLISH_INDEX)
     message(FATAL_ERROR "Apply must preview, save, publish only on success, and rollback")
+endif()
+
+string(FIND "${HOST_ENTRY_SOURCE}"
+    "const bool window_close_requested = WindowShouldClose()"
+    WINDOW_CLOSE_SAMPLE_INDEX)
+string(FIND "${HOST_ENTRY_SOURCE}"
+    "const PhysicalKeySnapshot physical_keys = sample_physical_keys()"
+    PHYSICAL_SAMPLE_INDEX)
+string(FIND "${HOST_ENTRY_SOURCE}" "consume_host_settings_notice("
+    NOTICE_CONSUME_INDEX)
+string(FIND "${HOST_ENTRY_SOURCE}" "settle_host_pause_command("
+    SETTINGS_SETTLE_CALL_INDEX)
+if(WINDOW_CLOSE_SAMPLE_INDEX EQUAL -1 OR PHYSICAL_SAMPLE_INDEX EQUAL -1
+        OR NOTICE_CONSUME_INDEX EQUAL -1 OR SETTINGS_SETTLE_CALL_INDEX EQUAL -1
+        OR NOT WINDOW_CLOSE_SAMPLE_INDEX LESS PHYSICAL_SAMPLE_INDEX
+        OR NOT PAUSE_UPDATE_INDEX LESS NOTICE_CONSUME_INDEX
+        OR NOT NOTICE_CONSUME_INDEX LESS SETTINGS_SETTLE_CALL_INDEX)
+    message(FATAL_ERROR
+        "window close must be honored only after pause notice/Apply settlement")
 endif()
 
 string(FIND "${HOST_ENTRY_SOURCE}" "core::FixedStepFrame frame = host_gate.fixed_step"

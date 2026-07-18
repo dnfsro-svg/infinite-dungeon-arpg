@@ -2,9 +2,17 @@
 
 #include "core/fixed_step.hpp"
 #include "dungeon/dungeon_session.hpp"
+#include "host_input.hpp"
+#include "pause_menu_state.hpp"
+#include "platform/settings/settings_store.hpp"
 #include "raylib_host.hpp"
+#include "window_settings.hpp"
 
 #include <cstdint>
+#include <cstring>
+#include <filesystem>
+#include <string>
+#include <vector>
 
 namespace {
 
@@ -12,6 +20,35 @@ namespace combat = arpg::combat;
 namespace core = arpg::core;
 namespace dungeon = arpg::dungeon;
 namespace platform = arpg::platform;
+namespace settings = arpg::settings;
+
+struct MemorySettingsFiles final {
+    std::filesystem::path path{};
+    std::vector<std::uint8_t> bytes{};
+    bool fail_replace{};
+};
+
+bool memory_read(void* context, const std::filesystem::path& path,
+    std::vector<std::uint8_t>& bytes) {
+    auto& files = *static_cast<MemorySettingsFiles*>(context);
+    if (files.bytes.empty() || files.path != path) return false;
+    bytes = files.bytes;
+    return true;
+}
+
+bool memory_replace(void* context, const std::filesystem::path& path,
+    const std::uint8_t* bytes, std::size_t size) {
+    auto& files = *static_cast<MemorySettingsFiles*>(context);
+    if (files.fail_replace || bytes == nullptr) return false;
+    files.path = path;
+    files.bytes.assign(bytes, bytes + size);
+    return true;
+}
+
+settings::SettingsStore memory_store(MemorySettingsFiles& files) {
+    return settings::SettingsStore{"memory-settings",
+        {&files, &memory_read, &memory_replace}};
+}
 
 void run_frame(dungeon::DungeonSession& session,
     const platform::HostFrameGateResult& frame,
@@ -109,11 +146,152 @@ arpg::test::Failure pause_entry_discards_same_frame_action_and_accumulator()
     return {};
 }
 
+arpg::test::Failure death_continue_uses_fixed_e_from_authoritative_snapshot()
+    noexcept {
+    settings::SettingsData rebound = settings::default_settings();
+    ARPG_REQUIRE(settings::assign_or_swap(rebound,
+        settings::SettingAction::interact, settings::StableKey::q));
+
+    platform::PhysicalKeySnapshot physical{};
+    physical.pressed[static_cast<std::size_t>(settings::StableKey::q)] = true;
+    physical.escape = true;
+    const platform::HostFrameInput rebound_input =
+        platform::map_host_frame_input(rebound, physical);
+    ARPG_REQUIRE(rebound_input.keys.e);
+    const platform::DeathInputGate rebound_gate =
+        platform::host_death_input_gate(
+            false, true, rebound_input.keys, physical);
+    ARPG_REQUIRE(!rebound_gate.continue_death);
+    ARPG_REQUIRE(rebound_gate.exit);
+    ARPG_REQUIRE(!rebound_gate.forward_gameplay);
+
+    physical = {};
+    physical.pressed[static_cast<std::size_t>(settings::StableKey::e)] = true;
+    const platform::HostFrameInput fixed_e_input =
+        platform::map_host_frame_input(rebound, physical);
+    ARPG_REQUIRE(!fixed_e_input.keys.e);
+    const platform::DeathInputGate fixed_e_gate =
+        platform::host_death_input_gate(
+            false, true, fixed_e_input.keys, physical);
+    ARPG_REQUIRE(fixed_e_gate.continue_death);
+    ARPG_REQUIRE(!fixed_e_gate.exit);
+    return {};
+}
+
+arpg::test::Failure corrupt_settings_notice_is_deferred_until_first_settings()
+    noexcept {
+    platform::HostSettingsNotice notice = platform::make_host_settings_notice(
+        settings::SettingsLoadStatus::defaults_corrupt);
+    ARPG_REQUIRE(notice.recovered_defaults_pending);
+
+    platform::PauseMenuState state{};
+    state.committed = settings::default_settings();
+    state.draft = state.committed;
+    state.screen = platform::PauseScreen::root;
+    state.selected_row = 1U;
+    platform::PauseInput enter{};
+    enter.enter = true;
+    const platform::PauseScreen previous = state.screen;
+    ARPG_REQUIRE(platform::update_pause_menu(state, {}, enter)
+        == platform::PauseCommand::none);
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::settings);
+    ARPG_REQUIRE(state.message == nullptr);
+
+    platform::consume_host_settings_notice(notice, previous, state);
+    ARPG_REQUIRE(!notice.recovered_defaults_pending);
+    ARPG_REQUIRE(state.message != nullptr);
+    ARPG_REQUIRE(std::strcmp(state.message,
+        u8"设置已恢复默认值") == 0);
+
+    state.message = nullptr;
+    platform::consume_host_settings_notice(
+        notice, platform::PauseScreen::root, state);
+    ARPG_REQUIRE(state.message == nullptr);
+    return {};
+}
+
+arpg::test::Failure healthy_settings_loads_do_not_queue_recovery_notice()
+    noexcept {
+    const settings::SettingsLoadStatus statuses[] = {
+        settings::SettingsLoadStatus::defaults_missing,
+        settings::SettingsLoadStatus::recovered_single_slot,
+    };
+    for (const settings::SettingsLoadStatus status : statuses) {
+        platform::HostSettingsNotice notice =
+            platform::make_host_settings_notice(status);
+        ARPG_REQUIRE(!notice.recovered_defaults_pending);
+        platform::PauseMenuState state{};
+        state.screen = platform::PauseScreen::settings;
+        platform::consume_host_settings_notice(
+            notice, platform::PauseScreen::root, state);
+        ARPG_REQUIRE(state.message == nullptr);
+    }
+    return {};
+}
+
+arpg::test::Failure close_same_frame_waits_for_successful_apply() noexcept {
+    MemorySettingsFiles files{};
+    settings::SettingsStore store = memory_store(files);
+    platform::PauseMenuState state{};
+    state.committed = settings::default_settings();
+    state.draft = state.committed;
+    state.draft.revision = 1U;
+    ARPG_REQUIRE(settings::assign_or_swap(state.draft,
+        settings::SettingAction::light_attack, settings::StableKey::q));
+    settings::SettingsData live = state.committed;
+    settings::SettingsData input = state.committed;
+
+    const bool exit_requested = platform::settle_host_pause_command(
+        platform::PauseCommand::apply, true, state, live, input, store, {});
+    ARPG_REQUIRE(exit_requested);
+    ARPG_REQUIRE(state.committed.revision == 1U);
+    ARPG_REQUIRE(settings::binding_for(state.committed,
+        settings::SettingAction::light_attack) == settings::StableKey::q);
+    ARPG_REQUIRE(input.bindings == state.committed.bindings);
+    ARPG_REQUIRE(live.bindings == state.committed.bindings);
+    return {};
+}
+
+arpg::test::Failure close_same_frame_waits_for_rejected_apply() noexcept {
+    MemorySettingsFiles files{};
+    files.fail_replace = true;
+    settings::SettingsStore store = memory_store(files);
+    platform::PauseMenuState state{};
+    state.committed = settings::default_settings();
+    state.draft = state.committed;
+    state.draft.revision = 1U;
+    ARPG_REQUIRE(settings::assign_or_swap(state.draft,
+        settings::SettingAction::light_attack, settings::StableKey::q));
+    const settings::SettingsData original = state.committed;
+    settings::SettingsData live = state.committed;
+    settings::SettingsData input = state.committed;
+
+    const bool exit_requested = platform::settle_host_pause_command(
+        platform::PauseCommand::apply, true, state, live, input, store, {});
+    ARPG_REQUIRE(exit_requested);
+    ARPG_REQUIRE(state.committed.revision == original.revision);
+    ARPG_REQUIRE(state.committed.bindings == original.bindings);
+    ARPG_REQUIRE(input.bindings == original.bindings);
+    ARPG_REQUIRE(state.draft.bindings != original.bindings);
+    ARPG_REQUIRE(state.message != nullptr);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"600 paused frames freeze simulation",
         &six_hundred_paused_presented_frames_freeze_simulation},
     {"pause entry discards action and accumulator",
         &pause_entry_discards_same_frame_action_and_accumulator},
+    {"death continue uses fixed E snapshot",
+        &death_continue_uses_fixed_e_from_authoritative_snapshot},
+    {"corrupt settings notice is deferred",
+        &corrupt_settings_notice_is_deferred_until_first_settings},
+    {"healthy settings loads have no notice",
+        &healthy_settings_loads_do_not_queue_recovery_notice},
+    {"close waits for successful Apply",
+        &close_same_frame_waits_for_successful_apply},
+    {"close waits for rejected Apply",
+        &close_same_frame_waits_for_rejected_apply},
 };
 
 }  // namespace

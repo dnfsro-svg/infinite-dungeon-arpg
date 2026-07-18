@@ -50,6 +50,7 @@ constexpr char kSettingsPreviewFailed[] = "Live preview failed";
 constexpr char kSettingsSaveFailed[] = "Settings save failed; retry";
 constexpr char kSettingsRollbackFailed[] = "Settings rollback failed";
 constexpr char kSettingsSaved[] = "Settings saved";
+constexpr char kSettingsRecoveredDefaults[] = u8"设置已恢复默认值";
 
 [[nodiscard]] bool stable_pressed(
     const PhysicalKeySnapshot& snapshot,
@@ -435,6 +436,111 @@ HostFrameGateResult gate_host_frame(
     return {true, fixed_step.advance(frame_seconds)};
 }
 
+DeathInputGate host_death_input_gate(
+    bool death_saving,
+    bool death_pending,
+    FrameKeyState keys,
+    const PhysicalKeySnapshot& physical_keys) noexcept {
+    keys.e = stable_pressed(physical_keys, settings::StableKey::e);
+    return death_input_gate(death_saving, death_pending, keys);
+}
+
+HostSettingsNotice make_host_settings_notice(
+    settings::SettingsLoadStatus status) noexcept {
+    return {status == settings::SettingsLoadStatus::defaults_corrupt};
+}
+
+void consume_host_settings_notice(
+    HostSettingsNotice& notice,
+    PauseScreen previous_screen,
+    PauseMenuState& pause_menu) noexcept {
+    if (!notice.recovered_defaults_pending
+            || previous_screen != PauseScreen::root
+            || pause_menu.screen != PauseScreen::settings) {
+        return;
+    }
+    pause_menu.message = kSettingsRecoveredDefaults;
+    notice.recovered_defaults_pending = false;
+}
+
+bool settle_host_pause_command(
+    PauseCommand command,
+    bool window_close_requested,
+    PauseMenuState& pause_menu,
+    settings::SettingsData& live_settings,
+    settings::SettingsData& input_settings,
+    const settings::SettingsStore& settings_store,
+    WindowSettingsBackend settings_backend) {
+    switch (command) {
+    case PauseCommand::none:
+        break;
+    case PauseCommand::preview: {
+        const LiveSettingsResult result = apply_live_settings(
+            live_settings, pause_menu.draft, settings_backend);
+        if (result == LiveSettingsResult::applied) {
+            live_settings = pause_menu.draft;
+            pause_menu.message = nullptr;
+        } else {
+            pause_menu.message = kSettingsPreviewFailed;
+        }
+        break;
+    }
+    case PauseCommand::apply: {
+        const LiveSettingsResult preview = apply_live_settings(
+            live_settings, pause_menu.draft, settings_backend);
+        if (preview != LiveSettingsResult::applied) {
+            const LiveSettingsResult rollback = rollback_live_settings(
+                live_settings, pause_menu.committed, settings_backend);
+            if (rollback == LiveSettingsResult::applied) {
+                live_settings = pause_menu.committed;
+                pause_menu.message = kSettingsPreviewFailed;
+            } else {
+                pause_menu.message = kSettingsRollbackFailed;
+            }
+            break;
+        }
+        const settings::SettingsData previewed = pause_menu.draft;
+        live_settings = previewed;
+        settings::SettingsData save_draft = previewed;
+        save_draft.revision = pause_menu.committed.revision;
+        const settings::SettingsSaveResult saved = settings_store.save(
+            pause_menu.committed, save_draft);
+        if (saved.status == settings::SettingsSaveStatus::committed) {
+            pause_menu.committed = saved.settings;
+            pause_menu.draft = saved.settings;
+            live_settings = saved.settings;
+            input_settings = saved.settings;
+            pause_menu.message = kSettingsSaved;
+            break;
+        }
+        const LiveSettingsResult rollback = rollback_live_settings(
+            previewed, pause_menu.committed, settings_backend);
+        if (rollback == LiveSettingsResult::applied) {
+            live_settings = pause_menu.committed;
+            pause_menu.message = kSettingsSaveFailed;
+        } else {
+            pause_menu.message = kSettingsRollbackFailed;
+        }
+        break;
+    }
+    case PauseCommand::rollback: {
+        const LiveSettingsResult result = rollback_live_settings(
+            live_settings, pause_menu.committed, settings_backend);
+        if (result == LiveSettingsResult::applied) {
+            live_settings = pause_menu.committed;
+        } else {
+            pause_menu.message = kSettingsRollbackFailed;
+        }
+        break;
+    }
+    case PauseCommand::resume:
+        break;
+    case PauseCommand::quit:
+        return true;
+    }
+    return window_close_requested;
+}
+
 HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
     bool window_ready = false;
     try {
@@ -450,6 +556,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         }
         settings::SettingsStore settings_store(*settings_directory);
         const settings::SettingsLoadResult loaded = settings_store.load();
+        HostSettingsNotice settings_notice =
+            make_host_settings_notice(loaded.status);
         settings::SettingsData committed_settings = loaded.settings;
         if (settings::validate_settings(committed_settings)
                 != settings::SettingsValidationError::none) {
@@ -530,7 +638,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             drain_events(*runtime.session(), renderer, feedback, audio);
         }
 
-        while (!WindowShouldClose() && !exit_requested) {
+        while (!exit_requested) {
+            const bool window_close_requested = WindowShouldClose();
             const PhysicalKeySnapshot physical_keys = sample_physical_keys();
             HostFrameInput frame_input = map_host_frame_input(
                 input_settings, physical_keys);
@@ -547,7 +656,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     inventory.close();
                     fixed_step.clear_accumulator();
                 }
-                if (frame_input.keys.escape) {
+                if (frame_input.keys.escape || window_close_requested) {
                     exit_requested = true;
                     continue;
                 }
@@ -582,12 +691,12 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                         == Stage11ValidationScenario::deep_continue
                     || config.stage11_validation
                         == Stage11ValidationScenario::floor_one_continue);
-            if (validation_continue
+            DeathInputGate death_gate = host_death_input_gate(
+                death_saving, death_pending, frame_input.keys, physical_keys);
+            if (validation_continue && !death_saving
                     && !stage11_validation_state.continue_requested) {
-                frame_input.keys.e = true;
+                death_gate.continue_death = true;
             }
-            const DeathInputGate death_gate = death_input_gate(
-                death_saving, death_pending, frame_input.keys);
             if (!death_gate.forward_gameplay) {
                 if (inventory.is_open()) inventory.close();
                 passive_overlay_open = false;
@@ -614,6 +723,10 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     && death_continue_result
                         != dungeon::RequestResult::rejected) {
                 stage11_validation_state.continue_requested = true;
+            }
+            if (!death_gate.forward_gameplay && window_close_requested) {
+                exit_requested = true;
+                continue;
             }
             bool escape_consumed = false;
             if (death_gate.forward_gameplay && frame_input.keys.escape) {
@@ -667,8 +780,9 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     inventory_toggled_this_frame = true;
                 }
             }
+            const PauseScreen pause_screen_before = pause_menu.screen;
             const bool pause_was_open =
-                pause_menu.screen != PauseScreen::closed;
+                pause_screen_before != PauseScreen::closed;
             if (pause_was_open && physical_keys.mouse_left) {
                 const PauseMenuLayout layout = pause_menu_layout(
                     GetScreenWidth(), GetScreenHeight());
@@ -689,72 +803,12 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 pause_menu.screen == PauseScreen::capture_binding);
             const PauseCommand pause_command = update_pause_menu(
                 pause_menu, pause_context, pause_input);
-            switch (pause_command) {
-            case PauseCommand::none:
-                break;
-            case PauseCommand::preview: {
-                const LiveSettingsResult result = apply_live_settings(
-                    live_settings, pause_menu.draft, settings_backend);
-                if (result == LiveSettingsResult::applied) {
-                    live_settings = pause_menu.draft;
-                    pause_menu.message = nullptr;
-                } else {
-                    pause_menu.message = kSettingsPreviewFailed;
-                }
-                break;
-            }
-            case PauseCommand::apply: {
-                const LiveSettingsResult preview = apply_live_settings(
-                    live_settings, pause_menu.draft, settings_backend);
-                if (preview != LiveSettingsResult::applied) {
-                    const LiveSettingsResult rollback = rollback_live_settings(
-                        live_settings, pause_menu.committed,
-                        settings_backend);
-                    if (rollback == LiveSettingsResult::applied) {
-                        live_settings = pause_menu.committed;
-                        pause_menu.message = kSettingsPreviewFailed;
-                    } else {
-                        pause_menu.message = kSettingsRollbackFailed;
-                    }
-                    break;
-                }
-                const settings::SettingsData previewed = pause_menu.draft;
-                live_settings = previewed;
-                settings::SettingsData save_draft = previewed;
-                save_draft.revision = pause_menu.committed.revision;
-                const settings::SettingsSaveResult saved = settings_store.save(
-                    pause_menu.committed, save_draft);
-                if (saved.status == settings::SettingsSaveStatus::committed) {
-                    pause_menu.committed = saved.settings;
-                    pause_menu.draft = saved.settings;
-                    live_settings = saved.settings;
-                    input_settings = saved.settings;
-                    pause_menu.message = kSettingsSaved;
-                    break;
-                }
-                const LiveSettingsResult rollback = rollback_live_settings(
-                    previewed, pause_menu.committed, settings_backend);
-                if (rollback == LiveSettingsResult::applied) {
-                    live_settings = pause_menu.committed;
-                    pause_menu.message = kSettingsSaveFailed;
-                } else {
-                    pause_menu.message = kSettingsRollbackFailed;
-                }
-                break;
-            }
-            case PauseCommand::rollback: {
-                const LiveSettingsResult result = rollback_live_settings(
-                    live_settings, pause_menu.committed, settings_backend);
-                if (result == LiveSettingsResult::applied) {
-                    live_settings = pause_menu.committed;
-                } else {
-                    pause_menu.message = kSettingsRollbackFailed;
-                }
-                break;
-            }
-            case PauseCommand::resume:
-                break;
-            case PauseCommand::quit:
+            consume_host_settings_notice(
+                settings_notice, pause_screen_before, pause_menu);
+            if (settle_host_pause_command(
+                    pause_command, window_close_requested,
+                    pause_menu, live_settings, input_settings,
+                    settings_store, settings_backend)) {
                 exit_requested = true;
                 continue;
             }

@@ -92,8 +92,8 @@ file(READ "${VALID_HOST_SOURCE}" valid_host_source)
 set(validation_bypass_file
     "${CMAKE_CURRENT_BINARY_DIR}/stage11_bad_validation_continue_bypass.txt")
 string(REPLACE
-    "const DeathInputGate death_gate = death_input_gate("
-    "static_cast<void>(runtime.request_death_continue());\n            const DeathInputGate death_gate = death_input_gate("
+    "DeathInputGate death_gate = host_death_input_gate("
+    "static_cast<void>(runtime.request_death_continue());\n            DeathInputGate death_gate = host_death_input_gate("
     validation_bypass_source "${valid_host_source}")
 if(validation_bypass_source STREQUAL valid_host_source)
     message(FATAL_ERROR
