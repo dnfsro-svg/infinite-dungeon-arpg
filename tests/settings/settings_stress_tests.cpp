@@ -21,6 +21,11 @@ namespace {
 namespace platform = arpg::platform;
 namespace settings = arpg::settings;
 
+// Independently derived from the documented 1,000-step mutation sequence and
+// the settings file layout (including its CRC32 field), not from store output.
+constexpr std::uint64_t kExpectedSlotAHash = 0xB18681AE11B562E5ULL;
+constexpr std::uint64_t kExpectedSlotBHash = 0x2FCCF872A6729E6FULL;
+
 struct MemorySlots final {
     std::array<std::uint8_t, settings::kSettingsEncodedSize> a{};
     std::array<std::uint8_t, settings::kSettingsEncodedSize> b{};
@@ -152,6 +157,12 @@ arpg::test::Failure thousand_atomic_reload_cycles_are_restart_stable() noexcept 
     ARPG_REQUIRE(first.slot_b == second.slot_b);
     ARPG_REQUIRE(first.slot_a_hash != 0U);
     ARPG_REQUIRE(first.slot_b_hash != 0U);
+    ARPG_REQUIRE(first.slot_a_hash == kExpectedSlotAHash);
+    ARPG_REQUIRE(first.slot_b_hash == kExpectedSlotBHash);
+    ARPG_REQUIRE(first.slot_a[12U] == 0xE7U);
+    ARPG_REQUIRE(first.slot_a[13U] == 0x03U);
+    ARPG_REQUIRE(first.slot_b[12U] == 0xE8U);
+    ARPG_REQUIRE(first.slot_b[13U] == 0x03U);
     ARPG_REQUIRE(first.slot_a_hash == second.slot_a_hash);
     ARPG_REQUIRE(first.slot_b_hash == second.slot_b_hash);
     ARPG_REQUIRE(first.slot_a_hash != first.slot_b_hash);
