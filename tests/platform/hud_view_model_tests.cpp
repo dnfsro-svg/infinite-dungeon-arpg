@@ -2,6 +2,7 @@
 
 #include "hud_view_model.hpp"
 #include "hud_notice_state.hpp"
+#include "hud_palette.hpp"
 
 #include <cstring>
 #include <limits>
@@ -237,10 +238,15 @@ arpg::test::Failure navigation_formats_extremes_and_four_shared_element_visuals(
     ARPG_REQUIRE(std::strstr(output.navigation.elements[1].label.bytes.data(), u8"水") != nullptr);
     ARPG_REQUIRE(std::strstr(output.navigation.elements[2].label.bytes.data(), u8"电") != nullptr);
     ARPG_REQUIRE(std::strstr(output.navigation.elements[3].label.bytes.data(), u8"混沌") != nullptr);
-    ARPG_REQUIRE(output.navigation.elements[0].color.r == 227U);
-    ARPG_REQUIRE(output.navigation.elements[1].color.b == 222U);
-    ARPG_REQUIRE(output.navigation.elements[2].color.g == 211U);
-    ARPG_REQUIRE(output.navigation.elements[3].color.r == 166U);
+    const platform::HudPalette palette = platform::hud_palette();
+    ARPG_REQUIRE(platform::hud_palette_color(output.navigation.elements[0].color_id).r
+        == palette.fire.r);
+    ARPG_REQUIRE(platform::hud_palette_color(output.navigation.elements[1].color_id).b
+        == palette.water.b);
+    ARPG_REQUIRE(platform::hud_palette_color(output.navigation.elements[2].color_id).g
+        == palette.lightning.g);
+    ARPG_REQUIRE(platform::hud_palette_color(output.navigation.elements[3].color_id).r
+        == palette.chaos.r);
     return {};
 }
 
@@ -314,6 +320,43 @@ arpg::test::Failure rebound_context_hints_use_committed_e_i_and_p_labels() noexc
     return {};
 }
 
+arpg::test::Failure abyss_confirmation_context_preserves_descent_and_door_meaning_after_rebind() noexcept {
+    dungeon::DungeonSnapshot previous = normal_snapshot();
+    previous.is_abyss = true;
+    previous.abyss_rule = arpg::abyss::AbyssRuleId::abyss_fury;
+    platform::ControlHints hints{};
+    static_cast<void>(std::snprintf(hints.secondary.data(), hints.secondary.size(),
+        "E Interact"));
+
+    dungeon::DungeonSnapshot descent = previous;
+    descent.abyss_exit_confirmation_armed = true;
+    descent.abyss_exit_confirmation_transition = dungeon::TransitionKind::descent;
+    platform::HudNoticeState descent_notices{};
+    descent_notices.observe(previous, descent, {}, hints, false);
+    platform::HudViewModel output{};
+    platform::build_hud_view_model(output, descent, {}, hints);
+    platform::attach_notice_view(output, descent_notices.view());
+    ARPG_REQUIRE(output.context.primary_kind == platform::HudNoticeKind::abyss_abandon);
+    ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), "E") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(),
+        "abandon remaining rewards") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), "descend") != nullptr);
+
+    dungeon::DungeonSnapshot door = previous;
+    door.abyss_exit_confirmation_armed = true;
+    door.abyss_exit_confirmation_transition = dungeon::TransitionKind::door;
+    door.abyss_exit_confirmation_direction = dungeon::ExitDirection::left;
+    platform::HudNoticeState door_notices{};
+    door_notices.observe(previous, door, {}, hints, false);
+    platform::build_hud_view_model(output, door, {}, hints);
+    platform::attach_notice_view(output, door_notices.view());
+    ARPG_REQUIRE(output.context.primary_kind == platform::HudNoticeKind::abyss_abandon);
+    ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), "E") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), "SAME door") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), "ALL remaining rewards") != nullptr);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"normal combat projection", &normal_combat_projects_snapshot_values},
     {"missing combat snapshot", &absent_combat_snapshot_is_reported},
@@ -329,6 +372,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"navigation extremes and elements", &navigation_formats_extremes_and_four_shared_element_visuals},
     {"abyss context attachment", &context_attaches_notice_priority_without_changing_abyss_values},
     {"rebound context hints", &rebound_context_hints_use_committed_e_i_and_p_labels},
+    {"abyss confirmation context semantics", &abyss_confirmation_context_preserves_descent_and_door_meaning_after_rebind},
 };
 
 }  // namespace

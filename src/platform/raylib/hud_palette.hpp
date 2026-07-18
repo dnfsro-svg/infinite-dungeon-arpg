@@ -1,23 +1,40 @@
 #pragma once
 
+#include "hud_color.hpp"
+
 #include <raylib.h>
 
 namespace arpg::platform {
 
+[[nodiscard]] constexpr Color hud_palette_color(HudPaletteId id) noexcept {
+    const HudRgba8 color = hud_palette_rgba(id);
+    return {color.r, color.g, color.b, color.a};
+}
+
 struct HudPalette final {
-    Color health{218, 78, 88, 255};
-    Color barrier{86, 164, 240, 255};
-    Color experience{231, 190, 78, 255};
-    Color fire{227, 91, 62, 255};
-    Color water{64, 169, 222, 255};
-    Color lightning{240, 211, 73, 255};
-    Color chaos{166, 91, 205, 255};
-    Color text{230, 235, 242, 255};
-    Color error{255, 127, 110, 255};
+    Color health{};
+    Color barrier{};
+    Color experience{};
+    Color fire{};
+    Color water{};
+    Color lightning{};
+    Color chaos{};
+    Color text{};
+    Color error{};
 };
 
 [[nodiscard]] constexpr HudPalette hud_palette() noexcept {
-    return {};
+    return {
+        hud_palette_color(HudPaletteId::health),
+        hud_palette_color(HudPaletteId::barrier),
+        hud_palette_color(HudPaletteId::experience),
+        hud_palette_color(HudPaletteId::fire),
+        hud_palette_color(HudPaletteId::water),
+        hud_palette_color(HudPaletteId::lightning),
+        hud_palette_color(HudPaletteId::chaos),
+        hud_palette_color(HudPaletteId::text),
+        hud_palette_color(HudPaletteId::error),
+    };
 }
 
 }  // namespace arpg::platform

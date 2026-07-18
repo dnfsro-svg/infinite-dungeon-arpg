@@ -31,6 +31,22 @@ arpg::test::Failure required_hud_text_is_covered_by_shared_font_plan() noexcept 
     return {};
 }
 
+arpg::test::Failure task6_visible_chinese_text_is_covered_without_exhausting_shared_capacity() noexcept {
+    const platform::HudFontPlan plan = platform::hud_font_plan();
+    constexpr const char* kTask6Text[] = {
+        u8"深度", u8"层房间", u8"生态", u8"第", u8"波", u8"下一波即将开始",
+        u8"待领奖励", u8"未领取", u8"正在保存房间", u8"正在处理撤退",
+        u8"房间状态异常", u8"深渊", u8"火", u8"水", u8"电", u8"混沌",
+    };
+
+    ARPG_REQUIRE(plan.covers_required_text);
+    ARPG_REQUIRE(plan.shared.codepoint_count < plan.shared.codepoints.size());
+    for (const char* text : kTask6Text) {
+        ARPG_REQUIRE(platform::death_overlay_font_covers_text(plan.shared, text));
+    }
+    return {};
+}
+
 arpg::test::Failure shared_codepoints_are_unique_and_fixed_capacity() noexcept {
     const platform::HudFontPlan plan = platform::hud_font_plan();
     ARPG_REQUIRE(plan.shared.candidate_count
@@ -76,6 +92,7 @@ arpg::test::Failure renderer_shutdown_is_safe_before_initialization() noexcept {
 
 constexpr arpg::test::TestCase kCases[] = {
     {"required Chinese coverage", &required_hud_text_is_covered_by_shared_font_plan},
+    {"Task6 Chinese coverage has capacity", &task6_visible_chinese_text_is_covered_without_exhausting_shared_capacity},
     {"fixed unique shared codepoints", &shared_codepoints_are_unique_and_fixed_capacity},
     {"opaque distinct HUD palette", &hud_palette_key_colors_are_opaque_and_distinct},
     {"safe uninitialized renderer shutdown", &renderer_shutdown_is_safe_before_initialization},

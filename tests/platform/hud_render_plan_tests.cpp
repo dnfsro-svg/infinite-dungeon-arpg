@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 
 #include "combat/combat_types.hpp"
+#include "hud_palette.hpp"
 #include "hud_renderer.hpp"
 
 #include <array>
@@ -10,6 +11,11 @@ namespace {
 
 namespace platform = arpg::platform;
 namespace combat = arpg::combat;
+
+bool same_color(Color lhs, Color rhs) noexcept {
+    return lhs.r == rhs.r && lhs.g == rhs.g && lhs.b == rhs.b
+        && lhs.a == rhs.a;
+}
 
 [[nodiscard]] platform::PlayerHudModel player_model() noexcept {
     platform::PlayerHudModel model{};
@@ -246,6 +252,52 @@ arpg::test::Failure objective_navigation_and_context_plans_stay_in_their_layout_
     return {};
 }
 
+float monospace_measure(const char* text, float font_size, void*) noexcept {
+    std::size_t count{};
+    while (text != nullptr && text[count] != '\0') ++count;
+    return static_cast<float>(count) * font_size * 0.6F;
+}
+
+arpg::test::Failure navigation_element_colors_use_the_authoritative_hud_palette() noexcept {
+    platform::NavigationHudModel navigation{};
+    navigation.primary.bytes[0] = 'x';
+    navigation.element_count = 4U;
+    navigation.elements[0].color_id = platform::HudPaletteId::fire;
+    navigation.elements[1].color_id = platform::HudPaletteId::water;
+    navigation.elements[2].color_id = platform::HudPaletteId::lightning;
+    navigation.elements[3].color_id = platform::HudPaletteId::chaos;
+    const platform::NavigationPanelPlan plan =
+        platform::make_navigation_panel_plan(navigation, player_layout());
+    const platform::HudPalette palette = platform::hud_palette();
+
+    ARPG_REQUIRE(same_color(platform::hud_palette_color(plan.elements[0].color_id),
+        palette.fire));
+    ARPG_REQUIRE(same_color(platform::hud_palette_color(plan.elements[1].color_id),
+        palette.water));
+    ARPG_REQUIRE(same_color(platform::hud_palette_color(plan.elements[2].color_id),
+        palette.lightning));
+    ARPG_REQUIRE(same_color(platform::hud_palette_color(plan.elements[3].color_id),
+        palette.chaos));
+    return {};
+}
+
+arpg::test::Failure maximum_navigation_text_has_a_measured_bounded_draw_plan() noexcept {
+    platform::HudText96 text{};
+    static_cast<void>(std::snprintf(text.bytes.data(), text.bytes.size(),
+        u8"深度 18446744073709551615 · 层房间 18446744073709551615"));
+    const platform::HudTextDrawPlan plan = platform::make_hud_text_draw_plan(
+        text, 270.0F, 16.0F, 11.0F, &monospace_measure, nullptr);
+
+    ARPG_REQUIRE(plan.visible);
+    ARPG_REQUIRE(plan.font_size >= 11.0F);
+    ARPG_REQUIRE(plan.font_size <= 16.0F);
+    ARPG_REQUIRE(monospace_measure(plan.text.bytes.data(), plan.font_size, nullptr)
+        <= 270.0F);
+    ARPG_REQUIRE(plan.truncated || plan.font_size < 16.0F);
+    ARPG_REQUIRE(plan.text.bytes.back() == '\0');
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"health first", &health_is_always_the_first_visible_player_bar},
     {"conditional barrier", &barrier_bar_is_visible_only_with_a_positive_maximum},
@@ -256,6 +308,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"nonfinite ratios", &nonfinite_player_ratios_fall_back_to_zero_without_low_health_pulse},
     {"monster snapshot palette world space", &monster_resource_plan_consumes_snapshot_values_and_palette_ids},
     {"objective navigation context plans", &objective_navigation_and_context_plans_stay_in_their_layout_panels},
+    {"navigation colors use shared palette", &navigation_element_colors_use_the_authoritative_hud_palette},
+    {"navigation maximum text fit", &maximum_navigation_text_has_a_measured_bounded_draw_plan},
 };
 
 }  // namespace

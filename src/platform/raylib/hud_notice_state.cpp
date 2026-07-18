@@ -1,5 +1,7 @@
 #include "hud_notice_state.hpp"
 
+#include "dungeon_view_math.hpp"
+
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -214,6 +216,33 @@ void add_action_notice(std::array<HudNotice, 4>& notices,
     add_transient(notices, dropped_count, kind, priority, suffix);
 }
 
+void add_abyss_confirmation_notice(std::array<HudNotice, 4>& notices,
+    std::uint32_t& dropped_count,
+    const dungeon::DungeonSnapshot& current,
+    const ControlHints& hints) noexcept {
+    const AbyssHudValues values = abyss_hud_values(current);
+    if (!values.confirmation_visible) {
+        add_action_notice(notices, dropped_count, HudNoticeKind::abyss_abandon,
+            kAbyssPriority, hints, "Interact", "again to abandon rewards");
+        return;
+    }
+
+    HudNotice notice{};
+    notice.kind = HudNoticeKind::abyss_abandon;
+    notice.priority = kAbyssPriority;
+    notice.seconds_left = kTransientSeconds;
+    char key[32]{};
+    if (!action_key(key, sizeof(key), hints, "Interact")) {
+        format_notice(notice, "%s", values.confirmation_label);
+    } else if (values.confirmation_transition == dungeon::TransitionKind::descent
+        && std::strncmp(values.confirmation_label, "Press E ", 8U) == 0) {
+        format_notice(notice, "%s %s", key, values.confirmation_label + 8U);
+    } else {
+        format_notice(notice, "%s again: %s", key, values.confirmation_label);
+    }
+    enqueue(notices, dropped_count, notice);
+}
+
 }  // namespace
 
 void HudNoticeState::observe(const dungeon::DungeonSnapshot& previous,
@@ -237,8 +266,7 @@ void HudNoticeState::observe(const dungeon::DungeonSnapshot& previous,
         kRecoveryPriority, recovery_required, "Recovery required");
 
     if (context_changed && current.abyss_exit_confirmation_armed) {
-        add_action_notice(notices_, dropped_count_, HudNoticeKind::abyss_abandon,
-            kAbyssPriority, hints, "Interact", "again to abandon rewards");
+        add_abyss_confirmation_notice(notices_, dropped_count_, current, hints);
     }
     const bool awaiting_exit = current.has_active_room
         && current.phase == dungeon::RoomPhase::awaiting_exit;

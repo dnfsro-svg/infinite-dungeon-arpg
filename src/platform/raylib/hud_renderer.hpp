@@ -1,6 +1,7 @@
 #pragma once
 
 #include "hud_layout.hpp"
+#include "hud_palette.hpp"
 #include "hud_view_model.hpp"
 
 #include <raylib.h>
@@ -30,8 +31,6 @@ struct PlayerPanelPlan final {
     std::uint8_t tag_count{};
     bool experience_maxed{};
 };
-
-enum class HudPaletteId : std::uint8_t { health, barrier, experience };
 
 struct MonsterBarPlan final {
     bool visible{};
@@ -72,17 +71,28 @@ struct ContextPanelPlan final {
     HudNoticeKind secondary_kind{HudNoticeKind::none};
 };
 
+using HudTextMeasureFn = float (*)(const char*, float, void*) noexcept;
+
+struct HudTextDrawPlan final {
+    bool visible{};
+    bool truncated{};
+    HudText96 text{};
+    float font_size{};
+};
+
 [[nodiscard]] PlayerPanelPlan make_player_panel_plan(
     const PlayerHudModel&, const HudLayout&, float presentation_seconds) noexcept;
 [[nodiscard]] MonsterBarVisualPlan make_monster_bar_visual_plan(
     const combat::MonsterSnapshot&) noexcept;
-[[nodiscard]] Color hud_palette_color(HudPaletteId palette_id) noexcept;
 [[nodiscard]] ObjectivePanelPlan make_objective_panel_plan(
     const RoomHudModel&, const HudLayout&) noexcept;
 [[nodiscard]] NavigationPanelPlan make_navigation_panel_plan(
     const NavigationHudModel&, const HudLayout&) noexcept;
 [[nodiscard]] ContextPanelPlan make_context_panel_plan(
     const ContextHudModel&, const HudLayout&) noexcept;
+[[nodiscard]] HudTextDrawPlan make_hud_text_draw_plan(const HudText96&,
+    float bounds_width, float preferred_font_size, float minimum_font_size,
+    HudTextMeasureFn, void*) noexcept;
 
 class HudRenderer final {
 public:

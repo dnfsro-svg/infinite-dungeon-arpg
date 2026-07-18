@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <limits>
 
 namespace arpg::platform {
@@ -94,16 +95,6 @@ void draw_player_bar(const HudBarPlan& bar) noexcept {
 }
 
 }  // namespace
-
-Color hud_palette_color(HudPaletteId palette_id) noexcept {
-    const HudPalette palette = hud_palette();
-    switch (palette_id) {
-    case HudPaletteId::health: return palette.health;
-    case HudPaletteId::barrier: return palette.barrier;
-    case HudPaletteId::experience: return palette.experience;
-    }
-    return palette.text;
-}
 
 namespace {
 
@@ -212,16 +203,105 @@ ContextPanelPlan make_context_panel_plan(const ContextHudModel& context,
 
 namespace {
 
-[[nodiscard]] Color element_color(const NavigationHudModel::Element::Color& color)
-    noexcept {
-    return {color.r, color.g, color.b, color.a};
+[[nodiscard]] std::size_t bounded_text_length(const HudText96& text) noexcept {
+    std::size_t length{};
+    while (length < text.bytes.size() && text.bytes[length] != '\0') ++length;
+    return length;
+}
+
+[[nodiscard]] std::size_t previous_utf8_boundary(const char* text,
+    std::size_t length) noexcept {
+    while (length > 0U
+        && (static_cast<unsigned char>(text[length]) & 0xC0U) == 0x80U) {
+        --length;
+    }
+    return length;
+}
+
+[[nodiscard]] float measure_text(HudTextMeasureFn measure, const char* text,
+    float font_size, void* context) noexcept {
+    if (measure == nullptr || text == nullptr || !(font_size > 0.0F)) {
+        return (std::numeric_limits<float>::infinity)();
+    }
+    const float width = measure(text, font_size, context);
+    return std::isfinite(width) && width >= 0.0F
+        ? width : (std::numeric_limits<float>::infinity)();
+}
+
+}  // namespace
+
+HudTextDrawPlan make_hud_text_draw_plan(const HudText96& input,
+    float bounds_width, float preferred_font_size, float minimum_font_size,
+    HudTextMeasureFn measure, void* context) noexcept {
+    HudTextDrawPlan plan{};
+    if (input.bytes[0] == '\0' || !(bounds_width > 0.0F)
+        || !(preferred_font_size > 0.0F) || measure == nullptr) {
+        return plan;
+    }
+    const float minimum = std::clamp(minimum_font_size, 1.0F,
+        preferred_font_size);
+    plan.visible = true;
+    plan.text = input;
+    plan.text.bytes.back() = '\0';
+    plan.font_size = preferred_font_size;
+    while (plan.font_size > minimum
+        && measure_text(measure, plan.text.bytes.data(), plan.font_size, context)
+            > bounds_width) {
+        plan.font_size = std::max(minimum, plan.font_size - 1.0F);
+    }
+    if (measure_text(measure, plan.text.bytes.data(), plan.font_size, context)
+        <= bounds_width) {
+        return plan;
+    }
+
+    constexpr char kEllipsis[] = "...";
+    const std::size_t input_length = bounded_text_length(plan.text);
+    std::size_t copied = input_length;
+    while (copied > 0U) {
+        copied = previous_utf8_boundary(plan.text.bytes.data(), copied - 1U);
+        if (copied + sizeof(kEllipsis) > plan.text.bytes.size()) continue;
+        char candidate[96]{};
+        std::memcpy(candidate, plan.text.bytes.data(), copied);
+        std::memcpy(candidate + copied, kEllipsis, sizeof(kEllipsis));
+        if (measure_text(measure, candidate, plan.font_size, context)
+            <= bounds_width) {
+            std::memcpy(plan.text.bytes.data(), candidate, sizeof(candidate));
+            plan.text.truncated = true;
+            plan.truncated = true;
+            return plan;
+        }
+    }
+    plan.visible = false;
+    plan.text = {};
+    plan.truncated = true;
+    return plan;
+}
+
+namespace {
+
+struct RaylibTextMeasureContext final {
+    Font font{};
+};
+
+float measure_text_ex(const char* text, float font_size, void* context) noexcept {
+    if (context == nullptr) return 0.0F;
+    const auto* value = static_cast<const RaylibTextMeasureContext*>(context);
+    return MeasureTextEx(value->font, text, font_size, 1.0F).x;
 }
 
 void draw_panel_text(Font font, const HudRect& bounds, const HudText96& text,
     float size, Color color) noexcept {
-    if (text.bytes[0] == '\0') return;
-    DrawTextEx(font, text.bytes.data(),
-        {bounds.x + 10.0F, bounds.y + 7.0F}, size, 1.0F, color);
+    RaylibTextMeasureContext measure{font};
+    const HudTextDrawPlan plan = make_hud_text_draw_plan(text,
+        std::max(0.0F, bounds.width - 20.0F), size,
+        std::min(size, 11.0F), &measure_text_ex, &measure);
+    if (!plan.visible) return;
+    BeginScissorMode(static_cast<int>(bounds.x), static_cast<int>(bounds.y),
+        std::max(0, static_cast<int>(bounds.width)),
+        std::max(0, static_cast<int>(bounds.height)));
+    DrawTextEx(font, plan.text.bytes.data(),
+        {bounds.x + 10.0F, bounds.y + 7.0F}, plan.font_size, 1.0F, color);
+    EndScissorMode();
 }
 
 void draw_context_notice(Font font, const HudRect& bounds,
@@ -369,7 +449,8 @@ void HudRenderer::draw(const HudViewModel& view,
             HudRect element = navigation.bounds;
             element.y += (42.0F + static_cast<float>(index) * 17.0F) * layout.scale;
             draw_panel_text(font_, element, navigation.elements[index].label,
-                13.0F * layout.scale, element_color(navigation.elements[index].color));
+                13.0F * layout.scale,
+                hud_palette_color(navigation.elements[index].color_id));
         }
     }
     draw_context_notice(font_, context.primary_bounds, context.primary,

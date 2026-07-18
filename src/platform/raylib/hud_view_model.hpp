@@ -3,6 +3,7 @@
 #include "control_hints.hpp"
 #include "dungeon/dungeon_types.hpp"
 #include "dungeon_runtime.hpp"
+#include "hud_color.hpp"
 
 #include <array>
 #include <cstdint>
@@ -60,12 +61,7 @@ struct NavigationHudModel final {
     HudText96 ecology_label{};
     struct Element final {
         HudText96 label{};
-        struct Color final {
-            std::uint8_t r{};
-            std::uint8_t g{};
-            std::uint8_t b{};
-            std::uint8_t a{255U};
-        } color{};
+        HudPaletteId color_id{HudPaletteId::fire};
     };
     std::array<Element, 4> elements{};
     std::uint8_t element_count{};

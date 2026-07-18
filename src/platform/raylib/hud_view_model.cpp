@@ -62,15 +62,14 @@ const char* ecology_name(dungeon::DungeonElement ecology) noexcept {
     return u8"未知";
 }
 
-NavigationHudModel::Element::Color element_color(
-    dungeon::DungeonElement ecology) noexcept {
+HudPaletteId element_color(dungeon::DungeonElement ecology) noexcept {
     switch (ecology) {
-    case dungeon::DungeonElement::fire: return {227U, 91U, 62U, 255U};
-    case dungeon::DungeonElement::water: return {64U, 169U, 222U, 255U};
-    case dungeon::DungeonElement::lightning: return {240U, 211U, 73U, 255U};
-    case dungeon::DungeonElement::chaos: return {166U, 91U, 205U, 255U};
+    case dungeon::DungeonElement::fire: return HudPaletteId::fire;
+    case dungeon::DungeonElement::water: return HudPaletteId::water;
+    case dungeon::DungeonElement::lightning: return HudPaletteId::lightning;
+    case dungeon::DungeonElement::chaos: return HudPaletteId::chaos;
     }
-    return {166U, 91U, 205U, 255U};
+    return HudPaletteId::chaos;
 }
 
 void build_room_objective(RoomHudModel& room,
@@ -136,7 +135,7 @@ void build_navigation(NavigationHudModel& navigation,
     }};
     navigation.element_count = static_cast<std::uint8_t>(kElements.size());
     for (std::size_t index{}; index < kElements.size(); ++index) {
-        navigation.elements[index].color = element_color(kElements[index]);
+        navigation.elements[index].color_id = element_color(kElements[index]);
         format_text(navigation.elements[index].label, diagnostics, u8"%s %u",
             ecology_name(kElements[index]),
             static_cast<unsigned>(navigation.biases[index]));
