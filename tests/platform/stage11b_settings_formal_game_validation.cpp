@@ -185,7 +185,10 @@ int main(int argc, char** argv) {
     ok = ok && run_child(root, saves, root / "settings-pause", "pause");
     const auto pause = read_summary(root / "pause.txt");
     ok = ok && equals(pause, "paused_tick_before",
-        value_or_empty(pause, "paused_tick_after").c_str());
+        value_or_empty(pause, "paused_tick_after").c_str())
+        && equals(pause, "player_monster_hash_before",
+            value_or_empty(pause, "player_monster_hash_after").c_str())
+        && nonzero(pause, "player_monster_hash_before");
 
     ok = ok && run_child(root, saves, root / "settings-page", "settings");
     ok = ok && run_child(root, saves, root / "settings-swap", "swap");
@@ -199,6 +202,11 @@ int main(int argc, char** argv) {
            << "character_save_hash_after=" << character_after << '\n'
            << "rebound_old_attack=" << value_or_empty(rebound, "old_attack_count") << '\n'
            << "rebound_new_attack=" << value_or_empty(rebound, "new_attack_count") << '\n'
+           << "paused_tick_before=" << value_or_empty(pause, "paused_tick_before") << '\n'
+           << "paused_tick_after=" << value_or_empty(pause, "paused_tick_after") << '\n'
+           << "player_monster_hash_before=" << value_or_empty(pause, "player_monster_hash_before") << '\n'
+           << "player_monster_hash_after=" << value_or_empty(pause, "player_monster_hash_after") << '\n'
+           << "committed_revision=" << value_or_empty(rebound, "committed_revision") << '\n'
            << "restart_binding=" << value_or_empty(restart, "light_attack") << '\n'
            << "single_slot_status=" << value_or_empty(single_slot, "load_status") << '\n'
            << "corrupt_default_status=" << value_or_empty(corrupt, "load_status") << '\n'

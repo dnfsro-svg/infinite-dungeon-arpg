@@ -32,6 +32,10 @@
 #include <optional>
 #include <string>
 
+#ifdef _WIN32
+extern "C" __declspec(dllimport) int __stdcall SetForegroundWindow(void*);
+#endif
+
 #include "direct_input_poison.hpp"
 
 static_assert(arpg::platform::direct_input_poison::active,
@@ -156,6 +160,8 @@ struct Stage11BValidationState final {
     std::uint64_t fixed_ticks{};
     std::uint64_t paused_ticks_before{};
     std::uint64_t paused_ticks_after{};
+    std::uint64_t player_monster_hash_before{};
+    std::uint64_t player_monster_hash_after{};
     std::uint32_t old_attack_count{};
     std::uint32_t new_attack_count{};
     bool old_attack_checked{};
@@ -185,19 +191,9 @@ void inject_stage11b_open_settings(PhysicalKeySnapshot& snapshot,
     if (config.stage11b_validation == Stage11BValidationScenario::none) {
         return snapshot;
     }
-    // Formal runs must be deterministic even when the desktop test runner has
-    // unrelated keys held.  This is still a physical snapshot: the scenario
-    // below adds only StableKey/escape/enter edges before the normal mapper.
-    snapshot.down.fill(false);
-    snapshot.pressed.fill(false);
-    snapshot.escape = false;
-    snapshot.enter = false;
-    snapshot.f1 = false;
-    snapshot.f12 = false;
-    snapshot.v = false;
-    snapshot.mouse_left = false;
-    snapshot.mouse_right = false;
-    snapshot.mouse_wheel = 0.0F;
+    // Preserve every sampled production input.  A deterministic scenario only
+    // adds physical key edges after the actual raylib window has focus.
+    if (snapshot.focus_lost) return snapshot;
     const std::uint32_t frame = ++state.injected_frame;
     switch (config.stage11b_validation) {
     case Stage11BValidationScenario::paused_freeze:
@@ -286,8 +282,8 @@ void inject_stage11b_open_settings(PhysicalKeySnapshot& snapshot,
 }
 
 void write_stage11b_validation_summary(const RaylibHostConfig& config,
-    const Stage11BValidationState& state, const PauseMenuState& pause_menu,
-    const dungeon::DungeonSnapshot& snapshot) noexcept {
+    const Stage11BValidationState& state,
+    const PauseMenuState& pause_menu) noexcept {
     if (!config.validation_summary_file.has_value()
         || config.stage11b_validation == Stage11BValidationScenario::none) {
         return;
@@ -306,7 +302,8 @@ void write_stage11b_validation_summary(const RaylibHostConfig& config,
                << "injected_frame=" << state.injected_frame << '\n'
                << "paused_tick_before=" << state.paused_ticks_before << '\n'
                << "paused_tick_after=" << state.paused_ticks_after << '\n'
-               << "player_monster_hash=" << stage11b_snapshot_hash(snapshot) << '\n'
+               << "player_monster_hash_before=" << state.player_monster_hash_before << '\n'
+               << "player_monster_hash_after=" << state.player_monster_hash_after << '\n'
                << "committed_revision=" << pause_menu.committed.revision << '\n'
                << "old_attack_count=" << state.old_attack_count << '\n'
                << "new_attack_count=" << state.new_attack_count << '\n'
@@ -762,6 +759,11 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         }
         SetWindowMinSize(800, 450);
         SetExitKey(KEY_NULL);
+#ifdef _WIN32
+        if (config.stage11b_validation != Stage11BValidationScenario::none) {
+            static_cast<void>(SetForegroundWindow(GetWindowHandle()));
+        }
+#endif
         core::FixedStepRunner fixed_step;
         CombatRenderer renderer;
         static_cast<void>(renderer.initialize_resources());
@@ -977,19 +979,11 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 inventory.is_open(),
                 passive_overlay_open,
                 current.pending_save_kind.has_value(),
-                config.stage11b_validation == Stage11BValidationScenario::none
-                    ? !physical_keys.focus_lost : true,
+                !physical_keys.focus_lost,
             };
             PauseInput pause_input = pause_input_from_snapshot(
                 physical_keys, escape_consumed,
                 pause_menu.screen == PauseScreen::capture_binding);
-            if (config.stage11b_validation != Stage11BValidationScenario::none) {
-                // The scenario injects only keyboard edges.  A noninteractive
-                // test desktop may report a focus transition even though its
-                // real raylib window remains the input target; do not turn
-                // that desktop artifact into a synthetic binding cancellation.
-                pause_input.focus_lost = false;
-            }
             const PauseCommand pause_command = update_pause_menu(
                 pause_menu, pause_context, pause_input);
             consume_host_settings_notice(
@@ -1163,10 +1157,14 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 if (stage11b_validation_state.paused_presented == 0U) {
                     stage11b_validation_state.paused_ticks_before =
                         stage11b_validation_state.fixed_ticks;
+                    stage11b_validation_state.player_monster_hash_before =
+                        stage11b_snapshot_hash(current);
                 }
                 ++stage11b_validation_state.paused_presented;
                 stage11b_validation_state.paused_ticks_after =
                     stage11b_validation_state.fixed_ticks;
+                stage11b_validation_state.player_monster_hash_after =
+                    stage11b_snapshot_hash(current);
             }
             const bool stage10_target_visible = stage10_validation_reached(
                 current, config, stage10_validation_state);
@@ -1227,7 +1225,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             }
         }
         write_stage11b_validation_summary(config, stage11b_validation_state,
-            pause_menu, current);
+            pause_menu);
         audio.shutdown();
         renderer.shutdown_resources();
         CloseWindow();
