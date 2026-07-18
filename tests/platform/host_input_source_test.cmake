@@ -12,6 +12,7 @@ file(READ "${RAYLIB_SOURCE_DIR}/raylib_host.cpp" HOST_SOURCE)
 file(READ "${RAYLIB_SOURCE_DIR}/inventory_renderer.cpp" INVENTORY_SOURCE)
 file(READ "${RAYLIB_SOURCE_DIR}/host_input.cpp" INPUT_AUTHORITY_SOURCE)
 file(READ "${POISON_HEADER}" POISON_SOURCE)
+include("${CMAKE_CURRENT_LIST_DIR}/cpp_source_lexer.cmake")
 
 function(require_match_count SOURCE PATTERN EXPECTED LABEL)
     string(REGEX MATCHALL "${PATTERN}" MATCHES "${SOURCE}")
@@ -71,6 +72,22 @@ const PhysicalKeySnapshot physical_keys = inject_stage11c_physical_edges(
     stage11b_physical_keys, config, input_settings, current,
     stage11c_validation_state);
 HostFrameInput frame_input = map_host_frame_input(settings, physical_keys);
+DeathInputGate death_gate = host_death_input_gate(
+    death_saving, death_pending, frame_input.keys, physical_keys);
+const bool pause_blocks_gameplay = pause_open || pause_was_open;
+HostFrameGateResult host_gate{};
+const PassiveOverlayInputGate passive_input_gate = passive_overlay_input_gate(
+    passive_overlay_open);
+const InventoryInputGate inventory_gate = inventory_input_gate(inventory.is_open());
+const bool forward_actions = passive_input_gate.forward_actions
+    && inventory_gate.forward_actions
+    && death_gate.forward_gameplay
+    && host_gate.forward_gameplay && !pause_blocks_gameplay;
+if (forward_actions) {
+    const std::array<bool, 3> accepted_actions =
+        submit_frame_actions(*session, frame_input);
+}
+if (forward_descent && frame_input.keys.e) {}
 #define IsKeyDown ::arpg::platform::direct_input_poison::blocked
 ]=])
 poison_macro_line_pattern(IsKeyDown SELF_TEST_MACRO_PATTERN)
@@ -149,6 +166,7 @@ require_match_count(
     "host logical mapping calls")
 
 function(physical_input_chain_valid SOURCE OUT_VARIABLE)
+    arpg_sanitize_cpp_source("${SOURCE}" SOURCE)
     string(FIND "${SOURCE}"
         "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys()"
         SAMPLE_INDEX)
@@ -161,11 +179,47 @@ function(physical_input_chain_valid SOURCE OUT_VARIABLE)
     string(FIND "${SOURCE}"
         "HostFrameInput frame_input = map_host_frame_input("
         MAP_INDEX)
+    string(FIND "${SOURCE}"
+        "DeathInputGate death_gate = host_death_input_gate("
+        DEATH_GATE_INDEX)
+    string(FIND "${SOURCE}"
+        "const bool pause_blocks_gameplay ="
+        PAUSE_BLOCK_INDEX)
+    string(FIND "${SOURCE}" "HostFrameGateResult host_gate{}"
+        HOST_GATE_INDEX)
+    string(FIND "${SOURCE}"
+        "const PassiveOverlayInputGate passive_input_gate ="
+        PASSIVE_GATE_INDEX)
+    string(FIND "${SOURCE}"
+        "const InventoryInputGate inventory_gate ="
+        INVENTORY_GATE_INDEX)
+    string(FIND "${SOURCE}" "const bool forward_actions ="
+        FORWARD_ACTIONS_INDEX)
+    string(FIND "${SOURCE}" "if (forward_actions) {"
+        FORWARD_ACTIONS_IF_INDEX)
+    string(FIND "${SOURCE}" "submit_frame_actions(*session, frame_input)"
+        SUBMIT_ACTIONS_INDEX)
+    string(FIND "${SOURCE}" "if (forward_descent && frame_input.keys.e)"
+        FORWARD_DESCENT_INDEX)
     if(SAMPLE_INDEX EQUAL -1 OR STAGE11B_INDEX EQUAL -1
             OR STAGE11C_INDEX EQUAL -1 OR MAP_INDEX EQUAL -1
+            OR DEATH_GATE_INDEX EQUAL -1 OR PAUSE_BLOCK_INDEX EQUAL -1
+            OR HOST_GATE_INDEX EQUAL -1 OR PASSIVE_GATE_INDEX EQUAL -1
+            OR INVENTORY_GATE_INDEX EQUAL -1 OR FORWARD_ACTIONS_INDEX EQUAL -1
+            OR FORWARD_ACTIONS_IF_INDEX EQUAL -1 OR SUBMIT_ACTIONS_INDEX EQUAL -1
+            OR FORWARD_DESCENT_INDEX EQUAL -1
             OR NOT SAMPLE_INDEX LESS STAGE11B_INDEX
             OR NOT STAGE11B_INDEX LESS STAGE11C_INDEX
-            OR NOT STAGE11C_INDEX LESS MAP_INDEX)
+            OR NOT STAGE11C_INDEX LESS MAP_INDEX
+            OR NOT MAP_INDEX LESS DEATH_GATE_INDEX
+            OR NOT DEATH_GATE_INDEX LESS PAUSE_BLOCK_INDEX
+            OR NOT PAUSE_BLOCK_INDEX LESS HOST_GATE_INDEX
+            OR NOT HOST_GATE_INDEX LESS PASSIVE_GATE_INDEX
+            OR NOT PASSIVE_GATE_INDEX LESS INVENTORY_GATE_INDEX
+            OR NOT INVENTORY_GATE_INDEX LESS FORWARD_ACTIONS_INDEX
+            OR NOT FORWARD_ACTIONS_INDEX LESS FORWARD_ACTIONS_IF_INDEX
+            OR NOT FORWARD_ACTIONS_IF_INDEX LESS SUBMIT_ACTIONS_INDEX
+            OR NOT SUBMIT_ACTIONS_INDEX LESS FORWARD_DESCENT_INDEX)
         set("${OUT_VARIABLE}" FALSE PARENT_SCOPE)
         return()
     endif()
@@ -185,8 +239,24 @@ function(physical_input_chain_valid SOURCE OUT_VARIABLE)
     string(FIND "${STAGE11C_SOURCE}" "stage11c_validation_state)"
         STAGE11C_STATE_INDEX)
     string(FIND "${MAP_SOURCE}" "physical_keys)" MAP_INPUT_INDEX)
+    math(EXPR FORWARD_ACTIONS_LENGTH
+        "${FORWARD_ACTIONS_IF_INDEX} - ${FORWARD_ACTIONS_INDEX}")
+    string(SUBSTRING "${SOURCE}" ${FORWARD_ACTIONS_INDEX}
+        ${FORWARD_ACTIONS_LENGTH} FORWARD_ACTIONS_SOURCE)
+    math(EXPR CONTROLLED_SUBMIT_LENGTH
+        "${FORWARD_DESCENT_INDEX} - ${FORWARD_ACTIONS_IF_INDEX}")
+    string(SUBSTRING "${SOURCE}" ${FORWARD_ACTIONS_IF_INDEX}
+        ${CONTROLLED_SUBMIT_LENGTH} CONTROLLED_SUBMIT_SOURCE)
+    string(REGEX MATCHALL "submit_frame_actions[ \t\r\n]*\\("
+        SUBMIT_ACTION_CALLS "${SOURCE}")
+    list(LENGTH SUBMIT_ACTION_CALLS SUBMIT_ACTION_CALL_COUNT)
     if(STAGE11B_INPUT_INDEX EQUAL -1 OR STAGE11C_INPUT_INDEX EQUAL -1
-            OR STAGE11C_STATE_INDEX EQUAL -1 OR MAP_INPUT_INDEX EQUAL -1)
+            OR STAGE11C_STATE_INDEX EQUAL -1 OR MAP_INPUT_INDEX EQUAL -1
+            OR NOT SUBMIT_ACTION_CALL_COUNT EQUAL 1
+            OR NOT FORWARD_ACTIONS_SOURCE MATCHES
+                "const bool forward_actions =[ \t\r\n]*passive_input_gate\\.forward_actions[ \t\r\n]*&&[ \t\r\n]*inventory_gate\\.forward_actions[ \t\r\n]*&&[ \t\r\n]*death_gate\\.forward_gameplay[ \t\r\n]*&&[ \t\r\n]*host_gate\\.forward_gameplay[ \t\r\n]*&&[ \t\r\n]*!pause_blocks_gameplay[ \t\r\n]*;"
+            OR NOT CONTROLLED_SUBMIT_SOURCE MATCHES
+                "if[ \t\r\n]*\\([ \t\r\n]*forward_actions[ \t\r\n]*\\)[ \t\r\n]*\\{[ \t\r\n]*const[ \t]+std::array<bool,[ \t]*3>[ \t]+accepted_actions[ \t\r\n]*=[ \t\r\n]*submit_frame_actions[ \t\r\n]*\\([ \t\r\n]*\\*session,[ \t\r\n]*frame_input[ \t\r\n]*\\)[ \t\r\n]*;")
         set("${OUT_VARIABLE}" FALSE PARENT_SCOPE)
         return()
     endif()
@@ -201,6 +271,24 @@ endif()
 physical_input_chain_valid("${REAL_STRUCTURE}" REFERENCE_INPUT_CHAIN_VALID)
 if(NOT REFERENCE_INPUT_CHAIN_VALID)
     message(FATAL_ERROR "host input chain self-check rejected reference")
+endif()
+set(INPUT_CHAIN_SPOOF_ACCEPTANCES)
+set(COMMENT_ONLY_INPUT_CHAIN "/*${REAL_STRUCTURE}*/")
+set(STRING_ONLY_INPUT_CHAIN "R\"arpg(${REAL_STRUCTURE})arpg\"")
+physical_input_chain_valid("${COMMENT_ONLY_INPUT_CHAIN}"
+    COMMENT_ONLY_INPUT_CHAIN_VALID)
+if(COMMENT_ONLY_INPUT_CHAIN_VALID)
+    list(APPEND INPUT_CHAIN_SPOOF_ACCEPTANCES "comment-only-chain")
+endif()
+physical_input_chain_valid("${STRING_ONLY_INPUT_CHAIN}"
+    STRING_ONLY_INPUT_CHAIN_VALID)
+if(STRING_ONLY_INPUT_CHAIN_VALID)
+    list(APPEND INPUT_CHAIN_SPOOF_ACCEPTANCES "string-only-chain")
+endif()
+if(INPUT_CHAIN_SPOOF_ACCEPTANCES)
+    list(JOIN INPUT_CHAIN_SPOOF_ACCEPTANCES ", " INPUT_CHAIN_SPOOF_NAMES)
+    message(FATAL_ERROR
+        "host input chain accepted source spoofs: ${INPUT_CHAIN_SPOOF_NAMES}")
 endif()
 string(REPLACE
     "stage11b_physical_keys, config, input_settings, current,"
@@ -225,6 +313,37 @@ physical_input_chain_valid("${MAP_BEFORE_STAGE11C_STRUCTURE}"
     MAP_BEFORE_STAGE11C_STRUCTURE_VALID)
 if(MAP_BEFORE_STAGE11C_STRUCTURE_VALID)
     message(FATAL_ERROR "host input chain accepted map-before-Stage11C mutation")
+endif()
+
+set(SUBMIT_DECLARATION [=[
+                const std::array<bool, 3> accepted_actions =
+                    submit_frame_actions(*session, frame_input);
+]=])
+set(HOST_GATE_DECLARATION
+    "            HostFrameGateResult host_gate{};")
+string(REPLACE "${SUBMIT_DECLARATION}" ""
+    SUBMIT_BEFORE_GATE_STRUCTURE "${HOST_SOURCE}")
+string(REPLACE "${HOST_GATE_DECLARATION}"
+    "${SUBMIT_DECLARATION}\n${HOST_GATE_DECLARATION}"
+    SUBMIT_BEFORE_GATE_STRUCTURE "${SUBMIT_BEFORE_GATE_STRUCTURE}")
+string(REPLACE "            if (forward_actions) {"
+    "            {"
+    UNCONDITIONAL_SUBMIT_STRUCTURE "${HOST_SOURCE}")
+set(ACCEPTED_SUBMIT_MUTATIONS)
+physical_input_chain_valid("${SUBMIT_BEFORE_GATE_STRUCTURE}"
+    SUBMIT_BEFORE_GATE_STRUCTURE_VALID)
+if(SUBMIT_BEFORE_GATE_STRUCTURE_VALID)
+    list(APPEND ACCEPTED_SUBMIT_MUTATIONS "submit-before-gate")
+endif()
+physical_input_chain_valid("${UNCONDITIONAL_SUBMIT_STRUCTURE}"
+    UNCONDITIONAL_SUBMIT_STRUCTURE_VALID)
+if(UNCONDITIONAL_SUBMIT_STRUCTURE_VALID)
+    list(APPEND ACCEPTED_SUBMIT_MUTATIONS "unconditional-submit-bypass")
+endif()
+if(ACCEPTED_SUBMIT_MUTATIONS)
+    list(JOIN ACCEPTED_SUBMIT_MUTATIONS ", " ACCEPTED_SUBMIT_MUTATION_NAMES)
+    message(FATAL_ERROR
+        "host input chain accepted mutations: ${ACCEPTED_SUBMIT_MUTATION_NAMES}")
 endif()
 
 function(strip_cpp_noncode SOURCE OUT_VARIABLE)

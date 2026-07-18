@@ -131,8 +131,11 @@ Stage 11-C PNG、log、save、settings 或 build artifact。
 2026-07-18 审计结果：`git diff --check bd8c8be...HEAD` 无输出；提交前工作树只有本记录
 与 README 的预期文档变更。相对基线的功能/测试/规格差异限于 Stage 11-C HUD 与两项
 保持历史门禁有效的验证器修复。已跟踪生成物扫描只命中 Stage 8 的十张既有验收 PNG、
-Stage 9 的三张既有验收 PNG 和 `task10-fixture-full.log`；这些均早于 Stage 11-C，未新增
-Stage 11-C PNG、log、存档、settings 双槽文件或 `out/build` 产物。
+Stage 9 的四张既有验收 PNG（`01-fixed-affix-room-render.png`、
+`01-fixed-affix-room.png`、`02-formal-game-initial.png`、
+`03-formal-game-submitted-frame.png`）和 `task10-fixture-full.log`；这些均为 Stage 9 及更早
+里程碑保留的受控验收证据，未新增 Stage 11-C PNG、log、存档、settings 双槽文件或
+`out/build` 产物。
 
 Stage 11-C 完成后保留 `codex/stage11c-complete-hud` 工作树和分支，不合并 `main`，
 不开始地面物品过滤、主菜单、手柄、分辨率/画质设置、macOS 或 Stage 11-D。

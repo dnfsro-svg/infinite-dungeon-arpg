@@ -91,6 +91,7 @@ if(NOT SAMPLE_CALL_COUNT EQUAL 1)
 endif()
 
 function(arpg_physical_input_chain_is_valid SOURCE OUT_VALID)
+    arpg_sanitize_cpp_source("${SOURCE}" SOURCE)
     string(FIND "${SOURCE}"
         "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys()"
         SAMPLE_INDEX)
@@ -103,11 +104,52 @@ function(arpg_physical_input_chain_is_valid SOURCE OUT_VALID)
     string(FIND "${SOURCE}"
         "HostFrameInput frame_input = map_host_frame_input("
         MAP_INDEX)
+    string(FIND "${SOURCE}"
+        "DeathInputGate death_gate = host_death_input_gate("
+        DEATH_GATE_INDEX)
+    string(FIND "${SOURCE}"
+        "const bool pause_blocks_gameplay ="
+        PAUSE_BLOCK_INDEX)
+    string(FIND "${SOURCE}"
+        "HostFrameGateResult host_gate{}"
+        HOST_GATE_INDEX)
+    string(FIND "${SOURCE}"
+        "const PassiveOverlayInputGate passive_input_gate ="
+        PASSIVE_GATE_INDEX)
+    string(FIND "${SOURCE}"
+        "const InventoryInputGate inventory_gate ="
+        INVENTORY_GATE_INDEX)
+    string(FIND "${SOURCE}"
+        "const bool forward_actions ="
+        FORWARD_ACTIONS_INDEX)
+    string(FIND "${SOURCE}"
+        "if (forward_actions) {"
+        FORWARD_ACTIONS_IF_INDEX)
+    string(FIND "${SOURCE}"
+        "submit_frame_actions(*session, frame_input)"
+        SUBMIT_ACTIONS_INDEX)
+    string(FIND "${SOURCE}"
+        "if (forward_descent && frame_input.keys.e)"
+        FORWARD_DESCENT_INDEX)
     if(SAMPLE_INDEX EQUAL -1 OR STAGE11B_INDEX EQUAL -1
             OR STAGE11C_INDEX EQUAL -1 OR MAP_INDEX EQUAL -1
+            OR DEATH_GATE_INDEX EQUAL -1 OR PAUSE_BLOCK_INDEX EQUAL -1
+            OR HOST_GATE_INDEX EQUAL -1 OR PASSIVE_GATE_INDEX EQUAL -1
+            OR INVENTORY_GATE_INDEX EQUAL -1 OR FORWARD_ACTIONS_INDEX EQUAL -1
+            OR FORWARD_ACTIONS_IF_INDEX EQUAL -1 OR SUBMIT_ACTIONS_INDEX EQUAL -1
+            OR FORWARD_DESCENT_INDEX EQUAL -1
             OR NOT SAMPLE_INDEX LESS STAGE11B_INDEX
             OR NOT STAGE11B_INDEX LESS STAGE11C_INDEX
-            OR NOT STAGE11C_INDEX LESS MAP_INDEX)
+            OR NOT STAGE11C_INDEX LESS MAP_INDEX
+            OR NOT MAP_INDEX LESS DEATH_GATE_INDEX
+            OR NOT DEATH_GATE_INDEX LESS PAUSE_BLOCK_INDEX
+            OR NOT PAUSE_BLOCK_INDEX LESS HOST_GATE_INDEX
+            OR NOT HOST_GATE_INDEX LESS PASSIVE_GATE_INDEX
+            OR NOT PASSIVE_GATE_INDEX LESS INVENTORY_GATE_INDEX
+            OR NOT INVENTORY_GATE_INDEX LESS FORWARD_ACTIONS_INDEX
+            OR NOT FORWARD_ACTIONS_INDEX LESS FORWARD_ACTIONS_IF_INDEX
+            OR NOT FORWARD_ACTIONS_IF_INDEX LESS SUBMIT_ACTIONS_INDEX
+            OR NOT SUBMIT_ACTIONS_INDEX LESS FORWARD_DESCENT_INDEX)
         set(${OUT_VALID} FALSE PARENT_SCOPE)
         return()
     endif()
@@ -133,10 +175,26 @@ function(arpg_physical_input_chain_is_valid SOURCE OUT_VALID)
         STAGE11C_STATE_INDEX)
     string(FIND "${MAP_SOURCE}" "input_settings, physical_keys)"
         MAPS_INJECTED_KEYS_INDEX)
+    math(EXPR FORWARD_ACTIONS_LENGTH
+        "${FORWARD_ACTIONS_IF_INDEX} - ${FORWARD_ACTIONS_INDEX}")
+    string(SUBSTRING "${SOURCE}" ${FORWARD_ACTIONS_INDEX}
+        ${FORWARD_ACTIONS_LENGTH} FORWARD_ACTIONS_SOURCE)
+    math(EXPR CONTROLLED_SUBMIT_LENGTH
+        "${FORWARD_DESCENT_INDEX} - ${FORWARD_ACTIONS_IF_INDEX}")
+    string(SUBSTRING "${SOURCE}" ${FORWARD_ACTIONS_IF_INDEX}
+        ${CONTROLLED_SUBMIT_LENGTH} CONTROLLED_SUBMIT_SOURCE)
+    string(REGEX MATCHALL "submit_frame_actions[ \t\n]*\\("
+        SUBMIT_ACTION_CALLS "${SOURCE}")
+    list(LENGTH SUBMIT_ACTION_CALLS SUBMIT_ACTION_CALL_COUNT)
     if(STAGE11B_CALL_INDEX EQUAL -1 OR STAGE11B_INPUT_INDEX EQUAL -1
             OR STAGE11C_CALL_INDEX EQUAL -1 OR STAGE11C_INPUT_INDEX EQUAL -1
             OR STAGE11C_STATE_INDEX EQUAL -1
-            OR MAPS_INJECTED_KEYS_INDEX EQUAL -1)
+            OR MAPS_INJECTED_KEYS_INDEX EQUAL -1
+            OR NOT SUBMIT_ACTION_CALL_COUNT EQUAL 1
+            OR NOT FORWARD_ACTIONS_SOURCE MATCHES
+                "const bool forward_actions =[ \t\n]*passive_input_gate\\.forward_actions[ \t\n]*&&[ \t\n]*inventory_gate\\.forward_actions[ \t\n]*&&[ \t\n]*death_gate\\.forward_gameplay[ \t\n]*&&[ \t\n]*host_gate\\.forward_gameplay[ \t\n]*&&[ \t\n]*!pause_blocks_gameplay[ \t\n]*;"
+            OR NOT CONTROLLED_SUBMIT_SOURCE MATCHES
+                "if[ \t\n]*\\([ \t\n]*forward_actions[ \t\n]*\\)[ \t\n]*\\{[ \t\n]*const[ \t]+std::array<bool,[ \t]*3>[ \t]+accepted_actions[ \t\n]*=[ \t\n]*submit_frame_actions[ \t\n]*\\([ \t\n]*\\*session,[ \t\n]*frame_input[ \t\n]*\\)[ \t\n]*;")
         set(${OUT_VALID} FALSE PARENT_SCOPE)
         return()
     endif()
@@ -159,11 +217,47 @@ const PhysicalKeySnapshot physical_keys = inject_stage11c_physical_edges(
     stage11c_validation_state);
 HostFrameInput frame_input = map_host_frame_input(
     input_settings, physical_keys);
+DeathInputGate death_gate = host_death_input_gate(
+    death_saving, death_pending, frame_input.keys, physical_keys);
+const bool pause_blocks_gameplay = pause_open || pause_was_open;
+HostFrameGateResult host_gate{};
+const PassiveOverlayInputGate passive_input_gate = passive_overlay_input_gate(
+    passive_overlay_open);
+const InventoryInputGate inventory_gate = inventory_input_gate(
+    inventory.is_open());
+const bool forward_actions = passive_input_gate.forward_actions
+    && inventory_gate.forward_actions
+    && death_gate.forward_gameplay
+    && host_gate.forward_gameplay && !pause_blocks_gameplay;
+if (forward_actions) {
+    const std::array<bool, 3> accepted_actions =
+        submit_frame_actions(*session, frame_input);
+}
+if (forward_descent && frame_input.keys.e) {}
 ]=])
 arpg_physical_input_chain_is_valid("${STAGE11B_INPUT_CHAIN_REFERENCE}"
     STAGE11B_INPUT_CHAIN_REFERENCE_VALID)
 if(NOT STAGE11B_INPUT_CHAIN_REFERENCE_VALID)
     message(FATAL_ERROR "input chain self-check rejected its reference chain")
+endif()
+set(INPUT_CHAIN_SPOOF_ACCEPTANCES)
+set(COMMENT_ONLY_INPUT_CHAIN "/*${STAGE11B_INPUT_CHAIN_REFERENCE}*/")
+set(STRING_ONLY_INPUT_CHAIN
+    "R\"arpg(${STAGE11B_INPUT_CHAIN_REFERENCE})arpg\"")
+arpg_physical_input_chain_is_valid("${COMMENT_ONLY_INPUT_CHAIN}"
+    COMMENT_ONLY_INPUT_CHAIN_VALID)
+if(COMMENT_ONLY_INPUT_CHAIN_VALID)
+    list(APPEND INPUT_CHAIN_SPOOF_ACCEPTANCES "comment-only-chain")
+endif()
+arpg_physical_input_chain_is_valid("${STRING_ONLY_INPUT_CHAIN}"
+    STRING_ONLY_INPUT_CHAIN_VALID)
+if(STRING_ONLY_INPUT_CHAIN_VALID)
+    list(APPEND INPUT_CHAIN_SPOOF_ACCEPTANCES "string-only-chain")
+endif()
+if(INPUT_CHAIN_SPOOF_ACCEPTANCES)
+    list(JOIN INPUT_CHAIN_SPOOF_ACCEPTANCES ", " INPUT_CHAIN_SPOOF_NAMES)
+    message(FATAL_ERROR
+        "input chain self-check accepted source spoofs: ${INPUT_CHAIN_SPOOF_NAMES}")
 endif()
 
 set(STAGE11B_INPUT_CHAIN_SAMPLE_AFTER_INJECT [=[
@@ -208,6 +302,37 @@ arpg_physical_input_chain_is_valid("${STAGE11C_BYPASS_CHAIN}"
     STAGE11C_BYPASS_CHAIN_VALID)
 if(STAGE11C_BYPASS_CHAIN_VALID)
     message(FATAL_ERROR "input chain self-check accepted Stage11C bypass mutation")
+endif()
+
+set(SUBMIT_DECLARATION [=[
+                const std::array<bool, 3> accepted_actions =
+                    submit_frame_actions(*session, frame_input);
+]=])
+set(HOST_GATE_DECLARATION
+    "            HostFrameGateResult host_gate{};")
+string(REPLACE "${SUBMIT_DECLARATION}" ""
+    SUBMIT_BEFORE_GATE_CHAIN "${HOST_ENTRY_SOURCE}")
+string(REPLACE "${HOST_GATE_DECLARATION}"
+    "${SUBMIT_DECLARATION}\n${HOST_GATE_DECLARATION}"
+    SUBMIT_BEFORE_GATE_CHAIN "${SUBMIT_BEFORE_GATE_CHAIN}")
+string(REPLACE "            if (forward_actions) {"
+    "            {"
+    UNCONDITIONAL_SUBMIT_CHAIN "${HOST_ENTRY_SOURCE}")
+set(ACCEPTED_SUBMIT_MUTATIONS)
+arpg_physical_input_chain_is_valid("${SUBMIT_BEFORE_GATE_CHAIN}"
+    SUBMIT_BEFORE_GATE_CHAIN_VALID)
+if(SUBMIT_BEFORE_GATE_CHAIN_VALID)
+    list(APPEND ACCEPTED_SUBMIT_MUTATIONS "submit-before-gate")
+endif()
+arpg_physical_input_chain_is_valid("${UNCONDITIONAL_SUBMIT_CHAIN}"
+    UNCONDITIONAL_SUBMIT_CHAIN_VALID)
+if(UNCONDITIONAL_SUBMIT_CHAIN_VALID)
+    list(APPEND ACCEPTED_SUBMIT_MUTATIONS "unconditional-submit-bypass")
+endif()
+if(ACCEPTED_SUBMIT_MUTATIONS)
+    list(JOIN ACCEPTED_SUBMIT_MUTATIONS ", " ACCEPTED_SUBMIT_MUTATION_NAMES)
+    message(FATAL_ERROR
+        "input chain self-check accepted mutations: ${ACCEPTED_SUBMIT_MUTATION_NAMES}")
 endif()
 
 string(FIND "${HOST_SANITIZED_SOURCE}"
