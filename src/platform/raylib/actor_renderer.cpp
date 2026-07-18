@@ -1,6 +1,7 @@
 #include "combat_renderer.hpp"
 
 #include "combat_view_math.hpp"
+#include "hud_renderer.hpp"
 #include "dungeon_view_math.hpp"
 
 #include <raylib.h>
@@ -216,16 +217,22 @@ void draw_monster_silhouette(const MonsterSnapshot& monster, Vec3 position,
             radius, radius * 1.18F,
             Fade(to_color(outline.color), static_cast<float>(outline.alpha) / 255.0F));
     }
+    const MonsterBarVisualPlan bar_visual = monster_bar_visual_plan();
     const float bar_width = 54.0F * scale;
     draw_bar(x - bar_width * .5F, y - 102.0F * scale, bar_width,
-        monster.max_hp <= 0 ? 0.0F : static_cast<float>(monster.hp) / static_cast<float>(monster.max_hp), Color{78, 219, 120, 255});
+        monster.max_hp <= 0 ? 0.0F : static_cast<float>(monster.hp) / static_cast<float>(monster.max_hp),
+        hud_palette_color(bar_visual.palette_ids[0]));
     if (monster.max_shield > 0) draw_bar(x - bar_width * .5F, y - 95.0F * scale, bar_width,
-        static_cast<float>(monster.shield) / static_cast<float>(monster.max_shield), accent);
+        static_cast<float>(monster.shield) / static_cast<float>(monster.max_shield),
+        hud_palette_color(bar_visual.palette_ids[1]));
+    if (monster.max_break > 0) draw_bar(x - bar_width * .5F, y - 88.0F * scale, bar_width,
+        static_cast<float>(monster.break_value) / static_cast<float>(monster.max_break),
+        hud_palette_color(bar_visual.palette_ids[2]));
     for (std::size_t index = 0U; index < affix_count; ++index) {
         const AffixBadge badge = monster_affix_badge(monster.affixes.values[index]);
         DrawText(TextFormat("%s %s", badge.short_name, badge.tier_text),
             static_cast<int>(x - bar_width * .5F),
-            static_cast<int>(y - (87.0F - static_cast<float>(index) * 10.0F) * scale),
+            static_cast<int>(y - (80.0F - static_cast<float>(index) * 10.0F) * scale),
             9, to_color(badge.color));
     }
     DrawText(visual.role_label, static_cast<int>(x - bar_width * .5F), static_cast<int>(y + 7.0F), 11, Color{225, 230, 239, 230});
@@ -233,6 +240,14 @@ void draw_monster_silhouette(const MonsterSnapshot& monster, Vec3 position,
 }
 
 }  // namespace
+
+MonsterBarVisualPlan monster_bar_visual_plan() noexcept {
+    return {{
+        HudPaletteId::health,
+        HudPaletteId::barrier,
+        HudPaletteId::experience,
+    }, 3U, true};
+}
 
 void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
     const dungeon::DungeonSnapshot& current, float alpha, bool draw_debug,

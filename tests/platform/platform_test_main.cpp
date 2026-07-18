@@ -25,6 +25,7 @@ arpg::test::TestSuite hud_view_model_suite() noexcept;
 arpg::test::TestSuite hud_notice_state_suite() noexcept;
 arpg::test::TestSuite hud_layout_suite() noexcept;
 arpg::test::TestSuite hud_font_suite() noexcept;
+arpg::test::TestSuite hud_render_plan_suite() noexcept;
 
 int main() {
 #if defined(_WIN32) && defined(_DEBUG)
@@ -57,7 +58,8 @@ int main() {
         hud_notice_state_suite(),
         hud_layout_suite(),
         hud_font_suite(),
+        hud_render_plan_suite(),
     };
 
-    return arpg::test::run_suites(suites, 210, "stage 11c task 4 HUD resources");
+    return arpg::test::run_suites(suites, 217, "stage 11c task 5 combat bars");
 }

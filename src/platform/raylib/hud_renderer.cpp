@@ -5,11 +5,15 @@
 #include "dungeon_runtime.hpp"
 #include "dungeon_view_math.hpp"
 #include "hud_font.hpp"
+#include "hud_palette.hpp"
 #include "hud_renderer.hpp"
 #include "render_layout.hpp"
 
 #include <raylib.h>
 
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
 #include <limits>
 
 namespace arpg::platform {
@@ -53,7 +57,100 @@ bool has_requested_glyphs(Font font,
     return true;
 }
 
+[[nodiscard]] float clamped_ratio(float ratio) noexcept {
+    return std::clamp(ratio, 0.0F, 1.0F);
+}
+
+[[nodiscard]] HudRect player_bar_bounds(const HudLayout& layout,
+    float logical_y) noexcept {
+    const float scale = layout.scale;
+    return {
+        layout.player_panel.x + (94.0F * scale),
+        layout.player_panel.y + (logical_y * scale),
+        std::max(0.0F, layout.player_panel.width - (106.0F * scale)),
+        std::max(0.0F, 14.0F * scale),
+    };
+}
+
+[[nodiscard]] Color color_for_bar(HudBarKind kind) noexcept {
+    switch (kind) {
+    case HudBarKind::health: return hud_palette_color(HudPaletteId::health);
+    case HudBarKind::barrier: return hud_palette_color(HudPaletteId::barrier);
+    case HudBarKind::experience: return hud_palette_color(HudPaletteId::experience);
+    }
+    return hud_palette().text;
+}
+
+void draw_player_bar(const HudBarPlan& bar) noexcept {
+    const Color fill = color_for_bar(bar.kind);
+    const Rectangle bounds{bar.bounds.x, bar.bounds.y, bar.bounds.width,
+        bar.bounds.height};
+    DrawRectangleRec(bounds, Color{20, 23, 31, 230});
+    DrawRectangleRec({bar.bounds.x + 1.0F, bar.bounds.y + 1.0F,
+        std::max(0.0F, bar.bounds.width - 2.0F) * clamped_ratio(bar.ratio),
+        std::max(0.0F, bar.bounds.height - 2.0F)}, fill);
+    DrawRectangleLinesEx(bounds, 1.0F, Color{8, 10, 16, 255});
+}
+
 }  // namespace
+
+Color hud_palette_color(HudPaletteId palette_id) noexcept {
+    const HudPalette palette = hud_palette();
+    switch (palette_id) {
+    case HudPaletteId::health: return palette.health;
+    case HudPaletteId::barrier: return palette.barrier;
+    case HudPaletteId::experience: return palette.experience;
+    }
+    return palette.text;
+}
+
+namespace {
+
+[[nodiscard]] const char* status_tag_label(HudStatusTagKind tag) noexcept {
+    switch (tag) {
+    case HudStatusTagKind::slow: return u8"减速";
+    case HudStatusTagKind::corrosion: return u8"腐蚀";
+    case HudStatusTagKind::invulnerable: return u8"无敌";
+    }
+    return "";
+}
+
+}  // namespace
+
+PlayerPanelPlan make_player_panel_plan(const PlayerHudModel& player,
+    const HudLayout& layout, float presentation_seconds) noexcept {
+    PlayerPanelPlan plan{};
+    if (!player.visible || layout.player_panel.width <= 0.0F
+            || layout.player_panel.height <= 0.0F || layout.scale <= 0.0F) {
+        return plan;
+    }
+
+    plan.bars[plan.bar_count++] = {
+        player_bar_bounds(layout, 26.0F), clamped_ratio(player.hp_ratio),
+        HudBarKind::health};
+    if (player.max_barrier > 0) {
+        plan.bars[plan.bar_count++] = {
+            player_bar_bounds(layout, 52.0F), clamped_ratio(player.barrier_ratio),
+            HudBarKind::barrier};
+    }
+    plan.experience_maxed = player.level >= 100U;
+    plan.bars[plan.bar_count++] = {
+        player_bar_bounds(layout, 78.0F),
+        plan.experience_maxed ? 1.0F : clamped_ratio(player.experience_ratio),
+        HudBarKind::experience};
+
+    plan.tag_count = std::min<std::uint8_t>(player.status_tag_count,
+        static_cast<std::uint8_t>(plan.tags.size()));
+    for (std::size_t index = 0U; index < plan.tag_count; ++index) {
+        plan.tags[index] = player.status_tags[index];
+    }
+
+    const float seconds = std::max(0.0F, presentation_seconds);
+    const float pulse_phase = std::fmod(seconds, 0.5F);
+    plan.low_health_emphasis = clamped_ratio(player.hp_ratio) < 0.25F
+        && pulse_phase < 0.25F;
+    return plan;
+}
 
 HudRenderer::~HudRenderer() noexcept {
     shutdown();
@@ -101,8 +198,59 @@ bool HudRenderer::font_ready() const noexcept {
 
 void HudRenderer::draw(const HudViewModel& view,
     const HudLayout& layout) const noexcept {
-    static_cast<void>(view);
-    static_cast<void>(layout);
+    if (!font_ready_ || !IsWindowReady()) return;
+    const PlayerPanelPlan plan = make_player_panel_plan(view.player, layout,
+        static_cast<float>(GetTime()));
+    if (plan.bar_count == 0U) return;
+
+    const HudPalette palette = hud_palette();
+    DrawRectangleRounded({layout.player_panel.x, layout.player_panel.y,
+        layout.player_panel.width, layout.player_panel.height}, 0.08F, 6,
+        Color{7, 10, 17, 220});
+
+    char text[96]{};
+    for (std::size_t index = 0U; index < plan.bar_count; ++index) {
+        const HudBarPlan& bar = plan.bars[index];
+        switch (bar.kind) {
+        case HudBarKind::health:
+            std::snprintf(text, sizeof(text), u8"生命 HP %d/%d", view.player.hp,
+                view.player.max_hp);
+            break;
+        case HudBarKind::barrier:
+            std::snprintf(text, sizeof(text), u8"护盾 %d/%d", view.player.barrier,
+                view.player.max_barrier);
+            break;
+        case HudBarKind::experience:
+            if (plan.experience_maxed) {
+                std::snprintf(text, sizeof(text), "XP MAX");
+            } else {
+                std::snprintf(text, sizeof(text), "XP %llu/%llu",
+                    static_cast<unsigned long long>(view.player.experience),
+                    static_cast<unsigned long long>(view.player.required_experience));
+            }
+            break;
+        }
+        DrawTextEx(font_, text, {layout.player_panel.x + (12.0F * layout.scale),
+            bar.bounds.y - (2.0F * layout.scale)}, 15.0F * layout.scale,
+            1.0F * layout.scale, palette.text);
+        draw_player_bar(bar);
+    }
+    if (plan.low_health_emphasis) {
+        DrawRectangleLinesEx({layout.player_panel.x, layout.player_panel.y,
+            layout.player_panel.width, layout.player_panel.height},
+            2.0F * layout.scale,
+            palette.health);
+    }
+    for (std::size_t index = 0U; index < plan.tag_count; ++index) {
+        const float tag_x = layout.player_panel.x
+            + ((12.0F + static_cast<float>(index) * 64.0F) * layout.scale);
+        const float tag_y = layout.player_panel.y + (110.0F * layout.scale);
+        DrawRectangleRounded({tag_x, tag_y, 56.0F * layout.scale,
+            20.0F * layout.scale}, 0.18F, 4, Color{30, 39, 55, 235});
+        DrawTextEx(font_, status_tag_label(plan.tags[index]),
+            {tag_x + (8.0F * layout.scale), tag_y + (2.0F * layout.scale)},
+            13.0F * layout.scale, 1.0F * layout.scale, palette.text);
+    }
 }
 
 void CombatRenderer::draw_abyss_hud(
