@@ -3,11 +3,16 @@
 #include "combat_feedback.hpp"
 #include "death_overlay_renderer.hpp"
 #include "dungeon_view_math.hpp"
+#include "hud_notice_state.hpp"
+#include "hud_renderer.hpp"
+
+#include <cstdint>
 
 namespace arpg::platform {
 
 struct DungeonRenderStatus;
 struct ControlHints;
+class DebugOverlayRenderer;
 
 struct DoorRenderDecision final {
     const char* label{};
@@ -30,6 +35,17 @@ public:
     void consume_dungeon_event(const dungeon::DungeonEvent& event) noexcept;
     void clear_combat_transients() noexcept;
     void update(float frame_seconds) noexcept;
+    void observe_hud(
+        const dungeon::DungeonSnapshot& previous,
+        const dungeon::DungeonSnapshot& current,
+        const DungeonRenderStatus& runtime_status,
+        const ControlHints& control_hints,
+        float frame_seconds,
+        bool paused) noexcept;
+    [[nodiscard]] const HudViewModel& hud_model() const noexcept;
+    [[nodiscard]] HudNoticeView hud_notice_view() const noexcept;
+    [[nodiscard]] std::uint64_t hud_binding_revision() const noexcept;
+    [[nodiscard]] std::uint64_t hud_observation_count() const noexcept;
     void draw(
         const dungeon::DungeonSnapshot& previous,
         const dungeon::DungeonSnapshot& current,
@@ -37,8 +53,7 @@ public:
         float interpolation_alpha,
         bool draw_debug,
         const CombatFeedback& feedback,
-        bool audio_ready,
-        const ControlHints& control_hints) noexcept;
+        bool audio_ready) noexcept;
 
 private:
     void draw_room(const dungeon::DungeonSnapshot& current) const noexcept;
@@ -48,11 +63,7 @@ private:
         float interpolation_alpha,
         bool draw_debug,
         const CombatFeedback& feedback) const noexcept;
-    void draw_hud(
-        const dungeon::DungeonSnapshot& current,
-        const DungeonRenderStatus& runtime_status,
-        bool draw_debug,
-        const ControlHints& control_hints) const noexcept;
+    void draw_hud() const noexcept;
     void draw_abyss_hud(
         const dungeon::DungeonSnapshot& current,
         float x,
@@ -62,16 +73,16 @@ private:
         const combat::CombatSnapshot& snapshot,
         float width,
         float height) const noexcept;
-    void draw_debug_overlay(
-        const dungeon::DungeonSnapshot& current,
-        const DungeonRenderStatus& runtime_status,
-        const CombatFeedback& feedback,
-        bool audio_ready) const noexcept;
-
     combat::CombatEvent last_event_{};
     bool has_last_event_{};
     TransitionVisualState transition_{};
     DeathOverlayRenderer death_overlay_{};
+    HudRenderer hud_renderer_{};
+    HudNoticeState hud_notices_{};
+    HudViewModel hud_model_{};
+    HudLayout hud_layout_{};
+    std::uint64_t hud_binding_revision_{};
+    std::uint64_t hud_observation_count_{};
 };
 
 }  // namespace arpg::platform

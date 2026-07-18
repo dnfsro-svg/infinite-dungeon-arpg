@@ -1,5 +1,6 @@
 #include "combat_renderer.hpp"
 
+#include "debug_overlay_renderer.hpp"
 #include "dungeon_runtime.hpp"
 
 #include <raylib.h>
@@ -9,10 +10,17 @@
 namespace arpg::platform {
 
 bool CombatRenderer::initialize_resources() noexcept {
-    return death_overlay_.initialize();
+    const bool death_font_ready = death_overlay_.initialize();
+    const bool hud_font_ready = hud_renderer_.initialize();
+    if (!death_font_ready || !hud_font_ready) {
+        TraceLog(LOG_WARNING,
+            "HUD overlays are using a fallback font; formal CJK validation will fail");
+    }
+    return true;
 }
 
 void CombatRenderer::shutdown_resources() noexcept {
+    hud_renderer_.shutdown();
     death_overlay_.shutdown();
 }
 
@@ -49,6 +57,42 @@ void CombatRenderer::update(float frame_seconds) noexcept {
     transition_ = advance_transition(transition_, frame_seconds);
 }
 
+void CombatRenderer::observe_hud(
+    const dungeon::DungeonSnapshot& previous,
+    const dungeon::DungeonSnapshot& current,
+    const DungeonRenderStatus& runtime_status,
+    const ControlHints& control_hints,
+    float frame_seconds,
+    bool paused) noexcept {
+    hud_notices_.observe(previous, current, runtime_status, control_hints, false);
+    hud_notices_.update(frame_seconds, paused);
+    HudViewModel model{};
+    build_hud_view_model(model, current, runtime_status, control_hints);
+    attach_notice_view(model, hud_notices_.view());
+    hud_model_ = model;
+    hud_layout_ = IsWindowReady()
+        ? make_hud_layout(GetScreenWidth(), GetScreenHeight(), false)
+        : HudLayout{};
+    hud_binding_revision_ = control_hints.revision;
+    ++hud_observation_count_;
+}
+
+const HudViewModel& CombatRenderer::hud_model() const noexcept {
+    return hud_model_;
+}
+
+HudNoticeView CombatRenderer::hud_notice_view() const noexcept {
+    return hud_notices_.view();
+}
+
+std::uint64_t CombatRenderer::hud_binding_revision() const noexcept {
+    return hud_binding_revision_;
+}
+
+std::uint64_t CombatRenderer::hud_observation_count() const noexcept {
+    return hud_observation_count_;
+}
+
 void CombatRenderer::draw(
     const dungeon::DungeonSnapshot& previous,
     const dungeon::DungeonSnapshot& current,
@@ -56,8 +100,7 @@ void CombatRenderer::draw(
     float interpolation_alpha,
     bool draw_debug,
     const CombatFeedback& feedback,
-    bool audio_ready,
-    const ControlHints& control_hints) noexcept {
+    bool audio_ready) noexcept {
     transition_ = transition_after_room_phase(transition_, current.phase);
 
     const CameraOffset camera_offset = feedback.camera_offset();
@@ -70,13 +113,12 @@ void CombatRenderer::draw(
         draw_debug, feedback);
     EndMode2D();
 
-    draw_hud(current, runtime_status, draw_debug, control_hints);
+    draw_hud();
     if (draw_debug) {
-        draw_debug_overlay(current, runtime_status, feedback, audio_ready);
+        DebugOverlayRenderer{}.draw(current, runtime_status, feedback, audio_ready,
+            hud_model_.diagnostics, hud_notices_.dropped_count(),
+            hud_binding_revision_);
     }
-    DrawText(draw_debug ? "F1 DEBUG ON" : "F1 DEBUG OFF",
-        GetScreenWidth() - 150, 20, 16,
-        draw_debug ? Color{255, 126, 197, 255} : Color{142, 153, 170, 255});
 
     const float overlay_alpha = transition_overlay_alpha(transition_.seconds_left);
     if (overlay_alpha > 0.0F) {

@@ -20,6 +20,7 @@ if(TARGET arpg_raylib)
         hud_layout_tests.cpp
         hud_font_tests.cpp
         hud_render_plan_tests.cpp
+        hud_host_integration_tests.cpp
         death_input_gate_tests.cpp
         death_overlay_view_tests.cpp)
     target_sources(arpg_platform_tests PRIVATE inventory_view_math_tests.cpp)

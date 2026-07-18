@@ -473,24 +473,8 @@ void CombatRenderer::draw_abyss_hud(
     static_cast<void>(line_step);
 }
 
-void CombatRenderer::draw_hud(
-    const dungeon::DungeonSnapshot& current,
-    const DungeonRenderStatus& runtime_status,
-    bool draw_debug,
-    const ControlHints& control_hints) const noexcept {
-    static_cast<void>(draw_debug);
-    HudViewModel model{};
-    build_hud_view_model(model, current, runtime_status, control_hints);
-    const RenderLayout legacy = render_layout(false);
-    DrawRectangleRounded({16.0F, 14.0F, legacy.hud_panel_width,
-        72.0F}, 0.06F, 6, Color{7, 10, 17, 220});
-    DrawText(model.room.objective.bytes.data(), static_cast<int>(legacy.hud_x),
-        legacy.hud_first_line_y, 16, Color{218, 226, 239, 255});
-    DrawText(model.navigation.primary.bytes.data(), static_cast<int>(legacy.hud_x),
-        legacy.hud_second_instruction_y, 16, Color{110, 207, 255, 255});
-    DrawText(model.navigation.ecology_label.bytes.data(),
-        static_cast<int>(legacy.hud_x), legacy.hud_status_y, 16,
-        Color{218, 226, 239, 255});
+void CombatRenderer::draw_hud() const noexcept {
+    hud_renderer_.draw(hud_model_, hud_layout_);
 }
 
 }  // namespace arpg::platform

@@ -9,6 +9,7 @@ add_library(arpg_raylib STATIC
     death_overlay_renderer.cpp
     death_overlay_view.cpp
     debug_renderer.cpp
+    debug_overlay_renderer.cpp
     dungeon_view_math.cpp
     dungeon_runtime.cpp
     host_input.cpp
