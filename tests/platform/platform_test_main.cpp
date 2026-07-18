@@ -53,5 +53,5 @@ int main() {
         hud_view_model_suite(),
     };
 
-    return arpg::test::run_suites(suites, 189, "stage 11c task 1 HUD view model");
+    return arpg::test::run_suites(suites, 190, "stage 11c task 1 HUD view model");
 }

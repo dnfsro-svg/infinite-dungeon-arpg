@@ -64,7 +64,7 @@ void build_hud_view_model(HudViewModel& output,
         u8"目标：剩余 %u 个敌人",
         static_cast<unsigned>(snapshot.remaining_targets));
     format_text(output.room.secondary, output.diagnostics,
-        u8"待结算经验 +%llu | %s | %s",
+        u8"待结算经验 +%llu | %.32s | %.32s",
         static_cast<unsigned long long>(snapshot.pending_room_experience),
         hints.primary.data(), hints.secondary.data());
 

@@ -152,9 +152,30 @@ arpg::test::Failure objective_uses_chinese_target_text() noexcept {
     return {};
 }
 
-arpg::test::Failure long_secondary_text_truncates_and_terminates() noexcept {
+arpg::test::Failure non_terminated_hint_buffers_are_bounded_and_terminated() noexcept {
     dungeon::DungeonSnapshot snapshot = normal_snapshot();
     snapshot.pending_room_experience = 1U;
+    platform::ControlHints hints{};
+    hints.primary.fill('P');
+    hints.secondary.fill('S');
+    hints.revision = (std::numeric_limits<std::uint64_t>::max)();
+    platform::HudViewModel output{};
+    platform::build_hud_view_model(output, snapshot, {}, hints);
+
+    ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(),
+        "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(),
+        "SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS") != nullptr);
+    ARPG_REQUIRE(!output.room.secondary.truncated);
+    ARPG_REQUIRE(output.room.secondary.bytes.back() == '\0');
+    ARPG_REQUIRE(output.diagnostics.truncated_texts == 0U);
+    return {};
+}
+
+arpg::test::Failure truncated_secondary_text_remains_nul_terminated() noexcept {
+    dungeon::DungeonSnapshot snapshot = normal_snapshot();
+    snapshot.pending_room_experience =
+        (std::numeric_limits<std::uint64_t>::max)();
     platform::ControlHints hints{};
     hints.primary.fill('P');
     hints.secondary.fill('S');
@@ -176,7 +197,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"status tag capacity", &active_statuses_project_in_fixed_priority_order},
     {"uint32 navigation biases", &navigation_preserves_all_uint32_biases},
     {"Chinese objective text", &objective_uses_chinese_target_text},
-    {"text truncation and termination", &long_secondary_text_truncates_and_terminates},
+    {"non-terminated hint buffers", &non_terminated_hint_buffers_are_bounded_and_terminated},
+    {"truncated secondary text", &truncated_secondary_text_remains_nul_terminated},
 };
 
 }  // namespace
