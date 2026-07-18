@@ -1,7 +1,7 @@
 # Stage 11-C 完整 HUD 信息闭环设计
 
-日期：2026-07-18  
-分支：`codex/stage11c-complete-hud`  
+日期：2026-07-18
+分支：`codex/stage11c-complete-hud`
 基线：已验收 Stage 11-B `bd8c8be6dd02614c85a117d869520c57fa7aca1f`
 
 ## 1. 目标
