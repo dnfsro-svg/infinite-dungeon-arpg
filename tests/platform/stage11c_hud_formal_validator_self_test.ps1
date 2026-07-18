@@ -6,6 +6,22 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
+Add-Type -TypeDefinition @'
+public static class Stage11CFnv1aSelfTest {
+    public static ulong Hash(byte[] bytes) {
+        const ulong Offset = 1469598103934665603UL;
+        const ulong Prime = 1099511628211UL;
+        unchecked {
+            ulong hash = Offset;
+            foreach (byte value in bytes) {
+                hash ^= value;
+                hash *= Prime;
+            }
+            return hash;
+        }
+    }
+}
+'@
 
 function New-Mutation([string]$Name) {
     $target = Join-Path $MutationRoot $Name
@@ -32,6 +48,17 @@ function Save-MutatedBitmap([string]$Path, [scriptblock]$Mutation) {
     }
 }
 
+function Update-AggregateImageHash([string]$Root, [string]$Name) {
+    $image = Join-Path $Root ($Name + '.png')
+    [uint64]$hash = [Stage11CFnv1aSelfTest]::Hash(
+        [System.IO.File]::ReadAllBytes($image))
+    $report = Join-Path $Root 'stage11c-hud-evidence.txt'
+    $content = Get-Content -Raw -LiteralPath $report -Encoding UTF8
+    $content = $content -replace ('(?m)^' + [regex]::Escape($Name) +
+        '_image_hash=.*$'), ($Name + '_image_hash=' + $hash)
+    Set-Content -LiteralPath $report -Value $content -Encoding UTF8
+}
+
 $mutations = @()
 
 $removedChinese = New-Mutation 'removed_chinese'
@@ -56,6 +83,7 @@ Save-MutatedBitmap (Join-Path $missingGlyph 'abyss-warning.png') {
         } finally { $pen.Dispose() }
     } finally { $graphics.Dispose() }
 }
+Update-AggregateImageHash $missingGlyph 'abyss-warning'
 $mutations += @{ Name='missing_glyph_boxes'; Path=$missingGlyph; Reason='missing-glyph boxes' }
 
 $clearedPanel = New-Mutation 'cleared_chinese_panel'
@@ -65,6 +93,7 @@ Save-MutatedBitmap (Join-Path $clearedPanel 'level-up.png') {
     try { $graphics.FillRectangle([System.Drawing.Brushes]::Black, 340, 570, 600, 70) }
     finally { $graphics.Dispose() }
 }
+Update-AggregateImageHash $clearedPanel 'level-up'
 $mutations += @{ Name='cleared_chinese_panel'; Path=$clearedPanel; Reason='Chinese text region is blank' }
 
 $tamperedHash = New-Mutation 'tampered_snapshot_hash'
@@ -73,6 +102,26 @@ $content = Get-Content -Raw -LiteralPath $report -Encoding UTF8
 $content = $content -replace '(?m)^abyss-warning_snapshot_hash=.*$', 'abyss-warning_snapshot_hash=1'
 Set-Content -LiteralPath $report -Value $content -Encoding UTF8
 $mutations += @{ Name='tampered_snapshot_hash'; Path=$tamperedHash; Reason='snapshot hash mismatch' }
+
+$tamperedPixel = New-Mutation 'tampered_png_pixel'
+Save-MutatedBitmap (Join-Path $tamperedPixel 'combat.png') {
+    param($bitmap)
+    $original = $bitmap.GetPixel(0, 0)
+    $replacement = if ($original.ToArgb() -eq [System.Drawing.Color]::Magenta.ToArgb()) {
+        [System.Drawing.Color]::Lime
+    } else {
+        [System.Drawing.Color]::Magenta
+    }
+    $bitmap.SetPixel(0, 0, $replacement)
+}
+$mutations += @{ Name='tampered_png_pixel'; Path=$tamperedPixel; Reason='image hash mismatch: combat' }
+
+$tamperedImageHash = New-Mutation 'tampered_aggregate_image_hash'
+$report = Join-Path $tamperedImageHash 'stage11c-hud-evidence.txt'
+$content = Get-Content -Raw -LiteralPath $report -Encoding UTF8
+$content = $content -replace '(?m)^combat_image_hash=.*$', 'combat_image_hash=1'
+Set-Content -LiteralPath $report -Value $content -Encoding UTF8
+$mutations += @{ Name='tampered_aggregate_image_hash'; Path=$tamperedImageHash; Reason='image hash mismatch: combat' }
 
 $zeroRect = New-Mutation 'zero_sized_rect'
 $summary = Join-Path $zeroRect 'combat.txt'

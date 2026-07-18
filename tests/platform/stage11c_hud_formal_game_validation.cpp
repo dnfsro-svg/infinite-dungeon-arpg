@@ -50,6 +50,26 @@ constexpr std::array<ScenarioSpec, 6> kScenarios{{
 
 std::filesystem::path g_executable_path{};
 
+constexpr std::uint64_t kFnvOffset = 1469598103934665603ULL;
+constexpr std::uint64_t kFnvPrime = 1099511628211ULL;
+constexpr std::array<unsigned char, 6> kFnvFixture{{
+    0x00U, 0x01U, 0x02U, 0x7FU, 0x80U, 0xFFU,
+}};
+
+[[nodiscard]] constexpr std::uint64_t hash_bytes(
+    const unsigned char* bytes, std::size_t size) noexcept {
+    std::uint64_t hash = kFnvOffset;
+    for (std::size_t index{}; index < size; ++index) {
+        hash ^= bytes[index];
+        hash *= kFnvPrime;
+    }
+    return hash;
+}
+
+static_assert(hash_bytes(kFnvFixture.data(), kFnvFixture.size())
+    == 12476124638988131554ULL,
+    "Stage11C FNV-1a fixture must remain language-neutral");
+
 [[nodiscard]] std::optional<SelectedRun> find_abyss_run() noexcept {
     constexpr std::array<dungeon::ExitDirection, 4> directions{{
         dungeon::ExitDirection::up,
@@ -97,11 +117,11 @@ std::filesystem::path g_executable_path{};
 
 [[nodiscard]] std::uint64_t hash_file(const std::filesystem::path& path) {
     std::ifstream stream(path, std::ios::binary);
-    std::uint64_t hash = 1469598103934665603ULL;
+    std::uint64_t hash = kFnvOffset;
     char byte{};
     while (stream.get(byte)) {
         hash ^= static_cast<unsigned char>(byte);
-        hash *= 1099511628211ULL;
+        hash *= kFnvPrime;
     }
     return hash;
 }
@@ -251,6 +271,8 @@ int main(int argc, char** argv) {
     }
     std::ofstream report(root / "stage11c-hud-evidence.txt",
         std::ios::out | std::ios::trunc);
+    report << "fnv1a_fixture_hash="
+           << hash_bytes(kFnvFixture.data(), kFnvFixture.size()) << '\n';
     for (const ScenarioSpec& spec : kScenarios) {
         const auto values = read_summary(root / spec.summary);
         const bool valid = summary_has_required_fields(values, spec);

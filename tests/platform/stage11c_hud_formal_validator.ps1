@@ -34,6 +34,32 @@ Get-Content -LiteralPath $report -Encoding UTF8 | ForEach-Object {
 if ($reportValues.result -ne 'pass') { throw 'formal evidence aggregate did not pass' }
 
 Add-Type -AssemblyName System.Drawing
+if (-not ('Stage11CFnv1a' -as [type])) {
+    Add-Type -TypeDefinition @'
+public static class Stage11CFnv1a {
+    public static ulong Hash(byte[] bytes) {
+        const ulong Offset = 1469598103934665603UL;
+        const ulong Prime = 1099511628211UL;
+        unchecked {
+            ulong hash = Offset;
+            foreach (byte value in bytes) {
+                hash ^= value;
+                hash *= Prime;
+            }
+            return hash;
+        }
+    }
+}
+'@
+}
+$fnvFixture = [byte[]](0x00,0x01,0x02,0x7F,0x80,0xFF)
+[uint64]$fnvFixtureExpected = 12476124638988131554
+[uint64]$fnvFixtureActual = [Stage11CFnv1a]::Hash($fnvFixture)
+if ($fnvFixtureActual -ne $fnvFixtureExpected -or
+        -not $reportValues.ContainsKey('fnv1a_fixture_hash') -or
+        [uint64]$reportValues.fnv1a_fixture_hash -ne $fnvFixtureExpected) {
+    throw 'FNV-1a fixture mismatch between formal runner and validator'
+}
 function Read-Values([string]$Path) {
     $result = @{}
     Get-Content -LiteralPath $Path -Encoding UTF8 | ForEach-Object {
@@ -135,6 +161,12 @@ foreach ($name in $expected.Keys) {
     if ((Get-Item -LiteralPath $imagePath).LastWriteTimeUtc -lt [DateTime]::UtcNow.AddMinutes(-15)) {
         throw "stale screenshot: $name"
     }
+    $imageHashKey = $name + '_image_hash'
+    [uint64]$actualImageHash = [Stage11CFnv1a]::Hash($bytes)
+    if (-not $reportValues.ContainsKey($imageHashKey) -or
+            [uint64]$reportValues[$imageHashKey] -ne $actualImageHash) {
+        throw "image hash mismatch: $name"
+    }
 
     $values = Read-Values $summaryPath
     foreach ($key in $required) {
@@ -231,7 +263,7 @@ foreach ($name in $expected.Keys) {
     } finally {
         $bitmap.Dispose()
     }
-    if ($reportValues[$name + '_valid'] -ne '1' -or [uint64]$reportValues[$name + '_image_hash'] -eq 0) {
+    if ($reportValues[$name + '_valid'] -ne '1') {
         throw "aggregate report rejected scenario: $name"
     }
 }
