@@ -136,6 +136,30 @@ comment-only/string-only 伪造链。host gate 还要求 `pause_open` 的 true �
 `dumpbin /dependents out/build/windows-msvc-release/bin/arpg_game.exe` 只列出 Windows 与
 MSVC 运行库，不含 `raylib.dll`。
 
+## 最终双审修复补充
+
+最终双审提出的三项 Important 已分别通过独立提交闭环：
+
+- `94708ae`：`CombatRenderer` 持有固定容量 `HudViewModelProjector`。目标、导航和已提交
+  按键提示分别以精确字段 key 缓存；normal/recovery/death 三类有效呈现帧共享缓存，非法
+  owner 无副作用。只读累计计数证明相同字段不重复格式化；动态生命、剩余目标和通知仍逐帧
+  刷新。10 万次压力测试持续断言相同场景计数不变，cold-first/steady heap allocation 均为零。
+- `26438a2`：四向普通门和深渊门由移动触碰，不再显示 Interact 键前缀。普通门显示
+  `进入出口`；深渊确认显示 `离开后再次触碰同一出口以放弃全部剩余奖励`。只有洞口下降和
+  descent 确认继续使用已提交 Interact 键；共享中文字体语料同步覆盖新文本。
+- `d568f66`：聚合报告的六个 `*_image_hash` 与实际 PNG bytes 逐字节绑定。runner 与
+  validator 都使用 offset `1469598103934665603`、prime `1099511628211` 的 FNV-1a；
+  fixture `00 01 02 7F 80 FF` 在两端均必须得到 `12476124638988131554`。validator 的
+  `unchecked ulong` 实现避免 PowerShell 移位、符号和溢出差异；self-test 新增有效 PNG
+  单像素篡改与仅聚合 hash 篡改，两者均按名称拒绝。
+
+修复后的 Debug 聚焦验证为：Stage 11-C stress/formal/validator/self/architecture/evidence
+guard 共 8/8、31.73 秒；死亡五路径、`platform.units`、设置 formal、input latency 和
+host input 共 5/5、71.02 秒。六张 1280x720 PNG 已重新生成并逐张目检，深渊图中的两行
+情境提示无按键前缀、无缺字框。聚合报告包含六项 `*_valid=1`、非零且逐文件匹配的 PNG/
+snapshot hash，以及 `result=pass`。本轮按修复任务边界未重复执行完整 70 项 Debug 或
+Release；由最终父级审查通过后统一执行。
+
 ## 分支边界与停止条件
 
 最终审计以 Stage 11-B 基线执行 `git diff --check`、`git status --short`、`git diff --stat`
