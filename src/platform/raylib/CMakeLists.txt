@@ -13,6 +13,7 @@ add_library(arpg_raylib STATIC
     dungeon_runtime.cpp
     host_input.cpp
     host_launch_options.cpp
+    hud_font.cpp
     hud_view_model.cpp
     hud_notice_state.cpp
     hud_layout.cpp
