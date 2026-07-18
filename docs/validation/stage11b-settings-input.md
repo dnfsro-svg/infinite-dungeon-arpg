@@ -115,10 +115,15 @@ ctest --preset windows-msvc-release --output-on-failure
 - Release：fresh configure、clean-first **263** 个构建目标成功，完整 CTest **61/61** 通过；
   最终日志结束于 09:38:29。
 - 后续整改的 Debug formal 证据位于带空格目录 `stage11b settings evidence`：真实 V6 双槽
-  `run_a.sav`/`run_b.sav` 分别为 460 bytes，前后 hash 相等；暂停先推进 1 tick，再冻结 120
-  presented frames（`1/1`），恢复后恰推进 1 tick（`1→2`，无 catch-up）；旧 `J` 接受数 `0`、
-  新 `U` 接受数 `1`。`corrupt.png` 可见红色中文“设置已恢复默认值”，并由字体加载状态和正式
-  验证器共同确认。
+  `run_a.sav`/`run_b.sav` 分别为 460 bytes：`run_a` 的前后 FNV-1a hash 均为
+  `16395907754423809155`，`run_b` 的前后 hash 均为 `1222458592949165727`。暂停先推进 1 tick，
+  再冻结 120 presented frames（`1/1`），恢复后恰推进 1 tick（`1→2`，无 catch-up）；生产
+  `queue_action` 接受计数为旧 `J=0`、新 `U=1`。`corrupt.png` 可见红色中文“设置已恢复默认值”，
+  并由字体加载状态和正式验证器共同确认。
+- 最终整改门禁：Debug fresh configure、clean-first **263** 个构建目标、完整 CTest **61/61**
+  通过（日志结束于 10:08:46）；Release fresh configure、clean-first **263** 个构建目标、完整
+  CTest **61/61** 通过（日志结束于 10:13:50）。Release 的带空格证据目录于 10:12:27–10:12:31
+  新鲜生成七张 PNG 与子进程 `.cmd` 文件，摘要 `result=pass`。
 
 Release CTest 会重新运行 `stage11b.settings_formal`，因此上述 Release 证据不是 Debug 产物的复用。
 
