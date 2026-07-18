@@ -21,6 +21,7 @@ arpg::test::TestSuite pause_menu_view_suite() noexcept;
 arpg::test::TestSuite window_settings_suite() noexcept;
 arpg::test::TestSuite pause_host_gate_suite() noexcept;
 arpg::test::TestSuite control_hints_suite() noexcept;
+arpg::test::TestSuite hud_view_model_suite() noexcept;
 
 int main() {
 #if defined(_WIN32) && defined(_DEBUG)
@@ -49,7 +50,8 @@ int main() {
         pause_menu_view_suite(),
         window_settings_suite(),
         control_hints_suite(),
+        hud_view_model_suite(),
     };
 
-    return arpg::test::run_suites(suites, 180, "stage 11b task 9 control hints");
+    return arpg::test::run_suites(suites, 189, "stage 11c task 1 HUD view model");
 }
