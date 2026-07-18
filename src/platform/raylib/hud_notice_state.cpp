@@ -221,29 +221,15 @@ void add_abyss_confirmation_notice(std::array<HudNotice, 4>& notices,
     const dungeon::DungeonSnapshot& current,
     const ControlHints& hints) noexcept {
     const AbyssHudValues values = abyss_hud_values(current);
-    if (!values.confirmation_visible) {
+    if (values.confirmation_transition == dungeon::TransitionKind::descent) {
         add_action_notice(notices, dropped_count, HudNoticeKind::abyss_abandon,
-            kAbyssPriority, hints, "Interact", u8"再次交互以放弃奖励");
+            kAbyssPriority, hints, "Interact",
+            u8"再次交互，放弃剩余奖励并下降");
         return;
     }
-
-    HudNotice notice{};
-    notice.kind = HudNoticeKind::abyss_abandon;
-    notice.priority = kAbyssPriority;
-    notice.seconds_left = kTransientSeconds;
-    char key[32]{};
-    if (!action_key(key, sizeof(key), hints, "Interact")) {
-        if (values.confirmation_transition == dungeon::TransitionKind::descent) {
-            format_notice(notice, u8"再次交互，放弃剩余奖励并下降");
-        } else {
-            format_notice(notice, u8"再次触碰同一出口以放弃全部剩余奖励");
-        }
-    } else if (values.confirmation_transition == dungeon::TransitionKind::descent) {
-        format_notice(notice, u8"%s 再次交互，放弃剩余奖励并下降", key);
-    } else {
-        format_notice(notice, u8"%s 再次触碰同一出口以放弃全部剩余奖励", key);
-    }
-    enqueue(notices, dropped_count, notice);
+    add_transient(notices, dropped_count, HudNoticeKind::abyss_abandon,
+        kAbyssPriority,
+        u8"离开后再次触碰同一出口以放弃全部剩余奖励");
 }
 
 }  // namespace
@@ -282,8 +268,8 @@ void HudNoticeState::observe(const dungeon::DungeonSnapshot& previous,
             kHolePriority, hints, "Interact", u8"进入下一层");
     }
     if (context_changed && awaiting_exit && has_open_exit(current)) {
-        add_action_notice(notices_, dropped_count_, HudNoticeKind::exit_ready,
-            kExitPriority, hints, "Interact", u8"进入出口");
+        add_transient(notices_, dropped_count_, HudNoticeKind::exit_ready,
+            kExitPriority, u8"进入出口");
     }
     if (current.phase == dungeon::RoomPhase::cleared
         && current.remaining_targets == 0U

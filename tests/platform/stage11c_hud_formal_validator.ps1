@@ -22,6 +22,7 @@ $cn = @{
     LevelUp = ConvertFrom-Codepoints @(0x5347,0x7EA7)
     Abyss = ConvertFrom-Codepoints @(0x6DF1,0x6E0A)
     Abandon = ConvertFrom-Codepoints @(0x653E,0x5F03)
+    DoorAbandon = ConvertFrom-Codepoints @(0x79BB,0x5F00,0x540E,0x518D,0x6B21,0x89E6,0x78B0,0x540C,0x4E00,0x51FA,0x53E3,0x4EE5,0x653E,0x5F03,0x5168,0x90E8,0x5269,0x4F59,0x5956,0x52B1)
 }
 $report = Join-Path $EvidenceDirectory 'stage11c-hud-evidence.txt'
 if (-not (Test-Path -LiteralPath $report)) { throw "missing formal evidence report: $report" }
@@ -156,6 +157,7 @@ foreach ($name in $expected.Keys) {
     $navigation = @($values.navigation_values -split ',' | ForEach-Object { [uint64]$_ })
     if ($navigation.Count -ne 7 -or $navigation[0] -eq 0 -or $navigation[1] -eq 0) { throw "invalid navigation values: $name" }
     $noticeKinds = @($values.notice_kinds -split ',')
+    $noticeTexts = @($values.notice_texts -split '\|')
     $hasChineseObjective = $values.objective -match '[\u4e00-\u9fff]'
     $hasChineseNotice = $values.notice_texts -match '[\u4e00-\u9fff]'
     switch ($name) {
@@ -182,6 +184,7 @@ foreach ($name in $expected.Keys) {
             if (-not $hasChineseObjective -or $values.objective -notmatch [regex]::Escape($cn.Abyss) -or
                     -not $hasChineseNotice -or -not ($noticeKinds -contains '3') -or
                     $values.notice_texts -notmatch [regex]::Escape($cn.Abandon) -or
+                    $noticeTexts -notcontains $cn.DoorAbandon -or
                     $values.notice_texts -notmatch [regex]::Escape($cn.Reward)) {
                 throw 'abyss-warning Chinese semantic mismatch'
             }

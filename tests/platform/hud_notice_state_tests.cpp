@@ -345,7 +345,7 @@ arpg::test::Failure production_visible_notices_are_chinese_first_and_font_covere
     current.abyss_exit_confirmation_armed = true;
     current.abyss_exit_confirmation_transition = dungeon::TransitionKind::door;
     ARPG_REQUIRE(require_primary(current, saved_status(), false,
-        u8"Q 再次触碰同一出口以放弃全部剩余奖励"));
+        u8"离开后再次触碰同一出口以放弃全部剩余奖励"));
 
     current = previous;
     current.phase = dungeon::RoomPhase::awaiting_exit;
@@ -355,7 +355,7 @@ arpg::test::Failure production_visible_notices_are_chinese_first_and_font_covere
     current = previous;
     current.phase = dungeon::RoomPhase::awaiting_exit;
     current.exits_open[0] = true;
-    ARPG_REQUIRE(require_primary(current, saved_status(), false, u8"Q 进入出口"));
+    ARPG_REQUIRE(require_primary(current, saved_status(), false, u8"进入出口"));
 
     current = previous;
     current.phase = dungeon::RoomPhase::cleared;

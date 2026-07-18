@@ -351,7 +351,8 @@ arpg::test::Failure abyss_confirmation_context_preserves_descent_and_door_meanin
     platform::build_hud_view_model(output, door, {}, hints);
     platform::attach_notice_view(output, door_notices.view());
     ARPG_REQUIRE(output.context.primary_kind == platform::HudNoticeKind::abyss_abandon);
-    ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), "F") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), "F") == nullptr);
+    ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), u8"离开后") != nullptr);
     ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), u8"同一出口") != nullptr);
     ARPG_REQUIRE(std::strstr(output.context.primary.bytes.data(), u8"全部剩余奖励") != nullptr);
     return {};
