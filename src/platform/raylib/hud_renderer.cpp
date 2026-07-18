@@ -1,6 +1,7 @@
 #include "combat_renderer.hpp"
 
 #include "combat_view_math.hpp"
+#include "control_hints.hpp"
 #include "dungeon_runtime.hpp"
 #include "dungeon_view_math.hpp"
 #include "render_layout.hpp"
@@ -91,7 +92,8 @@ void CombatRenderer::draw_abyss_hud(
 void CombatRenderer::draw_hud(
     const dungeon::DungeonSnapshot& current,
     const DungeonRenderStatus& runtime_status,
-    bool draw_debug) const noexcept {
+    bool draw_debug,
+    const ControlHints& control_hints) const noexcept {
     const RenderLayout layout = render_layout(draw_debug);
     const std::uint64_t room_ordinal = current.room_index
             == (std::numeric_limits<std::uint64_t>::max)()
@@ -103,10 +105,10 @@ void CombatRenderer::draw_hud(
     const Color text{218, 226, 239, 255};
     const Color accent{110, 207, 255, 255};
     int y = layout.hud_first_line_y;
-    DrawText("WASD Move  J Light  K Jump  L Launcher  E Descend  I Inventory",
+    DrawText(control_hints.primary.data(),
         static_cast<int>(layout.hud_x), y, 16, accent);
     y = layout.hud_second_instruction_y;
-    DrawText("P Star Chart after clear  R Reset  F1 Debug  F12 Screenshot  Esc Close/Exit",
+    DrawText(control_hints.secondary.data(),
         static_cast<int>(layout.hud_x), y, 16, accent);
     y = layout.hud_status_y;
     DrawText(TextFormat("Depth %llu  Floor Room %llu  Global Room %llu",

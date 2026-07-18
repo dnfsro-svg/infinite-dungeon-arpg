@@ -56,7 +56,8 @@ void CombatRenderer::draw(
     float interpolation_alpha,
     bool draw_debug,
     const CombatFeedback& feedback,
-    bool audio_ready) noexcept {
+    bool audio_ready,
+    const ControlHints& control_hints) noexcept {
     transition_ = transition_after_room_phase(transition_, current.phase);
 
     const CameraOffset camera_offset = feedback.camera_offset();
@@ -69,7 +70,7 @@ void CombatRenderer::draw(
         draw_debug, feedback);
     EndMode2D();
 
-    draw_hud(current, runtime_status, draw_debug);
+    draw_hud(current, runtime_status, draw_debug, control_hints);
     if (draw_debug) {
         draw_debug_overlay(current, runtime_status, feedback, audio_ready);
     }

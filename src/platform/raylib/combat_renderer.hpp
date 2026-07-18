@@ -7,6 +7,7 @@
 namespace arpg::platform {
 
 struct DungeonRenderStatus;
+struct ControlHints;
 
 struct DoorRenderDecision final {
     const char* label{};
@@ -36,7 +37,8 @@ public:
         float interpolation_alpha,
         bool draw_debug,
         const CombatFeedback& feedback,
-        bool audio_ready) noexcept;
+        bool audio_ready,
+        const ControlHints& control_hints) noexcept;
 
 private:
     void draw_room(const dungeon::DungeonSnapshot& current) const noexcept;
@@ -49,7 +51,8 @@ private:
     void draw_hud(
         const dungeon::DungeonSnapshot& current,
         const DungeonRenderStatus& runtime_status,
-        bool draw_debug) const noexcept;
+        bool draw_debug,
+        const ControlHints& control_hints) const noexcept;
     void draw_abyss_hud(
         const dungeon::DungeonSnapshot& current,
         float x,

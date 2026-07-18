@@ -3,6 +3,7 @@
 #include "combat_audio.hpp"
 #include "combat_feedback.hpp"
 #include "combat_renderer.hpp"
+#include "control_hints.hpp"
 #include "core/fixed_step.hpp"
 #include "dungeon_runtime.hpp"
 #include "dungeon_view_math.hpp"
@@ -605,6 +606,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         pause_menu.draft = committed_settings;
         settings::SettingsData live_settings = committed_settings;
         settings::SettingsData input_settings = committed_settings;
+        ControlHints control_hints{};
+        refresh_control_hints(control_hints, input_settings);
         bool pause_latched = false;
         bool draw_debug = false;
         bool passive_overlay_open = false;
@@ -805,12 +808,16 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 pause_menu, pause_context, pause_input);
             consume_host_settings_notice(
                 settings_notice, pause_screen_before, pause_menu);
+            const std::uint64_t input_revision_before = input_settings.revision;
             if (settle_host_pause_command(
                     pause_command, window_close_requested,
                     pause_menu, live_settings, input_settings,
                     settings_store, settings_backend)) {
                 exit_requested = true;
                 continue;
+            }
+            if (input_settings.revision != input_revision_before) {
+                refresh_control_hints(control_hints, input_settings);
             }
             const bool pause_open = pause_menu.screen != PauseScreen::closed;
             const bool pause_blocks_gameplay = pause_open || pause_was_open;
@@ -941,7 +948,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             ClearBackground(Color{13, 17, 27, 255});
             renderer.draw(previous, current, runtime.render_status(),
                 static_cast<float>(frame.interpolation_alpha), draw_debug,
-                feedback, audio_ready);
+                feedback, audio_ready, control_hints);
             if (passive_overlay_open) {
                 draw_passive_tree_overlay(current, runtime.render_status());
             }
