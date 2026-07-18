@@ -15,6 +15,7 @@ add_library(arpg_raylib STATIC
     host_launch_options.cpp
     hud_view_model.cpp
     hud_notice_state.cpp
+    hud_layout.cpp
     hud_renderer.cpp
     inventory_renderer.cpp
     inventory_view_math.cpp

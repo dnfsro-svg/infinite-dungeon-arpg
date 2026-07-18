@@ -1,6 +1,7 @@
 #pragma once
 
 #include "combat_view_math.hpp"
+#include "hud_layout.hpp"
 
 namespace arpg::platform {
 
