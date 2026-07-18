@@ -132,6 +132,25 @@ require_match_count(
     1
     "host logical mapping calls")
 
+# Every host path that presents through the shared EndDrawing helper must use
+# the production HUD presentation seam exactly once.  This binds normal,
+# recovery and death-overlay ownership without registering a Task8 guard.
+require_match_count(
+    "${HOST_SOURCE}"
+    "renderer\\.observe_presented_hud_frame\\("
+    2
+    "host presented HUD observation seam calls")
+require_match_count(
+    "${HOST_SOURCE}"
+    "HudPresentedFrame::recovery"
+    1
+    "host recovery HUD observation owner")
+require_match_count(
+    "${HOST_SOURCE}"
+    "HudPresentedFrame::death_overlay"
+    1
+    "host death HUD observation owner")
+
 set(POISON_TARGET
     "::arpg::platform::direct_input_poison::blocked")
 set(DIRECT_INPUT_APIS

@@ -865,8 +865,9 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 }
                 // A recovery screen owns presentation, not simulation.  It still
                 // receives exactly one HUD observation before its presented frame.
-                renderer.observe_hud(previous, current, runtime.render_status(),
-                    control_hints, GetFrameTime(), true);
+                renderer.observe_presented_hud_frame(HudPresentedFrame::recovery,
+                    previous, current, runtime.render_status(), control_hints,
+                    GetFrameTime(), true);
                 draw_recovery_screen(runtime.render_status());
                 std::optional<std::string> capture_path =
                     validation_capture_path();
@@ -1173,8 +1174,11 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
 
             // Observe after all possible fixed-step changes and before every
             // presented frame, including death/recovery-owned overlay frames.
-            renderer.observe_hud(previous, current, runtime.render_status(),
-                control_hints, frame_seconds, pause_blocks_gameplay);
+            const HudPresentedFrame hud_presented_frame = current.death.has_value()
+                ? HudPresentedFrame::death_overlay : HudPresentedFrame::normal;
+            renderer.observe_presented_hud_frame(hud_presented_frame,
+                previous, current, runtime.render_status(), control_hints,
+                frame_seconds, pause_blocks_gameplay);
             BeginDrawing();
             ClearBackground(Color{13, 17, 27, 255});
             renderer.draw(previous, current, runtime.render_status(),

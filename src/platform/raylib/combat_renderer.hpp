@@ -2,17 +2,19 @@
 
 #include "combat_feedback.hpp"
 #include "death_overlay_renderer.hpp"
+#include "debug_overlay_renderer.hpp"
 #include "dungeon_view_math.hpp"
 #include "hud_notice_state.hpp"
 #include "hud_renderer.hpp"
 
 #include <cstdint>
+#include <array>
 
 namespace arpg::platform {
 
 struct DungeonRenderStatus;
 struct ControlHints;
-class DebugOverlayRenderer;
+enum class HudPresentedFrame : std::uint8_t { normal, recovery, death_overlay };
 
 struct DoorRenderDecision final {
     const char* label{};
@@ -42,10 +44,20 @@ public:
         const ControlHints& control_hints,
         float frame_seconds,
         bool paused) noexcept;
+    void observe_presented_hud_frame(
+        HudPresentedFrame,
+        const dungeon::DungeonSnapshot& previous,
+        const dungeon::DungeonSnapshot& current,
+        const DungeonRenderStatus& runtime_status,
+        const ControlHints& control_hints,
+        float frame_seconds,
+        bool paused) noexcept;
     [[nodiscard]] const HudViewModel& hud_model() const noexcept;
     [[nodiscard]] HudNoticeView hud_notice_view() const noexcept;
     [[nodiscard]] std::uint64_t hud_binding_revision() const noexcept;
     [[nodiscard]] std::uint64_t hud_observation_count() const noexcept;
+    [[nodiscard]] std::uint64_t hud_presented_frame_count(
+        HudPresentedFrame) const noexcept;
     void draw(
         const dungeon::DungeonSnapshot& previous,
         const dungeon::DungeonSnapshot& current,
@@ -78,11 +90,13 @@ private:
     TransitionVisualState transition_{};
     DeathOverlayRenderer death_overlay_{};
     HudRenderer hud_renderer_{};
+    DebugOverlayRenderer debug_overlay_{};
     HudNoticeState hud_notices_{};
     HudViewModel hud_model_{};
     HudLayout hud_layout_{};
     std::uint64_t hud_binding_revision_{};
     std::uint64_t hud_observation_count_{};
+    std::array<std::uint64_t, 3> hud_presented_frame_counts_{};
 };
 
 }  // namespace arpg::platform

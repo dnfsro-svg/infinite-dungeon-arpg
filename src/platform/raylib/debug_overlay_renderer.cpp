@@ -45,6 +45,23 @@ const char* player_state_name(combat::PlayerState state) noexcept {
     return "?";
 }
 
+const char* event_name(combat::CombatEventKind kind) noexcept {
+    switch (kind) {
+    case combat::CombatEventKind::swing: return "Swing";
+    case combat::CombatEventKind::hit: return "Hit";
+    case combat::CombatEventKind::impact_summary: return "Impact";
+    case combat::CombatEventKind::landing: return "Landing";
+    case combat::CombatEventKind::break_started: return "Break";
+    case combat::CombatEventKind::defeated: return "Defeated";
+    case combat::CombatEventKind::respawned: return "Respawned";
+    case combat::CombatEventKind::reset: return "Reset";
+    case combat::CombatEventKind::player_hit: return "Player hit";
+    case combat::CombatEventKind::player_hurt_started: return "Player hurt";
+    case combat::CombatEventKind::player_health_reset: return "Player heal";
+    }
+    return "?";
+}
+
 const char* ecology_name(dungeon::DungeonElement element) noexcept {
     switch (element) {
     case dungeon::DungeonElement::fire: return "FIRE";
@@ -57,10 +74,40 @@ const char* ecology_name(dungeon::DungeonElement element) noexcept {
 
 }  // namespace
 
+DebugOverlayDiagnosticsPlan make_debug_overlay_diagnostics_plan(
+    const dungeon::DungeonSnapshot& current,
+    const HudBuildDiagnostics& hud_diagnostics,
+    std::uint32_t notice_drops,
+    std::uint64_t binding_revision,
+    const combat::CombatEvent& last_event,
+    bool has_last_event,
+    bool cjk_font_ready) noexcept {
+    DebugOverlayDiagnosticsPlan plan{};
+    plan.total_budget = current.encounter.total_budget;
+    plan.current_wave_budget = current.encounter.current_wave_budget;
+    plan.ground_saturation = current.diagnostics.ground_saturation_count;
+    if (current.combat.has_value()) {
+        const combat::CombatSnapshot& combat = *current.combat;
+        plan.active_monsters = combat.monster_count;
+        plan.active_projectiles = combat.projectile_count;
+        plan.active_hazards = combat.hazard_count;
+        plan.projectile_saturation = combat.diagnostics.projectile_saturation_count;
+        plan.projectile_invalid_owner = combat.diagnostics.projectile_invalid_owner_count;
+        plan.hazard_saturation = combat.diagnostics.hazard_saturation_count;
+        plan.hazard_invalid_owner = combat.diagnostics.hazard_invalid_owner_count;
+    }
+    plan.hud = hud_diagnostics;
+    plan.notice_drops = notice_drops;
+    plan.binding_revision = binding_revision;
+    plan.last_event = last_event;
+    plan.has_last_event = has_last_event;
+    plan.cjk_font_ready = cjk_font_ready;
+    return plan;
+}
+
 void DebugOverlayRenderer::draw(const dungeon::DungeonSnapshot& current,
     const DungeonRenderStatus& runtime_status, const CombatFeedback& feedback,
-    bool audio_ready, const HudBuildDiagnostics& hud_diagnostics,
-    std::uint32_t notice_drops, std::uint64_t binding_revision) const noexcept {
+    bool audio_ready, const DebugOverlayDiagnosticsPlan& diagnostics) const noexcept {
     const Color text{218, 226, 239, 255};
     const RenderLayout layout = render_layout(true);
     int y = debug_overlay_start_y(current.combat.has_value() ? 265 : 150);
@@ -76,11 +123,19 @@ void DebugOverlayRenderer::draw(const dungeon::DungeonSnapshot& current,
         static_cast<unsigned>(runtime_status.error), static_cast<unsigned>(current.diagnostics.fault)),
         static_cast<int>(layout.hud_x), y, 16, text);
     y += layout.hud_line_step;
-    DrawText(TextFormat("Dungeon event %u relay %u rejected %u index fault %s",
+    DrawText(TextFormat("Budget total/current %u/%u  M/P/H %llu/%llu/%llu",
+        static_cast<unsigned>(diagnostics.total_budget),
+        static_cast<unsigned>(diagnostics.current_wave_budget),
+        static_cast<unsigned long long>(diagnostics.active_monsters),
+        static_cast<unsigned long long>(diagnostics.active_projectiles),
+        static_cast<unsigned long long>(diagnostics.active_hazards)),
+        static_cast<int>(layout.hud_x), y, 16, text);
+    y += layout.hud_line_step;
+    DrawText(TextFormat("Dungeon event %u relay %u rejected %u ground saturation %u",
         current.diagnostics.event_overflow_count,
         current.diagnostics.combat_relay_overflow_count,
         current.diagnostics.rejected_exit_count,
-        current.diagnostics.room_index_overflow ? "YES" : "NO"),
+        diagnostics.ground_saturation),
         static_cast<int>(layout.hud_x), y, 16, text);
     if (current.combat.has_value()) {
         const combat::CombatSnapshot& state = *current.combat;
@@ -110,16 +165,28 @@ void DebugOverlayRenderer::draw(const dungeon::DungeonSnapshot& current,
             static_cast<int>(layout.hud_x), y, 16, text);
     }
     y += layout.hud_line_step;
+    DrawText(diagnostics.has_last_event
+            ? TextFormat("Last event %s target %u",
+                event_name(diagnostics.last_event.kind), diagnostics.last_event.target_index)
+            : "Last event None",
+        static_cast<int>(layout.hud_x), y, 16, text);
+    y += layout.hud_line_step;
     DrawText(TextFormat("FX %u Dropped %u Shake %.1f Audio %s",
         static_cast<unsigned>(feedback.active_count()), feedback.dropped_count(),
         feedback.shake_amplitude(), audio_ready ? "Ready" : "Unavailable"),
         static_cast<int>(layout.hud_x), y, 16,
         audio_ready ? text : Color{255, 151, 117, 255});
     y += layout.hud_line_step;
-    DrawText(TextFormat("HUD clamp %u trunc %u missing %s notices dropped %u bindings %llu",
-        hud_diagnostics.clamped_values, hud_diagnostics.truncated_texts,
-        hud_diagnostics.combat_snapshot_missing ? "YES" : "NO", notice_drops,
-        static_cast<unsigned long long>(binding_revision)),
+    DrawText(TextFormat("Projectile saturation/invalid %u/%u Hazard saturation/invalid %u/%u",
+        diagnostics.projectile_saturation, diagnostics.projectile_invalid_owner,
+        diagnostics.hazard_saturation, diagnostics.hazard_invalid_owner),
+        static_cast<int>(layout.hud_x), y, 16, text);
+    y += layout.hud_line_step;
+    DrawText(TextFormat("HUD clamp %u trunc %u missing %s notices dropped %u bindings %llu CJK %s",
+        diagnostics.hud.clamped_values, diagnostics.hud.truncated_texts,
+        diagnostics.hud.combat_snapshot_missing ? "YES" : "NO", diagnostics.notice_drops,
+        static_cast<unsigned long long>(diagnostics.binding_revision),
+        diagnostics.cjk_font_ready ? "READY" : "FALLBACK"),
         static_cast<int>(layout.hud_x), y, 16, text);
 }
 

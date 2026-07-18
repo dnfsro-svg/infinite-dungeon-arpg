@@ -23,4 +23,9 @@ HudFontPlan hud_font_plan() noexcept {
     return plan;
 }
 
+HudFontDrawMode hud_font_draw_mode(bool cjk_font_ready) noexcept {
+    return cjk_font_ready ? HudFontDrawMode::cjk_ready
+                          : HudFontDrawMode::fallback;
+}
+
 }  // namespace arpg::platform

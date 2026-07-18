@@ -210,7 +210,9 @@ const items::ItemOwnershipState* DungeonRuntime::item_state() const noexcept {
 }
 
 DungeonRenderStatus DungeonRuntime::render_status() const noexcept {
-    return status_;
+    DungeonRenderStatus status = status_;
+    status.recovery_required = state() == DungeonRuntimeState::recovery_required;
+    return status;
 }
 
 void DungeonRuntime::fixed_tick(combat::MovementInput movement) noexcept {

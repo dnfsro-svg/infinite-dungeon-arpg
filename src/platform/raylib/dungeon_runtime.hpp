@@ -32,6 +32,7 @@ struct DungeonRenderStatus final {
     SaveIndicator indicator{SaveIndicator::none};
     persistence::SaveSlot active_slot{persistence::SaveSlot::none};
     persistence::SaveError error{persistence::SaveError::none};
+    bool recovery_required{};
 };
 
 class DungeonRuntime final {

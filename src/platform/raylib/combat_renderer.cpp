@@ -64,7 +64,8 @@ void CombatRenderer::observe_hud(
     const ControlHints& control_hints,
     float frame_seconds,
     bool paused) noexcept {
-    hud_notices_.observe(previous, current, runtime_status, control_hints, false);
+    hud_notices_.observe(previous, current, runtime_status, control_hints,
+        runtime_status.recovery_required);
     hud_notices_.update(frame_seconds, paused);
     HudViewModel model{};
     build_hud_view_model(model, current, runtime_status, control_hints);
@@ -75,6 +76,18 @@ void CombatRenderer::observe_hud(
         : HudLayout{};
     hud_binding_revision_ = control_hints.revision;
     ++hud_observation_count_;
+}
+
+void CombatRenderer::observe_presented_hud_frame(
+    HudPresentedFrame frame,
+    const dungeon::DungeonSnapshot& previous,
+    const dungeon::DungeonSnapshot& current,
+    const DungeonRenderStatus& runtime_status,
+    const ControlHints& control_hints,
+    float frame_seconds,
+    bool paused) noexcept {
+    observe_hud(previous, current, runtime_status, control_hints, frame_seconds, paused);
+    ++hud_presented_frame_counts_[static_cast<std::size_t>(frame)];
 }
 
 const HudViewModel& CombatRenderer::hud_model() const noexcept {
@@ -91,6 +104,11 @@ std::uint64_t CombatRenderer::hud_binding_revision() const noexcept {
 
 std::uint64_t CombatRenderer::hud_observation_count() const noexcept {
     return hud_observation_count_;
+}
+
+std::uint64_t CombatRenderer::hud_presented_frame_count(
+    HudPresentedFrame frame) const noexcept {
+    return hud_presented_frame_counts_[static_cast<std::size_t>(frame)];
 }
 
 void CombatRenderer::draw(
@@ -115,9 +133,11 @@ void CombatRenderer::draw(
 
     draw_hud();
     if (draw_debug) {
-        DebugOverlayRenderer{}.draw(current, runtime_status, feedback, audio_ready,
-            hud_model_.diagnostics, hud_notices_.dropped_count(),
-            hud_binding_revision_);
+        const DebugOverlayDiagnosticsPlan diagnostics =
+            make_debug_overlay_diagnostics_plan(current, hud_model_.diagnostics,
+                hud_notices_.dropped_count(), hud_binding_revision_, last_event_,
+                has_last_event_, hud_renderer_.font_ready());
+        debug_overlay_.draw(current, runtime_status, feedback, audio_ready, diagnostics);
     }
 
     const float overlay_alpha = transition_overlay_alpha(transition_.seconds_left);
