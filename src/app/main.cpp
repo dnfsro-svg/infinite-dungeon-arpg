@@ -13,6 +13,7 @@ int main(int argc, char** argv) {
     }
     arpg::platform::RaylibHostConfig config{};
     config.save_directory = arguments.options.save_directory;
+    config.settings_directory = arguments.options.settings_directory;
     config.new_run_seed = arguments.options.new_run_seed;
     return static_cast<int>(arpg::platform::run_raylib_host(config));
 }

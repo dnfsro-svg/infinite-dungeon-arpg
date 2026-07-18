@@ -8,6 +8,7 @@ namespace arpg::platform {
 
 struct HostLaunchOptions final {
     std::optional<std::filesystem::path> save_directory{};
+    std::optional<std::filesystem::path> settings_directory{};
     std::optional<std::uint64_t> new_run_seed{};
 };
 

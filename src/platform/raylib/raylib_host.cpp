@@ -10,13 +10,20 @@
 #include "inventory_renderer.hpp"
 #include "passive_tree_renderer.hpp"
 #include "passive_tree_view_math.hpp"
+#include "pause_menu_renderer.hpp"
+#include "pause_menu_state.hpp"
+#include "pause_menu_view.hpp"
 #include "persistence/save_paths.hpp"
+#include "platform/settings/settings_store.hpp"
 #include "platform/settings/settings_types.hpp"
+#include "stable_key_raylib.hpp"
+#include "window_settings.hpp"
 
 #include <raylib.h>
 
 #include <cstdint>
 #include <cmath>
+#include <cstddef>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -34,9 +41,49 @@ static_assert(arpg::platform::direct_input_poison::active,
 static_assert(RAYLIB_VERSION_MAJOR == 6, "raylib 6.0.0 is required");
 static_assert(RAYLIB_VERSION_MINOR == 0, "raylib 6.0.0 is required");
 static_assert(RAYLIB_VERSION_PATCH == 0, "raylib 6.0.0 is required");
+static_assert(FLAG_VSYNC_HINT != 0, "raylib VSync flag must remain available");
 
 namespace arpg::platform {
 namespace {
+
+constexpr char kSettingsPreviewFailed[] = "Live preview failed";
+constexpr char kSettingsSaveFailed[] = "Settings save failed; retry";
+constexpr char kSettingsRollbackFailed[] = "Settings rollback failed";
+constexpr char kSettingsSaved[] = "Settings saved";
+
+[[nodiscard]] bool stable_pressed(
+    const PhysicalKeySnapshot& snapshot,
+    settings::StableKey key) noexcept {
+    const std::size_t index = static_cast<std::size_t>(key);
+    return index < snapshot.pressed.size() && snapshot.pressed[index];
+}
+
+[[nodiscard]] std::optional<settings::StableKey> captured_stable_key(
+    const PhysicalKeySnapshot& snapshot) noexcept {
+    for (std::size_t index = 0U; index < snapshot.pressed.size(); ++index) {
+        if (snapshot.pressed[index]) {
+            return static_cast<settings::StableKey>(index);
+        }
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] PauseInput pause_input_from_snapshot(
+    const PhysicalKeySnapshot& snapshot,
+    bool escape_consumed,
+    bool capture_binding) noexcept {
+    PauseInput input{};
+    input.escape = snapshot.escape && !escape_consumed;
+    input.enter = snapshot.enter;
+    input.up = stable_pressed(snapshot, settings::StableKey::arrow_up);
+    input.down = stable_pressed(snapshot, settings::StableKey::arrow_down);
+    input.left = stable_pressed(snapshot, settings::StableKey::arrow_left);
+    input.right = stable_pressed(snapshot, settings::StableKey::arrow_right);
+    input.activate = snapshot.mouse_left;
+    input.focus_lost = snapshot.focus_lost;
+    if (capture_binding) input.captured_key = captured_stable_key(snapshot);
+    return input;
+}
 
 void drain_events(dungeon::DungeonSession& session, CombatRenderer& renderer,
     CombatFeedback& feedback, CombatAudio& audio) noexcept {
@@ -374,6 +421,20 @@ bool stage10_validation_reached(
 
 }  // namespace
 
+HostFrameGateResult gate_host_frame(
+    core::FixedStepRunner& fixed_step,
+    bool& pause_latched,
+    bool paused,
+    double frame_seconds) noexcept {
+    if (paused) {
+        if (!pause_latched) fixed_step.clear_accumulator();
+        pause_latched = true;
+        return {};
+    }
+    pause_latched = false;
+    return {true, fixed_step.advance(frame_seconds)};
+}
+
 HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
     bool window_ready = false;
     try {
@@ -381,6 +442,18 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             ? config.save_directory : persistence::default_save_directory();
         if (!save_directory.has_value()) {
             return HostExitCode::save_initialization_failed;
+        }
+        const auto settings_directory = config.settings_directory.has_value()
+            ? config.settings_directory : save_directory;
+        if (!settings_directory.has_value()) {
+            return HostExitCode::save_initialization_failed;
+        }
+        settings::SettingsStore settings_store(*settings_directory);
+        const settings::SettingsLoadResult loaded = settings_store.load();
+        settings::SettingsData committed_settings = loaded.settings;
+        if (settings::validate_settings(committed_settings)
+                != settings::SettingsValidationError::none) {
+            committed_settings = settings::default_settings();
         }
         DungeonRuntimeConfig runtime_config{};
         runtime_config.save.directory = *save_directory;
@@ -391,7 +464,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             return HostExitCode::save_initialization_failed;
         }
 
-        SetConfigFlags(FLAG_VSYNC_HINT | FLAG_WINDOW_RESIZABLE);
+        SetConfigFlags(initial_window_flags(committed_settings));
         InitWindow(config.window_width, config.window_height, config.window_title);
         window_ready = IsWindowReady();
         if (!window_ready) {
@@ -413,6 +486,18 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         CombatAudio audio;
         InventoryRenderer inventory;
         const bool audio_ready = audio.initialize();
+        if (audio_ready) {
+            SetMasterVolume(master_volume_fraction(
+                committed_settings.master_sfx_percent));
+        }
+        const WindowSettingsBackend settings_backend =
+            raylib_window_settings_backend();
+        PauseMenuState pause_menu{};
+        pause_menu.committed = committed_settings;
+        pause_menu.draft = committed_settings;
+        settings::SettingsData live_settings = committed_settings;
+        settings::SettingsData input_settings = committed_settings;
+        bool pause_latched = false;
         bool draw_debug = false;
         bool passive_overlay_open = false;
         bool exit_requested = false;
@@ -421,7 +506,6 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         unsigned validation_capture_count = 0U;
         Stage10ValidationState stage10_validation_state{};
         Stage11ValidationState stage11_validation_state{};
-        const settings::SettingsData input_settings = settings::default_settings();
         bool stage10_validation_captured = false;
         const std::string validation_capture_prefix = config.validation_capture
             ? (*save_directory / "stage8-validation-").string()
@@ -531,18 +615,19 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                         != dungeon::RequestResult::rejected) {
                 stage11_validation_state.continue_requested = true;
             }
+            bool escape_consumed = false;
             if (death_gate.forward_gameplay && frame_input.keys.escape) {
                 if (inventory.is_open()) {
                     inventory.close();
                     fixed_step.clear_accumulator();
                     inventory_toggled_this_frame = true;
+                    escape_consumed = true;
                 } else if (passive_overlay_open) {
                     passive_overlay_open = false;
-                } else {
-                    exit_requested = true;
-                    continue;
+                    escape_consumed = true;
                 }
             } else if (death_gate.forward_gameplay
+                    && pause_menu.screen == PauseScreen::closed
                     && frame_input.keys.inventory) {
                 if (inventory.is_open()) {
                     inventory.close();
@@ -558,6 +643,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 }
             }
             if (death_gate.forward_gameplay
+                && pause_menu.screen == PauseScreen::closed
                 && !inventory.is_open() && !inventory_toggled_this_frame
                 && frame_input.keys.passives
                 && passive_overlay_can_toggle(inventory.is_open())
@@ -568,7 +654,9 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     && death_gate.debug_toggle) {
                 draw_debug = !draw_debug;
             }
-            if (death_gate.forward_gameplay && inventory.is_open()
+            if (death_gate.forward_gameplay
+                && pause_menu.screen == PauseScreen::closed
+                && inventory.is_open()
                 && inventory.process_input(runtime, current, frame_input)) {
                 current = session->snapshot();
                 previous = current;
@@ -579,19 +667,128 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     inventory_toggled_this_frame = true;
                 }
             }
+            const bool pause_was_open =
+                pause_menu.screen != PauseScreen::closed;
+            if (pause_was_open && physical_keys.mouse_left) {
+                const PauseMenuLayout layout = pause_menu_layout(
+                    GetScreenWidth(), GetScreenHeight());
+                const auto selected = hit_test_pause_row(
+                    layout, physical_keys.mouse_position);
+                if (selected.has_value()) pause_menu.selected_row = *selected;
+            }
+            const PauseContext pause_context{
+                death_saving || death_pending,
+                false,
+                inventory.is_open(),
+                passive_overlay_open,
+                current.pending_save_kind.has_value(),
+                !physical_keys.focus_lost,
+            };
+            const PauseInput pause_input = pause_input_from_snapshot(
+                physical_keys, escape_consumed,
+                pause_menu.screen == PauseScreen::capture_binding);
+            const PauseCommand pause_command = update_pause_menu(
+                pause_menu, pause_context, pause_input);
+            switch (pause_command) {
+            case PauseCommand::none:
+                break;
+            case PauseCommand::preview: {
+                const LiveSettingsResult result = apply_live_settings(
+                    live_settings, pause_menu.draft, settings_backend);
+                if (result == LiveSettingsResult::applied) {
+                    live_settings = pause_menu.draft;
+                    pause_menu.message = nullptr;
+                } else {
+                    pause_menu.message = kSettingsPreviewFailed;
+                }
+                break;
+            }
+            case PauseCommand::apply: {
+                const LiveSettingsResult preview = apply_live_settings(
+                    live_settings, pause_menu.draft, settings_backend);
+                if (preview != LiveSettingsResult::applied) {
+                    const LiveSettingsResult rollback = rollback_live_settings(
+                        live_settings, pause_menu.committed,
+                        settings_backend);
+                    if (rollback == LiveSettingsResult::applied) {
+                        live_settings = pause_menu.committed;
+                        pause_menu.message = kSettingsPreviewFailed;
+                    } else {
+                        pause_menu.message = kSettingsRollbackFailed;
+                    }
+                    break;
+                }
+                const settings::SettingsData previewed = pause_menu.draft;
+                live_settings = previewed;
+                settings::SettingsData save_draft = previewed;
+                save_draft.revision = pause_menu.committed.revision;
+                const settings::SettingsSaveResult saved = settings_store.save(
+                    pause_menu.committed, save_draft);
+                if (saved.status == settings::SettingsSaveStatus::committed) {
+                    pause_menu.committed = saved.settings;
+                    pause_menu.draft = saved.settings;
+                    live_settings = saved.settings;
+                    input_settings = saved.settings;
+                    pause_menu.message = kSettingsSaved;
+                    break;
+                }
+                const LiveSettingsResult rollback = rollback_live_settings(
+                    previewed, pause_menu.committed, settings_backend);
+                if (rollback == LiveSettingsResult::applied) {
+                    live_settings = pause_menu.committed;
+                    pause_menu.message = kSettingsSaveFailed;
+                } else {
+                    pause_menu.message = kSettingsRollbackFailed;
+                }
+                break;
+            }
+            case PauseCommand::rollback: {
+                const LiveSettingsResult result = rollback_live_settings(
+                    live_settings, pause_menu.committed, settings_backend);
+                if (result == LiveSettingsResult::applied) {
+                    live_settings = pause_menu.committed;
+                } else {
+                    pause_menu.message = kSettingsRollbackFailed;
+                }
+                break;
+            }
+            case PauseCommand::resume:
+                break;
+            case PauseCommand::quit:
+                exit_requested = true;
+                continue;
+            }
+            const bool pause_open = pause_menu.screen != PauseScreen::closed;
+            const bool pause_blocks_gameplay = pause_open || pause_was_open;
+            const float frame_seconds = GetFrameTime();
+            HostFrameGateResult host_gate{};
+            if (pause_open) {
+                host_gate = gate_host_frame(fixed_step, pause_latched, true,
+                    static_cast<double>(frame_seconds));
+                previous = current;
+            } else if (!inventory.is_open()
+                    && !inventory_toggled_this_frame) {
+                host_gate = gate_host_frame(fixed_step, pause_latched, false,
+                    static_cast<double>(frame_seconds));
+            } else {
+                previous = current;
+            }
             const PassiveOverlayInputGate passive_input_gate = passive_overlay_input_gate(
                 passive_overlay_open);
             const InventoryInputGate inventory_gate = inventory_input_gate(
                 inventory.is_open() || inventory_toggled_this_frame);
             const bool forward_actions = passive_input_gate.forward_actions
                 && inventory_gate.forward_actions
-                && death_gate.forward_gameplay;
+                && death_gate.forward_gameplay
+                && host_gate.forward_gameplay && !pause_blocks_gameplay;
             const bool forward_movement = passive_input_gate.forward_movement
                 && inventory_gate.forward_movement
-                && death_gate.forward_gameplay;
+                && death_gate.forward_gameplay
+                && host_gate.forward_gameplay && !pause_blocks_gameplay;
             const bool forward_descent = passive_input_gate.forward_descent
                 && inventory_gate.forward_descent
-                && death_gate.forward_gameplay;
+                && death_gate.forward_gameplay
+                && host_gate.forward_gameplay && !pause_blocks_gameplay;
             if (forward_actions && inventory_gate.forward_room_reset
                 && frame_input.keys.reset) {
                 const dungeon::RequestResult reset =
@@ -602,7 +799,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     drain_events(*session, renderer, feedback, audio);
                 }
             }
-            if (death_gate.forward_gameplay && passive_overlay_open
+            if (!pause_blocks_gameplay && death_gate.forward_gameplay
+                    && passive_overlay_open
                     && frame_input.keys.mouse_gameplay) {
                 const auto selected = hit_test_passive_node(
                     {frame_input.mouse_position.x, frame_input.mouse_position.y},
@@ -629,12 +827,10 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
 
             const combat::MovementInput movement = forward_movement
                 ? frame_input.movement : combat::MovementInput{};
-            const float frame_seconds = GetFrameTime();
             feedback.update(frame_seconds);
             renderer.update(frame_seconds);
-            core::FixedStepFrame frame{};
-            if (!inventory.is_open() && !inventory_toggled_this_frame) {
-                frame = fixed_step.advance(static_cast<double>(frame_seconds));
+            core::FixedStepFrame frame = host_gate.fixed_step;
+            if (host_gate.forward_gameplay) {
                 if (config.stage10_validation
                             != Stage10ValidationScenario::none
                         || config.stage11_validation
@@ -644,8 +840,6 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                         frame.interpolation_alpha = 0.0;
                     }
                 }
-            } else {
-                previous = current;
             }
             for (std::uint32_t step = 0; step < frame.steps; ++step) {
                 previous = current;
@@ -699,6 +893,9 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             }
             if (inventory.is_open()) {
                 inventory.draw(*session, current, runtime.render_status());
+            }
+            if (pause_menu.screen != PauseScreen::closed) {
+                draw_pause_menu(pause_menu);
             }
             const bool stage10_target_visible = stage10_validation_reached(
                 current, config, stage10_validation_state);

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/fixed_step.hpp"
+
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -36,6 +38,7 @@ struct RaylibHostConfig final {
     int window_height{720};
     const char* window_title{"Infinite Dungeon - Stage 3 Dungeon Rules"};
     std::optional<std::filesystem::path> save_directory{};
+    std::optional<std::filesystem::path> settings_directory{};
     std::optional<std::uint64_t> new_run_seed{};
     bool validation_capture{};
     std::uint32_t validation_exit_after_presented_frames{};
@@ -47,6 +50,17 @@ struct RaylibHostConfig final {
     std::uint32_t validation_steps_per_frame{};
     std::optional<std::filesystem::path> validation_capture_file{};
 };
+
+struct HostFrameGateResult final {
+    bool forward_gameplay{};
+    core::FixedStepFrame fixed_step{};
+};
+
+[[nodiscard]] HostFrameGateResult gate_host_frame(
+    core::FixedStepRunner& fixed_step,
+    bool& pause_latched,
+    bool paused,
+    double frame_seconds) noexcept;
 
 enum class HostExitCode : int {
     success = 0,

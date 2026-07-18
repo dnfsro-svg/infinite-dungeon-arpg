@@ -19,6 +19,7 @@ arpg::test::TestSuite death_overlay_view_suite() noexcept;
 arpg::test::TestSuite pause_menu_state_suite() noexcept;
 arpg::test::TestSuite pause_menu_view_suite() noexcept;
 arpg::test::TestSuite window_settings_suite() noexcept;
+arpg::test::TestSuite pause_host_gate_suite() noexcept;
 
 int main() {
 #if defined(_WIN32) && defined(_DEBUG)
@@ -39,6 +40,7 @@ int main() {
         passive_tree_view_suite(),
         host_launch_options_suite(),
         dungeon_runtime_suite(),
+        pause_host_gate_suite(),
         inventory_view_math_suite(),
         death_input_gate_suite(),
         death_overlay_view_suite(),
@@ -47,5 +49,5 @@ int main() {
         window_settings_suite(),
     };
 
-    return arpg::test::run_suites(suites, 166, "stage 11b task 7 live settings");
+    return arpg::test::run_suites(suites, 169, "stage 11b task 8 host integration");
 }

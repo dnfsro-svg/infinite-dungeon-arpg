@@ -78,7 +78,26 @@ arpg::test::Failure no_arguments_leave_options_empty() noexcept {
     const HostArgumentResult result = parse(1, argv);
     ARPG_REQUIRE(result.error == HostArgumentError::none);
     ARPG_REQUIRE(!result.options.save_directory.has_value());
+    ARPG_REQUIRE(!result.options.settings_directory.has_value());
     ARPG_REQUIRE(!result.options.new_run_seed.has_value());
+    return {};
+}
+
+arpg::test::Failure settings_directory_is_frozen_and_isolated_from_save()
+    noexcept {
+    const char* const argv[] = {
+        "arpg", "--save-dir", "character saves",
+        "--settings-dir", "settings only"};
+    const HostArgumentResult result = parse(5, argv);
+    ARPG_REQUIRE(result.error == HostArgumentError::none);
+    ARPG_REQUIRE(result.options.save_directory.has_value());
+    ARPG_REQUIRE(result.options.settings_directory.has_value());
+    ARPG_REQUIRE(result.options.save_directory->is_absolute());
+    ARPG_REQUIRE(result.options.settings_directory->is_absolute());
+    ARPG_REQUIRE(*result.options.save_directory
+        != *result.options.settings_directory);
+    ARPG_REQUIRE(result.options.settings_directory->filename()
+        == "settings only");
     return {};
 }
 
@@ -157,12 +176,16 @@ arpg::test::Failure duplicate_and_unknown_options_are_rejected() noexcept {
     const char* const duplicate_directory[] = {
         "arpg", "--save-dir", "one", "--save-dir", "two"};
     const char* const unknown[] = {"arpg", "--seed=8"};
+    const char* const duplicate_settings_directory[] = {
+        "arpg", "--settings-dir", "one", "--settings-dir", "two"};
     ARPG_REQUIRE(parse(5, duplicate_seed).error
         == HostArgumentError::duplicate_option);
     ARPG_REQUIRE(parse(5, duplicate_directory).error
         == HostArgumentError::duplicate_option);
     ARPG_REQUIRE(parse(2, unknown).error
         == HostArgumentError::unknown_option);
+    ARPG_REQUIRE(parse(5, duplicate_settings_directory).error
+        == HostArgumentError::duplicate_option);
     return {};
 }
 
@@ -186,6 +209,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"no arguments", &no_arguments_leave_options_empty},
     {"decimal and hexadecimal seed", &decimal_and_hex_seeds_parse_to_same_value},
     {"absolute save directory", &save_directory_with_spaces_is_frozen_absolute},
+    {"isolated settings directory", &settings_directory_is_frozen_and_isolated_from_save},
     {"failed temporary directory cleanup", &failed_temporary_directory_never_removes_unowned_path},
     {"duplicate and unknown options", &duplicate_and_unknown_options_are_rejected},
     {"missing and invalid seed", &missing_and_invalid_seed_values_are_rejected},
