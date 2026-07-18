@@ -114,7 +114,7 @@ ctest --preset windows-msvc-release --output-on-failure
   最终日志结束于 09:33:15。
 - Release：fresh configure、clean-first **263** 个构建目标成功，完整 CTest **61/61** 通过；
   最终日志结束于 09:38:29。
-- 后续整改的 Debug formal 证据位于带空格目录 `stage11b settings evidence`：真实 V6 双槽
+- 后续整改的 Release formal 证据位于带空格目录 `stage11b settings evidence`：真实 V6 双槽
   `run_a.sav`/`run_b.sav` 分别为 460 bytes：`run_a` 的前后 FNV-1a hash 均为
   `16395907754423809155`，`run_b` 的前后 hash 均为 `1222458592949165727`。暂停先推进 1 tick，
   再冻结 120 presented frames（`1/1`），恢复后恰推进 1 tick（`1→2`，无 catch-up）；生产
