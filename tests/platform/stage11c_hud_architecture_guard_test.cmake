@@ -131,6 +131,8 @@ arpg_hud_seams_assert_exclude("HUD boundary rejects dynamic std::string"
     "std[ \\t\\r\\n]*::[ \\t\\r\\n]*string([^A-Za-z0-9_]|$)")
 arpg_hud_seams_assert_exclude("HUD boundary rejects dynamic std::vector"
     "std[ \\t\\r\\n]*::[ \\t\\r\\n]*vector[ \\t\\r\\n]*[<]")
+arpg_hud_seams_assert_exclude("Normal HUD rejects legacy Budget text"
+    "Budget")
 
 set(_view_model_header "${_hud_root}/hud_view_model.hpp")
 set(_renderer_header "${_hud_root}/hud_renderer.hpp")

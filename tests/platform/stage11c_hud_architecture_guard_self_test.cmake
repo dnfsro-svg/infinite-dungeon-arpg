@@ -113,7 +113,8 @@ arpg_expect_hud_guard_rejects(dynamic_vector raylib_host.cpp
     "renderer.draw(previous, current, runtime.render_status(),"
     "std::vector<int> stage11c_bad_vector;"
     "HUD boundary rejects dynamic std::vector")
-arpg_expect_hud_guard_rejects(legacy_budget combat_renderer.cpp ""
+arpg_expect_hud_guard_rejects(legacy_budget raylib_host.cpp
+    "renderer.draw(previous, current, runtime.render_status(),"
     "constexpr const char* stage11c_bad_text = \"Budget\";"
     "Normal HUD rejects legacy Budget text")
 arpg_expect_hud_guard_rejects(fourth_status_tag hud_view_model.cpp ""
