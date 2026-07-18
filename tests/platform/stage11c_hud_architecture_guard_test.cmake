@@ -19,8 +19,27 @@ if(NOT _hud_sources)
     message(FATAL_ERROR "Stage11C HUD boundary sources are missing: ${_hud_root}")
 endif()
 
+set(_combat_sources
+    "${_hud_root}/combat_renderer.hpp"
+    "${_hud_root}/combat_renderer.cpp")
+set(_debug_overlay_sources
+    "${_hud_root}/debug_overlay_renderer.hpp"
+    "${_hud_root}/debug_overlay_renderer.cpp")
+set(_host_source "${_hud_root}/raylib_host.cpp")
+set(_hud_boundary_sources
+    ${_hud_sources} ${_combat_sources} ${_debug_overlay_sources})
+foreach(_required_source IN LISTS _hud_boundary_sources)
+    if(NOT EXISTS "${_required_source}")
+        message(FATAL_ERROR
+            "Stage11C HUD boundary source is missing: ${_required_source}")
+    endif()
+endforeach()
+if(NOT EXISTS "${_host_source}")
+    message(FATAL_ERROR "Stage11C HUD host source is missing: ${_host_source}")
+endif()
+
 function(arpg_hud_assert_excludes REASON REGEX)
-    foreach(_source_file IN LISTS _hud_sources)
+    foreach(_source_file IN LISTS ARGN)
         file(READ "${_source_file}" _source_text)
         if(_source_text MATCHES "${REGEX}")
             message(FATAL_ERROR "${REASON}: ${_source_file}")
@@ -29,19 +48,89 @@ function(arpg_hud_assert_excludes REASON REGEX)
 endfunction()
 
 arpg_hud_assert_excludes("HUD boundary rejects physical input sampling"
-    "(^|[^A-Za-z0-9_])GetKeyPressed[ \\t\\r\\n]*[(]")
+    "(^|[^A-Za-z0-9_])GetKeyPressed[ \\t\\r\\n]*[(]"
+    ${_hud_boundary_sources})
 arpg_hud_assert_excludes("HUD boundary rejects DungeonSession access"
-    "(^|[^A-Za-z0-9_])DungeonSession([^A-Za-z0-9_]|$)")
+    "(^|[^A-Za-z0-9_])DungeonSession([^A-Za-z0-9_]|$)"
+    ${_hud_boundary_sources})
 arpg_hud_assert_excludes("HUD boundary rejects fixed tick access"
-    "(^|[^A-Za-z0-9_])fixed_tick[ \\t\\r\\n]*[(]")
+    "(^|[^A-Za-z0-9_])fixed_tick[ \\t\\r\\n]*[(]"
+    ${_hud_boundary_sources})
 arpg_hud_assert_excludes("HUD boundary rejects SettingsStore access"
-    "(^|[^A-Za-z0-9_])SettingsStore([^A-Za-z0-9_]|$)")
+    "(^|[^A-Za-z0-9_])SettingsStore([^A-Za-z0-9_]|$)"
+    ${_hud_boundary_sources})
 arpg_hud_assert_excludes("HUD boundary rejects dynamic std::string"
-    "std[ \\t\\r\\n]*::[ \\t\\r\\n]*string([^A-Za-z0-9_]|$)")
+    "std[ \\t\\r\\n]*::[ \\t\\r\\n]*string([^A-Za-z0-9_]|$)"
+    ${_hud_boundary_sources})
 arpg_hud_assert_excludes("HUD boundary rejects dynamic std::vector"
-    "std[ \\t\\r\\n]*::[ \\t\\r\\n]*vector[ \\t\\r\\n]*[<]")
+    "std[ \\t\\r\\n]*::[ \\t\\r\\n]*vector[ \\t\\r\\n]*[<]"
+    ${_hud_boundary_sources})
 arpg_hud_assert_excludes("Normal HUD rejects legacy Budget text"
-    "Budget")
+    "Budget" ${_hud_sources} ${_combat_sources})
+
+function(arpg_extract_hud_host_seam
+        SOURCE_TEXT START_TOKEN END_TOKEN REASON OUT_SEAM)
+    string(FIND "${SOURCE_TEXT}" "${START_TOKEN}" _start)
+    if(_start EQUAL -1)
+        message(FATAL_ERROR "${REASON}: start token is missing")
+    endif()
+    string(SUBSTRING "${SOURCE_TEXT}" ${_start} -1 _tail)
+    string(FIND "${_tail}" "${END_TOKEN}" _relative_end)
+    if(_relative_end EQUAL -1)
+        message(FATAL_ERROR "${REASON}: end token is missing")
+    endif()
+    string(LENGTH "${END_TOKEN}" _end_token_length)
+    math(EXPR _length "${_relative_end} + ${_end_token_length}")
+    string(SUBSTRING "${_tail}" 0 ${_length} _seam)
+    set("${OUT_SEAM}" "${_seam}" PARENT_SCOPE)
+endfunction()
+
+file(READ "${_host_source}" _host_text)
+arpg_extract_hud_host_seam("${_host_text}"
+    "renderer.observe_presented_hud_frame(HudPresentedFrame::recovery,"
+    "GetFrameTime(), true);"
+    "Host HUD recovery observation seam is invalid" _recovery_hud_seam)
+arpg_extract_hud_host_seam("${_host_text}"
+    "const HudPresentedFrame hud_presented_frame = current.death.has_value()"
+    "feedback, audio_ready);"
+    "Host HUD normal observation/presentation seam is invalid" _normal_hud_seam)
+foreach(_required_recovery IN ITEMS
+        "HudPresentedFrame::recovery" "renderer.observe_presented_hud_frame")
+    string(FIND "${_recovery_hud_seam}" "${_required_recovery}" _found)
+    if(_found EQUAL -1)
+        message(FATAL_ERROR
+            "Host HUD recovery observation seam is invalid: ${_required_recovery}")
+    endif()
+endforeach()
+foreach(_required_normal IN ITEMS
+        "HudPresentedFrame::death_overlay" "HudPresentedFrame::normal"
+        "renderer.observe_presented_hud_frame" "BeginDrawing();"
+        "renderer.draw(previous, current, runtime.render_status()")
+    string(FIND "${_normal_hud_seam}" "${_required_normal}" _found)
+    if(_found EQUAL -1)
+        message(FATAL_ERROR
+            "Host HUD normal observation/presentation seam is invalid: ${_required_normal}")
+    endif()
+endforeach()
+
+function(arpg_hud_seams_assert_exclude REASON REGEX)
+    if(_recovery_hud_seam MATCHES "${REGEX}"
+            OR _normal_hud_seam MATCHES "${REGEX}")
+        message(FATAL_ERROR "${REASON}: ${_host_source} HUD seam")
+    endif()
+endfunction()
+arpg_hud_seams_assert_exclude("HUD boundary rejects physical input sampling"
+    "(^|[^A-Za-z0-9_])GetKeyPressed[ \\t\\r\\n]*[(]")
+arpg_hud_seams_assert_exclude("HUD boundary rejects DungeonSession access"
+    "(^|[^A-Za-z0-9_])DungeonSession([^A-Za-z0-9_]|$)")
+arpg_hud_seams_assert_exclude("HUD boundary rejects fixed tick access"
+    "(^|[^A-Za-z0-9_])fixed_tick[ \\t\\r\\n]*[(]")
+arpg_hud_seams_assert_exclude("HUD boundary rejects SettingsStore access"
+    "(^|[^A-Za-z0-9_])SettingsStore([^A-Za-z0-9_]|$)")
+arpg_hud_seams_assert_exclude("HUD boundary rejects dynamic std::string"
+    "std[ \\t\\r\\n]*::[ \\t\\r\\n]*string([^A-Za-z0-9_]|$)")
+arpg_hud_seams_assert_exclude("HUD boundary rejects dynamic std::vector"
+    "std[ \\t\\r\\n]*::[ \\t\\r\\n]*vector[ \\t\\r\\n]*[<]")
 
 set(_view_model_header "${_hud_root}/hud_view_model.hpp")
 set(_renderer_header "${_hud_root}/hud_renderer.hpp")

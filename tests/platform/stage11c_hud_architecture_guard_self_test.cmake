@@ -19,6 +19,12 @@ file(GLOB _production_hud_sources LIST_DIRECTORIES FALSE
     "${_production_hud_root}/hud_*.cc"
     "${_production_hud_root}/hud_*.cpp"
     "${_production_hud_root}/hud_*.cxx")
+list(APPEND _production_hud_sources
+    "${_production_hud_root}/combat_renderer.hpp"
+    "${_production_hud_root}/combat_renderer.cpp"
+    "${_production_hud_root}/debug_overlay_renderer.hpp"
+    "${_production_hud_root}/debug_overlay_renderer.cpp"
+    "${_production_hud_root}/raylib_host.cpp")
 if(NOT _production_hud_sources)
     message(FATAL_ERROR "Stage11C production HUD sources are missing")
 endif()
@@ -36,7 +42,8 @@ endforeach()
 
 file(MAKE_DIRECTORY "${GUARD_TEST_ROOT}")
 
-function(arpg_expect_hud_guard_rejects NAME TARGET_FILE MUTATION REASON)
+function(arpg_expect_hud_guard_rejects
+        NAME TARGET_FILE INSERT_BEFORE MUTATION REASON)
     set(_mutation_root "${GUARD_TEST_ROOT}/${NAME}")
     file(MAKE_DIRECTORY "${_mutation_root}")
     foreach(_production_source IN LISTS _production_hud_sources)
@@ -50,7 +57,20 @@ function(arpg_expect_hud_guard_rejects NAME TARGET_FILE MUTATION REASON)
         message(FATAL_ERROR
             "Stage11C mutation ${NAME} target is missing: ${TARGET_FILE}")
     endif()
-    file(APPEND "${_mutated_source}" "\n// Stage11C ${NAME} mutation\n${MUTATION}\n")
+    if(INSERT_BEFORE STREQUAL "")
+        file(APPEND "${_mutated_source}"
+            "\n// Stage11C ${NAME} mutation\n${MUTATION}\n")
+    else()
+        file(READ "${_mutated_source}" _mutated_text)
+        set(_original_text "${_mutated_text}")
+        string(REPLACE "${INSERT_BEFORE}"
+            "${MUTATION}\n${INSERT_BEFORE}" _mutated_text "${_mutated_text}")
+        if(_mutated_text STREQUAL _original_text)
+            message(FATAL_ERROR
+                "Stage11C mutation ${NAME} anchor is missing: ${INSERT_BEFORE}")
+        endif()
+        file(WRITE "${_mutated_source}" "${_mutated_text}")
+    endif()
 
     execute_process(
         COMMAND "${CMAKE_COMMAND}"
@@ -73,28 +93,30 @@ function(arpg_expect_hud_guard_rejects NAME TARGET_FILE MUTATION REASON)
     endif()
 endfunction()
 
-arpg_expect_hud_guard_rejects(get_key_pressed hud_renderer.cpp
+arpg_expect_hud_guard_rejects(get_key_pressed combat_renderer.cpp ""
     "int stage11c_bad_key() { return GetKeyPressed(); }"
     "HUD boundary rejects physical input sampling")
-arpg_expect_hud_guard_rejects(dungeon_session hud_view_model.cpp
+arpg_expect_hud_guard_rejects(dungeon_session debug_overlay_renderer.hpp ""
     "DungeonSession* stage11c_bad_session = nullptr;"
     "HUD boundary rejects DungeonSession access")
-arpg_expect_hud_guard_rejects(fixed_tick hud_notice_state.cpp
-    "void stage11c_bad_tick() { runtime.fixed_tick({}); }"
+arpg_expect_hud_guard_rejects(fixed_tick raylib_host.cpp
+    "GetFrameTime(), true);"
+    "runtime.fixed_tick({});"
     "HUD boundary rejects fixed tick access")
-arpg_expect_hud_guard_rejects(settings_store hud_view_model.cpp
+arpg_expect_hud_guard_rejects(settings_store combat_renderer.hpp ""
     "SettingsStore* stage11c_bad_store = nullptr;"
     "HUD boundary rejects SettingsStore access")
-arpg_expect_hud_guard_rejects(dynamic_string hud_renderer.cpp
+arpg_expect_hud_guard_rejects(dynamic_string debug_overlay_renderer.cpp ""
     "std::string stage11c_bad_string;"
     "HUD boundary rejects dynamic std::string")
-arpg_expect_hud_guard_rejects(dynamic_vector hud_notice_state.cpp
+arpg_expect_hud_guard_rejects(dynamic_vector raylib_host.cpp
+    "renderer.draw(previous, current, runtime.render_status(),"
     "std::vector<int> stage11c_bad_vector;"
     "HUD boundary rejects dynamic std::vector")
-arpg_expect_hud_guard_rejects(legacy_budget hud_renderer.cpp
+arpg_expect_hud_guard_rejects(legacy_budget combat_renderer.cpp ""
     "constexpr const char* stage11c_bad_text = \"Budget\";"
     "Normal HUD rejects legacy Budget text")
-arpg_expect_hud_guard_rejects(fourth_status_tag hud_view_model.cpp
+arpg_expect_hud_guard_rejects(fourth_status_tag hud_view_model.cpp ""
     "void stage11c_bad_fourth(HudViewModel& output) { append_status_tag(output.player, HudStatusTagKind::slow); }"
     "HUD visible status tag limit rejects fourth tag")
 
