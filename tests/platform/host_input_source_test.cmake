@@ -32,8 +32,10 @@ set(ACTIVE_ASSERT_PATTERN
     "${SOURCE_LINE_START}static_assert[ \t]*\\([ \t]*arpg::platform::direct_input_poison::active[ \t]*(,|\\))")
 set(SAMPLE_CALL_LINE_PATTERN
     "${SOURCE_LINE_START}const[ \t]+PhysicalKeySnapshot[ \t]+sampled_physical_keys[ \t]*=[ \t]*sample_physical_keys[ \t]*\\([ \t]*\\)")
-set(INJECT_CALL_LINE_PATTERN
-    "${SOURCE_LINE_START}const[ \t]+PhysicalKeySnapshot[ \t]+physical_keys[ \t]*=[ \t]*inject_stage11b_physical_edges[ \t]*\\(")
+set(STAGE11B_INJECT_CALL_LINE_PATTERN
+    "${SOURCE_LINE_START}const[ \t]+PhysicalKeySnapshot[ \t]+stage11b_physical_keys[ \t]*=[ \t\r\n]*inject_stage11b_physical_edges[ \t]*\\(")
+set(STAGE11C_INJECT_CALL_LINE_PATTERN
+    "${SOURCE_LINE_START}const[ \t]+PhysicalKeySnapshot[ \t]+physical_keys[ \t]*=[ \t]*inject_stage11c_physical_edges[ \t]*\\(")
 set(MAP_CALL_LINE_PATTERN
     "${SOURCE_LINE_START}HostFrameInput[ \t]+frame_input[ \t]*=[ \t]*map_host_frame_input[ \t]*\\(")
 set(ACTIVE_SENTINEL_PATTERN
@@ -49,8 +51,12 @@ set(COMMENT_ONLY_STRUCTURE [=[
 // #include "direct_input_poison.hpp"
 // static_assert(arpg::platform::direct_input_poison::active);
 // const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();
-// const PhysicalKeySnapshot physical_keys = inject_stage11b_physical_edges(
+// const PhysicalKeySnapshot stage11b_physical_keys =
+//     inject_stage11b_physical_edges(
 //     sampled_physical_keys, config, stage11b_validation_state);
+// const PhysicalKeySnapshot physical_keys = inject_stage11c_physical_edges(
+//     stage11b_physical_keys, config, input_settings, current,
+//     stage11c_validation_state);
 // HostFrameInput frame_input = map_host_frame_input(settings, physical_keys);
 // #define IsKeyDown ::arpg::platform::direct_input_poison::blocked
 ]=])
@@ -58,8 +64,12 @@ set(REAL_STRUCTURE [=[
 #include "direct_input_poison.hpp"
 static_assert(arpg::platform::direct_input_poison::active, "active");
 const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();
-const PhysicalKeySnapshot physical_keys = inject_stage11b_physical_edges(
+const PhysicalKeySnapshot stage11b_physical_keys =
+    inject_stage11b_physical_edges(
     sampled_physical_keys, config, stage11b_validation_state);
+const PhysicalKeySnapshot physical_keys = inject_stage11c_physical_edges(
+    stage11b_physical_keys, config, input_settings, current,
+    stage11c_validation_state);
 HostFrameInput frame_input = map_host_frame_input(settings, physical_keys);
 #define IsKeyDown ::arpg::platform::direct_input_poison::blocked
 ]=])
@@ -68,7 +78,8 @@ foreach(STRUCTURE_PATTERN IN ITEMS
         POISON_INCLUDE_LINE_PATTERN
         ACTIVE_ASSERT_PATTERN
         SAMPLE_CALL_LINE_PATTERN
-        INJECT_CALL_LINE_PATTERN
+        STAGE11B_INJECT_CALL_LINE_PATTERN
+        STAGE11C_INJECT_CALL_LINE_PATTERN
         MAP_CALL_LINE_PATTERN
         SELF_TEST_MACRO_PATTERN)
     require_match_count(
@@ -123,14 +134,98 @@ require_match_count(
     "host physical snapshot calls")
 require_match_count(
     "${HOST_SOURCE}"
-    "${INJECT_CALL_LINE_PATTERN}"
+    "${STAGE11B_INJECT_CALL_LINE_PATTERN}"
     1
     "host stage11b physical injection calls")
+require_match_count(
+    "${HOST_SOURCE}"
+    "${STAGE11C_INJECT_CALL_LINE_PATTERN}"
+    1
+    "host stage11c physical injection calls")
 require_match_count(
     "${HOST_SOURCE}"
     "${MAP_CALL_LINE_PATTERN}"
     1
     "host logical mapping calls")
+
+function(physical_input_chain_valid SOURCE OUT_VARIABLE)
+    string(FIND "${SOURCE}"
+        "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys()"
+        SAMPLE_INDEX)
+    string(FIND "${SOURCE}"
+        "const PhysicalKeySnapshot stage11b_physical_keys ="
+        STAGE11B_INDEX)
+    string(FIND "${SOURCE}"
+        "const PhysicalKeySnapshot physical_keys = inject_stage11c_physical_edges("
+        STAGE11C_INDEX)
+    string(FIND "${SOURCE}"
+        "HostFrameInput frame_input = map_host_frame_input("
+        MAP_INDEX)
+    if(SAMPLE_INDEX EQUAL -1 OR STAGE11B_INDEX EQUAL -1
+            OR STAGE11C_INDEX EQUAL -1 OR MAP_INDEX EQUAL -1
+            OR NOT SAMPLE_INDEX LESS STAGE11B_INDEX
+            OR NOT STAGE11B_INDEX LESS STAGE11C_INDEX
+            OR NOT STAGE11C_INDEX LESS MAP_INDEX)
+        set("${OUT_VARIABLE}" FALSE PARENT_SCOPE)
+        return()
+    endif()
+    math(EXPR STAGE11B_LENGTH "${STAGE11C_INDEX} - ${STAGE11B_INDEX}")
+    string(SUBSTRING "${SOURCE}" ${STAGE11B_INDEX} ${STAGE11B_LENGTH}
+        STAGE11B_SOURCE)
+    math(EXPR STAGE11C_LENGTH "${MAP_INDEX} - ${STAGE11C_INDEX}")
+    string(SUBSTRING "${SOURCE}" ${STAGE11C_INDEX} ${STAGE11C_LENGTH}
+        STAGE11C_SOURCE)
+    string(SUBSTRING "${SOURCE}" ${MAP_INDEX} -1 MAP_SOURCE)
+    string(FIND "${STAGE11B_SOURCE}"
+        "sampled_physical_keys, config, stage11b_validation_state)"
+        STAGE11B_INPUT_INDEX)
+    string(FIND "${STAGE11C_SOURCE}"
+        "stage11b_physical_keys, config, input_settings, current,"
+        STAGE11C_INPUT_INDEX)
+    string(FIND "${STAGE11C_SOURCE}" "stage11c_validation_state)"
+        STAGE11C_STATE_INDEX)
+    string(FIND "${MAP_SOURCE}" "physical_keys)" MAP_INPUT_INDEX)
+    if(STAGE11B_INPUT_INDEX EQUAL -1 OR STAGE11C_INPUT_INDEX EQUAL -1
+            OR STAGE11C_STATE_INDEX EQUAL -1 OR MAP_INPUT_INDEX EQUAL -1)
+        set("${OUT_VARIABLE}" FALSE PARENT_SCOPE)
+        return()
+    endif()
+    set("${OUT_VARIABLE}" TRUE PARENT_SCOPE)
+endfunction()
+
+physical_input_chain_valid("${HOST_SOURCE}" HOST_INPUT_CHAIN_VALID)
+if(NOT HOST_INPUT_CHAIN_VALID)
+    message(FATAL_ERROR
+        "host input chain must apply Stage11B then Stage11C before mapping")
+endif()
+physical_input_chain_valid("${REAL_STRUCTURE}" REFERENCE_INPUT_CHAIN_VALID)
+if(NOT REFERENCE_INPUT_CHAIN_VALID)
+    message(FATAL_ERROR "host input chain self-check rejected reference")
+endif()
+string(REPLACE
+    "stage11b_physical_keys, config, input_settings, current,"
+    "sampled_physical_keys, config, input_settings, current,"
+    BYPASSED_STAGE11C_STRUCTURE "${REAL_STRUCTURE}")
+physical_input_chain_valid("${BYPASSED_STAGE11C_STRUCTURE}"
+    BYPASSED_STAGE11C_STRUCTURE_VALID)
+if(BYPASSED_STAGE11C_STRUCTURE_VALID)
+    message(FATAL_ERROR "host input chain accepted Stage11C bypass mutation")
+endif()
+set(MAP_BEFORE_STAGE11C_STRUCTURE [=[
+const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();
+const PhysicalKeySnapshot stage11b_physical_keys =
+    inject_stage11b_physical_edges(
+    sampled_physical_keys, config, stage11b_validation_state);
+HostFrameInput frame_input = map_host_frame_input(settings, physical_keys);
+const PhysicalKeySnapshot physical_keys = inject_stage11c_physical_edges(
+    stage11b_physical_keys, config, input_settings, current,
+    stage11c_validation_state);
+]=])
+physical_input_chain_valid("${MAP_BEFORE_STAGE11C_STRUCTURE}"
+    MAP_BEFORE_STAGE11C_STRUCTURE_VALID)
+if(MAP_BEFORE_STAGE11C_STRUCTURE_VALID)
+    message(FATAL_ERROR "host input chain accepted map-before-Stage11C mutation")
+endif()
 
 function(strip_cpp_noncode SOURCE OUT_VARIABLE)
     set(CODE "${SOURCE}")
