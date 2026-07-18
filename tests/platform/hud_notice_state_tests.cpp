@@ -234,6 +234,42 @@ arpg::test::Failure unchanged_context_does_not_repeat_overflow_drops() noexcept 
     return {};
 }
 
+arpg::test::Failure room_clear_edge_does_not_require_commit_or_room_change() noexcept {
+    const dungeon::DungeonSnapshot combat = baseline_snapshot();
+    dungeon::DungeonSnapshot cleared = combat;
+    cleared.phase = dungeon::RoomPhase::cleared;
+    cleared.remaining_targets = 0U;
+
+    platform::HudNoticeState state{};
+    state.observe(combat, combat, saved_status(), rebound_hints(), false);
+    state.observe(combat, cleared, saved_status(), rebound_hints(), false);
+    ARPG_REQUIRE(state.view().primary.kind == platform::HudNoticeKind::room_clear);
+    state.update(10.0F, false);
+    state.observe(combat, cleared, saved_status(), rebound_hints(), false);
+    ARPG_REQUIRE(state.view().primary.kind == platform::HudNoticeKind::none);
+    return {};
+}
+
+arpg::test::Failure room_zero_context_clears_on_next_room() noexcept {
+    dungeon::DungeonSnapshot first_room = baseline_snapshot();
+    first_room.room_index = 0U;
+    dungeon::DungeonSnapshot contextual = first_room;
+    contextual.phase = dungeon::RoomPhase::awaiting_exit;
+    contextual.has_hole = true;
+
+    platform::HudNoticeState state{};
+    state.observe(first_room, contextual, saved_status(), rebound_hints(), false);
+    ARPG_REQUIRE(state.view().primary.kind == platform::HudNoticeKind::hole_interact);
+
+    dungeon::DungeonSnapshot next_room = contextual;
+    next_room.room_index = 1U;
+    next_room.phase = dungeon::RoomPhase::combat;
+    next_room.has_hole = false;
+    state.observe(contextual, next_room, saved_status(), rebound_hints(), false);
+    ARPG_REQUIRE(state.view().primary.kind == platform::HudNoticeKind::none);
+    return {};
+}
+
 arpg::test::Failure save_error_and_recovery_are_persistent_and_state_owned() noexcept {
     const dungeon::DungeonSnapshot snapshot = baseline_snapshot();
     platform::HudNoticeState state{};
@@ -292,6 +328,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"room context clearing", &room_transition_and_explicit_clear_remove_room_context},
     {"bounded queue overflow", &full_queue_discards_lowest_priority_and_counts_drop},
     {"unchanged context has no repeat overflow", &unchanged_context_does_not_repeat_overflow_drops},
+    {"room clear edge without commit", &room_clear_edge_does_not_require_commit_or_room_change},
+    {"room zero context transition", &room_zero_context_clears_on_next_room},
     {"persistent save and recovery ownership", &save_error_and_recovery_are_persistent_and_state_owned},
     {"rebound bounded control hints", &rebound_labels_and_non_terminated_arrays_are_bounded},
 };

@@ -222,9 +222,9 @@ void HudNoticeState::observe(const dungeon::DungeonSnapshot& previous,
     const ControlHints& hints,
     bool recovery_required) noexcept {
     const bool new_commit = current.commit_generation != last_commit_generation_;
-    const bool new_room = last_room_index_ != 0U
+    const bool new_room = has_observation_
         && current.room_index != last_room_index_;
-    const bool context_changed = new_commit
+    const bool context_changed = !has_observation_ || new_commit
         || last_room_index_ != current.room_index;
     if (new_room) {
         clear_room_context();
@@ -253,9 +253,12 @@ void HudNoticeState::observe(const dungeon::DungeonSnapshot& previous,
     if (current.phase == dungeon::RoomPhase::cleared
         && current.remaining_targets == 0U
         && previous.phase != dungeon::RoomPhase::cleared
-        && (new_commit || last_room_index_ != current.room_index)) {
+        && (!has_room_clear_observation_
+            || last_room_clear_room_index_ != current.room_index)) {
         add_transient(notices_, dropped_count_, HudNoticeKind::room_clear,
             kRoomClearPriority, "Room clear");
+        last_room_clear_room_index_ = current.room_index;
+        has_room_clear_observation_ = true;
     }
     if (current.last_room_experience != 0U
         && current.last_room_experience != last_room_experience_) {
@@ -294,6 +297,7 @@ void HudNoticeState::observe(const dungeon::DungeonSnapshot& previous,
     last_room_index_ = current.room_index;
     last_room_experience_ = current.last_room_experience;
     last_level_ = current.progression.level;
+    has_observation_ = true;
 }
 
 void HudNoticeState::update(float frame_seconds, bool paused) noexcept {
@@ -328,7 +332,7 @@ void HudNoticeState::clear_room_context() noexcept {
     while (write < notices_.size()) {
         notices_[write++] = {};
     }
-    last_room_index_ = 0U;
+    has_observation_ = false;
 }
 
 HudNoticeView HudNoticeState::view() const noexcept {

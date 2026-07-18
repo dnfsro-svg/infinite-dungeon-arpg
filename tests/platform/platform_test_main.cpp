@@ -55,5 +55,5 @@ int main() {
         hud_notice_state_suite(),
     };
 
-    return arpg::test::run_suites(suites, 199, "stage 11c task 2 HUD notices");
+    return arpg::test::run_suites(suites, 201, "stage 11c task 2 HUD notices");
 }
