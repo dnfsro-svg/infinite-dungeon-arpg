@@ -4,7 +4,9 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ReferenceImage,
     [Parameter(Mandatory = $true)]
-    [string]$MutationRoot
+    [string]$MutationRoot,
+    [Parameter(Mandatory = $true)]
+    [string]$EmptyFailureValidator
 )
 
 $ErrorActionPreference = 'Stop'
@@ -13,19 +15,78 @@ function Invoke-Stage9Validator {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
         [string]$ExpectedFailure,
-        [DateTime]$MinimumWriteTimeUtc = [DateTime]::MinValue
+        [DateTime]$MinimumWriteTimeUtc = [DateTime]::MinValue,
+        [string]$PowerShellPath
     )
 
-    $previousErrorActionPreference = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $Validator `
-            -ValidateOnlyPath $Path -MinimumWriteTimeUtc $MinimumWriteTimeUtc 2>&1
-        $exitCode = $LASTEXITCODE
-    } finally {
-        $ErrorActionPreference = $previousErrorActionPreference
+    if ([string]::IsNullOrWhiteSpace($PowerShellPath)) {
+        try {
+            $PowerShellPath = (Get-Command powershell.exe `
+                -CommandType Application -ErrorAction Stop).Source
+        } catch {
+            throw ("Stage9 validator process launch failed: " +
+                "could not resolve powershell.exe: $($_.Exception.Message)")
+        }
     }
-    $text = ($output | Out-String)
+
+    $argumentValues = @(
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        $Validator,
+        '-ValidateOnlyPath',
+        $Path,
+        '-MinimumWriteTimeUtc',
+        $MinimumWriteTimeUtc.ToString(
+            'o', [System.Globalization.CultureInfo]::InvariantCulture)
+    )
+    foreach ($value in $argumentValues) {
+        if ($value.Contains('"')) {
+            throw "Stage9 validator process argument contains a quote: $value"
+        }
+    }
+
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $PowerShellPath
+    $startInfo.Arguments = (($argumentValues | ForEach-Object {
+        '"' + $_ + '"'
+    }) -join ' ')
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    $exitCode = $null
+    $stdout = ''
+    $stderr = ''
+    try {
+        try {
+            if (-not $process.Start()) {
+                throw 'Process.Start returned false'
+            }
+        } catch {
+            throw ("Stage9 validator process launch failed: " +
+                "executable='$PowerShellPath': $($_.Exception.Message)")
+        }
+
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $process.WaitForExit()
+        $stdout = $stdoutTask.Result
+        $stderr = $stderrTask.Result
+        $exitCode = $process.ExitCode
+    } finally {
+        $process.Dispose()
+    }
+
+    $text = ($stdout + [Environment]::NewLine + $stderr).Trim()
+    if ($exitCode -ne 0 -and [string]::IsNullOrWhiteSpace($text)) {
+        throw ("Stage9 validator process failed without diagnostics: " +
+            "exit=$exitCode stdout=$($stdout.Length) stderr=$($stderr.Length)")
+    }
     if ([string]::IsNullOrEmpty($ExpectedFailure)) {
         if ($exitCode -ne 0) {
             throw "Stage9 validator rejected valid structured capture: $text"
@@ -168,4 +229,35 @@ try {
 }
 Invoke-Stage9Validator -Path $tooBright -ExpectedFailure 'unbalanced exposure'
 
-Write-Output 'stage9_formal_capture_validator_self_test=PASS mutations=7'
+$realValidator = $Validator
+try {
+    $Validator = $EmptyFailureValidator
+    try {
+        Invoke-Stage9Validator -Path $ReferenceImage `
+            -ExpectedFailure 'low color diversity'
+        throw 'Stage9 validator empty-diagnostics probe was accepted'
+    } catch {
+        $message = $_.Exception.Message
+        if ($message -notmatch
+            'validator process failed without diagnostics: exit=23 stdout=0 stderr=0') {
+            throw "Stage9 validator empty-diagnostics diagnosis is wrong: $message"
+        }
+    }
+} finally {
+    $Validator = $realValidator
+}
+
+$missingPowerShell = Join-Path $MutationRoot 'missing-powershell.exe'
+try {
+    Invoke-Stage9Validator -Path $ReferenceImage `
+        -PowerShellPath $missingPowerShell
+    throw 'Stage9 validator launch-failure probe was accepted'
+} catch {
+    $message = $_.Exception.Message
+    if ($message -notmatch 'validator process launch failed' -or
+        $message -notmatch [Regex]::Escape($missingPowerShell)) {
+        throw "Stage9 validator launch-failure diagnosis is wrong: $message"
+    }
+}
+
+Write-Output 'stage9_formal_capture_validator_self_test=PASS mutations=7 infrastructure_probes=2'
