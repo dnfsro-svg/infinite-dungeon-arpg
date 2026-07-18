@@ -37,6 +37,28 @@ if(TARGET arpg_raylib)
     set_tests_properties(
         platform.units PROPERTIES LABELS "headless;platform")
 
+    add_executable(arpg_stage11c_hud_stress
+        ../core/allocation_probe.cpp
+        hud_stress_tests.cpp)
+    target_compile_features(arpg_stage11c_hud_stress PRIVATE cxx_std_17)
+    target_include_directories(arpg_stage11c_hud_stress
+        PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+    target_link_libraries(arpg_stage11c_hud_stress PRIVATE arpg_raylib)
+    if(MSVC)
+        target_compile_options(arpg_stage11c_hud_stress PRIVATE /utf-8)
+    endif()
+    arpg_enable_project_warnings(arpg_stage11c_hud_stress)
+
+    add_test(
+        NAME stage11c.hud_stress.zero_alloc_100k
+        COMMAND arpg_stage11c_hud_stress)
+    set_tests_properties(
+        stage11c.hud_stress.zero_alloc_100k
+        PROPERTIES
+            ENVIRONMENT "ARPG_STAGE11C_HUD_STRESS=1"
+            LABELS "headless;platform;stress;stage11c"
+            TIMEOUT 300)
+
     add_executable(arpg_stage11b_settings_formal
         stage11b_settings_formal_game_validation.cpp)
     target_compile_features(arpg_stage11b_settings_formal PRIVATE cxx_std_17)
@@ -928,6 +950,29 @@ set_tests_properties(
     PROPERTIES
         ENVIRONMENT "ARPG_TEST_FILTER=stage11b.architecture"
         LABELS "headless;platform;architecture;stage11b"
+        TIMEOUT 300)
+
+add_test(
+    NAME stage11c.architecture.hud_boundaries
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}/src"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11c_hud_architecture_guard_test.cmake")
+set_tests_properties(
+    stage11c.architecture.hud_boundaries
+    PROPERTIES LABELS "headless;platform;architecture;stage11c")
+
+add_test(
+    NAME stage11c.architecture.hud_boundaries_self_test
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}/src"
+        "-DGUARD_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage11c_hud_architecture_guard_test.cmake"
+        "-DBAD_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage11c_hud_bad_source.txt"
+        "-DGUARD_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/stage11c-hud-guard-mutations"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11c_hud_architecture_guard_self_test.cmake")
+set_tests_properties(
+    stage11c.architecture.hud_boundaries_self_test
+    PROPERTIES
+        LABELS "headless;platform;architecture;stage11c"
         TIMEOUT 300)
 
 add_test(
