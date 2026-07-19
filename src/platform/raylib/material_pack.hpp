@@ -33,6 +33,7 @@ public:
     [[nodiscard]] bool load() noexcept;
     void unload() noexcept;
     [[nodiscard]] bool available(MaterialAtlasId id) const noexcept;
+    [[nodiscard]] bool can_draw(MaterialSpriteId id) const noexcept;
     [[nodiscard]] bool draw(
         MaterialSpriteId id, Vector2 foot_position, bool flip_x,
         float scale = 1.0F) const noexcept;

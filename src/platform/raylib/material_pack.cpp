@@ -145,16 +145,25 @@ bool MaterialPack::available(MaterialAtlasId id) const noexcept {
     return state_.available(id);
 }
 
+bool MaterialPack::can_draw(MaterialSpriteId id) const noexcept {
+    if (!state_.can_draw(id) || !valid_texture_api(texture_api_)) return false;
+
+    const MaterialManifestDefinition manifest = default_material_manifest();
+    const MaterialFrameDefinition* const frame = find_frame(manifest, id);
+    if (frame == nullptr || !state_.available(frame->atlas)) return false;
+
+    return texture_api_.valid(textures_[atlas_index(frame->atlas)]);
+}
+
 bool MaterialPack::draw(MaterialSpriteId id, Vector2 foot_position,
     bool flip_x, float scale) const noexcept {
-    if (!state_.can_draw(id) || scale <= 0.0F) return false;
+    if (!can_draw(id) || scale <= 0.0F) return false;
 
     const MaterialManifestDefinition manifest = default_material_manifest();
     const MaterialFrameDefinition* const frame = find_frame(manifest, id);
     if (frame == nullptr || !state_.available(frame->atlas)) return false;
 
     const Texture2D& texture = textures_[atlas_index(frame->atlas)];
-    if (!IsTextureValid(texture)) return false;
 
     Rectangle source = frame->source;
     if (flip_x) {
