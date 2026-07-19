@@ -1,5 +1,6 @@
 #include "material_asset_validation.hpp"
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -41,6 +42,13 @@ constexpr std::size_t kMaximumManifestRgbaBytes = 64U * 1024U * 1024U;
 MaterialValidationResult validate_material_frame(
     const MaterialAtlasDefinition& atlas,
     const MaterialFrameDefinition& frame) noexcept {
+    if (!std::isfinite(frame.source.x) || !std::isfinite(frame.source.y)
+        || !std::isfinite(frame.source.width)
+        || !std::isfinite(frame.source.height)
+        || !std::isfinite(frame.foot_anchor.x)
+        || !std::isfinite(frame.foot_anchor.y)) {
+        return invalid_result(MaterialValidationError::invalid_frame);
+    }
     if (!is_known_atlas(atlas.id) || !is_known_atlas(frame.atlas)
         || !is_known_sprite(frame.id) || atlas.id != frame.atlas
         || atlas.width <= 0 || atlas.height <= 0) {

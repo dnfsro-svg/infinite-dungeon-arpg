@@ -19,21 +19,32 @@ arpg::test::Failure material_animation_selects_launcher_active() noexcept {
 }
 
 arpg::test::Failure material_animation_covers_all_player_states_and_attacks() noexcept {
-    constexpr std::array<PlayerState, 8> kStates{{
-        PlayerState::idle, PlayerState::move, PlayerState::attack_startup,
-        PlayerState::attack_active, PlayerState::attack_recovery,
-        PlayerState::jump_rise, PlayerState::jump_fall, PlayerState::landing,
-    }};
     constexpr std::array<AttackId, 5> kAttacks{{
         AttackId::j1, AttackId::j2, AttackId::j3, AttackId::launcher,
         AttackId::air_j,
     }};
-    for (const PlayerState state : kStates) {
-        for (const AttackId attack : kAttacks) {
-            ARPG_REQUIRE(arpg::platform::select_player_sprite(state, attack)
-                != MaterialSpriteId::missing);
+    constexpr std::array<MaterialSpriteId, 5> kAttackSprites{{
+        MaterialSpriteId::player_j1, MaterialSpriteId::player_j2,
+        MaterialSpriteId::player_j3, MaterialSpriteId::player_launcher,
+        MaterialSpriteId::player_air_j,
+    }};
+    for (std::size_t index = 0U; index < kAttacks.size(); ++index) {
+        for (const PlayerState state : {PlayerState::attack_startup,
+                 PlayerState::attack_active, PlayerState::attack_recovery}) {
+            ARPG_REQUIRE(arpg::platform::select_player_sprite(state, kAttacks[index])
+                == kAttackSprites[index]);
         }
     }
+    ARPG_REQUIRE(arpg::platform::select_player_sprite(
+        PlayerState::idle, AttackId::j1) == MaterialSpriteId::player_idle);
+    ARPG_REQUIRE(arpg::platform::select_player_sprite(
+        PlayerState::move, AttackId::j1) == MaterialSpriteId::player_move);
+    ARPG_REQUIRE(arpg::platform::select_player_sprite(
+        PlayerState::jump_rise, AttackId::j1) == MaterialSpriteId::player_jump_rise);
+    ARPG_REQUIRE(arpg::platform::select_player_sprite(
+        PlayerState::jump_fall, AttackId::j1) == MaterialSpriteId::player_jump_fall);
+    ARPG_REQUIRE(arpg::platform::select_player_sprite(
+        PlayerState::landing, AttackId::j1) == MaterialSpriteId::player_landing);
     ARPG_REQUIRE(arpg::platform::select_player_sprite(
         PlayerState::attack_active, AttackId::none) == MaterialSpriteId::player_idle);
     return {};
@@ -46,15 +57,25 @@ arpg::test::Failure material_animation_covers_monsters_and_ai_phases() noexcept 
         MonsterId::lightning_shooter, MonsterId::lightning_dasher,
         MonsterId::chaos_chaser, MonsterId::chaos_hazard,
     }};
+    constexpr std::array<MaterialSpriteId, 8> kExpectedSprites{{
+        MaterialSpriteId::fire_bomber_idle,
+        MaterialSpriteId::fire_charger_idle,
+        MaterialSpriteId::water_bulwark_idle,
+        MaterialSpriteId::water_support_idle,
+        MaterialSpriteId::lightning_shooter_idle,
+        MaterialSpriteId::lightning_dasher_idle,
+        MaterialSpriteId::chaos_chaser_idle,
+        MaterialSpriteId::chaos_hazard_idle,
+    }};
     constexpr std::array<MonsterAiPhase, 7> kPhases{{
         MonsterAiPhase::idle, MonsterAiPhase::move, MonsterAiPhase::telegraph,
         MonsterAiPhase::active, MonsterAiPhase::recovery,
         MonsterAiPhase::cooldown, MonsterAiPhase::defeated,
     }};
-    for (const MonsterId monster : kMonsters) {
+    for (std::size_t index = 0U; index < kMonsters.size(); ++index) {
         for (const MonsterAiPhase phase : kPhases) {
-            ARPG_REQUIRE(arpg::platform::select_monster_sprite(monster, phase)
-                != MaterialSpriteId::missing);
+            ARPG_REQUIRE(arpg::platform::select_monster_sprite(
+                kMonsters[index], phase) == kExpectedSprites[index]);
         }
     }
     ARPG_REQUIRE(arpg::platform::select_monster_sprite(
