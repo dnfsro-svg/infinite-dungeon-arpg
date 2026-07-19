@@ -133,7 +133,7 @@ ctest --test-dir E:/game/task6-build -R '^stage11c\.hud_stress\.zero_alloc_100k$
 
 ## 自审
 
-- `combat_renderer.cpp` 只有一处 `build_ground_loot_view` 调用；位于每次 `draw` 开头。room/HUD 两个 production consumer 都来自同一个 lvalue plan，未持有跨帧引用。
+- `combat_renderer.cpp` 只有一处 `build_ground_loot_view` 调用；位于每次 `draw` 开头。room/HUD 两个 production stage 都直接读取同一个 `render_plan.ground_loot` 字段，不持有指针或跨帧引用。
 - room icon path 不调用 `ground_loot_visible` 或 `build_ground_loot_view`；HUD label path 同样不重算 filter。
 - label path 只使用固定容量 `GroundLootView` 文本和 `DrawTextEx`；源码扫描无 `TextFormat`、`std::string`、`std::vector` 或 `DrawText`。
 - `CombatRenderer::set_loot_filter_mode` 只写 renderer 私有 presentation 状态；runtime、session、pickup policy 不引用该字段。
@@ -143,5 +143,83 @@ ctest --test-dir E:/game/task6-build -R '^stage11c\.hud_stress\.zero_alloc_100k$
 ## 顾虑
 
 - headless 单元测试无法直接拦截 raylib `Draw*` 调用，因此顺序和复用由真实 production `CombatRenderPlan` 驱动并由纯 plan 测试、源码扫描及现有 architecture guards 验证；本任务未做 Task 9 的像素级 formal evidence。
-- Apply failure 只有在既有 `rollback_live_settings` 成功时才能保证所有窗口/音量 live state 都恢复；loot renderer mode 会随该成功回滚恢复。rollback 自身失败仍保留既有错误提示语义，未在 Task 6 擅自改写。
+- Apply failure 即使 `rollback_live_settings` 失败，也会无条件恢复 live/draft loot mode；窗口、音量或 VSync 的外部 backend 状态仍遵循既有 rollback error 语义。
 - 独立 build 目录位于 `E:/game/task6-build`，因为共享 task5 build 目录对当前执行身份不可写。
+
+## 审查修复：Apply 隔离与 consumer 生命周期
+
+本节记录 `bfec85f feat: render filtered ground loot labels` 后的 Important 审查修复。
+
+### RED
+
+先新增真实 rollback-failure host 测试：Apply 的首次 fullscreen preview 成功，SettingsStore replace 失败，随后第二次 window-mode set（rollback）失败。生产代码未修改时运行：
+
+```powershell
+cmake --build E:/game/task6-build --target arpg_platform_tests -- -j1
+ctest --test-dir E:/game/task6-build -R '^platform\.units$' -V
+```
+
+得到有效 RED：
+
+```text
+[FAIL] pause_host_gate.Apply rollback failure restores committed loot policy:
+live.loot_filter_mode == original.loot_filter_mode
+258 cases, 1 failures
+```
+
+consumer 生命周期使用独立 architecture guard 先锁定：禁止 `GroundLootRenderConsumers`、`ground_loot_render_consumers`、`room_icons`、`hud_labels`，并要求两个 production stage 直接消费 `render_plan.ground_loot`，同时要求 `build_ground_loot_view` 在 renderer source 恰好一处。修改生产代码前运行：
+
+```powershell
+ctest --test-dir E:/game/task6-build \
+  -R '^stage11d\.renderer_integration_guard$' -V
+```
+
+得到有效 RED：
+
+```text
+Stage11D renderer exposes forbidden loot consumer wrapper:
+GroundLootRenderConsumers
+```
+
+### GREEN 实现
+
+- Apply backend preview 改用 `preview_settings` 副本，其中 loot mode 强制等于 committed；因此 save committed 之前不会把 draft loot 写入 `live_settings`。
+- SettingsStore 保存继续使用原始 draft（仅按既有规则调整 revision），保存成功后才把新 loot mode 一起发布到 committed/draft/live/input。
+- Apply preview failure 与 save failure 均在检查 backend rollback 结果之前，无条件把 `live_settings.loot_filter_mode` 和 `pause_menu.draft.loot_filter_mode` 恢复为 committed。即使窗口 rollback 失败，fixed tick/live 与 renderer/draft 仍保持旧 loot policy。
+- 删除 `GroundLootRenderConsumers` 与 `ground_loot_render_consumers`。production room stage 和 ground-label stage 直接将同一个 `render_plan.ground_loot` const 引用传入 renderer，不再存在可空或 rvalue 悬空指针 API。
+- C++ plan 测试直接绑定 `plan.ground_loot` 的两个 stage 引用并验证地址、ordinal 和 draw order；Stage11D guard 验证 production 直连、wrapper 缺失和单次 builder 调用。
+
+### GREEN 与回归
+
+小步 GREEN：
+
+```text
+platform.units: 258 cases, 0 failures
+stage11d.renderer_integration_guard: Passed
+```
+
+提交前 focused 回归命令：
+
+```powershell
+cmake --build E:/game/task6-build \
+  --target arpg_platform_tests arpg_settings_tests arpg_stage11c_hud_stress -- -j1
+ctest --test-dir E:/game/task6-build \
+  -R "^(platform\.units|settings\.units|stage11c\.hud_stress\.zero_alloc_100k|platform\.pause_menu_state_boundary|stage11b\.architecture\.settings_boundaries|stage11c\.architecture\.hud_boundaries(_self_test)?|platform\.host_input_source|stage11b\.settings_evidence_guard(_self_test)?|stage11c\.hud_evidence_guard(_self_test)?|stage11d\.renderer_integration_guard)$" \
+  --output-on-failure
+```
+
+结果：13/13 CTest 通过、0 failures；首次完整回归 43.72 秒，提交前 fresh 重跑 39.62 秒。包含 `platform.units` 258 cases、`settings.units`、HUD 100k stress、Task4 settings guard/self-test、Host/HUD architecture guards 和新 Stage11D renderer guard。
+
+### 修复文件与提交
+
+- `src/platform/raylib/combat_renderer.hpp`
+- `src/platform/raylib/combat_renderer.cpp`
+- `src/platform/raylib/raylib_host.cpp`
+- `tests/platform/hud_host_integration_tests.cpp`
+- `tests/platform/pause_host_gate_tests.cpp`
+- `tests/platform/platform_test_main.cpp`
+- `tests/platform/CMakeLists.txt`
+- `tests/platform/stage11d_renderer_integration_guard_test.cmake`
+- `.superpowers/sdd/task-6-report.md`
+
+修复提交主题：`fix: isolate loot preview and render plan lifetime`

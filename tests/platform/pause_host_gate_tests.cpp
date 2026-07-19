@@ -50,6 +50,30 @@ settings::SettingsStore memory_store(MemorySettingsFiles& files) {
         {&files, &memory_read, &memory_replace}};
 }
 
+struct ApplyRollbackFailureBackend final {
+    settings::WindowMode mode{settings::WindowMode::windowed};
+    std::size_t set_window_mode_calls{};
+};
+
+bool fail_rollback_window_mode(
+    void* context,
+    settings::WindowMode mode) noexcept {
+    auto& backend = *static_cast<ApplyRollbackFailureBackend*>(context);
+    backend.mode = mode;
+    ++backend.set_window_mode_calls;
+    return backend.set_window_mode_calls != 2U;
+}
+
+settings::WindowMode read_failure_backend_window_mode(void* context) noexcept {
+    return static_cast<ApplyRollbackFailureBackend*>(context)->mode;
+}
+
+platform::WindowSettingsBackend rollback_failure_backend(
+    ApplyRollbackFailureBackend& backend) noexcept {
+    return {&backend, nullptr, &fail_rollback_window_mode, nullptr,
+        &read_failure_backend_window_mode, nullptr};
+}
+
 void run_frame(dungeon::DungeonSession& session,
     const platform::HostFrameGateResult& frame,
     bool request_action) noexcept {
@@ -323,6 +347,38 @@ arpg::test::Failure loot_filter_preview_is_renderer_only_until_commit() noexcept
     return {};
 }
 
+arpg::test::Failure apply_rollback_failure_still_restores_committed_loot_policy()
+    noexcept {
+    MemorySettingsFiles files{};
+    files.fail_replace = true;
+    settings::SettingsStore store = memory_store(files);
+    ApplyRollbackFailureBackend backend{};
+    platform::PauseMenuState state{};
+    state.screen = platform::PauseScreen::settings;
+    state.committed = settings::default_settings();
+    state.draft = state.committed;
+    state.draft.revision = 1U;
+    state.draft.window_mode = settings::WindowMode::fullscreen;
+    state.draft.loot_filter_mode = settings::LootFilterMode::rare_only;
+    const settings::SettingsData original = state.committed;
+    settings::SettingsData live = state.committed;
+    settings::SettingsData input = state.committed;
+
+    ARPG_REQUIRE(!platform::settle_host_pause_command(
+        platform::PauseCommand::apply, false, state, live, input, store,
+        rollback_failure_backend(backend)));
+    ARPG_REQUIRE(backend.set_window_mode_calls == 3U);
+    ARPG_REQUIRE(state.message != nullptr);
+    ARPG_REQUIRE(state.committed.loot_filter_mode == original.loot_filter_mode);
+    ARPG_REQUIRE(live.loot_filter_mode == original.loot_filter_mode);
+    ARPG_REQUIRE(state.draft.loot_filter_mode == original.loot_filter_mode);
+    ARPG_REQUIRE(platform::loot_pickup_policy(live.loot_filter_mode).minimum_rarity
+        == platform::loot_pickup_policy(original.loot_filter_mode).minimum_rarity);
+    ARPG_REQUIRE(platform::renderer_loot_filter_mode(
+        state.screen, live, state.draft) == original.loot_filter_mode);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"600 paused frames freeze simulation",
         &six_hundred_paused_presented_frames_freeze_simulation},
@@ -340,6 +396,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &close_same_frame_waits_for_rejected_apply},
     {"loot filter preview is renderer-only until commit",
         &loot_filter_preview_is_renderer_only_until_commit},
+    {"Apply rollback failure restores committed loot policy",
+        &apply_rollback_failure_still_restores_committed_loot_policy},
 };
 
 }  // namespace

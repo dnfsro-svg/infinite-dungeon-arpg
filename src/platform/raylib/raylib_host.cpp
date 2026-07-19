@@ -952,24 +952,29 @@ bool settle_host_pause_command(
         break;
     }
     case PauseCommand::apply: {
+        settings::SettingsData preview_settings = pause_menu.draft;
+        preview_settings.loot_filter_mode =
+            pause_menu.committed.loot_filter_mode;
         const LiveSettingsResult preview = apply_live_settings(
-            live_settings, pause_menu.draft, settings_backend);
+            live_settings, preview_settings, settings_backend);
         if (preview != LiveSettingsResult::applied) {
             const LiveSettingsResult rollback = rollback_live_settings(
                 live_settings, pause_menu.committed, settings_backend);
+            live_settings.loot_filter_mode =
+                pause_menu.committed.loot_filter_mode;
+            pause_menu.draft.loot_filter_mode =
+                pause_menu.committed.loot_filter_mode;
             if (rollback == LiveSettingsResult::applied) {
                 live_settings = pause_menu.committed;
-                pause_menu.draft.loot_filter_mode =
-                    pause_menu.committed.loot_filter_mode;
                 pause_menu.message = kSettingsPreviewFailed;
             } else {
                 pause_menu.message = kSettingsRollbackFailed;
             }
             break;
         }
-        const settings::SettingsData previewed = pause_menu.draft;
+        const settings::SettingsData previewed = preview_settings;
         live_settings = previewed;
-        settings::SettingsData save_draft = previewed;
+        settings::SettingsData save_draft = pause_menu.draft;
         save_draft.revision = pause_menu.committed.revision;
         const settings::SettingsSaveResult saved = settings_store.save(
             pause_menu.committed, save_draft);
@@ -983,10 +988,12 @@ bool settle_host_pause_command(
         }
         const LiveSettingsResult rollback = rollback_live_settings(
             previewed, pause_menu.committed, settings_backend);
+        live_settings.loot_filter_mode =
+            pause_menu.committed.loot_filter_mode;
+        pause_menu.draft.loot_filter_mode =
+            pause_menu.committed.loot_filter_mode;
         if (rollback == LiveSettingsResult::applied) {
             live_settings = pause_menu.committed;
-            pause_menu.draft.loot_filter_mode =
-                pause_menu.committed.loot_filter_mode;
             pause_menu.message = kSettingsSaveFailed;
         } else {
             pause_menu.message = kSettingsRollbackFailed;

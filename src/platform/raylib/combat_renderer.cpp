@@ -26,11 +26,6 @@ CombatRenderPlan make_combat_render_plan(
     return plan;
 }
 
-GroundLootRenderConsumers ground_loot_render_consumers(
-    const CombatRenderPlan& plan) noexcept {
-    return {&plan.ground_loot, &plan.ground_loot};
-}
-
 std::optional<std::size_t> hud_presented_frame_index(
     HudPresentedFrame frame) noexcept {
     const std::size_t index = static_cast<std::size_t>(frame);
@@ -166,8 +161,6 @@ void CombatRenderer::draw(
     const CombatRenderPlan render_plan = make_combat_render_plan(current,
         loot_filter_mode_, static_cast<float>(GetScreenWidth()),
         static_cast<float>(GetScreenHeight()));
-    const GroundLootRenderConsumers ground_loot =
-        ground_loot_render_consumers(render_plan);
 
     const CameraOffset camera_offset = feedback.camera_offset();
     Camera2D world_camera{};
@@ -183,7 +176,7 @@ void CombatRenderer::draw(
         }
         switch (stage) {
         case CombatRenderStage::room:
-            draw_room(current, *ground_loot.room_icons);
+            draw_room(current, render_plan.ground_loot);
             break;
         case CombatRenderStage::actors:
             draw_actors(previous, current,
@@ -191,7 +184,7 @@ void CombatRenderer::draw(
                 draw_debug, feedback);
             break;
         case CombatRenderStage::ground_loot_labels:
-            hud_renderer_.draw_ground_loot(*ground_loot.hud_labels);
+            hud_renderer_.draw_ground_loot(render_plan.ground_loot);
             break;
         case CombatRenderStage::normal_hud:
             draw_hud();

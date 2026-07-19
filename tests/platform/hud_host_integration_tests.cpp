@@ -332,12 +332,12 @@ arpg::test::Failure ground_loot_render_plan_reuses_one_view_and_orders_stages()
 
     const platform::CombatRenderPlan plan = platform::make_combat_render_plan(
         value, settings::LootFilterMode::magic_or_better, 1280.0F, 720.0F);
-    const platform::GroundLootRenderConsumers consumers =
-        platform::ground_loot_render_consumers(plan);
+    const platform::GroundLootView& room_stage_view = plan.ground_loot;
+    const platform::GroundLootView& label_stage_view = plan.ground_loot;
 
-    ARPG_REQUIRE(consumers.room_icons == &plan.ground_loot);
-    ARPG_REQUIRE(consumers.hud_labels == &plan.ground_loot);
-    ARPG_REQUIRE(consumers.room_icons == consumers.hud_labels);
+    ARPG_REQUIRE(&room_stage_view == &plan.ground_loot);
+    ARPG_REQUIRE(&label_stage_view == &plan.ground_loot);
+    ARPG_REQUIRE(&room_stage_view == &label_stage_view);
     ARPG_REQUIRE(plan.ground_loot.count == 2U);
     ARPG_REQUIRE(plan.ground_loot.labels[0].ordinal == 20U);
     ARPG_REQUIRE(plan.ground_loot.labels[1].ordinal == 30U);

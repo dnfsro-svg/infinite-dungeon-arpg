@@ -1291,3 +1291,12 @@ add_test(
 set_tests_properties(
     stage11c.hud_evidence_guard_self_test
     PROPERTIES LABELS "headless;platform;architecture;stage11c" TIMEOUT 300)
+
+add_test(
+    NAME stage11d.renderer_integration_guard
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11d_renderer_integration_guard_test.cmake")
+set_tests_properties(
+    stage11d.renderer_integration_guard
+    PROPERTIES LABELS "headless;platform;architecture;stage11d")

@@ -37,19 +37,11 @@ struct CombatRenderPlan final {
     std::size_t stage_count{};
 };
 
-struct GroundLootRenderConsumers final {
-    const GroundLootView* room_icons{};
-    const GroundLootView* hud_labels{};
-};
-
 [[nodiscard]] CombatRenderPlan make_combat_render_plan(
     const dungeon::DungeonSnapshot& snapshot,
     settings::LootFilterMode mode,
     float width,
     float height) noexcept;
-
-[[nodiscard]] GroundLootRenderConsumers ground_loot_render_consumers(
-    const CombatRenderPlan& plan) noexcept;
 
 [[nodiscard]] std::optional<std::size_t> hud_presented_frame_index(
     HudPresentedFrame) noexcept;
