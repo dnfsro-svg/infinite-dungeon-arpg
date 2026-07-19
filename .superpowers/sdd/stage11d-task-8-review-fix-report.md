@@ -25,12 +25,12 @@ Result: `254 cases, 1 failures`; the old trace failed at `policy_attempts[0] > 0
 ## Guard hardening
 
 - Dynamic families now cover `basic_string`, all named string aliases, sequential/associative containers, `forward_list`, stack/queue adaptors, and `std::pmr` aliases while allowing `std::array`.
-- Presentation checks reject `DungeonSession`, Session calls through `.` or `->`, `SettingsStore`, `SaveStore`, and store persistence calls.
-- A small lexer removes line/block comments and quoted literals for ordinary presentation/function checks.
+- Presentation checks reject `DungeonSession`; member-call checks target identifiers containing `session` or `store` through `.`/`->`, avoiding unrelated `animation.tick()`, `frame.snapshot()`, and `cache.load()` calls.
+- The final guard reuses repository `cpp_source_lexer.cmake` for phase-2 line splices, raw/ordinary strings, characters, comments, and preprocessor include/define handling.
 - Include checks remove comments, require every dungeon/settings include operand to be a literal, normalize separators, and reject forbidden relative/absolute path segments.
-- Explicit pickup is extracted by sanitized function-definition plus balanced braces, so an injected `auto_pickup_eligible` call cannot shorten the checked body.
-- Automatic policy captures renamed ground/policy parameters, requires the real monster rarity return, and checks the real abyss bypass appears before it.
-- Self-test now proves 22 bad mutations fail for their named reason and five equivalent variants pass.
+- Explicit pickup is extracted by sanitized function-definition plus balanced braces; declarations are skipped, so an injected call or forward declaration cannot redirect extraction.
+- Automatic policy captures renamed parameters and validates the entire anchored canonical top-level body, rejecting unreachable wrappers and tail decoys.
+- Final self-test proves 27 bad mutations fail for their named reason and eight equivalent variants pass.
 
 ## Stress hardening
 

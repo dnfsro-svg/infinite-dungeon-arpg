@@ -22,7 +22,9 @@ foreach(_fixture_token IN ITEMS
         "SESSION_SNAPSHOT" "SAVE_STORE" "STORE_LOAD"
         "MACRO_DUNGEON_INCLUDE" "MACRO_SETTINGS_INCLUDE"
         "RARITY_COMMENT_DECOY" "UNREACHABLE_ABYSS_BYPASS"
-        "PRESENTATION_SETTINGS_STORE" "EXPLICIT_AUTO_POLICY_CALL")
+        "PRESENTATION_SETTINGS_STORE" "EXPLICIT_AUTO_POLICY_CALL"
+        "SPLICED_VECTOR" "SPLICED_SESSION" "SPLICED_STORE"
+        "FORWARD_DECL_BAD" "IF_FALSE_POLICY")
     string(FIND "${_bad_source_text}" "${_fixture_token}" _fixture_index)
     if(_fixture_index EQUAL -1)
         message(FATAL_ERROR
@@ -35,19 +37,34 @@ file(MAKE_DIRECTORY "${GUARD_TEST_ROOT}")
 function(arpg_stage11d_make_fixture NAME OUT_ROOT)
     set(_fixture_root "${GUARD_TEST_ROOT}/${NAME}/src")
     file(REMOVE_RECURSE "${GUARD_TEST_ROOT}/${NAME}")
-    file(MAKE_DIRECTORY "${_fixture_root}/platform")
-    file(COPY "${SOURCE_ROOT}/dungeon" DESTINATION "${_fixture_root}")
-    file(COPY "${SOURCE_ROOT}/platform/settings"
-        DESTINATION "${_fixture_root}/platform")
-    file(COPY "${SOURCE_ROOT}/platform/raylib"
-        DESTINATION "${_fixture_root}/platform")
+    file(MAKE_DIRECTORY "${_fixture_root}/dungeon")
+    file(MAKE_DIRECTORY "${_fixture_root}/platform/settings")
+    file(MAKE_DIRECTORY "${_fixture_root}/platform/raylib")
+    foreach(_relative_source IN ITEMS
+            "dungeon/dungeon_transition.cpp"
+            "dungeon/dungeon_session.cpp"
+            "platform/settings/settings_types.cpp"
+            "platform/settings/settings_codec.cpp"
+            "platform/raylib/ground_loot_view.hpp"
+            "platform/raylib/ground_loot_view.cpp"
+            "platform/raylib/loot_pickup_feedback.hpp"
+            "platform/raylib/loot_pickup_feedback.cpp"
+            "platform/raylib/room_renderer.cpp")
+        get_filename_component(_relative_directory
+            "${_relative_source}" DIRECTORY)
+        file(MAKE_DIRECTORY "${_fixture_root}/${_relative_directory}")
+        file(COPY_FILE "${SOURCE_ROOT}/${_relative_source}"
+            "${_fixture_root}/${_relative_source}" ONLY_IF_DIFFERENT)
+    endforeach()
     set("${OUT_ROOT}" "${_fixture_root}" PARENT_SCOPE)
 endfunction()
 
-function(arpg_stage11d_run_guard FIXTURE_ROOT OUT_RESULT OUT_OUTPUT)
+function(arpg_stage11d_run_guard
+        FIXTURE_ROOT RELATIVE_FILE OUT_RESULT OUT_OUTPUT)
     execute_process(
         COMMAND "${CMAKE_COMMAND}"
             "-DSOURCE_ROOT=${FIXTURE_ROOT}"
+            "-DSTAGE11D_MUTATION_RELATIVE_FILE=${RELATIVE_FILE}"
             -P "${GUARD_SCRIPT}"
         RESULT_VARIABLE _result
         OUTPUT_VARIABLE _stdout
@@ -64,7 +81,8 @@ function(arpg_stage11d_append_mutation NAME RELATIVE_FILE MUTATION REASON)
             "Stage11D mutation ${NAME} target is missing: ${RELATIVE_FILE}")
     endif()
     file(APPEND "${_target}" "\n// Stage11D ${NAME} mutation\n${MUTATION}\n")
-    arpg_stage11d_run_guard("${_fixture_root}" _result _output)
+    arpg_stage11d_run_guard(
+        "${_fixture_root}" "${RELATIVE_FILE}" _result _output)
     if(_result EQUAL 0)
         message(FATAL_ERROR
             "Stage11D loot guard accepted ${NAME} mutation")
@@ -93,7 +111,8 @@ function(arpg_stage11d_replace_mutation
             "Stage11D mutation ${NAME} substitution token is missing")
     endif()
     file(WRITE "${_target}" "${_source}")
-    arpg_stage11d_run_guard("${_fixture_root}" _result _output)
+    arpg_stage11d_run_guard(
+        "${_fixture_root}" "${RELATIVE_FILE}" _result _output)
     if(EXPECT_REJECT)
         if(_result EQUAL 0)
             message(FATAL_ERROR
@@ -123,6 +142,10 @@ arpg_stage11d_append_mutation(forward_list
     "platform/raylib/loot_pickup_feedback.cpp"
     "std::forward_list<int> stage11d_bad_forward_list; // FORWARD_LIST"
     "loot presentation rejects dynamic strings or containers")
+arpg_stage11d_append_mutation(spliced_vector
+    "platform/raylib/ground_loot_view.cpp"
+    "std::vec\\\ntor<int> stage11d_bad_spliced_vector; // SPLICED_VECTOR"
+    "loot presentation rejects dynamic strings or containers")
 arpg_stage11d_append_mutation(physical_input
     "platform/raylib/loot_pickup_feedback.cpp"
     "bool stage11d_bad_input() { return IsKeyDown(1); }"
@@ -139,6 +162,10 @@ arpg_stage11d_append_mutation(session_snapshot
     "platform/raylib/ground_loot_view.cpp"
     "void stage11d_bad_snapshot() { session.snapshot(); } // SESSION_SNAPSHOT"
     "loot presentation rejects session calls")
+arpg_stage11d_append_mutation(spliced_session
+    "platform/raylib/loot_pickup_feedback.cpp"
+    "void stage11d_bad_spliced_session() { ses\\\nsion->tick({}); } // SPLICED_SESSION"
+    "loot presentation rejects session calls")
 arpg_stage11d_append_mutation(save_store
     "platform/raylib/loot_pickup_feedback.cpp"
     "SaveStore* stage11d_bad_save_store = nullptr; // SAVE_STORE"
@@ -150,6 +177,10 @@ arpg_stage11d_append_mutation(presentation_settings_store
 arpg_stage11d_append_mutation(store_load
     "platform/raylib/ground_loot_view.cpp"
     "void stage11d_bad_load() { store.load(); } // STORE_LOAD"
+    "loot presentation rejects save/store access")
+arpg_stage11d_append_mutation(spliced_store
+    "platform/raylib/ground_loot_view.cpp"
+    "void stage11d_bad_spliced_store() { sto\\\nre.load(); } // SPLICED_STORE"
     "loot presentation rejects save/store access")
 arpg_stage11d_append_mutation(settings_store
     "platform/raylib/room_renderer.cpp"
@@ -203,7 +234,17 @@ arpg_stage11d_replace_mutation(unreachable_abyss_bypass
     "dungeon/dungeon_transition.cpp"
     "    if (ground.source == GroundItemSource::abyss_chest) return true;\n    return ground.source == GroundItemSource::monster_drop\n        && static_cast<std::uint8_t>(ground.item.rarity)\n            >= static_cast<std::uint8_t>(policy.minimum_rarity);"
     "    // UNREACHABLE_ABYSS_BYPASS\n    return ground.source == GroundItemSource::monster_drop\n        && static_cast<std::uint8_t>(ground.item.rarity)\n            >= static_cast<std::uint8_t>(policy.minimum_rarity);\n    if (ground.source == GroundItemSource::abyss_chest) return true;"
-    "automatic pickup abyss bypass must precede rarity return" TRUE)
+    "automatic pickup policy must use canonical top-level body" TRUE)
+arpg_stage11d_replace_mutation(forward_declaration_bad_definition
+    "dungeon/dungeon_transition.cpp"
+    "bool auto_pickup_eligible(\n    const GroundItem& ground,\n    AutoPickupPolicy policy) noexcept {\n    if (!ground.active) return false;\n    if (ground.source == GroundItemSource::abyss_chest) return true;\n    return ground.source == GroundItemSource::monster_drop\n        && static_cast<std::uint8_t>(ground.item.rarity)\n            >= static_cast<std::uint8_t>(policy.minimum_rarity);\n}"
+    "bool auto_pickup_eligible(const GroundItem& ground, AutoPickupPolicy policy) noexcept; // FORWARD_DECL_BAD\nbool stage11d_unrelated_forward_body() noexcept { return false; }\nbool auto_pickup_eligible(\n    const GroundItem& ground,\n    AutoPickupPolicy policy) noexcept {\n    if (!ground.active) return false;\n    if (ground.source == GroundItemSource::abyss_chest) return true;\n    return ground.source == GroundItemSource::monster_drop;\n}"
+    "automatic pickup policy is incomplete" TRUE)
+arpg_stage11d_replace_mutation(if_false_policy_wrapper
+    "dungeon/dungeon_transition.cpp"
+    "    if (ground.source == GroundItemSource::abyss_chest) return true;\n    return ground.source == GroundItemSource::monster_drop\n        && static_cast<std::uint8_t>(ground.item.rarity)\n            >= static_cast<std::uint8_t>(policy.minimum_rarity);"
+    "    if (false) { // IF_FALSE_POLICY\n        if (ground.source == GroundItemSource::abyss_chest) return true;\n        return ground.source == GroundItemSource::monster_drop\n            && static_cast<std::uint8_t>(ground.item.rarity)\n                >= static_cast<std::uint8_t>(policy.minimum_rarity);\n    }\n    return false;"
+    "automatic pickup policy must use canonical top-level body" TRUE)
 
 arpg_stage11d_replace_mutation(equivalent_reversed_abyss_test
     "dungeon/dungeon_transition.cpp"
@@ -230,6 +271,21 @@ arpg_stage11d_replace_mutation(equivalent_commented_include
     "#include \"platform/settings/settings_codec.hpp\""
     "#include \"platform/settings/settings_codec.hpp\"\n// #include MACRO_DUNGEON_INCLUDE\nconstexpr const char* kStage11DIncludeText = \"#include ../../dungeon/decoy.hpp\";"
     "" FALSE)
+arpg_stage11d_replace_mutation(equivalent_forward_declaration
+    "dungeon/dungeon_transition.cpp"
+    "bool auto_pickup_eligible(\n    const GroundItem& ground,"
+    "bool auto_pickup_eligible(const GroundItem& ground, AutoPickupPolicy policy) noexcept;\nbool stage11d_unrelated_good_body() noexcept { return false; }\nbool auto_pickup_eligible(\n    const GroundItem& ground,"
+    "" FALSE)
+arpg_stage11d_replace_mutation(equivalent_unrelated_member_calls
+    "platform/raylib/ground_loot_view.cpp"
+    "#include <cstdio>"
+    "#include <cstdio>\nvoid stage11d_good_members() { animation.tick(); frame.snapshot(); cache.load(); }"
+    "" FALSE)
+arpg_stage11d_replace_mutation(equivalent_raw_string_and_comment
+    "platform/raylib/ground_loot_view.cpp"
+    "#include <cstdio>"
+    "#include <cstdio>\nconstexpr const char* kStage11DRaw = R\"guard(std::vector session->tick store.load())guard\";\n/* std::pmr::vector and ses\\\nsion.snapshot() are harmless comments */"
+    "" FALSE)
 
 message(STATUS
-    "Stage 11D loot guard rejected twenty-two bad mutations and accepted five equivalent variants")
+    "Stage 11D loot guard rejected twenty-seven bad mutations and accepted eight equivalent variants")

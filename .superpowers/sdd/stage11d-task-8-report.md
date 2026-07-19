@@ -34,14 +34,14 @@ Result: `254 cases, 1 failures`, at `filtered_items_retained > 0U`.
 - Dungeon include paths reject settings and raylib dependencies, including normalized relative paths.
 - Settings include paths reject dungeon dependencies, including normalized relative paths.
 - Ground-loot view and pickup feedback reject the reviewed dynamic string/container families (including PMR aliases and container adaptors), direct physical input sampling, `.`/`->` Session calls, `DungeonSession`, `SettingsStore`, `SaveStore`, and store load/save/commit/recover calls. Fixed `std::array` remains allowed.
-- Ordinary presentation checks remove line/block comments and quoted literals before matching. The real `room_renderer.cpp` rejects direct save/store access.
+- Ordinary presentation checks use the repository `cpp_source_lexer.cmake`, so phase-2 line splices, raw/ordinary strings, characters, and comments are sanitized consistently. The real `room_renderer.cpp` rejects direct save/store access.
 - The extracted `DungeonSession::request_pickup` body rejects rarity/filter policy checks, preserving explicit-pickup semantics.
-- Function bodies are extracted from sanitized code by matched definition and balanced braces, not by the next bare function-name token.
-- The extracted `auto_pickup_eligible` body derives both parameter names, normalizes formatting, requires one real monster-source + rarity + minimum-rarity return expression, and proves the real abyss true-return precedes it.
+- Function bodies are extracted from sanitized code by matched definition and balanced braces; declarations ending in `;` are skipped, and bare calls cannot shorten the checked body.
+- The extracted `auto_pickup_eligible` body derives both parameter names and must match the complete anchored top-level canonical body: active guard, abyss true bypass, then monster-source + rarity + minimum-rarity return. Extra wrappers and tail decoys are rejected.
 - Dungeon/settings include lines are comment-cleaned, every operand must be a literal, and forbidden absolute or relative path segments are rejected.
 - All required files, manifest tokens, mutation targets, and substitutions fail closed.
 
-After review hardening, the mutation self-test rejects 22 named bad variants, including the original seven, PMR/forward-list families, pointer/member Session calls, both store types/calls, macro include operands, comment-only rarity decoys, unreachable abyss bypasses, and explicit policy calls. Five semantics-preserving variants cover reversed comparisons, parameter renaming/function reformatting, harmless comments/strings, and commented include decoys.
+After final review hardening, the mutation self-test rejects 27 named bad variants, including phase-2 line-splice bypasses, forward-declaration extraction traps, and an `if(false)` canonical-policy wrapper. Eight semantics-preserving variants cover reversed comparisons, parameter renaming/function reformatting, a valid forward declaration plus unrelated function, raw strings/comments, harmless non-session/non-store member calls, and commented include decoys.
 
 ## Deterministic stress coverage
 
@@ -88,4 +88,4 @@ Result: `10/10` passed.
 
 The review hardening was also test-first. Before the guard update, the expanded self-test failed because the old guard accepted `std::pmr::vector`. Before exact pickup/count implementation, the full dungeon executable failed at `policy_attempts[0] > 0U` with `254 cases, 1 failures`.
 
-After the fixes, guard/self-test passed `2/2` (22 bad and five good variants), dungeon passed `254/254`, settings passed `3/3`, and the same relevant architecture/stress selection passed `10/10`.
+After the final fixes, production guard and self-test passed with 27 bad and eight good variants, dungeon passed `254/254`, settings passed `3/3`, and the same relevant architecture/stress selection passed `10/10`.
