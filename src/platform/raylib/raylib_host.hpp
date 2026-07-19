@@ -6,7 +6,12 @@
 #include <filesystem>
 #include <optional>
 
+namespace arpg::dungeon {
+struct AutoPickupPolicy;
+}
+
 namespace arpg::settings {
+enum class LootFilterMode : std::uint8_t;
 enum class SettingsLoadStatus : std::uint8_t;
 struct SettingsData;
 class SettingsStore;
@@ -101,6 +106,9 @@ struct HostFrameGateResult final {
     bool& pause_latched,
     bool paused,
     double frame_seconds) noexcept;
+
+[[nodiscard]] dungeon::AutoPickupPolicy loot_pickup_policy(
+    settings::LootFilterMode mode) noexcept;
 
 [[nodiscard]] DeathInputGate host_death_input_gate(
     bool death_saving,

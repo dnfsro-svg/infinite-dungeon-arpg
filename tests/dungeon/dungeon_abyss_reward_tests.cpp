@@ -524,6 +524,8 @@ arpg::test::Failure abyss_pickup_prepares_claim_without_consuming_sequence() noe
         == PendingSaveKind::abyss_reward_claim);
     ARPG_REQUIRE(filtered.pending_save_view()->pickup_ordinal
         == reward_ground_ordinal);
+    ARPG_REQUIRE(filtered.snapshot().pending_pickup_ordinal
+        == reward_ground_ordinal);
     ARPG_REQUIRE(arpg::test::ground_items(
         filtered)[ordinary_ground_ordinal].active);
 

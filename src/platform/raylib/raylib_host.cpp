@@ -877,6 +877,19 @@ HostFrameGateResult gate_host_frame(
     return {true, fixed_step.advance(frame_seconds)};
 }
 
+dungeon::AutoPickupPolicy loot_pickup_policy(
+    settings::LootFilterMode mode) noexcept {
+    switch (mode) {
+    case settings::LootFilterMode::show_all:
+        return {items::ItemRarity::normal};
+    case settings::LootFilterMode::magic_or_better:
+        return {items::ItemRarity::magic};
+    case settings::LootFilterMode::rare_only:
+        return {items::ItemRarity::rare};
+    }
+    return {};
+}
+
 DeathInputGate host_death_input_gate(
     bool death_saving,
     bool death_pending,
@@ -1408,7 +1421,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                         step_movement = movement;
                     }
                 }
-                runtime.fixed_tick(step_movement);
+                runtime.fixed_tick(step_movement,
+                    loot_pickup_policy(live_settings.loot_filter_mode));
                 ++stage11b_validation_state.fixed_ticks;
                 current = session->snapshot();
                 if (current.death.has_value()) {

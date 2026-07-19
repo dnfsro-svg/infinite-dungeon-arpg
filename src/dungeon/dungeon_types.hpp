@@ -144,6 +144,8 @@ struct GroundItemSnapshot final {
     std::uint8_t abyss_reward_ordinal{0xFFU};
     combat::Vec3 position{};
     std::uint64_t item_id{};
+    std::uint8_t base_id{};
+    std::uint8_t item_level{};
     items::ItemSlot slot{items::ItemSlot::weapon};
     items::ItemRarity rarity{items::ItemRarity::normal};
 };
@@ -195,6 +197,7 @@ struct DungeonSnapshot final {
     std::uint16_t ground_item_count{};
     std::array<GroundItemSnapshot, kGroundDropCapacity> ground_items{};
     std::optional<PendingSaveKind> pending_save_kind{};
+    std::optional<std::uint16_t> pending_pickup_ordinal{};
     std::optional<DeathSnapshot> death{};
     std::optional<combat::CombatSnapshot> combat{};
     DungeonEncounterDiagnostics encounter{};

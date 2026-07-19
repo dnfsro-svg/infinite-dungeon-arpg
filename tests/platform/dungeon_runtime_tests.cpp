@@ -3,8 +3,10 @@
 
 #include "../dungeon/dungeon_test_support.hpp"
 #include "dungeon_runtime.hpp"
+#include "raylib_host.hpp"
 #include "abyss/abyss_rules.hpp"
 #include "persistence/checkpoint_codec.hpp"
+#include "platform/settings/settings_types.hpp"
 
 #include <array>
 #include <algorithm>
@@ -753,6 +755,49 @@ bool install_pickup_if_needed(platform::DungeonRuntime& runtime,
     return runtime.session()->snapshot().ground_item_count == 1U;
 }
 
+arpg::test::Failure loot_filter_modes_map_to_pickup_policy() noexcept {
+    ARPG_REQUIRE(platform::loot_pickup_policy(
+        arpg::settings::LootFilterMode::show_all).minimum_rarity
+        == items::ItemRarity::normal);
+    ARPG_REQUIRE(platform::loot_pickup_policy(
+        arpg::settings::LootFilterMode::magic_or_better).minimum_rarity
+        == items::ItemRarity::magic);
+    ARPG_REQUIRE(platform::loot_pickup_policy(
+        arpg::settings::LootFilterMode::rare_only).minimum_rarity
+        == items::ItemRarity::rare);
+    return {};
+}
+
+arpg::test::Failure fixed_tick_forwards_pickup_policy_and_defaults_show_all() noexcept {
+    TempDirectory filtered_directory;
+    platform::DungeonRuntime filtered(config_for(filtered_directory, 0xF117E2U));
+    ARPG_REQUIRE(filtered.initialize());
+    const auto filtered_before = filtered.session()->snapshot();
+    ARPG_REQUIRE(filtered_before.combat.has_value());
+    arpg::test::install_ground_item(*filtered.session(), 0U,
+        normal_item(0xF117E201U), filtered_before.combat->player.position);
+
+    filtered.fixed_tick({}, {items::ItemRarity::rare});
+
+    ARPG_REQUIRE(filtered.session()->snapshot().ground_item_count == 1U);
+    ARPG_REQUIRE(filtered.session()->pending_save_view() == nullptr);
+
+    TempDirectory default_directory;
+    platform::DungeonRuntime default_runtime(
+        config_for(default_directory, 0xDEF4017U));
+    ARPG_REQUIRE(default_runtime.initialize());
+    const auto default_before = default_runtime.session()->snapshot();
+    ARPG_REQUIRE(default_before.combat.has_value());
+    arpg::test::install_ground_item(*default_runtime.session(), 0U,
+        normal_item(0xDEF401701U), default_before.combat->player.position);
+
+    default_runtime.fixed_tick({});
+
+    ARPG_REQUIRE(default_runtime.session()->snapshot().ground_item_count == 0U);
+    ARPG_REQUIRE(default_runtime.session()->pending_save_view() == nullptr);
+    return {};
+}
+
 arpg::test::Failure runtime_exposes_narrow_item_requests_and_stable_item_view() noexcept {
     TempDirectory directory;
     auto config = config_for(directory);
@@ -1238,6 +1283,10 @@ constexpr arpg::test::TestCase kCases[] = {
     {"single slot corruption recovers and subsequent saves alternate", &single_slot_corruption_recovers_and_subsequent_saves_alternate},
     {"invalid rules fault without creating save or session", &invalid_rules_fault_without_creating_save_or_session},
     {"runtime exposes narrow item requests and stable item view", &runtime_exposes_narrow_item_requests_and_stable_item_view},
+    {"loot filter modes map to pickup policy",
+        &loot_filter_modes_map_to_pickup_policy},
+    {"fixed tick forwards pickup policy and defaults show all",
+        &fixed_tick_forwards_pickup_policy_and_defaults_show_all},
     {"large inventory snapshot and views do not allocate", &large_inventory_snapshot_and_views_do_not_allocate},
     {"generic service adds no large state copies", &generic_service_adds_no_large_state_copies},
     {"runtime echoes death pending kind", &runtime_echoes_death_pending_kind},

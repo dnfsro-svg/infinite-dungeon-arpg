@@ -1,136 +1,95 @@
-# Stage 10 Task 4 报告
+# Stage 11-D Task 4 报告
 
-## 范围与结论
+## 状态
 
-- 实现一次机会生命周期的 `available -> started -> failed`，未实现 clear、奖励物化、领取、放弃或 Task 6/7 的规则数值与环境运行时。
-- `available` 只做确定性选择校验、完整强化 encounter plan、reward profile 与首波 Combat 配置预计算；无 `CombatWorld`、无怪物、无封门/战斗事件。
-- `abyss_start` 的 verified receipt 成功后才创建 `CombatWorld`；`abyss_fail` 的 verified receipt 成功后才清 `is_abyss` 并以同 seed/ecology/hole 重建普通 encounter。
-- Combat 玩家生命可到 0，`player_defeated` 每次生命只发一次；普通死亡与 R/深渊失败共用 `reset_to_normal_room()`。
+完成 Production Snapshot Metadata and Runtime Mapping，并按真实 RED -> GREEN 执行 TDD。
+
+## 实现
+
+- `GroundItemSnapshot` 新增 `base_id`、`item_level`，快照直接复制已存在的生产 `ItemInstance` 字段。
+- `DungeonSnapshot` 新增 `pending_pickup_ordinal`；仅 `loot_pickup` 与 `abyss_reward_claim` 从真实 `PendingSave::pickup_ordinal` 填值，其余 pending kind 保持 `nullopt`。
+- `DungeonRuntime::fixed_tick` 接受可选 `AutoPickupPolicy` 并透传给 `DungeonSession::tick`；默认参数仍为 `normal`，兼容原有 show-all 调用者。
+- host 边界新增 `loot_pickup_policy(settings::LootFilterMode)`，三档映射为 normal/magic/rare。
+- 唯一 host fixed-tick 调用每步读取 `live_settings.loot_filter_mode`；未读取 `pause_menu.draft`。
+- 未实现 ground label、renderer 或 feedback。
 
 ## TDD 证据
 
 ### RED
 
-- Combat：`player_health.damage reaches zero` 首次真实执行失败，实际 HP 为 1；第二项事件测试首次编译失败于缺失 `CombatEventKind::player_defeated`。
-- Dungeon 原子启动：6 项启动事务测试首次编译失败于缺失 `PendingSaveKind::abyss_start`；补枚举后，旧回归暴露 transition 后直接 locked、深渊标记仍走普通 director 的旧假设。
-- Runtime：新增 6 项首次执行有 4 项失败，分别是 loaded-started 未先提交 failed、自动失败发布未 fault、V4 initial/door migration 未发布 V5。
-- 压力回归：定位到两项真实语义冲突：直接重载 started 绕过 Runtime crash gate；自定义 threat=2/max=2 的普通最小房遇深渊预算 3 必然 generation fault。分别改为模拟 Runtime 的 started->failed 与显式选择普通门，没有放宽生产故障语义。
+命令：
 
-### GREEN / Refactor
+```powershell
+cmake --build --preset windows-msvc-debug --target arpg_dungeon_tests arpg_platform_tests -- -j1
+cmake --build --preset windows-msvc-debug --target arpg_platform_tests -- -j1
+cmake -DSOURCE_ROOT=E:/game/.worktrees/stage11d-loot-filter -DGUARD_TEST_ROOT=E:/game/.worktrees/stage11d-loot-filter/out/build/windows-msvc-debug/tests/platform/stage11b-evidence-guard -P tests/platform/stage11b_settings_evidence_guard_test.cmake
+```
 
-- Combat 137 cases、Dungeon 159 cases、Persistence 70 cases、Platform 80 cases 全绿。
-- Refactor 后移除重复 abyss affix supplement；Task 5 的 `build_abyss_encounter_plan` 已返回完整强化 plan。
-- `DungeonSession`/Runtime 使用 move 避免大 inventory 的额外拷贝；start/fail pending 构造异常进入 fault，不跨越 `noexcept`。
-- `git diff --check` 通过；四测试目标构建无警告。
+预期失败：
 
-## 完整事务状态表
+- dungeon：`GroundItemSnapshot` 缺少 `base_id`/`item_level`，`DungeonSnapshot` 缺少 `pending_pickup_ordinal`。
+- platform：缺少 `loot_pickup_policy`，`DungeonRuntime::fixed_tick` 不接受两个参数。
+- host guard：`Stage11B evidence guard requires live loot policy behind host gate`。
 
-| 入口/稳定盘面 | 预提交内存状态 | SaveDisposition / receipt | 发布后的稳定盘面 | 可玩副作用 |
-|---|---|---|---|---|
-| 普通门、`none/failed` | `transition`, committing，旧 Combat 冻结 | committed + exact receipt | 新房 descriptor；若 abyss 门则 `available` | transition 时销毁旧 Combat；目标房尚未构造 |
-| 普通门 | 同上 | not_committed | 旧稳定房、awaiting_exit | 无新房副作用，可重试 |
-| 普通门 | 同上 | indeterminate / mismatch | faulted | 无可玩新房 |
-| `available` 构造 | 校验 seed/depth selection；预计算强化 plan/reward/config；`abyss_start`, committing | 尚未提交 | stable 仍 available | 无 CombatWorld、无怪物 |
-| `abyss_start` | cached plan + cached Combat config | committed + exact verified state | 同房 `started`, generation+1 | 此时才 emplace CombatWorld，phase=locked |
-| `abyss_start` | 同上 | not_committed | stable 仍 available，session faulted | 无 CombatWorld |
-| `abyss_start` | 同上 | indeterminate / generation/state mismatch | stable 仍 available，session faulted | 无 CombatWorld |
-| `started` + R/`player_defeated` | `abyss_fail`, committing；Combat 冻结 | 尚未提交 | stable 仍 started | 不清规则、不重建、不重复排队 |
-| `abyss_fail` | next: is_abyss=false, lifecycle=failed | committed + exact verified state | 同 seed/ecology/hole 的 failed | 清挑战标记并构造普通 encounter，phase=locked |
-| `abyss_fail` | 同上 | not_committed / indeterminate / mismatch | stable 仍 started，session faulted | Combat 对象可留作诊断但不可玩 |
-| V5 load started | session 尚未创建 | 自动 failed commit 成功 | failed, generation+1 | 成功后才创建普通 session |
-| V5 load started | 同上 | 自动 commit 非 committed / mismatch | runtime faulted | 无 session |
-| V1-V4 migrated | helper 后 generation+1，session 尚未创建 | migration commit 成功 | 合法 V5 | 成功后才创建 session；若 available，再单独排 start |
-| V1-V4 migrated | 同上 | migration commit 非 committed / mismatch | runtime faulted | 无 session |
+说明：首次普通构建因工作树构建目录写权限/PDB 竞争失败，不计作 RED；加载 MSVC 开发环境并在沙箱外串行构建后取得上述有效 RED。
 
-## SaveStore fault matrix
+### GREEN
 
-`abyss_start` 与 `abyss_fail` 都逐点使用真实 `SaveStore` hook：
+构建：
 
-| SaveFaultPoint | 典型 disposition | 磁盘允许状态 | Session 允许状态 |
-|---|---|---|---|
-| before_temp_write | not_committed | old | faulted；start 无 Combat |
-| after_temp_write | not_committed | old | faulted；start 无 Combat |
-| after_temp_validation | not_committed | old | faulted；start 无 Combat |
-| before_publish | not_committed | old | faulted；start 无 Combat |
-| after_publish | indeterminate | old 或 new（实测为可恢复稳定状态） | faulted，不可玩 |
-| final_scan_a | indeterminate | old 或 new | faulted，不可玩 |
-| final_scan_b | indeterminate | old 或 new | faulted，不可玩 |
-| before_archive | hook 不属于 commit 路径，commit 正常 | new | exact receipt 后进入 new |
+```powershell
+cmake --build --preset windows-msvc-debug --target arpg_dungeon_tests arpg_platform_tests -- -j1
+```
 
-矩阵断言磁盘始终 `same_run_state(old) || same_run_state(new)`；不存在 session 已开始挑战但磁盘仍 available 的可玩状态。
+结果：成功链接 `arpg_dungeon_tests.exe` 与 `arpg_platform_tests.exe`。增量复验同样成功。
 
-## 事件时序
+主 focused tests：
 
-1. transition receipt：`transition_requested -> transition_committed -> room_destroyed`。
-2. 进入 available：下一 tick 只排 `abyss_start`，phase=committing，无 `room_entered/combat_started`。
-3. start exact receipt：创建 CombatWorld，phase=locked；下一 tick 才发 `room_entered -> combat_started`。
-4. 致死伤害：`player_hit -> player_hurt_started -> player_defeated`，HP=0；后续伤害不再发事件。
-5. 普通死亡：relay defeat 后立即调用普通 reset helper，发 `room_reset`。
-6. started 深渊死亡/R：先排 `abyss_fail`；提交期间 tick 冻结且 R rejected；exact receipt 后普通重建并发 `room_reset`。
+```powershell
+ctest --preset windows-msvc-debug -R "^(dungeon.units|platform.units|stage11b.settings_evidence_guard)$"
+```
+
+提交前 fresh 结果：3/3 通过，0 失败；`dungeon.units` 180.84 秒，`platform.units` 3.20 秒，host evidence guard 0.01 秒。
+
+补充 stress/architecture tests：
+
+```powershell
+ctest --preset windows-msvc-debug -R "^(stage10.abyss_stress.determinism_and_zero_alloc|platform.input_latency_source|stage11b.settings_evidence_guard_self_test|stage11c.architecture.hud_boundaries|stage11c.architecture.hud_boundaries_self_test)$"
+```
+
+结果：5/5 通过，0 失败。
 
 ## 文件
 
-- Runtime：`src/dungeon/dungeon_types.hpp`, `dungeon_rules.hpp`, `dungeon_session.*`, `dungeon_transition.cpp`, `src/combat/combat_types.hpp`, `combat_world.cpp`, `src/platform/raylib/dungeon_runtime.cpp`, `raylib_host.cpp`。
-- Tests：combat health；dungeon transaction/lifecycle/navigation/stress compatibility；persistence fault matrix；platform runtime migration/crash tests；suite case-count baselines。
-- 仅稳定声明未实现副作用：`abyss_clear`, `abyss_reward_materialized`, `abyss_reward_claim`, `abyss_abandon` 及四个新增 fault 值。
+- `src/dungeon/dungeon_types.hpp`
+- `src/dungeon/dungeon_snapshot.cpp`
+- `src/platform/raylib/dungeon_runtime.hpp`
+- `src/platform/raylib/dungeon_runtime.cpp`
+- `src/platform/raylib/raylib_host.hpp`
+- `src/platform/raylib/raylib_host.cpp`
+- `tests/dungeon/dungeon_loot_drop_tests.cpp`
+- `tests/dungeon/dungeon_abyss_reward_tests.cpp`
+- `tests/dungeon/dungeon_stress_tests.cpp`
+- `tests/platform/dungeon_runtime_tests.cpp`
+- `tests/platform/platform_test_main.cpp`
+- `tests/platform/stage11b_settings_evidence_guard_test.cmake`
+- `.superpowers/sdd/task-4-report.md`
 
-## 验证
+## 提交
 
-```text
-ctest --preset windows-msvc-debug -R "dungeon.units|persistence.units" --output-on-failure
-2/2 passed; dungeon 159 cases, persistence 70 cases
+主题：`feat: expose filtered ground loot snapshots`
 
-ctest --preset windows-msvc-debug -R '^dungeon.units$' --output-on-failure
-refactor 后 fresh 1/1 passed (143.70s)
+## 自审
 
-ctest --preset windows-msvc-debug -R "combat.units|platform.units|architecture" --output-on-failure
-21/21 passed; combat 137 cases, persistence 70 cases,
-platform 80 cases, architecture 18 tests
-```
+- 新 snapshot 字段只来自现有生产 ground item，不复制额外对象或新增分配。
+- pending ordinal 分支严格限制为两种 pickup save kind；transition 等其他 save kind 已断言为无值。
+- rare-only runtime 会保留 normal drop；省略 policy 的既有调用仍自动拾取 normal drop。
+- source guard 同时要求 `live_settings` 映射并拒绝 `pause_menu.draft` 映射。
+- dungeon stress 的 snapshot 等价比较已包含新增字段、source 与 abyss ordinal。
+- 没有新增 dungeon -> platform 反向依赖；依赖方向仍为 platform 调用 dungeon。
 
-## 疑虑/后续边界
+## 顾虑
 
-- `abyss_generation_failed` 对不可组成 1.5x 精确预算的自定义 director 配置是硬 fault，按简报不得降级或重投；普通兼容压力测试因此显式避开 abyss 门。
-- Task 8/9 接管 cleared/reward；Task 6/7 接管六条数值规则与三种环境效果。本提交没有提前实现这些行为。
-
-## 独立审查修复：不可丢失死亡与死亡输入门禁
-
-### 根因
-
-- 原实现按 `player_hit -> player_hurt_started -> player_defeated` 将三项表现事件 best-effort 写入 64 槽队列；只剩两槽时 HP 已归零，但第三项可溢出。
-- DungeonSession 原来只在 relay 收到 `player_defeated` 时排 `abyss_fail`，因此表现队列容量错误地影响一次机会资格。
-- CombatWorld 的 `queue_action()` 与 `tick()` 原来没有 HP=0 门禁，死亡后仍可接受或消费缓冲攻击。
-
-### RED
-
-```text
-cmake --build --preset windows-msvc-debug \
-  --target arpg_combat_tests arpg_dungeon_tests
-
-player_health_tests.cpp: error C2039:
-"player_defeated": not a member of CombatWorld
-```
-
-该 RED 来自三个先写测试：事件队列预填 62/64 后致死、死亡输入冻结、Dungeon started 深渊丢失表现 defeat event 后仍必须排 fail。
-
-### GREEN 与断言
-
-- `CombatWorld::player_defeated()` 以 `player_.hp == 0` 作为 durable truth，不读取事件队列且无副作用。
-- 致死时立即清空 `AttackRuntime` 与 `InputBuffer`；HP=0 后 `queue_action()` 返回 false。
-- dead tick 只递增 combat tick，不移动、不进入 attack、不消费/产生 swing；load_wave/reset 清理后旧 action 不穿透。
-- `player_defeated` 表现事件在有容量时仍 exactly once；队列预填 62 后该事件溢出时，durable latch 仍 true，`event_overflow_count == 1`。
-- DungeonSession 在 combat tick relay 后直接检查 durable truth；started 深渊即使 relay 中 defeat event 数量为 0，仍只排一个 `abyss_fail`。
-- Durable handler 不覆盖已进入的 `faulted`；combat relay overflow 的 fault 优先，且不会创建 `abyss_fail` pending。
-
-```text
-ctest --preset windows-msvc-debug -R combat.units --output-on-failure
-1/1 passed; 139 cases, 0 failures
-
-ctest --preset windows-msvc-debug -R dungeon.units --output-on-failure
-1/1 passed; 161 cases, 0 failures; final fresh 141.56s
-
-ctest --preset windows-msvc-debug \
-  -R "combat.units|persistence.units|platform.units|architecture" \
-  --output-on-failure
-21/21 passed; final fresh 58.58s
-```
+- 无已知功能顾虑。
+- MSVC 构建必须加载 Visual Studio Developer Command Prompt；沙箱内现有 build 目录有写权限/PDB 锁限制，因此验证在获批的沙箱外串行执行。
+- 构建日志中 `host_input_tests.cpp` 有既存 C4834 警告，本任务未修改该文件，测试仍全部通过。

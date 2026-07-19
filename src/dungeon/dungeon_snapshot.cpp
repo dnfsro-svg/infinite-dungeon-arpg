@@ -127,6 +127,8 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
         packed.abyss_reward_ordinal = ground.abyss_reward_ordinal;
         packed.position = ground.position;
         packed.item_id = ground.item.id;
+        packed.base_id = ground.item.base_id;
+        packed.item_level = ground.item.item_level;
         const items::BaseDefinition* base =
             items::base_definition(ground.item.base_id);
         if (base != nullptr) packed.slot = base->slot;
@@ -134,6 +136,11 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
     }
     if (pending_save_.has_value()) {
         result.pending_save_kind = pending_save_->kind;
+        if (pending_save_->kind == PendingSaveKind::loot_pickup
+                || pending_save_->kind
+                    == PendingSaveKind::abyss_reward_claim) {
+            result.pending_pickup_ordinal = pending_save_->pickup_ordinal;
+        }
     }
     if (combat_.has_value()) {
         result.combat.emplace(combat_->snapshot());

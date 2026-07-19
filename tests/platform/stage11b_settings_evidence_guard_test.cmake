@@ -119,9 +119,20 @@ if(NOT _fixed_tick_count EQUAL 1)
     message(FATAL_ERROR "Stage11B evidence guard requires exactly one pause-gated runtime.fixed_tick path")
 endif()
 string(FIND "${_host_text}" "if (host_gate.forward_gameplay)" _fixed_gate)
-string(FIND "${_host_text}" "runtime.fixed_tick(step_movement);" _fixed_tick)
-if(_fixed_gate EQUAL -1 OR _fixed_tick EQUAL -1 OR NOT _fixed_gate LESS _fixed_tick)
-    message(FATAL_ERROR "Stage11B evidence guard requires runtime.fixed_tick behind host gate")
+string(FIND "${_host_text}" "runtime.fixed_tick(step_movement," _fixed_tick)
+string(FIND "${_host_text}"
+    "loot_pickup_policy(live_settings.loot_filter_mode)" _pickup_policy)
+string(FIND "${_host_text}"
+    "loot_pickup_policy(pause_menu.draft.loot_filter_mode)" _draft_policy)
+if(_fixed_gate EQUAL -1 OR _fixed_tick EQUAL -1 OR _pickup_policy EQUAL -1
+        OR NOT _fixed_gate LESS _fixed_tick
+        OR NOT _fixed_tick LESS _pickup_policy)
+    message(FATAL_ERROR
+        "Stage11B evidence guard requires live loot policy behind host gate")
+endif()
+if(NOT _draft_policy EQUAL -1)
+    message(FATAL_ERROR
+        "Stage11B evidence guard rejects draft loot policy in fixed_tick")
 endif()
 string(FIND "${_host_text}" "const std::array<bool, 3> accepted_actions =" _accepted_actions)
 string(FIND "${_host_text}" "accepted_actions[0] ? 1U : 0U" _accepted_attack_count)

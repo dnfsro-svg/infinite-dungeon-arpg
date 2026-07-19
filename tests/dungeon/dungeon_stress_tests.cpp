@@ -204,8 +204,12 @@ bool same_ground_item(
     const arpg::dungeon::GroundItemSnapshot& lhs,
     const arpg::dungeon::GroundItemSnapshot& rhs) noexcept {
     return lhs.ordinal == rhs.ordinal
+        && lhs.source == rhs.source
+        && lhs.abyss_reward_ordinal == rhs.abyss_reward_ordinal
         && same_vec(lhs.position, rhs.position)
         && lhs.item_id == rhs.item_id
+        && lhs.base_id == rhs.base_id
+        && lhs.item_level == rhs.item_level
         && lhs.slot == rhs.slot
         && lhs.rarity == rhs.rarity;
 }
@@ -242,6 +246,7 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
             || lhs.equipped_ids != rhs.equipped_ids
             || lhs.ground_item_count != rhs.ground_item_count
             || lhs.pending_save_kind != rhs.pending_save_kind
+            || lhs.pending_pickup_ordinal != rhs.pending_pickup_ordinal
             || lhs.encounter.total_budget != rhs.encounter.total_budget
             || lhs.encounter.current_wave_budget
                 != rhs.encounter.current_wave_budget

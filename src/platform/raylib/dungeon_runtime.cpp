@@ -215,11 +215,12 @@ DungeonRenderStatus DungeonRuntime::render_status() const noexcept {
     return status;
 }
 
-void DungeonRuntime::fixed_tick(combat::MovementInput movement) noexcept {
+void DungeonRuntime::fixed_tick(combat::MovementInput movement,
+    dungeon::AutoPickupPolicy pickup_policy) noexcept {
     if (state() != DungeonRuntimeState::running || !session_.has_value()) {
         return;
     }
-    session_->tick(movement);
+    session_->tick(movement, pickup_policy);
     service_pending_save();
 }
 

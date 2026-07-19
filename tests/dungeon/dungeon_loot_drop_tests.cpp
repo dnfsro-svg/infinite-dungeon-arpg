@@ -214,6 +214,10 @@ arpg::test::Failure two_wave_trace_rolls_each_ordinal_once() noexcept {
         ARPG_REQUIRE(ground.position.y == -static_cast<float>(ordinal));
         ARPG_REQUIRE(ground.position.z == 0.0F);
         ARPG_REQUIRE(ground.item_id == expected->id);
+        ARPG_REQUIRE(ground.source
+            == arpg::dungeon::GroundItemSource::monster_drop);
+        ARPG_REQUIRE(ground.base_id == expected->base_id);
+        ARPG_REQUIRE(ground.item_level == expected->item_level);
         const auto* base = arpg::items::base_definition(expected->base_id);
         ARPG_REQUIRE(base != nullptr);
         ARPG_REQUIRE(ground.slot == base->slot);
@@ -222,6 +226,8 @@ arpg::test::Failure two_wave_trace_rolls_each_ordinal_once() noexcept {
     for (; packed < snapshot.ground_items.size(); ++packed) {
         const auto& ground = snapshot.ground_items[packed];
         ARPG_REQUIRE(ground.ordinal == 0U);
+        ARPG_REQUIRE(ground.base_id == 0U);
+        ARPG_REQUIRE(ground.item_level == 0U);
         ARPG_REQUIRE(ground.item_id == 0U);
         ARPG_REQUIRE(ground.position.x == 0.0F);
         ARPG_REQUIRE(ground.position.y == 0.0F);
@@ -245,6 +251,7 @@ arpg::test::Failure nearby_tick_prepares_atomic_pickup() noexcept {
     DungeonSession session{rules, state};
     const auto before = session.snapshot();
     ARPG_REQUIRE(before.phase == arpg::dungeon::RoomPhase::locked);
+    ARPG_REQUIRE(!before.pending_pickup_ordinal.has_value());
     ARPG_REQUIRE(before.combat.has_value());
     const auto player = before.combat->player.position;
     ARPG_REQUIRE(arpg::test::relay_defeated(
@@ -262,6 +269,7 @@ arpg::test::Failure nearby_tick_prepares_atomic_pickup() noexcept {
         == arpg::dungeon::RoomPhase::committing);
     ARPG_REQUIRE(pending_snapshot.pending_save_kind
         == arpg::dungeon::PendingSaveKind::loot_pickup);
+    ARPG_REQUIRE(pending_snapshot.pending_pickup_ordinal == ordinal);
     ARPG_REQUIRE(pending_snapshot.ground_item_count == 1U);
     ARPG_REQUIRE(session.item_state().items.empty());
     const auto pending = session.pending_save();
@@ -741,6 +749,7 @@ arpg::test::Failure transition_clears_claimed_and_ground_only_on_commit() noexce
     ARPG_REQUIRE(first.has_value());
     ARPG_REQUIRE(first->kind == arpg::dungeon::PendingSaveKind::transition);
     ARPG_REQUIRE(first->pickup_ordinal == 0xFFFFU);
+    ARPG_REQUIRE(!session.snapshot().pending_pickup_ordinal.has_value());
     ARPG_REQUIRE((first->next_state.item_ownership.claimed_drop_bits
         == std::array<std::uint64_t, 3>{}));
     session.resolve_pending_save({
