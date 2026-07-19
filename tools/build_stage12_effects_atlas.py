@@ -18,7 +18,9 @@ def key_green(image: Image.Image) -> Image.Image:
     for y in range(rgba.height):
         for x in range(rgba.width):
             red, green, blue, alpha = pixels[x, y]
-            if green > 150 and green > red * 1.35 and green > blue * 1.35:
+            # Remove chroma pixels including dark antialiased spill. Cyan water
+            # highlights stay intact because blue is not materially lower.
+            if green > 20 and green >= red + 8 and green >= blue + 8:
                 pixels[x, y] = (red, green, blue, 0)
     return rgba
 
@@ -66,6 +68,9 @@ def main() -> None:
         ((218, 74, 205), "orb"))
     for index, (color, shape) in enumerate(loot_icons):
         atlas.alpha_composite(icon(color, shape), (index * CELL, 2 * CELL))
+    # Resampling transparent chroma-key edges can reintroduce green spill;
+    # clean the final composited atlas once more before writing it.
+    atlas = key_green(atlas)
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     atlas.save(OUTPUT)
     print(f"Wrote {OUTPUT} {atlas.width}x{atlas.height} RGBA")

@@ -109,6 +109,8 @@ struct RaylibHostConfig final {
     std::uint32_t validation_steps_per_frame{};
     std::optional<std::filesystem::path> validation_capture_file{};
     std::optional<std::filesystem::path> validation_summary_file{};
+    bool validation_request_screenshot{};
+    bool stage12_material_showcase{};
 };
 
 struct HostFrameGateResult final {

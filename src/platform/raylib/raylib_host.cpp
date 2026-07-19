@@ -149,6 +149,37 @@ std::optional<std::string> host_screenshot_path(
     }
 }
 
+void apply_stage12_material_showcase(dungeon::DungeonSnapshot& snapshot) noexcept {
+    if (!snapshot.combat.has_value()) return;
+    constexpr std::array<combat::MonsterId, 8> ids{{
+        combat::MonsterId::fire_bomber, combat::MonsterId::fire_charger,
+        combat::MonsterId::water_bulwark, combat::MonsterId::water_support,
+        combat::MonsterId::lightning_shooter, combat::MonsterId::lightning_dasher,
+        combat::MonsterId::chaos_chaser, combat::MonsterId::chaos_hazard,
+    }};
+    constexpr std::array<combat::Vec3, 8> positions{{
+        {-4.0F, -2.0F, 0.0F}, {-1.3F, -2.0F, 0.0F}, {1.3F, -2.0F, 0.0F},
+        {4.0F, -2.0F, 0.0F}, {-4.0F, 1.5F, 0.0F}, {-1.3F, 1.5F, 0.0F},
+        {1.3F, 1.5F, 0.0F}, {4.0F, 1.5F, 0.0F},
+    }};
+    auto& combat_snapshot = *snapshot.combat;
+    combat_snapshot.monster_count = ids.size();
+    snapshot.remaining_targets = static_cast<std::uint8_t>(ids.size());
+    for (std::size_t index = 0U; index < ids.size(); ++index) {
+        combat::MonsterSnapshot& monster = combat_snapshot.monsters[index];
+        monster = {};
+        monster.active = true;
+        monster.generation = 1U;
+        monster.id = ids[index];
+        monster.position = positions[index];
+        monster.spawn = positions[index];
+        monster.facing = combat::Facing::right;
+        monster.hp = 100;
+        monster.max_hp = 100;
+        monster.ai_phase = combat::MonsterAiPhase::active;
+    }
+}
+
 struct Stage10ValidationState final {
     bool entered_abyss{};
     bool reset_requested{};
@@ -2194,8 +2225,12 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             renderer.set_loot_filter_mode(presented_loot_filter);
             BeginDrawing();
             ClearBackground(Color{13, 17, 27, 255});
+            dungeon::DungeonSnapshot presented_snapshot = current;
+            if (config.stage12_material_showcase) {
+                apply_stage12_material_showcase(presented_snapshot);
+            }
             const GroundLootView ground_loot_view = renderer.draw(
-                previous, current, runtime.render_status(),
+                previous, presented_snapshot, runtime.render_status(),
                 static_cast<float>(frame.interpolation_alpha), draw_debug,
                 feedback, audio_ready);
 // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN presented_semantics
@@ -2305,7 +2340,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 stage11b_validation_state.pause_capture_while_paused =
                     stage11b_paused_visible_capture;
             }
-            if (death_gate.screenshot) {
+            if (death_gate.screenshot || (config.validation_request_screenshot
+                    && presented_frame_count == 1U)) {
                 capture_path = host_screenshot_path(config);
                 captured_stage10_target = false;
             } else if (!capture_path.has_value()

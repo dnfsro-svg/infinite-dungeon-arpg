@@ -190,6 +190,8 @@ arpg::test::Failure duplicate_and_unknown_options_are_rejected() noexcept {
     const char* const unknown[] = {"arpg", "--seed=8"};
     const char* const duplicate_settings_directory[] = {
         "arpg", "--settings-dir", "one", "--settings-dir", "two"};
+    const char* const duplicate_screenshot_directory[] = {
+        "arpg", "--screenshot-dir", "one", "--screenshot-dir", "two"};
     ARPG_REQUIRE(parse(5, duplicate_seed).error
         == HostArgumentError::duplicate_option);
     ARPG_REQUIRE(parse(5, duplicate_directory).error
@@ -198,18 +200,23 @@ arpg::test::Failure duplicate_and_unknown_options_are_rejected() noexcept {
         == HostArgumentError::unknown_option);
     ARPG_REQUIRE(parse(5, duplicate_settings_directory).error
         == HostArgumentError::duplicate_option);
+    ARPG_REQUIRE(parse(5, duplicate_screenshot_directory).error
+        == HostArgumentError::duplicate_option);
     return {};
 }
 
 arpg::test::Failure missing_and_invalid_seed_values_are_rejected() noexcept {
     const char* const missing[] = {"arpg", "--seed"};
     const char* const null_directory[] = {"arpg", "--save-dir", nullptr};
+    const char* const missing_screenshot_directory[] = {"arpg", "--screenshot-dir"};
     const char* const negative[] = {"arpg", "--seed", "-1"};
     const char* const overflow[] = {
         "arpg", "--seed", "18446744073709551616"};
     const char* const trailing[] = {"arpg", "--seed", "8x"};
     ARPG_REQUIRE(parse(2, missing).error == HostArgumentError::missing_value);
     ARPG_REQUIRE(parse(3, null_directory).error
+        == HostArgumentError::missing_value);
+    ARPG_REQUIRE(parse(2, missing_screenshot_directory).error
         == HostArgumentError::missing_value);
     ARPG_REQUIRE(parse(3, negative).error == HostArgumentError::invalid_seed);
     ARPG_REQUIRE(parse(3, overflow).error == HostArgumentError::invalid_seed);
