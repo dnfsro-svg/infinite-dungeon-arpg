@@ -346,6 +346,15 @@ arpg::test::Failure maximum_navigation_text_has_a_measured_bounded_draw_plan() n
     return {};
 }
 
+arpg::test::Failure hud_text_style_keeps_key_labels_readable_at_720p() noexcept {
+    const platform::HudReadabilityStyle style = platform::hud_readability_style();
+    ARPG_REQUIRE(style.panel_minimum_font_size >= 13.0F);
+    ARPG_REQUIRE(style.player_bar_font_size >= 17.0F);
+    ARPG_REQUIRE(style.objective_primary_font_size >= 20.0F);
+    ARPG_REQUIRE(style.outline_pixels >= 1);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"health first", &health_is_always_the_first_visible_player_bar},
     {"conditional barrier", &barrier_bar_is_visible_only_with_a_positive_maximum},
@@ -359,6 +368,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"objective navigation context plans", &objective_navigation_and_context_plans_stay_in_their_layout_panels},
     {"navigation colors use shared palette", &navigation_element_colors_use_the_authoritative_hud_palette},
     {"navigation maximum text fit", &maximum_navigation_text_has_a_measured_bounded_draw_plan},
+    {"HUD key labels remain readable at 720p", &hud_text_style_keeps_key_labels_readable_at_720p},
 };
 
 }  // namespace

@@ -28,6 +28,15 @@ using arpg::platform::HazardVisualMode;
 using arpg::platform::MonsterWarningMode;
 using arpg::platform::MonsterVisual;
 
+arpg::test::Failure monster_labels_keep_a_readable_size_and_outline() noexcept {
+    const auto style = arpg::platform::monster_label_text_style(0.55F);
+    ARPG_REQUIRE(style.role_font_size >= 14);
+    ARPG_REQUIRE(style.phase_font_size >= 12);
+    ARPG_REQUIRE(style.affix_font_size >= 11);
+    ARPG_REQUIRE(style.outline_pixels >= 2);
+    return {};
+}
+
 bool same_color(arpg::platform::Rgba8 lhs, arpg::platform::Rgba8 rhs) noexcept {
     return lhs.r == rhs.r && lhs.g == rhs.g && lhs.b == rhs.b && lhs.a == rhs.a;
 }
@@ -272,6 +281,7 @@ arpg::test::Failure hazards_and_affix_warning_audio_are_distinct_and_throttled()
 }
 
 constexpr arpg::test::TestCase kCases[] = {
+    {"monster labels retain readable text treatment", &monster_labels_keep_a_readable_size_and_outline},
     {"unique monster labels and ecology accent",
      &all_monster_roles_have_unique_labels_and_ecology_accent},
     {"priority monster warnings", &priority_phases_expose_warning_visuals},

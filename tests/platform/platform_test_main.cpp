@@ -77,5 +77,5 @@ int main() {
         stage12_material_render_suite(),
     };
 
-    return arpg::test::run_suites(suites, 304, "stage 12 material manifest runtime");
+    return arpg::test::run_suites(suites, 306, "stage 12 material manifest runtime");
 }

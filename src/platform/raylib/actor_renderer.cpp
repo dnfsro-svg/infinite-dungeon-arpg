@@ -81,6 +81,18 @@ MaterialSpriteId effect_sprite(VisualEffectKind kind) noexcept {
     return MaterialSpriteId::missing;
 }
 
+void draw_outlined_text(const char* text, int x, int y, int font_size,
+    Color color, int outline_pixels) noexcept {
+    const Color outline{5, 8, 14, 235};
+    for (int offset_y = -outline_pixels; offset_y <= outline_pixels; ++offset_y) {
+        for (int offset_x = -outline_pixels; offset_x <= outline_pixels; ++offset_x) {
+            if (offset_x == 0 && offset_y == 0) continue;
+            DrawText(text, x + offset_x, y + offset_y, font_size, outline);
+        }
+    }
+    DrawText(text, x, y, font_size, color);
+}
+
 void draw_effects(const CombatFeedback& feedback, const MaterialPack& material_pack,
     float width, float height, bool foreground) noexcept {
     for (const VisualEffect& effect : feedback.effects()) {
@@ -228,6 +240,7 @@ void draw_monster_presentation(const MonsterSnapshot& monster, Vec3 position,
     std::uint64_t tick) noexcept {
     const ScreenProjection projected = project_combat_position(position, width, height);
     const MonsterVisual visual = monster_visual(monster.id, monster.ai_phase, ecology);
+    const MonsterLabelTextStyle text_style = monster_label_text_style(projected.scale);
     const float scale = projected.scale;
     const float x = projected.x;
     const float y = projected.y;
@@ -252,16 +265,18 @@ void draw_monster_presentation(const MonsterSnapshot& monster, Vec3 position,
     }
     for (std::size_t index = 0U; index < affix_count; ++index) {
         const AffixBadge badge = monster_affix_badge(monster.affixes.values[index]);
-        DrawText(TextFormat("%s %s", badge.short_name, badge.tier_text),
+        draw_outlined_text(TextFormat("%s %s", badge.short_name, badge.tier_text),
             static_cast<int>(x - bar_width * .5F),
-            static_cast<int>(y - (80.0F - static_cast<float>(index) * 10.0F) * scale),
-            9, to_color(badge.color));
+            static_cast<int>(y - (80.0F - static_cast<float>(index) * 12.0F) * scale),
+            text_style.affix_font_size, to_color(badge.color), text_style.outline_pixels);
     }
-    DrawText(visual.role_label, static_cast<int>(x - bar_width * .5F),
-        static_cast<int>(y + 7.0F), 11, Color{225, 230, 239, 230});
-    DrawText(monster_phase_name(monster.ai_phase),
-        static_cast<int>(x - bar_width * .5F), static_cast<int>(y + 19.0F), 10,
-        Color{184, 196, 213, 220});
+    draw_outlined_text(visual.role_label, static_cast<int>(x - bar_width * .5F),
+        static_cast<int>(y + 5.0F), text_style.role_font_size,
+        Color{238, 243, 252, 255}, text_style.outline_pixels);
+    draw_outlined_text(monster_phase_name(monster.ai_phase),
+        static_cast<int>(x - bar_width * .5F), static_cast<int>(y + 23.0F),
+        text_style.phase_font_size, Color{205, 218, 237, 255},
+        text_style.outline_pixels);
 }
 
 void draw_monster_silhouette(const MonsterSnapshot& monster, Vec3 position,

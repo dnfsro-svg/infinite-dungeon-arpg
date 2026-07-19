@@ -53,6 +53,13 @@ struct MonsterVisual final {
     MonsterWarningMode warning_mode{MonsterWarningMode::none};
 };
 
+struct MonsterLabelTextStyle final {
+    int affix_font_size{11};
+    int role_font_size{14};
+    int phase_font_size{12};
+    int outline_pixels{2};
+};
+
 struct AffixBadge final {
     const char* short_name{"?"};
     const char* tier_text{"M1"};
@@ -79,6 +86,8 @@ void sort_actor_draw_items(
     combat::MonsterId id,
     combat::MonsterAiPhase phase,
     dungeon::DungeonElement ecology) noexcept;
+[[nodiscard]] MonsterLabelTextStyle monster_label_text_style(
+    float projection_scale) noexcept;
 [[nodiscard]] AffixBadge monster_affix_badge(
     combat::MonsterAffixInstance affix) noexcept;
 [[nodiscard]] AffixOutline monster_affix_outline(

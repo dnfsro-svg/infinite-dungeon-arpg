@@ -84,6 +84,19 @@ struct HudTextDrawPlan final {
     float font_size{};
 };
 
+struct HudReadabilityStyle final {
+    float panel_minimum_font_size{13.0F};
+    float player_bar_font_size{17.0F};
+    float progression_font_size{15.0F};
+    float status_tag_font_size{13.0F};
+    float objective_primary_font_size{20.0F};
+    float objective_secondary_font_size{16.0F};
+    float navigation_primary_font_size{18.0F};
+    float navigation_secondary_font_size{16.0F};
+    float navigation_element_font_size{14.0F};
+    int outline_pixels{1};
+};
+
 [[nodiscard]] PlayerPanelPlan make_player_panel_plan(
     const PlayerHudModel&, const HudLayout&, float presentation_seconds) noexcept;
 [[nodiscard]] MonsterBarVisualPlan make_monster_bar_visual_plan(
@@ -97,6 +110,7 @@ struct HudTextDrawPlan final {
 [[nodiscard]] HudTextDrawPlan make_hud_text_draw_plan(const HudText96&,
     float bounds_width, float preferred_font_size, float minimum_font_size,
     HudTextMeasureFn, void*) noexcept;
+[[nodiscard]] HudReadabilityStyle hud_readability_style() noexcept;
 
 class HudRenderer final {
 public:

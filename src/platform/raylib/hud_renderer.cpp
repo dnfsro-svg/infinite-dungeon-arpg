@@ -283,6 +283,10 @@ HudTextDrawPlan make_hud_text_draw_plan(const HudText96& input,
     return plan;
 }
 
+HudReadabilityStyle hud_readability_style() noexcept {
+    return {};
+}
+
 namespace {
 
 struct RaylibTextMeasureContext final {
@@ -295,18 +299,33 @@ float measure_text_ex(const char* text, float font_size, void* context) noexcept
     return MeasureTextEx(value->font, text, font_size, 1.0F).x;
 }
 
+void draw_hud_text(Font font, const char* text, Vector2 position, float size,
+    Color color, int outline_pixels) noexcept {
+    const Color outline{4, 7, 12, 235};
+    for (int offset_y = -outline_pixels; offset_y <= outline_pixels; ++offset_y) {
+        for (int offset_x = -outline_pixels; offset_x <= outline_pixels; ++offset_x) {
+            if (offset_x == 0 && offset_y == 0) continue;
+            DrawTextEx(font, text, {position.x + static_cast<float>(offset_x),
+                position.y + static_cast<float>(offset_y)}, size, 1.0F, outline);
+        }
+    }
+    DrawTextEx(font, text, position, size, 1.0F, color);
+}
+
 void draw_panel_text(Font font, const HudRect& bounds, const HudText96& text,
     float size, Color color) noexcept {
     RaylibTextMeasureContext measure{font};
     const HudTextDrawPlan plan = make_hud_text_draw_plan(text,
         std::max(0.0F, bounds.width - 20.0F), size,
-        std::min(size, 11.0F), &measure_text_ex, &measure);
+        std::min(size, hud_readability_style().panel_minimum_font_size),
+        &measure_text_ex, &measure);
     if (!plan.visible) return;
     BeginScissorMode(static_cast<int>(bounds.x), static_cast<int>(bounds.y),
         std::max(0, static_cast<int>(bounds.width)),
         std::max(0, static_cast<int>(bounds.height)));
-    DrawTextEx(font, plan.text.bytes.data(),
-        {bounds.x + 10.0F, bounds.y + 7.0F}, plan.font_size, 1.0F, color);
+    draw_hud_text(font, plan.text.bytes.data(),
+        {bounds.x + 10.0F, bounds.y + 7.0F}, plan.font_size, color,
+        hud_readability_style().outline_pixels);
     EndScissorMode();
 }
 
@@ -321,7 +340,7 @@ void draw_context_notice(Font font, const HudRect& bounds,
         0.18F, 6, fill);
     DrawRectangleLinesEx({bounds.x, bounds.y, bounds.width, bounds.height},
         1.0F, color);
-    draw_panel_text(font, bounds, text, 16.0F, color);
+    draw_panel_text(font, bounds, text, 17.0F, color);
 }
 
 }  // namespace
@@ -380,6 +399,7 @@ void HudRenderer::draw_ground_loot(
     const Font draw_font = selection.use_default_font
         ? GetFontDefault() : font_;
     const HudPalette palette = hud_palette();
+    const HudReadabilityStyle style = hud_readability_style();
     for (std::size_t index = 0U; index < view.count; ++index) {
         const GroundLootLabel& label = view.labels[index];
         const Rectangle bounds{label.rect.x, label.rect.y,
@@ -397,8 +417,9 @@ void HudRenderer::draw_ground_loot(
             static_cast<int>(bounds.y),
             (std::max)(0, static_cast<int>(bounds.width)),
             (std::max)(0, static_cast<int>(bounds.height)));
-        DrawTextEx(draw_font, label.text.data(),
-            {bounds.x + 8.0F, bounds.y + 3.0F}, 14.0F, 1.0F, text);
+        draw_hud_text(draw_font, label.text.data(),
+            {bounds.x + 8.0F, bounds.y + 3.0F}, 16.0F, text,
+            style.outline_pixels);
         EndScissorMode();
     }
 }
@@ -417,6 +438,7 @@ void HudRenderer::draw(const HudViewModel& view,
     const ContextPanelPlan context = make_context_panel_plan(view.context, layout);
 
     const HudPalette palette = hud_palette();
+    const HudReadabilityStyle style = hud_readability_style();
     if (plan.bar_count != 0U) {
         DrawRectangleRounded({layout.player_panel.x, layout.player_panel.y,
             layout.player_panel.width, layout.player_panel.height}, 0.08F, 6,
@@ -444,9 +466,11 @@ void HudRenderer::draw(const HudViewModel& view,
                 }
                 break;
             }
-            DrawTextEx(draw_font, text, {layout.player_panel.x + (12.0F * layout.scale),
-                bar.bounds.y - (2.0F * layout.scale)}, 15.0F * layout.scale,
-                1.0F * layout.scale, palette.text);
+            draw_hud_text(draw_font, text,
+                {layout.player_panel.x + (12.0F * layout.scale),
+                bar.bounds.y - (2.0F * layout.scale)},
+                style.player_bar_font_size * layout.scale,
+                palette.text, style.outline_pixels);
             draw_player_bar(bar);
         }
         if (plan.low_health_emphasis) {
@@ -455,19 +479,21 @@ void HudRenderer::draw(const HudViewModel& view,
                 2.0F * layout.scale,
                 palette.health);
         }
-        DrawTextEx(draw_font, plan.progression_text.bytes.data(),
+        draw_hud_text(draw_font, plan.progression_text.bytes.data(),
             {layout.player_panel.x + (12.0F * layout.scale),
                 layout.player_panel.y + (102.0F * layout.scale)},
-            13.0F * layout.scale, 1.0F * layout.scale, palette.text);
+            style.progression_font_size * layout.scale, palette.text,
+            style.outline_pixels);
         for (std::size_t index = 0U; index < plan.tag_count; ++index) {
             const float tag_x = layout.player_panel.x
                 + ((12.0F + static_cast<float>(index) * 64.0F) * layout.scale);
             const float tag_y = layout.player_panel.y + (122.0F * layout.scale);
             DrawRectangleRounded({tag_x, tag_y, 56.0F * layout.scale,
                 18.0F * layout.scale}, 0.18F, 4, Color{30, 39, 55, 235});
-            DrawTextEx(draw_font, status_tag_label(plan.tags[index]),
+            draw_hud_text(draw_font, status_tag_label(plan.tags[index]),
                 {tag_x + (8.0F * layout.scale), tag_y + (1.0F * layout.scale)},
-                12.0F * layout.scale, 1.0F * layout.scale, palette.text);
+                style.status_tag_font_size * layout.scale, palette.text,
+                style.outline_pixels);
         }
     }
     if (objective.visible) {
@@ -475,27 +501,28 @@ void HudRenderer::draw(const HudViewModel& view,
             objective.bounds.width, objective.bounds.height}, 0.12F, 6,
             objective.abyss ? Color{47, 18, 47, 228} : Color{7, 10, 17, 220});
         draw_panel_text(draw_font, objective.bounds, objective.primary,
-            18.0F * layout.scale, objective.abyss ? palette.chaos : palette.text);
+            style.objective_primary_font_size * layout.scale,
+            objective.abyss ? palette.chaos : palette.text);
         HudRect secondary = objective.bounds;
         secondary.y += 28.0F * layout.scale;
         draw_panel_text(draw_font, secondary, objective.secondary,
-            14.0F * layout.scale, palette.text);
+            style.objective_secondary_font_size * layout.scale, palette.text);
     }
     if (navigation.visible) {
         DrawRectangleRounded({navigation.bounds.x, navigation.bounds.y,
             navigation.bounds.width, navigation.bounds.height}, 0.12F, 6,
             Color{7, 10, 17, 220});
         draw_panel_text(draw_font, navigation.bounds, navigation.primary,
-            16.0F * layout.scale, palette.text);
+            style.navigation_primary_font_size * layout.scale, palette.text);
         HudRect ecology = navigation.bounds;
         ecology.y += 22.0F * layout.scale;
         draw_panel_text(draw_font, ecology, navigation.ecology,
-            14.0F * layout.scale, palette.text);
+            style.navigation_secondary_font_size * layout.scale, palette.text);
         for (std::size_t index{}; index < navigation.element_count; ++index) {
             HudRect element = navigation.bounds;
             element.y += (42.0F + static_cast<float>(index) * 17.0F) * layout.scale;
             draw_panel_text(draw_font, element, navigation.elements[index].label,
-                13.0F * layout.scale,
+                style.navigation_element_font_size * layout.scale,
                 hud_palette_color(navigation.elements[index].color_id));
         }
     }

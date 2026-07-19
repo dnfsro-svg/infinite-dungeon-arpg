@@ -159,6 +159,12 @@ MonsterVisual monster_visual(
     return visual;
 }
 
+MonsterLabelTextStyle monster_label_text_style(float projection_scale) noexcept {
+    const int near_camera_bonus = projection_scale > 1.15F ? 1 : 0;
+    return {11 + near_camera_bonus, 14 + near_camera_bonus,
+        12 + near_camera_bonus, 2};
+}
+
 AffixBadge monster_affix_badge(combat::MonsterAffixInstance affix) noexcept {
     const combat::MonsterAffixDefinition* const definition =
         combat::monster_affix_definition(affix.id);
