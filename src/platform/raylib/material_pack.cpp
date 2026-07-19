@@ -156,7 +156,7 @@ bool MaterialPack::can_draw(MaterialSpriteId id) const noexcept {
 }
 
 bool MaterialPack::draw(MaterialSpriteId id, Vector2 foot_position,
-    bool flip_x, float scale) const noexcept {
+    bool flip_x, float scale, Color tint) const noexcept {
     if (!can_draw(id) || scale <= 0.0F) return false;
 
     const MaterialManifestDefinition manifest = default_material_manifest();
@@ -173,7 +173,7 @@ bool MaterialPack::draw(MaterialSpriteId id, Vector2 foot_position,
     const Rectangle destination{foot_position.x - frame->foot_anchor.x * scale,
         foot_position.y - frame->foot_anchor.y * scale,
         frame->source.width * scale, frame->source.height * scale};
-    DrawTexturePro(texture, source, destination, {0.0F, 0.0F}, 0.0F, WHITE);
+    DrawTexturePro(texture, source, destination, {0.0F, 0.0F}, 0.0F, tint);
     return true;
 }
 

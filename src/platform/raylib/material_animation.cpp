@@ -172,4 +172,9 @@ MaterialSpriteId select_door_sprite(dungeon::DungeonElement element) noexcept {
     return MaterialSpriteId::missing;
 }
 
+float material_actor_draw_scale(bool player, float projection_scale) noexcept {
+    if (projection_scale <= 0.0F) return 0.0F;
+    return projection_scale * (player ? 0.36F : 0.34F);
+}
+
 }  // namespace arpg::platform

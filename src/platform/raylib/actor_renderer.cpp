@@ -173,10 +173,20 @@ void draw_blink_affix_warning(const MonsterSnapshot& monster, Vec3 position,
 }
 
 bool draw_material_actor(const MaterialPack& material_pack,
-    MaterialSpriteId sprite, Facing facing,
-    const ScreenProjection& projected) noexcept {
-    return material_pack.draw(sprite, {projected.x, projected.y},
-        facing == Facing::left, projected.scale);
+    MaterialSpriteId sprite, Facing facing, bool player,
+    const ScreenProjection& projected, float hit_flash_seconds = 0.0F) noexcept {
+    const float scale = material_actor_draw_scale(player, projected.scale);
+    if (!material_pack.draw(sprite, {projected.x, projected.y},
+            facing == Facing::left, scale)) {
+        return false;
+    }
+    if (hit_flash_seconds > 0.0F) {
+        BeginBlendMode(BLEND_ADDITIVE);
+        static_cast<void>(material_pack.draw(sprite, {projected.x, projected.y},
+            facing == Facing::left, scale, Color{255, 249, 220, 185}));
+        EndBlendMode();
+    }
+    return true;
 }
 
 void draw_player_geometry(const ScreenProjection& projected) noexcept {
@@ -340,14 +350,15 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
                 sprite = MaterialSpriteId::player_hurt;
             }
             if (!draw_material_actor(material_pack_, sprite,
-                    current_combat.player.facing, projected)) {
+                    current_combat.player.facing, true, projected)) {
                 draw_player_geometry(projected);
             }
         } else {
             const MonsterSnapshot& monster = current_combat.monsters[item.monster_index];
             const MaterialSpriteId sprite = select_monster_sprite(monster.id,
                 monster.ai_phase);
-            if (draw_material_actor(material_pack_, sprite, monster.facing, projected)) {
+            if (draw_material_actor(material_pack_, sprite, monster.facing, false,
+                    projected, feedback.target_flash_seconds(item.monster_index))) {
                 draw_monster_presentation(monster, item.position, current.ecology,
                     width, height, current_combat.tick);
             } else {

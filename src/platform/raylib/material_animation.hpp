@@ -21,4 +21,7 @@ namespace arpg::platform {
 [[nodiscard]] MaterialSpriteId select_door_sprite(
     dungeon::DungeonElement element) noexcept;
 
+[[nodiscard]] float material_actor_draw_scale(
+    bool player, float projection_scale) noexcept;
+
 }  // namespace arpg::platform

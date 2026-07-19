@@ -36,7 +36,7 @@ public:
     [[nodiscard]] bool can_draw(MaterialSpriteId id) const noexcept;
     [[nodiscard]] bool draw(
         MaterialSpriteId id, Vector2 foot_position, bool flip_x,
-        float scale = 1.0F) const noexcept;
+        float scale = 1.0F, Color tint = WHITE) const noexcept;
 
 private:
     MaterialTextureApi texture_api_{};
