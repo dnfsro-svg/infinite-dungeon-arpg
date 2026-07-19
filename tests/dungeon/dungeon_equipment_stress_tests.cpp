@@ -46,6 +46,8 @@ enum class MismatchField : std::uint8_t {
     player_build,
     ground_active,
     ground_ordinal,
+    ground_source,
+    ground_abyss_reward_ordinal,
     ground_position,
     ground_content,
 };
@@ -68,6 +70,9 @@ struct TraceResult final {
     std::size_t filtered_items_retained{};
     std::size_t relaxed_policy_pickups{};
     std::size_t hot_path_iterations{};
+    std::array<std::size_t, 3> policy_attempts{};
+    std::array<std::size_t, 3> policy_retained{};
+    std::size_t exact_pickup_verifications{};
 };
 
 bool same_build(const arpg::combat::PlayerCombatBuild& left,
@@ -137,6 +142,10 @@ Comparison compare_sessions(
         if (!a.active) continue;
         if (a.drop_ordinal != b.drop_ordinal)
             return {MismatchField::ground_ordinal, index};
+        if (a.source != b.source)
+            return {MismatchField::ground_source, index};
+        if (a.abyss_reward_ordinal != b.abyss_reward_ordinal)
+            return {MismatchField::ground_abyss_reward_ordinal, index};
         if (a.position.x != b.position.x || a.position.y != b.position.y
                 || a.position.z != b.position.z)
             return {MismatchField::ground_position, index};
@@ -195,6 +204,7 @@ PickupAttempt pickup_one(DungeonSession& session,
     const GroundItem& ground = arpg::test::ground_items(session)[ordinal];
     if (!ground.active) return PickupAttempt::failed;
     const ItemInstance original_item = ground.item;
+    const std::uint64_t original_item_id = ground.item.id;
     const auto original_position = ground.position;
     const auto original_source = ground.source;
     arpg::test::set_player_position(session, ground.position);
@@ -210,7 +220,31 @@ PickupAttempt pickup_one(DungeonSession& session,
                 && same_item_bytes(retained.item, original_item)
             ? PickupAttempt::retained : PickupAttempt::failed;
     }
-    return commit_pending(session)
+    if (original_source != arpg::dungeon::GroundItemSource::monster_drop
+            || pending->kind != arpg::dungeon::PendingSaveKind::loot_pickup
+            || pending->pickup_ordinal != ordinal) {
+        return PickupAttempt::failed;
+    }
+    if (!commit_pending(session)) return PickupAttempt::failed;
+
+    const auto& committed_ground = arpg::test::ground_items(session);
+    if (committed_ground[ordinal].active) return PickupAttempt::failed;
+    for (const GroundItem& candidate : committed_ground) {
+        if (candidate.active && candidate.item.id == original_item_id) {
+            return PickupAttempt::failed;
+        }
+    }
+    const auto& ownership = session.item_state();
+    const auto owned = std::count_if(ownership.items.begin(),
+        ownership.items.end(), [original_item_id](const ItemInstance& item) {
+            return item.id == original_item_id;
+        });
+    const std::size_t word = ordinal / 64U;
+    const std::size_t bit = ordinal % 64U;
+    const bool claimed = word < ownership.claimed_drop_bits.size()
+        && (ownership.claimed_drop_bits[word]
+            & (std::uint64_t{1U} << bit)) != 0U;
+    return owned == 1 && claimed
         ? PickupAttempt::picked : PickupAttempt::failed;
 }
 
@@ -392,6 +426,12 @@ TraceResult run_trace(std::size_t room_count, bool perturb_pickup_order) {
             const AutoPickupPolicy policy{perturb_pickup_order
                 ? ItemRarity::normal
                 : static_cast<ItemRarity>((room + index) % 3U)};
+            const std::size_t policy_index = static_cast<std::size_t>(
+                policy.minimum_rarity);
+            if (!perturb_pickup_order) {
+                if (policy_index >= result.policy_attempts.size()) return result;
+                ++result.policy_attempts[policy_index];
+            }
             const bool left_eligible = arpg::dungeon::auto_pickup_eligible(
                 arpg::test::ground_items(*left)[left_order[index]], policy);
             const bool right_eligible = arpg::dungeon::auto_pickup_eligible(
@@ -408,6 +448,11 @@ TraceResult run_trace(std::size_t room_count, bool perturb_pickup_order) {
             if (!left_eligible) {
                 retained_ordinals[retained_count++] = left_order[index];
                 ++result.filtered_items_retained;
+                if (!perturb_pickup_order) {
+                    ++result.policy_retained[policy_index];
+                }
+            } else if (!perturb_pickup_order) {
+                ++result.exact_pickup_verifications;
             }
             if (!record_comparison(
                     result, *left, *right, room, step++)) {
@@ -424,6 +469,7 @@ TraceResult run_trace(std::size_t room_count, bool perturb_pickup_order) {
                 return result;
             }
             ++result.relaxed_policy_pickups;
+            ++result.exact_pickup_verifications;
             if (!record_comparison(
                     result, *left, *right, room, step++)) {
                 result.completed = perturb_pickup_order
@@ -465,6 +511,9 @@ const char* mismatch_name(MismatchField field) noexcept {
     case MismatchField::player_build: return "player_build";
     case MismatchField::ground_active: return "ground_active";
     case MismatchField::ground_ordinal: return "ground_ordinal";
+    case MismatchField::ground_source: return "ground_source";
+    case MismatchField::ground_abyss_reward_ordinal:
+        return "ground_abyss_reward_ordinal";
     case MismatchField::ground_position: return "ground_position";
     case MismatchField::ground_content: return "ground_content";
     }
@@ -498,6 +547,15 @@ arpg::test::Failure one_thousand_room_equipment_trace_is_deterministic() noexcep
     ARPG_REQUIRE(result.relaxed_policy_pickups
         == result.filtered_items_retained);
     ARPG_REQUIRE(result.hot_path_iterations == 100000U);
+    ARPG_REQUIRE(result.policy_attempts[0] > 0U);
+    ARPG_REQUIRE(result.policy_attempts[1] > 0U);
+    ARPG_REQUIRE(result.policy_attempts[2] > 0U);
+    ARPG_REQUIRE(result.policy_retained[0] == 0U);
+    ARPG_REQUIRE(result.policy_retained[1] > 0U);
+    ARPG_REQUIRE(result.policy_retained[2] > 0U);
+    ARPG_REQUIRE(result.policy_retained[0] + result.policy_retained[1]
+        + result.policy_retained[2] == result.filtered_items_retained);
+    ARPG_REQUIRE(result.exact_pickup_verifications > 0U);
     return {};
 }
 
