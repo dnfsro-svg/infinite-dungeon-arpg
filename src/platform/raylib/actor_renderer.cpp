@@ -3,6 +3,7 @@
 #include "combat_view_math.hpp"
 #include "hud_renderer.hpp"
 #include "dungeon_view_math.hpp"
+#include "material_animation.hpp"
 
 #include <raylib.h>
 
@@ -171,6 +172,68 @@ void draw_blink_affix_warning(const MonsterSnapshot& monster, Vec3 position,
         ground_radius, ground_radius * 0.38F, warning);
 }
 
+bool draw_material_actor(const MaterialPack& material_pack,
+    MaterialSpriteId sprite, Facing facing,
+    const ScreenProjection& projected) noexcept {
+    return material_pack.draw(sprite, {projected.x, projected.y},
+        facing == Facing::left, projected.scale);
+}
+
+void draw_player_geometry(const ScreenProjection& projected) noexcept {
+    const float body_width = 42.0F * projected.scale;
+    const float body_height = 82.0F * projected.scale;
+    DrawRectangleRounded({projected.x - body_width * .5F,
+        projected.y - body_height, body_width, body_height}, .20F, 6,
+        Color{65, 202, 223, 255});
+    DrawTriangle({projected.x, projected.y - body_height - 16.0F * projected.scale},
+        {projected.x - 12.0F * projected.scale,
+            projected.y - body_height + 5.0F * projected.scale},
+        {projected.x + 12.0F * projected.scale,
+            projected.y - body_height + 5.0F * projected.scale},
+        Color{134, 237, 255, 255});
+}
+
+void draw_monster_presentation(const MonsterSnapshot& monster, Vec3 position,
+    dungeon::DungeonElement ecology, float width, float height,
+    std::uint64_t tick) noexcept {
+    const ScreenProjection projected = project_combat_position(position, width, height);
+    const MonsterVisual visual = monster_visual(monster.id, monster.ai_phase, ecology);
+    const float scale = projected.scale;
+    const float x = projected.x;
+    const float y = projected.y;
+    const std::size_t affix_count = std::min<std::size_t>(
+        monster.affixes.count, monster.affixes.values.size());
+    for (std::size_t index = 0U; index < affix_count; ++index) {
+        const AffixOutline outline = monster_affix_outline(
+            monster.affixes.values[index], tick);
+        const float radius = (35.0F + static_cast<float>(index) * 4.0F) * scale;
+        DrawEllipseLines(static_cast<int>(x), static_cast<int>(y - 42.0F * scale),
+            radius, radius * 1.18F,
+            Fade(to_color(outline.color), static_cast<float>(outline.alpha) / 255.0F));
+    }
+    const MonsterBarVisualPlan bar_visual = make_monster_bar_visual_plan(monster);
+    const float bar_width = 54.0F * scale;
+    constexpr float kBarOffsets[] = {102.0F, 95.0F, 88.0F};
+    for (std::size_t index = 0U; index < bar_visual.bars.size(); ++index) {
+        const MonsterBarPlan& bar = bar_visual.bars[index];
+        if (!bar.visible) continue;
+        draw_bar(x - bar_width * .5F, y - kBarOffsets[index] * scale,
+            bar_width, bar.ratio, hud_palette_color(bar.palette_id));
+    }
+    for (std::size_t index = 0U; index < affix_count; ++index) {
+        const AffixBadge badge = monster_affix_badge(monster.affixes.values[index]);
+        DrawText(TextFormat("%s %s", badge.short_name, badge.tier_text),
+            static_cast<int>(x - bar_width * .5F),
+            static_cast<int>(y - (80.0F - static_cast<float>(index) * 10.0F) * scale),
+            9, to_color(badge.color));
+    }
+    DrawText(visual.role_label, static_cast<int>(x - bar_width * .5F),
+        static_cast<int>(y + 7.0F), 11, Color{225, 230, 239, 230});
+    DrawText(monster_phase_name(monster.ai_phase),
+        static_cast<int>(x - bar_width * .5F), static_cast<int>(y + 19.0F), 10,
+        Color{184, 196, 213, 220});
+}
+
 void draw_monster_silhouette(const MonsterSnapshot& monster, Vec3 position,
     dungeon::DungeonElement ecology, float width, float height,
     const CombatFeedback& feedback, std::size_t monster_index,
@@ -213,35 +276,7 @@ void draw_monster_silhouette(const MonsterSnapshot& monster, Vec3 position,
         DrawCircleLines(static_cast<int>(x + 25.0F * scale), static_cast<int>(y - 88.0F * scale), 8.0F * scale, accent); break;
     }
 
-    const std::size_t affix_count = std::min<std::size_t>(
-        monster.affixes.count, monster.affixes.values.size());
-    for (std::size_t index = 0U; index < affix_count; ++index) {
-        const AffixOutline outline = monster_affix_outline(
-            monster.affixes.values[index], tick);
-        const float radius = (35.0F + static_cast<float>(index) * 4.0F) * scale;
-        DrawEllipseLines(static_cast<int>(x), static_cast<int>(y - 42.0F * scale),
-            radius, radius * 1.18F,
-            Fade(to_color(outline.color), static_cast<float>(outline.alpha) / 255.0F));
-    }
-    const MonsterBarVisualPlan bar_visual =
-        make_monster_bar_visual_plan(monster);
-    const float bar_width = 54.0F * scale;
-    constexpr float kBarOffsets[] = {102.0F, 95.0F, 88.0F};
-    for (std::size_t index = 0U; index < bar_visual.bars.size(); ++index) {
-        const MonsterBarPlan& bar = bar_visual.bars[index];
-        if (!bar.visible) continue;
-        draw_bar(x - bar_width * .5F, y - kBarOffsets[index] * scale,
-            bar_width, bar.ratio, hud_palette_color(bar.palette_id));
-    }
-    for (std::size_t index = 0U; index < affix_count; ++index) {
-        const AffixBadge badge = monster_affix_badge(monster.affixes.values[index]);
-        DrawText(TextFormat("%s %s", badge.short_name, badge.tier_text),
-            static_cast<int>(x - bar_width * .5F),
-            static_cast<int>(y - (80.0F - static_cast<float>(index) * 10.0F) * scale),
-            9, to_color(badge.color));
-    }
-    DrawText(visual.role_label, static_cast<int>(x - bar_width * .5F), static_cast<int>(y + 7.0F), 11, Color{225, 230, 239, 230});
-    DrawText(monster_phase_name(monster.ai_phase), static_cast<int>(x - bar_width * .5F), static_cast<int>(y + 19.0F), 10, Color{184, 196, 213, 220});
+    draw_monster_presentation(monster, position, ecology, width, height, tick);
 }
 
 }  // namespace
@@ -297,16 +332,28 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
         const RenderActor& item = draw_items[index];
         const ScreenProjection projected = project_combat_position(item.position, width, height);
         if (item.player) {
-            const float body_width = 42.0F * projected.scale;
-            const float body_height = 82.0F * projected.scale;
-            DrawRectangleRounded({projected.x - body_width * .5F, projected.y - body_height, body_width, body_height}, .20F, 6, Color{65, 202, 223, 255});
-            DrawTriangle({projected.x, projected.y - body_height - 16.0F * projected.scale},
-                {projected.x - 12.0F * projected.scale, projected.y - body_height + 5.0F * projected.scale},
-                {projected.x + 12.0F * projected.scale, projected.y - body_height + 5.0F * projected.scale}, Color{134, 237, 255, 255});
+            MaterialSpriteId sprite = select_player_sprite(
+                current_combat.player.state, current_combat.player.active_attack);
+            if (current_combat.player.hp <= 0) {
+                sprite = MaterialSpriteId::player_dead;
+            } else if (current_combat.player.hurt_ticks > 0) {
+                sprite = MaterialSpriteId::player_hurt;
+            }
+            if (!draw_material_actor(material_pack_, sprite,
+                    current_combat.player.facing, projected)) {
+                draw_player_geometry(projected);
+            }
         } else {
-            draw_monster_silhouette(current_combat.monsters[item.monster_index], item.position,
-                current.ecology, width, height, feedback, item.monster_index,
-                current_combat.tick);
+            const MonsterSnapshot& monster = current_combat.monsters[item.monster_index];
+            const MaterialSpriteId sprite = select_monster_sprite(monster.id,
+                monster.ai_phase);
+            if (draw_material_actor(material_pack_, sprite, monster.facing, projected)) {
+                draw_monster_presentation(monster, item.position, current.ecology,
+                    width, height, current_combat.tick);
+            } else {
+                draw_monster_silhouette(monster, item.position, current.ecology,
+                    width, height, feedback, item.monster_index, current_combat.tick);
+            }
         }
     }
     draw_effects(feedback, width, height, true);

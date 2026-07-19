@@ -49,24 +49,95 @@ MaterialSpriteId select_player_sprite(
 MaterialSpriteId select_monster_sprite(
     combat::MonsterId monster,
     combat::MonsterAiPhase phase) noexcept {
-    static_cast<void>(phase);
     switch (monster) {
     case combat::MonsterId::fire_bomber:
-        return MaterialSpriteId::fire_bomber_idle;
+        switch (phase) {
+        case combat::MonsterAiPhase::idle: return MaterialSpriteId::fire_bomber_idle;
+        case combat::MonsterAiPhase::move: return MaterialSpriteId::fire_bomber_move;
+        case combat::MonsterAiPhase::telegraph: return MaterialSpriteId::fire_bomber_telegraph;
+        case combat::MonsterAiPhase::active: return MaterialSpriteId::fire_bomber_active;
+        case combat::MonsterAiPhase::recovery: return MaterialSpriteId::fire_bomber_recovery;
+        case combat::MonsterAiPhase::cooldown: return MaterialSpriteId::fire_bomber_cooldown;
+        case combat::MonsterAiPhase::defeated: return MaterialSpriteId::fire_bomber_defeated;
+        }
+        break;
     case combat::MonsterId::fire_charger:
-        return MaterialSpriteId::fire_charger_idle;
+        switch (phase) {
+        case combat::MonsterAiPhase::idle: return MaterialSpriteId::fire_charger_idle;
+        case combat::MonsterAiPhase::move: return MaterialSpriteId::fire_charger_move;
+        case combat::MonsterAiPhase::telegraph: return MaterialSpriteId::fire_charger_telegraph;
+        case combat::MonsterAiPhase::active: return MaterialSpriteId::fire_charger_active;
+        case combat::MonsterAiPhase::recovery: return MaterialSpriteId::fire_charger_recovery;
+        case combat::MonsterAiPhase::cooldown: return MaterialSpriteId::fire_charger_cooldown;
+        case combat::MonsterAiPhase::defeated: return MaterialSpriteId::fire_charger_defeated;
+        }
+        break;
     case combat::MonsterId::water_bulwark:
-        return MaterialSpriteId::water_bulwark_idle;
+        switch (phase) {
+        case combat::MonsterAiPhase::idle: return MaterialSpriteId::water_bulwark_idle;
+        case combat::MonsterAiPhase::move: return MaterialSpriteId::water_bulwark_move;
+        case combat::MonsterAiPhase::telegraph: return MaterialSpriteId::water_bulwark_telegraph;
+        case combat::MonsterAiPhase::active: return MaterialSpriteId::water_bulwark_active;
+        case combat::MonsterAiPhase::recovery: return MaterialSpriteId::water_bulwark_recovery;
+        case combat::MonsterAiPhase::cooldown: return MaterialSpriteId::water_bulwark_cooldown;
+        case combat::MonsterAiPhase::defeated: return MaterialSpriteId::water_bulwark_defeated;
+        }
+        break;
     case combat::MonsterId::water_support:
-        return MaterialSpriteId::water_support_idle;
+        switch (phase) {
+        case combat::MonsterAiPhase::idle: return MaterialSpriteId::water_support_idle;
+        case combat::MonsterAiPhase::move: return MaterialSpriteId::water_support_move;
+        case combat::MonsterAiPhase::telegraph: return MaterialSpriteId::water_support_telegraph;
+        case combat::MonsterAiPhase::active: return MaterialSpriteId::water_support_active;
+        case combat::MonsterAiPhase::recovery: return MaterialSpriteId::water_support_recovery;
+        case combat::MonsterAiPhase::cooldown: return MaterialSpriteId::water_support_cooldown;
+        case combat::MonsterAiPhase::defeated: return MaterialSpriteId::water_support_defeated;
+        }
+        break;
     case combat::MonsterId::lightning_shooter:
-        return MaterialSpriteId::lightning_shooter_idle;
+        switch (phase) {
+        case combat::MonsterAiPhase::idle: return MaterialSpriteId::lightning_shooter_idle;
+        case combat::MonsterAiPhase::move: return MaterialSpriteId::lightning_shooter_move;
+        case combat::MonsterAiPhase::telegraph: return MaterialSpriteId::lightning_shooter_telegraph;
+        case combat::MonsterAiPhase::active: return MaterialSpriteId::lightning_shooter_active;
+        case combat::MonsterAiPhase::recovery: return MaterialSpriteId::lightning_shooter_recovery;
+        case combat::MonsterAiPhase::cooldown: return MaterialSpriteId::lightning_shooter_cooldown;
+        case combat::MonsterAiPhase::defeated: return MaterialSpriteId::lightning_shooter_defeated;
+        }
+        break;
     case combat::MonsterId::lightning_dasher:
-        return MaterialSpriteId::lightning_dasher_idle;
+        switch (phase) {
+        case combat::MonsterAiPhase::idle: return MaterialSpriteId::lightning_dasher_idle;
+        case combat::MonsterAiPhase::move: return MaterialSpriteId::lightning_dasher_move;
+        case combat::MonsterAiPhase::telegraph: return MaterialSpriteId::lightning_dasher_telegraph;
+        case combat::MonsterAiPhase::active: return MaterialSpriteId::lightning_dasher_active;
+        case combat::MonsterAiPhase::recovery: return MaterialSpriteId::lightning_dasher_recovery;
+        case combat::MonsterAiPhase::cooldown: return MaterialSpriteId::lightning_dasher_cooldown;
+        case combat::MonsterAiPhase::defeated: return MaterialSpriteId::lightning_dasher_defeated;
+        }
+        break;
     case combat::MonsterId::chaos_chaser:
-        return MaterialSpriteId::chaos_chaser_idle;
+        switch (phase) {
+        case combat::MonsterAiPhase::idle: return MaterialSpriteId::chaos_chaser_idle;
+        case combat::MonsterAiPhase::move: return MaterialSpriteId::chaos_chaser_move;
+        case combat::MonsterAiPhase::telegraph: return MaterialSpriteId::chaos_chaser_telegraph;
+        case combat::MonsterAiPhase::active: return MaterialSpriteId::chaos_chaser_active;
+        case combat::MonsterAiPhase::recovery: return MaterialSpriteId::chaos_chaser_recovery;
+        case combat::MonsterAiPhase::cooldown: return MaterialSpriteId::chaos_chaser_cooldown;
+        case combat::MonsterAiPhase::defeated: return MaterialSpriteId::chaos_chaser_defeated;
+        }
+        break;
     case combat::MonsterId::chaos_hazard:
-        return MaterialSpriteId::chaos_hazard_idle;
+        switch (phase) {
+        case combat::MonsterAiPhase::idle: return MaterialSpriteId::chaos_hazard_idle;
+        case combat::MonsterAiPhase::move: return MaterialSpriteId::chaos_hazard_move;
+        case combat::MonsterAiPhase::telegraph: return MaterialSpriteId::chaos_hazard_telegraph;
+        case combat::MonsterAiPhase::active: return MaterialSpriteId::chaos_hazard_active;
+        case combat::MonsterAiPhase::recovery: return MaterialSpriteId::chaos_hazard_recovery;
+        case combat::MonsterAiPhase::cooldown: return MaterialSpriteId::chaos_hazard_cooldown;
+        case combat::MonsterAiPhase::defeated: return MaterialSpriteId::chaos_hazard_defeated;
+        }
+        break;
     case combat::MonsterId::count:
         return MaterialSpriteId::missing;
     }

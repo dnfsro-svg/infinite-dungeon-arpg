@@ -27,7 +27,8 @@ if(TARGET arpg_raylib)
         ground_loot_view_tests.cpp
         material_asset_validation_tests.cpp
         material_animation_tests.cpp
-        stage12_environment_render_tests.cpp)
+        stage12_environment_render_tests.cpp
+        stage12_actor_render_tests.cpp)
     target_sources(arpg_platform_tests PRIVATE inventory_view_math_tests.cpp)
     target_compile_features(arpg_platform_tests PRIVATE cxx_std_17)
     target_include_directories(arpg_platform_tests
