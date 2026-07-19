@@ -1,0 +1,11 @@
+// Stage 11-D loot architecture mutation manifest.
+std::string dynamic_text;
+bool direct_input() { return IsKeyDown(1); }
+void presentation_tick() { session.tick({}); }
+SettingsStore* direct_store = nullptr;
+// DUNGEON_TO_SETTINGS_INCLUDE
+// RARITY_IN_EXPLICIT_PICKUP
+// MISSING_ABYSS_BYPASS
+// RELATIVE_DUNGEON_INCLUDE
+// RELATIVE_SETTINGS_INCLUDE
+// RELATIVE_RAYLIB_INCLUDE

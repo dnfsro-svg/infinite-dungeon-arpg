@@ -153,6 +153,7 @@ struct StressOutcome final {
     std::uint64_t slot_a_hash{};
     std::uint64_t slot_b_hash{};
     bool success{};
+    std::array<std::size_t, 3> filter_mode_saves{};
 };
 
 [[nodiscard]] StressOutcome run_stress_cycles() noexcept {
@@ -160,6 +161,7 @@ struct StressOutcome final {
     settings::SettingsStore store{"stage11b-stress", memory_ops(slots)};
     settings::SettingsData direct = settings::default_settings();
     constexpr std::array<std::uint32_t, 3> restart_intervals{{17U, 31U, 43U}};
+    std::array<std::size_t, 3> filter_mode_saves{};
 
     for (std::uint64_t revision = 1U; revision <= 1000U; ++revision) {
         settings::SettingsData draft = direct;
@@ -183,6 +185,7 @@ struct StressOutcome final {
             return {};
         }
         direct = saved.settings;
+        ++filter_mode_saves[static_cast<std::size_t>(direct.loot_filter_mode)];
 
         for (const std::uint32_t interval : restart_intervals) {
             if (revision % interval != 0U) {
@@ -201,7 +204,8 @@ struct StressOutcome final {
     if (!slots.has_a || !slots.has_b || !same_settings(restarted.settings, direct)) {
         return {};
     }
-    return {direct, slots.a, slots.b, sentinel_hash(slots.a), sentinel_hash(slots.b), true};
+    return {direct, slots.a, slots.b, sentinel_hash(slots.a),
+        sentinel_hash(slots.b), true, filter_mode_saves};
 }
 
 arpg::test::Failure thousand_atomic_reload_cycles_are_restart_stable() noexcept {
@@ -225,6 +229,13 @@ arpg::test::Failure thousand_atomic_reload_cycles_are_restart_stable() noexcept 
     ARPG_REQUIRE(first.slot_a_hash == second.slot_a_hash);
     ARPG_REQUIRE(first.slot_b_hash == second.slot_b_hash);
     ARPG_REQUIRE(first.slot_a_hash != first.slot_b_hash);
+    ARPG_REQUIRE(first.filter_mode_saves[0] > 0U);
+    ARPG_REQUIRE(first.filter_mode_saves[1] > 0U);
+    ARPG_REQUIRE(first.filter_mode_saves[2] > 0U);
+    ARPG_REQUIRE(first.filter_mode_saves == second.filter_mode_saves);
+    constexpr std::array<std::size_t, 3> kExpectedFilterModeSaves{
+        {333U, 334U, 333U}};
+    ARPG_REQUIRE(first.filter_mode_saves == kExpectedFilterModeSaves);
     MemorySlots slots{};
     settings::SettingsData legacy = settings::default_settings();
     legacy.revision = 51U;
@@ -275,7 +286,9 @@ arpg::test::Failure settings_hot_paths_and_cached_frame_paths_allocate_nothing()
     platform::refresh_control_hints(hints, values);
 
     const std::uint64_t before = arpg::test::allocation_count();
-    for (std::size_t iteration = 0U; iteration < 10000U; ++iteration) {
+    for (std::size_t iteration = 0U; iteration < 100000U; ++iteration) {
+        values.loot_filter_mode = static_cast<settings::LootFilterMode>(
+            iteration % 3U);
         ARPG_REQUIRE(settings::validate_settings(values)
             == settings::SettingsValidationError::none);
         const auto action = static_cast<settings::SettingAction>(

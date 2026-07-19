@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 
+#include "allocation_probe.hpp"
 #include "dungeon_test_support.hpp"
 
 #include "dungeon/dungeon_progression.hpp"
@@ -22,10 +23,12 @@ using arpg::dungeon::DungeonRules;
 using arpg::dungeon::DungeonSession;
 using arpg::dungeon::ExitDirection;
 using arpg::dungeon::GroundItem;
+using arpg::dungeon::AutoPickupPolicy;
 using arpg::dungeon::RequestResult;
 using arpg::dungeon::RoomPhase;
 using arpg::dungeon::SaveDisposition;
 using arpg::items::ItemInstance;
+using arpg::items::ItemRarity;
 
 constexpr std::uint64_t kRootSeed = 0x8E10A57E5D00D123ULL;
 constexpr std::size_t kStressRoomCount = 1000U;
@@ -62,6 +65,9 @@ struct TraceResult final {
     std::size_t equips{};
     std::size_t recipes{};
     std::size_t restarts{};
+    std::size_t filtered_items_retained{};
+    std::size_t relaxed_policy_pickups{};
+    std::size_t hot_path_iterations{};
 };
 
 bool same_build(const arpg::combat::PlayerCombatBuild& left,
@@ -177,14 +183,58 @@ std::vector<std::uint16_t> active_ordinals(
     return result;
 }
 
-bool pickup_one(
-    DungeonSession& session, std::uint16_t ordinal) noexcept {
+enum class PickupAttempt : std::uint8_t {
+    failed,
+    retained,
+    picked,
+};
+
+PickupAttempt pickup_one(DungeonSession& session,
+    std::uint16_t ordinal,
+    AutoPickupPolicy policy) noexcept {
     const GroundItem& ground = arpg::test::ground_items(session)[ordinal];
-    if (!ground.active) return false;
+    if (!ground.active) return PickupAttempt::failed;
+    const ItemInstance original_item = ground.item;
+    const auto original_position = ground.position;
+    const auto original_source = ground.source;
     arpg::test::set_player_position(session, ground.position);
-    session.request_nearby_pickups(ground.position);
+    session.request_nearby_pickups(ground.position, policy);
     const auto pending = session.pending_save_view();
-    return pending != nullptr && commit_pending(session);
+    if (pending == nullptr) {
+        const GroundItem& retained = arpg::test::ground_items(session)[ordinal];
+        return retained.active && retained.drop_ordinal == ordinal
+                && retained.source == original_source
+                && retained.position.x == original_position.x
+                && retained.position.y == original_position.y
+                && retained.position.z == original_position.z
+                && same_item_bytes(retained.item, original_item)
+            ? PickupAttempt::retained : PickupAttempt::failed;
+    }
+    return commit_pending(session)
+        ? PickupAttempt::picked : PickupAttempt::failed;
+}
+
+bool run_filter_hot_path_probe(TraceResult& result) noexcept {
+    GroundItem ground{};
+    ground.active = true;
+    std::size_t eligible_count = 0U;
+    constexpr std::size_t kIterationCount = 100000U;
+    const std::uint64_t before = arpg::test::allocation_count();
+    for (std::size_t iteration = 0U;
+         iteration < kIterationCount; ++iteration) {
+        ground.source = iteration % 11U == 0U
+            ? arpg::dungeon::GroundItemSource::abyss_chest
+            : arpg::dungeon::GroundItemSource::monster_drop;
+        ground.item.rarity = static_cast<ItemRarity>(iteration % 3U);
+        const AutoPickupPolicy policy{
+            static_cast<ItemRarity>((iteration / 3U) % 3U)};
+        if (arpg::dungeon::auto_pickup_eligible(ground, policy)) {
+            ++eligible_count;
+        }
+    }
+    result.hot_path_iterations = kIterationCount;
+    return eligible_count > 0U
+        && arpg::test::allocation_count() == before;
 }
 
 const arpg::items::BaseDefinition* base_for(const ItemInstance& item) noexcept {
@@ -302,6 +352,7 @@ TraceResult run_trace(std::size_t room_count, bool perturb_pickup_order) {
     auto left = std::make_unique<DungeonSession>(rules, initial.state);
     auto right = std::make_unique<DungeonSession>(rules, initial.state);
     std::size_t step = 0U;
+    if (!run_filter_hot_path_probe(result)) return result;
     if (!record_comparison(result, *left, *right, 0U, step++)) return result;
 
     for (std::size_t room = 0U; room < room_count; ++room) {
@@ -334,10 +385,45 @@ TraceResult run_trace(std::size_t room_count, bool perturb_pickup_order) {
             std::swap(right_order[0], right_order[1]);
             result.perturbation_applied = true;
         }
+        std::array<std::uint16_t, arpg::dungeon::kGroundDropCapacity>
+            retained_ordinals{};
+        std::size_t retained_count = 0U;
         for (std::size_t index = 0U; index < left_order.size(); ++index) {
-            if (!pickup_one(*left, left_order[index])
-                    || !pickup_one(*right, right_order[index]))
+            const AutoPickupPolicy policy{perturb_pickup_order
+                ? ItemRarity::normal
+                : static_cast<ItemRarity>((room + index) % 3U)};
+            const bool left_eligible = arpg::dungeon::auto_pickup_eligible(
+                arpg::test::ground_items(*left)[left_order[index]], policy);
+            const bool right_eligible = arpg::dungeon::auto_pickup_eligible(
+                arpg::test::ground_items(*right)[right_order[index]], policy);
+            if (left_eligible != right_eligible) return result;
+            const PickupAttempt left_attempt =
+                pickup_one(*left, left_order[index], policy);
+            const PickupAttempt right_attempt =
+                pickup_one(*right, right_order[index], policy);
+            const PickupAttempt expected = left_eligible
+                ? PickupAttempt::picked : PickupAttempt::retained;
+            if (left_attempt != expected || right_attempt != expected)
                 return result;
+            if (!left_eligible) {
+                retained_ordinals[retained_count++] = left_order[index];
+                ++result.filtered_items_retained;
+            }
+            if (!record_comparison(
+                    result, *left, *right, room, step++)) {
+                result.completed = perturb_pickup_order
+                    && result.perturbation_applied;
+                return result;
+            }
+        }
+        for (std::size_t index = 0U; index < retained_count; ++index) {
+            const std::uint16_t ordinal = retained_ordinals[index];
+            if (pickup_one(*left, ordinal, {}) != PickupAttempt::picked
+                    || pickup_one(*right, ordinal, {})
+                        != PickupAttempt::picked) {
+                return result;
+            }
+            ++result.relaxed_policy_pickups;
             if (!record_comparison(
                     result, *left, *right, room, step++)) {
                 result.completed = perturb_pickup_order
@@ -408,6 +494,10 @@ arpg::test::Failure one_thousand_room_equipment_trace_is_deterministic() noexcep
     ARPG_REQUIRE(result.equips > 0U);
     ARPG_REQUIRE(result.recipes > 0U);
     ARPG_REQUIRE(result.restarts == kStressRoomCount / kRestartInterval);
+    ARPG_REQUIRE(result.filtered_items_retained > 0U);
+    ARPG_REQUIRE(result.relaxed_policy_pickups
+        == result.filtered_items_retained);
+    ARPG_REQUIRE(result.hot_path_iterations == 100000U);
     return {};
 }
 

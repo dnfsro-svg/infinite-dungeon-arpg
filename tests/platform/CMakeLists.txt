@@ -1018,6 +1018,29 @@ set_tests_properties(
         TIMEOUT 300)
 
 add_test(
+    NAME stage11d.architecture.loot_boundaries
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}/src"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11d_loot_architecture_guard_test.cmake")
+set_tests_properties(
+    stage11d.architecture.loot_boundaries
+    PROPERTIES LABELS "headless;platform;architecture;stage11d")
+
+add_test(
+    NAME stage11d.architecture.loot_boundaries_self_test
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}/src"
+        "-DGUARD_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage11d_loot_architecture_guard_test.cmake"
+        "-DBAD_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage11d_loot_bad_source.txt"
+        "-DGUARD_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/stage11d-loot-guard-mutations"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11d_loot_architecture_guard_self_test.cmake")
+set_tests_properties(
+    stage11d.architecture.loot_boundaries_self_test
+    PROPERTIES
+        LABELS "headless;platform;architecture;stage11d"
+        TIMEOUT 300)
+
+add_test(
     NAME architecture.dungeon_no_raylib
     COMMAND "${CMAKE_COMMAND}"
         "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/dungeon"
