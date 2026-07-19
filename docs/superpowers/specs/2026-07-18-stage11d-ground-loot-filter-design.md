@@ -43,11 +43,12 @@ Stage 11-D 让玩家在不打开背包的情况下识别地面装备，并用一
 
 ### 3.3 拾取反馈
 
-- 自动拾取事务进入保存阶段时缓存该装备的固定容量显示摘要。
-- 保存提交成功且该地面槽消失后，在 HUD 情境区显示一次 `已拾取：稀有 胸甲 · i24`，并沿用现有短通知寿命。
+- `DungeonRuntime` 在同步提交拾取保存前，从生产 pending ordinal 和生产地面快照缓存该装备的固定容量回执候选。
+- 只有保存提交成功、Session 接受回执且该地面槽消失后，runtime 才发布带 commit generation 的只读拾取回执；正式 host 不依赖不可呈现的中间 pending snapshot。
+- HUD 观察到新的已提交回执后，在情境区显示一次 `已拾取：稀有 胸甲 · i24`，并沿用现有短通知寿命。
 - 保存失败、事务回滚或地面槽仍存在时不得显示成功反馈。
 - 深渊奖励反馈使用深渊配色，但不改变奖励状态机。
-- 反馈只属于平台表现状态，不进入角色存档、设置文件或确定性哈希。
+- 回执和反馈只属于平台运行/表现状态，不进入角色存档、设置文件或确定性哈希。
 
 ## 4. 设置与迁移
 
@@ -98,16 +99,20 @@ Stage 11-D 让玩家在不打开背包的情况下识别地面装备，并用一
 
 `room_renderer` 只绘制该 ViewModel，不再自行决定过滤规则或格式化物品文本。
 
-### 5.3 拾取反馈状态
+### 5.3 拾取提交回执与反馈状态
 
-新增固定容量 `LootPickupFeedbackState`，观察相邻生产快照：
+正式 runtime 的 `fixed_tick()` 会同步执行 `service_pending_save()`，所以 pending snapshot 不会稳定出现在 presented frame。不得通过测试私有注入假设 HUD 一定能看到 pending 阶段。
 
-- 只在 `PendingSaveKind::loot_pickup` 或 `abyss_reward_claim` 出现时缓存对应地面条目；
-- 只在下一次已提交快照中确认 commit generation 前进且对应 item ID 不再位于地面时发布成功事件；
-- 房间切换、回滚、恢复界面、fault 或保存错误清除候选；
-- 同一个 item ID 最多发布一次。
+`DungeonRenderStatus` 增加固定字段 `LootPickupReceipt`：commit generation、item ID、base ID、item level、rarity、source 和有效标记。runtime 只在真实 `loot_pickup`/`abyss_reward_claim` 保存提交成功并被 Session 接受后更新回执；失败、回滚、其他保存类型或 fault 不更新。
 
-HUD 通知层消费该一次性固定缓冲事件，不反向读取背包或改变生产状态。
+新增固定容量 `LootPickupFeedbackState`，观察相邻 `DungeonRenderStatus`：
+
+- 只在回执 commit generation 或 item ID 相对上次观察发生合法前进时格式化一次反馈；
+- 首次附着到已有旧回执时只建立基线，不重放历史拾取；
+- 回执倒退、非法字段、恢复界面、fault 或保存错误清除基线且不发布成功；
+- 同一个 commit generation + item ID 最多发布一次。
+
+HUD 通知层消费该一次性固定缓冲事件，不读取背包、不调用 Session，也不改变生产状态。
 
 ## 6. 异常与边界
 
@@ -127,7 +132,7 @@ HUD 通知层消费该一次性固定缓冲事件，不反向读取背包或改�
 - Dungeon：三档怪物掉落资格、深渊绕过、同半径多物品稳定顺序、过滤拾取先于出口、显式拾取不受过滤影响。
 - Snapshot：base ID、物品等级、来源、ordinal 与生产地面物品一致。
 - 标签：三档可见性、深渊常显、中文摘要、稀有度颜色、重叠消解、三档分辨率安全区、非法 base、NUL 终止。
-- 反馈：成功只发一次；保存失败、回滚、转房和伪造消失不发。
+- 回执/反馈：同步真实保存成功只发一次；首次附着旧回执、保存失败、回滚、其他保存、非法/倒退回执和 fault 不发。
 - 分配：10 万次过滤判断、标签构建/布局与未变化反馈刷新零堆分配。
 
 ### 7.2 架构守卫

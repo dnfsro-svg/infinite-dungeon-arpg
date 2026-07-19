@@ -346,22 +346,26 @@ git commit -m "feat: render filtered ground loot labels"
 - Create: `src/platform/raylib/loot_pickup_feedback.hpp`
 - Create: `src/platform/raylib/loot_pickup_feedback.cpp`
 - Create: `tests/platform/loot_pickup_feedback_tests.cpp`
+- Modify: `src/platform/raylib/dungeon_runtime.hpp`
+- Modify: `src/platform/raylib/dungeon_runtime.cpp`
 - Modify: `src/platform/raylib/hud_view_model.hpp`
 - Modify: `src/platform/raylib/hud_notice_state.hpp`
 - Modify: `src/platform/raylib/hud_notice_state.cpp`
 - Modify: `src/platform/raylib/combat_renderer.hpp`
 - Modify: `src/platform/raylib/combat_renderer.cpp`
+- Modify: `tests/platform/dungeon_runtime_tests.cpp`
 - Modify: CMake/test registration files
 
 **Interfaces:**
+- Produces: `struct LootPickupReceipt` in `DungeonRenderStatus`, containing validity, commit generation, item ID, base ID, item level, rarity, and source.
 - Produces: `struct LootPickupFeedback { bool ready; bool abyss; HudText96 text; std::uint64_t item_id; }`.
-- Produces: `LootPickupFeedbackState::observe(previous, current, runtime_status) noexcept`.
+- Produces: `LootPickupFeedbackState::observe(const DungeonRenderStatus&) noexcept`.
 - Produces: `HudNoticeState::publish_loot_pickup(const HudText96&, bool abyss) noexcept`.
 - Adds: `HudNoticeKind::loot_pickup` at reward priority.
 
 - [ ] **Step 1: Write failing state-machine tests**
 
-Require pending pickup to cache, successful generation advance plus disappearance to publish once, and repeated observation to publish nothing. Require save error, same generation, room change, fault, wrong ordinal, changed item ID, or surviving ground item to clear/reject the candidate. Cover abyss styling separately.
+Require the real synchronous runtime to publish a receipt only after a committed ordinary or abyss pickup, using the production pending ordinal and ground item fields. Require save failure, rollback, non-pickup saves, rejected Session receipt, wrong ordinal, or surviving ground item to leave the prior receipt unchanged. For the presentation state, require first observation to establish a baseline, a newer valid receipt to publish once, and repeated/same/older/invalid/error/recovery observations to publish nothing. Cover abyss styling separately.
 
 - [ ] **Step 2: Verify RED**
 
@@ -369,11 +373,11 @@ Build platform tests; expected missing feedback state and notice API.
 
 - [ ] **Step 3: Implement the fixed presentation observer**
 
-Cache the exact pending snapshot entry by `pending_pickup_ordinal`; format its summary without heap allocation. Confirm commit generation increments and item disappearance before publishing. Never inspect or mutate `DungeonSession::item_state()`.
+Before the synchronous store commit, cache the exact production ground snapshot entry selected by `pending_pickup_ordinal`. After commit and Session resolution, publish `LootPickupReceipt` only if commit generation advanced and the exact item disappeared from the same ground ordinal. Format a newer receipt without heap allocation. Never inspect or mutate `DungeonSession::item_state()` from the presentation observer.
 
 - [ ] **Step 4: Publish through existing HUD priority queue**
 
-Call feedback observation before `HudNoticeState::observe`. Enqueue at the existing reward priority with a three-second lifetime; save/recovery/abyss confirmation notices must retain higher priority.
+Call receipt observation before `HudNoticeState::observe`. Enqueue a newly produced feedback at the existing reward priority with a three-second lifetime; save/recovery/abyss confirmation notices must retain higher priority.
 
 - [ ] **Step 5: Verify GREEN and zero allocation**
 
