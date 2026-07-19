@@ -71,6 +71,8 @@ struct ContextPanelPlan final {
     HudText96 secondary{};
     HudNoticeKind primary_kind{HudNoticeKind::none};
     HudNoticeKind secondary_kind{HudNoticeKind::none};
+    bool primary_abyss{};
+    bool secondary_abyss{};
 };
 
 using HudTextMeasureFn = float (*)(const char*, float, void*) noexcept;

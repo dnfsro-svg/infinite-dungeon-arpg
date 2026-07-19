@@ -207,7 +207,8 @@ float fixed_measure(const char* text, float font_size, void*) noexcept {
         && lhs.priority == rhs.priority
         && lhs.seconds_left == rhs.seconds_left
         && lhs.text.bytes == rhs.text.bytes
-        && lhs.text.truncated == rhs.text.truncated;
+        && lhs.text.truncated == rhs.text.truncated
+        && lhs.abyss == rhs.abyss;
 }
 
 [[nodiscard]] bool same_notice_view(const platform::HudNoticeView& lhs,

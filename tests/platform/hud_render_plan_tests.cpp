@@ -244,6 +244,7 @@ arpg::test::Failure objective_navigation_and_context_plans_stay_in_their_layout_
         u8"深度 1 · 层房间 2"));
     platform::ContextHudModel context{};
     context.primary_kind = platform::HudNoticeKind::exit_ready;
+    context.primary_abyss = true;
     static_cast<void>(std::snprintf(context.primary.bytes.data(), context.primary.bytes.size(),
         "E to enter exit"));
 
@@ -262,6 +263,7 @@ arpg::test::Failure objective_navigation_and_context_plans_stay_in_their_layout_
     ARPG_REQUIRE(rect_inside(navigation_plan.bounds, layout.navigation_panel));
     ARPG_REQUIRE(context_plan.primary_visible);
     ARPG_REQUIRE(context_plan.primary_kind == platform::HudNoticeKind::exit_ready);
+    ARPG_REQUIRE(context_plan.primary_abyss);
     ARPG_REQUIRE(rect_inside(context_plan.primary_bounds, layout.primary_notice));
     return {};
 }

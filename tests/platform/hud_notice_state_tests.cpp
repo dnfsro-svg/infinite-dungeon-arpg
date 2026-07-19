@@ -435,6 +435,28 @@ arpg::test::Failure progression_between_presented_frames_enqueues_each_edge_once
     return {};
 }
 
+arpg::test::Failure pickup_feedback_is_reward_priority_and_keeps_abyss_style()
+    noexcept {
+    platform::HudText96 text{};
+    static_cast<void>(std::snprintf(text.bytes.data(), text.bytes.size(),
+        u8"已拾取：稀有 胸甲 · i24"));
+    platform::HudNoticeState normal{};
+    normal.publish_loot_pickup(text, false);
+    ARPG_REQUIRE(normal.view().primary.kind
+        == platform::HudNoticeKind::loot_pickup);
+    ARPG_REQUIRE(!normal.view().primary.abyss);
+    ARPG_REQUIRE(arpg::test::near(normal.view().primary.seconds_left, 3.0F));
+
+    platform::HudNoticeState abyss{};
+    abyss.publish_loot_pickup(text, true);
+    ARPG_REQUIRE(abyss.view().primary.kind
+        == platform::HudNoticeKind::loot_pickup);
+    ARPG_REQUIRE(abyss.view().primary.abyss);
+    ARPG_REQUIRE(std::strcmp(abyss.view().primary.text.bytes.data(),
+        text.bytes.data()) == 0);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"priority order and two-line limit", &priority_order_and_two_line_limit_are_deterministic},
     {"complete priority order", &complete_priority_order_is_exposed_by_each_trigger},
@@ -450,6 +472,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"production Chinese notice corpus", &production_visible_notices_are_chinese_first_and_font_covered},
     {"abyss confirmation presented edge once", &abyss_confirmation_between_presented_frames_enqueues_once},
     {"progression presented edges once", &progression_between_presented_frames_enqueues_each_edge_once},
+    {"pickup feedback reward priority abyss style",
+        &pickup_feedback_is_reward_priority_and_keeps_abyss_style},
 };
 
 }  // namespace

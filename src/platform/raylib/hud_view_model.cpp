@@ -327,6 +327,8 @@ void attach_notice_view(HudViewModel& output,
     output.context.secondary = notices.secondary.text;
     output.context.primary_kind = notices.primary.kind;
     output.context.secondary_kind = notices.secondary.kind;
+    output.context.primary_abyss = notices.primary.abyss;
+    output.context.secondary_abyss = notices.secondary.abyss;
 }
 
 }  // namespace arpg::platform

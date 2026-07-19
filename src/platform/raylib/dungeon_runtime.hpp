@@ -28,11 +28,22 @@ struct DungeonRuntimeConfig final {
     void* seed_context{};
 };
 
+struct LootPickupReceipt final {
+    bool valid{};
+    std::uint64_t commit_generation{};
+    std::uint64_t item_id{};
+    std::uint8_t base_id{};
+    std::uint8_t item_level{};
+    items::ItemRarity rarity{items::ItemRarity::normal};
+    dungeon::GroundItemSource source{dungeon::GroundItemSource::monster_drop};
+};
+
 struct DungeonRenderStatus final {
     SaveIndicator indicator{SaveIndicator::none};
     persistence::SaveSlot active_slot{persistence::SaveSlot::none};
     persistence::SaveError error{persistence::SaveError::none};
     bool recovery_required{};
+    LootPickupReceipt loot_pickup{};
 };
 
 class DungeonRuntime final {
@@ -65,6 +76,10 @@ private:
     [[nodiscard]] std::optional<std::uint64_t> select_new_run_seed() const noexcept;
     void sync_load_status(const persistence::SaveLoadResult& result) noexcept;
     void sync_commit_status(const persistence::SaveCommitResult& result) noexcept;
+    [[nodiscard]] bool commit_and_resolve_pending(
+        const dungeon::PendingSave&,
+        dungeon::PendingSaveKind,
+        std::uint64_t expected_generation) noexcept;
     [[nodiscard]] static dungeon::PendingSaveResult to_session_result(
         persistence::SaveCommitResult&& saved) noexcept;
 

@@ -5,6 +5,8 @@
 #include "dungeon_runtime.hpp"
 #include "raylib_host.hpp"
 #include "abyss/abyss_rules.hpp"
+#include "abyss/abyss_rewards.hpp"
+#include "dungeon/abyss_reward.hpp"
 #include "persistence/checkpoint_codec.hpp"
 #include "platform/settings/settings_types.hpp"
 
@@ -65,6 +67,13 @@ struct TempDirectory final {
 struct FaultContext final {
     persistence::SaveFaultPoint point{};
     bool enabled{};
+};
+
+struct GroundReplacementContext final {
+    dungeon::DungeonSession* session{};
+    items::ItemInstance replacement{};
+    bool armed{};
+    bool invoked{};
 };
 
 bool fail_when_enabled(persistence::SaveFaultPoint point,
@@ -755,6 +764,48 @@ bool install_pickup_if_needed(platform::DungeonRuntime& runtime,
     return runtime.session()->snapshot().ground_item_count == 1U;
 }
 
+bool replace_ground_before_publish(persistence::SaveFaultPoint point,
+    void* opaque) noexcept {
+    auto* const context = static_cast<GroundReplacementContext*>(opaque);
+    if (context != nullptr && context->armed && context->session != nullptr
+            && point == persistence::SaveFaultPoint::before_publish) {
+        arpg::test::install_ground_item(*context->session, 0U,
+            context->replacement, {0.0F, 0.0F, 0.0F});
+        context->invoked = true;
+    }
+    return false;
+}
+
+dungeon::DungeonRunState runtime_cleared_abyss_state() noexcept {
+    constexpr std::uint64_t kDepth = 20U;
+    constexpr std::uint64_t kLowDangerAbyssSeed = 1446U;
+    dungeon::DungeonRunState state = dungeon::make_initial_run_state(
+        0xA9B9555EEDULL, dungeon::DungeonRules{}).state;
+    const auto selection = arpg::abyss::select_abyss_rule(
+        kLowDangerAbyssSeed, kDepth);
+    if (arpg::abyss::is_abyss_roll(kLowDangerAbyssSeed)
+            && selection.has_value()
+            && selection->danger == arpg::abyss::AbyssDanger::low) {
+        state.current_room.seed = kLowDangerAbyssSeed;
+        state.current_room.depth = kDepth;
+        state.current_room.entry = dungeon::EntrySide::left;
+        state.current_room.is_abyss = true;
+        state.current_room.has_hole = true;
+        state.last_transition = dungeon::TransitionKind::door;
+        state.last_direction = dungeon::ExitDirection::right;
+        state.abyss.lifecycle = arpg::abyss::AbyssLifecycle::cleared;
+        state.abyss.danger = selection->danger;
+        state.abyss.rule = selection->rule;
+        state.abyss.rules_version = selection->rules_version;
+        state.abyss.reward_total = arpg::abyss::reward_profile_for(
+            selection->danger, 1U).item_count;
+        state.abyss.generated_mask = 1U;
+        state.abyss.reward_revision = 1U;
+        return state;
+    }
+    return {};
+}
+
 arpg::test::Failure loot_filter_modes_map_to_pickup_policy() noexcept {
     ARPG_REQUIRE(platform::loot_pickup_policy(
         arpg::settings::LootFilterMode::show_all).minimum_rarity
@@ -798,6 +849,157 @@ arpg::test::Failure fixed_tick_forwards_pickup_policy_and_defaults_show_all() no
 
     ARPG_REQUIRE(default_runtime.session()->snapshot().ground_item_count == 0U);
     ARPG_REQUIRE(default_runtime.session()->pending_save_view() == nullptr);
+    return {};
+}
+
+arpg::test::Failure synchronous_pickup_publishes_exact_committed_receipt()
+    noexcept {
+    TempDirectory directory;
+    platform::DungeonRuntime runtime(config_for(directory, 0x51A7E11U));
+    ARPG_REQUIRE(runtime.initialize());
+    const auto before = runtime.session()->snapshot();
+    ARPG_REQUIRE(before.combat.has_value());
+    const items::ItemInstance item = normal_item(0x51A7E1101U, 3U);
+    arpg::test::install_ground_item(*runtime.session(), 0U, item,
+        before.combat->player.position);
+
+    runtime.fixed_tick({});
+
+    const auto after = runtime.session()->snapshot();
+    const auto receipt = runtime.render_status().loot_pickup;
+    ARPG_REQUIRE(after.commit_generation == before.commit_generation + 1U);
+    ARPG_REQUIRE(after.ground_item_count == 0U);
+    ARPG_REQUIRE(receipt.valid);
+    ARPG_REQUIRE(receipt.commit_generation == after.commit_generation);
+    ARPG_REQUIRE(receipt.item_id == item.id);
+    ARPG_REQUIRE(receipt.base_id == item.base_id);
+    ARPG_REQUIRE(receipt.item_level == item.item_level);
+    ARPG_REQUIRE(receipt.rarity == item.rarity);
+    ARPG_REQUIRE(receipt.source == dungeon::GroundItemSource::monster_drop);
+    return {};
+}
+
+arpg::test::Failure abyss_claim_publishes_committed_abyss_receipt() noexcept {
+    TempDirectory directory;
+    auto config = config_for(directory, 0xAB155U);
+    persistence::SaveStore seed_store(config.save);
+    const auto initial = runtime_cleared_abyss_state();
+    ARPG_REQUIRE(initial.current_room.is_abyss);
+    ARPG_REQUIRE(seed_store.commit(initial).state
+        == persistence::SaveCommitState::committed);
+    platform::DungeonRuntime runtime(config);
+    ARPG_REQUIRE(runtime.initialize());
+    const auto before = runtime.session()->snapshot();
+    ARPG_REQUIRE(before.ground_item_count == 1U);
+    const auto item = before.ground_items[0];
+    ARPG_REQUIRE(item.source == dungeon::GroundItemSource::abyss_chest);
+    arpg::test::set_player_position(*runtime.session(), item.position);
+    ARPG_REQUIRE(runtime.request_pickup(item.ordinal)
+        == dungeon::RequestResult::accepted);
+
+    runtime.service_pending_save();
+
+    const auto after = runtime.session()->snapshot();
+    const auto receipt = runtime.render_status().loot_pickup;
+    ARPG_REQUIRE(after.commit_generation == before.commit_generation + 1U);
+    ARPG_REQUIRE(after.ground_item_count == 0U);
+    ARPG_REQUIRE(receipt.valid);
+    ARPG_REQUIRE(receipt.commit_generation == after.commit_generation);
+    ARPG_REQUIRE(receipt.item_id == item.item_id);
+    ARPG_REQUIRE(receipt.source == dungeon::GroundItemSource::abyss_chest);
+    return {};
+}
+
+arpg::test::Failure failed_and_nonpickup_saves_do_not_replace_receipt()
+    noexcept {
+    TempDirectory directory;
+    FaultContext fault{persistence::SaveFaultPoint::before_publish, false};
+    auto config = config_for(directory, 0xFA17E11U);
+    config.save.fault_hook = &fail_when_enabled;
+    config.save.fault_context = &fault;
+    platform::DungeonRuntime runtime(config);
+    ARPG_REQUIRE(runtime.initialize());
+    const auto start = runtime.session()->snapshot();
+    ARPG_REQUIRE(start.combat.has_value());
+    const items::ItemInstance first = normal_item(0xFA17E1101U, 2U);
+    arpg::test::install_ground_item(*runtime.session(), 0U, first,
+        start.combat->player.position);
+    runtime.fixed_tick({});
+    const auto confirmed = runtime.render_status().loot_pickup;
+    ARPG_REQUIRE(confirmed.valid);
+
+    ARPG_REQUIRE(runtime.request_equip(first.id)
+        == dungeon::RequestResult::accepted);
+    runtime.service_pending_save();
+    ARPG_REQUIRE(runtime.render_status().loot_pickup.commit_generation
+        == confirmed.commit_generation);
+    ARPG_REQUIRE(runtime.render_status().loot_pickup.item_id
+        == confirmed.item_id);
+
+    const auto positioned = runtime.session()->snapshot();
+    ARPG_REQUIRE(positioned.combat.has_value());
+    const items::ItemInstance second = normal_item(0xFA17E1102U, 1U);
+    arpg::test::install_ground_item(*runtime.session(), 0U, second,
+        positioned.combat->player.position);
+    ARPG_REQUIRE(runtime.request_pickup(0U) == dungeon::RequestResult::accepted);
+    fault.enabled = true;
+    runtime.service_pending_save();
+    ARPG_REQUIRE(runtime.render_status().indicator == platform::SaveIndicator::error);
+    ARPG_REQUIRE(runtime.render_status().loot_pickup.commit_generation
+        == confirmed.commit_generation);
+    ARPG_REQUIRE(runtime.render_status().loot_pickup.item_id
+        == confirmed.item_id);
+    ARPG_REQUIRE(runtime.session()->snapshot().ground_item_count == 1U);
+    return {};
+}
+
+arpg::test::Failure wrong_pending_ordinal_fault_does_not_publish_receipt()
+    noexcept {
+    TempDirectory directory;
+    platform::DungeonRuntime runtime(config_for(directory, 0xBAD0D1U));
+    ARPG_REQUIRE(runtime.initialize());
+    const auto before = runtime.session()->snapshot();
+    ARPG_REQUIRE(before.combat.has_value());
+    arpg::test::install_ground_item(*runtime.session(), 0U,
+        normal_item(0xBAD0D101U), before.combat->player.position);
+    ARPG_REQUIRE(runtime.request_pickup(0U) == dungeon::RequestResult::accepted);
+    arpg::test::DungeonSessionTestAccess::set_pending_pickup_ordinal(
+        *runtime.session(), 191U);
+
+    runtime.service_pending_save();
+
+    ARPG_REQUIRE(runtime.state() == platform::DungeonRuntimeState::faulted);
+    ARPG_REQUIRE(!runtime.render_status().loot_pickup.valid);
+    return {};
+}
+
+arpg::test::Failure replaced_pickup_ordinal_does_not_publish_receipt()
+    noexcept {
+    TempDirectory directory;
+    GroundReplacementContext replacement{};
+    replacement.replacement = normal_item(0xA17E2202U);
+    auto config = config_for(directory, 0xA17E22U);
+    config.save.fault_hook = &replace_ground_before_publish;
+    config.save.fault_context = &replacement;
+    platform::DungeonRuntime runtime(config);
+    ARPG_REQUIRE(runtime.initialize());
+    replacement.session = runtime.session();
+    const auto before = runtime.session()->snapshot();
+    ARPG_REQUIRE(before.combat.has_value());
+    arpg::test::install_ground_item(*runtime.session(), 0U,
+        normal_item(0xA17E2201U), before.combat->player.position);
+    ARPG_REQUIRE(runtime.request_pickup(0U) == dungeon::RequestResult::accepted);
+    replacement.armed = true;
+
+    runtime.service_pending_save();
+
+    ARPG_REQUIRE(replacement.invoked);
+    ARPG_REQUIRE(runtime.state() == platform::DungeonRuntimeState::faulted);
+    ARPG_REQUIRE(!runtime.render_status().loot_pickup.valid);
+    const auto after = runtime.session()->snapshot();
+    ARPG_REQUIRE(after.ground_item_count == 1U);
+    ARPG_REQUIRE(after.ground_items[0].ordinal == 0U);
+    ARPG_REQUIRE(after.ground_items[0].item_id == replacement.replacement.id);
     return {};
 }
 
@@ -1290,6 +1492,16 @@ constexpr arpg::test::TestCase kCases[] = {
         &loot_filter_modes_map_to_pickup_policy},
     {"fixed tick forwards pickup policy and defaults show all",
         &fixed_tick_forwards_pickup_policy_and_defaults_show_all},
+    {"synchronous pickup publishes exact committed receipt",
+        &synchronous_pickup_publishes_exact_committed_receipt},
+    {"abyss claim publishes committed abyss receipt",
+        &abyss_claim_publishes_committed_abyss_receipt},
+    {"failed and nonpickup preserve pickup receipt",
+        &failed_and_nonpickup_saves_do_not_replace_receipt},
+    {"wrong pending ordinal does not publish receipt",
+        &wrong_pending_ordinal_fault_does_not_publish_receipt},
+    {"replaced pickup ordinal does not publish receipt",
+        &replaced_pickup_ordinal_does_not_publish_receipt},
     {"large inventory snapshot and views do not allocate", &large_inventory_snapshot_and_views_do_not_allocate},
     {"generic service adds no large state copies", &generic_service_adds_no_large_state_copies},
     {"runtime echoes death pending kind", &runtime_echoes_death_pending_kind},

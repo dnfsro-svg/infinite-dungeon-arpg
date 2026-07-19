@@ -23,6 +23,7 @@ arpg::test::TestSuite pause_host_gate_suite() noexcept;
 arpg::test::TestSuite control_hints_suite() noexcept;
 arpg::test::TestSuite hud_view_model_suite() noexcept;
 arpg::test::TestSuite hud_notice_state_suite() noexcept;
+arpg::test::TestSuite loot_pickup_feedback_suite() noexcept;
 arpg::test::TestSuite hud_layout_suite() noexcept;
 arpg::test::TestSuite hud_font_suite() noexcept;
 arpg::test::TestSuite hud_render_plan_suite() noexcept;
@@ -58,6 +59,7 @@ int main() {
         control_hints_suite(),
         hud_view_model_suite(),
         hud_notice_state_suite(),
+        loot_pickup_feedback_suite(),
         hud_layout_suite(),
         hud_font_suite(),
         hud_render_plan_suite(),
@@ -65,5 +67,5 @@ int main() {
         ground_loot_view_suite(),
     };
 
-    return arpg::test::run_suites(suites, 258, "stage 11d loot filter runtime");
+    return arpg::test::run_suites(suites, 270, "stage 11d loot filter runtime");
 }

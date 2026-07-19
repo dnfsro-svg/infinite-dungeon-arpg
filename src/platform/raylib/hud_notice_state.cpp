@@ -337,6 +337,17 @@ void HudNoticeState::observe(const dungeon::DungeonSnapshot& previous,
     has_observation_ = true;
 }
 
+void HudNoticeState::publish_loot_pickup(
+    const HudText96& text, bool abyss) noexcept {
+    HudNotice notice{};
+    notice.kind = HudNoticeKind::loot_pickup;
+    notice.priority = kRewardPriority;
+    notice.seconds_left = kTransientSeconds;
+    notice.text = text;
+    notice.abyss = abyss;
+    enqueue(notices_, dropped_count_, notice);
+}
+
 void HudNoticeState::update(float frame_seconds, bool paused) noexcept {
     if (paused || !(frame_seconds > 0.0F)) {
         return;

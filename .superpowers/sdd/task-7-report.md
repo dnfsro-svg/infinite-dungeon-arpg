@@ -1,178 +1,95 @@
-# Stage 10 Task 7 报告：固定容量深渊环境规则
+# Stage 11-D Task 7 报告：已提交拾取回执与 HUD 反馈
 
-## 状态与范围
+## 范围
 
-- 基线 HEAD：`9f4e0764e58cc7e09f01f5bb07432f7d0b72889e`。
-- 只实现 Thunderstorm、Hunting Flames、Chaos Expansion 的 combat runtime、统一 HazardPool、伤害语义、snapshot 和 clear API。
-- 未接 dungeon clear lifecycle，未实现 UI、renderer、奖励或怪物设计。
-- runtime 所有数值均消费 `CombatEncounterConfig::abyss.environment`；按 rule ID 只选择 renderer-facing `HazardKind`，没有重写 cycle、bp、warning、duration、interval 或 radius。
+- 起点：`417f58a`。
+- 仅实现 Task 7：runtime 已确认拾取回执、固定容量表现 observer、HUD 三秒通知和深渊紫色样式。
+- 未实现 Task 8 架构守卫扩展、Task 9 正式截图或 Task 10 文档门禁。
 
-## TDD：RED → GREEN
+## TDD RED
 
-### RED 1：tick 0 环境不存在
+测试先行修改：
 
-- 先只注册 `chaos region exists at tick zero`。
-- 新构建成功后输出：`151 cases, 1 failures`。
-- 精确失败：`state.hazard_count == 1U`，证明测试命中尚未存在的环境 runtime，而非旧二进制或拼写错误。
+- `tests/platform/loot_pickup_feedback_tests.cpp`
+- `tests/platform/dungeon_runtime_tests.cpp`
+- `tests/platform/hud_notice_state_tests.cpp`
+- `tests/platform/hud_host_integration_tests.cpp`
+- 平台测试注册与 case count。
 
-### GREEN 1：最小固定池基础
+RED 命令：
 
-- 加入 `HazardSource`、三种 `HazardKind`、固定 `AbyssEnvironmentRuntime`、环境专用 pool spawn 和 tick 0 chaos 槽。
-- 输出：`151 cases, 0 failures`。
+```powershell
+cmd.exe /d /s /c "call C:\PROGRA~2\MICROS~2\2022\BUILDT~1\Common7\Tools\VsDevCmd.bat -arch=x64 -host_arch=x64 && cmake --build out/build/windows-msvc-debug --target arpg_platform_tests -- -j1"
+```
 
-### RED 2：完整规则行为
+真实失败：
 
-- 再加入周期、伤害、snapshot、饱和、清理、无敌帧和 allocation 测试。
-- 校准 actual max HP 夹具后输出：`160 cases, 8 failures`。
-- 失败分别命中 chaos 扩张、thunder warning、hunting warning/首次伤害、config 消费、pool saturation 和 clear API；不是编译错误。
+- 首次 RED：`loot_pickup_feedback_tests.cpp(4): fatal error C1083: loot_pickup_feedback.hpp: No such file or directory`。
+- 补齐 runtime 事务测试后的 RED：`DungeonRenderStatus::loot_pickup` 不存在。
+- 两次失败均来自 Task 7 API 尚未实现；测试夹具的 abyss rewards include 错误已先修正并重新确认 RED。
 
-### GREEN 2：三规则与统一伤害路径
+## 实现与事务不变量
 
-- 实现 config-driven 周期调度、环境 telegraph 零点激活、chaos 原槽扩张、environment owner 合法旁路、source-aware owner 清理和 clear API。
-- 输出：`160 cases, 0 failures`。
-- 自审修正 chaos 初始 spawn 失败时同一 tick 可能重试的问题：用固定 `expansion_stage` sentinel 记录 tick 0 已尝试，只在下一正常 expansion stage 重试。
+- `DungeonRuntime::service_pending_save()` 只为 `loot_pickup` / `abyss_reward_claim` 捕获生产 pending ordinal 对应的地面快照。
+- store 必须返回 committed，verified state 必须与 pending next state 完全一致，Session 必须接受结果且进入对应 commit generation。
+- captured item ID 与 captured ordinal 均必须从提交后 ground snapshot 消失，才更新持久保留的 `LootPickupReceipt`。
+- 保存失败、非拾取保存、错误 ordinal、同 ordinal 被替换、Session fault 均不覆盖旧回执。
+- capture、commit/resolve、confirm 分为独立栈帧，避免 Debug 大型 checkpoint + snapshot 同帧造成栈溢出。
+- observer 只读取 `DungeonRenderStatus`，不读取 Session 或背包。
+- 首次直接附着已有 valid 回执只建立 baseline；先观察正常空状态后，第一次真实回执会发布。连续空帧幂等。
+- same receipt 不重发；malformed、backward、save error、recovery 清 baseline 且不发布。
+- HUD 在普通 notice observation 前消费 feedback，以 reward priority 发布三秒；深渊反馈携带 abyss 标记并使用 chaos/紫色主题。
+- unchanged observer 100,000 次 allocation probe 为零。
 
-### RED/GREEN 3：换波不能误删环境
+## GREEN 与回归
 
-- 自审新增 `wave reload keeps environment`。
-- RED：`161 cases, 1 failures`，失败于 `load_wave()` 后 environment count 从 1 变 0。
-- GREEN：`load_wave()` 改为只清 `HazardSource::monster`；输出 `161 cases, 0 failures`。
+构建与平台 GREEN：
 
-## 固定 tick 时序
+```powershell
+cmd.exe /d /s /c "call C:\PROGRA~2\MICROS~2\2022\BUILDT~1\Common7\Tools\VsDevCmd.bat -arch=x64 -host_arch=x64 && cmake --build out/build/windows-msvc-debug --target arpg_platform_tests -- -j1 && out\build\windows-msvc-debug\bin\arpg_platform_tests.exe"
+```
 
-CombatWorld 在处理逻辑 tick `T` 后把 snapshot 的 `tick` 增为 `T+1`。下表的“逻辑 tick”是事件和规则定义使用的 tick；warning snapshot 是该 tick 处理后的可绘制状态。
+结果：`270 cases, 0 failures`。
 
-| 规则 | 逻辑 tick | 处理 | 处理后 snapshot / 伤害 |
-|---|---:|---|---|
-| Thunderstorm | 0..179 | 无环境槽 | environment hazard count 0 |
-| Thunderstorm | 180 | 锁定本 tick 玩家位置并尝试占一个 pool 槽 | source=environment，kind=thunderstorm，radius=0.8，telegraph=45，active_ticks=1 |
-| Thunderstorm | 181..224 | warning 倒计时 | tick 224 处理后 telegraph=1 |
-| Thunderstorm | 225 | telegraph 到 0，当 tick 结算一次 ground/environment lightning | 15% actual max HP；命中或落空后区域结束；成功命中事件 tick=225 |
-| Thunderstorm | 360 | 下一正常周期 | 若 t180 池满、此时有槽，则在这里重新生成；中间不重试 |
-| Hunting Flames | 0..239 | 无环境槽 | environment hazard count 0 |
-| Hunting Flames | 240 | 锁点并生成 warning | radius=1.0，telegraph=45，active_ticks=180，interval=60 |
-| Hunting Flames | 285 | 区域进入 active 的第一 tick | 第一次 10% fire 尝试；测试锁定成功事件 tick=285 |
-| Hunting Flames | 345 / 405 | 每 60 tick 再尝试 | 成功事件分别为 345、405；每次仍经过统一 i-frame |
-| Hunting Flames | 464 | 第 180 个 active tick 结束 | 当 tick 后销毁；不会在 465 再伤害 |
-| Hunting Flames | 480 | 下一正常 cycle | 重新锁定玩家并 warning |
-| Chaos Expansion | 0 | 挑战初始化即占槽，中心为房间中心，立即 active | radius=1.0；第一次 8% chaos 尝试事件 tick=0 |
-| Chaos Expansion | 60 / 120 | 每 60 tick 伤害 | 仍为 radius=1.0 |
-| Chaos Expansion | 180 | 先把同一槽 radius 更新为 2.3，再结算本 tick 伤害 | 没有新 pool 分配 |
-| Chaos Expansion | 360 / 540 / 720 | 同一槽依次更新 | radius=3.6 / 4.9 / 6.2 |
-| Chaos Expansion | >720 | stage 上限保持 | radius 永久保持 6.2，直到显式 clear/reset |
+相关 CTest：
 
-环境 warning 采用 pool 内部 `warning + 1` 的初始计数，并在生成当 tick 先经过一次 hazard simulation；因此 renderer-facing snapshot 精确看到配置的 45，而激活仍精确发生在锁点后第 45 tick。monster-source telegraph 保持既有“到 0 后下一 tick 激活”语义，旧词缀测试未改变。
+```powershell
+ctest --test-dir out/build/windows-msvc-debug -R '^(platform\.units|stage11c\.hud_stress\.zero_alloc_100k|stage11c\.architecture\.hud_boundaries(_self_test)?|stage11d\.renderer_integration_guard(_self_test)?)$' --output-on-failure
+```
 
-## HazardPool、source 与饱和
+结果：`6/6 passed`，包括：
 
-- `HazardPool` 仍是唯一 `std::array<HazardRuntime, 96>` 固定池；没有环境旁路容器。
-- `HazardSource::monster` 要求有效 monster owner；`HazardSource::abyss_environment` 使用 `{index=0xFFFF,generation=0}` 的无效 owner，此 owner 对环境 source 合法。
-- `remove_owned_hazards()` 和换波清理只删除 monster source；怪物死亡、显式 destroy 和 `load_wave()` 不删除 environment source。
-- `clear_abyss_rule_preserving_resources()` 只删除 environment source、复位固定 runtime、清空 abyss config，并阻止后续再生。
-- pool 满的 t180：旧 96 槽 generation/source 不变，environment spawn 返回失败，`hazard_saturation_count` 只加 1，没有 `player_hit`/`player_hurt_started`。
-- t181..359 不逐 tick 重试；释放一个槽后，t360 下一正常周期成功生成，saturation 仍为 1。
-- chaos 初始失败只在下一 expansion stage 边界重试，不会在 tick 0 的初始化和首次 `tick()` 双重计数。
+- `platform.units`
+- `stage11c.hud_stress.zero_alloc_100k`
+- Stage 11-C HUD architecture guard + self-test
+- Stage 11-D renderer integration guard + self-test
 
-## 伤害、减伤、闪避与无敌帧
-
-- raw damage 统一调用 Task 1 `percent_of_actual_max_hp(player_.max_hp, damage_bp)`，即 `max(1, ceil(actual_max_hp * bp / 10000))`。
-- 100 actual max HP 测试锁定：thunder=15、hunting=10、chaos=8；自定义 333bp 锁定 ceil 为 4，证明 runtime 没有按 rule ID 重写数值。
-- `DamagePacket` 只在 config 指定元素槽写值：catalog 三规则分别严格为 lightning/fire/chaos，其余四槽为 0。
-- 环境统一调用 `apply_player_damage(packet, ground_or_environment, center, heavy)`，因此 10000bp evasion 仍命中，但元素减伤照常生效；15 lightning + 50% reduction 实际扣 8。
-- i-frame 与直接命中共用同一状态。测试在 hunting t285 前先造成直接伤害，t285 环境尝试被 30 tick invulnerability 拦截；该 hazard 仍进入下一 60 tick interval，t345 才成功扣 10。测试没有把“每 60 tick 尝试”误写成“每 60 tick 必扣血”。
-- 环境 path 不读取 monster affix、不调用 `apply_monster_direct_hit`、chain、corrosion 或 death trigger；thunder 命中后 corrosion 仍为 0。
-
-## Snapshot 与零分配
-
-- `HazardSnapshot` 固定携带：active、generation、owner、source、kind、center、radius、telegraph_ticks、active_ticks、lifetime_ticks、damage_interval_ticks、latch/persistence 和 DamagePacket。
-- Task 11 可以只读 snapshot 区分 warning/active、monster/environment 与三种环境表现。
-- chaos lifetime/active_ticks 使用固定 `uint16_t` 最大值作为持续区域展示值，simulation 对该 source/kind 不递减，最终半径保持 6.2。
-- `AbyssEnvironmentRuntime` 只有 enum、整数、Vec3 和 bool；static_assert 为 trivially copyable。
-- 600 tick 循环同时执行 `tick()` 与 `snapshot()`，allocation probe 前后 delta 为 0。
-- 新增与修改的 runtime/helper 全部 `noexcept`，不使用 vector、map、string、function 或 heap allocation。
+最终执行 `git diff --check`，无 whitespace error。
 
 ## 修改文件
 
-- 生产：`src/combat/combat_types.hpp`、`combat_world.hpp/.cpp`、`abyss_environment.cpp`、`monster_pool.hpp/.cpp`、`combat_snapshot.cpp`、`CMakeLists.txt`。
-- 测试：`tests/combat/abyss_environment_tests.cpp`、`combat_test_support.hpp`、`monster_affix_trigger_tests.cpp`、`combat_test_main.cpp`、`CMakeLists.txt`。
-- 报告：`.superpowers/sdd/task-7-report.md`。
+生产：
 
-## 测试覆盖
+- `src/platform/raylib/dungeon_runtime.hpp/.cpp`
+- `src/platform/raylib/loot_pickup_feedback.hpp/.cpp`
+- `src/platform/raylib/hud_notice_state.hpp/.cpp`
+- `src/platform/raylib/hud_view_model.hpp/.cpp`
+- `src/platform/raylib/hud_renderer.hpp/.cpp`
+- `src/platform/raylib/combat_renderer.hpp/.cpp`
+- `src/platform/raylib/CMakeLists.txt`
 
-- chaos tick 0 snapshot、元素 packet、owner/source、固定 lifetime/interval。
-- chaos t0/60 伤害与 180/360/540/720 半径、最终 6.2 保持。
-- thunder t180 锁点、45 warning、t225 命中结束、100% evasion bypass、lightning reduction。
-- hunting t240 warning、t285 首击、t345/t405 interval、t464 duration 结束、共享 i-frame。
-- 自定义 environment config cycle/warning/radius/bp/damage_type 原样消费。
-- pool 满不覆盖、单次 saturation、无伤害、释放后下一正常周期恢复。
-- monster destroy 与 wave reload 均保留 environment；clear API 删除并停止 environment。
-- 600 tick allocation delta 0；既有 monster hazard snapshot equality 增加 source 字段。
+测试：
 
-## 最终验证
+- `tests/platform/loot_pickup_feedback_tests.cpp`
+- `tests/platform/dungeon_runtime_tests.cpp`
+- `tests/platform/hud_notice_state_tests.cpp`
+- `tests/platform/hud_host_integration_tests.cpp`
+- `tests/platform/hud_render_plan_tests.cpp`
+- `tests/platform/hud_stress_tests.cpp`
+- `tests/platform/platform_test_main.cpp`
+- `tests/platform/CMakeLists.txt`
 
-- Combat：`arpg_combat_tests.exe`，`161 cases, 0 failures`。
-- Dungeon：完整 executable 回归含 1000-room stress，`161 cases, 0 failures`。
-- Architecture：`ctest -L architecture`，`20/20` passed，0 failures。
-- 上述三组均在最终工作树状态重新构建/执行并得到新鲜 exit 0；提交前另执行 `git diff --check`。
+## 剩余风险
 
-## 疑虑与边界
-
-- 无已知 Task 7 功能缺口。
-- 本任务没有把 clear API 接到 dungeon clear lifecycle；这是 Task 8 范围。
-- renderer/UI 尚未消费新增 snapshot 字段；这是 Task 11 范围。
-
----
-
-## 审查修复：动态 maxHP、圆形环境边界与覆盖补强
-
-### 审查结论与范围
-
-- 修复 2 个 Important：环境伤害从 spawn 时固化改为每次真实相交尝试按当前 actual maxHP 重算；environment source 从 monster AABB 分离为接地平面圆。
-- 修复 3 个 Minor：拒绝非法 `HazardSource`；补 Chaos/Hunting 饱和恢复与近满池 600 tick；补 break-stress hazard snapshot 全字段比较。
-- 未提前接 Dungeon clear lifecycle 或 renderer；Task 8/11 边界不变。
-
-### TDD RED 证据
-
-1. renderer-facing API RED：新增测试先引用 `HazardSnapshot::environment_damage_bp` 与 `environment_damage_type`，MSVC 明确因两个成员不存在而编译失败。
-2. 加入固定字段透传、但未改行为后的 RED：`165 cases, 4 failures`：
-   - Chaos 换装到 maxHP 1101 后 snapshot 仍显示旧 1001 maxHP 的 81，而非 89。
-   - Hunting warning 期间换装后仍显示旧 fire packet，而非激活时应有的 111。
-   - radius 外轴点仍被旧 player-extent AABB 命中。
-   - `static_cast<HazardSource>(0xFF)` 仍能绕过 monster owner 验证并占池。
-3. Minor comparator RED：先加入饱和/近满池测试并撤回 comparator 修复；输出 `168 cases, 1 failure`，`same_hazards` 把 source 不同的 snapshot 误判为相同。
-
-### GREEN：动态伤害与 snapshot 契约
-
-- `HazardRuntime` 与 `HazardSnapshot` 固定保存 `environment_damage_bp` 和 `environment_damage_type`；monster source 默认是 `0/physical`，不改变既有缓存 packet。
-- 环境 hazard 每次满足圆形相交且 interval latch 已释放时，先调用 Task 1 的 `percent_of_actual_max_hp(current player_.max_hp, bp)` 重建严格单元素 packet，再进入统一 `apply_player_damage`。
-- 即便命中被共享 invulnerability 拦截，本次“尝试”也使用当前 maxHP packet 并照常进入 interval latch，语义与此前 i-frame 约束一致。
-- `CombatWorld::snapshot()` 对 environment source 也按当前 `player_.max_hp` 生成 `visible_damage`，并同时暴露 bp/type；Task 11 无需从 rule ID 猜伤害。
-- 动态测试锁定：
-  - Chaos actual maxHP `1001 -> 1101 -> 1001`，相邻 60 tick 成功事件值 `81 -> 89 -> 81`。
-  - Hunting t240 warning 后 `1001 -> 1101`，warning snapshot 与 t285 激活均为 fire `111`。
-  - Thunder t180 warning 后 `1101 -> 1001`，warning snapshot 与 t225 激活均为 lightning `151`，覆盖 ceil rounding。
-
-### GREEN：环境圆形碰撞
-
-- monster source 保留原有 player extents + 三轴 AABB，Stage 9 行为不漂移。
-- environment source 要求玩家 `z == 0`，并只计算 ground-plane `dx*dx + dy*dy <= radius*radius`；z 不作为平面距离，player capsule extents 不膨胀环境半径。
-- 对 `0.8 / 1.0 / 6.2` 三档分别测试：轴上 `radius-0.01` 命中、`radius+0.01` 不命中，以及矩形内但圆外的对角点不命中。
-
-### GREEN：pool、饱和与零分配
-
-- `HazardPool::spawn` 仅接受 `monster` 与 `abyss_environment` 两个 source 枚举；未知值在 owner/pool mutation 前直接 `nullopt`，active count 保持 0。
-- Chaos tick0 满池：仅 saturation `+1`；释放槽后 t1..179 不重试，t180 以 radius 2.3 正常恢复，计数仍为 1。
-- Hunting t240 满池：仅 saturation `+1`；释放槽后 t241..479 不重试，t480 正常生成 warning，计数仍为 1。
-- 600 tick allocation probe 改为真实 near-full 场景：95 个 monster hazards + Hunting t240 spawn、t464 end、t480 repeat；每 tick 同时调用 `tick()`/`snapshot()`，allocation delta 仍为 0，最终 96 槽、1 个 environment、0 saturation。
-
-### GREEN：snapshot comparator
-
-- `break_stress_tests.cpp::same_hazards` 现在比较 owner、source、kind、center/radius、全部时序字段、latch、`persists_after_owner_death`、damage、environment bp/type。
-- 独立测试逐项变更 source、kind、persistence、bp、type，均必须判为不相等。
-- `monster_affix_trigger_tests.cpp` 的固定数组 comparator 同步比较 bp/type。
-
-### 审查修复验证
-
-- Combat fresh：`arpg_combat_tests.exe`，`168 cases, 0 failures`，exit 0。
-- Dungeon fresh：完整 executable 回归含 1000-room stress，`161 cases, 0 failures`，exit 0。
-- Architecture fresh：`ctest -L architecture --output-on-failure`，`20/20` passed，0 failures，exit 0。
+- Task 7 使用现有 catalog 英文基底名，和 Stage 11-D 地面标签保持一致；本任务未重命名 catalog。
+- 正式 raylib 截图与证据验证属于 Task 9。

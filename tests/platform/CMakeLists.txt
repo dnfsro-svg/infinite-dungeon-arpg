@@ -17,6 +17,7 @@ if(TARGET arpg_raylib)
         control_hints_tests.cpp
         hud_view_model_tests.cpp
         hud_notice_state_tests.cpp
+        loot_pickup_feedback_tests.cpp
         hud_layout_tests.cpp
         hud_font_tests.cpp
         hud_render_plan_tests.cpp

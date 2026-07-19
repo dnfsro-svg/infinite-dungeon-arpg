@@ -194,6 +194,8 @@ ContextPanelPlan make_context_panel_plan(const ContextHudModel& context,
     plan.secondary = context.secondary;
     plan.primary_kind = context.primary_kind;
     plan.secondary_kind = context.secondary_kind;
+    plan.primary_abyss = context.primary_abyss;
+    plan.secondary_abyss = context.secondary_abyss;
     plan.primary_visible = context.primary_kind != HudNoticeKind::none
         && context.primary.bytes[0] != '\0'
         && layout.primary_notice.width > 0.0F
@@ -499,9 +501,11 @@ void HudRenderer::draw(const HudViewModel& view,
     }
     draw_context_notice(draw_font, context.primary_bounds, context.primary,
         context.primary_kind, context.primary_kind == HudNoticeKind::save_error
-            ? palette.error : palette.text);
+            ? palette.error : context.primary_abyss
+                ? hud_palette_color(HudPaletteId::chaos) : palette.text);
     draw_context_notice(draw_font, context.secondary_bounds, context.secondary,
-        context.secondary_kind, palette.text);
+        context.secondary_kind, context.secondary_abyss
+            ? hud_palette_color(HudPaletteId::chaos) : palette.text);
 }
 
 void CombatRenderer::draw_abyss_hud(

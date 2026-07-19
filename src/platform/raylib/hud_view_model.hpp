@@ -18,7 +18,7 @@ enum class HudStatusTagKind : std::uint8_t { slow, corrosion, invulnerable };
 enum class HudNoticeKind : std::uint8_t {
     none, save_error, recovery_required, abyss_abandon,
     hole_interact, exit_ready, room_clear, reward, level_up,
-    passive_points, inventory, passive_tree
+    passive_points, inventory, passive_tree, loot_pickup
 };
 
 struct HudNoticeView;
@@ -72,6 +72,8 @@ struct ContextHudModel final {
     HudText96 secondary{};
     HudNoticeKind primary_kind{HudNoticeKind::none};
     HudNoticeKind secondary_kind{HudNoticeKind::none};
+    bool primary_abyss{};
+    bool secondary_abyss{};
 };
 
 struct HudBuildDiagnostics final {

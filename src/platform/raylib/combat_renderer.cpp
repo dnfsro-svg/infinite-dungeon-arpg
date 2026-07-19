@@ -93,6 +93,12 @@ void CombatRenderer::observe_hud(
     const ControlHints& control_hints,
     float frame_seconds,
     bool paused) noexcept {
+    const LootPickupFeedback pickup_feedback =
+        loot_pickup_feedback_.observe(runtime_status);
+    if (pickup_feedback.ready) {
+        hud_notices_.publish_loot_pickup(
+            pickup_feedback.text, pickup_feedback.abyss);
+    }
     hud_notices_.observe(previous, current, runtime_status, control_hints,
         runtime_status.recovery_required);
     hud_notices_.update(frame_seconds, paused);

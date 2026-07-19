@@ -12,6 +12,7 @@ struct HudNotice final {
     std::uint8_t priority{};
     float seconds_left{};
     HudText96 text{};
+    bool abyss{};
 };
 
 struct HudNoticeView final {
@@ -26,6 +27,7 @@ public:
         const DungeonRenderStatus& status,
         const ControlHints& hints,
         bool recovery_required) noexcept;
+    void publish_loot_pickup(const HudText96&, bool abyss) noexcept;
     void update(float frame_seconds, bool paused) noexcept;
     void clear_room_context() noexcept;
     [[nodiscard]] HudNoticeView view() const noexcept;

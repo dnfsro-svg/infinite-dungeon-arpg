@@ -372,6 +372,36 @@ arpg::test::Failure renderer_uses_draft_only_on_the_settings_screen() noexcept {
     return {};
 }
 
+arpg::test::Failure renderer_observes_committed_pickup_receipts_before_notices()
+    noexcept {
+    platform::CombatRenderer renderer{};
+    const auto current = snapshot();
+    const auto hints = committed_hints(1U);
+    platform::DungeonRenderStatus baseline = saved_status();
+    baseline.loot_pickup = {true, 7U, 70U, 3U, 24U,
+        items::ItemRarity::rare, dungeon::GroundItemSource::monster_drop};
+    renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
+        current, current, baseline, hints, 0.0F, false);
+    ARPG_REQUIRE(renderer.hud_notice_view().primary.kind
+        != platform::HudNoticeKind::loot_pickup);
+
+    platform::DungeonRenderStatus committed = baseline;
+    committed.loot_pickup.commit_generation = 8U;
+    committed.loot_pickup.item_id = 80U;
+    renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
+        current, current, committed, hints, 0.0F, false);
+    ARPG_REQUIRE(renderer.hud_notice_view().primary.kind
+        == platform::HudNoticeKind::loot_pickup);
+    ARPG_REQUIRE(std::strcmp(renderer.hud_notice_view().primary.text.bytes.data(),
+        u8"已拾取：稀有 Ward Coat · i24") == 0);
+
+    renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
+        current, current, committed, hints, 1.0F, false);
+    ARPG_REQUIRE(arpg::test::near(
+        renderer.hud_notice_view().primary.seconds_left, 2.0F));
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"observes every presented frame read only", &observation_is_once_per_presented_frame_and_read_only},
     {"production presentation seam covers all owners", &production_presentation_seam_observes_normal_recovery_and_death},
@@ -386,6 +416,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &ground_loot_render_plan_reuses_one_view_and_orders_stages},
     {"renderer draft is settings-only",
         &renderer_uses_draft_only_on_the_settings_screen},
+    {"renderer observes committed pickup receipt",
+        &renderer_observes_committed_pickup_receipts_before_notices},
 };
 
 }  // namespace

@@ -7,6 +7,85 @@
 #include <utility>
 
 namespace arpg::platform {
+namespace {
+
+[[nodiscard]] bool pickup_save_kind(
+    dungeon::PendingSaveKind kind) noexcept {
+    return kind == dungeon::PendingSaveKind::loot_pickup
+        || kind == dungeon::PendingSaveKind::abyss_reward_claim;
+}
+
+struct PickupCandidate final {
+    LootPickupReceipt receipt{};
+    std::uint16_t ordinal{};
+};
+
+[[nodiscard]] std::optional<PickupCandidate> pickup_candidate(
+    const dungeon::DungeonSnapshot& snapshot,
+    dungeon::PendingSaveKind kind,
+    std::uint16_t ordinal,
+    std::uint64_t expected_generation) noexcept {
+    if (!pickup_save_kind(kind) || !snapshot.pending_save_kind.has_value()
+            || *snapshot.pending_save_kind != kind
+            || !snapshot.pending_pickup_ordinal.has_value()
+            || *snapshot.pending_pickup_ordinal != ordinal
+            || expected_generation <= snapshot.commit_generation) {
+        return std::nullopt;
+    }
+    for (std::size_t index = 0U; index < snapshot.ground_item_count
+            && index < snapshot.ground_items.size(); ++index) {
+        const dungeon::GroundItemSnapshot& item = snapshot.ground_items[index];
+        if (item.ordinal != ordinal || item.item_id == 0U) continue;
+        const bool source_matches =
+            (kind == dungeon::PendingSaveKind::loot_pickup
+                && item.source == dungeon::GroundItemSource::monster_drop)
+            || (kind == dungeon::PendingSaveKind::abyss_reward_claim
+                && item.source == dungeon::GroundItemSource::abyss_chest);
+        if (!source_matches) return std::nullopt;
+        return PickupCandidate{{true, expected_generation, item.item_id,
+            item.base_id, item.item_level, item.rarity, item.source}, ordinal};
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] std::optional<PickupCandidate> capture_pickup_candidate(
+    const dungeon::DungeonSession& session,
+    const dungeon::PendingSave& pending) noexcept {
+    const dungeon::DungeonSnapshot snapshot = session.snapshot();
+    return pickup_candidate(snapshot, pending.kind, pending.pickup_ordinal,
+        pending.expected_generation);
+}
+
+[[nodiscard]] bool ground_contains_item(
+    const dungeon::DungeonSnapshot& snapshot,
+    std::uint64_t item_id) noexcept {
+    for (std::size_t index = 0U; index < snapshot.ground_item_count
+            && index < snapshot.ground_items.size(); ++index) {
+        if (snapshot.ground_items[index].item_id == item_id) return true;
+    }
+    return false;
+}
+
+[[nodiscard]] bool ground_contains_ordinal(
+    const dungeon::DungeonSnapshot& snapshot,
+    std::uint16_t ordinal) noexcept {
+    for (std::size_t index = 0U; index < snapshot.ground_item_count
+            && index < snapshot.ground_items.size(); ++index) {
+        if (snapshot.ground_items[index].ordinal == ordinal) return true;
+    }
+    return false;
+}
+
+[[nodiscard]] bool pickup_was_committed(
+    const dungeon::DungeonSession& session,
+    const PickupCandidate& candidate) noexcept {
+    const dungeon::DungeonSnapshot snapshot = session.snapshot();
+    return snapshot.commit_generation == candidate.receipt.commit_generation
+        && !ground_contains_item(snapshot, candidate.receipt.item_id)
+        && !ground_contains_ordinal(snapshot, candidate.ordinal);
+}
+
+}  // namespace
 
 DungeonRuntime::DungeonRuntime(DungeonRuntimeConfig config)
     : config_(std::move(config)), store_(config_.save) {}
@@ -233,15 +312,38 @@ void DungeonRuntime::service_pending_save() noexcept {
         return;
     }
     const dungeon::PendingSaveKind pending_kind = pending->kind;
+    const std::uint64_t expected_generation = pending->expected_generation;
+    const auto candidate = capture_pickup_candidate(*session_, *pending);
+    const bool committed_exact = commit_and_resolve_pending(
+        *pending, pending_kind, expected_generation);
+    if (state() == DungeonRuntimeState::faulted) {
+        state_ = DungeonRuntimeState::faulted;
+    }
+    if (candidate.has_value() && committed_exact
+            && state_ == DungeonRuntimeState::running
+            && pickup_was_committed(*session_, *candidate)) {
+        status_.loot_pickup = candidate->receipt;
+    }
+}
+
+bool DungeonRuntime::commit_and_resolve_pending(
+    const dungeon::PendingSave& pending,
+    dungeon::PendingSaveKind pending_kind,
+    std::uint64_t expected_generation) noexcept {
+    const bool pending_state_matches = expected_generation
+        == pending.next_state.commit_generation;
     status_.indicator = SaveIndicator::saving;
-    persistence::SaveCommitResult saved = store_.commit(pending->next_state);
+    persistence::SaveCommitResult saved = store_.commit(pending.next_state);
+    const bool committed_exact = saved.state
+            == persistence::SaveCommitState::committed
+        && saved.verified_state.commit_generation == expected_generation
+        && pending_state_matches
+        && dungeon::same_run_state(saved.verified_state, pending.next_state);
     sync_commit_status(saved);
     dungeon::PendingSaveResult result = to_session_result(std::move(saved));
     result.kind = pending_kind;
     session_->resolve_pending_save(result);
-    if (session_->snapshot().phase == dungeon::RoomPhase::faulted) {
-        state_ = DungeonRuntimeState::faulted;
-    }
+    return committed_exact;
 }
 
 void DungeonRuntime::service_pending_transition() noexcept {

@@ -18,6 +18,7 @@ add_library(arpg_raylib STATIC
     hud_font.cpp
     hud_view_model.cpp
     hud_notice_state.cpp
+    loot_pickup_feedback.cpp
     hud_layout.cpp
     hud_renderer.cpp
     inventory_renderer.cpp
