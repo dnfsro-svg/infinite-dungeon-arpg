@@ -90,7 +90,9 @@ public:
         DungeonRules rules,
         DungeonRunState stable_state) noexcept;
     [[nodiscard]] bool queue_action(combat::Action action) noexcept;
-    void tick(combat::MovementInput movement) noexcept;
+    void tick(
+        combat::MovementInput movement,
+        AutoPickupPolicy pickup_policy = {}) noexcept;
     [[nodiscard]] bool request_descent(bool player_in_range) noexcept;
     [[nodiscard]] bool request_passive_allocation(
         passives::PassiveNodeId node) noexcept;
@@ -106,7 +108,8 @@ public:
         std::uint16_t drop_ordinal) noexcept;
     [[nodiscard]] RequestResult request_death_continue() noexcept;
     void request_nearby_pickups(
-        combat::Vec3 player_position) noexcept;
+        combat::Vec3 player_position,
+        AutoPickupPolicy pickup_policy = {}) noexcept;
     [[nodiscard]] const items::ItemOwnershipState& item_state() const noexcept;
     [[nodiscard]] std::optional<combat::PlayerCombatBuild>
     preview_equipment_build(

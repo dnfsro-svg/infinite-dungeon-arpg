@@ -262,7 +262,9 @@ bool DungeonSession::queue_action(combat::Action action) noexcept {
         : false;
 }
 
-void DungeonSession::tick(combat::MovementInput movement) noexcept {
+void DungeonSession::tick(
+    combat::MovementInput movement,
+    AutoPickupPolicy pickup_policy) noexcept {
     if (phase_ == RoomPhase::committing
             || phase_ == RoomPhase::death_pending
             || phase_ == RoomPhase::faulted) {
@@ -339,13 +341,13 @@ void DungeonSession::tick(combat::MovementInput movement) noexcept {
                     clear_abyss_exit_confirmation();
                 }
             }
-            request_nearby_pickups(state.player.position);
+            request_nearby_pickups(state.player.position, pickup_policy);
             if (phase_ == RoomPhase::awaiting_exit
                     && requested.has_value()) {
                 attempt_exit(*requested);
             }
         } else {
-            request_nearby_pickups(state.player.position);
+            request_nearby_pickups(state.player.position, pickup_policy);
         }
     }
 

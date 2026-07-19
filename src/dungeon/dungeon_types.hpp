@@ -130,6 +130,14 @@ struct GroundItem final {
     items::ItemInstance item{};
 };
 
+struct AutoPickupPolicy final {
+    items::ItemRarity minimum_rarity{items::ItemRarity::normal};
+};
+
+[[nodiscard]] bool auto_pickup_eligible(
+    const GroundItem& ground,
+    AutoPickupPolicy policy) noexcept;
+
 struct GroundItemSnapshot final {
     std::uint16_t ordinal{};
     GroundItemSource source{GroundItemSource::monster_drop};

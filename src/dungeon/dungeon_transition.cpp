@@ -901,8 +901,19 @@ RequestResult DungeonSession::request_pickup(
     }
 }
 
+bool auto_pickup_eligible(
+    const GroundItem& ground,
+    AutoPickupPolicy policy) noexcept {
+    if (!ground.active) return false;
+    if (ground.source == GroundItemSource::abyss_chest) return true;
+    return ground.source == GroundItemSource::monster_drop
+        && static_cast<std::uint8_t>(ground.item.rarity)
+            >= static_cast<std::uint8_t>(policy.minimum_rarity);
+}
+
 void DungeonSession::request_nearby_pickups(
-    combat::Vec3 player_position) noexcept {
+    combat::Vec3 player_position,
+    AutoPickupPolicy pickup_policy) noexcept {
     if (!item_request_phase(phase_) || !combat_.has_value()
             || pending_save_.has_value()) {
         return;
@@ -910,7 +921,7 @@ void DungeonSession::request_nearby_pickups(
     for (std::uint16_t ordinal = 0U;
          ordinal < ground_items_.size(); ++ordinal) {
         const GroundItem& ground = ground_items_[ordinal];
-        if (!ground.active
+        if (!auto_pickup_eligible(ground, pickup_policy)
                 || !pickup_distance_ok(player_position, ground.position)) {
             continue;
         }

@@ -477,6 +477,54 @@ arpg::test::Failure collision_and_revision_overflow_fault_without_retry() noexce
 }
 
 arpg::test::Failure abyss_pickup_prepares_claim_without_consuming_sequence() noexcept {
+    DungeonRunState filtered_state = cleared_abyss_state(AbyssDanger::low);
+    bool found_normal_reward = false;
+    for (std::uint64_t seed = 1U; seed != 0U; ++seed) {
+        const auto selection = arpg::abyss::select_abyss_rule(
+            seed, filtered_state.current_room.depth);
+        const auto reward = arpg::dungeon::derive_abyss_reward_slot(
+            seed, AbyssDanger::low,
+            static_cast<std::uint8_t>(filtered_state.current_room.depth), 0U);
+        if (!arpg::abyss::is_abyss_roll(seed)
+                || !selection.has_value()
+                || selection->danger != AbyssDanger::low
+                || !reward.has_value()
+                || reward->rarity != arpg::items::ItemRarity::normal) {
+            continue;
+        }
+        filtered_state.current_room.seed = seed;
+        filtered_state.abyss.danger = selection->danger;
+        filtered_state.abyss.rule = selection->rule;
+        filtered_state.abyss.rules_version = selection->rules_version;
+        found_normal_reward = true;
+        break;
+    }
+    ARPG_REQUIRE(found_normal_reward);
+    filtered_state.abyss.generated_mask = 1U;
+    filtered_state.abyss.reward_revision = 1U;
+    DungeonSession filtered{DungeonRules{}, filtered_state};
+    const GroundItem* filtered_reward = abyss_ground(filtered, 0U);
+    ARPG_REQUIRE(filtered_reward != nullptr);
+    ARPG_REQUIRE(filtered_reward->item.rarity
+        == arpg::items::ItemRarity::normal);
+    const std::uint16_t reward_ground_ordinal =
+        filtered_reward->drop_ordinal;
+    const std::uint16_t ordinary_ground_ordinal =
+        reward_ground_ordinal == 0U ? 1U : 0U;
+    const auto reward_position = filtered_reward->position;
+    arpg::test::install_ground_item(filtered, ordinary_ground_ordinal,
+        normal_item(0xAB5511U), reward_position);
+    set_player_position(filtered, reward_position);
+    filtered.request_nearby_pickups(
+        reward_position, {arpg::items::ItemRarity::rare});
+    ARPG_REQUIRE(filtered.pending_save_view() != nullptr);
+    ARPG_REQUIRE(filtered.pending_save_view()->kind
+        == PendingSaveKind::abyss_reward_claim);
+    ARPG_REQUIRE(filtered.pending_save_view()->pickup_ordinal
+        == reward_ground_ordinal);
+    ARPG_REQUIRE(arpg::test::ground_items(
+        filtered)[ordinary_ground_ordinal].active);
+
     DungeonRunState state = cleared_abyss_state(AbyssDanger::medium);
     state.abyss.generated_mask = 3U;
     state.abyss.reward_revision = 2U;

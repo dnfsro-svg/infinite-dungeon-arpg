@@ -6,6 +6,7 @@
 #include "dungeon/room_generation.hpp"
 #include "dungeon/dungeon_progression.hpp"
 #include "dungeon/encounter_director.hpp"
+#include "items/item_generation.hpp"
 #include "passives/passive_tree_catalog.hpp"
 
 #include <array>
@@ -369,9 +370,10 @@ void tracked_tick(
 bool tick_equal(
     DungeonSession& lhs,
     DungeonSession& rhs,
-    MovementInput movement) noexcept {
-    lhs.tick(movement);
-    rhs.tick(movement);
+    MovementInput movement,
+    arpg::dungeon::AutoPickupPolicy pickup_policy = {}) noexcept {
+    lhs.tick(movement, pickup_policy);
+    rhs.tick(movement, pickup_policy);
     if (!same_snapshot(lhs.snapshot(), rhs.snapshot())) {
         return false;
     }
@@ -1232,6 +1234,40 @@ arpg::test::Failure identical_seed_and_route_are_field_equal() noexcept {
     auto lhs = std::make_unique<DungeonSession>(config);
     auto rhs = std::make_unique<DungeonSession>(config);
     ARPG_REQUIRE(same_snapshot(lhs->snapshot(), rhs->snapshot()));
+
+    const auto player = lhs->snapshot().combat->player.position;
+    const auto normal = arpg::items::generate_item({
+        0xCC0101U,
+        arpg::items::ItemSlot::gloves,
+        20U,
+        0xCC0101U,
+        arpg::items::ItemRarity::normal,
+    });
+    const auto rare = arpg::items::generate_item({
+        0xCC0303U,
+        arpg::items::ItemSlot::gloves,
+        20U,
+        0xCC0303U,
+        arpg::items::ItemRarity::rare,
+    });
+    ARPG_REQUIRE(normal.has_value());
+    ARPG_REQUIRE(rare.has_value());
+    constexpr std::uint16_t kNormalOrdinal = 2U;
+    constexpr std::uint16_t kRareOrdinal = 9U;
+    arpg::test::install_ground_item(
+        *lhs, kNormalOrdinal, *normal, player);
+    arpg::test::install_ground_item(
+        *rhs, kNormalOrdinal, *normal, player);
+    arpg::test::install_ground_item(
+        *lhs, kRareOrdinal, *rare, player);
+    arpg::test::install_ground_item(
+        *rhs, kRareOrdinal, *rare, player);
+    ARPG_REQUIRE(tick_equal(*lhs, *rhs, {},
+        {arpg::items::ItemRarity::rare}));
+    ARPG_REQUIRE(lhs->pending_save_view() != nullptr);
+    ARPG_REQUIRE(lhs->pending_save_view()->pickup_ordinal == kRareOrdinal);
+    ARPG_REQUIRE(arpg::test::ground_items(*lhs)[kNormalOrdinal].active);
+    ARPG_REQUIRE(commit_equal(*lhs, *rhs));
 
     std::size_t exits = 0;
     for (int tick = 0; tick < 100000 && exits < 4U; ++tick) {
