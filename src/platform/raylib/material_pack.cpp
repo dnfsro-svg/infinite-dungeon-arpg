@@ -39,7 +39,23 @@ constexpr const char* kAtlasPaths[] = {
     return nullptr;
 }
 
+[[nodiscard]] constexpr bool valid_texture_api(
+    MaterialTextureApi texture_api) noexcept {
+    return texture_api.load != nullptr && texture_api.valid != nullptr
+        && texture_api.unload != nullptr;
+}
+
+[[nodiscard]] MaterialTextureApi default_material_texture_api() noexcept {
+    return {&LoadTexture, &IsTextureValid, &UnloadTexture};
+}
+
 }  // namespace
+
+MaterialPack::MaterialPack() noexcept
+    : MaterialPack(default_material_texture_api()) {}
+
+MaterialPack::MaterialPack(MaterialTextureApi texture_api) noexcept
+    : texture_api_(texture_api) {}
 
 void MaterialPackState::set_available(MaterialAtlasId id, bool available) noexcept {
     if (!is_known_atlas(id)) return;
@@ -68,6 +84,12 @@ void MaterialPackState::reset() noexcept {
 bool MaterialPack::load() noexcept {
     unload();
 
+    if (!valid_texture_api(texture_api_)) {
+        TraceLog(LOG_WARNING,
+            "Stage 12 material texture API is incomplete; using program fallback");
+        return false;
+    }
+
     const MaterialManifestDefinition manifest = default_material_manifest();
     if (!validate_material_manifest(manifest).valid) {
         TraceLog(LOG_WARNING, "Stage 12 material manifest is invalid; using program fallback");
@@ -77,11 +99,11 @@ bool MaterialPack::load() noexcept {
     for (std::size_t index = 0U; index < manifest.atlas_count; ++index) {
         const MaterialAtlasDefinition& definition = manifest.atlases[index];
         const std::size_t texture_index = atlas_index(definition.id);
-        Texture2D texture = LoadTexture(kAtlasPaths[texture_index]);
-        const bool dimensions_match = IsTextureValid(texture)
+        Texture2D texture = texture_api_.load(kAtlasPaths[texture_index]);
+        const bool dimensions_match = texture_api_.valid(texture)
             && texture.width == definition.width && texture.height == definition.height;
         if (!dimensions_match) {
-            if (IsTextureValid(texture)) UnloadTexture(texture);
+            if (texture_api_.valid(texture)) texture_api_.unload(texture);
             if (!warnings_emitted_[texture_index]) {
                 TraceLog(LOG_WARNING,
                     "Stage 12 material atlas unavailable or has unexpected dimensions: %s; using program fallback",
@@ -98,7 +120,9 @@ bool MaterialPack::load() noexcept {
 
 void MaterialPack::unload() noexcept {
     for (Texture2D& texture : textures_) {
-        if (IsTextureValid(texture)) UnloadTexture(texture);
+        if (valid_texture_api(texture_api_) && texture_api_.valid(texture)) {
+            texture_api_.unload(texture);
+        }
         texture = Texture2D{};
     }
     state_.reset();

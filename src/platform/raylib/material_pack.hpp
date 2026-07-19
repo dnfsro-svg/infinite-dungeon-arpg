@@ -7,6 +7,12 @@
 
 namespace arpg::platform {
 
+struct MaterialTextureApi final {
+    Texture2D (*load)(const char* path){};
+    bool (*valid)(Texture2D texture){};
+    void (*unload)(Texture2D texture){};
+};
+
 class MaterialPackState final {
 public:
     void set_available(MaterialAtlasId id, bool available) noexcept;
@@ -22,6 +28,8 @@ private:
 
 class MaterialPack final {
 public:
+    MaterialPack() noexcept;
+    explicit MaterialPack(MaterialTextureApi texture_api) noexcept;
     [[nodiscard]] bool load() noexcept;
     void unload() noexcept;
     [[nodiscard]] bool available(MaterialAtlasId id) const noexcept;
@@ -29,6 +37,7 @@ public:
         MaterialSpriteId id, Vector2 foot_position, bool flip_x) const noexcept;
 
 private:
+    MaterialTextureApi texture_api_{};
     MaterialPackState state_{};
     std::array<Texture2D, static_cast<std::size_t>(MaterialAtlasId::count)>
         textures_{};
