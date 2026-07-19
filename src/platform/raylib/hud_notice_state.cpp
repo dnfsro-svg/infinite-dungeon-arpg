@@ -94,7 +94,8 @@ void format_notice(HudNotice& notice, const char* format, ...) noexcept {
 [[nodiscard]] bool is_room_context(HudNoticeKind kind) noexcept {
     return kind != HudNoticeKind::none
         && kind != HudNoticeKind::save_error
-        && kind != HudNoticeKind::recovery_required;
+        && kind != HudNoticeKind::recovery_required
+        && kind != HudNoticeKind::loot_pickup;
 }
 
 [[nodiscard]] bool has_open_exit(

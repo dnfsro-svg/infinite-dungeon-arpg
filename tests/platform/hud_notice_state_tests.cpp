@@ -445,6 +445,7 @@ arpg::test::Failure pickup_feedback_is_reward_priority_and_keeps_abyss_style()
     ARPG_REQUIRE(normal.view().primary.kind
         == platform::HudNoticeKind::loot_pickup);
     ARPG_REQUIRE(!normal.view().primary.abyss);
+    ARPG_REQUIRE(normal.view().primary.priority == 60U);
     ARPG_REQUIRE(arpg::test::near(normal.view().primary.seconds_left, 3.0F));
 
     platform::HudNoticeState abyss{};
@@ -454,6 +455,78 @@ arpg::test::Failure pickup_feedback_is_reward_priority_and_keeps_abyss_style()
     ARPG_REQUIRE(abyss.view().primary.abyss);
     ARPG_REQUIRE(std::strcmp(abyss.view().primary.text.bytes.data(),
         text.bytes.data()) == 0);
+    return {};
+}
+
+arpg::test::Failure pickup_feedback_survives_room_change_for_full_lifetime()
+    noexcept {
+    const dungeon::DungeonSnapshot baseline = baseline_snapshot();
+    platform::HudNoticeState state{};
+    state.observe(baseline, baseline, saved_status(), rebound_hints(), false);
+    platform::HudText96 text{};
+    static_cast<void>(std::snprintf(text.bytes.data(), text.bytes.size(),
+        u8"已拾取：普通 Iron Blade · i1"));
+    state.publish_loot_pickup(text, false);
+
+    dungeon::DungeonSnapshot next = baseline;
+    ++next.room_index;
+    ++next.commit_generation;
+    state.observe(baseline, next, saved_status(), rebound_hints(), false);
+    ARPG_REQUIRE(state.view().primary.kind
+        == platform::HudNoticeKind::loot_pickup);
+    ARPG_REQUIRE(arpg::test::near(state.view().primary.seconds_left, 3.0F));
+    state.update(1.0F, false);
+    ARPG_REQUIRE(arpg::test::near(state.view().primary.seconds_left, 2.0F));
+    return {};
+}
+
+arpg::test::Failure pickup_feedback_priority_is_below_transaction_blockers()
+    noexcept {
+    platform::HudText96 text{};
+    static_cast<void>(std::snprintf(text.bytes.data(), text.bytes.size(),
+        u8"已拾取：稀有 Ward Coat · i24"));
+    const auto baseline = baseline_snapshot();
+
+    platform::HudNoticeState save{};
+    save.publish_loot_pickup(text, false);
+    save.observe(baseline, baseline, error_status(), rebound_hints(), false);
+    ARPG_REQUIRE(save.view().primary.kind == platform::HudNoticeKind::save_error);
+    ARPG_REQUIRE(save.view().primary.priority == 110U);
+    ARPG_REQUIRE(save.view().secondary.kind
+        == platform::HudNoticeKind::loot_pickup);
+    ARPG_REQUIRE(save.view().secondary.priority == 60U);
+
+    platform::HudNoticeState recovery{};
+    recovery.publish_loot_pickup(text, false);
+    recovery.observe(baseline, baseline, saved_status(), rebound_hints(), true);
+    ARPG_REQUIRE(recovery.view().primary.kind
+        == platform::HudNoticeKind::recovery_required);
+    ARPG_REQUIRE(recovery.view().primary.priority == 109U);
+    ARPG_REQUIRE(recovery.view().secondary.kind
+        == platform::HudNoticeKind::loot_pickup);
+
+    dungeon::DungeonSnapshot abyss = baseline;
+    abyss.abyss_exit_confirmation_armed = true;
+    platform::HudNoticeState confirmation{};
+    confirmation.publish_loot_pickup(text, true);
+    confirmation.observe(baseline, abyss, saved_status(), rebound_hints(), false);
+    ARPG_REQUIRE(confirmation.view().primary.kind
+        == platform::HudNoticeKind::abyss_abandon);
+    ARPG_REQUIRE(confirmation.view().primary.priority == 100U);
+    ARPG_REQUIRE(confirmation.view().secondary.kind
+        == platform::HudNoticeKind::loot_pickup);
+    ARPG_REQUIRE(confirmation.view().secondary.abyss);
+
+    dungeon::DungeonSnapshot rewarded = baseline;
+    rewarded.last_room_experience = 25U;
+    platform::HudNoticeState reward{};
+    reward.publish_loot_pickup(text, false);
+    reward.observe(baseline, rewarded, saved_status(), rebound_hints(), false);
+    ARPG_REQUIRE(reward.view().primary.kind
+        == platform::HudNoticeKind::loot_pickup);
+    ARPG_REQUIRE(reward.view().secondary.kind == platform::HudNoticeKind::reward);
+    ARPG_REQUIRE(reward.view().primary.priority == 60U);
+    ARPG_REQUIRE(reward.view().secondary.priority == 60U);
     return {};
 }
 
@@ -474,6 +547,10 @@ constexpr arpg::test::TestCase kCases[] = {
     {"progression presented edges once", &progression_between_presented_frames_enqueues_each_edge_once},
     {"pickup feedback reward priority abyss style",
         &pickup_feedback_is_reward_priority_and_keeps_abyss_style},
+    {"pickup feedback survives room change",
+        &pickup_feedback_survives_room_change_for_full_lifetime},
+    {"pickup feedback priority ordering",
+        &pickup_feedback_priority_is_below_transaction_blockers},
 };
 
 }  // namespace

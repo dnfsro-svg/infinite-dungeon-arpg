@@ -3,6 +3,7 @@
 
 #include "../dungeon/dungeon_test_support.hpp"
 #include "dungeon_runtime.hpp"
+#include "combat_renderer.hpp"
 #include "raylib_host.hpp"
 #include "abyss/abyss_rules.hpp"
 #include "abyss/abyss_rewards.hpp"
@@ -541,6 +542,8 @@ arpg::test::Failure indeterminate_passive_save_faults_runtime() noexcept {
     runtime.service_pending_save();
     ARPG_REQUIRE(runtime.session()->snapshot().phase == dungeon::RoomPhase::faulted);
     ARPG_REQUIRE(runtime.state() == platform::DungeonRuntimeState::faulted);
+    ARPG_REQUIRE(runtime.render_status().faulted);
+    ARPG_REQUIRE(!runtime.render_status().recovery_required);
     return {};
 }
 
@@ -612,6 +615,8 @@ arpg::test::Failure dual_slot_corruption_requires_recovery_then_archives_new_run
     platform::DungeonRuntime runtime(config_for(directory));
     ARPG_REQUIRE(!runtime.initialize());
     ARPG_REQUIRE(runtime.state() == platform::DungeonRuntimeState::recovery_required);
+    ARPG_REQUIRE(runtime.render_status().recovery_required);
+    ARPG_REQUIRE(!runtime.render_status().faulted);
     ARPG_REQUIRE(runtime.session() == nullptr);
     ARPG_REQUIRE(runtime.item_state() == nullptr);
     ARPG_REQUIRE(runtime.request_pickup(0U) == dungeon::RequestResult::rejected);
@@ -762,6 +767,17 @@ bool install_pickup_if_needed(platform::DungeonRuntime& runtime,
     arpg::test::install_ground_item(*runtime.session(), 0U,
         normal_item(401U, 2U), snapshot.combat->player.position);
     return runtime.session()->snapshot().ground_item_count == 1U;
+}
+
+bool same_receipt(const platform::LootPickupReceipt& left,
+    const platform::LootPickupReceipt& right) noexcept {
+    return left.valid == right.valid
+        && left.commit_generation == right.commit_generation
+        && left.item_id == right.item_id
+        && left.base_id == right.base_id
+        && left.item_level == right.item_level
+        && left.rarity == right.rarity
+        && left.source == right.source;
 }
 
 bool replace_ground_before_publish(persistence::SaveFaultPoint point,
@@ -958,7 +974,15 @@ arpg::test::Failure wrong_pending_ordinal_fault_does_not_publish_receipt()
     TempDirectory directory;
     platform::DungeonRuntime runtime(config_for(directory, 0xBAD0D1U));
     ARPG_REQUIRE(runtime.initialize());
-    const auto before = runtime.session()->snapshot();
+    auto before = runtime.session()->snapshot();
+    ARPG_REQUIRE(before.combat.has_value());
+    arpg::test::install_ground_item(*runtime.session(), 0U,
+        normal_item(0xBAD0D100U), before.combat->player.position);
+    runtime.fixed_tick({});
+    const auto confirmed = runtime.render_status().loot_pickup;
+    ARPG_REQUIRE(confirmed.valid);
+
+    before = runtime.session()->snapshot();
     ARPG_REQUIRE(before.combat.has_value());
     arpg::test::install_ground_item(*runtime.session(), 0U,
         normal_item(0xBAD0D101U), before.combat->player.position);
@@ -969,7 +993,8 @@ arpg::test::Failure wrong_pending_ordinal_fault_does_not_publish_receipt()
     runtime.service_pending_save();
 
     ARPG_REQUIRE(runtime.state() == platform::DungeonRuntimeState::faulted);
-    ARPG_REQUIRE(!runtime.render_status().loot_pickup.valid);
+    ARPG_REQUIRE(runtime.render_status().faulted);
+    ARPG_REQUIRE(same_receipt(runtime.render_status().loot_pickup, confirmed));
     return {};
 }
 
@@ -984,7 +1009,15 @@ arpg::test::Failure replaced_pickup_ordinal_does_not_publish_receipt()
     platform::DungeonRuntime runtime(config);
     ARPG_REQUIRE(runtime.initialize());
     replacement.session = runtime.session();
-    const auto before = runtime.session()->snapshot();
+    auto before = runtime.session()->snapshot();
+    ARPG_REQUIRE(before.combat.has_value());
+    arpg::test::install_ground_item(*runtime.session(), 0U,
+        normal_item(0xA17E2200U), before.combat->player.position);
+    runtime.fixed_tick({});
+    const auto confirmed = runtime.render_status().loot_pickup;
+    ARPG_REQUIRE(confirmed.valid);
+
+    before = runtime.session()->snapshot();
     ARPG_REQUIRE(before.combat.has_value());
     arpg::test::install_ground_item(*runtime.session(), 0U,
         normal_item(0xA17E2201U), before.combat->player.position);
@@ -995,11 +1028,55 @@ arpg::test::Failure replaced_pickup_ordinal_does_not_publish_receipt()
 
     ARPG_REQUIRE(replacement.invoked);
     ARPG_REQUIRE(runtime.state() == platform::DungeonRuntimeState::faulted);
-    ARPG_REQUIRE(!runtime.render_status().loot_pickup.valid);
+    ARPG_REQUIRE(runtime.render_status().faulted);
+    ARPG_REQUIRE(same_receipt(runtime.render_status().loot_pickup, confirmed));
     const auto after = runtime.session()->snapshot();
     ARPG_REQUIRE(after.ground_item_count == 1U);
     ARPG_REQUIRE(after.ground_items[0].ordinal == 0U);
     ARPG_REQUIRE(after.ground_items[0].item_id == replacement.replacement.id);
+    return {};
+}
+
+arpg::test::Failure failed_pickup_retry_publishes_one_presented_hud_notice()
+    noexcept {
+    TempDirectory directory;
+    FaultContext fault{persistence::SaveFaultPoint::before_publish, false};
+    auto config = config_for(directory, 0xFEED771U);
+    config.save.fault_hook = &fail_when_enabled;
+    config.save.fault_context = &fault;
+    platform::DungeonRuntime runtime(config);
+    ARPG_REQUIRE(runtime.initialize());
+    platform::CombatRenderer renderer{};
+    platform::ControlHints hints{};
+    auto previous = runtime.session()->snapshot();
+    renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
+        previous, previous, runtime.render_status(), hints, 0.0F, false);
+    ARPG_REQUIRE(previous.combat.has_value());
+    arpg::test::install_ground_item(*runtime.session(), 0U,
+        normal_item(0xFEED77101U), previous.combat->player.position);
+
+    fault.enabled = true;
+    runtime.fixed_tick({});
+    auto failed = runtime.session()->snapshot();
+    ARPG_REQUIRE(runtime.render_status().indicator == platform::SaveIndicator::error);
+    ARPG_REQUIRE(!runtime.render_status().loot_pickup.valid);
+    renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
+        previous, failed, runtime.render_status(), hints, 0.0F, false);
+
+    fault.enabled = false;
+    runtime.fixed_tick({});
+    const auto committed = runtime.session()->snapshot();
+    ARPG_REQUIRE(runtime.render_status().loot_pickup.valid);
+    renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
+        failed, committed, runtime.render_status(), hints, 0.0F, false);
+    ARPG_REQUIRE(renderer.hud_notice_view().primary.kind
+        == platform::HudNoticeKind::loot_pickup);
+    ARPG_REQUIRE(renderer.hud_notice_view().primary.seconds_left == 3.0F);
+    renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
+        committed, committed, runtime.render_status(), hints, 1.0F, false);
+    ARPG_REQUIRE(renderer.hud_notice_view().primary.kind
+        == platform::HudNoticeKind::loot_pickup);
+    ARPG_REQUIRE(renderer.hud_notice_view().primary.seconds_left == 2.0F);
     return {};
 }
 
@@ -1502,6 +1579,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &wrong_pending_ordinal_fault_does_not_publish_receipt},
     {"replaced pickup ordinal does not publish receipt",
         &replaced_pickup_ordinal_does_not_publish_receipt},
+    {"failed pickup retry publishes one HUD notice",
+        &failed_pickup_retry_publishes_one_presented_hud_notice},
     {"large inventory snapshot and views do not allocate", &large_inventory_snapshot_and_views_do_not_allocate},
     {"generic service adds no large state copies", &generic_service_adds_no_large_state_copies},
     {"runtime echoes death pending kind", &runtime_echoes_death_pending_kind},

@@ -21,11 +21,12 @@ public:
 private:
     enum class Attachment : std::uint8_t {
         unattached,
-        empty_observed,
-        receipt_baseline,
+        live,
     };
     std::uint64_t generation_{};
     std::uint64_t item_id_{};
+    bool has_high_water_{};
+    bool preserve_attachment_after_block_{};
     Attachment attachment_{Attachment::unattached};
 };
 

@@ -290,7 +290,10 @@ const items::ItemOwnershipState* DungeonRuntime::item_state() const noexcept {
 
 DungeonRenderStatus DungeonRuntime::render_status() const noexcept {
     DungeonRenderStatus status = status_;
-    status.recovery_required = state() == DungeonRuntimeState::recovery_required;
+    const DungeonRuntimeState runtime_state = state();
+    status.recovery_required =
+        runtime_state == DungeonRuntimeState::recovery_required;
+    status.faulted = runtime_state == DungeonRuntimeState::faulted;
     return status;
 }
 

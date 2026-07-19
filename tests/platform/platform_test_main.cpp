@@ -67,5 +67,5 @@ int main() {
         ground_loot_view_suite(),
     };
 
-    return arpg::test::run_suites(suites, 270, "stage 11d loot filter runtime");
+    return arpg::test::run_suites(suites, 277, "stage 11d loot filter runtime");
 }

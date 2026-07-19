@@ -43,6 +43,7 @@ struct DungeonRenderStatus final {
     persistence::SaveSlot active_slot{persistence::SaveSlot::none};
     persistence::SaveError error{persistence::SaveError::none};
     bool recovery_required{};
+    bool faulted{};
     LootPickupReceipt loot_pickup{};
 };
 

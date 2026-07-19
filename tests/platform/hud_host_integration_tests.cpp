@@ -402,6 +402,41 @@ arpg::test::Failure renderer_observes_committed_pickup_receipts_before_notices()
     return {};
 }
 
+arpg::test::Failure abyss_pickup_cross_room_keeps_purple_context_end_to_end()
+    noexcept {
+    platform::CombatRenderer renderer{};
+    const auto hints = committed_hints(2U);
+    dungeon::DungeonSnapshot previous = snapshot();
+    platform::DungeonRenderStatus empty = saved_status();
+    renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
+        previous, previous, empty, hints, 0.0F, false);
+
+    dungeon::DungeonSnapshot next = previous;
+    ++next.room_index;
+    ++next.commit_generation;
+    platform::DungeonRenderStatus claimed = saved_status();
+    claimed.loot_pickup = {true, next.commit_generation, 0xAB155U,
+        3U, 24U, items::ItemRarity::rare,
+        dungeon::GroundItemSource::abyss_chest};
+    renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
+        previous, next, claimed, hints, 0.0F, false);
+
+    const auto notice = renderer.hud_notice_view().primary;
+    ARPG_REQUIRE(notice.kind == platform::HudNoticeKind::loot_pickup);
+    ARPG_REQUIRE(notice.abyss);
+    ARPG_REQUIRE(notice.priority == 60U);
+    ARPG_REQUIRE(renderer.hud_model().context.primary_kind
+        == platform::HudNoticeKind::loot_pickup);
+    ARPG_REQUIRE(renderer.hud_model().context.primary_abyss);
+    const platform::HudLayout layout =
+        platform::make_hud_layout(1280, 720, false);
+    const platform::ContextPanelPlan plan =
+        platform::make_context_panel_plan(renderer.hud_model().context, layout);
+    ARPG_REQUIRE(plan.primary_visible);
+    ARPG_REQUIRE(plan.primary_abyss);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"observes every presented frame read only", &observation_is_once_per_presented_frame_and_read_only},
     {"production presentation seam covers all owners", &production_presentation_seam_observes_normal_recovery_and_death},
@@ -418,6 +453,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &renderer_uses_draft_only_on_the_settings_screen},
     {"renderer observes committed pickup receipt",
         &renderer_observes_committed_pickup_receipts_before_notices},
+    {"abyss pickup keeps purple context across room",
+        &abyss_pickup_cross_room_keeps_purple_context_end_to_end},
 };
 
 }  // namespace
