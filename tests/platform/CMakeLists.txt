@@ -28,7 +28,8 @@ if(TARGET arpg_raylib)
         material_asset_validation_tests.cpp
         material_animation_tests.cpp
         stage12_environment_render_tests.cpp
-        stage12_actor_render_tests.cpp)
+        stage12_actor_render_tests.cpp
+        stage12_material_render_tests.cpp)
     target_sources(arpg_platform_tests PRIVATE inventory_view_math_tests.cpp)
     target_compile_features(arpg_platform_tests PRIVATE cxx_std_17)
     target_include_directories(arpg_platform_tests
@@ -44,6 +45,32 @@ if(TARGET arpg_raylib)
     add_test(NAME platform.units COMMAND arpg_platform_tests)
     set_tests_properties(
         platform.units PROPERTIES LABELS "headless;platform")
+
+    add_executable(arpg_stage12_material_formal
+        stage12_material_formal_game_validation.cpp)
+    target_compile_features(arpg_stage12_material_formal PRIVATE cxx_std_17)
+    target_compile_definitions(arpg_stage12_material_formal
+        PRIVATE ARPG_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    target_link_libraries(arpg_stage12_material_formal PRIVATE arpg_raylib)
+    if(MSVC)
+        target_compile_options(arpg_stage12_material_formal PRIVATE /utf-8)
+    endif()
+    arpg_enable_project_warnings(arpg_stage12_material_formal)
+    add_test(
+        NAME stage12.material_formal
+        COMMAND "$<TARGET_FILE:arpg_stage12_material_formal>"
+            "${CMAKE_CURRENT_BINARY_DIR}/stage12 material evidence")
+    set_tests_properties(stage12.material_formal
+        PROPERTIES LABELS "platform;raylib;stage12" TIMEOUT 300
+            FIXTURES_SETUP stage12_material_evidence RUN_SERIAL TRUE)
+    add_test(
+        NAME stage12.material_evidence_validator
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/stage12_material_validator.ps1"
+            -EvidenceDirectory "${CMAKE_CURRENT_BINARY_DIR}/stage12 material evidence")
+    set_tests_properties(stage12.material_evidence_validator
+        PROPERTIES LABELS "platform;raylib;stage12" TIMEOUT 60
+            FIXTURES_REQUIRED stage12_material_evidence)
 
     add_executable(arpg_stage11c_hud_stress
         ../core/allocation_probe.cpp

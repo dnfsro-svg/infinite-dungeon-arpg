@@ -71,8 +71,18 @@ void draw_bar(float x, float y, float width, float ratio, Color color) noexcept 
         0.0F, 1.0F);
 }
 
-void draw_effects(const CombatFeedback& feedback, float width, float height,
-    bool foreground) noexcept {
+MaterialSpriteId effect_sprite(VisualEffectKind kind) noexcept {
+    switch (kind) {
+    case VisualEffectKind::weapon_trail: return MaterialSpriteId::effect_launcher_trail;
+    case VisualEffectKind::dust: return MaterialSpriteId::effect_landing_dust;
+    case VisualEffectKind::spark: return MaterialSpriteId::effect_hit_spark;
+    case VisualEffectKind::damage_number: return MaterialSpriteId::missing;
+    }
+    return MaterialSpriteId::missing;
+}
+
+void draw_effects(const CombatFeedback& feedback, const MaterialPack& material_pack,
+    float width, float height, bool foreground) noexcept {
     for (const VisualEffect& effect : feedback.effects()) {
         if (!effect.active) continue;
         const bool is_foreground = effect.kind == VisualEffectKind::spark
@@ -82,6 +92,12 @@ void draw_effects(const CombatFeedback& feedback, float width, float height,
             : std::clamp(effect.age_seconds / effect.lifetime_seconds, 0.0F, 1.0F);
         const float opacity = 1.0F - progress;
         const ScreenProjection projected = project_combat_position(effect.position, width, height);
+        const MaterialSpriteId sprite = effect_sprite(effect.kind);
+        if (sprite != MaterialSpriteId::missing
+            && material_pack.draw(sprite, {projected.x, projected.y}, false,
+                0.62F * projected.scale, Fade(WHITE, opacity))) {
+            continue;
+        }
         switch (effect.kind) {
         case VisualEffectKind::weapon_trail:
             DrawLineEx({projected.x - 36.0F * projected.scale, projected.y - 42.0F * projected.scale},
@@ -125,13 +141,17 @@ void draw_hazards(const CombatSnapshot& snapshot, float width, float height) noe
     }
 }
 
-void draw_projectiles(const CombatSnapshot& snapshot, float width, float height,
-    dungeon::DungeonElement ecology) noexcept {
+void draw_projectiles(const CombatSnapshot& snapshot, const MaterialPack& material_pack,
+    float width, float height, dungeon::DungeonElement ecology) noexcept {
     const Color color = to_color(monster_ecology_color(ecology));
     for (const ProjectileSnapshot& projectile : snapshot.projectiles) {
         if (!projectile.active) continue;
         const ScreenProjection projected = project_projectile_position(projectile, width, height);
         const float radius = std::max(3.0F, projectile.radius * 22.0F) * projected.scale;
+        if (material_pack.draw(select_element_effect(ecology),
+                {projected.x, projected.y}, false, 0.30F * projected.scale)) {
+            continue;
+        }
         DrawCircle(static_cast<int>(projected.x), static_cast<int>(projected.y), radius, color);
         DrawCircleLines(static_cast<int>(projected.x), static_cast<int>(projected.y),
             radius + 2.0F, Color{244, 248, 255, 235});
@@ -330,8 +350,8 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
     }
     sort_render_actors(draw_items, draw_count);
     draw_hazards(current_combat, width, height);
-    draw_effects(feedback, width, height, false);
-    draw_projectiles(current_combat, width, height, current.ecology);
+    draw_effects(feedback, material_pack_, width, height, false);
+    draw_projectiles(current_combat, material_pack_, width, height, current.ecology);
     for (std::size_t index = 0; index < draw_count; ++index) {
         const RenderActor& item = draw_items[index];
         const ScreenProjection ground = project_combat_position({item.position.x, item.position.y, 0.0F}, width, height);
@@ -357,6 +377,11 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
             const MonsterSnapshot& monster = current_combat.monsters[item.monster_index];
             const MaterialSpriteId sprite = select_monster_sprite(monster.id,
                 monster.ai_phase);
+            if (monster.affixes.count > 0U) {
+                static_cast<void>(material_pack_.draw(MaterialSpriteId::effect_affix_aura,
+                    {projected.x, projected.ground_y}, false, 0.72F * projected.scale,
+                    Color{230, 142, 255, 155}));
+            }
             if (draw_material_actor(material_pack_, sprite, monster.facing, false,
                     projected, feedback.target_flash_seconds(item.monster_index))) {
                 draw_monster_presentation(monster, item.position, current.ecology,
@@ -367,7 +392,7 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
             }
         }
     }
-    draw_effects(feedback, width, height, true);
+    draw_effects(feedback, material_pack_, width, height, true);
     if (draw_debug) draw_debug_world_volumes(current_combat, width, height);
 }
 

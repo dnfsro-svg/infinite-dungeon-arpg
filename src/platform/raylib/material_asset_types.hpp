@@ -92,6 +92,18 @@ enum class MaterialSpriteId : std::uint16_t {
     environment_door_lightning,
     environment_door_chaos,
     environment_hole,
+    effect_fire,
+    effect_water,
+    effect_lightning,
+    effect_chaos,
+    effect_hit_spark,
+    effect_launcher_trail,
+    effect_landing_dust,
+    effect_affix_aura,
+    loot_icon_normal,
+    loot_icon_magic,
+    loot_icon_rare,
+    loot_icon_abyss,
     count,
 };
 

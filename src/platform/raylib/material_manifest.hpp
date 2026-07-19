@@ -2,6 +2,8 @@
 
 #include "material_asset_types.hpp"
 
+#include "items/item_types.hpp"
+
 #include <cstddef>
 
 namespace arpg::platform {
@@ -33,6 +35,11 @@ inline constexpr MaterialAtlasDefinition kDefaultMaterialAtlases[] = {
         {static_cast<float>((column) * 224), static_cast<float>((row) * 224), \
             224.0F, 224.0F}, \
         {112.0F, 224.0F}, 0U}
+
+#define ARPG_EFFECT_FRAME(sprite, column, row) \
+    {MaterialSpriteId::sprite, MaterialAtlasId::effects_ui, \
+        {static_cast<float>((column) * 128), static_cast<float>((row) * 128), \
+            128.0F, 128.0F}, {64.0F, 110.0F}, 0U}
 
 inline constexpr MaterialFrameDefinition kDefaultMaterialFrames[] = {
     ARPG_ACTOR_FRAME(player_idle, 0, 0),
@@ -121,9 +128,22 @@ inline constexpr MaterialFrameDefinition kDefaultMaterialFrames[] = {
         {336.0F, 704.0F, 112.0F, 112.0F}, {56.0F, 112.0F}, 0U},
     {MaterialSpriteId::environment_hole, MaterialAtlasId::environment,
         {448.0F, 704.0F, 192.0F, 160.0F}, {96.0F, 80.0F}, 0U},
+    ARPG_EFFECT_FRAME(effect_fire, 0, 0),
+    ARPG_EFFECT_FRAME(effect_water, 1, 0),
+    ARPG_EFFECT_FRAME(effect_lightning, 2, 0),
+    ARPG_EFFECT_FRAME(effect_chaos, 3, 0),
+    ARPG_EFFECT_FRAME(effect_hit_spark, 0, 1),
+    ARPG_EFFECT_FRAME(effect_launcher_trail, 1, 1),
+    ARPG_EFFECT_FRAME(effect_landing_dust, 2, 1),
+    ARPG_EFFECT_FRAME(effect_affix_aura, 3, 1),
+    ARPG_EFFECT_FRAME(loot_icon_normal, 0, 2),
+    ARPG_EFFECT_FRAME(loot_icon_magic, 1, 2),
+    ARPG_EFFECT_FRAME(loot_icon_rare, 2, 2),
+    ARPG_EFFECT_FRAME(loot_icon_abyss, 3, 2),
 };
 
 #undef ARPG_ACTOR_FRAME
+#undef ARPG_EFFECT_FRAME
 
 }  // namespace detail
 
@@ -135,6 +155,17 @@ default_material_manifest() noexcept {
         detail::kDefaultMaterialFrames,
         sizeof(detail::kDefaultMaterialFrames)
             / sizeof(detail::kDefaultMaterialFrames[0])};
+}
+
+[[nodiscard]] constexpr MaterialSpriteId select_loot_sprite(
+    items::ItemRarity rarity, bool abyss = false) noexcept {
+    if (abyss) return MaterialSpriteId::loot_icon_abyss;
+    switch (rarity) {
+    case items::ItemRarity::normal: return MaterialSpriteId::loot_icon_normal;
+    case items::ItemRarity::magic: return MaterialSpriteId::loot_icon_magic;
+    case items::ItemRarity::rare: return MaterialSpriteId::loot_icon_rare;
+    }
+    return MaterialSpriteId::missing;
 }
 
 }  // namespace arpg::platform

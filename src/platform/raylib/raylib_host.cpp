@@ -131,10 +131,18 @@ void present_frame_and_maybe_capture(const char* path) noexcept {
     UnloadImage(image);
 }
 
-std::optional<std::string> host_screenshot_path() noexcept {
+std::optional<std::string> host_screenshot_path(
+    const RaylibHostConfig& config) noexcept {
     try {
-        return (std::filesystem::path{
-            GetApplicationDirectory()} / "stage8-equipment-loot.png").string();
+        const std::filesystem::path directory = config.screenshot_directory
+            .value_or(std::filesystem::path{GetApplicationDirectory()});
+        std::error_code error;
+        std::filesystem::create_directories(directory, error);
+        if (error) {
+            TraceLog(LOG_WARNING, "failed to create screenshot directory");
+            return std::nullopt;
+        }
+        return (directory / "stage8-equipment-loot.png").string();
     } catch (...) {
         TraceLog(LOG_WARNING, "failed to construct screenshot path");
         return std::nullopt;
@@ -1829,7 +1837,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 std::optional<std::string> capture_path =
                     validation_capture_path();
                 if (frame_input.keys.f12 || frame_input.keys.v) {
-                    capture_path = host_screenshot_path();
+                    capture_path = host_screenshot_path(config);
                 }
                 present_frame_and_maybe_capture(capture_path.has_value()
                     ? capture_path->c_str() : nullptr);
@@ -2298,8 +2306,22 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     stage11b_paused_visible_capture;
             }
             if (death_gate.screenshot) {
-                capture_path = host_screenshot_path();
+                capture_path = host_screenshot_path(config);
                 captured_stage10_target = false;
+            } else if (!capture_path.has_value()
+                    && config.validation_capture_file.has_value()
+                    && config.validation_exit_after_presented_frames != 0U
+                    && config.stage10_validation == Stage10ValidationScenario::none
+                    && config.stage11_validation == Stage11ValidationScenario::none
+                    && config.stage11b_validation == Stage11BValidationScenario::none
+                    && config.stage11c_hud_validation == Stage11CHudValidationScenario::none
+                    && config.stage11d_loot_validation
+                        == Stage11DLootValidationScenario::none
+                    && presented_frame_count + 1U
+                        >= config.validation_exit_after_presented_frames) {
+                // Formal material validation captures an ordinary gameplay frame
+                // at a caller-owned path without sharing the legacy F12 file.
+                capture_path = config.validation_capture_file->string();
             } else if (!capture_path.has_value()) {
                 capture_path = validation_capture_path();
             }

@@ -38,6 +38,19 @@ constexpr const char* kAtlasPaths[] = {
     case MaterialSpriteId::environment_door_chaos:
     case MaterialSpriteId::environment_hole:
         return MaterialAtlasId::environment;
+    case MaterialSpriteId::effect_fire:
+    case MaterialSpriteId::effect_water:
+    case MaterialSpriteId::effect_lightning:
+    case MaterialSpriteId::effect_chaos:
+    case MaterialSpriteId::effect_hit_spark:
+    case MaterialSpriteId::effect_launcher_trail:
+    case MaterialSpriteId::effect_landing_dust:
+    case MaterialSpriteId::effect_affix_aura:
+    case MaterialSpriteId::loot_icon_normal:
+    case MaterialSpriteId::loot_icon_magic:
+    case MaterialSpriteId::loot_icon_rare:
+    case MaterialSpriteId::loot_icon_abyss:
+        return MaterialAtlasId::effects_ui;
     default:
         break;
     }

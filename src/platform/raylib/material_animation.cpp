@@ -177,6 +177,16 @@ MaterialSpriteId select_door_sprite(dungeon::DungeonElement element) noexcept {
     return MaterialSpriteId::missing;
 }
 
+MaterialSpriteId select_element_effect(dungeon::DungeonElement element) noexcept {
+    switch (element) {
+    case dungeon::DungeonElement::fire: return MaterialSpriteId::effect_fire;
+    case dungeon::DungeonElement::water: return MaterialSpriteId::effect_water;
+    case dungeon::DungeonElement::lightning: return MaterialSpriteId::effect_lightning;
+    case dungeon::DungeonElement::chaos: return MaterialSpriteId::effect_chaos;
+    }
+    return MaterialSpriteId::missing;
+}
+
 float material_actor_draw_scale(bool player, float projection_scale) noexcept {
     if (projection_scale <= 0.0F) return 0.0F;
     const float trimmed_height = player ? kPlayerTrimmedHeight

@@ -253,7 +253,7 @@ const dungeon::GroundItemSnapshot* ground_item_with_ordinal(
 
 void draw_ground_items(const dungeon::DungeonSnapshot& snapshot,
     const GroundLootView& ground_loot,
-    float width, float height) noexcept {
+    const MaterialPack& material_pack, float width, float height) noexcept {
     for (std::size_t index = 0U; index < ground_loot.count; ++index) {
         const dungeon::GroundItemSnapshot* const item =
             ground_item_with_ordinal(snapshot,
@@ -269,7 +269,11 @@ void draw_ground_items(const dungeon::DungeonSnapshot& snapshot,
             static_cast<int>(projected.ground_y + 2.0F),
             17.0F * projected.scale, 6.0F * projected.scale,
             Fade(color, 0.24F));
-        draw_ground_item_shape(item->slot, center, projected.scale, color);
+        const bool abyss = item->source == dungeon::GroundItemSource::abyss_chest;
+        if (!material_pack.draw(select_loot_sprite(item->rarity, abyss), center,
+                false, 0.30F * projected.scale)) {
+            draw_ground_item_shape(item->slot, center, projected.scale, color);
+        }
     }
 }
 
@@ -339,7 +343,7 @@ void CombatRenderer::draw_room(
     }
     draw_abyss(current, static_cast<float>(GetTime()));
     draw_environment_hazards(current, width, height);
-    draw_ground_items(current, ground_loot, width, height);
+    draw_ground_items(current, ground_loot, material_pack_, width, height);
     draw_doors(current, width, height, material_pack_, draw_material_environment);
     draw_hole(current, material_pack_, draw_material_environment);
 }

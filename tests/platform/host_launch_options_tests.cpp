@@ -79,7 +79,19 @@ arpg::test::Failure no_arguments_leave_options_empty() noexcept {
     ARPG_REQUIRE(result.error == HostArgumentError::none);
     ARPG_REQUIRE(!result.options.save_directory.has_value());
     ARPG_REQUIRE(!result.options.settings_directory.has_value());
+    ARPG_REQUIRE(!result.options.screenshot_directory.has_value());
     ARPG_REQUIRE(!result.options.new_run_seed.has_value());
+    return {};
+}
+
+arpg::test::Failure screenshot_directory_is_absolute_and_distinct() noexcept {
+    const char* const argv[] = {"arpg", "--screenshot-dir", "capture evidence"};
+    const HostArgumentResult result = parse(3, argv);
+    ARPG_REQUIRE(result.error == HostArgumentError::none);
+    ARPG_REQUIRE(result.options.screenshot_directory.has_value());
+    ARPG_REQUIRE(result.options.screenshot_directory->is_absolute());
+    ARPG_REQUIRE(result.options.screenshot_directory->filename()
+        == "capture evidence");
     return {};
 }
 
@@ -210,6 +222,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"decimal and hexadecimal seed", &decimal_and_hex_seeds_parse_to_same_value},
     {"absolute save directory", &save_directory_with_spaces_is_frozen_absolute},
     {"isolated settings directory", &settings_directory_is_frozen_and_isolated_from_save},
+    {"isolated screenshot directory", &screenshot_directory_is_absolute_and_distinct},
     {"failed temporary directory cleanup", &failed_temporary_directory_never_removes_unowned_path},
     {"duplicate and unknown options", &duplicate_and_unknown_options_are_rejected},
     {"missing and invalid seed", &missing_and_invalid_seed_values_are_rejected},
