@@ -23,6 +23,8 @@ add_library(arpg_raylib STATIC
     hud_renderer.cpp
     inventory_renderer.cpp
     inventory_view_math.cpp
+    material_animation.cpp
+    material_asset_validation.cpp
     passive_tree_renderer.cpp
     passive_tree_view_math.cpp
     pause_menu_state.cpp

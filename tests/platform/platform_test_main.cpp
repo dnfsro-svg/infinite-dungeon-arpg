@@ -29,6 +29,8 @@ arpg::test::TestSuite hud_font_suite() noexcept;
 arpg::test::TestSuite hud_render_plan_suite() noexcept;
 arpg::test::TestSuite hud_host_integration_suite() noexcept;
 arpg::test::TestSuite ground_loot_view_suite() noexcept;
+arpg::test::TestSuite material_asset_validation_suite() noexcept;
+arpg::test::TestSuite material_animation_suite() noexcept;
 
 int main() {
 #if defined(_WIN32) && defined(_DEBUG)
@@ -65,7 +67,9 @@ int main() {
         hud_render_plan_suite(),
         hud_host_integration_suite(),
         ground_loot_view_suite(),
+        material_asset_validation_suite(),
+        material_animation_suite(),
     };
 
-    return arpg::test::run_suites(suites, 277, "stage 11d loot filter runtime");
+    return arpg::test::run_suites(suites, 285, "stage 12 material manifest runtime");
 }
