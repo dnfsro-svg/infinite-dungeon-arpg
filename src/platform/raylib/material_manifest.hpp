@@ -30,7 +30,8 @@ inline constexpr MaterialAtlasDefinition kDefaultMaterialAtlases[] = {
 
 #define ARPG_ACTOR_FRAME(sprite, column, row) \
     {MaterialSpriteId::sprite, MaterialAtlasId::actors, \
-        {static_cast<float>((column) * 224), static_cast<float>((row) * 224), 224.0F, 224.0F}, \
+        {static_cast<float>((column) * 224), static_cast<float>((row) * 224), \
+            224.0F, 224.0F}, \
         {112.0F, 224.0F}, 0U}
 
 inline constexpr MaterialFrameDefinition kDefaultMaterialFrames[] = {

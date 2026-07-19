@@ -33,6 +33,8 @@ if(TARGET arpg_raylib)
     target_compile_features(arpg_platform_tests PRIVATE cxx_std_17)
     target_include_directories(arpg_platform_tests
         PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+    target_compile_definitions(arpg_platform_tests
+        PRIVATE ARPG_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
     target_link_libraries(arpg_platform_tests PRIVATE arpg_raylib)
     if(MSVC)
         target_compile_options(arpg_platform_tests PRIVATE /utf-8)

@@ -4,7 +4,10 @@
 #include "material_asset_validation.hpp"
 #include "material_manifest.hpp"
 
+#include <raylib.h>
+
 #include <array>
+#include <cstdint>
 
 namespace {
 
@@ -68,9 +71,101 @@ arpg::test::Failure stage12_monster_phases_use_distinct_material_frames() noexce
 }
 
 arpg::test::Failure stage12_actor_material_scale_matches_existing_geometry() noexcept {
-    ARPG_REQUIRE(arpg::platform::material_actor_draw_scale(true, 1.0F) == 0.36F);
-    ARPG_REQUIRE(arpg::platform::material_actor_draw_scale(false, 1.0F) == 0.34F);
-    ARPG_REQUIRE(arpg::platform::material_actor_draw_scale(true, 0.5F) == 0.18F);
+    constexpr float kPlayerTrimmedHeight = 172.0F;
+    constexpr float kPlayerTargetHeight = 82.0F;
+    constexpr float kMonsterTrimmedHeight = 176.0F;
+    constexpr float kMonsterTargetHeight = 78.0F;
+    const float player_scale = arpg::platform::material_actor_draw_scale(true, 1.0F);
+    const float monster_scale = arpg::platform::material_actor_draw_scale(false, 1.0F);
+    ARPG_REQUIRE(player_scale * kPlayerTrimmedHeight >= kPlayerTargetHeight - 0.1F);
+    ARPG_REQUIRE(player_scale * kPlayerTrimmedHeight <= kPlayerTargetHeight + 0.1F);
+    ARPG_REQUIRE(monster_scale * kMonsterTrimmedHeight >= kMonsterTargetHeight - 0.1F);
+    ARPG_REQUIRE(monster_scale * kMonsterTrimmedHeight <= kMonsterTargetHeight + 0.1F);
+    ARPG_REQUIRE(arpg::platform::material_actor_draw_scale(true, 0.5F)
+        == player_scale * 0.5F);
+    return {};
+}
+
+std::uint64_t sprite_pixel_hash(const Color* pixels, int image_width,
+    const arpg::platform::MaterialFrameDefinition& frame) noexcept {
+    std::uint64_t hash = 1469598103934665603ULL;
+    const int left = static_cast<int>(frame.source.x);
+    const int top = static_cast<int>(frame.source.y);
+    const int right = left + static_cast<int>(frame.source.width);
+    const int bottom = top + static_cast<int>(frame.source.height);
+    for (int y = top; y < bottom; ++y) {
+        for (int x = left; x < right; ++x) {
+            const Color pixel = pixels[y * image_width + x];
+            hash ^= pixel.r; hash *= 1099511628211ULL;
+            hash ^= pixel.g; hash *= 1099511628211ULL;
+            hash ^= pixel.b; hash *= 1099511628211ULL;
+            hash ^= pixel.a; hash *= 1099511628211ULL;
+        }
+    }
+    return hash;
+}
+
+bool frame_has_opaque_pixel(const Color* pixels, int image_width,
+    const arpg::platform::MaterialFrameDefinition& frame) noexcept {
+    const int left = static_cast<int>(frame.source.x);
+    const int top = static_cast<int>(frame.source.y);
+    const int right = left + static_cast<int>(frame.source.width);
+    const int bottom = top + static_cast<int>(frame.source.height);
+    for (int y = top; y < bottom; ++y) {
+        for (int x = left; x < right; ++x) {
+            if (pixels[y * image_width + x].a > 0U) return true;
+        }
+    }
+    return false;
+}
+
+arpg::test::Failure stage12_all_actor_manifest_frames_have_exported_content() noexcept {
+    const Image image = LoadImage(ARPG_PROJECT_SOURCE_DIR "/assets/stage12/actors.png");
+    ARPG_REQUIRE(image.data != nullptr);
+    Color* const pixels = LoadImageColors(image);
+    ARPG_REQUIRE(pixels != nullptr);
+    const arpg::platform::MaterialManifestDefinition manifest =
+        arpg::platform::default_material_manifest();
+    for (std::size_t index = 0U; index < manifest.frame_count; ++index) {
+        const arpg::platform::MaterialFrameDefinition& frame = manifest.frames[index];
+        if (frame.atlas != arpg::platform::MaterialAtlasId::actors) continue;
+        ARPG_REQUIRE(frame_has_opaque_pixel(pixels, image.width, frame));
+    }
+    UnloadImageColors(pixels);
+    UnloadImage(image);
+    return {};
+}
+
+arpg::test::Failure stage12_monster_phase_frames_have_unique_exported_pixels() noexcept {
+    constexpr std::array<MonsterId, 8> kMonsters{{
+        MonsterId::fire_bomber, MonsterId::fire_charger,
+        MonsterId::water_bulwark, MonsterId::water_support,
+        MonsterId::lightning_shooter, MonsterId::lightning_dasher,
+        MonsterId::chaos_chaser, MonsterId::chaos_hazard,
+    }};
+    constexpr std::array<MonsterAiPhase, 7> kPhases{{
+        MonsterAiPhase::idle, MonsterAiPhase::move, MonsterAiPhase::telegraph,
+        MonsterAiPhase::active, MonsterAiPhase::recovery,
+        MonsterAiPhase::cooldown, MonsterAiPhase::defeated,
+    }};
+    const Image image = LoadImage(ARPG_PROJECT_SOURCE_DIR "/assets/stage12/actors.png");
+    ARPG_REQUIRE(image.data != nullptr);
+    Color* const pixels = LoadImageColors(image);
+    ARPG_REQUIRE(pixels != nullptr);
+    for (const MonsterId monster : kMonsters) {
+        std::array<std::uint64_t, kPhases.size()> hashes{};
+        for (std::size_t index = 0U; index < kPhases.size(); ++index) {
+            const arpg::platform::MaterialFrameDefinition* frame = find_manifest_frame(
+                arpg::platform::select_monster_sprite(monster, kPhases[index]));
+            ARPG_REQUIRE(frame != nullptr);
+            hashes[index] = sprite_pixel_hash(pixels, image.width, *frame);
+            for (std::size_t prior = 0U; prior < index; ++prior) {
+                ARPG_REQUIRE(hashes[index] != hashes[prior]);
+            }
+        }
+    }
+    UnloadImageColors(pixels);
+    UnloadImage(image);
     return {};
 }
 
@@ -98,6 +193,10 @@ constexpr arpg::test::TestCase kCases[] = {
         &stage12_player_attack_actions_have_distinct_material_frames},
     {"scales material actors to the existing geometry envelope",
         &stage12_actor_material_scale_matches_existing_geometry},
+    {"exports distinct pixels for every monster phase frame",
+        &stage12_monster_phase_frames_have_unique_exported_pixels},
+    {"exports content for every actor manifest frame",
+        &stage12_all_actor_manifest_frames_have_exported_content},
 };
 
 }  // namespace

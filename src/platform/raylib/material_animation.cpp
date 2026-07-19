@@ -3,6 +3,11 @@
 namespace arpg::platform {
 namespace {
 
+constexpr float kPlayerTrimmedHeight = 172.0F;
+constexpr float kPlayerTargetHeight = 82.0F;
+constexpr float kMonsterTrimmedHeight = 176.0F;
+constexpr float kMonsterTargetHeight = 78.0F;
+
 [[nodiscard]] MaterialSpriteId select_attack_sprite(
     combat::AttackId attack) noexcept {
     switch (attack) {
@@ -174,7 +179,11 @@ MaterialSpriteId select_door_sprite(dungeon::DungeonElement element) noexcept {
 
 float material_actor_draw_scale(bool player, float projection_scale) noexcept {
     if (projection_scale <= 0.0F) return 0.0F;
-    return projection_scale * (player ? 0.36F : 0.34F);
+    const float trimmed_height = player ? kPlayerTrimmedHeight
+                                        : kMonsterTrimmedHeight;
+    const float target_height = player ? kPlayerTargetHeight
+                                       : kMonsterTargetHeight;
+    return projection_scale * target_height / trimmed_height;
 }
 
 }  // namespace arpg::platform
