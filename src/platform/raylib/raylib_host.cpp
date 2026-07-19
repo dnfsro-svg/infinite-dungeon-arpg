@@ -356,26 +356,26 @@ void inject_stage11b_open_settings(PhysicalKeySnapshot& snapshot,
     case Stage11BValidationScenario::rebound_attack:
     case Stage11BValidationScenario::conflict_swap:
         if (frame == 1U) snapshot.escape = true;
-        else if (frame == 2U || (frame >= 4U && frame <= 10U)
-            || (frame >= 13U && frame <= 19U)) {
+        else if (frame == 2U || (frame >= 4U && frame <= 11U)
+            || (frame >= 14U && frame <= 20U)) {
             inject_stage11b_pressed(snapshot, settings::StableKey::arrow_down);
-        } else if (frame == 3U || frame == 11U || frame == 20U) {
+        } else if (frame == 3U || frame == 12U || frame == 21U) {
             snapshot.enter = true;
-        } else if (frame == 12U) {
+        } else if (frame == 13U) {
             inject_stage11b_pressed(snapshot,
                 config.stage11b_validation == Stage11BValidationScenario::rebound_attack
                     ? settings::StableKey::u : settings::StableKey::k);
         } else if (config.stage11b_validation
                        == Stage11BValidationScenario::rebound_attack
-                   && (frame == 21U || frame == 22U)) {
+                   && (frame == 22U || frame == 23U)) {
             snapshot.escape = true;
         } else if (config.stage11b_validation
                        == Stage11BValidationScenario::rebound_attack
-                   && frame == 23U) {
+                   && frame == 24U) {
             inject_stage11b_pressed(snapshot, settings::StableKey::j);
         } else if (config.stage11b_validation
                        == Stage11BValidationScenario::rebound_attack
-                   && frame == 24U) {
+                   && frame == 25U) {
             inject_stage11b_pressed(snapshot, settings::StableKey::u);
         }
         break;
@@ -401,11 +401,11 @@ void inject_stage11b_open_settings(PhysicalKeySnapshot& snapshot,
         return state.injected_frame >= 4U
             && pause_menu.screen == PauseScreen::settings;
     case Stage11BValidationScenario::rebound_attack:
-        return state.injected_frame >= 24U && state.old_attack_checked
+        return state.injected_frame >= 25U && state.old_attack_checked
             && state.new_attack_count != 0U
             && pause_menu.screen == PauseScreen::closed;
     case Stage11BValidationScenario::conflict_swap:
-        return state.injected_frame >= 20U
+        return state.injected_frame >= 21U
             && pause_menu.screen == PauseScreen::settings;
     }
     return false;
@@ -2051,11 +2051,11 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     submit_frame_actions(*session, frame_input);
                 if (config.stage11b_validation
                         == Stage11BValidationScenario::rebound_attack) {
-                    if (stage11b_validation_state.injected_frame == 23U) {
+                    if (stage11b_validation_state.injected_frame == 24U) {
                         stage11b_validation_state.old_attack_checked = true;
                         stage11b_validation_state.old_attack_count +=
                             accepted_actions[0] ? 1U : 0U;
-                    } else if (stage11b_validation_state.injected_frame == 24U) {
+                    } else if (stage11b_validation_state.injected_frame == 25U) {
                         stage11b_validation_state.new_attack_count +=
                             accepted_actions[0] ? 1U : 0U;
                     }
@@ -2269,7 +2269,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             const bool stage11b_visible_capture =
                 (config.stage11b_validation == Stage11BValidationScenario::rebound_attack
                     || config.stage11b_validation == Stage11BValidationScenario::conflict_swap)
-                && stage11b_validation_state.injected_frame == 20U;
+                && stage11b_validation_state.injected_frame == 21U;
             const bool stage11b_paused_visible_capture =
                 config.stage11b_validation == Stage11BValidationScenario::paused_freeze
                 && pause_menu.screen != PauseScreen::closed

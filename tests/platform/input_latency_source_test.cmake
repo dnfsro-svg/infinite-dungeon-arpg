@@ -96,7 +96,8 @@ function(arpg_physical_input_chain_is_valid SOURCE OUT_VALID)
     set(WS1 "[ \t\r\n]+")
     string(FIND "${SOURCE}" "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys()" SAMPLE_INDEX)
     string(FIND "${SOURCE}" "const PhysicalKeySnapshot stage11b_physical_keys =" STAGE11B_INDEX)
-    string(FIND "${SOURCE}" "const PhysicalKeySnapshot physical_keys = inject_stage11c_physical_edges(" STAGE11C_INDEX)
+    string(FIND "${SOURCE}" "const PhysicalKeySnapshot stage11c_physical_keys = inject_stage11c_physical_edges(" STAGE11C_INDEX)
+    string(FIND "${SOURCE}" "const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges(" STAGE11D_INDEX)
     string(FIND "${SOURCE}" "HostFrameInput frame_input = map_host_frame_input(" MAP_INDEX)
     string(FIND "${SOURCE}" "DeathInputGate death_gate = host_death_input_gate(" DEATH_GATE_INDEX)
     string(FIND "${SOURCE}" "const bool pause_blocks_gameplay =" PAUSE_BLOCK_INDEX)
@@ -111,6 +112,7 @@ function(arpg_physical_input_chain_is_valid SOURCE OUT_VALID)
     string(FIND "${SOURCE}" "session->request_descent(in_range)" REQUEST_DESCENT_INDEX)
     string(FIND "${SOURCE}" "const combat::MovementInput movement = forward_movement" MOVEMENT_INPUT_INDEX)
     if(SAMPLE_INDEX EQUAL -1 OR STAGE11B_INDEX EQUAL -1 OR STAGE11C_INDEX EQUAL -1
+            OR STAGE11D_INDEX EQUAL -1
             OR MAP_INDEX EQUAL -1 OR DEATH_GATE_INDEX EQUAL -1 OR PAUSE_BLOCK_INDEX EQUAL -1
             OR HOST_GATE_INDEX EQUAL -1 OR PASSIVE_GATE_INDEX EQUAL -1 OR INVENTORY_GATE_INDEX EQUAL -1
             OR FORWARD_ACTIONS_INDEX EQUAL -1 OR FORWARD_DESCENT_DECL_INDEX EQUAL -1
@@ -118,7 +120,8 @@ function(arpg_physical_input_chain_is_valid SOURCE OUT_VALID)
             OR FORWARD_DESCENT_INDEX EQUAL -1 OR REQUEST_DESCENT_INDEX EQUAL -1
             OR MOVEMENT_INPUT_INDEX EQUAL -1
             OR NOT SAMPLE_INDEX LESS STAGE11B_INDEX OR NOT STAGE11B_INDEX LESS STAGE11C_INDEX
-            OR NOT STAGE11C_INDEX LESS MAP_INDEX OR NOT MAP_INDEX LESS DEATH_GATE_INDEX
+            OR NOT STAGE11C_INDEX LESS STAGE11D_INDEX OR NOT STAGE11D_INDEX LESS MAP_INDEX
+            OR NOT MAP_INDEX LESS DEATH_GATE_INDEX
             OR NOT DEATH_GATE_INDEX LESS PAUSE_BLOCK_INDEX OR NOT PAUSE_BLOCK_INDEX LESS HOST_GATE_INDEX
             OR NOT HOST_GATE_INDEX LESS PASSIVE_GATE_INDEX OR NOT PASSIVE_GATE_INDEX LESS INVENTORY_GATE_INDEX
             OR NOT INVENTORY_GATE_INDEX LESS FORWARD_ACTIONS_INDEX
@@ -134,8 +137,10 @@ function(arpg_physical_input_chain_is_valid SOURCE OUT_VALID)
 
     math(EXPR STAGE11B_LENGTH "${STAGE11C_INDEX} - ${STAGE11B_INDEX}")
     string(SUBSTRING "${SOURCE}" ${STAGE11B_INDEX} ${STAGE11B_LENGTH} STAGE11B_SOURCE)
-    math(EXPR STAGE11C_LENGTH "${MAP_INDEX} - ${STAGE11C_INDEX}")
+    math(EXPR STAGE11C_LENGTH "${STAGE11D_INDEX} - ${STAGE11C_INDEX}")
     string(SUBSTRING "${SOURCE}" ${STAGE11C_INDEX} ${STAGE11C_LENGTH} STAGE11C_SOURCE)
+    math(EXPR STAGE11D_LENGTH "${MAP_INDEX} - ${STAGE11D_INDEX}")
+    string(SUBSTRING "${SOURCE}" ${STAGE11D_INDEX} ${STAGE11D_LENGTH} STAGE11D_SOURCE)
     string(SUBSTRING "${SOURCE}" ${MAP_INDEX} -1 MAP_SOURCE)
     math(EXPR HOST_GATE_LENGTH "${PASSIVE_GATE_INDEX} - ${HOST_GATE_INDEX}")
     string(SUBSTRING "${SOURCE}" ${HOST_GATE_INDEX} ${HOST_GATE_LENGTH} HOST_GATE_SOURCE)
@@ -161,6 +166,7 @@ function(arpg_physical_input_chain_is_valid SOURCE OUT_VALID)
 
     if(NOT STAGE11B_SOURCE MATCHES "inject_stage11b_physical_edges${WS}\\(${WS}sampled_physical_keys,${WS}config,${WS}stage11b_validation_state${WS}\\)"
             OR NOT STAGE11C_SOURCE MATCHES "inject_stage11c_physical_edges${WS}\\(${WS}stage11b_physical_keys,${WS}config,${WS}input_settings,${WS}current,${WS}stage11c_validation_state${WS}\\)"
+            OR NOT STAGE11D_SOURCE MATCHES "inject_stage11d_physical_edges${WS}\\(${WS}stage11c_physical_keys,${WS}config,${WS}input_settings,${WS}current,${WS}stage11d_validation_state${WS}\\)"
             OR NOT MAP_SOURCE MATCHES "map_host_frame_input${WS}\\(${WS}input_settings,${WS}physical_keys${WS}\\)"
             OR NOT SOURCE MATCHES "DeathInputGate death_gate =${WS}host_death_input_gate${WS}\\(${WS}death_saving,${WS}death_pending,${WS}frame_input\\.keys,${WS}physical_keys${WS}\\)${WS};"
             OR NOT HOST_GATE_CALL_COUNT EQUAL 2
@@ -185,7 +191,7 @@ endfunction()
 arpg_physical_input_chain_is_valid("${HOST_ENTRY_SOURCE}" HOST_INPUT_CHAIN_VALID)
 if(NOT HOST_INPUT_CHAIN_VALID)
     message(FATAL_ERROR
-        "host input must sample once, apply Stage11B then Stage11C physical edges, and map that snapshot")
+        "host input must sample once, apply Stage11B, Stage11C, then Stage11D physical edges, and map that snapshot")
 endif()
 
 set(STAGE11B_INPUT_CHAIN_REFERENCE [=[
@@ -193,9 +199,12 @@ const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();
 const PhysicalKeySnapshot stage11b_physical_keys =
     inject_stage11b_physical_edges(
     sampled_physical_keys, config, stage11b_validation_state);
-const PhysicalKeySnapshot physical_keys = inject_stage11c_physical_edges(
+const PhysicalKeySnapshot stage11c_physical_keys = inject_stage11c_physical_edges(
     stage11b_physical_keys, config, input_settings, current,
     stage11c_validation_state);
+const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges(
+    stage11c_physical_keys, config, input_settings, current,
+    stage11d_validation_state);
 HostFrameInput frame_input = map_host_frame_input(
     input_settings, physical_keys);
 DeathInputGate death_gate = host_death_input_gate(
@@ -264,9 +273,12 @@ const PhysicalKeySnapshot stage11b_physical_keys =
     inject_stage11b_physical_edges(
     sampled_physical_keys, config, stage11b_validation_state);
 const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();
-const PhysicalKeySnapshot physical_keys = inject_stage11c_physical_edges(
+const PhysicalKeySnapshot stage11c_physical_keys = inject_stage11c_physical_edges(
     stage11b_physical_keys, config, input_settings, current,
     stage11c_validation_state);
+const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges(
+    stage11c_physical_keys, config, input_settings, current,
+    stage11d_validation_state);
 HostFrameInput frame_input = map_host_frame_input(
     input_settings, physical_keys);
 ]=])
@@ -283,9 +295,12 @@ const PhysicalKeySnapshot stage11b_physical_keys =
     sampled_physical_keys, config, stage11b_validation_state);
 HostFrameInput frame_input = map_host_frame_input(
     input_settings, physical_keys);
-const PhysicalKeySnapshot physical_keys = inject_stage11c_physical_edges(
+const PhysicalKeySnapshot stage11c_physical_keys = inject_stage11c_physical_edges(
     stage11b_physical_keys, config, input_settings, current,
     stage11c_validation_state);
+const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges(
+    stage11c_physical_keys, config, input_settings, current,
+    stage11d_validation_state);
 ]=])
 arpg_physical_input_chain_is_valid("${STAGE11B_INPUT_CHAIN_MAP_BEFORE_INJECT}"
     STAGE11B_INPUT_CHAIN_MAP_BEFORE_INJECT_VALID)
@@ -301,6 +316,15 @@ arpg_physical_input_chain_is_valid("${STAGE11C_BYPASS_CHAIN}"
     STAGE11C_BYPASS_CHAIN_VALID)
 if(STAGE11C_BYPASS_CHAIN_VALID)
     message(FATAL_ERROR "input chain self-check accepted Stage11C bypass mutation")
+endif()
+string(REPLACE
+    "stage11c_physical_keys, config, input_settings, current,"
+    "stage11b_physical_keys, config, input_settings, current,"
+    STAGE11D_BYPASS_CHAIN "${STAGE11B_INPUT_CHAIN_REFERENCE}")
+arpg_physical_input_chain_is_valid("${STAGE11D_BYPASS_CHAIN}"
+    STAGE11D_BYPASS_CHAIN_VALID)
+if(STAGE11D_BYPASS_CHAIN_VALID)
+    message(FATAL_ERROR "input chain self-check accepted Stage11D bypass mutation")
 endif()
 
 set(SUBMIT_DECLARATION [=[

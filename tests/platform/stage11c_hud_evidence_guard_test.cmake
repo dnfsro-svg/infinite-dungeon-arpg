@@ -146,7 +146,9 @@ endif()
 unset(_previous_order)
 foreach(_ordered IN ITEMS
         "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();"
-        "const PhysicalKeySnapshot physical_keys = inject_stage11c_physical_edges("
+        "const PhysicalKeySnapshot stage11b_physical_keys ="
+        "const PhysicalKeySnapshot stage11c_physical_keys = inject_stage11c_physical_edges("
+        "const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges("
         "HostFrameInput frame_input = map_host_frame_input("
         "HostFrameGateResult host_gate"
         "submit_frame_actions(*session, frame_input)")

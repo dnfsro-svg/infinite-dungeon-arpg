@@ -105,7 +105,7 @@ endforeach()
 foreach(_required_normal IN ITEMS
         "HudPresentedFrame::death_overlay" "HudPresentedFrame::normal"
         "renderer.observe_presented_hud_frame" "BeginDrawing();"
-        "renderer.draw(previous, current, runtime.render_status()")
+        "const GroundLootView ground_loot_view = renderer.draw(")
     string(FIND "${_normal_hud_seam}" "${_required_normal}" _found)
     if(_found EQUAL -1)
         message(FATAL_ERROR
