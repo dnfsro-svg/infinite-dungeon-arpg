@@ -43,6 +43,59 @@ bool copy_materials(const std::filesystem::path& executable) {
     return true;
 }
 
+bool path_is_within(const std::filesystem::path& child,
+    const std::filesystem::path& parent) {
+    const auto relative = child.lexically_relative(parent);
+    return !relative.empty() && !relative.is_absolute()
+        && *relative.begin() != "..";
+}
+
+bool allowed_evidence_parent(const std::filesystem::path& candidate) {
+    std::error_code error{};
+    const auto absolute = std::filesystem::absolute(candidate, error)
+        .lexically_normal();
+    if (error || absolute.empty() || absolute == absolute.root_path()
+        || absolute.filename() != "stage12 material evidence") return false;
+    const std::string generic = absolute.generic_string();
+    return generic.find("/out/build/") != std::string::npos;
+}
+
+bool prepare_evidence_run(const std::filesystem::path& candidate,
+    std::filesystem::path& run_root) {
+    if (!allowed_evidence_parent(candidate)) return false;
+    std::error_code error{};
+    const auto parent = std::filesystem::absolute(candidate, error).lexically_normal();
+    if (error) return false;
+    run_root = parent / "stage12-run";
+    if (!path_is_within(run_root, parent)) return false;
+    const auto status = std::filesystem::symlink_status(run_root, error);
+    if (error && error != std::errc::no_such_file_or_directory) return false;
+    if (!error && std::filesystem::is_symlink(status)) return false;
+    error.clear();
+    std::filesystem::remove_all(run_root, error);
+    if (error) return false;
+    std::filesystem::create_directories(run_root, error);
+    return !error;
+}
+
+bool root_safety_self_test(const std::filesystem::path& root) {
+    std::error_code error{};
+    std::filesystem::create_directories(root, error);
+    if (error) return false;
+    const auto sentinel = root / "sentinel.txt";
+    std::ofstream output(sentinel, std::ios::out | std::ios::trunc);
+    output << "must survive";
+    output.close();
+    std::filesystem::path ignored{};
+    const bool rejected_temp_parent = !prepare_evidence_run(root, ignored);
+    const bool rejected_source_root = !prepare_evidence_run(
+        std::filesystem::path{ARPG_PROJECT_SOURCE_DIR}, ignored);
+    const bool rejected_workspace = !prepare_evidence_run(
+        std::filesystem::path{ARPG_PROJECT_SOURCE_DIR}.parent_path(), ignored);
+    return rejected_temp_parent && rejected_source_root && rejected_workspace
+        && std::filesystem::is_regular_file(sentinel, error) && !error;
+}
+
 bool capture(const std::filesystem::path& root, const Resolution& resolution,
     const char* image_name = nullptr, bool showcase = false,
     bool request_f12 = false) {
@@ -103,12 +156,15 @@ bool run_input_hole_evidence(const std::filesystem::path& root,
 }  // namespace
 
 int main(int argc, char** argv) {
+    if (argc == 3 && argv[1] != nullptr && argv[2] != nullptr
+        && std::string{argv[1]} == "--root-safety-self-test") {
+        return root_safety_self_test(std::filesystem::absolute(argv[2])) ? 0 : 1;
+    }
     if (argc != 2 || argv[1] == nullptr) return 2;
-    const std::filesystem::path root = std::filesystem::absolute(argv[1]);
+    std::filesystem::path root{};
+    if (!prepare_evidence_run(std::filesystem::absolute(argv[1]), root)
+        || !copy_materials(std::filesystem::absolute(argv[0]))) return 3;
     std::error_code error{};
-    std::filesystem::remove_all(root, error);
-    std::filesystem::create_directories(root, error);
-    if (error || !copy_materials(std::filesystem::absolute(argv[0]))) return 3;
     bool captures_ok = true;
     for (const Resolution& resolution : kResolutions) {
         captures_ok = capture(root, resolution) && captures_ok;

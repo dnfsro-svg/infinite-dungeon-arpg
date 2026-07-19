@@ -67,10 +67,17 @@ if(TARGET arpg_raylib)
         NAME stage12.material_evidence_validator
         COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
             "${CMAKE_CURRENT_SOURCE_DIR}/stage12_material_validator.ps1"
-            -EvidenceDirectory "${CMAKE_CURRENT_BINARY_DIR}/stage12 material evidence")
+            -EvidenceDirectory "${CMAKE_CURRENT_BINARY_DIR}/stage12 material evidence/stage12-run")
     set_tests_properties(stage12.material_evidence_validator
         PROPERTIES LABELS "platform;raylib;stage12" TIMEOUT 60
             FIXTURES_REQUIRED stage12_material_evidence)
+    add_test(
+        NAME stage12.material_root_safety
+        COMMAND "$<TARGET_FILE:arpg_stage12_material_formal>"
+            --root-safety-self-test
+            "${CMAKE_CURRENT_BINARY_DIR}/stage12-root-safety")
+    set_tests_properties(stage12.material_root_safety
+        PROPERTIES LABELS "headless;platform;stage12" TIMEOUT 30)
 
     add_executable(arpg_stage11c_hud_stress
         ../core/allocation_probe.cpp
