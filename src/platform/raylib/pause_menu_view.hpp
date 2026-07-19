@@ -10,7 +10,7 @@
 
 namespace arpg::platform {
 
-inline constexpr std::size_t kPauseMenuRowCapacity = 16U;
+inline constexpr std::size_t kPauseMenuRowCapacity = 17U;
 inline constexpr std::size_t kPauseMenuRowTextCapacity = 64U;
 
 struct PauseMenuLayout final {

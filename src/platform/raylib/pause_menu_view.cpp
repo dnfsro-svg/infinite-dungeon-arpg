@@ -12,7 +12,7 @@ constexpr float kPanelHeight = 544.0F;
 constexpr float kRowInsetX = 24.0F;
 constexpr float kFirstRowY = 60.0F;
 constexpr float kRowHeight = 22.0F;
-constexpr float kRowStride = 27.0F;
+constexpr float kRowStride = 25.0F;
 constexpr float kFooterY = 496.0F;
 constexpr float kFooterHeight = 28.0F;
 
@@ -62,19 +62,22 @@ void build_settings_rows(
     write_row(view, 2U, "VSync: %s (saved %s)",
         enabled_label(state.draft.vsync_enabled),
         enabled_label(state.committed.vsync_enabled));
+    write_row(view, 3U, "Loot Filter: %s (saved %s)",
+        settings::loot_filter_label(state.draft.loot_filter_mode),
+        settings::loot_filter_label(state.committed.loot_filter_mode));
 
     for (std::size_t index = 0U;
          index < static_cast<std::size_t>(settings::SettingAction::count);
          ++index) {
         const auto action = static_cast<settings::SettingAction>(index);
-        write_row(view, index + 3U, "%s: %s (saved %s)",
+        write_row(view, index + 4U, "%s: %s (saved %s)",
             settings::action_label(action),
             stable_key_label(settings::binding_for(state.draft, action)),
             stable_key_label(settings::binding_for(state.committed, action)));
     }
-    write_row(view, 13U, "%s", "Reset Defaults");
-    write_row(view, 14U, "%s", "Apply");
-    write_row(view, 15U, "%s", "Cancel");
+    write_row(view, 14U, "%s", "Reset Defaults");
+    write_row(view, 15U, "%s", "Apply");
+    write_row(view, 16U, "%s", "Cancel");
 }
 
 }  // namespace

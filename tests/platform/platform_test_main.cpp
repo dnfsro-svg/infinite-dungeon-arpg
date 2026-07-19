@@ -63,5 +63,5 @@ int main() {
         hud_host_integration_suite(),
     };
 
-    return arpg::test::run_suites(suites, 241, "stage 11c final review fixes");
+    return arpg::test::run_suites(suites, 242, "stage 11c final review fixes");
 }

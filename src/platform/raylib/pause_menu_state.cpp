@@ -8,10 +8,14 @@ namespace arpg::platform {
 namespace {
 
 constexpr std::size_t kRootRowCount = 3U;
-constexpr std::size_t kSettingsRowCount = 16U;
+constexpr std::size_t kSettingsRowCount = 17U;
 constexpr std::size_t kQuitRowCount = 2U;
-constexpr std::size_t kFirstBindingRow = 3U;
-constexpr std::size_t kLastBindingRow = 12U;
+constexpr std::size_t kLootFilterRow = 3U;
+constexpr std::size_t kFirstBindingRow = 4U;
+constexpr std::size_t kLastBindingRow = 13U;
+constexpr std::size_t kResetRow = 14U;
+constexpr std::size_t kApplyRow = 15U;
+constexpr std::size_t kCancelRow = 16U;
 
 constexpr char kInvalidBindingMessage[] = "Key cannot be assigned";
 constexpr char kInvalidSettingsMessage[] = "Settings are invalid";
@@ -120,6 +124,41 @@ void return_to_root(PauseMenuState& state) noexcept {
         : PauseCommand::preview;
 }
 
+[[nodiscard]] PauseCommand update_loot_filter(
+    PauseMenuState& state,
+    const PauseInput& input) noexcept {
+    if (!input.left && !input.right && !confirmed(input)) {
+        return PauseCommand::none;
+    }
+    const settings::LootFilterMode before = state.draft.loot_filter_mode;
+    if (input.left) {
+        switch (before) {
+            case settings::LootFilterMode::show_all:
+                state.draft.loot_filter_mode = settings::LootFilterMode::rare_only;
+                break;
+            case settings::LootFilterMode::magic_or_better:
+                state.draft.loot_filter_mode = settings::LootFilterMode::show_all;
+                break;
+            case settings::LootFilterMode::rare_only:
+                state.draft.loot_filter_mode = settings::LootFilterMode::magic_or_better;
+                break;
+        }
+    } else {
+        switch (before) {
+            case settings::LootFilterMode::show_all:
+                state.draft.loot_filter_mode = settings::LootFilterMode::magic_or_better;
+                break;
+            case settings::LootFilterMode::magic_or_better:
+                state.draft.loot_filter_mode = settings::LootFilterMode::rare_only;
+                break;
+            case settings::LootFilterMode::rare_only:
+                state.draft.loot_filter_mode = settings::LootFilterMode::show_all;
+                break;
+        }
+    }
+    return PauseCommand::preview;
+}
+
 [[nodiscard]] PauseCommand update_settings(
     PauseMenuState& state,
     const PauseInput& input) noexcept {
@@ -145,6 +184,9 @@ void return_to_root(PauseMenuState& state) noexcept {
         state.draft.vsync_enabled = !state.draft.vsync_enabled;
         return PauseCommand::preview;
     }
+    if (state.selected_row == kLootFilterRow) {
+        return update_loot_filter(state, input);
+    }
     if (!confirmed(input)) {
         return PauseCommand::none;
     }
@@ -156,13 +198,13 @@ void return_to_root(PauseMenuState& state) noexcept {
         state.message = nullptr;
         return PauseCommand::none;
     }
-    if (state.selected_row == 13U) {
+    if (state.selected_row == kResetRow) {
         const std::uint64_t revision = state.draft.revision;
         state.draft = settings::default_settings();
         state.draft.revision = revision;
         return PauseCommand::preview;
     }
-    if (state.selected_row == 14U) {
+    if (state.selected_row == kApplyRow) {
         if (settings::validate_settings(state.draft) !=
             settings::SettingsValidationError::none) {
             state.message = kInvalidSettingsMessage;
@@ -176,7 +218,10 @@ void return_to_root(PauseMenuState& state) noexcept {
         state.draft.revision = state.committed.revision + 1U;
         return PauseCommand::apply;
     }
-    return rollback_to_root(state);
+    if (state.selected_row == kCancelRow) {
+        return rollback_to_root(state);
+    }
+    return PauseCommand::none;
 }
 
 [[nodiscard]] PauseCommand update_capture(

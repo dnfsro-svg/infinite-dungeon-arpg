@@ -176,12 +176,12 @@ test::Failure opening_quit_confirmation_defaults_to_back() noexcept {
     return {};
 }
 
-test::Failure settings_navigation_wraps_all_sixteen_rows() noexcept {
+test::Failure settings_navigation_wraps_all_seventeen_rows() noexcept {
     auto state = make_state();
     state.screen = platform::PauseScreen::settings;
     ARPG_REQUIRE(update(state, input_for(InputKind::up)) == platform::PauseCommand::none);
-    ARPG_REQUIRE(state.selected_row == 15U);
-    for (std::size_t expected = 0U; expected < 16U; ++expected) {
+    ARPG_REQUIRE(state.selected_row == 16U);
+    for (std::size_t expected = 0U; expected < 17U; ++expected) {
         ARPG_REQUIRE(update(state, input_for(InputKind::down)) == platform::PauseCommand::none);
         ARPG_REQUIRE(state.selected_row == expected);
     }
@@ -242,13 +242,32 @@ test::Failure vsync_preview_toggles_for_all_controls() noexcept {
     return {};
 }
 
+test::Failure loot_filter_preview_cycles_for_all_controls() noexcept {
+    auto state = make_state();
+    state.screen = platform::PauseScreen::settings;
+    state.selected_row = 3U;
+    ARPG_REQUIRE(update(state, input_for(InputKind::left)) ==
+        platform::PauseCommand::preview);
+    ARPG_REQUIRE(state.draft.loot_filter_mode ==
+        settings::LootFilterMode::rare_only);
+    ARPG_REQUIRE(update(state, input_for(InputKind::right)) ==
+        platform::PauseCommand::preview);
+    ARPG_REQUIRE(state.draft.loot_filter_mode ==
+        settings::LootFilterMode::show_all);
+    ARPG_REQUIRE(update(state, input_for(InputKind::enter)) ==
+        platform::PauseCommand::preview);
+    ARPG_REQUIRE(state.draft.loot_filter_mode ==
+        settings::LootFilterMode::magic_or_better);
+    return {};
+}
+
 test::Failure every_binding_row_enters_matching_capture() noexcept {
     for (std::size_t action = 0U;
          action < static_cast<std::size_t>(settings::SettingAction::count);
          ++action) {
         auto state = make_state();
         state.screen = platform::PauseScreen::settings;
-        state.selected_row = action + 3U;
+        state.selected_row = action + 4U;
         const InputKind confirm = action % 2U == 0U
             ? InputKind::activate
             : InputKind::enter;
@@ -335,16 +354,18 @@ test::Failure capture_cancellation_paths_preserve_draft() noexcept {
 test::Failure reset_defaults_preserves_revision_and_previews() noexcept {
     auto state = make_state();
     state.screen = platform::PauseScreen::settings;
-    state.selected_row = 13U;
+    state.selected_row = 14U;
     state.draft.master_sfx_percent = 25U;
     state.draft.window_mode = settings::WindowMode::fullscreen;
     state.draft.vsync_enabled = false;
+    state.draft.loot_filter_mode = settings::LootFilterMode::rare_only;
     state.draft.revision = 42U;
     ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::preview);
     const auto defaults = settings::default_settings();
     ARPG_REQUIRE(state.draft.master_sfx_percent == defaults.master_sfx_percent);
     ARPG_REQUIRE(state.draft.window_mode == defaults.window_mode);
     ARPG_REQUIRE(state.draft.vsync_enabled == defaults.vsync_enabled);
+    ARPG_REQUIRE(state.draft.loot_filter_mode == defaults.loot_filter_mode);
     ARPG_REQUIRE(state.draft.bindings == defaults.bindings);
     ARPG_REQUIRE(state.draft.revision == 42U);
     return {};
@@ -353,14 +374,17 @@ test::Failure reset_defaults_preserves_revision_and_previews() noexcept {
 test::Failure apply_increments_draft_without_publishing_or_closing() noexcept {
     auto state = make_state();
     state.screen = platform::PauseScreen::settings;
-    state.selected_row = 14U;
+    state.selected_row = 15U;
     state.committed.revision = 7U;
     state.draft.revision = 2U;
     state.draft.master_sfx_percent = 55U;
+    state.draft.loot_filter_mode = settings::LootFilterMode::rare_only;
     ARPG_REQUIRE(update(state, input_for(InputKind::enter)) == platform::PauseCommand::apply);
     ARPG_REQUIRE(state.draft.revision == 8U);
     ARPG_REQUIRE(state.committed.revision == 7U);
     ARPG_REQUIRE(state.committed.master_sfx_percent == 100U);
+    ARPG_REQUIRE(state.committed.loot_filter_mode == settings::LootFilterMode::show_all);
+    ARPG_REQUIRE(state.draft.loot_filter_mode == settings::LootFilterMode::rare_only);
     ARPG_REQUIRE(state.screen == platform::PauseScreen::settings);
     return {};
 }
@@ -368,7 +392,7 @@ test::Failure apply_increments_draft_without_publishing_or_closing() noexcept {
 test::Failure apply_preserves_host_retry_message() noexcept {
     auto state = make_state();
     state.screen = platform::PauseScreen::settings;
-    state.selected_row = 14U;
+    state.selected_row = 15U;
     state.message = "save failed; retry";
     const char* message = state.message;
     ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::apply);
@@ -379,7 +403,7 @@ test::Failure apply_preserves_host_retry_message() noexcept {
 test::Failure apply_rejects_invalid_draft() noexcept {
     auto state = make_state();
     state.screen = platform::PauseScreen::settings;
-    state.selected_row = 14U;
+    state.selected_row = 15U;
     state.draft.master_sfx_percent = 53U;
     ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::none);
     ARPG_REQUIRE(state.screen == platform::PauseScreen::settings);
@@ -391,7 +415,7 @@ test::Failure apply_rejects_invalid_draft() noexcept {
 test::Failure apply_rejects_revision_overflow() noexcept {
     auto state = make_state();
     state.screen = platform::PauseScreen::settings;
-    state.selected_row = 14U;
+    state.selected_row = 15U;
     state.committed.revision = std::numeric_limits<std::uint64_t>::max();
     ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::none);
     ARPG_REQUIRE(state.draft.revision == 0U);
@@ -415,11 +439,12 @@ test::Failure settings_escape_rolls_back_to_committed() noexcept {
 test::Failure settings_cancel_row_rolls_back_to_committed() noexcept {
     auto state = make_state();
     state.screen = platform::PauseScreen::settings;
-    state.selected_row = 15U;
-    state.draft.vsync_enabled = false;
+    state.selected_row = 16U;
+    state.committed.loot_filter_mode = settings::LootFilterMode::magic_or_better;
+    state.draft.loot_filter_mode = settings::LootFilterMode::rare_only;
     ARPG_REQUIRE(update(state, input_for(InputKind::enter)) == platform::PauseCommand::rollback);
     ARPG_REQUIRE(state.screen == platform::PauseScreen::root);
-    ARPG_REQUIRE(state.draft.vsync_enabled == state.committed.vsync_enabled);
+    ARPG_REQUIRE(state.draft.loot_filter_mode == state.committed.loot_filter_mode);
     return {};
 }
 
@@ -536,7 +561,12 @@ test::Failure state_machine_performs_no_heap_allocations() noexcept {
 
         state = make_state();
         state.screen = platform::PauseScreen::settings;
-        state.selected_row = 13U;
+        state.selected_row = 3U;
+        ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::preview);
+
+        state = make_state();
+        state.screen = platform::PauseScreen::settings;
+        state.selected_row = 14U;
         state.draft.master_sfx_percent = 50U;
         state.draft.revision = iteration;
         ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::preview);
@@ -544,7 +574,7 @@ test::Failure state_machine_performs_no_heap_allocations() noexcept {
 
         state = make_state();
         state.screen = platform::PauseScreen::settings;
-        state.selected_row = 14U;
+        state.selected_row = 15U;
         state.committed.revision = iteration;
         state.draft = state.committed;
         state.message = kRetryMessage;
@@ -554,21 +584,21 @@ test::Failure state_machine_performs_no_heap_allocations() noexcept {
 
         state = make_state();
         state.screen = platform::PauseScreen::settings;
-        state.selected_row = 14U;
+        state.selected_row = 15U;
         state.draft.master_sfx_percent = 53U;
         ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::none);
         ARPG_REQUIRE(state.message != nullptr);
 
         state = make_state();
         state.screen = platform::PauseScreen::settings;
-        state.selected_row = 14U;
+        state.selected_row = 15U;
         state.committed.revision = std::numeric_limits<std::uint64_t>::max();
         ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::none);
         ARPG_REQUIRE(state.message != nullptr);
 
         state = make_state();
         state.screen = platform::PauseScreen::settings;
-        state.selected_row = 15U;
+        state.selected_row = 16U;
         state.draft.master_sfx_percent = 25U;
         ARPG_REQUIRE(update(state, input_for(InputKind::activate)) == platform::PauseCommand::rollback);
         ARPG_REQUIRE(state.screen == platform::PauseScreen::root);
@@ -642,10 +672,11 @@ constexpr test::TestCase kCases[] = {
     {"root continue uses enter and escape", &root_continue_supports_enter_and_escape},
     {"settings copies committed", &opening_settings_copies_committed_and_clears_message},
     {"quit defaults to back", &opening_quit_confirmation_defaults_to_back},
-    {"settings navigation wraps", &settings_navigation_wraps_all_sixteen_rows},
+    {"settings navigation wraps", &settings_navigation_wraps_all_seventeen_rows},
     {"volume preview clamps and noops", &volume_preview_clamps_and_noop_returns_none},
     {"window mode toggles", &window_mode_preview_toggles_for_all_controls},
     {"vsync toggles", &vsync_preview_toggles_for_all_controls},
+    {"loot filter cycles", &loot_filter_preview_cycles_for_all_controls},
     {"all binding rows capture", &every_binding_row_enters_matching_capture},
     {"valid capture assigns", &valid_capture_assigns_without_preview},
     {"occupied capture swaps", &occupied_capture_swaps_without_preview},
