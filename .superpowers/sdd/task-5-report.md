@@ -1,63 +1,98 @@
-# Stage 10 Task 5 报告
+# Stage 11-D Task 5 报告
 
-## Status
+## 状态
 
-完成纯 `build_abyss_encounter_plan` 与 `supplement_abyss_affixes`，未接入房间生命周期。
+完成 Fixed-Capacity Ground Loot View，并按真实 RED -> GREEN 执行 TDD。范围严格停在纯 ViewModel 构建；未加入实际 Draw 调用、host preview、room renderer 接线或 pickup feedback。
 
-## RED / GREEN
+## 实现
 
-- RED：先加入预算 8→12、9→14、24→36 与深度词缀下限测试；在正确加载 VS 2022 开发环境后，编译分别因 `build_abyss_encounter_plan` 和 `supplement_abyss_affixes` 不存在而失败，确认失败来自缺失功能。
-- GREEN：实现预算缩放、普通 plan/普通 affix 先生成、深渊补足与强化合法性后，`combat.units` 136/136、`dungeon.units` 145/145 通过。
-- Refactor：抽出共享的指定预算 plan 构造路径，使普通 `build_encounter_plan` 继续使用原 RNG 域和普通 affix 生成；Stage 9 既有 golden 测试通过。
+- 新增 `LootLabelRect`、`GroundLootLabel`、`GroundLootViewDiagnostics` 与 `GroundLootView`。
+- `GroundLootView::labels` 为 `std::array<GroundLootLabel, dungeon::kGroundDropCapacity>`，容量精确等于 192；文本为 64 字节固定数组并强制末字节 NUL。
+- `ground_loot_visible` 支持 `show_all`、`magic_or_better`、`rare_only`；深渊宝箱奖励绕过所有过滤，非法过滤枚举回退为 show-all。
+- View builder 只读 `DungeonSnapshot`，按 ordinal 稳定插入；标签正文使用中文稀有度、catalog 基底名和 `iLvl`，非法 base 固定显示 `未知装备`。
+- 普通/魔法/稀有分别使用白/蓝/金文本色；深渊条目额外设置 `abyss=true` 和紫色边框色。
+- 重叠处理只向上移动后续 ordinal，循环上限为 `kGroundDropCapacity`；随后将每个矩形夹紧到 12 像素屏幕安全区。
+- 诊断计数覆盖非法 base、文本截断、重叠调整和容量饱和。
+- 实现使用 `std::snprintf`、固定数组和值类型，不使用 `std::string`、`std::vector` 或堆分配。
 
-## 确定性与命名域
+## TDD 证据
 
-- 普通词缀仍使用 Stage 9 的 count/selection/tier/context 域，未重抽。
-- 深渊选择域：`ABYSEL01`（`0x41425953454C3031`）。
-- 深渊 tier 域：`ABYTIER1`（`0x4142595449455231`）。
-- 每个 append 输出位置都从对应命名域再按绝对 `output_index` 派生独立子流；补足从 `normal.count` 开始，只写新增槽位。
-- 已满足深度下限的合法集合原值返回，包括未使用槽位，逐字节语义不变。
+### RED
 
-## 候选不足与容量
+先只新增并注册 `ground_loot_view_tests.cpp`，未创建生产头/实现。
 
-- 补足复用 required/forbidden tags、重复与双向 conflict 校验。
-- 测试用受限合法 catalog 只留下一个兼容候选；深度 20 需要两条时返回 `nullopt`，不静默少给。
-- `MonsterAffixSet` 仍为固定 3 槽，40+ 精确补到 3，不增加高危词缀上限。
-- 强化预算为 `(normal * 3 + 1) / 2`；合法性使用 `ceil(config.max_budget*1.5)` 上限。
-- 可表示边界 normal max 170→abyss max 255 构造出单波 96 spawn 并合法；171→257 超出固定 DTO 表示范围时显式 `invalid_rules`，不降级。
-- 纯接口只使用固定 `std::array`/值类型；4096 次补足与 1024 次强化 plan 测试的 allocation delta 均为 0。
+首次尝试共享 preset build 目录时，由于该目录在当前沙箱身份下不可写且未加载 SDK，出现 `.ninja_lock permission denied` 与 SDK 检测失败；该环境失败不计作 RED。
 
-## 依赖重排
+随后加载 VS 2022 BuildTools 环境并使用独立构建目录：
 
-原计划由 Task 4 先接生命周期，但 started 门禁要求在落盘前完整调用本任务的纯构造接口。按批准的依赖重排，本任务保持 `src/dungeon/dungeon_session.cpp` 不改；`available → started` 前置计算及 runtime 接线由紧接着的 Task 4 完成。因此 available 房不会在本提交中提前启动强化战斗。
+```powershell
+cmake -S . -B out/build/task5-debug -G Ninja `
+  -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Debug `
+  -DFETCHCONTENT_SOURCE_DIR_RAYLIB=out/build/windows-msvc-debug/_deps/raylib-src
+cmake --build out/build/task5-debug --target arpg_platform_tests
+```
+
+有效 RED：
+
+```text
+tests/platform/ground_loot_view_tests.cpp(4): fatal error C1083:
+无法打开包括文件: “ground_loot_view.hpp”: No such file or directory
+```
+
+失败原因准确来自 Task 5 生产接口尚不存在。
+
+### GREEN
+
+实现生产头/源并注册 `ground_loot_view.cpp` 后：
+
+```powershell
+cmake --build out/build/task5-debug --target arpg_platform_tests
+```
+
+结果：4/4 增量步骤成功，`arpg_raylib.lib` 与 `arpg_platform_tests.exe` 链接成功。
+
+提交前 fresh focused test：
+
+```powershell
+ctest --test-dir out/build/task5-debug -R '^platform\.units$' -V
+```
+
+结果：1/1 CTest 通过，253 cases、0 failures，3.50 秒。100k 探针明确输出：
+
+```text
+[stage11d-ground-loot] builds=100000 unchanged=50000 alternating=50000 allocations=0
+```
+
+Task 5 新增 9 个用例覆盖：三档可见性与 builder 过滤、深渊绕过、非法 filter 回退、非法 base、中文 catalog 文本、NUL、白/蓝/金 palette、深渊紫边、ordinal 稳定、合理重叠消解、1024x576/1280x720/1920x1080 安全区、192 容量极端、快照逐字节不变、100k unchanged/alternating 零分配。
 
 ## 文件
 
-- `src/combat/monster_affix_generation.hpp/.cpp`
-- `src/dungeon/encounter_director.hpp/.cpp`
-- `src/dungeon/encounter_budget.cpp`
-- `tests/combat/monster_affix_generation_tests.cpp`
-- `tests/combat/monster_affix_test_support.hpp`
-- `tests/dungeon/encounter_director_tests.cpp`
-- `tests/combat/combat_test_main.cpp`
-- `tests/dungeon/dungeon_test_main.cpp`
+- `src/platform/raylib/ground_loot_view.hpp`
+- `src/platform/raylib/ground_loot_view.cpp`
+- `src/platform/raylib/CMakeLists.txt`
+- `tests/platform/ground_loot_view_tests.cpp`
+- `tests/platform/CMakeLists.txt`
+- `tests/platform/platform_test_main.cpp`
 - `.superpowers/sdd/task-5-report.md`
 
-## 验证
+## 提交
 
-```text
-ctest --preset windows-msvc-debug -R "combat.units|dungeon.units" --output-on-failure
-combat.units: passed (0.77 s)
-dungeon.units: passed (142.99 s)
-100% tests passed, 0 failed
+主题：`feat: build fixed ground loot labels`
 
-ARPG_STAGE9_AFFIX_STRESS_ONLY=1 arpg_dungeon_tests.exe
-2 cases, 0 failures
-```
+## 自审
 
-`git diff --check` 通过。普通 Stage 9 affix golden、掉落与压力用例均包含在上述通过套件中。
+- 头/源未 include `raylib.h`，未调用 raylib、Draw/TextFormat、Session、Store、随机、输入或 fixed tick。
+- 唯一允许的跨模块读取为 `project_combat_position`、无 raylib 的 `Rgba8`、settings 枚举与只读 item catalog。
+- 生产文件中不存在 `std::string`、`std::vector`、`<string>` 或 `<vector>`；100k 实测 allocation delta 为 0。
+- ordinal 插入在相同输入下完全确定；同 ordinal 时保留快照原顺序。
+- source count 先夹紧到 192；输出数组写入前再次检查容量。192 个同锚点时，重叠循环和前向扫描均受固定容量约束。
+- 每个标签最终都经过安全区 clamp；极端堆叠在顶部可能重合，但任务明确不要求 192 个矩形数学上全部互斥。
+- `std::snprintf` 使用 catalog `string_view` 的显式长度，非法 base 不越界；无论首选或短格式，末字节均强制 NUL。
+- `git diff --check` 通过；源码禁用依赖扫描无命中。
 
-## 疑虑
+## 顾虑
 
-- 无 Task 5 纯接口遗留疑虑。
-- 生命周期尚未消费纯 plan 是刻意的依赖重排边界，必须由 Task 4 接线后再验证 started 原子门禁。
+- 无已知功能顾虑。
+- 本任务只产生 ViewModel；后续 renderer 必须消费 `text_color`/`border_color`/`abyss`，当前没有实际 Draw 或字体覆盖验证，符合 Task 5 边界。
+- 192 个极端同锚点标签在安全区顶部可重叠，这是任务允许的有界退化；不会越界或分配。
+- 共享 `out/build/windows-msvc-debug` 在当前执行身份下不可写，因此验证使用独立 `out/build/task5-debug`；编译器为 MSVC 19.44.35228.0、Windows SDK 10.0.26100.0。

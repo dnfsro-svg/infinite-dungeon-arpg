@@ -27,6 +27,7 @@ arpg::test::TestSuite hud_layout_suite() noexcept;
 arpg::test::TestSuite hud_font_suite() noexcept;
 arpg::test::TestSuite hud_render_plan_suite() noexcept;
 arpg::test::TestSuite hud_host_integration_suite() noexcept;
+arpg::test::TestSuite ground_loot_view_suite() noexcept;
 
 int main() {
 #if defined(_WIN32) && defined(_DEBUG)
@@ -61,7 +62,8 @@ int main() {
         hud_font_suite(),
         hud_render_plan_suite(),
         hud_host_integration_suite(),
+        ground_loot_view_suite(),
     };
 
-    return arpg::test::run_suites(suites, 244, "stage 11d loot filter runtime");
+    return arpg::test::run_suites(suites, 253, "stage 11d loot filter runtime");
 }

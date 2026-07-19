@@ -22,7 +22,8 @@ if(TARGET arpg_raylib)
         hud_render_plan_tests.cpp
         hud_host_integration_tests.cpp
         death_input_gate_tests.cpp
-        death_overlay_view_tests.cpp)
+        death_overlay_view_tests.cpp
+        ground_loot_view_tests.cpp)
     target_sources(arpg_platform_tests PRIVATE inventory_view_math_tests.cpp)
     target_compile_features(arpg_platform_tests PRIVATE cxx_std_17)
     target_include_directories(arpg_platform_tests
