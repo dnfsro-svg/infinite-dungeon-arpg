@@ -104,3 +104,51 @@ foreach(_mutation IN ITEMS
         message(FATAL_ERROR "count mutation failed for wrong reason: ${_source_mutation}: ${_mutation_stdout}${_mutation_stderr}")
     endif()
 endforeach()
+
+set(_decoy_policy_host "${GUARD_TEST_ROOT}/host-decoy-loot-policy.cpp")
+file(READ "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp"
+    _decoy_policy_source)
+string(REPLACE
+    "runtime.fixed_tick(step_movement,\n                    loot_pickup_policy(live_settings.loot_filter_mode));"
+    "runtime.fixed_tick(step_movement, {});\n                static_cast<void>(loot_pickup_policy(live_settings.loot_filter_mode));"
+    _decoy_policy_source "${_decoy_policy_source}")
+file(WRITE "${_decoy_policy_host}" "${_decoy_policy_source}")
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+        "-DHOST_OVERRIDE=${_decoy_policy_host}" -P "${_guard}"
+    RESULT_VARIABLE _decoy_policy_result
+    OUTPUT_VARIABLE _decoy_policy_stdout
+    ERROR_VARIABLE _decoy_policy_stderr)
+if(_decoy_policy_result EQUAL 0)
+    message(FATAL_ERROR
+        "evidence guard self-test accepted default policy with live-policy decoy")
+endif()
+if(NOT "${_decoy_policy_stdout}${_decoy_policy_stderr}" MATCHES
+        "requires live loot policy behind host gate")
+    message(FATAL_ERROR
+        "decoy loot policy mutation failed for wrong reason: ${_decoy_policy_stdout}${_decoy_policy_stderr}")
+endif()
+
+set(_draft_policy_host "${GUARD_TEST_ROOT}/host-draft-loot-policy.cpp")
+file(READ "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp"
+    _draft_policy_source)
+string(REPLACE
+    "loot_pickup_policy(live_settings.loot_filter_mode)"
+    "loot_pickup_policy(pause_menu.draft.loot_filter_mode)"
+    _draft_policy_source "${_draft_policy_source}")
+file(WRITE "${_draft_policy_host}" "${_draft_policy_source}")
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+        "-DHOST_OVERRIDE=${_draft_policy_host}" -P "${_guard}"
+    RESULT_VARIABLE _draft_policy_result
+    OUTPUT_VARIABLE _draft_policy_stdout
+    ERROR_VARIABLE _draft_policy_stderr)
+if(_draft_policy_result EQUAL 0)
+    message(FATAL_ERROR
+        "evidence guard self-test accepted draft loot pickup policy")
+endif()
+if(NOT "${_draft_policy_stdout}${_draft_policy_stderr}" MATCHES
+        "rejects draft loot policy in fixed_tick")
+    message(FATAL_ERROR
+        "draft loot policy mutation failed for wrong reason: ${_draft_policy_stdout}${_draft_policy_stderr}")
+endif()

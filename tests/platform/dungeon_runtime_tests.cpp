@@ -765,6 +765,9 @@ arpg::test::Failure loot_filter_modes_map_to_pickup_policy() noexcept {
     ARPG_REQUIRE(platform::loot_pickup_policy(
         arpg::settings::LootFilterMode::rare_only).minimum_rarity
         == items::ItemRarity::rare);
+    ARPG_REQUIRE(platform::loot_pickup_policy(
+        static_cast<arpg::settings::LootFilterMode>(0xFFU)).minimum_rarity
+        == items::ItemRarity::normal);
     return {};
 }
 
