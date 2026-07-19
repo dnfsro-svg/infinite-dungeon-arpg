@@ -35,6 +35,15 @@ enum class MaterialSpriteId : std::uint16_t {
     lightning_dasher_idle,
     chaos_chaser_idle,
     chaos_hazard_idle,
+    environment_floor_fire,
+    environment_floor_water,
+    environment_floor_lightning,
+    environment_floor_chaos,
+    environment_door_fire,
+    environment_door_water,
+    environment_door_lightning,
+    environment_door_chaos,
+    environment_hole,
     count,
 };
 

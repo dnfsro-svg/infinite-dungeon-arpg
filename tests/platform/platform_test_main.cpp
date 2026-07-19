@@ -31,6 +31,7 @@ arpg::test::TestSuite hud_host_integration_suite() noexcept;
 arpg::test::TestSuite ground_loot_view_suite() noexcept;
 arpg::test::TestSuite material_asset_validation_suite() noexcept;
 arpg::test::TestSuite material_animation_suite() noexcept;
+arpg::test::TestSuite stage12_environment_render_suite() noexcept;
 
 int main() {
 #if defined(_WIN32) && defined(_DEBUG)
@@ -69,7 +70,8 @@ int main() {
         ground_loot_view_suite(),
         material_asset_validation_suite(),
         material_animation_suite(),
+        stage12_environment_render_suite(),
     };
 
-    return arpg::test::run_suites(suites, 291, "stage 12 material manifest runtime");
+    return arpg::test::run_suites(suites, 292, "stage 12 material manifest runtime");
 }

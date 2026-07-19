@@ -34,7 +34,8 @@ public:
     void unload() noexcept;
     [[nodiscard]] bool available(MaterialAtlasId id) const noexcept;
     [[nodiscard]] bool draw(
-        MaterialSpriteId id, Vector2 foot_position, bool flip_x) const noexcept;
+        MaterialSpriteId id, Vector2 foot_position, bool flip_x,
+        float scale = 1.0F) const noexcept;
 
 private:
     MaterialTextureApi texture_api_{};

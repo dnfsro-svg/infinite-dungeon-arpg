@@ -27,7 +27,20 @@ constexpr const char* kAtlasPaths[] = {
 
 [[nodiscard]] constexpr MaterialAtlasId atlas_for_sprite(
     MaterialSpriteId id) noexcept {
-    static_cast<void>(id);
+    switch (id) {
+    case MaterialSpriteId::environment_floor_fire:
+    case MaterialSpriteId::environment_floor_water:
+    case MaterialSpriteId::environment_floor_lightning:
+    case MaterialSpriteId::environment_floor_chaos:
+    case MaterialSpriteId::environment_door_fire:
+    case MaterialSpriteId::environment_door_water:
+    case MaterialSpriteId::environment_door_lightning:
+    case MaterialSpriteId::environment_door_chaos:
+    case MaterialSpriteId::environment_hole:
+        return MaterialAtlasId::environment;
+    default:
+        break;
+    }
     return MaterialAtlasId::actors;
 }
 
@@ -133,8 +146,8 @@ bool MaterialPack::available(MaterialAtlasId id) const noexcept {
 }
 
 bool MaterialPack::draw(MaterialSpriteId id, Vector2 foot_position,
-    bool flip_x) const noexcept {
-    if (!state_.can_draw(id)) return false;
+    bool flip_x, float scale) const noexcept {
+    if (!state_.can_draw(id) || scale <= 0.0F) return false;
 
     const MaterialManifestDefinition manifest = default_material_manifest();
     const MaterialFrameDefinition* const frame = find_frame(manifest, id);
@@ -148,9 +161,9 @@ bool MaterialPack::draw(MaterialSpriteId id, Vector2 foot_position,
         source.x += source.width;
         source.width = -source.width;
     }
-    const Rectangle destination{foot_position.x - frame->foot_anchor.x,
-        foot_position.y - frame->foot_anchor.y, frame->source.width,
-        frame->source.height};
+    const Rectangle destination{foot_position.x - frame->foot_anchor.x * scale,
+        foot_position.y - frame->foot_anchor.y * scale,
+        frame->source.width * scale, frame->source.height * scale};
     DrawTexturePro(texture, source, destination, {0.0F, 0.0F}, 0.0F, WHITE);
     return true;
 }

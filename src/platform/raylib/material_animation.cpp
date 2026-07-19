@@ -73,4 +73,32 @@ MaterialSpriteId select_monster_sprite(
     return MaterialSpriteId::missing;
 }
 
+MaterialSpriteId select_floor_sprite(dungeon::DungeonElement element) noexcept {
+    switch (element) {
+    case dungeon::DungeonElement::fire:
+        return MaterialSpriteId::environment_floor_fire;
+    case dungeon::DungeonElement::water:
+        return MaterialSpriteId::environment_floor_water;
+    case dungeon::DungeonElement::lightning:
+        return MaterialSpriteId::environment_floor_lightning;
+    case dungeon::DungeonElement::chaos:
+        return MaterialSpriteId::environment_floor_chaos;
+    }
+    return MaterialSpriteId::missing;
+}
+
+MaterialSpriteId select_door_sprite(dungeon::DungeonElement element) noexcept {
+    switch (element) {
+    case dungeon::DungeonElement::fire:
+        return MaterialSpriteId::environment_door_fire;
+    case dungeon::DungeonElement::water:
+        return MaterialSpriteId::environment_door_water;
+    case dungeon::DungeonElement::lightning:
+        return MaterialSpriteId::environment_door_lightning;
+    case dungeon::DungeonElement::chaos:
+        return MaterialSpriteId::environment_door_chaos;
+    }
+    return MaterialSpriteId::missing;
+}
+
 }  // namespace arpg::platform

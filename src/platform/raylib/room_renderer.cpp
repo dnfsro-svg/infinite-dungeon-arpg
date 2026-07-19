@@ -2,6 +2,7 @@
 
 #include "combat/room_bounds.hpp"
 #include "dungeon_view_math.hpp"
+#include "material_animation.hpp"
 #include "render_layout.hpp"
 
 #include <raylib.h>
@@ -55,8 +56,20 @@ void draw_graybox_room(dungeon::DungeonElement ecology) noexcept {
     }
 }
 
+bool draw_environment_room(const MaterialPack& material_pack,
+    dungeon::DungeonElement ecology) noexcept {
+    const float width = static_cast<float>(GetScreenWidth());
+    const float height = static_cast<float>(GetScreenHeight());
+    const float scale = (std::max)(width / 1024.0F, height / 704.0F);
+    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
+        Color{9, 12, 20, 255});
+    return material_pack.draw(select_floor_sprite(ecology),
+        {width * 0.5F, height}, false, scale);
+}
+
 void draw_doors(const dungeon::DungeonSnapshot& snapshot,
-    float width, float height) noexcept {
+    float width, float height, const MaterialPack& material_pack,
+    bool draw_material_environment) noexcept {
     const DoorVisualMode mode = door_visual_mode(snapshot.phase,
         snapshot.has_active_room, snapshot.exits_open[0]);
     if (mode == DoorVisualMode::hidden) {
@@ -82,7 +95,13 @@ void draw_doors(const dungeon::DungeonSnapshot& snapshot,
         const float door_height = 70.0F * projected.scale;
         const Rectangle frame{projected.x - door_width * 0.5F,
             projected.ground_y - door_height, door_width, door_height};
-        DrawRectangleLinesEx(frame, 5.0F * projected.scale, frame_color);
+        const bool drew_material_door = draw_material_environment
+            && material_pack.draw(select_door_sprite(snapshot.ecology),
+                {projected.x, projected.ground_y}, false,
+                0.72F * projected.scale);
+        if (!drew_material_door) {
+            DrawRectangleLinesEx(frame, 5.0F * projected.scale, frame_color);
+        }
         if (visual.draw_locked_interior) {
             DrawRectangleRec({frame.x + 7.0F * projected.scale,
                 frame.y + 7.0F * projected.scale,
@@ -259,7 +278,8 @@ void draw_abyss(const dungeon::DungeonSnapshot& snapshot, float elapsed_seconds)
     }
 }
 
-void draw_hole(const dungeon::DungeonSnapshot& snapshot) noexcept {
+void draw_hole(const dungeon::DungeonSnapshot& snapshot,
+    const MaterialPack& material_pack, bool draw_material_environment) noexcept {
     const HoleVisualMode hole = hole_visual_mode(snapshot);
     if (hole == HoleVisualMode::hidden) {
         return;
@@ -272,7 +292,12 @@ void draw_hole(const dungeon::DungeonSnapshot& snapshot) noexcept {
     Color color{43, 25, 55, 255};
     if (hole == HoleVisualMode::ready) color = Color{230, 79, 186, 255};
     else if (hole == HoleVisualMode::busy) color = Color{255, 194, 74, 255};
-    DrawEllipse(x, y, 74.0F, 25.0F, Color{5, 2, 9, 235});
+    const bool drew_material_hole = draw_material_environment
+        && material_pack.draw(MaterialSpriteId::environment_hole,
+            {projected.x, projected.ground_y}, false, 0.77F * projected.scale);
+    if (!drew_material_hole) {
+        DrawEllipse(x, y, 74.0F, 25.0F, Color{5, 2, 9, 235});
+    }
     DrawEllipseLines(x, y, 74.0F, 25.0F, color);
     const char* label = hole == HoleVisualMode::sealed ? "SEALED"
         : hole == HoleVisualMode::ready ? "READY"
@@ -292,12 +317,16 @@ void CombatRenderer::draw_room(
     const GroundLootView& ground_loot) const noexcept {
     const float width = static_cast<float>(GetScreenWidth());
     const float height = static_cast<float>(GetScreenHeight());
-    draw_graybox_room(current.ecology);
+    const bool draw_material_environment =
+        draw_environment_room(material_pack_, current.ecology);
+    if (!draw_material_environment) {
+        draw_graybox_room(current.ecology);
+    }
     draw_abyss(current, static_cast<float>(GetTime()));
     draw_environment_hazards(current, width, height);
     draw_ground_items(current, ground_loot, width, height);
-    draw_doors(current, width, height);
-    draw_hole(current);
+    draw_doors(current, width, height, material_pack_, draw_material_environment);
+    draw_hole(current, material_pack_, draw_material_environment);
 }
 
 }  // namespace arpg::platform
