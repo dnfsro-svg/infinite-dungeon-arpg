@@ -478,8 +478,10 @@ arpg::test::Failure collision_and_revision_overflow_fault_without_retry() noexce
 
 arpg::test::Failure abyss_pickup_prepares_claim_without_consuming_sequence() noexcept {
     DungeonRunState filtered_state = cleared_abyss_state(AbyssDanger::low);
+    constexpr std::uint64_t kNormalRewardSeedSearchLimit = 100000U;
     bool found_normal_reward = false;
-    for (std::uint64_t seed = 1U; seed != 0U; ++seed) {
+    for (std::uint64_t seed = 1U;
+         seed <= kNormalRewardSeedSearchLimit; ++seed) {
         const auto selection = arpg::abyss::select_abyss_rule(
             seed, filtered_state.current_room.depth);
         const auto reward = arpg::dungeon::derive_abyss_reward_slot(

@@ -369,6 +369,16 @@ arpg::test::Failure nearby_pickup_chooses_lowest_ordinal_only() noexcept {
     ARPG_REQUIRE(magic_or_better.pending_save_view() != nullptr);
     ARPG_REQUIRE(magic_or_better.pending_save_view()->pickup_ordinal
         == kMagicOrdinal);
+    ARPG_REQUIRE(resolve_committed(magic_or_better));
+    ARPG_REQUIRE(!arpg::test::ground_items(
+        magic_or_better)[kMagicOrdinal].active);
+    magic_or_better.request_nearby_pickups(player);
+    ARPG_REQUIRE(magic_or_better.pending_save_view() != nullptr);
+    ARPG_REQUIRE(magic_or_better.pending_save_view()->pickup_ordinal
+        == kNormalOrdinal);
+    ARPG_REQUIRE(resolve_committed(magic_or_better));
+    ARPG_REQUIRE(!arpg::test::ground_items(
+        magic_or_better)[kNormalOrdinal].active);
 
     DungeonSession rare_only{DungeonRules{}, state};
     arpg::test::install_ground_item(rare_only, kNormalOrdinal, normal, player);
@@ -379,6 +389,14 @@ arpg::test::Failure nearby_pickup_chooses_lowest_ordinal_only() noexcept {
     ARPG_REQUIRE(rare_only.pending_save_view() != nullptr);
     ARPG_REQUIRE(rare_only.pending_save_view()->pickup_ordinal
         == kRareOrdinal);
+    ARPG_REQUIRE(resolve_committed(rare_only));
+    ARPG_REQUIRE(!arpg::test::ground_items(rare_only)[kRareOrdinal].active);
+    rare_only.request_nearby_pickups(player);
+    ARPG_REQUIRE(rare_only.pending_save_view() != nullptr);
+    ARPG_REQUIRE(rare_only.pending_save_view()->pickup_ordinal
+        == kNormalOrdinal);
+    ARPG_REQUIRE(resolve_committed(rare_only));
+    ARPG_REQUIRE(!arpg::test::ground_items(rare_only)[kNormalOrdinal].active);
 
     DungeonSession default_policy{DungeonRules{}, state};
     arpg::test::install_ground_item(
