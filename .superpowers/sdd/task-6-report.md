@@ -7,7 +7,7 @@
 ## 实现
 
 - `CombatRenderPlan` 每次由 `CombatRenderer::draw` 构建一次，内部只拥有一个预构建 `GroundLootView`。
-- `GroundLootRenderConsumers` 将 room icon 与 HUD label 两个 consumer 指向同一个 `CombatRenderPlan::ground_loot`；两个 pass 不再各自过滤或重建 ordinal 集。
+- room icon 与 HUD label 两个 stage 直接共享同一个 `CombatRenderPlan::ground_loot`；两个 pass 不再各自过滤或重建 ordinal 集。
 - production render stage 顺序由可测 plan 驱动：`room -> actors -> ground_loot_labels -> normal_hud`。room 与 actors 在 `BeginMode2D` 内；标签在 actors 后结束 world mode，再由正常 HUD 绘制前呈现。
 - `room_renderer.cpp` 不再遍历所有 snapshot 掉落绘制图标，而是只按传入 View 的 ordinal 查找对应 snapshot item，保留 slot/rarity/world projection 的实际图标绘制。
 - `HudRenderer::draw_ground_loot(const GroundLootView&)` 复用 HUD 已加载 Font、HUD palette 和 `DrawTextEx`；标签路径不使用 `TextFormat`、`std::string` 或 `std::vector`。
@@ -40,8 +40,8 @@ renderer_loot_filter_mode 不是 arpg::platform 的成员 / 找不到标识符
 
 ```text
 hud_host_integration_tests.cpp: error C2039/C3861:
-CombatRenderPlan、make_combat_render_plan、GroundLootRenderConsumers、
-ground_loot_render_consumers、CombatRenderStage 尚不存在
+CombatRenderPlan、make_combat_render_plan、ground-loot stage 接口、
+CombatRenderStage 尚不存在
 ```
 
 失败原因准确来自 Task 6 production API 与 render plan 尚不存在。
@@ -76,7 +76,7 @@ ctest --test-dir E:/game/task6-build -R '^platform\.units$' -V
 
 Task 6 新增/扩展的测试覆盖：
 
-- 一个 `CombatRenderPlan` 只拥有一个 View；room icon 与 HUD label consumer 指针完全相同。
+- 一个 `CombatRenderPlan` 只拥有一个 View；room icon 与 HUD label 直接读取同一个 `plan.ground_loot`。
 - `magic_or_better` 下 normal ordinal 被排除，icon/label 共用的 ordinal 为 20、30。
 - production stage 顺序固定为 room、actors、ground labels、normal HUD。
 - settings screen 使用 draft mode，其余所有 pause screens 使用 committed/live mode。
@@ -167,7 +167,7 @@ live.loot_filter_mode == original.loot_filter_mode
 258 cases, 1 failures
 ```
 
-consumer 生命周期使用独立 architecture guard 先锁定：禁止 `GroundLootRenderConsumers`、`ground_loot_render_consumers`、`room_icons`、`hud_labels`，并要求两个 production stage 直接消费 `render_plan.ground_loot`，同时要求 `build_ground_loot_view` 在 renderer source 恰好一处。修改生产代码前运行：
+共享 View 生命周期使用独立 architecture guard 先锁定：禁止旧的 wrapper/helper，并要求两个 production stage 直接消费 `render_plan.ground_loot`，同时要求 `build_ground_loot_view` 在 renderer source 恰好一处。修改生产代码前运行：
 
 ```powershell
 ctest --test-dir E:/game/task6-build \
@@ -177,8 +177,7 @@ ctest --test-dir E:/game/task6-build \
 得到有效 RED：
 
 ```text
-Stage11D renderer exposes forbidden loot consumer wrapper:
-GroundLootRenderConsumers
+Stage11D renderer exposes forbidden legacy loot wrapper
 ```
 
 ### GREEN 实现
@@ -186,7 +185,7 @@ GroundLootRenderConsumers
 - Apply backend preview 改用 `preview_settings` 副本，其中 loot mode 强制等于 committed；因此 save committed 之前不会把 draft loot 写入 `live_settings`。
 - SettingsStore 保存继续使用原始 draft（仅按既有规则调整 revision），保存成功后才把新 loot mode 一起发布到 committed/draft/live/input。
 - Apply preview failure 与 save failure 均在检查 backend rollback 结果之前，无条件把 `live_settings.loot_filter_mode` 和 `pause_menu.draft.loot_filter_mode` 恢复为 committed。即使窗口 rollback 失败，fixed tick/live 与 renderer/draft 仍保持旧 loot policy。
-- 删除 `GroundLootRenderConsumers` 与 `ground_loot_render_consumers`。production room stage 和 ground-label stage 直接将同一个 `render_plan.ground_loot` const 引用传入 renderer，不再存在可空或 rvalue 悬空指针 API。
+- 删除旧的 ground-loot wrapper/helper。production room stage 和 ground-label stage 直接将同一个 `render_plan.ground_loot` const 引用传入 renderer，不再存在可空或 rvalue 悬空指针 API。
 - C++ plan 测试直接绑定 `plan.ground_loot` 的两个 stage 引用并验证地址、ordinal 和 draw order；Stage11D guard 验证 production 直连、wrapper 缺失和单次 builder 调用。
 
 ### GREEN 与回归
@@ -223,3 +222,71 @@ ctest --test-dir E:/game/task6-build \
 - `.superpowers/sdd/task-6-report.md`
 
 修复提交主题：`fix: isolate loot preview and render plan lifetime`
+
+## 审查修复二：renderer guard 语义与 mutation self-test
+
+本节记录 `362e469 fix: isolate loot preview and render plan lifetime` 后对 architecture guard 的加固；production renderer 无需改动。
+
+### RED
+
+先注册新的 mutation self-test，并在旧 guard 上运行：
+
+```powershell
+cmd.exe /d /s /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 && cmake --build E:/game/task6-build --target arpg_platform_tests -- -j1 && ctest --test-dir E:/game/task6-build -R "^stage11d\.renderer_integration_guard_self_test$" -V'
+```
+
+得到有效 RED；旧 guard 没有约束 `CombatRenderer::draw` 内每帧只调用一次 plan factory：
+
+```text
+Stage11D guard accepted bad duplicate_factory mutation
+0/1 tests passed, 1 test failed
+```
+
+### GREEN 实现与 mutation 结果
+
+- guard 现在读取 `combat_renderer.cpp`、`room_renderer.cpp` 和 `hud_renderer.cpp`，要求 `CombatRenderer::draw` 内 `make_combat_render_plan` 恰好调用一次，且 factory 内 `build_ground_loot_view` 恰好一处。
+- room/HUD source 禁止独立调用 `build_ground_loot_view`、`ground_loot_visible`、`make_combat_render_plan` 或引入 loot-filter mode 重算。
+- guard 从 factory 结果声明中解析局部 plan 名称，再把 room icon 与 HUD label 参数解析回同一个 `plan.ground_loot` 数据源；允许空白/换行变化、局部 plan 改名以及 `const GroundLootView&` / `const auto&` 别名。
+- self-test 的所有替换都 fail closed；replacement token 缺失或替换未改变 source 会立即失败。
+- 4 个坏 mutation 全部被正确原因拒绝：重复 factory、room 重建、HUD 重建、consumer 复制分叉。
+- 2 个语义等价 variant 全部接受：局部 plan 改名并多行格式化、room/HUD 共用 const-reference alias。总计 6 个变体。
+
+GREEN 命令与输出：
+
+```powershell
+ctest --test-dir E:/game/task6-build -R "^stage11d\.renderer_integration_guard_self_test$" -V
+```
+
+```text
+[stage11d-renderer-guard-self-test] bad_mutations=4 equivalent_variants=2
+1/1 tests passed, 0 tests failed
+```
+
+### 完整回归
+
+```powershell
+cmd.exe /d /s /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 && cmake --build E:/game/task6-build --target arpg_platform_tests arpg_stage11c_hud_stress -- -j1 && ctest --test-dir E:/game/task6-build -R "^(platform\.units|stage11c\.hud_stress\.zero_alloc_100k|stage11b\.architecture\.settings_boundaries|stage11c\.architecture\.hud_boundaries(_self_test)?|platform\.host_input_source|stage11b\.settings_evidence_guard(_self_test)?|stage11c\.hud_evidence_guard(_self_test)?|stage11d\.renderer_integration_guard(_self_test)?)$" --output-on-failure'
+```
+
+结果：12/12 CTest 通过、0 failures，总耗时 41.78 秒；覆盖 `platform.units`、HUD 100k stress、Stage11B/11C architecture/evidence guards 与 self-test、host input source，以及 Stage11D guard 与新 self-test。
+
+`platform.units` 的详细复跑结果：
+
+```powershell
+ctest --test-dir E:/game/task6-build -R "^platform\.units$" -V
+```
+
+```text
+[stage11d-ground-loot] builds=100000 unchanged=50000 alternating=50000 allocations=0
+258 cases, 0 failures
+1/1 tests passed, 0 tests failed
+```
+
+### 修复文件与提交
+
+- `tests/platform/CMakeLists.txt`
+- `tests/platform/stage11d_renderer_integration_guard_test.cmake`
+- `tests/platform/stage11d_renderer_integration_guard_self_test.cmake`
+- `.superpowers/sdd/task-6-report.md`
+
+修复提交主题：`test: harden ground loot renderer guard`

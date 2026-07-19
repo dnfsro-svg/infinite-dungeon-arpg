@@ -1300,3 +1300,13 @@ add_test(
 set_tests_properties(
     stage11d.renderer_integration_guard
     PROPERTIES LABELS "headless;platform;architecture;stage11d")
+
+add_test(
+    NAME stage11d.renderer_integration_guard_self_test
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        "-DGUARD_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/stage11d-renderer-guard-mutations"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11d_renderer_integration_guard_self_test.cmake")
+set_tests_properties(
+    stage11d.renderer_integration_guard_self_test
+    PROPERTIES LABELS "headless;platform;architecture;stage11d")
