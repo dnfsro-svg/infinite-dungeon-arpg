@@ -154,7 +154,7 @@ std::uint64_t CombatRenderer::hud_presented_frame_count(
     return index.has_value() ? hud_presented_frame_counts_[*index] : 0U;
 }
 
-void CombatRenderer::draw(
+GroundLootView CombatRenderer::draw(
     const dungeon::DungeonSnapshot& previous,
     const dungeon::DungeonSnapshot& current,
     const DungeonRenderStatus& runtime_status,
@@ -213,6 +213,7 @@ void CombatRenderer::draw(
             Fade(BLACK, overlay_alpha));
     }
     death_overlay_.draw(current);
+    return render_plan.ground_loot;
 }
 
 }  // namespace arpg::platform

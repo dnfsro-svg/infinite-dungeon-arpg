@@ -51,7 +51,7 @@ endfunction()
 stage11d_reject_consumer_rebuild("${_room_source}" "room")
 stage11d_reject_consumer_rebuild("${_hud_source}" "HUD")
 
-string(FIND "${_combat_source}" "void CombatRenderer::draw(" _draw_start)
+string(FIND "${_combat_source}" "GroundLootView CombatRenderer::draw(" _draw_start)
 if(_draw_start EQUAL -1)
     message(FATAL_ERROR "Stage11D renderer integration requires CombatRenderer::draw")
 endif()
@@ -130,5 +130,23 @@ foreach(_consumer IN ITEMS room hud)
         "Stage11D consumer divergence: room and HUD consumers must use the same GroundLootView from CombatRenderPlan (${_consumer} uses ${_argument})")
 endforeach()
 
+string(REGEX MATCHALL "return[A-Za-z_]" _return_calls "${_draw_normalized}")
+list(LENGTH _return_calls _return_count)
+if(NOT _return_count EQUAL 1)
+    message(FATAL_ERROR
+        "Stage11D CombatRenderer::draw must return its shared GroundLootView exactly once")
+endif()
+string(FIND "${_draw_normalized}"
+    "return${_canonical_ground_loot}" _canonical_return)
+set(_alias_return -1)
+if(NOT "${_ground_loot_alias}" STREQUAL "")
+    string(FIND "${_draw_normalized}"
+        "return${_ground_loot_alias}" _alias_return)
+endif()
+if(_canonical_return EQUAL -1 AND _alias_return EQUAL -1)
+    message(FATAL_ERROR
+        "Stage11D CombatRenderer::draw must return the same GroundLootView consumed by room and HUD")
+endif()
+
 message(STATUS
-    "[stage11d-renderer-integration] factory_calls=${_factory_call_count} builder_calls=${_builder_call_count} room_consumers=${_room_consumer_count} hud_consumers=${_hud_consumer_count}")
+    "[stage11d-renderer-integration] factory_calls=${_factory_call_count} builder_calls=${_builder_call_count} room_consumers=${_room_consumer_count} hud_consumers=${_hud_consumer_count} shared_returns=${_return_count}")

@@ -92,7 +92,7 @@ public:
         hud_static_formatting_diagnostics() const noexcept;
     [[nodiscard]] std::uint64_t hud_presented_frame_count(
         HudPresentedFrame) const noexcept;
-    void draw(
+    [[nodiscard]] GroundLootView draw(
         const dungeon::DungeonSnapshot& previous,
         const dungeon::DungeonSnapshot& current,
         const DungeonRenderStatus& runtime_status,

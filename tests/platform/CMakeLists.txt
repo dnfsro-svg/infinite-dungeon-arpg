@@ -126,6 +126,57 @@ if(TARGET arpg_raylib)
         PROPERTIES LABELS "platform;raylib;stage11c"
             TIMEOUT 120 FIXTURES_REQUIRED stage11c_hud_evidence)
 
+    set(_stage11d_loot_formal_source
+        "${CMAKE_CURRENT_SOURCE_DIR}/stage11d_loot_formal_game_validation.cpp")
+    if(EXISTS "${_stage11d_loot_formal_source}")
+        add_executable(arpg_stage11d_loot_formal
+            stage11d_loot_formal_game_validation.cpp)
+        target_compile_features(arpg_stage11d_loot_formal PRIVATE cxx_std_17)
+        target_link_libraries(arpg_stage11d_loot_formal PRIVATE arpg_raylib)
+        if(MSVC)
+            target_compile_options(arpg_stage11d_loot_formal PRIVATE /utf-8)
+        endif()
+        arpg_enable_project_warnings(arpg_stage11d_loot_formal)
+        set(_stage11d_loot_formal_command
+            "$<TARGET_FILE:arpg_stage11d_loot_formal>")
+    else()
+        set(_stage11d_loot_formal_command
+            "${CMAKE_CURRENT_BINARY_DIR}/missing-arpg-stage11d-loot-formal")
+    endif()
+
+    add_test(
+        NAME stage11d.loot_formal
+        COMMAND "${_stage11d_loot_formal_command}"
+            "${CMAKE_CURRENT_BINARY_DIR}/stage11d loot evidence"
+            "${PROJECT_SOURCE_DIR}/docs/validation/evidence/stage11d")
+    set_tests_properties(
+        stage11d.loot_formal
+        PROPERTIES LABELS "platform;raylib;stage11d"
+            TIMEOUT 600 FIXTURES_SETUP stage11d_loot_evidence
+            RUN_SERIAL TRUE)
+
+    add_test(
+        NAME stage11d.loot_root_safety
+        COMMAND "${_stage11d_loot_formal_command}"
+            --root-safety-self-test
+            "${CMAKE_CURRENT_BINARY_DIR}/stage11d-root-safety/stage11d loot evidence"
+            "${PROJECT_SOURCE_DIR}")
+    set_tests_properties(
+        stage11d.loot_root_safety
+        PROPERTIES LABELS "headless;platform;stage11d" TIMEOUT 30)
+
+    add_test(
+        NAME stage11d.loot_evidence_validator
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/stage11d_loot_formal_validator.ps1"
+            -EvidenceDirectory "${CMAKE_CURRENT_BINARY_DIR}/stage11d loot evidence"
+            -CommittedEvidenceDirectory
+                "${PROJECT_SOURCE_DIR}/docs/validation/evidence/stage11d")
+    set_tests_properties(
+        stage11d.loot_evidence_validator
+        PROPERTIES LABELS "platform;raylib;stage11d"
+            TIMEOUT 60 FIXTURES_REQUIRED stage11d_loot_evidence)
+
     add_test(
         NAME platform.pause_menu_state_boundary
         COMMAND "${CMAKE_COMMAND}"
@@ -1334,3 +1385,22 @@ add_test(
 set_tests_properties(
     stage11d.renderer_integration_guard_self_test
     PROPERTIES LABELS "headless;platform;architecture;stage11d")
+
+add_test(
+    NAME stage11d.loot_evidence_guard
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11d_loot_evidence_guard_test.cmake")
+set_tests_properties(
+    stage11d.loot_evidence_guard
+    PROPERTIES LABELS "headless;platform;architecture;stage11d")
+
+add_test(
+    NAME stage11d.loot_evidence_guard_self_test
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        "-DGUARD_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/stage11d-loot-evidence-mutations"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11d_loot_evidence_guard_self_test.cmake")
+set_tests_properties(
+    stage11d.loot_evidence_guard_self_test
+    PROPERTIES LABELS "headless;platform;architecture;stage11d" TIMEOUT 300)

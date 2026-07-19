@@ -73,6 +73,16 @@ enum class Stage11CHudValidationScenario : std::uint8_t {
     debug_overlay,
 };
 
+enum class Stage11DLootValidationScenario : std::uint8_t {
+    none,
+    show_all,
+    magic_or_better,
+    rare_only,
+    rare_only_abyss,
+    preview_cancel,
+    pickup_feedback,
+};
+
 struct RaylibHostConfig final {
     int window_width{1280};
     int window_height{720};
@@ -90,6 +100,8 @@ struct RaylibHostConfig final {
         Stage11BValidationScenario::none};
     Stage11CHudValidationScenario stage11c_hud_validation{
         Stage11CHudValidationScenario::none};
+    Stage11DLootValidationScenario stage11d_loot_validation{
+        Stage11DLootValidationScenario::none};
     std::uint8_t validation_abyss_direction{0xFFU};
     std::uint32_t validation_steps_per_frame{};
     std::optional<std::filesystem::path> validation_capture_file{};

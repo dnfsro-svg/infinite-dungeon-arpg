@@ -1,0 +1,12 @@
+ordinary_root=62
+ordinary_room=979
+ordinary_depth=1
+abyss_root=1
+abyss_room=6
+show-all_hash=3906286069499726852
+magic-plus_hash=15567429798435001534
+rare-only_hash=1222560037361426616
+rare-abyss_hash=5381394698943442220
+preview-cancel_hash=10701433826634318442
+pickup-feedback_hash=4207614990933268893
+result=pass
