@@ -111,6 +111,17 @@ arpg::test::Failure required_hud_text_is_covered_by_shared_font_plan() noexcept 
     return {};
 }
 
+arpg::test::Failure ground_loot_labels_are_covered_by_the_hud_owned_font() noexcept {
+    const platform::HudFontPlan plan = platform::hud_font_plan();
+    constexpr const char* kGroundLootText =
+        u8"普通魔法稀有已拾取未知装备";
+
+    ARPG_REQUIRE(plan.covers_required_text);
+    ARPG_REQUIRE(platform::death_overlay_font_covers_text(
+        plan.shared, kGroundLootText));
+    return {};
+}
+
 arpg::test::Failure task6_visible_chinese_text_is_covered_without_exhausting_shared_capacity() noexcept {
     const platform::HudFontPlan plan = platform::hud_font_plan();
     constexpr const char* kTask6Text[] = {
@@ -172,6 +183,8 @@ arpg::test::Failure renderer_shutdown_is_safe_before_initialization() noexcept {
 
 constexpr arpg::test::TestCase kCases[] = {
     {"required Chinese coverage", &required_hud_text_is_covered_by_shared_font_plan},
+    {"ground loot Chinese coverage",
+        &ground_loot_labels_are_covered_by_the_hud_owned_font},
     {"Task6 Chinese coverage has capacity", &task6_visible_chinese_text_is_covered_without_exhausting_shared_capacity},
     {"production ViewModel text coverage", &production_view_model_texts_and_player_labels_are_covered},
     {"fixed unique shared codepoints", &shared_codepoints_are_unique_and_fixed_capacity},

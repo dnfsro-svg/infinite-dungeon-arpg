@@ -1,133 +1,147 @@
-# Stage 10 Task 6 报告：六条深渊战斗数值规则
+# Stage 11-D Task 6 报告
 
 ## 状态
 
-- 基线 HEAD：`e4f9ff2df9dbea147df64d32a00d793fd87dabec`
-- 范围：只实现 combat 数值与 Dungeon config 接线；未实现环境 runtime、清房调用、奖励或 UI。
-- 结果：六条规则已通过 `CombatEncounterConfig::abyss` 消费；CombatWorld 不读取 checkpoint、save、room seed 或奖励状态。
+完成 Renderer and Draft Preview Integration，并按真实 RED -> GREEN 执行 TDD。范围停在 ground loot 图标/标签渲染、HUD 字体覆盖和 Host draft/committed policy separation；未实现 pickup feedback（Task 7）或 formal evidence（Task 9）。
 
-## TDD：RED 证据
+## 实现
 
-1. 配置契约 RED：新增 `CombatEncounterConfig::abyss` 测试后，MSVC 明确报错 `CombatEncounterConfig` 没有成员 `abyss`。
-2. 100% 行为基线 RED（145 cases, 5 failures）：
-   - Heavy Steps：期望 `4.59`，实际仍为地面速度 `5.4`。
-   - Swift Pursuit：期望移动位移 `1.15x`，实际仍为 `1.0x`。
-   - Abyss Bulwark：期望 armor `1007`，实际仍为 Stage 9 的 `775`。
-   - Abyss Fury：期望接触伤害 `65`，实际仍为 `45`。
-   - Exhausted Recovery：期望初始 hp `700`，实际仍为 `1000`。
-3. 资源 API RED：测试先引用 `restore_player_resources` 与 `clear_abyss_rule_preserving_resources`，编译明确因两个成员不存在而失败。
-4. Dungeon exact-receipt RED：固定选中 `abyss_fury` 后，receipt 前缓存 config 的 `rule` 仍为 `none`。
-5. 自审补强 RED：Fury 下 death-blast hazard 仍为 `120`，未达到 `174`。
+- `CombatRenderPlan` 每次由 `CombatRenderer::draw` 构建一次，内部只拥有一个预构建 `GroundLootView`。
+- `GroundLootRenderConsumers` 将 room icon 与 HUD label 两个 consumer 指向同一个 `CombatRenderPlan::ground_loot`；两个 pass 不再各自过滤或重建 ordinal 集。
+- production render stage 顺序由可测 plan 驱动：`room -> actors -> ground_loot_labels -> normal_hud`。room 与 actors 在 `BeginMode2D` 内；标签在 actors 后结束 world mode，再由正常 HUD 绘制前呈现。
+- `room_renderer.cpp` 不再遍历所有 snapshot 掉落绘制图标，而是只按传入 View 的 ordinal 查找对应 snapshot item，保留 slot/rarity/world projection 的实际图标绘制。
+- `HudRenderer::draw_ground_loot(const GroundLootView&)` 复用 HUD 已加载 Font、HUD palette 和 `DrawTextEx`；标签路径不使用 `TextFormat`、`std::string` 或 `std::vector`。
+- `hud_font.cpp` 在 HUD shared font plan 中补齐 `普通魔法稀有已拾取未知装备` 的 codepoint，并将完整短语列入 required text coverage。
+- 新增 `CombatRenderer::set_loot_filter_mode(settings::LootFilterMode) noexcept`，仅控制 `draw` 的表现 plan。
+- Host 仅在 `PauseScreen::settings` 向 renderer 发送 `pause_menu.draft.loot_filter_mode`；closed/root/capture/quit-confirm 都发送 `live_settings` 的已提交 mode。
+- `PauseCommand::preview` 对音量、窗口和 VSync 继续 live preview，但构造 preview settings 时强制保留 `pause_menu.committed.loot_filter_mode`。因此 `DungeonRuntime::fixed_tick` 仍读取 `loot_pickup_policy(live_settings.loot_filter_mode)`，且该字段的语义现在真实等于 committed policy。
+- Apply 成功后 committed/draft/live 一起发布新 mode；Cancel 和可成功回滚的 Apply failure 恢复旧 mode。Apply failure 仍保留其他 draft 字段用于既有重试流程，只将表现相关 loot mode 复位为 committed。
 
-## GREEN 与倍率组合顺序
+## TDD 证据
 
-统一顺序为：
+### RED 1：Host / render plan API
 
-1. 先完整求值 Stage 9 affix runtime profile。
-2. 再顺序应用 Abyss basis points；不覆盖 Stage 9 结果。
-3. 正整数资源/盾值需要上取整时使用统一 ceil helper；armor 与 damage 延续整数 floor。
-4. tick 统一使用 ceil，非零 base 的结果至少为 1 tick。
+先只修改测试，加入 settings-only draft selection、renderer/live policy separation、单 View reuse、ordinal 与 stage ordering 断言，未修改生产接口。
 
-统一基础 helper 位于 `combat_scaling.hpp`：`scale_basis_points`、`scale_ticks_ratio`、Stage 9 packet 缩放与 Abyss outgoing damage boundary；`monster_ai_common.hpp` 只保留 move/attack/cooldown 的 AI/profile 组合包装。三个 AI 文件不再各自复制 tick/packet 浮点逻辑。
+共享 `out/build/task5-debug` 受当前执行身份 ACL 影响，出现 `.ninja_lock permission denied`，因此使用独立构建目录 `E:/game/task6-build`：
 
-## 六条规则精确证据
+```powershell
+cmd.exe /d /s /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 && cmake -S . -B E:/game/task6-build -G Ninja -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Debug -DFETCHCONTENT_SOURCE_DIR_RAYLIB=E:/game/.worktrees/stage11d-loot-filter/out/build/windows-msvc-debug/_deps/raylib-src && cmake --build E:/game/task6-build --target arpg_platform_tests -- -j1'
+```
 
-### Swift Pursuit
+有效 RED：
 
-- chaos chaser 地面移动：`1.15x`。
-- cooldown：`ceil(42 * 8500 / 10000) = 36`。
-- 与 Stage 9 Swift M3 组合：Stage 9 cooldown `32`，再乘 Abyss 得 `ceil(32 * 0.85) = 28`。
-- telegraph/recovery/active 不受 Swift 改动。
+```text
+pause_host_gate_tests.cpp: error C2039/C3861:
+renderer_loot_filter_mode 不是 arpg::platform 的成员 / 找不到标识符
+```
 
-### Abyss Bulwark
+补最小 Host selection helper 后继续构建，得到下一条有效 RED：
 
-- Armored M3：`floor(775 * 1.30) = 1007`；无 armor 时仍为 `0`。
-- 基础 chaos chaser 实际 max hp `260`，额外盾 `ceil(260 * 0.30) = 78`；加入既有 fallback max shield 后为 `168`，current shield 增加 `78`。
-- Mighty M3 先把实际 max hp 求为 `520`，再给额外盾 `156`，max/current 分别为 `246/156`。
-- Shielding M2 的 Stage 9 max shield `91` 保留并叠加，得到 max/current `169/78`，没有把 Stage 9 shielding 免费激活或覆盖。
+```text
+hud_host_integration_tests.cpp: error C2039/C3861:
+CombatRenderPlan、make_combat_render_plan、GroundLootRenderConsumers、
+ground_loot_render_consumers、CombatRenderStage 尚不存在
+```
 
-### Abyss Fury
+失败原因准确来自 Task 6 production API 与 render plan 尚不存在。
 
-- 接触：`floor(45 * 1.45) = 65`。
-- projectile：生成时保留 Stage 9 packet `40`，direct-hit 最终边界得到 `floor(40 * 1.45) = 58`。
-- native monster hazard：`floor(35 * 1.45) = 50`。
-- death-blast affix hazard：`floor(120 * 1.45) = 174`；chain/burning 也在生成边界走同一函数。
-- Stage 9 Frenzy M3 先算 `floor(45 * 1.5) = 67`，再算 `floor(67 * 1.45) = 97`。
-- telegraph/active/recovery/cooldown：`7/4/9/21`（Frenzy M3 后再除 Fury 1.45）；active ticks 保持 `4`。
-- damage 只乘一次：contact/projectile/bomber 在 direct-hit 最终边界乘；native/death/chain/burning hazard 因不走 direct-hit，在生成边界乘；environment 未接入该边界。
+### RED 2：HUD glyph coverage
 
-### Heavy Steps
+完成最小 renderer/Host 接线并成功编译后运行：
 
-- 仅非 airborne 的水平地面速度：`5.4 * 0.85 = 4.59`。
-- jump impulse/弧线不变；空中横移仍为 `3.78`；逐 tick 比较攻击 ID/phase 完全相同。
+```powershell
+ctest --test-dir E:/game/task6-build -R '^platform\.units$' -V
+```
 
-### Exhausted Recovery
+有效 RED：
 
-- 初次进入：hp `1000 -> 700`，barrier `101 -> 71`（ceil）。
-- `reset_player_health=false` 跨 wave 保留受损后的当前 hp/barrier，不重复乘 `0.7`。
-- 显式 restore amount：`1 -> 1`、`10 -> 7`；`reset_player_health=true` 先清零再走同一 restore API，恢复到 `700/71`。
+```text
+[FAIL] hud_font.ground loot Chinese coverage:
+death_overlay_font_covers_text(plan.shared, "普通魔法稀有已拾取未知装备")
+```
 
-### Life Sacrifice
+同时 suite case-count guard 从 253 报告实际 257，这是新增 4 个用例后的预期登记更新。
 
-- base max hp `1001` 经 ceil 得 `551`，进入时按同一 ratio mapping 保持满血比例。
-- 退出前 `276/551`，调用 `clear_abyss_rule_preserving_resources()` 后为 `501/1001`（最近整数公式）。
-- barrier `37/101` 退出后仍为 `37/101`，只 clamp，不 refill。
-- clear API 只提供 Task 8 可测试接线点；本任务没有在清房时调用。
+### GREEN
 
-## Dungeon 接线与依赖
+补齐 HUD shared glyph plan 并更新 case-count 后：
 
-- `make_combat_encounter_config` 新增显式 `AbyssCombatConfig` 参数并原样缓存。
-- normal room 显式传 `combat_config_for(none)`。
-- abyss start 在 checkpoint selection 的 seed/depth/danger/rule/rules_version 全部匹配后，传 `combat_config_for(selection->rule)`；exact receipt 前只缓存，receipt 成功后才构造 CombatWorld。
-- `arpg_combat` PUBLIC 链接 `arpg_abyss`；`arpg_abyss` 仍只 PRIVATE 链接 `arpg_core`，无反向 combat 依赖。
+```powershell
+cmake --build E:/game/task6-build --target arpg_platform_tests -- -j1
+ctest --test-dir E:/game/task6-build -R '^platform\.units$' -V
+```
 
-## 修改文件
+结果：`platform.units` 1/1 CTest 通过，257 cases、0 failures；100k GroundLootView 探针仍为 allocations=0。
 
-- Combat public config/API/CMake：`combat_types.hpp`、`combat_world.hpp/.cpp`、`CMakeLists.txt`。
-- 统一缩放与运行路径：`combat_scaling.hpp`、`monster_ai_common.hpp`、三个 monster AI、`monster_ai.cpp`、`monster_pool.hpp/.cpp`、`player_simulation.cpp`。
-- Dungeon config/cached receipt 接线：`room_combat_template.hpp/.cpp`、`dungeon_session.cpp`。
-- 测试：combat config/health/movement/melee/support/main，以及 Dungeon transaction/support。
+Task 6 新增/扩展的测试覆盖：
 
-## 最终验证
+- 一个 `CombatRenderPlan` 只拥有一个 View；room icon 与 HUD label consumer 指针完全相同。
+- `magic_or_better` 下 normal ordinal 被排除，icon/label 共用的 ordinal 为 20、30。
+- production stage 顺序固定为 room、actors、ground labels、normal HUD。
+- settings screen 使用 draft mode，其余所有 pause screens 使用 committed/live mode。
+- Preview 后 renderer 可见 rare-only draft，但 `live_settings` 与 runtime pickup policy 保持 committed。
+- Cancel 恢复 renderer old mode；Apply failure 恢复 live/draft renderer mode；Apply 成功后 live/committed 才发布新 mode。
+- HUD-owned shared font 覆盖 `普通魔法稀有已拾取未知装备`。
 
-- `ctest --preset windows-msvc-debug -R "combat.units|dungeon.units" --output-on-failure`
-  - `combat.units` passed，`dungeon.units` passed。
-  - 2/2 tests，0 failures，fresh 总耗时 `143.32 sec`。
-- `ctest --preset windows-msvc-debug -R '^abyss.units$|^architecture\.' --output-on-failure`
-  - 19/19 tests，0 failures；包括 combat no-raylib/no-dungeon/no-persistence 与 persistence checkpoint-only。
+## focused 回归
 
-## 疑虑与边界
+```powershell
+ctest --test-dir E:/game/task6-build -R "^(platform\.pause_menu_state_boundary|stage11b\.architecture\.settings_boundaries|stage11c\.architecture\.hud_boundaries(_self_test)?|platform\.host_input_source|stage11b\.settings_evidence_guard(_self_test)?|stage11c\.hud_evidence_guard(_self_test)?)$" --output-on-failure
+```
 
-- 无已知 Task 6 功能缺口。
-- Task 7 的三条 environment runtime 仍未实现；当前 Fury boundary 不会误缩放未来 environment damage。
-- Task 8 必须显式调用 `clear_abyss_rule_preserving_resources()`；本任务只提供并测试 API，没有提前接清房 lifecycle。
+结果：9/9 通过、0 failures。包括 Task 4 要求的 `stage11b.settings_evidence_guard` 与 mutation self-test；唯一 fixed tick 仍为：
 
-## 审查修复：Fury 最终伤害边界与 helper 下沉
+```cpp
+runtime.fixed_tick(step_movement,
+    loot_pickup_policy(live_settings.loot_filter_mode));
+```
 
-### RED
+```powershell
+cmake --build E:/game/task6-build --target arpg_settings_tests -- -j1
+ctest --test-dir E:/game/task6-build -R '^settings\.units$' --output-on-failure
+```
 
-- actual contact 使用 Blink Assault M1 把 Stage 9 contact packet 从 `45` 变为 `54`，再叠 Chilling M1：旧实现先 Fury 后 Chilling，结果为 `90`；期望先 `ceil(54 * 0.15) = 9` 合入 packet，再 final Fury，结果 `floor(63 * 1.45) = 91`。
-- actual projectile 使用基础 lightning `40` 与 Chilling M1：旧顺序得到 `floor(40 * 1.45) + ceil(58 * 0.15) = 67`；期望先加入 `ceil(40 * 0.15) = 6`，再 final Fury 得 `floor(46 * 1.45) = 66`。
-- Fury + Chaos Corrosion 三档旧实现仍写入原值 `20/30/45`；期望 final DoT `29/43/65`。
-- RED 输出：`150 cases, 2 failures`，分别命中 contact `91` 断言与 Corrosion 三档断言。
+结果：`settings.units` 1/1 通过、0 failures。
 
-### GREEN 与 exactly-once 审计
+```powershell
+cmake --build E:/game/task6-build --target arpg_stage11c_hud_stress -- -j1
+ctest --test-dir E:/game/task6-build -R '^stage11c\.hud_stress\.zero_alloc_100k$' --output-on-failure
+```
 
-- `apply_monster_direct_hit` 先完整合入 Chilling 水伤，再对最终 packet 每个元素 floor 乘 `monster_damage_bp`；AI contact、projectile 与 bomber 不再提前乘 Fury。
-- projectile runtime 中保存 Stage 9 packet，命中 direct-hit 后只乘一次；Chilling M1 测试锁定 packet `40`、最终玩家伤害 `66`。
-- Corrosion 在最终写入 `PlayerStatusRuntime` 前 floor 乘一次：M1/M2/M3 为 `29/43/65`；相同测试同时锁定无 Fury 时仍为 `20/30/45`，排除无条件缩放与双乘。
-- native monster hazard 以及 death/chain/burning affix hazard 不经过 direct-hit，继续只在生成边界乘 Fury；environment 仍未实现且未接入。
-- GREEN 输出：`150 cases, 0 failures`。
+结果：HUD stress 1/1 通过、0 failures。
 
-### Minor Refactor
+## 文件
 
-- 新增窄头 `src/combat/combat_scaling.hpp`，集中整数 basis-point、tick ratio、Stage 9 packet 与 outgoing packet 缩放。
-- `monster_ai_common.hpp` 只保留 AI/profile 的 move/attack/cooldown 组合包装。
-- `combat_world.cpp`、`monster_pool.cpp`、`player_simulation.cpp` 与 scaling 单测直接 include `combat_scaling.hpp`，不再 include AI common；没有复制 helper 实现。
+- `src/platform/raylib/combat_renderer.hpp`
+- `src/platform/raylib/combat_renderer.cpp`
+- `src/platform/raylib/room_renderer.cpp`
+- `src/platform/raylib/hud_renderer.hpp`
+- `src/platform/raylib/hud_renderer.cpp`
+- `src/platform/raylib/hud_font.cpp`
+- `src/platform/raylib/raylib_host.hpp`
+- `src/platform/raylib/raylib_host.cpp`
+- `tests/platform/hud_font_tests.cpp`
+- `tests/platform/hud_host_integration_tests.cpp`
+- `tests/platform/pause_host_gate_tests.cpp`
+- `tests/platform/platform_test_main.cpp`
+- `.superpowers/sdd/task-6-report.md`
 
-### 审查修复后的 fresh 验证
+## 提交
 
-- `ctest --preset windows-msvc-debug -R "combat.units|dungeon.units" --output-on-failure`
-  - 2/2 tests，0 failures，总耗时 `143.81 sec`。
-- `ctest --preset windows-msvc-debug -R '^abyss.units$|^architecture\.' --output-on-failure`
-  - 19/19 tests，0 failures，总耗时 `53.55 sec`。
+主题：`feat: render filtered ground loot labels`
+
+## 自审
+
+- `combat_renderer.cpp` 只有一处 `build_ground_loot_view` 调用；位于每次 `draw` 开头。room/HUD 两个 production consumer 都来自同一个 lvalue plan，未持有跨帧引用。
+- room icon path 不调用 `ground_loot_visible` 或 `build_ground_loot_view`；HUD label path 同样不重算 filter。
+- label path 只使用固定容量 `GroundLootView` 文本和 `DrawTextEx`；源码扫描无 `TextFormat`、`std::string`、`std::vector` 或 `DrawText`。
+- `CombatRenderer::set_loot_filter_mode` 只写 renderer 私有 presentation 状态；runtime、session、pickup policy 不引用该字段。
+- settings draft 的 loot mode 不再写入 live runtime field。Apply 成功是唯一将新 loot mode 发布给 committed/live 的路径；Cancel/失败回滚保持旧 policy。
+- `git diff --check` 通过；platform、settings、settings/HUD architecture guards 与 HUD stress 全部通过。
+
+## 顾虑
+
+- headless 单元测试无法直接拦截 raylib `Draw*` 调用，因此顺序和复用由真实 production `CombatRenderPlan` 驱动并由纯 plan 测试、源码扫描及现有 architecture guards 验证；本任务未做 Task 9 的像素级 formal evidence。
+- Apply failure 只有在既有 `rollback_live_settings` 成功时才能保证所有窗口/音量 live state 都恢复；loot renderer mode 会随该成功回滚恢复。rollback 自身失败仍保留既有错误提示语义，未在 Task 6 擅自改写。
+- 独立 build 目录位于 `E:/game/task6-build`，因为共享 task5 build 目录对当前执行身份不可写。

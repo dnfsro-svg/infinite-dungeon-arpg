@@ -9,6 +9,28 @@
 
 namespace arpg::platform {
 
+CombatRenderPlan make_combat_render_plan(
+    const dungeon::DungeonSnapshot& snapshot,
+    settings::LootFilterMode mode,
+    float width,
+    float height) noexcept {
+    CombatRenderPlan plan{};
+    plan.ground_loot = build_ground_loot_view(snapshot, mode, width, height);
+    plan.stages = {{
+        CombatRenderStage::room,
+        CombatRenderStage::actors,
+        CombatRenderStage::ground_loot_labels,
+        CombatRenderStage::normal_hud,
+    }};
+    plan.stage_count = plan.stages.size();
+    return plan;
+}
+
+GroundLootRenderConsumers ground_loot_render_consumers(
+    const CombatRenderPlan& plan) noexcept {
+    return {&plan.ground_loot, &plan.ground_loot};
+}
+
 std::optional<std::size_t> hud_presented_frame_index(
     HudPresentedFrame frame) noexcept {
     const std::size_t index = static_cast<std::size_t>(frame);
@@ -58,6 +80,11 @@ void CombatRenderer::consume_dungeon_event(
 void CombatRenderer::clear_combat_transients() noexcept {
     last_event_ = combat::CombatEvent{};
     has_last_event_ = false;
+}
+
+void CombatRenderer::set_loot_filter_mode(
+    settings::LootFilterMode mode) noexcept {
+    loot_filter_mode_ = mode;
 }
 
 void CombatRenderer::update(float frame_seconds) noexcept {
@@ -136,17 +163,43 @@ void CombatRenderer::draw(
     bool audio_ready) noexcept {
     transition_ = transition_after_room_phase(transition_, current.phase);
 
+    const CombatRenderPlan render_plan = make_combat_render_plan(current,
+        loot_filter_mode_, static_cast<float>(GetScreenWidth()),
+        static_cast<float>(GetScreenHeight()));
+    const GroundLootRenderConsumers ground_loot =
+        ground_loot_render_consumers(render_plan);
+
     const CameraOffset camera_offset = feedback.camera_offset();
     Camera2D world_camera{};
     world_camera.offset = {camera_offset.x, camera_offset.y};
     world_camera.zoom = 1.0F;
     BeginMode2D(world_camera);
-    draw_room(current);
-    draw_actors(previous, current, std::clamp(interpolation_alpha, 0.0F, 1.0F),
-        draw_debug, feedback);
-    EndMode2D();
+    bool world_mode = true;
+    for (std::size_t index = 0U; index < render_plan.stage_count; ++index) {
+        const CombatRenderStage stage = render_plan.stages[index];
+        if (stage == CombatRenderStage::ground_loot_labels && world_mode) {
+            EndMode2D();
+            world_mode = false;
+        }
+        switch (stage) {
+        case CombatRenderStage::room:
+            draw_room(current, *ground_loot.room_icons);
+            break;
+        case CombatRenderStage::actors:
+            draw_actors(previous, current,
+                std::clamp(interpolation_alpha, 0.0F, 1.0F),
+                draw_debug, feedback);
+            break;
+        case CombatRenderStage::ground_loot_labels:
+            hud_renderer_.draw_ground_loot(*ground_loot.hud_labels);
+            break;
+        case CombatRenderStage::normal_hud:
+            draw_hud();
+            break;
+        }
+    }
+    if (world_mode) EndMode2D();
 
-    draw_hud();
     if (draw_debug) {
         const DebugOverlayDiagnosticsPlan diagnostics =
             make_debug_overlay_diagnostics_plan(current, hud_model_.diagnostics,

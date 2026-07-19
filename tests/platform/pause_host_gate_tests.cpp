@@ -236,6 +236,7 @@ arpg::test::Failure close_same_frame_waits_for_successful_apply() noexcept {
     state.committed = settings::default_settings();
     state.draft = state.committed;
     state.draft.revision = 1U;
+    state.draft.loot_filter_mode = settings::LootFilterMode::rare_only;
     ARPG_REQUIRE(settings::assign_or_swap(state.draft,
         settings::SettingAction::light_attack, settings::StableKey::q));
     settings::SettingsData live = state.committed;
@@ -249,6 +250,9 @@ arpg::test::Failure close_same_frame_waits_for_successful_apply() noexcept {
         settings::SettingAction::light_attack) == settings::StableKey::q);
     ARPG_REQUIRE(input.bindings == state.committed.bindings);
     ARPG_REQUIRE(live.bindings == state.committed.bindings);
+    ARPG_REQUIRE(state.committed.loot_filter_mode
+        == settings::LootFilterMode::rare_only);
+    ARPG_REQUIRE(live.loot_filter_mode == state.committed.loot_filter_mode);
     return {};
 }
 
@@ -260,6 +264,7 @@ arpg::test::Failure close_same_frame_waits_for_rejected_apply() noexcept {
     state.committed = settings::default_settings();
     state.draft = state.committed;
     state.draft.revision = 1U;
+    state.draft.loot_filter_mode = settings::LootFilterMode::rare_only;
     ARPG_REQUIRE(settings::assign_or_swap(state.draft,
         settings::SettingAction::light_attack, settings::StableKey::q));
     const settings::SettingsData original = state.committed;
@@ -273,7 +278,48 @@ arpg::test::Failure close_same_frame_waits_for_rejected_apply() noexcept {
     ARPG_REQUIRE(state.committed.bindings == original.bindings);
     ARPG_REQUIRE(input.bindings == original.bindings);
     ARPG_REQUIRE(state.draft.bindings != original.bindings);
+    ARPG_REQUIRE(live.loot_filter_mode == original.loot_filter_mode);
+    ARPG_REQUIRE(state.draft.loot_filter_mode == original.loot_filter_mode);
+    ARPG_REQUIRE(platform::renderer_loot_filter_mode(
+        state.screen, live, state.draft) == original.loot_filter_mode);
     ARPG_REQUIRE(state.message != nullptr);
+    return {};
+}
+
+arpg::test::Failure loot_filter_preview_is_renderer_only_until_commit() noexcept {
+    MemorySettingsFiles files{};
+    settings::SettingsStore store = memory_store(files);
+    platform::PauseMenuState state{};
+    state.screen = platform::PauseScreen::settings;
+    state.committed = settings::default_settings();
+    state.draft = state.committed;
+    state.draft.loot_filter_mode = settings::LootFilterMode::rare_only;
+    settings::SettingsData live = state.committed;
+    settings::SettingsData input = state.committed;
+
+    ARPG_REQUIRE(!platform::settle_host_pause_command(
+        platform::PauseCommand::preview, false, state, live, input, store, {}));
+    ARPG_REQUIRE(live.loot_filter_mode == state.committed.loot_filter_mode);
+    ARPG_REQUIRE(platform::loot_pickup_policy(live.loot_filter_mode).minimum_rarity
+        == platform::loot_pickup_policy(
+            state.committed.loot_filter_mode).minimum_rarity);
+    ARPG_REQUIRE(platform::renderer_loot_filter_mode(
+        state.screen, live, state.draft)
+        == settings::LootFilterMode::rare_only);
+
+    platform::PauseInput cancel{};
+    cancel.escape = true;
+    const platform::PauseCommand rollback =
+        platform::update_pause_menu(state, {}, cancel);
+    ARPG_REQUIRE(rollback == platform::PauseCommand::rollback);
+    ARPG_REQUIRE(!platform::settle_host_pause_command(
+        rollback, false, state, live, input, store, {}));
+    ARPG_REQUIRE(state.screen == platform::PauseScreen::root);
+    ARPG_REQUIRE(state.draft.loot_filter_mode
+        == state.committed.loot_filter_mode);
+    ARPG_REQUIRE(platform::renderer_loot_filter_mode(
+        state.screen, live, state.draft)
+        == state.committed.loot_filter_mode);
     return {};
 }
 
@@ -292,6 +338,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &close_same_frame_waits_for_successful_apply},
     {"close waits for rejected Apply",
         &close_same_frame_waits_for_rejected_apply},
+    {"loot filter preview is renderer-only until commit",
+        &loot_filter_preview_is_renderer_only_until_commit},
 };
 
 }  // namespace

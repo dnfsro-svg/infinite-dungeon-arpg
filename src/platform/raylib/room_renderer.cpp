@@ -203,21 +203,39 @@ void draw_ground_item_shape(items::ItemSlot slot, Vector2 center,
     }
 }
 
+const dungeon::GroundItemSnapshot* ground_item_with_ordinal(
+    const dungeon::DungeonSnapshot& snapshot,
+    std::uint16_t ordinal) noexcept {
+    const std::size_t count = (std::min)(
+        static_cast<std::size_t>(snapshot.ground_item_count),
+        snapshot.ground_items.size());
+    for (std::size_t index = 0U; index < count; ++index) {
+        if (snapshot.ground_items[index].ordinal == ordinal) {
+            return &snapshot.ground_items[index];
+        }
+    }
+    return nullptr;
+}
+
 void draw_ground_items(const dungeon::DungeonSnapshot& snapshot,
+    const GroundLootView& ground_loot,
     float width, float height) noexcept {
-    for (std::size_t index = 0U; index < snapshot.ground_item_count; ++index) {
-        const dungeon::GroundItemSnapshot& item = snapshot.ground_items[index];
+    for (std::size_t index = 0U; index < ground_loot.count; ++index) {
+        const dungeon::GroundItemSnapshot* const item =
+            ground_item_with_ordinal(snapshot,
+                ground_loot.labels[index].ordinal);
+        if (item == nullptr) continue;
         const RenderProjection projected = project_render_world(
-            item.position.x, item.position.y, item.position.z,
+            item->position.x, item->position.y, item->position.z,
             width, height);
         const Vector2 center{projected.x,
             projected.ground_y - 13.0F * projected.scale};
-        const Color color = ground_item_color(item.rarity);
+        const Color color = ground_item_color(item->rarity);
         DrawEllipse(static_cast<int>(projected.x),
             static_cast<int>(projected.ground_y + 2.0F),
             17.0F * projected.scale, 6.0F * projected.scale,
             Fade(color, 0.24F));
-        draw_ground_item_shape(item.slot, center, projected.scale, color);
+        draw_ground_item_shape(item->slot, center, projected.scale, color);
     }
 }
 
@@ -269,13 +287,15 @@ void draw_hole(const dungeon::DungeonSnapshot& snapshot) noexcept {
 
 }  // namespace
 
-void CombatRenderer::draw_room(const dungeon::DungeonSnapshot& current) const noexcept {
+void CombatRenderer::draw_room(
+    const dungeon::DungeonSnapshot& current,
+    const GroundLootView& ground_loot) const noexcept {
     const float width = static_cast<float>(GetScreenWidth());
     const float height = static_cast<float>(GetScreenHeight());
     draw_graybox_room(current.ecology);
     draw_abyss(current, static_cast<float>(GetTime()));
     draw_environment_hazards(current, width, height);
-    draw_ground_items(current, width, height);
+    draw_ground_items(current, ground_loot, width, height);
     draw_doors(current, width, height);
     draw_hole(current);
 }

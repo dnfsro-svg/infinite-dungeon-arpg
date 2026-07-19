@@ -370,6 +370,37 @@ bool HudRenderer::font_ready() const noexcept {
     return font_ready_;
 }
 
+void HudRenderer::draw_ground_loot(
+    const GroundLootView& view) const noexcept {
+    if (!IsWindowReady()) return;
+    const HudFontSelectionPlan selection =
+        make_hud_font_selection_plan(font_ready_);
+    const Font draw_font = selection.use_default_font
+        ? GetFontDefault() : font_;
+    const HudPalette palette = hud_palette();
+    for (std::size_t index = 0U; index < view.count; ++index) {
+        const GroundLootLabel& label = view.labels[index];
+        const Rectangle bounds{label.rect.x, label.rect.y,
+            label.rect.width, label.rect.height};
+        const Color text{label.text_color.r, label.text_color.g,
+            label.text_color.b, label.text_color.a};
+        const Color border{label.border_color.r, label.border_color.g,
+            label.border_color.b, label.border_color.a};
+        const Color fill = label.abyss
+            ? Fade(palette.chaos, 0.42F)
+            : Fade(palette.text, 0.13F);
+        DrawRectangleRounded(bounds, 0.18F, 6, fill);
+        DrawRectangleLinesEx(bounds, label.abyss ? 2.0F : 1.0F, border);
+        BeginScissorMode(static_cast<int>(bounds.x),
+            static_cast<int>(bounds.y),
+            (std::max)(0, static_cast<int>(bounds.width)),
+            (std::max)(0, static_cast<int>(bounds.height)));
+        DrawTextEx(draw_font, label.text.data(),
+            {bounds.x + 8.0F, bounds.y + 3.0F}, 14.0F, 1.0F, text);
+        EndScissorMode();
+    }
+}
+
 void HudRenderer::draw(const HudViewModel& view,
     const HudLayout& layout) const noexcept {
     if (!IsWindowReady()) return;

@@ -3,6 +3,7 @@
 #include "hud_layout.hpp"
 #include "hud_palette.hpp"
 #include "hud_view_model.hpp"
+#include "ground_loot_view.hpp"
 
 #include <raylib.h>
 
@@ -105,6 +106,7 @@ public:
     [[nodiscard]] bool initialize() noexcept;
     void shutdown() noexcept;
     [[nodiscard]] bool font_ready() const noexcept;
+    void draw_ground_loot(const GroundLootView&) const noexcept;
     void draw(const HudViewModel&, const HudLayout&) const noexcept;
 
 private:

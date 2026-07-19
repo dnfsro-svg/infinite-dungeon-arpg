@@ -904,6 +904,15 @@ HostSettingsNotice make_host_settings_notice(
     return {status == settings::SettingsLoadStatus::defaults_corrupt};
 }
 
+settings::LootFilterMode renderer_loot_filter_mode(
+    PauseScreen screen,
+    const settings::SettingsData& live_settings,
+    const settings::SettingsData& draft_settings) noexcept {
+    return screen == PauseScreen::settings
+        ? draft_settings.loot_filter_mode
+        : live_settings.loot_filter_mode;
+}
+
 void consume_host_settings_notice(
     HostSettingsNotice& notice,
     PauseScreen previous_screen,
@@ -929,10 +938,13 @@ bool settle_host_pause_command(
     case PauseCommand::none:
         break;
     case PauseCommand::preview: {
+        settings::SettingsData preview_settings = pause_menu.draft;
+        preview_settings.loot_filter_mode =
+            pause_menu.committed.loot_filter_mode;
         const LiveSettingsResult result = apply_live_settings(
-            live_settings, pause_menu.draft, settings_backend);
+            live_settings, preview_settings, settings_backend);
         if (result == LiveSettingsResult::applied) {
-            live_settings = pause_menu.draft;
+            live_settings = preview_settings;
             pause_menu.message = nullptr;
         } else {
             pause_menu.message = kSettingsPreviewFailed;
@@ -947,6 +959,8 @@ bool settle_host_pause_command(
                 live_settings, pause_menu.committed, settings_backend);
             if (rollback == LiveSettingsResult::applied) {
                 live_settings = pause_menu.committed;
+                pause_menu.draft.loot_filter_mode =
+                    pause_menu.committed.loot_filter_mode;
                 pause_menu.message = kSettingsPreviewFailed;
             } else {
                 pause_menu.message = kSettingsRollbackFailed;
@@ -971,6 +985,8 @@ bool settle_host_pause_command(
             previewed, pause_menu.committed, settings_backend);
         if (rollback == LiveSettingsResult::applied) {
             live_settings = pause_menu.committed;
+            pause_menu.draft.loot_filter_mode =
+                pause_menu.committed.loot_filter_mode;
             pause_menu.message = kSettingsSaveFailed;
         } else {
             pause_menu.message = kSettingsRollbackFailed;
@@ -1472,6 +1488,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             } else {
                 stage11c_validation_state.target_presented_frames = 0U;
             }
+            renderer.set_loot_filter_mode(renderer_loot_filter_mode(
+                pause_menu.screen, live_settings, pause_menu.draft));
             BeginDrawing();
             ClearBackground(Color{13, 17, 27, 255});
             renderer.draw(previous, current, runtime.render_status(),

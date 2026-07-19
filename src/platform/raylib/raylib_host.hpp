@@ -110,6 +110,11 @@ struct HostFrameGateResult final {
 [[nodiscard]] dungeon::AutoPickupPolicy loot_pickup_policy(
     settings::LootFilterMode mode) noexcept;
 
+[[nodiscard]] settings::LootFilterMode renderer_loot_filter_mode(
+    PauseScreen screen,
+    const settings::SettingsData& live_settings,
+    const settings::SettingsData& draft_settings) noexcept;
+
 [[nodiscard]] DeathInputGate host_death_input_gate(
     bool death_saving,
     bool death_pending,

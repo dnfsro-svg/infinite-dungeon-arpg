@@ -4,14 +4,32 @@
 #include "control_hints.hpp"
 #include "debug_overlay_renderer.hpp"
 #include "dungeon_runtime.hpp"
+#include "ground_loot_view.hpp"
 #include "hud_font.hpp"
+#include "pause_menu_state.hpp"
+#include "platform/settings/settings_types.hpp"
+#include "raylib_host.hpp"
 
 #include <cstring>
 
 namespace {
 
 namespace dungeon = arpg::dungeon;
+namespace items = arpg::items;
 namespace platform = arpg::platform;
+namespace settings = arpg::settings;
+
+dungeon::GroundItemSnapshot ground_item(
+    std::uint16_t ordinal,
+    items::ItemRarity rarity) noexcept {
+    dungeon::GroundItemSnapshot item{};
+    item.ordinal = ordinal;
+    item.item_id = 1000U + ordinal;
+    item.base_id = 1U;
+    item.item_level = 20U;
+    item.rarity = rarity;
+    return item;
+}
 
 platform::ControlHints committed_hints(std::uint64_t revision) noexcept {
     platform::ControlHints hints{};
@@ -304,6 +322,56 @@ arpg::test::Failure static_text_cache_rebuilds_only_changed_fragments() noexcept
     return {};
 }
 
+arpg::test::Failure ground_loot_render_plan_reuses_one_view_and_orders_stages()
+    noexcept {
+    dungeon::DungeonSnapshot value = snapshot();
+    value.ground_items[0] = ground_item(30U, items::ItemRarity::rare);
+    value.ground_items[1] = ground_item(10U, items::ItemRarity::normal);
+    value.ground_items[2] = ground_item(20U, items::ItemRarity::magic);
+    value.ground_item_count = 3U;
+
+    const platform::CombatRenderPlan plan = platform::make_combat_render_plan(
+        value, settings::LootFilterMode::magic_or_better, 1280.0F, 720.0F);
+    const platform::GroundLootRenderConsumers consumers =
+        platform::ground_loot_render_consumers(plan);
+
+    ARPG_REQUIRE(consumers.room_icons == &plan.ground_loot);
+    ARPG_REQUIRE(consumers.hud_labels == &plan.ground_loot);
+    ARPG_REQUIRE(consumers.room_icons == consumers.hud_labels);
+    ARPG_REQUIRE(plan.ground_loot.count == 2U);
+    ARPG_REQUIRE(plan.ground_loot.labels[0].ordinal == 20U);
+    ARPG_REQUIRE(plan.ground_loot.labels[1].ordinal == 30U);
+    ARPG_REQUIRE(plan.stage_count == 4U);
+    ARPG_REQUIRE(plan.stages[0] == platform::CombatRenderStage::room);
+    ARPG_REQUIRE(plan.stages[1] == platform::CombatRenderStage::actors);
+    ARPG_REQUIRE(plan.stages[2]
+        == platform::CombatRenderStage::ground_loot_labels);
+    ARPG_REQUIRE(plan.stages[3] == platform::CombatRenderStage::normal_hud);
+    return {};
+}
+
+arpg::test::Failure renderer_uses_draft_only_on_the_settings_screen() noexcept {
+    settings::SettingsData live = settings::default_settings();
+    live.loot_filter_mode = settings::LootFilterMode::magic_or_better;
+    settings::SettingsData draft = live;
+    draft.loot_filter_mode = settings::LootFilterMode::rare_only;
+
+    ARPG_REQUIRE(platform::renderer_loot_filter_mode(
+        platform::PauseScreen::settings, live, draft)
+        == settings::LootFilterMode::rare_only);
+    constexpr platform::PauseScreen kCommittedScreens[] = {
+        platform::PauseScreen::closed,
+        platform::PauseScreen::root,
+        platform::PauseScreen::capture_binding,
+        platform::PauseScreen::quit_confirm,
+    };
+    for (const platform::PauseScreen screen : kCommittedScreens) {
+        ARPG_REQUIRE(platform::renderer_loot_filter_mode(screen, live, draft)
+            == settings::LootFilterMode::magic_or_better);
+    }
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"observes every presented frame read only", &observation_is_once_per_presented_frame_and_read_only},
     {"production presentation seam covers all owners", &production_presentation_seam_observes_normal_recovery_and_death},
@@ -314,6 +382,10 @@ constexpr arpg::test::TestCase kCases[] = {
     {"settings apply uses committed hints", &committed_settings_hints_and_revision_are_used_after_apply},
     {"observation publishes prebuilt hud model", &observation_publishes_the_prebuilt_hud_model},
     {"static HUD text cache invalidates by fragment", &static_text_cache_rebuilds_only_changed_fragments},
+    {"ground loot render plan reuses view and orders stages",
+        &ground_loot_render_plan_reuses_one_view_and_orders_stages},
+    {"renderer draft is settings-only",
+        &renderer_uses_draft_only_on_the_settings_screen},
 };
 
 }  // namespace
