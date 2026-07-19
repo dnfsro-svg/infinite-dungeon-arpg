@@ -106,22 +106,17 @@ ctest --preset windows-msvc-release --output-on-failure
 
 | 配置 | Fresh clean-first 构建 | 完整 CTest | 总测试时间 |
 | --- | --- | --- | --- |
-| Debug | 279/279，exit 0 | 70/70，0 failed | 394.15 秒 |
-| Release | 279/279，exit 0 | 70/70，0 failed | 261.79 秒 |
+| Debug | 279/279，exit 0 | 70/70，0 failed | 434.70 秒 |
+| Release | 279/279，exit 0 | 70/70，0 failed | 293.80 秒 |
 
-Fresh Debug 中 Stage 11-C 压力/正式画面/证据验证/验证器自测/架构门禁分别为
-0.58/16.75/4.04/9.06/0.03 秒，架构自测 0.21 秒；Release 分别为
-0.18/13.81/4.30/9.47/0.03 秒，架构自测 0.24 秒。两种配置的六个场景摘要均为
+Fresh Debug 中 Stage 11-C 压力/正式画面/证据验证/验证器自测/架构门禁/架构自测分别为
+0.34/17.30/4.08/9.77/0.03/0.23 秒；Release 分别为
+0.10/15.78/4.05/9.71/0.03/0.24 秒。两种配置的六个场景摘要均为
 六项 `*_valid=1` 与 `result=pass`。输入延迟源码门禁最终 Debug/Release 分别为
-9.57/8.69 秒，host 输入源码门禁分别为 0.04/0.04 秒；既有死亡、设置、持久化、
-地下城和 240 项平台单元场景全部保留在 70 项完整门禁中。
+19.38/19.35 秒，host 输入源码门禁分别为 34.66/33.80 秒；既有死亡、设置、持久化、
+地下城和 241 项平台单元场景全部保留在 70 项完整门禁中。
 
-Task 10 两轮 review 修复提交 `c2fd48d`、`a36ce94` 后，未改变 CMake 测试注册或生产构建
-产物，因此直接在
-最终分支再次执行完整 Debug `ctest --preset windows-msvc-debug --output-on-failure`：
-70/70、0 failed、438.50 秒。该次最终复跑的 Stage 11-C 压力/正式画面/证据验证/
-验证器自测/架构门禁/架构自测分别为 0.57/16.87/3.97/9.21/0.03/0.23 秒；强化后的
-input latency/host input 完整链门禁分别为 19.09/34.46 秒。两项门禁先清除注释与字符串，
+Task 10 review 修复提交 `c2fd48d`、`a36ce94` 后，两项输入门禁先清除注释与字符串，
 再要求唯一提交严格位于 physical sample、Stage 11-B 注入、Stage 11-C 注入、逻辑映射、
 死亡/暂停/覆盖层门禁及 `forward_actions` 合取之后，并由 `if (forward_actions)` 控制；
 原位 mutation 会拒绝 map-before-Stage11C、Stage11C bypass、submit-before-gate、
@@ -152,13 +147,18 @@ MSVC 运行库，不含 `raylib.dll`。
   fixture `00 01 02 7F 80 FF` 在两端均必须得到 `12476124638988131554`。validator 的
   `unchecked ulong` 实现避免 PowerShell 移位、符号和溢出差异；self-test 新增有效 PNG
   单像素篡改与仅聚合 hash 篡改，两者均按名称拒绝。
+- `c1098a1`：Stage 9 validator 自测改用绝对 Windows PowerShell 路径和显式子进程双流捕获。
+  启动失败与 `exit=23` 且 stdout/stderr 均为空的基础设施故障分别由真实探针验证；七类
+  mutation 的精确拒绝原因保持不变，不重试、不吞错。此前 Release 全套中的一次空输出
+  偶发失败未能在串行、全链或并行压力复现中重现，因此未将推测写成根因。
 
 修复后的 Debug 聚焦验证为：Stage 11-C stress/formal/validator/self/architecture/evidence
 guard 共 8/8、31.73 秒；死亡五路径、`platform.units`、设置 formal、input latency 和
 host input 共 5/5、71.02 秒。六张 1280x720 PNG 已重新生成并逐张目检，深渊图中的两行
 情境提示无按键前缀、无缺字框。聚合报告包含六项 `*_valid=1`、非零且逐文件匹配的 PNG/
 snapshot hash，以及 `result=pass`。本轮按修复任务边界未重复执行完整 70 项 Debug 或
-Release；由最终父级审查通过后统一执行。
+Release；最终双审通过后，父级已在 `c1098a1` HEAD 上完成上表所列的 Fresh Debug/Release
+clean-first 279/279 与 CTest 70/70，作为最终完成证据。
 
 ## 分支边界与停止条件
 
