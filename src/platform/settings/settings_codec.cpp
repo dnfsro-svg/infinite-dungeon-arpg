@@ -11,7 +11,8 @@ namespace {
 
 constexpr std::array<std::uint8_t, 8> magic{
     'A', 'R', 'P', 'G', 'S', 'E', 'T', '1'};
-constexpr std::uint16_t format = 1U;
+constexpr std::uint16_t format_v1 = 1U;
+constexpr std::uint16_t format_v2 = 2U;
 constexpr std::uint16_t payload_size = 20U;
 constexpr std::size_t crc_covered_offset = 8U;
 constexpr std::size_t crc_covered_size = 32U;
@@ -81,12 +82,13 @@ encode_settings(const SettingsData& settings) noexcept {
     for (std::size_t index = 0U; index < magic.size(); ++index) {
         bytes[index] = magic[index];
     }
-    write_u16(bytes, 8U, format);
+    write_u16(bytes, 8U, format_v2);
     write_u16(bytes, 10U, payload_size);
     write_u64(bytes, 12U, settings.revision);
     bytes[20] = settings.master_sfx_percent;
     bytes[21] = static_cast<std::uint8_t>(settings.window_mode);
     bytes[22] = settings.vsync_enabled ? 1U : 0U;
+    bytes[23] = static_cast<std::uint8_t>(settings.loot_filter_mode);
     for (std::size_t index = 0U; index < settings.bindings.size(); ++index) {
         bytes[24U + index] = static_cast<std::uint8_t>(settings.bindings[index]);
     }
@@ -106,7 +108,8 @@ SettingsDecodeResult decode_settings(
             return decode_error(SettingsCodecError::wrong_magic);
         }
     }
-    if (read_u16(bytes, 8U) != format) {
+    const std::uint16_t record_format = read_u16(bytes, 8U);
+    if (record_format != format_v1 && record_format != format_v2) {
         return decode_error(SettingsCodecError::wrong_format);
     }
     if (read_u16(bytes, 10U) != payload_size) {
@@ -117,7 +120,7 @@ SettingsDecodeResult decode_settings(
     if (read_u32(bytes, crc_offset) != expected_crc) {
         return decode_error(SettingsCodecError::bad_crc);
     }
-    if (bytes[23] != 0U) {
+    if (record_format == format_v1 && bytes[23] != 0U) {
         return decode_error(SettingsCodecError::reserved_nonzero);
     }
     for (std::size_t offset = 34U; offset < crc_offset; ++offset) {
@@ -134,6 +137,9 @@ SettingsDecodeResult decode_settings(
     settings.master_sfx_percent = bytes[20];
     settings.window_mode = static_cast<WindowMode>(bytes[21]);
     settings.vsync_enabled = bytes[22] != 0U;
+    settings.loot_filter_mode = record_format == format_v1
+        ? LootFilterMode::show_all
+        : static_cast<LootFilterMode>(bytes[23]);
     for (std::size_t index = 0U; index < settings.bindings.size(); ++index) {
         settings.bindings[index] = static_cast<StableKey>(bytes[24U + index]);
     }

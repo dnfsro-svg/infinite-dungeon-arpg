@@ -74,10 +74,17 @@ enum class WindowMode : std::uint8_t {
     fullscreen
 };
 
+enum class LootFilterMode : std::uint8_t {
+    show_all,
+    magic_or_better,
+    rare_only
+};
+
 struct SettingsData final {
     std::uint8_t master_sfx_percent{100};
     WindowMode window_mode{WindowMode::windowed};
     bool vsync_enabled{true};
+    LootFilterMode loot_filter_mode{LootFilterMode::show_all};
     std::array<StableKey, static_cast<std::size_t>(SettingAction::count)> bindings{};
     std::uint64_t revision{};
 };
@@ -87,6 +94,7 @@ enum class SettingsValidationError : std::uint8_t {
     volume_range,
     volume_step,
     window_mode,
+    loot_filter_mode,
     key_range,
     reserved_key,
     duplicate_key
@@ -100,5 +108,6 @@ enum class SettingsValidationError : std::uint8_t {
     SettingAction action,
     StableKey key) noexcept;
 [[nodiscard]] const char* action_label(SettingAction action) noexcept;
+[[nodiscard]] const char* loot_filter_label(LootFilterMode mode) noexcept;
 
 }  // namespace arpg::settings

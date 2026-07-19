@@ -13,6 +13,7 @@ using arpg::settings::SettingAction;
 using arpg::settings::SettingsData;
 using arpg::settings::SettingsValidationError;
 using arpg::settings::StableKey;
+using arpg::settings::LootFilterMode;
 using arpg::settings::WindowMode;
 
 constexpr std::array<SettingAction, 10> actions{
@@ -32,6 +33,7 @@ constexpr std::array<SettingAction, 10> actions{
     return lhs.master_sfx_percent == rhs.master_sfx_percent &&
         lhs.window_mode == rhs.window_mode &&
         lhs.vsync_enabled == rhs.vsync_enabled &&
+        lhs.loot_filter_mode == rhs.loot_filter_mode &&
         lhs.bindings == rhs.bindings &&
         lhs.revision == rhs.revision;
 }
@@ -45,12 +47,29 @@ arpg::test::Failure defaults_are_stable() noexcept {
     ARPG_REQUIRE(settings.master_sfx_percent == 100U);
     ARPG_REQUIRE(settings.window_mode == WindowMode::windowed);
     ARPG_REQUIRE(settings.vsync_enabled);
+    ARPG_REQUIRE(settings.loot_filter_mode == LootFilterMode::show_all);
     ARPG_REQUIRE(settings.revision == 0U);
     ARPG_REQUIRE(settings.bindings == expected);
     for (std::size_t index = 0; index < actions.size(); ++index) {
         ARPG_REQUIRE(arpg::settings::binding_for(settings, actions[index]) == expected[index]);
     }
     ARPG_REQUIRE(arpg::settings::validate_settings(settings) == SettingsValidationError::none);
+    SettingsData values = settings;
+    constexpr std::array<LootFilterMode, 3> modes{
+        LootFilterMode::show_all,
+        LootFilterMode::magic_or_better,
+        LootFilterMode::rare_only};
+    constexpr std::array<const char*, 3> labels{
+        "Show All", "Magic or Better", "Rare Only"};
+    for (std::size_t index = 0U; index < modes.size(); ++index) {
+        values.loot_filter_mode = modes[index];
+        ARPG_REQUIRE(arpg::settings::validate_settings(values) == SettingsValidationError::none);
+        ARPG_REQUIRE(std::strcmp(arpg::settings::loot_filter_label(modes[index]), labels[index]) == 0);
+    }
+    values.loot_filter_mode = static_cast<LootFilterMode>(3U);
+    ARPG_REQUIRE(arpg::settings::validate_settings(values) ==
+        SettingsValidationError::loot_filter_mode);
+    ARPG_REQUIRE(std::strcmp(arpg::settings::loot_filter_label(values.loot_filter_mode), "Unknown") == 0);
     return {};
 }
 

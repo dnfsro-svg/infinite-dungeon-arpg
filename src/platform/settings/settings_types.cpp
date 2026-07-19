@@ -32,12 +32,21 @@ constexpr std::array<const char*, action_count> action_labels{
     "Inventory",
     "Passive Tree"};
 
+constexpr std::array<const char*, 3> loot_filter_labels{
+    "Show All",
+    "Magic or Better",
+    "Rare Only"};
+
 [[nodiscard]] constexpr std::size_t action_index(SettingAction action) noexcept {
     return static_cast<std::size_t>(action);
 }
 
 [[nodiscard]] constexpr bool valid_key(StableKey key) noexcept {
     return static_cast<std::size_t>(key) < static_cast<std::size_t>(StableKey::count);
+}
+
+[[nodiscard]] constexpr bool valid_loot_filter_mode(LootFilterMode mode) noexcept {
+    return static_cast<std::size_t>(mode) < loot_filter_labels.size();
 }
 
 }  // namespace
@@ -58,6 +67,9 @@ SettingsValidationError validate_settings(const SettingsData& settings) noexcept
     if (settings.window_mode != WindowMode::windowed &&
         settings.window_mode != WindowMode::fullscreen) {
         return SettingsValidationError::window_mode;
+    }
+    if (!valid_loot_filter_mode(settings.loot_filter_mode)) {
+        return SettingsValidationError::loot_filter_mode;
     }
 
     for (std::size_t index = 0; index < settings.bindings.size(); ++index) {
@@ -101,6 +113,11 @@ bool assign_or_swap(SettingsData& settings, SettingAction action, StableKey key)
 const char* action_label(SettingAction action) noexcept {
     const std::size_t index = action_index(action);
     return index < action_labels.size() ? action_labels[index] : "Unknown";
+}
+
+const char* loot_filter_label(LootFilterMode mode) noexcept {
+    const std::size_t index = static_cast<std::size_t>(mode);
+    return index < loot_filter_labels.size() ? loot_filter_labels[index] : "Unknown";
 }
 
 }  // namespace arpg::settings

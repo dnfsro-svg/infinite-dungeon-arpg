@@ -12,6 +12,7 @@ namespace {
 using arpg::settings::SettingsCodecError;
 using arpg::settings::SettingsData;
 using arpg::settings::StableKey;
+using arpg::settings::LootFilterMode;
 using arpg::settings::WindowMode;
 
 constexpr std::size_t crc_offset = 40U;
@@ -53,32 +54,44 @@ void refresh_crc(
     return lhs.master_sfx_percent == rhs.master_sfx_percent &&
         lhs.window_mode == rhs.window_mode &&
         lhs.vsync_enabled == rhs.vsync_enabled &&
+        lhs.loot_filter_mode == rhs.loot_filter_mode &&
         lhs.bindings == rhs.bindings &&
         lhs.revision == rhs.revision;
 }
 
 arpg::test::Failure fixed_layout_matches_golden_bytes() noexcept {
     static_assert(arpg::settings::kSettingsEncodedSize == 44U,
-        "settings record format 1 must remain exactly 44 bytes");
+        "settings record must remain exactly 44 bytes");
     const auto encoded = arpg::settings::encode_settings(golden_settings());
     constexpr std::array<std::uint8_t, 44> expected{
         0x41, 0x52, 0x50, 0x47, 0x53, 0x45, 0x54, 0x31,
-        0x01, 0x00, 0x14, 0x00,
+        0x02, 0x00, 0x14, 0x00,
         0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,
         0x5F, 0x01, 0x00, 0x00,
         0x16, 0x12, 0x00, 0x03, 0x09, 0x0A, 0x0B, 0x04, 0x08, 0x0F,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0xE1, 0xE9, 0x38, 0x1C};
+        0x5E, 0xE1, 0x27, 0xD5};
     ARPG_REQUIRE(encoded == expected);
     return {};
 }
 
 arpg::test::Failure valid_records_round_trip() noexcept {
-    const SettingsData expected = golden_settings();
-    const auto encoded = arpg::settings::encode_settings(expected);
+    SettingsData expected = golden_settings();
+    expected.loot_filter_mode = LootFilterMode::rare_only;
+    auto encoded = arpg::settings::encode_settings(expected);
+    ARPG_REQUIRE(encoded[8] == 2U && encoded[9] == 0U);
+    ARPG_REQUIRE(encoded[23] == static_cast<std::uint8_t>(LootFilterMode::rare_only));
     const auto decoded = arpg::settings::decode_settings(encoded.data(), encoded.size());
     ARPG_REQUIRE(decoded.error == SettingsCodecError::none);
     ARPG_REQUIRE(same_settings(decoded.settings, expected));
+
+    encoded[8] = 1U;
+    encoded[9] = 0U;
+    encoded[23] = 0U;
+    refresh_crc(encoded);
+    const auto migrated = arpg::settings::decode_settings(encoded.data(), encoded.size());
+    ARPG_REQUIRE(migrated.error == SettingsCodecError::none);
+    ARPG_REQUIRE(migrated.settings.loot_filter_mode == LootFilterMode::show_all);
     return {};
 }
 
@@ -115,7 +128,7 @@ arpg::test::Failure header_and_crc_errors_are_classified() noexcept {
         SettingsCodecError::wrong_magic);
 
     bytes = valid;
-    bytes[8] = 2U;
+    bytes[8] = 3U;
     refresh_crc(bytes);
     ARPG_REQUIRE(arpg::settings::decode_settings(bytes.data(), bytes.size()).error ==
         SettingsCodecError::wrong_format);
@@ -135,7 +148,7 @@ arpg::test::Failure header_and_crc_errors_are_classified() noexcept {
 
 arpg::test::Failure every_reserved_byte_must_be_zero() noexcept {
     const auto valid = arpg::settings::encode_settings(golden_settings());
-    constexpr std::array<std::size_t, 7> reserved_offsets{23U, 34U, 35U, 36U, 37U, 38U, 39U};
+    constexpr std::array<std::size_t, 6> reserved_offsets{34U, 35U, 36U, 37U, 38U, 39U};
     for (const std::size_t offset : reserved_offsets) {
         auto bytes = valid;
         bytes[offset] = 1U;
@@ -143,6 +156,12 @@ arpg::test::Failure every_reserved_byte_must_be_zero() noexcept {
         ARPG_REQUIRE(arpg::settings::decode_settings(bytes.data(), bytes.size()).error ==
             SettingsCodecError::reserved_nonzero);
     }
+    auto bytes = valid;
+    bytes[8] = 1U;
+    bytes[23] = 1U;
+    refresh_crc(bytes);
+    ARPG_REQUIRE(arpg::settings::decode_settings(bytes.data(), bytes.size()).error ==
+        SettingsCodecError::reserved_nonzero);
     return {};
 }
 

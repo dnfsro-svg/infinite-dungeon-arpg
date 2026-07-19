@@ -36,6 +36,7 @@ struct SlotRecord final {
     return lhs.master_sfx_percent == rhs.master_sfx_percent &&
         lhs.window_mode == rhs.window_mode &&
         lhs.vsync_enabled == rhs.vsync_enabled &&
+        lhs.loot_filter_mode == rhs.loot_filter_mode &&
         lhs.bindings == rhs.bindings &&
         lhs.revision == rhs.revision;
 }

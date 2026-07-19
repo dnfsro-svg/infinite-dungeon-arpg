@@ -2,6 +2,7 @@
 
 #include "allocation_probe.hpp"
 #include "control_hints.hpp"
+#include "core/crc32.hpp"
 #include "host_input.hpp"
 #include "dungeon_runtime.hpp"
 #include "persistence/save_store.hpp"
@@ -29,8 +30,8 @@ namespace settings = arpg::settings;
 
 // Independently derived from the documented 1,000-step mutation sequence and
 // the settings file layout (including its CRC32 field), not from store output.
-constexpr std::uint64_t kExpectedSlotAHash = 0xB18681AE11B562E5ULL;
-constexpr std::uint64_t kExpectedSlotBHash = 0x2FCCF872A6729E6FULL;
+constexpr std::uint64_t kExpectedSlotAHash = 0xCFFDFDC436D24D81ULL;
+constexpr std::uint64_t kExpectedSlotBHash = 0xBADB6B4DC55C7E7DULL;
 
 struct MemorySlots final {
     std::array<std::uint8_t, settings::kSettingsEncodedSize> a{};
@@ -75,11 +76,25 @@ bool memory_replace(void* context, const std::filesystem::path& path,
     return {&slots, &memory_read, &memory_replace};
 }
 
+[[nodiscard]] std::array<std::uint8_t, settings::kSettingsEncodedSize>
+    encode_v1(const settings::SettingsData& values) noexcept {
+    auto bytes = settings::encode_settings(values);
+    bytes[8] = 1U;
+    bytes[9] = 0U;
+    bytes[23] = 0U;
+    const std::uint32_t checksum = arpg::core::crc32(bytes.data() + 8U, 32U);
+    for (std::size_t index = 0U; index < 4U; ++index) {
+        bytes[40U + index] = static_cast<std::uint8_t>(checksum >> (index * 8U));
+    }
+    return bytes;
+}
+
 [[nodiscard]] bool same_settings(const settings::SettingsData& lhs,
     const settings::SettingsData& rhs) noexcept {
     return lhs.master_sfx_percent == rhs.master_sfx_percent
         && lhs.window_mode == rhs.window_mode
         && lhs.vsync_enabled == rhs.vsync_enabled
+        && lhs.loot_filter_mode == rhs.loot_filter_mode
         && lhs.bindings == rhs.bindings
         && lhs.revision == rhs.revision;
 }
@@ -159,6 +174,7 @@ struct StressOutcome final {
         draft.window_mode = (revision & 1U) != 0U
             ? settings::WindowMode::fullscreen : settings::WindowMode::windowed;
         draft.vsync_enabled = (revision % 3U) != 0U;
+        draft.loot_filter_mode = static_cast<settings::LootFilterMode>(revision % 3U);
         const auto saved = store.save(direct, draft);
         if (saved.status != settings::SettingsSaveStatus::committed
                 || saved.settings.revision != revision
@@ -209,6 +225,23 @@ arpg::test::Failure thousand_atomic_reload_cycles_are_restart_stable() noexcept 
     ARPG_REQUIRE(first.slot_a_hash == second.slot_a_hash);
     ARPG_REQUIRE(first.slot_b_hash == second.slot_b_hash);
     ARPG_REQUIRE(first.slot_a_hash != first.slot_b_hash);
+    MemorySlots slots{};
+    settings::SettingsData legacy = settings::default_settings();
+    legacy.revision = 51U;
+    legacy.loot_filter_mode = settings::LootFilterMode::rare_only;
+    slots.a = encode_v1(legacy);
+    slots.has_a = true;
+
+    settings::SettingsData current = settings::default_settings();
+    current.revision = 52U;
+    current.loot_filter_mode = settings::LootFilterMode::magic_or_better;
+    slots.b = settings::encode_settings(current);
+    slots.has_b = true;
+
+    const auto loaded = settings::SettingsStore{"stage11d-mixed", memory_ops(slots)}.load();
+    ARPG_REQUIRE(loaded.status == settings::SettingsLoadStatus::loaded);
+    ARPG_REQUIRE(loaded.settings.revision == current.revision);
+    ARPG_REQUIRE(loaded.settings.loot_filter_mode == current.loot_filter_mode);
     return {};
 }
 

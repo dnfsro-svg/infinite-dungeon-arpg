@@ -116,6 +116,7 @@ void put(FakeFiles& fake, const char* name, const SettingsData& settings) {
     return lhs.master_sfx_percent == rhs.master_sfx_percent &&
         lhs.window_mode == rhs.window_mode &&
         lhs.vsync_enabled == rhs.vsync_enabled &&
+        lhs.loot_filter_mode == rhs.loot_filter_mode &&
         lhs.bindings == rhs.bindings &&
         lhs.revision == rhs.revision;
 }
@@ -184,8 +185,11 @@ arpg::test::Failure equal_revision_identical_slots_are_loadable() noexcept {
 
 arpg::test::Failure equal_revision_conflict_loads_corrupt_defaults() noexcept {
     FakeFiles fake{};
-    put(fake, "settings-a.bin", settings_at(11U, 85U));
-    put(fake, "settings-b.bin", settings_at(11U, 90U));
+    const SettingsData slot_a = settings_at(11U, 85U);
+    SettingsData slot_b = slot_a;
+    slot_b.loot_filter_mode = arpg::settings::LootFilterMode::rare_only;
+    put(fake, "settings-a.bin", slot_a);
+    put(fake, "settings-b.bin", slot_b);
     const auto result = SettingsStore{"C:/settings", fake_ops(fake)}.load();
     ARPG_REQUIRE(result.status == SettingsLoadStatus::defaults_corrupt);
     ARPG_REQUIRE(same_settings(result.settings, arpg::settings::default_settings()));
