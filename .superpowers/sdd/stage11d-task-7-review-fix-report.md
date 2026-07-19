@@ -85,6 +85,13 @@ ctest --test-dir out/build/windows-msvc-debug -R '^(platform\.units|stage11c\.hu
 - `git diff --check`：无 whitespace error。
 - 历史报告校验：`git diff 417f58a -- .superpowers/sdd/task-7-report.md` 无输出。
 
+## 最终复审与收尾
+
+- 独立规格复审：Approved，Critical/Important/Minor 均为 0。
+- 独立质量复审确认产品代码全部通过；最后两项收尾已完成：权威设计/计划改为 blocked 帧保留单调 generation 高水位，本地 `progress.md` / `task-7-brief.md` 从 Git 索引移除但保留在磁盘。
+- 主控重新运行平台 executable：`277 cases, 0 failures`，ground-loot 100,000 次构建探针 allocations=0。
+- 主控重新运行相关 CTest：`6/6 passed`。
+
 ## 剩余风险
 
 - 正式 raylib 截图和内容验证仍属于 Task 9。

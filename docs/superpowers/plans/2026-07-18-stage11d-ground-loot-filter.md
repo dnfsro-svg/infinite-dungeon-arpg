@@ -365,7 +365,7 @@ git commit -m "feat: render filtered ground loot labels"
 
 - [ ] **Step 1: Write failing state-machine tests**
 
-Require the real synchronous runtime to publish a receipt only after a committed ordinary or abyss pickup, using the production pending ordinal and ground item fields. Require save failure, rollback, non-pickup saves, rejected Session receipt, wrong ordinal, or surviving ground item to leave the prior receipt unchanged. For the presentation state, require first observation to establish a baseline, a newer valid receipt to publish once, and repeated/same/older/invalid/error/recovery observations to publish nothing. Cover abyss styling separately.
+Require the real synchronous runtime to publish a receipt only after a committed ordinary or abyss pickup, using the production pending ordinal and ground item fields. Require save failure, rollback, non-pickup saves, rejected Session receipt, wrong ordinal, or surviving ground item to leave the prior receipt unchanged. For the presentation state, require first observation to establish a baseline, a newer valid receipt to publish once, and repeated/same/older/invalid/error/recovery/fault observations to publish nothing. Error, recovery, and fault must preserve a monotonic generation high-water mark so a later strictly newer committed receipt still publishes without replaying the old one. Require pickup notices to survive a same-frame room change for their remaining lifetime. Cover abyss styling separately.
 
 - [ ] **Step 2: Verify RED**
 
