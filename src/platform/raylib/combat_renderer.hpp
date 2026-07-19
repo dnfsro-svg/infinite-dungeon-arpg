@@ -8,6 +8,7 @@
 #include "hud_notice_state.hpp"
 #include "hud_renderer.hpp"
 #include "loot_pickup_feedback.hpp"
+#include "material_pack.hpp"
 
 #include <cstdint>
 #include <array>
@@ -129,6 +130,7 @@ private:
     DebugOverlayRenderer debug_overlay_{};
     HudNoticeState hud_notices_{};
     LootPickupFeedbackState loot_pickup_feedback_{};
+    MaterialPack material_pack_{};
     HudViewModelProjector hud_projector_{};
     HudViewModel hud_model_{};
     HudLayout hud_layout_{};

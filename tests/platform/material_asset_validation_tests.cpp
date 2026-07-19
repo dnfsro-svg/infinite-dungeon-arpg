@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 
 #include "material_asset_validation.hpp"
+#include "material_pack.hpp"
 
 #include <array>
 #include <cstddef>
@@ -12,7 +13,23 @@ using arpg::platform::MaterialAtlasDefinition;
 using arpg::platform::MaterialAtlasId;
 using arpg::platform::MaterialFrameDefinition;
 using arpg::platform::MaterialManifestDefinition;
+using arpg::platform::MaterialPackState;
 using arpg::platform::MaterialSpriteId;
+
+arpg::test::Failure material_pack_falls_back_when_atlas_is_unavailable() noexcept {
+    MaterialPackState state{};
+    state.set_available(MaterialAtlasId::actors, false);
+    ARPG_REQUIRE(!state.can_draw(MaterialSpriteId::player_idle));
+    return {};
+}
+
+arpg::test::Failure material_pack_allows_repeated_shutdown() noexcept {
+    MaterialPackState state{};
+    state.reset();
+    state.reset();
+    ARPG_REQUIRE(!state.any_available());
+    return {};
+}
 
 arpg::test::Failure material_manifest_rejects_frame_outside_atlas() noexcept {
     const MaterialAtlasDefinition atlas{
@@ -156,6 +173,9 @@ arpg::test::Failure material_manifest_accepts_valid_unique_frames() noexcept {
 }
 
 constexpr arpg::test::TestCase kCases[] = {
+    {"falls back when atlas is unavailable",
+        &material_pack_falls_back_when_atlas_is_unavailable},
+    {"allows repeated shutdown", &material_pack_allows_repeated_shutdown},
     {"rejects frame outside atlas", &material_manifest_rejects_frame_outside_atlas},
     {"rejects invalid frame geometry and anchor",
         &material_manifest_rejects_invalid_frame_geometry_and_anchor},

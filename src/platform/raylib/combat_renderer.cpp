@@ -36,6 +36,7 @@ std::optional<std::size_t> hud_presented_frame_index(
 bool CombatRenderer::initialize_resources() noexcept {
     const bool death_font_ready = death_overlay_.initialize();
     const bool hud_font_ready = hud_renderer_.initialize();
+    static_cast<void>(material_pack_.load());
     if (!death_font_ready || !hud_font_ready) {
         TraceLog(LOG_WARNING,
             "HUD overlays are using a fallback font; formal CJK validation will fail");
@@ -44,6 +45,7 @@ bool CombatRenderer::initialize_resources() noexcept {
 }
 
 void CombatRenderer::shutdown_resources() noexcept {
+    material_pack_.unload();
     hud_renderer_.shutdown();
     death_overlay_.shutdown();
 }

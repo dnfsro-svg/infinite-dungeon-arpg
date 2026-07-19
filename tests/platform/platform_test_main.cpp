@@ -71,5 +71,5 @@ int main() {
         material_animation_suite(),
     };
 
-    return arpg::test::run_suites(suites, 286, "stage 12 material manifest runtime");
+    return arpg::test::run_suites(suites, 288, "stage 12 material manifest runtime");
 }
