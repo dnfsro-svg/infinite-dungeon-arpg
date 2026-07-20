@@ -300,6 +300,45 @@ arpg::test::Failure reinforcement_scales_only_equipped_base_slot_attributes() no
     ARPG_REQUIRE(saturated_projection.valid);
     ARPG_REQUIRE(saturated_projection.weapon_physical
         == (std::numeric_limits<std::int64_t>::max)());
+
+    ItemInstance saturated_affixed_weapon = affixed_weapon;
+    saturated_affixed_weapon.id = 55U;
+    saturated_affixed_weapon.reinforcement =
+        (std::numeric_limits<std::uint32_t>::max)();
+    ItemOwnershipState saturated_affixed{};
+    saturated_affixed.items = {saturated_affixed_weapon};
+    saturated_affixed.equipment.equipped_ids[0] = saturated_affixed_weapon.id;
+    const EquipmentProjection saturated_affixed_projection =
+        project_equipment(saturated_affixed);
+    ARPG_REQUIRE(saturated_affixed_projection.valid);
+    ARPG_REQUIRE(saturated_affixed_projection.weapon_physical
+        == (std::numeric_limits<std::int64_t>::max)());
+
+    ItemInstance saturated_helmet = normal_item(56U, 2U);
+    saturated_helmet.rarity = ItemRarity::magic;
+    saturated_helmet.required_level = 95U;
+    saturated_helmet.reinforcement =
+        (std::numeric_limits<std::uint32_t>::max)();
+    saturated_helmet.affixes[0] = {104U, 1U, 0xFFU};
+    saturated_helmet.affix_count = 1U;
+    ItemInstance saturated_chest = normal_item(57U, 3U);
+    saturated_chest.reinforcement =
+        (std::numeric_limits<std::uint32_t>::max)();
+    ARPG_REQUIRE(validate_item(saturated_helmet));
+    ARPG_REQUIRE(validate_item(saturated_chest));
+    ItemOwnershipState saturated_armor{};
+    saturated_armor.items = {saturated_helmet, saturated_chest};
+    saturated_armor.equipment.equipped_ids[1] = saturated_helmet.id;
+    saturated_armor.equipment.equipped_ids[2] = saturated_chest.id;
+    const EquipmentProjection saturated_armor_projection =
+        project_equipment(saturated_armor);
+    ARPG_REQUIRE(saturated_armor_projection.valid);
+    const auto saturated_armor_values = arpg::modifiers::evaluate_player_modifiers(
+        {saturated_armor_projection.modifiers.data(),
+            saturated_armor_projection.modifier_count});
+    ARPG_REQUIRE(saturated_armor_values.valid);
+    ARPG_REQUIRE(saturated_armor_values.armor
+        == (std::numeric_limits<std::int64_t>::max)());
     return {};
 }
 

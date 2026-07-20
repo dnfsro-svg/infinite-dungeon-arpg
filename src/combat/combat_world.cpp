@@ -51,6 +51,26 @@ bool checked_add(
 }
 
 bool checked_multiply(
+    std::int64_t left, std::int64_t right, std::int64_t& result) noexcept;
+
+std::int64_t saturating_add(
+    std::int64_t left, std::int64_t right) noexcept {
+    std::int64_t result{};
+    if (checked_add(left, right, result)) return result;
+    return right < 0 ? (std::numeric_limits<std::int64_t>::min)()
+                     : (std::numeric_limits<std::int64_t>::max)();
+}
+
+std::int64_t saturating_multiply(
+    std::int64_t left, std::int64_t right) noexcept {
+    std::int64_t result{};
+    if (checked_multiply(left, right, result)) return result;
+    return (left < 0) != (right < 0)
+        ? (std::numeric_limits<std::int64_t>::min)()
+        : (std::numeric_limits<std::int64_t>::max)();
+}
+
+bool checked_multiply(
     std::int64_t left, std::int64_t right, std::int64_t& result) noexcept {
     const auto maximum = (std::numeric_limits<std::int64_t>::max)();
     const auto minimum = (std::numeric_limits<std::int64_t>::min)();
@@ -102,11 +122,15 @@ std::uint64_t multiply_divide_floor_u64(
     return quotient;
 }
 
-std::optional<std::int64_t> fixed_scale_floor(
+std::int64_t fixed_scale_floor(
     std::int64_t value, std::int64_t factor) noexcept {
-    std::int64_t product{};
-    if (!checked_multiply(value, factor, product)) return std::nullopt;
-    return fixed_floor(product);
+    return fixed_floor(saturating_multiply(value, factor));
+}
+
+int saturating_damage_component(std::int64_t value) noexcept {
+    return static_cast<int>(std::clamp(value,
+        static_cast<std::int64_t>((std::numeric_limits<int>::min)()),
+        static_cast<std::int64_t>((std::numeric_limits<int>::max)())));
 }
 
 bool validate_player_build_fields(const PlayerCombatBuild& build) noexcept {
@@ -140,38 +164,21 @@ std::optional<DamagePacket> build_player_hit_packet_checked_unvalidated(
     DamagePacket packet{};
     const auto& values = build.values;
     std::int64_t physical{};
-    if (!checked_add(base_physical, build.weapon_physical, physical)
-        || !checked_add(physical,
-                        fixed_floor(values.flat_damage[
-                            modifiers::damage_index(
-                                modifiers::DamageType::physical)]),
-                        physical)) {
-        return std::nullopt;
-    }
-    auto scaled = fixed_scale_floor(
+    physical = saturating_add(base_physical, build.weapon_physical);
+    physical = saturating_add(physical, fixed_floor(values.flat_damage[
+        modifiers::damage_index(modifiers::DamageType::physical)]));
+    std::int64_t scaled = fixed_scale_floor(
         physical, values.damage_increased[
                       modifiers::damage_index(modifiers::DamageType::physical)]);
-    if (!scaled.has_value()) return std::nullopt;
-    scaled = fixed_scale_floor(*scaled, values.melee_damage);
-    if (!scaled.has_value()) return std::nullopt;
-    if (*scaled < (std::numeric_limits<int>::min)()
-        || *scaled > (std::numeric_limits<int>::max)()) {
-        return std::nullopt;
-    }
+    scaled = fixed_scale_floor(scaled, values.melee_damage);
     packet.amount[modifiers::damage_index(modifiers::DamageType::physical)] =
-        static_cast<int>(*scaled);
+        saturating_damage_component(scaled);
     for (std::size_t index = 1; index < modifiers::kDamageTypeCount; ++index) {
         scaled = fixed_scale_floor(
             fixed_floor(values.flat_damage[index]),
             values.damage_increased[index]);
-        if (!scaled.has_value()) return std::nullopt;
-        scaled = fixed_scale_floor(*scaled, values.melee_damage);
-        if (!scaled.has_value()
-            || *scaled < (std::numeric_limits<int>::min)()
-            || *scaled > (std::numeric_limits<int>::max)()) {
-            return std::nullopt;
-        }
-        packet.amount[index] = static_cast<int>(*scaled);
+        scaled = fixed_scale_floor(scaled, values.melee_damage);
+        packet.amount[index] = saturating_damage_component(scaled);
     }
     return packet;
 }
@@ -418,12 +425,6 @@ bool derive_player_build(
         const auto packet = build_player_hit_packet_checked_unvalidated(
             definition->damage, build);
         if (!packet.has_value()) return false;
-        std::int64_t packet_total = 0;
-        for (const int amount : packet->amount) {
-            if (amount <= 0) continue;
-            if (!checked_add(packet_total, amount, packet_total)) return false;
-        }
-        if (packet_total > (std::numeric_limits<int>::max)()) return false;
     }
 
     result.armor = values.armor;

@@ -28,6 +28,13 @@ bool checked_add(
     return true;
 }
 
+FixedValue saturating_add(FixedValue left, FixedValue right) noexcept {
+    FixedValue result{};
+    if (checked_add(left, right, result)) return result;
+    return right < 0 ? (std::numeric_limits<FixedValue>::min)()
+                     : (std::numeric_limits<FixedValue>::max)();
+}
+
 bool checked_subtract(
     FixedValue left,
     FixedValue right,
@@ -64,16 +71,11 @@ FixedValue saturating_multiply(FixedValue left, FixedValue right) noexcept {
     return left * right;
 }
 
-FixedValue saturating_mul_div(
-    FixedValue value,
-    FixedValue factor,
-    bool& valid) noexcept {
+FixedValue saturating_mul_div(FixedValue value, FixedValue factor) noexcept {
     const FixedValue whole = saturating_multiply(value / kFixedOne, factor);
     const FixedValue remainder = saturating_multiply(value % kFixedOne, factor)
         / kFixedOne;
-    FixedValue result{};
-    valid = checked_add(whole, remainder, result) && valid;
-    return result;
+    return saturating_add(whole, remainder);
 }
 
 bool matches(const Modifier& modifier,
@@ -147,30 +149,20 @@ StatEvaluation evaluate_stat(
     FixedValue result = base;
     for (std::size_t index = 0; index < count; ++index) {
         if (active[index]->operation == ModifierOperation::flat) {
-            if (!checked_add(result, active[index]->value, result)) {
-                return {result, false, false};
-            }
+            result = saturating_add(result, active[index]->value);
         }
     }
     FixedValue increased = 0;
     for (std::size_t index = 0; index < count; ++index) {
         if (active[index]->operation == ModifierOperation::increased) {
-            if (!checked_add(increased, active[index]->value, increased)) {
-                return {result, false, false};
-            }
+            increased = saturating_add(increased, active[index]->value);
         }
     }
-    FixedValue increased_factor{};
-    if (!checked_add(kFixedOne, increased, increased_factor)) {
-        return {result, false, false};
-    }
-    bool valid = true;
-    result = saturating_mul_div(result, increased_factor, valid);
-    if (!valid) return {result, false, false};
+    const FixedValue increased_factor = saturating_add(kFixedOne, increased);
+    result = saturating_mul_div(result, increased_factor);
     for (std::size_t index = 0; index < count; ++index) {
         if (active[index]->operation == ModifierOperation::more) {
-            result = saturating_mul_div(result, active[index]->value, valid);
-            if (!valid) return {result, false, false};
+            result = saturating_mul_div(result, active[index]->value);
         }
     }
     return {std::clamp(result, bounds.minimum, bounds.maximum), true, false};
@@ -220,11 +212,8 @@ ConversionResult evaluate_conversions(
             return result;
         }
         remaining[source] -= applied;
-        bool valid = true;
-        const FixedValue amount = saturating_mul_div(
-            original[source], applied, valid);
-        if (!valid
-            || amount == (std::numeric_limits<FixedValue>::min)()
+        const FixedValue amount = saturating_mul_div(original[source], applied);
+        if (amount == (std::numeric_limits<FixedValue>::min)()
             || !checked_subtract(result.values[source], amount,
                 result.values[source])
             || !checked_add(result.values[target], amount,

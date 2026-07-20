@@ -2,6 +2,7 @@
 
 #include "dungeon/dungeon_progression.hpp"
 #include "dungeon/dungeon_session.hpp"
+#include "dungeon_test_support.hpp"
 #include "items/item_catalog.hpp"
 #include "items/item_generation.hpp"
 #include "items/material_catalog.hpp"
@@ -9,6 +10,7 @@
 #include <array>
 #include <cstdint>
 #include <initializer_list>
+#include <limits>
 
 namespace {
 
@@ -222,11 +224,60 @@ arpg::test::Failure coupon_fifteen_sets_level_through_atomic_transaction() noexc
     return {};
 }
 
+arpg::test::Failure successful_non_item_commit_clears_reinforcement_receipt() noexcept {
+    ItemInstance item = generated_item(501U, 1U, ItemRarity::normal);
+    ARPG_REQUIRE(arpg::items::validate_item(item));
+    DungeonRunState state = state_with_items({item});
+    state.progression = {2U, 0U, 1U, 1U};
+    const std::size_t coupon = arpg::items::material_index(MaterialId::coupon_15);
+    state.item_ownership.materials[coupon] = 1U;
+    DungeonSession session{DungeonRules{}, state};
+
+    ARPG_REQUIRE(session.request_coupon(MaterialId::coupon_15, item.id)
+        == RequestResult::accepted);
+    ARPG_REQUIRE(commit_pending(session));
+    ARPG_REQUIRE(session.snapshot().reinforcement_receipt.valid);
+
+    arpg::test::EventSummary events{};
+    ARPG_REQUIRE(arpg::test::drive_until_cleared(session, events));
+    if (session.snapshot().phase == RoomPhase::cleared) session.tick({});
+    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::awaiting_exit);
+    ARPG_REQUIRE(session.request_passive_allocation(2U));
+    const auto failed = session.pending_save();
+    ARPG_REQUIRE(failed.has_value());
+    session.resolve_pending_save({SaveDisposition::not_committed,
+        failed->expected_generation, failed->next_state});
+    ARPG_REQUIRE(session.snapshot().reinforcement_receipt.valid);
+
+    ARPG_REQUIRE(session.request_passive_allocation(2U));
+    ARPG_REQUIRE(commit_pending(session));
+    ARPG_REQUIRE(!session.snapshot().reinforcement_receipt.valid);
+    return {};
+}
+
+arpg::test::Failure equipped_extreme_reinforcement_saves_with_saturated_hit_packet() noexcept {
+    ItemInstance item = generated_item(601U, 1U, ItemRarity::normal);
+    ARPG_REQUIRE(arpg::items::validate_item(item));
+    item.reinforcement = (std::numeric_limits<std::uint32_t>::max)();
+    DungeonSession session{DungeonRules{}, state_with_items({item})};
+
+    ARPG_REQUIRE(session.request_equip(item.id) == RequestResult::accepted);
+    ARPG_REQUIRE(commit_pending(session));
+    const auto& build = arpg::test::player_build(session);
+    ARPG_REQUIRE(build.weapon_physical
+        == (std::numeric_limits<std::int64_t>::max)());
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"craft spends only after pure success", &crafting_spends_only_after_a_successful_pure_craft},
     {"recipe exact base resets reinforcement", &recipe_requires_exact_base_and_resets_reinforcement},
     {"reinforcement failure bands save atomically", &reinforcement_failure_bands_apply_through_saved_transactions},
     {"coupon fifteen saves atomically", &coupon_fifteen_sets_level_through_atomic_transaction},
+    {"non-item success clears reinforcement receipt",
+        &successful_non_item_commit_clears_reinforcement_receipt},
+    {"equipped extreme reinforcement saves with saturation",
+        &equipped_extreme_reinforcement_saves_with_saturated_hit_packet},
 };
 
 }  // namespace

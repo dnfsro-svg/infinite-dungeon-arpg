@@ -29,6 +29,13 @@ bool checked_add(std::int64_t left,
     return true;
 }
 
+std::int64_t saturating_add(std::int64_t left, std::int64_t right) noexcept {
+    std::int64_t output{};
+    if (checked_add(left, right, output)) return output;
+    return right < 0 ? (std::numeric_limits<std::int64_t>::min)()
+                     : (std::numeric_limits<std::int64_t>::max)();
+}
+
 bool checked_multiply(std::int64_t left,
     std::int64_t right,
     std::int64_t& output) noexcept {
@@ -124,11 +131,13 @@ bool apply_effect(EquipmentProjection& projection,
         return append_modifier(projection, slot, source,
             stat, operation, value);
     case ItemEffectKind::local_weapon_physical_flat:
-        return slot == ItemSlot::weapon
-            && checked_add(local_flat, value, local_flat);
+        if (slot != ItemSlot::weapon) return false;
+        local_flat = saturating_add(local_flat, value);
+        return true;
     case ItemEffectKind::local_weapon_physical_increased:
-        return slot == ItemSlot::weapon
-            && checked_add(local_increased, value, local_increased);
+        if (slot != ItemSlot::weapon) return false;
+        local_increased = saturating_add(local_increased, value);
+        return true;
     case ItemEffectKind::slot_dependent_attack_speed:
         if (value < (std::numeric_limits<std::int32_t>::min)()
                 || value > (std::numeric_limits<std::int32_t>::max)()) {
@@ -204,9 +213,8 @@ bool valid_equipment_override(const ItemOwnershipState& state,
 bool checked_weapon_formula(std::int64_t base_and_flat,
     std::int64_t local_increased,
     std::int64_t& output) noexcept {
-    std::int64_t factor{};
-    if (!checked_add(modifiers::kFixedOne, local_increased, factor))
-        return false;
+    const std::int64_t factor = saturating_add(
+        modifiers::kFixedOne, local_increased);
     if (factor == modifiers::kFixedOne) {
         output = base_and_flat;
         return true;
@@ -243,7 +251,8 @@ bool checked_weapon_formula(std::int64_t base_and_flat,
             factor, remainder))
         return false;
     remainder /= modifiers::kFixedOne;
-    return checked_add(whole, remainder, output);
+    output = saturating_add(whole, remainder);
+    return true;
 }
 
 }  // namespace

@@ -211,7 +211,7 @@ int main() {
         const arpg::test::TestSuite crafting_only[] = {
             dungeon_crafting_transaction_suite(),
         };
-        return arpg::test::run_suites(crafting_only, 4,
+        return arpg::test::run_suites(crafting_only, 6,
             "stage 16 task 7 crafting and reinforcement transactions");
     }
 
