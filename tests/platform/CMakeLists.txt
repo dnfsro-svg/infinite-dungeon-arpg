@@ -6,6 +6,7 @@ if(TARGET arpg_raylib)
         audio_pack_tests.cpp
         audio_routing_tests.cpp
         audio_scene_tests.cpp
+        stage15_audio_pack_tests.cpp
         combat_feedback_tests.cpp
         combat_view_math_tests.cpp
         monster_view_tests.cpp

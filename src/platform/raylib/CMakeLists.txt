@@ -40,6 +40,8 @@ add_library(arpg_raylib STATIC
     raylib_host.cpp
     room_renderer.cpp
     stable_key_raylib.cpp
+    stream_pack.cpp
+    ui_audio_pack.cpp
     window_settings.cpp)
 
 target_include_directories(arpg_raylib
