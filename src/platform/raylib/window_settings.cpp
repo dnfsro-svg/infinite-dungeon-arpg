@@ -34,9 +34,11 @@ void restore_applied_fields(
 
 [[nodiscard]] bool raylib_set_volume(
     void*,
-    std::uint8_t percent) noexcept {
+    std::uint8_t) noexcept {
     if (!IsAudioDeviceReady()) return false;
-    SetMasterVolume(master_volume_fraction(percent));
+    // Stage 15 applies Master in GameAudio alongside the other four buses.
+    // Keep raylib's process-wide gain neutral to avoid multiplying it twice.
+    SetMasterVolume(1.0F);
     return true;
 }
 

@@ -1,6 +1,5 @@
 #include "raylib_host.hpp"
 
-#include "combat_audio.hpp"
 #include "combat_feedback.hpp"
 #include "combat_renderer.hpp"
 #include "combat/monster_affix_generation.hpp"
@@ -8,6 +7,7 @@
 #include "core/fixed_step.hpp"
 #include "dungeon_runtime.hpp"
 #include "dungeon_view_math.hpp"
+#include "game_audio.hpp"
 #include "host_input.hpp"
 #include "inventory_renderer.hpp"
 #include "passive_tree_renderer.hpp"
@@ -96,7 +96,7 @@ constexpr char kSettingsRecoveredDefaults[] = u8"设置已恢复默认值";
 }
 
 void drain_events(dungeon::DungeonSession& session, CombatRenderer& renderer,
-    CombatFeedback& feedback, CombatAudio& audio) noexcept {
+    CombatFeedback& feedback, GameAudio& audio) noexcept {
     while (const auto event = session.try_pop_combat_event()) {
         renderer.consume_event(*event);
         feedback.consume(*event);
@@ -107,9 +107,46 @@ void drain_events(dungeon::DungeonSession& session, CombatRenderer& renderer,
         if (dungeon_event_clears_transients(event->kind)) {
             renderer.clear_combat_transients();
             feedback.clear();
-            audio.stop_all();
+            audio.clear_combat_transients();
         }
     }
+}
+
+[[nodiscard]] AudioBusLevels audio_bus_levels(
+    const settings::SettingsData& value) noexcept {
+    return {value.master_sfx_percent, value.sfx_percent, value.music_percent,
+        value.ambience_percent, value.ui_percent};
+}
+
+[[nodiscard]] UiAudioCueMask pause_audio_cues(PauseScreen before,
+    PauseScreen after, PauseCommand command) noexcept {
+    UiAudioCueMask cues{};
+    if (before == PauseScreen::closed && after != PauseScreen::closed) {
+        cues = static_cast<UiAudioCueMask>(
+            cues | ui_audio_cue_mask(UiAudioCue::open));
+    } else if (before != PauseScreen::closed && after == PauseScreen::closed) {
+        cues = static_cast<UiAudioCueMask>(
+            cues | ui_audio_cue_mask(UiAudioCue::close));
+    }
+    switch (command) {
+    case PauseCommand::preview:
+        cues = static_cast<UiAudioCueMask>(
+            cues | ui_audio_cue_mask(UiAudioCue::navigate));
+        break;
+    case PauseCommand::apply:
+    case PauseCommand::quit:
+        cues = static_cast<UiAudioCueMask>(
+            cues | ui_audio_cue_mask(UiAudioCue::confirm));
+        break;
+    case PauseCommand::rollback:
+        cues = static_cast<UiAudioCueMask>(
+            cues | ui_audio_cue_mask(UiAudioCue::cancel));
+        break;
+    case PauseCommand::none:
+    case PauseCommand::resume:
+        break;
+    }
+    return cues;
 }
 
 void draw_recovery_screen(const DungeonRenderStatus& status) noexcept {
@@ -1770,12 +1807,11 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         PauseMenuRenderer pause_menu_renderer;
         static_cast<void>(pause_menu_renderer.initialize());
         CombatFeedback feedback;
-        CombatAudio audio;
+        GameAudio audio;
         InventoryRenderer inventory;
         const bool audio_ready = audio.initialize();
         if (audio_ready) {
-            SetMasterVolume(master_volume_fraction(
-                committed_settings.master_sfx_percent));
+            SetMasterVolume(1.0F);
         }
         const WindowSettingsBackend settings_backend =
             raylib_window_settings_backend();
@@ -1859,11 +1895,16 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     exit_requested = true;
                     continue;
                 }
+                const float recovery_frame_seconds = GetFrameTime();
+                audio.update({false, current.is_abyss, true,
+                        current.death.has_value()},
+                    audio_bus_levels(live_settings), 0U,
+                    recovery_frame_seconds);
                 // A recovery screen owns presentation, not simulation.  It still
                 // receives exactly one HUD observation before its presented frame.
                 renderer.observe_presented_hud_frame(HudPresentedFrame::recovery,
                     previous, current, runtime.render_status(), control_hints,
-                    GetFrameTime(), true);
+                    recovery_frame_seconds, true);
                 draw_recovery_screen(runtime.render_status());
                 std::optional<std::string> capture_path =
                     validation_capture_path();
@@ -1879,6 +1920,9 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             if (session == nullptr) {
                 break;
             }
+            const bool inventory_open_before = inventory.is_open();
+            const bool passive_open_before = passive_overlay_open;
+            const std::uint32_t inventory_count_before = current.inventory_count;
             bool inventory_toggled_this_frame = false;
             if (runtime.state() != DungeonRuntimeState::running
                 && inventory.is_open()) {
@@ -2008,6 +2052,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 pause_menu.screen == PauseScreen::capture_binding);
             const PauseCommand pause_command = update_pause_menu(
                 pause_menu, pause_context, pause_input);
+            UiAudioCueMask ui_audio_cues = pause_audio_cues(
+                pause_screen_before, pause_menu.screen, pause_command);
             consume_host_settings_notice(
                 settings_notice, pause_screen_before, pause_menu);
             const std::uint64_t input_revision_before = input_settings.revision;
@@ -2194,6 +2240,32 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     break;
                 }
             }
+
+            if (inventory.is_open() != inventory_open_before
+                    || passive_overlay_open != passive_open_before) {
+                const bool opened = inventory.is_open() || passive_overlay_open;
+                ui_audio_cues = static_cast<UiAudioCueMask>(ui_audio_cues
+                    | ui_audio_cue_mask(opened
+                        ? UiAudioCue::open : UiAudioCue::close));
+            }
+            if (current.inventory_count > inventory_count_before) {
+                ui_audio_cues = static_cast<UiAudioCueMask>(ui_audio_cues
+                    | ui_audio_cue_mask(UiAudioCue::reward));
+            }
+            const settings::SettingsData& presented_audio_settings =
+                pause_menu.screen == PauseScreen::settings
+                    || pause_menu.screen == PauseScreen::capture_binding
+                ? pause_menu.draft : live_settings;
+            const bool combat_audio_active = current.combat.has_value()
+                && (current.phase == dungeon::RoomPhase::combat
+                    || current.phase == dungeon::RoomPhase::wave_delay)
+                && current.remaining_targets != 0U;
+            audio.update({combat_audio_active, current.is_abyss,
+                    pause_blocks_gameplay || inventory.is_open()
+                        || passive_overlay_open,
+                    current.death.has_value()},
+                audio_bus_levels(presented_audio_settings), ui_audio_cues,
+                frame_seconds);
 
             // Observe after all possible fixed-step changes and before every
             // presented frame, including death/recovery-owned overlay frames.

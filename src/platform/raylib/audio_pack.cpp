@@ -3,6 +3,7 @@
 #include "audio_asset_validation.hpp"
 #include "audio_manifest.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -25,12 +26,13 @@ constexpr unsigned int kMaximumFrameCount = 66150U;
     return api.load_wave != nullptr && api.wave_valid != nullptr
         && api.load_sound_from_wave != nullptr && api.sound_valid != nullptr
         && api.unload_wave != nullptr && api.unload_sound != nullptr
-        && api.play_sound != nullptr && api.stop_sound != nullptr;
+        && api.play_sound != nullptr && api.stop_sound != nullptr
+        && api.set_sound_volume != nullptr;
 }
 
 [[nodiscard]] AudioSoundApi default_audio_api() noexcept {
     return {&LoadWave, &IsWaveValid, &LoadSoundFromWave, &IsSoundValid,
-        &UnloadWave, &UnloadSound, &PlaySound, &StopSound};
+        &UnloadWave, &UnloadSound, &PlaySound, &StopSound, &SetSoundVolume};
 }
 
 [[nodiscard]] const AudioManifestEntry* find_entry(
@@ -159,6 +161,16 @@ void AudioPack::play(AudioAssetId id) noexcept {
     const std::size_t index = static_cast<std::size_t>(id);
     if (available_[index] && api_.sound_valid(sounds_[index])) {
         api_.play_sound(sounds_[index]);
+    }
+}
+
+void AudioPack::set_volume(float volume) noexcept {
+    if (api_.set_sound_volume == nullptr || api_.sound_valid == nullptr) return;
+    volume = std::clamp(volume, 0.0F, 1.0F);
+    for (std::size_t index{}; index < kAssetCount; ++index) {
+        if (available_[index] && api_.sound_valid(sounds_[index])) {
+            api_.set_sound_volume(sounds_[index], volume);
+        }
     }
 }
 

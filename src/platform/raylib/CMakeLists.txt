@@ -16,6 +16,7 @@ add_library(arpg_raylib STATIC
     debug_overlay_renderer.cpp
     dungeon_view_math.cpp
     dungeon_runtime.cpp
+    game_audio.cpp
     ground_loot_view.cpp
     host_input.cpp
     host_launch_options.cpp

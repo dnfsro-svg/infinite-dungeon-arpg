@@ -426,11 +426,12 @@ void fake_play_sound(Sound sound) {
     }
 }
 void fake_stop_sound(Sound) {}
+void fake_set_sound_volume(Sound, float) {}
 
 [[nodiscard]] platform::AudioSoundApi formal_audio_api() noexcept {
     return {&real_load_wave, &real_wave_valid, &fake_load_sound,
         &fake_sound_valid, &real_unload_wave, &fake_unload_sound,
-        &fake_play_sound, &fake_stop_sound};
+        &fake_play_sound, &fake_stop_sound, &fake_set_sound_volume};
 }
 
 class CurrentPathScope final {

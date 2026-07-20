@@ -36,6 +36,8 @@ struct FakeAudio final {
     std::size_t created_sound_count{};
     std::size_t play_count{};
     std::size_t stop_count{};
+    std::size_t volume_count{};
+    float last_volume{};
     unsigned int next_sound_handle{1U};
     std::array<const void*, kRecordCapacity> unloaded_wave_data{};
     std::array<unsigned int, kRecordCapacity> unloaded_sound_handles{};
@@ -146,10 +148,17 @@ void fake_stop_sound(Sound sound) noexcept {
     }
 }
 
+void fake_set_sound_volume(Sound sound, float volume) noexcept {
+    if (g_fake_audio != nullptr && fake_sound_valid(sound)) {
+        ++g_fake_audio->volume_count;
+        g_fake_audio->last_volume = volume;
+    }
+}
+
 [[nodiscard]] AudioSoundApi fake_audio_api() noexcept {
     return {&fake_load_wave, &fake_wave_valid, &fake_load_sound_from_wave,
         &fake_sound_valid, &fake_unload_wave, &fake_unload_sound,
-        &fake_play_sound, &fake_stop_sound};
+        &fake_play_sound, &fake_stop_sound, &fake_set_sound_volume};
 }
 
 [[nodiscard]] std::size_t wave_unload_count(
@@ -359,6 +368,24 @@ arpg::test::Failure audio_pack_repeated_unload_does_not_release_twice() noexcept
     return {};
 }
 
+arpg::test::Failure audio_pack_applies_clamped_bus_volume() noexcept {
+    FakeAudio fake{};
+    FakeAudioScope scope{fake};
+    AudioPack pack{fake_audio_api()};
+
+    ARPG_REQUIRE(pack.load());
+    pack.set_volume(-1.0F);
+    ARPG_REQUIRE(fake.volume_count == kAudioAssetCount);
+    ARPG_REQUIRE(fake.last_volume == 0.0F);
+    pack.set_volume(2.0F);
+    ARPG_REQUIRE(fake.volume_count == kAudioAssetCount * 2U);
+    ARPG_REQUIRE(fake.last_volume == 1.0F);
+    pack.set_volume(0.35F);
+    ARPG_REQUIRE(fake.volume_count == kAudioAssetCount * 3U);
+    ARPG_REQUIRE(fake.last_volume == 0.35F);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"loads all fourteen external assets",
         &audio_pack_loads_all_fourteen_external_assets},
@@ -376,6 +403,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &audio_pack_rolls_back_when_fallback_sound_fails},
     {"repeated unload is idempotent",
         &audio_pack_repeated_unload_does_not_release_twice},
+    {"bus volume is clamped and applied",
+        &audio_pack_applies_clamped_bus_volume},
 };
 
 }  // namespace

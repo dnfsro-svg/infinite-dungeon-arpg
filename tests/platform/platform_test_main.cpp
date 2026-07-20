@@ -87,5 +87,5 @@ int main() {
         stage12_material_render_suite(),
     };
 
-    return arpg::test::run_suites(suites, 348, "stage 15 audio packs");
+    return arpg::test::run_suites(suites, 349, "stage 15 audio integration");
 }

@@ -19,6 +19,7 @@ struct AudioSoundApi final {
     void (*unload_sound)(Sound sound){};
     void (*play_sound)(Sound sound){};
     void (*stop_sound)(Sound sound){};
+    void (*set_sound_volume)(Sound sound, float volume){};
 };
 
 class AudioPack final {
@@ -27,6 +28,7 @@ public:
     explicit AudioPack(AudioSoundApi api) noexcept;
     [[nodiscard]] bool load() noexcept;
     void play(AudioAssetId id) noexcept;
+    void set_volume(float volume) noexcept;
     void stop_all() noexcept;
     void unload() noexcept;
     [[nodiscard]] bool available(AudioAssetId id) const noexcept;

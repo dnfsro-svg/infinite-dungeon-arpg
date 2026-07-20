@@ -1522,3 +1522,12 @@ add_test(
 set_tests_properties(
     stage15.audio_sources_self_test
     PROPERTIES LABELS "headless;platform;negative;stage15" TIMEOUT 60)
+
+add_test(
+    NAME stage15.audio_integration_guard
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage15_audio_integration_guard.cmake")
+set_tests_properties(
+    stage15.audio_integration_guard
+    PROPERTIES LABELS "headless;platform;architecture;stage15")
