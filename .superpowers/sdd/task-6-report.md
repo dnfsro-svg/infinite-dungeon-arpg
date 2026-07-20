@@ -325,3 +325,15 @@ ctest --test-dir E:/game/task6-build -R "^platform\.units$" -V
 ## Commit
 
 `0a7df09 feat: add item currency crafting and recipe safeguards`
+
+## Stage 16 Task 6 审查修复：前端配方契约一致性
+
+- RED：新增背包缓存用例，三个均为武器且同稀有度、但底材为
+  `1/7/8` 时，旧缓存错误地将三合一按钮标记为可用；
+  `platform.units` 357 cases 中该用例失败。
+- GREEN：`refresh_inventory_view_cache` 改为严格比较 `base_id` 与稀有度，
+  与 `request_recipe` 的后端规则一致；不改动后端合成、随机或碰撞逻辑。
+- 同时更新全量地城中的两个旧夹具：压力测试候选三件改为同底材，深渊奖励
+  碰撞夹具明确将第二、第三件设为第一件的底材，保留原 ID、种子和碰撞语义。
+- 验证：`dungeon.units` 268/268 PASS（189.11s），`items.units` 45/45 PASS，
+  `platform.units` 357/357 PASS，`stage16.crafting_transaction.units` 2/2 PASS。

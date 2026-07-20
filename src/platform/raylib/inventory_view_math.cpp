@@ -311,15 +311,12 @@ void refresh_inventory_view_cache(InventoryViewCache& cache,
         || cache.resolved_recipe.ids[1] == cache.resolved_recipe.ids[2]) return;
     const items::ItemInstance& first =
         state.items[cache.recipe_indices[0]];
-    const items::BaseDefinition* const first_base =
-        items::base_definition(first.base_id);
-    if (first_base == nullptr) return;
+    if (items::base_definition(first.base_id) == nullptr) return;
     for (std::size_t selected = 1U; selected < 3U; ++selected) {
         const items::ItemInstance& item =
             state.items[cache.recipe_indices[selected]];
-        const items::BaseDefinition* const base =
-            items::base_definition(item.base_id);
-        if (base == nullptr || base->slot != first_base->slot
+        if (items::base_definition(item.base_id) == nullptr
+            || item.base_id != first.base_id
             || item.rarity != first.rarity) return;
     }
     cache.recipe_ready = true;

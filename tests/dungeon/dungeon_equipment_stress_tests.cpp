@@ -302,14 +302,14 @@ std::array<std::uint64_t, 3> first_recipe(
             const ItemInstance& b = state.items[second];
             const auto* b_base = base_for(b);
             if (b_base == nullptr || equipped(state.equipment, b.id)
-                    || b_base->slot != a_base->slot || b.rarity != a.rarity)
+                    || b.base_id != a.base_id || b.rarity != a.rarity)
                 continue;
             for (std::size_t third = second + 1U;
                  third < state.items.size(); ++third) {
                 const ItemInstance& c = state.items[third];
                 const auto* c_base = base_for(c);
                 if (c_base != nullptr && !equipped(state.equipment, c.id)
-                        && c_base->slot == a_base->slot
+                        && c.base_id == a.base_id
                         && c.rarity == a.rarity)
                     return {a.id, b.id, c.id};
             }

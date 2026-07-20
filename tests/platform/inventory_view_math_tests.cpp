@@ -227,6 +227,22 @@ test::Failure comparison_uses_full_build_fields() noexcept {
     return {};
 }
 
+test::Failure recipe_cache_rejects_same_slot_different_bases() noexcept {
+    items::ItemOwnershipState state{};
+    state.items = {
+        make_item(701U, 1U, items::ItemRarity::normal),
+        make_item(702U, 7U, items::ItemRarity::normal),
+        make_item(703U, 8U, items::ItemRarity::normal),
+    };
+    platform::RecipeSelection recipe{};
+    recipe.ids = {{701U, 702U, 703U}};
+    recipe.count = 3U;
+    platform::InventoryViewCache cache{};
+    platform::refresh_inventory_view_cache(cache, state, 91U, {}, 0U, recipe);
+    ARPG_REQUIRE(!platform::cached_recipe_ready(cache));
+    return {};
+}
+
 test::Failure view_cache_never_rescans_stable_maximum_inventory() noexcept {
     items::ItemOwnershipState state{};
     state.items.reserve(65535U);
@@ -396,6 +412,8 @@ constexpr test::TestCase kCases[] = {
     {"inventory equipment hit", &equipped_slot_hit_requires_an_occupied_slot},
     {"inventory overlay gates", &inventory_and_passive_overlays_are_mutually_exclusive},
     {"inventory build comparison", &comparison_uses_full_build_fields},
+    {"inventory recipe base contract",
+        &recipe_cache_rejects_same_slot_different_bases},
     {"inventory maximum cache complexity",
         &view_cache_never_rescans_stable_maximum_inventory},
     {"inventory readable attribute labels",

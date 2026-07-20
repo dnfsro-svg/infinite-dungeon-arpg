@@ -1202,8 +1202,10 @@ arpg::test::Failure recipe_product_colliding_with_abyss_ground_is_atomic() noexc
     DungeonRunState state = arpg::dungeon::make_initial_run_state(
         0x51515151ULL, DungeonRules{}).state;
     const auto a = normal_item(0x5101U);
-    const auto b = normal_item(0x5102U);
-    const auto c = normal_item(0x5103U);
+    auto b = normal_item(0x5102U);
+    auto c = normal_item(0x5103U);
+    b.base_id = a.base_id;
+    c.base_id = a.base_id;
     state.item_ownership.items = {a, b, c};
     state.item_ownership.next_item_sequence = 9U;
     const auto product = arpg::items::generate_recipe_item(
