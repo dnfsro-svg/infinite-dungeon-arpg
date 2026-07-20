@@ -8,6 +8,7 @@
 #include "hud_notice_state.hpp"
 #include "hud_renderer.hpp"
 #include "loot_pickup_feedback.hpp"
+#include "material_loot_view.hpp"
 #include "material_pack.hpp"
 
 #include <cstdint>
@@ -35,6 +36,7 @@ enum class CombatRenderStage : std::uint8_t {
 
 struct CombatRenderPlan final {
     GroundLootView ground_loot{};
+    MaterialLootView material_loot{};
     std::array<CombatRenderStage, 4> stages{};
     std::size_t stage_count{};
 };
@@ -105,7 +107,8 @@ public:
 private:
     void draw_room(
         const dungeon::DungeonSnapshot& current,
-        const GroundLootView& ground_loot) const noexcept;
+        const GroundLootView& ground_loot,
+        const MaterialLootView& material_loot) const noexcept;
     void draw_actors(
         const dungeon::DungeonSnapshot& previous,
         const dungeon::DungeonSnapshot& current,
@@ -130,6 +133,7 @@ private:
     DebugOverlayRenderer debug_overlay_{};
     HudNoticeState hud_notices_{};
     LootPickupFeedbackState loot_pickup_feedback_{};
+    MaterialPickupFeedbackState material_pickup_feedback_{};
     MaterialPack material_pack_{};
     HudViewModelProjector hud_projector_{};
     HudViewModel hud_model_{};

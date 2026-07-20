@@ -1,6 +1,7 @@
 #pragma once
 
 #include "inventory_view_math.hpp"
+#include "material_bag_renderer.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -45,6 +46,7 @@ private:
     RecipeSelection recipe_{};
     InventoryClickTracker click_tracker_{};
     InventoryViewCache view_cache_{};
+    MaterialBagRenderer material_bag_{};
     std::uint64_t comparison_generation_{~std::uint64_t{0U}};
     std::uint64_t comparison_item_id_{};
     items::EquipmentState comparison_equipment_{};

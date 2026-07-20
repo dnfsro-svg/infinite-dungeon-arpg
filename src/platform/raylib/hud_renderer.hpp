@@ -4,6 +4,7 @@
 #include "hud_palette.hpp"
 #include "hud_view_model.hpp"
 #include "ground_loot_view.hpp"
+#include "material_loot_view.hpp"
 
 #include <raylib.h>
 
@@ -123,6 +124,7 @@ public:
     void shutdown() noexcept;
     [[nodiscard]] bool font_ready() const noexcept;
     void draw_ground_loot(const GroundLootView&) const noexcept;
+    void draw_material_loot(const MaterialLootView&) const noexcept;
     void draw(const HudViewModel&, const HudLayout&) const noexcept;
 
 private:

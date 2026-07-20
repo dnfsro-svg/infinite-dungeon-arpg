@@ -4,6 +4,7 @@
 #include "dungeon_view_math.hpp"
 #include "environment_render_plan.hpp"
 #include "material_animation.hpp"
+#include "material_loot_view.hpp"
 #include "render_layout.hpp"
 
 #include <raylib.h>
@@ -277,6 +278,48 @@ void draw_ground_items(const dungeon::DungeonSnapshot& snapshot,
     }
 }
 
+const dungeon::GroundMaterialSnapshot* ground_material_with_ordinal(
+    const dungeon::DungeonSnapshot& snapshot, std::uint16_t ordinal) noexcept {
+    const std::size_t count = (std::min)(
+        static_cast<std::size_t>(snapshot.ground_material_count),
+        snapshot.ground_materials.size());
+    for (std::size_t index = 0U; index < count; ++index) {
+        if (snapshot.ground_materials[index].ordinal == ordinal) {
+            return &snapshot.ground_materials[index];
+        }
+    }
+    return nullptr;
+}
+
+void draw_ground_materials(const dungeon::DungeonSnapshot& snapshot,
+    const MaterialLootView& view, float width, float height) noexcept {
+    for (std::size_t index = 0U; index < view.count; ++index) {
+        const MaterialLootLabel& label = view.labels[index];
+        const auto* material = ground_material_with_ordinal(snapshot, label.ordinal);
+        if (material == nullptr) continue;
+        const RenderProjection projected = project_render_world(
+            material->position.x, material->position.y, material->position.z,
+            width, height);
+        const Color color{label.text_color.r, label.text_color.g,
+            label.text_color.b, label.text_color.a};
+        const float radius = (label.emphasized ? 9.0F : 6.0F) * projected.scale;
+        const Vector2 center{projected.x, projected.ground_y - radius};
+        DrawEllipse(static_cast<int>(projected.x),
+            static_cast<int>(projected.ground_y + 1.0F), radius * 1.6F,
+            radius * 0.45F, Fade(color, 0.28F));
+        if (label.emphasized) {
+            DrawLineEx({center.x, center.y + radius},
+                {center.x, center.y - 36.0F * projected.scale},
+                2.0F * projected.scale, Fade(color, 0.65F));
+            DrawCircleLines(static_cast<int>(center.x), static_cast<int>(center.y),
+                radius * 1.55F, Fade(color, 0.78F));
+        }
+        DrawCircleV(center, radius, color);
+        DrawCircleLines(static_cast<int>(center.x), static_cast<int>(center.y),
+            radius, RAYWHITE);
+    }
+}
+
 void draw_abyss(const dungeon::DungeonSnapshot& snapshot, float elapsed_seconds) noexcept {
     if (!snapshot.is_abyss) {
         return;
@@ -333,7 +376,8 @@ void draw_hole(const dungeon::DungeonSnapshot& snapshot,
 
 void CombatRenderer::draw_room(
     const dungeon::DungeonSnapshot& current,
-    const GroundLootView& ground_loot) const noexcept {
+    const GroundLootView& ground_loot,
+    const MaterialLootView& material_loot) const noexcept {
     const float width = static_cast<float>(GetScreenWidth());
     const float height = static_cast<float>(GetScreenHeight());
     const bool draw_material_environment = can_draw_room_environment(current,
@@ -343,6 +387,7 @@ void CombatRenderer::draw_room(
     }
     draw_abyss(current, static_cast<float>(GetTime()));
     draw_environment_hazards(current, width, height);
+    draw_ground_materials(current, material_loot, width, height);
     draw_ground_items(current, ground_loot, material_pack_, width, height);
     draw_doors(current, width, height, material_pack_, draw_material_environment);
     draw_hole(current, material_pack_, draw_material_environment);

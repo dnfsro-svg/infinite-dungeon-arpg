@@ -424,6 +424,35 @@ void HudRenderer::draw_ground_loot(
     }
 }
 
+void HudRenderer::draw_material_loot(
+    const MaterialLootView& view) const noexcept {
+    if (!IsWindowReady()) return;
+    const HudFontSelectionPlan selection =
+        make_hud_font_selection_plan(font_ready_);
+    const Font draw_font = selection.use_default_font
+        ? GetFontDefault() : font_;
+    const HudReadabilityStyle style = hud_readability_style();
+    for (std::size_t index = 0U; index < view.count; ++index) {
+        const MaterialLootLabel& label = view.labels[index];
+        const Rectangle bounds{label.rect.x, label.rect.y,
+            label.rect.width, label.rect.height};
+        const Color color{label.text_color.r, label.text_color.g,
+            label.text_color.b, label.text_color.a};
+        DrawRectangleRounded(bounds, 0.18F, 6,
+            Fade(color, label.emphasized ? 0.31F : 0.15F));
+        DrawRectangleRoundedLinesEx(bounds, 0.18F, 6,
+            label.emphasized ? 2.5F : 1.0F, color);
+        BeginScissorMode(static_cast<int>(bounds.x),
+            static_cast<int>(bounds.y),
+            (std::max)(0, static_cast<int>(bounds.width)),
+            (std::max)(0, static_cast<int>(bounds.height)));
+        draw_hud_text(draw_font, label.text.data(),
+            {bounds.x + 8.0F, bounds.y + 3.0F}, 16.0F, color,
+            style.outline_pixels);
+        EndScissorMode();
+    }
+}
+
 void HudRenderer::draw(const HudViewModel& view,
     const HudLayout& layout) const noexcept {
     if (!IsWindowReady()) return;
