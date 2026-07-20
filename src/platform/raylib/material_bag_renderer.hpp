@@ -17,6 +17,7 @@ struct MaterialBagLayout final {
 };
 
 [[nodiscard]] MaterialBagLayout material_bag_layout(int width, int height) noexcept;
+[[nodiscard]] Rectangle material_bag_detail_bounds(int width, int height) noexcept;
 
 class MaterialBagRenderer final {
 public:

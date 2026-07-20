@@ -91,5 +91,5 @@ int main() {
         stage12_material_render_suite(),
     };
 
-    return arpg::test::run_suites(suites, 354, "stage 16 material UI");
+    return arpg::test::run_suites(suites, 355, "stage 16 material UI");
 }

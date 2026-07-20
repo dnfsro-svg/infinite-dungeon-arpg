@@ -439,9 +439,11 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     }
     const items::BaseDefinition* const base = items::base_definition(item->base_id);
     if (base == nullptr) return;
-    BeginScissorMode(static_cast<int>(layout.detail.x),
-        static_cast<int>(layout.detail.y), static_cast<int>(layout.detail.width),
-        static_cast<int>(layout.detail.height));
+    const Rectangle detail_bounds = material_bag_detail_bounds(
+        GetScreenWidth(), GetScreenHeight());
+    BeginScissorMode(static_cast<int>(detail_bounds.x),
+        static_cast<int>(detail_bounds.y), static_cast<int>(detail_bounds.width),
+        static_cast<int>(detail_bounds.height));
     std::size_t detail_line = 0U;
     const auto draw_detail_line = [&](const char* text, Color color) noexcept {
         const Rectangle line = detail_line_rectangle(layout, detail_line++);

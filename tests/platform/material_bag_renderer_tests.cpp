@@ -15,6 +15,16 @@ arpg::test::Failure material_bag_has_all_fourteen_slots() noexcept {
     return {};
 }
 
+arpg::test::Failure minimum_layout_keeps_detail_above_material_bag() noexcept {
+    const platform::MaterialBagLayout bag =
+        platform::material_bag_layout(800, 450);
+    const Rectangle detail = platform::material_bag_detail_bounds(800, 450);
+    ARPG_REQUIRE(bag.contains_all_slots());
+    ARPG_REQUIRE(detail.height > 0.0F);
+    ARPG_REQUIRE(detail.y + detail.height <= bag.panel.y);
+    return {};
+}
+
 arpg::test::Failure selected_material_requires_an_owned_material_slot() noexcept {
     items::ItemOwnershipState state{};
     state.materials[items::material_index(items::MaterialId::chaos)] = 4U;
@@ -33,6 +43,7 @@ arpg::test::Failure selected_material_requires_an_owned_material_slot() noexcept
 
 constexpr arpg::test::TestCase kCases[] = {
     {"material bag contains all slots", &material_bag_has_all_fourteen_slots},
+    {"minimum layout separates detail and bag", &minimum_layout_keeps_detail_above_material_bag},
     {"material bag selects owned material", &selected_material_requires_an_owned_material_slot},
 };
 

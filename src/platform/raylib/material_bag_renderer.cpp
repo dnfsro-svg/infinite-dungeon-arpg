@@ -62,6 +62,16 @@ MaterialBagLayout material_bag_layout(int width, int height) noexcept {
     return result;
 }
 
+Rectangle material_bag_detail_bounds(int width, int height) noexcept {
+    const InventoryLayout inventory = inventory_layout(width, height);
+    const MaterialBagLayout bag = material_bag_layout(width, height);
+    constexpr float kDetailTopInset = 36.0F;
+    constexpr float kDetailBagGap = 4.0F;
+    const float top = inventory.detail.y + kDetailTopInset;
+    const float bottom = (std::max)(top, bag.panel.y - kDetailBagGap);
+    return {inventory.detail.x, top, inventory.detail.width, bottom - top};
+}
+
 bool MaterialBagRenderer::select_slot(std::size_t slot,
     const items::ItemOwnershipState& state) noexcept {
     if (slot >= state.materials.size() || state.materials[slot] == 0U) return false;
