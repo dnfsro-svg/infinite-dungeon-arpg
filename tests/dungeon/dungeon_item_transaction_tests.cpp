@@ -198,6 +198,7 @@ arpg::test::Failure equip_publishes_only_after_commit_and_preserves_health() noe
         state_with_items({normal_item(31U, 2U), normal_item(32U, 3U)})};
     session.tick({});
     const int base_max_hp = session.snapshot().combat->player.max_hp;
+    const auto base_build = arpg::test::player_build(session);
     arpg::test::damage_current_player(session, 30);
     const auto damaged = session.snapshot();
     ARPG_REQUIRE(damaged.phase == RoomPhase::combat);
@@ -221,15 +222,25 @@ arpg::test::Failure equip_publishes_only_after_commit_and_preserves_health() noe
     const auto equipped = session.snapshot();
     ARPG_REQUIRE(equipped.phase == RoomPhase::combat);
     ARPG_REQUIRE(session.item_state().equipment.equipped_ids[1] == 31U);
-    ARPG_REQUIRE(equipped.combat->player.max_hp == base_max_hp + 38);
+    ARPG_REQUIRE(equipped.combat->player.max_hp == base_max_hp);
     ARPG_REQUIRE(equipped.combat->player.hp == damaged_hp);
+    const auto helmet_build = arpg::test::player_build(session);
+    ARPG_REQUIRE(helmet_build.values.armor
+        == base_build.values.armor + 7500);
+    ARPG_REQUIRE(helmet_build.values.evasion
+        == base_build.values.evasion + 2625);
 
     ARPG_REQUIRE(session.request_equip(32U) == RequestResult::accepted);
     ARPG_REQUIRE(commit_pending(session));
-    const auto barrier_equipped = session.snapshot();
-    ARPG_REQUIRE(barrier_equipped.combat->player.max_barrier == 46);
-    ARPG_REQUIRE(barrier_equipped.combat->player.barrier == 0);
-    ARPG_REQUIRE(barrier_equipped.combat->player.hp == damaged_hp);
+    const auto chest_equipped = session.snapshot();
+    ARPG_REQUIRE(chest_equipped.combat->player.max_barrier == 0);
+    ARPG_REQUIRE(chest_equipped.combat->player.barrier == 0);
+    ARPG_REQUIRE(chest_equipped.combat->player.hp == damaged_hp);
+    const auto combined_build = arpg::test::player_build(session);
+    ARPG_REQUIRE(combined_build.values.armor
+        == base_build.values.armor + 7500 + 15000);
+    ARPG_REQUIRE(combined_build.values.evasion
+        == base_build.values.evasion + 2625 + 5250);
 
     ARPG_REQUIRE(session.request_unequip(ItemSlot::helmet)
         == RequestResult::accepted);
@@ -237,6 +248,11 @@ arpg::test::Failure equip_publishes_only_after_commit_and_preserves_health() noe
     const auto unequipped = session.snapshot();
     ARPG_REQUIRE(unequipped.combat->player.max_hp == base_max_hp);
     ARPG_REQUIRE(unequipped.combat->player.hp == damaged_hp);
+    const auto chest_build = arpg::test::player_build(session);
+    ARPG_REQUIRE(chest_build.values.armor
+        == base_build.values.armor + 15000);
+    ARPG_REQUIRE(chest_build.values.evasion
+        == base_build.values.evasion + 5250);
     return {};
 }
 
@@ -317,6 +333,7 @@ arpg::test::Failure committed_receipt_publishes_without_allocation() noexcept {
     const int barrier_before = before.combat->player.barrier;
     const int max_hp_before = before.combat->player.max_hp;
     const int max_barrier_before = before.combat->player.max_barrier;
+    const auto build_before = arpg::test::player_build(session);
 
     ARPG_REQUIRE(session.request_equip(165U) == RequestResult::accepted);
     const auto pending = *session.pending_save();
@@ -338,12 +355,15 @@ arpg::test::Failure committed_receipt_publishes_without_allocation() noexcept {
     ARPG_REQUIRE(session.item_state().equipment.equipped_ids[1] == 165U);
     ARPG_REQUIRE(after.commit_generation == pending.expected_generation);
     ARPG_REQUIRE(after.combat.has_value());
-    ARPG_REQUIRE(after.combat->player.max_hp == max_hp_before + 38);
+    ARPG_REQUIRE(after.combat->player.max_hp == max_hp_before);
     ARPG_REQUIRE(after.combat->player.hp == hp_before);
     ARPG_REQUIRE(after.combat->player.max_barrier == max_barrier_before);
     ARPG_REQUIRE(after.combat->player.barrier == barrier_before);
-    ARPG_REQUIRE(arpg::test::player_build(session).values.max_health
-        == 38 * arpg::modifiers::kFixedOne);
+    const auto build_after = arpg::test::player_build(session);
+    ARPG_REQUIRE(build_after.values.armor == build_before.values.armor + 7500);
+    ARPG_REQUIRE(build_after.values.evasion
+        == build_before.values.evasion + 2625);
+    ARPG_REQUIRE(build_after.values.max_health == build_before.values.max_health);
     return {};
 }
 
@@ -418,6 +438,8 @@ arpg::test::Failure equipment_indeterminate_save_faults() noexcept {
 arpg::test::Failure recipe_is_atomic_ordered_and_retry_deterministic() noexcept {
     DungeonRunState state = state_with_items({normal_item(51U, 2U),
         normal_item(52U, 2U), normal_item(53U, 2U), normal_item(54U, 3U)});
+    state.item_ownership.materials[0] =
+        (std::numeric_limits<std::uint64_t>::max)();
     DungeonSession session{DungeonRules{}, state};
     const std::array<std::uint64_t, 3> ids{{51U, 52U, 53U}};
     ARPG_REQUIRE(session.request_recipe(ids) == RequestResult::accepted);
@@ -426,6 +448,8 @@ arpg::test::Failure recipe_is_atomic_ordered_and_retry_deterministic() noexcept 
     ARPG_REQUIRE(session.item_state().items.size() == 4U);
     ARPG_REQUIRE(first.next_state.item_ownership.items.size() == 2U);
     ARPG_REQUIRE(first.next_state.item_ownership.items[0].id == 54U);
+    ARPG_REQUIRE(first.next_state.item_ownership.materials[0]
+        == (std::numeric_limits<std::uint64_t>::max)());
     const std::uint64_t product_id =
         first.next_state.item_ownership.items[1].id;
     ARPG_REQUIRE(product_id != 0U);
@@ -434,6 +458,8 @@ arpg::test::Failure recipe_is_atomic_ordered_and_retry_deterministic() noexcept 
     session.resolve_pending_save({SaveDisposition::not_committed,
         first.expected_generation, first.next_state});
     ARPG_REQUIRE(session.item_state().items.size() == 4U);
+    ARPG_REQUIRE(session.item_state().materials[0]
+        == (std::numeric_limits<std::uint64_t>::max)());
     ARPG_REQUIRE(session.item_state().next_item_sequence == 9U);
     ARPG_REQUIRE(session.request_recipe(ids) == RequestResult::accepted);
     const auto second = *session.pending_save();
@@ -443,6 +469,8 @@ arpg::test::Failure recipe_is_atomic_ordered_and_retry_deterministic() noexcept 
     ARPG_REQUIRE(session.item_state().items.size() == 2U);
     ARPG_REQUIRE(session.item_state().items[0].id == 54U);
     ARPG_REQUIRE(session.item_state().items[1].id == product_id);
+    ARPG_REQUIRE(session.item_state().materials[0]
+        == (std::numeric_limits<std::uint64_t>::max)());
     ARPG_REQUIRE(session.item_state().next_item_sequence == 10U);
     return {};
 }
@@ -543,7 +571,13 @@ arpg::test::Failure room_build_combines_passives_and_equipment() noexcept {
     ARPG_REQUIRE(combined_snapshot.combat->player.max_barrier
         == passive_snapshot.combat->player.max_barrier);
     ARPG_REQUIRE(combined_snapshot.combat->player.max_hp
-        == passive_snapshot.combat->player.max_hp + 38);
+        == passive_snapshot.combat->player.max_hp);
+    const auto passive_build = arpg::test::player_build(passive_only);
+    const auto combined_build = arpg::test::player_build(combined);
+    ARPG_REQUIRE(combined_build.values.armor
+        == passive_build.values.armor + 7500);
+    ARPG_REQUIRE(combined_build.values.evasion
+        == passive_build.values.evasion + 2625);
     return {};
 }
 
@@ -567,8 +601,32 @@ arpg::test::Failure same_run_state_compares_all_item_ownership_fields() noexcept
     changed.item_ownership.claimed_drop_bits[2] = 1U;
     ARPG_REQUIRE(!arpg::dungeon::same_run_state(original, changed));
     changed = original;
+    changed.item_ownership.materials[0] = 1U;
+    ARPG_REQUIRE(!arpg::dungeon::same_run_state(original, changed));
+    changed = original;
+    changed.item_ownership.items[0].reinforcement = 1U;
+    ARPG_REQUIRE(!arpg::dungeon::same_run_state(original, changed));
+    changed = original;
+    changed.item_ownership.items[0].affixes[0].value_roll_bp =
+        arpg::items::kAffixValueRollMinimumBp;
+    ARPG_REQUIRE(!arpg::dungeon::same_run_state(original, changed));
+    changed = original;
     ++changed.item_ownership.next_item_sequence;
     ARPG_REQUIRE(!arpg::dungeon::same_run_state(original, changed));
+
+    DungeonRunState copied = state_with_items({});
+    copied.item_ownership.items.reserve(original.item_ownership.items.size());
+    original.item_ownership.materials[0] =
+        (std::numeric_limits<std::uint64_t>::max)();
+    ARPG_REQUIRE(arpg::test::copy_run_state_reusing_items(copied, original));
+    ARPG_REQUIRE(arpg::dungeon::same_run_state(copied, original));
+
+    DungeonRunState published = state_with_items({normal_item(123U, 4U)});
+    DungeonRunState next = original;
+    next.item_ownership.materials[1] = 0x123456789ABCDEF0ULL;
+    const DungeonRunState expected = next;
+    arpg::test::publish_run_state_reusing_items(published, next);
+    ARPG_REQUIRE(arpg::dungeon::same_run_state(published, expected));
     return {};
 }
 
@@ -586,8 +644,9 @@ arpg::test::Failure equipment_preview_uses_passives_without_mutating_state() noe
     const auto candidate = session.preview_equipment_build(equipped);
     ARPG_REQUIRE(candidate.has_value());
     ARPG_REQUIRE(candidate->values.max_barrier == current->values.max_barrier);
-    ARPG_REQUIRE(candidate->values.max_health
-        == current->values.max_health + 38 * arpg::modifiers::kFixedOne);
+    ARPG_REQUIRE(candidate->values.max_health == current->values.max_health);
+    ARPG_REQUIRE(candidate->values.armor == current->values.armor + 7500);
+    ARPG_REQUIRE(candidate->values.evasion == current->values.evasion + 2625);
     ARPG_REQUIRE(session.item_state().equipment.equipped_ids[1] == 0U);
     return {};
 }

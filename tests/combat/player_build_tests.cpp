@@ -297,8 +297,11 @@ arpg::test::Failure hit_packet_reports_zero_and_invalid_without_partial_packet()
     invalid.weapon_physical = -1;
     ARPG_REQUIRE(!build_player_hit_packet(1, invalid).has_value());
     invalid = PlayerCombatBuild{};
-    invalid.local_attack_speed_bp = -1;
+    invalid.local_attack_speed_bp = -10001;
     ARPG_REQUIRE(!build_player_hit_packet(1, invalid).has_value());
+    PlayerCombatBuild slowed{};
+    slowed.local_attack_speed_bp = -1500;
+    ARPG_REQUIRE(build_player_hit_packet(1, slowed).has_value());
 
     PlayerCombatBuild overflowing{};
     overflowing.weapon_physical =

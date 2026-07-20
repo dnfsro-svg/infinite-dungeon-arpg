@@ -42,6 +42,7 @@ struct AffixRoll final {
     std::uint16_t affix_id{};
     std::uint8_t tier{};
     std::uint8_t variant{};
+    std::uint16_t value_roll_bp{};
 };
 
 struct ItemInstance final {
@@ -54,17 +55,17 @@ struct ItemInstance final {
     std::uint8_t affix_count{};
     std::array<std::uint8_t, 3> reserved{};
     std::uint32_t reinforcement{};
-    std::array<std::uint8_t, 4> extension_reserved{};
+    std::array<std::uint8_t, 8> extension_reserved{};
 };
 
 static_assert(std::is_standard_layout_v<ItemInstance>);
 static_assert(std::is_trivially_copyable_v<ItemInstance>);
-static_assert(sizeof(ItemInstance) == 48U);
+static_assert(sizeof(ItemInstance) == 64U);
 static_assert(offsetof(ItemInstance, affixes) == 12U);
-static_assert(offsetof(ItemInstance, affix_count) == 36U);
-static_assert(offsetof(ItemInstance, reserved) == 37U);
-static_assert(offsetof(ItemInstance, reinforcement) == 40U);
-static_assert(offsetof(ItemInstance, extension_reserved) == 44U);
+static_assert(offsetof(ItemInstance, affix_count) == 48U);
+static_assert(offsetof(ItemInstance, reserved) == 49U);
+static_assert(offsetof(ItemInstance, reinforcement) == 52U);
+static_assert(offsetof(ItemInstance, extension_reserved) == 56U);
 
 struct EquipmentState final {
     std::array<std::uint64_t, 6> equipped_ids{};
@@ -73,7 +74,7 @@ struct EquipmentState final {
 struct ItemOwnershipState final {
     std::vector<ItemInstance> items{};
     EquipmentState equipment{};
-    std::array<std::uint32_t, kMaterialCount> materials{};
+    std::array<std::uint64_t, kMaterialCount> materials{};
     std::array<std::uint64_t, 3> claimed_drop_bits{};
     std::uint64_t next_item_sequence{1};
 };

@@ -41,6 +41,16 @@ bool stage9_affix_stress_only() noexcept {
     return enabled;
 }
 
+bool stage8_equipment_stress_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_STAGE8_EQUIPMENT_STRESS_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
 bool stage10_abyss_reward_only() noexcept {
     char* value = nullptr;
     std::size_t length = 0U;
@@ -115,6 +125,14 @@ int main() {
         dungeon_affix_reward_suite(),
         dungeon_affix_stress_suite(),
     };
+
+    if (stage8_equipment_stress_only()) {
+        const arpg::test::TestSuite stress_only[] = {
+            dungeon_equipment_stress_suite(),
+        };
+        return arpg::test::run_suites(stress_only, 2,
+            "stage 8 equipment stress");
+    }
 
     if (stage9_affix_stress_only()) {
         const arpg::test::TestSuite stress_only[] = {

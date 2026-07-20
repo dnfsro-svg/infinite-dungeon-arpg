@@ -48,6 +48,9 @@ struct CraftResult final {
 };
 
 [[nodiscard]] CraftResult craft_item(CraftRequest request) noexcept;
+[[nodiscard]] bool affix_in_directed_category(
+    DirectedCategory category,
+    std::uint16_t affix_id) noexcept;
 [[nodiscard]] std::uint16_t reinforcement_success_chance_bp(
     std::uint32_t target) noexcept;
 [[nodiscard]] ReinforcementFailure reinforcement_failure(

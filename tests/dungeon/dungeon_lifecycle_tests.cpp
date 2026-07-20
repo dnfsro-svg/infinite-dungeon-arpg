@@ -135,9 +135,11 @@ arpg::test::Failure abyss_clear_is_atomic_and_restores_life_resources() noexcept
     items::ItemInstance barrier_item{};
     barrier_item.id = 0xBABB1EULL;
     barrier_item.base_id = 3U;
-    barrier_item.rarity = items::ItemRarity::normal;
+    barrier_item.rarity = items::ItemRarity::magic;
     barrier_item.item_level = 40U;
-    barrier_item.required_level = 1U;
+    barrier_item.required_level = 30U;
+    barrier_item.affixes[0] = {12U, 6U, 0xFFU};
+    barrier_item.affix_count = 1U;
     state.item_ownership.items.push_back(barrier_item);
     state.item_ownership.equipment.equipped_ids[2] = barrier_item.id;
     const auto stable_before = state;

@@ -41,6 +41,7 @@ enum class MismatchField : std::uint8_t {
     item_count,
     item_bytes,
     equipment_ids,
+    materials,
     claimed_bits,
     next_sequence,
     player_build,
@@ -60,6 +61,7 @@ struct Comparison final {
 struct TraceResult final {
     bool completed{};
     bool perturbation_applied{};
+    const char* abort_point{"none"};
     Comparison mismatch{};
     std::size_t mismatch_room{};
     std::size_t mismatch_step{};
@@ -100,7 +102,7 @@ bool same_build(const arpg::combat::PlayerCombatBuild& left,
 
 bool same_item_bytes(
     const ItemInstance& left, const ItemInstance& right) noexcept {
-    static_assert(sizeof(ItemInstance) == 48U);
+    static_assert(sizeof(ItemInstance) == 64U);
     return std::memcmp(&left, &right, sizeof(ItemInstance)) == 0;
 }
 
@@ -124,6 +126,8 @@ Comparison compare_sessions(
     if (left_items.equipment.equipped_ids
             != right_items.equipment.equipped_ids)
         return {MismatchField::equipment_ids, 0U};
+    if (left_items.materials != right_items.materials)
+        return {MismatchField::materials, 0U};
     if (left_items.claimed_drop_bits != right_items.claimed_drop_bits)
         return {MismatchField::claimed_bits, 0U};
     if (left_items.next_item_sequence != right_items.next_item_sequence)
@@ -319,10 +323,26 @@ bool apply_fixed_transactions(DungeonSession& left,
         const ItemInstance& chosen = items[room % items.size()];
         const RequestResult left_result = left.request_equip(chosen.id);
         const RequestResult right_result = right.request_equip(chosen.id);
-        if (left_result != right_result || left_result == RequestResult::faulted)
+        if (left_result != right_result || left_result == RequestResult::faulted) {
+            std::fprintf(stderr,
+                "stage8 fixed transaction equip failed room=%zu left=%u right=%u id=%llu base=%u level=%u rarity=%u left_fault=%u right_fault=%u\n",
+                room, static_cast<unsigned>(left_result),
+                static_cast<unsigned>(right_result),
+                static_cast<unsigned long long>(chosen.id),
+                static_cast<unsigned>(chosen.base_id),
+                static_cast<unsigned>(chosen.item_level),
+                static_cast<unsigned>(chosen.rarity),
+                static_cast<unsigned>(left.snapshot().diagnostics.fault),
+                static_cast<unsigned>(right.snapshot().diagnostics.fault));
             return false;
+        }
         if (left_result == RequestResult::accepted) {
-            if (!commit_pending(left) || !commit_pending(right)) return false;
+            if (!commit_pending(left) || !commit_pending(right)) {
+                std::fprintf(stderr,
+                    "stage8 fixed transaction equip commit failed room=%zu\n",
+                    room);
+                return false;
+            }
             ++equips;
         }
     }
@@ -332,9 +352,21 @@ bool apply_fixed_transactions(DungeonSession& left,
     const RequestResult left_result = left.request_recipe(recipe);
     const RequestResult right_result = right.request_recipe(recipe);
     if (left_result != RequestResult::accepted
-            || right_result != RequestResult::accepted)
+            || right_result != RequestResult::accepted) {
+        std::fprintf(stderr,
+            "stage8 fixed transaction recipe failed room=%zu left=%u right=%u ids=%llu,%llu,%llu\n",
+            room, static_cast<unsigned>(left_result),
+            static_cast<unsigned>(right_result),
+            static_cast<unsigned long long>(recipe[0]),
+            static_cast<unsigned long long>(recipe[1]),
+            static_cast<unsigned long long>(recipe[2]));
         return false;
-    if (!commit_pending(left) || !commit_pending(right)) return false;
+    }
+    if (!commit_pending(left) || !commit_pending(right)) {
+        std::fprintf(stderr,
+            "stage8 fixed transaction recipe commit failed room=%zu\n", room);
+        return false;
+    }
     ++recipes;
     return true;
 }
@@ -382,11 +414,17 @@ TraceResult run_trace(std::size_t room_count, bool perturb_pickup_order) {
     TraceResult result{};
     const DungeonRules rules{};
     auto initial = arpg::dungeon::make_initial_run_state(kRootSeed, rules);
-    if (initial.fault != arpg::dungeon::DungeonFault::none) return result;
+    if (initial.fault != arpg::dungeon::DungeonFault::none) {
+        result.abort_point = "initial_state";
+        return result;
+    }
     auto left = std::make_unique<DungeonSession>(rules, initial.state);
     auto right = std::make_unique<DungeonSession>(rules, initial.state);
     std::size_t step = 0U;
-    if (!run_filter_hot_path_probe(result)) return result;
+    if (!run_filter_hot_path_probe(result)) {
+        result.abort_point = "filter_hot_path";
+        return result;
+    }
     if (!record_comparison(result, *left, *right, 0U, step++)) return result;
 
     for (std::size_t room = 0U; room < room_count; ++room) {
@@ -402,7 +440,10 @@ TraceResult run_trace(std::size_t room_count, bool perturb_pickup_order) {
                         *left, wave, target, position)
                         || !arpg::test::relay_defeated(
                             *right, wave, target, position))
-                    return result;
+                    {
+                        result.abort_point = "relay_defeated";
+                        return result;
+                    }
                 drain_observable_events(*left);
                 drain_observable_events(*right);
                 if (!record_comparison(
@@ -436,15 +477,20 @@ TraceResult run_trace(std::size_t room_count, bool perturb_pickup_order) {
                 arpg::test::ground_items(*left)[left_order[index]], policy);
             const bool right_eligible = arpg::dungeon::auto_pickup_eligible(
                 arpg::test::ground_items(*right)[right_order[index]], policy);
-            if (left_eligible != right_eligible) return result;
+            if (left_eligible != right_eligible) {
+                result.abort_point = "pickup_eligibility";
+                return result;
+            }
             const PickupAttempt left_attempt =
                 pickup_one(*left, left_order[index], policy);
             const PickupAttempt right_attempt =
                 pickup_one(*right, right_order[index], policy);
             const PickupAttempt expected = left_eligible
                 ? PickupAttempt::picked : PickupAttempt::retained;
-            if (left_attempt != expected || right_attempt != expected)
+            if (left_attempt != expected || right_attempt != expected) {
+                result.abort_point = "pickup_attempt";
                 return result;
+            }
             if (!left_eligible) {
                 retained_ordinals[retained_count++] = left_order[index];
                 ++result.filtered_items_retained;
@@ -458,6 +504,7 @@ TraceResult run_trace(std::size_t room_count, bool perturb_pickup_order) {
                     result, *left, *right, room, step++)) {
                 result.completed = perturb_pickup_order
                     && result.perturbation_applied;
+                result.abort_point = "retained_pickup";
                 return result;
             }
         }
@@ -479,16 +526,24 @@ TraceResult run_trace(std::size_t room_count, bool perturb_pickup_order) {
         }
 
         if (!apply_fixed_transactions(
-                *left, *right, room, result.equips, result.recipes))
+                *left, *right, room, result.equips, result.recipes)) {
+            result.abort_point = "fixed_transactions";
             return result;
+        }
         if (!record_comparison(result, *left, *right, room, step++))
             return result;
-        if (!transition_room(*left, *right, room)) return result;
+        if (!transition_room(*left, *right, room)) {
+            result.abort_point = "transition_room";
+            return result;
+        }
         if (!record_comparison(result, *left, *right, room, step++))
             return result;
 
         if ((room + 1U) % kRestartInterval == 0U) {
-            if (!restart_right_session(right, rules)) return result;
+            if (!restart_right_session(right, rules)) {
+                result.abort_point = "restart_right_session";
+                return result;
+            }
             ++result.restarts;
             if (!record_comparison(result, *left, *right, room, step++))
                 return result;
@@ -506,6 +561,7 @@ const char* mismatch_name(MismatchField field) noexcept {
     case MismatchField::item_count: return "item_count";
     case MismatchField::item_bytes: return "item_bytes";
     case MismatchField::equipment_ids: return "equipment_ids";
+    case MismatchField::materials: return "materials";
     case MismatchField::claimed_bits: return "claimed_bits";
     case MismatchField::next_sequence: return "next_sequence";
     case MismatchField::player_build: return "player_build";
@@ -533,9 +589,10 @@ arpg::test::Failure one_thousand_room_equipment_trace_is_deterministic() noexcep
     const TraceResult result = run_trace(kStressRoomCount, false);
     if (!result.completed || result.mismatch.field != MismatchField::none) {
         std::fprintf(stderr,
-            "stage8 stress mismatch room=%zu step=%zu field=%s index=%zu\n",
+            "stage8 stress mismatch room=%zu step=%zu field=%s index=%zu abort=%s\n",
             result.mismatch_room, result.mismatch_step,
-            mismatch_name(result.mismatch.field), result.mismatch.index);
+            mismatch_name(result.mismatch.field), result.mismatch.index,
+            result.abort_point);
     }
     ARPG_REQUIRE(result.completed);
     ARPG_REQUIRE(result.mismatch.field == MismatchField::none);

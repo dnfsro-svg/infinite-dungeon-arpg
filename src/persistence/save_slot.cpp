@@ -17,13 +17,17 @@ bool same_item(const items::ItemInstance& lhs,
         || lhs.rarity != rhs.rarity || lhs.item_level != rhs.item_level
         || lhs.required_level != rhs.required_level
         || lhs.affix_count != rhs.affix_count
-        || lhs.reserved != rhs.reserved) {
+        || lhs.reserved != rhs.reserved
+        || lhs.reinforcement != rhs.reinforcement
+        || lhs.extension_reserved != rhs.extension_reserved) {
         return false;
     }
     for (std::size_t index = 0U; index < lhs.affixes.size(); ++index) {
         if (lhs.affixes[index].affix_id != rhs.affixes[index].affix_id
             || lhs.affixes[index].tier != rhs.affixes[index].tier
-            || lhs.affixes[index].variant != rhs.affixes[index].variant) {
+            || lhs.affixes[index].variant != rhs.affixes[index].variant
+            || lhs.affixes[index].value_roll_bp
+                != rhs.affixes[index].value_roll_bp) {
             return false;
         }
     }
@@ -34,6 +38,7 @@ bool same_ownership(const items::ItemOwnershipState& lhs,
     const items::ItemOwnershipState& rhs) noexcept {
     if (lhs.items.size() != rhs.items.size()
         || lhs.equipment.equipped_ids != rhs.equipment.equipped_ids
+        || lhs.materials != rhs.materials
         || lhs.claimed_drop_bits != rhs.claimed_drop_bits
         || lhs.next_item_sequence != rhs.next_item_sequence) {
         return false;

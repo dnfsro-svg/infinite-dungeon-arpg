@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 
@@ -37,6 +38,7 @@ bool same_ownership(const items::ItemOwnershipState& left,
     const items::ItemOwnershipState& right) noexcept {
     if (left.items.size() != right.items.size()
             || left.equipment.equipped_ids != right.equipment.equipped_ids
+            || left.materials != right.materials
             || left.claimed_drop_bits != right.claimed_drop_bits
             || left.next_item_sequence != right.next_item_sequence) {
         return false;
@@ -597,11 +599,13 @@ arpg::test::Failure reset_reopen_and_repeated_load_keep_persisted_room_fields() 
         saved.verified_state));
     ARPG_REQUIRE(dungeon::same_run_state(second_load.checkpoint,
         saved.verified_state));
-    dungeon::DungeonSession reopened{dungeon::DungeonRules{}, first_load.checkpoint};
-    dungeon::DungeonSession repeated{dungeon::DungeonRules{}, second_load.checkpoint};
+    auto reopened = std::make_unique<dungeon::DungeonSession>(
+        dungeon::DungeonRules{}, first_load.checkpoint);
+    auto repeated = std::make_unique<dungeon::DungeonSession>(
+        dungeon::DungeonRules{}, second_load.checkpoint);
     ARPG_REQUIRE(same_descriptor(after_reset, saved.verified_state));
-    ARPG_REQUIRE(same_descriptor(reopened.snapshot(), saved.verified_state));
-    ARPG_REQUIRE(same_descriptor(repeated.snapshot(), saved.verified_state));
+    ARPG_REQUIRE(same_descriptor(reopened->snapshot(), saved.verified_state));
+    ARPG_REQUIRE(same_descriptor(repeated->snapshot(), saved.verified_state));
     return {};
 }
 

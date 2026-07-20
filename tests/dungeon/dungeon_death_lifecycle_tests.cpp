@@ -586,8 +586,11 @@ arpg::test::Failure abyss_death_receipt_mutations_fail_closed() noexcept {
 }
 
 arpg::test::Failure ordinary_death_prepares_atomic_retreat() noexcept {
-    DungeonSession session{DungeonRules{}, dungeon::make_initial_run_state(
-        0xD34D6U, DungeonRules{}).state};
+    auto initial = dungeon::make_initial_run_state(
+        0xD34D6U, DungeonRules{}).state;
+    initial.item_ownership.materials[0] =
+        (std::numeric_limits<std::uint64_t>::max)();
+    DungeonSession session{DungeonRules{}, std::move(initial)};
     const auto stable_before = arpg::test::stable_state(session);
     ARPG_REQUIRE(drive_ordinary_death(session));
     const auto* pending = session.pending_save_view();
@@ -598,6 +601,8 @@ arpg::test::Failure ordinary_death_prepares_atomic_retreat() noexcept {
         == stable_before.commit_generation + 1U);
     ARPG_REQUIRE(pending->next_state.death_sequence
         == stable_before.death_sequence + 1U);
+    ARPG_REQUIRE(pending->next_state.item_ownership.materials
+        == stable_before.item_ownership.materials);
     ARPG_REQUIRE(arpg::test::stable_state(session).death_sequence
         == stable_before.death_sequence);
     ARPG_REQUIRE(pending->next_state.death.lifecycle

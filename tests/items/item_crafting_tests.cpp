@@ -235,8 +235,41 @@ arpg::test::Failure divine_preserves_affix_identity_tier_and_variant() noexcept 
     ARPG_REQUIRE(divine.item.id == rare.id);
     ARPG_REQUIRE(divine.item.rarity == rare.rarity);
     ARPG_REQUIRE(divine.item.affix_count == rare.affix_count);
-    ARPG_REQUIRE(std::memcmp(divine.item.affixes.data(), rare.affixes.data(),
-        sizeof(rare.affixes)) == 0);
+    bool changed_effect = false;
+    for (std::size_t index = 0U; index < rare.affix_count; ++index) {
+        const AffixRoll& before = rare.affixes[index];
+        const AffixRoll& after = divine.item.affixes[index];
+        ARPG_REQUIRE(after.affix_id == before.affix_id);
+        ARPG_REQUIRE(after.tier == before.tier);
+        ARPG_REQUIRE(after.variant == before.variant);
+        ARPG_REQUIRE(after.value_roll_bp >= kAffixValueRollMinimumBp);
+        ARPG_REQUIRE(after.value_roll_bp <= kAffixValueRollMaximumBp);
+        ARPG_REQUIRE(after.value_roll_bp != before.value_roll_bp);
+        const auto before_value = affix_roll_value(before);
+        const auto after_value = affix_roll_value(after);
+        ARPG_REQUIRE(before_value.has_value() && after_value.has_value());
+        changed_effect = changed_effect || *before_value != *after_value;
+    }
+    ARPG_REQUIRE(changed_effect);
+    return {};
+}
+
+arpg::test::Failure divine_rejects_when_integer_effect_cannot_change() noexcept {
+    ItemInstance item{};
+    item.id = 0xD171EULL;
+    item.base_id = 1U;
+    item.rarity = ItemRarity::magic;
+    item.item_level = 1U;
+    item.required_level = 1U;
+    item.affixes[0] = {1U, 8U, 0xFFU};
+    item.affix_count = 1U;
+    ARPG_REQUIRE(validate_item(item));
+    ARPG_REQUIRE(affix_roll_value(item.affixes[0]) == 1);
+
+    const CraftResult result = craft(MaterialId::divine, item);
+    ARPG_REQUIRE(!result.applied);
+    ARPG_REQUIRE(!result.consumed);
+    ARPG_REQUIRE(same_item(result.item, item));
     return {};
 }
 
@@ -296,6 +329,27 @@ arpg::test::Failure directed_replacement_preserves_count_and_is_compatible() noe
         ARPG_REQUIRE(changed == 1U);
     }
     ARPG_REQUIRE(successful_replays == 512U);
+
+    constexpr std::array<std::uint16_t, 24> all_ids{{
+        1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U, 9U, 10U, 11U, 12U,
+        101U, 102U, 103U, 104U, 105U, 106U, 107U, 108U, 109U,
+        110U, 111U, 112U}};
+    for (const std::uint16_t id : all_ids) {
+        const bool damage = id == 1U || id == 2U || id == 105U || id == 106U;
+        const bool defense = id == 11U || id == 12U || id == 103U
+            || id == 104U || id == 111U;
+        const bool speed = id == 101U || id == 102U;
+        const bool element = (id >= 3U && id <= 10U)
+            || (id >= 107U && id <= 110U) || id == 112U;
+        ARPG_REQUIRE(affix_in_directed_category(
+            DirectedCategory::damage, id) == damage);
+        ARPG_REQUIRE(affix_in_directed_category(
+            DirectedCategory::defense, id) == defense);
+        ARPG_REQUIRE(affix_in_directed_category(
+            DirectedCategory::speed, id) == speed);
+        ARPG_REQUIRE(affix_in_directed_category(
+            DirectedCategory::element, id) == element);
+    }
     return {};
 }
 
@@ -379,6 +433,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"chaos and exalt", &chaos_and_exalt_follow_rare_contracts},
     {"annul and scour", &annul_downgrades_rarity_and_scour_clears_affixes},
     {"divine identity", &divine_preserves_affix_identity_tier_and_variant},
+    {"divine rejects rounded no effect",
+        &divine_rejects_when_integer_effect_cannot_change},
     {"directed replacement",
         &directed_replacement_preserves_count_and_is_compatible},
     {"craft legality and replay",

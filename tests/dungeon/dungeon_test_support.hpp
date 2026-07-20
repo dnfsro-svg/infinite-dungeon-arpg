@@ -256,6 +256,18 @@ struct DungeonSessionTestAccess final {
         const dungeon::DungeonSession& session) noexcept {
         return session.stable_state_;
     }
+    static bool copy_run_state_reusing_items(
+        dungeon::DungeonRunState& destination,
+        const dungeon::DungeonRunState& source) noexcept {
+        return dungeon::DungeonSession::copy_run_state_reusing_items(
+            destination, source);
+    }
+    static void publish_run_state_reusing_items(
+        dungeon::DungeonRunState& destination,
+        dungeon::DungeonRunState& source) noexcept {
+        dungeon::DungeonSession::publish_run_state_reusing_items(
+            destination, source);
+    }
     static const std::array<dungeon::GroundItem,
         dungeon::kGroundDropCapacity>& ground_items(
         const dungeon::DungeonSession& session) noexcept {
@@ -414,6 +426,20 @@ inline const std::array<std::uint64_t, 3>& rolled_drop_bits(
 inline const dungeon::DungeonRunState& stable_state(
     const dungeon::DungeonSession& session) noexcept {
     return DungeonSessionTestAccess::stable_state(session);
+}
+
+inline bool copy_run_state_reusing_items(
+    dungeon::DungeonRunState& destination,
+    const dungeon::DungeonRunState& source) noexcept {
+    return DungeonSessionTestAccess::copy_run_state_reusing_items(
+        destination, source);
+}
+
+inline void publish_run_state_reusing_items(
+    dungeon::DungeonRunState& destination,
+    dungeon::DungeonRunState& source) noexcept {
+    DungeonSessionTestAccess::publish_run_state_reusing_items(
+        destination, source);
 }
 
 inline const std::array<dungeon::GroundItem,

@@ -37,14 +37,17 @@ namespace {
             || lhs.item_level != rhs.item_level
             || lhs.required_level != rhs.required_level
             || lhs.affix_count != rhs.affix_count
-            || lhs.reserved != rhs.reserved) {
+            || lhs.reserved != rhs.reserved
+            || lhs.reinforcement != rhs.reinforcement
+            || lhs.extension_reserved != rhs.extension_reserved) {
         return false;
     }
     for (std::size_t index = 0U; index < lhs.affixes.size(); ++index) {
         const items::AffixRoll& a = lhs.affixes[index];
         const items::AffixRoll& b = rhs.affixes[index];
         if (a.affix_id != b.affix_id || a.tier != b.tier
-                || a.variant != b.variant) {
+                || a.variant != b.variant
+                || a.value_roll_bp != b.value_roll_bp) {
             return false;
         }
     }
@@ -56,6 +59,7 @@ namespace {
     const items::ItemOwnershipState& rhs) noexcept {
     if (lhs.items.size() != rhs.items.size()
             || lhs.equipment.equipped_ids != rhs.equipment.equipped_ids
+            || lhs.materials != rhs.materials
             || lhs.claimed_drop_bits != rhs.claimed_drop_bits
             || lhs.next_item_sequence != rhs.next_item_sequence) {
         return false;

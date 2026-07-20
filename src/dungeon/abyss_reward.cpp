@@ -59,14 +59,18 @@ bool same_item_instance(
             || left.item_level != right.item_level
             || left.required_level != right.required_level
             || left.affix_count != right.affix_count
-            || left.reserved != right.reserved) {
+            || left.reserved != right.reserved
+            || left.reinforcement != right.reinforcement
+            || left.extension_reserved != right.extension_reserved) {
         return false;
     }
     for (std::size_t index = 0U; index < left.affixes.size(); ++index) {
         if (left.affixes[index].affix_id != right.affixes[index].affix_id
                 || left.affixes[index].tier != right.affixes[index].tier
                 || left.affixes[index].variant
-                    != right.affixes[index].variant) {
+                    != right.affixes[index].variant
+                || left.affixes[index].value_roll_bp
+                    != right.affixes[index].value_roll_bp) {
             return false;
         }
     }
