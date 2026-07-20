@@ -688,6 +688,7 @@ bool same_ownership(const items::ItemOwnershipState& left,
     const items::ItemOwnershipState& right) noexcept {
     if (left.items.size() != right.items.size()
             || left.equipment.equipped_ids != right.equipment.equipped_ids
+            || left.materials != right.materials
             || left.claimed_drop_bits != right.claimed_drop_bits
             || left.next_item_sequence != right.next_item_sequence) {
         return false;

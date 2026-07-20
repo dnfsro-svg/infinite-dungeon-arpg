@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 
 namespace {
 
@@ -95,12 +96,16 @@ bool same_item(
             || left.item_level != right.item_level
             || left.required_level != right.required_level
             || left.affix_count != right.affix_count
-            || left.reserved != right.reserved) return false;
+            || left.reserved != right.reserved
+            || left.reinforcement != right.reinforcement
+            || left.extension_reserved != right.extension_reserved) return false;
     for (std::size_t index = 0U; index < left.affixes.size(); ++index) {
         if (left.affixes[index].affix_id != right.affixes[index].affix_id
                 || left.affixes[index].tier != right.affixes[index].tier
                 || left.affixes[index].variant
-                    != right.affixes[index].variant) return false;
+                    != right.affixes[index].variant
+                || left.affixes[index].value_roll_bp
+                    != right.affixes[index].value_roll_bp) return false;
     }
     return true;
 }
@@ -986,45 +991,45 @@ arpg::test::Failure abyss_confirmation_invalidates_on_key_range_revision_and_cap
     state.abyss.generated_mask = 7U;
     state.abyss.reward_revision = 3U;
 
-    DungeonSession direction{DungeonRules{}, state};
-    arpg::test::set_phase(direction, RoomPhase::awaiting_exit);
-    attempt_exit(direction, ExitDirection::left);
-    ARPG_REQUIRE(direction.snapshot().abyss_exit_confirmation_armed);
-    attempt_exit(direction, ExitDirection::right);
-    ARPG_REQUIRE(!direction.snapshot().abyss_exit_confirmation_armed);
-    ARPG_REQUIRE(!direction.pending_save().has_value());
+    auto direction = std::make_unique<DungeonSession>(DungeonRules{}, state);
+    arpg::test::set_phase(*direction, RoomPhase::awaiting_exit);
+    attempt_exit(*direction, ExitDirection::left);
+    ARPG_REQUIRE(direction->snapshot().abyss_exit_confirmation_armed);
+    attempt_exit(*direction, ExitDirection::right);
+    ARPG_REQUIRE(!direction->snapshot().abyss_exit_confirmation_armed);
+    ARPG_REQUIRE(!direction->pending_save().has_value());
 
-    DungeonSession range{DungeonRules{}, state};
-    arpg::test::set_phase(range, RoomPhase::awaiting_exit);
-    set_player_position(range, {-12.0F, 0.0F, 0.0F});
-    attempt_exit(range, ExitDirection::left);
-    ARPG_REQUIRE(range.snapshot().abyss_exit_confirmation_armed);
-    set_player_position(range, {8.0F, 3.0F, 0.0F});
-    range.tick({});
-    ARPG_REQUIRE(!range.snapshot().abyss_exit_confirmation_armed);
+    auto range = std::make_unique<DungeonSession>(DungeonRules{}, state);
+    arpg::test::set_phase(*range, RoomPhase::awaiting_exit);
+    set_player_position(*range, {-12.0F, 0.0F, 0.0F});
+    attempt_exit(*range, ExitDirection::left);
+    ARPG_REQUIRE(range->snapshot().abyss_exit_confirmation_armed);
+    set_player_position(*range, {8.0F, 3.0F, 0.0F});
+    range->tick({});
+    ARPG_REQUIRE(!range->snapshot().abyss_exit_confirmation_armed);
 
-    DungeonSession revision{DungeonRules{}, state};
-    arpg::test::set_phase(revision, RoomPhase::awaiting_exit);
-    set_player_position(revision, {-12.0F, 0.0F, 0.0F});
-    attempt_exit(revision, ExitDirection::left);
-    const std::uint16_t claim = abyss_ground(revision, 0U)->drop_ordinal;
-    set_player_position(revision,
-        arpg::test::ground_items(revision)[claim].position);
-    ARPG_REQUIRE(revision.request_pickup(claim)
+    auto revision = std::make_unique<DungeonSession>(DungeonRules{}, state);
+    arpg::test::set_phase(*revision, RoomPhase::awaiting_exit);
+    set_player_position(*revision, {-12.0F, 0.0F, 0.0F});
+    attempt_exit(*revision, ExitDirection::left);
+    const std::uint16_t claim = abyss_ground(*revision, 0U)->drop_ordinal;
+    set_player_position(*revision,
+        arpg::test::ground_items(*revision)[claim].position);
+    ARPG_REQUIRE(revision->request_pickup(claim)
         == arpg::dungeon::RequestResult::accepted);
-    ARPG_REQUIRE(!revision.snapshot().abyss_exit_confirmation_armed);
+    ARPG_REQUIRE(!revision->snapshot().abyss_exit_confirmation_armed);
 
-    DungeonSession full_events{DungeonRules{}, state};
-    arpg::test::set_phase(full_events, RoomPhase::awaiting_exit);
+    auto full_events = std::make_unique<DungeonSession>(DungeonRules{}, state);
+    arpg::test::set_phase(*full_events, RoomPhase::awaiting_exit);
     ARPG_REQUIRE(arpg::test::DungeonSessionTestAccess::fill_dungeon_events(
-        full_events, DungeonSession::kDungeonEventCapacity)
+        *full_events, DungeonSession::kDungeonEventCapacity)
         == DungeonSession::kDungeonEventCapacity);
-    attempt_exit(full_events, ExitDirection::left);
-    ARPG_REQUIRE(full_events.snapshot().phase == RoomPhase::faulted);
-    ARPG_REQUIRE(full_events.snapshot().diagnostics.fault
+    attempt_exit(*full_events, ExitDirection::left);
+    ARPG_REQUIRE(full_events->snapshot().phase == RoomPhase::faulted);
+    ARPG_REQUIRE(full_events->snapshot().diagnostics.fault
         == DungeonFault::event_overflow);
-    ARPG_REQUIRE(!full_events.snapshot().abyss_exit_confirmation_armed);
-    ARPG_REQUIRE(!full_events.pending_save().has_value());
+    ARPG_REQUIRE(!full_events->snapshot().abyss_exit_confirmation_armed);
+    ARPG_REQUIRE(!full_events->pending_save().has_value());
     return {};
 }
 
@@ -1035,43 +1040,43 @@ arpg::test::Failure abyss_hole_confirmation_leaves_range_and_descends_on_second_
     state.abyss.generated_mask = 7U;
     state.abyss.reward_revision = 3U;
 
-    DungeonSession range{DungeonRules{}, state};
-    arpg::test::set_phase(range, RoomPhase::awaiting_exit);
-    set_player_position(range, {0.0F, 3.5F, 0.0F});
-    ARPG_REQUIRE(!range.request_descent(true));
-    ARPG_REQUIRE(range.snapshot().abyss_exit_confirmation_armed);
-    ARPG_REQUIRE(range.snapshot().abyss_exit_confirmation_transition
+    auto range = std::make_unique<DungeonSession>(DungeonRules{}, state);
+    arpg::test::set_phase(*range, RoomPhase::awaiting_exit);
+    set_player_position(*range, {0.0F, 3.5F, 0.0F});
+    ARPG_REQUIRE(!range->request_descent(true));
+    ARPG_REQUIRE(range->snapshot().abyss_exit_confirmation_armed);
+    ARPG_REQUIRE(range->snapshot().abyss_exit_confirmation_transition
         == TransitionKind::descent);
-    ARPG_REQUIRE(range.snapshot().abyss_exit_confirmation_direction
+    ARPG_REQUIRE(range->snapshot().abyss_exit_confirmation_direction
         == ExitDirection::none);
-    set_player_position(range, {8.0F, 3.5F, 0.0F});
-    range.tick({});
-    ARPG_REQUIRE(!range.snapshot().abyss_exit_confirmation_armed);
+    set_player_position(*range, {8.0F, 3.5F, 0.0F});
+    range->tick({});
+    ARPG_REQUIRE(!range->snapshot().abyss_exit_confirmation_armed);
 
-    DungeonSession descent{DungeonRules{}, state};
-    arpg::test::set_phase(descent, RoomPhase::awaiting_exit);
-    set_player_position(descent, {0.0F, 3.5F, 0.0F});
-    ARPG_REQUIRE(!descent.request_descent(true));
-    ARPG_REQUIRE(descent.request_descent(true));
-    ARPG_REQUIRE(descent.pending_save()->kind == PendingSaveKind::abyss_abandon);
-    ARPG_REQUIRE(descent.pending_save()->transition == TransitionKind::descent);
-    ARPG_REQUIRE(descent.pending_save()->direction == ExitDirection::none);
-    ARPG_REQUIRE(descent.pending_save()->next_state
+    auto descent = std::make_unique<DungeonSession>(DungeonRules{}, state);
+    arpg::test::set_phase(*descent, RoomPhase::awaiting_exit);
+    set_player_position(*descent, {0.0F, 3.5F, 0.0F});
+    ARPG_REQUIRE(!descent->request_descent(true));
+    ARPG_REQUIRE(descent->request_descent(true));
+    ARPG_REQUIRE(descent->pending_save()->kind == PendingSaveKind::abyss_abandon);
+    ARPG_REQUIRE(descent->pending_save()->transition == TransitionKind::descent);
+    ARPG_REQUIRE(descent->pending_save()->direction == ExitDirection::none);
+    ARPG_REQUIRE(descent->pending_save()->next_state
         .last_abyss_resolution.generated == 3U);
-    ARPG_REQUIRE(descent.pending_save()->next_state
+    ARPG_REQUIRE(descent->pending_save()->next_state
         .last_abyss_resolution.abandoned == 0U);
 
     DungeonRunState claimed = state;
     claimed.abyss.claimed_mask = 7U;
-    DungeonSession one_press{DungeonRules{}, claimed};
-    arpg::test::set_phase(one_press, RoomPhase::awaiting_exit);
-    ARPG_REQUIRE(one_press.request_descent(true));
-    ARPG_REQUIRE(one_press.pending_save()->kind == PendingSaveKind::transition);
-    ARPG_REQUIRE(one_press.pending_save()->next_state
+    auto one_press = std::make_unique<DungeonSession>(DungeonRules{}, claimed);
+    arpg::test::set_phase(*one_press, RoomPhase::awaiting_exit);
+    ARPG_REQUIRE(one_press->request_descent(true));
+    ARPG_REQUIRE(one_press->pending_save()->kind == PendingSaveKind::transition);
+    ARPG_REQUIRE(one_press->pending_save()->next_state
         .last_abyss_resolution.generated == 3U);
-    ARPG_REQUIRE(one_press.pending_save()->next_state
+    ARPG_REQUIRE(one_press->pending_save()->next_state
         .last_abyss_resolution.claimed == 3U);
-    ARPG_REQUIRE(one_press.pending_save()->next_state
+    ARPG_REQUIRE(one_press->pending_save()->next_state
         .last_abyss_resolution.abandoned == 0U);
     return {};
 }

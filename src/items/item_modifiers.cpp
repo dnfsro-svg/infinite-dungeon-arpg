@@ -255,11 +255,12 @@ EquipmentProjectionResult project_equipment_with_state(
             const AffixRoll& roll = item->affixes[affix_index];
             const AffixDefinition* affix = affix_definition(roll.affix_id);
             if (affix == nullptr) return {};
-            const std::size_t index = static_cast<std::size_t>(8U - roll.tier);
+            const auto value = affix_roll_value(roll);
+            if (!value.has_value()) return {};
             const std::uint16_t source = static_cast<std::uint16_t>(
                 kAffixSourceStart + affix_index * kSourceStride);
             if (!apply_effect(projection, slot, affix->effect, affix->stat,
-                    affix->operation, affix->values[index], roll.variant,
+                    affix->operation, *value, roll.variant,
                     source, local_flat, local_increased))
                 return {};
         }

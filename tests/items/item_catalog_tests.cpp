@@ -24,6 +24,9 @@ static_assert(std::is_same_v<
 static_assert(std::is_same_v<
     std::underlying_type_t<AffixKind>, std::uint8_t>);
 static_assert(std::is_same_v<decltype(AffixRoll::affix_id), std::uint16_t>);
+static_assert(std::is_same_v<
+    decltype(AffixRoll::value_roll_bp), std::uint16_t>);
+static_assert(sizeof(AffixRoll) == 6U);
 static_assert(std::is_same_v<decltype(ItemInstance::id), std::uint64_t>);
 static_assert(std::is_same_v<
     decltype(ItemInstance::reinforcement), std::uint32_t>);
@@ -32,16 +35,16 @@ static_assert(std::is_same_v<
 static_assert(std::is_same_v<
     decltype(ItemInstance::reserved), std::array<std::uint8_t, 3>>);
 static_assert(std::is_same_v<
-    decltype(ItemInstance::extension_reserved), std::array<std::uint8_t, 4>>);
+    decltype(ItemInstance::extension_reserved), std::array<std::uint8_t, 8>>);
 static_assert(std::is_standard_layout_v<ItemInstance>);
 static_assert(std::is_trivially_copyable_v<ItemInstance>);
-static_assert(sizeof(ItemInstance) == 48U);
+static_assert(sizeof(ItemInstance) == 64U);
 static_assert(offsetof(ItemInstance, id) == 0U);
 static_assert(offsetof(ItemInstance, affixes) == 12U);
-static_assert(offsetof(ItemInstance, affix_count) == 36U);
-static_assert(offsetof(ItemInstance, reserved) == 37U);
-static_assert(offsetof(ItemInstance, reinforcement) == 40U);
-static_assert(offsetof(ItemInstance, extension_reserved) == 44U);
+static_assert(offsetof(ItemInstance, affix_count) == 48U);
+static_assert(offsetof(ItemInstance, reserved) == 49U);
+static_assert(offsetof(ItemInstance, reinforcement) == 52U);
+static_assert(offsetof(ItemInstance, extension_reserved) == 56U);
 static_assert(std::is_same_v<
     decltype(EquipmentState::equipped_ids), std::array<std::uint64_t, 6>>);
 static_assert(std::is_same_v<
@@ -49,7 +52,7 @@ static_assert(std::is_same_v<
     std::array<std::uint64_t, 3>>);
 static_assert(std::is_same_v<
     decltype(ItemOwnershipState::materials),
-    std::array<std::uint32_t, kMaterialCount>>);
+    std::array<std::uint64_t, kMaterialCount>>);
 static_assert(static_cast<std::uint8_t>(ItemSlot::weapon) == 0U);
 static_assert(static_cast<std::uint8_t>(ItemSlot::accessory) == 5U);
 static_assert(static_cast<std::uint8_t>(ItemSlot::count) == 6U);
@@ -347,7 +350,7 @@ ItemInstance valid_rare_accessory() noexcept {
 arpg::test::Failure stable_item_types_have_required_defaults() noexcept {
     const ItemOwnershipState ownership{};
     const std::array<std::uint64_t, 6> empty_equipment{};
-    const std::array<std::uint32_t, kMaterialCount> empty_materials{};
+    const std::array<std::uint64_t, kMaterialCount> empty_materials{};
     const std::array<std::uint64_t, 3> empty_claims{};
     ARPG_REQUIRE(ownership.items.empty());
     ARPG_REQUIRE(ownership.equipment.equipped_ids == empty_equipment);
@@ -528,6 +531,9 @@ arpg::test::Failure item_requires_unused_rolls_to_be_zero() noexcept {
     ARPG_REQUIRE(!validate_item(item));
     item.affixes[1] = {};
     item.affixes[1].variant = 0xFFU;
+    ARPG_REQUIRE(!validate_item(item));
+    item.affixes[1] = {};
+    item.affixes[1].value_roll_bp = kAffixValueRollMinimumBp;
     ARPG_REQUIRE(!validate_item(item));
     return {};
 }

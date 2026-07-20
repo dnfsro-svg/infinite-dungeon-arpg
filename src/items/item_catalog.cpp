@@ -249,7 +249,8 @@ constexpr bool effect_sentinel_is_valid(ItemEffectKind effect, StatId stat,
 }
 
 constexpr bool roll_is_zero(const AffixRoll& roll) noexcept {
-    return roll.affix_id == 0U && roll.tier == 0U && roll.variant == 0U;
+    return roll.affix_id == 0U && roll.tier == 0U && roll.variant == 0U
+        && roll.value_roll_bp == 0U;
 }
 
 }  // namespace
@@ -289,6 +290,27 @@ std::uint8_t tier_minimum_level(std::uint8_t tier) noexcept {
 std::uint32_t tier_base_weight(std::uint8_t tier) noexcept {
     return tier >= 1U && tier <= 8U
         ? kTierBaseWeights[static_cast<std::size_t>(8U - tier)] : 0U;
+}
+
+std::optional<std::int32_t> affix_roll_value(
+    const AffixRoll& roll) noexcept {
+    const AffixDefinition* const affix = affix_definition(roll.affix_id);
+    if (affix == nullptr || roll.tier < 1U || roll.tier > 8U)
+        return std::nullopt;
+    if (roll.value_roll_bp != 0U
+        && (roll.value_roll_bp < kAffixValueRollMinimumBp
+            || roll.value_roll_bp > kAffixValueRollMaximumBp)) {
+        return std::nullopt;
+    }
+    const std::int64_t basis_points = roll.value_roll_bp == 0U
+        ? kAffixValueRollCanonicalBp : roll.value_roll_bp;
+    const std::int64_t raw = affix->values[
+        static_cast<std::size_t>(8U - roll.tier)];
+    const std::int64_t product = raw * basis_points;
+    const std::int64_t rounded = product >= 0
+        ? (product + 5000) / 10000
+        : (product - 5000) / 10000;
+    return static_cast<std::int32_t>(rounded);
 }
 
 bool validate_catalog() noexcept {
@@ -401,7 +423,8 @@ bool validate_item(const ItemInstance& item) noexcept {
         const std::uint8_t tier_level = tier_minimum_level(roll.tier);
         if (affix == nullptr || tier_level == 0U
             || (affix->slot_mask & slot_bit(base->slot)) == 0U
-            || item.item_level < tier_level)
+            || item.item_level < tier_level
+            || !affix_roll_value(roll).has_value())
             return false;
         if (affix->id == 112U) {
             if (roll.variant > 3U)

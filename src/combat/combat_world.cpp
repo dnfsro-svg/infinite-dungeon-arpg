@@ -112,7 +112,8 @@ std::optional<std::int64_t> fixed_scale_floor(
 bool validate_player_build_fields(const PlayerCombatBuild& build) noexcept {
     const auto& values = build.values;
     if (!values.valid || build.weapon_physical < 0
-        || build.local_attack_speed_bp < 0 || values.armor < 0
+        || build.local_attack_speed_bp < -modifiers::kFixedOne
+        || values.armor < 0
         || values.evasion < 0 || values.melee_damage < 0
         || values.max_health < 0 || values.max_health_more < 0
         || values.max_barrier < 0 || values.damage_taken < 0

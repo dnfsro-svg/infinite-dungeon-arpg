@@ -145,6 +145,8 @@ bool same_permanent_player_state(
                 != right.item_ownership.items.size()
             || left.item_ownership.equipment.equipped_ids
                 != right.item_ownership.equipment.equipped_ids
+            || left.item_ownership.materials
+                != right.item_ownership.materials
             || left.item_ownership.claimed_drop_bits
                 != right.item_ownership.claimed_drop_bits
             || left.item_ownership.next_item_sequence
@@ -159,14 +161,18 @@ bool same_permanent_player_state(
                 || a.item_level != b.item_level
                 || a.required_level != b.required_level
                 || a.affix_count != b.affix_count
-                || a.reserved != b.reserved) {
+                || a.reserved != b.reserved
+                || a.reinforcement != b.reinforcement
+                || a.extension_reserved != b.extension_reserved) {
             return false;
         }
         for (std::size_t affix = 0U; affix < a.affixes.size(); ++affix) {
             if (a.affixes[affix].affix_id != b.affixes[affix].affix_id
                     || a.affixes[affix].tier != b.affixes[affix].tier
                     || a.affixes[affix].variant
-                        != b.affixes[affix].variant) {
+                        != b.affixes[affix].variant
+                    || a.affixes[affix].value_roll_bp
+                        != b.affixes[affix].value_roll_bp) {
                 return false;
             }
         }

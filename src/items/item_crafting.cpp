@@ -218,22 +218,6 @@ bool valid_category(DirectedCategory category) noexcept {
         || category == DirectedCategory::element;
 }
 
-bool category_contains(DirectedCategory category, std::uint16_t id) noexcept {
-    switch (category) {
-    case DirectedCategory::damage:
-        return id == 1U || id == 2U || id == 105U || id == 106U;
-    case DirectedCategory::defense:
-        return id == 11U || id == 12U || id == 103U || id == 104U;
-    case DirectedCategory::speed:
-        return id == 101U || id == 102U;
-    case DirectedCategory::element:
-        return (id >= 3U && id <= 10U) || (id >= 107U && id <= 112U);
-    case DirectedCategory::count:
-        return false;
-    }
-    return false;
-}
-
 std::size_t collect_affixes(
     std::array<const AffixDefinition*, 24>& definitions) noexcept {
     std::size_t count = 0U;
@@ -308,7 +292,52 @@ AffixRoll roll_affix(const AffixDefinition& definition,
     const std::uint8_t variant = definition.id == 112U
         ? static_cast<std::uint8_t>(rng.next_bounded(4U).value_or(0U))
         : 0xFFU;
-    return {definition.id, tier, variant};
+    const std::uint16_t value_roll = static_cast<std::uint16_t>(
+        kAffixValueRollMinimumBp
+        + rng.next_bounded(kAffixValueRollMaximumBp
+            - kAffixValueRollMinimumBp + 1U).value_or(0U));
+    return {definition.id, tier, variant, value_roll};
+}
+
+bool reroll_affix_value(AffixRoll& roll,
+    core::DeterministicRng& rng) noexcept {
+    const auto before = affix_roll_value(roll);
+    if (!before.has_value()) return false;
+
+    std::uint64_t changed_value_count = 0U;
+    for (std::uint32_t candidate = kAffixValueRollMinimumBp;
+         candidate <= kAffixValueRollMaximumBp; ++candidate) {
+        AffixRoll probe = roll;
+        probe.value_roll_bp = static_cast<std::uint16_t>(candidate);
+        const auto value = affix_roll_value(probe);
+        if (value.has_value() && *value != *before) ++changed_value_count;
+    }
+    if (changed_value_count != 0U) {
+        std::uint64_t selected =
+            rng.next_bounded(changed_value_count).value_or(0U);
+        for (std::uint32_t candidate = kAffixValueRollMinimumBp;
+             candidate <= kAffixValueRollMaximumBp; ++candidate) {
+            AffixRoll probe = roll;
+            probe.value_roll_bp = static_cast<std::uint16_t>(candidate);
+            const auto value = affix_roll_value(probe);
+            if (!value.has_value() || *value == *before) continue;
+            if (selected-- == 0U) {
+                roll.value_roll_bp = probe.value_roll_bp;
+                return true;
+            }
+        }
+    }
+
+    const std::uint16_t current = roll.value_roll_bp == 0U
+        ? kAffixValueRollCanonicalBp : roll.value_roll_bp;
+    const std::uint32_t alternatives =
+        kAffixValueRollMaximumBp - kAffixValueRollMinimumBp;
+    std::uint16_t selected = static_cast<std::uint16_t>(
+        kAffixValueRollMinimumBp
+        + rng.next_bounded(alternatives).value_or(0U));
+    if (selected >= current) ++selected;
+    roll.value_roll_bp = selected;
+    return false;
 }
 
 bool append_random_affix(ItemInstance& item,
@@ -362,7 +391,8 @@ bool replace_directed(ItemInstance& item,
         bool has_candidate = false;
         for (std::size_t index = 0U; index < all_count; ++index) {
             const AffixDefinition* candidate = all[index];
-            if (candidate != nullptr && category_contains(category, candidate->id)
+            if (candidate != nullptr
+                && affix_in_directed_category(category, candidate->id)
                 && candidate->group_id != old_definition->group_id
                 && candidate_compatible(item, *candidate, slot, old_index)) {
                 has_candidate = true;
@@ -381,7 +411,8 @@ bool replace_directed(ItemInstance& item,
     if (old_definition == nullptr) return false;
     for (std::size_t index = 0U; index < all_count; ++index) {
         const AffixDefinition* candidate = all[index];
-        if (candidate != nullptr && category_contains(category, candidate->id)
+        if (candidate != nullptr
+            && affix_in_directed_category(category, candidate->id)
             && candidate->group_id != old_definition->group_id
             && candidate_compatible(item, *candidate, slot, old_index)) {
             eligible[eligible_count++] = candidate;
@@ -399,6 +430,28 @@ CraftResult rejected(const ItemInstance& item) noexcept {
 }
 
 }  // namespace
+
+bool affix_in_directed_category(
+    DirectedCategory category,
+    std::uint16_t affix_id) noexcept {
+    switch (category) {
+    case DirectedCategory::damage:
+        return affix_id == 1U || affix_id == 2U
+            || affix_id == 105U || affix_id == 106U;
+    case DirectedCategory::defense:
+        return affix_id == 11U || affix_id == 12U
+            || affix_id == 103U || affix_id == 104U || affix_id == 111U;
+    case DirectedCategory::speed:
+        return affix_id == 101U || affix_id == 102U;
+    case DirectedCategory::element:
+        return (affix_id >= 3U && affix_id <= 10U)
+            || (affix_id >= 107U && affix_id <= 110U)
+            || affix_id == 112U;
+    case DirectedCategory::count:
+        return false;
+    }
+    return false;
+}
 
 CraftResult craft_item(CraftRequest request) noexcept {
     if (request.item.id == 0U || !validate_item(request.item)
@@ -476,9 +529,8 @@ CraftResult craft_item(CraftRequest request) noexcept {
         }
         break;
     case MaterialId::divine:
-        // Affix values are catalog-derived from the stored id/tier/variant tuple.
-        // There is no additional mutable intra-tier roll in this item model.
-        success = output.affix_count != 0U;
+        for (std::size_t index = 0U; index < output.affix_count; ++index)
+            success = reroll_affix_value(output.affixes[index], rng) || success;
         break;
     case MaterialId::scour:
         if (output.rarity == ItemRarity::magic

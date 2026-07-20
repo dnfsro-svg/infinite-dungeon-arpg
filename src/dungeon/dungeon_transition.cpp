@@ -87,14 +87,17 @@ bool same_item(
             || left.item_level != right.item_level
             || left.required_level != right.required_level
             || left.affix_count != right.affix_count
-            || left.reserved != right.reserved) {
+            || left.reserved != right.reserved
+            || left.reinforcement != right.reinforcement
+            || left.extension_reserved != right.extension_reserved) {
         return false;
     }
     for (std::size_t index = 0U; index < left.affixes.size(); ++index) {
         const items::AffixRoll& a = left.affixes[index];
         const items::AffixRoll& b = right.affixes[index];
         if (a.affix_id != b.affix_id || a.tier != b.tier
-                || a.variant != b.variant) {
+                || a.variant != b.variant
+                || a.value_roll_bp != b.value_roll_bp) {
             return false;
         }
     }

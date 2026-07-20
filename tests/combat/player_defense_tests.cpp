@@ -125,7 +125,7 @@ arpg::test::Failure invalid_resolution_is_distinct_from_legal_zero() noexcept {
     invalid.weapon_physical = -1;
     ARPG_REQUIRE(!resolve_player_damage(DamagePacket{1}, invalid).has_value());
     invalid = PlayerCombatBuild{};
-    invalid.local_attack_speed_bp = -1;
+    invalid.local_attack_speed_bp = -10001;
     ARPG_REQUIRE(!resolve_player_damage(DamagePacket{1}, invalid).has_value());
 
     PlayerCombatBuild overflowing{};
