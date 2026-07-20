@@ -100,7 +100,7 @@ bool same_build(const arpg::combat::PlayerCombatBuild& left,
 
 bool same_item_bytes(
     const ItemInstance& left, const ItemInstance& right) noexcept {
-    static_assert(sizeof(ItemInstance) == 40U);
+    static_assert(sizeof(ItemInstance) == 48U);
     return std::memcmp(&left, &right, sizeof(ItemInstance)) == 0;
 }
 

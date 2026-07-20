@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 
 #include "items/item_catalog.hpp"
+#include "items/material_catalog.hpp"
 
 #include <array>
 #include <cstddef>
@@ -25,21 +26,30 @@ static_assert(std::is_same_v<
 static_assert(std::is_same_v<decltype(AffixRoll::affix_id), std::uint16_t>);
 static_assert(std::is_same_v<decltype(ItemInstance::id), std::uint64_t>);
 static_assert(std::is_same_v<
+    decltype(ItemInstance::reinforcement), std::uint32_t>);
+static_assert(std::is_same_v<
     decltype(ItemInstance::affixes), std::array<AffixRoll, 6>>);
 static_assert(std::is_same_v<
     decltype(ItemInstance::reserved), std::array<std::uint8_t, 3>>);
+static_assert(std::is_same_v<
+    decltype(ItemInstance::extension_reserved), std::array<std::uint8_t, 4>>);
 static_assert(std::is_standard_layout_v<ItemInstance>);
 static_assert(std::is_trivially_copyable_v<ItemInstance>);
-static_assert(sizeof(ItemInstance) == 40U);
+static_assert(sizeof(ItemInstance) == 48U);
 static_assert(offsetof(ItemInstance, id) == 0U);
 static_assert(offsetof(ItemInstance, affixes) == 12U);
 static_assert(offsetof(ItemInstance, affix_count) == 36U);
 static_assert(offsetof(ItemInstance, reserved) == 37U);
+static_assert(offsetof(ItemInstance, reinforcement) == 40U);
+static_assert(offsetof(ItemInstance, extension_reserved) == 44U);
 static_assert(std::is_same_v<
     decltype(EquipmentState::equipped_ids), std::array<std::uint64_t, 6>>);
 static_assert(std::is_same_v<
     decltype(ItemOwnershipState::claimed_drop_bits),
     std::array<std::uint64_t, 3>>);
+static_assert(std::is_same_v<
+    decltype(ItemOwnershipState::materials),
+    std::array<std::uint32_t, kMaterialCount>>);
 static_assert(static_cast<std::uint8_t>(ItemSlot::weapon) == 0U);
 static_assert(static_cast<std::uint8_t>(ItemSlot::accessory) == 5U);
 static_assert(static_cast<std::uint8_t>(ItemSlot::count) == 6U);
@@ -337,9 +347,11 @@ ItemInstance valid_rare_accessory() noexcept {
 arpg::test::Failure stable_item_types_have_required_defaults() noexcept {
     const ItemOwnershipState ownership{};
     const std::array<std::uint64_t, 6> empty_equipment{};
+    const std::array<std::uint32_t, kMaterialCount> empty_materials{};
     const std::array<std::uint64_t, 3> empty_claims{};
     ARPG_REQUIRE(ownership.items.empty());
     ARPG_REQUIRE(ownership.equipment.equipped_ids == empty_equipment);
+    ARPG_REQUIRE(ownership.materials == empty_materials);
     ARPG_REQUIRE(ownership.claimed_drop_bits == empty_claims);
     ARPG_REQUIRE(ownership.next_item_sequence == 1U);
     return {};
@@ -527,6 +539,12 @@ arpg::test::Failure item_requires_reserved_bytes_to_be_zero() noexcept {
         item.reserved[index] = static_cast<std::uint8_t>(index + 1U);
         ARPG_REQUIRE(!validate_item(item));
         item.reserved[index] = 0U;
+    }
+    for (std::size_t index = 0U;
+         index < item.extension_reserved.size(); ++index) {
+        item.extension_reserved[index] = static_cast<std::uint8_t>(index + 1U);
+        ARPG_REQUIRE(!validate_item(item));
+        item.extension_reserved[index] = 0U;
     }
     ARPG_REQUIRE(validate_item(item));
     return {};

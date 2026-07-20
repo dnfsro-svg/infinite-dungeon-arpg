@@ -362,6 +362,8 @@ bool validate_item(const ItemInstance& item) noexcept {
         return false;
     for (const std::uint8_t byte : item.reserved)
         if (byte != 0U) return false;
+    for (const std::uint8_t byte : item.extension_reserved)
+        if (byte != 0U) return false;
 
     std::uint8_t minimum_affixes = 0U;
     std::uint8_t maximum_affixes = 0U;
