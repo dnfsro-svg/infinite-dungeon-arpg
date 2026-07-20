@@ -1,5 +1,6 @@
 add_library(arpg_raylib STATIC
     actor_renderer.cpp
+    audio_pack.cpp
     audio_asset_validation.cpp
     audio_routing.cpp
     combat_audio.cpp
@@ -33,6 +34,7 @@ add_library(arpg_raylib STATIC
     pause_menu_state.cpp
     pause_menu_view.cpp
     pause_menu_renderer.cpp
+    procedural_audio.cpp
     raylib_input.cpp
     raylib_host.cpp
     room_renderer.cpp
