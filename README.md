@@ -4,7 +4,7 @@
 
 ## 当前里程碑
 
-Stage 11-D：地面物品过滤与自动拾取反馈闭环（建立在 Stage 11-C 完整 HUD 之上）。
+Stage 14：战斗音效资源包与发行时本地加载（建立在 Stage 11-D 地面物品过滤与自动拾取反馈闭环之上）。
 
 - 正常游戏中按 `Esc` 打开暂停层。暂停不会推进固定步、战斗或地下城状态；恢复时也不会补跑暂停期间的 tick。
 - 设置可调整主音效（0%–100%，每次 5%）、窗口化/全屏、VSync、地面物品过滤预设，以及十项玩法动作的键盘绑定。
@@ -16,10 +16,11 @@ Stage 11-D：地面物品过滤与自动拾取反馈闭环（建立在 Stage 11-
 - 上中目标面板显示战斗波次、剩余目标、清房出口和深渊状态；右上导航显示深度、层内房间、生态与火/水/电/混沌偏向。
 - 下中情境区最多显示一条主通知和一条次通知，存档/恢复、深渊放弃确认、洞口/出口、清房/奖励/升级和操作提示依次按优先级竞争，不会让低优先级提示覆盖错误或确认信息。
 - `F1` 只切换开发诊断层；预算、对象池、饱和、非法 owner、seed、存档槽和 HUD 诊断不会出现在普通 HUD。
+- 战斗的轻击、J3、L 上挑、轻/中/重命中、重击摘要、受击、落地、击杀和三类词条预警使用随发行包部署的 14 个本地 PCM 音效。单个损坏资源只回退该资源，不中断其余音效；模拟、地下城、掉落和存档层不依赖音频资源或 raylib 音频 API。
 
-实现边界、V6 存档布局、正式测试与真实 raylib 五路径证据见 [Stage 11-A 验证记录](docs/validation/stage11a-death-continue.md)。暂停、设置、重绑定、双槽恢复和 Stage 11-B 正式 raylib 证据见 [Stage 11-B 验证记录](docs/validation/stage11b-settings-input.md)。完整 HUD、固定容量/零分配门禁、中文字体、三分辨率和六场景正式证据见 [Stage 11-C 验证记录](docs/validation/stage11c-complete-hud.md)。三个地面过滤预设、深渊例外、自动拾取回执、设置 V2 迁移和六场生产 raylib 证据见 [Stage 11-D 验证记录](docs/validation/stage11d-ground-loot-filter.md)。
+实现边界、V6 存档布局、正式测试与真实 raylib 五路径证据见 [Stage 11-A 验证记录](docs/validation/stage11a-death-continue.md)。暂停、设置、重绑定、双槽恢复和 Stage 11-B 正式 raylib 证据见 [Stage 11-B 验证记录](docs/validation/stage11b-settings-input.md)。完整 HUD、固定容量/零分配门禁、中文字体、三分辨率和六场景正式证据见 [Stage 11-C 验证记录](docs/validation/stage11c-complete-hud.md)。三个地面过滤预设、深渊例外、自动拾取回执、设置 V2 迁移和六场生产 raylib 证据见 [Stage 11-D 验证记录](docs/validation/stage11d-ground-loot-filter.md)。战斗音效来源、自动证据、试听文件和验收边界见 [Stage 14 验证记录](docs/validation/stage14-combat-audio-pack.md)。
 
-本分支止步于 Stage 11-D；macOS、主菜单、手柄、分辨率/画质设置和 Stage 12 均未实现。
+本分支止步于 Stage 14；音乐、环境声、UI 音效和音量分类迁移（Stage 15）尚未启动；macOS、主菜单、手柄及分辨率/画质设置仍未实现。
 
 ## 构建与运行
 
@@ -89,3 +90,7 @@ Stage 11-D：地面物品过滤与自动拾取反馈闭环（建立在 Stage 11-
 设置页会立即用草稿预览地面标签；选择“取消”或按 `Esc` 会恢复已提交预设，选择“应用”并成功保存后才会改变正常游戏中的过滤和自动拾取门槛。深渊奖励始终例外：无论当前预设如何，奖励都会显示并保持可领取。
 
 设置记录已升级为 V2，仍保持 44 字节双槽布局。读取旧 V1 设置时，已有音量、窗口、VSync 与按键绑定继续保留，地面物品过滤迁移为默认“显示全部”；下次成功应用后按 V2 写回。
+
+## Stage 14 战斗音频材质包
+
+发布版随包携带 14 个短 PCM WAV，覆盖 J 连击、L 上挑、命中、玩家受击、落地、击杀和三类词条预警。资源缺失或单文件解码失败时仅该声音使用程序化回退，不影响其余资源或战斗模拟。来源、哈希、格式预算与正式验收结果见 [Stage 14 验收记录](docs/validation/stage14-combat-audio-pack.md)。
