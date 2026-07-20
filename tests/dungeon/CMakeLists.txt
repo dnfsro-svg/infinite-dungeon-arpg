@@ -12,6 +12,7 @@ add_executable(arpg_dungeon_tests
     dungeon_progression_tests.cpp
     dungeon_passive_tree_tests.cpp
     dungeon_item_transaction_tests.cpp
+    dungeon_crafting_transaction_tests.cpp
     dungeon_equipment_stress_tests.cpp
     dungeon_loot_drop_tests.cpp
     dungeon_material_loot_tests.cpp
@@ -44,6 +45,11 @@ add_test(NAME dungeon.units COMMAND arpg_dungeon_tests)
 add_test(NAME stage16.material_loot.units COMMAND arpg_dungeon_tests)
 set_tests_properties(stage16.material_loot.units PROPERTIES
     ENVIRONMENT "ARPG_STAGE16_MATERIAL_LOOT_ONLY=1"
+    LABELS "headless;dungeon;stage16")
+
+add_test(NAME stage16.crafting_transaction.units COMMAND arpg_dungeon_tests)
+set_tests_properties(stage16.crafting_transaction.units PROPERTIES
+    ENVIRONMENT "ARPG_STAGE16_CRAFTING_TRANSACTION_ONLY=1"
     LABELS "headless;dungeon;stage16")
 
 add_test(NAME stage11.death_stress.determinism_zero_alloc

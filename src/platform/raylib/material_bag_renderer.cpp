@@ -79,6 +79,36 @@ bool MaterialBagRenderer::select_slot(std::size_t slot,
     return true;
 }
 
+bool MaterialBagRenderer::clear_selection() noexcept {
+    if (!selected_.has_value()) return false;
+    selected_.reset();
+    return true;
+}
+
+void MaterialBagRenderer::sync_selection(
+    const items::ItemOwnershipState& state) noexcept {
+    if (!selected_.has_value()
+            || state.materials[items::material_index(*selected_)] != 0U) {
+        return;
+    }
+    selected_.reset();
+}
+
+bool MaterialBagRenderer::cycle_directed_category(
+    Vector2 point, int width, int height) noexcept {
+    if (selected_ != items::MaterialId::directed) return false;
+    const MaterialBagLayout layout = material_bag_layout(width, height);
+    const std::size_t index = items::material_index(items::MaterialId::directed);
+    if (index >= layout.slots.size() || !contains(layout.slots[index], point)) {
+        return false;
+    }
+    const auto next = static_cast<std::uint8_t>(directed_category_) + 1U;
+    directed_category_ = next < static_cast<std::uint8_t>(items::DirectedCategory::count)
+        ? static_cast<items::DirectedCategory>(next)
+        : items::DirectedCategory::damage;
+    return true;
+}
+
 bool MaterialBagRenderer::process_click(Vector2 point,
     const items::ItemOwnershipState& state, int width, int height) noexcept {
     const MaterialBagLayout layout = material_bag_layout(width, height);
@@ -90,6 +120,10 @@ bool MaterialBagRenderer::process_click(Vector2 point,
 
 std::optional<items::MaterialId> MaterialBagRenderer::selected_material() const noexcept {
     return selected_;
+}
+
+items::DirectedCategory MaterialBagRenderer::directed_category() const noexcept {
+    return directed_category_;
 }
 
 void MaterialBagRenderer::draw(const items::ItemOwnershipState& state,
@@ -119,6 +153,19 @@ void MaterialBagRenderer::draw(const items::ItemOwnershipState& state,
         DrawText(TextFormat("x%llu", static_cast<unsigned long long>(state.materials[index])),
             static_cast<int>(slot.x + 5.0F), static_cast<int>(slot.y + slot.height - 13.0F),
             11, RAYWHITE);
+        if (selected && id == items::MaterialId::directed) {
+            const char* category = "Damage";
+            switch (directed_category_) {
+            case items::DirectedCategory::damage: break;
+            case items::DirectedCategory::defense: category = "Defense"; break;
+            case items::DirectedCategory::speed: category = "Speed"; break;
+            case items::DirectedCategory::element: category = "Element"; break;
+            case items::DirectedCategory::count: break;
+            }
+            DrawText(TextFormat("%s (R-click: cycle)", category),
+                static_cast<int>(slot.x + 5.0F), static_cast<int>(slot.y + 16.0F),
+                9, Color{255, 237, 154, 255});
+        }
     }
 }
 

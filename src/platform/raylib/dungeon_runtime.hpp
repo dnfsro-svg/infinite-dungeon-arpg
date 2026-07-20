@@ -61,6 +61,10 @@ public:
         std::uint64_t item_id) noexcept;
     [[nodiscard]] dungeon::RequestResult request_unequip(
         items::ItemSlot slot) noexcept;
+    [[nodiscard]] dungeon::RequestResult request_craft(
+        items::MaterialId material, std::uint64_t item_id,
+        std::optional<items::DirectedCategory> directed_category =
+            std::nullopt) noexcept;
     [[nodiscard]] dungeon::RequestResult request_recipe(
         const std::array<std::uint64_t, 3>& item_ids) noexcept;
     [[nodiscard]] dungeon::RequestResult request_death_continue() noexcept;

@@ -271,6 +271,14 @@ dungeon::RequestResult DungeonRuntime::request_unequip(
         : dungeon::RequestResult::rejected;
 }
 
+dungeon::RequestResult DungeonRuntime::request_craft(
+    items::MaterialId material, std::uint64_t item_id,
+    std::optional<items::DirectedCategory> directed_category) noexcept {
+    return state() == DungeonRuntimeState::running && session_.has_value()
+        ? session_->request_craft(material, item_id, directed_category)
+        : dungeon::RequestResult::rejected;
+}
+
 dungeon::RequestResult DungeonRuntime::request_recipe(
     const std::array<std::uint64_t, 3>& item_ids) noexcept {
     return state() == DungeonRuntimeState::running && session_.has_value()

@@ -4,6 +4,7 @@
 #include "dungeon/abyss_reward.hpp"
 #include "dungeon/dungeon_progression.hpp"
 #include "items/item_catalog.hpp"
+#include "items/item_crafting.hpp"
 #include "items/item_generation.hpp"
 #include "passives/passive_tree_rules.hpp"
 
@@ -482,6 +483,7 @@ RequestResult DungeonSession::prepare_item_save(
 bool DungeonSession::pending_item_cache_consistent() const noexcept {
     const bool item_pending = pending_save_.has_value()
         && (pending_save_->kind == PendingSaveKind::equipment
+            || pending_save_->kind == PendingSaveKind::craft
             || pending_save_->kind == PendingSaveKind::recipe);
     return item_pending == pending_item_build_.has_value();
 }
@@ -750,6 +752,64 @@ RequestResult DungeonSession::request_unequip(items::ItemSlot slot) noexcept {
     }
 }
 
+RequestResult DungeonSession::request_craft(
+    items::MaterialId material,
+    std::uint64_t item_id,
+    std::optional<items::DirectedCategory> directed_category) noexcept {
+    if (!pending_item_cache_consistent()) {
+        enter_fault(DungeonFault::save_receipt_mismatch);
+        return RequestResult::faulted;
+    }
+    const std::size_t material_index = items::material_index(material);
+    if (!item_request_phase(phase_) || !combat_.has_value()
+            || pending_save_.has_value() || item_id == 0U
+            || material_index >= items::kMaterialCount
+            || !items::material_is_crafting_currency(material)) {
+        return RequestResult::rejected;
+    }
+    const items::OwnershipValidationResult stable_validation =
+        items::validate_ownership_detailed(stable_state_.item_ownership);
+    if (stable_validation == items::OwnershipValidationResult::allocation_failure) {
+        return RequestResult::rejected;
+    }
+    if (stable_validation != items::OwnershipValidationResult::valid) {
+        enter_fault(DungeonFault::invalid_item_state);
+        return RequestResult::faulted;
+    }
+    const items::ItemInstance* const item = find_item(
+        stable_state_.item_ownership, item_id);
+    if (item == nullptr
+            || stable_state_.item_ownership.materials[material_index] == 0U) {
+        return RequestResult::rejected;
+    }
+    const items::CraftResult crafted = items::craft_item({
+        stable_state_.root_seed, stable_state_.commit_generation,
+        *item, material, directed_category});
+    if (!crafted.applied || !crafted.consumed || crafted.item.id != item_id) {
+        return RequestResult::rejected;
+    }
+    try {
+        DungeonRunState next = stable_state_;
+        next.progression = room_progression_;
+        bool replaced = false;
+        for (items::ItemInstance& owned : next.item_ownership.items) {
+            if (owned.id == item_id) {
+                owned = crafted.item;
+                replaced = true;
+                break;
+            }
+        }
+        if (!replaced) return RequestResult::rejected;
+        --next.item_ownership.materials[material_index];
+        return prepare_item_save(
+            std::move(next), PendingSaveKind::craft, phase_);
+    } catch (const std::bad_alloc&) {
+        return RequestResult::rejected;
+    } catch (...) {
+        return RequestResult::rejected;
+    }
+}
+
 RequestResult DungeonSession::request_recipe(
     const std::array<std::uint64_t, 3>& item_ids) noexcept {
     if (!pending_item_cache_consistent()) {
@@ -788,7 +848,7 @@ RequestResult DungeonSession::request_recipe(
     const items::BaseDefinition* b_base = items::base_definition(b->base_id);
     const items::BaseDefinition* c_base = items::base_definition(c->base_id);
     if (a_base == nullptr || b_base == nullptr || c_base == nullptr
-            || a_base->slot != b_base->slot || a_base->slot != c_base->slot
+            || a->base_id != b->base_id || a->base_id != c->base_id
             || a->rarity != b->rarity || a->rarity != c->rarity) {
         return RequestResult::rejected;
     }
@@ -1163,6 +1223,7 @@ void DungeonSession::commit_pending_save(
 
     const PendingSaveKind kind = pending_save_->kind;
     const bool item_commit = kind == PendingSaveKind::equipment
+        || kind == PendingSaveKind::craft
         || kind == PendingSaveKind::recipe;
     const bool pickup_commit = kind == PendingSaveKind::loot_pickup;
     const bool material_pickup_commit =

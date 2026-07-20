@@ -274,7 +274,7 @@ std::optional<ItemInstance> generate_recipe_item(
     const BaseDefinition* b_base = base_definition(b.base_id);
     const BaseDefinition* c_base = base_definition(c.base_id);
     if (a_base == nullptr || b_base == nullptr || c_base == nullptr
-        || a_base->slot != b_base->slot || a_base->slot != c_base->slot) {
+        || a.base_id != b.base_id || a.base_id != c.base_id) {
         return std::nullopt;
     }
 
@@ -294,8 +294,12 @@ std::optional<ItemInstance> generate_recipe_item(
         + static_cast<std::uint16_t>(c.item_level);
     const std::uint8_t output_level =
         static_cast<std::uint8_t>(level_sum / 3U);
-    return generate_with_rarity(derive_recipe_affix_seed(ids), a_base->slot,
-        output_level, output_id, a.rarity);
+    auto output = generate_with_rarity(derive_recipe_affix_seed(ids),
+        a_base->slot, output_level, output_id, a.rarity);
+    if (!output.has_value()) return std::nullopt;
+    output->base_id = a.base_id;
+    output->reinforcement = 0U;
+    return validate_item(*output) ? output : std::nullopt;
 }
 
 }  // namespace arpg::items

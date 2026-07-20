@@ -183,6 +183,7 @@ void InventoryRenderer::refresh_comparison(
 void InventoryRenderer::sync(const dungeon::DungeonSession& session,
     const dungeon::DungeonSnapshot& snapshot) {
     const items::ItemOwnershipState& state = session.item_state();
+    material_bag_.sync_selection(state);
     refresh_inventory_view_cache(view_cache_, state,
         snapshot.commit_generation, filter_, selected_item_id_, recipe_);
     if (selected_item_id_ != 0U && selected_item(state) == nullptr) {
@@ -220,10 +221,15 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
     const bool right_pressed = input.mouse_right_pressed;
     if (!left_pressed && !right_pressed) return false;
     const Vector2 mouse = input.mouse_position;
+    if (right_pressed && material_bag_.cycle_directed_category(
+            mouse, GetScreenWidth(), GetScreenHeight())) {
+        return false;
+    }
     if (left_pressed && material_bag_.process_click(mouse, state,
             GetScreenWidth(), GetScreenHeight())) {
         return false;
     }
+    if (right_pressed && material_bag_.clear_selection()) return false;
     if (left_pressed && contains(slot_filter_button(layout.grid), mouse)) {
         if (!filter_.slot.has_value()) filter_.slot = items::ItemSlot::weapon;
         else if (*filter_.slot == items::ItemSlot::accessory) filter_.slot.reset();
@@ -274,6 +280,21 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
         const items::ItemInstance& item = state.items[
             view_cache_.filtered_indices[filtered_position]];
         selected_item_id_ = item.id;
+        if (left_pressed && requests_enabled) {
+            const auto selected_material = material_bag_.selected_material();
+            if (selected_material.has_value()) {
+                const auto category = *selected_material == items::MaterialId::directed
+                    ? std::optional<items::DirectedCategory>{
+                        material_bag_.directed_category()}
+                    : std::nullopt;
+                if (runtime.request_craft(*selected_material, item.id, category)
+                        == dungeon::RequestResult::accepted) {
+                    runtime.service_pending_save();
+                    return true;
+                }
+                return false;
+            }
+        }
         const bool recipe_toggle = right_pressed || input.control_down;
         if (recipe_toggle) {
             static_cast<void>(toggle_recipe_selection(recipe_, item.id));
@@ -421,6 +442,32 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
         && recipe_ready();
     draw_button(combine_button(layout.grid), TextFormat("Combine (%u/3)",
         static_cast<unsigned>(recipe_.count)), enabled);
+    bool reinforced_recipe_input = false;
+    for (std::size_t index = 0U; index < recipe_.count; ++index) {
+        for (const items::ItemInstance& recipe_item : state.items) {
+            if (recipe_item.id == recipe_.ids[index]
+                    && recipe_item.reinforcement != 0U) {
+                reinforced_recipe_input = true;
+                break;
+            }
+        }
+    }
+    if (reinforced_recipe_input) {
+        DrawText("WARNING: Combine removes reinforcement.",
+            static_cast<int>(layout.grid.x + 12.0F),
+            static_cast<int>(layout.grid.y + layout.grid.height - 58.0F),
+            11, Color{255, 173, 81, 255});
+    }
+    if (const auto selected_material = material_bag_.selected_material();
+            selected_material.has_value()) {
+        const items::MaterialDefinition* const definition =
+            items::material_definition(*selected_material);
+        DrawText(TextFormat("Selected: %s - click an item to use (R-click cancels)",
+            definition == nullptr ? "Invalid" : definition->name.data()),
+            static_cast<int>(layout.grid.x + 12.0F),
+            static_cast<int>(layout.grid.y + 23.0F), 11,
+            Color{255, 237, 154, 255});
+    }
     if (snapshot.pending_save_kind.has_value()) {
         DrawText("SAVE PENDING - ACTIONS DISABLED",
             static_cast<int>(layout.grid.x + 12.0F),

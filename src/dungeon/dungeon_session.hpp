@@ -3,6 +3,7 @@
 #include "core/bounded_queue.hpp"
 #include "dungeon/encounter_director.hpp"
 #include "dungeon/dungeon_types.hpp"
+#include "items/item_crafting.hpp"
 #include "progression/progression_rules.hpp"
 
 #include "combat/combat_world.hpp"
@@ -102,6 +103,11 @@ public:
         std::uint64_t item_id) noexcept;
     [[nodiscard]] RequestResult request_unequip(
         items::ItemSlot slot) noexcept;
+    [[nodiscard]] RequestResult request_craft(
+        items::MaterialId material,
+        std::uint64_t item_id,
+        std::optional<items::DirectedCategory> directed_category =
+            std::nullopt) noexcept;
     [[nodiscard]] RequestResult request_recipe(
         const std::array<std::uint64_t, 3>& item_ids) noexcept;
     [[nodiscard]] RequestResult request_pickup(

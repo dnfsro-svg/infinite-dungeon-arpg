@@ -18,6 +18,7 @@ arpg::test::TestSuite dungeon_rules_suite() noexcept;
 arpg::test::TestSuite dungeon_progression_suite() noexcept;
 arpg::test::TestSuite dungeon_passive_tree_suite() noexcept;
 arpg::test::TestSuite dungeon_item_transaction_suite() noexcept;
+arpg::test::TestSuite dungeon_crafting_transaction_suite() noexcept;
 arpg::test::TestSuite dungeon_equipment_stress_suite() noexcept;
 arpg::test::TestSuite dungeon_loot_drop_suite() noexcept;
 arpg::test::TestSuite dungeon_material_loot_suite() noexcept;
@@ -102,6 +103,16 @@ bool stage16_material_loot_only() noexcept {
     return enabled;
 }
 
+bool stage16_crafting_transaction_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_STAGE16_CRAFTING_TRANSACTION_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
 }  // namespace
 
 int main() {
@@ -125,6 +136,7 @@ int main() {
         dungeon_progression_suite(),
         dungeon_passive_tree_suite(),
         dungeon_item_transaction_suite(),
+        dungeon_crafting_transaction_suite(),
         dungeon_equipment_stress_suite(),
         dungeon_loot_drop_suite(),
         dungeon_material_loot_suite(),
@@ -195,6 +207,14 @@ int main() {
             "stage 16 task 4 material loot");
     }
 
-    return arpg::test::run_suites(suites, 266,
+    if (stage16_crafting_transaction_only()) {
+        const arpg::test::TestSuite crafting_only[] = {
+            dungeon_crafting_transaction_suite(),
+        };
+        return arpg::test::run_suites(crafting_only, 2,
+            "stage 16 task 6 crafting transactions");
+    }
+
+    return arpg::test::run_suites(suites, 268,
         "stage 11a task 8 death continue validation");
 }

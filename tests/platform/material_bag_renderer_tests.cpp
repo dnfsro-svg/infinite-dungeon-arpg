@@ -41,10 +41,24 @@ arpg::test::Failure selected_material_requires_an_owned_material_slot() noexcept
     return {};
 }
 
+arpg::test::Failure selected_material_can_be_cancelled_without_changing_counts() noexcept {
+    items::ItemOwnershipState state{};
+    const std::size_t chaos = items::material_index(items::MaterialId::chaos);
+    state.materials[chaos] = 4U;
+    platform::MaterialBagRenderer renderer{};
+    ARPG_REQUIRE(renderer.select_slot(chaos, state));
+    ARPG_REQUIRE(renderer.clear_selection());
+    ARPG_REQUIRE(!renderer.selected_material().has_value());
+    ARPG_REQUIRE(state.materials[chaos] == 4U);
+    ARPG_REQUIRE(!renderer.clear_selection());
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"material bag contains all slots", &material_bag_has_all_fourteen_slots},
     {"minimum layout separates detail and bag", &minimum_layout_keeps_detail_above_material_bag},
     {"material bag selects owned material", &selected_material_requires_an_owned_material_slot},
+    {"material bag selection cancels", &selected_material_can_be_cancelled_without_changing_counts},
 };
 
 }  // namespace

@@ -21,6 +21,11 @@ ItemInstance generated_material(std::uint64_t seed,
     return generate_item({seed, slot, level, id, rarity}).value();
 }
 
+ItemInstance with_base(ItemInstance item, std::uint8_t base_id) noexcept {
+    item.base_id = base_id;
+    return item;
+}
+
 bool same_affixes(const ItemInstance& left,
     const ItemInstance& right) noexcept {
     return std::memcmp(left.affixes.data(), right.affixes.data(),
@@ -30,10 +35,10 @@ bool same_affixes(const ItemInstance& left,
 arpg::test::Failure recipe_is_order_independent_and_averages_level() noexcept {
     const ItemInstance a = generated_material(
         11U, 300U, ItemSlot::accessory, 95U, ItemRarity::rare);
-    const ItemInstance b = generated_material(
-        22U, 100U, ItemSlot::accessory, 96U, ItemRarity::rare);
-    const ItemInstance c = generated_material(
-        33U, 200U, ItemSlot::accessory, 100U, ItemRarity::rare);
+    const ItemInstance b = with_base(generated_material(
+        22U, 100U, ItemSlot::accessory, 96U, ItemRarity::rare), a.base_id);
+    const ItemInstance c = with_base(generated_material(
+        33U, 200U, ItemSlot::accessory, 100U, ItemRarity::rare), a.base_id);
     const auto abc = generate_recipe_item(0xABCDEFULL, 9U, a, b, c);
     const auto cba = generate_recipe_item(0xABCDEFULL, 9U, c, b, a);
     const auto bac = generate_recipe_item(0xABCDEFULL, 9U, b, a, c);
@@ -43,9 +48,7 @@ arpg::test::Failure recipe_is_order_independent_and_averages_level() noexcept {
     ARPG_REQUIRE(std::memcmp(&*abc, &*cba, sizeof(ItemInstance)) == 0);
     ARPG_REQUIRE(std::memcmp(&*abc, &*bac, sizeof(ItemInstance)) == 0);
     ARPG_REQUIRE(abc->id != 0U);
-    const auto accessory_bases = base_ids_for_slot(ItemSlot::accessory);
-    ARPG_REQUIRE(std::find(accessory_bases.begin(), accessory_bases.end(),
-        abc->base_id) != accessory_bases.end());
+    ARPG_REQUIRE(abc->base_id == a.base_id);
     ARPG_REQUIRE(abc->rarity == ItemRarity::rare);
     ARPG_REQUIRE(abc->item_level == 97U);
     ARPG_REQUIRE(validate_item(*abc));
@@ -55,10 +58,10 @@ arpg::test::Failure recipe_is_order_independent_and_averages_level() noexcept {
 arpg::test::Failure recipe_fully_rerolls_magic_and_rare_affixes() noexcept {
     const ItemInstance rare_a = generated_material(
         101U, 41U, ItemSlot::weapon, 100U, ItemRarity::rare);
-    const ItemInstance rare_b = generated_material(
-        202U, 42U, ItemSlot::weapon, 100U, ItemRarity::rare);
-    const ItemInstance rare_c = generated_material(
-        303U, 43U, ItemSlot::weapon, 100U, ItemRarity::rare);
+    const ItemInstance rare_b = with_base(generated_material(
+        202U, 42U, ItemSlot::weapon, 100U, ItemRarity::rare), rare_a.base_id);
+    const ItemInstance rare_c = with_base(generated_material(
+        303U, 43U, ItemSlot::weapon, 100U, ItemRarity::rare), rare_a.base_id);
     const auto rare = generate_recipe_item(88U, 3U,
         rare_a, rare_b, rare_c);
     ARPG_REQUIRE(rare.has_value());
@@ -69,10 +72,10 @@ arpg::test::Failure recipe_fully_rerolls_magic_and_rare_affixes() noexcept {
 
     const ItemInstance magic_a = generated_material(
         404U, 51U, ItemSlot::gloves, 75U, ItemRarity::magic);
-    const ItemInstance magic_b = generated_material(
-        505U, 52U, ItemSlot::gloves, 88U, ItemRarity::magic);
-    const ItemInstance magic_c = generated_material(
-        606U, 53U, ItemSlot::gloves, 95U, ItemRarity::magic);
+    const ItemInstance magic_b = with_base(generated_material(
+        505U, 52U, ItemSlot::gloves, 88U, ItemRarity::magic), magic_a.base_id);
+    const ItemInstance magic_c = with_base(generated_material(
+        606U, 53U, ItemSlot::gloves, 95U, ItemRarity::magic), magic_a.base_id);
     const auto magic = generate_recipe_item(99U, 4U,
         magic_a, magic_b, magic_c);
     ARPG_REQUIRE(magic.has_value());
@@ -82,10 +85,10 @@ arpg::test::Failure recipe_fully_rerolls_magic_and_rare_affixes() noexcept {
 
     const ItemInstance normal_a = generated_material(
         1U, 61U, ItemSlot::boots, 1U, ItemRarity::normal);
-    const ItemInstance normal_b = generated_material(
-        2U, 62U, ItemSlot::boots, 16U, ItemRarity::normal);
-    const ItemInstance normal_c = generated_material(
-        3U, 63U, ItemSlot::boots, 30U, ItemRarity::normal);
+    const ItemInstance normal_b = with_base(generated_material(
+        2U, 62U, ItemSlot::boots, 16U, ItemRarity::normal), normal_a.base_id);
+    const ItemInstance normal_c = with_base(generated_material(
+        3U, 63U, ItemSlot::boots, 30U, ItemRarity::normal), normal_a.base_id);
     const auto normal = generate_recipe_item(100U, 5U,
         normal_a, normal_b, normal_c);
     ARPG_REQUIRE(normal.has_value());
@@ -98,10 +101,10 @@ arpg::test::Failure recipe_fully_rerolls_magic_and_rare_affixes() noexcept {
 arpg::test::Failure recipe_rejects_invalid_material_contracts() noexcept {
     const ItemInstance a = generated_material(
         1U, 71U, ItemSlot::helmet, 100U, ItemRarity::magic);
-    const ItemInstance b = generated_material(
-        2U, 72U, ItemSlot::helmet, 100U, ItemRarity::magic);
-    const ItemInstance c = generated_material(
-        3U, 73U, ItemSlot::helmet, 100U, ItemRarity::magic);
+    const ItemInstance b = with_base(generated_material(
+        2U, 72U, ItemSlot::helmet, 100U, ItemRarity::magic), a.base_id);
+    const ItemInstance c = with_base(generated_material(
+        3U, 73U, ItemSlot::helmet, 100U, ItemRarity::magic), a.base_id);
     ARPG_REQUIRE(!generate_recipe_item(1U, 0U, a, b, c).has_value());
 
     ItemInstance invalid = a;
@@ -125,10 +128,10 @@ arpg::test::Failure recipe_rejects_invalid_material_contracts() noexcept {
 arpg::test::Failure recipe_rejects_output_id_collision() noexcept {
     ItemInstance a = generated_material(
         1U, 81U, ItemSlot::boots, 30U, ItemRarity::normal);
-    const ItemInstance b = generated_material(
-        2U, 82U, ItemSlot::boots, 30U, ItemRarity::normal);
-    const ItemInstance c = generated_material(
-        3U, 83U, ItemSlot::boots, 30U, ItemRarity::normal);
+    const ItemInstance b = with_base(generated_material(
+        2U, 82U, ItemSlot::boots, 30U, ItemRarity::normal), a.base_id);
+    const ItemInstance c = with_base(generated_material(
+        3U, 83U, ItemSlot::boots, 30U, ItemRarity::normal), a.base_id);
     std::optional<ItemInstance> baseline{};
     std::uint64_t root_seed = 1U;
     for (; root_seed <= 1024U && !baseline.has_value(); ++root_seed)

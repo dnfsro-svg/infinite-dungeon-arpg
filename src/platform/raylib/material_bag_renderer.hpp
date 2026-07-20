@@ -1,6 +1,7 @@
 #pragma once
 
 #include "inventory_view_math.hpp"
+#include "items/item_crafting.hpp"
 #include "items/material_catalog.hpp"
 
 #include <array>
@@ -25,11 +26,17 @@ public:
         const items::ItemOwnershipState&, int width, int height) noexcept;
     [[nodiscard]] bool select_slot(std::size_t,
         const items::ItemOwnershipState&) noexcept;
+    [[nodiscard]] bool clear_selection() noexcept;
+    void sync_selection(const items::ItemOwnershipState&) noexcept;
+    [[nodiscard]] bool cycle_directed_category(
+        Vector2, int width, int height) noexcept;
     [[nodiscard]] std::optional<items::MaterialId> selected_material() const noexcept;
+    [[nodiscard]] items::DirectedCategory directed_category() const noexcept;
     void draw(const items::ItemOwnershipState&, int width, int height) const noexcept;
 
 private:
     std::optional<items::MaterialId> selected_{};
+    items::DirectedCategory directed_category_{items::DirectedCategory::damage};
 };
 
 }  // namespace arpg::platform

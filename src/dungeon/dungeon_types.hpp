@@ -236,6 +236,7 @@ enum class PendingSaveKind : std::uint8_t {
     material_pickup,
     room_clear,
     equipment,
+    craft,
     recipe,
     abyss_start,
     abyss_fail,
