@@ -1500,3 +1500,23 @@ add_test(
 set_tests_properties(
     stage14.audio_integration_guard
     PROPERTIES LABELS "headless;platform;architecture;stage14")
+
+add_test(
+    NAME stage15.audio_sources
+    COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+        "${CMAKE_CURRENT_SOURCE_DIR}/stage15_audio_source_validator.ps1"
+        -AssetDirectory "${PROJECT_SOURCE_DIR}/assets/stage15/audio")
+set_tests_properties(
+    stage15.audio_sources
+    PROPERTIES LABELS "headless;platform;stage15")
+
+add_test(
+    NAME stage15.audio_sources_self_test
+    COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+        "${CMAKE_CURRENT_SOURCE_DIR}/stage15_audio_source_validator_self_test.ps1"
+        -AssetDirectory "${PROJECT_SOURCE_DIR}/assets/stage15/audio"
+        -Validator "${CMAKE_CURRENT_SOURCE_DIR}/stage15_audio_source_validator.ps1"
+        -MutationRoot "${CMAKE_CURRENT_BINARY_DIR}/stage15-audio-source-mutations")
+set_tests_properties(
+    stage15.audio_sources_self_test
+    PROPERTIES LABELS "headless;platform;negative;stage15" TIMEOUT 60)
