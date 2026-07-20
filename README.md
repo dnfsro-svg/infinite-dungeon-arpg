@@ -4,7 +4,7 @@
 
 ## 当前里程碑
 
-Stage 15：低资源音乐、环境声、UI 音效与五路混音（建立在 Stage 14 战斗音效资源包之上）。
+Stage 16：材料掉落、货币改造、三合一与装备强化（建立在 Stage 15 低资源音频混音之上）。
 
 - 正常游戏中按 `Esc` 打开暂停层。暂停不会推进固定步、战斗或地下城状态；恢复时也不会补跑暂停期间的 tick。
 - 设置可分别调整主音量、战斗音效、音乐、环境声和 UI 音效（0%–100%，每次 5%），并保留窗口化/全屏、VSync、地面物品过滤预设和十项玩法动作的键盘绑定。
@@ -18,10 +18,14 @@ Stage 15：低资源音乐、环境声、UI 音效与五路混音（建立在 St
 - `F1` 只切换开发诊断层；预算、对象池、饱和、非法 owner、seed、存档槽和 HUD 诊断不会出现在普通 HUD。
 - 战斗的轻击、J3、L 上挑、轻/中/重命中、重击摘要、受击、落地、击杀和三类词条预警使用随发行包部署的 14 个本地 PCM 音效。单个损坏资源只回退该资源，不中断其余音效；模拟、地下城、掉落和存档层不依赖音频资源或 raylib 音频 API。
 - 探索/战斗音乐与普通/深渊环境声使用 4 条本地 OGG 流，按场景分别以 0.40/0.25 秒交叉淡化；暂停及死亡覆盖层会降低音乐和环境声，菜单导航、确认、取消、开关覆盖层和拾取奖励使用 6 个本地 UI 音效。
+- 地面材料独立于装备掉落和过滤：普通怪按危险度 8%–35% 掉落材料，高危险度还可独立掉落 +6/+9/+12/+15 强化券；靠近 1.5 格自动拾取，清房将吸附余下材料。死亡前未拾取的材料会丢失。
+- 背包底部有固定 14 格材料袋（容量 400/种）。选择材料后点击装备即可使用：九种货币只在成功的原子存档后扣除；强化券会直接提升到券面；强化石从 +12 升 +13 前要求确认。
+- 三件未装备、同基底、同稀有度的装备可右键/Control 标记后点击“三合一”合成；产物取平均物品等级且强化归零。
+- 强化 1–3 为 100%，4/5/6 为 90%/80%/70%，7–12 为 70%，+13 为 60% 后每级乘 0.95（最低 0.1%）。失败时 +7–9 回 +6、+10–11 归零、+12 及以上销毁；武器提升底材伤害、防具提升底材护甲、饰品提升元素减伤，词缀不被放大。
 
-实现边界、V6 存档布局、正式测试与真实 raylib 五路径证据见 [Stage 11-A 验证记录](docs/validation/stage11a-death-continue.md)。暂停、设置、重绑定、双槽恢复和 Stage 11-B 正式 raylib 证据见 [Stage 11-B 验证记录](docs/validation/stage11b-settings-input.md)。完整 HUD、固定容量/零分配门禁、中文字体、三分辨率和六场景正式证据见 [Stage 11-C 验证记录](docs/validation/stage11c-complete-hud.md)。三个地面过滤预设、深渊例外、自动拾取回执、设置 V2 迁移和六场生产 raylib 证据见 [Stage 11-D 验证记录](docs/validation/stage11d-ground-loot-filter.md)。战斗音效来源、自动证据、试听文件和验收边界见 [Stage 14 验证记录](docs/validation/stage14-combat-audio-pack.md)。音乐/环境/UI 来源、五路混音和运行态验收见 [Stage 15 验证记录](docs/validation/stage15-audio-mix.md)。
+实现边界、V6 存档布局、正式测试与真实 raylib 五路径证据见 [Stage 11-A 验证记录](docs/validation/stage11a-death-continue.md)。暂停、设置、重绑定、双槽恢复和 Stage 11-B 正式 raylib 证据见 [Stage 11-B 验证记录](docs/validation/stage11b-settings-input.md)。完整 HUD、固定容量/零分配门禁、中文字体、三分辨率和六场景正式证据见 [Stage 11-C 验证记录](docs/validation/stage11c-complete-hud.md)。三个地面过滤预设、深渊例外、自动拾取回执、设置 V2 迁移和六场生产 raylib 证据见 [Stage 11-D 验证记录](docs/validation/stage11d-ground-loot-filter.md)。战斗音效来源、自动证据、试听文件和验收边界见 [Stage 14 验证记录](docs/validation/stage14-combat-audio-pack.md)。音乐/环境/UI 来源、五路混音和运行态验收见 [Stage 15 验证记录](docs/validation/stage15-audio-mix.md)。材料、货币、强化、百万次分布模拟和真实 1280×720 Raylib 场景见 [Stage 16 验证记录](docs/validation/stage16-loot-currency-reinforcement.md)。
 
-本分支止步于 Stage 15；macOS、主菜单、手柄及分辨率/画质设置仍未实现。
+本分支止步于 Stage 16；macOS、主菜单、手柄及分辨率/画质设置仍未实现。
 
 ## 构建与运行
 

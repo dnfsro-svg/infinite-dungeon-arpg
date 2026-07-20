@@ -53,6 +53,24 @@ if(TARGET arpg_raylib)
     set_tests_properties(
         platform.units PROPERTIES LABELS "headless;platform")
 
+    add_executable(arpg_stage16_loot_reinforcement_game_validation
+        stage16_loot_reinforcement_game_validation.cpp)
+    target_compile_features(arpg_stage16_loot_reinforcement_game_validation
+        PRIVATE cxx_std_17)
+    target_include_directories(arpg_stage16_loot_reinforcement_game_validation
+        PRIVATE "${PROJECT_SOURCE_DIR}/tests/dungeon")
+    target_link_libraries(arpg_stage16_loot_reinforcement_game_validation
+        PRIVATE arpg_raylib)
+    if(MSVC)
+        target_compile_options(arpg_stage16_loot_reinforcement_game_validation PRIVATE /utf-8)
+    endif()
+    arpg_enable_project_warnings(arpg_stage16_loot_reinforcement_game_validation)
+    add_test(NAME stage16.loot_reinforcement.real_raylib
+        COMMAND "$<TARGET_FILE:arpg_stage16_loot_reinforcement_game_validation>"
+            "${CMAKE_CURRENT_BINARY_DIR}/stage16 loot reinforcement evidence")
+    set_tests_properties(stage16.loot_reinforcement.real_raylib PROPERTIES
+        LABELS "platform;raylib;stage16;validation" TIMEOUT 90 RUN_SERIAL TRUE)
+
     add_executable(arpg_stage12_material_formal
         stage12_material_formal_game_validation.cpp)
     target_compile_features(arpg_stage12_material_formal PRIVATE cxx_std_17)

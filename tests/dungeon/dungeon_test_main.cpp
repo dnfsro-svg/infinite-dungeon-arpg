@@ -215,6 +215,6 @@ int main() {
             "stage 16 task 7 crafting and reinforcement transactions");
     }
 
-    return arpg::test::run_suites(suites, 270,
+    return arpg::test::run_suites(suites, 272,
         "stage 11a task 8 death continue validation");
 }

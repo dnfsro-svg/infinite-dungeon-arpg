@@ -52,6 +52,19 @@ set_tests_properties(stage16.crafting_transaction.units PROPERTIES
     ENVIRONMENT "ARPG_STAGE16_CRAFTING_TRANSACTION_ONLY=1"
     LABELS "headless;dungeon;stage16")
 
+add_executable(arpg_stage16_loot_reinforcement_simulation
+    stage16_loot_reinforcement_simulation.cpp)
+target_compile_features(arpg_stage16_loot_reinforcement_simulation PRIVATE cxx_std_17)
+target_include_directories(arpg_stage16_loot_reinforcement_simulation
+    PRIVATE "${PROJECT_SOURCE_DIR}/tests/dungeon")
+target_link_libraries(arpg_stage16_loot_reinforcement_simulation
+    PRIVATE arpg_dungeon arpg_persistence)
+arpg_enable_project_warnings(arpg_stage16_loot_reinforcement_simulation)
+add_test(NAME stage16.loot_reinforcement.simulation
+    COMMAND arpg_stage16_loot_reinforcement_simulation)
+set_tests_properties(stage16.loot_reinforcement.simulation PROPERTIES
+    LABELS "headless;dungeon;stage16;validation" TIMEOUT 60)
+
 add_test(NAME stage11.death_stress.determinism_zero_alloc
     COMMAND arpg_dungeon_tests)
 set_tests_properties(stage11.death_stress.determinism_zero_alloc PROPERTIES
