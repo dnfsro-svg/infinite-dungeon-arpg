@@ -10,5 +10,5 @@ int main() {
     const arpg::test::TestSuite suites[] = {
         item_catalog_suite(), item_generation_suite(), item_modifier_suite(),
         item_recipe_suite(), item_crafting_suite()};
-    return arpg::test::run_suites(suites, 45, "stage 16 task 2 items");
+    return arpg::test::run_suites(suites, 46, "stage 16 reinforcement items");
 }

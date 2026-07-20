@@ -1,6 +1,7 @@
 #include "items/item_modifiers.hpp"
 
 #include "items/item_catalog.hpp"
+#include "items/item_crafting.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -13,6 +14,7 @@ inline constexpr modifiers::ModifierId kEquipmentModifierDomain =
     0x80000000U;
 inline constexpr std::uint16_t kBaseSourceStart = 1U;
 inline constexpr std::uint16_t kAffixSourceStart = 0x100U;
+inline constexpr std::uint16_t kReinforcementSourceStart = 0x80U;
 inline constexpr std::uint16_t kSourceStride = 4U;
 
 bool checked_add(std::int64_t left,
@@ -94,12 +96,14 @@ bool append_modifier(EquipmentProjection& projection,
     std::uint16_t source,
     modifiers::StatId stat,
     modifiers::ModifierOperation operation,
-    std::int32_t raw_value) noexcept {
+    std::int64_t raw_value) noexcept {
     if (projection.modifier_count >= projection.modifiers.size()) return false;
     std::int64_t value = raw_value;
     if (uses_fixed_units(stat, operation)
-        && !checked_multiply(value, modifiers::kFixedOne, value))
-        return false;
+        && !checked_multiply(value, modifiers::kFixedOne, value)) {
+        value = value < 0 ? (std::numeric_limits<std::int64_t>::min)()
+                          : (std::numeric_limits<std::int64_t>::max)();
+    }
     projection.modifiers[projection.modifier_count++] = modifiers::Modifier{
         modifier_id(slot, source), stat, operation, value};
     return true;
@@ -110,7 +114,7 @@ bool apply_effect(EquipmentProjection& projection,
     ItemEffectKind effect,
     modifiers::StatId stat,
     modifiers::ModifierOperation operation,
-    std::int32_t value,
+    std::int64_t value,
     std::uint8_t variant,
     std::uint16_t source,
     std::int64_t& local_flat,
@@ -126,9 +130,14 @@ bool apply_effect(EquipmentProjection& projection,
         return slot == ItemSlot::weapon
             && checked_add(local_increased, value, local_increased);
     case ItemEffectKind::slot_dependent_attack_speed:
+        if (value < (std::numeric_limits<std::int32_t>::min)()
+                || value > (std::numeric_limits<std::int32_t>::max)()) {
+            return false;
+        }
         if (slot == ItemSlot::weapon) {
             return checked_add_int32(projection.local_attack_speed_bp,
-                value, projection.local_attack_speed_bp);
+                static_cast<std::int32_t>(value),
+                projection.local_attack_speed_bp);
         }
         return append_modifier(projection, slot, source,
             modifiers::StatId::attack_speed,
@@ -198,6 +207,34 @@ bool checked_weapon_formula(std::int64_t base_and_flat,
     std::int64_t factor{};
     if (!checked_add(modifiers::kFixedOne, local_increased, factor))
         return false;
+    if (factor == modifiers::kFixedOne) {
+        output = base_and_flat;
+        return true;
+    }
+    if (base_and_flat >= 0 && factor >= 0) {
+        const auto maximum = (std::numeric_limits<std::int64_t>::max)();
+        const std::int64_t whole_input =
+            base_and_flat / modifiers::kFixedOne;
+        const std::int64_t remainder_input =
+            base_and_flat % modifiers::kFixedOne;
+        if (whole_input > maximum / factor) {
+            output = maximum;
+            return true;
+        }
+        const std::int64_t whole = whole_input * factor;
+        std::int64_t remainder_product{};
+        if (!checked_multiply(remainder_input, factor, remainder_product)) {
+            output = maximum;
+            return true;
+        }
+        const std::int64_t remainder = remainder_product / modifiers::kFixedOne;
+        if (whole > maximum - remainder) {
+            output = maximum;
+            return true;
+        }
+        output = whole + remainder;
+        return true;
+    }
     std::int64_t whole{};
     std::int64_t remainder{};
     if (!checked_multiply(base_and_flat / modifiers::kFixedOne,
@@ -242,12 +279,38 @@ EquipmentProjectionResult project_equipment_with_state(
         for (std::size_t effect_index = 0U;
              effect_index < base->effect_count; ++effect_index) {
             const BaseEffect& effect = base->effects[effect_index];
+            std::int64_t value = effect.values[base_value_index];
+            if ((slot == ItemSlot::weapon
+                    && effect.effect
+                        == ItemEffectKind::local_weapon_physical_flat)
+                || (slot != ItemSlot::weapon && slot != ItemSlot::accessory
+                    && effect.effect == ItemEffectKind::global_modifier
+                    && effect.stat == modifiers::StatId::armor
+                    && effect.operation == modifiers::ModifierOperation::flat)) {
+                value = reinforced_base_value(value, item->reinforcement);
+            }
             const std::uint16_t source = static_cast<std::uint16_t>(
                 kBaseSourceStart + effect_index * kSourceStride);
             if (!apply_effect(projection, slot, effect.effect, effect.stat,
-                    effect.operation, effect.values[base_value_index], 0xFFU,
+                    effect.operation, value, 0xFFU,
                     source, local_flat, local_increased))
                 return {};
+        }
+
+        if (slot == ItemSlot::accessory && item->reinforcement != 0U) {
+            const std::int32_t bonus = reinforced_accessory_bonus_bp(
+                item->reinforcement);
+            for (std::uint16_t element = 0U; element < 4U; ++element) {
+                const auto stat = static_cast<modifiers::StatId>(
+                    static_cast<std::uint16_t>(
+                        modifiers::StatId::fire_damage_reduction) + element);
+                if (!append_modifier(projection, slot,
+                        static_cast<std::uint16_t>(
+                            kReinforcementSourceStart + element),
+                        stat, modifiers::ModifierOperation::flat, bonus)) {
+                    return {};
+                }
+            }
         }
 
         for (std::size_t affix_index = 0U;

@@ -130,19 +130,26 @@ arpg::test::Failure reinforcement_failure_bands_apply_through_saved_transactions
     const std::size_t stone = arpg::items::material_index(
         MaterialId::reinforcement_stone);
 
-    const auto exercise_failure = [&](std::uint32_t current,
+    const auto exercise_failure = [&](ItemInstance source_item,
+        std::uint32_t current,
         std::uint32_t expected, bool expect_destroy) noexcept {
         for (std::uint64_t seed = 1U; seed <= 256U; ++seed) {
-            ItemInstance item = source;
+            ItemInstance item = source_item;
             item.reinforcement = current;
             DungeonRunState state = state_with_items({item});
             state.root_seed = seed;
             state.item_ownership.materials[stone] = 1U;
             if (expect_destroy) {
+                const auto* const base = arpg::items::base_definition(item.base_id);
+                if (base == nullptr) return false;
                 state.item_ownership.equipment.equipped_ids[
-                    static_cast<std::size_t>(ItemSlot::weapon)] = item.id;
+                    static_cast<std::size_t>(base->slot)] = item.id;
             }
             DungeonSession session{DungeonRules{}, state};
+            if (expect_destroy && (!session.snapshot().combat.has_value()
+                    || session.snapshot().combat->player.armor == 0)) {
+                return false;
+            }
             if (session.request_reinforcement(item.id)
                     != RequestResult::accepted) {
                 continue;
@@ -156,8 +163,8 @@ arpg::test::Failure reinforcement_failure_bands_apply_through_saved_transactions
                 continue;
             }
             if (expect_destroy && pending->next_state.item_ownership.equipment
-                    .equipped_ids[static_cast<std::size_t>(ItemSlot::weapon)]
-                    != 0U) {
+                    .equipped_ids[static_cast<std::size_t>(
+                        arpg::items::base_definition(item.base_id)->slot)] != 0U) {
                 return false;
             }
             if (pending->next_state.item_ownership.materials[stone] != 0U
@@ -168,15 +175,18 @@ arpg::test::Failure reinforcement_failure_bands_apply_through_saved_transactions
             const ItemInstance* const committed = find_item(
                 session.item_state(), item.id);
             return expect_destroy ? committed == nullptr
+                    && session.snapshot().combat.has_value()
+                    && session.snapshot().combat->player.armor == 0
                                   : committed != nullptr
                 && committed->reinforcement == expected;
         }
         return false;
     };
 
-    ARPG_REQUIRE(exercise_failure(7U, 6U, false));
-    ARPG_REQUIRE(exercise_failure(10U, 0U, false));
-    ARPG_REQUIRE(exercise_failure(12U, 0U, true));
+    ARPG_REQUIRE(exercise_failure(source, 7U, 6U, false));
+    ARPG_REQUIRE(exercise_failure(source, 10U, 0U, false));
+    ARPG_REQUIRE(exercise_failure(
+        generated_item(302U, 2U, ItemRarity::normal), 12U, 0U, true));
     return {};
 }
 
@@ -186,7 +196,10 @@ arpg::test::Failure coupon_fifteen_sets_level_through_atomic_transaction() noexc
     item.reinforcement = 3U;
     DungeonRunState state = state_with_items({item});
     const std::size_t coupon = arpg::items::material_index(MaterialId::coupon_15);
+    const std::size_t transmute = arpg::items::material_index(
+        MaterialId::transmute);
     state.item_ownership.materials[coupon] = 1U;
+    state.item_ownership.materials[transmute] = 1U;
     DungeonSession session{DungeonRules{}, state};
 
     ARPG_REQUIRE(session.request_coupon(MaterialId::coupon_15, item.id)
@@ -201,6 +214,11 @@ arpg::test::Failure coupon_fifteen_sets_level_through_atomic_transaction() noexc
     ARPG_REQUIRE(pending->next_state.item_ownership.materials[coupon] == 0U);
     ARPG_REQUIRE(commit_pending(session));
     ARPG_REQUIRE(find_item(session.item_state(), item.id)->reinforcement == 15U);
+    ARPG_REQUIRE(session.snapshot().reinforcement_receipt.valid);
+    ARPG_REQUIRE(session.request_craft(MaterialId::transmute, item.id)
+        == RequestResult::accepted);
+    ARPG_REQUIRE(commit_pending(session));
+    ARPG_REQUIRE(!session.snapshot().reinforcement_receipt.valid);
     return {};
 }
 

@@ -1,12 +1,14 @@
 #include "test_framework.hpp"
 
 #include "items/item_catalog.hpp"
+#include "items/item_crafting.hpp"
 #include "items/item_modifiers.hpp"
 #include "modifiers/player_modifier_values.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 namespace {
 
@@ -238,6 +240,69 @@ arpg::test::Failure equipment_override_projects_without_copying_ownership() noex
     return {};
 }
 
+arpg::test::Failure reinforcement_scales_only_equipped_base_slot_attributes() noexcept {
+    ItemInstance weapon = normal_item(51U, 1U);
+    ItemInstance helmet = normal_item(52U, 2U);
+    ItemInstance accessory = normal_item(53U, 6U);
+    weapon.reinforcement = 1U;
+    helmet.reinforcement = 1U;
+    accessory.reinforcement = 1U;
+    ItemOwnershipState reinforced{};
+    reinforced.items = {weapon, helmet, accessory};
+    reinforced.equipment.equipped_ids[0] = weapon.id;
+    reinforced.equipment.equipped_ids[1] = helmet.id;
+    reinforced.equipment.equipped_ids[5] = accessory.id;
+    const EquipmentProjection projection = project_equipment(reinforced);
+    ARPG_REQUIRE(projection.valid);
+    ARPG_REQUIRE(projection.weapon_physical == 18);
+    const auto values = arpg::modifiers::evaluate_player_modifiers(
+        {projection.modifiers.data(), projection.modifier_count});
+    ARPG_REQUIRE(values.valid);
+    ARPG_REQUIRE(values.armor == 8250);
+    for (const std::int32_t reduction : values.damage_reduction)
+        ARPG_REQUIRE(reduction == 1050);
+
+    ItemInstance affixed_weapon = normal_item(54U, 1U);
+    affixed_weapon.rarity = ItemRarity::rare;
+    affixed_weapon.required_level = 95U;
+    affixed_weapon.reinforcement = 1U;
+    affixed_weapon.affixes[0] = {1U, 1U, 0xFFU};
+    affixed_weapon.affixes[1] = {2U, 1U, 0xFFU};
+    affixed_weapon.affixes[2] = {101U, 1U, 0xFFU};
+    affixed_weapon.affix_count = 3U;
+    ARPG_REQUIRE(validate_item(affixed_weapon));
+    ItemOwnershipState affixed{};
+    affixed.items = {affixed_weapon};
+    affixed.equipment.equipped_ids[0] = affixed_weapon.id;
+    const EquipmentProjection affixed_projection = project_equipment(affixed);
+    ARPG_REQUIRE(affixed_projection.valid);
+    ARPG_REQUIRE(affixed_projection.weapon_physical == 42);
+
+    accessory.reinforcement = 13U;
+    ItemOwnershipState post_twelve{};
+    post_twelve.items = {accessory};
+    post_twelve.equipment.equipped_ids[5] = accessory.id;
+    const EquipmentProjection post_twelve_projection =
+        project_equipment(post_twelve);
+    const auto post_twelve_values = arpg::modifiers::evaluate_player_modifiers(
+        {post_twelve_projection.modifiers.data(),
+            post_twelve_projection.modifier_count});
+    ARPG_REQUIRE(post_twelve_projection.valid);
+    ARPG_REQUIRE(post_twelve_values.valid);
+    for (const std::int32_t reduction : post_twelve_values.damage_reduction)
+        ARPG_REQUIRE(reduction == 1675);
+
+    weapon.reinforcement = (std::numeric_limits<std::uint32_t>::max)();
+    ItemOwnershipState saturated{};
+    saturated.items = {weapon};
+    saturated.equipment.equipped_ids[0] = weapon.id;
+    const EquipmentProjection saturated_projection = project_equipment(saturated);
+    ARPG_REQUIRE(saturated_projection.valid);
+    ARPG_REQUIRE(saturated_projection.weapon_physical
+        == (std::numeric_limits<std::int64_t>::max)());
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"weapon local floor formula", &weapon_local_values_use_frozen_floor_order},
     {"base intrinsic projection",
@@ -252,6 +317,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &detailed_projection_distinguishes_invalid_state},
     {"equipment override projection",
         &equipment_override_projects_without_copying_ownership},
+    {"reinforcement projects equipped base attributes",
+        &reinforcement_scales_only_equipped_base_slot_attributes},
 };
 
 }  // namespace

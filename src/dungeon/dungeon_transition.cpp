@@ -1570,6 +1570,8 @@ void DungeonSession::commit_pending_save(
         combat_->apply_player_build(published_build);
         if (reinforcement_commit) {
             reinforcement_receipt_ = published_reinforcement_receipt;
+        } else {
+            reinforcement_receipt_ = {};
         }
         phase_ = resume_phase;
         return;
