@@ -10,7 +10,7 @@
 
 namespace arpg::platform {
 
-inline constexpr std::size_t kPauseMenuRenderOpCapacity = 22U;
+inline constexpr std::size_t kPauseMenuRenderOpCapacity = 26U;
 
 enum class PauseMenuRenderOpKind : std::uint8_t {
     dim,

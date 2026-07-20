@@ -33,6 +33,10 @@ platform::PauseMenuState settings_state() noexcept {
     state.committed = settings::default_settings();
     state.draft = state.committed;
     state.draft.master_sfx_percent = 55U;
+    state.draft.sfx_percent = 60U;
+    state.draft.music_percent = 35U;
+    state.draft.ambience_percent = 25U;
+    state.draft.ui_percent = 70U;
     state.draft.window_mode = settings::WindowMode::fullscreen;
     state.draft.vsync_enabled = false;
     state.draft.loot_filter_mode = settings::LootFilterMode::magic_or_better;
@@ -84,16 +88,16 @@ test::Failure layouts_are_bounded_centered_and_fixed() noexcept {
             layout.footer.y - layout.panel.y, 496.0F));
         ARPG_REQUIRE(test::near(layout.footer.width, 712.0F));
         ARPG_REQUIRE(test::near(layout.footer.height, 28.0F));
-        for (std::size_t row = 0U; row < 17U; ++row) {
+        for (std::size_t row = 0U; row < 21U; ++row) {
             ARPG_REQUIRE(inside(layout.rows[row], layout.panel));
             ARPG_REQUIRE(separated(layout.rows[row], layout.footer));
             ARPG_REQUIRE(test::near(
                 layout.rows[row].x - layout.panel.x, 24.0F));
             ARPG_REQUIRE(test::near(
                 layout.rows[row].y - layout.panel.y,
-                60.0F + static_cast<float>(row) * 25.0F));
+                60.0F + static_cast<float>(row) * 20.0F));
             ARPG_REQUIRE(test::near(layout.rows[row].width, 712.0F));
-            ARPG_REQUIRE(test::near(layout.rows[row].height, 22.0F));
+            ARPG_REQUIRE(test::near(layout.rows[row].height, 18.0F));
             if (row != 0U) {
                 ARPG_REQUIRE(separated(layout.rows[row - 1U], layout.rows[row]));
                 ARPG_REQUIRE(layout.rows[row - 1U].y
@@ -124,22 +128,22 @@ test::Failure layout_has_exact_1024_golden_geometry() noexcept {
     ARPG_REQUIRE(test::near(layout.rows[0].x, 156.0F));
     ARPG_REQUIRE(test::near(layout.rows[0].y, 76.0F));
     ARPG_REQUIRE(test::near(layout.rows[0].width, 712.0F));
-    ARPG_REQUIRE(test::near(layout.rows[0].height, 22.0F));
+    ARPG_REQUIRE(test::near(layout.rows[0].height, 18.0F));
     ARPG_REQUIRE(test::near(
         layout.rows[0].y - layout.panel.y, 60.0F));
 
-    ARPG_REQUIRE(test::near(layout.rows[16].x, 156.0F));
-    ARPG_REQUIRE(test::near(layout.rows[16].y, 476.0F));
-    ARPG_REQUIRE(test::near(layout.rows[16].width, 712.0F));
-    ARPG_REQUIRE(test::near(layout.rows[16].height, 22.0F));
-    for (std::size_t row = 1U; row < 17U; ++row) {
+    ARPG_REQUIRE(test::near(layout.rows[20].x, 156.0F));
+    ARPG_REQUIRE(test::near(layout.rows[20].y, 476.0F));
+    ARPG_REQUIRE(test::near(layout.rows[20].width, 712.0F));
+    ARPG_REQUIRE(test::near(layout.rows[20].height, 18.0F));
+    for (std::size_t row = 1U; row < 21U; ++row) {
         ARPG_REQUIRE(test::near(
-            layout.rows[row].y - layout.rows[row - 1U].y, 25.0F));
+            layout.rows[row].y - layout.rows[row - 1U].y, 20.0F));
         ARPG_REQUIRE(test::near(
             layout.rows[row].y
                 - (layout.rows[row - 1U].y
                     + layout.rows[row - 1U].height),
-            3.0F));
+            2.0F));
     }
 
     ARPG_REQUIRE(test::near(layout.footer.x, 156.0F));
@@ -152,7 +156,7 @@ test::Failure layout_has_exact_1024_golden_geometry() noexcept {
 test::Failure hit_test_uses_half_open_rows_only() noexcept {
     const platform::PauseMenuLayout layout =
         platform::pause_menu_layout(1280, 720);
-    for (std::size_t row = 0U; row < 17U; ++row) {
+    for (std::size_t row = 0U; row < 21U; ++row) {
         const Rectangle bounds = layout.rows[row];
         const auto center = platform::hit_test_pause_row(layout,
             {bounds.x + bounds.width * 0.5F,
@@ -216,11 +220,15 @@ test::Failure settings_view_shows_all_draft_and_committed_values() noexcept {
     const platform::PauseMenuState state = settings_state();
     const auto view = platform::make_pause_menu_view(state);
     ARPG_REQUIRE(std::strcmp(view.title, "SETTINGS") == 0);
-    ARPG_REQUIRE(view.row_count == 17U);
+    ARPG_REQUIRE(view.row_count == 21U);
     ARPG_REQUIRE(view.selected_row == 12U);
     ARPG_REQUIRE(view.message == state.message);
     constexpr const char* kRows[] = {
-        "Master SFX: 55% (saved 100%)",
+        "Master: 55% (saved 100%)",
+        "SFX: 60% (saved 100%)",
+        "Music: 35% (saved 45%)",
+        "Ambience: 25% (saved 35%)",
+        "UI: 70% (saved 80%)",
         "Window Mode: Fullscreen (saved Windowed)",
         "VSync: Off (saved On)",
         "Loot Filter: Magic or Better (saved Show All)",
@@ -275,7 +283,7 @@ test::Failure selected_rows_clamp_to_each_visible_view() noexcept {
     ARPG_REQUIRE(platform::make_pause_menu_view(state).selected_row == 2U);
 
     state.screen = platform::PauseScreen::settings;
-    ARPG_REQUIRE(platform::make_pause_menu_view(state).selected_row == 16U);
+    ARPG_REQUIRE(platform::make_pause_menu_view(state).selected_row == 20U);
 
     state.screen = platform::PauseScreen::quit_confirm;
     ARPG_REQUIRE(platform::make_pause_menu_view(state).selected_row == 1U);
@@ -342,7 +350,7 @@ test::Failure render_plan_inserts_optional_message_before_footer() noexcept {
         platform::make_pause_menu_render_plan(view);
     ARPG_REQUIRE(message_plan.has_message);
     ARPG_REQUIRE(message_plan.op_count == view.row_count + 5U);
-    ARPG_REQUIRE(platform::kPauseMenuRenderOpCapacity == 22U);
+    ARPG_REQUIRE(platform::kPauseMenuRenderOpCapacity == 26U);
     ARPG_REQUIRE(message_plan.op_count == platform::kPauseMenuRenderOpCapacity);
     ARPG_REQUIRE(message_plan.ops[message_plan.op_count - 2U].kind
         == platform::PauseMenuRenderOpKind::message);
@@ -392,7 +400,7 @@ test::Failure all_view_layout_and_hit_paths_allocate_nothing() noexcept {
     for (std::size_t iteration = 0U; iteration < 1000U; ++iteration) {
         for (const auto& state : states) {
             const auto view = platform::make_pause_menu_view(state);
-            ARPG_REQUIRE(view.row_count <= 17U);
+            ARPG_REQUIRE(view.row_count <= 21U);
             const auto plan = platform::make_pause_menu_render_plan(view);
             ARPG_REQUIRE(plan.op_count <= platform::kPauseMenuRenderOpCapacity);
         }
@@ -402,10 +410,10 @@ test::Failure all_view_layout_and_hit_paths_allocate_nothing() noexcept {
         for (const auto& size : kSizes) {
             const auto layout = platform::pause_menu_layout(size[0], size[1]);
             const auto hit = platform::hit_test_pause_row(layout,
-                {layout.rows[iteration % 17U].x,
-                 layout.rows[iteration % 17U].y});
+                {layout.rows[iteration % 21U].x,
+                 layout.rows[iteration % 21U].y});
             ARPG_REQUIRE(hit.has_value());
-            ARPG_REQUIRE(*hit == iteration % 17U);
+            ARPG_REQUIRE(*hit == iteration % 21U);
             ARPG_REQUIRE(!platform::hit_test_pause_row(layout,
                 {layout.footer.x, layout.footer.y}).has_value());
         }

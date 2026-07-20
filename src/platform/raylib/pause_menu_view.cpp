@@ -11,8 +11,8 @@ constexpr float kPanelWidth = 760.0F;
 constexpr float kPanelHeight = 544.0F;
 constexpr float kRowInsetX = 24.0F;
 constexpr float kFirstRowY = 60.0F;
-constexpr float kRowHeight = 22.0F;
-constexpr float kRowStride = 25.0F;
+constexpr float kRowHeight = 18.0F;
+constexpr float kRowStride = 20.0F;
 constexpr float kFooterY = 496.0F;
 constexpr float kFooterHeight = 28.0F;
 
@@ -53,16 +53,28 @@ void write_row(
 void build_settings_rows(
     PauseMenuView& view,
     const PauseMenuState& state) noexcept {
-    write_row(view, 0U, "Master SFX: %u%% (saved %u%%)",
+    write_row(view, 0U, "Master: %u%% (saved %u%%)",
         static_cast<unsigned>(state.draft.master_sfx_percent),
         static_cast<unsigned>(state.committed.master_sfx_percent));
-    write_row(view, 1U, "Window Mode: %s (saved %s)",
+    write_row(view, 1U, "SFX: %u%% (saved %u%%)",
+        static_cast<unsigned>(state.draft.sfx_percent),
+        static_cast<unsigned>(state.committed.sfx_percent));
+    write_row(view, 2U, "Music: %u%% (saved %u%%)",
+        static_cast<unsigned>(state.draft.music_percent),
+        static_cast<unsigned>(state.committed.music_percent));
+    write_row(view, 3U, "Ambience: %u%% (saved %u%%)",
+        static_cast<unsigned>(state.draft.ambience_percent),
+        static_cast<unsigned>(state.committed.ambience_percent));
+    write_row(view, 4U, "UI: %u%% (saved %u%%)",
+        static_cast<unsigned>(state.draft.ui_percent),
+        static_cast<unsigned>(state.committed.ui_percent));
+    write_row(view, 5U, "Window Mode: %s (saved %s)",
         window_mode_label(state.draft.window_mode),
         window_mode_label(state.committed.window_mode));
-    write_row(view, 2U, "VSync: %s (saved %s)",
+    write_row(view, 6U, "VSync: %s (saved %s)",
         enabled_label(state.draft.vsync_enabled),
         enabled_label(state.committed.vsync_enabled));
-    write_row(view, 3U, "Loot Filter: %s (saved %s)",
+    write_row(view, 7U, "Loot Filter: %s (saved %s)",
         settings::loot_filter_label(state.draft.loot_filter_mode),
         settings::loot_filter_label(state.committed.loot_filter_mode));
 
@@ -70,14 +82,14 @@ void build_settings_rows(
          index < static_cast<std::size_t>(settings::SettingAction::count);
          ++index) {
         const auto action = static_cast<settings::SettingAction>(index);
-        write_row(view, index + 4U, "%s: %s (saved %s)",
+        write_row(view, index + 8U, "%s: %s (saved %s)",
             settings::action_label(action),
             stable_key_label(settings::binding_for(state.draft, action)),
             stable_key_label(settings::binding_for(state.committed, action)));
     }
-    write_row(view, 14U, "%s", "Reset Defaults");
-    write_row(view, 15U, "%s", "Apply");
-    write_row(view, 16U, "%s", "Cancel");
+    write_row(view, 18U, "%s", "Reset Defaults");
+    write_row(view, 19U, "%s", "Apply");
+    write_row(view, 20U, "%s", "Cancel");
 }
 
 }  // namespace

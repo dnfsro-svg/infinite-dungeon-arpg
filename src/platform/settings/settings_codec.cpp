@@ -13,6 +13,7 @@ constexpr std::array<std::uint8_t, 8> magic{
     'A', 'R', 'P', 'G', 'S', 'E', 'T', '1'};
 constexpr std::uint16_t format_v1 = 1U;
 constexpr std::uint16_t format_v2 = 2U;
+constexpr std::uint16_t format_v3 = 3U;
 constexpr std::uint16_t payload_size = 20U;
 constexpr std::size_t crc_covered_offset = 8U;
 constexpr std::size_t crc_covered_size = 32U;
@@ -82,7 +83,7 @@ encode_settings(const SettingsData& settings) noexcept {
     for (std::size_t index = 0U; index < magic.size(); ++index) {
         bytes[index] = magic[index];
     }
-    write_u16(bytes, 8U, format_v2);
+    write_u16(bytes, 8U, format_v3);
     write_u16(bytes, 10U, payload_size);
     write_u64(bytes, 12U, settings.revision);
     bytes[20] = settings.master_sfx_percent;
@@ -92,6 +93,10 @@ encode_settings(const SettingsData& settings) noexcept {
     for (std::size_t index = 0U; index < settings.bindings.size(); ++index) {
         bytes[24U + index] = static_cast<std::uint8_t>(settings.bindings[index]);
     }
+    bytes[34] = settings.sfx_percent;
+    bytes[35] = settings.music_percent;
+    bytes[36] = settings.ambience_percent;
+    bytes[37] = settings.ui_percent;
     const std::uint32_t checksum =
         core::crc32(bytes.data() + crc_covered_offset, crc_covered_size);
     write_u32(bytes, crc_offset, checksum);
@@ -109,7 +114,8 @@ SettingsDecodeResult decode_settings(
         }
     }
     const std::uint16_t record_format = read_u16(bytes, 8U);
-    if (record_format != format_v1 && record_format != format_v2) {
+    if (record_format != format_v1 && record_format != format_v2
+            && record_format != format_v3) {
         return decode_error(SettingsCodecError::wrong_format);
     }
     if (read_u16(bytes, 10U) != payload_size) {
@@ -123,7 +129,8 @@ SettingsDecodeResult decode_settings(
     if (record_format == format_v1 && bytes[23] != 0U) {
         return decode_error(SettingsCodecError::reserved_nonzero);
     }
-    for (std::size_t offset = 34U; offset < crc_offset; ++offset) {
+    const std::size_t reserved_begin = record_format == format_v3 ? 38U : 34U;
+    for (std::size_t offset = reserved_begin; offset < crc_offset; ++offset) {
         if (bytes[offset] != 0U) {
             return decode_error(SettingsCodecError::reserved_nonzero);
         }
@@ -142,6 +149,12 @@ SettingsDecodeResult decode_settings(
         : static_cast<LootFilterMode>(bytes[23]);
     for (std::size_t index = 0U; index < settings.bindings.size(); ++index) {
         settings.bindings[index] = static_cast<StableKey>(bytes[24U + index]);
+    }
+    if (record_format == format_v3) {
+        settings.sfx_percent = bytes[34];
+        settings.music_percent = bytes[35];
+        settings.ambience_percent = bytes[36];
+        settings.ui_percent = bytes[37];
     }
     if (validate_settings(settings) != SettingsValidationError::none) {
         return decode_error(SettingsCodecError::invalid_settings);

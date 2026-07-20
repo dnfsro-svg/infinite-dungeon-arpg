@@ -8,14 +8,14 @@ namespace arpg::platform {
 namespace {
 
 constexpr std::size_t kRootRowCount = 3U;
-constexpr std::size_t kSettingsRowCount = 17U;
+constexpr std::size_t kSettingsRowCount = 21U;
 constexpr std::size_t kQuitRowCount = 2U;
-constexpr std::size_t kLootFilterRow = 3U;
-constexpr std::size_t kFirstBindingRow = 4U;
-constexpr std::size_t kLastBindingRow = 13U;
-constexpr std::size_t kResetRow = 14U;
-constexpr std::size_t kApplyRow = 15U;
-constexpr std::size_t kCancelRow = 16U;
+constexpr std::size_t kLootFilterRow = 7U;
+constexpr std::size_t kFirstBindingRow = 8U;
+constexpr std::size_t kLastBindingRow = 17U;
+constexpr std::size_t kResetRow = 18U;
+constexpr std::size_t kApplyRow = 19U;
+constexpr std::size_t kCancelRow = 20U;
 
 constexpr char kInvalidBindingMessage[] = "Key cannot be assigned";
 constexpr char kInvalidSettingsMessage[] = "Settings are invalid";
@@ -107,19 +107,19 @@ void return_to_root(PauseMenuState& state) noexcept {
 }
 
 [[nodiscard]] PauseCommand update_volume(
-    PauseMenuState& state,
+    std::uint8_t& volume,
     const PauseInput& input) noexcept {
-    const std::uint8_t before = state.draft.master_sfx_percent;
+    const std::uint8_t before = volume;
     if (input.left) {
-        state.draft.master_sfx_percent = before <= 5U
+        volume = before <= 5U
             ? 0U
             : static_cast<std::uint8_t>(before - 5U);
     } else if (input.right) {
-        state.draft.master_sfx_percent = before >= 95U
+        volume = before >= 95U
             ? 100U
             : static_cast<std::uint8_t>(before + 5U);
     }
-    return state.draft.master_sfx_percent == before
+    return volume == before
         ? PauseCommand::none
         : PauseCommand::preview;
 }
@@ -168,10 +168,15 @@ void return_to_root(PauseMenuState& state) noexcept {
     if (navigate(state.selected_row, kSettingsRowCount, input)) {
         return PauseCommand::none;
     }
-    if (state.selected_row == 0U) {
-        return update_volume(state, input);
+    if (state.selected_row <= 4U) {
+        std::uint8_t* volumes[] = {
+            &state.draft.master_sfx_percent, &state.draft.sfx_percent,
+            &state.draft.music_percent, &state.draft.ambience_percent,
+            &state.draft.ui_percent,
+        };
+        return update_volume(*volumes[state.selected_row], input);
     }
-    if (state.selected_row == 1U &&
+    if (state.selected_row == 5U &&
         (input.left || input.right || confirmed(input))) {
         state.draft.window_mode =
             state.draft.window_mode == settings::WindowMode::windowed
@@ -179,7 +184,7 @@ void return_to_root(PauseMenuState& state) noexcept {
             : settings::WindowMode::windowed;
         return PauseCommand::preview;
     }
-    if (state.selected_row == 2U &&
+    if (state.selected_row == 6U &&
         (input.left || input.right || confirmed(input))) {
         state.draft.vsync_enabled = !state.draft.vsync_enabled;
         return PauseCommand::preview;

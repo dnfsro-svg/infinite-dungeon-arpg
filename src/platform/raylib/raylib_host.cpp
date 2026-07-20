@@ -395,26 +395,26 @@ void inject_stage11b_open_settings(PhysicalKeySnapshot& snapshot,
     case Stage11BValidationScenario::rebound_attack:
     case Stage11BValidationScenario::conflict_swap:
         if (frame == 1U) snapshot.escape = true;
-        else if (frame == 2U || (frame >= 4U && frame <= 11U)
-            || (frame >= 14U && frame <= 20U)) {
+        else if (frame == 2U || (frame >= 4U && frame <= 15U)
+            || (frame >= 18U && frame <= 24U)) {
             inject_stage11b_pressed(snapshot, settings::StableKey::arrow_down);
-        } else if (frame == 3U || frame == 12U || frame == 21U) {
+        } else if (frame == 3U || frame == 16U || frame == 25U) {
             snapshot.enter = true;
-        } else if (frame == 13U) {
+        } else if (frame == 17U) {
             inject_stage11b_pressed(snapshot,
                 config.stage11b_validation == Stage11BValidationScenario::rebound_attack
                     ? settings::StableKey::u : settings::StableKey::k);
         } else if (config.stage11b_validation
                        == Stage11BValidationScenario::rebound_attack
-                   && (frame == 22U || frame == 23U)) {
+                   && (frame == 26U || frame == 27U)) {
             snapshot.escape = true;
         } else if (config.stage11b_validation
                        == Stage11BValidationScenario::rebound_attack
-                   && frame == 24U) {
+                   && frame == 28U) {
             inject_stage11b_pressed(snapshot, settings::StableKey::j);
         } else if (config.stage11b_validation
                        == Stage11BValidationScenario::rebound_attack
-                   && frame == 25U) {
+                   && frame == 29U) {
             inject_stage11b_pressed(snapshot, settings::StableKey::u);
         }
         break;
@@ -440,11 +440,11 @@ void inject_stage11b_open_settings(PhysicalKeySnapshot& snapshot,
         return state.injected_frame >= 4U
             && pause_menu.screen == PauseScreen::settings;
     case Stage11BValidationScenario::rebound_attack:
-        return state.injected_frame >= 25U && state.old_attack_checked
+        return state.injected_frame >= 29U && state.old_attack_checked
             && state.new_attack_count != 0U
             && pause_menu.screen == PauseScreen::closed;
     case Stage11BValidationScenario::conflict_swap:
-        return state.injected_frame >= 21U
+        return state.injected_frame >= 25U
             && pause_menu.screen == PauseScreen::settings;
     }
     return false;
@@ -2090,11 +2090,11 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     submit_frame_actions(*session, frame_input);
                 if (config.stage11b_validation
                         == Stage11BValidationScenario::rebound_attack) {
-                    if (stage11b_validation_state.injected_frame == 24U) {
+                    if (stage11b_validation_state.injected_frame == 28U) {
                         stage11b_validation_state.old_attack_checked = true;
                         stage11b_validation_state.old_attack_count +=
                             accepted_actions[0] ? 1U : 0U;
-                    } else if (stage11b_validation_state.injected_frame == 25U) {
+                    } else if (stage11b_validation_state.injected_frame == 29U) {
                         stage11b_validation_state.new_attack_count +=
                             accepted_actions[0] ? 1U : 0U;
                     }

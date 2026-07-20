@@ -30,8 +30,8 @@ namespace settings = arpg::settings;
 
 // Independently derived from the documented 1,000-step mutation sequence and
 // the settings file layout (including its CRC32 field), not from store output.
-constexpr std::uint64_t kExpectedSlotAHash = 0xCFFDFDC436D24D81ULL;
-constexpr std::uint64_t kExpectedSlotBHash = 0xBADB6B4DC55C7E7DULL;
+constexpr std::uint64_t kExpectedSlotAHash = 0xCB05E442957CEAB6ULL;
+constexpr std::uint64_t kExpectedSlotBHash = 0x5070A2DBB88738F4ULL;
 
 struct MemorySlots final {
     std::array<std::uint8_t, settings::kSettingsEncodedSize> a{};
@@ -77,11 +77,12 @@ bool memory_replace(void* context, const std::filesystem::path& path,
 }
 
 [[nodiscard]] std::array<std::uint8_t, settings::kSettingsEncodedSize>
-    encode_v1(const settings::SettingsData& values) noexcept {
+encode_v1(const settings::SettingsData& values) noexcept {
     auto bytes = settings::encode_settings(values);
     bytes[8] = 1U;
     bytes[9] = 0U;
     bytes[23] = 0U;
+    for (std::size_t offset = 34U; offset < 40U; ++offset) bytes[offset] = 0U;
     const std::uint32_t checksum = arpg::core::crc32(bytes.data() + 8U, 32U);
     for (std::size_t index = 0U; index < 4U; ++index) {
         bytes[40U + index] = static_cast<std::uint8_t>(checksum >> (index * 8U));
@@ -92,6 +93,10 @@ bool memory_replace(void* context, const std::filesystem::path& path,
 [[nodiscard]] bool same_settings(const settings::SettingsData& lhs,
     const settings::SettingsData& rhs) noexcept {
     return lhs.master_sfx_percent == rhs.master_sfx_percent
+        && lhs.sfx_percent == rhs.sfx_percent
+        && lhs.music_percent == rhs.music_percent
+        && lhs.ambience_percent == rhs.ambience_percent
+        && lhs.ui_percent == rhs.ui_percent
         && lhs.window_mode == rhs.window_mode
         && lhs.vsync_enabled == rhs.vsync_enabled
         && lhs.loot_filter_mode == rhs.loot_filter_mode
@@ -173,6 +178,10 @@ struct StressOutcome final {
             return {};
         }
         draft.master_sfx_percent = static_cast<std::uint8_t>((revision % 21U) * 5U);
+        draft.sfx_percent = static_cast<std::uint8_t>(((revision + 3U) % 21U) * 5U);
+        draft.music_percent = static_cast<std::uint8_t>(((revision + 6U) % 21U) * 5U);
+        draft.ambience_percent = static_cast<std::uint8_t>(((revision + 9U) % 21U) * 5U);
+        draft.ui_percent = static_cast<std::uint8_t>(((revision + 12U) % 21U) * 5U);
         draft.window_mode = (revision & 1U) != 0U
             ? settings::WindowMode::fullscreen : settings::WindowMode::windowed;
         draft.vsync_enabled = (revision % 3U) != 0U;

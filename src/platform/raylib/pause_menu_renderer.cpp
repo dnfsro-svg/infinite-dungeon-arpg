@@ -102,7 +102,7 @@ void draw_pause_menu_with_font(
                         Color{121, 197, 244, 255});
                 }
                 DrawTextEx(font, view.rows[op.row_index].data(),
-                    {bounds.x + 10.0F, bounds.y + 3.0F}, 16.0F, 1.0F,
+                    {bounds.x + 10.0F, bounds.y + 1.0F}, 14.0F, 1.0F,
                     op.selected
                         ? Color{244, 249, 255, 255}
                         : Color{207, 218, 231, 255});

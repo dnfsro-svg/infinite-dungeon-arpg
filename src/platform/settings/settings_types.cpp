@@ -58,11 +58,14 @@ SettingsData default_settings() noexcept {
 }
 
 SettingsValidationError validate_settings(const SettingsData& settings) noexcept {
-    if (settings.master_sfx_percent > 100U) {
-        return SettingsValidationError::volume_range;
-    }
-    if (settings.master_sfx_percent % 5U != 0U) {
-        return SettingsValidationError::volume_step;
+    const std::array<std::uint8_t, 5> volumes{{
+        settings.master_sfx_percent, settings.sfx_percent,
+        settings.music_percent, settings.ambience_percent,
+        settings.ui_percent,
+    }};
+    for (const std::uint8_t volume : volumes) {
+        if (volume > 100U) return SettingsValidationError::volume_range;
+        if (volume % 5U != 0U) return SettingsValidationError::volume_step;
     }
     if (settings.window_mode != WindowMode::windowed &&
         settings.window_mode != WindowMode::fullscreen) {

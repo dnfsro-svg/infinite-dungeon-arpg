@@ -82,6 +82,10 @@ enum class LootFilterMode : std::uint8_t {
 
 struct SettingsData final {
     std::uint8_t master_sfx_percent{100};
+    std::uint8_t sfx_percent{100};
+    std::uint8_t music_percent{45};
+    std::uint8_t ambience_percent{35};
+    std::uint8_t ui_percent{80};
     WindowMode window_mode{WindowMode::windowed};
     bool vsync_enabled{true};
     LootFilterMode loot_filter_mode{LootFilterMode::show_all};

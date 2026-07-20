@@ -31,6 +31,10 @@ constexpr std::array<SettingAction, 10> actions{
 [[nodiscard]] bool same_settings(
     const SettingsData& lhs, const SettingsData& rhs) noexcept {
     return lhs.master_sfx_percent == rhs.master_sfx_percent &&
+        lhs.sfx_percent == rhs.sfx_percent &&
+        lhs.music_percent == rhs.music_percent &&
+        lhs.ambience_percent == rhs.ambience_percent &&
+        lhs.ui_percent == rhs.ui_percent &&
         lhs.window_mode == rhs.window_mode &&
         lhs.vsync_enabled == rhs.vsync_enabled &&
         lhs.loot_filter_mode == rhs.loot_filter_mode &&
@@ -45,6 +49,10 @@ arpg::test::Failure defaults_are_stable() noexcept {
         StableKey::k, StableKey::l, StableKey::e, StableKey::i, StableKey::p};
 
     ARPG_REQUIRE(settings.master_sfx_percent == 100U);
+    ARPG_REQUIRE(settings.sfx_percent == 100U);
+    ARPG_REQUIRE(settings.music_percent == 45U);
+    ARPG_REQUIRE(settings.ambience_percent == 35U);
+    ARPG_REQUIRE(settings.ui_percent == 80U);
     ARPG_REQUIRE(settings.window_mode == WindowMode::windowed);
     ARPG_REQUIRE(settings.vsync_enabled);
     ARPG_REQUIRE(settings.loot_filter_mode == LootFilterMode::show_all);
@@ -87,17 +95,31 @@ arpg::test::Failure action_labels_are_present_and_distinct() noexcept {
 
 arpg::test::Failure rejects_volume_out_of_range() noexcept {
     SettingsData settings = arpg::settings::default_settings();
-    settings.master_sfx_percent = 101U;
-    ARPG_REQUIRE(arpg::settings::validate_settings(settings) ==
-        SettingsValidationError::volume_range);
+    std::uint8_t SettingsData::* fields[] = {
+        &SettingsData::master_sfx_percent, &SettingsData::sfx_percent,
+        &SettingsData::music_percent, &SettingsData::ambience_percent,
+        &SettingsData::ui_percent};
+    for (const auto field : fields) {
+        settings = arpg::settings::default_settings();
+        settings.*field = 101U;
+        ARPG_REQUIRE(arpg::settings::validate_settings(settings) ==
+            SettingsValidationError::volume_range);
+    }
     return {};
 }
 
 arpg::test::Failure rejects_volume_off_step() noexcept {
     SettingsData settings = arpg::settings::default_settings();
-    settings.master_sfx_percent = 99U;
-    ARPG_REQUIRE(arpg::settings::validate_settings(settings) ==
-        SettingsValidationError::volume_step);
+    std::uint8_t SettingsData::* fields[] = {
+        &SettingsData::master_sfx_percent, &SettingsData::sfx_percent,
+        &SettingsData::music_percent, &SettingsData::ambience_percent,
+        &SettingsData::ui_percent};
+    for (const auto field : fields) {
+        settings = arpg::settings::default_settings();
+        settings.*field = 99U;
+        ARPG_REQUIRE(arpg::settings::validate_settings(settings) ==
+            SettingsValidationError::volume_step);
+    }
     return {};
 }
 

@@ -114,6 +114,10 @@ void put(FakeFiles& fake, const char* name, const SettingsData& settings) {
 [[nodiscard]] bool same_settings(
     const SettingsData& lhs, const SettingsData& rhs) noexcept {
     return lhs.master_sfx_percent == rhs.master_sfx_percent &&
+        lhs.sfx_percent == rhs.sfx_percent &&
+        lhs.music_percent == rhs.music_percent &&
+        lhs.ambience_percent == rhs.ambience_percent &&
+        lhs.ui_percent == rhs.ui_percent &&
         lhs.window_mode == rhs.window_mode &&
         lhs.vsync_enabled == rhs.vsync_enabled &&
         lhs.loot_filter_mode == rhs.loot_filter_mode &&
