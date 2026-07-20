@@ -45,7 +45,7 @@ foreach(_stage14_source IN LISTS _stage14_production_files)
             "Stage14 production source must not invoke or reference ffmpeg: ${_stage14_source}")
     endif()
     if(_stage14_source_lower MATCHES
-            "(^|[^A-Za-z0-9_])((std::)?(system|popen|_popen)|createprocess[a-z]*|shellexecute[a-z]*|winexec)[ \\t\\r\\n]*\\(")
+            "(^|[^A-Za-z0-9_.:])((std::)?system|_wsystem|popen|_popen|_wpopen|createprocess[a-z]*|shellexecute[a-z]*|winexec|posix_spawn[a-z]*|_spawn(l|le|lp|lpe|v|ve|vp|vpe)?|_wspawn(l|le|lp|lpe|v|ve|vp|vpe)?|exec(l|le|lp|lpe|v|ve|vp|vpe)?|_exec(l|le|lp|lpe|v|ve|vp|vpe)?)[ \\t\\r\\n]*\\(")
         message(FATAL_ERROR
             "Stage14 production source must not launch a process: ${_stage14_source}")
     endif()
