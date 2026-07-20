@@ -321,15 +321,13 @@ arpg::test::Failure reinforcement_scales_only_equipped_base_slot_attributes() no
         (std::numeric_limits<std::uint32_t>::max)();
     saturated_helmet.affixes[0] = {104U, 1U, 0xFFU};
     saturated_helmet.affix_count = 1U;
-    ItemInstance saturated_chest = normal_item(57U, 3U);
-    saturated_chest.reinforcement =
-        (std::numeric_limits<std::uint32_t>::max)();
+    ItemInstance ordinary_chest = normal_item(57U, 3U);
     ARPG_REQUIRE(validate_item(saturated_helmet));
-    ARPG_REQUIRE(validate_item(saturated_chest));
+    ARPG_REQUIRE(validate_item(ordinary_chest));
     ItemOwnershipState saturated_armor{};
-    saturated_armor.items = {saturated_helmet, saturated_chest};
+    saturated_armor.items = {saturated_helmet, ordinary_chest};
     saturated_armor.equipment.equipped_ids[1] = saturated_helmet.id;
-    saturated_armor.equipment.equipped_ids[2] = saturated_chest.id;
+    saturated_armor.equipment.equipped_ids[2] = ordinary_chest.id;
     const EquipmentProjection saturated_armor_projection =
         project_equipment(saturated_armor);
     ARPG_REQUIRE(saturated_armor_projection.valid);

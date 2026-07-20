@@ -103,13 +103,32 @@ bool append_modifier(EquipmentProjection& projection,
     std::uint16_t source,
     modifiers::StatId stat,
     modifiers::ModifierOperation operation,
-    std::int64_t raw_value) noexcept {
+    std::int64_t raw_value,
+    bool allow_reinforcement_saturation_merge) noexcept {
     if (projection.modifier_count >= projection.modifiers.size()) return false;
     std::int64_t value = raw_value;
     if (uses_fixed_units(stat, operation)
         && !checked_multiply(value, modifiers::kFixedOne, value)) {
         value = value < 0 ? (std::numeric_limits<std::int64_t>::min)()
                           : (std::numeric_limits<std::int64_t>::max)();
+    }
+    const auto maximum = (std::numeric_limits<std::int64_t>::max)();
+    const auto minimum = (std::numeric_limits<std::int64_t>::min)();
+    for (std::size_t index = 0U; index < projection.modifier_count; ++index) {
+        modifiers::Modifier& existing = projection.modifiers[index];
+        if (existing.stat != stat || existing.operation != operation) {
+            continue;
+        }
+        // A saturated existing value was produced by an earlier reinforced
+        // equipment effect. Preserve that anchor for later slots so the
+        // projection is independent of equipment-slot iteration order.
+        if (existing.value == maximum || existing.value == minimum
+                || (allow_reinforcement_saturation_merge
+                    && (value == maximum || value == minimum))) {
+            existing.value = value == minimum || existing.value == minimum
+                ? minimum : maximum;
+            return true;
+        }
     }
     projection.modifiers[projection.modifier_count++] = modifiers::Modifier{
         modifier_id(slot, source), stat, operation, value};
@@ -122,6 +141,7 @@ bool apply_effect(EquipmentProjection& projection,
     modifiers::StatId stat,
     modifiers::ModifierOperation operation,
     std::int64_t value,
+    bool allow_reinforcement_saturation_merge,
     std::uint8_t variant,
     std::uint16_t source,
     std::int64_t& local_flat,
@@ -129,7 +149,7 @@ bool apply_effect(EquipmentProjection& projection,
     switch (effect) {
     case ItemEffectKind::global_modifier:
         return append_modifier(projection, slot, source,
-            stat, operation, value);
+            stat, operation, value, allow_reinforcement_saturation_merge);
     case ItemEffectKind::local_weapon_physical_flat:
         if (slot != ItemSlot::weapon) return false;
         local_flat = saturating_add(local_flat, value);
@@ -150,7 +170,8 @@ bool apply_effect(EquipmentProjection& projection,
         }
         return append_modifier(projection, slot, source,
             modifiers::StatId::attack_speed,
-            modifiers::ModifierOperation::increased, value);
+            modifiers::ModifierOperation::increased, value,
+            allow_reinforcement_saturation_merge);
     case ItemEffectKind::all_element_damage_reduction:
         for (std::uint16_t element = 0U; element < 4U; ++element) {
             const auto element_stat = static_cast<modifiers::StatId>(
@@ -158,7 +179,8 @@ bool apply_effect(EquipmentProjection& projection,
                     modifiers::StatId::fire_damage_reduction) + element);
             if (!append_modifier(projection, slot,
                     static_cast<std::uint16_t>(source + element),
-                    element_stat, modifiers::ModifierOperation::flat, value))
+                    element_stat, modifiers::ModifierOperation::flat, value,
+                    allow_reinforcement_saturation_merge))
                 return false;
         }
         return true;
@@ -169,7 +191,8 @@ bool apply_effect(EquipmentProjection& projection,
                     modifiers::StatId::fire_damage_reduction) + element);
             if (!append_modifier(projection, slot,
                     static_cast<std::uint16_t>(source + element),
-                    element_stat, modifiers::ModifierOperation::flat, value))
+                    element_stat, modifiers::ModifierOperation::flat, value,
+                    allow_reinforcement_saturation_merge))
                 return false;
         }
         return true;
@@ -178,7 +201,8 @@ bool apply_effect(EquipmentProjection& projection,
         return append_modifier(projection, slot, source,
             static_cast<modifiers::StatId>(static_cast<std::uint16_t>(
                 modifiers::StatId::fire_damage_reduction_cap) + variant),
-            modifiers::ModifierOperation::flat, value);
+            modifiers::ModifierOperation::flat, value,
+            allow_reinforcement_saturation_merge);
     case ItemEffectKind::count:
         return false;
     }
@@ -289,19 +313,21 @@ EquipmentProjectionResult project_equipment_with_state(
              effect_index < base->effect_count; ++effect_index) {
             const BaseEffect& effect = base->effects[effect_index];
             std::int64_t value = effect.values[base_value_index];
-            if ((slot == ItemSlot::weapon
+            const bool reinforced_base = (slot == ItemSlot::weapon
                     && effect.effect
                         == ItemEffectKind::local_weapon_physical_flat)
                 || (slot != ItemSlot::weapon && slot != ItemSlot::accessory
                     && effect.effect == ItemEffectKind::global_modifier
                     && effect.stat == modifiers::StatId::armor
-                    && effect.operation == modifiers::ModifierOperation::flat)) {
+                    && effect.operation == modifiers::ModifierOperation::flat);
+            if (reinforced_base) {
                 value = reinforced_base_value(value, item->reinforcement);
             }
             const std::uint16_t source = static_cast<std::uint16_t>(
                 kBaseSourceStart + effect_index * kSourceStride);
             if (!apply_effect(projection, slot, effect.effect, effect.stat,
-                    effect.operation, value, 0xFFU,
+                    effect.operation, value, reinforced_base
+                        && item->reinforcement != 0U, 0xFFU,
                     source, local_flat, local_increased))
                 return {};
         }
@@ -316,7 +342,8 @@ EquipmentProjectionResult project_equipment_with_state(
                 if (!append_modifier(projection, slot,
                         static_cast<std::uint16_t>(
                             kReinforcementSourceStart + element),
-                        stat, modifiers::ModifierOperation::flat, bonus)) {
+                        stat, modifiers::ModifierOperation::flat, bonus,
+                        true)) {
                     return {};
                 }
             }
@@ -332,7 +359,8 @@ EquipmentProjectionResult project_equipment_with_state(
             const std::uint16_t source = static_cast<std::uint16_t>(
                 kAffixSourceStart + affix_index * kSourceStride);
             if (!apply_effect(projection, slot, affix->effect, affix->stat,
-                    affix->operation, *value, roll.variant,
+                    affix->operation, *value, item->reinforcement != 0U,
+                    roll.variant,
                     source, local_flat, local_increased))
                 return {};
         }

@@ -22,6 +22,13 @@ int ceil_divide(std::int64_t numerator, std::int32_t divisor) noexcept {
     return static_cast<int>((numerator + divisor - 1) / divisor);
 }
 
+int saturating_damage_add(int left, int right) noexcept {
+    const int maximum = (std::numeric_limits<int>::max)();
+    if (left <= 0) return std::max(0, right);
+    if (right <= 0) return left;
+    return left > maximum - right ? maximum : left + right;
+}
+
 std::uint16_t hit_stop_for(FeedbackLevel feedback) noexcept {
     switch (feedback) {
     case FeedbackLevel::light:
@@ -150,7 +157,7 @@ void CombatWorld::resolve_attack_hits() noexcept {
                     static_cast<std::int64_t>(value) * remaining_bp,
                     kBasisPoints);
             }
-            hp_damage += value;
+            hp_damage = saturating_damage_add(hp_damage, value);
         }
         const int packet_total = hp_damage;
         if (dummy.shield != 0 && hp_damage > 0) {

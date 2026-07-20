@@ -51,5 +51,5 @@ int main() {
         player_defense_suite(),
     };
 
-    return arpg::test::run_suites(suites, 205, "stage 11-a task 2 death snapshot");
+    return arpg::test::run_suites(suites, 206, "stage 11-a task 2 death snapshot");
 }
