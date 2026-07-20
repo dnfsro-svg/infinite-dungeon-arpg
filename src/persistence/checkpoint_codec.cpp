@@ -454,6 +454,12 @@ std::optional<EncodedCheckpoint> encode_checkpoint(
     }
     write_u16(out.data() + 684U,
         state.item_ownership.material_discovery_bits);
+    for (std::size_t index = 0U;
+            index < state.item_ownership.material_claimed_drop_bits.size();
+            ++index) {
+        write_u64(out.data() + 692U + index * 8U,
+            state.item_ownership.material_claimed_drop_bits[index]);
+    }
 
     for (std::size_t item_index = 0U; item_index < item_count; ++item_index) {
         const auto& item = state.item_ownership.items[item_index];
@@ -883,6 +889,15 @@ DecodeResult decode_checkpoint(
                     return error_result(CodecError::wrong_size);
                 if (reserved != 0U)
                     return error_result(CodecError::invalid_state);
+            }
+            for (auto& claimed :
+                    state.item_ownership.material_claimed_drop_bits) {
+                if (!materials.read_u64(claimed))
+                    return error_result(CodecError::wrong_size);
+            }
+            if ((state.item_ownership.material_claimed_drop_bits.back()
+                    & ~0xFFFFULL) != 0U) {
+                return error_result(CodecError::invalid_state);
             }
         }
         ownership.offset = layout.item_offset;

@@ -238,6 +238,39 @@ struct DungeonSessionTestAccess final {
             session.pending_save_->pickup_ordinal = ordinal;
         }
     }
+    static void set_started_abyss_room(
+        dungeon::DungeonSession& session,
+        abyss::AbyssDanger danger) noexcept {
+        session.stable_state_.current_room.is_abyss = true;
+        session.stable_state_.abyss.lifecycle = abyss::AbyssLifecycle::started;
+        session.stable_state_.abyss.danger = danger;
+        session.stable_state_.abyss.rule = danger == abyss::AbyssDanger::low
+            ? abyss::AbyssRuleId::thunderstorm
+            : (danger == abyss::AbyssDanger::medium
+                ? abyss::AbyssRuleId::hunting_flames
+                : abyss::AbyssRuleId::chaos_expansion);
+        session.stable_state_.abyss.rules_version = abyss::kAbyssRulesVersion;
+    }
+    static void clear_all_ground_items(
+        dungeon::DungeonSession& session) noexcept {
+        session.ground_items_ = {};
+    }
+    static void install_ground_material(
+        dungeon::DungeonSession& session,
+        std::uint16_t ordinal,
+        items::MaterialId material,
+        combat::Vec3 position,
+        dungeon::GroundMaterialSource source =
+            dungeon::GroundMaterialSource::monster_common) noexcept {
+        if (ordinal < session.ground_materials_.size()) {
+            session.ground_materials_[ordinal] = {
+                true, ordinal, source, position, material};
+        }
+    }
+    static void prepare_room_clear(
+        dungeon::DungeonSession& session) noexcept {
+        session.prepare_room_clear();
+    }
     static void offset_pending_abyss_reward_position(
         dungeon::DungeonSession& session,
         combat::Vec3 offset) noexcept {
@@ -272,6 +305,11 @@ struct DungeonSessionTestAccess final {
         dungeon::kGroundDropCapacity>& ground_items(
         const dungeon::DungeonSession& session) noexcept {
         return session.ground_items_;
+    }
+    static const std::array<dungeon::GroundMaterial,
+        dungeon::kGroundMaterialCapacity>& ground_materials(
+        const dungeon::DungeonSession& session) noexcept {
+        return session.ground_materials_;
     }
 };
 
@@ -409,6 +447,33 @@ inline void set_pending_pickup_ordinal(
     dungeon::DungeonSession& session,
     std::uint16_t ordinal) noexcept {
     DungeonSessionTestAccess::set_pending_pickup_ordinal(session, ordinal);
+}
+
+inline void set_started_abyss_room(
+    dungeon::DungeonSession& session,
+    abyss::AbyssDanger danger) noexcept {
+    DungeonSessionTestAccess::set_started_abyss_room(session, danger);
+}
+
+inline void clear_all_ground_items(
+    dungeon::DungeonSession& session) noexcept {
+    DungeonSessionTestAccess::clear_all_ground_items(session);
+}
+
+inline void install_ground_material(
+    dungeon::DungeonSession& session,
+    std::uint16_t ordinal,
+    items::MaterialId material,
+    combat::Vec3 position,
+    dungeon::GroundMaterialSource source =
+        dungeon::GroundMaterialSource::monster_common) noexcept {
+    DungeonSessionTestAccess::install_ground_material(
+        session, ordinal, material, position, source);
+}
+
+inline void prepare_room_clear(
+    dungeon::DungeonSession& session) noexcept {
+    DungeonSessionTestAccess::prepare_room_clear(session);
 }
 
 inline void offset_pending_abyss_reward_position(
@@ -595,6 +660,16 @@ inline bool drive_until_cleared(
         if (state.phase == dungeon::RoomPhase::cleared
                 || state.phase == dungeon::RoomPhase::awaiting_exit) {
             return true;
+        }
+        if (state.phase == dungeon::RoomPhase::committing
+                && state.pending_save_kind.has_value()
+                && (*state.pending_save_kind
+                        == dungeon::PendingSaveKind::room_clear
+                    || *state.pending_save_kind
+                        == dungeon::PendingSaveKind::abyss_clear)) {
+            if (!commit_pending(session)) return false;
+            drain_all_events(session, summary);
+            continue;
         }
         if (state.phase == dungeon::RoomPhase::combat) {
             force_defeat_current_wave(session);

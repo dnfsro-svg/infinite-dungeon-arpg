@@ -3,6 +3,7 @@
 #include "combat/combat_types.hpp"
 #include "dungeon/dungeon_checkpoint.hpp"
 #include "dungeon/dungeon_rules.hpp"
+#include "dungeon/material_loot.hpp"
 
 #include <array>
 #include <cstddef>
@@ -90,6 +91,7 @@ struct DungeonDiagnostics final {
     std::uint32_t rejected_exit_count{};
     std::uint32_t save_failure_count{};
     std::uint32_t ground_saturation_count{};
+    std::uint32_t material_ground_saturation_count{};
     DungeonFault fault{DungeonFault::none};
     bool room_index_overflow{};
 };
@@ -157,6 +159,13 @@ struct DeathSnapshot final {
     bool continue_failed{};
 };
 
+struct MaterialPickupReceipt final {
+    bool valid{};
+    bool room_vacuum{};
+    std::uint64_t commit_generation{};
+    std::array<std::uint64_t, items::kMaterialCount> counts{};
+};
+
 struct DungeonSnapshot final {
     std::uint64_t session_tick{};
     std::uint64_t root_seed{};
@@ -196,8 +205,13 @@ struct DungeonSnapshot final {
     std::array<std::uint64_t, 6> equipped_ids{};
     std::uint16_t ground_item_count{};
     std::array<GroundItemSnapshot, kGroundDropCapacity> ground_items{};
+    std::uint16_t ground_material_count{};
+    std::array<GroundMaterialSnapshot, kGroundMaterialCapacity>
+        ground_materials{};
+    MaterialPickupReceipt material_pickup_receipt{};
     std::optional<PendingSaveKind> pending_save_kind{};
     std::optional<std::uint16_t> pending_pickup_ordinal{};
+    std::optional<std::uint16_t> pending_material_pickup_ordinal{};
     std::optional<DeathSnapshot> death{};
     std::optional<combat::CombatSnapshot> combat{};
     DungeonEncounterDiagnostics encounter{};
@@ -219,6 +233,8 @@ enum class PendingSaveKind : std::uint8_t {
     transition,
     passive_tree,
     loot_pickup,
+    material_pickup,
+    room_clear,
     equipment,
     recipe,
     abyss_start,

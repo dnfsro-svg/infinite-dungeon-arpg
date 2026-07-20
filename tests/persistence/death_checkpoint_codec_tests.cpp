@@ -125,18 +125,18 @@ arpg::test::Failure v7_layout_and_full_round_trip() noexcept {
     static_assert(persistence::kV6DeathPayloadSize == 224U);
     static_assert(persistence::kV6BasePayloadSize == 428U);
     static_assert(persistence::kV6BaseEncodedCheckpointSize == 460U);
-    static_assert(persistence::kV7BasePayloadSize == 660U);
-    static_assert(persistence::kV7BaseEncodedCheckpointSize == 692U);
+    static_assert(persistence::kV7BasePayloadSize == 716U);
+    static_assert(persistence::kV7BaseEncodedCheckpointSize == 748U);
     auto state = make_state();
     state.death_sequence = 12U;
     state.death = make_pending_death();
     const auto encoded = persistence::encode_checkpoint(state);
     ARPG_REQUIRE(encoded.has_value());
-    ARPG_REQUIRE(encoded->size() == 692U);
+    ARPG_REQUIRE(encoded->size() == 748U);
     const std::array<std::uint8_t, 8U> magic{{'A','R','P','G','S','V','7','\0'}};
     ARPG_REQUIRE(std::equal(magic.begin(), magic.end(), encoded->begin()));
     ARPG_REQUIRE((*encoded)[8U] == 7U);
-    ARPG_REQUIRE((*encoded)[24U] == 0x94U && (*encoded)[25U] == 0x02U);
+    ARPG_REQUIRE((*encoded)[24U] == 0xCCU && (*encoded)[25U] == 0x02U);
     ARPG_REQUIRE((*encoded)[236U] == 12U);
     ARPG_REQUIRE((*encoded)[244U] == 1U);
     ARPG_REQUIRE(bytes_at(*encoded, 245U,
@@ -191,7 +191,7 @@ arpg::test::Failure v7_layout_and_full_round_trip() noexcept {
             [](std::uint8_t value) { return value == 0U; }));
     }
     ARPG_REQUIRE(std::all_of(encoded->begin() + 684U,
-        encoded->begin() + 692U, [](std::uint8_t value) { return value == 0U; }));
+        encoded->begin() + 748U, [](std::uint8_t value) { return value == 0U; }));
     const auto decoded = persistence::decode_checkpoint(encoded->data(), encoded->size());
     ARPG_REQUIRE(decoded.error == persistence::CodecError::none);
     ARPG_REQUIRE(!decoded.migrated);
@@ -393,7 +393,7 @@ arpg::test::Failure v7_death_enum_boolean_reserved_and_state_errors() noexcept {
 arpg::test::Failure v7_lengths_crc_and_magic_are_rejected() noexcept {
     const auto encoded = persistence::encode_checkpoint(make_state());
     ARPG_REQUIRE(encoded.has_value());
-    for (std::size_t size = 236U; size < 692U; ++size) {
+    for (std::size_t size = 236U; size < 748U; ++size) {
         ARPG_REQUIRE(persistence::decode_checkpoint(encoded->data(), size).error
             == persistence::CodecError::bad_payload_length);
     }
@@ -402,7 +402,7 @@ arpg::test::Failure v7_lengths_crc_and_magic_are_rejected() noexcept {
     ARPG_REQUIRE(persistence::decode_checkpoint(trailing.data(), trailing.size()).error
         == persistence::CodecError::bad_payload_length);
     auto bad_length = *encoded;
-    write_u32(bad_length, 24U, 659U);
+    write_u32(bad_length, 24U, 715U);
     ARPG_REQUIRE(persistence::decode_checkpoint(
         bad_length.data(), bad_length.size()).error
         == persistence::CodecError::bad_payload_length);

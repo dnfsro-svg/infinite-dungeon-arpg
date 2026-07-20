@@ -163,6 +163,11 @@ arpg::test::Failure v7_layout_materials_and_items_round_trip() noexcept {
     state.item_ownership.claimed_drop_bits = {{
         0x4142434445464748ULL, 0x5152535455565758ULL,
         0x6162636465666768ULL}};
+    state.item_ownership.material_claimed_drop_bits = {{
+        0x0102030405060708ULL, 0x1112131415161718ULL,
+        0x2122232425262728ULL, 0x3132333435363738ULL,
+        0x4142434445464748ULL, 0x5152535455565758ULL,
+        0x000000000000A55AULL}};
     state.item_ownership.equipment.equipped_ids[0] =
         state.item_ownership.items[1].id;
     state.item_ownership.equipment.equipped_ids[5] =
@@ -185,12 +190,12 @@ arpg::test::Failure v7_layout_materials_and_items_round_trip() noexcept {
     const auto encoded = persistence::encode_checkpoint(state);
     ARPG_REQUIRE(encoded.has_value());
     const auto& bytes = *encoded;
-    ARPG_REQUIRE(bytes.size() == 884U);
+    ARPG_REQUIRE(bytes.size() == 940U);
     ARPG_REQUIRE(std::equal(bytes.begin(), bytes.begin() + 8U,
         std::array<std::uint8_t, 8U>{{'A','R','P','G','S','V','7','\0'}}.begin()));
     ARPG_REQUIRE(read_u32(bytes, 8U) == 7U);
     ARPG_REQUIRE(read_u32(bytes, 12U) == 1U);
-    ARPG_REQUIRE(read_u32(bytes, 24U) == 852U);
+    ARPG_REQUIRE(read_u32(bytes, 24U) == 908U);
     ARPG_REQUIRE(read_u32(bytes, 152U) == 3U);
     ARPG_REQUIRE(read_u64(bytes, 156U) == state.item_ownership.next_item_sequence);
     ARPG_REQUIRE(read_u64(bytes, 164U) == state.item_ownership.claimed_drop_bits[0]);
@@ -213,8 +218,14 @@ arpg::test::Failure v7_layout_materials_and_items_round_trip() noexcept {
             state.item_ownership.material_discovery_bits >> 8U));
     ARPG_REQUIRE(std::all_of(bytes.begin() + 686U, bytes.begin() + 692U,
         [](std::uint8_t value) noexcept { return value == 0U; }));
+    for (std::size_t index = 0U;
+            index < state.item_ownership.material_claimed_drop_bits.size();
+            ++index) {
+        ARPG_REQUIRE(read_u64(bytes, 692U + index * 8U)
+            == state.item_ownership.material_claimed_drop_bits[index]);
+    }
 
-    constexpr std::size_t kRecord = 692U;
+    constexpr std::size_t kRecord = 748U;
     ARPG_REQUIRE(read_u64(bytes, kRecord) == state.item_ownership.items[0].id);
     ARPG_REQUIRE(bytes[kRecord + 8U] == 2U);
     ARPG_REQUIRE(bytes[kRecord + 9U] == 0U);
@@ -253,6 +264,8 @@ arpg::test::Failure v7_layout_materials_and_items_round_trip() noexcept {
             == (std::numeric_limits<std::uint64_t>::max)());
     ARPG_REQUIRE(decoded.state.item_ownership.material_discovery_bits
         == state.item_ownership.material_discovery_bits);
+    ARPG_REQUIRE(decoded.state.item_ownership.material_claimed_drop_bits
+        == state.item_ownership.material_claimed_drop_bits);
     ARPG_REQUIRE(decoded.state.item_ownership.next_item_sequence
         == state.item_ownership.next_item_sequence);
     return {};
@@ -285,7 +298,7 @@ arpg::test::Failure v7_complete_ownership_and_six_roll_record_are_golden() noexc
 
     const auto encoded = persistence::encode_checkpoint(state);
     ARPG_REQUIRE(encoded.has_value());
-    ARPG_REQUIRE(encoded->size() == 756U);
+    ARPG_REQUIRE(encoded->size() == 812U);
     constexpr std::array<std::uint8_t, 84U> kExpectedOwnership{{
         0x01U, 0x00U, 0x00U, 0x00U,
         0x18U, 0x17U, 0x16U, 0x15U, 0x14U, 0x13U, 0x12U, 0x11U,
@@ -314,7 +327,7 @@ arpg::test::Failure v7_complete_ownership_and_six_roll_record_are_golden() noexc
     ARPG_REQUIRE(std::equal(kExpectedOwnership.begin(), kExpectedOwnership.end(),
         encoded->begin() + 152U));
     ARPG_REQUIRE(std::equal(kExpectedRecord.begin(), kExpectedRecord.end(),
-        encoded->begin() + 692U));
+        encoded->begin() + 748U));
     return {};
 }
 
@@ -1097,12 +1110,13 @@ arpg::test::Failure encoded_sizes_and_generation_are_little_endian() noexcept {
     static_assert(persistence::kV6BaseEncodedCheckpointSize == 460U);
     static_assert(persistence::kV7MaterialRecordSize == 16U);
     static_assert(persistence::kV7ItemRecordSize == 64U);
-    static_assert(persistence::kV7BasePayloadSize == 660U);
-    static_assert(persistence::kV7BaseEncodedCheckpointSize == 692U);
+    static_assert(persistence::kV7MaterialClaimPayloadSize == 56U);
+    static_assert(persistence::kV7BasePayloadSize == 716U);
+    static_assert(persistence::kV7BaseEncodedCheckpointSize == 748U);
 
     std::vector<std::uint8_t> bytes;
     ARPG_REQUIRE(encoded_fixture(bytes));
-    ARPG_REQUIRE(bytes.size() == 692U);
+    ARPG_REQUIRE(bytes.size() == 748U);
     ARPG_REQUIRE(bytes[16] == 0x18U);
     ARPG_REQUIRE(bytes[17] == 0x17U);
     ARPG_REQUIRE(bytes[18] == 0x16U);
@@ -1323,7 +1337,7 @@ arpg::test::Failure v5_length_count_crc_and_capacity_are_bounded() noexcept {
     maximum.item_ownership.next_item_sequence = 65536U;
     const auto maximum_encoded = persistence::encode_checkpoint(maximum);
     ARPG_REQUIRE(maximum_encoded.has_value());
-    ARPG_REQUIRE(maximum_encoded->size() == 4194932U);
+    ARPG_REQUIRE(maximum_encoded->size() == 4194988U);
     const auto maximum_decoded = persistence::decode_checkpoint(
         maximum_encoded->data(), maximum_encoded->size());
     ARPG_REQUIRE(maximum_decoded.error == persistence::CodecError::none);
@@ -1373,6 +1387,13 @@ arpg::test::Failure v7_material_ids_discovery_and_reserved_bytes_are_validated()
         base_reserved.data(), base_reserved.size()).error
             == persistence::CodecError::invalid_state);
 
+    auto material_claim_high_bit = *encoded;
+    material_claim_high_bit[692U + 6U * 8U + 2U] = 1U;
+    refresh_crc(material_claim_high_bit);
+    ARPG_REQUIRE(persistence::decode_checkpoint(
+        material_claim_high_bit.data(), material_claim_high_bit.size()).error
+            == persistence::CodecError::invalid_state);
+
     auto invalid_roll = *encoded;
     write_u16(invalid_roll,
         persistence::kV7BaseEncodedCheckpointSize
@@ -1392,6 +1413,9 @@ arpg::test::Failure v7_material_ids_discovery_and_reserved_bytes_are_validated()
 
     state.item_ownership.material_discovery_bits = 0x4000U;
     ARPG_REQUIRE(!persistence::encode_checkpoint(state).has_value());
+    state.item_ownership.material_discovery_bits = 0U;
+    state.item_ownership.material_claimed_drop_bits[6U] = 0x10000U;
+    ARPG_REQUIRE(!persistence::encode_checkpoint(state).has_value());
     return {};
 }
 
@@ -1407,16 +1431,16 @@ arpg::test::Failure v7_corrupt_item_semantics_are_rejected() noexcept {
             == persistence::CodecError::invalid_state;
     };
 
-    ARPG_REQUIRE(rejects(705U, 1U));
-    ARPG_REQUIRE(rejects(708U, 1U));
-    ARPG_REQUIRE(rejects(692U, 0U));
-    ARPG_REQUIRE(rejects(756U, 101U));
-    ARPG_REQUIRE(rejects(700U, 0U));
-    ARPG_REQUIRE(rejects(702U, 0U));
-    ARPG_REQUIRE(rejects(703U, 96U));
-    ARPG_REQUIRE(rejects(842U, 7U));
-    ARPG_REQUIRE(rejects(773U, 7U));
-    ARPG_REQUIRE(rejects(851U, 4U));
+    ARPG_REQUIRE(rejects(761U, 1U));
+    ARPG_REQUIRE(rejects(764U, 1U));
+    ARPG_REQUIRE(rejects(748U, 0U));
+    ARPG_REQUIRE(rejects(812U, 101U));
+    ARPG_REQUIRE(rejects(756U, 0U));
+    ARPG_REQUIRE(rejects(758U, 0U));
+    ARPG_REQUIRE(rejects(759U, 96U));
+    ARPG_REQUIRE(rejects(898U, 7U));
+    ARPG_REQUIRE(rejects(829U, 7U));
+    ARPG_REQUIRE(rejects(907U, 4U));
 
     auto dangling = *encoded;
     dangling[188U] = 0xFEU;

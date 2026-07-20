@@ -41,16 +41,18 @@ constexpr std::uint64_t kDropItemIdDomain = 0x44524F505F49445FULL;
         ordinal_stream.next_u64(), domain);
 }
 
+template <std::size_t Size>
 [[nodiscard]] bool bit_is_set(
-    const std::array<std::uint64_t, 3>& bits,
+    const std::array<std::uint64_t, Size>& bits,
     std::uint16_t ordinal) noexcept {
     const std::size_t word = ordinal / 64U;
     const std::uint8_t bit = static_cast<std::uint8_t>(ordinal % 64U);
     return word < bits.size() && (bits[word] & (std::uint64_t{1U} << bit)) != 0U;
 }
 
+template <std::size_t Size>
 void set_bit(
-    std::array<std::uint64_t, 3>& bits,
+    std::array<std::uint64_t, Size>& bits,
     std::uint16_t ordinal) noexcept {
     const std::size_t word = ordinal / 64U;
     const std::uint8_t bit = static_cast<std::uint8_t>(ordinal % 64U);
@@ -458,6 +460,8 @@ void DungeonSession::construct_current_room() noexcept {
     }
     ground_items_ = {};
     rolled_drop_bits_ = {};
+    ground_materials_ = {};
+    rolled_material_bits_ = {};
     if (stable_state_.current_room.depth == 0U) {
         enter_fault(DungeonFault::invalid_item_state);
         return;
@@ -536,6 +540,8 @@ void DungeonSession::clear_transient_room_state() noexcept {
     combat_.reset();
     ground_items_ = {};
     rolled_drop_bits_ = {};
+    ground_materials_ = {};
+    rolled_material_bits_ = {};
     encounter_plan_ = {};
     wave_index_ = 0U;
     wave_delay_ticks_ = 0U;
@@ -928,6 +934,7 @@ RequestResult DungeonSession::prepare_abyss_failure() noexcept {
             enter_fault(DungeonFault::invalid_abyss_state);
             return RequestResult::faulted;
         }
+        next.item_ownership.material_claimed_drop_bits = {};
         pending_save_ = PendingSave{
             PendingSaveKind::abyss_fail,
             next.commit_generation,
@@ -1019,16 +1026,19 @@ void DungeonSession::relay_combat_events() noexcept {
     }
     while (auto event = combat_->try_pop_event()) {
         if (event->kind == combat::CombatEventKind::defeated
-            && event->reward_eligible
-            && claim_defeat_reward(*event)) {
-            roll_ground_drop(*event);
-            const std::size_t monster_index = static_cast<std::size_t>(
-                event->monster_id);
-            if (monster_index < progression_rules_.monster_experience.size()) {
-                saturating_add(pending_room_experience_,
-                    affix_experience(
-                        progression_rules_.monster_experience[monster_index],
-                        event->affix_score));
+                && event->reward_eligible) {
+            roll_ground_materials(*event);
+            if (claim_defeat_reward(*event)) {
+                roll_ground_drop(*event);
+                const std::size_t monster_index = static_cast<std::size_t>(
+                    event->monster_id);
+                if (monster_index
+                        < progression_rules_.monster_experience.size()) {
+                    saturating_add(pending_room_experience_,
+                        affix_experience(
+                            progression_rules_.monster_experience[monster_index],
+                            event->affix_score));
+                }
             }
         }
         const bool relayed = combat_events_.try_push(*event);
@@ -1112,6 +1122,7 @@ bool DungeonSession::prepare_death_retreat() noexcept {
     next.current_room.is_abyss = false;
     next.last_transition = TransitionKind::death_retreat;
     next.last_direction = ExitDirection::none;
+    next.item_ownership.material_claimed_drop_bits = {};
     next.death = make_death_checkpoint(
         frozen, stable_state_.current_room, target.room);
     if (!valid_death_checkpoint_dungeon(
@@ -1181,6 +1192,8 @@ bool DungeonSession::copy_run_state_reusing_items(
     destination.item_ownership.materials = source.item_ownership.materials;
     destination.item_ownership.material_discovery_bits =
         source.item_ownership.material_discovery_bits;
+    destination.item_ownership.material_claimed_drop_bits =
+        source.item_ownership.material_claimed_drop_bits;
     destination.item_ownership.claimed_drop_bits =
         source.item_ownership.claimed_drop_bits;
     destination.item_ownership.next_item_sequence =
@@ -1208,6 +1221,8 @@ void DungeonSession::publish_run_state_reusing_items(
     destination.item_ownership.materials = source.item_ownership.materials;
     destination.item_ownership.material_discovery_bits =
         source.item_ownership.material_discovery_bits;
+    destination.item_ownership.material_claimed_drop_bits =
+        source.item_ownership.material_claimed_drop_bits;
     destination.item_ownership.claimed_drop_bits =
         source.item_ownership.claimed_drop_bits;
     destination.item_ownership.next_item_sequence =
@@ -1314,6 +1329,7 @@ bool DungeonSession::pending_death_cache_consistent() const noexcept {
     exact.current_room.is_abyss = false;
     exact.last_transition = TransitionKind::death_retreat;
     exact.last_direction = ExitDirection::none;
+    exact.item_ownership.material_claimed_drop_bits = {};
     exact.death = expected;
     return same_run_state(next, exact)
         && valid_death_checkpoint_dungeon(
@@ -1389,6 +1405,143 @@ void DungeonSession::roll_ground_drop(
     };
 }
 
+bool DungeonSession::claim_material_roll(std::uint16_t ordinal) noexcept {
+    if (ordinal >= kGroundMaterialCapacity
+            || bit_is_set(
+                stable_state_.item_ownership.material_claimed_drop_bits,
+                ordinal)
+            || bit_is_set(rolled_material_bits_, ordinal)) {
+        return false;
+    }
+    set_bit(rolled_material_bits_, ordinal);
+    return true;
+}
+
+bool DungeonSession::place_ground_material(
+    std::uint16_t ordinal,
+    GroundMaterialSource source,
+    combat::Vec3 position,
+    items::MaterialId material) noexcept {
+    if (ordinal >= ground_materials_.size()
+            || items::material_index(material) >= items::kMaterialCount) {
+        enter_fault(DungeonFault::invalid_item_state);
+        return false;
+    }
+    if (ground_materials_[ordinal].active) {
+        saturating_increment(diagnostics_.material_ground_saturation_count);
+        return false;
+    }
+    ground_materials_[ordinal] = {
+        true, ordinal, source, position, material};
+    return true;
+}
+
+void DungeonSession::roll_ground_materials(
+    const combat::CombatEvent& event) noexcept {
+    const std::uint16_t spawn_ordinal = event.spawn_ordinal;
+    if (spawn_ordinal >= kGroundDropCapacity) return;
+    const std::uint16_t common_ordinal = static_cast<std::uint16_t>(
+        spawn_ordinal * 2U);
+    const std::uint16_t coupon_ordinal = static_cast<std::uint16_t>(
+        common_ordinal + 1U);
+    const combat::Vec3 position{event.position.x, event.position.y, 0.0F};
+    if (claim_material_roll(common_ordinal)) {
+        const auto common = roll_material_drop(
+            stable_state_.current_room.seed,
+            spawn_ordinal,
+            stable_state_.current_room.depth,
+            event.affix_score);
+        if (common.has_value()) {
+            static_cast<void>(place_ground_material(
+                common_ordinal, GroundMaterialSource::monster_common,
+                position, *common));
+        }
+    }
+    if (phase_ == RoomPhase::faulted) return;
+    if (claim_material_roll(coupon_ordinal)) {
+        const bool abyss_monster = stable_state_.current_room.is_abyss
+            && stable_state_.abyss.lifecycle
+                == abyss::AbyssLifecycle::started;
+        const auto coupon = roll_coupon_drop(
+            stable_state_.current_room.seed,
+            spawn_ordinal,
+            stable_state_.current_room.depth,
+            event.affix_score,
+            abyss_monster);
+        if (coupon.has_value()) {
+            static_cast<void>(place_ground_material(
+                coupon_ordinal, GroundMaterialSource::monster_coupon,
+                position, *coupon));
+        }
+    }
+}
+
+bool DungeonSession::materialize_abyss_clear_materials() noexcept {
+    const std::uint8_t count = abyss_material_reward_count(
+        stable_state_.abyss.danger);
+    if (count == 0U || count > 3U) return false;
+    for (std::uint8_t index = 0U; index < count; ++index) {
+        const std::uint16_t ordinal = static_cast<std::uint16_t>(
+            kAbyssMaterialOrdinalBegin + index);
+        if (!claim_material_roll(ordinal)) {
+            if (bit_is_set(
+                    stable_state_.item_ownership.material_claimed_drop_bits,
+                    ordinal)) {
+                continue;
+            }
+            return false;
+        }
+        const auto material = roll_abyss_material(
+            stable_state_.current_room.seed,
+            stable_state_.current_room.depth,
+            index);
+        const auto position = abyss_reward_position(index);
+        if (!material.has_value() || !position.has_value()
+                || !place_ground_material(
+                    ordinal, GroundMaterialSource::abyss_reward,
+                    *position, *material)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool DungeonSession::has_ground_materials() const noexcept {
+    for (const GroundMaterial& material : ground_materials_) {
+        if (material.active) return true;
+    }
+    return false;
+}
+
+void DungeonSession::vacuum_room_materials() noexcept {
+    if (!pending_save_.has_value()
+            || (pending_save_->kind != PendingSaveKind::room_clear
+                && pending_save_->kind != PendingSaveKind::abyss_clear)) {
+        enter_fault(DungeonFault::save_receipt_mismatch);
+        return;
+    }
+    auto& ownership = pending_save_->next_state.item_ownership;
+    for (const GroundMaterial& ground : ground_materials_) {
+        if (!ground.active) continue;
+        const std::size_t material_index = items::material_index(
+            ground.material);
+        if (ground.ordinal >= kGroundMaterialCapacity
+                || material_index >= items::kMaterialCount
+                || bit_is_set(ownership.material_claimed_drop_bits,
+                    ground.ordinal)
+                || ownership.materials[material_index]
+                    == (std::numeric_limits<std::uint64_t>::max)()) {
+            pending_save_.reset();
+            enter_fault(DungeonFault::invalid_item_state);
+            return;
+        }
+        ++ownership.materials[material_index];
+        ownership.material_discovery_bits |= static_cast<std::uint16_t>(
+            std::uint16_t{1U} << material_index);
+        set_bit(ownership.material_claimed_drop_bits, ground.ordinal);
+    }
+}
+
 void DungeonSession::settle_room_experience() noexcept {
     saturating_add(pending_room_experience_,
         progression_rules_.room_clear_experience);
@@ -1403,13 +1556,15 @@ void DungeonSession::settle_room_experience() noexcept {
 void DungeonSession::prepare_room_clear() noexcept {
     const bool started_abyss = stable_state_.current_room.is_abyss
         && stable_state_.abyss.lifecycle == abyss::AbyssLifecycle::started;
-    if (!started_abyss) {
+    if (!started_abyss && !has_ground_materials()) {
         settle_room_experience();
         publish_room_clear();
         return;
     }
     if (!combat_.has_value() || pending_save_.has_value()) {
-        enter_fault(DungeonFault::invalid_abyss_state);
+        enter_fault(started_abyss
+            ? DungeonFault::invalid_abyss_state
+            : DungeonFault::invalid_item_state);
         return;
     }
     constexpr std::size_t kClearPublicationEventCount = 2U;
@@ -1424,13 +1579,18 @@ void DungeonSession::prepare_room_clear() noexcept {
         return;
     }
 
-    const std::uint8_t base_item_level = static_cast<std::uint8_t>(
-        std::min<std::uint64_t>(stable_state_.current_room.depth, 100U));
-    const abyss::AbyssRewardProfile reward = abyss::reward_profile_for(
-        stable_state_.abyss.danger, base_item_level);
-    if (reward.item_count == 0U || reward.item_count > 3U) {
-        enter_fault(DungeonFault::invalid_abyss_state);
-        return;
+    abyss::AbyssRewardProfile reward{};
+    if (started_abyss) {
+        const std::uint8_t base_item_level = static_cast<std::uint8_t>(
+            std::min<std::uint64_t>(
+                stable_state_.current_room.depth, 100U));
+        reward = abyss::reward_profile_for(
+            stable_state_.abyss.danger, base_item_level);
+        if (reward.item_count == 0U || reward.item_count > 3U
+                || !materialize_abyss_clear_materials()) {
+            enter_fault(DungeonFault::invalid_abyss_state);
+            return;
+        }
     }
 
     std::uint64_t total_experience = pending_room_experience_;
@@ -1443,24 +1603,32 @@ void DungeonSession::prepare_room_clear() noexcept {
         DungeonRunState next = stable_state_;
         ++next.commit_generation;
         next.progression = projected.state;
-        next.abyss.lifecycle = abyss::AbyssLifecycle::cleared;
-        next.abyss.reward_total = reward.item_count;
-        next.abyss.generated_mask = 0U;
-        next.abyss.claimed_mask = 0U;
-        next.abyss.abandoned_mask = 0U;
-        next.abyss.reward_revision = 0U;
+        if (started_abyss) {
+            next.abyss.lifecycle = abyss::AbyssLifecycle::cleared;
+            next.abyss.reward_total = reward.item_count;
+            next.abyss.generated_mask = 0U;
+            next.abyss.claimed_mask = 0U;
+            next.abyss.abandoned_mask = 0U;
+            next.abyss.reward_revision = 0U;
+        }
         pending_save_ = PendingSave{
-            PendingSaveKind::abyss_clear,
+            started_abyss ? PendingSaveKind::abyss_clear
+                          : PendingSaveKind::room_clear,
             next.commit_generation,
             std::move(next),
             TransitionKind::none,
             ExitDirection::none,
             RoomPhase::cleared,
         };
+        vacuum_room_materials();
     } catch (...) {
-        enter_fault(DungeonFault::invalid_abyss_state);
+        pending_save_.reset();
+        enter_fault(started_abyss
+            ? DungeonFault::invalid_abyss_state
+            : DungeonFault::invalid_item_state);
         return;
     }
+    if (phase_ == RoomPhase::faulted || !pending_save_.has_value()) return;
     phase_ = RoomPhase::committing;
 }
 

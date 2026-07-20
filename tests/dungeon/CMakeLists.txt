@@ -14,6 +14,7 @@ add_executable(arpg_dungeon_tests
     dungeon_item_transaction_tests.cpp
     dungeon_equipment_stress_tests.cpp
     dungeon_loot_drop_tests.cpp
+    dungeon_material_loot_tests.cpp
     dungeon_transaction_tests.cpp
     dungeon_abyss_reward_tests.cpp
     dungeon_abyss_stress_tests.cpp
@@ -31,8 +32,19 @@ target_include_directories(arpg_dungeon_tests
         "${PROJECT_SOURCE_DIR}/tests/combat")
 target_link_libraries(arpg_dungeon_tests PRIVATE arpg_dungeon arpg_persistence)
 arpg_enable_project_warnings(arpg_dungeon_tests)
+if(MSVC)
+    # Several lifecycle fixtures intentionally keep multiple full fixed-capacity
+    # sessions and snapshots alive at once. The Stage 16 material ground pool is
+    # also fixed-capacity, so reserve enough stack for those debug-only fixtures.
+    target_link_options(arpg_dungeon_tests PRIVATE /STACK:4194304)
+endif()
 
 add_test(NAME dungeon.units COMMAND arpg_dungeon_tests)
+
+add_test(NAME stage16.material_loot.units COMMAND arpg_dungeon_tests)
+set_tests_properties(stage16.material_loot.units PROPERTIES
+    ENVIRONMENT "ARPG_STAGE16_MATERIAL_LOOT_ONLY=1"
+    LABELS "headless;dungeon;stage16")
 
 add_test(NAME stage11.death_stress.determinism_zero_alloc
     COMMAND arpg_dungeon_tests)

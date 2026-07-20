@@ -214,6 +214,15 @@ bool same_ground_item(
         && lhs.rarity == rhs.rarity;
 }
 
+bool same_ground_material(
+    const arpg::dungeon::GroundMaterialSnapshot& lhs,
+    const arpg::dungeon::GroundMaterialSnapshot& rhs) noexcept {
+    return lhs.ordinal == rhs.ordinal
+        && lhs.source == rhs.source
+        && same_vec(lhs.position, rhs.position)
+        && lhs.material == rhs.material;
+}
+
 bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexcept {
     if (lhs.session_tick != rhs.session_tick || lhs.root_seed != rhs.root_seed
             || lhs.commit_generation != rhs.commit_generation
@@ -245,8 +254,19 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
             || lhs.inventory_count != rhs.inventory_count
             || lhs.equipped_ids != rhs.equipped_ids
             || lhs.ground_item_count != rhs.ground_item_count
+            || lhs.ground_material_count != rhs.ground_material_count
+            || lhs.material_pickup_receipt.valid
+                != rhs.material_pickup_receipt.valid
+            || lhs.material_pickup_receipt.room_vacuum
+                != rhs.material_pickup_receipt.room_vacuum
+            || lhs.material_pickup_receipt.commit_generation
+                != rhs.material_pickup_receipt.commit_generation
+            || lhs.material_pickup_receipt.counts
+                != rhs.material_pickup_receipt.counts
             || lhs.pending_save_kind != rhs.pending_save_kind
             || lhs.pending_pickup_ordinal != rhs.pending_pickup_ordinal
+            || lhs.pending_material_pickup_ordinal
+                != rhs.pending_material_pickup_ordinal
             || lhs.encounter.total_budget != rhs.encounter.total_budget
             || lhs.encounter.current_wave_budget
                 != rhs.encounter.current_wave_budget
@@ -263,6 +283,8 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
                 != rhs.diagnostics.save_failure_count
             || lhs.diagnostics.ground_saturation_count
                 != rhs.diagnostics.ground_saturation_count
+            || lhs.diagnostics.material_ground_saturation_count
+                != rhs.diagnostics.material_ground_saturation_count
             || lhs.diagnostics.fault != rhs.diagnostics.fault
             || lhs.diagnostics.room_index_overflow
                 != rhs.diagnostics.room_index_overflow
@@ -271,6 +293,13 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
     }
     for (std::size_t index = 0U; index < lhs.ground_items.size(); ++index) {
         if (!same_ground_item(lhs.ground_items[index], rhs.ground_items[index])) {
+            return false;
+        }
+    }
+    for (std::size_t index = 0U;
+            index < lhs.ground_materials.size(); ++index) {
+        if (!same_ground_material(
+                lhs.ground_materials[index], rhs.ground_materials[index])) {
             return false;
         }
     }
@@ -343,9 +372,13 @@ void tracked_tick(
             || *state.pending_save_kind
                 == arpg::dungeon::PendingSaveKind::loot_pickup
             || *state.pending_save_kind
+                == arpg::dungeon::PendingSaveKind::material_pickup
+            || *state.pending_save_kind
                 == arpg::dungeon::PendingSaveKind::abyss_start
             || *state.pending_save_kind
                 == arpg::dungeon::PendingSaveKind::abyss_clear
+            || *state.pending_save_kind
+                == arpg::dungeon::PendingSaveKind::room_clear
             || *state.pending_save_kind
                 == arpg::dungeon::PendingSaveKind::abyss_reward_materialized);
     const bool protected_abyss_boundary = state.phase == RoomPhase::committing
@@ -477,6 +510,7 @@ bool confirm_pending_save(
     const DungeonSnapshot saved = session.snapshot();
     record_allocations(summary, before, true);
     if (kind == arpg::dungeon::PendingSaveKind::loot_pickup
+            || kind == arpg::dungeon::PendingSaveKind::material_pickup
             || kind == arpg::dungeon::PendingSaveKind::abyss_reward_claim) {
         return saved.phase == resume_phase
             && !saved.pending_save_kind.has_value()
@@ -488,7 +522,8 @@ bool confirm_pending_save(
             && !saved.pending_save_kind.has_value()
             && saved.commit_generation == expected_generation;
     }
-    if (kind == arpg::dungeon::PendingSaveKind::abyss_clear) {
+    if (kind == arpg::dungeon::PendingSaveKind::abyss_clear
+            || kind == arpg::dungeon::PendingSaveKind::room_clear) {
         return saved.phase == RoomPhase::cleared
             && saved.has_active_room && saved.combat.has_value()
             && !saved.pending_save_kind.has_value()

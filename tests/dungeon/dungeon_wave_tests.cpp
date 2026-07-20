@@ -39,6 +39,12 @@ bool all_exits_closed(const arpg::dungeon::DungeonSnapshot& state) noexcept {
 bool clear_current_wave(DungeonSession& session) noexcept {
     for (int tick = 0; tick < 128; ++tick) {
         const auto state = session.snapshot();
+        if (state.phase == RoomPhase::committing
+                && state.pending_save_kind
+                    == arpg::dungeon::PendingSaveKind::room_clear) {
+            if (!arpg::test::commit_pending(session)) return false;
+            continue;
+        }
         if (state.phase == RoomPhase::wave_delay
                 || state.phase == RoomPhase::cleared
                 || state.phase == RoomPhase::awaiting_exit) {
@@ -262,6 +268,11 @@ arpg::test::Failure rollback_keeps_health_but_committed_room_resets_it() noexcep
         session.tick({});
         arpg::test::force_defeat_current_wave(session);
         session.tick({});
+        if (session.snapshot().phase == RoomPhase::committing
+                && session.snapshot().pending_save_kind
+                    == arpg::dungeon::PendingSaveKind::room_clear) {
+            if (!arpg::test::commit_pending(session)) return false;
+        }
         if (session.snapshot().phase == RoomPhase::cleared) session.tick({});
         return session.snapshot().phase == RoomPhase::awaiting_exit;
     };

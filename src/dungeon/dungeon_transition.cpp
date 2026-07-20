@@ -54,8 +54,9 @@ bool contains_id(
     return ids[0] == id || ids[1] == id || ids[2] == id;
 }
 
+template <std::size_t Size>
 bool bit_is_set(
-    const std::array<std::uint64_t, 3>& bits,
+    const std::array<std::uint64_t, Size>& bits,
     std::uint16_t ordinal) noexcept {
     const std::size_t word = ordinal / 64U;
     const std::uint8_t bit = static_cast<std::uint8_t>(ordinal % 64U);
@@ -63,8 +64,9 @@ bool bit_is_set(
         && (bits[word] & (std::uint64_t{1U} << bit)) != 0U;
 }
 
+template <std::size_t Size>
 void set_bit(
-    std::array<std::uint64_t, 3>& bits,
+    std::array<std::uint64_t, Size>& bits,
     std::uint16_t ordinal) noexcept {
     const std::size_t word = ordinal / 64U;
     const std::uint8_t bit = static_cast<std::uint8_t>(ordinal % 64U);
@@ -348,6 +350,7 @@ bool DungeonSession::prepare_transition(
 
     next.state.progression = room_progression_;
     next.state.item_ownership.claimed_drop_bits = {};
+    next.state.item_ownership.material_claimed_drop_bits = {};
     if (!finalize_abyss_exit(next.state, abandon_abyss)) {
         enter_fault(DungeonFault::invalid_abyss_state);
         return false;
@@ -606,6 +609,62 @@ bool DungeonSession::pending_abyss_claim_cache_consistent() const noexcept {
     return expected.has_value() && same_ground_item(*expected, ground)
         && !item_id_in_use(stable_state_.item_ownership, ground_items_,
             ground.item.id, ground_index);
+}
+
+bool DungeonSession::pending_material_cache_consistent() const noexcept {
+    if (!pending_save_.has_value()) return true;
+    const PendingSaveKind kind = pending_save_->kind;
+    const bool pickup = kind == PendingSaveKind::material_pickup;
+    const bool vacuum = kind == PendingSaveKind::room_clear
+        || kind == PendingSaveKind::abyss_clear;
+    if (!pickup && !vacuum) return true;
+
+    const auto& stable = stable_state_.item_ownership;
+    const auto& next = pending_save_->next_state.item_ownership;
+    if (next.items.size() != stable.items.size()
+            || next.equipment.equipped_ids != stable.equipment.equipped_ids
+            || next.claimed_drop_bits != stable.claimed_drop_bits
+            || next.next_item_sequence != stable.next_item_sequence) {
+        return false;
+    }
+    for (std::size_t index = 0U; index < stable.items.size(); ++index) {
+        if (!same_item(next.items[index], stable.items[index])) return false;
+    }
+
+    auto expected_counts = stable.materials;
+    auto expected_claims = stable.material_claimed_drop_bits;
+    std::uint16_t expected_discovery = stable.material_discovery_bits;
+    const auto append_ground = [&](const GroundMaterial& ground) noexcept {
+        const std::size_t material_index = items::material_index(
+            ground.material);
+        if (!ground.active || ground.ordinal >= kGroundMaterialCapacity
+                || material_index >= items::kMaterialCount
+                || bit_is_set(expected_claims, ground.ordinal)
+                || expected_counts[material_index]
+                    == (std::numeric_limits<std::uint64_t>::max)()) {
+            return false;
+        }
+        ++expected_counts[material_index];
+        expected_discovery |= static_cast<std::uint16_t>(
+            std::uint16_t{1U} << material_index);
+        set_bit(expected_claims, ground.ordinal);
+        return true;
+    };
+
+    if (pickup) {
+        const std::uint16_t ordinal = pending_save_->pickup_ordinal;
+        if (ordinal >= ground_materials_.size()
+                || !append_ground(ground_materials_[ordinal])) {
+            return false;
+        }
+    } else {
+        for (const GroundMaterial& ground : ground_materials_) {
+            if (ground.active && !append_ground(ground)) return false;
+        }
+    }
+    return next.materials == expected_counts
+        && next.material_discovery_bits == expected_discovery
+        && next.material_claimed_drop_bits == expected_claims;
 }
 
 RequestResult DungeonSession::request_equip(std::uint64_t item_id) noexcept {
@@ -904,6 +963,79 @@ RequestResult DungeonSession::request_pickup(
     }
 }
 
+RequestResult DungeonSession::request_material_pickup(
+    std::uint16_t ordinal) noexcept {
+    if (!pending_item_cache_consistent()
+            || !pending_material_cache_consistent()) {
+        enter_fault(DungeonFault::save_receipt_mismatch);
+        return RequestResult::faulted;
+    }
+    if (!item_request_phase(phase_) || pending_save_.has_value()
+            || ordinal >= ground_materials_.size()) {
+        return RequestResult::rejected;
+    }
+    const GroundMaterial& ground = ground_materials_[ordinal];
+    const std::size_t material_index = items::material_index(ground.material);
+    if (!ground.active || ground.ordinal != ordinal) {
+        return RequestResult::rejected;
+    }
+    if (material_index >= items::kMaterialCount
+            || bit_is_set(
+                stable_state_.item_ownership.material_claimed_drop_bits,
+                ordinal)) {
+        enter_fault(DungeonFault::invalid_item_state);
+        return RequestResult::faulted;
+    }
+    if (!combat_.has_value() || !pickup_distance_ok(
+            combat_->snapshot().player.position, ground.position)) {
+        return RequestResult::rejected;
+    }
+    if (stable_state_.item_ownership.materials[material_index]
+            == (std::numeric_limits<std::uint64_t>::max)()) {
+        enter_fault(DungeonFault::invalid_item_state);
+        return RequestResult::faulted;
+    }
+    if (stable_state_.commit_generation
+            == (std::numeric_limits<std::uint64_t>::max)()) {
+        enter_fault(DungeonFault::commit_generation_overflow);
+        return RequestResult::faulted;
+    }
+    try {
+        DungeonRunState next = stable_state_;
+        next.progression = room_progression_;
+        ++next.item_ownership.materials[material_index];
+        next.item_ownership.material_discovery_bits |=
+            static_cast<std::uint16_t>(
+                std::uint16_t{1U} << material_index);
+        set_bit(next.item_ownership.material_claimed_drop_bits, ordinal);
+        const items::OwnershipValidationResult validation =
+            items::validate_ownership_detailed(next.item_ownership);
+        if (validation == items::OwnershipValidationResult::allocation_failure) {
+            return RequestResult::rejected;
+        }
+        if (validation != items::OwnershipValidationResult::valid) {
+            enter_fault(DungeonFault::invalid_item_state);
+            return RequestResult::faulted;
+        }
+        ++next.commit_generation;
+        pending_save_.emplace(PendingSave{
+            PendingSaveKind::material_pickup,
+            next.commit_generation,
+            std::move(next),
+            TransitionKind::none,
+            ExitDirection::none,
+            phase_,
+            ordinal,
+        });
+        phase_ = RoomPhase::committing;
+        return RequestResult::accepted;
+    } catch (const std::bad_alloc&) {
+        return RequestResult::rejected;
+    } catch (...) {
+        return RequestResult::rejected;
+    }
+}
+
 bool auto_pickup_eligible(
     const GroundItem& ground,
     AutoPickupPolicy policy) noexcept {
@@ -931,6 +1063,19 @@ void DungeonSession::request_nearby_pickups(
         const RequestResult result = request_pickup(ordinal);
         if (result != RequestResult::rejected) return;
     }
+    if (phase_ != RoomPhase::combat && phase_ != RoomPhase::wave_delay) {
+        return;
+    }
+    for (std::uint16_t ordinal = 0U;
+         ordinal < ground_materials_.size(); ++ordinal) {
+        const GroundMaterial& ground = ground_materials_[ordinal];
+        if (!ground.active
+                || !pickup_distance_ok(player_position, ground.position)) {
+            continue;
+        }
+        const RequestResult result = request_material_pickup(ordinal);
+        if (result != RequestResult::rejected) return;
+    }
 }
 
 void DungeonSession::commit_pending_save(
@@ -952,6 +1097,10 @@ void DungeonSession::commit_pending_save(
         return;
     }
     if (!pending_abyss_claim_cache_consistent()) {
+        enter_fault(DungeonFault::save_receipt_mismatch);
+        return;
+    }
+    if (!pending_material_cache_consistent()) {
         enter_fault(DungeonFault::save_receipt_mismatch);
         return;
     }
@@ -1016,10 +1165,14 @@ void DungeonSession::commit_pending_save(
     const bool item_commit = kind == PendingSaveKind::equipment
         || kind == PendingSaveKind::recipe;
     const bool pickup_commit = kind == PendingSaveKind::loot_pickup;
+    const bool material_pickup_commit =
+        kind == PendingSaveKind::material_pickup;
     const bool claim_commit = kind == PendingSaveKind::abyss_reward_claim;
     const bool start_commit = kind == PendingSaveKind::abyss_start;
     const bool fail_commit = kind == PendingSaveKind::abyss_fail;
-    const bool clear_commit = kind == PendingSaveKind::abyss_clear;
+    const bool abyss_clear_commit = kind == PendingSaveKind::abyss_clear;
+    const bool room_clear_commit = kind == PendingSaveKind::room_clear;
+    const bool clear_commit = abyss_clear_commit || room_clear_commit;
     const bool reward_commit = kind
         == PendingSaveKind::abyss_reward_materialized;
     const bool death_retreat_commit = kind == PendingSaveKind::death_retreat;
@@ -1044,6 +1197,15 @@ void DungeonSession::commit_pending_save(
             return;
         }
     }
+    if (material_pickup_commit) {
+        if (pickup_ordinal >= ground_materials_.size()
+                || !ground_materials_[pickup_ordinal].active
+                || ground_materials_[pickup_ordinal].ordinal
+                    != pickup_ordinal) {
+            enter_fault(DungeonFault::save_receipt_mismatch);
+            return;
+        }
+    }
     combat::PlayerCombatBuild published_build{};
     if (item_commit) {
         if (!combat_.has_value()) {
@@ -1054,6 +1216,19 @@ void DungeonSession::commit_pending_save(
     }
     PendingAbyssReward published_reward{};
     if (reward_commit) published_reward = *pending_abyss_reward_;
+    MaterialPickupReceipt published_material_receipt{};
+    if (material_pickup_commit || clear_commit) {
+        published_material_receipt.valid = true;
+        published_material_receipt.room_vacuum = clear_commit;
+        published_material_receipt.commit_generation =
+            pending_save_->next_state.commit_generation;
+        for (std::size_t index = 0U;
+                index < published_material_receipt.counts.size(); ++index) {
+            published_material_receipt.counts[index] =
+                pending_save_->next_state.item_ownership.materials[index]
+                - stable_state_.item_ownership.materials[index];
+        }
+    }
     if (death_commit && !can_emit(1U)) {
         enter_fault(DungeonFault::event_overflow);
         return;
@@ -1102,7 +1277,11 @@ void DungeonSession::commit_pending_save(
     if (clear_commit) {
         settle_room_experience();
         room_progression_ = stable_state_.progression;
-        combat_->clear_abyss_rule_preserving_resources();
+        ground_materials_ = {};
+        material_pickup_receipt_ = published_material_receipt;
+        if (abyss_clear_commit) {
+            combat_->clear_abyss_rule_preserving_resources();
+        }
         // prepare_room_clear reserved both publication slots. While committing,
         // tick() is frozen and no other dungeon-event producer can consume them.
         publish_room_clear();
@@ -1118,6 +1297,8 @@ void DungeonSession::commit_pending_save(
         clear_abyss_exit_confirmation();
         ground_items_ = {};
         rolled_drop_bits_ = {};
+        ground_materials_ = {};
+        rolled_material_bits_ = {};
         combat_.reset();
         phase_ = RoomPhase::transitioning;
         emit_committed(previous_room, stable_state_);
@@ -1131,6 +1312,12 @@ void DungeonSession::commit_pending_save(
     }
     if (pickup_commit || claim_commit) {
         ground_items_[pickup_ordinal] = GroundItem{};
+        phase_ = resume_phase;
+        return;
+    }
+    if (material_pickup_commit) {
+        ground_materials_[pickup_ordinal] = GroundMaterial{};
+        material_pickup_receipt_ = published_material_receipt;
         phase_ = resume_phase;
         return;
     }

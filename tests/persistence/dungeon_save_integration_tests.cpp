@@ -40,6 +40,8 @@ bool same_ownership(const items::ItemOwnershipState& left,
              || left.equipment.equipped_ids != right.equipment.equipped_ids
              || left.materials != right.materials
              || left.material_discovery_bits != right.material_discovery_bits
+             || left.material_claimed_drop_bits
+                != right.material_claimed_drop_bits
              || left.claimed_drop_bits != right.claimed_drop_bits
             || left.next_item_sequence != right.next_item_sequence) {
         return false;
@@ -437,6 +439,8 @@ arpg::test::Failure v7_materials_discovery_and_reinforcement_survive_restart()
     initial.item_ownership.material_discovery_bits = static_cast<std::uint16_t>(
         (1U << items::material_index(items::MaterialId::chaos))
         | (1U << items::material_index(items::MaterialId::coupon_15)));
+    initial.item_ownership.material_claimed_drop_bits[0U] = 0x8000000000000001ULL;
+    initial.item_ownership.material_claimed_drop_bits[6U] = 0xA55AU;
 
     const auto committed = store.commit(initial);
     ARPG_REQUIRE(committed.state == persistence::SaveCommitState::committed);
@@ -454,6 +458,8 @@ arpg::test::Failure v7_materials_discovery_and_reinforcement_survive_restart()
         items::material_index(items::MaterialId::chaos)] == 42U);
     ARPG_REQUIRE(restarted.checkpoint.item_ownership.material_discovery_bits
         == initial.item_ownership.material_discovery_bits);
+    ARPG_REQUIRE(restarted.checkpoint.item_ownership.material_claimed_drop_bits
+        == initial.item_ownership.material_claimed_drop_bits);
     return {};
 }
 
@@ -494,6 +500,9 @@ arpg::test::Failure pre_publish_failure_keeps_old_room_in_memory_and_on_disk() n
 
     dungeon::DungeonSession session{dungeon::DungeonRules{}, initial};
     ARPG_REQUIRE(drive_door_pending(session, dungeon::ExitDirection::up));
+    const auto stable_before_transition = arpg::test::stable_state(session);
+    ARPG_REQUIRE(store.commit(stable_before_transition).state
+        == persistence::SaveCommitState::committed);
     const auto pending = session.pending_transition();
     ARPG_REQUIRE(pending.has_value());
     FaultContext fault{persistence::SaveFaultPoint::before_publish, false};
@@ -503,21 +512,28 @@ arpg::test::Failure pre_publish_failure_keeps_old_room_in_memory_and_on_disk() n
     session.resolve_pending_transition(to_session_result(saved));
     const auto snapshot = session.snapshot();
     ARPG_REQUIRE(snapshot.phase == dungeon::RoomPhase::awaiting_exit);
-    ARPG_REQUIRE(snapshot.root_seed == initial.root_seed);
-    ARPG_REQUIRE(snapshot.commit_generation == initial.commit_generation);
-    ARPG_REQUIRE(snapshot.room_index == initial.current_room.index);
-    ARPG_REQUIRE(snapshot.room_seed == initial.current_room.seed);
-    ARPG_REQUIRE(snapshot.depth == initial.current_room.depth);
+    ARPG_REQUIRE(snapshot.root_seed == stable_before_transition.root_seed);
+    ARPG_REQUIRE(snapshot.commit_generation
+        == stable_before_transition.commit_generation);
+    ARPG_REQUIRE(snapshot.room_index
+        == stable_before_transition.current_room.index);
+    ARPG_REQUIRE(snapshot.room_seed
+        == stable_before_transition.current_room.seed);
+    ARPG_REQUIRE(snapshot.depth == stable_before_transition.current_room.depth);
     ARPG_REQUIRE(snapshot.floor_room_index
-        == initial.current_room.floor_room_index);
-    ARPG_REQUIRE(snapshot.biases == initial.biases);
-    ARPG_REQUIRE(snapshot.ecology == initial.current_room.ecology);
-    ARPG_REQUIRE(snapshot.has_hole == initial.current_room.has_hole);
-    ARPG_REQUIRE(snapshot.is_abyss == initial.current_room.is_abyss);
+        == stable_before_transition.current_room.floor_room_index);
+    ARPG_REQUIRE(snapshot.biases == stable_before_transition.biases);
+    ARPG_REQUIRE(snapshot.ecology
+        == stable_before_transition.current_room.ecology);
+    ARPG_REQUIRE(snapshot.has_hole
+        == stable_before_transition.current_room.has_hole);
+    ARPG_REQUIRE(snapshot.is_abyss
+        == stable_before_transition.current_room.is_abyss);
 
     const auto loaded = store.load();
     ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::ready);
-    ARPG_REQUIRE(dungeon::same_run_state(loaded.checkpoint, initial));
+    ARPG_REQUIRE(dungeon::same_run_state(
+        loaded.checkpoint, stable_before_transition));
     return {};
 }
 

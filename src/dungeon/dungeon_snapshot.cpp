@@ -134,12 +134,26 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
         if (base != nullptr) packed.slot = base->slot;
         packed.rarity = ground.item.rarity;
     }
+    for (const GroundMaterial& ground : ground_materials_) {
+        if (!ground.active) continue;
+        GroundMaterialSnapshot& packed =
+            result.ground_materials[result.ground_material_count++];
+        packed.ordinal = ground.ordinal;
+        packed.source = ground.source;
+        packed.position = ground.position;
+        packed.material = ground.material;
+    }
+    result.material_pickup_receipt = material_pickup_receipt_;
     if (pending_save_.has_value()) {
         result.pending_save_kind = pending_save_->kind;
         if (pending_save_->kind == PendingSaveKind::loot_pickup
                 || pending_save_->kind
                     == PendingSaveKind::abyss_reward_claim) {
             result.pending_pickup_ordinal = pending_save_->pickup_ordinal;
+        }
+        if (pending_save_->kind == PendingSaveKind::material_pickup) {
+            result.pending_material_pickup_ordinal =
+                pending_save_->pickup_ordinal;
         }
     }
     if (combat_.has_value()) {

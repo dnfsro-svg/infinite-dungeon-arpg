@@ -1,4 +1,67 @@
-# Stage 11-D Task 4 报告
+# Stage 16 Task 4 实现报告
+
+## 状态
+
+完成材料独立地面池、确定性掉落、战斗近距自动拾取、清房原子真空吸取，以及 V7 材料认领位图持久化。未修改 raylib 背包 UI、材料消费或 Boss 逻辑。
+
+## 实现
+
+- 新增 400 槽 `GroundMaterial` 固定池，与 192 槽装备地面池、装备 RNG 和金装路径完全独立；普通/券掉落固定映射为 `spawn*2` / `spawn*2+1`，深渊奖励使用 384 起始保留槽。
+- 材料概率、材料类型、强化券阶级、深渊材料分别使用独立 RNG domain；普通材料和强化券可在同一怪物上同时掉落，深度/危险分阈值与权重按正式设计冻结。
+- 仅在 `combat`/`wave_delay` 阶段按距离自动拾取；单个拾取使用 `material_pickup` 原子保存，失败保留地面物。
+- 普通房与深渊清房使用 `room_clear` / `abyss_clear` 单一事务，把剩余材料、发现位和认领位一起写入 next state；提交后才清空地面池并发布拾取回执。
+- 死亡丢弃未拾取地面材料，保留已提交计数，并清空新房间的材料认领位；过渡、深渊失败同样清理房间局部位图。
+- `ItemOwnershipState` 新增 7 个 64 位材料认领字。V7 追加 56 字节，旧 V1-V6 解码为全零，并拒绝 ordinal 400 以上的高位。
+- 地面槽冲突不会覆盖已有材料，记录 `material_ground_saturation_count`；快照发布固定材料列表、待拾取 ordinal 和逐材料提交回执。
+
+## TDD 证据
+
+- 纯逻辑 RED：缺少 `material_loot.hpp` 及掉落接口；实现后焦点纯逻辑 5/5。
+- 持久化 RED：缺少材料认领字段/V7 尺寸；实现后 persistence 85/85。
+- 会话 RED：缺少独立地面池、拾取与清房事务接口；实现后 Stage16 焦点 11/11。
+- 审计 RED：已有材料认领位后死亡，焦点用例在 `resolve_committed(session)` 失败；精确重建同步清位后恢复 11/11。
+- 全量回归先暴露 Windows Debug 默认 1MB 测试栈溢出，以及旧 helper 未提交 `room_clear`；测试目标栈储备提升到 4MB，旧驱动按真实保存边界提交并重新计数分配，生产事务未放宽。
+
+## 最终验证
+
+```text
+scripts/Build.ps1 -Preset windows-msvc-debug
+  PASS，完整 MSVC Debug 构建
+
+ctest.exe --preset windows-msvc-debug -R '^stage16\.material_loot\.units$' --output-on-failure
+  PASS，11/11，0.07s
+
+ctest.exe --preset windows-msvc-debug -R '^dungeon\.units$' --output-on-failure
+  PASS，265/265，187.61s
+
+ctest.exe --preset windows-msvc-debug -R '^persistence\.units$' --output-on-failure
+  PASS，85/85，0.41s
+
+git diff --check
+  PASS（仅 Git 的 LF->CRLF 工作树提示，无空白错误）
+```
+
+## 主要文件
+
+- `src/dungeon/material_loot.hpp/.cpp`
+- `src/dungeon/dungeon_session.hpp/.cpp`
+- `src/dungeon/dungeon_transition.cpp`
+- `src/dungeon/dungeon_snapshot.cpp`
+- `src/dungeon/dungeon_types.hpp`
+- `src/items/item_types.hpp`, `src/items/item_catalog.cpp`
+- `src/persistence/checkpoint_codec.hpp/.cpp`, `src/persistence/save_slot.cpp`
+- `tests/dungeon/dungeon_material_loot_tests.cpp` 及全量驱动兼容更新
+- `tests/persistence/checkpoint_codec_tests.cpp`, `death_checkpoint_codec_tests.cpp`, `dungeon_save_integration_tests.cpp`
+
+## 注意事项
+
+- 400 槽生产池保持固定容量、无清房热路径动态扩容。Windows Debug 测试因多个完整 Session/快照同时驻栈，测试可执行文件单独预留 4MB；生产可执行文件链接设置未改。
+- V7 仍是当前格式版本，只扩展其固定基区；旧 V7 测试金样已同步更新，V1-V6 迁移行为不变。
+- 无已知功能顾虑；本报告与实现同一提交。
+
+---
+
+# 历史报告：Stage 11-D Task 4
 
 ## 状态
 

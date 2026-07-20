@@ -452,7 +452,8 @@ OwnershipValidationResult validate_ownership_detailed(
     const ItemOwnershipState& state) noexcept {
     if (state.next_item_sequence == 0U || state.items.size() > 65535U
         || (state.material_discovery_bits
-            & static_cast<std::uint16_t>(~kMaterialDiscoveryMask)) != 0U) {
+            & static_cast<std::uint16_t>(~kMaterialDiscoveryMask)) != 0U
+        || (state.material_claimed_drop_bits.back() & ~0xFFFFULL) != 0U) {
         return OwnershipValidationResult::invalid_state;
     }
 

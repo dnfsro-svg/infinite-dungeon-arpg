@@ -106,6 +106,8 @@ public:
         const std::array<std::uint64_t, 3>& item_ids) noexcept;
     [[nodiscard]] RequestResult request_pickup(
         std::uint16_t drop_ordinal) noexcept;
+    [[nodiscard]] RequestResult request_material_pickup(
+        std::uint16_t ordinal) noexcept;
     [[nodiscard]] RequestResult request_death_continue() noexcept;
     void request_nearby_pickups(
         combat::Vec3 player_position,
@@ -169,6 +171,16 @@ private:
     [[nodiscard]] bool claim_defeat_reward(
         const combat::CombatEvent& event) noexcept;
     void roll_ground_drop(const combat::CombatEvent& event) noexcept;
+    void roll_ground_materials(const combat::CombatEvent& event) noexcept;
+    [[nodiscard]] bool claim_material_roll(std::uint16_t ordinal) noexcept;
+    [[nodiscard]] bool place_ground_material(
+        std::uint16_t ordinal,
+        GroundMaterialSource source,
+        combat::Vec3 position,
+        items::MaterialId material) noexcept;
+    [[nodiscard]] bool materialize_abyss_clear_materials() noexcept;
+    void vacuum_room_materials() noexcept;
+    [[nodiscard]] bool has_ground_materials() const noexcept;
     void prepare_room_clear() noexcept;
     void publish_room_clear() noexcept;
     void settle_room_experience() noexcept;
@@ -201,6 +213,7 @@ private:
     [[nodiscard]] bool pending_abyss_reward_cache_consistent() const noexcept;
     [[nodiscard]] bool pending_abyss_claim_cache_consistent() const noexcept;
     [[nodiscard]] bool pending_death_cache_consistent() const noexcept;
+    [[nodiscard]] bool pending_material_cache_consistent() const noexcept;
     void commit_pending_save(const PendingSaveResult& result) noexcept;
     [[nodiscard]] DungeonSnapshot build_dungeon_snapshot() const noexcept;
     void enter_fault(DungeonFault fault) noexcept;
@@ -226,6 +239,10 @@ private:
     std::optional<combat::CombatWorld> combat_{};
     std::array<GroundItem, kGroundDropCapacity> ground_items_{};
     std::array<std::uint64_t, 3> rolled_drop_bits_{};
+    std::array<GroundMaterial, kGroundMaterialCapacity> ground_materials_{};
+    std::array<std::uint64_t, kMaterialDropBitWordCount>
+        rolled_material_bits_{};
+    MaterialPickupReceipt material_pickup_receipt_{};
     RoomEncounterPlan encounter_plan_{};
     std::uint8_t wave_index_{};
     std::uint16_t wave_delay_ticks_{};
