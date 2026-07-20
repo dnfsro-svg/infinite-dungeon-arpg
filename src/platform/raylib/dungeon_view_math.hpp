@@ -87,7 +87,7 @@ struct AbyssHudValues final {
 };
 
 inline constexpr combat::Vec3 kHoleCenter{0.0F, 3.5F, 0.0F};
-inline constexpr float kHoleInteractionRadius = 2.0F;
+inline constexpr float kHoleInteractionRadius = 3.25F;
 
 [[nodiscard]] DoorVisualMode door_visual_mode(
     dungeon::RoomPhase phase,

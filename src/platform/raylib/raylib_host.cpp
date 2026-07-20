@@ -2327,6 +2327,9 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
 // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN visible_capture
             const bool loot_validation_visible_capture =
                 stage11d_validation_state.target_visible;
+            const bool no_loot_validation_active =
+                config.stage11d_loot_validation
+                    == Stage11DLootValidationScenario::none;
 // STAGE11D_LOOT_VALIDATION_SEAM_END visible_capture
             std::optional<std::string> capture_path{};
             bool captured_stage10_target = false;
@@ -2351,8 +2354,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     && config.stage11_validation == Stage11ValidationScenario::none
                     && config.stage11b_validation == Stage11BValidationScenario::none
                     && config.stage11c_hud_validation == Stage11CHudValidationScenario::none
-                    && config.stage11d_loot_validation
-                        == Stage11DLootValidationScenario::none
+                    && no_loot_validation_active
                     && presented_frame_count + 1U
                         >= config.validation_exit_after_presented_frames) {
                 // Formal material validation captures an ordinary gameplay frame

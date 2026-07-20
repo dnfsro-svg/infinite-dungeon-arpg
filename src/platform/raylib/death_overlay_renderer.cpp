@@ -21,6 +21,16 @@ void draw_text(Font font, const char* text, DeathOverlayRect bounds,
             font, text, static_cast<float>(font_size), kSpacing);
         x += (bounds.width - measured.x) * 0.5F;
     }
+    constexpr int kOutlinePixels = 2;
+    const Color outline{3, 5, 10, 245};
+    for (int offset_y = -kOutlinePixels; offset_y <= kOutlinePixels; ++offset_y) {
+        for (int offset_x = -kOutlinePixels; offset_x <= kOutlinePixels; ++offset_x) {
+            if (offset_x == 0 && offset_y == 0) continue;
+            DrawTextEx(font, text, {x + static_cast<float>(offset_x),
+                bounds.y + static_cast<float>(offset_y)},
+                static_cast<float>(font_size), kSpacing, outline);
+        }
+    }
     DrawTextEx(font, text, {x, bounds.y}, static_cast<float>(font_size),
         kSpacing, color);
 }

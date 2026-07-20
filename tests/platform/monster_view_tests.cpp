@@ -85,6 +85,15 @@ arpg::test::Failure priority_phases_expose_warning_visuals() noexcept {
     ARPG_REQUIRE(arpg::platform::monster_visual(
         MonsterId::water_bulwark, MonsterAiPhase::move,
         DungeonElement::water).warning_mode == MonsterWarningMode::none);
+    ARPG_REQUIRE(arpg::platform::monster_visual(
+        MonsterId::water_bulwark, MonsterAiPhase::telegraph,
+        DungeonElement::water).warning_mode == MonsterWarningMode::telegraph);
+    ARPG_REQUIRE(arpg::platform::monster_visual(
+        MonsterId::lightning_shooter, MonsterAiPhase::active,
+        DungeonElement::lightning).warning_mode == MonsterWarningMode::active);
+    ARPG_REQUIRE(!arpg::platform::monster_visual(
+        MonsterId::water_support, MonsterAiPhase::telegraph,
+        DungeonElement::water).priority_warning);
     return {};
 }
 

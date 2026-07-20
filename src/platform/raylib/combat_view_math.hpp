@@ -51,6 +51,7 @@ struct MonsterVisual final {
     MonsterShapeId shape{MonsterShapeId::chaser};
     const char* role_label{"CHASER"};
     MonsterWarningMode warning_mode{MonsterWarningMode::none};
+    bool priority_warning{};
 };
 
 struct MonsterLabelTextStyle final {

@@ -321,11 +321,11 @@ void draw_hole(const dungeon::DungeonSnapshot& snapshot,
     const char* label = hole == HoleVisualMode::sealed ? "SEALED"
         : hole == HoleVisualMode::ready ? "READY"
         : hole == HoleVisualMode::busy ? "SAVING" : "FAULTED";
-    DrawText(label, x - MeasureText(label, 16) / 2, y - 8, 16, color);
+    DrawText(label, x - MeasureText(label, 20) / 2, y - 12, 20, color);
     if (snapshot.combat.has_value()
         && can_prompt_descent(snapshot, snapshot.combat->player.position)) {
-        constexpr const char* kPrompt = "Press E to descend";
-        DrawText(kPrompt, x - MeasureText(kPrompt, 18) / 2, y + 34, 18, RAYWHITE);
+        constexpr const char* kPrompt = "E: DESCEND";
+        DrawText(kPrompt, x - MeasureText(kPrompt, 26) / 2, y + 36, 26, RAYWHITE);
     }
 }
 

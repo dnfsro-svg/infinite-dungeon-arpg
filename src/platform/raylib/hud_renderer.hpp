@@ -85,16 +85,16 @@ struct HudTextDrawPlan final {
 };
 
 struct HudReadabilityStyle final {
-    float panel_minimum_font_size{13.0F};
-    float player_bar_font_size{17.0F};
-    float progression_font_size{15.0F};
-    float status_tag_font_size{13.0F};
-    float objective_primary_font_size{20.0F};
-    float objective_secondary_font_size{16.0F};
-    float navigation_primary_font_size{18.0F};
-    float navigation_secondary_font_size{16.0F};
-    float navigation_element_font_size{14.0F};
-    int outline_pixels{1};
+    float panel_minimum_font_size{15.0F};
+    float player_bar_font_size{19.0F};
+    float progression_font_size{17.0F};
+    float status_tag_font_size{15.0F};
+    float objective_primary_font_size{22.0F};
+    float objective_secondary_font_size{18.0F};
+    float navigation_primary_font_size{20.0F};
+    float navigation_secondary_font_size{18.0F};
+    float navigation_element_font_size{16.0F};
+    int outline_pixels{2};
 };
 
 [[nodiscard]] PlayerPanelPlan make_player_panel_plan(

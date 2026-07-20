@@ -151,9 +151,12 @@ MonsterVisual monster_visual(
         || id == combat::MonsterId::fire_charger
         || id == combat::MonsterId::lightning_dasher
         || id == combat::MonsterId::chaos_hazard;
-    if (priority && phase == combat::MonsterAiPhase::telegraph) {
+    const bool direct_attacker = id != combat::MonsterId::water_support
+        && id != combat::MonsterId::count;
+    visual.priority_warning = priority;
+    if (direct_attacker && phase == combat::MonsterAiPhase::telegraph) {
         visual.warning_mode = MonsterWarningMode::telegraph;
-    } else if (priority && phase == combat::MonsterAiPhase::active) {
+    } else if (direct_attacker && phase == combat::MonsterAiPhase::active) {
         visual.warning_mode = MonsterWarningMode::active;
     }
     return visual;

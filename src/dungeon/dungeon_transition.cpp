@@ -257,7 +257,7 @@ void DungeonSession::update_abyss_exit_confirmation_range(
     bool in_range = false;
     if (abyss_exit_confirmation_.transition == TransitionKind::descent) {
         constexpr combat::Vec3 kHoleCenter{0.0F, 3.5F, 0.0F};
-        constexpr float kHoleRadius = 2.0F;
+        constexpr float kHoleRadius = 3.25F;
         const float x = player_position.x - kHoleCenter.x;
         const float y = player_position.y - kHoleCenter.y;
         in_range = x * x + y * y <= kHoleRadius * kHoleRadius;

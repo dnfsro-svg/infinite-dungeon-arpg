@@ -445,20 +445,20 @@ DeathOverlayLayout death_overlay_layout(
 
     DeathOverlayLayout layout{};
     layout.panel = make_rect(panel_x, panel_y, panel_width, panel_height);
-    layout.title_font_size = compact ? 24 : 32;
-    layout.body_font_size = compact ? 13 : 16;
-    layout.prompt_font_size = compact ? 20 : 24;
+    layout.title_font_size = compact ? 28 : 36;
+    layout.body_font_size = compact ? 15 : 18;
+    layout.prompt_font_size = compact ? 22 : 26;
     layout.title = make_rect(panel_x + 24.0F, panel_y + 16.0F,
         panel_width - 48.0F, static_cast<float>(layout.title_font_size + 6));
 
     const float full_x = panel_x + 28.0F;
     const float full_width = panel_width - 56.0F;
     const float full_y = panel_y + (compact ? 54.0F : 66.0F);
-    const float full_step = compact ? 23.0F : 29.0F;
+    const float full_step = compact ? 24.0F : 30.0F;
     const float column_gap = compact ? 18.0F : 32.0F;
     const float column_width = (full_width - column_gap) * 0.5F;
     const float column_y = panel_y + (compact ? 136.0F : 174.0F);
-    const float column_step = compact ? 19.0F : 26.0F;
+    const float column_step = compact ? 20.0F : 27.0F;
     std::size_t full_index = 0U;
     std::size_t left_index = 0U;
     std::size_t right_index = 0U;

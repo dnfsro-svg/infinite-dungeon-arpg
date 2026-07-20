@@ -13,6 +13,7 @@ enum class VisualEffectKind : std::uint8_t {
     dust,
     damage_number,
     weapon_trail,
+    defeat_marker,
 };
 
 struct VisualEffect final {
@@ -43,6 +44,8 @@ public:
     [[nodiscard]] CameraOffset camera_offset() const noexcept;
     [[nodiscard]] float target_flash_seconds(
         std::size_t target_index) const noexcept;
+    [[nodiscard]] float player_hit_indicator_seconds() const noexcept;
+    [[nodiscard]] combat::Vec3 player_hit_source() const noexcept;
     [[nodiscard]] const std::array<VisualEffect, kCapacity>& effects()
         const noexcept;
 
@@ -52,6 +55,8 @@ private:
     float shake_amplitude_{};
     float shake_time_{};
     float shake_phase_{};
+    float player_hit_indicator_seconds_{};
+    combat::Vec3 player_hit_source_{};
     std::uint32_t dropped_count_{};
 };
 
