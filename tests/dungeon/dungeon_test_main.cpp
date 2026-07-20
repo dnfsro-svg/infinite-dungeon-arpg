@@ -191,10 +191,10 @@ int main() {
         const arpg::test::TestSuite material_only[] = {
             dungeon_material_loot_suite(),
         };
-        return arpg::test::run_suites(material_only, 11,
+        return arpg::test::run_suites(material_only, 12,
             "stage 16 task 4 material loot");
     }
 
-    return arpg::test::run_suites(suites, 265,
+    return arpg::test::run_suites(suites, 266,
         "stage 11a task 8 death continue validation");
 }

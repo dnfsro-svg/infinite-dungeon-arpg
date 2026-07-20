@@ -7,6 +7,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 namespace {
 
@@ -282,6 +283,72 @@ arpg::test::Failure room_clear_vacuum_is_one_atomic_save() noexcept {
     return {};
 }
 
+arpg::test::Failure room_clear_save_failure_retries_vacuum_before_exits()
+    noexcept {
+    DungeonRunState state = material_state(45U, 3U, 27U);
+    for (std::size_t word = 0U; word < 6U; ++word) {
+        state.item_ownership.material_claimed_drop_bits[word] =
+            (std::numeric_limits<std::uint64_t>::max)();
+    }
+    state.item_ownership.claimed_drop_bits.fill(
+        (std::numeric_limits<std::uint64_t>::max)());
+    DungeonSession session{DungeonRules{}, state};
+    session.tick({});
+    ARPG_REQUIRE(session.snapshot().phase
+        == arpg::dungeon::RoomPhase::combat);
+    arpg::test::install_ground_material(
+        session, arpg::dungeon::kAbyssMaterialOrdinalBegin,
+        MaterialId::chaos, {100.0F, 100.0F, 0.0F});
+
+    for (int tick = 0; tick < 4096; ++tick) {
+        const auto snapshot = session.snapshot();
+        if (snapshot.phase == arpg::dungeon::RoomPhase::committing) break;
+        if (snapshot.phase == arpg::dungeon::RoomPhase::combat) {
+            arpg::test::force_defeat_current_wave(session);
+        }
+        session.tick({});
+    }
+    ARPG_REQUIRE(session.pending_save().has_value());
+    const auto first = *session.pending_save();
+    ARPG_REQUIRE(first.kind
+        == arpg::dungeon::PendingSaveKind::room_clear);
+    for (const bool open : session.snapshot().exits_open) {
+        ARPG_REQUIRE(!open);
+    }
+
+    session.resolve_pending_save({
+        arpg::dungeon::SaveDisposition::not_committed,
+        first.expected_generation,
+        first.next_state,
+        first.kind,
+    });
+    ARPG_REQUIRE(session.snapshot().ground_material_count == 1U);
+    for (const bool open : session.snapshot().exits_open) {
+        ARPG_REQUIRE(!open);
+    }
+
+    session.tick({});
+    ARPG_REQUIRE(session.pending_save().has_value());
+    const auto retry = *session.pending_save();
+    ARPG_REQUIRE(retry.kind
+        == arpg::dungeon::PendingSaveKind::room_clear);
+    ARPG_REQUIRE(retry.expected_generation == first.expected_generation);
+    ARPG_REQUIRE(arpg::dungeon::same_run_state(
+        retry.next_state, first.next_state));
+    for (const bool open : session.snapshot().exits_open) {
+        ARPG_REQUIRE(!open);
+    }
+
+    ARPG_REQUIRE(resolve_committed(session));
+    ARPG_REQUIRE(session.snapshot().ground_material_count == 0U);
+    ARPG_REQUIRE(session.item_state().materials[
+        arpg::items::material_index(MaterialId::chaos)] == 1U);
+    for (const bool open : session.snapshot().exits_open) {
+        ARPG_REQUIRE(open);
+    }
+    return {};
+}
+
 arpg::test::Failure abyss_clear_adds_one_two_or_three_materials() noexcept {
     constexpr std::array<arpg::abyss::AbyssDanger, 3U> kDangers{{
         arpg::abyss::AbyssDanger::low,
@@ -364,6 +431,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"material proximity requires combat and range",
         &proximity_pickup_requires_combat_and_nearby_range},
     {"room clear vacuum atomic", &room_clear_vacuum_is_one_atomic_save},
+    {"room clear save failure retries vacuum",
+        &room_clear_save_failure_retries_vacuum_before_exits},
     {"abyss clear material counts",
         &abyss_clear_adds_one_two_or_three_materials},
     {"death discards unpicked materials",

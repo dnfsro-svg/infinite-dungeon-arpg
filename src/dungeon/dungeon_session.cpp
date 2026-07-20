@@ -1618,7 +1618,7 @@ void DungeonSession::prepare_room_clear() noexcept {
             std::move(next),
             TransitionKind::none,
             ExitDirection::none,
-            RoomPhase::cleared,
+            started_abyss ? RoomPhase::cleared : RoomPhase::combat,
         };
         vacuum_room_materials();
     } catch (...) {

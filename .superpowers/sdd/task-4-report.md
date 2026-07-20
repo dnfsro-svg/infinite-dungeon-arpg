@@ -18,8 +18,9 @@
 
 - 纯逻辑 RED：缺少 `material_loot.hpp` 及掉落接口；实现后焦点纯逻辑 5/5。
 - 持久化 RED：缺少材料认领字段/V7 尺寸；实现后 persistence 85/85。
-- 会话 RED：缺少独立地面池、拾取与清房事务接口；实现后 Stage16 焦点 11/11。
+- 会话 RED：缺少独立地面池、拾取与清房事务接口；实现后初始 Stage16 焦点 11/11。
 - 审计 RED：已有材料认领位后死亡，焦点用例在 `resolve_committed(session)` 失败；精确重建同步清位后恢复 11/11。
+- Important 审查 RED：真实 tick 清房产生 `room_clear` 后，提交中出口已经开放；`not_committed` 又恢复到 `cleared`，下一 tick 绕过真空重试。新用例明确失败于 `!open`。普通房 pending 的恢复阶段改为 `combat` 后，下一真实 tick 自动重建完全相同的真空事务，焦点恢复 12/12；深渊恢复阶段和受保护保存语义未改。
 - 全量回归先暴露 Windows Debug 默认 1MB 测试栈溢出，以及旧 helper 未提交 `room_clear`；测试目标栈储备提升到 4MB，旧驱动按真实保存边界提交并重新计数分配，生产事务未放宽。
 
 ## 最终验证
@@ -29,13 +30,13 @@ scripts/Build.ps1 -Preset windows-msvc-debug
   PASS，完整 MSVC Debug 构建
 
 ctest.exe --preset windows-msvc-debug -R '^stage16\.material_loot\.units$' --output-on-failure
-  PASS，11/11，0.07s
+  PASS，12/12，0.07s
 
 ctest.exe --preset windows-msvc-debug -R '^dungeon\.units$' --output-on-failure
-  PASS，265/265，187.61s
+  PASS，266/266，188.12s
 
 ctest.exe --preset windows-msvc-debug -R '^persistence\.units$' --output-on-failure
-  PASS，85/85，0.41s
+  PASS，85/85，0.40s
 
 git diff --check
   PASS（仅 Git 的 LF->CRLF 工作树提示，无空白错误）
@@ -57,6 +58,7 @@ git diff --check
 
 - 400 槽生产池保持固定容量、无清房热路径动态扩容。Windows Debug 测试因多个完整 Session/快照同时驻栈，测试可执行文件单独预留 4MB；生产可执行文件链接设置未改。
 - V7 仍是当前格式版本，只扩展其固定基区；旧 V7 测试金样已同步更新，V1-V6 迁移行为不变。
+- 普通房 `room_clear` 在 pending 与 `not_committed` 后均保持出口关闭；只有真空事务 committed 后才进入 `cleared` 并发布出口事件。
 - 无已知功能顾虑；本报告与实现同一提交。
 
 ---
