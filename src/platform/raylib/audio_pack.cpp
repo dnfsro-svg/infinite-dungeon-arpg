@@ -113,6 +113,7 @@ bool AudioPack::load() noexcept {
         }
 
         if (!external_loaded) {
+            bool fallback_loaded{};
             const Wave fallback_wave = procedural_.wave(id);
             if (api_.wave_valid(fallback_wave)) {
                 Sound fallback_sound = api_.load_sound_from_wave(fallback_wave);
@@ -120,7 +121,12 @@ bool AudioPack::load() noexcept {
                     sounds_[index] = fallback_sound;
                     available_[index] = true;
                     using_fallback_[index] = true;
+                    fallback_loaded = true;
                 }
+            }
+            if (!fallback_loaded) {
+                unload();
+                return false;
             }
         }
         all_available = all_available && available_[index];
@@ -132,6 +138,7 @@ bool AudioPack::load() noexcept {
         all_available = true;
         for (std::size_t index{}; index < kAssetCount; ++index) {
             const auto id = static_cast<AudioAssetId>(index);
+            bool fallback_loaded{};
             const Wave fallback_wave = procedural_.wave(id);
             if (api_.wave_valid(fallback_wave)) {
                 Sound fallback_sound = api_.load_sound_from_wave(fallback_wave);
@@ -139,7 +146,12 @@ bool AudioPack::load() noexcept {
                     sounds_[index] = fallback_sound;
                     available_[index] = true;
                     using_fallback_[index] = true;
+                    fallback_loaded = true;
                 }
+            }
+            if (!fallback_loaded) {
+                unload();
+                return false;
             }
             all_available = all_available && available_[index];
         }
