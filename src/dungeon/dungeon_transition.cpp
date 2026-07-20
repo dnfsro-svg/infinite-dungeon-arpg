@@ -1,6 +1,7 @@
 #include "dungeon/dungeon_session.hpp"
 
 #include "combat/room_bounds.hpp"
+#include "core/deterministic_rng.hpp"
 #include "dungeon/abyss_reward.hpp"
 #include "dungeon/dungeon_progression.hpp"
 #include "items/item_catalog.hpp"
@@ -18,6 +19,9 @@
 
 namespace arpg::dungeon {
 namespace {
+
+inline constexpr std::uint64_t kReinforcementDomain =
+    0x5245494E464F5243ULL;
 
 void saturating_increment(std::uint32_t& value) noexcept {
     if (value != (std::numeric_limits<std::uint32_t>::max)()) {
@@ -53,6 +57,20 @@ bool contains_id(
     const std::array<std::uint64_t, 3>& ids,
     std::uint64_t id) noexcept {
     return ids[0] == id || ids[1] == id || ids[2] == id;
+}
+
+bool reinforcement_succeeds(std::uint64_t root_seed,
+    std::uint64_t item_id,
+    std::uint32_t current,
+    std::uint64_t nonce,
+    std::uint16_t chance_bp) noexcept {
+    const std::uint64_t stream = kReinforcementDomain
+        ^ item_id
+        ^ (static_cast<std::uint64_t>(current) << 32U)
+        ^ nonce;
+    core::DeterministicRng rng = core::DeterministicRng::derive_stream(
+        root_seed, stream);
+    return rng.next_bounded(10000U).value_or(9999U) < chance_bp;
 }
 
 template <std::size_t Size>
@@ -429,7 +447,8 @@ bool DungeonSession::prepare_passive_mutation(
 RequestResult DungeonSession::prepare_item_save(
     DungeonRunState&& next,
     PendingSaveKind kind,
-    RoomPhase resume_phase) noexcept {
+    RoomPhase resume_phase,
+    std::optional<ReinforcementReceipt> reinforcement_receipt) noexcept {
     if (!pending_item_cache_consistent()) {
         enter_fault(DungeonFault::save_receipt_mismatch);
         return RequestResult::faulted;
@@ -467,6 +486,9 @@ RequestResult DungeonSession::prepare_item_save(
     }
     ++next.commit_generation;
     const std::uint64_t expected_generation = next.commit_generation;
+    if (reinforcement_receipt.has_value()) {
+        reinforcement_receipt->commit_generation = expected_generation;
+    }
     pending_save_.emplace(PendingSave{
         kind,
         expected_generation,
@@ -474,6 +496,9 @@ RequestResult DungeonSession::prepare_item_save(
         TransitionKind::none,
         ExitDirection::none,
         resume_phase,
+        0xFFFFU,
+        std::nullopt,
+        reinforcement_receipt,
     });
     pending_item_build_.emplace(candidate_build.build);
     phase_ = RoomPhase::committing;
@@ -484,7 +509,8 @@ bool DungeonSession::pending_item_cache_consistent() const noexcept {
     const bool item_pending = pending_save_.has_value()
         && (pending_save_->kind == PendingSaveKind::equipment
             || pending_save_->kind == PendingSaveKind::craft
-            || pending_save_->kind == PendingSaveKind::recipe);
+            || pending_save_->kind == PendingSaveKind::recipe
+            || pending_save_->kind == PendingSaveKind::reinforcement);
     return item_pending == pending_item_build_.has_value();
 }
 
@@ -803,6 +829,147 @@ RequestResult DungeonSession::request_craft(
         --next.item_ownership.materials[material_index];
         return prepare_item_save(
             std::move(next), PendingSaveKind::craft, phase_);
+    } catch (const std::bad_alloc&) {
+        return RequestResult::rejected;
+    } catch (...) {
+        return RequestResult::rejected;
+    }
+}
+
+RequestResult DungeonSession::request_reinforcement(
+    std::uint64_t item_id) noexcept {
+    if (!pending_item_cache_consistent()) {
+        enter_fault(DungeonFault::save_receipt_mismatch);
+        return RequestResult::faulted;
+    }
+    const std::size_t stone = items::material_index(
+        items::MaterialId::reinforcement_stone);
+    if (!item_request_phase(phase_) || !combat_.has_value()
+            || pending_save_.has_value() || item_id == 0U
+            || stone >= items::kMaterialCount
+            || stable_state_.item_ownership.materials[stone] == 0U) {
+        return RequestResult::rejected;
+    }
+    const items::OwnershipValidationResult stable_validation =
+        items::validate_ownership_detailed(stable_state_.item_ownership);
+    if (stable_validation == items::OwnershipValidationResult::allocation_failure) {
+        return RequestResult::rejected;
+    }
+    if (stable_validation != items::OwnershipValidationResult::valid) {
+        enter_fault(DungeonFault::invalid_item_state);
+        return RequestResult::faulted;
+    }
+    const items::ItemInstance* const item = find_item(
+        stable_state_.item_ownership, item_id);
+    if (item == nullptr) return RequestResult::rejected;
+    const items::ReinforcementPreview preview =
+        items::reinforcement_preview(*item);
+    if (!preview.can_attempt) return RequestResult::rejected;
+
+    const bool success = reinforcement_succeeds(stable_state_.root_seed,
+        item->id, item->reinforcement, stable_state_.commit_generation,
+        preview.success_chance_bp);
+    ReinforcementReceipt receipt{true, false, success, false, 0U,
+        item->id, item->reinforcement, item->reinforcement,
+        preview.success_chance_bp, items::MaterialId::reinforcement_stone};
+    try {
+        DungeonRunState next = stable_state_;
+        next.progression = room_progression_;
+        auto& owned = next.item_ownership.items;
+        if (success) {
+            for (items::ItemInstance& candidate : owned) {
+                if (candidate.id == item_id) {
+                    candidate.reinforcement = preview.target;
+                    receipt.after = candidate.reinforcement;
+                    break;
+                }
+            }
+        } else {
+            const items::ReinforcementFailure failure =
+                items::reinforcement_failure(item->reinforcement);
+            if (failure == items::ReinforcementFailure::destroy) {
+                std::size_t write = 0U;
+                for (std::size_t read = 0U; read < owned.size(); ++read) {
+                    if (owned[read].id == item_id) continue;
+                    if (write != read) owned[write] = owned[read];
+                    ++write;
+                }
+                owned.resize(write);
+                for (std::uint64_t& equipped
+                        : next.item_ownership.equipment.equipped_ids) {
+                    if (equipped == item_id) equipped = 0U;
+                }
+                receipt.destroyed = true;
+                receipt.after = 0U;
+            } else {
+                const std::uint32_t after = failure
+                        == items::ReinforcementFailure::reset_six ? 6U
+                    : failure == items::ReinforcementFailure::reset_zero ? 0U
+                    : item->reinforcement;
+                for (items::ItemInstance& candidate : owned) {
+                    if (candidate.id == item_id) {
+                        candidate.reinforcement = after;
+                        receipt.after = after;
+                        break;
+                    }
+                }
+            }
+        }
+        --next.item_ownership.materials[stone];
+        return prepare_item_save(std::move(next),
+            PendingSaveKind::reinforcement, phase_, receipt);
+    } catch (const std::bad_alloc&) {
+        return RequestResult::rejected;
+    } catch (...) {
+        return RequestResult::rejected;
+    }
+}
+
+RequestResult DungeonSession::request_coupon(
+    items::MaterialId coupon, std::uint64_t item_id) noexcept {
+    if (!pending_item_cache_consistent()) {
+        enter_fault(DungeonFault::save_receipt_mismatch);
+        return RequestResult::faulted;
+    }
+    const std::size_t coupon_index = items::material_index(coupon);
+    if (!item_request_phase(phase_) || !combat_.has_value()
+            || pending_save_.has_value() || item_id == 0U
+            || coupon_index >= items::kMaterialCount
+            || !items::material_is_coupon(coupon)
+            || stable_state_.item_ownership.materials[coupon_index] == 0U) {
+        return RequestResult::rejected;
+    }
+    const items::OwnershipValidationResult stable_validation =
+        items::validate_ownership_detailed(stable_state_.item_ownership);
+    if (stable_validation == items::OwnershipValidationResult::allocation_failure) {
+        return RequestResult::rejected;
+    }
+    if (stable_validation != items::OwnershipValidationResult::valid) {
+        enter_fault(DungeonFault::invalid_item_state);
+        return RequestResult::faulted;
+    }
+    const items::ItemInstance* const item = find_item(
+        stable_state_.item_ownership, item_id);
+    if (item == nullptr) return RequestResult::rejected;
+    const auto upgraded = items::apply_coupon(*item, coupon);
+    if (!upgraded.has_value()) return RequestResult::rejected;
+
+    ReinforcementReceipt receipt{true, true, true, false, 0U,
+        item_id, item->reinforcement, upgraded->reinforcement, 10000U, coupon};
+    try {
+        DungeonRunState next = stable_state_;
+        next.progression = room_progression_;
+        bool replaced = false;
+        for (items::ItemInstance& candidate : next.item_ownership.items) {
+            if (candidate.id != item_id) continue;
+            candidate = *upgraded;
+            replaced = true;
+            break;
+        }
+        if (!replaced) return RequestResult::rejected;
+        --next.item_ownership.materials[coupon_index];
+        return prepare_item_save(std::move(next),
+            PendingSaveKind::reinforcement, phase_, receipt);
     } catch (const std::bad_alloc&) {
         return RequestResult::rejected;
     } catch (...) {
@@ -1224,7 +1391,9 @@ void DungeonSession::commit_pending_save(
     const PendingSaveKind kind = pending_save_->kind;
     const bool item_commit = kind == PendingSaveKind::equipment
         || kind == PendingSaveKind::craft
-        || kind == PendingSaveKind::recipe;
+        || kind == PendingSaveKind::recipe
+        || kind == PendingSaveKind::reinforcement;
+    const bool reinforcement_commit = kind == PendingSaveKind::reinforcement;
     const bool pickup_commit = kind == PendingSaveKind::loot_pickup;
     const bool material_pickup_commit =
         kind == PendingSaveKind::material_pickup;
@@ -1263,6 +1432,37 @@ void DungeonSession::commit_pending_save(
                 || !ground_materials_[pickup_ordinal].active
                 || ground_materials_[pickup_ordinal].ordinal
                     != pickup_ordinal) {
+            enter_fault(DungeonFault::save_receipt_mismatch);
+            return;
+        }
+    }
+    ReinforcementReceipt published_reinforcement_receipt{};
+    if (reinforcement_commit) {
+        if (!pending_save_->reinforcement_receipt.has_value()) {
+            enter_fault(DungeonFault::save_receipt_mismatch);
+            return;
+        }
+        published_reinforcement_receipt = *pending_save_->reinforcement_receipt;
+        const std::size_t material_index = items::material_index(
+            published_reinforcement_receipt.material);
+        const items::ItemInstance* const published = find_item(
+            pending_save_->next_state.item_ownership,
+            published_reinforcement_receipt.item_id);
+        if (!published_reinforcement_receipt.valid
+                || published_reinforcement_receipt.commit_generation
+                    != pending_save_->expected_generation
+                || material_index >= items::kMaterialCount
+                || !((published_reinforcement_receipt.coupon
+                        && items::material_is_coupon(
+                            published_reinforcement_receipt.material))
+                    || (!published_reinforcement_receipt.coupon
+                        && published_reinforcement_receipt.material
+                            == items::MaterialId::reinforcement_stone))
+                || (published_reinforcement_receipt.destroyed
+                    ? published != nullptr
+                    : published == nullptr
+                        || published->reinforcement
+                            != published_reinforcement_receipt.after)) {
             enter_fault(DungeonFault::save_receipt_mismatch);
             return;
         }
@@ -1368,6 +1568,9 @@ void DungeonSession::commit_pending_save(
     room_progression_ = stable_state_.progression;
     if (item_commit) {
         combat_->apply_player_build(published_build);
+        if (reinforcement_commit) {
+            reinforcement_receipt_ = published_reinforcement_receipt;
+        }
         phase_ = resume_phase;
         return;
     }

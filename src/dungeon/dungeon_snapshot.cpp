@@ -144,6 +144,7 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
         packed.material = ground.material;
     }
     result.material_pickup_receipt = material_pickup_receipt_;
+    result.reinforcement_receipt = reinforcement_receipt_;
     if (pending_save_.has_value()) {
         result.pending_save_kind = pending_save_->kind;
         if (pending_save_->kind == PendingSaveKind::loot_pickup

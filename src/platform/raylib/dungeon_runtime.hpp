@@ -67,6 +67,10 @@ public:
             std::nullopt) noexcept;
     [[nodiscard]] dungeon::RequestResult request_recipe(
         const std::array<std::uint64_t, 3>& item_ids) noexcept;
+    [[nodiscard]] dungeon::RequestResult request_reinforcement(
+        std::uint64_t item_id) noexcept;
+    [[nodiscard]] dungeon::RequestResult request_coupon(
+        items::MaterialId coupon, std::uint64_t item_id) noexcept;
     [[nodiscard]] dungeon::RequestResult request_death_continue() noexcept;
     [[nodiscard]] const items::ItemOwnershipState* item_state() const noexcept;
     [[nodiscard]] DungeonRenderStatus render_status() const noexcept;

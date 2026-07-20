@@ -166,6 +166,19 @@ struct MaterialPickupReceipt final {
     std::array<std::uint64_t, items::kMaterialCount> counts{};
 };
 
+struct ReinforcementReceipt final {
+    bool valid{};
+    bool coupon{};
+    bool success{};
+    bool destroyed{};
+    std::uint64_t commit_generation{};
+    std::uint64_t item_id{};
+    std::uint32_t before{};
+    std::uint32_t after{};
+    std::uint16_t success_chance_bp{};
+    items::MaterialId material{items::MaterialId::count};
+};
+
 struct DungeonSnapshot final {
     std::uint64_t session_tick{};
     std::uint64_t root_seed{};
@@ -209,6 +222,7 @@ struct DungeonSnapshot final {
     std::array<GroundMaterialSnapshot, kGroundMaterialCapacity>
         ground_materials{};
     MaterialPickupReceipt material_pickup_receipt{};
+    ReinforcementReceipt reinforcement_receipt{};
     std::optional<PendingSaveKind> pending_save_kind{};
     std::optional<std::uint16_t> pending_pickup_ordinal{};
     std::optional<std::uint16_t> pending_material_pickup_ordinal{};
@@ -238,6 +252,7 @@ enum class PendingSaveKind : std::uint8_t {
     equipment,
     craft,
     recipe,
+    reinforcement,
     abyss_start,
     abyss_fail,
     abyss_clear,
@@ -257,6 +272,7 @@ struct PendingSave final {
     RoomPhase resume_phase{RoomPhase::awaiting_exit};
     std::uint16_t pickup_ordinal{0xFFFFU};
     std::optional<combat::CombatDeathSnapshot> death_snapshot{};
+    std::optional<ReinforcementReceipt> reinforcement_receipt{};
 };
 
 struct PendingSaveResult final {

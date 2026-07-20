@@ -286,6 +286,20 @@ dungeon::RequestResult DungeonRuntime::request_recipe(
         : dungeon::RequestResult::rejected;
 }
 
+dungeon::RequestResult DungeonRuntime::request_reinforcement(
+    std::uint64_t item_id) noexcept {
+    return state() == DungeonRuntimeState::running && session_.has_value()
+        ? session_->request_reinforcement(item_id)
+        : dungeon::RequestResult::rejected;
+}
+
+dungeon::RequestResult DungeonRuntime::request_coupon(
+    items::MaterialId coupon, std::uint64_t item_id) noexcept {
+    return state() == DungeonRuntimeState::running && session_.has_value()
+        ? session_->request_coupon(coupon, item_id)
+        : dungeon::RequestResult::rejected;
+}
+
 dungeon::RequestResult DungeonRuntime::request_death_continue() noexcept {
     return state() == DungeonRuntimeState::running && session_.has_value()
         ? session_->request_death_continue()

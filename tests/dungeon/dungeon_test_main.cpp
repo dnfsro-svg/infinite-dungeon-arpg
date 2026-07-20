@@ -211,10 +211,10 @@ int main() {
         const arpg::test::TestSuite crafting_only[] = {
             dungeon_crafting_transaction_suite(),
         };
-        return arpg::test::run_suites(crafting_only, 2,
-            "stage 16 task 6 crafting transactions");
+        return arpg::test::run_suites(crafting_only, 4,
+            "stage 16 task 7 crafting and reinforcement transactions");
     }
 
-    return arpg::test::run_suites(suites, 268,
+    return arpg::test::run_suites(suites, 270,
         "stage 11a task 8 death continue validation");
 }

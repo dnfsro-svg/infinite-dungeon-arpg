@@ -54,11 +54,25 @@ arpg::test::Failure selected_material_can_be_cancelled_without_changing_counts()
     return {};
 }
 
+arpg::test::Failure reinforcement_stone_requires_explicit_destroy_confirmation() noexcept {
+    platform::MaterialBagRenderer renderer{};
+    ARPG_REQUIRE(!renderer.begin_reinforcement_confirmation(77U, 11U));
+    ARPG_REQUIRE(renderer.begin_reinforcement_confirmation(77U, 12U));
+    ARPG_REQUIRE(renderer.reinforcement_confirmation_item() == 77U);
+    ARPG_REQUIRE(!renderer.resolve_reinforcement_confirmation(false).has_value());
+    ARPG_REQUIRE(!renderer.reinforcement_confirmation_item().has_value());
+    ARPG_REQUIRE(renderer.begin_reinforcement_confirmation(77U, 13U));
+    ARPG_REQUIRE(renderer.resolve_reinforcement_confirmation(true) == 77U);
+    ARPG_REQUIRE(!renderer.reinforcement_confirmation_item().has_value());
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"material bag contains all slots", &material_bag_has_all_fourteen_slots},
     {"minimum layout separates detail and bag", &minimum_layout_keeps_detail_above_material_bag},
     {"material bag selects owned material", &selected_material_requires_an_owned_material_slot},
     {"material bag selection cancels", &selected_material_can_be_cancelled_without_changing_counts},
+    {"reinforcement requires destroy confirmation", &reinforcement_stone_requires_explicit_destroy_confirmation},
 };
 
 }  // namespace

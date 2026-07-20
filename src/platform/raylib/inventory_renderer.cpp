@@ -147,6 +147,7 @@ void InventoryRenderer::open(const dungeon::DungeonSession& session,
 void InventoryRenderer::close() noexcept {
     open_ = false;
     click_tracker_ = {};
+    static_cast<void>(material_bag_.resolve_reinforcement_confirmation(false));
 }
 
 bool InventoryRenderer::is_open() const noexcept { return open_; }
@@ -221,6 +222,30 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
     const bool right_pressed = input.mouse_right_pressed;
     if (!left_pressed && !right_pressed) return false;
     const Vector2 mouse = input.mouse_position;
+    const bool requests_enabled = !snapshot.pending_save_kind.has_value()
+        && runtime.state() == DungeonRuntimeState::running;
+    if (material_bag_.reinforcement_confirmation_item().has_value()) {
+        const ReinforcementConfirmationLayout confirmation =
+            reinforcement_confirmation_layout(GetScreenWidth(), GetScreenHeight());
+        if (right_pressed || (left_pressed
+                && contains(confirmation.cancel, mouse))) {
+            static_cast<void>(
+                material_bag_.resolve_reinforcement_confirmation(false));
+            return false;
+        }
+        if (left_pressed && contains(confirmation.confirm, mouse)) {
+            const auto confirmed =
+                material_bag_.resolve_reinforcement_confirmation(true);
+            if (requests_enabled && confirmed.has_value()
+                    && runtime.request_reinforcement(*confirmed)
+                        == dungeon::RequestResult::accepted) {
+                runtime.service_pending_save();
+                return true;
+            }
+            return false;
+        }
+        return false;
+    }
     if (right_pressed && material_bag_.cycle_directed_category(
             mouse, GetScreenWidth(), GetScreenHeight())) {
         return false;
@@ -248,8 +273,6 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
         scroll_rows_ = 0.0F;
         return false;
     }
-    const bool requests_enabled = !snapshot.pending_save_kind.has_value()
-        && runtime.state() == DungeonRuntimeState::running;
     if (left_pressed) {
         if (const auto slot = hit_test_equipped_slot(
                 mouse, layout, state.equipment)) {
@@ -283,6 +306,28 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
         if (left_pressed && requests_enabled) {
             const auto selected_material = material_bag_.selected_material();
             if (selected_material.has_value()) {
+                if (*selected_material == items::MaterialId::reinforcement_stone) {
+                    if (item.reinforcement >= 12U) {
+                        static_cast<void>(
+                            material_bag_.begin_reinforcement_confirmation(
+                                item.id, item.reinforcement));
+                        return false;
+                    }
+                    if (runtime.request_reinforcement(item.id)
+                            == dungeon::RequestResult::accepted) {
+                        runtime.service_pending_save();
+                        return true;
+                    }
+                    return false;
+                }
+                if (items::material_is_coupon(*selected_material)) {
+                    if (runtime.request_coupon(*selected_material, item.id)
+                            == dungeon::RequestResult::accepted) {
+                        runtime.service_pending_save();
+                        return true;
+                    }
+                    return false;
+                }
                 const auto category = *selected_material == items::MaterialId::directed
                     ? std::optional<items::DirectedCategory>{
                         material_bag_.directed_category()}
@@ -474,6 +519,27 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
             static_cast<int>(layout.grid.y + 13.0F), 12,
             Color{255, 191, 96, 255});
     }
+    if (snapshot.reinforcement_receipt.valid) {
+        const dungeon::ReinforcementReceipt& receipt =
+            snapshot.reinforcement_receipt;
+        const char* const result = receipt.destroyed ? "DESTROYED"
+            : receipt.success ? "SUCCESS" : "FAILED";
+        const char* const action = receipt.coupon ? "Coupon" : "Reinforcement";
+        const Color color = receipt.success ? Color{147, 244, 169, 255}
+                                            : Color{255, 145, 118, 255};
+        if (receipt.destroyed) {
+            DrawText(TextFormat("%s %s: +%u -> DESTROYED", action, result,
+                static_cast<unsigned>(receipt.before)),
+                static_cast<int>(layout.grid.x + 12.0F),
+                static_cast<int>(layout.grid.y + 13.0F), 12, color);
+        } else {
+            DrawText(TextFormat("%s %s: +%u -> +%u", action, result,
+                static_cast<unsigned>(receipt.before),
+                static_cast<unsigned>(receipt.after)),
+                static_cast<int>(layout.grid.x + 12.0F),
+                static_cast<int>(layout.grid.y + 13.0F), 12, color);
+        }
+    }
 
     const items::ItemInstance* const item = selected_item(state);
     const Rectangle first_detail_line = detail_line_rectangle(layout, 0U);
@@ -502,6 +568,8 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     draw_detail_line(TextFormat("iLvl %u  Required %u",
         static_cast<unsigned>(item->item_level),
         static_cast<unsigned>(item->required_level)), RAYWHITE);
+    draw_detail_line(TextFormat("Reinforcement +%u",
+        static_cast<unsigned>(item->reinforcement)), Color{255, 225, 123, 255});
     for (std::size_t effect_index = 0U;
          effect_index < base->effect_count; ++effect_index) {
         const items::BaseEffect& effect = base->effects[effect_index];
@@ -576,6 +644,8 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
             diff.damage_reduction_cap_bonus[3] / 100.0), RAYWHITE);
     }
     EndScissorMode();
+    material_bag_.draw_reinforcement_confirmation(
+        GetScreenWidth(), GetScreenHeight());
 }
 
 }  // namespace arpg::platform

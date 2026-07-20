@@ -124,9 +124,91 @@ arpg::test::Failure recipe_requires_exact_base_and_resets_reinforcement() noexce
     return {};
 }
 
+arpg::test::Failure reinforcement_failure_bands_apply_through_saved_transactions() noexcept {
+    const ItemInstance source = generated_item(301U, 1U, ItemRarity::normal);
+    ARPG_REQUIRE(arpg::items::validate_item(source));
+    const std::size_t stone = arpg::items::material_index(
+        MaterialId::reinforcement_stone);
+
+    const auto exercise_failure = [&](std::uint32_t current,
+        std::uint32_t expected, bool expect_destroy) noexcept {
+        for (std::uint64_t seed = 1U; seed <= 256U; ++seed) {
+            ItemInstance item = source;
+            item.reinforcement = current;
+            DungeonRunState state = state_with_items({item});
+            state.root_seed = seed;
+            state.item_ownership.materials[stone] = 1U;
+            if (expect_destroy) {
+                state.item_ownership.equipment.equipped_ids[
+                    static_cast<std::size_t>(ItemSlot::weapon)] = item.id;
+            }
+            DungeonSession session{DungeonRules{}, state};
+            if (session.request_reinforcement(item.id)
+                    != RequestResult::accepted) {
+                continue;
+            }
+            const auto pending = session.pending_save();
+            if (!pending.has_value()) return false;
+            const ItemInstance* const after = find_item(
+                pending->next_state.item_ownership, item.id);
+            if (expect_destroy ? after != nullptr
+                    : after == nullptr || after->reinforcement != expected) {
+                continue;
+            }
+            if (expect_destroy && pending->next_state.item_ownership.equipment
+                    .equipped_ids[static_cast<std::size_t>(ItemSlot::weapon)]
+                    != 0U) {
+                return false;
+            }
+            if (pending->next_state.item_ownership.materials[stone] != 0U
+                    || pending->kind != PendingSaveKind::reinforcement
+                    || !commit_pending(session)) {
+                return false;
+            }
+            const ItemInstance* const committed = find_item(
+                session.item_state(), item.id);
+            return expect_destroy ? committed == nullptr
+                                  : committed != nullptr
+                && committed->reinforcement == expected;
+        }
+        return false;
+    };
+
+    ARPG_REQUIRE(exercise_failure(7U, 6U, false));
+    ARPG_REQUIRE(exercise_failure(10U, 0U, false));
+    ARPG_REQUIRE(exercise_failure(12U, 0U, true));
+    return {};
+}
+
+arpg::test::Failure coupon_fifteen_sets_level_through_atomic_transaction() noexcept {
+    ItemInstance item = generated_item(401U, 1U, ItemRarity::normal);
+    ARPG_REQUIRE(arpg::items::validate_item(item));
+    item.reinforcement = 3U;
+    DungeonRunState state = state_with_items({item});
+    const std::size_t coupon = arpg::items::material_index(MaterialId::coupon_15);
+    state.item_ownership.materials[coupon] = 1U;
+    DungeonSession session{DungeonRules{}, state};
+
+    ARPG_REQUIRE(session.request_coupon(MaterialId::coupon_15, item.id)
+        == RequestResult::accepted);
+    const auto pending = session.pending_save();
+    ARPG_REQUIRE(pending.has_value());
+    ARPG_REQUIRE(pending->kind == PendingSaveKind::reinforcement);
+    const ItemInstance* const after = find_item(
+        pending->next_state.item_ownership, item.id);
+    ARPG_REQUIRE(after != nullptr);
+    ARPG_REQUIRE(after->reinforcement == 15U);
+    ARPG_REQUIRE(pending->next_state.item_ownership.materials[coupon] == 0U);
+    ARPG_REQUIRE(commit_pending(session));
+    ARPG_REQUIRE(find_item(session.item_state(), item.id)->reinforcement == 15U);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"craft spends only after pure success", &crafting_spends_only_after_a_successful_pure_craft},
     {"recipe exact base resets reinforcement", &recipe_requires_exact_base_and_resets_reinforcement},
+    {"reinforcement failure bands save atomically", &reinforcement_failure_bands_apply_through_saved_transactions},
+    {"coupon fifteen saves atomically", &coupon_fifteen_sets_level_through_atomic_transaction},
 };
 
 }  // namespace

@@ -110,6 +110,10 @@ public:
             std::nullopt) noexcept;
     [[nodiscard]] RequestResult request_recipe(
         const std::array<std::uint64_t, 3>& item_ids) noexcept;
+    [[nodiscard]] RequestResult request_reinforcement(
+        std::uint64_t item_id) noexcept;
+    [[nodiscard]] RequestResult request_coupon(
+        items::MaterialId coupon, std::uint64_t item_id) noexcept;
     [[nodiscard]] RequestResult request_pickup(
         std::uint16_t drop_ordinal) noexcept;
     [[nodiscard]] RequestResult request_material_pickup(
@@ -210,7 +214,9 @@ private:
     [[nodiscard]] RequestResult prepare_item_save(
         DungeonRunState&& next,
         PendingSaveKind kind,
-        RoomPhase resume_phase) noexcept;
+        RoomPhase resume_phase,
+        std::optional<ReinforcementReceipt> reinforcement_receipt =
+            std::nullopt) noexcept;
     [[nodiscard]] PlayerBuildResult build_for(
         const checkpoint::DungeonRunState& state,
         const items::EquipmentState* equipment_override = nullptr) const noexcept;
@@ -249,6 +255,7 @@ private:
     std::array<std::uint64_t, kMaterialDropBitWordCount>
         rolled_material_bits_{};
     MaterialPickupReceipt material_pickup_receipt_{};
+    ReinforcementReceipt reinforcement_receipt_{};
     RoomEncounterPlan encounter_plan_{};
     std::uint8_t wave_index_{};
     std::uint16_t wave_delay_ticks_{};

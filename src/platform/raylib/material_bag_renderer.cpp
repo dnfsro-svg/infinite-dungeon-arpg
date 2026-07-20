@@ -72,6 +72,25 @@ Rectangle material_bag_detail_bounds(int width, int height) noexcept {
     return {inventory.detail.x, top, inventory.detail.width, bottom - top};
 }
 
+ReinforcementConfirmationLayout reinforcement_confirmation_layout(
+    int width, int height) noexcept {
+    const float panel_width = (std::min)(360.0F,
+        (std::max)(180.0F, static_cast<float>(width) - 32.0F));
+    const float panel_height = 124.0F;
+    const Rectangle panel{(static_cast<float>(width) - panel_width) * 0.5F,
+        (static_cast<float>(height) - panel_height) * 0.5F,
+        panel_width, panel_height};
+    constexpr float kModalInset = 14.0F;
+    constexpr float kModalGap = 8.0F;
+    const float button_width = (panel.width - kModalInset * 2.0F
+        - kModalGap) * 0.5F;
+    return {panel,
+        {panel.x + kModalInset, panel.y + panel.height - 38.0F,
+            button_width, 24.0F},
+        {panel.x + kModalInset + button_width + kModalGap,
+            panel.y + panel.height - 38.0F, button_width, 24.0F}};
+}
+
 bool MaterialBagRenderer::select_slot(std::size_t slot,
     const items::ItemOwnershipState& state) noexcept {
     if (slot >= state.materials.size() || state.materials[slot] == 0U) return false;
@@ -83,6 +102,29 @@ bool MaterialBagRenderer::clear_selection() noexcept {
     if (!selected_.has_value()) return false;
     selected_.reset();
     return true;
+}
+
+bool MaterialBagRenderer::begin_reinforcement_confirmation(
+    std::uint64_t item_id, std::uint32_t current) noexcept {
+    if (item_id == 0U || current < 12U
+            || reinforcement_confirmation_item_.has_value()) {
+        return false;
+    }
+    reinforcement_confirmation_item_ = item_id;
+    return true;
+}
+
+std::optional<std::uint64_t>
+MaterialBagRenderer::resolve_reinforcement_confirmation(
+    bool confirmed) noexcept {
+    const auto item = reinforcement_confirmation_item_;
+    reinforcement_confirmation_item_.reset();
+    return confirmed ? item : std::nullopt;
+}
+
+std::optional<std::uint64_t>
+MaterialBagRenderer::reinforcement_confirmation_item() const noexcept {
+    return reinforcement_confirmation_item_;
 }
 
 void MaterialBagRenderer::sync_selection(
@@ -167,6 +209,29 @@ void MaterialBagRenderer::draw(const items::ItemOwnershipState& state,
                 9, Color{255, 237, 154, 255});
         }
     }
+}
+
+void MaterialBagRenderer::draw_reinforcement_confirmation(
+    int width, int height) const noexcept {
+    if (!reinforcement_confirmation_item_.has_value()) return;
+    const ReinforcementConfirmationLayout layout =
+        reinforcement_confirmation_layout(width, height);
+    DrawRectangleRounded(layout.panel, 0.04F, 5, Color{29, 15, 18, 252});
+    DrawRectangleRoundedLinesEx(layout.panel, 0.04F, 5, 2.0F,
+        Color{255, 113, 96, 255});
+    DrawText("DANGER: FAILURE DESTROYS EQUIPMENT",
+        static_cast<int>(layout.panel.x + 14.0F),
+        static_cast<int>(layout.panel.y + 16.0F), 14,
+        Color{255, 180, 160, 255});
+    DrawText("Use one Reinforcement Stone?",
+        static_cast<int>(layout.panel.x + 14.0F),
+        static_cast<int>(layout.panel.y + 42.0F), 13, RAYWHITE);
+    DrawRectangleRounded(layout.confirm, 0.10F, 4, Color{113, 39, 39, 255});
+    DrawRectangleRounded(layout.cancel, 0.10F, 4, Color{44, 58, 74, 255});
+    DrawText("CONFIRM", static_cast<int>(layout.confirm.x + 8.0F),
+        static_cast<int>(layout.confirm.y + 5.0F), 13, RAYWHITE);
+    DrawText("CANCEL", static_cast<int>(layout.cancel.x + 10.0F),
+        static_cast<int>(layout.cancel.y + 5.0F), 13, RAYWHITE);
 }
 
 }  // namespace arpg::platform
