@@ -8,8 +8,10 @@ set(_game_audio "${_repository_root}/src/platform/raylib/game_audio.cpp")
 set(_game_audio_header "${_repository_root}/src/platform/raylib/game_audio.hpp")
 set(_host "${_repository_root}/src/platform/raylib/raylib_host.cpp")
 set(_raylib_cmake "${_repository_root}/src/platform/raylib/CMakeLists.txt")
+set(_app_cmake "${_repository_root}/src/app/CMakeLists.txt")
 foreach(_required IN ITEMS
-        "${_game_audio}" "${_game_audio_header}" "${_host}" "${_raylib_cmake}")
+        "${_game_audio}" "${_game_audio_header}" "${_host}" "${_raylib_cmake}"
+        "${_app_cmake}")
     if(NOT EXISTS "${_required}")
         message(FATAL_ERROR "Stage15 integration input missing: ${_required}")
     endif()
@@ -81,5 +83,15 @@ string(FIND "${_cmake_text}" "game_audio.cpp" _cmake_found)
 if(_cmake_found EQUAL -1)
     message(FATAL_ERROR "Stage15 arpg_raylib target omits game_audio.cpp")
 endif()
+
+file(READ "${_app_cmake}" _app_cmake_text)
+foreach(_token IN ITEMS
+        "assets/stage15/audio"
+        "$<TARGET_FILE_DIR:arpg_game>/assets/stage15/audio")
+    string(FIND "${_app_cmake_text}" "${_token}" _copy_found)
+    if(_copy_found EQUAL -1)
+        message(FATAL_ERROR "Stage15 release copy rule missing: ${_token}")
+    endif()
+endforeach()
 
 message(STATUS "[stage15-audio-integration] ownership, boundary, and host wiring passed")

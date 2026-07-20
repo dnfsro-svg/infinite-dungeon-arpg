@@ -20,3 +20,10 @@ add_custom_command(TARGET arpg_game POST_BUILD
         "$<TARGET_FILE_DIR:arpg_game>/assets/stage14/audio"
     COMMENT "Copying Stage 14 combat audio assets"
     VERBATIM)
+
+add_custom_command(TARGET arpg_game POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+        "${PROJECT_SOURCE_DIR}/assets/stage15/audio"
+        "$<TARGET_FILE_DIR:arpg_game>/assets/stage15/audio"
+    COMMENT "Copying Stage 15 music, ambience, and UI audio assets"
+    VERBATIM)

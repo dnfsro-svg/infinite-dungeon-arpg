@@ -120,6 +120,53 @@ if(TARGET arpg_raylib)
     set_tests_properties(stage14.audio_root_safety
         PROPERTIES LABELS "headless;platform;stage14" TIMEOUT 30)
 
+    add_executable(arpg_stage15_audio_formal
+        stage15_audio_formal_game_validation.cpp)
+    target_compile_features(arpg_stage15_audio_formal PRIVATE cxx_std_17)
+    target_compile_definitions(arpg_stage15_audio_formal
+        PRIVATE ARPG_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    target_link_libraries(arpg_stage15_audio_formal PRIVATE arpg_raylib)
+    if(MSVC)
+        target_compile_options(arpg_stage15_audio_formal PRIVATE /utf-8)
+    endif()
+    arpg_enable_project_warnings(arpg_stage15_audio_formal)
+
+    add_test(
+        NAME stage15.audio_formal
+        COMMAND "$<TARGET_FILE:arpg_stage15_audio_formal>"
+            "${CMAKE_CURRENT_BINARY_DIR}/stage15 audio evidence"
+            "${PROJECT_SOURCE_DIR}/docs/validation/evidence/stage15-audio-mix")
+    set_tests_properties(stage15.audio_formal
+        PROPERTIES LABELS "platform;raylib;stage15" TIMEOUT 300
+            FIXTURES_SETUP stage15_audio_evidence RUN_SERIAL TRUE)
+    add_test(
+        NAME stage15.audio_evidence_validator
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/stage15_audio_validator.ps1"
+            -EvidenceDirectory
+                "${CMAKE_CURRENT_BINARY_DIR}/stage15 audio evidence/stage15-run")
+    set_tests_properties(stage15.audio_evidence_validator
+        PROPERTIES LABELS "platform;raylib;stage15" TIMEOUT 60
+            FIXTURES_REQUIRED stage15_audio_evidence)
+    add_test(
+        NAME stage15.audio_evidence_validator_self_test
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/stage15_audio_validator_self_test.ps1"
+            -EvidenceDirectory
+                "${CMAKE_CURRENT_BINARY_DIR}/stage15 audio evidence/stage15-run"
+            -Validator "${CMAKE_CURRENT_SOURCE_DIR}/stage15_audio_validator.ps1"
+            -MutationRoot "${CMAKE_CURRENT_BINARY_DIR}/stage15-audio-evidence-mutation")
+    set_tests_properties(stage15.audio_evidence_validator_self_test
+        PROPERTIES LABELS "platform;raylib;negative;stage15" TIMEOUT 60
+            FIXTURES_REQUIRED stage15_audio_evidence)
+    add_test(
+        NAME stage15.audio_root_safety
+        COMMAND "$<TARGET_FILE:arpg_stage15_audio_formal>"
+            --root-safety-self-test
+            "${CMAKE_CURRENT_BINARY_DIR}/stage15-root-safety")
+    set_tests_properties(stage15.audio_root_safety
+        PROPERTIES LABELS "headless;platform;stage15" TIMEOUT 30)
+
     add_executable(arpg_stage11c_hud_stress
         ../core/allocation_probe.cpp
         hud_stress_tests.cpp)
