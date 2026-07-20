@@ -352,6 +352,8 @@ ItemAttributeLabel item_attribute_label(items::ItemEffectKind effect,
         name = "Attack speed";
     } else if (effect == items::ItemEffectKind::all_element_damage_reduction) {
         name = "All element DR";
+    } else if (effect == items::ItemEffectKind::tri_element_damage_reduction) {
+        name = "Fire/Water/Lightning DR";
     } else if (effect
             == items::ItemEffectKind::variant_element_damage_reduction_cap) {
         switch (variant) {
@@ -370,6 +372,7 @@ ItemAttributeLabel item_attribute_label(items::ItemEffectKind effect,
         || operation != modifiers::ModifierOperation::flat
         || percent_stat(stat)
         || effect == items::ItemEffectKind::all_element_damage_reduction
+        || effect == items::ItemEffectKind::tri_element_damage_reduction
         || effect
             == items::ItemEffectKind::variant_element_damage_reduction_cap;
     const char* qualifier = "";

@@ -3,6 +3,7 @@
 #include "items/item_catalog.hpp"
 #include "items/item_generation.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -42,7 +43,9 @@ arpg::test::Failure recipe_is_order_independent_and_averages_level() noexcept {
     ARPG_REQUIRE(std::memcmp(&*abc, &*cba, sizeof(ItemInstance)) == 0);
     ARPG_REQUIRE(std::memcmp(&*abc, &*bac, sizeof(ItemInstance)) == 0);
     ARPG_REQUIRE(abc->id != 0U);
-    ARPG_REQUIRE(abc->base_id == 6U);
+    const auto accessory_bases = base_ids_for_slot(ItemSlot::accessory);
+    ARPG_REQUIRE(std::find(accessory_bases.begin(), accessory_bases.end(),
+        abc->base_id) != accessory_bases.end());
     ARPG_REQUIRE(abc->rarity == ItemRarity::rare);
     ARPG_REQUIRE(abc->item_level == 97U);
     ARPG_REQUIRE(validate_item(*abc));

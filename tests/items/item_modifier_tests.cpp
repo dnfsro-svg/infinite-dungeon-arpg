@@ -38,6 +38,28 @@ const Modifier* find_modifier(const EquipmentProjection& projection,
     return nullptr;
 }
 
+std::size_t modifier_occurrences(const EquipmentProjection& projection,
+    StatId stat, ModifierOperation operation) noexcept {
+    std::size_t count = 0U;
+    for (std::size_t index = 0U; index < projection.modifier_count; ++index) {
+        if (projection.modifiers[index].stat == stat
+            && projection.modifiers[index].operation == operation)
+            ++count;
+    }
+    return count;
+}
+
+std::int64_t modifier_total(const EquipmentProjection& projection,
+    StatId stat, ModifierOperation operation) noexcept {
+    std::int64_t total = 0;
+    for (std::size_t index = 0U; index < projection.modifier_count; ++index) {
+        const Modifier& modifier = projection.modifiers[index];
+        if (modifier.stat == stat && modifier.operation == operation)
+            total += modifier.value;
+    }
+    return total;
+}
+
 arpg::test::Failure weapon_local_values_use_frozen_floor_order() noexcept {
     ItemInstance weapon = normal_item(1U, 1U);
     weapon.rarity = ItemRarity::rare;
@@ -69,14 +91,14 @@ arpg::test::Failure base_intrinsics_project_through_global_modifier_path() noexc
     ARPG_REQUIRE(projection.valid);
     ARPG_REQUIRE(projection.weapon_physical == 16);
     ARPG_REQUIRE(projection.local_attack_speed_bp == 0);
-    ARPG_REQUIRE(projection.modifier_count == 8U);
+    ARPG_REQUIRE(projection.modifier_count == 12U);
     const auto values = arpg::modifiers::evaluate_player_modifiers(
         {projection.modifiers.data(), projection.modifier_count});
     ARPG_REQUIRE(values.valid);
-    ARPG_REQUIRE(values.max_health == 38 * arpg::modifiers::kFixedOne);
-    ARPG_REQUIRE(values.max_barrier == 46 * arpg::modifiers::kFixedOne);
-    ARPG_REQUIRE(values.attack_speed == 10800);
-    ARPG_REQUIRE(values.movement_speed == 10800);
+    ARPG_REQUIRE(values.armor == 30000);
+    ARPG_REQUIRE(values.evasion == 10501);
+    ARPG_REQUIRE(values.attack_speed == 10000);
+    ARPG_REQUIRE(values.movement_speed == 10000);
     for (const std::int32_t reduction : values.damage_reduction)
         ARPG_REQUIRE(reduction == 1000);
 
@@ -88,6 +110,35 @@ arpg::test::Failure base_intrinsics_project_through_global_modifier_path() noexc
         for (std::size_t prior = 0U; prior < index; ++prior)
             ARPG_REQUIRE(projection.modifiers[prior].id != id);
     }
+    return {};
+}
+
+arpg::test::Failure every_active_base_effect_projects_exactly_once() noexcept {
+    ItemOwnershipState state{};
+    state.items.push_back(normal_item(101U, 7U));
+    state.items.push_back(normal_item(102U, 17U));
+    state.equipment.equipped_ids[0] = 101U;
+    state.equipment.equipped_ids[5] = 102U;
+
+    const auto projection = project_equipment(state);
+    ARPG_REQUIRE(projection.valid);
+    ARPG_REQUIRE(projection.weapon_physical == 13);
+    ARPG_REQUIRE(projection.local_attack_speed_bp == 1200);
+    ARPG_REQUIRE(projection.modifier_count == 8U);
+    ARPG_REQUIRE(modifier_total(projection, StatId::impulse_scale,
+        ModifierOperation::increased) == -2000);
+    ARPG_REQUIRE(modifier_occurrences(projection,
+        StatId::fire_damage_reduction, ModifierOperation::flat) == 2U);
+    ARPG_REQUIRE(modifier_occurrences(projection,
+        StatId::water_damage_reduction, ModifierOperation::flat) == 2U);
+    ARPG_REQUIRE(modifier_occurrences(projection,
+        StatId::lightning_damage_reduction, ModifierOperation::flat) == 2U);
+    ARPG_REQUIRE(modifier_occurrences(projection,
+        StatId::chaos_damage_reduction, ModifierOperation::flat) == 1U);
+    ARPG_REQUIRE(modifier_total(projection, StatId::fire_damage_reduction,
+        ModifierOperation::flat) == 1250);
+    ARPG_REQUIRE(modifier_total(projection, StatId::chaos_damage_reduction,
+        ModifierOperation::flat) == 250);
     return {};
 }
 
@@ -112,7 +163,7 @@ arpg::test::Failure slot_dependent_and_variant_affixes_map_globally() noexcept {
     const auto projection = project_equipment(state);
     ARPG_REQUIRE(projection.valid);
     ARPG_REQUIRE(projection.local_attack_speed_bp == 0);
-    ARPG_REQUIRE(projection.modifier_count == 7U);
+    ARPG_REQUIRE(projection.modifier_count == 8U);
     const auto* speed = find_modifier(
         projection, StatId::attack_speed, ModifierOperation::increased);
     const auto* cap = find_modifier(projection,
@@ -122,7 +173,7 @@ arpg::test::Failure slot_dependent_and_variant_affixes_map_globally() noexcept {
     const auto values = arpg::modifiers::evaluate_player_modifiers(
         {projection.modifiers.data(), projection.modifier_count});
     ARPG_REQUIRE(values.valid);
-    ARPG_REQUIRE(values.attack_speed == 12000);
+    ARPG_REQUIRE(values.attack_speed == 11200);
     ARPG_REQUIRE(values.damage_reduction_cap_bonus[2] == 600);
     return {};
 }
@@ -134,11 +185,11 @@ arpg::test::Failure projection_validates_ownership_and_ignores_unequipped() noex
     state.equipment.equipped_ids[1] = 21U;
     const auto projection = project_equipment(state);
     ARPG_REQUIRE(projection.valid);
-    ARPG_REQUIRE(projection.modifier_count == 1U);
+    ARPG_REQUIRE(projection.modifier_count == 2U);
     ARPG_REQUIRE(find_modifier(projection,
-        StatId::max_health, ModifierOperation::flat) != nullptr);
+        StatId::armor, ModifierOperation::flat) != nullptr);
     ARPG_REQUIRE(find_modifier(projection,
-        StatId::max_barrier, ModifierOperation::flat) == nullptr);
+        StatId::evasion, ModifierOperation::flat) != nullptr);
 
     state.equipment.equipped_ids[1] = 999U;
     const auto invalid = project_equipment(state);
@@ -176,7 +227,7 @@ arpg::test::Failure equipment_override_projects_without_copying_ownership() noex
     ARPG_REQUIRE(projection.projection.valid);
     ARPG_REQUIRE(projection.projection.weapon_physical == 16);
     ARPG_REQUIRE(find_modifier(projection.projection,
-        StatId::max_health, ModifierOperation::flat) != nullptr);
+        StatId::armor, ModifierOperation::flat) != nullptr);
     ARPG_REQUIRE(state.items.data() == original_data);
     ARPG_REQUIRE(state.equipment.equipped_ids[0] == 0U);
 
@@ -191,6 +242,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"weapon local floor formula", &weapon_local_values_use_frozen_floor_order},
     {"base intrinsic projection",
         &base_intrinsics_project_through_global_modifier_path},
+    {"every active base effect projects once",
+        &every_active_base_effect_projects_exactly_once},
     {"slot-dependent and variant mapping",
         &slot_dependent_and_variant_affixes_map_globally},
     {"ownership validation and equipped-only projection",

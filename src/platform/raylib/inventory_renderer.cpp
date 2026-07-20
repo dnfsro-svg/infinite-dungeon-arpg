@@ -448,13 +448,17 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     draw_detail_line(TextFormat("iLvl %u  Required %u",
         static_cast<unsigned>(item->item_level),
         static_cast<unsigned>(item->required_level)), RAYWHITE);
-    const ItemAttributeLabel inherent = item_attribute_label(base->effect,
-        base->stat, base->operation, base->slot, 0xFFU);
-    const std::int32_t inherent_raw =
-        base->values[base_value_index(item->item_level)];
-    draw_detail_line(TextFormat("Base [%s] %s %+g%s%s", inherent.scope,
-        inherent.name, item_attribute_display_value(inherent_raw, inherent),
-        inherent.suffix, inherent.qualifier), Color{150, 210, 255, 255});
+    for (std::size_t effect_index = 0U;
+         effect_index < base->effect_count; ++effect_index) {
+        const items::BaseEffect& effect = base->effects[effect_index];
+        const ItemAttributeLabel inherent = item_attribute_label(effect.effect,
+            effect.stat, effect.operation, base->slot, 0xFFU);
+        const std::int32_t inherent_raw =
+            effect.values[base_value_index(item->item_level)];
+        draw_detail_line(TextFormat("Base [%s] %s %+g%s%s", inherent.scope,
+            inherent.name, item_attribute_display_value(inherent_raw, inherent),
+            inherent.suffix, inherent.qualifier), Color{150, 210, 255, 255});
+    }
     for (std::size_t index = 0U; index < item->affix_count; ++index) {
         const items::AffixRoll& roll = item->affixes[index];
         const items::AffixDefinition* const affix = items::affix_definition(roll.affix_id);

@@ -144,12 +144,25 @@ bool apply_effect(EquipmentProjection& projection,
                 return false;
         }
         return true;
+    case ItemEffectKind::tri_element_damage_reduction:
+        for (std::uint16_t element = 0U; element < 3U; ++element) {
+            const auto element_stat = static_cast<modifiers::StatId>(
+                static_cast<std::uint16_t>(
+                    modifiers::StatId::fire_damage_reduction) + element);
+            if (!append_modifier(projection, slot,
+                    static_cast<std::uint16_t>(source + element),
+                    element_stat, modifiers::ModifierOperation::flat, value))
+                return false;
+        }
+        return true;
     case ItemEffectKind::variant_element_damage_reduction_cap:
         if (variant >= 4U) return false;
         return append_modifier(projection, slot, source,
             static_cast<modifiers::StatId>(static_cast<std::uint16_t>(
                 modifiers::StatId::fire_damage_reduction_cap) + variant),
             modifiers::ModifierOperation::flat, value);
+    case ItemEffectKind::count:
+        return false;
     }
     return false;
 }
@@ -226,10 +239,16 @@ EquipmentProjectionResult project_equipment_with_state(
         if (base == nullptr) return {};
         const ItemSlot slot = static_cast<ItemSlot>(slot_index);
         const std::size_t base_value_index = value_index(item->item_level);
-        if (!apply_effect(projection, slot, base->effect, base->stat,
-                base->operation, base->values[base_value_index], 0xFFU,
-                kBaseSourceStart, local_flat, local_increased))
-            return {};
+        for (std::size_t effect_index = 0U;
+             effect_index < base->effect_count; ++effect_index) {
+            const BaseEffect& effect = base->effects[effect_index];
+            const std::uint16_t source = static_cast<std::uint16_t>(
+                kBaseSourceStart + effect_index * kSourceStride);
+            if (!apply_effect(projection, slot, effect.effect, effect.stat,
+                    effect.operation, effect.values[base_value_index], 0xFFU,
+                    source, local_flat, local_increased))
+                return {};
+        }
 
         for (std::size_t affix_index = 0U;
              affix_index < item->affix_count; ++affix_index) {

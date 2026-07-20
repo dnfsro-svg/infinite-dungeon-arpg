@@ -35,25 +35,129 @@ constexpr std::array<std::int32_t, 8> kRating{{25, 60, 150, 400, 1000,
 constexpr std::array<std::int32_t, 8> kReduction{{300, 500, 700, 900,
     1100, 1400, 1700, 2000}};
 
-constexpr std::array<BaseDefinition, 6> kBases{{
-    {1U, "Iron Blade", ItemSlot::weapon,
-        ItemEffectKind::local_weapon_physical_flat, StatId::count,
-        ModifierOperation::flat, {{2, 3, 4, 5, 7, 9, 12, 16}}},
-    {2U, "Guard Helm", ItemSlot::helmet, ItemEffectKind::global_modifier,
-        StatId::max_health, ModifierOperation::flat,
-        {{3, 5, 8, 12, 17, 23, 30, 38}}},
-    {3U, "Ward Coat", ItemSlot::chest, ItemEffectKind::global_modifier,
-        StatId::max_barrier, ModifierOperation::flat,
-        {{4, 7, 11, 16, 22, 29, 37, 46}}},
-    {4U, "Striker Gloves", ItemSlot::gloves,
-        ItemEffectKind::global_modifier, StatId::attack_speed,
-        ModifierOperation::increased, {{100, 200, 300, 400, 500, 600, 700, 800}}},
-    {5U, "Runner Boots", ItemSlot::boots, ItemEffectKind::global_modifier,
-        StatId::move_speed, ModifierOperation::increased,
-        {{100, 200, 300, 400, 500, 600, 700, 800}}},
-    {6U, "Element Charm", ItemSlot::accessory,
-        ItemEffectKind::all_element_damage_reduction, StatId::count,
-        ModifierOperation::flat, {{100, 200, 300, 400, 500, 600, 800, 1000}}},
+constexpr BaseEffect base_effect(ItemEffectKind effect, StatId stat,
+    ModifierOperation operation,
+    std::array<std::int32_t, 8> values) noexcept {
+    return {effect, stat, operation, values};
+}
+
+constexpr std::array<std::int32_t, 8> kHelmArmor{{6, 15, 38, 100, 250, 750,
+    2500, 7500}};
+constexpr std::array<std::int32_t, 8> kChestArmor{{12, 30, 75, 200, 500, 1500,
+    5000, 15000}};
+constexpr std::array<std::int32_t, 8> kGlovesArmor{{3, 8, 19, 50, 125, 375,
+    1250, 3750}};
+constexpr std::array<std::int32_t, 8> kHelmLightArmor{{4, 9, 23, 60, 150, 450,
+    1500, 4500}};
+constexpr std::array<std::int32_t, 8> kChestLightArmor{{7, 18, 45, 120, 300, 900,
+    3000, 9000}};
+constexpr std::array<std::int32_t, 8> kGlovesLightArmor{{2, 5, 11, 30, 75, 225,
+    750, 2250}};
+constexpr std::array<std::int32_t, 8> kHelmHeavyArmor{{9, 23, 57, 150, 375, 1125,
+    3750, 11250}};
+constexpr std::array<std::int32_t, 8> kChestHeavyArmor{{18, 45, 113, 300, 750,
+    2250, 7500, 22500}};
+constexpr std::array<std::int32_t, 8> kGlovesHeavyArmor{{5, 12, 29, 75, 188, 563,
+    1875, 5625}};
+constexpr std::array<std::int32_t, 8> kHelmBalancedEvasion{{2, 5, 13, 35, 88,
+    263, 875, 2625}};
+constexpr std::array<std::int32_t, 8> kChestBalancedEvasion{{4, 11, 26, 70, 175,
+    525, 1750, 5250}};
+constexpr std::array<std::int32_t, 8> kGlovesBalancedEvasion{{1, 3, 7, 18, 44,
+    131, 438, 1313}};
+constexpr std::array<std::int32_t, 8> kElementQuarter{{25, 50, 75, 100, 125,
+    150, 200, 250}};
+constexpr std::array<std::int32_t, 8> kElementHalf{{50, 100, 150, 200, 250,
+    300, 400, 500}};
+constexpr std::array<std::int32_t, 8> kElementDouble{{200, 400, 600, 800, 1000,
+    1200, 1600, 2000}};
+
+constexpr std::array<BaseDefinition, 18> kBases{{
+    {1U, "Refined Blade", ItemSlot::weapon, {{
+        base_effect(ItemEffectKind::local_weapon_physical_flat, StatId::count,
+            ModifierOperation::flat, {{2, 3, 4, 5, 7, 9, 12, 16}}), {}, {}}}, 1U},
+    {2U, "Guard Helm", ItemSlot::helmet, {{
+        base_effect(ItemEffectKind::global_modifier, StatId::armor,
+            ModifierOperation::flat, kHelmArmor),
+        base_effect(ItemEffectKind::global_modifier, StatId::evasion,
+            ModifierOperation::flat, kHelmBalancedEvasion), {}}}, 2U},
+    {3U, "Ward Coat", ItemSlot::chest, {{
+        base_effect(ItemEffectKind::global_modifier, StatId::armor,
+            ModifierOperation::flat, kChestArmor),
+        base_effect(ItemEffectKind::global_modifier, StatId::evasion,
+            ModifierOperation::flat, kChestBalancedEvasion), {}}}, 2U},
+    {4U, "Striker Gloves", ItemSlot::gloves, {{
+        base_effect(ItemEffectKind::global_modifier, StatId::armor,
+            ModifierOperation::flat, kGlovesArmor),
+        base_effect(ItemEffectKind::global_modifier, StatId::evasion,
+            ModifierOperation::flat, kGlovesBalancedEvasion), {}}}, 2U},
+    {5U, "Runner Boots", ItemSlot::boots, {{
+        base_effect(ItemEffectKind::global_modifier, StatId::armor,
+            ModifierOperation::flat, kGlovesArmor),
+        base_effect(ItemEffectKind::global_modifier, StatId::evasion,
+            ModifierOperation::flat, kGlovesBalancedEvasion), {}}}, 2U},
+    {6U, "Element Charm", ItemSlot::accessory, {{
+        base_effect(ItemEffectKind::all_element_damage_reduction, StatId::count,
+            ModifierOperation::flat, {{100, 200, 300, 400, 500, 600, 800, 1000}}),
+        {}, {}}}, 1U},
+    {7U, "Swift Dagger", ItemSlot::weapon, {{
+        base_effect(ItemEffectKind::local_weapon_physical_flat, StatId::count,
+            ModifierOperation::flat, {{1, 2, 3, 4, 5, 7, 10, 13}}),
+        base_effect(ItemEffectKind::slot_dependent_attack_speed, StatId::count,
+            ModifierOperation::flat, {{1200, 1200, 1200, 1200, 1200, 1200, 1200, 1200}}),
+        base_effect(ItemEffectKind::global_modifier, StatId::impulse_scale,
+            ModifierOperation::increased, {{-2000, -2000, -2000, -2000, -2000, -2000, -2000, -2000}})}}, 3U},
+    {8U, "Siege Greatblade", ItemSlot::weapon, {{
+        base_effect(ItemEffectKind::local_weapon_physical_flat, StatId::count,
+            ModifierOperation::flat, {{3, 4, 5, 7, 9, 12, 16, 22}}),
+        base_effect(ItemEffectKind::slot_dependent_attack_speed, StatId::count,
+            ModifierOperation::flat, {{-1500, -1500, -1500, -1500, -1500, -1500, -1500, -1500}}),
+        base_effect(ItemEffectKind::global_modifier, StatId::impulse_scale,
+            ModifierOperation::increased, {{3000, 3000, 3000, 3000, 3000, 3000, 3000, 3000}})}}, 3U},
+    {9U, "Shadow Hood", ItemSlot::helmet, {{
+        base_effect(ItemEffectKind::global_modifier, StatId::armor,
+            ModifierOperation::flat, kHelmLightArmor),
+        base_effect(ItemEffectKind::global_modifier, StatId::evasion,
+            ModifierOperation::flat, kHelmArmor), {}}}, 2U},
+    {10U, "Bastion Helm", ItemSlot::helmet, {{
+        base_effect(ItemEffectKind::global_modifier, StatId::armor,
+            ModifierOperation::flat, kHelmHeavyArmor), {}, {}}}, 1U},
+    {11U, "Nightstalker Coat", ItemSlot::chest, {{
+        base_effect(ItemEffectKind::global_modifier, StatId::armor,
+            ModifierOperation::flat, kChestLightArmor),
+        base_effect(ItemEffectKind::global_modifier, StatId::evasion,
+            ModifierOperation::flat, kChestArmor), {}}}, 2U},
+    {12U, "Citadel Plate", ItemSlot::chest, {{
+        base_effect(ItemEffectKind::global_modifier, StatId::armor,
+            ModifierOperation::flat, kChestHeavyArmor), {}, {}}}, 1U},
+    {13U, "Hunter Wraps", ItemSlot::gloves, {{
+        base_effect(ItemEffectKind::global_modifier, StatId::armor,
+            ModifierOperation::flat, kGlovesLightArmor),
+        base_effect(ItemEffectKind::global_modifier, StatId::evasion,
+            ModifierOperation::flat, kGlovesArmor), {}}}, 2U},
+    {14U, "Bonebreaker Gauntlets", ItemSlot::gloves, {{
+        base_effect(ItemEffectKind::global_modifier, StatId::armor,
+            ModifierOperation::flat, kGlovesHeavyArmor), {}, {}}}, 1U},
+    {15U, "Fleet Boots", ItemSlot::boots, {{
+        base_effect(ItemEffectKind::global_modifier, StatId::armor,
+            ModifierOperation::flat, kGlovesLightArmor),
+        base_effect(ItemEffectKind::global_modifier, StatId::evasion,
+            ModifierOperation::flat, kGlovesArmor), {}}}, 2U},
+    {16U, "Iron Greaves", ItemSlot::boots, {{
+        base_effect(ItemEffectKind::global_modifier, StatId::armor,
+            ModifierOperation::flat, kGlovesHeavyArmor), {}, {}}}, 1U},
+    {17U, "Triune Pendant", ItemSlot::accessory, {{
+        base_effect(ItemEffectKind::all_element_damage_reduction, StatId::count,
+            ModifierOperation::flat, kElementQuarter),
+        base_effect(ItemEffectKind::tri_element_damage_reduction, StatId::count,
+            ModifierOperation::flat, {{100, 200, 300, 400, 500, 600, 800, 1000}}),
+        {}}}, 2U},
+    {18U, "Eye of Chaos", ItemSlot::accessory, {{
+        base_effect(ItemEffectKind::all_element_damage_reduction, StatId::count,
+            ModifierOperation::flat, kElementHalf),
+        base_effect(ItemEffectKind::global_modifier,
+            StatId::chaos_damage_reduction, ModifierOperation::flat,
+            kElementDouble), {}}}, 2U},
 }};
 
 constexpr std::array<AffixDefinition, 24> kAffixes{{
@@ -138,6 +242,7 @@ constexpr std::array<AffixDefinition, 24> kAffixes{{
 
 constexpr bool effect_sentinel_is_valid(ItemEffectKind effect, StatId stat,
     ModifierOperation operation) noexcept {
+    if (effect == ItemEffectKind::count) return false;
     if (effect == ItemEffectKind::global_modifier)
         return stat < StatId::count;
     return stat == StatId::count && operation == ModifierOperation::flat;
@@ -153,6 +258,19 @@ const BaseDefinition* base_definition(std::uint8_t id) noexcept {
     if (id == 0U || id > kBases.size())
         return nullptr;
     return &kBases[static_cast<std::size_t>(id - 1U)];
+}
+
+std::array<std::uint8_t, 3> base_ids_for_slot(ItemSlot slot) noexcept {
+    switch (slot) {
+    case ItemSlot::weapon: return {{1U, 7U, 8U}};
+    case ItemSlot::helmet: return {{2U, 9U, 10U}};
+    case ItemSlot::chest: return {{3U, 11U, 12U}};
+    case ItemSlot::gloves: return {{4U, 13U, 14U}};
+    case ItemSlot::boots: return {{5U, 15U, 16U}};
+    case ItemSlot::accessory: return {{6U, 17U, 18U}};
+    case ItemSlot::count: return {};
+    }
+    return {};
 }
 
 const AffixDefinition* affix_definition(std::uint16_t id) noexcept {
@@ -174,19 +292,40 @@ std::uint32_t tier_base_weight(std::uint8_t tier) noexcept {
 }
 
 bool validate_catalog() noexcept {
-    std::uint8_t seen_base_slots = 0U;
+    std::array<std::uint8_t,
+        static_cast<std::size_t>(ItemSlot::count)> base_counts{};
     for (std::size_t index = 0U; index < kBases.size(); ++index) {
         const BaseDefinition& base = kBases[index];
         if (base.id != index + 1U || base.name.empty()
             || slot_bit(base.slot) == 0U
-            || (seen_base_slots & slot_bit(base.slot)) != 0U
-            || !effect_sentinel_is_valid(base.effect, base.stat, base.operation))
+            || base.effect_count == 0U
+            || base.effect_count > base.effects.size())
             return false;
-        seen_base_slots = static_cast<std::uint8_t>(
-            seen_base_slots | slot_bit(base.slot));
+        ++base_counts[static_cast<std::size_t>(base.slot)];
+        for (std::size_t effect_index = 0U;
+             effect_index < base.effects.size(); ++effect_index) {
+            const BaseEffect& effect = base.effects[effect_index];
+            if (effect_index < base.effect_count) {
+                if (!effect_sentinel_is_valid(
+                        effect.effect, effect.stat, effect.operation))
+                    return false;
+            } else if (effect.effect != ItemEffectKind::count
+                || effect.stat != StatId::count
+                || effect.operation != ModifierOperation::flat
+                || effect.values != std::array<std::int32_t, 8>{}) {
+                return false;
+            }
+        }
     }
-    if (seen_base_slots != kAllSlots)
-        return false;
+    for (std::size_t slot_index = 0U; slot_index < base_counts.size(); ++slot_index) {
+        const ItemSlot slot = static_cast<ItemSlot>(slot_index);
+        const auto ids = base_ids_for_slot(slot);
+        if (base_counts[slot_index] != ids.size()) return false;
+        for (const std::uint8_t id : ids) {
+            const BaseDefinition* const base = base_definition(id);
+            if (base == nullptr || base->slot != slot) return false;
+        }
+    }
 
     std::array<std::uint8_t, 6> prefix_counts{};
     std::array<std::uint8_t, 6> suffix_counts{};
