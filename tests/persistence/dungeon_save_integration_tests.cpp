@@ -37,9 +37,10 @@ items::ItemInstance normal_weapon(std::uint64_t id) noexcept {
 bool same_ownership(const items::ItemOwnershipState& left,
     const items::ItemOwnershipState& right) noexcept {
     if (left.items.size() != right.items.size()
-            || left.equipment.equipped_ids != right.equipment.equipped_ids
-            || left.materials != right.materials
-            || left.claimed_drop_bits != right.claimed_drop_bits
+             || left.equipment.equipped_ids != right.equipment.equipped_ids
+             || left.materials != right.materials
+             || left.material_discovery_bits != right.material_discovery_bits
+             || left.claimed_drop_bits != right.claimed_drop_bits
             || left.next_item_sequence != right.next_item_sequence) {
         return false;
     }
@@ -417,6 +418,42 @@ arpg::test::Failure initial_generation_one_round_trips_descriptor() noexcept {
     ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::ready);
     dungeon::DungeonSession session{dungeon::DungeonRules{}, loaded.checkpoint};
     ARPG_REQUIRE(same_descriptor(session.snapshot(), initial));
+    return {};
+}
+
+arpg::test::Failure v7_materials_discovery_and_reinforcement_survive_restart()
+    noexcept {
+    TempDirectory directory;
+    auto store = make_store(directory.path);
+    auto initial = initial_state(0x8100U);
+    auto weapon = normal_weapon(0x7100U);
+    weapon.reinforcement = 15U;
+    initial.item_ownership.items.push_back(weapon);
+    initial.item_ownership.next_item_sequence = weapon.id + 1U;
+    initial.item_ownership.materials[items::material_index(
+        items::MaterialId::chaos)] = 42U;
+    initial.item_ownership.materials[items::material_index(
+        items::MaterialId::coupon_15)] = 7U;
+    initial.item_ownership.material_discovery_bits = static_cast<std::uint16_t>(
+        (1U << items::material_index(items::MaterialId::chaos))
+        | (1U << items::material_index(items::MaterialId::coupon_15)));
+
+    const auto committed = store.commit(initial);
+    ARPG_REQUIRE(committed.state == persistence::SaveCommitState::committed);
+    ARPG_REQUIRE(same_ownership(committed.verified_state.item_ownership,
+        initial.item_ownership));
+
+    auto restarted_store = make_store(directory.path);
+    const auto restarted = restarted_store.load();
+    ARPG_REQUIRE(restarted.state == persistence::SaveLoadState::ready);
+    ARPG_REQUIRE(same_ownership(
+        restarted.checkpoint.item_ownership, initial.item_ownership));
+    ARPG_REQUIRE(restarted.checkpoint.item_ownership.items[0].reinforcement
+        == 15U);
+    ARPG_REQUIRE(restarted.checkpoint.item_ownership.materials[
+        items::material_index(items::MaterialId::chaos)] == 42U);
+    ARPG_REQUIRE(restarted.checkpoint.item_ownership.material_discovery_bits
+        == initial.item_ownership.material_discovery_bits);
     return {};
 }
 
@@ -905,6 +942,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"affix drop reload claim semantics",
         &affix_drop_is_stable_before_claim_and_absent_after_reload},
     {"initial generation one round trips descriptor", &initial_generation_one_round_trips_descriptor},
+    {"v7 materials discovery and reinforcement survive restart",
+        &v7_materials_discovery_and_reinforcement_survive_restart},
     {"committed door transition restarts in next room", &committed_door_transition_restarts_in_next_room},
     {"pre publish failure keeps old room in memory and on disk", &pre_publish_failure_keeps_old_room_in_memory_and_on_disk},
     {"lost post publish receipt faults session but restart uses new room", &lost_post_publish_receipt_faults_session_but_restart_uses_new_room},

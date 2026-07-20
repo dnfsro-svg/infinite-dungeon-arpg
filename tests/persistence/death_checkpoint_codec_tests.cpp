@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 #include "v5_golden_fixture.hpp"
 
+#include "items/item_catalog.hpp"
 #include "persistence/checkpoint_codec.hpp"
 
 #include <algorithm>
@@ -120,20 +121,22 @@ bool bytes_at(const std::vector<std::uint8_t>& bytes, std::size_t offset,
         && std::equal(expected.begin(), expected.end(), bytes.begin() + offset);
 }
 
-arpg::test::Failure v6_layout_and_full_round_trip() noexcept {
+arpg::test::Failure v7_layout_and_full_round_trip() noexcept {
     static_assert(persistence::kV6DeathPayloadSize == 224U);
     static_assert(persistence::kV6BasePayloadSize == 428U);
     static_assert(persistence::kV6BaseEncodedCheckpointSize == 460U);
+    static_assert(persistence::kV7BasePayloadSize == 660U);
+    static_assert(persistence::kV7BaseEncodedCheckpointSize == 692U);
     auto state = make_state();
     state.death_sequence = 12U;
     state.death = make_pending_death();
     const auto encoded = persistence::encode_checkpoint(state);
     ARPG_REQUIRE(encoded.has_value());
-    ARPG_REQUIRE(encoded->size() == 460U);
-    const std::array<std::uint8_t, 8U> magic{{'A','R','P','G','S','V','6','\0'}};
+    ARPG_REQUIRE(encoded->size() == 692U);
+    const std::array<std::uint8_t, 8U> magic{{'A','R','P','G','S','V','7','\0'}};
     ARPG_REQUIRE(std::equal(magic.begin(), magic.end(), encoded->begin()));
-    ARPG_REQUIRE((*encoded)[8U] == 6U);
-    ARPG_REQUIRE((*encoded)[24U] == 0xACU && (*encoded)[25U] == 0x01U);
+    ARPG_REQUIRE((*encoded)[8U] == 7U);
+    ARPG_REQUIRE((*encoded)[24U] == 0x94U && (*encoded)[25U] == 0x02U);
     ARPG_REQUIRE((*encoded)[236U] == 12U);
     ARPG_REQUIRE((*encoded)[244U] == 1U);
     ARPG_REQUIRE(bytes_at(*encoded, 245U,
@@ -179,6 +182,16 @@ arpg::test::Failure v6_layout_and_full_round_trip() noexcept {
             0x00U,0x01U,0x01U,0x00U}}));
     ARPG_REQUIRE(std::all_of(encoded->begin() + 452U,
         encoded->begin() + 460U, [](std::uint8_t value) { return value == 0U; }));
+    for (std::size_t index = 0U; index < arpg::items::kMaterialCount; ++index) {
+        const std::size_t record = 460U
+            + index * persistence::kV7MaterialRecordSize;
+        ARPG_REQUIRE((*encoded)[record] == index + 1U);
+        ARPG_REQUIRE(std::all_of(encoded->begin() + record + 1U,
+            encoded->begin() + record + persistence::kV7MaterialRecordSize,
+            [](std::uint8_t value) { return value == 0U; }));
+    }
+    ARPG_REQUIRE(std::all_of(encoded->begin() + 684U,
+        encoded->begin() + 692U, [](std::uint8_t value) { return value == 0U; }));
     const auto decoded = persistence::decode_checkpoint(encoded->data(), encoded->size());
     ARPG_REQUIRE(decoded.error == persistence::CodecError::none);
     ARPG_REQUIRE(!decoded.migrated);
@@ -241,6 +254,9 @@ arpg::test::Failure v5_fixture_migrates_to_canonical_none() noexcept {
     ARPG_REQUIRE(state.last_abyss_resolution.abandoned == 1U);
 
     ARPG_REQUIRE(state.item_ownership.items.size() == 3U);
+    ARPG_REQUIRE((state.item_ownership.materials
+        == std::array<std::uint64_t, arpg::items::kMaterialCount>{}));
+    ARPG_REQUIRE(state.item_ownership.material_discovery_bits == 0U);
     ARPG_REQUIRE(state.item_ownership.next_item_sequence
         == 0x8182838485868788ULL);
     ARPG_REQUIRE((state.item_ownership.claimed_drop_bits
@@ -262,7 +278,9 @@ arpg::test::Failure v5_fixture_migrates_to_canonical_none() noexcept {
         && magic.item_level == 1U && magic.required_level == 1U
         && magic.affix_count == 1U);
     ARPG_REQUIRE(magic.affixes[0].affix_id == 1U
-        && magic.affixes[0].tier == 8U && magic.affixes[0].variant == 0xFFU);
+        && magic.affixes[0].tier == 8U && magic.affixes[0].variant == 0xFFU
+        && magic.affixes[0].value_roll_bp
+            == arpg::items::kAffixValueRollCanonicalBp);
     const auto& rare = state.item_ownership.items[2];
     ARPG_REQUIRE(rare.id == 0x7172737475767778ULL && rare.base_id == 6U);
     ARPG_REQUIRE(rare.rarity == arpg::items::ItemRarity::rare
@@ -273,7 +291,9 @@ arpg::test::Failure v5_fixture_migrates_to_canonical_none() noexcept {
     ARPG_REQUIRE(rare.affixes[1].affix_id == 111U
         && rare.affixes[1].tier == 8U && rare.affixes[1].variant == 0xFFU);
     ARPG_REQUIRE(rare.affixes[2].affix_id == 112U
-        && rare.affixes[2].tier == 8U && rare.affixes[2].variant == 3U);
+        && rare.affixes[2].tier == 8U && rare.affixes[2].variant == 3U
+        && rare.affixes[2].value_roll_bp
+            == arpg::items::kAffixValueRollCanonicalBp);
     for (const auto& roll : normal.affixes) {
         ARPG_REQUIRE(roll.affix_id == 0U
             && roll.tier == 0U && roll.variant == 0U);
@@ -296,10 +316,24 @@ arpg::test::Failure v5_fixture_migrates_to_canonical_none() noexcept {
         [](std::uint8_t value) noexcept { return value == 0U; }));
     ARPG_REQUIRE(decoded.state.death_sequence == 0U);
     ARPG_REQUIRE(same_death(decoded.state.death, checkpoint::DeathCheckpoint{}));
+
+    const auto& v6 = arpg::test::fixtures::kV6FullState;
+    const auto decoded_v6 = persistence::decode_checkpoint(v6.data(), v6.size());
+    ARPG_REQUIRE(decoded_v6.error == persistence::CodecError::none);
+    ARPG_REQUIRE(decoded_v6.migrated);
+    ARPG_REQUIRE(decoded_v6.state.item_ownership.items.size() == 3U);
+    ARPG_REQUIRE(decoded_v6.state.item_ownership.items[1].affixes[0].value_roll_bp
+        == arpg::items::kAffixValueRollCanonicalBp);
+    ARPG_REQUIRE(decoded_v6.state.item_ownership.items[1].reinforcement == 0U);
+    ARPG_REQUIRE((decoded_v6.state.item_ownership.materials
+        == std::array<std::uint64_t, arpg::items::kMaterialCount>{}));
+    ARPG_REQUIRE(decoded_v6.state.item_ownership.material_discovery_bits == 0U);
+    ARPG_REQUIRE(same_death(
+        decoded_v6.state.death, checkpoint::DeathCheckpoint{}));
     return {};
 }
 
-arpg::test::Failure v6_death_enum_boolean_reserved_and_state_errors() noexcept {
+arpg::test::Failure v7_death_enum_boolean_reserved_and_state_errors() noexcept {
     auto state = make_state();
     state.death_sequence = 1U;
     state.death = make_pending_death();
@@ -356,10 +390,10 @@ arpg::test::Failure v6_death_enum_boolean_reserved_and_state_errors() noexcept {
     return {};
 }
 
-arpg::test::Failure v6_lengths_crc_and_magic_are_rejected() noexcept {
+arpg::test::Failure v7_lengths_crc_and_magic_are_rejected() noexcept {
     const auto encoded = persistence::encode_checkpoint(make_state());
     ARPG_REQUIRE(encoded.has_value());
-    for (std::size_t size = 236U; size < 460U; ++size) {
+    for (std::size_t size = 236U; size < 692U; ++size) {
         ARPG_REQUIRE(persistence::decode_checkpoint(encoded->data(), size).error
             == persistence::CodecError::bad_payload_length);
     }
@@ -368,7 +402,7 @@ arpg::test::Failure v6_lengths_crc_and_magic_are_rejected() noexcept {
     ARPG_REQUIRE(persistence::decode_checkpoint(trailing.data(), trailing.size()).error
         == persistence::CodecError::bad_payload_length);
     auto bad_length = *encoded;
-    write_u32(bad_length, 24U, 427U);
+    write_u32(bad_length, 24U, 659U);
     ARPG_REQUIRE(persistence::decode_checkpoint(
         bad_length.data(), bad_length.size()).error
         == persistence::CodecError::bad_payload_length);
@@ -389,10 +423,10 @@ arpg::test::Failure v6_lengths_crc_and_magic_are_rejected() noexcept {
 }
 
 constexpr arpg::test::TestCase kCases[] = {
-    {"v6 layout and full round trip", &v6_layout_and_full_round_trip},
+    {"v7 layout and full round trip", &v7_layout_and_full_round_trip},
     {"v5 fixture migrates to canonical none", &v5_fixture_migrates_to_canonical_none},
-    {"v6 death enum boolean reserved and state errors", &v6_death_enum_boolean_reserved_and_state_errors},
-    {"v6 lengths crc and magic are rejected", &v6_lengths_crc_and_magic_are_rejected},
+    {"v7 death enum boolean reserved and state errors", &v7_death_enum_boolean_reserved_and_state_errors},
+    {"v7 lengths crc and magic are rejected", &v7_lengths_crc_and_magic_are_rejected},
 };
 
 }  // namespace

@@ -26,6 +26,8 @@ enum class MaterialId : std::uint8_t {
 
 inline constexpr std::size_t kMaterialCount =
     static_cast<std::size_t>(MaterialId::count);
+inline constexpr std::uint16_t kMaterialDiscoveryMask =
+    static_cast<std::uint16_t>((std::uint32_t{1U} << kMaterialCount) - 1U);
 
 struct MaterialDefinition final {
     MaterialId id{MaterialId::count};

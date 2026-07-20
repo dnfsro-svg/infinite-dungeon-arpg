@@ -25,6 +25,8 @@ using abyss::AbyssDanger;
 using abyss::AbyssLifecycle;
 using abyss::AbyssRuleId;
 
+constexpr std::array<std::uint8_t, 8> kV7Magic{{
+    'A', 'R', 'P', 'G', 'S', 'V', '7', '\0'}};
 constexpr std::array<std::uint8_t, 8> kV6Magic{{
     'A', 'R', 'P', 'G', 'S', 'V', '6', '\0'}};
 constexpr std::array<std::uint8_t, 8> kV5Magic{{
@@ -125,14 +127,21 @@ struct ItemLayout final {
     std::size_t ownership_offset{};
     std::size_t base_payload_size{};
     std::size_t item_offset{};
+    std::size_t item_record_size{};
 };
 
 ItemLayout item_layout(std::uint32_t format) noexcept {
     if (format == kFourthCheckpointFormatVersion)
-        return {120U, 124U, kV4BasePayloadSize, kV4BaseEncodedCheckpointSize};
+        return {120U, 124U, kV4BasePayloadSize,
+            kV4BaseEncodedCheckpointSize, kV4ItemRecordSize};
     if (format == kFifthCheckpointFormatVersion)
-        return {152U, 156U, kV5BasePayloadSize, kV5BaseEncodedCheckpointSize};
-    return {152U, 156U, kV6BasePayloadSize, kV6BaseEncodedCheckpointSize};
+        return {152U, 156U, kV5BasePayloadSize,
+            kV5BaseEncodedCheckpointSize, kV4ItemRecordSize};
+    if (format == kSixthCheckpointFormatVersion)
+        return {152U, 156U, kV6BasePayloadSize,
+            kV6BaseEncodedCheckpointSize, kV4ItemRecordSize};
+    return {152U, 156U, kV7BasePayloadSize,
+        kV7BaseEncodedCheckpointSize, kV7ItemRecordSize};
 }
 
 bool valid_entry(std::uint8_t value) noexcept {
@@ -314,11 +323,11 @@ std::optional<EncodedCheckpoint> encode_checkpoint(
     const auto item_count = state.item_ownership.items.size();
     if (item_count > kMaximumCheckpointItemCount
         || item_count > (std::numeric_limits<std::size_t>::max()
-                - kV6BasePayloadSize) / kV4ItemRecordSize) {
+                - kV7BasePayloadSize) / kV7ItemRecordSize) {
         return std::nullopt;
     }
-    const auto payload_size = kV6BasePayloadSize
-        + item_count * kV4ItemRecordSize;
+    const auto payload_size = kV7BasePayloadSize
+        + item_count * kV7ItemRecordSize;
     if (payload_size > std::numeric_limits<std::size_t>::max()
             - kCheckpointHeaderSize) {
         return std::nullopt;
@@ -333,7 +342,7 @@ std::optional<EncodedCheckpoint> encode_checkpoint(
         return std::nullopt;
     }
 
-    std::copy(kV6Magic.begin(), kV6Magic.end(), out.begin());
+    std::copy(kV7Magic.begin(), kV7Magic.end(), out.begin());
     write_u32(out.data() + 8U, kCheckpointFormatVersion);
     write_u32(out.data() + 12U, kCheckpointRulesVersion);
     write_u64(out.data() + 16U, state.commit_generation);
@@ -432,10 +441,24 @@ std::optional<EncodedCheckpoint> encode_checkpoint(
     out[450U] = death.target_room.has_hole ? 1U : 0U;
     out[451U] = death.target_room.is_abyss ? 1U : 0U;
 
+    for (std::size_t material_index = 0U;
+            material_index < items::kMaterialCount; ++material_index) {
+        const auto material_id = static_cast<items::MaterialId>(material_index);
+        const auto* const definition = items::material_definition(material_id);
+        if (definition == nullptr)
+            return std::nullopt;
+        auto* record = out.data() + kV6BaseEncodedCheckpointSize
+            + material_index * kV7MaterialRecordSize;
+        record[0U] = definition->stable_id;
+        write_u64(record + 8U, state.item_ownership.materials[material_index]);
+    }
+    write_u16(out.data() + 684U,
+        state.item_ownership.material_discovery_bits);
+
     for (std::size_t item_index = 0U; item_index < item_count; ++item_index) {
         const auto& item = state.item_ownership.items[item_index];
-        auto* record = out.data() + kV6BaseEncodedCheckpointSize
-            + item_index * kV4ItemRecordSize;
+        auto* record = out.data() + kV7BaseEncodedCheckpointSize
+            + item_index * kV7ItemRecordSize;
         write_u64(record, item.id);
         record[8U] = item.base_id;
         record[9U] = static_cast<std::uint8_t>(item.rarity);
@@ -445,11 +468,13 @@ std::optional<EncodedCheckpoint> encode_checkpoint(
         for (std::size_t roll_index = 0U;
                 roll_index < item.affixes.size(); ++roll_index) {
             const auto& roll = item.affixes[roll_index];
-            auto* encoded_roll = record + 16U + roll_index * 4U;
+            auto* encoded_roll = record + 16U + roll_index * 6U;
             write_u16(encoded_roll, roll.affix_id);
             encoded_roll[2U] = roll.tier;
             encoded_roll[3U] = roll.variant;
+            write_u16(encoded_roll + 4U, roll.value_roll_bp);
         }
+        write_u32(record + 52U, item.reinforcement);
     }
 
     write_u32(out.data() + 28U,
@@ -463,6 +488,8 @@ DecodeResult decode_checkpoint(
         return error_result(CodecError::wrong_size);
     }
     const bool current_magic = std::equal(
+        kV7Magic.begin(), kV7Magic.end(), bytes);
+    const bool sixth_magic = std::equal(
         kV6Magic.begin(), kV6Magic.end(), bytes);
     const bool fifth_magic = std::equal(
         kV5Magic.begin(), kV5Magic.end(), bytes);
@@ -472,7 +499,7 @@ DecodeResult decode_checkpoint(
         kV3Magic.begin(), kV3Magic.end(), bytes);
     const bool legacy_magic = std::equal(
         kV1V2Magic.begin(), kV1V2Magic.end(), bytes);
-    if (!current_magic && !fifth_magic && !fourth_magic
+    if (!current_magic && !sixth_magic && !fifth_magic && !fourth_magic
         && !third_magic && !legacy_magic) {
         return error_result(CodecError::bad_magic);
     }
@@ -489,6 +516,7 @@ DecodeResult decode_checkpoint(
         return error_result(CodecError::wrong_size);
     }
     if (format != kCheckpointFormatVersion
+        && format != kSixthCheckpointFormatVersion
         && format != kFourthCheckpointFormatVersion
         && format != kFifthCheckpointFormatVersion
         && format != kThirdCheckpointFormatVersion
@@ -498,6 +526,7 @@ DecodeResult decode_checkpoint(
     }
     const bool matching_magic =
         (format == kCheckpointFormatVersion && current_magic)
+        || (format == kSixthCheckpointFormatVersion && sixth_magic)
         || (format == kFifthCheckpointFormatVersion && fifth_magic)
         || (format == kFourthCheckpointFormatVersion && fourth_magic)
         || (format == kThirdCheckpointFormatVersion && third_magic)
@@ -527,8 +556,12 @@ DecodeResult decode_checkpoint(
             && payload_size < kV5BasePayloadSize)) {
         return error_result(CodecError::bad_payload_length);
     }
-    if (format == kCheckpointFormatVersion
+    if (format == kSixthCheckpointFormatVersion
         && payload_size < kV6BasePayloadSize) {
+        return error_result(CodecError::bad_payload_length);
+    }
+    if (format == kCheckpointFormatVersion
+        && payload_size < kV7BasePayloadSize) {
         return error_result(CodecError::bad_payload_length);
     }
     if (encoded_crc != checkpoint_crc(bytes, payload_size)) {
@@ -538,6 +571,7 @@ DecodeResult decode_checkpoint(
     std::uint32_t item_count{};
     if (format == kFourthCheckpointFormatVersion
             || format == kFifthCheckpointFormatVersion
+            || format == kSixthCheckpointFormatVersion
             || format == kCheckpointFormatVersion) {
         const auto layout = item_layout(format);
         DecodeCursor count_cursor{
@@ -547,11 +581,11 @@ DecodeResult decode_checkpoint(
             return error_result(CodecError::bad_payload_length);
         }
         if (item_count > (std::numeric_limits<std::size_t>::max()
-                - layout.base_payload_size) / kV4ItemRecordSize) {
+                - layout.base_payload_size) / layout.item_record_size) {
             return error_result(CodecError::bad_payload_length);
         }
         const auto expected_payload_size = layout.base_payload_size
-            + static_cast<std::size_t>(item_count) * kV4ItemRecordSize;
+            + static_cast<std::size_t>(item_count) * layout.item_record_size;
         if (payload_size != expected_payload_size)
             return error_result(CodecError::bad_payload_length);
     }
@@ -577,7 +611,8 @@ DecodeResult decode_checkpoint(
     if (!valid_entry(entry)
             || !valid_element(ecology)
             || !valid_transition(transition,
-                format == kCheckpointFormatVersion)
+                format == kSixthCheckpointFormatVersion
+                    || format == kCheckpointFormatVersion)
             || !valid_direction(direction)) {
         return error_result(CodecError::invalid_enum);
     }
@@ -625,6 +660,7 @@ DecodeResult decode_checkpoint(
     } else if (format == kThirdCheckpointFormatVersion
             || format == kFourthCheckpointFormatVersion
             || format == kFifthCheckpointFormatVersion
+            || format == kSixthCheckpointFormatVersion
             || format == kCheckpointFormatVersion) {
         if (bytes[97U] != 0U
             || !std::all_of(bytes + 114U, bytes + 120U,
@@ -648,6 +684,7 @@ DecodeResult decode_checkpoint(
         state.passive_tree = passives::PassiveTreeState{1ULL};
     }
     if (format == kFifthCheckpointFormatVersion
+            || format == kSixthCheckpointFormatVersion
             || format == kCheckpointFormatVersion) {
         const auto lifecycle = bytes[120U];
         const auto danger = bytes[121U];
@@ -692,7 +729,8 @@ DecodeResult decode_checkpoint(
         state.last_abyss_resolution.claimed = bytes[148U];
         state.last_abyss_resolution.abandoned = bytes[149U];
     }
-    if (format == kCheckpointFormatVersion) {
+    if (format == kSixthCheckpointFormatVersion
+            || format == kCheckpointFormatVersion) {
         const auto lifecycle = bytes[244U];
         const auto source_kind = bytes[246U];
         const auto damage_type = bytes[247U];
@@ -786,6 +824,7 @@ DecodeResult decode_checkpoint(
     }
     if (format == kFourthCheckpointFormatVersion
             || format == kFifthCheckpointFormatVersion
+            || format == kSixthCheckpointFormatVersion
             || format == kCheckpointFormatVersion) {
         const auto layout = item_layout(format);
         DecodeCursor ownership{
@@ -799,6 +838,52 @@ DecodeResult decode_checkpoint(
         for (auto& equipped : state.item_ownership.equipment.equipped_ids) {
             if (!ownership.read_u64(equipped))
                 return error_result(CodecError::wrong_size);
+        }
+        if (format == kCheckpointFormatVersion) {
+            DecodeCursor materials{
+                reinterpret_cast<const std::byte*>(bytes), size,
+                kV6BaseEncodedCheckpointSize};
+            for (std::size_t material_index = 0U;
+                    material_index < items::kMaterialCount; ++material_index) {
+                const auto material_id = static_cast<items::MaterialId>(
+                    material_index);
+                const auto* const definition = items::material_definition(
+                    material_id);
+                std::uint8_t stable_id{};
+                if (definition == nullptr || !materials.read_u8(stable_id)
+                    || stable_id != definition->stable_id) {
+                    return error_result(CodecError::invalid_state);
+                }
+                for (std::size_t reserved_index = 0U;
+                        reserved_index < 7U; ++reserved_index) {
+                    std::uint8_t reserved{};
+                    if (!materials.read_u8(reserved))
+                        return error_result(CodecError::wrong_size);
+                    if (reserved != 0U)
+                        return error_result(CodecError::invalid_state);
+                }
+                if (!materials.read_u64(
+                        state.item_ownership.materials[material_index])) {
+                    return error_result(CodecError::wrong_size);
+                }
+            }
+            if (!materials.read_u16(
+                    state.item_ownership.material_discovery_bits)) {
+                return error_result(CodecError::wrong_size);
+            }
+            if ((state.item_ownership.material_discovery_bits
+                    & static_cast<std::uint16_t>(
+                        ~items::kMaterialDiscoveryMask)) != 0U) {
+                return error_result(CodecError::invalid_state);
+            }
+            for (std::size_t reserved_index = 0U;
+                    reserved_index < 6U; ++reserved_index) {
+                std::uint8_t reserved{};
+                if (!materials.read_u8(reserved))
+                    return error_result(CodecError::wrong_size);
+                if (reserved != 0U)
+                    return error_result(CodecError::invalid_state);
+            }
         }
         ownership.offset = layout.item_offset;
         for (auto& item : state.item_ownership.items) {
@@ -821,20 +906,40 @@ DecodeResult decode_checkpoint(
                 if (record_reserved != 0U)
                     return error_result(CodecError::invalid_state);
             }
-            for (auto& roll : item.affixes) {
+            for (std::size_t roll_index = 0U;
+                    roll_index < item.affixes.size(); ++roll_index) {
+                auto& roll = item.affixes[roll_index];
                 if (!ownership.read_u16(roll.affix_id)
                     || !ownership.read_u8(roll.tier)
                     || !ownership.read_u8(roll.variant)) {
                     return error_result(CodecError::wrong_size);
                 }
+                if (format == kCheckpointFormatVersion) {
+                    if (!ownership.read_u16(roll.value_roll_bp))
+                        return error_result(CodecError::wrong_size);
+                } else if (roll_index < item.affix_count) {
+                    roll.value_roll_bp = items::kAffixValueRollCanonicalBp;
+                }
+            }
+            if (format == kCheckpointFormatVersion) {
+                if (!ownership.read_u32(item.reinforcement))
+                    return error_result(CodecError::wrong_size);
+                for (auto& reserved : item.extension_reserved) {
+                    if (!ownership.read_u8(reserved))
+                        return error_result(CodecError::wrong_size);
+                    if (reserved != 0U)
+                        return error_result(CodecError::invalid_state);
+                }
             }
         }
     }
     if (!valid_checkpoint_fields(
-            state, format == kCheckpointFormatVersion)) {
+            state, format == kSixthCheckpointFormatVersion
+                || format == kCheckpointFormatVersion)) {
         return error_result(CodecError::invalid_state);
     }
     if ((format == kFifthCheckpointFormatVersion
+            || format == kSixthCheckpointFormatVersion
             || format == kCheckpointFormatVersion)
         && (!valid_abyss_checkpoint(state)
             || !valid_last_resolution(state.last_abyss_resolution))) {

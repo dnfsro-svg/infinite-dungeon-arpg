@@ -78,8 +78,9 @@ arpg::test::Failure passive_bits_round_trip_at_little_endian_offset_106() noexce
     const auto state = make_fixture();
     const auto bytes = persistence::encode_checkpoint(state);
     ARPG_REQUIRE(bytes.has_value());
-    ARPG_REQUIRE(bytes->size() == 460U);
-    ARPG_REQUIRE((*bytes)[0U] == 'A' && (*bytes)[7U] == 0U);
+    ARPG_REQUIRE(bytes->size() == persistence::kV7BaseEncodedCheckpointSize);
+    ARPG_REQUIRE((*bytes)[0U] == 'A' && (*bytes)[6U] == '7'
+        && (*bytes)[7U] == 0U);
     ARPG_REQUIRE((*bytes)[106U] == 0x01U && (*bytes)[107U] == 0x07U);
     const auto decoded = persistence::decode_checkpoint(bytes->data(), bytes->size());
     ARPG_REQUIRE(decoded.error == persistence::CodecError::none);
@@ -113,7 +114,7 @@ arpg::test::Failure invalid_passive_bits_are_rejected() noexcept {
         auto bytes = persistence::encode_checkpoint(make_fixture());
         ARPG_REQUIRE(bytes.has_value());
         mutate(bytes->data());
-        refresh_crc(bytes->data(), 428U);
+        refresh_crc(bytes->data(), persistence::kV7BasePayloadSize);
         ARPG_REQUIRE(persistence::decode_checkpoint(bytes->data(), bytes->size()).error
             == persistence::CodecError::invalid_state);
     }

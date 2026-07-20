@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 
 namespace arpg::test::fixtures {
@@ -39,5 +40,48 @@ inline constexpr std::array<std::uint8_t, 356U> kV5FullState{{
     0x6FU, 0x00U, 0x08U, 0xFFU, 0x70U, 0x00U, 0x08U, 0x03U, 0x00U, 0x00U, 0x00U, 0x00U,
     0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U,
 }};
+
+constexpr std::uint32_t update_fixture_crc(std::uint32_t state,
+    const std::uint8_t* bytes, std::size_t size) noexcept {
+    std::uint32_t crc = state ^ 0xFFFFFFFFU;
+    for (std::size_t index = 0U; index < size; ++index) {
+        crc ^= bytes[index];
+        for (std::size_t bit = 0U; bit < 8U; ++bit) {
+            const std::uint32_t mask =
+                0U - static_cast<std::uint32_t>(crc & 1U);
+            crc = (crc >> 1U) ^ (0xEDB88320U & mask);
+        }
+    }
+    return crc ^ 0xFFFFFFFFU;
+}
+
+// Frozen V6 ownership bytes derived only from the frozen V5 fixture above.
+// The canonical empty death block is inserted explicitly so this fixture stays
+// independent of the current encoder and preserves the 40-byte V6 item record.
+constexpr std::array<std::uint8_t, 580U> make_v6_full_state() noexcept {
+    std::array<std::uint8_t, 580U> bytes{};
+    for (std::size_t index = 0U; index < 236U; ++index)
+        bytes[index] = kV5FullState[index];
+    for (std::size_t index = 236U; index < kV5FullState.size(); ++index)
+        bytes[index + 224U] = kV5FullState[index];
+
+    bytes[0U] = 'A'; bytes[1U] = 'R'; bytes[2U] = 'P'; bytes[3U] = 'G';
+    bytes[4U] = 'S'; bytes[5U] = 'V'; bytes[6U] = '6'; bytes[7U] = '\0';
+    bytes[8U] = 6U;
+    bytes[24U] = 0x24U;
+    bytes[25U] = 0x02U;
+    bytes[246U] = 5U;
+    bytes[248U] = 0xFFU;
+
+    const std::uint32_t header_crc = update_fixture_crc(
+        0U, bytes.data() + 8U, 20U);
+    const std::uint32_t checksum = update_fixture_crc(
+        header_crc, bytes.data() + 32U, 548U);
+    for (std::size_t index = 0U; index < 4U; ++index)
+        bytes[28U + index] = static_cast<std::uint8_t>(checksum >> (index * 8U));
+    return bytes;
+}
+
+inline constexpr auto kV6FullState = make_v6_full_state();
 
 }  // namespace arpg::test::fixtures

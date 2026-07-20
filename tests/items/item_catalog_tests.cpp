@@ -355,6 +355,7 @@ arpg::test::Failure stable_item_types_have_required_defaults() noexcept {
     ARPG_REQUIRE(ownership.items.empty());
     ARPG_REQUIRE(ownership.equipment.equipped_ids == empty_equipment);
     ARPG_REQUIRE(ownership.materials == empty_materials);
+    ARPG_REQUIRE(ownership.material_discovery_bits == 0U);
     ARPG_REQUIRE(ownership.claimed_drop_bits == empty_claims);
     ARPG_REQUIRE(ownership.next_item_sequence == 1U);
     return {};

@@ -450,8 +450,11 @@ bool validate_item(const ItemInstance& item) noexcept {
 
 OwnershipValidationResult validate_ownership_detailed(
     const ItemOwnershipState& state) noexcept {
-    if (state.next_item_sequence == 0U || state.items.size() > 65535U)
+    if (state.next_item_sequence == 0U || state.items.size() > 65535U
+        || (state.material_discovery_bits
+            & static_cast<std::uint16_t>(~kMaterialDiscoveryMask)) != 0U) {
         return OwnershipValidationResult::invalid_state;
+    }
 
     const std::size_t item_count = state.items.size();
     const std::unique_ptr<std::uint64_t[]> ids{item_count == 0U

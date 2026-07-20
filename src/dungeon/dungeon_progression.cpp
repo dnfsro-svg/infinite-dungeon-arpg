@@ -60,6 +60,7 @@ namespace {
     if (lhs.items.size() != rhs.items.size()
             || lhs.equipment.equipped_ids != rhs.equipment.equipped_ids
             || lhs.materials != rhs.materials
+            || lhs.material_discovery_bits != rhs.material_discovery_bits
             || lhs.claimed_drop_bits != rhs.claimed_drop_bits
             || lhs.next_item_sequence != rhs.next_item_sequence) {
         return false;

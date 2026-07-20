@@ -75,6 +75,7 @@ struct ItemOwnershipState final {
     std::vector<ItemInstance> items{};
     EquipmentState equipment{};
     std::array<std::uint64_t, kMaterialCount> materials{};
+    std::uint16_t material_discovery_bits{};
     std::array<std::uint64_t, 3> claimed_drop_bits{};
     std::uint64_t next_item_sequence{1};
 };

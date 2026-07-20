@@ -42,6 +42,7 @@ enum class MismatchField : std::uint8_t {
     item_bytes,
     equipment_ids,
     materials,
+    material_discovery,
     claimed_bits,
     next_sequence,
     player_build,
@@ -128,6 +129,10 @@ Comparison compare_sessions(
         return {MismatchField::equipment_ids, 0U};
     if (left_items.materials != right_items.materials)
         return {MismatchField::materials, 0U};
+    if (left_items.material_discovery_bits
+            != right_items.material_discovery_bits) {
+        return {MismatchField::material_discovery, 0U};
+    }
     if (left_items.claimed_drop_bits != right_items.claimed_drop_bits)
         return {MismatchField::claimed_bits, 0U};
     if (left_items.next_item_sequence != right_items.next_item_sequence)
@@ -562,6 +567,7 @@ const char* mismatch_name(MismatchField field) noexcept {
     case MismatchField::item_bytes: return "item_bytes";
     case MismatchField::equipment_ids: return "equipment_ids";
     case MismatchField::materials: return "materials";
+    case MismatchField::material_discovery: return "material_discovery";
     case MismatchField::claimed_bits: return "claimed_bits";
     case MismatchField::next_sequence: return "next_sequence";
     case MismatchField::player_build: return "player_build";

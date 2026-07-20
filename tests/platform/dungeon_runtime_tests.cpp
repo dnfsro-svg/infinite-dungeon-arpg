@@ -17,6 +17,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -124,14 +125,51 @@ void write_u32(std::vector<std::uint8_t>& bytes, std::size_t offset,
         bytes[offset + index] = static_cast<std::uint8_t>(value >> (index * 8U));
 }
 
+std::vector<std::uint8_t> encode_v6(
+    const dungeon::DungeonRunState& state) {
+    const auto encoded = persistence::encode_checkpoint(state);
+    if (!encoded.has_value()
+            || encoded->size() < persistence::kV7BaseEncodedCheckpointSize) {
+        return {};
+    }
+
+    const std::size_t item_count = state.item_ownership.items.size();
+    std::vector<std::uint8_t> v6(
+        persistence::kV6BaseEncodedCheckpointSize
+            + item_count * persistence::kV4ItemRecordSize,
+        0U);
+    std::copy_n(encoded->begin(), persistence::kV6BaseEncodedCheckpointSize,
+        v6.begin());
+    for (std::size_t item_index = 0U; item_index < item_count; ++item_index) {
+        const std::size_t v7_record = persistence::kV7BaseEncodedCheckpointSize
+            + item_index * persistence::kV7ItemRecordSize;
+        const std::size_t v6_record = persistence::kV6BaseEncodedCheckpointSize
+            + item_index * persistence::kV4ItemRecordSize;
+        std::copy_n(encoded->begin() + v7_record, 16U,
+            v6.begin() + v6_record);
+        for (std::size_t roll_index = 0U; roll_index < 6U; ++roll_index) {
+            std::copy_n(encoded->begin() + v7_record + 16U + roll_index * 6U,
+                4U, v6.begin() + v6_record + 16U + roll_index * 4U);
+        }
+    }
+    v6[0U] = 'A'; v6[1U] = 'R'; v6[2U] = 'P'; v6[3U] = 'G';
+    v6[4U] = 'S'; v6[5U] = 'V'; v6[6U] = '6'; v6[7U] = '\0';
+    write_u32(v6, 8U, persistence::kSixthCheckpointFormatVersion);
+    write_u32(v6, 24U, static_cast<std::uint32_t>(v6.size() - 32U));
+    auto checksum = persistence::crc32_update(0U, v6.data() + 8U, 20U);
+    checksum = persistence::crc32_update(
+        checksum, v6.data() + 32U, v6.size() - 32U);
+    write_u32(v6, 28U, checksum);
+    return v6;
+}
+
 std::vector<std::uint8_t> encode_v4(
     const dungeon::DungeonRunState& state) {
     auto encodable = state;
     encodable.current_room.is_abyss = false;
     encodable.abyss = {};
-    const auto encoded = persistence::encode_checkpoint(encodable);
-    if (!encoded.has_value() || encoded->size() < 460U) return {};
-    auto v5 = *encoded;
+    auto v5 = encode_v6(encodable);
+    if (v5.empty()) return {};
     v5.erase(v5.begin() + 236U, v5.begin() + 460U);
     v5[0U] = 'I'; v5[1U] = 'A'; v5[2U] = 'R'; v5[3U] = 'P';
     v5[4U] = 'G'; v5[5U] = 'S'; v5[6U] = '0'; v5[7U] = '6';
@@ -154,9 +192,8 @@ std::vector<std::uint8_t> encode_v4(
 
 std::vector<std::uint8_t> encode_v5(
     const dungeon::DungeonRunState& state) {
-    const auto encoded = persistence::encode_checkpoint(state);
-    if (!encoded.has_value() || encoded->size() < 460U) return {};
-    auto v5 = *encoded;
+    auto v5 = encode_v6(state);
+    if (v5.empty()) return {};
     v5.erase(v5.begin() + 236U, v5.begin() + 460U);
     const std::array<std::uint8_t, 8U> magic{{
         'I', 'A', 'R', 'P', 'G', 'S', '0', '6'}};
@@ -689,6 +726,7 @@ bool same_ownership(const items::ItemOwnershipState& left,
     if (left.items.size() != right.items.size()
             || left.equipment.equipped_ids != right.equipment.equipped_ids
             || left.materials != right.materials
+            || left.material_discovery_bits != right.material_discovery_bits
             || left.claimed_drop_bits != right.claimed_drop_bits
             || left.next_item_sequence != right.next_item_sequence) {
         return false;
@@ -1447,55 +1485,57 @@ arpg::test::Failure item_request_fault_matrix_is_atomic_and_restart_consistent()
             ARPG_REQUIRE(seed_store.commit(initial).state
                 == persistence::SaveCommitState::committed);
 
-            platform::DungeonRuntime runtime(config);
-            ARPG_REQUIRE(runtime.initialize());
-            ARPG_REQUIRE(install_pickup_if_needed(runtime, kind));
-            const auto before_snapshot = runtime.session()->snapshot();
-            const items::ItemOwnershipState before_items = *runtime.item_state();
-            const auto before_build = arpg::test::player_build(*runtime.session());
-            ARPG_REQUIRE(issue_item_request(runtime, kind)
+            auto runtime = std::make_unique<platform::DungeonRuntime>(config);
+            ARPG_REQUIRE(runtime->initialize());
+            ARPG_REQUIRE(install_pickup_if_needed(*runtime, kind));
+            const auto before_snapshot = runtime->session()->snapshot();
+            const items::ItemOwnershipState before_items = *runtime->item_state();
+            const auto before_build = arpg::test::player_build(*runtime->session());
+            ARPG_REQUIRE(issue_item_request(*runtime, kind)
                 == dungeon::RequestResult::accepted);
             const dungeon::PendingSave* const pending =
-                runtime.session()->pending_save_view();
+                runtime->session()->pending_save_view();
             ARPG_REQUIRE(pending != nullptr);
             const auto expected_generation = pending->expected_generation;
             const items::ItemOwnershipState expected_items =
                 pending->next_state.item_ownership;
-            dungeon::DungeonSession expected_session{{}, pending->next_state};
-            const auto expected_build = arpg::test::player_build(expected_session);
+            auto expected_session = std::make_unique<dungeon::DungeonSession>(
+                dungeon::DungeonRules{}, pending->next_state);
+            const auto expected_build = arpg::test::player_build(
+                *expected_session);
 
-            ARPG_REQUIRE(runtime.request_pickup(0U)
+            ARPG_REQUIRE(runtime->request_pickup(0U)
                 == dungeon::RequestResult::rejected);
-            ARPG_REQUIRE(runtime.request_equip(101U)
+            ARPG_REQUIRE(runtime->request_equip(101U)
                 == dungeon::RequestResult::rejected);
-            ARPG_REQUIRE(runtime.request_unequip(items::ItemSlot::weapon)
+            ARPG_REQUIRE(runtime->request_unequip(items::ItemSlot::weapon)
                 == dungeon::RequestResult::rejected);
-            ARPG_REQUIRE(runtime.request_recipe({{301U, 302U, 303U}})
+            ARPG_REQUIRE(runtime->request_recipe({{301U, 302U, 303U}})
                 == dungeon::RequestResult::rejected);
-            ARPG_REQUIRE(!runtime.session()->request_descent(true));
+            ARPG_REQUIRE(!runtime->session()->request_descent(true));
             arpg::test::attempt_exit(
-                *runtime.session(), dungeon::ExitDirection::right);
-            static_cast<void>(runtime.session()->reset_current_room());
-            ARPG_REQUIRE(!runtime.session()->queue_action(combat::Action::light));
-            ARPG_REQUIRE(runtime.session()->snapshot().phase
+                *runtime->session(), dungeon::ExitDirection::right);
+            static_cast<void>(runtime->session()->reset_current_room());
+            ARPG_REQUIRE(!runtime->session()->queue_action(combat::Action::light));
+            ARPG_REQUIRE(runtime->session()->snapshot().phase
                 == dungeon::RoomPhase::committing);
-            ARPG_REQUIRE(runtime.session()->snapshot().commit_generation
+            ARPG_REQUIRE(runtime->session()->snapshot().commit_generation
                 == before_snapshot.commit_generation);
-            ARPG_REQUIRE(runtime.session()->snapshot().ground_item_count
+            ARPG_REQUIRE(runtime->session()->snapshot().ground_item_count
                 == before_snapshot.ground_item_count);
-            ARPG_REQUIRE(same_ownership(*runtime.item_state(), before_items));
+            ARPG_REQUIRE(same_ownership(*runtime->item_state(), before_items));
 
             fault.enabled = disposition != persistence::SaveCommitState::committed;
-            runtime.service_pending_save();
-            const auto after_snapshot = runtime.session()->snapshot();
+            runtime->service_pending_save();
+            const auto after_snapshot = runtime->session()->snapshot();
             const bool committed =
                 disposition == persistence::SaveCommitState::committed;
             const bool indeterminate =
                 disposition == persistence::SaveCommitState::indeterminate;
-            ARPG_REQUIRE(runtime.render_status().indicator
+            ARPG_REQUIRE(runtime->render_status().indicator
                 == (committed ? platform::SaveIndicator::saved
                               : platform::SaveIndicator::error));
-            ARPG_REQUIRE(runtime.state()
+            ARPG_REQUIRE(runtime->state()
                 == (indeterminate ? platform::DungeonRuntimeState::faulted
                                   : platform::DungeonRuntimeState::running));
             ARPG_REQUIRE(after_snapshot.phase
@@ -1504,16 +1544,16 @@ arpg::test::Failure item_request_fault_matrix_is_atomic_and_restart_consistent()
             ARPG_REQUIRE(after_snapshot.commit_generation
                 == (committed ? expected_generation
                               : before_snapshot.commit_generation));
-            ARPG_REQUIRE(same_ownership(*runtime.item_state(),
+            ARPG_REQUIRE(same_ownership(*runtime->item_state(),
                 committed ? expected_items : before_items));
             ARPG_REQUIRE(after_snapshot.ground_item_count
                 == (committed && kind == ItemRequestKind::pickup
                     ? 0U : before_snapshot.ground_item_count));
             ARPG_REQUIRE(same_build(
-                arpg::test::player_build(*runtime.session()),
+                arpg::test::player_build(*runtime->session()),
                 committed ? expected_build : before_build));
             if (indeterminate) {
-                ARPG_REQUIRE(issue_item_request(runtime, kind)
+                ARPG_REQUIRE(issue_item_request(*runtime, kind)
                     == dungeon::RequestResult::rejected);
             }
 
@@ -1521,22 +1561,23 @@ arpg::test::Failure item_request_fault_matrix_is_atomic_and_restart_consistent()
             persistence::SaveStore disk_store(restart_config.save);
             const auto disk = disk_store.load();
             ARPG_REQUIRE(disk.state == persistence::SaveLoadState::ready);
-            platform::DungeonRuntime restarted(restart_config);
-            ARPG_REQUIRE(restarted.initialize());
-            ARPG_REQUIRE(restarted.session()->snapshot().commit_generation
+            auto restarted = std::make_unique<platform::DungeonRuntime>(
+                restart_config);
+            ARPG_REQUIRE(restarted->initialize());
+            ARPG_REQUIRE(restarted->session()->snapshot().commit_generation
                 == disk.checkpoint.commit_generation);
             ARPG_REQUIRE(same_ownership(
-                *restarted.item_state(), disk.checkpoint.item_ownership));
-            ARPG_REQUIRE(same_build(arpg::test::player_build(*restarted.session()),
+                *restarted->item_state(), disk.checkpoint.item_ownership));
+            ARPG_REQUIRE(same_build(arpg::test::player_build(*restarted->session()),
                 arpg::test::player_build(dungeon::DungeonSession{
                     {}, disk.checkpoint})));
             if (committed) {
-                ARPG_REQUIRE(same_ownership(*restarted.item_state(), expected_items));
+                ARPG_REQUIRE(same_ownership(*restarted->item_state(), expected_items));
             } else if (!indeterminate) {
-                ARPG_REQUIRE(same_ownership(*restarted.item_state(), before_items));
+                ARPG_REQUIRE(same_ownership(*restarted->item_state(), before_items));
             } else {
-                ARPG_REQUIRE(same_ownership(*restarted.item_state(), before_items)
-                    || same_ownership(*restarted.item_state(), expected_items));
+                ARPG_REQUIRE(same_ownership(*restarted->item_state(), before_items)
+                    || same_ownership(*restarted->item_state(), expected_items));
             }
         }
     }

@@ -604,6 +604,9 @@ arpg::test::Failure same_run_state_compares_all_item_ownership_fields() noexcept
     changed.item_ownership.materials[0] = 1U;
     ARPG_REQUIRE(!arpg::dungeon::same_run_state(original, changed));
     changed = original;
+    changed.item_ownership.material_discovery_bits = 1U;
+    ARPG_REQUIRE(!arpg::dungeon::same_run_state(original, changed));
+    changed = original;
     changed.item_ownership.items[0].reinforcement = 1U;
     ARPG_REQUIRE(!arpg::dungeon::same_run_state(original, changed));
     changed = original;
@@ -618,12 +621,14 @@ arpg::test::Failure same_run_state_compares_all_item_ownership_fields() noexcept
     copied.item_ownership.items.reserve(original.item_ownership.items.size());
     original.item_ownership.materials[0] =
         (std::numeric_limits<std::uint64_t>::max)();
+    original.item_ownership.material_discovery_bits = 0x2001U;
     ARPG_REQUIRE(arpg::test::copy_run_state_reusing_items(copied, original));
     ARPG_REQUIRE(arpg::dungeon::same_run_state(copied, original));
 
     DungeonRunState published = state_with_items({normal_item(123U, 4U)});
     DungeonRunState next = original;
     next.item_ownership.materials[1] = 0x123456789ABCDEF0ULL;
+    next.item_ownership.material_discovery_bits = 0x3FFFU;
     const DungeonRunState expected = next;
     arpg::test::publish_run_state_reusing_items(published, next);
     ARPG_REQUIRE(arpg::dungeon::same_run_state(published, expected));
