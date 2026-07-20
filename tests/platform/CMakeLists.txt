@@ -1456,3 +1456,11 @@ add_test(
 set_tests_properties(
     stage14.audio_sources
     PROPERTIES LABELS "headless;platform;stage14")
+
+add_test(
+    NAME stage14.audio_integration_guard
+    COMMAND "${CMAKE_COMMAND}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage14_audio_integration_guard.cmake")
+set_tests_properties(
+    stage14.audio_integration_guard
+    PROPERTIES LABELS "headless;platform;architecture;stage14")
