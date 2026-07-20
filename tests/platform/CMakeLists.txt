@@ -1444,3 +1444,12 @@ add_test(
 set_tests_properties(
     stage11d.loot_evidence_guard_self_test
     PROPERTIES LABELS "headless;platform;architecture;stage11d" TIMEOUT 300)
+
+add_test(
+    NAME stage14.audio_sources
+    COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+        "${CMAKE_CURRENT_SOURCE_DIR}/stage14_audio_source_validator.ps1"
+        -AssetDirectory "${PROJECT_SOURCE_DIR}/assets/stage14/audio")
+set_tests_properties(
+    stage14.audio_sources
+    PROPERTIES LABELS "headless;platform;stage14")
