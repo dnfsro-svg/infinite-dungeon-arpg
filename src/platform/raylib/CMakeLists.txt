@@ -1,5 +1,6 @@
 add_library(arpg_raylib STATIC
     actor_renderer.cpp
+    audio_asset_validation.cpp
     combat_audio.cpp
     combat_feedback.cpp
     combat_renderer.cpp

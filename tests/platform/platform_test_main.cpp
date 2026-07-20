@@ -29,6 +29,7 @@ arpg::test::TestSuite hud_font_suite() noexcept;
 arpg::test::TestSuite hud_render_plan_suite() noexcept;
 arpg::test::TestSuite hud_host_integration_suite() noexcept;
 arpg::test::TestSuite ground_loot_view_suite() noexcept;
+arpg::test::TestSuite audio_asset_validation_suite() noexcept;
 arpg::test::TestSuite material_asset_validation_suite() noexcept;
 arpg::test::TestSuite material_animation_suite() noexcept;
 arpg::test::TestSuite stage12_environment_render_suite() noexcept;
@@ -70,6 +71,7 @@ int main() {
         hud_render_plan_suite(),
         hud_host_integration_suite(),
         ground_loot_view_suite(),
+        audio_asset_validation_suite(),
         material_asset_validation_suite(),
         material_animation_suite(),
         stage12_environment_render_suite(),
@@ -77,5 +79,5 @@ int main() {
         stage12_material_render_suite(),
     };
 
-    return arpg::test::run_suites(suites, 308, "stage 13 combat readability runtime");
+    return arpg::test::run_suites(suites, 316, "stage 14 audio manifest");
 }

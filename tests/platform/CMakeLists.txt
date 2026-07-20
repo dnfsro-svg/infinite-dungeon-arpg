@@ -25,6 +25,7 @@ if(TARGET arpg_raylib)
         death_input_gate_tests.cpp
         death_overlay_view_tests.cpp
         ground_loot_view_tests.cpp
+        audio_asset_validation_tests.cpp
         material_asset_validation_tests.cpp
         material_animation_tests.cpp
         stage12_environment_render_tests.cpp
