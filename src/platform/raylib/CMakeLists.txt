@@ -3,6 +3,7 @@ add_library(arpg_raylib STATIC
     audio_pack.cpp
     audio_asset_validation.cpp
     audio_routing.cpp
+    audio_scene.cpp
     combat_audio.cpp
     combat_feedback.cpp
     combat_renderer.cpp

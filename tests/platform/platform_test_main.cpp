@@ -10,6 +10,7 @@ arpg::test::TestSuite monster_view_suite() noexcept;
 arpg::test::TestSuite combat_feedback_suite() noexcept;
 arpg::test::TestSuite audio_pack_suite() noexcept;
 arpg::test::TestSuite audio_routing_suite() noexcept;
+arpg::test::TestSuite audio_scene_suite() noexcept;
 arpg::test::TestSuite host_input_suite() noexcept;
 arpg::test::TestSuite dungeon_view_math_suite() noexcept;
 arpg::test::TestSuite passive_tree_view_suite() noexcept;
@@ -54,6 +55,7 @@ int main() {
         combat_feedback_suite(),
         audio_pack_suite(),
         audio_routing_suite(),
+        audio_scene_suite(),
         host_input_suite(),
         dungeon_view_math_suite(),
         passive_tree_view_suite(),
@@ -83,5 +85,5 @@ int main() {
         stage12_material_render_suite(),
     };
 
-    return arpg::test::run_suites(suites, 332, "stage 14 audio pack");
+    return arpg::test::run_suites(suites, 340, "stage 15 audio scene");
 }
