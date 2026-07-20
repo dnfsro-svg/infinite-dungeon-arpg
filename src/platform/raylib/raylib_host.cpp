@@ -809,11 +809,11 @@ void inject_stage11c_movement(PhysicalKeySnapshot& snapshot,
     if (config.stage11d_loot_validation == Scenario::preview_cancel
             && ordinary_ready) {
         const std::uint8_t phase = ++state.preview_phase;
-        if (phase == 1U || phase == 9U || phase == 10U) snapshot.escape = true;
-        else if (phase == 2U || (phase >= 4U && phase <= 6U)) {
+        if (phase == 1U || phase == 12U || phase == 13U) snapshot.escape = true;
+        else if (phase == 2U || (phase >= 4U && phase <= 10U)) {
             inject_stage11b_pressed(snapshot, settings::StableKey::arrow_down);
         } else if (phase == 3U) snapshot.enter = true;
-        else if (phase == 7U) {
+        else if (phase == 11U) {
             inject_stage11b_pressed(snapshot, settings::StableKey::arrow_right);
         }
         return snapshot;
@@ -1219,8 +1219,8 @@ void stage11d_record_semantics(Stage11DLootValidationState& state,
     }
     if (!stage11d_has_three_ordinary_rarities(snapshot)) return false;
     if (scenario == Scenario::preview_cancel) {
-        if (state.preview_phase == 8U) state.preview_visible_count = view.count;
-        if (state.preview_phase < 10U || pause_menu.screen != PauseScreen::closed) {
+        if (state.preview_phase == 11U) state.preview_visible_count = view.count;
+        if (state.preview_phase < 13U || pause_menu.screen != PauseScreen::closed) {
             return false;
         }
         state.restored_visible_count = view.count;
@@ -1904,7 +1904,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 // receives exactly one HUD observation before its presented frame.
                 renderer.observe_presented_hud_frame(HudPresentedFrame::recovery,
                     previous, current, runtime.render_status(), control_hints,
-                    recovery_frame_seconds, true);
+                    GetFrameTime(), true);
                 draw_recovery_screen(runtime.render_status());
                 std::optional<std::string> capture_path =
                     validation_capture_path();
