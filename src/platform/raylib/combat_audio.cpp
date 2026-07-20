@@ -24,53 +24,32 @@ bool has_cue(AudioCueMask mask, AudioCue cue) noexcept {
     return (mask & audio_cue_mask(cue)) != 0;
 }
 
-std::size_t warning_cue_index(AudioCue cue) noexcept {
-    switch (cue) {
-    case AudioCue::blink_warning: return 0U;
-    case AudioCue::chain_warning: return 1U;
-    case AudioCue::death_warning: return 2U;
-    default: return 3U;
+Sound* sound_for(AudioAssetId id, Sound& weapon,
+    std::array<Sound, 3>& material, Sound& low, Sound& blink_warning,
+    Sound& chain_warning, Sound& death_warning) noexcept {
+    switch (id) {
+    case AudioAssetId::swing_light_1:
+    case AudioAssetId::swing_light_2:
+    case AudioAssetId::swing_finisher:
+    case AudioAssetId::swing_launcher:
+        return &weapon;
+    case AudioAssetId::impact_1: return &material[0];
+    case AudioAssetId::impact_2: return &material[1];
+    case AudioAssetId::impact_3: return &material[2];
+    case AudioAssetId::impact_low:
+    case AudioAssetId::player_hurt:
+    case AudioAssetId::landing:
+    case AudioAssetId::enemy_defeat:
+        return &low;
+    case AudioAssetId::warning_blink: return &blink_warning;
+    case AudioAssetId::warning_chain: return &chain_warning;
+    case AudioAssetId::warning_death: return &death_warning;
+    case AudioAssetId::count: return nullptr;
     }
+    return nullptr;
 }
 
 }  // namespace
-
-AudioCueMask route_audio_cues(const combat::CombatEvent& event) noexcept {
-    switch (event.kind) {
-    case combat::CombatEventKind::swing:
-        return audio_cue_mask(AudioCue::weapon);
-    case combat::CombatEventKind::hit:
-        return audio_cue_mask(AudioCue::material);
-    case combat::CombatEventKind::impact_summary:
-        return event.feedback == combat::FeedbackLevel::heavy
-            ? audio_cue_mask(AudioCue::low)
-            : 0;
-    case combat::CombatEventKind::player_hit:
-        return audio_cue_mask(AudioCue::low);
-    case combat::CombatEventKind::affix_blink_warning:
-        return audio_cue_mask(AudioCue::blink_warning);
-    case combat::CombatEventKind::affix_chain_warning:
-        return audio_cue_mask(AudioCue::chain_warning);
-    case combat::CombatEventKind::affix_death_warning:
-        return audio_cue_mask(AudioCue::death_warning);
-    default:
-        return 0;
-    }
-}
-
-bool WarningAudioThrottle::allow(AudioCue cue, std::uint64_t tick) noexcept {
-    const std::size_t index = warning_cue_index(cue);
-    if (index >= last_ticks_.size()) {
-        return false;
-    }
-    if (!has_last_tick_[index] || tick < last_ticks_[index]
-        || tick - last_ticks_[index] >= 12U) {
-        last_ticks_[index] = tick;
-        has_last_tick_[index] = true;
-        return true;
-    }
-    return false;
-}
 
 CombatAudio::~CombatAudio() noexcept {
     shutdown();
@@ -172,35 +151,37 @@ bool CombatAudio::initialize() noexcept {
 
 void CombatAudio::consume_event(
     const combat::CombatEvent& event) noexcept {
+    if (event.kind == combat::CombatEventKind::reset) {
+        selection_.reset();
+        playback_budget_.reset();
+        return;
+    }
     if (!ready_) {
         return;
     }
-    const AudioCueMask cues = route_audio_cues(event);
-    if (has_cue(cues, AudioCue::weapon)) {
-        PlaySound(weapon_);
-    }
-    if (has_cue(cues, AudioCue::material)) {
-        PlaySound(material_[material_voice_]);
-        material_voice_ = (material_voice_ + 1) % material_.size();
-    }
-    if (has_cue(cues, AudioCue::low)) {
-        PlaySound(low_);
-    }
-    if (has_cue(cues, AudioCue::blink_warning)
-        && warning_throttle_.allow(AudioCue::blink_warning, event.tick)) {
-        PlaySound(blink_warning_);
-    }
-    if (has_cue(cues, AudioCue::chain_warning)
-        && warning_throttle_.allow(AudioCue::chain_warning, event.tick)) {
-        PlaySound(chain_warning_);
-    }
-    if (has_cue(cues, AudioCue::death_warning)
-        && warning_throttle_.allow(AudioCue::death_warning, event.tick)) {
-        PlaySound(death_warning_);
+    const AudioPlan plan = route_audio_plan(event);
+    constexpr std::array<AudioCue, 11> kCues{{
+        AudioCue::swing_light, AudioCue::swing_finisher,
+        AudioCue::swing_launcher, AudioCue::impact, AudioCue::impact_low,
+        AudioCue::player_hurt, AudioCue::landing, AudioCue::enemy_defeat,
+        AudioCue::warning_blink, AudioCue::warning_chain,
+        AudioCue::warning_death,
+    }};
+    for (const AudioCue cue : kCues) {
+        if (!has_cue(plan.cues, cue) || !playback_budget_.allow(cue, event.tick)) {
+            continue;
+        }
+        Sound* const sound = sound_for(selection_.select(cue), weapon_, material_,
+            low_, blink_warning_, chain_warning_, death_warning_);
+        if (sound != nullptr) {
+            PlaySound(*sound);
+        }
     }
 }
 
 void CombatAudio::stop_all() noexcept {
+    selection_.reset();
+    playback_budget_.reset();
     if (!ready_) {
         return;
     }
@@ -212,7 +193,6 @@ void CombatAudio::stop_all() noexcept {
     StopSound(blink_warning_);
     StopSound(chain_warning_);
     StopSound(death_warning_);
-    material_voice_ = 0;
 }
 
 void CombatAudio::shutdown() noexcept {
@@ -242,7 +222,8 @@ void CombatAudio::shutdown() noexcept {
     blink_warning_ = Sound{};
     chain_warning_ = Sound{};
     death_warning_ = Sound{};
-    material_voice_ = 0;
+    selection_.reset();
+    playback_budget_.reset();
     ready_ = false;
     if (owns_device_ && IsAudioDeviceReady()) {
         CloseAudioDevice();

@@ -1,6 +1,6 @@
 #include "test_framework.hpp"
 
-#include "combat_audio.hpp"
+#include "audio_routing.hpp"
 #include "combat_feedback.hpp"
 
 #include <cstddef>
@@ -134,23 +134,24 @@ arpg::test::Failure defeated_event_spawns_one_distinct_marker() noexcept {
 arpg::test::Failure audio_routes_weapon_material_and_low_once() noexcept {
     CombatEvent event{};
     event.kind = CombatEventKind::swing;
-    ARPG_REQUIRE(route_audio_cues(event)
-                 == audio_cue_mask(AudioCue::weapon));
+    event.attack = AttackId::j1;
+    ARPG_REQUIRE(route_audio_plan(event).cues
+                 == audio_cue_mask(AudioCue::swing_light));
 
     event.kind = CombatEventKind::hit;
     event.feedback = FeedbackLevel::heavy;
-    ARPG_REQUIRE(route_audio_cues(event)
-                 == audio_cue_mask(AudioCue::material));
+    ARPG_REQUIRE(route_audio_plan(event).cues
+                 == audio_cue_mask(AudioCue::impact));
 
     event.kind = CombatEventKind::impact_summary;
     event.feedback = FeedbackLevel::heavy;
-    ARPG_REQUIRE(route_audio_cues(event)
-                 == audio_cue_mask(AudioCue::low));
+    ARPG_REQUIRE(route_audio_plan(event).cues
+                 == audio_cue_mask(AudioCue::impact_low));
     event.feedback = FeedbackLevel::medium;
-    ARPG_REQUIRE(route_audio_cues(event) == 0);
+    ARPG_REQUIRE(route_audio_plan(event).cues == 0);
 
     event.kind = CombatEventKind::reset;
-    ARPG_REQUIRE(route_audio_cues(event) == 0);
+    ARPG_REQUIRE(route_audio_plan(event).cues == 0);
     return {};
 }
 

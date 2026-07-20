@@ -1,6 +1,6 @@
 #include "test_framework.hpp"
 
-#include "combat_audio.hpp"
+#include "audio_routing.hpp"
 #include "combat_view_math.hpp"
 #include "combat/monster_affix_catalog.hpp"
 #include "dungeon_view_math.hpp"
@@ -149,10 +149,11 @@ arpg::test::Failure hazard_modes_and_projected_effects_are_explicit() noexcept {
 arpg::test::Failure monster_attack_audio_emits_one_low_layer() noexcept {
     arpg::combat::CombatEvent event{};
     event.kind = arpg::combat::CombatEventKind::player_hit;
-    ARPG_REQUIRE(arpg::platform::route_audio_cues(event)
-        == arpg::platform::audio_cue_mask(arpg::platform::AudioCue::low));
+    ARPG_REQUIRE(arpg::platform::route_audio_plan(event).cues
+        == arpg::platform::audio_cue_mask(
+            arpg::platform::AudioCue::player_hurt));
     event.kind = arpg::combat::CombatEventKind::player_hurt_started;
-    ARPG_REQUIRE(arpg::platform::route_audio_cues(event) == 0);
+    ARPG_REQUIRE(arpg::platform::route_audio_plan(event).cues == 0);
     return {};
 }
 
@@ -265,27 +266,12 @@ arpg::test::Failure hazards_and_affix_warning_audio_are_distinct_and_throttled()
     chain_event.kind = arpg::combat::CombatEventKind::affix_chain_warning;
     arpg::combat::CombatEvent death_event{};
     death_event.kind = arpg::combat::CombatEventKind::affix_death_warning;
-    ARPG_REQUIRE(arpg::platform::route_audio_cues(blink)
-        == arpg::platform::audio_cue_mask(arpg::platform::AudioCue::blink_warning));
-    ARPG_REQUIRE(arpg::platform::route_audio_cues(chain_event)
-        == arpg::platform::audio_cue_mask(arpg::platform::AudioCue::chain_warning));
-    ARPG_REQUIRE(arpg::platform::route_audio_cues(death_event)
-        == arpg::platform::audio_cue_mask(arpg::platform::AudioCue::death_warning));
-
-    arpg::platform::WarningAudioThrottle throttle{};
-    ARPG_REQUIRE(throttle.allow(arpg::platform::AudioCue::blink_warning, 24U));
-    ARPG_REQUIRE(!throttle.allow(arpg::platform::AudioCue::blink_warning, 24U));
-    ARPG_REQUIRE(!throttle.allow(arpg::platform::AudioCue::blink_warning, 28U));
-    ARPG_REQUIRE(!throttle.allow(arpg::platform::AudioCue::blink_warning, 35U));
-    ARPG_REQUIRE(throttle.allow(arpg::platform::AudioCue::blink_warning, 36U));
-    ARPG_REQUIRE(throttle.allow(arpg::platform::AudioCue::chain_warning, 24U));
-    ARPG_REQUIRE(throttle.allow(arpg::platform::AudioCue::blink_warning, 2U));
-
-    arpg::platform::WarningAudioThrottle near_wrap{};
-    constexpr std::uint64_t kMax = UINT64_MAX;
-    ARPG_REQUIRE(near_wrap.allow(arpg::platform::AudioCue::blink_warning, kMax - 5U));
-    ARPG_REQUIRE(!near_wrap.allow(arpg::platform::AudioCue::blink_warning, kMax - 1U));
-    ARPG_REQUIRE(near_wrap.allow(arpg::platform::AudioCue::blink_warning, 2U));
+    ARPG_REQUIRE(arpg::platform::route_audio_plan(blink).cues
+        == arpg::platform::audio_cue_mask(arpg::platform::AudioCue::warning_blink));
+    ARPG_REQUIRE(arpg::platform::route_audio_plan(chain_event).cues
+        == arpg::platform::audio_cue_mask(arpg::platform::AudioCue::warning_chain));
+    ARPG_REQUIRE(arpg::platform::route_audio_plan(death_event).cues
+        == arpg::platform::audio_cue_mask(arpg::platform::AudioCue::warning_death));
     return {};
 }
 

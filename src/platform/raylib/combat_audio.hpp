@@ -1,6 +1,6 @@
 #pragma once
 
-#include "combat/combat_types.hpp"
+#include "audio_routing.hpp"
 
 #include <raylib.h>
 
@@ -9,33 +9,6 @@
 #include <cstdint>
 
 namespace arpg::platform {
-
-enum class AudioCue : std::uint8_t {
-    weapon = 1U << 0U,
-    material = 1U << 1U,
-    low = 1U << 2U,
-    blink_warning = 1U << 3U,
-    chain_warning = 1U << 4U,
-    death_warning = 1U << 5U,
-};
-
-using AudioCueMask = std::uint8_t;
-
-[[nodiscard]] constexpr AudioCueMask audio_cue_mask(AudioCue cue) noexcept {
-    return static_cast<AudioCueMask>(cue);
-}
-
-[[nodiscard]] AudioCueMask route_audio_cues(
-    const combat::CombatEvent& event) noexcept;
-
-class WarningAudioThrottle final {
-public:
-    [[nodiscard]] bool allow(AudioCue cue, std::uint64_t tick) noexcept;
-
-private:
-    std::array<std::uint64_t, 3> last_ticks_{};
-    std::array<bool, 3> has_last_tick_{};
-};
 
 class CombatAudio final {
 public:
@@ -74,8 +47,8 @@ private:
     Sound blink_warning_{};
     Sound chain_warning_{};
     Sound death_warning_{};
-    std::size_t material_voice_{};
-    WarningAudioThrottle warning_throttle_{};
+    AudioSelectionState selection_{};
+    AudioPlaybackBudget playback_budget_{};
     bool ready_{};
     bool owns_device_{};
 };
