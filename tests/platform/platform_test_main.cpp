@@ -33,6 +33,8 @@ arpg::test::TestSuite hud_font_suite() noexcept;
 arpg::test::TestSuite hud_render_plan_suite() noexcept;
 arpg::test::TestSuite hud_host_integration_suite() noexcept;
 arpg::test::TestSuite ground_loot_view_suite() noexcept;
+arpg::test::TestSuite material_loot_view_suite() noexcept;
+arpg::test::TestSuite material_bag_renderer_suite() noexcept;
 arpg::test::TestSuite audio_asset_validation_suite() noexcept;
 arpg::test::TestSuite material_asset_validation_suite() noexcept;
 arpg::test::TestSuite material_animation_suite() noexcept;
@@ -79,6 +81,8 @@ int main() {
         hud_render_plan_suite(),
         hud_host_integration_suite(),
         ground_loot_view_suite(),
+        material_loot_view_suite(),
+        material_bag_renderer_suite(),
         audio_asset_validation_suite(),
         material_asset_validation_suite(),
         material_animation_suite(),
@@ -87,5 +91,5 @@ int main() {
         stage12_material_render_suite(),
     };
 
-    return arpg::test::run_suites(suites, 349, "stage 15 audio integration");
+    return arpg::test::run_suites(suites, 354, "stage 16 material UI");
 }

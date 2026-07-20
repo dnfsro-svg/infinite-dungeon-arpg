@@ -16,6 +16,7 @@ CombatRenderPlan make_combat_render_plan(
     float height) noexcept {
     CombatRenderPlan plan{};
     plan.ground_loot = build_ground_loot_view(snapshot, mode, width, height);
+    plan.material_loot = build_material_loot_view(snapshot, width, height);
     plan.stages = {{
         CombatRenderStage::room,
         CombatRenderStage::actors,
@@ -101,6 +102,13 @@ void CombatRenderer::observe_hud(
         hud_notices_.publish_loot_pickup(
             pickup_feedback.text, pickup_feedback.abyss);
     }
+    material_pickup_feedback_.update(frame_seconds, paused);
+    const MaterialPickupFeedback material_feedback =
+        material_pickup_feedback_.observe(current);
+    if (material_feedback.ready) {
+        hud_notices_.publish_loot_pickup(
+            material_feedback.text, material_feedback.emphasized);
+    }
     hud_notices_.observe(previous, current, runtime_status, control_hints,
         runtime_status.recovery_required);
     hud_notices_.update(frame_seconds, paused);
@@ -184,7 +192,7 @@ GroundLootView CombatRenderer::draw(
         }
         switch (stage) {
         case CombatRenderStage::room:
-            draw_room(current, render_plan.ground_loot);
+            draw_room(current, render_plan.ground_loot, render_plan.material_loot);
             break;
         case CombatRenderStage::actors:
             draw_actors(previous, current,
@@ -193,6 +201,7 @@ GroundLootView CombatRenderer::draw(
             break;
         case CombatRenderStage::ground_loot_labels:
             hud_renderer_.draw_ground_loot(render_plan.ground_loot);
+            hud_renderer_.draw_material_loot(render_plan.material_loot);
             break;
         case CombatRenderStage::normal_hud:
             draw_hud();

@@ -220,6 +220,10 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
     const bool right_pressed = input.mouse_right_pressed;
     if (!left_pressed && !right_pressed) return false;
     const Vector2 mouse = input.mouse_position;
+    if (left_pressed && material_bag_.process_click(mouse, state,
+            GetScreenWidth(), GetScreenHeight())) {
+        return false;
+    }
     if (left_pressed && contains(slot_filter_button(layout.grid), mouse)) {
         if (!filter_.slot.has_value()) filter_.slot = items::ItemSlot::weapon;
         else if (*filter_.slot == items::ItemSlot::accessory) filter_.slot.reset();
@@ -305,6 +309,7 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     draw_panel(layout.equipment, "EQUIPMENT");
     draw_panel(layout.grid, "INVENTORY");
     draw_panel(layout.detail, "ITEM DETAIL");
+    material_bag_.draw(state, GetScreenWidth(), GetScreenHeight());
 
     for (std::size_t index = 0U; index < state.equipment.equipped_ids.size(); ++index) {
         const auto slot = static_cast<items::ItemSlot>(index);
