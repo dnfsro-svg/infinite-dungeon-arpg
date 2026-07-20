@@ -13,6 +13,7 @@ namespace arpg::items {
 namespace {
 
 inline constexpr std::uint64_t kItemRarityDomain = 0x4954454D52415201ULL;
+inline constexpr std::uint64_t kItemBaseDomain = 0x4954454D42415301ULL;
 inline constexpr std::uint64_t kItemAffixCountDomain = 0x4954454D434E5401ULL;
 inline constexpr std::uint64_t kItemAffixSelectionDomain = 0x4954454D53454C01ULL;
 inline constexpr std::uint64_t kItemAffixTierDomain = 0x4954454D54494501ULL;
@@ -78,6 +79,15 @@ std::optional<ItemRarity> select_rarity(
         roll_weighted_index(seed, kItemRarityDomain, values));
 }
 
+std::optional<std::uint8_t> select_base_id(
+    std::uint64_t seed, ItemSlot slot) noexcept {
+    const auto ids = base_ids_for_slot(slot);
+    if (ids[0] == 0U || ids[1] == 0U || ids[2] == 0U) return std::nullopt;
+    const std::size_t index = static_cast<std::size_t>(
+        roll_bounded(seed, kItemBaseDomain, ids.size()));
+    return ids[index];
+}
+
 std::uint8_t select_tier(
     std::uint64_t seed,
     std::uint8_t item_level,
@@ -126,7 +136,9 @@ std::optional<ItemInstance> generate_with_rarity(
     ItemRarity rarity) noexcept {
     ItemInstance item{};
     item.id = item_id;
-    item.base_id = static_cast<std::uint8_t>(slot) + 1U;
+    const auto base_id = select_base_id(seed, slot);
+    if (!base_id.has_value()) return std::nullopt;
+    item.base_id = *base_id;
     item.rarity = rarity;
     item.item_level = item_level;
     item.required_level = 1U;

@@ -104,7 +104,9 @@ arpg::test::Failure generation_is_byte_deterministic_and_items_are_valid() noexc
     ARPG_REQUIRE(second.has_value());
     ARPG_REQUIRE(std::memcmp(&*first, &*second, sizeof(ItemInstance)) == 0);
     ARPG_REQUIRE(first->id == 77U);
-    ARPG_REQUIRE(first->base_id == 6U);
+    const auto accessory_bases = base_ids_for_slot(ItemSlot::accessory);
+    ARPG_REQUIRE(std::find(accessory_bases.begin(), accessory_bases.end(),
+        first->base_id) != accessory_bases.end());
     ARPG_REQUIRE(first->rarity == ItemRarity::rare);
     ARPG_REQUIRE(first->item_level == 100U);
     ARPG_REQUIRE(validate_item(*first));
@@ -127,6 +129,25 @@ arpg::test::Failure generation_is_byte_deterministic_and_items_are_valid() noexc
     ARPG_REQUIRE(prefixes <= 3U);
     ARPG_REQUIRE(suffixes <= 3U);
     ARPG_REQUIRE(first->required_level == required);
+    return {};
+}
+
+arpg::test::Failure generated_items_choose_all_three_bases_from_a_separate_domain() noexcept {
+    for (std::uint8_t raw_slot = 0U;
+         raw_slot < static_cast<std::uint8_t>(ItemSlot::count); ++raw_slot) {
+        const ItemSlot slot = static_cast<ItemSlot>(raw_slot);
+        const auto ids = base_ids_for_slot(slot);
+        std::array<bool, 3> observed{};
+        for (std::uint64_t seed = 1U; seed <= 4096U; ++seed) {
+            const auto item = generate_item(
+                {seed, slot, 100U, seed, ItemRarity::normal});
+            ARPG_REQUIRE(item.has_value());
+            const auto it = std::find(ids.begin(), ids.end(), item->base_id);
+            ARPG_REQUIRE(it != ids.end());
+            observed[static_cast<std::size_t>(it - ids.begin())] = true;
+        }
+        ARPG_REQUIRE(observed[0] && observed[1] && observed[2]);
+    }
     return {};
 }
 
@@ -176,6 +197,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"invalid generation inputs", &generation_rejects_invalid_local_inputs},
     {"deterministic valid generation",
         &generation_is_byte_deterministic_and_items_are_valid},
+    {"three base choices use an independent domain",
+        &generated_items_choose_all_three_bases_from_a_separate_domain},
     {"rarity counts and six-affix slots",
         &rarity_counts_and_all_slots_support_six_affixes},
 };
