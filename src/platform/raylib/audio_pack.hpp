@@ -36,6 +36,9 @@ private:
     static constexpr std::size_t kAssetCount =
         static_cast<std::size_t>(AudioAssetId::count);
 
+    [[nodiscard]] bool load_fallback(
+        std::size_t index, AudioAssetId id) noexcept;
+
     AudioSoundApi api_{};
     ProceduralAudio procedural_{};
     std::array<Sound, kAssetCount> sounds_{};

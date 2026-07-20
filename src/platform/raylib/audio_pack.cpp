@@ -74,6 +74,20 @@ AudioPack::AudioPack() noexcept
 AudioPack::AudioPack(AudioSoundApi api) noexcept
     : api_(api) {}
 
+bool AudioPack::load_fallback(
+    std::size_t index, AudioAssetId id) noexcept {
+    const Wave fallback_wave = procedural_.wave(id);
+    if (!api_.wave_valid(fallback_wave)) return false;
+
+    Sound fallback_sound = api_.load_sound_from_wave(fallback_wave);
+    if (!api_.sound_valid(fallback_sound)) return false;
+
+    sounds_[index] = fallback_sound;
+    available_[index] = true;
+    using_fallback_[index] = true;
+    return true;
+}
+
 bool AudioPack::load() noexcept {
     unload();
     if (!valid_api(api_)) return false;
@@ -113,18 +127,7 @@ bool AudioPack::load() noexcept {
         }
 
         if (!external_loaded) {
-            bool fallback_loaded{};
-            const Wave fallback_wave = procedural_.wave(id);
-            if (api_.wave_valid(fallback_wave)) {
-                Sound fallback_sound = api_.load_sound_from_wave(fallback_wave);
-                if (api_.sound_valid(fallback_sound)) {
-                    sounds_[index] = fallback_sound;
-                    available_[index] = true;
-                    using_fallback_[index] = true;
-                    fallback_loaded = true;
-                }
-            }
-            if (!fallback_loaded) {
+            if (!load_fallback(index, id)) {
                 unload();
                 return false;
             }
@@ -138,18 +141,7 @@ bool AudioPack::load() noexcept {
         all_available = true;
         for (std::size_t index{}; index < kAssetCount; ++index) {
             const auto id = static_cast<AudioAssetId>(index);
-            bool fallback_loaded{};
-            const Wave fallback_wave = procedural_.wave(id);
-            if (api_.wave_valid(fallback_wave)) {
-                Sound fallback_sound = api_.load_sound_from_wave(fallback_wave);
-                if (api_.sound_valid(fallback_sound)) {
-                    sounds_[index] = fallback_sound;
-                    available_[index] = true;
-                    using_fallback_[index] = true;
-                    fallback_loaded = true;
-                }
-            }
-            if (!fallback_loaded) {
+            if (!load_fallback(index, id)) {
                 unload();
                 return false;
             }
