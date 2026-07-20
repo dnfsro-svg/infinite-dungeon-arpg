@@ -30,4 +30,7 @@ struct AudioValidationResult final {
     const AudioManifestEntry& entry,
     const AudioDecodedMetadata& metadata) noexcept;
 
+[[nodiscard]] AudioValidationResult validate_audio_pcm_budget(
+    const AudioDecodedMetadata* metadata, std::size_t count) noexcept;
+
 }  // namespace arpg::platform

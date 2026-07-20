@@ -78,6 +78,15 @@ arpg::test::Failure audio_manifest_rejects_path_escape_and_empty_segments() noex
     entries.front().path = "assets/stage14/audio//warning-death.wav";
     ARPG_REQUIRE(!arpg::platform::validate_audio_manifest(
         {entries.data(), entries.size(), nullptr}).valid);
+    entries.front().path = "a";
+    ARPG_REQUIRE(!arpg::platform::validate_audio_manifest(
+        {entries.data(), entries.size(), nullptr}).valid);
+    entries.front().path = "/assets/stage14/audio/warning-death.wav";
+    ARPG_REQUIRE(!arpg::platform::validate_audio_manifest(
+        {entries.data(), entries.size(), nullptr}).valid);
+    entries.front().path = "assets/stage14/audio/./warning-death.wav";
+    ARPG_REQUIRE(!arpg::platform::validate_audio_manifest(
+        {entries.data(), entries.size(), nullptr}).valid);
     return {};
 }
 
@@ -114,15 +123,19 @@ arpg::test::Failure audio_metadata_rejects_silence_and_clipping() noexcept {
 }
 
 arpg::test::Failure audio_manifest_rejects_total_pcm_over_eight_mib() noexcept {
-    const AudioManifestDefinition default_manifest =
-        arpg::platform::default_audio_manifest();
-    std::array<AudioDecodedMetadata, 14> metadata{};
-    for (AudioDecodedMetadata& value : metadata) {
-        value = {700000U, 44100U, 16U, 1U, 0.5F};
+    std::array<AudioDecodedMetadata, 63> within_budget{};
+    for (AudioDecodedMetadata& value : within_budget) {
+        value = {66150U, 44100U, 16U, 1U, 0.5F};
     }
-    const AudioManifestDefinition manifest{default_manifest.entries,
-        default_manifest.entry_count, metadata.data()};
-    const auto result = arpg::platform::validate_audio_manifest(manifest);
+    ARPG_REQUIRE(arpg::platform::validate_audio_pcm_budget(
+        within_budget.data(), within_budget.size()).valid);
+
+    std::array<AudioDecodedMetadata, 64> metadata{};
+    for (AudioDecodedMetadata& value : metadata) {
+        value = {66150U, 44100U, 16U, 1U, 0.5F};
+    }
+    const auto result = arpg::platform::validate_audio_pcm_budget(
+        metadata.data(), metadata.size());
     ARPG_REQUIRE(!result.valid);
     ARPG_REQUIRE(result.error == AudioValidationError::pcm_budget_exceeded);
     return {};

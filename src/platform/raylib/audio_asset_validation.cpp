@@ -32,7 +32,10 @@ constexpr char kAudioPathPrefix[] = "assets/stage14/audio/";
 [[nodiscard]] bool has_audio_path_prefix(const char* path) noexcept {
     if (path == nullptr) return false;
     for (std::size_t index = 0U; kAudioPathPrefix[index] != '\0'; ++index) {
-        if (path[index] != kAudioPathPrefix[index]) return false;
+        const char character = path[index];
+        if (character == '\0' || character != kAudioPathPrefix[index]) {
+            return false;
+        }
     }
     return true;
 }
@@ -122,6 +125,24 @@ AudioValidationResult validate_audio_metadata(const AudioManifestEntry& entry,
     return valid_result();
 }
 
+AudioValidationResult validate_audio_pcm_budget(
+    const AudioDecodedMetadata* metadata, std::size_t count) noexcept {
+    if (count != 0U && metadata == nullptr) {
+        return invalid_result(AudioValidationError::invalid_manifest);
+    }
+
+    std::size_t total_pcm_bytes{};
+    for (std::size_t index = 0U; index < count; ++index) {
+        std::size_t pcm_bytes{};
+        if (!pcm_byte_count(metadata[index], pcm_bytes)
+            || pcm_bytes > kMaximumPcmBytes - total_pcm_bytes) {
+            return invalid_result(AudioValidationError::pcm_budget_exceeded);
+        }
+        total_pcm_bytes += pcm_bytes;
+    }
+    return valid_result();
+}
+
 AudioValidationResult validate_audio_manifest(
     const AudioManifestDefinition& manifest) noexcept {
     if (manifest.entries == nullptr || manifest.entry_count != kExpectedAudioAssetCount) {
@@ -140,26 +161,13 @@ AudioValidationResult validate_audio_manifest(
 
     if (manifest.decoded_metadata == nullptr) return valid_result();
 
-    std::size_t total_pcm_bytes{};
-    for (std::size_t index = 0U; index < manifest.entry_count; ++index) {
-        const AudioValidationResult basic_result = validate_metadata_basics(
-            manifest.entries[index], manifest.decoded_metadata[index]);
-        if (!basic_result.valid) return basic_result;
-
-        std::size_t pcm_bytes{};
-        if (!pcm_byte_count(manifest.decoded_metadata[index], pcm_bytes)
-            || pcm_bytes > kMaximumPcmBytes - total_pcm_bytes) {
-            return invalid_result(AudioValidationError::pcm_budget_exceeded);
-        }
-        total_pcm_bytes += pcm_bytes;
-    }
-
     for (std::size_t index = 0U; index < manifest.entry_count; ++index) {
         const AudioValidationResult metadata_result = validate_audio_metadata(
             manifest.entries[index], manifest.decoded_metadata[index]);
         if (!metadata_result.valid) return metadata_result;
     }
-    return valid_result();
+    return validate_audio_pcm_budget(
+        manifest.decoded_metadata, manifest.entry_count);
 }
 
 }  // namespace arpg::platform
