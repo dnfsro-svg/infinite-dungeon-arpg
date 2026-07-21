@@ -7,8 +7,11 @@ namespace arpg::skills {
 namespace {
 
 constexpr std::array<ActiveSkillDefinition, kActiveSkillCount> kDefinitions{{
-    {ActiveSkillId::draw_slash, "Draw Slash", kDrawSlashCooldownTicks},
-    {ActiveSkillId::storm_swords, "Storm Swords", kStormSwordsCooldownTicks},
+    {ActiveSkillId::draw_slash,
+     u8"\u62D4\u5200\u65A9", kDrawSlashCooldownTicks},
+    {ActiveSkillId::storm_swords,
+     u8"\u6781\u00B7\u9B3C\u5251\u672F\uFF08\u66B4\u98CE\u5F0F\uFF09",
+     kStormSwordsCooldownTicks},
 }};
 
 }  // namespace

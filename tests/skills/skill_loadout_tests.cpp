@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 namespace {
 
@@ -30,6 +31,12 @@ arpg::test::Failure catalog_defines_the_two_active_skills() noexcept {
     const ActiveSkillDefinition* storm = active_skill_definition(ActiveSkillId::storm_swords);
     ARPG_REQUIRE(draw != nullptr);
     ARPG_REQUIRE(storm != nullptr);
+    ARPG_REQUIRE(std::strcmp(
+        draw->display_name, u8"\u62D4\u5200\u65A9") == 0);
+    ARPG_REQUIRE(std::strcmp(
+        storm->display_name,
+        u8"\u6781\u00B7\u9B3C\u5251\u672F\uFF08\u66B4\u98CE\u5F0F\uFF09")
+        == 0);
     ARPG_REQUIRE(draw->cooldown_ticks == kDrawSlashCooldownTicks);
     ARPG_REQUIRE(storm->cooldown_ticks == kStormSwordsCooldownTicks);
     ARPG_REQUIRE(active_skill_definition(ActiveSkillId::none) == nullptr);

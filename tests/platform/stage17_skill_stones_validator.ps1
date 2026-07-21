@@ -29,6 +29,7 @@ $images = @(
     '05-restarted-loadout-1280x720.png'
 )
 $pixelHashes = [System.Collections.Generic.HashSet[string]]::new()
+$pixelHashesByImage = [ordered]@{}
 foreach ($name in $images) {
     $path = Join-Path $run $name
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -70,6 +71,7 @@ foreach ($name in $images) {
     if (-not $pixelHashes.Add($hash)) {
         throw "duplicate decoded pixel content: $name"
     }
+    $pixelHashesByImage[$name] = $hash.ToLowerInvariant()
 }
 
 $lines = @(Get-Content -LiteralPath $statePath -Encoding UTF8)
@@ -113,5 +115,10 @@ foreach ($key in $expected.Keys) {
     if ($fields[$key] -cne $expected[$key]) {
         throw "state field rejected: $key=$($fields[$key])"
     }
+}
+foreach ($name in $images) {
+    $path = Join-Path $run $name
+    Write-Output ("[stage17-skill-stones-evidence] PNG path={0} pixel_sha256={1}" -f
+        $path, $pixelHashesByImage[$name])
 }
 Write-Output '[stage17-skill-stones-evidence] PASS'

@@ -30,6 +30,9 @@ void add_active_skill_codepoints(DeathOverlayFontPlan& plan) noexcept {
         0x65E0, 0x53D6, 0x51FA, 0x6B63, 0x5728, 0x4FDD,
         0x5B58, 0x5931, 0x8D25,
         0x80CC, 0x5305, 0x5173, 0x95ED,
+        0x62D4, 0x5200, 0x65A9,
+        0x6781, 0x00B7, 0x9B3C, 0x5251, 0x672F,
+        0x66B4, 0x98CE, 0x5F0F,
     };
     for (const int codepoint : kCodepoints) {
         add_hud_codepoint(plan, codepoint);
@@ -59,6 +62,7 @@ HudFontPlan hud_font_plan() noexcept {
         u8"空主技能槽", u8"辅助技能石（只读）", u8"未装备技能石",
         u8"无", u8"取出", u8"正在保存",
         u8"技能石背包关闭",
+        u8"拔刀斩", u8"极·鬼剑术（暴风式）",
     };
     plan.covers_required_text = true;
     for (const char* text : kRequiredText) {

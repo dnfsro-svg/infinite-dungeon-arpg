@@ -97,8 +97,8 @@ arpg::test::Failure startup_has_no_damage_and_draw_slash_hits_each_front_target_
     ARPG_REQUIRE(snapshot.monsters[0].hp < before.monsters[0].hp);
     ARPG_REQUIRE(snapshot.monsters[1].hp < before.monsters[1].hp);
     ARPG_REQUIRE(snapshot.monsters[2].hp < before.monsters[2].hp);
-    ARPG_REQUIRE(snapshot.monsters[0].velocity.x > 0.0F);
-    ARPG_REQUIRE(snapshot.monsters[1].velocity.x > 0.0F);
+    ARPG_REQUIRE(arpg::test::near(
+        snapshot.monsters[1].velocity.x, 0.22, kFloatTolerance));
 
     const auto after_hit = snapshot;
     tick_n(world, 30);
@@ -106,6 +106,17 @@ arpg::test::Failure startup_has_no_damage_and_draw_slash_hits_each_front_target_
     ARPG_REQUIRE(snapshot.monsters[0].hp == after_hit.monsters[0].hp);
     ARPG_REQUIRE(snapshot.monsters[1].hp == after_hit.monsters[1].hp);
     ARPG_REQUIRE(snapshot.monsters[2].hp == after_hit.monsters[2].hp);
+
+    CombatLabConfig left_config = draw_slash_config();
+    left_config.initial_facing = Facing::left;
+    left_config.dummy_spawns[0] = {8.0F, 3.0F, 0.0F};
+    left_config.dummy_spawns[1] = {-3.0F, 0.75F, 0.0F};
+    CombatWorld left{left_config};
+    ARPG_REQUIRE(left.request_active_skill(ActiveSkillId::draw_slash)
+                 == SkillCastResult::accepted);
+    tick_n(left, kDrawSlashStartupTicks);
+    ARPG_REQUIRE(arpg::test::near(
+        left.snapshot().monsters[1].velocity.x, -0.22, kFloatTolerance));
     return {};
 }
 
@@ -169,6 +180,17 @@ arpg::test::Failure draw_slash_respects_five_range_and_three_point_two_width_bou
                  == SkillCastResult::accepted);
     tick_n(outside, kDrawSlashStartupTicks);
     ARPG_REQUIRE(outside.snapshot().monsters[0].hp == outside_hp);
+
+    CombatLabConfig forward_outside_config = draw_slash_config();
+    forward_outside_config.dummy_spawns[0] = {5.0001F, 0.0F, 0.0F};
+    CombatWorld forward_outside{forward_outside_config};
+    const int forward_outside_hp = forward_outside.snapshot().monsters[0].hp;
+    ARPG_REQUIRE(forward_outside.request_active_skill(
+                     ActiveSkillId::draw_slash)
+                 == SkillCastResult::accepted);
+    tick_n(forward_outside, kDrawSlashStartupTicks);
+    ARPG_REQUIRE(forward_outside.snapshot().monsters[0].hp
+                 == forward_outside_hp);
     return {};
 }
 

@@ -101,7 +101,8 @@ arpg::test::Failure required_hud_text_is_covered_by_shared_font_plan() noexcept 
     constexpr const char* kRequiredText[] = {
         u8"生命", u8"护盾", u8"剩余", u8"出口已开放", u8"保存失败",
         u8"未分配点", u8"火焰", u8"水", u8"闪电", u8"混沌",
-        u8"减速", u8"腐蚀", u8"无敌",
+        u8"减速", u8"腐蚀", u8"无敌", u8"拔刀斩",
+        u8"极·鬼剑术（暴风式）",
     };
 
     ARPG_REQUIRE(plan.covers_required_text);

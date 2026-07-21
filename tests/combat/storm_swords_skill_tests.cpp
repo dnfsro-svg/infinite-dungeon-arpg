@@ -190,8 +190,10 @@ arpg::test::Failure normal_and_finisher_radii_are_independent_and_finisher_launc
     ARPG_REQUIRE(before.monsters[1].hp - snapshot.monsters[1].hp == 360);
     ARPG_REQUIRE(before.monsters[2].hp == snapshot.monsters[2].hp);
     ARPG_REQUIRE(snapshot.monsters[1].reaction == ReactionState::airborne);
-    ARPG_REQUIRE(snapshot.monsters[1].velocity.x > 0.0F);
-    ARPG_REQUIRE(snapshot.monsters[1].velocity.z > 0.0F);
+    ARPG_REQUIRE(arpg::test::near(
+        snapshot.monsters[1].velocity.x, 0.26, kFloatTolerance));
+    ARPG_REQUIRE(arpg::test::near(
+        snapshot.monsters[1].velocity.z, 0.24, kFloatTolerance));
 
     bool saw_finisher = false;
     while (const auto event = world.try_pop_event()) {
@@ -202,6 +204,23 @@ arpg::test::Failure normal_and_finisher_radii_are_independent_and_finisher_launc
                 && carries_storm_metadata(*event, 12U, true));
     }
     ARPG_REQUIRE(saw_finisher);
+
+    CombatLabConfig left_config = storm_config();
+    left_config.initial_facing = Facing::left;
+    left_config.dummy_spawns = {{{12.0F, 4.0F, 0.0F},
+                                 {-3.5F, 3.0F, 0.0F},
+                                 {12.0F, -4.0F, 0.0F}}};
+    CombatWorld left{left_config};
+    ARPG_REQUIRE(left.request_active_skill(ActiveSkillId::storm_swords)
+                 == SkillCastResult::accepted);
+    tick_n(left, 96);
+    const CombatSnapshot left_snapshot = left.snapshot();
+    ARPG_REQUIRE(left_snapshot.monsters[1].reaction
+                 == ReactionState::airborne);
+    ARPG_REQUIRE(arpg::test::near(
+        left_snapshot.monsters[1].velocity.x, -0.26, kFloatTolerance));
+    ARPG_REQUIRE(arpg::test::near(
+        left_snapshot.monsters[1].velocity.z, 0.24, kFloatTolerance));
     return {};
 }
 

@@ -27,3 +27,11 @@
 固定种子 `170017`：默认槽为 `draw_slash,storm_swords,none,none,none`；重排并重启后为 `none,draw_slash,none,none,storm_swords`。owned bits 为 3，25 个辅助槽均为空；拔刀斩场景命中 2，暴风式普通剑段命中累计 3、终结命中 1、完整 12 段，移动期间中心锁定，冷却不跨重启持久化。
 
 详细绝对证据路径、技能常量和命令记录见 `docs/validation/stage17-swordmaster-skill-stones.md`。
+
+## 最终审查修复（2026-07-21）
+
+- 技能目录名称改为精确 UTF-8 `拔刀斩`、`极·鬼剑术（暴风式）`；HUD 与暂停页测试直接断言这两个中文字符串，不再与 catalog 自引用。
+- 共享 HUD 字体补全两个技能名的所有 codepoint，并将完整名称加入 required text 自检。Debug/Release 真实 Raylib 日志均显示 HUD CJK 字体成功加载 335 glyphs，新截图目视确认 HUD 与暂停页显示中文名。
+- 拔刀斩测试新增 `x=5.0001,y=0` 不命中与 normal 目标左右精确速度 `-0.22/+0.22`；暴风式终结测试新增 normal 目标左右精确速度 `-0.26/+0.26` 和 `z=0.24`。生产常量原本正确，本次只收紧边界覆盖。
+- Debug/Release 的 skills/combat/platform 分别为 10/10、228/228、374/374 通过；Stage17 真实 Raylib 分别 3/3 通过（11.11 秒 / 7.56 秒）。
+- Debug/Release 五图均已重新生成；验证器现在逐图输出绝对路径与解码 ARGB 像素 SHA-256。两套证据根路径与 10 个实测哈希已记入 `docs/validation/stage17-swordmaster-skill-stones.md`。

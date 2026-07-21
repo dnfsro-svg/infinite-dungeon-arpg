@@ -38,12 +38,9 @@ arpg::test::Failure hud_projects_exactly_five_numbered_slots_and_catalog_names()
     ARPG_REQUIRE(view.slots[2U].empty);
     ARPG_REQUIRE(view.slots[3U].empty);
     ARPG_REQUIRE(view.slots[4U].empty);
-    ARPG_REQUIRE(std::strcmp(view.slots[0U].name.data(),
-        skills::active_skill_definition(skills::ActiveSkillId::draw_slash)
-            ->display_name) == 0);
-    ARPG_REQUIRE(std::strcmp(view.slots[1U].name.data(),
-        skills::active_skill_definition(skills::ActiveSkillId::storm_swords)
-            ->display_name) == 0);
+    ARPG_REQUIRE(std::strcmp(view.slots[0U].name.data(), u8"拔刀斩") == 0);
+    ARPG_REQUIRE(std::strcmp(
+        view.slots[1U].name.data(), u8"极·鬼剑术（暴风式）") == 0);
     ARPG_REQUIRE(view.slots[2U].name[0U] == '\0');
     return {};
 }

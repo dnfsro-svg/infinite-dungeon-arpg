@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstring>
 
 namespace {
 
@@ -39,8 +40,12 @@ arpg::test::Failure view_has_five_main_slots_five_read_only_supports_and_invento
             == skills::kSupportSlotsPerActive);
         for (const bool empty : slot.support_empty) ARPG_REQUIRE(empty);
     }
+    ARPG_REQUIRE(std::strcmp(
+        view.slots[1U].name.data(), u8"极·鬼剑术（暴风式）") == 0);
     ARPG_REQUIRE(view.inventory_count == 1U);
     ARPG_REQUIRE(view.inventory[0U].id == skills::ActiveSkillId::draw_slash);
+    ARPG_REQUIRE(std::strcmp(
+        view.inventory[0U].name.data(), u8"拔刀斩") == 0);
     return {};
 }
 
