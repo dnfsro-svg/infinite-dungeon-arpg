@@ -380,43 +380,51 @@ void drain(dungeon::DungeonSession& session) noexcept {
     }
 }
 
-bool clear_and_await(dungeon::DungeonSession& session) noexcept {
+bool clear_and_await(platform::DungeonRuntime& runtime) noexcept {
     for (int tick = 0; tick < 4096; ++tick) {
-        const auto snapshot = session.snapshot();
+        auto* const session = runtime.session();
+        if (session == nullptr) {
+            return false;
+        }
+        const auto snapshot = session->snapshot();
         if (snapshot.phase == dungeon::RoomPhase::awaiting_exit) {
             return true;
         }
         if (snapshot.phase == dungeon::RoomPhase::cleared) {
-            session.tick({});
-            drain(session);
+            runtime.fixed_tick({});
+            drain(*session);
             continue;
         }
         if (snapshot.phase == dungeon::RoomPhase::combat) {
-            arpg::test::force_defeat_current_wave(session);
+            arpg::test::force_defeat_current_wave(*session);
         }
-        session.tick({});
-        drain(session);
+        runtime.fixed_tick({});
+        drain(*session);
     }
     return false;
 }
 
-bool drive_door_pending(dungeon::DungeonSession& session) noexcept {
-    if (!clear_and_await(session)) {
+bool drive_door_pending(platform::DungeonRuntime& runtime) noexcept {
+    if (!clear_and_await(runtime)) {
         return false;
     }
     combat::MovementInput movement{1, 0};
-    for (int tick = 0; tick < 512; ++tick) {
-        const auto snapshot = session.snapshot();
+    for (int tick = 0; tick < 1024; ++tick) {
+        auto* const session = runtime.session();
+        if (session == nullptr) {
+            return false;
+        }
+        const auto snapshot = session->snapshot();
         if (snapshot.phase == dungeon::RoomPhase::committing) {
-            return session.pending_transition().has_value();
+            return session->pending_transition().has_value();
         }
         if (!snapshot.combat.has_value()) {
             return false;
         }
         movement.y = snapshot.combat->player.position.y > 0.1F ? -1
             : (snapshot.combat->player.position.y < -0.1F ? 1 : 0);
-        session.tick(movement);
-        drain(session);
+        session->tick(movement);
+        drain(*session);
     }
     return false;
 }
@@ -464,7 +472,7 @@ arpg::test::Failure committed_pending_transition_maps_verified_state_and_saved_i
     TempDirectory directory;
     platform::DungeonRuntime runtime(config_for(directory));
     ARPG_REQUIRE(runtime.initialize());
-    ARPG_REQUIRE(drive_door_pending(*runtime.session()));
+    ARPG_REQUIRE(drive_door_pending(runtime));
     const auto expected = runtime.session()->pending_transition();
     ARPG_REQUIRE(expected.has_value());
     runtime.service_pending_transition();
@@ -480,7 +488,7 @@ arpg::test::Failure committed_passive_save_survives_runtime_restart() noexcept {
     TempDirectory directory;
     platform::DungeonRuntime runtime(config_for(directory));
     ARPG_REQUIRE(runtime.initialize());
-    ARPG_REQUIRE(clear_and_await(*runtime.session()));
+    ARPG_REQUIRE(clear_and_await(runtime));
     ARPG_REQUIRE(runtime.session()->request_passive_allocation(8U));
     runtime.service_pending_save();
     const auto saved = runtime.session()->snapshot();
@@ -507,7 +515,7 @@ arpg::test::Failure committed_route_and_refund_survive_runtime_restart() noexcep
 
     platform::DungeonRuntime runtime(config);
     ARPG_REQUIRE(runtime.initialize());
-    ARPG_REQUIRE(clear_and_await(*runtime.session()));
+    ARPG_REQUIRE(clear_and_await(runtime));
     const auto before = runtime.session()->snapshot();
     for (const std::uint8_t node : {std::uint8_t{8U}, std::uint8_t{9U},
             std::uint8_t{10U}}) {
@@ -544,7 +552,7 @@ arpg::test::Failure passive_pre_publish_failure_keeps_old_tree_and_retryable_run
     config.save.fault_context = &fault;
     platform::DungeonRuntime runtime(config);
     ARPG_REQUIRE(runtime.initialize());
-    ARPG_REQUIRE(clear_and_await(*runtime.session()));
+    ARPG_REQUIRE(clear_and_await(runtime));
     const auto before = runtime.session()->snapshot();
     ARPG_REQUIRE(runtime.session()->request_passive_allocation(8U));
     fault.enabled = true;
@@ -573,7 +581,7 @@ arpg::test::Failure indeterminate_passive_save_faults_runtime() noexcept {
     config.save.fault_context = &fault;
     platform::DungeonRuntime runtime(config);
     ARPG_REQUIRE(runtime.initialize());
-    ARPG_REQUIRE(clear_and_await(*runtime.session()));
+    ARPG_REQUIRE(clear_and_await(runtime));
     ARPG_REQUIRE(runtime.session()->request_passive_allocation(8U));
     fault.enabled = true;
     runtime.service_pending_save();
@@ -588,7 +596,7 @@ arpg::test::Failure passive_pending_rejects_door_and_descent_requests() noexcept
     TempDirectory directory;
     platform::DungeonRuntime runtime(config_for(directory));
     ARPG_REQUIRE(runtime.initialize());
-    ARPG_REQUIRE(clear_and_await(*runtime.session()));
+    ARPG_REQUIRE(clear_and_await(runtime));
     ARPG_REQUIRE(runtime.session()->request_passive_allocation(8U));
     const auto pending = runtime.session()->pending_save();
     ARPG_REQUIRE(pending.has_value());
@@ -613,14 +621,14 @@ arpg::test::Failure pre_publish_not_committed_maps_to_retryable_error() noexcept
     config.save.fault_context = &fault;
     platform::DungeonRuntime runtime(config);
     ARPG_REQUIRE(runtime.initialize());
-    ARPG_REQUIRE(drive_door_pending(*runtime.session()));
+    ARPG_REQUIRE(drive_door_pending(runtime));
     fault.enabled = true;
     runtime.service_pending_transition();
     ARPG_REQUIRE(runtime.session()->snapshot().phase
         == dungeon::RoomPhase::awaiting_exit);
     ARPG_REQUIRE(runtime.render_status().indicator == platform::SaveIndicator::error);
     fault.enabled = false;
-    ARPG_REQUIRE(drive_door_pending(*runtime.session()));
+    ARPG_REQUIRE(drive_door_pending(runtime));
     runtime.service_pending_transition();
     ARPG_REQUIRE(runtime.session()->snapshot().phase
         == dungeon::RoomPhase::transitioning);
@@ -635,7 +643,7 @@ arpg::test::Failure indeterminate_maps_to_faulted_runtime_and_blocks_selection()
     config.save.fault_context = &fault;
     platform::DungeonRuntime runtime(config);
     ARPG_REQUIRE(runtime.initialize());
-    ARPG_REQUIRE(drive_door_pending(*runtime.session()));
+    ARPG_REQUIRE(drive_door_pending(runtime));
     fault.enabled = true;
     runtime.service_pending_transition();
     ARPG_REQUIRE(runtime.session()->snapshot().phase == dungeon::RoomPhase::faulted);
@@ -682,11 +690,11 @@ arpg::test::Failure single_slot_corruption_recovers_and_subsequent_saves_alterna
     platform::DungeonRuntime runtime(config);
     ARPG_REQUIRE(runtime.initialize());
     ARPG_REQUIRE(runtime.render_status().indicator == platform::SaveIndicator::recovered);
-    ARPG_REQUIRE(drive_door_pending(*runtime.session()));
+    ARPG_REQUIRE(drive_door_pending(runtime));
     runtime.service_pending_transition();
     const auto first_slot = runtime.render_status().active_slot;
     runtime.session()->tick({});
-    ARPG_REQUIRE(drive_door_pending(*runtime.session()));
+    ARPG_REQUIRE(drive_door_pending(runtime));
     runtime.service_pending_transition();
     ARPG_REQUIRE(runtime.render_status().active_slot != first_slot);
     return {};
