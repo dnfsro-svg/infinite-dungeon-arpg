@@ -254,7 +254,12 @@ arpg::test::Failure objective_navigation_and_context_plans_stay_in_their_layout_
     static_cast<void>(std::snprintf(room.objective.bytes.data(), room.objective.bytes.size(),
         u8"兽潮 · 怪物 19/41"));
     static_cast<void>(std::snprintf(room.secondary.bytes.data(), room.secondary.bytes.size(),
-        u8"深渊 ABYSS HIGH · ABYSS FURY · 奖励 2/1"));
+        u8"深渊 ABYSS HIGH · 规则 ABYSS FURY"));
+    static_cast<void>(std::snprintf(room.abyss_effect.bytes.data(),
+        room.abyss_effect.bytes.size(),
+        "Every 240t: warn 45t/radius 1.0, burn 10%% max HP/60t for 180t"));
+    static_cast<void>(std::snprintf(room.abyss_rewards.bytes.data(),
+        room.abyss_rewards.bytes.size(), u8"待领奖励 2 · 未领取 1"));
     room.density_affix = arpg::dungeon::RoomDensityAffix::horde;
     room.initial_monster_count = 41U;
     room.remaining_targets = 19U;
@@ -278,6 +283,8 @@ arpg::test::Failure objective_navigation_and_context_plans_stay_in_their_layout_
     ARPG_REQUIRE(objective.visible);
     ARPG_REQUIRE(objective.primary.bytes == room.objective.bytes);
     ARPG_REQUIRE(objective.secondary.bytes == room.secondary.bytes);
+    ARPG_REQUIRE(objective.abyss_effect.bytes == room.abyss_effect.bytes);
+    ARPG_REQUIRE(objective.abyss_rewards.bytes == room.abyss_rewards.bytes);
     ARPG_REQUIRE(rect_inside(objective.bounds, layout.objective_panel));
     const platform::HudReadabilityStyle style = platform::hud_readability_style();
     const platform::HudTextDrawPlan primary_text =
@@ -294,10 +301,28 @@ arpg::test::Failure objective_navigation_and_context_plans_stay_in_their_layout_
             (std::min)(style.objective_secondary_font_size * layout.scale,
                 style.panel_minimum_font_size),
             &utf8_readability_measure, nullptr);
+    const platform::HudTextDrawPlan effect_text =
+        platform::make_hud_text_draw_plan(objective.abyss_effect,
+            objective.bounds.width - 20.0F,
+            style.objective_detail_font_size * layout.scale,
+            (std::min)(style.objective_detail_font_size * layout.scale,
+                style.panel_minimum_font_size),
+            &utf8_readability_measure, nullptr);
+    const platform::HudTextDrawPlan rewards_text =
+        platform::make_hud_text_draw_plan(objective.abyss_rewards,
+            objective.bounds.width - 20.0F,
+            style.objective_detail_font_size * layout.scale,
+            (std::min)(style.objective_detail_font_size * layout.scale,
+                style.panel_minimum_font_size),
+            &utf8_readability_measure, nullptr);
     ARPG_REQUIRE(primary_text.visible);
     ARPG_REQUIRE(!primary_text.truncated);
     ARPG_REQUIRE(secondary_text.visible);
     ARPG_REQUIRE(!secondary_text.truncated);
+    ARPG_REQUIRE(effect_text.visible);
+    ARPG_REQUIRE(!effect_text.truncated);
+    ARPG_REQUIRE(rewards_text.visible);
+    ARPG_REQUIRE(!rewards_text.truncated);
     ARPG_REQUIRE(navigation_plan.visible);
     ARPG_REQUIRE(navigation_plan.primary.bytes == navigation.primary.bytes);
     ARPG_REQUIRE(rect_inside(navigation_plan.bounds, layout.navigation_panel));

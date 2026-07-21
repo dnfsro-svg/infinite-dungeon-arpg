@@ -92,6 +92,24 @@ arpg::test::Failure notices_remain_above_the_bottom_abyss_confirmation_area() no
     return {};
 }
 
+arpg::test::Failure four_line_objective_fits_1024_by_704_between_side_panels() noexcept {
+    const platform::HudLayout layout =
+        platform::make_hud_layout(1024, 704, false);
+    constexpr float kFourLineObjectiveHeight = 120.0F;
+
+    ARPG_REQUIRE(layout.objective_panel.height
+        >= kFourLineObjectiveHeight * layout.scale);
+    ARPG_REQUIRE(platform::hud_rect_inside(
+        layout.objective_panel, layout.safe_area));
+    ARPG_REQUIRE(!platform::hud_rects_overlap(
+        layout.objective_panel, layout.player_panel));
+    ARPG_REQUIRE(!platform::hud_rects_overlap(
+        layout.objective_panel, layout.navigation_panel));
+    ARPG_REQUIRE(!platform::hud_rects_overlap(
+        layout.objective_panel, layout.combat_exclusion));
+    return {};
+}
+
 arpg::test::Failure debug_panel_is_opt_in_and_keeps_the_combat_exclusion_clear() noexcept {
     const platform::HudLayout hidden = platform::make_hud_layout(1280, 720, false);
     const platform::HudLayout visible = platform::make_hud_layout(1280, 720, true);
@@ -146,6 +164,8 @@ arpg::test::Failure hud_rect_helpers_distinguish_touching_from_overlapping() noe
 constexpr arpg::test::TestCase kCases[] = {
     {"resolution safe layout matrices", &resolution_matrices_are_safe_and_do_not_cover_combat},
     {"notices above abyss confirmation", &notices_remain_above_the_bottom_abyss_confirmation_area},
+    {"four-line objective at 1024x704",
+        &four_line_objective_fits_1024_by_704_between_side_panels},
     {"debug layout opt in", &debug_panel_is_opt_in_and_keeps_the_combat_exclusion_clear},
     {"invalid viewport layout", &invalid_viewports_return_an_empty_layout},
     {"HUD rectangle helpers", &hud_rect_helpers_distinguish_touching_from_overlapping},

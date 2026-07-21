@@ -22,6 +22,7 @@ bool same_color(Color lhs, Color rhs) noexcept {
     const platform::HudViewModel& model) noexcept {
     const platform::HudText96* const texts[] = {
         &model.room.objective, &model.room.secondary,
+        &model.room.abyss_effect, &model.room.abyss_rewards,
         &model.navigation.primary, &model.navigation.ecology_label,
         &model.navigation.elements[0].label, &model.navigation.elements[1].label,
         &model.navigation.elements[2].label, &model.navigation.elements[3].label,
@@ -127,7 +128,7 @@ arpg::test::Failure task6_visible_chinese_text_is_covered_without_exhausting_sha
     const platform::HudFontPlan plan = platform::hud_font_plan();
     constexpr const char* kTask6Text[] = {
         u8"深度", u8"层房间", u8"生态", u8"第", u8"波", u8"下一波即将开始",
-        u8"待领奖励", u8"未领取", u8"正在保存房间", u8"正在处理撤退",
+        u8"待领奖励", u8"未领取", u8"规则", u8"正在保存房间", u8"正在处理撤退",
         u8"房间状态异常", u8"深渊", u8"火", u8"水", u8"电", u8"混沌",
         u8"拥挤", u8"密集", u8"兽潮", u8"怪物",
     };

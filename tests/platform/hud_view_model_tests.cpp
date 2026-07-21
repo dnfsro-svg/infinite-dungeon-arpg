@@ -240,18 +240,72 @@ arpg::test::Failure objective_describes_every_player_visible_room_state() noexce
     ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(), u8"深渊") != nullptr);
     ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(), "ABYSS HIGH") != nullptr);
     ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(), "ABYSS FURY") != nullptr);
-    ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(), "2/1") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.abyss_effect.bytes.data(),
+        "Monsters: damage and attack speed x145%") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.abyss_rewards.bytes.data(),
+        u8"待领奖励 2") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.abyss_rewards.bytes.data(),
+        u8"未领取 1") != nullptr);
 
+    return {};
+}
+
+arpg::test::Failure abyss_objective_preserves_rule_effect_and_labeled_rewards() noexcept {
+    dungeon::DungeonSnapshot snapshot = normal_snapshot();
+    snapshot.is_abyss = true;
+    snapshot.abyss_danger = arpg::abyss::AbyssDanger::high;
+    snapshot.abyss_rule = arpg::abyss::AbyssRuleId::hunting_flames;
+    snapshot.abyss_pending_rewards = 12U;
+    snapshot.abyss_unpicked_rewards = 7U;
+    platform::HudViewModel output{};
+
+    platform::build_hud_view_model(output, snapshot, {}, default_hints());
+
+    ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(),
+        "HUNTING FLAMES") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.abyss_effect.bytes.data(),
+        "Every 240t: warn 45t/radius 1.0, burn 10% max HP/60t for 180t")
+        != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.abyss_rewards.bytes.data(),
+        u8"待领奖励 12") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.abyss_rewards.bytes.data(),
+        u8"未领取 7") != nullptr);
+    ARPG_REQUIRE(!output.room.secondary.truncated);
+    ARPG_REQUIRE(!output.room.abyss_effect.truncated);
+    ARPG_REQUIRE(!output.room.abyss_rewards.truncated);
+    return {};
+}
+
+arpg::test::Failure density_affix_alone_rebuilds_cached_objective() noexcept {
     platform::HudViewModelProjector projector{};
-    dungeon::DungeonSnapshot cached = normal_snapshot();
-    projector.build(output, cached, {}, default_hints());
+    dungeon::DungeonSnapshot snapshot = normal_snapshot();
+    platform::HudViewModel output{};
+    projector.build(output, snapshot, {}, default_hints());
     const auto before = projector.static_formatting_diagnostics();
-    cached.density_affix = dungeon::RoomDensityAffix::dense;
-    cached.initial_monster_count = 22U;
-    projector.build(output, cached, {}, default_hints());
+
+    snapshot.density_affix = dungeon::RoomDensityAffix::dense;
+    projector.build(output, snapshot, {}, default_hints());
+
     const auto after = projector.static_formatting_diagnostics();
     ARPG_REQUIRE(after.objective_rebuilds == before.objective_rebuilds + 1U);
     ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"密集") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), "5/15") != nullptr);
+    return {};
+}
+
+arpg::test::Failure initial_count_alone_rebuilds_cached_objective() noexcept {
+    platform::HudViewModelProjector projector{};
+    dungeon::DungeonSnapshot snapshot = normal_snapshot();
+    platform::HudViewModel output{};
+    projector.build(output, snapshot, {}, default_hints());
+    const auto before = projector.static_formatting_diagnostics();
+
+    snapshot.initial_monster_count = 22U;
+    projector.build(output, snapshot, {}, default_hints());
+
+    const auto after = projector.static_formatting_diagnostics();
+    ARPG_REQUIRE(after.objective_rebuilds == before.objective_rebuilds + 1U);
+    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"拥挤") != nullptr);
     ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), "5/22") != nullptr);
     return {};
 }
@@ -404,6 +458,9 @@ constexpr arpg::test::TestCase kCases[] = {
     {"non-terminated hint buffers", &non_terminated_hint_buffers_are_bounded_and_terminated},
     {"truncated secondary text", &truncated_secondary_text_remains_nul_terminated},
     {"room objective states", &objective_describes_every_player_visible_room_state},
+    {"abyss objective details", &abyss_objective_preserves_rule_effect_and_labeled_rewards},
+    {"density affix cache key", &density_affix_alone_rebuilds_cached_objective},
+    {"initial count cache key", &initial_count_alone_rebuilds_cached_objective},
     {"navigation extremes and elements", &navigation_formats_extremes_and_four_shared_element_visuals},
     {"abyss context attachment", &context_attaches_notice_priority_without_changing_abyss_values},
     {"rebound context hints", &rebound_context_hints_use_committed_e_i_and_p_labels},

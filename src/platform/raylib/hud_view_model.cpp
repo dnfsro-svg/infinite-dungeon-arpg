@@ -78,8 +78,12 @@ void build_room_objective(RoomHudModel& room,
     const AbyssHudValues abyss = abyss_hud_values(snapshot);
     if (abyss.visible) {
         format_text(room.secondary, diagnostics,
-            u8"深渊 %s · %s · 奖励 %u/%u",
-            abyss.danger_label, abyss.rule_label,
+            u8"深渊 %s · 规则 %s",
+            abyss.danger_label, abyss.rule_label);
+        format_text(room.abyss_effect, diagnostics,
+            "%s", abyss.effect_label);
+        format_text(room.abyss_rewards, diagnostics,
+            u8"待领奖励 %u · 未领取 %u",
             static_cast<unsigned>(abyss.pending_rewards),
             static_cast<unsigned>(abyss.unpicked_rewards));
     }

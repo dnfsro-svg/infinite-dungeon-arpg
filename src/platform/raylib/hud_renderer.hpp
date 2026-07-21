@@ -52,6 +52,8 @@ struct ObjectivePanelPlan final {
     HudRect bounds{};
     HudText96 primary{};
     HudText96 secondary{};
+    HudText96 abyss_effect{};
+    HudText96 abyss_rewards{};
 };
 
 struct NavigationPanelPlan final {
@@ -92,6 +94,7 @@ struct HudReadabilityStyle final {
     float status_tag_font_size{15.0F};
     float objective_primary_font_size{22.0F};
     float objective_secondary_font_size{18.0F};
+    float objective_detail_font_size{16.0F};
     float navigation_primary_font_size{20.0F};
     float navigation_secondary_font_size{18.0F};
     float navigation_element_font_size{16.0F};

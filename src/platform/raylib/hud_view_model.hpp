@@ -48,6 +48,8 @@ struct PlayerHudModel final {
 struct RoomHudModel final {
     HudText96 objective{};
     HudText96 secondary{};
+    HudText96 abyss_effect{};
+    HudText96 abyss_rewards{};
     bool abyss{};
     dungeon::RoomDensityAffix density_affix{
         dungeon::RoomDensityAffix::crowded};

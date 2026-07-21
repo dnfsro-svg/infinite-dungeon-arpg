@@ -162,6 +162,8 @@ ObjectivePanelPlan make_objective_panel_plan(const RoomHudModel& room,
     plan.bounds = layout.objective_panel;
     plan.primary = room.objective;
     plan.secondary = room.secondary;
+    plan.abyss_effect = room.abyss_effect;
+    plan.abyss_rewards = room.abyss_rewards;
     return plan;
 }
 
@@ -540,6 +542,14 @@ void HudRenderer::draw(const HudViewModel& view,
         secondary.y += 28.0F * layout.scale;
         draw_panel_text(draw_font, secondary, objective.secondary,
             style.objective_secondary_font_size * layout.scale, palette.text);
+        HudRect abyss_effect = objective.bounds;
+        abyss_effect.y += 50.0F * layout.scale;
+        draw_panel_text(draw_font, abyss_effect, objective.abyss_effect,
+            style.objective_detail_font_size * layout.scale, palette.text);
+        HudRect abyss_rewards = objective.bounds;
+        abyss_rewards.y += 72.0F * layout.scale;
+        draw_panel_text(draw_font, abyss_rewards, objective.abyss_rewards,
+            style.objective_detail_font_size * layout.scale, palette.text);
     }
     if (navigation.visible) {
         DrawRectangleRounded({navigation.bounds.x, navigation.bounds.y,
