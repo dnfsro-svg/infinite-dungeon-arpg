@@ -17,13 +17,6 @@
 namespace arpg::platform {
 namespace {
 
-Vector2 lerp(Vector2 from, Vector2 to, float amount) noexcept {
-    return {
-        from.x + (to.x - from.x) * amount,
-        from.y + (to.y - from.y) * amount,
-    };
-}
-
 void draw_graybox_room(dungeon::DungeonElement ecology) noexcept {
     const float width = static_cast<float>(GetScreenWidth());
     const float height = static_cast<float>(GetScreenHeight());
@@ -44,18 +37,6 @@ void draw_graybox_room(dungeon::DungeonElement ecology) noexcept {
     const Color floor{tint.r, tint.g, tint.b, 255};
     DrawTriangle(back_left, floor_left, floor_right, floor);
     DrawTriangle(back_left, floor_right, back_right, floor);
-    const Color grid{87, 99, 119, 110};
-    for (int column = 0; column <= 10; ++column) {
-        const float amount = static_cast<float>(column) / 10.0F;
-        DrawLineEx(lerp(back_left, back_right, amount),
-            lerp(floor_left, floor_right, amount), 1.0F, grid);
-    }
-    for (int row = 0; row <= 8; ++row) {
-        const float linear = static_cast<float>(row) / 8.0F;
-        const float perspective = linear * linear;
-        DrawLineEx(lerp(back_left, floor_left, perspective),
-            lerp(back_right, floor_right, perspective), 1.0F, grid);
-    }
 }
 
 bool draw_environment_room(const MaterialPack& material_pack,
@@ -83,8 +64,32 @@ bool can_draw_room_environment(const dungeon::DungeonSnapshot& snapshot,
     });
 }
 
+Vector2 ground_point(ScreenProjection projection) noexcept {
+    return {projection.x, projection.ground_y};
+}
+
+void draw_room_geometry(const RoomGeometryPlan& geometry) noexcept {
+    const Color grid{112, 127, 151, 112};
+    for (std::size_t index = 0U;
+         index < geometry.grid_line_count; ++index) {
+        const RoomProjectedLine& line = geometry.grid_lines[index];
+        if (!line.visible) continue;
+        DrawLineEx(ground_point(line.screen_start),
+            ground_point(line.screen_end), 1.0F, grid);
+    }
+
+    const Color boundary{167, 183, 209, 190};
+    constexpr std::array<std::array<std::size_t, 2>, 4> kEdges{{
+        {{0U, 1U}}, {{2U, 3U}}, {{0U, 2U}}, {{1U, 3U}},
+    }};
+    for (const auto& edge : kEdges) {
+        DrawLineEx(ground_point(geometry.corners[edge[0]]),
+            ground_point(geometry.corners[edge[1]]), 3.0F, boundary);
+    }
+}
+
 void draw_doors(const dungeon::DungeonSnapshot& snapshot,
-    CombatCameraView view, float width, float height,
+    const RoomGeometryPlan& geometry,
     const MaterialPack& material_pack,
     bool draw_material_environment) noexcept {
     const DoorVisualMode mode = door_visual_mode(snapshot.phase,
@@ -92,19 +97,11 @@ void draw_doors(const dungeon::DungeonSnapshot& snapshot,
     if (mode == DoorVisualMode::hidden) {
         return;
     }
-    constexpr std::array<combat::Vec3, 4> kDoorCenters{{
-        {0.0F, combat::room_bounds::min_y, 0.0F},
-        {0.0F, combat::room_bounds::max_y, 0.0F},
-        {combat::room_bounds::min_x, 0.0F, 0.0F},
-        {combat::room_bounds::max_x, 0.0F, 0.0F},
-    }};
     constexpr std::array<dungeon::ExitDirection, 4> kDirections{{
         dungeon::ExitDirection::up, dungeon::ExitDirection::down,
         dungeon::ExitDirection::left, dungeon::ExitDirection::right}};
-    for (std::size_t index = 0; index < kDoorCenters.size(); ++index) {
-        const RenderProjection projected = project_render_world(
-            kDoorCenters[index].x, kDoorCenters[index].y, kDoorCenters[index].z,
-            view, width, height);
+    for (std::size_t index = 0; index < geometry.doors.size(); ++index) {
+        const ScreenProjection projected = geometry.doors[index];
         const DoorRenderDecision visual = door_render_decision(mode, kDirections[index]);
         const Color frame_color{visual.frame.r, visual.frame.g, visual.frame.b, visual.frame.a};
         const Color text_color{visual.text.r, visual.text.g, visual.text.b, visual.text.a};
@@ -345,15 +342,12 @@ void draw_abyss(const dungeon::DungeonSnapshot& snapshot, float elapsed_seconds)
 
 void draw_hole(const dungeon::DungeonSnapshot& snapshot,
     const MaterialPack& material_pack, bool draw_material_environment,
-    CombatCameraView view) noexcept {
+    const RoomGeometryPlan& geometry) noexcept {
     const HoleVisualMode hole = hole_visual_mode(snapshot);
     if (hole == HoleVisualMode::hidden) {
         return;
     }
-    const RenderProjection projected = project_render_world(kHoleCenter.x,
-        kHoleCenter.y, kHoleCenter.z, view,
-        static_cast<float>(GetScreenWidth()),
-        static_cast<float>(GetScreenHeight()));
+    const ScreenProjection projected = geometry.hole;
     const int x = static_cast<int>(projected.x);
     const int y = static_cast<int>(projected.ground_y);
     Color color{43, 25, 55, 255};
@@ -386,18 +380,20 @@ void CombatRenderer::draw_room(
     CombatCameraView view) const noexcept {
     const float width = static_cast<float>(GetScreenWidth());
     const float height = static_cast<float>(GetScreenHeight());
+    const RoomGeometryPlan geometry = make_room_geometry_plan(
+        view, width, height);
     const bool draw_material_environment = can_draw_room_environment(current,
         material_pack_) && draw_environment_room(material_pack_, current.ecology);
     if (!draw_material_environment) {
         draw_graybox_room(current.ecology);
     }
+    draw_room_geometry(geometry);
     draw_abyss(current, static_cast<float>(GetTime()));
     draw_environment_hazards(current, view, width, height);
     draw_ground_materials(current, material_loot, view, width, height);
     draw_ground_items(current, ground_loot, material_pack_, view, width, height);
-    draw_doors(current, view, width, height,
-        material_pack_, draw_material_environment);
-    draw_hole(current, material_pack_, draw_material_environment, view);
+    draw_doors(current, geometry, material_pack_, draw_material_environment);
+    draw_hole(current, material_pack_, draw_material_environment, geometry);
 }
 
 }  // namespace arpg::platform

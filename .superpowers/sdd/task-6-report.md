@@ -1,3 +1,77 @@
+# Stage 19 Task 6 实现报告：大型房间渲染与密度 HUD
+
+## 结论
+
+- HUD 战斗目标改为 `词条 · 怪物 剩余/初始`，普通与深渊均显示实际初始数量；生产 HUD 不再显示波次措辞。
+- `RoomHudModel` 公开密度词条、初始数量、剩余数量和预格式化副行；缓存键包含词条与初始数量，跨房间不复用旧文字。
+- 深渊副行继续显示危险等级、规则和待领/未领计数；1024×704 最小布局下完整可读且不截断。
+- 中文字体固定容量计划补入 `拥挤/密集/兽潮/怪物` 字形；找不到完整中文字体时仍走既有默认字体回退，不新增英文占位词条。
+- 房间场景新增固定 2 世界单位网格：X 方向 25 条、Y 方向 12 条，共 37 条；纯计划先投影后按屏幕包围盒裁剪。
+- 地面材质仍作为不拉伸的基础层，滚动网格和四边界线绘制在其上。四角、四门、洞口、危险区、装备和材料都消费 Task 5 同一 `CombatCameraView`。
+
+## TDD 证据
+
+### RED
+
+生产修改前先扩展 HUD、布局、字体与环境渲染测试。加载 MSVC/Windows SDK include 后执行：
+
+```powershell
+cmake --build --preset windows-msvc-debug --target arpg_platform_tests -- -j1
+```
+
+有效 RED：
+
+```text
+hud_view_model_tests.cpp(156): error C2039: "density_affix": 不是 RoomHudModel 的成员
+hud_view_model_tests.cpp(158): error C2039: "initial_monster_count": 不是 RoomHudModel 的成员
+```
+
+首次未加载 SDK 的 `cmath` 缺失属于环境失败，不计作 RED。
+
+### GREEN 与可读性修复
+
+- 初次生产接入后 25/25 编译成功。
+- 平台运行只剩新的 1024×704 深渊副行截断断言失败；保持完整规则、奖励文字和字体下限不变，仅将顶部目标面板逻辑宽度调整为 480。
+- 最终 `arpg_platform_tests.exe`：`376 cases, 0 failures`。
+
+## 最终验证
+
+```text
+arpg_platform_tests + arpg_game Debug 构建：通过
+platform.units：通过
+stage11c.hud_stress.zero_alloc_100k：通过
+stage11c.architecture.hud_boundaries：通过
+stage11c.architecture.hud_boundaries_self_test：通过
+platform.module_boundary：通过
+stage11c.hud_evidence_guard：通过
+stage11c.hud_evidence_guard_self_test：通过
+fresh dungeon executable：296/296，通过
+fresh persistence executable：94/94，通过
+git diff --check：通过（仅 core.autocrlf 换行提示）
+```
+
+额外运行 `stage11c.hud_evidence_validator_self_test` 时，CTest 依赖拉起旧
+`stage11c.hud_formal` 夹具；其旧清场场景在密度怪群下有 3 个既存失败，
+与 Task 5 报告中的旧固定清场预算问题同类。Task 6 的平台单元、HUD 零分配、
+架构边界和证据源守卫均全绿；未跨范围修改正式验收驱动，留给 Task 7 的全量
+验收更新。
+
+## 变更范围
+
+- `src/platform/raylib/environment_render_plan.hpp`
+- `src/platform/raylib/room_renderer.cpp`
+- `src/platform/raylib/hud_view_model.hpp/.cpp`
+- `src/platform/raylib/hud_layout.cpp`
+- `src/platform/raylib/hud_font.cpp`
+- `tests/platform/hud_view_model_tests.cpp`
+- `tests/platform/hud_render_plan_tests.cpp`
+- `tests/platform/hud_font_tests.cpp`
+- `tests/platform/stage12_environment_render_tests.cpp`
+
+未修改密度公式、会话生命周期、相机几何、保存、战斗或输入。
+
+---
+
 # Stage 11-D Task 6 报告
 
 ## 状态

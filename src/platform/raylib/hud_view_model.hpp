@@ -49,6 +49,9 @@ struct RoomHudModel final {
     HudText96 objective{};
     HudText96 secondary{};
     bool abyss{};
+    dungeon::RoomDensityAffix density_affix{
+        dungeon::RoomDensityAffix::crowded};
+    std::uint8_t initial_monster_count{};
     std::uint8_t remaining_targets{};
 };
 
@@ -117,8 +120,9 @@ private:
     struct ObjectiveKey final {
         bool is_abyss{};
         dungeon::RoomPhase phase{dungeon::RoomPhase::locked};
-        std::uint8_t wave_index{};
-        std::uint8_t wave_count{};
+        dungeon::RoomDensityAffix density_affix{
+            dungeon::RoomDensityAffix::crowded};
+        std::uint8_t initial_monster_count{};
         std::uint8_t remaining_targets{};
         abyss::AbyssDanger abyss_danger{abyss::AbyssDanger::low};
         abyss::AbyssRuleId abyss_rule{abyss::AbyssRuleId::none};
@@ -147,6 +151,9 @@ private:
     std::uint32_t cached_control_hint_truncations_{};
     HudStaticFormattingDiagnostics static_formatting_diagnostics_{};
 };
+
+[[nodiscard]] const char* room_density_label(
+    dungeon::RoomDensityAffix) noexcept;
 
 void build_hud_view_model(HudViewModel& output,
     const dungeon::DungeonSnapshot& snapshot,

@@ -41,6 +41,20 @@ bool same_color(Color lhs, Color rhs) noexcept {
     return platform::hud_rect_inside(inner, outer);
 }
 
+float monospace_measure(const char* text, float font_size, void*) noexcept;
+
+float utf8_readability_measure(const char* text,
+    float font_size, void*) noexcept {
+    float units{};
+    if (text == nullptr) return units;
+    const auto* bytes = reinterpret_cast<const unsigned char*>(text);
+    for (std::size_t index{}; bytes[index] != 0U; ++index) {
+        if ((bytes[index] & 0xC0U) == 0x80U) continue;
+        units += bytes[index] < 0x80U ? 0.6F : 1.0F;
+    }
+    return units * font_size;
+}
+
 arpg::test::Failure health_is_always_the_first_visible_player_bar() noexcept {
     const platform::PlayerPanelPlan plan = platform::make_player_panel_plan(
         player_model(), player_layout(), 0.0F);
@@ -235,10 +249,16 @@ arpg::test::Failure monster_resource_plan_consumes_snapshot_values_and_palette_i
 }
 
 arpg::test::Failure objective_navigation_and_context_plans_stay_in_their_layout_panels() noexcept {
-    const platform::HudLayout layout = player_layout();
+    const platform::HudLayout layout = platform::make_hud_layout(1024, 704, false);
     platform::RoomHudModel room{};
     static_cast<void>(std::snprintf(room.objective.bytes.data(), room.objective.bytes.size(),
-        u8"第 1/2 波 · 剩余 3"));
+        u8"兽潮 · 怪物 19/41"));
+    static_cast<void>(std::snprintf(room.secondary.bytes.data(), room.secondary.bytes.size(),
+        u8"深渊 ABYSS HIGH · ABYSS FURY · 奖励 2/1"));
+    room.density_affix = arpg::dungeon::RoomDensityAffix::horde;
+    room.initial_monster_count = 41U;
+    room.remaining_targets = 19U;
+    room.abyss = true;
     platform::NavigationHudModel navigation{};
     static_cast<void>(std::snprintf(navigation.primary.bytes.data(), navigation.primary.bytes.size(),
         u8"深度 1 · 层房间 2"));
@@ -257,7 +277,27 @@ arpg::test::Failure objective_navigation_and_context_plans_stay_in_their_layout_
 
     ARPG_REQUIRE(objective.visible);
     ARPG_REQUIRE(objective.primary.bytes == room.objective.bytes);
+    ARPG_REQUIRE(objective.secondary.bytes == room.secondary.bytes);
     ARPG_REQUIRE(rect_inside(objective.bounds, layout.objective_panel));
+    const platform::HudReadabilityStyle style = platform::hud_readability_style();
+    const platform::HudTextDrawPlan primary_text =
+        platform::make_hud_text_draw_plan(objective.primary,
+            objective.bounds.width - 20.0F,
+            style.objective_primary_font_size * layout.scale,
+            (std::min)(style.objective_primary_font_size * layout.scale,
+                style.panel_minimum_font_size),
+            &utf8_readability_measure, nullptr);
+    const platform::HudTextDrawPlan secondary_text =
+        platform::make_hud_text_draw_plan(objective.secondary,
+            objective.bounds.width - 20.0F,
+            style.objective_secondary_font_size * layout.scale,
+            (std::min)(style.objective_secondary_font_size * layout.scale,
+                style.panel_minimum_font_size),
+            &utf8_readability_measure, nullptr);
+    ARPG_REQUIRE(primary_text.visible);
+    ARPG_REQUIRE(!primary_text.truncated);
+    ARPG_REQUIRE(secondary_text.visible);
+    ARPG_REQUIRE(!secondary_text.truncated);
     ARPG_REQUIRE(navigation_plan.visible);
     ARPG_REQUIRE(navigation_plan.primary.bytes == navigation.primary.bytes);
     ARPG_REQUIRE(rect_inside(navigation_plan.bounds, layout.navigation_panel));

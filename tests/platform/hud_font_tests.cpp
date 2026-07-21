@@ -129,6 +129,7 @@ arpg::test::Failure task6_visible_chinese_text_is_covered_without_exhausting_sha
         u8"深度", u8"层房间", u8"生态", u8"第", u8"波", u8"下一波即将开始",
         u8"待领奖励", u8"未领取", u8"正在保存房间", u8"正在处理撤退",
         u8"房间状态异常", u8"深渊", u8"火", u8"水", u8"电", u8"混沌",
+        u8"拥挤", u8"密集", u8"兽潮", u8"怪物",
     };
 
     ARPG_REQUIRE(plan.covers_required_text);

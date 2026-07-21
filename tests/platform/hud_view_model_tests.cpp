@@ -23,11 +23,15 @@ platform::ControlHints default_hints() noexcept {
 
 dungeon::DungeonSnapshot normal_snapshot() noexcept {
     dungeon::DungeonSnapshot snapshot{};
+    snapshot.phase = dungeon::RoomPhase::combat;
     snapshot.depth = 7U;
     snapshot.floor_room_index = 3U;
     snapshot.ecology = dungeon::DungeonElement::water;
     snapshot.biases = {{11U, 22U, 33U, 44U}};
     snapshot.remaining_targets = 5U;
+    snapshot.density_affix = dungeon::RoomDensityAffix::crowded;
+    snapshot.base_monster_count = 15U;
+    snapshot.initial_monster_count = 15U;
     snapshot.progression = {4U, 40U, 3U, 2U};
     snapshot.combat.emplace();
     snapshot.combat->player.hp = 80;
@@ -149,8 +153,13 @@ arpg::test::Failure objective_uses_chinese_target_text() noexcept {
     platform::HudViewModel output{};
     platform::build_hud_view_model(output, snapshot, {}, default_hints());
 
-    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"目标") != nullptr);
-    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), "5") != nullptr);
+    ARPG_REQUIRE(output.room.density_affix
+        == dungeon::RoomDensityAffix::crowded);
+    ARPG_REQUIRE(output.room.initial_monster_count == 15U);
+    ARPG_REQUIRE(output.room.remaining_targets == 5U);
+    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"拥挤") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"怪物") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), "5/15") != nullptr);
     return {};
 }
 
@@ -192,18 +201,23 @@ arpg::test::Failure truncated_secondary_text_remains_nul_terminated() noexcept {
 
 arpg::test::Failure objective_describes_every_player_visible_room_state() noexcept {
     dungeon::DungeonSnapshot snapshot = normal_snapshot();
-    snapshot.wave_index = 1U;
-    snapshot.wave_count = 3U;
+    snapshot.density_affix = dungeon::RoomDensityAffix::horde;
+    snapshot.base_monster_count = 27U;
+    snapshot.initial_monster_count = 27U;
+    snapshot.remaining_targets = 19U;
     platform::HudViewModel output{};
 
     snapshot.phase = dungeon::RoomPhase::combat;
     platform::build_hud_view_model(output, snapshot, {}, default_hints());
-    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"第 2/3 波") != nullptr);
-    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"剩余 5") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"兽潮") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), "19/27") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"波") == nullptr);
 
     snapshot.phase = dungeon::RoomPhase::wave_delay;
     platform::build_hud_view_model(output, snapshot, {}, default_hints());
-    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"下一波") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"兽潮") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), "19/27") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"波") == nullptr);
 
     snapshot.phase = dungeon::RoomPhase::cleared;
     platform::build_hud_view_model(output, snapshot, {}, default_hints());
@@ -214,11 +228,31 @@ arpg::test::Failure objective_describes_every_player_visible_room_state() noexce
     ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"正在保存") != nullptr);
 
     snapshot.is_abyss = true;
+    snapshot.phase = dungeon::RoomPhase::combat;
+    snapshot.initial_monster_count = 41U;
     snapshot.abyss_danger = arpg::abyss::AbyssDanger::high;
     snapshot.abyss_rule = arpg::abyss::AbyssRuleId::abyss_fury;
+    snapshot.abyss_pending_rewards = 2U;
+    snapshot.abyss_unpicked_rewards = 1U;
     platform::build_hud_view_model(output, snapshot, {}, default_hints());
-    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"深渊") != nullptr);
-    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), "ABYSS HIGH") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"兽潮") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), "19/41") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(), u8"深渊") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(), "ABYSS HIGH") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(), "ABYSS FURY") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(), "2/1") != nullptr);
+
+    platform::HudViewModelProjector projector{};
+    dungeon::DungeonSnapshot cached = normal_snapshot();
+    projector.build(output, cached, {}, default_hints());
+    const auto before = projector.static_formatting_diagnostics();
+    cached.density_affix = dungeon::RoomDensityAffix::dense;
+    cached.initial_monster_count = 22U;
+    projector.build(output, cached, {}, default_hints());
+    const auto after = projector.static_formatting_diagnostics();
+    ARPG_REQUIRE(after.objective_rebuilds == before.objective_rebuilds + 1U);
+    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"密集") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), "5/22") != nullptr);
     return {};
 }
 
