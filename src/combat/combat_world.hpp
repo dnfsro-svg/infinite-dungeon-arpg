@@ -20,6 +20,16 @@ struct DungeonSessionTestAccess;
 
 namespace arpg::combat {
 
+struct PlayerAttackHitSpec final {
+    AttackId source{AttackId::none};
+    int base_physical{};
+    int break_damage{};
+    ImpactKind impact{ImpactKind::light_hitstun};
+    float knockback_speed{};
+    float launch_speed{};
+    FeedbackLevel feedback{FeedbackLevel::light};
+};
+
 class CombatWorld final {
 public:
     explicit CombatWorld(CombatLabConfig config = {}) noexcept;
@@ -81,8 +91,13 @@ private:
 
     void simulate_player(MovementInput movement) noexcept;
     void simulate_active_skill_movement(MovementInput movement) noexcept;
+    void tick_active_skill_cooldowns() noexcept;
     void tick_active_skill() noexcept;
     void resolve_draw_slash_hits() noexcept;
+    [[nodiscard]] bool resolve_player_attack_hit(
+        std::size_t index,
+        const PlayerAttackHitSpec& spec,
+        std::array<bool, kMonsterCapacity>& hit_latch) noexcept;
     void simulate_target(std::size_t index) noexcept;
     void simulate_monster(std::size_t slot) noexcept;
     void simulate_projectiles() noexcept;

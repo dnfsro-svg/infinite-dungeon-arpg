@@ -228,3 +228,119 @@ ctest --preset windows-msvc-debug -R "^(platform.units|stage11b.settings_evidenc
 - draft 与 decoy mutations 都 fail closed，并校验具体失败原因。
 - 未修改生产 runtime/snapshot 行为。
 - 无已知功能顾虑；mutation 的输入替换按当前生产调用格式构造，若格式漂移导致替换失效，self-test 会失败而不是静默通过。
+
+---
+
+# Stage 17 Task 4 报告：CombatWorld 技能运行态与拔刀斩
+
+## 实现
+
+- 新增固定容量 `ActiveSkillRuntime`：公开快照、每技能冷却和每怪物命中锁存均为固定数组。
+- `CombatWorld::request_active_skill` 支持拔刀斩请求、冷却/无效技能/玩家不可用/普攻活动/另一技能活动结果，并在成功时锁定施放中心与朝向、立即开始 240 tick 冷却。
+- 拔刀斩第 10 tick 以锁定中心和锁定朝向判定前方线性展宽区域；每个目标在单次施放中只会受击一次。
+- 命中调用现有 `build_player_hit_packet`，沿用怪物护盾、HP、破韧、破甲窗口和 `ImpactKind::medium_hitstun` / 水平击退行为；没有加入 `AttackId` 连段。
+- 施放期间移动输入继续驱动水平移动但不改朝向；J/L 不会被消费，K 仍保留在已有输入缓冲及过期逻辑中。
+- `reset`、`load_wave`、死亡路径均清除技能施放态和冷却；战斗模块未引入 persistence 依赖。
+
+## 变更文件
+
+- `src/combat/active_skill_runtime.hpp`
+- `src/combat/active_skill_runtime.cpp`
+- `src/combat/combat_types.hpp`
+- `src/combat/combat_world.hpp`
+- `src/combat/combat_world.cpp`
+- `src/combat/combat_snapshot.cpp`
+- `src/combat/CMakeLists.txt`
+- `tests/combat/draw_slash_skill_tests.cpp`
+- `tests/combat/CMakeLists.txt`
+- `tests/combat/combat_test_main.cpp`
+
+## TDD 证据
+
+### RED
+
+先新增 `draw_slash_skill_tests.cpp`、测试 CMake 和测试入口，未创建运行态头文件时执行：
+
+```powershell
+$env:WindowsSDKVersion = '10.0.26100.0\'
+cmd.exe /d /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul && cmake --build --preset windows-msvc-core-debug --target arpg_combat_tests'
+```
+
+实际失败：`fatal error C1083: 无法打开包括文件: “combat/active_skill_runtime.hpp”: No such file or directory`。
+
+首次原始构建命令还因当前 shell 未加载 SDK 环境而在 CMake 门禁处报告 `Windows SDK ... detected ''`；加载 vcvars 并明确设置已安装的 10.0.26100.0 后，得到上述预期 API/头文件缺失的 RED。
+
+### GREEN
+
+```powershell
+$env:WindowsSDKVersion = '10.0.26100.0\'
+cmd.exe /d /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul && cmake --build --preset windows-msvc-core-debug --target arpg_combat_tests'
+$env:ARPG_STAGE17_DRAW_SLASH_ONLY='1'
+& out/build/windows-msvc-core-debug/bin/arpg_combat_tests.exe
+Remove-Item Env:ARPG_STAGE17_DRAW_SLASH_ONLY
+```
+
+输出：`7 cases, 0 failures`。
+
+## 回归
+
+```powershell
+$env:WindowsSDKVersion = '10.0.26100.0\'
+cmd.exe /d /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul && cmake --build --preset windows-msvc-core-debug --target arpg_combat_tests'
+ctest --test-dir out/build/windows-msvc-core-debug -R '^(combat\.units|architecture\.combat_no_persistence)$' --output-on-failure
+```
+
+输出：2/2 通过；`combat.units` 0.79 秒，`architecture.combat_no_persistence` 8.12 秒。
+
+## 自审与顾虑
+
+- 已核对技能不进入 `AttackId`、运行态无动态分配、`reset/load_wave` 清除瞬态，且架构边界测试通过。
+- 旧训练场第三个靶是重甲；其未破韧前按既有管线不会接受击退，因此测试用两个非重甲目标验证水平击退，并仍验证三个前方目标均受到物理伤害。
+- 暴风式在本任务范围外，当前有效但未实现的 `storm_swords` 请求返回 `invalid_skill`；Task 5 需扩展该分支和伤害/时序，不能把本任务的拔刀斩逻辑当作暴风式实现。
+
+---
+
+# Stage 17 Task 4 审查修复
+
+## 修复
+
+- 冷却推进从施放状态机拆出，在每次存活的 `CombatWorld::tick()` 开始时递减；不再被 hit-stop 或 hurt 暂停。
+- 在 `hit_resolution.cpp` 抽取单一 `resolve_player_attack_hit` 命中管线。普攻与拔刀斩均通过该函数处理 `build_player_hit_packet`、护盾、HP、破韧、Impact、hit-stop 和事件；参数化攻击来源、物理伤害、破韧、Impact、击退、反馈。拔刀斩仅保留扇形目标选择，未进入 `AttackId` 连段。
+- 真实 `apply_player_damage` 致死分支现在立即清除 `ActiveSkillRuntime`，包括施放快照、命中锁存与冷却。
+- 技能状态机按世界 tick 推进，因此拔刀斩严格在第 10 tick 命中，随后第 11-24 tick 为 14 tick 后摇；自身命中 hit-stop 不再改变该时序。
+
+## 审查 RED
+
+先新增硬直冷却、精确时序/数值/边界、真实致死、零分配断言后执行：
+
+```powershell
+$env:WindowsSDKVersion = '10.0.26100.0\'
+cmd.exe /d /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul && cmake --build --preset windows-msvc-core-debug --target arpg_combat_tests'
+$env:ARPG_STAGE17_DRAW_SLASH_ONLY='1'
+& out/build/windows-msvc-core-debug/bin/arpg_combat_tests.exe
+Remove-Item Env:ARPG_STAGE17_DRAW_SLASH_ONLY
+```
+
+实际 RED：
+
+- `cooldown advances during hurt`：240 world ticks 后冷却未归零。
+- `lethal player damage cancels skill`：真实致死后 `active_skill.id` 仍是拔刀斩。
+- 统一管线抽取后的第一次运行还暴露精确时序 RED：自身 medium hit-stop 暂停状态机，第 24 tick 未达到预期后摇末尾。
+
+## 审查 GREEN 与回归
+
+同一 focused 命令在最小修复后输出：`13 cases, 0 failures`。
+
+```powershell
+$env:WindowsSDKVersion = '10.0.26100.0\'
+cmd.exe /d /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul && cmake --build --preset windows-msvc-core-debug --target arpg_combat_tests'
+ctest --test-dir out/build/windows-msvc-core-debug -R '^(combat\.units|architecture\.combat_no_persistence)$' --output-on-failure
+```
+
+输出：2/2 通过，`combat.units` 0.80 秒，`architecture.combat_no_persistence` 7.91 秒。
+
+## 自审
+
+- 新增测试覆盖硬直期间 240 tick 冷却、第 10 tick 命中、14 tick 后摇、220 物理/36 破韧、5.0/3.2 边界、真实致死取消和请求/命中/恢复热路径零分配。
+- 普攻完整回归通过，证明共享命中管线未改变既有普攻行为。
+- 无已知功能顾虑；暴风式仍保持 Task 5 范围外。

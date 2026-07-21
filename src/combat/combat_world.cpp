@@ -568,10 +568,10 @@ void CombatWorld::tick(MovementInput movement) noexcept {
         return;
     }
     player_damage_history_.begin_tick(tick_);
+    tick_active_skill_cooldowns();
     if (player_.hp == 0) {
         attack_ = AttackRuntime{};
-        active_skill_.snapshot = ActiveSkillSnapshot{};
-        active_skill_.hit_latch.fill(false);
+        active_skill_ = ActiveSkillRuntime{};
         input_buffer_.clear();
         ++tick_;
         return;
@@ -589,8 +589,8 @@ void CombatWorld::tick(MovementInput movement) noexcept {
     if (player_hurt) {
         --player_.hurt_ticks;
     }
+    tick_active_skill();
     if (!player_frozen && !player_hurt) {
-        tick_active_skill();
         if (active_skill_.snapshot.id == skills::ActiveSkillId::none) {
             simulate_player(movement);
         } else {
@@ -987,6 +987,7 @@ bool CombatWorld::apply_player_damage(
     player_damage_history_.record(actual);
     if (player_.hp == 0) {
         attack_ = AttackRuntime{};
+        active_skill_ = ActiveSkillRuntime{};
         input_buffer_.clear();
     }
     player_.hurt_ticks = kPlayerHurtTicks;

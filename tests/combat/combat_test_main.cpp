@@ -51,7 +51,7 @@ int main() {
             draw_slash_skill_suite(),
         };
         return arpg::test::run_suites(
-            draw_slash_suites, 7, "stage 17 task 4 draw slash");
+            draw_slash_suites, 13, "stage 17 task 4 draw slash");
     }
 
     const arpg::test::TestSuite suites[] = {
@@ -81,5 +81,5 @@ int main() {
         player_defense_suite(),
     };
 
-    return arpg::test::run_suites(suites, 213, "stage 17 task 4 draw slash");
+    return arpg::test::run_suites(suites, 219, "stage 17 task 4 draw slash");
 }
