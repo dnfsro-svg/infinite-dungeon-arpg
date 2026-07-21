@@ -4,6 +4,7 @@
 
 #include "dungeon/dungeon_progression.hpp"
 #include "dungeon/dungeon_session.hpp"
+#include "dungeon/room_affix.hpp"
 #include "abyss/abyss_rules.hpp"
 #include "persistence/save_store.hpp"
 
@@ -289,10 +290,11 @@ bool clear_and_await(dungeon::DungeonSession& session) noexcept {
 
 bool drive_door_pending(dungeon::DungeonSession& session,
     dungeon::ExitDirection direction) noexcept {
+    constexpr int kDoorTravelTickLimit = 640;
     if (!clear_and_await(session)) {
         return false;
     }
-    for (int tick = 0; tick < 256; ++tick) {
+    for (int tick = 0; tick < kDoorTravelTickLimit; ++tick) {
         const auto snapshot = session.snapshot();
         if (!snapshot.combat.has_value()) {
             return false;
@@ -329,7 +331,7 @@ bool drive_door_pending(dungeon::DungeonSession& session,
     case dungeon::ExitDirection::none:
         return false;
     }
-    for (int tick = 0; tick < 256; ++tick) {
+    for (int tick = 0; tick < kDoorTravelTickLimit; ++tick) {
         session.tick(outward);
         arpg::test::EventSummary summary;
         arpg::test::drain_all_events(session, summary);
@@ -486,8 +488,16 @@ arpg::test::Failure committed_door_transition_restarts_in_next_room() noexcept {
     ARPG_REQUIRE(restarted.state == persistence::SaveLoadState::ready);
     dungeon::DungeonSession restarted_session{
         dungeon::DungeonRules{}, restarted.checkpoint};
-    ARPG_REQUIRE(same_descriptor(restarted_session.snapshot(),
+    const auto restarted_snapshot = restarted_session.snapshot();
+    const auto density = dungeon::roll_room_density(
+        restarted.checkpoint.current_room.seed,
+        restarted.checkpoint.current_room.is_abyss);
+    ARPG_REQUIRE(same_descriptor(restarted_snapshot,
         pending->next_state));
+    ARPG_REQUIRE(restarted_snapshot.density_affix == density.affix);
+    ARPG_REQUIRE(restarted_snapshot.base_monster_count == density.base_count);
+    ARPG_REQUIRE(restarted_snapshot.initial_monster_count
+        == density.monster_count);
     return {};
 }
 

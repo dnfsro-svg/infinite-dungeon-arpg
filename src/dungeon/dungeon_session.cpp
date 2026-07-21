@@ -25,11 +25,6 @@
 namespace arpg::dungeon {
 namespace {
 
-constexpr std::uint16_t kWaveDelayTicks = 45U;
-// Temporary API migration values. Stage 19 Task 4 replaces these with the
-// deterministic room-density roll without persisting either value.
-constexpr std::uint8_t kTemporaryNormalEncounterCount = 12U;
-constexpr std::uint8_t kTemporaryAbyssEncounterCount = 18U;
 constexpr std::uint64_t kPlayerEvasionSeedDomain = 0x45564153494F4E31ULL;
 constexpr std::uint64_t kDropChanceDomain = 0x44524F505F43484EULL;
 constexpr std::uint64_t kDropSlotDomain = 0x44524F505F534C54ULL;
@@ -306,14 +301,7 @@ void DungeonSession::tick(
     } else if (phase_ == RoomPhase::cleared) {
         phase_ = RoomPhase::awaiting_exit;
     } else if (combat_.has_value()) {
-        if (phase_ == RoomPhase::wave_delay) {
-            if (wave_delay_ticks_ != 0U) {
-                --wave_delay_ticks_;
-            }
-            if (wave_delay_ticks_ == 0U) {
-                start_next_wave();
-            }
-        } else if (phase_ == RoomPhase::combat
+        if (phase_ == RoomPhase::combat
                 || phase_ == RoomPhase::awaiting_exit) {
             combat_->tick(movement);
             relay_combat_events();
@@ -321,12 +309,7 @@ void DungeonSession::tick(
             handle_player_defeat();
 
             if (phase_ == RoomPhase::combat && remaining_targets() == 0U) {
-                if (wave_index_ + 1U < encounter_plan_.wave_count) {
-                    phase_ = RoomPhase::wave_delay;
-                    wave_delay_ticks_ = kWaveDelayTicks;
-                } else {
-                    prepare_room_clear();
-                }
+                prepare_room_clear();
             }
         }
 
@@ -464,6 +447,9 @@ DungeonSession::try_pop_combat_event() noexcept {
 }
 
 void DungeonSession::construct_current_room() noexcept {
+    room_density_ = roll_room_density(
+        stable_state_.current_room.seed,
+        stable_state_.current_room.is_abyss);
     if (stable_state_.death.lifecycle
             == checkpoint::DeathLifecycle::pending_continue) {
         clear_transient_room_state();
@@ -794,13 +780,16 @@ void DungeonSession::attempt_abyss_reward_materialization() noexcept {
 }
 
 void DungeonSession::construct_normal_room() noexcept {
+    room_density_ = roll_room_density(
+        stable_state_.current_room.seed,
+        stable_state_.current_room.is_abyss);
     const EncounterBuildRequest request{
         stable_state_.current_room.seed,
         stable_state_.current_room.depth,
         stable_state_.current_room.ecology,
         stable_state_.current_room.entry,
         stable_state_.current_room.has_hole,
-        kTemporaryNormalEncounterCount,
+        room_density_.monster_count,
     };
     const EncounterPlanResult plan = build_encounter_plan(
         request, rules_.encounter);
@@ -874,13 +863,17 @@ bool DungeonSession::prepare_abyss_start() noexcept {
         return false;
     }
 
+    room_density_ = roll_room_density(
+        stable_state_.current_room.seed,
+        stable_state_.current_room.is_abyss);
+
     const EncounterBuildRequest request{
         stable_state_.current_room.seed,
         stable_state_.current_room.depth,
         stable_state_.current_room.ecology,
         stable_state_.current_room.entry,
         stable_state_.current_room.has_hole,
-        kTemporaryAbyssEncounterCount,
+        room_density_.monster_count,
     };
     EncounterPlanResult built = build_abyss_encounter_plan(
         request, rules_.encounter);
@@ -1036,20 +1029,6 @@ DungeonSession::preview_equipment_build(
     return result.status == PlayerBuildStatus::valid
         ? std::optional<combat::PlayerCombatBuild>{result.build}
         : std::nullopt;
-}
-
-void DungeonSession::start_next_wave() noexcept {
-    if (!combat_.has_value() || wave_index_ + 1U >= encounter_plan_.wave_count) {
-        enter_fault(DungeonFault::invalid_rules);
-        return;
-    }
-    const std::uint8_t next_wave = static_cast<std::uint8_t>(wave_index_ + 1U);
-    if (!combat_->load_wave(encounter_plan_.waves[next_wave], false)) {
-        enter_fault(DungeonFault::invalid_rules);
-        return;
-    }
-    wave_index_ = next_wave;
-    phase_ = RoomPhase::combat;
 }
 
 void DungeonSession::relay_combat_events() noexcept {

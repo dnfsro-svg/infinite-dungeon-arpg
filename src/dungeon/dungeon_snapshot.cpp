@@ -9,11 +9,6 @@
 namespace arpg::dungeon {
 namespace {
 
-// Temporary API migration values shared by snapshot legality diagnostics.
-// Stage 19 Task 4 replaces them with the session's density-derived count.
-constexpr std::uint8_t kTemporaryNormalEncounterCount = 12U;
-constexpr std::uint8_t kTemporaryAbyssEncounterCount = 18U;
-
 bool equipped(const items::EquipmentState& equipment,
     std::uint64_t item_id) noexcept {
     for (const std::uint64_t equipped_id : equipment.equipped_ids) {
@@ -92,6 +87,9 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
     result.wave_index = wave_index_;
     result.wave_count = encounter_plan_.wave_count;
     result.wave_delay_ticks = wave_delay_ticks_;
+    result.density_affix = room_density_.affix;
+    result.base_monster_count = room_density_.base_count;
+    result.initial_monster_count = room_density_.monster_count;
     result.remaining_targets = remaining_targets();
     result.entry_side = stable_state_.current_room.entry;
     result.last_exit = last_exit_;
@@ -167,6 +165,8 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
         result.combat.emplace(combat_->snapshot());
     }
     result.encounter.total_budget = encounter_plan_.total_budget;
+    result.encounter.initial_monster_count =
+        encounter_plan_.initial_monster_count;
     const auto& room = stable_state_.current_room;
     const EncounterBuildRequest request{
         room.seed,
@@ -174,8 +174,7 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
         room.ecology,
         room.entry,
         room.has_hole,
-        room.is_abyss ? kTemporaryAbyssEncounterCount
-                      : kTemporaryNormalEncounterCount,
+        room_density_.monster_count,
     };
     result.encounter.plan_valid = encounter_plan_legal(
         encounter_plan_, request, rules_.encounter);

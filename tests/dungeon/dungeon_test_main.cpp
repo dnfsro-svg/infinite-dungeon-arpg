@@ -205,7 +205,7 @@ int main() {
         const arpg::test::TestSuite death_only[] = {
             dungeon_death_lifecycle_suite(),
         };
-        return arpg::test::run_suites(death_only, 31,
+        return arpg::test::run_suites(death_only, 32,
             "stage 11a task 8 focused death lifecycle");
     }
 
@@ -241,6 +241,6 @@ int main() {
             "stage 17 task 3 skill loadout transactions");
     }
 
-    return arpg::test::run_suites(suites, 294,
+    return arpg::test::run_suites(suites, 296,
         "stage 18 dungeon queries");
 }

@@ -6,6 +6,7 @@
 #include "dungeon/room_generation.hpp"
 #include "dungeon/dungeon_progression.hpp"
 #include "dungeon/encounter_director.hpp"
+#include "dungeon/room_affix.hpp"
 #include "items/item_generation.hpp"
 #include "passives/passive_tree_catalog.hpp"
 
@@ -85,13 +86,16 @@ bool generate_golden_room_trace(
         return false;
     }
     for (std::size_t index = 0U; index < trace.size(); ++index) {
+        const auto density = arpg::dungeon::roll_room_density(
+            built.state.current_room.seed,
+            built.state.current_room.is_abyss);
         const arpg::dungeon::EncounterBuildRequest request{
             built.state.current_room.seed,
             built.state.current_room.depth,
             built.state.current_room.ecology,
             built.state.current_room.entry,
             built.state.current_room.has_hole,
-            12U,
+            density.monster_count,
         };
         const auto plan = arpg::dungeon::build_encounter_plan(
             request, rules.encounter);
@@ -1138,15 +1142,21 @@ arpg::test::Failure combat_ready_launcher_input_robot_naturally_clears_ten_rooms
         static_cast<unsigned>(first.encounter.total_budget),
         static_cast<unsigned>(first.encounter.current_wave_spawn_count));
     ARPG_REQUIRE(first.wave_count == 1U);
-    ARPG_REQUIRE(first.encounter.total_budget >= 24U);
-    ARPG_REQUIRE(first.encounter.total_budget <= 48U);
-    ARPG_REQUIRE(first.encounter.current_wave_spawn_count == 12U);
+    ARPG_REQUIRE(first.encounter.total_budget
+        >= 2U * first.initial_monster_count);
+    ARPG_REQUIRE(first.encounter.total_budget
+        <= 4U * first.initial_monster_count);
+    ARPG_REQUIRE(first.encounter.current_wave_spawn_count
+        == first.initial_monster_count);
 
     StressSummary summary{};
     for (std::size_t room = 0; room < 10U; ++room) {
         const std::uint8_t initial_monster_count =
             session.snapshot().encounter.current_wave_spawn_count;
-        ARPG_REQUIRE(initial_monster_count == 12U);
+        ARPG_REQUIRE(initial_monster_count
+            == session.snapshot().initial_monster_count);
+        ARPG_REQUIRE(initial_monster_count >= 12U);
+        ARPG_REQUIRE(initial_monster_count <= 30U);
         RealInputTrace trace{};
         const bool cleared = drive_real_input_clear(
             session, summary, trace, arpg::combat::Action::launcher);
@@ -1426,12 +1436,13 @@ arpg::test::Failure fixed_seed_room_trace_matches_baseline_golden() noexcept {
     const std::uint64_t hash = golden_room_trace_hash(trace);
     std::printf("[stage19-encounter-trace] hash=0x%016llx\n",
         static_cast<unsigned long long>(hash));
-    ARPG_REQUIRE(hash == 0x385552097f5cbd0aULL);
+    ARPG_REQUIRE(hash == 0x58fdb223c26bd06aULL);
 
     const GoldenTraceEntry& first = trace[0U];
     ARPG_REQUIRE(first.depth == 1U);
     ARPG_REQUIRE(first.ecology == checkpoint::DungeonElement::chaos);
-    ARPG_REQUIRE(first.monster_count == 12U);
+    ARPG_REQUIRE(first.monster_count >= 12U);
+    ARPG_REQUIRE(first.monster_count <= 30U);
     ARPG_REQUIRE(first.monster_ids[0U] == arpg::combat::MonsterId::chaos_chaser);
     ARPG_REQUIRE(!first.has_hole);
     ARPG_REQUIRE(!first.is_abyss);
@@ -1440,7 +1451,8 @@ arpg::test::Failure fixed_seed_room_trace_matches_baseline_golden() noexcept {
     const GoldenTraceEntry& middle = trace[127U];
     ARPG_REQUIRE(middle.depth == 1U);
     ARPG_REQUIRE(middle.ecology == checkpoint::DungeonElement::fire);
-    ARPG_REQUIRE(middle.monster_count == 12U);
+    ARPG_REQUIRE(middle.monster_count >= 12U);
+    ARPG_REQUIRE(middle.monster_count <= 30U);
     ARPG_REQUIRE(middle.monster_ids[0U] == arpg::combat::MonsterId::chaos_chaser);
     ARPG_REQUIRE(!middle.has_hole);
     ARPG_REQUIRE(!middle.is_abyss);
@@ -1449,7 +1461,8 @@ arpg::test::Failure fixed_seed_room_trace_matches_baseline_golden() noexcept {
     const GoldenTraceEntry& last = trace[255U];
     ARPG_REQUIRE(last.depth == 1U);
     ARPG_REQUIRE(last.ecology == checkpoint::DungeonElement::lightning);
-    ARPG_REQUIRE(last.monster_count == 12U);
+    ARPG_REQUIRE(last.monster_count >= 12U);
+    ARPG_REQUIRE(last.monster_count <= 30U);
     ARPG_REQUIRE(last.monster_ids[0U] == arpg::combat::MonsterId::chaos_chaser);
     ARPG_REQUIRE(!last.has_hole);
     ARPG_REQUIRE(!last.is_abyss);

@@ -4,6 +4,7 @@
 #include "dungeon/dungeon_checkpoint.hpp"
 #include "dungeon/dungeon_rules.hpp"
 #include "dungeon/material_loot.hpp"
+#include "dungeon/room_affix.hpp"
 
 #include <array>
 #include <cstddef>
@@ -98,6 +99,7 @@ struct DungeonDiagnostics final {
 
 struct DungeonEncounterDiagnostics final {
     std::uint8_t total_budget{};
+    std::uint8_t initial_monster_count{};
     std::uint8_t current_wave_budget{};
     std::uint8_t current_wave_spawn_count{};
     bool plan_valid{};
@@ -195,6 +197,9 @@ struct DungeonSnapshot final {
     std::uint8_t wave_index{};
     std::uint8_t wave_count{};
     std::uint16_t wave_delay_ticks{};
+    RoomDensityAffix density_affix{RoomDensityAffix::crowded};
+    std::uint8_t base_monster_count{};
+    std::uint8_t initial_monster_count{};
     std::uint8_t remaining_targets{};
     EntrySide entry_side{EntrySide::initial};
     ExitDirection last_exit{ExitDirection::none};

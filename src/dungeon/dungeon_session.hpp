@@ -180,7 +180,6 @@ private:
     void reset_to_normal_room(bool clear_queues) noexcept;
     [[nodiscard]] bool prepare_abyss_start() noexcept;
     [[nodiscard]] RequestResult prepare_abyss_failure() noexcept;
-    void start_next_wave() noexcept;
     void relay_combat_events() noexcept;
     void handle_player_defeat() noexcept;
     [[nodiscard]] bool prepare_death_retreat() noexcept;
@@ -276,6 +275,7 @@ private:
     MaterialPickupReceipt material_pickup_receipt_{};
     ReinforcementReceipt reinforcement_receipt_{};
     RoomEncounterPlan encounter_plan_{};
+    RoomDensityRoll room_density_{};
     std::uint8_t wave_index_{};
     std::uint16_t wave_delay_ticks_{};
     core::BoundedQueue<DungeonEvent, kDungeonEventCapacity> events_{};

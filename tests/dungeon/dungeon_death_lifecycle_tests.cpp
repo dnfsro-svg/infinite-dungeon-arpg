@@ -6,6 +6,7 @@
 #include "dungeon/death_checkpoint.hpp"
 #include "dungeon/dungeon_progression.hpp"
 #include "dungeon/dungeon_session.hpp"
+#include "dungeon/room_affix.hpp"
 #include "dungeon/room_generation.hpp"
 #include "../dungeon/dungeon_test_support.hpp"
 
@@ -958,6 +959,50 @@ arpg::test::Failure depth_one_continue_clamps_and_constructs_saved_room() noexce
     return {};
 }
 
+arpg::test::Failure death_continue_refreshes_transient_density() noexcept {
+    checkpoint::DungeonRunState persisted{};
+    arpg::dungeon::RoomDensityRoll source_roll{};
+    arpg::dungeon::RoomDensityRoll target_roll{};
+    bool found_distinct_roll = false;
+    for (std::uint64_t depth = 2U; depth <= 64U; ++depth) {
+        persisted = pending_state(depth);
+        source_roll = arpg::dungeon::roll_room_density(
+            persisted.current_room.seed, false);
+        target_roll = arpg::dungeon::roll_room_density(
+            persisted.death.target_room.seed, false);
+        if (source_roll.affix != target_roll.affix
+                || source_roll.base_count != target_roll.base_count) {
+            found_distinct_roll = true;
+            break;
+        }
+    }
+    ARPG_REQUIRE(found_distinct_roll);
+
+    DungeonSession session{DungeonRules{}, persisted};
+    ARPG_REQUIRE(session.snapshot().density_affix == source_roll.affix);
+    ARPG_REQUIRE(session.snapshot().base_monster_count
+        == source_roll.base_count);
+    ARPG_REQUIRE(session.request_death_continue() == RequestResult::accepted);
+    const auto pending = *session.pending_save();
+    session.resolve_pending_save({SaveDisposition::committed,
+        pending.expected_generation, pending.next_state,
+        PendingSaveKind::death_continue});
+
+    const auto transitioning = session.snapshot();
+    ARPG_REQUIRE(transitioning.phase == RoomPhase::transitioning);
+    ARPG_REQUIRE(transitioning.density_affix == target_roll.affix);
+    ARPG_REQUIRE(transitioning.base_monster_count == target_roll.base_count);
+    ARPG_REQUIRE(transitioning.initial_monster_count
+        == target_roll.monster_count);
+    session.tick({});
+    const auto entered = session.snapshot();
+    ARPG_REQUIRE(entered.density_affix == target_roll.affix);
+    ARPG_REQUIRE(entered.base_monster_count == target_roll.base_count);
+    ARPG_REQUIRE(entered.initial_monster_count == target_roll.monster_count);
+    ARPG_REQUIRE(entered.remaining_targets == target_roll.monster_count);
+    return {};
+}
+
 arpg::test::Failure death_continue_not_committed_retries_exactly() noexcept {
     const auto persisted = pending_state(12U);
     DungeonSession session{DungeonRules{}, persisted};
@@ -1228,6 +1273,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"death commit consumes reserved slot", &death_commit_consumes_reserved_terminal_slot},
     {"death retry reserves terminal slot", &death_not_committed_and_retry_reserve_terminal_slot},
     {"death continue prepares exact target", &death_continue_prepares_exact_target_without_reroll},
+    {"death continue refreshes transient density", &death_continue_refreshes_transient_density},
     {"depth one continue constructs saved room", &depth_one_continue_clamps_and_constructs_saved_room},
     {"death continue retry is exact", &death_continue_not_committed_retries_exactly},
     {"death continue receipt fault matrix", &death_continue_receipt_fault_matrix},

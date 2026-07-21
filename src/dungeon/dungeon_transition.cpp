@@ -1608,6 +1608,9 @@ void DungeonSession::commit_pending_save(
     }
     pending_abyss_combat_.reset();
     if (death_retreat_commit) {
+        room_density_ = roll_room_density(
+            stable_state_.current_room.seed,
+            stable_state_.current_room.is_abyss);
         clear_transient_room_state();
         phase_ = RoomPhase::death_pending;
         static_cast<void>(emit(
@@ -1618,6 +1621,9 @@ void DungeonSession::commit_pending_save(
         return;
     }
     if (death_continue_commit) {
+        room_density_ = roll_room_density(
+            stable_state_.current_room.seed,
+            stable_state_.current_room.is_abyss);
         clear_transient_room_state();
         phase_ = RoomPhase::transitioning;
         static_cast<void>(emit(

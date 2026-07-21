@@ -3,6 +3,7 @@
 #include "dungeon_test_support.hpp"
 
 #include "dungeon/room_generation.hpp"
+#include "dungeon/room_affix.hpp"
 #include "dungeon/dungeon_progression.hpp"
 #include "abyss/abyss_rules.hpp"
 #include "items/item_types.hpp"
@@ -57,6 +58,47 @@ bool commit_abyss_start(arpg::dungeon::DungeonSession& session) noexcept {
         pending->expected_generation, pending->next_state});
     return session.snapshot().phase == arpg::dungeon::RoomPhase::locked
         && session.snapshot().combat.has_value();
+}
+
+arpg::test::Failure abyss_density_is_loaded_before_first_tick() noexcept {
+    using namespace arpg;
+    dungeon::DungeonRunState state = lifecycle_available_state();
+    const dungeon::RoomDensityRoll expected =
+        dungeon::roll_room_density(state.current_room.seed, true);
+    dungeon::DungeonSession session{{}, state};
+    ARPG_REQUIRE(commit_abyss_start(session));
+
+    const dungeon::DungeonSnapshot entered = session.snapshot();
+    ARPG_REQUIRE(entered.phase == dungeon::RoomPhase::locked);
+    ARPG_REQUIRE(entered.wave_index == 0U);
+    ARPG_REQUIRE(entered.wave_count == 1U);
+    ARPG_REQUIRE(entered.wave_delay_ticks == 0U);
+    ARPG_REQUIRE(entered.density_affix == expected.affix);
+    ARPG_REQUIRE(entered.base_monster_count == expected.base_count);
+    ARPG_REQUIRE(entered.initial_monster_count == expected.monster_count);
+    ARPG_REQUIRE(entered.initial_monster_count
+        == static_cast<std::uint8_t>(
+            (entered.base_monster_count * 3U + 1U) / 2U));
+    ARPG_REQUIRE(entered.initial_monster_count <= 45U);
+    ARPG_REQUIRE(entered.remaining_targets == entered.initial_monster_count);
+    ARPG_REQUIRE(entered.combat.has_value());
+    ARPG_REQUIRE(entered.combat->monster_count
+        == entered.initial_monster_count);
+    ARPG_REQUIRE(entered.encounter.initial_monster_count
+        == entered.initial_monster_count);
+
+    session.tick({});
+    test::force_defeat_current_wave(session);
+    session.tick({});
+    const dungeon::DungeonSnapshot clearing = session.snapshot();
+    ARPG_REQUIRE(clearing.phase == dungeon::RoomPhase::committing);
+    ARPG_REQUIRE(clearing.pending_save_kind
+        == dungeon::PendingSaveKind::abyss_clear);
+    ARPG_REQUIRE(clearing.remaining_targets == 0U);
+    ARPG_REQUIRE(clearing.wave_index == 0U);
+    ARPG_REQUIRE(clearing.wave_count == 1U);
+    ARPG_REQUIRE(clearing.wave_delay_ticks == 0U);
+    return {};
 }
 
 arpg::dungeon::DungeonRunState lifecycle_state_for_rule(
@@ -420,8 +462,10 @@ arpg::test::Failure abyss_fail_commit_rebuilds_same_normal_room() noexcept {
     ARPG_REQUIRE(!after.is_abyss);
     ARPG_REQUIRE(test::DungeonSessionTestAccess::stable_state(session)
         .abyss.lifecycle == abyss::AbyssLifecycle::failed);
+    const auto density = dungeon::roll_room_density(after.room_seed, false);
     const dungeon::EncounterBuildRequest request{after.room_seed,
-        after.depth, after.ecology, after.entry_side, after.has_hole, 12U};
+        after.depth, after.ecology, after.entry_side, after.has_hole,
+        density.monster_count};
     const auto expected = dungeon::build_encounter_plan(
         request, dungeon::DungeonRules{}.encounter);
     ARPG_REQUIRE(after.encounter.total_budget == expected.plan.total_budget);
@@ -576,8 +620,10 @@ arpg::test::Failure deep_abyss_snapshot_uses_expanded_budget_legality() noexcept
     dungeon::DungeonSession session{{}, state};
     ARPG_REQUIRE(commit_abyss_start(session));
     const auto snapshot = session.snapshot();
+    const auto density = dungeon::roll_room_density(snapshot.room_seed, true);
     ARPG_REQUIRE(snapshot.wave_count == 1U);
-    ARPG_REQUIRE(snapshot.encounter.current_wave_spawn_count == 18U);
+    ARPG_REQUIRE(snapshot.encounter.current_wave_spawn_count
+        == density.monster_count);
     ARPG_REQUIRE(snapshot.encounter.plan_valid);
     return {};
 }
@@ -791,6 +837,7 @@ arpg::test::Failure combat_events_relay_in_source_order() noexcept {
 }
 
 constexpr arpg::test::TestCase kCases[] = {
+    {"abyss density is loaded before first tick", &abyss_density_is_loaded_before_first_tick},
     {"abyss clear requires two reserved event slots", &abyss_clear_requires_two_reserved_event_slots},
     {"abyss clear exactly two slots publish both events", &abyss_clear_exactly_two_slots_publish_both_events},
     {"abyss clear is atomic and restores life resources", &abyss_clear_is_atomic_and_restores_life_resources},

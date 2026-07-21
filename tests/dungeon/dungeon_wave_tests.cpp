@@ -3,6 +3,7 @@
 #include "dungeon_test_support.hpp"
 
 #include "dungeon/dungeon_progression.hpp"
+#include "dungeon/room_affix.hpp"
 
 #include <cstdint>
 
@@ -61,10 +62,20 @@ arpg::test::Failure single_batch_clears_without_wave_delay() noexcept {
     DungeonSession session{rules, state_for_seed(0x2A11CEU, rules)};
 
     const auto initial = session.snapshot();
+    const auto expected = arpg::dungeon::roll_room_density(
+        initial.room_seed, false);
     ARPG_REQUIRE(initial.wave_count == 1U);
     ARPG_REQUIRE(initial.wave_index == 0U);
-    ARPG_REQUIRE(initial.remaining_targets == 12U);
-    ARPG_REQUIRE(initial.encounter.current_wave_spawn_count == 12U);
+    ARPG_REQUIRE(initial.density_affix == expected.affix);
+    ARPG_REQUIRE(initial.base_monster_count == expected.base_count);
+    ARPG_REQUIRE(initial.initial_monster_count == expected.monster_count);
+    ARPG_REQUIRE(initial.remaining_targets == initial.initial_monster_count);
+    ARPG_REQUIRE(initial.combat->monster_count
+        == initial.initial_monster_count);
+    ARPG_REQUIRE(initial.encounter.initial_monster_count
+        == initial.initial_monster_count);
+    ARPG_REQUIRE(initial.encounter.current_wave_spawn_count
+        == initial.initial_monster_count);
     ARPG_REQUIRE(all_exits_closed(initial));
     ARPG_REQUIRE(clear_current_wave(session));
     if (session.snapshot().phase == RoomPhase::cleared) session.tick({});
@@ -110,6 +121,16 @@ arpg::test::Failure reset_and_reload_rebuild_the_same_encounter_plan() noexcept 
     ARPG_REQUIRE(before.encounter.total_budget == after_reload.encounter.total_budget);
     ARPG_REQUIRE(before.wave_count == after_reset.wave_count);
     ARPG_REQUIRE(before.wave_count == after_reload.wave_count);
+    ARPG_REQUIRE(before.density_affix == after_reset.density_affix);
+    ARPG_REQUIRE(before.density_affix == after_reload.density_affix);
+    ARPG_REQUIRE(before.base_monster_count
+        == after_reset.base_monster_count);
+    ARPG_REQUIRE(before.base_monster_count
+        == after_reload.base_monster_count);
+    ARPG_REQUIRE(before.initial_monster_count
+        == after_reset.initial_monster_count);
+    ARPG_REQUIRE(before.initial_monster_count
+        == after_reload.initial_monster_count);
     ARPG_REQUIRE(before.combat->monster_count == after_reset.combat->monster_count);
     ARPG_REQUIRE(before.combat->monster_count == after_reload.combat->monster_count);
     for (std::size_t index = 0U; index < before.combat->monsters.size(); ++index) {
@@ -137,13 +158,15 @@ arpg::test::Failure legacy_abyss_flag_without_lifecycle_faults() noexcept {
     return {};
 }
 
-arpg::test::Failure exact_twelve_fixture_reaches_awaiting_exit() noexcept {
+arpg::test::Failure density_fixture_reaches_awaiting_exit() noexcept {
     DungeonRules rules;
     DungeonSession session{rules, state_for_seed(0xA11CE5EEDULL, rules)};
     const auto initial = session.snapshot();
+    const auto expected = arpg::dungeon::roll_room_density(
+        initial.room_seed, false);
     ARPG_REQUIRE(initial.combat.has_value());
-    ARPG_REQUIRE(initial.remaining_targets == 12U);
-    ARPG_REQUIRE(initial.combat->monster_count == 12U);
+    ARPG_REQUIRE(initial.remaining_targets == expected.monster_count);
+    ARPG_REQUIRE(initial.combat->monster_count == expected.monster_count);
     ARPG_REQUIRE(initial.combat->monsters[0].id
         == arpg::combat::MonsterId::chaos_chaser);
 
@@ -159,8 +182,10 @@ arpg::test::Failure exact_twelve_fixture_reaches_awaiting_exit() noexcept {
 arpg::test::Failure shooter_and_chasers_fixture_reaches_awaiting_exit() noexcept {
     DungeonSession session;
     const auto initial = session.snapshot();
+    const auto expected = arpg::dungeon::roll_room_density(
+        initial.room_seed, false);
     ARPG_REQUIRE(initial.combat.has_value());
-    ARPG_REQUIRE(initial.remaining_targets == 12U);
+    ARPG_REQUIRE(initial.remaining_targets == expected.monster_count);
     bool has_shooter = false;
     for (const auto& monster : initial.combat->monsters) {
         has_shooter = has_shooter
@@ -278,7 +303,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"sealed hole stays closed until single batch clear", &sealed_hole_stays_closed_until_single_batch_clear},
     {"reset and reload rebuild the same encounter plan", &reset_and_reload_rebuild_the_same_encounter_plan},
     {"legacy abyss flag without lifecycle faults", &legacy_abyss_flag_without_lifecycle_faults},
-    {"exact twelve fixture reaches awaiting exit", &exact_twelve_fixture_reaches_awaiting_exit},
+    {"density fixture reaches awaiting exit", &density_fixture_reaches_awaiting_exit},
     {"shooter and chasers fixture reaches awaiting exit", &shooter_and_chasers_fixture_reaches_awaiting_exit},
     {"forced defeat skips wave delay and starts clear", &forced_defeat_skips_wave_delay_and_starts_clear},
     {"single batch clear preserves health through commit", &single_batch_clear_preserves_health_through_commit},

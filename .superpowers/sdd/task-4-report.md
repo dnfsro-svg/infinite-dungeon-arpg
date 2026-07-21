@@ -1,3 +1,66 @@
+# Stage 19 Task 4 实现报告：密度词条接入会话生命周期
+
+## 结论
+
+- `DungeonSession` 现在只保存瞬态 `RoomDensityRoll`，按当前房 seed 与
+  `is_abyss` 确定性重算；未修改 checkpoint、版本号或序列化布局。
+- 普通房目标数为词条基础数量 12～30；深渊房为
+  `ceil(base * 1.5)`，最大 45。临时普通 12 / 深渊 18 已完全移除。
+- 普通与深渊遭遇均在首次 combat tick 前一次装载全部怪物；生产 tick
+  不再进入 `wave_delay`，`start_next_wave` 已移除。
+- 快照公开 `density_affix`、`base_monster_count`、
+  `initial_monster_count`，诊断同时公开初始数量和威胁和；
+  `remaining_targets` 继续读取实时存活数。
+- reset、普通/深渊构造、稳定状态重载、死亡撤退和死亡继续目标切换均重算
+  瞬态密度；持久化真实重载测试验证三项派生值一致。
+
+## TDD 证据
+
+### RED 1：会话与深渊快照
+
+先修改 wave/lifecycle 测试，再构建。编译只因缺少
+`DungeonSnapshot::{density_affix,base_monster_count,initial_monster_count}`
+和 `DungeonEncounterDiagnostics::initial_monster_count` 失败，证明新 API
+在生产实现前被测试约束。
+
+### RED 2：死亡继续切换
+
+新增动态寻找“死亡房与目标房密度结果不同”的固定测试输入。生产修复前，
+提交 death-continue 后的 transitioning 快照仍暴露旧房词条，精确失败于
+`transitioning.density_affix == target_roll.affix`。加入目标房重算后，
+Stage 11 death 聚焦套件为 `32 cases, 0 failures`。
+
+### 回归 RED 与最小修复
+
+首次完整回归准确暴露：
+
+- encounter trace 仍是固定 12 数量的旧 golden；更新为密度驱动后的
+  `0x58fdb223c26bd06a`。
+- persistence 门移动夹具仍用 256 tick，无法穿越 Task 1 的四倍房间；
+  只把测试移动上限同步为已有大房间使用的 640 tick。
+
+纯输入门禁未改为辅助清场：10 个房间均只通过 launcher 输入自然清理，
+实际初始怪物数覆盖 12、14、16、17、21、25，全部击杀归属 launcher，
+输入拒绝为 0。
+
+## 验证
+
+- `ARPG_STAGE11_DEATH_ONLY=1`：32/32，0 failures。
+- fresh `dungeon.units` 可执行程序：296/296，0 failures；包含 10 房纯输入、
+  1000 房生命周期/容量、固定 trace 与深渊压力。
+- fresh `persistence.units`：94/94，0 failures；既有 codec golden 和
+  round-trip 全通过，真实 SaveStore 重载后派生密度一致。
+- architecture：18/18，0 failures（从 `LastTest.log` 复核）。
+- 全量 Debug 增量构建：退出码 0，最终 `ninja: no work to do`。
+- `git diff --check`：通过。
+
+## 范围
+
+未实现 HUD 文本、房间渲染、相机或新存档字段；未改变词条目录、权重和
+数量区间。旧 `RoomPhase::wave_delay` 枚举仅为源码兼容保留。
+
+---
+
 # Stage 16 Task 4 实现报告
 
 ## 状态
