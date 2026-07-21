@@ -39,6 +39,12 @@ bool all_exits_closed(const arpg::dungeon::DungeonSnapshot& state) noexcept {
 bool clear_current_wave(DungeonSession& session) noexcept {
     for (int tick = 0; tick < 128; ++tick) {
         const auto state = session.snapshot();
+        if (state.phase == RoomPhase::committing
+                && state.pending_save_kind
+                    == arpg::dungeon::PendingSaveKind::room_clear) {
+            if (!arpg::test::commit_pending(session)) return false;
+            continue;
+        }
         if (state.phase == RoomPhase::wave_delay
                 || state.phase == RoomPhase::cleared
                 || state.phase == RoomPhase::awaiting_exit) {
@@ -109,7 +115,7 @@ arpg::test::Failure reset_and_reload_rebuild_the_same_encounter_plan() noexcept 
     DungeonSession session{rules, state};
     const auto plan = arpg::test::encounter_plan(session);
     const auto before = session.snapshot();
-    session.reset_current_room();
+    static_cast<void>(session.reset_current_room());
     const auto after_reset = session.snapshot();
     DungeonSession reloaded{rules, state};
     const auto after_reload = reloaded.snapshot();
@@ -136,22 +142,16 @@ arpg::test::Failure reset_and_reload_rebuild_the_same_encounter_plan() noexcept 
     return {};
 }
 
-arpg::test::Failure abyss_uses_the_normal_director_configuration() noexcept {
+arpg::test::Failure legacy_abyss_flag_without_lifecycle_faults() noexcept {
     DungeonRules rules = two_wave_rules();
     DungeonRunState abyss = state_for_seed(0xAB155U, rules);
     abyss.current_room.is_abyss = true;
-    DungeonRunState normal = abyss;
-    normal.current_room.is_abyss = false;
-
     DungeonSession abyss_session{rules, abyss};
-    DungeonSession normal_session{rules, normal};
     const auto abyss_snapshot = abyss_session.snapshot();
-    const auto normal_snapshot = normal_session.snapshot();
-    ARPG_REQUIRE(abyss_snapshot.encounter.total_budget
-        == normal_snapshot.encounter.total_budget);
-    ARPG_REQUIRE(abyss_snapshot.wave_count == normal_snapshot.wave_count);
-    ARPG_REQUIRE(abyss_snapshot.combat->monster_count
-        == normal_snapshot.combat->monster_count);
+    ARPG_REQUIRE(abyss_snapshot.phase == RoomPhase::faulted);
+    ARPG_REQUIRE(abyss_snapshot.diagnostics.fault
+        == arpg::dungeon::DungeonFault::invalid_abyss_state);
+    ARPG_REQUIRE(!abyss_snapshot.combat.has_value());
     return {};
 }
 
@@ -268,6 +268,11 @@ arpg::test::Failure rollback_keeps_health_but_committed_room_resets_it() noexcep
         session.tick({});
         arpg::test::force_defeat_current_wave(session);
         session.tick({});
+        if (session.snapshot().phase == RoomPhase::committing
+                && session.snapshot().pending_save_kind
+                    == arpg::dungeon::PendingSaveKind::room_clear) {
+            if (!arpg::test::commit_pending(session)) return false;
+        }
         if (session.snapshot().phase == RoomPhase::cleared) session.tick({});
         return session.snapshot().phase == RoomPhase::awaiting_exit;
     };
@@ -303,7 +308,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"two wave room keeps exits closed until last wave", &two_wave_room_keeps_exits_closed_until_last_wave},
     {"sealed hole stays closed through wave delay", &sealed_hole_stays_closed_through_wave_delay},
     {"reset and reload rebuild the same encounter plan", &reset_and_reload_rebuild_the_same_encounter_plan},
-    {"abyss uses the normal director configuration", &abyss_uses_the_normal_director_configuration},
+    {"legacy abyss flag without lifecycle faults", &legacy_abyss_flag_without_lifecycle_faults},
     {"four chaser fixture reaches awaiting exit", &four_chaser_fixture_reaches_awaiting_exit},
     {"shooter and chasers fixture reaches awaiting exit", &shooter_and_chasers_fixture_reaches_awaiting_exit},
     {"forced defeat advances real wave lifecycle", &forced_defeat_advances_real_wave_lifecycle},

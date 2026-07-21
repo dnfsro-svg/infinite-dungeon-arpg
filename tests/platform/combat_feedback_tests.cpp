@@ -1,6 +1,6 @@
 #include "test_framework.hpp"
 
-#include "combat_audio.hpp"
+#include "audio_routing.hpp"
 #include "combat_feedback.hpp"
 
 #include <cstddef>
@@ -96,26 +96,62 @@ arpg::test::Failure fixed_pool_overflow_and_reset_are_exact() noexcept {
     return {};
 }
 
+arpg::test::Failure player_hit_keeps_a_short_source_indicator() noexcept {
+    CombatFeedback feedback;
+    CombatEvent hit{};
+    hit.kind = CombatEventKind::player_hit;
+    hit.position = Vec3{-2.0F, 1.5F, 0.0F};
+    feedback.consume(hit);
+    ARPG_REQUIRE(arpg::test::near(
+        feedback.player_hit_indicator_seconds(), 0.55, 1.0e-4));
+    const Vec3 source = feedback.player_hit_source();
+    ARPG_REQUIRE(source.x == -2.0F && source.y == 1.5F);
+    for (int frame = 0; frame < 6; ++frame) {
+        feedback.update(0.1F);
+    }
+    ARPG_REQUIRE(arpg::test::near(
+        feedback.player_hit_indicator_seconds(), 0.0, 1.0e-4));
+    return {};
+}
+
+arpg::test::Failure defeated_event_spawns_one_distinct_marker() noexcept {
+    CombatFeedback feedback;
+    CombatEvent defeated{};
+    defeated.kind = CombatEventKind::defeated;
+    defeated.position = Vec3{3.0F, -1.0F, 0.0F};
+    feedback.consume(defeated);
+    ARPG_REQUIRE(feedback.active_count() == 1U);
+    const auto& effects = feedback.effects();
+    ARPG_REQUIRE(effects[0].active);
+    ARPG_REQUIRE(effects[0].kind == VisualEffectKind::defeat_marker);
+    for (int frame = 0; frame < 7; ++frame) {
+        feedback.update(0.1F);
+    }
+    ARPG_REQUIRE(feedback.active_count() == 0U);
+    return {};
+}
+
 arpg::test::Failure audio_routes_weapon_material_and_low_once() noexcept {
     CombatEvent event{};
     event.kind = CombatEventKind::swing;
-    ARPG_REQUIRE(route_audio_cues(event)
-                 == audio_cue_mask(AudioCue::weapon));
+    event.attack = AttackId::j1;
+    ARPG_REQUIRE(route_audio_plan(event).cues
+                 == audio_cue_mask(AudioCue::swing_light));
 
     event.kind = CombatEventKind::hit;
     event.feedback = FeedbackLevel::heavy;
-    ARPG_REQUIRE(route_audio_cues(event)
-                 == audio_cue_mask(AudioCue::material));
+    ARPG_REQUIRE(route_audio_plan(event).cues
+                 == audio_cue_mask(AudioCue::impact));
 
     event.kind = CombatEventKind::impact_summary;
     event.feedback = FeedbackLevel::heavy;
-    ARPG_REQUIRE(route_audio_cues(event)
-                 == audio_cue_mask(AudioCue::low));
+    ARPG_REQUIRE(route_audio_plan(event).cues
+                 == audio_cue_mask(AudioCue::impact_low));
     event.feedback = FeedbackLevel::medium;
-    ARPG_REQUIRE(route_audio_cues(event) == 0);
+    ARPG_REQUIRE(route_audio_plan(event).cues == 0);
 
     event.kind = CombatEventKind::reset;
-    ARPG_REQUIRE(route_audio_cues(event) == 0);
+    ARPG_REQUIRE(route_audio_plan(event).cues == 0);
     return {};
 }
 
@@ -124,6 +160,8 @@ constexpr arpg::test::TestCase kCases[] = {
      &multi_target_feedback_uses_one_max_shake},
     {"fixed pool overflow and reset",
      &fixed_pool_overflow_and_reset_are_exact},
+    {"player hit source indicator", &player_hit_keeps_a_short_source_indicator},
+    {"defeated marker", &defeated_event_spawns_one_distinct_marker},
     {"pure audio cue routing",
      &audio_routes_weapon_material_and_low_once},
 };

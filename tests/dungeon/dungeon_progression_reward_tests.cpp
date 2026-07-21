@@ -37,7 +37,7 @@ arpg::test::Failure reset_discards_unsettled_room_experience() noexcept {
     ARPG_REQUIRE(before_reset.pending_room_experience > 0U
         || before_reset.last_room_experience > 0U);
 
-    session.reset_current_room();
+    static_cast<void>(session.reset_current_room());
     const DungeonSnapshot reset = session.snapshot();
     ARPG_REQUIRE(reset.pending_room_experience == 0U);
     ARPG_REQUIRE(reset.progression.level == 1U);

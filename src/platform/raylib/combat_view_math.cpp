@@ -151,12 +151,21 @@ MonsterVisual monster_visual(
         || id == combat::MonsterId::fire_charger
         || id == combat::MonsterId::lightning_dasher
         || id == combat::MonsterId::chaos_hazard;
-    if (priority && phase == combat::MonsterAiPhase::telegraph) {
+    const bool direct_attacker = id != combat::MonsterId::water_support
+        && id != combat::MonsterId::count;
+    visual.priority_warning = priority;
+    if (direct_attacker && phase == combat::MonsterAiPhase::telegraph) {
         visual.warning_mode = MonsterWarningMode::telegraph;
-    } else if (priority && phase == combat::MonsterAiPhase::active) {
+    } else if (direct_attacker && phase == combat::MonsterAiPhase::active) {
         visual.warning_mode = MonsterWarningMode::active;
     }
     return visual;
+}
+
+MonsterLabelTextStyle monster_label_text_style(float projection_scale) noexcept {
+    const int near_camera_bonus = projection_scale > 1.15F ? 1 : 0;
+    return {11 + near_camera_bonus, 14 + near_camera_bonus,
+        12 + near_camera_bonus, 2};
 }
 
 AffixBadge monster_affix_badge(combat::MonsterAffixInstance affix) noexcept {
@@ -222,6 +231,12 @@ HazardVisualMode hazard_visual_mode(
         ? HazardVisualMode::telegraph
         : hazard.active_ticks != 0U
             ? HazardVisualMode::active : HazardVisualMode::hidden;
+}
+
+bool uses_generic_hazard_pass(
+    const combat::HazardSnapshot& hazard) noexcept {
+    return hazard.active
+        && hazard.source == combat::HazardSource::monster;
 }
 
 Rgba8 hazard_color(combat::HazardKind kind) noexcept {

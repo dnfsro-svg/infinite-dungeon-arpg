@@ -1,6 +1,7 @@
 #include "combat/combat_world.hpp"
 
 #include "combat/attack_catalog.hpp"
+#include "combat/combat_scaling.hpp"
 #include "combat/room_bounds.hpp"
 
 #include <algorithm>
@@ -226,7 +227,11 @@ void CombatWorld::simulate_player(MovementInput movement) noexcept {
         / static_cast<float>(modifiers::kFixedOne);
     const float air_scale = static_cast<float>(values.air_control)
         / static_cast<float>(modifiers::kFixedOne);
-    const float speed = kGroundSpeed * movement_scale
+    const float abyss_ground_scale = airborne
+        ? 1.0F
+        : scale_basis_points(
+              1.0F, encounter_config_.abyss.player_ground_move_bp);
+    const float speed = kGroundSpeed * movement_scale * abyss_ground_scale
         * (airborne ? kAirRatio * air_scale : 1.0F)
         * static_cast<float>(10000 - std::clamp(player_.status.slow_bp, 0, 10000))
         / 10000.0F;

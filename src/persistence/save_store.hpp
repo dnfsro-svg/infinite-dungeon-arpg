@@ -62,6 +62,7 @@ struct SaveLoadResult final {
     SaveError error{SaveError::none};
     SaveSlot active_slot{SaveSlot::none};
     bool recovered{};
+    bool migrated{};
     dungeon::checkpoint::DungeonRunState checkpoint{};
 };
 

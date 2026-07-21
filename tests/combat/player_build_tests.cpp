@@ -297,19 +297,28 @@ arpg::test::Failure hit_packet_reports_zero_and_invalid_without_partial_packet()
     invalid.weapon_physical = -1;
     ARPG_REQUIRE(!build_player_hit_packet(1, invalid).has_value());
     invalid = PlayerCombatBuild{};
-    invalid.local_attack_speed_bp = -1;
+    invalid.local_attack_speed_bp = -10001;
     ARPG_REQUIRE(!build_player_hit_packet(1, invalid).has_value());
+    PlayerCombatBuild slowed{};
+    slowed.local_attack_speed_bp = -1500;
+    ARPG_REQUIRE(build_player_hit_packet(1, slowed).has_value());
 
     PlayerCombatBuild overflowing{};
     overflowing.weapon_physical =
         (std::numeric_limits<std::int64_t>::max)();
-    ARPG_REQUIRE(!build_player_hit_packet(1, overflowing).has_value());
+    const auto saturated_weapon = build_player_hit_packet(1, overflowing);
+    ARPG_REQUIRE(saturated_weapon.has_value());
+    ARPG_REQUIRE(saturated_weapon->amount[damage_index(DamageType::physical)]
+        == (std::numeric_limits<int>::max)());
     overflowing = PlayerCombatBuild{};
     overflowing.values.flat_damage[damage_index(DamageType::physical)] =
         (std::numeric_limits<std::int64_t>::max)();
     overflowing.values.damage_increased[damage_index(DamageType::physical)] =
         (std::numeric_limits<std::int32_t>::max)();
-    ARPG_REQUIRE(!build_player_hit_packet(52, overflowing).has_value());
+    const auto saturated_flat = build_player_hit_packet(52, overflowing);
+    ARPG_REQUIRE(saturated_flat.has_value());
+    ARPG_REQUIRE(saturated_flat->amount[damage_index(DamageType::physical)]
+        == (std::numeric_limits<int>::max)());
     return {};
 }
 
@@ -395,6 +404,28 @@ arpg::test::Failure weapon_physical_is_applied_by_real_melee_hit() noexcept {
     return {};
 }
 
+arpg::test::Failure saturated_physical_and_elemental_real_hit_is_bounded() noexcept {
+    PlayerCombatBuild build{};
+    build.weapon_physical = (std::numeric_limits<std::int64_t>::max)();
+    build.values.flat_damage[damage_index(DamageType::fire)] =
+        (std::numeric_limits<std::int64_t>::max)();
+    CombatEncounterConfig config = one_monster_config();
+    config.player_build = build;
+    CombatWorld world{config};
+    arpg::test::drain_events(world);
+    ARPG_REQUIRE(world.queue_action(Action::light));
+    arpg::test::tick_n(world, 8);
+    ARPG_REQUIRE(world.snapshot().monsters[0].hp == 0);
+    bool saw_saturated_hit = false;
+    while (const auto event = world.try_pop_event()) {
+        if (event->kind != CombatEventKind::hit) continue;
+        saw_saturated_hit = true;
+        ARPG_REQUIRE(event->value == (std::numeric_limits<int>::max)());
+    }
+    ARPG_REQUIRE(saw_saturated_hit);
+    return {};
+}
+
 arpg::test::Failure local_attack_speed_multiplies_global_without_scaling_active() noexcept {
     PlayerCombatBuild build{};
     build.values.attack_speed = 15000;
@@ -416,7 +447,7 @@ arpg::test::Failure local_attack_speed_multiplies_global_without_scaling_active(
     return {};
 }
 
-arpg::test::Failure overflowing_weapon_build_is_rejected_atomically() noexcept {
+arpg::test::Failure overflowing_weapon_build_saturates_atomically() noexcept {
     CombatWorld world{one_monster_config()};
     const auto before = world.snapshot().player;
     PlayerCombatBuild invalid{};
@@ -424,13 +455,15 @@ arpg::test::Failure overflowing_weapon_build_is_rejected_atomically() noexcept {
         (std::numeric_limits<std::int64_t>::max)();
     invalid.values.max_health = 500000;
     world.apply_player_build(invalid);
-    ARPG_REQUIRE(same_player_state(before, world.snapshot().player));
+    ARPG_REQUIRE(world.snapshot().player.max_hp == 1050);
+    const auto saturated = world.snapshot().player;
 
     PlayerCombatBuild unrepresentable_speed{};
     unrepresentable_speed.values.attack_speed = 1;
     unrepresentable_speed.values.max_health = 500000;
     world.apply_player_build(unrepresentable_speed);
-    ARPG_REQUIRE(same_player_state(before, world.snapshot().player));
+    ARPG_REQUIRE(!same_player_state(before, saturated));
+    ARPG_REQUIRE(same_player_state(saturated, world.snapshot().player));
     return {};
 }
 
@@ -456,8 +489,10 @@ constexpr arpg::test::TestCase kCases[] = {
     {"overflowing health build consistency", &overflowing_health_build_is_rejected_consistently},
     {"unrepresentable speed build consistency", &unrepresentable_speed_build_is_rejected_consistently},
     {"weapon physical real hit", &weapon_physical_is_applied_by_real_melee_hit},
+    {"saturated physical and elemental real hit",
+        &saturated_physical_and_elemental_real_hit_is_bounded},
     {"local and global attack speed", &local_attack_speed_multiplies_global_without_scaling_active},
-    {"overflowing weapon build", &overflowing_weapon_build_is_rejected_atomically},
+    {"overflowing weapon build", &overflowing_weapon_build_saturates_atomically},
 };
 
 }  // namespace

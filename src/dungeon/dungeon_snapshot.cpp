@@ -1,6 +1,10 @@
 #include "dungeon/dungeon_session.hpp"
 
+#include "dungeon/death_checkpoint.hpp"
+#include "dungeon/room_generation.hpp"
 #include "items/item_catalog.hpp"
+
+#include <limits>
 
 namespace arpg::dungeon {
 namespace {
@@ -31,8 +35,55 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
     result.biases = stable_state_.biases;
     result.phase = phase_;
     result.has_active_room = combat_.has_value();
-    result.exits_open.fill(
-        phase_ == RoomPhase::cleared || phase_ == RoomPhase::awaiting_exit);
+    const checkpoint::DeathCheckpoint* visible_death = nullptr;
+    checkpoint::DeathCheckpoint retry_death{};
+    bool death_saving = false;
+    if (pending_save_.has_value()
+            && pending_save_->next_state.death.lifecycle
+                == checkpoint::DeathLifecycle::pending_continue) {
+        visible_death = &pending_save_->next_state.death;
+        death_saving = true;
+    } else if (pending_save_.has_value()
+            && pending_save_->kind == PendingSaveKind::death_continue
+            && stable_state_.death.lifecycle
+                == checkpoint::DeathLifecycle::pending_continue) {
+        visible_death = &stable_state_.death;
+        death_saving = true;
+    } else if (stable_state_.death.lifecycle
+            == checkpoint::DeathLifecycle::pending_continue) {
+        visible_death = &stable_state_.death;
+    } else if (combat_.has_value() && combat_->death_snapshot().has_value()
+            && stable_state_.death_sequence
+                != (std::numeric_limits<std::uint64_t>::max)()) {
+        const auto target = make_death_retreat_target(stable_state_,
+            stable_state_.death_sequence + 1U, rules_);
+        if (target.fault == DungeonFault::none) {
+            retry_death = make_death_checkpoint(*combat_->death_snapshot(),
+                stable_state_.current_room, target.room);
+            visible_death = &retry_death;
+            death_saving = true;
+        }
+    }
+    if (visible_death != nullptr) {
+        result.death.emplace(DeathSnapshot{
+            *visible_death,
+            death_saving,
+            !death_saving && phase_ == RoomPhase::death_pending,
+            !death_saving && death_continue_failed_,
+        });
+    }
+    bool exits_open = phase_ == RoomPhase::cleared
+        || phase_ == RoomPhase::awaiting_exit;
+    if (!exits_open && phase_ == RoomPhase::committing
+            && pending_save_.has_value()
+            && pending_save_->kind != PendingSaveKind::abyss_clear) {
+        exits_open = pending_save_->resume_phase == RoomPhase::cleared
+            || pending_save_->resume_phase == RoomPhase::awaiting_exit;
+    }
+    result.exits_open.fill(exits_open);
+    result.abyss_doors = visible_death == nullptr
+        ? preview_abyss_doors(stable_state_.current_room)
+        : std::array<bool, 4>{};
     result.wave_index = wave_index_;
     result.wave_count = encounter_plan_.wave_count;
     result.wave_delay_ticks = wave_delay_ticks_;
@@ -43,9 +94,22 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
     result.ecology = stable_state_.current_room.ecology;
     result.has_hole = stable_state_.current_room.has_hole;
     result.is_abyss = stable_state_.current_room.is_abyss;
+    if (result.is_abyss) {
+        result.abyss_danger = stable_state_.abyss.danger;
+        result.abyss_rule = stable_state_.abyss.rule;
+    }
+    result.abyss_pending_rewards = abyss_pending_reward_count();
+    result.abyss_unpicked_rewards = abyss_unpicked_reward_count();
+    result.abyss_exit_confirmation_armed = abyss_exit_confirmation_.armed;
+    result.abyss_exit_confirmation_transition =
+        abyss_exit_confirmation_.transition;
+    result.abyss_exit_confirmation_direction =
+        abyss_exit_confirmation_.direction;
     result.has_pending_transition = pending_save_.has_value()
-        && pending_save_->kind == PendingSaveKind::transition;
+        && (pending_save_->kind == PendingSaveKind::transition
+            || pending_save_->kind == PendingSaveKind::abyss_abandon);
     result.passive_tree = stable_state_.passive_tree;
+    result.skill_loadout = stable_state_.skill_loadout;
     result.passive_save_pending = pending_save_.has_value()
         && pending_save_->kind == PendingSaveKind::passive_tree;
     result.passive_tree_error = last_passive_tree_error_;
@@ -60,22 +124,52 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
         GroundItemSnapshot& packed =
             result.ground_items[result.ground_item_count++];
         packed.ordinal = ground.drop_ordinal;
+        packed.source = ground.source;
+        packed.abyss_reward_ordinal = ground.abyss_reward_ordinal;
         packed.position = ground.position;
         packed.item_id = ground.item.id;
+        packed.base_id = ground.item.base_id;
+        packed.item_level = ground.item.item_level;
         const items::BaseDefinition* base =
             items::base_definition(ground.item.base_id);
         if (base != nullptr) packed.slot = base->slot;
         packed.rarity = ground.item.rarity;
     }
+    for (const GroundMaterial& ground : ground_materials_) {
+        if (!ground.active) continue;
+        GroundMaterialSnapshot& packed =
+            result.ground_materials[result.ground_material_count++];
+        packed.ordinal = ground.ordinal;
+        packed.source = ground.source;
+        packed.position = ground.position;
+        packed.material = ground.material;
+    }
+    result.material_pickup_receipt = material_pickup_receipt_;
+    result.reinforcement_receipt = reinforcement_receipt_;
     if (pending_save_.has_value()) {
         result.pending_save_kind = pending_save_->kind;
+        if (pending_save_->kind == PendingSaveKind::loot_pickup
+                || pending_save_->kind
+                    == PendingSaveKind::abyss_reward_claim) {
+            result.pending_pickup_ordinal = pending_save_->pickup_ordinal;
+        }
+        if (pending_save_->kind == PendingSaveKind::material_pickup) {
+            result.pending_material_pickup_ordinal =
+                pending_save_->pickup_ordinal;
+        }
     }
     if (combat_.has_value()) {
         result.combat.emplace(combat_->snapshot());
     }
     result.encounter.total_budget = encounter_plan_.total_budget;
-    result.encounter.plan_valid = encounter_plan_legal(
-        encounter_plan_, rules_.encounter);
+    if (stable_state_.current_room.is_abyss) {
+        const auto legality = abyss_encounter_legality_config(rules_.encounter);
+        result.encounter.plan_valid = legality.has_value()
+            && encounter_plan_legal(encounter_plan_, *legality);
+    } else {
+        result.encounter.plan_valid = encounter_plan_legal(
+            encounter_plan_, rules_.encounter);
+    }
     if (wave_index_ < encounter_plan_.wave_count) {
         const auto& wave = encounter_plan_.waves[wave_index_];
         result.encounter.current_wave_budget = wave.spent_budget;

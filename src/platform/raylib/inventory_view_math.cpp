@@ -1,9 +1,11 @@
 #include "inventory_view_math.hpp"
 
 #include "items/item_catalog.hpp"
+#include "skills/active_skill_catalog.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 namespace arpg::platform {
 namespace {
@@ -14,6 +16,14 @@ constexpr float kGap = 10.0F;
 constexpr float kEquipmentFraction = 0.27F;
 constexpr float kGridFraction = 0.42F;
 constexpr double kDoubleClickSeconds = 0.30;
+
+constexpr float kSkillMainWidth = 132.0F;
+constexpr float kSkillMainHeight = 72.0F;
+constexpr float kSkillMainGap = 12.0F;
+constexpr float kSkillSupportSize = 54.0F;
+constexpr float kSkillSupportGap = 12.0F;
+constexpr float kPageButtonWidth = 136.0F;
+constexpr float kPageButtonHeight = 30.0F;
 
 bool contains(Rectangle rectangle, Vector2 point) noexcept {
     return point.x >= rectangle.x && point.x <= rectangle.x + rectangle.width
@@ -33,6 +43,25 @@ bool same_filter(InventoryFilter left, InventoryFilter right) noexcept {
 bool same_recipe(const RecipeSelection& left,
     const RecipeSelection& right) noexcept {
     return left.count == right.count && left.ids == right.ids;
+}
+
+[[nodiscard]] bool skill_equipped(
+    const skills::SkillLoadoutState& state,
+    skills::ActiveSkillId id) noexcept {
+    for (const skills::ActiveSkillSlot& slot : state.slots) {
+        if (slot.active == id) return true;
+    }
+    return false;
+}
+
+void copy_skill_name(std::array<char, 48>& output,
+    skills::ActiveSkillId id) noexcept {
+    const skills::ActiveSkillDefinition* const definition =
+        skills::active_skill_definition(id);
+    if (definition == nullptr) return;
+    static_cast<void>(std::snprintf(output.data(), output.size(), "%s",
+        definition->display_name));
+    output.back() = '\0';
 }
 
 bool matches_inventory_filter(const items::ItemInstance& item,
@@ -112,6 +141,170 @@ InventoryLayout inventory_layout(int width, int height) noexcept {
         grid_width, content_height};
     return {equipment, grid,
         {grid.x + grid.width + kGap, kTop, detail_width, content_height}};
+}
+
+ActiveSkillLoadoutLayout active_skill_loadout_layout(
+    int width, int height) noexcept {
+    if (width <= 0 || height <= 0) return {};
+    const float screen_width = static_cast<float>(width);
+    const float screen_height = static_cast<float>(height);
+    ActiveSkillLoadoutLayout layout{};
+    layout.panel = {40.0F, 70.0F, std::max(0.0F, screen_width - 80.0F),
+        std::max(0.0F, screen_height - 100.0F)};
+    layout.equipment_page_button = {
+        screen_width * 0.5F - kPageButtonWidth - 6.0F,
+        18.0F, kPageButtonWidth, kPageButtonHeight,
+    };
+    layout.skill_stones_page_button = {
+        screen_width * 0.5F + 6.0F,
+        18.0F, kPageButtonWidth, kPageButtonHeight,
+    };
+
+    constexpr float kMainWidth =
+        static_cast<float>(skills::kActiveSkillSlotCount) * kSkillMainWidth
+        + static_cast<float>(skills::kActiveSkillSlotCount - 1U)
+            * kSkillMainGap;
+    const float main_x = (screen_width - kMainWidth) * 0.5F;
+    const float main_y = layout.panel.y + 62.0F;
+    for (std::size_t index = 0U; index < layout.main_slots.size(); ++index) {
+        layout.main_slots[index] = {
+            main_x + static_cast<float>(index)
+                * (kSkillMainWidth + kSkillMainGap),
+            main_y, kSkillMainWidth, kSkillMainHeight,
+        };
+    }
+
+    constexpr float kSupportWidth =
+        static_cast<float>(skills::kSupportSlotsPerActive) * kSkillSupportSize
+        + static_cast<float>(skills::kSupportSlotsPerActive - 1U)
+            * kSkillSupportGap;
+    const float support_x = (screen_width - kSupportWidth) * 0.5F;
+    const float support_y = main_y + kSkillMainHeight + 78.0F;
+    for (std::size_t index = 0U; index < layout.support_slots.size(); ++index) {
+        layout.support_slots[index] = {
+            support_x + static_cast<float>(index)
+                * (kSkillSupportSize + kSkillSupportGap),
+            support_y, kSkillSupportSize, kSkillSupportSize,
+        };
+    }
+
+    constexpr float kInventoryWidth = 180.0F;
+    constexpr float kInventoryHeight = 62.0F;
+    constexpr float kInventoryGap = 18.0F;
+    const float inventory_total =
+        static_cast<float>(skills::kActiveSkillCount) * kInventoryWidth
+        + static_cast<float>(skills::kActiveSkillCount - 1U) * kInventoryGap;
+    const float inventory_x = (screen_width - inventory_total) * 0.5F;
+    const float inventory_y = support_y + kSkillSupportSize + 82.0F;
+    for (std::size_t index = 0U; index < layout.inventory_slots.size(); ++index) {
+        layout.inventory_slots[index] = {
+            inventory_x + static_cast<float>(index)
+                * (kInventoryWidth + kInventoryGap),
+            inventory_y, kInventoryWidth, kInventoryHeight,
+        };
+    }
+    layout.remove_button = {
+        (screen_width - 164.0F) * 0.5F,
+        std::min(inventory_y + kInventoryHeight + 42.0F,
+            screen_height - 62.0F),
+        164.0F, 38.0F,
+    };
+    return layout;
+}
+
+ActiveSkillLoadoutView make_active_skill_loadout_view(
+    const skills::SkillLoadoutState& state,
+    const ActiveSkillLoadoutSelection& selection,
+    bool save_pending) noexcept {
+    ActiveSkillLoadoutView view{};
+    view.save_pending = save_pending;
+    for (std::size_t index = 0U; index < view.slots.size(); ++index) {
+        ActiveSkillLoadoutSlotView& output = view.slots[index];
+        const skills::ActiveSkillSlot& input = state.slots[index];
+        output.slot_number = static_cast<std::uint8_t>(index + 1U);
+        output.id = input.active;
+        output.empty = output.id == skills::ActiveSkillId::none;
+        output.selected = selection.selected_slot == index;
+        copy_skill_name(output.name, output.id);
+        for (std::size_t support = 0U;
+             support < output.support_empty.size(); ++support) {
+            output.support_empty[support] =
+                input.supports[support] == skills::SupportSkillId::none;
+        }
+    }
+    for (std::size_t raw_id = 0U; raw_id < skills::kActiveSkillCount; ++raw_id) {
+        const auto id = static_cast<skills::ActiveSkillId>(raw_id);
+        const std::uint64_t bit = 1ULL << raw_id;
+        if ((state.owned_active_bits & bit) == 0U
+                || skill_equipped(state, id)) {
+            continue;
+        }
+        ActiveSkillInventoryStoneView& stone =
+            view.inventory[view.inventory_count++];
+        stone.id = id;
+        stone.selected = selection.selected_inventory == id;
+        copy_skill_name(stone.name, id);
+    }
+    return view;
+}
+
+std::optional<ActiveSkillLoadoutCommand>
+active_skill_loadout_command_after_click(
+    const skills::SkillLoadoutState& state,
+    const ActiveSkillLoadoutLayout& layout,
+    Vector2 point,
+    ActiveSkillLoadoutSelection& selection,
+    bool save_pending) noexcept {
+    if (save_pending) return std::nullopt;
+    const ActiveSkillLoadoutView view = make_active_skill_loadout_view(
+        state, selection, false);
+    for (std::size_t index = 0U; index < layout.main_slots.size(); ++index) {
+        if (!contains(layout.main_slots[index], point)) continue;
+        if (selection.selected_inventory != skills::ActiveSkillId::none
+                && state.slots[index].active == skills::ActiveSkillId::none) {
+            return ActiveSkillLoadoutCommand{
+                ActiveSkillLoadoutActionKind::equip,
+                static_cast<std::uint8_t>(index), 0xFFU,
+                selection.selected_inventory};
+        }
+        if (selection.selected_slot < state.slots.size()
+                && selection.selected_slot != index
+                && state.slots[selection.selected_slot].active
+                    != skills::ActiveSkillId::none
+                && state.slots[index].active != skills::ActiveSkillId::none) {
+            return ActiveSkillLoadoutCommand{
+                ActiveSkillLoadoutActionKind::swap,
+                static_cast<std::uint8_t>(selection.selected_slot),
+                static_cast<std::uint8_t>(index),
+                skills::ActiveSkillId::none};
+        }
+        selection.selected_slot = index;
+        selection.selected_inventory = skills::ActiveSkillId::none;
+        return ActiveSkillLoadoutCommand{
+            ActiveSkillLoadoutActionKind::select,
+            static_cast<std::uint8_t>(index), 0xFFU,
+            state.slots[index].active};
+    }
+
+    if (contains(layout.remove_button, point)
+            && selection.selected_slot < state.slots.size()
+            && state.slots[selection.selected_slot].active
+                != skills::ActiveSkillId::none) {
+        return ActiveSkillLoadoutCommand{
+            ActiveSkillLoadoutActionKind::remove,
+            static_cast<std::uint8_t>(selection.selected_slot), 0xFFU,
+            state.slots[selection.selected_slot].active};
+    }
+
+    for (std::size_t index = 0U; index < view.inventory_count; ++index) {
+        if (!contains(layout.inventory_slots[index], point)) continue;
+        selection.selected_slot = kNoActiveSkillLoadoutSelection;
+        selection.selected_inventory = view.inventory[index].id;
+        return ActiveSkillLoadoutCommand{
+            ActiveSkillLoadoutActionKind::select, 0xFFU, 0xFFU,
+            view.inventory[index].id};
+    }
+    return std::nullopt;
 }
 
 float clamp_inventory_scroll_rows(std::size_t filtered_count, int columns,
@@ -311,15 +504,12 @@ void refresh_inventory_view_cache(InventoryViewCache& cache,
         || cache.resolved_recipe.ids[1] == cache.resolved_recipe.ids[2]) return;
     const items::ItemInstance& first =
         state.items[cache.recipe_indices[0]];
-    const items::BaseDefinition* const first_base =
-        items::base_definition(first.base_id);
-    if (first_base == nullptr) return;
+    if (items::base_definition(first.base_id) == nullptr) return;
     for (std::size_t selected = 1U; selected < 3U; ++selected) {
         const items::ItemInstance& item =
             state.items[cache.recipe_indices[selected]];
-        const items::BaseDefinition* const base =
-            items::base_definition(item.base_id);
-        if (base == nullptr || base->slot != first_base->slot
+        if (items::base_definition(item.base_id) == nullptr
+            || item.base_id != first.base_id
             || item.rarity != first.rarity) return;
     }
     cache.recipe_ready = true;
@@ -352,6 +542,8 @@ ItemAttributeLabel item_attribute_label(items::ItemEffectKind effect,
         name = "Attack speed";
     } else if (effect == items::ItemEffectKind::all_element_damage_reduction) {
         name = "All element DR";
+    } else if (effect == items::ItemEffectKind::tri_element_damage_reduction) {
+        name = "Fire/Water/Lightning DR";
     } else if (effect
             == items::ItemEffectKind::variant_element_damage_reduction_cap) {
         switch (variant) {
@@ -370,6 +562,7 @@ ItemAttributeLabel item_attribute_label(items::ItemEffectKind effect,
         || operation != modifiers::ModifierOperation::flat
         || percent_stat(stat)
         || effect == items::ItemEffectKind::all_element_damage_reduction
+        || effect == items::ItemEffectKind::tri_element_damage_reduction
         || effect
             == items::ItemEffectKind::variant_element_damage_reduction_cap;
     const char* qualifier = "";

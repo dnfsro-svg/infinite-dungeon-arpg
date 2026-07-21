@@ -5,9 +5,11 @@
 #include <cstdint>
 #include <optional>
 
+#include "abyss/abyss_types.hpp"
 #include "combat/monster_affix_types.hpp"
 #include "modifiers/damage_types.hpp"
 #include "modifiers/player_modifier_values.hpp"
+#include "skills/active_skill_types.hpp"
 
 namespace arpg::test {
 struct CombatWorldTestAccess;
@@ -40,6 +42,32 @@ enum class AttackPhase : std::uint8_t {
     active,
     recovery,
     finished,
+};
+
+enum class SkillCastResult : std::uint8_t {
+    accepted,
+    none,
+    invalid_skill,
+    cooling_down,
+    player_unavailable,
+    basic_attack_active,
+    skill_active,
+};
+
+enum class ActiveSkillPhase : std::uint8_t {
+    none,
+    startup,
+    strikes,
+    finisher,
+    recovery,
+};
+
+struct ActiveSkillSnapshot final {
+    skills::ActiveSkillId id{skills::ActiveSkillId::none};
+    ActiveSkillPhase phase{ActiveSkillPhase::none};
+    std::uint16_t elapsed_ticks{};
+    Vec3 locked_center{};
+    std::uint8_t strike_index{};
 };
 
 enum class FeedbackLevel : std::uint8_t {
@@ -75,22 +103,22 @@ enum class DamageDelivery : std::uint8_t {
     ground_or_environment,
 };
 
-struct PlayerStatusRuntime final {
-    std::int32_t slow_bp{};
-    std::uint16_t slow_ticks{};
-    int corrosion_damage_per_second{};
-    std::uint16_t corrosion_ticks{};
-    std::uint8_t corrosion_tick_phase{};
-};
-
 struct PlayerCombatBuild final {
     modifiers::PlayerModifierValues values{};
     std::int64_t weapon_physical{};
     std::int32_t local_attack_speed_bp{};
 };
 
+struct ResolvedPlayerDamage final {
+    std::array<std::uint64_t, modifiers::kDamageTypeCount> by_type{};
+    std::uint64_t total{};
+};
+
 [[nodiscard]] std::optional<DamagePacket> build_player_hit_packet(
     int base_physical, const PlayerCombatBuild& build) noexcept;
+[[nodiscard]] std::optional<ResolvedPlayerDamage>
+resolve_player_damage_packet(
+    DamagePacket packet, const PlayerCombatBuild& build) noexcept;
 [[nodiscard]] std::optional<int> resolve_player_damage(
     DamagePacket packet, const PlayerCombatBuild& build) noexcept;
 [[nodiscard]] std::uint16_t scaled_phase_ticks(
@@ -113,6 +141,55 @@ enum class MonsterId : std::uint8_t {
     chaos_chaser,
     chaos_hazard,
     count,
+};
+
+enum class PlayerDamageSourceKind : std::uint8_t {
+    monster_attack,
+    projectile,
+    ground_hazard,
+    monster_affix,
+    abyss_environment,
+    unknown,
+};
+
+struct PlayerDamageSource final {
+    PlayerDamageSourceKind kind{PlayerDamageSourceKind::unknown};
+    MonsterId monster{MonsterId::count};
+    std::uint16_t detail_id{};
+};
+
+struct PlayerDefenseSnapshot final {
+    int hp{};
+    int max_hp{};
+    int barrier{};
+    int max_barrier{};
+    std::int64_t armor{};
+    std::int64_t evasion{};
+    std::int32_t armor_reduction_bp{};
+    std::int32_t evasion_rate_bp{};
+    std::array<std::int32_t, modifiers::kElementCount> damage_reduction{};
+    std::array<std::int32_t, modifiers::kElementCount> damage_reduction_cap{};
+};
+
+struct CombatDeathSnapshot final {
+    std::uint64_t tick{};
+    PlayerDamageSource source{};
+    modifiers::DamageType primary_type{modifiers::DamageType::physical};
+    std::uint64_t raw_damage{};
+    std::uint64_t barrier_loss{};
+    std::uint64_t health_loss{};
+    std::uint64_t final_damage{};
+    std::array<std::uint64_t, modifiers::kDamageTypeCount> recent_damage{};
+    PlayerDefenseSnapshot defense{};
+};
+
+struct PlayerStatusRuntime final {
+    std::int32_t slow_bp{};
+    std::uint16_t slow_ticks{};
+    int corrosion_damage_per_second{};
+    std::uint16_t corrosion_ticks{};
+    std::uint8_t corrosion_tick_phase{};
+    PlayerDamageSource corrosion_source{};
 };
 
 enum class MonsterTag : std::uint16_t {
@@ -177,6 +254,14 @@ enum class HazardKind : std::uint8_t {
     burning,
     chain_lightning,
     death_blast,
+    thunderstorm,
+    hunting_flame,
+    chaos_expansion,
+};
+
+enum class HazardSource : std::uint8_t {
+    monster,
+    abyss_environment,
 };
 
 struct MonsterHandle final {
@@ -206,6 +291,7 @@ struct HazardRuntime final {
     bool active{};
     std::uint16_t generation{};
     MonsterHandle owner{};
+    HazardSource source{HazardSource::monster};
     HazardKind kind{HazardKind::native};
     Vec3 center{};
     float radius{};
@@ -217,6 +303,19 @@ struct HazardRuntime final {
     bool player_latched{};
     bool persists_after_owner_death{};
     DamagePacket damage{};
+    std::uint16_t environment_damage_bp{};
+    modifiers::DamageType environment_damage_type{
+        modifiers::DamageType::physical};
+};
+
+struct AbyssEnvironmentRuntime final {
+    abyss::AbyssRuleId rule{abyss::AbyssRuleId::none};
+    std::uint16_t cycle_tick{};
+    std::uint16_t stage_tick{};
+    Vec3 locked_center{};
+    std::uint8_t expansion_stage{};
+    bool warning{};
+    bool active{};
 };
 
 struct EncounterWave final {
@@ -237,6 +336,7 @@ enum class CombatEventKind : std::uint8_t {
     player_hit,
     player_hurt_started,
     player_health_reset,
+    player_defeated,
     affix_blink_warning,
     affix_chain_warning,
     affix_death_warning,
@@ -253,6 +353,9 @@ struct CombatEvent final {
     CombatEventKind kind{};
     std::uint64_t tick{};
     AttackId attack{AttackId::none};
+    skills::ActiveSkillId skill{skills::ActiveSkillId::none};
+    std::uint8_t strike_index{};
+    bool finisher{};
     std::uint8_t target_index{0xFF};
     std::uint8_t hit_count{};
     FeedbackLevel feedback{};
@@ -352,6 +455,7 @@ struct CombatEncounterConfig final {
     bool reset_player_health{true};
     PlayerCombatBuild player_build{};
     std::uint64_t evasion_seed{};
+    abyss::AbyssCombatConfig abyss{};
 };
 
 struct PlayerSnapshot final {
@@ -431,6 +535,7 @@ struct HazardSnapshot final {
     bool active{};
     std::uint16_t generation{};
     MonsterHandle owner{};
+    HazardSource source{HazardSource::monster};
     HazardKind kind{HazardKind::native};
     Vec3 center{};
     float radius{};
@@ -441,6 +546,9 @@ struct HazardSnapshot final {
     bool player_latched{};
     bool persists_after_owner_death{};
     DamagePacket damage{};
+    std::uint16_t environment_damage_bp{};
+    modifiers::DamageType environment_damage_type{
+        modifiers::DamageType::physical};
 };
 
 // Temporary presentation alias for pre-Task 3 dungeon tests. Task 8 removes
@@ -465,6 +573,8 @@ struct CombatDiagnostics final {
 struct CombatSnapshot final {
     std::uint64_t tick{};
     PlayerSnapshot player{};
+    ActiveSkillSnapshot active_skill{};
+    std::array<std::uint16_t, skills::kActiveSkillCount> skill_cooldowns{};
     std::array<MonsterSnapshot, kMonsterCapacity> monsters{};
     std::size_t monster_count{};
     std::array<ProjectileSnapshot, kProjectileCapacity> projectiles{};

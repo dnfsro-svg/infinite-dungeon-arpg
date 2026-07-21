@@ -125,7 +125,7 @@ arpg::test::Failure invalid_resolution_is_distinct_from_legal_zero() noexcept {
     invalid.weapon_physical = -1;
     ARPG_REQUIRE(!resolve_player_damage(DamagePacket{1}, invalid).has_value());
     invalid = PlayerCombatBuild{};
-    invalid.local_attack_speed_bp = -1;
+    invalid.local_attack_speed_bp = -10001;
     ARPG_REQUIRE(!resolve_player_damage(DamagePacket{1}, invalid).has_value());
 
     PlayerCombatBuild overflowing{};
@@ -138,10 +138,11 @@ arpg::test::Failure invalid_resolution_is_distinct_from_legal_zero() noexcept {
 }
 
 arpg::test::Failure invalid_direct_packet_does_not_advance_evasion_rng() noexcept {
-    PlayerCombatBuild build{};
-    build.values.evasion = 50;
-    CombatWorld with_invalid{defense_config(build)};
-    CombatWorld control{defense_config(build)};
+    PlayerCombatBuild overflowing{};
+    overflowing.values.damage_taken =
+        (std::numeric_limits<std::int64_t>::max)();
+    CombatWorld with_invalid{defense_config(overflowing)};
+    CombatWorld control{defense_config(overflowing)};
     arpg::test::drain_events(with_invalid);
     arpg::test::drain_events(control);
 
@@ -155,6 +156,11 @@ arpg::test::Failure invalid_direct_packet_does_not_advance_evasion_rng() noexcep
     ARPG_REQUIRE(after_invalid.tick == before.tick);
     ARPG_REQUIRE(same_player_snapshot(after_invalid.player, before.player));
     ARPG_REQUIRE(!with_invalid.try_pop_event().has_value());
+
+    PlayerCombatBuild build{};
+    build.values.evasion = 50;
+    with_invalid.apply_player_build(build);
+    control.apply_player_build(build);
 
     arpg::test::CombatWorldTestAccess::apply_damage(
         with_invalid, DamagePacket{10}, DamageDelivery::direct,

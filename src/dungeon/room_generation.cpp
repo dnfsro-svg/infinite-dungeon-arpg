@@ -1,5 +1,6 @@
 #include "dungeon/room_generation.hpp"
 
+#include "abyss/abyss_rules.hpp"
 #include "core/deterministic_rng.hpp"
 #include "dungeon/room_combat_template.hpp"
 
@@ -22,6 +23,8 @@ constexpr std::uint64_t kHoleDomain =
     0x484F4C455F563031ULL;
 constexpr std::uint64_t kAbyssDomain =
     0x41425953535F3031ULL;
+constexpr std::uint64_t kDeathRetreatDomain =
+    0x44454154485F5254ULL;
 
 [[nodiscard]] std::uint64_t first(
     std::uint64_t seed,
@@ -69,6 +72,28 @@ std::uint64_t derive_descent_room_seed(
     return first(
         first(first(current_seed, kDescentRoomDomain), next_serial),
         static_cast<std::uint64_t>(ExitDirection::none));
+}
+
+std::array<bool, 4> preview_abyss_doors(
+    const checkpoint::RoomDescriptor& current) noexcept {
+    std::array<bool, 4> preview{};
+    if (current.index == (std::numeric_limits<std::uint64_t>::max)()) {
+        return preview;
+    }
+
+    constexpr std::array<checkpoint::ExitDirection, 4> directions{{
+        checkpoint::ExitDirection::up,
+        checkpoint::ExitDirection::down,
+        checkpoint::ExitDirection::left,
+        checkpoint::ExitDirection::right,
+    }};
+    const std::uint64_t next_index = current.index + 1U;
+    for (std::size_t index = 0U; index < directions.size(); ++index) {
+        const std::uint64_t target_seed = derive_door_room_seed(
+            current.seed, next_index, directions[index]);
+        preview[index] = abyss::is_abyss_roll(target_seed);
+    }
+    return preview;
 }
 
 RoomGenerationResult generate_room_descriptor(
@@ -120,13 +145,63 @@ RoomGenerationResult generate_room_descriptor(
     room.entry = entry;
     room.ecology = ecology;
     room.has_hole = hole_value.value() < rules.hole_threshold;
-    room.is_abyss = abyss_value.value() < rules.abyss_threshold;
+    room.is_abyss = false;
 
     RoomRandomSamples samples;
     samples.ecology = ecology_value.value();
     samples.hole = static_cast<std::uint32_t>(hole_value.value());
     samples.abyss = static_cast<std::uint32_t>(abyss_value.value());
     return {DungeonFault::none, room, samples};
+}
+
+DeathRetreatTargetResult make_death_retreat_target(
+    const checkpoint::DungeonRunState& current,
+    std::uint64_t next_death_sequence,
+    const DungeonRules& rules) noexcept {
+    return make_death_retreat_target(
+        current.current_room, current.commit_generation,
+        current.death_sequence, next_death_sequence, rules);
+}
+
+DeathRetreatTargetResult make_death_retreat_target(
+    const checkpoint::RoomDescriptor& current_room,
+    std::uint64_t commit_generation,
+    std::uint64_t death_sequence,
+    std::uint64_t next_death_sequence,
+    const DungeonRules& rules) noexcept {
+    const auto maximum = (std::numeric_limits<std::uint64_t>::max)();
+    if (current_room.index == maximum) {
+        return {DungeonFault::room_index_overflow, {}};
+    }
+    if (commit_generation == maximum) {
+        return {DungeonFault::commit_generation_overflow, {}};
+    }
+    if (death_sequence == maximum) {
+        return {DungeonFault::death_sequence_overflow, {}};
+    }
+    if (next_death_sequence != death_sequence + 1U) {
+        return {DungeonFault::death_sequence_mismatch, {}};
+    }
+
+    const std::uint64_t target_depth = current_room.depth > 1U
+        ? current_room.depth - 1U : 1U;
+    std::uint64_t seed = first(
+        current_room.seed, kDeathRetreatDomain);
+    seed = first(seed, commit_generation);
+    seed = first(seed, next_death_sequence);
+    seed = first(seed, target_depth);
+    if (seed == 0U) seed = 0xD34D5EEDULL;
+
+    const auto generated = generate_room_descriptor(
+        seed, current_room.index + 1U, target_depth, 0U,
+        checkpoint::EntrySide::initial,
+        std::array<std::uint32_t, 4>{}, rules);
+    if (generated.fault != DungeonFault::none) {
+        return {generated.fault, {}};
+    }
+    checkpoint::RoomDescriptor room = generated.room;
+    room.is_abyss = false;
+    return {DungeonFault::none, room};
 }
 
 std::uint64_t derive_next_room_seed(

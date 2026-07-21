@@ -51,6 +51,14 @@ struct MonsterVisual final {
     MonsterShapeId shape{MonsterShapeId::chaser};
     const char* role_label{"CHASER"};
     MonsterWarningMode warning_mode{MonsterWarningMode::none};
+    bool priority_warning{};
+};
+
+struct MonsterLabelTextStyle final {
+    int affix_font_size{11};
+    int role_font_size{14};
+    int phase_font_size{12};
+    int outline_pixels{2};
 };
 
 struct AffixBadge final {
@@ -79,6 +87,8 @@ void sort_actor_draw_items(
     combat::MonsterId id,
     combat::MonsterAiPhase phase,
     dungeon::DungeonElement ecology) noexcept;
+[[nodiscard]] MonsterLabelTextStyle monster_label_text_style(
+    float projection_scale) noexcept;
 [[nodiscard]] AffixBadge monster_affix_badge(
     combat::MonsterAffixInstance affix) noexcept;
 [[nodiscard]] AffixOutline monster_affix_outline(
@@ -95,6 +105,8 @@ void sort_actor_draw_items(
 [[nodiscard]] float player_hp_ratio(
     const combat::PlayerSnapshot& player) noexcept;
 [[nodiscard]] HazardVisualMode hazard_visual_mode(
+    const combat::HazardSnapshot& hazard) noexcept;
+[[nodiscard]] bool uses_generic_hazard_pass(
     const combat::HazardSnapshot& hazard) noexcept;
 [[nodiscard]] Rgba8 hazard_color(combat::HazardKind kind) noexcept;
 [[nodiscard]] ScreenProjection project_projectile_position(

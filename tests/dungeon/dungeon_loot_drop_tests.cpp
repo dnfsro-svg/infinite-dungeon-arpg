@@ -92,14 +92,18 @@ bool same_item(
             || left.item_level != right.item_level
             || left.required_level != right.required_level
             || left.affix_count != right.affix_count
-            || left.reserved != right.reserved) {
+            || left.reserved != right.reserved
+            || left.reinforcement != right.reinforcement
+            || left.extension_reserved != right.extension_reserved) {
         return false;
     }
     for (std::size_t index = 0U; index < left.affixes.size(); ++index) {
         if (left.affixes[index].affix_id != right.affixes[index].affix_id
                 || left.affixes[index].tier != right.affixes[index].tier
                 || left.affixes[index].variant
-                    != right.affixes[index].variant) {
+                    != right.affixes[index].variant
+                || left.affixes[index].value_roll_bp
+                    != right.affixes[index].value_roll_bp) {
             return false;
         }
     }
@@ -161,6 +165,19 @@ arpg::items::ItemInstance normal_item(
     return item.value_or(arpg::items::ItemInstance{});
 }
 
+arpg::items::ItemInstance item_with_rarity(
+    std::uint64_t id,
+    arpg::items::ItemRarity rarity) noexcept {
+    const auto item = arpg::items::generate_item({
+        id ^ 0xA5A5A5A5ULL,
+        arpg::items::ItemSlot::helmet,
+        20U,
+        id,
+        rarity,
+    });
+    return item.value_or(arpg::items::ItemInstance{});
+}
+
 arpg::test::Failure two_wave_trace_rolls_each_ordinal_once() noexcept {
     const DungeonRules rules;
     const DungeonRunState state = trace_state();
@@ -201,6 +218,10 @@ arpg::test::Failure two_wave_trace_rolls_each_ordinal_once() noexcept {
         ARPG_REQUIRE(ground.position.y == -static_cast<float>(ordinal));
         ARPG_REQUIRE(ground.position.z == 0.0F);
         ARPG_REQUIRE(ground.item_id == expected->id);
+        ARPG_REQUIRE(ground.source
+            == arpg::dungeon::GroundItemSource::monster_drop);
+        ARPG_REQUIRE(ground.base_id == expected->base_id);
+        ARPG_REQUIRE(ground.item_level == expected->item_level);
         const auto* base = arpg::items::base_definition(expected->base_id);
         ARPG_REQUIRE(base != nullptr);
         ARPG_REQUIRE(ground.slot == base->slot);
@@ -209,6 +230,8 @@ arpg::test::Failure two_wave_trace_rolls_each_ordinal_once() noexcept {
     for (; packed < snapshot.ground_items.size(); ++packed) {
         const auto& ground = snapshot.ground_items[packed];
         ARPG_REQUIRE(ground.ordinal == 0U);
+        ARPG_REQUIRE(ground.base_id == 0U);
+        ARPG_REQUIRE(ground.item_level == 0U);
         ARPG_REQUIRE(ground.item_id == 0U);
         ARPG_REQUIRE(ground.position.x == 0.0F);
         ARPG_REQUIRE(ground.position.y == 0.0F);
@@ -232,6 +255,7 @@ arpg::test::Failure nearby_tick_prepares_atomic_pickup() noexcept {
     DungeonSession session{rules, state};
     const auto before = session.snapshot();
     ARPG_REQUIRE(before.phase == arpg::dungeon::RoomPhase::locked);
+    ARPG_REQUIRE(!before.pending_pickup_ordinal.has_value());
     ARPG_REQUIRE(before.combat.has_value());
     const auto player = before.combat->player.position;
     ARPG_REQUIRE(arpg::test::relay_defeated(
@@ -249,6 +273,7 @@ arpg::test::Failure nearby_tick_prepares_atomic_pickup() noexcept {
         == arpg::dungeon::RoomPhase::committing);
     ARPG_REQUIRE(pending_snapshot.pending_save_kind
         == arpg::dungeon::PendingSaveKind::loot_pickup);
+    ARPG_REQUIRE(pending_snapshot.pending_pickup_ordinal == ordinal);
     ARPG_REQUIRE(pending_snapshot.ground_item_count == 1U);
     ARPG_REQUIRE(session.item_state().items.empty());
     const auto pending = session.pending_save();
@@ -267,21 +292,27 @@ arpg::test::Failure nearby_tick_prepares_atomic_pickup() noexcept {
 
 arpg::test::Failure auto_pickup_precedes_same_tick_exit_request() noexcept {
     const DungeonRunState state = trace_state();
-    const std::uint16_t ordinal = first_drop_ordinal(state);
     DungeonSession session{DungeonRules{}, state};
     const arpg::combat::Vec3 doorway{
         arpg::combat::room_bounds::max_x, 0.0F, 0.0F};
     arpg::test::set_player_position(session, doorway);
     arpg::test::set_phase(session, arpg::dungeon::RoomPhase::awaiting_exit);
-    ARPG_REQUIRE(inject_drop(session, ordinal, doorway));
+    constexpr std::uint16_t kNormalOrdinal = 3U;
+    constexpr std::uint16_t kMagicOrdinal = 7U;
+    arpg::test::install_ground_item(session, kNormalOrdinal,
+        item_with_rarity(0xA001U, arpg::items::ItemRarity::normal), doorway);
+    arpg::test::install_ground_item(session, kMagicOrdinal,
+        item_with_rarity(0xA002U, arpg::items::ItemRarity::magic), doorway);
 
-    session.tick({1, 0});
+    session.tick({1, 0}, {arpg::items::ItemRarity::magic});
 
     ARPG_REQUIRE(session.snapshot().phase
         == arpg::dungeon::RoomPhase::committing);
     ARPG_REQUIRE(session.pending_save().has_value());
     ARPG_REQUIRE(session.pending_save()->kind
         == arpg::dungeon::PendingSaveKind::loot_pickup);
+    ARPG_REQUIRE(session.pending_save()->pickup_ordinal == kMagicOrdinal);
+    ARPG_REQUIRE(arpg::test::ground_items(session)[kNormalOrdinal].active);
     ARPG_REQUIRE(!session.pending_transition().has_value());
     return {};
 }
@@ -320,6 +351,81 @@ arpg::test::Failure nearby_pickup_chooses_lowest_ordinal_only() noexcept {
     ARPG_REQUIRE(session.pending_save().has_value());
     ARPG_REQUIRE(session.pending_save()->pickup_ordinal == first);
     ARPG_REQUIRE(session.snapshot().ground_item_count == 2U);
+
+    constexpr std::uint16_t kNormalOrdinal = 4U;
+    constexpr std::uint16_t kMagicOrdinal = 5U;
+    constexpr std::uint16_t kRareOrdinal = 6U;
+    const auto normal = item_with_rarity(
+        0xB001U, arpg::items::ItemRarity::normal);
+    const auto magic = item_with_rarity(
+        0xB002U, arpg::items::ItemRarity::magic);
+    const auto rare = item_with_rarity(
+        0xB003U, arpg::items::ItemRarity::rare);
+
+    DungeonSession magic_or_better{DungeonRules{}, state};
+    arpg::test::install_ground_item(
+        magic_or_better, kNormalOrdinal, normal, player);
+    arpg::test::install_ground_item(
+        magic_or_better, kMagicOrdinal, magic, player);
+    arpg::test::install_ground_item(
+        magic_or_better, kRareOrdinal, rare, player);
+    ARPG_REQUIRE(arpg::dungeon::auto_pickup_eligible(
+        arpg::test::ground_items(magic_or_better)[kNormalOrdinal], {}));
+    ARPG_REQUIRE(!arpg::dungeon::auto_pickup_eligible(
+        arpg::test::ground_items(magic_or_better)[kNormalOrdinal],
+        {arpg::items::ItemRarity::magic}));
+    magic_or_better.request_nearby_pickups(
+        player, {arpg::items::ItemRarity::magic});
+    ARPG_REQUIRE(arpg::test::ground_items(
+        magic_or_better)[kNormalOrdinal].active);
+    ARPG_REQUIRE(magic_or_better.pending_save_view() != nullptr);
+    ARPG_REQUIRE(magic_or_better.pending_save_view()->pickup_ordinal
+        == kMagicOrdinal);
+    ARPG_REQUIRE(resolve_committed(magic_or_better));
+    ARPG_REQUIRE(!arpg::test::ground_items(
+        magic_or_better)[kMagicOrdinal].active);
+    magic_or_better.request_nearby_pickups(player);
+    ARPG_REQUIRE(magic_or_better.pending_save_view() != nullptr);
+    ARPG_REQUIRE(magic_or_better.pending_save_view()->pickup_ordinal
+        == kNormalOrdinal);
+    ARPG_REQUIRE(resolve_committed(magic_or_better));
+    ARPG_REQUIRE(!arpg::test::ground_items(
+        magic_or_better)[kNormalOrdinal].active);
+
+    DungeonSession rare_only{DungeonRules{}, state};
+    arpg::test::install_ground_item(rare_only, kNormalOrdinal, normal, player);
+    arpg::test::install_ground_item(rare_only, kMagicOrdinal, magic, player);
+    arpg::test::install_ground_item(rare_only, kRareOrdinal, rare, player);
+    rare_only.request_nearby_pickups(
+        player, {arpg::items::ItemRarity::rare});
+    ARPG_REQUIRE(rare_only.pending_save_view() != nullptr);
+    ARPG_REQUIRE(rare_only.pending_save_view()->pickup_ordinal
+        == kRareOrdinal);
+    ARPG_REQUIRE(resolve_committed(rare_only));
+    ARPG_REQUIRE(!arpg::test::ground_items(rare_only)[kRareOrdinal].active);
+    rare_only.request_nearby_pickups(player);
+    ARPG_REQUIRE(rare_only.pending_save_view() != nullptr);
+    ARPG_REQUIRE(rare_only.pending_save_view()->pickup_ordinal
+        == kNormalOrdinal);
+    ARPG_REQUIRE(resolve_committed(rare_only));
+    ARPG_REQUIRE(!arpg::test::ground_items(rare_only)[kNormalOrdinal].active);
+
+    DungeonSession default_policy{DungeonRules{}, state};
+    arpg::test::install_ground_item(
+        default_policy, kNormalOrdinal, normal, player);
+    default_policy.request_nearby_pickups(player);
+    ARPG_REQUIRE(default_policy.pending_save_view() != nullptr);
+    ARPG_REQUIRE(default_policy.pending_save_view()->pickup_ordinal
+        == kNormalOrdinal);
+
+    DungeonSession explicit_pickup{DungeonRules{}, state};
+    arpg::test::install_ground_item(
+        explicit_pickup, kNormalOrdinal, normal, player);
+    ARPG_REQUIRE(explicit_pickup.request_pickup(kNormalOrdinal)
+        == arpg::dungeon::RequestResult::accepted);
+    ARPG_REQUIRE(explicit_pickup.pending_save_view() != nullptr);
+    ARPG_REQUIRE(explicit_pickup.pending_save_view()->pickup_ordinal
+        == kNormalOrdinal);
     return {};
 }
 
@@ -543,7 +649,7 @@ arpg::test::Failure miss_is_rolled_once_until_room_reset() noexcept {
     arpg::test::set_current_room_seed(session, hit_seed);
     ARPG_REQUIRE(inject_drop(session, miss, {10.0F, 20.0F, 30.0F}));
     ARPG_REQUIRE(session.snapshot().ground_item_count == 0U);
-    session.reset_current_room();
+    static_cast<void>(session.reset_current_room());
     ARPG_REQUIRE(inject_drop(session, miss, {10.0F, 20.0F, 30.0F}));
     ARPG_REQUIRE(session.snapshot().ground_item_count == 1U);
     return {};
@@ -647,6 +753,7 @@ arpg::test::Failure transition_clears_claimed_and_ground_only_on_commit() noexce
     ARPG_REQUIRE(first.has_value());
     ARPG_REQUIRE(first->kind == arpg::dungeon::PendingSaveKind::transition);
     ARPG_REQUIRE(first->pickup_ordinal == 0xFFFFU);
+    ARPG_REQUIRE(!session.snapshot().pending_pickup_ordinal.has_value());
     ARPG_REQUIRE((first->next_state.item_ownership.claimed_drop_bits
         == std::array<std::uint64_t, 3>{}));
     session.resolve_pending_save({

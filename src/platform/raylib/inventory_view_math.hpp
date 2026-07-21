@@ -2,6 +2,7 @@
 
 #include "combat/combat_types.hpp"
 #include "items/item_catalog.hpp"
+#include "skills/active_skill_types.hpp"
 
 #include <raylib.h>
 
@@ -18,6 +19,67 @@ struct InventoryLayout final {
     Rectangle equipment{};
     Rectangle grid{};
     Rectangle detail{};
+};
+
+enum class InventoryPage : std::uint8_t {
+    equipment_materials,
+    skill_stones,
+};
+
+inline constexpr std::size_t kNoActiveSkillLoadoutSelection =
+    ~std::size_t{0U};
+
+struct ActiveSkillLoadoutSelection final {
+    std::size_t selected_slot{kNoActiveSkillLoadoutSelection};
+    skills::ActiveSkillId selected_inventory{skills::ActiveSkillId::none};
+};
+
+struct ActiveSkillLoadoutSlotView final {
+    std::uint8_t slot_number{};
+    skills::ActiveSkillId id{skills::ActiveSkillId::none};
+    std::array<char, 48> name{};
+    std::array<bool, skills::kSupportSlotsPerActive> support_empty{};
+    bool empty{};
+    bool selected{};
+};
+
+struct ActiveSkillInventoryStoneView final {
+    skills::ActiveSkillId id{skills::ActiveSkillId::none};
+    std::array<char, 48> name{};
+    bool selected{};
+};
+
+struct ActiveSkillLoadoutView final {
+    std::array<ActiveSkillLoadoutSlotView,
+        skills::kActiveSkillSlotCount> slots{};
+    std::array<ActiveSkillInventoryStoneView,
+        skills::kActiveSkillCount> inventory{};
+    std::size_t inventory_count{};
+    bool save_pending{};
+};
+
+struct ActiveSkillLoadoutLayout final {
+    Rectangle panel{};
+    std::array<Rectangle, skills::kActiveSkillSlotCount> main_slots{};
+    std::array<Rectangle, skills::kSupportSlotsPerActive> support_slots{};
+    std::array<Rectangle, skills::kActiveSkillCount> inventory_slots{};
+    Rectangle remove_button{};
+    Rectangle equipment_page_button{};
+    Rectangle skill_stones_page_button{};
+};
+
+enum class ActiveSkillLoadoutActionKind : std::uint8_t {
+    select,
+    remove,
+    equip,
+    swap,
+};
+
+struct ActiveSkillLoadoutCommand final {
+    ActiveSkillLoadoutActionKind kind{ActiveSkillLoadoutActionKind::select};
+    std::uint8_t slot{0xFFU};
+    std::uint8_t other_slot{0xFFU};
+    skills::ActiveSkillId skill{skills::ActiveSkillId::none};
 };
 
 struct VisibleGridRange final {
@@ -98,6 +160,19 @@ struct ItemAttributeLabel final {
 };
 
 [[nodiscard]] InventoryLayout inventory_layout(int width, int height) noexcept;
+[[nodiscard]] ActiveSkillLoadoutLayout active_skill_loadout_layout(
+    int width, int height) noexcept;
+[[nodiscard]] ActiveSkillLoadoutView make_active_skill_loadout_view(
+    const skills::SkillLoadoutState& state,
+    const ActiveSkillLoadoutSelection& selection,
+    bool save_pending) noexcept;
+[[nodiscard]] std::optional<ActiveSkillLoadoutCommand>
+active_skill_loadout_command_after_click(
+    const skills::SkillLoadoutState& state,
+    const ActiveSkillLoadoutLayout& layout,
+    Vector2 point,
+    ActiveSkillLoadoutSelection& selection,
+    bool save_pending) noexcept;
 [[nodiscard]] VisibleGridRange visible_grid_range(
     std::size_t filtered_count, int columns, float scroll_rows,
     float viewport_height, float cell_height) noexcept;

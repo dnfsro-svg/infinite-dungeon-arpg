@@ -17,6 +17,7 @@ struct SlotInfo final {
     SlotFileState state{SlotFileState::missing};
     SaveError error{SaveError::none};
     checkpoint::DungeonRunState checkpoint{};
+    bool migrated{};
 };
 
 struct ScanResult final {

@@ -63,6 +63,9 @@ public:
     [[nodiscard]] std::optional<MonsterHandle> spawn(
         const MonsterSpawnSpec& spec) noexcept;
     [[nodiscard]] std::optional<MonsterHandle> spawn(
+        const MonsterSpawnSpec& spec,
+        const abyss::AbyssCombatConfig& abyss_config) noexcept;
+    [[nodiscard]] std::optional<MonsterHandle> spawn(
         MonsterId id, Vec3 position) noexcept;
     [[nodiscard]] bool destroy(MonsterHandle handle) noexcept;
     [[nodiscard]] std::size_t active_count() const noexcept;
@@ -127,6 +130,20 @@ struct HazardHandle final {
 class HazardPool final {
 public:
     void clear() noexcept;
+    [[nodiscard]] std::optional<HazardHandle> spawn(
+        HazardSource source,
+        MonsterHandle owner,
+        HazardKind kind,
+        Vec3 center,
+        float radius,
+        std::uint16_t telegraph_ticks,
+        std::uint16_t active_ticks,
+        std::uint16_t damage_interval_ticks,
+        DamagePacket damage,
+        bool persists_after_owner_death = false,
+        std::uint16_t environment_damage_bp = 0U,
+        modifiers::DamageType environment_damage_type =
+            modifiers::DamageType::physical) noexcept;
     [[nodiscard]] std::optional<HazardHandle> spawn(
         MonsterHandle owner,
         HazardKind kind,

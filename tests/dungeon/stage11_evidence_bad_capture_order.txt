@@ -1,0 +1,15 @@
+void stage11_validation_input() {
+    MovementInput movement{};
+    session.queue_action(Action::light);
+    runtime.fixed_tick(movement);
+    const auto death_key = settings::StableKey::e;
+    DeathInputGate death_gate = host_death_input_gate(
+        false, true, frame_input.keys, physical_keys);
+    death_gate.continue_death = true;
+    if (death_gate.continue_death) {
+        runtime.request_death_continue();
+    }
+    Image image = LoadImageFromScreen();
+    ExportImage(image, path);
+    EndDrawing();
+}

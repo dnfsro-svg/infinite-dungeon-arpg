@@ -18,13 +18,12 @@ constexpr Rgba8 kChaosFrame{154U, 76U, 210U, 255U};
 
 DoorVisualMode door_visual_mode(
     dungeon::RoomPhase phase,
-    bool has_active_room) noexcept {
+    bool has_active_room,
+    bool exits_open) noexcept {
     if (!has_active_room || phase == dungeon::RoomPhase::transitioning) {
         return DoorVisualMode::hidden;
     }
-    if (phase == dungeon::RoomPhase::cleared
-        || phase == dungeon::RoomPhase::awaiting_exit
-        || phase == dungeon::RoomPhase::committing) {
+    if (exits_open) {
         return DoorVisualMode::open;
     }
     return DoorVisualMode::closed;
@@ -44,6 +43,134 @@ DoorTheme door_theme(dungeon::ExitDirection direction) noexcept {
         return {dungeon::DungeonElement::chaos, "UNKNOWN", "?", kChaosFrame};
     }
     return {dungeon::DungeonElement::chaos, "UNKNOWN", "?", kChaosFrame};
+}
+
+bool abyss_door_marker(
+    const dungeon::DungeonSnapshot& snapshot,
+    dungeon::ExitDirection direction) noexcept {
+    const auto index = static_cast<std::size_t>(direction);
+    return index < snapshot.abyss_doors.size()
+        && snapshot.abyss_doors[index];
+}
+
+EnvironmentHazardVisual environment_hazard_visual(
+    const combat::HazardSnapshot& hazard) noexcept {
+    if (!hazard.active
+            || hazard.source != combat::HazardSource::abyss_environment
+            || hazard.radius <= 0.0F) {
+        return {};
+    }
+
+    Rgba8 active_outline{};
+    Rgba8 active_fill{};
+    switch (hazard.kind) {
+    case combat::HazardKind::thunderstorm:
+        active_outline = {132U, 211U, 255U, 235U};
+        active_fill = {65U, 149U, 230U, 76U};
+        break;
+    case combat::HazardKind::hunting_flame:
+        active_outline = {255U, 91U, 48U, 235U};
+        active_fill = {224U, 49U, 30U, 88U};
+        break;
+    case combat::HazardKind::chaos_expansion:
+        active_outline = {221U, 62U, 188U, 235U};
+        active_fill = {145U, 25U, 126U, 84U};
+        break;
+    default:
+        return {};
+    }
+
+    const bool warning = hazard.telegraph_ticks != 0U;
+    return {
+        warning ? EnvironmentHazardVisualMode::warning
+                : EnvironmentHazardVisualMode::active,
+        hazard.center,
+        hazard.radius,
+        warning ? Rgba8{255U, 203U, 91U, 48U} : active_fill,
+        warning ? Rgba8{255U, 203U, 91U, 235U} : active_outline,
+    };
+}
+
+namespace {
+
+const char* abyss_danger_label(abyss::AbyssDanger danger) noexcept {
+    switch (danger) {
+    case abyss::AbyssDanger::low: return "ABYSS LOW";
+    case abyss::AbyssDanger::medium: return "ABYSS MED";
+    case abyss::AbyssDanger::high: return "ABYSS HIGH";
+    }
+    return "ABYSS";
+}
+
+const char* abyss_rule_label(abyss::AbyssRuleId rule) noexcept {
+    switch (rule) {
+    case abyss::AbyssRuleId::thunderstorm: return "THUNDERSTORM";
+    case abyss::AbyssRuleId::hunting_flames: return "HUNTING FLAMES";
+    case abyss::AbyssRuleId::chaos_expansion: return "CHAOS EXPANSION";
+    case abyss::AbyssRuleId::swift_pursuit: return "SWIFT PURSUIT";
+    case abyss::AbyssRuleId::abyss_bulwark: return "ABYSS BULWARK";
+    case abyss::AbyssRuleId::abyss_fury: return "ABYSS FURY";
+    case abyss::AbyssRuleId::heavy_steps: return "HEAVY STEPS";
+    case abyss::AbyssRuleId::exhausted_recovery:
+        return "EXHAUSTED RECOVERY";
+    case abyss::AbyssRuleId::life_sacrifice: return "LIFE SACRIFICE";
+    case abyss::AbyssRuleId::none: return "NO RULE";
+    }
+    return "NO RULE";
+}
+
+const char* abyss_effect_label(abyss::AbyssRuleId rule) noexcept {
+    switch (rule) {
+    case abyss::AbyssRuleId::thunderstorm:
+        return "Every 180t: warn 45t/radius 0.8, hit 15% max HP lightning";
+    case abyss::AbyssRuleId::hunting_flames:
+        return "Every 240t: warn 45t/radius 1.0, burn 10% max HP/60t for 180t";
+    case abyss::AbyssRuleId::chaos_expansion:
+        return "Radius 1.0/2.3/3.6/4.9/6.2 per 180t, 8% max HP chaos/60t";
+    case abyss::AbyssRuleId::swift_pursuit:
+        return "Monsters: move +15%, cooldown x85%";
+    case abyss::AbyssRuleId::abyss_bulwark:
+        return "Monsters: armor x130%, shield +30% max HP";
+    case abyss::AbyssRuleId::abyss_fury:
+        return "Monsters: damage and attack speed x145%";
+    case abyss::AbyssRuleId::heavy_steps:
+        return "Player: ground move x85%";
+    case abyss::AbyssRuleId::exhausted_recovery:
+        return "Player: entry resources and future recovery x70%";
+    case abyss::AbyssRuleId::life_sacrifice:
+        return "Player: max HP x55%";
+    case abyss::AbyssRuleId::none:
+        return "";
+    }
+    return "";
+}
+
+}  // namespace
+
+AbyssHudValues abyss_hud_values(
+    const dungeon::DungeonSnapshot& snapshot) noexcept {
+    AbyssHudValues values{};
+    values.visible = snapshot.is_abyss
+        && snapshot.abyss_rule != abyss::AbyssRuleId::none;
+    values.danger_label = abyss_danger_label(snapshot.abyss_danger);
+    values.rule_label = abyss_rule_label(snapshot.abyss_rule);
+    values.effect_label = abyss_effect_label(snapshot.abyss_rule);
+    values.pending_rewards = snapshot.abyss_pending_rewards;
+    values.unpicked_rewards = snapshot.abyss_unpicked_rewards;
+    values.confirmation_visible = values.visible
+        && snapshot.abyss_exit_confirmation_armed;
+    values.confirmation_transition =
+        snapshot.abyss_exit_confirmation_transition;
+    values.confirmation_direction =
+        snapshot.abyss_exit_confirmation_direction;
+    if (values.confirmation_transition == dungeon::TransitionKind::descent) {
+        values.confirmation_label =
+            "Press E again to abandon remaining rewards and descend";
+    } else {
+        values.confirmation_label =
+            "Touch the SAME door again to abandon ALL remaining rewards";
+    }
+    return values;
 }
 
 HoleVisualMode hole_visual_mode(

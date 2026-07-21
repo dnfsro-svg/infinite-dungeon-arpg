@@ -1,6 +1,6 @@
 #include "test_framework.hpp"
 
-#include "combat_audio.hpp"
+#include "audio_routing.hpp"
 #include "combat_view_math.hpp"
 #include "combat/monster_affix_catalog.hpp"
 #include "dungeon_view_math.hpp"
@@ -27,6 +27,15 @@ using arpg::dungeon::DungeonElement;
 using arpg::platform::HazardVisualMode;
 using arpg::platform::MonsterWarningMode;
 using arpg::platform::MonsterVisual;
+
+arpg::test::Failure monster_labels_keep_a_readable_size_and_outline() noexcept {
+    const auto style = arpg::platform::monster_label_text_style(0.55F);
+    ARPG_REQUIRE(style.role_font_size >= 14);
+    ARPG_REQUIRE(style.phase_font_size >= 12);
+    ARPG_REQUIRE(style.affix_font_size >= 11);
+    ARPG_REQUIRE(style.outline_pixels >= 2);
+    return {};
+}
 
 bool same_color(arpg::platform::Rgba8 lhs, arpg::platform::Rgba8 rhs) noexcept {
     return lhs.r == rhs.r && lhs.g == rhs.g && lhs.b == rhs.b && lhs.a == rhs.a;
@@ -76,6 +85,15 @@ arpg::test::Failure priority_phases_expose_warning_visuals() noexcept {
     ARPG_REQUIRE(arpg::platform::monster_visual(
         MonsterId::water_bulwark, MonsterAiPhase::move,
         DungeonElement::water).warning_mode == MonsterWarningMode::none);
+    ARPG_REQUIRE(arpg::platform::monster_visual(
+        MonsterId::water_bulwark, MonsterAiPhase::telegraph,
+        DungeonElement::water).warning_mode == MonsterWarningMode::telegraph);
+    ARPG_REQUIRE(arpg::platform::monster_visual(
+        MonsterId::lightning_shooter, MonsterAiPhase::active,
+        DungeonElement::lightning).warning_mode == MonsterWarningMode::active);
+    ARPG_REQUIRE(!arpg::platform::monster_visual(
+        MonsterId::water_support, MonsterAiPhase::telegraph,
+        DungeonElement::water).priority_warning);
     return {};
 }
 
@@ -131,10 +149,11 @@ arpg::test::Failure hazard_modes_and_projected_effects_are_explicit() noexcept {
 arpg::test::Failure monster_attack_audio_emits_one_low_layer() noexcept {
     arpg::combat::CombatEvent event{};
     event.kind = arpg::combat::CombatEventKind::player_hit;
-    ARPG_REQUIRE(arpg::platform::route_audio_cues(event)
-        == arpg::platform::audio_cue_mask(arpg::platform::AudioCue::low));
+    ARPG_REQUIRE(arpg::platform::route_audio_plan(event).cues
+        == arpg::platform::audio_cue_mask(
+            arpg::platform::AudioCue::player_hurt));
     event.kind = arpg::combat::CombatEventKind::player_hurt_started;
-    ARPG_REQUIRE(arpg::platform::route_audio_cues(event) == 0);
+    ARPG_REQUIRE(arpg::platform::route_audio_plan(event).cues == 0);
     return {};
 }
 
@@ -247,31 +266,17 @@ arpg::test::Failure hazards_and_affix_warning_audio_are_distinct_and_throttled()
     chain_event.kind = arpg::combat::CombatEventKind::affix_chain_warning;
     arpg::combat::CombatEvent death_event{};
     death_event.kind = arpg::combat::CombatEventKind::affix_death_warning;
-    ARPG_REQUIRE(arpg::platform::route_audio_cues(blink)
-        == arpg::platform::audio_cue_mask(arpg::platform::AudioCue::blink_warning));
-    ARPG_REQUIRE(arpg::platform::route_audio_cues(chain_event)
-        == arpg::platform::audio_cue_mask(arpg::platform::AudioCue::chain_warning));
-    ARPG_REQUIRE(arpg::platform::route_audio_cues(death_event)
-        == arpg::platform::audio_cue_mask(arpg::platform::AudioCue::death_warning));
-
-    arpg::platform::WarningAudioThrottle throttle{};
-    ARPG_REQUIRE(throttle.allow(arpg::platform::AudioCue::blink_warning, 24U));
-    ARPG_REQUIRE(!throttle.allow(arpg::platform::AudioCue::blink_warning, 24U));
-    ARPG_REQUIRE(!throttle.allow(arpg::platform::AudioCue::blink_warning, 28U));
-    ARPG_REQUIRE(!throttle.allow(arpg::platform::AudioCue::blink_warning, 35U));
-    ARPG_REQUIRE(throttle.allow(arpg::platform::AudioCue::blink_warning, 36U));
-    ARPG_REQUIRE(throttle.allow(arpg::platform::AudioCue::chain_warning, 24U));
-    ARPG_REQUIRE(throttle.allow(arpg::platform::AudioCue::blink_warning, 2U));
-
-    arpg::platform::WarningAudioThrottle near_wrap{};
-    constexpr std::uint64_t kMax = UINT64_MAX;
-    ARPG_REQUIRE(near_wrap.allow(arpg::platform::AudioCue::blink_warning, kMax - 5U));
-    ARPG_REQUIRE(!near_wrap.allow(arpg::platform::AudioCue::blink_warning, kMax - 1U));
-    ARPG_REQUIRE(near_wrap.allow(arpg::platform::AudioCue::blink_warning, 2U));
+    ARPG_REQUIRE(arpg::platform::route_audio_plan(blink).cues
+        == arpg::platform::audio_cue_mask(arpg::platform::AudioCue::warning_blink));
+    ARPG_REQUIRE(arpg::platform::route_audio_plan(chain_event).cues
+        == arpg::platform::audio_cue_mask(arpg::platform::AudioCue::warning_chain));
+    ARPG_REQUIRE(arpg::platform::route_audio_plan(death_event).cues
+        == arpg::platform::audio_cue_mask(arpg::platform::AudioCue::warning_death));
     return {};
 }
 
 constexpr arpg::test::TestCase kCases[] = {
+    {"monster labels retain readable text treatment", &monster_labels_keep_a_readable_size_and_outline},
     {"unique monster labels and ecology accent",
      &all_monster_roles_have_unique_labels_and_ecology_accent},
     {"priority monster warnings", &priority_phases_expose_warning_visuals},

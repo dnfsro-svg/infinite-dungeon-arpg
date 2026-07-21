@@ -103,9 +103,9 @@ void CombatWorld::resolve_monster_contact_attack(
          player_.position.z + kPlayerHalfHeight},
     };
     if (overlaps_inclusive(contact, player_hurtbox)) {
-        DamagePacket packet = definition->contact_damage;
+        DamagePacket packet = scale_monster_affix_damage(
+            definition->contact_damage, monster.affix_profile);
         for (int& amount : packet.amount) {
-            amount = scaled_monster_damage(amount, monster.affix_profile);
             if (monster.blink_empowered) {
                 amount = static_cast<int>((static_cast<std::int64_t>(amount)
                     * blink_damage_bp(monster.affixes)) / 10000);
@@ -114,6 +114,7 @@ void CombatWorld::resolve_monster_contact_attack(
         if (apply_monster_direct_hit(slot, packet,
             monster.position,
             definition->feedback)) {
+            if (death_snapshot_.has_value()) return;
             monster.blink_empowered = false;
         }
     }

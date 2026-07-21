@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <string_view>
 
 namespace arpg::items {
@@ -17,16 +18,23 @@ enum class ItemEffectKind : std::uint8_t {
     slot_dependent_attack_speed,
     all_element_damage_reduction,
     variant_element_damage_reduction_cap,
+    tri_element_damage_reduction,
+    count,
+};
+
+struct BaseEffect final {
+    ItemEffectKind effect{ItemEffectKind::count};
+    modifiers::StatId stat{modifiers::StatId::count};
+    modifiers::ModifierOperation operation{modifiers::ModifierOperation::flat};
+    std::array<std::int32_t, 8> values{};
 };
 
 struct BaseDefinition final {
     std::uint8_t id{};
     std::string_view name{};
     ItemSlot slot{};
-    ItemEffectKind effect{};
-    modifiers::StatId stat{modifiers::StatId::count};
-    modifiers::ModifierOperation operation{modifiers::ModifierOperation::flat};
-    std::array<std::int32_t, 8> values{};
+    std::array<BaseEffect, 3> effects{};
+    std::uint8_t effect_count{};
 };
 
 struct AffixDefinition final {
@@ -46,10 +54,18 @@ enum class OwnershipValidationResult : std::uint8_t {
     allocation_failure,
 };
 
+inline constexpr std::uint16_t kAffixValueRollMinimumBp = 9000U;
+inline constexpr std::uint16_t kAffixValueRollCanonicalBp = 10000U;
+inline constexpr std::uint16_t kAffixValueRollMaximumBp = 11000U;
+
 [[nodiscard]] const BaseDefinition* base_definition(std::uint8_t id) noexcept;
+[[nodiscard]] std::array<std::uint8_t, 3> base_ids_for_slot(
+    ItemSlot slot) noexcept;
 [[nodiscard]] const AffixDefinition* affix_definition(std::uint16_t id) noexcept;
 [[nodiscard]] std::uint8_t tier_minimum_level(std::uint8_t tier) noexcept;
 [[nodiscard]] std::uint32_t tier_base_weight(std::uint8_t tier) noexcept;
+[[nodiscard]] std::optional<std::int32_t> affix_roll_value(
+    const AffixRoll& roll) noexcept;
 [[nodiscard]] bool validate_catalog() noexcept;
 [[nodiscard]] bool validate_item(const ItemInstance& item) noexcept;
 [[nodiscard]] OwnershipValidationResult validate_ownership_detailed(

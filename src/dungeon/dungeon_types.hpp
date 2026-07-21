@@ -3,6 +3,7 @@
 #include "combat/combat_types.hpp"
 #include "dungeon/dungeon_checkpoint.hpp"
 #include "dungeon/dungeon_rules.hpp"
+#include "dungeon/material_loot.hpp"
 
 #include <array>
 #include <cstddef>
@@ -25,6 +26,7 @@ enum class RoomPhase : std::uint8_t {
     awaiting_exit,
     committing,
     transitioning,
+    death_pending,
     faulted,
 };
 
@@ -47,6 +49,7 @@ enum class DungeonEventKind : std::uint8_t {
     combat_started,
     room_cleared,
     exits_opened,
+    abyss_exit_warning,
     transition_requested,
     transition_committed,
     save_failed,
@@ -55,6 +58,10 @@ enum class DungeonEventKind : std::uint8_t {
     room_destroyed,
     room_reset,
     faulted,
+    death_detected,
+    death_retreat_committed,
+    death_continue_requested,
+    death_continued,
 };
 
 struct DungeonEvent final {
@@ -66,6 +73,16 @@ struct DungeonEvent final {
     std::uint64_t destination_room_seed{};
     TransitionKind transition{TransitionKind::none};
     ExitDirection direction{ExitDirection::none};
+    std::uint8_t abyss_pending_rewards{};
+    std::uint8_t abyss_unpicked_rewards{};
+};
+
+struct AbyssExitConfirmation final {
+    bool armed{};
+    TransitionKind transition{TransitionKind::none};
+    ExitDirection direction{ExitDirection::none};
+    bool door_input_released{};
+    std::uint32_t reward_revision{};
 };
 
 struct DungeonDiagnostics final {
@@ -73,6 +90,8 @@ struct DungeonDiagnostics final {
     std::uint32_t combat_relay_overflow_count{};
     std::uint32_t rejected_exit_count{};
     std::uint32_t save_failure_count{};
+    std::uint32_t ground_saturation_count{};
+    std::uint32_t material_ground_saturation_count{};
     DungeonFault fault{DungeonFault::none};
     bool room_index_overflow{};
 };
@@ -99,19 +118,65 @@ struct RoomDescriptor final {
 inline constexpr std::size_t kGroundDropCapacity = 192U;
 inline constexpr float kPickupRadius = 1.5F;
 
+enum class GroundItemSource : std::uint8_t {
+    monster_drop,
+    abyss_chest,
+};
+
 struct GroundItem final {
     bool active{};
     std::uint16_t drop_ordinal{};
+    GroundItemSource source{GroundItemSource::monster_drop};
+    std::uint8_t abyss_reward_ordinal{0xFFU};
     combat::Vec3 position{};
     items::ItemInstance item{};
 };
 
+struct AutoPickupPolicy final {
+    items::ItemRarity minimum_rarity{items::ItemRarity::normal};
+};
+
+[[nodiscard]] bool auto_pickup_eligible(
+    const GroundItem& ground,
+    AutoPickupPolicy policy) noexcept;
+
 struct GroundItemSnapshot final {
     std::uint16_t ordinal{};
+    GroundItemSource source{GroundItemSource::monster_drop};
+    std::uint8_t abyss_reward_ordinal{0xFFU};
     combat::Vec3 position{};
     std::uint64_t item_id{};
+    std::uint8_t base_id{};
+    std::uint8_t item_level{};
     items::ItemSlot slot{items::ItemSlot::weapon};
     items::ItemRarity rarity{items::ItemRarity::normal};
+};
+
+struct DeathSnapshot final {
+    checkpoint::DeathCheckpoint checkpoint{};
+    bool saving{};
+    bool can_continue{};
+    bool continue_failed{};
+};
+
+struct MaterialPickupReceipt final {
+    bool valid{};
+    bool room_vacuum{};
+    std::uint64_t commit_generation{};
+    std::array<std::uint64_t, items::kMaterialCount> counts{};
+};
+
+struct ReinforcementReceipt final {
+    bool valid{};
+    bool coupon{};
+    bool success{};
+    bool destroyed{};
+    std::uint64_t commit_generation{};
+    std::uint64_t item_id{};
+    std::uint32_t before{};
+    std::uint32_t after{};
+    std::uint16_t success_chance_bp{};
+    items::MaterialId material{items::MaterialId::count};
 };
 
 struct DungeonSnapshot final {
@@ -126,6 +191,7 @@ struct DungeonSnapshot final {
     RoomPhase phase{RoomPhase::locked};
     bool has_active_room{};
     std::array<bool, 4> exits_open{};
+    std::array<bool, 4> abyss_doors{};
     std::uint8_t wave_index{};
     std::uint8_t wave_count{};
     std::uint16_t wave_delay_ticks{};
@@ -136,8 +202,16 @@ struct DungeonSnapshot final {
     DungeonElement ecology{DungeonElement::fire};
     bool has_hole{};
     bool is_abyss{};
+    abyss::AbyssDanger abyss_danger{abyss::AbyssDanger::low};
+    abyss::AbyssRuleId abyss_rule{abyss::AbyssRuleId::none};
+    std::uint8_t abyss_pending_rewards{};
+    std::uint8_t abyss_unpicked_rewards{};
+    bool abyss_exit_confirmation_armed{};
+    TransitionKind abyss_exit_confirmation_transition{TransitionKind::none};
+    ExitDirection abyss_exit_confirmation_direction{ExitDirection::none};
     bool has_pending_transition{};
     passives::PassiveTreeState passive_tree{};
+    skills::SkillLoadoutState skill_loadout{};
     bool passive_save_pending{};
     passives::PassiveTreeError passive_tree_error{
         passives::PassiveTreeError::none};
@@ -145,7 +219,15 @@ struct DungeonSnapshot final {
     std::array<std::uint64_t, 6> equipped_ids{};
     std::uint16_t ground_item_count{};
     std::array<GroundItemSnapshot, kGroundDropCapacity> ground_items{};
+    std::uint16_t ground_material_count{};
+    std::array<GroundMaterialSnapshot, kGroundMaterialCapacity>
+        ground_materials{};
+    MaterialPickupReceipt material_pickup_receipt{};
+    ReinforcementReceipt reinforcement_receipt{};
     std::optional<PendingSaveKind> pending_save_kind{};
+    std::optional<std::uint16_t> pending_pickup_ordinal{};
+    std::optional<std::uint16_t> pending_material_pickup_ordinal{};
+    std::optional<DeathSnapshot> death{};
     std::optional<combat::CombatSnapshot> combat{};
     DungeonEncounterDiagnostics encounter{};
     DungeonDiagnostics diagnostics{};
@@ -166,8 +248,21 @@ enum class PendingSaveKind : std::uint8_t {
     transition,
     passive_tree,
     loot_pickup,
+    material_pickup,
+    room_clear,
     equipment,
+    craft,
     recipe,
+    reinforcement,
+    skill_loadout,
+    abyss_start,
+    abyss_fail,
+    abyss_clear,
+    abyss_reward_materialized,
+    abyss_reward_claim,
+    abyss_abandon,
+    death_retreat,
+    death_continue,
 };
 
 struct PendingSave final {
@@ -178,12 +273,15 @@ struct PendingSave final {
     ExitDirection direction{ExitDirection::none};
     RoomPhase resume_phase{RoomPhase::awaiting_exit};
     std::uint16_t pickup_ordinal{0xFFFFU};
+    std::optional<combat::CombatDeathSnapshot> death_snapshot{};
+    std::optional<ReinforcementReceipt> reinforcement_receipt{};
 };
 
 struct PendingSaveResult final {
     SaveDisposition disposition{SaveDisposition::indeterminate};
     std::uint64_t generation{};
     DungeonRunState verified_state{};
+    std::optional<PendingSaveKind> kind{};
 };
 
 using TransitionSaveResult = PendingSaveResult;

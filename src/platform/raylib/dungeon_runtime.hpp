@@ -28,10 +28,23 @@ struct DungeonRuntimeConfig final {
     void* seed_context{};
 };
 
+struct LootPickupReceipt final {
+    bool valid{};
+    std::uint64_t commit_generation{};
+    std::uint64_t item_id{};
+    std::uint8_t base_id{};
+    std::uint8_t item_level{};
+    items::ItemRarity rarity{items::ItemRarity::normal};
+    dungeon::GroundItemSource source{dungeon::GroundItemSource::monster_drop};
+};
+
 struct DungeonRenderStatus final {
     SaveIndicator indicator{SaveIndicator::none};
     persistence::SaveSlot active_slot{persistence::SaveSlot::none};
     persistence::SaveError error{persistence::SaveError::none};
+    bool recovery_required{};
+    bool faulted{};
+    LootPickupReceipt loot_pickup{};
 };
 
 class DungeonRuntime final {
@@ -48,10 +61,21 @@ public:
         std::uint64_t item_id) noexcept;
     [[nodiscard]] dungeon::RequestResult request_unequip(
         items::ItemSlot slot) noexcept;
+    [[nodiscard]] dungeon::RequestResult request_craft(
+        items::MaterialId material, std::uint64_t item_id,
+        std::optional<items::DirectedCategory> directed_category =
+            std::nullopt) noexcept;
     [[nodiscard]] dungeon::RequestResult request_recipe(
         const std::array<std::uint64_t, 3>& item_ids) noexcept;
+    [[nodiscard]] dungeon::RequestResult request_reinforcement(
+        std::uint64_t item_id) noexcept;
+    [[nodiscard]] dungeon::RequestResult request_coupon(
+        items::MaterialId coupon, std::uint64_t item_id) noexcept;
+    [[nodiscard]] dungeon::RequestResult request_death_continue() noexcept;
     [[nodiscard]] const items::ItemOwnershipState* item_state() const noexcept;
     [[nodiscard]] DungeonRenderStatus render_status() const noexcept;
+    void fixed_tick(combat::MovementInput movement,
+        dungeon::AutoPickupPolicy pickup_policy = {}) noexcept;
     void service_pending_save() noexcept;
     // Kept until the host is migrated to the generic pending-save entry point.
     void service_pending_transition() noexcept;
@@ -61,6 +85,10 @@ private:
     [[nodiscard]] std::optional<std::uint64_t> select_new_run_seed() const noexcept;
     void sync_load_status(const persistence::SaveLoadResult& result) noexcept;
     void sync_commit_status(const persistence::SaveCommitResult& result) noexcept;
+    [[nodiscard]] bool commit_and_resolve_pending(
+        const dungeon::PendingSave&,
+        dungeon::PendingSaveKind,
+        std::uint64_t expected_generation) noexcept;
     [[nodiscard]] static dungeon::PendingSaveResult to_session_result(
         persistence::SaveCommitResult&& saved) noexcept;
 

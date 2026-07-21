@@ -1,8 +1,11 @@
 #include "combat/monster_pool.hpp"
 
+#include "combat/combat_scaling.hpp"
 #include "combat/monster_catalog.hpp"
 
+#include <algorithm>
 #include <cstddef>
+#include <limits>
 
 namespace arpg::combat {
 namespace {
@@ -50,13 +53,21 @@ void MonsterPool::clear() noexcept {
 
 std::optional<MonsterHandle> MonsterPool::spawn(
     const MonsterSpawnSpec& spec) noexcept {
+    return spawn(spec, abyss::AbyssCombatConfig{});
+}
+
+std::optional<MonsterHandle> MonsterPool::spawn(
+    const MonsterSpawnSpec& spec,
+    const abyss::AbyssCombatConfig& abyss_config) noexcept {
     const MonsterDefinition* definition = monster_definition(spec.id);
     if (definition == nullptr) {
         return std::nullopt;
     }
 
-    const MonsterAffixProfile profile = evaluate_monster_affixes(
+    MonsterAffixProfile profile = evaluate_monster_affixes(
         *definition, spec.affixes);
+    profile.armor_rating = scale_basis_points(
+        profile.armor_rating, abyss_config.monster_armor_bp);
 
     for (std::size_t index = 0; index < slots_.size(); ++index) {
         MonsterRuntime& runtime = slots_[index];
@@ -87,7 +98,15 @@ std::optional<MonsterHandle> MonsterPool::spawn(
             ? profile.shield_recharge_delay_ticks
             : definition->shield_duration_ticks != 0
                 ? definition->shield_duration_ticks : 120;
-        runtime.shield = 0;
+        const int extra_shield = scale_basis_points(
+            runtime.max_hp,
+            abyss_config.monster_extra_shield_bp,
+            BasisPointRounding::ceil);
+        runtime.max_shield = extra_shield
+                > (std::numeric_limits<int>::max)() - runtime.max_shield
+            ? (std::numeric_limits<int>::max)()
+            : runtime.max_shield + extra_shield;
+        runtime.shield = extra_shield;
         runtime.shield_ticks = 0;
         runtime.armor = definition->max_break > 0
             ? ArmorState::armored : ArmorState::none;
@@ -295,6 +314,7 @@ void HazardPool::clear() noexcept {
 }
 
 std::optional<HazardHandle> HazardPool::spawn(
+    HazardSource source,
     MonsterHandle owner,
     HazardKind kind,
     Vec3 center,
@@ -303,8 +323,13 @@ std::optional<HazardHandle> HazardPool::spawn(
     std::uint16_t active_ticks,
     std::uint16_t damage_interval_ticks,
     DamagePacket damage,
-    bool persists_after_owner_death) noexcept {
-    if (owner.index >= kMonsterCapacity || owner.generation == 0U
+    bool persists_after_owner_death,
+    std::uint16_t environment_damage_bp,
+    modifiers::DamageType environment_damage_type) noexcept {
+    if ((source != HazardSource::monster
+         && source != HazardSource::abyss_environment)
+        || (source == HazardSource::monster
+         && (owner.index >= kMonsterCapacity || owner.generation == 0U))
         || radius <= 0.0F || active_ticks == 0U) {
         return std::nullopt;
     }
@@ -322,6 +347,7 @@ std::optional<HazardHandle> HazardPool::spawn(
         runtime.active = true;
         runtime.generation = generation;
         runtime.owner = owner;
+        runtime.source = source;
         runtime.kind = kind;
         runtime.center = center;
         runtime.radius = radius;
@@ -333,10 +359,27 @@ std::optional<HazardHandle> HazardPool::spawn(
             ? 1U : damage_interval_ticks;
         runtime.damage = damage;
         runtime.persists_after_owner_death = persists_after_owner_death;
+        runtime.environment_damage_bp = environment_damage_bp;
+        runtime.environment_damage_type = environment_damage_type;
         ++active_count_;
         return HazardHandle{static_cast<std::uint16_t>(index), generation};
     }
     return std::nullopt;
+}
+
+std::optional<HazardHandle> HazardPool::spawn(
+    MonsterHandle owner,
+    HazardKind kind,
+    Vec3 center,
+    float radius,
+    std::uint16_t telegraph_ticks,
+    std::uint16_t active_ticks,
+    std::uint16_t damage_interval_ticks,
+    DamagePacket damage,
+    bool persists_after_owner_death) noexcept {
+    return spawn(HazardSource::monster, owner, kind, center, radius,
+                 telegraph_ticks, active_ticks, damage_interval_ticks, damage,
+                 persists_after_owner_death);
 }
 
 std::optional<HazardHandle> HazardPool::spawn(

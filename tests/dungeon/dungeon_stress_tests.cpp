@@ -6,12 +6,14 @@
 #include "dungeon/room_generation.hpp"
 #include "dungeon/dungeon_progression.hpp"
 #include "dungeon/encounter_director.hpp"
+#include "items/item_generation.hpp"
 #include "passives/passive_tree_catalog.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <memory>
 
 namespace {
 
@@ -33,6 +35,20 @@ constexpr std::array<ExitDirection, 4> kRoute{{
     ExitDirection::down,
     ExitDirection::left,
 }};
+
+ExitDirection ordinary_direction(
+    const DungeonSnapshot& state,
+    ExitDirection preferred) noexcept {
+    if (!state.abyss_doors[static_cast<std::size_t>(preferred)]) {
+        return preferred;
+    }
+    for (std::size_t index = 0U; index < state.abyss_doors.size(); ++index) {
+        if (!state.abyss_doors[index]) {
+            return static_cast<ExitDirection>(index);
+        }
+    }
+    return preferred;
+}
 
 constexpr std::size_t kGoldenTraceRoomCount = 256U;
 constexpr std::size_t kGoldenTraceMonsterCapacity =
@@ -188,10 +204,23 @@ bool same_ground_item(
     const arpg::dungeon::GroundItemSnapshot& lhs,
     const arpg::dungeon::GroundItemSnapshot& rhs) noexcept {
     return lhs.ordinal == rhs.ordinal
+        && lhs.source == rhs.source
+        && lhs.abyss_reward_ordinal == rhs.abyss_reward_ordinal
         && same_vec(lhs.position, rhs.position)
         && lhs.item_id == rhs.item_id
+        && lhs.base_id == rhs.base_id
+        && lhs.item_level == rhs.item_level
         && lhs.slot == rhs.slot
         && lhs.rarity == rhs.rarity;
+}
+
+bool same_ground_material(
+    const arpg::dungeon::GroundMaterialSnapshot& lhs,
+    const arpg::dungeon::GroundMaterialSnapshot& rhs) noexcept {
+    return lhs.ordinal == rhs.ordinal
+        && lhs.source == rhs.source
+        && same_vec(lhs.position, rhs.position)
+        && lhs.material == rhs.material;
 }
 
 bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexcept {
@@ -213,11 +242,31 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
             || lhs.ecology != rhs.ecology
             || lhs.has_hole != rhs.has_hole
             || lhs.is_abyss != rhs.is_abyss
+            || lhs.abyss_pending_rewards != rhs.abyss_pending_rewards
+            || lhs.abyss_unpicked_rewards != rhs.abyss_unpicked_rewards
+            || lhs.abyss_exit_confirmation_armed
+                != rhs.abyss_exit_confirmation_armed
+            || lhs.abyss_exit_confirmation_transition
+                != rhs.abyss_exit_confirmation_transition
+            || lhs.abyss_exit_confirmation_direction
+                != rhs.abyss_exit_confirmation_direction
             || lhs.has_pending_transition != rhs.has_pending_transition
             || lhs.inventory_count != rhs.inventory_count
             || lhs.equipped_ids != rhs.equipped_ids
             || lhs.ground_item_count != rhs.ground_item_count
+            || lhs.ground_material_count != rhs.ground_material_count
+            || lhs.material_pickup_receipt.valid
+                != rhs.material_pickup_receipt.valid
+            || lhs.material_pickup_receipt.room_vacuum
+                != rhs.material_pickup_receipt.room_vacuum
+            || lhs.material_pickup_receipt.commit_generation
+                != rhs.material_pickup_receipt.commit_generation
+            || lhs.material_pickup_receipt.counts
+                != rhs.material_pickup_receipt.counts
             || lhs.pending_save_kind != rhs.pending_save_kind
+            || lhs.pending_pickup_ordinal != rhs.pending_pickup_ordinal
+            || lhs.pending_material_pickup_ordinal
+                != rhs.pending_material_pickup_ordinal
             || lhs.encounter.total_budget != rhs.encounter.total_budget
             || lhs.encounter.current_wave_budget
                 != rhs.encounter.current_wave_budget
@@ -232,6 +281,10 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
                 != rhs.diagnostics.rejected_exit_count
             || lhs.diagnostics.save_failure_count
                 != rhs.diagnostics.save_failure_count
+            || lhs.diagnostics.ground_saturation_count
+                != rhs.diagnostics.ground_saturation_count
+            || lhs.diagnostics.material_ground_saturation_count
+                != rhs.diagnostics.material_ground_saturation_count
             || lhs.diagnostics.fault != rhs.diagnostics.fault
             || lhs.diagnostics.room_index_overflow
                 != rhs.diagnostics.room_index_overflow
@@ -240,6 +293,13 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
     }
     for (std::size_t index = 0U; index < lhs.ground_items.size(); ++index) {
         if (!same_ground_item(lhs.ground_items[index], rhs.ground_items[index])) {
+            return false;
+        }
+    }
+    for (std::size_t index = 0U;
+            index < lhs.ground_materials.size(); ++index) {
+        if (!same_ground_material(
+                lhs.ground_materials[index], rhs.ground_materials[index])) {
             return false;
         }
     }
@@ -252,7 +312,9 @@ bool same_event(const DungeonEvent& lhs, const DungeonEvent& rhs) noexcept {
         && lhs.destination_room_index == rhs.destination_room_index
         && lhs.destination_room_seed == rhs.destination_room_seed
         && lhs.transition == rhs.transition
-        && lhs.direction == rhs.direction;
+        && lhs.direction == rhs.direction
+        && lhs.abyss_pending_rewards == rhs.abyss_pending_rewards
+        && lhs.abyss_unpicked_rewards == rhs.abyss_unpicked_rewards;
 }
 
 bool same_event(const CombatEvent& lhs, const CombatEvent& rhs) noexcept {
@@ -308,11 +370,31 @@ void tracked_tick(
         && (*state.pending_save_kind
                 == arpg::dungeon::PendingSaveKind::transition
             || *state.pending_save_kind
-                == arpg::dungeon::PendingSaveKind::loot_pickup);
+                == arpg::dungeon::PendingSaveKind::loot_pickup
+            || *state.pending_save_kind
+                == arpg::dungeon::PendingSaveKind::material_pickup
+            || *state.pending_save_kind
+                == arpg::dungeon::PendingSaveKind::abyss_start
+            || *state.pending_save_kind
+                == arpg::dungeon::PendingSaveKind::abyss_clear
+            || *state.pending_save_kind
+                == arpg::dungeon::PendingSaveKind::room_clear
+            || *state.pending_save_kind
+                == arpg::dungeon::PendingSaveKind::abyss_reward_materialized);
+    const bool protected_abyss_boundary = state.phase == RoomPhase::committing
+        && state.pending_save_kind.has_value()
+        && (*state.pending_save_kind
+                == arpg::dungeon::PendingSaveKind::abyss_reward_claim
+            || *state.pending_save_kind
+                == arpg::dungeon::PendingSaveKind::abyss_abandon);
     const bool room_load = phase_before == RoomPhase::transitioning
-        && state.phase == RoomPhase::locked;
+        && (state.phase == RoomPhase::locked
+            || (state.phase == RoomPhase::committing
+                && state.pending_save_kind.has_value()
+                && *state.pending_save_kind
+                    == arpg::dungeon::PendingSaveKind::abyss_start));
     const std::uint64_t delta = arpg::test::allocation_count() - before;
-    if (save_boundary) {
+    if (save_boundary || protected_abyss_boundary) {
         ++summary.save_boundaries;
         summary.save_boundary_allocations += delta;
     } else if (room_load) {
@@ -326,9 +408,10 @@ void tracked_tick(
 bool tick_equal(
     DungeonSession& lhs,
     DungeonSession& rhs,
-    MovementInput movement) noexcept {
-    lhs.tick(movement);
-    rhs.tick(movement);
+    MovementInput movement,
+    arpg::dungeon::AutoPickupPolicy pickup_policy = {}) noexcept {
+    lhs.tick(movement, pickup_policy);
+    rhs.tick(movement, pickup_policy);
     if (!same_snapshot(lhs.snapshot(), rhs.snapshot())) {
         return false;
     }
@@ -426,12 +509,34 @@ bool confirm_pending_save(
     });
     const DungeonSnapshot saved = session.snapshot();
     record_allocations(summary, before, true);
-    if (kind == arpg::dungeon::PendingSaveKind::loot_pickup) {
+    if (kind == arpg::dungeon::PendingSaveKind::loot_pickup
+            || kind == arpg::dungeon::PendingSaveKind::material_pickup
+            || kind == arpg::dungeon::PendingSaveKind::abyss_reward_claim) {
         return saved.phase == resume_phase
             && !saved.pending_save_kind.has_value()
             && saved.commit_generation == expected_generation;
     }
-    return kind == arpg::dungeon::PendingSaveKind::transition
+    if (kind == arpg::dungeon::PendingSaveKind::abyss_start) {
+        return saved.phase == RoomPhase::locked
+            && saved.has_active_room && saved.combat.has_value()
+            && !saved.pending_save_kind.has_value()
+            && saved.commit_generation == expected_generation;
+    }
+    if (kind == arpg::dungeon::PendingSaveKind::abyss_clear
+            || kind == arpg::dungeon::PendingSaveKind::room_clear) {
+        return saved.phase == RoomPhase::cleared
+            && saved.has_active_room && saved.combat.has_value()
+            && !saved.pending_save_kind.has_value()
+            && saved.commit_generation == expected_generation;
+    }
+    if (kind
+            == arpg::dungeon::PendingSaveKind::abyss_reward_materialized) {
+        return saved.phase == resume_phase
+            && !saved.pending_save_kind.has_value()
+            && saved.commit_generation == expected_generation;
+    }
+    return (kind == arpg::dungeon::PendingSaveKind::transition
+            || kind == arpg::dungeon::PendingSaveKind::abyss_abandon)
         && saved.phase == RoomPhase::transitioning
         && !saved.has_pending_transition
         && saved.commit_generation == expected_generation
@@ -491,11 +596,11 @@ bool drive_clear(DungeonSession& session, StressSummary& summary) noexcept {
     return false;
 }
 
-bool drive_exit(
+bool drive_to_transition(
     DungeonSession& session,
     ExitDirection direction,
     StressSummary& summary,
-    bool verify_phases) noexcept {
+    std::uint64_t& transition_room_index) noexcept {
     for (int tick = 0; tick < 512; ++tick) {
         const DungeonSnapshot state = session.snapshot();
         if (state.phase == RoomPhase::committing) {
@@ -519,6 +624,15 @@ bool drive_exit(
             }
             drain(session, summary);
         }
+        if (session.snapshot().abyss_exit_confirmation_armed) {
+            tracked_tick(session, {}, summary);
+            drain(session, summary);
+            if (session.snapshot().phase == RoomPhase::committing) {
+                if (!confirm_pending_save(session, summary)) return false;
+                drain(session, summary);
+            }
+            continue;
+        }
         if (session.snapshot().phase == RoomPhase::transitioning) {
             break;
         }
@@ -528,19 +642,53 @@ bool drive_exit(
             || transition.has_active_room || transition.combat.has_value()) {
         return false;
     }
+    transition_room_index = transition.room_index;
+    return true;
+}
+
+bool drive_to_locked(
+    DungeonSession& session,
+    ExitDirection direction,
+    StressSummary& summary) noexcept {
     tracked_tick(session, outward(direction), summary);
     drain(session, summary);
+    if (session.snapshot().phase == RoomPhase::committing) {
+        if (!confirm_pending_save(session, summary)) return false;
+        drain(session, summary);
+    }
     const DungeonSnapshot locked = session.snapshot();
     if (locked.phase != RoomPhase::locked || !locked.has_active_room
             || !locked.combat.has_value() || locked.combat->tick != 0U) {
         return false;
     }
+    return true;
+}
+
+bool drive_to_combat(
+    DungeonSession& session,
+    ExitDirection direction,
+    StressSummary& summary,
+    std::uint64_t transition_room_index,
+    bool verify_phases) noexcept {
     tracked_tick(session, outward(direction), summary);
     drain(session, summary);
     const DungeonSnapshot combat = session.snapshot();
     return combat.phase == RoomPhase::combat && combat.has_active_room
         && combat.combat.has_value() && combat.combat->tick == 0U
-        && (!verify_phases || combat.room_index == transition.room_index);
+        && (!verify_phases || combat.room_index == transition_room_index);
+}
+
+bool drive_exit(
+    DungeonSession& session,
+    ExitDirection direction,
+    StressSummary& summary,
+    bool verify_phases) noexcept {
+    std::uint64_t transition_room_index{};
+    return drive_to_transition(
+            session, direction, summary, transition_room_index)
+        && drive_to_locked(session, direction, summary)
+        && drive_to_combat(session, direction, summary,
+            transition_room_index, verify_phases);
 }
 
 bool drive_rooms(
@@ -975,8 +1123,24 @@ arpg::test::Failure launcher_input_robot_clears_ten_minimal_committed_rooms() no
                 trace.monster_hits, trace.player_hits);
         }
         ARPG_REQUIRE(cleared);
-        ARPG_REQUIRE(drive_exit(session, kRoute[room % kRoute.size()], summary,
-            true));
+        const bool exited = drive_exit(session,
+            ordinary_direction(session.snapshot(),
+                kRoute[room % kRoute.size()]), summary, true);
+        if (!exited) {
+            const auto failed = session.snapshot();
+            std::fprintf(stderr,
+                "[launcher-exit-failure] loop=%llu room=%llu phase=%u "
+                "fault=%u pending=%u abyss=%u\n",
+                static_cast<unsigned long long>(room),
+                static_cast<unsigned long long>(failed.room_index),
+                static_cast<unsigned>(failed.phase),
+                static_cast<unsigned>(failed.diagnostics.fault),
+                static_cast<unsigned>(failed.pending_save_kind.has_value()
+                    ? *failed.pending_save_kind
+                    : arpg::dungeon::PendingSaveKind::transition),
+                static_cast<unsigned>(failed.is_abyss));
+        }
+        ARPG_REQUIRE(exited);
     }
     ARPG_REQUIRE(session.snapshot().room_index == 10U);
     ARPG_REQUIRE(summary.dungeon_overflow == 0U);
@@ -1002,8 +1166,24 @@ arpg::test::Failure launcher_input_robot_clears_thousand_minimal_committed_rooms
             print_real_input_trace("launcher-1000-failure", trace, false);
         }
         ARPG_REQUIRE(cleared);
-        ARPG_REQUIRE(drive_exit(session, kRoute[room % kRoute.size()], summary,
-            true));
+        const bool exited = drive_exit(session,
+            ordinary_direction(session.snapshot(),
+                kRoute[room % kRoute.size()]), summary, true);
+        if (!exited) {
+            const auto failed = session.snapshot();
+            std::fprintf(stderr,
+                "[launcher-1000-exit-failure] loop=%llu room=%llu phase=%u "
+                "fault=%u pending=%u abyss=%u\n",
+                static_cast<unsigned long long>(room),
+                static_cast<unsigned long long>(failed.room_index),
+                static_cast<unsigned>(failed.phase),
+                static_cast<unsigned>(failed.diagnostics.fault),
+                static_cast<unsigned>(failed.pending_save_kind.has_value()
+                    ? *failed.pending_save_kind
+                    : arpg::dungeon::PendingSaveKind::transition),
+                static_cast<unsigned>(failed.is_abyss));
+        }
+        ARPG_REQUIRE(exited);
     }
     const DungeonSnapshot final = session.snapshot();
     const std::uint64_t allocation_delta = arpg::test::allocation_count()
@@ -1091,17 +1271,51 @@ arpg::test::Failure ten_thousand_director_plans_are_legal_deterministic_and_allo
 arpg::test::Failure identical_seed_and_route_are_field_equal() noexcept {
     arpg::dungeon::DungeonSessionConfig config;
     config.root_seed = 0x1020304050607080ULL;
-    DungeonSession lhs{config};
-    DungeonSession rhs{config};
-    ARPG_REQUIRE(same_snapshot(lhs.snapshot(), rhs.snapshot()));
+    auto lhs = std::make_unique<DungeonSession>(config);
+    auto rhs = std::make_unique<DungeonSession>(config);
+    ARPG_REQUIRE(same_snapshot(lhs->snapshot(), rhs->snapshot()));
+
+    const auto player = lhs->snapshot().combat->player.position;
+    const auto normal = arpg::items::generate_item({
+        0xCC0101U,
+        arpg::items::ItemSlot::gloves,
+        20U,
+        0xCC0101U,
+        arpg::items::ItemRarity::normal,
+    });
+    const auto rare = arpg::items::generate_item({
+        0xCC0303U,
+        arpg::items::ItemSlot::gloves,
+        20U,
+        0xCC0303U,
+        arpg::items::ItemRarity::rare,
+    });
+    ARPG_REQUIRE(normal.has_value());
+    ARPG_REQUIRE(rare.has_value());
+    constexpr std::uint16_t kNormalOrdinal = 2U;
+    constexpr std::uint16_t kRareOrdinal = 9U;
+    arpg::test::install_ground_item(
+        *lhs, kNormalOrdinal, *normal, player);
+    arpg::test::install_ground_item(
+        *rhs, kNormalOrdinal, *normal, player);
+    arpg::test::install_ground_item(
+        *lhs, kRareOrdinal, *rare, player);
+    arpg::test::install_ground_item(
+        *rhs, kRareOrdinal, *rare, player);
+    ARPG_REQUIRE(tick_equal(*lhs, *rhs, {},
+        {arpg::items::ItemRarity::rare}));
+    ARPG_REQUIRE(lhs->pending_save_view() != nullptr);
+    ARPG_REQUIRE(lhs->pending_save_view()->pickup_ordinal == kRareOrdinal);
+    ARPG_REQUIRE(arpg::test::ground_items(*lhs)[kNormalOrdinal].active);
+    ARPG_REQUIRE(commit_equal(*lhs, *rhs));
 
     std::size_t exits = 0;
     for (int tick = 0; tick < 100000 && exits < 4U; ++tick) {
-        const DungeonSnapshot state = lhs.snapshot();
+        const DungeonSnapshot state = lhs->snapshot();
         MovementInput movement{};
         if (state.phase == RoomPhase::combat && state.combat.has_value()) {
-            arpg::test::force_defeat_current_wave(lhs);
-            arpg::test::force_defeat_current_wave(rhs);
+            arpg::test::force_defeat_current_wave(*lhs);
+            arpg::test::force_defeat_current_wave(*rhs);
         } else if (state.phase == RoomPhase::awaiting_exit) {
             const ExitDirection direction = kRoute[exits];
             movement = align_center(state, direction);
@@ -1110,11 +1324,11 @@ arpg::test::Failure identical_seed_and_route_are_field_equal() noexcept {
             }
         }
         const std::uint64_t before_index = state.room_index;
-        ARPG_REQUIRE(tick_equal(lhs, rhs, movement));
-        if (lhs.snapshot().phase == RoomPhase::committing) {
-            ARPG_REQUIRE(commit_equal(lhs, rhs));
+        ARPG_REQUIRE(tick_equal(*lhs, *rhs, movement));
+        if (lhs->snapshot().phase == RoomPhase::committing) {
+            ARPG_REQUIRE(commit_equal(*lhs, *rhs));
         }
-        if (lhs.snapshot().room_index == before_index + 1U) {
+        if (lhs->snapshot().room_index == before_index + 1U) {
             ++exits;
         }
     }
@@ -1125,16 +1339,16 @@ arpg::test::Failure identical_seed_and_route_are_field_equal() noexcept {
 arpg::test::Failure one_changed_direction_changes_only_committed_room() noexcept {
     arpg::dungeon::DungeonSessionConfig config;
     config.root_seed = 0x9988776655443322ULL;
-    DungeonSession up{config};
-    DungeonSession right{config};
+    auto up = std::make_unique<DungeonSession>(config);
+    auto right = std::make_unique<DungeonSession>(config);
     StressSummary up_summary{};
     StressSummary right_summary{};
-    ARPG_REQUIRE(drive_clear(up, up_summary));
-    ARPG_REQUIRE(drive_clear(right, right_summary));
-    ARPG_REQUIRE(drive_exit(up, ExitDirection::up, up_summary, true));
-    ARPG_REQUIRE(drive_exit(right, ExitDirection::right, right_summary, true));
-    const DungeonSnapshot a = up.snapshot();
-    const DungeonSnapshot b = right.snapshot();
+    ARPG_REQUIRE(drive_clear(*up, up_summary));
+    ARPG_REQUIRE(drive_clear(*right, right_summary));
+    ARPG_REQUIRE(drive_exit(*up, ExitDirection::up, up_summary, true));
+    ARPG_REQUIRE(drive_exit(*right, ExitDirection::right, right_summary, true));
+    const DungeonSnapshot a = up->snapshot();
+    const DungeonSnapshot b = right->snapshot();
     ARPG_REQUIRE(a.room_index == 1U && b.room_index == 1U);
     ARPG_REQUIRE(a.room_seed != b.room_seed);
     ARPG_REQUIRE(a.room_seed == arpg::dungeon::derive_next_room_seed(

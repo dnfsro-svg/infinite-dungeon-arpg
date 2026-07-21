@@ -78,7 +78,38 @@ arpg::test::Failure no_arguments_leave_options_empty() noexcept {
     const HostArgumentResult result = parse(1, argv);
     ARPG_REQUIRE(result.error == HostArgumentError::none);
     ARPG_REQUIRE(!result.options.save_directory.has_value());
+    ARPG_REQUIRE(!result.options.settings_directory.has_value());
+    ARPG_REQUIRE(!result.options.screenshot_directory.has_value());
     ARPG_REQUIRE(!result.options.new_run_seed.has_value());
+    return {};
+}
+
+arpg::test::Failure screenshot_directory_is_absolute_and_distinct() noexcept {
+    const char* const argv[] = {"arpg", "--screenshot-dir", "capture evidence"};
+    const HostArgumentResult result = parse(3, argv);
+    ARPG_REQUIRE(result.error == HostArgumentError::none);
+    ARPG_REQUIRE(result.options.screenshot_directory.has_value());
+    ARPG_REQUIRE(result.options.screenshot_directory->is_absolute());
+    ARPG_REQUIRE(result.options.screenshot_directory->filename()
+        == "capture evidence");
+    return {};
+}
+
+arpg::test::Failure settings_directory_is_frozen_and_isolated_from_save()
+    noexcept {
+    const char* const argv[] = {
+        "arpg", "--save-dir", "character saves",
+        "--settings-dir", "settings only"};
+    const HostArgumentResult result = parse(5, argv);
+    ARPG_REQUIRE(result.error == HostArgumentError::none);
+    ARPG_REQUIRE(result.options.save_directory.has_value());
+    ARPG_REQUIRE(result.options.settings_directory.has_value());
+    ARPG_REQUIRE(result.options.save_directory->is_absolute());
+    ARPG_REQUIRE(result.options.settings_directory->is_absolute());
+    ARPG_REQUIRE(*result.options.save_directory
+        != *result.options.settings_directory);
+    ARPG_REQUIRE(result.options.settings_directory->filename()
+        == "settings only");
     return {};
 }
 
@@ -157,24 +188,35 @@ arpg::test::Failure duplicate_and_unknown_options_are_rejected() noexcept {
     const char* const duplicate_directory[] = {
         "arpg", "--save-dir", "one", "--save-dir", "two"};
     const char* const unknown[] = {"arpg", "--seed=8"};
+    const char* const duplicate_settings_directory[] = {
+        "arpg", "--settings-dir", "one", "--settings-dir", "two"};
+    const char* const duplicate_screenshot_directory[] = {
+        "arpg", "--screenshot-dir", "one", "--screenshot-dir", "two"};
     ARPG_REQUIRE(parse(5, duplicate_seed).error
         == HostArgumentError::duplicate_option);
     ARPG_REQUIRE(parse(5, duplicate_directory).error
         == HostArgumentError::duplicate_option);
     ARPG_REQUIRE(parse(2, unknown).error
         == HostArgumentError::unknown_option);
+    ARPG_REQUIRE(parse(5, duplicate_settings_directory).error
+        == HostArgumentError::duplicate_option);
+    ARPG_REQUIRE(parse(5, duplicate_screenshot_directory).error
+        == HostArgumentError::duplicate_option);
     return {};
 }
 
 arpg::test::Failure missing_and_invalid_seed_values_are_rejected() noexcept {
     const char* const missing[] = {"arpg", "--seed"};
     const char* const null_directory[] = {"arpg", "--save-dir", nullptr};
+    const char* const missing_screenshot_directory[] = {"arpg", "--screenshot-dir"};
     const char* const negative[] = {"arpg", "--seed", "-1"};
     const char* const overflow[] = {
         "arpg", "--seed", "18446744073709551616"};
     const char* const trailing[] = {"arpg", "--seed", "8x"};
     ARPG_REQUIRE(parse(2, missing).error == HostArgumentError::missing_value);
     ARPG_REQUIRE(parse(3, null_directory).error
+        == HostArgumentError::missing_value);
+    ARPG_REQUIRE(parse(2, missing_screenshot_directory).error
         == HostArgumentError::missing_value);
     ARPG_REQUIRE(parse(3, negative).error == HostArgumentError::invalid_seed);
     ARPG_REQUIRE(parse(3, overflow).error == HostArgumentError::invalid_seed);
@@ -186,6 +228,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"no arguments", &no_arguments_leave_options_empty},
     {"decimal and hexadecimal seed", &decimal_and_hex_seeds_parse_to_same_value},
     {"absolute save directory", &save_directory_with_spaces_is_frozen_absolute},
+    {"isolated settings directory", &settings_directory_is_frozen_and_isolated_from_save},
+    {"isolated screenshot directory", &screenshot_directory_is_absolute_and_distinct},
     {"failed temporary directory cleanup", &failed_temporary_directory_never_removes_unowned_path},
     {"duplicate and unknown options", &duplicate_and_unknown_options_are_rejected},
     {"missing and invalid seed", &missing_and_invalid_seed_values_are_rejected},

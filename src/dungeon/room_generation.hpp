@@ -24,6 +24,9 @@ namespace arpg::dungeon {
     std::uint64_t current_seed,
     std::uint64_t next_serial) noexcept;
 
+[[nodiscard]] std::array<bool, 4> preview_abyss_doors(
+    const checkpoint::RoomDescriptor& current) noexcept;
+
 struct RoomRandomSamples final {
     std::uint64_t ecology{};
     std::uint32_t hole{};
@@ -35,6 +38,23 @@ struct RoomGenerationResult final {
     checkpoint::RoomDescriptor room{};
     RoomRandomSamples samples{};
 };
+
+struct DeathRetreatTargetResult final {
+    DungeonFault fault{DungeonFault::none};
+    checkpoint::RoomDescriptor room{};
+};
+
+[[nodiscard]] DeathRetreatTargetResult make_death_retreat_target(
+    const checkpoint::DungeonRunState& current,
+    std::uint64_t next_death_sequence,
+    const DungeonRules& rules) noexcept;
+
+[[nodiscard]] DeathRetreatTargetResult make_death_retreat_target(
+    const checkpoint::RoomDescriptor& current_room,
+    std::uint64_t commit_generation,
+    std::uint64_t death_sequence,
+    std::uint64_t next_death_sequence,
+    const DungeonRules& rules) noexcept;
 
 [[nodiscard]] RoomGenerationResult generate_room_descriptor(
     std::uint64_t seed,

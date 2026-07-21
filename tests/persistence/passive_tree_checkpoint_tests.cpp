@@ -34,7 +34,7 @@ checkpoint::DungeonRunState make_fixture() noexcept {
     state.current_room.entry = checkpoint::EntrySide::right;
     state.current_room.ecology = checkpoint::DungeonElement::chaos;
     state.current_room.has_hole = true;
-    state.current_room.is_abyss = true;
+    state.current_room.is_abyss = false;
     state.last_transition = checkpoint::TransitionKind::descent;
     state.last_direction = checkpoint::ExitDirection::left;
     state.progression = {10U, 0U, 9U, 6U};
@@ -78,8 +78,9 @@ arpg::test::Failure passive_bits_round_trip_at_little_endian_offset_106() noexce
     const auto state = make_fixture();
     const auto bytes = persistence::encode_checkpoint(state);
     ARPG_REQUIRE(bytes.has_value());
-    ARPG_REQUIRE(bytes->size() == 204U);
-    ARPG_REQUIRE((*bytes)[0U] == 'I' && (*bytes)[7U] == '5');
+    ARPG_REQUIRE(bytes->size() == persistence::kV8BaseEncodedCheckpointSize);
+    ARPG_REQUIRE((*bytes)[0U] == 'A' && (*bytes)[6U] == '8'
+        && (*bytes)[7U] == 0U);
     ARPG_REQUIRE((*bytes)[106U] == 0x01U && (*bytes)[107U] == 0x07U);
     const auto decoded = persistence::decode_checkpoint(bytes->data(), bytes->size());
     ARPG_REQUIRE(decoded.error == persistence::CodecError::none);
@@ -113,7 +114,7 @@ arpg::test::Failure invalid_passive_bits_are_rejected() noexcept {
         auto bytes = persistence::encode_checkpoint(make_fixture());
         ARPG_REQUIRE(bytes.has_value());
         mutate(bytes->data());
-        refresh_crc(bytes->data(), 172U);
+        refresh_crc(bytes->data(), persistence::kV8BasePayloadSize);
         ARPG_REQUIRE(persistence::decode_checkpoint(bytes->data(), bytes->size()).error
             == persistence::CodecError::invalid_state);
     }

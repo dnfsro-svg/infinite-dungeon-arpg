@@ -37,6 +37,59 @@ struct DungeonSessionTestAccess final {
                 damage, combat::Vec3{}, combat::FeedbackLevel::light);
         }
     }
+    static bool kill_current_player_through_combat(
+        dungeon::DungeonSession& session) noexcept {
+        if (!session.combat_.has_value()) return false;
+        const combat::PlayerDamageSource source{
+            combat::PlayerDamageSourceKind::ground_hazard,
+            combat::MonsterId::fire_bomber,
+            static_cast<std::uint16_t>(combat::HazardKind::burning),
+        };
+        return session.combat_->apply_player_damage(
+            combat::DamagePacket{1000000},
+            combat::DamageDelivery::ground_or_environment,
+            source, combat::Vec3{}, combat::FeedbackLevel::heavy);
+    }
+    static const abyss::AbyssCombatConfig* pending_abyss_config(
+        const dungeon::DungeonSession& session) noexcept {
+        return session.pending_abyss_combat_.has_value()
+            ? &session.pending_abyss_combat_->abyss
+            : nullptr;
+    }
+    static const abyss::AbyssCombatConfig* active_abyss_config(
+        const dungeon::DungeonSession& session) noexcept {
+        return session.combat_.has_value()
+            ? &session.combat_->encounter_config_.abyss
+            : nullptr;
+    }
+    static void fill_current_combat_events(
+        dungeon::DungeonSession& session, std::size_t count) noexcept {
+        if (!session.combat_.has_value()) return;
+        combat::CombatEvent event{};
+        event.kind = combat::CombatEventKind::reset;
+        for (std::size_t index = 0U; index < count; ++index) {
+            session.combat_->emit_event(event);
+        }
+    }
+    static std::size_t fill_dungeon_events(
+        dungeon::DungeonSession& session, std::size_t count) noexcept {
+        dungeon::DungeonEvent event{};
+        event.kind = dungeon::DungeonEventKind::room_reset;
+        std::size_t pushed = 0U;
+        while (pushed < count && session.events_.try_push(event)) {
+            ++pushed;
+        }
+        return pushed;
+    }
+    static void force_fault(
+        dungeon::DungeonSession& session,
+        dungeon::DungeonFault fault) noexcept {
+        session.enter_fault(fault);
+    }
+    static void handle_player_defeat(
+        dungeon::DungeonSession& session) noexcept {
+        session.handle_player_defeat();
+    }
     static void force_defeat_current_wave(
         dungeon::DungeonSession& session) noexcept {
         if (!session.combat_.has_value()) {
@@ -140,7 +193,42 @@ struct DungeonSessionTestAccess final {
         combat::Vec3 position) noexcept {
         if (ordinal < session.ground_items_.size()) {
             session.ground_items_[ordinal] = {
-                true, ordinal, position, item};
+                true, ordinal, dungeon::GroundItemSource::monster_drop,
+                0xFFU, position, item};
+        }
+    }
+    static void install_abyss_ground_item(
+        dungeon::DungeonSession& session,
+        std::uint16_t ordinal,
+        std::uint8_t reward_ordinal,
+        const items::ItemInstance& item,
+        combat::Vec3 position) noexcept {
+        if (ordinal < session.ground_items_.size()) {
+            session.ground_items_[ordinal] = {
+                true, ordinal, dungeon::GroundItemSource::abyss_chest,
+                reward_ordinal, position, item};
+        }
+    }
+    static combat::CombatWorld* mutable_combat_world(
+        dungeon::DungeonSession& session) noexcept {
+        return session.combat_.has_value() ? &*session.combat_ : nullptr;
+    }
+    static void install_combat_world(
+        dungeon::DungeonSession& session,
+        const combat::CombatEncounterConfig& config) noexcept {
+        session.combat_.emplace(config);
+    }
+    static void fill_ground_pool(
+        dungeon::DungeonSession& session,
+        const items::ItemInstance& prototype) noexcept {
+        for (std::uint16_t index = 0U;
+             index < session.ground_items_.size(); ++index) {
+            items::ItemInstance item = prototype;
+            item.id += index;
+            session.ground_items_[index] = {
+                true, index, dungeon::GroundItemSource::monster_drop,
+                0xFFU, {100.0F + static_cast<float>(index),
+                    100.0F, 0.0F}, item};
         }
     }
     static void set_pending_pickup_ordinal(
@@ -148,6 +236,49 @@ struct DungeonSessionTestAccess final {
         std::uint16_t ordinal) noexcept {
         if (session.pending_save_.has_value()) {
             session.pending_save_->pickup_ordinal = ordinal;
+        }
+    }
+    static void set_started_abyss_room(
+        dungeon::DungeonSession& session,
+        abyss::AbyssDanger danger) noexcept {
+        session.stable_state_.current_room.is_abyss = true;
+        session.stable_state_.abyss.lifecycle = abyss::AbyssLifecycle::started;
+        session.stable_state_.abyss.danger = danger;
+        session.stable_state_.abyss.rule = danger == abyss::AbyssDanger::low
+            ? abyss::AbyssRuleId::thunderstorm
+            : (danger == abyss::AbyssDanger::medium
+                ? abyss::AbyssRuleId::hunting_flames
+                : abyss::AbyssRuleId::chaos_expansion);
+        session.stable_state_.abyss.rules_version = abyss::kAbyssRulesVersion;
+    }
+    static void clear_all_ground_items(
+        dungeon::DungeonSession& session) noexcept {
+        session.ground_items_ = {};
+    }
+    static void install_ground_material(
+        dungeon::DungeonSession& session,
+        std::uint16_t ordinal,
+        items::MaterialId material,
+        combat::Vec3 position,
+        dungeon::GroundMaterialSource source =
+            dungeon::GroundMaterialSource::monster_common) noexcept {
+        if (ordinal < session.ground_materials_.size()) {
+            session.ground_materials_[ordinal] = {
+                true, ordinal, source, position, material};
+        }
+    }
+    static void prepare_room_clear(
+        dungeon::DungeonSession& session) noexcept {
+        session.prepare_room_clear();
+    }
+    static void offset_pending_abyss_reward_position(
+        dungeon::DungeonSession& session,
+        combat::Vec3 offset) noexcept {
+        if (session.pending_abyss_reward_.has_value()) {
+            auto& position = session.pending_abyss_reward_->ground.position;
+            position.x += offset.x;
+            position.y += offset.y;
+            position.z += offset.z;
         }
     }
     static const std::array<std::uint64_t, 3>& rolled_drop_bits(
@@ -158,10 +289,32 @@ struct DungeonSessionTestAccess final {
         const dungeon::DungeonSession& session) noexcept {
         return session.stable_state_;
     }
+    static void set_room_progression(
+        dungeon::DungeonSession& session,
+        progression::ProgressionState state) noexcept {
+        session.room_progression_ = state;
+    }
+    static bool copy_run_state_reusing_items(
+        dungeon::DungeonRunState& destination,
+        const dungeon::DungeonRunState& source) noexcept {
+        return dungeon::DungeonSession::copy_run_state_reusing_items(
+            destination, source);
+    }
+    static void publish_run_state_reusing_items(
+        dungeon::DungeonRunState& destination,
+        dungeon::DungeonRunState& source) noexcept {
+        dungeon::DungeonSession::publish_run_state_reusing_items(
+            destination, source);
+    }
     static const std::array<dungeon::GroundItem,
         dungeon::kGroundDropCapacity>& ground_items(
         const dungeon::DungeonSession& session) noexcept {
         return session.ground_items_;
+    }
+    static const std::array<dungeon::GroundMaterial,
+        dungeon::kGroundMaterialCapacity>& ground_materials(
+        const dungeon::DungeonSession& session) noexcept {
+        return session.ground_materials_;
     }
 };
 
@@ -176,6 +329,17 @@ inline bool defeat_next_live_monster(dungeon::DungeonSession& session) noexcept 
 inline void damage_current_player(
     dungeon::DungeonSession& session, int damage) noexcept {
     DungeonSessionTestAccess::damage_current_player(session, damage);
+}
+
+inline bool kill_current_player_through_combat(
+    dungeon::DungeonSession& session) noexcept {
+    return DungeonSessionTestAccess::kill_current_player_through_combat(
+        session);
+}
+
+inline std::size_t fill_dungeon_events(
+    dungeon::DungeonSession& session, std::size_t count) noexcept {
+    return DungeonSessionTestAccess::fill_dungeon_events(session, count);
 }
 
 inline const dungeon::RoomEncounterPlan& encounter_plan(
@@ -256,10 +420,72 @@ inline void install_ground_item(
         session, ordinal, item, position);
 }
 
+inline void install_abyss_ground_item(
+    dungeon::DungeonSession& session,
+    std::uint16_t ordinal,
+    std::uint8_t reward_ordinal,
+    const items::ItemInstance& item,
+    combat::Vec3 position) noexcept {
+    DungeonSessionTestAccess::install_abyss_ground_item(
+        session, ordinal, reward_ordinal, item, position);
+}
+
+inline void install_combat_world(
+    dungeon::DungeonSession& session,
+    const combat::CombatEncounterConfig& config) noexcept {
+    DungeonSessionTestAccess::install_combat_world(
+        session, config);
+}
+
+inline combat::CombatWorld* mutable_combat_world(
+    dungeon::DungeonSession& session) noexcept {
+    return DungeonSessionTestAccess::mutable_combat_world(session);
+}
+
+inline void fill_ground_pool(
+    dungeon::DungeonSession& session,
+    const items::ItemInstance& prototype) noexcept {
+    DungeonSessionTestAccess::fill_ground_pool(session, prototype);
+}
+
 inline void set_pending_pickup_ordinal(
     dungeon::DungeonSession& session,
     std::uint16_t ordinal) noexcept {
     DungeonSessionTestAccess::set_pending_pickup_ordinal(session, ordinal);
+}
+
+inline void set_started_abyss_room(
+    dungeon::DungeonSession& session,
+    abyss::AbyssDanger danger) noexcept {
+    DungeonSessionTestAccess::set_started_abyss_room(session, danger);
+}
+
+inline void clear_all_ground_items(
+    dungeon::DungeonSession& session) noexcept {
+    DungeonSessionTestAccess::clear_all_ground_items(session);
+}
+
+inline void install_ground_material(
+    dungeon::DungeonSession& session,
+    std::uint16_t ordinal,
+    items::MaterialId material,
+    combat::Vec3 position,
+    dungeon::GroundMaterialSource source =
+        dungeon::GroundMaterialSource::monster_common) noexcept {
+    DungeonSessionTestAccess::install_ground_material(
+        session, ordinal, material, position, source);
+}
+
+inline void prepare_room_clear(
+    dungeon::DungeonSession& session) noexcept {
+    DungeonSessionTestAccess::prepare_room_clear(session);
+}
+
+inline void offset_pending_abyss_reward_position(
+    dungeon::DungeonSession& session,
+    combat::Vec3 offset) noexcept {
+    DungeonSessionTestAccess::offset_pending_abyss_reward_position(
+        session, offset);
 }
 
 inline const std::array<std::uint64_t, 3>& rolled_drop_bits(
@@ -270,6 +496,26 @@ inline const std::array<std::uint64_t, 3>& rolled_drop_bits(
 inline const dungeon::DungeonRunState& stable_state(
     const dungeon::DungeonSession& session) noexcept {
     return DungeonSessionTestAccess::stable_state(session);
+}
+
+inline void set_room_progression(
+    dungeon::DungeonSession& session,
+    progression::ProgressionState state) noexcept {
+    DungeonSessionTestAccess::set_room_progression(session, state);
+}
+
+inline bool copy_run_state_reusing_items(
+    dungeon::DungeonRunState& destination,
+    const dungeon::DungeonRunState& source) noexcept {
+    return DungeonSessionTestAccess::copy_run_state_reusing_items(
+        destination, source);
+}
+
+inline void publish_run_state_reusing_items(
+    dungeon::DungeonRunState& destination,
+    dungeon::DungeonRunState& source) noexcept {
+    DungeonSessionTestAccess::publish_run_state_reusing_items(
+        destination, source);
 }
 
 inline const std::array<dungeon::GroundItem,
@@ -298,13 +544,13 @@ inline bool same_encounter_plan(const dungeon::RoomEncounterPlan& left,
 
 inline bool commit_pending(
     dungeon::DungeonSession& session) noexcept {
-    const auto pending = session.pending_transition();
+    const auto pending = session.pending_save();
     if (!pending.has_value()) {
         return false;
     }
-    session.resolve_pending_transition({
+    session.resolve_pending_save({
         dungeon::SaveDisposition::committed,
-        pending->next_state.commit_generation,
+        pending->expected_generation,
         pending->next_state,
     });
     return true;
@@ -425,6 +671,16 @@ inline bool drive_until_cleared(
         if (state.phase == dungeon::RoomPhase::cleared
                 || state.phase == dungeon::RoomPhase::awaiting_exit) {
             return true;
+        }
+        if (state.phase == dungeon::RoomPhase::committing
+                && state.pending_save_kind.has_value()
+                && (*state.pending_save_kind
+                        == dungeon::PendingSaveKind::room_clear
+                    || *state.pending_save_kind
+                        == dungeon::PendingSaveKind::abyss_clear)) {
+            if (!commit_pending(session)) return false;
+            drain_all_events(session, summary);
+            continue;
         }
         if (state.phase == dungeon::RoomPhase::combat) {
             force_defeat_current_wave(session);

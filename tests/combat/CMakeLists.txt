@@ -1,10 +1,12 @@
 add_executable(arpg_combat_tests
     ../core/allocation_probe.cpp
     combat_test_main.cpp
+    abyss_environment_tests.cpp
     attack_catalog_tests.cpp
     attack_state_tests.cpp
     break_stress_tests.cpp
     combat_config_tests.cpp
+    draw_slash_skill_tests.cpp
     dummy_reaction_tests.cpp
     hit_resolution_tests.cpp
     input_buffer_tests.cpp
@@ -20,7 +22,10 @@ add_executable(arpg_combat_tests
     movement_jump_tests.cpp
     player_health_tests.cpp
     player_build_tests.cpp
-    player_defense_tests.cpp)
+    player_damage_history_tests.cpp
+    player_death_snapshot_tests.cpp
+    player_defense_tests.cpp
+    storm_swords_skill_tests.cpp)
 
 target_compile_features(arpg_combat_tests PRIVATE cxx_std_17)
 target_include_directories(arpg_combat_tests

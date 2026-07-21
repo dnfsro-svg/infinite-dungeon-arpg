@@ -194,7 +194,14 @@ bool reload_v4(std::unique_ptr<DungeonSession>& session,
     const auto decoded = arpg::persistence::decode_checkpoint(
         encoded->data(), encoded->size());
     if (decoded.error != arpg::persistence::CodecError::none) return false;
-    session = std::make_unique<DungeonSession>(rules, decoded.state);
+    auto restored = decoded.state;
+    if (restored.abyss.lifecycle
+            == arpg::abyss::AbyssLifecycle::started) {
+        ++restored.commit_generation;
+        restored.current_room.is_abyss = false;
+        restored.abyss.lifecycle = arpg::abyss::AbyssLifecycle::failed;
+    }
+    session = std::make_unique<DungeonSession>(rules, restored);
     return session->snapshot().phase == RoomPhase::locked;
 }
 
@@ -362,10 +369,37 @@ bool transition_room(DungeonSession& session, std::size_t room) noexcept {
         ExitDirection::up, ExitDirection::right,
         ExitDirection::down, ExitDirection::left,
     }};
-    arpg::test::set_phase(session, RoomPhase::awaiting_exit);
-    arpg::test::attempt_exit(session, kDirections[room % kDirections.size()]);
-    if (!commit_pending(session)) return false;
+    const ExitDirection direction = kDirections[room % kDirections.size()];
+    arpg::combat::Vec3 door_position{};
+    switch (direction) {
+    case ExitDirection::up: door_position.y = -5.5F; break;
+    case ExitDirection::down: door_position.y = 5.5F; break;
+    case ExitDirection::left: door_position.x = -12.0F; break;
+    case ExitDirection::right: door_position.x = 12.0F; break;
+    case ExitDirection::none: return false;
+    }
+    for (int attempt = 0; attempt < 16; ++attempt) {
+        if (session.snapshot().phase == RoomPhase::committing) {
+            if (!commit_pending(session)) return false;
+            if (session.snapshot().phase == RoomPhase::transitioning) break;
+            continue;
+        }
+        arpg::test::set_phase(session, RoomPhase::awaiting_exit);
+        arpg::test::set_player_position(session, door_position);
+        arpg::test::attempt_exit(session, direction);
+        if (session.snapshot().phase == RoomPhase::committing) continue;
+        if (session.snapshot().abyss_exit_confirmation_armed) {
+            session.tick({});
+            if (session.snapshot().phase != RoomPhase::committing
+                    && session.snapshot().abyss_exit_confirmation_armed) {
+                arpg::test::attempt_exit(session, direction);
+            }
+        }
+    }
+    if (session.snapshot().phase != RoomPhase::transitioning) return false;
     session.tick({});
+    if (session.snapshot().phase == RoomPhase::committing
+            && !commit_pending(session)) return false;
     drain_events(session);
     return session.snapshot().phase == RoomPhase::locked;
 }

@@ -25,6 +25,8 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
         player_.status.corrosion_damage_per_second,
         player_.status.corrosion_ticks, player_.status.corrosion_tick_phase,
     };
+    result.active_skill = active_skill_.snapshot;
+    result.skill_cooldowns = active_skill_.cooldowns;
     for (std::size_t index = 0; index < monsters_.slots().size(); ++index) {
         const MonsterRuntime& monster = monsters_.slots()[index];
         result.monsters[index] = MonsterSnapshot{
@@ -58,11 +60,20 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
         for (std::size_t index = 0; index < hazards_.slots().size(); ++index) {
             const HazardRuntime& hazard = hazards_.slots()[index];
             if (!hazard.active) continue;
+            const DamagePacket visible_damage = hazard.source
+                    == HazardSource::abyss_environment
+                ? environment_damage_packet(
+                    player_.max_hp, hazard.environment_damage_bp,
+                    hazard.environment_damage_type)
+                : hazard.damage;
             result.hazards[index] = HazardSnapshot{
-                hazard.active, hazard.generation, hazard.owner, hazard.kind, hazard.center,
+                hazard.active, hazard.generation, hazard.owner, hazard.source,
+                hazard.kind, hazard.center,
                 hazard.radius, hazard.telegraph_ticks, hazard.active_ticks,
                 hazard.lifetime_ticks, hazard.damage_interval_ticks,
-                hazard.player_latched, hazard.persists_after_owner_death, hazard.damage,
+                hazard.player_latched, hazard.persists_after_owner_death,
+                visible_damage, hazard.environment_damage_bp,
+                hazard.environment_damage_type,
             };
         }
     }

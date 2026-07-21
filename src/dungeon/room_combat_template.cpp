@@ -52,6 +52,7 @@ std::optional<combat::CombatEncounterConfig> make_combat_encounter_config(
     std::uint32_t rules_version,
     const combat::EncounterWave& wave,
     bool reset_player_health,
+    abyss::AbyssCombatConfig abyss_config,
     combat::PlayerCombatBuild player_build,
     std::uint64_t evasion_seed) noexcept {
     const auto legacy = make_combat_lab_config(entry, rules_version);
@@ -63,6 +64,7 @@ std::optional<combat::CombatEncounterConfig> make_combat_encounter_config(
     config.initial_facing = legacy->initial_facing;
     config.wave = wave;
     config.reset_player_health = reset_player_health;
+    config.abyss = abyss_config;
     config.player_build = player_build;
     config.evasion_seed = evasion_seed;
     return config;

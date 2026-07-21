@@ -55,6 +55,8 @@ HostArgumentResult parse_host_arguments(
     HostArgumentResult result{};
     bool seed_seen = false;
     bool save_directory_seen = false;
+    bool settings_directory_seen = false;
+    bool screenshot_directory_seen = false;
     for (int index = 1; index < argc; ++index) {
         const char* const argument = argv[index];
         if (equals(argument, "--seed")) {
@@ -88,6 +90,42 @@ HostArgumentResult parse_host_arguments(
                     std::filesystem::path{argv[++index]});
             } catch (const std::filesystem::filesystem_error&) {
                 return error_result(HostArgumentError::invalid_seed);
+            } catch (...) {
+                return error_result(HostArgumentError::invalid_seed);
+            }
+            continue;
+        }
+
+        if (equals(argument, "--settings-dir")) {
+            if (settings_directory_seen) {
+                return error_result(HostArgumentError::duplicate_option);
+            }
+            settings_directory_seen = true;
+            if (index + 1 >= argc || argv[index + 1] == nullptr
+                || is_option(argv[index + 1])) {
+                return error_result(HostArgumentError::missing_value);
+            }
+            try {
+                result.options.settings_directory = std::filesystem::absolute(
+                    std::filesystem::path{argv[++index]});
+            } catch (...) {
+                return error_result(HostArgumentError::invalid_seed);
+            }
+            continue;
+        }
+
+        if (equals(argument, "--screenshot-dir")) {
+            if (screenshot_directory_seen) {
+                return error_result(HostArgumentError::duplicate_option);
+            }
+            screenshot_directory_seen = true;
+            if (index + 1 >= argc || argv[index + 1] == nullptr
+                || is_option(argv[index + 1])) {
+                return error_result(HostArgumentError::missing_value);
+            }
+            try {
+                result.options.screenshot_directory = std::filesystem::absolute(
+                    std::filesystem::path{argv[++index]});
             } catch (...) {
                 return error_result(HostArgumentError::invalid_seed);
             }

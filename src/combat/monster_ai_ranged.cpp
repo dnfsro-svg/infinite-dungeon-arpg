@@ -22,25 +22,6 @@ void clamp_position(Vec3& position) noexcept {
     position.y = std::clamp(position.y, room_bounds::min_y, room_bounds::max_y);
 }
 
-std::uint16_t frenzy_ticks(
-    std::uint16_t base, const MonsterRuntime& monster) noexcept {
-    return scaled_monster_ticks(base, monster.affix_profile.attack_timing_bp);
-}
-
-std::uint16_t cooldown_ticks(
-    std::uint16_t base, const MonsterRuntime& monster) noexcept {
-    return scaled_monster_ticks(frenzy_ticks(base, monster),
-                                monster.affix_profile.cooldown_bp);
-}
-
-DamagePacket scaled_packet(
-    DamagePacket packet, const MonsterRuntime& monster) noexcept {
-    for (int& amount : packet.amount) {
-        amount = scaled_monster_damage(amount, monster.affix_profile);
-    }
-    return packet;
-}
-
 const MonsterAffixTierValues* affix_values(
     const MonsterAffixSet& affixes, MonsterAffixId id) noexcept {
     for (std::size_t index = 0; index < affixes.count
@@ -69,7 +50,8 @@ DamagePacket scaled_multishot_packet(
 bool move_to_preferred_range(
     MonsterRuntime& monster,
     const MonsterDefinition& definition,
-    Vec3 player) noexcept {
+    Vec3 player,
+    const abyss::AbyssCombatConfig& abyss_config) noexcept {
     const float distance = target_distance(monster.position, player);
     if (distance > definition.preferred_range + kRangeSlack
         || distance < definition.preferred_range - kRangeSlack) {
@@ -84,8 +66,9 @@ bool move_to_preferred_range(
             dy = 0.0F;
         }
         const float magnitude = std::sqrt(dx * dx + dy * dy);
-        const float speed = monster_move_step(
-            definition.move_speed, monster.affix_profile);
+        const float speed = abyss_monster_move_step(
+            definition.move_speed, monster.affix_profile,
+            abyss_config);
         monster.velocity.x = dx / magnitude * speed;
         monster.velocity.y = dy / magnitude * speed;
         monster.position.x += monster.velocity.x;
@@ -95,7 +78,9 @@ bool move_to_preferred_range(
     }
     monster.velocity = Vec3{};
     monster.ai_phase = MonsterAiPhase::telegraph;
-    monster.ai_ticks = frenzy_ticks(definition.telegraph_ticks, monster);
+    monster.ai_ticks = abyss_monster_attack_ticks(
+        definition.telegraph_ticks, monster.affix_profile,
+        abyss_config);
     monster.attack_target_position = player;
     return false;
 }
@@ -110,7 +95,8 @@ void CombatWorld::simulate_ranged_ai(
     switch (monster.ai_phase) {
     case MonsterAiPhase::move:
         face_toward(monster, player_.position);
-        static_cast<void>(move_to_preferred_range(monster, definition, player_.position));
+        static_cast<void>(move_to_preferred_range(
+            monster, definition, player_.position, encounter_config_.abyss));
         return;
     case MonsterAiPhase::telegraph:
         face_toward(monster, player_.position);
@@ -163,8 +149,8 @@ void CombatWorld::simulate_ranged_ai(
                      projectile_index < count
                          && projectile_index < fanned_velocities.size();
                      ++projectile_index) {
-                    DamagePacket packet = scaled_packet(
-                        definition.contact_damage, monster);
+                    DamagePacket packet = scale_monster_affix_damage(
+                        definition.contact_damage, monster.affix_profile);
                     if (multishot != nullptr) {
                         packet = scaled_multishot_packet(
                             packet, multishot->primary_bp);
@@ -204,31 +190,37 @@ void CombatWorld::simulate_ranged_ai(
                 } else {
                     const float distance = target_distance(monster.position, player_.position);
                     if (distance < definition.preferred_range && distance > 0.0001F) {
+                        const float retreat_step = abyss_monster_move_step(
+                            definition.move_speed, monster.affix_profile,
+                            encounter_config_.abyss);
                         monster.position.x += (monster.position.x - player_.position.x)
-                            / distance * monster_move_step(
-                                definition.move_speed, monster.affix_profile);
+                            / distance * retreat_step;
                         monster.position.y += (monster.position.y - player_.position.y)
-                            / distance * monster_move_step(
-                                definition.move_speed, monster.affix_profile);
+                            / distance * retreat_step;
                         clamp_position(monster.position);
                     }
                     monster.ai_phase = MonsterAiPhase::cooldown;
-                    monster.ai_ticks = cooldown_ticks(
-                        kSupportFallbackCooldown, monster);
+                    monster.ai_ticks = abyss_monster_cooldown_ticks(
+                        kSupportFallbackCooldown, monster.affix_profile,
+                        encounter_config_.abyss);
                 }
             }
             monster.contact_attack_resolved = true;
         }
         if (tick_down(monster.ai_ticks)) {
             monster.ai_phase = MonsterAiPhase::recovery;
-            monster.ai_ticks = frenzy_ticks(definition.recovery_ticks, monster);
+            monster.ai_ticks = abyss_monster_attack_ticks(
+                definition.recovery_ticks, monster.affix_profile,
+                encounter_config_.abyss);
         }
         return;
     case MonsterAiPhase::recovery:
         monster.velocity = Vec3{};
         if (tick_down(monster.ai_ticks)) {
             monster.ai_phase = MonsterAiPhase::cooldown;
-            monster.ai_ticks = cooldown_ticks(definition.cooldown_ticks, monster);
+            monster.ai_ticks = abyss_monster_cooldown_ticks(
+                definition.cooldown_ticks, monster.affix_profile,
+                encounter_config_.abyss);
         }
         return;
     case MonsterAiPhase::cooldown:

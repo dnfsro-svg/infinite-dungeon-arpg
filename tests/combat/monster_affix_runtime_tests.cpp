@@ -6,6 +6,7 @@
 #include "combat/monster_affix_runtime.hpp"
 #include "combat/monster_catalog.hpp"
 #include "combat/monster_pool.hpp"
+#include "abyss/abyss_rules.hpp"
 #include "modifiers/damage_types.hpp"
 
 #include <array>
@@ -403,6 +404,34 @@ arpg::test::Failure corrosion_dot_bypasses_evasion_and_uses_chaos_reduction() no
     return {};
 }
 
+arpg::test::Failure abyss_fury_scales_final_corrosion_dot_once() noexcept {
+    constexpr std::array<MonsterAffixTier, 3> tiers{{
+        MonsterAffixTier::m1,
+        MonsterAffixTier::m2,
+        MonsterAffixTier::m3,
+    }};
+    constexpr std::array<int, 3> expected{{29, 43, 65}};
+    constexpr std::array<int, 3> unscaled{{20, 30, 45}};
+    for (std::size_t index = 0U; index < tiers.size(); ++index) {
+        CombatEncounterConfig config = affixed_encounter(
+            MonsterAffixId::chaos_corrosion, tiers[index]);
+        CombatWorld normal{config};
+        arpg::test::CombatWorldTestAccess::apply_monster_direct_hit(
+            normal, 0U, DamagePacket{2}, Vec3{}, FeedbackLevel::light);
+        ARPG_REQUIRE(normal.snapshot().player.corrosion_damage_per_second
+                     == unscaled[index]);
+
+        config.abyss = arpg::abyss::combat_config_for(
+            arpg::abyss::AbyssRuleId::abyss_fury);
+        CombatWorld world{config};
+        arpg::test::CombatWorldTestAccess::apply_monster_direct_hit(
+            world, 0U, DamagePacket{2}, Vec3{}, FeedbackLevel::light);
+        ARPG_REQUIRE(world.snapshot().player.corrosion_damage_per_second
+                     == expected[index]);
+    }
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"mighty horizontal launch only", &mighty_scales_only_horizontal_launch_impulse},
     {"frenzy damage and non-active timing", &frenzy_scales_damage_and_only_non_active_timing},
@@ -413,6 +442,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"spawn spec runtime snapshot copy", &spawn_spec_is_copied_to_runtime_and_snapshot},
     {"chilling direct water and slow", &chilling_direct_hit_adds_water_damage_and_slows_movement},
     {"corrosion dot delivery and reduction", &corrosion_dot_bypasses_evasion_and_uses_chaos_reduction},
+    {"abyss fury final corrosion dot once",
+     &abyss_fury_scales_final_corrosion_dot_once},
 };
 
 }  // namespace

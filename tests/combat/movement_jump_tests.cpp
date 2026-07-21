@@ -2,6 +2,8 @@
 
 #include "combat/combat_world.hpp"
 
+#include "abyss/abyss_rules.hpp"
+
 #include <cmath>
 #include <cstdint>
 
@@ -166,6 +168,54 @@ arpg::test::Failure airborne_motion_uses_seventy_percent_control() noexcept {
     return {};
 }
 
+arpg::test::Failure heavy_steps_scales_only_ground_horizontal_motion() noexcept {
+    CombatEncounterConfig normal_config{};
+    normal_config.wave = {};
+    CombatEncounterConfig heavy_config = normal_config;
+    heavy_config.abyss = arpg::abyss::combat_config_for(
+        arpg::abyss::AbyssRuleId::heavy_steps);
+    CombatWorld normal{normal_config};
+    CombatWorld heavy{heavy_config};
+
+    normal.tick(MovementInput{1, 0});
+    heavy.tick(MovementInput{1, 0});
+    ARPG_REQUIRE(arpg::test::near(
+        normal.snapshot().player.velocity.x, 5.4, kFloatTolerance));
+    ARPG_REQUIRE(arpg::test::near(
+        heavy.snapshot().player.velocity.x, 4.59, kFloatTolerance));
+
+    ARPG_REQUIRE(normal.queue_action(Action::jump));
+    ARPG_REQUIRE(heavy.queue_action(Action::jump));
+    normal.tick({});
+    heavy.tick({});
+    ARPG_REQUIRE(arpg::test::near(
+        heavy.snapshot().player.velocity.z,
+        normal.snapshot().player.velocity.z));
+    ARPG_REQUIRE(arpg::test::near(
+        heavy.snapshot().player.position.z,
+        normal.snapshot().player.position.z));
+    normal.tick(MovementInput{1, 0});
+    heavy.tick(MovementInput{1, 0});
+    ARPG_REQUIRE(arpg::test::near(
+        normal.snapshot().player.velocity.x, 3.78, kFloatTolerance));
+    ARPG_REQUIRE(arpg::test::near(
+        heavy.snapshot().player.velocity.x, 3.78, kFloatTolerance));
+
+    CombatWorld normal_attack{normal_config};
+    CombatWorld heavy_attack{heavy_config};
+    ARPG_REQUIRE(normal_attack.queue_action(Action::light));
+    ARPG_REQUIRE(heavy_attack.queue_action(Action::light));
+    for (int tick = 0; tick < 40; ++tick) {
+        normal_attack.tick({});
+        heavy_attack.tick({});
+        ARPG_REQUIRE(normal_attack.snapshot().player.active_attack
+                     == heavy_attack.snapshot().player.active_attack);
+        ARPG_REQUIRE(normal_attack.snapshot().player.attack_phase
+                     == heavy_attack.snapshot().player.attack_phase);
+    }
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"fixed ground motion and normalized diagonal",
      &ground_motion_is_fixed_and_diagonal_is_normalized},
@@ -173,6 +223,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"deterministic jump apex and landing",
      &jump_arc_has_deterministic_apex_and_one_landing_tick},
     {"seventy percent air control", &airborne_motion_uses_seventy_percent_control},
+    {"heavy steps only scales ground movement",
+     &heavy_steps_scales_only_ground_horizontal_motion},
 };
 
 }  // namespace

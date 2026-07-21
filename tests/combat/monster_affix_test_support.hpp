@@ -18,6 +18,12 @@ generate_monster_affixes_with_catalog(
     std::uint8_t wave_index, std::uint8_t spawn_index,
     const MonsterDefinition& monster,
     const MonsterAffixCatalog& catalog) noexcept;
+[[nodiscard]] std::optional<MonsterAffixSet>
+supplement_abyss_affixes_with_catalog(
+    std::uint64_t room_seed, std::uint64_t depth,
+    std::uint8_t wave_index, std::uint8_t spawn_index,
+    const MonsterDefinition& monster, MonsterAffixSet normal,
+    const MonsterAffixCatalog& catalog) noexcept;
 [[nodiscard]] std::uint64_t monster_affix_context_seed(
     std::uint64_t room_seed, std::uint64_t depth,
     std::uint8_t wave_index, std::uint8_t spawn_index) noexcept;

@@ -1,30 +1,65 @@
 add_library(arpg_raylib STATIC
+    active_skill_renderer.cpp
+    active_skill_view.cpp
     actor_renderer.cpp
+    audio_pack.cpp
+    audio_asset_validation.cpp
+    audio_routing.cpp
+    audio_scene.cpp
     combat_audio.cpp
     combat_feedback.cpp
     combat_renderer.cpp
+    control_hints.cpp
     combat_view_math.cpp
+    death_overlay_font.cpp
+    death_overlay_renderer.cpp
+    death_overlay_view.cpp
     debug_renderer.cpp
+    debug_overlay_renderer.cpp
     dungeon_view_math.cpp
     dungeon_runtime.cpp
+    game_audio.cpp
+    ground_loot_view.cpp
+    host_input.cpp
     host_launch_options.cpp
+    hud_font.cpp
+    hud_view_model.cpp
+    hud_notice_state.cpp
+    loot_pickup_feedback.cpp
+    material_bag_renderer.cpp
+    material_loot_view.cpp
+    hud_layout.cpp
     hud_renderer.cpp
     inventory_renderer.cpp
     inventory_view_math.cpp
+    material_animation.cpp
+    material_asset_validation.cpp
+    material_pack.cpp
     passive_tree_renderer.cpp
     passive_tree_view_math.cpp
+    pause_menu_state.cpp
+    pause_menu_view.cpp
+    pause_menu_renderer.cpp
+    procedural_audio.cpp
     raylib_input.cpp
     raylib_host.cpp
-    room_renderer.cpp)
+    room_renderer.cpp
+    stable_key_raylib.cpp
+    stream_pack.cpp
+    ui_audio_pack.cpp
+    window_settings.cpp)
 
 target_include_directories(arpg_raylib
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_features(arpg_raylib PUBLIC cxx_std_17)
 target_link_libraries(arpg_raylib
     PUBLIC arpg_dungeon arpg_persistence raylib
-    PRIVATE arpg_core)
+    PRIVATE arpg_core arpg_settings)
 if(WIN32)
     target_link_libraries(arpg_raylib PRIVATE user32)
 endif()
 
 arpg_enable_project_warnings(arpg_raylib)
+if(MSVC)
+    target_compile_options(arpg_raylib PRIVATE /utf-8)
+endif()

@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <optional>
+#include <string_view>
 
 namespace arpg::dungeon {
 
@@ -27,7 +28,49 @@ enum class DungeonFault : std::uint8_t {
     item_id_collision,
     item_sequence_overflow,
     invalid_item_state,
+    invalid_abyss_state,
+    abyss_generation_failed,
+    abyss_reward_collision,
+    abyss_reward_revision_overflow,
+    death_sequence_overflow,
+    death_sequence_mismatch,
 };
+
+[[nodiscard]] constexpr std::string_view dungeon_fault_name(
+    DungeonFault fault) noexcept {
+    switch (fault) {
+    case DungeonFault::none: return "none";
+    case DungeonFault::invalid_rules: return "invalid_rules";
+    case DungeonFault::invalid_direction: return "invalid_direction";
+    case DungeonFault::commit_generation_overflow:
+        return "commit_generation_overflow";
+    case DungeonFault::room_index_overflow: return "room_index_overflow";
+    case DungeonFault::depth_overflow: return "depth_overflow";
+    case DungeonFault::floor_room_overflow: return "floor_room_overflow";
+    case DungeonFault::bias_overflow: return "bias_overflow";
+    case DungeonFault::weight_overflow: return "weight_overflow";
+    case DungeonFault::event_overflow: return "event_overflow";
+    case DungeonFault::combat_relay_overflow: return "combat_relay_overflow";
+    case DungeonFault::save_commit_indeterminate:
+        return "save_commit_indeterminate";
+    case DungeonFault::save_receipt_mismatch: return "save_receipt_mismatch";
+    case DungeonFault::item_id_collision: return "item_id_collision";
+    case DungeonFault::item_sequence_overflow: return "item_sequence_overflow";
+    case DungeonFault::invalid_item_state: return "invalid_item_state";
+    case DungeonFault::invalid_abyss_state: return "invalid_abyss_state";
+    case DungeonFault::abyss_generation_failed:
+        return "abyss_generation_failed";
+    case DungeonFault::abyss_reward_collision:
+        return "abyss_reward_collision";
+    case DungeonFault::abyss_reward_revision_overflow:
+        return "abyss_reward_revision_overflow";
+    case DungeonFault::death_sequence_overflow:
+        return "death_sequence_overflow";
+    case DungeonFault::death_sequence_mismatch:
+        return "death_sequence_mismatch";
+    }
+    return "unknown_dungeon_fault";
+}
 
 // Gray-box encounter tuning is intentionally centralized here so later
 // balancing changes do not alter the director's algorithm or RNG contract.

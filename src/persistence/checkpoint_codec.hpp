@@ -20,11 +20,31 @@ inline constexpr std::size_t kEncodedCheckpointSize = 120U;
 inline constexpr std::size_t kV4BasePayloadSize = 172U;
 inline constexpr std::size_t kV4ItemRecordSize = 40U;
 inline constexpr std::size_t kV4BaseEncodedCheckpointSize = 204U;
+inline constexpr std::size_t kV5AbyssPayloadSize = 32U;
+inline constexpr std::size_t kV5BasePayloadSize = 204U;
+inline constexpr std::size_t kV5BaseEncodedCheckpointSize = 236U;
+inline constexpr std::size_t kV6DeathPayloadSize = 224U;
+inline constexpr std::size_t kV6BasePayloadSize = 428U;
+inline constexpr std::size_t kV6BaseEncodedCheckpointSize = 460U;
+inline constexpr std::size_t kV7MaterialRecordSize = 16U;
+inline constexpr std::size_t kV7MaterialPayloadSize = 224U;
+inline constexpr std::size_t kV7DiscoveryPayloadSize = 8U;
+inline constexpr std::size_t kV7MaterialClaimPayloadSize = 56U;
+inline constexpr std::size_t kV7ItemRecordSize = 64U;
+inline constexpr std::size_t kV7BasePayloadSize = 716U;
+inline constexpr std::size_t kV7BaseEncodedCheckpointSize = 748U;
+inline constexpr std::size_t kV8SkillLoadoutPayloadSize = 40U;
+inline constexpr std::size_t kV8BasePayloadSize = 756U;
+inline constexpr std::size_t kV8BaseEncodedCheckpointSize = 788U;
 inline constexpr std::size_t kMaximumCheckpointItemCount = 65535U;
 inline constexpr std::uint32_t kLegacyCheckpointFormatVersion = 1U;
 inline constexpr std::uint32_t kPreviousCheckpointFormatVersion = 2U;
 inline constexpr std::uint32_t kThirdCheckpointFormatVersion = 3U;
-inline constexpr std::uint32_t kCheckpointFormatVersion = 4U;
+inline constexpr std::uint32_t kFourthCheckpointFormatVersion = 4U;
+inline constexpr std::uint32_t kFifthCheckpointFormatVersion = 5U;
+inline constexpr std::uint32_t kSixthCheckpointFormatVersion = 6U;
+inline constexpr std::uint32_t kSeventhCheckpointFormatVersion = 7U;
+inline constexpr std::uint32_t kCheckpointFormatVersion = 8U;
 inline constexpr std::uint32_t kCheckpointRulesVersion = 1U;
 
 enum class CodecError : std::uint8_t {
@@ -44,6 +64,7 @@ enum class CodecError : std::uint8_t {
 struct DecodeResult final {
     CodecError error{CodecError::none};
     dungeon::checkpoint::DungeonRunState state{};
+    bool migrated{};
 };
 
 using EncodedCheckpoint = std::vector<std::uint8_t>;

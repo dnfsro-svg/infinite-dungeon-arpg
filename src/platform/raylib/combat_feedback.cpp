@@ -51,6 +51,16 @@ void CombatFeedback::consume(const combat::CombatEvent& event) noexcept {
         return;
     }
 
+    if (event.kind == combat::CombatEventKind::defeated) {
+        VisualEffect marker{};
+        marker.active = true;
+        marker.kind = VisualEffectKind::defeat_marker;
+        marker.position = event.position;
+        marker.lifetime_seconds = 0.65F;
+        static_cast<void>(try_spawn(marker));
+        return;
+    }
+
     if (event.kind != combat::CombatEventKind::hit
         && event.kind != combat::CombatEventKind::player_hit) {
         return;
@@ -59,6 +69,10 @@ void CombatFeedback::consume(const combat::CombatEvent& event) noexcept {
     if (event.kind == combat::CombatEventKind::hit
         && event.target_index < flash_seconds_.size()) {
         flash_seconds_[event.target_index] = 2.0F / 60.0F;
+    }
+    if (event.kind == combat::CombatEventKind::player_hit) {
+        player_hit_source_ = event.position;
+        player_hit_indicator_seconds_ = 0.55F;
     }
 
     VisualEffect spark{};
@@ -94,6 +108,8 @@ void CombatFeedback::update(float frame_seconds) noexcept {
     for (float& flash : flash_seconds_) {
         flash = std::max(0.0F, flash - dt);
     }
+    player_hit_indicator_seconds_ = std::max(0.0F,
+        player_hit_indicator_seconds_ - dt);
 
     if (shake_time_ > 0.0F) {
         shake_time_ = std::max(0.0F, shake_time_ - dt);
@@ -110,6 +126,8 @@ void CombatFeedback::clear() noexcept {
     shake_amplitude_ = 0.0F;
     shake_time_ = 0.0F;
     shake_phase_ = 0.0F;
+    player_hit_indicator_seconds_ = 0.0F;
+    player_hit_source_ = {};
     dropped_count_ = 0;
 }
 
@@ -160,6 +178,14 @@ float CombatFeedback::target_flash_seconds(
     return target_index < flash_seconds_.size()
         ? flash_seconds_[target_index]
         : 0.0F;
+}
+
+float CombatFeedback::player_hit_indicator_seconds() const noexcept {
+    return player_hit_indicator_seconds_;
+}
+
+combat::Vec3 CombatFeedback::player_hit_source() const noexcept {
+    return player_hit_source_;
 }
 
 const std::array<VisualEffect, CombatFeedback::kCapacity>&

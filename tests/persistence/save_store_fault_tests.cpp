@@ -2,6 +2,9 @@
 
 #include "persistence/checkpoint_codec.hpp"
 #include "persistence/save_store.hpp"
+#include "abyss/abyss_rewards.hpp"
+#include "abyss/abyss_rules.hpp"
+#include "dungeon/dungeon_progression.hpp"
 
 #include <array>
 #include <cstdint>
@@ -85,6 +88,8 @@ bool same_ownership(const items::ItemOwnershipState& lhs,
     const items::ItemOwnershipState& rhs) noexcept {
     if (lhs.items.size() != rhs.items.size()
             || lhs.equipment.equipped_ids != rhs.equipment.equipped_ids
+            || lhs.materials != rhs.materials
+            || lhs.material_discovery_bits != rhs.material_discovery_bits
             || lhs.claimed_drop_bits != rhs.claimed_drop_bits
             || lhs.next_item_sequence != rhs.next_item_sequence) {
         return false;
@@ -261,7 +266,12 @@ arpg::test::Failure publish_final_scan_fault_is_indeterminate() noexcept {
 
     FaultContext fault{persistence::SaveFaultPoint::final_scan_a, true, false};
     auto faulty = make_store(directory.path, &fault);
-    const auto expected = make_state(2U, 6U);
+    auto expected = make_state(2U, 6U);
+    expected.last_abyss_resolution.valid = true;
+    expected.last_abyss_resolution.room_seed = expected.current_room.seed;
+    expected.last_abyss_resolution.rule = arpg::abyss::AbyssRuleId::thunderstorm;
+    expected.last_abyss_resolution.total = 1U;
+    expected.last_abyss_resolution.generated = 1U;
     const auto result = faulty.commit(expected);
     ARPG_REQUIRE(result.state == persistence::SaveCommitState::indeterminate);
     ARPG_REQUIRE(result.state != persistence::SaveCommitState::not_committed);
@@ -518,6 +528,123 @@ arpg::test::Failure variable_length_faults_preserve_atomic_slot_semantics() noex
     return {};
 }
 
+checkpoint::DungeonRunState cleared_abyss_for_faults(
+    arpg::abyss::AbyssDanger wanted) noexcept {
+    checkpoint::DungeonRunState state = arpg::dungeon::make_initial_run_state(
+        0xA10FA017ULL, arpg::dungeon::DungeonRules{}).state;
+    constexpr std::uint64_t kDepth = 20U;
+    for (std::uint64_t seed = 1U; seed != 0U; ++seed) {
+        const auto selection = arpg::abyss::select_abyss_rule(seed, kDepth);
+        if (!arpg::abyss::is_abyss_roll(seed)
+                || !selection.has_value() || selection->danger != wanted) continue;
+        state.current_room.seed = seed;
+        state.current_room.depth = kDepth;
+        state.current_room.entry = checkpoint::EntrySide::left;
+        state.current_room.is_abyss = true;
+        state.current_room.has_hole = true;
+        state.last_transition = checkpoint::TransitionKind::door;
+        state.last_direction = checkpoint::ExitDirection::right;
+        state.abyss.lifecycle = arpg::abyss::AbyssLifecycle::cleared;
+        state.abyss.danger = selection->danger;
+        state.abyss.rule = selection->rule;
+        state.abyss.rules_version = selection->rules_version;
+        state.abyss.reward_total = arpg::abyss::reward_profile_for(
+            wanted, 1U).item_count;
+        return state;
+    }
+    return {};
+}
+
+arpg::test::Failure abyss_claim_and_abandon_fault_matrix_is_old_or_new() noexcept {
+    struct Transaction final {
+        checkpoint::DungeonRunState old_state{};
+        checkpoint::DungeonRunState new_state{};
+    };
+    std::array<Transaction, 2U> transactions{};
+
+    auto& claim = transactions[0U];
+    claim.old_state = cleared_abyss_for_faults(
+        arpg::abyss::AbyssDanger::low);
+    claim.old_state.commit_generation = 41U;
+    claim.old_state.abyss.generated_mask = 1U;
+    claim.old_state.abyss.reward_revision = 1U;
+    claim.old_state.item_ownership.next_item_sequence = 9001U;
+    claim.new_state = claim.old_state;
+    claim.new_state.commit_generation = 42U;
+    claim.new_state.abyss.claimed_mask = 1U;
+    claim.new_state.abyss.reward_revision = 2U;
+    claim.new_state.item_ownership.items.push_back(normal_item(0xA811C1A1U));
+
+    auto& abandon = transactions[1U];
+    abandon.old_state = cleared_abyss_for_faults(
+        arpg::abyss::AbyssDanger::high);
+    abandon.old_state.commit_generation = 51U;
+    abandon.old_state.abyss.generated_mask = 1U;
+    abandon.old_state.abyss.reward_revision = 1U;
+    abandon.new_state = abandon.old_state;
+    abandon.new_state.commit_generation = 52U;
+    abandon.new_state.current_room.index += 1U;
+    abandon.new_state.current_room.seed ^= 0xA8A8U;
+    abandon.new_state.current_room.is_abyss = false;
+    abandon.new_state.abyss = {};
+    abandon.new_state.last_transition = checkpoint::TransitionKind::door;
+    abandon.new_state.last_direction = checkpoint::ExitDirection::left;
+    abandon.new_state.last_abyss_resolution.valid = true;
+    abandon.new_state.last_abyss_resolution.room_seed =
+        abandon.old_state.current_room.seed;
+    abandon.new_state.last_abyss_resolution.rule = abandon.old_state.abyss.rule;
+    abandon.new_state.last_abyss_resolution.total = 3U;
+    abandon.new_state.last_abyss_resolution.generated = 1U;
+    abandon.new_state.last_abyss_resolution.claimed = 0U;
+    abandon.new_state.last_abyss_resolution.abandoned = 2U;
+
+    struct FaultExpectation final {
+        persistence::SaveFaultPoint point{};
+        bool new_state{};
+    };
+    constexpr std::array<FaultExpectation, 7U> kFaults{{
+        {persistence::SaveFaultPoint::before_temp_write, false},
+        {persistence::SaveFaultPoint::after_temp_write, false},
+        {persistence::SaveFaultPoint::after_temp_validation, false},
+        {persistence::SaveFaultPoint::before_publish, false},
+        {persistence::SaveFaultPoint::after_publish, true},
+        {persistence::SaveFaultPoint::final_scan_a, true},
+        {persistence::SaveFaultPoint::final_scan_b, true},
+    }};
+
+    for (const Transaction& transaction : transactions) {
+        for (const FaultExpectation& expectation : kFaults) {
+            TempDirectory directory;
+            auto healthy = make_store(directory.path);
+            ARPG_REQUIRE(healthy.commit(transaction.old_state).state
+                == persistence::SaveCommitState::committed);
+            FaultContext fault{expectation.point, false, false};
+            auto faulty = make_store(directory.path, &fault);
+            static_cast<void>(faulty.commit(transaction.new_state));
+            const auto loaded = faulty.load();
+            ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::ready);
+            const auto& expected = expectation.new_state
+                ? transaction.new_state : transaction.old_state;
+            ARPG_REQUIRE(arpg::dungeon::same_run_state(
+                loaded.checkpoint, expected));
+            if (&transaction == &transactions[0U]) {
+                ARPG_REQUIRE(loaded.checkpoint.item_ownership.items.size()
+                    == (expectation.new_state ? 1U : 0U));
+                ARPG_REQUIRE(loaded.checkpoint.item_ownership.next_item_sequence
+                    == 9001U);
+                ARPG_REQUIRE(loaded.checkpoint.abyss.claimed_mask
+                    == (expectation.new_state ? 1U : 0U));
+            } else {
+                ARPG_REQUIRE(loaded.checkpoint.last_abyss_resolution.valid
+                    == expectation.new_state);
+                ARPG_REQUIRE(loaded.checkpoint.current_room.is_abyss
+                    != expectation.new_state);
+            }
+        }
+    }
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"before temp write is not committed and old bytes unchanged", &before_temp_write_is_not_committed_and_old_bytes_unchanged},
     {"after temp validation before publish is not committed", &after_temp_validation_before_publish_is_not_committed},
@@ -528,6 +655,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"archive failure blocks and preserves corrupt files", &archive_failure_blocks_and_preserves_corrupt_files},
     {"baseline fault recovery selects recorded slot and generation", &baseline_fault_recovery_selects_recorded_slot_and_generation},
     {"variable length faults preserve atomic slot semantics", &variable_length_faults_preserve_atomic_slot_semantics},
+    {"abyss claim abandon faults are old or new",
+        &abyss_claim_and_abandon_fault_matrix_is_old_or_new},
 };
 
 }  // namespace

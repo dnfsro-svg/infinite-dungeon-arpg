@@ -18,12 +18,14 @@ namespace {
 namespace checkpoint = arpg::dungeon::checkpoint;
 namespace persistence = arpg::persistence;
 namespace items = arpg::items;
+namespace skills = arpg::skills;
 
 [[maybe_unused]] const persistence::SaveLoadResult kSaveLoadFieldOrderProbe{
     persistence::SaveLoadState::ready,
     persistence::SaveError::none,
     persistence::SaveSlot::a,
     true,
+    false,
     {}};
 
 struct TempDirectory final {
@@ -61,6 +63,35 @@ checkpoint::DungeonRunState make_state(std::uint64_t generation,
     state.current_room.ecology = checkpoint::DungeonElement::fire;
     state.last_transition = checkpoint::TransitionKind::none;
     state.last_direction = checkpoint::ExitDirection::none;
+    return state;
+}
+
+checkpoint::DungeonRunState with_pending_death(
+    checkpoint::DungeonRunState state) noexcept {
+    state.death_sequence = 1U;
+    state.biases = {};
+    state.current_room.is_abyss = false;
+    state.last_transition = checkpoint::TransitionKind::death_retreat;
+    state.last_direction = checkpoint::ExitDirection::none;
+    auto& death = state.death;
+    death.lifecycle = checkpoint::DeathLifecycle::pending_continue;
+    death.data_version = checkpoint::kDeathCheckpointDataVersion;
+    death.death_depth = state.current_room.depth;
+    death.death_floor_room_index = state.current_room.floor_room_index;
+    death.death_ecology = state.current_room.ecology;
+    death.source_kind = checkpoint::DeathSourceKind::unknown;
+    death.source_monster_id = 0xFFU;
+    death.damage_type = checkpoint::DeathDamageType::physical;
+    death.raw_damage = 10U;
+    death.health_loss = 10U;
+    death.final_damage = 10U;
+    death.recent_damage[0] = 10U;
+    death.max_hp = 10;
+    death.damage_reduction_cap = {{7500, 7500, 7500, 7500}};
+    death.target_room = {state.current_room.index + 1U, 0xD34DULL,
+        state.current_room.depth > 1U ? state.current_room.depth - 1U : 1U,
+        0U, checkpoint::EntrySide::initial,
+        checkpoint::DungeonElement::water, false, false};
     return state;
 }
 
@@ -123,6 +154,56 @@ void write_bytes(const std::filesystem::path& path,
 std::vector<std::uint8_t> encoded(const checkpoint::DungeonRunState& state) {
     const auto bytes = persistence::encode_checkpoint(state);
     return bytes.has_value() ? *bytes : std::vector<std::uint8_t>{};
+}
+
+void write_u32(std::vector<std::uint8_t>& bytes, std::size_t offset,
+    std::uint32_t value) noexcept {
+    for (std::size_t index = 0U; index < 4U; ++index)
+        bytes[offset + index] = static_cast<std::uint8_t>(value >> (index * 8U));
+}
+
+std::vector<std::uint8_t> encoded_v4(
+    const checkpoint::DungeonRunState& state) {
+    const auto v8 = encoded(state);
+    if (v8.size() < persistence::kV8BaseEncodedCheckpointSize)
+        return {};
+    std::vector<std::uint8_t> v5(
+        persistence::kV6BaseEncodedCheckpointSize
+            + state.item_ownership.items.size()
+                * persistence::kV4ItemRecordSize,
+        0U);
+    std::copy_n(v8.begin(), persistence::kV6BaseEncodedCheckpointSize,
+        v5.begin());
+    for (std::size_t item_index = 0U;
+            item_index < state.item_ownership.items.size(); ++item_index) {
+        const std::size_t v8_record = persistence::kV8BaseEncodedCheckpointSize
+            + item_index * persistence::kV7ItemRecordSize;
+        const std::size_t v6_record = persistence::kV6BaseEncodedCheckpointSize
+            + item_index * persistence::kV4ItemRecordSize;
+        std::copy_n(v8.begin() + v8_record, 16U, v5.begin() + v6_record);
+        for (std::size_t roll = 0U; roll < 6U; ++roll) {
+            std::copy_n(v8.begin() + v8_record + 16U + roll * 6U, 4U,
+                v5.begin() + v6_record + 16U + roll * 4U);
+        }
+    }
+    v5.erase(v5.begin() + 236U, v5.begin() + 460U);
+    v5[0U] = 'I'; v5[1U] = 'A'; v5[2U] = 'R'; v5[3U] = 'P';
+    v5[4U] = 'G'; v5[5U] = 'S'; v5[6U] = '0'; v5[7U] = '6';
+    write_u32(v5, 8U, 5U);
+    write_u32(v5, 24U, static_cast<std::uint32_t>(v5.size() - 32U));
+    if (v5.size() < 152U)
+        return {};
+    std::vector<std::uint8_t> v4(v5.size() - 32U, 0U);
+    std::copy_n(v5.begin(), 120U, v4.begin());
+    std::copy(v5.begin() + 152U, v5.end(), v4.begin() + 120U);
+    v4[7U] = '5';
+    write_u32(v4, 8U, 4U);
+    write_u32(v4, 24U, static_cast<std::uint32_t>(v4.size() - 32U));
+    auto checksum = persistence::crc32_update(0U, v4.data() + 8U, 20U);
+    checksum = persistence::crc32_update(
+        checksum, v4.data() + 32U, v4.size() - 32U);
+    write_u32(v4, 28U, checksum);
+    return v4;
 }
 
 bool has_only_allowed_files(const std::filesystem::path& directory) noexcept {
@@ -287,13 +368,15 @@ arpg::test::Failure variable_length_slots_rotate_large_then_small() noexcept {
     ARPG_REQUIRE(store.commit(large).state
         == persistence::SaveCommitState::committed);
     ARPG_REQUIRE(std::filesystem::file_size(directory.path / "run_a.sav")
-        == 204U + 40U * 257U);
+        == persistence::kV8BaseEncodedCheckpointSize
+            + persistence::kV7ItemRecordSize * 257U);
 
     const auto small = with_items(make_state(2U, 21U), 1U);
     ARPG_REQUIRE(store.commit(small).state
         == persistence::SaveCommitState::committed);
     ARPG_REQUIRE(std::filesystem::file_size(directory.path / "run_b.sav")
-        == 244U);
+        == persistence::kV8BaseEncodedCheckpointSize
+            + persistence::kV7ItemRecordSize);
     const auto loaded = store.load();
     ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::ready);
     ARPG_REQUIRE(loaded.active_slot == persistence::SaveSlot::b);
@@ -318,11 +401,60 @@ arpg::test::Failure same_state_includes_all_ownership_bytes_and_order() noexcept
     rhs.item_ownership.equipment.equipped_ids[0] = 1U;
     ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
     rhs = lhs;
+    rhs.item_ownership.materials[0] = 1U;
+    ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+    rhs = lhs;
+    rhs.item_ownership.material_discovery_bits = 1U;
+    ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+    rhs = lhs;
+    rhs.item_ownership.items[0].reinforcement = 1U;
+    ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+    rhs = lhs;
     rhs.item_ownership.claimed_drop_bits[2] = 8U;
     ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
     rhs = lhs;
     ++rhs.item_ownership.next_item_sequence;
     ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+    rhs = lhs;
+    ++rhs.abyss.reward_revision;
+    ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+    rhs = lhs;
+    rhs.last_abyss_resolution.room_seed = 1U;
+    ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+    rhs = lhs;
+    ++rhs.death_sequence;
+    ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+    lhs = with_pending_death(lhs);
+    rhs = lhs;
+    ++rhs.death.raw_damage;
+    ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+
+    const auto ownership_state = lhs;
+    lhs = make_state(9U, 22U);
+    rhs = lhs;
+    rhs.skill_loadout.owned_active_bits ^= 0x2U;
+    ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+    for (std::size_t slot = 0U;
+            slot < skills::kActiveSkillSlotCount; ++slot) {
+        rhs = lhs;
+        rhs.skill_loadout.slots[slot].active =
+            lhs.skill_loadout.slots[slot].active
+                == skills::ActiveSkillId::none
+            ? skills::ActiveSkillId::draw_slash
+            : skills::ActiveSkillId::none;
+        ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+    }
+    for (std::size_t slot = 0U;
+            slot < skills::kActiveSkillSlotCount; ++slot) {
+        for (std::size_t support = 0U;
+                support < skills::kSupportSlotsPerActive; ++support) {
+            rhs = lhs;
+            rhs.skill_loadout.slots[slot].supports[support] =
+                static_cast<skills::SupportSkillId>(0U);
+            ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+        }
+    }
+    lhs = ownership_state;
 
     TempDirectory directory;
     write_bytes(directory.path / "run_a.sav", encoded(lhs));
@@ -337,6 +469,116 @@ arpg::test::Failure same_state_includes_all_ownership_bytes_and_order() noexcept
     return {};
 }
 
+arpg::test::Failure equal_generation_active_slot_difference_conflicts()
+    noexcept {
+    TempDirectory directory;
+    const auto lhs = make_state(8U, 80U);
+    auto rhs = lhs;
+    std::swap(rhs.skill_loadout.slots[1U], rhs.skill_loadout.slots[4U]);
+    ARPG_REQUIRE(skills::validate_skill_loadout(lhs.skill_loadout)
+        == skills::SkillLoadoutError::none);
+    ARPG_REQUIRE(skills::validate_skill_loadout(rhs.skill_loadout)
+        == skills::SkillLoadoutError::none);
+    const auto encoded_lhs = encoded(lhs);
+    const auto encoded_rhs = encoded(rhs);
+    ARPG_REQUIRE(encoded_lhs.size()
+        == persistence::kV8BaseEncodedCheckpointSize);
+    ARPG_REQUIRE(encoded_rhs.size()
+        == persistence::kV8BaseEncodedCheckpointSize);
+    write_bytes(directory.path / "run_a.sav", encoded_lhs);
+    write_bytes(directory.path / "run_b.sav", encoded_rhs);
+
+    const auto loaded = make_store(directory.path).load();
+    ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::recovery_required);
+    ARPG_REQUIRE(loaded.error == persistence::SaveError::conflicting_slots);
+    return {};
+}
+
+arpg::test::Failure equal_generation_owned_skill_difference_conflicts()
+    noexcept {
+    TempDirectory directory;
+    const auto lhs = make_state(8U, 81U);
+    auto rhs = lhs;
+    rhs.skill_loadout = skills::SkillLoadoutState{};
+    ARPG_REQUIRE(skills::validate_skill_loadout(lhs.skill_loadout)
+        == skills::SkillLoadoutError::none);
+    ARPG_REQUIRE(skills::validate_skill_loadout(rhs.skill_loadout)
+        == skills::SkillLoadoutError::none);
+    const auto encoded_lhs = encoded(lhs);
+    const auto encoded_rhs = encoded(rhs);
+    ARPG_REQUIRE(encoded_lhs.size()
+        == persistence::kV8BaseEncodedCheckpointSize);
+    ARPG_REQUIRE(encoded_rhs.size()
+        == persistence::kV8BaseEncodedCheckpointSize);
+    write_bytes(directory.path / "run_a.sav", encoded_lhs);
+    write_bytes(directory.path / "run_b.sav", encoded_rhs);
+
+    const auto loaded = make_store(directory.path).load();
+    ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::recovery_required);
+    ARPG_REQUIRE(loaded.error == persistence::SaveError::conflicting_slots);
+    return {};
+}
+
+arpg::test::Failure equal_generation_death_sequence_difference_conflicts() noexcept {
+    TempDirectory directory;
+    const auto lhs = with_pending_death(make_state(7U, 77U));
+    auto rhs = lhs;
+    ++rhs.death_sequence;
+    write_bytes(directory.path / "run_a.sav", encoded(lhs));
+    write_bytes(directory.path / "run_b.sav", encoded(rhs));
+    auto store = make_store(directory.path);
+    const auto loaded = store.load();
+    ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::recovery_required);
+    ARPG_REQUIRE(loaded.error == persistence::SaveError::conflicting_slots);
+    return {};
+}
+
+arpg::test::Failure equal_generation_death_field_difference_conflicts() noexcept {
+    TempDirectory directory;
+    const auto lhs = with_pending_death(make_state(7U, 78U));
+    auto rhs = lhs;
+    ++rhs.death.raw_damage;
+    write_bytes(directory.path / "run_a.sav", encoded(lhs));
+    write_bytes(directory.path / "run_b.sav", encoded(rhs));
+    auto store = make_store(directory.path);
+    const auto loaded = store.load();
+    ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::recovery_required);
+    ARPG_REQUIRE(loaded.error == persistence::SaveError::conflicting_slots);
+    return {};
+}
+
+arpg::test::Failure migrated_flag_follows_the_selected_ab_slot() noexcept {
+    TempDirectory directory;
+    write_bytes(directory.path / "run_a.sav", encoded_v4(make_state(1U, 40U)));
+    write_bytes(directory.path / "run_b.sav", encoded(make_state(2U, 41U)));
+    auto store = make_store(directory.path);
+    auto loaded = store.load();
+    ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::ready);
+    ARPG_REQUIRE(loaded.active_slot == persistence::SaveSlot::b);
+    ARPG_REQUIRE(!loaded.migrated);
+
+    write_bytes(directory.path / "run_b.sav", encoded(make_state(1U, 41U)));
+    write_bytes(directory.path / "run_a.sav", encoded_v4(make_state(2U, 40U)));
+    loaded = store.load();
+    ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::ready);
+    ARPG_REQUIRE(loaded.active_slot == persistence::SaveSlot::a);
+    ARPG_REQUIRE(loaded.migrated);
+    return {};
+}
+
+arpg::test::Failure migrated_flag_survives_invalid_slot_recovery() noexcept {
+    TempDirectory directory;
+    write_bytes(directory.path / "run_a.sav", encoded_v4(make_state(7U, 42U)));
+    write_bytes(directory.path / "run_b.sav", {0x01U, 0x02U, 0x03U});
+    auto store = make_store(directory.path);
+    const auto loaded = store.load();
+    ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::ready);
+    ARPG_REQUIRE(loaded.active_slot == persistence::SaveSlot::a);
+    ARPG_REQUIRE(loaded.recovered);
+    ARPG_REQUIRE(loaded.migrated);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"empty commit and reload", &empty_commit_and_reload},
     {"highest generation wins and alternates", &highest_generation_wins_and_alternates},
@@ -347,6 +589,14 @@ constexpr arpg::test::TestCase kCases[] = {
     {"temp files do not participate in load", &temp_files_do_not_participate_in_load},
     {"variable length slots rotate large then small", &variable_length_slots_rotate_large_then_small},
     {"same state includes ownership bytes and order", &same_state_includes_all_ownership_bytes_and_order},
+    {"equal generation active slot difference conflicts",
+        &equal_generation_active_slot_difference_conflicts},
+    {"equal generation owned skill difference conflicts",
+        &equal_generation_owned_skill_difference_conflicts},
+    {"equal generation death sequence difference conflicts", &equal_generation_death_sequence_difference_conflicts},
+    {"equal generation death field difference conflicts", &equal_generation_death_field_difference_conflicts},
+    {"migrated flag follows selected ab slot", &migrated_flag_follows_the_selected_ab_slot},
+    {"migrated flag survives invalid slot recovery", &migrated_flag_survives_invalid_slot_recovery},
 };
 
 }  // namespace

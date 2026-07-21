@@ -1,7 +1,11 @@
 #include "test_framework.hpp"
 
+#include "abyss/abyss_rules.hpp"
+#include "dungeon/abyss_checkpoint_migration.hpp"
 #include "persistence/checkpoint_codec.hpp"
+#include "items/item_catalog.hpp"
 #include "items/item_types.hpp"
+#include "v5_golden_fixture.hpp"
 
 #include <algorithm>
 #include <array>
@@ -9,6 +13,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <new>
 #include <vector>
 
@@ -68,8 +73,30 @@ void operator delete[](void* memory, std::size_t) noexcept {
 namespace {
 
 namespace checkpoint = arpg::dungeon::checkpoint;
+namespace abyss = arpg::abyss;
+namespace dungeon = arpg::dungeon;
 namespace persistence = arpg::persistence;
 namespace items = arpg::items;
+namespace skills = arpg::skills;
+
+checkpoint::DungeonRunState make_owned_fixture();
+std::array<std::uint8_t, persistence::kLegacyEncodedCheckpointSize>
+legacy_fixture() noexcept;
+std::vector<std::uint8_t> as_v7_golden(
+    const std::vector<std::uint8_t>& v8);
+
+bool same_skill_loadout(const skills::SkillLoadoutState& lhs,
+    const skills::SkillLoadoutState& rhs) noexcept {
+    if (lhs.owned_active_bits != rhs.owned_active_bits)
+        return false;
+    for (std::size_t slot = 0U; slot < lhs.slots.size(); ++slot) {
+        if (lhs.slots[slot].active != rhs.slots[slot].active
+            || lhs.slots[slot].supports != rhs.slots[slot].supports) {
+            return false;
+        }
+    }
+    return true;
+}
 
 checkpoint::DungeonRunState make_fixture() noexcept {
     checkpoint::DungeonRunState state{};
@@ -83,7 +110,7 @@ checkpoint::DungeonRunState make_fixture() noexcept {
     state.current_room.entry = checkpoint::EntrySide::right;
     state.current_room.ecology = checkpoint::DungeonElement::chaos;
     state.current_room.has_hole = true;
-    state.current_room.is_abyss = true;
+    state.current_room.is_abyss = false;
     state.last_transition = checkpoint::TransitionKind::descent;
     state.last_direction = checkpoint::ExitDirection::left;
     state.progression = {37U, 42U, 36U, 36U};
@@ -142,7 +169,7 @@ void write_u32(std::vector<std::uint8_t>& bytes, std::size_t offset,
         bytes[offset + index] = static_cast<std::uint8_t>(value >> (index * 8U));
 }
 
-arpg::test::Failure v4_golden_layout_and_items_round_trip() noexcept {
+arpg::test::Failure v8_layout_materials_and_items_round_trip() noexcept {
     auto state = make_fixture();
     state.item_ownership.items = {
         normal_item(0x0102030405060708ULL, 2U),
@@ -152,44 +179,90 @@ arpg::test::Failure v4_golden_layout_and_items_round_trip() noexcept {
     state.item_ownership.claimed_drop_bits = {{
         0x4142434445464748ULL, 0x5152535455565758ULL,
         0x6162636465666768ULL}};
+    state.item_ownership.material_claimed_drop_bits = {{
+        0x0102030405060708ULL, 0x1112131415161718ULL,
+        0x2122232425262728ULL, 0x3132333435363738ULL,
+        0x4142434445464748ULL, 0x5152535455565758ULL,
+        0x000000000000A55AULL}};
     state.item_ownership.equipment.equipped_ids[0] =
         state.item_ownership.items[1].id;
     state.item_ownership.equipment.equipped_ids[5] =
         state.item_ownership.items[2].id;
+    state.item_ownership.items[1].affixes[0].value_roll_bp = 9001U;
+    state.item_ownership.items[1].reinforcement = 15U;
+    for (std::size_t index = 0U;
+            index < state.item_ownership.materials.size(); ++index) {
+        state.item_ownership.materials[index] = index + 1U;
+    }
+    state.item_ownership.materials[items::material_index(
+        items::MaterialId::chaos)] = 42U;
+    state.item_ownership.materials[items::material_index(
+        items::MaterialId::coupon_15)] =
+            (std::numeric_limits<std::uint64_t>::max)();
+    state.item_ownership.material_discovery_bits = static_cast<std::uint16_t>(
+        (1U << items::material_index(items::MaterialId::chaos))
+        | (1U << items::material_index(items::MaterialId::coupon_15)));
 
     const auto encoded = persistence::encode_checkpoint(state);
     ARPG_REQUIRE(encoded.has_value());
     const auto& bytes = *encoded;
-    ARPG_REQUIRE(bytes.size() == 324U);
+    ARPG_REQUIRE(bytes.size() == 980U);
     ARPG_REQUIRE(std::equal(bytes.begin(), bytes.begin() + 8U,
-        std::array<std::uint8_t, 8U>{{'I','A','R','P','G','S','0','5'}}.begin()));
-    ARPG_REQUIRE(read_u32(bytes, 8U) == 4U);
+        std::array<std::uint8_t, 8U>{{'A','R','P','G','S','V','8','\0'}}.begin()));
+    ARPG_REQUIRE(read_u32(bytes, 8U) == 8U);
     ARPG_REQUIRE(read_u32(bytes, 12U) == 1U);
-    ARPG_REQUIRE(read_u32(bytes, 24U) == 292U);
-    ARPG_REQUIRE(read_u32(bytes, 120U) == 3U);
-    ARPG_REQUIRE(read_u64(bytes, 124U) == state.item_ownership.next_item_sequence);
-    ARPG_REQUIRE(read_u64(bytes, 132U) == state.item_ownership.claimed_drop_bits[0]);
-    ARPG_REQUIRE(read_u64(bytes, 156U) == state.item_ownership.equipment.equipped_ids[0]);
-    ARPG_REQUIRE(read_u64(bytes, 196U) == state.item_ownership.equipment.equipped_ids[5]);
+    ARPG_REQUIRE(read_u32(bytes, 24U) == 948U);
+    ARPG_REQUIRE(read_u32(bytes, 152U) == 3U);
+    ARPG_REQUIRE(read_u64(bytes, 156U) == state.item_ownership.next_item_sequence);
+    ARPG_REQUIRE(read_u64(bytes, 164U) == state.item_ownership.claimed_drop_bits[0]);
+    ARPG_REQUIRE(read_u64(bytes, 188U) == state.item_ownership.equipment.equipped_ids[0]);
+    ARPG_REQUIRE(read_u64(bytes, 228U) == state.item_ownership.equipment.equipped_ids[5]);
 
-    constexpr std::size_t kRecord = 204U;
+    for (std::size_t index = 0U; index < items::kMaterialCount; ++index) {
+        const std::size_t record = 460U + index * 16U;
+        ARPG_REQUIRE(bytes[record] == index + 1U);
+        ARPG_REQUIRE(std::all_of(bytes.begin() + record + 1U,
+            bytes.begin() + record + 8U,
+            [](std::uint8_t value) noexcept { return value == 0U; }));
+        ARPG_REQUIRE(read_u64(bytes, record + 8U)
+            == state.item_ownership.materials[index]);
+    }
+    ARPG_REQUIRE(bytes[684U]
+        == static_cast<std::uint8_t>(state.item_ownership.material_discovery_bits));
+    ARPG_REQUIRE(bytes[685U]
+        == static_cast<std::uint8_t>(
+            state.item_ownership.material_discovery_bits >> 8U));
+    ARPG_REQUIRE(std::all_of(bytes.begin() + 686U, bytes.begin() + 692U,
+        [](std::uint8_t value) noexcept { return value == 0U; }));
+    for (std::size_t index = 0U;
+            index < state.item_ownership.material_claimed_drop_bits.size();
+            ++index) {
+        ARPG_REQUIRE(read_u64(bytes, 692U + index * 8U)
+            == state.item_ownership.material_claimed_drop_bits[index]);
+    }
+
+    constexpr std::size_t kRecord = 788U;
     ARPG_REQUIRE(read_u64(bytes, kRecord) == state.item_ownership.items[0].id);
     ARPG_REQUIRE(bytes[kRecord + 8U] == 2U);
     ARPG_REQUIRE(bytes[kRecord + 9U] == 0U);
     ARPG_REQUIRE(bytes[kRecord + 12U] == 0U);
     ARPG_REQUIRE(bytes[kRecord + 13U] == 0U
         && bytes[kRecord + 14U] == 0U && bytes[kRecord + 15U] == 0U);
-    constexpr std::size_t kRareRecord = kRecord + 80U;
+    constexpr std::size_t kMagicRecord = kRecord + 64U;
+    ARPG_REQUIRE(bytes[kMagicRecord + 20U] == 0x29U
+        && bytes[kMagicRecord + 21U] == 0x23U);
+    ARPG_REQUIRE(read_u32(bytes, kMagicRecord + 52U) == 15U);
+    constexpr std::size_t kRareRecord = kRecord + 128U;
     ARPG_REQUIRE(bytes[kRareRecord + 12U] == 3U);
     ARPG_REQUIRE(bytes[kRareRecord + 16U] == 7U);
     ARPG_REQUIRE(bytes[kRareRecord + 18U] == 8U
         && bytes[kRareRecord + 19U] == 0xFFU);
-    ARPG_REQUIRE(bytes[kRareRecord + 24U] == 112U
-        && bytes[kRareRecord + 25U] == 0U);
-    ARPG_REQUIRE(bytes[kRareRecord + 26U] == 8U
-        && bytes[kRareRecord + 27U] == 3U);
-    ARPG_REQUIRE(std::all_of(bytes.begin() + kRareRecord + 28U,
-        bytes.begin() + kRareRecord + 40U,
+    ARPG_REQUIRE(bytes[kRareRecord + 28U] == 112U
+        && bytes[kRareRecord + 29U] == 0U);
+    ARPG_REQUIRE(bytes[kRareRecord + 30U] == 8U
+        && bytes[kRareRecord + 31U] == 3U);
+    ARPG_REQUIRE(std::all_of(bytes.begin() + kRareRecord + 34U,
+        bytes.begin() + kRareRecord + 64U,
         [](std::uint8_t value) noexcept { return value == 0U; }));
 
     const auto decoded = persistence::decode_checkpoint(bytes.data(), bytes.size());
@@ -197,12 +270,24 @@ arpg::test::Failure v4_golden_layout_and_items_round_trip() noexcept {
     ARPG_REQUIRE(decoded.state.item_ownership.items.size() == 3U);
     ARPG_REQUIRE(decoded.state.item_ownership.items[2].affixes[2].affix_id == 112U);
     ARPG_REQUIRE(decoded.state.item_ownership.items[2].affixes[2].variant == 3U);
+    ARPG_REQUIRE(decoded.state.item_ownership.items[1].affixes[0].value_roll_bp
+        == 9001U);
+    ARPG_REQUIRE(decoded.state.item_ownership.items[1].reinforcement == 15U);
+    ARPG_REQUIRE(decoded.state.item_ownership.materials[
+        items::material_index(items::MaterialId::chaos)] == 42U);
+    ARPG_REQUIRE(decoded.state.item_ownership.materials[
+        items::material_index(items::MaterialId::coupon_15)]
+            == (std::numeric_limits<std::uint64_t>::max)());
+    ARPG_REQUIRE(decoded.state.item_ownership.material_discovery_bits
+        == state.item_ownership.material_discovery_bits);
+    ARPG_REQUIRE(decoded.state.item_ownership.material_claimed_drop_bits
+        == state.item_ownership.material_claimed_drop_bits);
     ARPG_REQUIRE(decoded.state.item_ownership.next_item_sequence
         == state.item_ownership.next_item_sequence);
     return {};
 }
 
-arpg::test::Failure v4_complete_ownership_and_six_roll_record_are_golden() noexcept {
+arpg::test::Failure v7_complete_ownership_and_six_roll_record_are_golden() noexcept {
     auto state = make_fixture();
     auto item = normal_item(0x0102030405060708ULL, 6U);
     item.rarity = items::ItemRarity::rare;
@@ -215,6 +300,10 @@ arpg::test::Failure v4_complete_ownership_and_six_roll_record_are_golden() noexc
     item.affixes[3] = {101U, 4U, 0xFFU};
     item.affixes[4] = {111U, 5U, 0xFFU};
     item.affixes[5] = {112U, 6U, 2U};
+    for (std::size_t index = 0U; index < item.affix_count; ++index)
+        item.affixes[index].value_roll_bp = static_cast<std::uint16_t>(
+            9000U + index * 100U);
+    item.reinforcement = 0x11223344U;
     state.item_ownership.items = {item};
     state.item_ownership.next_item_sequence = 0x1112131415161718ULL;
     state.item_ownership.claimed_drop_bits = {{
@@ -225,7 +314,7 @@ arpg::test::Failure v4_complete_ownership_and_six_roll_record_are_golden() noexc
 
     const auto encoded = persistence::encode_checkpoint(state);
     ARPG_REQUIRE(encoded.has_value());
-    ARPG_REQUIRE(encoded->size() == 244U);
+    ARPG_REQUIRE(encoded->size() == 852U);
     constexpr std::array<std::uint8_t, 84U> kExpectedOwnership{{
         0x01U, 0x00U, 0x00U, 0x00U,
         0x18U, 0x17U, 0x16U, 0x15U, 0x14U, 0x13U, 0x12U, 0x11U,
@@ -239,20 +328,33 @@ arpg::test::Failure v4_complete_ownership_and_six_roll_record_are_golden() noexc
         0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U,
         0x08U, 0x07U, 0x06U, 0x05U, 0x04U, 0x03U, 0x02U, 0x01U,
     }};
-    constexpr std::array<std::uint8_t, 40U> kExpectedRecord{{
+    constexpr std::array<std::uint8_t, 64U> kExpectedRecord{{
         0x08U, 0x07U, 0x06U, 0x05U, 0x04U, 0x03U, 0x02U, 0x01U,
         0x06U, 0x02U, 0x5FU, 0x5FU, 0x06U, 0x00U, 0x00U, 0x00U,
-        0x07U, 0x00U, 0x01U, 0xFFU,
-        0x08U, 0x00U, 0x02U, 0xFFU,
-        0x0BU, 0x00U, 0x03U, 0xFFU,
-        0x65U, 0x00U, 0x04U, 0xFFU,
-        0x6FU, 0x00U, 0x05U, 0xFFU,
-        0x70U, 0x00U, 0x06U, 0x02U,
+        0x07U, 0x00U, 0x01U, 0xFFU, 0x28U, 0x23U,
+        0x08U, 0x00U, 0x02U, 0xFFU, 0x8CU, 0x23U,
+        0x0BU, 0x00U, 0x03U, 0xFFU, 0xF0U, 0x23U,
+        0x65U, 0x00U, 0x04U, 0xFFU, 0x54U, 0x24U,
+        0x6FU, 0x00U, 0x05U, 0xFFU, 0xB8U, 0x24U,
+        0x70U, 0x00U, 0x06U, 0x02U, 0x1CU, 0x25U,
+        0x44U, 0x33U, 0x22U, 0x11U,
+        0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x00U,
     }};
+    const auto v7 = as_v7_golden(*encoded);
+    ARPG_REQUIRE(v7.size() == 812U);
     ARPG_REQUIRE(std::equal(kExpectedOwnership.begin(), kExpectedOwnership.end(),
-        encoded->begin() + 120U));
+        v7.begin() + 152U));
     ARPG_REQUIRE(std::equal(kExpectedRecord.begin(), kExpectedRecord.end(),
-        encoded->begin() + 204U));
+        v7.begin() + 748U));
+    const auto decoded_v7 = persistence::decode_checkpoint(
+        v7.data(), v7.size());
+    ARPG_REQUIRE(decoded_v7.error == persistence::CodecError::none);
+    ARPG_REQUIRE(decoded_v7.migrated);
+    ARPG_REQUIRE(decoded_v7.state.item_ownership.items.size() == 1U);
+    ARPG_REQUIRE(decoded_v7.state.item_ownership.items[0].reinforcement
+        == item.reinforcement);
+    ARPG_REQUIRE(same_skill_loadout(
+        decoded_v7.state.skill_loadout, skills::default_skill_loadout()));
     return {};
 }
 
@@ -299,6 +401,706 @@ void refresh_crc(std::vector<std::uint8_t>& bytes) noexcept {
     }
 }
 
+std::vector<std::uint8_t> as_v6_golden(
+    const std::vector<std::uint8_t>& v8) {
+    if (v8.size() < persistence::kV8BaseEncodedCheckpointSize)
+        return {};
+    const std::uint32_t item_count = read_u32(v8, 152U);
+    std::vector<std::uint8_t> v6(
+        persistence::kV6BaseEncodedCheckpointSize
+            + static_cast<std::size_t>(item_count) * persistence::kV4ItemRecordSize,
+        0U);
+    std::copy_n(v8.begin(), persistence::kV6BaseEncodedCheckpointSize, v6.begin());
+    for (std::size_t item_index = 0U; item_index < item_count; ++item_index) {
+        const std::size_t v8_record = persistence::kV8BaseEncodedCheckpointSize
+            + item_index * persistence::kV7ItemRecordSize;
+        const std::size_t v6_record = persistence::kV6BaseEncodedCheckpointSize
+            + item_index * persistence::kV4ItemRecordSize;
+        std::copy_n(v8.begin() + v8_record, 16U, v6.begin() + v6_record);
+        for (std::size_t roll = 0U; roll < 6U; ++roll) {
+            std::copy_n(v8.begin() + v8_record + 16U + roll * 6U, 4U,
+                v6.begin() + v6_record + 16U + roll * 4U);
+        }
+    }
+    const std::array<std::uint8_t, 8U> magic{{
+        'A','R','P','G','S','V','6','\0'}};
+    std::copy(magic.begin(), magic.end(), v6.begin());
+    write_u32(v6, 8U, persistence::kSixthCheckpointFormatVersion);
+    write_u32(v6, 24U, static_cast<std::uint32_t>(v6.size() - 32U));
+    refresh_crc(v6);
+    return v6;
+}
+
+std::vector<std::uint8_t> as_v7_golden(
+    const std::vector<std::uint8_t>& v8) {
+    if (v8.size() < persistence::kV8BaseEncodedCheckpointSize)
+        return {};
+    std::vector<std::uint8_t> v7;
+    v7.reserve(v8.size() - persistence::kV8SkillLoadoutPayloadSize);
+    v7.insert(v7.end(), v8.begin(),
+        v8.begin() + persistence::kV7BaseEncodedCheckpointSize);
+    v7.insert(v7.end(),
+        v8.begin() + persistence::kV8BaseEncodedCheckpointSize, v8.end());
+    const std::array<std::uint8_t, 8U> magic{{
+        'A','R','P','G','S','V','7','\0'}};
+    std::copy(magic.begin(), magic.end(), v7.begin());
+    write_u32(v7, 8U, persistence::kSeventhCheckpointFormatVersion);
+    write_u32(v7, 24U, static_cast<std::uint32_t>(
+        v7.size() - persistence::kCheckpointHeaderSize));
+    refresh_crc(v7);
+    return v7;
+}
+
+void write_u16(std::vector<std::uint8_t>& bytes, std::size_t offset,
+    std::uint16_t value) noexcept {
+    bytes[offset] = static_cast<std::uint8_t>(value);
+    bytes[offset + 1U] = static_cast<std::uint8_t>(value >> 8U);
+}
+
+std::vector<std::uint8_t> as_v4_golden(
+    const std::vector<std::uint8_t>& v7) {
+    auto v5 = as_v6_golden(v7);
+    v5.erase(v5.begin() + 236U, v5.begin() + 460U);
+    v5[0U] = 'I'; v5[1U] = 'A'; v5[2U] = 'R'; v5[3U] = 'P';
+    v5[4U] = 'G'; v5[5U] = 'S'; v5[6U] = '0'; v5[7U] = '6';
+    write_u32(v5, 8U, 5U);
+    write_u32(v5, 24U, static_cast<std::uint32_t>(v5.size() - 32U));
+    refresh_crc(v5);
+    std::vector<std::uint8_t> v4(v5.size() - 32U, 0U);
+    std::copy_n(v5.begin(), 120U, v4.begin());
+    std::copy(v5.begin() + 152U, v5.end(), v4.begin() + 120U);
+    v4[7U] = '5';
+    write_u32(v4, 8U, 4U);
+    write_u32(v4, 24U, static_cast<std::uint32_t>(v4.size() - 32U));
+    refresh_crc(v4);
+    return v4;
+}
+
+std::uint8_t reward_total_for_test(abyss::AbyssDanger danger) noexcept;
+checkpoint::DungeonRunState state_for_danger(
+    abyss::AbyssDanger danger,
+    abyss::AbyssLifecycle lifecycle) noexcept;
+
+void set_abyss(checkpoint::DungeonRunState& state,
+    abyss::AbyssLifecycle lifecycle) noexcept {
+    while (!abyss::is_abyss_roll(state.current_room.seed)) {
+        ++state.current_room.seed;
+    }
+    const auto selection = abyss::select_abyss_rule(
+        state.current_room.seed, state.current_room.depth);
+    if (!selection.has_value())
+        return;
+    state.current_room.is_abyss = true;
+    state.current_room.entry = checkpoint::EntrySide::right;
+    state.last_transition = checkpoint::TransitionKind::door;
+    state.last_direction = checkpoint::ExitDirection::left;
+    state.abyss.lifecycle = lifecycle;
+    state.abyss.danger = selection->danger;
+    state.abyss.rule = selection->rule;
+    state.abyss.rules_version = selection->rules_version;
+}
+
+arpg::test::Failure v5_abyss_origin_requires_a_matching_door() noexcept {
+    const auto valid = state_for_danger(
+        abyss::AbyssDanger::low, abyss::AbyssLifecycle::available);
+    ARPG_REQUIRE(persistence::encode_checkpoint(valid).has_value());
+
+    for (const auto lifecycle : std::array<abyss::AbyssLifecycle, 3U>{{
+             abyss::AbyssLifecycle::available,
+             abyss::AbyssLifecycle::started,
+             abyss::AbyssLifecycle::cleared}}) {
+        auto initial = valid;
+        set_abyss(initial, lifecycle);
+        initial.current_room.entry = checkpoint::EntrySide::initial;
+        initial.last_transition = checkpoint::TransitionKind::none;
+        initial.last_direction = checkpoint::ExitDirection::none;
+        if (lifecycle == abyss::AbyssLifecycle::cleared) {
+            initial.abyss.reward_total = reward_total_for_test(
+                initial.abyss.danger);
+        }
+        ARPG_REQUIRE(!persistence::encode_checkpoint(initial).has_value());
+
+        auto descent = initial;
+        descent.current_room.entry = checkpoint::EntrySide::initial;
+        descent.last_transition = checkpoint::TransitionKind::descent;
+        ARPG_REQUIRE(!persistence::encode_checkpoint(descent).has_value());
+
+        auto mismatched = initial;
+        mismatched.current_room.entry = checkpoint::EntrySide::left;
+        mismatched.last_transition = checkpoint::TransitionKind::door;
+        mismatched.last_direction = checkpoint::ExitDirection::left;
+        ARPG_REQUIRE(!persistence::encode_checkpoint(mismatched).has_value());
+    }
+
+    auto none = make_fixture();
+    none.current_room.is_abyss = true;
+    ARPG_REQUIRE(!persistence::encode_checkpoint(none).has_value());
+
+    auto failed = valid;
+    failed.abyss.lifecycle = abyss::AbyssLifecycle::failed;
+    failed.current_room.is_abyss = true;
+    ARPG_REQUIRE(!persistence::encode_checkpoint(failed).has_value());
+
+    const auto encoded = persistence::encode_checkpoint(valid);
+    ARPG_REQUIRE(encoded.has_value());
+    auto impossible_decode = *encoded;
+    impossible_decode[88U] = static_cast<std::uint8_t>(
+        checkpoint::EntrySide::initial);
+    impossible_decode[92U] = static_cast<std::uint8_t>(
+        checkpoint::TransitionKind::descent);
+    impossible_decode[93U] = static_cast<std::uint8_t>(
+        checkpoint::ExitDirection::none);
+    refresh_crc(impossible_decode);
+    ARPG_REQUIRE(persistence::decode_checkpoint(impossible_decode.data(),
+        impossible_decode.size()).error == persistence::CodecError::invalid_state);
+    return {};
+}
+
+std::uint64_t seed_for_danger(abyss::AbyssDanger danger,
+    std::uint64_t depth = 40U) noexcept {
+    for (std::uint64_t seed = 1U; seed < 100000U; ++seed) {
+        const auto selection = abyss::select_abyss_rule(seed, depth);
+        if (abyss::is_abyss_roll(seed)
+                && selection.has_value() && selection->danger == danger)
+            return seed;
+    }
+    return 0U;
+}
+
+std::uint8_t reward_total_for_test(abyss::AbyssDanger danger) noexcept {
+    switch (danger) {
+    case abyss::AbyssDanger::low: return 1U;
+    case abyss::AbyssDanger::medium: return 2U;
+    case abyss::AbyssDanger::high: return 3U;
+    default: return 0U;
+    }
+}
+
+checkpoint::DungeonRunState state_for_danger(
+    abyss::AbyssDanger danger,
+    abyss::AbyssLifecycle lifecycle) noexcept {
+    auto state = make_fixture();
+    state.current_room.depth = 40U;
+    state.current_room.seed = seed_for_danger(danger, state.current_room.depth);
+    set_abyss(state, lifecycle);
+    return state;
+}
+
+arpg::test::Failure v5_full_abyss_state_and_resolution_round_trip() noexcept {
+    auto state = state_for_danger(
+        abyss::AbyssDanger::high, abyss::AbyssLifecycle::cleared);
+    ARPG_REQUIRE(state.current_room.seed != 0U);
+    state.abyss.reward_total = 3U;
+    state.abyss.generated_mask = 0x03U;
+    state.abyss.claimed_mask = 0x01U;
+    state.abyss.abandoned_mask = 0x04U;
+    state.abyss.reward_revision = 0x11223344U;
+    state.last_abyss_resolution.valid = true;
+    state.last_abyss_resolution.room_seed = state.current_room.seed;
+    state.last_abyss_resolution.rule = state.abyss.rule;
+    state.last_abyss_resolution.total = 3U;
+    state.last_abyss_resolution.generated = 2U;
+    state.last_abyss_resolution.claimed = 1U;
+    state.last_abyss_resolution.abandoned = 1U;
+
+    const auto encoded = persistence::encode_checkpoint(state);
+    ARPG_REQUIRE(encoded.has_value());
+    ARPG_REQUIRE(encoded->size() == persistence::kV8BaseEncodedCheckpointSize);
+    ARPG_REQUIRE((*encoded)[7U] == '\0');
+    ARPG_REQUIRE(read_u32(*encoded, 8U) == 8U);
+    ARPG_REQUIRE(read_u32(*encoded, 24U) == persistence::kV8BasePayloadSize);
+    ARPG_REQUIRE((*encoded)[120U]
+        == static_cast<std::uint8_t>(abyss::AbyssLifecycle::cleared));
+    ARPG_REQUIRE((*encoded)[121U]
+        == static_cast<std::uint8_t>(state.abyss.danger));
+    ARPG_REQUIRE((*encoded)[122U]
+        == static_cast<std::uint8_t>(state.abyss.rule));
+    ARPG_REQUIRE(read_u32(*encoded, 124U) == abyss::kAbyssRulesVersion);
+    ARPG_REQUIRE((*encoded)[128U] == 3U && (*encoded)[129U] == 0x03U);
+    ARPG_REQUIRE((*encoded)[130U] == 0x01U && (*encoded)[131U] == 0x04U);
+    ARPG_REQUIRE(read_u32(*encoded, 132U) == 0x11223344U);
+    ARPG_REQUIRE((*encoded)[136U] == 1U);
+    ARPG_REQUIRE(read_u64(*encoded, 137U) == state.current_room.seed);
+    ARPG_REQUIRE((*encoded)[145U] == static_cast<std::uint8_t>(state.abyss.rule));
+    ARPG_REQUIRE((*encoded)[146U] == 3U && (*encoded)[147U] == 2U);
+    ARPG_REQUIRE((*encoded)[148U] == 1U && (*encoded)[149U] == 1U);
+
+    const auto decoded = persistence::decode_checkpoint(
+        encoded->data(), encoded->size());
+    ARPG_REQUIRE(decoded.error == persistence::CodecError::none);
+    ARPG_REQUIRE(!decoded.migrated);
+    ARPG_REQUIRE(decoded.state.abyss.lifecycle == state.abyss.lifecycle);
+    ARPG_REQUIRE(decoded.state.abyss.rule == state.abyss.rule);
+    ARPG_REQUIRE(decoded.state.abyss.reward_revision == 0x11223344U);
+    ARPG_REQUIRE(decoded.state.last_abyss_resolution.valid);
+    ARPG_REQUIRE(decoded.state.last_abyss_resolution.room_seed
+        == state.current_room.seed);
+    ARPG_REQUIRE(decoded.state.last_abyss_resolution.generated == 2U);
+    return {};
+}
+
+arpg::test::Failure v5_cleared_reward_total_matches_each_danger() noexcept {
+    constexpr std::array<abyss::AbyssDanger, 3U> kDangers{{
+        abyss::AbyssDanger::low,
+        abyss::AbyssDanger::medium,
+        abyss::AbyssDanger::high}};
+    for (const auto danger : kDangers) {
+        auto state = state_for_danger(danger, abyss::AbyssLifecycle::cleared);
+        ARPG_REQUIRE(state.current_room.seed != 0U);
+        ARPG_REQUIRE(state.abyss.danger == danger);
+        const auto expected_total = reward_total_for_test(danger);
+        state.abyss.reward_total = expected_total;
+        const auto encoded = persistence::encode_checkpoint(state);
+        ARPG_REQUIRE(encoded.has_value());
+        ARPG_REQUIRE(persistence::decode_checkpoint(
+            encoded->data(), encoded->size()).error
+            == persistence::CodecError::none);
+
+        state.abyss.reward_total = static_cast<std::uint8_t>(
+            expected_total == 3U ? 2U : expected_total + 1U);
+        ARPG_REQUIRE(!persistence::encode_checkpoint(state).has_value());
+        auto wrong_bytes = *encoded;
+        wrong_bytes[128U] = state.abyss.reward_total;
+        refresh_crc(wrong_bytes);
+        ARPG_REQUIRE(persistence::decode_checkpoint(
+            wrong_bytes.data(), wrong_bytes.size()).error
+            == persistence::CodecError::invalid_state);
+    }
+    return {};
+}
+
+arpg::test::Failure v5_resolution_total_matches_each_rule_danger() noexcept {
+    constexpr std::array<abyss::AbyssDanger, 3U> kDangers{{
+        abyss::AbyssDanger::low,
+        abyss::AbyssDanger::medium,
+        abyss::AbyssDanger::high}};
+    for (const auto danger : kDangers) {
+        auto state = state_for_danger(danger, abyss::AbyssLifecycle::started);
+        ARPG_REQUIRE(state.current_room.seed != 0U);
+        ARPG_REQUIRE(state.abyss.danger == danger);
+        const auto expected_total = reward_total_for_test(danger);
+        state.last_abyss_resolution.valid = true;
+        state.last_abyss_resolution.room_seed = state.current_room.seed + 1U;
+        state.last_abyss_resolution.rule = state.abyss.rule;
+        state.last_abyss_resolution.total = expected_total;
+        state.last_abyss_resolution.generated = expected_total;
+        const auto encoded = persistence::encode_checkpoint(state);
+        ARPG_REQUIRE(encoded.has_value());
+        ARPG_REQUIRE(persistence::decode_checkpoint(
+            encoded->data(), encoded->size()).error
+            == persistence::CodecError::none);
+
+        const auto wrong_total = static_cast<std::uint8_t>(
+            expected_total == 3U ? 2U : expected_total + 1U);
+        state.last_abyss_resolution.total = wrong_total;
+        state.last_abyss_resolution.generated = wrong_total;
+        ARPG_REQUIRE(!persistence::encode_checkpoint(state).has_value());
+        auto wrong_bytes = *encoded;
+        wrong_bytes[146U] = wrong_total;
+        wrong_bytes[147U] = wrong_total;
+        refresh_crc(wrong_bytes);
+        ARPG_REQUIRE(persistence::decode_checkpoint(
+            wrong_bytes.data(), wrong_bytes.size()).error
+            == persistence::CodecError::invalid_state);
+    }
+    return {};
+}
+
+arpg::test::Failure v5_started_state_survives_decode() noexcept {
+    auto state = make_fixture();
+    set_abyss(state, abyss::AbyssLifecycle::started);
+    const auto encoded = persistence::encode_checkpoint(state);
+    ARPG_REQUIRE(encoded.has_value());
+    const auto decoded = persistence::decode_checkpoint(
+        encoded->data(), encoded->size());
+    ARPG_REQUIRE(decoded.error == persistence::CodecError::none);
+    ARPG_REQUIRE(decoded.state.abyss.lifecycle == abyss::AbyssLifecycle::started);
+    ARPG_REQUIRE(!decoded.migrated);
+    return {};
+}
+
+arpg::test::Failure v5_abyss_enums_are_rejected_individually() noexcept {
+    auto state = make_fixture();
+    set_abyss(state, abyss::AbyssLifecycle::started);
+    const auto encoded = persistence::encode_checkpoint(state);
+    ARPG_REQUIRE(encoded.has_value());
+    for (const auto offset : std::array<std::size_t, 4U>{{120U,121U,122U,145U}}) {
+        auto bytes = *encoded;
+        if (offset == 145U) {
+            bytes[136U] = 1U;
+            bytes[137U] = 1U;
+            bytes[146U] = 1U;
+            bytes[147U] = 1U;
+        }
+        bytes[offset] = 0xFEU;
+        refresh_crc(bytes);
+        ARPG_REQUIRE(persistence::decode_checkpoint(bytes.data(), bytes.size()).error
+            == persistence::CodecError::invalid_enum);
+    }
+    return {};
+}
+
+arpg::test::Failure v5_resolution_boolean_is_rejected() noexcept {
+    auto state = make_fixture();
+    set_abyss(state, abyss::AbyssLifecycle::started);
+    auto bytes = *persistence::encode_checkpoint(state);
+    bytes[136U] = 2U;
+    refresh_crc(bytes);
+    ARPG_REQUIRE(persistence::decode_checkpoint(bytes.data(), bytes.size()).error
+        == persistence::CodecError::invalid_boolean);
+    return {};
+}
+
+arpg::test::Failure v5_reward_total_and_mask_bits_are_rejected() noexcept {
+    auto state = state_for_danger(
+        abyss::AbyssDanger::high, abyss::AbyssLifecycle::cleared);
+    ARPG_REQUIRE(state.current_room.seed != 0U);
+    state.abyss.reward_total = 3U;
+    const auto encoded = persistence::encode_checkpoint(state);
+    ARPG_REQUIRE(encoded.has_value());
+    for (const auto mutation : std::array<std::array<std::uint8_t, 2U>, 2U>{{
+            {{128U, 4U}}, {{129U, 8U}}}}) {
+        auto bytes = *encoded;
+        bytes[mutation[0]] = mutation[1];
+        refresh_crc(bytes);
+        ARPG_REQUIRE(persistence::decode_checkpoint(bytes.data(), bytes.size()).error
+            == persistence::CodecError::invalid_state);
+    }
+    return {};
+}
+
+arpg::test::Failure v5_claimed_and_abandoned_masks_are_consistent() noexcept {
+    auto state = state_for_danger(
+        abyss::AbyssDanger::high, abyss::AbyssLifecycle::cleared);
+    ARPG_REQUIRE(state.current_room.seed != 0U);
+    state.abyss.reward_total = 3U;
+    state.abyss.generated_mask = 1U;
+    const auto encoded = persistence::encode_checkpoint(state);
+    ARPG_REQUIRE(encoded.has_value());
+    auto claimed = *encoded;
+    claimed[130U] = 2U;
+    refresh_crc(claimed);
+    ARPG_REQUIRE(persistence::decode_checkpoint(claimed.data(), claimed.size()).error
+        == persistence::CodecError::invalid_state);
+    auto abandoned = *encoded;
+    abandoned[131U] = 1U;
+    refresh_crc(abandoned);
+    ARPG_REQUIRE(persistence::decode_checkpoint(abandoned.data(), abandoned.size()).error
+        == persistence::CodecError::invalid_state);
+    return {};
+}
+
+arpg::test::Failure v5_rule_and_danger_must_match_deterministic_selection() noexcept {
+    auto state = make_fixture();
+    set_abyss(state, abyss::AbyssLifecycle::available);
+    const auto encoded = persistence::encode_checkpoint(state);
+    ARPG_REQUIRE(encoded.has_value());
+    auto wrong_rule = *encoded;
+    wrong_rule[122U] = static_cast<std::uint8_t>(
+        state.abyss.rule == abyss::AbyssRuleId::thunderstorm
+            ? abyss::AbyssRuleId::swift_pursuit
+            : abyss::AbyssRuleId::thunderstorm);
+    refresh_crc(wrong_rule);
+    ARPG_REQUIRE(persistence::decode_checkpoint(
+        wrong_rule.data(), wrong_rule.size()).error
+        == persistence::CodecError::invalid_state);
+    auto wrong_danger = *encoded;
+    wrong_danger[121U] = static_cast<std::uint8_t>(
+        state.abyss.danger == abyss::AbyssDanger::low
+            ? abyss::AbyssDanger::medium : abyss::AbyssDanger::low);
+    refresh_crc(wrong_danger);
+    ARPG_REQUIRE(persistence::decode_checkpoint(
+        wrong_danger.data(), wrong_danger.size()).error
+        == persistence::CodecError::invalid_state);
+    auto wrong_version = *encoded;
+    write_u32(wrong_version, 124U, abyss::kAbyssRulesVersion + 1U);
+    refresh_crc(wrong_version);
+    ARPG_REQUIRE(persistence::decode_checkpoint(
+        wrong_version.data(), wrong_version.size()).error
+        == persistence::CodecError::invalid_state);
+    return {};
+}
+
+arpg::test::Failure v5_lifecycle_requires_matching_room_state() noexcept {
+    auto state = make_fixture();
+    state.current_room.is_abyss = false;
+    set_abyss(state, abyss::AbyssLifecycle::available);
+    state.current_room.is_abyss = false;
+    ARPG_REQUIRE(!persistence::encode_checkpoint(state).has_value());
+    state = make_fixture();
+    state.abyss.rules_version = abyss::kAbyssRulesVersion;
+    ARPG_REQUIRE(!persistence::encode_checkpoint(state).has_value());
+    return {};
+}
+
+arpg::test::Failure v5_resolution_counts_are_validated() noexcept {
+    auto state = state_for_danger(
+        abyss::AbyssDanger::high, abyss::AbyssLifecycle::started);
+    ARPG_REQUIRE(state.current_room.seed != 0U);
+    state.last_abyss_resolution.valid = true;
+    state.last_abyss_resolution.room_seed = 1U;
+    state.last_abyss_resolution.rule = state.abyss.rule;
+    state.last_abyss_resolution.total = 3U;
+    state.last_abyss_resolution.generated = 2U;
+    state.last_abyss_resolution.claimed = 1U;
+    state.last_abyss_resolution.abandoned = 1U;
+    const auto encoded = persistence::encode_checkpoint(state);
+    ARPG_REQUIRE(encoded.has_value());
+    auto impossible_total = *encoded;
+    impossible_total[149U] = 0U;
+    refresh_crc(impossible_total);
+    ARPG_REQUIRE(persistence::decode_checkpoint(
+        impossible_total.data(), impossible_total.size()).error
+        == persistence::CodecError::invalid_state);
+    auto excessive_claimed = *encoded;
+    excessive_claimed[148U] = 3U;
+    refresh_crc(excessive_claimed);
+    ARPG_REQUIRE(persistence::decode_checkpoint(
+        excessive_claimed.data(), excessive_claimed.size()).error
+        == persistence::CodecError::invalid_state);
+    return {};
+}
+
+arpg::test::Failure v5_crc_covers_abyss_fields() noexcept {
+    auto state = make_fixture();
+    set_abyss(state, abyss::AbyssLifecycle::started);
+    auto bytes = *persistence::encode_checkpoint(state);
+    bytes[132U] ^= 1U;
+    ARPG_REQUIRE(persistence::decode_checkpoint(bytes.data(), bytes.size()).error
+        == persistence::CodecError::bad_crc);
+    return {};
+}
+
+arpg::test::Failure legacy_door_abyss_migrates_deterministically() noexcept {
+    struct DoorCase final {
+        checkpoint::ExitDirection direction{};
+        checkpoint::EntrySide opposite{};
+    };
+    constexpr std::array<DoorCase, 4U> kDoors{{
+        {checkpoint::ExitDirection::up, checkpoint::EntrySide::bottom},
+        {checkpoint::ExitDirection::down, checkpoint::EntrySide::top},
+        {checkpoint::ExitDirection::left, checkpoint::EntrySide::right},
+        {checkpoint::ExitDirection::right, checkpoint::EntrySide::left}}};
+    for (const auto& door : kDoors) {
+        auto legacy = make_fixture();
+        legacy.current_room.seed = 0x11E9U;
+        ARPG_REQUIRE(abyss::is_abyss_roll(legacy.current_room.seed));
+        legacy.current_room.entry = door.opposite;
+        legacy.last_transition = checkpoint::TransitionKind::door;
+        legacy.last_direction = door.direction;
+        legacy.current_room.is_abyss = true;
+        const auto migrated = dungeon::migrate_legacy_abyss_checkpoint(legacy);
+        const auto expected = abyss::select_abyss_rule(
+            legacy.current_room.seed, legacy.current_room.depth);
+        ARPG_REQUIRE(expected.has_value());
+        ARPG_REQUIRE(migrated.abyss.lifecycle
+            == abyss::AbyssLifecycle::available);
+        ARPG_REQUIRE(migrated.abyss.rule == expected->rule);
+        ARPG_REQUIRE(migrated.abyss.danger == expected->danger);
+        ARPG_REQUIRE(migrated.abyss.rules_version == abyss::kAbyssRulesVersion);
+        ARPG_REQUIRE(migrated.current_room.is_abyss);
+    }
+    return {};
+}
+
+arpg::test::Failure legacy_door_abyss_requires_new_domain_roll() noexcept {
+    auto legacy = make_owned_fixture();
+    legacy.current_room.seed = 0x4142434445464748ULL;
+    ARPG_REQUIRE(!abyss::is_abyss_roll(legacy.current_room.seed));
+    legacy.current_room.entry = checkpoint::EntrySide::bottom;
+    legacy.last_transition = checkpoint::TransitionKind::door;
+    legacy.last_direction = checkpoint::ExitDirection::up;
+    legacy.current_room.is_abyss = true;
+    legacy.abyss.lifecycle = abyss::AbyssLifecycle::cleared;
+    legacy.abyss.rule = abyss::AbyssRuleId::life_sacrifice;
+    legacy.last_abyss_resolution.valid = true;
+
+    auto expected = legacy;
+    expected.current_room.is_abyss = false;
+    expected.abyss = {};
+    expected.last_abyss_resolution = {};
+    const auto migrated = dungeon::migrate_legacy_abyss_checkpoint(legacy);
+    ARPG_REQUIRE(same_state(migrated, expected));
+    ARPG_REQUIRE(migrated.item_ownership.items.size()
+        == expected.item_ownership.items.size());
+    ARPG_REQUIRE(migrated.item_ownership.items[0].id
+        == expected.item_ownership.items[0].id);
+    ARPG_REQUIRE(migrated.item_ownership.equipment.equipped_ids
+        == expected.item_ownership.equipment.equipped_ids);
+    ARPG_REQUIRE(migrated.item_ownership.claimed_drop_bits
+        == expected.item_ownership.claimed_drop_bits);
+    ARPG_REQUIRE(migrated.item_ownership.next_item_sequence
+        == expected.item_ownership.next_item_sequence);
+    ARPG_REQUIRE(migrated.abyss.lifecycle == abyss::AbyssLifecycle::none);
+    ARPG_REQUIRE(!migrated.last_abyss_resolution.valid);
+    return {};
+}
+
+arpg::test::Failure legacy_door_migration_rejects_missing_or_mismatched_direction() noexcept {
+    constexpr std::array<checkpoint::ExitDirection, 5U> kDirections{{
+        checkpoint::ExitDirection::none,
+        checkpoint::ExitDirection::up,
+        checkpoint::ExitDirection::down,
+        checkpoint::ExitDirection::left,
+        checkpoint::ExitDirection::right}};
+    constexpr std::array<checkpoint::EntrySide, 5U> kWrongEntries{{
+        checkpoint::EntrySide::left,
+        checkpoint::EntrySide::top,
+        checkpoint::EntrySide::bottom,
+        checkpoint::EntrySide::left,
+        checkpoint::EntrySide::right}};
+    for (std::size_t index = 0U; index < kDirections.size(); ++index) {
+        auto legacy = make_fixture();
+        legacy.current_room.is_abyss = true;
+        legacy.last_transition = checkpoint::TransitionKind::door;
+        legacy.last_direction = kDirections[index];
+        legacy.current_room.entry = kWrongEntries[index];
+        const auto migrated = dungeon::migrate_legacy_abyss_checkpoint(legacy);
+        ARPG_REQUIRE(!migrated.current_room.is_abyss);
+        ARPG_REQUIRE(migrated.abyss.lifecycle == abyss::AbyssLifecycle::none);
+    }
+    return {};
+}
+
+arpg::test::Failure legacy_initial_and_descent_abyss_are_cleared_without_drift() noexcept {
+    for (const bool descent : std::array<bool, 2U>{{false, true}}) {
+        auto legacy = make_owned_fixture();
+        legacy.current_room.is_abyss = true;
+        legacy.current_room.entry = descent
+            ? checkpoint::EntrySide::left : checkpoint::EntrySide::initial;
+        legacy.last_transition = descent
+            ? checkpoint::TransitionKind::descent : checkpoint::TransitionKind::door;
+        const auto migrated = dungeon::migrate_legacy_abyss_checkpoint(legacy);
+        ARPG_REQUIRE(!migrated.current_room.is_abyss);
+        ARPG_REQUIRE(migrated.abyss.lifecycle == abyss::AbyssLifecycle::none);
+        ARPG_REQUIRE(migrated.root_seed == legacy.root_seed);
+        ARPG_REQUIRE(migrated.commit_generation == legacy.commit_generation);
+        ARPG_REQUIRE(migrated.biases == legacy.biases);
+        ARPG_REQUIRE(migrated.current_room.seed == legacy.current_room.seed);
+        ARPG_REQUIRE(migrated.current_room.index == legacy.current_room.index);
+        ARPG_REQUIRE(migrated.current_room.depth == legacy.current_room.depth);
+        ARPG_REQUIRE(migrated.current_room.floor_room_index
+            == legacy.current_room.floor_room_index);
+        ARPG_REQUIRE(migrated.current_room.ecology == legacy.current_room.ecology);
+        ARPG_REQUIRE(migrated.current_room.has_hole == legacy.current_room.has_hole);
+        ARPG_REQUIRE(migrated.progression.experience == legacy.progression.experience);
+        ARPG_REQUIRE(migrated.progression.level == legacy.progression.level);
+        ARPG_REQUIRE(migrated.progression.earned_passive_points
+            == legacy.progression.earned_passive_points);
+        ARPG_REQUIRE(migrated.progression.unspent_passive_points
+            == legacy.progression.unspent_passive_points);
+        ARPG_REQUIRE(migrated.passive_tree.allocated_bits
+            == legacy.passive_tree.allocated_bits);
+        ARPG_REQUIRE(migrated.item_ownership.items.size()
+            == legacy.item_ownership.items.size());
+        ARPG_REQUIRE(migrated.item_ownership.items[0].id
+            == legacy.item_ownership.items[0].id);
+        ARPG_REQUIRE(migrated.item_ownership.next_item_sequence
+            == legacy.item_ownership.next_item_sequence);
+    }
+    auto ordinary = make_owned_fixture();
+    ordinary.current_room.is_abyss = false;
+    const auto migrated_ordinary = dungeon::migrate_legacy_abyss_checkpoint(
+        ordinary);
+    ARPG_REQUIRE(!migrated_ordinary.current_room.is_abyss);
+    ARPG_REQUIRE(migrated_ordinary.abyss.lifecycle
+        == abyss::AbyssLifecycle::none);
+    return {};
+}
+
+arpg::test::Failure v1_through_v6_decode_as_migrated_but_v8_does_not() noexcept {
+    const auto default_loadout = skills::default_skill_loadout();
+    const auto v1 = legacy_fixture();
+    const auto decoded_v1 = persistence::decode_checkpoint(v1.data(), v1.size());
+    ARPG_REQUIRE(decoded_v1.migrated);
+    ARPG_REQUIRE(decoded_v1.state.death_sequence == 0U);
+    ARPG_REQUIRE(checkpoint::valid_death_checkpoint_structural(decoded_v1.state.death));
+    ARPG_REQUIRE(same_skill_loadout(
+        decoded_v1.state.skill_loadout, default_loadout));
+
+    constexpr std::array<std::uint8_t, persistence::kPreviousEncodedCheckpointSize>
+        v2{{
+            0x49U,0x41U,0x52U,0x50U,0x47U,0x53U,0x30U,0x33U,
+            0x02U,0x00U,0x00U,0x00U,0x01U,0x00U,0x00U,0x00U,
+            0x18U,0x17U,0x16U,0x15U,0x14U,0x13U,0x12U,0x11U,
+            0x50U,0x00U,0x00U,0x00U,0xC7U,0x37U,0x66U,0x35U,
+            0x08U,0x07U,0x06U,0x05U,0x04U,0x03U,0x02U,0x01U,
+            0x24U,0x23U,0x22U,0x21U,0x28U,0x27U,0x26U,0x25U,
+            0x2CU,0x2BU,0x2AU,0x29U,0x30U,0x2FU,0x2EU,0x2DU,
+            0x38U,0x37U,0x36U,0x35U,0x34U,0x33U,0x32U,0x31U,
+            0x48U,0x47U,0x46U,0x45U,0x44U,0x43U,0x42U,0x41U,
+            0x02U,0x00U,0x00U,0x00U,0x00U,0x00U,0x00U,0x00U,
+            0x03U,0x00U,0x00U,0x00U,0x00U,0x00U,0x00U,0x00U,
+            0x04U,0x03U,0x01U,0x01U,0x01U,0x02U,0x25U,0x24U,
+            0x24U,0x00U,0x2AU,0x00U,0x00U,0x00U,0x00U,0x00U,
+            0x00U,0x00U,0x00U,0x00U,0x00U,0x00U,0x00U,0x00U}};
+    const auto decoded_v2 = persistence::decode_checkpoint(v2.data(), v2.size());
+    ARPG_REQUIRE(decoded_v2.migrated);
+    ARPG_REQUIRE(decoded_v2.state.death_sequence == 0U);
+    ARPG_REQUIRE(checkpoint::valid_death_checkpoint_structural(decoded_v2.state.death));
+    ARPG_REQUIRE(same_skill_loadout(
+        decoded_v2.state.skill_loadout, default_loadout));
+
+    auto current = persistence::encode_checkpoint(make_fixture());
+    ARPG_REQUIRE(current.has_value());
+    auto v3 = std::vector<std::uint8_t>(current->begin(), current->begin() + 120U);
+    const std::array<std::uint8_t, 8U> v3_magic{{'I','A','R','P','G','S','0','4'}};
+    std::copy(v3_magic.begin(), v3_magic.end(), v3.begin());
+    write_u32(v3, 8U, 3U);
+    write_u32(v3, 24U, 88U);
+    refresh_crc(v3);
+    const auto decoded_v3 = persistence::decode_checkpoint(v3.data(), v3.size());
+    ARPG_REQUIRE(decoded_v3.migrated);
+    ARPG_REQUIRE(decoded_v3.state.death_sequence == 0U);
+    ARPG_REQUIRE(checkpoint::valid_death_checkpoint_structural(decoded_v3.state.death));
+    ARPG_REQUIRE(same_skill_loadout(
+        decoded_v3.state.skill_loadout, default_loadout));
+    const auto v4 = as_v4_golden(*current);
+    const auto decoded_v4 = persistence::decode_checkpoint(v4.data(), v4.size());
+    ARPG_REQUIRE(decoded_v4.migrated);
+    ARPG_REQUIRE(decoded_v4.state.death_sequence == 0U);
+    ARPG_REQUIRE(checkpoint::valid_death_checkpoint_structural(decoded_v4.state.death));
+    ARPG_REQUIRE(same_skill_loadout(
+        decoded_v4.state.skill_loadout, default_loadout));
+    const auto current_owned = persistence::encode_checkpoint(make_owned_fixture());
+    ARPG_REQUIRE(current_owned.has_value());
+    const auto v4_owned = as_v4_golden(*current_owned);
+    const auto decoded_v4_owned = persistence::decode_checkpoint(
+        v4_owned.data(), v4_owned.size());
+    ARPG_REQUIRE(decoded_v4_owned.error == persistence::CodecError::none);
+    ARPG_REQUIRE(decoded_v4_owned.migrated);
+    ARPG_REQUIRE(decoded_v4_owned.state.item_ownership.items.size() == 3U);
+    ARPG_REQUIRE(same_skill_loadout(
+        decoded_v4_owned.state.skill_loadout, default_loadout));
+
+    const auto& v5 = arpg::test::fixtures::kV5FullState;
+    const auto decoded_v5 = persistence::decode_checkpoint(v5.data(), v5.size());
+    ARPG_REQUIRE(decoded_v5.error == persistence::CodecError::none);
+    ARPG_REQUIRE(decoded_v5.migrated);
+    ARPG_REQUIRE(same_skill_loadout(
+        decoded_v5.state.skill_loadout, default_loadout));
+
+    const auto& v6 = arpg::test::fixtures::kV6FullState;
+    const auto decoded_v6 = persistence::decode_checkpoint(v6.data(), v6.size());
+    ARPG_REQUIRE(decoded_v6.error == persistence::CodecError::none);
+    ARPG_REQUIRE(decoded_v6.migrated);
+    ARPG_REQUIRE(same_skill_loadout(
+        decoded_v6.state.skill_loadout, default_loadout));
+    ARPG_REQUIRE(decoded_v6.state.item_ownership.items.size() == 3U);
+    ARPG_REQUIRE(decoded_v6.state.item_ownership.items[1].affixes[0].value_roll_bp
+        == items::kAffixValueRollCanonicalBp);
+    ARPG_REQUIRE(decoded_v6.state.item_ownership.items[2].affixes[2].value_roll_bp
+        == items::kAffixValueRollCanonicalBp);
+    for (const auto& item : decoded_v6.state.item_ownership.items)
+        ARPG_REQUIRE(item.reinforcement == 0U);
+    ARPG_REQUIRE((decoded_v6.state.item_ownership.materials
+        == std::array<std::uint64_t, items::kMaterialCount>{}));
+    ARPG_REQUIRE(decoded_v6.state.item_ownership.material_discovery_bits == 0U);
+    ARPG_REQUIRE(!persistence::decode_checkpoint(
+        current->data(), current->size()).migrated);
+    return {};
+}
+
 arpg::test::Failure baseline_checkpoint_bytes_are_preserved() noexcept {
     constexpr std::array<std::uint8_t, persistence::kPreviousEncodedCheckpointSize>
         kBaselineBytes{{
@@ -319,18 +1121,22 @@ arpg::test::Failure baseline_checkpoint_bytes_are_preserved() noexcept {
         }};
     const auto bytes = persistence::encode_checkpoint(make_fixture());
     ARPG_REQUIRE(bytes.has_value());
-    ARPG_REQUIRE(bytes->size() == 204U);
-    ARPG_REQUIRE((*bytes)[0U] == 0x49U && (*bytes)[7U] == 0x35U);
+    ARPG_REQUIRE(bytes->size() == persistence::kV8BaseEncodedCheckpointSize);
+    ARPG_REQUIRE((*bytes)[0U] == 'A' && (*bytes)[6U] == '8'
+        && (*bytes)[7U] == 0U);
     ARPG_REQUIRE((*bytes)[106U] == 0x01U && (*bytes)[107U] == 0x00U);
 
     const auto decoded = persistence::decode_checkpoint(
         kBaselineBytes.data(), kBaselineBytes.size());
     ARPG_REQUIRE(decoded.error == persistence::CodecError::none);
-    ARPG_REQUIRE(same_state(decoded.state, make_fixture()));
+    auto legacy_expected = make_fixture();
+    legacy_expected.current_room.is_abyss = true;
+    ARPG_REQUIRE(same_state(decoded.state, legacy_expected));
     ARPG_REQUIRE(decoded.state.passive_tree.allocated_bits == 1ULL);
 
     std::vector<std::uint8_t> format_three(bytes->begin(), bytes->begin() + 120U);
-    format_three[7U] = '4';
+    const std::array<std::uint8_t, 8U> v3_magic{{'I','A','R','P','G','S','0','4'}};
+    std::copy(v3_magic.begin(), v3_magic.end(), format_three.begin());
     write_u32(format_three, 8U, 3U);
     write_u32(format_three, 24U, 88U);
     refresh_crc(format_three);
@@ -360,10 +1166,22 @@ arpg::test::Failure encoded_sizes_and_generation_are_little_endian() noexcept {
     static_assert(persistence::kCheckpointHeaderSize == 32U);
     static_assert(persistence::kV4BasePayloadSize == 172U);
     static_assert(persistence::kV4BaseEncodedCheckpointSize == 204U);
+    static_assert(persistence::kV5BasePayloadSize == 204U);
+    static_assert(persistence::kV5BaseEncodedCheckpointSize == 236U);
+    static_assert(persistence::kV6BasePayloadSize == 428U);
+    static_assert(persistence::kV6BaseEncodedCheckpointSize == 460U);
+    static_assert(persistence::kV7MaterialRecordSize == 16U);
+    static_assert(persistence::kV7ItemRecordSize == 64U);
+    static_assert(persistence::kV7MaterialClaimPayloadSize == 56U);
+    static_assert(persistence::kV7BasePayloadSize == 716U);
+    static_assert(persistence::kV7BaseEncodedCheckpointSize == 748U);
+    static_assert(persistence::kV8SkillLoadoutPayloadSize == 40U);
+    static_assert(persistence::kV8BasePayloadSize == 756U);
+    static_assert(persistence::kV8BaseEncodedCheckpointSize == 788U);
 
     std::vector<std::uint8_t> bytes;
     ARPG_REQUIRE(encoded_fixture(bytes));
-    ARPG_REQUIRE(bytes.size() == 204U);
+    ARPG_REQUIRE(bytes.size() == 788U);
     ARPG_REQUIRE(bytes[16] == 0x18U);
     ARPG_REQUIRE(bytes[17] == 0x17U);
     ARPG_REQUIRE(bytes[18] == 0x16U);
@@ -406,7 +1224,7 @@ arpg::test::Failure wrong_magic_is_rejected() noexcept {
 arpg::test::Failure unsupported_format_and_rules_are_rejected() noexcept {
     std::vector<std::uint8_t> bytes;
     ARPG_REQUIRE(encoded_fixture(bytes));
-    bytes[8] = 5U;
+    bytes[8] = 9U;
     auto decoded = persistence::decode_checkpoint(bytes.data(), bytes.size());
     ARPG_REQUIRE(decoded.error == persistence::CodecError::unsupported_format);
 
@@ -536,7 +1354,7 @@ checkpoint::DungeonRunState make_owned_fixture() {
     return state;
 }
 
-arpg::test::Failure v4_length_count_crc_and_capacity_are_bounded() noexcept {
+arpg::test::Failure v5_length_count_crc_and_capacity_are_bounded() noexcept {
     const auto encoded = persistence::encode_checkpoint(make_owned_fixture());
     ARPG_REQUIRE(encoded.has_value());
 
@@ -553,19 +1371,19 @@ arpg::test::Failure v4_length_count_crc_and_capacity_are_bounded() noexcept {
         == persistence::CodecError::bad_payload_length);
 
     auto bad_crc = *encoded;
-    bad_crc[204U] ^= 1U;
+    bad_crc[236U] ^= 1U;
     ARPG_REQUIRE(persistence::decode_checkpoint(
         bad_crc.data(), bad_crc.size()).error == persistence::CodecError::bad_crc);
 
     auto excessive_count = *encoded;
-    write_u32(excessive_count, 120U, 65536U);
+    write_u32(excessive_count, 152U, 65536U);
     refresh_crc(excessive_count);
     ARPG_REQUIRE(persistence::decode_checkpoint(
         excessive_count.data(), excessive_count.size()).error
         == persistence::CodecError::bad_payload_length);
 
     auto mismatched_count = *encoded;
-    write_u32(mismatched_count, 120U, 2U);
+    write_u32(mismatched_count, 152U, 2U);
     refresh_crc(mismatched_count);
     ARPG_REQUIRE(persistence::decode_checkpoint(
         mismatched_count.data(), mismatched_count.size()).error
@@ -584,7 +1402,7 @@ arpg::test::Failure v4_length_count_crc_and_capacity_are_bounded() noexcept {
     maximum.item_ownership.next_item_sequence = 65536U;
     const auto maximum_encoded = persistence::encode_checkpoint(maximum);
     ARPG_REQUIRE(maximum_encoded.has_value());
-    ARPG_REQUIRE(maximum_encoded->size() == 2621604U);
+    ARPG_REQUIRE(maximum_encoded->size() == 4195028U);
     const auto maximum_decoded = persistence::decode_checkpoint(
         maximum_encoded->data(), maximum_encoded->size());
     ARPG_REQUIRE(maximum_decoded.error == persistence::CodecError::none);
@@ -596,7 +1414,77 @@ arpg::test::Failure v4_length_count_crc_and_capacity_are_bounded() noexcept {
     return {};
 }
 
-arpg::test::Failure v4_corrupt_item_semantics_are_rejected() noexcept {
+arpg::test::Failure v8_material_ids_discovery_and_reserved_bytes_are_validated()
+    noexcept {
+    auto state = make_owned_fixture();
+    state.item_ownership.material_discovery_bits = 0x3FFFU;
+    const auto encoded = persistence::encode_checkpoint(state);
+    ARPG_REQUIRE(encoded.has_value());
+
+    for (std::size_t index = 0U; index < items::kMaterialCount; ++index) {
+        auto wrong_id = *encoded;
+        wrong_id[460U + index * persistence::kV7MaterialRecordSize] =
+            static_cast<std::uint8_t>(index == 0U ? 2U : index);
+        refresh_crc(wrong_id);
+        ARPG_REQUIRE(persistence::decode_checkpoint(
+            wrong_id.data(), wrong_id.size()).error
+                == persistence::CodecError::invalid_state);
+    }
+
+    auto material_reserved = *encoded;
+    material_reserved[461U] = 1U;
+    refresh_crc(material_reserved);
+    ARPG_REQUIRE(persistence::decode_checkpoint(
+        material_reserved.data(), material_reserved.size()).error
+            == persistence::CodecError::invalid_state);
+
+    auto discovery_high_bit = *encoded;
+    discovery_high_bit[685U] = 0x40U;
+    refresh_crc(discovery_high_bit);
+    ARPG_REQUIRE(persistence::decode_checkpoint(
+        discovery_high_bit.data(), discovery_high_bit.size()).error
+            == persistence::CodecError::invalid_state);
+
+    auto base_reserved = *encoded;
+    base_reserved[686U] = 1U;
+    refresh_crc(base_reserved);
+    ARPG_REQUIRE(persistence::decode_checkpoint(
+        base_reserved.data(), base_reserved.size()).error
+            == persistence::CodecError::invalid_state);
+
+    auto material_claim_high_bit = *encoded;
+    material_claim_high_bit[692U + 6U * 8U + 2U] = 1U;
+    refresh_crc(material_claim_high_bit);
+    ARPG_REQUIRE(persistence::decode_checkpoint(
+        material_claim_high_bit.data(), material_claim_high_bit.size()).error
+            == persistence::CodecError::invalid_state);
+
+    auto invalid_roll = *encoded;
+    write_u16(invalid_roll,
+        persistence::kV8BaseEncodedCheckpointSize
+            + persistence::kV7ItemRecordSize + 20U,
+        items::kAffixValueRollMinimumBp - 1U);
+    refresh_crc(invalid_roll);
+    ARPG_REQUIRE(persistence::decode_checkpoint(
+        invalid_roll.data(), invalid_roll.size()).error
+            == persistence::CodecError::invalid_state);
+
+    auto item_reserved = *encoded;
+    item_reserved[persistence::kV8BaseEncodedCheckpointSize + 56U] = 1U;
+    refresh_crc(item_reserved);
+    ARPG_REQUIRE(persistence::decode_checkpoint(
+        item_reserved.data(), item_reserved.size()).error
+            == persistence::CodecError::invalid_state);
+
+    state.item_ownership.material_discovery_bits = 0x4000U;
+    ARPG_REQUIRE(!persistence::encode_checkpoint(state).has_value());
+    state.item_ownership.material_discovery_bits = 0U;
+    state.item_ownership.material_claimed_drop_bits[6U] = 0x10000U;
+    ARPG_REQUIRE(!persistence::encode_checkpoint(state).has_value());
+    return {};
+}
+
+arpg::test::Failure v8_corrupt_item_semantics_are_rejected() noexcept {
     const auto encoded = persistence::encode_checkpoint(make_owned_fixture());
     ARPG_REQUIRE(encoded.has_value());
     const auto rejects = [&encoded](std::size_t offset,
@@ -608,41 +1496,41 @@ arpg::test::Failure v4_corrupt_item_semantics_are_rejected() noexcept {
             == persistence::CodecError::invalid_state;
     };
 
-    ARPG_REQUIRE(rejects(217U, 1U));
-    ARPG_REQUIRE(rejects(220U, 1U));
-    ARPG_REQUIRE(rejects(204U, 0U));
-    ARPG_REQUIRE(rejects(244U, 101U));
-    ARPG_REQUIRE(rejects(212U, 0U));
-    ARPG_REQUIRE(rejects(214U, 0U));
-    ARPG_REQUIRE(rejects(215U, 96U));
-    ARPG_REQUIRE(rejects(304U, 7U));
-    ARPG_REQUIRE(rejects(261U, 7U));
-    ARPG_REQUIRE(rejects(311U, 4U));
+    ARPG_REQUIRE(rejects(801U, 1U));
+    ARPG_REQUIRE(rejects(804U, 1U));
+    ARPG_REQUIRE(rejects(788U, 0U));
+    ARPG_REQUIRE(rejects(852U, 101U));
+    ARPG_REQUIRE(rejects(796U, 0U));
+    ARPG_REQUIRE(rejects(798U, 0U));
+    ARPG_REQUIRE(rejects(799U, 96U));
+    ARPG_REQUIRE(rejects(938U, 7U));
+    ARPG_REQUIRE(rejects(869U, 7U));
+    ARPG_REQUIRE(rejects(947U, 4U));
 
     auto dangling = *encoded;
-    dangling[156U] = 0xFEU;
+    dangling[188U] = 0xFEU;
     refresh_crc(dangling);
     ARPG_REQUIRE(persistence::decode_checkpoint(
         dangling.data(), dangling.size()).error
         == persistence::CodecError::invalid_state);
 
     auto wrong_slot = *encoded;
-    std::copy_n(wrong_slot.begin() + 156U, 8U, wrong_slot.begin() + 164U);
+    std::copy_n(wrong_slot.begin() + 188U, 8U, wrong_slot.begin() + 196U);
     refresh_crc(wrong_slot);
     ARPG_REQUIRE(persistence::decode_checkpoint(
         wrong_slot.data(), wrong_slot.size()).error
         == persistence::CodecError::invalid_state);
 
     auto duplicate_equipment = *encoded;
-    std::copy_n(duplicate_equipment.begin() + 156U, 8U,
-        duplicate_equipment.begin() + 196U);
+    std::copy_n(duplicate_equipment.begin() + 188U, 8U,
+        duplicate_equipment.begin() + 228U);
     refresh_crc(duplicate_equipment);
     ARPG_REQUIRE(persistence::decode_checkpoint(
         duplicate_equipment.data(), duplicate_equipment.size()).error
         == persistence::CodecError::invalid_state);
 
     auto zero_sequence = *encoded;
-    std::fill(zero_sequence.begin() + 124U, zero_sequence.begin() + 132U,
+    std::fill(zero_sequence.begin() + 156U, zero_sequence.begin() + 164U,
         static_cast<std::uint8_t>(0U));
     refresh_crc(zero_sequence);
     ARPG_REQUIRE(persistence::decode_checkpoint(
@@ -661,7 +1549,7 @@ arpg::test::Failure codec_allocation_failures_do_not_escape_noexcept() noexcept 
     ARPG_REQUIRE(encoded.has_value());
 
     auto excessive_count = *encoded;
-    write_u32(excessive_count, 120U, 65536U);
+    write_u32(excessive_count, 152U, 65536U);
     refresh_crc(excessive_count);
     gAllocationsBeforeFailure = kVectorProxyAllocations == 0 ? 0 : -1;
     const auto rejected_before_allocation = persistence::decode_checkpoint(
@@ -693,11 +1581,11 @@ arpg::test::Failure codec_allocation_failures_do_not_escape_noexcept() noexcept 
     return {};
 }
 
-arpg::test::Failure v4_unified_validator_rejects_semantic_state() noexcept {
+arpg::test::Failure v5_unified_validator_rejects_semantic_state() noexcept {
     const auto encoded = persistence::encode_checkpoint(make_owned_fixture());
     ARPG_REQUIRE(encoded.has_value());
     auto zero_sequence = *encoded;
-    std::fill(zero_sequence.begin() + 124U, zero_sequence.begin() + 132U,
+    std::fill(zero_sequence.begin() + 156U, zero_sequence.begin() + 164U,
         static_cast<std::uint8_t>(0U));
     refresh_crc(zero_sequence);
     ARPG_REQUIRE(persistence::decode_checkpoint(
@@ -706,12 +1594,127 @@ arpg::test::Failure v4_unified_validator_rejects_semantic_state() noexcept {
     return {};
 }
 
+arpg::test::Failure v8_death_retreat_transition_round_trips() noexcept {
+    auto state = make_fixture();
+    state.last_transition = checkpoint::TransitionKind::death_retreat;
+    state.last_direction = checkpoint::ExitDirection::none;
+    const auto encoded = persistence::encode_checkpoint(state);
+    ARPG_REQUIRE(encoded.has_value());
+    const auto decoded = persistence::decode_checkpoint(
+        encoded->data(), encoded->size());
+    ARPG_REQUIRE(decoded.error == persistence::CodecError::none);
+    ARPG_REQUIRE(decoded.state.last_transition
+        == checkpoint::TransitionKind::death_retreat);
+    ARPG_REQUIRE(!decoded.migrated);
+
+    auto v5 = as_v6_golden(*encoded);
+    v5.erase(v5.begin() + 236U, v5.begin() + 460U);
+    const std::array<std::uint8_t, 8U> v5_magic{{
+        'I','A','R','P','G','S','0','6'}};
+    std::copy(v5_magic.begin(), v5_magic.end(), v5.begin());
+    write_u32(v5, 8U, 5U);
+    write_u32(v5, 24U, static_cast<std::uint32_t>(v5.size() - 32U));
+    refresh_crc(v5);
+    ARPG_REQUIRE(persistence::decode_checkpoint(v5.data(), v5.size()).error
+        == persistence::CodecError::invalid_enum);
+    return {};
+}
+
+arpg::test::Failure v8_pending_death_floor_zero_round_trips() noexcept {
+    auto state = make_fixture();
+    state.current_room.floor_room_index = 0U;
+    state.last_transition = checkpoint::TransitionKind::death_retreat;
+    state.last_direction = checkpoint::ExitDirection::none;
+    state.death_sequence = 1U;
+    state.death.lifecycle = checkpoint::DeathLifecycle::pending_continue;
+    state.death.data_version = checkpoint::kDeathCheckpointDataVersion;
+    state.death.death_depth = state.current_room.depth;
+    state.death.death_floor_room_index = 0U;
+    state.death.death_ecology = state.current_room.ecology;
+    state.death.source_kind = checkpoint::DeathSourceKind::unknown;
+    state.death.source_monster_id = 0xFFU;
+    state.death.damage_type = checkpoint::DeathDamageType::physical;
+    state.death.raw_damage = 10U;
+    state.death.health_loss = 10U;
+    state.death.final_damage = 10U;
+    state.death.recent_damage[0] = 10U;
+    state.death.max_hp = 100;
+    state.death.damage_reduction_cap = {{7500, 7500, 7500, 7500}};
+    state.death.target_room = {
+        state.current_room.index + 1U, 0x12345678U, 1U, 0U,
+        checkpoint::EntrySide::initial,
+        checkpoint::DungeonElement::water, true, false};
+
+    const auto encoded = persistence::encode_checkpoint(state);
+    ARPG_REQUIRE(encoded.has_value());
+    const auto decoded = persistence::decode_checkpoint(
+        encoded->data(), encoded->size());
+    ARPG_REQUIRE(decoded.error == persistence::CodecError::none);
+    ARPG_REQUIRE(decoded.state.current_room.floor_room_index == 0U);
+    ARPG_REQUIRE(decoded.state.death.lifecycle
+        == checkpoint::DeathLifecycle::pending_continue);
+    ARPG_REQUIRE(decoded.state.death.death_floor_room_index == 0U);
+    ARPG_REQUIRE(decoded.state.last_transition
+        == checkpoint::TransitionKind::death_retreat);
+
+    auto wrong_transition = state;
+    wrong_transition.last_transition = checkpoint::TransitionKind::door;
+    ARPG_REQUIRE(!persistence::encode_checkpoint(wrong_transition).has_value());
+    auto wrong_direction = state;
+    wrong_direction.last_direction = checkpoint::ExitDirection::left;
+    ARPG_REQUIRE(!persistence::encode_checkpoint(wrong_direction).has_value());
+    return {};
+}
+
+arpg::test::Failure v8_continued_target_floor_zero_round_trips() noexcept {
+    auto state = make_fixture();
+    state.current_room.floor_room_index = 0U;
+    state.last_transition = checkpoint::TransitionKind::death_retreat;
+    state.last_direction = checkpoint::ExitDirection::none;
+    state.death_sequence = 1U;
+    ARPG_REQUIRE(state.death.lifecycle == checkpoint::DeathLifecycle::none);
+
+    const auto encoded = persistence::encode_checkpoint(state);
+    ARPG_REQUIRE(encoded.has_value());
+    const auto decoded = persistence::decode_checkpoint(
+        encoded->data(), encoded->size());
+    ARPG_REQUIRE(decoded.error == persistence::CodecError::none);
+    ARPG_REQUIRE(decoded.state.current_room.floor_room_index == 0U);
+    ARPG_REQUIRE(decoded.state.death.lifecycle
+        == checkpoint::DeathLifecycle::none);
+    ARPG_REQUIRE(decoded.state.last_transition
+        == checkpoint::TransitionKind::death_retreat);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
-    {"v4 golden layout and items round trip", &v4_golden_layout_and_items_round_trip},
-    {"v4 complete ownership and six roll record are golden", &v4_complete_ownership_and_six_roll_record_are_golden},
-    {"v4 length count crc and capacity are bounded", &v4_length_count_crc_and_capacity_are_bounded},
-    {"v4 corrupt item semantics are rejected", &v4_corrupt_item_semantics_are_rejected},
-    {"v4 unified validator rejects semantic state", &v4_unified_validator_rejects_semantic_state},
+    {"v5 full abyss state and resolution round trip", &v5_full_abyss_state_and_resolution_round_trip},
+    {"v5 cleared reward total matches each danger", &v5_cleared_reward_total_matches_each_danger},
+    {"v5 resolution total matches each rule danger", &v5_resolution_total_matches_each_rule_danger},
+    {"v5 started state survives decode", &v5_started_state_survives_decode},
+    {"v5 abyss enums are rejected individually", &v5_abyss_enums_are_rejected_individually},
+    {"v5 resolution boolean is rejected", &v5_resolution_boolean_is_rejected},
+    {"v5 reward total and mask bits are rejected", &v5_reward_total_and_mask_bits_are_rejected},
+    {"v5 claimed and abandoned masks are consistent", &v5_claimed_and_abandoned_masks_are_consistent},
+    {"v5 rule and danger match deterministic selection", &v5_rule_and_danger_must_match_deterministic_selection},
+    {"v5 lifecycle requires matching room state", &v5_lifecycle_requires_matching_room_state},
+    {"v5 abyss origin requires matching door", &v5_abyss_origin_requires_a_matching_door},
+    {"v5 resolution counts are validated", &v5_resolution_counts_are_validated},
+    {"v5 crc covers abyss fields", &v5_crc_covers_abyss_fields},
+    {"legacy door abyss migrates deterministically", &legacy_door_abyss_migrates_deterministically},
+    {"legacy door abyss requires new domain roll", &legacy_door_abyss_requires_new_domain_roll},
+    {"legacy door migration rejects missing or mismatched direction", &legacy_door_migration_rejects_missing_or_mismatched_direction},
+    {"legacy initial and descent abyss clear without drift", &legacy_initial_and_descent_abyss_are_cleared_without_drift},
+    {"v1 through v6 decode migrated and v8 does not", &v1_through_v6_decode_as_migrated_but_v8_does_not},
+    {"v8 layout materials and items round trip", &v8_layout_materials_and_items_round_trip},
+    {"v7 complete ownership and six roll record are golden", &v7_complete_ownership_and_six_roll_record_are_golden},
+    {"v5 length count crc and capacity are bounded", &v5_length_count_crc_and_capacity_are_bounded},
+    {"v8 material ids discovery and reserved bytes are validated", &v8_material_ids_discovery_and_reserved_bytes_are_validated},
+    {"v8 corrupt item semantics are rejected", &v8_corrupt_item_semantics_are_rejected},
+    {"v5 unified validator rejects semantic state", &v5_unified_validator_rejects_semantic_state},
+    {"v8 death retreat transition round trips", &v8_death_retreat_transition_round_trips},
+    {"v8 pending death floor zero round trips", &v8_pending_death_floor_zero_round_trips},
+    {"v8 continued target floor zero round trips", &v8_continued_target_floor_zero_round_trips},
     {"codec allocation failures do not escape noexcept", &codec_allocation_failures_do_not_escape_noexcept},
     {"baseline checkpoint bytes are preserved", &baseline_checkpoint_bytes_are_preserved},
     {"all nonzero fields round trip", &all_nonzero_fields_round_trip},

@@ -176,8 +176,12 @@ arpg::test::Failure launcher_integrates_then_lands_in_knockdown() noexcept {
     while (const auto event = world.try_pop_event()) {
         ARPG_REQUIRE(event->kind != CombatEventKind::landing);
     }
+    return {};
+}
 
+arpg::test::Failure airborne_followup_preserves_local_freeze() noexcept {
     CombatWorld airborne_followup{normal_target_config()};
+    CombatSnapshot snapshot{};
     ARPG_REQUIRE(airborne_followup.queue_action(Action::launcher));
     airborne_followup.tick(MovementInput{});
     tick_n(airborne_followup, 7);
@@ -206,12 +210,16 @@ arpg::test::Failure launcher_integrates_then_lands_in_knockdown() noexcept {
         snapshot.monsters[1].velocity.z,
         frozen_velocity_z - 24.0 / 60.0,
         1.0e-4));
+    return {};
+}
 
+arpg::test::Failure airborne_targets_freeze_independently() noexcept {
     CombatLabConfig independent_config;
     independent_config.dummy_spawns = {{{-1.20F, 0.0F, 0.0F},
                                         {1.80F, 0.0F, 0.0F},
                                         {7.00F, -3.0F, 0.0F}}};
     CombatWorld independent{independent_config};
+    CombatSnapshot snapshot{};
     ARPG_REQUIRE(independent.queue_action(Action::launcher));
     independent.tick(MovementInput{});
     tick_n(independent, 7);
@@ -370,6 +378,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"J1 light and normal hitstun", &j1_hitstun_uses_local_frozen_ticks},
     {"J2 light and normal knockback", &j2_knockback_scales_for_light_and_normal},
     {"launcher gravity and landing", &launcher_integrates_then_lands_in_knockdown},
+    {"airborne followup local freeze", &airborne_followup_preserves_local_freeze},
+    {"airborne targets freeze independently", &airborne_targets_freeze_independently},
     {"knockdown and rising boundaries", &knockdown_and_rising_have_exact_boundaries},
     {"defeated and ninety-tick respawn", &defeated_respawns_after_ninety_active_ticks},
 };

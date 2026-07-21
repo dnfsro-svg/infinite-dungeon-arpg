@@ -57,14 +57,51 @@ struct ProgressionHudValues final {
     bool maximum_level{};
 };
 
+enum class EnvironmentHazardVisualMode : std::uint8_t {
+    hidden,
+    warning,
+    active,
+};
+
+struct EnvironmentHazardVisual final {
+    EnvironmentHazardVisualMode mode{EnvironmentHazardVisualMode::hidden};
+    combat::Vec3 center{};
+    float radius{};
+    Rgba8 fill{};
+    Rgba8 outline{};
+};
+
+struct AbyssHudValues final {
+    bool visible{};
+    const char* danger_label{};
+    const char* rule_label{};
+    const char* effect_label{};
+    std::uint8_t pending_rewards{};
+    std::uint8_t unpicked_rewards{};
+    bool confirmation_visible{};
+    dungeon::TransitionKind confirmation_transition{
+        dungeon::TransitionKind::none};
+    dungeon::ExitDirection confirmation_direction{
+        dungeon::ExitDirection::none};
+    const char* confirmation_label{};
+};
+
 inline constexpr combat::Vec3 kHoleCenter{0.0F, 3.5F, 0.0F};
-inline constexpr float kHoleInteractionRadius = 2.0F;
+inline constexpr float kHoleInteractionRadius = 3.25F;
 
 [[nodiscard]] DoorVisualMode door_visual_mode(
     dungeon::RoomPhase phase,
-    bool has_active_room) noexcept;
+    bool has_active_room,
+    bool exits_open) noexcept;
 [[nodiscard]] DoorTheme door_theme(
     dungeon::ExitDirection direction) noexcept;
+[[nodiscard]] bool abyss_door_marker(
+    const dungeon::DungeonSnapshot& snapshot,
+    dungeon::ExitDirection direction) noexcept;
+[[nodiscard]] EnvironmentHazardVisual environment_hazard_visual(
+    const combat::HazardSnapshot& hazard) noexcept;
+[[nodiscard]] AbyssHudValues abyss_hud_values(
+    const dungeon::DungeonSnapshot& snapshot) noexcept;
 [[nodiscard]] HoleVisualMode hole_visual_mode(
     const dungeon::DungeonSnapshot& snapshot) noexcept;
 [[nodiscard]] bool player_in_hole_range(

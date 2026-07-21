@@ -1,0 +1,264 @@
+#include "active_skill_renderer.hpp"
+
+#include "combat/active_skill_runtime.hpp"
+#include "combat_view_math.hpp"
+#include "skills/active_skill_catalog.hpp"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdio>
+
+namespace arpg::platform {
+namespace {
+
+constexpr float kPi = 3.14159265358979323846F;
+constexpr std::uint64_t kFlashTicks = 7U;
+constexpr std::uint16_t kStormFinisherTick = static_cast<std::uint16_t>(
+    combat::kStormStartupTicks
+    + static_cast<std::uint16_t>(combat::kStormStrikeCount)
+        * combat::kStormStrikeIntervalTicks);
+
+[[nodiscard]] bool recent_finisher_event(
+    const combat::CombatSnapshot& snapshot,
+    const combat::CombatEvent* event,
+    std::uint64_t& age) noexcept {
+    if (event == nullptr
+        || event->skill != skills::ActiveSkillId::storm_swords
+        || !event->finisher || snapshot.tick < event->tick) {
+        return false;
+    }
+    age = snapshot.tick - event->tick;
+    return age <= kFlashTicks;
+}
+
+void draw_skill_text(Font font, const char* text,
+    float x, float y, float size, Color color) noexcept {
+    if (text == nullptr || text[0] == '\0') return;
+    DrawTextEx(font, text, {x, y}, size, 1.0F, color);
+}
+
+void draw_draw_slash(const DrawSlashVisualPlan& plan,
+    float width, float height) noexcept {
+    if (!plan.visible) return;
+    const ScreenProjection projected = project_combat_position(
+        plan.center, width, height);
+    constexpr std::size_t kArcSegments = 14U;
+    std::array<Vector2, kArcSegments + 2U> fan{};
+    const float direction = plan.facing == combat::Facing::left ? -1.0F : 1.0F;
+    const Vector2 origin{projected.x,
+        projected.ground_y - 42.0F * projected.scale};
+    fan[0U] = origin;
+    const float radius = 250.0F * projected.scale;
+    for (std::size_t index = 0U; index <= kArcSegments; ++index) {
+        const float t = static_cast<float>(index)
+            / static_cast<float>(kArcSegments);
+        const float angle = (-0.62F + t * 1.24F)
+            + (direction < 0.0F ? kPi : 0.0F);
+        fan[index + 1U] = {
+            origin.x + std::cos(angle) * radius,
+            origin.y + std::sin(angle) * radius * 0.58F,
+        };
+    }
+    DrawTriangleFan(fan.data(), static_cast<int>(fan.size()),
+        Fade(Color{150, 224, 255, 255}, 0.24F * plan.opacity));
+    for (std::size_t index = 1U; index + 1U < fan.size(); ++index) {
+        DrawLineEx(fan[index], fan[index + 1U],
+            3.0F * projected.scale,
+            Fade(Color{236, 251, 255, 255}, plan.opacity));
+    }
+}
+
+void draw_sword(Vector2 center, float angle, float scale,
+    bool highlighted, float opacity) noexcept {
+    const Vector2 direction{std::cos(angle), std::sin(angle)};
+    const Vector2 normal{-direction.y, direction.x};
+    const float length = (highlighted ? 50.0F : 38.0F) * scale;
+    const float half_width = (highlighted ? 7.0F : 5.0F) * scale;
+    const Vector2 tip{center.x + direction.x * length * 0.58F,
+        center.y + direction.y * length * 0.58F};
+    const Vector2 base{center.x - direction.x * length * 0.42F,
+        center.y - direction.y * length * 0.42F};
+    const Vector2 left{base.x + normal.x * half_width,
+        base.y + normal.y * half_width};
+    const Vector2 right{base.x - normal.x * half_width,
+        base.y - normal.y * half_width};
+    const Color blade = highlighted
+        ? Fade(Color{244, 252, 255, 255}, opacity)
+        : Fade(Color{111, 194, 255, 255}, opacity * 0.58F);
+    DrawTriangle(tip, left, right, blade);
+    DrawLineEx({base.x + normal.x * half_width * 1.6F,
+                   base.y + normal.y * half_width * 1.6F},
+        {base.x - normal.x * half_width * 1.6F,
+            base.y - normal.y * half_width * 1.6F},
+        2.0F * scale, blade);
+}
+
+void draw_storm_swords(const StormSwordsVisualPlan& plan,
+    float width, float height) noexcept {
+    if (!plan.visible && !plan.finisher_visible) return;
+    const ScreenProjection projected = project_combat_position(
+        plan.center, width, height);
+    const float radius = 155.0F * projected.scale;
+    if (plan.visible) {
+        for (std::size_t index = 0U; index < plan.sword_count; ++index) {
+            const StormSwordVisual& sword = plan.swords[index];
+            const Vector2 position{
+                projected.x + std::cos(sword.angle_radians) * radius,
+                projected.ground_y
+                    + std::sin(sword.angle_radians) * radius * 0.38F
+                    - 54.0F * projected.scale,
+            };
+            draw_sword(position, sword.angle_radians + kPi,
+                projected.scale, sword.highlighted, 0.92F);
+        }
+    }
+    if (!plan.finisher_visible) return;
+    const float opacity = std::clamp(plan.finisher_opacity, 0.0F, 1.0F);
+    const Vector2 sword_center{projected.x,
+        projected.ground_y - 118.0F * projected.scale};
+    draw_sword(sword_center, kPi * 0.5F, projected.scale * 1.8F,
+        true, opacity);
+    const float wave = (95.0F + (1.0F - opacity) * 95.0F) * projected.scale;
+    DrawEllipseLines(static_cast<int>(projected.x),
+        static_cast<int>(projected.ground_y), wave, wave * 0.34F,
+        Fade(Color{225, 247, 255, 255}, opacity));
+}
+
+}  // namespace
+
+ActiveSkillEffectPlan make_active_skill_effect_plan(
+    const combat::CombatSnapshot& snapshot,
+    const combat::CombatEvent* last_event) noexcept {
+    ActiveSkillEffectPlan result{};
+    const combat::ActiveSkillSnapshot& skill = snapshot.active_skill;
+    if (skill.id == skills::ActiveSkillId::draw_slash
+            && skill.elapsed_ticks >= combat::kDrawSlashStartupTicks) {
+        const std::uint16_t age = static_cast<std::uint16_t>(
+            skill.elapsed_ticks - combat::kDrawSlashStartupTicks);
+        if (age <= kFlashTicks) {
+            result.draw_slash.visible = true;
+            result.draw_slash.center = skill.locked_center;
+            result.draw_slash.facing = snapshot.player.facing;
+            result.draw_slash.opacity = 1.0F
+                - static_cast<float>(age)
+                    / static_cast<float>(kFlashTicks + 1U);
+        }
+    }
+
+    if (skill.id == skills::ActiveSkillId::storm_swords) {
+        result.storm_swords.center = skill.locked_center;
+        result.storm_swords.visible = skill.phase == combat::ActiveSkillPhase::startup
+            || skill.phase == combat::ActiveSkillPhase::strikes
+            || skill.phase == combat::ActiveSkillPhase::finisher;
+        result.storm_swords.sword_count = combat::kStormStrikeCount;
+        for (std::size_t index = 0U;
+             index < result.storm_swords.sword_count; ++index) {
+            result.storm_swords.swords[index].angle_radians =
+                static_cast<float>(index) * (2.0F * kPi
+                    / static_cast<float>(combat::kStormStrikeCount));
+            result.storm_swords.swords[index].highlighted =
+                skill.strike_index == index + 1U;
+        }
+    }
+
+    std::uint64_t event_age = 0U;
+    const bool recent_event = recent_finisher_event(
+        snapshot, last_event, event_age);
+    const bool snapshot_finisher_window =
+        skill.id == skills::ActiveSkillId::storm_swords
+        && (skill.phase == combat::ActiveSkillPhase::finisher
+            || skill.phase == combat::ActiveSkillPhase::recovery)
+        && skill.elapsed_ticks >= kStormFinisherTick
+        && skill.elapsed_ticks <= kStormFinisherTick + kFlashTicks;
+    const std::uint64_t snapshot_age = snapshot_finisher_window
+        ? static_cast<std::uint64_t>(
+            skill.elapsed_ticks - kStormFinisherTick)
+        : 0U;
+    if (snapshot_finisher_window || recent_event) {
+        if (!result.storm_swords.visible) {
+            result.storm_swords.center = skill.locked_center;
+        }
+        result.storm_swords.finisher_visible = true;
+        const float age = static_cast<float>(snapshot_finisher_window
+            ? snapshot_age : event_age);
+        result.storm_swords.finisher_opacity = std::clamp(
+            1.0F - age / static_cast<float>(kFlashTicks + 1U), 0.0F, 1.0F);
+        result.screen_flash_alpha = 0.16F
+            * result.storm_swords.finisher_opacity;
+    }
+    return result;
+}
+
+void ActiveSkillRenderer::draw_world(
+    const combat::CombatSnapshot& snapshot,
+    const combat::CombatEvent* last_event,
+    float width, float height) const noexcept {
+    const ActiveSkillEffectPlan plan = make_active_skill_effect_plan(
+        snapshot, last_event);
+    draw_draw_slash(plan.draw_slash, width, height);
+    draw_storm_swords(plan.storm_swords, width, height);
+    if (plan.screen_flash_alpha > 0.0F) {
+        DrawRectangle(0, 0, static_cast<int>(width), static_cast<int>(height),
+            Fade(Color{220, 244, 255, 255}, plan.screen_flash_alpha));
+    }
+}
+
+void ActiveSkillRenderer::draw_hud(const ActiveSkillHudModel& model,
+    const ActiveSkillHudLayout& layout,
+    Font hud_font, bool hud_font_ready) const noexcept {
+    for (std::size_t index = 0U; index < model.slots.size(); ++index) {
+        const ActiveSkillHudSlot& slot = model.slots[index];
+        const Rectangle bounds = layout.slots[index];
+        DrawRectangleRounded(bounds, 0.12F, 4, Color{12, 20, 31, 238});
+        DrawRectangleRoundedLinesEx(bounds, 0.12F, 4, 2.0F,
+            slot.empty ? Color{74, 91, 112, 235}
+                       : Color{107, 199, 255, 255});
+        if (slot.empty) {
+            const Vector2 center{bounds.x + bounds.width * 0.5F,
+                bounds.y + bounds.height * 0.5F + 4.0F};
+            DrawCircleLines(static_cast<int>(center.x),
+                static_cast<int>(center.y), 13.0F,
+                Color{84, 103, 128, 220});
+            DrawLineEx({center.x - 9.0F, center.y},
+                {center.x + 9.0F, center.y}, 1.0F,
+                Color{84, 103, 128, 220});
+        } else {
+            const Vector2 center{bounds.x + bounds.width * 0.5F,
+                bounds.y + 26.0F};
+            DrawPoly(center, 4, 13.0F, 45.0F,
+                Color{50, 135, 185, 230});
+            DrawPolyLinesEx(center, 4, 13.0F, 45.0F, 2.0F,
+                Color{201, 242, 255, 255});
+        }
+
+        if (slot.cooldown_ratio > 0.0F) {
+            const float ratio = std::clamp(slot.cooldown_ratio, 0.0F, 1.0F);
+            const float overlay_height = bounds.height * ratio;
+            DrawRectangleRec({bounds.x, bounds.y + bounds.height - overlay_height,
+                bounds.width, overlay_height}, Color{3, 7, 14, 190});
+        }
+        if (!hud_font_ready) continue;
+        char key[2]{static_cast<char>('0' + slot.key_number), '\0'};
+        draw_skill_text(hud_font, key, bounds.x + 4.0F,
+            bounds.y + 2.0F, 13.0F, Color{245, 249, 255, 255});
+        if (!slot.empty) {
+            draw_skill_text(hud_font, slot.name.data(), bounds.x + 3.0F,
+                bounds.y + bounds.height - 13.0F, 9.0F,
+                Color{219, 240, 255, 255});
+        }
+        if (slot.cooldown_ratio <= 0.0F || slot.empty) continue;
+        const skills::ActiveSkillDefinition* const definition =
+            skills::active_skill_definition(slot.id);
+        if (definition == nullptr) continue;
+        const float seconds = std::ceil(slot.cooldown_ratio
+            * static_cast<float>(definition->cooldown_ticks) / 60.0F);
+        char remaining[12]{};
+        static_cast<void>(std::snprintf(remaining, sizeof(remaining),
+            "%.0fs", seconds));
+        draw_skill_text(hud_font, remaining, bounds.x + 18.0F,
+            bounds.y + 21.0F, 14.0F, WHITE);
+    }
+}
+
+}  // namespace arpg::platform

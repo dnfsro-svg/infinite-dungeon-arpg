@@ -8,6 +8,14 @@
 namespace arpg::test {
 
 struct CombatWorldTestAccess final {
+    static void fill_event_queue(
+        combat::CombatWorld& world, std::size_t count) noexcept {
+        combat::CombatEvent event{};
+        event.kind = combat::CombatEventKind::reset;
+        for (std::size_t index = 0U; index < count; ++index) {
+            world.emit_event(event);
+        }
+    }
     static void apply_damage(
         combat::CombatWorld& world,
         int damage,
@@ -20,9 +28,21 @@ struct CombatWorldTestAccess final {
         combat::CombatWorld& world,
         combat::DamagePacket packet,
         combat::DamageDelivery delivery,
+        combat::PlayerDamageSource source,
         combat::Vec3 source_position,
         combat::FeedbackLevel feedback) noexcept {
-        world.apply_player_damage(packet, delivery, source_position, feedback);
+        world.apply_player_damage(
+            packet, delivery, source, source_position, feedback);
+    }
+
+    static void apply_damage(
+        combat::CombatWorld& world,
+        combat::DamagePacket packet,
+        combat::DamageDelivery delivery,
+        combat::Vec3 source_position,
+        combat::FeedbackLevel feedback) noexcept {
+        apply_damage(world, packet, delivery, combat::PlayerDamageSource{},
+                     source_position, feedback);
     }
 
     static void apply_damage(
@@ -80,12 +100,29 @@ struct CombatWorldTestAccess final {
     static void fill_hazards(
         combat::CombatWorld& world,
         combat::MonsterHandle owner) noexcept {
-        for (std::size_t index = 0; index < combat::kHazardCapacity;
-             ++index) {
+        fill_hazards(world, owner, combat::kHazardCapacity);
+    }
+
+    static void fill_hazards(
+        combat::CombatWorld& world,
+        combat::MonsterHandle owner,
+        std::size_t count) noexcept {
+        for (std::size_t index = 0; index < count; ++index) {
             static_cast<void>(world.spawn_hazard(
                 owner, combat::HazardKind::native, combat::Vec3{}, 1.0F,
                 1000U, 1000U, 30U, 1));
         }
+    }
+
+    static void activate_abyss_environment(
+        combat::CombatWorld& world,
+        abyss::AbyssCombatConfig config) noexcept {
+        world.encounter_config_.abyss = config;
+        world.abyss_environment_ = {};
+        world.abyss_environment_.rule = config.rule;
+        world.abyss_environment_.active = config.environment.active;
+        world.abyss_environment_.expansion_stage = 0xFFU;
+        world.simulate_abyss_environment();
     }
 
     static void set_saturation_counts(
@@ -111,6 +148,46 @@ struct CombatWorldTestAccess final {
         if (index < world.monsters_.slots_.size()) {
             world.monsters_.slots_[index].shield = shield;
         }
+    }
+
+    static combat::MonsterAffixProfile monster_affix_profile(
+        const combat::CombatWorld& world,
+        std::size_t index) noexcept {
+        return index < world.monsters_.slots_.size()
+            ? world.monsters_.slots_[index].affix_profile
+            : combat::MonsterAffixProfile{};
+    }
+
+    static void set_player_resources(
+        combat::CombatWorld& world,
+        int hp,
+        int barrier) noexcept {
+        world.player_.hp = hp;
+        world.player_.barrier = barrier;
+    }
+
+    static void set_player_evasion_rate_bp(
+        combat::CombatWorld& world, std::int32_t basis_points) noexcept {
+        world.player_.evasion_rate_bp = basis_points;
+    }
+
+    static bool monster_contact_resolved(
+        const combat::CombatWorld& world,
+        std::size_t index) noexcept {
+        return index < world.monsters_.slots_.size()
+            && world.monsters_.slots_[index].contact_attack_resolved;
+    }
+
+    static std::uint16_t monster_ai_ticks(
+        const combat::CombatWorld& world,
+        std::size_t index) noexcept {
+        return index < world.monsters_.slots_.size()
+            ? world.monsters_.slots_[index].ai_ticks : 0U;
+    }
+
+    static const abyss::AbyssCombatConfig& abyss_config(
+        const combat::CombatWorld& world) noexcept {
+        return world.encounter_config_.abyss;
     }
 
     static void apply_monster_direct_hit(
@@ -150,6 +227,23 @@ struct CombatWorldTestAccess final {
             world.monsters_.slots_[slot].burning_ground_ticks = burning_ticks;
             world.monsters_.slots_[slot].blink_assault_ticks = blink_ticks;
         }
+    }
+
+    static void set_blink_empowered(
+        combat::CombatWorld& world,
+        std::size_t slot,
+        bool empowered) noexcept {
+        if (slot < world.monsters_.slots_.size()) {
+            world.monsters_.slots_[slot].blink_empowered = empowered;
+        }
+    }
+
+    static bool destroy_hazard_at(
+        combat::CombatWorld& world, std::size_t index) noexcept {
+        if (index >= world.hazards_.slots().size()) return false;
+        const auto& hazard = world.hazards_.slots()[index];
+        return world.hazards_.destroy(combat::HazardHandle{
+            static_cast<std::uint16_t>(index), hazard.generation});
     }
 
     static void tick_active_affixes(

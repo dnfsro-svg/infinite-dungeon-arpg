@@ -2,24 +2,379 @@ if(TARGET arpg_raylib)
     add_executable(arpg_platform_tests
         ../core/allocation_probe.cpp
         platform_test_main.cpp
-        combat_key_bindings_tests.cpp
+        host_input_tests.cpp
+        active_skill_input_tests.cpp
+        active_skill_view_tests.cpp
+        active_skill_loadout_view_tests.cpp
+        audio_pack_tests.cpp
+        audio_routing_tests.cpp
+        audio_scene_tests.cpp
+        stage15_audio_pack_tests.cpp
         combat_feedback_tests.cpp
         combat_view_math_tests.cpp
         monster_view_tests.cpp
         dungeon_view_math_tests.cpp
         passive_tree_view_tests.cpp
         host_launch_options_tests.cpp
-        dungeon_runtime_tests.cpp)
+        dungeon_runtime_tests.cpp
+        pause_host_gate_tests.cpp
+        pause_menu_state_tests.cpp
+        pause_menu_view_tests.cpp
+        window_settings_tests.cpp
+        control_hints_tests.cpp
+        hud_view_model_tests.cpp
+        hud_notice_state_tests.cpp
+        loot_pickup_feedback_tests.cpp
+        hud_layout_tests.cpp
+        hud_font_tests.cpp
+        hud_render_plan_tests.cpp
+        hud_host_integration_tests.cpp
+        death_input_gate_tests.cpp
+        death_overlay_view_tests.cpp
+        ground_loot_view_tests.cpp
+        material_loot_view_tests.cpp
+        material_bag_renderer_tests.cpp
+        audio_asset_validation_tests.cpp
+        material_asset_validation_tests.cpp
+        material_animation_tests.cpp
+        stage12_environment_render_tests.cpp
+        stage12_actor_render_tests.cpp
+        stage12_material_render_tests.cpp)
     target_sources(arpg_platform_tests PRIVATE inventory_view_math_tests.cpp)
     target_compile_features(arpg_platform_tests PRIVATE cxx_std_17)
     target_include_directories(arpg_platform_tests
         PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+    target_compile_definitions(arpg_platform_tests
+        PRIVATE ARPG_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
     target_link_libraries(arpg_platform_tests PRIVATE arpg_raylib)
+    if(MSVC)
+        target_compile_options(arpg_platform_tests PRIVATE /utf-8)
+    endif()
     arpg_enable_project_warnings(arpg_platform_tests)
 
     add_test(NAME platform.units COMMAND arpg_platform_tests)
     set_tests_properties(
         platform.units PROPERTIES LABELS "headless;platform")
+
+    add_executable(arpg_stage16_loot_reinforcement_game_validation
+        stage16_loot_reinforcement_game_validation.cpp)
+    target_compile_features(arpg_stage16_loot_reinforcement_game_validation
+        PRIVATE cxx_std_17)
+    target_include_directories(arpg_stage16_loot_reinforcement_game_validation
+        PRIVATE "${PROJECT_SOURCE_DIR}/tests/dungeon")
+    target_link_libraries(arpg_stage16_loot_reinforcement_game_validation
+        PRIVATE arpg_raylib)
+    if(MSVC)
+        target_compile_options(arpg_stage16_loot_reinforcement_game_validation PRIVATE /utf-8)
+    endif()
+    arpg_enable_project_warnings(arpg_stage16_loot_reinforcement_game_validation)
+    add_test(NAME stage16.loot_reinforcement.real_raylib
+        COMMAND "$<TARGET_FILE:arpg_stage16_loot_reinforcement_game_validation>"
+            "${CMAKE_CURRENT_BINARY_DIR}/stage16 loot reinforcement evidence")
+    set_tests_properties(stage16.loot_reinforcement.real_raylib PROPERTIES
+        LABELS "platform;raylib;stage16;validation" TIMEOUT 90 RUN_SERIAL TRUE)
+
+    add_executable(arpg_stage17_skill_stones_game_validation
+        stage17_skill_stones_game_validation.cpp)
+    target_compile_features(arpg_stage17_skill_stones_game_validation
+        PRIVATE cxx_std_17)
+    target_link_libraries(arpg_stage17_skill_stones_game_validation
+        PRIVATE arpg_raylib)
+    if(MSVC)
+        target_compile_options(arpg_stage17_skill_stones_game_validation
+            PRIVATE /utf-8)
+    endif()
+    arpg_enable_project_warnings(arpg_stage17_skill_stones_game_validation)
+    set(_stage17_evidence_root
+        "${CMAKE_CURRENT_BINARY_DIR}/stage17 skill stones evidence")
+    set(_stage17_evidence_run "${_stage17_evidence_root}/stage17-run")
+    add_test(NAME stage17.skill_stones.real_raylib
+        COMMAND "$<TARGET_FILE:arpg_stage17_skill_stones_game_validation>"
+            "${_stage17_evidence_root}")
+    set_tests_properties(stage17.skill_stones.real_raylib PROPERTIES
+        LABELS "platform;raylib;graphics;formal-game;stage17;validation"
+        TIMEOUT 180 RUN_SERIAL TRUE FIXTURES_SETUP stage17_skill_stones_evidence)
+    add_test(NAME stage17.skill_stones.evidence_validator
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/stage17_skill_stones_validator.ps1"
+            -EvidenceDirectory "${_stage17_evidence_run}")
+    set_tests_properties(stage17.skill_stones.evidence_validator PROPERTIES
+        LABELS "platform;raylib;graphics;formal-game;stage17;validation"
+        TIMEOUT 60 FIXTURES_REQUIRED stage17_skill_stones_evidence)
+    add_test(NAME stage17.skill_stones.evidence_validator_self_test
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/stage17_skill_stones_validator_self_test.ps1"
+            -EvidenceDirectory "${_stage17_evidence_run}"
+            -Validator "${CMAKE_CURRENT_SOURCE_DIR}/stage17_skill_stones_validator.ps1"
+            -MutationRoot "${_stage17_evidence_run}/validator-self-test")
+    set_tests_properties(
+        stage17.skill_stones.evidence_validator_self_test PROPERTIES
+        LABELS "platform;raylib;graphics;formal-game;negative;stage17;validation"
+        TIMEOUT 90 FIXTURES_REQUIRED stage17_skill_stones_evidence)
+
+    add_executable(arpg_stage12_material_formal
+        stage12_material_formal_game_validation.cpp)
+    target_compile_features(arpg_stage12_material_formal PRIVATE cxx_std_17)
+    target_compile_definitions(arpg_stage12_material_formal
+        PRIVATE ARPG_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    target_link_libraries(arpg_stage12_material_formal PRIVATE arpg_raylib)
+    if(MSVC)
+        target_compile_options(arpg_stage12_material_formal PRIVATE /utf-8)
+    endif()
+    arpg_enable_project_warnings(arpg_stage12_material_formal)
+    add_test(
+        NAME stage12.material_formal
+        COMMAND "$<TARGET_FILE:arpg_stage12_material_formal>"
+            "${CMAKE_CURRENT_BINARY_DIR}/stage12 material evidence")
+    set_tests_properties(stage12.material_formal
+        PROPERTIES LABELS "platform;raylib;stage12" TIMEOUT 300
+            FIXTURES_SETUP stage12_material_evidence RUN_SERIAL TRUE)
+    add_test(
+        NAME stage12.material_evidence_validator
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/stage12_material_validator.ps1"
+            -EvidenceDirectory "${CMAKE_CURRENT_BINARY_DIR}/stage12 material evidence/stage12-run")
+    set_tests_properties(stage12.material_evidence_validator
+        PROPERTIES LABELS "platform;raylib;stage12" TIMEOUT 60
+            FIXTURES_REQUIRED stage12_material_evidence)
+    add_test(
+        NAME stage12.material_root_safety
+        COMMAND "$<TARGET_FILE:arpg_stage12_material_formal>"
+            --root-safety-self-test
+            "${CMAKE_CURRENT_BINARY_DIR}/stage12-root-safety")
+    set_tests_properties(stage12.material_root_safety
+        PROPERTIES LABELS "headless;platform;stage12" TIMEOUT 30)
+
+    add_executable(arpg_stage14_audio_formal
+        stage14_audio_formal_game_validation.cpp)
+    target_compile_features(arpg_stage14_audio_formal PRIVATE cxx_std_17)
+    target_compile_definitions(arpg_stage14_audio_formal
+        PRIVATE ARPG_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    target_link_libraries(arpg_stage14_audio_formal PRIVATE arpg_raylib)
+    if(MSVC)
+        target_compile_options(arpg_stage14_audio_formal PRIVATE /utf-8)
+    endif()
+    arpg_enable_project_warnings(arpg_stage14_audio_formal)
+
+    add_test(
+        NAME stage14.audio_formal
+        COMMAND "$<TARGET_FILE:arpg_stage14_audio_formal>"
+            "${CMAKE_CURRENT_BINARY_DIR}/stage14 audio evidence"
+            "${PROJECT_SOURCE_DIR}/docs/validation/evidence/stage14-audio-material-pack")
+    set_tests_properties(stage14.audio_formal
+        PROPERTIES LABELS "platform;raylib;stage14" TIMEOUT 300
+            FIXTURES_SETUP stage14_audio_evidence RUN_SERIAL TRUE)
+    add_test(
+        NAME stage14.audio_evidence_validator
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/stage14_audio_validator.ps1"
+            -EvidenceDirectory
+                "${CMAKE_CURRENT_BINARY_DIR}/stage14 audio evidence/stage14-run")
+    set_tests_properties(stage14.audio_evidence_validator
+        PROPERTIES LABELS "platform;raylib;stage14" TIMEOUT 60
+            FIXTURES_REQUIRED stage14_audio_evidence)
+    add_test(
+        NAME stage14.audio_root_safety
+        COMMAND "$<TARGET_FILE:arpg_stage14_audio_formal>"
+            --root-safety-self-test
+            "${CMAKE_CURRENT_BINARY_DIR}/stage14-root-safety")
+    set_tests_properties(stage14.audio_root_safety
+        PROPERTIES LABELS "headless;platform;stage14" TIMEOUT 30)
+
+    add_executable(arpg_stage15_audio_formal
+        stage15_audio_formal_game_validation.cpp)
+    target_compile_features(arpg_stage15_audio_formal PRIVATE cxx_std_17)
+    target_compile_definitions(arpg_stage15_audio_formal
+        PRIVATE ARPG_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    target_link_libraries(arpg_stage15_audio_formal PRIVATE arpg_raylib)
+    if(MSVC)
+        target_compile_options(arpg_stage15_audio_formal PRIVATE /utf-8)
+    endif()
+    arpg_enable_project_warnings(arpg_stage15_audio_formal)
+
+    add_test(
+        NAME stage15.audio_formal
+        COMMAND "$<TARGET_FILE:arpg_stage15_audio_formal>"
+            "${CMAKE_CURRENT_BINARY_DIR}/stage15 audio evidence"
+            "${PROJECT_SOURCE_DIR}/docs/validation/evidence/stage15-audio-mix")
+    set_tests_properties(stage15.audio_formal
+        PROPERTIES LABELS "platform;raylib;stage15" TIMEOUT 300
+            FIXTURES_SETUP stage15_audio_evidence RUN_SERIAL TRUE)
+    add_test(
+        NAME stage15.audio_evidence_validator
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/stage15_audio_validator.ps1"
+            -EvidenceDirectory
+                "${CMAKE_CURRENT_BINARY_DIR}/stage15 audio evidence/stage15-run")
+    set_tests_properties(stage15.audio_evidence_validator
+        PROPERTIES LABELS "platform;raylib;stage15" TIMEOUT 60
+            FIXTURES_REQUIRED stage15_audio_evidence)
+    add_test(
+        NAME stage15.audio_evidence_validator_self_test
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/stage15_audio_validator_self_test.ps1"
+            -EvidenceDirectory
+                "${CMAKE_CURRENT_BINARY_DIR}/stage15 audio evidence/stage15-run"
+            -Validator "${CMAKE_CURRENT_SOURCE_DIR}/stage15_audio_validator.ps1"
+            -MutationRoot "${CMAKE_CURRENT_BINARY_DIR}/stage15-audio-evidence-mutation")
+    set_tests_properties(stage15.audio_evidence_validator_self_test
+        PROPERTIES LABELS "platform;raylib;negative;stage15" TIMEOUT 60
+            FIXTURES_REQUIRED stage15_audio_evidence)
+    add_test(
+        NAME stage15.audio_root_safety
+        COMMAND "$<TARGET_FILE:arpg_stage15_audio_formal>"
+            --root-safety-self-test
+            "${CMAKE_CURRENT_BINARY_DIR}/stage15-root-safety")
+    set_tests_properties(stage15.audio_root_safety
+        PROPERTIES LABELS "headless;platform;stage15" TIMEOUT 30)
+
+    add_executable(arpg_stage11c_hud_stress
+        ../core/allocation_probe.cpp
+        hud_stress_tests.cpp)
+    target_compile_features(arpg_stage11c_hud_stress PRIVATE cxx_std_17)
+    target_include_directories(arpg_stage11c_hud_stress
+        PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
+    target_link_libraries(arpg_stage11c_hud_stress PRIVATE arpg_raylib)
+    if(MSVC)
+        target_compile_options(arpg_stage11c_hud_stress PRIVATE /utf-8)
+    endif()
+    arpg_enable_project_warnings(arpg_stage11c_hud_stress)
+
+    add_test(
+        NAME stage11c.hud_stress.zero_alloc_100k
+        COMMAND arpg_stage11c_hud_stress)
+    set_tests_properties(
+        stage11c.hud_stress.zero_alloc_100k
+        PROPERTIES
+            ENVIRONMENT "ARPG_STAGE11C_HUD_STRESS=1"
+            LABELS "headless;platform;stress;stage11c"
+            TIMEOUT 300)
+
+    add_executable(arpg_stage11b_settings_formal
+        stage11b_settings_formal_game_validation.cpp)
+    target_compile_features(arpg_stage11b_settings_formal PRIVATE cxx_std_17)
+    target_link_libraries(arpg_stage11b_settings_formal PRIVATE arpg_raylib)
+    arpg_enable_project_warnings(arpg_stage11b_settings_formal)
+
+    add_test(
+        NAME stage11b.settings_formal
+        COMMAND "$<TARGET_FILE:arpg_stage11b_settings_formal>"
+            "${CMAKE_CURRENT_BINARY_DIR}/stage11b settings evidence")
+    set_tests_properties(
+        stage11b.settings_formal
+        PROPERTIES LABELS "platform;raylib;stage11b"
+            TIMEOUT 300 FIXTURES_SETUP stage11b_settings_evidence)
+
+    add_test(
+        NAME stage11b.settings_evidence_validator
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/stage11b_settings_formal_validator.ps1"
+            -EvidenceDirectory "${CMAKE_CURRENT_BINARY_DIR}/stage11b settings evidence")
+    set_tests_properties(
+        stage11b.settings_evidence_validator
+        PROPERTIES LABELS "platform;raylib;stage11b"
+            TIMEOUT 60 FIXTURES_REQUIRED stage11b_settings_evidence)
+
+    add_executable(arpg_stage11c_hud_formal
+        stage11c_hud_formal_game_validation.cpp)
+    target_compile_features(arpg_stage11c_hud_formal PRIVATE cxx_std_17)
+    target_link_libraries(arpg_stage11c_hud_formal PRIVATE arpg_raylib)
+    if(MSVC)
+        target_compile_options(arpg_stage11c_hud_formal PRIVATE /utf-8)
+    endif()
+    arpg_enable_project_warnings(arpg_stage11c_hud_formal)
+
+    add_test(
+        NAME stage11c.hud_formal
+        COMMAND "$<TARGET_FILE:arpg_stage11c_hud_formal>"
+            "${CMAKE_CURRENT_BINARY_DIR}/stage11c hud evidence")
+    set_tests_properties(
+        stage11c.hud_formal
+        PROPERTIES LABELS "platform;raylib;stage11c"
+            TIMEOUT 600 FIXTURES_SETUP stage11c_hud_evidence)
+
+    add_test(
+        NAME stage11c.hud_evidence_validator
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/stage11c_hud_formal_validator.ps1"
+            -EvidenceDirectory "${CMAKE_CURRENT_BINARY_DIR}/stage11c hud evidence")
+    set_tests_properties(
+        stage11c.hud_evidence_validator
+        PROPERTIES LABELS "platform;raylib;stage11c"
+            TIMEOUT 60 FIXTURES_REQUIRED stage11c_hud_evidence)
+
+    add_test(
+        NAME stage11c.hud_evidence_validator_self_test
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/stage11c_hud_formal_validator_self_test.ps1"
+            -EvidenceDirectory "${CMAKE_CURRENT_BINARY_DIR}/stage11c hud evidence"
+            -Validator "${CMAKE_CURRENT_SOURCE_DIR}/stage11c_hud_formal_validator.ps1"
+            -MutationRoot "${CMAKE_CURRENT_BINARY_DIR}/stage11c-hud-validator-mutations")
+    set_tests_properties(
+        stage11c.hud_evidence_validator_self_test
+        PROPERTIES LABELS "platform;raylib;stage11c"
+            TIMEOUT 120 FIXTURES_REQUIRED stage11c_hud_evidence)
+
+    set(_stage11d_loot_formal_source
+        "${CMAKE_CURRENT_SOURCE_DIR}/stage11d_loot_formal_game_validation.cpp")
+    if(EXISTS "${_stage11d_loot_formal_source}")
+        add_executable(arpg_stage11d_loot_formal
+            stage11d_loot_formal_game_validation.cpp)
+        target_compile_features(arpg_stage11d_loot_formal PRIVATE cxx_std_17)
+        target_link_libraries(arpg_stage11d_loot_formal PRIVATE arpg_raylib)
+        if(MSVC)
+            target_compile_options(arpg_stage11d_loot_formal PRIVATE /utf-8)
+        endif()
+        arpg_enable_project_warnings(arpg_stage11d_loot_formal)
+        set(_stage11d_loot_formal_command
+            "$<TARGET_FILE:arpg_stage11d_loot_formal>")
+    else()
+        set(_stage11d_loot_formal_command
+            "${CMAKE_CURRENT_BINARY_DIR}/missing-arpg-stage11d-loot-formal")
+    endif()
+
+    add_test(
+        NAME stage11d.loot_formal
+        COMMAND "${_stage11d_loot_formal_command}"
+            "${CMAKE_CURRENT_BINARY_DIR}/stage11d loot evidence"
+            "${PROJECT_SOURCE_DIR}/docs/validation/evidence/stage11d")
+    set_tests_properties(
+        stage11d.loot_formal
+        PROPERTIES LABELS "platform;raylib;stage11d"
+            TIMEOUT 600 FIXTURES_SETUP stage11d_loot_evidence
+            RUN_SERIAL TRUE)
+
+    add_test(
+        NAME stage11d.loot_root_safety
+        COMMAND "${_stage11d_loot_formal_command}"
+            --root-safety-self-test
+            "${CMAKE_CURRENT_BINARY_DIR}/stage11d-root-safety/stage11d loot evidence"
+            "${PROJECT_SOURCE_DIR}")
+    set_tests_properties(
+        stage11d.loot_root_safety
+        PROPERTIES LABELS "headless;platform;stage11d" TIMEOUT 30)
+
+    add_test(
+        NAME stage11d.loot_evidence_validator
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/stage11d_loot_formal_validator.ps1"
+            -EvidenceDirectory "${CMAKE_CURRENT_BINARY_DIR}/stage11d loot evidence"
+            -CommittedEvidenceDirectory
+                "${PROJECT_SOURCE_DIR}/docs/validation/evidence/stage11d")
+    set_tests_properties(
+        stage11d.loot_evidence_validator
+        PROPERTIES LABELS "platform;raylib;stage11d"
+            TIMEOUT 60 FIXTURES_REQUIRED stage11d_loot_evidence)
+
+    add_test(
+        NAME platform.pause_menu_state_boundary
+        COMMAND "${CMAKE_COMMAND}"
+            "-DPAUSE_STATE_HEADER=${PROJECT_SOURCE_DIR}/src/platform/raylib/pause_menu_state.hpp"
+            "-DPAUSE_STATE_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/pause_menu_state.cpp"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/pause_menu_state_boundary_test.cmake")
+    set_tests_properties(
+        platform.pause_menu_state_boundary
+        PROPERTIES LABELS "headless;platform;architecture;stage11b")
 endif()
 
 function(arpg_tokenize_dependency_value INPUT_VALUE OUT_TOKENS)
@@ -857,6 +1212,75 @@ set_tests_properties(
     PROPERTIES LABELS "headless;architecture")
 
 add_test(
+    NAME stage11.architecture.death_boundaries
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}/src"
+        "-DGUARD_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/stage11-guard-mutations"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11_architecture_guard_test.cmake")
+set_tests_properties(
+    stage11.architecture.death_boundaries
+    PROPERTIES LABELS "headless;architecture;stage11")
+
+add_test(
+    NAME stage11b.architecture.settings_boundaries
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}/src"
+        "-DGUARD_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/stage11b-settings-guard-mutations"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11b_architecture_guard_test.cmake")
+set_tests_properties(
+    stage11b.architecture.settings_boundaries
+    PROPERTIES
+        ENVIRONMENT "ARPG_TEST_FILTER=stage11b.architecture"
+        LABELS "headless;platform;architecture;stage11b"
+        TIMEOUT 300)
+
+add_test(
+    NAME stage11c.architecture.hud_boundaries
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}/src"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11c_hud_architecture_guard_test.cmake")
+set_tests_properties(
+    stage11c.architecture.hud_boundaries
+    PROPERTIES LABELS "headless;platform;architecture;stage11c")
+
+add_test(
+    NAME stage11c.architecture.hud_boundaries_self_test
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}/src"
+        "-DGUARD_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage11c_hud_architecture_guard_test.cmake"
+        "-DBAD_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage11c_hud_bad_source.txt"
+        "-DGUARD_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/stage11c-hud-guard-mutations"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11c_hud_architecture_guard_self_test.cmake")
+set_tests_properties(
+    stage11c.architecture.hud_boundaries_self_test
+    PROPERTIES
+        LABELS "headless;platform;architecture;stage11c"
+        TIMEOUT 300)
+
+add_test(
+    NAME stage11d.architecture.loot_boundaries
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}/src"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11d_loot_architecture_guard_test.cmake")
+set_tests_properties(
+    stage11d.architecture.loot_boundaries
+    PROPERTIES LABELS "headless;platform;architecture;stage11d")
+
+add_test(
+    NAME stage11d.architecture.loot_boundaries_self_test
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}/src"
+        "-DGUARD_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage11d_loot_architecture_guard_test.cmake"
+        "-DBAD_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage11d_loot_bad_source.txt"
+        "-DGUARD_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/stage11d-loot-guard-mutations"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11d_loot_architecture_guard_self_test.cmake")
+set_tests_properties(
+    stage11d.architecture.loot_boundaries_self_test
+    PROPERTIES
+        LABELS "headless;platform;architecture;stage11d"
+        TIMEOUT 300)
+
+add_test(
     NAME architecture.dungeon_no_raylib
     COMMAND "${CMAKE_COMMAND}"
         "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src/dungeon"
@@ -1004,3 +1428,214 @@ add_test(
 set_tests_properties(
     platform.input_latency_source
     PROPERTIES LABELS "headless;platform;architecture")
+
+function(arpg_verify_direct_input_poison)
+    include(CheckCXXSourceCompiles)
+    set(CMAKE_CXX_STANDARD 17)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+    set(CMAKE_REQUIRED_INCLUDES
+        "${PROJECT_SOURCE_DIR}/src/platform/raylib")
+    set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+
+    unset(ARPG_DIRECT_INPUT_POISON_ACTIVE_COMPILES CACHE)
+    check_cxx_source_compiles([=[
+        #include "direct_input_poison.hpp"
+        static_assert(
+            ::arpg::platform::direct_input_poison::active,
+            "direct input poison must be active");
+        int main() { return 0; }
+    ]=] ARPG_DIRECT_INPUT_POISON_ACTIVE_COMPILES)
+    if(NOT ARPG_DIRECT_INPUT_POISON_ACTIVE_COMPILES)
+        message(FATAL_ERROR
+            "direct input poison must expose a compilable active sentinel")
+    endif()
+
+    foreach(_arpg_poison_label IN ITEMS
+            KEY MOUSE FOCUS PLATFORM_WRAPPER ADDRESS)
+        if(_arpg_poison_label STREQUAL "KEY")
+            set(_arpg_poison_declaration "bool IsKeyDown(int);")
+            set(_arpg_poison_expression "IsKeyDown(0)")
+        elseif(_arpg_poison_label STREQUAL "MOUSE")
+            set(_arpg_poison_declaration "bool IsMouseButtonDown(int);")
+            set(_arpg_poison_expression "IsMouseButtonDown(0)")
+        elseif(_arpg_poison_label STREQUAL "FOCUS")
+            set(_arpg_poison_declaration "bool IsWindowFocused();")
+            set(_arpg_poison_expression "IsWindowFocused()")
+        elseif(_arpg_poison_label STREQUAL "PLATFORM_WRAPPER")
+            set(_arpg_poison_declaration
+                "namespace arpg::platform { bool platform_key_down(int) noexcept; }\nusing arpg::platform::platform_key_down;")
+            set(_arpg_poison_expression "platform_key_down(0)")
+        else()
+            set(_arpg_poison_declaration "bool IsKeyDown(int);")
+            set(_arpg_poison_expression "&IsKeyDown")
+        endif()
+
+        set(_arpg_poison_result
+            "ARPG_DIRECT_INPUT_POISON_${_arpg_poison_label}_COMPILES")
+        set(_arpg_control_result
+            "ARPG_DIRECT_INPUT_CONTROL_${_arpg_poison_label}_COMPILES")
+        unset("${_arpg_control_result}" CACHE)
+        check_cxx_source_compiles("
+            ${_arpg_poison_declaration}
+            int main() {
+                static_cast<void>(${_arpg_poison_expression});
+                return 0;
+            }
+        " "${_arpg_control_result}")
+        if(NOT ${_arpg_control_result})
+            message(FATAL_ERROR
+                "direct input control probe must compile for ${_arpg_poison_label}")
+        endif()
+        unset("${_arpg_poison_result}" CACHE)
+        check_cxx_source_compiles("
+            ${_arpg_poison_declaration}
+            #include \"direct_input_poison.hpp\"
+            int main() {
+                static_cast<void>(${_arpg_poison_expression});
+                return 0;
+            }
+        " "${_arpg_poison_result}")
+        if(${_arpg_poison_result})
+            message(FATAL_ERROR
+                "direct input poison compile probe unexpectedly accepted ${_arpg_poison_label}")
+        endif()
+    endforeach()
+endfunction()
+
+arpg_verify_direct_input_poison()
+
+add_test(
+    NAME platform.host_input_source
+    COMMAND "${CMAKE_COMMAND}"
+        "-DRAYLIB_SOURCE_DIR=${PROJECT_SOURCE_DIR}/src/platform/raylib"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/host_input_source_test.cmake")
+set_tests_properties(
+    platform.host_input_source
+    PROPERTIES LABELS "headless;platform;architecture")
+
+# Task 11 deliberately registers the real-host evidence gate before the
+# harness exists.  This keeps the first execution red instead of silently
+# accepting an unvalidated settings path.
+add_test(
+    NAME stage11b.settings_evidence_guard
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        "-DGUARD_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/stage11b-evidence-guard"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11b_settings_evidence_guard_test.cmake")
+set_tests_properties(
+    stage11b.settings_evidence_guard
+    PROPERTIES LABELS "headless;platform;architecture;stage11b")
+
+
+add_test(
+    NAME stage11b.settings_evidence_guard_self_test
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        "-DGUARD_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/stage11b-evidence-guard-mutations"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11b_settings_evidence_guard_self_test.cmake")
+set_tests_properties(
+    stage11b.settings_evidence_guard_self_test
+    PROPERTIES LABELS "headless;platform;architecture;stage11b")
+
+add_test(
+    NAME stage11c.hud_evidence_guard
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11c_hud_evidence_guard_test.cmake")
+set_tests_properties(
+    stage11c.hud_evidence_guard
+    PROPERTIES LABELS "headless;platform;architecture;stage11c")
+
+add_test(
+    NAME stage11c.hud_evidence_guard_self_test
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        "-DGUARD_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/stage11c-hud-evidence-mutations"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11c_hud_evidence_guard_self_test.cmake")
+set_tests_properties(
+    stage11c.hud_evidence_guard_self_test
+    PROPERTIES LABELS "headless;platform;architecture;stage11c" TIMEOUT 300)
+
+add_test(
+    NAME stage11d.renderer_integration_guard
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11d_renderer_integration_guard_test.cmake")
+set_tests_properties(
+    stage11d.renderer_integration_guard
+    PROPERTIES LABELS "headless;platform;architecture;stage11d")
+
+add_test(
+    NAME stage11d.renderer_integration_guard_self_test
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        "-DGUARD_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/stage11d-renderer-guard-mutations"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11d_renderer_integration_guard_self_test.cmake")
+set_tests_properties(
+    stage11d.renderer_integration_guard_self_test
+    PROPERTIES LABELS "headless;platform;architecture;stage11d")
+
+add_test(
+    NAME stage11d.loot_evidence_guard
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11d_loot_evidence_guard_test.cmake")
+set_tests_properties(
+    stage11d.loot_evidence_guard
+    PROPERTIES LABELS "headless;platform;architecture;stage11d")
+
+add_test(
+    NAME stage11d.loot_evidence_guard_self_test
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        "-DGUARD_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/stage11d-loot-evidence-mutations"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11d_loot_evidence_guard_self_test.cmake")
+set_tests_properties(
+    stage11d.loot_evidence_guard_self_test
+    PROPERTIES LABELS "headless;platform;architecture;stage11d" TIMEOUT 300)
+
+add_test(
+    NAME stage14.audio_sources
+    COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+        "${CMAKE_CURRENT_SOURCE_DIR}/stage14_audio_source_validator.ps1"
+        -AssetDirectory "${PROJECT_SOURCE_DIR}/assets/stage14/audio")
+set_tests_properties(
+    stage14.audio_sources
+    PROPERTIES LABELS "headless;platform;stage14")
+
+add_test(
+    NAME stage14.audio_integration_guard
+    COMMAND "${CMAKE_COMMAND}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage14_audio_integration_guard.cmake")
+set_tests_properties(
+    stage14.audio_integration_guard
+    PROPERTIES LABELS "headless;platform;architecture;stage14")
+
+add_test(
+    NAME stage15.audio_sources
+    COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+        "${CMAKE_CURRENT_SOURCE_DIR}/stage15_audio_source_validator.ps1"
+        -AssetDirectory "${PROJECT_SOURCE_DIR}/assets/stage15/audio")
+set_tests_properties(
+    stage15.audio_sources
+    PROPERTIES LABELS "headless;platform;stage15")
+
+add_test(
+    NAME stage15.audio_sources_self_test
+    COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+        "${CMAKE_CURRENT_SOURCE_DIR}/stage15_audio_source_validator_self_test.ps1"
+        -AssetDirectory "${PROJECT_SOURCE_DIR}/assets/stage15/audio"
+        -Validator "${CMAKE_CURRENT_SOURCE_DIR}/stage15_audio_source_validator.ps1"
+        -MutationRoot "${CMAKE_CURRENT_BINARY_DIR}/stage15-audio-source-mutations")
+set_tests_properties(
+    stage15.audio_sources_self_test
+    PROPERTIES LABELS "headless;platform;negative;stage15" TIMEOUT 60)
+
+add_test(
+    NAME stage15.audio_integration_guard
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage15_audio_integration_guard.cmake")
+set_tests_properties(
+    stage15.audio_integration_guard
+    PROPERTIES LABELS "headless;platform;architecture;stage15")

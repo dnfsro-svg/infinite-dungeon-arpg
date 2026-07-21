@@ -2,11 +2,16 @@
 
 #include "combat/room_bounds.hpp"
 #include "dungeon_view_math.hpp"
+#include "environment_render_plan.hpp"
+#include "material_animation.hpp"
+#include "material_loot_view.hpp"
 #include "render_layout.hpp"
 
 #include <raylib.h>
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 
 namespace arpg::platform {
@@ -53,10 +58,36 @@ void draw_graybox_room(dungeon::DungeonElement ecology) noexcept {
     }
 }
 
+bool draw_environment_room(const MaterialPack& material_pack,
+    dungeon::DungeonElement ecology) noexcept {
+    const float width = static_cast<float>(GetScreenWidth());
+    const float height = static_cast<float>(GetScreenHeight());
+    const float scale = (std::max)(width / 1024.0F, height / 704.0F);
+    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
+        Color{9, 12, 20, 255});
+    return material_pack.draw(select_floor_sprite(ecology),
+        {width * 0.5F, height}, false, scale);
+}
+
+bool can_draw_room_environment(const dungeon::DungeonSnapshot& snapshot,
+    const MaterialPack& material_pack) noexcept {
+    const DoorVisualMode door_mode = door_visual_mode(snapshot.phase,
+        snapshot.has_active_room, snapshot.exits_open[0]);
+    const HoleVisualMode hole_mode = hole_visual_mode(snapshot);
+    return should_draw_material_environment({
+        material_pack.can_draw(select_floor_sprite(snapshot.ecology)),
+        material_pack.can_draw(select_door_sprite(snapshot.ecology)),
+        material_pack.can_draw(MaterialSpriteId::environment_hole),
+        door_mode != DoorVisualMode::hidden,
+        hole_mode != HoleVisualMode::hidden,
+    });
+}
+
 void draw_doors(const dungeon::DungeonSnapshot& snapshot,
-    float width, float height) noexcept {
+    float width, float height, const MaterialPack& material_pack,
+    bool draw_material_environment) noexcept {
     const DoorVisualMode mode = door_visual_mode(snapshot.phase,
-        snapshot.has_active_room);
+        snapshot.has_active_room, snapshot.exits_open[0]);
     if (mode == DoorVisualMode::hidden) {
         return;
     }
@@ -80,7 +111,13 @@ void draw_doors(const dungeon::DungeonSnapshot& snapshot,
         const float door_height = 70.0F * projected.scale;
         const Rectangle frame{projected.x - door_width * 0.5F,
             projected.ground_y - door_height, door_width, door_height};
-        DrawRectangleLinesEx(frame, 5.0F * projected.scale, frame_color);
+        if (draw_material_environment) {
+            static_cast<void>(material_pack.draw(select_door_sprite(snapshot.ecology),
+                {projected.x, projected.ground_y}, false,
+                0.72F * projected.scale));
+        } else {
+            DrawRectangleLinesEx(frame, 5.0F * projected.scale, frame_color);
+        }
         if (visual.draw_locked_interior) {
             DrawRectangleRec({frame.x + 7.0F * projected.scale,
                 frame.y + 7.0F * projected.scale,
@@ -93,9 +130,56 @@ void draw_doors(const dungeon::DungeonSnapshot& snapshot,
         const int arrow_width = MeasureText(visual.arrow, font_size);
         DrawText(visual.arrow, static_cast<int>(projected.x) - arrow_width / 2,
             static_cast<int>(frame.y + 17.0F * projected.scale), font_size, text_color);
+        if (abyss_door_marker(snapshot, kDirections[index])) {
+            const Vector2 marker{
+                frame.x + frame.width - 12.0F * projected.scale,
+                frame.y + 13.0F * projected.scale,
+            };
+            DrawPoly(marker, 4, 9.0F * projected.scale, 45.0F,
+                Color{231, 46, 157, 245});
+            DrawPolyLinesEx(marker, 4, 9.0F * projected.scale, 45.0F,
+                2.0F * projected.scale, Color{255, 155, 221, 255});
+        }
         DrawText(visual.label, static_cast<int>(frame.x),
             static_cast<int>(frame.y - 15.0F * projected.scale),
             static_cast<int>(11.0F * projected.scale), text_color);
+    }
+}
+
+void draw_environment_hazards(const dungeon::DungeonSnapshot& snapshot,
+    float width, float height) noexcept {
+    if (!snapshot.combat.has_value()) return;
+    for (const combat::HazardSnapshot& hazard : snapshot.combat->hazards) {
+        const EnvironmentHazardVisual visual =
+            environment_hazard_visual(hazard);
+        if (visual.mode == EnvironmentHazardVisualMode::hidden) continue;
+
+        const RenderProjection center = project_render_world(
+            visual.center.x, visual.center.y, 0.0F, width, height);
+        const RenderProjection x_edge = project_render_world(
+            visual.center.x + visual.radius, visual.center.y, 0.0F,
+            width, height);
+        const RenderProjection y_edge = project_render_world(
+            visual.center.x, visual.center.y + visual.radius, 0.0F,
+            width, height);
+        const float radius_x = std::max(
+            1.0F, std::fabs(x_edge.x - center.x));
+        const float radius_y = std::max(
+            1.0F, std::fabs(y_edge.ground_y - center.ground_y));
+        const Color fill{visual.fill.r, visual.fill.g,
+            visual.fill.b, visual.fill.a};
+        const Color outline{visual.outline.r, visual.outline.g,
+            visual.outline.b, visual.outline.a};
+        DrawEllipse(static_cast<int>(center.x),
+            static_cast<int>(center.ground_y), radius_x, radius_y, fill);
+        DrawEllipseLines(static_cast<int>(center.x),
+            static_cast<int>(center.ground_y), radius_x, radius_y, outline);
+        if (visual.mode == EnvironmentHazardVisualMode::warning) {
+            DrawEllipseLines(static_cast<int>(center.x),
+                static_cast<int>(center.ground_y),
+                std::max(1.0F, radius_x - 4.0F),
+                std::max(1.0F, radius_y - 2.0F), outline);
+        }
     }
 }
 
@@ -154,21 +238,85 @@ void draw_ground_item_shape(items::ItemSlot slot, Vector2 center,
     }
 }
 
+const dungeon::GroundItemSnapshot* ground_item_with_ordinal(
+    const dungeon::DungeonSnapshot& snapshot,
+    std::uint16_t ordinal) noexcept {
+    const std::size_t count = (std::min)(
+        static_cast<std::size_t>(snapshot.ground_item_count),
+        snapshot.ground_items.size());
+    for (std::size_t index = 0U; index < count; ++index) {
+        if (snapshot.ground_items[index].ordinal == ordinal) {
+            return &snapshot.ground_items[index];
+        }
+    }
+    return nullptr;
+}
+
 void draw_ground_items(const dungeon::DungeonSnapshot& snapshot,
-    float width, float height) noexcept {
-    for (std::size_t index = 0U; index < snapshot.ground_item_count; ++index) {
-        const dungeon::GroundItemSnapshot& item = snapshot.ground_items[index];
+    const GroundLootView& ground_loot,
+    const MaterialPack& material_pack, float width, float height) noexcept {
+    for (std::size_t index = 0U; index < ground_loot.count; ++index) {
+        const dungeon::GroundItemSnapshot* const item =
+            ground_item_with_ordinal(snapshot,
+                ground_loot.labels[index].ordinal);
+        if (item == nullptr) continue;
         const RenderProjection projected = project_render_world(
-            item.position.x, item.position.y, item.position.z,
+            item->position.x, item->position.y, item->position.z,
             width, height);
         const Vector2 center{projected.x,
             projected.ground_y - 13.0F * projected.scale};
-        const Color color = ground_item_color(item.rarity);
+        const Color color = ground_item_color(item->rarity);
         DrawEllipse(static_cast<int>(projected.x),
             static_cast<int>(projected.ground_y + 2.0F),
             17.0F * projected.scale, 6.0F * projected.scale,
             Fade(color, 0.24F));
-        draw_ground_item_shape(item.slot, center, projected.scale, color);
+        const bool abyss = item->source == dungeon::GroundItemSource::abyss_chest;
+        if (!material_pack.draw(select_loot_sprite(item->rarity, abyss), center,
+                false, 0.30F * projected.scale)) {
+            draw_ground_item_shape(item->slot, center, projected.scale, color);
+        }
+    }
+}
+
+const dungeon::GroundMaterialSnapshot* ground_material_with_ordinal(
+    const dungeon::DungeonSnapshot& snapshot, std::uint16_t ordinal) noexcept {
+    const std::size_t count = (std::min)(
+        static_cast<std::size_t>(snapshot.ground_material_count),
+        snapshot.ground_materials.size());
+    for (std::size_t index = 0U; index < count; ++index) {
+        if (snapshot.ground_materials[index].ordinal == ordinal) {
+            return &snapshot.ground_materials[index];
+        }
+    }
+    return nullptr;
+}
+
+void draw_ground_materials(const dungeon::DungeonSnapshot& snapshot,
+    const MaterialLootView& view, float width, float height) noexcept {
+    for (std::size_t index = 0U; index < view.count; ++index) {
+        const MaterialLootLabel& label = view.labels[index];
+        const auto* material = ground_material_with_ordinal(snapshot, label.ordinal);
+        if (material == nullptr) continue;
+        const RenderProjection projected = project_render_world(
+            material->position.x, material->position.y, material->position.z,
+            width, height);
+        const Color color{label.text_color.r, label.text_color.g,
+            label.text_color.b, label.text_color.a};
+        const float radius = (label.emphasized ? 9.0F : 6.0F) * projected.scale;
+        const Vector2 center{projected.x, projected.ground_y - radius};
+        DrawEllipse(static_cast<int>(projected.x),
+            static_cast<int>(projected.ground_y + 1.0F), radius * 1.6F,
+            radius * 0.45F, Fade(color, 0.28F));
+        if (label.emphasized) {
+            DrawLineEx({center.x, center.y + radius},
+                {center.x, center.y - 36.0F * projected.scale},
+                2.0F * projected.scale, Fade(color, 0.65F));
+            DrawCircleLines(static_cast<int>(center.x), static_cast<int>(center.y),
+                radius * 1.55F, Fade(color, 0.78F));
+        }
+        DrawCircleV(center, radius, color);
+        DrawCircleLines(static_cast<int>(center.x), static_cast<int>(center.y),
+            radius, RAYWHITE);
     }
 }
 
@@ -182,9 +330,18 @@ void draw_abyss(const dungeon::DungeonSnapshot& snapshot, float elapsed_seconds)
     DrawRectangleLinesEx({8.0F, 8.0F, static_cast<float>(GetScreenWidth() - 16),
         static_cast<float>(GetScreenHeight() - 16)}, 8.0F,
         Fade(Color{225, 47, 160, 255}, 0.20F + pulse * 0.45F));
+    const AbyssHudValues values = abyss_hud_values(snapshot);
+    if (values.visible) {
+        const char* label = TextFormat("%s  |  %s",
+            values.danger_label, values.rule_label);
+        const int font_size = 20;
+        DrawText(label, GetScreenWidth() / 2 - MeasureText(label, font_size) / 2,
+            18, font_size, Color{255, 164, 221, 255});
+    }
 }
 
-void draw_hole(const dungeon::DungeonSnapshot& snapshot) noexcept {
+void draw_hole(const dungeon::DungeonSnapshot& snapshot,
+    const MaterialPack& material_pack, bool draw_material_environment) noexcept {
     const HoleVisualMode hole = hole_visual_mode(snapshot);
     if (hole == HoleVisualMode::hidden) {
         return;
@@ -197,29 +354,43 @@ void draw_hole(const dungeon::DungeonSnapshot& snapshot) noexcept {
     Color color{43, 25, 55, 255};
     if (hole == HoleVisualMode::ready) color = Color{230, 79, 186, 255};
     else if (hole == HoleVisualMode::busy) color = Color{255, 194, 74, 255};
-    DrawEllipse(x, y, 74.0F, 25.0F, Color{5, 2, 9, 235});
+    if (draw_material_environment) {
+        static_cast<void>(material_pack.draw(MaterialSpriteId::environment_hole,
+            {projected.x, projected.ground_y}, false, 0.77F * projected.scale));
+    } else {
+        DrawEllipse(x, y, 74.0F, 25.0F, Color{5, 2, 9, 235});
+    }
     DrawEllipseLines(x, y, 74.0F, 25.0F, color);
     const char* label = hole == HoleVisualMode::sealed ? "SEALED"
         : hole == HoleVisualMode::ready ? "READY"
         : hole == HoleVisualMode::busy ? "SAVING" : "FAULTED";
-    DrawText(label, x - MeasureText(label, 16) / 2, y - 8, 16, color);
+    DrawText(label, x - MeasureText(label, 20) / 2, y - 12, 20, color);
     if (snapshot.combat.has_value()
         && can_prompt_descent(snapshot, snapshot.combat->player.position)) {
-        constexpr const char* kPrompt = "Press E to descend";
-        DrawText(kPrompt, x - MeasureText(kPrompt, 18) / 2, y + 34, 18, RAYWHITE);
+        constexpr const char* kPrompt = "E: DESCEND";
+        DrawText(kPrompt, x - MeasureText(kPrompt, 26) / 2, y + 36, 26, RAYWHITE);
     }
 }
 
 }  // namespace
 
-void CombatRenderer::draw_room(const dungeon::DungeonSnapshot& current) const noexcept {
+void CombatRenderer::draw_room(
+    const dungeon::DungeonSnapshot& current,
+    const GroundLootView& ground_loot,
+    const MaterialLootView& material_loot) const noexcept {
     const float width = static_cast<float>(GetScreenWidth());
     const float height = static_cast<float>(GetScreenHeight());
-    draw_graybox_room(current.ecology);
+    const bool draw_material_environment = can_draw_room_environment(current,
+        material_pack_) && draw_environment_room(material_pack_, current.ecology);
+    if (!draw_material_environment) {
+        draw_graybox_room(current.ecology);
+    }
     draw_abyss(current, static_cast<float>(GetTime()));
-    draw_ground_items(current, width, height);
-    draw_doors(current, width, height);
-    draw_hole(current);
+    draw_environment_hazards(current, width, height);
+    draw_ground_materials(current, material_loot, width, height);
+    draw_ground_items(current, ground_loot, material_pack_, width, height);
+    draw_doors(current, width, height, material_pack_, draw_material_environment);
+    draw_hole(current, material_pack_, draw_material_environment);
 }
 
 }  // namespace arpg::platform

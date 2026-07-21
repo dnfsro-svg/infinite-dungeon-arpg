@@ -1,4 +1,6 @@
 add_library(arpg_combat STATIC
+    active_skill_runtime.cpp
+    abyss_environment.cpp
     attack_catalog.cpp
     combat_collision.cpp
     combat_effects.cpp
@@ -15,12 +17,15 @@ add_library(arpg_combat STATIC
     monster_affix_runtime.cpp
     monster_catalog.cpp
     monster_pool.cpp
+    player_damage_history.cpp
     player_simulation.cpp
     target_simulation.cpp)
 
 target_include_directories(arpg_combat
     PUBLIC "${PROJECT_SOURCE_DIR}/src")
 target_compile_features(arpg_combat PUBLIC cxx_std_17)
-target_link_libraries(arpg_combat PRIVATE arpg_core arpg_modifiers)
+target_link_libraries(arpg_combat
+    PUBLIC arpg_abyss
+    PRIVATE arpg_core arpg_modifiers)
 
 arpg_enable_project_warnings(arpg_combat)

@@ -14,6 +14,7 @@ using arpg::dungeon::ExitDirection;
 using arpg::dungeon::RoomPhase;
 using arpg::platform::DoorTheme;
 using arpg::platform::DoorVisualMode;
+using arpg::platform::EnvironmentHazardVisualMode;
 using arpg::platform::HoleVisualMode;
 using arpg::platform::Rgba8;
 using arpg::platform::SaveIndicator;
@@ -30,21 +31,23 @@ DungeonSnapshot active_snapshot(
 }
 
 arpg::test::Failure door_modes_follow_room_lifecycle() noexcept {
-    ARPG_REQUIRE(arpg::platform::door_visual_mode(RoomPhase::locked, true)
+    ARPG_REQUIRE(arpg::platform::door_visual_mode(RoomPhase::locked, true, false)
         == DoorVisualMode::closed);
-    ARPG_REQUIRE(arpg::platform::door_visual_mode(RoomPhase::combat, true)
+    ARPG_REQUIRE(arpg::platform::door_visual_mode(RoomPhase::combat, true, false)
         == DoorVisualMode::closed);
-    ARPG_REQUIRE(arpg::platform::door_visual_mode(RoomPhase::cleared, true)
+    ARPG_REQUIRE(arpg::platform::door_visual_mode(RoomPhase::cleared, true, true)
         == DoorVisualMode::open);
     ARPG_REQUIRE(arpg::platform::door_visual_mode(
-        RoomPhase::awaiting_exit, true) == DoorVisualMode::open);
+        RoomPhase::awaiting_exit, true, true) == DoorVisualMode::open);
     ARPG_REQUIRE(arpg::platform::door_visual_mode(
-        RoomPhase::committing, true) == DoorVisualMode::open);
+        RoomPhase::committing, true, false) == DoorVisualMode::closed);
     ARPG_REQUIRE(arpg::platform::door_visual_mode(
-        RoomPhase::faulted, true) == DoorVisualMode::closed);
+        RoomPhase::committing, true, true) == DoorVisualMode::open);
     ARPG_REQUIRE(arpg::platform::door_visual_mode(
-        RoomPhase::transitioning, true) == DoorVisualMode::hidden);
-    ARPG_REQUIRE(arpg::platform::door_visual_mode(RoomPhase::combat, false)
+        RoomPhase::faulted, true, false) == DoorVisualMode::closed);
+    ARPG_REQUIRE(arpg::platform::door_visual_mode(
+        RoomPhase::transitioning, true, false) == DoorVisualMode::hidden);
+    ARPG_REQUIRE(arpg::platform::door_visual_mode(RoomPhase::combat, false, false)
         == DoorVisualMode::hidden);
     return {};
 }
@@ -82,6 +85,150 @@ arpg::test::Failure door_themes_match_directional_elements() noexcept {
         ARPG_REQUIRE(std::strcmp(locked.arrow, theme.arrow) == 0);
         ARPG_REQUIRE(rgba_equals(locked.frame, theme.frame));
     }
+    return {};
+}
+
+arpg::test::Failure abyss_door_markers_follow_only_directional_preview() noexcept {
+    DungeonSnapshot snapshot = active_snapshot(3U, 4U);
+    snapshot.abyss_rule = arpg::abyss::AbyssRuleId::life_sacrifice;
+    snapshot.abyss_danger = arpg::abyss::AbyssDanger::high;
+    for (const ExitDirection direction : {ExitDirection::up,
+             ExitDirection::down, ExitDirection::left,
+             ExitDirection::right, ExitDirection::none}) {
+        ARPG_REQUIRE(!arpg::platform::abyss_door_marker(snapshot, direction));
+    }
+
+    for (const ExitDirection selected : {ExitDirection::up,
+             ExitDirection::down, ExitDirection::left,
+             ExitDirection::right}) {
+        snapshot.abyss_doors.fill(false);
+        snapshot.abyss_doors[static_cast<std::size_t>(selected)] = true;
+        for (const ExitDirection direction : {ExitDirection::up,
+                 ExitDirection::down, ExitDirection::left,
+                 ExitDirection::right}) {
+            ARPG_REQUIRE(arpg::platform::abyss_door_marker(snapshot, direction)
+                == (direction == selected));
+        }
+        const auto closed = arpg::platform::door_render_decision(
+            DoorVisualMode::closed, selected);
+        const auto open = arpg::platform::door_render_decision(
+            DoorVisualMode::open, selected);
+        ARPG_REQUIRE(closed.draw_locked_interior);
+        ARPG_REQUIRE(!open.draw_locked_interior);
+    }
+    return {};
+}
+
+arpg::test::Failure environment_hazards_use_snapshot_geometry_and_phase() noexcept {
+    struct Expected final {
+        arpg::combat::HazardKind kind;
+        Rgba8 active_outline;
+    };
+    constexpr Expected cases[] = {
+        {arpg::combat::HazardKind::thunderstorm,
+            {132U, 211U, 255U, 235U}},
+        {arpg::combat::HazardKind::hunting_flame,
+            {255U, 91U, 48U, 235U}},
+        {arpg::combat::HazardKind::chaos_expansion,
+            {221U, 62U, 188U, 235U}},
+    };
+    float radius = 0.8F;
+    for (const Expected& expected : cases) {
+        arpg::combat::HazardSnapshot hazard{};
+        hazard.active = true;
+        hazard.source = arpg::combat::HazardSource::abyss_environment;
+        hazard.kind = expected.kind;
+        hazard.center = {2.25F, -3.5F, 0.0F};
+        hazard.radius = radius;
+        hazard.telegraph_ticks = 12U;
+        auto visual = arpg::platform::environment_hazard_visual(hazard);
+        ARPG_REQUIRE(visual.mode == EnvironmentHazardVisualMode::warning);
+        ARPG_REQUIRE(arpg::test::near(visual.center.x, 2.25, 1.0e-6));
+        ARPG_REQUIRE(arpg::test::near(visual.center.y, -3.5, 1.0e-6));
+        ARPG_REQUIRE(arpg::test::near(visual.radius, radius, 1.0e-6));
+        ARPG_REQUIRE(rgba_equals(visual.outline, {255U, 203U, 91U, 235U}));
+
+        hazard.telegraph_ticks = 0U;
+        hazard.active_ticks = 60U;
+        visual = arpg::platform::environment_hazard_visual(hazard);
+        ARPG_REQUIRE(visual.mode == EnvironmentHazardVisualMode::active);
+        ARPG_REQUIRE(rgba_equals(visual.outline, expected.active_outline));
+        ARPG_REQUIRE(arpg::test::near(visual.radius, radius, 1.0e-6));
+        radius += 0.2F;
+    }
+
+    arpg::combat::HazardSnapshot monster_hazard{};
+    monster_hazard.active = true;
+    monster_hazard.source = arpg::combat::HazardSource::monster;
+    monster_hazard.kind = arpg::combat::HazardKind::thunderstorm;
+    ARPG_REQUIRE(arpg::platform::environment_hazard_visual(monster_hazard).mode
+        == EnvironmentHazardVisualMode::hidden);
+    return {};
+}
+
+arpg::test::Failure abyss_hud_uses_committed_snapshot_labels_and_counts() noexcept {
+    DungeonSnapshot snapshot = active_snapshot(5U, 6U);
+    auto hidden = arpg::platform::abyss_hud_values(snapshot);
+    ARPG_REQUIRE(!hidden.visible);
+
+    snapshot.is_abyss = true;
+    snapshot.abyss_rule = arpg::abyss::AbyssRuleId::abyss_fury;
+    snapshot.abyss_danger = arpg::abyss::AbyssDanger::high;
+    snapshot.abyss_pending_rewards = 2U;
+    snapshot.abyss_unpicked_rewards = 1U;
+    const auto values = arpg::platform::abyss_hud_values(snapshot);
+    ARPG_REQUIRE(values.visible);
+    ARPG_REQUIRE(std::strcmp(values.danger_label, "ABYSS HIGH") == 0);
+    ARPG_REQUIRE(std::strcmp(values.rule_label, "ABYSS FURY") == 0);
+    ARPG_REQUIRE(std::strcmp(values.effect_label,
+        "Monsters: damage and attack speed x145%") == 0);
+    ARPG_REQUIRE(values.pending_rewards == 2U);
+    ARPG_REQUIRE(values.unpicked_rewards == 1U);
+    ARPG_REQUIRE(!values.confirmation_visible);
+
+    snapshot.abyss_danger = arpg::abyss::AbyssDanger::low;
+    snapshot.abyss_rule = arpg::abyss::AbyssRuleId::thunderstorm;
+    const auto low = arpg::platform::abyss_hud_values(snapshot);
+    ARPG_REQUIRE(std::strcmp(low.danger_label, "ABYSS LOW") == 0);
+    ARPG_REQUIRE(std::strcmp(low.rule_label, "THUNDERSTORM") == 0);
+    ARPG_REQUIRE(std::strcmp(low.effect_label,
+        "Every 180t: warn 45t/radius 0.8, hit 15% max HP lightning") == 0);
+    snapshot.abyss_danger = arpg::abyss::AbyssDanger::medium;
+    ARPG_REQUIRE(std::strcmp(
+        arpg::platform::abyss_hud_values(snapshot).danger_label,
+        "ABYSS MED") == 0);
+    return {};
+}
+
+arpg::test::Failure abyss_confirmation_prompt_preserves_transition_and_direction() noexcept {
+    DungeonSnapshot snapshot = active_snapshot(7U, 8U);
+    snapshot.is_abyss = true;
+    snapshot.abyss_rule = arpg::abyss::AbyssRuleId::hunting_flames;
+    snapshot.abyss_danger = arpg::abyss::AbyssDanger::medium;
+    snapshot.abyss_pending_rewards = 1U;
+    snapshot.abyss_unpicked_rewards = 2U;
+    snapshot.abyss_exit_confirmation_armed = true;
+    snapshot.abyss_exit_confirmation_transition =
+        arpg::dungeon::TransitionKind::door;
+    snapshot.abyss_exit_confirmation_direction = ExitDirection::left;
+    auto values = arpg::platform::abyss_hud_values(snapshot);
+    ARPG_REQUIRE(values.confirmation_visible);
+    ARPG_REQUIRE(values.confirmation_transition
+        == arpg::dungeon::TransitionKind::door);
+    ARPG_REQUIRE(values.confirmation_direction == ExitDirection::left);
+    ARPG_REQUIRE(std::strcmp(values.confirmation_label,
+        "Touch the SAME door again to abandon ALL remaining rewards") == 0);
+
+    snapshot.abyss_exit_confirmation_transition =
+        arpg::dungeon::TransitionKind::descent;
+    snapshot.abyss_exit_confirmation_direction = ExitDirection::none;
+    values = arpg::platform::abyss_hud_values(snapshot);
+    ARPG_REQUIRE(std::strcmp(values.confirmation_label,
+        "Press E again to abandon remaining rewards and descend") == 0);
+
+    snapshot.abyss_exit_confirmation_armed = false;
+    ARPG_REQUIRE(!arpg::platform::abyss_hud_values(snapshot)
+        .confirmation_visible);
     return {};
 }
 
@@ -305,6 +452,10 @@ constexpr arpg::test::TestCase kCases[] = {
     {"cleanup routing and labels", &cleanup_routing_and_labels_are_stable},
     {"transition fade alpha", &fade_alpha_clamps_to_transition_window},
     {"directional door themes", &door_themes_match_directional_elements},
+    {"abyss door marker preview", &abyss_door_markers_follow_only_directional_preview},
+    {"environment hazard snapshot visuals", &environment_hazards_use_snapshot_geometry_and_phase},
+    {"abyss HUD snapshot values", &abyss_hud_uses_committed_snapshot_labels_and_counts},
+    {"abyss confirmation prompt values", &abyss_confirmation_prompt_preserves_transition_and_direction},
     {"ecosystem tints", &ecosystem_tints_are_stable},
     {"abyss pulse bounds", &abyss_pulse_is_bounded_and_periodic},
     {"hole visual modes", &hole_modes_follow_room_phase},
