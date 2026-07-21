@@ -4,6 +4,7 @@ project(infinite_dungeon_arpg VERSION 0.1.0 LANGUAGES C CXX)
 include(cmake/NormalizeMsvcShowIncludes.cmake)
 
 option(ARPG_BUILD_GRAPHICS "Build the raylib host and game executable" ON)
+option(ARPG_BUILD_PERFORMANCE_PROBES "Build local performance probes" OFF)
 
 if(NOT MSVC)
     message(FATAL_ERROR "Stage 0 requires MSVC")
@@ -51,6 +52,10 @@ add_subdirectory(src/passives)
 add_subdirectory(src/dungeon)
 add_subdirectory(src/persistence)
 add_subdirectory(src/platform/settings)
+
+if(ARPG_BUILD_PERFORMANCE_PROBES)
+    add_subdirectory(tools/performance)
+endif()
 
 if(ARPG_BUILD_GRAPHICS)
     include(cmake/Dependencies.cmake)

@@ -1,0 +1,6 @@
+add_executable(arpg_save_commit_probe save_commit_probe.cpp)
+
+target_compile_features(arpg_save_commit_probe PRIVATE cxx_std_17)
+target_link_libraries(
+    arpg_save_commit_probe PRIVATE arpg_persistence arpg_dungeon)
+arpg_enable_project_warnings(arpg_save_commit_probe)
