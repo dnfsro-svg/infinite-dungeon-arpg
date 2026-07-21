@@ -76,4 +76,7 @@ Release：
 - `combat.units`、`dungeon.units`、`persistence.units`、`platform.units`、Stage16 真实 raylib：5/5 通过，0 失败，总计 54.41 秒；`dungeon.units` 为 51.77 秒。
 - Stage17 技能石真实 raylib、证据校验与反向自检：3/3 通过，0 失败，总计 7.53 秒。
 
-最终还需在提交后重新运行 `git diff --check`、目标快照调用审计和 Release 基准，作为合并前的最新证据。
+提交后完成最终复验：完整 Release CTest 为 102/102 通过、0 失败，总计
+718.95 秒；`git diff --check` 无错误；目标快照调用审计仍为 0 个匹配。
+再次运行 101 次 Release 基准得到 P95 0.651600 ms、最大 0.937600 ms、
+平均 0.434437 ms，异步保存决策不变。
