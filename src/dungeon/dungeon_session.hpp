@@ -157,6 +157,11 @@ private:
         combat::PlayerCombatBuild build{};
         PlayerBuildStatus status{PlayerBuildStatus::invalid_state};
     };
+    enum class SkillLoadoutMutation : std::uint8_t {
+        remove,
+        equip,
+        swap,
+    };
     struct PendingAbyssReward final {
         std::uint16_t ground_index{0xFFFFU};
         std::uint8_t reward_ordinal{0xFFU};
@@ -223,6 +228,11 @@ private:
         RoomPhase resume_phase,
         std::optional<ReinforcementReceipt> reinforcement_receipt =
             std::nullopt) noexcept;
+    [[nodiscard]] RequestResult request_skill_loadout_mutation(
+        SkillLoadoutMutation mutation,
+        skills::ActiveSkillId skill,
+        std::uint8_t left,
+        std::uint8_t right) noexcept;
     [[nodiscard]] PlayerBuildResult build_for(
         const checkpoint::DungeonRunState& state,
         const items::EquipmentState* equipment_override = nullptr) const noexcept;

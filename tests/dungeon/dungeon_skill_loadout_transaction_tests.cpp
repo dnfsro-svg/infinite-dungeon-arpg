@@ -5,6 +5,7 @@
 #include "dungeon/dungeon_progression.hpp"
 #include "dungeon/dungeon_session.hpp"
 #include "persistence/save_store.hpp"
+#include "progression/progression_rules.hpp"
 #include "skills/skill_loadout.hpp"
 
 #include <cstdint>
@@ -93,6 +94,16 @@ bool same_loadout(const skills::SkillLoadoutState& left,
     return true;
 }
 
+bool same_progression(const arpg::progression::ProgressionState& left,
+    const arpg::progression::ProgressionState& right) noexcept {
+    return left.level == right.level
+        && left.experience == right.experience
+        && left.earned_passive_points == right.earned_passive_points
+        && left.unspent_passive_points == right.unspent_passive_points;
+}
+
+enum class IsolatedMutation : std::uint8_t { remove, equip, swap };
+
 bool commit_pending_with_store(
     dungeon::DungeonSession& session,
     persistence::SaveStore& store) noexcept {
@@ -109,6 +120,90 @@ bool commit_pending_with_store(
 
 dungeon::DungeonRunState initial_state(std::uint64_t seed) noexcept {
     return dungeon::make_initial_run_state(seed, dungeon::DungeonRules{}).state;
+}
+
+bool isolated_mutation_changes_only_loadout_and_generation(
+    IsolatedMutation mutation, std::uint64_t seed) noexcept {
+    TempDirectory directory;
+    if (directory.path.empty()) return false;
+    auto state = initial_state(seed);
+    if (mutation == IsolatedMutation::equip) {
+        if (skills::remove_active_skill(state.skill_loadout, 0U)
+                != skills::SkillLoadoutError::none) {
+            return false;
+        }
+    } else if (mutation == IsolatedMutation::swap) {
+        if (skills::swap_active_skill_slots(state.skill_loadout, 0U, 4U)
+                != skills::SkillLoadoutError::none) {
+            return false;
+        }
+    }
+    auto store = make_store(directory.path);
+    auto seeded = store.commit(state);
+    if (seeded.state != persistence::SaveCommitState::committed) return false;
+    dungeon::DungeonSession session{{}, std::move(seeded.verified_state)};
+    const dungeon::DungeonRunState before = arpg::test::stable_state(session);
+    const arpg::progression::ProgressionRules progression_rules =
+        arpg::progression::default_progression_rules();
+    const arpg::progression::ProgressionState live =
+        arpg::progression::apply_experience(
+            before.progression, 1U, progression_rules).state;
+    if (!arpg::progression::valid_progression_state(
+            live, progression_rules)
+            || same_progression(live, before.progression)) {
+        return false;
+    }
+    arpg::test::set_room_progression(session, live);
+
+    skills::SkillLoadoutState expected_loadout = before.skill_loadout;
+    dungeon::RequestResult requested = dungeon::RequestResult::faulted;
+    if (mutation == IsolatedMutation::remove) {
+        if (skills::remove_active_skill(expected_loadout, 0U)
+                != skills::SkillLoadoutError::none) {
+            return false;
+        }
+        requested = session.request_remove_active_skill(0U);
+    } else if (mutation == IsolatedMutation::equip) {
+        if (skills::equip_active_skill(expected_loadout,
+                skills::ActiveSkillId::draw_slash, 4U)
+                != skills::SkillLoadoutError::none) {
+            return false;
+        }
+        requested = session.request_equip_active_skill(
+            skills::ActiveSkillId::draw_slash, 4U);
+    } else {
+        if (skills::swap_active_skill_slots(expected_loadout, 1U, 4U)
+                != skills::SkillLoadoutError::none) {
+            return false;
+        }
+        requested = session.request_swap_active_skill_slots(1U, 4U);
+    }
+    if (requested != dungeon::RequestResult::accepted) return false;
+    const dungeon::PendingSave* const pending = session.pending_save_view();
+    if (pending == nullptr
+            || pending->kind != dungeon::PendingSaveKind::skill_loadout
+            || !dungeon::same_run_state(
+                arpg::test::stable_state(session), before)
+            || session.snapshot().commit_generation != before.commit_generation
+            || !same_loadout(session.snapshot().skill_loadout,
+                before.skill_loadout)
+            || !same_progression(session.snapshot().progression, live)) {
+        return false;
+    }
+
+    dungeon::DungeonRunState expected = before;
+    ++expected.commit_generation;
+    expected.skill_loadout = expected_loadout;
+    if (!dungeon::same_run_state(pending->next_state, expected)
+            || !commit_pending_with_store(session, store)
+            || !dungeon::same_run_state(
+                arpg::test::stable_state(session), expected)
+            || !same_progression(session.snapshot().progression, live)
+            || !same_loadout(session.snapshot().skill_loadout,
+                expected_loadout)) {
+        return false;
+    }
+    return true;
 }
 
 arpg::test::Failure snapshot_starts_with_value_owned_default_loadout() noexcept {
@@ -188,6 +283,24 @@ arpg::test::Failure real_store_remove_equip_and_swap_publish_atomically()
         == skills::ActiveSkillId::draw_slash);
     ARPG_REQUIRE(published.skill_loadout.slots[4U].active
         == skills::ActiveSkillId::storm_swords);
+    return {};
+}
+
+arpg::test::Failure remove_changes_only_loadout_and_generation() noexcept {
+    ARPG_REQUIRE(isolated_mutation_changes_only_loadout_and_generation(
+        IsolatedMutation::remove, 0x51717A11ULL));
+    return {};
+}
+
+arpg::test::Failure equip_changes_only_loadout_and_generation() noexcept {
+    ARPG_REQUIRE(isolated_mutation_changes_only_loadout_and_generation(
+        IsolatedMutation::equip, 0x51717A12ULL));
+    return {};
+}
+
+arpg::test::Failure swap_changes_only_loadout_and_generation() noexcept {
+    ARPG_REQUIRE(isolated_mutation_changes_only_loadout_and_generation(
+        IsolatedMutation::swap, 0x51717A13ULL));
     return {};
 }
 
@@ -331,6 +444,12 @@ constexpr arpg::test::TestCase kCases[] = {
         &snapshot_starts_with_value_owned_default_loadout},
     {"real store remove equip swap publish atomically",
         &real_store_remove_equip_and_swap_publish_atomically},
+    {"remove changes only loadout and generation",
+        &remove_changes_only_loadout_and_generation},
+    {"equip changes only loadout and generation",
+        &equip_changes_only_loadout_and_generation},
+    {"swap changes only loadout and generation",
+        &swap_changes_only_loadout_and_generation},
     {"failed store preserves bytes and reuses candidate",
         &failed_store_preserves_stable_bytes_and_reuses_candidate},
     {"invalid empty occupied duplicate requests reject",

@@ -231,10 +231,10 @@ int main() {
         const arpg::test::TestSuite loadout_only[] = {
             dungeon_skill_loadout_transaction_suite(),
         };
-        return arpg::test::run_suites(loadout_only, 6,
+        return arpg::test::run_suites(loadout_only, 9,
             "stage 17 task 3 skill loadout transactions");
     }
 
-    return arpg::test::run_suites(suites, 278,
+    return arpg::test::run_suites(suites, 281,
         "stage 11a task 8 death continue validation");
 }

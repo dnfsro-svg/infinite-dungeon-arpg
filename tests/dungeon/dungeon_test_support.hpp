@@ -289,6 +289,11 @@ struct DungeonSessionTestAccess final {
         const dungeon::DungeonSession& session) noexcept {
         return session.stable_state_;
     }
+    static void set_room_progression(
+        dungeon::DungeonSession& session,
+        progression::ProgressionState state) noexcept {
+        session.room_progression_ = state;
+    }
     static bool copy_run_state_reusing_items(
         dungeon::DungeonRunState& destination,
         const dungeon::DungeonRunState& source) noexcept {
@@ -491,6 +496,12 @@ inline const std::array<std::uint64_t, 3>& rolled_drop_bits(
 inline const dungeon::DungeonRunState& stable_state(
     const dungeon::DungeonSession& session) noexcept {
     return DungeonSessionTestAccess::stable_state(session);
+}
+
+inline void set_room_progression(
+    dungeon::DungeonSession& session,
+    progression::ProgressionState state) noexcept {
+    DungeonSessionTestAccess::set_room_progression(session, state);
 }
 
 inline bool copy_run_state_reusing_items(

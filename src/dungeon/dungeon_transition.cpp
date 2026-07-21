@@ -1276,90 +1276,53 @@ RequestResult DungeonSession::request_material_pickup(
 
 RequestResult DungeonSession::request_remove_active_skill(
     std::uint8_t slot) noexcept {
-    if (!pending_item_cache_consistent()) {
-        enter_fault(DungeonFault::save_receipt_mismatch);
-        return RequestResult::faulted;
-    }
-    const std::size_t index = static_cast<std::size_t>(slot);
-    if (!item_request_phase(phase_) || pending_save_.has_value()
-            || index >= skills::kActiveSkillSlotCount
-            || stable_state_.skill_loadout.slots[index].active
-                == skills::ActiveSkillId::none) {
-        return RequestResult::rejected;
-    }
-    const RoomPhase resume_phase = phase_;
-    PendingSave& reusable = pending_save_.prepare();
-    if (!copy_run_state_reusing_items(
-            reusable.next_state, stable_state_)) {
-        pending_save_.reset();
-        return RequestResult::rejected;
-    }
-    reusable.next_state.progression = room_progression_;
-    if (skills::remove_active_skill(
-            reusable.next_state.skill_loadout, index)
-            != skills::SkillLoadoutError::none
-            || skills::validate_skill_loadout(
-                reusable.next_state.skill_loadout)
-                != skills::SkillLoadoutError::none) {
-        pending_save_.reset();
-        return RequestResult::rejected;
-    }
-    DungeonRunState next = std::move(reusable.next_state);
-    pending_save_.reset();
-    return prepare_item_save(std::move(next),
-        PendingSaveKind::skill_loadout, resume_phase);
+    return request_skill_loadout_mutation(
+        SkillLoadoutMutation::remove,
+        skills::ActiveSkillId::none, slot, 0U);
 }
 
 RequestResult DungeonSession::request_equip_active_skill(
     skills::ActiveSkillId skill, std::uint8_t slot) noexcept {
-    if (!pending_item_cache_consistent()) {
-        enter_fault(DungeonFault::save_receipt_mismatch);
-        return RequestResult::faulted;
-    }
-    const std::size_t index = static_cast<std::size_t>(slot);
-    if (!item_request_phase(phase_) || pending_save_.has_value()
-            || index >= skills::kActiveSkillSlotCount) {
-        return RequestResult::rejected;
-    }
-    const RoomPhase resume_phase = phase_;
-    PendingSave& reusable = pending_save_.prepare();
-    if (!copy_run_state_reusing_items(
-            reusable.next_state, stable_state_)) {
-        pending_save_.reset();
-        return RequestResult::rejected;
-    }
-    reusable.next_state.progression = room_progression_;
-    if (skills::equip_active_skill(
-            reusable.next_state.skill_loadout, skill, index)
-            != skills::SkillLoadoutError::none
-            || skills::validate_skill_loadout(
-                reusable.next_state.skill_loadout)
-                != skills::SkillLoadoutError::none) {
-        pending_save_.reset();
-        return RequestResult::rejected;
-    }
-    DungeonRunState next = std::move(reusable.next_state);
-    pending_save_.reset();
-    return prepare_item_save(std::move(next),
-        PendingSaveKind::skill_loadout, resume_phase);
+    return request_skill_loadout_mutation(
+        SkillLoadoutMutation::equip, skill, slot, 0U);
 }
 
 RequestResult DungeonSession::request_swap_active_skill_slots(
     std::uint8_t left, std::uint8_t right) noexcept {
+    return request_skill_loadout_mutation(
+        SkillLoadoutMutation::swap,
+        skills::ActiveSkillId::none, left, right);
+}
+
+RequestResult DungeonSession::request_skill_loadout_mutation(
+    SkillLoadoutMutation mutation,
+    skills::ActiveSkillId skill,
+    std::uint8_t left,
+    std::uint8_t right) noexcept {
     if (!pending_item_cache_consistent()) {
         enter_fault(DungeonFault::save_receipt_mismatch);
         return RequestResult::faulted;
     }
     const std::size_t left_index = static_cast<std::size_t>(left);
     const std::size_t right_index = static_cast<std::size_t>(right);
-    if (!item_request_phase(phase_) || pending_save_.has_value()
-            || left_index >= skills::kActiveSkillSlotCount
+    if (!item_request_phase(phase_) || pending_save_.has_value()) {
+        return RequestResult::rejected;
+    }
+    const bool invalid_remove = mutation == SkillLoadoutMutation::remove
+        && (left_index >= skills::kActiveSkillSlotCount
+            || stable_state_.skill_loadout.slots[left_index].active
+                == skills::ActiveSkillId::none);
+    const bool invalid_equip = mutation == SkillLoadoutMutation::equip
+        && left_index >= skills::kActiveSkillSlotCount;
+    const bool invalid_swap = mutation == SkillLoadoutMutation::swap
+        && (left_index >= skills::kActiveSkillSlotCount
             || right_index >= skills::kActiveSkillSlotCount
             || left_index == right_index
             || (stable_state_.skill_loadout.slots[left_index].active
                     == skills::ActiveSkillId::none
                 && stable_state_.skill_loadout.slots[right_index].active
-                    == skills::ActiveSkillId::none)) {
+                    == skills::ActiveSkillId::none));
+    if (invalid_remove || invalid_equip || invalid_swap) {
         return RequestResult::rejected;
     }
     const RoomPhase resume_phase = phase_;
@@ -1369,9 +1332,19 @@ RequestResult DungeonSession::request_swap_active_skill_slots(
         pending_save_.reset();
         return RequestResult::rejected;
     }
-    reusable.next_state.progression = room_progression_;
-    if (skills::swap_active_skill_slots(reusable.next_state.skill_loadout,
-            left_index, right_index) != skills::SkillLoadoutError::none
+    skills::SkillLoadoutError mutation_error =
+        skills::SkillLoadoutError::invalid_slot;
+    if (mutation == SkillLoadoutMutation::remove) {
+        mutation_error = skills::remove_active_skill(
+            reusable.next_state.skill_loadout, left_index);
+    } else if (mutation == SkillLoadoutMutation::equip) {
+        mutation_error = skills::equip_active_skill(
+            reusable.next_state.skill_loadout, skill, left_index);
+    } else if (mutation == SkillLoadoutMutation::swap) {
+        mutation_error = skills::swap_active_skill_slots(
+            reusable.next_state.skill_loadout, left_index, right_index);
+    }
+    if (mutation_error != skills::SkillLoadoutError::none
             || skills::validate_skill_loadout(
                 reusable.next_state.skill_loadout)
                 != skills::SkillLoadoutError::none) {
@@ -1688,6 +1661,10 @@ void DungeonSession::commit_pending_save(
         emit_committed(previous_room, stable_state_);
         return;
     }
+    if (skill_loadout_commit) {
+        phase_ = resume_phase;
+        return;
+    }
     room_progression_ = stable_state_.progression;
     if (item_commit) {
         combat_->apply_player_build(published_build);
@@ -1705,10 +1682,6 @@ void DungeonSession::commit_pending_save(
     if (material_pickup_commit) {
         ground_materials_[pickup_ordinal] = GroundMaterial{};
         material_pickup_receipt_ = published_material_receipt;
-        phase_ = resume_phase;
-        return;
-    }
-    if (skill_loadout_commit) {
         phase_ = resume_phase;
         return;
     }
