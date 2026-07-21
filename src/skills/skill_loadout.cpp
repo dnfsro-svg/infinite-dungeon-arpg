@@ -31,6 +31,8 @@ SkillLoadoutState default_skill_loadout() noexcept {
             static_cast<std::uint8_t>(ActiveSkillId::draw_slash)) |
         (std::uint64_t{1U} <<
             static_cast<std::uint8_t>(ActiveSkillId::storm_swords));
+    state.slots[0].active = ActiveSkillId::draw_slash;
+    state.slots[1].active = ActiveSkillId::storm_swords;
     return state;
 }
 

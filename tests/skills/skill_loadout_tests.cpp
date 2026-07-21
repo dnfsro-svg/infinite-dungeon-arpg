@@ -10,11 +10,14 @@ namespace {
 
 using namespace arpg::skills;
 
-arpg::test::Failure default_loadout_has_owned_active_stones_and_empty_supports() noexcept {
+arpg::test::Failure default_loadout_equips_owned_active_stones_and_empty_supports() noexcept {
     const SkillLoadoutState state = default_skill_loadout();
     ARPG_REQUIRE(state.owned_active_bits == ((std::uint64_t{1U} << 0U) | (std::uint64_t{1U} << 1U)));
+    ARPG_REQUIRE(state.slots[0].active == ActiveSkillId::draw_slash);
+    ARPG_REQUIRE(state.slots[1].active == ActiveSkillId::storm_swords);
+    for (std::size_t index = 2U; index < state.slots.size(); ++index)
+        ARPG_REQUIRE(state.slots[index].active == ActiveSkillId::none);
     for (const ActiveSkillSlot& slot : state.slots) {
-        ARPG_REQUIRE(slot.active == ActiveSkillId::none);
         for (const SupportSkillId support : slot.supports)
             ARPG_REQUIRE(support == SupportSkillId::none);
     }
@@ -35,8 +38,7 @@ arpg::test::Failure catalog_defines_the_two_active_skills() noexcept {
 
 arpg::test::Failure duplicate_active_stone_is_rejected() noexcept {
     SkillLoadoutState state = default_skill_loadout();
-    ARPG_REQUIRE(equip_active_skill(state, ActiveSkillId::draw_slash, 0U) == SkillLoadoutError::none);
-    ARPG_REQUIRE(equip_active_skill(state, ActiveSkillId::draw_slash, 1U) == SkillLoadoutError::duplicate_active);
+    ARPG_REQUIRE(equip_active_skill(state, ActiveSkillId::draw_slash, 2U) == SkillLoadoutError::duplicate_active);
     return {};
 }
 
@@ -62,7 +64,6 @@ arpg::test::Failure invalid_support_id_is_rejected_by_validation() noexcept {
 
 arpg::test::Failure removing_an_active_stone_empties_its_slot() noexcept {
     SkillLoadoutState state = default_skill_loadout();
-    ARPG_REQUIRE(equip_active_skill(state, ActiveSkillId::draw_slash, 0U) == SkillLoadoutError::none);
     ARPG_REQUIRE(remove_active_skill(state, 0U) == SkillLoadoutError::none);
     ARPG_REQUIRE(state.slots[0].active == ActiveSkillId::none);
     return {};
@@ -70,6 +71,7 @@ arpg::test::Failure removing_an_active_stone_empties_its_slot() noexcept {
 
 arpg::test::Failure equipping_an_owned_active_stone_uses_an_empty_slot() noexcept {
     SkillLoadoutState state = default_skill_loadout();
+    ARPG_REQUIRE(remove_active_skill(state, 1U) == SkillLoadoutError::none);
     ARPG_REQUIRE(equip_active_skill(state, ActiveSkillId::storm_swords, 4U) == SkillLoadoutError::none);
     ARPG_REQUIRE(state.slots[4].active == ActiveSkillId::storm_swords);
     return {};
@@ -77,7 +79,6 @@ arpg::test::Failure equipping_an_owned_active_stone_uses_an_empty_slot() noexcep
 
 arpg::test::Failure occupied_destination_is_rejected_without_overwriting() noexcept {
     SkillLoadoutState state = default_skill_loadout();
-    ARPG_REQUIRE(equip_active_skill(state, ActiveSkillId::draw_slash, 0U) == SkillLoadoutError::none);
     ARPG_REQUIRE(equip_active_skill(state, ActiveSkillId::storm_swords, 0U) == SkillLoadoutError::destination_occupied);
     ARPG_REQUIRE(state.slots[0].active == ActiveSkillId::draw_slash);
     return {};
@@ -85,8 +86,6 @@ arpg::test::Failure occupied_destination_is_rejected_without_overwriting() noexc
 
 arpg::test::Failure active_slots_can_be_swapped() noexcept {
     SkillLoadoutState state = default_skill_loadout();
-    ARPG_REQUIRE(equip_active_skill(state, ActiveSkillId::draw_slash, 0U) == SkillLoadoutError::none);
-    ARPG_REQUIRE(equip_active_skill(state, ActiveSkillId::storm_swords, 1U) == SkillLoadoutError::none);
     ARPG_REQUIRE(swap_active_skill_slots(state, 0U, 1U) == SkillLoadoutError::none);
     ARPG_REQUIRE(state.slots[0].active == ActiveSkillId::storm_swords);
     ARPG_REQUIRE(state.slots[1].active == ActiveSkillId::draw_slash);
@@ -94,7 +93,7 @@ arpg::test::Failure active_slots_can_be_swapped() noexcept {
 }
 
 constexpr arpg::test::TestCase kCases[] = {
-    {"default loadout owned active stones and empty supports", &default_loadout_has_owned_active_stones_and_empty_supports},
+    {"default loadout equips owned active stones and empty supports", &default_loadout_equips_owned_active_stones_and_empty_supports},
     {"catalog defines two active skills", &catalog_defines_the_two_active_skills},
     {"duplicate active stone rejected", &duplicate_active_stone_is_rejected},
     {"unowned active stone rejected", &unowned_active_stone_is_rejected},
