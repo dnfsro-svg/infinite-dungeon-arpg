@@ -19,14 +19,18 @@ Stage 16 增加 18 个稳定装备基底、14 种独立材料、九种货币改�
 | 10 | 1,800 | 179,548 | 2,317 |
 | 27 | 3,500 | 349,659 | 2,873 |
 
-同一模拟还覆盖四张券的临界深度/危险度、九种货币、强化概率与失败分段、四张券面、材料拾取、清房真空、死前未拾取损失、V7 状态重载、极限强化饱和，以及 2,000 次“材料流采样前后装备生成完全相同”的随机回放。
+同一模拟还覆盖正常与深渊两套十种材料权重、普通与深渊怪的四档券概率/优先级（深渊三倍概率）、14 种材料可得性、四张券的精确/深度减一/危险度减一边界、九种货币、四段强化失败后果与 75,000 次/段的真实 Session 强化长跑、材料拾取、清房真空、死前未拾取损失、V7 `checkpoint_codec` 编码/解码后重建 Session、极限强化饱和。
+
+既有 Task1 房间、怪物、装备、深渊装备奖励流以完整字段指纹 `15972885342817959559` 冻结；在材料 RNG 调用插入前后必须一致。
 
 `stage16.loot_reinforcement.real_raylib` 真正初始化 raylib 6.0 / GLFW / OpenGL 并在 **1280×720** 生成：
 
-- `out/build/windows-msvc-debug/tests/platform/stage16 loot reinforcement evidence/stage16-loot-reinforcement-1280x720.png`
-- `out/build/windows-msvc-debug/tests/platform/stage16 loot reinforcement evidence/stage16-loot-reinforcement-state.txt`
+- `out/build/windows-msvc-debug/tests/platform/stage16 loot reinforcement evidence/stage16-run/stage16-ground-material-1280x720.png`
+- `out/build/windows-msvc-debug/tests/platform/stage16 loot reinforcement evidence/stage16-run/stage16-confirmation-1280x720.png`
+- `out/build/windows-msvc-debug/tests/platform/stage16 loot reinforcement evidence/stage16-run/stage16-complete-1280x720.png`
+- `out/build/windows-msvc-debug/tests/platform/stage16 loot reinforcement evidence/stage16-run/stage16-loot-reinforcement-state.txt`
 
-该场景依次执行并渲染已提交的真实核心事务：材料拾取、材料袋选择、Chaos 改造、+12 强化券、+12→+13 销毁确认与失败销毁。状态文本记录每一步的持久化结果，截图不使用预制图片或终端替代。
+该场景以真实 `SaveStore` 写入 V7 存档，再由生产 `DungeonRuntime` 读取；它执行实际战斗生成地面材料、靠近拾取、材料袋选择、Chaos 改造、+12 强化券、对 +12 装备使用强化石的确认与失败销毁，最后重启运行时核验装备已消失、已拾取材料仍在，并核验三种已使用材料均为预期余量（若地面掉落恰好同种，则保留那一份拾取物）。每次运行先删除受控 `stage16-run` 子目录并重新创建截图；验证 PNG 尺寸、内容、文件大小、修改时间和状态文本。
 
 执行命令：
 
@@ -37,6 +41,6 @@ ctest --test-dir out/build/windows-msvc-debug -R '^dungeon\.units$' --output-on-
 .\scripts\Build.ps1 -Preset windows-msvc-release
 ```
 
-2026-07-20 的最终新鲜结果：`ctest -L stage16` 为 **4/4 通过、0 失败**（材料 12 项、交易 6 项、百万次模拟、真实 Raylib）；`dungeon.units` 为 **272 项、0 失败**，耗时 192.93 秒。`windows-msvc-release` 构建以 exit 0 完成，`out/build/windows-msvc-release/bin/arpg_game.exe` 存在（1,579,520 字节）。
+最新命令结果以本页列出的完整命令为准；证据目录只保存最近一次真实运行的产物。
 
 Stage 9 的 `stage9.formal_game.capture_after_present` 图形栈溢出是早于 Stage 16 的已知基线例外；它未被 Stage16 标签套件调用，也不能被写作 Stage16 通过的证据。Stage16 仅以本页列出的新鲜命令结果为准。
