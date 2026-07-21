@@ -16,6 +16,7 @@ arpg::test::TestSuite dungeon_navigation_suite() noexcept;
 arpg::test::TestSuite dungeon_stress_suite() noexcept;
 arpg::test::TestSuite dungeon_rules_suite() noexcept;
 arpg::test::TestSuite dungeon_progression_suite() noexcept;
+arpg::test::TestSuite dungeon_query_suite() noexcept;
 arpg::test::TestSuite dungeon_passive_tree_suite() noexcept;
 arpg::test::TestSuite dungeon_item_transaction_suite() noexcept;
 arpg::test::TestSuite dungeon_crafting_transaction_suite() noexcept;
@@ -146,6 +147,7 @@ int main() {
         dungeon_stress_suite(),
         dungeon_rules_suite(),
         dungeon_progression_suite(),
+        dungeon_query_suite(),
         dungeon_passive_tree_suite(),
         dungeon_item_transaction_suite(),
         dungeon_crafting_transaction_suite(),
@@ -237,6 +239,6 @@ int main() {
             "stage 17 task 3 skill loadout transactions");
     }
 
-    return arpg::test::run_suites(suites, 285,
-        "stage 11a task 8 death continue validation");
+    return arpg::test::run_suites(suites, 287,
+        "stage 18 dungeon queries");
 }

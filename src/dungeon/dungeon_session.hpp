@@ -142,6 +142,7 @@ public:
     void resolve_pending_transition(
         const TransitionSaveResult& result) noexcept;
     [[nodiscard]] RequestResult reset_current_room() noexcept;
+    [[nodiscard]] RoomPhase phase() const noexcept;
     [[nodiscard]] DungeonSnapshot snapshot() const noexcept;
     [[nodiscard]] std::optional<DungeonEvent> try_pop_event() noexcept;
     [[nodiscard]] std::optional<combat::CombatEvent>

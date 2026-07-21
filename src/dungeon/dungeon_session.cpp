@@ -278,6 +278,10 @@ combat::SkillCastResult DungeonSession::request_active_skill_slot(
         : combat_->request_active_skill(skill);
 }
 
+RoomPhase DungeonSession::phase() const noexcept {
+    return phase_;
+}
+
 void DungeonSession::tick(
     combat::MovementInput movement,
     AutoPickupPolicy pickup_policy) noexcept {
@@ -342,11 +346,11 @@ void DungeonSession::tick(
     if (combat_.has_value() && phase_ != RoomPhase::committing
             && phase_ != RoomPhase::transitioning
             && phase_ != RoomPhase::faulted) {
-        const combat::CombatSnapshot state = combat_->snapshot();
+        const combat::Vec3 player_position = combat_->player_position();
         if (phase_ == RoomPhase::awaiting_exit) {
-            update_abyss_exit_confirmation_range(state.player.position);
+            update_abyss_exit_confirmation_range(player_position);
             const auto requested = requested_exit(
-                state.player.position, movement);
+                player_position, movement);
             if (abyss_exit_confirmation_.armed
                     && abyss_exit_confirmation_.transition
                         == TransitionKind::door) {
@@ -357,13 +361,13 @@ void DungeonSession::tick(
                     clear_abyss_exit_confirmation();
                 }
             }
-            request_nearby_pickups(state.player.position, pickup_policy);
+            request_nearby_pickups(player_position, pickup_policy);
             if (phase_ == RoomPhase::awaiting_exit
                     && requested.has_value()) {
                 attempt_exit(*requested);
             }
         } else {
-            request_nearby_pickups(state.player.position, pickup_policy);
+            request_nearby_pickups(player_position, pickup_policy);
         }
     }
 
@@ -1740,14 +1744,10 @@ std::uint8_t DungeonSession::remaining_targets() const noexcept {
     if (!combat_.has_value()) {
         return 0U;
     }
-    std::uint8_t remaining = 0U;
-    const combat::CombatSnapshot state = combat_->snapshot();
-    for (const auto& monster : state.monsters) {
-        if (monster.active && monster.hp > 0) {
-            ++remaining;
-        }
-    }
-    return remaining;
+    const std::size_t remaining = combat_->living_monster_count();
+    constexpr std::size_t maximum =
+        (std::numeric_limits<std::uint8_t>::max)();
+    return static_cast<std::uint8_t>(remaining > maximum ? maximum : remaining);
 }
 
 }  // namespace arpg::dungeon

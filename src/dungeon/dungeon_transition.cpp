@@ -1093,7 +1093,7 @@ RequestResult DungeonSession::request_pickup(
     }
     const bool abyss_claim = ground.source == GroundItemSource::abyss_chest;
     if (!combat_.has_value() || !pickup_distance_ok(
-            combat_->snapshot().player.position, ground.position)) {
+            combat_->player_position(), ground.position)) {
         return RequestResult::rejected;
     }
     const items::OwnershipValidationResult stable_validation =
@@ -1225,7 +1225,7 @@ RequestResult DungeonSession::request_material_pickup(
         return RequestResult::faulted;
     }
     if (!combat_.has_value() || !pickup_distance_ok(
-            combat_->snapshot().player.position, ground.position)) {
+            combat_->player_position(), ground.position)) {
         return RequestResult::rejected;
     }
     if (stable_state_.item_ownership.materials[material_index]

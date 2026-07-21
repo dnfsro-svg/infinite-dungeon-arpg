@@ -236,7 +236,7 @@ bool DungeonRuntime::initialize() noexcept {
 
 DungeonRuntimeState DungeonRuntime::state() const noexcept {
     if (session_.has_value()
-        && session_->snapshot().phase == dungeon::RoomPhase::faulted) {
+        && session_->phase() == dungeon::RoomPhase::faulted) {
         return DungeonRuntimeState::faulted;
     }
     return state_;
