@@ -1,3 +1,69 @@
+# Stage 19 Task 5 实现报告：零延迟滚动战斗相机
+
+## 结论
+
+- 新增纯值类型 `CombatCameraView`。16:9 固定显示 24×11 世界区域；
+  2560×1080 显示 32×11；横向最多显示完整 48 单位房间。
+- 相机中心直接由本帧渲染插值后的玩家位置派生，X/Y 在房间边缘钳制；
+  不保存上一帧中心、速度、平滑系数或追赶状态。
+- `CombatRenderer::draw` 每帧只构造一个逻辑相机，并将同一个值传给房间、
+  门、洞、环境危害、地面装备/材料及其标签、玩家/怪物、警告、投射物、
+  危险区、战斗反馈特效、主动技能和 debug AABB。
+- 玩家绘制与相机跟随使用同一个插值坐标。房间切换或无 combat 快照时回到
+  稳定中心视图；raylib `Camera2D` 仍只叠加最终屏幕空间震动。
+- 投影仅把透视缩放输入钳制到 0～1；地面 Y 保留未钳制深度，离开视野的
+  世界对象能正确投影到屏幕外，便于后续裁剪。
+
+## TDD 证据
+
+### RED
+
+先在 `combat_view_math_tests.cpp` 写入 16:9 视野、四边钳制、当前帧立即
+跟随、21:9 横向扩展和像素尺度不拉伸断言。首次构建按预期只因以下新 API
+不存在而失败：
+
+- `CombatCameraView`
+- `make_combat_camera_view`
+- 带 `CombatCameraView` 的 `project_combat_position` 重载
+
+生产代码在该 RED 之前未修改。
+
+### GREEN
+
+- `arpg_platform_tests`：构建成功，无编译警告。
+- `arpg_game`：Debug 构建和资产复制成功。
+- `ARPG_TEST_TRACE=1 arpg_platform_tests.exe`：全部 6 个
+  `combat_view_math` case 均运行且没有 `[FAIL]`；其中既有两个 case 内包含
+  新相机 RED 断言，因此保持项目平台测试总数 374 不变。
+- `git diff --check`：通过，仅显示仓库既有 LF/CRLF 提示。
+
+## 已知非 Task 5 回归
+
+完整 `platform.units` 当前为 `374 cases, 9 failures`。失败全部位于
+`tests/platform/dungeon_runtime_tests.cpp`，表现为旧清房/开门 helper 在
+Task 4 密度怪群增加后未能在固定预算内完成：
+
+1. committed pending transition maps verified state and saved indicator
+2. committed passive save survives runtime restart
+3. committed route and refund survive runtime restart
+4. passive pre publish failure keeps old tree and retryable runtime
+5. indeterminate passive save faults runtime
+6. passive pending rejects door and descent requests
+7. pre publish not committed maps to retryable error
+8. indeterminate maps to faulted runtime and blocks selection
+9. single slot corruption recovers and subsequent saves alternate
+
+这些失败在 Task 5 仅有纯相机 API 时已出现；Task 5 diff 未修改 dungeon、
+runtime 或上述测试文件。按任务边界未在本提交跨范围修改它们，也不声明整套
+`platform.units` 全绿。
+
+## 范围
+
+未修改 HUD 布局/文本、密度公式、会话词条、存档格式、战斗数值或房间地面
+网格表现；后者仍留给 Task 6。
+
+---
+
 # Stage 11-D Task 5 报告
 
 ## 状态

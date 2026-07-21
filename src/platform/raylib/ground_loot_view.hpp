@@ -10,6 +10,8 @@
 
 namespace arpg::platform {
 
+struct CombatCameraView;
+
 inline constexpr std::size_t kGroundLootTextCapacity = 64U;
 inline constexpr float kGroundLootSafetyInset = 12.0F;
 
@@ -47,6 +49,13 @@ struct GroundLootView final {
 [[nodiscard]] bool ground_loot_visible(
     const dungeon::GroundItemSnapshot& item,
     settings::LootFilterMode mode) noexcept;
+
+[[nodiscard]] GroundLootView build_ground_loot_view(
+    const dungeon::DungeonSnapshot& snapshot,
+    settings::LootFilterMode mode,
+    CombatCameraView view,
+    float width,
+    float height) noexcept;
 
 [[nodiscard]] GroundLootView build_ground_loot_view(
     const dungeon::DungeonSnapshot& snapshot,

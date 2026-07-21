@@ -3,6 +3,7 @@
 #include "active_skill_renderer.hpp"
 #include "active_skill_view.hpp"
 #include "combat_feedback.hpp"
+#include "combat_view_math.hpp"
 #include "death_overlay_renderer.hpp"
 #include "debug_overlay_renderer.hpp"
 #include "dungeon_view_math.hpp"
@@ -42,6 +43,13 @@ struct CombatRenderPlan final {
     std::array<CombatRenderStage, 4> stages{};
     std::size_t stage_count{};
 };
+
+[[nodiscard]] CombatRenderPlan make_combat_render_plan(
+    const dungeon::DungeonSnapshot& snapshot,
+    settings::LootFilterMode mode,
+    CombatCameraView view,
+    float width,
+    float height) noexcept;
 
 [[nodiscard]] CombatRenderPlan make_combat_render_plan(
     const dungeon::DungeonSnapshot& snapshot,
@@ -114,10 +122,13 @@ private:
     void draw_room(
         const dungeon::DungeonSnapshot& current,
         const GroundLootView& ground_loot,
-        const MaterialLootView& material_loot) const noexcept;
+        const MaterialLootView& material_loot,
+        CombatCameraView view) const noexcept;
     void draw_actors(
         const dungeon::DungeonSnapshot& previous,
         const dungeon::DungeonSnapshot& current,
+        CombatCameraView view,
+        combat::Vec3 interpolated_player,
         float interpolation_alpha,
         bool draw_debug,
         const CombatFeedback& feedback) const noexcept;
@@ -129,6 +140,7 @@ private:
         int line_step) const noexcept;
     void draw_debug_world_volumes(
         const combat::CombatSnapshot& snapshot,
+        CombatCameraView view,
         float width,
         float height) const noexcept;
     combat::CombatEvent last_event_{};

@@ -83,7 +83,8 @@ bool material_is_emphasized(items::MaterialId id) noexcept {
 }
 
 MaterialLootView build_material_loot_view(
-    const dungeon::DungeonSnapshot& snapshot, float width, float height) noexcept {
+    const dungeon::DungeonSnapshot& snapshot, CombatCameraView camera,
+    float width, float height) noexcept {
     MaterialLootView view{};
     const std::size_t source_count = (std::min)(
         static_cast<std::size_t>(snapshot.ground_material_count),
@@ -101,7 +102,7 @@ MaterialLootView build_material_loot_view(
             continue;
         }
         const ScreenProjection projection = project_combat_position(
-            material.position, width, height);
+            material.position, camera, width, height);
         MaterialLootLabel label{};
         label.ordinal = material.ordinal;
         label.anchor_x = projection.x;
@@ -118,6 +119,14 @@ MaterialLootView build_material_loot_view(
         insert_label(view, label);
     }
     return view;
+}
+
+MaterialLootView build_material_loot_view(
+    const dungeon::DungeonSnapshot& snapshot,
+    float width,
+    float height) noexcept {
+    return build_material_loot_view(snapshot,
+        make_combat_camera_view({}, width, height), width, height);
 }
 
 void MaterialPickupFeedbackState::update(float frame_seconds,

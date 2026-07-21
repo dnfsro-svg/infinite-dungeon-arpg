@@ -16,6 +16,12 @@ struct ScreenProjection final {
     float scale{};
 };
 
+struct CombatCameraView final {
+    combat::Vec3 center{};
+    float visible_width{24.0F};
+    float visible_depth{11.0F};
+};
+
 struct ActorDrawItem final {
     combat::Vec3 position{};
     std::uint8_t index{};
@@ -73,6 +79,17 @@ struct AffixOutline final {
     std::uint8_t alpha{255U};
 };
 
+[[nodiscard]] CombatCameraView make_combat_camera_view(
+    combat::Vec3 interpolated_player,
+    float width,
+    float height) noexcept;
+
+[[nodiscard]] ScreenProjection project_combat_position(
+    combat::Vec3 position,
+    CombatCameraView view,
+    float width,
+    float height) noexcept;
+
 [[nodiscard]] ScreenProjection project_combat_position(
     combat::Vec3 position,
     float width,
@@ -111,6 +128,16 @@ void sort_actor_draw_items(
 [[nodiscard]] Rgba8 hazard_color(combat::HazardKind kind) noexcept;
 [[nodiscard]] ScreenProjection project_projectile_position(
     const combat::ProjectileSnapshot& projectile,
+    CombatCameraView view,
+    float width,
+    float height) noexcept;
+[[nodiscard]] ScreenProjection project_projectile_position(
+    const combat::ProjectileSnapshot& projectile,
+    float width,
+    float height) noexcept;
+[[nodiscard]] ScreenProjection project_hazard_center(
+    const combat::HazardSnapshot& hazard,
+    CombatCameraView view,
     float width,
     float height) noexcept;
 [[nodiscard]] ScreenProjection project_hazard_center(

@@ -12,11 +12,14 @@ namespace arpg::platform {
 CombatRenderPlan make_combat_render_plan(
     const dungeon::DungeonSnapshot& snapshot,
     settings::LootFilterMode mode,
+    CombatCameraView view,
     float width,
     float height) noexcept {
     CombatRenderPlan plan{};
-    plan.ground_loot = build_ground_loot_view(snapshot, mode, width, height);
-    plan.material_loot = build_material_loot_view(snapshot, width, height);
+    plan.ground_loot = build_ground_loot_view(
+        snapshot, mode, view, width, height);
+    plan.material_loot = build_material_loot_view(
+        snapshot, view, width, height);
     plan.stages = {{
         CombatRenderStage::room,
         CombatRenderStage::actors,
@@ -25,6 +28,15 @@ CombatRenderPlan make_combat_render_plan(
     }};
     plan.stage_count = plan.stages.size();
     return plan;
+}
+
+CombatRenderPlan make_combat_render_plan(
+    const dungeon::DungeonSnapshot& snapshot,
+    settings::LootFilterMode mode,
+    float width,
+    float height) noexcept {
+    return make_combat_render_plan(snapshot, mode,
+        make_combat_camera_view({}, width, height), width, height);
 }
 
 std::optional<std::size_t> hud_presented_frame_index(
@@ -193,9 +205,28 @@ GroundLootView CombatRenderer::draw(
     bool audio_ready) noexcept {
     transition_ = transition_after_room_phase(transition_, current.phase);
 
+    const float alpha = std::clamp(interpolation_alpha, 0.0F, 1.0F);
+    combat::Vec3 interpolated_player{};
+    if (current.combat.has_value()) {
+        const combat::Vec3 current_position = current.combat->player.position;
+        const combat::Vec3 previous_position = can_interpolate_room(previous, current)
+            ? previous.combat->player.position : current_position;
+        interpolated_player = {
+            previous_position.x
+                + (current_position.x - previous_position.x) * alpha,
+            previous_position.y
+                + (current_position.y - previous_position.y) * alpha,
+            previous_position.z
+                + (current_position.z - previous_position.z) * alpha,
+        };
+    }
+    const float width = static_cast<float>(GetScreenWidth());
+    const float height = static_cast<float>(GetScreenHeight());
+    const CombatCameraView camera = make_combat_camera_view(
+        interpolated_player, width, height);
+
     const CombatRenderPlan render_plan = make_combat_render_plan(current,
-        loot_filter_mode_, static_cast<float>(GetScreenWidth()),
-        static_cast<float>(GetScreenHeight()));
+        loot_filter_mode_, camera, width, height);
 
     const CameraOffset camera_offset = feedback.camera_offset();
     Camera2D world_camera{};
@@ -211,17 +242,16 @@ GroundLootView CombatRenderer::draw(
         }
         switch (stage) {
         case CombatRenderStage::room:
-            draw_room(current, render_plan.ground_loot, render_plan.material_loot);
+            draw_room(current, render_plan.ground_loot,
+                render_plan.material_loot, camera);
             break;
         case CombatRenderStage::actors:
-            draw_actors(previous, current,
-                std::clamp(interpolation_alpha, 0.0F, 1.0F),
+            draw_actors(previous, current, camera, interpolated_player, alpha,
                 draw_debug, feedback);
             if (current.combat.has_value()) {
                 active_skill_renderer_.draw_world(*current.combat,
                     has_last_event_ ? &last_event_ : nullptr,
-                    static_cast<float>(GetScreenWidth()),
-                    static_cast<float>(GetScreenHeight()));
+                    camera, width, height);
             }
             break;
         case CombatRenderStage::ground_loot_labels:

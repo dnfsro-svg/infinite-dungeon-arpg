@@ -51,6 +51,9 @@ private:
 [[nodiscard]] std::string_view material_label(items::MaterialId) noexcept;
 [[nodiscard]] bool material_is_emphasized(items::MaterialId) noexcept;
 [[nodiscard]] MaterialLootView build_material_loot_view(
+    const dungeon::DungeonSnapshot&, CombatCameraView view,
+    float width, float height) noexcept;
+[[nodiscard]] MaterialLootView build_material_loot_view(
     const dungeon::DungeonSnapshot&, float width, float height) noexcept;
 
 }  // namespace arpg::platform

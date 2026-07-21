@@ -96,7 +96,7 @@ void draw_outlined_text(const char* text, int x, int y, int font_size,
 }
 
 void draw_effects(const CombatFeedback& feedback, const MaterialPack& material_pack,
-    float width, float height, bool foreground) noexcept {
+    CombatCameraView view, float width, float height, bool foreground) noexcept {
     for (const VisualEffect& effect : feedback.effects()) {
         if (!effect.active) continue;
         const bool is_foreground = effect.kind == VisualEffectKind::spark
@@ -106,7 +106,8 @@ void draw_effects(const CombatFeedback& feedback, const MaterialPack& material_p
         const float progress = effect.lifetime_seconds <= 0.0F ? 1.0F
             : std::clamp(effect.age_seconds / effect.lifetime_seconds, 0.0F, 1.0F);
         const float opacity = 1.0F - progress;
-        const ScreenProjection projected = project_combat_position(effect.position, width, height);
+        const ScreenProjection projected = project_combat_position(
+            effect.position, view, width, height);
         const MaterialSpriteId sprite = effect_sprite(effect.kind);
         if (sprite != MaterialSpriteId::missing
             && material_pack.draw(sprite, {projected.x, projected.y}, false,
@@ -152,12 +153,14 @@ void draw_effects(const CombatFeedback& feedback, const MaterialPack& material_p
     }
 }
 
-void draw_hazards(const CombatSnapshot& snapshot, float width, float height) noexcept {
+void draw_hazards(const CombatSnapshot& snapshot, CombatCameraView view,
+    float width, float height) noexcept {
     for (const HazardSnapshot& hazard : snapshot.hazards) {
         if (!uses_generic_hazard_pass(hazard)) continue;
         const HazardVisualMode mode = hazard_visual_mode(hazard);
         if (mode == HazardVisualMode::hidden) continue;
-        const ScreenProjection projected = project_hazard_center(hazard, width, height);
+        const ScreenProjection projected = project_hazard_center(
+            hazard, view, width, height);
         const float radius = std::max(9.0F, hazard.radius * 58.0F) * projected.scale;
         const Color color = to_color(hazard_color(hazard.kind));
         const Color draw_color = mode == HazardVisualMode::telegraph
@@ -172,11 +175,13 @@ void draw_hazards(const CombatSnapshot& snapshot, float width, float height) noe
 }
 
 void draw_projectiles(const CombatSnapshot& snapshot, const MaterialPack& material_pack,
-    float width, float height, dungeon::DungeonElement ecology) noexcept {
+    CombatCameraView view, float width, float height,
+    dungeon::DungeonElement ecology) noexcept {
     const Color color = to_color(monster_ecology_color(ecology));
     for (const ProjectileSnapshot& projectile : snapshot.projectiles) {
         if (!projectile.active) continue;
-        const ScreenProjection projected = project_projectile_position(projectile, width, height);
+        const ScreenProjection projected = project_projectile_position(
+            projectile, view, width, height);
         const float radius = std::max(3.0F, projectile.radius * 22.0F) * projected.scale;
         if (material_pack.draw(select_element_effect(ecology),
                 {projected.x, projected.y}, false, 0.30F * projected.scale)) {
@@ -189,10 +194,12 @@ void draw_projectiles(const CombatSnapshot& snapshot, const MaterialPack& materi
 }
 
 void draw_monster_warning(const MonsterSnapshot& monster, Vec3 position,
-    dungeon::DungeonElement ecology, float width, float height) noexcept {
+    dungeon::DungeonElement ecology, CombatCameraView view,
+    float width, float height) noexcept {
     const MonsterVisual visual = monster_visual(monster.id, monster.ai_phase, ecology);
     if (visual.warning_mode == MonsterWarningMode::none) return;
-    const ScreenProjection projected = project_combat_position(position, width, height);
+    const ScreenProjection projected = project_combat_position(
+        position, view, width, height);
     const Color warning = to_color(visual.warning);
     const float size = 34.0F * projected.scale;
     const float opacity = visual.warning_mode == MonsterWarningMode::active
@@ -209,13 +216,15 @@ void draw_monster_warning(const MonsterSnapshot& monster, Vec3 position,
             28, warning, 2);
     }
     if (visual.shape == MonsterShapeId::charger || visual.shape == MonsterShapeId::dasher) {
-        const ScreenProjection target = project_combat_position(monster.attack_target_position, width, height);
+        const ScreenProjection target = project_combat_position(
+            monster.attack_target_position, view, width, height);
         DrawLineEx({projected.x, projected.ground_y - 18.0F * projected.scale},
             {target.x, target.ground_y - 18.0F * target.scale},
             visual.warning_mode == MonsterWarningMode::active ? 5.0F : 2.0F, warning); return;
     }
     if (visual.shape == MonsterShapeId::hazard_caster) {
-        const ScreenProjection target = project_combat_position(monster.attack_target_position, width, height);
+        const ScreenProjection target = project_combat_position(
+            monster.attack_target_position, view, width, height);
         DrawEllipseLines(static_cast<int>(target.x), static_cast<int>(target.ground_y),
             size * 1.5F, size * 0.55F, warning); return;
     }
@@ -223,9 +232,10 @@ void draw_monster_warning(const MonsterSnapshot& monster, Vec3 position,
 }
 
 void draw_blink_affix_warning(const MonsterSnapshot& monster, Vec3 position,
-    float width, float height) noexcept {
+    CombatCameraView view, float width, float height) noexcept {
     if (!blink_affix_warning_visible(monster)) return;
-    const ScreenProjection projected = project_combat_position(position, width, height);
+    const ScreenProjection projected = project_combat_position(
+        position, view, width, height);
     const Color warning{255, 86, 214, 235};
     const float actor_radius = blink_affix_warning_actor_radius(monster) * projected.scale;
     const float ground_radius = blink_affix_warning_ground_radius(monster) * projected.scale;
@@ -267,13 +277,14 @@ void draw_player_geometry(const ScreenProjection& projected) noexcept {
 }
 
 void draw_player_hit_direction(const CombatFeedback& feedback,
-    Vec3 player_position, float width, float height) noexcept {
+    Vec3 player_position, CombatCameraView view,
+    float width, float height) noexcept {
     const float seconds = feedback.player_hit_indicator_seconds();
     if (seconds <= 0.0F) return;
     const ScreenProjection player = project_combat_position(
-        player_position, width, height);
+        player_position, view, width, height);
     const ScreenProjection source = project_combat_position(
-        feedback.player_hit_source(), width, height);
+        feedback.player_hit_source(), view, width, height);
     float direction_x = source.x - player.x;
     float direction_y = source.ground_y - player.ground_y;
     const float length = std::sqrt(direction_x * direction_x
@@ -295,9 +306,11 @@ void draw_player_hit_direction(const CombatFeedback& feedback,
 }
 
 void draw_monster_presentation(const MonsterSnapshot& monster, Vec3 position,
-    dungeon::DungeonElement ecology, float width, float height,
+    dungeon::DungeonElement ecology, CombatCameraView view,
+    float width, float height,
     std::uint64_t tick, std::size_t label_lane) noexcept {
-    const ScreenProjection projected = project_combat_position(position, width, height);
+    const ScreenProjection projected = project_combat_position(
+        position, view, width, height);
     const MonsterVisual visual = monster_visual(monster.id, monster.ai_phase, ecology);
     const MonsterLabelTextStyle text_style = monster_label_text_style(projected.scale);
     const float scale = projected.scale;
@@ -346,10 +359,12 @@ void draw_monster_presentation(const MonsterSnapshot& monster, Vec3 position,
 }
 
 void draw_monster_silhouette(const MonsterSnapshot& monster, Vec3 position,
-    dungeon::DungeonElement ecology, float width, float height,
+    dungeon::DungeonElement ecology, CombatCameraView view,
+    float width, float height,
     const CombatFeedback& feedback, std::size_t monster_index,
     std::uint64_t tick, std::size_t label_lane) noexcept {
-    const ScreenProjection projected = project_combat_position(position, width, height);
+    const ScreenProjection projected = project_combat_position(
+        position, view, width, height);
     const MonsterVisual visual = monster_visual(monster.id, monster.ai_phase, ecology);
     Color body = to_color(visual.body);
     if (feedback.target_flash_seconds(monster_index) > 0.0F) body = Color{255, 249, 220, 255};
@@ -387,7 +402,7 @@ void draw_monster_silhouette(const MonsterSnapshot& monster, Vec3 position,
         DrawCircleLines(static_cast<int>(x + 25.0F * scale), static_cast<int>(y - 88.0F * scale), 8.0F * scale, accent); break;
     }
 
-    draw_monster_presentation(monster, position, ecology, width, height,
+    draw_monster_presentation(monster, position, ecology, view, width, height,
         tick, label_lane);
 }
 
@@ -408,7 +423,8 @@ MonsterBarVisualPlan make_monster_bar_visual_plan(
 }
 
 void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
-    const dungeon::DungeonSnapshot& current, float alpha, bool draw_debug,
+    const dungeon::DungeonSnapshot& current, CombatCameraView view,
+    combat::Vec3 interpolated_player, float alpha, bool draw_debug,
     const CombatFeedback& feedback) const noexcept {
     if (!current.combat.has_value()) return;
     const float width = static_cast<float>(GetScreenWidth());
@@ -418,7 +434,7 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
         ? *previous.combat : current_combat;
     std::array<RenderActor, kMonsterCapacity + 1> draw_items{};
     std::size_t draw_count = 0;
-    draw_items[draw_count++] = {current_combat.player.position, 0U, true};
+    draw_items[draw_count++] = {interpolated_player, 0U, true};
     for (std::size_t index = 0; index < current_combat.monsters.size(); ++index) {
         const MonsterSnapshot& monster = current_combat.monsters[index];
         if (!monster_visible(monster)) continue;
@@ -427,22 +443,26 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
         if (monster.id == previous_monster.id && monster.generation == previous_monster.generation
             && monster_visible(previous_monster)) position = interpolate(previous_monster.position, monster.position, alpha);
         draw_items[draw_count++] = {position, static_cast<std::uint8_t>(index), false};
-        draw_monster_warning(monster, position, current.ecology, width, height);
-        draw_blink_affix_warning(monster, position, width, height);
+        draw_monster_warning(monster, position, current.ecology,
+            view, width, height);
+        draw_blink_affix_warning(monster, position, view, width, height);
     }
     sort_render_actors(draw_items, draw_count);
-    draw_hazards(current_combat, width, height);
-    draw_effects(feedback, material_pack_, width, height, false);
-    draw_projectiles(current_combat, material_pack_, width, height, current.ecology);
+    draw_hazards(current_combat, view, width, height);
+    draw_effects(feedback, material_pack_, view, width, height, false);
+    draw_projectiles(current_combat, material_pack_, view,
+        width, height, current.ecology);
     for (std::size_t index = 0; index < draw_count; ++index) {
         const RenderActor& item = draw_items[index];
-        const ScreenProjection ground = project_combat_position({item.position.x, item.position.y, 0.0F}, width, height);
+        const ScreenProjection ground = project_combat_position(
+            {item.position.x, item.position.y, 0.0F}, view, width, height);
         const float shadow_width = (item.player ? 48.0F : 54.0F) * ground.scale;
         DrawEllipse(static_cast<int>(ground.x), static_cast<int>(ground.ground_y + 3.0F), shadow_width, 10.0F * ground.scale, Color{3, 5, 8, 125});
     }
     for (std::size_t index = 0; index < draw_count; ++index) {
         const RenderActor& item = draw_items[index];
-        const ScreenProjection projected = project_combat_position(item.position, width, height);
+        const ScreenProjection projected = project_combat_position(
+            item.position, view, width, height);
         if (item.player) {
             MaterialSpriteId sprite = select_player_sprite(
                 current_combat.player.state, current_combat.player.active_attack);
@@ -455,7 +475,8 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
                     current_combat.player.facing, true, projected)) {
                 draw_player_geometry(projected);
             }
-            draw_player_hit_direction(feedback, item.position, width, height);
+            draw_player_hit_direction(feedback, item.position,
+                view, width, height);
         } else {
             const MonsterSnapshot& monster = current_combat.monsters[item.monster_index];
             const MaterialSpriteId sprite = select_monster_sprite(monster.id,
@@ -468,16 +489,19 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
             if (draw_material_actor(material_pack_, sprite, monster.facing, false,
                     projected, feedback.target_flash_seconds(item.monster_index))) {
                 draw_monster_presentation(monster, item.position, current.ecology,
-                    width, height, current_combat.tick, item.monster_index);
+                    view, width, height, current_combat.tick, item.monster_index);
             } else {
                 draw_monster_silhouette(monster, item.position, current.ecology,
-                    width, height, feedback, item.monster_index, current_combat.tick,
+                    view, width, height, feedback, item.monster_index,
+                    current_combat.tick,
                     item.monster_index);
             }
         }
     }
-    draw_effects(feedback, material_pack_, width, height, true);
-    if (draw_debug) draw_debug_world_volumes(current_combat, width, height);
+    draw_effects(feedback, material_pack_, view, width, height, true);
+    if (draw_debug) {
+        draw_debug_world_volumes(current_combat, view, width, height);
+    }
 }
 
 }  // namespace arpg::platform
