@@ -9,6 +9,11 @@
 namespace arpg::dungeon {
 namespace {
 
+// Temporary API migration values shared by snapshot legality diagnostics.
+// Stage 19 Task 4 replaces them with the session's density-derived count.
+constexpr std::uint8_t kTemporaryNormalEncounterCount = 12U;
+constexpr std::uint8_t kTemporaryAbyssEncounterCount = 18U;
+
 bool equipped(const items::EquipmentState& equipment,
     std::uint64_t item_id) noexcept {
     for (const std::uint64_t equipped_id : equipment.equipped_ids) {
@@ -162,14 +167,18 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
         result.combat.emplace(combat_->snapshot());
     }
     result.encounter.total_budget = encounter_plan_.total_budget;
-    if (stable_state_.current_room.is_abyss) {
-        const auto legality = abyss_encounter_legality_config(rules_.encounter);
-        result.encounter.plan_valid = legality.has_value()
-            && encounter_plan_legal(encounter_plan_, *legality);
-    } else {
-        result.encounter.plan_valid = encounter_plan_legal(
-            encounter_plan_, rules_.encounter);
-    }
+    const auto& room = stable_state_.current_room;
+    const EncounterBuildRequest request{
+        room.seed,
+        room.depth,
+        room.ecology,
+        room.entry,
+        room.has_hole,
+        room.is_abyss ? kTemporaryAbyssEncounterCount
+                      : kTemporaryNormalEncounterCount,
+    };
+    result.encounter.plan_valid = encounter_plan_legal(
+        encounter_plan_, request, rules_.encounter);
     if (wave_index_ < encounter_plan_.wave_count) {
         const auto& wave = encounter_plan_.waves[wave_index_];
         result.encounter.current_wave_budget = wave.spent_budget;

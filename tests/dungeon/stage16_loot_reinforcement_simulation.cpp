@@ -108,9 +108,12 @@ std::optional<std::uint64_t> frozen_existing_stream_fingerprint(
         const auto abyss = dungeon::derive_abyss_ground_item(
             room.state.current_room.seed, arpg::abyss::AbyssDanger::high,
             75U, 0U, 0U);
-        const auto encounter = dungeon::build_encounter_plan(
+        const dungeon::EncounterBuildRequest request{
             room.state.current_room.seed, room.state.current_room.depth,
-            room.state.current_room.ecology, dungeon::DungeonRules{}.encounter);
+            room.state.current_room.ecology, room.state.current_room.entry,
+            room.state.current_room.has_hole, 12U};
+        const auto encounter = dungeon::build_encounter_plan(
+            request, dungeon::DungeonRules{}.encounter);
         if (room.fault != dungeon::DungeonFault::none || encounter.fault
                 != dungeon::DungeonFault::none || !equipment || !abyss) {
             return std::nullopt;

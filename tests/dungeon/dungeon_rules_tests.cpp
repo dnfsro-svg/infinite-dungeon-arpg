@@ -11,8 +11,10 @@ namespace {
 
 using arpg::dungeon::DungeonFault;
 using arpg::dungeon::DungeonRules;
+using arpg::dungeon::EncounterDirectorConfig;
 using arpg::dungeon::compute_ecology_weights;
 using arpg::dungeon::element_for_exit;
+using arpg::dungeon::validate_encounter_director_config;
 using arpg::dungeon::validate_rules;
 namespace checkpoint = arpg::dungeon::checkpoint;
 using checkpoint::DungeonElement;
@@ -88,12 +90,36 @@ arpg::test::Failure invalid_weights_leave_outputs_zeroed() noexcept {
     return {};
 }
 
+arpg::test::Failure count_era_encounter_config_is_checked() noexcept {
+    EncounterDirectorConfig config{};
+    ARPG_REQUIRE(validate_encounter_director_config(config)
+        == DungeonFault::none);
+    config.matching_ecology_weight = 0U;
+    ARPG_REQUIRE(validate_encounter_director_config(config)
+        == DungeonFault::invalid_rules);
+    config = {};
+    config.off_ecology_weight = 0U;
+    ARPG_REQUIRE(validate_encounter_director_config(config)
+        == DungeonFault::invalid_rules);
+    config = {};
+    config.high_priority_limit = 97U;
+    ARPG_REQUIRE(validate_encounter_director_config(config)
+        == DungeonFault::invalid_rules);
+    config = {};
+    config.ranged_limit = 97U;
+    ARPG_REQUIRE(validate_encounter_director_config(config)
+        == DungeonFault::invalid_rules);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"exit directions map to elements", &exit_directions_map_to_elements},
     {"default rules are valid", &default_rules_are_valid},
     {"default biases produce checked weights", &default_biases_produce_checked_weights},
     {"threshold boundaries are checked", &threshold_boundaries_are_checked},
     {"invalid weights leave outputs zeroed", &invalid_weights_leave_outputs_zeroed},
+    {"count era encounter config is checked",
+        &count_era_encounter_config_is_checked},
 };
 
 }  // namespace

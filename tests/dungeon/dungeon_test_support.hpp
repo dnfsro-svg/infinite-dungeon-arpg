@@ -527,6 +527,7 @@ inline const std::array<dungeon::GroundItem,
 inline bool same_encounter_plan(const dungeon::RoomEncounterPlan& left,
     const dungeon::RoomEncounterPlan& right) noexcept {
     if (left.wave_count != right.wave_count
+            || left.initial_monster_count != right.initial_monster_count
             || left.total_budget != right.total_budget) return false;
     for (std::size_t wave = 0; wave < left.wave_count; ++wave) {
         const auto& a = left.waves[wave];

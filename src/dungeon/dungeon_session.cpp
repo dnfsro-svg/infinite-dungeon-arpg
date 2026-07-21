@@ -26,6 +26,10 @@ namespace arpg::dungeon {
 namespace {
 
 constexpr std::uint16_t kWaveDelayTicks = 45U;
+// Temporary API migration values. Stage 19 Task 4 replaces these with the
+// deterministic room-density roll without persisting either value.
+constexpr std::uint8_t kTemporaryNormalEncounterCount = 12U;
+constexpr std::uint8_t kTemporaryAbyssEncounterCount = 18U;
 constexpr std::uint64_t kPlayerEvasionSeedDomain = 0x45564153494F4E31ULL;
 constexpr std::uint64_t kDropChanceDomain = 0x44524F505F43484EULL;
 constexpr std::uint64_t kDropSlotDomain = 0x44524F505F534C54ULL;
@@ -790,11 +794,16 @@ void DungeonSession::attempt_abyss_reward_materialization() noexcept {
 }
 
 void DungeonSession::construct_normal_room() noexcept {
-    const EncounterPlanResult plan = build_encounter_plan(
+    const EncounterBuildRequest request{
         stable_state_.current_room.seed,
         stable_state_.current_room.depth,
         stable_state_.current_room.ecology,
-        rules_.encounter);
+        stable_state_.current_room.entry,
+        stable_state_.current_room.has_hole,
+        kTemporaryNormalEncounterCount,
+    };
+    const EncounterPlanResult plan = build_encounter_plan(
+        request, rules_.encounter);
     if (plan.fault != DungeonFault::none || plan.plan.wave_count == 0U) {
         enter_fault(plan.fault == DungeonFault::none
             ? DungeonFault::invalid_rules : plan.fault);
@@ -865,11 +874,16 @@ bool DungeonSession::prepare_abyss_start() noexcept {
         return false;
     }
 
-    EncounterPlanResult built = build_abyss_encounter_plan(
+    const EncounterBuildRequest request{
         stable_state_.current_room.seed,
         stable_state_.current_room.depth,
         stable_state_.current_room.ecology,
-        rules_.encounter);
+        stable_state_.current_room.entry,
+        stable_state_.current_room.has_hole,
+        kTemporaryAbyssEncounterCount,
+    };
+    EncounterPlanResult built = build_abyss_encounter_plan(
+        request, rules_.encounter);
     if (built.fault != DungeonFault::none || built.plan.wave_count == 0U) {
         enter_fault(DungeonFault::abyss_generation_failed);
         return false;

@@ -51,11 +51,16 @@ std::optional<SelectedRun> find_run(
                     && next.state.abyss.rule == required_rule
                     && (!require_hole || next.state.current_room.has_hole)) {
                 if (require_all_melee) {
-                    const auto plan = arpg::dungeon::build_abyss_encounter_plan(
+                    const arpg::dungeon::EncounterBuildRequest request{
                         next.state.current_room.seed,
                         next.state.current_room.depth,
                         next.state.current_room.ecology,
-                        rules.encounter);
+                        next.state.current_room.entry,
+                        next.state.current_room.has_hole,
+                        18U,
+                    };
+                    const auto plan = arpg::dungeon::build_abyss_encounter_plan(
+                        request, rules.encounter);
                     bool all_melee = plan.fault
                         == arpg::dungeon::DungeonFault::none;
                     for (std::size_t wave = 0U;

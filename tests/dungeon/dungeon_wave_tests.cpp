@@ -16,11 +16,8 @@ using arpg::dungeon::DungeonSession;
 using arpg::dungeon::ExitDirection;
 using arpg::dungeon::RoomPhase;
 
-DungeonRules two_wave_rules() noexcept {
-    DungeonRules rules;
-    rules.encounter.base_budget = 16U;
-    rules.encounter.max_budget = 16U;
-    return rules;
+DungeonRules single_batch_rules() noexcept {
+    return DungeonRules{};
 }
 
 DungeonRunState state_for_seed(std::uint64_t seed, const DungeonRules& rules) noexcept {
@@ -59,58 +56,43 @@ bool clear_current_wave(DungeonSession& session) noexcept {
     return false;
 }
 
-bool tick_wave_delay(DungeonSession& session) noexcept {
-    for (int tick = 0; tick < 64; ++tick) {
-        session.tick({});
-        if (session.snapshot().phase == RoomPhase::combat
-                && session.snapshot().wave_index == 1U) {
-            return true;
-        }
-    }
-    return false;
-}
-
-arpg::test::Failure two_wave_room_keeps_exits_closed_until_last_wave() noexcept {
-    const DungeonRules rules = two_wave_rules();
+arpg::test::Failure single_batch_clears_without_wave_delay() noexcept {
+    const DungeonRules rules = single_batch_rules();
     DungeonSession session{rules, state_for_seed(0x2A11CEU, rules)};
 
+    const auto initial = session.snapshot();
+    ARPG_REQUIRE(initial.wave_count == 1U);
+    ARPG_REQUIRE(initial.wave_index == 0U);
+    ARPG_REQUIRE(initial.remaining_targets == 12U);
+    ARPG_REQUIRE(initial.encounter.current_wave_spawn_count == 12U);
+    ARPG_REQUIRE(all_exits_closed(initial));
     ARPG_REQUIRE(clear_current_wave(session));
-    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::wave_delay);
-    ARPG_REQUIRE(session.snapshot().wave_count == 2U);
-    ARPG_REQUIRE(session.snapshot().wave_index == 0U);
-    ARPG_REQUIRE(session.snapshot().wave_delay_ticks > 0U);
-    ARPG_REQUIRE(all_exits_closed(session.snapshot()));
-    ARPG_REQUIRE(!session.request_descent(true));
-    ARPG_REQUIRE(!session.queue_action(arpg::combat::Action::light));
-
-    ARPG_REQUIRE(tick_wave_delay(session));
-    ARPG_REQUIRE(session.snapshot().wave_index == 1U);
-    ARPG_REQUIRE(session.snapshot().remaining_targets > 0U);
-    ARPG_REQUIRE(clear_current_wave(session));
-    session.tick({});
+    if (session.snapshot().phase == RoomPhase::cleared) session.tick({});
     ARPG_REQUIRE(session.snapshot().phase == RoomPhase::awaiting_exit);
+    ARPG_REQUIRE(session.snapshot().wave_delay_ticks == 0U);
     for (const bool open : session.snapshot().exits_open) {
         ARPG_REQUIRE(open);
     }
     return {};
 }
 
-arpg::test::Failure sealed_hole_stays_closed_through_wave_delay() noexcept {
-    const DungeonRules rules = two_wave_rules();
+arpg::test::Failure sealed_hole_stays_closed_until_single_batch_clear() noexcept {
+    const DungeonRules rules = single_batch_rules();
     DungeonRunState state = state_for_seed(0xA8A55U, rules);
     state.current_room.has_hole = true;
     DungeonSession session{rules, state};
 
-    ARPG_REQUIRE(clear_current_wave(session));
-    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::wave_delay);
     ARPG_REQUIRE(session.snapshot().has_hole);
     ARPG_REQUIRE(!session.request_descent(true));
     ARPG_REQUIRE(all_exits_closed(session.snapshot()));
+    ARPG_REQUIRE(clear_current_wave(session));
+    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::cleared
+        || session.snapshot().phase == RoomPhase::awaiting_exit);
     return {};
 }
 
 arpg::test::Failure reset_and_reload_rebuild_the_same_encounter_plan() noexcept {
-    const DungeonRules rules = two_wave_rules();
+    const DungeonRules rules = single_batch_rules();
     const DungeonRunState state = state_for_seed(0xC0FFEEU, rules);
     DungeonSession session{rules, state};
     const auto plan = arpg::test::encounter_plan(session);
@@ -143,7 +125,7 @@ arpg::test::Failure reset_and_reload_rebuild_the_same_encounter_plan() noexcept 
 }
 
 arpg::test::Failure legacy_abyss_flag_without_lifecycle_faults() noexcept {
-    DungeonRules rules = two_wave_rules();
+    DungeonRules rules = single_batch_rules();
     DungeonRunState abyss = state_for_seed(0xAB155U, rules);
     abyss.current_room.is_abyss = true;
     DungeonSession abyss_session{rules, abyss};
@@ -155,17 +137,15 @@ arpg::test::Failure legacy_abyss_flag_without_lifecycle_faults() noexcept {
     return {};
 }
 
-arpg::test::Failure four_chaser_fixture_reaches_awaiting_exit() noexcept {
+arpg::test::Failure exact_twelve_fixture_reaches_awaiting_exit() noexcept {
     DungeonRules rules;
     DungeonSession session{rules, state_for_seed(0xA11CE5EEDULL, rules)};
     const auto initial = session.snapshot();
     ARPG_REQUIRE(initial.combat.has_value());
-    ARPG_REQUIRE(initial.remaining_targets == 4U);
-    for (const auto& monster : initial.combat->monsters) {
-        if (monster.active) {
-            ARPG_REQUIRE(monster.id == arpg::combat::MonsterId::chaos_chaser);
-        }
-    }
+    ARPG_REQUIRE(initial.remaining_targets == 12U);
+    ARPG_REQUIRE(initial.combat->monster_count == 12U);
+    ARPG_REQUIRE(initial.combat->monsters[0].id
+        == arpg::combat::MonsterId::chaos_chaser);
 
     arpg::test::EventSummary events;
     ARPG_REQUIRE(arpg::test::drive_until_cleared(session, events, 4096));
@@ -180,7 +160,7 @@ arpg::test::Failure shooter_and_chasers_fixture_reaches_awaiting_exit() noexcept
     DungeonSession session;
     const auto initial = session.snapshot();
     ARPG_REQUIRE(initial.combat.has_value());
-    ARPG_REQUIRE(initial.remaining_targets == 3U);
+    ARPG_REQUIRE(initial.remaining_targets == 12U);
     bool has_shooter = false;
     for (const auto& monster : initial.combat->monsters) {
         has_shooter = has_shooter
@@ -198,65 +178,54 @@ arpg::test::Failure shooter_and_chasers_fixture_reaches_awaiting_exit() noexcept
     return {};
 }
 
-arpg::test::Failure forced_defeat_advances_real_wave_lifecycle() noexcept {
-    const DungeonRules rules = two_wave_rules();
+arpg::test::Failure forced_defeat_skips_wave_delay_and_starts_clear() noexcept {
+    const DungeonRules rules = single_batch_rules();
     DungeonSession session{rules, state_for_seed(0x2A11CEU, rules)};
     session.tick({});
     arpg::test::force_defeat_current_wave(session);
     session.tick({});
-    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::wave_delay);
+    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::committing);
     ARPG_REQUIRE(session.snapshot().remaining_targets == 0U);
     ARPG_REQUIRE(all_exits_closed(session.snapshot()));
+    ARPG_REQUIRE(session.snapshot().wave_delay_ticks == 0U);
     return {};
 }
 
-arpg::test::Failure wave_delay_freezes_combat_and_preserves_health_until_wave_one() noexcept {
-    const DungeonRules rules = two_wave_rules();
+arpg::test::Failure single_batch_clear_preserves_health_through_commit() noexcept {
+    const DungeonRules rules = single_batch_rules();
     DungeonSession session{rules, state_for_seed(0x2A11CEU, rules)};
     session.tick({});
     arpg::test::damage_current_player(session, 100);
     arpg::test::force_defeat_current_wave(session);
     session.tick({});
-    const auto delay = session.snapshot();
-    ARPG_REQUIRE(delay.phase == RoomPhase::wave_delay);
-    const int hp = delay.combat->player.hp;
-    const auto player = delay.combat->player;
-    const auto combat_tick = delay.combat->tick;
-    for (int tick = 0; tick < 44; ++tick) {
-        session.tick({});
-        const auto frozen = session.snapshot();
-        ARPG_REQUIRE(frozen.phase == RoomPhase::wave_delay);
-        ARPG_REQUIRE(frozen.combat->tick == combat_tick);
-        ARPG_REQUIRE(frozen.combat->player.hp == hp);
-        ARPG_REQUIRE(frozen.combat->player.state == player.state);
-        ARPG_REQUIRE(all_exits_closed(frozen));
-    }
-    session.tick({});
-    const auto wave_one = session.snapshot();
-    ARPG_REQUIRE(wave_one.phase == RoomPhase::combat);
-    ARPG_REQUIRE(wave_one.wave_index == 1U);
-    ARPG_REQUIRE(wave_one.combat->player.hp == hp);
+    const auto pending_clear = session.snapshot();
+    ARPG_REQUIRE(pending_clear.phase == RoomPhase::committing);
+    const int hp = pending_clear.combat->player.hp;
+    ARPG_REQUIRE(arpg::test::commit_pending(session));
+    const auto cleared = session.snapshot();
+    ARPG_REQUIRE(cleared.phase == RoomPhase::cleared);
+    ARPG_REQUIRE(cleared.combat->player.hp == hp);
+    ARPG_REQUIRE(cleared.wave_count == 1U);
+    ARPG_REQUIRE(cleared.wave_index == 0U);
     return {};
 }
 
-arpg::test::Failure hole_stays_rejected_for_every_delay_tick() noexcept {
-    const DungeonRules rules = two_wave_rules();
+arpg::test::Failure hole_stays_rejected_until_single_batch_commit() noexcept {
+    const DungeonRules rules = single_batch_rules();
     auto state = state_for_seed(0x2A11CEU, rules);
     state.current_room.has_hole = true;
     DungeonSession session{rules, state};
     session.tick({});
+    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::combat);
+    ARPG_REQUIRE(!session.request_descent(true));
+    ARPG_REQUIRE(!session.pending_transition().has_value());
     arpg::test::force_defeat_current_wave(session);
     session.tick({});
-    for (int tick = 0; tick < 44; ++tick) {
-        const auto snapshot = session.snapshot();
-        ARPG_REQUIRE(snapshot.phase == RoomPhase::wave_delay);
-        ARPG_REQUIRE(snapshot.has_hole);
-        ARPG_REQUIRE(!session.request_descent(true));
-        ARPG_REQUIRE(!session.pending_transition().has_value());
-        session.tick({});
-    }
-    session.tick({});
-    ARPG_REQUIRE(session.snapshot().wave_index == 1U);
+    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::committing);
+    ARPG_REQUIRE(!session.request_descent(true));
+    ARPG_REQUIRE(arpg::test::commit_pending(session));
+    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::cleared);
+    ARPG_REQUIRE(session.snapshot().wave_index == 0U);
     return {};
 }
 
@@ -305,15 +274,15 @@ arpg::test::Failure rollback_keeps_health_but_committed_room_resets_it() noexcep
 }
 
 constexpr arpg::test::TestCase kCases[] = {
-    {"two wave room keeps exits closed until last wave", &two_wave_room_keeps_exits_closed_until_last_wave},
-    {"sealed hole stays closed through wave delay", &sealed_hole_stays_closed_through_wave_delay},
+    {"single batch clears without wave delay", &single_batch_clears_without_wave_delay},
+    {"sealed hole stays closed until single batch clear", &sealed_hole_stays_closed_until_single_batch_clear},
     {"reset and reload rebuild the same encounter plan", &reset_and_reload_rebuild_the_same_encounter_plan},
     {"legacy abyss flag without lifecycle faults", &legacy_abyss_flag_without_lifecycle_faults},
-    {"four chaser fixture reaches awaiting exit", &four_chaser_fixture_reaches_awaiting_exit},
+    {"exact twelve fixture reaches awaiting exit", &exact_twelve_fixture_reaches_awaiting_exit},
     {"shooter and chasers fixture reaches awaiting exit", &shooter_and_chasers_fixture_reaches_awaiting_exit},
-    {"forced defeat advances real wave lifecycle", &forced_defeat_advances_real_wave_lifecycle},
-    {"wave delay freezes combat and preserves health", &wave_delay_freezes_combat_and_preserves_health_until_wave_one},
-    {"hole stays rejected for every delay tick", &hole_stays_rejected_for_every_delay_tick},
+    {"forced defeat skips wave delay and starts clear", &forced_defeat_skips_wave_delay_and_starts_clear},
+    {"single batch clear preserves health through commit", &single_batch_clear_preserves_health_through_commit},
+    {"hole stays rejected until single batch commit", &hole_stays_rejected_until_single_batch_commit},
     {"rollback keeps health but committed room resets it", &rollback_keeps_health_but_committed_room_resets_it},
 };
 

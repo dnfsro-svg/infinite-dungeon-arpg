@@ -66,6 +66,7 @@ bool bit_is_set(const std::array<std::uint64_t, 3>& bits,
 bool same_plan_and_affixes(const RoomEncounterPlan& left,
     const RoomEncounterPlan& right) noexcept {
     if (left.wave_count != right.wave_count
+            || left.initial_monster_count != right.initial_monster_count
             || left.total_budget != right.total_budget) return false;
     for (std::uint8_t wave = 0U; wave < left.wave_count; ++wave) {
         const auto& a = left.waves[wave];
@@ -127,9 +128,12 @@ std::optional<DungeonRunState> deep40_state_with_affix(
     state.current_room.depth = 40U;
     state.current_room.floor_room_index = 40U;
     state.current_room.seed = arpg::dungeon::derive_initial_room_seed(root, 39U);
-    const auto plan = arpg::dungeon::build_encounter_plan(
+    const arpg::dungeon::EncounterBuildRequest request{
         state.current_room.seed, state.current_room.depth,
-        state.current_room.ecology, rules.encounter);
+        state.current_room.ecology, state.current_room.entry,
+        state.current_room.has_hole, 12U};
+    const auto plan = arpg::dungeon::build_encounter_plan(
+        request, rules.encounter);
     return plan.fault == arpg::dungeon::DungeonFault::none && has_affix(plan.plan)
         ? std::optional<DungeonRunState>{state} : std::nullopt;
 }

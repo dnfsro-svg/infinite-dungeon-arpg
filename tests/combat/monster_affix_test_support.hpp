@@ -43,6 +43,7 @@ namespace arpg::dungeon::test_support {
 
 [[nodiscard]] bool encounter_plan_legal_with_affix_catalog(
     const RoomEncounterPlan& plan,
+    const EncounterBuildRequest& request,
     const EncounterDirectorConfig& config,
     const combat::MonsterAffixCatalog& catalog) noexcept;
 

@@ -1,13 +1,12 @@
 #include "dungeon/encounter_director.hpp"
 
-#include "abyss/abyss_rules.hpp"
 #include "combat/monster_catalog.hpp"
 #include "combat/monster_affix_catalog.hpp"
 #include "combat/monster_affix_generation.hpp"
 #include "combat/room_bounds.hpp"
 #include "core/deterministic_rng.hpp"
+#include "dungeon/room_combat_template.hpp"
 
-#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -15,11 +14,12 @@
 
 namespace arpg::dungeon::detail {
 
-[[nodiscard]] std::uint8_t compute_encounter_budget(
-    std::uint64_t depth,
-    const EncounterDirectorConfig& config) noexcept;
+[[nodiscard]] bool checked_accumulate_threat_cost(
+    std::uint8_t& total,
+    std::uint8_t threat_cost) noexcept;
 [[nodiscard]] bool encounter_plan_legal_with_affix_catalog(
     const RoomEncounterPlan& plan,
+    const EncounterBuildRequest& request,
     const EncounterDirectorConfig& config,
     const combat::MonsterAffixCatalog& catalog) noexcept;
 
@@ -46,6 +46,22 @@ constexpr float kRoomMinX = combat::room_bounds::min_x;
 constexpr float kRoomMaxX = combat::room_bounds::max_x;
 constexpr float kRoomMinY = combat::room_bounds::min_y;
 constexpr float kRoomMaxY = combat::room_bounds::max_y;
+constexpr float kPlayerExclusionRadius = 4.0F;
+constexpr float kNavigationExclusionRadius = 3.0F;
+constexpr std::uint64_t kPositionAttempts = 32U;
+constexpr std::uint64_t kPositionXMillisteps = 48001U;
+constexpr std::uint64_t kPositionYMillisteps = 22001U;
+constexpr std::uint64_t kFallbackGridWidth = 49U;
+constexpr std::uint64_t kFallbackGridHeight = 23U;
+constexpr std::uint64_t kFallbackGridSize =
+    kFallbackGridWidth * kFallbackGridHeight;
+constexpr combat::Vec3 kHoleCenter{0.0F, 3.5F, 0.0F};
+constexpr std::array<combat::Vec3, 4> kDoorCenters{{
+    {kRoomMinX, 0.0F, 0.0F},
+    {kRoomMaxX, 0.0F, 0.0F},
+    {0.0F, kRoomMinY, 0.0F},
+    {0.0F, kRoomMaxY, 0.0F},
+}};
 
 struct TagCounts final {
     std::uint16_t high_priority{};
@@ -63,22 +79,17 @@ struct Candidate final {
     return static_cast<std::uint8_t>(ecology) <= 3U;
 }
 
-[[nodiscard]] std::uint8_t priority_limit(
-    std::uint8_t encounter_budget_value,
-    const EncounterDirectorConfig& config) noexcept {
-    return encounter_budget_value > config.two_wave_threshold
-        ? config.high_budget_priority_limit
-        : config.normal_high_priority_limit;
+[[nodiscard]] bool valid_entry(checkpoint::EntrySide entry) noexcept {
+    return static_cast<std::uint8_t>(entry)
+        <= static_cast<std::uint8_t>(checkpoint::EntrySide::right);
 }
 
 [[nodiscard]] bool fits_tag_limits(
     const combat::MonsterDefinition& definition,
     const TagCounts& counts,
-    std::uint8_t encounter_budget_value,
     const EncounterDirectorConfig& config) noexcept {
     if (combat::has_tag(definition, combat::MonsterTag::high_priority)
-            && counts.high_priority >= priority_limit(
-                encounter_budget_value, config)) {
+            && counts.high_priority >= config.high_priority_limit) {
         return false;
     }
     if (combat::has_tag(definition, combat::MonsterTag::ranged)
@@ -105,93 +116,112 @@ void add_tag_counts(
     counts.ground_hazard += combat::has_tag(definition, combat::MonsterTag::ground_hazard);
 }
 
-[[nodiscard]] combat::Vec3 next_spawn_position(
-    core::DeterministicRng& rng) noexcept {
-    const std::uint64_t raw_x = rng.next_bounded(16001U).value_or(0U);
-    const std::uint64_t raw_y = rng.next_bounded(7001U).value_or(0U);
-    const float x = kRoomMinX
-        + static_cast<float>(raw_x) / 1000.0F
-            * combat::room_bounds::width / 16.0F;
-    const float y = kRoomMinY
-        + static_cast<float>(raw_y) / 1000.0F
-            * combat::room_bounds::depth / 7.0F;
-    return {
-        std::clamp(x, kRoomMinX, kRoomMaxX),
-        std::clamp(y, kRoomMinY, kRoomMaxY),
-        0.0F,
-    };
+[[nodiscard]] float squared_distance(
+    combat::Vec3 left,
+    combat::Vec3 right) noexcept {
+    const float x = left.x - right.x;
+    const float y = left.y - right.y;
+    return x * x + y * y;
+}
+
+[[nodiscard]] bool legal_spawn_position(
+    combat::Vec3 position,
+    combat::Vec3 player_spawn,
+    bool has_hole) noexcept {
+    if (position.x < kRoomMinX || position.x > kRoomMaxX
+            || position.y < kRoomMinY || position.y > kRoomMaxY
+            || position.z != 0.0F
+            || squared_distance(position, player_spawn)
+                <= kPlayerExclusionRadius * kPlayerExclusionRadius) {
+        return false;
+    }
+    for (const combat::Vec3 door : kDoorCenters) {
+        if (squared_distance(position, door)
+                <= kNavigationExclusionRadius * kNavigationExclusionRadius) {
+            return false;
+        }
+    }
+    return !has_hole || squared_distance(position, kHoleCenter)
+        > kNavigationExclusionRadius * kNavigationExclusionRadius;
+}
+
+[[nodiscard]] bool next_spawn_position(
+    core::DeterministicRng& rng,
+    combat::Vec3 player_spawn,
+    bool has_hole,
+    combat::Vec3& position) noexcept {
+    for (std::uint64_t attempt = 0U; attempt < kPositionAttempts; ++attempt) {
+        const auto raw_x = rng.next_bounded(kPositionXMillisteps);
+        const auto raw_y = rng.next_bounded(kPositionYMillisteps);
+        if (!raw_x.has_value() || !raw_y.has_value()) return false;
+        const combat::Vec3 candidate{
+            kRoomMinX + static_cast<float>(*raw_x) / 1000.0F,
+            kRoomMinY + static_cast<float>(*raw_y) / 1000.0F,
+            0.0F,
+        };
+        if (legal_spawn_position(candidate, player_spawn, has_hole)) {
+            position = candidate;
+            return true;
+        }
+    }
+
+    const auto offset = rng.next_bounded(kFallbackGridSize);
+    if (!offset.has_value()) return false;
+    for (std::uint64_t scan = 0U; scan < kFallbackGridSize; ++scan) {
+        const std::uint64_t index = (*offset + scan) % kFallbackGridSize;
+        const combat::Vec3 candidate{
+            kRoomMinX + static_cast<float>(index % kFallbackGridWidth),
+            kRoomMinY + static_cast<float>(index / kFallbackGridWidth),
+            0.0F,
+        };
+        if (legal_spawn_position(candidate, player_spawn, has_hole)) {
+            position = candidate;
+            return true;
+        }
+    }
+    return false;
 }
 
 [[nodiscard]] bool append_spawn(
     combat::EncounterWave& wave,
-    combat::MonsterId id,
+    const combat::MonsterDefinition& definition,
+    combat::Vec3 player_spawn,
+    bool has_hole,
     core::DeterministicRng& position_rng) noexcept {
-    if (wave.spawn_count >= wave.spawns.size()) {
+    if (wave.spawn_count >= wave.spawns.size()) return false;
+    combat::Vec3 position{};
+    if (!next_spawn_position(
+            position_rng, player_spawn, has_hole, position)
+            || !detail::checked_accumulate_threat_cost(
+                wave.spent_budget, definition.threat_cost)) {
         return false;
     }
-    wave.spawns[wave.spawn_count++] = {id, next_spawn_position(position_rng)};
+    wave.spawns[wave.spawn_count++] = {definition.id, position};
     return true;
 }
 
-[[nodiscard]] bool append_cheapest_direct_target(
+[[nodiscard]] bool fill_wave(
     combat::EncounterWave& wave,
-    std::uint8_t wave_budget,
-    std::uint8_t encounter_budget_value,
-    TagCounts& counts,
-    const EncounterDirectorConfig& config,
-    core::DeterministicRng& position_rng) noexcept {
-    const combat::MonsterDefinition* best = nullptr;
-    for (std::uint8_t raw = 0U;
-         raw < static_cast<std::uint8_t>(combat::MonsterId::count); ++raw) {
-        const auto* definition = combat::monster_definition(
-            static_cast<combat::MonsterId>(raw));
-        if (definition == nullptr
-                || !combat::has_tag(*definition, combat::MonsterTag::direct_target)
-                || definition->threat_cost > wave_budget
-                || !fits_tag_limits(
-                    *definition, counts, encounter_budget_value, config)) {
-            continue;
-        }
-        if (best == nullptr || definition->threat_cost < best->threat_cost
-                || (definition->threat_cost == best->threat_cost
-                    && static_cast<std::uint8_t>(definition->id)
-                        < static_cast<std::uint8_t>(best->id))) {
-            best = definition;
-        }
-    }
-    if (best == nullptr || !append_spawn(wave, best->id, position_rng)) {
-        return false;
-    }
-    wave.spent_budget = best->threat_cost;
-    add_tag_counts(*best, counts);
-    return true;
-}
-
-void fill_wave(
-    combat::EncounterWave& wave,
-    std::uint8_t wave_budget,
-    std::uint8_t encounter_budget_value,
+    std::uint8_t target_count,
     checkpoint::DungeonElement ecology,
+    combat::Vec3 player_spawn,
+    bool has_hole,
     const EncounterDirectorConfig& config,
     core::DeterministicRng& selection_rng,
     core::DeterministicRng& position_rng) noexcept {
     TagCounts counts{};
-    if (!append_cheapest_direct_target(
-            wave, wave_budget, encounter_budget_value, counts, config,
-            position_rng)) {
-        const auto* fallback = combat::monster_definition(
-            combat::MonsterId::chaos_chaser);
-        if (fallback != nullptr && append_spawn(
-                wave, fallback->id, position_rng)) {
-            wave.spent_budget = fallback->threat_cost;
-            add_tag_counts(*fallback, counts);
-        }
+    const auto* fallback = combat::monster_definition(
+        combat::MonsterId::chaos_chaser);
+    if (fallback == nullptr
+            || !combat::has_tag(*fallback, combat::MonsterTag::direct_target)
+            || !fits_tag_limits(*fallback, counts, config)
+            || !append_spawn(
+                wave, *fallback, player_spawn, has_hole, position_rng)) {
+        return false;
     }
+    add_tag_counts(*fallback, counts);
 
-    while (wave.spent_budget < wave_budget
-            && wave.spawn_count < wave.spawns.size()) {
-        const std::uint16_t remaining = static_cast<std::uint16_t>(
-            wave_budget - wave.spent_budget);
+    while (wave.spawn_count < target_count) {
         std::array<Candidate, static_cast<std::size_t>(combat::MonsterId::count)>
             candidates{};
         std::size_t candidate_count = 0U;
@@ -200,9 +230,8 @@ void fill_wave(
              raw < static_cast<std::uint8_t>(combat::MonsterId::count); ++raw) {
             const auto id = static_cast<combat::MonsterId>(raw);
             const auto* definition = combat::monster_definition(id);
-            if (definition == nullptr || definition->threat_cost > remaining
-                    || !fits_tag_limits(
-                        *definition, counts, encounter_budget_value, config)) {
+            if (definition == nullptr
+                    || !fits_tag_limits(*definition, counts, config)) {
                 continue;
             }
             const std::uint64_t weight = definition->preferred_ecology
@@ -216,32 +245,25 @@ void fill_wave(
             candidates[candidate_count++] = {id, weight};
             total_weight += weight;
         }
-        if (candidate_count == 0U || total_weight == 0U) {
-            break;
-        }
-        const std::uint64_t roll = selection_rng.next_bounded(total_weight)
-            .value_or(0U);
-        std::uint64_t cursor = roll;
+        if (candidate_count == 0U || total_weight == 0U) return false;
+        const auto roll = selection_rng.next_bounded(total_weight);
+        if (!roll.has_value()) return false;
+        std::uint64_t cursor = *roll;
         std::size_t selected = 0U;
         for (; selected < candidate_count; ++selected) {
-            if (cursor < candidates[selected].weight) {
-                break;
-            }
+            if (cursor < candidates[selected].weight) break;
             cursor -= candidates[selected].weight;
         }
-        if (selected >= candidate_count) {
-            selected = candidate_count - 1U;
-        }
+        if (selected >= candidate_count) return false;
         const auto* definition = combat::monster_definition(
             candidates[selected].id);
         if (definition == nullptr || !append_spawn(
-                wave, definition->id, position_rng)) {
-            break;
+                wave, *definition, player_spawn, has_hole, position_rng)) {
+            return false;
         }
-        wave.spent_budget = static_cast<std::uint8_t>(
-            wave.spent_budget + definition->threat_cost);
         add_tag_counts(*definition, counts);
     }
+    return wave.spawn_count == target_count;
 }
 
 [[nodiscard]] bool affix_set_legal_for_monster(
@@ -326,40 +348,42 @@ void fill_wave(
     return true;
 }
 
-[[nodiscard]] EncounterPlanResult build_encounter_plan_with_budget(
-    std::uint64_t room_seed,
-    std::uint64_t depth,
-    checkpoint::DungeonElement ecology,
-    const EncounterDirectorConfig& director_config,
-    const EncounterDirectorConfig& legality_config,
-    std::uint8_t budget) noexcept {
+[[nodiscard]] bool valid_request(
+    const EncounterBuildRequest& request) noexcept {
+    return request.depth != 0U && valid_ecology(request.ecology)
+        && valid_entry(request.entry)
+        && request.target_monster_count >= 12U
+        && request.target_monster_count <= 45U;
+}
+
+[[nodiscard]] EncounterPlanResult build_encounter_plan_impl(
+    const EncounterBuildRequest& request,
+    const EncounterDirectorConfig& config) noexcept {
     EncounterPlanResult result{};
-    if (budget == 0U) {
+    const auto combat_config = make_combat_lab_config(request.entry, 1U);
+    if (validate_encounter_director_config(config) != DungeonFault::none
+            || !valid_request(request) || !combat_config.has_value()) {
         result.fault = DungeonFault::invalid_rules;
         return result;
     }
-    result.plan.total_budget = budget;
-    result.plan.wave_count = budget > director_config.two_wave_threshold
-        ? 2U : 1U;
-    const std::uint8_t first_wave_budget =
-        result.plan.wave_count == 2U
-            ? static_cast<std::uint8_t>((budget + 1U) / 2U)
-            : budget;
-    const std::uint8_t second_wave_budget =
-        static_cast<std::uint8_t>(budget - first_wave_budget);
+    result.plan.wave_count = 1U;
+    result.plan.initial_monster_count = request.target_monster_count;
     auto selection_rng = core::DeterministicRng::derive_stream(
-        room_seed, kEncounterDirectorDomain);
+        request.room_seed, kEncounterDirectorDomain);
     auto position_rng = core::DeterministicRng::derive_stream(
-        room_seed, kEncounterPositionDomain);
-    fill_wave(result.plan.waves[0], first_wave_budget, budget, ecology,
-        director_config, selection_rng, position_rng);
-    if (result.plan.wave_count == 2U) {
-        fill_wave(result.plan.waves[1], second_wave_budget, budget, ecology,
-            director_config, selection_rng, position_rng);
+        request.room_seed, kEncounterPositionDomain);
+    if (!fill_wave(result.plan.waves[0], request.target_monster_count,
+            request.ecology, combat_config->player_spawn, request.has_hole,
+            config, selection_rng, position_rng)) {
+        result.fault = DungeonFault::invalid_rules;
+        result.plan = {};
+        return result;
     }
-    if (!apply_generated_affixes(result.plan, room_seed, depth)
+    result.plan.total_budget = result.plan.waves[0].spent_budget;
+    if (!apply_generated_affixes(
+            result.plan, request.room_seed, request.depth)
             || !detail::encounter_plan_legal_with_affix_catalog(result.plan,
-                legality_config, combat::monster_affix_catalog())) {
+                request, config, combat::monster_affix_catalog())) {
         result.fault = DungeonFault::invalid_rules;
         result.plan = {};
     }
@@ -368,27 +392,23 @@ void fill_wave(
 
 }  // namespace
 
-std::uint8_t encounter_budget(
-    std::uint64_t depth,
-    const EncounterDirectorConfig& config) noexcept {
-    return detail::compute_encounter_budget(depth, config);
-}
-
 bool detail::encounter_plan_legal_with_affix_catalog(
     const RoomEncounterPlan& plan,
+    const EncounterBuildRequest& request,
     const EncounterDirectorConfig& config,
     const combat::MonsterAffixCatalog& catalog) noexcept {
+    const auto combat_config = make_combat_lab_config(request.entry, 1U);
     if (!combat::detail::monster_affix_catalog_valid(catalog)
             || validate_encounter_director_config(config) != DungeonFault::none
-            || plan.wave_count == 0U
-            || plan.wave_count > plan.waves.size()
-            || plan.total_budget == 0U
-            || plan.total_budget > config.max_budget) {
-        return false;
-    }
-    const std::uint8_t expected_wave_count =
-        plan.total_budget > config.two_wave_threshold ? 2U : 1U;
-    if (plan.wave_count != expected_wave_count) {
+            || !valid_request(request) || !combat_config.has_value()
+            || plan.wave_count != 1U
+            || plan.initial_monster_count < 12U
+            || plan.initial_monster_count > 45U
+            || plan.initial_monster_count != request.target_monster_count
+            || plan.initial_monster_count != plan.waves[0].spawn_count
+            || plan.waves[1].spawn_count != 0U
+            || plan.waves[1].spent_budget != 0U
+            || plan.total_budget == 0U || plan.total_budget > 180U) {
         return false;
     }
     std::uint16_t total_spent = 0U;
@@ -410,7 +430,9 @@ bool detail::encounter_plan_legal_with_affix_catalog(
                     || spawn.position.x > kRoomMaxX
                     || spawn.position.y < kRoomMinY
                     || spawn.position.y > kRoomMaxY
-                    || spawn.position.z != 0.0F) {
+                    || spawn.position.z != 0.0F
+                    || !legal_spawn_position(spawn.position,
+                        combat_config->player_spawn, request.has_hole)) {
                 return false;
             }
             spent = static_cast<std::uint16_t>(
@@ -425,18 +447,8 @@ bool detail::encounter_plan_legal_with_affix_catalog(
             }
             add_tag_counts(*definition, counts);
         }
-        const std::uint8_t first_wave_budget =
-            plan.wave_count == 2U
-                ? static_cast<std::uint8_t>((plan.total_budget + 1U) / 2U)
-                : plan.total_budget;
-        const std::uint8_t wave_budget = wave_index == 0U
-            ? first_wave_budget
-            : static_cast<std::uint8_t>(
-                plan.total_budget - first_wave_budget);
         if (!has_direct_target || spent != wave.spent_budget
-                || spent > wave_budget
-                || counts.high_priority > priority_limit(
-                    plan.total_budget, config)
+                || counts.high_priority > config.high_priority_limit
                 || counts.ranged > config.ranged_limit
                 || counts.support > config.support_limit
                 || counts.ground_hazard > config.ground_hazard_limit) {
@@ -444,71 +456,32 @@ bool detail::encounter_plan_legal_with_affix_catalog(
         }
         total_spent = static_cast<std::uint16_t>(total_spent + spent);
     }
-    return total_spent <= plan.total_budget;
+    return total_spent == plan.total_budget;
 }
 
 bool encounter_plan_legal(
     const RoomEncounterPlan& plan,
+    const EncounterBuildRequest& request,
     const EncounterDirectorConfig& config) noexcept {
-    return detail::encounter_plan_legal_with_affix_catalog(plan, config,
-        combat::monster_affix_catalog());
+    return detail::encounter_plan_legal_with_affix_catalog(
+        plan, request, config, combat::monster_affix_catalog());
 }
 
 EncounterPlanResult build_encounter_plan(
-    std::uint64_t room_seed,
-    std::uint64_t depth,
-    checkpoint::DungeonElement ecology,
+    const EncounterBuildRequest& request,
     const EncounterDirectorConfig& config) noexcept {
-    if (validate_encounter_director_config(config) != DungeonFault::none
-            || !valid_ecology(ecology)) {
-        return {DungeonFault::invalid_rules, {}};
-    }
-    return build_encounter_plan_with_budget(room_seed, depth, ecology, config,
-        config, encounter_budget(depth, config));
-}
-
-std::optional<EncounterDirectorConfig> abyss_encounter_legality_config(
-    const EncounterDirectorConfig& config) noexcept {
-    if (validate_encounter_director_config(config) != DungeonFault::none) {
-        return std::nullopt;
-    }
-    const std::uint16_t abyss_max = abyss::abyss_encounter_budget_wide(
-        config.max_budget);
-    if (abyss_max > (std::numeric_limits<std::uint8_t>::max)()) {
-        return std::nullopt;
-    }
-    EncounterDirectorConfig legality = config;
-    legality.max_budget = static_cast<std::uint8_t>(abyss_max);
-    if (validate_encounter_director_config(legality) != DungeonFault::none) {
-        return std::nullopt;
-    }
-    return legality;
+    return build_encounter_plan_impl(request, config);
 }
 
 EncounterPlanResult build_abyss_encounter_plan(
-    std::uint64_t room_seed,
-    std::uint64_t depth,
-    checkpoint::DungeonElement ecology,
+    const EncounterBuildRequest& request,
     const EncounterDirectorConfig& config) noexcept {
-    if (validate_encounter_director_config(config) != DungeonFault::none
-            || !valid_ecology(ecology)) {
-        return {DungeonFault::invalid_rules, {}};
-    }
-    const std::uint16_t abyss_budget = abyss::abyss_encounter_budget_wide(
-        encounter_budget(depth, config));
-    const auto legality_config = abyss_encounter_legality_config(config);
-    if (abyss_budget == 0U
-            || abyss_budget > (std::numeric_limits<std::uint8_t>::max)()
-            || !legality_config.has_value()) {
-        return {DungeonFault::invalid_rules, {}};
-    }
-    EncounterPlanResult result = build_encounter_plan_with_budget(room_seed,
-        depth, ecology, config, *legality_config,
-        static_cast<std::uint8_t>(abyss_budget));
+    EncounterPlanResult result = build_encounter_plan_impl(request, config);
     if (result.fault != DungeonFault::none) return result;
-    if (!supplement_abyss_plan_affixes(result.plan, room_seed, depth)
+    if (!supplement_abyss_plan_affixes(
+            result.plan, request.room_seed, request.depth)
             || !detail::encounter_plan_legal_with_affix_catalog(result.plan,
-                *legality_config, combat::monster_affix_catalog())) {
+                request, config, combat::monster_affix_catalog())) {
         return {DungeonFault::invalid_rules, {}};
     }
     return result;
@@ -520,9 +493,11 @@ namespace arpg::dungeon::test_support {
 
 bool encounter_plan_legal_with_affix_catalog(
     const RoomEncounterPlan& plan,
+    const EncounterBuildRequest& request,
     const EncounterDirectorConfig& config,
     const combat::MonsterAffixCatalog& catalog) noexcept {
-    return detail::encounter_plan_legal_with_affix_catalog(plan, config, catalog);
+    return detail::encounter_plan_legal_with_affix_catalog(
+        plan, request, config, catalog);
 }
 
 }  // namespace arpg::dungeon::test_support

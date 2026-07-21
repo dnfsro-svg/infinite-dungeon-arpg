@@ -104,6 +104,7 @@ bool same_descriptor(const checkpoint::RoomDescriptor& lhs,
 bool same_encounter(const arpg::dungeon::RoomEncounterPlan& lhs,
     const arpg::dungeon::RoomEncounterPlan& rhs) noexcept {
     if (lhs.wave_count != rhs.wave_count
+            || lhs.initial_monster_count != rhs.initial_monster_count
             || lhs.total_budget != rhs.total_budget) return false;
     for (std::size_t wave = 0U; wave < lhs.wave_count; ++wave) {
         const auto& a = lhs.waves[wave];
@@ -159,6 +160,7 @@ void fold_room(LongTrace& trace, const RoomTrace& room) noexcept {
     trace.hash = fold(trace.hash, static_cast<std::uint8_t>(room.rule));
     trace.hash = fold(trace.hash, room.rules_version);
     trace.hash = fold(trace.hash, room.encounter.wave_count);
+    trace.hash = fold(trace.hash, room.encounter.initial_monster_count);
     trace.hash = fold(trace.hash, room.encounter.total_budget);
     for (std::size_t wave = 0U; wave < room.encounter.wave_count; ++wave) {
         const auto& entries = room.encounter.waves[wave];
@@ -376,13 +378,19 @@ bool generate_long_trace(LongTrace& trace, std::size_t restart_interval) noexcep
         room.rule = state.abyss.rule;
         room.rules_version = state.abyss.rules_version;
 
+        const arpg::dungeon::EncounterBuildRequest request{
+            state.current_room.seed,
+            state.current_room.depth,
+            state.current_room.ecology,
+            state.current_room.entry,
+            state.current_room.has_hole,
+            static_cast<std::uint8_t>(
+                state.current_room.is_abyss ? 18U : 12U),
+        };
         const auto encounter = state.current_room.is_abyss
             ? arpg::dungeon::build_abyss_encounter_plan(
-                state.current_room.seed, state.current_room.depth,
-                state.current_room.ecology, rules.encounter)
-            : arpg::dungeon::build_encounter_plan(
-                state.current_room.seed, state.current_room.depth,
-                state.current_room.ecology, rules.encounter);
+                request, rules.encounter)
+            : arpg::dungeon::build_encounter_plan(request, rules.encounter);
         if (encounter.fault != arpg::dungeon::DungeonFault::none) return false;
         room.encounter = encounter.plan;
 
@@ -534,7 +542,7 @@ arpg::test::Failure thousand_room_abyss_trace_matches_golden_and_reload() noexce
     constexpr std::array<std::uint32_t, 4> kGoldenHits{{9U, 11U, 9U, 7U}};
     ARPG_REQUIRE(first->door_trials == kGoldenTrials);
     ARPG_REQUIRE(first->door_hits == kGoldenHits);
-    ARPG_REQUIRE(first->hash == 0x05d554c69da3351bULL);
+    ARPG_REQUIRE(first->hash == 0xbe1ba6dc7d9c29a3ULL);
     return {};
 }
 

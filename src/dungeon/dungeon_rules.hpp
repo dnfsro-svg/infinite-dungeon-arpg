@@ -75,15 +75,9 @@ enum class DungeonFault : std::uint8_t {
 // Gray-box encounter tuning is intentionally centralized here so later
 // balancing changes do not alter the director's algorithm or RNG contract.
 struct EncounterDirectorConfig final {
-    std::uint8_t base_budget{8};
-    std::uint8_t depth_step{5};
-    std::uint8_t budget_per_step{1};
-    std::uint8_t max_budget{24};
-    std::uint8_t two_wave_threshold{12};
     std::uint8_t matching_ecology_weight{4};
     std::uint8_t off_ecology_weight{1};
-    std::uint8_t normal_high_priority_limit{1};
-    std::uint8_t high_budget_priority_limit{2};
+    std::uint8_t high_priority_limit{2};
     std::uint8_t ranged_limit{4};
     std::uint8_t support_limit{2};
     std::uint8_t ground_hazard_limit{3};

@@ -241,6 +241,6 @@ int main() {
             "stage 17 task 3 skill loadout transactions");
     }
 
-    return arpg::test::run_suites(suites, 291,
+    return arpg::test::run_suites(suites, 294,
         "stage 18 dungeon queries");
 }

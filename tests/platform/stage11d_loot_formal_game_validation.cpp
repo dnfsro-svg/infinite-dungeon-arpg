@@ -151,8 +151,16 @@ struct OrdinaryRoomScore final {
     if (state.current_room.is_abyss || state.current_room.depth != 1U) {
         return std::nullopt;
     }
-    const auto built = dungeon::build_encounter_plan(state.current_room.seed,
-        state.current_room.depth, state.current_room.ecology, rules.encounter);
+    const dungeon::EncounterBuildRequest request{
+        state.current_room.seed,
+        state.current_room.depth,
+        state.current_room.ecology,
+        state.current_room.entry,
+        state.current_room.has_hole,
+        12U,
+    };
+    const auto built = dungeon::build_encounter_plan(
+        request, rules.encounter);
     if (built.fault != dungeon::DungeonFault::none) return std::nullopt;
     bool normal = false;
     bool magic = false;
@@ -525,11 +533,16 @@ int main(int argc, char** argv) {
             << score->spawn_count << ','
             << score->base_threat << ','
             << static_cast<unsigned>(score->total_budget) << '\n';
-        const auto plan = dungeon::build_encounter_plan(
+        const dungeon::EncounterBuildRequest request{
             selected.ordinary.current_room.seed,
             selected.ordinary.current_room.depth,
             selected.ordinary.current_room.ecology,
-            dungeon::DungeonRules{}.encounter);
+            selected.ordinary.current_room.entry,
+            selected.ordinary.current_room.has_hole,
+            12U,
+        };
+        const auto plan = dungeon::build_encounter_plan(
+            request, dungeon::DungeonRules{}.encounter);
         for (std::size_t wave = 0U; wave < plan.plan.wave_count; ++wave) {
             for (std::size_t index = 0U;
                  index < plan.plan.waves[wave].spawn_count; ++index) {

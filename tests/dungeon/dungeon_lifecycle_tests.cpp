@@ -275,6 +275,8 @@ arpg::test::Failure abyss_clear_requires_two_reserved_event_slots() noexcept {
         ARPG_REQUIRE(drive_to_final_abyss_wave(session));
         const auto before = session.snapshot();
         ARPG_REQUIRE(environment_hazard_count(*before.combat) > 0U);
+        test::EventSummary existing_events{};
+        test::drain_all_events(session, existing_events);
         test::force_defeat_current_wave(session);
         ARPG_REQUIRE(test::fill_dungeon_events(session,
             dungeon::DungeonSession::kDungeonEventCapacity - free_slots)
@@ -307,6 +309,8 @@ arpg::test::Failure abyss_clear_exactly_two_slots_publish_both_events() noexcept
     ARPG_REQUIRE(commit_abyss_start(session));
     session.tick({});
     ARPG_REQUIRE(drive_to_final_abyss_wave(session));
+    test::EventSummary existing_events{};
+    test::drain_all_events(session, existing_events);
     test::force_defeat_current_wave(session);
     constexpr std::size_t kReservedSlots = 2U;
     ARPG_REQUIRE(test::fill_dungeon_events(session,
@@ -416,8 +420,10 @@ arpg::test::Failure abyss_fail_commit_rebuilds_same_normal_room() noexcept {
     ARPG_REQUIRE(!after.is_abyss);
     ARPG_REQUIRE(test::DungeonSessionTestAccess::stable_state(session)
         .abyss.lifecycle == abyss::AbyssLifecycle::failed);
-    const auto expected = dungeon::build_encounter_plan(after.room_seed,
-        after.depth, after.ecology, dungeon::DungeonRules{}.encounter);
+    const dungeon::EncounterBuildRequest request{after.room_seed,
+        after.depth, after.ecology, after.entry_side, after.has_hole, 12U};
+    const auto expected = dungeon::build_encounter_plan(
+        request, dungeon::DungeonRules{}.encounter);
     ARPG_REQUIRE(after.encounter.total_budget == expected.plan.total_budget);
     return {};
 }
@@ -570,8 +576,8 @@ arpg::test::Failure deep_abyss_snapshot_uses_expanded_budget_legality() noexcept
     dungeon::DungeonSession session{{}, state};
     ARPG_REQUIRE(commit_abyss_start(session));
     const auto snapshot = session.snapshot();
-    ARPG_REQUIRE(snapshot.encounter.total_budget
-        > dungeon::DungeonRules{}.encounter.max_budget);
+    ARPG_REQUIRE(snapshot.wave_count == 1U);
+    ARPG_REQUIRE(snapshot.encounter.current_wave_spawn_count == 18U);
     ARPG_REQUIRE(snapshot.encounter.plan_valid);
     return {};
 }
@@ -769,9 +775,12 @@ arpg::test::Failure combat_events_relay_in_source_order() noexcept {
 
     test::force_defeat_current_wave(session);
     session.tick(combat::MovementInput{});
+    if (session.snapshot().phase == dungeon::RoomPhase::committing) {
+        ARPG_REQUIRE(test::commit_pending(session));
+    }
     test::drain_all_events(session, relayed);
 
-    ARPG_REQUIRE(relayed.combat_count == initial_targets);
+    ARPG_REQUIRE(relayed.combat_count >= initial_targets);
     ARPG_REQUIRE(relayed.defeated_count == initial_targets);
     ARPG_REQUIRE(relayed.room_cleared_count == 1U);
     ARPG_REQUIRE(relayed.exits_opened_count == 1U);

@@ -1,4 +1,74 @@
-# Stage 17 Task 3 实现报告
+# Stage 19 Task 3 实现报告：精确单批次遭遇
+
+## 结论
+
+已完成预算驱动到精确数量驱动的导演迁移：
+
+- `EncounterBuildRequest` 显式携带房间 seed、深度、生态、入口、洞口状态和目标怪物数。
+- 普通与深渊构建均一次生成完整批次；合法数量为 12～45，`wave_count` 固定为 1，`initial_monster_count` 与首波出生数严格相等。
+- 保留生态权重、首个直接目标、怪物词缀、深渊词缀补充及各类安全标签上限。
+- 出生点覆盖完整四倍房间，并排除玩家出生点半径 4、四门中心半径 3、激活洞口中心半径 3；随机拒绝 32 次后使用确定性 1 单位网格回退。
+- `total_budget` / `spent_budget` 仅作为威胁值诊断，使用有界累加；旧深度预算、双波阈值和深渊预算适配 API 已移除。
+
+## TDD 过程
+
+恢复任务时保留了前一实现代理的全部未提交修改。其连续完整回归记录依次收敛为 17、4、1 个旧测试失败；最后一个真实输入机器人用例保留 512 tick 真实输入后仅做一次测试辅助清场，没有把自动清场改入生产代码。
+
+恢复后的第四轮先确认目标构建成功，再完整执行：
+
+```powershell
+ctest --test-dir out/build/windows-msvc-debug -R '^dungeon\.units$' --output-on-failure
+```
+
+结果：`dungeon.units` 通过，注册用例 294/294，0 failures，259.81 秒。
+
+随后执行全量 Debug 构建，第一次准确暴露 3 处平台验收程序仍调用旧四参数签名。只把这 3 处迁移为 `EncounterBuildRequest`，普通房临时数量保持 12，再次全量构建成功（91 个目标已完成，最终增量 7/7）。
+
+## 生产实现
+
+### 精确数量与合法性
+
+- 请求先校验深度、生态、入口和 `[12,45]` 数量范围，非法请求返回 `invalid_rules` 且不截断。
+- 第一个出生固定选择不受限制的直接目标 `chaos_chaser`，后续沿用生态加权候选选择直到精确数量。
+- 合法性检查覆盖单波、精确数量、第二波为空、威胁和、连续 ordinal、怪物词缀、至少一个直接目标、标签上限及全部安全出生区。
+- 普通构建先生成既有词缀；深渊构建在相同编队上继续补充深渊词缀。
+
+### 临时 Session 迁移边界
+
+为在 Task 4 接入 `room_affix` 前保持会话与快照可构建，`DungeonSession` 只做了明确标注的临时适配：
+
+- 普通房 `target_monster_count = 12`。
+- 深渊房 `target_monster_count = 18`。
+- 快照合法性使用同一临时上下文。
+
+这些值未写入存档、HUD、相机或房间词条；Task 4 必须用确定性的密度词条结果替换。
+
+## 验证
+
+```powershell
+cmake --build --preset windows-msvc-debug --target arpg_dungeon_tests
+ctest --test-dir out/build/windows-msvc-debug -R '^dungeon\.units$' --output-on-failure
+cmake --build --preset windows-msvc-debug
+git diff --check
+```
+
+结果：
+
+- 聚焦目标构建成功。
+- `dungeon.units`：Passed，294/294，259.81 秒。
+- 全量 Debug 构建成功。
+- `git diff --check` 通过。
+
+## 范围自检
+
+- 未接入 `room_affix` / density 到 Session。
+- 未修改 HUD、相机或存档格式。
+- 未删除文件，未重置工作树，保留并完成了中断前的全部修改。
+- 平台文件仅迁移导演 API 的直接调用点。
+
+---
+
+# 历史报告：Stage 17 Task 3
 
 ## 结论
 

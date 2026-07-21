@@ -103,9 +103,16 @@ std::optional<dungeon::DungeonRunState> prepared_state(
     for (std::uint64_t root = 1U; root <= 8192U; ++root) {
         const auto built = dungeon::make_initial_run_state(root, dungeon::DungeonRules{});
         if (built.fault != dungeon::DungeonFault::none) continue;
+        const dungeon::EncounterBuildRequest request{
+            built.state.current_room.seed,
+            built.state.current_room.depth,
+            built.state.current_room.ecology,
+            built.state.current_room.entry,
+            built.state.current_room.has_hole,
+            12U,
+        };
         const auto plan = dungeon::build_encounter_plan(
-            built.state.current_room.seed, built.state.current_room.depth,
-            built.state.current_room.ecology, dungeon::DungeonRules{}.encounter);
+            request, dungeon::DungeonRules{}.encounter);
         if (plan.fault != dungeon::DungeonFault::none) continue;
         if (plan.plan.wave_count == 0U || plan.plan.waves[0].spawn_count == 0U) {
             continue;
