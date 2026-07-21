@@ -2132,17 +2132,17 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 }
             }
             if (forward_actions) {
-                const std::array<bool, 3> accepted_actions =
+                const SubmittedFrameActions submitted_actions =
                     submit_frame_actions(*session, frame_input);
                 if (config.stage11b_validation
                         == Stage11BValidationScenario::rebound_attack) {
                     if (stage11b_validation_state.injected_frame == 28U) {
                         stage11b_validation_state.old_attack_checked = true;
                         stage11b_validation_state.old_attack_count +=
-                            accepted_actions[0] ? 1U : 0U;
+                            submitted_actions.combat[0] ? 1U : 0U;
                     } else if (stage11b_validation_state.injected_frame == 29U) {
                         stage11b_validation_state.new_attack_count +=
-                            accepted_actions[0] ? 1U : 0U;
+                            submitted_actions.combat[0] ? 1U : 0U;
                     }
                 }
             }

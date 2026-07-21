@@ -264,6 +264,20 @@ bool DungeonSession::queue_action(combat::Action action) noexcept {
         : false;
 }
 
+combat::SkillCastResult DungeonSession::request_active_skill_slot(
+    std::uint8_t slot) noexcept {
+    const std::size_t index = static_cast<std::size_t>(slot);
+    if (phase_ != RoomPhase::combat || !combat_.has_value()
+            || index >= skills::kActiveSkillSlotCount) {
+        return combat::SkillCastResult::none;
+    }
+    const skills::ActiveSkillId skill =
+        stable_state_.skill_loadout.slots[index].active;
+    return skill == skills::ActiveSkillId::none
+        ? combat::SkillCastResult::none
+        : combat_->request_active_skill(skill);
+}
+
 void DungeonSession::tick(
     combat::MovementInput movement,
     AutoPickupPolicy pickup_policy) noexcept {

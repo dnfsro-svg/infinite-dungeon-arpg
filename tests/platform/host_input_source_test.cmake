@@ -104,7 +104,7 @@ const bool forward_descent = passive_input_gate.forward_descent
     && death_gate.forward_gameplay
     && host_gate.forward_gameplay && !pause_blocks_gameplay;
 if (forward_actions) {
-    const std::array<bool, 3> accepted_actions =
+    const SubmittedFrameActions submitted_actions =
         submit_frame_actions(*session, frame_input);
 }
 if (forward_descent && frame_input.keys.e) {
@@ -285,7 +285,7 @@ function(physical_input_chain_valid SOURCE OUT_VARIABLE)
             OR NOT SOURCE MATCHES "const InventoryInputGate inventory_gate =${WS}inventory_input_gate${WS}\\(${WS}inventory\\.is_open${WS}\\(${WS}\\)${WS}\\|\\|${WS}inventory_toggled_this_frame${WS}\\)${WS};"
             OR NOT SUBMIT_ACTION_CALL_COUNT EQUAL 1
             OR NOT FORWARD_ACTIONS_SOURCE MATCHES "const bool forward_actions =${WS}passive_input_gate\\.forward_actions${WS}&&${WS}inventory_gate\\.forward_actions${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS};"
-            OR NOT CONTROLLED_SUBMIT_SOURCE MATCHES "if${WS}\\(${WS}forward_actions${WS}\\)${WS}\\{${WS}const${WS1}std::array<bool,${WS}3>${WS1}accepted_actions${WS}=${WS}submit_frame_actions${WS}\\(${WS}\\*session,${WS}frame_input${WS}\\)${WS};"
+            OR NOT CONTROLLED_SUBMIT_SOURCE MATCHES "if${WS}\\(${WS}forward_actions${WS}\\)${WS}\\{${WS}const${WS1}SubmittedFrameActions${WS1}submitted_actions${WS}=${WS}submit_frame_actions${WS}\\(${WS}\\*session,${WS}frame_input${WS}\\)${WS};"
             OR NOT FORWARD_DESCENT_ASSIGNMENT_COUNT EQUAL 1
             OR NOT FORWARD_DESCENT_SOURCE MATCHES "const bool forward_descent =${WS}passive_input_gate\\.forward_descent${WS}&&${WS}inventory_gate\\.forward_descent${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS};"
             OR NOT REQUEST_DESCENT_CALL_COUNT EQUAL 1
@@ -361,7 +361,7 @@ if(MAP_BEFORE_STAGE11C_STRUCTURE_VALID)
 endif()
 
 set(SUBMIT_DECLARATION [=[
-                const std::array<bool, 3> accepted_actions =
+                const SubmittedFrameActions submitted_actions =
                     submit_frame_actions(*session, frame_input);
 ]=])
 set(HOST_GATE_DECLARATION

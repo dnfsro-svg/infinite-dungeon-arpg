@@ -25,6 +25,7 @@ struct PhysicalKeySnapshot final {
     bool f1{};
     bool f12{};
     bool v{};
+    std::array<bool, skills::kActiveSkillSlotCount> active_skill_slots{};
     bool mouse_left{};
     bool mouse_right{};
     bool focus_lost{};
@@ -36,6 +37,7 @@ struct HostFrameInput final {
     FrameKeyState keys{};
     combat::MovementInput movement{};
     std::array<bool, 3> combat_actions{};
+    std::array<bool, skills::kActiveSkillSlotCount> active_skill_slots{};
     bool mouse_left_pressed{};
     bool mouse_right_pressed{};
     bool control_down{};
@@ -60,7 +62,13 @@ struct PhysicalKeySource final {
 [[nodiscard]] HostFrameInput map_host_frame_input(
     const settings::SettingsData& settings,
     const PhysicalKeySnapshot& snapshot) noexcept;
-[[nodiscard]] std::array<bool, 3> submit_frame_actions(
+struct SubmittedFrameActions final {
+    std::array<bool, 3> combat{};
+    std::array<combat::SkillCastResult,
+        skills::kActiveSkillSlotCount> skills{};
+};
+
+[[nodiscard]] SubmittedFrameActions submit_frame_actions(
     dungeon::DungeonSession& session,
     const HostFrameInput& input) noexcept;
 

@@ -91,6 +91,8 @@ public:
         DungeonRules rules,
         DungeonRunState stable_state) noexcept;
     [[nodiscard]] bool queue_action(combat::Action action) noexcept;
+    [[nodiscard]] combat::SkillCastResult request_active_skill_slot(
+        std::uint8_t slot) noexcept;
     void tick(
         combat::MovementInput movement,
         AutoPickupPolicy pickup_policy = {}) noexcept;

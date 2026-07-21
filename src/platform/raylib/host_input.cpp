@@ -108,6 +108,11 @@ PhysicalKeySnapshot sample_physical_keys(
     snapshot.f1 = source.pressed(source.context, KEY_F1);
     snapshot.f12 = source.pressed(source.context, KEY_F12);
     snapshot.v = snapshot.pressed[stable_index(settings::StableKey::v)];
+    for (std::size_t index = 0U;
+            index < snapshot.active_skill_slots.size(); ++index) {
+        snapshot.active_skill_slots[index] = source.pressed(
+            source.context, KEY_ONE + static_cast<int>(index));
+    }
     snapshot.mouse_left = source.mouse_left_pressed != nullptr
         && source.mouse_left_pressed(source.context);
     snapshot.mouse_right = source.mouse_right_pressed != nullptr
@@ -151,6 +156,10 @@ HostFrameInput map_host_frame_input(
             settings_data, snapshot, combat_actions[index]);
         input.keys.attack = input.keys.attack || input.combat_actions[index];
     }
+    input.active_skill_slots = snapshot.active_skill_slots;
+    for (bool requested : input.active_skill_slots) {
+        input.keys.attack = input.keys.attack || requested;
+    }
 
     input.keys.e = action_pressed(
         settings_data, snapshot, settings::SettingAction::interact);
@@ -177,7 +186,7 @@ HostFrameInput map_host_frame_input(
     return input;
 }
 
-std::array<bool, 3> submit_frame_actions(
+SubmittedFrameActions submit_frame_actions(
     dungeon::DungeonSession& session,
     const HostFrameInput& input) noexcept {
     constexpr std::array<combat::Action, 3> actions{{
@@ -185,13 +194,20 @@ std::array<bool, 3> submit_frame_actions(
         combat::Action::jump,
         combat::Action::launcher,
     }};
-    std::array<bool, actions.size()> accepted{};
+    SubmittedFrameActions submitted{};
+    submitted.skills.fill(combat::SkillCastResult::none);
     for (std::size_t index = 0U; index < actions.size(); ++index) {
         if (input.combat_actions[index]) {
-            accepted[index] = session.queue_action(actions[index]);
+            submitted.combat[index] = session.queue_action(actions[index]);
         }
     }
-    return accepted;
+    for (std::size_t slot = 0U; slot < input.active_skill_slots.size(); ++slot) {
+        if (!input.active_skill_slots[slot]) continue;
+        submitted.skills[slot] = session.request_active_skill_slot(
+            static_cast<std::uint8_t>(slot));
+        if (submitted.skills[slot] == combat::SkillCastResult::accepted) break;
+    }
+    return submitted;
 }
 
 }  // namespace arpg::platform

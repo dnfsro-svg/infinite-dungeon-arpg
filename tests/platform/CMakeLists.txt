@@ -3,6 +3,7 @@ if(TARGET arpg_raylib)
         ../core/allocation_probe.cpp
         platform_test_main.cpp
         host_input_tests.cpp
+        active_skill_input_tests.cpp
         audio_pack_tests.cpp
         audio_routing_tests.cpp
         audio_scene_tests.cpp
