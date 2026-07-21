@@ -20,7 +20,11 @@ arpg::test::Failure catalog_has_required_weights_and_ranges() noexcept {
     ARPG_REQUIRE(crowded->minimum == 12U);
     ARPG_REQUIRE(crowded->maximum == 16U);
     ARPG_REQUIRE(dense->weight == 35U);
+    ARPG_REQUIRE(dense->minimum == 17U);
+    ARPG_REQUIRE(dense->maximum == 22U);
     ARPG_REQUIRE(horde->weight == 15U);
+    ARPG_REQUIRE(horde->minimum == 23U);
+    ARPG_REQUIRE(horde->maximum == 30U);
     return {};
 }
 
