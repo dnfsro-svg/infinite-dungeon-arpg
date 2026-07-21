@@ -111,3 +111,9 @@ Stage 17：五槽主动技能石、剑圣“拔刀斩”与“极·鬼剑术（�
 ## Stage 17 剑圣技能石
 
 角色拥有五个可交换的主动技能石槽和每槽五个只读辅助槽。默认 `1` 施放拔刀斩、`2` 施放暴风式；暂停页技能石标签通过生产保存事务取出、装入或交换技能石。V8 存档持久化装配和库存，旧档迁移到安全默认值，但不持久化冷却和正在施放的技能。真实 1280×720 Raylib 五图证据、精确状态字段和破坏性验证结果见 [Stage 17 验收记录](docs/validation/stage17-swordmaster-skill-stones.md)。
+
+## 许可证
+
+项目源代码采用 [GNU General Public License v3.0 only](LICENSE)（SPDX：`GPL-3.0-only`）授权。分发源代码、修改版本或基于本项目代码的衍生作品时，须遵守 GPL-3.0-only 的对应条款。
+
+美术、音频、字体及其他非代码素材不因代码采用 GPL 而自动变更授权。第三方或外部素材继续遵循其目录中的来源与许可记录，例如 `assets/stage14/audio/SOURCES.md`、`assets/stage15/audio/SOURCES.md` 以及 Stage 12 的各项 `*-source.md`；系统字体不随仓库分发。没有单独许可声明的素材不得推定为已获得额外授权。
