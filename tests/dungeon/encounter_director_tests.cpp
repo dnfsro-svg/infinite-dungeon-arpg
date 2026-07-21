@@ -5,6 +5,7 @@
 #include "combat/monster_catalog.hpp"
 #include "combat/monster_affix_catalog.hpp"
 #include "combat/monster_affix_generation.hpp"
+#include "combat/room_bounds.hpp"
 #include "dungeon/dungeon_checkpoint.hpp"
 #include "dungeon/encounter_director.hpp"
 
@@ -109,8 +110,10 @@ bool test_encounter_plan_legal(
             ranged_count += test_has_tag(*definition, MonsterTag::ranged);
             support_count += test_has_tag(*definition, MonsterTag::support);
             hazard_count += test_has_tag(*definition, MonsterTag::ground_hazard);
-            if (spawn.position.x < -8.0F || spawn.position.x > 8.0F
-                    || spawn.position.y < -3.5F || spawn.position.y > 3.5F
+            if (spawn.position.x < arpg::combat::room_bounds::min_x
+                    || spawn.position.x > arpg::combat::room_bounds::max_x
+                    || spawn.position.y < arpg::combat::room_bounds::min_y
+                    || spawn.position.y > arpg::combat::room_bounds::max_y
                     || spawn.position.z != 0.0F) {
                 return false;
             }
@@ -236,10 +239,10 @@ arpg::test::Failure encounter_plan_is_deterministic_and_legal() noexcept {
         float y{};
     };
     constexpr std::array<ExpectedBaseSpawn, 4> kStage8BaseTrace{{
-        {MonsterId::chaos_chaser, -1.898F, -3.159F},
-        {MonsterId::fire_charger, 5.914F, 3.418F},
-        {MonsterId::chaos_chaser, -1.935F, -3.361F},
-        {MonsterId::lightning_dasher, -2.939F, 0.850F},
+        {MonsterId::chaos_chaser, -3.796F, -6.318F},
+        {MonsterId::fire_charger, 11.828F, 6.836F},
+        {MonsterId::chaos_chaser, -3.870F, -6.722F},
+        {MonsterId::lightning_dasher, -5.878F, 1.700F},
     }};
     for (std::size_t wave_index = 0U; wave_index < a.plan.wave_count;
          ++wave_index) {

@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 
 #include "abyss/abyss_rules.hpp"
+#include "combat/room_bounds.hpp"
 #include "dungeon/dungeon_progression.hpp"
 #include "dungeon/room_combat_template.hpp"
 #include "dungeon/room_generation.hpp"
@@ -245,21 +246,21 @@ arpg::test::Failure entry_templates_preserve_stage_two_layout() noexcept {
     ARPG_REQUIRE(same_position(initial->dummy_spawns[0], 2.30F, -0.35F));
     ARPG_REQUIRE(same_position(initial->dummy_spawns[1], 2.80F, 0.0F));
     ARPG_REQUIRE(same_position(initial->dummy_spawns[2], 3.30F, 0.35F));
-    ARPG_REQUIRE(same_position(left->player_spawn, -10.50F, 0.0F));
+    ARPG_REQUIRE(same_position(left->player_spawn, -22.50F, 0.0F));
     ARPG_REQUIRE(left->initial_facing == Facing::right);
     ARPG_REQUIRE(same_position(left->dummy_spawns[0], 2.30F, -0.35F));
     ARPG_REQUIRE(same_position(left->dummy_spawns[1], 2.80F, 0.0F));
     ARPG_REQUIRE(same_position(left->dummy_spawns[2], 3.30F, 0.35F));
-    ARPG_REQUIRE(same_position(right->player_spawn, 10.50F, 0.0F));
+    ARPG_REQUIRE(same_position(right->player_spawn, 22.50F, 0.0F));
     ARPG_REQUIRE(right->initial_facing == Facing::left);
     ARPG_REQUIRE(same_position(right->dummy_spawns[0], -2.30F, -0.35F));
     ARPG_REQUIRE(same_position(right->dummy_spawns[1], -2.80F, 0.0F));
     ARPG_REQUIRE(same_position(right->dummy_spawns[2], -3.30F, 0.35F));
-    ARPG_REQUIRE(same_position(top->player_spawn, 0.0F, -4.75F));
+    ARPG_REQUIRE(same_position(top->player_spawn, 0.0F, -10.25F));
     ARPG_REQUIRE(same_position(top->dummy_spawns[0], 2.30F, 2.30F));
     ARPG_REQUIRE(same_position(top->dummy_spawns[1], 2.80F, 2.30F));
     ARPG_REQUIRE(same_position(top->dummy_spawns[2], 3.30F, 2.30F));
-    ARPG_REQUIRE(same_position(bottom->player_spawn, 0.0F, 4.75F));
+    ARPG_REQUIRE(same_position(bottom->player_spawn, 0.0F, 10.25F));
     ARPG_REQUIRE(same_position(bottom->dummy_spawns[0], 2.30F, -2.30F));
     ARPG_REQUIRE(same_position(bottom->dummy_spawns[1], 2.80F, -2.30F));
     ARPG_REQUIRE(same_position(bottom->dummy_spawns[2], 3.30F, -2.30F));

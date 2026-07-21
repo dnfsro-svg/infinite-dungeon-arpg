@@ -3,6 +3,7 @@
 #include "combat_test_support.hpp"
 
 #include "combat/combat_world.hpp"
+#include "combat/room_bounds.hpp"
 
 #include <array>
 #include <cstddef>
@@ -199,7 +200,7 @@ arpg::test::Failure chain_projectile_end_paths_warn_once_without_recursion() noe
     };
     constexpr std::array<EndCase, 3> kEndCases{{
         {{0.0F, 0.0F, 0.0F}, {}, 30U},       // hit player
-        {{12.1F, 0.0F, 0.0F}, {}, 30U},      // leave room bounds
+        {{room_bounds::max_x + 0.1F, 0.0F, 0.0F}, {}, 30U},  // leave room bounds
         {{8.0F, 0.0F, 0.0F}, {}, 1U},        // expire
     }};
 
@@ -467,12 +468,12 @@ arpg::test::Failure full_hazard_pool_cleans_owner_when_death_blast_creation_fail
 arpg::test::Failure blink_assault_warns_then_clamps_and_empowers() noexcept {
     CombatWorld world{affixed_encounter(
         MonsterId::chaos_chaser, MonsterAffixId::blink_assault,
-        MonsterAffixTier::m3, Vec3{11.9F, 0.0F, 0.0F})};
+        MonsterAffixTier::m3, Vec3{room_bounds::max_x - 0.1F, 0.0F, 0.0F})};
     arpg::test::tick_n(world, 240);
     const CombatSnapshot warning = world.snapshot();
     ARPG_REQUIRE(warning.monsters[0].affix_warning == MonsterAffixWarning::blink);
     arpg::test::tick_n(world, 30);
-    ARPG_REQUIRE(world.snapshot().monsters[0].position.x <= 12.0F);
+    ARPG_REQUIRE(world.snapshot().monsters[0].position.x <= room_bounds::max_x);
     return {};
 }
 
@@ -480,7 +481,7 @@ arpg::test::Failure blink_warning_pauses_ai_then_real_hit_consumes_frenzied_empo
     CombatWorld world{dual_affixed_encounter(
         MonsterId::chaos_chaser, MonsterAffixId::blink_assault,
         MonsterAffixTier::m3, MonsterAffixId::frenzy, MonsterAffixTier::m3,
-        Vec3{11.9F, 0.0F, 0.0F})};
+        Vec3{room_bounds::max_x - 0.1F, 0.0F, 0.0F})};
     arpg::test::tick_n(world, 240);
     const MonsterSnapshot warning = world.snapshot().monsters[0];
     const int hp_before_warning = world.snapshot().player.hp;
@@ -563,7 +564,7 @@ arpg::test::Failure tiered_blink_cooldowns_and_warnings_are_frozen() noexcept {
     for (std::size_t index = 0U; index < 3U; ++index) {
         CombatWorld world{affixed_encounter(
             MonsterId::chaos_chaser, MonsterAffixId::blink_assault,
-            kTiers[index], Vec3{11.9F, 0.0F, 0.0F})};
+        kTiers[index], Vec3{room_bounds::max_x - 0.1F, 0.0F, 0.0F})};
         arpg::test::tick_n(world, kCooldowns[index]);
         const auto warning = world.snapshot().monsters[0];
         ARPG_REQUIRE(warning.affix_warning == MonsterAffixWarning::blink);
@@ -572,8 +573,8 @@ arpg::test::Failure tiered_blink_cooldowns_and_warnings_are_frozen() noexcept {
         const auto blinked = world.snapshot().monsters[0];
         ARPG_REQUIRE(blinked.affix_warning == MonsterAffixWarning::none);
         ARPG_REQUIRE(blinked.blink_empowered);
-        ARPG_REQUIRE(blinked.position.x >= -12.0F);
-        ARPG_REQUIRE(blinked.position.x <= 12.0F);
+        ARPG_REQUIRE(blinked.position.x >= room_bounds::min_x);
+        ARPG_REQUIRE(blinked.position.x <= room_bounds::max_x);
     }
     return {};
 }

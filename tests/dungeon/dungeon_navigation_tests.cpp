@@ -3,6 +3,7 @@
 #include "dungeon_test_support.hpp"
 
 #include "abyss/abyss_rules.hpp"
+#include "combat/room_bounds.hpp"
 #include "dungeon/dungeon_progression.hpp"
 #include "dungeon/room_generation.hpp"
 #include "dungeon/room_navigation.hpp"
@@ -88,7 +89,7 @@ MovementInput alignment(const DungeonSnapshot& state, ExitDirection direction) n
 }
 
 bool commit_exit(DungeonSession& session, ExitDirection direction) noexcept {
-    for (int tick = 0; tick < 256; ++tick) {
+    for (int tick = 0; tick < 640; ++tick) {
         const DungeonSnapshot state = session.snapshot();
         const MovementInput movement = alignment(state, direction);
         if (movement.x == 0 && movement.y == 0) {
@@ -97,7 +98,7 @@ bool commit_exit(DungeonSession& session, ExitDirection direction) noexcept {
         session.tick(movement);
         drain_dungeon(session);
     }
-    for (int tick = 0; tick < 256; ++tick) {
+    for (int tick = 0; tick < 640; ++tick) {
         session.tick(outward(direction));
         drain_combat(session);
         if (session.snapshot().phase == RoomPhase::committing) {
@@ -148,7 +149,7 @@ bool request_without_dungeon_drain(
     DungeonSession& session,
     ExitDirection direction,
     RoomPhase expected_phase) noexcept {
-    for (int tick = 0; tick < 256; ++tick) {
+    for (int tick = 0; tick < 640; ++tick) {
         const DungeonSnapshot state = session.snapshot();
         const MovementInput movement = alignment(state, direction);
         if (movement.x == 0 && movement.y == 0) {
@@ -157,7 +158,7 @@ bool request_without_dungeon_drain(
         session.tick(movement);
         drain_combat(session);
     }
-    for (int tick = 0; tick < 256; ++tick) {
+    for (int tick = 0; tick < 640; ++tick) {
         session.tick(outward(direction));
         drain_combat(session);
         const DungeonSnapshot state = session.snapshot();
@@ -195,25 +196,25 @@ bool advance_without_dungeon_drain(
 
 arpg::test::Failure exact_apertures_accept_outward_input() noexcept {
     using arpg::dungeon::requested_exit;
-    ARPG_REQUIRE(requested_exit(Vec3{-12.0F, 0.90F, 4.0F}, {-1, 0})
+    ARPG_REQUIRE(requested_exit(Vec3{-24.0F, 0.90F, 0.0F}, {-1, 0})
         == ExitDirection::left);
-    ARPG_REQUIRE(requested_exit(Vec3{12.0F, -0.90F, 0.0F}, {1, 0})
+    ARPG_REQUIRE(requested_exit(Vec3{24.0F, -0.90F, 0.0F}, {1, 0})
         == ExitDirection::right);
-    ARPG_REQUIRE(requested_exit(Vec3{1.50F, -5.5F, 0.0F}, {0, -1})
+    ARPG_REQUIRE(requested_exit(Vec3{1.50F, -11.0F, 0.0F}, {0, -1})
         == ExitDirection::up);
-    ARPG_REQUIRE(requested_exit(Vec3{-1.50F, 5.5F, 0.0F}, {0, 1})
+    ARPG_REQUIRE(requested_exit(Vec3{-1.50F, 11.0F, 0.0F}, {0, 1})
         == ExitDirection::down);
     return {};
 }
 
 arpg::test::Failure invalid_physical_requests_are_rejected() noexcept {
     using arpg::dungeon::requested_exit;
-    ARPG_REQUIRE(!requested_exit(Vec3{-12.0F, 0.0F, 0.0F}, {1, 0}));
-    ARPG_REQUIRE(!requested_exit(Vec3{-11.99F, 0.0F, 0.0F}, {-1, 0}));
-    ARPG_REQUIRE(!requested_exit(Vec3{-12.0F, 0.91F, 0.0F}, {-1, 0}));
-    ARPG_REQUIRE(!requested_exit(Vec3{12.0F, -0.91F, 0.0F}, {1, 0}));
-    ARPG_REQUIRE(!requested_exit(Vec3{1.51F, -5.5F, 0.0F}, {0, -1}));
-    ARPG_REQUIRE(!requested_exit(Vec3{-1.51F, 5.5F, 0.0F}, {0, 1}));
+    ARPG_REQUIRE(!requested_exit(Vec3{arpg::combat::room_bounds::min_x, 0.0F, 0.0F}, {1, 0}));
+    ARPG_REQUIRE(!requested_exit(Vec3{arpg::combat::room_bounds::min_x + 0.01F, 0.0F, 0.0F}, {-1, 0}));
+    ARPG_REQUIRE(!requested_exit(Vec3{arpg::combat::room_bounds::min_x, 0.91F, 0.0F}, {-1, 0}));
+    ARPG_REQUIRE(!requested_exit(Vec3{arpg::combat::room_bounds::max_x, -0.91F, 0.0F}, {1, 0}));
+    ARPG_REQUIRE(!requested_exit(Vec3{1.51F, arpg::combat::room_bounds::min_y, 0.0F}, {0, -1}));
+    ARPG_REQUIRE(!requested_exit(Vec3{-1.51F, arpg::combat::room_bounds::max_y, 0.0F}, {0, 1}));
     return {};
 }
 
@@ -275,7 +276,7 @@ arpg::test::Failure transition_and_combat_start_are_separate_ticks() noexcept {
     ARPG_REQUIRE(locked.combat.has_value());
     ARPG_REQUIRE(locked.combat->tick == 0U);
     ARPG_REQUIRE(locked.combat->player.position.x == 0.0F);
-    ARPG_REQUIRE(locked.combat->player.position.y == 4.75F);
+    ARPG_REQUIRE(locked.combat->player.position.y == 10.25F);
 
     session.tick(outward(ExitDirection::up));
     const ExitEvents events = drain_dungeon(session);
@@ -333,7 +334,7 @@ arpg::test::Failure maximum_index_faults_once_without_destroying() noexcept {
     drain_dungeon(session);
 
     const DungeonSnapshot before = session.snapshot();
-    for (int tick = 0; tick < 256; ++tick) {
+    for (int tick = 0; tick < 640; ++tick) {
         session.tick(outward(ExitDirection::left));
         drain_combat(session);
         if (session.snapshot().diagnostics.room_index_overflow) {

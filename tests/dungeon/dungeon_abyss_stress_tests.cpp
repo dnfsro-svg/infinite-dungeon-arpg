@@ -7,6 +7,7 @@
 #include "abyss/abyss_rewards.hpp"
 #include "abyss/abyss_rules.hpp"
 #include "combat/combat_world.hpp"
+#include "combat/room_bounds.hpp"
 #include "dungeon/abyss_reward.hpp"
 #include "dungeon/dungeon_progression.hpp"
 #include "dungeon/encounter_director.hpp"
@@ -319,7 +320,7 @@ ResolutionTrace production_resolution(
     }
 
     arpg::test::fill_ground_pool(session, ground_prototype());
-    arpg::test::set_player_position(session, {12.0F, 0.0F, 0.0F});
+    arpg::test::set_player_position(session, {arpg::combat::room_bounds::max_x, 0.0F, 0.0F});
     session.tick({1, 0});
     const auto warned = session.snapshot();
     bool warning_event = false;
@@ -533,7 +534,7 @@ arpg::test::Failure thousand_room_abyss_trace_matches_golden_and_reload() noexce
     constexpr std::array<std::uint32_t, 4> kGoldenHits{{9U, 11U, 9U, 7U}};
     ARPG_REQUIRE(first->door_trials == kGoldenTrials);
     ARPG_REQUIRE(first->door_hits == kGoldenHits);
-    ARPG_REQUIRE(first->hash == 0xe102b17e6423351bULL);
+    ARPG_REQUIRE(first->hash == 0x05d554c69da3351bULL);
     return {};
 }
 

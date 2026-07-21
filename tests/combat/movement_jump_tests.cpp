@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 
 #include "combat/combat_world.hpp"
+#include "combat/room_bounds.hpp"
 
 #include "abyss/abyss_rules.hpp"
 
@@ -10,6 +11,13 @@
 namespace {
 
 using namespace arpg::combat;
+
+static_assert(room_bounds::min_x == -24.0F);
+static_assert(room_bounds::max_x == 24.0F);
+static_assert(room_bounds::min_y == -11.0F);
+static_assert(room_bounds::max_y == 11.0F);
+static_assert(room_bounds::width == 48.0F);
+static_assert(room_bounds::depth == 22.0F);
 
 constexpr double kFloatTolerance = 1.0e-4;
 
@@ -52,20 +60,20 @@ arpg::test::Failure room_clamps_facing_and_reset_are_stable() noexcept {
     config.dummy_spawns[0] = Vec3{2.0F, -1.0F, 0.0F};
     CombatWorld world{config};
 
-    for (int tick = 0; tick < 200; ++tick) {
+    for (int tick = 0; tick < 400; ++tick) {
         world.tick(MovementInput{1, 1});
     }
     CombatSnapshot snapshot = world.snapshot();
-    ARPG_REQUIRE(arpg::test::near(snapshot.player.position.x, 12.0));
-    ARPG_REQUIRE(arpg::test::near(snapshot.player.position.y, 5.5));
+    ARPG_REQUIRE(arpg::test::near(snapshot.player.position.x, room_bounds::max_x));
+    ARPG_REQUIRE(arpg::test::near(snapshot.player.position.y, room_bounds::max_y));
 
-    for (int tick = 0; tick < 400; ++tick) {
+    for (int tick = 0; tick < 800; ++tick) {
         world.tick(MovementInput{-1, -1});
     }
     world.tick(MovementInput{0, 1});
     snapshot = world.snapshot();
-    ARPG_REQUIRE(arpg::test::near(snapshot.player.position.x, -12.0));
-    ARPG_REQUIRE(snapshot.player.position.y > -5.5F);
+    ARPG_REQUIRE(arpg::test::near(snapshot.player.position.x, room_bounds::min_x));
+    ARPG_REQUIRE(snapshot.player.position.y > room_bounds::min_y);
     ARPG_REQUIRE(snapshot.player.facing == Facing::left);
 
     for (int action = 0; action < 32; ++action) {

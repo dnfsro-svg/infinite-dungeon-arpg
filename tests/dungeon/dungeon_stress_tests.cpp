@@ -601,7 +601,7 @@ bool drive_to_transition(
     ExitDirection direction,
     StressSummary& summary,
     std::uint64_t& transition_room_index) noexcept {
-    for (int tick = 0; tick < 512; ++tick) {
+    for (int tick = 0; tick < 640; ++tick) {
         const DungeonSnapshot state = session.snapshot();
         if (state.phase == RoomPhase::committing) {
             if (!confirm_pending_save(session, summary)) return false;
@@ -615,7 +615,7 @@ bool drive_to_transition(
         tracked_tick(session, movement, summary);
         drain(session, summary);
     }
-    for (int tick = 0; tick < 512; ++tick) {
+    for (int tick = 0; tick < 640; ++tick) {
         tracked_tick(session, outward(direction), summary);
         drain(session, summary);
         if (session.snapshot().phase == RoomPhase::committing) {

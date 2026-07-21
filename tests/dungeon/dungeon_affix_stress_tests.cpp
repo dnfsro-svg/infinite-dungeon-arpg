@@ -6,6 +6,7 @@
 
 #include "combat/combat_world.hpp"
 #include "combat/monster_affix_generation.hpp"
+#include "combat/room_bounds.hpp"
 #include "dungeon/dungeon_progression.hpp"
 #include "persistence/checkpoint_codec.hpp"
 
@@ -372,10 +373,10 @@ bool transition_room(DungeonSession& session, std::size_t room) noexcept {
     const ExitDirection direction = kDirections[room % kDirections.size()];
     arpg::combat::Vec3 door_position{};
     switch (direction) {
-    case ExitDirection::up: door_position.y = -5.5F; break;
-    case ExitDirection::down: door_position.y = 5.5F; break;
-    case ExitDirection::left: door_position.x = -12.0F; break;
-    case ExitDirection::right: door_position.x = 12.0F; break;
+    case ExitDirection::up: door_position.y = arpg::combat::room_bounds::min_y; break;
+    case ExitDirection::down: door_position.y = arpg::combat::room_bounds::max_y; break;
+    case ExitDirection::left: door_position.x = arpg::combat::room_bounds::min_x; break;
+    case ExitDirection::right: door_position.x = arpg::combat::room_bounds::max_x; break;
     case ExitDirection::none: return false;
     }
     for (int attempt = 0; attempt < 16; ++attempt) {
