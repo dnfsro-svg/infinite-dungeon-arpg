@@ -4,6 +4,7 @@
 #include "passives/passive_tree_types.hpp"
 #include "progression/progression_types.hpp"
 #include "items/item_types.hpp"
+#include "skills/skill_loadout.hpp"
 
 #include <array>
 #include <cstdint>
@@ -298,6 +299,8 @@ struct DungeonRunState final {
     items::ItemOwnershipState item_ownership{};
     std::uint64_t death_sequence{};
     DeathCheckpoint death{};
+    skills::SkillLoadoutState skill_loadout{
+        skills::default_skill_loadout()};
 };
 
 [[nodiscard]] constexpr bool valid_abyss_door_origin(

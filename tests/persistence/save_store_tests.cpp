@@ -163,25 +163,25 @@ void write_u32(std::vector<std::uint8_t>& bytes, std::size_t offset,
 
 std::vector<std::uint8_t> encoded_v4(
     const checkpoint::DungeonRunState& state) {
-    const auto v7 = encoded(state);
-    if (v7.size() < persistence::kV7BaseEncodedCheckpointSize)
+    const auto v8 = encoded(state);
+    if (v8.size() < persistence::kV8BaseEncodedCheckpointSize)
         return {};
     std::vector<std::uint8_t> v5(
         persistence::kV6BaseEncodedCheckpointSize
             + state.item_ownership.items.size()
                 * persistence::kV4ItemRecordSize,
         0U);
-    std::copy_n(v7.begin(), persistence::kV6BaseEncodedCheckpointSize,
+    std::copy_n(v8.begin(), persistence::kV6BaseEncodedCheckpointSize,
         v5.begin());
     for (std::size_t item_index = 0U;
             item_index < state.item_ownership.items.size(); ++item_index) {
-        const std::size_t v7_record = persistence::kV7BaseEncodedCheckpointSize
+        const std::size_t v7_record = persistence::kV8BaseEncodedCheckpointSize
             + item_index * persistence::kV7ItemRecordSize;
         const std::size_t v6_record = persistence::kV6BaseEncodedCheckpointSize
             + item_index * persistence::kV4ItemRecordSize;
-        std::copy_n(v7.begin() + v7_record, 16U, v5.begin() + v6_record);
+        std::copy_n(v8.begin() + v7_record, 16U, v5.begin() + v6_record);
         for (std::size_t roll = 0U; roll < 6U; ++roll) {
-            std::copy_n(v7.begin() + v7_record + 16U + roll * 6U, 4U,
+            std::copy_n(v8.begin() + v7_record + 16U + roll * 6U, 4U,
                 v5.begin() + v6_record + 16U + roll * 4U);
         }
     }
@@ -367,14 +367,14 @@ arpg::test::Failure variable_length_slots_rotate_large_then_small() noexcept {
     ARPG_REQUIRE(store.commit(large).state
         == persistence::SaveCommitState::committed);
     ARPG_REQUIRE(std::filesystem::file_size(directory.path / "run_a.sav")
-        == persistence::kV7BaseEncodedCheckpointSize
+        == persistence::kV8BaseEncodedCheckpointSize
             + persistence::kV7ItemRecordSize * 257U);
 
     const auto small = with_items(make_state(2U, 21U), 1U);
     ARPG_REQUIRE(store.commit(small).state
         == persistence::SaveCommitState::committed);
     ARPG_REQUIRE(std::filesystem::file_size(directory.path / "run_b.sav")
-        == persistence::kV7BaseEncodedCheckpointSize
+        == persistence::kV8BaseEncodedCheckpointSize
             + persistence::kV7ItemRecordSize);
     const auto loaded = store.load();
     ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::ready);

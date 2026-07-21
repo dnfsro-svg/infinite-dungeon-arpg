@@ -33,6 +33,9 @@ inline constexpr std::size_t kV7MaterialClaimPayloadSize = 56U;
 inline constexpr std::size_t kV7ItemRecordSize = 64U;
 inline constexpr std::size_t kV7BasePayloadSize = 716U;
 inline constexpr std::size_t kV7BaseEncodedCheckpointSize = 748U;
+inline constexpr std::size_t kV8SkillLoadoutPayloadSize = 40U;
+inline constexpr std::size_t kV8BasePayloadSize = 756U;
+inline constexpr std::size_t kV8BaseEncodedCheckpointSize = 788U;
 inline constexpr std::size_t kMaximumCheckpointItemCount = 65535U;
 inline constexpr std::uint32_t kLegacyCheckpointFormatVersion = 1U;
 inline constexpr std::uint32_t kPreviousCheckpointFormatVersion = 2U;
@@ -40,7 +43,8 @@ inline constexpr std::uint32_t kThirdCheckpointFormatVersion = 3U;
 inline constexpr std::uint32_t kFourthCheckpointFormatVersion = 4U;
 inline constexpr std::uint32_t kFifthCheckpointFormatVersion = 5U;
 inline constexpr std::uint32_t kSixthCheckpointFormatVersion = 6U;
-inline constexpr std::uint32_t kCheckpointFormatVersion = 7U;
+inline constexpr std::uint32_t kSeventhCheckpointFormatVersion = 7U;
+inline constexpr std::uint32_t kCheckpointFormatVersion = 8U;
 inline constexpr std::uint32_t kCheckpointRulesVersion = 1U;
 
 enum class CodecError : std::uint8_t {

@@ -5,6 +5,7 @@
 #include "passives/passive_tree_rules.hpp"
 #include "progression/progression_rules.hpp"
 #include "items/item_catalog.hpp"
+#include "skills/skill_loadout.hpp"
 
 #include <algorithm>
 #include <limits>
@@ -25,6 +26,8 @@ using abyss::AbyssDanger;
 using abyss::AbyssLifecycle;
 using abyss::AbyssRuleId;
 
+constexpr std::array<std::uint8_t, 8> kV8Magic{{
+    'A', 'R', 'P', 'G', 'S', 'V', '8', '\0'}};
 constexpr std::array<std::uint8_t, 8> kV7Magic{{
     'A', 'R', 'P', 'G', 'S', 'V', '7', '\0'}};
 constexpr std::array<std::uint8_t, 8> kV6Magic{{
@@ -140,8 +143,20 @@ ItemLayout item_layout(std::uint32_t format) noexcept {
     if (format == kSixthCheckpointFormatVersion)
         return {152U, 156U, kV6BasePayloadSize,
             kV6BaseEncodedCheckpointSize, kV4ItemRecordSize};
-    return {152U, 156U, kV7BasePayloadSize,
-        kV7BaseEncodedCheckpointSize, kV7ItemRecordSize};
+    if (format == kSeventhCheckpointFormatVersion)
+        return {152U, 156U, kV7BasePayloadSize,
+            kV7BaseEncodedCheckpointSize, kV7ItemRecordSize};
+    return {152U, 156U, kV8BasePayloadSize,
+        kV8BaseEncodedCheckpointSize, kV7ItemRecordSize};
+}
+
+bool valid_active_skill_id(std::uint8_t value) noexcept {
+    return value < skills::kActiveSkillCount
+        || value == static_cast<std::uint8_t>(skills::ActiveSkillId::none);
+}
+
+bool valid_support_skill_id(std::uint8_t value) noexcept {
+    return value == static_cast<std::uint8_t>(skills::SupportSkillId::none);
 }
 
 bool valid_entry(std::uint8_t value) noexcept {
@@ -316,6 +331,8 @@ std::optional<EncodedCheckpoint> encode_checkpoint(
         || !valid_abyss_checkpoint(state)
         || !valid_last_resolution(state.last_abyss_resolution)
         || !checkpoint::valid_death_checkpoint_structural(state.death)
+        || skills::validate_skill_loadout(state.skill_loadout)
+            != skills::SkillLoadoutError::none
         || items::validate_ownership_detailed(state.item_ownership)
             != items::OwnershipValidationResult::valid) {
         return std::nullopt;
@@ -323,10 +340,10 @@ std::optional<EncodedCheckpoint> encode_checkpoint(
     const auto item_count = state.item_ownership.items.size();
     if (item_count > kMaximumCheckpointItemCount
         || item_count > (std::numeric_limits<std::size_t>::max()
-                - kV7BasePayloadSize) / kV7ItemRecordSize) {
+                - kV8BasePayloadSize) / kV7ItemRecordSize) {
         return std::nullopt;
     }
-    const auto payload_size = kV7BasePayloadSize
+    const auto payload_size = kV8BasePayloadSize
         + item_count * kV7ItemRecordSize;
     if (payload_size > std::numeric_limits<std::size_t>::max()
             - kCheckpointHeaderSize) {
@@ -342,7 +359,7 @@ std::optional<EncodedCheckpoint> encode_checkpoint(
         return std::nullopt;
     }
 
-    std::copy(kV7Magic.begin(), kV7Magic.end(), out.begin());
+    std::copy(kV8Magic.begin(), kV8Magic.end(), out.begin());
     write_u32(out.data() + 8U, kCheckpointFormatVersion);
     write_u32(out.data() + 12U, kCheckpointRulesVersion);
     write_u64(out.data() + 16U, state.commit_generation);
@@ -461,9 +478,22 @@ std::optional<EncodedCheckpoint> encode_checkpoint(
             state.item_ownership.material_claimed_drop_bits[index]);
     }
 
+    write_u64(out.data() + 748U, state.skill_loadout.owned_active_bits);
+    for (std::size_t slot = 0U; slot < state.skill_loadout.slots.size(); ++slot) {
+        out[756U + slot] = static_cast<std::uint8_t>(
+            state.skill_loadout.slots[slot].active);
+        for (std::size_t support = 0U;
+                support < state.skill_loadout.slots[slot].supports.size();
+                ++support) {
+            out[761U + slot * skills::kSupportSlotsPerActive + support] =
+                static_cast<std::uint8_t>(
+                    state.skill_loadout.slots[slot].supports[support]);
+        }
+    }
+
     for (std::size_t item_index = 0U; item_index < item_count; ++item_index) {
         const auto& item = state.item_ownership.items[item_index];
-        auto* record = out.data() + kV7BaseEncodedCheckpointSize
+        auto* record = out.data() + kV8BaseEncodedCheckpointSize
             + item_index * kV7ItemRecordSize;
         write_u64(record, item.id);
         record[8U] = item.base_id;
@@ -494,6 +524,8 @@ DecodeResult decode_checkpoint(
         return error_result(CodecError::wrong_size);
     }
     const bool current_magic = std::equal(
+        kV8Magic.begin(), kV8Magic.end(), bytes);
+    const bool seventh_magic = std::equal(
         kV7Magic.begin(), kV7Magic.end(), bytes);
     const bool sixth_magic = std::equal(
         kV6Magic.begin(), kV6Magic.end(), bytes);
@@ -505,7 +537,8 @@ DecodeResult decode_checkpoint(
         kV3Magic.begin(), kV3Magic.end(), bytes);
     const bool legacy_magic = std::equal(
         kV1V2Magic.begin(), kV1V2Magic.end(), bytes);
-    if (!current_magic && !sixth_magic && !fifth_magic && !fourth_magic
+    if (!current_magic && !seventh_magic && !sixth_magic
+        && !fifth_magic && !fourth_magic
         && !third_magic && !legacy_magic) {
         return error_result(CodecError::bad_magic);
     }
@@ -522,6 +555,7 @@ DecodeResult decode_checkpoint(
         return error_result(CodecError::wrong_size);
     }
     if (format != kCheckpointFormatVersion
+        && format != kSeventhCheckpointFormatVersion
         && format != kSixthCheckpointFormatVersion
         && format != kFourthCheckpointFormatVersion
         && format != kFifthCheckpointFormatVersion
@@ -532,6 +566,7 @@ DecodeResult decode_checkpoint(
     }
     const bool matching_magic =
         (format == kCheckpointFormatVersion && current_magic)
+        || (format == kSeventhCheckpointFormatVersion && seventh_magic)
         || (format == kSixthCheckpointFormatVersion && sixth_magic)
         || (format == kFifthCheckpointFormatVersion && fifth_magic)
         || (format == kFourthCheckpointFormatVersion && fourth_magic)
@@ -566,8 +601,12 @@ DecodeResult decode_checkpoint(
         && payload_size < kV6BasePayloadSize) {
         return error_result(CodecError::bad_payload_length);
     }
-    if (format == kCheckpointFormatVersion
+    if (format == kSeventhCheckpointFormatVersion
         && payload_size < kV7BasePayloadSize) {
+        return error_result(CodecError::bad_payload_length);
+    }
+    if (format == kCheckpointFormatVersion
+        && payload_size < kV8BasePayloadSize) {
         return error_result(CodecError::bad_payload_length);
     }
     if (encoded_crc != checkpoint_crc(bytes, payload_size)) {
@@ -578,6 +617,7 @@ DecodeResult decode_checkpoint(
     if (format == kFourthCheckpointFormatVersion
             || format == kFifthCheckpointFormatVersion
             || format == kSixthCheckpointFormatVersion
+            || format == kSeventhCheckpointFormatVersion
             || format == kCheckpointFormatVersion) {
         const auto layout = item_layout(format);
         DecodeCursor count_cursor{
@@ -618,6 +658,7 @@ DecodeResult decode_checkpoint(
             || !valid_element(ecology)
             || !valid_transition(transition,
                 format == kSixthCheckpointFormatVersion
+                    || format == kSeventhCheckpointFormatVersion
                     || format == kCheckpointFormatVersion)
             || !valid_direction(direction)) {
         return error_result(CodecError::invalid_enum);
@@ -667,6 +708,7 @@ DecodeResult decode_checkpoint(
             || format == kFourthCheckpointFormatVersion
             || format == kFifthCheckpointFormatVersion
             || format == kSixthCheckpointFormatVersion
+            || format == kSeventhCheckpointFormatVersion
             || format == kCheckpointFormatVersion) {
         if (bytes[97U] != 0U
             || !std::all_of(bytes + 114U, bytes + 120U,
@@ -691,6 +733,7 @@ DecodeResult decode_checkpoint(
     }
     if (format == kFifthCheckpointFormatVersion
             || format == kSixthCheckpointFormatVersion
+            || format == kSeventhCheckpointFormatVersion
             || format == kCheckpointFormatVersion) {
         const auto lifecycle = bytes[120U];
         const auto danger = bytes[121U];
@@ -736,6 +779,7 @@ DecodeResult decode_checkpoint(
         state.last_abyss_resolution.abandoned = bytes[149U];
     }
     if (format == kSixthCheckpointFormatVersion
+            || format == kSeventhCheckpointFormatVersion
             || format == kCheckpointFormatVersion) {
         const auto lifecycle = bytes[244U];
         const auto source_kind = bytes[246U];
@@ -831,6 +875,7 @@ DecodeResult decode_checkpoint(
     if (format == kFourthCheckpointFormatVersion
             || format == kFifthCheckpointFormatVersion
             || format == kSixthCheckpointFormatVersion
+            || format == kSeventhCheckpointFormatVersion
             || format == kCheckpointFormatVersion) {
         const auto layout = item_layout(format);
         DecodeCursor ownership{
@@ -845,7 +890,8 @@ DecodeResult decode_checkpoint(
             if (!ownership.read_u64(equipped))
                 return error_result(CodecError::wrong_size);
         }
-        if (format == kCheckpointFormatVersion) {
+        if (format == kSeventhCheckpointFormatVersion
+                || format == kCheckpointFormatVersion) {
             DecodeCursor materials{
                 reinterpret_cast<const std::byte*>(bytes), size,
                 kV6BaseEncodedCheckpointSize};
@@ -900,6 +946,43 @@ DecodeResult decode_checkpoint(
                 return error_result(CodecError::invalid_state);
             }
         }
+        if (format == kCheckpointFormatVersion) {
+            DecodeCursor loadout{
+                reinterpret_cast<const std::byte*>(bytes), size, 748U};
+            if (!loadout.read_u64(state.skill_loadout.owned_active_bits))
+                return error_result(CodecError::wrong_size);
+            for (auto& slot : state.skill_loadout.slots) {
+                std::uint8_t active{};
+                if (!loadout.read_u8(active))
+                    return error_result(CodecError::wrong_size);
+                if (!valid_active_skill_id(active))
+                    return error_result(CodecError::invalid_enum);
+                slot.active = static_cast<skills::ActiveSkillId>(active);
+            }
+            for (auto& slot : state.skill_loadout.slots) {
+                for (auto& support : slot.supports) {
+                    std::uint8_t encoded_support{};
+                    if (!loadout.read_u8(encoded_support))
+                        return error_result(CodecError::wrong_size);
+                    if (!valid_support_skill_id(encoded_support))
+                        return error_result(CodecError::invalid_enum);
+                    support = static_cast<skills::SupportSkillId>(
+                        encoded_support);
+                }
+            }
+            for (std::size_t reserved_index = 0U;
+                    reserved_index < 2U; ++reserved_index) {
+                std::uint8_t reserved{};
+                if (!loadout.read_u8(reserved))
+                    return error_result(CodecError::wrong_size);
+                if (reserved != 0U)
+                    return error_result(CodecError::invalid_state);
+            }
+            if (skills::validate_skill_loadout(state.skill_loadout)
+                    != skills::SkillLoadoutError::none) {
+                return error_result(CodecError::invalid_state);
+            }
+        }
         ownership.offset = layout.item_offset;
         for (auto& item : state.item_ownership.items) {
             if (!ownership.read_u64(item.id)
@@ -929,14 +1012,16 @@ DecodeResult decode_checkpoint(
                     || !ownership.read_u8(roll.variant)) {
                     return error_result(CodecError::wrong_size);
                 }
-                if (format == kCheckpointFormatVersion) {
+                if (format == kSeventhCheckpointFormatVersion
+                        || format == kCheckpointFormatVersion) {
                     if (!ownership.read_u16(roll.value_roll_bp))
                         return error_result(CodecError::wrong_size);
                 } else if (roll_index < item.affix_count) {
                     roll.value_roll_bp = items::kAffixValueRollCanonicalBp;
                 }
             }
-            if (format == kCheckpointFormatVersion) {
+            if (format == kSeventhCheckpointFormatVersion
+                    || format == kCheckpointFormatVersion) {
                 if (!ownership.read_u32(item.reinforcement))
                     return error_result(CodecError::wrong_size);
                 for (auto& reserved : item.extension_reserved) {
@@ -950,11 +1035,13 @@ DecodeResult decode_checkpoint(
     }
     if (!valid_checkpoint_fields(
             state, format == kSixthCheckpointFormatVersion
+                || format == kSeventhCheckpointFormatVersion
                 || format == kCheckpointFormatVersion)) {
         return error_result(CodecError::invalid_state);
     }
     if ((format == kFifthCheckpointFormatVersion
             || format == kSixthCheckpointFormatVersion
+            || format == kSeventhCheckpointFormatVersion
             || format == kCheckpointFormatVersion)
         && (!valid_abyss_checkpoint(state)
             || !valid_last_resolution(state.last_abyss_resolution))) {
@@ -968,6 +1055,8 @@ DecodeResult decode_checkpoint(
         return error_result(CodecError::allocation_failure);
     if (ownership_validation != items::OwnershipValidationResult::valid)
         return error_result(CodecError::invalid_state);
+    if (format != kCheckpointFormatVersion)
+        state.skill_loadout = skills::default_skill_loadout();
     result.migrated = format != kCheckpointFormatVersion;
     return result;
 }
