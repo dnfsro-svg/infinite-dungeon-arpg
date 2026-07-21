@@ -6,6 +6,7 @@
 #include "dungeon/abyss_reward.hpp"
 #include "combat/room_bounds.hpp"
 #include "dungeon/dungeon_progression.hpp"
+#include "dungeon/room_affix.hpp"
 #include "dungeon/dungeon_session.hpp"
 #include "abyss/abyss_rewards.hpp"
 #include "abyss/abyss_rules.hpp"
@@ -783,6 +784,8 @@ arpg::test::Failure reloaded_cleared_abyss_is_navigable_and_auto_claims() noexce
     navigable.abyss.reward_revision = 2U;
     DungeonSession movement{DungeonRules{}, navigable};
     ARPG_REQUIRE(movement.snapshot().phase == RoomPhase::cleared);
+    ARPG_REQUIRE(movement.snapshot().initial_monster_count
+        == movement.snapshot().encounter.initial_monster_count);
     ARPG_REQUIRE(movement.snapshot().has_active_room);
     ARPG_REQUIRE(movement.snapshot().combat.has_value());
     ARPG_REQUIRE(movement.snapshot().remaining_targets == 0U);
@@ -974,9 +977,20 @@ arpg::test::Failure abyss_door_abandon_counts_only_ungenerated_rewards() noexcep
     session.resolve_pending_save({SaveDisposition::committed,
         pending.expected_generation, pending.next_state});
     const auto departed = session.snapshot();
+    const auto expected_density = arpg::dungeon::roll_room_density(
+        departed.room_seed, departed.is_abyss);
     ARPG_REQUIRE(departed.phase == RoomPhase::transitioning);
     ARPG_REQUIRE(departed.room_seed == pending.next_state.current_room.seed);
     ARPG_REQUIRE(departed.room_seed != state.current_room.seed);
+    const auto previous_density = arpg::dungeon::roll_room_density(
+        state.current_room.seed, state.current_room.is_abyss);
+    ARPG_REQUIRE(previous_density.affix != expected_density.affix
+        || previous_density.base_count != expected_density.base_count
+        || previous_density.monster_count != expected_density.monster_count);
+    ARPG_REQUIRE(departed.density_affix == expected_density.affix);
+    ARPG_REQUIRE(departed.base_monster_count == expected_density.base_count);
+    ARPG_REQUIRE(departed.initial_monster_count
+        == expected_density.monster_count);
     ARPG_REQUIRE(departed.ground_item_count == 0U);
     const auto& resolution = arpg::test::stable_state(session)
                                  .last_abyss_resolution;

@@ -5,6 +5,7 @@
 #include "abyss/abyss_rules.hpp"
 #include "combat/room_bounds.hpp"
 #include "dungeon/dungeon_progression.hpp"
+#include "dungeon/room_affix.hpp"
 #include "dungeon/room_generation.hpp"
 #include "dungeon/room_navigation.hpp"
 
@@ -234,6 +235,15 @@ arpg::test::Failure first_exit_commits_destroys_and_removes_combat() noexcept {
     ARPG_REQUIRE(!after.combat.has_value());
     ARPG_REQUIRE(after.room_index == before.room_index + 1U);
     ARPG_REQUIRE(after.room_seed != before.room_seed);
+    const auto expected_density = arpg::dungeon::roll_room_density(
+        after.room_seed, after.is_abyss);
+    ARPG_REQUIRE(before.density_affix != expected_density.affix
+        || before.base_monster_count != expected_density.base_count
+        || before.initial_monster_count != expected_density.monster_count);
+    ARPG_REQUIRE(after.density_affix == expected_density.affix);
+    ARPG_REQUIRE(after.base_monster_count == expected_density.base_count);
+    ARPG_REQUIRE(after.initial_monster_count
+        == expected_density.monster_count);
     ARPG_REQUIRE(after.last_exit == ExitDirection::right);
     ARPG_REQUIRE(events.count == 3U);
     ARPG_REQUIRE(events.values[0].kind

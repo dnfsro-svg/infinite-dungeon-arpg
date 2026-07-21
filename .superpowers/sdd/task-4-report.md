@@ -407,3 +407,38 @@ ctest --test-dir out/build/windows-msvc-core-debug -R '^(combat\.units|architect
 - 新增测试覆盖硬直期间 240 tick 冷却、第 10 tick 命中、14 tick 后摇、220 物理/36 破韧、5.0/3.2 边界、真实致死取消和请求/命中/恢复热路径零分配。
 - 普攻完整回归通过，证明共享命中管线未改变既有普攻行为。
 - 无已知功能顾虑；暴风式仍保持 Task 5 范围外。
+
+---
+
+# Stage 19 Task 4 审查修复：切换帧密度与已清深渊诊断一致性
+
+## 修复
+
+- 普通门切换和 `abyss_abandon` 保存提交后，立即按新的稳定房间
+  `seed/is_abyss` 重算瞬态 `room_density_`；`transitioning` 同帧快照不再把
+  新房 seed 与旧房密度混合。
+- `DungeonSnapshot::initial_monster_count` 与
+  `DungeonEncounterDiagnostics::initial_monster_count` 统一从同一
+  `room_density_.monster_count` 派生。已清深渊重载即使没有活动 encounter
+  plan，两处初始数量也保持一致。
+- 未改 HUD、相机、checkpoint/序列化、词条概率、深渊倍率、单波遭遇和
+  纯输入门禁。
+
+## TDD 证据
+
+生产修复前，新增断言取得三个准确 RED：
+
+- 普通门提交后的即时快照失败于
+  `after.density_affix == expected_density.affix`。
+- 深渊放弃提交后的即时快照失败于
+  `departed.density_affix == expected_density.affix`。
+- 已清深渊重载失败于顶层 initial 与 encounter diagnostic initial 不相等。
+
+最小修复后，导航聚焦套件 `11/11`，深渊奖励聚焦套件 `32/32`。
+
+## 最终验证
+
+- fresh `arpg_dungeon_tests.exe`：`296 cases, 0 failures`，包含 10 房纯输入
+  清场、1000 房压力、固定 encounter trace 与深渊压力。
+- fresh `arpg_persistence_tests.exe`：`94 cases, 0 failures`。
+- `git diff --check`：通过；只有 Windows `core.autocrlf` 的既有换行提示。

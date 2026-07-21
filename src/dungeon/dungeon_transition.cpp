@@ -1657,6 +1657,9 @@ void DungeonSession::commit_pending_save(
     }
     if (kind == PendingSaveKind::transition
             || kind == PendingSaveKind::abyss_abandon) {
+        room_density_ = roll_room_density(
+            stable_state_.current_room.seed,
+            stable_state_.current_room.is_abyss);
         clear_abyss_exit_confirmation();
         ground_items_ = {};
         rolled_drop_bits_ = {};
