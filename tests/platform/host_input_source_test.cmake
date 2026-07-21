@@ -39,6 +39,8 @@ set(STAGE11C_INJECT_CALL_LINE_PATTERN
     "${SOURCE_LINE_START}const[ \t]+PhysicalKeySnapshot[ \t]+stage11c_physical_keys[ \t]*=[ \t]*inject_stage11c_physical_edges[ \t]*\\(")
 set(STAGE11D_INJECT_CALL_LINE_PATTERN
     "${SOURCE_LINE_START}const[ \t]+PhysicalKeySnapshot[ \t]+physical_keys[ \t]*=[ \t]*inject_stage11d_physical_edges[ \t]*\\(")
+set(STAGE17_INJECT_CALL_LINE_PATTERN
+    "${SOURCE_LINE_START}const[ \t]+PhysicalKeySnapshot[ \t]+stage17_physical_keys[ \t]*=[ \t\r\n]*inject_stage17_physical_edges[ \t]*\\(")
 set(MAP_CALL_LINE_PATTERN
     "${SOURCE_LINE_START}HostFrameInput[ \t]+frame_input[ \t]*=[ \t]*map_host_frame_input[ \t]*\\(")
 set(ACTIVE_SENTINEL_PATTERN
@@ -63,7 +65,10 @@ set(COMMENT_ONLY_STRUCTURE [=[
 // const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges(
 //     stage11c_physical_keys, config, input_settings, current,
 //     stage11d_validation_state);
-// HostFrameInput frame_input = map_host_frame_input(settings, physical_keys);
+// const PhysicalKeySnapshot stage17_physical_keys =
+//     inject_stage17_physical_edges(physical_keys, config, input_settings,
+//         current, *stage17_validation_state);
+// HostFrameInput frame_input = map_host_frame_input(settings, stage17_physical_keys);
 // #define IsKeyDown ::arpg::platform::direct_input_poison::blocked
 ]=])
 set(REAL_STRUCTURE [=[
@@ -79,7 +84,11 @@ const PhysicalKeySnapshot stage11c_physical_keys = inject_stage11c_physical_edge
 const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges(
     stage11c_physical_keys, config, input_settings, current,
     stage11d_validation_state);
-HostFrameInput frame_input = map_host_frame_input(input_settings, physical_keys);
+const PhysicalKeySnapshot stage17_physical_keys =
+    inject_stage17_physical_edges(physical_keys, config, input_settings,
+        current, *stage17_validation_state);
+HostFrameInput frame_input = map_host_frame_input(
+    input_settings, stage17_physical_keys);
 DeathInputGate death_gate = host_death_input_gate(
     death_saving, death_pending, frame_input.keys, physical_keys);
 const bool pause_blocks_gameplay = pause_open || pause_was_open;
@@ -125,6 +134,7 @@ foreach(STRUCTURE_PATTERN IN ITEMS
         STAGE11B_INJECT_CALL_LINE_PATTERN
         STAGE11C_INJECT_CALL_LINE_PATTERN
         STAGE11D_INJECT_CALL_LINE_PATTERN
+        STAGE17_INJECT_CALL_LINE_PATTERN
         MAP_CALL_LINE_PATTERN
         SELF_TEST_MACRO_PATTERN)
     require_match_count(
@@ -194,6 +204,11 @@ require_match_count(
     "host stage11d physical injection calls")
 require_match_count(
     "${HOST_SOURCE}"
+    "${STAGE17_INJECT_CALL_LINE_PATTERN}"
+    1
+    "host stage17 physical injection calls")
+require_match_count(
+    "${HOST_SOURCE}"
     "${MAP_CALL_LINE_PATTERN}"
     1
     "host logical mapping calls")
@@ -206,6 +221,7 @@ function(physical_input_chain_valid SOURCE OUT_VARIABLE)
     string(FIND "${SOURCE}" "const PhysicalKeySnapshot stage11b_physical_keys =" STAGE11B_INDEX)
     string(FIND "${SOURCE}" "const PhysicalKeySnapshot stage11c_physical_keys = inject_stage11c_physical_edges(" STAGE11C_INDEX)
     string(FIND "${SOURCE}" "const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges(" STAGE11D_INDEX)
+    string(FIND "${SOURCE}" "const PhysicalKeySnapshot stage17_physical_keys =" STAGE17_INDEX)
     string(FIND "${SOURCE}" "HostFrameInput frame_input = map_host_frame_input(" MAP_INDEX)
     string(FIND "${SOURCE}" "DeathInputGate death_gate = host_death_input_gate(" DEATH_GATE_INDEX)
     string(FIND "${SOURCE}" "const bool pause_blocks_gameplay =" PAUSE_BLOCK_INDEX)
@@ -220,7 +236,7 @@ function(physical_input_chain_valid SOURCE OUT_VARIABLE)
     string(FIND "${SOURCE}" "session->request_descent(in_range)" REQUEST_DESCENT_INDEX)
     string(FIND "${SOURCE}" "const combat::MovementInput movement = forward_movement" MOVEMENT_INPUT_INDEX)
     if(SAMPLE_INDEX EQUAL -1 OR STAGE11B_INDEX EQUAL -1 OR STAGE11C_INDEX EQUAL -1
-            OR STAGE11D_INDEX EQUAL -1
+            OR STAGE11D_INDEX EQUAL -1 OR STAGE17_INDEX EQUAL -1
             OR MAP_INDEX EQUAL -1 OR DEATH_GATE_INDEX EQUAL -1 OR PAUSE_BLOCK_INDEX EQUAL -1
             OR HOST_GATE_INDEX EQUAL -1 OR PASSIVE_GATE_INDEX EQUAL -1 OR INVENTORY_GATE_INDEX EQUAL -1
             OR FORWARD_ACTIONS_INDEX EQUAL -1 OR FORWARD_DESCENT_DECL_INDEX EQUAL -1
@@ -228,7 +244,9 @@ function(physical_input_chain_valid SOURCE OUT_VARIABLE)
             OR FORWARD_DESCENT_INDEX EQUAL -1 OR REQUEST_DESCENT_INDEX EQUAL -1
             OR MOVEMENT_INPUT_INDEX EQUAL -1
             OR NOT SAMPLE_INDEX LESS STAGE11B_INDEX OR NOT STAGE11B_INDEX LESS STAGE11C_INDEX
-            OR NOT STAGE11C_INDEX LESS STAGE11D_INDEX OR NOT STAGE11D_INDEX LESS MAP_INDEX
+            OR NOT STAGE11C_INDEX LESS STAGE11D_INDEX
+            OR NOT STAGE11D_INDEX LESS STAGE17_INDEX
+            OR NOT STAGE17_INDEX LESS MAP_INDEX
             OR NOT MAP_INDEX LESS DEATH_GATE_INDEX
             OR NOT DEATH_GATE_INDEX LESS PAUSE_BLOCK_INDEX OR NOT PAUSE_BLOCK_INDEX LESS HOST_GATE_INDEX
             OR NOT HOST_GATE_INDEX LESS PASSIVE_GATE_INDEX OR NOT PASSIVE_GATE_INDEX LESS INVENTORY_GATE_INDEX
@@ -247,8 +265,10 @@ function(physical_input_chain_valid SOURCE OUT_VARIABLE)
     string(SUBSTRING "${SOURCE}" ${STAGE11B_INDEX} ${STAGE11B_LENGTH} STAGE11B_SOURCE)
     math(EXPR STAGE11C_LENGTH "${STAGE11D_INDEX} - ${STAGE11C_INDEX}")
     string(SUBSTRING "${SOURCE}" ${STAGE11C_INDEX} ${STAGE11C_LENGTH} STAGE11C_SOURCE)
-    math(EXPR STAGE11D_LENGTH "${MAP_INDEX} - ${STAGE11D_INDEX}")
+    math(EXPR STAGE11D_LENGTH "${STAGE17_INDEX} - ${STAGE11D_INDEX}")
     string(SUBSTRING "${SOURCE}" ${STAGE11D_INDEX} ${STAGE11D_LENGTH} STAGE11D_SOURCE)
+    math(EXPR STAGE17_LENGTH "${MAP_INDEX} - ${STAGE17_INDEX}")
+    string(SUBSTRING "${SOURCE}" ${STAGE17_INDEX} ${STAGE17_LENGTH} STAGE17_SOURCE)
     string(SUBSTRING "${SOURCE}" ${MAP_INDEX} -1 MAP_SOURCE)
     math(EXPR HOST_GATE_LENGTH "${PASSIVE_GATE_INDEX} - ${HOST_GATE_INDEX}")
     string(SUBSTRING "${SOURCE}" ${HOST_GATE_INDEX} ${HOST_GATE_LENGTH} HOST_GATE_SOURCE)
@@ -275,7 +295,8 @@ function(physical_input_chain_valid SOURCE OUT_VARIABLE)
     if(NOT STAGE11B_SOURCE MATCHES "inject_stage11b_physical_edges${WS}\\(${WS}sampled_physical_keys,${WS}config,${WS}stage11b_validation_state${WS}\\)"
             OR NOT STAGE11C_SOURCE MATCHES "inject_stage11c_physical_edges${WS}\\(${WS}stage11b_physical_keys,${WS}config,${WS}input_settings,${WS}current,${WS}stage11c_validation_state${WS}\\)"
             OR NOT STAGE11D_SOURCE MATCHES "inject_stage11d_physical_edges${WS}\\(${WS}stage11c_physical_keys,${WS}config,${WS}input_settings,${WS}current,${WS}stage11d_validation_state${WS}\\)"
-            OR NOT MAP_SOURCE MATCHES "map_host_frame_input${WS}\\(${WS}input_settings,${WS}physical_keys${WS}\\)"
+            OR NOT STAGE17_SOURCE MATCHES "inject_stage17_physical_edges${WS}\\(${WS}physical_keys,${WS}config,${WS}input_settings,${WS}current,${WS}\\*stage17_validation_state${WS}\\)"
+            OR NOT MAP_SOURCE MATCHES "map_host_frame_input${WS}\\(${WS}input_settings,${WS}stage17_physical_keys${WS}\\)"
             OR NOT SOURCE MATCHES "DeathInputGate death_gate =${WS}host_death_input_gate${WS}\\(${WS}death_saving,${WS}death_pending,${WS}frame_input\\.keys,${WS}physical_keys${WS}\\)${WS};"
             OR NOT HOST_GATE_CALL_COUNT EQUAL 2
             OR NOT HOST_GATE_SOURCE MATCHES "if${WS}\\(${WS}pause_open${WS}\\)${WS}\\{${WS}host_gate${WS}=${WS}gate_host_frame${WS}\\(${WS}fixed_step,${WS}pause_latched,${WS}true,${WS}static_cast<double>${WS}\\(${WS}frame_seconds${WS}\\)${WS}\\)${WS};"

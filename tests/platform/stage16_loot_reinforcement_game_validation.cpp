@@ -433,7 +433,8 @@ bool render_inventory_capture(const std::filesystem::path& run,
     ClearBackground(BLACK);
     static_cast<void>(room->draw(*current, *current, runtime.render_status(), 1.0F,
         false, feedback, false));
-    inventory.draw(*runtime.session(), *current, runtime.render_status());
+    inventory.draw(*runtime.session(), *current, runtime.render_status(),
+        room->hud_font(), room->hud_font_ready());
     EndDrawing();
     const auto image = run / name;
     const auto relative = std::filesystem::relative(image,

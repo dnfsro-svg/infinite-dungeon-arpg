@@ -74,6 +74,44 @@ if(TARGET arpg_raylib)
     set_tests_properties(stage16.loot_reinforcement.real_raylib PROPERTIES
         LABELS "platform;raylib;stage16;validation" TIMEOUT 90 RUN_SERIAL TRUE)
 
+    add_executable(arpg_stage17_skill_stones_game_validation
+        stage17_skill_stones_game_validation.cpp)
+    target_compile_features(arpg_stage17_skill_stones_game_validation
+        PRIVATE cxx_std_17)
+    target_link_libraries(arpg_stage17_skill_stones_game_validation
+        PRIVATE arpg_raylib)
+    if(MSVC)
+        target_compile_options(arpg_stage17_skill_stones_game_validation
+            PRIVATE /utf-8)
+    endif()
+    arpg_enable_project_warnings(arpg_stage17_skill_stones_game_validation)
+    set(_stage17_evidence_root
+        "${CMAKE_CURRENT_BINARY_DIR}/stage17 skill stones evidence")
+    set(_stage17_evidence_run "${_stage17_evidence_root}/stage17-run")
+    add_test(NAME stage17.skill_stones.real_raylib
+        COMMAND "$<TARGET_FILE:arpg_stage17_skill_stones_game_validation>"
+            "${_stage17_evidence_root}")
+    set_tests_properties(stage17.skill_stones.real_raylib PROPERTIES
+        LABELS "platform;raylib;graphics;formal-game;stage17;validation"
+        TIMEOUT 180 RUN_SERIAL TRUE FIXTURES_SETUP stage17_skill_stones_evidence)
+    add_test(NAME stage17.skill_stones.evidence_validator
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/stage17_skill_stones_validator.ps1"
+            -EvidenceDirectory "${_stage17_evidence_run}")
+    set_tests_properties(stage17.skill_stones.evidence_validator PROPERTIES
+        LABELS "platform;raylib;graphics;formal-game;stage17;validation"
+        TIMEOUT 60 FIXTURES_REQUIRED stage17_skill_stones_evidence)
+    add_test(NAME stage17.skill_stones.evidence_validator_self_test
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/stage17_skill_stones_validator_self_test.ps1"
+            -EvidenceDirectory "${_stage17_evidence_run}"
+            -Validator "${CMAKE_CURRENT_SOURCE_DIR}/stage17_skill_stones_validator.ps1"
+            -MutationRoot "${_stage17_evidence_run}/validator-self-test")
+    set_tests_properties(
+        stage17.skill_stones.evidence_validator_self_test PROPERTIES
+        LABELS "platform;raylib;graphics;formal-game;negative;stage17;validation"
+        TIMEOUT 90 FIXTURES_REQUIRED stage17_skill_stones_evidence)
+
     add_executable(arpg_stage12_material_formal
         stage12_material_formal_game_validation.cpp)
     target_compile_features(arpg_stage12_material_formal PRIVATE cxx_std_17)

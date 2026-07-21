@@ -4,7 +4,7 @@
 
 ## 当前里程碑
 
-Stage 16：材料掉落、货币改造、三合一与装备强化（建立在 Stage 15 低资源音频混音之上）。
+Stage 17：五槽主动技能石、剑圣“拔刀斩”与“极·鬼剑术（暴风式）”（建立在 Stage 16 材料、货币与强化之上）。
 
 - 正常游戏中按 `Esc` 打开暂停层。暂停不会推进固定步、战斗或地下城状态；恢复时也不会补跑暂停期间的 tick。
 - 设置可分别调整主音量、战斗音效、音乐、环境声和 UI 音效（0%–100%，每次 5%），并保留窗口化/全屏、VSync、地面物品过滤预设和十项玩法动作的键盘绑定。
@@ -22,10 +22,13 @@ Stage 16：材料掉落、货币改造、三合一与装备强化（建立在 St
 - 背包底部有固定 14 格材料袋；材料不占装备格，地面材料池总容量为 400。选择材料后点击装备即可使用：九种货币只在成功的原子存档后扣除；强化券会直接提升到券面；对当前已 +12 或更高装备使用强化石时要求确认。
 - 三件未装备、同基底、同稀有度的装备可右键/Control 标记后点击“三合一”合成；产物取平均物品等级且强化归零。
 - 强化 1–3 为 100%，4/5/6 为 90%/80%/70%，7–12 为 70%，+13 为 60% 后每级乘 0.95（最低 0.1%）。失败时 +7–9 回 +6、+10–11 归零、+12 及以上销毁；武器提升底材伤害、防具提升底材护甲、饰品提升元素减伤，词缀不被放大。
+- HUD 底部固定显示五个主动技能石槽；新档和 V1–V7 迁移默认槽 1 为拔刀斩、槽 2 为暴风式、槽 3–5 为空。数字键 `1`–`5` 只请求对应槽位，空槽无副作用。
+- 暂停页背包的“技能石”标签可取出、装入和交换任意主槽；每个主槽显示五个只读空辅助槽。装配通过原子存档事务提交，失败不会半更新；技能冷却和施放状态不持久化。
+- 拔刀斩是短前摇、单目标每次施放最多命中一次并明确击退的近距离扇形攻击；暴风式锁定施放中心，执行 12 段剑阵和独立终结击飞，死亡或换房会取消未完成施放。
 
-实现边界、V6 存档布局、正式测试与真实 raylib 五路径证据见 [Stage 11-A 验证记录](docs/validation/stage11a-death-continue.md)。暂停、设置、重绑定、双槽恢复和 Stage 11-B 正式 raylib 证据见 [Stage 11-B 验证记录](docs/validation/stage11b-settings-input.md)。完整 HUD、固定容量/零分配门禁、中文字体、三分辨率和六场景正式证据见 [Stage 11-C 验证记录](docs/validation/stage11c-complete-hud.md)。三个地面过滤预设、深渊例外、自动拾取回执、设置 V2 迁移和六场生产 raylib 证据见 [Stage 11-D 验证记录](docs/validation/stage11d-ground-loot-filter.md)。战斗音效来源、自动证据、试听文件和验收边界见 [Stage 14 验证记录](docs/validation/stage14-combat-audio-pack.md)。音乐/环境/UI 来源、五路混音和运行态验收见 [Stage 15 验证记录](docs/validation/stage15-audio-mix.md)。材料、货币、强化、百万次分布模拟和真实 1280×720 Raylib 场景见 [Stage 16 验证记录](docs/validation/stage16-loot-currency-reinforcement.md)。
+实现边界、V6 存档布局、正式测试与真实 raylib 五路径证据见 [Stage 11-A 验证记录](docs/validation/stage11a-death-continue.md)。暂停、设置、重绑定、双槽恢复和 Stage 11-B 正式 raylib 证据见 [Stage 11-B 验证记录](docs/validation/stage11b-settings-input.md)。完整 HUD、固定容量/零分配门禁、中文字体、三分辨率和六场景正式证据见 [Stage 11-C 验证记录](docs/validation/stage11c-complete-hud.md)。三个地面过滤预设、深渊例外、自动拾取回执、设置 V2 迁移和六场生产 raylib 证据见 [Stage 11-D 验证记录](docs/validation/stage11d-ground-loot-filter.md)。战斗音效来源、自动证据、试听文件和验收边界见 [Stage 14 验证记录](docs/validation/stage14-combat-audio-pack.md)。音乐/环境/UI 来源、五路混音和运行态验收见 [Stage 15 验证记录](docs/validation/stage15-audio-mix.md)。材料、货币、强化、百万次分布模拟和真实 1280×720 Raylib 场景见 [Stage 16 验证记录](docs/validation/stage16-loot-currency-reinforcement.md)。五槽技能石、V8 迁移、两项剑圣技能和真实 Raylib 五图证据见 [Stage 17 验证记录](docs/validation/stage17-swordmaster-skill-stones.md)。
 
-本分支止步于 Stage 16；macOS、主菜单、手柄及分辨率/画质设置仍未实现。
+本分支止步于 Stage 17；辅助技能石的掉落、装卸和效果，以及 macOS、主菜单、手柄及分辨率/画质设置仍未实现。
 
 ## 构建与运行
 
@@ -65,6 +68,7 @@ Stage 16：材料掉落、货币改造、三合一与装备强化（建立在 St
 | `I` | 打开/关闭背包 |
 | `P` | 清房后打开/关闭被动星盘 |
 | `R` | 重置当前房；深渊战斗中会永久消耗本房挑战机会 |
+| `1`–`5` | 施放对应主动技能石槽；默认 `1` 为拔刀斩、`2` 为暴风式、`3`–`5` 为空 |
 | `F1` | 调试显示 |
 | `F12` 或 `V` | 截图到程序目录 |
 | `Esc` | 按优先级关闭恢复/死亡界面以外的当前覆盖层；背包或星盘关闭后再次按才打开暂停；暂停内返回、取消捕获或继续 |
@@ -103,3 +107,7 @@ Stage 16：材料掉落、货币改造、三合一与装备强化（建立在 St
 ## Stage 15 低资源音频混音
 
 发布版新增 2 条音乐、2 条环境声和 6 个 UI 音效，总磁盘占用 12,916,359 字节。`GameAudio` 统一管理唯一 raylib 音频设备、Stage 14 战斗音效、Stage 15 流式资源、UI 边沿去重和五路音量；资源加载、格式、场景路由、发布复制、输出根安全和防篡改证据均由 CTest 自动验证。详细结果见 [Stage 15 验收记录](docs/validation/stage15-audio-mix.md)。
+
+## Stage 17 剑圣技能石
+
+角色拥有五个可交换的主动技能石槽和每槽五个只读辅助槽。默认 `1` 施放拔刀斩、`2` 施放暴风式；暂停页技能石标签通过生产保存事务取出、装入或交换技能石。V8 存档持久化装配和库存，旧档迁移到安全默认值，但不持久化冷却和正在施放的技能。真实 1280×720 Raylib 五图证据、精确状态字段和破坏性验证结果见 [Stage 17 验收记录](docs/validation/stage17-swordmaster-skill-stones.md)。

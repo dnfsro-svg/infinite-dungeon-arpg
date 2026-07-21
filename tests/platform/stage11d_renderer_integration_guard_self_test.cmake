@@ -91,9 +91,10 @@ stage11d_replace_required(_combat_renamed_declaration "${_combat}"
     local_plan_declaration_rename)
 stage11d_replace_required(_combat_renamed "${_combat_renamed_declaration}"
     "render_plan." "frame_plan." local_plan_use_rename)
-set(_renamed_room "            draw_room(current, frame_plan.ground_loot);")
+set(_renamed_room
+    "            draw_room(current, frame_plan.ground_loot, frame_plan.material_loot);")
 set(_formatted_room
-    "            draw_room(\n                current,\n                frame_plan.ground_loot); ")
+    "            draw_room(\n                current,\n                frame_plan.ground_loot,\n                frame_plan.material_loot); ")
 stage11d_replace_required(_combat_formatted "${_combat_renamed}"
     "${_renamed_room}" "${_formatted_room}" harmless_formatting)
 stage11d_run_guard_case(rename_and_format "${_combat_formatted}" "${_room}"
@@ -106,8 +107,11 @@ set(_alias_declaration
 stage11d_replace_required(_combat_alias "${_combat_renamed}"
     "${_renamed_camera}" "${_alias_declaration}" const_reference_alias)
 stage11d_replace_required(_combat_alias_room "${_combat_alias}"
-    "frame_plan.ground_loot);" "shared_ground_loot);" alias_consumers)
-stage11d_run_guard_case(const_reference_alias "${_combat_alias_room}" "${_room}"
+    "frame_plan.ground_loot, frame_plan.material_loot);"
+    "shared_ground_loot, frame_plan.material_loot);" alias_room_consumer)
+stage11d_replace_required(_combat_alias_consumers "${_combat_alias_room}"
+    "frame_plan.ground_loot);" "shared_ground_loot);" alias_hud_consumer)
+stage11d_run_guard_case(const_reference_alias "${_combat_alias_consumers}" "${_room}"
     "${_hud}" TRUE "")
 
 message(STATUS

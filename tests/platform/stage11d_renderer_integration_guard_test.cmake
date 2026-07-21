@@ -96,7 +96,7 @@ if(_alias_declaration)
 endif()
 
 set(_room_consumer_pattern
-    "draw_room\\([^,;]+,([A-Za-z_][A-Za-z0-9_.]*)\\)")
+    "draw_room\\([^,;]+,([A-Za-z_][A-Za-z0-9_.]*)(,[^;]+)?\\)")
 string(REGEX MATCHALL "${_room_consumer_pattern}" _room_consumer_calls "${_draw_normalized}")
 list(LENGTH _room_consumer_calls _room_consumer_count)
 if(NOT _room_consumer_count EQUAL 1)

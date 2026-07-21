@@ -23,6 +23,7 @@
 
 #include <raylib.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cmath>
 #include <cstddef>
@@ -30,6 +31,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <optional>
 #include <string>
 
@@ -60,6 +62,11 @@ constexpr char kSettingsSaveFailed[] = "Settings save failed; retry";
 constexpr char kSettingsRollbackFailed[] = "Settings rollback failed";
 constexpr char kSettingsSaved[] = "Settings saved";
 constexpr char kSettingsRecoveredDefaults[] = u8"设置已恢复默认值";
+
+struct Stage17SkillStonesValidationState;
+void observe_stage17_combat_event(
+    Stage17SkillStonesValidationState* state,
+    const combat::CombatEvent& event) noexcept;
 
 [[nodiscard]] bool stable_pressed(
     const PhysicalKeySnapshot& snapshot,
@@ -96,8 +103,10 @@ constexpr char kSettingsRecoveredDefaults[] = u8"设置已恢复默认值";
 }
 
 void drain_events(dungeon::DungeonSession& session, CombatRenderer& renderer,
-    CombatFeedback& feedback, GameAudio& audio) noexcept {
+    CombatFeedback& feedback, GameAudio& audio,
+    Stage17SkillStonesValidationState* stage17 = nullptr) noexcept {
     while (const auto event = session.try_pop_combat_event()) {
+        observe_stage17_combat_event(stage17, *event);
         renderer.consume_event(*event);
         feedback.consume(*event);
         audio.consume_event(*event);
@@ -321,6 +330,93 @@ struct Stage11DLootValidationState final {
 };
 // STAGE11D_LOOT_VALIDATION_SEAM_END state
 
+enum class Stage17ValidationStep : std::uint8_t {
+    initial,
+    empty_slot_3,
+    empty_slot_4,
+    empty_slot_5,
+    approach_draw,
+    draw_active,
+    approach_storm,
+    storm_active,
+    open_inventory,
+    open_skill_page,
+    remove_slot_1,
+    select_draw_inventory,
+    equip_slot_5,
+    swap_slots_2_5,
+    restart_open_inventory,
+    restart_open_skill_page,
+    restart_capture,
+    complete,
+};
+
+enum class Stage17Capture : std::uint8_t {
+    none,
+    initial,
+    draw_hit,
+    storm_array,
+    storm_finisher,
+    restarted,
+};
+
+struct Stage17SkillStonesValidationState final {
+    Stage17ValidationStep step{Stage17ValidationStep::initial};
+    Stage17Capture capture_pending{Stage17Capture::none};
+    skills::SkillLoadoutState initial_loadout{};
+    skills::SkillLoadoutState final_loadout{};
+    combat::Vec3 storm_center{};
+    combat::Vec3 storm_player_start{};
+    bool initial_recorded{};
+    bool initial_captured{};
+    bool draw_accepted{};
+    bool draw_captured{};
+    bool storm_accepted{};
+    bool storm_lock_recorded{};
+    bool storm_center_locked{true};
+    bool storm_player_moved{};
+    bool storm_array_captured{};
+    bool storm_finisher_captured{};
+    bool restart_captured{};
+    bool restart_persisted{};
+    bool restart_cooldowns_zero{};
+    bool public_input_path{};
+    bool production_transactions{};
+    bool aborted_by_death{};
+    std::array<bool, 3> empty_slots_none{};
+    std::uint32_t draw_hit_count{};
+    std::uint32_t storm_strike_hit_count{};
+    std::uint32_t storm_finisher_hit_count{};
+    std::uint8_t storm_strike_count{};
+    std::uint32_t presented_frames{};
+};
+
+void observe_stage17_combat_event(
+    Stage17SkillStonesValidationState* const state,
+    const combat::CombatEvent& event) noexcept {
+    if (state == nullptr || event.kind != combat::CombatEventKind::hit) return;
+    if (event.skill == skills::ActiveSkillId::draw_slash) {
+        ++state->draw_hit_count;
+        if (!state->draw_captured) {
+            state->capture_pending = Stage17Capture::draw_hit;
+        }
+    } else if (event.skill == skills::ActiveSkillId::storm_swords) {
+        if (event.finisher) {
+            ++state->storm_finisher_hit_count;
+            if (!state->storm_finisher_captured) {
+                state->capture_pending = Stage17Capture::storm_finisher;
+            }
+        } else {
+            ++state->storm_strike_hit_count;
+            state->storm_strike_count = std::max(
+                state->storm_strike_count, event.strike_index);
+            if (!state->storm_array_captured) {
+                state->capture_pending = Stage17Capture::storm_array;
+            }
+        }
+    }
+}
+
 // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN selectors
 [[nodiscard]] bool stage11d_has_three_ordinary_rarities(
     const dungeon::DungeonSnapshot& snapshot) noexcept {
@@ -395,6 +491,488 @@ void inject_stage11b_pressed(PhysicalKeySnapshot& snapshot,
     if (index < snapshot.pressed.size()) {
         snapshot.pressed[index] = true;
         snapshot.down[index] = true;
+    }
+}
+
+[[nodiscard]] const combat::MonsterSnapshot* stage17_nearest_monster(
+    const combat::CombatSnapshot& combat_state) noexcept {
+    const combat::MonsterSnapshot* nearest = nullptr;
+    float nearest_distance = 0.0F;
+    for (const combat::MonsterSnapshot& monster : combat_state.monsters) {
+        if (!monster.active || monster.hp <= 0) continue;
+        const float x = monster.position.x - combat_state.player.position.x;
+        const float y = monster.position.y - combat_state.player.position.y;
+        const float distance = x * x + y * y;
+        if (nearest == nullptr || distance < nearest_distance) {
+            nearest = &monster;
+            nearest_distance = distance;
+        }
+    }
+    return nearest;
+}
+
+void stage17_press_action(PhysicalKeySnapshot& snapshot,
+    const settings::SettingsData& input_settings,
+    const settings::SettingAction action) noexcept {
+    inject_stage11b_pressed(snapshot,
+        settings::binding_for(input_settings, action));
+}
+
+void stage17_hold_action(PhysicalKeySnapshot& snapshot,
+    const settings::SettingsData& input_settings,
+    const settings::SettingAction action) noexcept {
+    const std::size_t index = static_cast<std::size_t>(
+        settings::binding_for(input_settings, action));
+    if (index < snapshot.down.size()) snapshot.down[index] = true;
+}
+
+void stage17_apply_movement(PhysicalKeySnapshot& snapshot,
+    const settings::SettingsData& input_settings,
+    const combat::MovementInput movement) noexcept {
+    if (movement.x < 0) {
+        stage17_hold_action(snapshot, input_settings,
+            settings::SettingAction::move_left);
+    } else if (movement.x > 0) {
+        stage17_hold_action(snapshot, input_settings,
+            settings::SettingAction::move_right);
+    }
+    if (movement.y < 0) {
+        stage17_hold_action(snapshot, input_settings,
+            settings::SettingAction::move_up);
+    } else if (movement.y > 0) {
+        stage17_hold_action(snapshot, input_settings,
+            settings::SettingAction::move_down);
+    }
+}
+
+[[nodiscard]] bool stage17_prepare_skill_lane(
+    PhysicalKeySnapshot& snapshot,
+    const settings::SettingsData& input_settings,
+    const combat::CombatSnapshot& combat_state) noexcept {
+    const combat::MonsterSnapshot* const target =
+        stage17_nearest_monster(combat_state);
+    if (target == nullptr) return false;
+    const combat::Vec3& player = combat_state.player.position;
+    const float x = target->position.x - player.x;
+    const float y = target->position.y - player.y;
+    const int toward = x >= 0.0F ? 1 : -1;
+    combat::MovementInput movement{};
+    if (std::fabs(y) > 0.28F) {
+        movement.y = y > 0.0F ? 1 : -1;
+    }
+    if (std::fabs(x) > 3.8F) {
+        movement.x = static_cast<std::int8_t>(toward);
+    } else if (std::fabs(x) < 3.15F) {
+        movement.x = static_cast<std::int8_t>(-toward);
+    } else {
+        const combat::Facing expected = toward > 0
+            ? combat::Facing::right : combat::Facing::left;
+        if (combat_state.player.facing != expected) {
+            movement.x = static_cast<std::int8_t>(toward);
+        }
+    }
+    if (movement.x != 0 || movement.y != 0) {
+        stage17_apply_movement(snapshot, input_settings, movement);
+        return false;
+    }
+    return true;
+}
+
+[[nodiscard]] Vector2 stage17_center(const Rectangle rectangle) noexcept {
+    return {rectangle.x + rectangle.width * 0.5F,
+        rectangle.y + rectangle.height * 0.5F};
+}
+
+void stage17_click(PhysicalKeySnapshot& snapshot,
+    const Rectangle rectangle) noexcept {
+    snapshot.mouse_left = true;
+    snapshot.mouse_position = stage17_center(rectangle);
+}
+
+[[nodiscard]] PhysicalKeySnapshot inject_stage17_physical_edges(
+    PhysicalKeySnapshot snapshot, const RaylibHostConfig& config,
+    const settings::SettingsData& input_settings,
+    const dungeon::DungeonSnapshot& current,
+    Stage17SkillStonesValidationState& state) noexcept {
+    if (config.stage17_skill_stones_validation
+            == Stage17SkillStonesValidationScenario::none
+        || snapshot.focus_lost) {
+        return snapshot;
+    }
+    const ActiveSkillLoadoutLayout layout = active_skill_loadout_layout(
+        config.window_width, config.window_height);
+    switch (state.step) {
+    case Stage17ValidationStep::initial:
+    case Stage17ValidationStep::draw_active:
+    case Stage17ValidationStep::complete:
+    case Stage17ValidationStep::restart_capture:
+        break;
+    case Stage17ValidationStep::empty_slot_3:
+        snapshot.active_skill_slots[2] = true;
+        break;
+    case Stage17ValidationStep::empty_slot_4:
+        snapshot.active_skill_slots[3] = true;
+        break;
+    case Stage17ValidationStep::empty_slot_5:
+        snapshot.active_skill_slots[4] = true;
+        break;
+    case Stage17ValidationStep::approach_draw:
+        if (current.combat.has_value()
+                && stage17_prepare_skill_lane(
+                    snapshot, input_settings, *current.combat)) {
+            snapshot.active_skill_slots[0] = true;
+        }
+        break;
+    case Stage17ValidationStep::approach_storm:
+        if (current.combat.has_value()
+                && stage17_nearest_monster(*current.combat) != nullptr) {
+            snapshot.active_skill_slots[1] = true;
+        }
+        break;
+    case Stage17ValidationStep::storm_active:
+        stage17_apply_movement(snapshot, input_settings, {-1, -1});
+        break;
+    case Stage17ValidationStep::open_inventory:
+    case Stage17ValidationStep::restart_open_inventory:
+        stage17_press_action(snapshot, input_settings,
+            settings::SettingAction::inventory);
+        break;
+    case Stage17ValidationStep::open_skill_page:
+        stage17_click(snapshot, layout.skill_stones_page_button);
+        state.step = Stage17ValidationStep::remove_slot_1;
+        break;
+    case Stage17ValidationStep::remove_slot_1:
+        stage17_click(snapshot, layout.remove_button);
+        break;
+    case Stage17ValidationStep::select_draw_inventory:
+        stage17_click(snapshot, layout.inventory_slots[0]);
+        state.step = Stage17ValidationStep::equip_slot_5;
+        break;
+    case Stage17ValidationStep::equip_slot_5:
+        stage17_click(snapshot, layout.main_slots[4]);
+        break;
+    case Stage17ValidationStep::swap_slots_2_5:
+        stage17_click(snapshot, layout.main_slots[1]);
+        break;
+    case Stage17ValidationStep::restart_open_skill_page:
+        stage17_click(snapshot, layout.skill_stones_page_button);
+        state.step = Stage17ValidationStep::restart_capture;
+        state.capture_pending = Stage17Capture::restarted;
+        break;
+    }
+    return snapshot;
+}
+
+void observe_stage17_submitted_actions(
+    const RaylibHostConfig& config,
+    Stage17SkillStonesValidationState& state,
+    const SubmittedFrameActions& submitted) noexcept {
+    if (config.stage17_skill_stones_validation
+            == Stage17SkillStonesValidationScenario::none) {
+        return;
+    }
+    switch (state.step) {
+    case Stage17ValidationStep::empty_slot_3:
+    case Stage17ValidationStep::empty_slot_4:
+    case Stage17ValidationStep::empty_slot_5: {
+        const std::size_t index = state.step
+                == Stage17ValidationStep::empty_slot_3 ? 2U
+            : state.step == Stage17ValidationStep::empty_slot_4 ? 3U : 4U;
+        state.empty_slots_none[index - 2U] =
+            submitted.skills[index] == combat::SkillCastResult::none;
+        state.public_input_path = true;
+        state.step = index == 2U ? Stage17ValidationStep::empty_slot_4
+            : index == 3U ? Stage17ValidationStep::empty_slot_5
+                          : Stage17ValidationStep::approach_draw;
+        break;
+    }
+    case Stage17ValidationStep::approach_draw:
+        if (submitted.skills[0] == combat::SkillCastResult::accepted) {
+            state.draw_accepted = true;
+            state.public_input_path = true;
+            state.step = Stage17ValidationStep::draw_active;
+        }
+        break;
+    case Stage17ValidationStep::approach_storm:
+        if (submitted.skills[1] == combat::SkillCastResult::accepted) {
+            state.storm_accepted = true;
+            state.public_input_path = true;
+            state.step = Stage17ValidationStep::storm_active;
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+[[nodiscard]] bool stage17_same_point(
+    combat::Vec3 left, combat::Vec3 right) noexcept {
+    constexpr float kTolerance = 0.0001F;
+    return std::fabs(left.x - right.x) <= kTolerance
+        && std::fabs(left.y - right.y) <= kTolerance
+        && std::fabs(left.z - right.z) <= kTolerance;
+}
+
+[[nodiscard]] bool stage17_all_cooldowns_zero(
+    const combat::CombatSnapshot& combat_state) noexcept {
+    return std::all_of(combat_state.skill_cooldowns.begin(),
+        combat_state.skill_cooldowns.end(),
+        [](const std::uint16_t ticks) noexcept { return ticks == 0U; });
+}
+
+[[nodiscard]] bool stage17_final_loadout(
+    const skills::SkillLoadoutState& loadout) noexcept {
+    return loadout.slots[0].active == skills::ActiveSkillId::none
+        && loadout.slots[1].active == skills::ActiveSkillId::draw_slash
+        && loadout.slots[2].active == skills::ActiveSkillId::none
+        && loadout.slots[3].active == skills::ActiveSkillId::none
+        && loadout.slots[4].active == skills::ActiveSkillId::storm_swords;
+}
+
+void observe_stage17_snapshot(const RaylibHostConfig& config,
+    Stage17SkillStonesValidationState& state,
+    const dungeon::DungeonSnapshot& current) noexcept {
+    if (config.stage17_skill_stones_validation
+            == Stage17SkillStonesValidationScenario::none) {
+        return;
+    }
+    if (!state.initial_recorded) {
+        state.initial_loadout = current.skill_loadout;
+        state.initial_recorded = true;
+        if (config.stage17_skill_stones_validation
+                == Stage17SkillStonesValidationScenario::restarted_loadout) {
+            state.restart_persisted = stage17_final_loadout(current.skill_loadout);
+            state.restart_cooldowns_zero = current.combat.has_value()
+                && stage17_all_cooldowns_zero(*current.combat);
+            state.step = Stage17ValidationStep::restart_open_inventory;
+        }
+    }
+    if (current.death.has_value()) {
+        state.aborted_by_death = true;
+        return;
+    }
+    if (!current.combat.has_value()) return;
+    const combat::CombatSnapshot& combat_state = *current.combat;
+    if (state.step == Stage17ValidationStep::draw_active
+            && state.draw_captured
+            && combat_state.active_skill.id == skills::ActiveSkillId::none) {
+        state.step = Stage17ValidationStep::approach_storm;
+    }
+    if (state.step != Stage17ValidationStep::storm_active) return;
+    const combat::ActiveSkillSnapshot& skill = combat_state.active_skill;
+    if (skill.id == skills::ActiveSkillId::storm_swords) {
+        if (!state.storm_lock_recorded) {
+            state.storm_lock_recorded = true;
+            state.storm_center = skill.locked_center;
+            state.storm_player_start = combat_state.player.position;
+        } else {
+            state.storm_center_locked = state.storm_center_locked
+                && stage17_same_point(state.storm_center, skill.locked_center);
+            state.storm_player_moved = state.storm_player_moved
+                || !stage17_same_point(
+                    state.storm_player_start, combat_state.player.position);
+        }
+        state.storm_strike_count = std::max(
+            state.storm_strike_count, skill.strike_index);
+        if (skill.phase == combat::ActiveSkillPhase::strikes
+                && !state.storm_array_captured) {
+            state.capture_pending = Stage17Capture::storm_array;
+        }
+        if (skill.phase == combat::ActiveSkillPhase::finisher
+                && !state.storm_finisher_captured) {
+            state.capture_pending = Stage17Capture::storm_finisher;
+        }
+    } else if (state.storm_array_captured
+            && state.storm_finisher_captured) {
+        state.step = Stage17ValidationStep::open_inventory;
+    }
+}
+
+void observe_stage17_inventory(const RaylibHostConfig& config,
+    Stage17SkillStonesValidationState& state,
+    const InventoryRenderer& inventory,
+    const dungeon::DungeonSnapshot& current) noexcept {
+    if (config.stage17_skill_stones_validation
+            == Stage17SkillStonesValidationScenario::none) {
+        return;
+    }
+    if (state.step == Stage17ValidationStep::open_inventory
+            && inventory.is_open()) {
+        state.step = Stage17ValidationStep::open_skill_page;
+    } else if (state.step == Stage17ValidationStep::remove_slot_1
+            && current.skill_loadout.slots[0].active
+                == skills::ActiveSkillId::none) {
+        state.step = Stage17ValidationStep::select_draw_inventory;
+    } else if (state.step == Stage17ValidationStep::equip_slot_5
+            && current.skill_loadout.slots[4].active
+                == skills::ActiveSkillId::draw_slash) {
+        state.step = Stage17ValidationStep::swap_slots_2_5;
+    } else if (state.step == Stage17ValidationStep::swap_slots_2_5
+            && stage17_final_loadout(current.skill_loadout)) {
+        state.final_loadout = current.skill_loadout;
+        state.production_transactions =
+            !current.pending_save_kind.has_value();
+        state.step = Stage17ValidationStep::complete;
+    } else if (state.step == Stage17ValidationStep::restart_open_inventory
+            && inventory.is_open()) {
+        state.step = Stage17ValidationStep::restart_open_skill_page;
+    }
+}
+
+[[nodiscard]] const char* stage17_capture_name(
+    const Stage17Capture capture) noexcept {
+    switch (capture) {
+    case Stage17Capture::initial: return "01-new-default-1280x720.png";
+    case Stage17Capture::draw_hit: return "02-draw-slash-hit-1280x720.png";
+    case Stage17Capture::storm_array: return "03-storm-array-1280x720.png";
+    case Stage17Capture::storm_finisher: return "04-storm-finisher-1280x720.png";
+    case Stage17Capture::restarted: return "05-restarted-loadout-1280x720.png";
+    case Stage17Capture::none: break;
+    }
+    return nullptr;
+}
+
+[[nodiscard]] std::optional<std::string> stage17_capture_path(
+    const RaylibHostConfig& config,
+    Stage17SkillStonesValidationState& state) noexcept {
+    if (config.stage17_skill_stones_validation
+            == Stage17SkillStonesValidationScenario::none
+        || !config.screenshot_directory.has_value()) {
+        return std::nullopt;
+    }
+    ++state.presented_frames;
+    if (state.step == Stage17ValidationStep::initial
+            && !state.initial_captured && state.presented_frames >= 2U) {
+        state.capture_pending = Stage17Capture::initial;
+    }
+    const char* const name = stage17_capture_name(state.capture_pending);
+    if (name == nullptr) return std::nullopt;
+    return (*config.screenshot_directory / name).string();
+}
+
+void mark_stage17_capture_complete(
+    Stage17SkillStonesValidationState& state) noexcept {
+    switch (state.capture_pending) {
+    case Stage17Capture::initial:
+        state.initial_captured = true;
+        state.step = Stage17ValidationStep::empty_slot_3;
+        break;
+    case Stage17Capture::draw_hit:
+        state.draw_captured = true;
+        break;
+    case Stage17Capture::storm_array:
+        state.storm_array_captured = true;
+        break;
+    case Stage17Capture::storm_finisher:
+        state.storm_finisher_captured = true;
+        break;
+    case Stage17Capture::restarted:
+        state.restart_captured = true;
+        state.step = Stage17ValidationStep::complete;
+        break;
+    case Stage17Capture::none:
+        break;
+    }
+    state.capture_pending = Stage17Capture::none;
+}
+
+[[nodiscard]] const char* stage17_skill_name(
+    const skills::ActiveSkillId id) noexcept {
+    switch (id) {
+    case skills::ActiveSkillId::draw_slash: return "draw_slash";
+    case skills::ActiveSkillId::storm_swords: return "storm_swords";
+    case skills::ActiveSkillId::none: return "none";
+    case skills::ActiveSkillId::count: break;
+    }
+    return "invalid";
+}
+
+void write_stage17_loadout(std::ostream& stream,
+    const skills::SkillLoadoutState& loadout) {
+    for (std::size_t index = 0U; index < loadout.slots.size(); ++index) {
+        if (index != 0U) stream << ',';
+        stream << stage17_skill_name(loadout.slots[index].active);
+    }
+}
+
+[[nodiscard]] std::size_t stage17_support_none_count(
+    const skills::SkillLoadoutState& loadout) noexcept {
+    std::size_t count{};
+    for (const skills::ActiveSkillSlot& slot : loadout.slots) {
+        count += static_cast<std::size_t>(std::count(slot.supports.begin(),
+            slot.supports.end(), skills::SupportSkillId::none));
+    }
+    return count;
+}
+
+[[nodiscard]] bool stage17_validation_complete(
+    const RaylibHostConfig& config,
+    const Stage17SkillStonesValidationState& state) noexcept {
+    return config.stage17_skill_stones_validation
+            != Stage17SkillStonesValidationScenario::none
+        && (state.step == Stage17ValidationStep::complete
+            || state.aborted_by_death);
+}
+
+void write_stage17_validation_summary(const RaylibHostConfig& config,
+    const Stage17SkillStonesValidationState& state) noexcept {
+    if (!config.validation_summary_file.has_value()
+        || config.stage17_skill_stones_validation
+            == Stage17SkillStonesValidationScenario::none) {
+        return;
+    }
+    try {
+        std::ofstream stream(*config.validation_summary_file,
+            std::ios::out | std::ios::trunc);
+        if (!stream) return;
+        const bool production = config.stage17_skill_stones_validation
+            == Stage17SkillStonesValidationScenario::production_sequence;
+        const bool empty_slots = std::all_of(state.empty_slots_none.begin(),
+            state.empty_slots_none.end(), [](const bool value) noexcept {
+                return value;
+            });
+        const bool passed = production
+            ? state.step == Stage17ValidationStep::complete
+                && state.initial_captured && state.draw_accepted
+                && state.draw_captured && state.storm_accepted
+                && state.storm_array_captured && state.storm_finisher_captured
+                && state.storm_center_locked && state.storm_player_moved
+                && state.public_input_path && state.production_transactions
+                && empty_slots
+            : state.step == Stage17ValidationStep::complete
+                && state.restart_captured && state.restart_persisted
+                && state.restart_cooldowns_zero;
+        stream << "scenario=" << (production
+                ? "production_sequence" : "restarted_loadout") << '\n'
+               << "result=" << (passed ? "pass" : "fail") << '\n'
+               << "final_step=" << static_cast<unsigned>(state.step) << '\n'
+               << "aborted_by_death=" << (state.aborted_by_death ? 1 : 0) << '\n'
+               << "initial_slots=";
+        write_stage17_loadout(stream, state.initial_loadout);
+        stream << '\n' << "final_slots=";
+        write_stage17_loadout(stream, state.final_loadout);
+        stream << '\n'
+               << "owned_active_bits=" << state.initial_loadout.owned_active_bits << '\n'
+               << "support_none_count="
+               << stage17_support_none_count(state.initial_loadout) << '\n'
+               << "empty_slots_none=" << (empty_slots ? 1 : 0) << '\n'
+               << "draw_accepted=" << (state.draw_accepted ? 1 : 0) << '\n'
+               << "draw_hit_count=" << state.draw_hit_count << '\n'
+               << "storm_accepted=" << (state.storm_accepted ? 1 : 0) << '\n'
+               << "storm_strike_hit_count=" << state.storm_strike_hit_count << '\n'
+               << "storm_finisher_hit_count=" << state.storm_finisher_hit_count << '\n'
+               << "storm_strike_count="
+               << static_cast<unsigned>(state.storm_strike_count) << '\n'
+               << "storm_center_locked=" << (state.storm_center_locked ? 1 : 0) << '\n'
+               << "storm_player_moved=" << (state.storm_player_moved ? 1 : 0) << '\n'
+               << "public_input_path=" << (state.public_input_path ? 1 : 0) << '\n'
+               << "production_transactions="
+               << (state.production_transactions ? 1 : 0) << '\n'
+               << "restart_persisted=" << (state.restart_persisted ? 1 : 0) << '\n'
+               << "restart_cooldowns_zero="
+               << (state.restart_cooldowns_zero ? 1 : 0) << '\n';
+    } catch (...) {
+        TraceLog(LOG_WARNING, "failed to write stage17 validation summary");
     }
 }
 
@@ -1768,7 +2346,9 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         DungeonRuntimeConfig runtime_config{};
         runtime_config.save.directory = *save_directory;
         runtime_config.new_run_seed = config.new_run_seed;
-        DungeonRuntime runtime(runtime_config);
+        const auto runtime_storage =
+            std::make_unique<DungeonRuntime>(runtime_config);
+        DungeonRuntime& runtime = *runtime_storage;
         const bool initialized = runtime.initialize();
         if (!initialized && runtime.state() != DungeonRuntimeState::recovery_required) {
             return HostExitCode::save_initialization_failed;
@@ -1797,6 +2377,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 || config.stage11d_loot_validation
                     != Stage11DLootValidationScenario::none
 // STAGE11D_LOOT_VALIDATION_SEAM_END foreground
+                || config.stage17_skill_stones_validation
+                    != Stage17SkillStonesValidationScenario::none
                 ) {
             static_cast<void>(SetForegroundWindow(GetWindowHandle()));
         }
@@ -1838,6 +2420,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
 // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN runtime_state
         Stage11DLootValidationState stage11d_validation_state{};
 // STAGE11D_LOOT_VALIDATION_SEAM_END runtime_state
+        const auto stage17_validation_state =
+            std::make_unique<Stage17SkillStonesValidationState>();
         bool stage10_validation_captured = false;
         const std::string validation_capture_prefix = config.validation_capture
             ? (*save_directory / "stage8-validation-").string()
@@ -1854,15 +2438,28 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             return std::string{TextFormat("%s%03u.png",
                 validation_capture_prefix.c_str(), validation_capture_count)};
         };
-        dungeon::DungeonSnapshot current{};
-        dungeon::DungeonSnapshot previous{};
+        const auto current_storage =
+            std::make_unique<dungeon::DungeonSnapshot>();
+        const auto previous_storage =
+            std::make_unique<dungeon::DungeonSnapshot>();
+        const auto presented_snapshot_storage =
+            std::make_unique<dungeon::DungeonSnapshot>();
+        dungeon::DungeonSnapshot& current = *current_storage;
+        dungeon::DungeonSnapshot& previous = *previous_storage;
+        dungeon::DungeonSnapshot& presented_snapshot =
+            *presented_snapshot_storage;
         if (runtime.session() != nullptr) {
             current = runtime.session()->snapshot();
             previous = current;
-            drain_events(*runtime.session(), renderer, feedback, audio);
+            observe_stage17_snapshot(
+                config, *stage17_validation_state, current);
+            drain_events(*runtime.session(), renderer, feedback, audio,
+                stage17_validation_state.get());
         }
 
         while (!exit_requested) {
+            observe_stage17_snapshot(
+                config, *stage17_validation_state, current);
             const bool window_close_requested = WindowShouldClose();
             const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();
             const PhysicalKeySnapshot stage11b_physical_keys =
@@ -1876,14 +2473,19 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 stage11c_physical_keys, config, input_settings, current,
                 stage11d_validation_state);
 // STAGE11D_LOOT_VALIDATION_SEAM_END runtime_input
+            const PhysicalKeySnapshot stage17_physical_keys =
+                inject_stage17_physical_edges(physical_keys,
+                    config, input_settings, current,
+                    *stage17_validation_state);
             HostFrameInput frame_input = map_host_frame_input(
-                input_settings, physical_keys);
+                input_settings, stage17_physical_keys);
             if (recovery_requested(runtime.state() == DungeonRuntimeState::recovery_required,
                     frame_input.keys.recovery)) {
                 if (runtime.recover_with_new_run() && runtime.session() != nullptr) {
                     current = runtime.session()->snapshot();
                     previous = current;
-                    drain_events(*runtime.session(), renderer, feedback, audio);
+                    drain_events(*runtime.session(), renderer, feedback, audio,
+                        stage17_validation_state.get());
                 }
             }
             if (runtime.state() == DungeonRuntimeState::recovery_required) {
@@ -2022,13 +2624,16 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 && inventory.process_input(runtime, current, frame_input)) {
                 current = session->snapshot();
                 previous = current;
-                drain_events(*session, renderer, feedback, audio);
+                drain_events(*session, renderer, feedback, audio,
+                    stage17_validation_state.get());
                 if (runtime.state() != DungeonRuntimeState::running) {
                     inventory.close();
                     fixed_step.clear_accumulator();
                     inventory_toggled_this_frame = true;
                 }
             }
+            observe_stage17_inventory(config, *stage17_validation_state,
+                inventory, current);
             const PauseScreen pause_screen_before = pause_menu.screen;
             const bool pause_was_open =
                 pause_screen_before != PauseScreen::closed;
@@ -2113,7 +2718,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 if (reset != dungeon::RequestResult::rejected) {
                     current = session->snapshot();
                     previous = current;
-                    drain_events(*session, renderer, feedback, audio);
+                    drain_events(*session, renderer, feedback, audio,
+                        stage17_validation_state.get());
                 }
             }
             if (!pause_blocks_gameplay && death_gate.forward_gameplay
@@ -2134,6 +2740,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             if (forward_actions) {
                 const SubmittedFrameActions submitted_actions =
                     submit_frame_actions(*session, frame_input);
+                observe_stage17_submitted_actions(
+                    config, *stage17_validation_state, submitted_actions);
                 if (config.stage11b_validation
                         == Stage11BValidationScenario::rebound_attack) {
                     if (stage11b_validation_state.injected_frame == 28U) {
@@ -2172,6 +2780,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                         || config.stage11d_loot_validation
                             != Stage11DLootValidationScenario::none
 // STAGE11D_LOOT_VALIDATION_SEAM_END fixed_step
+                        || config.stage17_skill_stones_validation
+                            != Stage17SkillStonesValidationScenario::none
                         ) {
                     if (config.validation_steps_per_frame != 0U) {
                         frame.steps = config.validation_steps_per_frame;
@@ -2200,6 +2810,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     loot_pickup_policy(live_settings.loot_filter_mode));
                 ++stage11b_validation_state.fixed_ticks;
                 current = session->snapshot();
+                observe_stage17_snapshot(
+                    config, *stage17_validation_state, current);
 // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN abyss_claim
                 if (stage11d_validation_state.abyss_claim_requested) {
                     bool still_ground = false;
@@ -2230,7 +2842,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     inventory.close();
                     fixed_step.clear_accumulator();
                 }
-                drain_events(*session, renderer, feedback, audio);
+                drain_events(*session, renderer, feedback, audio,
+                    stage17_validation_state.get());
                 if (stage10_validation_reached(
                         current, config, stage10_validation_state)) {
                     break;
@@ -2297,7 +2910,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             renderer.set_loot_filter_mode(presented_loot_filter);
             BeginDrawing();
             ClearBackground(Color{13, 17, 27, 255});
-            dungeon::DungeonSnapshot presented_snapshot = current;
+            presented_snapshot = current;
             if (config.stage12_material_showcase) {
                 apply_stage12_material_showcase(presented_snapshot);
             }
@@ -2382,6 +2995,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                         != Stage11DLootValidationScenario::rare_only_abyss
                     || stage11d_validation_state.abyss_claimed);
 // STAGE11D_LOOT_VALIDATION_SEAM_END reached
+            const bool stage17_reached = stage17_validation_complete(
+                config, *stage17_validation_state);
             const bool stage11b_visible_capture =
                 (config.stage11b_validation == Stage11BValidationScenario::rebound_attack
                     || config.stage11b_validation == Stage11BValidationScenario::conflict_swap)
@@ -2395,7 +3010,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 || stage11b_reached || stage11c_reached;
 // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN reached_merge
             const bool validation_reached = prior_validation_reached
-                || stage11d_reached;
+                || stage11d_reached || stage17_reached;
 // STAGE11D_LOOT_VALIDATION_SEAM_END reached_merge
 // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN visible_capture
             const bool loot_validation_visible_capture =
@@ -2404,9 +3019,12 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 config.stage11d_loot_validation
                     == Stage11DLootValidationScenario::none;
 // STAGE11D_LOOT_VALIDATION_SEAM_END visible_capture
-            std::optional<std::string> capture_path{};
+            std::optional<std::string> capture_path = stage17_capture_path(
+                config, *stage17_validation_state);
+            const bool stage17_capture_requested = capture_path.has_value();
             bool captured_stage10_target = false;
-            if ((validation_reached || loot_validation_visible_capture
+            if (!capture_path.has_value()
+                    && (validation_reached || loot_validation_visible_capture
                     || stage11b_visible_capture
                     || stage11b_paused_visible_capture)
                     && !stage10_validation_captured
@@ -2438,6 +3056,9 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             }
             present_frame_and_maybe_capture(capture_path.has_value()
                 ? capture_path->c_str() : nullptr);
+            if (stage17_capture_requested) {
+                mark_stage17_capture_complete(*stage17_validation_state);
+            }
             ++presented_frame_count;
             if (captured_stage10_target && stage11c_reached) {
                 stage11c_validation_state.captured = true;
@@ -2469,6 +3090,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         write_stage11d_loot_validation_summary(config,
             stage11d_validation_state, pause_menu);
 // STAGE11D_LOOT_VALIDATION_SEAM_END summary
+        write_stage17_validation_summary(config, *stage17_validation_state);
         audio.shutdown();
         renderer.shutdown_resources();
         pause_menu_renderer.shutdown();

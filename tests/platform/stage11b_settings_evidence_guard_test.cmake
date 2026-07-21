@@ -136,8 +136,10 @@ if(_fixed_gate EQUAL -1 OR _live_policy_call EQUAL -1
     message(FATAL_ERROR
         "Stage11B evidence guard requires live loot policy behind host gate")
 endif()
-string(FIND "${_host_text}" "const std::array<bool, 3> accepted_actions =" _accepted_actions)
-string(FIND "${_host_text}" "accepted_actions[0] ? 1U : 0U" _accepted_attack_count)
+string(FIND "${_host_text}"
+    "const SubmittedFrameActions submitted_actions =" _accepted_actions)
+string(FIND "${_host_text}"
+    "submitted_actions.combat[0] ? 1U : 0U" _accepted_attack_count)
 if(_accepted_actions EQUAL -1 OR _accepted_attack_count EQUAL -1)
     message(FATAL_ERROR "Stage11B evidence guard requires accepted queue_action evidence")
 endif()

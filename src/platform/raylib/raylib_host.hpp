@@ -83,6 +83,12 @@ enum class Stage11DLootValidationScenario : std::uint8_t {
     pickup_feedback,
 };
 
+enum class Stage17SkillStonesValidationScenario : std::uint8_t {
+    none,
+    production_sequence,
+    restarted_loadout,
+};
+
 struct RaylibHostConfig final {
     int window_width{1280};
     int window_height{720};
@@ -105,6 +111,8 @@ struct RaylibHostConfig final {
         Stage11CHudValidationScenario::none};
     Stage11DLootValidationScenario stage11d_loot_validation{
         Stage11DLootValidationScenario::none};
+    Stage17SkillStonesValidationScenario stage17_skill_stones_validation{
+        Stage17SkillStonesValidationScenario::none};
     std::uint8_t validation_abyss_direction{0xFFU};
     std::uint32_t validation_steps_per_frame{};
     std::optional<std::filesystem::path> validation_capture_file{};
