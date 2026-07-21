@@ -30,7 +30,7 @@ Release 最近一次运行的五张绝对证据路径：
 - `E:\game\.worktrees\stage16-loot-reinforcement\out\build\windows-msvc-release\tests\platform\stage17 skill stones evidence\stage17-run\04-storm-finisher-1280x720.png`
 - `E:\game\.worktrees\stage16-loot-reinforcement\out\build\windows-msvc-release\tests\platform\stage17 skill stones evidence\stage17-run\05-restarted-loadout-1280x720.png`
 
-状态文件位于同目录 `stage17-skill-stones-state.txt`。验证器要求恰好五个固定文件名、每张 PNG 大于 4096 字节、解码尺寸恰为 1280×720、修改时间严格晚于本次 `run.marker`，并对解码后的 ARGB 像素做 SHA-256，五张图必须互不相同。它还逐字段精确检查 23 个状态字段。破坏性自测分别截断 PNG、伪造 `save_version` 和回拨时间戳，三种突变都必须被拒绝；所有清理只允许发生在经绝对路径验证的 `stage17-run` 或其自测子目录。
+状态文件位于同目录 `stage17-skill-stones-state.txt`。验证器要求恰好五个固定文件名、每张 PNG 大于 4096 字节、解码尺寸恰为 1280×720、修改时间严格晚于本次 `run.marker`，并对解码后的 ARGB 像素做 SHA-256，五张图必须互不相同。它还逐字段精确检查 23 个状态字段。破坏性自测分别截断 PNG、伪造 `save_version`、回拨时间戳，并把已存在的 `MutationRoot` 替换为 junction；四种突变都必须被拒绝，junction 目标的哨兵文件必须保留。递归清理前会解析 evidence 与 mutation 的绝对/真实路径，拒绝路径链及 mutation 子树中的任何 reparse point，并再次确认 mutation 仍在受控 evidence root 内。
 
 ## 新鲜验证结果
 
@@ -46,15 +46,20 @@ ctest --test-dir out/build/windows-msvc-debug -LE 'graphics|formal-game' --outpu
 .\scripts\Build.ps1 -Preset windows-msvc-release
 ctest --test-dir out/build/windows-msvc-release -L stage17 --output-on-failure
 ctest --test-dir out/build/windows-msvc-release -LE 'graphics|formal-game' --output-on-failure
+
+ctest --test-dir out/build/windows-msvc-debug -R '^(stage16\.loot_reinforcement\.real_raylib|stage17\.skill_stones\.)' --output-on-failure
+ctest --test-dir out/build/windows-msvc-debug -R '^architecture\.' --output-on-failure
+ctest --test-dir out/build/windows-msvc-debug -R '^(stage12\.material_(formal|evidence_validator)|stage11b\.settings_(formal|evidence_validator)|stage11c\.hud_(formal|evidence_validator|evidence_validator_self_test)|stage11d\.loot_(formal|evidence_validator))$' --output-on-failure
 ```
 
-- Debug Stage17：3/3 通过，0 失败，11.19 秒；真实 Raylib 10.41 秒、验证器 0.27 秒、破坏性自测 0.50 秒。
+- Debug Stage17（最终复验）：3/3 通过，0 失败，10.96 秒；真实 Raylib 10.14 秒、验证器 0.29 秒、含根及子树 junction 拒绝的破坏性自测 0.54 秒。
 - Debug 完整 `-LE` 门禁：92/92 通过，0 失败，979.69 秒。
 - Release 全量构建：213/213 构建步骤成功。
-- Release Stage17：3/3 通过，0 失败，7.97 秒；真实 Raylib 7.11 秒、验证器 0.35 秒、破坏性自测 0.49 秒。
+- Release Stage17（安全修复后）：3/3 通过，0 失败，7.62 秒；真实 Raylib 6.82 秒、验证器 0.27 秒、含 junction 拒绝的破坏性自测 0.51 秒。
 - Release 完整 `-LE` 门禁：92/92 通过，0 失败，740.11 秒。
-- Debug Stage16/17 联合真实 Raylib：4/4 通过，0 失败，11.93 秒。
-- Debug `^architecture\.`：18/18 通过，0 失败，82.32 秒。
+- Debug Stage16/17 联合真实 Raylib（修复后）：4/4 通过，0 失败，11.63 秒。
+- Debug `^architecture\.`（修复后）：18/18 通过，0 失败，83.99 秒。
+- Debug 既有 formal/validator 聚焦复测（修复后）：9/9 通过，0 失败，177.62 秒。
 
 ## 已知基线与实现说明
 

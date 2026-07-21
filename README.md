@@ -9,7 +9,7 @@ Stage 17：五槽主动技能石、剑圣“拔刀斩”与“极·鬼剑术（�
 - 正常游戏中按 `Esc` 打开暂停层。暂停不会推进固定步、战斗或地下城状态；恢复时也不会补跑暂停期间的 tick。
 - 设置可分别调整主音量、战斗音效、音乐、环境声和 UI 音效（0%–100%，每次 5%），并保留窗口化/全屏、VSync、地面物品过滤预设和十项玩法动作的键盘绑定。
 - 设置草稿支持预览、应用和取消：音量、窗口、VSync 与地面标签在草稿修改时预览；只有 `应用` 持久化成功后，输入和物品过滤策略才切换到新设置；取消会恢复已提交的运行时设置与地面标签。
-- 设置使用独立的 `settings-a.bin`/`settings-b.bin` 双槽文件，和角色 V6 存档完全分离。单槽损坏会恢复合法槽；双槽损坏则回到默认设置并在设置页提示一次，不会进入角色存档恢复流程。
+- 设置使用独立的 `settings-a.bin`/`settings-b.bin` 双槽文件，和当前角色 V8 存档完全分离。单槽损坏会恢复合法槽；双槽损坏则回到默认设置并在设置页提示一次，不会进入角色存档恢复流程。
 - 地面物品过滤提供“显示全部”“魔法及以上”“仅稀有”三个预设。被过滤的普通房掉落仍留在生产快照与地面，不会因为隐藏标签而自动进入背包；自动拾取只领取达到当前预设门槛的物品。
 - 深渊房奖励不受普通掉落过滤门槛限制，即使低于“仅稀有”门槛仍会显示并可领取。成功拾取后，下中情境区显示带物品名的“已拾取”回执。
 - 左下玩家面板常驻生命、护盾（存在时）、经验、等级、未分配点和最多三个当前状态标签；低生命仅以有界边框频率强调。
@@ -26,7 +26,7 @@ Stage 17：五槽主动技能石、剑圣“拔刀斩”与“极·鬼剑术（�
 - 暂停页背包的“技能石”标签可取出、装入和交换任意主槽；每个主槽显示五个只读空辅助槽。装配通过原子存档事务提交，失败不会半更新；技能冷却和施放状态不持久化。
 - 拔刀斩是短前摇、单目标每次施放最多命中一次并明确击退的近距离扇形攻击；暴风式锁定施放中心，执行 12 段剑阵和独立终结击飞，死亡或换房会取消未完成施放。
 
-实现边界、V6 存档布局、正式测试与真实 raylib 五路径证据见 [Stage 11-A 验证记录](docs/validation/stage11a-death-continue.md)。暂停、设置、重绑定、双槽恢复和 Stage 11-B 正式 raylib 证据见 [Stage 11-B 验证记录](docs/validation/stage11b-settings-input.md)。完整 HUD、固定容量/零分配门禁、中文字体、三分辨率和六场景正式证据见 [Stage 11-C 验证记录](docs/validation/stage11c-complete-hud.md)。三个地面过滤预设、深渊例外、自动拾取回执、设置 V2 迁移和六场生产 raylib 证据见 [Stage 11-D 验证记录](docs/validation/stage11d-ground-loot-filter.md)。战斗音效来源、自动证据、试听文件和验收边界见 [Stage 14 验证记录](docs/validation/stage14-combat-audio-pack.md)。音乐/环境/UI 来源、五路混音和运行态验收见 [Stage 15 验证记录](docs/validation/stage15-audio-mix.md)。材料、货币、强化、百万次分布模拟和真实 1280×720 Raylib 场景见 [Stage 16 验证记录](docs/validation/stage16-loot-currency-reinforcement.md)。五槽技能石、V8 迁移、两项剑圣技能和真实 Raylib 五图证据见 [Stage 17 验证记录](docs/validation/stage17-swordmaster-skill-stones.md)。
+实现边界、Stage 11-A 当时的角色存档布局、正式测试与真实 raylib 五路径证据见 [Stage 11-A 验证记录](docs/validation/stage11a-death-continue.md)。暂停、设置、重绑定、双槽恢复和 Stage 11-B 正式 raylib 证据见 [Stage 11-B 验证记录](docs/validation/stage11b-settings-input.md)。完整 HUD、固定容量/零分配门禁、中文字体、三分辨率和六场景正式证据见 [Stage 11-C 验证记录](docs/validation/stage11c-complete-hud.md)。三个地面过滤预设、深渊例外、自动拾取回执、设置 V2 迁移和六场生产 raylib 证据见 [Stage 11-D 验证记录](docs/validation/stage11d-ground-loot-filter.md)。战斗音效来源、自动证据、试听文件和验收边界见 [Stage 14 验证记录](docs/validation/stage14-combat-audio-pack.md)。音乐/环境/UI 来源、五路混音和运行态验收见 [Stage 15 验证记录](docs/validation/stage15-audio-mix.md)。材料、货币、强化、百万次分布模拟和真实 1280×720 Raylib 场景见 [Stage 16 验证记录](docs/validation/stage16-loot-currency-reinforcement.md)。五槽技能石、当前 V8 存档、V1–V7 迁移、两项剑圣技能和真实 Raylib 五图证据见 [Stage 17 验证记录](docs/validation/stage17-swordmaster-skill-stones.md)。
 
 本分支止步于 Stage 17；辅助技能石的掉落、装卸和效果，以及 macOS、主菜单、手柄及分辨率/画质设置仍未实现。
 
