@@ -52,6 +52,19 @@ bool same_ownership(const items::ItemOwnershipState& lhs,
     return true;
 }
 
+bool same_skill_loadout(const skills::SkillLoadoutState& lhs,
+    const skills::SkillLoadoutState& rhs) noexcept {
+    if (lhs.owned_active_bits != rhs.owned_active_bits)
+        return false;
+    for (std::size_t slot = 0U; slot < lhs.slots.size(); ++slot) {
+        if (lhs.slots[slot].active != rhs.slots[slot].active
+            || lhs.slots[slot].supports != rhs.slots[slot].supports) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool same_room(const checkpoint::RoomDescriptor& lhs,
     const checkpoint::RoomDescriptor& rhs) noexcept {
     return lhs.index == rhs.index && lhs.seed == rhs.seed
@@ -147,6 +160,7 @@ bool same_state(const checkpoint::DungeonRunState& lhs,
         && lhs.passive_tree.allocated_bits == rhs.passive_tree.allocated_bits
         && lhs.last_transition == rhs.last_transition
         && lhs.last_direction == rhs.last_direction
+        && same_skill_loadout(lhs.skill_loadout, rhs.skill_loadout)
         && same_ownership(lhs.item_ownership, rhs.item_ownership);
 }
 

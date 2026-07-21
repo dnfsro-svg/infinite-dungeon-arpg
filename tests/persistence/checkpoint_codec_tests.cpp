@@ -169,7 +169,7 @@ void write_u32(std::vector<std::uint8_t>& bytes, std::size_t offset,
         bytes[offset + index] = static_cast<std::uint8_t>(value >> (index * 8U));
 }
 
-arpg::test::Failure v7_layout_materials_and_items_round_trip() noexcept {
+arpg::test::Failure v8_layout_materials_and_items_round_trip() noexcept {
     auto state = make_fixture();
     state.item_ownership.items = {
         normal_item(0x0102030405060708ULL, 2U),
@@ -412,13 +412,13 @@ std::vector<std::uint8_t> as_v6_golden(
         0U);
     std::copy_n(v8.begin(), persistence::kV6BaseEncodedCheckpointSize, v6.begin());
     for (std::size_t item_index = 0U; item_index < item_count; ++item_index) {
-        const std::size_t v7_record = persistence::kV8BaseEncodedCheckpointSize
+        const std::size_t v8_record = persistence::kV8BaseEncodedCheckpointSize
             + item_index * persistence::kV7ItemRecordSize;
         const std::size_t v6_record = persistence::kV6BaseEncodedCheckpointSize
             + item_index * persistence::kV4ItemRecordSize;
-        std::copy_n(v8.begin() + v7_record, 16U, v6.begin() + v6_record);
+        std::copy_n(v8.begin() + v8_record, 16U, v6.begin() + v6_record);
         for (std::size_t roll = 0U; roll < 6U; ++roll) {
-            std::copy_n(v8.begin() + v7_record + 16U + roll * 6U, 4U,
+            std::copy_n(v8.begin() + v8_record + 16U + roll * 6U, 4U,
                 v6.begin() + v6_record + 16U + roll * 4U);
         }
     }
@@ -1008,7 +1008,7 @@ arpg::test::Failure legacy_initial_and_descent_abyss_are_cleared_without_drift()
     return {};
 }
 
-arpg::test::Failure v1_through_v6_decode_as_migrated_but_v7_does_not() noexcept {
+arpg::test::Failure v1_through_v6_decode_as_migrated_but_v8_does_not() noexcept {
     const auto default_loadout = skills::default_skill_loadout();
     const auto v1 = legacy_fixture();
     const auto decoded_v1 = persistence::decode_checkpoint(v1.data(), v1.size());
@@ -1414,7 +1414,7 @@ arpg::test::Failure v5_length_count_crc_and_capacity_are_bounded() noexcept {
     return {};
 }
 
-arpg::test::Failure v7_material_ids_discovery_and_reserved_bytes_are_validated()
+arpg::test::Failure v8_material_ids_discovery_and_reserved_bytes_are_validated()
     noexcept {
     auto state = make_owned_fixture();
     state.item_ownership.material_discovery_bits = 0x3FFFU;
@@ -1484,7 +1484,7 @@ arpg::test::Failure v7_material_ids_discovery_and_reserved_bytes_are_validated()
     return {};
 }
 
-arpg::test::Failure v7_corrupt_item_semantics_are_rejected() noexcept {
+arpg::test::Failure v8_corrupt_item_semantics_are_rejected() noexcept {
     const auto encoded = persistence::encode_checkpoint(make_owned_fixture());
     ARPG_REQUIRE(encoded.has_value());
     const auto rejects = [&encoded](std::size_t offset,
@@ -1594,7 +1594,7 @@ arpg::test::Failure v5_unified_validator_rejects_semantic_state() noexcept {
     return {};
 }
 
-arpg::test::Failure v7_death_retreat_transition_round_trips() noexcept {
+arpg::test::Failure v8_death_retreat_transition_round_trips() noexcept {
     auto state = make_fixture();
     state.last_transition = checkpoint::TransitionKind::death_retreat;
     state.last_direction = checkpoint::ExitDirection::none;
@@ -1620,7 +1620,7 @@ arpg::test::Failure v7_death_retreat_transition_round_trips() noexcept {
     return {};
 }
 
-arpg::test::Failure v7_pending_death_floor_zero_round_trips() noexcept {
+arpg::test::Failure v8_pending_death_floor_zero_round_trips() noexcept {
     auto state = make_fixture();
     state.current_room.floor_room_index = 0U;
     state.last_transition = checkpoint::TransitionKind::death_retreat;
@@ -1666,7 +1666,7 @@ arpg::test::Failure v7_pending_death_floor_zero_round_trips() noexcept {
     return {};
 }
 
-arpg::test::Failure v7_continued_target_floor_zero_round_trips() noexcept {
+arpg::test::Failure v8_continued_target_floor_zero_round_trips() noexcept {
     auto state = make_fixture();
     state.current_room.floor_room_index = 0U;
     state.last_transition = checkpoint::TransitionKind::death_retreat;
@@ -1705,16 +1705,16 @@ constexpr arpg::test::TestCase kCases[] = {
     {"legacy door abyss requires new domain roll", &legacy_door_abyss_requires_new_domain_roll},
     {"legacy door migration rejects missing or mismatched direction", &legacy_door_migration_rejects_missing_or_mismatched_direction},
     {"legacy initial and descent abyss clear without drift", &legacy_initial_and_descent_abyss_are_cleared_without_drift},
-    {"v1 through v6 decode migrated and v7 does not", &v1_through_v6_decode_as_migrated_but_v7_does_not},
-    {"v7 layout materials and items round trip", &v7_layout_materials_and_items_round_trip},
+    {"v1 through v6 decode migrated and v8 does not", &v1_through_v6_decode_as_migrated_but_v8_does_not},
+    {"v8 layout materials and items round trip", &v8_layout_materials_and_items_round_trip},
     {"v7 complete ownership and six roll record are golden", &v7_complete_ownership_and_six_roll_record_are_golden},
     {"v5 length count crc and capacity are bounded", &v5_length_count_crc_and_capacity_are_bounded},
-    {"v7 material ids discovery and reserved bytes are validated", &v7_material_ids_discovery_and_reserved_bytes_are_validated},
-    {"v7 corrupt item semantics are rejected", &v7_corrupt_item_semantics_are_rejected},
+    {"v8 material ids discovery and reserved bytes are validated", &v8_material_ids_discovery_and_reserved_bytes_are_validated},
+    {"v8 corrupt item semantics are rejected", &v8_corrupt_item_semantics_are_rejected},
     {"v5 unified validator rejects semantic state", &v5_unified_validator_rejects_semantic_state},
-    {"v7 death retreat transition round trips", &v7_death_retreat_transition_round_trips},
-    {"v7 pending death floor zero round trips", &v7_pending_death_floor_zero_round_trips},
-    {"v7 continued target floor zero round trips", &v7_continued_target_floor_zero_round_trips},
+    {"v8 death retreat transition round trips", &v8_death_retreat_transition_round_trips},
+    {"v8 pending death floor zero round trips", &v8_pending_death_floor_zero_round_trips},
+    {"v8 continued target floor zero round trips", &v8_continued_target_floor_zero_round_trips},
     {"codec allocation failures do not escape noexcept", &codec_allocation_failures_do_not_escape_noexcept},
     {"baseline checkpoint bytes are preserved", &baseline_checkpoint_bytes_are_preserved},
     {"all nonzero fields round trip", &all_nonzero_fields_round_trip},

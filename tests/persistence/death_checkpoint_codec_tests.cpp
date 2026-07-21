@@ -121,7 +121,7 @@ bool bytes_at(const std::vector<std::uint8_t>& bytes, std::size_t offset,
         && std::equal(expected.begin(), expected.end(), bytes.begin() + offset);
 }
 
-arpg::test::Failure v7_layout_and_full_round_trip() noexcept {
+arpg::test::Failure v8_layout_and_full_round_trip() noexcept {
     static_assert(persistence::kV6DeathPayloadSize == 224U);
     static_assert(persistence::kV6BasePayloadSize == 428U);
     static_assert(persistence::kV6BaseEncodedCheckpointSize == 460U);
@@ -333,7 +333,7 @@ arpg::test::Failure v5_fixture_migrates_to_canonical_none() noexcept {
     return {};
 }
 
-arpg::test::Failure v7_death_enum_boolean_reserved_and_state_errors() noexcept {
+arpg::test::Failure v8_death_enum_boolean_reserved_and_state_errors() noexcept {
     auto state = make_state();
     state.death_sequence = 1U;
     state.death = make_pending_death();
@@ -390,7 +390,7 @@ arpg::test::Failure v7_death_enum_boolean_reserved_and_state_errors() noexcept {
     return {};
 }
 
-arpg::test::Failure v7_lengths_crc_and_magic_are_rejected() noexcept {
+arpg::test::Failure v8_lengths_crc_and_magic_are_rejected() noexcept {
     const auto encoded = persistence::encode_checkpoint(make_state());
     ARPG_REQUIRE(encoded.has_value());
     for (std::size_t size = 236U; size < 788U; ++size) {
@@ -423,10 +423,10 @@ arpg::test::Failure v7_lengths_crc_and_magic_are_rejected() noexcept {
 }
 
 constexpr arpg::test::TestCase kCases[] = {
-    {"v7 layout and full round trip", &v7_layout_and_full_round_trip},
+    {"v8 layout and full round trip", &v8_layout_and_full_round_trip},
     {"v5 fixture migrates to canonical none", &v5_fixture_migrates_to_canonical_none},
-    {"v7 death enum boolean reserved and state errors", &v7_death_enum_boolean_reserved_and_state_errors},
-    {"v7 lengths crc and magic are rejected", &v7_lengths_crc_and_magic_are_rejected},
+    {"v8 death enum boolean reserved and state errors", &v8_death_enum_boolean_reserved_and_state_errors},
+    {"v8 lengths crc and magic are rejected", &v8_lengths_crc_and_magic_are_rejected},
 };
 
 }  // namespace

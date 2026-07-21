@@ -18,6 +18,7 @@ namespace {
 namespace checkpoint = arpg::dungeon::checkpoint;
 namespace persistence = arpg::persistence;
 namespace items = arpg::items;
+namespace skills = arpg::skills;
 
 [[maybe_unused]] const persistence::SaveLoadResult kSaveLoadFieldOrderProbe{
     persistence::SaveLoadState::ready,
@@ -175,13 +176,13 @@ std::vector<std::uint8_t> encoded_v4(
         v5.begin());
     for (std::size_t item_index = 0U;
             item_index < state.item_ownership.items.size(); ++item_index) {
-        const std::size_t v7_record = persistence::kV8BaseEncodedCheckpointSize
+        const std::size_t v8_record = persistence::kV8BaseEncodedCheckpointSize
             + item_index * persistence::kV7ItemRecordSize;
         const std::size_t v6_record = persistence::kV6BaseEncodedCheckpointSize
             + item_index * persistence::kV4ItemRecordSize;
-        std::copy_n(v8.begin() + v7_record, 16U, v5.begin() + v6_record);
+        std::copy_n(v8.begin() + v8_record, 16U, v5.begin() + v6_record);
         for (std::size_t roll = 0U; roll < 6U; ++roll) {
-            std::copy_n(v8.begin() + v7_record + 16U + roll * 6U, 4U,
+            std::copy_n(v8.begin() + v8_record + 16U + roll * 6U, 4U,
                 v5.begin() + v6_record + 16U + roll * 4U);
         }
     }
@@ -428,6 +429,33 @@ arpg::test::Failure same_state_includes_all_ownership_bytes_and_order() noexcept
     ++rhs.death.raw_damage;
     ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
 
+    const auto ownership_state = lhs;
+    lhs = make_state(9U, 22U);
+    rhs = lhs;
+    rhs.skill_loadout.owned_active_bits ^= 0x2U;
+    ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+    for (std::size_t slot = 0U;
+            slot < skills::kActiveSkillSlotCount; ++slot) {
+        rhs = lhs;
+        rhs.skill_loadout.slots[slot].active =
+            lhs.skill_loadout.slots[slot].active
+                == skills::ActiveSkillId::none
+            ? skills::ActiveSkillId::draw_slash
+            : skills::ActiveSkillId::none;
+        ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+    }
+    for (std::size_t slot = 0U;
+            slot < skills::kActiveSkillSlotCount; ++slot) {
+        for (std::size_t support = 0U;
+                support < skills::kSupportSlotsPerActive; ++support) {
+            rhs = lhs;
+            rhs.skill_loadout.slots[slot].supports[support] =
+                static_cast<skills::SupportSkillId>(0U);
+            ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+        }
+    }
+    lhs = ownership_state;
+
     TempDirectory directory;
     write_bytes(directory.path / "run_a.sav", encoded(lhs));
     rhs = lhs;
@@ -436,6 +464,56 @@ arpg::test::Failure same_state_includes_all_ownership_bytes_and_order() noexcept
     write_bytes(directory.path / "run_b.sav", encoded(rhs));
     auto store = make_store(directory.path);
     const auto loaded = store.load();
+    ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::recovery_required);
+    ARPG_REQUIRE(loaded.error == persistence::SaveError::conflicting_slots);
+    return {};
+}
+
+arpg::test::Failure equal_generation_active_slot_difference_conflicts()
+    noexcept {
+    TempDirectory directory;
+    const auto lhs = make_state(8U, 80U);
+    auto rhs = lhs;
+    std::swap(rhs.skill_loadout.slots[1U], rhs.skill_loadout.slots[4U]);
+    ARPG_REQUIRE(skills::validate_skill_loadout(lhs.skill_loadout)
+        == skills::SkillLoadoutError::none);
+    ARPG_REQUIRE(skills::validate_skill_loadout(rhs.skill_loadout)
+        == skills::SkillLoadoutError::none);
+    const auto encoded_lhs = encoded(lhs);
+    const auto encoded_rhs = encoded(rhs);
+    ARPG_REQUIRE(encoded_lhs.size()
+        == persistence::kV8BaseEncodedCheckpointSize);
+    ARPG_REQUIRE(encoded_rhs.size()
+        == persistence::kV8BaseEncodedCheckpointSize);
+    write_bytes(directory.path / "run_a.sav", encoded_lhs);
+    write_bytes(directory.path / "run_b.sav", encoded_rhs);
+
+    const auto loaded = make_store(directory.path).load();
+    ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::recovery_required);
+    ARPG_REQUIRE(loaded.error == persistence::SaveError::conflicting_slots);
+    return {};
+}
+
+arpg::test::Failure equal_generation_owned_skill_difference_conflicts()
+    noexcept {
+    TempDirectory directory;
+    const auto lhs = make_state(8U, 81U);
+    auto rhs = lhs;
+    rhs.skill_loadout = skills::SkillLoadoutState{};
+    ARPG_REQUIRE(skills::validate_skill_loadout(lhs.skill_loadout)
+        == skills::SkillLoadoutError::none);
+    ARPG_REQUIRE(skills::validate_skill_loadout(rhs.skill_loadout)
+        == skills::SkillLoadoutError::none);
+    const auto encoded_lhs = encoded(lhs);
+    const auto encoded_rhs = encoded(rhs);
+    ARPG_REQUIRE(encoded_lhs.size()
+        == persistence::kV8BaseEncodedCheckpointSize);
+    ARPG_REQUIRE(encoded_rhs.size()
+        == persistence::kV8BaseEncodedCheckpointSize);
+    write_bytes(directory.path / "run_a.sav", encoded_lhs);
+    write_bytes(directory.path / "run_b.sav", encoded_rhs);
+
+    const auto loaded = make_store(directory.path).load();
     ARPG_REQUIRE(loaded.state == persistence::SaveLoadState::recovery_required);
     ARPG_REQUIRE(loaded.error == persistence::SaveError::conflicting_slots);
     return {};
@@ -511,6 +589,10 @@ constexpr arpg::test::TestCase kCases[] = {
     {"temp files do not participate in load", &temp_files_do_not_participate_in_load},
     {"variable length slots rotate large then small", &variable_length_slots_rotate_large_then_small},
     {"same state includes ownership bytes and order", &same_state_includes_all_ownership_bytes_and_order},
+    {"equal generation active slot difference conflicts",
+        &equal_generation_active_slot_difference_conflicts},
+    {"equal generation owned skill difference conflicts",
+        &equal_generation_owned_skill_difference_conflicts},
     {"equal generation death sequence difference conflicts", &equal_generation_death_sequence_difference_conflicts},
     {"equal generation death field difference conflicts", &equal_generation_death_field_difference_conflicts},
     {"migrated flag follows selected ab slot", &migrated_flag_follows_the_selected_ab_slot},

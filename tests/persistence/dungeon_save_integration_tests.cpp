@@ -423,7 +423,7 @@ arpg::test::Failure initial_generation_one_round_trips_descriptor() noexcept {
     return {};
 }
 
-arpg::test::Failure v7_materials_discovery_and_reinforcement_survive_restart()
+arpg::test::Failure v8_materials_discovery_and_reinforcement_survive_restart()
     noexcept {
     TempDirectory directory;
     auto store = make_store(directory.path);
@@ -958,8 +958,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"affix drop reload claim semantics",
         &affix_drop_is_stable_before_claim_and_absent_after_reload},
     {"initial generation one round trips descriptor", &initial_generation_one_round_trips_descriptor},
-    {"v7 materials discovery and reinforcement survive restart",
-        &v7_materials_discovery_and_reinforcement_survive_restart},
+    {"v8 materials discovery and reinforcement survive restart",
+        &v8_materials_discovery_and_reinforcement_survive_restart},
     {"committed door transition restarts in next room", &committed_door_transition_restarts_in_next_room},
     {"pre publish failure keeps old room in memory and on disk", &pre_publish_failure_keeps_old_room_in_memory_and_on_disk},
     {"lost post publish receipt faults session but restart uses new room", &lost_post_publish_receipt_faults_session_but_restart_uses_new_room},
