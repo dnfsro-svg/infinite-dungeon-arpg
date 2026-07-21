@@ -14,6 +14,10 @@ namespace {
 
 constexpr float kPi = 3.14159265358979323846F;
 constexpr std::uint64_t kFlashTicks = 7U;
+constexpr std::uint16_t kStormFinisherTick = static_cast<std::uint16_t>(
+    combat::kStormStartupTicks
+    + static_cast<std::uint16_t>(combat::kStormStrikeCount)
+        * combat::kStormStrikeIntervalTicks);
 
 [[nodiscard]] bool recent_finisher_event(
     const combat::CombatSnapshot& snapshot,
@@ -161,15 +165,23 @@ ActiveSkillEffectPlan make_active_skill_effect_plan(
     std::uint64_t event_age = 0U;
     const bool recent_event = recent_finisher_event(
         snapshot, last_event, event_age);
-    const bool snapshot_finisher = skill.id == skills::ActiveSkillId::storm_swords
-        && skill.phase == combat::ActiveSkillPhase::finisher;
-    if (snapshot_finisher || recent_event) {
+    const bool snapshot_finisher_window =
+        skill.id == skills::ActiveSkillId::storm_swords
+        && (skill.phase == combat::ActiveSkillPhase::finisher
+            || skill.phase == combat::ActiveSkillPhase::recovery)
+        && skill.elapsed_ticks >= kStormFinisherTick
+        && skill.elapsed_ticks <= kStormFinisherTick + kFlashTicks;
+    const std::uint64_t snapshot_age = snapshot_finisher_window
+        ? static_cast<std::uint64_t>(
+            skill.elapsed_ticks - kStormFinisherTick)
+        : 0U;
+    if (snapshot_finisher_window || recent_event) {
         if (!result.storm_swords.visible) {
             result.storm_swords.center = skill.locked_center;
         }
         result.storm_swords.finisher_visible = true;
-        const float age = snapshot_finisher ? 0.0F
-            : static_cast<float>(event_age);
+        const float age = static_cast<float>(snapshot_finisher_window
+            ? snapshot_age : event_age);
         result.storm_swords.finisher_opacity = std::clamp(
             1.0F - age / static_cast<float>(kFlashTicks + 1U), 0.0F, 1.0F);
         result.screen_flash_alpha = 0.16F

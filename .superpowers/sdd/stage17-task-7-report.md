@@ -46,7 +46,30 @@ cmake --build --preset windows-msvc-debug --target arpg_platform_tests
 完成最小实现后，同一平台目标构建成功，`platform.units` 首次 1/1 通过。最终直接运行平台测试程序：
 
 ```text
-373 cases, 0 failures
+374 cases, 0 failures
+```
+
+### 审查修复 RED → GREEN
+
+审查指出空挥暴风式不会产生 finisher `CombatEvent`，原实现只在单个
+`phase=finisher` tick 或存在事件时显示终结特效。代码核对确认公开快照在
+`elapsed_ticks=24+12*6=96` 进入 finisher，随后进入 recovery。
+
+先新增独立用例 `storm finisher snapshot lifetime`，断言无事件时：finisher
+tick 与 recovery `+1..+7` 可见，`+8` 不可见。生产代码未修改时实际运行：
+
+```text
+[FAIL] active_skill_view.storm finisher snapshot lifetime:
+plan.storm_swords.finisher_visible
+374 cases, 1 failures
+```
+
+随后只修改 `make_active_skill_effect_plan`：以
+`active_skill.elapsed_ticks - 96` 为主 age，事件仅在快照窗口不可用时补充。
+同一平台程序恢复 GREEN：
+
+```text
+374 cases, 0 failures
 ```
 
 ## 实现摘要
@@ -77,12 +100,14 @@ cmake --build --preset windows-msvc-debug --target arpg_platform_tests
 
 ## 测试覆盖
 
-新增 9 个平台用例覆盖：
+新增 10 个平台用例覆盖：
 
 - 固定五槽、1～5、空槽、目录名称；
 - 冷却 ratio clamp；
 - 1280x720、1600x900、1920x1080 下 HUD 固定尺寸/间距/居中；
 - 拔刀命中窗口/朝向与暴风 12 剑、当前 strike、finisher 事件寿命；
+- 无 finisher 事件时，暴风终结在 finisher 与 recovery `+1..+7`
+  按公开快照持续，`+8` 截止；
 - 五主槽、每槽五个辅助空位、未装备石库存；
 - 三分辨率下所有交互区和辅助区不重叠；
 - select/remove/equip/swap 命令语义；
@@ -105,7 +130,7 @@ ctest --test-dir out/build/windows-msvc-debug -R '^(platform\.units|stage11c\.hu
 
 2/2 通过：
 
-- `platform.units`：5.60 秒，373 cases / 0 failures；
+- `platform.units`：5.59 秒，374 cases / 0 failures；
 - `stage11c.hud_stress.zero_alloc_100k`：0.35 秒，100k HUD 零分配通过。
 
 ```powershell
@@ -117,6 +142,24 @@ ctest --test-dir out/build/windows-msvc-debug -R '^(skills\.units|combat\.units|
 - `skills.units`：0.01 秒；
 - `combat.units`：0.94 秒；
 - `dungeon.units`：196.02 秒（包含技能 loadout 原子事务回归）。
+
+```powershell
+cmake --build --preset windows-msvc-debug --target arpg_persistence_tests
+ctest --test-dir out/build/windows-msvc-debug -R '^persistence\.units$' --output-on-failure
+out/build/windows-msvc-debug/bin/arpg_persistence_tests.exe
+```
+
+构建退出码 `0`；最终 `persistence.units` 1/1 通过（0.43 秒），直接程序输出
+`94 cases, 0 failures`，覆盖 V8 技能 loadout 往返/迁移与既有持久化回归。
+
+审查修复后的最终组合回归：
+
+```powershell
+ctest --test-dir out/build/windows-msvc-debug -R '^(platform\.units|stage11c\.hud_stress\.zero_alloc_100k|persistence\.units|combat\.units)$' --output-on-failure
+```
+
+4/4 通过：combat 0.89 秒、persistence 0.43 秒、platform 5.59 秒、
+HUD 100k 零分配 0.35 秒，总耗时 7.27 秒。
 
 ```powershell
 git diff --check

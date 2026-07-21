@@ -142,11 +142,50 @@ arpg::test::Failure native_effect_plan_uses_snapshot_timing_and_twelve_swords()
     return {};
 }
 
+arpg::test::Failure storm_finisher_persists_from_snapshot_without_hit_event()
+    noexcept {
+    constexpr std::uint16_t kFinisherTick = static_cast<std::uint16_t>(
+        combat::kStormStartupTicks
+        + static_cast<std::uint16_t>(combat::kStormStrikeCount)
+            * combat::kStormStrikeIntervalTicks);
+    combat::CombatSnapshot snapshot{};
+    snapshot.active_skill.id = skills::ActiveSkillId::storm_swords;
+    snapshot.active_skill.locked_center = {4.0F, -2.0F, 0.0F};
+    snapshot.active_skill.phase = combat::ActiveSkillPhase::finisher;
+    snapshot.active_skill.elapsed_ticks = kFinisherTick;
+    platform::ActiveSkillEffectPlan plan =
+        platform::make_active_skill_effect_plan(snapshot, nullptr);
+    ARPG_REQUIRE(plan.storm_swords.finisher_visible);
+    ARPG_REQUIRE(plan.screen_flash_alpha > 0.0F);
+
+    snapshot.active_skill.phase = combat::ActiveSkillPhase::recovery;
+    for (std::uint16_t age = 1U; age <= 7U; ++age) {
+        snapshot.active_skill.elapsed_ticks = static_cast<std::uint16_t>(
+            kFinisherTick + age);
+        plan = platform::make_active_skill_effect_plan(snapshot, nullptr);
+        ARPG_REQUIRE(plan.storm_swords.finisher_visible);
+        ARPG_REQUIRE(plan.storm_swords.finisher_opacity > 0.0F);
+        ARPG_REQUIRE(plan.screen_flash_alpha > 0.0F);
+        ARPG_REQUIRE(arpg::test::near(
+            plan.storm_swords.center.x, 4.0F));
+        ARPG_REQUIRE(arpg::test::near(
+            plan.storm_swords.center.y, -2.0F));
+    }
+
+    snapshot.active_skill.elapsed_ticks = static_cast<std::uint16_t>(
+        kFinisherTick + 8U);
+    plan = platform::make_active_skill_effect_plan(snapshot, nullptr);
+    ARPG_REQUIRE(!plan.storm_swords.finisher_visible);
+    ARPG_REQUIRE(arpg::test::near(plan.screen_flash_alpha, 0.0F));
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"active skill HUD fixed slots", &hud_projects_exactly_five_numbered_slots_and_catalog_names},
     {"active skill HUD cooldown clamp", &hud_cooldown_ratios_are_clamped_and_empty_slots_stay_zero},
     {"active skill HUD fixed layout", &hud_layout_is_bottom_centered_with_fixed_slot_geometry},
     {"active skill native effect plan", &native_effect_plan_uses_snapshot_timing_and_twelve_swords},
+    {"storm finisher snapshot lifetime", &storm_finisher_persists_from_snapshot_without_hit_event},
 };
 
 }  // namespace
