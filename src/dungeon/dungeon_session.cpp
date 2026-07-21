@@ -1186,6 +1186,7 @@ bool DungeonSession::copy_run_state_reusing_items(
     destination.last_direction = source.last_direction;
     destination.progression = source.progression;
     destination.passive_tree = source.passive_tree;
+    destination.skill_loadout = source.skill_loadout;
     if (source_items.empty()) destination_items.clear();
     else destination_items.assign(source_items.begin(), source_items.end());
     destination.item_ownership.equipment = source.item_ownership.equipment;
@@ -1217,6 +1218,7 @@ void DungeonSession::publish_run_state_reusing_items(
     destination.last_direction = source.last_direction;
     destination.progression = source.progression;
     destination.passive_tree = source.passive_tree;
+    destination.skill_loadout = source.skill_loadout;
     destination.item_ownership.equipment = source.item_ownership.equipment;
     destination.item_ownership.materials = source.item_ownership.materials;
     destination.item_ownership.material_discovery_bits =

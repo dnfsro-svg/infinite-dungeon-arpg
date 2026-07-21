@@ -109,6 +109,7 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
         && (pending_save_->kind == PendingSaveKind::transition
             || pending_save_->kind == PendingSaveKind::abyss_abandon);
     result.passive_tree = stable_state_.passive_tree;
+    result.skill_loadout = stable_state_.skill_loadout;
     result.passive_save_pending = pending_save_.has_value()
         && pending_save_->kind == PendingSaveKind::passive_tree;
     result.passive_tree_error = last_passive_tree_error_;

@@ -19,6 +19,7 @@ arpg::test::TestSuite dungeon_progression_suite() noexcept;
 arpg::test::TestSuite dungeon_passive_tree_suite() noexcept;
 arpg::test::TestSuite dungeon_item_transaction_suite() noexcept;
 arpg::test::TestSuite dungeon_crafting_transaction_suite() noexcept;
+arpg::test::TestSuite dungeon_skill_loadout_transaction_suite() noexcept;
 arpg::test::TestSuite dungeon_equipment_stress_suite() noexcept;
 arpg::test::TestSuite dungeon_loot_drop_suite() noexcept;
 arpg::test::TestSuite dungeon_material_loot_suite() noexcept;
@@ -113,6 +114,16 @@ bool stage16_crafting_transaction_only() noexcept {
     return enabled;
 }
 
+bool stage17_skill_loadout_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_STAGE17_SKILL_LOADOUT_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
 }  // namespace
 
 int main() {
@@ -137,6 +148,7 @@ int main() {
         dungeon_passive_tree_suite(),
         dungeon_item_transaction_suite(),
         dungeon_crafting_transaction_suite(),
+        dungeon_skill_loadout_transaction_suite(),
         dungeon_equipment_stress_suite(),
         dungeon_loot_drop_suite(),
         dungeon_material_loot_suite(),
@@ -215,6 +227,14 @@ int main() {
             "stage 16 task 7 crafting and reinforcement transactions");
     }
 
-    return arpg::test::run_suites(suites, 272,
+    if (stage17_skill_loadout_only()) {
+        const arpg::test::TestSuite loadout_only[] = {
+            dungeon_skill_loadout_transaction_suite(),
+        };
+        return arpg::test::run_suites(loadout_only, 6,
+            "stage 17 task 3 skill loadout transactions");
+    }
+
+    return arpg::test::run_suites(suites, 278,
         "stage 11a task 8 death continue validation");
 }

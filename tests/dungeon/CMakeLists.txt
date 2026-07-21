@@ -13,6 +13,7 @@ add_executable(arpg_dungeon_tests
     dungeon_passive_tree_tests.cpp
     dungeon_item_transaction_tests.cpp
     dungeon_crafting_transaction_tests.cpp
+    dungeon_skill_loadout_transaction_tests.cpp
     dungeon_equipment_stress_tests.cpp
     dungeon_loot_drop_tests.cpp
     dungeon_material_loot_tests.cpp

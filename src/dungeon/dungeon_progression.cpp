@@ -270,7 +270,18 @@ RunStateBuildResult make_descent_transition(
 bool same_run_state(
     const checkpoint::DungeonRunState& lhs,
     const checkpoint::DungeonRunState& rhs) noexcept {
-    return lhs.root_seed == rhs.root_seed
+    bool same_skill_loadout = lhs.skill_loadout.owned_active_bits
+        == rhs.skill_loadout.owned_active_bits;
+    for (std::size_t slot = 0U;
+            same_skill_loadout && slot < lhs.skill_loadout.slots.size();
+            ++slot) {
+        same_skill_loadout = lhs.skill_loadout.slots[slot].active
+                == rhs.skill_loadout.slots[slot].active
+            && lhs.skill_loadout.slots[slot].supports
+                == rhs.skill_loadout.slots[slot].supports;
+    }
+    return same_skill_loadout
+        && lhs.root_seed == rhs.root_seed
         && lhs.commit_generation == rhs.commit_generation
         && lhs.biases == rhs.biases
         && lhs.current_room.index == rhs.current_room.index

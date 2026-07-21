@@ -460,17 +460,26 @@ RequestResult DungeonSession::prepare_item_save(
     }
     if (validation != items::OwnershipValidationResult::valid
             || !passives::valid_passive_tree_state(
-                next.passive_tree, next.progression)) {
+                next.passive_tree, next.progression)
+            || skills::validate_skill_loadout(next.skill_loadout)
+                != skills::SkillLoadoutError::none) {
         enter_fault(DungeonFault::invalid_item_state);
         return RequestResult::faulted;
     }
-    const PlayerBuildResult candidate_build = build_for(next);
-    if (candidate_build.status == PlayerBuildStatus::allocation_failure) {
-        return RequestResult::rejected;
-    }
-    if (candidate_build.status != PlayerBuildStatus::valid) {
-        enter_fault(DungeonFault::invalid_item_state);
-        return RequestResult::faulted;
+    const bool needs_player_build = kind == PendingSaveKind::equipment
+        || kind == PendingSaveKind::craft
+        || kind == PendingSaveKind::recipe
+        || kind == PendingSaveKind::reinforcement;
+    PlayerBuildResult candidate_build{};
+    if (needs_player_build) {
+        candidate_build = build_for(next);
+        if (candidate_build.status == PlayerBuildStatus::allocation_failure) {
+            return RequestResult::rejected;
+        }
+        if (candidate_build.status != PlayerBuildStatus::valid) {
+            enter_fault(DungeonFault::invalid_item_state);
+            return RequestResult::faulted;
+        }
     }
     if (next.commit_generation
             == (std::numeric_limits<std::uint64_t>::max)()) {
@@ -500,7 +509,9 @@ RequestResult DungeonSession::prepare_item_save(
         std::nullopt,
         reinforcement_receipt,
     });
-    pending_item_build_.emplace(candidate_build.build);
+    if (needs_player_build) {
+        pending_item_build_.emplace(candidate_build.build);
+    }
     phase_ = RoomPhase::committing;
     return RequestResult::accepted;
 }
@@ -1263,6 +1274,116 @@ RequestResult DungeonSession::request_material_pickup(
     }
 }
 
+RequestResult DungeonSession::request_remove_active_skill(
+    std::uint8_t slot) noexcept {
+    if (!pending_item_cache_consistent()) {
+        enter_fault(DungeonFault::save_receipt_mismatch);
+        return RequestResult::faulted;
+    }
+    const std::size_t index = static_cast<std::size_t>(slot);
+    if (!item_request_phase(phase_) || pending_save_.has_value()
+            || index >= skills::kActiveSkillSlotCount
+            || stable_state_.skill_loadout.slots[index].active
+                == skills::ActiveSkillId::none) {
+        return RequestResult::rejected;
+    }
+    const RoomPhase resume_phase = phase_;
+    PendingSave& reusable = pending_save_.prepare();
+    if (!copy_run_state_reusing_items(
+            reusable.next_state, stable_state_)) {
+        pending_save_.reset();
+        return RequestResult::rejected;
+    }
+    reusable.next_state.progression = room_progression_;
+    if (skills::remove_active_skill(
+            reusable.next_state.skill_loadout, index)
+            != skills::SkillLoadoutError::none
+            || skills::validate_skill_loadout(
+                reusable.next_state.skill_loadout)
+                != skills::SkillLoadoutError::none) {
+        pending_save_.reset();
+        return RequestResult::rejected;
+    }
+    DungeonRunState next = std::move(reusable.next_state);
+    pending_save_.reset();
+    return prepare_item_save(std::move(next),
+        PendingSaveKind::skill_loadout, resume_phase);
+}
+
+RequestResult DungeonSession::request_equip_active_skill(
+    skills::ActiveSkillId skill, std::uint8_t slot) noexcept {
+    if (!pending_item_cache_consistent()) {
+        enter_fault(DungeonFault::save_receipt_mismatch);
+        return RequestResult::faulted;
+    }
+    const std::size_t index = static_cast<std::size_t>(slot);
+    if (!item_request_phase(phase_) || pending_save_.has_value()
+            || index >= skills::kActiveSkillSlotCount) {
+        return RequestResult::rejected;
+    }
+    const RoomPhase resume_phase = phase_;
+    PendingSave& reusable = pending_save_.prepare();
+    if (!copy_run_state_reusing_items(
+            reusable.next_state, stable_state_)) {
+        pending_save_.reset();
+        return RequestResult::rejected;
+    }
+    reusable.next_state.progression = room_progression_;
+    if (skills::equip_active_skill(
+            reusable.next_state.skill_loadout, skill, index)
+            != skills::SkillLoadoutError::none
+            || skills::validate_skill_loadout(
+                reusable.next_state.skill_loadout)
+                != skills::SkillLoadoutError::none) {
+        pending_save_.reset();
+        return RequestResult::rejected;
+    }
+    DungeonRunState next = std::move(reusable.next_state);
+    pending_save_.reset();
+    return prepare_item_save(std::move(next),
+        PendingSaveKind::skill_loadout, resume_phase);
+}
+
+RequestResult DungeonSession::request_swap_active_skill_slots(
+    std::uint8_t left, std::uint8_t right) noexcept {
+    if (!pending_item_cache_consistent()) {
+        enter_fault(DungeonFault::save_receipt_mismatch);
+        return RequestResult::faulted;
+    }
+    const std::size_t left_index = static_cast<std::size_t>(left);
+    const std::size_t right_index = static_cast<std::size_t>(right);
+    if (!item_request_phase(phase_) || pending_save_.has_value()
+            || left_index >= skills::kActiveSkillSlotCount
+            || right_index >= skills::kActiveSkillSlotCount
+            || left_index == right_index
+            || (stable_state_.skill_loadout.slots[left_index].active
+                    == skills::ActiveSkillId::none
+                && stable_state_.skill_loadout.slots[right_index].active
+                    == skills::ActiveSkillId::none)) {
+        return RequestResult::rejected;
+    }
+    const RoomPhase resume_phase = phase_;
+    PendingSave& reusable = pending_save_.prepare();
+    if (!copy_run_state_reusing_items(
+            reusable.next_state, stable_state_)) {
+        pending_save_.reset();
+        return RequestResult::rejected;
+    }
+    reusable.next_state.progression = room_progression_;
+    if (skills::swap_active_skill_slots(reusable.next_state.skill_loadout,
+            left_index, right_index) != skills::SkillLoadoutError::none
+            || skills::validate_skill_loadout(
+                reusable.next_state.skill_loadout)
+                != skills::SkillLoadoutError::none) {
+        pending_save_.reset();
+        return RequestResult::rejected;
+    }
+    DungeonRunState next = std::move(reusable.next_state);
+    pending_save_.reset();
+    return prepare_item_save(std::move(next),
+        PendingSaveKind::skill_loadout, resume_phase);
+}
+
 bool auto_pickup_eligible(
     const GroundItem& ground,
     AutoPickupPolicy policy) noexcept {
@@ -1394,6 +1515,7 @@ void DungeonSession::commit_pending_save(
         || kind == PendingSaveKind::recipe
         || kind == PendingSaveKind::reinforcement;
     const bool reinforcement_commit = kind == PendingSaveKind::reinforcement;
+    const bool skill_loadout_commit = kind == PendingSaveKind::skill_loadout;
     const bool pickup_commit = kind == PendingSaveKind::loot_pickup;
     const bool material_pickup_commit =
         kind == PendingSaveKind::material_pickup;
@@ -1583,6 +1705,10 @@ void DungeonSession::commit_pending_save(
     if (material_pickup_commit) {
         ground_materials_[pickup_ordinal] = GroundMaterial{};
         material_pickup_receipt_ = published_material_receipt;
+        phase_ = resume_phase;
+        return;
+    }
+    if (skill_loadout_commit) {
         phase_ = resume_phase;
         return;
     }

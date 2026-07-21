@@ -118,6 +118,12 @@ public:
         std::uint16_t drop_ordinal) noexcept;
     [[nodiscard]] RequestResult request_material_pickup(
         std::uint16_t ordinal) noexcept;
+    [[nodiscard]] RequestResult request_remove_active_skill(
+        std::uint8_t slot) noexcept;
+    [[nodiscard]] RequestResult request_equip_active_skill(
+        skills::ActiveSkillId skill, std::uint8_t slot) noexcept;
+    [[nodiscard]] RequestResult request_swap_active_skill_slots(
+        std::uint8_t left, std::uint8_t right) noexcept;
     [[nodiscard]] RequestResult request_death_continue() noexcept;
     void request_nearby_pickups(
         combat::Vec3 player_position,

@@ -211,6 +211,7 @@ struct DungeonSnapshot final {
     ExitDirection abyss_exit_confirmation_direction{ExitDirection::none};
     bool has_pending_transition{};
     passives::PassiveTreeState passive_tree{};
+    skills::SkillLoadoutState skill_loadout{};
     bool passive_save_pending{};
     passives::PassiveTreeError passive_tree_error{
         passives::PassiveTreeError::none};
@@ -253,6 +254,7 @@ enum class PendingSaveKind : std::uint8_t {
     craft,
     recipe,
     reinforcement,
+    skill_loadout,
     abyss_start,
     abyss_fail,
     abyss_clear,
