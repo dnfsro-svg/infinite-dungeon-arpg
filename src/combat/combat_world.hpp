@@ -1,5 +1,6 @@
 #pragma once
 
+#include "combat/active_skill_runtime.hpp"
 #include "combat/combat_types.hpp"
 #include "combat/input_buffer.hpp"
 #include "combat/monster_pool.hpp"
@@ -25,6 +26,8 @@ public:
     explicit CombatWorld(CombatEncounterConfig config) noexcept;
 
     [[nodiscard]] bool queue_action(Action action) noexcept;
+    [[nodiscard]] SkillCastResult request_active_skill(
+        skills::ActiveSkillId skill) noexcept;
     void tick(MovementInput movement) noexcept;
     void reset() noexcept;
     void apply_player_build(PlayerCombatBuild build) noexcept;
@@ -77,6 +80,9 @@ private:
     };
 
     void simulate_player(MovementInput movement) noexcept;
+    void simulate_active_skill_movement(MovementInput movement) noexcept;
+    void tick_active_skill() noexcept;
+    void resolve_draw_slash_hits() noexcept;
     void simulate_target(std::size_t index) noexcept;
     void simulate_monster(std::size_t slot) noexcept;
     void simulate_projectiles() noexcept;
@@ -204,6 +210,7 @@ private:
     HazardPool hazards_{};
     AbyssEnvironmentRuntime abyss_environment_{};
     AttackRuntime attack_{};
+    ActiveSkillRuntime active_skill_{};
     InputBuffer input_buffer_{};
     struct EffectOwner final {
         std::size_t monster_slot{};

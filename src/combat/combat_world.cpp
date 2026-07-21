@@ -2,11 +2,13 @@
 
 #include "abyss/abyss_rules.hpp"
 #include "combat/attack_catalog.hpp"
+#include "combat/active_skill_runtime.hpp"
 #include "combat/combat_scaling.hpp"
 #include "combat/monster_affix_catalog.hpp"
 #include "combat/monster_affix_generation.hpp"
 #include "combat/monster_catalog.hpp"
 #include "combat/room_bounds.hpp"
+#include "skills/active_skill_catalog.hpp"
 
 #include <array>
 #include <algorithm>
@@ -529,6 +531,37 @@ bool CombatWorld::queue_action(Action action) noexcept {
     return player_.hp > 0 && input_buffer_.push(action);
 }
 
+SkillCastResult CombatWorld::request_active_skill(
+    skills::ActiveSkillId skill) noexcept {
+    if (skill == skills::ActiveSkillId::none) return SkillCastResult::none;
+    const std::size_t index = static_cast<std::size_t>(skill);
+    if (index >= skills::kActiveSkillCount) return SkillCastResult::invalid_skill;
+    if (player_.hp <= 0 || player_.hurt_ticks != 0U
+        || player_.hit_stop_ticks != 0U || death_snapshot_.has_value()) {
+        return SkillCastResult::player_unavailable;
+    }
+    if (attack_.id != AttackId::none) return SkillCastResult::basic_attack_active;
+    if (active_skill_.cooldowns[index] != 0U) {
+        return SkillCastResult::cooling_down;
+    }
+    if (active_skill_.snapshot.id != skills::ActiveSkillId::none) {
+        return SkillCastResult::skill_active;
+    }
+    if (skill != skills::ActiveSkillId::draw_slash) {
+        return SkillCastResult::invalid_skill;
+    }
+
+    active_skill_.snapshot = ActiveSkillSnapshot{
+        skill, ActiveSkillPhase::startup, 0U, player_.position, 0U};
+    active_skill_.locked_facing = player_.facing;
+    active_skill_.cooldowns[index] = skills::kDrawSlashCooldownTicks;
+    active_skill_.hit_latch.fill(false);
+    player_.velocity.x = 0.0F;
+    player_.velocity.y = 0.0F;
+    player_.state = PlayerState::attack_startup;
+    return SkillCastResult::accepted;
+}
+
 void CombatWorld::tick(MovementInput movement) noexcept {
     if (death_snapshot_.has_value()) {
         ++tick_;
@@ -537,6 +570,8 @@ void CombatWorld::tick(MovementInput movement) noexcept {
     player_damage_history_.begin_tick(tick_);
     if (player_.hp == 0) {
         attack_ = AttackRuntime{};
+        active_skill_.snapshot = ActiveSkillSnapshot{};
+        active_skill_.hit_latch.fill(false);
         input_buffer_.clear();
         ++tick_;
         return;
@@ -555,7 +590,12 @@ void CombatWorld::tick(MovementInput movement) noexcept {
         --player_.hurt_ticks;
     }
     if (!player_frozen && !player_hurt) {
-        simulate_player(movement);
+        tick_active_skill();
+        if (active_skill_.snapshot.id == skills::ActiveSkillId::none) {
+            simulate_player(movement);
+        } else {
+            simulate_active_skill_movement(movement);
+        }
     }
 
     if (player_.invulnerability_ticks != 0) {
@@ -713,6 +753,7 @@ void CombatWorld::initialize_runtime() noexcept {
     }
 
     attack_ = AttackRuntime{};
+    active_skill_ = ActiveSkillRuntime{};
     input_buffer_.clear();
     input_buffer_.reset_diagnostics();
     while (events_.try_pop().has_value()) {
@@ -809,6 +850,7 @@ bool CombatWorld::load_wave(
         }
     }
     attack_ = AttackRuntime{};
+    active_skill_ = ActiveSkillRuntime{};
     input_buffer_.clear();
     input_buffer_.reset_diagnostics();
     while (events_.try_pop().has_value()) {
@@ -862,6 +904,9 @@ bool CombatWorld::destroy_monster(MonsterHandle handle) noexcept {
     remove_owned_hazards(handle);
     if (handle.index < attack_.hit_targets.size()) {
         attack_.hit_targets[handle.index] = false;
+    }
+    if (handle.index < active_skill_.hit_latch.size()) {
+        active_skill_.hit_latch[handle.index] = false;
     }
     return true;
 }

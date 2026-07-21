@@ -25,6 +25,8 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
         player_.status.corrosion_damage_per_second,
         player_.status.corrosion_ticks, player_.status.corrosion_tick_phase,
     };
+    result.active_skill = active_skill_.snapshot;
+    result.skill_cooldowns = active_skill_.cooldowns;
     for (std::size_t index = 0; index < monsters_.slots().size(); ++index) {
         const MonsterRuntime& monster = monsters_.slots()[index];
         result.monsters[index] = MonsterSnapshot{

@@ -9,6 +9,7 @@
 #include "combat/monster_affix_types.hpp"
 #include "modifiers/damage_types.hpp"
 #include "modifiers/player_modifier_values.hpp"
+#include "skills/active_skill_types.hpp"
 
 namespace arpg::test {
 struct CombatWorldTestAccess;
@@ -41,6 +42,32 @@ enum class AttackPhase : std::uint8_t {
     active,
     recovery,
     finished,
+};
+
+enum class SkillCastResult : std::uint8_t {
+    accepted,
+    none,
+    invalid_skill,
+    cooling_down,
+    player_unavailable,
+    basic_attack_active,
+    skill_active,
+};
+
+enum class ActiveSkillPhase : std::uint8_t {
+    none,
+    startup,
+    strikes,
+    finisher,
+    recovery,
+};
+
+struct ActiveSkillSnapshot final {
+    skills::ActiveSkillId id{skills::ActiveSkillId::none};
+    ActiveSkillPhase phase{ActiveSkillPhase::none};
+    std::uint16_t elapsed_ticks{};
+    Vec3 locked_center{};
+    std::uint8_t strike_index{};
 };
 
 enum class FeedbackLevel : std::uint8_t {
@@ -543,6 +570,8 @@ struct CombatDiagnostics final {
 struct CombatSnapshot final {
     std::uint64_t tick{};
     PlayerSnapshot player{};
+    ActiveSkillSnapshot active_skill{};
+    std::array<std::uint16_t, skills::kActiveSkillCount> skill_cooldowns{};
     std::array<MonsterSnapshot, kMonsterCapacity> monsters{};
     std::size_t monster_count{};
     std::array<ProjectileSnapshot, kProjectileCapacity> projectiles{};
