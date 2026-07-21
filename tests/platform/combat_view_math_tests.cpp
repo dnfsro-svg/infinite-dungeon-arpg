@@ -9,9 +9,88 @@ namespace {
 
 using arpg::combat::Vec3;
 using arpg::platform::ActorDrawItem;
+using arpg::platform::CombatCameraView;
 using arpg::platform::ScreenProjection;
 
+arpg::test::Failure camera_tracks_immediately_and_clamps_to_room() noexcept {
+    const CombatCameraView center = arpg::platform::make_combat_camera_view(
+        {0.0F, 0.0F, 0.0F}, 1280.0F, 720.0F);
+    ARPG_REQUIRE(arpg::test::near(center.visible_width, 24.0, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(center.visible_depth, 11.0, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(center.center.x, 0.0, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(center.center.y, 0.0, 1.0e-4));
+
+    const CombatCameraView right = arpg::platform::make_combat_camera_view(
+        {24.0F, 0.0F, 0.0F}, 1280.0F, 720.0F);
+    const CombatCameraView left = arpg::platform::make_combat_camera_view(
+        {-24.0F, 0.0F, 0.0F}, 1280.0F, 720.0F);
+    const CombatCameraView front = arpg::platform::make_combat_camera_view(
+        {0.0F, 11.0F, 0.0F}, 1280.0F, 720.0F);
+    const CombatCameraView back = arpg::platform::make_combat_camera_view(
+        {0.0F, -11.0F, 0.0F}, 1280.0F, 720.0F);
+    ARPG_REQUIRE(arpg::test::near(right.center.x, 12.0, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(left.center.x, -12.0, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(front.center.y, 5.5, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(back.center.y, -5.5, 1.0e-4));
+
+    const Vec3 first_player{3.0F, 2.0F, 0.0F};
+    const CombatCameraView first = arpg::platform::make_combat_camera_view(
+        first_player, 1280.0F, 720.0F);
+    const ScreenProjection first_projection =
+        arpg::platform::project_combat_position(
+            first_player, first, 1280.0F, 720.0F);
+    const Vec3 next_player{-2.0F, -1.0F, 0.0F};
+    const CombatCameraView next = arpg::platform::make_combat_camera_view(
+        next_player, 1280.0F, 720.0F);
+    const ScreenProjection next_projection =
+        arpg::platform::project_combat_position(
+            next_player, next, 1280.0F, 720.0F);
+    ARPG_REQUIRE(arpg::test::near(first.center.x, 3.0, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(next.center.x, -2.0, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(first_projection.x, 640.0, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(next_projection.x, 640.0, 1.0e-4));
+    return {};
+}
+
+arpg::test::Failure ultrawide_expands_width_without_stretching() noexcept {
+    const CombatCameraView standard = arpg::platform::make_combat_camera_view(
+        {0.0F, 0.0F, 0.0F}, 1280.0F, 720.0F);
+    const CombatCameraView ultrawide = arpg::platform::make_combat_camera_view(
+        {24.0F, 0.0F, 0.0F}, 2560.0F, 1080.0F);
+    ARPG_REQUIRE(arpg::test::near(ultrawide.visible_depth, 11.0, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(ultrawide.visible_width, 32.0, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(ultrawide.center.x, 8.0, 1.0e-4));
+
+    const ScreenProjection standard_player =
+        arpg::platform::project_combat_position(
+            {0.0F, 0.0F, 0.0F}, standard, 1280.0F, 720.0F);
+    const ScreenProjection ultrawide_player =
+        arpg::platform::project_combat_position(
+            {8.0F, 0.0F, 0.0F}, ultrawide, 2560.0F, 1080.0F);
+    ARPG_REQUIRE(arpg::test::near(
+        standard_player.scale, ultrawide_player.scale, 1.0e-4));
+
+    const ScreenProjection standard_step =
+        arpg::platform::project_combat_position(
+            {1.0F, 0.0F, 0.0F}, standard, 1280.0F, 720.0F);
+    const ScreenProjection ultrawide_step =
+        arpg::platform::project_combat_position(
+            {9.0F, 0.0F, 0.0F}, ultrawide, 2560.0F, 1080.0F);
+    const double standard_pixels_per_height =
+        (standard_step.x - standard_player.x) / 720.0;
+    const double ultrawide_pixels_per_height =
+        (ultrawide_step.x - ultrawide_player.x) / 1080.0;
+    ARPG_REQUIRE(arpg::test::near(standard_pixels_per_height,
+        ultrawide_pixels_per_height, 1.0e-4));
+    return {};
+}
+
 arpg::test::Failure back_and_front_projection_are_exact() noexcept {
+    if (const arpg::test::Failure failure =
+            camera_tracks_immediately_and_clamps_to_room();
+            failure.expression != nullptr) {
+        return failure;
+    }
     const ScreenProjection back = arpg::platform::project_combat_position(
         Vec3{0.0F, -5.5F, 0.0F}, 1280.0F, 720.0F);
     ARPG_REQUIRE(arpg::test::near(back.x, 640.0, 1.0e-4));
@@ -29,6 +108,11 @@ arpg::test::Failure back_and_front_projection_are_exact() noexcept {
 }
 
 arpg::test::Failure expanded_room_corners_remain_in_viewport() noexcept {
+    if (const arpg::test::Failure failure =
+            ultrawide_expands_width_without_stretching();
+            failure.expression != nullptr) {
+        return failure;
+    }
     constexpr std::array<Vec3, 4> corners{{
         {-12.0F, -5.5F, 0.0F}, {12.0F, -5.5F, 0.0F},
         {-12.0F, 5.5F, 0.0F}, {12.0F, 5.5F, 0.0F},
@@ -87,10 +171,12 @@ arpg::test::Failure actor_order_is_y_z_x_then_index() noexcept {
 
 arpg::test::Failure render_layout_keeps_baseline_projection_and_hud_values() noexcept {
     using arpg::platform::RenderProjection;
+    const CombatCameraView view = arpg::platform::make_combat_camera_view(
+        {4.0F, 1.0F, 0.0F}, 1280.0F, 720.0F);
     const RenderProjection north = arpg::platform::project_render_world(
-        0.0F, -5.5F, 0.0F, 1280.0F, 720.0F);
+        0.0F, -5.5F, 0.0F, view, 1280.0F, 720.0F);
     const ScreenProjection expected_north = arpg::platform::project_combat_position(
-        Vec3{0.0F, -5.5F, 0.0F}, 1280.0F, 720.0F);
+        Vec3{0.0F, -5.5F, 0.0F}, view, 1280.0F, 720.0F);
     ARPG_REQUIRE(arpg::test::near(north.x, expected_north.x, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(north.y, expected_north.y, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(
@@ -98,9 +184,9 @@ arpg::test::Failure render_layout_keeps_baseline_projection_and_hud_values() noe
     ARPG_REQUIRE(arpg::test::near(north.scale, expected_north.scale, 1.0e-4));
 
     const RenderProjection east = arpg::platform::project_render_world(
-        12.0F, 0.0F, 0.0F, 1280.0F, 720.0F);
+        12.0F, 0.0F, 0.0F, view, 1280.0F, 720.0F);
     const ScreenProjection expected_east = arpg::platform::project_combat_position(
-        Vec3{12.0F, 0.0F, 0.0F}, 1280.0F, 720.0F);
+        Vec3{12.0F, 0.0F, 0.0F}, view, 1280.0F, 720.0F);
     ARPG_REQUIRE(arpg::test::near(east.x, expected_east.x, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(east.y, expected_east.y, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(

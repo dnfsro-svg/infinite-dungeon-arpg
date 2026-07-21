@@ -151,6 +151,7 @@ bool ground_loot_visible(const dungeon::GroundItemSnapshot& item,
 GroundLootView build_ground_loot_view(
     const dungeon::DungeonSnapshot& snapshot,
     settings::LootFilterMode mode,
+    CombatCameraView camera,
     float width,
     float height) noexcept {
     GroundLootView view{};
@@ -175,7 +176,7 @@ GroundLootView build_ground_loot_view(
         label.border_color = label.abyss
             ? kAbyssBorderColor : label.text_color;
         const ScreenProjection projection =
-            project_combat_position(item.position, width, height);
+            project_combat_position(item.position, camera, width, height);
         label.anchor_x = projection.x;
         label.anchor_y = projection.y;
         format_label_text(label, item, view.diagnostics);
@@ -184,6 +185,15 @@ GroundLootView build_ground_loot_view(
 
     layout_labels(view, width, height);
     return view;
+}
+
+GroundLootView build_ground_loot_view(
+    const dungeon::DungeonSnapshot& snapshot,
+    settings::LootFilterMode mode,
+    float width,
+    float height) noexcept {
+    return build_ground_loot_view(snapshot, mode,
+        make_combat_camera_view({}, width, height), width, height);
 }
 
 }  // namespace arpg::platform

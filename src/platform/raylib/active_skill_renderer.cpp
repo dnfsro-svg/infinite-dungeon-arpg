@@ -39,10 +39,10 @@ void draw_skill_text(Font font, const char* text,
 }
 
 void draw_draw_slash(const DrawSlashVisualPlan& plan,
-    float width, float height) noexcept {
+    CombatCameraView view, float width, float height) noexcept {
     if (!plan.visible) return;
     const ScreenProjection projected = project_combat_position(
-        plan.center, width, height);
+        plan.center, view, width, height);
     constexpr std::size_t kArcSegments = 14U;
     std::array<Vector2, kArcSegments + 2U> fan{};
     const float direction = plan.facing == combat::Facing::left ? -1.0F : 1.0F;
@@ -95,10 +95,10 @@ void draw_sword(Vector2 center, float angle, float scale,
 }
 
 void draw_storm_swords(const StormSwordsVisualPlan& plan,
-    float width, float height) noexcept {
+    CombatCameraView view, float width, float height) noexcept {
     if (!plan.visible && !plan.finisher_visible) return;
     const ScreenProjection projected = project_combat_position(
-        plan.center, width, height);
+        plan.center, view, width, height);
     const float radius = 155.0F * projected.scale;
     if (plan.visible) {
         for (std::size_t index = 0U; index < plan.sword_count; ++index) {
@@ -193,11 +193,11 @@ ActiveSkillEffectPlan make_active_skill_effect_plan(
 void ActiveSkillRenderer::draw_world(
     const combat::CombatSnapshot& snapshot,
     const combat::CombatEvent* last_event,
-    float width, float height) const noexcept {
+    CombatCameraView view, float width, float height) const noexcept {
     const ActiveSkillEffectPlan plan = make_active_skill_effect_plan(
         snapshot, last_event);
-    draw_draw_slash(plan.draw_slash, width, height);
-    draw_storm_swords(plan.storm_swords, width, height);
+    draw_draw_slash(plan.draw_slash, view, width, height);
+    draw_storm_swords(plan.storm_swords, view, width, height);
     if (plan.screen_flash_alpha > 0.0F) {
         DrawRectangle(0, 0, static_cast<int>(width), static_cast<int>(height),
             Fade(Color{220, 244, 255, 255}, plan.screen_flash_alpha));

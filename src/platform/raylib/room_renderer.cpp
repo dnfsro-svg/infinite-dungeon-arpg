@@ -84,7 +84,8 @@ bool can_draw_room_environment(const dungeon::DungeonSnapshot& snapshot,
 }
 
 void draw_doors(const dungeon::DungeonSnapshot& snapshot,
-    float width, float height, const MaterialPack& material_pack,
+    CombatCameraView view, float width, float height,
+    const MaterialPack& material_pack,
     bool draw_material_environment) noexcept {
     const DoorVisualMode mode = door_visual_mode(snapshot.phase,
         snapshot.has_active_room, snapshot.exits_open[0]);
@@ -103,7 +104,7 @@ void draw_doors(const dungeon::DungeonSnapshot& snapshot,
     for (std::size_t index = 0; index < kDoorCenters.size(); ++index) {
         const RenderProjection projected = project_render_world(
             kDoorCenters[index].x, kDoorCenters[index].y, kDoorCenters[index].z,
-            width, height);
+            view, width, height);
         const DoorRenderDecision visual = door_render_decision(mode, kDirections[index]);
         const Color frame_color{visual.frame.r, visual.frame.g, visual.frame.b, visual.frame.a};
         const Color text_color{visual.text.r, visual.text.g, visual.text.b, visual.text.a};
@@ -147,7 +148,7 @@ void draw_doors(const dungeon::DungeonSnapshot& snapshot,
 }
 
 void draw_environment_hazards(const dungeon::DungeonSnapshot& snapshot,
-    float width, float height) noexcept {
+    CombatCameraView view, float width, float height) noexcept {
     if (!snapshot.combat.has_value()) return;
     for (const combat::HazardSnapshot& hazard : snapshot.combat->hazards) {
         const EnvironmentHazardVisual visual =
@@ -155,13 +156,13 @@ void draw_environment_hazards(const dungeon::DungeonSnapshot& snapshot,
         if (visual.mode == EnvironmentHazardVisualMode::hidden) continue;
 
         const RenderProjection center = project_render_world(
-            visual.center.x, visual.center.y, 0.0F, width, height);
+            visual.center.x, visual.center.y, 0.0F, view, width, height);
         const RenderProjection x_edge = project_render_world(
             visual.center.x + visual.radius, visual.center.y, 0.0F,
-            width, height);
+            view, width, height);
         const RenderProjection y_edge = project_render_world(
             visual.center.x, visual.center.y + visual.radius, 0.0F,
-            width, height);
+            view, width, height);
         const float radius_x = std::max(
             1.0F, std::fabs(x_edge.x - center.x));
         const float radius_y = std::max(
@@ -254,7 +255,8 @@ const dungeon::GroundItemSnapshot* ground_item_with_ordinal(
 
 void draw_ground_items(const dungeon::DungeonSnapshot& snapshot,
     const GroundLootView& ground_loot,
-    const MaterialPack& material_pack, float width, float height) noexcept {
+    const MaterialPack& material_pack, CombatCameraView view,
+    float width, float height) noexcept {
     for (std::size_t index = 0U; index < ground_loot.count; ++index) {
         const dungeon::GroundItemSnapshot* const item =
             ground_item_with_ordinal(snapshot,
@@ -262,7 +264,7 @@ void draw_ground_items(const dungeon::DungeonSnapshot& snapshot,
         if (item == nullptr) continue;
         const RenderProjection projected = project_render_world(
             item->position.x, item->position.y, item->position.z,
-            width, height);
+            view, width, height);
         const Vector2 center{projected.x,
             projected.ground_y - 13.0F * projected.scale};
         const Color color = ground_item_color(item->rarity);
@@ -292,14 +294,15 @@ const dungeon::GroundMaterialSnapshot* ground_material_with_ordinal(
 }
 
 void draw_ground_materials(const dungeon::DungeonSnapshot& snapshot,
-    const MaterialLootView& view, float width, float height) noexcept {
-    for (std::size_t index = 0U; index < view.count; ++index) {
-        const MaterialLootLabel& label = view.labels[index];
+    const MaterialLootView& loot_view, CombatCameraView camera,
+    float width, float height) noexcept {
+    for (std::size_t index = 0U; index < loot_view.count; ++index) {
+        const MaterialLootLabel& label = loot_view.labels[index];
         const auto* material = ground_material_with_ordinal(snapshot, label.ordinal);
         if (material == nullptr) continue;
         const RenderProjection projected = project_render_world(
             material->position.x, material->position.y, material->position.z,
-            width, height);
+            camera, width, height);
         const Color color{label.text_color.r, label.text_color.g,
             label.text_color.b, label.text_color.a};
         const float radius = (label.emphasized ? 9.0F : 6.0F) * projected.scale;
@@ -341,13 +344,15 @@ void draw_abyss(const dungeon::DungeonSnapshot& snapshot, float elapsed_seconds)
 }
 
 void draw_hole(const dungeon::DungeonSnapshot& snapshot,
-    const MaterialPack& material_pack, bool draw_material_environment) noexcept {
+    const MaterialPack& material_pack, bool draw_material_environment,
+    CombatCameraView view) noexcept {
     const HoleVisualMode hole = hole_visual_mode(snapshot);
     if (hole == HoleVisualMode::hidden) {
         return;
     }
     const RenderProjection projected = project_render_world(kHoleCenter.x,
-        kHoleCenter.y, kHoleCenter.z, static_cast<float>(GetScreenWidth()),
+        kHoleCenter.y, kHoleCenter.z, view,
+        static_cast<float>(GetScreenWidth()),
         static_cast<float>(GetScreenHeight()));
     const int x = static_cast<int>(projected.x);
     const int y = static_cast<int>(projected.ground_y);
@@ -377,7 +382,8 @@ void draw_hole(const dungeon::DungeonSnapshot& snapshot,
 void CombatRenderer::draw_room(
     const dungeon::DungeonSnapshot& current,
     const GroundLootView& ground_loot,
-    const MaterialLootView& material_loot) const noexcept {
+    const MaterialLootView& material_loot,
+    CombatCameraView view) const noexcept {
     const float width = static_cast<float>(GetScreenWidth());
     const float height = static_cast<float>(GetScreenHeight());
     const bool draw_material_environment = can_draw_room_environment(current,
@@ -386,11 +392,12 @@ void CombatRenderer::draw_room(
         draw_graybox_room(current.ecology);
     }
     draw_abyss(current, static_cast<float>(GetTime()));
-    draw_environment_hazards(current, width, height);
-    draw_ground_materials(current, material_loot, width, height);
-    draw_ground_items(current, ground_loot, material_pack_, width, height);
-    draw_doors(current, width, height, material_pack_, draw_material_environment);
-    draw_hole(current, material_pack_, draw_material_environment);
+    draw_environment_hazards(current, view, width, height);
+    draw_ground_materials(current, material_loot, view, width, height);
+    draw_ground_items(current, ground_loot, material_pack_, view, width, height);
+    draw_doors(current, view, width, height,
+        material_pack_, draw_material_environment);
+    draw_hole(current, material_pack_, draw_material_environment, view);
 }
 
 }  // namespace arpg::platform

@@ -10,6 +10,8 @@
 
 namespace arpg::platform {
 
+struct CombatCameraView;
+
 struct DrawSlashVisualPlan final {
     bool visible{};
     combat::Vec3 center{};
@@ -45,6 +47,7 @@ class ActiveSkillRenderer final {
 public:
     void draw_world(const combat::CombatSnapshot& snapshot,
         const combat::CombatEvent* last_event,
+        CombatCameraView view,
         float width, float height) const noexcept;
     void draw_hud(const ActiveSkillHudModel& model,
         const ActiveSkillHudLayout& layout,
