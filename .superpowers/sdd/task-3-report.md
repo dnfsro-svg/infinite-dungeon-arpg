@@ -66,6 +66,54 @@ git diff --check
 - 未删除文件，未重置工作树，保留并完成了中断前的全部修改。
 - 平台文件仅迁移导演 API 的直接调用点。
 
+## 审查 P1 修复：恢复纯输入自然清场门禁
+
+审查确认原 `drive_real_input_clear` 在 512 tick 后调用
+`force_defeat_current_wave`，并在 4096 tick 后回退到 `drive_clear`；同时
+名为“launcher input robot clears thousand rooms”的压力用例实际从第一房起
+就用辅助清场。这会让 12 怪、大房间下的真实输入行为失去门禁作用。
+
+### RED 与根因
+
+先删除两处清场回退，保留 10 房真实 `queue_action(Action::launcher)` 路径。
+未修复机器人时完整程序得到 `294 cases, 2 failures`：
+
+- 第 0 房在 tick 1388 自然死亡，剩余 7 怪；30 次上挑、48 次真实命中、
+  5 次自然击杀、25 次怪物命中，无队列溢出。
+- room 38 在 4096 tick 内 21 次上挑、46 次命中但 0 击杀。
+
+最低生命目标锁定的第一版最小修复仍保持 RED：room 38 提升到 3 次击杀，
+但第 0 房仍在 tick 1504 死亡、剩余 8 怪。这证明击退后最近目标切换造成的
+伤害分散是原因之一，但旧机器人原本针对单怪/低密度设计，默认裸装仍无法
+在 12 怪围攻下完成输入链门禁。
+
+### 最小 GREEN
+
+- 机器人固定优先最低剩余生命、同生命时取最近目标，避免上挑击退后立即
+  换靶。
+- 10 房门禁明确命名为 `combat ready launcher input robot naturally clears
+  ten rooms`，使用只影响测试角色的确定性构筑：50 倍近战倍率、2 倍攻速、
+  1.5 倍移速。它不改怪物生命或死亡状态，也不修改生产配置。
+- 每房断言初始怪物恰为 12、输入入队成功且零拒绝、真实 swing/命中存在、
+  12 个 defeated 事件全部携带 `AttackId::launcher`，非 launcher 击杀为 0。
+- 1000 房用例准确改名为
+  `assisted clear thousand rooms preserves lifecycle and capacity`，只声明并
+  继续验证辅助清场下的生命周期、容量、分配和溢出压力。
+
+GREEN 运行中 10 房均自然清场：每房 8～12 次真实上挑，合计 120 次命中、
+120 次 launcher 击杀、0 次非 launcher 击杀、0 次输入拒绝。直接运行完整
+测试程序结果为 `294 cases, 0 failures`。
+
+最终 fresh 门禁：
+
+```powershell
+ctest --test-dir out/build/windows-msvc-debug -R '^dungeon\.units$' --output-on-failure
+```
+
+结果：`dungeon.units` Passed，276.33 秒；1/1 通过，0 失败。P1 修复只修改
+`tests/dungeon/dungeon_stress_tests.cpp` 和本报告；未修改生产
+Encounter/Session 数量，也未触碰 density、HUD、camera 或 save。
+
 ---
 
 # 历史报告：Stage 17 Task 3
