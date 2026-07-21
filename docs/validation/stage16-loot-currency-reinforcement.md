@@ -43,7 +43,7 @@ ctest --test-dir out/build/windows-msvc-debug -R '^dungeon\.units$' --output-on-
 
 本轮最终执行结果（2026-07-20，EDT）：
 
-- `ctest --test-dir out/build/windows-msvc-debug -L stage16 --output-on-failure`：**4/4 通过，0 失败，46.63 秒**。其中 `stage16.loot_reinforcement.material_units` 0.09 秒、`stage16.loot_reinforcement.crafting_units` 0.01 秒、`stage16.loot_reinforcement.simulation` 45.83 秒、`stage16.loot_reinforcement.real_raylib` 0.80 秒。
+- `ctest --test-dir out/build/windows-msvc-debug -L stage16 --output-on-failure`：**4/4 通过，0 失败，46.63 秒**。其中 `stage16.material_loot.units` 0.09 秒、`stage16.crafting_transaction.units` 0.01 秒、`stage16.loot_reinforcement.simulation` 45.83 秒、`stage16.loot_reinforcement.real_raylib` 0.80 秒。
 - `ctest --test-dir out/build/windows-msvc-debug -R '^dungeon\.units$' --output-on-failure`：**exit 0，272/272 cases，0 failures，196.40 秒**。
 - `./scripts/Build.ps1 -Preset windows-msvc-release`：**exit 0**，输出 `ninja: no work to do.`；发布文件 `out/build/windows-msvc-release/bin/arpg_game.exe` 存在，大小 **1,579,520 bytes**，最后写入时间为 **2026-07-20 20:09:20 EDT**。
 
