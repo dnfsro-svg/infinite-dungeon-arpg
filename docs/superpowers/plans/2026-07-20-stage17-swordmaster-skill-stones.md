@@ -35,6 +35,11 @@
 | HUD/暂停页 | `src/platform/raylib/active_skill_view.hpp/.cpp`, `active_skill_renderer.hpp/.cpp`, `inventory_view_math.*`, `inventory_renderer.*`, `raylib_host.cpp` | 五槽 HUD、冷却遮罩、暂停装卸交互、25 个空辅助位 |
 | 验收 | `tests/skills`, `tests/combat`, `tests/dungeon`, `tests/persistence`, `tests/platform`, `docs/validation` | 单元、事务、真实 Raylib 证据和交付记录 |
 
+## Confirmed execution decisions
+
+- 已占用的主动槽不允许直接覆盖装入。玩家必须先取出再装入，或在两个已装备槽之间交换；这保证任何操作都不会销毁技能石。
+- 为满足编译依赖，任务按 `1 → 4 → 5 → 2 → 3 → 6 → 7 → 8` 执行。任务编号和验收内容不变。
+
 ---
 
 ### Task 1: 建立技能石领域、目录与五槽不变量
@@ -53,7 +58,7 @@
 
 - [ ] **Step 1: 先注册独立测试目标并写失败测试**
 
-  在根 `CMakeLists.txt` 中把 `add_subdirectory(src/skills)` 放在 `src/combat` 之前，把 `add_subdirectory(tests/skills)` 放在 `tests/combat` 之前。建立 `arpg_skills_tests`，测试：默认装配、两个 owned 位、25 个辅助 `none`、重复主动石拒绝、非 owned 石拒绝、非法 ID 拒绝、取出、装入、占用槽替换、槽间交换。
+  在根 `CMakeLists.txt` 中把 `add_subdirectory(src/skills)` 放在 `src/combat` 之前，把 `add_subdirectory(tests/skills)` 放在 `tests/combat` 之前。建立 `arpg_skills_tests`，测试：默认装配、两个 owned 位、25 个辅助 `none`、重复主动石拒绝、非 owned 石拒绝、非法 ID 拒绝、取出、装入、占用槽装入拒绝、槽间交换。
 
 - [ ] **Step 2: 运行 RED，确认失败原因仅为技能领域尚不存在**
 
