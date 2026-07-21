@@ -8,6 +8,7 @@
 #endif
 
 arpg::test::TestSuite room_generation_suite() noexcept;
+arpg::test::TestSuite room_affix_suite() noexcept;
 arpg::test::TestSuite death_checkpoint_suite() noexcept;
 arpg::test::TestSuite dungeon_death_lifecycle_suite() noexcept;
 arpg::test::TestSuite dungeon_death_stress_suite() noexcept;
@@ -140,6 +141,7 @@ int main() {
 #endif
     const arpg::test::TestSuite suites[] = {
         room_generation_suite(),
+        room_affix_suite(),
         death_checkpoint_suite(),
         dungeon_death_lifecycle_suite(),
         dungeon_lifecycle_suite(),
@@ -239,6 +241,6 @@ int main() {
             "stage 17 task 3 skill loadout transactions");
     }
 
-    return arpg::test::run_suites(suites, 287,
+    return arpg::test::run_suites(suites, 291,
         "stage 18 dungeon queries");
 }
