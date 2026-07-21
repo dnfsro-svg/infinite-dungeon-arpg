@@ -28,6 +28,9 @@ struct PlayerAttackHitSpec final {
     float knockback_speed{};
     float launch_speed{};
     FeedbackLevel feedback{FeedbackLevel::light};
+    skills::ActiveSkillId skill{skills::ActiveSkillId::none};
+    std::uint8_t strike_index{};
+    bool finisher{};
 };
 
 class CombatWorld final {
@@ -94,6 +97,7 @@ private:
     void tick_active_skill_cooldowns() noexcept;
     void tick_active_skill() noexcept;
     void resolve_draw_slash_hits() noexcept;
+    void resolve_storm_swords_hits(bool finisher) noexcept;
     [[nodiscard]] bool resolve_player_attack_hit(
         std::size_t index,
         const PlayerAttackHitSpec& spec,

@@ -80,13 +80,55 @@ void CombatWorld::tick_active_skill_cooldowns() noexcept {
 void CombatWorld::tick_active_skill() noexcept {
     ActiveSkillSnapshot& cast = active_skill_.snapshot;
     if (cast.id == skills::ActiveSkillId::none) return;
-    if (cast.id != skills::ActiveSkillId::draw_slash) {
+    if (cast.id != skills::ActiveSkillId::draw_slash
+        && cast.id != skills::ActiveSkillId::storm_swords) {
         active_skill_.snapshot = ActiveSkillSnapshot{};
         active_skill_.hit_latch.fill(false);
         return;
     }
 
     ++cast.elapsed_ticks;
+    if (cast.id == skills::ActiveSkillId::storm_swords) {
+        const std::uint16_t finisher_tick = static_cast<std::uint16_t>(
+            kStormStartupTicks
+            + static_cast<std::uint16_t>(kStormStrikeCount)
+                * kStormStrikeIntervalTicks);
+        if (cast.elapsed_ticks < kStormStartupTicks) {
+            cast.phase = ActiveSkillPhase::startup;
+            player_.state = PlayerState::attack_startup;
+            return;
+        }
+        if (cast.elapsed_ticks < finisher_tick) {
+            cast.phase = ActiveSkillPhase::strikes;
+            player_.state = PlayerState::attack_active;
+            const std::uint16_t strike_elapsed = static_cast<std::uint16_t>(
+                cast.elapsed_ticks - kStormStartupTicks);
+            if (strike_elapsed % kStormStrikeIntervalTicks == 0U) {
+                cast.strike_index = static_cast<std::uint8_t>(
+                    1U + strike_elapsed / kStormStrikeIntervalTicks);
+                active_skill_.hit_latch.fill(false);
+                resolve_storm_swords_hits(false);
+            }
+            return;
+        }
+        if (cast.elapsed_ticks == finisher_tick) {
+            cast.phase = ActiveSkillPhase::finisher;
+            player_.state = PlayerState::attack_active;
+            active_skill_.hit_latch.fill(false);
+            resolve_storm_swords_hits(true);
+            return;
+        }
+        if (cast.elapsed_ticks <= finisher_tick + kStormRecoveryTicks) {
+            cast.phase = ActiveSkillPhase::recovery;
+            player_.state = PlayerState::attack_recovery;
+            return;
+        }
+
+        active_skill_.snapshot = ActiveSkillSnapshot{};
+        active_skill_.hit_latch.fill(false);
+        return;
+    }
+
     if (cast.elapsed_ticks < kDrawSlashStartupTicks) {
         cast.phase = ActiveSkillPhase::startup;
         player_.state = PlayerState::attack_startup;
@@ -115,7 +157,7 @@ void CombatWorld::resolve_draw_slash_hits() noexcept {
     const PlayerAttackHitSpec hit_spec{
         AttackId::none, kDrawSlashBasePhysical, kDrawSlashBreakDamage,
         ImpactKind::medium_hitstun, kDrawSlashKnockbackSpeed, 0.0F,
-        FeedbackLevel::medium};
+        FeedbackLevel::medium, skills::ActiveSkillId::draw_slash, 0U, false};
     for (std::size_t index = 0U; index < monsters_.slots_.size(); ++index) {
         const MonsterRuntime& monster = monsters_.slots_[index];
         if (active_skill_.hit_latch[index] || !monster.active || monster.hp <= 0
@@ -130,6 +172,38 @@ void CombatWorld::resolve_draw_slash_hits() noexcept {
             * (forward / kDrawSlashRange);
         if (std::fabs(monster.position.y - center.y) > half_width) continue;
 
+        static_cast<void>(resolve_player_attack_hit(
+            index, hit_spec, active_skill_.hit_latch));
+    }
+}
+
+void CombatWorld::resolve_storm_swords_hits(bool finisher) noexcept {
+    const Vec3 center = active_skill_.snapshot.locked_center;
+    const float radius = finisher ? kStormFinisherRadius : kStormStrikeRadius;
+    const float radius_squared = radius * radius;
+    const PlayerAttackHitSpec hit_spec{
+        AttackId::none,
+        finisher ? kStormFinisherBasePhysical : kStormStrikeBasePhysical,
+        0,
+        finisher ? ImpactKind::launch : ImpactKind::light_hitstun,
+        finisher ? kStormFinisherKnockbackSpeed : 0.0F,
+        finisher ? kStormFinisherLaunchSpeed : 0.0F,
+        finisher ? FeedbackLevel::heavy : FeedbackLevel::light,
+        skills::ActiveSkillId::storm_swords,
+        active_skill_.snapshot.strike_index,
+        finisher};
+
+    for (std::size_t index = 0U; index < monsters_.slots_.size(); ++index) {
+        const MonsterRuntime& monster = monsters_.slots_[index];
+        if (active_skill_.hit_latch[index] || !monster.active || monster.hp <= 0
+            || monster.reaction == ReactionState::defeated
+            || monster.reaction == ReactionState::respawning) {
+            continue;
+        }
+
+        const float delta_x = monster.position.x - center.x;
+        const float delta_y = monster.position.y - center.y;
+        if (delta_x * delta_x + delta_y * delta_y > radius_squared) continue;
         static_cast<void>(resolve_player_attack_hit(
             index, hit_spec, active_skill_.hit_latch));
     }

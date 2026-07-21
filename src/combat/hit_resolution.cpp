@@ -219,6 +219,9 @@ bool CombatWorld::resolve_player_attack_hit(
     hit.kind = CombatEventKind::hit;
     hit.tick = tick_;
     hit.attack = spec.source;
+    hit.skill = spec.skill;
+    hit.strike_index = spec.strike_index;
+    hit.finisher = spec.finisher;
     hit.target_index = static_cast<std::uint8_t>(index);
     hit.hit_count = 1;
     hit.feedback = spec.feedback;
@@ -230,6 +233,9 @@ bool CombatWorld::resolve_player_attack_hit(
         break_started.kind = CombatEventKind::break_started;
         break_started.tick = tick_;
         break_started.attack = spec.source;
+        break_started.skill = spec.skill;
+        break_started.strike_index = spec.strike_index;
+        break_started.finisher = spec.finisher;
         break_started.target_index = static_cast<std::uint8_t>(index);
         break_started.feedback = spec.feedback;
         break_started.position = dummy.position;

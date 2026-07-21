@@ -547,14 +547,21 @@ SkillCastResult CombatWorld::request_active_skill(
     if (active_skill_.snapshot.id != skills::ActiveSkillId::none) {
         return SkillCastResult::skill_active;
     }
-    if (skill != skills::ActiveSkillId::draw_slash) {
+    if (skill != skills::ActiveSkillId::draw_slash
+        && skill != skills::ActiveSkillId::storm_swords) {
         return SkillCastResult::invalid_skill;
     }
 
+    Vec3 locked_center = player_.position;
+    if (skill == skills::ActiveSkillId::storm_swords) {
+        const float facing = player_.facing == Facing::right ? 1.0F : -1.0F;
+        locked_center.x += facing * kStormCenterForward;
+    }
     active_skill_.snapshot = ActiveSkillSnapshot{
-        skill, ActiveSkillPhase::startup, 0U, player_.position, 0U};
+        skill, ActiveSkillPhase::startup, 0U, locked_center, 0U};
     active_skill_.locked_facing = player_.facing;
-    active_skill_.cooldowns[index] = skills::kDrawSlashCooldownTicks;
+    active_skill_.cooldowns[index] = skill == skills::ActiveSkillId::draw_slash
+        ? skills::kDrawSlashCooldownTicks : skills::kStormSwordsCooldownTicks;
     active_skill_.hit_latch.fill(false);
     player_.velocity.x = 0.0F;
     player_.velocity.y = 0.0F;

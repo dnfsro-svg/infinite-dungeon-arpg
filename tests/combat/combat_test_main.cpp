@@ -26,6 +26,7 @@ arpg::test::TestSuite player_build_suite() noexcept;
 arpg::test::TestSuite player_damage_history_suite() noexcept;
 arpg::test::TestSuite player_death_snapshot_suite() noexcept;
 arpg::test::TestSuite player_defense_suite() noexcept;
+arpg::test::TestSuite storm_swords_skill_suite() noexcept;
 
 namespace {
 
@@ -43,9 +44,31 @@ bool draw_slash_only_enabled() noexcept {
 #endif
 }
 
+bool storm_swords_only_enabled() noexcept {
+#if defined(_MSC_VER)
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(
+        &value, &length, "ARPG_STAGE17_STORM_SWORDS_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+#else
+    return std::getenv("ARPG_STAGE17_STORM_SWORDS_ONLY") != nullptr;
+#endif
+}
+
 }  // namespace
 
 int main() {
+    if (storm_swords_only_enabled()) {
+        const arpg::test::TestSuite storm_swords_suites[] = {
+            storm_swords_skill_suite(),
+        };
+        return arpg::test::run_suites(
+            storm_swords_suites, 9, "stage 17 task 5 storm swords");
+    }
+
     if (draw_slash_only_enabled()) {
         const arpg::test::TestSuite draw_slash_suites[] = {
             draw_slash_skill_suite(),
@@ -79,7 +102,8 @@ int main() {
         player_damage_history_suite(),
         player_death_snapshot_suite(),
         player_defense_suite(),
+        storm_swords_skill_suite(),
     };
 
-    return arpg::test::run_suites(suites, 219, "stage 17 task 4 draw slash");
+    return arpg::test::run_suites(suites, 228, "stage 17 task 5 storm swords");
 }

@@ -353,6 +353,9 @@ struct CombatEvent final {
     CombatEventKind kind{};
     std::uint64_t tick{};
     AttackId attack{AttackId::none};
+    skills::ActiveSkillId skill{skills::ActiveSkillId::none};
+    std::uint8_t strike_index{};
+    bool finisher{};
     std::uint8_t target_index{0xFF};
     std::uint8_t hit_count{};
     FeedbackLevel feedback{};
