@@ -93,5 +93,5 @@ int main() {
         stage12_material_render_suite(),
     };
 
-    return arpg::test::run_suites(suites, 362, "stage 16 reinforcement UI");
+    return arpg::test::run_suites(suites, 364, "stage 16 reinforcement UI");
 }

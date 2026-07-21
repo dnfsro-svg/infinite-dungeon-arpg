@@ -7,6 +7,7 @@
 
 #include <array>
 #include <cstddef>
+#include <utility>
 
 namespace {
 
@@ -32,6 +33,14 @@ bool source_down(void* context, int key) noexcept {
 platform::PhysicalKeySource source_for(KeySourceState& state) noexcept {
     return {&state, &source_pressed, &source_down,
         nullptr, nullptr, nullptr, nullptr, nullptr};
+}
+
+void commit_pending_save(dungeon::DungeonSession& session) noexcept {
+    const auto pending = session.pending_save();
+    if (!pending.has_value()) return;
+    session.resolve_pending_save({dungeon::SaveDisposition::committed,
+        pending->expected_generation, std::move(pending->next_state),
+        pending->kind});
 }
 
 test::Failure sampler_maps_number_key_edges_to_active_skill_slots() noexcept {
@@ -84,6 +93,50 @@ test::Failure submit_routes_same_frame_slots_in_order_until_one_is_accepted()
     return {};
 }
 
+test::Failure submit_skips_an_empty_earlier_slot_and_accepts_later_slot()
+    noexcept {
+    dungeon::DungeonSession session{};
+    session.tick({});
+    ARPG_REQUIRE(session.request_remove_active_skill(0U)
+        == dungeon::RequestResult::accepted);
+    commit_pending_save(session);
+
+    platform::HostFrameInput input{};
+    input.active_skill_slots[0U] = true;
+    input.active_skill_slots[1U] = true;
+    const auto submitted = platform::submit_frame_actions(session, input);
+    ARPG_REQUIRE(submitted.skills[0U] == combat::SkillCastResult::none);
+    ARPG_REQUIRE(submitted.skills[1U] == combat::SkillCastResult::accepted);
+    return {};
+}
+
+test::Failure submit_skips_a_cooling_earlier_slot_and_accepts_later_slot()
+    noexcept {
+    dungeon::DungeonSession session{};
+    session.tick({});
+    ARPG_REQUIRE(session.request_active_skill_slot(0U)
+        == combat::SkillCastResult::accepted);
+    bool cooling_down = false;
+    for (std::size_t tick = 0U; tick < 512U; ++tick) {
+        session.tick({});
+        const auto snapshot = session.snapshot();
+        cooling_down = snapshot.combat.has_value()
+            && snapshot.combat->active_skill.id == skills::ActiveSkillId::none
+            && snapshot.combat->skill_cooldowns[0U] != 0U;
+        if (cooling_down) break;
+    }
+    ARPG_REQUIRE(cooling_down);
+
+    platform::HostFrameInput input{};
+    input.active_skill_slots[0U] = true;
+    input.active_skill_slots[1U] = true;
+    const auto submitted = platform::submit_frame_actions(session, input);
+    ARPG_REQUIRE(submitted.skills[0U]
+        == combat::SkillCastResult::cooling_down);
+    ARPG_REQUIRE(submitted.skills[1U] == combat::SkillCastResult::accepted);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"number key edges map to active skill slots",
         &sampler_maps_number_key_edges_to_active_skill_slots},
@@ -93,6 +146,10 @@ constexpr arpg::test::TestCase kCases[] = {
         &mapper_forwards_slots_and_counts_them_as_attack_input},
     {"submit routes same frame skill slots in order",
         &submit_routes_same_frame_slots_in_order_until_one_is_accepted},
+    {"submit skips empty earlier skill slot",
+        &submit_skips_an_empty_earlier_slot_and_accepts_later_slot},
+    {"submit skips cooling earlier skill slot",
+        &submit_skips_a_cooling_earlier_slot_and_accepts_later_slot},
 };
 
 }  // namespace
