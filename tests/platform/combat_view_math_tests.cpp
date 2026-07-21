@@ -3,6 +3,7 @@
 #include "combat_view_math.hpp"
 #include "render_layout.hpp"
 
+#include <algorithm>
 #include <array>
 
 namespace {
@@ -11,6 +12,31 @@ using arpg::combat::Vec3;
 using arpg::platform::ActorDrawItem;
 using arpg::platform::CombatCameraView;
 using arpg::platform::ScreenProjection;
+
+Vec3 independently_unproject_ground_position(
+    ScreenProjection projection,
+    CombatCameraView view,
+    float width,
+    float height) noexcept {
+    // This deliberately does not call any production projection helper.  It is
+    // the analytic inverse of the documented ground band, so a matching
+    // forward-only implementation cannot make this test vacuous.
+    constexpr float kGroundBandStart = 0.38F;
+    constexpr float kGroundBandDepth = 0.50F;
+    constexpr float kMinimumScale = 0.70F;
+    constexpr float kScaleDepth = 0.30F;
+    constexpr float kHorizontalFill = 0.92F;
+    const float depth = (projection.ground_y / height - kGroundBandStart)
+        / kGroundBandDepth;
+    const float visual_depth = (std::max)(0.0F, (std::min)(depth, 1.0F));
+    const float scale = kMinimumScale + kScaleDepth * visual_depth;
+    return {
+        view.center.x + (projection.x - width * 0.5F) * view.visible_width
+            / (width * kHorizontalFill * scale),
+        view.center.y - view.visible_depth * 0.5F + depth * view.visible_depth,
+        0.0F,
+    };
+}
 
 arpg::test::Failure camera_tracks_immediately_and_clamps_to_room() noexcept {
     const CombatCameraView center = arpg::platform::make_combat_camera_view(
@@ -49,6 +75,62 @@ arpg::test::Failure camera_tracks_immediately_and_clamps_to_room() noexcept {
     ARPG_REQUIRE(arpg::test::near(next.center.x, -2.0, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(first_projection.x, 640.0, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(next_projection.x, 640.0, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(first_projection.ground_y, 453.6, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(next_projection.ground_y, 453.6, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(first_projection.y, first_projection.ground_y, 1.0e-4));
+    ARPG_REQUIRE(arpg::test::near(next_projection.y, next_projection.ground_y, 1.0e-4));
+    return {};
+}
+
+arpg::test::Failure four_camera_clamp_edges_project_the_visible_boundary() noexcept {
+    constexpr float kWidth = 1280.0F;
+    constexpr float kHeight = 720.0F;
+    struct ClampCase final {
+        Vec3 player{};
+        Vec3 visible_boundary{};
+        float expected_x{};
+        float expected_ground_y{};
+    };
+    constexpr std::array<ClampCase, 4> kCases{{
+        {{24.0F, 0.0F, 0.0F}, {24.0F, 0.0F, 0.0F}, 1140.48F, 453.6F},
+        {{-24.0F, 0.0F, 0.0F}, {-24.0F, 0.0F, 0.0F}, 139.52F, 453.6F},
+        {{0.0F, 11.0F, 0.0F}, {0.0F, 11.0F, 0.0F}, 640.0F, 633.6F},
+        {{0.0F, -11.0F, 0.0F}, {0.0F, -11.0F, 0.0F}, 640.0F, 273.6F},
+    }};
+    for (const ClampCase& item : kCases) {
+        const CombatCameraView view = arpg::platform::make_combat_camera_view(
+            item.player, kWidth, kHeight);
+        const ScreenProjection projection = arpg::platform::project_combat_position(
+            item.visible_boundary, view, kWidth, kHeight);
+        ARPG_REQUIRE(arpg::test::near(projection.x, item.expected_x, 1.0e-4));
+        ARPG_REQUIRE(arpg::test::near(
+            projection.ground_y, item.expected_ground_y, 1.0e-4));
+        ARPG_REQUIRE(projection.x >= 0.0F);
+        ARPG_REQUIRE(projection.x <= kWidth);
+        ARPG_REQUIRE(projection.ground_y >= 0.0F);
+        ARPG_REQUIRE(projection.ground_y <= kHeight);
+    }
+    return {};
+}
+
+arpg::test::Failure camera_projection_round_trips_through_independent_math() noexcept {
+    constexpr float kWidth = 1280.0F;
+    constexpr float kHeight = 720.0F;
+    const CombatCameraView view = arpg::platform::make_combat_camera_view(
+        {5.0F, 3.0F, 0.0F}, kWidth, kHeight);
+    constexpr std::array<Vec3, 4> kWorldPoints{{
+        {-3.0F, -1.0F, 0.0F}, {5.0F, 3.0F, 0.0F},
+        {12.0F, 5.5F, 0.0F}, {16.0F, 8.5F, 0.0F},
+    }};
+    for (const Vec3 world : kWorldPoints) {
+        const ScreenProjection projected = arpg::platform::project_combat_position(
+            world, view, kWidth, kHeight);
+        const Vec3 recovered = independently_unproject_ground_position(
+            projected, view, kWidth, kHeight);
+        ARPG_REQUIRE(arpg::test::near(recovered.x, world.x, 1.0e-4));
+        ARPG_REQUIRE(arpg::test::near(recovered.y, world.y, 1.0e-4));
+        ARPG_REQUIRE(arpg::test::near(projected.y, projected.ground_y, 1.0e-4));
+    }
     return {};
 }
 
@@ -224,6 +306,8 @@ arpg::test::Failure generic_hazard_pass_excludes_abyss_environment() noexcept {
 }
 
 constexpr arpg::test::TestCase kCases[] = {
+    {"camera clamp edge projection", &four_camera_clamp_edges_project_the_visible_boundary},
+    {"camera projection independent round trip", &camera_projection_round_trips_through_independent_math},
     {"back and front projection", &back_and_front_projection_are_exact},
     {"expanded room corners", &expanded_room_corners_remain_in_viewport},
     {"Z-only actor offset", &z_only_offsets_actor_screen_y},
