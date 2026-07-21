@@ -116,6 +116,12 @@ void CombatRenderer::observe_hud(
     hud_projector_.build(model, current, runtime_status, control_hints);
     attach_notice_view(model, hud_notices_.view());
     hud_model_ = model;
+    const std::array<std::uint16_t, skills::kActiveSkillCount> cooldowns =
+        current.combat.has_value()
+        ? current.combat->skill_cooldowns
+        : std::array<std::uint16_t, skills::kActiveSkillCount>{};
+    active_skill_hud_model_ = make_active_skill_hud_model(
+        current.skill_loadout, cooldowns);
     hud_layout_ = IsWindowReady()
         ? make_hud_layout(GetScreenWidth(), GetScreenHeight(), false)
         : HudLayout{};
@@ -164,6 +170,19 @@ std::uint64_t CombatRenderer::hud_presented_frame_count(
     return index.has_value() ? hud_presented_frame_counts_[*index] : 0U;
 }
 
+const ActiveSkillHudModel& CombatRenderer::active_skill_hud_model()
+    const noexcept {
+    return active_skill_hud_model_;
+}
+
+Font CombatRenderer::hud_font() const noexcept {
+    return hud_renderer_.hud_font();
+}
+
+bool CombatRenderer::hud_font_ready() const noexcept {
+    return hud_renderer_.font_ready();
+}
+
 GroundLootView CombatRenderer::draw(
     const dungeon::DungeonSnapshot& previous,
     const dungeon::DungeonSnapshot& current,
@@ -198,6 +217,12 @@ GroundLootView CombatRenderer::draw(
             draw_actors(previous, current,
                 std::clamp(interpolation_alpha, 0.0F, 1.0F),
                 draw_debug, feedback);
+            if (current.combat.has_value()) {
+                active_skill_renderer_.draw_world(*current.combat,
+                    has_last_event_ ? &last_event_ : nullptr,
+                    static_cast<float>(GetScreenWidth()),
+                    static_cast<float>(GetScreenHeight()));
+            }
             break;
         case CombatRenderStage::ground_loot_labels:
             hud_renderer_.draw_ground_loot(render_plan.ground_loot);
@@ -205,6 +230,9 @@ GroundLootView CombatRenderer::draw(
             break;
         case CombatRenderStage::normal_hud:
             draw_hud();
+            active_skill_renderer_.draw_hud(active_skill_hud_model_,
+                active_skill_hud_layout(GetScreenWidth(), GetScreenHeight()),
+                hud_renderer_.hud_font(), hud_renderer_.font_ready());
             break;
         }
     }

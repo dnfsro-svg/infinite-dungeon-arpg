@@ -123,6 +123,7 @@ public:
     [[nodiscard]] bool initialize() noexcept;
     void shutdown() noexcept;
     [[nodiscard]] bool font_ready() const noexcept;
+    [[nodiscard]] Font hud_font() const noexcept;
     void draw_ground_loot(const GroundLootView&) const noexcept;
     void draw_material_loot(const MaterialLootView&) const noexcept;
     void draw(const HudViewModel&, const HudLayout&) const noexcept;

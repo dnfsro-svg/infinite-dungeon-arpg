@@ -2321,7 +2321,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 draw_passive_tree_overlay(current, runtime.render_status());
             }
             if (inventory.is_open()) {
-                inventory.draw(*session, current, runtime.render_status());
+                inventory.draw(*session, current, runtime.render_status(),
+                    renderer.hud_font(), renderer.hud_font_ready());
             }
             if (stage11b_validation_state.resume_observed) {
                 stage11b_validation_state.resume_ticks_after =

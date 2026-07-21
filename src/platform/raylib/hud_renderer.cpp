@@ -391,6 +391,10 @@ bool HudRenderer::font_ready() const noexcept {
     return font_ready_;
 }
 
+Font HudRenderer::hud_font() const noexcept {
+    return font_;
+}
+
 void HudRenderer::draw_ground_loot(
     const GroundLootView& view) const noexcept {
     if (!IsWindowReady()) return;

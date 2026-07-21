@@ -22,12 +22,27 @@ void add_ground_loot_codepoints(DeathOverlayFontPlan& plan) noexcept {
     }
 }
 
+void add_active_skill_codepoints(DeathOverlayFontPlan& plan) noexcept {
+    constexpr int kCodepoints[] = {
+        0x4E3B, 0x52A8, 0x6280, 0x80FD, 0x77F3, 0x69FD,
+        0x88C5, 0x5907, 0x6750, 0x6599, 0x8F85, 0x52A9,
+        0xFF08, 0x53EA, 0x8BFB, 0xFF09, 0x7A7A, 0x672A,
+        0x65E0, 0x53D6, 0x51FA, 0x6B63, 0x5728, 0x4FDD,
+        0x5B58, 0x5931, 0x8D25,
+        0x80CC, 0x5305, 0x5173, 0x95ED,
+    };
+    for (const int codepoint : kCodepoints) {
+        add_hud_codepoint(plan, codepoint);
+    }
+}
+
 }  // namespace
 
 HudFontPlan hud_font_plan() noexcept {
     HudFontPlan plan{};
     plan.shared = death_overlay_font_plan();
     add_ground_loot_codepoints(plan.shared);
+    add_active_skill_codepoints(plan.shared);
     constexpr const char* kRequiredText[] = {
         u8"生命", u8"护盾", u8"剩余", u8"出口已开放", u8"保存失败",
         u8"未分配点", u8"火焰", u8"水", u8"闪电", u8"混沌",
@@ -40,6 +55,10 @@ HudFontPlan hud_font_plan() noexcept {
         u8"房间已清理", u8"奖励", u8"升级至级", u8"有未分配被动点",
         u8"打开背包", u8"打开被动树",
         u8"普通魔法稀有已拾取未知装备",
+        u8"装备 / 材料", u8"技能石", u8"主动技能石槽",
+        u8"空主技能槽", u8"辅助技能石（只读）", u8"未装备技能石",
+        u8"无", u8"取出", u8"正在保存",
+        u8"技能石背包关闭",
     };
     plan.covers_required_text = true;
     for (const char* text : kRequiredText) {

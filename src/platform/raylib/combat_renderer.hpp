@@ -1,5 +1,7 @@
 #pragma once
 
+#include "active_skill_renderer.hpp"
+#include "active_skill_view.hpp"
 #include "combat_feedback.hpp"
 #include "death_overlay_renderer.hpp"
 #include "debug_overlay_renderer.hpp"
@@ -95,6 +97,10 @@ public:
         hud_static_formatting_diagnostics() const noexcept;
     [[nodiscard]] std::uint64_t hud_presented_frame_count(
         HudPresentedFrame) const noexcept;
+    [[nodiscard]] const ActiveSkillHudModel& active_skill_hud_model()
+        const noexcept;
+    [[nodiscard]] Font hud_font() const noexcept;
+    [[nodiscard]] bool hud_font_ready() const noexcept;
     [[nodiscard]] GroundLootView draw(
         const dungeon::DungeonSnapshot& previous,
         const dungeon::DungeonSnapshot& current,
@@ -130,6 +136,7 @@ private:
     TransitionVisualState transition_{};
     DeathOverlayRenderer death_overlay_{};
     HudRenderer hud_renderer_{};
+    ActiveSkillRenderer active_skill_renderer_{};
     DebugOverlayRenderer debug_overlay_{};
     HudNoticeState hud_notices_{};
     LootPickupFeedbackState loot_pickup_feedback_{};
@@ -137,6 +144,7 @@ private:
     MaterialPack material_pack_{};
     HudViewModelProjector hud_projector_{};
     HudViewModel hud_model_{};
+    ActiveSkillHudModel active_skill_hud_model_{};
     HudLayout hud_layout_{};
     std::uint64_t hud_binding_revision_{};
     std::uint64_t hud_observation_count_{};

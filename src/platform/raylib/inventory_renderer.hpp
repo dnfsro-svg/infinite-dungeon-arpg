@@ -28,7 +28,8 @@ public:
         const HostFrameInput& input);
     void draw(const dungeon::DungeonSession& session,
         const dungeon::DungeonSnapshot& snapshot,
-        const DungeonRenderStatus& status);
+        const DungeonRenderStatus& status,
+        Font hud_font, bool hud_font_ready);
 
 private:
     void sync(const dungeon::DungeonSession& session,
@@ -40,6 +41,8 @@ private:
     [[nodiscard]] bool recipe_ready() const noexcept;
 
     bool open_{};
+    InventoryPage page_{InventoryPage::equipment_materials};
+    ActiveSkillLoadoutSelection active_skill_selection_{};
     InventoryFilter filter_{};
     float scroll_rows_{};
     std::uint64_t selected_item_id_{};

@@ -83,6 +83,127 @@ void draw_button(Rectangle rectangle, const char* label,
         static_cast<int>(rectangle.y + 6.0F), 14, text);
 }
 
+void draw_hud_font_text(Font font, bool ready, const char* text,
+    float x, float y, float size, Color color) noexcept {
+    if (!ready || text == nullptr || text[0] == '\0') return;
+    DrawTextEx(font, text, {x, y}, size, 1.0F, color);
+}
+
+void draw_inventory_page_button(Rectangle rectangle, const char* label,
+    bool active, Font font, bool font_ready) noexcept {
+    DrawRectangleRounded(rectangle, 0.14F, 4,
+        active ? Color{42, 104, 139, 255} : Color{23, 39, 57, 255});
+    DrawRectangleRoundedLinesEx(rectangle, 0.14F, 4, 1.0F,
+        active ? Color{151, 225, 255, 255} : Color{75, 105, 137, 255});
+    draw_hud_font_text(font, font_ready, label,
+        rectangle.x + 12.0F, rectangle.y + 6.0F, 16.0F,
+        active ? Color{242, 250, 255, 255}
+               : Color{174, 194, 216, 255});
+}
+
+void draw_active_skill_loadout(const dungeon::DungeonSnapshot& snapshot,
+    const DungeonRenderStatus& status,
+    const ActiveSkillLoadoutSelection& selection,
+    Font font, bool font_ready) noexcept {
+    const ActiveSkillLoadoutLayout layout = active_skill_loadout_layout(
+        GetScreenWidth(), GetScreenHeight());
+    const ActiveSkillLoadoutView view = make_active_skill_loadout_view(
+        snapshot.skill_loadout, selection,
+        snapshot.pending_save_kind.has_value());
+    DrawRectangleRounded(layout.panel, 0.025F, 5, Color{8, 12, 20, 247});
+    DrawRectangleRoundedLinesEx(layout.panel, 0.025F, 5, 1.0F,
+        Color{72, 91, 120, 255});
+    draw_hud_font_text(font, font_ready, u8"主动技能石槽",
+        layout.panel.x + 18.0F, layout.panel.y + 16.0F, 21.0F,
+        Color{141, 221, 255, 255});
+
+    for (std::size_t index = 0U; index < view.slots.size(); ++index) {
+        const ActiveSkillLoadoutSlotView& slot = view.slots[index];
+        const Rectangle bounds = layout.main_slots[index];
+        DrawRectangleRounded(bounds, 0.08F, 4,
+            slot.selected ? Color{38, 83, 111, 255}
+                          : Color{20, 30, 44, 255});
+        DrawRectangleRoundedLinesEx(bounds, 0.08F, 4,
+            slot.selected ? 3.0F : 1.0F,
+            slot.selected ? Color{148, 225, 255, 255}
+                          : Color{77, 105, 137, 255});
+        char number[8]{};
+        static_cast<void>(std::snprintf(number, sizeof(number), "%u",
+            static_cast<unsigned>(slot.slot_number)));
+        draw_hud_font_text(font, font_ready, number,
+            bounds.x + 8.0F, bounds.y + 7.0F, 18.0F, WHITE);
+        draw_hud_font_text(font, font_ready,
+            slot.empty ? u8"空主技能槽" : slot.name.data(),
+            bounds.x + 28.0F, bounds.y + 27.0F, 15.0F,
+            slot.empty ? Color{116, 132, 151, 255}
+                       : Color{210, 241, 255, 255});
+    }
+
+    draw_hud_font_text(font, font_ready, u8"辅助技能石（只读）",
+        layout.support_slots[0U].x,
+        layout.support_slots[0U].y - 31.0F, 17.0F,
+        Color{171, 193, 217, 255});
+    for (const Rectangle support : layout.support_slots) {
+        DrawRectangleRounded(support, 0.08F, 4, Color{17, 24, 35, 255});
+        DrawRectangleRoundedLinesEx(support, 0.08F, 4, 1.0F,
+            Color{61, 79, 101, 255});
+        draw_hud_font_text(font, font_ready, u8"空",
+            support.x + 17.0F, support.y + 17.0F, 15.0F,
+            Color{105, 121, 141, 255});
+    }
+
+    draw_hud_font_text(font, font_ready, u8"未装备技能石",
+        layout.inventory_slots[0U].x,
+        layout.inventory_slots[0U].y - 31.0F, 17.0F,
+        Color{171, 193, 217, 255});
+    for (std::size_t index = 0U; index < view.inventory_count; ++index) {
+        const ActiveSkillInventoryStoneView& stone = view.inventory[index];
+        const Rectangle bounds = layout.inventory_slots[index];
+        DrawRectangleRounded(bounds, 0.08F, 4,
+            stone.selected ? Color{38, 83, 111, 255}
+                           : Color{20, 30, 44, 255});
+        DrawRectangleRoundedLinesEx(bounds, 0.08F, 4,
+            stone.selected ? 3.0F : 1.0F,
+            stone.selected ? Color{148, 225, 255, 255}
+                           : Color{77, 105, 137, 255});
+        draw_hud_font_text(font, font_ready, stone.name.data(),
+            bounds.x + 10.0F, bounds.y + 20.0F, 16.0F,
+            Color{210, 241, 255, 255});
+    }
+    if (view.inventory_count == 0U) {
+        draw_hud_font_text(font, font_ready, u8"无",
+            layout.inventory_slots[0U].x,
+            layout.inventory_slots[0U].y + 20.0F, 16.0F,
+            Color{105, 121, 141, 255});
+    }
+
+    const bool removable = !view.save_pending
+        && selection.selected_slot < snapshot.skill_loadout.slots.size()
+        && snapshot.skill_loadout.slots[selection.selected_slot].active
+            != skills::ActiveSkillId::none;
+    DrawRectangleRounded(layout.remove_button, 0.12F, 4,
+        removable ? Color{74, 53, 65, 255} : Color{42, 45, 52, 255});
+    DrawRectangleRoundedLinesEx(layout.remove_button, 0.12F, 4, 1.0F,
+        removable ? Color{219, 125, 151, 255}
+                  : Color{65, 68, 75, 255});
+    draw_hud_font_text(font, font_ready, u8"取出",
+        layout.remove_button.x + 61.0F,
+        layout.remove_button.y + 9.0F, 16.0F,
+        removable ? WHITE : Color{118, 123, 133, 255});
+
+    if (view.save_pending) {
+        draw_hud_font_text(font, font_ready, u8"正在保存",
+            layout.panel.x + 18.0F,
+            layout.panel.y + layout.panel.height - 32.0F,
+            17.0F, Color{255, 191, 96, 255});
+    } else if (status.indicator == SaveIndicator::error) {
+        draw_hud_font_text(font, font_ready, u8"保存失败",
+            layout.panel.x + 18.0F,
+            layout.panel.y + layout.panel.height - 32.0F,
+            17.0F, Color{255, 118, 118, 255});
+    }
+}
+
 int grid_columns(Rectangle grid) noexcept {
     return std::max(1, static_cast<int>((grid.width - 20.0F) / 112.0F));
 }
@@ -141,11 +262,15 @@ std::size_t base_value_index(std::uint8_t item_level) noexcept {
 void InventoryRenderer::open(const dungeon::DungeonSession& session,
     const dungeon::DungeonSnapshot& snapshot) {
     open_ = true;
+    page_ = InventoryPage::equipment_materials;
+    active_skill_selection_ = {};
     sync(session, snapshot);
 }
 
 void InventoryRenderer::close() noexcept {
     open_ = false;
+    page_ = InventoryPage::equipment_materials;
+    active_skill_selection_ = {};
     click_tracker_ = {};
     static_cast<void>(material_bag_.resolve_reinforcement_confirmation(false));
 }
@@ -224,6 +349,62 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
     const Vector2 mouse = input.mouse_position;
     const bool requests_enabled = !snapshot.pending_save_kind.has_value()
         && runtime.state() == DungeonRuntimeState::running;
+    const ActiveSkillLoadoutLayout skill_layout = active_skill_loadout_layout(
+        GetScreenWidth(), GetScreenHeight());
+    if (left_pressed && contains(skill_layout.equipment_page_button, mouse)) {
+        page_ = InventoryPage::equipment_materials;
+        return false;
+    }
+    if (left_pressed && contains(skill_layout.skill_stones_page_button, mouse)) {
+        page_ = InventoryPage::skill_stones;
+        if (active_skill_selection_.selected_slot
+                == kNoActiveSkillLoadoutSelection
+            && active_skill_selection_.selected_inventory
+                == skills::ActiveSkillId::none) {
+            active_skill_selection_.selected_slot = 0U;
+        }
+        return false;
+    }
+    if (page_ == InventoryPage::skill_stones) {
+        if (!left_pressed) return false;
+        const auto command = active_skill_loadout_command_after_click(
+            snapshot.skill_loadout, skill_layout, mouse,
+            active_skill_selection_, !requests_enabled);
+        if (!command.has_value()
+                || command->kind == ActiveSkillLoadoutActionKind::select) {
+            return false;
+        }
+        dungeon::RequestResult request = dungeon::RequestResult::rejected;
+        switch (command->kind) {
+        case ActiveSkillLoadoutActionKind::select:
+            return false;
+        case ActiveSkillLoadoutActionKind::remove:
+            request = session.request_remove_active_skill(command->slot);
+            break;
+        case ActiveSkillLoadoutActionKind::equip:
+            request = session.request_equip_active_skill(
+                command->skill, command->slot);
+            break;
+        case ActiveSkillLoadoutActionKind::swap:
+            request = session.request_swap_active_skill_slots(
+                command->slot, command->other_slot);
+            break;
+        }
+        if (request != dungeon::RequestResult::accepted) return false;
+        const std::uint64_t generation_before = snapshot.commit_generation;
+        runtime.service_pending_save();
+        const dungeon::DungeonSnapshot after = session.snapshot();
+        if (after.commit_generation != generation_before) {
+            if (command->kind == ActiveSkillLoadoutActionKind::equip) {
+                active_skill_selection_.selected_slot = command->slot;
+                active_skill_selection_.selected_inventory =
+                    skills::ActiveSkillId::none;
+            } else if (command->kind == ActiveSkillLoadoutActionKind::swap) {
+                active_skill_selection_.selected_slot = command->other_slot;
+            }
+        }
+        return true;
+    }
     if (material_bag_.reinforcement_confirmation_item().has_value()) {
         const ReinforcementConfirmationLayout confirmation =
             reinforcement_confirmation_layout(GetScreenWidth(), GetScreenHeight());
@@ -364,14 +545,34 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
 
 void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     const dungeon::DungeonSnapshot& snapshot,
-    const DungeonRenderStatus&) {
+    const DungeonRenderStatus& status,
+    Font hud_font, bool hud_font_ready) {
     if (!open_) return;
     sync(session, snapshot);
     const items::ItemOwnershipState& state = session.item_state();
     const InventoryLayout layout = inventory_layout(GetScreenWidth(), GetScreenHeight());
     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Color{3, 5, 9, 225});
-    DrawText("EQUIPMENT INVENTORY - I / ESC CLOSE", 14, 16, 24,
-        Color{141, 221, 255, 255});
+    const ActiveSkillLoadoutLayout skill_layout = active_skill_loadout_layout(
+        GetScreenWidth(), GetScreenHeight());
+    if (page_ == InventoryPage::equipment_materials) {
+        DrawText("EQUIPMENT INVENTORY - I / ESC CLOSE", 14, 16, 24,
+            Color{141, 221, 255, 255});
+    } else {
+        draw_hud_font_text(hud_font, hud_font_ready,
+            u8"技能石背包 - I / ESC 关闭", 14.0F, 16.0F, 22.0F,
+            Color{141, 221, 255, 255});
+    }
+    draw_inventory_page_button(skill_layout.equipment_page_button,
+        u8"装备 / 材料", page_ == InventoryPage::equipment_materials,
+        hud_font, hud_font_ready);
+    draw_inventory_page_button(skill_layout.skill_stones_page_button,
+        u8"技能石", page_ == InventoryPage::skill_stones,
+        hud_font, hud_font_ready);
+    if (page_ == InventoryPage::skill_stones) {
+        draw_active_skill_loadout(snapshot, status, active_skill_selection_,
+            hud_font, hud_font_ready);
+        return;
+    }
     draw_panel(layout.equipment, "EQUIPMENT");
     draw_panel(layout.grid, "INVENTORY");
     draw_panel(layout.detail, "ITEM DETAIL");
