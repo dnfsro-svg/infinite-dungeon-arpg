@@ -899,6 +899,18 @@ std::size_t CombatWorld::active_monster_count() const noexcept {
     return monsters_.active_count();
 }
 
+Vec3 CombatWorld::player_position() const noexcept {
+    return player_.position;
+}
+
+std::size_t CombatWorld::living_monster_count() const noexcept {
+    std::size_t count = 0U;
+    for (const MonsterRuntime& monster : monsters_.slots()) {
+        if (monster.active && monster.hp > 0) ++count;
+    }
+    return count;
+}
+
 std::size_t CombatWorld::active_projectile_count() const noexcept {
     return projectiles_.active_count();
 }

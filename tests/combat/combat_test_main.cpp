@@ -7,6 +7,7 @@ arpg::test::TestSuite abyss_environment_suite() noexcept;
 arpg::test::TestSuite attack_state_suite() noexcept;
 arpg::test::TestSuite break_stress_suite() noexcept;
 arpg::test::TestSuite combat_config_suite() noexcept;
+arpg::test::TestSuite combat_query_suite() noexcept;
 arpg::test::TestSuite draw_slash_skill_suite() noexcept;
 arpg::test::TestSuite dummy_reaction_suite() noexcept;
 arpg::test::TestSuite input_buffer_suite() noexcept;
@@ -83,6 +84,7 @@ int main() {
         attack_state_suite(),
         break_stress_suite(),
         combat_config_suite(),
+        combat_query_suite(),
         draw_slash_skill_suite(),
         dummy_reaction_suite(),
         input_buffer_suite(),
@@ -105,5 +107,5 @@ int main() {
         storm_swords_skill_suite(),
     };
 
-    return arpg::test::run_suites(suites, 228, "stage 17 task 5 storm swords");
+    return arpg::test::run_suites(suites, 230, "stage 18 combat queries");
 }

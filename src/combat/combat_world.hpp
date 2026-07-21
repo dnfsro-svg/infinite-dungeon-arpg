@@ -50,6 +50,8 @@ public:
         const EncounterWave& wave,
         bool reset_player_health = true) noexcept;
     [[nodiscard]] bool destroy_monster(MonsterHandle handle) noexcept;
+    [[nodiscard]] Vec3 player_position() const noexcept;
+    [[nodiscard]] std::size_t living_monster_count() const noexcept;
     [[nodiscard]] std::size_t active_monster_count() const noexcept;
     [[nodiscard]] std::size_t active_projectile_count() const noexcept;
     [[nodiscard]] CombatSnapshot snapshot() const noexcept;
