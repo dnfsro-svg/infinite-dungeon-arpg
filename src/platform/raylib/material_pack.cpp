@@ -520,6 +520,53 @@ bool MaterialPack::draw_to(MaterialSpriteId id, Rectangle destination,
     return true;
 }
 
+bool MaterialPack::draw_nine_slice(MaterialSpriteId id,
+    Rectangle destination, float border_pixels, Color tint) const noexcept {
+    if (!can_draw(id) || destination.width <= 0.0F
+            || destination.height <= 0.0F || border_pixels <= 0.0F) {
+        return false;
+    }
+    const MaterialManifestDefinition manifest = default_material_manifest();
+    const MaterialFrameDefinition* const frame = find_frame(manifest, id);
+    if (frame == nullptr || !state_.available(frame->atlas)
+            || border_pixels * 2.0F >= frame->source.width
+            || border_pixels * 2.0F >= frame->source.height) {
+        return false;
+    }
+    const float destination_border = std::min(border_pixels,
+        std::min(destination.width * 0.5F, destination.height * 0.5F));
+    const std::array<float, 3U> source_widths{{border_pixels,
+        frame->source.width - border_pixels * 2.0F, border_pixels}};
+    const std::array<float, 3U> source_heights{{border_pixels,
+        frame->source.height - border_pixels * 2.0F, border_pixels}};
+    const std::array<float, 3U> destination_widths{{destination_border,
+        destination.width - destination_border * 2.0F, destination_border}};
+    const std::array<float, 3U> destination_heights{{destination_border,
+        destination.height - destination_border * 2.0F, destination_border}};
+    const std::size_t texture_index = atlas_index(frame->atlas);
+    float source_y = frame->source.y;
+    float destination_y = destination.y;
+    for (std::size_t row{}; row < 3U; ++row) {
+        float source_x = frame->source.x;
+        float destination_x = destination.x;
+        for (std::size_t column{}; column < 3U; ++column) {
+            texture_api_.draw_material(color_textures_[texture_index],
+                material_textures_[texture_index],
+                {source_x, source_y, source_widths[column],
+                    source_heights[row]},
+                {destination_x, destination_y, destination_widths[column],
+                    destination_heights[row]},
+                {0.0F, 0.0F}, 0.0F, tint, {});
+            source_x += source_widths[column];
+            destination_x += destination_widths[column];
+        }
+        source_y += source_heights[row];
+        destination_y += destination_heights[row];
+    }
+    ++sprite_draw_counts_[static_cast<std::size_t>(id)];
+    return true;
+}
+
 std::uint64_t MaterialPack::sprite_draw_count(
     MaterialSpriteId id) const noexcept {
     const std::size_t index = static_cast<std::size_t>(id);

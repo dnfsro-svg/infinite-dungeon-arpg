@@ -288,6 +288,18 @@ bool ActiveSkillRenderer::assets_ready() const noexcept {
         && assets_.ready(ActiveSkillAtlasId::storm_swords);
 }
 
+ActiveSkillCooldownOverlayPlan make_active_skill_cooldown_overlay(
+    Rectangle bounds, float cooldown_ratio, bool empty) noexcept {
+    if (empty || cooldown_ratio <= 0.0F || bounds.width <= 0.0F
+            || bounds.height <= 0.0F) {
+        return {};
+    }
+    const float ratio = std::clamp(cooldown_ratio, 0.0F, 1.0F);
+    const float overlay_height = bounds.height * ratio;
+    return {true, {bounds.x, bounds.y + bounds.height - overlay_height,
+        bounds.width, overlay_height}};
+}
+
 void ActiveSkillRenderer::draw_hud(const ActiveSkillHudModel& model,
     const ActiveSkillHudLayout& layout,
     Font hud_font, bool hud_font_ready,
@@ -325,11 +337,16 @@ void ActiveSkillRenderer::draw_hud(const ActiveSkillHudModel& model,
                 Color{201, 242, 255, 255});
         }
 
-        if (slot.cooldown_ratio > 0.0F && !material_drawn) {
-            const float ratio = std::clamp(slot.cooldown_ratio, 0.0F, 1.0F);
-            const float overlay_height = bounds.height * ratio;
-            DrawRectangleRec({bounds.x, bounds.y + bounds.height - overlay_height,
-                bounds.width, overlay_height}, Color{3, 7, 14, 190});
+        const ActiveSkillCooldownOverlayPlan cooldown_overlay =
+            make_active_skill_cooldown_overlay(
+                bounds, slot.cooldown_ratio, slot.empty);
+        if (cooldown_overlay.visible) {
+            DrawRectangleRec(cooldown_overlay.bounds, Color{3, 7, 14, 190});
+            DrawLineEx({cooldown_overlay.bounds.x,
+                    cooldown_overlay.bounds.y},
+                {cooldown_overlay.bounds.x + cooldown_overlay.bounds.width,
+                    cooldown_overlay.bounds.y},
+                1.5F, Color{112, 211, 255, 210});
         }
         if (!hud_font_ready) continue;
         char key[2]{static_cast<char>('0' + slot.key_number), '\0'};

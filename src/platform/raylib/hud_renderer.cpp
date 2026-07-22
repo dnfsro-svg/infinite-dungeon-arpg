@@ -506,6 +506,12 @@ void HudRenderer::draw(const HudViewModel& view,
             DrawRectangleRounded(panel_bounds, 0.08F, 6,
                 Color{7, 10, 17, 220});
         }
+        static_cast<void>(assets.draw_to(
+            ui_material_sprite(UiMaterialElement::label_plate),
+            {panel_bounds.x + 8.0F * layout.scale,
+                panel_bounds.y + 3.0F * layout.scale,
+                panel_bounds.width - 16.0F * layout.scale,
+                23.0F * layout.scale}));
 
         char text[96]{};
         for (std::size_t index = 0U; index < plan.bar_count; ++index) {
@@ -578,6 +584,12 @@ void HudRenderer::draw(const HudViewModel& view,
                 objective.abyss ? Color{47, 18, 47, 228}
                                 : Color{7, 10, 17, 220});
         }
+        static_cast<void>(assets.draw_to(
+            ui_material_sprite(UiMaterialElement::label_plate),
+            {bounds.x + 8.0F * layout.scale,
+                bounds.y + 5.0F * layout.scale,
+                bounds.width - 16.0F * layout.scale,
+                24.0F * layout.scale}));
         draw_panel_text(draw_font, objective.bounds, objective.primary,
             style.objective_primary_font_size * layout.scale,
             objective.abyss ? palette.chaos : palette.text);

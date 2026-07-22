@@ -65,11 +65,15 @@ bool contains(Rectangle rectangle, Vector2 point) noexcept {
 
 void draw_panel(Rectangle rectangle, const char* title,
     const MaterialPack& assets, UiMaterialElement element) noexcept {
-    if (!assets.draw_to(ui_material_sprite(element), rectangle)) {
+    if (!assets.draw_nine_slice(ui_material_sprite(element), rectangle)) {
         DrawRectangleRounded(rectangle, 0.025F, 5, Color{8, 12, 20, 247});
         DrawRectangleRoundedLinesEx(rectangle, 0.025F, 5, 1.0F,
             Color{72, 91, 120, 255});
     }
+    const Rectangle label_bounds{rectangle.x + 8.0F, rectangle.y + 5.0F,
+        std::min(190.0F, rectangle.width - 16.0F), 30.0F};
+    static_cast<void>(assets.draw_to(
+        ui_material_sprite(UiMaterialElement::label_plate), label_bounds));
     DrawText(title, static_cast<int>(rectangle.x + 12.0F),
         static_cast<int>(rectangle.y + 10.0F), 18,
         Color{131, 211, 255, 255});
@@ -126,7 +130,8 @@ void draw_active_skill_loadout(const dungeon::DungeonSnapshot& snapshot,
     const ActiveSkillLoadoutView view = make_active_skill_loadout_view(
         snapshot.skill_loadout, selection,
         snapshot.pending_save_kind.has_value());
-    if (!assets.draw_to(ui_material_sprite(UiMaterialElement::skill_panel),
+    if (!assets.draw_nine_slice(
+            ui_material_sprite(UiMaterialElement::skill_panel),
             layout.panel)) {
         DrawRectangleRounded(layout.panel, 0.025F, 5, Color{8, 12, 20, 247});
         DrawRectangleRoundedLinesEx(layout.panel, 0.025F, 5, 1.0F,

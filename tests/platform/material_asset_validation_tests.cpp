@@ -34,6 +34,8 @@ struct FakeMaterialTextures final {
     std::array<unsigned int, kCapacity> unloaded_ids{};
     std::array<unsigned int, kCapacity> drawn_color_ids{};
     std::array<unsigned int, kCapacity> drawn_material_ids{};
+    std::array<Rectangle, kCapacity> drawn_sources{};
+    std::array<Rectangle, kCapacity> drawn_destinations{};
     std::array<MaterialCompositeParameters, kCapacity> composites{};
     std::size_t load_count{};
     std::size_t unload_count{};
@@ -97,7 +99,7 @@ void fake_shutdown_material_pipeline() noexcept {
 }
 
 void fake_draw_material(Texture2D color, Texture2D material,
-    Rectangle, Rectangle, Vector2, float, Color,
+    Rectangle source, Rectangle destination, Vector2, float, Color,
     MaterialCompositeParameters parameters) noexcept {
     if (g_fake_material_textures == nullptr
         || g_fake_material_textures->draw_count
@@ -105,6 +107,8 @@ void fake_draw_material(Texture2D color, Texture2D material,
     const std::size_t index = g_fake_material_textures->draw_count++;
     g_fake_material_textures->drawn_color_ids[index] = color.id;
     g_fake_material_textures->drawn_material_ids[index] = material.id;
+    g_fake_material_textures->drawn_sources[index] = source;
+    g_fake_material_textures->drawn_destinations[index] = destination;
     g_fake_material_textures->composites[index] = parameters;
 }
 
@@ -289,6 +293,51 @@ arpg::test::Failure material_pack_records_successful_item_sprite_draws() noexcep
     ARPG_REQUIRE(pack.sprite_draw_count(MaterialSpriteId::missing) == 0U);
     pack.unload();
     ARPG_REQUIRE(pack.sprite_draw_count(MaterialSpriteId::item_weapon) == 0U);
+    g_fake_material_textures = nullptr;
+    return {};
+}
+
+arpg::test::Failure material_pack_nine_slice_preserves_panel_corners() noexcept {
+    FakeMaterialTextures fake{};
+    const MaterialManifestDefinition manifest =
+        arpg::platform::default_material_manifest();
+    for (std::size_t index{}; index < manifest.atlas_count; ++index) {
+        const auto& atlas = manifest.atlases[index];
+        fake.loaded[index * 2U] = {
+            static_cast<unsigned int>(6000U + index * 2U),
+            atlas.width, atlas.height, 1, 7};
+        fake.loaded[index * 2U + 1U] = {
+            static_cast<unsigned int>(6001U + index * 2U),
+            atlas.width, atlas.height, 1, 7};
+    }
+    g_fake_material_textures = &fake;
+    arpg::platform::MaterialPack pack{fake_material_texture_api()};
+    ARPG_REQUIRE(pack.load(MaterialEcology::fire));
+    ARPG_REQUIRE(pack.draw_nine_slice(
+        MaterialSpriteId::ui_inventory_panel_grid,
+        {10.0F, 20.0F, 800.0F, 600.0F}, 32.0F));
+    ARPG_REQUIRE(fake.draw_count == 9U);
+    ARPG_REQUIRE(pack.sprite_draw_count(
+        MaterialSpriteId::ui_inventory_panel_grid) == 1U);
+    for (const std::size_t corner : {0U, 2U, 6U, 8U}) {
+        ARPG_REQUIRE(arpg::test::near(
+            fake.drawn_sources[corner].width, 32.0F));
+        ARPG_REQUIRE(arpg::test::near(
+            fake.drawn_sources[corner].height, 32.0F));
+        ARPG_REQUIRE(arpg::test::near(
+            fake.drawn_destinations[corner].width, 32.0F));
+        ARPG_REQUIRE(arpg::test::near(
+            fake.drawn_destinations[corner].height, 32.0F));
+    }
+    ARPG_REQUIRE(arpg::test::near(
+        fake.drawn_sources[4U].width, 64.0F));
+    ARPG_REQUIRE(arpg::test::near(
+        fake.drawn_sources[4U].height, 64.0F));
+    ARPG_REQUIRE(arpg::test::near(
+        fake.drawn_destinations[4U].width, 736.0F));
+    ARPG_REQUIRE(arpg::test::near(
+        fake.drawn_destinations[4U].height, 536.0F));
+    pack.unload();
     g_fake_material_textures = nullptr;
     return {};
 }
@@ -740,6 +789,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &material_pack_loads_and_draws_color_material_pairs},
     {"records successful item sprite draws",
         &material_pack_records_successful_item_sprite_draws},
+    {"nine slice preserves authored panel corners",
+        &material_pack_nine_slice_preserves_panel_corners},
     {"switches ecology without reloading common atlases",
         &material_pack_switches_ecology_without_reloading_common},
     {"all manifest texture pairs exist and match declared dimensions",

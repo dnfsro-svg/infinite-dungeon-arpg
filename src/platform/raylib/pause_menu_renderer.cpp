@@ -84,7 +84,7 @@ void draw_pause_menu_with_font(
                     Color{2, 4, 8, 190});
                 break;
             case PauseMenuRenderOpKind::panel:
-                if (assets == nullptr || !assets->draw_to(ui_material_sprite(
+                if (assets == nullptr || !assets->draw_nine_slice(ui_material_sprite(
                         UiMaterialElement::pause_panel), layout.panel)) {
                     DrawRectangleRounded(layout.panel, 0.04F, 8,
                         Color{10, 14, 23, 248});

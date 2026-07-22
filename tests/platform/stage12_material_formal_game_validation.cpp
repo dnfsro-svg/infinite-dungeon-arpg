@@ -1,6 +1,7 @@
 #include "material_asset_validation.hpp"
 #include "raylib_host.hpp"
 #include "dungeon/dungeon_types.hpp"
+#include "ui_material.hpp"
 
 #include <raylib.h>
 
@@ -54,6 +55,26 @@ bool every_resource_drawn(const std::array<std::uint64_t, Size>& counts) {
         if (count == 0U) return false;
     }
     return true;
+}
+
+template <std::size_t Size>
+bool ui_resources_drawn(const platform::Stage12MaterialRuntimeStatus& status,
+    const std::array<platform::UiMaterialElement, Size>& resources) {
+    for (const platform::UiMaterialElement resource : resources) {
+        if (status.ui_material_draws[static_cast<std::size_t>(resource)] == 0U) {
+            return false;
+        }
+    }
+    return status.ui_material_resident;
+}
+
+std::uint64_t ui_draw_mask(
+    const platform::Stage12MaterialRuntimeStatus& status) noexcept {
+    std::uint64_t mask{};
+    for (std::size_t index{}; index < status.ui_material_draws.size(); ++index) {
+        if (status.ui_material_draws[index] != 0U) mask |= (1ULL << index);
+    }
+    return mask;
 }
 
 std::uint64_t manifest_texture_pair_bytes() noexcept {
@@ -127,7 +148,9 @@ bool capture(const std::filesystem::path& root, const Resolution& resolution,
     bool hide_showcase_monsters = false,
     const char* baseline_image_name = nullptr,
     platform::Stage12UiShowcase ui_showcase =
-        platform::Stage12UiShowcase::none) {
+        platform::Stage12UiShowcase::none,
+    platform::Stage11CHudValidationScenario hud_scenario =
+        platform::Stage11CHudValidationScenario::none) {
     const std::filesystem::path capture = root / (image_name == nullptr
         ? resolution.name : image_name);
     platform::RaylibHostConfig config{};
@@ -139,13 +162,17 @@ bool capture(const std::filesystem::path& root, const Resolution& resolution,
     config.screenshot_directory = root / (std::string{"f12-"}
         + (image_name == nullptr ? resolution.name : image_name));
     config.new_run_seed = 12012U;
-    config.validation_exit_after_presented_frames = 4U;
+    config.validation_exit_after_presented_frames = hud_scenario
+        == platform::Stage11CHudValidationScenario::none ? 4U : 600U;
+    config.validation_steps_per_frame = hud_scenario
+        == platform::Stage11CHudValidationScenario::none ? 0U : 8U;
     config.validation_capture_file = capture;
     config.stage12_material_showcase = showcase;
     config.stage12_material_showcase_ecology = showcase_ecology;
     config.stage12_material_runtime_status = material_status;
     config.stage12_material_showcase_hide_monsters = hide_showcase_monsters;
     config.stage12_ui_showcase = ui_showcase;
+    config.stage11c_hud_validation = hud_scenario;
     if (baseline_image_name != nullptr) {
         config.stage12_material_baseline_capture_file =
             root / baseline_image_name;
@@ -241,18 +268,59 @@ int main(int argc, char** argv) {
         "ui-gallery-1280x720.png", false, false, std::nullopt,
         &ui_runtime, false, nullptr,
         platform::Stage12UiShowcase::material_gallery);
+    platform::Stage12MaterialRuntimeStatus hud_ui_runtime{};
+    const bool hud_ui_ok = capture(root, kResolutions[0],
+        "ui-hud-1280x720.png", false, false, std::nullopt,
+        &hud_ui_runtime, false, nullptr, platform::Stage12UiShowcase::none,
+        platform::Stage11CHudValidationScenario::low_health_status);
+    const bool hud_ui_1920_ok = capture(root, kResolutions[1],
+        "ui-hud-1920x1080.png", false, false, std::nullopt,
+        nullptr, false, nullptr, platform::Stage12UiShowcase::none,
+        platform::Stage11CHudValidationScenario::low_health_status);
+    platform::Stage12MaterialRuntimeStatus inventory_ui_runtime{};
     const bool inventory_ui_ok = capture(root, kResolutions[0],
         "ui-inventory-1280x720.png", false, false, std::nullopt,
+        &inventory_ui_runtime, false, nullptr,
+        platform::Stage12UiShowcase::inventory);
+    const bool inventory_ui_1920_ok = capture(root, kResolutions[1],
+        "ui-inventory-1920x1080.png", false, false, std::nullopt,
         nullptr, false, nullptr, platform::Stage12UiShowcase::inventory);
+    platform::Stage12MaterialRuntimeStatus skill_ui_runtime{};
     const bool skill_ui_ok = capture(root, kResolutions[0],
         "ui-skill-stones-1280x720.png", false, false, std::nullopt,
+        &skill_ui_runtime, false, nullptr,
+        platform::Stage12UiShowcase::skill_stones);
+    const bool skill_ui_1920_ok = capture(root, kResolutions[1],
+        "ui-skill-stones-1920x1080.png", false, false, std::nullopt,
         nullptr, false, nullptr, platform::Stage12UiShowcase::skill_stones);
+    platform::Stage12MaterialRuntimeStatus pause_ui_runtime{};
     const bool pause_ui_ok = capture(root, kResolutions[0],
         "ui-pause-1280x720.png", false, false, std::nullopt,
+        &pause_ui_runtime, false, nullptr, platform::Stage12UiShowcase::pause);
+    const bool pause_ui_1920_ok = capture(root, kResolutions[1],
+        "ui-pause-1920x1080.png", false, false, std::nullopt,
         nullptr, false, nullptr, platform::Stage12UiShowcase::pause);
     const bool ui_runtime_ok = ui_gallery_ok
         && ui_runtime.ui_material_resident
         && every_resource_drawn(ui_runtime.ui_material_draws);
+    using Ui = platform::UiMaterialElement;
+    const bool hud_ui_runtime_ok = hud_ui_ok && ui_resources_drawn(
+        hud_ui_runtime, std::array{Ui::hud_panel, Ui::hud_health_track,
+            Ui::hud_health_fill, Ui::hud_resource_track,
+            Ui::hud_skill_empty, Ui::hud_skill_ready, Ui::label_plate});
+    const bool inventory_ui_runtime_ok = inventory_ui_ok && ui_resources_drawn(
+        inventory_ui_runtime, std::array{Ui::inventory_panel_equipment,
+            Ui::inventory_panel_grid, Ui::inventory_panel_detail,
+            Ui::inventory_tab_idle, Ui::inventory_tab_active,
+            Ui::inventory_slot_idle, Ui::inventory_button_idle,
+            Ui::inventory_button_disabled, Ui::label_plate});
+    const bool skill_ui_runtime_ok = skill_ui_ok && ui_resources_drawn(
+        skill_ui_runtime, std::array{Ui::skill_panel, Ui::skill_slot_empty,
+            Ui::skill_slot_support, Ui::inventory_tab_idle,
+            Ui::inventory_tab_active, Ui::inventory_button_active});
+    const bool pause_ui_runtime_ok = pause_ui_ok && ui_resources_drawn(
+        pause_ui_runtime, std::array{Ui::pause_panel, Ui::pause_row_idle,
+            Ui::pause_row_selected, Ui::pause_footer});
     const bool showcase_ok = capture(root, kResolutions[0],
         "monsters-1280x720.png", true, true);
     platform::Stage12MaterialRuntimeStatus water_runtime{};
@@ -337,12 +405,24 @@ int main(int argc, char** argv) {
            << "ui_material_pair=" << (ui_runtime.ui_material_resident
                 ? "resident" : "missing") << '\n'
            << "ui_runtime_draws=" << (ui_runtime_ok ? "pass" : "fail") << '\n'
+           << "hud_ui_runtime_draws=" << (hud_ui_runtime_ok ? "pass" : "fail") << '\n'
+           << "hud_ui_draw_mask=" << ui_draw_mask(hud_ui_runtime) << '\n'
+           << "inventory_ui_runtime_draws=" << (inventory_ui_runtime_ok ? "pass" : "fail") << '\n'
+           << "inventory_ui_draw_mask=" << ui_draw_mask(inventory_ui_runtime) << '\n'
+           << "skill_ui_runtime_draws=" << (skill_ui_runtime_ok ? "pass" : "fail") << '\n'
+           << "skill_ui_draw_mask=" << ui_draw_mask(skill_ui_runtime) << '\n'
+           << "pause_ui_runtime_draws=" << (pause_ui_runtime_ok ? "pass" : "fail") << '\n'
+           << "pause_ui_draw_mask=" << ui_draw_mask(pause_ui_runtime) << '\n'
            << "ui_baseline_screenshot=ui-baseline-1280x720.png\n"
-           << "hud_ui_screenshot=ui-baseline-1280x720.png\n"
+           << "hud_ui_screenshot=ui-hud-1280x720.png\n"
+           << "hud_ui_screenshot_1920=ui-hud-1920x1080.png\n"
            << "ui_gallery_screenshot=ui-gallery-1280x720.png\n"
            << "inventory_ui_screenshot=ui-inventory-1280x720.png\n"
+           << "inventory_ui_screenshot_1920=ui-inventory-1920x1080.png\n"
            << "skill_ui_screenshot=ui-skill-stones-1280x720.png\n"
+           << "skill_ui_screenshot_1920=ui-skill-stones-1920x1080.png\n"
            << "pause_ui_screenshot=ui-pause-1280x720.png\n"
+           << "pause_ui_screenshot_1920=ui-pause-1920x1080.png\n"
            << "water_monster_screenshot=water-monsters-1280x720.png\n"
            << "lightning_monster_screenshot=lightning-monsters-1280x720.png\n"
            << "lightning_background_screenshot=lightning-background-1280x720.png\n"
@@ -394,15 +474,18 @@ int main(int argc, char** argv) {
            << "chaos_hazard_drawn=" << (chaos_runtime.chaos_hazard_draw.drawn ? "pass" : "fail") << '\n'
            << "f12_screenshot=f12-monsters-1280x720.png/stage8-equipment-loot.png\n"
            << "screenshot_isolation=" << (f12_ok ? "pass" : "fail") << '\n'
-           << "screenshot_decode=" << (captures_ok && showcase_ok && item_baseline_ok && item_showcase_ok && ui_baseline_ok && ui_gallery_ok && inventory_ui_ok && skill_ui_ok && pause_ui_ok && water_showcase_ok && lightning_showcase_ok && lightning_background_ok && chaos_showcase_ok && chaos_background_ok && f12_ok ? "pass" : "fail") << '\n'
-           << "result=" << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && item_baseline_ok && item_runtime_ok && ui_runtime_ok && ui_baseline_ok && inventory_ui_ok && skill_ui_ok && pause_ui_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "pass" : "fail")
+           << "screenshot_decode=" << (captures_ok && showcase_ok && item_baseline_ok && item_showcase_ok && ui_baseline_ok && ui_gallery_ok && hud_ui_ok && hud_ui_1920_ok && inventory_ui_ok && inventory_ui_1920_ok && skill_ui_ok && skill_ui_1920_ok && pause_ui_ok && pause_ui_1920_ok && water_showcase_ok && lightning_showcase_ok && lightning_background_ok && chaos_showcase_ok && chaos_background_ok && f12_ok ? "pass" : "fail") << '\n'
+           << "result=" << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && item_baseline_ok && item_runtime_ok && ui_runtime_ok && hud_ui_runtime_ok && inventory_ui_runtime_ok && skill_ui_runtime_ok && pause_ui_runtime_ok && ui_baseline_ok && hud_ui_1920_ok && inventory_ui_1920_ok && skill_ui_1920_ok && pause_ui_1920_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "pass" : "fail")
            << '\n';
     std::cout << "stage12 material formal "
-              << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && item_baseline_ok && item_runtime_ok && ui_runtime_ok && ui_baseline_ok && inventory_ui_ok && skill_ui_ok && pause_ui_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "PASS" : "FAIL")
+              << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && item_baseline_ok && item_runtime_ok && ui_runtime_ok && hud_ui_runtime_ok && inventory_ui_runtime_ok && skill_ui_runtime_ok && pause_ui_runtime_ok && ui_baseline_ok && hud_ui_1920_ok && inventory_ui_1920_ok && skill_ui_1920_ok && pause_ui_1920_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "PASS" : "FAIL")
               << std::endl;
     return report && captures_ok && fallback_capture && !error && manifest_ok
         && showcase_ok && item_baseline_ok && item_runtime_ok && ui_runtime_ok
-        && ui_baseline_ok && inventory_ui_ok && skill_ui_ok && pause_ui_ok
+        && hud_ui_runtime_ok && inventory_ui_runtime_ok
+        && skill_ui_runtime_ok && pause_ui_runtime_ok
+        && ui_baseline_ok && hud_ui_1920_ok && inventory_ui_1920_ok
+        && skill_ui_1920_ok && pause_ui_1920_ok
         && water_runtime_ok && lightning_runtime_ok
         && lightning_background_ok && chaos_runtime_ok && chaos_background_ok
         && f12_ok && input_hole_ok ? 0 : 1;

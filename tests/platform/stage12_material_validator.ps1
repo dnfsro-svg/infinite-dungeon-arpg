@@ -407,14 +407,58 @@ function Assert-UiScreenDifferent([string]$Path, [string]$BaselinePath,
     }
 }
 
+function Assert-HudRoiDifferent([string]$Path, [string]$BaselinePath) {
+    $bitmap = [System.Drawing.Bitmap]::FromFile($Path)
+    $baseline = [System.Drawing.Bitmap]::FromFile($BaselinePath)
+    try {
+        [int]$changed = 0
+        foreach ($region in @(
+                [System.Drawing.Rectangle]::new(0, 0, 430, 190),
+                [System.Drawing.Rectangle]::new(430, 620, 420, 100))) {
+            for ($y = $region.Top; $y -lt $region.Bottom; $y += 2) {
+                for ($x = $region.Left; $x -lt $region.Right; $x += 2) {
+                    $pixel = $bitmap.GetPixel($x, $y)
+                    $reference = $baseline.GetPixel($x, $y)
+                    $difference = [Math]::Abs([int]$pixel.R - [int]$reference.R) +
+                        [Math]::Abs([int]$pixel.G - [int]$reference.G) +
+                        [Math]::Abs([int]$pixel.B - [int]$reference.B)
+                    if ($difference -ge 36) { ++$changed }
+                }
+            }
+        }
+        if ($changed -lt 180) {
+            throw "HUD material ROIs do not show an independent state: changed=$changed"
+        }
+    } finally {
+        $bitmap.Dispose()
+        $baseline.Dispose()
+    }
+}
+
+function Assert-UiDrawMask([uint64]$Mask, [int[]]$Bits, [string]$Name) {
+    foreach ($bit in $Bits) {
+        $flag = [uint64]1 -shl $bit
+        if (($Mask -band $flag) -eq 0) {
+            throw "missing page-specific UI material draw: $Name bit=$bit"
+        }
+    }
+}
+
 $reportPath = Join-Path $EvidenceDirectory 'stage12-material-evidence.txt'
 if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { throw 'missing material report' }
 $report = Read-Report $reportPath
 foreach ($key in @('manifest','atlas_bytes','fallback','input_hole_regression',
         'monsters','monster_screenshot','item_screenshot','item_baseline_screenshot','items_ui_pair',
         'item_runtime_draws','ui_material_pair','ui_runtime_draws',
+        'hud_ui_runtime_draws','inventory_ui_runtime_draws',
+        'skill_ui_runtime_draws','pause_ui_runtime_draws',
+        'hud_ui_draw_mask','inventory_ui_draw_mask',
+        'skill_ui_draw_mask','pause_ui_draw_mask',
         'ui_baseline_screenshot','hud_ui_screenshot','ui_gallery_screenshot',
-        'inventory_ui_screenshot','skill_ui_screenshot','pause_ui_screenshot',
+        'hud_ui_screenshot_1920','inventory_ui_screenshot',
+        'inventory_ui_screenshot_1920','skill_ui_screenshot',
+        'skill_ui_screenshot_1920','pause_ui_screenshot',
+        'pause_ui_screenshot_1920',
         'water_monster_screenshot','lightning_monster_screenshot',
         'lightning_background_screenshot','chaos_monster_screenshot',
         'chaos_background_screenshot',
@@ -441,6 +485,10 @@ if ($report.result -ne 'pass' -or $report.manifest -ne 'pass' -or
         $report.item_runtime_draws -ne 'pass' -or
         $report.ui_material_pair -ne 'resident' -or
         $report.ui_runtime_draws -ne 'pass' -or
+        $report.hud_ui_runtime_draws -ne 'pass' -or
+        $report.inventory_ui_runtime_draws -ne 'pass' -or
+        $report.skill_ui_runtime_draws -ne 'pass' -or
+        $report.pause_ui_runtime_draws -ne 'pass' -or
         $report.shader_pipeline -ne 'pass' -or
         $report.water_ecology_residency -ne 'pass' -or
         $report.water_environment_pair -ne 'resident' -or
@@ -474,6 +522,10 @@ if ($report.result -ne 'pass' -or $report.manifest -ne 'pass' -or
         $report.monsters -ne 'fire_bomber,fire_charger,water_bulwark,water_support,lightning_shooter,lightning_dasher,chaos_chaser,chaos_hazard') {
     throw 'formal material report rejected'
 }
+Assert-UiDrawMask ([uint64]$report.hud_ui_draw_mask) @(0,1,2,5,14,15,37) 'hud'
+Assert-UiDrawMask ([uint64]$report.inventory_ui_draw_mask) @(17,18,19,20,21,22,24,26,37) 'inventory'
+Assert-UiDrawMask ([uint64]$report.skill_ui_draw_mask) @(20,21,25,27,28,31) 'skill-stones'
+Assert-UiDrawMask ([uint64]$report.pause_ui_draw_mask) @(32,33,34,35) 'pause'
 $shooterFrame = [uint16]$report.lightning_shooter_frame
 $dasherFrame = [uint16]$report.lightning_dasher_frame
 if ($shooterFrame -ge 12 -or $dasherFrame -ge 12) {
@@ -521,7 +573,12 @@ foreach ($path in @($uiBaseline, $hudUi, $uiGallery)) {
         throw "missing HUD/UI screenshot: $path"
     }
 }
+if ($report.hud_ui_screenshot -eq $report.ui_baseline_screenshot) {
+    throw 'HUD screenshot must be independent from the UI baseline'
+}
 Measure-UiGallery $uiGallery $uiBaseline
+Assert-UiScreenDifferent $hudUi $uiBaseline 'hud'
+Assert-HudRoiDifferent $hudUi $uiBaseline
 foreach ($entry in @(
         @('inventory_ui_screenshot','inventory'),
         @('skill_ui_screenshot','skill-stones'),
@@ -531,6 +588,23 @@ foreach ($entry in @(
         throw "missing UI screenshot: $($entry[1])"
     }
     Assert-UiScreenDifferent $path $uiBaseline $entry[1]
+}
+foreach ($entry in @(
+        @('hud_ui_screenshot_1920','hud'),
+        @('inventory_ui_screenshot_1920','inventory'),
+        @('skill_ui_screenshot_1920','skill-stones'),
+        @('pause_ui_screenshot_1920','pause'))) {
+    $path = Join-Path $EvidenceDirectory $report[$entry[0]]
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "missing 1920 UI screenshot: $($entry[1])"
+    }
+    $size = Read-PngSize $path
+    if ($size[0] -ne 1920 -or $size[1] -ne 1080) {
+        throw "wrong 1920 UI screenshot dimensions: $($entry[1])"
+    }
+    if ((Get-Item -LiteralPath $path).Length -le 4096) {
+        throw "empty 1920 UI screenshot: $($entry[1])"
+    }
 }
 $waterMonsterScreenshot = Join-Path $EvidenceDirectory $report.water_monster_screenshot
 if (-not (Test-Path -LiteralPath $waterMonsterScreenshot -PathType Leaf)) { throw 'missing water-monster screenshot' }

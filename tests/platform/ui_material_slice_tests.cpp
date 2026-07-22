@@ -5,6 +5,10 @@
 
 #include <array>
 #include <cstddef>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <string>
 
 namespace {
 
@@ -89,11 +93,23 @@ arpg::test::Failure semantic_states_use_distinct_authored_resources() noexcept {
     return {};
 }
 
+arpg::test::Failure label_plate_is_used_by_runtime_hud() noexcept {
+    const std::filesystem::path source = std::filesystem::path{
+        ARPG_PROJECT_SOURCE_DIR} / "src/platform/raylib/hud_renderer.cpp";
+    std::ifstream input(source);
+    const std::string contents((std::istreambuf_iterator<char>(input)), {});
+    ARPG_REQUIRE(input.good() || input.eof());
+    ARPG_REQUIRE(contents.find("UiMaterialElement::label_plate")
+        != std::string::npos);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"every UI element has a unique material frame",
         &every_ui_element_has_a_unique_material_frame},
     {"semantic UI states use authored resources",
         &semantic_states_use_distinct_authored_resources},
+    {"label plate is used by runtime HUD", &label_plate_is_used_by_runtime_hud},
 };
 
 }  // namespace

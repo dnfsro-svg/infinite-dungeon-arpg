@@ -64,10 +64,34 @@ $reportPath = Join-Path $missingUiRuntime 'stage12-material-evidence.txt'
     Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
 $mutations += @{ Name='missing-ui-runtime-draw'; Path=$missingUiRuntime }
 
+foreach ($page in @('hud','inventory','skill','pause')) {
+    $missingPageRuntime = New-Mutation "missing-$page-ui-runtime-draw"
+    $reportPath = Join-Path $missingPageRuntime 'stage12-material-evidence.txt'
+    (Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8).Replace(
+        "${page}_ui_runtime_draws=pass", "${page}_ui_runtime_draws=fail") |
+        Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+    $mutations += @{ Name="missing-$page-ui-runtime-draw"; Path=$missingPageRuntime }
+}
+
+$fallbackHud = New-Mutation 'fallback-hud-ui'
+Copy-Item -LiteralPath (Join-Path $fallbackHud 'ui-baseline-1280x720.png') `
+    -Destination (Join-Path $fallbackHud 'ui-hud-1280x720.png') -Force
+$mutations += @{ Name='fallback-hud-ui'; Path=$fallbackHud }
+
 $fallbackInventory = New-Mutation 'fallback-inventory-ui'
 Copy-Item -LiteralPath (Join-Path $fallbackInventory 'ui-baseline-1280x720.png') `
     -Destination (Join-Path $fallbackInventory 'ui-inventory-1280x720.png') -Force
 $mutations += @{ Name='fallback-inventory-ui'; Path=$fallbackInventory }
+
+$fallbackSkill = New-Mutation 'fallback-skill-ui'
+Copy-Item -LiteralPath (Join-Path $fallbackSkill 'ui-baseline-1280x720.png') `
+    -Destination (Join-Path $fallbackSkill 'ui-skill-stones-1280x720.png') -Force
+$mutations += @{ Name='fallback-skill-ui'; Path=$fallbackSkill }
+
+$fallbackPause = New-Mutation 'fallback-pause-ui'
+Copy-Item -LiteralPath (Join-Path $fallbackPause 'ui-baseline-1280x720.png') `
+    -Destination (Join-Path $fallbackPause 'ui-pause-1280x720.png') -Force
+$mutations += @{ Name='fallback-pause-ui'; Path=$fallbackPause }
 
 $solid = New-Mutation 'solid-gray'
 Save-MutatedBitmap (Join-Path $solid 'lightning-monsters-1280x720.png') {

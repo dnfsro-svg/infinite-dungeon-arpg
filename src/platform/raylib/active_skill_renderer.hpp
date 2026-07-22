@@ -74,4 +74,13 @@ private:
     ActiveSkillAssets assets_{};
 };
 
+struct ActiveSkillCooldownOverlayPlan final {
+    bool visible{};
+    Rectangle bounds{};
+};
+
+[[nodiscard]] ActiveSkillCooldownOverlayPlan
+make_active_skill_cooldown_overlay(
+    Rectangle bounds, float cooldown_ratio, bool empty) noexcept;
+
 }  // namespace arpg::platform

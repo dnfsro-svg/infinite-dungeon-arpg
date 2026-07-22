@@ -187,6 +187,28 @@ arpg::test::Failure storm_finisher_persists_from_snapshot_without_hit_event()
     return {};
 }
 
+arpg::test::Failure hud_cooldown_overlay_keeps_continuous_material_feedback()
+    noexcept {
+    const Rectangle bounds{100.0F, 200.0F, 58.0F, 58.0F};
+    const platform::ActiveSkillCooldownOverlayPlan hidden =
+        platform::make_active_skill_cooldown_overlay(bounds, 0.0F, false);
+    ARPG_REQUIRE(!hidden.visible);
+    const platform::ActiveSkillCooldownOverlayPlan half =
+        platform::make_active_skill_cooldown_overlay(bounds, 0.5F, false);
+    ARPG_REQUIRE(half.visible);
+    ARPG_REQUIRE(arpg::test::near(half.bounds.x, bounds.x));
+    ARPG_REQUIRE(arpg::test::near(half.bounds.y, 229.0F));
+    ARPG_REQUIRE(arpg::test::near(half.bounds.width, bounds.width));
+    ARPG_REQUIRE(arpg::test::near(half.bounds.height, 29.0F));
+    const platform::ActiveSkillCooldownOverlayPlan full =
+        platform::make_active_skill_cooldown_overlay(bounds, 4.0F, false);
+    ARPG_REQUIRE(full.visible);
+    ARPG_REQUIRE(arpg::test::near(full.bounds.height, bounds.height));
+    ARPG_REQUIRE(!platform::make_active_skill_cooldown_overlay(
+        bounds, 0.75F, true).visible);
+    return {};
+}
+
 arpg::test::Failure storm_sword_plan_uses_spawned_sword_lifecycle_and_two_bands()
     noexcept {
     combat::CombatSnapshot snapshot{};
@@ -226,6 +248,8 @@ arpg::test::Failure storm_sword_plan_uses_spawned_sword_lifecycle_and_two_bands(
 constexpr arpg::test::TestCase kCases[] = {
     {"active skill HUD fixed slots", &hud_projects_exactly_five_numbered_slots_and_catalog_names},
     {"active skill HUD cooldown clamp", &hud_cooldown_ratios_are_clamped_and_empty_slots_stay_zero},
+    {"active skill HUD continuous cooldown overlay",
+        &hud_cooldown_overlay_keeps_continuous_material_feedback},
     {"active skill HUD fixed layout", &hud_layout_is_bottom_centered_with_fixed_slot_geometry},
     {"active skill native effect plan", &native_effect_plan_uses_snapshot_timing_and_twelve_swords},
     {"storm finisher snapshot lifetime", &storm_finisher_persists_from_snapshot_without_hit_event},
