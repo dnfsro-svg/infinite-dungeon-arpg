@@ -99,6 +99,10 @@ arpg::test::Failure timeline_events_use_a_fixed_capacity_cxx17_view() noexcept {
         active_skill_events_at(ActiveSkillId::draw_slash, 46U);
     ARPG_REQUIRE(strike.size() == 1U);
     ARPG_REQUIRE(strike[0U].kind == ActiveSkillTimelineEventKind::damage);
+    const ActiveSkillTimelineEventRange recovery =
+        active_skill_events_at(ActiveSkillId::storm_swords, 342U);
+    ARPG_REQUIRE(recovery.size() == 2U);
+    ARPG_REQUIRE(recovery[0U].kind == ActiveSkillTimelineEventKind::phase_recovery);
     return {};
 }
 

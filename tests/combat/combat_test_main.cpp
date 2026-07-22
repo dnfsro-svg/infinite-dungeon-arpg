@@ -82,7 +82,7 @@ int main() {
             active_skill_timeline_suite(),
         };
         return arpg::test::run_suites(
-            active_skill_timeline_suites, 3, "active skill timeline");
+            active_skill_timeline_suites, 4, "active skill timeline");
     }
 
     if (storm_swords_only_enabled()) {

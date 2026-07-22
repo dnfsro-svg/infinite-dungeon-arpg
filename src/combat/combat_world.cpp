@@ -559,10 +559,12 @@ SkillCastResult CombatWorld::request_active_skill(
     }
     active_skill_.snapshot = ActiveSkillSnapshot{
         skill, ActiveSkillPhase::startup, 0U, locked_center, 0U};
+    active_skill_.snapshot.transients_active = true;
     active_skill_.locked_facing = player_.facing;
     active_skill_.cooldowns[index] = skill == skills::ActiveSkillId::draw_slash
         ? skills::kDrawSlashCooldownTicks : skills::kStormSwordsCooldownTicks;
     active_skill_.hit_latch.fill(false);
+    apply_active_skill_events_at(0U);
     player_.velocity.x = 0.0F;
     player_.velocity.y = 0.0F;
     player_.state = PlayerState::attack_startup;
@@ -970,7 +972,8 @@ bool CombatWorld::apply_player_damage(
     }
 
     if (resolved->total == 0U || player_.hp == 0
-            || player_.invulnerability_ticks != 0) {
+            || player_.invulnerability_ticks != 0
+            || active_skill_.snapshot.player_invulnerable) {
         return false;
     }
 

@@ -34,7 +34,7 @@ struct ActiveSkillTimelineEventRange final {
         return events;
     }
     [[nodiscard]] constexpr const ActiveSkillTimelineEvent* end() const noexcept {
-        return events + count;
+        return count == 0U ? events : events + count;
     }
     [[nodiscard]] constexpr bool empty() const noexcept { return count == 0U; }
     [[nodiscard]] constexpr std::size_t size() const noexcept { return count; }

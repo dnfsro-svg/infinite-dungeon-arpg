@@ -1,6 +1,7 @@
 #include "combat/combat_world.hpp"
 
 #include "combat/active_skill_runtime.hpp"
+#include "combat/active_skill_timeline.hpp"
 #include "combat/combat_scaling.hpp"
 #include "combat/room_bounds.hpp"
 #include "modifiers/modifier_math.hpp"
@@ -80,72 +81,78 @@ void CombatWorld::tick_active_skill_cooldowns() noexcept {
 void CombatWorld::tick_active_skill() noexcept {
     ActiveSkillSnapshot& cast = active_skill_.snapshot;
     if (cast.id == skills::ActiveSkillId::none) return;
-    if (cast.id != skills::ActiveSkillId::draw_slash
-        && cast.id != skills::ActiveSkillId::storm_swords) {
-        active_skill_.snapshot = ActiveSkillSnapshot{};
-        active_skill_.hit_latch.fill(false);
+    const ActiveSkillClip* const clip = active_skill_clip(cast.id);
+    if (clip == nullptr || clip->frame_count == 0U) {
+        clear_active_skill();
         return;
     }
 
     ++cast.elapsed_ticks;
-    if (cast.id == skills::ActiveSkillId::storm_swords) {
-        const std::uint16_t finisher_tick = static_cast<std::uint16_t>(
-            kStormStartupTicks
-            + static_cast<std::uint16_t>(kStormStrikeCount)
-                * kStormStrikeIntervalTicks);
-        if (cast.elapsed_ticks < kStormStartupTicks) {
+    const std::uint32_t animation_frame = static_cast<std::uint32_t>(
+        cast.elapsed_ticks) * clip->frames_per_second / 60U;
+    cast.frame_index = static_cast<std::uint16_t>(std::min(
+        animation_frame, static_cast<std::uint32_t>(clip->frame_count - 1U)));
+    apply_active_skill_events_at(cast.elapsed_ticks);
+    if (active_skill_.snapshot.id != skills::ActiveSkillId::none) return;
+}
+
+void CombatWorld::apply_active_skill_events_at(const std::uint16_t tick) noexcept {
+    ActiveSkillSnapshot& cast = active_skill_.snapshot;
+    for (const ActiveSkillTimelineEvent& event : active_skill_events_at(
+             cast.id, tick)) {
+        switch (event.kind) {
+        case ActiveSkillTimelineEventKind::phase_startup:
             cast.phase = ActiveSkillPhase::startup;
             player_.state = PlayerState::attack_startup;
-            return;
-        }
-        if (cast.elapsed_ticks < finisher_tick) {
+            break;
+        case ActiveSkillTimelineEventKind::phase_strikes:
             cast.phase = ActiveSkillPhase::strikes;
             player_.state = PlayerState::attack_active;
-            const std::uint16_t strike_elapsed = static_cast<std::uint16_t>(
-                cast.elapsed_ticks - kStormStartupTicks);
-            if (strike_elapsed % kStormStrikeIntervalTicks == 0U) {
-                cast.strike_index = static_cast<std::uint8_t>(
-                    1U + strike_elapsed / kStormStrikeIntervalTicks);
-                active_skill_.hit_latch.fill(false);
-                resolve_storm_swords_hits(false);
-            }
-            return;
-        }
-        if (cast.elapsed_ticks == finisher_tick) {
+            break;
+        case ActiveSkillTimelineEventKind::phase_finisher:
             cast.phase = ActiveSkillPhase::finisher;
             player_.state = PlayerState::attack_active;
-            active_skill_.hit_latch.fill(false);
-            resolve_storm_swords_hits(true);
-            return;
-        }
-        if (cast.elapsed_ticks <= finisher_tick + kStormRecoveryTicks) {
+            break;
+        case ActiveSkillTimelineEventKind::phase_recovery:
             cast.phase = ActiveSkillPhase::recovery;
             player_.state = PlayerState::attack_recovery;
+            break;
+        case ActiveSkillTimelineEventKind::damage:
+            active_skill_.hit_latch.fill(false);
+            if (cast.id == skills::ActiveSkillId::draw_slash) {
+                resolve_draw_slash_hits();
+            } else {
+                const bool finisher = event.ordinal == 0xFFU;
+                cast.strike_index = finisher ? kStormStrikeCount
+                    : static_cast<std::uint8_t>(event.ordinal + 1U);
+                resolve_storm_swords_hits(finisher);
+            }
+            break;
+        case ActiveSkillTimelineEventKind::invulnerability_on:
+            cast.player_invulnerable = true;
+            break;
+        case ActiveSkillTimelineEventKind::invulnerability_off:
+            cast.player_invulnerable = false;
+            break;
+        case ActiveSkillTimelineEventKind::pull:
+            pull_storm_swords_targets();
+            break;
+        case ActiveSkillTimelineEventKind::spawn_sword:
+            ++cast.spawned_sword_count;
+            break;
+        case ActiveSkillTimelineEventKind::clear_transients:
+            clear_active_skill();
             return;
         }
+    }
+}
 
-        active_skill_.snapshot = ActiveSkillSnapshot{};
-        active_skill_.hit_latch.fill(false);
-        return;
-    }
+void CombatWorld::pull_storm_swords_targets() noexcept {
+    // The material milestone records the pull event now; target displacement is
+    // applied by the later obstacle-aware crowd-control pass.
+}
 
-    if (cast.elapsed_ticks < kDrawSlashStartupTicks) {
-        cast.phase = ActiveSkillPhase::startup;
-        player_.state = PlayerState::attack_startup;
-        return;
-    }
-    if (cast.elapsed_ticks == kDrawSlashStartupTicks) {
-        cast.phase = ActiveSkillPhase::strikes;
-        resolve_draw_slash_hits();
-        player_.state = PlayerState::attack_active;
-        return;
-    }
-    if (cast.elapsed_ticks <= kDrawSlashStartupTicks + kDrawSlashRecoveryTicks) {
-        cast.phase = ActiveSkillPhase::recovery;
-        player_.state = PlayerState::attack_recovery;
-        return;
-    }
-
+void CombatWorld::clear_active_skill() noexcept {
     active_skill_.snapshot = ActiveSkillSnapshot{};
     active_skill_.hit_latch.fill(false);
 }

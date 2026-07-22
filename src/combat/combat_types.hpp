@@ -68,6 +68,10 @@ struct ActiveSkillSnapshot final {
     std::uint16_t elapsed_ticks{};
     Vec3 locked_center{};
     std::uint8_t strike_index{};
+    std::uint16_t frame_index{};
+    std::uint8_t spawned_sword_count{};
+    bool player_invulnerable{};
+    bool transients_active{};
 };
 
 enum class FeedbackLevel : std::uint8_t {

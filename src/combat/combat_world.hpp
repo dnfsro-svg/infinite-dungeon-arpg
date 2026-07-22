@@ -98,6 +98,9 @@ private:
     void simulate_active_skill_movement(MovementInput movement) noexcept;
     void tick_active_skill_cooldowns() noexcept;
     void tick_active_skill() noexcept;
+    void apply_active_skill_events_at(std::uint16_t tick) noexcept;
+    void pull_storm_swords_targets() noexcept;
+    void clear_active_skill() noexcept;
     void resolve_draw_slash_hits() noexcept;
     void resolve_storm_swords_hits(bool finisher) noexcept;
     [[nodiscard]] bool resolve_player_attack_hit(

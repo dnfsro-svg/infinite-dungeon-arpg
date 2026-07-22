@@ -19,7 +19,7 @@ constexpr std::array<ActiveSkillTimelineEvent, 5U> kDrawSlashEvents{{
     {90U, ActiveSkillTimelineEventKind::clear_transients, 0U},
 }};
 
-constexpr std::array<ActiveSkillTimelineEvent, 44U> kStormSwordsEvents{{
+constexpr std::array<ActiveSkillTimelineEvent, 45U> kStormSwordsEvents{{
     {0U, ActiveSkillTimelineEventKind::phase_startup, 0U},
     {0U, ActiveSkillTimelineEventKind::pull, 0U},
     {12U, ActiveSkillTimelineEventKind::spawn_sword, 0U},
@@ -62,6 +62,7 @@ constexpr std::array<ActiveSkillTimelineEvent, 44U> kStormSwordsEvents{{
     {306U, ActiveSkillTimelineEventKind::damage, 11U},
     {324U, ActiveSkillTimelineEventKind::phase_finisher, 0U},
     {324U, ActiveSkillTimelineEventKind::damage, kFinisherOrdinal},
+    {342U, ActiveSkillTimelineEventKind::phase_recovery, 0U},
     {342U, ActiveSkillTimelineEventKind::invulnerability_off, 0U},
     {360U, ActiveSkillTimelineEventKind::clear_transients, 0U},
 }};
