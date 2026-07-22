@@ -57,6 +57,12 @@ bool fire_room_route_is_clear(float from_y, float to_y) noexcept {
     return true;
 }
 
+bool fire_room_crate_visible(const combat::CombatSnapshot& snapshot,
+    std::size_t crate_index) noexcept {
+    return crate_index < snapshot.fire_crate_count
+        && snapshot.fire_crates[crate_index].intact;
+}
+
 bool fire_room_has_two_navigation_routes() noexcept {
     return fire_room_route_is_clear(-4.0F, -4.0F)
         && fire_room_route_is_clear(4.0F, 4.0F);

@@ -125,6 +125,7 @@ private:
     void respawn_dummy(std::size_t index) noexcept;
     void apply_attack_assist(const AttackDefinition& definition) noexcept;
     void resolve_attack_hits() noexcept;
+    void resolve_fire_crate_hits(Aabb attack_box) noexcept;
     bool apply_player_damage(
         DamagePacket damage,
         DamageDelivery delivery,
@@ -235,6 +236,7 @@ private:
     AbyssEnvironmentRuntime abyss_environment_{};
     AttackRuntime attack_{};
     ActiveSkillRuntime active_skill_{};
+    std::array<FireRoomCrateSnapshot, kFireRoomCrateCapacity> fire_crates_{};
     InputBuffer input_buffer_{};
     struct EffectOwner final {
         std::size_t monster_slot{};

@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 
+#include "combat/combat_world.hpp"
 #include "fire_room_material_slice.hpp"
 #include "material_asset_validation.hpp"
 #include "material_manifest.hpp"
@@ -67,10 +68,50 @@ arpg::test::Failure fire_room_preserves_two_navigation_routes() noexcept {
     return {};
 }
 
+arpg::test::Failure fire_room_attack_snapshot_hides_only_hit_crate() noexcept {
+    arpg::combat::CombatEncounterConfig config{};
+    config.player_spawn = {-4.50F, 0.0F, 0.0F};
+    config.fire_room_obstacles = true;
+    arpg::combat::CombatWorld world{config};
+
+    ARPG_REQUIRE(world.snapshot().fire_crate_count == 2U);
+    ARPG_REQUIRE(arpg::platform::fire_room_crate_visible(world.snapshot(), 0U));
+    ARPG_REQUIRE(arpg::platform::fire_room_crate_visible(world.snapshot(), 1U));
+    ARPG_REQUIRE(world.queue_action(arpg::combat::Action::light));
+    for (int tick{}; tick < 8; ++tick) world.tick({});
+
+    const arpg::combat::CombatSnapshot broken = world.snapshot();
+    ARPG_REQUIRE(!broken.fire_crates[0].intact);
+    ARPG_REQUIRE(broken.fire_crates[0].broken_tick != 0U);
+    ARPG_REQUIRE(broken.fire_crates[1].intact);
+    ARPG_REQUIRE(!arpg::platform::fire_room_crate_visible(broken, 0U));
+    ARPG_REQUIRE(arpg::platform::fire_room_crate_visible(broken, 1U));
+
+    for (int tick{}; tick < 24; ++tick) world.tick({});
+    ARPG_REQUIRE(world.queue_action(arpg::combat::Action::light));
+    for (int tick{}; tick < 8; ++tick) world.tick({});
+    const arpg::combat::CombatSnapshot repeated = world.snapshot();
+    ARPG_REQUIRE(repeated.fire_crates[0].broken_tick == broken.fire_crates[0].broken_tick);
+    ARPG_REQUIRE(!arpg::platform::fire_room_crate_visible(repeated, 0U));
+
+    config.player_spawn = {1.80F, 0.0F, 0.0F};
+    arpg::combat::CombatWorld right_crate_world{config};
+    ARPG_REQUIRE(right_crate_world.queue_action(arpg::combat::Action::light));
+    for (int tick{}; tick < 8; ++tick) right_crate_world.tick({});
+    const arpg::combat::CombatSnapshot right_broken = right_crate_world.snapshot();
+    ARPG_REQUIRE(right_broken.fire_crates[0].intact);
+    ARPG_REQUIRE(!right_broken.fire_crates[1].intact);
+    ARPG_REQUIRE(arpg::platform::fire_room_crate_visible(right_broken, 0U));
+    ARPG_REQUIRE(!arpg::platform::fire_room_crate_visible(right_broken, 1U));
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"contains all layered fire-room props", &fire_room_has_required_layered_props},
     {"preserves two fire-room navigation routes",
         &fire_room_preserves_two_navigation_routes},
+    {"projects attack-broken crate state into fire-room rendering",
+        &fire_room_attack_snapshot_hides_only_hit_crate},
 };
 
 }  // namespace
