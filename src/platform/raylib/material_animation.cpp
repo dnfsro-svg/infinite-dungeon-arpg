@@ -2,6 +2,7 @@
 
 #include "material_manifest.hpp"
 
+#include <array>
 #include <cstddef>
 
 namespace arpg::platform {
@@ -11,6 +12,25 @@ constexpr float kPlayerTrimmedHeight = 172.0F;
 constexpr float kPlayerTargetHeight = 82.0F;
 constexpr float kMonsterTrimmedHeight = 176.0F;
 constexpr float kMonsterTargetHeight = 78.0F;
+constexpr float kPlayerAnimationCell = 128.0F;
+constexpr std::uint8_t kPlayerAnimationColumns = 8U;
+
+constexpr std::array<PlayerAnimationClipDefinition,
+    static_cast<std::size_t>(PlayerAnimationClipId::count)> kPlayerClips{{
+    {PlayerAnimationClipId::idle, MaterialAtlasId::player_locomotion, 0U, 16U},
+    {PlayerAnimationClipId::move, MaterialAtlasId::player_locomotion, 16U, 20U},
+    {PlayerAnimationClipId::jump, MaterialAtlasId::player_locomotion, 36U, 24U},
+    {PlayerAnimationClipId::j1, MaterialAtlasId::player_combo_a, 0U, 18U},
+    {PlayerAnimationClipId::j2, MaterialAtlasId::player_combo_a, 18U, 22U},
+    {PlayerAnimationClipId::j3, MaterialAtlasId::player_combo_b, 0U, 26U},
+    {PlayerAnimationClipId::launcher, MaterialAtlasId::player_combo_b, 26U, 24U},
+    {PlayerAnimationClipId::air_j, MaterialAtlasId::player_air, 0U, 18U},
+    {PlayerAnimationClipId::landing, MaterialAtlasId::player_air, 18U, 14U},
+    {PlayerAnimationClipId::hurt, MaterialAtlasId::player_reaction, 0U, 10U},
+    {PlayerAnimationClipId::down, MaterialAtlasId::player_reaction, 10U, 16U},
+    {PlayerAnimationClipId::get_up, MaterialAtlasId::player_reaction, 26U, 14U},
+    {PlayerAnimationClipId::death, MaterialAtlasId::player_reaction, 40U, 24U},
+}};
 
 [[nodiscard]] MaterialSpriteId select_attack_sprite(
     combat::AttackId attack) noexcept {
@@ -29,6 +49,19 @@ constexpr float kMonsterTargetHeight = 78.0F;
         return MaterialSpriteId::player_idle;
     }
     return MaterialSpriteId::missing;
+}
+
+[[nodiscard]] PlayerAnimationClipId select_attack_clip(
+    combat::AttackId attack) noexcept {
+    switch (attack) {
+    case combat::AttackId::j1: return PlayerAnimationClipId::j1;
+    case combat::AttackId::j2: return PlayerAnimationClipId::j2;
+    case combat::AttackId::j3: return PlayerAnimationClipId::j3;
+    case combat::AttackId::launcher: return PlayerAnimationClipId::launcher;
+    case combat::AttackId::air_j: return PlayerAnimationClipId::air_j;
+    case combat::AttackId::none: return PlayerAnimationClipId::idle;
+    }
+    return PlayerAnimationClipId::idle;
 }
 
 }  // namespace
@@ -53,6 +86,40 @@ MaterialSpriteId select_player_sprite(
         return MaterialSpriteId::player_landing;
     }
     return MaterialSpriteId::missing;
+}
+
+PlayerAnimationClipId select_player_animation_clip(
+    combat::PlayerState state, combat::AttackId attack) noexcept {
+    switch (state) {
+    case combat::PlayerState::idle: return PlayerAnimationClipId::idle;
+    case combat::PlayerState::move: return PlayerAnimationClipId::move;
+    case combat::PlayerState::attack_startup:
+    case combat::PlayerState::attack_active:
+    case combat::PlayerState::attack_recovery: return select_attack_clip(attack);
+    case combat::PlayerState::jump_rise:
+    case combat::PlayerState::jump_fall: return PlayerAnimationClipId::jump;
+    case combat::PlayerState::landing: return PlayerAnimationClipId::landing;
+    }
+    return PlayerAnimationClipId::idle;
+}
+
+const PlayerAnimationClipDefinition* player_animation_clip(
+    PlayerAnimationClipId id) noexcept {
+    const std::size_t index = static_cast<std::size_t>(id);
+    return index < kPlayerClips.size() ? &kPlayerClips[index] : nullptr;
+}
+
+std::optional<PlayerAnimationFrame> player_animation_frame(
+    const PlayerAnimationClipDefinition& clip, std::uint16_t frame) noexcept {
+    if (frame >= clip.frame_count) return std::nullopt;
+    const std::uint16_t cell = static_cast<std::uint16_t>(clip.first_cell) + frame;
+    const std::uint16_t column = cell % kPlayerAnimationColumns;
+    const std::uint16_t row = cell / kPlayerAnimationColumns;
+    return PlayerAnimationFrame{clip.atlas,
+        {static_cast<float>(column) * kPlayerAnimationCell,
+         static_cast<float>(row) * kPlayerAnimationCell,
+         kPlayerAnimationCell, kPlayerAnimationCell},
+        {64.0F, 124.0F}, {88.0F, 64.0F}};
 }
 
 MaterialSpriteId select_monster_sprite(

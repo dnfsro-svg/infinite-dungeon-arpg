@@ -11,6 +11,11 @@ enum class MaterialAtlasId : std::uint8_t {
     environment,
     actors,
     effects_ui,
+    player_locomotion,
+    player_combo_a,
+    player_combo_b,
+    player_reaction,
+    player_air,
     count,
 };
 

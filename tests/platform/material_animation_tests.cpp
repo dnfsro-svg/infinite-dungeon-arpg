@@ -12,6 +12,42 @@ using arpg::combat::MonsterId;
 using arpg::combat::PlayerState;
 using arpg::platform::AnimationClipId;
 using arpg::platform::MaterialSpriteId;
+using arpg::platform::PlayerAnimationClipId;
+
+arpg::test::Failure player_animation_clips_have_required_unique_uv_frames() noexcept {
+    constexpr std::array<PlayerAnimationClipId, 11> kClips{{
+        PlayerAnimationClipId::idle, PlayerAnimationClipId::move,
+        PlayerAnimationClipId::jump, PlayerAnimationClipId::j1,
+        PlayerAnimationClipId::j2, PlayerAnimationClipId::j3,
+        PlayerAnimationClipId::launcher, PlayerAnimationClipId::hurt,
+        PlayerAnimationClipId::down, PlayerAnimationClipId::get_up,
+        PlayerAnimationClipId::death,
+    }};
+    constexpr std::array<std::uint16_t, 11> kMinimumFrames{{
+        16U, 20U, 24U, 18U, 22U, 26U, 24U, 10U, 16U, 14U, 24U,
+    }};
+    for (std::size_t index = 0U; index < kClips.size(); ++index) {
+        const auto* clip = arpg::platform::player_animation_clip(kClips[index]);
+        ARPG_REQUIRE(clip != nullptr);
+        ARPG_REQUIRE(clip->frame_count >= kMinimumFrames[index]);
+        ARPG_REQUIRE(clip->frames_per_second == 24U);
+        for (std::uint16_t frame = 0U; frame < clip->frame_count; ++frame) {
+            const auto current = arpg::platform::player_animation_frame(*clip, frame);
+            ARPG_REQUIRE(current.has_value());
+            ARPG_REQUIRE(current->foot_anchor.x >= 0.0F);
+            ARPG_REQUIRE(current->foot_anchor.y >= 0.0F);
+            ARPG_REQUIRE(current->weapon_anchor.x >= 0.0F);
+            ARPG_REQUIRE(current->weapon_anchor.y >= 0.0F);
+            if (frame == 0U) continue;
+            const auto previous = arpg::platform::player_animation_frame(*clip,
+                static_cast<std::uint16_t>(frame - 1U));
+            ARPG_REQUIRE(previous.has_value());
+            ARPG_REQUIRE(current->source.x != previous->source.x
+                || current->source.y != previous->source.y);
+        }
+    }
+    return {};
+}
 
 arpg::test::Failure material_animation_selects_launcher_active() noexcept {
     ARPG_REQUIRE(arpg::platform::select_player_sprite(PlayerState::attack_active,
@@ -91,6 +127,8 @@ arpg::test::Failure material_animation_exposes_fixed_capacity_clips() noexcept {
 }
 
 constexpr arpg::test::TestCase kCases[] = {
+    {"player action clips use unique UV frames",
+        &player_animation_clips_have_required_unique_uv_frames},
     {"selects launcher active", &material_animation_selects_launcher_active},
     {"covers player states and attacks",
         &material_animation_covers_all_player_states_and_attacks},
