@@ -125,7 +125,7 @@ bool wait_for_target_grounded(
     CombatWorld& world,
     std::size_t target_index) noexcept {
     for (int tick = 0; tick < 240; ++tick) {
-        const MonsterSnapshot& target =
+        const MonsterSnapshot target =
             world.snapshot().monsters[target_index];
         if (target.position.z == 0.0F
             && target.reaction != ReactionState::airborne) {
@@ -133,7 +133,7 @@ bool wait_for_target_grounded(
         }
         world.tick(MovementInput{});
     }
-    const MonsterSnapshot& target = world.snapshot().monsters[target_index];
+    const MonsterSnapshot target = world.snapshot().monsters[target_index];
     return target.position.z == 0.0F
         && target.reaction != ReactionState::airborne;
 }
