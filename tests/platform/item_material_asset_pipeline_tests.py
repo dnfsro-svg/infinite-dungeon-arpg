@@ -6,7 +6,7 @@ import importlib.util
 from pathlib import Path
 import unittest
 
-from PIL import Image, ImageChops, ImageStat
+from PIL import Image, ImageChops, ImageFilter, ImageStat
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -35,6 +35,26 @@ def connected_component_sizes(alpha: Image.Image, threshold: int = 8) -> list[in
                     stack.append(neighbor)
         sizes.append(size)
     return sorted(sizes, reverse=True)
+
+
+def outer_magenta_ratio(icon: Image.Image) -> float:
+    alpha = icon.getchannel("A")
+    inner = alpha.filter(ImageFilter.MinFilter(3))
+    edge = ImageChops.subtract(alpha, inner)
+    edge_pixels = edge.load()
+    pixels = icon.load()
+    total = 0
+    magenta = 0
+    for y in range(icon.height):
+        for x in range(icon.width):
+            red, green, blue, visible = pixels[x, y]
+            if edge_pixels[x, y] < 12 or visible < 12:
+                continue
+            total += 1
+            if (red >= 70 and blue >= 70 and min(red, blue) >= green * 1.35
+                    and abs(red - blue) <= 100):
+                magenta += 1
+    return magenta / total if total else 0.0
 
 
 class ItemMaterialAssetPipelineTests(unittest.TestCase):
@@ -123,6 +143,36 @@ class ItemMaterialAssetPipelineTests(unittest.TestCase):
         self.assertGreaterEqual(center[0], 130)
         self.assertGreaterEqual(center[2], 190)
         self.assertEqual(center[3], 255)
+
+    def test_non_purple_resources_have_no_magenta_key_halo(self) -> None:
+        atlas = Image.open(ROOT / "assets" / "stage12" / "items_ui.png").convert("RGBA")
+        purple_cells = {
+            BUILDER.ICON_CELLS["rarity_abyss"],
+            BUILDER.ICON_CELLS["material_augment"],
+            BUILDER.ICON_CELLS["material_chaos"],
+            BUILDER.ICON_CELLS["material_coupon_9"],
+        }
+        for name, cell in BUILDER.ICON_CELLS.items():
+            if cell in purple_cells:
+                continue
+            ratio = outer_magenta_ratio(BUILDER.crop_cell(atlas, cell))
+            self.assertLessEqual(ratio, 0.12, f"{name}: {ratio:.3f}")
+
+    def test_key_blended_outer_edge_is_despilled_but_inner_purple_survives(self) -> None:
+        source = Image.new("RGBA", (48, 48), (245, 3, 243, 255))
+        pixels = source.load()
+        for y in range(11, 37):
+            for x in range(11, 37):
+                pixels[x, y] = (140, 25, 160, 255)
+        for y in range(14, 34):
+            for x in range(14, 34):
+                pixels[x, y] = (108, 28, 174, 255)
+        cleaned = BUILDER.remove_magenta_key(source)
+        edge = cleaned.getpixel((11, 24))
+        interior = cleaned.getpixel((24, 24))
+        self.assertLessEqual(edge[3], 112)
+        self.assertLess(min(edge[0], edge[2]), 90)
+        self.assertEqual(interior, (108, 28, 174, 255))
 
     def test_rarity_silhouettes_are_structurally_distinct(self) -> None:
         atlas = Image.open(ROOT / "assets" / "stage12" / "items_ui.png").convert("RGBA")

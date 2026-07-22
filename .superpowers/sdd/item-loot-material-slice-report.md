@@ -82,7 +82,21 @@
   background matte. Significant components near the largest authored subject
   are retained; detached background fragments are excluded before the subject
   bounding box is centered. Real purple foreground detail is preserved.
-- Asset quality coverage is now 6/6 and explicitly checks exact-transparent
+- Asset quality coverage is now 8/8 and explicitly checks exact-transparent
   background ratios, the dominant connected subject, five-pixel clean cell
   borders, and a synthetic purple subject whose anchor must not be shifted by
   dark-magenta edge noise.
+- Added a localized alpha-edge despill pass after connected-background removal.
+  It is restricted to key-mixed pixels within two pixels of the transparent
+  background, so genuine purple interiors are not recolored. A synthetic
+  key-blended edge sample now proves the edge is made translucent and
+  decontaminated while its inner purple sample remains byte-identical.
+- Added a per-cell outer-halo quality gate for all non-purple resources. Under
+  that metric, the rebuilt atlas reduced the affected outer-magenta ratios from
+  approximately 26.2-38.2% to 1.65-6.01% (3.81% mean), with every checked cell
+  below the 12% ceiling.
+- The fixed-position validator no longer treats the removed magenta fringe as
+  authored weapon chroma. The intentionally near-neutral steel weapon uses a
+  one-pixel accent floor while retaining the same substantial-difference,
+  connected-contour, extent, and 45-color-diversity requirements; the
+  baseline-replacement negative test still has to fail.

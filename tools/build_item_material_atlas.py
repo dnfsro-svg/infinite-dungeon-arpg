@@ -119,10 +119,36 @@ def _connected_background_mask(source: Image.Image) -> bytearray:
 def remove_magenta_key(source: Image.Image) -> Image.Image:
     rgba = source.convert("RGBA")
     background = _connected_background_mask(rgba)
+    background_image = Image.new("L", rgba.size)
+    background_image.putdata([255 if value else 0 for value in background])
+    edge_zone = background_image.filter(ImageFilter.MaxFilter(5))
+    edge_pixels = edge_zone.load()
+    key = _key_color(rgba)
     pixels = []
     for index, (red, green, blue, source_alpha) in enumerate(
             rgba.get_flattened_data()):
+        x = index % rgba.width
+        y = index // rgba.width
         alpha = 0 if background[index] else source_alpha
+        key_mix = (red >= 70 and blue >= 70
+                   and min(red, blue) >= green * 1.35
+                   and abs(red - blue) <= 100)
+        if alpha != 0 and edge_pixels[x, y] != 0 and key_mix:
+            distance = max(abs(red - key[0]), abs(green - key[1]),
+                           abs(blue - key[2]))
+            coverage = min(1.0, max(0.0, (distance - 55.0) / 125.0))
+            if coverage < 1.0:
+                alpha = round(source_alpha * coverage)
+                if coverage > 0.05:
+                    key_share = 1.0 - coverage
+                    red = max(0, min(255, round(
+                        (red - key_share * key[0]) / coverage)))
+                    green = max(0, min(255, round(
+                        (green - key_share * key[1]) / coverage)))
+                    blue = max(0, min(255, round(
+                        (blue - key_share * key[2]) / coverage)))
+                else:
+                    alpha = 0
         if alpha == 0:
             red = green = blue = 0
         pixels.append((red, green, blue, alpha))
