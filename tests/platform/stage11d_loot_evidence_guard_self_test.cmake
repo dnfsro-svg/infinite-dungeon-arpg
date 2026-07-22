@@ -241,7 +241,7 @@ endif()
 set(_path "${GUARD_TEST_ROOT}/second-render-plan.cpp")
 file(WRITE "${_path}" "${_mutated}")
 expect_rejected("second render plan" RENDERER "${_path}"
-    "requires the one production renderer plan")
+    "requires two overloads, one forwarding call")
 
 file(READ "${_validator}" _validator_text)
 set(_mutated "${_validator_text}")
