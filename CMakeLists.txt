@@ -6,25 +6,36 @@ include(cmake/NormalizeMsvcShowIncludes.cmake)
 option(ARPG_BUILD_GRAPHICS "Build the raylib host and game executable" ON)
 option(ARPG_BUILD_PERFORMANCE_PROBES "Build local performance probes" OFF)
 
-if(NOT MSVC)
-    message(FATAL_ERROR "Stage 0 requires MSVC")
-endif()
+if(WIN32)
+    if(NOT MSVC)
+        message(FATAL_ERROR "Stage 0 requires MSVC")
+    endif()
 
-if(NOT MSVC_VERSION EQUAL 1944)
-    message(FATAL_ERROR
-        "Stage 0 requires MSVC 19.44; detected "
-        "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
-endif()
+    if(NOT MSVC_VERSION EQUAL 1944)
+        message(FATAL_ERROR
+            "Stage 0 requires MSVC 19.44; detected "
+            "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
+    endif()
 
-if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
-    message(FATAL_ERROR "Stage 0 requires an x64 target")
-endif()
+    if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+        message(FATAL_ERROR "Stage 0 requires an x64 target")
+    endif()
 
-string(REGEX REPLACE "[/\\\\]+$" "" ARPG_WINDOWS_SDK "$ENV{WindowsSDKVersion}")
-if(NOT ARPG_WINDOWS_SDK STREQUAL "10.0.26100.0")
-    message(FATAL_ERROR
-        "Stage 0 requires Windows SDK 10.0.26100.0; detected "
-        "'${ARPG_WINDOWS_SDK}'")
+    string(REGEX REPLACE "[/\\\\]+$" "" ARPG_WINDOWS_SDK "$ENV{WindowsSDKVersion}")
+    if(NOT ARPG_WINDOWS_SDK STREQUAL "10.0.26100.0")
+        message(FATAL_ERROR
+            "Stage 0 requires Windows SDK 10.0.26100.0; detected "
+            "'${ARPG_WINDOWS_SDK}'")
+    endif()
+else()
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang)$")
+        message(FATAL_ERROR "Linux core builds require GCC or Clang")
+    endif()
+
+    if(ARPG_BUILD_GRAPHICS)
+        message(FATAL_ERROR
+            "Non-Windows builds are core-only; set ARPG_BUILD_GRAPHICS=OFF")
+    endif()
 endif()
 
 set(CMAKE_CXX_STANDARD 17)
@@ -37,6 +48,8 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 function(arpg_enable_project_warnings target_name)
     if(MSVC)
         target_compile_options("${target_name}" PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options("${target_name}" PRIVATE -Wall -Wextra -Wpedantic)
     endif()
 endfunction()
 
