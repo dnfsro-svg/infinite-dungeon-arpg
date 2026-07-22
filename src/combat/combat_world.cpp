@@ -754,6 +754,10 @@ void CombatWorld::initialize_runtime() noexcept {
     projectiles_.clear();
     hazards_.clear();
     abyss_environment_ = AbyssEnvironmentRuntime{};
+    fire_crates_ = {{
+        {{-3.20F, 0.0F, 0.0F}, 0U, true},
+        {{3.20F, 0.0F, 0.0F}, 0U, true},
+    }};
     if (legacy_mode_) {
         initialize_legacy_monsters();
     } else {

@@ -108,6 +108,7 @@ void CombatWorld::resolve_attack_hits() noexcept {
 
     const Aabb attack_box = make_world_aabb(
         definition->local_hitbox, player_.position, player_.facing);
+    resolve_fire_crate_hits(attack_box);
     std::array<std::uint8_t, kMonsterCapacity> hit_indices{};
     std::size_t hit_count = 0;
     for (std::size_t index = 0; index < monsters_.slots_.size(); ++index) {
@@ -150,6 +151,21 @@ void CombatWorld::resolve_attack_hits() noexcept {
         summary.feedback = definition->feedback;
         summary.position = monsters_.slots_[hit_indices[0]].position;
         emit_event(summary);
+    }
+}
+
+void CombatWorld::resolve_fire_crate_hits(Aabb attack_box) noexcept {
+    if (!encounter_config_.fire_room_obstacles) return;
+    constexpr float kCrateHalfExtent = 0.80F;
+    for (FireRoomCrateSnapshot& crate : fire_crates_) {
+        if (!crate.intact) continue;
+        const Aabb crate_box{{crate.position.x - kCrateHalfExtent,
+                                  crate.position.y - kCrateHalfExtent, 0.0F},
+            {crate.position.x + kCrateHalfExtent,
+                crate.position.y + kCrateHalfExtent, 1.0F}};
+        if (!overlaps_inclusive(attack_box, crate_box)) continue;
+        crate.intact = false;
+        crate.broken_tick = tick_;
     }
 }
 

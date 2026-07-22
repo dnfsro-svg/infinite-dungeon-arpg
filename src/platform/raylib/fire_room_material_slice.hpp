@@ -1,5 +1,6 @@
 #pragma once
 
+#include "combat/combat_types.hpp"
 #include "material_asset_types.hpp"
 
 #include <array>
@@ -46,6 +47,8 @@ struct FireRoomObstacle final {
 [[nodiscard]] const std::array<FireRoomObstacle, 3>&
 fire_room_obstacles() noexcept;
 [[nodiscard]] bool fire_room_route_is_clear(float from_y, float to_y) noexcept;
+[[nodiscard]] bool fire_room_crate_visible(
+    const combat::CombatSnapshot& snapshot, std::size_t crate_index) noexcept;
 [[nodiscard]] bool fire_room_has_two_navigation_routes() noexcept;
 
 }  // namespace arpg::platform

@@ -575,6 +575,14 @@ struct CombatDiagnostics final {
     std::uint32_t effect_command_overflow_count{};
 };
 
+inline constexpr std::size_t kFireRoomCrateCapacity = 2U;
+
+struct FireRoomCrateSnapshot final {
+    Vec3 position{};
+    std::uint64_t broken_tick{};
+    bool intact{true};
+};
+
 struct CombatSnapshot final {
     std::uint64_t tick{};
     PlayerSnapshot player{};
@@ -588,6 +596,8 @@ struct CombatSnapshot final {
     std::size_t hazard_count{};
     // Compatibility projection only; runtime state is owned by monsters.
     std::array<DummySnapshot, kDummyCount> dummies{};
+    std::array<FireRoomCrateSnapshot, kFireRoomCrateCapacity> fire_crates{};
+    std::size_t fire_crate_count{};
     CombatDiagnostics diagnostics{};
 };
 

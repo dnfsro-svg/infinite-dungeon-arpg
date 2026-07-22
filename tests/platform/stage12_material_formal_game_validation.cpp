@@ -35,7 +35,11 @@ bool copy_materials(const std::filesystem::path& executable) {
     std::error_code error{};
     std::filesystem::create_directories(destination, error);
     if (error) return false;
-    for (const char* name : {"environment.png", "actors.png", "effects_ui.png"}) {
+    for (const char* name : {
+             "environment.png", "actors.png", "effects_ui.png",
+             "fire_environment.png", "fire_environment_material.png",
+             "fire_bomber.png", "fire_bomber_material.png",
+             "fire_charger.png", "fire_charger_material.png"}) {
         std::filesystem::copy_file(source / name, destination / name,
             std::filesystem::copy_options::overwrite_existing, error);
         if (error) return false;
