@@ -39,6 +39,18 @@
       "cacheVariables": {
         "ARPG_BUILD_GRAPHICS": "OFF"
       }
+    },
+    {
+      "name": "linux-gcc-core-debug",
+      "displayName": "Linux GCC Core-only Debug",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "cacheVariables": {
+        "BUILD_TESTING": "ON",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "ARPG_BUILD_GRAPHICS": "OFF",
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
     }
   ],
   "buildPresets": [
@@ -53,6 +65,10 @@
     {
       "name": "windows-msvc-core-debug",
       "configurePreset": "windows-msvc-core-debug"
+    },
+    {
+      "name": "linux-gcc-core-debug",
+      "configurePreset": "linux-gcc-core-debug"
     }
   ],
   "testPresets": [
@@ -71,6 +87,12 @@
     {
       "name": "windows-msvc-core-debug",
       "configurePreset": "windows-msvc-core-debug",
+      "output": { "outputOnFailure": true },
+      "execution": { "stopOnFailure": true }
+    },
+    {
+      "name": "linux-gcc-core-debug",
+      "configurePreset": "linux-gcc-core-debug",
       "output": { "outputOnFailure": true },
       "execution": { "stopOnFailure": true }
     }
