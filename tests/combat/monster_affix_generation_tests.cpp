@@ -112,7 +112,7 @@ std::size_t reference_candidates(const MonsterDefinition& monster,
     return count;
 }
 
-enum class ReferenceSampling final {
+enum class ReferenceSampling {
     indexed,
     shared_sequential,
 };
