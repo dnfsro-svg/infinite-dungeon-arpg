@@ -12,6 +12,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <string>
 
@@ -82,6 +83,14 @@ struct OpaqueBounds final {
     int height{};
 };
 
+struct SilhouetteMetrics final {
+    OpaqueBounds bounds{};
+    std::uint64_t visible_pixels{};
+    std::uint64_t soft_pixels{};
+    int centroid_x{};
+    int centroid_y{};
+};
+
 OpaqueBounds frame_opaque_bounds(const Color* pixels, int image_width,
     const Rectangle& source) noexcept {
     const int left = static_cast<int>(source.x);
@@ -103,6 +112,33 @@ OpaqueBounds frame_opaque_bounds(const Color* pixels, int image_width,
     }
     return max_x < min_x || max_y < min_y
         ? OpaqueBounds{} : OpaqueBounds{max_x - min_x + 1, max_y - min_y + 1};
+}
+
+SilhouetteMetrics frame_silhouette_metrics(const Color* pixels,
+    int image_width, const Rectangle& source) noexcept {
+    SilhouetteMetrics metrics{};
+    metrics.bounds = frame_opaque_bounds(pixels, image_width, source);
+    const int left = static_cast<int>(source.x);
+    const int top = static_cast<int>(source.y);
+    const int right = left + static_cast<int>(source.width);
+    const int bottom = top + static_cast<int>(source.height);
+    std::uint64_t x_sum{};
+    std::uint64_t y_sum{};
+    for (int y = top; y < bottom; ++y) {
+        for (int x = left; x < right; ++x) {
+            const unsigned char alpha = pixels[y * image_width + x].a;
+            if (alpha <= 24U) continue;
+            ++metrics.visible_pixels;
+            if (alpha >= 48U && alpha <= 207U) ++metrics.soft_pixels;
+            x_sum += static_cast<std::uint64_t>(x - left);
+            y_sum += static_cast<std::uint64_t>(y - top);
+        }
+    }
+    if (metrics.visible_pixels > 0U) {
+        metrics.centroid_x = static_cast<int>(x_sum / metrics.visible_pixels);
+        metrics.centroid_y = static_cast<int>(y_sum / metrics.visible_pixels);
+    }
+    return metrics;
 }
 
 arpg::test::Failure water_ecology_has_independent_loadable_color_and_material_atlases() noexcept {
@@ -200,6 +236,7 @@ arpg::test::Failure water_monsters_expose_complete_multiframe_state_groups() noe
             std::array<bool, 4> key_poses_seen{};
             std::array<std::uint64_t, 20> hashes{};
             std::size_t unique_hashes{};
+            SilhouetteMetrics previous_metrics{};
             for (std::uint16_t frame{}; frame < clip->frame_count; ++frame) {
                 const auto current = arpg::platform::monster_animation_frame(*clip, frame);
                 ARPG_REQUIRE(current.has_value());
@@ -216,13 +253,29 @@ arpg::test::Failure water_monsters_expose_complete_multiframe_state_groups() noe
                 }
                 const std::uint64_t hash = frame_pixel_hash(
                     pixels, image.width, current->source);
+                const SilhouetteMetrics metrics = frame_silhouette_metrics(
+                    pixels, image.width, current->source);
+                ARPG_REQUIRE(metrics.visible_pixels > 0U);
+                ARPG_REQUIRE(metrics.soft_pixels * 100U
+                    <= metrics.visible_pixels * 55U);
+                if (frame > 0U) {
+                    ARPG_REQUIRE(std::abs(metrics.bounds.height
+                        - previous_metrics.bounds.height) <= 42);
+                    const int centroid_dx = metrics.centroid_x
+                        - previous_metrics.centroid_x;
+                    const int centroid_dy = metrics.centroid_y
+                        - previous_metrics.centroid_y;
+                    ARPG_REQUIRE(centroid_dx * centroid_dx
+                        + centroid_dy * centroid_dy <= 34 * 34);
+                }
+                previous_metrics = metrics;
                 bool seen{};
                 for (std::size_t prior{}; prior < unique_hashes; ++prior) {
                     if (hashes[prior] == hash) seen = true;
                 }
                 if (!seen) hashes[unique_hashes++] = hash;
             }
-            ARPG_REQUIRE(unique_hashes * 2U >= clip->frame_count);
+            ARPG_REQUIRE(unique_hashes >= clip->key_pose_count);
             for (const bool seen : key_poses_seen) ARPG_REQUIRE(seen);
         }
         const auto* const idle = arpg::platform::monster_animation_clip(

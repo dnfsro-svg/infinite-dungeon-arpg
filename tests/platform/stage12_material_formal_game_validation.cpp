@@ -1,5 +1,6 @@
 #include "material_asset_validation.hpp"
 #include "raylib_host.hpp"
+#include "dungeon/dungeon_types.hpp"
 
 #include <raylib.h>
 
@@ -112,7 +113,8 @@ bool root_safety_self_test(const std::filesystem::path& root) {
 
 bool capture(const std::filesystem::path& root, const Resolution& resolution,
     const char* image_name = nullptr, bool showcase = false,
-    bool request_f12 = false) {
+    bool request_f12 = false,
+    std::optional<arpg::dungeon::DungeonElement> showcase_ecology = std::nullopt) {
     const std::filesystem::path capture = root / (image_name == nullptr
         ? resolution.name : image_name);
     platform::RaylibHostConfig config{};
@@ -127,6 +129,7 @@ bool capture(const std::filesystem::path& root, const Resolution& resolution,
     config.validation_exit_after_presented_frames = 4U;
     config.validation_capture_file = capture;
     config.stage12_material_showcase = showcase;
+    config.stage12_material_showcase_ecology = showcase_ecology;
     config.validation_request_screenshot = request_f12;
     const auto started = std::filesystem::file_time_type::clock::now()
         - std::chrono::seconds(2);
@@ -196,6 +199,9 @@ int main(int argc, char** argv) {
         platform::default_material_manifest()).valid;
     const bool showcase_ok = capture(root, kResolutions[0],
         "monsters-1280x720.png", true, true);
+    const bool water_showcase_ok = capture(root, kResolutions[0],
+        "water-monsters-1280x720.png", true, false,
+        arpg::dungeon::DungeonElement::water);
     const std::filesystem::path f12_capture = root / "f12-monsters-1280x720.png"
         / "stage8-equipment-loot.png";
     std::error_code f12_error{};
@@ -210,13 +216,14 @@ int main(int argc, char** argv) {
            << "input_hole_regression=" << (input_hole_ok ? "pass" : "fail") << '\n'
            << "monsters=" << (showcase_ok ? "fire_bomber,fire_charger,water_bulwark,water_support,lightning_shooter,lightning_dasher,chaos_chaser,chaos_hazard" : "") << '\n'
            << "monster_screenshot=monsters-1280x720.png\n"
+           << "water_monster_screenshot=water-monsters-1280x720.png\n"
            << "f12_screenshot=f12-monsters-1280x720.png/stage8-equipment-loot.png\n"
            << "screenshot_isolation=" << (f12_ok ? "pass" : "fail") << '\n'
-           << "screenshot_decode=" << (captures_ok && showcase_ok && f12_ok ? "pass" : "fail") << '\n'
-           << "result=" << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && f12_ok && input_hole_ok ? "pass" : "fail")
+           << "screenshot_decode=" << (captures_ok && showcase_ok && water_showcase_ok && f12_ok ? "pass" : "fail") << '\n'
+           << "result=" << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && water_showcase_ok && f12_ok && input_hole_ok ? "pass" : "fail")
            << '\n';
     std::cout << "stage12 material formal "
-              << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && f12_ok && input_hole_ok ? "PASS" : "FAIL")
+              << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && water_showcase_ok && f12_ok && input_hole_ok ? "PASS" : "FAIL")
               << std::endl;
-    return report && captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && f12_ok && input_hole_ok ? 0 : 1;
+    return report && captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && water_showcase_ok && f12_ok && input_hole_ok ? 0 : 1;
 }

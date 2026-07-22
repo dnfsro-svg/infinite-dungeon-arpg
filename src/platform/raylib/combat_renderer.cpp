@@ -8,6 +8,20 @@
 #include <algorithm>
 
 namespace arpg::platform {
+namespace {
+
+[[nodiscard]] constexpr MaterialEcology material_ecology(
+    dungeon::DungeonElement ecology) noexcept {
+    switch (ecology) {
+    case dungeon::DungeonElement::fire: return MaterialEcology::fire;
+    case dungeon::DungeonElement::water: return MaterialEcology::water;
+    case dungeon::DungeonElement::lightning: return MaterialEcology::lightning;
+    case dungeon::DungeonElement::chaos: return MaterialEcology::chaos;
+    }
+    return MaterialEcology::common;
+}
+
+}  // namespace
 
 CombatRenderPlan make_combat_render_plan(
     const dungeon::DungeonSnapshot& snapshot,
@@ -202,6 +216,7 @@ GroundLootView CombatRenderer::draw(
     bool draw_debug,
     const CombatFeedback& feedback,
     bool audio_ready) noexcept {
+    static_cast<void>(material_pack_.load(material_ecology(current.ecology)));
     transition_ = transition_after_room_phase(transition_, current.phase);
 
     const CombatRenderPlan render_plan = make_combat_render_plan(current,

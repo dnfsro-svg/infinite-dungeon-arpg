@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from math import floor
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageEnhance
@@ -74,6 +73,14 @@ def alpha_bbox(image: Image.Image) -> tuple[int, int, int, int]:
 def pose_board_rows(role: str) -> list[list[Image.Image]]:
     board = Image.open(
         SOURCE / f"water-{role}-pose-board-alpha-v2.png").convert("RGBA")
+    reference = board.crop((0, 0, round(board.width / 4),
+                            round(board.height / 5)))
+    reference_alpha = reference.getchannel("A").point(
+        lambda value: 0 if value < 64 else 255)
+    reference_bbox = reference_alpha.getbbox()
+    if reference_bbox is None:
+        raise RuntimeError(f"{role} reference pose has no visible pixels")
+    cell_scale = 172.0 / (reference_bbox[3] - reference_bbox[1])
     rows: list[list[Image.Image]] = []
     for row in range(5):
         poses: list[Image.Image] = []
@@ -83,29 +90,29 @@ def pose_board_rows(role: str) -> list[list[Image.Image]]:
             left = round(column * board.width / 4)
             right = round((column + 1) * board.width / 4)
             pose = board.crop((left, top, right, bottom))
+            alpha = pose.getchannel("A").point(
+                lambda value: 0 if value < 64 else (
+                    255 if value > 160 else (value - 64) * 255 // 96))
+            pose.putalpha(alpha)
+            pose = pose.resize((round(pose.width * cell_scale),
+                                round(pose.height * cell_scale)),
+                               Image.Resampling.LANCZOS)
             pose = pose.crop(alpha_bbox(pose))
-            pose.thumbnail((184, 184), Image.Resampling.LANCZOS)
             canvas = Image.new("RGBA", (CELL * 2, CELL * 2))
             canvas.alpha_composite(pose,
-                ((canvas.width - pose.width) // 2, canvas.height - pose.height - 4))
+                ((canvas.width - pose.width) // 2, 186 - pose.height))
             poses.append(canvas)
         rows.append(poses)
     return rows
 
 
-def interpolate_pose(poses: list[Image.Image], frame: int,
-                     frame_count: int, loop: bool) -> Image.Image:
+def discrete_pose(poses: list[Image.Image], frame: int,
+                  frame_count: int, loop: bool) -> Image.Image:
     if loop:
-        position = frame * len(poses) / frame_count
-        first = floor(position) % len(poses)
-        second = (first + 1) % len(poses)
+        pose_index = frame * len(poses) // frame_count
     else:
-        position = frame * (len(poses) - 1) / (frame_count - 1)
-        first = min(floor(position), len(poses) - 1)
-        second = min(first + 1, len(poses) - 1)
-    amount = position - floor(position)
-    blended = Image.blend(poses[first], poses[second], amount)
-    return blended.resize((CELL, CELL), Image.Resampling.LANCZOS)
+        pose_index = round(frame * (len(poses) - 1) / (frame_count - 1))
+    return poses[pose_index].resize((CELL, CELL), Image.Resampling.LANCZOS)
 
 
 def build_monster(role: str) -> None:
@@ -116,7 +123,7 @@ def build_monster(role: str) -> None:
             (0, 12, True), (1, 16, True), (2, 20, False),
             (3, 8, False), (4, 16, False)):
         for local_frame in range(frame_count):
-            frame = interpolate_pose(
+            frame = discrete_pose(
                 rows[row], local_frame, frame_count, loop)
             atlas.alpha_composite(frame,
                 ((frame_index % COLUMNS) * CELL,

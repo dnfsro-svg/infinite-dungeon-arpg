@@ -22,6 +22,7 @@ using arpg::platform::AnimationClipDefinition;
 using arpg::platform::MaterialAtlasId;
 using arpg::platform::MaterialFrameDefinition;
 using arpg::platform::MaterialManifestDefinition;
+using arpg::platform::MaterialCompositeParameters;
 using arpg::platform::MaterialPackState;
 using arpg::platform::MaterialSpriteId;
 
@@ -31,10 +32,14 @@ struct FakeMaterialTextures final {
     std::array<Texture2D, kCapacity> loaded{};
     std::array<std::array<char, 512>, kCapacity> loaded_paths{};
     std::array<unsigned int, kCapacity> unloaded_ids{};
-    std::array<unsigned int, kCapacity> drawn_ids{};
+    std::array<unsigned int, kCapacity> drawn_color_ids{};
+    std::array<unsigned int, kCapacity> drawn_material_ids{};
+    std::array<MaterialCompositeParameters, kCapacity> composites{};
     std::size_t load_count{};
     std::size_t unload_count{};
     std::size_t draw_count{};
+    std::size_t pipeline_initialize_count{};
+    std::size_t pipeline_shutdown_count{};
 };
 
 FakeMaterialTextures* g_fake_material_textures{};
@@ -45,10 +50,23 @@ Texture2D fake_load_texture(const char* path) noexcept {
             >= g_fake_material_textures->loaded.size()) {
         return {};
     }
-    const std::size_t index = g_fake_material_textures->load_count++;
-    std::snprintf(g_fake_material_textures->loaded_paths[index].data(),
-        g_fake_material_textures->loaded_paths[index].size(), "%s", path);
-    return g_fake_material_textures->loaded[index];
+    const std::size_t record_index = g_fake_material_textures->load_count++;
+    std::snprintf(g_fake_material_textures->loaded_paths[record_index].data(),
+        g_fake_material_textures->loaded_paths[record_index].size(), "%s", path);
+    const MaterialManifestDefinition manifest =
+        arpg::platform::default_material_manifest();
+    const std::string loaded_path{path};
+    for (std::size_t index{}; index < manifest.atlas_count; ++index) {
+        if (loaded_path.find(manifest.atlases[index].color_path)
+            != std::string::npos) {
+            return g_fake_material_textures->loaded[index * 2U];
+        }
+        if (loaded_path.find(manifest.atlases[index].material_path)
+            != std::string::npos) {
+            return g_fake_material_textures->loaded[index * 2U + 1U];
+        }
+    }
+    return {};
 }
 
 bool fake_texture_valid(Texture2D texture) noexcept {
@@ -65,18 +83,44 @@ void fake_unload_texture(Texture2D texture) noexcept {
         g_fake_material_textures->unload_count++] = texture.id;
 }
 
-void fake_draw_texture(Texture2D texture, Rectangle, Rectangle,
-    Vector2, float, Color) noexcept {
+bool fake_initialize_material_pipeline() noexcept {
+    if (g_fake_material_textures == nullptr) return false;
+    ++g_fake_material_textures->pipeline_initialize_count;
+    return true;
+}
+
+void fake_shutdown_material_pipeline() noexcept {
+    if (g_fake_material_textures != nullptr) {
+        ++g_fake_material_textures->pipeline_shutdown_count;
+    }
+}
+
+void fake_draw_material(Texture2D color, Texture2D material,
+    Rectangle, Rectangle, Vector2, float, Color,
+    MaterialCompositeParameters parameters) noexcept {
     if (g_fake_material_textures == nullptr
         || g_fake_material_textures->draw_count
-            >= g_fake_material_textures->drawn_ids.size()) return;
-    g_fake_material_textures->drawn_ids[
-        g_fake_material_textures->draw_count++] = texture.id;
+            >= g_fake_material_textures->drawn_color_ids.size()) return;
+    const std::size_t index = g_fake_material_textures->draw_count++;
+    g_fake_material_textures->drawn_color_ids[index] = color.id;
+    g_fake_material_textures->drawn_material_ids[index] = material.id;
+    g_fake_material_textures->composites[index] = parameters;
 }
 
 arpg::platform::MaterialTextureApi fake_material_texture_api() noexcept {
     return {&fake_load_texture, &fake_texture_valid, &fake_unload_texture,
-        &fake_draw_texture};
+        &fake_initialize_material_pipeline, &fake_shutdown_material_pipeline,
+        &fake_draw_material};
+}
+
+std::size_t atlas_count_for_ecology(MaterialEcology ecology) noexcept {
+    const auto manifest = arpg::platform::default_material_manifest();
+    std::size_t count{};
+    for (std::size_t index{}; index < manifest.atlas_count; ++index) {
+        if (manifest.atlases[index].ecology == MaterialEcology::common
+            || manifest.atlases[index].ecology == ecology) ++count;
+    }
+    return count;
 }
 
 arpg::test::Failure material_pack_falls_back_when_atlas_is_unavailable() noexcept {
@@ -100,7 +144,7 @@ arpg::test::Failure material_pack_loads_missing_atlases_without_unloading() noex
     arpg::platform::MaterialPack pack{fake_material_texture_api()};
     ARPG_REQUIRE(!pack.load());
     ARPG_REQUIRE(fake.load_count
-        == arpg::platform::default_material_manifest().atlas_count * 2U);
+        == atlas_count_for_ecology(MaterialEcology::common) * 2U);
     ARPG_REQUIRE(!pack.available(MaterialAtlasId::environment));
     ARPG_REQUIRE(!pack.available(MaterialAtlasId::actors));
     ARPG_REQUIRE(!pack.available(MaterialAtlasId::effects_ui));
@@ -146,27 +190,67 @@ arpg::test::Failure material_pack_loads_and_draws_color_material_pairs() noexcep
     }
     g_fake_material_textures = &fake;
     arpg::platform::MaterialPack pack{fake_material_texture_api()};
-    ARPG_REQUIRE(pack.load());
-    ARPG_REQUIRE(fake.load_count == manifest.atlas_count * 2U);
-    for (std::size_t index{}; index < manifest.atlas_count; ++index) {
-        const std::string color_path{fake.loaded_paths[index * 2U].data()};
-        const std::string material_path{
-            fake.loaded_paths[index * 2U + 1U].data()};
-        ARPG_REQUIRE(color_path.find(manifest.atlases[index].color_path)
-            != std::string::npos);
-        ARPG_REQUIRE(material_path.find(manifest.atlases[index].material_path)
-            != std::string::npos);
-    }
+    ARPG_REQUIRE(pack.load(MaterialEcology::water));
+    ARPG_REQUIRE(fake.load_count
+        == atlas_count_for_ecology(MaterialEcology::water) * 2U);
+    ARPG_REQUIRE(!pack.available(MaterialAtlasId::fire_environment));
+    ARPG_REQUIRE(pack.available(MaterialAtlasId::water_environment));
     ARPG_REQUIRE(pack.draw_frame(MaterialAtlasId::water_bulwark,
         {0.0F, 0.0F, 96.0F, 96.0F}, {48.0F, 93.0F},
         {100.0F, 100.0F}, false));
-    ARPG_REQUIRE(fake.draw_count == 2U);
+    ARPG_REQUIRE(fake.draw_count == 1U);
     const std::size_t water_index = static_cast<std::size_t>(
         MaterialAtlasId::water_bulwark);
-    ARPG_REQUIRE(fake.drawn_ids[0] == 1000U + water_index * 2U);
-    ARPG_REQUIRE(fake.drawn_ids[1] == 1001U + water_index * 2U);
+    ARPG_REQUIRE(fake.drawn_color_ids[0] == 1000U + water_index * 2U);
+    ARPG_REQUIRE(fake.drawn_material_ids[0] == 1001U + water_index * 2U);
+    ARPG_REQUIRE(fake.composites[0].roughness_channel == 0U);
+    ARPG_REQUIRE(fake.composites[0].emissive_channel == 1U);
+    ARPG_REQUIRE(fake.composites[0].metalness_channel == 2U);
+    ARPG_REQUIRE(fake.composites[0].roughness_strength > 0.0F);
+    ARPG_REQUIRE(fake.composites[0].metalness_strength > 0.0F);
+    ARPG_REQUIRE(fake.composites[0].emissive_strength > 0.0F);
     pack.unload();
-    ARPG_REQUIRE(fake.unload_count == manifest.atlas_count * 2U);
+    ARPG_REQUIRE(fake.unload_count
+        == atlas_count_for_ecology(MaterialEcology::water) * 2U);
+    g_fake_material_textures = nullptr;
+    return {};
+}
+
+arpg::test::Failure material_pack_switches_ecology_without_reloading_common() noexcept {
+    FakeMaterialTextures fake{};
+    const MaterialManifestDefinition manifest =
+        arpg::platform::default_material_manifest();
+    for (std::size_t index{}; index < manifest.atlas_count; ++index) {
+        const auto& atlas = manifest.atlases[index];
+        fake.loaded[index * 2U] = {
+            static_cast<unsigned int>(2000U + index * 2U),
+            atlas.width, atlas.height, 1, 7};
+        fake.loaded[index * 2U + 1U] = {
+            static_cast<unsigned int>(2001U + index * 2U),
+            atlas.width, atlas.height, 1, 7};
+    }
+    g_fake_material_textures = &fake;
+    arpg::platform::MaterialPack pack{fake_material_texture_api()};
+    ARPG_REQUIRE(pack.load(MaterialEcology::fire));
+    ARPG_REQUIRE(pack.current_ecology() == MaterialEcology::fire);
+    ARPG_REQUIRE(pack.available(MaterialAtlasId::environment));
+    ARPG_REQUIRE(pack.available(MaterialAtlasId::fire_bomber));
+    ARPG_REQUIRE(!pack.available(MaterialAtlasId::water_bulwark));
+    const std::size_t fire_loads = fake.load_count;
+    ARPG_REQUIRE(fire_loads
+        == atlas_count_for_ecology(MaterialEcology::fire) * 2U);
+    ARPG_REQUIRE(pack.load(MaterialEcology::fire));
+    ARPG_REQUIRE(fake.load_count == fire_loads);
+    ARPG_REQUIRE(fake.unload_count == 0U);
+
+    ARPG_REQUIRE(pack.load(MaterialEcology::water));
+    ARPG_REQUIRE(pack.current_ecology() == MaterialEcology::water);
+    ARPG_REQUIRE(pack.available(MaterialAtlasId::environment));
+    ARPG_REQUIRE(!pack.available(MaterialAtlasId::fire_bomber));
+    ARPG_REQUIRE(pack.available(MaterialAtlasId::water_bulwark));
+    ARPG_REQUIRE(fake.unload_count == 6U);
+    ARPG_REQUIRE(fake.load_count == fire_loads + 6U);
+    pack.unload();
     g_fake_material_textures = nullptr;
     return {};
 }
@@ -547,6 +631,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &material_pack_loads_all_original_player_action_atlases},
     {"loads and draws paired color and material atlases",
         &material_pack_loads_and_draws_color_material_pairs},
+    {"switches ecology without reloading common atlases",
+        &material_pack_switches_ecology_without_reloading_common},
     {"all manifest texture pairs exist and match declared dimensions",
         &material_manifest_all_texture_pairs_exist_and_match},
     {"player action atlas files have transparent borders",

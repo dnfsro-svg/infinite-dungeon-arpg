@@ -4,15 +4,29 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 
 namespace arpg::platform {
+
+struct MaterialCompositeParameters final {
+    std::uint8_t roughness_channel{0U};
+    std::uint8_t emissive_channel{1U};
+    std::uint8_t metalness_channel{2U};
+    float roughness_strength{0.32F};
+    float emissive_strength{0.72F};
+    float metalness_strength{0.28F};
+    Color emissive_tint{72U, 214U, 255U, 255U};
+};
 
 struct MaterialTextureApi final {
     Texture2D (*load)(const char* path){};
     bool (*valid)(Texture2D texture){};
     void (*unload)(Texture2D texture){};
-    void (*draw)(Texture2D texture, Rectangle source, Rectangle destination,
-        Vector2 origin, float rotation, Color tint){};
+    bool (*initialize_material_pipeline)(){};
+    void (*shutdown_material_pipeline)(){};
+    void (*draw_material)(Texture2D color, Texture2D material,
+        Rectangle source, Rectangle destination, Vector2 origin,
+        float rotation, Color tint, MaterialCompositeParameters parameters){};
 };
 
 class MaterialPackState final {
@@ -32,8 +46,10 @@ class MaterialPack final {
 public:
     MaterialPack() noexcept;
     explicit MaterialPack(MaterialTextureApi texture_api) noexcept;
-    [[nodiscard]] bool load() noexcept;
+    [[nodiscard]] bool load(
+        MaterialEcology ecology = MaterialEcology::common) noexcept;
     void unload() noexcept;
+    [[nodiscard]] MaterialEcology current_ecology() const noexcept;
     [[nodiscard]] bool available(MaterialAtlasId id) const noexcept;
     [[nodiscard]] bool can_draw(MaterialSpriteId id) const noexcept;
     [[nodiscard]] bool draw(
@@ -53,6 +69,8 @@ private:
         material_textures_{};
     std::array<bool, static_cast<std::size_t>(MaterialAtlasId::count)>
         warnings_emitted_{};
+    MaterialEcology current_ecology_{MaterialEcology::common};
+    bool material_pipeline_ready_{};
 };
 
 }  // namespace arpg::platform

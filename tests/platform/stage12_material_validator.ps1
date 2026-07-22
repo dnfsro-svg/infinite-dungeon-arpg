@@ -32,7 +32,7 @@ $reportPath = Join-Path $EvidenceDirectory 'stage12-material-evidence.txt'
 if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { throw 'missing material report' }
 $report = Read-Report $reportPath
 foreach ($key in @('manifest','atlas_bytes','fallback','input_hole_regression',
-        'monsters','monster_screenshot','f12_screenshot','screenshot_isolation',
+        'monsters','monster_screenshot','water_monster_screenshot','f12_screenshot','screenshot_isolation',
         'screenshot_decode','result')) {
     if (-not $report.ContainsKey($key)) { throw "missing report field: $key" }
 }
@@ -60,6 +60,10 @@ $monsterScreenshot = Join-Path $EvidenceDirectory $report.monster_screenshot
 if (-not (Test-Path -LiteralPath $monsterScreenshot -PathType Leaf)) { throw 'missing eight-monster screenshot' }
 $monsterSize = Read-PngSize $monsterScreenshot
 if ($monsterSize[0] -ne 1280 -or $monsterSize[1] -ne 720) { throw 'wrong eight-monster screenshot size' }
+$waterMonsterScreenshot = Join-Path $EvidenceDirectory $report.water_monster_screenshot
+if (-not (Test-Path -LiteralPath $waterMonsterScreenshot -PathType Leaf)) { throw 'missing water-monster screenshot' }
+$waterMonsterSize = Read-PngSize $waterMonsterScreenshot
+if ($waterMonsterSize[0] -ne 1280 -or $waterMonsterSize[1] -ne 720) { throw 'wrong water-monster screenshot size' }
 $f12Screenshot = Join-Path $EvidenceDirectory $report.f12_screenshot
 if (-not (Test-Path -LiteralPath $f12Screenshot -PathType Leaf)) { throw 'missing isolated F12 screenshot' }
 $f12Size = Read-PngSize $f12Screenshot

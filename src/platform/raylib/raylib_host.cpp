@@ -195,8 +195,10 @@ std::optional<std::string> host_screenshot_path(
     }
 }
 
-void apply_stage12_material_showcase(dungeon::DungeonSnapshot& snapshot) noexcept {
+void apply_stage12_material_showcase(dungeon::DungeonSnapshot& snapshot,
+    std::optional<dungeon::DungeonElement> ecology) noexcept {
     if (!snapshot.combat.has_value()) return;
+    if (ecology.has_value()) snapshot.ecology = *ecology;
     constexpr std::array<combat::MonsterId, 8> ids{{
         combat::MonsterId::fire_bomber, combat::MonsterId::fire_charger,
         combat::MonsterId::water_bulwark, combat::MonsterId::water_support,
@@ -2969,7 +2971,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             ClearBackground(Color{13, 17, 27, 255});
             presented_snapshot = current;
             if (config.stage12_material_showcase) {
-                apply_stage12_material_showcase(presented_snapshot);
+                apply_stage12_material_showcase(presented_snapshot,
+                    config.stage12_material_showcase_ecology);
             }
             const GroundLootView ground_loot_view = renderer.draw(
                 previous, presented_snapshot, runtime.render_status(),

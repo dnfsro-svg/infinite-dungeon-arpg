@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/fixed_step.hpp"
+#include "dungeon/dungeon_types.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -119,6 +120,7 @@ struct RaylibHostConfig final {
     std::optional<std::filesystem::path> validation_summary_file{};
     bool validation_request_screenshot{};
     bool stage12_material_showcase{};
+    std::optional<dungeon::DungeonElement> stage12_material_showcase_ecology{};
 };
 
 struct HostFrameGateResult final {

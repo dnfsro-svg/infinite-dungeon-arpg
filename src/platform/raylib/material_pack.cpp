@@ -113,16 +113,130 @@ namespace {
 [[nodiscard]] constexpr bool valid_texture_api(
     MaterialTextureApi texture_api) noexcept {
     return texture_api.load != nullptr && texture_api.valid != nullptr
-        && texture_api.unload != nullptr && texture_api.draw != nullptr;
+        && texture_api.unload != nullptr
+        && texture_api.initialize_material_pipeline != nullptr
+        && texture_api.shutdown_material_pipeline != nullptr
+        && texture_api.draw_material != nullptr;
 }
 
-void draw_texture(Texture2D texture, Rectangle source, Rectangle destination,
-    Vector2 origin, float rotation, Color tint) noexcept {
-    DrawTexturePro(texture, source, destination, origin, rotation, tint);
+struct MaterialShaderState final {
+    Shader shader{};
+    int material_map_location{-1};
+    int channel_map_location{-1};
+    int channel_strengths_location{-1};
+    int emissive_tint_location{-1};
+    bool ready{};
+};
+
+MaterialShaderState g_material_shader{};
+
+constexpr const char* kMaterialFragmentShader = R"glsl(
+#version 330
+in vec2 fragTexCoord;
+in vec4 fragColor;
+uniform sampler2D texture0;
+uniform sampler2D materialMap;
+uniform vec3 channelMap;
+uniform vec3 channelStrengths;
+uniform vec3 emissiveTint;
+out vec4 finalColor;
+float packedChannel(vec4 materialSample, float channel) {
+    if (channel < 0.5) return materialSample.r;
+    if (channel < 1.5) return materialSample.g;
+    if (channel < 2.5) return materialSample.b;
+    return materialSample.a;
+}
+void main() {
+    vec4 base = texture(texture0, fragTexCoord) * fragColor;
+    vec4 materialSample = texture(materialMap, fragTexCoord);
+    float roughness = clamp(packedChannel(materialSample, channelMap.x)
+        * channelStrengths.x, 0.0, 1.0);
+    float emissive = clamp(packedChannel(materialSample, channelMap.y)
+        * channelStrengths.y, 0.0, 1.0);
+    float metalness = clamp(packedChannel(materialSample, channelMap.z)
+        * channelStrengths.z, 0.0, 1.0);
+    float diffuseLight = 1.0 - 0.42 * roughness;
+    vec3 metalLight = metalness * (base.rgb * 0.24 + vec3(0.08, 0.10, 0.13));
+    vec3 emissiveLight = emissiveTint * emissive;
+    finalColor = vec4(base.rgb * diffuseLight + metalLight + emissiveLight,
+        base.a * materialSample.a);
+}
+)glsl";
+
+bool initialize_material_pipeline() noexcept {
+    if (g_material_shader.ready) return true;
+    g_material_shader.shader = LoadShaderFromMemory(
+        nullptr, kMaterialFragmentShader);
+    if (!IsShaderValid(g_material_shader.shader)) return false;
+    g_material_shader.material_map_location = GetShaderLocation(
+        g_material_shader.shader, "materialMap");
+    g_material_shader.channel_map_location = GetShaderLocation(
+        g_material_shader.shader, "channelMap");
+    g_material_shader.channel_strengths_location = GetShaderLocation(
+        g_material_shader.shader, "channelStrengths");
+    g_material_shader.emissive_tint_location = GetShaderLocation(
+        g_material_shader.shader, "emissiveTint");
+    g_material_shader.ready = g_material_shader.material_map_location >= 0
+        && g_material_shader.channel_map_location >= 0
+        && g_material_shader.channel_strengths_location >= 0
+        && g_material_shader.emissive_tint_location >= 0;
+    if (!g_material_shader.ready) {
+        UnloadShader(g_material_shader.shader);
+        g_material_shader = {};
+    }
+    return g_material_shader.ready;
+}
+
+void shutdown_material_pipeline() noexcept {
+    if (g_material_shader.ready) UnloadShader(g_material_shader.shader);
+    g_material_shader = {};
+}
+
+void draw_material(Texture2D color, Texture2D material, Rectangle source,
+    Rectangle destination, Vector2 origin, float rotation, Color tint,
+    MaterialCompositeParameters parameters) noexcept {
+    if (!g_material_shader.ready) return;
+    const float channel_strengths[3]{parameters.roughness_strength,
+        parameters.emissive_strength, parameters.metalness_strength};
+    const float channel_map[3]{
+        static_cast<float>(parameters.roughness_channel),
+        static_cast<float>(parameters.emissive_channel),
+        static_cast<float>(parameters.metalness_channel)};
+    const float emissive_tint[3]{
+        static_cast<float>(parameters.emissive_tint.r) / 255.0F,
+        static_cast<float>(parameters.emissive_tint.g) / 255.0F,
+        static_cast<float>(parameters.emissive_tint.b) / 255.0F};
+    SetShaderValueTexture(g_material_shader.shader,
+        g_material_shader.material_map_location, material);
+    SetShaderValue(g_material_shader.shader,
+        g_material_shader.channel_map_location, channel_map,
+        SHADER_UNIFORM_VEC3);
+    SetShaderValue(g_material_shader.shader,
+        g_material_shader.channel_strengths_location, channel_strengths,
+        SHADER_UNIFORM_VEC3);
+    SetShaderValue(g_material_shader.shader,
+        g_material_shader.emissive_tint_location, emissive_tint,
+        SHADER_UNIFORM_VEC3);
+    BeginShaderMode(g_material_shader.shader);
+    DrawTexturePro(color, source, destination, origin, rotation, tint);
+    EndShaderMode();
 }
 
 [[nodiscard]] MaterialTextureApi default_material_texture_api() noexcept {
-    return {&LoadTexture, &IsTextureValid, &UnloadTexture, &draw_texture};
+    return {&LoadTexture, &IsTextureValid, &UnloadTexture,
+        &initialize_material_pipeline, &shutdown_material_pipeline,
+        &draw_material};
+}
+
+[[nodiscard]] constexpr bool ecology_is_valid(
+    MaterialEcology ecology) noexcept {
+    return ecology < MaterialEcology::count;
+}
+
+[[nodiscard]] constexpr bool atlas_required(
+    const MaterialAtlasDefinition& atlas, MaterialEcology ecology) noexcept {
+    return atlas.ecology == MaterialEcology::common
+        || atlas.ecology == ecology;
 }
 
 }  // namespace
@@ -157,14 +271,13 @@ void MaterialPackState::reset() noexcept {
     available_.fill(false);
 }
 
-bool MaterialPack::load() noexcept {
-    unload();
-
+bool MaterialPack::load(MaterialEcology ecology) noexcept {
     if (!valid_texture_api(texture_api_)) {
         TraceLog(LOG_WARNING,
             "Stage 12 material texture API is incomplete; using program fallback");
         return false;
     }
+    if (!ecology_is_valid(ecology)) return false;
 
     const MaterialManifestDefinition manifest = default_material_manifest();
     if (!validate_material_manifest(manifest).valid) {
@@ -172,9 +285,39 @@ bool MaterialPack::load() noexcept {
         return false;
     }
 
+    if (!material_pipeline_ready_) {
+        material_pipeline_ready_ = texture_api_.initialize_material_pipeline();
+        if (!material_pipeline_ready_) {
+            TraceLog(LOG_WARNING,
+                "Stage 12 material shader pipeline is unavailable; using program fallback");
+            return false;
+        }
+    }
+
     for (std::size_t index = 0U; index < manifest.atlas_count; ++index) {
         const MaterialAtlasDefinition& definition = manifest.atlases[index];
+        if (atlas_required(definition, ecology)) continue;
         const std::size_t texture_index = atlas_index(definition.id);
+        if (texture_api_.valid(color_textures_[texture_index])) {
+            texture_api_.unload(color_textures_[texture_index]);
+        }
+        if (texture_api_.valid(material_textures_[texture_index])) {
+            texture_api_.unload(material_textures_[texture_index]);
+        }
+        color_textures_[texture_index] = {};
+        material_textures_[texture_index] = {};
+        state_.set_available(definition.id, false);
+    }
+
+    for (std::size_t index = 0U; index < manifest.atlas_count; ++index) {
+        const MaterialAtlasDefinition& definition = manifest.atlases[index];
+        if (!atlas_required(definition, ecology)) continue;
+        const std::size_t texture_index = atlas_index(definition.id);
+        if (texture_api_.valid(color_textures_[texture_index])
+            && texture_api_.valid(material_textures_[texture_index])) {
+            state_.set_available(definition.id, true);
+            continue;
+        }
         std::array<char, 512> color_deployed_path{};
         std::array<char, 512> material_deployed_path{};
         const int color_written = std::snprintf(color_deployed_path.data(),
@@ -218,6 +361,7 @@ bool MaterialPack::load() noexcept {
         material_textures_[texture_index] = material_texture;
         state_.set_available(definition.id, true);
     }
+    current_ecology_ = ecology;
     return state_.any_available();
 }
 
@@ -235,6 +379,15 @@ void MaterialPack::unload() noexcept {
         material_textures_[index] = Texture2D{};
     }
     state_.reset();
+    current_ecology_ = MaterialEcology::common;
+    if (material_pipeline_ready_ && valid_texture_api(texture_api_)) {
+        texture_api_.shutdown_material_pipeline();
+    }
+    material_pipeline_ready_ = false;
+}
+
+MaterialEcology MaterialPack::current_ecology() const noexcept {
+    return current_ecology_;
 }
 
 bool MaterialPack::available(MaterialAtlasId id) const noexcept {
@@ -273,11 +426,8 @@ bool MaterialPack::draw(MaterialSpriteId id, Vector2 foot_position,
     const Rectangle destination{foot_position.x - frame->foot_anchor.x * scale,
         foot_position.y - frame->foot_anchor.y * scale,
         frame->source.width * scale, frame->source.height * scale};
-    texture_api_.draw(color_texture, source, destination, {0.0F, 0.0F}, 0.0F, tint);
-    texture_api_.draw(material_texture, source, destination, {0.0F, 0.0F},
-        0.0F, Color{255U, 255U, 255U,
-            static_cast<unsigned char>((std::min)(48U,
-                static_cast<unsigned int>(tint.a)))});
+    texture_api_.draw_material(color_texture, material_texture, source,
+        destination, {0.0F, 0.0F}, 0.0F, tint, {});
     return true;
 }
 
@@ -307,11 +457,8 @@ bool MaterialPack::draw_frame(MaterialAtlasId atlas, Rectangle source,
         foot_position.y - foot_anchor.y * scale,
         source.width < 0.0F ? -source.width * scale : source.width * scale,
         source.height * scale};
-    texture_api_.draw(color_texture, source, destination, {0.0F, 0.0F}, 0.0F, tint);
-    texture_api_.draw(material_texture, source, destination, {0.0F, 0.0F},
-        0.0F, Color{255U, 255U, 255U,
-            static_cast<unsigned char>((std::min)(48U,
-                static_cast<unsigned int>(tint.a)))});
+    texture_api_.draw_material(color_texture, material_texture, source,
+        destination, {0.0F, 0.0F}, 0.0F, tint, {});
     return true;
 }
 
