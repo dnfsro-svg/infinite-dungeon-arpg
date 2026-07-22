@@ -59,6 +59,13 @@ if(TARGET arpg_raylib)
     set_tests_properties(
         platform.units PROPERTIES LABELS "headless;platform")
 
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME stage12.lightning_asset_pipeline
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/lightning_asset_pipeline_tests.py")
+    set_tests_properties(stage12.lightning_asset_pipeline PROPERTIES
+        LABELS "headless;platform;stage12" TIMEOUT 120)
+
     add_executable(arpg_stage16_loot_reinforcement_game_validation
         stage16_loot_reinforcement_game_validation.cpp)
     target_compile_features(arpg_stage16_loot_reinforcement_game_validation
@@ -145,6 +152,16 @@ if(TARGET arpg_raylib)
             -EvidenceDirectory "${CMAKE_CURRENT_BINARY_DIR}/stage12 material evidence/stage12-run")
     set_tests_properties(stage12.material_evidence_validator
         PROPERTIES LABELS "platform;raylib;stage12" TIMEOUT 60
+            FIXTURES_REQUIRED stage12_material_evidence)
+    add_test(
+        NAME stage12.material_evidence_validator_self_test
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/stage12_material_validator_self_test.ps1"
+            -EvidenceDirectory "${CMAKE_CURRENT_BINARY_DIR}/stage12 material evidence/stage12-run"
+            -Validator "${CMAKE_CURRENT_SOURCE_DIR}/stage12_material_validator.ps1"
+            -MutationRoot "${CMAKE_CURRENT_BINARY_DIR}/stage12 material evidence/validator-mutations")
+    set_tests_properties(stage12.material_evidence_validator_self_test
+        PROPERTIES LABELS "platform;raylib;stage12;negative" TIMEOUT 120
             FIXTURES_REQUIRED stage12_material_evidence)
     add_test(
         NAME stage12.material_root_safety

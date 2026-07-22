@@ -236,6 +236,21 @@ SilhouetteMetrics frame_silhouette_metrics(const Color* pixels,
     return metrics;
 }
 
+int frame_opaque_bottom(const Color* pixels, int image_width,
+    const Rectangle& source) noexcept {
+    const int left = static_cast<int>(source.x);
+    const int top = static_cast<int>(source.y);
+    int opaque_bottom{-1};
+    for (int y{}; y < static_cast<int>(source.height); ++y) {
+        for (int x{}; x < static_cast<int>(source.width); ++x) {
+            if (pixels[(top + y) * image_width + left + x].a > 96U) {
+                opaque_bottom = (std::max)(opaque_bottom, y);
+            }
+        }
+    }
+    return opaque_bottom;
+}
+
 arpg::test::Failure water_ecology_has_independent_loadable_color_and_material_atlases() noexcept {
     constexpr std::array<MaterialAtlasId, 3> kAtlases{{
         MaterialAtlasId::water_environment,
@@ -330,6 +345,8 @@ arpg::test::Failure monsters_expose_complete_multiframe_state_groups(
             std::array<std::uint64_t, 20> hashes{};
             std::size_t unique_hashes{};
             SilhouetteMetrics previous_metrics{};
+            int minimum_bottom{96};
+            int maximum_bottom{-1};
             for (std::uint16_t frame{}; frame < clip->frame_count; ++frame) {
                 const auto current = arpg::platform::monster_animation_frame(*clip, frame);
                 ARPG_REQUIRE(current.has_value());
@@ -356,12 +373,16 @@ arpg::test::Failure monsters_expose_complete_multiframe_state_groups(
                     pixels, image.width, current->source);
                 const ConnectedSilhouette connected = connected_silhouette(
                     pixels, image.width, current->source);
+                const int opaque_bottom = frame_opaque_bottom(
+                    pixels, image.width, current->source);
                 ARPG_REQUIRE(metrics.visible_pixels > 0U);
                 ARPG_REQUIRE(connected.visible_pixels > 0U);
                 ARPG_REQUIRE(connected.largest_component * 100U
                     >= connected.visible_pixels * 94U);
                 ARPG_REQUIRE(connected.second_component * 100U
                     <= connected.visible_pixels * 2U);
+                minimum_bottom = (std::min)(minimum_bottom, opaque_bottom);
+                maximum_bottom = (std::max)(maximum_bottom, opaque_bottom);
                 ARPG_REQUIRE(metrics.soft_pixels * 100U
                     <= metrics.visible_pixels * 55U);
                 if (frame > 0U) {
@@ -383,6 +404,10 @@ arpg::test::Failure monsters_expose_complete_multiframe_state_groups(
             }
             ARPG_REQUIRE(unique_hashes == clip->frame_count);
             for (const bool seen : key_poses_seen) ARPG_REQUIRE(seen);
+            if (atlases[monster_index] == MaterialAtlasId::lightning_shooter
+                || atlases[monster_index] == MaterialAtlasId::lightning_dasher) {
+                ARPG_REQUIRE(maximum_bottom - minimum_bottom <= 1);
+            }
         }
         const auto* const idle = arpg::platform::monster_animation_clip(
             monsters[monster_index], MonsterAnimationState::idle);

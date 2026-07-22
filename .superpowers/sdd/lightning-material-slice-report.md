@@ -52,3 +52,48 @@ unobstructed central combat lane.
 - `stage12.material_evidence_validator` -- PASS
 - `stage12.material_root_safety` -- PASS
 - formal paired texture total: 150,765,568 bytes, below 268,435,456 bytes
+
+## Review hardening follow-up
+
+Review found that the original fixed-grid crop could cut a complete source
+subject at an invisible grid boundary and that foot anchoring happened before
+the final alpha cleanup. RED evidence reproduced shooter foot bottoms spanning
+76..92 and dasher special spanning 74..92. It also proved that the formal
+validator accepted a solid gray image, a water-ecology substitution and a
+capture with both lightning-monster regions erased.
+
+The corrected source path detects complete connected subjects across the full
+board, maps exactly one subject to every expected frame slot, requires
+non-overlapping direct crop rectangles and preserves all subject pixels. It does
+not move, copy, composite, scale or rewrite source character pixels. The
+original complete poses remain the direct crop source. `shooter idle v4` was
+regenerated because its earlier boards failed the new source-margin gate.
+
+After atlas normalization and tiny-island cleanup, the builder now re-detects
+the main component and aligns its bottom to baseline 92. Both Python and C++
+tests hard-require every state to satisfy `max(bottom) - min(bottom) <= 1`.
+Registered silhouette similarity rejects whole-frame translation or pose pairs
+without enough authored change; a separate three-frame gate rejects exact
+linear interpolation.
+
+The formal PowerShell validator now decodes the actual lightning capture and
+requires a complex dark-storm image with minimum brass-warning and cyan-electric
+pixel ratios. It also verifies lightning-specific accent pixels in fixed shooter
+and dasher regions. Its negative self-test must reject solid gray, water-room
+substitution and erased-monster captures.
+
+Fresh follow-up verification on MSVC x64:
+
+- `python tests/platform/lightning_asset_pipeline_tests.py` -- PASS, 5 tests
+- `platform.units` -- PASS, 407 cases and 0 failures
+- `stage12.lightning_asset_pipeline` -- PASS
+- `stage12.material_formal` -- PASS
+- `stage12.material_evidence_validator` -- PASS
+- `stage12.material_evidence_validator_self_test` -- PASS
+- `stage12.material_root_safety` -- PASS
+- combined CTest selection -- 6 of 6 passed
+
+The regenerated formal lightning capture was visually re-inspected after the
+atlas rebuild. Both lightning monsters remain visible in their expected combat
+regions, the dark/brass/cyan ecology is intact and the central fight lane remains
+readable.

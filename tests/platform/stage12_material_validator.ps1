@@ -4,6 +4,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Drawing
 if (-not (Test-Path -LiteralPath $EvidenceDirectory -PathType Container)) {
     throw "missing evidence directory: $EvidenceDirectory"
 }
@@ -26,6 +27,59 @@ function Read-PngSize([string]$Path) {
     $height = [uint32]$bytes[20] * 16777216 + [uint32]$bytes[21] * 65536 +
         [uint32]$bytes[22] * 256 + [uint32]$bytes[23]
     return @($width, $height)
+}
+
+function Measure-LightningCapture([string]$Path) {
+    $bitmap = [System.Drawing.Bitmap]::FromFile($Path)
+    try {
+        if ($bitmap.Width -ne 1280 -or $bitmap.Height -ne 720) {
+            throw 'wrong lightning-monster screenshot size'
+        }
+        [int]$dark = 0
+        [int]$brass = 0
+        [int]$cyan = 0
+        $colors = [System.Collections.Generic.HashSet[int]]::new()
+        for ($y = 0; $y -lt $bitmap.Height; $y += 2) {
+            for ($x = 0; $x -lt $bitmap.Width; $x += 2) {
+                $pixel = $bitmap.GetPixel($x, $y)
+                if ($pixel.R + $pixel.G + $pixel.B -lt 180) { ++$dark }
+                if ($pixel.R -gt 145 -and $pixel.G -gt 95 -and $pixel.B -lt 85 `
+                        -and $pixel.R -gt $pixel.G + 25) { ++$brass }
+                if ($pixel.B -gt 145 -and $pixel.G -gt 100 -and $pixel.R -lt 120 `
+                        -and $pixel.B -gt $pixel.R + 45) { ++$cyan }
+                [void]$colors.Add((($pixel.R -shr 4) -shl 8) -bor `
+                    (($pixel.G -shr 4) -shl 4) -bor ($pixel.B -shr 4))
+            }
+        }
+        $sampled = ($bitmap.Width / 2) * ($bitmap.Height / 2)
+        if ($colors.Count -lt 150) { throw 'lightning capture is effectively solid' }
+        if ($dark -lt $sampled * 0.35) { throw 'lightning capture lacks dark storm palette' }
+        if ($brass -lt $sampled * 0.008) { throw 'lightning capture lacks brass warning palette' }
+        if ($cyan -lt $sampled * 0.02) { throw 'lightning capture lacks cyan electric palette' }
+
+        $regions = @(
+            @{ Name='lightning_shooter'; X=520; Y=390; Width=115; Height=155 },
+            @{ Name='lightning_dasher'; X=635; Y=390; Width=115; Height=155 }
+        )
+        foreach ($region in $regions) {
+            [int]$accent = 0
+            for ($y = $region.Y; $y -lt $region.Y + $region.Height; ++$y) {
+                for ($x = $region.X; $x -lt $region.X + $region.Width; ++$x) {
+                    $pixel = $bitmap.GetPixel($x, $y)
+                    $isBrass = $pixel.R -gt 145 -and $pixel.G -gt 95 `
+                        -and $pixel.B -lt 85 -and $pixel.R -gt $pixel.G + 25
+                    $isCyan = $pixel.B -gt 145 -and $pixel.G -gt 100 `
+                        -and $pixel.R -lt 120 -and $pixel.B -gt $pixel.R + 45
+                    if ($isBrass -or $isCyan) { ++$accent }
+                }
+            }
+            if ($accent -lt 150) {
+                throw "lightning capture missing monster pixels: $($region.Name)"
+            }
+        }
+    } finally {
+        $bitmap.Dispose()
+    }
 }
 
 $reportPath = Join-Path $EvidenceDirectory 'stage12-material-evidence.txt'
@@ -81,6 +135,7 @@ $lightningMonsterScreenshot = Join-Path $EvidenceDirectory $report.lightning_mon
 if (-not (Test-Path -LiteralPath $lightningMonsterScreenshot -PathType Leaf)) { throw 'missing lightning-monster screenshot' }
 $lightningMonsterSize = Read-PngSize $lightningMonsterScreenshot
 if ($lightningMonsterSize[0] -ne 1280 -or $lightningMonsterSize[1] -ne 720) { throw 'wrong lightning-monster screenshot size' }
+Measure-LightningCapture $lightningMonsterScreenshot
 $f12Screenshot = Join-Path $EvidenceDirectory $report.f12_screenshot
 if (-not (Test-Path -LiteralPath $f12Screenshot -PathType Leaf)) { throw 'missing isolated F12 screenshot' }
 $f12Size = Read-PngSize $f12Screenshot
