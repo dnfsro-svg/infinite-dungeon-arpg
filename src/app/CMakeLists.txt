@@ -16,6 +16,13 @@ add_custom_command(TARGET arpg_game POST_BUILD
 
 add_custom_command(TARGET arpg_game POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E copy_directory
+        "${PROJECT_SOURCE_DIR}/assets/skills"
+        "$<TARGET_FILE_DIR:arpg_game>/assets/skills"
+    COMMENT "Copying active-skill frame atlases"
+    VERBATIM)
+
+add_custom_command(TARGET arpg_game POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory
         "${PROJECT_SOURCE_DIR}/assets/stage14/audio"
         "$<TARGET_FILE_DIR:arpg_game>/assets/stage14/audio"
     COMMENT "Copying Stage 14 combat audio assets"

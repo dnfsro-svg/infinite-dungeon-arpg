@@ -86,6 +86,12 @@ if(TARGET arpg_raylib)
             PRIVATE /utf-8)
     endif()
     arpg_enable_project_warnings(arpg_stage17_skill_stones_game_validation)
+    add_custom_command(TARGET arpg_stage17_skill_stones_game_validation POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            "${PROJECT_SOURCE_DIR}/assets/skills"
+            "$<TARGET_FILE_DIR:arpg_stage17_skill_stones_game_validation>/assets/skills"
+        COMMENT "Copying active-skill frame atlases for Stage 17 validation"
+        VERBATIM)
     set(_stage17_evidence_root
         "${CMAKE_CURRENT_BINARY_DIR}/stage17 skill stones evidence")
     set(_stage17_evidence_run "${_stage17_evidence_root}/stage17-run")

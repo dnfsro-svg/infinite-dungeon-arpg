@@ -2,6 +2,9 @@
 
 #include <raylib.h>
 
+#include <array>
+#include <cstdio>
+
 namespace arpg::platform {
 namespace {
 
@@ -53,7 +56,15 @@ bool ActiveSkillAssets::load() noexcept {
     unload();
     bool any_loaded = false;
     for (const ActiveSkillAtlasDefinition& definition : kAtlases) {
-        Texture2D texture = LoadTexture(definition.path);
+        std::array<char, 512> deployed_path{};
+        const int written = std::snprintf(deployed_path.data(),
+            deployed_path.size(), "%s%s", GetApplicationDirectory(),
+            definition.path);
+        const char* const path = written > 0
+                && static_cast<std::size_t>(written) < deployed_path.size()
+            ? deployed_path.data()
+            : definition.path;
+        Texture2D texture = LoadTexture(path);
         if (!IsTextureValid(texture) || texture.width != definition.width
             || texture.height != definition.height) {
             if (IsTextureValid(texture)) UnloadTexture(texture);
