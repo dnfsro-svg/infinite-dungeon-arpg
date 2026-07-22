@@ -3,6 +3,7 @@
 #include "dungeon/dungeon_progression.hpp"
 #include "dungeon/dungeon_session.hpp"
 #include "dungeon/room_generation.hpp"
+#include "items/item_catalog.hpp"
 #include "items/item_generation.hpp"
 #include "persistence/save_store.hpp"
 
@@ -58,12 +59,30 @@ DungeonRules validation_rules() noexcept {
 }
 
 bool install_validation_build(DungeonRunState& state) {
+    constexpr std::array<std::uint8_t, 6> base_ids{{
+        8U, 10U, 12U, 14U, 16U, 18U,
+    }};
+    constexpr std::array<std::array<arpg::items::AffixRoll, 6>, 6>
+        affixes{{
+            {{{1U, 1U, 0xFFU}, {2U, 1U, 0xFFU}, {3U, 1U, 0xFFU},
+              {101U, 1U, 0xFFU}, {105U, 1U, 0xFFU}, {106U, 1U, 0xFFU}}},
+            {{{7U, 1U, 0xFFU}, {11U, 1U, 0xFFU}, {12U, 1U, 0xFFU},
+              {103U, 1U, 0xFFU}, {104U, 1U, 0xFFU}, {111U, 1U, 0xFFU}}},
+            {{{7U, 1U, 0xFFU}, {11U, 1U, 0xFFU}, {12U, 1U, 0xFFU},
+              {103U, 1U, 0xFFU}, {104U, 1U, 0xFFU}, {111U, 1U, 0xFFU}}},
+            {{{3U, 1U, 0xFFU}, {11U, 1U, 0xFFU}, {12U, 1U, 0xFFU},
+              {101U, 1U, 0xFFU}, {103U, 1U, 0xFFU}, {104U, 1U, 0xFFU}}},
+            {{{7U, 1U, 0xFFU}, {11U, 1U, 0xFFU}, {12U, 1U, 0xFFU},
+              {102U, 1U, 0xFFU}, {103U, 1U, 0xFFU}, {104U, 1U, 0xFFU}}},
+            {{{3U, 1U, 0xFFU}, {11U, 1U, 0xFFU}, {12U, 1U, 0xFFU},
+              {103U, 1U, 0xFFU}, {110U, 1U, 0xFFU}, {111U, 1U, 0xFFU}}},
+        }};
     state.progression = {100U, 0U, 99U, 99U};
     state.item_ownership = {};
     state.item_ownership.items.reserve(6U);
     for (std::uint8_t index = 0U; index < 6U; ++index) {
         const std::uint64_t id = static_cast<std::uint64_t>(index) + 1U;
-        const auto item = arpg::items::generate_item({
+        auto item = arpg::items::generate_item({
             0xA8100000ULL + index,
             static_cast<arpg::items::ItemSlot>(index),
             100U,
@@ -71,6 +90,14 @@ bool install_validation_build(DungeonRunState& state) {
             arpg::items::ItemRarity::rare,
         });
         if (!item.has_value()) return false;
+        item->base_id = base_ids[index];
+        item->affixes = {};
+        std::copy(affixes[index].begin(), affixes[index].end(),
+            item->affixes.begin());
+        item->affix_count = 6U;
+        item->required_level = 95U;
+        item->reinforcement = 15U;
+        if (!arpg::items::validate_item(*item)) return false;
         state.item_ownership.items.push_back(*item);
         state.item_ownership.equipment.equipped_ids[index] = id;
     }
@@ -110,6 +137,7 @@ bool service_pending(DungeonSession& session,
     arpg::persistence::SaveStore& store) noexcept {
     const auto* const pending = session.pending_save_view();
     if (pending == nullptr) return true;
+    const PendingSaveKind pending_kind = pending->kind;
     auto committed = store.commit(pending->next_state);
     arpg::dungeon::SaveDisposition disposition =
         arpg::dungeon::SaveDisposition::indeterminate;
@@ -121,9 +149,23 @@ bool service_pending(DungeonSession& session,
     }
     session.resolve_pending_save({disposition,
         committed.verified_state.commit_generation,
-        std::move(committed.verified_state)});
-    return disposition == arpg::dungeon::SaveDisposition::committed
-        && session.snapshot().phase != RoomPhase::faulted;
+        std::move(committed.verified_state), pending_kind});
+    const auto state = session.snapshot();
+    const bool succeeded =
+        disposition == arpg::dungeon::SaveDisposition::committed
+        && state.phase != RoomPhase::faulted;
+    if (!succeeded) {
+        std::cerr << "pending save failed kind="
+                  << static_cast<unsigned>(pending_kind)
+                  << " commit_state="
+                  << static_cast<unsigned>(committed.state)
+                  << " save_error="
+                  << static_cast<unsigned>(committed.error)
+                  << " phase=" << static_cast<unsigned>(state.phase)
+                  << " dungeon_fault="
+                  << static_cast<unsigned>(state.diagnostics.fault) << '\n';
+    }
+    return succeeded;
 }
 
 const MonsterSnapshot* nearest_monster(const CombatSnapshot& state) noexcept {
@@ -199,6 +241,11 @@ bool drive_clear(DungeonSession& session,
                       << " room=" << state.room_index
                       << " abyss=" << state.is_abyss
                       << " generation=" << state.commit_generation
+                      << " tick=" << tick
+                      << " initial_hp=" << initial_hp
+                      << " minimum_hp=" << minimum_hp
+                      << " remaining_targets="
+                      << static_cast<unsigned>(state.remaining_targets)
                       << " fault=" << static_cast<unsigned>(
                             state.diagnostics.fault) << '\n';
             return false;
@@ -347,12 +394,35 @@ bool abandon_through_door(DungeonSession& session,
     ExitDirection direction,
     AbandonEvidence& evidence) noexcept {
     bool released = false;
+    std::uint8_t maximum_pending = 0U;
+    std::uint8_t maximum_unpicked = 0U;
+    std::uint16_t maximum_ground = 0U;
+    std::optional<float> detour_y{};
     for (int tick = 0; tick < 2000; ++tick) {
         if (!service_pending(session, store)) return false;
         const auto state = session.snapshot();
+        maximum_pending = (std::max)(
+            maximum_pending, state.abyss_pending_rewards);
+        maximum_unpicked = (std::max)(
+            maximum_unpicked, state.abyss_unpicked_rewards);
+        maximum_ground = (std::max)(maximum_ground, state.ground_item_count);
         if (state.room_index > 1U) {
-            return evidence.warning_event && evidence.armed
+            const bool succeeded = evidence.warning_event && evidence.armed
                 && evidence.neutral_release && released;
+            if (!succeeded) {
+                std::cerr << "abandon evidence incomplete warning="
+                          << evidence.warning_event
+                          << " armed=" << evidence.armed
+                          << " neutral_release=" << evidence.neutral_release
+                          << " released=" << released
+                          << " max_pending="
+                          << static_cast<unsigned>(maximum_pending)
+                          << " max_unpicked="
+                          << static_cast<unsigned>(maximum_unpicked)
+                          << " max_ground=" << maximum_ground
+                          << " room=" << state.room_index << '\n';
+            }
+            return succeeded;
         }
         if (state.phase == RoomPhase::faulted || !state.combat.has_value()) {
             std::cerr << "abandon stopped phase="
@@ -393,8 +463,50 @@ bool abandon_through_door(DungeonSession& session,
                 continue;
             }
         }
-        session.tick(exit_movement(
-            state.combat->player.position, direction));
+        if (state.abyss_pending_rewards != 0U) {
+            session.tick({});
+            continue;
+        }
+        if (!detour_y.has_value() && state.abyss_unpicked_rewards != 0U) {
+            float top_distance = 0.0F;
+            float bottom_distance = 0.0F;
+            for (std::size_t index = 0U;
+                 index < state.ground_item_count; ++index) {
+                const auto& ground = state.ground_items[index];
+                if (ground.source
+                        != arpg::dungeon::GroundItemSource::abyss_chest) {
+                    continue;
+                }
+                const float top = ground.position.y
+                    - arpg::combat::room_bounds::min_y;
+                const float bottom = arpg::combat::room_bounds::max_y
+                    - ground.position.y;
+                top_distance += top * top;
+                bottom_distance += bottom * bottom;
+            }
+            detour_y = top_distance >= bottom_distance
+                ? arpg::combat::room_bounds::min_y + 0.5F
+                : arpg::combat::room_bounds::max_y - 0.5F;
+        }
+        MovementInput movement = exit_movement(
+            state.combat->player.position, direction);
+        if (direction == ExitDirection::right && detour_y.has_value()
+                && !state.abyss_exit_confirmation_armed) {
+            const Vec3 player = state.combat->player.position;
+            movement = {};
+            if (player.x < arpg::combat::room_bounds::max_x - 0.25F) {
+                if (std::fabs(player.y - *detour_y) > 0.25F) {
+                    movement.y = player.y < *detour_y ? 1 : -1;
+                } else {
+                    movement.x = 1;
+                }
+            } else if (std::fabs(player.y) > 0.25F) {
+                movement.y = player.y < 0.0F ? 1 : -1;
+            } else {
+                movement.x = 1;
+            }
+        }
+        session.tick(movement);
     }
     const auto failed = session.snapshot();
     std::cerr << "abandon timed out phase="
@@ -427,7 +539,10 @@ std::optional<EnvironmentEvidence> run_environment_probe(
     DungeonSession session{validation_rules(), seeded.verified_state};
     if (!service_pending(session, store)) return std::nullopt;
     EnvironmentEvidence evidence{};
-    int previous_hp = 0;
+    int previous_resources = 0;
+    int initial_barrier = 0;
+    int minimum_barrier = 0;
+    int minimum_resources = 0;
     bool previous_warning = false;
     for (int tick = 0; tick < 1200; ++tick) {
         if (!service_pending(session, store)) return std::nullopt;
@@ -436,11 +551,17 @@ std::optional<EnvironmentEvidence> run_environment_probe(
         if (evidence.initial_hp == 0) {
             evidence.initial_hp = state.combat->player.hp;
             evidence.minimum_hp = evidence.initial_hp;
+            initial_barrier = state.combat->player.barrier;
+            minimum_barrier = initial_barrier;
+            minimum_resources = evidence.initial_hp + initial_barrier;
         }
         evidence.minimum_hp = (std::min)(
             evidence.minimum_hp, state.combat->player.hp);
+        minimum_barrier = (std::min)(
+            minimum_barrier, state.combat->player.barrier);
         bool active_this_tick = false;
         bool warning_this_tick = false;
+        std::optional<Vec3> environment_center{};
         for (std::size_t index = 0U;
              index < state.combat->hazard_count; ++index) {
             const auto& hazard = state.combat->hazards[index];
@@ -457,32 +578,47 @@ std::optional<EnvironmentEvidence> run_environment_probe(
                 || hazard.telegraph_ticks == 0U;
             active_this_tick = active_this_tick
                 || hazard.telegraph_ticks == 0U;
+            environment_center = hazard.center;
         }
+        const int current_resources = state.combat->player.hp
+            + state.combat->player.barrier;
+        minimum_resources = (std::min)(minimum_resources, current_resources);
         evidence.active_damage_seen = evidence.active_damage_seen
-            || (active_this_tick && previous_hp != 0
-                && state.combat->player.hp < previous_hp)
+            || (active_this_tick && previous_resources != 0
+                && current_resources < previous_resources)
             || (previous_warning && !warning_this_tick
-                && !active_this_tick && previous_hp != 0
-                && state.combat->player.hp < previous_hp);
+                && !active_this_tick && previous_resources != 0
+                && current_resources < previous_resources);
         evidence.active_seen = evidence.active_seen
             || (previous_warning && !warning_this_tick);
         if (evidence.active_damage_seen) {
             return evidence;
         }
-        previous_hp = state.combat->player.hp;
+        previous_resources = current_resources;
         previous_warning = warning_this_tick;
         MovementInput movement{};
-        if (!evidence.warning_seen) {
+        if (state.remaining_targets > 1U) {
+            const auto* const target = nearest_monster(*state.combat);
+            if (target != nullptr) {
+                movement = movement_toward(
+                    state.combat->player.position, target->position);
+                if (state.combat->player.hurt_ticks == 0U
+                        && state.combat->player.active_attack
+                            == arpg::combat::AttackId::none
+                        && state.combat->diagnostics.input_size == 0U
+                        && in_attack_lane(*state.combat, *target)) {
+                    static_cast<void>(session.queue_action(Action::light));
+                }
+            }
+        } else if (environment_center.has_value()) {
+            movement = movement_toward(
+                state.combat->player.position, *environment_center);
+        } else if (!evidence.warning_seen) {
             const int leg = tick % 240;
             movement = leg < 60 ? MovementInput{1, 0}
                 : leg < 120 ? MovementInput{0, 1}
                 : leg < 180 ? MovementInput{-1, 0}
                 : MovementInput{0, -1};
-            if (state.combat->player.active_attack
-                    == arpg::combat::AttackId::none
-                    && state.combat->diagnostics.input_size == 0U) {
-                static_cast<void>(session.queue_action(Action::jump));
-            }
         }
         session.tick(movement);
         while (session.try_pop_event().has_value()) {}
@@ -497,7 +633,10 @@ std::optional<EnvironmentEvidence> run_environment_probe(
               << " active=" << evidence.active_seen
               << " active_damage=" << evidence.active_damage_seen
               << " initial_hp=" << evidence.initial_hp
-              << " minimum_hp=" << evidence.minimum_hp << '\n';
+              << " minimum_hp=" << evidence.minimum_hp
+              << " initial_barrier=" << initial_barrier
+              << " minimum_barrier=" << minimum_barrier
+              << " minimum_resources=" << minimum_resources << '\n';
     return evidence.warning_seen && evidence.active_seen
         && evidence.active_damage_seen
         ? std::optional<EnvironmentEvidence>{evidence} : std::nullopt;
@@ -509,8 +648,16 @@ std::filesystem::path clean_fixture_directory(
         / "stage10-validation-fixture-save";
     std::error_code error;
     std::filesystem::remove_all(directory, error);
-    if (error) return {};
+    if (error) {
+        std::cerr << "fixture cleanup failed path=" << directory
+                  << " error=" << error.message() << '\n';
+        return {};
+    }
     std::filesystem::create_directories(directory, error);
+    if (error) {
+        std::cerr << "fixture directory creation failed path=" << directory
+                  << " error=" << error.message() << '\n';
+    }
     return error ? std::filesystem::path{} : directory;
 }
 
