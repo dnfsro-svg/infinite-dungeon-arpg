@@ -25,6 +25,33 @@ def rectangle_frame(left: int, top: int, right: int, bottom: int,
     return frame
 
 
+def authored_endpoint(direction: int, color: tuple[int, int, int, int]) -> Image.Image:
+    """Connected synthetic pose with a changing arm and trailing coat."""
+    frame = Image.new("RGBA", (96, 96))
+    draw = ImageDraw.Draw(frame)
+    draw.ellipse((37, 15, 57, 35), fill=color)
+    draw.polygon(((31, 35), (63, 35), (68, 77), (27, 77)), fill=color)
+    if direction < 0:
+        draw.polygon(((34, 41), (8, 27), (5, 35), (31, 54)), fill=color)
+        draw.polygon(((32, 62), (14, 76), (29, 79), (43, 67)), fill=color)
+    else:
+        draw.polygon(((60, 41), (88, 23), (91, 32), (63, 54)), fill=color)
+        draw.polygon(((61, 62), (82, 75), (66, 80), (49, 68)), fill=color)
+    return frame
+
+
+def mix_frames(before: Image.Image, after: Image.Image, amount: float) -> Image.Image:
+    pixels = []
+    for first, third in zip(before.get_flattened_data(),
+                            after.get_flattened_data()):
+        pixels.append(tuple(round(first[channel] * (1.0 - amount)
+                                  + third[channel] * amount)
+                            for channel in range(4)))
+    result = Image.new("RGBA", before.size)
+    result.putdata(pixels)
+    return result
+
+
 class LightningAssetPipelineTests(unittest.TestCase):
     def test_detected_frames_directly_crop_each_complete_source_subject(self) -> None:
         detect = getattr(BUILDER, "detect_source_frames", None)
@@ -66,6 +93,54 @@ class LightningAssetPipelineTests(unittest.TestCase):
                                                        (140, 180, 220, 255)))]
         with self.assertRaisesRegex(RuntimeError, "linear interpolation"):
             BUILDER.validate_frames(interpolated, "synthetic/interpolation")
+
+    def test_pose_gate_rejects_bilinear_resampled_interpolation(self) -> None:
+        before = authored_endpoint(-1, (24, 92, 148, 255))
+        after = authored_endpoint(1, (148, 184, 224, 255))
+        middle = mix_frames(before, after, 0.5)
+        middle = middle.resize((89, 89), Image.Resampling.BILINEAR).resize(
+            before.size, Image.Resampling.BILINEAR)
+        with self.assertRaisesRegex(RuntimeError, "linear interpolation"):
+            BUILDER.validate_frames([before, middle, after],
+                                    "synthetic/bilinear-interpolation")
+
+    def test_pose_gate_rejects_eased_interpolation(self) -> None:
+        before = authored_endpoint(-1, (24, 92, 148, 255))
+        after = authored_endpoint(1, (148, 184, 224, 255))
+        middle = mix_frames(before, after, 0.32)
+        with self.assertRaisesRegex(RuntimeError, "linear interpolation"):
+            BUILDER.validate_frames([before, middle, after],
+                                    "synthetic/eased-interpolation")
+
+    def test_pose_gate_rejects_color_perturbed_compressed_interpolation(self) -> None:
+        before = authored_endpoint(-1, (24, 92, 148, 255))
+        after = authored_endpoint(1, (148, 184, 224, 255))
+        middle = mix_frames(before, after, 0.5)
+        perturbed = []
+        for index, pixel in enumerate(middle.get_flattened_data()):
+            delta = (-5, 3, 6, -2)[index % 4]
+            perturbed.append(tuple(
+                max(0, min(255, ((value + delta) // 6) * 6))
+                for value in pixel))
+        middle.putdata(perturbed)
+        with self.assertRaisesRegex(RuntimeError, "linear interpolation"):
+            BUILDER.validate_frames([before, middle, after],
+                                    "synthetic/perturbed-interpolation")
+
+    def test_pose_gate_accepts_nonlinear_authored_pose_progression(self) -> None:
+        before = authored_endpoint(-1, (30, 120, 180, 255))
+        middle = Image.new("RGBA", (96, 96))
+        draw = ImageDraw.Draw(middle)
+        draw.ellipse((36, 12, 58, 34), fill=(55, 155, 205, 255))
+        draw.polygon(((27, 36), (67, 36), (61, 79), (33, 79)),
+                     fill=(55, 155, 205, 255))
+        draw.polygon(((31, 42), (19, 18), (27, 15), (43, 43)),
+                     fill=(55, 155, 205, 255))
+        draw.polygon(((63, 42), (78, 62), (70, 67), (52, 48)),
+                     fill=(55, 155, 205, 255))
+        after = authored_endpoint(1, (80, 190, 225, 255))
+        self.assertFalse(BUILDER.is_linear_interpolation(before, middle, after),
+            "a genuinely redrawn intermediate pose must remain accepted")
 
     def test_final_atlas_states_keep_one_pixel_foot_baseline(self) -> None:
         for role in ("shooter", "dasher"):

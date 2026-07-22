@@ -2,6 +2,7 @@
 
 #include "core/fixed_step.hpp"
 #include "dungeon/dungeon_types.hpp"
+#include "material_asset_types.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -90,6 +91,14 @@ enum class Stage17SkillStonesValidationScenario : std::uint8_t {
     restarted_loadout,
 };
 
+struct Stage12MonsterMaterialDrawStatus final {
+    bool presenter_visible{};
+    bool use_material_frame{};
+    MaterialAtlasId atlas{MaterialAtlasId::count};
+    std::uint16_t frame_index{};
+    bool drawn{};
+};
+
 struct Stage12MaterialRuntimeStatus final {
     bool shader_pipeline_ready{};
     bool water_ecology_ready{};
@@ -100,6 +109,8 @@ struct Stage12MaterialRuntimeStatus final {
     bool lightning_environment_resident{};
     bool lightning_shooter_resident{};
     bool lightning_dasher_resident{};
+    Stage12MonsterMaterialDrawStatus lightning_shooter_draw{};
+    Stage12MonsterMaterialDrawStatus lightning_dasher_draw{};
 };
 
 struct RaylibHostConfig final {
@@ -132,6 +143,7 @@ struct RaylibHostConfig final {
     std::optional<std::filesystem::path> validation_summary_file{};
     bool validation_request_screenshot{};
     bool stage12_material_showcase{};
+    bool stage12_material_showcase_hide_monsters{};
     std::optional<dungeon::DungeonElement> stage12_material_showcase_ecology{};
     Stage12MaterialRuntimeStatus* stage12_material_runtime_status{};
 };

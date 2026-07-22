@@ -196,7 +196,8 @@ std::optional<std::string> host_screenshot_path(
 }
 
 void apply_stage12_material_showcase(dungeon::DungeonSnapshot& snapshot,
-    std::optional<dungeon::DungeonElement> ecology) noexcept {
+    std::optional<dungeon::DungeonElement> ecology,
+    bool hide_monsters) noexcept {
     if (!snapshot.combat.has_value()) return;
     if (ecology.has_value()) snapshot.ecology = *ecology;
     constexpr std::array<combat::MonsterId, 8> ids{{
@@ -211,6 +212,14 @@ void apply_stage12_material_showcase(dungeon::DungeonSnapshot& snapshot,
         {1.3F, 1.5F, 0.0F}, {4.0F, 1.5F, 0.0F},
     }};
     auto& combat_snapshot = *snapshot.combat;
+    if (hide_monsters) {
+        combat_snapshot.monster_count = 0U;
+        snapshot.remaining_targets = 0U;
+        for (combat::MonsterSnapshot& monster : combat_snapshot.monsters) {
+            monster = {};
+        }
+        return;
+    }
     combat_snapshot.monster_count = ids.size();
     snapshot.remaining_targets = static_cast<std::uint8_t>(ids.size());
     for (std::size_t index = 0U; index < ids.size(); ++index) {
@@ -2972,13 +2981,20 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             presented_snapshot = current;
             if (config.stage12_material_showcase) {
                 apply_stage12_material_showcase(presented_snapshot,
-                    config.stage12_material_showcase_ecology);
+                    config.stage12_material_showcase_ecology,
+                    config.stage12_material_showcase_hide_monsters);
             }
             const GroundLootView ground_loot_view = renderer.draw(
                 previous, presented_snapshot, runtime.render_status(),
                 static_cast<float>(frame.interpolation_alpha), draw_debug,
                 feedback, audio_ready);
             if (config.stage12_material_runtime_status != nullptr) {
+                const MonsterMaterialDrawRuntimeStatus shooter_draw =
+                    renderer.monster_material_draw_status(
+                        combat::MonsterId::lightning_shooter);
+                const MonsterMaterialDrawRuntimeStatus dasher_draw =
+                    renderer.monster_material_draw_status(
+                        combat::MonsterId::lightning_dasher);
                 *config.stage12_material_runtime_status = {
                     renderer.material_pipeline_ready(),
                     renderer.material_ecology_ready(MaterialEcology::water),
@@ -2995,6 +3011,12 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                         MaterialAtlasId::lightning_shooter),
                     renderer.material_atlas_available(
                         MaterialAtlasId::lightning_dasher),
+                    {shooter_draw.presenter_visible,
+                        shooter_draw.use_material_frame, shooter_draw.atlas,
+                        shooter_draw.frame_index, shooter_draw.drawn},
+                    {dasher_draw.presenter_visible,
+                        dasher_draw.use_material_frame, dasher_draw.atlas,
+                        dasher_draw.frame_index, dasher_draw.drawn},
                 };
             }
 // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN presented_semantics

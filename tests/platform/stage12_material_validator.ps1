@@ -29,10 +29,12 @@ function Read-PngSize([string]$Path) {
     return @($width, $height)
 }
 
-function Measure-LightningCapture([string]$Path) {
+function Measure-LightningCapture([string]$Path, [string]$BackgroundPath) {
     $bitmap = [System.Drawing.Bitmap]::FromFile($Path)
+    $background = [System.Drawing.Bitmap]::FromFile($BackgroundPath)
     try {
-        if ($bitmap.Width -ne 1280 -or $bitmap.Height -ne 720) {
+        if ($bitmap.Width -ne 1280 -or $bitmap.Height -ne 720 -or
+                $background.Width -ne 1280 -or $background.Height -ne 720) {
             throw 'wrong lightning-monster screenshot size'
         }
         [int]$dark = 0
@@ -62,23 +64,67 @@ function Measure-LightningCapture([string]$Path) {
             @{ Name='lightning_dasher'; X=635; Y=390; Width=115; Height=155 }
         )
         foreach ($region in $regions) {
-            [int]$accent = 0
+            $mask = New-Object 'bool[,]' $region.Width, $region.Height
+            [int]$changed = 0
             for ($y = $region.Y; $y -lt $region.Y + $region.Height; ++$y) {
                 for ($x = $region.X; $x -lt $region.X + $region.Width; ++$x) {
                     $pixel = $bitmap.GetPixel($x, $y)
-                    $isBrass = $pixel.R -gt 145 -and $pixel.G -gt 95 `
-                        -and $pixel.B -lt 85 -and $pixel.R -gt $pixel.G + 25
-                    $isCyan = $pixel.B -gt 145 -and $pixel.G -gt 100 `
-                        -and $pixel.R -lt 120 -and $pixel.B -gt $pixel.R + 45
-                    if ($isBrass -or $isCyan) { ++$accent }
+                    $base = $background.GetPixel($x, $y)
+                    $difference = [Math]::Abs([int]$pixel.R - [int]$base.R) +
+                        [Math]::Abs([int]$pixel.G - [int]$base.G) +
+                        [Math]::Abs([int]$pixel.B - [int]$base.B)
+                    if ($difference -ge 72) {
+                        $localMaskX = $x - $region.X
+                        $localMaskY = $y - $region.Y
+                        $mask[$localMaskX, $localMaskY] = $true
+                        ++$changed
+                    }
                 }
             }
-            if ($accent -lt 150) {
-                throw "lightning capture missing monster pixels: $($region.Name)"
+            [int]$largest = 0
+            [int]$largestWidth = 0
+            [int]$largestHeight = 0
+            for ($localY = 0; $localY -lt $region.Height; ++$localY) {
+                for ($localX = 0; $localX -lt $region.Width; ++$localX) {
+                    if (-not $mask[$localX, $localY]) { continue }
+                    $queue = [System.Collections.Generic.Queue[int]]::new()
+                    $queue.Enqueue($localY * $region.Width + $localX)
+                    $mask[$localX, $localY] = $false
+                    [int]$component = 0
+                    [int]$minX = $localX; [int]$maxX = $localX
+                    [int]$minY = $localY; [int]$maxY = $localY
+                    while ($queue.Count -gt 0) {
+                        $point = $queue.Dequeue()
+                        $px = $point % $region.Width
+                        $py = [Math]::Floor($point / $region.Width)
+                        ++$component
+                        $minX = [Math]::Min($minX, $px); $maxX = [Math]::Max($maxX, $px)
+                        $minY = [Math]::Min($minY, $py); $maxY = [Math]::Max($maxY, $py)
+                        foreach ($offset in @(@(-1,0),@(1,0),@(0,-1),@(0,1))) {
+                            $nx = $px + $offset[0]; $ny = $py + $offset[1]
+                            if ($nx -ge 0 -and $nx -lt $region.Width -and
+                                    $ny -ge 0 -and $ny -lt $region.Height -and
+                                    $mask[$nx, $ny]) {
+                                $mask[$nx, $ny] = $false
+                                $queue.Enqueue($ny * $region.Width + $nx)
+                            }
+                        }
+                    }
+                    if ($component -gt $largest) {
+                        $largest = $component
+                        $largestWidth = $maxX - $minX + 1
+                        $largestHeight = $maxY - $minY + 1
+                    }
+                }
+            }
+            if ($changed -lt 500 -or $largest -lt 180 -or
+                    $largestWidth -lt 18 -or $largestHeight -lt 28) {
+                throw "lightning capture lacks monster-vs-background contour: $($region.Name) changed=$changed largest=$largest extent=${largestWidth}x${largestHeight}"
             }
         }
     } finally {
         $bitmap.Dispose()
+        $background.Dispose()
     }
 }
 
@@ -87,10 +133,15 @@ if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { throw 'missing m
 $report = Read-Report $reportPath
 foreach ($key in @('manifest','atlas_bytes','fallback','input_hole_regression',
         'monsters','monster_screenshot','water_monster_screenshot','lightning_monster_screenshot',
+        'lightning_background_screenshot',
         'f12_screenshot','screenshot_isolation',
         'shader_pipeline','water_ecology_residency','water_environment_pair',
         'water_bulwark_pair','water_support_pair','lightning_ecology_residency',
         'lightning_environment_pair','lightning_shooter_pair','lightning_dasher_pair',
+        'lightning_shooter_presenter','lightning_shooter_use_material_frame',
+        'lightning_shooter_atlas','lightning_shooter_frame','lightning_shooter_drawn',
+        'lightning_dasher_presenter','lightning_dasher_use_material_frame',
+        'lightning_dasher_atlas','lightning_dasher_frame','lightning_dasher_drawn',
         'screenshot_decode','result')) {
     if (-not $report.ContainsKey($key)) { throw "missing report field: $key" }
 }
@@ -105,9 +156,22 @@ if ($report.result -ne 'pass' -or $report.manifest -ne 'pass' -or
         $report.lightning_environment_pair -ne 'resident' -or
         $report.lightning_shooter_pair -ne 'resident' -or
         $report.lightning_dasher_pair -ne 'resident' -or
+        $report.lightning_shooter_presenter -ne 'pass' -or
+        $report.lightning_shooter_use_material_frame -ne 'pass' -or
+        $report.lightning_shooter_atlas -ne 'lightning_shooter' -or
+        $report.lightning_shooter_drawn -ne 'pass' -or
+        $report.lightning_dasher_presenter -ne 'pass' -or
+        $report.lightning_dasher_use_material_frame -ne 'pass' -or
+        $report.lightning_dasher_atlas -ne 'lightning_dasher' -or
+        $report.lightning_dasher_drawn -ne 'pass' -or
         $report.screenshot_isolation -ne 'pass' -or $report.screenshot_decode -ne 'pass' -or
         $report.monsters -ne 'fire_bomber,fire_charger,water_bulwark,water_support,lightning_shooter,lightning_dasher,chaos_chaser,chaos_hazard') {
     throw 'formal material report rejected'
+}
+$shooterFrame = [uint16]$report.lightning_shooter_frame
+$dasherFrame = [uint16]$report.lightning_dasher_frame
+if ($shooterFrame -ge 12 -or $dasherFrame -ge 12) {
+    throw 'formal material report rejected invalid lightning frame index'
 }
 $atlasBytes = [uint64]$report.atlas_bytes
 if ($atlasBytes -lt 150765568) { throw 'paired texture budget was not fully counted' }
@@ -135,7 +199,11 @@ $lightningMonsterScreenshot = Join-Path $EvidenceDirectory $report.lightning_mon
 if (-not (Test-Path -LiteralPath $lightningMonsterScreenshot -PathType Leaf)) { throw 'missing lightning-monster screenshot' }
 $lightningMonsterSize = Read-PngSize $lightningMonsterScreenshot
 if ($lightningMonsterSize[0] -ne 1280 -or $lightningMonsterSize[1] -ne 720) { throw 'wrong lightning-monster screenshot size' }
-Measure-LightningCapture $lightningMonsterScreenshot
+$lightningBackgroundScreenshot = Join-Path $EvidenceDirectory $report.lightning_background_screenshot
+if (-not (Test-Path -LiteralPath $lightningBackgroundScreenshot -PathType Leaf)) { throw 'missing lightning background baseline' }
+$lightningBackgroundSize = Read-PngSize $lightningBackgroundScreenshot
+if ($lightningBackgroundSize[0] -ne 1280 -or $lightningBackgroundSize[1] -ne 720) { throw 'wrong lightning background screenshot size' }
+Measure-LightningCapture $lightningMonsterScreenshot $lightningBackgroundScreenshot
 $f12Screenshot = Join-Path $EvidenceDirectory $report.f12_screenshot
 if (-not (Test-Path -LiteralPath $f12Screenshot -PathType Leaf)) { throw 'missing isolated F12 screenshot' }
 $f12Size = Read-PngSize $f12Screenshot
@@ -168,4 +236,4 @@ foreach ($expected in $expectedAtlases) {
         throw "wrong atlas dimensions: $($expected[0])"
     }
 }
-Write-Output 'stage12 material evidence validated: screenshots, atlases, fallback, input/hole, eight monsters, water and lightning residency'
+Write-Output 'stage12 material evidence validated: screenshots, atlases, fallback, input/hole, runtime monster draws, and lightning baseline contours'

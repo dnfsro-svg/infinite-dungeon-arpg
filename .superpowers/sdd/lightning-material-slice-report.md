@@ -97,3 +97,59 @@ The regenerated formal lightning capture was visually re-inspected after the
 atlas rebuild. Both lightning monsters remain visible in their expected combat
 regions, the dark/brass/cyan ecology is intact and the central fight lane remains
 readable.
+
+## Second review hardening
+
+The interpolation gate no longer depends on an exact 50 percent arithmetic
+average. After silhouette registration it estimates the interpolation amount
+from all visible RGBA differences, verifies correlated before-to-middle and
+middle-to-after deltas, checks normalized fit residuals at 4, 8, 16 and 32
+channel-value tolerances, and requires alpha-weighted contour/keypoint moments
+to follow a linear trajectory. It evaluates both centroid-registered and
+foot/body-anchor-preserving candidates so articulated limbs cannot disguise a
+tween or make a real redrawn pose fail merely because its centroid moved.
+
+RED tests demonstrated that the previous gate accepted a bilinear-resampled
+tween, a 0.32 eased tween and a midpoint tween with small color perturbation and
+six-level compression. Those three samples are now rejected end to end by
+`validate_frames`; a deliberately nonlinear intermediate pose remains accepted.
+The full generator also accepts every real shooter and dasher source sequence,
+providing positive coverage against false rejection.
+
+The formal host now records what happened in the production actor renderer for
+both lightning monsters, rather than treating atlas residency as draw proof.
+For every presented frame it reports presenter visibility,
+`use_material_frame`, selected atlas, selected frame index and the actual
+`MaterialPack::draw_frame` return value. The formal result hard-requires the
+shooter and dasher to select their respective atlases and complete a material
+frame draw.
+
+A second deterministic lightning capture uses the same ecology and camera but
+removes all showcase monsters only from the copied formal presentation
+snapshot. The validator compares each lightning-monster region against this
+background baseline, thresholds material pixel differences, and requires a
+large connected contour with minimum width and height. Global lightning palette
+checks remain ecology evidence only; they are no longer accepted as evidence
+that a monster was drawn. Negative self-tests replace both monster regions with
+the exact baseline and separately falsify the runtime `drawn` field; both are
+rejected. An out-of-range runtime frame is rejected as well.
+
+Fresh MSVC x64 verification:
+
+- `python tests/platform/lightning_asset_pipeline_tests.py` -- PASS, 9 tests
+- `python tools/build_lightning_material_slice.py` -- PASS, every real source board
+- build targets `arpg_platform_tests` and `arpg_stage12_material_formal` -- PASS
+- `platform.units` -- PASS, 407 cases and 0 failures
+- `stage12.lightning_asset_pipeline` -- PASS
+- `stage12.material_formal` -- PASS
+- `stage12.material_evidence_validator` -- PASS
+- `stage12.material_evidence_validator_self_test` -- PASS
+- `stage12.material_root_safety` -- PASS
+- combined CTest selection -- 6 of 6 passed
+
+The fresh preset configuration confirmed MSVC 19.44 x64 and Windows SDK 26100.
+The repository-wide all-target build later stopped in the unrelated existing
+`stage11d_loot_formal` target because Win32 `CloseWindow`/`ShowCursor`
+declarations conflict with raylib. The two targets in this slice were then
+explicitly built in that same fresh tree and the complete six-test selection
+above passed; no Stage 11D source was changed here.

@@ -89,6 +89,13 @@ bool CombatRenderer::material_atlas_available(
     return material_pack_.available(atlas);
 }
 
+MonsterMaterialDrawRuntimeStatus CombatRenderer::monster_material_draw_status(
+    combat::MonsterId monster) const noexcept {
+    const std::size_t index = static_cast<std::size_t>(monster);
+    if (index >= monster_material_draw_statuses_.size()) return {};
+    return monster_material_draw_statuses_[index];
+}
+
 DoorRenderDecision door_render_decision(
     DoorVisualMode mode,
     dungeon::ExitDirection direction) noexcept {

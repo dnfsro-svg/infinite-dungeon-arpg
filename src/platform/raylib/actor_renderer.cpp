@@ -483,6 +483,7 @@ MonsterBarVisualPlan make_monster_bar_visual_plan(
 void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
     const dungeon::DungeonSnapshot& current, float alpha, bool draw_debug,
     const CombatFeedback& feedback) noexcept {
+    monster_material_draw_statuses_.fill({});
     if (!current.combat.has_value()) return;
     const float width = static_cast<float>(GetScreenWidth());
     const float height = static_cast<float>(GetScreenHeight());
@@ -499,6 +500,14 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
                 current_combat.tick,
                 feedback.target_flash_seconds(index) > 0.0F);
         if (!material_plan.visible) continue;
+        MonsterMaterialDrawRuntimeStatus& material_status =
+            monster_material_draw_statuses_[static_cast<std::size_t>(monster.id)];
+        material_status.presenter_visible = true;
+        material_status.use_material_frame = material_plan.use_material_frame;
+        material_status.frame_index = material_plan.frame_index;
+        if (material_plan.frame.has_value()) {
+            material_status.atlas = material_plan.frame->atlas;
+        }
         Vec3 position = monster.position;
         const MonsterSnapshot& previous_monster = previous_combat.monsters[index];
         if (monster.id == previous_monster.id && monster.generation == previous_monster.generation
@@ -548,8 +557,12 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
             }
             const float hit_flash_seconds = feedback.target_flash_seconds(
                 item.monster_index);
-            if (draw_monster_animation(material_pack_, monster,
-                    item.material_plan, projected, hit_flash_seconds)
+            const bool material_frame_drawn = draw_monster_animation(
+                material_pack_, monster, item.material_plan, projected,
+                hit_flash_seconds);
+            monster_material_draw_statuses_[static_cast<std::size_t>(monster.id)]
+                .drawn |= material_frame_drawn;
+            if (material_frame_drawn
                 || draw_material_actor(material_pack_, sprite, monster.facing,
                     false, projected, hit_flash_seconds)) {
                 draw_monster_presentation(monster, item.position, current.ecology,

@@ -336,12 +336,28 @@ def registered_pose_similarity(lhs: Image.Image,
     return best
 
 
-def is_linear_interpolation(before: Image.Image, middle: Image.Image,
-                            after: Image.Image) -> bool:
-    _, before_shift = registered_pose_similarity(before, middle)
-    _, after_shift = registered_pose_similarity(after, middle)
-    compared = 0
-    matching = 0
+def _cosine_similarity(lhs: list[float], rhs: list[float]) -> float:
+    denominator = math.sqrt(sum(value * value for value in lhs)
+                            * sum(value * value for value in rhs))
+    if denominator <= 1.0e-9:
+        return 0.0
+    return sum(first * second for first, second in zip(lhs, rhs)) / denominator
+
+
+def _trajectory_follows(lhs: list[float], total: list[float]) -> bool:
+    total_energy = sum(value * value for value in total)
+    lhs_energy = sum(value * value for value in lhs)
+    if total_energy <= 1.0e-12:
+        return lhs_energy <= 1.0e-12
+    return _cosine_similarity(lhs, total) >= 0.96
+
+
+def _linear_interpolation_evidence(before: Image.Image, middle: Image.Image,
+                                   after: Image.Image,
+                                   before_shift: tuple[int, int],
+                                   after_shift: tuple[int, int]) -> bool:
+    samples: list[tuple[int, int, int]] = []
+    alpha_moments = [[0.0] * 6 for _ in range(3)]
     transparent = (0, 0, 0, 0)
     for y in range(middle.height):
         for x in range(middle.width):
@@ -358,11 +374,76 @@ def is_linear_interpolation(before: Image.Image, middle: Image.Image,
                      and 0 <= after_y < after.height else transparent)
             if first[3] <= 24 and second[3] <= 24 and third[3] <= 24:
                 continue
-            compared += 1
-            if all(abs(second[channel] * 2 - first[channel] - third[channel]) <= 2
-                   for channel in range(4)):
-                matching += 1
-    return compared > 0 and matching * 100 >= compared * 98
+            for channel in range(4):
+                samples.append((first[channel], second[channel], third[channel]))
+            for moment, pixel in zip(alpha_moments, (first, second, third)):
+                alpha = pixel[3] / 255.0
+                moment[0] += alpha
+                moment[1] += alpha * x
+                moment[2] += alpha * y
+                moment[3] += alpha * x * x
+                moment[4] += alpha * y * y
+                moment[5] += alpha * x * y
+    if not samples:
+        return False
+    total_difference = [third - first for first, _, third in samples]
+    total_energy = sum(value * value for value in total_difference)
+    if total_energy <= 1.0:
+        return False
+    early_difference = [second - first for first, second, _ in samples]
+    late_difference = [third - second for _, second, third in samples]
+    amount = sum(total * early for total, early
+                 in zip(total_difference, early_difference)) / total_energy
+    if not 0.12 <= amount <= 0.88:
+        return False
+    residuals = [second - (first + amount * (third - first))
+                 for first, second, third in samples]
+    residual_ratio = math.sqrt(
+        sum(value * value for value in residuals) / total_energy)
+    approximate = {
+        threshold: sum(abs(value) <= threshold for value in residuals)
+        / len(residuals)
+        for threshold in (4, 8, 16, 32)
+    }
+
+    # Alpha-weighted contour moments act as stable silhouette keypoints.  A
+    # blended/resampled tween keeps their trajectory collinear even when edge
+    # pixels have been antialiased; a genuinely redrawn pose does not.
+    scales = (middle.width * middle.height,
+              middle.width * middle.width * middle.height,
+              middle.height * middle.width * middle.height,
+              middle.width ** 3 * middle.height,
+              middle.height ** 3 * middle.width,
+              middle.width ** 2 * middle.height ** 2)
+    normalized = [[value / scale for value, scale in zip(moment, scales)]
+                  for moment in alpha_moments]
+    moment_total = [third - first for first, third
+                    in zip(normalized[0], normalized[2])]
+    moment_early = [second - first for first, second
+                    in zip(normalized[0], normalized[1])]
+    moment_late = [third - second for second, third
+                   in zip(normalized[1], normalized[2])]
+    return (
+        residual_ratio <= 0.29
+        and _cosine_similarity(early_difference, total_difference) >= 0.84
+        and _cosine_similarity(late_difference, total_difference) >= 0.84
+        and approximate[16] >= 0.85
+        and approximate[32] >= 0.89
+        and _trajectory_follows(moment_early, moment_total)
+        and _trajectory_follows(moment_late, moment_total))
+
+
+def is_linear_interpolation(before: Image.Image, middle: Image.Image,
+                            after: Image.Image) -> bool:
+    _, before_shift = registered_pose_similarity(before, middle)
+    _, after_shift = registered_pose_similarity(after, middle)
+    # Evaluate the pose-registered triplet and an anchor-preserving candidate.
+    # The latter matters for articulated poses whose limbs move the alpha
+    # centroid while their feet/body remain intentionally fixed.
+    candidates = {(before_shift, after_shift), ((0, 0), (0, 0))}
+    return any(_linear_interpolation_evidence(
+        before, middle, after, candidate_before, candidate_after)
+        for candidate_before, candidate_after in candidates)
 
 
 def validate_frames(frames: list[Image.Image], label: str) -> None:

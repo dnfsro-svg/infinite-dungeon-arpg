@@ -44,6 +44,14 @@ struct CombatRenderPlan final {
     std::size_t stage_count{};
 };
 
+struct MonsterMaterialDrawRuntimeStatus final {
+    bool presenter_visible{};
+    bool use_material_frame{};
+    MaterialAtlasId atlas{MaterialAtlasId::count};
+    std::uint16_t frame_index{};
+    bool drawn{};
+};
+
 [[nodiscard]] CombatRenderPlan make_combat_render_plan(
     const dungeon::DungeonSnapshot& snapshot,
     settings::LootFilterMode mode,
@@ -76,6 +84,8 @@ public:
         MaterialEcology ecology) const noexcept;
     [[nodiscard]] bool material_atlas_available(
         MaterialAtlasId atlas) const noexcept;
+    [[nodiscard]] MonsterMaterialDrawRuntimeStatus monster_material_draw_status(
+        combat::MonsterId monster) const noexcept;
     void consume_event(const combat::CombatEvent& event) noexcept;
     void consume_dungeon_event(const dungeon::DungeonEvent& event) noexcept;
     void clear_combat_transients() noexcept;
@@ -150,6 +160,9 @@ private:
     MaterialPickupFeedbackState material_pickup_feedback_{};
     MaterialPack material_pack_{};
     MonsterMaterialPresenter monster_presenter_{};
+    std::array<MonsterMaterialDrawRuntimeStatus,
+        static_cast<std::size_t>(combat::MonsterId::count)>
+        monster_material_draw_statuses_{};
     HudViewModelProjector hud_projector_{};
     HudViewModel hud_model_{};
     ActiveSkillHudModel active_skill_hud_model_{};

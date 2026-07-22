@@ -115,7 +115,8 @@ bool capture(const std::filesystem::path& root, const Resolution& resolution,
     const char* image_name = nullptr, bool showcase = false,
     bool request_f12 = false,
     std::optional<arpg::dungeon::DungeonElement> showcase_ecology = std::nullopt,
-    platform::Stage12MaterialRuntimeStatus* material_status = nullptr) {
+    platform::Stage12MaterialRuntimeStatus* material_status = nullptr,
+    bool hide_showcase_monsters = false) {
     const std::filesystem::path capture = root / (image_name == nullptr
         ? resolution.name : image_name);
     platform::RaylibHostConfig config{};
@@ -132,6 +133,7 @@ bool capture(const std::filesystem::path& root, const Resolution& resolution,
     config.stage12_material_showcase = showcase;
     config.stage12_material_showcase_ecology = showcase_ecology;
     config.stage12_material_runtime_status = material_status;
+    config.stage12_material_showcase_hide_monsters = hide_showcase_monsters;
     config.validation_request_screenshot = request_f12;
     const auto started = std::filesystem::file_time_type::clock::now()
         - std::chrono::seconds(2);
@@ -215,12 +217,27 @@ int main(int argc, char** argv) {
     const bool lightning_showcase_ok = capture(root, kResolutions[0],
         "lightning-monsters-1280x720.png", true, false,
         arpg::dungeon::DungeonElement::lightning, &lightning_runtime);
+    const bool lightning_background_ok = capture(root, kResolutions[0],
+        "lightning-background-1280x720.png", true, false,
+        arpg::dungeon::DungeonElement::lightning, nullptr, true);
     const bool lightning_runtime_ok = lightning_showcase_ok
         && lightning_runtime.shader_pipeline_ready
         && lightning_runtime.lightning_ecology_ready
         && lightning_runtime.lightning_environment_resident
         && lightning_runtime.lightning_shooter_resident
-        && lightning_runtime.lightning_dasher_resident;
+        && lightning_runtime.lightning_dasher_resident
+        && lightning_runtime.lightning_shooter_draw.presenter_visible
+        && lightning_runtime.lightning_shooter_draw.use_material_frame
+        && lightning_runtime.lightning_shooter_draw.atlas
+            == platform::MaterialAtlasId::lightning_shooter
+        && lightning_runtime.lightning_shooter_draw.frame_index < 12U
+        && lightning_runtime.lightning_shooter_draw.drawn
+        && lightning_runtime.lightning_dasher_draw.presenter_visible
+        && lightning_runtime.lightning_dasher_draw.use_material_frame
+        && lightning_runtime.lightning_dasher_draw.atlas
+            == platform::MaterialAtlasId::lightning_dasher
+        && lightning_runtime.lightning_dasher_draw.frame_index < 12U
+        && lightning_runtime.lightning_dasher_draw.drawn;
     const std::filesystem::path f12_capture = root / "f12-monsters-1280x720.png"
         / "stage8-equipment-loot.png";
     std::error_code f12_error{};
@@ -237,6 +254,7 @@ int main(int argc, char** argv) {
            << "monster_screenshot=monsters-1280x720.png\n"
            << "water_monster_screenshot=water-monsters-1280x720.png\n"
            << "lightning_monster_screenshot=lightning-monsters-1280x720.png\n"
+           << "lightning_background_screenshot=lightning-background-1280x720.png\n"
            << "shader_pipeline=" << (water_runtime.shader_pipeline_ready
                     && lightning_runtime.shader_pipeline_ready
                 ? "pass" : "fail") << '\n'
@@ -256,15 +274,26 @@ int main(int argc, char** argv) {
                 ? "resident" : "missing") << '\n'
            << "lightning_dasher_pair=" << (lightning_runtime.lightning_dasher_resident
                 ? "resident" : "missing") << '\n'
+           << "lightning_shooter_presenter=" << (lightning_runtime.lightning_shooter_draw.presenter_visible ? "pass" : "fail") << '\n'
+           << "lightning_shooter_use_material_frame=" << (lightning_runtime.lightning_shooter_draw.use_material_frame ? "pass" : "fail") << '\n'
+           << "lightning_shooter_atlas=" << (lightning_runtime.lightning_shooter_draw.atlas == platform::MaterialAtlasId::lightning_shooter ? "lightning_shooter" : "wrong") << '\n'
+           << "lightning_shooter_frame=" << lightning_runtime.lightning_shooter_draw.frame_index << '\n'
+           << "lightning_shooter_drawn=" << (lightning_runtime.lightning_shooter_draw.drawn ? "pass" : "fail") << '\n'
+           << "lightning_dasher_presenter=" << (lightning_runtime.lightning_dasher_draw.presenter_visible ? "pass" : "fail") << '\n'
+           << "lightning_dasher_use_material_frame=" << (lightning_runtime.lightning_dasher_draw.use_material_frame ? "pass" : "fail") << '\n'
+           << "lightning_dasher_atlas=" << (lightning_runtime.lightning_dasher_draw.atlas == platform::MaterialAtlasId::lightning_dasher ? "lightning_dasher" : "wrong") << '\n'
+           << "lightning_dasher_frame=" << lightning_runtime.lightning_dasher_draw.frame_index << '\n'
+           << "lightning_dasher_drawn=" << (lightning_runtime.lightning_dasher_draw.drawn ? "pass" : "fail") << '\n'
            << "f12_screenshot=f12-monsters-1280x720.png/stage8-equipment-loot.png\n"
            << "screenshot_isolation=" << (f12_ok ? "pass" : "fail") << '\n'
-           << "screenshot_decode=" << (captures_ok && showcase_ok && water_showcase_ok && lightning_showcase_ok && f12_ok ? "pass" : "fail") << '\n'
-           << "result=" << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && water_runtime_ok && lightning_runtime_ok && f12_ok && input_hole_ok ? "pass" : "fail")
+           << "screenshot_decode=" << (captures_ok && showcase_ok && water_showcase_ok && lightning_showcase_ok && lightning_background_ok && f12_ok ? "pass" : "fail") << '\n'
+           << "result=" << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && f12_ok && input_hole_ok ? "pass" : "fail")
            << '\n';
     std::cout << "stage12 material formal "
-              << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && water_runtime_ok && lightning_runtime_ok && f12_ok && input_hole_ok ? "PASS" : "FAIL")
+              << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && f12_ok && input_hole_ok ? "PASS" : "FAIL")
               << std::endl;
     return report && captures_ok && fallback_capture && !error && manifest_ok
         && showcase_ok && water_runtime_ok && lightning_runtime_ok
+        && lightning_background_ok
         && f12_ok && input_hole_ok ? 0 : 1;
 }
