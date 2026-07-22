@@ -2,12 +2,15 @@
 
 import json
 from pathlib import Path
+import re
 import shlex
 import unittest
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 LINUX_CORE_PRESET = "linux-gcc-core-debug"
+CHECKOUT_SHA = "11bd71901bbe5b1630ceea73d27597364c9af683"
+UPLOAD_ARTIFACT_SHA = "ea165f8d65b6e75b540449e92b4886f43607fa02"
 
 
 class CloudReadinessContractTest(unittest.TestCase):
@@ -129,6 +132,142 @@ class CloudReadinessContractTest(unittest.TestCase):
             for command in commands
         )
 
+    def _permissions_entries(self, workflow):
+        """Read a simple top-level permissions mapping; reject unsupported YAML."""
+        lines = workflow.splitlines()
+        headers = [index for index, line in enumerate(lines) if line == "permissions:"]
+        self.assertEqual(1, len(headers), "Workflow needs one top-level permissions block")
+
+        entries = []
+        for line in lines[headers[0] + 1 :]:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if not line[0].isspace():
+                break
+            self.assertTrue(
+                line.startswith("  ") and not line.startswith("   "),
+                "Permissions entries must use a two-space mapping indentation",
+            )
+            self.assertRegex(
+                stripped,
+                r"^[A-Za-z][A-Za-z0-9_-]*:\s*[^#\s]+$",
+                "Unsupported permissions entry syntax",
+            )
+            entries.append(stripped)
+        self.assertTrue(entries, "Permissions block must not be empty")
+        return tuple(entries)
+
+    def _workflow_uses(self, workflow):
+        """Extract only real YAML uses nodes; comments and other syntax are ignored."""
+        uses = []
+        for line in workflow.splitlines():
+            match = re.match(
+                r"^\s*(?:-\s+)?uses:\s*([^\s#]+)\s*(?:#.*)?$", line
+            )
+            if match:
+                uses.append(match.group(1))
+        return tuple(uses)
+
+    def _assert_pinned_actions(self, workflow):
+        uses = self._workflow_uses(workflow)
+        self.assertTrue(uses, "Workflow must contain real uses nodes")
+        for action in uses:
+            self.assertNotIn("@v4", action, "Movable @v4 action refs are forbidden")
+            self.assertRegex(
+                action,
+                r"^actions/[A-Za-z0-9_.-]+@[0-9a-f]{40}$",
+                f"Action ref must use a 40-character SHA: {action}",
+            )
+
+        checkout = [action for action in uses if action.startswith("actions/checkout@")]
+        upload = [
+            action for action in uses if action.startswith("actions/upload-artifact@")
+        ]
+        self.assertEqual(
+            (f"actions/checkout@{CHECKOUT_SHA}",) * 2,
+            tuple(checkout),
+            "Each checkout node must use the approved SHA",
+        )
+        self.assertEqual(
+            (f"actions/upload-artifact@{UPLOAD_ARTIFACT_SHA}",),
+            tuple(upload),
+            "The upload-artifact node must use the approved SHA",
+        )
+
+    def _without_powershell_line_comments(self, script):
+        """Strip # comments outside quoted strings; reject unterminated quoted strings."""
+        cleaned = []
+        for line in script.splitlines():
+            quote = None
+            output = []
+            for character in line:
+                if character in "'\"":
+                    if quote is None:
+                        quote = character
+                    elif quote == character:
+                        quote = None
+                    output.append(character)
+                elif character == "#" and quote is None:
+                    break
+                else:
+                    output.append(character)
+            self.assertIsNone(quote, "Unsupported unterminated PowerShell string")
+            cleaned.append("".join(output).rstrip())
+        return tuple(cleaned)
+
+    def _vswhere_args_tokens(self, script):
+        """Parse the unique string-only vswhere array; unsupported PowerShell fails closed."""
+        lines = self._without_powershell_line_comments(script)
+        starts = [
+            index
+            for index, line in enumerate(lines)
+            if re.fullmatch(r"\s*\$vswhereArgs\s*=\s*@\(\s*", line)
+        ]
+        self.assertEqual(1, len(starts), "Expected one $vswhereArgs array")
+
+        values = []
+        end = None
+        for index in range(starts[0] + 1, len(lines)):
+            line = lines[index].strip()
+            if line == ")":
+                end = index
+                break
+            self.assertIsNotNone(
+                re.fullmatch(r"(?:'[^']*'\s*,?\s*)+", line),
+                "vswhere args must be a string-only array with a standalone closing parenthesis",
+            )
+            values.extend(re.findall(r"'([^']*)'", line))
+        self.assertIsNotNone(end, "Missing closing parenthesis for $vswhereArgs")
+        return tuple(values), lines
+
+    def _assert_vswhere_contract(self, script):
+        values, lines = self._vswhere_args_tokens(script)
+        self.assertNotIn(
+            "Microsoft.VisualStudio.Product.BuildTools",
+            values,
+            "vswhere must not be restricted to Build Tools",
+        )
+        self.assertEqual("*", values[values.index("-products") + 1])
+        self.assertEqual("[17.0,18.0)", values[values.index("-version") + 1])
+        requires = values[values.index("-requires") + 1 : values.index("-property")]
+        self.assertIn("Microsoft.VisualStudio.Component.VC.Tools.x86.x64", requires)
+        self.assertIn("Microsoft.VisualStudio.Component.Windows11SDK.26100", requires)
+
+        install_commands = [
+            line
+            for line in lines
+            if re.fullmatch(
+                r"\s*\$installPath\s*=\s*&\s+\$vswhere\s+@vswhereArgs\s*",
+                line,
+            )
+        ]
+        self.assertEqual(
+            1,
+            len(install_commands),
+            "$installPath must be assigned by exactly one & $vswhere @vswhereArgs command",
+        )
+
     def test_linux_core_debug_configure_preset_uses_required_core_settings(self):
         presets = self._load_presets()
         configure = self._preset_by_name(
@@ -214,36 +353,32 @@ class CloudReadinessContractTest(unittest.TestCase):
     def test_ci_workflow_pins_permissions_and_official_actions(self):
         workflow = self._read_required_file(".github/workflows/build-and-test.yml")
 
-        self.assertIn(
-            "permissions:\n  contents: read",
-            workflow,
-            "Workflow must request read-only repository contents permission",
+        self.assertEqual(("contents: read",), self._permissions_entries(workflow))
+        self._assert_pinned_actions(workflow)
+
+        comment_decoy = workflow.replace(
+            "permissions:\n", "# permissions:\n", 1
         )
-        self.assertIn(
-            "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
-            workflow,
-            "Checkout action must be pinned to the approved full SHA",
-        )
-        self.assertIn(
-            "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
-            workflow,
-            "Artifact action must be pinned to the approved full SHA",
-        )
+        with self.assertRaises(AssertionError):
+            self._permissions_entries(comment_decoy)
+        action_rollback = workflow.replace(CHECKOUT_SHA, "v4", 1)
+        action_rollback += f"\n# - uses: actions/checkout@{CHECKOUT_SHA}\n"
+        with self.assertRaises(AssertionError):
+            self._assert_pinned_actions(action_rollback)
 
     def test_configure_accepts_all_vs_2022_products_with_required_components(self):
         script = self._read_required_file("scripts/Configure.ps1")
 
-        self.assertIn("'-products', '*'", script)
-        self.assertIn("'-version', '[17.0,18.0)'", script)
-        self.assertIn(
-            "'Microsoft.VisualStudio.Component.VC.Tools.x86.x64'", script
+        self._assert_vswhere_contract(script)
+
+        products_rollback = script.replace(
+            "'-products', '*'",
+            "'-products', 'Microsoft.VisualStudio.Product.BuildTools'",
+            1,
         )
-        self.assertIn(
-            "'Microsoft.VisualStudio.Component.Windows11SDK.26100'", script
-        )
-        self.assertIn(
-            "VS 2022 with MSVC x64 and SDK 26100 not found", script
-        )
+        products_rollback += "\n# '-products', '*'\n"
+        with self.assertRaises(AssertionError):
+            self._assert_vswhere_contract(products_rollback)
 
 
 if __name__ == "__main__":
