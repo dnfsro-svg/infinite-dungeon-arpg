@@ -4,6 +4,7 @@
 #include "combat_renderer.hpp"
 #include "combat/monster_affix_generation.hpp"
 #include "control_hints.hpp"
+#include "death_overlay_font.hpp"
 #include "core/fixed_step.hpp"
 #include "dungeon_runtime.hpp"
 #include "dungeon_view_math.hpp"
@@ -3165,7 +3166,34 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     material_status.ui_material_draws[index] =
                         renderer.material_sprite_draw_count(
                             kUiMaterialSprites[index]);
+                    material_status.ui_direct_stretch_draws[index] =
+                        renderer.material_direct_stretch_draw_count(
+                            kUiMaterialSprites[index]);
                 }
+                material_status.bundled_font_ready =
+                    renderer.hud_font_ready()
+                    && pause_menu_renderer.has_cjk_font();
+                material_status.bundled_font_glyph_count =
+                    renderer.hud_font_ready()
+                    ? static_cast<std::uint16_t>((std::min)(
+                        renderer.hud_font().glyphCount, 65535))
+                    : 0U;
+                const Font runtime_font = renderer.hud_font();
+                material_status.bundled_font_source_base_size =
+                    renderer.hud_font_ready()
+                    ? static_cast<std::uint16_t>((std::max)(
+                        runtime_font.baseSize, 0))
+                    : 0U;
+                material_status.bundled_font_atlas_bytes =
+                    renderer.hud_font_ready()
+                    ? ui_font_atlas_bytes(runtime_font.texture.width,
+                        runtime_font.texture.height)
+                    : 0U;
+                material_status.bundled_font_total_atlas_bytes =
+                    material_status.bundled_font_atlas_bytes
+                        * kUiFontAtlasInstanceCount;
+                material_status.bundled_font_total_atlas_byte_budget =
+                    kUiFontTotalAtlasByteBudget;
             }
 // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN presented_semantics
             stage11d_validation_state.target_visible = stage11d_target_visible(

@@ -131,6 +131,13 @@ struct Stage12MaterialRuntimeStatus final {
     std::array<std::uint64_t, items::kMaterialCount> material_draws{};
     bool ui_material_resident{};
     std::array<std::uint64_t, 40U> ui_material_draws{};
+    std::array<std::uint64_t, 40U> ui_direct_stretch_draws{};
+    bool bundled_font_ready{};
+    std::uint16_t bundled_font_glyph_count{};
+    std::uint16_t bundled_font_source_base_size{};
+    std::uint64_t bundled_font_atlas_bytes{};
+    std::uint64_t bundled_font_total_atlas_bytes{};
+    std::uint64_t bundled_font_total_atlas_byte_budget{};
 };
 
 struct RaylibHostConfig final {

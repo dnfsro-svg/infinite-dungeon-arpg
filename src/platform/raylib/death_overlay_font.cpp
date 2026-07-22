@@ -56,12 +56,12 @@ void add_text(DeathOverlayFontPlan& plan, const char* text) noexcept {
 DeathOverlayFontPlan death_overlay_font_plan() noexcept {
     DeathOverlayFontPlan plan{};
     plan.candidate_paths = {{
-        "C:/Windows/Fonts/NotoSansSC-VF.ttf",
-        "C:/Windows/Fonts/simhei.ttf",
-        "C:/Windows/Fonts/Deng.ttf",
-        "C:/Windows/Fonts/simfang.ttf",
+        "assets/fonts/NotoSansSC[wght].ttf",
+        nullptr,
+        nullptr,
+        nullptr,
     }};
-    plan.candidate_count = plan.candidate_paths.size();
+    plan.candidate_count = 1U;
     for (int codepoint = 32; codepoint <= 126; ++codepoint) {
         add_codepoint(plan, codepoint);
     }
@@ -76,7 +76,8 @@ DeathOverlayFontPlan death_overlay_font_plan() noexcept {
         "需要恢复存档再次交互，以放弃奖励离开后触碰同一出口全部剩余并下降进入下一层进入出口已清理升级至级有被动点打开背包树"
         "投弹者冲锋之壁垒支援射手突袭追猎灾术师原生燃烧连锁爆破雷暴"
         "猎杀之焰扩张强力狂热迅捷装甲多重寒冷腐蚀闪现无规则追猎狂怒"
-        "沉重脚步疲惫恢复献祭");
+        "沉重脚步疲惫恢复献祭"
+        "装备背包技能石暂停继续设置退出游戏关闭选择操作提示材料条目");
     return plan;
 }
 

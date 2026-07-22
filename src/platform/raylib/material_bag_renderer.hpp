@@ -60,9 +60,9 @@ public:
     [[nodiscard]] std::optional<items::MaterialId> selected_material() const noexcept;
     [[nodiscard]] items::DirectedCategory directed_category() const noexcept;
     void draw(const items::ItemOwnershipState&, const MaterialPack&,
-        int width, int height) const noexcept;
+        Font font, bool font_ready, int width, int height) const noexcept;
     void draw_reinforcement_confirmation(const MaterialPack&,
-        int width, int height) const noexcept;
+        Font font, bool font_ready, int width, int height) const noexcept;
 
 private:
     std::optional<items::MaterialId> selected_{};

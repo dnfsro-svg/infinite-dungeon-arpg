@@ -56,6 +56,8 @@ public:
     [[nodiscard]] bool can_draw(MaterialSpriteId id) const noexcept;
     [[nodiscard]] std::uint64_t sprite_draw_count(
         MaterialSpriteId id) const noexcept;
+    [[nodiscard]] std::uint64_t direct_stretch_draw_count(
+        MaterialSpriteId id) const noexcept;
     [[nodiscard]] bool draw(
         MaterialSpriteId id, Vector2 foot_position, bool flip_x,
         float scale = 1.0F, Color tint = WHITE) const noexcept;
@@ -64,6 +66,9 @@ public:
     [[nodiscard]] bool draw_nine_slice(MaterialSpriteId id,
         Rectangle destination, float border_pixels = 32.0F,
         Color tint = WHITE) const noexcept;
+    [[nodiscard]] bool draw_horizontal_slice(MaterialSpriteId id,
+        Rectangle source_within_frame, float cap_source_width,
+        Rectangle destination, Color tint = WHITE) const noexcept;
     [[nodiscard]] bool draw_region_fit(MaterialSpriteId id,
         Rectangle source_within_frame, Rectangle destination_bounds,
         Color tint = WHITE) const noexcept;
@@ -83,6 +88,9 @@ private:
         warnings_emitted_{};
     mutable std::array<std::uint64_t,
         static_cast<std::size_t>(MaterialSpriteId::count)> sprite_draw_counts_{};
+    mutable std::array<std::uint64_t,
+        static_cast<std::size_t>(MaterialSpriteId::count)>
+        direct_stretch_draw_counts_{};
     MaterialEcology current_ecology_{MaterialEcology::common};
     bool material_pipeline_ready_{};
 };

@@ -7,6 +7,22 @@ namespace arpg::platform {
 
 inline constexpr std::size_t kDeathOverlayFontCandidateCapacity = 4U;
 inline constexpr std::size_t kDeathOverlayCodepointCapacity = 384U;
+inline constexpr int kUiFontSourceBaseSize = 64;
+inline constexpr int kUiFontMaximumDisplaySize = 26;
+inline constexpr std::size_t kUiFontAtlasBytesPerPixel = 2U;
+inline constexpr std::size_t kUiFontAtlasByteBudget = 8U * 1024U * 1024U;
+inline constexpr std::size_t kUiFontAtlasInstanceCount = 3U;
+inline constexpr std::size_t kUiFontTotalAtlasByteBudget =
+    kUiFontAtlasByteBudget * kUiFontAtlasInstanceCount;
+
+[[nodiscard]] constexpr std::size_t ui_font_atlas_bytes(
+    int width, int height) noexcept {
+    return width > 0 && height > 0
+        ? static_cast<std::size_t>(width)
+            * static_cast<std::size_t>(height)
+            * kUiFontAtlasBytesPerPixel
+        : 0U;
+}
 
 struct DeathOverlayFontPlan final {
     std::array<const char*, kDeathOverlayFontCandidateCapacity>

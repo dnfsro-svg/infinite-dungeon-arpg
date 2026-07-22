@@ -84,6 +84,68 @@ foreach ($page in @('hud','inventory','skill','pause')) {
         Name="missing-$page-ui-runtime-draw-1920"; Path=$missingPageRuntime }
 }
 
+$missingBundledFont = New-Mutation 'missing-bundled-font-runtime'
+$reportPath = Join-Path $missingBundledFont 'stage12-material-evidence.txt'
+(Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8).Replace(
+    'bundled_font_runtime=pass', 'bundled_font_runtime=fail') |
+    Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+$mutations += @{ Name='missing-bundled-font-runtime'; Path=$missingBundledFont }
+
+$emptyFontSubset = New-Mutation 'empty-bundled-font-subset'
+$reportPath = Join-Path $emptyFontSubset 'stage12-material-evidence.txt'
+(Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) -replace
+    'bundled_font_glyph_count=\d+', 'bundled_font_glyph_count=0' |
+    Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+$mutations += @{ Name='empty-bundled-font-subset'; Path=$emptyFontSubset }
+
+$lowResolutionFont = New-Mutation 'low-resolution-bundled-font'
+$reportPath = Join-Path $lowResolutionFont 'stage12-material-evidence.txt'
+(Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) -replace
+    'bundled_font_source_base_size=\d+', 'bundled_font_source_base_size=32' |
+    Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+$mutations += @{ Name='low-resolution-bundled-font'; Path=$lowResolutionFont }
+
+$oversizeFontAtlas = New-Mutation 'oversize-bundled-font-atlas'
+$reportPath = Join-Path $oversizeFontAtlas 'stage12-material-evidence.txt'
+(Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) -replace
+    'bundled_font_atlas_bytes=\d+', 'bundled_font_atlas_bytes=999999999' |
+    Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+$mutations += @{ Name='oversize-bundled-font-atlas'; Path=$oversizeFontAtlas }
+
+$lowTextContrast = New-Mutation 'low-ui-text-contrast'
+$reportPath = Join-Path $lowTextContrast 'stage12-material-evidence.txt'
+(Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8).Replace(
+    'ui_text_contrast=pass', 'ui_text_contrast=fail') |
+    Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+$mutations += @{ Name='low-ui-text-contrast'; Path=$lowTextContrast }
+
+$gradientTextFill = New-Mutation 'non-solid-ui-text-fill'
+$reportPath = Join-Path $gradientTextFill 'stage12-material-evidence.txt'
+(Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8).Replace(
+    'ui_text_solid_fill=pass', 'ui_text_solid_fill=fail') |
+    Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+$mutations += @{ Name='non-solid-ui-text-fill'; Path=$gradientTextFill }
+
+foreach ($suffix in @('', '_1920')) {
+    foreach ($page in @('hud','inventory','skill','pause')) {
+        $stretch = New-Mutation "stretched-$page$suffix"
+        $reportPath = Join-Path $stretch 'stage12-material-evidence.txt'
+        (Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8).Replace(
+            "${page}_decorative_stretch${suffix}=pass",
+            "${page}_decorative_stretch${suffix}=fail") |
+            Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+        $mutations += @{ Name="stretched-$page$suffix"; Path=$stretch }
+
+        $overlap = New-Mutation "overlap-$page$suffix"
+        $reportPath = Join-Path $overlap 'stage12-material-evidence.txt'
+        (Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8).Replace(
+            "${page}_text_layout${suffix}=pass",
+            "${page}_text_layout${suffix}=fail") |
+            Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+        $mutations += @{ Name="overlap-$page$suffix"; Path=$overlap }
+    }
+}
+
 $fallbackHud = New-Mutation 'fallback-hud-ui'
 Copy-Item -LiteralPath (Join-Path $fallbackHud 'ui-baseline-1280x720.png') `
     -Destination (Join-Path $fallbackHud 'ui-hud-1280x720.png') -Force

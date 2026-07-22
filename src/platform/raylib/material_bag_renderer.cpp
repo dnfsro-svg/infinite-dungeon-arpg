@@ -2,6 +2,7 @@
 
 #include "material_loot_view.hpp"
 #include "ui_material.hpp"
+#include "ui_text_contrast.hpp"
 
 #include <raylib.h>
 
@@ -13,6 +14,23 @@ namespace {
 constexpr float kInset = 10.0F;
 constexpr float kGap = 4.0F;
 constexpr std::size_t kColumns = 2U;
+
+void draw_material_text(Font font, bool ready, const char* text,
+    float x, float y, float size, Color color) noexcept {
+    if (text == nullptr || text[0] == '\0') return;
+    const Font draw_font = ready && IsFontValid(font) ? font : GetFontDefault();
+    const UiTextContrastStyle style = ui_text_contrast_style();
+    color.a = 255U;
+    if (ui_luma_contrast_ratio(color, style.backing) < 4.5F) {
+        color = style.muted;
+    }
+    DrawTextEx(draw_font, text, {x + 2.0F, y + 2.0F}, size, 0.5F,
+        style.shadow);
+    DrawTextEx(draw_font, text, {x - 1.0F, y}, size, 0.5F, style.shadow);
+    DrawTextEx(draw_font, text, {x, y - 1.0F}, size, 0.5F, style.shadow);
+    DrawTextEx(draw_font, text, {x + 1.0F, y}, size, 0.5F, color);
+    DrawTextEx(draw_font, text, {x, y}, size, 0.5F, color);
+}
 
 bool contains(Rectangle rectangle, Vector2 point) noexcept {
     return point.x >= rectangle.x && point.x <= rectangle.x + rectangle.width
@@ -184,17 +202,19 @@ items::DirectedCategory MaterialBagRenderer::directed_category() const noexcept 
 }
 
 void MaterialBagRenderer::draw(const items::ItemOwnershipState& state,
-    const MaterialPack& assets, int width, int height) const noexcept {
+    const MaterialPack& assets, Font font, bool font_ready,
+    int width, int height) const noexcept {
     const MaterialBagLayout layout = material_bag_layout(width, height);
     if (!layout.contains_all_slots()) return;
-    if (!assets.draw_to(ui_material_sprite(
+    if (!assets.draw_nine_slice(ui_material_sprite(
             UiMaterialElement::inventory_panel_detail), layout.panel)) {
         DrawRectangleRounded(layout.panel, 0.025F, 5, Color{8, 12, 20, 247});
         DrawRectangleRoundedLinesEx(layout.panel, 0.025F, 5, 1.0F,
             Color{72, 91, 120, 255});
     }
-    DrawText("MATERIAL BAG", static_cast<int>(layout.panel.x + kInset),
-        static_cast<int>(layout.panel.y + 9.0F), 16, Color{131, 211, 255, 255});
+    draw_material_text(font, font_ready, "MATERIAL BAG",
+        layout.panel.x + 40.0F, layout.panel.y + 9.0F, 18.0F,
+        ui_text_contrast_style().primary);
     static_cast<void>(assets.draw(MaterialSpriteId::bag_frame_nw,
         {layout.panel.x + 13.0F, layout.panel.y + 13.0F}, false, 0.16F));
     static_cast<void>(assets.draw(MaterialSpriteId::bag_frame_ne,
@@ -214,9 +234,10 @@ void MaterialBagRenderer::draw(const items::ItemOwnershipState& state,
             return Color{rgba.r, rgba.g, rgba.b, rgba.a};
         }();
         const Rectangle slot = layout.slots[index];
-        if (!assets.draw_to(ui_material_sprite(selected
+        if (!assets.draw_horizontal_slice(ui_material_sprite(selected
                 ? UiMaterialElement::inventory_slot_selected
-                : UiMaterialElement::inventory_slot_idle), slot)) {
+                : UiMaterialElement::inventory_slot_idle),
+                {4.0F, 4.0F, 120.0F, 120.0F}, 28.0F, slot)) {
             DrawRectangleRounded(slot, 0.08F, 4,
                 selected ? Color{34, 68, 88, 255} : Color{21, 28, 39, 255});
             DrawRectangleRoundedLinesEx(slot, 0.08F, 4,
@@ -229,13 +250,14 @@ void MaterialBagRenderer::draw(const items::ItemOwnershipState& state,
             {slot.x + 4.0F + icon_width * 0.5F,
              slot.y + slot.height * 0.5F}, false, icon_scale));
         const items::MaterialDefinition* const definition = items::material_definition(id);
-        DrawText(definition == nullptr ? "Invalid" : definition->name.data(),
-            static_cast<int>(slot.x + 8.0F + icon_width),
-            static_cast<int>(slot.y + 3.0F), 10, color);
-        DrawText(TextFormat("x%llu", static_cast<unsigned long long>(state.materials[index])),
-            static_cast<int>(slot.x + 8.0F + icon_width),
-            static_cast<int>(slot.y + slot.height - 13.0F),
-            11, RAYWHITE);
+        draw_material_text(font, font_ready,
+            definition == nullptr ? "Invalid" : definition->name.data(),
+            slot.x + 8.0F + icon_width, slot.y + 2.0F, 13.0F, color);
+        draw_material_text(font, font_ready,
+            TextFormat("x%llu",
+                static_cast<unsigned long long>(state.materials[index])),
+            slot.x + 8.0F + icon_width, slot.y + slot.height - 16.0F,
+            13.0F, ui_text_contrast_style().primary);
         if (selected && id == items::MaterialId::directed) {
             const char* category = "Damage";
             switch (directed_category_) {
@@ -245,45 +267,50 @@ void MaterialBagRenderer::draw(const items::ItemOwnershipState& state,
             case items::DirectedCategory::element: category = "Element"; break;
             case items::DirectedCategory::count: break;
             }
-            DrawText(TextFormat("%s (R-click: cycle)", category),
-                static_cast<int>(slot.x + 5.0F), static_cast<int>(slot.y + 16.0F),
-                9, Color{255, 237, 154, 255});
+            draw_material_text(font, font_ready,
+                TextFormat("%s (R-click: cycle)", category),
+                slot.x + 5.0F, slot.y + 15.0F, 11.0F,
+                ui_text_contrast_style().warning);
         }
     }
 }
 
 void MaterialBagRenderer::draw_reinforcement_confirmation(
-    const MaterialPack& assets, int width, int height) const noexcept {
+    const MaterialPack& assets, Font font, bool font_ready,
+    int width, int height) const noexcept {
     if (!reinforcement_confirmation_item_.has_value()) return;
     const ReinforcementConfirmationLayout layout =
         reinforcement_confirmation_layout(width, height);
-    if (!assets.draw_to(ui_material_sprite(UiMaterialElement::warning_modal),
+    if (!assets.draw_nine_slice(
+            ui_material_sprite(UiMaterialElement::warning_modal),
             layout.panel)) {
         DrawRectangleRounded(layout.panel, 0.04F, 5, Color{29, 15, 18, 252});
         DrawRectangleRoundedLinesEx(layout.panel, 0.04F, 5, 2.0F,
             Color{255, 113, 96, 255});
     }
-    DrawText("DANGER: FAILURE DESTROYS EQUIPMENT",
-        static_cast<int>(layout.panel.x + 14.0F),
-        static_cast<int>(layout.panel.y + 16.0F), 14,
-        Color{255, 180, 160, 255});
-    DrawText("Use one Reinforcement Stone?",
-        static_cast<int>(layout.panel.x + 14.0F),
-        static_cast<int>(layout.panel.y + 42.0F), 13, RAYWHITE);
-    if (!assets.draw_to(ui_material_sprite(
-            UiMaterialElement::reinforcement_confirm), layout.confirm)) {
+    draw_material_text(font, font_ready,
+        "DANGER: FAILURE DESTROYS EQUIPMENT",
+        layout.panel.x + 22.0F, layout.panel.y + 17.0F, 16.0F,
+        ui_text_contrast_style().danger);
+    draw_material_text(font, font_ready, "Use one Reinforcement Stone?",
+        layout.panel.x + 22.0F, layout.panel.y + 43.0F, 15.0F,
+        ui_text_contrast_style().primary);
+    if (!assets.draw_horizontal_slice(ui_material_sprite(
+            UiMaterialElement::reinforcement_confirm),
+            {4.0F, 22.0F, 120.0F, 84.0F}, 24.0F, layout.confirm)) {
         DrawRectangleRounded(layout.confirm, 0.10F, 4,
             Color{113, 39, 39, 255});
     }
-    if (!assets.draw_to(ui_material_sprite(
-            UiMaterialElement::reinforcement_cancel), layout.cancel)) {
+    if (!assets.draw_horizontal_slice(ui_material_sprite(
+            UiMaterialElement::reinforcement_cancel),
+            {4.0F, 30.0F, 120.0F, 67.0F}, 24.0F, layout.cancel)) {
         DrawRectangleRounded(layout.cancel, 0.10F, 4,
             Color{44, 58, 74, 255});
     }
-    DrawText("CONFIRM", static_cast<int>(layout.confirm.x + 8.0F),
-        static_cast<int>(layout.confirm.y + 5.0F), 13, RAYWHITE);
-    DrawText("CANCEL", static_cast<int>(layout.cancel.x + 10.0F),
-        static_cast<int>(layout.cancel.y + 5.0F), 13, RAYWHITE);
+    draw_material_text(font, font_ready, "CONFIRM",
+        layout.confirm.x + 10.0F, layout.confirm.y + 5.0F, 13.0F, RAYWHITE);
+    draw_material_text(font, font_ready, "CANCEL",
+        layout.cancel.x + 12.0F, layout.cancel.y + 5.0F, 13.0F, RAYWHITE);
 }
 
 }  // namespace arpg::platform

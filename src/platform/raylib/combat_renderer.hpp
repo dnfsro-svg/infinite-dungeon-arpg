@@ -87,6 +87,8 @@ public:
     [[nodiscard]] const MaterialPack& material_pack() const noexcept;
     [[nodiscard]] std::uint64_t material_sprite_draw_count(
         MaterialSpriteId sprite) const noexcept;
+    [[nodiscard]] std::uint64_t material_direct_stretch_draw_count(
+        MaterialSpriteId sprite) const noexcept;
     [[nodiscard]] MonsterMaterialDrawRuntimeStatus monster_material_draw_status(
         combat::MonsterId monster) const noexcept;
     void consume_event(const combat::CombatEvent& event) noexcept;

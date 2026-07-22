@@ -2,6 +2,7 @@
 
 #include "death_overlay_font.hpp"
 #include "death_overlay_view.hpp"
+#include "ui_text_contrast.hpp"
 
 #include <cstddef>
 
@@ -21,16 +22,26 @@ void draw_text(Font font, const char* text, DeathOverlayRect bounds,
             font, text, static_cast<float>(font_size), kSpacing);
         x += (bounds.width - measured.x) * 0.5F;
     }
-    constexpr int kOutlinePixels = 2;
-    const Color outline{3, 5, 10, 245};
+    const UiTextContrastStyle style = ui_text_contrast_style();
+    color.a = 255U;
+    if (ui_luma_contrast_ratio(color, style.backing) < 4.5F) {
+        color = style.muted;
+    }
+    DrawTextEx(font, text,
+        {x + static_cast<float>(style.shadow_pixels),
+         bounds.y + static_cast<float>(style.shadow_pixels)},
+        static_cast<float>(font_size), kSpacing, style.shadow);
+    const int kOutlinePixels = style.outline_pixels;
     for (int offset_y = -kOutlinePixels; offset_y <= kOutlinePixels; ++offset_y) {
         for (int offset_x = -kOutlinePixels; offset_x <= kOutlinePixels; ++offset_x) {
             if (offset_x == 0 && offset_y == 0) continue;
             DrawTextEx(font, text, {x + static_cast<float>(offset_x),
                 bounds.y + static_cast<float>(offset_y)},
-                static_cast<float>(font_size), kSpacing, outline);
+                static_cast<float>(font_size), kSpacing, style.shadow);
         }
     }
+    DrawTextEx(font, text, {x + 1.0F, bounds.y},
+        static_cast<float>(font_size), kSpacing, color);
     DrawTextEx(font, text, {x, bounds.y}, static_cast<float>(font_size),
         kSpacing, color);
 }
@@ -56,11 +67,13 @@ bool DeathOverlayRenderer::initialize() noexcept {
     for (std::size_t index = 0U; index < plan.candidate_count; ++index) {
         const char* path = plan.candidate_paths[index];
         if (path == nullptr || !FileExists(path)) continue;
-        Font candidate = LoadFontEx(path, 32, plan.codepoints.data(),
+        Font candidate = LoadFontEx(path, kUiFontSourceBaseSize,
+            plan.codepoints.data(),
             static_cast<int>(plan.codepoint_count));
         if (IsFontValid(candidate)
                 && candidate.glyphCount
                     == static_cast<int>(plan.codepoint_count)) {
+            SetTextureFilter(candidate.texture, TEXTURE_FILTER_BILINEAR);
             font_ = candidate;
             owns_font_ = true;
             TraceLog(LOG_INFO, "DEATH OVERLAY: Loaded font %s (%i glyphs)",
@@ -92,13 +105,13 @@ void DeathOverlayRenderer::draw(
     draw_panel(layout);
     const Font draw_font = IsFontValid(font_) ? font_ : GetFontDefault();
     draw_text(draw_font, view.title.data(), layout.title,
-        layout.title_font_size, Color{255, 190, 176, 255}, true);
+        layout.title_font_size, ui_text_contrast_style().danger, true);
     for (std::size_t index = 0U; index < view.line_count; ++index) {
         const DeathOverlayRect bounds = layout.line_bounds[index];
         draw_text(draw_font, view.lines[index].text.data(), bounds,
             layout.body_font_size,
-            view.lines[index].heading ? Color{255, 190, 176, 255}
-                                      : Color{222, 228, 239, 255});
+            view.lines[index].heading ? ui_text_contrast_style().danger
+                                      : ui_text_contrast_style().primary);
     }
     DrawLine(static_cast<int>(layout.prompt.x),
         static_cast<int>(layout.prompt.y - 8.0F),
@@ -108,8 +121,8 @@ void DeathOverlayRenderer::draw(
     draw_text(draw_font, view.prompt.data(), layout.prompt,
         layout.prompt_font_size,
         snapshot.death->continue_failed
-            ? Color{255, 116, 116, 255}
-            : Color{255, 222, 146, 255}, true);
+            ? ui_text_contrast_style().danger
+            : ui_text_contrast_style().warning, true);
 }
 
 }  // namespace arpg::platform

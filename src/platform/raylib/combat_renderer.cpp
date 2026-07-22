@@ -98,6 +98,11 @@ std::uint64_t CombatRenderer::material_sprite_draw_count(
     return material_pack_.sprite_draw_count(sprite);
 }
 
+std::uint64_t CombatRenderer::material_direct_stretch_draw_count(
+    MaterialSpriteId sprite) const noexcept {
+    return material_pack_.direct_stretch_draw_count(sprite);
+}
+
 MonsterMaterialDrawRuntimeStatus CombatRenderer::monster_material_draw_status(
     combat::MonsterId monster) const noexcept {
     const std::size_t index = static_cast<std::size_t>(monster);

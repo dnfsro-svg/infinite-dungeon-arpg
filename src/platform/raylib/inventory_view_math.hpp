@@ -68,6 +68,16 @@ struct ActiveSkillLoadoutLayout final {
     Rectangle skill_stones_page_button{};
 };
 
+struct InventoryTextSafeLayout final {
+    Rectangle page_title{};
+    Rectangle equipment_panel_title{};
+    Rectangle grid_panel_title{};
+    Rectangle detail_panel_title{};
+    Rectangle skill_panel_title{};
+    Rectangle support_section_title{};
+    Rectangle inventory_section_title{};
+};
+
 enum class ActiveSkillLoadoutActionKind : std::uint8_t {
     select,
     remove,
@@ -161,6 +171,8 @@ struct ItemAttributeLabel final {
 
 [[nodiscard]] InventoryLayout inventory_layout(int width, int height) noexcept;
 [[nodiscard]] ActiveSkillLoadoutLayout active_skill_loadout_layout(
+    int width, int height) noexcept;
+[[nodiscard]] InventoryTextSafeLayout inventory_text_safe_layout(
     int width, int height) noexcept;
 [[nodiscard]] ActiveSkillLoadoutView make_active_skill_loadout_view(
     const skills::SkillLoadoutState& state,

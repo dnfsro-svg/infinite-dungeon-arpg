@@ -6,6 +6,7 @@
 #include "dungeon_runtime.hpp"
 #include "items/item_catalog.hpp"
 #include "ui_material.hpp"
+#include "ui_text_contrast.hpp"
 
 #include <raylib.h>
 
@@ -63,8 +64,29 @@ bool contains(Rectangle rectangle, Vector2 point) noexcept {
         && point.y >= rectangle.y && point.y <= rectangle.y + rectangle.height;
 }
 
+void draw_hud_font_text(Font font, bool ready, const char* text,
+    float x, float y, float size, Color color) noexcept {
+    if (text == nullptr || text[0] == '\0') return;
+    const Font draw_font = ready && IsFontValid(font) ? font : GetFontDefault();
+    const UiTextContrastStyle style = ui_text_contrast_style();
+    color.a = 255U;
+    if (ui_luma_contrast_ratio(color, style.backing) < 4.5F) {
+        color = style.muted;
+    }
+    constexpr float kSpacing = 0.5F;
+    DrawTextEx(draw_font, text,
+        {x + static_cast<float>(style.shadow_pixels),
+         y + static_cast<float>(style.shadow_pixels)},
+        size, kSpacing, style.shadow);
+    DrawTextEx(draw_font, text, {x - 1.0F, y}, size, kSpacing, style.shadow);
+    DrawTextEx(draw_font, text, {x, y - 1.0F}, size, kSpacing, style.shadow);
+    DrawTextEx(draw_font, text, {x + 1.0F, y}, size, kSpacing, color);
+    DrawTextEx(draw_font, text, {x, y}, size, kSpacing, color);
+}
+
 void draw_panel(Rectangle rectangle, const char* title,
-    const MaterialPack& assets, UiMaterialElement element) noexcept {
+    const MaterialPack& assets, UiMaterialElement element,
+    Font font, bool font_ready, Rectangle title_bounds) noexcept {
     if (!assets.draw_nine_slice(ui_material_sprite(element), rectangle)) {
         DrawRectangleRounded(rectangle, 0.025F, 5, Color{8, 12, 20, 247});
         DrawRectangleRoundedLinesEx(rectangle, 0.025F, 5, 1.0F,
@@ -75,50 +97,57 @@ void draw_panel(Rectangle rectangle, const char* title,
     static_cast<void>(assets.draw_region_fit(
         ui_material_sprite(UiMaterialElement::label_plate),
         {4.0F, 30.0F, 120.0F, 67.0F}, label_bounds));
-    DrawText(title, static_cast<int>(rectangle.x + 12.0F),
-        static_cast<int>(rectangle.y + 10.0F), 18,
-        Color{131, 211, 255, 255});
+    draw_hud_font_text(font, font_ready, title,
+        title_bounds.x, title_bounds.y + 2.0F, 19.0F,
+        ui_text_contrast_style().primary);
 }
 
 void draw_button(Rectangle rectangle, const char* label,
-    bool enabled, const MaterialPack& assets, bool active = false) noexcept {
+    bool enabled, const MaterialPack& assets, Font font, bool font_ready,
+    bool active = false) noexcept {
     const Color fill = !enabled ? Color{42, 45, 52, 255}
         : active ? Color{42, 104, 139, 255} : Color{28, 47, 67, 255};
-    const Color text = enabled ? RAYWHITE : Color{118, 123, 133, 255};
+    const UiTextContrastStyle text_style = ui_text_contrast_style();
+    const Color text = !enabled ? text_style.muted
+        : active ? text_style.interaction : text_style.primary;
     const UiMaterialElement element = !enabled
         ? UiMaterialElement::inventory_button_disabled
         : active ? UiMaterialElement::inventory_button_active
                  : UiMaterialElement::inventory_button_idle;
-    if (!assets.draw_to(ui_material_sprite(element), rectangle)) {
+    Rectangle source{4.0F, 40.0F, 120.0F, 47.0F};
+    if (element == UiMaterialElement::inventory_button_active) {
+        source = {4.0F, 42.0F, 120.0F, 44.0F};
+    } else if (element == UiMaterialElement::inventory_button_disabled) {
+        source = {4.0F, 41.0F, 120.0F, 46.0F};
+    }
+    if (!assets.draw_horizontal_slice(ui_material_sprite(element),
+            source, 24.0F, rectangle)) {
         DrawRectangleRounded(rectangle, 0.12F, 4, fill);
         DrawRectangleRoundedLinesEx(rectangle, 0.12F, 4, 1.0F,
             enabled ? Color{90, 151, 190, 255} : Color{65, 68, 75, 255});
     }
-    DrawText(label, static_cast<int>(rectangle.x + 7.0F),
-        static_cast<int>(rectangle.y + 6.0F), 14, text);
-}
-
-void draw_hud_font_text(Font font, bool ready, const char* text,
-    float x, float y, float size, Color color) noexcept {
-    if (!ready || text == nullptr || text[0] == '\0') return;
-    DrawTextEx(font, text, {x, y}, size, 1.0F, color);
+    draw_hud_font_text(font, font_ready, label,
+        rectangle.x + 9.0F, rectangle.y + 5.0F, 15.0F, text);
 }
 
 void draw_inventory_page_button(Rectangle rectangle, const char* label,
     bool active, Font font, bool font_ready,
     const MaterialPack& assets) noexcept {
-    if (!assets.draw_to(ui_material_sprite(active
+    if (!assets.draw_horizontal_slice(ui_material_sprite(active
             ? UiMaterialElement::inventory_tab_active
-            : UiMaterialElement::inventory_tab_idle), rectangle)) {
+            : UiMaterialElement::inventory_tab_idle),
+            active ? Rectangle{4.0F, 32.0F, 120.0F, 63.0F}
+                   : Rectangle{4.0F, 34.0F, 120.0F, 59.0F},
+            24.0F, rectangle)) {
         DrawRectangleRounded(rectangle, 0.14F, 4,
             active ? Color{42, 104, 139, 255} : Color{23, 39, 57, 255});
         DrawRectangleRoundedLinesEx(rectangle, 0.14F, 4, 1.0F,
             active ? Color{151, 225, 255, 255} : Color{75, 105, 137, 255});
     }
     draw_hud_font_text(font, font_ready, label,
-        rectangle.x + 12.0F, rectangle.y + 6.0F, 16.0F,
-        active ? Color{242, 250, 255, 255}
-               : Color{174, 194, 216, 255});
+        rectangle.x + 12.0F, rectangle.y + 5.0F, 17.0F,
+        active ? ui_text_contrast_style().interaction
+               : ui_text_contrast_style().primary);
 }
 
 void draw_active_skill_loadout(const dungeon::DungeonSnapshot& snapshot,
@@ -127,6 +156,8 @@ void draw_active_skill_loadout(const dungeon::DungeonSnapshot& snapshot,
     const MaterialPack& assets,
     Font font, bool font_ready) noexcept {
     const ActiveSkillLoadoutLayout layout = active_skill_loadout_layout(
+        GetScreenWidth(), GetScreenHeight());
+    const InventoryTextSafeLayout text_layout = inventory_text_safe_layout(
         GetScreenWidth(), GetScreenHeight());
     const ActiveSkillLoadoutView view = make_active_skill_loadout_view(
         snapshot.skill_loadout, selection,
@@ -139,8 +170,9 @@ void draw_active_skill_loadout(const dungeon::DungeonSnapshot& snapshot,
             Color{72, 91, 120, 255});
     }
     draw_hud_font_text(font, font_ready, u8"主动技能石槽",
-        layout.panel.x + 18.0F, layout.panel.y + 16.0F, 21.0F,
-        Color{141, 221, 255, 255});
+        text_layout.skill_panel_title.x,
+        text_layout.skill_panel_title.y + 2.0F, 23.0F,
+        ui_text_contrast_style().primary);
 
     for (std::size_t index = 0U; index < view.slots.size(); ++index) {
         const ActiveSkillLoadoutSlotView& slot = view.slots[index];
@@ -149,7 +181,7 @@ void draw_active_skill_loadout(const dungeon::DungeonSnapshot& snapshot,
             ? UiMaterialElement::skill_slot_selected
             : slot.empty ? UiMaterialElement::skill_slot_empty
                          : UiMaterialElement::skill_slot_ready;
-        if (!assets.draw_to(ui_material_sprite(slot_material), bounds)) {
+        if (!assets.draw_nine_slice(ui_material_sprite(slot_material), bounds)) {
             DrawRectangleRounded(bounds, 0.08F, 4,
                 slot.selected ? Color{38, 83, 111, 255}
                               : Color{20, 30, 44, 255});
@@ -169,18 +201,19 @@ void draw_active_skill_loadout(const dungeon::DungeonSnapshot& snapshot,
             bounds.x + 43.0F, bounds.y + 7.0F, 18.0F, WHITE);
         draw_hud_font_text(font, font_ready,
             slot.empty ? u8"空主技能槽" : slot.name.data(),
-            bounds.x + 63.0F, bounds.y + 27.0F, 15.0F,
-            slot.empty ? Color{116, 132, 151, 255}
+            bounds.x + 63.0F, bounds.y + 26.0F, 17.0F,
+            slot.empty ? ui_text_contrast_style().muted
                        : Color{210, 241, 255, 255});
     }
 
     draw_hud_font_text(font, font_ready, u8"辅助技能石（只读）",
-        layout.support_slots[0U].x,
-        layout.support_slots[0U].y - 31.0F, 17.0F,
-        Color{171, 193, 217, 255});
+        text_layout.support_section_title.x,
+        text_layout.support_section_title.y + 2.0F, 19.0F,
+        ui_text_contrast_style().primary);
     for (const Rectangle support : layout.support_slots) {
-        if (!assets.draw_to(ui_material_sprite(
-                UiMaterialElement::skill_slot_support), support)) {
+        if (!assets.draw_region_fit(ui_material_sprite(
+                UiMaterialElement::skill_slot_support),
+                {4.0F, 5.0F, 120.0F, 117.0F}, support)) {
             DrawRectangleRounded(support, 0.08F, 4, Color{17, 24, 35, 255});
             DrawRectangleRoundedLinesEx(support, 0.08F, 4, 1.0F,
                 Color{61, 79, 101, 255});
@@ -191,20 +224,24 @@ void draw_active_skill_loadout(const dungeon::DungeonSnapshot& snapshot,
              support.y + support.height * 0.5F},
             false, 0.22F, Fade(WHITE, 0.48F)));
         draw_hud_font_text(font, font_ready, u8"空",
-            support.x + 17.0F, support.y + 17.0F, 15.0F,
-            Color{105, 121, 141, 255});
+            support.x + 17.0F, support.y + 16.0F, 17.0F,
+            ui_text_contrast_style().muted);
     }
 
     draw_hud_font_text(font, font_ready, u8"未装备技能石",
-        layout.inventory_slots[0U].x,
-        layout.inventory_slots[0U].y - 31.0F, 17.0F,
-        Color{171, 193, 217, 255});
+        text_layout.inventory_section_title.x,
+        text_layout.inventory_section_title.y + 2.0F, 19.0F,
+        ui_text_contrast_style().primary);
     for (std::size_t index = 0U; index < view.inventory_count; ++index) {
         const ActiveSkillInventoryStoneView& stone = view.inventory[index];
         const Rectangle bounds = layout.inventory_slots[index];
-        if (!assets.draw_to(ui_material_sprite(stone.selected
+        if (!assets.draw_horizontal_slice(ui_material_sprite(stone.selected
                 ? UiMaterialElement::skill_slot_selected
-                : UiMaterialElement::skill_slot_ready), bounds)) {
+                : UiMaterialElement::skill_slot_ready),
+                stone.selected
+                    ? Rectangle{5.0F, 4.0F, 118.0F, 120.0F}
+                    : Rectangle{4.0F, 5.0F, 120.0F, 118.0F},
+                28.0F, bounds)) {
             DrawRectangleRounded(bounds, 0.08F, 4,
                 stone.selected ? Color{38, 83, 111, 255}
                                : Color{20, 30, 44, 255});
@@ -218,24 +255,26 @@ void draw_active_skill_loadout(const dungeon::DungeonSnapshot& snapshot,
             {bounds.x + 22.0F, bounds.y + bounds.height * 0.5F},
             false, 0.22F));
         draw_hud_font_text(font, font_ready, stone.name.data(),
-            bounds.x + 43.0F, bounds.y + 20.0F, 16.0F,
-            Color{210, 241, 255, 255});
+            bounds.x + 43.0F, bounds.y + 19.0F, 18.0F,
+            ui_text_contrast_style().primary);
     }
     if (view.inventory_count == 0U) {
         draw_hud_font_text(font, font_ready, u8"无",
             layout.inventory_slots[0U].x,
-            layout.inventory_slots[0U].y + 20.0F, 16.0F,
-            Color{105, 121, 141, 255});
+            layout.inventory_slots[0U].y + 19.0F, 18.0F,
+            ui_text_contrast_style().muted);
     }
 
     const bool removable = !view.save_pending
         && selection.selected_slot < snapshot.skill_loadout.slots.size()
         && snapshot.skill_loadout.slots[selection.selected_slot].active
             != skills::ActiveSkillId::none;
-    if (!assets.draw_to(ui_material_sprite(removable
+    if (!assets.draw_horizontal_slice(ui_material_sprite(removable
             ? UiMaterialElement::inventory_button_active
             : UiMaterialElement::inventory_button_disabled),
-            layout.remove_button)) {
+            removable ? Rectangle{4.0F, 42.0F, 120.0F, 44.0F}
+                      : Rectangle{4.0F, 41.0F, 120.0F, 46.0F},
+            24.0F, layout.remove_button)) {
         DrawRectangleRounded(layout.remove_button, 0.12F, 4,
             removable ? Color{74, 53, 65, 255} : Color{42, 45, 52, 255});
         DrawRectangleRoundedLinesEx(layout.remove_button, 0.12F, 4, 1.0F,
@@ -244,8 +283,9 @@ void draw_active_skill_loadout(const dungeon::DungeonSnapshot& snapshot,
     }
     draw_hud_font_text(font, font_ready, u8"取出",
         layout.remove_button.x + 61.0F,
-        layout.remove_button.y + 9.0F, 16.0F,
-        removable ? WHITE : Color{118, 123, 133, 255});
+        layout.remove_button.y + 8.0F, 18.0F,
+        removable ? ui_text_contrast_style().interaction
+                  : ui_text_contrast_style().muted);
 
     if (view.save_pending) {
         draw_hud_font_text(font, font_ready, u8"正在保存",
@@ -620,13 +660,18 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Color{3, 5, 9, 225});
     const ActiveSkillLoadoutLayout skill_layout = active_skill_loadout_layout(
         GetScreenWidth(), GetScreenHeight());
+    const InventoryTextSafeLayout text_layout = inventory_text_safe_layout(
+        GetScreenWidth(), GetScreenHeight());
     if (page_ == InventoryPage::equipment_materials) {
-        DrawText("EQUIPMENT INVENTORY - I / ESC CLOSE", 14, 16, 24,
-            Color{141, 221, 255, 255});
+        draw_hud_font_text(hud_font, hud_font_ready,
+            "EQUIPMENT INVENTORY  ·  I / ESC CLOSE",
+            text_layout.page_title.x, text_layout.page_title.y + 2.0F, 24.0F,
+            ui_text_contrast_style().primary);
     } else {
         draw_hud_font_text(hud_font, hud_font_ready,
-            u8"技能石背包 - I / ESC 关闭", 14.0F, 16.0F, 22.0F,
-            Color{141, 221, 255, 255});
+            u8"技能石背包  ·  I / ESC 关闭",
+            text_layout.page_title.x, text_layout.page_title.y + 2.0F, 23.0F,
+            ui_text_contrast_style().primary);
     }
     draw_inventory_page_button(skill_layout.equipment_page_button,
         u8"装备 / 材料", page_ == InventoryPage::equipment_materials,
@@ -640,21 +685,27 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
         return;
     }
     draw_panel(layout.equipment, "EQUIPMENT", material_pack,
-        UiMaterialElement::inventory_panel_equipment);
+        UiMaterialElement::inventory_panel_equipment,
+        hud_font, hud_font_ready, text_layout.equipment_panel_title);
     draw_panel(layout.grid, "INVENTORY", material_pack,
-        UiMaterialElement::inventory_panel_grid);
+        UiMaterialElement::inventory_panel_grid,
+        hud_font, hud_font_ready, text_layout.grid_panel_title);
     draw_panel(layout.detail, "ITEM DETAIL", material_pack,
-        UiMaterialElement::inventory_panel_detail);
-    material_bag_.draw(state, material_pack,
+        UiMaterialElement::inventory_panel_detail,
+        hud_font, hud_font_ready, text_layout.detail_panel_title);
+    material_bag_.draw(state, material_pack, hud_font, hud_font_ready,
         GetScreenWidth(), GetScreenHeight());
 
     for (std::size_t index = 0U; index < state.equipment.equipped_ids.size(); ++index) {
         const auto slot = static_cast<items::ItemSlot>(index);
         const Rectangle rectangle = equipment_slot_rectangle(layout, slot);
         const bool equipped = state.equipment.equipped_ids[index] != 0U;
-        if (!material_pack.draw_to(ui_material_sprite(equipped
+        if (!material_pack.draw_horizontal_slice(ui_material_sprite(equipped
                 ? UiMaterialElement::inventory_slot_selected
-                : UiMaterialElement::inventory_slot_idle), rectangle)) {
+                : UiMaterialElement::inventory_slot_idle),
+                equipped ? Rectangle{4.0F, 4.0F, 120.0F, 120.0F}
+                         : Rectangle{4.0F, 4.0F, 120.0F, 120.0F},
+                28.0F, rectangle)) {
             DrawRectangleRounded(rectangle, 0.08F, 4,
                 Color{21, 28, 40, 255});
             DrawRectangleRoundedLinesEx(rectangle, 0.08F, 4, 1.0F,
@@ -666,72 +717,80 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
                 ? Fade(WHITE, 0.30F) : WHITE));
         const std::uint64_t id = state.equipment.equipped_ids[index];
         if (id == 0U) {
-            DrawText(TextFormat("%s  [empty]", slot_name(slot)),
-                static_cast<int>(rectangle.x + 45.0F),
-                static_cast<int>(rectangle.y + 8.0F), 13, RAYWHITE);
+            draw_hud_font_text(hud_font, hud_font_ready,
+                TextFormat("%s  [empty]", slot_name(slot)),
+                rectangle.x + 45.0F, rectangle.y + 7.0F, 14.0F,
+                ui_text_contrast_style().primary);
         } else {
-            DrawText(TextFormat("%s  #%llu", slot_name(slot),
+            draw_hud_font_text(hud_font, hud_font_ready,
+                TextFormat("%s  #%llu", slot_name(slot),
                 static_cast<unsigned long long>(id)),
-                static_cast<int>(rectangle.x + 45.0F),
-                static_cast<int>(rectangle.y + 8.0F), 13, RAYWHITE);
+                rectangle.x + 45.0F, rectangle.y + 7.0F, 14.0F,
+                ui_text_contrast_style().primary);
         }
     }
     int stat_y = static_cast<int>(layout.equipment.y + 248.0F);
     if (snapshot.combat.has_value()) {
         const combat::PlayerSnapshot& player = snapshot.combat->player;
-        DrawText(TextFormat("HP %d/%d  Barrier %d/%d", player.hp, player.max_hp,
+        draw_hud_font_text(hud_font, hud_font_ready,
+            TextFormat("HP %d/%d  Barrier %d/%d", player.hp, player.max_hp,
             player.barrier, player.max_barrier),
-            static_cast<int>(layout.equipment.x + 12.0F), stat_y, 12, RAYWHITE);
+            layout.equipment.x + 12.0F, static_cast<float>(stat_y),
+            14.0F, ui_text_contrast_style().primary);
         stat_y += 17;
-        DrawText(TextFormat("Armor %lld (%g%%)",
+        draw_hud_font_text(hud_font, hud_font_ready, TextFormat("Armor %lld (%g%%)",
             static_cast<long long>(player.armor), player.armor_reduction_bp / 100.0F),
-            static_cast<int>(layout.equipment.x + 12.0F), stat_y, 12, RAYWHITE);
+            layout.equipment.x + 12.0F, static_cast<float>(stat_y), 14.0F,
+            ui_text_contrast_style().primary);
         stat_y += 17;
-        DrawText(TextFormat("Evasion %lld (%g%%)",
+        draw_hud_font_text(hud_font, hud_font_ready, TextFormat("Evasion %lld (%g%%)",
             static_cast<long long>(player.evasion), player.evasion_rate_bp / 100.0F),
-            static_cast<int>(layout.equipment.x + 12.0F), stat_y, 12, RAYWHITE);
+            layout.equipment.x + 12.0F, static_cast<float>(stat_y), 14.0F,
+            ui_text_contrast_style().primary);
         stat_y += 17;
-        DrawText(TextFormat("F %g/%g  W %g/%g%%",
+        draw_hud_font_text(hud_font, hud_font_ready, TextFormat("F %g/%g  W %g/%g%%",
             player.damage_reduction[0] / 100.0F,
             player.damage_reduction_cap[0] / 100.0F,
             player.damage_reduction[1] / 100.0F,
             player.damage_reduction_cap[1] / 100.0F),
-            static_cast<int>(layout.equipment.x + 12.0F), stat_y, 12, RAYWHITE);
+            layout.equipment.x + 12.0F, static_cast<float>(stat_y), 14.0F,
+            ui_text_contrast_style().primary);
         stat_y += 17;
-        DrawText(TextFormat("L %g/%g  C %g/%g%%",
+        draw_hud_font_text(hud_font, hud_font_ready, TextFormat("L %g/%g  C %g/%g%%",
             player.damage_reduction[2] / 100.0F,
             player.damage_reduction_cap[2] / 100.0F,
             player.damage_reduction[3] / 100.0F,
             player.damage_reduction_cap[3] / 100.0F),
-            static_cast<int>(layout.equipment.x + 12.0F), stat_y, 12, RAYWHITE);
+            layout.equipment.x + 12.0F, static_cast<float>(stat_y), 14.0F,
+            ui_text_contrast_style().primary);
     }
     if (current_build_.has_value()) {
         stat_y += 22;
-        DrawText(TextFormat("Move %g%%  Attack %g%%",
+        draw_hud_font_text(hud_font, hud_font_ready, TextFormat("Move %g%%  Attack %g%%",
             current_build_->values.movement_speed / 100.0F,
             current_build_->values.attack_speed / 100.0F),
-            static_cast<int>(layout.equipment.x + 12.0F), stat_y, 12,
-            Color{155, 211, 255, 255});
+            layout.equipment.x + 12.0F, static_cast<float>(stat_y), 14.0F,
+            ui_text_contrast_style().primary);
         stat_y += 17;
-        DrawText(TextFormat("Weapon physical +%lld",
+        draw_hud_font_text(hud_font, hud_font_ready, TextFormat("Weapon physical +%lld",
             static_cast<long long>(current_build_->weapon_physical)),
-            static_cast<int>(layout.equipment.x + 12.0F), stat_y, 12,
-            Color{155, 211, 255, 255});
+            layout.equipment.x + 12.0F, static_cast<float>(stat_y), 14.0F,
+            ui_text_contrast_style().primary);
         stat_y += 17;
-        DrawText(TextFormat("Melee %g%%",
+        draw_hud_font_text(hud_font, hud_font_ready, TextFormat("Melee %g%%",
             current_build_->values.melee_damage / 100.0F),
-            static_cast<int>(layout.equipment.x + 12.0F), stat_y, 12,
-            Color{155, 211, 255, 255});
+            layout.equipment.x + 12.0F, static_cast<float>(stat_y), 14.0F,
+            ui_text_contrast_style().primary);
     }
 
     const Rectangle slot_button = slot_filter_button(layout.grid);
     const Rectangle rarity_button = rarity_filter_button(layout.grid);
     draw_button(slot_button, TextFormat("Slot: %s",
         filter_.slot.has_value() ? slot_name(*filter_.slot) : "All"), true,
-        material_pack);
+        material_pack, hud_font, hud_font_ready);
     draw_button(rarity_button, TextFormat("Rarity: %s",
         filter_.rarity.has_value() ? rarity_name(*filter_.rarity) : "All"), true,
-        material_pack);
+        material_pack, hud_font, hud_font_ready);
     const Rectangle viewport = grid_viewport(layout.grid);
     DrawRectangleRec(viewport, Color{11, 16, 25, 255});
     BeginScissorMode(static_cast<int>(viewport.x), static_cast<int>(viewport.y),
@@ -752,9 +811,11 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
         const bool recipe_selected = std::find(recipe_.ids.begin(),
             recipe_.ids.begin() + static_cast<std::ptrdiff_t>(recipe_.count),
             item.id) != recipe_.ids.begin() + static_cast<std::ptrdiff_t>(recipe_.count);
-        if (!material_pack.draw_to(ui_material_sprite(selected || recipe_selected
-                ? UiMaterialElement::inventory_slot_selected
-                : UiMaterialElement::inventory_slot_idle), cell)) {
+        if (!material_pack.draw_horizontal_slice(ui_material_sprite(
+                selected || recipe_selected
+                    ? UiMaterialElement::inventory_slot_selected
+                    : UiMaterialElement::inventory_slot_idle),
+                {4.0F, 4.0F, 120.0F, 120.0F}, 28.0F, cell)) {
             DrawRectangleRounded(cell, 0.08F, 4,
                 selected ? Color{34, 68, 88, 255} : Color{21, 28, 39, 255});
             DrawRectangleRoundedLinesEx(cell, 0.08F, 4,
@@ -762,19 +823,21 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
                 recipe_selected ? Color{237, 118, 212, 255}
                                 : rarity_color(item.rarity));
         }
-        DrawText(base == nullptr ? "Invalid" : base->name.data(),
-            static_cast<int>(cell.x + 5.0F), static_cast<int>(cell.y + 7.0F),
-            13, rarity_color(item.rarity));
-        DrawText(TextFormat("%s  i%u", rarity_name(item.rarity),
+        draw_hud_font_text(hud_font, hud_font_ready,
+            base == nullptr ? "Invalid" : base->name.data(),
+            cell.x + 7.0F, cell.y + 6.0F, 14.0F, rarity_color(item.rarity));
+        draw_hud_font_text(hud_font, hud_font_ready,
+            TextFormat("%s  i%u", rarity_name(item.rarity),
             static_cast<unsigned>(item.item_level)),
-            static_cast<int>(cell.x + 5.0F), static_cast<int>(cell.y + 31.0F),
-            12, Color{174, 183, 198, 255});
+            cell.x + 7.0F, cell.y + 30.0F, 13.0F,
+            ui_text_contrast_style().muted);
     }
     EndScissorMode();
     const bool enabled = !snapshot.pending_save_kind.has_value()
         && recipe_ready();
     draw_button(combine_button(layout.grid), TextFormat("Combine (%u/3)",
-        static_cast<unsigned>(recipe_.count)), enabled, material_pack);
+        static_cast<unsigned>(recipe_.count)), enabled, material_pack,
+        hud_font, hud_font_ready);
     bool reinforced_recipe_input = false;
     for (std::size_t index = 0U; index < recipe_.count; ++index) {
         for (const items::ItemInstance& recipe_item : state.items) {
@@ -786,25 +849,26 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
         }
     }
     if (reinforced_recipe_input) {
-        DrawText("WARNING: Combine removes reinforcement.",
-            static_cast<int>(layout.grid.x + 12.0F),
-            static_cast<int>(layout.grid.y + layout.grid.height - 58.0F),
-            11, Color{255, 173, 81, 255});
+        draw_hud_font_text(hud_font, hud_font_ready,
+            "WARNING: Combine removes reinforcement.",
+            layout.grid.x + 12.0F,
+            layout.grid.y + layout.grid.height - 58.0F,
+            13.0F, ui_text_contrast_style().warning);
     }
     if (const auto selected_material = material_bag_.selected_material();
             selected_material.has_value()) {
         const items::MaterialDefinition* const definition =
             items::material_definition(*selected_material);
-        DrawText(TextFormat("Selected: %s - click an item to use (R-click cancels)",
+        draw_hud_font_text(hud_font, hud_font_ready,
+            TextFormat("Selected: %s - click an item to use (R-click cancels)",
             definition == nullptr ? "Invalid" : definition->name.data()),
-            static_cast<int>(layout.grid.x + 12.0F),
-            static_cast<int>(layout.grid.y + 23.0F), 11,
-            Color{255, 237, 154, 255});
+            layout.grid.x + 12.0F, layout.grid.y + 42.0F, 13.0F,
+            ui_text_contrast_style().warning);
     }
     if (snapshot.pending_save_kind.has_value()) {
-        DrawText("SAVE PENDING - ACTIONS DISABLED",
-            static_cast<int>(layout.grid.x + 12.0F),
-            static_cast<int>(layout.grid.y + 13.0F), 12,
+        draw_hud_font_text(hud_font, hud_font_ready,
+            "SAVE PENDING - ACTIONS DISABLED",
+            layout.grid.x + 12.0F, layout.grid.y + 42.0F, 12.0F,
             Color{255, 191, 96, 255});
     }
     if (snapshot.reinforcement_receipt.valid) {
@@ -816,16 +880,18 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
         const Color color = receipt.success ? Color{147, 244, 169, 255}
                                             : Color{255, 145, 118, 255};
         if (receipt.destroyed) {
-            DrawText(TextFormat("%s %s: +%u -> DESTROYED", action, result,
+            draw_hud_font_text(hud_font, hud_font_ready,
+                TextFormat("%s %s: +%u -> DESTROYED", action, result,
                 static_cast<unsigned>(receipt.before)),
-                static_cast<int>(layout.grid.x + 12.0F),
-                static_cast<int>(layout.grid.y + 13.0F), 12, color);
+                layout.grid.x + 12.0F, layout.grid.y + 42.0F,
+                12.0F, color);
         } else {
-            DrawText(TextFormat("%s %s: +%u -> +%u", action, result,
+            draw_hud_font_text(hud_font, hud_font_ready,
+                TextFormat("%s %s: +%u -> +%u", action, result,
                 static_cast<unsigned>(receipt.before),
                 static_cast<unsigned>(receipt.after)),
-                static_cast<int>(layout.grid.x + 12.0F),
-                static_cast<int>(layout.grid.y + 13.0F), 12, color);
+                layout.grid.x + 12.0F, layout.grid.y + 42.0F,
+                12.0F, color);
         }
     }
 
@@ -834,8 +900,10 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     const int detail_x = static_cast<int>(first_detail_line.x);
     const int detail_y = static_cast<int>(first_detail_line.y);
     if (item == nullptr) {
-        DrawText("Click an item to inspect.", detail_x, detail_y, 15,
-            Color{166, 175, 191, 255});
+        draw_hud_font_text(hud_font, hud_font_ready,
+            "Click an item to inspect.", static_cast<float>(detail_x),
+            static_cast<float>(detail_y), 17.0F,
+            ui_text_contrast_style().muted);
         return;
     }
     const items::BaseDefinition* const base = items::base_definition(item->base_id);
@@ -848,8 +916,8 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     std::size_t detail_line = 0U;
     const auto draw_detail_line = [&](const char* text, Color color) noexcept {
         const Rectangle line = detail_line_rectangle(layout, detail_line++);
-        DrawText(text, static_cast<int>(line.x), static_cast<int>(line.y),
-            10, color);
+        draw_hud_font_text(hud_font, hud_font_ready, text,
+            line.x, line.y, 13.0F, color);
     };
     draw_detail_line(TextFormat("%s %s", rarity_name(item->rarity),
         base->name.data()), rarity_color(item->rarity));
@@ -933,7 +1001,7 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     }
     EndScissorMode();
     material_bag_.draw_reinforcement_confirmation(material_pack,
-        GetScreenWidth(), GetScreenHeight());
+        hud_font, hud_font_ready, GetScreenWidth(), GetScreenHeight());
 }
 
 }  // namespace arpg::platform

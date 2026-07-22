@@ -104,6 +104,12 @@ PauseMenuLayout pause_menu_layout(int width, int height) noexcept {
         kPanelWidth,
         kPanelHeight,
     };
+    layout.title = {
+        layout.panel.x + kRowInsetX,
+        layout.panel.y + 20.0F,
+        layout.panel.width - kRowInsetX * 2.0F,
+        28.0F,
+    };
     for (std::size_t row = 0U; row < kPauseMenuRowCapacity; ++row) {
         layout.rows[row] = {
             layout.panel.x + kRowInsetX,

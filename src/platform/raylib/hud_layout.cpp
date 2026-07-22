@@ -99,6 +99,24 @@ HudLayout make_hud_layout(
     return layout;
 }
 
+HudTextSafeLayout make_hud_text_safe_layout(
+    const HudLayout& layout) noexcept {
+    if (layout.scale <= 0.0F) return {};
+    const float scale = layout.scale;
+    const auto inset = [scale](HudRect panel, float x, float y,
+                               float height) noexcept {
+        return HudRect{panel.x + x * scale, panel.y + y * scale,
+            std::max(0.0F, panel.width - x * 2.0F * scale),
+            height * scale};
+    };
+    return {
+        inset(layout.objective_panel, 18.0F, 8.0F, 23.0F),
+        inset(layout.objective_panel, 18.0F, 39.0F, 20.0F),
+        inset(layout.navigation_panel, 18.0F, 9.0F, 21.0F),
+        inset(layout.navigation_panel, 18.0F, 37.0F, 19.0F),
+    };
+}
+
 bool hud_rects_overlap(HudRect lhs, HudRect rhs) noexcept {
     if (!has_area(lhs) || !has_area(rhs)) return false;
     return lhs.x < rhs.x + rhs.width && rhs.x < lhs.x + lhs.width

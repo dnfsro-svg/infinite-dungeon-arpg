@@ -1,7 +1,12 @@
 #include "material_asset_validation.hpp"
 #include "raylib_host.hpp"
+#include "hud_font.hpp"
+#include "hud_layout.hpp"
+#include "inventory_view_math.hpp"
+#include "pause_menu_view.hpp"
 #include "dungeon/dungeon_types.hpp"
 #include "ui_material.hpp"
+#include "ui_text_contrast.hpp"
 
 #include <raylib.h>
 
@@ -75,6 +80,85 @@ std::uint64_t ui_draw_mask(
         if (status.ui_material_draws[index] != 0U) mask |= (1ULL << index);
     }
     return mask;
+}
+
+template <std::size_t Size>
+bool no_direct_stretch(
+    const platform::Stage12MaterialRuntimeStatus& status,
+    const std::array<platform::UiMaterialElement, Size>& resources) {
+    for (const platform::UiMaterialElement resource : resources) {
+        if (status.ui_direct_stretch_draws[
+                static_cast<std::size_t>(resource)] != 0U) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool rectangle_inside(Rectangle inner, Rectangle outer) noexcept {
+    return inner.width > 0.0F && inner.height > 0.0F
+        && inner.x >= outer.x && inner.y >= outer.y
+        && inner.x + inner.width <= outer.x + outer.width
+        && inner.y + inner.height <= outer.y + outer.height;
+}
+
+bool rectangles_separated(Rectangle first, Rectangle second) noexcept {
+    return first.x + first.width <= second.x
+        || second.x + second.width <= first.x
+        || first.y + first.height <= second.y
+        || second.y + second.height <= first.y;
+}
+
+bool hud_text_layout_safe(int width, int height) noexcept {
+    const auto layout = platform::make_hud_layout(width, height, false);
+    const auto text = platform::make_hud_text_safe_layout(layout);
+    return platform::hud_rect_inside(text.objective_title,
+               layout.objective_panel)
+        && platform::hud_rect_inside(text.objective_hint,
+               layout.objective_panel)
+        && !platform::hud_rects_overlap(text.objective_title,
+               text.objective_hint)
+        && platform::hud_rect_inside(text.navigation_title,
+               layout.navigation_panel)
+        && platform::hud_rect_inside(text.navigation_ecology,
+               layout.navigation_panel)
+        && !platform::hud_rects_overlap(text.navigation_title,
+               text.navigation_ecology);
+}
+
+bool inventory_text_layout_safe(int width, int height) noexcept {
+    const auto panels = platform::inventory_layout(width, height);
+    const auto skill = platform::active_skill_loadout_layout(width, height);
+    const auto text = platform::inventory_text_safe_layout(width, height);
+    const Rectangle viewport{0.0F, 0.0F, static_cast<float>(width),
+        static_cast<float>(height)};
+    return rectangle_inside(text.page_title, viewport)
+        && rectangles_separated(text.page_title,
+            skill.equipment_page_button)
+        && rectangles_separated(text.page_title,
+            skill.skill_stones_page_button)
+        && rectangle_inside(text.equipment_panel_title, panels.equipment)
+        && rectangle_inside(text.grid_panel_title, panels.grid)
+        && rectangle_inside(text.detail_panel_title, panels.detail);
+}
+
+bool skill_text_layout_safe(int width, int height) noexcept {
+    const auto skill = platform::active_skill_loadout_layout(width, height);
+    const auto text = platform::inventory_text_safe_layout(width, height);
+    return rectangle_inside(text.skill_panel_title, skill.panel)
+        && rectangles_separated(text.skill_panel_title, skill.main_slots[0])
+        && rectangles_separated(text.support_section_title,
+            skill.support_slots[0])
+        && rectangles_separated(text.inventory_section_title,
+            skill.inventory_slots[0]);
+}
+
+bool pause_text_layout_safe(int width, int height) noexcept {
+    const auto layout = platform::pause_menu_layout(width, height);
+    return rectangle_inside(layout.title, layout.panel)
+        && rectangles_separated(layout.title, layout.rows[0])
+        && rectangle_inside(layout.footer, layout.panel)
+        && rectangles_separated(layout.rows[20], layout.footer);
 }
 
 std::uint64_t manifest_texture_pair_bytes() noexcept {
@@ -351,6 +435,113 @@ int main(int argc, char** argv) {
         && ui_resources_drawn(pause_ui_1920_runtime,
             std::array{Ui::pause_panel, Ui::pause_row_idle,
                 Ui::pause_row_selected, Ui::pause_footer});
+    constexpr std::array kHudNonStretchResources{
+        Ui::hud_panel, Ui::hud_health_track, Ui::hud_health_fill,
+        Ui::hud_barrier_track, Ui::hud_barrier_fill,
+        Ui::hud_resource_track, Ui::hud_resource_fill,
+        Ui::hud_status_slow, Ui::hud_status_corrosion,
+        Ui::hud_status_invulnerable, Ui::hud_objective_panel,
+        Ui::hud_navigation_panel, Ui::hud_notice, Ui::hud_notice_abyss,
+        Ui::label_plate};
+    constexpr std::array kInventoryNonStretchResources{
+        Ui::inventory_panel_equipment, Ui::inventory_panel_grid,
+        Ui::inventory_panel_detail, Ui::inventory_tab_idle,
+        Ui::inventory_tab_active, Ui::inventory_slot_idle,
+        Ui::inventory_slot_selected, Ui::inventory_button_idle,
+        Ui::inventory_button_active, Ui::inventory_button_disabled,
+        Ui::warning_modal, Ui::label_plate};
+    constexpr std::array kSkillNonStretchResources{
+        Ui::skill_panel, Ui::skill_slot_empty, Ui::skill_slot_ready,
+        Ui::skill_slot_selected, Ui::skill_slot_support,
+        Ui::inventory_tab_idle, Ui::inventory_tab_active,
+        Ui::inventory_button_active, Ui::inventory_button_disabled};
+    constexpr std::array kPauseNonStretchResources{
+        Ui::pause_panel, Ui::pause_row_idle, Ui::pause_row_selected,
+        Ui::pause_footer};
+    const bool hud_non_stretch_ok = no_direct_stretch(
+        hud_ui_runtime, kHudNonStretchResources);
+    const bool inventory_non_stretch_ok = no_direct_stretch(
+        inventory_ui_runtime, kInventoryNonStretchResources);
+    const bool skill_non_stretch_ok = no_direct_stretch(
+        skill_ui_runtime, kSkillNonStretchResources);
+    const bool pause_non_stretch_ok = no_direct_stretch(
+        pause_ui_runtime, kPauseNonStretchResources);
+    const bool hud_non_stretch_1920_ok = no_direct_stretch(
+        hud_ui_1920_runtime, kHudNonStretchResources);
+    const bool inventory_non_stretch_1920_ok = no_direct_stretch(
+        inventory_ui_1920_runtime, kInventoryNonStretchResources);
+    const bool skill_non_stretch_1920_ok = no_direct_stretch(
+        skill_ui_1920_runtime, kSkillNonStretchResources);
+    const bool pause_non_stretch_1920_ok = no_direct_stretch(
+        pause_ui_1920_runtime, kPauseNonStretchResources);
+    const auto font_runtime_valid = [](const auto& status) noexcept {
+        return status.bundled_font_ready
+            && status.bundled_font_glyph_count > 0U
+            && status.bundled_font_glyph_count
+                <= platform::kDeathOverlayCodepointCapacity
+            && status.bundled_font_source_base_size
+                >= platform::kUiFontMaximumDisplaySize * 2
+            && status.bundled_font_atlas_bytes > 0U
+            && status.bundled_font_atlas_bytes
+                <= platform::kUiFontAtlasByteBudget
+            && status.bundled_font_total_atlas_bytes
+                <= status.bundled_font_total_atlas_byte_budget;
+    };
+    const bool bundled_font_runtime_ok =
+        font_runtime_valid(hud_ui_runtime)
+        && font_runtime_valid(inventory_ui_runtime)
+        && font_runtime_valid(skill_ui_runtime)
+        && font_runtime_valid(pause_ui_runtime)
+        && font_runtime_valid(hud_ui_1920_runtime)
+        && font_runtime_valid(inventory_ui_1920_runtime)
+        && font_runtime_valid(skill_ui_1920_runtime)
+        && font_runtime_valid(pause_ui_1920_runtime);
+    const bool hud_text_1280_ok = hud_text_layout_safe(1280, 720);
+    const bool inventory_text_1280_ok = inventory_text_layout_safe(1280, 720);
+    const bool skill_text_1280_ok = skill_text_layout_safe(1280, 720);
+    const bool pause_text_1280_ok = pause_text_layout_safe(1280, 720);
+    const bool hud_text_1920_ok = hud_text_layout_safe(1920, 1080);
+    const bool inventory_text_1920_ok = inventory_text_layout_safe(1920, 1080);
+    const bool skill_text_1920_ok = skill_text_layout_safe(1920, 1080);
+    const bool pause_text_1920_ok = pause_text_layout_safe(1920, 1080);
+    const auto text_contrast = platform::ui_text_contrast_style();
+    const float primary_contrast = platform::ui_luma_contrast_ratio(
+        text_contrast.primary, text_contrast.backing);
+    const float secondary_contrast = platform::ui_luma_contrast_ratio(
+        text_contrast.secondary, text_contrast.backing);
+    const float muted_contrast = platform::ui_luma_contrast_ratio(
+        text_contrast.muted, text_contrast.backing);
+    const bool solid_text_fill_ok =
+        text_contrast.primary.r == 248U
+        && text_contrast.primary.g == 246U
+        && text_contrast.primary.b == 238U
+        && text_contrast.primary.a == 255U
+        && text_contrast.interaction.r == 194U
+        && text_contrast.interaction.g == 229U
+        && text_contrast.interaction.b == 255U
+        && text_contrast.interaction.a == 255U
+        && text_contrast.warning.r == 255U
+        && text_contrast.warning.g == 210U
+        && text_contrast.warning.b == 118U
+        && text_contrast.warning.a == 255U;
+    const bool text_contrast_ok = solid_text_fill_ok
+        && text_contrast.primary.a == 255U
+        && text_contrast.secondary.a == 255U
+        && text_contrast.muted.a == 255U
+        && primary_contrast >= 7.0F && secondary_contrast >= 6.0F
+        && muted_contrast >= 4.5F && text_contrast.outline_pixels >= 1
+        && text_contrast.shadow_pixels >= 2
+        && text_contrast.backing.a >= 220U;
+    const bool ui_readability_contract_ok = bundled_font_runtime_ok
+        && text_contrast_ok
+        && hud_non_stretch_ok && inventory_non_stretch_ok
+        && skill_non_stretch_ok && pause_non_stretch_ok
+        && hud_non_stretch_1920_ok && inventory_non_stretch_1920_ok
+        && skill_non_stretch_1920_ok && pause_non_stretch_1920_ok
+        && hud_text_1280_ok && inventory_text_1280_ok
+        && skill_text_1280_ok && pause_text_1280_ok
+        && hud_text_1920_ok && inventory_text_1920_ok
+        && skill_text_1920_ok && pause_text_1920_ok;
     const bool showcase_ok = capture(root, kResolutions[0],
         "monsters-1280x720.png", true, true);
     platform::Stage12MaterialRuntimeStatus water_runtime{};
@@ -451,6 +642,39 @@ int main(int argc, char** argv) {
            << "skill_ui_draw_mask_1920=" << ui_draw_mask(skill_ui_1920_runtime) << '\n'
            << "pause_ui_runtime_draws_1920=" << (pause_ui_1920_runtime_ok ? "pass" : "fail") << '\n'
            << "pause_ui_draw_mask_1920=" << ui_draw_mask(pause_ui_1920_runtime) << '\n'
+           << "bundled_font_runtime=" << (bundled_font_runtime_ok ? "pass" : "fail") << '\n'
+           << "bundled_font_glyph_count=" << hud_ui_runtime.bundled_font_glyph_count << '\n'
+           << "bundled_font_subset_capacity=" << platform::kDeathOverlayCodepointCapacity << '\n'
+           << "bundled_font_source_base_size=" << hud_ui_runtime.bundled_font_source_base_size << '\n'
+           << "bundled_font_max_display_size=" << platform::kUiFontMaximumDisplaySize << '\n'
+           << "bundled_font_atlas_bytes=" << hud_ui_runtime.bundled_font_atlas_bytes << '\n'
+           << "bundled_font_atlas_byte_budget=" << platform::kUiFontAtlasByteBudget << '\n'
+           << "bundled_font_total_atlas_bytes=" << hud_ui_runtime.bundled_font_total_atlas_bytes << '\n'
+           << "bundled_font_total_atlas_byte_budget=" << hud_ui_runtime.bundled_font_total_atlas_byte_budget << '\n'
+           << "ui_text_contrast=" << (text_contrast_ok ? "pass" : "fail") << '\n'
+           << "ui_text_solid_fill=" << (solid_text_fill_ok ? "pass" : "fail") << '\n'
+           << "ui_text_primary_contrast=" << primary_contrast << '\n'
+           << "ui_text_secondary_contrast=" << secondary_contrast << '\n'
+           << "ui_text_muted_contrast=" << muted_contrast << '\n'
+           << "ui_text_outline_pixels=" << text_contrast.outline_pixels << '\n'
+           << "ui_text_shadow_pixels=" << text_contrast.shadow_pixels << '\n'
+           << "ui_text_backing_alpha=" << static_cast<unsigned>(text_contrast.backing.a) << '\n'
+           << "hud_decorative_stretch=" << (hud_non_stretch_ok ? "pass" : "fail") << '\n'
+           << "inventory_decorative_stretch=" << (inventory_non_stretch_ok ? "pass" : "fail") << '\n'
+           << "skill_decorative_stretch=" << (skill_non_stretch_ok ? "pass" : "fail") << '\n'
+           << "pause_decorative_stretch=" << (pause_non_stretch_ok ? "pass" : "fail") << '\n'
+           << "hud_decorative_stretch_1920=" << (hud_non_stretch_1920_ok ? "pass" : "fail") << '\n'
+           << "inventory_decorative_stretch_1920=" << (inventory_non_stretch_1920_ok ? "pass" : "fail") << '\n'
+           << "skill_decorative_stretch_1920=" << (skill_non_stretch_1920_ok ? "pass" : "fail") << '\n'
+           << "pause_decorative_stretch_1920=" << (pause_non_stretch_1920_ok ? "pass" : "fail") << '\n'
+           << "hud_text_layout=" << (hud_text_1280_ok ? "pass" : "fail") << '\n'
+           << "inventory_text_layout=" << (inventory_text_1280_ok ? "pass" : "fail") << '\n'
+           << "skill_text_layout=" << (skill_text_1280_ok ? "pass" : "fail") << '\n'
+           << "pause_text_layout=" << (pause_text_1280_ok ? "pass" : "fail") << '\n'
+           << "hud_text_layout_1920=" << (hud_text_1920_ok ? "pass" : "fail") << '\n'
+           << "inventory_text_layout_1920=" << (inventory_text_1920_ok ? "pass" : "fail") << '\n'
+           << "skill_text_layout_1920=" << (skill_text_1920_ok ? "pass" : "fail") << '\n'
+           << "pause_text_layout_1920=" << (pause_text_1920_ok ? "pass" : "fail") << '\n'
            << "ui_baseline_screenshot=ui-baseline-1280x720.png\n"
            << "ui_baseline_screenshot_1920=ui-baseline-1920x1080.png\n"
            << "hud_ui_screenshot=ui-hud-1280x720.png\n"
@@ -514,10 +738,10 @@ int main(int argc, char** argv) {
            << "f12_screenshot=f12-monsters-1280x720.png/stage8-equipment-loot.png\n"
            << "screenshot_isolation=" << (f12_ok ? "pass" : "fail") << '\n'
            << "screenshot_decode=" << (captures_ok && showcase_ok && item_baseline_ok && item_showcase_ok && ui_baseline_ok && ui_baseline_1920_ok && ui_gallery_ok && hud_ui_ok && hud_ui_1920_ok && inventory_ui_ok && inventory_ui_1920_ok && skill_ui_ok && skill_ui_1920_ok && pause_ui_ok && pause_ui_1920_ok && water_showcase_ok && lightning_showcase_ok && lightning_background_ok && chaos_showcase_ok && chaos_background_ok && f12_ok ? "pass" : "fail") << '\n'
-           << "result=" << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && item_baseline_ok && item_runtime_ok && ui_runtime_ok && hud_ui_runtime_ok && inventory_ui_runtime_ok && skill_ui_runtime_ok && pause_ui_runtime_ok && hud_ui_1920_runtime_ok && inventory_ui_1920_runtime_ok && skill_ui_1920_runtime_ok && pause_ui_1920_runtime_ok && ui_baseline_ok && ui_baseline_1920_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "pass" : "fail")
+           << "result=" << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && item_baseline_ok && item_runtime_ok && ui_runtime_ok && hud_ui_runtime_ok && inventory_ui_runtime_ok && skill_ui_runtime_ok && pause_ui_runtime_ok && hud_ui_1920_runtime_ok && inventory_ui_1920_runtime_ok && skill_ui_1920_runtime_ok && pause_ui_1920_runtime_ok && ui_readability_contract_ok && ui_baseline_ok && ui_baseline_1920_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "pass" : "fail")
            << '\n';
     std::cout << "stage12 material formal "
-              << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && item_baseline_ok && item_runtime_ok && ui_runtime_ok && hud_ui_runtime_ok && inventory_ui_runtime_ok && skill_ui_runtime_ok && pause_ui_runtime_ok && hud_ui_1920_runtime_ok && inventory_ui_1920_runtime_ok && skill_ui_1920_runtime_ok && pause_ui_1920_runtime_ok && ui_baseline_ok && ui_baseline_1920_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "PASS" : "FAIL")
+               << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && item_baseline_ok && item_runtime_ok && ui_runtime_ok && hud_ui_runtime_ok && inventory_ui_runtime_ok && skill_ui_runtime_ok && pause_ui_runtime_ok && hud_ui_1920_runtime_ok && inventory_ui_1920_runtime_ok && skill_ui_1920_runtime_ok && pause_ui_1920_runtime_ok && ui_readability_contract_ok && ui_baseline_ok && ui_baseline_1920_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "PASS" : "FAIL")
               << std::endl;
     return report && captures_ok && fallback_capture && !error && manifest_ok
         && showcase_ok && item_baseline_ok && item_runtime_ok && ui_runtime_ok
@@ -525,6 +749,7 @@ int main(int argc, char** argv) {
         && skill_ui_runtime_ok && pause_ui_runtime_ok
         && hud_ui_1920_runtime_ok && inventory_ui_1920_runtime_ok
         && skill_ui_1920_runtime_ok && pause_ui_1920_runtime_ok
+        && ui_readability_contract_ok
         && ui_baseline_ok && ui_baseline_1920_ok
         && water_runtime_ok && lightning_runtime_ok
         && lightning_background_ok && chaos_runtime_ok && chaos_background_ok

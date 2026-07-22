@@ -356,6 +356,47 @@ arpg::test::Failure material_pack_nine_slice_preserves_panel_corners() noexcept 
     return {};
 }
 
+arpg::test::Failure material_pack_horizontal_slice_preserves_decorated_caps() noexcept {
+    FakeMaterialTextures fake{};
+    const MaterialManifestDefinition manifest =
+        arpg::platform::default_material_manifest();
+    for (std::size_t index{}; index < manifest.atlas_count; ++index) {
+        const auto& atlas = manifest.atlases[index];
+        fake.loaded[index * 2U] = {
+            static_cast<unsigned int>(7000U + index * 2U),
+            atlas.width, atlas.height, 1, 7};
+        fake.loaded[index * 2U + 1U] = {
+            static_cast<unsigned int>(7001U + index * 2U),
+            atlas.width, atlas.height, 1, 7};
+    }
+    g_fake_material_textures = &fake;
+    arpg::platform::MaterialPack pack{fake_material_texture_api()};
+    ARPG_REQUIRE(pack.load(MaterialEcology::fire));
+    ARPG_REQUIRE(pack.draw_horizontal_slice(
+        MaterialSpriteId::ui_pause_row_selected,
+        {4.0F, 41.0F, 120.0F, 46.0F}, 24.0F,
+        {100.0F, 120.0F, 712.0F, 20.0F}));
+    ARPG_REQUIRE(fake.draw_count == 3U);
+    for (const std::size_t index : {0U, 2U}) {
+        const Rectangle source = fake.drawn_sources[index];
+        const Rectangle destination = fake.drawn_destinations[index];
+        ARPG_REQUIRE(arpg::test::near(source.width / source.height,
+            destination.width / destination.height));
+    }
+    ARPG_REQUIRE(fake.drawn_sources[1].width <= 8.0F);
+    ARPG_REQUIRE(pack.sprite_draw_count(
+        MaterialSpriteId::ui_pause_row_selected) == 1U);
+    ARPG_REQUIRE(pack.direct_stretch_draw_count(
+        MaterialSpriteId::ui_pause_row_selected) == 0U);
+    ARPG_REQUIRE(pack.draw_to(MaterialSpriteId::ui_pause_row_selected,
+        {100.0F, 150.0F, 712.0F, 20.0F}));
+    ARPG_REQUIRE(pack.direct_stretch_draw_count(
+        MaterialSpriteId::ui_pause_row_selected) == 1U);
+    pack.unload();
+    g_fake_material_textures = nullptr;
+    return {};
+}
+
 arpg::test::Failure material_pack_switches_ecology_without_reloading_common() noexcept {
     FakeMaterialTextures fake{};
     const MaterialManifestDefinition manifest =
@@ -805,6 +846,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &material_pack_records_successful_item_sprite_draws},
     {"nine slice preserves authored panel corners",
         &material_pack_nine_slice_preserves_panel_corners},
+    {"horizontal slice preserves decorated caps",
+        &material_pack_horizontal_slice_preserves_decorated_caps},
     {"switches ecology without reloading common atlases",
         &material_pack_switches_ecology_without_reloading_common},
     {"all manifest texture pairs exist and match declared dimensions",

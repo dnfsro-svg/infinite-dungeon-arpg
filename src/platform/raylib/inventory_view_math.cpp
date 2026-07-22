@@ -212,6 +212,31 @@ ActiveSkillLoadoutLayout active_skill_loadout_layout(
     return layout;
 }
 
+InventoryTextSafeLayout inventory_text_safe_layout(
+    int width, int height) noexcept {
+    if (width <= 0 || height <= 0) return {};
+    const InventoryLayout panels = inventory_layout(width, height);
+    const ActiveSkillLoadoutLayout skill = active_skill_loadout_layout(
+        width, height);
+    const auto panel_title = [](Rectangle panel) noexcept {
+        return Rectangle{panel.x + 40.0F, panel.y + 10.0F,
+            std::max(0.0F, panel.width - 56.0F), 26.0F};
+    };
+    return {
+        {14.0F, 24.0F,
+            std::max(0.0F, skill.equipment_page_button.x - 28.0F), 34.0F},
+        panel_title(panels.equipment),
+        panel_title(panels.grid),
+        panel_title(panels.detail),
+        {skill.panel.x + 40.0F, skill.panel.y + 14.0F,
+            std::max(0.0F, skill.panel.width - 80.0F), 28.0F},
+        {skill.support_slots[0U].x,
+            skill.support_slots[0U].y - 29.0F, 240.0F, 23.0F},
+        {skill.inventory_slots[0U].x,
+            skill.inventory_slots[0U].y - 29.0F, 240.0F, 23.0F},
+    };
+}
+
 ActiveSkillLoadoutView make_active_skill_loadout_view(
     const skills::SkillLoadoutState& state,
     const ActiveSkillLoadoutSelection& selection,

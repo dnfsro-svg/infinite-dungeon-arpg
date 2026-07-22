@@ -440,6 +440,7 @@ void MaterialPack::unload() noexcept {
     }
     state_.reset();
     sprite_draw_counts_.fill(0U);
+    direct_stretch_draw_counts_.fill(0U);
     current_ecology_ = MaterialEcology::common;
     if (material_pipeline_ready_ && valid_texture_api(texture_api_)) {
         texture_api_.shutdown_material_pipeline();
@@ -529,6 +530,7 @@ bool MaterialPack::draw_to(MaterialSpriteId id, Rectangle destination,
     texture_api_.draw_material(color_textures_[index], material_textures_[index],
         frame->source, destination, {0.0F, 0.0F}, 0.0F, tint, {});
     ++sprite_draw_counts_[static_cast<std::size_t>(id)];
+    ++direct_stretch_draw_counts_[static_cast<std::size_t>(id)];
     return true;
 }
 
@@ -632,6 +634,62 @@ bool MaterialPack::draw_nine_slice(MaterialSpriteId id,
     return true;
 }
 
+bool MaterialPack::draw_horizontal_slice(MaterialSpriteId id,
+    Rectangle source_within_frame, float cap_source_width,
+    Rectangle destination, Color tint) const noexcept {
+    if (!can_draw(id) || source_within_frame.x < 0.0F
+            || source_within_frame.y < 0.0F
+            || source_within_frame.width <= 0.0F
+            || source_within_frame.height <= 0.0F
+            || cap_source_width <= 0.0F
+            || cap_source_width * 2.0F >= source_within_frame.width
+            || destination.width <= 0.0F || destination.height <= 0.0F) {
+        return false;
+    }
+    const MaterialManifestDefinition manifest = default_material_manifest();
+    const MaterialFrameDefinition* const frame = find_frame(manifest, id);
+    if (frame == nullptr || !state_.available(frame->atlas)
+            || source_within_frame.x + source_within_frame.width
+                > frame->source.width
+            || source_within_frame.y + source_within_frame.height
+                > frame->source.height) {
+        return false;
+    }
+    const float scale = destination.height / source_within_frame.height;
+    const float cap_destination_width = cap_source_width * scale;
+    if (cap_destination_width * 2.0F >= destination.width) return false;
+
+    const std::size_t texture_index = atlas_index(frame->atlas);
+    const auto draw_part = [&](Rectangle local_source,
+                               Rectangle part_destination) noexcept {
+        local_source.x += frame->source.x;
+        local_source.y += frame->source.y;
+        texture_api_.draw_material(color_textures_[texture_index],
+            material_textures_[texture_index], local_source, part_destination,
+            {0.0F, 0.0F}, 0.0F, tint, {});
+    };
+    const float middle_source_x = source_within_frame.x
+        + (source_within_frame.width - 8.0F) * 0.5F;
+    const Rectangle left_source{source_within_frame.x, source_within_frame.y,
+        cap_source_width, source_within_frame.height};
+    const Rectangle middle_source{middle_source_x, source_within_frame.y,
+        8.0F, source_within_frame.height};
+    const Rectangle right_source{
+        source_within_frame.x + source_within_frame.width - cap_source_width,
+        source_within_frame.y, cap_source_width, source_within_frame.height};
+    draw_part(left_source, {destination.x, destination.y,
+        cap_destination_width, destination.height});
+    draw_part(middle_source, {
+        destination.x + cap_destination_width, destination.y,
+        destination.width - cap_destination_width * 2.0F,
+        destination.height});
+    draw_part(right_source, {
+        destination.x + destination.width - cap_destination_width,
+        destination.y, cap_destination_width, destination.height});
+    ++sprite_draw_counts_[static_cast<std::size_t>(id)];
+    return true;
+}
+
 bool MaterialPack::draw_region_fit(MaterialSpriteId id,
     Rectangle source_within_frame, Rectangle destination_bounds,
     Color tint) const noexcept {
@@ -679,6 +737,13 @@ std::uint64_t MaterialPack::sprite_draw_count(
     const std::size_t index = static_cast<std::size_t>(id);
     return index < sprite_draw_counts_.size()
         ? sprite_draw_counts_[index] : 0U;
+}
+
+std::uint64_t MaterialPack::direct_stretch_draw_count(
+    MaterialSpriteId id) const noexcept {
+    const std::size_t index = static_cast<std::size_t>(id);
+    return index < direct_stretch_draw_counts_.size()
+        ? direct_stretch_draw_counts_[index] : 0U;
 }
 
 bool MaterialPack::draw_frame(MaterialAtlasId atlas, Rectangle source,

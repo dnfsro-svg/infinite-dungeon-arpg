@@ -1,5 +1,7 @@
 #include "active_skill_renderer.hpp"
 
+#include "ui_text_contrast.hpp"
+
 #include "combat/active_skill_runtime.hpp"
 #include "combat_view_math.hpp"
 #include "skills/active_skill_catalog.hpp"
@@ -60,7 +62,16 @@ constexpr std::uint16_t kStormFinisherFramesBegin = 129U;
 void draw_skill_text(Font font, const char* text,
     float x, float y, float size, Color color) noexcept {
     if (text == nullptr || text[0] == '\0') return;
-    DrawTextEx(font, text, {x, y}, size, 1.0F, color);
+    const UiTextContrastStyle style = ui_text_contrast_style();
+    color.a = 255U;
+    if (ui_luma_contrast_ratio(color, style.backing) < 4.5F) {
+        color = style.muted;
+    }
+    DrawTextEx(font, text, {x + 2.0F, y + 2.0F}, size, 0.5F,
+        style.shadow);
+    DrawTextEx(font, text, {x - 1.0F, y}, size, 0.5F, style.shadow);
+    DrawTextEx(font, text, {x + 1.0F, y}, size, 0.5F, color);
+    DrawTextEx(font, text, {x, y}, size, 0.5F, color);
 }
 
 void draw_draw_slash(const DrawSlashVisualPlan& plan,
@@ -351,11 +362,11 @@ void ActiveSkillRenderer::draw_hud(const ActiveSkillHudModel& model,
         if (!hud_font_ready) continue;
         char key[2]{static_cast<char>('0' + slot.key_number), '\0'};
         draw_skill_text(hud_font, key, bounds.x + 4.0F,
-            bounds.y + 2.0F, 13.0F, Color{245, 249, 255, 255});
+            bounds.y + 2.0F, 14.0F, ui_text_contrast_style().primary);
         if (!slot.empty) {
             draw_skill_text(hud_font, slot.name.data(), bounds.x + 3.0F,
-                bounds.y + bounds.height - 13.0F, 9.0F,
-                Color{219, 240, 255, 255});
+                bounds.y + bounds.height - 15.0F, 11.0F,
+                ui_text_contrast_style().primary);
         }
         if (slot.cooldown_ratio <= 0.0F || slot.empty) continue;
         const skills::ActiveSkillDefinition* const definition =
@@ -367,7 +378,7 @@ void ActiveSkillRenderer::draw_hud(const ActiveSkillHudModel& model,
         static_cast<void>(std::snprintf(remaining, sizeof(remaining),
             "%.0fs", seconds));
         draw_skill_text(hud_font, remaining, bounds.x + 18.0F,
-            bounds.y + 21.0F, 14.0F, WHITE);
+            bounds.y + 20.0F, 15.0F, ui_text_contrast_style().primary);
     }
 }
 

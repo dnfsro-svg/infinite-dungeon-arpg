@@ -3,6 +3,7 @@
 #include "death_overlay_font.hpp"
 #include "pause_menu_view.hpp"
 #include "ui_material.hpp"
+#include "ui_text_contrast.hpp"
 
 #include <raylib.h>
 
@@ -24,8 +25,24 @@ void draw_centered_text(
         bounds.x + (bounds.width - static_cast<float>(text_width)) * 0.5F);
     const int y = static_cast<int>(
         bounds.y + (bounds.height - static_cast<float>(font_size)) * 0.5F);
-    DrawTextEx(font, text, {static_cast<float>(x), static_cast<float>(y)},
+    const Vector2 position{static_cast<float>(x), static_cast<float>(y)};
+    const UiTextContrastStyle style = ui_text_contrast_style();
+    color.a = 255U;
+    if (ui_luma_contrast_ratio(color, style.backing) < 4.5F) {
+        color = style.muted;
+    }
+    DrawTextEx(font, text,
+        {position.x + static_cast<float>(style.shadow_pixels),
+         position.y + static_cast<float>(style.shadow_pixels)},
+        static_cast<float>(font_size), kSpacing, style.shadow);
+    DrawTextEx(font, text, {position.x - 1.0F, position.y},
+        static_cast<float>(font_size), kSpacing, style.shadow);
+    DrawTextEx(font, text, {position.x, position.y - 1.0F},
+        static_cast<float>(font_size), kSpacing, style.shadow);
+    DrawTextEx(font, text, {position.x + 1.0F, position.y},
         static_cast<float>(font_size), kSpacing, color);
+    DrawTextEx(font, text, position, static_cast<float>(font_size),
+        kSpacing, color);
 }
 
 }  // namespace
@@ -70,12 +87,6 @@ void draw_pause_menu_with_font(
     const PauseMenuLayout layout = pause_menu_layout(
         screen_width, screen_height);
 
-    const Rectangle title_bounds{
-        layout.panel.x + 24.0F,
-        layout.panel.y + 14.0F,
-        layout.panel.width - 48.0F,
-        32.0F,
-    };
     for (std::size_t index = 0U; index < plan.op_count; ++index) {
         const PauseMenuRenderOp op = plan.ops[index];
         switch (op.kind) {
@@ -94,15 +105,20 @@ void draw_pause_menu_with_font(
                 }
                 break;
             case PauseMenuRenderOpKind::title:
-                draw_centered_text(font, view.title, title_bounds, 28,
-                    Color{191, 225, 255, 255});
+                draw_centered_text(font, view.title, layout.title, 26,
+                    ui_text_contrast_style().primary);
                 break;
             case PauseMenuRenderOpKind::row: {
                 const Rectangle bounds = layout.rows[op.row_index];
-                const bool row_drawn = assets != nullptr && assets->draw_to(
-                    ui_material_sprite(op.selected
-                        ? UiMaterialElement::pause_row_selected
-                        : UiMaterialElement::pause_row_idle), bounds);
+                const bool row_drawn = assets != nullptr
+                    && assets->draw_horizontal_slice(
+                        ui_material_sprite(op.selected
+                            ? UiMaterialElement::pause_row_selected
+                            : UiMaterialElement::pause_row_idle),
+                        op.selected
+                            ? Rectangle{4.0F, 41.0F, 120.0F, 46.0F}
+                            : Rectangle{4.0F, 40.0F, 120.0F, 47.0F},
+                        24.0F, bounds);
                 if (!row_drawn && op.selected) {
                     DrawRectangleRounded(bounds, 0.18F, 5,
                         Color{42, 91, 126, 235});
@@ -110,11 +126,27 @@ void draw_pause_menu_with_font(
                         bounds, 0.18F, 5, 1.0F,
                         Color{121, 197, 244, 255});
                 }
+                const UiTextContrastStyle style = ui_text_contrast_style();
+                const Vector2 row_position{bounds.x + 14.0F, bounds.y};
+                const float row_text_width = MeasureTextEx(font,
+                    view.rows[op.row_index].data(), 17.0F, 0.5F).x;
+                DrawRectangleRounded(
+                    {bounds.x + 8.0F, bounds.y + 1.0F,
+                     row_text_width + 16.0F, bounds.height - 2.0F},
+                    0.20F, 4, style.backing);
                 DrawTextEx(font, view.rows[op.row_index].data(),
-                    {bounds.x + 10.0F, bounds.y + 1.0F}, 14.0F, 1.0F,
-                    op.selected
-                        ? Color{244, 249, 255, 255}
-                        : Color{207, 218, 231, 255});
+                    {row_position.x + 2.0F, row_position.y + 2.0F},
+                    17.0F, 0.5F, style.shadow);
+                DrawTextEx(font, view.rows[op.row_index].data(),
+                    {row_position.x - 1.0F, row_position.y},
+                    17.0F, 0.5F, style.shadow);
+                DrawTextEx(font, view.rows[op.row_index].data(),
+                    {row_position.x + 1.0F, row_position.y},
+                    17.0F, 0.5F,
+                    op.selected ? style.interaction : style.primary);
+                DrawTextEx(font, view.rows[op.row_index].data(),
+                    row_position, 17.0F, 0.5F,
+                    op.selected ? style.interaction : style.primary);
                 break;
             }
             case PauseMenuRenderOpKind::message:
@@ -122,8 +154,10 @@ void draw_pause_menu_with_font(
                     Color{255, 139, 139, 255});
                 break;
             case PauseMenuRenderOpKind::footer:
-                if (assets == nullptr || !assets->draw_to(ui_material_sprite(
-                        UiMaterialElement::pause_footer), layout.footer)) {
+                if (assets == nullptr || !assets->draw_horizontal_slice(
+                        ui_material_sprite(UiMaterialElement::pause_footer),
+                        {4.0F, 52.0F, 120.0F, 24.0F}, 24.0F,
+                        layout.footer)) {
                     DrawLine(
                         static_cast<int>(layout.footer.x),
                         static_cast<int>(layout.footer.y - 5.0F),
@@ -133,11 +167,18 @@ void draw_pause_menu_with_font(
                         Color{75, 86, 104, 220});
                 }
                 if (!plan.has_message) {
+                    const UiTextContrastStyle style =
+                        ui_text_contrast_style();
+                    DrawRectangleRounded(
+                        {layout.footer.x + 5.0F, layout.footer.y + 3.0F,
+                         layout.footer.width - 10.0F,
+                         layout.footer.height - 6.0F},
+                        0.18F, 4, style.backing);
                     draw_centered_text(font,
                         "Arrow keys navigate | Enter select | Esc back",
                         layout.footer,
                         16,
-                        Color{165, 178, 196, 255});
+                        ui_text_contrast_style().muted);
                 }
                 break;
         }
@@ -154,10 +195,12 @@ bool PauseMenuRenderer::initialize() noexcept {
     for (std::size_t index = 0U; index < plan.candidate_count; ++index) {
         const char* path = plan.candidate_paths[index];
         if (path == nullptr || !FileExists(path)) continue;
-        Font candidate = LoadFontEx(path, 32, plan.codepoints.data(),
+        Font candidate = LoadFontEx(path, kUiFontSourceBaseSize,
+            plan.codepoints.data(),
             static_cast<int>(plan.codepoint_count));
         if (IsFontValid(candidate)
                 && candidate.glyphCount == static_cast<int>(plan.codepoint_count)) {
+            SetTextureFilter(candidate.texture, TEXTURE_FILTER_BILINEAR);
             font_ = candidate;
             owns_font_ = true;
             return true;

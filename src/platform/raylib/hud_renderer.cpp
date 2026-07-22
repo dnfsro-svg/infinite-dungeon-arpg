@@ -7,6 +7,8 @@
 #include "hud_font.hpp"
 #include "hud_palette.hpp"
 #include "hud_renderer.hpp"
+
+#include "ui_text_contrast.hpp"
 #include "render_layout.hpp"
 #include "ui_material.hpp"
 
@@ -98,14 +100,25 @@ void draw_player_bar(const HudBarPlan& bar,
         track = UiMaterialElement::hud_resource_track;
         filled = UiMaterialElement::hud_resource_fill;
     }
-    if (!assets.draw_to(ui_material_sprite(track), bounds)) {
+    Rectangle track_source{4.0F, 35.0F, 120.0F, 57.0F};
+    Rectangle fill_source{4.0F, 36.0F, 120.0F, 55.0F};
+    if (bar.kind == HudBarKind::barrier) {
+        track_source = {4.0F, 34.0F, 120.0F, 60.0F};
+        fill_source = {4.0F, 32.0F, 120.0F, 64.0F};
+    } else if (bar.kind == HudBarKind::experience) {
+        track_source = {4.0F, 27.0F, 120.0F, 74.0F};
+        fill_source = {4.0F, 33.0F, 120.0F, 61.0F};
+    }
+    if (!assets.draw_horizontal_slice(ui_material_sprite(track),
+            track_source, 24.0F, bounds)) {
         DrawRectangleRec(bounds, Color{20, 23, 31, 230});
     }
     const Rectangle fill_bounds{bar.bounds.x + 1.0F, bar.bounds.y + 1.0F,
         std::max(0.0F, bar.bounds.width - 2.0F) * clamped_ratio(bar.ratio),
         std::max(0.0F, bar.bounds.height - 2.0F)};
     if (fill_bounds.width > 0.0F
-            && !assets.draw_to(ui_material_sprite(filled), fill_bounds)) {
+            && !assets.draw_horizontal_slice(ui_material_sprite(filled),
+                fill_source, 24.0F, fill_bounds)) {
         DrawRectangleRec(fill_bounds, fill);
     }
 }
@@ -317,13 +330,24 @@ float measure_text_ex(const char* text, float font_size, void* context) noexcept
 
 void draw_hud_text(Font font, const char* text, Vector2 position, float size,
     Color color, int outline_pixels) noexcept {
-    const Color outline{4, 7, 12, 235};
+    const HudReadabilityStyle style = hud_readability_style();
+    const UiTextContrastStyle contrast = ui_text_contrast_style();
+    DrawTextEx(font, text,
+        {position.x + static_cast<float>(style.shadow_pixels),
+         position.y + static_cast<float>(style.shadow_pixels)},
+        size, 1.0F, contrast.shadow);
     for (int offset_y = -outline_pixels; offset_y <= outline_pixels; ++offset_y) {
         for (int offset_x = -outline_pixels; offset_x <= outline_pixels; ++offset_x) {
             if (offset_x == 0 && offset_y == 0) continue;
             DrawTextEx(font, text, {position.x + static_cast<float>(offset_x),
-                position.y + static_cast<float>(offset_y)}, size, 1.0F, outline);
+                position.y + static_cast<float>(offset_y)}, size, 1.0F,
+                contrast.shadow);
         }
+    }
+    for (int offset = style.embolden_pixels; offset > 0; --offset) {
+        DrawTextEx(font, text,
+            {position.x + static_cast<float>(offset), position.y},
+            size, 1.0F, color);
     }
     DrawTextEx(font, text, position, size, 1.0F, color);
 }
@@ -336,11 +360,20 @@ void draw_panel_text(Font font, const HudRect& bounds, const HudText96& text,
         std::min(size, hud_readability_style().panel_minimum_font_size),
         &measure_text_ex, &measure);
     if (!plan.visible) return;
+    const UiTextContrastStyle contrast = ui_text_contrast_style();
+    const Rectangle backing{
+        bounds.x + 4.0F, bounds.y + 2.0F,
+        std::max(0.0F, bounds.width - 8.0F),
+        std::max(0.0F, bounds.height - 4.0F)};
+    DrawRectangleRounded(backing, 0.16F, 4, contrast.backing);
     BeginScissorMode(static_cast<int>(bounds.x), static_cast<int>(bounds.y),
         std::max(0, static_cast<int>(bounds.width)),
         std::max(0, static_cast<int>(bounds.height)));
     draw_hud_text(font, plan.text.bytes.data(),
-        {bounds.x + 10.0F, bounds.y + 7.0F}, plan.font_size, color,
+        {bounds.x + 10.0F,
+            bounds.y + std::max(0.0F,
+                (bounds.height - plan.font_size) * 0.5F)},
+        plan.font_size, color,
         hud_readability_style().outline_pixels);
     EndScissorMode();
 }
@@ -354,9 +387,13 @@ void draw_context_notice(Font font, const HudRect& bounds,
         || kind == HudNoticeKind::abyss_abandon;
     const Color fill = urgent ? Color{54, 18, 31, 238} : Color{15, 22, 33, 232};
     const Rectangle rectangle{bounds.x, bounds.y, bounds.width, bounds.height};
-    if (!assets.draw_to(ui_material_sprite(abyss
-            ? UiMaterialElement::hud_notice_abyss
-            : UiMaterialElement::hud_notice), rectangle)) {
+    const UiMaterialElement notice = abyss
+        ? UiMaterialElement::hud_notice_abyss : UiMaterialElement::hud_notice;
+    const Rectangle notice_source = abyss
+        ? Rectangle{4.0F, 17.0F, 120.0F, 94.0F}
+        : Rectangle{4.0F, 22.0F, 120.0F, 83.0F};
+    if (!assets.draw_horizontal_slice(ui_material_sprite(notice),
+            notice_source, 24.0F, rectangle)) {
         DrawRectangleRounded(rectangle, 0.18F, 6, fill);
         DrawRectangleLinesEx(rectangle, 1.0F, color);
     }
@@ -381,9 +418,11 @@ bool HudRenderer::initialize() noexcept {
     for (std::size_t index = 0U; index < plan.shared.candidate_count; ++index) {
         const char* path = plan.shared.candidate_paths[index];
         if (path == nullptr || !FileExists(path)) continue;
-        Font candidate = LoadFontEx(path, 32, plan.shared.codepoints.data(),
+        Font candidate = LoadFontEx(path, kUiFontSourceBaseSize,
+            plan.shared.codepoints.data(),
             static_cast<int>(plan.shared.codepoint_count));
         if (has_requested_glyphs(candidate, plan.shared)) {
+            SetTextureFilter(candidate.texture, TEXTURE_FILTER_BILINEAR);
             font_ = candidate;
             font_ready_ = true;
             TraceLog(LOG_INFO, "HUD: Loaded Chinese font %s (%i glyphs)",
@@ -495,13 +534,15 @@ void HudRenderer::draw(const HudViewModel& view,
     const NavigationPanelPlan navigation = make_navigation_panel_plan(
         view.navigation, layout);
     const ContextPanelPlan context = make_context_panel_plan(view.context, layout);
+    const HudTextSafeLayout text_layout = make_hud_text_safe_layout(layout);
 
     const HudPalette palette = hud_palette();
     const HudReadabilityStyle style = hud_readability_style();
     if (plan.bar_count != 0U) {
         const Rectangle panel_bounds{layout.player_panel.x, layout.player_panel.y,
             layout.player_panel.width, layout.player_panel.height};
-        if (!assets.draw_to(ui_material_sprite(UiMaterialElement::hud_panel),
+        if (!assets.draw_nine_slice(
+                ui_material_sprite(UiMaterialElement::hud_panel),
                 panel_bounds)) {
             DrawRectangleRounded(panel_bounds, 0.08F, 6,
                 Color{7, 10, 17, 220});
@@ -536,12 +577,12 @@ void HudRenderer::draw(const HudViewModel& view,
                 }
                 break;
             }
+            draw_player_bar(bar, assets);
             draw_hud_text(draw_font, text,
                 {layout.player_panel.x + (12.0F * layout.scale),
                 bar.bounds.y - (2.0F * layout.scale)},
                 style.player_bar_font_size * layout.scale,
                 palette.text, style.outline_pixels);
-            draw_player_bar(bar, assets);
         }
         if (plan.low_health_emphasis) {
             DrawRectangleLinesEx({layout.player_panel.x, layout.player_panel.y,
@@ -566,7 +607,12 @@ void HudRenderer::draw(const HudViewModel& view,
             }
             const Rectangle tag_bounds{tag_x, tag_y, 56.0F * layout.scale,
                 18.0F * layout.scale};
-            if (!assets.draw_to(ui_material_sprite(tag_material), tag_bounds)) {
+            Rectangle tag_source{5.0F, 4.0F, 117.0F, 120.0F};
+            if (tag_material == UiMaterialElement::hud_status_invulnerable) {
+                tag_source = {5.0F, 4.0F, 117.0F, 120.0F};
+            }
+            if (!assets.draw_region_fit(ui_material_sprite(tag_material),
+                    tag_source, tag_bounds)) {
                 DrawRectangleRounded(tag_bounds, 0.18F, 4,
                     Color{30, 39, 55, 235});
             }
@@ -579,7 +625,7 @@ void HudRenderer::draw(const HudViewModel& view,
     if (objective.visible) {
         const Rectangle bounds{objective.bounds.x, objective.bounds.y,
             objective.bounds.width, objective.bounds.height};
-        if (!assets.draw_to(ui_material_sprite(
+        if (!assets.draw_nine_slice(ui_material_sprite(
                 UiMaterialElement::hud_objective_panel), bounds)) {
             DrawRectangleRounded(bounds, 0.12F, 6,
                 objective.abyss ? Color{47, 18, 47, 228}
@@ -592,30 +638,36 @@ void HudRenderer::draw(const HudViewModel& view,
                 bounds.y + 5.0F * layout.scale,
                 bounds.width - 16.0F * layout.scale,
                 24.0F * layout.scale}));
-        draw_panel_text(draw_font, objective.bounds, objective.primary,
+        draw_panel_text(draw_font, text_layout.objective_title,
+            objective.primary,
             style.objective_primary_font_size * layout.scale,
             objective.abyss ? palette.chaos : palette.text);
-        HudRect secondary = objective.bounds;
-        secondary.y += 28.0F * layout.scale;
-        draw_panel_text(draw_font, secondary, objective.secondary,
-            style.objective_secondary_font_size * layout.scale, palette.text);
+        draw_panel_text(draw_font, text_layout.objective_hint,
+            objective.secondary,
+            style.objective_secondary_font_size * layout.scale,
+            ui_text_contrast_style().primary);
     }
     if (navigation.visible) {
         const Rectangle bounds{navigation.bounds.x, navigation.bounds.y,
             navigation.bounds.width, navigation.bounds.height};
-        if (!assets.draw_to(ui_material_sprite(
+        if (!assets.draw_nine_slice(ui_material_sprite(
                 UiMaterialElement::hud_navigation_panel), bounds)) {
             DrawRectangleRounded(bounds, 0.12F, 6, Color{7, 10, 17, 220});
         }
-        draw_panel_text(draw_font, navigation.bounds, navigation.primary,
+        draw_panel_text(draw_font, text_layout.navigation_title,
+            navigation.primary,
             style.navigation_primary_font_size * layout.scale, palette.text);
-        HudRect ecology = navigation.bounds;
-        ecology.y += 22.0F * layout.scale;
-        draw_panel_text(draw_font, ecology, navigation.ecology,
-            style.navigation_secondary_font_size * layout.scale, palette.text);
+        draw_panel_text(draw_font, text_layout.navigation_ecology,
+            navigation.ecology,
+            style.navigation_secondary_font_size * layout.scale,
+            ui_text_contrast_style().primary);
         for (std::size_t index{}; index < navigation.element_count; ++index) {
             HudRect element = navigation.bounds;
-            element.y += (42.0F + static_cast<float>(index) * 17.0F) * layout.scale;
+            element.x += 18.0F * layout.scale;
+            element.width -= 36.0F * layout.scale;
+            element.y += (58.0F + static_cast<float>(index) * 14.0F)
+                * layout.scale;
+            element.height = 14.0F * layout.scale;
             draw_panel_text(draw_font, element, navigation.elements[index].label,
                 style.navigation_element_font_size * layout.scale,
                 hud_palette_color(navigation.elements[index].color_id));

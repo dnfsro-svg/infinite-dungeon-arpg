@@ -82,6 +82,8 @@ test::Failure layouts_are_bounded_centered_and_fixed() noexcept {
         ARPG_REQUIRE(test::near(layout.panel.y * 2.0F + layout.panel.height,
             screen.height));
         ARPG_REQUIRE(inside(layout.footer, layout.panel));
+        ARPG_REQUIRE(inside(layout.title, layout.panel));
+        ARPG_REQUIRE(separated(layout.title, layout.rows[0]));
         ARPG_REQUIRE(test::near(
             layout.footer.x - layout.panel.x, 24.0F));
         ARPG_REQUIRE(test::near(
@@ -124,6 +126,10 @@ test::Failure layout_has_exact_1024_golden_geometry() noexcept {
     ARPG_REQUIRE(test::near(layout.panel.y, 16.0F));
     ARPG_REQUIRE(test::near(layout.panel.width, 760.0F));
     ARPG_REQUIRE(test::near(layout.panel.height, 544.0F));
+    ARPG_REQUIRE(test::near(layout.title.x, 156.0F));
+    ARPG_REQUIRE(test::near(layout.title.y, 36.0F));
+    ARPG_REQUIRE(test::near(layout.title.width, 712.0F));
+    ARPG_REQUIRE(test::near(layout.title.height, 28.0F));
 
     ARPG_REQUIRE(test::near(layout.rows[0].x, 156.0F));
     ARPG_REQUIRE(test::near(layout.rows[0].y, 76.0F));

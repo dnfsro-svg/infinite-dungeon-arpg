@@ -43,6 +43,28 @@ input bindings, inventory semantics, and pause behavior are unchanged.
   content bounds and aspect-fitted in the real HUD and inventory title paths.
 - Active-skill material frames retain a continuous bottom-up cooldown overlay
   and moving boundary line derived from the clamped `cooldown_ratio`.
+- Decorated horizontal controls use a three-part horizontal slice: authored
+  caps preserve aspect ratio while only an undecorated 8 px center strip
+  expands. Formal telemetry rejects direct-stretch draws for all four UI pages
+  at both resolutions.
+
+## Bundled font, readability, and resource contract
+
+- Runtime requires the bundled Google Fonts Noto Sans SC variable TTF and does
+  not probe Windows fonts. Source URL, retrieval date, SHA-256, and SIL OFL 1.1
+  metadata are in `assets/fonts/README.md`; `OFL.txt` is shipped verbatim.
+- The fixed production corpus preheats 346 unique Simplified Chinese and ASCII
+  glyphs under a hard 384-entry capacity. Raylib rasterizes at a 64 px source
+  size, at least 2x the largest 26 px UI size, and uses bilinear downsampling.
+- Formal telemetry measured one gray-alpha atlas at 4,194,304 bytes against an
+  8,388,608-byte budget. The HUD, pause, and death instances total 12,582,912
+  bytes against a 25,165,824-byte budget; shutdown unloads owned fonts.
+- Glyph fills are solid RGBA: warm white `(248,246,238,255)`, interaction ice
+  blue `(194,229,255,255)`, and warning `(255,210,118,255)`. A separate 1 px
+  outline, 2 px shadow, and optional `(5,9,16,232)` backing do not modulate fill.
+- Display-luma ratios against the backing are 12.08 primary, 11.03 interaction,
+  and 9.98 muted. The contract covers HUD, inventory, material bag, skill page,
+  pause menu, and death overlay copy.
 
 ## RED / GREEN evidence
 
@@ -70,6 +92,13 @@ must match. It also made the validator reject the old evidence with
 `missing report field: hud_ui_runtime_draws_1920` before 1920 page-local
 telemetry was implemented.
 
+The typography RED sequence then failed on the missing bundled font,
+horizontal-slice API, safe-layout boxes, direct-stretch telemetry, contrast
+style, and high-resolution resource fields. The high-resolution RED failed on
+the absent `kUiFontSourceBaseSize`, `kUiFontMaximumDisplaySize`, and
+`kUiFontAtlasByteBudget`; the solid-fill RED failed on the absent interaction
+color role. All now have unit, source, formal, validator, and negative coverage.
+
 ## Formal evidence and anti-fallback validation
 
 The same real Raylib host captured:
@@ -95,7 +124,9 @@ pass field, and exact resource draw mask; 1280 or gallery telemetry cannot
 satisfy a 1920 page contract. The self-test rejects hidden or
 baseline-substituted HUD/inventory/skill-stone/pause images and rejects missing
 telemetry independently for every page at both resolutions. Existing
-item/ecology negative mutations remain covered.
+item/ecology negative mutations remain covered. The self-test also rejects an
+empty font subset, low-resolution source, over-budget atlas, low contrast,
+non-solid fill, direct-stretched decorations, and page text-layout failures.
 
 Formal evidence reports `atlas_bytes=184205312`, below the 256 MiB ceiling.
 
@@ -103,13 +134,13 @@ Formal evidence reports `atlas_bytes=184205312`, below the 256 MiB ceiling.
 
 - MSVC x64 build: `arpg_game`, `arpg_platform_tests`, and
   `arpg_stage12_material_formal` succeeded.
-- `platform.units`: 422 cases, 0 failures.
-- Asset pipelines: item material and UI material both passed.
+- `platform.units`: 428 cases, 0 failures.
+- UI material/font source pipeline: 7 tests, 0 failures.
 - `stage12.material_formal`: passed.
 - `stage12.material_evidence_validator`: passed.
 - `stage12.material_evidence_validator_self_test`: passed.
 - `stage12.material_root_safety`: passed.
-- Combined CTest selection: 7/7 passed, 0 failed.
+- Combined formal/validator selection: 4/4 passed, 0 failed.
 - `git diff --check`: passed.
 
 ## Residual concern
@@ -117,5 +148,7 @@ Formal evidence reports `atlas_bytes=184205312`, below the 256 MiB ceiling.
 The ornament-preserving renderer intentionally trades several small border
 draws for undistorted art; the formal host covers this path at both required
 resolutions. The reviewed captures show 1:1 center and edge emblems, undistorted
-corner gems, and continuous repeated borders. No gameplay or state-machine
-behavior changed in this slice.
+corner gems, continuous repeated borders, uncropped titles, and readable solid
+warm-white/ice-blue text at 1280 x 720 and 1920 x 1080. The atlas is deliberately
+corpus-specific; new UI copy must update the fixed plan and coverage test. No
+gameplay, input, or state-machine behavior changed in this slice.

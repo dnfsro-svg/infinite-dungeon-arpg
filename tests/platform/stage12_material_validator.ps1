@@ -518,6 +518,24 @@ foreach ($key in @('manifest','atlas_bytes','fallback','input_hole_regression',
         'skill_ui_runtime_draws_1920','pause_ui_runtime_draws_1920',
         'hud_ui_draw_mask_1920','inventory_ui_draw_mask_1920',
         'skill_ui_draw_mask_1920','pause_ui_draw_mask_1920',
+        'bundled_font_runtime','bundled_font_glyph_count',
+        'bundled_font_subset_capacity',
+        'bundled_font_source_base_size','bundled_font_max_display_size',
+        'bundled_font_atlas_bytes','bundled_font_atlas_byte_budget',
+        'bundled_font_total_atlas_bytes',
+        'bundled_font_total_atlas_byte_budget',
+        'ui_text_contrast','ui_text_solid_fill','ui_text_primary_contrast',
+        'ui_text_secondary_contrast','ui_text_muted_contrast',
+        'ui_text_outline_pixels','ui_text_shadow_pixels',
+        'ui_text_backing_alpha',
+        'hud_decorative_stretch','inventory_decorative_stretch',
+        'skill_decorative_stretch','pause_decorative_stretch',
+        'hud_decorative_stretch_1920','inventory_decorative_stretch_1920',
+        'skill_decorative_stretch_1920','pause_decorative_stretch_1920',
+        'hud_text_layout','inventory_text_layout','skill_text_layout',
+        'pause_text_layout','hud_text_layout_1920',
+        'inventory_text_layout_1920','skill_text_layout_1920',
+        'pause_text_layout_1920',
         'ui_baseline_screenshot','ui_baseline_screenshot_1920',
         'hud_ui_screenshot','ui_gallery_screenshot',
         'hud_ui_screenshot_1920','inventory_ui_screenshot',
@@ -543,6 +561,46 @@ foreach ($key in @('manifest','atlas_bytes','fallback','input_hole_regression',
         'chaos_hazard_frame','chaos_hazard_drawn',
         'screenshot_decode','result')) {
     if (-not $report.ContainsKey($key)) { throw "missing report field: $key" }
+}
+foreach ($key in @('bundled_font_runtime','ui_text_contrast','ui_text_solid_fill',
+        'hud_decorative_stretch','inventory_decorative_stretch',
+        'skill_decorative_stretch','pause_decorative_stretch',
+        'hud_decorative_stretch_1920','inventory_decorative_stretch_1920',
+        'skill_decorative_stretch_1920','pause_decorative_stretch_1920',
+        'hud_text_layout','inventory_text_layout','skill_text_layout',
+        'pause_text_layout','hud_text_layout_1920',
+        'inventory_text_layout_1920','skill_text_layout_1920',
+        'pause_text_layout_1920')) {
+    if ($report[$key] -ne 'pass') {
+        throw "UI readability contract failed: $key"
+    }
+}
+$primaryContrast = [double]$report.ui_text_primary_contrast
+$secondaryContrast = [double]$report.ui_text_secondary_contrast
+$mutedContrast = [double]$report.ui_text_muted_contrast
+if ($primaryContrast -lt 7.0 -or $secondaryContrast -lt 6.0 -or
+        $mutedContrast -lt 4.5 -or
+        [int]$report.ui_text_outline_pixels -lt 1 -or
+        [int]$report.ui_text_shadow_pixels -lt 2 -or
+        [int]$report.ui_text_backing_alpha -lt 220) {
+    throw 'UI text contrast metrics failed'
+}
+$fontGlyphCount = [uint64]$report.bundled_font_glyph_count
+$fontSubsetCapacity = [uint64]$report.bundled_font_subset_capacity
+if ($fontGlyphCount -eq 0 -or $fontSubsetCapacity -ne 384 -or
+        $fontGlyphCount -gt $fontSubsetCapacity) {
+    throw 'bundled font glyph subset contract failed'
+}
+$fontSourceBase = [uint64]$report.bundled_font_source_base_size
+$fontMaxDisplay = [uint64]$report.bundled_font_max_display_size
+$fontAtlasBytes = [uint64]$report.bundled_font_atlas_bytes
+$fontAtlasBudget = [uint64]$report.bundled_font_atlas_byte_budget
+$fontTotalAtlasBytes = [uint64]$report.bundled_font_total_atlas_bytes
+$fontTotalAtlasBudget = [uint64]$report.bundled_font_total_atlas_byte_budget
+if ($fontSourceBase -lt ($fontMaxDisplay * 2) -or
+        $fontAtlasBytes -eq 0 -or $fontAtlasBytes -gt $fontAtlasBudget -or
+        $fontTotalAtlasBytes -gt $fontTotalAtlasBudget) {
+    throw 'bundled high-resolution font atlas budget failed'
 }
 if ($report.result -ne 'pass' -or $report.manifest -ne 'pass' -or
         $report.fallback -ne 'pass' -or $report.input_hole_regression -ne 'pass' -or

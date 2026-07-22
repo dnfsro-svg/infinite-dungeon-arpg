@@ -403,6 +403,37 @@ test::Failure detail_content_stays_inside_all_required_viewports() noexcept {
     return {};
 }
 
+test::Failure inventory_and_skill_text_boxes_use_disjoint_safe_areas() noexcept {
+    constexpr std::array<std::array<int, 2>, 2> kSizes{{
+        {{1280, 720}}, {{1920, 1080}},
+    }};
+    for (const auto size : kSizes) {
+        const Rectangle viewport{0.0F, 0.0F,
+            static_cast<float>(size[0]), static_cast<float>(size[1])};
+        const platform::InventoryLayout panels =
+            platform::inventory_layout(size[0], size[1]);
+        const platform::ActiveSkillLoadoutLayout skill =
+            platform::active_skill_loadout_layout(size[0], size[1]);
+        const platform::InventoryTextSafeLayout text =
+            platform::inventory_text_safe_layout(size[0], size[1]);
+        ARPG_REQUIRE(inside(text.page_title, viewport));
+        ARPG_REQUIRE(separated(text.page_title,
+            skill.equipment_page_button));
+        ARPG_REQUIRE(separated(text.page_title,
+            skill.skill_stones_page_button));
+        ARPG_REQUIRE(inside(text.equipment_panel_title, panels.equipment));
+        ARPG_REQUIRE(inside(text.grid_panel_title, panels.grid));
+        ARPG_REQUIRE(inside(text.detail_panel_title, panels.detail));
+        ARPG_REQUIRE(inside(text.skill_panel_title, skill.panel));
+        ARPG_REQUIRE(separated(text.skill_panel_title, skill.main_slots[0]));
+        ARPG_REQUIRE(separated(text.support_section_title,
+            skill.support_slots[0]));
+        ARPG_REQUIRE(separated(text.inventory_section_title,
+            skill.inventory_slots[0]));
+    }
+    return {};
+}
+
 constexpr test::TestCase kCases[] = {
     {"inventory layouts", &layouts_are_bounded_and_non_overlapping},
     {"inventory visible range", &visible_range_clamps_first_and_last_rows},
@@ -422,6 +453,8 @@ constexpr test::TestCase kCases[] = {
         &all_catalog_affixes_use_semantic_value_units},
     {"inventory detail content boundaries",
         &detail_content_stays_inside_all_required_viewports},
+    {"inventory and skill text safe areas",
+        &inventory_and_skill_text_boxes_use_disjoint_safe_areas},
 };
 
 }  // namespace
