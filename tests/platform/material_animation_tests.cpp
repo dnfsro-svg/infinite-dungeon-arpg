@@ -49,6 +49,23 @@ arpg::test::Failure player_animation_clips_have_required_unique_uv_frames() noex
     return {};
 }
 
+arpg::test::Failure player_animation_frame_index_matches_timeline_progress() noexcept {
+    const auto* const j3 = arpg::platform::player_animation_clip(
+        PlayerAnimationClipId::j3);
+    ARPG_REQUIRE(j3 != nullptr);
+    ARPG_REQUIRE(arpg::platform::player_animation_frame_index(*j3, 0U, 28U, false)
+        == 0U);
+    ARPG_REQUIRE(arpg::platform::player_animation_frame_index(*j3, 14U, 28U, false)
+        == 13U);
+    ARPG_REQUIRE(arpg::platform::player_animation_frame_index(*j3, 28U, 28U, false)
+        == 25U);
+    ARPG_REQUIRE(arpg::platform::player_animation_frame_index(*j3, 30U, 28U, false)
+        == 25U);
+    ARPG_REQUIRE(arpg::platform::player_animation_frame_index(*j3, 28U, 28U, true)
+        == 0U);
+    return {};
+}
+
 arpg::test::Failure material_animation_selects_launcher_active() noexcept {
     ARPG_REQUIRE(arpg::platform::select_player_sprite(PlayerState::attack_active,
         AttackId::launcher) == MaterialSpriteId::player_launcher);
@@ -129,6 +146,8 @@ arpg::test::Failure material_animation_exposes_fixed_capacity_clips() noexcept {
 constexpr arpg::test::TestCase kCases[] = {
     {"player action clips use unique UV frames",
         &player_animation_clips_have_required_unique_uv_frames},
+    {"player action frame index follows timeline progress",
+        &player_animation_frame_index_matches_timeline_progress},
     {"selects launcher active", &material_animation_selects_launcher_active},
     {"covers player states and attacks",
         &material_animation_covers_all_player_states_and_attacks},

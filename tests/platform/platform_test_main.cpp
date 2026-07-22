@@ -99,5 +99,5 @@ int main() {
         stage12_material_render_suite(),
     };
 
-    return arpg::test::run_suites(suites, 384, "player animation material contract");
+    return arpg::test::run_suites(suites, 386, "player animation material contract");
 }

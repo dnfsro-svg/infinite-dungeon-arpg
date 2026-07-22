@@ -51,6 +51,9 @@ struct PlayerAnimationFrame final {
     PlayerAnimationClipId id) noexcept;
 [[nodiscard]] std::optional<PlayerAnimationFrame> player_animation_frame(
     const PlayerAnimationClipDefinition& clip, std::uint16_t frame) noexcept;
+[[nodiscard]] std::uint16_t player_animation_frame_index(
+    const PlayerAnimationClipDefinition& clip, std::uint64_t elapsed_ticks,
+    std::uint16_t duration_ticks, bool loop) noexcept;
 
 [[nodiscard]] MaterialSpriteId select_monster_sprite(
     combat::MonsterId monster,

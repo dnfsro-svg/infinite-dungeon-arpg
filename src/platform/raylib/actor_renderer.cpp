@@ -1,5 +1,6 @@
 #include "combat_renderer.hpp"
 
+#include "combat/attack_catalog.hpp"
 #include "combat_view_math.hpp"
 #include "hud_renderer.hpp"
 #include "dungeon_view_math.hpp"
@@ -252,6 +253,52 @@ bool draw_material_actor(const MaterialPack& material_pack,
     return true;
 }
 
+std::uint16_t player_loop_duration_ticks(
+    const PlayerAnimationClipDefinition& clip) noexcept {
+    return static_cast<std::uint16_t>((static_cast<std::uint32_t>(clip.frame_count)
+        * 60U + clip.frames_per_second - 1U) / clip.frames_per_second);
+}
+
+bool draw_player_animation(const MaterialPack& material_pack,
+    const PlayerSnapshot& player, std::uint64_t world_tick,
+    const ScreenProjection& projected) noexcept {
+    PlayerAnimationClipId clip_id = select_player_animation_clip(
+        player.state, player.active_attack);
+    std::uint64_t elapsed_ticks = world_tick;
+    std::uint16_t duration_ticks{};
+    bool loop = true;
+    if (player.hp <= 0) {
+        clip_id = PlayerAnimationClipId::death;
+        elapsed_ticks = 1U;
+        duration_ticks = 1U;
+        loop = false;
+    } else if (player.hurt_ticks > 0U) {
+        clip_id = PlayerAnimationClipId::hurt;
+    } else if (player.active_attack != AttackId::none
+        && (player.state == PlayerState::attack_startup
+            || player.state == PlayerState::attack_active
+            || player.state == PlayerState::attack_recovery)) {
+        const AttackDefinition* const attack = find_attack_definition(
+            player.active_attack);
+        if (attack != nullptr) {
+            elapsed_ticks = player.attack_elapsed_ticks;
+            duration_ticks = static_cast<std::uint16_t>(attack->startup_ticks
+                + attack->active_ticks + attack->recovery_ticks);
+            loop = false;
+        }
+    }
+    const PlayerAnimationClipDefinition* const clip = player_animation_clip(clip_id);
+    if (clip == nullptr) return false;
+    if (duration_ticks == 0U) duration_ticks = player_loop_duration_ticks(*clip);
+    const std::uint16_t frame_index = player_animation_frame_index(*clip,
+        elapsed_ticks, duration_ticks, loop);
+    const auto frame = player_animation_frame(*clip, frame_index);
+    if (!frame.has_value()) return false;
+    return material_pack.draw_frame(frame->atlas, frame->source, frame->foot_anchor,
+        {projected.x, projected.y}, player.facing == Facing::left,
+        material_actor_draw_scale(true, projected.scale));
+}
+
 void draw_player_geometry(const ScreenProjection& projected) noexcept {
     const float body_width = 42.0F * projected.scale;
     const float body_height = 82.0F * projected.scale;
@@ -451,7 +498,9 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
             } else if (current_combat.player.hurt_ticks > 0) {
                 sprite = MaterialSpriteId::player_hurt;
             }
-            if (!draw_material_actor(material_pack_, sprite,
+            if (!draw_player_animation(material_pack_, current_combat.player,
+                    current_combat.tick, projected)
+                && !draw_material_actor(material_pack_, sprite,
                     current_combat.player.facing, true, projected)) {
                 draw_player_geometry(projected);
             }

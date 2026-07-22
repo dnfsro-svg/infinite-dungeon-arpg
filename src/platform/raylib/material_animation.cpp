@@ -2,6 +2,7 @@
 
 #include "material_manifest.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 
@@ -120,6 +121,18 @@ std::optional<PlayerAnimationFrame> player_animation_frame(
          static_cast<float>(row) * kPlayerAnimationCell,
          kPlayerAnimationCell, kPlayerAnimationCell},
         {64.0F, 124.0F}, {88.0F, 64.0F}};
+}
+
+std::uint16_t player_animation_frame_index(
+    const PlayerAnimationClipDefinition& clip, std::uint64_t elapsed_ticks,
+    std::uint16_t duration_ticks, bool loop) noexcept {
+    if (clip.frame_count == 0U || duration_ticks == 0U) return 0U;
+    const std::uint64_t timeline_ticks = loop
+        ? elapsed_ticks % duration_ticks : std::min<std::uint64_t>(
+            elapsed_ticks, duration_ticks);
+    const std::uint64_t frame = timeline_ticks * clip.frame_count / duration_ticks;
+    return static_cast<std::uint16_t>(std::min<std::uint64_t>(
+        frame, static_cast<std::uint64_t>(clip.frame_count - 1U)));
 }
 
 MaterialSpriteId select_monster_sprite(

@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 
 #include "material_asset_validation.hpp"
+#include "material_animation.hpp"
 #include "material_pack.hpp"
 
 #include <array>
@@ -127,6 +128,59 @@ arpg::test::Failure player_action_atlas_files_are_opaque_only_on_drawn_pixels() 
         ARPG_REQUIRE(image.width == 1024);
         ARPG_REQUIRE(image.height == 1024);
         ARPG_REQUIRE(GetImageColor(image, 0, 0).a == 0U);
+        UnloadImage(image);
+    }
+    return {};
+}
+
+arpg::test::Failure player_action_clips_map_only_to_drawn_non_chroma_cells() noexcept {
+    constexpr std::array<arpg::platform::PlayerAnimationClipId, 13> kClips{{
+        arpg::platform::PlayerAnimationClipId::idle,
+        arpg::platform::PlayerAnimationClipId::move,
+        arpg::platform::PlayerAnimationClipId::jump,
+        arpg::platform::PlayerAnimationClipId::j1,
+        arpg::platform::PlayerAnimationClipId::j2,
+        arpg::platform::PlayerAnimationClipId::j3,
+        arpg::platform::PlayerAnimationClipId::launcher,
+        arpg::platform::PlayerAnimationClipId::air_j,
+        arpg::platform::PlayerAnimationClipId::landing,
+        arpg::platform::PlayerAnimationClipId::hurt,
+        arpg::platform::PlayerAnimationClipId::down,
+        arpg::platform::PlayerAnimationClipId::get_up,
+        arpg::platform::PlayerAnimationClipId::death,
+    }};
+    const MaterialManifestDefinition manifest = arpg::platform::default_material_manifest();
+    const std::filesystem::path project{ARPG_PROJECT_SOURCE_DIR};
+    for (const auto id : kClips) {
+        const auto* const clip = arpg::platform::player_animation_clip(id);
+        ARPG_REQUIRE(clip != nullptr);
+        const MaterialAtlasDefinition* atlas{};
+        for (std::size_t index{}; index < manifest.atlas_count; ++index) {
+            if (manifest.atlases[index].id == clip->atlas) {
+                atlas = &manifest.atlases[index];
+                break;
+            }
+        }
+        ARPG_REQUIRE(atlas != nullptr);
+        const Image image = LoadImage((project / atlas->color_path).string().c_str());
+        ARPG_REQUIRE(image.data != nullptr);
+        for (std::uint16_t index{}; index < clip->frame_count; ++index) {
+            const auto frame = arpg::platform::player_animation_frame(*clip, index);
+            ARPG_REQUIRE(frame.has_value());
+            bool has_drawn_pixel{};
+            const int right = static_cast<int>(frame->source.x + frame->source.width);
+            const int bottom = static_cast<int>(frame->source.y + frame->source.height);
+            for (int y = static_cast<int>(frame->source.y); y < bottom; ++y) {
+                for (int x = static_cast<int>(frame->source.x); x < right; ++x) {
+                    const Color pixel = GetImageColor(image, x, y);
+                    if (pixel.a == 0U) continue;
+                    has_drawn_pixel = true;
+                    ARPG_REQUIRE(!(pixel.g >= pixel.r + 42U
+                        && pixel.g >= pixel.b + 42U));
+                }
+            }
+            ARPG_REQUIRE(has_drawn_pixel);
+        }
         UnloadImage(image);
     }
     return {};
@@ -407,6 +461,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &material_pack_loads_all_original_player_action_atlases},
     {"player action atlas files have transparent borders",
         &player_action_atlas_files_are_opaque_only_on_drawn_pixels},
+    {"player action clips use drawn non-chroma atlas cells",
+        &player_action_clips_map_only_to_drawn_non_chroma_cells},
     {"unloads wrong-sized valid atlas once",
         &material_pack_unloads_wrong_sized_valid_atlas_once},
     {"repeated unload releases valid atlas once",

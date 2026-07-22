@@ -4,6 +4,9 @@
 
 #include <raylib.h>
 
+#include <array>
+#include <cstdio>
+
 namespace arpg::platform {
 namespace {
 
@@ -119,7 +122,14 @@ bool MaterialPack::load() noexcept {
     for (std::size_t index = 0U; index < manifest.atlas_count; ++index) {
         const MaterialAtlasDefinition& definition = manifest.atlases[index];
         const std::size_t texture_index = atlas_index(definition.id);
-        Texture2D texture = texture_api_.load(definition.color_path);
+        std::array<char, 512> deployed_path{};
+        const int written = std::snprintf(deployed_path.data(),
+            deployed_path.size(), "%s%s", GetApplicationDirectory(),
+            definition.color_path);
+        const char* const color_path = written > 0
+                && static_cast<std::size_t>(written) < deployed_path.size()
+            ? deployed_path.data() : definition.color_path;
+        Texture2D texture = texture_api_.load(color_path);
         const bool dimensions_match = texture_api_.valid(texture)
             && texture.width == definition.width && texture.height == definition.height;
         if (!dimensions_match) {
@@ -180,6 +190,33 @@ bool MaterialPack::draw(MaterialSpriteId id, Vector2 foot_position,
     const Rectangle destination{foot_position.x - frame->foot_anchor.x * scale,
         foot_position.y - frame->foot_anchor.y * scale,
         frame->source.width * scale, frame->source.height * scale};
+    DrawTexturePro(texture, source, destination, {0.0F, 0.0F}, 0.0F, tint);
+    return true;
+}
+
+bool MaterialPack::draw_frame(MaterialAtlasId atlas, Rectangle source,
+    Vector2 foot_anchor, Vector2 foot_position, bool flip_x, float scale,
+    Color tint) const noexcept {
+    if (!is_known_atlas(atlas) || !state_.available(atlas)
+        || !valid_texture_api(texture_api_) || scale <= 0.0F
+        || source.width <= 0.0F || source.height <= 0.0F
+        || source.x < 0.0F || source.y < 0.0F) {
+        return false;
+    }
+    const Texture2D& texture = textures_[atlas_index(atlas)];
+    if (!texture_api_.valid(texture)
+        || source.x + source.width > static_cast<float>(texture.width)
+        || source.y + source.height > static_cast<float>(texture.height)) {
+        return false;
+    }
+    if (flip_x) {
+        source.x += source.width;
+        source.width = -source.width;
+    }
+    const Rectangle destination{foot_position.x - foot_anchor.x * scale,
+        foot_position.y - foot_anchor.y * scale,
+        source.width < 0.0F ? -source.width * scale : source.width * scale,
+        source.height * scale};
     DrawTexturePro(texture, source, destination, {0.0F, 0.0F}, 0.0F, tint);
     return true;
 }
