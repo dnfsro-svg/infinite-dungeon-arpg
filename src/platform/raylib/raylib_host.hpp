@@ -96,6 +96,10 @@ struct Stage12MaterialRuntimeStatus final {
     bool water_environment_resident{};
     bool water_bulwark_resident{};
     bool water_support_resident{};
+    bool lightning_ecology_ready{};
+    bool lightning_environment_resident{};
+    bool lightning_shooter_resident{};
+    bool lightning_dasher_resident{};
 };
 
 struct RaylibHostConfig final {

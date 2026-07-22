@@ -52,6 +52,7 @@ add_library(arpg_raylib STATIC
     ui_audio_pack.cpp
     window_settings.cpp)
 target_sources(arpg_raylib PRIVATE water_room_material_slice.cpp)
+target_sources(arpg_raylib PRIVATE lightning_room_material_slice.cpp)
 
 target_include_directories(arpg_raylib
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")

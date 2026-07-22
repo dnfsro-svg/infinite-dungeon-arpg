@@ -35,7 +35,7 @@ constexpr std::array<PlayerAnimationClipDefinition,
     {PlayerAnimationClipId::death, MaterialAtlasId::player_reaction, 40U, 24U},
 }};
 
-constexpr std::array<MonsterAnimationClipDefinition, 10> kWaterMonsterClips{{
+constexpr std::array<MonsterAnimationClipDefinition, 20> kEcologyMonsterClips{{
     {combat::MonsterId::water_bulwark, MonsterAnimationState::idle,
         MaterialAtlasId::water_bulwark, 0U, 12U, 12U},
     {combat::MonsterId::water_bulwark, MonsterAnimationState::move,
@@ -56,6 +56,26 @@ constexpr std::array<MonsterAnimationClipDefinition, 10> kWaterMonsterClips{{
         MaterialAtlasId::water_support, 48U, 8U, 20U},
     {combat::MonsterId::water_support, MonsterAnimationState::death,
         MaterialAtlasId::water_support, 56U, 16U, 16U},
+    {combat::MonsterId::lightning_shooter, MonsterAnimationState::idle,
+        MaterialAtlasId::lightning_shooter, 0U, 12U, 12U},
+    {combat::MonsterId::lightning_shooter, MonsterAnimationState::move,
+        MaterialAtlasId::lightning_shooter, 12U, 16U, 18U},
+    {combat::MonsterId::lightning_shooter, MonsterAnimationState::special,
+        MaterialAtlasId::lightning_shooter, 28U, 20U, 20U},
+    {combat::MonsterId::lightning_shooter, MonsterAnimationState::hurt,
+        MaterialAtlasId::lightning_shooter, 48U, 8U, 20U},
+    {combat::MonsterId::lightning_shooter, MonsterAnimationState::death,
+        MaterialAtlasId::lightning_shooter, 56U, 16U, 16U},
+    {combat::MonsterId::lightning_dasher, MonsterAnimationState::idle,
+        MaterialAtlasId::lightning_dasher, 0U, 12U, 12U},
+    {combat::MonsterId::lightning_dasher, MonsterAnimationState::move,
+        MaterialAtlasId::lightning_dasher, 12U, 16U, 18U},
+    {combat::MonsterId::lightning_dasher, MonsterAnimationState::special,
+        MaterialAtlasId::lightning_dasher, 28U, 20U, 20U},
+    {combat::MonsterId::lightning_dasher, MonsterAnimationState::hurt,
+        MaterialAtlasId::lightning_dasher, 48U, 8U, 20U},
+    {combat::MonsterId::lightning_dasher, MonsterAnimationState::death,
+        MaterialAtlasId::lightning_dasher, 56U, 16U, 16U},
 }};
 
 [[nodiscard]] MaterialSpriteId select_attack_sprite(
@@ -278,7 +298,7 @@ MonsterAnimationState select_monster_animation_state(
 
 const MonsterAnimationClipDefinition* monster_animation_clip(
     combat::MonsterId monster, MonsterAnimationState state) noexcept {
-    for (const MonsterAnimationClipDefinition& clip : kWaterMonsterClips) {
+    for (const MonsterAnimationClipDefinition& clip : kEcologyMonsterClips) {
         if (clip.monster == monster && clip.state == state) return &clip;
     }
     return nullptr;

@@ -47,6 +47,9 @@ inline constexpr MaterialAtlasDefinition kDefaultMaterialAtlases[] = {
     {MaterialAtlasId::water_environment, 768, 768, 4U * 768U * 768U, "assets/stage12/water_environment.png", "assets/stage12/water_environment_material.png", MaterialEcology::water},
     {MaterialAtlasId::water_bulwark, 864, 864, 4U * 864U * 864U, "assets/stage12/water_bulwark.png", "assets/stage12/water_bulwark_material.png", MaterialEcology::water},
     {MaterialAtlasId::water_support, 864, 864, 4U * 864U * 864U, "assets/stage12/water_support.png", "assets/stage12/water_support_material.png", MaterialEcology::water},
+    {MaterialAtlasId::lightning_environment, 768, 768, 4U * 768U * 768U, "assets/stage12/lightning_environment.png", "assets/stage12/lightning_environment_material.png", MaterialEcology::lightning},
+    {MaterialAtlasId::lightning_shooter, 864, 864, 4U * 864U * 864U, "assets/stage12/lightning_shooter.png", "assets/stage12/lightning_shooter_material.png", MaterialEcology::lightning},
+    {MaterialAtlasId::lightning_dasher, 864, 864, 4U * 864U * 864U, "assets/stage12/lightning_dasher.png", "assets/stage12/lightning_dasher_material.png", MaterialEcology::lightning},
 };
 
 #define ARPG_ACTOR_FRAME(sprite, column, row) \
@@ -71,6 +74,13 @@ inline constexpr MaterialAtlasDefinition kDefaultMaterialAtlases[] = {
          static_cast<float>(((cell) / 9) * 96), 96.0F, 96.0F}, \
         {48.0F, 93.0F}, 42U, {68.0F, 48.0F}, MaterialLayer::body, \
         MaterialClass::actor, static_cast<std::uint32_t>((cell) * 211U + 4001U)}
+
+#define ARPG_LIGHTNING_MONSTER_FRAME(sprite, atlas, cell) \
+    {MaterialSpriteId::sprite, MaterialAtlasId::atlas, \
+        {static_cast<float>(((cell) % 9) * 96), \
+         static_cast<float>(((cell) / 9) * 96), 96.0F, 96.0F}, \
+        {48.0F, 93.0F}, 42U, {68.0F, 48.0F}, MaterialLayer::body, \
+        MaterialClass::actor, static_cast<std::uint32_t>((cell) * 223U + 6001U)}
 
 inline constexpr MaterialFrameDefinition kDefaultMaterialFrames[] = {
     ARPG_ACTOR_FRAME(player_idle, 0, 0),
@@ -121,20 +131,20 @@ inline constexpr MaterialFrameDefinition kDefaultMaterialFrames[] = {
     ARPG_WATER_MONSTER_FRAME(water_support_recovery, water_support, 42),
     ARPG_WATER_MONSTER_FRAME(water_support_cooldown, water_support, 47),
     ARPG_WATER_MONSTER_FRAME(water_support_defeated, water_support, 56),
-    ARPG_ACTOR_FRAME(lightning_shooter_idle, 0, 5),
-    ARPG_ACTOR_FRAME(lightning_shooter_move, 1, 5),
-    ARPG_ACTOR_FRAME(lightning_shooter_telegraph, 2, 5),
-    ARPG_ACTOR_FRAME(lightning_shooter_active, 3, 5),
-    ARPG_ACTOR_FRAME(lightning_shooter_recovery, 4, 5),
-    ARPG_ACTOR_FRAME(lightning_shooter_cooldown, 5, 5),
-    ARPG_ACTOR_FRAME(lightning_shooter_defeated, 6, 5),
-    ARPG_ACTOR_FRAME(lightning_dasher_idle, 7, 5),
-    ARPG_ACTOR_FRAME(lightning_dasher_move, 0, 6),
-    ARPG_ACTOR_FRAME(lightning_dasher_telegraph, 1, 6),
-    ARPG_ACTOR_FRAME(lightning_dasher_active, 2, 6),
-    ARPG_ACTOR_FRAME(lightning_dasher_recovery, 3, 6),
-    ARPG_ACTOR_FRAME(lightning_dasher_cooldown, 4, 6),
-    ARPG_ACTOR_FRAME(lightning_dasher_defeated, 5, 6),
+    ARPG_LIGHTNING_MONSTER_FRAME(lightning_shooter_idle, lightning_shooter, 0),
+    ARPG_LIGHTNING_MONSTER_FRAME(lightning_shooter_move, lightning_shooter, 12),
+    ARPG_LIGHTNING_MONSTER_FRAME(lightning_shooter_telegraph, lightning_shooter, 28),
+    ARPG_LIGHTNING_MONSTER_FRAME(lightning_shooter_active, lightning_shooter, 35),
+    ARPG_LIGHTNING_MONSTER_FRAME(lightning_shooter_recovery, lightning_shooter, 42),
+    ARPG_LIGHTNING_MONSTER_FRAME(lightning_shooter_cooldown, lightning_shooter, 47),
+    ARPG_LIGHTNING_MONSTER_FRAME(lightning_shooter_defeated, lightning_shooter, 56),
+    ARPG_LIGHTNING_MONSTER_FRAME(lightning_dasher_idle, lightning_dasher, 0),
+    ARPG_LIGHTNING_MONSTER_FRAME(lightning_dasher_move, lightning_dasher, 12),
+    ARPG_LIGHTNING_MONSTER_FRAME(lightning_dasher_telegraph, lightning_dasher, 28),
+    ARPG_LIGHTNING_MONSTER_FRAME(lightning_dasher_active, lightning_dasher, 35),
+    ARPG_LIGHTNING_MONSTER_FRAME(lightning_dasher_recovery, lightning_dasher, 42),
+    ARPG_LIGHTNING_MONSTER_FRAME(lightning_dasher_cooldown, lightning_dasher, 47),
+    ARPG_LIGHTNING_MONSTER_FRAME(lightning_dasher_defeated, lightning_dasher, 56),
     ARPG_ACTOR_FRAME(chaos_chaser_idle, 6, 6),
     ARPG_ACTOR_FRAME(chaos_chaser_move, 7, 6),
     ARPG_ACTOR_FRAME(chaos_chaser_telegraph, 0, 7),
@@ -153,8 +163,8 @@ inline constexpr MaterialFrameDefinition kDefaultMaterialFrames[] = {
         {0.0F, 0.0F, 1024.0F, 704.0F}, {512.0F, 704.0F}, 0U},
     {MaterialSpriteId::environment_floor_water, MaterialAtlasId::water_environment,
         {0.0F, 0.0F, 512.0F, 512.0F}, {256.0F, 512.0F}, 0U},
-    {MaterialSpriteId::environment_floor_lightning, MaterialAtlasId::environment,
-        {0.0F, 0.0F, 1024.0F, 704.0F}, {512.0F, 704.0F}, 0U},
+    {MaterialSpriteId::environment_floor_lightning, MaterialAtlasId::lightning_environment,
+        {0.0F, 0.0F, 512.0F, 512.0F}, {256.0F, 512.0F}, 0U},
     {MaterialSpriteId::environment_floor_chaos, MaterialAtlasId::environment,
         {0.0F, 0.0F, 1024.0F, 704.0F}, {512.0F, 704.0F}, 0U},
     {MaterialSpriteId::environment_door_fire, MaterialAtlasId::environment,
@@ -163,8 +173,10 @@ inline constexpr MaterialFrameDefinition kDefaultMaterialFrames[] = {
         {512.0F, 0.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U,
         {128.0F, 128.0F}, MaterialLayer::front_effect,
         MaterialClass::environment, 5001U},
-    {MaterialSpriteId::environment_door_lightning, MaterialAtlasId::environment,
-        {224.0F, 704.0F, 112.0F, 112.0F}, {56.0F, 112.0F}, 0U},
+    {MaterialSpriteId::environment_door_lightning, MaterialAtlasId::lightning_environment,
+        {512.0F, 0.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U,
+        {128.0F, 128.0F}, MaterialLayer::front_effect,
+        MaterialClass::environment, 6001U},
     {MaterialSpriteId::environment_door_chaos, MaterialAtlasId::environment,
         {336.0F, 704.0F, 112.0F, 112.0F}, {56.0F, 112.0F}, 0U},
     {MaterialSpriteId::environment_hole, MaterialAtlasId::environment,
@@ -185,6 +197,22 @@ inline constexpr MaterialFrameDefinition kDefaultMaterialFrames[] = {
     {MaterialSpriteId::water_grate, MaterialAtlasId::water_environment,
         {512.0F, 256.0F, 256.0F, 256.0F}, {128.0F, 128.0F}, 0U,
         {128.0F, 128.0F}, MaterialLayer::body, MaterialClass::environment, 5006U},
+    {MaterialSpriteId::lightning_wall, MaterialAtlasId::lightning_environment,
+        {0.0F, 0.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U,
+        {128.0F, 128.0F}, MaterialLayer::body, MaterialClass::environment, 6002U},
+    {MaterialSpriteId::lightning_hole, MaterialAtlasId::lightning_environment,
+        {0.0F, 512.0F, 256.0F, 256.0F}, {128.0F, 128.0F}, 0U,
+        {128.0F, 128.0F}, MaterialLayer::body, MaterialClass::environment, 6003U},
+    {MaterialSpriteId::lightning_arc_lamp, MaterialAtlasId::lightning_environment,
+        {256.0F, 512.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U,
+        {128.0F, 128.0F}, MaterialLayer::front_effect,
+        MaterialClass::environment, 6004U},
+    {MaterialSpriteId::lightning_capacitor_bank, MaterialAtlasId::lightning_environment,
+        {512.0F, 256.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U,
+        {128.0F, 128.0F}, MaterialLayer::body, MaterialClass::environment, 6005U},
+    {MaterialSpriteId::lightning_grounding_rod, MaterialAtlasId::lightning_environment,
+        {512.0F, 512.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U,
+        {128.0F, 128.0F}, MaterialLayer::body, MaterialClass::environment, 6006U},
     ARPG_EFFECT_FRAME(effect_fire, 0, 0),
     ARPG_EFFECT_FRAME(effect_water, 1, 0),
     ARPG_EFFECT_FRAME(effect_lightning, 2, 0),
@@ -223,6 +251,7 @@ inline constexpr AnimationClipDefinition kDefaultAnimationClips[] = {
 #undef ARPG_EFFECT_FRAME
 #undef ARPG_FIRE_MONSTER_FRAME
 #undef ARPG_WATER_MONSTER_FRAME
+#undef ARPG_LIGHTNING_MONSTER_FRAME
 
 }  // namespace detail
 

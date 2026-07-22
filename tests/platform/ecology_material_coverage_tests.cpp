@@ -4,6 +4,7 @@
 #include "material_asset_validation.hpp"
 #include "material_manifest.hpp"
 #include "monster_material_presenter.hpp"
+#include "lightning_room_material_slice.hpp"
 #include "water_room_material_slice.hpp"
 
 #include <raylib.h>
@@ -296,9 +297,9 @@ arpg::test::Failure water_room_consumes_only_water_environment_materials() noexc
     return {};
 }
 
-arpg::test::Failure water_monsters_expose_complete_multiframe_state_groups() noexcept {
-    constexpr std::array<MonsterId, 2> kMonsters{{
-        MonsterId::water_bulwark, MonsterId::water_support}};
+arpg::test::Failure monsters_expose_complete_multiframe_state_groups(
+    const std::array<MonsterId, 2>& monsters,
+    const std::array<MaterialAtlasId, 2>& atlases) noexcept {
     constexpr std::array<MonsterAnimationState, 5> kStates{{
         MonsterAnimationState::idle,
         MonsterAnimationState::move,
@@ -307,12 +308,10 @@ arpg::test::Failure water_monsters_expose_complete_multiframe_state_groups() noe
         MonsterAnimationState::death,
     }};
     constexpr std::array<std::uint16_t, 5> kMinimumFrames{{12U, 16U, 20U, 8U, 16U}};
-    constexpr std::array<MaterialAtlasId, 2> kAtlases{{
-        MaterialAtlasId::water_bulwark, MaterialAtlasId::water_support}};
-    for (std::size_t monster_index{}; monster_index < kMonsters.size();
+    for (std::size_t monster_index{}; monster_index < monsters.size();
          ++monster_index) {
         const MaterialAtlasDefinition* const atlas = find_atlas(
-            kAtlases[monster_index]);
+            atlases[monster_index]);
         ARPG_REQUIRE(atlas != nullptr);
         const std::filesystem::path path = std::filesystem::path{
             ARPG_PROJECT_SOURCE_DIR} / atlas->color_path;
@@ -322,9 +321,9 @@ arpg::test::Failure water_monsters_expose_complete_multiframe_state_groups() noe
         ARPG_REQUIRE(pixels != nullptr);
         for (std::size_t state_index{}; state_index < kStates.size(); ++state_index) {
             const auto* const clip = arpg::platform::monster_animation_clip(
-                kMonsters[monster_index], kStates[state_index]);
+                monsters[monster_index], kStates[state_index]);
             ARPG_REQUIRE(clip != nullptr);
-            ARPG_REQUIRE(clip->atlas == kAtlases[monster_index]);
+            ARPG_REQUIRE(clip->atlas == atlases[monster_index]);
             ARPG_REQUIRE(clip->frame_count >= kMinimumFrames[state_index]);
             ARPG_REQUIRE(clip->key_pose_count >= 4U);
             std::array<bool, 4> key_poses_seen{};
@@ -386,9 +385,9 @@ arpg::test::Failure water_monsters_expose_complete_multiframe_state_groups() noe
             for (const bool seen : key_poses_seen) ARPG_REQUIRE(seen);
         }
         const auto* const idle = arpg::platform::monster_animation_clip(
-            kMonsters[monster_index], MonsterAnimationState::idle);
+            monsters[monster_index], MonsterAnimationState::idle);
         const auto* const death = arpg::platform::monster_animation_clip(
-            kMonsters[monster_index], MonsterAnimationState::death);
+            monsters[monster_index], MonsterAnimationState::death);
         ARPG_REQUIRE(idle != nullptr);
         ARPG_REQUIRE(death != nullptr);
         const auto standing_frame = arpg::platform::monster_animation_frame(
@@ -408,6 +407,117 @@ arpg::test::Failure water_monsters_expose_complete_multiframe_state_groups() noe
         UnloadImage(image);
     }
     return {};
+}
+
+arpg::test::Failure water_monsters_expose_complete_multiframe_state_groups() noexcept {
+    return monsters_expose_complete_multiframe_state_groups(
+        {MonsterId::water_bulwark, MonsterId::water_support},
+        {MaterialAtlasId::water_bulwark, MaterialAtlasId::water_support});
+}
+
+arpg::test::Failure lightning_ecology_has_independent_loadable_color_and_material_atlases() noexcept {
+    constexpr std::array<MaterialAtlasId, 3> kAtlases{{
+        MaterialAtlasId::lightning_environment,
+        MaterialAtlasId::lightning_shooter,
+        MaterialAtlasId::lightning_dasher,
+    }};
+    for (const MaterialAtlasId id : kAtlases) {
+        const MaterialAtlasDefinition* const atlas = find_atlas(id);
+        ARPG_REQUIRE(atlas != nullptr);
+        ARPG_REQUIRE(atlas->ecology == MaterialEcology::lightning);
+        ARPG_REQUIRE(atlas->color_path != nullptr);
+        ARPG_REQUIRE(atlas->material_path != nullptr);
+        const std::string color = std::filesystem::path{atlas->color_path}
+            .filename().string();
+        const std::string material = std::filesystem::path{atlas->material_path}
+            .filename().string();
+        ARPG_REQUIRE(color.find("lightning") != std::string::npos);
+        ARPG_REQUIRE(material.find("lightning") != std::string::npos);
+        ARPG_REQUIRE(color.find("fire") == std::string::npos);
+        ARPG_REQUIRE(color.find("water") == std::string::npos);
+        ARPG_REQUIRE(image_has_visible_color(
+            atlas->color_path, atlas->width, atlas->height));
+        ARPG_REQUIRE(image_has_visible_color(
+            atlas->material_path, atlas->width, atlas->height));
+    }
+    return {};
+}
+
+arpg::test::Failure lightning_room_consumes_only_lightning_environment_materials() noexcept {
+    const auto plan = arpg::platform::lightning_room_render_plan(
+        arpg::dungeon::DungeonElement::lightning);
+    ARPG_REQUIRE(plan.active);
+    ARPG_REQUIRE(plan.background_atlas == MaterialAtlasId::lightning_environment);
+    ARPG_REQUIRE(plan.background_source.width > 0.0F);
+    ARPG_REQUIRE(plan.background_source.height > 0.0F);
+    ARPG_REQUIRE(!arpg::platform::lightning_room_render_plan(
+        arpg::dungeon::DungeonElement::water).active);
+
+    const auto& slice = arpg::platform::lightning_room_material_slice();
+    constexpr std::array<arpg::platform::LightningRoomPropId, 7> kRequired{{
+        arpg::platform::LightningRoomPropId::floor,
+        arpg::platform::LightningRoomPropId::wall,
+        arpg::platform::LightningRoomPropId::door,
+        arpg::platform::LightningRoomPropId::hole,
+        arpg::platform::LightningRoomPropId::arc_lamp,
+        arpg::platform::LightningRoomPropId::capacitor_bank,
+        arpg::platform::LightningRoomPropId::grounding_rod,
+    }};
+    const auto manifest = arpg::platform::default_material_manifest();
+    for (std::size_t index{}; index < kRequired.size(); ++index) {
+        const auto& prop = slice.props[index];
+        ARPG_REQUIRE(prop.id == kRequired[index]);
+        ARPG_REQUIRE(prop.sprite != arpg::platform::MaterialSpriteId::missing);
+        const arpg::platform::MaterialFrameDefinition* frame{};
+        for (std::size_t frame_index{}; frame_index < manifest.frame_count;
+             ++frame_index) {
+            if (manifest.frames[frame_index].id == prop.sprite) {
+                frame = &manifest.frames[frame_index];
+                break;
+            }
+        }
+        ARPG_REQUIRE(frame != nullptr);
+        ARPG_REQUIRE(frame->atlas == MaterialAtlasId::lightning_environment);
+    }
+    return {};
+}
+
+arpg::test::Failure lightning_environment_keeps_high_contrast_warning_palette() noexcept {
+    const MaterialAtlasDefinition* const atlas = find_atlas(
+        MaterialAtlasId::lightning_environment);
+    ARPG_REQUIRE(atlas != nullptr);
+    const std::filesystem::path path = std::filesystem::path{
+        ARPG_PROJECT_SOURCE_DIR} / atlas->color_path;
+    const Image image = LoadImage(path.string().c_str());
+    ARPG_REQUIRE(image.data != nullptr);
+    Color* const pixels = LoadImageColors(image);
+    ARPG_REQUIRE(pixels != nullptr);
+    std::uint64_t dark{};
+    std::uint64_t warning{};
+    std::uint64_t cyan{};
+    const std::size_t count = static_cast<std::size_t>(image.width)
+        * static_cast<std::size_t>(image.height);
+    for (std::size_t index{}; index < count; ++index) {
+        const Color pixel = pixels[index];
+        if (pixel.a <= 24U) continue;
+        const unsigned int luminance = static_cast<unsigned int>(pixel.r)
+            + pixel.g + pixel.b;
+        if (luminance < 180U) ++dark;
+        if (pixel.r > 180U && pixel.g > 140U && pixel.b < 100U) ++warning;
+        if (pixel.b > 170U && pixel.g > 120U && pixel.r < 140U) ++cyan;
+    }
+    UnloadImageColors(pixels);
+    UnloadImage(image);
+    ARPG_REQUIRE(dark > count / 20U);
+    ARPG_REQUIRE(warning > count / 500U);
+    ARPG_REQUIRE(cyan > count / 1000U);
+    return {};
+}
+
+arpg::test::Failure lightning_monsters_expose_complete_multiframe_state_groups() noexcept {
+    return monsters_expose_complete_multiframe_state_groups(
+        {MonsterId::lightning_shooter, MonsterId::lightning_dasher},
+        {MaterialAtlasId::lightning_shooter, MaterialAtlasId::lightning_dasher});
 }
 
 arpg::test::Failure water_monster_presentation_collects_and_completes_death() noexcept {
@@ -503,6 +613,51 @@ arpg::test::Failure water_ecology_stays_inside_manifest_loading_budget() noexcep
     return {};
 }
 
+arpg::test::Failure lightning_monster_presentation_runs_special_hurt_and_death() noexcept {
+    arpg::platform::MonsterMaterialPresenter presenter{};
+    arpg::combat::MonsterSnapshot monster{};
+    monster.active = true;
+    monster.id = MonsterId::lightning_shooter;
+    monster.generation = 11U;
+    monster.ai_phase = MonsterAiPhase::move;
+    ARPG_REQUIRE(presenter.collect_draw_plan(0U, monster, 40U, false).frame_index == 0U);
+    ARPG_REQUIRE(presenter.collect_draw_plan(0U, monster, 48U, false).frame_index > 0U);
+
+    monster.ai_phase = MonsterAiPhase::telegraph;
+    const auto special = presenter.collect_draw_plan(0U, monster, 49U, false);
+    ARPG_REQUIRE(special.use_material_frame);
+    ARPG_REQUIRE(special.animation_state == MonsterAnimationState::special);
+    ARPG_REQUIRE(special.frame_index == 0U);
+    const auto hurt = presenter.collect_draw_plan(0U, monster, 50U, true);
+    ARPG_REQUIRE(hurt.animation_state == MonsterAnimationState::hurt);
+    ARPG_REQUIRE(hurt.frame_index == 0U);
+
+    monster.ai_phase = MonsterAiPhase::defeated;
+    const auto death = presenter.collect_draw_plan(0U, monster, 51U, true);
+    ARPG_REQUIRE(death.animation_state == MonsterAnimationState::death);
+    ARPG_REQUIRE(death.frame_index == 0U);
+    ARPG_REQUIRE(death.frame.has_value());
+    const auto complete = presenter.collect_draw_plan(0U, monster, 120U, false);
+    ARPG_REQUIRE(complete.frame_index == 15U);
+    ARPG_REQUIRE(complete.frame.has_value());
+    return {};
+}
+
+arpg::test::Failure lightning_ecology_stays_inside_manifest_loading_budget() noexcept {
+    const auto manifest = arpg::platform::default_material_manifest();
+    ARPG_REQUIRE(arpg::platform::validate_material_manifest(manifest).valid);
+    std::size_t loaded_bytes{};
+    for (std::size_t index{}; index < manifest.atlas_count; ++index) {
+        const auto ecology = manifest.atlases[index].ecology;
+        if (ecology == MaterialEcology::common
+            || ecology == MaterialEcology::lightning) {
+            loaded_bytes += manifest.atlases[index].rgba_bytes * 2U;
+        }
+    }
+    ARPG_REQUIRE(loaded_bytes <= manifest.memory_budget_bytes);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"loads independent water color and material atlases",
         &water_ecology_has_independent_loadable_color_and_material_atlases},
@@ -518,6 +673,18 @@ constexpr arpg::test::TestCase kCases[] = {
         &water_monster_presentation_restarts_non_looping_states},
     {"water ecology remains inside loading budget",
         &water_ecology_stays_inside_manifest_loading_budget},
+    {"loads independent lightning color and material atlases",
+        &lightning_ecology_has_independent_loadable_color_and_material_atlases},
+    {"lightning room consumes lightning-only environment materials",
+        &lightning_room_consumes_only_lightning_environment_materials},
+    {"lightning room keeps a high contrast warning palette",
+        &lightning_environment_keeps_high_contrast_warning_palette},
+    {"lightning monsters expose required multiframe state groups",
+        &lightning_monsters_expose_complete_multiframe_state_groups},
+    {"lightning presentation runs special hurt and death frames",
+        &lightning_monster_presentation_runs_special_hurt_and_death},
+    {"lightning ecology remains inside loading budget",
+        &lightning_ecology_stays_inside_manifest_loading_budget},
 };
 
 }  // namespace

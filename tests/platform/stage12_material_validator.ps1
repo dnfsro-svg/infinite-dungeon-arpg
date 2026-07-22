@@ -32,9 +32,12 @@ $reportPath = Join-Path $EvidenceDirectory 'stage12-material-evidence.txt'
 if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { throw 'missing material report' }
 $report = Read-Report $reportPath
 foreach ($key in @('manifest','atlas_bytes','fallback','input_hole_regression',
-        'monsters','monster_screenshot','water_monster_screenshot','f12_screenshot','screenshot_isolation',
+        'monsters','monster_screenshot','water_monster_screenshot','lightning_monster_screenshot',
+        'f12_screenshot','screenshot_isolation',
         'shader_pipeline','water_ecology_residency','water_environment_pair',
-        'water_bulwark_pair','water_support_pair','screenshot_decode','result')) {
+        'water_bulwark_pair','water_support_pair','lightning_ecology_residency',
+        'lightning_environment_pair','lightning_shooter_pair','lightning_dasher_pair',
+        'screenshot_decode','result')) {
     if (-not $report.ContainsKey($key)) { throw "missing report field: $key" }
 }
 if ($report.result -ne 'pass' -or $report.manifest -ne 'pass' -or
@@ -44,12 +47,16 @@ if ($report.result -ne 'pass' -or $report.manifest -ne 'pass' -or
         $report.water_environment_pair -ne 'resident' -or
         $report.water_bulwark_pair -ne 'resident' -or
         $report.water_support_pair -ne 'resident' -or
+        $report.lightning_ecology_residency -ne 'pass' -or
+        $report.lightning_environment_pair -ne 'resident' -or
+        $report.lightning_shooter_pair -ne 'resident' -or
+        $report.lightning_dasher_pair -ne 'resident' -or
         $report.screenshot_isolation -ne 'pass' -or $report.screenshot_decode -ne 'pass' -or
         $report.monsters -ne 'fire_bomber,fire_charger,water_bulwark,water_support,lightning_shooter,lightning_dasher,chaos_chaser,chaos_hazard') {
     throw 'formal material report rejected'
 }
 $atlasBytes = [uint64]$report.atlas_bytes
-if ($atlasBytes -lt 134103040) { throw 'paired texture budget was not fully counted' }
+if ($atlasBytes -lt 150765568) { throw 'paired texture budget was not fully counted' }
 if ($atlasBytes -gt 268435456) { throw 'texture budget exceeded' }
 
 foreach ($expected in @(@('game-1280x720.png',1280,720),
@@ -70,6 +77,10 @@ $waterMonsterScreenshot = Join-Path $EvidenceDirectory $report.water_monster_scr
 if (-not (Test-Path -LiteralPath $waterMonsterScreenshot -PathType Leaf)) { throw 'missing water-monster screenshot' }
 $waterMonsterSize = Read-PngSize $waterMonsterScreenshot
 if ($waterMonsterSize[0] -ne 1280 -or $waterMonsterSize[1] -ne 720) { throw 'wrong water-monster screenshot size' }
+$lightningMonsterScreenshot = Join-Path $EvidenceDirectory $report.lightning_monster_screenshot
+if (-not (Test-Path -LiteralPath $lightningMonsterScreenshot -PathType Leaf)) { throw 'missing lightning-monster screenshot' }
+$lightningMonsterSize = Read-PngSize $lightningMonsterScreenshot
+if ($lightningMonsterSize[0] -ne 1280 -or $lightningMonsterSize[1] -ne 720) { throw 'wrong lightning-monster screenshot size' }
 $f12Screenshot = Join-Path $EvidenceDirectory $report.f12_screenshot
 if (-not (Test-Path -LiteralPath $f12Screenshot -PathType Leaf)) { throw 'missing isolated F12 screenshot' }
 $f12Size = Read-PngSize $f12Screenshot
@@ -87,7 +98,13 @@ $expectedAtlases = @(@('environment.png',1024,1024),
     @('effects_ui_material.png',1024,1024), @('water_environment.png',768,768),
     @('water_environment_material.png',768,768), @('water_bulwark.png',864,864),
     @('water_bulwark_material.png',864,864), @('water_support.png',864,864),
-    @('water_support_material.png',864,864))
+    @('water_support_material.png',864,864),
+    @('lightning_environment.png',768,768),
+    @('lightning_environment_material.png',768,768),
+    @('lightning_shooter.png',864,864),
+    @('lightning_shooter_material.png',864,864),
+    @('lightning_dasher.png',864,864),
+    @('lightning_dasher_material.png',864,864))
 foreach ($expected in $expectedAtlases) {
     $path = Join-Path $assetRoot $expected[0]
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "missing atlas: $($expected[0])" }
@@ -96,4 +113,4 @@ foreach ($expected in $expectedAtlases) {
         throw "wrong atlas dimensions: $($expected[0])"
     }
 }
-Write-Output 'stage12 material evidence validated: screenshots, atlases, fallback, input/hole, eight monsters'
+Write-Output 'stage12 material evidence validated: screenshots, atlases, fallback, input/hole, eight monsters, water and lightning residency'

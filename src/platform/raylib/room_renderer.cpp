@@ -6,6 +6,7 @@
 #include "fire_room_material_slice.hpp"
 #include "material_animation.hpp"
 #include "material_loot_view.hpp"
+#include "lightning_room_material_slice.hpp"
 #include "render_layout.hpp"
 #include "water_room_material_slice.hpp"
 
@@ -82,6 +83,14 @@ bool draw_environment_room(const MaterialPack& material_pack,
             (std::max)(width / water.background_source.width,
                 height / water.background_source.height));
     }
+    const LightningRoomRenderPlan lightning = lightning_room_render_plan(ecology);
+    if (lightning.active && material_pack.available(lightning.background_atlas)) {
+        return material_pack.draw_frame(lightning.background_atlas,
+            lightning.background_source, {256.0F, 512.0F},
+            {width * 0.5F, height}, false,
+            (std::max)(width / lightning.background_source.width,
+                height / lightning.background_source.height));
+    }
     return material_pack.draw(select_floor_sprite(ecology),
         {width * 0.5F, height}, false, scale);
 }
@@ -107,9 +116,36 @@ void draw_water_room_props(const MaterialPack& material_pack,
     }
 }
 
+void draw_lightning_room_props(const MaterialPack& material_pack,
+    float width, float height) noexcept {
+    if (!material_pack.available(MaterialAtlasId::lightning_environment)) return;
+    constexpr std::array<Vector2, 5> kPositions{{
+        {0.12F, 0.34F}, {0.88F, 0.35F}, {0.18F, 0.82F},
+        {0.82F, 0.82F}, {0.50F, 0.86F},
+    }};
+    constexpr std::array<LightningRoomPropId, 5> kProps{{
+        LightningRoomPropId::arc_lamp, LightningRoomPropId::wall,
+        LightningRoomPropId::capacitor_bank,
+        LightningRoomPropId::grounding_rod,
+        LightningRoomPropId::capacitor_bank,
+    }};
+    const LightningRoomMaterialSlice& slice = lightning_room_material_slice();
+    for (std::size_t index{}; index < kProps.size(); ++index) {
+        const auto& prop = slice.props[static_cast<std::size_t>(kProps[index])];
+        static_cast<void>(material_pack.draw(prop.sprite,
+            {kPositions[index].x * width, kPositions[index].y * height},
+            false, index == 1U ? 0.90F : 0.55F));
+    }
+}
+
 MaterialSpriteId hole_sprite(dungeon::DungeonElement ecology) noexcept {
-    return ecology == dungeon::DungeonElement::water
-        ? MaterialSpriteId::water_hole : MaterialSpriteId::environment_hole;
+    if (ecology == dungeon::DungeonElement::water) {
+        return MaterialSpriteId::water_hole;
+    }
+    if (ecology == dungeon::DungeonElement::lightning) {
+        return MaterialSpriteId::lightning_hole;
+    }
+    return MaterialSpriteId::environment_hole;
 }
 
 void draw_fire_room_props(const MaterialPack& material_pack,
@@ -467,6 +503,8 @@ void CombatRenderer::draw_room(
         draw_fire_room_props(material_pack_, current, width, height);
     } else if (current.ecology == dungeon::DungeonElement::water) {
         draw_water_room_props(material_pack_, width, height);
+    } else if (current.ecology == dungeon::DungeonElement::lightning) {
+        draw_lightning_room_props(material_pack_, width, height);
     }
     draw_doors(current, width, height, material_pack_, draw_material_environment);
     draw_hole(current, material_pack_, draw_material_environment);

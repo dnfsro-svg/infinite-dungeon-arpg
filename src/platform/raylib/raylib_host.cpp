@@ -2988,6 +2988,13 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                         MaterialAtlasId::water_bulwark),
                     renderer.material_atlas_available(
                         MaterialAtlasId::water_support),
+                    renderer.material_ecology_ready(MaterialEcology::lightning),
+                    renderer.material_atlas_available(
+                        MaterialAtlasId::lightning_environment),
+                    renderer.material_atlas_available(
+                        MaterialAtlasId::lightning_shooter),
+                    renderer.material_atlas_available(
+                        MaterialAtlasId::lightning_dasher),
                 };
             }
 // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN presented_semantics

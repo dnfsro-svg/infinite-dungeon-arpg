@@ -27,10 +27,8 @@ namespace {
     MaterialSpriteId id) noexcept {
     switch (id) {
     case MaterialSpriteId::environment_floor_fire:
-    case MaterialSpriteId::environment_floor_lightning:
     case MaterialSpriteId::environment_floor_chaos:
     case MaterialSpriteId::environment_door_fire:
-    case MaterialSpriteId::environment_door_lightning:
     case MaterialSpriteId::environment_door_chaos:
     case MaterialSpriteId::environment_hole:
         return MaterialAtlasId::environment;
@@ -42,6 +40,14 @@ namespace {
     case MaterialSpriteId::water_coral:
     case MaterialSpriteId::water_grate:
         return MaterialAtlasId::water_environment;
+    case MaterialSpriteId::environment_floor_lightning:
+    case MaterialSpriteId::environment_door_lightning:
+    case MaterialSpriteId::lightning_wall:
+    case MaterialSpriteId::lightning_hole:
+    case MaterialSpriteId::lightning_arc_lamp:
+    case MaterialSpriteId::lightning_capacitor_bank:
+    case MaterialSpriteId::lightning_grounding_rod:
+        return MaterialAtlasId::lightning_environment;
     case MaterialSpriteId::fire_wall:
     case MaterialSpriteId::fire_torch:
     case MaterialSpriteId::fire_chain:
@@ -83,6 +89,22 @@ namespace {
     case MaterialSpriteId::water_support_cooldown:
     case MaterialSpriteId::water_support_defeated:
         return MaterialAtlasId::water_support;
+    case MaterialSpriteId::lightning_shooter_idle:
+    case MaterialSpriteId::lightning_shooter_move:
+    case MaterialSpriteId::lightning_shooter_telegraph:
+    case MaterialSpriteId::lightning_shooter_active:
+    case MaterialSpriteId::lightning_shooter_recovery:
+    case MaterialSpriteId::lightning_shooter_cooldown:
+    case MaterialSpriteId::lightning_shooter_defeated:
+        return MaterialAtlasId::lightning_shooter;
+    case MaterialSpriteId::lightning_dasher_idle:
+    case MaterialSpriteId::lightning_dasher_move:
+    case MaterialSpriteId::lightning_dasher_telegraph:
+    case MaterialSpriteId::lightning_dasher_active:
+    case MaterialSpriteId::lightning_dasher_recovery:
+    case MaterialSpriteId::lightning_dasher_cooldown:
+    case MaterialSpriteId::lightning_dasher_defeated:
+        return MaterialAtlasId::lightning_dasher;
     case MaterialSpriteId::effect_fire:
     case MaterialSpriteId::effect_water:
     case MaterialSpriteId::effect_lightning:

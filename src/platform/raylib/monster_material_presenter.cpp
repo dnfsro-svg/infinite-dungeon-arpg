@@ -5,9 +5,12 @@
 namespace arpg::platform {
 namespace {
 
-[[nodiscard]] bool is_water_monster(combat::MonsterId monster) noexcept {
+[[nodiscard]] bool has_complete_material_animation(
+    combat::MonsterId monster) noexcept {
     return monster == combat::MonsterId::water_bulwark
-        || monster == combat::MonsterId::water_support;
+        || monster == combat::MonsterId::water_support
+        || monster == combat::MonsterId::lightning_shooter
+        || monster == combat::MonsterId::lightning_dasher;
 }
 
 }  // namespace
@@ -21,7 +24,7 @@ MonsterMaterialDrawPlan MonsterMaterialPresenter::collect_draw_plan(
         slot = {};
         return {};
     }
-    if (!is_water_monster(monster.id)) {
+    if (!has_complete_material_animation(monster.id)) {
         slot = {};
         return {monster_visible(monster), false};
     }

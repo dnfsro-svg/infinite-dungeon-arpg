@@ -299,6 +299,17 @@ arpg::test::Failure material_pack_switches_ecology_without_reloading_common() no
     ARPG_REQUIRE(pack.available(MaterialAtlasId::water_bulwark));
     ARPG_REQUIRE(fake.unload_count == 6U);
     ARPG_REQUIRE(fake.load_count == fire_loads + 6U);
+
+    ARPG_REQUIRE(pack.load(MaterialEcology::lightning));
+    ARPG_REQUIRE(pack.ecology_ready(MaterialEcology::lightning));
+    ARPG_REQUIRE(!pack.ecology_ready(MaterialEcology::water));
+    ARPG_REQUIRE(pack.current_ecology() == MaterialEcology::lightning);
+    ARPG_REQUIRE(!pack.available(MaterialAtlasId::water_bulwark));
+    ARPG_REQUIRE(pack.available(MaterialAtlasId::lightning_environment));
+    ARPG_REQUIRE(pack.available(MaterialAtlasId::lightning_shooter));
+    ARPG_REQUIRE(pack.available(MaterialAtlasId::lightning_dasher));
+    ARPG_REQUIRE(fake.unload_count == 12U);
+    ARPG_REQUIRE(fake.load_count == fire_loads + 12U);
     pack.unload();
     g_fake_material_textures = nullptr;
     return {};

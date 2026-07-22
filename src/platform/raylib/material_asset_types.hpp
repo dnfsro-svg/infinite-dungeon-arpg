@@ -22,6 +22,9 @@ enum class MaterialAtlasId : std::uint8_t {
     water_environment,
     water_bulwark,
     water_support,
+    lightning_environment,
+    lightning_shooter,
+    lightning_dasher,
     count,
 };
 
@@ -168,6 +171,11 @@ enum class MaterialSpriteId : std::uint16_t {
     water_lantern,
     water_coral,
     water_grate,
+    lightning_wall,
+    lightning_hole,
+    lightning_arc_lamp,
+    lightning_capacitor_bank,
+    lightning_grounding_rod,
     effect_fire,
     effect_water,
     effect_lightning,
