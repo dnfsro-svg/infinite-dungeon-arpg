@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+import re
 import shlex
 import unittest
 
@@ -148,6 +149,34 @@ class CloudReadinessContractTest(unittest.TestCase):
 
         self.assertEqual(LINUX_CORE_PRESET, build.get("configurePreset"))
         self.assertEqual(LINUX_CORE_PRESET, test.get("configurePreset"))
+
+    def test_non_windows_gate_requires_gnu_or_clang_for_c_and_cxx(self):
+        cmake = self._read_required_file("CMakeLists.txt")
+
+        self.assertRegex(
+            cmake,
+            re.compile(
+                r'if\(\s*NOT\s+CMAKE_C_COMPILER_ID\s+MATCHES\s+'
+                r'"\^\(GNU\|Clang\)\$"'
+                r'\s+OR\s+NOT\s+CMAKE_CXX_COMPILER_ID\s+MATCHES\s+'
+                r'"\^\(GNU\|Clang\)\$"\s*\)'
+            ),
+            "Non-Windows gate must require GNU or Clang for both C and CXX",
+        )
+        self.assertIn(
+            "Non-Windows core builds require GNU or Clang C and CXX compilers",
+            cmake,
+        )
+
+    def test_linux_core_debug_excludes_only_windows_powershell_audio_tests(self):
+        presets = self._load_presets()
+        test = self._preset_by_name(presets, "testPresets", LINUX_CORE_PRESET)
+
+        self.assertEqual(
+            r"^(stage14\.audio_sources|stage15\.audio_sources|"
+            r"stage15\.audio_sources_self_test)$",
+            test.get("filter", {}).get("exclude", {}).get("name"),
+        )
 
     def test_cloud_setup_and_maintenance_run_configure_build_and_ctest(self):
         setup_commands = self._shell_commands("scripts/cloud/setup.sh")
