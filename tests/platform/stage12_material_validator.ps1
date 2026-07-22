@@ -413,7 +413,7 @@ function Assert-HudRoiDifferent([string]$Path, [string]$BaselinePath) {
     try {
         [int]$changed = 0
         foreach ($region in @(
-                [System.Drawing.Rectangle]::new(0, 0, 430, 190),
+                [System.Drawing.Rectangle]::new(0, 530, 430, 190),
                 [System.Drawing.Rectangle]::new(430, 620, 420, 100))) {
             for ($y = $region.Top; $y -lt $region.Bottom; $y += 2) {
                 for ($x = $region.Left; $x -lt $region.Right; $x += 2) {
@@ -428,6 +428,66 @@ function Assert-HudRoiDifferent([string]$Path, [string]$BaselinePath) {
         }
         if ($changed -lt 180) {
             throw "HUD material ROIs do not show an independent state: changed=$changed"
+        }
+    } finally {
+        $bitmap.Dispose()
+        $baseline.Dispose()
+    }
+}
+
+function Assert-UiScreenDifferentAtSize([string]$Path, [string]$BaselinePath,
+        [string]$Name, [int]$ExpectedWidth, [int]$ExpectedHeight,
+        [int]$MinimumChanged) {
+    $bitmap = [System.Drawing.Bitmap]::FromFile($Path)
+    $baseline = [System.Drawing.Bitmap]::FromFile($BaselinePath)
+    try {
+        if ($bitmap.Width -ne $ExpectedWidth -or
+                $bitmap.Height -ne $ExpectedHeight -or
+                $baseline.Width -ne $ExpectedWidth -or
+                $baseline.Height -ne $ExpectedHeight) {
+            throw "wrong UI screenshot/baseline size: $Name"
+        }
+        [int]$changed = 0
+        for ($y = 0; $y -lt $ExpectedHeight; $y += 4) {
+            for ($x = 0; $x -lt $ExpectedWidth; $x += 4) {
+                $pixel = $bitmap.GetPixel($x, $y)
+                $reference = $baseline.GetPixel($x, $y)
+                $difference = [Math]::Abs([int]$pixel.R - [int]$reference.R) +
+                    [Math]::Abs([int]$pixel.G - [int]$reference.G) +
+                    [Math]::Abs([int]$pixel.B - [int]$reference.B)
+                if ($difference -ge 36) { ++$changed }
+            }
+        }
+        if ($changed -lt $MinimumChanged) {
+            throw "UI screenshot duplicates/hides interface: $Name changed=$changed"
+        }
+    } finally {
+        $bitmap.Dispose()
+        $baseline.Dispose()
+    }
+}
+
+function Assert-UiRoiDifferent([string]$Path, [string]$BaselinePath,
+        [string]$Name, [System.Drawing.Rectangle[]]$Regions,
+        [int]$MinimumChanged) {
+    $bitmap = [System.Drawing.Bitmap]::FromFile($Path)
+    $baseline = [System.Drawing.Bitmap]::FromFile($BaselinePath)
+    try {
+        [int]$changed = 0
+        foreach ($region in $Regions) {
+            for ($y = $region.Top; $y -lt $region.Bottom; $y += 3) {
+                for ($x = $region.Left; $x -lt $region.Right; $x += 3) {
+                    $pixel = $bitmap.GetPixel($x, $y)
+                    $reference = $baseline.GetPixel($x, $y)
+                    $difference = [Math]::Abs([int]$pixel.R - [int]$reference.R) +
+                        [Math]::Abs([int]$pixel.G - [int]$reference.G) +
+                        [Math]::Abs([int]$pixel.B - [int]$reference.B)
+                    if ($difference -ge 36) { ++$changed }
+                }
+            }
+        }
+        if ($changed -lt $MinimumChanged) {
+            throw "UI page ROI duplicates baseline: $Name changed=$changed"
         }
     } finally {
         $bitmap.Dispose()
@@ -454,7 +514,12 @@ foreach ($key in @('manifest','atlas_bytes','fallback','input_hole_regression',
         'skill_ui_runtime_draws','pause_ui_runtime_draws',
         'hud_ui_draw_mask','inventory_ui_draw_mask',
         'skill_ui_draw_mask','pause_ui_draw_mask',
-        'ui_baseline_screenshot','hud_ui_screenshot','ui_gallery_screenshot',
+        'hud_ui_runtime_draws_1920','inventory_ui_runtime_draws_1920',
+        'skill_ui_runtime_draws_1920','pause_ui_runtime_draws_1920',
+        'hud_ui_draw_mask_1920','inventory_ui_draw_mask_1920',
+        'skill_ui_draw_mask_1920','pause_ui_draw_mask_1920',
+        'ui_baseline_screenshot','ui_baseline_screenshot_1920',
+        'hud_ui_screenshot','ui_gallery_screenshot',
         'hud_ui_screenshot_1920','inventory_ui_screenshot',
         'inventory_ui_screenshot_1920','skill_ui_screenshot',
         'skill_ui_screenshot_1920','pause_ui_screenshot',
@@ -489,6 +554,10 @@ if ($report.result -ne 'pass' -or $report.manifest -ne 'pass' -or
         $report.inventory_ui_runtime_draws -ne 'pass' -or
         $report.skill_ui_runtime_draws -ne 'pass' -or
         $report.pause_ui_runtime_draws -ne 'pass' -or
+        $report.hud_ui_runtime_draws_1920 -ne 'pass' -or
+        $report.inventory_ui_runtime_draws_1920 -ne 'pass' -or
+        $report.skill_ui_runtime_draws_1920 -ne 'pass' -or
+        $report.pause_ui_runtime_draws_1920 -ne 'pass' -or
         $report.shader_pipeline -ne 'pass' -or
         $report.water_ecology_residency -ne 'pass' -or
         $report.water_environment_pair -ne 'resident' -or
@@ -526,6 +595,10 @@ Assert-UiDrawMask ([uint64]$report.hud_ui_draw_mask) @(0,1,2,5,14,15,37) 'hud'
 Assert-UiDrawMask ([uint64]$report.inventory_ui_draw_mask) @(17,18,19,20,21,22,24,26,37) 'inventory'
 Assert-UiDrawMask ([uint64]$report.skill_ui_draw_mask) @(20,21,25,27,28,31) 'skill-stones'
 Assert-UiDrawMask ([uint64]$report.pause_ui_draw_mask) @(32,33,34,35) 'pause'
+Assert-UiDrawMask ([uint64]$report.hud_ui_draw_mask_1920) @(0,1,2,5,14,15,37) 'hud-1920'
+Assert-UiDrawMask ([uint64]$report.inventory_ui_draw_mask_1920) @(17,18,19,20,21,22,24,26,37) 'inventory-1920'
+Assert-UiDrawMask ([uint64]$report.skill_ui_draw_mask_1920) @(20,21,25,27,28,31) 'skill-stones-1920'
+Assert-UiDrawMask ([uint64]$report.pause_ui_draw_mask_1920) @(32,33,34,35) 'pause-1920'
 $shooterFrame = [uint16]$report.lightning_shooter_frame
 $dasherFrame = [uint16]$report.lightning_dasher_frame
 if ($shooterFrame -ge 12 -or $dasherFrame -ge 12) {
@@ -589,6 +662,14 @@ foreach ($entry in @(
     }
     Assert-UiScreenDifferent $path $uiBaseline $entry[1]
 }
+$uiBaseline1920 = Join-Path $EvidenceDirectory $report.ui_baseline_screenshot_1920
+if (-not (Test-Path -LiteralPath $uiBaseline1920 -PathType Leaf)) {
+    throw 'missing 1920 UI baseline screenshot'
+}
+$baseline1920Size = Read-PngSize $uiBaseline1920
+if ($baseline1920Size[0] -ne 1920 -or $baseline1920Size[1] -ne 1080) {
+    throw 'wrong 1920 UI baseline dimensions'
+}
 foreach ($entry in @(
         @('hud_ui_screenshot_1920','hud'),
         @('inventory_ui_screenshot_1920','inventory'),
@@ -605,6 +686,26 @@ foreach ($entry in @(
     if ((Get-Item -LiteralPath $path).Length -le 4096) {
         throw "empty 1920 UI screenshot: $($entry[1])"
     }
+    Assert-UiScreenDifferentAtSize $path $uiBaseline1920 `
+        "$($entry[1])-1920" 1920 1080 1200
+    switch ($entry[1]) {
+        'hud' {
+            $regions = @(
+                [System.Drawing.Rectangle]::new(0, 795, 645, 285),
+                [System.Drawing.Rectangle]::new(645, 930, 630, 150))
+        }
+        'inventory' {
+            $regions = @([System.Drawing.Rectangle]::new(0, 60, 1920, 1020))
+        }
+        'skill-stones' {
+            $regions = @([System.Drawing.Rectangle]::new(40, 70, 1840, 980))
+        }
+        'pause' {
+            $regions = @([System.Drawing.Rectangle]::new(560, 260, 800, 580))
+        }
+    }
+    Assert-UiRoiDifferent $path $uiBaseline1920 "$($entry[1])-1920" `
+        $regions 500
 }
 $waterMonsterScreenshot = Join-Path $EvidenceDirectory $report.water_monster_screenshot
 if (-not (Test-Path -LiteralPath $waterMonsterScreenshot -PathType Leaf)) { throw 'missing water-monster screenshot' }

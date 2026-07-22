@@ -64,6 +64,9 @@ public:
     [[nodiscard]] bool draw_nine_slice(MaterialSpriteId id,
         Rectangle destination, float border_pixels = 32.0F,
         Color tint = WHITE) const noexcept;
+    [[nodiscard]] bool draw_region_fit(MaterialSpriteId id,
+        Rectangle source_within_frame, Rectangle destination_bounds,
+        Color tint = WHITE) const noexcept;
     [[nodiscard]] bool draw_frame(
         MaterialAtlasId atlas, Rectangle source, Vector2 foot_anchor,
         Vector2 foot_position, bool flip_x, float scale = 1.0F,

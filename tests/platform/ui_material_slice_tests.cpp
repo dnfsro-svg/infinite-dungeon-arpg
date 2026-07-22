@@ -101,6 +101,16 @@ arpg::test::Failure label_plate_is_used_by_runtime_hud() noexcept {
     ARPG_REQUIRE(input.good() || input.eof());
     ARPG_REQUIRE(contents.find("UiMaterialElement::label_plate")
         != std::string::npos);
+    ARPG_REQUIRE(contents.find("draw_region_fit") != std::string::npos);
+    const std::filesystem::path inventory_source = std::filesystem::path{
+        ARPG_PROJECT_SOURCE_DIR} / "src/platform/raylib/inventory_renderer.cpp";
+    std::ifstream inventory_input(inventory_source);
+    const std::string inventory_contents(
+        (std::istreambuf_iterator<char>(inventory_input)), {});
+    ARPG_REQUIRE(inventory_contents.find("UiMaterialElement::label_plate")
+        != std::string::npos);
+    ARPG_REQUIRE(inventory_contents.find("draw_region_fit")
+        != std::string::npos);
     return {};
 }
 

@@ -72,8 +72,9 @@ void draw_panel(Rectangle rectangle, const char* title,
     }
     const Rectangle label_bounds{rectangle.x + 8.0F, rectangle.y + 5.0F,
         std::min(190.0F, rectangle.width - 16.0F), 30.0F};
-    static_cast<void>(assets.draw_to(
-        ui_material_sprite(UiMaterialElement::label_plate), label_bounds));
+    static_cast<void>(assets.draw_region_fit(
+        ui_material_sprite(UiMaterialElement::label_plate),
+        {4.0F, 30.0F, 120.0F, 67.0F}, label_bounds));
     DrawText(title, static_cast<int>(rectangle.x + 12.0F),
         static_cast<int>(rectangle.y + 10.0F), 18,
         Color{131, 211, 255, 255});

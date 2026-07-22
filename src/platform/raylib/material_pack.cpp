@@ -167,6 +167,18 @@ namespace {
         && texture_api.draw_material != nullptr;
 }
 
+[[nodiscard]] constexpr Vector2 panel_background_sample(
+    MaterialSpriteId id) noexcept {
+    switch (id) {
+    case MaterialSpriteId::ui_inventory_panel_equipment: return {88.0F, 44.0F};
+    case MaterialSpriteId::ui_inventory_panel_grid: return {88.0F, 48.0F};
+    case MaterialSpriteId::ui_inventory_panel_detail: return {40.0F, 68.0F};
+    case MaterialSpriteId::ui_skill_panel: return {88.0F, 88.0F};
+    case MaterialSpriteId::ui_pause_panel: return {84.0F, 56.0F};
+    default: return {40.0F, 40.0F};
+    }
+}
+
 struct MaterialShaderState final {
     Shader shader{};
     int material_map_location{-1};
@@ -533,36 +545,131 @@ bool MaterialPack::draw_nine_slice(MaterialSpriteId id,
             || border_pixels * 2.0F >= frame->source.height) {
         return false;
     }
-    const float destination_border = std::min(border_pixels,
-        std::min(destination.width * 0.5F, destination.height * 0.5F));
-    const std::array<float, 3U> source_widths{{border_pixels,
-        frame->source.width - border_pixels * 2.0F, border_pixels}};
-    const std::array<float, 3U> source_heights{{border_pixels,
-        frame->source.height - border_pixels * 2.0F, border_pixels}};
-    const std::array<float, 3U> destination_widths{{destination_border,
-        destination.width - destination_border * 2.0F, destination_border}};
-    const std::array<float, 3U> destination_heights{{destination_border,
-        destination.height - destination_border * 2.0F, destination_border}};
-    const std::size_t texture_index = atlas_index(frame->atlas);
-    float source_y = frame->source.y;
-    float destination_y = destination.y;
-    for (std::size_t row{}; row < 3U; ++row) {
-        float source_x = frame->source.x;
-        float destination_x = destination.x;
-        for (std::size_t column{}; column < 3U; ++column) {
-            texture_api_.draw_material(color_textures_[texture_index],
-                material_textures_[texture_index],
-                {source_x, source_y, source_widths[column],
-                    source_heights[row]},
-                {destination_x, destination_y, destination_widths[column],
-                    destination_heights[row]},
-                {0.0F, 0.0F}, 0.0F, tint, {});
-            source_x += source_widths[column];
-            destination_x += destination_widths[column];
-        }
-        source_y += source_heights[row];
-        destination_y += destination_heights[row];
+    if (border_pixels != 32.0F || destination.width < 64.0F
+            || destination.height < 64.0F || frame->source.width != 128.0F
+            || frame->source.height != 128.0F) {
+        return false;
     }
+    const std::size_t texture_index = atlas_index(frame->atlas);
+    const auto draw_part = [&](Rectangle local_source,
+                               Rectangle part_destination) noexcept {
+        local_source.x += frame->source.x;
+        local_source.y += frame->source.y;
+        texture_api_.draw_material(color_textures_[texture_index],
+            material_textures_[texture_index], local_source, part_destination,
+            {0.0F, 0.0F}, 0.0F, tint, {});
+    };
+    const Vector2 background = panel_background_sample(id);
+    draw_part({background.x, background.y, 1.0F, 1.0F},
+        {destination.x + 32.0F, destination.y + 32.0F,
+            destination.width - 64.0F, destination.height - 64.0F});
+    const auto tile_horizontal = [&](Rectangle source, float y,
+                                     float width) noexcept {
+        float x = destination.x + 32.0F;
+        float remaining = width;
+        while (remaining > 0.0F) {
+            const float segment = std::min(source.width, remaining);
+            Rectangle clipped = source;
+            clipped.width = segment;
+            draw_part(clipped, {x, y, segment, source.height});
+            x += segment;
+            remaining -= segment;
+        }
+    };
+    const auto tile_vertical = [&](Rectangle source, float x,
+                                   float height) noexcept {
+        float y = destination.y + 32.0F;
+        float remaining = height;
+        while (remaining > 0.0F) {
+            const float segment = std::min(source.height, remaining);
+            Rectangle clipped = source;
+            clipped.height = segment;
+            draw_part(clipped, {x, y, source.width, segment});
+            y += segment;
+            remaining -= segment;
+        }
+    };
+    const float inner_width = destination.width - 64.0F;
+    const float inner_height = destination.height - 64.0F;
+    tile_horizontal({32.0F, 0.0F, 8.0F, 32.0F},
+        destination.y, inner_width);
+    tile_horizontal({32.0F, 96.0F, 8.0F, 32.0F},
+        destination.y + destination.height - 32.0F, inner_width);
+    tile_vertical({0.0F, 32.0F, 32.0F, 8.0F},
+        destination.x, inner_height);
+    tile_vertical({96.0F, 32.0F, 32.0F, 8.0F},
+        destination.x + destination.width - 32.0F, inner_height);
+    draw_part({0.0F, 0.0F, 32.0F, 32.0F},
+        {destination.x, destination.y, 32.0F, 32.0F});
+    draw_part({96.0F, 0.0F, 32.0F, 32.0F},
+        {destination.x + destination.width - 32.0F,
+            destination.y, 32.0F, 32.0F});
+    draw_part({0.0F, 96.0F, 32.0F, 32.0F},
+        {destination.x, destination.y + destination.height - 32.0F,
+            32.0F, 32.0F});
+    draw_part({96.0F, 96.0F, 32.0F, 32.0F},
+        {destination.x + destination.width - 32.0F,
+            destination.y + destination.height - 32.0F, 32.0F, 32.0F});
+    draw_part({40.0F, 0.0F, 48.0F, 32.0F},
+        {destination.x + (destination.width - 48.0F) * 0.5F,
+            destination.y, 48.0F, 32.0F});
+    draw_part({40.0F, 96.0F, 48.0F, 32.0F},
+        {destination.x + (destination.width - 48.0F) * 0.5F,
+            destination.y + destination.height - 32.0F, 48.0F, 32.0F});
+    draw_part({0.0F, 40.0F, 32.0F, 48.0F},
+        {destination.x,
+            destination.y + (destination.height - 48.0F) * 0.5F,
+            32.0F, 48.0F});
+    draw_part({96.0F, 40.0F, 32.0F, 48.0F},
+        {destination.x + destination.width - 32.0F,
+            destination.y + (destination.height - 48.0F) * 0.5F,
+            32.0F, 48.0F});
+    draw_part({32.0F, 32.0F, 64.0F, 64.0F},
+        {destination.x + (destination.width - 64.0F) * 0.5F,
+            destination.y + (destination.height - 64.0F) * 0.5F,
+            64.0F, 64.0F});
+    ++sprite_draw_counts_[static_cast<std::size_t>(id)];
+    return true;
+}
+
+bool MaterialPack::draw_region_fit(MaterialSpriteId id,
+    Rectangle source_within_frame, Rectangle destination_bounds,
+    Color tint) const noexcept {
+    if (!can_draw(id) || source_within_frame.x < 0.0F
+            || source_within_frame.y < 0.0F
+            || source_within_frame.width <= 0.0F
+            || source_within_frame.height <= 0.0F
+            || destination_bounds.width <= 0.0F
+            || destination_bounds.height <= 0.0F) {
+        return false;
+    }
+    const MaterialManifestDefinition manifest = default_material_manifest();
+    const MaterialFrameDefinition* const frame = find_frame(manifest, id);
+    if (frame == nullptr || !state_.available(frame->atlas)
+            || source_within_frame.x + source_within_frame.width
+                > frame->source.width
+            || source_within_frame.y + source_within_frame.height
+                > frame->source.height) {
+        return false;
+    }
+    const float scale = std::min(
+        destination_bounds.width / source_within_frame.width,
+        destination_bounds.height / source_within_frame.height);
+    const Rectangle destination{
+        destination_bounds.x
+            + (destination_bounds.width - source_within_frame.width * scale)
+                * 0.5F,
+        destination_bounds.y
+            + (destination_bounds.height - source_within_frame.height * scale)
+                * 0.5F,
+        source_within_frame.width * scale,
+        source_within_frame.height * scale};
+    source_within_frame.x += frame->source.x;
+    source_within_frame.y += frame->source.y;
+    const std::size_t texture_index = atlas_index(frame->atlas);
+    texture_api_.draw_material(color_textures_[texture_index],
+        material_textures_[texture_index], source_within_frame, destination,
+        {0.0F, 0.0F}, 0.0F, tint, {});
     ++sprite_draw_counts_[static_cast<std::size_t>(id)];
     return true;
 }

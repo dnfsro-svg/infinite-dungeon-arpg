@@ -26,18 +26,21 @@ input bindings, inventory semantics, and pause behavior are unchanged.
   128 x 128 source cell, explicit anchor, UI class, and unique manifest hash.
 - Added `UiMaterialElement`, the forty-entry sprite table, and the 8 MiB decoded
   atlas-pair budget contract in `ui_material.hpp`.
-- Added destination-rectangle and true nine-slice material drawing to
-  `MaterialPack`; successful logical UI draws use the paired material shader
-  and increment per-sprite telemetry once. Nine-slice panels preserve 32 px
-  corners while isolating edge and center scaling.
+- Added destination-rectangle, ornament-preserving panel composition, and
+  aspect-fit region drawing to `MaterialPack`; successful logical UI draws use
+  the paired material shader and increment per-sprite telemetry once. Large
+  panels expand only a low-feature 1 x 1 background sample, repeat undecorated
+  8 px border segments without changing their aspect ratio, then overlay the
+  four corners, four edge ornaments, and 64 x 64 center emblem at 1:1 scale.
 - HUD tracks/fills/panels/notices/statuses, skill-slot states, inventory tabs and
   grids, material bag, skill-stone grids, reinforcement dialog, and pause menu
   now select assets by semantic state. Legacy geometry is retained only as the
   explicit failed-load fallback.
 - The formal host can expose actual inventory, skill-stone, and pause UI states
   without changing normal player input or transitions.
-- Inventory, skill-stone, and pause large panels use nine-slice drawing. The
-  authored `ui_label_plate` is used by the real HUD and inventory title paths.
+- Inventory, skill-stone, and pause large panels use the ornament-preserving
+  composition. The authored `ui_label_plate` is trimmed to its 120 x 67 alpha
+  content bounds and aspect-fitted in the real HUD and inventory title paths.
 - Active-skill material frames retain a continuous bottom-up cooldown overlay
   and moving boundary line derived from the clamped `cooldown_ratio`.
 
@@ -60,6 +63,13 @@ reported `hud_ui_runtime_draws=fail` and `skill_ui_runtime_draws=fail`. Per-page
 draw masks identified the exact state-dependent resources and the final
 contracts use only resources guaranteed by each captured production state.
 
+The second review-fix RED tightened this further: every non-background panel
+part must preserve source/destination aspect ratio, the 64 x 64 center emblem
+must be drawn at its authored size, and label-plate source/destination ratios
+must match. It also made the validator reject the old evidence with
+`missing report field: hud_ui_runtime_draws_1920` before 1920 page-local
+telemetry was implemented.
+
 ## Formal evidence and anti-fallback validation
 
 The same real Raylib host captured:
@@ -78,12 +88,14 @@ The same real Raylib host captured:
 The validator compares all forty exact gallery ROIs with the baseline, requires
 an independently captured HUD file plus changed HUD ROIs, checks that the actual
 inventory/skill-stone/pause pages differ materially from the baseline, validates
-all four 1920 x 1080 captures, and verifies both atlas files and residency. Each
-page has a separate runtime status object, pass field, and exact resource draw
-mask; gallery telemetry cannot satisfy a page contract. The self-test rejects
-hidden or baseline-substituted HUD/inventory/skill-stone/pause images and rejects
-missing telemetry independently for every page. Existing item/ecology negative
-mutations remain covered.
+all four 1920 x 1080 captures against `ui-baseline-1920x1080.png` with both
+whole-frame and page ROI differences, and verifies both atlas files and
+residency. At both resolutions each page has a separate runtime status object,
+pass field, and exact resource draw mask; 1280 or gallery telemetry cannot
+satisfy a 1920 page contract. The self-test rejects hidden or
+baseline-substituted HUD/inventory/skill-stone/pause images and rejects missing
+telemetry independently for every page at both resolutions. Existing
+item/ecology negative mutations remain covered.
 
 Formal evidence reports `atlas_bytes=184205312`, below the 256 MiB ceiling.
 
@@ -102,7 +114,8 @@ Formal evidence reports `atlas_bytes=184205312`, below the 256 MiB ceiling.
 
 ## Residual concern
 
-The 32 px nine-slice corners remain at native pixel size, so they occupy a
-smaller fraction of very large 1920 x 1080 panels. The reviewed real-host
-captures show undistorted corner gems and continuous borders at both required
-resolutions. No gameplay or state-machine behavior changed in this slice.
+The ornament-preserving renderer intentionally trades several small border
+draws for undistorted art; the formal host covers this path at both required
+resolutions. The reviewed captures show 1:1 center and edge emblems, undistorted
+corner gems, and continuous repeated borders. No gameplay or state-machine
+behavior changed in this slice.

@@ -506,8 +506,9 @@ void HudRenderer::draw(const HudViewModel& view,
             DrawRectangleRounded(panel_bounds, 0.08F, 6,
                 Color{7, 10, 17, 220});
         }
-        static_cast<void>(assets.draw_to(
+        static_cast<void>(assets.draw_region_fit(
             ui_material_sprite(UiMaterialElement::label_plate),
+            {4.0F, 30.0F, 120.0F, 67.0F},
             {panel_bounds.x + 8.0F * layout.scale,
                 panel_bounds.y + 3.0F * layout.scale,
                 panel_bounds.width - 16.0F * layout.scale,
@@ -584,8 +585,9 @@ void HudRenderer::draw(const HudViewModel& view,
                 objective.abyss ? Color{47, 18, 47, 228}
                                 : Color{7, 10, 17, 220});
         }
-        static_cast<void>(assets.draw_to(
+        static_cast<void>(assets.draw_region_fit(
             ui_material_sprite(UiMaterialElement::label_plate),
+            {4.0F, 30.0F, 120.0F, 67.0F},
             {bounds.x + 8.0F * layout.scale,
                 bounds.y + 5.0F * layout.scale,
                 bounds.width - 16.0F * layout.scale,

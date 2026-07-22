@@ -27,16 +27,17 @@ using arpg::platform::MaterialPackState;
 using arpg::platform::MaterialSpriteId;
 
 struct FakeMaterialTextures final {
-    static constexpr std::size_t kCapacity =
+    static constexpr std::size_t kTextureCapacity =
         static_cast<std::size_t>(MaterialAtlasId::count) * 2U;
-    std::array<Texture2D, kCapacity> loaded{};
-    std::array<std::array<char, 512>, kCapacity> loaded_paths{};
-    std::array<unsigned int, kCapacity> unloaded_ids{};
-    std::array<unsigned int, kCapacity> drawn_color_ids{};
-    std::array<unsigned int, kCapacity> drawn_material_ids{};
-    std::array<Rectangle, kCapacity> drawn_sources{};
-    std::array<Rectangle, kCapacity> drawn_destinations{};
-    std::array<MaterialCompositeParameters, kCapacity> composites{};
+    static constexpr std::size_t kDrawCapacity = 4096U;
+    std::array<Texture2D, kTextureCapacity> loaded{};
+    std::array<std::array<char, 512>, kTextureCapacity> loaded_paths{};
+    std::array<unsigned int, kTextureCapacity> unloaded_ids{};
+    std::array<unsigned int, kDrawCapacity> drawn_color_ids{};
+    std::array<unsigned int, kDrawCapacity> drawn_material_ids{};
+    std::array<Rectangle, kDrawCapacity> drawn_sources{};
+    std::array<Rectangle, kDrawCapacity> drawn_destinations{};
+    std::array<MaterialCompositeParameters, kDrawCapacity> composites{};
     std::size_t load_count{};
     std::size_t unload_count{};
     std::size_t draw_count{};
@@ -316,27 +317,40 @@ arpg::test::Failure material_pack_nine_slice_preserves_panel_corners() noexcept 
     ARPG_REQUIRE(pack.draw_nine_slice(
         MaterialSpriteId::ui_inventory_panel_grid,
         {10.0F, 20.0F, 800.0F, 600.0F}, 32.0F));
-    ARPG_REQUIRE(fake.draw_count == 9U);
+    ARPG_REQUIRE(fake.draw_count > 9U);
     ARPG_REQUIRE(pack.sprite_draw_count(
         MaterialSpriteId::ui_inventory_panel_grid) == 1U);
-    for (const std::size_t corner : {0U, 2U, 6U, 8U}) {
-        ARPG_REQUIRE(arpg::test::near(
-            fake.drawn_sources[corner].width, 32.0F));
-        ARPG_REQUIRE(arpg::test::near(
-            fake.drawn_sources[corner].height, 32.0F));
-        ARPG_REQUIRE(arpg::test::near(
-            fake.drawn_destinations[corner].width, 32.0F));
-        ARPG_REQUIRE(arpg::test::near(
-            fake.drawn_destinations[corner].height, 32.0F));
+    std::size_t preserved_centerpieces{};
+    for (std::size_t index{}; index < fake.draw_count; ++index) {
+        const Rectangle source = fake.drawn_sources[index];
+        const Rectangle destination = fake.drawn_destinations[index];
+        const bool pure_background_sample = source.width == 1.0F
+            && source.height == 1.0F;
+        if (!pure_background_sample) {
+            ARPG_REQUIRE(arpg::test::near(
+                source.width / source.height,
+                destination.width / destination.height));
+        }
+        if (arpg::test::near(source.width, 64.0F)
+                && arpg::test::near(source.height, 64.0F)
+                && arpg::test::near(destination.width, 64.0F)
+                && arpg::test::near(destination.height, 64.0F)) {
+            ++preserved_centerpieces;
+        }
     }
-    ARPG_REQUIRE(arpg::test::near(
-        fake.drawn_sources[4U].width, 64.0F));
-    ARPG_REQUIRE(arpg::test::near(
-        fake.drawn_sources[4U].height, 64.0F));
-    ARPG_REQUIRE(arpg::test::near(
-        fake.drawn_destinations[4U].width, 736.0F));
-    ARPG_REQUIRE(arpg::test::near(
-        fake.drawn_destinations[4U].height, 536.0F));
+    ARPG_REQUIRE(preserved_centerpieces == 1U);
+    const std::size_t before_label = fake.draw_count;
+    ARPG_REQUIRE(pack.draw_region_fit(MaterialSpriteId::ui_label_plate,
+        {4.0F, 30.0F, 120.0F, 67.0F},
+        {100.0F, 120.0F, 190.0F, 30.0F}));
+    ARPG_REQUIRE(fake.draw_count == before_label + 1U);
+    const Rectangle label_source = fake.drawn_sources[before_label];
+    const Rectangle label_destination = fake.drawn_destinations[before_label];
+    ARPG_REQUIRE(arpg::test::near(label_source.width / label_source.height,
+        label_destination.width / label_destination.height));
+    ARPG_REQUIRE(arpg::test::near(label_destination.height, 30.0F));
+    ARPG_REQUIRE(label_destination.width < 60.0F);
+    ARPG_REQUIRE(pack.sprite_draw_count(MaterialSpriteId::ui_label_plate) == 1U);
     pack.unload();
     g_fake_material_textures = nullptr;
     return {};
