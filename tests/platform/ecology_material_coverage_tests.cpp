@@ -121,6 +121,62 @@ struct OpaqueBounds final {
     int height{};
 };
 
+struct ConnectedSilhouette final {
+    std::uint64_t visible_pixels{};
+    std::uint64_t largest_component{};
+    std::uint64_t second_component{};
+};
+
+ConnectedSilhouette connected_silhouette(const Color* pixels, int image_width,
+    const Rectangle& source) noexcept {
+    constexpr int kCell = 96;
+    std::array<bool, kCell * kCell> visited{};
+    std::array<int, kCell * kCell> queue{};
+    ConnectedSilhouette result{};
+    const int left = static_cast<int>(source.x);
+    const int top = static_cast<int>(source.y);
+    const auto visible = [&](int x, int y) noexcept {
+        return pixels[(top + y) * image_width + left + x].a > 96U;
+    };
+    for (int y{}; y < kCell; ++y) {
+        for (int x{}; x < kCell; ++x) {
+            if (visible(x, y)) ++result.visible_pixels;
+            const int start = y * kCell + x;
+            if (visited[start] || !visible(x, y)) continue;
+            std::size_t read{};
+            std::size_t write{1U};
+            queue[0] = start;
+            visited[start] = true;
+            while (read < write) {
+                const int cell = queue[read++];
+                const int cx = cell % kCell;
+                const int cy = cell / kCell;
+                for (int dy = -1; dy <= 1; ++dy) {
+                    for (int dx = -1; dx <= 1; ++dx) {
+                        if ((dx == 0 && dy == 0) || cx + dx < 0
+                            || cx + dx >= kCell || cy + dy < 0
+                            || cy + dy >= kCell) continue;
+                        const int neighbor = (cy + dy) * kCell + cx + dx;
+                        if (visited[neighbor] || !visible(cx + dx, cy + dy)) {
+                            continue;
+                        }
+                        visited[neighbor] = true;
+                        queue[write++] = neighbor;
+                    }
+                }
+            }
+            const std::uint64_t component = write;
+            if (component > result.largest_component) {
+                result.second_component = result.largest_component;
+                result.largest_component = component;
+            } else if (component > result.second_component) {
+                result.second_component = component;
+            }
+        }
+    }
+    return result;
+}
+
 struct SilhouetteMetrics final {
     OpaqueBounds bounds{};
     std::uint64_t visible_pixels{};
@@ -299,7 +355,14 @@ arpg::test::Failure water_monsters_expose_complete_multiframe_state_groups() noe
                     pixels, image.width, current->source);
                 const SilhouetteMetrics metrics = frame_silhouette_metrics(
                     pixels, image.width, current->source);
+                const ConnectedSilhouette connected = connected_silhouette(
+                    pixels, image.width, current->source);
                 ARPG_REQUIRE(metrics.visible_pixels > 0U);
+                ARPG_REQUIRE(connected.visible_pixels > 0U);
+                ARPG_REQUIRE(connected.largest_component * 100U
+                    >= connected.visible_pixels * 94U);
+                ARPG_REQUIRE(connected.second_component * 100U
+                    <= connected.visible_pixels * 2U);
                 ARPG_REQUIRE(metrics.soft_pixels * 100U
                     <= metrics.visible_pixels * 55U);
                 if (frame > 0U) {

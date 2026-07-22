@@ -1,4 +1,4 @@
-"""Build deterministic water-ecology runtime atlases from original source art."""
+"""Build water-ecology atlases from complete authored animation poses."""
 
 from __future__ import annotations
 
@@ -14,6 +14,22 @@ ENV_SIZE = 768
 MONSTER_SIZE = 864
 CELL = 96
 COLUMNS = 9
+SEQUENCES = {
+    "bulwark": (
+        ("idle", "water-bulwark-idle-12-alpha-v3.png", 4, 3, 12),
+        ("move", "water-bulwark-move-16-alpha-v5.png", 4, 4, 16),
+        ("special", "water-bulwark-special-20-alpha-v3.png", 5, 4, 20),
+        ("hurt", "water-bulwark-hurt-8-alpha-v3.png", 4, 2, 8),
+        ("death", "water-bulwark-death-16-alpha-v4.png", 4, 4, 16),
+    ),
+    "support": (
+        ("idle", "water-support-idle-12-alpha-v4.png", 4, 3, 12),
+        ("move", "water-support-move-16-alpha-v3.png", 4, 4, 16),
+        ("special", "water-support-special-20-alpha-v5.png", 5, 4, 20),
+        ("hurt", "water-support-hurt-8-alpha-v4.png", 4, 2, 8),
+        ("death", "water-support-death-16-alpha-v3.png", 4, 4, 16),
+    ),
+}
 
 
 def cover(image: Image.Image, size: tuple[int, int]) -> Image.Image:
@@ -70,93 +86,39 @@ def alpha_bbox(image: Image.Image) -> tuple[int, int, int, int]:
     return bbox
 
 
-def pose_board_rows(role: str) -> list[list[Image.Image]]:
-    board = Image.open(
-        SOURCE / f"water-{role}-pose-board-alpha-v2.png").convert("RGBA")
-    reference = board.crop((0, 0, round(board.width / 4),
-                            round(board.height / 5)))
-    reference_alpha = reference.getchannel("A").point(
-        lambda value: 0 if value < 64 else 255)
-    reference_bbox = reference_alpha.getbbox()
-    if reference_bbox is None:
-        raise RuntimeError(f"{role} reference pose has no visible pixels")
-    cell_scale = 172.0 / (reference_bbox[3] - reference_bbox[1])
-    rows: list[list[Image.Image]] = []
-    for row in range(5):
+def sequence_frames(role: str) -> list[Image.Image]:
+    frames: list[Image.Image] = []
+    for state, filename, columns, rows, frame_count in SEQUENCES[role]:
+        board = Image.open(SOURCE / "water_sequences" / filename).convert("RGBA")
         poses: list[Image.Image] = []
-        top = round(row * board.height / 5)
-        bottom = round((row + 1) * board.height / 5)
-        for column in range(4):
-            left = round(column * board.width / 4)
-            right = round((column + 1) * board.width / 4)
-            pose = board.crop((left, top, right, bottom))
+        for frame in range(frame_count):
+            column = frame % columns
+            row = frame // columns
+            pose = board.crop((
+                round(column * board.width / columns),
+                round(row * board.height / rows),
+                round((column + 1) * board.width / columns),
+                round((row + 1) * board.height / rows)))
             alpha = pose.getchannel("A").point(
                 lambda value: 0 if value < 64 else (
                     255 if value > 160 else (value - 64) * 255 // 96))
             pose.putalpha(alpha)
-            pose = pose.resize((round(pose.width * cell_scale),
-                                round(pose.height * cell_scale)),
+            poses.append(pose.crop(alpha_bbox(pose)))
+        scale = min(184.0 / max(pose.height for pose in poses),
+                    188.0 / max(pose.width for pose in poses))
+        for pose in poses:
+            pose = pose.resize((round(pose.width * scale),
+                                round(pose.height * scale)),
                                Image.Resampling.LANCZOS)
             pose = pose.crop(alpha_bbox(pose))
             canvas = Image.new("RGBA", (CELL * 2, CELL * 2))
             canvas.alpha_composite(pose,
                 ((canvas.width - pose.width) // 2, 186 - pose.height))
-            poses.append(canvas)
-        rows.append(poses)
-    return rows
-
-
-def partwise_pose(poses: list[Image.Image], frame: int,
-                  frame_count: int, loop: bool) -> Image.Image:
-    if loop:
-        frames_per_transition = frame_count // len(poses)
-        pose_index = frame // frames_per_transition
-        next_pose_index = (pose_index + 1) % len(poses)
-        local_step = frame % frames_per_transition
-        transition_steps = frames_per_transition
-    else:
-        denominator = frame_count - 1
-        numerator = frame * (len(poses) - 1)
-        pose_index = min(numerator // denominator, len(poses) - 1)
-        if pose_index == len(poses) - 1:
-            return poses[pose_index].resize(
-                (CELL, CELL), Image.Resampling.LANCZOS)
-        next_pose_index = min(pose_index + 1, len(poses) - 1)
-        transition_start = (pose_index * denominator
-                            + len(poses) - 2) // (len(poses) - 1)
-        transition_end = ((pose_index + 1) * denominator
-                          + len(poses) - 2) // (len(poses) - 1)
-        local_step = frame - transition_start
-        transition_steps = transition_end - transition_start
-
-    current = poses[pose_index].copy()
-    following = poses[next_pose_index]
-    regions = tuple(
-        (column * 32, row * 32, (column + 1) * 32, (row + 1) * 32)
-        for row in range(6) for column in range(6))
-    weighted_regions = []
-    for region in regions:
-        difference = ImageChops.difference(
-            current.crop(region), following.crop(region))
-        if difference.getbbox() is None:
-            continue
-        histogram = difference.histogram()
-        weight = sum(value * count
-                     for channel in range(4)
-                     for value, count in enumerate(
-                         histogram[channel * 256:(channel + 1) * 256]))
-        weighted_regions.append((weight, region))
-    part_batches: list[list[tuple[int, int, int, int]]] = [
-        [] for _ in range(transition_steps)]
-    batch_weights = [0] * transition_steps
-    for weight, region in sorted(weighted_regions, reverse=True):
-        batch = min(range(transition_steps), key=batch_weights.__getitem__)
-        part_batches[batch].append(region)
-        batch_weights[batch] += weight
-    for batch in part_batches[:local_step]:
-        for region in batch:
-            current.paste(following.crop(region), region)
-    return current.resize((CELL, CELL), Image.Resampling.LANCZOS)
+            frames.append(canvas.resize(
+                (CELL, CELL), Image.Resampling.LANCZOS))
+        if len(poses) != frame_count:
+            raise RuntimeError(f"{role}/{state}: incomplete pose sheet")
+    return frames
 
 
 def validate_monster_frames(atlas: Image.Image, role: str) -> None:
@@ -188,23 +150,40 @@ def validate_monster_frames(atlas: Image.Image, role: str) -> None:
                 raise RuntimeError(
                     f"{role}/{state} frame {local_frame}->{local_frame + 1}: "
                     f"only {percent:.2f}% pixels changed")
+        for local_frame, frame in enumerate(frames):
+            visible = {
+                (x, y) for y in range(CELL) for x in range(CELL)
+                if frame.getpixel((x, y))[3] > 96}
+            remaining = set(visible)
+            components: list[int] = []
+            while remaining:
+                stack = [remaining.pop()]
+                size = 0
+                while stack:
+                    x, y = stack.pop()
+                    size += 1
+                    for dy in (-1, 0, 1):
+                        for dx in (-1, 0, 1):
+                            neighbor = (x + dx, y + dy)
+                            if neighbor in remaining:
+                                remaining.remove(neighbor)
+                                stack.append(neighbor)
+                components.append(size)
+            components.sort(reverse=True)
+            second = components[1] if len(components) > 1 else 0
+            if (not components or components[0] * 100 < len(visible) * 94
+                    or second * 100 > len(visible) * 2):
+                raise RuntimeError(
+                    f"{role}/{state} frame {local_frame}: disconnected silhouette")
         frame_offset += frame_count
 
 
 def build_monster(role: str) -> None:
-    rows = pose_board_rows(role)
     atlas = Image.new("RGBA", (MONSTER_SIZE, MONSTER_SIZE))
-    frame_index = 0
-    for row, frame_count, loop in (
-            (0, 12, True), (1, 16, True), (2, 20, False),
-            (3, 8, False), (4, 16, False)):
-        for local_frame in range(frame_count):
-            frame = partwise_pose(
-                rows[row], local_frame, frame_count, loop)
-            atlas.alpha_composite(frame,
-                ((frame_index % COLUMNS) * CELL,
-                 (frame_index // COLUMNS) * CELL))
-            frame_index += 1
+    for frame_index, frame in enumerate(sequence_frames(role)):
+        atlas.alpha_composite(frame,
+            ((frame_index % COLUMNS) * CELL,
+             (frame_index // COLUMNS) * CELL))
     validate_monster_frames(atlas, role)
     atlas.save(OUTPUT / f"water_{role}.png")
     material_map(atlas).save(OUTPUT / f"water_{role}_material.png")
