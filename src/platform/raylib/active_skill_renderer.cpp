@@ -38,6 +38,7 @@ void draw_skill_text(Font font, const char* text,
 }
 
 void draw_draw_slash(const DrawSlashVisualPlan& plan,
+    const ActiveSkillAssets& assets,
     float width, float height) noexcept {
     if (!plan.visible) return;
     const ScreenProjection projected = project_combat_position(
@@ -65,6 +66,12 @@ void draw_draw_slash(const DrawSlashVisualPlan& plan,
         DrawLineEx(fan[index], fan[index + 1U],
             3.0F * projected.scale,
             Fade(Color{236, 251, 255, 255}, plan.opacity));
+    }
+    if (plan.use_atlas) {
+        static_cast<void>(assets.draw(plan.atlas, plan.atlas_frame,
+            {projected.x, projected.ground_y},
+            plan.facing == combat::Facing::left, projected.scale * 0.72F,
+            Fade(WHITE, plan.opacity)));
     }
 }
 
@@ -107,10 +114,16 @@ void draw_sword(Vector2 center, float angle, float scale,
 }
 
 void draw_storm_swords(const StormSwordsVisualPlan& plan,
+    const ActiveSkillAssets& assets,
     float width, float height) noexcept {
     if (!plan.visible && !plan.finisher_visible) return;
     const ScreenProjection projected = project_combat_position(
         plan.center, width, height);
+    if (plan.use_atlas) {
+        static_cast<void>(assets.draw(plan.atlas, plan.atlas_frame,
+            {projected.x, projected.ground_y}, false, projected.scale * 0.70F,
+            WHITE));
+    }
     if (plan.visible) {
         for (std::size_t index = 0U; index < plan.sword_count; ++index) {
             const StormSwordVisual& sword = plan.swords[index];
@@ -159,6 +172,10 @@ ActiveSkillEffectPlan make_active_skill_effect_plan(
             result.draw_slash.opacity = 1.0F
                 - static_cast<float>(age)
                     / static_cast<float>(kFlashTicks + 1U);
+            result.draw_slash.use_atlas = true;
+            result.draw_slash.atlas = ActiveSkillAtlasId::draw_slash;
+            result.draw_slash.atlas_frame = std::min<std::size_t>(
+                skill.frame_index, 35U);
         }
     }
 
@@ -168,6 +185,11 @@ ActiveSkillEffectPlan make_active_skill_effect_plan(
             skill.spawned_sword_count, result.storm_swords.swords.size());
         result.storm_swords.visible = skill.transients_active
             && result.storm_swords.sword_count != 0U;
+        result.storm_swords.use_atlas = result.storm_swords.visible
+            || skill.phase == combat::ActiveSkillPhase::finisher;
+        result.storm_swords.atlas = ActiveSkillAtlasId::storm_swords;
+        result.storm_swords.atlas_frame = std::min<std::size_t>(
+            static_cast<std::size_t>(skill.frame_index) * 24U / 144U, 23U);
         for (std::size_t index = 0U;
              index < result.storm_swords.sword_count; ++index) {
             const bool aerial = index >= kStormGroundSwordCount;
@@ -220,12 +242,20 @@ void ActiveSkillRenderer::draw_world(
     float width, float height) const noexcept {
     const ActiveSkillEffectPlan plan = make_active_skill_effect_plan(
         snapshot, last_event);
-    draw_draw_slash(plan.draw_slash, width, height);
-    draw_storm_swords(plan.storm_swords, width, height);
+    draw_draw_slash(plan.draw_slash, assets_, width, height);
+    draw_storm_swords(plan.storm_swords, assets_, width, height);
     if (plan.screen_flash_alpha > 0.0F) {
         DrawRectangle(0, 0, static_cast<int>(width), static_cast<int>(height),
             Fade(Color{220, 244, 255, 255}, plan.screen_flash_alpha));
     }
+}
+
+bool ActiveSkillRenderer::initialize_resources() noexcept {
+    return assets_.load();
+}
+
+void ActiveSkillRenderer::shutdown_resources() noexcept {
+    assets_.unload();
 }
 
 void ActiveSkillRenderer::draw_hud(const ActiveSkillHudModel& model,

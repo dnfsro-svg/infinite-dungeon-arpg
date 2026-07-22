@@ -101,10 +101,15 @@ arpg::test::Failure native_effect_plan_uses_snapshot_timing_and_twelve_swords()
     snapshot.active_skill.id = skills::ActiveSkillId::draw_slash;
     snapshot.active_skill.phase = combat::ActiveSkillPhase::strikes;
     snapshot.active_skill.elapsed_ticks = 46U;
+    snapshot.active_skill.frame_index = 18U;
     snapshot.active_skill.locked_center = {2.0F, 3.0F, 0.0F};
     platform::ActiveSkillEffectPlan plan =
         platform::make_active_skill_effect_plan(snapshot, nullptr);
     ARPG_REQUIRE(plan.draw_slash.visible);
+    ARPG_REQUIRE(plan.draw_slash.use_atlas);
+    ARPG_REQUIRE(plan.draw_slash.atlas
+        == platform::ActiveSkillAtlasId::draw_slash);
+    ARPG_REQUIRE(plan.draw_slash.atlas_frame == 18U);
     ARPG_REQUIRE(plan.draw_slash.facing == combat::Facing::left);
     ARPG_REQUIRE(arpg::test::near(plan.draw_slash.center.x, 2.0F));
     snapshot.active_skill.elapsed_ticks = static_cast<std::uint16_t>(
@@ -119,6 +124,10 @@ arpg::test::Failure native_effect_plan_uses_snapshot_timing_and_twelve_swords()
     snapshot.active_skill.transients_active = true;
     plan = platform::make_active_skill_effect_plan(snapshot, nullptr);
     ARPG_REQUIRE(plan.storm_swords.visible);
+    ARPG_REQUIRE(plan.storm_swords.use_atlas);
+    ARPG_REQUIRE(plan.storm_swords.atlas
+        == platform::ActiveSkillAtlasId::storm_swords);
+    ARPG_REQUIRE(plan.storm_swords.atlas_frame < 24U);
     ARPG_REQUIRE(plan.storm_swords.sword_count == 12U);
     for (std::size_t index = 0U; index < plan.storm_swords.sword_count; ++index) {
         ARPG_REQUIRE(plan.storm_swords.swords[index].highlighted

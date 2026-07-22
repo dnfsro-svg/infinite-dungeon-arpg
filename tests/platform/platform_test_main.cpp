@@ -15,6 +15,7 @@ arpg::test::TestSuite stage15_audio_pack_suite() noexcept;
 arpg::test::TestSuite host_input_suite() noexcept;
 arpg::test::TestSuite active_skill_input_suite() noexcept;
 arpg::test::TestSuite active_skill_view_suite() noexcept;
+arpg::test::TestSuite active_skill_asset_suite() noexcept;
 arpg::test::TestSuite active_skill_loadout_view_suite() noexcept;
 arpg::test::TestSuite dungeon_view_math_suite() noexcept;
 arpg::test::TestSuite passive_tree_view_suite() noexcept;
@@ -66,6 +67,7 @@ int main() {
         host_input_suite(),
         active_skill_input_suite(),
         active_skill_view_suite(),
+        active_skill_asset_suite(),
         active_skill_loadout_view_suite(),
         dungeon_view_math_suite(),
         passive_tree_view_suite(),
@@ -97,5 +99,5 @@ int main() {
         stage12_material_render_suite(),
     };
 
-    return arpg::test::run_suites(suites, 380, "stage 17 active skill UI");
+    return arpg::test::run_suites(suites, 381, "stage 17 active skill UI");
 }

@@ -1,5 +1,6 @@
 add_library(arpg_raylib STATIC
     active_skill_renderer.cpp
+    active_skill_assets.cpp
     active_skill_view.cpp
     actor_renderer.cpp
     audio_pack.cpp
