@@ -44,6 +44,9 @@ inline constexpr MaterialAtlasDefinition kDefaultMaterialAtlases[] = {
     {MaterialAtlasId::fire_environment, 1024, 1024, 4U * 1024U * 1024U, "assets/stage12/fire_environment.png", "assets/stage12/fire_environment_material.png", MaterialEcology::fire},
     {MaterialAtlasId::fire_bomber, 1024, 1024, 4U * 1024U * 1024U, "assets/stage12/fire_bomber.png", "assets/stage12/fire_bomber_material.png", MaterialEcology::fire},
     {MaterialAtlasId::fire_charger, 1024, 1024, 4U * 1024U * 1024U, "assets/stage12/fire_charger.png", "assets/stage12/fire_charger_material.png", MaterialEcology::fire},
+    {MaterialAtlasId::water_environment, 768, 768, 4U * 768U * 768U, "assets/stage12/water_environment.png", "assets/stage12/water_environment_material.png", MaterialEcology::water},
+    {MaterialAtlasId::water_bulwark, 864, 864, 4U * 864U * 864U, "assets/stage12/water_bulwark.png", "assets/stage12/water_bulwark_material.png", MaterialEcology::water},
+    {MaterialAtlasId::water_support, 864, 864, 4U * 864U * 864U, "assets/stage12/water_support.png", "assets/stage12/water_support_material.png", MaterialEcology::water},
 };
 
 #define ARPG_ACTOR_FRAME(sprite, column, row) \
@@ -60,7 +63,14 @@ inline constexpr MaterialAtlasDefinition kDefaultMaterialAtlases[] = {
 #define ARPG_FIRE_MONSTER_FRAME(sprite, atlas, column, row) \
     {MaterialSpriteId::sprite, MaterialAtlasId::atlas, \
         {static_cast<float>((column) * 256), static_cast<float>((row) * 256), \
-            256.0F, 256.0F}, {128.0F, 246.0F}, 42U, {178.0F, 126.0F}, MaterialLayer::body, MaterialClass::actor, static_cast<std::uint32_t>((column) * 173U + (row) * 29U + 1009U)}
+        256.0F, 256.0F}, {128.0F, 246.0F}, 42U, {178.0F, 126.0F}, MaterialLayer::body, MaterialClass::actor, static_cast<std::uint32_t>((column) * 173U + (row) * 29U + 1009U)}
+
+#define ARPG_WATER_MONSTER_FRAME(sprite, atlas, cell) \
+    {MaterialSpriteId::sprite, MaterialAtlasId::atlas, \
+        {static_cast<float>(((cell) % 9) * 96), \
+         static_cast<float>(((cell) / 9) * 96), 96.0F, 96.0F}, \
+        {48.0F, 93.0F}, 42U, {68.0F, 48.0F}, MaterialLayer::body, \
+        MaterialClass::actor, static_cast<std::uint32_t>((cell) * 211U + 4001U)}
 
 inline constexpr MaterialFrameDefinition kDefaultMaterialFrames[] = {
     ARPG_ACTOR_FRAME(player_idle, 0, 0),
@@ -97,20 +107,20 @@ inline constexpr MaterialFrameDefinition kDefaultMaterialFrames[] = {
     {MaterialSpriteId::fire_bone_pile, MaterialAtlasId::fire_environment, {768.0F, 512.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U, {128.0F, 128.0F}, MaterialLayer::body, MaterialClass::environment, 2006U},
     {MaterialSpriteId::fire_breakable_crate, MaterialAtlasId::fire_environment, {0.0F, 768.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U, {128.0F, 128.0F}, MaterialLayer::body, MaterialClass::environment, 2007U},
     {MaterialSpriteId::fire_solid_brazier, MaterialAtlasId::fire_environment, {256.0F, 768.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U, {128.0F, 128.0F}, MaterialLayer::body, MaterialClass::environment, 2008U},
-    ARPG_ACTOR_FRAME(water_bulwark_idle, 2, 3),
-    ARPG_ACTOR_FRAME(water_bulwark_move, 3, 3),
-    ARPG_ACTOR_FRAME(water_bulwark_telegraph, 4, 3),
-    ARPG_ACTOR_FRAME(water_bulwark_active, 5, 3),
-    ARPG_ACTOR_FRAME(water_bulwark_recovery, 6, 3),
-    ARPG_ACTOR_FRAME(water_bulwark_cooldown, 7, 3),
-    ARPG_ACTOR_FRAME(water_bulwark_defeated, 0, 4),
-    ARPG_ACTOR_FRAME(water_support_idle, 1, 4),
-    ARPG_ACTOR_FRAME(water_support_move, 2, 4),
-    ARPG_ACTOR_FRAME(water_support_telegraph, 3, 4),
-    ARPG_ACTOR_FRAME(water_support_active, 4, 4),
-    ARPG_ACTOR_FRAME(water_support_recovery, 5, 4),
-    ARPG_ACTOR_FRAME(water_support_cooldown, 6, 4),
-    ARPG_ACTOR_FRAME(water_support_defeated, 7, 4),
+    ARPG_WATER_MONSTER_FRAME(water_bulwark_idle, water_bulwark, 0),
+    ARPG_WATER_MONSTER_FRAME(water_bulwark_move, water_bulwark, 12),
+    ARPG_WATER_MONSTER_FRAME(water_bulwark_telegraph, water_bulwark, 28),
+    ARPG_WATER_MONSTER_FRAME(water_bulwark_active, water_bulwark, 35),
+    ARPG_WATER_MONSTER_FRAME(water_bulwark_recovery, water_bulwark, 42),
+    ARPG_WATER_MONSTER_FRAME(water_bulwark_cooldown, water_bulwark, 47),
+    ARPG_WATER_MONSTER_FRAME(water_bulwark_defeated, water_bulwark, 56),
+    ARPG_WATER_MONSTER_FRAME(water_support_idle, water_support, 0),
+    ARPG_WATER_MONSTER_FRAME(water_support_move, water_support, 12),
+    ARPG_WATER_MONSTER_FRAME(water_support_telegraph, water_support, 28),
+    ARPG_WATER_MONSTER_FRAME(water_support_active, water_support, 35),
+    ARPG_WATER_MONSTER_FRAME(water_support_recovery, water_support, 42),
+    ARPG_WATER_MONSTER_FRAME(water_support_cooldown, water_support, 47),
+    ARPG_WATER_MONSTER_FRAME(water_support_defeated, water_support, 56),
     ARPG_ACTOR_FRAME(lightning_shooter_idle, 0, 5),
     ARPG_ACTOR_FRAME(lightning_shooter_move, 1, 5),
     ARPG_ACTOR_FRAME(lightning_shooter_telegraph, 2, 5),
@@ -141,22 +151,40 @@ inline constexpr MaterialFrameDefinition kDefaultMaterialFrames[] = {
     ARPG_ACTOR_FRAME(chaos_hazard_defeated, 3, 8),
     {MaterialSpriteId::environment_floor_fire, MaterialAtlasId::environment,
         {0.0F, 0.0F, 1024.0F, 704.0F}, {512.0F, 704.0F}, 0U},
-    {MaterialSpriteId::environment_floor_water, MaterialAtlasId::environment,
-        {0.0F, 0.0F, 1024.0F, 704.0F}, {512.0F, 704.0F}, 0U},
+    {MaterialSpriteId::environment_floor_water, MaterialAtlasId::water_environment,
+        {0.0F, 0.0F, 512.0F, 512.0F}, {256.0F, 512.0F}, 0U},
     {MaterialSpriteId::environment_floor_lightning, MaterialAtlasId::environment,
         {0.0F, 0.0F, 1024.0F, 704.0F}, {512.0F, 704.0F}, 0U},
     {MaterialSpriteId::environment_floor_chaos, MaterialAtlasId::environment,
         {0.0F, 0.0F, 1024.0F, 704.0F}, {512.0F, 704.0F}, 0U},
     {MaterialSpriteId::environment_door_fire, MaterialAtlasId::environment,
         {0.0F, 704.0F, 112.0F, 112.0F}, {56.0F, 112.0F}, 0U},
-    {MaterialSpriteId::environment_door_water, MaterialAtlasId::environment,
-        {112.0F, 704.0F, 112.0F, 112.0F}, {56.0F, 112.0F}, 0U},
+    {MaterialSpriteId::environment_door_water, MaterialAtlasId::water_environment,
+        {512.0F, 0.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U,
+        {128.0F, 128.0F}, MaterialLayer::front_effect,
+        MaterialClass::environment, 5001U},
     {MaterialSpriteId::environment_door_lightning, MaterialAtlasId::environment,
         {224.0F, 704.0F, 112.0F, 112.0F}, {56.0F, 112.0F}, 0U},
     {MaterialSpriteId::environment_door_chaos, MaterialAtlasId::environment,
         {336.0F, 704.0F, 112.0F, 112.0F}, {56.0F, 112.0F}, 0U},
     {MaterialSpriteId::environment_hole, MaterialAtlasId::environment,
         {448.0F, 704.0F, 192.0F, 160.0F}, {96.0F, 80.0F}, 0U},
+    {MaterialSpriteId::water_wall, MaterialAtlasId::water_environment,
+        {0.0F, 0.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U,
+        {128.0F, 128.0F}, MaterialLayer::body, MaterialClass::environment, 5002U},
+    {MaterialSpriteId::water_hole, MaterialAtlasId::water_environment,
+        {0.0F, 512.0F, 256.0F, 256.0F}, {128.0F, 128.0F}, 0U,
+        {128.0F, 128.0F}, MaterialLayer::body, MaterialClass::environment, 5003U},
+    {MaterialSpriteId::water_lantern, MaterialAtlasId::water_environment,
+        {256.0F, 512.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U,
+        {128.0F, 128.0F}, MaterialLayer::front_effect,
+        MaterialClass::environment, 5004U},
+    {MaterialSpriteId::water_coral, MaterialAtlasId::water_environment,
+        {512.0F, 512.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U,
+        {128.0F, 128.0F}, MaterialLayer::body, MaterialClass::environment, 5005U},
+    {MaterialSpriteId::water_grate, MaterialAtlasId::water_environment,
+        {512.0F, 256.0F, 256.0F, 256.0F}, {128.0F, 128.0F}, 0U,
+        {128.0F, 128.0F}, MaterialLayer::body, MaterialClass::environment, 5006U},
     ARPG_EFFECT_FRAME(effect_fire, 0, 0),
     ARPG_EFFECT_FRAME(effect_water, 1, 0),
     ARPG_EFFECT_FRAME(effect_lightning, 2, 0),
@@ -194,6 +222,7 @@ inline constexpr AnimationClipDefinition kDefaultAnimationClips[] = {
 #undef ARPG_ACTOR_FRAME
 #undef ARPG_EFFECT_FRAME
 #undef ARPG_FIRE_MONSTER_FRAME
+#undef ARPG_WATER_MONSTER_FRAME
 
 }  // namespace detail
 

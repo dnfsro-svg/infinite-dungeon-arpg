@@ -39,6 +39,7 @@ if(TARGET arpg_raylib)
         material_asset_validation_tests.cpp
         material_animation_tests.cpp
         fire_room_material_slice_tests.cpp
+        ecology_material_coverage_tests.cpp
         stage12_environment_render_tests.cpp
         stage12_actor_render_tests.cpp
         stage12_material_render_tests.cpp)

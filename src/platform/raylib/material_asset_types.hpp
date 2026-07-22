@@ -19,6 +19,9 @@ enum class MaterialAtlasId : std::uint8_t {
     fire_environment,
     fire_bomber,
     fire_charger,
+    water_environment,
+    water_bulwark,
+    water_support,
     count,
 };
 
@@ -160,6 +163,11 @@ enum class MaterialSpriteId : std::uint16_t {
     fire_bone_pile,
     fire_breakable_crate,
     fire_solid_brazier,
+    water_wall,
+    water_hole,
+    water_lantern,
+    water_coral,
+    water_grate,
     effect_fire,
     effect_water,
     effect_lightning,

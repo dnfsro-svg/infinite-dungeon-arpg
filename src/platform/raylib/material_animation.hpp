@@ -41,6 +41,30 @@ struct PlayerAnimationFrame final {
     Vector2 weapon_anchor{};
 };
 
+enum class MonsterAnimationState : std::uint8_t {
+    idle,
+    move,
+    special,
+    hurt,
+    death,
+    count,
+};
+
+struct MonsterAnimationClipDefinition final {
+    combat::MonsterId monster{combat::MonsterId::water_bulwark};
+    MonsterAnimationState state{MonsterAnimationState::idle};
+    MaterialAtlasId atlas{MaterialAtlasId::water_bulwark};
+    std::uint16_t first_cell{};
+    std::uint16_t frame_count{};
+    std::uint8_t frames_per_second{18U};
+};
+
+struct MonsterAnimationFrame final {
+    MaterialAtlasId atlas{MaterialAtlasId::water_bulwark};
+    Rectangle source{};
+    Vector2 foot_anchor{};
+};
+
 [[nodiscard]] MaterialSpriteId select_player_sprite(
     combat::PlayerState state,
     combat::AttackId attack) noexcept;
@@ -58,6 +82,14 @@ struct PlayerAnimationFrame final {
 [[nodiscard]] MaterialSpriteId select_monster_sprite(
     combat::MonsterId monster,
     combat::MonsterAiPhase phase) noexcept;
+[[nodiscard]] MonsterAnimationState select_monster_animation_state(
+    combat::MonsterAiPhase phase, bool hurt) noexcept;
+[[nodiscard]] const MonsterAnimationClipDefinition* monster_animation_clip(
+    combat::MonsterId monster, MonsterAnimationState state) noexcept;
+[[nodiscard]] std::optional<MonsterAnimationFrame> monster_animation_frame(
+    const MonsterAnimationClipDefinition& clip, std::uint16_t frame) noexcept;
+[[nodiscard]] std::uint16_t monster_animation_frame_index(
+    const MonsterAnimationClipDefinition& clip, std::uint64_t world_tick) noexcept;
 
 [[nodiscard]] MaterialSpriteId select_floor_sprite(
     dungeon::DungeonElement element) noexcept;

@@ -299,6 +299,33 @@ bool draw_player_animation(const MaterialPack& material_pack,
         material_actor_draw_scale(true, projected.scale));
 }
 
+bool draw_monster_animation(const MaterialPack& material_pack,
+    const MonsterSnapshot& monster, std::uint64_t world_tick,
+    const ScreenProjection& projected, float hit_flash_seconds) noexcept {
+    const MonsterAnimationState state = select_monster_animation_state(
+        monster.ai_phase, hit_flash_seconds > 0.0F);
+    const MonsterAnimationClipDefinition* const clip = monster_animation_clip(
+        monster.id, state);
+    if (clip == nullptr) return false;
+    const auto frame = monster_animation_frame(*clip,
+        monster_animation_frame_index(*clip, world_tick));
+    if (!frame.has_value()) return false;
+    constexpr float kWaterMonsterScale = 0.92F;
+    const float scale = kWaterMonsterScale * projected.scale;
+    const bool drawn = material_pack.draw_frame(frame->atlas, frame->source,
+        frame->foot_anchor, {projected.x, projected.y},
+        monster.facing == Facing::left, scale);
+    if (drawn && hit_flash_seconds > 0.0F) {
+        BeginBlendMode(BLEND_ADDITIVE);
+        static_cast<void>(material_pack.draw_frame(frame->atlas, frame->source,
+            frame->foot_anchor, {projected.x, projected.y},
+            monster.facing == Facing::left, scale,
+            Color{230, 248, 255, 175}));
+        EndBlendMode();
+    }
+    return drawn;
+}
+
 void draw_player_geometry(const ScreenProjection& projected) noexcept {
     const float body_width = 42.0F * projected.scale;
     const float body_height = 82.0F * projected.scale;
@@ -514,8 +541,12 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
                     {projected.x, projected.ground_y}, false, 0.72F * projected.scale,
                     Color{230, 142, 255, 155}));
             }
-            if (draw_material_actor(material_pack_, sprite, monster.facing, false,
-                    projected, feedback.target_flash_seconds(item.monster_index))) {
+            const float hit_flash_seconds = feedback.target_flash_seconds(
+                item.monster_index);
+            if (draw_monster_animation(material_pack_, monster,
+                    current_combat.tick, projected, hit_flash_seconds)
+                || draw_material_actor(material_pack_, sprite, monster.facing,
+                    false, projected, hit_flash_seconds)) {
                 draw_monster_presentation(monster, item.position, current.ecology,
                     width, height, current_combat.tick, item.monster_index);
             } else {

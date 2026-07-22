@@ -39,7 +39,10 @@ bool copy_materials(const std::filesystem::path& executable) {
              "environment.png", "actors.png", "effects_ui.png",
              "fire_environment.png", "fire_environment_material.png",
              "fire_bomber.png", "fire_bomber_material.png",
-             "fire_charger.png", "fire_charger_material.png"}) {
+             "fire_charger.png", "fire_charger_material.png",
+             "water_environment.png", "water_environment_material.png",
+             "water_bulwark.png", "water_bulwark_material.png",
+             "water_support.png", "water_support_material.png"}) {
         std::filesystem::copy_file(source / name, destination / name,
             std::filesystem::copy_options::overwrite_existing, error);
         if (error) return false;

@@ -7,6 +7,7 @@
 #include "material_animation.hpp"
 #include "material_loot_view.hpp"
 #include "render_layout.hpp"
+#include "water_room_material_slice.hpp"
 
 #include <raylib.h>
 
@@ -73,8 +74,42 @@ bool draw_environment_room(const MaterialPack& material_pack,
             {width * 0.5F, height}, false,
             (std::max)(width / 256.0F, height / 256.0F));
     }
+    const WaterRoomRenderPlan water = water_room_render_plan(ecology);
+    if (water.active && material_pack.available(water.background_atlas)) {
+        return material_pack.draw_frame(water.background_atlas,
+            water.background_source, {256.0F, 512.0F},
+            {width * 0.5F, height}, false,
+            (std::max)(width / water.background_source.width,
+                height / water.background_source.height));
+    }
     return material_pack.draw(select_floor_sprite(ecology),
         {width * 0.5F, height}, false, scale);
+}
+
+void draw_water_room_props(const MaterialPack& material_pack,
+    float width, float height) noexcept {
+    if (!material_pack.available(MaterialAtlasId::water_environment)) return;
+    constexpr std::array<Vector2, 5> kPositions{{
+        {0.13F, 0.35F}, {0.87F, 0.35F}, {0.18F, 0.82F},
+        {0.82F, 0.82F}, {0.50F, 0.86F},
+    }};
+    constexpr std::array<WaterRoomPropId, 5> kProps{{
+        WaterRoomPropId::lantern, WaterRoomPropId::wall,
+        WaterRoomPropId::coral, WaterRoomPropId::coral,
+        WaterRoomPropId::grate,
+    }};
+    const WaterRoomMaterialSlice& slice = water_room_material_slice();
+    for (std::size_t index{}; index < kProps.size(); ++index) {
+        const auto& prop = slice.props[static_cast<std::size_t>(kProps[index])];
+        static_cast<void>(material_pack.draw(prop.sprite,
+            {kPositions[index].x * width, kPositions[index].y * height},
+            index == 3U, index == 1U ? 0.92F : 0.58F));
+    }
+}
+
+MaterialSpriteId hole_sprite(dungeon::DungeonElement ecology) noexcept {
+    return ecology == dungeon::DungeonElement::water
+        ? MaterialSpriteId::water_hole : MaterialSpriteId::environment_hole;
 }
 
 void draw_fire_room_props(const MaterialPack& material_pack,
@@ -116,7 +151,7 @@ bool can_draw_room_environment(const dungeon::DungeonSnapshot& snapshot,
     return should_draw_material_environment({
         material_pack.can_draw(select_floor_sprite(snapshot.ecology)),
         material_pack.can_draw(select_door_sprite(snapshot.ecology)),
-        material_pack.can_draw(MaterialSpriteId::environment_hole),
+        material_pack.can_draw(hole_sprite(snapshot.ecology)),
         door_mode != DoorVisualMode::hidden,
         hole_mode != HoleVisualMode::hidden,
     });
@@ -394,7 +429,7 @@ void draw_hole(const dungeon::DungeonSnapshot& snapshot,
     if (hole == HoleVisualMode::ready) color = Color{230, 79, 186, 255};
     else if (hole == HoleVisualMode::busy) color = Color{255, 194, 74, 255};
     if (draw_material_environment) {
-        static_cast<void>(material_pack.draw(MaterialSpriteId::environment_hole,
+        static_cast<void>(material_pack.draw(hole_sprite(snapshot.ecology),
             {projected.x, projected.ground_y}, false, 0.77F * projected.scale));
     } else {
         DrawEllipse(x, y, 74.0F, 25.0F, Color{5, 2, 9, 235});
@@ -430,6 +465,8 @@ void CombatRenderer::draw_room(
     draw_ground_items(current, ground_loot, material_pack_, width, height);
     if (current.ecology == dungeon::DungeonElement::fire) {
         draw_fire_room_props(material_pack_, current, width, height);
+    } else if (current.ecology == dungeon::DungeonElement::water) {
+        draw_water_room_props(material_pack_, width, height);
     }
     draw_doors(current, width, height, material_pack_, draw_material_environment);
     draw_hole(current, material_pack_, draw_material_environment);

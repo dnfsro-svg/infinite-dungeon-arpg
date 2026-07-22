@@ -15,6 +15,8 @@ constexpr float kMonsterTrimmedHeight = 176.0F;
 constexpr float kMonsterTargetHeight = 78.0F;
 constexpr float kPlayerAnimationCell = 128.0F;
 constexpr std::uint8_t kPlayerAnimationColumns = 8U;
+constexpr float kWaterMonsterAnimationCell = 96.0F;
+constexpr std::uint16_t kWaterMonsterAnimationColumns = 9U;
 
 constexpr std::array<PlayerAnimationClipDefinition,
     static_cast<std::size_t>(PlayerAnimationClipId::count)> kPlayerClips{{
@@ -31,6 +33,29 @@ constexpr std::array<PlayerAnimationClipDefinition,
     {PlayerAnimationClipId::down, MaterialAtlasId::player_reaction, 10U, 16U},
     {PlayerAnimationClipId::get_up, MaterialAtlasId::player_reaction, 26U, 14U},
     {PlayerAnimationClipId::death, MaterialAtlasId::player_reaction, 40U, 24U},
+}};
+
+constexpr std::array<MonsterAnimationClipDefinition, 10> kWaterMonsterClips{{
+    {combat::MonsterId::water_bulwark, MonsterAnimationState::idle,
+        MaterialAtlasId::water_bulwark, 0U, 12U, 12U},
+    {combat::MonsterId::water_bulwark, MonsterAnimationState::move,
+        MaterialAtlasId::water_bulwark, 12U, 16U, 18U},
+    {combat::MonsterId::water_bulwark, MonsterAnimationState::special,
+        MaterialAtlasId::water_bulwark, 28U, 20U, 20U},
+    {combat::MonsterId::water_bulwark, MonsterAnimationState::hurt,
+        MaterialAtlasId::water_bulwark, 48U, 8U, 20U},
+    {combat::MonsterId::water_bulwark, MonsterAnimationState::death,
+        MaterialAtlasId::water_bulwark, 56U, 16U, 16U},
+    {combat::MonsterId::water_support, MonsterAnimationState::idle,
+        MaterialAtlasId::water_support, 0U, 12U, 12U},
+    {combat::MonsterId::water_support, MonsterAnimationState::move,
+        MaterialAtlasId::water_support, 12U, 16U, 18U},
+    {combat::MonsterId::water_support, MonsterAnimationState::special,
+        MaterialAtlasId::water_support, 28U, 20U, 20U},
+    {combat::MonsterId::water_support, MonsterAnimationState::hurt,
+        MaterialAtlasId::water_support, 48U, 8U, 20U},
+    {combat::MonsterId::water_support, MonsterAnimationState::death,
+        MaterialAtlasId::water_support, 56U, 16U, 16U},
 }};
 
 [[nodiscard]] MaterialSpriteId select_attack_sprite(
@@ -231,6 +256,52 @@ MaterialSpriteId select_monster_sprite(
         return MaterialSpriteId::missing;
     }
     return MaterialSpriteId::missing;
+}
+
+MonsterAnimationState select_monster_animation_state(
+    combat::MonsterAiPhase phase, bool hurt) noexcept {
+    if (phase == combat::MonsterAiPhase::defeated) {
+        return MonsterAnimationState::death;
+    }
+    if (hurt) return MonsterAnimationState::hurt;
+    switch (phase) {
+    case combat::MonsterAiPhase::idle: return MonsterAnimationState::idle;
+    case combat::MonsterAiPhase::move: return MonsterAnimationState::move;
+    case combat::MonsterAiPhase::telegraph:
+    case combat::MonsterAiPhase::active:
+    case combat::MonsterAiPhase::recovery:
+    case combat::MonsterAiPhase::cooldown: return MonsterAnimationState::special;
+    case combat::MonsterAiPhase::defeated: return MonsterAnimationState::death;
+    }
+    return MonsterAnimationState::idle;
+}
+
+const MonsterAnimationClipDefinition* monster_animation_clip(
+    combat::MonsterId monster, MonsterAnimationState state) noexcept {
+    for (const MonsterAnimationClipDefinition& clip : kWaterMonsterClips) {
+        if (clip.monster == monster && clip.state == state) return &clip;
+    }
+    return nullptr;
+}
+
+std::optional<MonsterAnimationFrame> monster_animation_frame(
+    const MonsterAnimationClipDefinition& clip, std::uint16_t frame) noexcept {
+    if (frame >= clip.frame_count) return std::nullopt;
+    const std::uint16_t cell = clip.first_cell + frame;
+    const std::uint16_t column = cell % kWaterMonsterAnimationColumns;
+    const std::uint16_t row = cell / kWaterMonsterAnimationColumns;
+    return MonsterAnimationFrame{clip.atlas,
+        {static_cast<float>(column) * kWaterMonsterAnimationCell,
+         static_cast<float>(row) * kWaterMonsterAnimationCell,
+         kWaterMonsterAnimationCell, kWaterMonsterAnimationCell},
+        {48.0F, 93.0F}};
+}
+
+std::uint16_t monster_animation_frame_index(
+    const MonsterAnimationClipDefinition& clip, std::uint64_t world_tick) noexcept {
+    if (clip.frame_count == 0U || clip.frames_per_second == 0U) return 0U;
+    const std::uint64_t frame = world_tick * clip.frames_per_second / 60U;
+    return static_cast<std::uint16_t>(frame % clip.frame_count);
 }
 
 MaterialSpriteId select_floor_sprite(dungeon::DungeonElement element) noexcept {

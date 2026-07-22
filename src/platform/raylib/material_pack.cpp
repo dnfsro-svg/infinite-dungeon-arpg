@@ -26,15 +26,21 @@ namespace {
     MaterialSpriteId id) noexcept {
     switch (id) {
     case MaterialSpriteId::environment_floor_fire:
-    case MaterialSpriteId::environment_floor_water:
     case MaterialSpriteId::environment_floor_lightning:
     case MaterialSpriteId::environment_floor_chaos:
     case MaterialSpriteId::environment_door_fire:
-    case MaterialSpriteId::environment_door_water:
     case MaterialSpriteId::environment_door_lightning:
     case MaterialSpriteId::environment_door_chaos:
     case MaterialSpriteId::environment_hole:
         return MaterialAtlasId::environment;
+    case MaterialSpriteId::environment_floor_water:
+    case MaterialSpriteId::environment_door_water:
+    case MaterialSpriteId::water_wall:
+    case MaterialSpriteId::water_hole:
+    case MaterialSpriteId::water_lantern:
+    case MaterialSpriteId::water_coral:
+    case MaterialSpriteId::water_grate:
+        return MaterialAtlasId::water_environment;
     case MaterialSpriteId::fire_wall:
     case MaterialSpriteId::fire_torch:
     case MaterialSpriteId::fire_chain:
@@ -60,6 +66,22 @@ namespace {
     case MaterialSpriteId::fire_charger_cooldown:
     case MaterialSpriteId::fire_charger_defeated:
         return MaterialAtlasId::fire_charger;
+    case MaterialSpriteId::water_bulwark_idle:
+    case MaterialSpriteId::water_bulwark_move:
+    case MaterialSpriteId::water_bulwark_telegraph:
+    case MaterialSpriteId::water_bulwark_active:
+    case MaterialSpriteId::water_bulwark_recovery:
+    case MaterialSpriteId::water_bulwark_cooldown:
+    case MaterialSpriteId::water_bulwark_defeated:
+        return MaterialAtlasId::water_bulwark;
+    case MaterialSpriteId::water_support_idle:
+    case MaterialSpriteId::water_support_move:
+    case MaterialSpriteId::water_support_telegraph:
+    case MaterialSpriteId::water_support_active:
+    case MaterialSpriteId::water_support_recovery:
+    case MaterialSpriteId::water_support_cooldown:
+    case MaterialSpriteId::water_support_defeated:
+        return MaterialAtlasId::water_support;
     case MaterialSpriteId::effect_fire:
     case MaterialSpriteId::effect_water:
     case MaterialSpriteId::effect_lightning:
