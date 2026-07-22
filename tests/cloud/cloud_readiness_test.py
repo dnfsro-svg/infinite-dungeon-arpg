@@ -188,7 +188,7 @@ class CloudReadinessContractTest(unittest.TestCase):
         workflow = self._read_required_file(".github/workflows/build-and-test.yml")
         jobs = self._workflow_jobs(workflow)
         ubuntu_job = self._job_using_runner(jobs, "ubuntu-latest")
-        windows_job = self._job_using_runner(jobs, "windows-latest")
+        windows_job = self._job_using_runner(jobs, "windows-2022")
         ubuntu_commands = self._workflow_run_commands(ubuntu_job)
         windows_commands = self._workflow_run_commands(windows_job)
 
@@ -209,6 +209,40 @@ class CloudReadinessContractTest(unittest.TestCase):
                 ".\\scripts\\Build.ps1 -Preset windows-msvc-release",
             ),
             "Windows job must run: .\\scripts\\Build.ps1 -Preset windows-msvc-release",
+        )
+
+    def test_ci_workflow_pins_permissions_and_official_actions(self):
+        workflow = self._read_required_file(".github/workflows/build-and-test.yml")
+
+        self.assertIn(
+            "permissions:\n  contents: read",
+            workflow,
+            "Workflow must request read-only repository contents permission",
+        )
+        self.assertIn(
+            "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+            workflow,
+            "Checkout action must be pinned to the approved full SHA",
+        )
+        self.assertIn(
+            "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+            workflow,
+            "Artifact action must be pinned to the approved full SHA",
+        )
+
+    def test_configure_accepts_all_vs_2022_products_with_required_components(self):
+        script = self._read_required_file("scripts/Configure.ps1")
+
+        self.assertIn("'-products', '*'", script)
+        self.assertIn("'-version', '[17.0,18.0)'", script)
+        self.assertIn(
+            "'Microsoft.VisualStudio.Component.VC.Tools.x86.x64'", script
+        )
+        self.assertIn(
+            "'Microsoft.VisualStudio.Component.Windows11SDK.26100'", script
+        )
+        self.assertIn(
+            "VS 2022 with MSVC x64 and SDK 26100 not found", script
         )
 
 

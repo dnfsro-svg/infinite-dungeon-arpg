@@ -32,14 +32,14 @@ function Enter-ArpgMsvcEnvironment {
     $vswhereArgs = @(
         '-latest',
         '-version', '[17.0,18.0)',
-        '-products', 'Microsoft.VisualStudio.Product.BuildTools',
+        '-products', '*',
         '-requires', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
         'Microsoft.VisualStudio.Component.Windows11SDK.26100',
         '-property', 'installationPath'
     )
     $installPath = & $vswhere @vswhereArgs
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($installPath)) {
-        throw 'VS 2022 Build Tools with MSVC x64 and SDK 26100 not found'
+        throw 'VS 2022 with MSVC x64 and SDK 26100 not found'
     }
 
     $installPath = ($installPath | Select-Object -First 1).Trim()

@@ -1,0 +1,45 @@
+name: Build and Test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-and-test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ubuntu-core-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install --yes cmake ninja-build g++
+      - name: Configure, build, and test core
+        run: bash scripts/cloud/setup.sh
+
+  windows-full-build:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      # v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Test Windows debug build
+        shell: pwsh
+        run: .\scripts\Test.ps1 -Preset windows-msvc-debug
+      - name: Build Windows release artifact
+        shell: pwsh
+        run: .\scripts\Build.ps1 -Preset windows-msvc-release
+      - name: Upload Windows artifact
+        # v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: infinite-dungeon-arpg-windows-x64
+          path: out/build/windows-msvc-release/bin/**
+          if-no-files-found: error
