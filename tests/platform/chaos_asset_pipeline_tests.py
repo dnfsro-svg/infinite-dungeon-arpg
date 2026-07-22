@@ -25,6 +25,17 @@ def rectangle_frame(left: int, top: int, right: int, bottom: int,
     return frame
 
 
+def rewrite_transparent_rgb(frame: Image.Image,
+                            color: tuple[int, int, int]) -> Image.Image:
+    """Change hidden RGB without changing any visible source pixel."""
+    rewritten = frame.copy()
+    rewritten.putdata([
+        (*color, 0) if pixel[3] <= 24 else pixel
+        for pixel in rewritten.get_flattened_data()
+    ])
+    return rewritten
+
+
 def authored_endpoint(direction: int, color: tuple[int, int, int, int]) -> Image.Image:
     """Connected synthetic pose with a changing arm and trailing coat."""
     frame = Image.new("RGBA", (96, 96))
@@ -72,6 +83,19 @@ class ChaosAssetPipelineTests(unittest.TestCase):
         self.assertEqual(cropped_pixels, source_pixels,
                          "direct crops must preserve every source subject pixel")
 
+    def test_detected_frames_reject_many_unassigned_tiny_components(self) -> None:
+        board = Image.new("RGBA", (240, 240))
+        draw = ImageDraw.Draw(board)
+        for bounds in ((30, 30, 80, 80), (150, 30, 200, 80),
+                       (30, 150, 80, 200), (150, 150, 200, 200)):
+            draw.rectangle(bounds, fill=(40, 180, 220, 255))
+        for y in range(92, 140, 2):
+            for x in range(92, 140, 2):
+                draw.point((x, y), fill=(220, 80, 190, 255))
+        with self.assertRaisesRegex(RuntimeError, "chroma noise budget"):
+            BUILDER.detect_source_frames(board, 2, 2, 4,
+                                         "synthetic/many-islands")
+
     def test_source_grid_rejects_main_silhouette_touching_cell_edge(self) -> None:
         board = Image.new("RGBA", (96, 96))
         ImageDraw.Draw(board).rectangle((0, 18, 60, 90),
@@ -84,6 +108,21 @@ class ChaosAssetPipelineTests(unittest.TestCase):
                       for shift in (0, 4)]
         with self.assertRaisesRegex(RuntimeError, "whole-frame translation"):
             BUILDER.validate_frames(translated, "synthetic/translation")
+
+    def test_pose_gate_treats_hidden_rgb_variants_as_duplicate_frames(self) -> None:
+        visible = rectangle_frame(18, 24, 58, 78)
+        hidden_variant = rewrite_transparent_rgb(visible, (231, 17, 149))
+        with self.assertRaisesRegex(RuntimeError, "duplicate whole frames"):
+            BUILDER.validate_frames([visible, hidden_variant],
+                                    "synthetic/hidden-rgb-duplicate")
+
+    def test_adjacent_change_counts_only_visible_union_pixels(self) -> None:
+        visible = rectangle_frame(18, 24, 58, 78)
+        hidden_variant = rewrite_transparent_rgb(visible, (231, 17, 149))
+        hidden_variant.putpixel((30, 40), (220, 30, 80, 255))
+        with self.assertRaisesRegex(RuntimeError, r"only 0\.\d+% changed"):
+            BUILDER.validate_frames([visible, hidden_variant],
+                                    "synthetic/hidden-rgb-adjacent")
 
     def test_pose_gate_rejects_exact_three_frame_linear_interpolation(self) -> None:
         interpolated = [rectangle_frame(14 + index * 4, 24, 58 + index * 4,

@@ -18,7 +18,12 @@
 - The builder detects complete connected subjects over each full source board,
   maps exactly one subject to each target slot and requires non-overlapping
   direct crop rectangles, complete pixel conservation and at least
-  `max(8 px, 2.5%)` source margin.
+  `max(8 px, 2.5%)` source margin. The conservation truth set is every source
+  pixel with alpha above 96: every such pixel is proved to occur in exactly one
+  crop, except explicitly audited chroma-key noise written off before crop
+  accounting. Noise is limited to 16 components, 128 total pixels and 47 pixels
+  per component; component bboxes/counts and every unassigned coordinate are
+  recorded.
 - Direct-crop validation does not move, copy, composite, scale or rewrite
   character pixels. Normalization begins only after the direct source crop has
   passed. No `Image.blend`, grid-cut character assembly or synthetic tween is
@@ -27,7 +32,10 @@
   3%, registered translation/silhouette similarity at or above 97%, correlated
   exact/eased/bilinear/color-quantized three-frame interpolation, main
   connectivity below 94%, secondary connectivity above 2% and final foot
-  anchor drift above one pixel. Real nonlinear authored poses remain accepted.
+  anchor drift above one pixel. Before uniqueness and adjacency comparisons,
+  alpha at or below 24 is canonicalized to transparent RGBA zero, and changed
+  pixels are counted only inside the visible union. Real nonlinear authored
+  poses remain accepted.
 
 ## Runtime and evidence
 
@@ -66,7 +74,8 @@
 ## Verification
 
 - `python tools/build_chaos_material_slice.py` -- PASS.
-- `python tests/platform/chaos_asset_pipeline_tests.py` -- PASS, 9 tests.
+- `python tests/platform/chaos_asset_pipeline_tests.py` -- PASS, 12 tests,
+  including excess detached-island and hidden-RGB negative regressions.
 - x64 MSVC build targets `arpg_platform_tests` and
   `arpg_stage12_material_formal` -- PASS.
 - `platform.units` -- PASS, 413 cases and zero failures.
@@ -78,7 +87,9 @@
 
 All C++ build and CTest commands use `VsDevCmd.bat -arch=x64 -host_arch=x64`.
 
-## Commit
+## Commits
 
-- `feat: add chaos ecology material slice` (single semantic commit; hash is
-  recorded after commit creation). No push is performed.
+- `3e809d6777ed3ce5556d0f33aad0c6cf3b8606c4` --
+  `feat: add chaos ecology material slice`.
+- The review-hardening change is an appended commit and does not rewrite
+  `3e809d6`. No push is performed.

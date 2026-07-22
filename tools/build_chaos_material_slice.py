@@ -20,6 +20,10 @@ CELL = 96
 COLUMNS = 9
 FOOT_BASELINE = 92
 SOURCE_SAFE_MARGIN_RATIO = 0.025
+SOURCE_ALPHA_THRESHOLD = 96
+CHROMA_NOISE_MAX_COMPONENT_PIXELS = 47
+CHROMA_NOISE_MAX_TOTAL_PIXELS = 128
+CHROMA_NOISE_MAX_COMPONENTS = 16
 SEQUENCES = {
     "chaser": (
         ("idle", "chaos-chaser-idle-12-alpha-v1.png", 4, 3, 12),
@@ -114,11 +118,18 @@ def alpha_bbox(image: Image.Image) -> tuple[int, int, int, int]:
     return bbox
 
 
-def alpha_components(frame: Image.Image,
-                     threshold: int = 96) -> list[set[tuple[int, int]]]:
+def visible_pixel_set(frame: Image.Image,
+                      threshold: int = SOURCE_ALPHA_THRESHOLD
+                      ) -> set[tuple[int, int]]:
     alpha = frame.getchannel("A")
-    remaining = {(x, y) for y in range(frame.height) for x in range(frame.width)
-                 if alpha.getpixel((x, y)) > threshold}
+    return {(x, y) for y in range(frame.height) for x in range(frame.width)
+            if alpha.getpixel((x, y)) > threshold}
+
+
+def alpha_components(frame: Image.Image,
+                     threshold: int = SOURCE_ALPHA_THRESHOLD
+                     ) -> list[set[tuple[int, int]]]:
+    remaining = visible_pixel_set(frame, threshold)
     components: list[set[tuple[int, int]]] = []
     while remaining:
         component = {remaining.pop()}
@@ -141,6 +152,33 @@ def component_bbox(component: set[tuple[int, int]]) -> tuple[int, int, int, int]
     return (min(x for x, _ in component), min(y for _, y in component),
             max(x for x, _ in component) + 1,
             max(y for _, y in component) + 1)
+
+
+def audit_chroma_noise(
+        components: list[set[tuple[int, int]]], subject_count: int,
+        label: str) -> set[tuple[int, int]]:
+    """Bound and record detached chroma-key specks before crop accounting."""
+    noise_components = components[subject_count:]
+    if not noise_components:
+        return set()
+    noise_pixels = set().union(*noise_components)
+    max_component = max(len(component) for component in noise_components)
+    audit = [(component_bbox(component), len(component))
+             for component in noise_components]
+    if (len(noise_components) > CHROMA_NOISE_MAX_COMPONENTS
+            or len(noise_pixels) > CHROMA_NOISE_MAX_TOTAL_PIXELS
+            or max_component > CHROMA_NOISE_MAX_COMPONENT_PIXELS):
+        raise RuntimeError(
+            f"{label}: chroma noise budget exceeded "
+            f"components={len(noise_components)}/"
+            f"{CHROMA_NOISE_MAX_COMPONENTS} "
+            f"pixels={len(noise_pixels)}/{CHROMA_NOISE_MAX_TOTAL_PIXELS} "
+            f"max_component={max_component}/"
+            f"{CHROMA_NOISE_MAX_COMPONENT_PIXELS} bboxes_and_counts={audit}")
+    print(
+        f"AUDIT {label}: chroma_noise_components={len(noise_components)} "
+        f"pixels={len(noise_pixels)} bboxes_and_counts={audit}")
+    return noise_pixels
 
 
 def validate_source_tile(tile: Image.Image, label: str) -> None:
@@ -189,17 +227,19 @@ def split_board(board: Image.Image, columns: int, rows: int,
 def detect_source_frames(board: Image.Image, columns: int, rows: int,
                          frame_count: int, label: str) -> list[Image.Image]:
     """Directly crop complete source subjects; never rewrite source pixels."""
+    source_visible = visible_pixel_set(board)
     components = alpha_components(board)
+    component_union = set().union(*components) if components else set()
+    if component_union != source_visible:
+        raise RuntimeError(f"{label}: visible-pixel component audit failed")
     if len(components) < frame_count:
         raise RuntimeError(
             f"{label}: detected only {len(components)} of {frame_count} subjects")
     subjects = components[:frame_count]
-    if len(components) > frame_count:
-        noise = len(components[frame_count])
-        if noise * 100 > len(subjects[-1]) * 2:
-            raise RuntimeError(
-                f"{label}: unassigned component is too large to be chroma noise "
-                f"noise={noise} smallest_subject={len(subjects[-1])}")
+    noise_pixels = audit_chroma_noise(components, frame_count, label)
+    subject_union = set().union(*subjects)
+    if subject_union | noise_pixels != source_visible:
+        raise RuntimeError(f"{label}: visible source pixels escaped classification")
 
     slots: dict[int, tuple[set[tuple[int, int]], tuple[int, int, int, int]]] = {}
     for component in subjects:
@@ -239,15 +279,47 @@ def detect_source_frames(board: Image.Image, columns: int, rows: int,
                     f"{label}: direct subject crops overlap frames "
                     f"{first} and {second}")
 
+    assignment_counts = {
+        pixel: sum(left <= pixel[0] < right and top <= pixel[1] < bottom
+                   for left, top, right, bottom in crop_bounds)
+        for pixel in source_visible
+    }
+    written_off_noise = {
+        pixel for pixel in noise_pixels if assignment_counts[pixel] == 0
+    }
+    invalid_assignments = {
+        pixel: count for pixel, count in assignment_counts.items()
+        if pixel not in written_off_noise and count != 1
+    }
+    if invalid_assignments:
+        sample = list(sorted(invalid_assignments.items()))[:16]
+        raise RuntimeError(
+            f"{label}: visible source pixel assignment failed "
+            f"count={len(invalid_assignments)} sample={sample}")
+    assigned_visible = source_visible - written_off_noise
+    crop_visible: set[tuple[int, int]] = set()
+    crop_visible_count = 0
+    for crop in crop_bounds:
+        inside = {pixel for pixel in source_visible
+                  if crop[0] <= pixel[0] < crop[2]
+                  and crop[1] <= pixel[1] < crop[3]}
+        crop_visible.update(inside)
+        crop_visible_count += len(inside)
+    if crop_visible != assigned_visible or crop_visible_count != len(assigned_visible):
+        raise RuntimeError(
+            f"{label}: direct crop visible-pixel conservation failed "
+            f"source={len(source_visible)} assigned={len(assigned_visible)} "
+            f"cropped={crop_visible_count} written_off={len(written_off_noise)}")
+    if written_off_noise:
+        print(
+            f"AUDIT {label}: written_off_chroma_pixels="
+            f"{len(written_off_noise)} coordinates={sorted(written_off_noise)}")
+
     frames: list[Image.Image] = []
-    mapped_pixels = 0
     for slot, crop in enumerate(crop_bounds):
         frame = board.crop(crop)
         validate_source_tile(frame, f"{label} frame {slot}")
-        mapped_pixels += len(slots[slot][0])
         frames.append(frame)
-    if mapped_pixels != sum(len(component) for component in subjects):
-        raise RuntimeError(f"{label}: source subject pixels were omitted")
     return frames
 
 
@@ -314,6 +386,16 @@ def normalized_frames(board_path: Path, columns: int, rows: int,
 def visible_points(frame: Image.Image) -> set[tuple[int, int]]:
     components = alpha_components(frame)
     return set().union(*components) if components else set()
+
+
+def normalize_hidden_rgba(frame: Image.Image, threshold: int = 24) -> Image.Image:
+    """Canonicalize invisible storage bytes before any pose comparison."""
+    normalized = frame.copy()
+    normalized.putdata([
+        (0, 0, 0, 0) if pixel[3] <= threshold else pixel
+        for pixel in normalized.get_flattened_data()
+    ])
+    return normalized
 
 
 def registered_pose_similarity(lhs: Image.Image,
@@ -452,29 +534,33 @@ def is_linear_interpolation(before: Image.Image, middle: Image.Image,
 
 
 def validate_frames(frames: list[Image.Image], label: str) -> None:
-    if len({frame.tobytes() for frame in frames}) != len(frames):
+    comparable_frames = [normalize_hidden_rgba(frame) for frame in frames]
+    if len({frame.tobytes() for frame in comparable_frames}) != len(frames):
         raise RuntimeError(f"{label}: duplicate whole frames")
-    for index in range(1, len(frames) - 1):
-        if is_linear_interpolation(frames[index - 1], frames[index],
-                                   frames[index + 1]):
+    for index in range(1, len(comparable_frames) - 1):
+        if is_linear_interpolation(comparable_frames[index - 1],
+                                   comparable_frames[index],
+                                   comparable_frames[index + 1]):
             raise RuntimeError(
                 f"{label} frames {index - 1}/{index}/{index + 1}: "
                 "three-frame linear interpolation detected")
-    for index, frame in enumerate(frames):
+    for index, frame in enumerate(comparable_frames):
         visible, largest, second = connected_components(frame)
         if visible == 0 or largest * 100 < visible * 94 or second * 100 > visible * 2:
             raise RuntimeError(
                 f"{label} frame {index}: disconnected silhouette "
                 f"visible={visible} largest={largest} second={second}")
-    for index, (current, following) in enumerate(zip(frames, frames[1:])):
+    for index, (current, following) in enumerate(
+            zip(comparable_frames, comparable_frames[1:])):
         visible_union = 0
         changed = 0
         for lhs, rhs in zip(current.get_flattened_data(),
                             following.get_flattened_data()):
             if lhs[3] > 24 or rhs[3] > 24:
                 visible_union += 1
-            if sum(abs(lhs[channel] - rhs[channel]) for channel in range(4)) >= 48:
-                changed += 1
+                if sum(abs(lhs[channel] - rhs[channel])
+                       for channel in range(4)) >= 48:
+                    changed += 1
         percent = changed * 100.0 / visible_union
         if percent < 3.0:
             raise RuntimeError(
