@@ -132,6 +132,12 @@ class CloudReadinessContractTest(unittest.TestCase):
             for command in commands
         )
 
+    def _has_run_command_matching(self, commands, expected_pattern):
+        return any(
+            re.fullmatch(expected_pattern, " ".join(command.split()), re.IGNORECASE)
+            for command in commands
+        )
+
     def _permissions_entries(self, workflow):
         """Read a simple top-level permissions mapping; reject unsupported YAML."""
         lines = workflow.splitlines()
@@ -332,8 +338,11 @@ class CloudReadinessContractTest(unittest.TestCase):
         windows_commands = self._workflow_run_commands(windows_job)
 
         self.assertTrue(
-            self._has_run_command(ubuntu_commands, "bash scripts/cloud/setup.sh"),
-            "Ubuntu job must run: bash scripts/cloud/setup.sh",
+            self._has_run_command_matching(
+                ubuntu_commands,
+                r'bash scripts/cloud/setup\.sh 2>&1 \| tee "\$\{RUNNER_TEMP\}/cloud-setup\.log"',
+            ),
+            "Ubuntu job must capture the setup script output for failure annotations",
         )
         self.assertTrue(
             self._has_run_command(

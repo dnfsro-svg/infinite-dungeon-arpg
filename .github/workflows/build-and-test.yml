@@ -22,7 +22,20 @@ jobs:
       - name: Install build tools
         run: sudo apt-get update && sudo apt-get install --yes cmake ninja-build g++
       - name: Configure, build, and test core
-        run: bash scripts/cloud/setup.sh
+        shell: bash
+        run: |
+          set +e
+          bash scripts/cloud/setup.sh 2>&1 | tee "${RUNNER_TEMP}/cloud-setup.log"
+          status="${PIPESTATUS[0]}"
+          set -e
+          if (( status != 0 )); then
+            details="$(tail -n 80 "${RUNNER_TEMP}/cloud-setup.log")"
+            details="${details//'%'/'%25'}"
+            details="${details//$'\r'/'%0D'}"
+            details="${details//$'\n'/'%0A'}"
+            printf '::error title=Ubuntu core setup failed::%s\n' "$details"
+          fi
+          exit "$status"
 
   windows-full-build:
     runs-on: windows-2022
