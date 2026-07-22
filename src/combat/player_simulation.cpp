@@ -24,6 +24,11 @@ int direction(std::int8_t value) noexcept {
     return value < 0 ? -1 : (value > 0 ? 1 : 0);
 }
 
+bool inside_fire_brazier(Vec3 position) noexcept {
+    return position.x >= -1.40F && position.x <= 1.40F
+        && position.y >= -1.70F && position.y <= 1.70F;
+}
+
 std::uint8_t combo_stage_for(AttackId id) noexcept {
     switch (id) {
     case AttackId::j1:
@@ -243,14 +248,18 @@ void CombatWorld::simulate_player(MovementInput movement) noexcept {
         player_.facing = Facing::right;
     }
 
-    player_.position.x = std::clamp(
-        player_.position.x + player_.velocity.x * kTickSeconds,
+    Vec3 candidate = player_.position;
+    candidate.x = std::clamp(
+        candidate.x + player_.velocity.x * kTickSeconds,
         room_bounds::min_x,
         room_bounds::max_x);
-    player_.position.y = std::clamp(
-        player_.position.y + player_.velocity.y * kTickSeconds,
+    candidate.y = std::clamp(
+        candidate.y + player_.velocity.y * kTickSeconds,
         room_bounds::min_y,
         room_bounds::max_y);
+    if (!encounter_config_.fire_room_obstacles || !inside_fire_brazier(candidate)) {
+        player_.position = candidate;
+    }
 
     if (airborne) {
         advance_vertical(false);

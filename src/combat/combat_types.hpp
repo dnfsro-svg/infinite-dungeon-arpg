@@ -460,6 +460,7 @@ struct CombatEncounterConfig final {
     PlayerCombatBuild player_build{};
     std::uint64_t evasion_seed{};
     abyss::AbyssCombatConfig abyss{};
+    bool fire_room_obstacles{};
 };
 
 struct PlayerSnapshot final {

@@ -620,7 +620,8 @@ void DungeonSession::construct_cleared_abyss_room() noexcept {
         true,
         abyss::combat_config_for(abyss::AbyssRuleId::none),
         player_build.build,
-        evasion_stream.next_u64());
+        evasion_stream.next_u64(),
+        stable_state_.current_room.ecology == checkpoint::DungeonElement::fire);
     if (!navigation_config.has_value()) {
         enter_fault(DungeonFault::invalid_rules);
         return;
@@ -814,7 +815,8 @@ void DungeonSession::construct_normal_room() noexcept {
         true,
         abyss::combat_config_for(abyss::AbyssRuleId::none),
         player_build.build,
-        evasion_stream.next_u64());
+        evasion_stream.next_u64(),
+        stable_state_.current_room.ecology == checkpoint::DungeonElement::fire);
     if (!config.has_value()) {
         enter_fault(DungeonFault::invalid_rules);
         return;
@@ -897,7 +899,8 @@ bool DungeonSession::prepare_abyss_start() noexcept {
         true,
         abyss::combat_config_for(selection->rule),
         player_build.build,
-        evasion_stream.next_u64());
+        evasion_stream.next_u64(),
+        stable_state_.current_room.ecology == checkpoint::DungeonElement::fire);
     if (!combat_config.has_value()) {
         enter_fault(DungeonFault::abyss_generation_failed);
         return false;

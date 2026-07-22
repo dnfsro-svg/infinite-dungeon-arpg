@@ -54,7 +54,7 @@ std::optional<combat::CombatEncounterConfig> make_combat_encounter_config(
     bool reset_player_health,
     abyss::AbyssCombatConfig abyss_config,
     combat::PlayerCombatBuild player_build,
-    std::uint64_t evasion_seed) noexcept {
+    std::uint64_t evasion_seed, bool fire_room_obstacles) noexcept {
     const auto legacy = make_combat_lab_config(entry, rules_version);
     if (!legacy.has_value()) {
         return std::nullopt;
@@ -67,6 +67,7 @@ std::optional<combat::CombatEncounterConfig> make_combat_encounter_config(
     config.abyss = abyss_config;
     config.player_build = player_build;
     config.evasion_seed = evasion_seed;
+    config.fire_room_obstacles = fire_room_obstacles;
     return config;
 }
 

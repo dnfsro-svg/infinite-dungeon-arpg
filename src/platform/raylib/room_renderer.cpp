@@ -3,6 +3,7 @@
 #include "combat/room_bounds.hpp"
 #include "dungeon_view_math.hpp"
 #include "environment_render_plan.hpp"
+#include "fire_room_material_slice.hpp"
 #include "material_animation.hpp"
 #include "material_loot_view.hpp"
 #include "render_layout.hpp"
@@ -65,8 +66,37 @@ bool draw_environment_room(const MaterialPack& material_pack,
     const float scale = (std::max)(width / 1024.0F, height / 704.0F);
     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
         Color{9, 12, 20, 255});
+    if (ecology == dungeon::DungeonElement::fire
+        && material_pack.available(MaterialAtlasId::fire_environment)) {
+        return material_pack.draw_frame(MaterialAtlasId::fire_environment,
+            {0.0F, 0.0F, 256.0F, 256.0F}, {128.0F, 256.0F},
+            {width * 0.5F, height}, false,
+            (std::max)(width / 256.0F, height / 256.0F));
+    }
     return material_pack.draw(select_floor_sprite(ecology),
         {width * 0.5F, height}, false, scale);
+}
+
+void draw_fire_room_props(const MaterialPack& material_pack,
+    float width, float height) noexcept {
+    if (!material_pack.available(MaterialAtlasId::fire_environment)) return;
+    constexpr std::array<Vector2, 8> kPositions{{
+        {0.14F, 0.34F}, {0.88F, 0.35F}, {0.24F, 0.72F}, {0.76F, 0.71F},
+        {0.12F, 0.79F}, {0.89F, 0.79F}, {0.42F, 0.84F}, {0.60F, 0.84F},
+    }};
+    constexpr std::array<FireRoomPropId, 8> kProps{{
+        FireRoomPropId::torch, FireRoomPropId::banner,
+        FireRoomPropId::weapon_rack, FireRoomPropId::bone_pile,
+        FireRoomPropId::chain, FireRoomPropId::breakable_crate,
+        FireRoomPropId::solid_brazier, FireRoomPropId::wall,
+    }};
+    const FireRoomMaterialSlice& slice = fire_room_material_slice();
+    for (std::size_t index{}; index < kProps.size(); ++index) {
+        const auto& prop = slice.props[static_cast<std::size_t>(kProps[index])];
+        static_cast<void>(material_pack.draw(prop.sprite,
+            {kPositions[index].x * width, kPositions[index].y * height}, false,
+            index == 7U ? 1.10F : 0.72F));
+    }
 }
 
 bool can_draw_room_environment(const dungeon::DungeonSnapshot& snapshot,
@@ -389,6 +419,9 @@ void CombatRenderer::draw_room(
     draw_environment_hazards(current, width, height);
     draw_ground_materials(current, material_loot, width, height);
     draw_ground_items(current, ground_loot, material_pack_, width, height);
+    if (current.ecology == dungeon::DungeonElement::fire) {
+        draw_fire_room_props(material_pack_, width, height);
+    }
     draw_doors(current, width, height, material_pack_, draw_material_environment);
     draw_hole(current, material_pack_, draw_material_environment);
 }

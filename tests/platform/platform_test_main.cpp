@@ -42,6 +42,7 @@ arpg::test::TestSuite material_bag_renderer_suite() noexcept;
 arpg::test::TestSuite audio_asset_validation_suite() noexcept;
 arpg::test::TestSuite material_asset_validation_suite() noexcept;
 arpg::test::TestSuite material_animation_suite() noexcept;
+arpg::test::TestSuite fire_room_material_slice_suite() noexcept;
 arpg::test::TestSuite stage12_environment_render_suite() noexcept;
 arpg::test::TestSuite stage12_actor_render_suite() noexcept;
 arpg::test::TestSuite stage12_material_render_suite() noexcept;
@@ -94,10 +95,11 @@ int main() {
         audio_asset_validation_suite(),
         material_asset_validation_suite(),
         material_animation_suite(),
+        fire_room_material_slice_suite(),
         stage12_environment_render_suite(),
         stage12_actor_render_suite(),
         stage12_material_render_suite(),
     };
 
-    return arpg::test::run_suites(suites, 386, "player animation material contract");
+    return arpg::test::run_suites(suites, 388, "fire room material slice contract");
 }

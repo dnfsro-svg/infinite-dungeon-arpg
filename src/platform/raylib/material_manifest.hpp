@@ -41,6 +41,9 @@ inline constexpr MaterialAtlasDefinition kDefaultMaterialAtlases[] = {
     {MaterialAtlasId::player_combo_b, 1024, 1024, 4U * 1024U * 1024U, "assets/player/player_combo_b.png", "assets/player/player_combo_b_material.png", MaterialEcology::common},
     {MaterialAtlasId::player_reaction, 1024, 1024, 4U * 1024U * 1024U, "assets/player/player_reaction.png", "assets/player/player_reaction_material.png", MaterialEcology::common},
     {MaterialAtlasId::player_air, 1024, 1024, 4U * 1024U * 1024U, "assets/player/player_air.png", "assets/player/player_air_material.png", MaterialEcology::common},
+    {MaterialAtlasId::fire_environment, 1024, 1024, 4U * 1024U * 1024U, "assets/stage12/fire_environment.png", "assets/stage12/fire_environment_material.png", MaterialEcology::fire},
+    {MaterialAtlasId::fire_bomber, 1024, 1024, 4U * 1024U * 1024U, "assets/stage12/fire_bomber.png", "assets/stage12/fire_bomber_material.png", MaterialEcology::fire},
+    {MaterialAtlasId::fire_charger, 1024, 1024, 4U * 1024U * 1024U, "assets/stage12/fire_charger.png", "assets/stage12/fire_charger_material.png", MaterialEcology::fire},
 };
 
 #define ARPG_ACTOR_FRAME(sprite, column, row) \
@@ -53,6 +56,11 @@ inline constexpr MaterialAtlasDefinition kDefaultMaterialAtlases[] = {
     {MaterialSpriteId::sprite, MaterialAtlasId::effects_ui, \
         {static_cast<float>((column) * 128), static_cast<float>((row) * 128), \
             128.0F, 128.0F}, {64.0F, 110.0F}, 42U, {64.0F, 64.0F}, MaterialLayer::front_effect, MaterialClass::effect, static_cast<std::uint32_t>((column) * 137U + (row) * 19U + 101U)}
+
+#define ARPG_FIRE_MONSTER_FRAME(sprite, atlas, column, row) \
+    {MaterialSpriteId::sprite, MaterialAtlasId::atlas, \
+        {static_cast<float>((column) * 256), static_cast<float>((row) * 256), \
+            256.0F, 256.0F}, {128.0F, 246.0F}, 42U, {178.0F, 126.0F}, MaterialLayer::body, MaterialClass::actor, static_cast<std::uint32_t>((column) * 173U + (row) * 29U + 1009U)}
 
 inline constexpr MaterialFrameDefinition kDefaultMaterialFrames[] = {
     ARPG_ACTOR_FRAME(player_idle, 0, 0),
@@ -67,20 +75,28 @@ inline constexpr MaterialFrameDefinition kDefaultMaterialFrames[] = {
     ARPG_ACTOR_FRAME(player_landing, 1, 1),
     ARPG_ACTOR_FRAME(player_hurt, 2, 1),
     ARPG_ACTOR_FRAME(player_dead, 3, 1),
-    ARPG_ACTOR_FRAME(fire_bomber_idle, 4, 1),
-    ARPG_ACTOR_FRAME(fire_bomber_move, 5, 1),
-    ARPG_ACTOR_FRAME(fire_bomber_telegraph, 6, 1),
-    ARPG_ACTOR_FRAME(fire_bomber_active, 7, 1),
-    ARPG_ACTOR_FRAME(fire_bomber_recovery, 0, 2),
-    ARPG_ACTOR_FRAME(fire_bomber_cooldown, 1, 2),
-    ARPG_ACTOR_FRAME(fire_bomber_defeated, 2, 2),
-    ARPG_ACTOR_FRAME(fire_charger_idle, 3, 2),
-    ARPG_ACTOR_FRAME(fire_charger_move, 4, 2),
-    ARPG_ACTOR_FRAME(fire_charger_telegraph, 5, 2),
-    ARPG_ACTOR_FRAME(fire_charger_active, 6, 2),
-    ARPG_ACTOR_FRAME(fire_charger_recovery, 7, 2),
-    ARPG_ACTOR_FRAME(fire_charger_cooldown, 0, 3),
-    ARPG_ACTOR_FRAME(fire_charger_defeated, 1, 3),
+    ARPG_FIRE_MONSTER_FRAME(fire_bomber_idle, fire_bomber, 0, 0),
+    ARPG_FIRE_MONSTER_FRAME(fire_bomber_move, fire_bomber, 1, 0),
+    ARPG_FIRE_MONSTER_FRAME(fire_bomber_telegraph, fire_bomber, 2, 0),
+    ARPG_FIRE_MONSTER_FRAME(fire_bomber_active, fire_bomber, 3, 0),
+    ARPG_FIRE_MONSTER_FRAME(fire_bomber_recovery, fire_bomber, 0, 1),
+    ARPG_FIRE_MONSTER_FRAME(fire_bomber_cooldown, fire_bomber, 1, 1),
+    ARPG_FIRE_MONSTER_FRAME(fire_bomber_defeated, fire_bomber, 2, 1),
+    ARPG_FIRE_MONSTER_FRAME(fire_charger_idle, fire_charger, 0, 0),
+    ARPG_FIRE_MONSTER_FRAME(fire_charger_move, fire_charger, 1, 0),
+    ARPG_FIRE_MONSTER_FRAME(fire_charger_telegraph, fire_charger, 2, 0),
+    ARPG_FIRE_MONSTER_FRAME(fire_charger_active, fire_charger, 3, 0),
+    ARPG_FIRE_MONSTER_FRAME(fire_charger_recovery, fire_charger, 0, 1),
+    ARPG_FIRE_MONSTER_FRAME(fire_charger_cooldown, fire_charger, 1, 1),
+    ARPG_FIRE_MONSTER_FRAME(fire_charger_defeated, fire_charger, 2, 1),
+    {MaterialSpriteId::fire_wall, MaterialAtlasId::fire_environment, {256.0F, 0.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U, {128.0F, 128.0F}, MaterialLayer::body, MaterialClass::environment, 2001U},
+    {MaterialSpriteId::fire_torch, MaterialAtlasId::fire_environment, {768.0F, 256.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U, {128.0F, 128.0F}, MaterialLayer::front_effect, MaterialClass::environment, 2002U},
+    {MaterialSpriteId::fire_chain, MaterialAtlasId::fire_environment, {0.0F, 512.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U, {128.0F, 128.0F}, MaterialLayer::front_effect, MaterialClass::environment, 2003U},
+    {MaterialSpriteId::fire_banner, MaterialAtlasId::fire_environment, {256.0F, 512.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U, {128.0F, 128.0F}, MaterialLayer::front_effect, MaterialClass::environment, 2004U},
+    {MaterialSpriteId::fire_weapon_rack, MaterialAtlasId::fire_environment, {512.0F, 512.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U, {128.0F, 128.0F}, MaterialLayer::body, MaterialClass::environment, 2005U},
+    {MaterialSpriteId::fire_bone_pile, MaterialAtlasId::fire_environment, {768.0F, 512.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U, {128.0F, 128.0F}, MaterialLayer::body, MaterialClass::environment, 2006U},
+    {MaterialSpriteId::fire_breakable_crate, MaterialAtlasId::fire_environment, {0.0F, 768.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U, {128.0F, 128.0F}, MaterialLayer::body, MaterialClass::environment, 2007U},
+    {MaterialSpriteId::fire_solid_brazier, MaterialAtlasId::fire_environment, {256.0F, 768.0F, 256.0F, 256.0F}, {128.0F, 246.0F}, 0U, {128.0F, 128.0F}, MaterialLayer::body, MaterialClass::environment, 2008U},
     ARPG_ACTOR_FRAME(water_bulwark_idle, 2, 3),
     ARPG_ACTOR_FRAME(water_bulwark_move, 3, 3),
     ARPG_ACTOR_FRAME(water_bulwark_telegraph, 4, 3),
@@ -177,6 +193,7 @@ inline constexpr AnimationClipDefinition kDefaultAnimationClips[] = {
 
 #undef ARPG_ACTOR_FRAME
 #undef ARPG_EFFECT_FRAME
+#undef ARPG_FIRE_MONSTER_FRAME
 
 }  // namespace detail
 

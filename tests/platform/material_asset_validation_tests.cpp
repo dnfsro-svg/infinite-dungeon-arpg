@@ -25,8 +25,8 @@ using arpg::platform::MaterialPackState;
 using arpg::platform::MaterialSpriteId;
 
 struct FakeMaterialTextures final {
-    std::array<Texture2D, 8> loaded{};
-    std::array<unsigned int, 8> unloaded_ids{};
+    std::array<Texture2D, 11> loaded{};
+    std::array<unsigned int, 11> unloaded_ids{};
     std::size_t load_count{};
     std::size_t unload_count{};
 };
@@ -81,7 +81,7 @@ arpg::test::Failure material_pack_loads_missing_atlases_without_unloading() noex
     g_fake_material_textures = &fake;
     arpg::platform::MaterialPack pack{fake_material_texture_api()};
     ARPG_REQUIRE(!pack.load());
-    ARPG_REQUIRE(fake.load_count == 8U);
+    ARPG_REQUIRE(fake.load_count == 11U);
     ARPG_REQUIRE(!pack.available(MaterialAtlasId::environment));
     ARPG_REQUIRE(!pack.available(MaterialAtlasId::actors));
     ARPG_REQUIRE(!pack.available(MaterialAtlasId::effects_ui));

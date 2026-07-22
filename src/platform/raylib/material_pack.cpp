@@ -35,6 +35,31 @@ namespace {
     case MaterialSpriteId::environment_door_chaos:
     case MaterialSpriteId::environment_hole:
         return MaterialAtlasId::environment;
+    case MaterialSpriteId::fire_wall:
+    case MaterialSpriteId::fire_torch:
+    case MaterialSpriteId::fire_chain:
+    case MaterialSpriteId::fire_banner:
+    case MaterialSpriteId::fire_weapon_rack:
+    case MaterialSpriteId::fire_bone_pile:
+    case MaterialSpriteId::fire_breakable_crate:
+    case MaterialSpriteId::fire_solid_brazier:
+        return MaterialAtlasId::fire_environment;
+    case MaterialSpriteId::fire_bomber_idle:
+    case MaterialSpriteId::fire_bomber_move:
+    case MaterialSpriteId::fire_bomber_telegraph:
+    case MaterialSpriteId::fire_bomber_active:
+    case MaterialSpriteId::fire_bomber_recovery:
+    case MaterialSpriteId::fire_bomber_cooldown:
+    case MaterialSpriteId::fire_bomber_defeated:
+        return MaterialAtlasId::fire_bomber;
+    case MaterialSpriteId::fire_charger_idle:
+    case MaterialSpriteId::fire_charger_move:
+    case MaterialSpriteId::fire_charger_telegraph:
+    case MaterialSpriteId::fire_charger_active:
+    case MaterialSpriteId::fire_charger_recovery:
+    case MaterialSpriteId::fire_charger_cooldown:
+    case MaterialSpriteId::fire_charger_defeated:
+        return MaterialAtlasId::fire_charger;
     case MaterialSpriteId::effect_fire:
     case MaterialSpriteId::effect_water:
     case MaterialSpriteId::effect_lightning:

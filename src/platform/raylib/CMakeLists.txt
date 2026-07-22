@@ -17,6 +17,7 @@ add_library(arpg_raylib STATIC
     death_overlay_view.cpp
     debug_renderer.cpp
     debug_overlay_renderer.cpp
+    fire_room_material_slice.cpp
     dungeon_view_math.cpp
     dungeon_runtime.cpp
     game_audio.cpp
