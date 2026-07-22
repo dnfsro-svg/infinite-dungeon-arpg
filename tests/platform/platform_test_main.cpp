@@ -97,5 +97,5 @@ int main() {
         stage12_material_render_suite(),
     };
 
-    return arpg::test::run_suites(suites, 379, "stage 17 active skill UI");
+    return arpg::test::run_suites(suites, 380, "stage 17 active skill UI");
 }

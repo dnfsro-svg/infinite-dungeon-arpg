@@ -100,7 +100,7 @@ arpg::test::Failure native_effect_plan_uses_snapshot_timing_and_twelve_swords()
     snapshot.player.facing = combat::Facing::left;
     snapshot.active_skill.id = skills::ActiveSkillId::draw_slash;
     snapshot.active_skill.phase = combat::ActiveSkillPhase::strikes;
-    snapshot.active_skill.elapsed_ticks = combat::kDrawSlashStartupTicks;
+    snapshot.active_skill.elapsed_ticks = 46U;
     snapshot.active_skill.locked_center = {2.0F, 3.0F, 0.0F};
     platform::ActiveSkillEffectPlan plan =
         platform::make_active_skill_effect_plan(snapshot, nullptr);
@@ -108,17 +108,19 @@ arpg::test::Failure native_effect_plan_uses_snapshot_timing_and_twelve_swords()
     ARPG_REQUIRE(plan.draw_slash.facing == combat::Facing::left);
     ARPG_REQUIRE(arpg::test::near(plan.draw_slash.center.x, 2.0F));
     snapshot.active_skill.elapsed_ticks = static_cast<std::uint16_t>(
-        combat::kDrawSlashStartupTicks + 8U);
+        46U + 8U);
     plan = platform::make_active_skill_effect_plan(snapshot, nullptr);
     ARPG_REQUIRE(!plan.draw_slash.visible);
 
     snapshot.active_skill.id = skills::ActiveSkillId::storm_swords;
     snapshot.active_skill.phase = combat::ActiveSkillPhase::strikes;
     snapshot.active_skill.strike_index = 4U;
+    snapshot.active_skill.spawned_sword_count = 12U;
+    snapshot.active_skill.transients_active = true;
     plan = platform::make_active_skill_effect_plan(snapshot, nullptr);
     ARPG_REQUIRE(plan.storm_swords.visible);
-    ARPG_REQUIRE(plan.storm_swords.sword_count == combat::kStormStrikeCount);
-    for (std::size_t index = 0U; index < plan.storm_swords.swords.size(); ++index) {
+    ARPG_REQUIRE(plan.storm_swords.sword_count == 12U);
+    for (std::size_t index = 0U; index < plan.storm_swords.sword_count; ++index) {
         ARPG_REQUIRE(plan.storm_swords.swords[index].highlighted
             == (index == 3U));
     }
@@ -141,10 +143,7 @@ arpg::test::Failure native_effect_plan_uses_snapshot_timing_and_twelve_swords()
 
 arpg::test::Failure storm_finisher_persists_from_snapshot_without_hit_event()
     noexcept {
-    constexpr std::uint16_t kFinisherTick = static_cast<std::uint16_t>(
-        combat::kStormStartupTicks
-        + static_cast<std::uint16_t>(combat::kStormStrikeCount)
-            * combat::kStormStrikeIntervalTicks);
+    constexpr std::uint16_t kFinisherTick = 324U;
     combat::CombatSnapshot snapshot{};
     snapshot.active_skill.id = skills::ActiveSkillId::storm_swords;
     snapshot.active_skill.locked_center = {4.0F, -2.0F, 0.0F};
@@ -177,12 +176,50 @@ arpg::test::Failure storm_finisher_persists_from_snapshot_without_hit_event()
     return {};
 }
 
+arpg::test::Failure storm_sword_plan_uses_spawned_sword_lifecycle_and_two_bands()
+    noexcept {
+    combat::CombatSnapshot snapshot{};
+    snapshot.active_skill.id = skills::ActiveSkillId::storm_swords;
+    snapshot.active_skill.phase = combat::ActiveSkillPhase::strikes;
+    snapshot.active_skill.elapsed_ticks = 108U;
+    snapshot.active_skill.spawned_sword_count = 15U;
+    snapshot.active_skill.transients_active = true;
+    const platform::ActiveSkillEffectPlan plan =
+        platform::make_active_skill_effect_plan(snapshot, nullptr);
+
+    ARPG_REQUIRE(plan.storm_swords.sword_count == 15U);
+    ARPG_REQUIRE(plan.storm_swords.swords.size() == 24U);
+    std::size_t ground_count = 0U;
+    std::size_t aerial_count = 0U;
+    for (std::size_t index = 0U; index < plan.storm_swords.sword_count; ++index) {
+        const platform::StormSwordVisual& sword = plan.storm_swords.swords[index];
+        ARPG_REQUIRE(sword.visible);
+        if (sword.band == platform::StormSwordBand::ground) {
+            ++ground_count;
+        } else {
+            ++aerial_count;
+        }
+    }
+    ARPG_REQUIRE(ground_count == 12U);
+    ARPG_REQUIRE(aerial_count == 3U);
+
+    snapshot.active_skill.transients_active = false;
+    snapshot.active_skill.id = skills::ActiveSkillId::none;
+    const platform::ActiveSkillEffectPlan cleared =
+        platform::make_active_skill_effect_plan(snapshot, nullptr);
+    ARPG_REQUIRE(cleared.storm_swords.sword_count == 0U);
+    ARPG_REQUIRE(!cleared.storm_swords.visible);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"active skill HUD fixed slots", &hud_projects_exactly_five_numbered_slots_and_catalog_names},
     {"active skill HUD cooldown clamp", &hud_cooldown_ratios_are_clamped_and_empty_slots_stay_zero},
     {"active skill HUD fixed layout", &hud_layout_is_bottom_centered_with_fixed_slot_geometry},
     {"active skill native effect plan", &native_effect_plan_uses_snapshot_timing_and_twelve_swords},
     {"storm finisher snapshot lifetime", &storm_finisher_persists_from_snapshot_without_hit_event},
+    {"storm sword lifecycle uses ground and aerial bands",
+     &storm_sword_plan_uses_spawned_sword_lifecycle_and_two_bands},
 };
 
 }  // namespace

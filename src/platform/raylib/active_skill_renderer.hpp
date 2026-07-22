@@ -7,6 +7,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 
 namespace arpg::platform {
 
@@ -17,7 +18,14 @@ struct DrawSlashVisualPlan final {
     float opacity{};
 };
 
+enum class StormSwordBand : std::uint8_t {
+    ground,
+    aerial,
+};
+
 struct StormSwordVisual final {
+    bool visible{};
+    StormSwordBand band{StormSwordBand::ground};
     float angle_radians{};
     bool highlighted{};
 };
@@ -26,7 +34,7 @@ struct StormSwordsVisualPlan final {
     bool visible{};
     bool finisher_visible{};
     combat::Vec3 center{};
-    std::array<StormSwordVisual, 12> swords{};
+    std::array<StormSwordVisual, 24> swords{};
     std::size_t sword_count{};
     float finisher_opacity{};
 };

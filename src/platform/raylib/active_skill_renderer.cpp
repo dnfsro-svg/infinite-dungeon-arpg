@@ -14,10 +14,9 @@ namespace {
 
 constexpr float kPi = 3.14159265358979323846F;
 constexpr std::uint64_t kFlashTicks = 7U;
-constexpr std::uint16_t kStormFinisherTick = static_cast<std::uint16_t>(
-    combat::kStormStartupTicks
-    + static_cast<std::uint16_t>(combat::kStormStrikeCount)
-        * combat::kStormStrikeIntervalTicks);
+constexpr std::uint16_t kDrawSlashImpactTick = 46U;
+constexpr std::uint16_t kStormFinisherTick = 324U;
+constexpr std::size_t kStormGroundSwordCount = 12U;
 
 [[nodiscard]] bool recent_finisher_event(
     const combat::CombatSnapshot& snapshot,
@@ -73,8 +72,8 @@ void draw_sword(Vector2 center, float angle, float scale,
     bool highlighted, float opacity) noexcept {
     const Vector2 direction{std::cos(angle), std::sin(angle)};
     const Vector2 normal{-direction.y, direction.x};
-    const float length = (highlighted ? 50.0F : 38.0F) * scale;
-    const float half_width = (highlighted ? 7.0F : 5.0F) * scale;
+    const float length = (highlighted ? 54.0F : 42.0F) * scale;
+    const float half_width = (highlighted ? 6.5F : 5.2F) * scale;
     const Vector2 tip{center.x + direction.x * length * 0.58F,
         center.y + direction.y * length * 0.58F};
     const Vector2 base{center.x - direction.x * length * 0.42F,
@@ -83,15 +82,28 @@ void draw_sword(Vector2 center, float angle, float scale,
         base.y + normal.y * half_width};
     const Vector2 right{base.x - normal.x * half_width,
         base.y - normal.y * half_width};
-    const Color blade = highlighted
-        ? Fade(Color{244, 252, 255, 255}, opacity)
-        : Fade(Color{111, 194, 255, 255}, opacity * 0.58F);
-    DrawTriangle(tip, left, right, blade);
+    const Color blade_edge = highlighted
+        ? Fade(Color{248, 251, 255, 255}, opacity)
+        : Fade(Color{126, 154, 182, 255}, opacity * 0.90F);
+    const Color blade_core = highlighted
+        ? Fade(Color{130, 207, 255, 255}, opacity)
+        : Fade(Color{35, 58, 83, 255}, opacity);
+    DrawTriangle(tip, left, right, blade_edge);
+    const Vector2 core_tip{tip.x - direction.x * 4.0F * scale,
+        tip.y - direction.y * 4.0F * scale};
+    DrawTriangle(core_tip,
+        {left.x + direction.x * 4.0F * scale, left.y + direction.y * 4.0F * scale},
+        {right.x + direction.x * 4.0F * scale, right.y + direction.y * 4.0F * scale},
+        blade_core);
     DrawLineEx({base.x + normal.x * half_width * 1.6F,
                    base.y + normal.y * half_width * 1.6F},
         {base.x - normal.x * half_width * 1.6F,
             base.y - normal.y * half_width * 1.6F},
-        2.0F * scale, blade);
+        2.4F * scale, Fade(Color{202, 155, 67, 255}, opacity));
+    DrawLineEx(base,
+        {base.x - direction.x * 12.0F * scale,
+         base.y - direction.y * 12.0F * scale},
+        3.0F * scale, Fade(Color{38, 30, 29, 255}, opacity));
 }
 
 void draw_storm_swords(const StormSwordsVisualPlan& plan,
@@ -99,18 +111,22 @@ void draw_storm_swords(const StormSwordsVisualPlan& plan,
     if (!plan.visible && !plan.finisher_visible) return;
     const ScreenProjection projected = project_combat_position(
         plan.center, width, height);
-    const float radius = 155.0F * projected.scale;
     if (plan.visible) {
         for (std::size_t index = 0U; index < plan.sword_count; ++index) {
             const StormSwordVisual& sword = plan.swords[index];
+            if (!sword.visible) continue;
+            const bool aerial = sword.band == StormSwordBand::aerial;
+            const float radius = (aerial ? 112.0F : 155.0F) * projected.scale;
             const Vector2 position{
                 projected.x + std::cos(sword.angle_radians) * radius,
                 projected.ground_y
-                    + std::sin(sword.angle_radians) * radius * 0.38F
-                    - 54.0F * projected.scale,
+                    + std::sin(sword.angle_radians) * radius
+                        * (aerial ? 0.26F : 0.38F)
+                    - (aerial ? 138.0F : 54.0F) * projected.scale,
             };
             draw_sword(position, sword.angle_radians + kPi,
-                projected.scale, sword.highlighted, 0.92F);
+                projected.scale * (aerial ? 0.96F : 1.0F),
+                sword.highlighted, aerial ? 1.0F : 0.92F);
         }
     }
     if (!plan.finisher_visible) return;
@@ -133,9 +149,9 @@ ActiveSkillEffectPlan make_active_skill_effect_plan(
     ActiveSkillEffectPlan result{};
     const combat::ActiveSkillSnapshot& skill = snapshot.active_skill;
     if (skill.id == skills::ActiveSkillId::draw_slash
-            && skill.elapsed_ticks >= combat::kDrawSlashStartupTicks) {
+            && skill.elapsed_ticks >= kDrawSlashImpactTick) {
         const std::uint16_t age = static_cast<std::uint16_t>(
-            skill.elapsed_ticks - combat::kDrawSlashStartupTicks);
+            skill.elapsed_ticks - kDrawSlashImpactTick);
         if (age <= kFlashTicks) {
             result.draw_slash.visible = true;
             result.draw_slash.center = skill.locked_center;
@@ -148,17 +164,25 @@ ActiveSkillEffectPlan make_active_skill_effect_plan(
 
     if (skill.id == skills::ActiveSkillId::storm_swords) {
         result.storm_swords.center = skill.locked_center;
-        result.storm_swords.visible = skill.phase == combat::ActiveSkillPhase::startup
-            || skill.phase == combat::ActiveSkillPhase::strikes
-            || skill.phase == combat::ActiveSkillPhase::finisher;
-        result.storm_swords.sword_count = combat::kStormStrikeCount;
+        result.storm_swords.sword_count = std::min<std::size_t>(
+            skill.spawned_sword_count, result.storm_swords.swords.size());
+        result.storm_swords.visible = skill.transients_active
+            && result.storm_swords.sword_count != 0U;
         for (std::size_t index = 0U;
              index < result.storm_swords.sword_count; ++index) {
+            const bool aerial = index >= kStormGroundSwordCount;
             result.storm_swords.swords[index].angle_radians =
-                static_cast<float>(index) * (2.0F * kPi
-                    / static_cast<float>(combat::kStormStrikeCount));
+                static_cast<float>(index % kStormGroundSwordCount)
+                    * (2.0F * kPi / static_cast<float>(kStormGroundSwordCount))
+                    + (aerial ? 0.26F : 0.0F)
+                    + static_cast<float>(skill.frame_index) * 0.035F;
+            result.storm_swords.swords[index].visible = true;
+            result.storm_swords.swords[index].band = aerial
+                ? StormSwordBand::aerial : StormSwordBand::ground;
             result.storm_swords.swords[index].highlighted =
-                skill.strike_index == index + 1U;
+                skill.strike_index != 0U
+                && ((skill.strike_index - 1U) % kStormGroundSwordCount)
+                    == (index % kStormGroundSwordCount);
         }
     }
 
