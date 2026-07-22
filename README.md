@@ -54,6 +54,26 @@ Stage 17：五槽主动技能石、剑圣“拔刀斩”与“极·鬼剑术（�
 .\scripts\Test.ps1 -Preset windows-msvc-release
 ```
 
+## Codex Cloud 开发
+
+Codex Cloud 的 Linux 环境只负责配置、构建和测试平台无关的核心，始终使用 `ARPG_BUILD_GRAPHICS=OFF`。它不启动 raylib 窗口，也不进行输入、音频或全屏验收；这些最终图形与手感检查只在 Windows 本机完成。
+
+在 Codex Cloud 环境中执行初始化：
+
+```bash
+bash scripts/cloud/setup.sh
+```
+
+日常维护和无图形核心回归可执行：
+
+```bash
+bash scripts/cloud/maintenance.sh
+```
+
+云端工作流程是：选择 `codex/<任务>` 分支，修改并运行上述核心测试，创建 PR；推送后会自动运行 [GitHub Actions 工作流](.github/workflows/build-and-test.yml) 的 Ubuntu 和 Windows jobs。Windows job 在 `windows-2022` 上使用 VS 2022、MSVC 19.44 与 Windows SDK 10.0.26100.0 完整构建 Windows raylib 游戏，并上传 `infinite-dungeon-arpg-windows-x64` artifact。等待 jobs 完成后下载该 artifact，本机仅进行最终图形和手感验收。
+
+相关脚本：[Cloud setup](scripts/cloud/setup.sh)、[Cloud maintenance](scripts/cloud/maintenance.sh)。推送前不应声称 GitHub CI 已通过；本阶段只保证推送后会自动运行。
+
 ## 操作（默认绑定）
 
 下表是默认绑定。十项玩法动作可在暂停设置中重绑；HUD 的交互、背包和星盘提示始终读取当前已提交绑定，不硬编码旧键位。
