@@ -61,7 +61,8 @@ public:
     [[nodiscard]] items::DirectedCategory directed_category() const noexcept;
     void draw(const items::ItemOwnershipState&, const MaterialPack&,
         int width, int height) const noexcept;
-    void draw_reinforcement_confirmation(int width, int height) const noexcept;
+    void draw_reinforcement_confirmation(const MaterialPack&,
+        int width, int height) const noexcept;
 
 private:
     std::optional<items::MaterialId> selected_{};

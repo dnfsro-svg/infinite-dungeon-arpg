@@ -54,6 +54,7 @@ inline constexpr MaterialAtlasDefinition kDefaultMaterialAtlases[] = {
     {MaterialAtlasId::chaos_chaser, 864, 864, 4U * 864U * 864U, "assets/stage12/chaos_chaser.png", "assets/stage12/chaos_chaser_material.png", MaterialEcology::chaos},
     {MaterialAtlasId::chaos_hazard, 864, 864, 4U * 864U * 864U, "assets/stage12/chaos_hazard.png", "assets/stage12/chaos_hazard_material.png", MaterialEcology::chaos},
     {MaterialAtlasId::items_ui, 1024, 1024, 4U * 1024U * 1024U, "assets/stage12/items_ui.png", "assets/stage12/items_ui_material.png", MaterialEcology::common},
+    {MaterialAtlasId::ui_material, 1024, 1024, 4U * 1024U * 1024U, "assets/stage12/ui_material.png", "assets/stage12/ui_material_material.png", MaterialEcology::common},
 };
 
 #define ARPG_ACTOR_FRAME(sprite, column, row) \
@@ -99,6 +100,13 @@ inline constexpr MaterialAtlasDefinition kDefaultMaterialAtlases[] = {
          static_cast<float>(((cell) / 8) * 128), 128.0F, 128.0F}, \
         {64.0F, 64.0F}, 0U, {64.0F, 64.0F}, layer_value, class_value, \
         static_cast<std::uint32_t>((cell) * 239U + 8009U)}
+
+#define ARPG_UI_FRAME(sprite, cell) \
+    {MaterialSpriteId::sprite, MaterialAtlasId::ui_material, \
+        {static_cast<float>(((cell) % 8) * 128), \
+         static_cast<float>(((cell) / 8) * 128), 128.0F, 128.0F}, \
+        {64.0F, 64.0F}, 0U, {64.0F, 64.0F}, MaterialLayer::front_effect, \
+        MaterialClass::ui, static_cast<std::uint32_t>((cell) * 251U + 12007U)}
 
 inline constexpr MaterialFrameDefinition kDefaultMaterialFrames[] = {
     ARPG_ACTOR_FRAME(player_idle, 0, 0),
@@ -287,6 +295,46 @@ inline constexpr MaterialFrameDefinition kDefaultMaterialFrames[] = {
     ARPG_ITEM_FRAME(bag_frame_ne, 27, MaterialLayer::front_effect, MaterialClass::ui),
     ARPG_ITEM_FRAME(bag_frame_sw, 28, MaterialLayer::front_effect, MaterialClass::ui),
     ARPG_ITEM_FRAME(bag_frame_se, 29, MaterialLayer::front_effect, MaterialClass::ui),
+    ARPG_UI_FRAME(ui_hud_panel, 0),
+    ARPG_UI_FRAME(ui_hud_health_track, 1),
+    ARPG_UI_FRAME(ui_hud_health_fill, 2),
+    ARPG_UI_FRAME(ui_hud_barrier_track, 3),
+    ARPG_UI_FRAME(ui_hud_barrier_fill, 4),
+    ARPG_UI_FRAME(ui_hud_resource_track, 5),
+    ARPG_UI_FRAME(ui_hud_resource_fill, 6),
+    ARPG_UI_FRAME(ui_hud_status_slow, 7),
+    ARPG_UI_FRAME(ui_hud_status_corrosion, 8),
+    ARPG_UI_FRAME(ui_hud_status_invulnerable, 9),
+    ARPG_UI_FRAME(ui_hud_objective_panel, 10),
+    ARPG_UI_FRAME(ui_hud_navigation_panel, 11),
+    ARPG_UI_FRAME(ui_hud_notice, 12),
+    ARPG_UI_FRAME(ui_hud_notice_abyss, 13),
+    ARPG_UI_FRAME(ui_hud_skill_empty, 14),
+    ARPG_UI_FRAME(ui_hud_skill_ready, 15),
+    ARPG_UI_FRAME(ui_hud_skill_cooldown, 16),
+    ARPG_UI_FRAME(ui_inventory_panel_equipment, 17),
+    ARPG_UI_FRAME(ui_inventory_panel_grid, 18),
+    ARPG_UI_FRAME(ui_inventory_panel_detail, 19),
+    ARPG_UI_FRAME(ui_inventory_tab_idle, 20),
+    ARPG_UI_FRAME(ui_inventory_tab_active, 21),
+    ARPG_UI_FRAME(ui_inventory_slot_idle, 22),
+    ARPG_UI_FRAME(ui_inventory_slot_selected, 23),
+    ARPG_UI_FRAME(ui_inventory_button_idle, 24),
+    ARPG_UI_FRAME(ui_inventory_button_active, 25),
+    ARPG_UI_FRAME(ui_inventory_button_disabled, 26),
+    ARPG_UI_FRAME(ui_skill_panel, 27),
+    ARPG_UI_FRAME(ui_skill_slot_empty, 28),
+    ARPG_UI_FRAME(ui_skill_slot_ready, 29),
+    ARPG_UI_FRAME(ui_skill_slot_selected, 30),
+    ARPG_UI_FRAME(ui_skill_slot_support, 31),
+    ARPG_UI_FRAME(ui_pause_panel, 32),
+    ARPG_UI_FRAME(ui_pause_row_idle, 33),
+    ARPG_UI_FRAME(ui_pause_row_selected, 34),
+    ARPG_UI_FRAME(ui_pause_footer, 35),
+    ARPG_UI_FRAME(ui_warning_modal, 36),
+    ARPG_UI_FRAME(ui_label_plate, 37),
+    ARPG_UI_FRAME(ui_reinforcement_confirm, 38),
+    ARPG_UI_FRAME(ui_reinforcement_cancel, 39),
 };
 
 inline constexpr AnimationEventDefinition kDefaultAnimationEvents[] = {
@@ -316,6 +364,7 @@ inline constexpr AnimationClipDefinition kDefaultAnimationClips[] = {
 #undef ARPG_LIGHTNING_MONSTER_FRAME
 #undef ARPG_CHAOS_MONSTER_FRAME
 #undef ARPG_ITEM_FRAME
+#undef ARPG_UI_FRAME
 
 }  // namespace detail
 

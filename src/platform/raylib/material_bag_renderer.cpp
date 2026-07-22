@@ -1,6 +1,7 @@
 #include "material_bag_renderer.hpp"
 
 #include "material_loot_view.hpp"
+#include "ui_material.hpp"
 
 #include <raylib.h>
 
@@ -186,9 +187,12 @@ void MaterialBagRenderer::draw(const items::ItemOwnershipState& state,
     const MaterialPack& assets, int width, int height) const noexcept {
     const MaterialBagLayout layout = material_bag_layout(width, height);
     if (!layout.contains_all_slots()) return;
-    DrawRectangleRounded(layout.panel, 0.025F, 5, Color{8, 12, 20, 247});
-    DrawRectangleRoundedLinesEx(layout.panel, 0.025F, 5, 1.0F,
-        Color{72, 91, 120, 255});
+    if (!assets.draw_to(ui_material_sprite(
+            UiMaterialElement::inventory_panel_detail), layout.panel)) {
+        DrawRectangleRounded(layout.panel, 0.025F, 5, Color{8, 12, 20, 247});
+        DrawRectangleRoundedLinesEx(layout.panel, 0.025F, 5, 1.0F,
+            Color{72, 91, 120, 255});
+    }
     DrawText("MATERIAL BAG", static_cast<int>(layout.panel.x + kInset),
         static_cast<int>(layout.panel.y + 9.0F), 16, Color{131, 211, 255, 255});
     static_cast<void>(assets.draw(MaterialSpriteId::bag_frame_nw,
@@ -210,10 +214,14 @@ void MaterialBagRenderer::draw(const items::ItemOwnershipState& state,
             return Color{rgba.r, rgba.g, rgba.b, rgba.a};
         }();
         const Rectangle slot = layout.slots[index];
-        DrawRectangleRounded(slot, 0.08F, 4,
-            selected ? Color{34, 68, 88, 255} : Color{21, 28, 39, 255});
-        DrawRectangleRoundedLinesEx(slot, 0.08F, 4,
-            selected ? 2.0F : 1.0F, color);
+        if (!assets.draw_to(ui_material_sprite(selected
+                ? UiMaterialElement::inventory_slot_selected
+                : UiMaterialElement::inventory_slot_idle), slot)) {
+            DrawRectangleRounded(slot, 0.08F, 4,
+                selected ? Color{34, 68, 88, 255} : Color{21, 28, 39, 255});
+            DrawRectangleRoundedLinesEx(slot, 0.08F, 4,
+                selected ? 2.0F : 1.0F, color);
+        }
         const float icon_scale = (std::min)(0.22F,
             (std::max)(0.08F, slot.height * 0.72F / 128.0F));
         const float icon_width = 128.0F * icon_scale;
@@ -245,13 +253,16 @@ void MaterialBagRenderer::draw(const items::ItemOwnershipState& state,
 }
 
 void MaterialBagRenderer::draw_reinforcement_confirmation(
-    int width, int height) const noexcept {
+    const MaterialPack& assets, int width, int height) const noexcept {
     if (!reinforcement_confirmation_item_.has_value()) return;
     const ReinforcementConfirmationLayout layout =
         reinforcement_confirmation_layout(width, height);
-    DrawRectangleRounded(layout.panel, 0.04F, 5, Color{29, 15, 18, 252});
-    DrawRectangleRoundedLinesEx(layout.panel, 0.04F, 5, 2.0F,
-        Color{255, 113, 96, 255});
+    if (!assets.draw_to(ui_material_sprite(UiMaterialElement::warning_modal),
+            layout.panel)) {
+        DrawRectangleRounded(layout.panel, 0.04F, 5, Color{29, 15, 18, 252});
+        DrawRectangleRoundedLinesEx(layout.panel, 0.04F, 5, 2.0F,
+            Color{255, 113, 96, 255});
+    }
     DrawText("DANGER: FAILURE DESTROYS EQUIPMENT",
         static_cast<int>(layout.panel.x + 14.0F),
         static_cast<int>(layout.panel.y + 16.0F), 14,
@@ -259,8 +270,16 @@ void MaterialBagRenderer::draw_reinforcement_confirmation(
     DrawText("Use one Reinforcement Stone?",
         static_cast<int>(layout.panel.x + 14.0F),
         static_cast<int>(layout.panel.y + 42.0F), 13, RAYWHITE);
-    DrawRectangleRounded(layout.confirm, 0.10F, 4, Color{113, 39, 39, 255});
-    DrawRectangleRounded(layout.cancel, 0.10F, 4, Color{44, 58, 74, 255});
+    if (!assets.draw_to(ui_material_sprite(
+            UiMaterialElement::reinforcement_confirm), layout.confirm)) {
+        DrawRectangleRounded(layout.confirm, 0.10F, 4,
+            Color{113, 39, 39, 255});
+    }
+    if (!assets.draw_to(ui_material_sprite(
+            UiMaterialElement::reinforcement_cancel), layout.cancel)) {
+        DrawRectangleRounded(layout.cancel, 0.10F, 4,
+            Color{44, 58, 74, 255});
+    }
     DrawText("CONFIRM", static_cast<int>(layout.confirm.x + 8.0F),
         static_cast<int>(layout.confirm.y + 5.0F), 13, RAYWHITE);
     DrawText("CANCEL", static_cast<int>(layout.cancel.x + 10.0F),

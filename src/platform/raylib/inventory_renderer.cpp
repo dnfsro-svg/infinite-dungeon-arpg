@@ -5,6 +5,7 @@
 #include "dungeon/dungeon_session.hpp"
 #include "dungeon_runtime.hpp"
 #include "items/item_catalog.hpp"
+#include "ui_material.hpp"
 
 #include <raylib.h>
 
@@ -62,23 +63,32 @@ bool contains(Rectangle rectangle, Vector2 point) noexcept {
         && point.y >= rectangle.y && point.y <= rectangle.y + rectangle.height;
 }
 
-void draw_panel(Rectangle rectangle, const char* title) noexcept {
-    DrawRectangleRounded(rectangle, 0.025F, 5, Color{8, 12, 20, 247});
-    DrawRectangleRoundedLinesEx(rectangle, 0.025F, 5, 1.0F,
-        Color{72, 91, 120, 255});
+void draw_panel(Rectangle rectangle, const char* title,
+    const MaterialPack& assets, UiMaterialElement element) noexcept {
+    if (!assets.draw_to(ui_material_sprite(element), rectangle)) {
+        DrawRectangleRounded(rectangle, 0.025F, 5, Color{8, 12, 20, 247});
+        DrawRectangleRoundedLinesEx(rectangle, 0.025F, 5, 1.0F,
+            Color{72, 91, 120, 255});
+    }
     DrawText(title, static_cast<int>(rectangle.x + 12.0F),
         static_cast<int>(rectangle.y + 10.0F), 18,
         Color{131, 211, 255, 255});
 }
 
 void draw_button(Rectangle rectangle, const char* label,
-    bool enabled, bool active = false) noexcept {
+    bool enabled, const MaterialPack& assets, bool active = false) noexcept {
     const Color fill = !enabled ? Color{42, 45, 52, 255}
         : active ? Color{42, 104, 139, 255} : Color{28, 47, 67, 255};
     const Color text = enabled ? RAYWHITE : Color{118, 123, 133, 255};
-    DrawRectangleRounded(rectangle, 0.12F, 4, fill);
-    DrawRectangleRoundedLinesEx(rectangle, 0.12F, 4, 1.0F,
-        enabled ? Color{90, 151, 190, 255} : Color{65, 68, 75, 255});
+    const UiMaterialElement element = !enabled
+        ? UiMaterialElement::inventory_button_disabled
+        : active ? UiMaterialElement::inventory_button_active
+                 : UiMaterialElement::inventory_button_idle;
+    if (!assets.draw_to(ui_material_sprite(element), rectangle)) {
+        DrawRectangleRounded(rectangle, 0.12F, 4, fill);
+        DrawRectangleRoundedLinesEx(rectangle, 0.12F, 4, 1.0F,
+            enabled ? Color{90, 151, 190, 255} : Color{65, 68, 75, 255});
+    }
     DrawText(label, static_cast<int>(rectangle.x + 7.0F),
         static_cast<int>(rectangle.y + 6.0F), 14, text);
 }
@@ -90,11 +100,16 @@ void draw_hud_font_text(Font font, bool ready, const char* text,
 }
 
 void draw_inventory_page_button(Rectangle rectangle, const char* label,
-    bool active, Font font, bool font_ready) noexcept {
-    DrawRectangleRounded(rectangle, 0.14F, 4,
-        active ? Color{42, 104, 139, 255} : Color{23, 39, 57, 255});
-    DrawRectangleRoundedLinesEx(rectangle, 0.14F, 4, 1.0F,
-        active ? Color{151, 225, 255, 255} : Color{75, 105, 137, 255});
+    bool active, Font font, bool font_ready,
+    const MaterialPack& assets) noexcept {
+    if (!assets.draw_to(ui_material_sprite(active
+            ? UiMaterialElement::inventory_tab_active
+            : UiMaterialElement::inventory_tab_idle), rectangle)) {
+        DrawRectangleRounded(rectangle, 0.14F, 4,
+            active ? Color{42, 104, 139, 255} : Color{23, 39, 57, 255});
+        DrawRectangleRoundedLinesEx(rectangle, 0.14F, 4, 1.0F,
+            active ? Color{151, 225, 255, 255} : Color{75, 105, 137, 255});
+    }
     draw_hud_font_text(font, font_ready, label,
         rectangle.x + 12.0F, rectangle.y + 6.0F, 16.0F,
         active ? Color{242, 250, 255, 255}
@@ -111,9 +126,12 @@ void draw_active_skill_loadout(const dungeon::DungeonSnapshot& snapshot,
     const ActiveSkillLoadoutView view = make_active_skill_loadout_view(
         snapshot.skill_loadout, selection,
         snapshot.pending_save_kind.has_value());
-    DrawRectangleRounded(layout.panel, 0.025F, 5, Color{8, 12, 20, 247});
-    DrawRectangleRoundedLinesEx(layout.panel, 0.025F, 5, 1.0F,
-        Color{72, 91, 120, 255});
+    if (!assets.draw_to(ui_material_sprite(UiMaterialElement::skill_panel),
+            layout.panel)) {
+        DrawRectangleRounded(layout.panel, 0.025F, 5, Color{8, 12, 20, 247});
+        DrawRectangleRoundedLinesEx(layout.panel, 0.025F, 5, 1.0F,
+            Color{72, 91, 120, 255});
+    }
     draw_hud_font_text(font, font_ready, u8"主动技能石槽",
         layout.panel.x + 18.0F, layout.panel.y + 16.0F, 21.0F,
         Color{141, 221, 255, 255});
@@ -121,13 +139,19 @@ void draw_active_skill_loadout(const dungeon::DungeonSnapshot& snapshot,
     for (std::size_t index = 0U; index < view.slots.size(); ++index) {
         const ActiveSkillLoadoutSlotView& slot = view.slots[index];
         const Rectangle bounds = layout.main_slots[index];
-        DrawRectangleRounded(bounds, 0.08F, 4,
-            slot.selected ? Color{38, 83, 111, 255}
-                          : Color{20, 30, 44, 255});
-        DrawRectangleRoundedLinesEx(bounds, 0.08F, 4,
-            slot.selected ? 3.0F : 1.0F,
-            slot.selected ? Color{148, 225, 255, 255}
-                          : Color{77, 105, 137, 255});
+        const UiMaterialElement slot_material = slot.selected
+            ? UiMaterialElement::skill_slot_selected
+            : slot.empty ? UiMaterialElement::skill_slot_empty
+                         : UiMaterialElement::skill_slot_ready;
+        if (!assets.draw_to(ui_material_sprite(slot_material), bounds)) {
+            DrawRectangleRounded(bounds, 0.08F, 4,
+                slot.selected ? Color{38, 83, 111, 255}
+                              : Color{20, 30, 44, 255});
+            DrawRectangleRoundedLinesEx(bounds, 0.08F, 4,
+                slot.selected ? 3.0F : 1.0F,
+                slot.selected ? Color{148, 225, 255, 255}
+                              : Color{77, 105, 137, 255});
+        }
         static_cast<void>(assets.draw(skill_stone_sprite(
             SkillStoneVisualKind::active),
             {bounds.x + 24.0F, bounds.y + bounds.height * 0.5F},
@@ -149,9 +173,12 @@ void draw_active_skill_loadout(const dungeon::DungeonSnapshot& snapshot,
         layout.support_slots[0U].y - 31.0F, 17.0F,
         Color{171, 193, 217, 255});
     for (const Rectangle support : layout.support_slots) {
-        DrawRectangleRounded(support, 0.08F, 4, Color{17, 24, 35, 255});
-        DrawRectangleRoundedLinesEx(support, 0.08F, 4, 1.0F,
-            Color{61, 79, 101, 255});
+        if (!assets.draw_to(ui_material_sprite(
+                UiMaterialElement::skill_slot_support), support)) {
+            DrawRectangleRounded(support, 0.08F, 4, Color{17, 24, 35, 255});
+            DrawRectangleRoundedLinesEx(support, 0.08F, 4, 1.0F,
+                Color{61, 79, 101, 255});
+        }
         static_cast<void>(assets.draw(skill_stone_sprite(
             SkillStoneVisualKind::support),
             {support.x + support.width * 0.5F,
@@ -169,13 +196,17 @@ void draw_active_skill_loadout(const dungeon::DungeonSnapshot& snapshot,
     for (std::size_t index = 0U; index < view.inventory_count; ++index) {
         const ActiveSkillInventoryStoneView& stone = view.inventory[index];
         const Rectangle bounds = layout.inventory_slots[index];
-        DrawRectangleRounded(bounds, 0.08F, 4,
-            stone.selected ? Color{38, 83, 111, 255}
-                           : Color{20, 30, 44, 255});
-        DrawRectangleRoundedLinesEx(bounds, 0.08F, 4,
-            stone.selected ? 3.0F : 1.0F,
-            stone.selected ? Color{148, 225, 255, 255}
-                           : Color{77, 105, 137, 255});
+        if (!assets.draw_to(ui_material_sprite(stone.selected
+                ? UiMaterialElement::skill_slot_selected
+                : UiMaterialElement::skill_slot_ready), bounds)) {
+            DrawRectangleRounded(bounds, 0.08F, 4,
+                stone.selected ? Color{38, 83, 111, 255}
+                               : Color{20, 30, 44, 255});
+            DrawRectangleRoundedLinesEx(bounds, 0.08F, 4,
+                stone.selected ? 3.0F : 1.0F,
+                stone.selected ? Color{148, 225, 255, 255}
+                               : Color{77, 105, 137, 255});
+        }
         static_cast<void>(assets.draw(skill_stone_sprite(
             SkillStoneVisualKind::active),
             {bounds.x + 22.0F, bounds.y + bounds.height * 0.5F},
@@ -195,11 +226,16 @@ void draw_active_skill_loadout(const dungeon::DungeonSnapshot& snapshot,
         && selection.selected_slot < snapshot.skill_loadout.slots.size()
         && snapshot.skill_loadout.slots[selection.selected_slot].active
             != skills::ActiveSkillId::none;
-    DrawRectangleRounded(layout.remove_button, 0.12F, 4,
-        removable ? Color{74, 53, 65, 255} : Color{42, 45, 52, 255});
-    DrawRectangleRoundedLinesEx(layout.remove_button, 0.12F, 4, 1.0F,
-        removable ? Color{219, 125, 151, 255}
-                  : Color{65, 68, 75, 255});
+    if (!assets.draw_to(ui_material_sprite(removable
+            ? UiMaterialElement::inventory_button_active
+            : UiMaterialElement::inventory_button_disabled),
+            layout.remove_button)) {
+        DrawRectangleRounded(layout.remove_button, 0.12F, 4,
+            removable ? Color{74, 53, 65, 255} : Color{42, 45, 52, 255});
+        DrawRectangleRoundedLinesEx(layout.remove_button, 0.12F, 4, 1.0F,
+            removable ? Color{219, 125, 151, 255}
+                      : Color{65, 68, 75, 255});
+    }
     draw_hud_font_text(font, font_ready, u8"取出",
         layout.remove_button.x + 61.0F,
         layout.remove_button.y + 9.0F, 16.0F,
@@ -287,6 +323,15 @@ void InventoryRenderer::close() noexcept {
     active_skill_selection_ = {};
     click_tracker_ = {};
     static_cast<void>(material_bag_.resolve_reinforcement_confirmation(false));
+}
+
+void InventoryRenderer::show_skill_stones_page() noexcept {
+    if (!open_) return;
+    page_ = InventoryPage::skill_stones;
+    if (active_skill_selection_.selected_slot
+            == kNoActiveSkillLoadoutSelection) {
+        active_skill_selection_.selected_slot = 0U;
+    }
 }
 
 bool InventoryRenderer::is_open() const noexcept { return open_; }
@@ -579,27 +624,36 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     }
     draw_inventory_page_button(skill_layout.equipment_page_button,
         u8"装备 / 材料", page_ == InventoryPage::equipment_materials,
-        hud_font, hud_font_ready);
+        hud_font, hud_font_ready, material_pack);
     draw_inventory_page_button(skill_layout.skill_stones_page_button,
         u8"技能石", page_ == InventoryPage::skill_stones,
-        hud_font, hud_font_ready);
+        hud_font, hud_font_ready, material_pack);
     if (page_ == InventoryPage::skill_stones) {
         draw_active_skill_loadout(snapshot, status, active_skill_selection_,
             material_pack, hud_font, hud_font_ready);
         return;
     }
-    draw_panel(layout.equipment, "EQUIPMENT");
-    draw_panel(layout.grid, "INVENTORY");
-    draw_panel(layout.detail, "ITEM DETAIL");
+    draw_panel(layout.equipment, "EQUIPMENT", material_pack,
+        UiMaterialElement::inventory_panel_equipment);
+    draw_panel(layout.grid, "INVENTORY", material_pack,
+        UiMaterialElement::inventory_panel_grid);
+    draw_panel(layout.detail, "ITEM DETAIL", material_pack,
+        UiMaterialElement::inventory_panel_detail);
     material_bag_.draw(state, material_pack,
         GetScreenWidth(), GetScreenHeight());
 
     for (std::size_t index = 0U; index < state.equipment.equipped_ids.size(); ++index) {
         const auto slot = static_cast<items::ItemSlot>(index);
         const Rectangle rectangle = equipment_slot_rectangle(layout, slot);
-        DrawRectangleRounded(rectangle, 0.08F, 4, Color{21, 28, 40, 255});
-        DrawRectangleRoundedLinesEx(rectangle, 0.08F, 4, 1.0F,
-            Color{75, 100, 133, 255});
+        const bool equipped = state.equipment.equipped_ids[index] != 0U;
+        if (!material_pack.draw_to(ui_material_sprite(equipped
+                ? UiMaterialElement::inventory_slot_selected
+                : UiMaterialElement::inventory_slot_idle), rectangle)) {
+            DrawRectangleRounded(rectangle, 0.08F, 4,
+                Color{21, 28, 40, 255});
+            DrawRectangleRoundedLinesEx(rectangle, 0.08F, 4, 1.0F,
+                Color{75, 100, 133, 255});
+        }
         static_cast<void>(material_pack.draw(ground_loot_item_sprite(slot),
             {rectangle.x + 24.0F, rectangle.y + rectangle.height * 0.5F},
             false, 0.24F, state.equipment.equipped_ids[index] == 0U
@@ -667,9 +721,11 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     const Rectangle slot_button = slot_filter_button(layout.grid);
     const Rectangle rarity_button = rarity_filter_button(layout.grid);
     draw_button(slot_button, TextFormat("Slot: %s",
-        filter_.slot.has_value() ? slot_name(*filter_.slot) : "All"), true);
+        filter_.slot.has_value() ? slot_name(*filter_.slot) : "All"), true,
+        material_pack);
     draw_button(rarity_button, TextFormat("Rarity: %s",
-        filter_.rarity.has_value() ? rarity_name(*filter_.rarity) : "All"), true);
+        filter_.rarity.has_value() ? rarity_name(*filter_.rarity) : "All"), true,
+        material_pack);
     const Rectangle viewport = grid_viewport(layout.grid);
     DrawRectangleRec(viewport, Color{11, 16, 25, 255});
     BeginScissorMode(static_cast<int>(viewport.x), static_cast<int>(viewport.y),
@@ -690,11 +746,16 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
         const bool recipe_selected = std::find(recipe_.ids.begin(),
             recipe_.ids.begin() + static_cast<std::ptrdiff_t>(recipe_.count),
             item.id) != recipe_.ids.begin() + static_cast<std::ptrdiff_t>(recipe_.count);
-        DrawRectangleRounded(cell, 0.08F, 4,
-            selected ? Color{34, 68, 88, 255} : Color{21, 28, 39, 255});
-        DrawRectangleRoundedLinesEx(cell, 0.08F, 4,
-            recipe_selected ? 3.0F : 1.0F,
-            recipe_selected ? Color{237, 118, 212, 255} : rarity_color(item.rarity));
+        if (!material_pack.draw_to(ui_material_sprite(selected || recipe_selected
+                ? UiMaterialElement::inventory_slot_selected
+                : UiMaterialElement::inventory_slot_idle), cell)) {
+            DrawRectangleRounded(cell, 0.08F, 4,
+                selected ? Color{34, 68, 88, 255} : Color{21, 28, 39, 255});
+            DrawRectangleRoundedLinesEx(cell, 0.08F, 4,
+                recipe_selected ? 3.0F : 1.0F,
+                recipe_selected ? Color{237, 118, 212, 255}
+                                : rarity_color(item.rarity));
+        }
         DrawText(base == nullptr ? "Invalid" : base->name.data(),
             static_cast<int>(cell.x + 5.0F), static_cast<int>(cell.y + 7.0F),
             13, rarity_color(item.rarity));
@@ -707,7 +768,7 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     const bool enabled = !snapshot.pending_save_kind.has_value()
         && recipe_ready();
     draw_button(combine_button(layout.grid), TextFormat("Combine (%u/3)",
-        static_cast<unsigned>(recipe_.count)), enabled);
+        static_cast<unsigned>(recipe_.count)), enabled, material_pack);
     bool reinforced_recipe_input = false;
     for (std::size_t index = 0U; index < recipe_.count; ++index) {
         for (const items::ItemInstance& recipe_item : state.items) {
@@ -865,7 +926,7 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
             diff.damage_reduction_cap_bonus[3] / 100.0), RAYWHITE);
     }
     EndScissorMode();
-    material_bag_.draw_reinforcement_confirmation(
+    material_bag_.draw_reinforcement_confirmation(material_pack,
         GetScreenWidth(), GetScreenHeight());
 }
 

@@ -2,6 +2,7 @@
 
 #include "death_overlay_font.hpp"
 #include "pause_menu_view.hpp"
+#include "ui_material.hpp"
 
 #include <raylib.h>
 
@@ -58,7 +59,8 @@ PauseMenuRenderPlan make_pause_menu_render_plan(
 }
 
 void draw_pause_menu_with_font(
-    const PauseMenuState& state, Font font) noexcept {
+    const PauseMenuState& state, Font font,
+    const MaterialPack* assets) noexcept {
     const PauseMenuView view = make_pause_menu_view(state);
     const PauseMenuRenderPlan plan = make_pause_menu_render_plan(view);
     if (plan.op_count == 0U) return;
@@ -82,11 +84,14 @@ void draw_pause_menu_with_font(
                     Color{2, 4, 8, 190});
                 break;
             case PauseMenuRenderOpKind::panel:
-                DrawRectangleRounded(layout.panel, 0.04F, 8,
-                    Color{10, 14, 23, 248});
-                DrawRectangleRoundedLinesEx(
-                    layout.panel, 0.04F, 8, 2.0F,
-                    Color{94, 159, 206, 255});
+                if (assets == nullptr || !assets->draw_to(ui_material_sprite(
+                        UiMaterialElement::pause_panel), layout.panel)) {
+                    DrawRectangleRounded(layout.panel, 0.04F, 8,
+                        Color{10, 14, 23, 248});
+                    DrawRectangleRoundedLinesEx(
+                        layout.panel, 0.04F, 8, 2.0F,
+                        Color{94, 159, 206, 255});
+                }
                 break;
             case PauseMenuRenderOpKind::title:
                 draw_centered_text(font, view.title, title_bounds, 28,
@@ -94,7 +99,11 @@ void draw_pause_menu_with_font(
                 break;
             case PauseMenuRenderOpKind::row: {
                 const Rectangle bounds = layout.rows[op.row_index];
-                if (op.selected) {
+                const bool row_drawn = assets != nullptr && assets->draw_to(
+                    ui_material_sprite(op.selected
+                        ? UiMaterialElement::pause_row_selected
+                        : UiMaterialElement::pause_row_idle), bounds);
+                if (!row_drawn && op.selected) {
                     DrawRectangleRounded(bounds, 0.18F, 5,
                         Color{42, 91, 126, 235});
                     DrawRectangleRoundedLinesEx(
@@ -113,13 +122,16 @@ void draw_pause_menu_with_font(
                     Color{255, 139, 139, 255});
                 break;
             case PauseMenuRenderOpKind::footer:
-                DrawLine(
-                    static_cast<int>(layout.footer.x),
-                    static_cast<int>(layout.footer.y - 5.0F),
-                    static_cast<int>(layout.footer.x
-                        + layout.footer.width),
-                    static_cast<int>(layout.footer.y - 5.0F),
-                    Color{75, 86, 104, 220});
+                if (assets == nullptr || !assets->draw_to(ui_material_sprite(
+                        UiMaterialElement::pause_footer), layout.footer)) {
+                    DrawLine(
+                        static_cast<int>(layout.footer.x),
+                        static_cast<int>(layout.footer.y - 5.0F),
+                        static_cast<int>(layout.footer.x
+                            + layout.footer.width),
+                        static_cast<int>(layout.footer.y - 5.0F),
+                        Color{75, 86, 104, 220});
+                }
                 if (!plan.has_message) {
                     draw_centered_text(font,
                         "Arrow keys navigate | Enter select | Esc back",
@@ -162,13 +174,14 @@ void PauseMenuRenderer::shutdown() noexcept {
     owns_font_ = false;
 }
 
-void PauseMenuRenderer::draw(const PauseMenuState& state) const noexcept {
+void PauseMenuRenderer::draw(const PauseMenuState& state,
+    const MaterialPack& material_pack) const noexcept {
     draw_pause_menu_with_font(state,
-        IsFontValid(font_) ? font_ : GetFontDefault());
+        IsFontValid(font_) ? font_ : GetFontDefault(), &material_pack);
 }
 
 void draw_pause_menu(const PauseMenuState& state) noexcept {
-    draw_pause_menu_with_font(state, GetFontDefault());
+    draw_pause_menu_with_font(state, GetFontDefault(), nullptr);
 }
 
 }  // namespace arpg::platform

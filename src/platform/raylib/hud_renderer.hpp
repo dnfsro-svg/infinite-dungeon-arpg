@@ -5,6 +5,7 @@
 #include "hud_view_model.hpp"
 #include "ground_loot_view.hpp"
 #include "material_loot_view.hpp"
+#include "material_pack.hpp"
 
 #include <raylib.h>
 
@@ -127,6 +128,8 @@ public:
     void draw_ground_loot(const GroundLootView&) const noexcept;
     void draw_material_loot(const MaterialLootView&) const noexcept;
     void draw(const HudViewModel&, const HudLayout&) const noexcept;
+    void draw(const HudViewModel&, const HudLayout&,
+        const MaterialPack&) const noexcept;
 
 private:
     Font font_{};

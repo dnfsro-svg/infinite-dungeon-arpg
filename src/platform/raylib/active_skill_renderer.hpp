@@ -3,6 +3,7 @@
 #include "active_skill_assets.hpp"
 #include "active_skill_view.hpp"
 #include "combat/combat_types.hpp"
+#include "material_pack.hpp"
 
 #include <raylib.h>
 
@@ -66,7 +67,8 @@ public:
         float width, float height) const noexcept;
     void draw_hud(const ActiveSkillHudModel& model,
         const ActiveSkillHudLayout& layout,
-        Font hud_font, bool hud_font_ready) const noexcept;
+        Font hud_font, bool hud_font_ready,
+        const MaterialPack& material_pack) const noexcept;
 
 private:
     ActiveSkillAssets assets_{};

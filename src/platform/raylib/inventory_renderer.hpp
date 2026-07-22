@@ -23,6 +23,7 @@ public:
     void open(const dungeon::DungeonSession& session,
         const dungeon::DungeonSnapshot& snapshot);
     void close() noexcept;
+    void show_skill_stones_page() noexcept;
     [[nodiscard]] bool is_open() const noexcept;
     [[nodiscard]] bool process_input(DungeonRuntime& runtime,
         const dungeon::DungeonSnapshot& snapshot,

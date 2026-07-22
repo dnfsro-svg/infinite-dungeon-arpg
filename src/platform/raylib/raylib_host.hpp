@@ -91,6 +91,14 @@ enum class Stage17SkillStonesValidationScenario : std::uint8_t {
     restarted_loadout,
 };
 
+enum class Stage12UiShowcase : std::uint8_t {
+    none,
+    material_gallery,
+    inventory,
+    skill_stones,
+    pause,
+};
+
 struct Stage12MonsterMaterialDrawStatus final {
     bool presenter_visible{};
     bool use_material_frame{};
@@ -121,6 +129,8 @@ struct Stage12MaterialRuntimeStatus final {
     std::array<std::uint64_t, 6U> equipment_slot_draws{};
     std::array<std::uint64_t, 4U> rarity_draws{};
     std::array<std::uint64_t, items::kMaterialCount> material_draws{};
+    bool ui_material_resident{};
+    std::array<std::uint64_t, 40U> ui_material_draws{};
 };
 
 struct RaylibHostConfig final {
@@ -154,6 +164,7 @@ struct RaylibHostConfig final {
     bool validation_request_screenshot{};
     bool stage12_material_showcase{};
     bool stage12_material_showcase_hide_monsters{};
+    Stage12UiShowcase stage12_ui_showcase{Stage12UiShowcase::none};
     std::optional<dungeon::DungeonElement> stage12_material_showcase_ecology{};
     std::optional<std::filesystem::path>
         stage12_material_baseline_capture_file{};

@@ -3,6 +3,7 @@
 #include "combat/active_skill_runtime.hpp"
 #include "combat_view_math.hpp"
 #include "skills/active_skill_catalog.hpp"
+#include "ui_material.hpp"
 
 #include <algorithm>
 #include <array>
@@ -289,15 +290,24 @@ bool ActiveSkillRenderer::assets_ready() const noexcept {
 
 void ActiveSkillRenderer::draw_hud(const ActiveSkillHudModel& model,
     const ActiveSkillHudLayout& layout,
-    Font hud_font, bool hud_font_ready) const noexcept {
+    Font hud_font, bool hud_font_ready,
+    const MaterialPack& material_pack) const noexcept {
     for (std::size_t index = 0U; index < model.slots.size(); ++index) {
         const ActiveSkillHudSlot& slot = model.slots[index];
         const Rectangle bounds = layout.slots[index];
-        DrawRectangleRounded(bounds, 0.12F, 4, Color{12, 20, 31, 238});
-        DrawRectangleRoundedLinesEx(bounds, 0.12F, 4, 2.0F,
-            slot.empty ? Color{74, 91, 112, 235}
-                       : Color{107, 199, 255, 255});
-        if (slot.empty) {
+        const UiMaterialElement slot_material = slot.cooldown_ratio > 0.0F
+            ? UiMaterialElement::hud_skill_cooldown
+            : slot.empty ? UiMaterialElement::hud_skill_empty
+                         : UiMaterialElement::hud_skill_ready;
+        const bool material_drawn = material_pack.draw_to(
+            ui_material_sprite(slot_material), bounds);
+        if (!material_drawn) {
+            DrawRectangleRounded(bounds, 0.12F, 4, Color{12, 20, 31, 238});
+            DrawRectangleRoundedLinesEx(bounds, 0.12F, 4, 2.0F,
+                slot.empty ? Color{74, 91, 112, 235}
+                           : Color{107, 199, 255, 255});
+        }
+        if (!material_drawn && slot.empty) {
             const Vector2 center{bounds.x + bounds.width * 0.5F,
                 bounds.y + bounds.height * 0.5F + 4.0F};
             DrawCircleLines(static_cast<int>(center.x),
@@ -306,7 +316,7 @@ void ActiveSkillRenderer::draw_hud(const ActiveSkillHudModel& model,
             DrawLineEx({center.x - 9.0F, center.y},
                 {center.x + 9.0F, center.y}, 1.0F,
                 Color{84, 103, 128, 220});
-        } else {
+        } else if (!material_drawn) {
             const Vector2 center{bounds.x + bounds.width * 0.5F,
                 bounds.y + 26.0F};
             DrawPoly(center, 4, 13.0F, 45.0F,
@@ -315,7 +325,7 @@ void ActiveSkillRenderer::draw_hud(const ActiveSkillHudModel& model,
                 Color{201, 242, 255, 255});
         }
 
-        if (slot.cooldown_ratio > 0.0F) {
+        if (slot.cooldown_ratio > 0.0F && !material_drawn) {
             const float ratio = std::clamp(slot.cooldown_ratio, 0.0F, 1.0F);
             const float overlay_height = bounds.height * ratio;
             DrawRectangleRec({bounds.x, bounds.y + bounds.height - overlay_height,

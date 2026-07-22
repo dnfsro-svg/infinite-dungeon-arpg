@@ -288,7 +288,8 @@ GroundLootView CombatRenderer::draw(
             draw_hud();
             active_skill_renderer_.draw_hud(active_skill_hud_model_,
                 active_skill_hud_layout(GetScreenWidth(), GetScreenHeight()),
-                hud_renderer_.hud_font(), hud_renderer_.font_ready());
+                hud_renderer_.hud_font(), hud_renderer_.font_ready(),
+                material_pack_);
             break;
         }
     }

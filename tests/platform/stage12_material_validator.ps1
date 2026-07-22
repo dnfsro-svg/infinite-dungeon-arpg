@@ -339,12 +339,83 @@ function Measure-ChaosCapture([string]$Path, [string]$BackgroundPath) {
     }
 }
 
+function Measure-UiGallery([string]$Path, [string]$BaselinePath) {
+    $bitmap = [System.Drawing.Bitmap]::FromFile($Path)
+    $baseline = [System.Drawing.Bitmap]::FromFile($BaselinePath)
+    try {
+        if ($bitmap.Width -ne 1280 -or $bitmap.Height -ne 720 -or
+                $baseline.Width -ne 1280 -or $baseline.Height -ne 720) {
+            throw 'wrong UI gallery/baseline size'
+        }
+        for ($index = 0; $index -lt 40; ++$index) {
+            $column = $index % 8
+            $row = [Math]::Floor($index / 8)
+            $left = 196 + $column * 112
+            $top = 84 + $row * 112
+            [int]$changed = 0
+            $colors = [System.Collections.Generic.HashSet[int]]::new()
+            for ($y = $top; $y -lt $top + 104; $y += 2) {
+                for ($x = $left; $x -lt $left + 104; $x += 2) {
+                    $pixel = $bitmap.GetPixel($x, $y)
+                    $reference = $baseline.GetPixel($x, $y)
+                    $difference = [Math]::Abs([int]$pixel.R - [int]$reference.R) +
+                        [Math]::Abs([int]$pixel.G - [int]$reference.G) +
+                        [Math]::Abs([int]$pixel.B - [int]$reference.B)
+                    if ($difference -ge 32) {
+                        ++$changed
+                        [void]$colors.Add((((([int]$pixel.R) -shr 4) -shl 8) -bor
+                            ((([int]$pixel.G) -shr 4) -shl 4) -bor
+                            (([int]$pixel.B) -shr 4)))
+                    }
+                }
+            }
+            if ($changed -lt 160 -or $colors.Count -lt 8) {
+                throw "UI gallery cell lacks authored material difference: $index changed=$changed colors=$($colors.Count)"
+            }
+        }
+    } finally {
+        $bitmap.Dispose()
+        $baseline.Dispose()
+    }
+}
+
+function Assert-UiScreenDifferent([string]$Path, [string]$BaselinePath,
+        [string]$Name) {
+    $bitmap = [System.Drawing.Bitmap]::FromFile($Path)
+    $baseline = [System.Drawing.Bitmap]::FromFile($BaselinePath)
+    try {
+        if ($bitmap.Width -ne 1280 -or $bitmap.Height -ne 720) {
+            throw "wrong UI screenshot size: $Name"
+        }
+        [int]$changed = 0
+        for ($y = 0; $y -lt 720; $y += 4) {
+            for ($x = 0; $x -lt 1280; $x += 4) {
+                $pixel = $bitmap.GetPixel($x, $y)
+                $reference = $baseline.GetPixel($x, $y)
+                $difference = [Math]::Abs([int]$pixel.R - [int]$reference.R) +
+                    [Math]::Abs([int]$pixel.G - [int]$reference.G) +
+                    [Math]::Abs([int]$pixel.B - [int]$reference.B)
+                if ($difference -ge 36) { ++$changed }
+            }
+        }
+        if ($changed -lt 800) {
+            throw "UI screenshot duplicates/hides interface: $Name changed=$changed"
+        }
+    } finally {
+        $bitmap.Dispose()
+        $baseline.Dispose()
+    }
+}
+
 $reportPath = Join-Path $EvidenceDirectory 'stage12-material-evidence.txt'
 if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { throw 'missing material report' }
 $report = Read-Report $reportPath
 foreach ($key in @('manifest','atlas_bytes','fallback','input_hole_regression',
         'monsters','monster_screenshot','item_screenshot','item_baseline_screenshot','items_ui_pair',
-        'item_runtime_draws','water_monster_screenshot','lightning_monster_screenshot',
+        'item_runtime_draws','ui_material_pair','ui_runtime_draws',
+        'ui_baseline_screenshot','hud_ui_screenshot','ui_gallery_screenshot',
+        'inventory_ui_screenshot','skill_ui_screenshot','pause_ui_screenshot',
+        'water_monster_screenshot','lightning_monster_screenshot',
         'lightning_background_screenshot','chaos_monster_screenshot',
         'chaos_background_screenshot',
         'f12_screenshot','screenshot_isolation',
@@ -368,6 +439,8 @@ if ($report.result -ne 'pass' -or $report.manifest -ne 'pass' -or
         $report.fallback -ne 'pass' -or $report.input_hole_regression -ne 'pass' -or
         $report.items_ui_pair -ne 'resident' -or
         $report.item_runtime_draws -ne 'pass' -or
+        $report.ui_material_pair -ne 'resident' -or
+        $report.ui_runtime_draws -ne 'pass' -or
         $report.shader_pipeline -ne 'pass' -or
         $report.water_ecology_residency -ne 'pass' -or
         $report.water_environment_pair -ne 'resident' -or
@@ -412,7 +485,7 @@ if ($chaserFrame -ge 12 -or $hazardFrame -ge 12) {
     throw 'formal material report rejected invalid chaos frame index'
 }
 $atlasBytes = [uint64]$report.atlas_bytes
-if ($atlasBytes -lt 175816704) { throw 'paired texture budget was not fully counted' }
+if ($atlasBytes -lt 184205312) { throw 'paired texture budget was not fully counted' }
 if ($atlasBytes -gt 268435456) { throw 'texture budget exceeded' }
 
 foreach ($expected in @(@('game-1280x720.png',1280,720),
@@ -440,6 +513,25 @@ $itemBaselineSize = Read-PngSize $itemBaselineScreenshot
 if ($itemBaselineSize[0] -ne 1280 -or $itemBaselineSize[1] -ne 720) { throw 'wrong item baseline screenshot size' }
 if ((Get-Item -LiteralPath $itemBaselineScreenshot).Length -le 4096) { throw 'empty item baseline screenshot' }
 Measure-ItemCapture $itemScreenshot $itemBaselineScreenshot
+$uiBaseline = Join-Path $EvidenceDirectory $report.ui_baseline_screenshot
+$hudUi = Join-Path $EvidenceDirectory $report.hud_ui_screenshot
+$uiGallery = Join-Path $EvidenceDirectory $report.ui_gallery_screenshot
+foreach ($path in @($uiBaseline, $hudUi, $uiGallery)) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "missing HUD/UI screenshot: $path"
+    }
+}
+Measure-UiGallery $uiGallery $uiBaseline
+foreach ($entry in @(
+        @('inventory_ui_screenshot','inventory'),
+        @('skill_ui_screenshot','skill-stones'),
+        @('pause_ui_screenshot','pause'))) {
+    $path = Join-Path $EvidenceDirectory $report[$entry[0]]
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "missing UI screenshot: $($entry[1])"
+    }
+    Assert-UiScreenDifferent $path $uiBaseline $entry[1]
+}
 $waterMonsterScreenshot = Join-Path $EvidenceDirectory $report.water_monster_screenshot
 if (-not (Test-Path -LiteralPath $waterMonsterScreenshot -PathType Leaf)) { throw 'missing water-monster screenshot' }
 $waterMonsterSize = Read-PngSize $waterMonsterScreenshot
@@ -484,7 +576,8 @@ $expectedAtlases = @(@('environment.png',1024,1024),
     @('environment_material.png',1024,1024), @('actors.png',2048,2048),
     @('actors_material.png',2048,2048), @('effects_ui.png',1024,1024),
     @('effects_ui_material.png',1024,1024), @('items_ui.png',1024,1024),
-    @('items_ui_material.png',1024,1024), @('water_environment.png',768,768),
+    @('items_ui_material.png',1024,1024), @('ui_material.png',1024,1024),
+    @('ui_material_material.png',1024,1024), @('water_environment.png',768,768),
     @('water_environment_material.png',768,768), @('water_bulwark.png',864,864),
     @('water_bulwark_material.png',864,864), @('water_support.png',864,864),
     @('water_support_material.png',864,864),
@@ -508,4 +601,4 @@ foreach ($expected in $expectedAtlases) {
         throw "wrong atlas dimensions: $($expected[0])"
     }
 }
-Write-Output 'stage12 material evidence validated: item telemetry, screenshots, atlases, fallback, input/hole, runtime monster draws, and lightning/chaos baseline contours'
+Write-Output 'stage12 material evidence validated: item/UI telemetry, same-host UI ROI/screens, atlases, fallback, input/hole, runtime monster draws, and ecology contours'

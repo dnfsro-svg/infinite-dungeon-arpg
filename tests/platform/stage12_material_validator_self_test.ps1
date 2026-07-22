@@ -52,6 +52,23 @@ $reportPath = Join-Path $missingItemRuntime 'stage12-material-evidence.txt'
     Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
 $mutations += @{ Name='missing-item-runtime-draw'; Path=$missingItemRuntime }
 
+$hiddenUi = New-Mutation 'hidden-ui-gallery'
+Copy-Item -LiteralPath (Join-Path $hiddenUi 'ui-baseline-1280x720.png') `
+    -Destination (Join-Path $hiddenUi 'ui-gallery-1280x720.png') -Force
+$mutations += @{ Name='hidden-ui-gallery'; Path=$hiddenUi }
+
+$missingUiRuntime = New-Mutation 'missing-ui-runtime-draw'
+$reportPath = Join-Path $missingUiRuntime 'stage12-material-evidence.txt'
+(Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8).Replace(
+    'ui_runtime_draws=pass', 'ui_runtime_draws=fail') |
+    Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+$mutations += @{ Name='missing-ui-runtime-draw'; Path=$missingUiRuntime }
+
+$fallbackInventory = New-Mutation 'fallback-inventory-ui'
+Copy-Item -LiteralPath (Join-Path $fallbackInventory 'ui-baseline-1280x720.png') `
+    -Destination (Join-Path $fallbackInventory 'ui-inventory-1280x720.png') -Force
+$mutations += @{ Name='fallback-inventory-ui'; Path=$fallbackInventory }
+
 $solid = New-Mutation 'solid-gray'
 Save-MutatedBitmap (Join-Path $solid 'lightning-monsters-1280x720.png') {
     param($bitmap)
@@ -161,4 +178,4 @@ foreach ($mutation in $mutations) {
     }
 }
 if ($failures.Count -ne 0) { throw ($failures -join [Environment]::NewLine) }
-Write-Output 'stage12 material validator rejected solid/no-item evidence, missing item telemetry, wrong-ecology, baseline-only monster regions, and invalid runtime draw/frame proof for lightning and chaos'
+Write-Output 'stage12 material validator rejected hidden/fallback UI, missing UI/item telemetry, solid/no-item evidence, wrong ecology, and invalid runtime draw/frame proof'

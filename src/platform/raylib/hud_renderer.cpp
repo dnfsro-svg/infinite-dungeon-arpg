@@ -8,6 +8,7 @@
 #include "hud_palette.hpp"
 #include "hud_renderer.hpp"
 #include "render_layout.hpp"
+#include "ui_material.hpp"
 
 #include <raylib.h>
 
@@ -83,15 +84,30 @@ bool has_requested_glyphs(Font font,
     return hud_palette().text;
 }
 
-void draw_player_bar(const HudBarPlan& bar) noexcept {
+void draw_player_bar(const HudBarPlan& bar,
+    const MaterialPack& assets) noexcept {
     const Color fill = color_for_bar(bar.kind);
     const Rectangle bounds{bar.bounds.x, bar.bounds.y, bar.bounds.width,
         bar.bounds.height};
-    DrawRectangleRec(bounds, Color{20, 23, 31, 230});
-    DrawRectangleRec({bar.bounds.x + 1.0F, bar.bounds.y + 1.0F,
+    UiMaterialElement track = UiMaterialElement::hud_health_track;
+    UiMaterialElement filled = UiMaterialElement::hud_health_fill;
+    if (bar.kind == HudBarKind::barrier) {
+        track = UiMaterialElement::hud_barrier_track;
+        filled = UiMaterialElement::hud_barrier_fill;
+    } else if (bar.kind == HudBarKind::experience) {
+        track = UiMaterialElement::hud_resource_track;
+        filled = UiMaterialElement::hud_resource_fill;
+    }
+    if (!assets.draw_to(ui_material_sprite(track), bounds)) {
+        DrawRectangleRec(bounds, Color{20, 23, 31, 230});
+    }
+    const Rectangle fill_bounds{bar.bounds.x + 1.0F, bar.bounds.y + 1.0F,
         std::max(0.0F, bar.bounds.width - 2.0F) * clamped_ratio(bar.ratio),
-        std::max(0.0F, bar.bounds.height - 2.0F)}, fill);
-    DrawRectangleLinesEx(bounds, 1.0F, Color{8, 10, 16, 255});
+        std::max(0.0F, bar.bounds.height - 2.0F)};
+    if (fill_bounds.width > 0.0F
+            && !assets.draw_to(ui_material_sprite(filled), fill_bounds)) {
+        DrawRectangleRec(fill_bounds, fill);
+    }
 }
 
 }  // namespace
@@ -330,16 +346,20 @@ void draw_panel_text(Font font, const HudRect& bounds, const HudText96& text,
 }
 
 void draw_context_notice(Font font, const HudRect& bounds,
-    const HudText96& text, HudNoticeKind kind, Color color) noexcept {
+    const HudText96& text, HudNoticeKind kind, Color color,
+    bool abyss, const MaterialPack& assets) noexcept {
     if (kind == HudNoticeKind::none || text.bytes[0] == '\0') return;
     const bool urgent = kind == HudNoticeKind::save_error
         || kind == HudNoticeKind::recovery_required
         || kind == HudNoticeKind::abyss_abandon;
     const Color fill = urgent ? Color{54, 18, 31, 238} : Color{15, 22, 33, 232};
-    DrawRectangleRounded({bounds.x, bounds.y, bounds.width, bounds.height},
-        0.18F, 6, fill);
-    DrawRectangleLinesEx({bounds.x, bounds.y, bounds.width, bounds.height},
-        1.0F, color);
+    const Rectangle rectangle{bounds.x, bounds.y, bounds.width, bounds.height};
+    if (!assets.draw_to(ui_material_sprite(abyss
+            ? UiMaterialElement::hud_notice_abyss
+            : UiMaterialElement::hud_notice), rectangle)) {
+        DrawRectangleRounded(rectangle, 0.18F, 6, fill);
+        DrawRectangleLinesEx(rectangle, 1.0F, color);
+    }
     draw_panel_text(font, bounds, text, 17.0F, color);
 }
 
@@ -459,6 +479,12 @@ void HudRenderer::draw_material_loot(
 
 void HudRenderer::draw(const HudViewModel& view,
     const HudLayout& layout) const noexcept {
+    static const MaterialPack unavailable_assets{};
+    draw(view, layout, unavailable_assets);
+}
+
+void HudRenderer::draw(const HudViewModel& view,
+    const HudLayout& layout, const MaterialPack& assets) const noexcept {
     if (!IsWindowReady()) return;
     const HudFontSelectionPlan selection =
         make_hud_font_selection_plan(font_ready_);
@@ -473,9 +499,13 @@ void HudRenderer::draw(const HudViewModel& view,
     const HudPalette palette = hud_palette();
     const HudReadabilityStyle style = hud_readability_style();
     if (plan.bar_count != 0U) {
-        DrawRectangleRounded({layout.player_panel.x, layout.player_panel.y,
-            layout.player_panel.width, layout.player_panel.height}, 0.08F, 6,
-            Color{7, 10, 17, 220});
+        const Rectangle panel_bounds{layout.player_panel.x, layout.player_panel.y,
+            layout.player_panel.width, layout.player_panel.height};
+        if (!assets.draw_to(ui_material_sprite(UiMaterialElement::hud_panel),
+                panel_bounds)) {
+            DrawRectangleRounded(panel_bounds, 0.08F, 6,
+                Color{7, 10, 17, 220});
+        }
 
         char text[96]{};
         for (std::size_t index = 0U; index < plan.bar_count; ++index) {
@@ -504,7 +534,7 @@ void HudRenderer::draw(const HudViewModel& view,
                 bar.bounds.y - (2.0F * layout.scale)},
                 style.player_bar_font_size * layout.scale,
                 palette.text, style.outline_pixels);
-            draw_player_bar(bar);
+            draw_player_bar(bar, assets);
         }
         if (plan.low_health_emphasis) {
             DrawRectangleLinesEx({layout.player_panel.x, layout.player_panel.y,
@@ -521,8 +551,18 @@ void HudRenderer::draw(const HudViewModel& view,
             const float tag_x = layout.player_panel.x
                 + ((12.0F + static_cast<float>(index) * 64.0F) * layout.scale);
             const float tag_y = layout.player_panel.y + (122.0F * layout.scale);
-            DrawRectangleRounded({tag_x, tag_y, 56.0F * layout.scale,
-                18.0F * layout.scale}, 0.18F, 4, Color{30, 39, 55, 235});
+            UiMaterialElement tag_material = UiMaterialElement::hud_status_slow;
+            if (plan.tags[index] == HudStatusTagKind::corrosion) {
+                tag_material = UiMaterialElement::hud_status_corrosion;
+            } else if (plan.tags[index] == HudStatusTagKind::invulnerable) {
+                tag_material = UiMaterialElement::hud_status_invulnerable;
+            }
+            const Rectangle tag_bounds{tag_x, tag_y, 56.0F * layout.scale,
+                18.0F * layout.scale};
+            if (!assets.draw_to(ui_material_sprite(tag_material), tag_bounds)) {
+                DrawRectangleRounded(tag_bounds, 0.18F, 4,
+                    Color{30, 39, 55, 235});
+            }
             draw_hud_text(draw_font, status_tag_label(plan.tags[index]),
                 {tag_x + (8.0F * layout.scale), tag_y + (1.0F * layout.scale)},
                 style.status_tag_font_size * layout.scale, palette.text,
@@ -530,9 +570,14 @@ void HudRenderer::draw(const HudViewModel& view,
         }
     }
     if (objective.visible) {
-        DrawRectangleRounded({objective.bounds.x, objective.bounds.y,
-            objective.bounds.width, objective.bounds.height}, 0.12F, 6,
-            objective.abyss ? Color{47, 18, 47, 228} : Color{7, 10, 17, 220});
+        const Rectangle bounds{objective.bounds.x, objective.bounds.y,
+            objective.bounds.width, objective.bounds.height};
+        if (!assets.draw_to(ui_material_sprite(
+                UiMaterialElement::hud_objective_panel), bounds)) {
+            DrawRectangleRounded(bounds, 0.12F, 6,
+                objective.abyss ? Color{47, 18, 47, 228}
+                                : Color{7, 10, 17, 220});
+        }
         draw_panel_text(draw_font, objective.bounds, objective.primary,
             style.objective_primary_font_size * layout.scale,
             objective.abyss ? palette.chaos : palette.text);
@@ -542,9 +587,12 @@ void HudRenderer::draw(const HudViewModel& view,
             style.objective_secondary_font_size * layout.scale, palette.text);
     }
     if (navigation.visible) {
-        DrawRectangleRounded({navigation.bounds.x, navigation.bounds.y,
-            navigation.bounds.width, navigation.bounds.height}, 0.12F, 6,
-            Color{7, 10, 17, 220});
+        const Rectangle bounds{navigation.bounds.x, navigation.bounds.y,
+            navigation.bounds.width, navigation.bounds.height};
+        if (!assets.draw_to(ui_material_sprite(
+                UiMaterialElement::hud_navigation_panel), bounds)) {
+            DrawRectangleRounded(bounds, 0.12F, 6, Color{7, 10, 17, 220});
+        }
         draw_panel_text(draw_font, navigation.bounds, navigation.primary,
             style.navigation_primary_font_size * layout.scale, palette.text);
         HudRect ecology = navigation.bounds;
@@ -562,10 +610,12 @@ void HudRenderer::draw(const HudViewModel& view,
     draw_context_notice(draw_font, context.primary_bounds, context.primary,
         context.primary_kind, context.primary_kind == HudNoticeKind::save_error
             ? palette.error : context.primary_abyss
-                ? hud_palette_color(HudPaletteId::chaos) : palette.text);
+                ? hud_palette_color(HudPaletteId::chaos) : palette.text,
+        context.primary_abyss, assets);
     draw_context_notice(draw_font, context.secondary_bounds, context.secondary,
         context.secondary_kind, context.secondary_abyss
-            ? hud_palette_color(HudPaletteId::chaos) : palette.text);
+            ? hud_palette_color(HudPaletteId::chaos) : palette.text,
+        context.secondary_abyss, assets);
 }
 
 void CombatRenderer::draw_abyss_hud(
@@ -582,7 +632,7 @@ void CombatRenderer::draw_abyss_hud(
 }
 
 void CombatRenderer::draw_hud() const noexcept {
-    hud_renderer_.draw(hud_model_, hud_layout_);
+    hud_renderer_.draw(hud_model_, hud_layout_, material_pack_);
 }
 
 }  // namespace arpg::platform

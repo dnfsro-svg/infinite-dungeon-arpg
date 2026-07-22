@@ -29,6 +29,10 @@ namespace {
             && id <= MaterialSpriteId::bag_frame_se) {
         return MaterialAtlasId::items_ui;
     }
+    if (id >= MaterialSpriteId::ui_hud_panel
+            && id <= MaterialSpriteId::ui_reinforcement_cancel) {
+        return MaterialAtlasId::ui_material;
+    }
     switch (id) {
     case MaterialSpriteId::environment_floor_fire:
     case MaterialSpriteId::environment_door_fire:
@@ -496,6 +500,22 @@ bool MaterialPack::draw(MaterialSpriteId id, Vector2 foot_position,
         frame->source.width * scale, frame->source.height * scale};
     texture_api_.draw_material(color_texture, material_texture, source,
         destination, {0.0F, 0.0F}, 0.0F, tint, {});
+    ++sprite_draw_counts_[static_cast<std::size_t>(id)];
+    return true;
+}
+
+bool MaterialPack::draw_to(MaterialSpriteId id, Rectangle destination,
+    Color tint) const noexcept {
+    if (!can_draw(id) || destination.width <= 0.0F
+            || destination.height <= 0.0F) {
+        return false;
+    }
+    const MaterialManifestDefinition manifest = default_material_manifest();
+    const MaterialFrameDefinition* const frame = find_frame(manifest, id);
+    if (frame == nullptr || !state_.available(frame->atlas)) return false;
+    const std::size_t index = atlas_index(frame->atlas);
+    texture_api_.draw_material(color_textures_[index], material_textures_[index],
+        frame->source, destination, {0.0F, 0.0F}, 0.0F, tint, {});
     ++sprite_draw_counts_[static_cast<std::size_t>(id)];
     return true;
 }

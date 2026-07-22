@@ -125,7 +125,9 @@ bool capture(const std::filesystem::path& root, const Resolution& resolution,
     std::optional<arpg::dungeon::DungeonElement> showcase_ecology = std::nullopt,
     platform::Stage12MaterialRuntimeStatus* material_status = nullptr,
     bool hide_showcase_monsters = false,
-    const char* baseline_image_name = nullptr) {
+    const char* baseline_image_name = nullptr,
+    platform::Stage12UiShowcase ui_showcase =
+        platform::Stage12UiShowcase::none) {
     const std::filesystem::path capture = root / (image_name == nullptr
         ? resolution.name : image_name);
     platform::RaylibHostConfig config{};
@@ -143,6 +145,7 @@ bool capture(const std::filesystem::path& root, const Resolution& resolution,
     config.stage12_material_showcase_ecology = showcase_ecology;
     config.stage12_material_runtime_status = material_status;
     config.stage12_material_showcase_hide_monsters = hide_showcase_monsters;
+    config.stage12_ui_showcase = ui_showcase;
     if (baseline_image_name != nullptr) {
         config.stage12_material_baseline_capture_file =
             root / baseline_image_name;
@@ -231,6 +234,25 @@ int main(int argc, char** argv) {
         && every_resource_drawn(item_runtime.equipment_slot_draws)
         && every_resource_drawn(item_runtime.rarity_draws)
         && every_resource_drawn(item_runtime.material_draws);
+    const bool ui_baseline_ok = capture(root, kResolutions[0],
+        "ui-baseline-1280x720.png");
+    platform::Stage12MaterialRuntimeStatus ui_runtime{};
+    const bool ui_gallery_ok = capture(root, kResolutions[0],
+        "ui-gallery-1280x720.png", false, false, std::nullopt,
+        &ui_runtime, false, nullptr,
+        platform::Stage12UiShowcase::material_gallery);
+    const bool inventory_ui_ok = capture(root, kResolutions[0],
+        "ui-inventory-1280x720.png", false, false, std::nullopt,
+        nullptr, false, nullptr, platform::Stage12UiShowcase::inventory);
+    const bool skill_ui_ok = capture(root, kResolutions[0],
+        "ui-skill-stones-1280x720.png", false, false, std::nullopt,
+        nullptr, false, nullptr, platform::Stage12UiShowcase::skill_stones);
+    const bool pause_ui_ok = capture(root, kResolutions[0],
+        "ui-pause-1280x720.png", false, false, std::nullopt,
+        nullptr, false, nullptr, platform::Stage12UiShowcase::pause);
+    const bool ui_runtime_ok = ui_gallery_ok
+        && ui_runtime.ui_material_resident
+        && every_resource_drawn(ui_runtime.ui_material_draws);
     const bool showcase_ok = capture(root, kResolutions[0],
         "monsters-1280x720.png", true, true);
     platform::Stage12MaterialRuntimeStatus water_runtime{};
@@ -312,6 +334,15 @@ int main(int argc, char** argv) {
            << "items_ui_pair=" << (item_runtime.items_ui_resident
                 ? "resident" : "missing") << '\n'
            << "item_runtime_draws=" << (item_runtime_ok ? "pass" : "fail") << '\n'
+           << "ui_material_pair=" << (ui_runtime.ui_material_resident
+                ? "resident" : "missing") << '\n'
+           << "ui_runtime_draws=" << (ui_runtime_ok ? "pass" : "fail") << '\n'
+           << "ui_baseline_screenshot=ui-baseline-1280x720.png\n"
+           << "hud_ui_screenshot=ui-baseline-1280x720.png\n"
+           << "ui_gallery_screenshot=ui-gallery-1280x720.png\n"
+           << "inventory_ui_screenshot=ui-inventory-1280x720.png\n"
+           << "skill_ui_screenshot=ui-skill-stones-1280x720.png\n"
+           << "pause_ui_screenshot=ui-pause-1280x720.png\n"
            << "water_monster_screenshot=water-monsters-1280x720.png\n"
            << "lightning_monster_screenshot=lightning-monsters-1280x720.png\n"
            << "lightning_background_screenshot=lightning-background-1280x720.png\n"
@@ -363,14 +394,16 @@ int main(int argc, char** argv) {
            << "chaos_hazard_drawn=" << (chaos_runtime.chaos_hazard_draw.drawn ? "pass" : "fail") << '\n'
            << "f12_screenshot=f12-monsters-1280x720.png/stage8-equipment-loot.png\n"
            << "screenshot_isolation=" << (f12_ok ? "pass" : "fail") << '\n'
-           << "screenshot_decode=" << (captures_ok && showcase_ok && item_baseline_ok && item_showcase_ok && water_showcase_ok && lightning_showcase_ok && lightning_background_ok && chaos_showcase_ok && chaos_background_ok && f12_ok ? "pass" : "fail") << '\n'
-           << "result=" << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && item_baseline_ok && item_runtime_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "pass" : "fail")
+           << "screenshot_decode=" << (captures_ok && showcase_ok && item_baseline_ok && item_showcase_ok && ui_baseline_ok && ui_gallery_ok && inventory_ui_ok && skill_ui_ok && pause_ui_ok && water_showcase_ok && lightning_showcase_ok && lightning_background_ok && chaos_showcase_ok && chaos_background_ok && f12_ok ? "pass" : "fail") << '\n'
+           << "result=" << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && item_baseline_ok && item_runtime_ok && ui_runtime_ok && ui_baseline_ok && inventory_ui_ok && skill_ui_ok && pause_ui_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "pass" : "fail")
            << '\n';
     std::cout << "stage12 material formal "
-              << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && item_baseline_ok && item_runtime_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "PASS" : "FAIL")
+              << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && item_baseline_ok && item_runtime_ok && ui_runtime_ok && ui_baseline_ok && inventory_ui_ok && skill_ui_ok && pause_ui_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "PASS" : "FAIL")
               << std::endl;
     return report && captures_ok && fallback_capture && !error && manifest_ok
-        && showcase_ok && item_baseline_ok && item_runtime_ok && water_runtime_ok && lightning_runtime_ok
+        && showcase_ok && item_baseline_ok && item_runtime_ok && ui_runtime_ok
+        && ui_baseline_ok && inventory_ui_ok && skill_ui_ok && pause_ui_ok
+        && water_runtime_ok && lightning_runtime_ok
         && lightning_background_ok && chaos_runtime_ok && chaos_background_ok
         && f12_ok && input_hole_ok ? 0 : 1;
 }

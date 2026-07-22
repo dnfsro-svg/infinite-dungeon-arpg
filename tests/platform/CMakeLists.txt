@@ -35,6 +35,7 @@ if(TARGET arpg_raylib)
         ground_loot_view_tests.cpp
         material_loot_view_tests.cpp
         material_bag_renderer_tests.cpp
+        ui_material_slice_tests.cpp
         audio_asset_validation_tests.cpp
         material_asset_validation_tests.cpp
         material_animation_tests.cpp
@@ -76,6 +77,13 @@ if(TARGET arpg_raylib)
         COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/item_material_asset_pipeline_tests.py")
     set_tests_properties(stage12.item_material_asset_pipeline PROPERTIES
+        LABELS "headless;platform;assets;stage12"
+        TIMEOUT 120)
+
+    add_test(NAME stage12.ui_material_asset_pipeline
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/ui_material_asset_pipeline_tests.py")
+    set_tests_properties(stage12.ui_material_asset_pipeline PROPERTIES
         LABELS "headless;platform;assets;stage12"
         TIMEOUT 120)
 

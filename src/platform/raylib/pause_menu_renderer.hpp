@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pause_menu_view.hpp"
+#include "material_pack.hpp"
 
 #include <raylib.h>
 
@@ -46,7 +47,8 @@ public:
     [[nodiscard]] bool initialize() noexcept;
     void shutdown() noexcept;
     [[nodiscard]] bool has_cjk_font() const noexcept { return owns_font_; }
-    void draw(const PauseMenuState& state) const noexcept;
+    void draw(const PauseMenuState& state,
+        const MaterialPack& material_pack) const noexcept;
 
 private:
     Font font_{};

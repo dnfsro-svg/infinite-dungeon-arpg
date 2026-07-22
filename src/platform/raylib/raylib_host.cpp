@@ -15,6 +15,7 @@
 #include "pause_menu_renderer.hpp"
 #include "pause_menu_state.hpp"
 #include "pause_menu_view.hpp"
+#include "ui_material.hpp"
 #include "persistence/save_paths.hpp"
 #include "platform/settings/settings_store.hpp"
 #include "platform/settings/settings_types.hpp"
@@ -175,6 +176,29 @@ void present_frame_and_maybe_capture(const char* path) noexcept {
     if (image.data == nullptr) return;
     static_cast<void>(ExportImage(image, path));
     UnloadImage(image);
+}
+
+void draw_stage12_ui_material_gallery(const MaterialPack& assets) noexcept {
+    constexpr float kCell = 104.0F;
+    constexpr float kGap = 8.0F;
+    constexpr std::size_t kColumns = 8U;
+    constexpr std::size_t kRows = 5U;
+    const float width = kCell * static_cast<float>(kColumns)
+        + kGap * static_cast<float>(kColumns - 1U);
+    const float height = kCell * static_cast<float>(kRows)
+        + kGap * static_cast<float>(kRows - 1U);
+    const float left = (static_cast<float>(GetScreenWidth()) - width) * 0.5F;
+    const float top = (static_cast<float>(GetScreenHeight()) - height) * 0.5F;
+    DrawRectangleRounded({left - 16.0F, top - 16.0F,
+        width + 32.0F, height + 32.0F}, 0.025F, 6,
+        Color{3, 6, 11, 244});
+    for (std::size_t index{}; index < kUiMaterialSprites.size(); ++index) {
+        const std::size_t row = index / kColumns;
+        const std::size_t column = index % kColumns;
+        static_cast<void>(assets.draw_to(kUiMaterialSprites[index],
+            {left + static_cast<float>(column) * (kCell + kGap),
+             top + static_cast<float>(row) * (kCell + kGap), kCell, kCell}));
+    }
 }
 
 std::optional<std::string> host_screenshot_path(
@@ -2572,6 +2596,19 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 config, *stage17_validation_state, current);
             drain_events(*runtime.session(), renderer, feedback, audio,
                 stage17_validation_state.get());
+            if (config.stage12_ui_showcase == Stage12UiShowcase::inventory
+                    || config.stage12_ui_showcase
+                        == Stage12UiShowcase::skill_stones) {
+                inventory.open(*runtime.session(), current);
+                if (config.stage12_ui_showcase
+                        == Stage12UiShowcase::skill_stones) {
+                    inventory.show_skill_stones_page();
+                }
+            } else if (config.stage12_ui_showcase
+                    == Stage12UiShowcase::pause) {
+                pause_menu.screen = PauseScreen::root;
+                pause_menu.selected_row = 1U;
+            }
         }
 
         while (!exit_requested) {
@@ -3120,6 +3157,15 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                         renderer.material_sprite_draw_count(material_loot_sprite(
                             static_cast<items::MaterialId>(index)));
                 }
+                material_status.ui_material_resident =
+                    renderer.material_atlas_available(
+                        MaterialAtlasId::ui_material);
+                for (std::size_t index{}; index < kUiMaterialSprites.size();
+                     ++index) {
+                    material_status.ui_material_draws[index] =
+                        renderer.material_sprite_draw_count(
+                            kUiMaterialSprites[index]);
+                }
             }
 // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN presented_semantics
             stage11d_validation_state.target_visible = stage11d_target_visible(
@@ -3146,7 +3192,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     stage11b_validation_state.fixed_ticks;
             }
             if (pause_menu.screen != PauseScreen::closed) {
-                pause_menu_renderer.draw(pause_menu);
+                pause_menu_renderer.draw(pause_menu, renderer.material_pack());
                 if (config.stage11b_validation
                         == Stage11BValidationScenario::corrupt_defaults
                     && pause_menu.message == kSettingsRecoveredDefaults
@@ -3230,6 +3276,10 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             if (!capture_path.has_value() && stage12_item_baseline_frame) {
                 capture_path =
                     config.stage12_material_baseline_capture_file->string();
+            }
+            if (config.stage12_ui_showcase
+                    == Stage12UiShowcase::material_gallery) {
+                draw_stage12_ui_material_gallery(renderer.material_pack());
             }
             if (!capture_path.has_value()
                     && (validation_reached || loot_validation_visible_capture
