@@ -354,8 +354,10 @@ enum class Stage17ValidationStep : std::uint8_t {
 enum class Stage17Capture : std::uint8_t {
     none,
     initial,
+    draw_windup,
     draw_hit,
     storm_array,
+    storm_aerial,
     storm_finisher,
     restarted,
 };
@@ -370,24 +372,31 @@ struct Stage17SkillStonesValidationState final {
     bool initial_recorded{};
     bool initial_captured{};
     bool draw_accepted{};
+    bool draw_windup_captured{};
     bool draw_captured{};
     bool storm_accepted{};
     bool storm_lock_recorded{};
     bool storm_center_locked{true};
     bool storm_player_moved{};
     bool storm_array_captured{};
+    bool storm_aerial_captured{};
     bool storm_finisher_captured{};
     bool restart_captured{};
     bool restart_persisted{};
     bool restart_cooldowns_zero{};
     bool public_input_path{};
     bool production_transactions{};
+    bool active_skill_atlases_ready{};
+    bool storm_invulnerable_seen{};
+    bool storm_finisher_phase_seen{};
     bool aborted_by_death{};
     std::array<bool, 3> empty_slots_none{};
     std::uint32_t draw_hit_count{};
     std::uint32_t storm_strike_hit_count{};
     std::uint32_t storm_finisher_hit_count{};
     std::uint8_t storm_strike_count{};
+    std::uint8_t storm_sword_peak{};
+    std::uint16_t draw_frame_peak{};
     std::uint32_t presented_frames{};
 };
 
@@ -630,7 +639,9 @@ void stage17_click(PhysicalKeySnapshot& snapshot,
         }
         break;
     case Stage17ValidationStep::storm_active:
-        stage17_apply_movement(snapshot, input_settings, {-1, -1});
+        if (!state.storm_player_moved) {
+            stage17_apply_movement(snapshot, input_settings, {-1, -1});
+        }
         break;
     case Stage17ValidationStep::open_inventory:
     case Stage17ValidationStep::restart_open_inventory:
@@ -754,7 +765,16 @@ void observe_stage17_snapshot(const RaylibHostConfig& config,
     if (!current.combat.has_value()) return;
     const combat::CombatSnapshot& combat_state = *current.combat;
     if (state.step == Stage17ValidationStep::draw_active
-            && state.draw_captured
+            && combat_state.active_skill.id == skills::ActiveSkillId::draw_slash) {
+        state.draw_frame_peak = std::max(state.draw_frame_peak,
+            combat_state.active_skill.frame_index);
+        if (!state.draw_windup_captured
+                && combat_state.active_skill.frame_index >= 6U
+                && combat_state.active_skill.frame_index < 18U) {
+            state.capture_pending = Stage17Capture::draw_windup;
+        }
+    } else if (state.step == Stage17ValidationStep::draw_active
+            && state.draw_windup_captured && state.draw_captured
             && combat_state.active_skill.id == skills::ActiveSkillId::none) {
         state.step = Stage17ValidationStep::approach_storm;
     }
@@ -774,15 +794,24 @@ void observe_stage17_snapshot(const RaylibHostConfig& config,
         }
         state.storm_strike_count = std::max(
             state.storm_strike_count, skill.strike_index);
+        state.storm_sword_peak = std::max(state.storm_sword_peak,
+            skill.spawned_sword_count);
+        state.storm_invulnerable_seen = state.storm_invulnerable_seen
+            || skill.player_invulnerable;
         if (skill.phase == combat::ActiveSkillPhase::strikes
                 && !state.storm_array_captured) {
             state.capture_pending = Stage17Capture::storm_array;
+        }
+        if (skill.spawned_sword_count > 12U && !state.storm_aerial_captured) {
+            state.capture_pending = Stage17Capture::storm_aerial;
         }
         if (skill.phase == combat::ActiveSkillPhase::finisher
                 && !state.storm_finisher_captured) {
             state.capture_pending = Stage17Capture::storm_finisher;
         }
-    } else if (state.storm_array_captured
+        state.storm_finisher_phase_seen = state.storm_finisher_phase_seen
+            || skill.phase == combat::ActiveSkillPhase::finisher;
+    } else if (state.storm_array_captured && state.storm_aerial_captured
             && state.storm_finisher_captured) {
         state.step = Stage17ValidationStep::open_inventory;
     }
@@ -823,10 +852,12 @@ void observe_stage17_inventory(const RaylibHostConfig& config,
     const Stage17Capture capture) noexcept {
     switch (capture) {
     case Stage17Capture::initial: return "01-new-default-1280x720.png";
-    case Stage17Capture::draw_hit: return "02-draw-slash-hit-1280x720.png";
-    case Stage17Capture::storm_array: return "03-storm-array-1280x720.png";
-    case Stage17Capture::storm_finisher: return "04-storm-finisher-1280x720.png";
-    case Stage17Capture::restarted: return "05-restarted-loadout-1280x720.png";
+    case Stage17Capture::draw_windup: return "02-draw-slash-windup-1280x720.png";
+    case Stage17Capture::draw_hit: return "03-draw-slash-hit-1280x720.png";
+    case Stage17Capture::storm_array: return "04-storm-ground-array-1280x720.png";
+    case Stage17Capture::storm_aerial: return "05-storm-aerial-array-1280x720.png";
+    case Stage17Capture::storm_finisher: return "06-storm-finisher-1280x720.png";
+    case Stage17Capture::restarted: return "07-restarted-loadout-1280x720.png";
     case Stage17Capture::none: break;
     }
     return nullptr;
@@ -857,11 +888,17 @@ void mark_stage17_capture_complete(
         state.initial_captured = true;
         state.step = Stage17ValidationStep::empty_slot_3;
         break;
+    case Stage17Capture::draw_windup:
+        state.draw_windup_captured = true;
+        break;
     case Stage17Capture::draw_hit:
         state.draw_captured = true;
         break;
     case Stage17Capture::storm_array:
         state.storm_array_captured = true;
+        break;
+    case Stage17Capture::storm_aerial:
+        state.storm_aerial_captured = true;
         break;
     case Stage17Capture::storm_finisher:
         state.storm_finisher_captured = true;
@@ -934,10 +971,15 @@ void write_stage17_validation_summary(const RaylibHostConfig& config,
         const bool passed = production
             ? state.step == Stage17ValidationStep::complete
                 && state.initial_captured && state.draw_accepted
-                && state.draw_captured && state.storm_accepted
-                && state.storm_array_captured && state.storm_finisher_captured
+                && state.draw_windup_captured && state.draw_captured
+                && state.storm_accepted && state.storm_array_captured
+                && state.storm_aerial_captured && state.storm_finisher_captured
                 && state.storm_center_locked && state.storm_player_moved
-                && state.public_input_path && state.production_transactions
+                && state.active_skill_atlases_ready
+                && state.storm_invulnerable_seen
+                && state.storm_finisher_phase_seen
+                && state.public_input_path
+                && state.production_transactions
                 && empty_slots
             : state.step == Stage17ValidationStep::complete
                 && state.restart_captured && state.restart_persisted
@@ -957,12 +999,25 @@ void write_stage17_validation_summary(const RaylibHostConfig& config,
                << stage17_support_none_count(state.initial_loadout) << '\n'
                << "empty_slots_none=" << (empty_slots ? 1 : 0) << '\n'
                << "draw_accepted=" << (state.draw_accepted ? 1 : 0) << '\n'
+               << "draw_windup_captured="
+               << (state.draw_windup_captured ? 1 : 0) << '\n'
+               << "draw_frame_peak=" << state.draw_frame_peak << '\n'
                << "draw_hit_count=" << state.draw_hit_count << '\n'
                << "storm_accepted=" << (state.storm_accepted ? 1 : 0) << '\n'
                << "storm_strike_hit_count=" << state.storm_strike_hit_count << '\n'
                << "storm_finisher_hit_count=" << state.storm_finisher_hit_count << '\n'
                << "storm_strike_count="
                << static_cast<unsigned>(state.storm_strike_count) << '\n'
+               << "storm_sword_peak="
+               << static_cast<unsigned>(state.storm_sword_peak) << '\n'
+               << "storm_invulnerable_seen="
+               << (state.storm_invulnerable_seen ? 1 : 0) << '\n'
+               << "storm_finisher_phase_seen="
+               << (state.storm_finisher_phase_seen ? 1 : 0) << '\n'
+               << "storm_aerial_captured="
+               << (state.storm_aerial_captured ? 1 : 0) << '\n'
+               << "active_skill_atlases_ready="
+               << (state.active_skill_atlases_ready ? 1 : 0) << '\n'
                << "storm_center_locked=" << (state.storm_center_locked ? 1 : 0) << '\n'
                << "storm_player_moved=" << (state.storm_player_moved ? 1 : 0) << '\n'
                << "public_input_path=" << (state.public_input_path ? 1 : 0) << '\n'
@@ -2422,6 +2477,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
 // STAGE11D_LOOT_VALIDATION_SEAM_END runtime_state
         const auto stage17_validation_state =
             std::make_unique<Stage17SkillStonesValidationState>();
+        stage17_validation_state->active_skill_atlases_ready =
+            renderer.active_skill_assets_ready();
         bool stage10_validation_captured = false;
         const std::string validation_capture_prefix = config.validation_capture
             ? (*save_directory / "stage8-validation-").string()

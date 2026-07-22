@@ -60,6 +60,7 @@ class ActiveSkillRenderer final {
 public:
     [[nodiscard]] bool initialize_resources() noexcept;
     void shutdown_resources() noexcept;
+    [[nodiscard]] bool assets_ready() const noexcept;
     void draw_world(const combat::CombatSnapshot& snapshot,
         const combat::CombatEvent* last_event,
         float width, float height) const noexcept;

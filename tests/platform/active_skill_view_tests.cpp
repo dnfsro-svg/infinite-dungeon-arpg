@@ -158,9 +158,11 @@ arpg::test::Failure storm_finisher_persists_from_snapshot_without_hit_event()
     snapshot.active_skill.locked_center = {4.0F, -2.0F, 0.0F};
     snapshot.active_skill.phase = combat::ActiveSkillPhase::finisher;
     snapshot.active_skill.elapsed_ticks = kFinisherTick;
+    snapshot.active_skill.frame_index = 129U;
     platform::ActiveSkillEffectPlan plan =
         platform::make_active_skill_effect_plan(snapshot, nullptr);
     ARPG_REQUIRE(plan.storm_swords.finisher_visible);
+    ARPG_REQUIRE(plan.storm_swords.atlas_frame == 17U);
     ARPG_REQUIRE(plan.screen_flash_alpha > 0.0F);
 
     snapshot.active_skill.phase = combat::ActiveSkillPhase::recovery;

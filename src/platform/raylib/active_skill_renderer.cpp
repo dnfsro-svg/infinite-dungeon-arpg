@@ -17,6 +17,31 @@ constexpr std::uint64_t kFlashTicks = 7U;
 constexpr std::uint16_t kDrawSlashImpactTick = 46U;
 constexpr std::uint16_t kStormFinisherTick = 324U;
 constexpr std::size_t kStormGroundSwordCount = 12U;
+constexpr std::size_t kStormAtlasPreFinisherFrames = 16U;
+constexpr std::size_t kStormAtlasFinisherFirstFrame = 17U;
+constexpr std::size_t kStormAtlasFinisherFrameCount = 3U;
+constexpr std::uint16_t kStormFinisherFramesBegin = 129U;
+
+[[nodiscard]] std::size_t storm_atlas_frame(
+    const combat::ActiveSkillSnapshot& skill) noexcept {
+    const bool finisher_window = skill.phase == combat::ActiveSkillPhase::finisher
+        || (skill.phase == combat::ActiveSkillPhase::recovery
+            && skill.elapsed_ticks >= kStormFinisherTick
+            && skill.elapsed_ticks <= kStormFinisherTick + kFlashTicks);
+    if (finisher_window) {
+        const std::size_t offset = skill.frame_index
+            > kStormFinisherFramesBegin
+            ? static_cast<std::size_t>(skill.frame_index
+                - kStormFinisherFramesBegin)
+            : 0U;
+        return kStormAtlasFinisherFirstFrame + std::min<std::size_t>(
+            offset, kStormAtlasFinisherFrameCount - 1U);
+    }
+    return std::min<std::size_t>(
+        static_cast<std::size_t>(skill.frame_index)
+            * kStormAtlasPreFinisherFrames / kStormFinisherFramesBegin,
+        kStormAtlasPreFinisherFrames - 1U);
+}
 
 [[nodiscard]] bool recent_finisher_event(
     const combat::CombatSnapshot& snapshot,
@@ -188,8 +213,7 @@ ActiveSkillEffectPlan make_active_skill_effect_plan(
         result.storm_swords.use_atlas = result.storm_swords.visible
             || skill.phase == combat::ActiveSkillPhase::finisher;
         result.storm_swords.atlas = ActiveSkillAtlasId::storm_swords;
-        result.storm_swords.atlas_frame = std::min<std::size_t>(
-            static_cast<std::size_t>(skill.frame_index) * 24U / 144U, 23U);
+        result.storm_swords.atlas_frame = storm_atlas_frame(skill);
         for (std::size_t index = 0U;
              index < result.storm_swords.sword_count; ++index) {
             const bool aerial = index >= kStormGroundSwordCount;
@@ -256,6 +280,11 @@ bool ActiveSkillRenderer::initialize_resources() noexcept {
 
 void ActiveSkillRenderer::shutdown_resources() noexcept {
     assets_.unload();
+}
+
+bool ActiveSkillRenderer::assets_ready() const noexcept {
+    return assets_.ready(ActiveSkillAtlasId::draw_slash)
+        && assets_.ready(ActiveSkillAtlasId::storm_swords);
 }
 
 void ActiveSkillRenderer::draw_hud(const ActiveSkillHudModel& model,

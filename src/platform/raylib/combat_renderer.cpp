@@ -57,6 +57,10 @@ void CombatRenderer::shutdown_resources() noexcept {
     death_overlay_.shutdown();
 }
 
+bool CombatRenderer::active_skill_assets_ready() const noexcept {
+    return active_skill_renderer_.assets_ready();
+}
+
 DoorRenderDecision door_render_decision(
     DoorVisualMode mode,
     dungeon::ExitDirection direction) noexcept {
