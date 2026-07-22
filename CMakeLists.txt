@@ -28,8 +28,12 @@ if(WIN32)
             "'${ARPG_WINDOWS_SDK}'")
     endif()
 else()
-    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang)$")
-        message(FATAL_ERROR "Linux core builds require GCC or Clang")
+    if(
+        NOT CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang)$"
+        OR NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang)$"
+    )
+        message(FATAL_ERROR
+            "Non-Windows core builds require GNU or Clang C and CXX compilers")
     endif()
 
     if(ARPG_BUILD_GRAPHICS)

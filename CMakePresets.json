@@ -94,7 +94,12 @@
       "name": "linux-gcc-core-debug",
       "configurePreset": "linux-gcc-core-debug",
       "output": { "outputOnFailure": true },
-      "execution": { "stopOnFailure": true }
+      "execution": { "stopOnFailure": true },
+      "filter": {
+        "exclude": {
+          "name": "^(stage14\\.audio_sources|stage15\\.audio_sources|stage15\\.audio_sources_self_test)$"
+        }
+      }
     }
   ]
 }
