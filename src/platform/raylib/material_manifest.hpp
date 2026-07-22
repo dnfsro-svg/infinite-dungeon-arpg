@@ -27,7 +27,7 @@ struct MaterialManifestDefinition final {
     std::size_t clip_count{};
     const AnimationEventDefinition* events{};
     std::size_t event_count{};
-    std::size_t memory_budget_bytes{64U * 1024U * 1024U};
+    std::size_t memory_budget_bytes{256U * 1024U * 1024U};
 };
 
 namespace detail {
@@ -238,7 +238,7 @@ default_material_manifest() noexcept {
         sizeof(detail::kDefaultAnimationClips) / sizeof(detail::kDefaultAnimationClips[0]),
         detail::kDefaultAnimationEvents,
         sizeof(detail::kDefaultAnimationEvents) / sizeof(detail::kDefaultAnimationEvents[0]),
-        64U * 1024U * 1024U};
+        256U * 1024U * 1024U};
 }
 
 [[nodiscard]] constexpr MaterialSpriteId select_loot_sprite(

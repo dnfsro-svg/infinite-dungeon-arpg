@@ -57,12 +57,14 @@ struct MonsterAnimationClipDefinition final {
     std::uint16_t first_cell{};
     std::uint16_t frame_count{};
     std::uint8_t frames_per_second{18U};
+    std::uint8_t key_pose_count{4U};
 };
 
 struct MonsterAnimationFrame final {
     MaterialAtlasId atlas{MaterialAtlasId::water_bulwark};
     Rectangle source{};
     Vector2 foot_anchor{};
+    std::uint8_t key_pose_index{};
 };
 
 [[nodiscard]] MaterialSpriteId select_player_sprite(
@@ -89,7 +91,8 @@ struct MonsterAnimationFrame final {
 [[nodiscard]] std::optional<MonsterAnimationFrame> monster_animation_frame(
     const MonsterAnimationClipDefinition& clip, std::uint16_t frame) noexcept;
 [[nodiscard]] std::uint16_t monster_animation_frame_index(
-    const MonsterAnimationClipDefinition& clip, std::uint64_t world_tick) noexcept;
+    const MonsterAnimationClipDefinition& clip, std::uint64_t elapsed_ticks,
+    bool loop = true) noexcept;
 
 [[nodiscard]] MaterialSpriteId select_floor_sprite(
     dungeon::DungeonElement element) noexcept;

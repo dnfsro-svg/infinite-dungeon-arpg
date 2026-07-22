@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from math import pi, sin
+from math import floor
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter
+from PIL import Image, ImageChops, ImageEnhance
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -71,90 +71,65 @@ def alpha_bbox(image: Image.Image) -> tuple[int, int, int, int]:
     return bbox
 
 
-def transformed_actor(actor: Image.Image, index: int, role: str) -> Image.Image:
-    scale = 2
-    canvas = Image.new("RGBA", (CELL * scale, CELL * scale))
-    if index < 12:
-        local, count, state = index, 12, "idle"
-    elif index < 28:
-        local, count, state = index - 12, 16, "move"
-    elif index < 48:
-        local, count, state = index - 28, 20, "special"
-    elif index < 56:
-        local, count, state = index - 48, 8, "hurt"
-    else:
-        local, count, state = index - 56, 16, "death"
-    phase = 2.0 * pi * local / count
-    x_shift = 0
-    y_shift = round(sin(phase) * 3)
-    angle = 0.0
-    opacity = 255
-    width = 168 if role == "bulwark" else 158
-    height = 178 if role == "bulwark" else 184
-    if state == "move":
-        x_shift = round(sin(phase) * 7)
-        y_shift = round(abs(sin(phase)) * -7)
-        angle = sin(phase) * 2.2
-    elif state == "special":
-        x_shift = round(sin(phase) * 4)
-        y_shift = round(sin(phase * 2.0) * 3)
-        angle = sin(phase) * 3.0
-    elif state == "hurt":
-        x_shift = round((1.0 - local / count) * -10)
-        angle = -7.0 + local * 0.75
-    elif state == "death":
-        progress = local / (count - 1)
-        angle = -70.0 * progress
-        x_shift = round(-16 * progress)
-        y_shift = round(50 * progress)
-        opacity = round(255 - 95 * progress)
-    sprite = actor.resize((width, height), Image.Resampling.LANCZOS)
-    if state == "idle":
-        breathe = round(2.0 * sin(phase))
-        sprite = sprite.resize((width + breathe, height - breathe),
-            Image.Resampling.LANCZOS)
-    if state == "hurt":
-        white = Image.new("RGBA", sprite.size, (190, 236, 255, 0))
-        white.putalpha(sprite.getchannel("A").point(lambda alpha: alpha // 3))
-        sprite = Image.alpha_composite(sprite, white)
-    if opacity != 255:
-        sprite.putalpha(sprite.getchannel("A").point(lambda alpha: alpha * opacity // 255))
-    sprite = sprite.rotate(angle, Image.Resampling.BICUBIC, expand=True)
-    position = ((canvas.width - sprite.width) // 2 + x_shift,
-                canvas.height - sprite.height - 4 + y_shift)
-    canvas.alpha_composite(sprite, position)
+def pose_board_rows(role: str) -> list[list[Image.Image]]:
+    board = Image.open(
+        SOURCE / f"water-{role}-pose-board-alpha-v2.png").convert("RGBA")
+    rows: list[list[Image.Image]] = []
+    for row in range(5):
+        poses: list[Image.Image] = []
+        top = round(row * board.height / 5)
+        bottom = round((row + 1) * board.height / 5)
+        for column in range(4):
+            left = round(column * board.width / 4)
+            right = round((column + 1) * board.width / 4)
+            pose = board.crop((left, top, right, bottom))
+            pose = pose.crop(alpha_bbox(pose))
+            pose.thumbnail((184, 184), Image.Resampling.LANCZOS)
+            canvas = Image.new("RGBA", (CELL * 2, CELL * 2))
+            canvas.alpha_composite(pose,
+                ((canvas.width - pose.width) // 2, canvas.height - pose.height - 4))
+            poses.append(canvas)
+        rows.append(poses)
+    return rows
 
-    draw = ImageDraw.Draw(canvas, "RGBA")
-    if state == "special":
-        pulse = local / (count - 1)
-        radius = round(22 + 38 * sin(pi * pulse))
-        center = (140 if role == "support" else 133, 83)
-        for band in range(3):
-            inset = band * 8
-            draw.ellipse((center[0] - radius - inset, center[1] - radius - inset,
-                          center[0] + radius + inset, center[1] + radius + inset),
-                         outline=(72, 221, 255, 185 - band * 42), width=3)
-        if role == "bulwark":
-            draw.arc((94, 25, 184, 178), 252, 108,
-                     fill=(156, 240, 255, 220), width=6)
-    elif state == "move":
-        for drop in range(3):
-            dx = 55 - drop * 13 - (local * 4) % 18
-            dy = 156 + drop * 7
-            draw.ellipse((dx, dy, dx + 4, dy + 8), fill=(75, 205, 238, 145))
-    return canvas.resize((CELL, CELL), Image.Resampling.LANCZOS)
+
+def interpolate_pose(poses: list[Image.Image], frame: int,
+                     frame_count: int, loop: bool) -> Image.Image:
+    if loop:
+        position = frame * len(poses) / frame_count
+        first = floor(position) % len(poses)
+        second = (first + 1) % len(poses)
+    else:
+        position = frame * (len(poses) - 1) / (frame_count - 1)
+        first = min(floor(position), len(poses) - 1)
+        second = min(first + 1, len(poses) - 1)
+    amount = position - floor(position)
+    blended = Image.blend(poses[first], poses[second], amount)
+    return blended.resize((CELL, CELL), Image.Resampling.LANCZOS)
 
 
 def build_monster(role: str) -> None:
-    source = Image.open(SOURCE / f"water-{role}-alpha-v1.png").convert("RGBA")
-    actor = source.crop(alpha_bbox(source))
+    rows = pose_board_rows(role)
     atlas = Image.new("RGBA", (MONSTER_SIZE, MONSTER_SIZE))
-    for index in range(72):
-        frame = transformed_actor(actor, index, role)
-        atlas.alpha_composite(frame,
-            ((index % COLUMNS) * CELL, (index // COLUMNS) * CELL))
+    frame_index = 0
+    for row, frame_count, loop in (
+            (0, 12, True), (1, 16, True), (2, 20, False),
+            (3, 8, False), (4, 16, False)):
+        for local_frame in range(frame_count):
+            frame = interpolate_pose(
+                rows[row], local_frame, frame_count, loop)
+            atlas.alpha_composite(frame,
+                ((frame_index % COLUMNS) * CELL,
+                 (frame_index // COLUMNS) * CELL))
+            frame_index += 1
     atlas.save(OUTPUT / f"water_{role}.png")
     material_map(atlas).save(OUTPUT / f"water_{role}_material.png")
+
+
+def build_common_material_maps() -> None:
+    for name in ("environment", "actors", "effects_ui"):
+        color = Image.open(OUTPUT / f"{name}.png").convert("RGBA")
+        material_map(color).save(OUTPUT / f"{name}_material.png")
 
 
 def main() -> None:
@@ -162,6 +137,7 @@ def main() -> None:
     build_environment()
     build_monster("bulwark")
     build_monster("support")
+    build_common_material_maps()
     for name in ("water_environment", "water_bulwark", "water_support"):
         image = Image.open(OUTPUT / f"{name}.png")
         print(f"wrote {name}: {image.width}x{image.height} RGBA")

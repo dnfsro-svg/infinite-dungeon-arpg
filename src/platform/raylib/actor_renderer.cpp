@@ -39,7 +39,12 @@ const char* monster_phase_name(MonsterAiPhase phase) noexcept {
     return "?";
 }
 
-struct RenderActor final { Vec3 position{}; std::uint8_t monster_index{}; bool player{}; };
+struct RenderActor final {
+    Vec3 position{};
+    std::uint8_t monster_index{};
+    bool player{};
+    MonsterMaterialDrawPlan material_plan{};
+};
 
 bool render_actor_precedes(const RenderActor& lhs, const RenderActor& rhs) noexcept {
     if (lhs.position.y != rhs.position.y) return lhs.position.y < rhs.position.y;
@@ -300,25 +305,19 @@ bool draw_player_animation(const MaterialPack& material_pack,
 }
 
 bool draw_monster_animation(const MaterialPack& material_pack,
-    const MonsterSnapshot& monster, std::uint64_t world_tick,
+    const MonsterSnapshot& monster, const MonsterMaterialDrawPlan& plan,
     const ScreenProjection& projected, float hit_flash_seconds) noexcept {
-    const MonsterAnimationState state = select_monster_animation_state(
-        monster.ai_phase, hit_flash_seconds > 0.0F);
-    const MonsterAnimationClipDefinition* const clip = monster_animation_clip(
-        monster.id, state);
-    if (clip == nullptr) return false;
-    const auto frame = monster_animation_frame(*clip,
-        monster_animation_frame_index(*clip, world_tick));
-    if (!frame.has_value()) return false;
+    if (!plan.use_material_frame || !plan.frame.has_value()) return false;
+    const MonsterAnimationFrame& frame = *plan.frame;
     constexpr float kWaterMonsterScale = 0.92F;
     const float scale = kWaterMonsterScale * projected.scale;
-    const bool drawn = material_pack.draw_frame(frame->atlas, frame->source,
-        frame->foot_anchor, {projected.x, projected.y},
+    const bool drawn = material_pack.draw_frame(frame.atlas, frame.source,
+        frame.foot_anchor, {projected.x, projected.y},
         monster.facing == Facing::left, scale);
     if (drawn && hit_flash_seconds > 0.0F) {
         BeginBlendMode(BLEND_ADDITIVE);
-        static_cast<void>(material_pack.draw_frame(frame->atlas, frame->source,
-            frame->foot_anchor, {projected.x, projected.y},
+        static_cast<void>(material_pack.draw_frame(frame.atlas, frame.source,
+            frame.foot_anchor, {projected.x, projected.y},
             monster.facing == Facing::left, scale,
             Color{230, 248, 255, 175}));
         EndBlendMode();
@@ -483,7 +482,7 @@ MonsterBarVisualPlan make_monster_bar_visual_plan(
 
 void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
     const dungeon::DungeonSnapshot& current, float alpha, bool draw_debug,
-    const CombatFeedback& feedback) const noexcept {
+    const CombatFeedback& feedback) noexcept {
     if (!current.combat.has_value()) return;
     const float width = static_cast<float>(GetScreenWidth());
     const float height = static_cast<float>(GetScreenHeight());
@@ -492,15 +491,21 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
         ? *previous.combat : current_combat;
     std::array<RenderActor, kMonsterCapacity + 1> draw_items{};
     std::size_t draw_count = 0;
-    draw_items[draw_count++] = {current_combat.player.position, 0U, true};
+    draw_items[draw_count++] = {current_combat.player.position, 0U, true, {}};
     for (std::size_t index = 0; index < current_combat.monsters.size(); ++index) {
         const MonsterSnapshot& monster = current_combat.monsters[index];
-        if (!monster_visible(monster)) continue;
+        const MonsterMaterialDrawPlan material_plan =
+            monster_presenter_.collect_draw_plan(index, monster,
+                current_combat.tick,
+                feedback.target_flash_seconds(index) > 0.0F);
+        if (!material_plan.visible) continue;
         Vec3 position = monster.position;
         const MonsterSnapshot& previous_monster = previous_combat.monsters[index];
         if (monster.id == previous_monster.id && monster.generation == previous_monster.generation
-            && monster_visible(previous_monster)) position = interpolate(previous_monster.position, monster.position, alpha);
-        draw_items[draw_count++] = {position, static_cast<std::uint8_t>(index), false};
+            && previous_monster.active) position = interpolate(
+                previous_monster.position, monster.position, alpha);
+        draw_items[draw_count++] = {position, static_cast<std::uint8_t>(index),
+            false, material_plan};
         draw_monster_warning(monster, position, current.ecology, width, height);
         draw_blink_affix_warning(monster, position, width, height);
     }
@@ -544,7 +549,7 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
             const float hit_flash_seconds = feedback.target_flash_seconds(
                 item.monster_index);
             if (draw_monster_animation(material_pack_, monster,
-                    current_combat.tick, projected, hit_flash_seconds)
+                    item.material_plan, projected, hit_flash_seconds)
                 || draw_material_actor(material_pack_, sprite, monster.facing,
                     false, projected, hit_flash_seconds)) {
                 draw_monster_presentation(monster, item.position, current.ecology,

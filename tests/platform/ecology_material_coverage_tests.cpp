@@ -3,10 +3,12 @@
 #include "material_animation.hpp"
 #include "material_asset_validation.hpp"
 #include "material_manifest.hpp"
+#include "monster_material_presenter.hpp"
 #include "water_room_material_slice.hpp"
 
 #include <raylib.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -73,6 +75,34 @@ std::uint64_t frame_pixel_hash(const Color* pixels, int image_width,
         }
     }
     return hash;
+}
+
+struct OpaqueBounds final {
+    int width{};
+    int height{};
+};
+
+OpaqueBounds frame_opaque_bounds(const Color* pixels, int image_width,
+    const Rectangle& source) noexcept {
+    const int left = static_cast<int>(source.x);
+    const int top = static_cast<int>(source.y);
+    const int right = left + static_cast<int>(source.width);
+    const int bottom = top + static_cast<int>(source.height);
+    int min_x = right;
+    int min_y = bottom;
+    int max_x = left - 1;
+    int max_y = top - 1;
+    for (int y = top; y < bottom; ++y) {
+        for (int x = left; x < right; ++x) {
+            if (pixels[y * image_width + x].a <= 24U) continue;
+            min_x = (std::min)(min_x, x);
+            min_y = (std::min)(min_y, y);
+            max_x = (std::max)(max_x, x);
+            max_y = (std::max)(max_y, y);
+        }
+    }
+    return max_x < min_x || max_y < min_y
+        ? OpaqueBounds{} : OpaqueBounds{max_x - min_x + 1, max_y - min_y + 1};
 }
 
 arpg::test::Failure water_ecology_has_independent_loadable_color_and_material_atlases() noexcept {
@@ -166,6 +196,8 @@ arpg::test::Failure water_monsters_expose_complete_multiframe_state_groups() noe
             ARPG_REQUIRE(clip != nullptr);
             ARPG_REQUIRE(clip->atlas == kAtlases[monster_index]);
             ARPG_REQUIRE(clip->frame_count >= kMinimumFrames[state_index]);
+            ARPG_REQUIRE(clip->key_pose_count >= 4U);
+            std::array<bool, 4> key_poses_seen{};
             std::array<std::uint64_t, 20> hashes{};
             std::size_t unique_hashes{};
             for (std::uint16_t frame{}; frame < clip->frame_count; ++frame) {
@@ -173,6 +205,8 @@ arpg::test::Failure water_monsters_expose_complete_multiframe_state_groups() noe
                 ARPG_REQUIRE(current.has_value());
                 ARPG_REQUIRE(current->source.width > 1.0F);
                 ARPG_REQUIRE(current->source.height > 1.0F);
+                ARPG_REQUIRE(current->key_pose_index < key_poses_seen.size());
+                key_poses_seen[current->key_pose_index] = true;
                 if (frame > 0U) {
                     const auto previous = arpg::platform::monster_animation_frame(
                         *clip, static_cast<std::uint16_t>(frame - 1U));
@@ -189,10 +223,91 @@ arpg::test::Failure water_monsters_expose_complete_multiframe_state_groups() noe
                 if (!seen) hashes[unique_hashes++] = hash;
             }
             ARPG_REQUIRE(unique_hashes * 2U >= clip->frame_count);
+            for (const bool seen : key_poses_seen) ARPG_REQUIRE(seen);
         }
+        const auto* const idle = arpg::platform::monster_animation_clip(
+            kMonsters[monster_index], MonsterAnimationState::idle);
+        const auto* const death = arpg::platform::monster_animation_clip(
+            kMonsters[monster_index], MonsterAnimationState::death);
+        ARPG_REQUIRE(idle != nullptr);
+        ARPG_REQUIRE(death != nullptr);
+        const auto standing_frame = arpg::platform::monster_animation_frame(
+            *idle, 0U);
+        const auto collapsed_frame = arpg::platform::monster_animation_frame(
+            *death, static_cast<std::uint16_t>(death->frame_count - 1U));
+        ARPG_REQUIRE(standing_frame.has_value());
+        ARPG_REQUIRE(collapsed_frame.has_value());
+        const OpaqueBounds standing = frame_opaque_bounds(
+            pixels, image.width, standing_frame->source);
+        const OpaqueBounds collapsed = frame_opaque_bounds(
+            pixels, image.width, collapsed_frame->source);
+        ARPG_REQUIRE(standing.height >= 80);
+        ARPG_REQUIRE(collapsed.height * 2 < standing.height);
+        ARPG_REQUIRE(collapsed.width > collapsed.height * 2);
         UnloadImageColors(pixels);
         UnloadImage(image);
     }
+    return {};
+}
+
+arpg::test::Failure water_monster_presentation_collects_and_completes_death() noexcept {
+    arpg::platform::MonsterMaterialPresenter presenter{};
+    arpg::combat::MonsterSnapshot monster{};
+    monster.active = true;
+    monster.id = MonsterId::water_bulwark;
+    monster.generation = 7U;
+    monster.ai_phase = MonsterAiPhase::move;
+
+    const auto moving = presenter.collect_draw_plan(0U, monster, 100U, false);
+    ARPG_REQUIRE(moving.visible);
+    ARPG_REQUIRE(moving.animation_state == MonsterAnimationState::move);
+    ARPG_REQUIRE(moving.frame_index == 0U);
+
+    monster.ai_phase = MonsterAiPhase::defeated;
+    const auto death_start = presenter.collect_draw_plan(0U, monster, 101U, false);
+    ARPG_REQUIRE(death_start.visible);
+    ARPG_REQUIRE(death_start.use_material_frame);
+    ARPG_REQUIRE(death_start.animation_state == MonsterAnimationState::death);
+    ARPG_REQUIRE(death_start.frame_index == 0U);
+    ARPG_REQUIRE(death_start.frame.has_value());
+
+    const auto death_complete = presenter.collect_draw_plan(0U, monster, 161U, false);
+    ARPG_REQUIRE(death_complete.visible);
+    ARPG_REQUIRE(death_complete.frame_index == 15U);
+    ARPG_REQUIRE(death_complete.frame.has_value());
+    const auto death_hold = presenter.collect_draw_plan(0U, monster, 220U, false);
+    ARPG_REQUIRE(death_hold.visible);
+    ARPG_REQUIRE(death_hold.frame_index == 15U);
+
+    monster.active = false;
+    ARPG_REQUIRE(!presenter.collect_draw_plan(0U, monster, 221U, false).visible);
+    return {};
+}
+
+arpg::test::Failure water_monster_presentation_restarts_non_looping_states() noexcept {
+    arpg::platform::MonsterMaterialPresenter presenter{};
+    arpg::combat::MonsterSnapshot monster{};
+    monster.active = true;
+    monster.id = MonsterId::water_support;
+    monster.generation = 3U;
+    monster.ai_phase = MonsterAiPhase::move;
+    ARPG_REQUIRE(presenter.collect_draw_plan(1U, monster, 40U, false).frame_index == 0U);
+    ARPG_REQUIRE(presenter.collect_draw_plan(1U, monster, 48U, false).frame_index > 0U);
+
+    monster.ai_phase = MonsterAiPhase::telegraph;
+    const auto special = presenter.collect_draw_plan(1U, monster, 49U, false);
+    ARPG_REQUIRE(special.animation_state == MonsterAnimationState::special);
+    ARPG_REQUIRE(special.frame_index == 0U);
+
+    const auto hurt = presenter.collect_draw_plan(1U, monster, 50U, true);
+    ARPG_REQUIRE(hurt.animation_state == MonsterAnimationState::hurt);
+    ARPG_REQUIRE(hurt.frame_index == 0U);
+
+    ++monster.generation;
+    monster.ai_phase = MonsterAiPhase::move;
+    const auto reused = presenter.collect_draw_plan(1U, monster, 90U, false);
+    ARPG_REQUIRE(reused.animation_state == MonsterAnimationState::move);
+    ARPG_REQUIRE(reused.frame_index == 0U);
     return {};
 }
 
@@ -221,7 +336,7 @@ arpg::test::Failure water_ecology_stays_inside_manifest_loading_budget() noexcep
     for (std::size_t index{}; index < manifest.atlas_count; ++index) {
         const auto ecology = manifest.atlases[index].ecology;
         if (ecology == MaterialEcology::common || ecology == MaterialEcology::water) {
-            loaded_bytes += manifest.atlases[index].rgba_bytes;
+            loaded_bytes += manifest.atlases[index].rgba_bytes * 2U;
         }
     }
     ARPG_REQUIRE(loaded_bytes <= manifest.memory_budget_bytes);
@@ -237,6 +352,10 @@ constexpr arpg::test::TestCase kCases[] = {
         &water_monsters_expose_complete_multiframe_state_groups},
     {"water runtime states select animation frame groups",
         &water_monster_runtime_states_select_frame_groups},
+    {"defeated water monster reaches and completes death frames",
+        &water_monster_presentation_collects_and_completes_death},
+    {"water presentation restarts non-looping states",
+        &water_monster_presentation_restarts_non_looping_states},
     {"water ecology remains inside loading budget",
         &water_ecology_stays_inside_manifest_loading_budget},
 };

@@ -294,14 +294,18 @@ std::optional<MonsterAnimationFrame> monster_animation_frame(
         {static_cast<float>(column) * kWaterMonsterAnimationCell,
          static_cast<float>(row) * kWaterMonsterAnimationCell,
          kWaterMonsterAnimationCell, kWaterMonsterAnimationCell},
-        {48.0F, 93.0F}};
+        {48.0F, 93.0F}, static_cast<std::uint8_t>((std::min)(3U,
+            static_cast<unsigned int>(frame) * clip.key_pose_count
+                / clip.frame_count))};
 }
 
 std::uint16_t monster_animation_frame_index(
-    const MonsterAnimationClipDefinition& clip, std::uint64_t world_tick) noexcept {
+    const MonsterAnimationClipDefinition& clip, std::uint64_t elapsed_ticks,
+    bool loop) noexcept {
     if (clip.frame_count == 0U || clip.frames_per_second == 0U) return 0U;
-    const std::uint64_t frame = world_tick * clip.frames_per_second / 60U;
-    return static_cast<std::uint16_t>(frame % clip.frame_count);
+    const std::uint64_t frame = elapsed_ticks * clip.frames_per_second / 60U;
+    return static_cast<std::uint16_t>(loop ? frame % clip.frame_count
+        : (std::min)(frame, static_cast<std::uint64_t>(clip.frame_count - 1U)));
 }
 
 MaterialSpriteId select_floor_sprite(dungeon::DungeonElement element) noexcept {

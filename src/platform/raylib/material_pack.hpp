@@ -11,6 +11,8 @@ struct MaterialTextureApi final {
     Texture2D (*load)(const char* path){};
     bool (*valid)(Texture2D texture){};
     void (*unload)(Texture2D texture){};
+    void (*draw)(Texture2D texture, Rectangle source, Rectangle destination,
+        Vector2 origin, float rotation, Color tint){};
 };
 
 class MaterialPackState final {
@@ -46,7 +48,9 @@ private:
     MaterialTextureApi texture_api_{};
     MaterialPackState state_{};
     std::array<Texture2D, static_cast<std::size_t>(MaterialAtlasId::count)>
-        textures_{};
+        color_textures_{};
+    std::array<Texture2D, static_cast<std::size_t>(MaterialAtlasId::count)>
+        material_textures_{};
     std::array<bool, static_cast<std::size_t>(MaterialAtlasId::count)>
         warnings_emitted_{};
 };

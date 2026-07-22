@@ -42,7 +42,9 @@ if ($report.result -ne 'pass' -or $report.manifest -ne 'pass' -or
         $report.monsters -ne 'fire_bomber,fire_charger,water_bulwark,water_support,lightning_shooter,lightning_dasher,chaos_chaser,chaos_hazard') {
     throw 'formal material report rejected'
 }
-if ([uint64]$report.atlas_bytes -gt 67108864) { throw 'texture budget exceeded' }
+$atlasBytes = [uint64]$report.atlas_bytes
+if ($atlasBytes -lt 134103040) { throw 'paired texture budget was not fully counted' }
+if ($atlasBytes -gt 268435456) { throw 'texture budget exceeded' }
 
 foreach ($expected in @(@('game-1280x720.png',1280,720),
         @('game-1920x1080.png',1920,1080), @('fallback-1280x720.png',1280,720))) {
@@ -69,8 +71,13 @@ if ($holeText -notmatch 'depth=2' -or $holeText -notmatch 'last_transition=1' -o
         $holeText -notmatch 'resolution_valid=1') { throw 'input/hole formal evidence rejected' }
 
 $assetRoot = Join-Path $PSScriptRoot '..\..\assets\stage12'
-$expectedAtlases = @(@('environment.png',1024,1024), @('actors.png',2048,2048),
-    @('effects_ui.png',1024,1024))
+$expectedAtlases = @(@('environment.png',1024,1024),
+    @('environment_material.png',1024,1024), @('actors.png',2048,2048),
+    @('actors_material.png',2048,2048), @('effects_ui.png',1024,1024),
+    @('effects_ui_material.png',1024,1024), @('water_environment.png',768,768),
+    @('water_environment_material.png',768,768), @('water_bulwark.png',864,864),
+    @('water_bulwark_material.png',864,864), @('water_support.png',864,864),
+    @('water_support_material.png',864,864))
 foreach ($expected in $expectedAtlases) {
     $path = Join-Path $assetRoot $expected[0]
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "missing atlas: $($expected[0])" }

@@ -4,6 +4,7 @@
 
 #include <raylib.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 
@@ -112,11 +113,16 @@ namespace {
 [[nodiscard]] constexpr bool valid_texture_api(
     MaterialTextureApi texture_api) noexcept {
     return texture_api.load != nullptr && texture_api.valid != nullptr
-        && texture_api.unload != nullptr;
+        && texture_api.unload != nullptr && texture_api.draw != nullptr;
+}
+
+void draw_texture(Texture2D texture, Rectangle source, Rectangle destination,
+    Vector2 origin, float rotation, Color tint) noexcept {
+    DrawTexturePro(texture, source, destination, origin, rotation, tint);
 }
 
 [[nodiscard]] MaterialTextureApi default_material_texture_api() noexcept {
-    return {&LoadTexture, &IsTextureValid, &UnloadTexture};
+    return {&LoadTexture, &IsTextureValid, &UnloadTexture, &draw_texture};
 }
 
 }  // namespace
@@ -169,38 +175,64 @@ bool MaterialPack::load() noexcept {
     for (std::size_t index = 0U; index < manifest.atlas_count; ++index) {
         const MaterialAtlasDefinition& definition = manifest.atlases[index];
         const std::size_t texture_index = atlas_index(definition.id);
-        std::array<char, 512> deployed_path{};
-        const int written = std::snprintf(deployed_path.data(),
-            deployed_path.size(), "%s%s", GetApplicationDirectory(),
+        std::array<char, 512> color_deployed_path{};
+        std::array<char, 512> material_deployed_path{};
+        const int color_written = std::snprintf(color_deployed_path.data(),
+            color_deployed_path.size(), "%s%s", GetApplicationDirectory(),
             definition.color_path);
-        const char* const color_path = written > 0
-                && static_cast<std::size_t>(written) < deployed_path.size()
-            ? deployed_path.data() : definition.color_path;
-        Texture2D texture = texture_api_.load(color_path);
-        const bool dimensions_match = texture_api_.valid(texture)
-            && texture.width == definition.width && texture.height == definition.height;
-        if (!dimensions_match) {
-            if (texture_api_.valid(texture)) texture_api_.unload(texture);
+        const int material_written = std::snprintf(material_deployed_path.data(),
+            material_deployed_path.size(), "%s%s", GetApplicationDirectory(),
+            definition.material_path);
+        const char* const color_path = color_written > 0
+                && static_cast<std::size_t>(color_written)
+                    < color_deployed_path.size()
+            ? color_deployed_path.data() : definition.color_path;
+        const char* const material_path = material_written > 0
+                && static_cast<std::size_t>(material_written)
+                    < material_deployed_path.size()
+            ? material_deployed_path.data() : definition.material_path;
+        Texture2D color_texture = texture_api_.load(color_path);
+        Texture2D material_texture = texture_api_.load(material_path);
+        const bool color_dimensions_match = texture_api_.valid(color_texture)
+            && color_texture.width == definition.width
+            && color_texture.height == definition.height;
+        const bool material_dimensions_match = texture_api_.valid(material_texture)
+            && material_texture.width == definition.width
+            && material_texture.height == definition.height;
+        if (!color_dimensions_match || !material_dimensions_match) {
+            if (texture_api_.valid(color_texture)) {
+                texture_api_.unload(color_texture);
+            }
+            if (texture_api_.valid(material_texture)) {
+                texture_api_.unload(material_texture);
+            }
             if (!warnings_emitted_[texture_index]) {
                 TraceLog(LOG_WARNING,
-                    "Stage 12 material atlas unavailable or has unexpected dimensions: %s; using program fallback",
-                    definition.color_path);
+                    "Stage 12 color/material atlas pair unavailable or has unexpected dimensions: %s | %s; using program fallback",
+                    definition.color_path, definition.material_path);
                 warnings_emitted_[texture_index] = true;
             }
             continue;
         }
-        textures_[texture_index] = texture;
+        color_textures_[texture_index] = color_texture;
+        material_textures_[texture_index] = material_texture;
         state_.set_available(definition.id, true);
     }
     return state_.any_available();
 }
 
 void MaterialPack::unload() noexcept {
-    for (Texture2D& texture : textures_) {
-        if (valid_texture_api(texture_api_) && texture_api_.valid(texture)) {
-            texture_api_.unload(texture);
+    for (std::size_t index{}; index < color_textures_.size(); ++index) {
+        if (valid_texture_api(texture_api_)
+            && texture_api_.valid(color_textures_[index])) {
+            texture_api_.unload(color_textures_[index]);
         }
-        texture = Texture2D{};
+        if (valid_texture_api(texture_api_)
+            && texture_api_.valid(material_textures_[index])) {
+            texture_api_.unload(material_textures_[index]);
+        }
+        color_textures_[index] = Texture2D{};
+        material_textures_[index] = Texture2D{};
     }
     state_.reset();
 }
@@ -216,7 +248,9 @@ bool MaterialPack::can_draw(MaterialSpriteId id) const noexcept {
     const MaterialFrameDefinition* const frame = find_frame(manifest, id);
     if (frame == nullptr || !state_.available(frame->atlas)) return false;
 
-    return texture_api_.valid(textures_[atlas_index(frame->atlas)]);
+    const std::size_t index = atlas_index(frame->atlas);
+    return texture_api_.valid(color_textures_[index])
+        && texture_api_.valid(material_textures_[index]);
 }
 
 bool MaterialPack::draw(MaterialSpriteId id, Vector2 foot_position,
@@ -227,7 +261,9 @@ bool MaterialPack::draw(MaterialSpriteId id, Vector2 foot_position,
     const MaterialFrameDefinition* const frame = find_frame(manifest, id);
     if (frame == nullptr || !state_.available(frame->atlas)) return false;
 
-    const Texture2D& texture = textures_[atlas_index(frame->atlas)];
+    const std::size_t index = atlas_index(frame->atlas);
+    const Texture2D& color_texture = color_textures_[index];
+    const Texture2D& material_texture = material_textures_[index];
 
     Rectangle source = frame->source;
     if (flip_x) {
@@ -237,7 +273,11 @@ bool MaterialPack::draw(MaterialSpriteId id, Vector2 foot_position,
     const Rectangle destination{foot_position.x - frame->foot_anchor.x * scale,
         foot_position.y - frame->foot_anchor.y * scale,
         frame->source.width * scale, frame->source.height * scale};
-    DrawTexturePro(texture, source, destination, {0.0F, 0.0F}, 0.0F, tint);
+    texture_api_.draw(color_texture, source, destination, {0.0F, 0.0F}, 0.0F, tint);
+    texture_api_.draw(material_texture, source, destination, {0.0F, 0.0F},
+        0.0F, Color{255U, 255U, 255U,
+            static_cast<unsigned char>((std::min)(48U,
+                static_cast<unsigned int>(tint.a)))});
     return true;
 }
 
@@ -250,10 +290,13 @@ bool MaterialPack::draw_frame(MaterialAtlasId atlas, Rectangle source,
         || source.x < 0.0F || source.y < 0.0F) {
         return false;
     }
-    const Texture2D& texture = textures_[atlas_index(atlas)];
-    if (!texture_api_.valid(texture)
-        || source.x + source.width > static_cast<float>(texture.width)
-        || source.y + source.height > static_cast<float>(texture.height)) {
+    const std::size_t index = atlas_index(atlas);
+    const Texture2D& color_texture = color_textures_[index];
+    const Texture2D& material_texture = material_textures_[index];
+    if (!texture_api_.valid(color_texture)
+        || !texture_api_.valid(material_texture)
+        || source.x + source.width > static_cast<float>(color_texture.width)
+        || source.y + source.height > static_cast<float>(color_texture.height)) {
         return false;
     }
     if (flip_x) {
@@ -264,7 +307,11 @@ bool MaterialPack::draw_frame(MaterialAtlasId atlas, Rectangle source,
         foot_position.y - foot_anchor.y * scale,
         source.width < 0.0F ? -source.width * scale : source.width * scale,
         source.height * scale};
-    DrawTexturePro(texture, source, destination, {0.0F, 0.0F}, 0.0F, tint);
+    texture_api_.draw(color_texture, source, destination, {0.0F, 0.0F}, 0.0F, tint);
+    texture_api_.draw(material_texture, source, destination, {0.0F, 0.0F},
+        0.0F, Color{255U, 255U, 255U,
+            static_cast<unsigned char>((std::min)(48U,
+                static_cast<unsigned int>(tint.a)))});
     return true;
 }
 

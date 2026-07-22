@@ -28,26 +28,33 @@ bool png_has_size(const std::filesystem::path& path, int width, int height) {
 }
 
 bool copy_materials(const std::filesystem::path& executable) {
-    const std::filesystem::path destination = executable.parent_path()
-        / "assets" / "stage12";
-    const std::filesystem::path source = std::filesystem::path{ARPG_PROJECT_SOURCE_DIR}
-        / "assets" / "stage12";
+    const std::filesystem::path destination = executable.parent_path();
+    const std::filesystem::path source{ARPG_PROJECT_SOURCE_DIR};
+    const auto manifest = platform::default_material_manifest();
     std::error_code error{};
-    std::filesystem::create_directories(destination, error);
-    if (error) return false;
-    for (const char* name : {
-             "environment.png", "actors.png", "effects_ui.png",
-             "fire_environment.png", "fire_environment_material.png",
-             "fire_bomber.png", "fire_bomber_material.png",
-             "fire_charger.png", "fire_charger_material.png",
-             "water_environment.png", "water_environment_material.png",
-             "water_bulwark.png", "water_bulwark_material.png",
-             "water_support.png", "water_support_material.png"}) {
-        std::filesystem::copy_file(source / name, destination / name,
-            std::filesystem::copy_options::overwrite_existing, error);
-        if (error) return false;
+    for (std::size_t index{}; index < manifest.atlas_count; ++index) {
+        for (const char* relative : {manifest.atlases[index].color_path,
+                                    manifest.atlases[index].material_path}) {
+            if (relative == nullptr) return false;
+            const std::filesystem::path target = destination / relative;
+            std::filesystem::create_directories(target.parent_path(), error);
+            if (error) return false;
+            std::filesystem::copy_file(source / relative, target,
+                std::filesystem::copy_options::overwrite_existing, error);
+            if (error) return false;
+        }
     }
     return true;
+}
+
+std::uint64_t manifest_texture_pair_bytes() noexcept {
+    const auto manifest = platform::default_material_manifest();
+    std::uint64_t bytes{};
+    for (std::size_t index{}; index < manifest.atlas_count; ++index) {
+        bytes += static_cast<std::uint64_t>(
+            manifest.atlases[index].rgba_bytes) * 2U;
+    }
+    return bytes;
 }
 
 bool path_is_within(const std::filesystem::path& child,
@@ -198,8 +205,7 @@ int main(int argc, char** argv) {
     std::ofstream report(root / "stage12-material-evidence.txt",
         std::ios::out | std::ios::trunc);
     report << "manifest=" << (manifest_ok ? "pass" : "fail") << '\n'
-           << "atlas_bytes=" << (4U * 1024U * 1024U + 4U * 2048U * 2048U
-                + 4U * 1024U * 1024U) << '\n'
+           << "atlas_bytes=" << manifest_texture_pair_bytes() << '\n'
            << "fallback=" << (fallback_capture && !error ? "pass" : "fail") << '\n'
            << "input_hole_regression=" << (input_hole_ok ? "pass" : "fail") << '\n'
            << "monsters=" << (showcase_ok ? "fire_bomber,fire_charger,water_bulwark,water_support,lightning_shooter,lightning_dasher,chaos_chaser,chaos_hazard" : "") << '\n'

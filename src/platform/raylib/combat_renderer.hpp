@@ -12,6 +12,7 @@
 #include "loot_pickup_feedback.hpp"
 #include "material_loot_view.hpp"
 #include "material_pack.hpp"
+#include "monster_material_presenter.hpp"
 
 #include <cstdint>
 #include <array>
@@ -121,7 +122,7 @@ private:
         const dungeon::DungeonSnapshot& current,
         float interpolation_alpha,
         bool draw_debug,
-        const CombatFeedback& feedback) const noexcept;
+        const CombatFeedback& feedback) noexcept;
     void draw_hud() const noexcept;
     void draw_abyss_hud(
         const dungeon::DungeonSnapshot& current,
@@ -143,6 +144,7 @@ private:
     LootPickupFeedbackState loot_pickup_feedback_{};
     MaterialPickupFeedbackState material_pickup_feedback_{};
     MaterialPack material_pack_{};
+    MonsterMaterialPresenter monster_presenter_{};
     HudViewModelProjector hud_projector_{};
     HudViewModel hud_model_{};
     ActiveSkillHudModel active_skill_hud_model_{};

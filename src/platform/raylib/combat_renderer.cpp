@@ -88,6 +88,7 @@ void CombatRenderer::consume_dungeon_event(
 void CombatRenderer::clear_combat_transients() noexcept {
     last_event_ = combat::CombatEvent{};
     has_last_event_ = false;
+    monster_presenter_.reset();
 }
 
 void CombatRenderer::set_loot_filter_mode(

@@ -9,7 +9,7 @@ namespace arpg::platform {
 namespace {
 
 constexpr int kMaximumAtlasDimension = 2048;
-constexpr std::size_t kMaximumManifestRgbaBytes = 64U * 1024U * 1024U;
+constexpr std::size_t kMaximumManifestRgbaBytes = 256U * 1024U * 1024U;
 constexpr std::uint16_t kMaximumClipFrames = 256U;
 
 [[nodiscard]] constexpr bool is_known_atlas(MaterialAtlasId id) noexcept {
@@ -100,10 +100,14 @@ MaterialValidationResult validate_material_manifest(
         const std::size_t budget = manifest.memory_budget_bytes == 0U
             ? kMaximumManifestRgbaBytes
             : manifest.memory_budget_bytes;
-        if (rgba_bytes > budget || atlas.rgba_bytes > budget - rgba_bytes) {
+        if (atlas.rgba_bytes > budget / 2U) {
             return invalid_result(MaterialValidationError::memory_budget_exceeded);
         }
-        rgba_bytes += atlas.rgba_bytes;
+        const std::size_t paired_rgba_bytes = atlas.rgba_bytes * 2U;
+        if (rgba_bytes > budget || paired_rgba_bytes > budget - rgba_bytes) {
+            return invalid_result(MaterialValidationError::memory_budget_exceeded);
+        }
+        rgba_bytes += paired_rgba_bytes;
         for (std::size_t prior = 0U; prior < index; ++prior) {
             if (manifest.atlases[prior].id == atlas.id) {
                 return invalid_result(MaterialValidationError::duplicate_atlas_id);

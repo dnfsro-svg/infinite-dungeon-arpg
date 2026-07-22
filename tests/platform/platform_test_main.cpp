@@ -103,6 +103,6 @@ int main() {
         stage12_material_render_suite(),
     };
 
-    return arpg::test::run_suites(suites, 394,
+    return arpg::test::run_suites(suites, 398,
         "water ecology material slice contract");
 }
