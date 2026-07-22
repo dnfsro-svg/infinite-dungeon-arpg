@@ -10,6 +10,11 @@
 namespace {
 
 using arpg::platform::MaterialAtlasDefinition;
+using arpg::platform::MaterialLayer;
+using arpg::platform::MaterialEcology;
+using arpg::platform::MaterialClass;
+using arpg::platform::AnimationClipId;
+using arpg::platform::AnimationClipDefinition;
 using arpg::platform::MaterialAtlasId;
 using arpg::platform::MaterialFrameDefinition;
 using arpg::platform::MaterialManifestDefinition;
@@ -210,7 +215,8 @@ arpg::test::Failure material_manifest_rejects_oversized_atlas_and_memory_budget(
 
 arpg::test::Failure material_manifest_rejects_duplicate_sprite_ids() noexcept {
     const std::array<MaterialAtlasDefinition, 1> atlases{{
-        {MaterialAtlasId::actors, 64, 64, 4U * 64U * 64U},
+        {MaterialAtlasId::actors, 64, 64, 4U * 64U * 64U, "actors.png",
+            "actors_material.png"},
     }};
     const std::array<MaterialFrameDefinition, 2> frames{{
         {MaterialSpriteId::player_idle, MaterialAtlasId::actors,
@@ -223,8 +229,10 @@ arpg::test::Failure material_manifest_rejects_duplicate_sprite_ids() noexcept {
     ARPG_REQUIRE(!arpg::platform::validate_material_manifest(manifest).valid);
 
     const std::array<MaterialAtlasDefinition, 2> duplicate_atlases{{
-        {MaterialAtlasId::actors, 64, 64, 4U * 64U * 64U},
-        {MaterialAtlasId::actors, 64, 64, 4U * 64U * 64U},
+        {MaterialAtlasId::actors, 64, 64, 4U * 64U * 64U, "actors.png",
+            "actors_material.png"},
+        {MaterialAtlasId::actors, 64, 64, 4U * 64U * 64U, "actors.png",
+            "actors_material.png"},
     }};
     const MaterialManifestDefinition duplicate_atlas_manifest{
         duplicate_atlases.data(), duplicate_atlases.size(), nullptr, 0U};
@@ -245,7 +253,8 @@ arpg::test::Failure material_manifest_rejects_duplicate_sprite_ids() noexcept {
 
 arpg::test::Failure material_manifest_accepts_valid_unique_frames() noexcept {
     const std::array<MaterialAtlasDefinition, 1> atlases{{
-        {MaterialAtlasId::actors, 64, 64, 4U * 64U * 64U},
+        {MaterialAtlasId::actors, 64, 64, 4U * 64U * 64U, "actors.png",
+            "actors_material.png"},
     }};
     const std::array<MaterialFrameDefinition, 2> frames{{
         {MaterialSpriteId::player_idle, MaterialAtlasId::actors,
@@ -256,6 +265,91 @@ arpg::test::Failure material_manifest_accepts_valid_unique_frames() noexcept {
     const MaterialManifestDefinition manifest{
         atlases.data(), atlases.size(), frames.data(), frames.size()};
     ARPG_REQUIRE(arpg::platform::validate_material_manifest(manifest).valid);
+    return {};
+}
+
+
+arpg::test::Failure material_manifest_rejects_missing_color_or_material_maps() noexcept {
+    const std::array<MaterialAtlasDefinition, 1> missing_color{{
+        {MaterialAtlasId::actors, 64, 64, 4U * 64U * 64U, nullptr,
+            "actors_material.png"},
+    }};
+    const MaterialManifestDefinition missing_color_manifest{
+        missing_color.data(), missing_color.size(), nullptr, 0U};
+    ARPG_REQUIRE(!arpg::platform::validate_material_manifest(
+        missing_color_manifest).valid);
+
+    const std::array<MaterialAtlasDefinition, 1> missing_material{{
+        {MaterialAtlasId::actors, 64, 64, 4U * 64U * 64U, "actors.png", nullptr},
+    }};
+    const MaterialManifestDefinition missing_material_manifest{
+        missing_material.data(), missing_material.size(), nullptr, 0U};
+    ARPG_REQUIRE(!arpg::platform::validate_material_manifest(
+        missing_material_manifest).valid);
+    return {};
+}
+
+arpg::test::Failure material_manifest_rejects_invalid_weapon_anchor_and_clips() noexcept {
+    const std::array<MaterialAtlasDefinition, 1> atlases{{
+        {MaterialAtlasId::actors, 128, 128, 4U * 128U * 128U, "actors.png",
+            "actors_material.png"},
+    }};
+    const std::array<MaterialFrameDefinition, 2> frames{{
+        {MaterialSpriteId::player_idle, MaterialAtlasId::actors, {0, 0, 32, 32},
+            {16, 30}, 42U, {33, 16}, MaterialLayer::body, MaterialClass::actor, 1U},
+        {MaterialSpriteId::player_move, MaterialAtlasId::actors, {32, 0, 32, 32},
+            {16, 30}, 42U, {16, 16}, MaterialLayer::body, MaterialClass::actor, 2U},
+    }};
+    ARPG_REQUIRE(!arpg::platform::validate_material_frame(atlases[0], frames[0]).valid);
+    const std::array<AnimationClipDefinition, 1> too_short{{
+        {AnimationClipId::player_idle, MaterialSpriteId::player_idle, 1U, 1U, 16U},
+    }};
+    const MaterialManifestDefinition manifest{atlases.data(), atlases.size(),
+        frames.data() + 1, 1U, too_short.data(), too_short.size()};
+    ARPG_REQUIRE(!arpg::platform::validate_material_manifest(manifest).valid);
+    return {};
+}
+
+arpg::test::Failure material_manifest_rejects_repeated_hash_and_ecology_boundary() noexcept {
+    const std::array<MaterialAtlasDefinition, 1> atlases{{
+        {MaterialAtlasId::actors, 128, 128, 4U * 128U * 128U, "actors.png",
+            "actors_material.png"},
+    }};
+    const std::array<MaterialFrameDefinition, 4> frames{{
+        {MaterialSpriteId::player_idle, MaterialAtlasId::actors, {0, 0, 16, 16}, {8, 15}, 42U, {8, 8}, MaterialLayer::body, MaterialClass::actor, 7U},
+        {MaterialSpriteId::player_move, MaterialAtlasId::actors, {16, 0, 16, 16}, {8, 15}, 42U, {8, 8}, MaterialLayer::body, MaterialClass::actor, 7U},
+        {MaterialSpriteId::player_j1, MaterialAtlasId::actors, {32, 0, 16, 16}, {8, 15}, 42U, {8, 8}, MaterialLayer::body, MaterialClass::actor, 7U},
+        {MaterialSpriteId::player_j2, MaterialAtlasId::actors, {48, 0, 16, 16}, {8, 15}, 42U, {8, 8}, MaterialLayer::body, MaterialClass::actor, 9U},
+    }};
+    const std::array<AnimationClipDefinition, 1> repeated{{
+        {AnimationClipId::player_idle, MaterialSpriteId::player_idle, 0U, 4U, 4U},
+    }};
+    const MaterialManifestDefinition repeated_manifest{atlases.data(), atlases.size(),
+        frames.data(), frames.size(), repeated.data(), repeated.size()};
+    ARPG_REQUIRE(!arpg::platform::validate_material_manifest(repeated_manifest).valid);
+
+    const std::array<MaterialFrameDefinition, 4> unique_frames{{
+        {MaterialSpriteId::player_idle, MaterialAtlasId::actors, {0, 0, 16, 16}, {8, 15}, 42U, {8, 8}, MaterialLayer::body, MaterialClass::actor, 11U},
+        {MaterialSpriteId::player_move, MaterialAtlasId::actors, {16, 0, 16, 16}, {8, 15}, 42U, {8, 8}, MaterialLayer::body, MaterialClass::actor, 12U},
+        {MaterialSpriteId::player_j1, MaterialAtlasId::actors, {32, 0, 16, 16}, {8, 15}, 42U, {8, 8}, MaterialLayer::body, MaterialClass::actor, 13U},
+        {MaterialSpriteId::player_j2, MaterialAtlasId::actors, {48, 0, 16, 16}, {8, 15}, 42U, {8, 8}, MaterialLayer::body, MaterialClass::actor, 14U},
+    }};
+    const std::array<AnimationClipDefinition, 1> water_clip{{
+        {AnimationClipId::monster_idle, MaterialSpriteId::player_idle, 0U, 4U, 4U,
+            24U, 0U, 0U, MaterialEcology::water},
+    }};
+    const MaterialManifestDefinition water_manifest{atlases.data(), atlases.size(),
+        unique_frames.data(), unique_frames.size(), water_clip.data(), water_clip.size()};
+    ARPG_REQUIRE(!arpg::platform::validate_material_manifest_for_ecology(
+        water_manifest, MaterialEcology::fire).valid);
+    ARPG_REQUIRE(arpg::platform::validate_material_manifest_for_ecology(
+        water_manifest, MaterialEcology::water).valid);
+    return {};
+}
+
+arpg::test::Failure material_manifest_accepts_default_layered_animation_manifest() noexcept {
+    ARPG_REQUIRE(arpg::platform::validate_material_manifest(
+        arpg::platform::default_material_manifest()).valid);
     return {};
 }
 
@@ -278,6 +372,14 @@ constexpr arpg::test::TestCase kCases[] = {
         &material_manifest_rejects_oversized_atlas_and_memory_budget},
     {"rejects duplicate sprite ids", &material_manifest_rejects_duplicate_sprite_ids},
     {"accepts valid unique frames", &material_manifest_accepts_valid_unique_frames},
+    {"rejects missing color or material maps",
+        &material_manifest_rejects_missing_color_or_material_maps},
+    {"rejects invalid weapon anchor and clips",
+        &material_manifest_rejects_invalid_weapon_anchor_and_clips},
+    {"rejects repeated hash and ecology boundary",
+        &material_manifest_rejects_repeated_hash_and_ecology_boundary},
+    {"accepts default layered animation manifest",
+        &material_manifest_accepts_default_layered_animation_manifest},
 };
 
 }  // namespace

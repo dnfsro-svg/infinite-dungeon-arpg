@@ -1,5 +1,9 @@
 #include "material_animation.hpp"
 
+#include "material_manifest.hpp"
+
+#include <cstddef>
+
 namespace arpg::platform {
 namespace {
 
@@ -194,6 +198,24 @@ float material_actor_draw_scale(bool player, float projection_scale) noexcept {
     const float target_height = player ? kPlayerTargetHeight
                                        : kMonsterTargetHeight;
     return projection_scale * target_height / trimmed_height;
+}
+
+const AnimationClipDefinition* material_animation_clip(AnimationClipId id) noexcept {
+    const MaterialManifestDefinition manifest = default_material_manifest();
+    for (std::size_t index = 0U; index < manifest.clip_count; ++index) {
+        if (manifest.clips[index].id == id) return &manifest.clips[index];
+    }
+    return nullptr;
+}
+
+MaterialSpriteId material_animation_frame_sprite(
+    const AnimationClipDefinition& clip, std::uint16_t frame) noexcept {
+    const MaterialManifestDefinition manifest = default_material_manifest();
+    if (clip.frame_count == 0U || frame >= clip.frame_count
+        || static_cast<std::size_t>(clip.first_frame) + frame >= manifest.frame_count) {
+        return MaterialSpriteId::missing;
+    }
+    return manifest.frames[clip.first_frame + frame].id;
 }
 
 }  // namespace arpg::platform

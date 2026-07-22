@@ -3,6 +3,7 @@
 #include <raylib.h>
 
 #include <cstdint>
+#include <cstddef>
 
 namespace arpg::platform {
 
@@ -10,6 +11,57 @@ enum class MaterialAtlasId : std::uint8_t {
     environment,
     actors,
     effects_ui,
+    count,
+};
+
+enum class MaterialLayer : std::uint8_t {
+    shadow,
+    back_effect,
+    body,
+    weapon,
+    front_effect,
+    count,
+};
+
+enum class MaterialClass : std::uint8_t {
+    environment,
+    actor,
+    effect,
+    ui,
+    loot,
+    count,
+};
+
+enum class MaterialEcology : std::uint8_t {
+    common,
+    fire,
+    water,
+    lightning,
+    chaos,
+    count,
+};
+
+enum class AnimationEventKind : std::uint8_t {
+    none,
+    hit,
+    footstep,
+    spawn_effect,
+    recovery,
+};
+
+enum class AnimationClipId : std::uint8_t {
+    player_idle,
+    player_move,
+    player_j1,
+    player_j2,
+    player_j3,
+    player_launcher,
+    player_jump,
+    monster_idle,
+    monster_move,
+    monster_attack,
+    monster_hurt,
+    monster_death,
     count,
 };
 
@@ -113,6 +165,27 @@ struct MaterialFrameDefinition final {
     Rectangle source{};
     Vector2 foot_anchor{};
     std::uint16_t duration_ms{};
+    Vector2 weapon_anchor{};
+    MaterialLayer layer{MaterialLayer::body};
+    MaterialClass material_class{MaterialClass::actor};
+    std::uint32_t perceptual_hash{};
+};
+
+struct AnimationEventDefinition final {
+    std::uint16_t frame_index{};
+    AnimationEventKind kind{AnimationEventKind::none};
+};
+
+struct AnimationClipDefinition final {
+    AnimationClipId id{AnimationClipId::player_idle};
+    MaterialSpriteId resource_id{MaterialSpriteId::missing};
+    std::uint16_t first_frame{};
+    std::uint16_t frame_count{};
+    std::uint16_t minimum_frames{};
+    std::uint8_t frames_per_second{24U};
+    std::uint16_t first_event{};
+    std::uint16_t event_count{};
+    MaterialEcology ecology{MaterialEcology::common};
 };
 
 }  // namespace arpg::platform

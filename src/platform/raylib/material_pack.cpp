@@ -7,12 +7,6 @@
 namespace arpg::platform {
 namespace {
 
-constexpr const char* kAtlasPaths[] = {
-    "assets/stage12/environment.png",
-    "assets/stage12/actors.png",
-    "assets/stage12/effects_ui.png",
-};
-
 [[nodiscard]] constexpr bool is_known_atlas(MaterialAtlasId id) noexcept {
     return id < MaterialAtlasId::count;
 }
@@ -125,7 +119,7 @@ bool MaterialPack::load() noexcept {
     for (std::size_t index = 0U; index < manifest.atlas_count; ++index) {
         const MaterialAtlasDefinition& definition = manifest.atlases[index];
         const std::size_t texture_index = atlas_index(definition.id);
-        Texture2D texture = texture_api_.load(kAtlasPaths[texture_index]);
+        Texture2D texture = texture_api_.load(definition.color_path);
         const bool dimensions_match = texture_api_.valid(texture)
             && texture.width == definition.width && texture.height == definition.height;
         if (!dimensions_match) {
@@ -133,7 +127,7 @@ bool MaterialPack::load() noexcept {
             if (!warnings_emitted_[texture_index]) {
                 TraceLog(LOG_WARNING,
                     "Stage 12 material atlas unavailable or has unexpected dimensions: %s; using program fallback",
-                    kAtlasPaths[texture_index]);
+                    definition.color_path);
                 warnings_emitted_[texture_index] = true;
             }
             continue;

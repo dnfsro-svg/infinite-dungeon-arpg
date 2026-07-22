@@ -10,6 +10,7 @@ using arpg::combat::AttackId;
 using arpg::combat::MonsterAiPhase;
 using arpg::combat::MonsterId;
 using arpg::combat::PlayerState;
+using arpg::platform::AnimationClipId;
 using arpg::platform::MaterialSpriteId;
 
 arpg::test::Failure material_animation_selects_launcher_active() noexcept {
@@ -73,12 +74,30 @@ arpg::test::Failure material_animation_covers_monsters_and_ai_phases() noexcept 
     return {};
 }
 
+
+arpg::test::Failure material_animation_exposes_fixed_capacity_clips() noexcept {
+    const auto* idle = arpg::platform::material_animation_clip(AnimationClipId::player_idle);
+    ARPG_REQUIRE(idle != nullptr);
+    ARPG_REQUIRE(idle->frame_count == 16U);
+    ARPG_REQUIRE(idle->minimum_frames == 16U);
+    ARPG_REQUIRE(arpg::platform::material_animation_frame_sprite(*idle, 0U)
+        != MaterialSpriteId::missing);
+    ARPG_REQUIRE(arpg::platform::material_animation_frame_sprite(*idle, idle->frame_count)
+        == MaterialSpriteId::missing);
+    const auto* attack = arpg::platform::material_animation_clip(AnimationClipId::monster_attack);
+    ARPG_REQUIRE(attack != nullptr);
+    ARPG_REQUIRE(attack->frame_count >= 20U);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"selects launcher active", &material_animation_selects_launcher_active},
     {"covers player states and attacks",
         &material_animation_covers_all_player_states_and_attacks},
     {"covers monsters and ai phases",
         &material_animation_covers_monsters_and_ai_phases},
+    {"exposes fixed capacity clips",
+        &material_animation_exposes_fixed_capacity_clips},
 };
 
 }  // namespace

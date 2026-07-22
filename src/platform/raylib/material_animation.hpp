@@ -26,4 +26,10 @@ namespace arpg::platform {
 [[nodiscard]] float material_actor_draw_scale(
     bool player, float projection_scale) noexcept;
 
+[[nodiscard]] const AnimationClipDefinition* material_animation_clip(
+    AnimationClipId id) noexcept;
+
+[[nodiscard]] MaterialSpriteId material_animation_frame_sprite(
+    const AnimationClipDefinition& clip, std::uint16_t frame) noexcept;
+
 }  // namespace arpg::platform

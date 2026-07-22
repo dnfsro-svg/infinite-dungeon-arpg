@@ -13,6 +13,9 @@ struct MaterialAtlasDefinition final {
     int width{};
     int height{};
     std::size_t rgba_bytes{};
+    const char* color_path{};
+    const char* material_path{};
+    MaterialEcology ecology{MaterialEcology::common};
 };
 
 struct MaterialManifestDefinition final {
@@ -20,26 +23,31 @@ struct MaterialManifestDefinition final {
     std::size_t atlas_count{};
     const MaterialFrameDefinition* frames{};
     std::size_t frame_count{};
+    const AnimationClipDefinition* clips{};
+    std::size_t clip_count{};
+    const AnimationEventDefinition* events{};
+    std::size_t event_count{};
+    std::size_t memory_budget_bytes{64U * 1024U * 1024U};
 };
 
 namespace detail {
 
 inline constexpr MaterialAtlasDefinition kDefaultMaterialAtlases[] = {
-    {MaterialAtlasId::environment, 1024, 1024, 4U * 1024U * 1024U},
-    {MaterialAtlasId::actors, 2048, 2048, 4U * 2048U * 2048U},
-    {MaterialAtlasId::effects_ui, 1024, 1024, 4U * 1024U * 1024U},
+    {MaterialAtlasId::environment, 1024, 1024, 4U * 1024U * 1024U, "assets/stage12/environment.png", "assets/stage12/environment_material.png", MaterialEcology::common},
+    {MaterialAtlasId::actors, 2048, 2048, 4U * 2048U * 2048U, "assets/stage12/actors.png", "assets/stage12/actors_material.png", MaterialEcology::common},
+    {MaterialAtlasId::effects_ui, 1024, 1024, 4U * 1024U * 1024U, "assets/stage12/effects_ui.png", "assets/stage12/effects_ui_material.png", MaterialEcology::common},
 };
 
 #define ARPG_ACTOR_FRAME(sprite, column, row) \
     {MaterialSpriteId::sprite, MaterialAtlasId::actors, \
         {static_cast<float>((column) * 224), static_cast<float>((row) * 224), \
             224.0F, 224.0F}, \
-        {112.0F, 224.0F}, 0U}
+        {112.0F, 224.0F}, 42U, {152.0F, 118.0F}, MaterialLayer::body, MaterialClass::actor, static_cast<std::uint32_t>((column) * 131U + (row) * 17U + 1U)}
 
 #define ARPG_EFFECT_FRAME(sprite, column, row) \
     {MaterialSpriteId::sprite, MaterialAtlasId::effects_ui, \
         {static_cast<float>((column) * 128), static_cast<float>((row) * 128), \
-            128.0F, 128.0F}, {64.0F, 110.0F}, 0U}
+            128.0F, 128.0F}, {64.0F, 110.0F}, 42U, {64.0F, 64.0F}, MaterialLayer::front_effect, MaterialClass::effect, static_cast<std::uint32_t>((column) * 137U + (row) * 19U + 101U)}
 
 inline constexpr MaterialFrameDefinition kDefaultMaterialFrames[] = {
     ARPG_ACTOR_FRAME(player_idle, 0, 0),
@@ -142,6 +150,26 @@ inline constexpr MaterialFrameDefinition kDefaultMaterialFrames[] = {
     ARPG_EFFECT_FRAME(loot_icon_abyss, 3, 2),
 };
 
+inline constexpr AnimationEventDefinition kDefaultAnimationEvents[] = {
+    {1U, AnimationEventKind::footstep},
+    {2U, AnimationEventKind::hit},
+};
+
+inline constexpr AnimationClipDefinition kDefaultAnimationClips[] = {
+    {AnimationClipId::player_idle, MaterialSpriteId::player_idle, 0U, 16U, 16U, 24U, 0U, 0U, MaterialEcology::common},
+    {AnimationClipId::player_move, MaterialSpriteId::player_move, 0U, 20U, 20U, 24U, 0U, 1U, MaterialEcology::common},
+    {AnimationClipId::player_j1, MaterialSpriteId::player_j1, 0U, 18U, 18U, 24U, 1U, 1U, MaterialEcology::common},
+    {AnimationClipId::player_j2, MaterialSpriteId::player_j2, 0U, 22U, 22U, 24U, 1U, 1U, MaterialEcology::common},
+    {AnimationClipId::player_j3, MaterialSpriteId::player_j3, 0U, 26U, 26U, 24U, 1U, 1U, MaterialEcology::common},
+    {AnimationClipId::player_launcher, MaterialSpriteId::player_launcher, 0U, 24U, 24U, 24U, 1U, 1U, MaterialEcology::common},
+    {AnimationClipId::player_jump, MaterialSpriteId::player_jump_rise, 0U, 24U, 24U, 24U, 0U, 0U, MaterialEcology::common},
+    {AnimationClipId::monster_idle, MaterialSpriteId::fire_bomber_idle, 0U, 12U, 12U, 24U, 0U, 0U, MaterialEcology::fire},
+    {AnimationClipId::monster_move, MaterialSpriteId::fire_bomber_move, 0U, 16U, 16U, 24U, 0U, 1U, MaterialEcology::fire},
+    {AnimationClipId::monster_attack, MaterialSpriteId::fire_bomber_active, 0U, 20U, 20U, 24U, 1U, 1U, MaterialEcology::fire},
+    {AnimationClipId::monster_hurt, MaterialSpriteId::fire_bomber_recovery, 0U, 8U, 8U, 24U, 0U, 0U, MaterialEcology::fire},
+    {AnimationClipId::monster_death, MaterialSpriteId::fire_bomber_defeated, 0U, 16U, 16U, 24U, 0U, 0U, MaterialEcology::fire},
+};
+
 #undef ARPG_ACTOR_FRAME
 #undef ARPG_EFFECT_FRAME
 
@@ -154,7 +182,12 @@ default_material_manifest() noexcept {
             / sizeof(detail::kDefaultMaterialAtlases[0]),
         detail::kDefaultMaterialFrames,
         sizeof(detail::kDefaultMaterialFrames)
-            / sizeof(detail::kDefaultMaterialFrames[0])};
+            / sizeof(detail::kDefaultMaterialFrames[0]),
+        detail::kDefaultAnimationClips,
+        sizeof(detail::kDefaultAnimationClips) / sizeof(detail::kDefaultAnimationClips[0]),
+        detail::kDefaultAnimationEvents,
+        sizeof(detail::kDefaultAnimationEvents) / sizeof(detail::kDefaultAnimationEvents[0]),
+        64U * 1024U * 1024U};
 }
 
 [[nodiscard]] constexpr MaterialSpriteId select_loot_sprite(

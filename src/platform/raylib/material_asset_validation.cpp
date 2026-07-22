@@ -10,6 +10,7 @@ namespace {
 
 constexpr int kMaximumAtlasDimension = 2048;
 constexpr std::size_t kMaximumManifestRgbaBytes = 64U * 1024U * 1024U;
+constexpr std::uint16_t kMaximumClipFrames = 256U;
 
 [[nodiscard]] constexpr bool is_known_atlas(MaterialAtlasId id) noexcept {
     return id < MaterialAtlasId::count;
@@ -46,7 +47,9 @@ MaterialValidationResult validate_material_frame(
         || !std::isfinite(frame.source.width)
         || !std::isfinite(frame.source.height)
         || !std::isfinite(frame.foot_anchor.x)
-        || !std::isfinite(frame.foot_anchor.y)) {
+        || !std::isfinite(frame.foot_anchor.y)
+        || !std::isfinite(frame.weapon_anchor.x)
+        || !std::isfinite(frame.weapon_anchor.y)) {
         return invalid_result(MaterialValidationError::invalid_frame);
     }
     if (!is_known_atlas(atlas.id) || !is_known_atlas(frame.atlas)
@@ -61,7 +64,12 @@ MaterialValidationResult validate_material_frame(
         || frame.foot_anchor.x < 0.0F || frame.foot_anchor.y < 0.0F
         || frame.foot_anchor.x > frame.source.width
         || frame.foot_anchor.y > frame.source.height) {
-        return invalid_result(MaterialValidationError::invalid_frame);
+        return invalid_result(MaterialValidationError::invalid_anchor);
+    }
+    if (frame.weapon_anchor.x < 0.0F || frame.weapon_anchor.y < 0.0F
+        || frame.weapon_anchor.x > frame.source.width
+        || frame.weapon_anchor.y > frame.source.height) {
+        return invalid_result(MaterialValidationError::invalid_anchor);
     }
     return valid_result();
 }
@@ -83,7 +91,16 @@ MaterialValidationResult validate_material_manifest(
             || atlas.height > kMaximumAtlasDimension) {
             return invalid_result(MaterialValidationError::atlas_limit_exceeded);
         }
-        if (atlas.rgba_bytes > kMaximumManifestRgbaBytes - rgba_bytes) {
+        if (atlas.color_path == nullptr || atlas.color_path[0] == '\0') {
+            return invalid_result(MaterialValidationError::missing_atlas_color_map);
+        }
+        if (atlas.material_path == nullptr || atlas.material_path[0] == '\0') {
+            return invalid_result(MaterialValidationError::missing_atlas_material_map);
+        }
+        const std::size_t budget = manifest.memory_budget_bytes == 0U
+            ? kMaximumManifestRgbaBytes
+            : manifest.memory_budget_bytes;
+        if (rgba_bytes > budget || atlas.rgba_bytes > budget - rgba_bytes) {
             return invalid_result(MaterialValidationError::memory_budget_exceeded);
         }
         rgba_bytes += atlas.rgba_bytes;
@@ -107,6 +124,43 @@ MaterialValidationResult validate_material_manifest(
             if (manifest.frames[prior].id == frame.id) {
                 return invalid_result(MaterialValidationError::duplicate_sprite_id);
             }
+        }
+    }
+
+    for (std::size_t index = 0U; index < manifest.clip_count; ++index) {
+        const AnimationClipDefinition& clip = manifest.clips[index];
+        if (clip.id >= AnimationClipId::count || clip.resource_id >= MaterialSpriteId::count
+            || clip.frame_count == 0U || clip.minimum_frames == 0U
+            || clip.frame_count < clip.minimum_frames
+            || clip.frame_count > kMaximumClipFrames
+            || static_cast<std::size_t>(clip.first_frame) + clip.frame_count > manifest.frame_count
+            || static_cast<std::size_t>(clip.first_event) + clip.event_count > manifest.event_count) {
+            return invalid_result(MaterialValidationError::invalid_clip);
+        }
+        std::uint16_t repeated{};
+        for (std::uint16_t offset = 1U; offset < clip.frame_count; ++offset) {
+            const MaterialFrameDefinition& previous = manifest.frames[clip.first_frame + offset - 1U];
+            const MaterialFrameDefinition& current = manifest.frames[clip.first_frame + offset];
+            if (previous.perceptual_hash != 0U
+                && previous.perceptual_hash == current.perceptual_hash) {
+                ++repeated;
+            }
+        }
+        if (clip.frame_count > 1U && repeated * 4U > clip.frame_count) {
+            return invalid_result(MaterialValidationError::repeated_frame_hash);
+        }
+    }
+    return valid_result();
+}
+
+MaterialValidationResult validate_material_manifest_for_ecology(
+    const MaterialManifestDefinition& manifest, MaterialEcology loaded_ecology) noexcept {
+    const MaterialValidationResult base = validate_material_manifest(manifest);
+    if (!base.valid) return base;
+    for (std::size_t index = 0U; index < manifest.clip_count; ++index) {
+        const MaterialEcology ecology = manifest.clips[index].ecology;
+        if (ecology != MaterialEcology::common && ecology != loaded_ecology) {
+            return invalid_result(MaterialValidationError::ecology_not_loaded);
         }
     }
     return valid_result();
