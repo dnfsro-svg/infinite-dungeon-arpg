@@ -249,8 +249,9 @@ if(NOT _host_second_plan EQUAL -1)
 endif()
 string(REGEX MATCHALL "make_combat_render_plan[ \t\r\n]*\\(" _renderer_plans "${_renderer_text}")
 list(LENGTH _renderer_plans _renderer_plan_count)
-if(NOT _renderer_plan_count EQUAL 2)
-    message(FATAL_ERROR "Stage11D loot evidence guard requires the one production renderer plan")
+if(NOT _renderer_plan_count EQUAL 4)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard requires two overloads, one forwarding call, and one production renderer plan")
 endif()
 foreach(_required IN ITEMS
         "const GroundLootView ground_loot_view = renderer.draw("
