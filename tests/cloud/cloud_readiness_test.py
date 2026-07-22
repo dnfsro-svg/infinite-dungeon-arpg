@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+import shlex
 import unittest
 
 
@@ -30,16 +31,24 @@ class CloudReadinessContractTest(unittest.TestCase):
     def _read_required_file(self, relative_path):
         path = REPOSITORY_ROOT / relative_path
         self.assertTrue(path.is_file(), f"Missing required cloud file: {relative_path}")
-        return path.read_text(encoding="utf-8").lower()
+        return path.read_text(encoding="utf-8")
 
-    def _executable_shell_lines(self, script):
-        return tuple(
-            line.strip()
-            for line in self._read_required_file(script).splitlines()
-            if line.strip() and not line.lstrip().startswith("#")
-        )
+    def _shell_commands(self, script):
+        """Parse one-command-per-line Bash scripts with shlex comments enabled."""
+        commands = []
+        for line_number, line in enumerate(
+            self._read_required_file(script).splitlines(), start=1
+        ):
+            try:
+                tokens = shlex.split(line, comments=True, posix=True)
+            except ValueError as error:
+                self.fail(f"Invalid Bash syntax in {script}:{line_number}: {error}")
+            if tokens:
+                commands.append(tuple(tokens))
+        return tuple(commands)
 
     def _workflow_jobs(self, workflow):
+        """Parse the supported YAML subset: jobs and two-space job headers."""
         jobs = {}
         current_job = None
         in_jobs = False
@@ -62,14 +71,63 @@ class CloudReadinessContractTest(unittest.TestCase):
             elif current_job is not None:
                 jobs[current_job].append(line)
 
-        return {name: "\n".join(lines) for name, lines in jobs.items()}
+        return {name: tuple(lines) for name, lines in jobs.items()}
 
     def _job_using_runner(self, jobs, runner):
-        runner_marker = f"runs-on: {runner}"
+        """Find a job by its supported four-space `runs-on:` YAML key."""
         for job in jobs.values():
-            if runner_marker in job:
-                return job
-        self.fail(f"Missing jobs block with {runner_marker}")
+            for line in job:
+                if not line.startswith("    runs-on:"):
+                    continue
+                runner_value = line.split(":", maxsplit=1)[1].strip()
+                if runner_value.lower() == runner.lower():
+                    return job
+        self.fail(f"Missing jobs block with runs-on: {runner}")
+
+    def _workflow_run_commands(self, job):
+        """Extract inline and |/> block `run:` commands from the supported YAML."""
+        commands = []
+        line_index = 0
+        while line_index < len(job):
+            line = job[line_index]
+            indentation = len(line) - len(line.lstrip())
+            stripped = line.strip()
+            if indentation < 4 or not stripped.startswith("run:"):
+                line_index += 1
+                continue
+
+            run_value = stripped[len("run:"):].strip()
+            if run_value not in ("|", ">", "|-", "|+", ">-", ">+"):
+                if run_value:
+                    commands.append(run_value)
+                line_index += 1
+                continue
+
+            line_index += 1
+            while line_index < len(job):
+                block_line = job[line_index]
+                block_indentation = len(block_line) - len(block_line.lstrip())
+                if block_line.strip() and block_indentation <= indentation:
+                    break
+                if block_line.strip() and not block_line.lstrip().startswith("#"):
+                    commands.append(block_line.strip())
+                line_index += 1
+
+        return tuple(commands)
+
+    def _has_exact_tokens(self, commands, expected_tokens):
+        expected = tuple(token.lower() for token in expected_tokens)
+        return any(
+            tuple(token.lower() for token in command) == expected
+            for command in commands
+        )
+
+    def _has_run_command(self, commands, expected_command):
+        expected = " ".join(expected_command.split()).lower().replace("\\", "/")
+        return any(
+            " ".join(command.split()).lower().replace("\\", "/") == expected
+            for command in commands
+        )
 
     def test_linux_core_debug_configure_preset_uses_required_core_settings(self):
         presets = self._load_presets()
@@ -92,40 +150,55 @@ class CloudReadinessContractTest(unittest.TestCase):
         self.assertEqual(LINUX_CORE_PRESET, test.get("configurePreset"))
 
     def test_cloud_setup_and_maintenance_run_configure_build_and_ctest(self):
-        required_commands = (
-            f"cmake --preset {LINUX_CORE_PRESET}",
-            f"cmake --build --preset {LINUX_CORE_PRESET}",
-            f"ctest --preset {LINUX_CORE_PRESET}",
+        setup_commands = self._shell_commands("scripts/cloud/setup.sh")
+        maintenance_commands = self._shell_commands("scripts/cloud/maintenance.sh")
+        expected_setup_commands = (
+            ("cmake", "--preset", LINUX_CORE_PRESET, "--fresh"),
+            ("cmake", "--build", "--preset", LINUX_CORE_PRESET),
+            ("ctest", "--preset", LINUX_CORE_PRESET, "--no-tests=error"),
+        )
+        expected_maintenance_commands = (
+            ("cmake", "--preset", LINUX_CORE_PRESET),
+            ("cmake", "--build", "--preset", LINUX_CORE_PRESET),
+            ("ctest", "--preset", LINUX_CORE_PRESET, "--no-tests=error"),
         )
 
-        for script in ("scripts/cloud/setup.sh", "scripts/cloud/maintenance.sh"):
-            executable_lines = self._executable_shell_lines(script)
-            for command in required_commands:
-                self.assertTrue(
-                    any(command in line for line in executable_lines),
-                    f"{script} must run: {command}",
-                )
+        for command in expected_setup_commands:
+            self.assertTrue(
+                self._has_exact_tokens(setup_commands, command),
+                f"scripts/cloud/setup.sh must run: {' '.join(command)}",
+            )
+        for command in expected_maintenance_commands:
+            self.assertTrue(
+                self._has_exact_tokens(maintenance_commands, command),
+                f"scripts/cloud/maintenance.sh must run: {' '.join(command)}",
+            )
 
     def test_ci_workflow_runs_ubuntu_core_tests_and_windows_full_build(self):
         workflow = self._read_required_file(".github/workflows/build-and-test.yml")
         jobs = self._workflow_jobs(workflow)
         ubuntu_job = self._job_using_runner(jobs, "ubuntu-latest")
         windows_job = self._job_using_runner(jobs, "windows-latest")
+        ubuntu_commands = self._workflow_run_commands(ubuntu_job)
+        windows_commands = self._workflow_run_commands(windows_job)
 
-        self.assertIn(LINUX_CORE_PRESET, ubuntu_job)
-        self.assertIn(f"ctest --preset {LINUX_CORE_PRESET}", ubuntu_job)
-        self.assertIn("scripts/test.ps1", windows_job)
-        self.assertIn("windows-msvc-debug", windows_job)
-        has_release_build_script = (
-            "scripts/build.ps1" in windows_job
-            and "windows-msvc-release" in windows_job
-        )
-        has_release_cmake_build = (
-            "cmake --build --preset windows-msvc-release" in windows_job
+        self.assertTrue(
+            self._has_run_command(ubuntu_commands, "bash scripts/cloud/setup.sh"),
+            "Ubuntu job must run: bash scripts/cloud/setup.sh",
         )
         self.assertTrue(
-            has_release_build_script or has_release_cmake_build,
-            "Windows job must include a Windows release full-build command",
+            self._has_run_command(
+                windows_commands,
+                ".\\scripts\\Test.ps1 -Preset windows-msvc-debug",
+            ),
+            "Windows job must run: .\\scripts\\Test.ps1 -Preset windows-msvc-debug",
+        )
+        self.assertTrue(
+            self._has_run_command(
+                windows_commands,
+                ".\\scripts\\Build.ps1 -Preset windows-msvc-release",
+            ),
+            "Windows job must run: .\\scripts\\Build.ps1 -Preset windows-msvc-release",
         )
 
 
