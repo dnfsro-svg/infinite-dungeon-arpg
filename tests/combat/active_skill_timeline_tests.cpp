@@ -71,6 +71,8 @@ arpg::test::Failure storm_swords_clip_has_locked_event_counts() noexcept {
     const auto* clip = active_skill_clip(ActiveSkillId::storm_swords);
     ARPG_REQUIRE(clip != nullptr);
     ARPG_REQUIRE(clip->duration_ticks == 360U);
+    ARPG_REQUIRE(clip->frame_count == 144U);
+    ARPG_REQUIRE(clip->frames_per_second == 24U);
     EventCounts counts{};
     const auto failure = count_events(ActiveSkillId::storm_swords, clip->duration_ticks, counts);
     ARPG_REQUIRE(failure.expression == nullptr);

@@ -7,7 +7,7 @@ namespace arpg::combat {
 namespace {
 
 constexpr ActiveSkillClip kDrawSlashClip{90U, 36U, 24U};
-constexpr ActiveSkillClip kStormSwordsClip{360U, 96U, 16U};
+constexpr ActiveSkillClip kStormSwordsClip{360U, 144U, 24U};
 
 constexpr std::uint8_t kFinisherOrdinal = 0xFFU;
 
