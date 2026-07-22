@@ -103,6 +103,6 @@ int main() {
         stage12_material_render_suite(),
     };
 
-    return arpg::test::run_suites(suites, 407,
-        "lightning ecology material slice contract");
+    return arpg::test::run_suites(suites, 413,
+        "chaos ecology material slice contract");
 }

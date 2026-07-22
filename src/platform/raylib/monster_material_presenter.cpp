@@ -10,7 +10,9 @@ namespace {
     return monster == combat::MonsterId::water_bulwark
         || monster == combat::MonsterId::water_support
         || monster == combat::MonsterId::lightning_shooter
-        || monster == combat::MonsterId::lightning_dasher;
+        || monster == combat::MonsterId::lightning_dasher
+        || monster == combat::MonsterId::chaos_chaser
+        || monster == combat::MonsterId::chaos_hazard;
 }
 
 }  // namespace

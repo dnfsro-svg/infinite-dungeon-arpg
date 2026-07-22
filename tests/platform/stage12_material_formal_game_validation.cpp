@@ -238,6 +238,31 @@ int main(int argc, char** argv) {
             == platform::MaterialAtlasId::lightning_dasher
         && lightning_runtime.lightning_dasher_draw.frame_index < 12U
         && lightning_runtime.lightning_dasher_draw.drawn;
+    platform::Stage12MaterialRuntimeStatus chaos_runtime{};
+    const bool chaos_showcase_ok = capture(root, kResolutions[0],
+        "chaos-monsters-1280x720.png", true, false,
+        arpg::dungeon::DungeonElement::chaos, &chaos_runtime);
+    const bool chaos_background_ok = capture(root, kResolutions[0],
+        "chaos-background-1280x720.png", true, false,
+        arpg::dungeon::DungeonElement::chaos, nullptr, true);
+    const bool chaos_runtime_ok = chaos_showcase_ok
+        && chaos_runtime.shader_pipeline_ready
+        && chaos_runtime.chaos_ecology_ready
+        && chaos_runtime.chaos_environment_resident
+        && chaos_runtime.chaos_chaser_resident
+        && chaos_runtime.chaos_hazard_resident
+        && chaos_runtime.chaos_chaser_draw.presenter_visible
+        && chaos_runtime.chaos_chaser_draw.use_material_frame
+        && chaos_runtime.chaos_chaser_draw.atlas
+            == platform::MaterialAtlasId::chaos_chaser
+        && chaos_runtime.chaos_chaser_draw.frame_index < 12U
+        && chaos_runtime.chaos_chaser_draw.drawn
+        && chaos_runtime.chaos_hazard_draw.presenter_visible
+        && chaos_runtime.chaos_hazard_draw.use_material_frame
+        && chaos_runtime.chaos_hazard_draw.atlas
+            == platform::MaterialAtlasId::chaos_hazard
+        && chaos_runtime.chaos_hazard_draw.frame_index < 12U
+        && chaos_runtime.chaos_hazard_draw.drawn;
     const std::filesystem::path f12_capture = root / "f12-monsters-1280x720.png"
         / "stage8-equipment-loot.png";
     std::error_code f12_error{};
@@ -255,8 +280,11 @@ int main(int argc, char** argv) {
            << "water_monster_screenshot=water-monsters-1280x720.png\n"
            << "lightning_monster_screenshot=lightning-monsters-1280x720.png\n"
            << "lightning_background_screenshot=lightning-background-1280x720.png\n"
+           << "chaos_monster_screenshot=chaos-monsters-1280x720.png\n"
+           << "chaos_background_screenshot=chaos-background-1280x720.png\n"
            << "shader_pipeline=" << (water_runtime.shader_pipeline_ready
                     && lightning_runtime.shader_pipeline_ready
+                    && chaos_runtime.shader_pipeline_ready
                 ? "pass" : "fail") << '\n'
            << "water_ecology_residency=" << (water_runtime.water_ecology_ready
                 ? "pass" : "fail") << '\n'
@@ -284,16 +312,30 @@ int main(int argc, char** argv) {
            << "lightning_dasher_atlas=" << (lightning_runtime.lightning_dasher_draw.atlas == platform::MaterialAtlasId::lightning_dasher ? "lightning_dasher" : "wrong") << '\n'
            << "lightning_dasher_frame=" << lightning_runtime.lightning_dasher_draw.frame_index << '\n'
            << "lightning_dasher_drawn=" << (lightning_runtime.lightning_dasher_draw.drawn ? "pass" : "fail") << '\n'
+           << "chaos_ecology_residency=" << (chaos_runtime.chaos_ecology_ready ? "pass" : "fail") << '\n'
+           << "chaos_environment_pair=" << (chaos_runtime.chaos_environment_resident ? "resident" : "missing") << '\n'
+           << "chaos_chaser_pair=" << (chaos_runtime.chaos_chaser_resident ? "resident" : "missing") << '\n'
+           << "chaos_hazard_pair=" << (chaos_runtime.chaos_hazard_resident ? "resident" : "missing") << '\n'
+           << "chaos_chaser_presenter=" << (chaos_runtime.chaos_chaser_draw.presenter_visible ? "pass" : "fail") << '\n'
+           << "chaos_chaser_use_material_frame=" << (chaos_runtime.chaos_chaser_draw.use_material_frame ? "pass" : "fail") << '\n'
+           << "chaos_chaser_atlas=" << (chaos_runtime.chaos_chaser_draw.atlas == platform::MaterialAtlasId::chaos_chaser ? "chaos_chaser" : "wrong") << '\n'
+           << "chaos_chaser_frame=" << chaos_runtime.chaos_chaser_draw.frame_index << '\n'
+           << "chaos_chaser_drawn=" << (chaos_runtime.chaos_chaser_draw.drawn ? "pass" : "fail") << '\n'
+           << "chaos_hazard_presenter=" << (chaos_runtime.chaos_hazard_draw.presenter_visible ? "pass" : "fail") << '\n'
+           << "chaos_hazard_use_material_frame=" << (chaos_runtime.chaos_hazard_draw.use_material_frame ? "pass" : "fail") << '\n'
+           << "chaos_hazard_atlas=" << (chaos_runtime.chaos_hazard_draw.atlas == platform::MaterialAtlasId::chaos_hazard ? "chaos_hazard" : "wrong") << '\n'
+           << "chaos_hazard_frame=" << chaos_runtime.chaos_hazard_draw.frame_index << '\n'
+           << "chaos_hazard_drawn=" << (chaos_runtime.chaos_hazard_draw.drawn ? "pass" : "fail") << '\n'
            << "f12_screenshot=f12-monsters-1280x720.png/stage8-equipment-loot.png\n"
            << "screenshot_isolation=" << (f12_ok ? "pass" : "fail") << '\n'
-           << "screenshot_decode=" << (captures_ok && showcase_ok && water_showcase_ok && lightning_showcase_ok && lightning_background_ok && f12_ok ? "pass" : "fail") << '\n'
-           << "result=" << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && f12_ok && input_hole_ok ? "pass" : "fail")
+           << "screenshot_decode=" << (captures_ok && showcase_ok && water_showcase_ok && lightning_showcase_ok && lightning_background_ok && chaos_showcase_ok && chaos_background_ok && f12_ok ? "pass" : "fail") << '\n'
+           << "result=" << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "pass" : "fail")
            << '\n';
     std::cout << "stage12 material formal "
-              << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && f12_ok && input_hole_ok ? "PASS" : "FAIL")
+              << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "PASS" : "FAIL")
               << std::endl;
     return report && captures_ok && fallback_capture && !error && manifest_ok
         && showcase_ok && water_runtime_ok && lightning_runtime_ok
-        && lightning_background_ok
+        && lightning_background_ok && chaos_runtime_ok && chaos_background_ok
         && f12_ok && input_hole_ok ? 0 : 1;
 }

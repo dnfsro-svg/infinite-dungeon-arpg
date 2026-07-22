@@ -35,7 +35,7 @@ constexpr std::array<PlayerAnimationClipDefinition,
     {PlayerAnimationClipId::death, MaterialAtlasId::player_reaction, 40U, 24U},
 }};
 
-constexpr std::array<MonsterAnimationClipDefinition, 20> kEcologyMonsterClips{{
+constexpr std::array<MonsterAnimationClipDefinition, 30> kEcologyMonsterClips{{
     {combat::MonsterId::water_bulwark, MonsterAnimationState::idle,
         MaterialAtlasId::water_bulwark, 0U, 12U, 12U},
     {combat::MonsterId::water_bulwark, MonsterAnimationState::move,
@@ -76,6 +76,26 @@ constexpr std::array<MonsterAnimationClipDefinition, 20> kEcologyMonsterClips{{
         MaterialAtlasId::lightning_dasher, 48U, 8U, 20U},
     {combat::MonsterId::lightning_dasher, MonsterAnimationState::death,
         MaterialAtlasId::lightning_dasher, 56U, 16U, 16U},
+    {combat::MonsterId::chaos_chaser, MonsterAnimationState::idle,
+        MaterialAtlasId::chaos_chaser, 0U, 12U, 12U},
+    {combat::MonsterId::chaos_chaser, MonsterAnimationState::move,
+        MaterialAtlasId::chaos_chaser, 12U, 16U, 18U},
+    {combat::MonsterId::chaos_chaser, MonsterAnimationState::special,
+        MaterialAtlasId::chaos_chaser, 28U, 20U, 20U},
+    {combat::MonsterId::chaos_chaser, MonsterAnimationState::hurt,
+        MaterialAtlasId::chaos_chaser, 48U, 8U, 20U},
+    {combat::MonsterId::chaos_chaser, MonsterAnimationState::death,
+        MaterialAtlasId::chaos_chaser, 56U, 16U, 16U},
+    {combat::MonsterId::chaos_hazard, MonsterAnimationState::idle,
+        MaterialAtlasId::chaos_hazard, 0U, 12U, 12U},
+    {combat::MonsterId::chaos_hazard, MonsterAnimationState::move,
+        MaterialAtlasId::chaos_hazard, 12U, 16U, 18U},
+    {combat::MonsterId::chaos_hazard, MonsterAnimationState::special,
+        MaterialAtlasId::chaos_hazard, 28U, 20U, 20U},
+    {combat::MonsterId::chaos_hazard, MonsterAnimationState::hurt,
+        MaterialAtlasId::chaos_hazard, 48U, 8U, 20U},
+    {combat::MonsterId::chaos_hazard, MonsterAnimationState::death,
+        MaterialAtlasId::chaos_hazard, 56U, 16U, 16U},
 }};
 
 [[nodiscard]] MaterialSpriteId select_attack_sprite(

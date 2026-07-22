@@ -75,10 +75,57 @@ $mutations += @{ Name='missing-runtime-draw'; Path=$missingRuntime }
 
 $invalidFrame = New-Mutation 'invalid-runtime-frame'
 $reportPath = Join-Path $invalidFrame 'stage12-material-evidence.txt'
-(Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8).Replace(
-    'lightning_dasher_frame=2', 'lightning_dasher_frame=65535') |
+(Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) -replace
+    'lightning_dasher_frame=\d+', 'lightning_dasher_frame=65535' |
     Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
 $mutations += @{ Name='invalid-runtime-frame'; Path=$invalidFrame }
+
+$solidChaos = New-Mutation 'solid-gray-chaos'
+Save-MutatedBitmap (Join-Path $solidChaos 'chaos-monsters-1280x720.png') {
+    param($bitmap)
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    try { $graphics.Clear([System.Drawing.Color]::FromArgb(255, 64, 64, 64)) }
+    finally { $graphics.Dispose() }
+}
+$mutations += @{ Name='solid-gray-chaos'; Path=$solidChaos }
+
+$wrongChaos = New-Mutation 'wrong-chaos-ecology'
+Copy-Item -LiteralPath (Join-Path $wrongChaos 'lightning-monsters-1280x720.png') `
+    -Destination (Join-Path $wrongChaos 'chaos-monsters-1280x720.png') -Force
+$mutations += @{ Name='wrong-chaos-ecology'; Path=$wrongChaos }
+
+$missingChaos = New-Mutation 'missing-chaos-monsters'
+$chaosBackground = [System.Drawing.Bitmap]::FromFile(
+    (Join-Path $missingChaos 'chaos-background-1280x720.png'))
+try {
+Save-MutatedBitmap (Join-Path $missingChaos 'chaos-monsters-1280x720.png') {
+    param($bitmap)
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    try {
+        foreach ($region in @(
+                [System.Drawing.Rectangle]::new(635, 390, 115, 155),
+                [System.Drawing.Rectangle]::new(750, 390, 115, 155))) {
+            $graphics.DrawImage($chaosBackground, $region, $region,
+                [System.Drawing.GraphicsUnit]::Pixel)
+        }
+    } finally { $graphics.Dispose() }
+}
+} finally { $chaosBackground.Dispose() }
+$mutations += @{ Name='missing-chaos-monsters'; Path=$missingChaos }
+
+$missingChaosRuntime = New-Mutation 'missing-chaos-runtime-draw'
+$reportPath = Join-Path $missingChaosRuntime 'stage12-material-evidence.txt'
+(Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8).Replace(
+    'chaos_chaser_drawn=pass', 'chaos_chaser_drawn=fail') |
+    Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+$mutations += @{ Name='missing-chaos-runtime-draw'; Path=$missingChaosRuntime }
+
+$invalidChaosFrame = New-Mutation 'invalid-chaos-runtime-frame'
+$reportPath = Join-Path $invalidChaosFrame 'stage12-material-evidence.txt'
+(Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) -replace `
+    'chaos_hazard_frame=\d+', 'chaos_hazard_frame=65535' |
+    Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+$mutations += @{ Name='invalid-chaos-runtime-frame'; Path=$invalidChaosFrame }
 
 $failures = @()
 foreach ($mutation in $mutations) {
@@ -93,4 +140,4 @@ foreach ($mutation in $mutations) {
     }
 }
 if ($failures.Count -ne 0) { throw ($failures -join [Environment]::NewLine) }
-Write-Output 'stage12 material validator rejected solid, wrong-ecology, baseline-only monster regions, and invalid runtime draw/frame proof'
+Write-Output 'stage12 material validator rejected solid, wrong-ecology, baseline-only monster regions, and invalid runtime draw/frame proof for lightning and chaos'

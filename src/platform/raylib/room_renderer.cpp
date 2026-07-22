@@ -1,6 +1,7 @@
 #include "combat_renderer.hpp"
 
 #include "combat/room_bounds.hpp"
+#include "chaos_room_material_slice.hpp"
 #include "dungeon_view_math.hpp"
 #include "environment_render_plan.hpp"
 #include "fire_room_material_slice.hpp"
@@ -91,6 +92,14 @@ bool draw_environment_room(const MaterialPack& material_pack,
             (std::max)(width / lightning.background_source.width,
                 height / lightning.background_source.height));
     }
+    const ChaosRoomRenderPlan chaos = chaos_room_render_plan(ecology);
+    if (chaos.active && material_pack.available(chaos.background_atlas)) {
+        return material_pack.draw_frame(chaos.background_atlas,
+            chaos.background_source, {256.0F, 512.0F},
+            {width * 0.5F, height}, false,
+            (std::max)(width / chaos.background_source.width,
+                height / chaos.background_source.height));
+    }
     return material_pack.draw(select_floor_sprite(ecology),
         {width * 0.5F, height}, false, scale);
 }
@@ -138,12 +147,37 @@ void draw_lightning_room_props(const MaterialPack& material_pack,
     }
 }
 
+void draw_chaos_room_props(const MaterialPack& material_pack,
+    float width, float height) noexcept {
+    if (!material_pack.available(MaterialAtlasId::chaos_environment)) return;
+    constexpr std::array<Vector2, 5> kPositions{{
+        {0.12F, 0.34F}, {0.88F, 0.35F}, {0.18F, 0.82F},
+        {0.82F, 0.82F}, {0.50F, 0.86F},
+    }};
+    constexpr std::array<ChaosRoomPropId, 5> kProps{{
+        ChaosRoomPropId::rift_lantern, ChaosRoomPropId::wall,
+        ChaosRoomPropId::anomaly_condenser,
+        ChaosRoomPropId::warning_obelisk,
+        ChaosRoomPropId::anomaly_condenser,
+    }};
+    const ChaosRoomMaterialSlice& slice = chaos_room_material_slice();
+    for (std::size_t index{}; index < kProps.size(); ++index) {
+        const auto& prop = slice.props[static_cast<std::size_t>(kProps[index])];
+        static_cast<void>(material_pack.draw(prop.sprite,
+            {kPositions[index].x * width, kPositions[index].y * height},
+            false, index == 1U ? 0.90F : 0.55F));
+    }
+}
+
 MaterialSpriteId hole_sprite(dungeon::DungeonElement ecology) noexcept {
     if (ecology == dungeon::DungeonElement::water) {
         return MaterialSpriteId::water_hole;
     }
     if (ecology == dungeon::DungeonElement::lightning) {
         return MaterialSpriteId::lightning_hole;
+    }
+    if (ecology == dungeon::DungeonElement::chaos) {
+        return MaterialSpriteId::chaos_hole;
     }
     return MaterialSpriteId::environment_hole;
 }
@@ -505,6 +539,8 @@ void CombatRenderer::draw_room(
         draw_water_room_props(material_pack_, width, height);
     } else if (current.ecology == dungeon::DungeonElement::lightning) {
         draw_lightning_room_props(material_pack_, width, height);
+    } else if (current.ecology == dungeon::DungeonElement::chaos) {
+        draw_chaos_room_props(material_pack_, width, height);
     }
     draw_doors(current, width, height, material_pack_, draw_material_environment);
     draw_hole(current, material_pack_, draw_material_environment);

@@ -2995,6 +2995,12 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 const MonsterMaterialDrawRuntimeStatus dasher_draw =
                     renderer.monster_material_draw_status(
                         combat::MonsterId::lightning_dasher);
+                const MonsterMaterialDrawRuntimeStatus chaser_draw =
+                    renderer.monster_material_draw_status(
+                        combat::MonsterId::chaos_chaser);
+                const MonsterMaterialDrawRuntimeStatus hazard_draw =
+                    renderer.monster_material_draw_status(
+                        combat::MonsterId::chaos_hazard);
                 *config.stage12_material_runtime_status = {
                     renderer.material_pipeline_ready(),
                     renderer.material_ecology_ready(MaterialEcology::water),
@@ -3017,6 +3023,19 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     {dasher_draw.presenter_visible,
                         dasher_draw.use_material_frame, dasher_draw.atlas,
                         dasher_draw.frame_index, dasher_draw.drawn},
+                    renderer.material_ecology_ready(MaterialEcology::chaos),
+                    renderer.material_atlas_available(
+                        MaterialAtlasId::chaos_environment),
+                    renderer.material_atlas_available(
+                        MaterialAtlasId::chaos_chaser),
+                    renderer.material_atlas_available(
+                        MaterialAtlasId::chaos_hazard),
+                    {chaser_draw.presenter_visible,
+                        chaser_draw.use_material_frame, chaser_draw.atlas,
+                        chaser_draw.frame_index, chaser_draw.drawn},
+                    {hazard_draw.presenter_visible,
+                        hazard_draw.use_material_frame, hazard_draw.atlas,
+                        hazard_draw.frame_index, hazard_draw.drawn},
                 };
             }
 // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN presented_semantics

@@ -66,6 +66,12 @@ if(TARGET arpg_raylib)
     set_tests_properties(stage12.lightning_asset_pipeline PROPERTIES
         LABELS "headless;platform;stage12" TIMEOUT 120)
 
+    add_test(NAME stage12.chaos_asset_pipeline
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/chaos_asset_pipeline_tests.py")
+    set_tests_properties(stage12.chaos_asset_pipeline PROPERTIES
+        LABELS "headless;platform;stage12" TIMEOUT 120)
+
     add_executable(arpg_stage16_loot_reinforcement_game_validation
         stage16_loot_reinforcement_game_validation.cpp)
     target_compile_features(arpg_stage16_loot_reinforcement_game_validation

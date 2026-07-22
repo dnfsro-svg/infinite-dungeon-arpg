@@ -25,6 +25,9 @@ enum class MaterialAtlasId : std::uint8_t {
     lightning_environment,
     lightning_shooter,
     lightning_dasher,
+    chaos_environment,
+    chaos_chaser,
+    chaos_hazard,
     count,
 };
 
@@ -176,6 +179,11 @@ enum class MaterialSpriteId : std::uint16_t {
     lightning_arc_lamp,
     lightning_capacitor_bank,
     lightning_grounding_rod,
+    chaos_wall,
+    chaos_hole,
+    chaos_rift_lantern,
+    chaos_anomaly_condenser,
+    chaos_warning_obelisk,
     effect_fire,
     effect_water,
     effect_lightning,

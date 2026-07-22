@@ -27,9 +27,7 @@ namespace {
     MaterialSpriteId id) noexcept {
     switch (id) {
     case MaterialSpriteId::environment_floor_fire:
-    case MaterialSpriteId::environment_floor_chaos:
     case MaterialSpriteId::environment_door_fire:
-    case MaterialSpriteId::environment_door_chaos:
     case MaterialSpriteId::environment_hole:
         return MaterialAtlasId::environment;
     case MaterialSpriteId::environment_floor_water:
@@ -48,6 +46,14 @@ namespace {
     case MaterialSpriteId::lightning_capacitor_bank:
     case MaterialSpriteId::lightning_grounding_rod:
         return MaterialAtlasId::lightning_environment;
+    case MaterialSpriteId::environment_floor_chaos:
+    case MaterialSpriteId::environment_door_chaos:
+    case MaterialSpriteId::chaos_wall:
+    case MaterialSpriteId::chaos_hole:
+    case MaterialSpriteId::chaos_rift_lantern:
+    case MaterialSpriteId::chaos_anomaly_condenser:
+    case MaterialSpriteId::chaos_warning_obelisk:
+        return MaterialAtlasId::chaos_environment;
     case MaterialSpriteId::fire_wall:
     case MaterialSpriteId::fire_torch:
     case MaterialSpriteId::fire_chain:
@@ -105,6 +111,22 @@ namespace {
     case MaterialSpriteId::lightning_dasher_cooldown:
     case MaterialSpriteId::lightning_dasher_defeated:
         return MaterialAtlasId::lightning_dasher;
+    case MaterialSpriteId::chaos_chaser_idle:
+    case MaterialSpriteId::chaos_chaser_move:
+    case MaterialSpriteId::chaos_chaser_telegraph:
+    case MaterialSpriteId::chaos_chaser_active:
+    case MaterialSpriteId::chaos_chaser_recovery:
+    case MaterialSpriteId::chaos_chaser_cooldown:
+    case MaterialSpriteId::chaos_chaser_defeated:
+        return MaterialAtlasId::chaos_chaser;
+    case MaterialSpriteId::chaos_hazard_idle:
+    case MaterialSpriteId::chaos_hazard_move:
+    case MaterialSpriteId::chaos_hazard_telegraph:
+    case MaterialSpriteId::chaos_hazard_active:
+    case MaterialSpriteId::chaos_hazard_recovery:
+    case MaterialSpriteId::chaos_hazard_cooldown:
+    case MaterialSpriteId::chaos_hazard_defeated:
+        return MaterialAtlasId::chaos_hazard;
     case MaterialSpriteId::effect_fire:
     case MaterialSpriteId::effect_water:
     case MaterialSpriteId::effect_lightning:

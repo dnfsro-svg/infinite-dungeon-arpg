@@ -310,6 +310,17 @@ arpg::test::Failure material_pack_switches_ecology_without_reloading_common() no
     ARPG_REQUIRE(pack.available(MaterialAtlasId::lightning_dasher));
     ARPG_REQUIRE(fake.unload_count == 12U);
     ARPG_REQUIRE(fake.load_count == fire_loads + 12U);
+
+    ARPG_REQUIRE(pack.load(MaterialEcology::chaos));
+    ARPG_REQUIRE(pack.ecology_ready(MaterialEcology::chaos));
+    ARPG_REQUIRE(!pack.ecology_ready(MaterialEcology::lightning));
+    ARPG_REQUIRE(pack.current_ecology() == MaterialEcology::chaos);
+    ARPG_REQUIRE(!pack.available(MaterialAtlasId::lightning_shooter));
+    ARPG_REQUIRE(pack.available(MaterialAtlasId::chaos_environment));
+    ARPG_REQUIRE(pack.available(MaterialAtlasId::chaos_chaser));
+    ARPG_REQUIRE(pack.available(MaterialAtlasId::chaos_hazard));
+    ARPG_REQUIRE(fake.unload_count == 18U);
+    ARPG_REQUIRE(fake.load_count == fire_loads + 18U);
     pack.unload();
     g_fake_material_textures = nullptr;
     return {};

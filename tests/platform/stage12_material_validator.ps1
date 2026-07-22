@@ -49,8 +49,9 @@ function Measure-LightningCapture([string]$Path, [string]$BackgroundPath) {
                         -and $pixel.R -gt $pixel.G + 25) { ++$brass }
                 if ($pixel.B -gt 145 -and $pixel.G -gt 100 -and $pixel.R -lt 120 `
                         -and $pixel.B -gt $pixel.R + 45) { ++$cyan }
-                [void]$colors.Add((($pixel.R -shr 4) -shl 8) -bor `
-                    (($pixel.G -shr 4) -shl 4) -bor ($pixel.B -shr 4))
+                [void]$colors.Add((((([int]$pixel.R) -shr 4) -shl 8) -bor `
+                    ((([int]$pixel.G) -shr 4) -shl 4) -bor `
+                    (([int]$pixel.B) -shr 4)))
             }
         }
         $sampled = ($bitmap.Width / 2) * ($bitmap.Height / 2)
@@ -128,12 +129,113 @@ function Measure-LightningCapture([string]$Path, [string]$BackgroundPath) {
     }
 }
 
+function Measure-ChaosCapture([string]$Path, [string]$BackgroundPath) {
+    $bitmap = [System.Drawing.Bitmap]::FromFile($Path)
+    $background = [System.Drawing.Bitmap]::FromFile($BackgroundPath)
+    try {
+        if ($bitmap.Width -ne 1280 -or $bitmap.Height -ne 720 -or
+                $background.Width -ne 1280 -or $background.Height -ne 720) {
+            throw 'wrong chaos-monster screenshot size'
+        }
+        [int]$dark = 0
+        [int]$magenta = 0
+        [int]$acid = 0
+        $colors = [System.Collections.Generic.HashSet[int]]::new()
+        for ($y = 0; $y -lt $bitmap.Height; $y += 2) {
+            for ($x = 0; $x -lt $bitmap.Width; $x += 2) {
+                $pixel = $bitmap.GetPixel($x, $y)
+                if ($pixel.R + $pixel.G + $pixel.B -lt 180) { ++$dark }
+                if ($pixel.R -gt 105 -and $pixel.B -gt 100 `
+                        -and $pixel.G -lt 110) { ++$magenta }
+                if ($pixel.G -gt 100 -and $pixel.G -gt $pixel.R + 10 `
+                        -and $pixel.G -gt $pixel.B + 10) { ++$acid }
+                [void]$colors.Add((((([int]$pixel.R) -shr 4) -shl 8) -bor `
+                    ((([int]$pixel.G) -shr 4) -shl 4) -bor `
+                    (([int]$pixel.B) -shr 4)))
+            }
+        }
+        $sampled = ($bitmap.Width / 2) * ($bitmap.Height / 2)
+        if ($colors.Count -lt 150) { throw 'chaos capture is effectively solid' }
+        if ($dark -lt $sampled * 0.35) { throw 'chaos capture lacks dark rift palette' }
+        if ($magenta -lt $sampled * 0.002) { throw 'chaos capture lacks magenta rift palette' }
+        if ($acid -lt $sampled * 0.001) { throw 'chaos capture lacks acid warning palette' }
+
+        $regions = @(
+            @{ Name='chaos_chaser'; X=635; Y=390; Width=115; Height=155 },
+            @{ Name='chaos_hazard'; X=750; Y=390; Width=115; Height=155 }
+        )
+        foreach ($region in $regions) {
+            $mask = New-Object 'bool[,]' $region.Width, $region.Height
+            [int]$changed = 0
+            for ($y = $region.Y; $y -lt $region.Y + $region.Height; ++$y) {
+                for ($x = $region.X; $x -lt $region.X + $region.Width; ++$x) {
+                    $pixel = $bitmap.GetPixel($x, $y)
+                    $base = $background.GetPixel($x, $y)
+                    $difference = [Math]::Abs([int]$pixel.R - [int]$base.R) +
+                        [Math]::Abs([int]$pixel.G - [int]$base.G) +
+                        [Math]::Abs([int]$pixel.B - [int]$base.B)
+                    if ($difference -ge 40) {
+                        $localMaskX = $x - $region.X
+                        $localMaskY = $y - $region.Y
+                        $mask[$localMaskX, $localMaskY] = $true
+                        ++$changed
+                    }
+                }
+            }
+            [int]$largest = 0
+            [int]$largestWidth = 0
+            [int]$largestHeight = 0
+            for ($localY = 0; $localY -lt $region.Height; ++$localY) {
+                for ($localX = 0; $localX -lt $region.Width; ++$localX) {
+                    if (-not $mask[$localX, $localY]) { continue }
+                    $queue = [System.Collections.Generic.Queue[int]]::new()
+                    $queue.Enqueue($localY * $region.Width + $localX)
+                    $mask[$localX, $localY] = $false
+                    [int]$component = 0
+                    [int]$minX = $localX; [int]$maxX = $localX
+                    [int]$minY = $localY; [int]$maxY = $localY
+                    while ($queue.Count -gt 0) {
+                        $point = $queue.Dequeue()
+                        $px = $point % $region.Width
+                        $py = [Math]::Floor($point / $region.Width)
+                        ++$component
+                        $minX = [Math]::Min($minX, $px); $maxX = [Math]::Max($maxX, $px)
+                        $minY = [Math]::Min($minY, $py); $maxY = [Math]::Max($maxY, $py)
+                        foreach ($offset in @(@(-1,0),@(1,0),@(0,-1),@(0,1))) {
+                            $nx = $px + $offset[0]; $ny = $py + $offset[1]
+                            if ($nx -ge 0 -and $nx -lt $region.Width -and
+                                    $ny -ge 0 -and $ny -lt $region.Height -and
+                                    $mask[$nx, $ny]) {
+                                $mask[$nx, $ny] = $false
+                                $queue.Enqueue($ny * $region.Width + $nx)
+                            }
+                        }
+                    }
+                    if ($component -gt $largest) {
+                        $largest = $component
+                        $largestWidth = $maxX - $minX + 1
+                        $largestHeight = $maxY - $minY + 1
+                    }
+                }
+            }
+            if ($changed -lt 500 -or $largest -lt 180 -or
+                    $largestWidth -lt 18 -or $largestHeight -lt 28) {
+                throw "chaos capture lacks monster-vs-background contour: $($region.Name) changed=$changed largest=$largest extent=${largestWidth}x${largestHeight}"
+            }
+        }
+    } finally {
+        $bitmap.Dispose()
+        $background.Dispose()
+    }
+}
+
 $reportPath = Join-Path $EvidenceDirectory 'stage12-material-evidence.txt'
 if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { throw 'missing material report' }
 $report = Read-Report $reportPath
 foreach ($key in @('manifest','atlas_bytes','fallback','input_hole_regression',
         'monsters','monster_screenshot','water_monster_screenshot','lightning_monster_screenshot',
-        'lightning_background_screenshot',
+        'lightning_background_screenshot','chaos_monster_screenshot',
+        'chaos_background_screenshot',
         'f12_screenshot','screenshot_isolation',
         'shader_pipeline','water_ecology_residency','water_environment_pair',
         'water_bulwark_pair','water_support_pair','lightning_ecology_residency',
@@ -142,6 +244,12 @@ foreach ($key in @('manifest','atlas_bytes','fallback','input_hole_regression',
         'lightning_shooter_atlas','lightning_shooter_frame','lightning_shooter_drawn',
         'lightning_dasher_presenter','lightning_dasher_use_material_frame',
         'lightning_dasher_atlas','lightning_dasher_frame','lightning_dasher_drawn',
+        'chaos_ecology_residency','chaos_environment_pair','chaos_chaser_pair',
+        'chaos_hazard_pair','chaos_chaser_presenter',
+        'chaos_chaser_use_material_frame','chaos_chaser_atlas',
+        'chaos_chaser_frame','chaos_chaser_drawn','chaos_hazard_presenter',
+        'chaos_hazard_use_material_frame','chaos_hazard_atlas',
+        'chaos_hazard_frame','chaos_hazard_drawn',
         'screenshot_decode','result')) {
     if (-not $report.ContainsKey($key)) { throw "missing report field: $key" }
 }
@@ -164,6 +272,18 @@ if ($report.result -ne 'pass' -or $report.manifest -ne 'pass' -or
         $report.lightning_dasher_use_material_frame -ne 'pass' -or
         $report.lightning_dasher_atlas -ne 'lightning_dasher' -or
         $report.lightning_dasher_drawn -ne 'pass' -or
+        $report.chaos_ecology_residency -ne 'pass' -or
+        $report.chaos_environment_pair -ne 'resident' -or
+        $report.chaos_chaser_pair -ne 'resident' -or
+        $report.chaos_hazard_pair -ne 'resident' -or
+        $report.chaos_chaser_presenter -ne 'pass' -or
+        $report.chaos_chaser_use_material_frame -ne 'pass' -or
+        $report.chaos_chaser_atlas -ne 'chaos_chaser' -or
+        $report.chaos_chaser_drawn -ne 'pass' -or
+        $report.chaos_hazard_presenter -ne 'pass' -or
+        $report.chaos_hazard_use_material_frame -ne 'pass' -or
+        $report.chaos_hazard_atlas -ne 'chaos_hazard' -or
+        $report.chaos_hazard_drawn -ne 'pass' -or
         $report.screenshot_isolation -ne 'pass' -or $report.screenshot_decode -ne 'pass' -or
         $report.monsters -ne 'fire_bomber,fire_charger,water_bulwark,water_support,lightning_shooter,lightning_dasher,chaos_chaser,chaos_hazard') {
     throw 'formal material report rejected'
@@ -173,8 +293,13 @@ $dasherFrame = [uint16]$report.lightning_dasher_frame
 if ($shooterFrame -ge 12 -or $dasherFrame -ge 12) {
     throw 'formal material report rejected invalid lightning frame index'
 }
+$chaserFrame = [uint16]$report.chaos_chaser_frame
+$hazardFrame = [uint16]$report.chaos_hazard_frame
+if ($chaserFrame -ge 12 -or $hazardFrame -ge 12) {
+    throw 'formal material report rejected invalid chaos frame index'
+}
 $atlasBytes = [uint64]$report.atlas_bytes
-if ($atlasBytes -lt 150765568) { throw 'paired texture budget was not fully counted' }
+if ($atlasBytes -lt 167428096) { throw 'paired texture budget was not fully counted' }
 if ($atlasBytes -gt 268435456) { throw 'texture budget exceeded' }
 
 foreach ($expected in @(@('game-1280x720.png',1280,720),
@@ -204,6 +329,15 @@ if (-not (Test-Path -LiteralPath $lightningBackgroundScreenshot -PathType Leaf))
 $lightningBackgroundSize = Read-PngSize $lightningBackgroundScreenshot
 if ($lightningBackgroundSize[0] -ne 1280 -or $lightningBackgroundSize[1] -ne 720) { throw 'wrong lightning background screenshot size' }
 Measure-LightningCapture $lightningMonsterScreenshot $lightningBackgroundScreenshot
+$chaosMonsterScreenshot = Join-Path $EvidenceDirectory $report.chaos_monster_screenshot
+if (-not (Test-Path -LiteralPath $chaosMonsterScreenshot -PathType Leaf)) { throw 'missing chaos-monster screenshot' }
+$chaosMonsterSize = Read-PngSize $chaosMonsterScreenshot
+if ($chaosMonsterSize[0] -ne 1280 -or $chaosMonsterSize[1] -ne 720) { throw 'wrong chaos-monster screenshot size' }
+$chaosBackgroundScreenshot = Join-Path $EvidenceDirectory $report.chaos_background_screenshot
+if (-not (Test-Path -LiteralPath $chaosBackgroundScreenshot -PathType Leaf)) { throw 'missing chaos background baseline' }
+$chaosBackgroundSize = Read-PngSize $chaosBackgroundScreenshot
+if ($chaosBackgroundSize[0] -ne 1280 -or $chaosBackgroundSize[1] -ne 720) { throw 'wrong chaos background screenshot size' }
+Measure-ChaosCapture $chaosMonsterScreenshot $chaosBackgroundScreenshot
 $f12Screenshot = Join-Path $EvidenceDirectory $report.f12_screenshot
 if (-not (Test-Path -LiteralPath $f12Screenshot -PathType Leaf)) { throw 'missing isolated F12 screenshot' }
 $f12Size = Read-PngSize $f12Screenshot
@@ -227,7 +361,13 @@ $expectedAtlases = @(@('environment.png',1024,1024),
     @('lightning_shooter.png',864,864),
     @('lightning_shooter_material.png',864,864),
     @('lightning_dasher.png',864,864),
-    @('lightning_dasher_material.png',864,864))
+    @('lightning_dasher_material.png',864,864),
+    @('chaos_environment.png',768,768),
+    @('chaos_environment_material.png',768,768),
+    @('chaos_chaser.png',864,864),
+    @('chaos_chaser_material.png',864,864),
+    @('chaos_hazard.png',864,864),
+    @('chaos_hazard_material.png',864,864))
 foreach ($expected in $expectedAtlases) {
     $path = Join-Path $assetRoot $expected[0]
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "missing atlas: $($expected[0])" }
@@ -236,4 +376,4 @@ foreach ($expected in $expectedAtlases) {
         throw "wrong atlas dimensions: $($expected[0])"
     }
 }
-Write-Output 'stage12 material evidence validated: screenshots, atlases, fallback, input/hole, runtime monster draws, and lightning baseline contours'
+Write-Output 'stage12 material evidence validated: screenshots, atlases, fallback, input/hole, runtime monster draws, and lightning/chaos baseline contours'

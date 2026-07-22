@@ -111,6 +111,12 @@ struct Stage12MaterialRuntimeStatus final {
     bool lightning_dasher_resident{};
     Stage12MonsterMaterialDrawStatus lightning_shooter_draw{};
     Stage12MonsterMaterialDrawStatus lightning_dasher_draw{};
+    bool chaos_ecology_ready{};
+    bool chaos_environment_resident{};
+    bool chaos_chaser_resident{};
+    bool chaos_hazard_resident{};
+    Stage12MonsterMaterialDrawStatus chaos_chaser_draw{};
+    Stage12MonsterMaterialDrawStatus chaos_hazard_draw{};
 };
 
 struct RaylibHostConfig final {

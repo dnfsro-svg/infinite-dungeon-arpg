@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 
+#include "chaos_room_material_slice.hpp"
 #include "material_animation.hpp"
 #include "material_asset_validation.hpp"
 #include "material_manifest.hpp"
@@ -683,6 +684,145 @@ arpg::test::Failure lightning_ecology_stays_inside_manifest_loading_budget() noe
     return {};
 }
 
+arpg::test::Failure chaos_ecology_has_independent_loadable_color_and_material_atlases() noexcept {
+    constexpr std::array<MaterialAtlasId, 3> kAtlases{{
+        MaterialAtlasId::chaos_environment,
+        MaterialAtlasId::chaos_chaser,
+        MaterialAtlasId::chaos_hazard,
+    }};
+    for (const MaterialAtlasId id : kAtlases) {
+        const MaterialAtlasDefinition* const atlas = find_atlas(id);
+        ARPG_REQUIRE(atlas != nullptr);
+        ARPG_REQUIRE(atlas->ecology == MaterialEcology::chaos);
+        ARPG_REQUIRE(atlas->color_path != nullptr);
+        ARPG_REQUIRE(atlas->material_path != nullptr);
+        const std::string color = std::filesystem::path{atlas->color_path}
+            .filename().string();
+        const std::string material = std::filesystem::path{atlas->material_path}
+            .filename().string();
+        ARPG_REQUIRE(color.find("chaos") != std::string::npos);
+        ARPG_REQUIRE(material.find("chaos") != std::string::npos);
+        ARPG_REQUIRE(color.find("fire") == std::string::npos);
+        ARPG_REQUIRE(color.find("water") == std::string::npos);
+        ARPG_REQUIRE(color.find("lightning") == std::string::npos);
+        ARPG_REQUIRE(image_has_visible_color(
+            atlas->color_path, atlas->width, atlas->height));
+        ARPG_REQUIRE(image_has_visible_color(
+            atlas->material_path, atlas->width, atlas->height));
+    }
+    return {};
+}
+
+arpg::test::Failure chaos_room_consumes_only_chaos_environment_materials() noexcept {
+    const auto plan = arpg::platform::chaos_room_render_plan(
+        arpg::dungeon::DungeonElement::chaos);
+    ARPG_REQUIRE(plan.active);
+    ARPG_REQUIRE(plan.background_atlas == MaterialAtlasId::chaos_environment);
+    ARPG_REQUIRE(!arpg::platform::chaos_room_render_plan(
+        arpg::dungeon::DungeonElement::lightning).active);
+    const auto& slice = arpg::platform::chaos_room_material_slice();
+    constexpr std::array<arpg::platform::ChaosRoomPropId, 7> kRequired{{
+        arpg::platform::ChaosRoomPropId::floor,
+        arpg::platform::ChaosRoomPropId::wall,
+        arpg::platform::ChaosRoomPropId::door,
+        arpg::platform::ChaosRoomPropId::hole,
+        arpg::platform::ChaosRoomPropId::rift_lantern,
+        arpg::platform::ChaosRoomPropId::anomaly_condenser,
+        arpg::platform::ChaosRoomPropId::warning_obelisk,
+    }};
+    const auto manifest = arpg::platform::default_material_manifest();
+    for (std::size_t index{}; index < kRequired.size(); ++index) {
+        const auto& prop = slice.props[index];
+        ARPG_REQUIRE(prop.id == kRequired[index]);
+        const arpg::platform::MaterialFrameDefinition* frame{};
+        for (std::size_t frame_index{}; frame_index < manifest.frame_count;
+             ++frame_index) {
+            if (manifest.frames[frame_index].id == prop.sprite) {
+                frame = &manifest.frames[frame_index];
+                break;
+            }
+        }
+        ARPG_REQUIRE(frame != nullptr);
+        ARPG_REQUIRE(frame->atlas == MaterialAtlasId::chaos_environment);
+    }
+    return {};
+}
+
+arpg::test::Failure chaos_environment_keeps_readable_rift_warning_palette() noexcept {
+    const auto* atlas = find_atlas(MaterialAtlasId::chaos_environment);
+    ARPG_REQUIRE(atlas != nullptr);
+    const std::filesystem::path path = std::filesystem::path{
+        ARPG_PROJECT_SOURCE_DIR} / atlas->color_path;
+    const Image image = LoadImage(path.string().c_str());
+    ARPG_REQUIRE(image.data != nullptr);
+    Color* const pixels = LoadImageColors(image);
+    ARPG_REQUIRE(pixels != nullptr);
+    std::uint64_t dark{};
+    std::uint64_t magenta{};
+    std::uint64_t acid{};
+    const std::size_t count = static_cast<std::size_t>(image.width)
+        * static_cast<std::size_t>(image.height);
+    for (std::size_t index{}; index < count; ++index) {
+        const Color pixel = pixels[index];
+        if (pixel.a <= 24U) continue;
+        if (static_cast<unsigned int>(pixel.r) + pixel.g + pixel.b < 190U) ++dark;
+        if (pixel.r > 115U && pixel.b > 105U && pixel.g < 100U) ++magenta;
+        if (pixel.g > 100U && pixel.g > pixel.r + 15U
+            && pixel.r > pixel.b) ++acid;
+    }
+    UnloadImageColors(pixels);
+    UnloadImage(image);
+    ARPG_REQUIRE(dark > count / 20U);
+    ARPG_REQUIRE(magenta > count / 1000U);
+    ARPG_REQUIRE(acid > count / 2500U);
+    return {};
+}
+
+arpg::test::Failure chaos_monsters_expose_complete_multiframe_state_groups() noexcept {
+    return monsters_expose_complete_multiframe_state_groups(
+        {MonsterId::chaos_chaser, MonsterId::chaos_hazard},
+        {MaterialAtlasId::chaos_chaser, MaterialAtlasId::chaos_hazard});
+}
+
+arpg::test::Failure chaos_monster_presentation_runs_special_hurt_and_death() noexcept {
+    arpg::platform::MonsterMaterialPresenter presenter{};
+    arpg::combat::MonsterSnapshot monster{};
+    monster.active = true;
+    monster.id = MonsterId::chaos_chaser;
+    monster.generation = 13U;
+    monster.ai_phase = MonsterAiPhase::move;
+    ARPG_REQUIRE(presenter.collect_draw_plan(0U, monster, 40U, false).frame_index == 0U);
+    ARPG_REQUIRE(presenter.collect_draw_plan(0U, monster, 48U, false).frame_index > 0U);
+    monster.ai_phase = MonsterAiPhase::telegraph;
+    const auto special = presenter.collect_draw_plan(0U, monster, 49U, false);
+    ARPG_REQUIRE(special.use_material_frame);
+    ARPG_REQUIRE(special.animation_state == MonsterAnimationState::special);
+    ARPG_REQUIRE(special.frame_index == 0U);
+    const auto hurt = presenter.collect_draw_plan(0U, monster, 50U, true);
+    ARPG_REQUIRE(hurt.animation_state == MonsterAnimationState::hurt);
+    monster.ai_phase = MonsterAiPhase::defeated;
+    const auto death = presenter.collect_draw_plan(0U, monster, 51U, true);
+    ARPG_REQUIRE(death.animation_state == MonsterAnimationState::death);
+    ARPG_REQUIRE(death.frame_index == 0U);
+    const auto complete = presenter.collect_draw_plan(0U, monster, 120U, false);
+    ARPG_REQUIRE(complete.frame_index == 15U);
+    return {};
+}
+
+arpg::test::Failure chaos_ecology_stays_inside_manifest_loading_budget() noexcept {
+    const auto manifest = arpg::platform::default_material_manifest();
+    ARPG_REQUIRE(arpg::platform::validate_material_manifest(manifest).valid);
+    std::size_t loaded_bytes{};
+    for (std::size_t index{}; index < manifest.atlas_count; ++index) {
+        const auto ecology = manifest.atlases[index].ecology;
+        if (ecology == MaterialEcology::common || ecology == MaterialEcology::chaos) {
+            loaded_bytes += manifest.atlases[index].rgba_bytes * 2U;
+        }
+    }
+    ARPG_REQUIRE(loaded_bytes <= manifest.memory_budget_bytes);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"loads independent water color and material atlases",
         &water_ecology_has_independent_loadable_color_and_material_atlases},
@@ -710,6 +850,18 @@ constexpr arpg::test::TestCase kCases[] = {
         &lightning_monster_presentation_runs_special_hurt_and_death},
     {"lightning ecology remains inside loading budget",
         &lightning_ecology_stays_inside_manifest_loading_budget},
+    {"loads independent chaos color and material atlases",
+        &chaos_ecology_has_independent_loadable_color_and_material_atlases},
+    {"chaos room consumes chaos-only environment materials",
+        &chaos_room_consumes_only_chaos_environment_materials},
+    {"chaos room keeps readable rift warning palette",
+        &chaos_environment_keeps_readable_rift_warning_palette},
+    {"chaos monsters expose required multiframe state groups",
+        &chaos_monsters_expose_complete_multiframe_state_groups},
+    {"chaos presentation runs special hurt and death frames",
+        &chaos_monster_presentation_runs_special_hurt_and_death},
+    {"chaos ecology remains inside loading budget",
+        &chaos_ecology_stays_inside_manifest_loading_budget},
 };
 
 }  // namespace
