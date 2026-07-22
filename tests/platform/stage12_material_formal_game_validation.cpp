@@ -48,6 +48,14 @@ bool copy_materials(const std::filesystem::path& executable) {
     return true;
 }
 
+template <std::size_t Size>
+bool every_resource_drawn(const std::array<std::uint64_t, Size>& counts) {
+    for (const std::uint64_t count : counts) {
+        if (count == 0U) return false;
+    }
+    return true;
+}
+
 std::uint64_t manifest_texture_pair_bytes() noexcept {
     const auto manifest = platform::default_material_manifest();
     std::uint64_t bytes{};
@@ -201,6 +209,15 @@ int main(int argc, char** argv) {
     std::filesystem::rename(corrupt_effects, effects, error);
     const bool manifest_ok = platform::validate_material_manifest(
         platform::default_material_manifest()).valid;
+    platform::Stage12MaterialRuntimeStatus item_runtime{};
+    const bool item_showcase_ok = capture(root, kResolutions[0],
+        "items-materials-1280x720.png", true, false,
+        arpg::dungeon::DungeonElement::fire, &item_runtime, true);
+    const bool item_runtime_ok = item_showcase_ok
+        && item_runtime.items_ui_resident
+        && every_resource_drawn(item_runtime.equipment_slot_draws)
+        && every_resource_drawn(item_runtime.rarity_draws)
+        && every_resource_drawn(item_runtime.material_draws);
     const bool showcase_ok = capture(root, kResolutions[0],
         "monsters-1280x720.png", true, true);
     platform::Stage12MaterialRuntimeStatus water_runtime{};
@@ -277,6 +294,10 @@ int main(int argc, char** argv) {
            << "input_hole_regression=" << (input_hole_ok ? "pass" : "fail") << '\n'
            << "monsters=" << (showcase_ok ? "fire_bomber,fire_charger,water_bulwark,water_support,lightning_shooter,lightning_dasher,chaos_chaser,chaos_hazard" : "") << '\n'
            << "monster_screenshot=monsters-1280x720.png\n"
+           << "item_screenshot=items-materials-1280x720.png\n"
+           << "items_ui_pair=" << (item_runtime.items_ui_resident
+                ? "resident" : "missing") << '\n'
+           << "item_runtime_draws=" << (item_runtime_ok ? "pass" : "fail") << '\n'
            << "water_monster_screenshot=water-monsters-1280x720.png\n"
            << "lightning_monster_screenshot=lightning-monsters-1280x720.png\n"
            << "lightning_background_screenshot=lightning-background-1280x720.png\n"
@@ -328,14 +349,14 @@ int main(int argc, char** argv) {
            << "chaos_hazard_drawn=" << (chaos_runtime.chaos_hazard_draw.drawn ? "pass" : "fail") << '\n'
            << "f12_screenshot=f12-monsters-1280x720.png/stage8-equipment-loot.png\n"
            << "screenshot_isolation=" << (f12_ok ? "pass" : "fail") << '\n'
-           << "screenshot_decode=" << (captures_ok && showcase_ok && water_showcase_ok && lightning_showcase_ok && lightning_background_ok && chaos_showcase_ok && chaos_background_ok && f12_ok ? "pass" : "fail") << '\n'
-           << "result=" << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "pass" : "fail")
+           << "screenshot_decode=" << (captures_ok && showcase_ok && item_showcase_ok && water_showcase_ok && lightning_showcase_ok && lightning_background_ok && chaos_showcase_ok && chaos_background_ok && f12_ok ? "pass" : "fail") << '\n'
+           << "result=" << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && item_runtime_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "pass" : "fail")
            << '\n';
     std::cout << "stage12 material formal "
-              << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "PASS" : "FAIL")
+              << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && item_runtime_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "PASS" : "FAIL")
               << std::endl;
     return report && captures_ok && fallback_capture && !error && manifest_ok
-        && showcase_ok && water_runtime_ok && lightning_runtime_ok
+        && showcase_ok && item_runtime_ok && water_runtime_ok && lightning_runtime_ok
         && lightning_background_ok && chaos_runtime_ok && chaos_background_ok
         && f12_ok && input_hole_ok ? 0 : 1;
 }

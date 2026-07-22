@@ -82,6 +82,28 @@ bool material_is_emphasized(items::MaterialId id) noexcept {
         || id == items::MaterialId::coupon_12 || id == items::MaterialId::coupon_15;
 }
 
+MaterialSpriteId material_loot_sprite(items::MaterialId id) noexcept {
+    switch (id) {
+    case items::MaterialId::transmute: return MaterialSpriteId::material_transmute;
+    case items::MaterialId::augment: return MaterialSpriteId::material_augment;
+    case items::MaterialId::regal: return MaterialSpriteId::material_regal;
+    case items::MaterialId::chaos: return MaterialSpriteId::material_chaos;
+    case items::MaterialId::exalt: return MaterialSpriteId::material_exalt;
+    case items::MaterialId::annul: return MaterialSpriteId::material_annul;
+    case items::MaterialId::divine: return MaterialSpriteId::material_divine;
+    case items::MaterialId::scour: return MaterialSpriteId::material_scour;
+    case items::MaterialId::directed: return MaterialSpriteId::material_directed;
+    case items::MaterialId::reinforcement_stone:
+        return MaterialSpriteId::material_reinforcement;
+    case items::MaterialId::coupon_6: return MaterialSpriteId::material_coupon_6;
+    case items::MaterialId::coupon_9: return MaterialSpriteId::material_coupon_9;
+    case items::MaterialId::coupon_12: return MaterialSpriteId::material_coupon_12;
+    case items::MaterialId::coupon_15: return MaterialSpriteId::material_coupon_15;
+    case items::MaterialId::count: break;
+    }
+    return MaterialSpriteId::missing;
+}
+
 MaterialLootView build_material_loot_view(
     const dungeon::DungeonSnapshot& snapshot, float width, float height) noexcept {
     MaterialLootView view{};
@@ -110,6 +132,7 @@ MaterialLootView build_material_loot_view(
             projection.y - kLabelGap - kLabelHeight, kLabelWidth, kLabelHeight};
         clamp_rect(label.rect, width, height);
         label.text_color = material_color(material.material);
+        label.sprite = material_loot_sprite(material.material);
         label.emphasized = material_is_emphasized(material.material);
         const std::string_view text = material_label(material.material);
         static_cast<void>(std::snprintf(label.text.data(), label.text.size(), "%.*s",

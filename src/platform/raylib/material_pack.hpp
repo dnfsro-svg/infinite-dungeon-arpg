@@ -54,6 +54,8 @@ public:
     [[nodiscard]] bool ecology_ready(MaterialEcology ecology) const noexcept;
     [[nodiscard]] bool available(MaterialAtlasId id) const noexcept;
     [[nodiscard]] bool can_draw(MaterialSpriteId id) const noexcept;
+    [[nodiscard]] std::uint64_t sprite_draw_count(
+        MaterialSpriteId id) const noexcept;
     [[nodiscard]] bool draw(
         MaterialSpriteId id, Vector2 foot_position, bool flip_x,
         float scale = 1.0F, Color tint = WHITE) const noexcept;
@@ -71,6 +73,8 @@ private:
         material_textures_{};
     std::array<bool, static_cast<std::size_t>(MaterialAtlasId::count)>
         warnings_emitted_{};
+    mutable std::array<std::uint64_t,
+        static_cast<std::size_t>(MaterialSpriteId::count)> sprite_draw_counts_{};
     MaterialEcology current_ecology_{MaterialEcology::common};
     bool material_pipeline_ready_{};
 };

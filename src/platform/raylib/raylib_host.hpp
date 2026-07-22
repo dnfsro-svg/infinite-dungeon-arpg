@@ -117,6 +117,10 @@ struct Stage12MaterialRuntimeStatus final {
     bool chaos_hazard_resident{};
     Stage12MonsterMaterialDrawStatus chaos_chaser_draw{};
     Stage12MonsterMaterialDrawStatus chaos_hazard_draw{};
+    bool items_ui_resident{};
+    std::array<std::uint64_t, 6U> equipment_slot_draws{};
+    std::array<std::uint64_t, 4U> rarity_draws{};
+    std::array<std::uint64_t, items::kMaterialCount> material_draws{};
 };
 
 struct RaylibHostConfig final {

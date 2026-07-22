@@ -2,6 +2,7 @@
 #include "test_framework.hpp"
 
 #include "ground_loot_view.hpp"
+#include "material_manifest.hpp"
 
 #include <array>
 #include <cstddef>
@@ -288,6 +289,52 @@ arpg::test::Failure hundred_thousand_builds_allocate_nothing() noexcept {
     return {};
 }
 
+arpg::test::Failure equipment_slots_and_rarities_have_unique_layered_resources() noexcept {
+    constexpr std::array<items::ItemSlot, 6U> kSlots{{
+        items::ItemSlot::weapon, items::ItemSlot::helmet,
+        items::ItemSlot::chest, items::ItemSlot::gloves,
+        items::ItemSlot::boots, items::ItemSlot::accessory,
+    }};
+    std::array<platform::MaterialSpriteId, kSlots.size()> slot_sprites{};
+    for (std::size_t index{}; index < kSlots.size(); ++index) {
+        slot_sprites[index] = platform::ground_loot_item_sprite(kSlots[index]);
+        ARPG_REQUIRE(slot_sprites[index] != platform::MaterialSpriteId::missing);
+        for (std::size_t previous{}; previous < index; ++previous) {
+            ARPG_REQUIRE(slot_sprites[index] != slot_sprites[previous]);
+        }
+    }
+
+    constexpr std::array<items::ItemRarity, 3U> kRarities{{
+        items::ItemRarity::normal, items::ItemRarity::magic,
+        items::ItemRarity::rare,
+    }};
+    std::array<platform::MaterialSpriteId, 4U> rarity_sprites{};
+    for (std::size_t index{}; index < kRarities.size(); ++index) {
+        rarity_sprites[index] = platform::ground_loot_rarity_sprite(
+            kRarities[index], false);
+    }
+    rarity_sprites[3] = platform::ground_loot_rarity_sprite(
+        items::ItemRarity::normal, true);
+    for (std::size_t index{}; index < rarity_sprites.size(); ++index) {
+        ARPG_REQUIRE(rarity_sprites[index] != platform::MaterialSpriteId::missing);
+        for (std::size_t previous{}; previous < index; ++previous) {
+            ARPG_REQUIRE(rarity_sprites[index] != rarity_sprites[previous]);
+        }
+    }
+
+    const platform::MaterialManifestDefinition manifest =
+        platform::default_material_manifest();
+    for (const auto sprite : slot_sprites) {
+        const auto* frame = platform::find_material_frame(manifest, sprite);
+        ARPG_REQUIRE(frame != nullptr);
+        ARPG_REQUIRE(frame->atlas == platform::MaterialAtlasId::items_ui);
+        ARPG_REQUIRE(frame->foot_anchor.x > 0.0F);
+        ARPG_REQUIRE(frame->foot_anchor.y > 0.0F);
+        ARPG_REQUIRE(frame->perceptual_hash != 0U);
+    }
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"three visibility modes and abyss", &visibility_covers_three_modes_and_abyss_bypass},
     {"filter and stable ordinal order", &builder_filters_and_orders_by_stable_ordinal},
@@ -298,6 +345,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"full capacity remains bounded", &full_capacity_extreme_layout_is_bounded},
     {"snapshot bytes remain unchanged", &builder_does_not_mutate_snapshot_bytes},
     {"hundred thousand builds no allocation", &hundred_thousand_builds_allocate_nothing},
+    {"equipment and rarity resources are unique", &equipment_slots_and_rarities_have_unique_layered_resources},
 };
 
 }  // namespace

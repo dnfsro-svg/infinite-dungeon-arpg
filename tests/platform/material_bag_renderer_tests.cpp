@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 
 #include "material_bag_renderer.hpp"
+#include "material_manifest.hpp"
 
 namespace {
 
@@ -67,12 +68,40 @@ arpg::test::Failure reinforcement_stone_requires_explicit_destroy_confirmation()
     return {};
 }
 
+arpg::test::Failure material_bag_and_skill_stones_use_authored_icon_resources() noexcept {
+    for (std::size_t index{}; index < items::kMaterialCount; ++index) {
+        const auto id = static_cast<items::MaterialId>(index);
+        ARPG_REQUIRE(platform::material_bag_sprite(id)
+            == platform::material_loot_sprite(id));
+    }
+    const auto active = platform::skill_stone_sprite(
+        platform::SkillStoneVisualKind::active);
+    const auto support = platform::skill_stone_sprite(
+        platform::SkillStoneVisualKind::support);
+    ARPG_REQUIRE(active != platform::MaterialSpriteId::missing);
+    ARPG_REQUIRE(support != platform::MaterialSpriteId::missing);
+    ARPG_REQUIRE(active != support);
+
+    const platform::MaterialManifestDefinition manifest =
+        platform::default_material_manifest();
+    const auto* active_frame = platform::find_material_frame(manifest, active);
+    const auto* support_frame = platform::find_material_frame(manifest, support);
+    ARPG_REQUIRE(active_frame != nullptr);
+    ARPG_REQUIRE(support_frame != nullptr);
+    ARPG_REQUIRE(active_frame->atlas == platform::MaterialAtlasId::items_ui);
+    ARPG_REQUIRE(support_frame->atlas == platform::MaterialAtlasId::items_ui);
+    ARPG_REQUIRE(active_frame->perceptual_hash
+        != support_frame->perceptual_hash);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"material bag contains all slots", &material_bag_has_all_fourteen_slots},
     {"minimum layout separates detail and bag", &minimum_layout_keeps_detail_above_material_bag},
     {"material bag selects owned material", &selected_material_requires_an_owned_material_slot},
     {"material bag selection cancels", &selected_material_can_be_cancelled_without_changing_counts},
     {"reinforcement requires destroy confirmation", &reinforcement_stone_requires_explicit_destroy_confirmation},
+    {"bag and skill stones use authored resources", &material_bag_and_skill_stones_use_authored_icon_resources},
 };
 
 }  // namespace

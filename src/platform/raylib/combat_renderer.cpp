@@ -89,6 +89,15 @@ bool CombatRenderer::material_atlas_available(
     return material_pack_.available(atlas);
 }
 
+const MaterialPack& CombatRenderer::material_pack() const noexcept {
+    return material_pack_;
+}
+
+std::uint64_t CombatRenderer::material_sprite_draw_count(
+    MaterialSpriteId sprite) const noexcept {
+    return material_pack_.sprite_draw_count(sprite);
+}
+
 MonsterMaterialDrawRuntimeStatus CombatRenderer::monster_material_draw_status(
     combat::MonsterId monster) const noexcept {
     const std::size_t index = static_cast<std::size_t>(monster);

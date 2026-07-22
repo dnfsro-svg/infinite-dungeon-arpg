@@ -53,6 +53,7 @@ inline constexpr MaterialAtlasDefinition kDefaultMaterialAtlases[] = {
     {MaterialAtlasId::chaos_environment, 768, 768, 4U * 768U * 768U, "assets/stage12/chaos_environment.png", "assets/stage12/chaos_environment_material.png", MaterialEcology::chaos},
     {MaterialAtlasId::chaos_chaser, 864, 864, 4U * 864U * 864U, "assets/stage12/chaos_chaser.png", "assets/stage12/chaos_chaser_material.png", MaterialEcology::chaos},
     {MaterialAtlasId::chaos_hazard, 864, 864, 4U * 864U * 864U, "assets/stage12/chaos_hazard.png", "assets/stage12/chaos_hazard_material.png", MaterialEcology::chaos},
+    {MaterialAtlasId::items_ui, 1024, 1024, 4U * 1024U * 1024U, "assets/stage12/items_ui.png", "assets/stage12/items_ui_material.png", MaterialEcology::common},
 };
 
 #define ARPG_ACTOR_FRAME(sprite, column, row) \
@@ -91,6 +92,13 @@ inline constexpr MaterialAtlasDefinition kDefaultMaterialAtlases[] = {
          static_cast<float>(((cell) / 9) * 96), 96.0F, 96.0F}, \
         {48.0F, 93.0F}, 42U, {68.0F, 48.0F}, MaterialLayer::body, \
         MaterialClass::actor, static_cast<std::uint32_t>((cell) * 227U + 7001U)}
+
+#define ARPG_ITEM_FRAME(sprite, cell, layer_value, class_value) \
+    {MaterialSpriteId::sprite, MaterialAtlasId::items_ui, \
+        {static_cast<float>(((cell) % 8) * 128), \
+         static_cast<float>(((cell) / 8) * 128), 128.0F, 128.0F}, \
+        {64.0F, 64.0F}, 0U, {64.0F, 64.0F}, layer_value, class_value, \
+        static_cast<std::uint32_t>((cell) * 239U + 8009U)}
 
 inline constexpr MaterialFrameDefinition kDefaultMaterialFrames[] = {
     ARPG_ACTOR_FRAME(player_idle, 0, 0),
@@ -249,10 +257,36 @@ inline constexpr MaterialFrameDefinition kDefaultMaterialFrames[] = {
     ARPG_EFFECT_FRAME(effect_launcher_trail, 1, 1),
     ARPG_EFFECT_FRAME(effect_landing_dust, 2, 1),
     ARPG_EFFECT_FRAME(effect_affix_aura, 3, 1),
-    ARPG_EFFECT_FRAME(loot_icon_normal, 0, 2),
-    ARPG_EFFECT_FRAME(loot_icon_magic, 1, 2),
-    ARPG_EFFECT_FRAME(loot_icon_rare, 2, 2),
-    ARPG_EFFECT_FRAME(loot_icon_abyss, 3, 2),
+    ARPG_ITEM_FRAME(item_weapon, 0, MaterialLayer::body, MaterialClass::loot),
+    ARPG_ITEM_FRAME(item_helmet, 1, MaterialLayer::body, MaterialClass::loot),
+    ARPG_ITEM_FRAME(item_chest, 2, MaterialLayer::body, MaterialClass::loot),
+    ARPG_ITEM_FRAME(item_gloves, 3, MaterialLayer::body, MaterialClass::loot),
+    ARPG_ITEM_FRAME(item_boots, 4, MaterialLayer::body, MaterialClass::loot),
+    ARPG_ITEM_FRAME(item_accessory, 5, MaterialLayer::body, MaterialClass::loot),
+    ARPG_ITEM_FRAME(loot_rarity_normal, 6, MaterialLayer::back_effect, MaterialClass::loot),
+    ARPG_ITEM_FRAME(loot_rarity_magic, 7, MaterialLayer::back_effect, MaterialClass::loot),
+    ARPG_ITEM_FRAME(loot_rarity_rare, 8, MaterialLayer::back_effect, MaterialClass::loot),
+    ARPG_ITEM_FRAME(loot_rarity_abyss, 9, MaterialLayer::back_effect, MaterialClass::loot),
+    ARPG_ITEM_FRAME(skill_stone_active, 10, MaterialLayer::front_effect, MaterialClass::ui),
+    ARPG_ITEM_FRAME(skill_stone_support, 11, MaterialLayer::front_effect, MaterialClass::ui),
+    ARPG_ITEM_FRAME(material_transmute, 12, MaterialLayer::body, MaterialClass::loot),
+    ARPG_ITEM_FRAME(material_augment, 13, MaterialLayer::body, MaterialClass::loot),
+    ARPG_ITEM_FRAME(material_regal, 14, MaterialLayer::body, MaterialClass::loot),
+    ARPG_ITEM_FRAME(material_chaos, 15, MaterialLayer::body, MaterialClass::loot),
+    ARPG_ITEM_FRAME(material_exalt, 16, MaterialLayer::body, MaterialClass::loot),
+    ARPG_ITEM_FRAME(material_annul, 17, MaterialLayer::body, MaterialClass::loot),
+    ARPG_ITEM_FRAME(material_divine, 18, MaterialLayer::body, MaterialClass::loot),
+    ARPG_ITEM_FRAME(material_scour, 19, MaterialLayer::body, MaterialClass::loot),
+    ARPG_ITEM_FRAME(material_directed, 20, MaterialLayer::body, MaterialClass::loot),
+    ARPG_ITEM_FRAME(material_reinforcement, 21, MaterialLayer::body, MaterialClass::loot),
+    ARPG_ITEM_FRAME(material_coupon_6, 22, MaterialLayer::body, MaterialClass::loot),
+    ARPG_ITEM_FRAME(material_coupon_9, 23, MaterialLayer::body, MaterialClass::loot),
+    ARPG_ITEM_FRAME(material_coupon_12, 24, MaterialLayer::body, MaterialClass::loot),
+    ARPG_ITEM_FRAME(material_coupon_15, 25, MaterialLayer::body, MaterialClass::loot),
+    ARPG_ITEM_FRAME(bag_frame_nw, 26, MaterialLayer::front_effect, MaterialClass::ui),
+    ARPG_ITEM_FRAME(bag_frame_ne, 27, MaterialLayer::front_effect, MaterialClass::ui),
+    ARPG_ITEM_FRAME(bag_frame_sw, 28, MaterialLayer::front_effect, MaterialClass::ui),
+    ARPG_ITEM_FRAME(bag_frame_se, 29, MaterialLayer::front_effect, MaterialClass::ui),
 };
 
 inline constexpr AnimationEventDefinition kDefaultAnimationEvents[] = {
@@ -281,6 +315,7 @@ inline constexpr AnimationClipDefinition kDefaultAnimationClips[] = {
 #undef ARPG_WATER_MONSTER_FRAME
 #undef ARPG_LIGHTNING_MONSTER_FRAME
 #undef ARPG_CHAOS_MONSTER_FRAME
+#undef ARPG_ITEM_FRAME
 
 }  // namespace detail
 
@@ -299,13 +334,21 @@ default_material_manifest() noexcept {
         256U * 1024U * 1024U};
 }
 
+[[nodiscard]] constexpr const MaterialFrameDefinition* find_material_frame(
+    const MaterialManifestDefinition& manifest, MaterialSpriteId id) noexcept {
+    for (std::size_t index{}; index < manifest.frame_count; ++index) {
+        if (manifest.frames[index].id == id) return &manifest.frames[index];
+    }
+    return nullptr;
+}
+
 [[nodiscard]] constexpr MaterialSpriteId select_loot_sprite(
     items::ItemRarity rarity, bool abyss = false) noexcept {
-    if (abyss) return MaterialSpriteId::loot_icon_abyss;
+    if (abyss) return MaterialSpriteId::loot_rarity_abyss;
     switch (rarity) {
-    case items::ItemRarity::normal: return MaterialSpriteId::loot_icon_normal;
-    case items::ItemRarity::magic: return MaterialSpriteId::loot_icon_magic;
-    case items::ItemRarity::rare: return MaterialSpriteId::loot_icon_rare;
+    case items::ItemRarity::normal: return MaterialSpriteId::loot_rarity_normal;
+    case items::ItemRarity::magic: return MaterialSpriteId::loot_rarity_magic;
+    case items::ItemRarity::rare: return MaterialSpriteId::loot_rarity_rare;
     }
     return MaterialSpriteId::missing;
 }

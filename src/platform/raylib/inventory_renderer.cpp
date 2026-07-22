@@ -104,6 +104,7 @@ void draw_inventory_page_button(Rectangle rectangle, const char* label,
 void draw_active_skill_loadout(const dungeon::DungeonSnapshot& snapshot,
     const DungeonRenderStatus& status,
     const ActiveSkillLoadoutSelection& selection,
+    const MaterialPack& assets,
     Font font, bool font_ready) noexcept {
     const ActiveSkillLoadoutLayout layout = active_skill_loadout_layout(
         GetScreenWidth(), GetScreenHeight());
@@ -127,14 +128,18 @@ void draw_active_skill_loadout(const dungeon::DungeonSnapshot& snapshot,
             slot.selected ? 3.0F : 1.0F,
             slot.selected ? Color{148, 225, 255, 255}
                           : Color{77, 105, 137, 255});
+        static_cast<void>(assets.draw(skill_stone_sprite(
+            SkillStoneVisualKind::active),
+            {bounds.x + 24.0F, bounds.y + bounds.height * 0.5F},
+            false, 0.24F, slot.empty ? Fade(WHITE, 0.30F) : WHITE));
         char number[8]{};
         static_cast<void>(std::snprintf(number, sizeof(number), "%u",
             static_cast<unsigned>(slot.slot_number)));
         draw_hud_font_text(font, font_ready, number,
-            bounds.x + 8.0F, bounds.y + 7.0F, 18.0F, WHITE);
+            bounds.x + 43.0F, bounds.y + 7.0F, 18.0F, WHITE);
         draw_hud_font_text(font, font_ready,
             slot.empty ? u8"空主技能槽" : slot.name.data(),
-            bounds.x + 28.0F, bounds.y + 27.0F, 15.0F,
+            bounds.x + 63.0F, bounds.y + 27.0F, 15.0F,
             slot.empty ? Color{116, 132, 151, 255}
                        : Color{210, 241, 255, 255});
     }
@@ -147,6 +152,11 @@ void draw_active_skill_loadout(const dungeon::DungeonSnapshot& snapshot,
         DrawRectangleRounded(support, 0.08F, 4, Color{17, 24, 35, 255});
         DrawRectangleRoundedLinesEx(support, 0.08F, 4, 1.0F,
             Color{61, 79, 101, 255});
+        static_cast<void>(assets.draw(skill_stone_sprite(
+            SkillStoneVisualKind::support),
+            {support.x + support.width * 0.5F,
+             support.y + support.height * 0.5F},
+            false, 0.22F, Fade(WHITE, 0.48F)));
         draw_hud_font_text(font, font_ready, u8"空",
             support.x + 17.0F, support.y + 17.0F, 15.0F,
             Color{105, 121, 141, 255});
@@ -166,8 +176,12 @@ void draw_active_skill_loadout(const dungeon::DungeonSnapshot& snapshot,
             stone.selected ? 3.0F : 1.0F,
             stone.selected ? Color{148, 225, 255, 255}
                            : Color{77, 105, 137, 255});
+        static_cast<void>(assets.draw(skill_stone_sprite(
+            SkillStoneVisualKind::active),
+            {bounds.x + 22.0F, bounds.y + bounds.height * 0.5F},
+            false, 0.22F));
         draw_hud_font_text(font, font_ready, stone.name.data(),
-            bounds.x + 10.0F, bounds.y + 20.0F, 16.0F,
+            bounds.x + 43.0F, bounds.y + 20.0F, 16.0F,
             Color{210, 241, 255, 255});
     }
     if (view.inventory_count == 0U) {
@@ -546,6 +560,7 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
 void InventoryRenderer::draw(const dungeon::DungeonSession& session,
     const dungeon::DungeonSnapshot& snapshot,
     const DungeonRenderStatus& status,
+    const MaterialPack& material_pack,
     Font hud_font, bool hud_font_ready) {
     if (!open_) return;
     sync(session, snapshot);
@@ -570,13 +585,14 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
         hud_font, hud_font_ready);
     if (page_ == InventoryPage::skill_stones) {
         draw_active_skill_loadout(snapshot, status, active_skill_selection_,
-            hud_font, hud_font_ready);
+            material_pack, hud_font, hud_font_ready);
         return;
     }
     draw_panel(layout.equipment, "EQUIPMENT");
     draw_panel(layout.grid, "INVENTORY");
     draw_panel(layout.detail, "ITEM DETAIL");
-    material_bag_.draw(state, GetScreenWidth(), GetScreenHeight());
+    material_bag_.draw(state, material_pack,
+        GetScreenWidth(), GetScreenHeight());
 
     for (std::size_t index = 0U; index < state.equipment.equipped_ids.size(); ++index) {
         const auto slot = static_cast<items::ItemSlot>(index);
@@ -584,15 +600,19 @@ void InventoryRenderer::draw(const dungeon::DungeonSession& session,
         DrawRectangleRounded(rectangle, 0.08F, 4, Color{21, 28, 40, 255});
         DrawRectangleRoundedLinesEx(rectangle, 0.08F, 4, 1.0F,
             Color{75, 100, 133, 255});
+        static_cast<void>(material_pack.draw(ground_loot_item_sprite(slot),
+            {rectangle.x + 24.0F, rectangle.y + rectangle.height * 0.5F},
+            false, 0.24F, state.equipment.equipped_ids[index] == 0U
+                ? Fade(WHITE, 0.30F) : WHITE));
         const std::uint64_t id = state.equipment.equipped_ids[index];
         if (id == 0U) {
             DrawText(TextFormat("%s  [empty]", slot_name(slot)),
-                static_cast<int>(rectangle.x + 8.0F),
+                static_cast<int>(rectangle.x + 45.0F),
                 static_cast<int>(rectangle.y + 8.0F), 13, RAYWHITE);
         } else {
             DrawText(TextFormat("%s  #%llu", slot_name(slot),
                 static_cast<unsigned long long>(id)),
-                static_cast<int>(rectangle.x + 8.0F),
+                static_cast<int>(rectangle.x + 45.0F),
                 static_cast<int>(rectangle.y + 8.0F), 13, RAYWHITE);
         }
     }

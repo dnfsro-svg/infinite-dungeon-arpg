@@ -148,6 +148,30 @@ bool ground_loot_visible(const dungeon::GroundItemSnapshot& item,
     return true;
 }
 
+MaterialSpriteId ground_loot_item_sprite(items::ItemSlot slot) noexcept {
+    switch (slot) {
+    case items::ItemSlot::weapon: return MaterialSpriteId::item_weapon;
+    case items::ItemSlot::helmet: return MaterialSpriteId::item_helmet;
+    case items::ItemSlot::chest: return MaterialSpriteId::item_chest;
+    case items::ItemSlot::gloves: return MaterialSpriteId::item_gloves;
+    case items::ItemSlot::boots: return MaterialSpriteId::item_boots;
+    case items::ItemSlot::accessory: return MaterialSpriteId::item_accessory;
+    case items::ItemSlot::count: break;
+    }
+    return MaterialSpriteId::missing;
+}
+
+MaterialSpriteId ground_loot_rarity_sprite(
+    items::ItemRarity rarity, bool abyss) noexcept {
+    if (abyss) return MaterialSpriteId::loot_rarity_abyss;
+    switch (rarity) {
+    case items::ItemRarity::normal: return MaterialSpriteId::loot_rarity_normal;
+    case items::ItemRarity::magic: return MaterialSpriteId::loot_rarity_magic;
+    case items::ItemRarity::rare: return MaterialSpriteId::loot_rarity_rare;
+    }
+    return MaterialSpriteId::missing;
+}
+
 GroundLootView build_ground_loot_view(
     const dungeon::DungeonSnapshot& snapshot,
     settings::LootFilterMode mode,
@@ -174,6 +198,9 @@ GroundLootView build_ground_loot_view(
         label.text_color = rarity_color(item.rarity);
         label.border_color = label.abyss
             ? kAbyssBorderColor : label.text_color;
+        label.item_sprite = ground_loot_item_sprite(item.slot);
+        label.rarity_sprite = ground_loot_rarity_sprite(
+            item.rarity, label.abyss);
         const ScreenProjection projection =
             project_combat_position(item.position, width, height);
         label.anchor_x = projection.x;

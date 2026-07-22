@@ -31,6 +31,22 @@ function Save-MutatedBitmap([string]$Path, [scriptblock]$Mutation) {
 }
 
 $mutations = @()
+$solidItems = New-Mutation 'solid-gray-items'
+Save-MutatedBitmap (Join-Path $solidItems 'items-materials-1280x720.png') {
+    param($bitmap)
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    try { $graphics.Clear([System.Drawing.Color]::FromArgb(255, 64, 64, 64)) }
+    finally { $graphics.Dispose() }
+}
+$mutations += @{ Name='solid-gray-items'; Path=$solidItems }
+
+$missingItemRuntime = New-Mutation 'missing-item-runtime-draw'
+$reportPath = Join-Path $missingItemRuntime 'stage12-material-evidence.txt'
+(Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8).Replace(
+    'item_runtime_draws=pass', 'item_runtime_draws=fail') |
+    Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+$mutations += @{ Name='missing-item-runtime-draw'; Path=$missingItemRuntime }
+
 $solid = New-Mutation 'solid-gray'
 Save-MutatedBitmap (Join-Path $solid 'lightning-monsters-1280x720.png') {
     param($bitmap)
@@ -140,4 +156,4 @@ foreach ($mutation in $mutations) {
     }
 }
 if ($failures.Count -ne 0) { throw ($failures -join [Environment]::NewLine) }
-Write-Output 'stage12 material validator rejected solid, wrong-ecology, baseline-only monster regions, and invalid runtime draw/frame proof for lightning and chaos'
+Write-Output 'stage12 material validator rejected solid item evidence, missing item telemetry, wrong-ecology, baseline-only monster regions, and invalid runtime draw/frame proof for lightning and chaos'

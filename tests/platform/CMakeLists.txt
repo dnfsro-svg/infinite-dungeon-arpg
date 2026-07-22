@@ -72,6 +72,13 @@ if(TARGET arpg_raylib)
     set_tests_properties(stage12.chaos_asset_pipeline PROPERTIES
         LABELS "headless;platform;stage12" TIMEOUT 120)
 
+    add_test(NAME stage12.item_material_asset_pipeline
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/item_material_asset_pipeline_tests.py")
+    set_tests_properties(stage12.item_material_asset_pipeline PROPERTIES
+        LABELS "headless;platform;assets;stage12"
+        TIMEOUT 120)
+
     add_executable(arpg_stage16_loot_reinforcement_game_validation
         stage16_loot_reinforcement_game_validation.cpp)
     target_compile_features(arpg_stage16_loot_reinforcement_game_validation
@@ -84,11 +91,19 @@ if(TARGET arpg_raylib)
         target_compile_options(arpg_stage16_loot_reinforcement_game_validation PRIVATE /utf-8)
     endif()
     arpg_enable_project_warnings(arpg_stage16_loot_reinforcement_game_validation)
+    add_custom_command(TARGET arpg_stage16_loot_reinforcement_game_validation POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            "${PROJECT_SOURCE_DIR}/assets/stage12"
+            "$<TARGET_FILE_DIR:arpg_stage16_loot_reinforcement_game_validation>/assets/stage12"
+        COMMENT "Copying item material atlases for Stage 16 validation"
+        VERBATIM)
     add_test(NAME stage16.loot_reinforcement.real_raylib
         COMMAND "$<TARGET_FILE:arpg_stage16_loot_reinforcement_game_validation>"
             "${CMAKE_CURRENT_BINARY_DIR}/stage16 loot reinforcement evidence")
     set_tests_properties(stage16.loot_reinforcement.real_raylib PROPERTIES
-        LABELS "platform;raylib;stage16;validation" TIMEOUT 90 RUN_SERIAL TRUE)
+        LABELS "platform;raylib;stage16;validation" TIMEOUT 90 RUN_SERIAL TRUE
+        WORKING_DIRECTORY
+            "$<TARGET_FILE_DIR:arpg_stage16_loot_reinforcement_game_validation>")
 
     add_executable(arpg_stage17_skill_stones_game_validation
         stage17_skill_stones_game_validation.cpp)
@@ -106,6 +121,12 @@ if(TARGET arpg_raylib)
             "${PROJECT_SOURCE_DIR}/assets/skills"
             "$<TARGET_FILE_DIR:arpg_stage17_skill_stones_game_validation>/assets/skills"
         COMMENT "Copying active-skill frame atlases for Stage 17 validation"
+        VERBATIM)
+    add_custom_command(TARGET arpg_stage17_skill_stones_game_validation POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            "${PROJECT_SOURCE_DIR}/assets/stage12"
+            "$<TARGET_FILE_DIR:arpg_stage17_skill_stones_game_validation>/assets/stage12"
+        COMMENT "Copying item material atlases for Stage 17 validation"
         VERBATIM)
     set(_stage17_evidence_root
         "${CMAKE_CURRENT_BINARY_DIR}/stage17 skill stones evidence")

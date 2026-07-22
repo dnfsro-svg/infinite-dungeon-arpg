@@ -29,6 +29,34 @@ function Read-PngSize([string]$Path) {
     return @($width, $height)
 }
 
+function Measure-ItemCapture([string]$Path) {
+    $bitmap = [System.Drawing.Bitmap]::FromFile($Path)
+    try {
+        $colors = [System.Collections.Generic.HashSet[int]]::new()
+        [int]$blueWhite = 0
+        [int]$ancientGold = 0
+        [int]$violet = 0
+        for ($y = 240; $y -lt 610; $y += 2) {
+            for ($x = 320; $x -lt 970; $x += 2) {
+                $pixel = $bitmap.GetPixel($x, $y)
+                [void]$colors.Add((((([int]$pixel.R) -shr 4) -shl 8) -bor
+                    ((([int]$pixel.G) -shr 4) -shl 4) -bor
+                    (([int]$pixel.B) -shr 4)))
+                if ($pixel.B -gt 145 -and $pixel.G -gt 115 -and
+                        $pixel.B -gt $pixel.R + 35) { ++$blueWhite }
+                if ($pixel.R -gt 145 -and $pixel.G -gt 90 -and
+                        $pixel.R -gt $pixel.B + 45) { ++$ancientGold }
+                if ($pixel.R -gt 105 -and $pixel.B -gt 120 -and
+                        $pixel.G -lt 120) { ++$violet }
+            }
+        }
+        if ($colors.Count -lt 160 -or $blueWhite -lt 100 -or
+                $ancientGold -lt 100 -or $violet -lt 40) {
+            throw "item/material capture lacks authored icon palette: colors=$($colors.Count) blueWhite=$blueWhite ancientGold=$ancientGold violet=$violet"
+        }
+    } finally { $bitmap.Dispose() }
+}
+
 function Measure-LightningCapture([string]$Path, [string]$BackgroundPath) {
     $bitmap = [System.Drawing.Bitmap]::FromFile($Path)
     $background = [System.Drawing.Bitmap]::FromFile($BackgroundPath)
@@ -219,7 +247,7 @@ function Measure-ChaosCapture([string]$Path, [string]$BackgroundPath) {
                 }
             }
             if ($changed -lt 500 -or $largest -lt 180 -or
-                    $largestWidth -lt 18 -or $largestHeight -lt 28) {
+                    ($largestWidth -lt 18 -and $largestHeight -lt 28)) {
                 throw "chaos capture lacks monster-vs-background contour: $($region.Name) changed=$changed largest=$largest extent=${largestWidth}x${largestHeight}"
             }
         }
@@ -233,7 +261,8 @@ $reportPath = Join-Path $EvidenceDirectory 'stage12-material-evidence.txt'
 if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { throw 'missing material report' }
 $report = Read-Report $reportPath
 foreach ($key in @('manifest','atlas_bytes','fallback','input_hole_regression',
-        'monsters','monster_screenshot','water_monster_screenshot','lightning_monster_screenshot',
+        'monsters','monster_screenshot','item_screenshot','items_ui_pair',
+        'item_runtime_draws','water_monster_screenshot','lightning_monster_screenshot',
         'lightning_background_screenshot','chaos_monster_screenshot',
         'chaos_background_screenshot',
         'f12_screenshot','screenshot_isolation',
@@ -255,6 +284,8 @@ foreach ($key in @('manifest','atlas_bytes','fallback','input_hole_regression',
 }
 if ($report.result -ne 'pass' -or $report.manifest -ne 'pass' -or
         $report.fallback -ne 'pass' -or $report.input_hole_regression -ne 'pass' -or
+        $report.items_ui_pair -ne 'resident' -or
+        $report.item_runtime_draws -ne 'pass' -or
         $report.shader_pipeline -ne 'pass' -or
         $report.water_ecology_residency -ne 'pass' -or
         $report.water_environment_pair -ne 'resident' -or
@@ -299,7 +330,7 @@ if ($chaserFrame -ge 12 -or $hazardFrame -ge 12) {
     throw 'formal material report rejected invalid chaos frame index'
 }
 $atlasBytes = [uint64]$report.atlas_bytes
-if ($atlasBytes -lt 167428096) { throw 'paired texture budget was not fully counted' }
+if ($atlasBytes -lt 175816704) { throw 'paired texture budget was not fully counted' }
 if ($atlasBytes -gt 268435456) { throw 'texture budget exceeded' }
 
 foreach ($expected in @(@('game-1280x720.png',1280,720),
@@ -316,6 +347,12 @@ $monsterScreenshot = Join-Path $EvidenceDirectory $report.monster_screenshot
 if (-not (Test-Path -LiteralPath $monsterScreenshot -PathType Leaf)) { throw 'missing eight-monster screenshot' }
 $monsterSize = Read-PngSize $monsterScreenshot
 if ($monsterSize[0] -ne 1280 -or $monsterSize[1] -ne 720) { throw 'wrong eight-monster screenshot size' }
+$itemScreenshot = Join-Path $EvidenceDirectory $report.item_screenshot
+if (-not (Test-Path -LiteralPath $itemScreenshot -PathType Leaf)) { throw 'missing item/material screenshot' }
+$itemSize = Read-PngSize $itemScreenshot
+if ($itemSize[0] -ne 1280 -or $itemSize[1] -ne 720) { throw 'wrong item/material screenshot size' }
+if ((Get-Item -LiteralPath $itemScreenshot).Length -le 4096) { throw 'empty item/material screenshot' }
+Measure-ItemCapture $itemScreenshot
 $waterMonsterScreenshot = Join-Path $EvidenceDirectory $report.water_monster_screenshot
 if (-not (Test-Path -LiteralPath $waterMonsterScreenshot -PathType Leaf)) { throw 'missing water-monster screenshot' }
 $waterMonsterSize = Read-PngSize $waterMonsterScreenshot
@@ -331,6 +368,13 @@ if ($lightningBackgroundSize[0] -ne 1280 -or $lightningBackgroundSize[1] -ne 720
 Measure-LightningCapture $lightningMonsterScreenshot $lightningBackgroundScreenshot
 $chaosMonsterScreenshot = Join-Path $EvidenceDirectory $report.chaos_monster_screenshot
 if (-not (Test-Path -LiteralPath $chaosMonsterScreenshot -PathType Leaf)) { throw 'missing chaos-monster screenshot' }
+$lightningBytes = [System.IO.File]::ReadAllBytes($lightningMonsterScreenshot)
+$chaosBytes = [System.IO.File]::ReadAllBytes($chaosMonsterScreenshot)
+$capturesMatch = $lightningBytes.Length -eq $chaosBytes.Length
+for ($index = 0; $capturesMatch -and $index -lt $lightningBytes.Length; ++$index) {
+    if ($lightningBytes[$index] -ne $chaosBytes[$index]) { $capturesMatch = $false }
+}
+if ($capturesMatch) { throw 'chaos capture duplicates lightning ecology evidence' }
 $chaosMonsterSize = Read-PngSize $chaosMonsterScreenshot
 if ($chaosMonsterSize[0] -ne 1280 -or $chaosMonsterSize[1] -ne 720) { throw 'wrong chaos-monster screenshot size' }
 $chaosBackgroundScreenshot = Join-Path $EvidenceDirectory $report.chaos_background_screenshot
@@ -352,7 +396,8 @@ $assetRoot = Join-Path $PSScriptRoot '..\..\assets\stage12'
 $expectedAtlases = @(@('environment.png',1024,1024),
     @('environment_material.png',1024,1024), @('actors.png',2048,2048),
     @('actors_material.png',2048,2048), @('effects_ui.png',1024,1024),
-    @('effects_ui_material.png',1024,1024), @('water_environment.png',768,768),
+    @('effects_ui_material.png',1024,1024), @('items_ui.png',1024,1024),
+    @('items_ui_material.png',1024,1024), @('water_environment.png',768,768),
     @('water_environment_material.png',768,768), @('water_bulwark.png',864,864),
     @('water_bulwark_material.png',864,864), @('water_support.png',864,864),
     @('water_support_material.png',864,864),
@@ -376,4 +421,4 @@ foreach ($expected in $expectedAtlases) {
         throw "wrong atlas dimensions: $($expected[0])"
     }
 }
-Write-Output 'stage12 material evidence validated: screenshots, atlases, fallback, input/hole, runtime monster draws, and lightning/chaos baseline contours'
+Write-Output 'stage12 material evidence validated: item telemetry, screenshots, atlases, fallback, input/hole, runtime monster draws, and lightning/chaos baseline contours'

@@ -25,6 +25,10 @@ namespace {
 
 [[nodiscard]] constexpr MaterialAtlasId atlas_for_sprite(
     MaterialSpriteId id) noexcept {
+    if (id >= MaterialSpriteId::item_weapon
+            && id <= MaterialSpriteId::bag_frame_se) {
+        return MaterialAtlasId::items_ui;
+    }
     switch (id) {
     case MaterialSpriteId::environment_floor_fire:
     case MaterialSpriteId::environment_door_fire:
@@ -135,10 +139,6 @@ namespace {
     case MaterialSpriteId::effect_launcher_trail:
     case MaterialSpriteId::effect_landing_dust:
     case MaterialSpriteId::effect_affix_aura:
-    case MaterialSpriteId::loot_icon_normal:
-    case MaterialSpriteId::loot_icon_magic:
-    case MaterialSpriteId::loot_icon_rare:
-    case MaterialSpriteId::loot_icon_abyss:
         return MaterialAtlasId::effects_ui;
     default:
         break;
@@ -423,6 +423,7 @@ void MaterialPack::unload() noexcept {
         material_textures_[index] = Texture2D{};
     }
     state_.reset();
+    sprite_draw_counts_.fill(0U);
     current_ecology_ = MaterialEcology::common;
     if (material_pipeline_ready_ && valid_texture_api(texture_api_)) {
         texture_api_.shutdown_material_pipeline();
@@ -495,7 +496,15 @@ bool MaterialPack::draw(MaterialSpriteId id, Vector2 foot_position,
         frame->source.width * scale, frame->source.height * scale};
     texture_api_.draw_material(color_texture, material_texture, source,
         destination, {0.0F, 0.0F}, 0.0F, tint, {});
+    ++sprite_draw_counts_[static_cast<std::size_t>(id)];
     return true;
+}
+
+std::uint64_t MaterialPack::sprite_draw_count(
+    MaterialSpriteId id) const noexcept {
+    const std::size_t index = static_cast<std::size_t>(id);
+    return index < sprite_draw_counts_.size()
+        ? sprite_draw_counts_[index] : 0U;
 }
 
 bool MaterialPack::draw_frame(MaterialAtlasId atlas, Rectangle source,

@@ -27,6 +27,20 @@ bool inside(Rectangle child, Rectangle parent) noexcept {
 
 }  // namespace
 
+MaterialSpriteId skill_stone_sprite(SkillStoneVisualKind kind) noexcept {
+    switch (kind) {
+    case SkillStoneVisualKind::active:
+        return MaterialSpriteId::skill_stone_active;
+    case SkillStoneVisualKind::support:
+        return MaterialSpriteId::skill_stone_support;
+    }
+    return MaterialSpriteId::missing;
+}
+
+MaterialSpriteId material_bag_sprite(items::MaterialId id) noexcept {
+    return material_loot_sprite(id);
+}
+
 bool MaterialBagLayout::contains_all_slots() const noexcept {
     if (panel.width <= 0.0F || panel.height <= 0.0F) return false;
     for (const Rectangle slot : slots) {
@@ -169,7 +183,7 @@ items::DirectedCategory MaterialBagRenderer::directed_category() const noexcept 
 }
 
 void MaterialBagRenderer::draw(const items::ItemOwnershipState& state,
-    int width, int height) const noexcept {
+    const MaterialPack& assets, int width, int height) const noexcept {
     const MaterialBagLayout layout = material_bag_layout(width, height);
     if (!layout.contains_all_slots()) return;
     DrawRectangleRounded(layout.panel, 0.025F, 5, Color{8, 12, 20, 247});
@@ -177,6 +191,17 @@ void MaterialBagRenderer::draw(const items::ItemOwnershipState& state,
         Color{72, 91, 120, 255});
     DrawText("MATERIAL BAG", static_cast<int>(layout.panel.x + kInset),
         static_cast<int>(layout.panel.y + 9.0F), 16, Color{131, 211, 255, 255});
+    static_cast<void>(assets.draw(MaterialSpriteId::bag_frame_nw,
+        {layout.panel.x + 13.0F, layout.panel.y + 13.0F}, false, 0.16F));
+    static_cast<void>(assets.draw(MaterialSpriteId::bag_frame_ne,
+        {layout.panel.x + layout.panel.width - 13.0F, layout.panel.y + 13.0F},
+        false, 0.16F));
+    static_cast<void>(assets.draw(MaterialSpriteId::bag_frame_sw,
+        {layout.panel.x + 13.0F, layout.panel.y + layout.panel.height - 13.0F},
+        false, 0.16F));
+    static_cast<void>(assets.draw(MaterialSpriteId::bag_frame_se,
+        {layout.panel.x + layout.panel.width - 13.0F,
+         layout.panel.y + layout.panel.height - 13.0F}, false, 0.16F));
     for (std::size_t index = 0U; index < layout.slots.size(); ++index) {
         const items::MaterialId id = static_cast<items::MaterialId>(index);
         const bool selected = selected_.has_value() && *selected_ == id;
@@ -189,11 +214,19 @@ void MaterialBagRenderer::draw(const items::ItemOwnershipState& state,
             selected ? Color{34, 68, 88, 255} : Color{21, 28, 39, 255});
         DrawRectangleRoundedLinesEx(slot, 0.08F, 4,
             selected ? 2.0F : 1.0F, color);
+        const float icon_scale = (std::min)(0.22F,
+            (std::max)(0.08F, slot.height * 0.72F / 128.0F));
+        const float icon_width = 128.0F * icon_scale;
+        static_cast<void>(assets.draw(material_bag_sprite(id),
+            {slot.x + 4.0F + icon_width * 0.5F,
+             slot.y + slot.height * 0.5F}, false, icon_scale));
         const items::MaterialDefinition* const definition = items::material_definition(id);
         DrawText(definition == nullptr ? "Invalid" : definition->name.data(),
-            static_cast<int>(slot.x + 5.0F), static_cast<int>(slot.y + 3.0F), 10, color);
+            static_cast<int>(slot.x + 8.0F + icon_width),
+            static_cast<int>(slot.y + 3.0F), 10, color);
         DrawText(TextFormat("x%llu", static_cast<unsigned long long>(state.materials[index])),
-            static_cast<int>(slot.x + 5.0F), static_cast<int>(slot.y + slot.height - 13.0F),
+            static_cast<int>(slot.x + 8.0F + icon_width),
+            static_cast<int>(slot.y + slot.height - 13.0F),
             11, RAYWHITE);
         if (selected && id == items::MaterialId::directed) {
             const char* category = "Damage";

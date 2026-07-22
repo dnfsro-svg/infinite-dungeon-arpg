@@ -2,6 +2,7 @@
 
 #include "inventory_view_math.hpp"
 #include "material_bag_renderer.hpp"
+#include "material_pack.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -29,6 +30,7 @@ public:
     void draw(const dungeon::DungeonSession& session,
         const dungeon::DungeonSnapshot& snapshot,
         const DungeonRenderStatus& status,
+        const MaterialPack& material_pack,
         Font hud_font, bool hud_font_ready);
 
 private:

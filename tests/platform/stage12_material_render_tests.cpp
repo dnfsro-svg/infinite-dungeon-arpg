@@ -63,7 +63,7 @@ arpg::test::Failure declared_effect_frames_are_nonempty() noexcept {
         ++seen;
     }
     UnloadImage(image);
-    ARPG_REQUIRE(seen == 12U);
+    ARPG_REQUIRE(seen == 8U);
     return {};
 }
 
@@ -71,6 +71,11 @@ arpg::test::Failure loot_rarity_uses_distinct_material_icons() noexcept {
     ARPG_REQUIRE(arpg::platform::select_loot_sprite(
         arpg::items::ItemRarity::normal)
         != arpg::platform::select_loot_sprite(arpg::items::ItemRarity::rare));
+    const auto manifest = arpg::platform::default_material_manifest();
+    const auto* frame = arpg::platform::find_material_frame(manifest,
+        arpg::platform::select_loot_sprite(arpg::items::ItemRarity::rare));
+    ARPG_REQUIRE(frame != nullptr);
+    ARPG_REQUIRE(frame->atlas == arpg::platform::MaterialAtlasId::items_ui);
     return {};
 }
 

@@ -414,9 +414,12 @@ void draw_ground_items(const dungeon::DungeonSnapshot& snapshot,
             static_cast<int>(projected.ground_y + 2.0F),
             17.0F * projected.scale, 6.0F * projected.scale,
             Fade(color, 0.24F));
-        const bool abyss = item->source == dungeon::GroundItemSource::abyss_chest;
-        if (!material_pack.draw(select_loot_sprite(item->rarity, abyss), center,
-                false, 0.30F * projected.scale)) {
+        const GroundLootLabel& label = ground_loot.labels[index];
+        const bool rarity_drawn = material_pack.draw(label.rarity_sprite, center,
+            false, 0.34F * projected.scale);
+        const bool item_drawn = material_pack.draw(label.item_sprite, center,
+            false, 0.25F * projected.scale);
+        if (!rarity_drawn || !item_drawn) {
             draw_ground_item_shape(item->slot, center, projected.scale, color);
         }
     }
@@ -436,7 +439,8 @@ const dungeon::GroundMaterialSnapshot* ground_material_with_ordinal(
 }
 
 void draw_ground_materials(const dungeon::DungeonSnapshot& snapshot,
-    const MaterialLootView& view, float width, float height) noexcept {
+    const MaterialLootView& view, const MaterialPack& material_pack,
+    float width, float height) noexcept {
     for (std::size_t index = 0U; index < view.count; ++index) {
         const MaterialLootLabel& label = view.labels[index];
         const auto* material = ground_material_with_ordinal(snapshot, label.ordinal);
@@ -458,7 +462,10 @@ void draw_ground_materials(const dungeon::DungeonSnapshot& snapshot,
             DrawCircleLines(static_cast<int>(center.x), static_cast<int>(center.y),
                 radius * 1.55F, Fade(color, 0.78F));
         }
-        DrawCircleV(center, radius, color);
+        if (!material_pack.draw(label.sprite, center, false,
+                (label.emphasized ? 0.24F : 0.20F) * projected.scale)) {
+            DrawCircleV(center, radius, color);
+        }
         DrawCircleLines(static_cast<int>(center.x), static_cast<int>(center.y),
             radius, RAYWHITE);
     }
@@ -531,7 +538,7 @@ void CombatRenderer::draw_room(
     }
     draw_abyss(current, static_cast<float>(GetTime()));
     draw_environment_hazards(current, width, height);
-    draw_ground_materials(current, material_loot, width, height);
+    draw_ground_materials(current, material_loot, material_pack_, width, height);
     draw_ground_items(current, ground_loot, material_pack_, width, height);
     if (current.ecology == dungeon::DungeonElement::fire) {
         draw_fire_room_props(material_pack_, current, width, height);

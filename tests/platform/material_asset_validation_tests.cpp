@@ -261,6 +261,38 @@ arpg::test::Failure material_pack_loads_and_draws_color_material_pairs() noexcep
     return {};
 }
 
+arpg::test::Failure material_pack_records_successful_item_sprite_draws() noexcept {
+    FakeMaterialTextures fake{};
+    const MaterialManifestDefinition manifest =
+        arpg::platform::default_material_manifest();
+    for (std::size_t index{}; index < manifest.atlas_count; ++index) {
+        const auto& atlas = manifest.atlases[index];
+        fake.loaded[index * 2U] = {
+            static_cast<unsigned int>(3000U + index * 2U),
+            atlas.width, atlas.height, 1, 7};
+        fake.loaded[index * 2U + 1U] = {
+            static_cast<unsigned int>(3001U + index * 2U),
+            atlas.width, atlas.height, 1, 7};
+    }
+    g_fake_material_textures = &fake;
+    arpg::platform::MaterialPack pack{fake_material_texture_api()};
+    ARPG_REQUIRE(pack.load(MaterialEcology::fire));
+    ARPG_REQUIRE(pack.sprite_draw_count(MaterialSpriteId::item_weapon) == 0U);
+    ARPG_REQUIRE(pack.draw(MaterialSpriteId::item_weapon,
+        {100.0F, 100.0F}, false, 0.25F));
+    ARPG_REQUIRE(pack.draw(MaterialSpriteId::item_weapon,
+        {120.0F, 100.0F}, false, 0.25F));
+    ARPG_REQUIRE(pack.draw(MaterialSpriteId::material_chaos,
+        {140.0F, 100.0F}, false, 0.25F));
+    ARPG_REQUIRE(pack.sprite_draw_count(MaterialSpriteId::item_weapon) == 2U);
+    ARPG_REQUIRE(pack.sprite_draw_count(MaterialSpriteId::material_chaos) == 1U);
+    ARPG_REQUIRE(pack.sprite_draw_count(MaterialSpriteId::missing) == 0U);
+    pack.unload();
+    ARPG_REQUIRE(pack.sprite_draw_count(MaterialSpriteId::item_weapon) == 0U);
+    g_fake_material_textures = nullptr;
+    return {};
+}
+
 arpg::test::Failure material_pack_switches_ecology_without_reloading_common() noexcept {
     FakeMaterialTextures fake{};
     const MaterialManifestDefinition manifest =
@@ -706,6 +738,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &material_pack_loads_all_original_player_action_atlases},
     {"loads and draws paired color and material atlases",
         &material_pack_loads_and_draws_color_material_pairs},
+    {"records successful item sprite draws",
+        &material_pack_records_successful_item_sprite_draws},
     {"switches ecology without reloading common atlases",
         &material_pack_switches_ecology_without_reloading_common},
     {"all manifest texture pairs exist and match declared dimensions",
