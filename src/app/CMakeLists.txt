@@ -16,6 +16,13 @@ add_custom_command(TARGET arpg_game POST_BUILD
 
 add_custom_command(TARGET arpg_game POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E copy_directory
+        "${PROJECT_SOURCE_DIR}/assets/player"
+        "$<TARGET_FILE_DIR:arpg_game>/assets/player"
+    COMMENT "Copying player base-animation material atlases"
+    VERBATIM)
+
+add_custom_command(TARGET arpg_game POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory
         "${PROJECT_SOURCE_DIR}/assets/skills"
         "$<TARGET_FILE_DIR:arpg_game>/assets/skills"
     COMMENT "Copying active-skill frame atlases"

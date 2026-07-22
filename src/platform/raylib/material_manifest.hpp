@@ -36,6 +36,11 @@ inline constexpr MaterialAtlasDefinition kDefaultMaterialAtlases[] = {
     {MaterialAtlasId::environment, 1024, 1024, 4U * 1024U * 1024U, "assets/stage12/environment.png", "assets/stage12/environment_material.png", MaterialEcology::common},
     {MaterialAtlasId::actors, 2048, 2048, 4U * 2048U * 2048U, "assets/stage12/actors.png", "assets/stage12/actors_material.png", MaterialEcology::common},
     {MaterialAtlasId::effects_ui, 1024, 1024, 4U * 1024U * 1024U, "assets/stage12/effects_ui.png", "assets/stage12/effects_ui_material.png", MaterialEcology::common},
+    {MaterialAtlasId::player_locomotion, 1024, 1024, 4U * 1024U * 1024U, "assets/player/player_locomotion.png", "assets/player/player_locomotion_material.png", MaterialEcology::common},
+    {MaterialAtlasId::player_combo_a, 1024, 1024, 4U * 1024U * 1024U, "assets/player/player_combo_a.png", "assets/player/player_combo_a_material.png", MaterialEcology::common},
+    {MaterialAtlasId::player_combo_b, 1024, 1024, 4U * 1024U * 1024U, "assets/player/player_combo_b.png", "assets/player/player_combo_b_material.png", MaterialEcology::common},
+    {MaterialAtlasId::player_reaction, 1024, 1024, 4U * 1024U * 1024U, "assets/player/player_reaction.png", "assets/player/player_reaction_material.png", MaterialEcology::common},
+    {MaterialAtlasId::player_air, 1024, 1024, 4U * 1024U * 1024U, "assets/player/player_air.png", "assets/player/player_air_material.png", MaterialEcology::common},
 };
 
 #define ARPG_ACTOR_FRAME(sprite, column, row) \

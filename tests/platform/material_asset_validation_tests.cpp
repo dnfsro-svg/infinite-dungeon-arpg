@@ -5,7 +5,9 @@
 
 #include <array>
 #include <cstddef>
+#include <filesystem>
 #include <limits>
+#include <string>
 
 namespace {
 
@@ -22,8 +24,8 @@ using arpg::platform::MaterialPackState;
 using arpg::platform::MaterialSpriteId;
 
 struct FakeMaterialTextures final {
-    std::array<Texture2D, 3> loaded{};
-    std::array<unsigned int, 3> unloaded_ids{};
+    std::array<Texture2D, 8> loaded{};
+    std::array<unsigned int, 8> unloaded_ids{};
     std::size_t load_count{};
     std::size_t unload_count{};
 };
@@ -78,13 +80,55 @@ arpg::test::Failure material_pack_loads_missing_atlases_without_unloading() noex
     g_fake_material_textures = &fake;
     arpg::platform::MaterialPack pack{fake_material_texture_api()};
     ARPG_REQUIRE(!pack.load());
-    ARPG_REQUIRE(fake.load_count == 3U);
+    ARPG_REQUIRE(fake.load_count == 8U);
     ARPG_REQUIRE(!pack.available(MaterialAtlasId::environment));
     ARPG_REQUIRE(!pack.available(MaterialAtlasId::actors));
     ARPG_REQUIRE(!pack.available(MaterialAtlasId::effects_ui));
     ARPG_REQUIRE(fake.unload_count == 0U);
     pack.unload();
     g_fake_material_textures = nullptr;
+    return {};
+}
+
+arpg::test::Failure material_pack_loads_all_original_player_action_atlases() noexcept {
+    FakeMaterialTextures fake{};
+    fake.loaded[3] = {301U, 1024, 1024, 1, 7};
+    fake.loaded[4] = {302U, 1024, 1024, 1, 7};
+    fake.loaded[5] = {303U, 1024, 1024, 1, 7};
+    fake.loaded[6] = {304U, 1024, 1024, 1, 7};
+    fake.loaded[7] = {305U, 1024, 1024, 1, 7};
+    g_fake_material_textures = &fake;
+    arpg::platform::MaterialPack pack{fake_material_texture_api()};
+    ARPG_REQUIRE(pack.load());
+    ARPG_REQUIRE(pack.available(MaterialAtlasId::player_locomotion));
+    ARPG_REQUIRE(pack.available(MaterialAtlasId::player_combo_a));
+    ARPG_REQUIRE(pack.available(MaterialAtlasId::player_combo_b));
+    ARPG_REQUIRE(pack.available(MaterialAtlasId::player_reaction));
+    ARPG_REQUIRE(pack.available(MaterialAtlasId::player_air));
+    pack.unload();
+    g_fake_material_textures = nullptr;
+    return {};
+}
+
+arpg::test::Failure player_action_atlas_files_are_opaque_only_on_drawn_pixels() noexcept {
+    constexpr std::array<const char*, 5> kAtlasNames{
+        "player_locomotion", "player_combo_a", "player_combo_b",
+        "player_reaction", "player_air"};
+    const std::filesystem::path root = std::filesystem::path{ARPG_PROJECT_SOURCE_DIR}
+        / "assets" / "player";
+    for (const char* name : kAtlasNames) {
+        const std::filesystem::path color = root / (std::string{name} + ".png");
+        const std::filesystem::path material = root
+            / (std::string{name} + "_material.png");
+        ARPG_REQUIRE(std::filesystem::is_regular_file(color));
+        ARPG_REQUIRE(std::filesystem::is_regular_file(material));
+        const Image image = LoadImage(color.string().c_str());
+        ARPG_REQUIRE(image.data != nullptr);
+        ARPG_REQUIRE(image.width == 1024);
+        ARPG_REQUIRE(image.height == 1024);
+        ARPG_REQUIRE(GetImageColor(image, 0, 0).a == 0U);
+        UnloadImage(image);
+    }
     return {};
 }
 
@@ -359,6 +403,10 @@ constexpr arpg::test::TestCase kCases[] = {
     {"allows repeated shutdown", &material_pack_allows_repeated_shutdown},
     {"loads missing atlases without unloading",
         &material_pack_loads_missing_atlases_without_unloading},
+    {"loads all original player action atlases",
+        &material_pack_loads_all_original_player_action_atlases},
+    {"player action atlas files have transparent borders",
+        &player_action_atlas_files_are_opaque_only_on_drawn_pixels},
     {"unloads wrong-sized valid atlas once",
         &material_pack_unloads_wrong_sized_valid_atlas_once},
     {"repeated unload releases valid atlas once",
