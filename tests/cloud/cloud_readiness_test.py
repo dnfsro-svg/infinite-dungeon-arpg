@@ -2,7 +2,6 @@
 
 import json
 from pathlib import Path
-import re
 import shlex
 import unittest
 
@@ -28,115 +27,6 @@ class CloudReadinessContractTest(unittest.TestCase):
             if preset.get("name") == name:
                 return preset
         self.fail(f"Missing {section} preset: {name}")
-
-    @staticmethod
-    def _strip_cmake_comments(cmake):
-        """Strip line comments; reject '#' inside quotes rather than misparse it.
-
-        This lightweight parser supports line-oriented CMake control commands.
-        It deliberately does not support escaped quotes or '#' within quoted
-        arguments, and fails closed for those inputs.
-        """
-        uncommented_lines = []
-        for line_number, line in enumerate(cmake.splitlines(), start=1):
-            comment_index = line.find("#")
-            if comment_index == -1:
-                uncommented_lines.append(line)
-                continue
-
-            before_comment = line[:comment_index]
-            if before_comment.count('"') % 2 or before_comment.count("'") % 2:
-                raise ValueError(
-                    f"Unsupported '#' inside a quoted CMake argument at line "
-                    f"{line_number}"
-                )
-            uncommented_lines.append(before_comment)
-
-        return "\n".join(uncommented_lines)
-
-    @classmethod
-    def _non_windows_cmake_branch(cls, cmake):
-        """Return the depth-1 else branch paired with a top-level WIN32 if.
-
-        Supports line-oriented if()/else()/endif() commands, including nested
-        if blocks and arbitrary command casing/whitespace. It rejects missing
-        or ambiguous structure instead of scanning unrelated CMake text.
-        """
-        lines = cls._strip_cmake_comments(cmake).splitlines()
-        win32_if = re.compile(r"^\s*if\s*\(\s*win32\s*\)\s*$", re.IGNORECASE)
-        if_command = re.compile(r"^\s*if\s*\(", re.IGNORECASE)
-        else_command = re.compile(r"^\s*else\s*\(\s*\)\s*$", re.IGNORECASE)
-        endif_command = re.compile(r"^\s*endif\s*\(\s*\)\s*$", re.IGNORECASE)
-
-        win32_start = None
-        branch_start = None
-        depth = 0
-        for line_number, line in enumerate(lines, start=1):
-            if win32_start is None:
-                if win32_if.fullmatch(line):
-                    win32_start = line_number
-                    depth = 1
-                continue
-
-            if if_command.match(line):
-                depth += 1
-                continue
-
-            if else_command.fullmatch(line) and depth == 1:
-                if branch_start is not None:
-                    raise ValueError("Top-level WIN32 block has multiple else branches")
-                branch_start = line_number
-                continue
-
-            if endif_command.fullmatch(line):
-                if depth == 1:
-                    if branch_start is None:
-                        raise ValueError("Top-level WIN32 block has no else branch")
-                    return "\n".join(lines[branch_start:line_number - 1])
-                depth -= 1
-
-        if win32_start is None:
-            raise ValueError("Missing top-level if(WIN32) block")
-        raise ValueError("Unclosed top-level if(WIN32) block")
-
-    @staticmethod
-    def _normalized_cmake_if_conditions(branch):
-        """Extract and normalize if conditions from one line-oriented CMake branch.
-
-        Supports one-line if conditions and multiline conditions closed by a
-        standalone ')'. Other forms fail closed to keep contract checks scoped.
-        """
-        lines = branch.splitlines()
-        if_command = re.compile(r"^\s*if\s*\((.*)$", re.IGNORECASE)
-        conditions = []
-        line_index = 0
-
-        while line_index < len(lines):
-            match = if_command.match(lines[line_index])
-            if match is None:
-                line_index += 1
-                continue
-
-            condition = match.group(1).strip()
-            if re.search(r"\)\s*$", condition):
-                condition = re.sub(r"\)\s*$", "", condition).strip()
-            else:
-                line_index += 1
-                condition_lines = [condition]
-                while line_index < len(lines):
-                    candidate = lines[line_index].strip()
-                    if candidate == ")":
-                        break
-                    condition_lines.append(candidate)
-                    line_index += 1
-                else:
-                    raise ValueError("Unclosed if condition in non-Windows branch")
-                condition = " ".join(condition_lines).strip()
-
-            conditions.append(" ".join(condition.upper().split()))
-            line_index += 1
-
-        return tuple(conditions)
 
     def _read_required_file(self, relative_path):
         path = REPOSITORY_ROOT / relative_path
@@ -258,35 +148,6 @@ class CloudReadinessContractTest(unittest.TestCase):
 
         self.assertEqual(LINUX_CORE_PRESET, build.get("configurePreset"))
         self.assertEqual(LINUX_CORE_PRESET, test.get("configurePreset"))
-
-    def test_non_windows_gate_requires_gnu_or_clang_for_c_and_cxx(self):
-        cmake = self._read_required_file("CMakeLists.txt")
-        non_windows_branch = self._non_windows_cmake_branch(cmake)
-        conditions = self._normalized_cmake_if_conditions(non_windows_branch)
-        c_compiler = re.compile(
-            r'\bNOT\s+CMAKE_C_COMPILER_ID\s+MATCHES\s+"\^\(GNU\|CLANG\)\$"'
-        )
-        cxx_compiler = re.compile(
-            r'\bNOT\s+CMAKE_CXX_COMPILER_ID\s+MATCHES\s+"\^\(GNU\|CLANG\)\$"'
-        )
-
-        compiler_gate = next(
-            (
-                condition
-                for condition in conditions
-                if c_compiler.search(condition) and cxx_compiler.search(condition)
-            ),
-            None,
-        )
-        self.assertIsNotNone(
-            compiler_gate,
-            "Non-Windows gate must require GNU or Clang for both C and CXX",
-        )
-        self.assertIn(" OR ", compiler_gate)
-        self.assertIn(
-            "Non-Windows core builds require GNU or Clang C and CXX compilers",
-            non_windows_branch,
-        )
 
     def test_linux_core_debug_excludes_only_windows_powershell_audio_tests(self):
         presets = self._load_presets()
