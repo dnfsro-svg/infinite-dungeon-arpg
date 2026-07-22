@@ -165,16 +165,17 @@ std::optional<std::uint64_t> frozen_existing_stream_fingerprint(
 }
 
 bool replay_keeps_existing_items_stable() noexcept {
-    constexpr std::uint64_t kFrozenTask1RoomEquipmentAndAbyss =
-        15972885342817959559ULL;
+    // Stage 19's formal encounter request is part of this frozen baseline.
+    constexpr std::uint64_t kFrozenStage19RoomEquipmentAbyssAndEncounter =
+        68296461820532187ULL;
     const auto baseline = frozen_existing_stream_fingerprint(false);
     const auto interleaved = frozen_existing_stream_fingerprint(true);
     std::cout << "frozen_existing_stream=" << baseline.value_or(0U) << '\n';
     return require(baseline.has_value() && interleaved.has_value()
             && *baseline == *interleaved,
             "material RNG does not perturb Task1 room/equipment/abyss streams")
-        && require(*baseline == kFrozenTask1RoomEquipmentAndAbyss,
-            "Task1 room/equipment/abyss golden fingerprint");
+        && require(*baseline == kFrozenStage19RoomEquipmentAbyssAndEncounter,
+            "Stage19 room/equipment/abyss/encounter golden fingerprint");
 }
 
 bool weighted_material_and_coupon_statistics() noexcept {
