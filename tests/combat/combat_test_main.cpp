@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 
+arpg::test::TestSuite active_skill_timeline_suite() noexcept;
 arpg::test::TestSuite attack_catalog_suite() noexcept;
 arpg::test::TestSuite abyss_environment_suite() noexcept;
 arpg::test::TestSuite attack_state_suite() noexcept;
@@ -30,6 +31,20 @@ arpg::test::TestSuite player_defense_suite() noexcept;
 arpg::test::TestSuite storm_swords_skill_suite() noexcept;
 
 namespace {
+
+bool active_skill_timeline_only_enabled() noexcept {
+#if defined(_MSC_VER)
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(
+        &value, &length, "ARPG_ACTIVE_SKILL_TIMELINE_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+#else
+    return std::getenv("ARPG_ACTIVE_SKILL_TIMELINE_ONLY") != nullptr;
+#endif
+}
 
 bool draw_slash_only_enabled() noexcept {
 #if defined(_MSC_VER)
@@ -62,6 +77,14 @@ bool storm_swords_only_enabled() noexcept {
 }  // namespace
 
 int main() {
+    if (active_skill_timeline_only_enabled()) {
+        const arpg::test::TestSuite active_skill_timeline_suites[] = {
+            active_skill_timeline_suite(),
+        };
+        return arpg::test::run_suites(
+            active_skill_timeline_suites, 3, "active skill timeline");
+    }
+
     if (storm_swords_only_enabled()) {
         const arpg::test::TestSuite storm_swords_suites[] = {
             storm_swords_skill_suite(),
@@ -79,6 +102,7 @@ int main() {
     }
 
     const arpg::test::TestSuite suites[] = {
+        active_skill_timeline_suite(),
         attack_catalog_suite(),
         abyss_environment_suite(),
         attack_state_suite(),
@@ -107,5 +131,5 @@ int main() {
         storm_swords_skill_suite(),
     };
 
-    return arpg::test::run_suites(suites, 230, "stage 18 combat queries");
+    return arpg::test::run_suites(suites, 234, "stage 18 combat queries");
 }

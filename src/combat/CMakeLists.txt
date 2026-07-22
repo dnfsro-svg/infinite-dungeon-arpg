@@ -1,5 +1,6 @@
 add_library(arpg_combat STATIC
     active_skill_runtime.cpp
+    active_skill_timeline.cpp
     abyss_environment.cpp
     attack_catalog.cpp
     combat_collision.cpp
