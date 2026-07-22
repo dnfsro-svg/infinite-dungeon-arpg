@@ -33,11 +33,17 @@ if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { throw 'missing m
 $report = Read-Report $reportPath
 foreach ($key in @('manifest','atlas_bytes','fallback','input_hole_regression',
         'monsters','monster_screenshot','water_monster_screenshot','f12_screenshot','screenshot_isolation',
-        'screenshot_decode','result')) {
+        'shader_pipeline','water_ecology_residency','water_environment_pair',
+        'water_bulwark_pair','water_support_pair','screenshot_decode','result')) {
     if (-not $report.ContainsKey($key)) { throw "missing report field: $key" }
 }
 if ($report.result -ne 'pass' -or $report.manifest -ne 'pass' -or
         $report.fallback -ne 'pass' -or $report.input_hole_regression -ne 'pass' -or
+        $report.shader_pipeline -ne 'pass' -or
+        $report.water_ecology_residency -ne 'pass' -or
+        $report.water_environment_pair -ne 'resident' -or
+        $report.water_bulwark_pair -ne 'resident' -or
+        $report.water_support_pair -ne 'resident' -or
         $report.screenshot_isolation -ne 'pass' -or $report.screenshot_decode -ne 'pass' -or
         $report.monsters -ne 'fire_bomber,fire_charger,water_bulwark,water_support,lightning_shooter,lightning_dasher,chaos_chaser,chaos_hazard') {
     throw 'formal material report rejected'

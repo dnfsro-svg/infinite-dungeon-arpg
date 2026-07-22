@@ -2978,6 +2978,18 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 previous, presented_snapshot, runtime.render_status(),
                 static_cast<float>(frame.interpolation_alpha), draw_debug,
                 feedback, audio_ready);
+            if (config.stage12_material_runtime_status != nullptr) {
+                *config.stage12_material_runtime_status = {
+                    renderer.material_pipeline_ready(),
+                    renderer.material_ecology_ready(MaterialEcology::water),
+                    renderer.material_atlas_available(
+                        MaterialAtlasId::water_environment),
+                    renderer.material_atlas_available(
+                        MaterialAtlasId::water_bulwark),
+                    renderer.material_atlas_available(
+                        MaterialAtlasId::water_support),
+                };
+            }
 // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN presented_semantics
             stage11d_validation_state.target_visible = stage11d_target_visible(
                 config, current, pause_menu, runtime.render_status(),

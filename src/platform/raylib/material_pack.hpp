@@ -50,6 +50,8 @@ public:
         MaterialEcology ecology = MaterialEcology::common) noexcept;
     void unload() noexcept;
     [[nodiscard]] MaterialEcology current_ecology() const noexcept;
+    [[nodiscard]] bool material_pipeline_ready() const noexcept;
+    [[nodiscard]] bool ecology_ready(MaterialEcology ecology) const noexcept;
     [[nodiscard]] bool available(MaterialAtlasId id) const noexcept;
     [[nodiscard]] bool can_draw(MaterialSpriteId id) const noexcept;
     [[nodiscard]] bool draw(

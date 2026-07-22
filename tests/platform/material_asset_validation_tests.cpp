@@ -40,6 +40,7 @@ struct FakeMaterialTextures final {
     std::size_t draw_count{};
     std::size_t pipeline_initialize_count{};
     std::size_t pipeline_shutdown_count{};
+    bool pipeline_initialize_succeeds{true};
 };
 
 FakeMaterialTextures* g_fake_material_textures{};
@@ -86,7 +87,7 @@ void fake_unload_texture(Texture2D texture) noexcept {
 bool fake_initialize_material_pipeline() noexcept {
     if (g_fake_material_textures == nullptr) return false;
     ++g_fake_material_textures->pipeline_initialize_count;
-    return true;
+    return g_fake_material_textures->pipeline_initialize_succeeds;
 }
 
 void fake_shutdown_material_pipeline() noexcept {
@@ -175,6 +176,48 @@ arpg::test::Failure material_pack_loads_all_original_player_action_atlases() noe
     return {};
 }
 
+arpg::test::Failure material_pack_rejects_unavailable_shader_pipeline() noexcept {
+    FakeMaterialTextures fake{};
+    fake.pipeline_initialize_succeeds = false;
+    g_fake_material_textures = &fake;
+    arpg::platform::MaterialPack pack{fake_material_texture_api()};
+    ARPG_REQUIRE(!pack.load(MaterialEcology::water));
+    ARPG_REQUIRE(!pack.material_pipeline_ready());
+    ARPG_REQUIRE(!pack.ecology_ready(MaterialEcology::water));
+    ARPG_REQUIRE(fake.pipeline_initialize_count == 1U);
+    ARPG_REQUIRE(fake.load_count == 0U);
+    pack.unload();
+    g_fake_material_textures = nullptr;
+    return {};
+}
+
+arpg::test::Failure material_pack_ecology_ready_requires_every_texture_pair() noexcept {
+    FakeMaterialTextures fake{};
+    const MaterialManifestDefinition manifest =
+        arpg::platform::default_material_manifest();
+    for (std::size_t index{}; index < manifest.atlas_count; ++index) {
+        const auto& atlas = manifest.atlases[index];
+        fake.loaded[index * 2U] = {
+            static_cast<unsigned int>(5000U + index * 2U),
+            atlas.width, atlas.height, 1, 7};
+        fake.loaded[index * 2U + 1U] = {
+            static_cast<unsigned int>(5001U + index * 2U),
+            atlas.width, atlas.height, 1, 7};
+        if (atlas.id == MaterialAtlasId::water_support) {
+            fake.loaded[index * 2U + 1U] = {};
+        }
+    }
+    g_fake_material_textures = &fake;
+    arpg::platform::MaterialPack pack{fake_material_texture_api()};
+    ARPG_REQUIRE(pack.load(MaterialEcology::water));
+    ARPG_REQUIRE(pack.material_pipeline_ready());
+    ARPG_REQUIRE(!pack.available(MaterialAtlasId::water_support));
+    ARPG_REQUIRE(!pack.ecology_ready(MaterialEcology::water));
+    pack.unload();
+    g_fake_material_textures = nullptr;
+    return {};
+}
+
 arpg::test::Failure material_pack_loads_and_draws_color_material_pairs() noexcept {
     FakeMaterialTextures fake{};
     const MaterialManifestDefinition manifest =
@@ -191,6 +234,8 @@ arpg::test::Failure material_pack_loads_and_draws_color_material_pairs() noexcep
     g_fake_material_textures = &fake;
     arpg::platform::MaterialPack pack{fake_material_texture_api()};
     ARPG_REQUIRE(pack.load(MaterialEcology::water));
+    ARPG_REQUIRE(pack.material_pipeline_ready());
+    ARPG_REQUIRE(pack.ecology_ready(MaterialEcology::water));
     ARPG_REQUIRE(fake.load_count
         == atlas_count_for_ecology(MaterialEcology::water) * 2U);
     ARPG_REQUIRE(!pack.available(MaterialAtlasId::fire_environment));
@@ -232,6 +277,8 @@ arpg::test::Failure material_pack_switches_ecology_without_reloading_common() no
     g_fake_material_textures = &fake;
     arpg::platform::MaterialPack pack{fake_material_texture_api()};
     ARPG_REQUIRE(pack.load(MaterialEcology::fire));
+    ARPG_REQUIRE(pack.material_pipeline_ready());
+    ARPG_REQUIRE(pack.ecology_ready(MaterialEcology::fire));
     ARPG_REQUIRE(pack.current_ecology() == MaterialEcology::fire);
     ARPG_REQUIRE(pack.available(MaterialAtlasId::environment));
     ARPG_REQUIRE(pack.available(MaterialAtlasId::fire_bomber));
@@ -244,6 +291,8 @@ arpg::test::Failure material_pack_switches_ecology_without_reloading_common() no
     ARPG_REQUIRE(fake.unload_count == 0U);
 
     ARPG_REQUIRE(pack.load(MaterialEcology::water));
+    ARPG_REQUIRE(pack.ecology_ready(MaterialEcology::water));
+    ARPG_REQUIRE(!pack.ecology_ready(MaterialEcology::fire));
     ARPG_REQUIRE(pack.current_ecology() == MaterialEcology::water);
     ARPG_REQUIRE(pack.available(MaterialAtlasId::environment));
     ARPG_REQUIRE(!pack.available(MaterialAtlasId::fire_bomber));
@@ -627,6 +676,10 @@ constexpr arpg::test::TestCase kCases[] = {
     {"allows repeated shutdown", &material_pack_allows_repeated_shutdown},
     {"loads missing atlases without unloading",
         &material_pack_loads_missing_atlases_without_unloading},
+    {"rejects unavailable shader pipeline",
+        &material_pack_rejects_unavailable_shader_pipeline},
+    {"ecology readiness requires every texture pair",
+        &material_pack_ecology_ready_requires_every_texture_pair},
     {"loads all original player action atlases",
         &material_pack_loads_all_original_player_action_atlases},
     {"loads and draws paired color and material atlases",

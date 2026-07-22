@@ -59,23 +59,61 @@ bool image_has_visible_color(const char* relative_path, int width, int height) n
     return visible && chromatic;
 }
 
-std::uint64_t frame_pixel_hash(const Color* pixels, int image_width,
+std::uint64_t frame_perceptual_hash(const Color* pixels, int image_width,
     const Rectangle& source) noexcept {
     std::uint64_t hash = 1469598103934665603ULL;
     const int left = static_cast<int>(source.x);
     const int top = static_cast<int>(source.y);
-    const int right = left + static_cast<int>(source.width);
-    const int bottom = top + static_cast<int>(source.height);
-    for (int y = top; y < bottom; ++y) {
-        for (int x = left; x < right; ++x) {
-            const Color pixel = pixels[y * image_width + x];
-            hash ^= pixel.r; hash *= 1099511628211ULL;
-            hash ^= pixel.g; hash *= 1099511628211ULL;
-            hash ^= pixel.b; hash *= 1099511628211ULL;
-            hash ^= pixel.a; hash *= 1099511628211ULL;
+    constexpr int kBlocks = 8;
+    const int block_width = static_cast<int>(source.width) / kBlocks;
+    const int block_height = static_cast<int>(source.height) / kBlocks;
+    for (int block_y{}; block_y < kBlocks; ++block_y) {
+        for (int block_x{}; block_x < kBlocks; ++block_x) {
+            std::array<std::uint32_t, 4> sums{};
+            for (int y{}; y < block_height; ++y) {
+                for (int x{}; x < block_width; ++x) {
+                    const Color pixel = pixels[
+                        (top + block_y * block_height + y) * image_width
+                        + left + block_x * block_width + x];
+                    sums[0] += pixel.r;
+                    sums[1] += pixel.g;
+                    sums[2] += pixel.b;
+                    sums[3] += pixel.a;
+                }
+            }
+            constexpr std::uint32_t kPixelsPerBlock = 12U * 12U;
+            for (const std::uint32_t sum : sums) {
+                const std::uint64_t quantized = (sum / kPixelsPerBlock) / 16U;
+                hash ^= quantized;
+                hash *= 1099511628211ULL;
+            }
         }
     }
     return hash;
+}
+
+std::uint64_t adjacent_changed_pixels(const Color* pixels, int image_width,
+    const Rectangle& lhs, const Rectangle& rhs,
+    std::uint64_t& visible_union) noexcept {
+    std::uint64_t changed{};
+    visible_union = 0U;
+    const int width = static_cast<int>(lhs.width);
+    const int height = static_cast<int>(lhs.height);
+    for (int y{}; y < height; ++y) {
+        for (int x{}; x < width; ++x) {
+            const Color a = pixels[(static_cast<int>(lhs.y) + y) * image_width
+                + static_cast<int>(lhs.x) + x];
+            const Color b = pixels[(static_cast<int>(rhs.y) + y) * image_width
+                + static_cast<int>(rhs.x) + x];
+            if (a.a > 24U || b.a > 24U) ++visible_union;
+            const int difference = std::abs(static_cast<int>(a.r) - b.r)
+                + std::abs(static_cast<int>(a.g) - b.g)
+                + std::abs(static_cast<int>(a.b) - b.b)
+                + std::abs(static_cast<int>(a.a) - b.a);
+            if (difference >= 48) ++changed;
+        }
+    }
+    return changed;
 }
 
 struct OpaqueBounds final {
@@ -250,8 +288,14 @@ arpg::test::Failure water_monsters_expose_complete_multiframe_state_groups() noe
                     ARPG_REQUIRE(previous.has_value());
                     ARPG_REQUIRE(current->source.x != previous->source.x
                         || current->source.y != previous->source.y);
+                    std::uint64_t visible_union{};
+                    const std::uint64_t changed = adjacent_changed_pixels(
+                        pixels, image.width, previous->source, current->source,
+                        visible_union);
+                    ARPG_REQUIRE(visible_union > 0U);
+                    ARPG_REQUIRE(changed * 100U >= visible_union * 3U);
                 }
-                const std::uint64_t hash = frame_pixel_hash(
+                const std::uint64_t hash = frame_perceptual_hash(
                     pixels, image.width, current->source);
                 const SilhouetteMetrics metrics = frame_silhouette_metrics(
                     pixels, image.width, current->source);
@@ -275,7 +319,7 @@ arpg::test::Failure water_monsters_expose_complete_multiframe_state_groups() noe
                 }
                 if (!seen) hashes[unique_hashes++] = hash;
             }
-            ARPG_REQUIRE(unique_hashes >= clip->key_pose_count);
+            ARPG_REQUIRE(unique_hashes == clip->frame_count);
             for (const bool seen : key_poses_seen) ARPG_REQUIRE(seen);
         }
         const auto* const idle = arpg::platform::monster_animation_clip(

@@ -390,6 +390,29 @@ MaterialEcology MaterialPack::current_ecology() const noexcept {
     return current_ecology_;
 }
 
+bool MaterialPack::material_pipeline_ready() const noexcept {
+    return material_pipeline_ready_;
+}
+
+bool MaterialPack::ecology_ready(MaterialEcology ecology) const noexcept {
+    if (!material_pipeline_ready_ || current_ecology_ != ecology
+        || !ecology_is_valid(ecology) || !valid_texture_api(texture_api_)) {
+        return false;
+    }
+    const MaterialManifestDefinition manifest = default_material_manifest();
+    for (std::size_t index{}; index < manifest.atlas_count; ++index) {
+        const MaterialAtlasDefinition& definition = manifest.atlases[index];
+        if (!atlas_required(definition, ecology)) continue;
+        const std::size_t texture_index = atlas_index(definition.id);
+        if (!state_.available(definition.id)
+            || !texture_api_.valid(color_textures_[texture_index])
+            || !texture_api_.valid(material_textures_[texture_index])) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool MaterialPack::available(MaterialAtlasId id) const noexcept {
     return state_.available(id);
 }

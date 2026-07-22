@@ -90,6 +90,14 @@ enum class Stage17SkillStonesValidationScenario : std::uint8_t {
     restarted_loadout,
 };
 
+struct Stage12MaterialRuntimeStatus final {
+    bool shader_pipeline_ready{};
+    bool water_ecology_ready{};
+    bool water_environment_resident{};
+    bool water_bulwark_resident{};
+    bool water_support_resident{};
+};
+
 struct RaylibHostConfig final {
     int window_width{1280};
     int window_height{720};
@@ -121,6 +129,7 @@ struct RaylibHostConfig final {
     bool validation_request_screenshot{};
     bool stage12_material_showcase{};
     std::optional<dungeon::DungeonElement> stage12_material_showcase_ecology{};
+    Stage12MaterialRuntimeStatus* stage12_material_runtime_status{};
 };
 
 struct HostFrameGateResult final {

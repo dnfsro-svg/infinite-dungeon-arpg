@@ -75,6 +75,20 @@ bool CombatRenderer::active_skill_assets_ready() const noexcept {
     return active_skill_renderer_.assets_ready();
 }
 
+bool CombatRenderer::material_pipeline_ready() const noexcept {
+    return material_pack_.material_pipeline_ready();
+}
+
+bool CombatRenderer::material_ecology_ready(
+    MaterialEcology ecology) const noexcept {
+    return material_pack_.ecology_ready(ecology);
+}
+
+bool CombatRenderer::material_atlas_available(
+    MaterialAtlasId atlas) const noexcept {
+    return material_pack_.available(atlas);
+}
+
 DoorRenderDecision door_render_decision(
     DoorVisualMode mode,
     dungeon::ExitDirection direction) noexcept {

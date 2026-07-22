@@ -71,6 +71,11 @@ public:
     [[nodiscard]] bool initialize_resources() noexcept;
     void shutdown_resources() noexcept;
     [[nodiscard]] bool active_skill_assets_ready() const noexcept;
+    [[nodiscard]] bool material_pipeline_ready() const noexcept;
+    [[nodiscard]] bool material_ecology_ready(
+        MaterialEcology ecology) const noexcept;
+    [[nodiscard]] bool material_atlas_available(
+        MaterialAtlasId atlas) const noexcept;
     void consume_event(const combat::CombatEvent& event) noexcept;
     void consume_dungeon_event(const dungeon::DungeonEvent& event) noexcept;
     void clear_combat_transients() noexcept;

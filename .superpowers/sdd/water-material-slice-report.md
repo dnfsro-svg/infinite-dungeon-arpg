@@ -15,11 +15,18 @@
 - 水怪构建器删除完整 RGBA 的 `Image.blend`。同一怪物使用固定参考比例、统一脚底 y=186，并按四个离散关键姿态保持；相邻帧测试约束高度跳变、质心位移与 55% 软轮廓上限。
 - 正式验证新增强制 water ecology 的 `water-monsters-1280x720.png`，因此 fire 与 water 选择性加载都经过真实 raylib/OpenGL 路径；shader 编译失败会在日志中显式暴露。
 
+## 第三轮复审修复
+
+- 水怪逐帧生成改为固定 192x192 画布、统一脚锚的 6x6 独立部件过渡；每个关键姿态间按 RGBA 差异权重均衡分批替换头部、肢体、武器、躯干与腿部区域，不做整帧复制、整图抖动或半透明混合。
+- 生成器与平台验收同时硬断言：每状态所有 12/16/20/8/16 帧的分块感知哈希唯一，任意相邻帧至少 3% 可见像素发生实质变化，并继续约束高度、质心、软轮廓、固定比例和脚锚。
+- `MaterialPack` 与 `CombatRenderer` 暴露只读 shader/生态/图集驻留状态；正式 water 截图只有在 shader pipeline 已就绪且 water_environment、water_bulwark、water_support 三对 color/material 图集全部驻留时才返回成功，并把每项状态写入证据报告。
+
 ## Commit
 
 - `feat: add water ecology material slice`（本报告随该提交保存；提交哈希由 Git 生成。）
 - `fix: complete paired water material presentation`（审核修复波；提交哈希由 Git 生成。）
 - `fix: enforce material semantics and ecology residency`（第二轮审核修复波；提交哈希由 Git 生成。）
+- `fix: require complete material animation evidence`（第三轮审核修复波；提交哈希由 Git 生成。）
 
 ## 测试
 
@@ -35,6 +42,11 @@
 
 以上 MSVC 构建均在 `VsDevCmd.bat -arch=x64 -host_arch=x64` 环境下执行。
 
-## 未验证项
+## 第三轮验证
 
-- 现有 `stage12.material_formal` 固定以火焰房间作为八怪展示背景；截图中水盾卫/水支援已由新图集渲染，但没有单独生成水房间背景截图。水环境加载、各部件归属与房间消费由确定性平台测试覆盖。
+- `out/build/windows-msvc-debug/bin/arpg_platform_tests.exe` — 通过，401/401；包含 shader 初始化失败、缺少任一水系双图以及逐状态全帧感知哈希/相邻变化门禁。
+- `ctest --test-dir out/build/windows-msvc-debug -R "^(platform\.units|stage12\.material_(formal|evidence_validator|root_safety))$" --output-on-failure` — 通过，4/4；正式报告强制记录 shader 与水系三对图集运行时驻留状态。
+
+## 已验证范围
+
+- 八怪总览继续使用火焰展示背景；另外生成独立水房间背景的 `water-monsters-1280x720.png`，并由正式返回值同时约束真实 shader pipeline 和三对水系图集驻留，已关闭此前“没有水房间背景截图”的缺口。

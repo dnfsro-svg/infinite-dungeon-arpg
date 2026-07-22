@@ -106,13 +106,89 @@ def pose_board_rows(role: str) -> list[list[Image.Image]]:
     return rows
 
 
-def discrete_pose(poses: list[Image.Image], frame: int,
+def partwise_pose(poses: list[Image.Image], frame: int,
                   frame_count: int, loop: bool) -> Image.Image:
     if loop:
-        pose_index = frame * len(poses) // frame_count
+        frames_per_transition = frame_count // len(poses)
+        pose_index = frame // frames_per_transition
+        next_pose_index = (pose_index + 1) % len(poses)
+        local_step = frame % frames_per_transition
+        transition_steps = frames_per_transition
     else:
-        pose_index = round(frame * (len(poses) - 1) / (frame_count - 1))
-    return poses[pose_index].resize((CELL, CELL), Image.Resampling.LANCZOS)
+        denominator = frame_count - 1
+        numerator = frame * (len(poses) - 1)
+        pose_index = min(numerator // denominator, len(poses) - 1)
+        if pose_index == len(poses) - 1:
+            return poses[pose_index].resize(
+                (CELL, CELL), Image.Resampling.LANCZOS)
+        next_pose_index = min(pose_index + 1, len(poses) - 1)
+        transition_start = (pose_index * denominator
+                            + len(poses) - 2) // (len(poses) - 1)
+        transition_end = ((pose_index + 1) * denominator
+                          + len(poses) - 2) // (len(poses) - 1)
+        local_step = frame - transition_start
+        transition_steps = transition_end - transition_start
+
+    current = poses[pose_index].copy()
+    following = poses[next_pose_index]
+    regions = tuple(
+        (column * 32, row * 32, (column + 1) * 32, (row + 1) * 32)
+        for row in range(6) for column in range(6))
+    weighted_regions = []
+    for region in regions:
+        difference = ImageChops.difference(
+            current.crop(region), following.crop(region))
+        if difference.getbbox() is None:
+            continue
+        histogram = difference.histogram()
+        weight = sum(value * count
+                     for channel in range(4)
+                     for value, count in enumerate(
+                         histogram[channel * 256:(channel + 1) * 256]))
+        weighted_regions.append((weight, region))
+    part_batches: list[list[tuple[int, int, int, int]]] = [
+        [] for _ in range(transition_steps)]
+    batch_weights = [0] * transition_steps
+    for weight, region in sorted(weighted_regions, reverse=True):
+        batch = min(range(transition_steps), key=batch_weights.__getitem__)
+        part_batches[batch].append(region)
+        batch_weights[batch] += weight
+    for batch in part_batches[:local_step]:
+        for region in batch:
+            current.paste(following.crop(region), region)
+    return current.resize((CELL, CELL), Image.Resampling.LANCZOS)
+
+
+def validate_monster_frames(atlas: Image.Image, role: str) -> None:
+    frame_offset = 0
+    for state, frame_count in (
+            ("idle", 12), ("move", 16), ("special", 20),
+            ("hurt", 8), ("death", 16)):
+        frames = []
+        for local_frame in range(frame_count):
+            cell = frame_offset + local_frame
+            x = cell % COLUMNS * CELL
+            y = cell // COLUMNS * CELL
+            frames.append(atlas.crop((x, y, x + CELL, y + CELL)))
+        if len({frame.tobytes() for frame in frames}) != frame_count:
+            raise RuntimeError(f"{role}/{state}: duplicate whole frames")
+        for local_frame, (current, following) in enumerate(
+                zip(frames, frames[1:])):
+            visible_union = 0
+            changed = 0
+            for lhs, rhs in zip(current.get_flattened_data(),
+                                following.get_flattened_data()):
+                if lhs[3] > 24 or rhs[3] > 24:
+                    visible_union += 1
+                if sum(abs(lhs[channel] - rhs[channel])
+                       for channel in range(4)) >= 48:
+                    changed += 1
+            percent = changed * 100.0 / visible_union
+            if percent < 3.0:
+                raise RuntimeError(
+                    f"{role}/{state} frame {local_frame}->{local_frame + 1}: "
+                    f"only {percent:.2f}% pixels changed")
+        frame_offset += frame_count
 
 
 def build_monster(role: str) -> None:
@@ -123,12 +199,13 @@ def build_monster(role: str) -> None:
             (0, 12, True), (1, 16, True), (2, 20, False),
             (3, 8, False), (4, 16, False)):
         for local_frame in range(frame_count):
-            frame = discrete_pose(
+            frame = partwise_pose(
                 rows[row], local_frame, frame_count, loop)
             atlas.alpha_composite(frame,
                 ((frame_index % COLUMNS) * CELL,
                  (frame_index // COLUMNS) * CELL))
             frame_index += 1
+    validate_monster_frames(atlas, role)
     atlas.save(OUTPUT / f"water_{role}.png")
     material_map(atlas).save(OUTPUT / f"water_{role}_material.png")
 
