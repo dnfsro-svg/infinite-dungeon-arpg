@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+import statistics
 
 from PIL import Image, ImageChops, ImageFilter, ImageStat
 
@@ -45,30 +46,160 @@ def source_cell(board: Image.Image, index: int) -> Image.Image:
     ))
 
 
+def _key_color(source: Image.Image) -> tuple[int, int, int]:
+    rgb = source.convert("RGB")
+    border = []
+    for x in range(rgb.width):
+        border.extend((rgb.getpixel((x, 0)), rgb.getpixel((x, rgb.height - 1))))
+    for y in range(rgb.height):
+        border.extend((rgb.getpixel((0, y)), rgb.getpixel((rgb.width - 1, y))))
+    key_candidates = [pixel for pixel in border
+                      if pixel[0] >= 180 and pixel[2] >= 180
+                      and pixel[1] <= 80 and abs(pixel[0] - pixel[2]) <= 55]
+    if not key_candidates:
+        key_candidates = border
+    return tuple(round(statistics.median(pixel[channel]
+                                         for pixel in key_candidates))
+                 for channel in range(3))
+
+
+def _connected_background_mask(source: Image.Image) -> bytearray:
+    rgba = source.convert("RGBA")
+    pixels = list(rgba.get_flattened_data())
+    key = _key_color(rgba)
+    broad = bytearray(len(pixels))
+    strong = bytearray(len(pixels))
+    for index, (red, green, blue, _) in enumerate(pixels):
+        distance = max(abs(red - key[0]), abs(green - key[1]),
+                       abs(blue - key[2]))
+        key_hue = (red >= 150 and blue >= 150 and green <= 110
+                   and abs(red - blue) <= 62)
+        broad[index] = key_hue and distance <= 72
+        strong[index] = key_hue and distance <= 32
+
+    width = rgba.width
+    height = rgba.height
+    remaining = bytearray(broad)
+    background = bytearray(len(pixels))
+    for start, present in enumerate(remaining):
+        if not present:
+            continue
+        stack = [start]
+        remaining[start] = 0
+        component = []
+        strong_count = 0
+        touches_edge = False
+        while stack:
+            point = stack.pop()
+            component.append(point)
+            strong_count += bool(strong[point])
+            x = point % width
+            y = point // width
+            touches_edge = touches_edge or x == 0 or y == 0 \
+                or x == width - 1 or y == height - 1
+            if x > 0 and remaining[point - 1]:
+                remaining[point - 1] = 0
+                stack.append(point - 1)
+            if x + 1 < width and remaining[point + 1]:
+                remaining[point + 1] = 0
+                stack.append(point + 1)
+            if y > 0 and remaining[point - width]:
+                remaining[point - width] = 0
+                stack.append(point - width)
+            if y + 1 < height and remaining[point + width]:
+                remaining[point + width] = 0
+                stack.append(point + width)
+        enclosed_key = len(component) >= 32 and strong_count * 5 >= len(component) * 4
+        if touches_edge or enclosed_key:
+            for point in component:
+                background[point] = 1
+    return background
+
+
 def remove_magenta_key(source: Image.Image) -> Image.Image:
     rgba = source.convert("RGBA")
+    background = _connected_background_mask(rgba)
     pixels = []
-    for red, green, blue, source_alpha in rgba.get_flattened_data():
-        distance = max(abs(255 - red), green, abs(255 - blue))
-        if distance <= 10:
-            alpha = 0
-        elif distance >= 72:
-            alpha = source_alpha
-        else:
-            alpha = round(source_alpha * (distance - 10) / 62)
-        if alpha < 255:
-            key_fraction = (255 - alpha) / 255.0
-            red = max(0, round(red - 180 * key_fraction))
-            blue = max(0, round(blue - 180 * key_fraction))
+    for index, (red, green, blue, source_alpha) in enumerate(
+            rgba.get_flattened_data()):
+        alpha = 0 if background[index] else source_alpha
+        if alpha == 0:
+            red = green = blue = 0
         pixels.append((red, green, blue, alpha))
     result = Image.new("RGBA", rgba.size)
     result.putdata(pixels)
     return result
 
 
+def _subject_components(alpha: Image.Image, threshold: int = 24) \
+        -> list[tuple[int, tuple[int, int, int, int], tuple[tuple[int, int], ...]]]:
+    pixels = alpha.load()
+    remaining = {(x, y) for y in range(alpha.height) for x in range(alpha.width)
+                 if pixels[x, y] >= threshold}
+    components = []
+    while remaining:
+        start = remaining.pop()
+        stack = [start]
+        count = 0
+        min_x = max_x = start[0]
+        min_y = max_y = start[1]
+        points = []
+        while stack:
+            x, y = stack.pop()
+            points.append((x, y))
+            count += 1
+            min_x = min(min_x, x)
+            max_x = max(max_x, x)
+            min_y = min(min_y, y)
+            max_y = max(max_y, y)
+            for neighbor in ((x - 1, y), (x + 1, y),
+                             (x, y - 1), (x, y + 1)):
+                if neighbor in remaining:
+                    remaining.remove(neighbor)
+                    stack.append(neighbor)
+        components.append((count, (min_x, min_y, max_x + 1, max_y + 1),
+                           tuple(points)))
+    return sorted(components, key=lambda component: component[0], reverse=True)
+
+
+def _box_distance(left: tuple[int, int, int, int],
+                  right: tuple[int, int, int, int]) -> int:
+    horizontal = max(left[0] - right[2], right[0] - left[2], 0)
+    vertical = max(left[1] - right[3], right[1] - left[3], 0)
+    return max(horizontal, vertical)
+
+
+def isolate_subject(source: Image.Image) -> Image.Image:
+    components = _subject_components(source.getchannel("A"))
+    if not components:
+        return source
+    largest_size, largest_box, _ = components[0]
+    minimum_size = max(16, largest_size // 250)
+    mask = Image.new("L", source.size)
+    mask_pixels = mask.load()
+    for size, bbox, points in components:
+        if size < minimum_size or _box_distance(bbox, largest_box) > 6:
+            continue
+        for x, y in points:
+            mask_pixels[x, y] = 255
+    mask = mask.filter(ImageFilter.MaxFilter(5))
+    result = source.copy()
+    result.putalpha(ImageChops.multiply(source.getchannel("A"), mask))
+    return result
+
+
+def subject_bbox(source: Image.Image) -> tuple[int, int, int, int] | None:
+    components = _subject_components(source.getchannel("A"))
+    if not components:
+        return None
+    boxes = [bbox for _, bbox, _ in components]
+    return (min(box[0] for box in boxes), min(box[1] for box in boxes),
+            max(box[2] for box in boxes), max(box[3] for box in boxes))
+
+
 def contain_icon(source: Image.Image) -> Image.Image:
-    alpha = source.getchannel("A")
-    bbox = alpha.point(lambda value: 255 if value >= 16 else 0).getbbox()
+    source = isolate_subject(source)
+    bbox = subject_bbox(source)
     if bbox is None:
         raise RuntimeError("item source cell contains no authored icon")
     icon = source.crop(bbox)

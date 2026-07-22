@@ -40,6 +40,11 @@ Save-MutatedBitmap (Join-Path $solidItems 'items-materials-1280x720.png') {
 }
 $mutations += @{ Name='solid-gray-items'; Path=$solidItems }
 
+$noItems = New-Mutation 'no-item-capture'
+Copy-Item -LiteralPath (Join-Path $noItems 'items-baseline-1280x720.png') `
+    -Destination (Join-Path $noItems 'items-materials-1280x720.png') -Force
+$mutations += @{ Name='no-item-capture'; Path=$noItems }
+
 $missingItemRuntime = New-Mutation 'missing-item-runtime-draw'
 $reportPath = Join-Path $missingItemRuntime 'stage12-material-evidence.txt'
 (Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8).Replace(
@@ -156,4 +161,4 @@ foreach ($mutation in $mutations) {
     }
 }
 if ($failures.Count -ne 0) { throw ($failures -join [Environment]::NewLine) }
-Write-Output 'stage12 material validator rejected solid item evidence, missing item telemetry, wrong-ecology, baseline-only monster regions, and invalid runtime draw/frame proof for lightning and chaos'
+Write-Output 'stage12 material validator rejected solid/no-item evidence, missing item telemetry, wrong-ecology, baseline-only monster regions, and invalid runtime draw/frame proof for lightning and chaos'

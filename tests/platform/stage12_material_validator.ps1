@@ -29,32 +29,109 @@ function Read-PngSize([string]$Path) {
     return @($width, $height)
 }
 
-function Measure-ItemCapture([string]$Path) {
+function Measure-ItemCapture([string]$Path, [string]$BaselinePath) {
     $bitmap = [System.Drawing.Bitmap]::FromFile($Path)
+    $baseline = [System.Drawing.Bitmap]::FromFile($BaselinePath)
     try {
-        $colors = [System.Collections.Generic.HashSet[int]]::new()
-        [int]$blueWhite = 0
-        [int]$ancientGold = 0
-        [int]$violet = 0
-        for ($y = 240; $y -lt 610; $y += 2) {
-            for ($x = 320; $x -lt 970; $x += 2) {
-                $pixel = $bitmap.GetPixel($x, $y)
-                [void]$colors.Add((((([int]$pixel.R) -shr 4) -shl 8) -bor
-                    ((([int]$pixel.G) -shr 4) -shl 4) -bor
-                    (([int]$pixel.B) -shr 4)))
-                if ($pixel.B -gt 145 -and $pixel.G -gt 115 -and
-                        $pixel.B -gt $pixel.R + 35) { ++$blueWhite }
-                if ($pixel.R -gt 145 -and $pixel.G -gt 90 -and
-                        $pixel.R -gt $pixel.B + 45) { ++$ancientGold }
-                if ($pixel.R -gt 105 -and $pixel.B -gt 120 -and
-                        $pixel.G -lt 120) { ++$violet }
+        $regions = @(
+            @{Name='equipment_weapon'; X=453; Y=339; Half=22},
+            @{Name='equipment_helmet'; X=528; Y=339; Half=22},
+            @{Name='equipment_chest'; X=603; Y=339; Half=22},
+            @{Name='equipment_gloves'; X=677; Y=339; Half=22},
+            @{Name='equipment_boots'; X=752; Y=339; Half=22},
+            @{Name='equipment_accessory'; X=827; Y=339; Half=22},
+            @{Name='material_0'; X=440; Y=514; Half=18},
+            @{Name='material_1'; X=507; Y=514; Half=18},
+            @{Name='material_2'; X=573; Y=514; Half=18},
+            @{Name='material_3'; X=640; Y=514; Half=18},
+            @{Name='material_4'; X=707; Y=514; Half=18},
+            @{Name='material_5'; X=773; Y=514; Half=18},
+            @{Name='material_6'; X=840; Y=514; Half=18},
+            @{Name='material_7'; X=431; Y=566; Half=18},
+            @{Name='material_8'; X=500; Y=566; Half=18},
+            @{Name='material_9'; X=570; Y=566; Half=18},
+            @{Name='material_10'; X=640; Y=566; Half=18},
+            @{Name='material_11'; X=710; Y=566; Half=18},
+            @{Name='material_12'; X=780; Y=566; Half=18},
+            @{Name='material_13'; X=849; Y=566; Half=18}
+        )
+        foreach ($region in $regions) {
+            $side = $region.Half * 2 + 1
+            $mask = New-Object 'bool[,]' $side, $side
+            $colors = [System.Collections.Generic.HashSet[int]]::new()
+            [int]$changed = 0
+            [int]$authored = 0
+            for ($localY = 0; $localY -lt $side; ++$localY) {
+                for ($localX = 0; $localX -lt $side; ++$localX) {
+                    $x = $region.X - $region.Half + $localX
+                    $y = $region.Y - $region.Half + $localY
+                    $pixel = $bitmap.GetPixel($x, $y)
+                    $reference = $baseline.GetPixel($x, $y)
+                    $difference = [Math]::Max(
+                        [Math]::Abs([int]$pixel.R - [int]$reference.R),
+                        [Math]::Max(
+                            [Math]::Abs([int]$pixel.G - [int]$reference.G),
+                            [Math]::Abs([int]$pixel.B - [int]$reference.B)))
+                    if ($difference -ge 36) {
+                        $mask[$localX, $localY] = $true
+                        ++$changed
+                    }
+                    if ([Math]::Max($pixel.R, [Math]::Max($pixel.G, $pixel.B)) -gt 125 -and
+                            [Math]::Max($pixel.R, [Math]::Max($pixel.G, $pixel.B)) -
+                            [Math]::Min($pixel.R, [Math]::Min($pixel.G, $pixel.B)) -gt 35) {
+                        ++$authored
+                    }
+                    [void]$colors.Add((((([int]$pixel.R) -shr 4) -shl 8) -bor
+                        ((([int]$pixel.G) -shr 4) -shl 4) -bor
+                        (([int]$pixel.B) -shr 4)))
+                }
+            }
+            [int]$largest = 0
+            [int]$largestWidth = 0
+            [int]$largestHeight = 0
+            for ($localY = 0; $localY -lt $side; ++$localY) {
+                for ($localX = 0; $localX -lt $side; ++$localX) {
+                    if (-not $mask[$localX, $localY]) { continue }
+                    $queue = [System.Collections.Generic.Queue[int]]::new()
+                    $queue.Enqueue($localY * $side + $localX)
+                    $mask[$localX, $localY] = $false
+                    [int]$component = 0
+                    [int]$minX = $localX; [int]$maxX = $localX
+                    [int]$minY = $localY; [int]$maxY = $localY
+                    while ($queue.Count -gt 0) {
+                        $point = $queue.Dequeue()
+                        $px = $point % $side
+                        $py = [Math]::Floor($point / $side)
+                        ++$component
+                        $minX = [Math]::Min($minX, $px); $maxX = [Math]::Max($maxX, $px)
+                        $minY = [Math]::Min($minY, $py); $maxY = [Math]::Max($maxY, $py)
+                        foreach ($offset in @(@(-1,0),@(1,0),@(0,-1),@(0,1))) {
+                            $nx = $px + $offset[0]; $ny = $py + $offset[1]
+                            if ($nx -ge 0 -and $nx -lt $side -and
+                                    $ny -ge 0 -and $ny -lt $side -and
+                                    $mask[$nx, $ny]) {
+                                $mask[$nx, $ny] = $false
+                                $queue.Enqueue($ny * $side + $nx)
+                            }
+                        }
+                    }
+                    if ($component -gt $largest) {
+                        $largest = $component
+                        $largestWidth = $maxX - $minX + 1
+                        $largestHeight = $maxY - $minY + 1
+                    }
+                }
+            }
+            if ($changed -lt 160 -or $largest -lt 100 -or
+                    $largestWidth -lt 12 -or $largestHeight -lt 12 -or
+                    $authored -lt 10 -or $colors.Count -lt 45) {
+                throw "item fixed-position proof rejected: $($region.Name) changed=$changed largest=$largest extent=${largestWidth}x${largestHeight} authored=$authored colors=$($colors.Count)"
             }
         }
-        if ($colors.Count -lt 160 -or $blueWhite -lt 100 -or
-                $ancientGold -lt 100 -or $violet -lt 40) {
-            throw "item/material capture lacks authored icon palette: colors=$($colors.Count) blueWhite=$blueWhite ancientGold=$ancientGold violet=$violet"
-        }
-    } finally { $bitmap.Dispose() }
+    } finally {
+        $bitmap.Dispose()
+        $baseline.Dispose()
+    }
 }
 
 function Measure-LightningCapture([string]$Path, [string]$BackgroundPath) {
@@ -261,7 +338,7 @@ $reportPath = Join-Path $EvidenceDirectory 'stage12-material-evidence.txt'
 if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { throw 'missing material report' }
 $report = Read-Report $reportPath
 foreach ($key in @('manifest','atlas_bytes','fallback','input_hole_regression',
-        'monsters','monster_screenshot','item_screenshot','items_ui_pair',
+        'monsters','monster_screenshot','item_screenshot','item_baseline_screenshot','items_ui_pair',
         'item_runtime_draws','water_monster_screenshot','lightning_monster_screenshot',
         'lightning_background_screenshot','chaos_monster_screenshot',
         'chaos_background_screenshot',
@@ -352,7 +429,12 @@ if (-not (Test-Path -LiteralPath $itemScreenshot -PathType Leaf)) { throw 'missi
 $itemSize = Read-PngSize $itemScreenshot
 if ($itemSize[0] -ne 1280 -or $itemSize[1] -ne 720) { throw 'wrong item/material screenshot size' }
 if ((Get-Item -LiteralPath $itemScreenshot).Length -le 4096) { throw 'empty item/material screenshot' }
-Measure-ItemCapture $itemScreenshot
+$itemBaselineScreenshot = Join-Path $EvidenceDirectory $report.item_baseline_screenshot
+if (-not (Test-Path -LiteralPath $itemBaselineScreenshot -PathType Leaf)) { throw 'missing item baseline screenshot' }
+$itemBaselineSize = Read-PngSize $itemBaselineScreenshot
+if ($itemBaselineSize[0] -ne 1280 -or $itemBaselineSize[1] -ne 720) { throw 'wrong item baseline screenshot size' }
+if ((Get-Item -LiteralPath $itemBaselineScreenshot).Length -le 4096) { throw 'empty item baseline screenshot' }
+Measure-ItemCapture $itemScreenshot $itemBaselineScreenshot
 $waterMonsterScreenshot = Join-Path $EvidenceDirectory $report.water_monster_screenshot
 if (-not (Test-Path -LiteralPath $waterMonsterScreenshot -PathType Leaf)) { throw 'missing water-monster screenshot' }
 $waterMonsterSize = Read-PngSize $waterMonsterScreenshot

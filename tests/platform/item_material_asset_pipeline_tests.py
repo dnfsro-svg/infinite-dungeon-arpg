@@ -17,6 +17,26 @@ BUILDER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(BUILDER)
 
 
+def connected_component_sizes(alpha: Image.Image, threshold: int = 8) -> list[int]:
+    pixels = alpha.load()
+    remaining = {(x, y) for y in range(alpha.height) for x in range(alpha.width)
+                 if pixels[x, y] >= threshold}
+    sizes: list[int] = []
+    while remaining:
+        stack = [remaining.pop()]
+        size = 0
+        while stack:
+            x, y = stack.pop()
+            size += 1
+            for neighbor in ((x - 1, y), (x + 1, y),
+                             (x, y - 1), (x, y + 1)):
+                if neighbor in remaining:
+                    remaining.remove(neighbor)
+                    stack.append(neighbor)
+        sizes.append(size)
+    return sorted(sizes, reverse=True)
+
+
 class ItemMaterialAssetPipelineTests(unittest.TestCase):
     def test_color_and_material_atlases_exist_and_match(self) -> None:
         color = Image.open(ROOT / "assets" / "stage12" / "items_ui.png").convert("RGBA")
@@ -56,6 +76,53 @@ class ItemMaterialAssetPipelineTests(unittest.TestCase):
             icon = BUILDER.crop_cell(atlas, cell)
             self.assertGreaterEqual(BUILDER.outline_contrast_score(icon), 0.18,
                                     name)
+
+    def test_cells_have_clean_transparent_backgrounds_and_one_main_subject(self) -> None:
+        atlas = Image.open(ROOT / "assets" / "stage12" / "items_ui.png").convert("RGBA")
+        transparent_ratios = []
+        for name, cell in BUILDER.ICON_CELLS.items():
+            alpha = BUILDER.crop_cell(atlas, cell).getchannel("A")
+            values = list(alpha.get_flattened_data())
+            transparent_ratio = sum(value == 0 for value in values) / len(values)
+            transparent_ratios.append(transparent_ratio)
+            self.assertGreaterEqual(transparent_ratio, 0.30, name)
+            components = connected_component_sizes(alpha)
+            self.assertTrue(components, name)
+            self.assertGreaterEqual(components[0] / sum(components), 0.88, name)
+            border = list(alpha.crop((0, 0, BUILDER.CELL, 5)).get_flattened_data())
+            border += list(alpha.crop(
+                (0, BUILDER.CELL - 5, BUILDER.CELL, BUILDER.CELL)).get_flattened_data())
+            border += list(alpha.crop((0, 5, 5, BUILDER.CELL - 5)).get_flattened_data())
+            border += list(alpha.crop(
+                (BUILDER.CELL - 5, 5, BUILDER.CELL, BUILDER.CELL - 5)).get_flattened_data())
+            self.assertEqual(max(border), 0, name)
+        self.assertGreaterEqual(sum(transparent_ratios) / len(transparent_ratios),
+                                0.57)
+
+    def test_background_matte_does_not_move_or_erase_a_purple_subject(self) -> None:
+        source = Image.new("RGBA", (180, 180), (255, 0, 255, 255))
+        pixels = source.load()
+        for y in range(38):
+            for x in range(44):
+                pixels[x, y] = (235 + (x % 3) * 5, y % 4, 238, 255)
+        for y in range(68, 148):
+            for x in range(105, 151):
+                pixels[x, y] = (150, 20, 210, 255)
+        for y in range(52, 54):
+            for x in range(8, 10):
+                pixels[x, y] = (118, 12, 166, 255)
+        icon = BUILDER.contain_icon(BUILDER.remove_magenta_key(source))
+        alpha = icon.getchannel("A")
+        self.assertEqual(alpha.getpixel((6, 6)), 0)
+        bbox = alpha.point(lambda value: 255 if value >= 96 else 0).getbbox()
+        self.assertIsNotNone(bbox)
+        assert bbox is not None
+        self.assertLessEqual(abs((bbox[0] + bbox[2]) / 2 - BUILDER.CELL / 2), 1.0)
+        self.assertLessEqual(abs((bbox[1] + bbox[3]) / 2 - BUILDER.CELL / 2), 1.0)
+        center = icon.getpixel((BUILDER.CELL // 2, BUILDER.CELL // 2))
+        self.assertGreaterEqual(center[0], 130)
+        self.assertGreaterEqual(center[2], 190)
+        self.assertEqual(center[3], 255)
 
     def test_rarity_silhouettes_are_structurally_distinct(self) -> None:
         atlas = Image.open(ROOT / "assets" / "stage12" / "items_ui.png").convert("RGBA")

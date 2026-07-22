@@ -155,6 +155,8 @@ struct RaylibHostConfig final {
     bool stage12_material_showcase{};
     bool stage12_material_showcase_hide_monsters{};
     std::optional<dungeon::DungeonElement> stage12_material_showcase_ecology{};
+    std::optional<std::filesystem::path>
+        stage12_material_baseline_capture_file{};
     Stage12MaterialRuntimeStatus* stage12_material_runtime_status{};
 };
 

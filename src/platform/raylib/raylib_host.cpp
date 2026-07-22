@@ -197,50 +197,57 @@ std::optional<std::string> host_screenshot_path(
 
 void apply_stage12_material_showcase(dungeon::DungeonSnapshot& snapshot,
     std::optional<dungeon::DungeonElement> ecology,
-    bool hide_monsters) noexcept {
+    bool hide_monsters, bool hide_items) noexcept {
     if (!snapshot.combat.has_value()) return;
     if (ecology.has_value()) snapshot.ecology = *ecology;
-    constexpr std::array<items::ItemSlot, 6U> item_slots{{
-        items::ItemSlot::weapon, items::ItemSlot::helmet,
-        items::ItemSlot::chest, items::ItemSlot::gloves,
-        items::ItemSlot::boots, items::ItemSlot::accessory,
-    }};
-    constexpr std::array<items::ItemRarity, 6U> item_rarities{{
-        items::ItemRarity::normal, items::ItemRarity::magic,
-        items::ItemRarity::rare, items::ItemRarity::normal,
-        items::ItemRarity::magic, items::ItemRarity::rare,
-    }};
-    snapshot.ground_item_count = static_cast<std::uint16_t>(item_slots.size());
-    for (std::size_t index{}; index < item_slots.size(); ++index) {
-        dungeon::GroundItemSnapshot& item = snapshot.ground_items[index];
-        item = {};
-        item.ordinal = static_cast<std::uint16_t>(index + 1U);
-        item.source = index == 3U
-            ? dungeon::GroundItemSource::abyss_chest
-            : dungeon::GroundItemSource::monster_drop;
-        item.abyss_reward_ordinal = index == 3U ? 0U : 0xFFU;
-        item.position = {-5.0F + static_cast<float>(index) * 2.0F,
-            -3.2F, 0.0F};
-        item.item_id = index + 1U;
-        item.base_id = static_cast<std::uint8_t>(index + 1U);
-        item.item_level = 60U;
-        item.slot = item_slots[index];
-        item.rarity = item_rarities[index];
-    }
-    snapshot.ground_material_count = static_cast<std::uint16_t>(
-        items::kMaterialCount);
-    for (std::size_t index{}; index < items::kMaterialCount; ++index) {
-        dungeon::GroundMaterialSnapshot& material =
-            snapshot.ground_materials[index];
-        material = {};
-        material.ordinal = static_cast<std::uint16_t>(index + 1U);
-        material.source = items::material_is_coupon(
-                static_cast<items::MaterialId>(index))
-            ? dungeon::GroundMaterialSource::monster_coupon
-            : dungeon::GroundMaterialSource::monster_common;
-        material.position = {-4.5F + static_cast<float>(index % 7U) * 1.5F,
-            2.0F + static_cast<float>(index / 7U) * 1.6F, 0.0F};
-        material.material = static_cast<items::MaterialId>(index);
+    if (hide_items) {
+        snapshot.ground_item_count = 0U;
+        snapshot.ground_material_count = 0U;
+    } else {
+        constexpr std::array<items::ItemSlot, 6U> item_slots{{
+            items::ItemSlot::weapon, items::ItemSlot::helmet,
+            items::ItemSlot::chest, items::ItemSlot::gloves,
+            items::ItemSlot::boots, items::ItemSlot::accessory,
+        }};
+        constexpr std::array<items::ItemRarity, 6U> item_rarities{{
+            items::ItemRarity::normal, items::ItemRarity::magic,
+            items::ItemRarity::rare, items::ItemRarity::normal,
+            items::ItemRarity::magic, items::ItemRarity::rare,
+        }};
+        snapshot.ground_item_count = static_cast<std::uint16_t>(
+            item_slots.size());
+        for (std::size_t index{}; index < item_slots.size(); ++index) {
+            dungeon::GroundItemSnapshot& item = snapshot.ground_items[index];
+            item = {};
+            item.ordinal = static_cast<std::uint16_t>(index + 1U);
+            item.source = index == 3U
+                ? dungeon::GroundItemSource::abyss_chest
+                : dungeon::GroundItemSource::monster_drop;
+            item.abyss_reward_ordinal = index == 3U ? 0U : 0xFFU;
+            item.position = {-5.0F + static_cast<float>(index) * 2.0F,
+                -3.2F, 0.0F};
+            item.item_id = index + 1U;
+            item.base_id = static_cast<std::uint8_t>(index + 1U);
+            item.item_level = 60U;
+            item.slot = item_slots[index];
+            item.rarity = item_rarities[index];
+        }
+        snapshot.ground_material_count = static_cast<std::uint16_t>(
+            items::kMaterialCount);
+        for (std::size_t index{}; index < items::kMaterialCount; ++index) {
+            dungeon::GroundMaterialSnapshot& material =
+                snapshot.ground_materials[index];
+            material = {};
+            material.ordinal = static_cast<std::uint16_t>(index + 1U);
+            material.source = items::material_is_coupon(
+                    static_cast<items::MaterialId>(index))
+                ? dungeon::GroundMaterialSource::monster_coupon
+                : dungeon::GroundMaterialSource::monster_common;
+            material.position = {
+                -4.5F + static_cast<float>(index % 7U) * 1.5F,
+                2.0F + static_cast<float>(index / 7U) * 1.6F, 0.0F};
+            material.material = static_cast<items::MaterialId>(index);
+        }
     }
     constexpr std::array<combat::MonsterId, 8> ids{{
         combat::MonsterId::fire_bomber, combat::MonsterId::fire_charger,
@@ -3018,13 +3025,19 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 renderer_loot_filter_mode(
                     pause_menu.screen, live_settings, pause_menu.draft);
             renderer.set_loot_filter_mode(presented_loot_filter);
+            const bool stage12_item_baseline_frame =
+                config.stage12_material_baseline_capture_file.has_value()
+                && config.validation_exit_after_presented_frames >= 2U
+                && presented_frame_count + 2U
+                    == config.validation_exit_after_presented_frames;
             BeginDrawing();
             ClearBackground(Color{13, 17, 27, 255});
             presented_snapshot = current;
             if (config.stage12_material_showcase) {
                 apply_stage12_material_showcase(presented_snapshot,
                     config.stage12_material_showcase_ecology,
-                    config.stage12_material_showcase_hide_monsters);
+                    config.stage12_material_showcase_hide_monsters,
+                    stage12_item_baseline_frame);
             }
             const GroundLootView ground_loot_view = renderer.draw(
                 previous, presented_snapshot, runtime.render_status(),
@@ -3214,6 +3227,10 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 config, *stage17_validation_state);
             const bool stage17_capture_requested = capture_path.has_value();
             bool captured_stage10_target = false;
+            if (!capture_path.has_value() && stage12_item_baseline_frame) {
+                capture_path =
+                    config.stage12_material_baseline_capture_file->string();
+            }
             if (!capture_path.has_value()
                     && (validation_reached || loot_validation_visible_capture
                     || stage11b_visible_capture

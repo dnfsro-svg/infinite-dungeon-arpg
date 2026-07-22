@@ -32,17 +32,18 @@
 ## TDD evidence
 
 - Asset RED: the new item pipeline test failed before the atlas builder/assets
-  existed; GREEN is 4/4 for dimensions/alpha parity, cell uniqueness and safe
-  margins, outline contrast, and rarity-mask distinction.
+  existed; GREEN is now 6/6 for dimensions/alpha parity, cell uniqueness and
+  safe margins, outline contrast, rarity-mask distinction, background matte,
+  subject connectivity, clean borders, and noise-independent anchoring.
 - Platform RED: compilation failed while the new slot/rarity/material mappings
   and sprite-draw telemetry were absent; GREEN is 417 cases, 0 failures.
 - Formal RED: compilation failed before `Stage12MaterialRuntimeStatus` exposed
   item-atlas residency and per-resource draw counts; GREEN now requires all six
   equipment, four rarity, and 14 material resources to record successful real
   draws.
-- Validator negative coverage rejects solid item evidence, missing item draw
-  telemetry, duplicated ecology evidence, baseline-only monster regions, and
-  invalid runtime draw/frame proof.
+- Validator negative coverage rejects solid or no-item evidence, missing item
+  draw telemetry, duplicated ecology evidence, baseline-only monster regions,
+  and invalid runtime draw/frame proof.
 
 ## Fresh verification
 
@@ -69,3 +70,19 @@
   accept the skill within its frame budget. The failure occurs before its
   inventory/skill-stone UI path; active/support resource mapping and manifest
   coverage pass in platform tests.
+
+## Important review fixes
+
+- Replaced the broad item-screenshot palette scan with a same-host baseline
+  capture and 20 fixed-position checks: six equipment positions and all 14
+  material positions must each have a substantial connected difference contour,
+  authored chroma, and local color diversity. The negative test replaces the
+  item capture with the no-item baseline and must be rejected.
+- Replaced per-pixel distance keying with a border-derived, connected magenta
+  background matte. Significant components near the largest authored subject
+  are retained; detached background fragments are excluded before the subject
+  bounding box is centered. Real purple foreground detail is preserved.
+- Asset quality coverage is now 6/6 and explicitly checks exact-transparent
+  background ratios, the dominant connected subject, five-pixel clean cell
+  borders, and a synthetic purple subject whose anchor must not be shifted by
+  dark-magenta edge noise.
