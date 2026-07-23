@@ -48,6 +48,7 @@ add_library(arpg_raylib STATIC
     procedural_audio.cpp
     raylib_input.cpp
     raylib_host.cpp
+    room_background_render_plan.cpp
     room_renderer.cpp
     stable_key_raylib.cpp
     stream_pack.cpp

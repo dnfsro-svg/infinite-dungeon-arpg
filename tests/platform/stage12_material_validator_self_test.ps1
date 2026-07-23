@@ -112,6 +112,36 @@ $reportPath = Join-Path $oversizeFontAtlas 'stage12-material-evidence.txt'
     Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
 $mutations += @{ Name='oversize-bundled-font-atlas'; Path=$oversizeFontAtlas }
 
+$missingResidentPeak = New-Mutation 'missing-resident-peak-bytes'
+$reportPath = Join-Path $missingResidentPeak 'stage12-material-evidence.txt'
+(Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) -replace
+    '(?m)^resident_peak_bytes=\d+\r?\n?', '' |
+    Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+$mutations += @{ Name='missing-resident-peak-bytes'; Path=$missingResidentPeak }
+
+$oversizeResidentPeak = New-Mutation 'oversize-resident-peak-bytes'
+$reportPath = Join-Path $oversizeResidentPeak 'stage12-material-evidence.txt'
+(Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) -replace
+    'resident_peak_bytes=\d+', 'resident_peak_bytes=268435457' |
+    Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+$mutations += @{ Name='oversize-resident-peak-bytes'; Path=$oversizeResidentPeak }
+
+$twoFieldsLowReport = New-Mutation 'two-fields-low-report'
+$reportPath = Join-Path $twoFieldsLowReport 'stage12-material-evidence.txt'
+$lowReport = (Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8).Replace(
+    'atlas_bytes=302170112', 'atlas_bytes=0')
+$lowReport = $lowReport.Replace(
+    'full_pack_bytes=302170112', 'full_pack_bytes=0')
+$lowReport | Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+$mutations += @{ Name='two-fields-low-report'; Path=$twoFieldsLowReport }
+
+$lowResidentPeak = New-Mutation 'low-resident-peak-bytes'
+$reportPath = Join-Path $lowResidentPeak 'stage12-material-evidence.txt'
+(Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) -replace
+    'resident_peak_bytes=\d+', 'resident_peak_bytes=1' |
+    Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+$mutations += @{ Name='low-resident-peak-bytes'; Path=$lowResidentPeak }
+
 $lowTextContrast = New-Mutation 'low-ui-text-contrast'
 $reportPath = Join-Path $lowTextContrast 'stage12-material-evidence.txt'
 (Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8).Replace(

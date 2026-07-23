@@ -30,6 +30,10 @@ enum class MaterialAtlasId : std::uint8_t {
     chaos_hazard,
     items_ui,
     ui_material,
+    fire_room_background,
+    water_room_background,
+    lightning_room_background,
+    chaos_room_background,
     count,
 };
 

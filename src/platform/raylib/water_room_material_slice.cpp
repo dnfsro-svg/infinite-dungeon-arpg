@@ -26,11 +26,4 @@ const WaterRoomMaterialSlice& water_room_material_slice() noexcept {
     return kWaterRoomSlice;
 }
 
-WaterRoomRenderPlan water_room_render_plan(
-    dungeon::DungeonElement ecology) noexcept {
-    return {ecology == dungeon::DungeonElement::water,
-        MaterialAtlasId::water_environment,
-        {0.0F, 0.0F, 512.0F, 512.0F}};
-}
-
 }  // namespace arpg::platform

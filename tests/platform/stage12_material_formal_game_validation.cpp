@@ -186,16 +186,6 @@ bool pause_text_layout_safe(int width, int height) noexcept {
         && rectangles_separated(layout.rows[20], layout.footer);
 }
 
-std::uint64_t manifest_texture_pair_bytes() noexcept {
-    const auto manifest = platform::default_material_manifest();
-    std::uint64_t bytes{};
-    for (std::size_t index{}; index < manifest.atlas_count; ++index) {
-        bytes += static_cast<std::uint64_t>(
-            manifest.atlases[index].rgba_bytes) * 2U;
-    }
-    return bytes;
-}
-
 bool path_is_within(const std::filesystem::path& child,
     const std::filesystem::path& parent) {
     const auto relative = child.lexically_relative(parent);
@@ -351,8 +341,13 @@ int main(int argc, char** argv) {
         "fallback-1280x720.png");
     error.clear();
     std::filesystem::rename(corrupt_effects, effects, error);
-    const bool manifest_ok = platform::validate_material_manifest(
-        platform::default_material_manifest()).valid;
+    const auto material_manifest = platform::default_material_manifest();
+    const bool manifest_ok =
+        platform::validate_material_manifest(material_manifest).valid;
+    const std::size_t material_full_pack_bytes =
+        platform::full_pack_bytes(material_manifest);
+    const std::size_t material_resident_peak_bytes =
+        platform::resident_peak_bytes(material_manifest);
     platform::Stage12MaterialRuntimeStatus item_runtime{};
     const bool item_showcase_ok = capture(root, kResolutions[0],
         "items-materials-1280x720.png", true, false,
@@ -718,7 +713,9 @@ int main(int argc, char** argv) {
     std::ofstream report(root / "stage12-material-evidence.txt",
         std::ios::out | std::ios::trunc);
     report << "manifest=" << (manifest_ok ? "pass" : "fail") << '\n'
-           << "atlas_bytes=" << manifest_texture_pair_bytes() << '\n'
+           << "atlas_bytes=" << material_full_pack_bytes << '\n'
+           << "full_pack_bytes=" << material_full_pack_bytes << '\n'
+           << "resident_peak_bytes=" << material_resident_peak_bytes << '\n'
            << "fallback=" << (fallback_capture && !error ? "pass" : "fail") << '\n'
            << "input_hole_regression=" << (input_hole_ok ? "pass" : "fail") << '\n'
            << "monsters=" << (showcase_ok ? "fire_bomber,fire_charger,water_bulwark,water_support,lightning_shooter,lightning_dasher,chaos_chaser,chaos_hazard" : "") << '\n'

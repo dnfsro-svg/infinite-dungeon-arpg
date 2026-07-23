@@ -41,6 +41,7 @@ if(TARGET arpg_raylib)
         material_animation_tests.cpp
         fire_room_material_slice_tests.cpp
         ecology_material_coverage_tests.cpp
+        room_background_render_plan_tests.cpp
         stage12_environment_render_tests.cpp
         stage12_actor_render_tests.cpp
         stage12_material_render_tests.cpp)
@@ -93,6 +94,14 @@ if(TARGET arpg_raylib)
     set_tests_properties(stage12.ui_material_asset_pipeline PROPERTIES
         LABELS "headless;platform;assets;stage12"
         TIMEOUT 120)
+
+    add_test(NAME stage12.native_room_background_asset_pipeline
+        COMMAND "${Python3_EXECUTABLE}" -m unittest
+            tests.platform.native_room_background_asset_pipeline_tests -v)
+    set_tests_properties(stage12.native_room_background_asset_pipeline PROPERTIES
+        LABELS "headless;platform;assets;stage12"
+        TIMEOUT 180
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
 
     add_executable(arpg_stage16_loot_reinforcement_game_validation
         stage16_loot_reinforcement_game_validation.cpp)

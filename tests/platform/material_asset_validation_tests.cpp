@@ -129,6 +129,15 @@ std::size_t atlas_count_for_ecology(MaterialEcology ecology) noexcept {
     return count;
 }
 
+std::size_t ecology_only_atlas_count(MaterialEcology ecology) noexcept {
+    const auto manifest = arpg::platform::default_material_manifest();
+    std::size_t count{};
+    for (std::size_t index{}; index < manifest.atlas_count; ++index) {
+        if (manifest.atlases[index].ecology == ecology) ++count;
+    }
+    return count;
+}
+
 arpg::test::Failure material_pack_falls_back_when_atlas_is_unavailable() noexcept {
     MaterialPackState state{};
     state.set_available(MaterialAtlasId::actors, false);
@@ -433,8 +442,14 @@ arpg::test::Failure material_pack_switches_ecology_without_reloading_common() no
     ARPG_REQUIRE(pack.available(MaterialAtlasId::environment));
     ARPG_REQUIRE(!pack.available(MaterialAtlasId::fire_bomber));
     ARPG_REQUIRE(pack.available(MaterialAtlasId::water_bulwark));
-    ARPG_REQUIRE(fake.unload_count == 6U);
-    ARPG_REQUIRE(fake.load_count == fire_loads + 6U);
+    const std::size_t fire_pair_count =
+        ecology_only_atlas_count(MaterialEcology::fire) * 2U;
+    const std::size_t water_pair_count =
+        ecology_only_atlas_count(MaterialEcology::water) * 2U;
+    const std::size_t lightning_pair_count =
+        ecology_only_atlas_count(MaterialEcology::lightning) * 2U;
+    ARPG_REQUIRE(fake.unload_count == fire_pair_count);
+    ARPG_REQUIRE(fake.load_count == fire_loads + water_pair_count);
 
     ARPG_REQUIRE(pack.load(MaterialEcology::lightning));
     ARPG_REQUIRE(pack.ecology_ready(MaterialEcology::lightning));
@@ -444,8 +459,9 @@ arpg::test::Failure material_pack_switches_ecology_without_reloading_common() no
     ARPG_REQUIRE(pack.available(MaterialAtlasId::lightning_environment));
     ARPG_REQUIRE(pack.available(MaterialAtlasId::lightning_shooter));
     ARPG_REQUIRE(pack.available(MaterialAtlasId::lightning_dasher));
-    ARPG_REQUIRE(fake.unload_count == 12U);
-    ARPG_REQUIRE(fake.load_count == fire_loads + 12U);
+    ARPG_REQUIRE(fake.unload_count == fire_pair_count + water_pair_count);
+    ARPG_REQUIRE(fake.load_count
+        == fire_loads + water_pair_count + lightning_pair_count);
 
     ARPG_REQUIRE(pack.load(MaterialEcology::chaos));
     ARPG_REQUIRE(pack.ecology_ready(MaterialEcology::chaos));
@@ -455,8 +471,11 @@ arpg::test::Failure material_pack_switches_ecology_without_reloading_common() no
     ARPG_REQUIRE(pack.available(MaterialAtlasId::chaos_environment));
     ARPG_REQUIRE(pack.available(MaterialAtlasId::chaos_chaser));
     ARPG_REQUIRE(pack.available(MaterialAtlasId::chaos_hazard));
-    ARPG_REQUIRE(fake.unload_count == 18U);
-    ARPG_REQUIRE(fake.load_count == fire_loads + 18U);
+    ARPG_REQUIRE(fake.unload_count
+        == fire_pair_count + water_pair_count + lightning_pair_count);
+    ARPG_REQUIRE(fake.load_count == fire_loads + water_pair_count
+        + lightning_pair_count
+        + ecology_only_atlas_count(MaterialEcology::chaos) * 2U);
     pack.unload();
     g_fake_material_textures = nullptr;
     return {};
@@ -688,6 +707,161 @@ arpg::test::Failure material_manifest_rejects_oversized_atlas_and_memory_budget(
     return {};
 }
 
+arpg::test::Failure material_manifest_reports_true_resident_peak() noexcept {
+    constexpr std::size_t kExpectedFullPackBytes = 302'170'112U;
+    constexpr std::size_t kExpectedResidentPeakBytes = 163'708'928U;
+    constexpr std::size_t kExpectedNonFirePeakBytes = 155'205'632U;
+    const MaterialManifestDefinition manifest =
+        arpg::platform::default_material_manifest();
+    ARPG_REQUIRE(arpg::platform::full_pack_bytes(manifest)
+        == kExpectedFullPackBytes);
+    ARPG_REQUIRE(arpg::platform::resident_peak_bytes(manifest)
+        == kExpectedResidentPeakBytes);
+    ARPG_REQUIRE(arpg::platform::validate_material_manifest(manifest).valid);
+
+    for (const MaterialEcology ecology : {MaterialEcology::fire,
+             MaterialEcology::water, MaterialEcology::lightning,
+             MaterialEcology::chaos}) {
+        std::array<MaterialAtlasDefinition,
+            static_cast<std::size_t>(MaterialAtlasId::count)> resident{};
+        std::size_t resident_count{};
+        for (std::size_t index{}; index < manifest.atlas_count; ++index) {
+            if (manifest.atlases[index].ecology == MaterialEcology::common
+                || manifest.atlases[index].ecology == ecology) {
+                resident[resident_count++] = manifest.atlases[index];
+            }
+        }
+        const MaterialManifestDefinition ecology_manifest{
+            resident.data(), resident_count, nullptr, 0U};
+        ARPG_REQUIRE(arpg::platform::resident_peak_bytes(ecology_manifest)
+            == (ecology == MaterialEcology::fire
+                ? kExpectedResidentPeakBytes : kExpectedNonFirePeakBytes));
+    }
+    return {};
+}
+
+arpg::test::Failure resident_peak_saturates_instead_of_overflowing() noexcept {
+    constexpr std::size_t kMaximum = (std::numeric_limits<std::size_t>::max)();
+    const std::array<MaterialAtlasDefinition, 2> atlases{{
+        {MaterialAtlasId::environment, 1, 1, kMaximum / 2U - 8U, "a", "b",
+            MaterialEcology::common},
+        {MaterialAtlasId::actors, 1, 1, 16U, "c", "d",
+            MaterialEcology::fire},
+    }};
+    const MaterialManifestDefinition manifest{
+        atlases.data(), atlases.size(), nullptr, 0U};
+    ARPG_REQUIRE(arpg::platform::resident_peak_bytes(manifest) == kMaximum);
+    const std::array<MaterialAtlasDefinition, 1> full_overflow{{
+        {MaterialAtlasId::environment, 1, 1, kMaximum, "a", "b"},
+    }};
+    const MaterialManifestDefinition full_overflow_manifest{
+        full_overflow.data(), full_overflow.size(), nullptr, 0U};
+    ARPG_REQUIRE(arpg::platform::full_pack_bytes(full_overflow_manifest)
+        == kMaximum);
+    return {};
+}
+
+arpg::test::Failure material_manifest_never_exceeds_hard_resident_cap() noexcept {
+    constexpr std::size_t kMiB = 1024U * 1024U;
+    constexpr std::size_t kAtlasBytes = 16U * kMiB;
+    const std::array<MaterialAtlasDefinition, 9> atlases{{
+        {MaterialAtlasId::environment, 2048, 2048, kAtlasBytes, "a", "b"},
+        {MaterialAtlasId::actors, 2048, 2048, kAtlasBytes, "c", "d"},
+        {MaterialAtlasId::effects_ui, 2048, 2048, kAtlasBytes, "e", "f"},
+        {MaterialAtlasId::player_locomotion, 2048, 2048, kAtlasBytes, "g", "h"},
+        {MaterialAtlasId::player_combo_a, 2048, 2048, kAtlasBytes, "i", "j"},
+        {MaterialAtlasId::player_combo_b, 2048, 2048, kAtlasBytes, "k", "l"},
+        {MaterialAtlasId::player_reaction, 2048, 2048, kAtlasBytes, "m", "n"},
+        {MaterialAtlasId::player_air, 2048, 2048, kAtlasBytes, "o", "p"},
+        {MaterialAtlasId::items_ui, 2048, 2048, kAtlasBytes, "q", "r"},
+    }};
+    const MaterialManifestDefinition exactly_at_hard_cap{
+        atlases.data(), 8U, nullptr, 0U, nullptr, 0U,
+        nullptr, 0U, 512U * kMiB};
+    ARPG_REQUIRE(arpg::platform::resident_peak_bytes(exactly_at_hard_cap)
+        == 256U * kMiB);
+    ARPG_REQUIRE(arpg::platform::validate_material_manifest(
+        exactly_at_hard_cap).valid);
+
+    const MaterialManifestDefinition one_pair_above_hard_cap{
+        atlases.data(), atlases.size(), nullptr, 0U, nullptr, 0U,
+        nullptr, 0U, 512U * kMiB};
+    ARPG_REQUIRE(!arpg::platform::validate_material_manifest(
+        one_pair_above_hard_cap).valid);
+    ARPG_REQUIRE(arpg::platform::validate_material_manifest(
+        one_pair_above_hard_cap).error
+        == arpg::platform::MaterialValidationError::memory_budget_exceeded);
+
+    const std::array<MaterialAtlasDefinition, 1> small_atlas{{
+        {MaterialAtlasId::environment, 64, 64, 4U * 64U * 64U, "a", "b"},
+    }};
+    const MaterialManifestDefinition requested_too_small{
+        small_atlas.data(), small_atlas.size(), nullptr, 0U, nullptr, 0U,
+        nullptr, 0U, 1U};
+    ARPG_REQUIRE(!arpg::platform::validate_material_manifest(
+        requested_too_small).valid);
+    return {};
+}
+
+arpg::test::Failure material_manifest_memory_stats_fail_closed() noexcept {
+    constexpr std::size_t kMaximum = (std::numeric_limits<std::size_t>::max)();
+    const MaterialManifestDefinition missing_atlases{
+        nullptr, 1U, nullptr, 0U};
+    ARPG_REQUIRE(arpg::platform::resident_peak_bytes(missing_atlases)
+        == kMaximum);
+    ARPG_REQUIRE(arpg::platform::full_pack_bytes(missing_atlases) == kMaximum);
+    ARPG_REQUIRE(!arpg::platform::validate_material_manifest(
+        missing_atlases).valid);
+
+    const MaterialAtlasDefinition illegal_ecology{
+        MaterialAtlasId::actors, 1, 1, 4U, "a", "b",
+        MaterialEcology::count};
+    const MaterialManifestDefinition illegal_ecology_manifest{
+        &illegal_ecology, 1U, nullptr, 0U};
+    ARPG_REQUIRE(arpg::platform::resident_peak_bytes(
+        illegal_ecology_manifest) == kMaximum);
+    ARPG_REQUIRE(!arpg::platform::validate_material_manifest(
+        illegal_ecology_manifest).valid);
+    return {};
+}
+
+arpg::test::Failure material_manifest_rejects_false_rgba_byte_claim() noexcept {
+    const std::array<MaterialAtlasDefinition, 1> atlases{{
+        {MaterialAtlasId::actors, 64, 64, 4U * 64U * 64U - 1U,
+            "actors.png", "actors_material.png"},
+    }};
+    const MaterialManifestDefinition manifest{
+        atlases.data(), atlases.size(), nullptr, 0U};
+    ARPG_REQUIRE(!arpg::platform::validate_material_manifest(manifest).valid);
+    ARPG_REQUIRE(arpg::platform::validate_material_manifest(manifest).error
+        == arpg::platform::MaterialValidationError::invalid_atlas);
+    return {};
+}
+
+arpg::test::Failure material_manifest_rejects_invalid_background_contracts() noexcept {
+    constexpr auto valid_bytes = [](int width, int height) noexcept {
+        return static_cast<std::size_t>(width)
+            * static_cast<std::size_t>(height) * 4U;
+    };
+    const std::array<MaterialAtlasDefinition, 4> invalid{{
+        {MaterialAtlasId::fire_room_background, 2559, 1440,
+            valid_bytes(2559, 1440), "a", "b", MaterialEcology::fire},
+        {MaterialAtlasId::water_room_background, 2561, 1440,
+            valid_bytes(2561, 1440), "c", "d", MaterialEcology::water},
+        {MaterialAtlasId::lightning_room_background, 2560, 1439,
+            valid_bytes(2560, 1439), "e", "f", MaterialEcology::lightning},
+        {MaterialAtlasId::chaos_room_background, 2560, 1440,
+            valid_bytes(2560, 1440), "g", "h", MaterialEcology::fire},
+    }};
+    for (const MaterialAtlasDefinition& atlas : invalid) {
+        const MaterialManifestDefinition manifest{&atlas, 1U, nullptr, 0U};
+        ARPG_REQUIRE(!arpg::platform::validate_material_manifest(manifest).valid);
+        ARPG_REQUIRE(arpg::platform::validate_material_manifest(manifest).error
+            == arpg::platform::MaterialValidationError::invalid_atlas);
+    }
+    return {};
+}
+
 arpg::test::Failure material_manifest_rejects_duplicate_sprite_ids() noexcept {
     const std::array<MaterialAtlasDefinition, 1> atlases{{
         {MaterialAtlasId::actors, 64, 64, 4U * 64U * 64U, "actors.png",
@@ -867,6 +1041,18 @@ constexpr arpg::test::TestCase kCases[] = {
         &material_manifest_rejects_non_finite_frame_geometry_and_anchor},
     {"rejects oversized atlas and memory budget",
         &material_manifest_rejects_oversized_atlas_and_memory_budget},
+    {"reports true resident peak",
+        &material_manifest_reports_true_resident_peak},
+    {"resident peak saturates instead of overflowing",
+        &resident_peak_saturates_instead_of_overflowing},
+    {"never exceeds hard resident cap",
+        &material_manifest_never_exceeds_hard_resident_cap},
+    {"memory stats fail closed",
+        &material_manifest_memory_stats_fail_closed},
+    {"rejects false rgba byte claim",
+        &material_manifest_rejects_false_rgba_byte_claim},
+    {"rejects invalid background contracts",
+        &material_manifest_rejects_invalid_background_contracts},
     {"rejects duplicate sprite ids", &material_manifest_rejects_duplicate_sprite_ids},
     {"accepts valid unique frames", &material_manifest_accepts_valid_unique_frames},
     {"rejects missing color or material maps",

@@ -9,6 +9,7 @@
 #include "material_loot_view.hpp"
 #include "lightning_room_material_slice.hpp"
 #include "render_layout.hpp"
+#include "room_background_render_plan.hpp"
 #include "ui_text_renderer.hpp"
 #include "ui_typography.hpp"
 #include "water_room_material_slice.hpp"
@@ -68,42 +69,12 @@ bool draw_environment_room(const MaterialPack& material_pack,
     dungeon::DungeonElement ecology) noexcept {
     const float width = static_cast<float>(GetScreenWidth());
     const float height = static_cast<float>(GetScreenHeight());
-    const float scale = (std::max)(width / 1024.0F, height / 704.0F);
     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
         Color{9, 12, 20, 255});
-    if (ecology == dungeon::DungeonElement::fire
-        && material_pack.available(MaterialAtlasId::fire_environment)) {
-        return material_pack.draw_frame(MaterialAtlasId::fire_environment,
-            {0.0F, 0.0F, 256.0F, 256.0F}, {128.0F, 256.0F},
-            {width * 0.5F, height}, false,
-            (std::max)(width / 256.0F, height / 256.0F));
-    }
-    const WaterRoomRenderPlan water = water_room_render_plan(ecology);
-    if (water.active && material_pack.available(water.background_atlas)) {
-        return material_pack.draw_frame(water.background_atlas,
-            water.background_source, {256.0F, 512.0F},
-            {width * 0.5F, height}, false,
-            (std::max)(width / water.background_source.width,
-                height / water.background_source.height));
-    }
-    const LightningRoomRenderPlan lightning = lightning_room_render_plan(ecology);
-    if (lightning.active && material_pack.available(lightning.background_atlas)) {
-        return material_pack.draw_frame(lightning.background_atlas,
-            lightning.background_source, {256.0F, 512.0F},
-            {width * 0.5F, height}, false,
-            (std::max)(width / lightning.background_source.width,
-                height / lightning.background_source.height));
-    }
-    const ChaosRoomRenderPlan chaos = chaos_room_render_plan(ecology);
-    if (chaos.active && material_pack.available(chaos.background_atlas)) {
-        return material_pack.draw_frame(chaos.background_atlas,
-            chaos.background_source, {256.0F, 512.0F},
-            {width * 0.5F, height}, false,
-            (std::max)(width / chaos.background_source.width,
-                height / chaos.background_source.height));
-    }
-    return material_pack.draw(select_floor_sprite(ecology),
-        {width * 0.5F, height}, false, scale);
+    const RoomBackgroundRenderPlan plan = room_background_render_plan(ecology);
+    return material_pack.draw_frame(plan.atlas, plan.source,
+        {1280.0F, 1440.0F}, {width * 0.5F, height}, false,
+        room_background_scale(width, height));
 }
 
 void draw_water_room_props(const MaterialPack& material_pack,
@@ -220,10 +191,21 @@ bool can_draw_room_environment(const dungeon::DungeonSnapshot& snapshot,
     const DoorVisualMode door_mode = door_visual_mode(snapshot.phase,
         snapshot.has_active_room, snapshot.exits_open[0]);
     const HoleVisualMode hole_mode = hole_visual_mode(snapshot);
+    const RoomBackgroundRenderPlan background =
+        room_background_render_plan(snapshot.ecology);
+    MaterialAtlasId props_atlas = MaterialAtlasId::fire_environment;
+    if (snapshot.ecology == dungeon::DungeonElement::water) {
+        props_atlas = MaterialAtlasId::water_environment;
+    } else if (snapshot.ecology == dungeon::DungeonElement::lightning) {
+        props_atlas = MaterialAtlasId::lightning_environment;
+    } else if (snapshot.ecology == dungeon::DungeonElement::chaos) {
+        props_atlas = MaterialAtlasId::chaos_environment;
+    }
     return should_draw_material_environment({
-        material_pack.can_draw(select_floor_sprite(snapshot.ecology)),
+        material_pack.available(background.atlas),
         material_pack.can_draw(select_door_sprite(snapshot.ecology)),
         material_pack.can_draw(hole_sprite(snapshot.ecology)),
+        material_pack.available(props_atlas),
         door_mode != DoorVisualMode::hidden,
         hole_mode != HoleVisualMode::hidden,
     });
@@ -558,14 +540,16 @@ void CombatRenderer::draw_room(
     draw_environment_hazards(current, width, height);
     draw_ground_materials(current, material_loot, material_pack_, width, height);
     draw_ground_items(current, ground_loot, material_pack_, width, height);
-    if (current.ecology == dungeon::DungeonElement::fire) {
-        draw_fire_room_props(material_pack_, current, width, height);
-    } else if (current.ecology == dungeon::DungeonElement::water) {
-        draw_water_room_props(material_pack_, width, height);
-    } else if (current.ecology == dungeon::DungeonElement::lightning) {
-        draw_lightning_room_props(material_pack_, width, height);
-    } else if (current.ecology == dungeon::DungeonElement::chaos) {
-        draw_chaos_room_props(material_pack_, width, height);
+    if (draw_material_environment) {
+        if (current.ecology == dungeon::DungeonElement::fire) {
+            draw_fire_room_props(material_pack_, current, width, height);
+        } else if (current.ecology == dungeon::DungeonElement::water) {
+            draw_water_room_props(material_pack_, width, height);
+        } else if (current.ecology == dungeon::DungeonElement::lightning) {
+            draw_lightning_room_props(material_pack_, width, height);
+        } else if (current.ecology == dungeon::DungeonElement::chaos) {
+            draw_chaos_room_props(material_pack_, width, height);
+        }
     }
     draw_doors(current, width, height, material_pack_,
         draw_material_environment, hud_renderer_.hud_font(),

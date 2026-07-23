@@ -348,20 +348,6 @@ std::uint16_t monster_animation_frame_index(
         : (std::min)(frame, static_cast<std::uint64_t>(clip.frame_count - 1U)));
 }
 
-MaterialSpriteId select_floor_sprite(dungeon::DungeonElement element) noexcept {
-    switch (element) {
-    case dungeon::DungeonElement::fire:
-        return MaterialSpriteId::environment_floor_fire;
-    case dungeon::DungeonElement::water:
-        return MaterialSpriteId::environment_floor_water;
-    case dungeon::DungeonElement::lightning:
-        return MaterialSpriteId::environment_floor_lightning;
-    case dungeon::DungeonElement::chaos:
-        return MaterialSpriteId::environment_floor_chaos;
-    }
-    return MaterialSpriteId::missing;
-}
-
 MaterialSpriteId select_door_sprite(dungeon::DungeonElement element) noexcept {
     switch (element) {
     case dungeon::DungeonElement::fire:

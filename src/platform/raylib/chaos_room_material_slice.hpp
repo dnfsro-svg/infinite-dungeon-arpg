@@ -31,15 +31,7 @@ struct ChaosRoomMaterialSlice final {
         static_cast<std::size_t>(ChaosRoomPropId::count)> props{};
 };
 
-struct ChaosRoomRenderPlan final {
-    bool active{};
-    MaterialAtlasId background_atlas{MaterialAtlasId::chaos_environment};
-    Rectangle background_source{};
-};
-
 [[nodiscard]] const ChaosRoomMaterialSlice&
 chaos_room_material_slice() noexcept;
-[[nodiscard]] ChaosRoomRenderPlan chaos_room_render_plan(
-    dungeon::DungeonElement ecology) noexcept;
 
 }  // namespace arpg::platform

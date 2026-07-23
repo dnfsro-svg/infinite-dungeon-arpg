@@ -26,11 +26,4 @@ const ChaosRoomMaterialSlice& chaos_room_material_slice() noexcept {
     return kChaosRoomSlice;
 }
 
-ChaosRoomRenderPlan chaos_room_render_plan(
-    dungeon::DungeonElement ecology) noexcept {
-    return {ecology == dungeon::DungeonElement::chaos,
-        MaterialAtlasId::chaos_environment,
-        {0.0F, 0.0F, 512.0F, 512.0F}};
-}
-
 }  // namespace arpg::platform

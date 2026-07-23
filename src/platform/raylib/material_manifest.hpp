@@ -55,6 +55,10 @@ inline constexpr MaterialAtlasDefinition kDefaultMaterialAtlases[] = {
     {MaterialAtlasId::chaos_hazard, 864, 864, 4U * 864U * 864U, "assets/stage12/chaos_hazard.png", "assets/stage12/chaos_hazard_material.png", MaterialEcology::chaos},
     {MaterialAtlasId::items_ui, 1024, 1024, 4U * 1024U * 1024U, "assets/stage12/items_ui.png", "assets/stage12/items_ui_material.png", MaterialEcology::common},
     {MaterialAtlasId::ui_material, 1024, 1024, 4U * 1024U * 1024U, "assets/stage12/ui_material.png", "assets/stage12/ui_material_material.png", MaterialEcology::common},
+    {MaterialAtlasId::fire_room_background, 2560, 1440, 14'745'600U, "assets/stage12/fire_room_background.png", "assets/stage12/fire_room_background_material.png", MaterialEcology::fire},
+    {MaterialAtlasId::water_room_background, 2560, 1440, 14'745'600U, "assets/stage12/water_room_background.png", "assets/stage12/water_room_background_material.png", MaterialEcology::water},
+    {MaterialAtlasId::lightning_room_background, 2560, 1440, 14'745'600U, "assets/stage12/lightning_room_background.png", "assets/stage12/lightning_room_background_material.png", MaterialEcology::lightning},
+    {MaterialAtlasId::chaos_room_background, 2560, 1440, 14'745'600U, "assets/stage12/chaos_room_background.png", "assets/stage12/chaos_room_background_material.png", MaterialEcology::chaos},
 };
 
 #define ARPG_ACTOR_FRAME(sprite, column, row) \
@@ -382,6 +386,11 @@ default_material_manifest() noexcept {
         sizeof(detail::kDefaultAnimationEvents) / sizeof(detail::kDefaultAnimationEvents[0]),
         256U * 1024U * 1024U};
 }
+
+[[nodiscard]] std::size_t resident_peak_bytes(
+    const MaterialManifestDefinition& manifest) noexcept;
+[[nodiscard]] std::size_t full_pack_bytes(
+    const MaterialManifestDefinition& manifest) noexcept;
 
 [[nodiscard]] constexpr const MaterialFrameDefinition* find_material_frame(
     const MaterialManifestDefinition& manifest, MaterialSpriteId id) noexcept {

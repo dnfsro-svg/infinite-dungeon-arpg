@@ -275,15 +275,6 @@ arpg::test::Failure water_ecology_has_independent_loadable_color_and_material_at
 }
 
 arpg::test::Failure water_room_consumes_only_water_environment_materials() noexcept {
-    const auto plan = arpg::platform::water_room_render_plan(
-        arpg::dungeon::DungeonElement::water);
-    ARPG_REQUIRE(plan.active);
-    ARPG_REQUIRE(plan.background_atlas == MaterialAtlasId::water_environment);
-    ARPG_REQUIRE(plan.background_source.width > 0.0F);
-    ARPG_REQUIRE(plan.background_source.height > 0.0F);
-    ARPG_REQUIRE(!arpg::platform::water_room_render_plan(
-        arpg::dungeon::DungeonElement::fire).active);
-
     const auto& slice = arpg::platform::water_room_material_slice();
     constexpr std::array<arpg::platform::WaterRoomPropId, 7> kRequired{{
         arpg::platform::WaterRoomPropId::floor,
@@ -470,15 +461,6 @@ arpg::test::Failure lightning_ecology_has_independent_loadable_color_and_materia
 }
 
 arpg::test::Failure lightning_room_consumes_only_lightning_environment_materials() noexcept {
-    const auto plan = arpg::platform::lightning_room_render_plan(
-        arpg::dungeon::DungeonElement::lightning);
-    ARPG_REQUIRE(plan.active);
-    ARPG_REQUIRE(plan.background_atlas == MaterialAtlasId::lightning_environment);
-    ARPG_REQUIRE(plan.background_source.width > 0.0F);
-    ARPG_REQUIRE(plan.background_source.height > 0.0F);
-    ARPG_REQUIRE(!arpg::platform::lightning_room_render_plan(
-        arpg::dungeon::DungeonElement::water).active);
-
     const auto& slice = arpg::platform::lightning_room_material_slice();
     constexpr std::array<arpg::platform::LightningRoomPropId, 7> kRequired{{
         arpg::platform::LightningRoomPropId::floor,
@@ -714,12 +696,6 @@ arpg::test::Failure chaos_ecology_has_independent_loadable_color_and_material_at
 }
 
 arpg::test::Failure chaos_room_consumes_only_chaos_environment_materials() noexcept {
-    const auto plan = arpg::platform::chaos_room_render_plan(
-        arpg::dungeon::DungeonElement::chaos);
-    ARPG_REQUIRE(plan.active);
-    ARPG_REQUIRE(plan.background_atlas == MaterialAtlasId::chaos_environment);
-    ARPG_REQUIRE(!arpg::platform::chaos_room_render_plan(
-        arpg::dungeon::DungeonElement::lightning).active);
     const auto& slice = arpg::platform::chaos_room_material_slice();
     constexpr std::array<arpg::platform::ChaosRoomPropId, 7> kRequired{{
         arpg::platform::ChaosRoomPropId::floor,

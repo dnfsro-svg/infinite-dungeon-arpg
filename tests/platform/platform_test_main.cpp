@@ -45,6 +45,7 @@ arpg::test::TestSuite material_asset_validation_suite() noexcept;
 arpg::test::TestSuite material_animation_suite() noexcept;
 arpg::test::TestSuite fire_room_material_slice_suite() noexcept;
 arpg::test::TestSuite ecology_material_coverage_suite() noexcept;
+arpg::test::TestSuite room_background_render_plan_suite() noexcept;
 arpg::test::TestSuite stage12_environment_render_suite() noexcept;
 arpg::test::TestSuite stage12_actor_render_suite() noexcept;
 arpg::test::TestSuite stage12_material_render_suite() noexcept;
@@ -100,11 +101,12 @@ int main() {
         material_animation_suite(),
         fire_room_material_slice_suite(),
         ecology_material_coverage_suite(),
+        room_background_render_plan_suite(),
         stage12_environment_render_suite(),
         stage12_actor_render_suite(),
         stage12_material_render_suite(),
     };
 
-    return arpg::test::run_suites(suites, 433,
+    return arpg::test::run_suites(suites, 442,
         "HUD and UI material slice contract");
 }

@@ -94,9 +94,6 @@ struct MonsterAnimationFrame final {
     const MonsterAnimationClipDefinition& clip, std::uint64_t elapsed_ticks,
     bool loop = true) noexcept;
 
-[[nodiscard]] MaterialSpriteId select_floor_sprite(
-    dungeon::DungeonElement element) noexcept;
-
 [[nodiscard]] MaterialSpriteId select_door_sprite(
     dungeon::DungeonElement element) noexcept;
 [[nodiscard]] MaterialSpriteId select_element_effect(

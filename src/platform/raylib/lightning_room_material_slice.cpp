@@ -26,11 +26,4 @@ const LightningRoomMaterialSlice& lightning_room_material_slice() noexcept {
     return kLightningRoomSlice;
 }
 
-LightningRoomRenderPlan lightning_room_render_plan(
-    dungeon::DungeonElement ecology) noexcept {
-    return {ecology == dungeon::DungeonElement::lightning,
-        MaterialAtlasId::lightning_environment,
-        {0.0F, 0.0F, 512.0F, 512.0F}};
-}
-
 }  // namespace arpg::platform
