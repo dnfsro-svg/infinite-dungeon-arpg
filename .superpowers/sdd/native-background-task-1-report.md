@@ -98,3 +98,61 @@
   luminance stddev 为 `11.5984`，真实房间左缘结构 ROI 为 `16.3743`。
 - 修复提交：`3a8ad132759f54857957fcedf2fe5e070deda3b0`
   （`fix: harden native fire background proof`）。
+
+## 第二轮复审修复：连续房间覆盖
+
+### RED
+
+- Command: `E:\codex1\python-dev\Python313\python.exe -m unittest tests.platform.native_room_background_asset_pipeline_tests -v`
+- Result: expected FAIL, 1/4 failed. The new coverage contract failed because
+  `fire-room-right-extension-v3.png` and `fire-room-near-extension-v3.png`
+  were absent from the manifest/source set; the old report had neither a
+  `continuous_room_rect` nor marked geometry whose union could cover the
+  central 55 percent.
+
+### GREEN
+
+- Same command: PASS, 4/4 in 7.400 seconds.
+- The suite includes a `git write-tree` + `git archive` clean-index rebuild,
+  so the archive must contain every manifest input and build successfully.
+- It independently cross-checks each placement's source/target dimensions and
+  actual ratios, requires both ratios to be at most 1.0, and now computes the
+  union of placements explicitly marked `continuous_room`; it does not trust a
+  handwritten rectangle field alone.
+
+### Native sources and coverage proof
+
+- New original ImageGen sources (built-in ImageGen, old tiles/layout were style
+  references only):
+  `fire-room-right-extension-v3.png` and
+  `fire-room-near-extension-v3.png`, each 1672 x 941 RGB and Git-tracked.
+- The report records `continuous_room_rect = [864, 486, 2976, 1674]`. Four
+  marked native placements jointly cover that complete rectangle, which maps to
+  runtime `(576, 324, 1984, 1116)`.
+- The right and near extensions overlap the original layout before alpha
+  feathering, avoiding the prior black vertical/low-detail discontinuities.
+  No source placement is enlarged: maximum `scale_x = 1.0`, maximum
+  `scale_y = 1.0`.
+- Actual consumed floor inputs are `fire-floor-tile-v1.png`,
+  `fire-floor-tile-v2-a.png` (`floor_near`), and
+  `fire-floor-tile-v2-b.png`; provenance no longer lists `floor_near` without
+  consuming it.
+
+### Final outputs and visual inspection
+
+- Master SHA-256: `cc452a958c597165319d0e4472fcd1eea57469c2a259e7ad510ffde63096e4be`
+- Runtime SHA-256: `92fdd54b6add6e478a6169d38d37cbc1909d97eb988784747e64d0e906f4e934`
+- Material SHA-256: `562cf35a0f219166379bb76878bea693d73536883d124fccd9b978afdf943d8e`
+- Opened final 3840 x 2160 master and final 2560 x 1440 runtime in full 16:9.
+  The required central ROI is a connected 2.5D chamber with a dark small-stone
+  rear wall, mid-floor recession and larger foreground slabs. The right side is
+  continuous to the required runtime x=1984 edge; no obvious repeated stamp,
+  hard seam, character, UI, text, door opening, interaction object or central
+  highlight was observed. The remaining outer frame is deliberately low-key
+  charcoal/steel context outside the continuous combat ROI.
+
+### Commit
+
+- Second-round proof-fix commit:
+  `430addd8545769b79086359faefd0d416d9dff0e`
+  (`fix: extend native fire room coverage`).
