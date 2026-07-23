@@ -26,6 +26,14 @@
         {
           "path": "art_source/stage12/backgrounds/fire/fire-room-layout-v2.png",
           "role": "room_layout"
+        },
+        {
+          "path": "art_source/stage12/backgrounds/fire/fire-room-right-extension-v3.png",
+          "role": "room_right_extension"
+        },
+        {
+          "path": "art_source/stage12/backgrounds/fire/fire-room-near-extension-v3.png",
+          "role": "room_near_extension"
         }
       ]
     }

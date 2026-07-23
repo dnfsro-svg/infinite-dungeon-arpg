@@ -26,6 +26,7 @@ MASTER = ROOT / "art_source/stage12/backgrounds/fire/fire-room-background-master
 RUNTIME = ROOT / "assets/stage12/fire_room_background.png"
 MATERIAL = ROOT / "assets/stage12/fire_room_background_material.png"
 REPORT = ROOT / "assets/stage12/room-background-build.json"
+CONTINUOUS_ROOM_ROI = (864, 486, 2976, 1674)
 
 
 def sha256(path: Path) -> str:
@@ -42,12 +43,38 @@ def declared_sources(root: Path = ROOT) -> list[dict[str, str]]:
     return manifest["ecologies"][ECOLOGY]["sources"]
 
 
+def rectangles_cover_roi(rectangles: list[list[int]], roi: tuple[int, int, int, int]) -> bool:
+    """Return whether axis-aligned rectangles jointly cover every point of roi."""
+    left, top, right, bottom = roi
+    xs = {left, right}
+    for rect_left, _, rect_right, _ in rectangles:
+        xs.add(max(left, min(right, rect_left)))
+        xs.add(max(left, min(right, rect_right)))
+    ordered_xs = sorted(xs)
+    for x0, x1 in zip(ordered_xs, ordered_xs[1:]):
+        if x0 == x1:
+            continue
+        intervals = sorted(
+            (max(top, rect_top), min(bottom, rect_bottom))
+            for rect_left, rect_top, rect_right, rect_bottom in rectangles
+            if rect_left <= x0 and rect_right >= x1
+        )
+        cursor = top
+        for interval_top, interval_bottom in intervals:
+            if interval_top > cursor:
+                return False
+            cursor = max(cursor, interval_bottom)
+        if cursor < bottom:
+            return False
+    return True
+
+
 class NativeRoomBackgroundAssetPipelineTests(unittest.TestCase):
     def test_fire_sources_are_native_tiles_at_least_1024_pixels(self) -> None:
         for entry in declared_sources():
             source = ROOT / entry["path"]
             with self.subTest(source=source.name), Image.open(source) as image:
-                if entry["role"] == "room_layout":
+                if entry["role"].startswith("room_"):
                     self.assertGreaterEqual(image.width, 1024)
                     self.assertGreaterEqual(image.height, 720)
                 else:
@@ -115,6 +142,8 @@ class NativeRoomBackgroundAssetPipelineTests(unittest.TestCase):
             "art_source/stage12/backgrounds/fire/fire-floor-tile-v2-b.png",
             "art_source/stage12/backgrounds/fire/fire-wall-tile-v2.png",
             "art_source/stage12/backgrounds/fire/fire-room-layout-v2.png",
+            "art_source/stage12/backgrounds/fire/fire-room-right-extension-v3.png",
+            "art_source/stage12/backgrounds/fire/fire-room-near-extension-v3.png",
         })
         manifest_text = SOURCE_MANIFEST.read_text(encoding="utf-8")
         self.assertNotIn("assets/stage12/fire_environment.png", manifest_text)
@@ -136,6 +165,11 @@ class NativeRoomBackgroundAssetPipelineTests(unittest.TestCase):
             "runtime": sha256(RUNTIME),
             "material": sha256(MATERIAL),
         })
+        continuous_rect = fire_report["continuous_room_rect"]
+        self.assertLessEqual(continuous_rect[0], CONTINUOUS_ROOM_ROI[0])
+        self.assertLessEqual(continuous_rect[1], CONTINUOUS_ROOM_ROI[1])
+        self.assertGreaterEqual(continuous_rect[2], CONTINUOUS_ROOM_ROI[2])
+        self.assertGreaterEqual(continuous_rect[3], CONTINUOUS_ROOM_ROI[3])
         self.assertTrue(fire_report["placements"], "no native placements were recorded")
         for placement in fire_report["placements"]:
             source_left, source_top, source_right, source_bottom = placement["source_rect"]
@@ -154,6 +188,20 @@ class NativeRoomBackgroundAssetPipelineTests(unittest.TestCase):
             self.assertLessEqual(placement["scale_y"], 1.0)
             self.assertIn("source_rect", placement)
             self.assertIn("target_rect", placement)
+
+        continuous_placements = [placement for placement in fire_report["placements"] if placement.get("continuous_room")]
+        self.assertTrue(continuous_placements, "continuous room placements were not marked")
+        self.assertTrue(
+            rectangles_cover_roi([placement["target_rect"] for placement in continuous_placements], CONTINUOUS_ROOM_ROI),
+            "continuous room placement geometry does not cover the required central 55 percent",
+        )
+        consumed_floor_sources = {
+            placement["source"]
+            for placement in fire_report["placements"]
+            if "/fire-floor-" in placement["source"]
+        }
+        self.assertGreaterEqual(len(consumed_floor_sources), 2)
+        self.assertIn("art_source/stage12/backgrounds/fire/fire-floor-tile-v2-a.png", consumed_floor_sources)
 
         with Image.open(MASTER) as master, Image.open(RUNTIME) as runtime, Image.open(MATERIAL) as material:
             self.assertEqual(master.size, (3840, 2160))

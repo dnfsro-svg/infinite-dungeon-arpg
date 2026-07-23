@@ -24,6 +24,7 @@ class BuildReport:
     runtime_size: tuple[int, int]
     source_sha256: dict[str, str]
     placements: list[dict[str, Any]]
+    continuous_room_rect: tuple[int, int, int, int]
     runtime_from_master: dict[str, Any]
     output_sha256: dict[str, str]
 
@@ -59,7 +60,7 @@ def _read_sources(ecology: str, root: Path) -> dict[str, Path]:
         if candidate.parent != permitted_directory or not candidate.is_file():
             raise ValueError(f"invalid declared source: {candidate}")
         sources[role] = candidate
-    required_roles = {"floor_legacy", "floor_near", "floor_mid", "wall_legacy", "wall_far", "room_layout"}
+    required_roles = {"floor_legacy", "floor_near", "floor_mid", "wall_legacy", "wall_far", "room_layout", "room_right_extension", "room_near_extension"}
     if set(sources) != required_roles:
         raise ValueError("fire build requires declared floor, wall, and native room layout sources")
     return sources
@@ -75,6 +76,7 @@ def _place_native(
     placements: list[dict[str, Any]],
     feather_px: int = 0,
     opacity: int = 255,
+    continuous_room: bool = False,
 ) -> None:
     left, top, right, bottom = source_rect
     source_width, source_height = right - left, bottom - top
@@ -111,6 +113,7 @@ def _place_native(
             "scale_x": target_width / source_width,
             "scale_y": target_height / source_height,
             "alpha_feather_px": feather_px,
+            "continuous_room": continuous_room,
         }
     )
 
@@ -226,12 +229,15 @@ def build_ecology(ecology: str, root: Path) -> BuildReport:
         Image.open(sources["wall_legacy"]) as wall_legacy_input,
         Image.open(sources["wall_far"]) as wall_far_input,
         Image.open(sources["room_layout"]) as room_layout_input,
+        Image.open(sources["room_right_extension"]) as room_right_extension_input,
+        Image.open(sources["room_near_extension"]) as room_near_extension_input,
     ):
-        loaded = {"floor_legacy": floor_legacy_input.convert("RGBA"), "floor_near": floor_near_input.convert("RGBA"), "floor_mid": floor_mid_input.convert("RGBA"), "wall_legacy": wall_legacy_input.convert("RGBA"), "wall_far": wall_far_input.convert("RGBA"), "room_layout": room_layout_input.convert("RGBA")}
-        if any(min(image.size) < 1024 for role, image in loaded.items() if role != "room_layout"):
+        loaded = {"floor_legacy": floor_legacy_input.convert("RGBA"), "floor_near": floor_near_input.convert("RGBA"), "floor_mid": floor_mid_input.convert("RGBA"), "wall_legacy": wall_legacy_input.convert("RGBA"), "wall_far": wall_far_input.convert("RGBA"), "room_layout": room_layout_input.convert("RGBA"), "room_right_extension": room_right_extension_input.convert("RGBA"), "room_near_extension": room_near_extension_input.convert("RGBA")}
+        room_roles = {"room_layout", "room_right_extension", "room_near_extension"}
+        if any(min(image.size) < 1024 for role, image in loaded.items() if role not in room_roles):
             raise ValueError("native source tiles must each be at least 1024 by 1024")
-        if loaded["room_layout"].width < 1024 or loaded["room_layout"].height < 720:
-            raise ValueError("native room layout source is unexpectedly small")
+        if any(loaded[role].width < 1024 or loaded[role].height < 720 for role in room_roles):
+            raise ValueError("native room extension source is unexpectedly small")
         master = Image.new("RGBA", MASTER_SIZE, (20, 21, 22, 255))
         placements: list[dict[str, Any]] = []
         wall_samples = [(sources["wall_far"], loaded["wall_far"]), (sources["wall_legacy"], loaded["wall_legacy"])]
@@ -239,8 +245,16 @@ def build_ecology(ecology: str, root: Path) -> BuildReport:
         _cover_perspective_band(master, [(sources["floor_mid"], loaded["floor_mid"]), (sources["floor_legacy"], loaded["floor_legacy"])], root, (0, 1450, 3840, 2160), 0.80, 29, placements, (760, 560), 85, 140)
         _cover_perspective_band(master, [(sources["wall_far"], loaded["wall_far"]), (sources["floor_mid"], loaded["floor_mid"])], root, (0, 420, 1050, 1710), 0.74, 43, placements, (680, 600), 75, 130)
         _cover_perspective_band(master, [(sources["wall_legacy"], loaded["wall_legacy"]), (sources["floor_mid"], loaded["floor_mid"])], root, (2790, 420, 3840, 1710), 0.74, 59, placements, (680, 600), 75, 130)
+        continuous_room_rect = (864, 486, 2976, 1674)
         layout = loaded["room_layout"]
-        _place_native(master, layout, sources["room_layout"], root, (0, 0, layout.width, layout.height), (1084, 536, 1084 + layout.width, 536 + layout.height), placements, feather_px=36)
+        right_extension = loaded["room_right_extension"]
+        near_extension = loaded["room_near_extension"]
+        _place_native(master, layout, sources["room_layout"], root, (0, 0, layout.width, layout.height), (864, 486, 864 + layout.width, 486 + layout.height), placements, feather_px=36, continuous_room=True)
+        _place_native(master, right_extension, sources["room_right_extension"], root, (0, 0, 676, 941), (2300, 486, 2976, 1427), placements, feather_px=56, continuous_room=True)
+        _place_native(master, near_extension, sources["room_near_extension"], root, (0, near_extension.height - 324, 1672, near_extension.height), (864, 1350, 2536, 1674), placements, feather_px=50, continuous_room=True)
+        _place_native(master, right_extension, sources["room_right_extension"], root, (0, right_extension.height - 324, 676, right_extension.height), (2300, 1350, 2976, 1674), placements, feather_px=50, continuous_room=True)
+        floor_near = loaded["floor_near"]
+        _place_native(master, floor_near, sources["floor_near"], root, (0, 520, floor_near.width, 1006), (1293, 1674, 2547, 2160), placements, feather_px=96, opacity=125)
         _apply_quiet_outer_vignette(master)
 
     master_path = root / "art_source/stage12/backgrounds/fire/fire-room-background-master.png"
@@ -257,6 +271,7 @@ def build_ecology(ecology: str, root: Path) -> BuildReport:
         runtime_size=RUNTIME_SIZE,
         source_sha256={_relative(path, root): _sha256(path) for path in sources.values()},
         placements=placements,
+        continuous_room_rect=continuous_room_rect,
         runtime_from_master={"resampling": "LANCZOS", "passes": 1},
         output_sha256={
             "master": _sha256(master_path),
