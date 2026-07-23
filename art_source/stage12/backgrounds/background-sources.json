@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "ecologies": {
+    "fire": {
+      "sources": [
+        {
+          "path": "art_source/stage12/backgrounds/fire/fire-floor-tile-v1.png",
+          "role": "floor"
+        },
+        {
+          "path": "art_source/stage12/backgrounds/fire/fire-wall-tile-v1.png",
+          "role": "wall"
+        }
+      ]
+    }
+  }
+}

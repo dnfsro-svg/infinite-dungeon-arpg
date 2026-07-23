@@ -1,0 +1,354 @@
+{
+  "ecologies": {
+    "fire": {
+      "ecology": "fire",
+      "master_size": [
+        3840,
+        2160
+      ],
+      "output_sha256": {
+        "master": "5bab11b0b5ad2745bebded1b810a085ac72a7641143ebb21cc1c54d5a048e57d",
+        "material": "69ab6e3bcb4ff9a345e8f1f9bf18d511a33d253a996acba81cba94b5343c78c0",
+        "runtime": "e24e7f866386aa00fea5f1df6105e968c9fd8c32ed654c383f6c61d0b29dd30a"
+      },
+      "placements": [
+        {
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/fire/fire-wall-tile-v1.png",
+          "source_rect": [
+            83,
+            37,
+            1254,
+            727
+          ],
+          "target_rect": [
+            0,
+            0,
+            1171,
+            690
+          ]
+        },
+        {
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/fire/fire-wall-tile-v1.png",
+          "source_rect": [
+            294,
+            37,
+            1254,
+            727
+          ],
+          "target_rect": [
+            1171,
+            0,
+            2131,
+            690
+          ]
+        },
+        {
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/fire/fire-wall-tile-v1.png",
+          "source_rect": [
+            505,
+            37,
+            1254,
+            727
+          ],
+          "target_rect": [
+            2131,
+            0,
+            2880,
+            690
+          ]
+        },
+        {
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/fire/fire-wall-tile-v1.png",
+          "source_rect": [
+            716,
+            37,
+            1254,
+            727
+          ],
+          "target_rect": [
+            2880,
+            0,
+            3418,
+            690
+          ]
+        },
+        {
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/fire/fire-wall-tile-v1.png",
+          "source_rect": [
+            927,
+            37,
+            1254,
+            727
+          ],
+          "target_rect": [
+            3418,
+            0,
+            3745,
+            690
+          ]
+        },
+        {
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/fire/fire-wall-tile-v1.png",
+          "source_rect": [
+            1138,
+            37,
+            1233,
+            727
+          ],
+          "target_rect": [
+            3745,
+            0,
+            3840,
+            690
+          ]
+        },
+        {
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/fire/fire-floor-tile-v1.png",
+          "source_rect": [
+            171,
+            259,
+            1254,
+            1254
+          ],
+          "target_rect": [
+            0,
+            610,
+            1083,
+            1605
+          ]
+        },
+        {
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/fire/fire-floor-tile-v1.png",
+          "source_rect": [
+            382,
+            259,
+            1254,
+            1254
+          ],
+          "target_rect": [
+            1083,
+            610,
+            1955,
+            1605
+          ]
+        },
+        {
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/fire/fire-floor-tile-v1.png",
+          "source_rect": [
+            593,
+            259,
+            1254,
+            1254
+          ],
+          "target_rect": [
+            1955,
+            610,
+            2616,
+            1605
+          ]
+        },
+        {
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/fire/fire-floor-tile-v1.png",
+          "source_rect": [
+            804,
+            259,
+            1254,
+            1254
+          ],
+          "target_rect": [
+            2616,
+            610,
+            3066,
+            1605
+          ]
+        },
+        {
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/fire/fire-floor-tile-v1.png",
+          "source_rect": [
+            1015,
+            259,
+            1254,
+            1254
+          ],
+          "target_rect": [
+            3066,
+            610,
+            3305,
+            1605
+          ]
+        },
+        {
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/fire/fire-floor-tile-v1.png",
+          "source_rect": [
+            1226,
+            259,
+            1254,
+            1254
+          ],
+          "target_rect": [
+            3305,
+            610,
+            3333,
+            1605
+          ]
+        },
+        {
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/fire/fire-floor-tile-v1.png",
+          "source_rect": [
+            183,
+            259,
+            690,
+            1254
+          ],
+          "target_rect": [
+            3333,
+            610,
+            3840,
+            1605
+          ]
+        },
+        {
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/fire/fire-floor-tile-v1.png",
+          "source_rect": [
+            268,
+            432,
+            1254,
+            987
+          ],
+          "target_rect": [
+            0,
+            1605,
+            986,
+            2160
+          ]
+        },
+        {
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/fire/fire-floor-tile-v1.png",
+          "source_rect": [
+            479,
+            432,
+            1254,
+            987
+          ],
+          "target_rect": [
+            986,
+            1605,
+            1761,
+            2160
+          ]
+        },
+        {
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/fire/fire-floor-tile-v1.png",
+          "source_rect": [
+            690,
+            432,
+            1254,
+            987
+          ],
+          "target_rect": [
+            1761,
+            1605,
+            2325,
+            2160
+          ]
+        },
+        {
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/fire/fire-floor-tile-v1.png",
+          "source_rect": [
+            901,
+            432,
+            1254,
+            987
+          ],
+          "target_rect": [
+            2325,
+            1605,
+            2678,
+            2160
+          ]
+        },
+        {
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/fire/fire-floor-tile-v1.png",
+          "source_rect": [
+            1112,
+            432,
+            1254,
+            987
+          ],
+          "target_rect": [
+            2678,
+            1605,
+            2820,
+            2160
+          ]
+        },
+        {
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/fire/fire-floor-tile-v1.png",
+          "source_rect": [
+            69,
+            432,
+            1089,
+            987
+          ],
+          "target_rect": [
+            2820,
+            1605,
+            3840,
+            2160
+          ]
+        }
+      ],
+      "runtime_from_master": {
+        "passes": 1,
+        "resampling": "LANCZOS"
+      },
+      "runtime_size": [
+        2560,
+        1440
+      ],
+      "source_sha256": {
+        "art_source/stage12/backgrounds/fire/fire-floor-tile-v1.png": "74c3c31172849d2790bf783ff9f0a09bbc37bc127bad178a7b320e5f735fe085",
+        "art_source/stage12/backgrounds/fire/fire-wall-tile-v1.png": "6f566db9435856b2b81ccaf027335eb778877dcc1676198428881b136e878963"
+      }
+    }
+  },
+  "schema_version": 1
+}
