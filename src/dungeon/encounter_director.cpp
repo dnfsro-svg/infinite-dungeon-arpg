@@ -8,7 +8,6 @@
 #include "core/deterministic_rng.hpp"
 
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -52,11 +51,6 @@ struct TagCounts final {
     std::uint16_t ranged{};
     std::uint16_t support{};
     std::uint16_t ground_hazard{};
-};
-
-struct Candidate final {
-    combat::MonsterId id{combat::MonsterId::chaos_chaser};
-    std::uint64_t weight{};
 };
 
 [[nodiscard]] bool valid_ecology(checkpoint::DungeonElement ecology) noexcept {
@@ -167,6 +161,90 @@ void add_tag_counts(
     return true;
 }
 
+[[nodiscard]] std::uint64_t candidate_weight(
+    const combat::MonsterDefinition& definition,
+    checkpoint::DungeonElement ecology,
+    const EncounterDirectorConfig& config) noexcept {
+    return definition.preferred_ecology == static_cast<std::uint8_t>(ecology)
+        ? config.matching_ecology_weight
+        : config.off_ecology_weight;
+}
+
+[[nodiscard]] bool monster_can_join_wave(
+    const combat::MonsterDefinition& definition,
+    std::uint16_t remaining_budget,
+    const TagCounts& counts,
+    std::uint8_t encounter_budget_value,
+    const EncounterDirectorConfig& config) noexcept {
+    return definition.threat_cost <= remaining_budget
+        && fits_tag_limits(definition, counts, encounter_budget_value, config);
+}
+
+[[nodiscard]] const combat::MonsterDefinition* choose_weighted_monster(
+    std::uint16_t remaining_budget,
+    const TagCounts& counts,
+    std::uint8_t encounter_budget_value,
+    checkpoint::DungeonElement ecology,
+    const EncounterDirectorConfig& config,
+    core::DeterministicRng& selection_rng) noexcept {
+    std::uint64_t total_weight = 0U;
+    for (std::uint8_t raw = 0U;
+         raw < static_cast<std::uint8_t>(combat::MonsterId::count); ++raw) {
+        const auto* definition = combat::monster_definition(
+            static_cast<combat::MonsterId>(raw));
+        if (definition == nullptr || !monster_can_join_wave(*definition,
+                remaining_budget, counts, encounter_budget_value, config)) {
+            continue;
+        }
+        const std::uint64_t weight = candidate_weight(*definition, ecology, config);
+        if (weight == 0U || total_weight >
+                (std::numeric_limits<std::uint64_t>::max)() - weight) {
+            continue;
+        }
+        total_weight += weight;
+    }
+    if (total_weight == 0U) {
+        return nullptr;
+    }
+
+    std::uint64_t cursor = selection_rng.next_bounded(total_weight).value_or(0U);
+    std::uint64_t accepted_weight = 0U;
+    const combat::MonsterDefinition* fallback = nullptr;
+    for (std::uint8_t raw = 0U;
+         raw < static_cast<std::uint8_t>(combat::MonsterId::count); ++raw) {
+        const auto* definition = combat::monster_definition(
+            static_cast<combat::MonsterId>(raw));
+        if (definition == nullptr || !monster_can_join_wave(*definition,
+                remaining_budget, counts, encounter_budget_value, config)) {
+            continue;
+        }
+        const std::uint64_t weight = candidate_weight(*definition, ecology, config);
+        if (weight == 0U || accepted_weight >
+                (std::numeric_limits<std::uint64_t>::max)() - weight) {
+            continue;
+        }
+        accepted_weight += weight;
+        fallback = definition;
+        if (cursor < weight) {
+            return definition;
+        }
+        cursor -= weight;
+    }
+    return fallback;
+}
+
+void add_fallback_direct_target(
+    combat::EncounterWave& wave,
+    TagCounts& counts,
+    core::DeterministicRng& position_rng) noexcept {
+    const auto* fallback = combat::monster_definition(
+        combat::MonsterId::chaos_chaser);
+    if (fallback != nullptr && append_spawn(wave, fallback->id, position_rng)) {
+        wave.spent_budget = fallback->threat_cost;
+        add_tag_counts(*fallback, counts);
+    }
+}
+
 void fill_wave(
     combat::EncounterWave& wave,
     std::uint8_t wave_budget,
@@ -179,63 +257,17 @@ void fill_wave(
     if (!append_cheapest_direct_target(
             wave, wave_budget, encounter_budget_value, counts, config,
             position_rng)) {
-        const auto* fallback = combat::monster_definition(
-            combat::MonsterId::chaos_chaser);
-        if (fallback != nullptr && append_spawn(
-                wave, fallback->id, position_rng)) {
-            wave.spent_budget = fallback->threat_cost;
-            add_tag_counts(*fallback, counts);
-        }
+        add_fallback_direct_target(wave, counts, position_rng);
     }
 
     while (wave.spent_budget < wave_budget
             && wave.spawn_count < wave.spawns.size()) {
         const std::uint16_t remaining = static_cast<std::uint16_t>(
             wave_budget - wave.spent_budget);
-        std::array<Candidate, static_cast<std::size_t>(combat::MonsterId::count)>
-            candidates{};
-        std::size_t candidate_count = 0U;
-        std::uint64_t total_weight = 0U;
-        for (std::uint8_t raw = 0U;
-             raw < static_cast<std::uint8_t>(combat::MonsterId::count); ++raw) {
-            const auto id = static_cast<combat::MonsterId>(raw);
-            const auto* definition = combat::monster_definition(id);
-            if (definition == nullptr || definition->threat_cost > remaining
-                    || !fits_tag_limits(
-                        *definition, counts, encounter_budget_value, config)) {
-                continue;
-            }
-            const std::uint64_t weight = definition->preferred_ecology
-                    == static_cast<std::uint8_t>(ecology)
-                ? config.matching_ecology_weight
-                : config.off_ecology_weight;
-            if (weight == 0U || total_weight >
-                    (std::numeric_limits<std::uint64_t>::max)() - weight) {
-                continue;
-            }
-            candidates[candidate_count++] = {id, weight};
-            total_weight += weight;
-        }
-        if (candidate_count == 0U || total_weight == 0U) {
-            break;
-        }
-        const std::uint64_t roll = selection_rng.next_bounded(total_weight)
-            .value_or(0U);
-        std::uint64_t cursor = roll;
-        std::size_t selected = 0U;
-        for (; selected < candidate_count; ++selected) {
-            if (cursor < candidates[selected].weight) {
-                break;
-            }
-            cursor -= candidates[selected].weight;
-        }
-        if (selected >= candidate_count) {
-            selected = candidate_count - 1U;
-        }
-        const auto* definition = combat::monster_definition(
-            candidates[selected].id);
-        if (definition == nullptr || !append_spawn(
-                wave, definition->id, position_rng)) {
+        const auto* definition = choose_weighted_monster(remaining, counts,
+            encounter_budget_value, ecology, config, selection_rng);
+        if (definition == nullptr
+                || !append_spawn(wave, definition->id, position_rng)) {
             break;
         }
         wave.spent_budget = static_cast<std::uint8_t>(
