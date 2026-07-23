@@ -146,6 +146,15 @@ struct Stage12MaterialRuntimeStatus final {
     std::array<std::uint64_t, 4U> ui_text_failed_size_roles{};
     std::array<std::uint32_t, 4U> ui_text_measured_counts{};
     std::array<float, 4U> ui_text_minimum_display_sizes{};
+    dungeon::DungeonElement hud_ecology{dungeon::DungeonElement::fire};
+    dungeon::DungeonElement room_background_ecology{
+        dungeon::DungeonElement::fire};
+    MaterialAtlasId room_background_atlas{MaterialAtlasId::count};
+    bool room_background_resident{};
+    bool room_background_drawn{};
+    std::uint16_t room_background_source_width{};
+    std::uint16_t room_background_source_height{};
+    float room_background_scale{};
 };
 
 struct RaylibHostConfig final {
@@ -179,6 +188,7 @@ struct RaylibHostConfig final {
     bool validation_request_screenshot{};
     bool stage12_material_showcase{};
     bool stage12_material_showcase_hide_monsters{};
+    bool stage12_material_background_only{};
     Stage12UiShowcase stage12_ui_showcase{Stage12UiShowcase::none};
     std::optional<dungeon::DungeonElement> stage12_material_showcase_ecology{};
     std::optional<std::filesystem::path>

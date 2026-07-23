@@ -2494,6 +2494,12 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         if (!initialized && runtime.state() != DungeonRuntimeState::recovery_required) {
             return HostExitCode::save_initialization_failed;
         }
+        if (config.stage12_material_background_only
+                && runtime.state() == DungeonRuntimeState::recovery_required) {
+            TraceLog(LOG_ERROR,
+                "Stage 12 background-only capture refused a recovery save");
+            return HostExitCode::save_initialization_failed;
+        }
 
         SetConfigFlags(initial_window_flags(committed_settings));
         InitWindow(config.window_width, config.window_height, config.window_title);
@@ -2645,6 +2651,12 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 }
             }
             if (runtime.state() == DungeonRuntimeState::recovery_required) {
+                if (config.stage12_material_background_only) {
+                    TraceLog(LOG_ERROR,
+                        "Stage 12 background-only capture entered recovery state");
+                    exit_requested = true;
+                    continue;
+                }
                 if (inventory.is_open()) {
                     inventory.close();
                     fixed_step.clear_accumulator();
@@ -3043,12 +3055,30 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 current.combat->player.barrier = 625;
             }
 
+            const bool stage12_item_baseline_frame =
+                config.stage12_material_baseline_capture_file.has_value()
+                && config.validation_exit_after_presented_frames >= 2U
+                && presented_frame_count + 2U
+                    == config.validation_exit_after_presented_frames;
+            presented_snapshot = current;
+            if (config.stage12_material_showcase) {
+                apply_stage12_material_showcase(presented_snapshot,
+                    config.stage12_material_showcase_ecology,
+                    config.stage12_material_showcase_hide_monsters,
+                    stage12_item_baseline_frame);
+            }
+            const dungeon::DungeonSnapshot& presented_hud_previous =
+                config.stage12_material_showcase ? presented_snapshot : previous;
+            const dungeon::DungeonSnapshot& presented_hud_current =
+                config.stage12_material_showcase ? presented_snapshot : current;
+
             // Observe after all possible fixed-step changes and before every
             // presented frame, including death/recovery-owned overlay frames.
             const HudPresentedFrame hud_presented_frame = current.death.has_value()
                 ? HudPresentedFrame::death_overlay : HudPresentedFrame::normal;
             renderer.observe_presented_hud_frame(hud_presented_frame,
-                previous, current, runtime.render_status(), control_hints,
+                presented_hud_previous, presented_hud_current,
+                runtime.render_status(), control_hints,
                 frame_seconds, pause_blocks_gameplay);
             const bool stage11c_target_visible = stage11c_hud_validation_reached(
                 current, config.stage11c_hud_validation,
@@ -3071,25 +3101,19 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 renderer_loot_filter_mode(
                     pause_menu.screen, live_settings, pause_menu.draft);
             renderer.set_loot_filter_mode(presented_loot_filter);
-            const bool stage12_item_baseline_frame =
-                config.stage12_material_baseline_capture_file.has_value()
-                && config.validation_exit_after_presented_frames >= 2U
-                && presented_frame_count + 2U
-                    == config.validation_exit_after_presented_frames;
             BeginDrawing();
             ClearBackground(Color{13, 17, 27, 255});
             reset_ui_text_bounds_audit();
-            presented_snapshot = current;
-            if (config.stage12_material_showcase) {
-                apply_stage12_material_showcase(presented_snapshot,
-                    config.stage12_material_showcase_ecology,
-                    config.stage12_material_showcase_hide_monsters,
-                    stage12_item_baseline_frame);
+            GroundLootView ground_loot_view{};
+            if (config.stage12_material_background_only) {
+                static_cast<void>(renderer.draw_room_background_only(
+                    presented_snapshot.ecology));
+            } else {
+                ground_loot_view = renderer.draw(
+                    previous, presented_snapshot, runtime.render_status(),
+                    static_cast<float>(frame.interpolation_alpha), draw_debug,
+                    feedback, audio_ready);
             }
-            const GroundLootView ground_loot_view = renderer.draw(
-                previous, presented_snapshot, runtime.render_status(),
-                static_cast<float>(frame.interpolation_alpha), draw_debug,
-                feedback, audio_ready);
             if (config.stage12_material_runtime_status != nullptr) {
                 const MonsterMaterialDrawRuntimeStatus shooter_draw =
                     renderer.monster_material_draw_status(
@@ -3141,6 +3165,18 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 };
                 auto& material_status =
                     *config.stage12_material_runtime_status;
+                material_status.hud_ecology = renderer.hud_model().navigation.ecology;
+                const RoomBackgroundDrawRuntimeStatus background_draw =
+                    renderer.room_background_draw_status();
+                material_status.room_background_ecology = background_draw.ecology;
+                material_status.room_background_atlas = background_draw.atlas;
+                material_status.room_background_resident = background_draw.resident;
+                material_status.room_background_drawn = background_draw.drawn;
+                material_status.room_background_source_width =
+                    background_draw.source_width;
+                material_status.room_background_source_height =
+                    background_draw.source_height;
+                material_status.room_background_scale = background_draw.scale;
                 material_status.items_ui_resident =
                     renderer.material_atlas_available(MaterialAtlasId::items_ui);
                 constexpr std::array<MaterialSpriteId, 6U> equipment_sprites{{
@@ -3216,10 +3252,12 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     renderer.hud_notice_view());
             }
 // STAGE11D_LOOT_VALIDATION_SEAM_END presented_semantics
-            if (passive_overlay_open) {
+            if (!config.stage12_material_background_only
+                && passive_overlay_open) {
                 draw_passive_tree_overlay(current, runtime.render_status());
             }
-            if (inventory.is_open()) {
+            if (!config.stage12_material_background_only
+                && inventory.is_open()) {
                 inventory.draw(*session, current, runtime.render_status(),
                     renderer.material_pack(), renderer.hud_font(),
                     renderer.hud_font_ready());
@@ -3228,7 +3266,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 stage11b_validation_state.resume_ticks_after =
                     stage11b_validation_state.fixed_ticks;
             }
-            if (pause_menu.screen != PauseScreen::closed) {
+            if (!config.stage12_material_background_only
+                && pause_menu.screen != PauseScreen::closed) {
                 pause_menu_renderer.draw(pause_menu, renderer.material_pack());
                 if (config.stage11b_validation
                         == Stage11BValidationScenario::corrupt_defaults
@@ -3336,7 +3375,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                         audit.pages[page].minimum_display_font_size;
                 }
             }
-            if (config.stage12_ui_showcase
+            if (!config.stage12_material_background_only
+                && config.stage12_ui_showcase
                     == Stage12UiShowcase::material_gallery) {
                 draw_stage12_ui_material_gallery(renderer.material_pack());
             }

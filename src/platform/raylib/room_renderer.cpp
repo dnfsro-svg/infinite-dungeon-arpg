@@ -523,16 +523,47 @@ void draw_hole(const dungeon::DungeonSnapshot& snapshot,
     }
 }
 
+RoomBackgroundDrawRuntimeStatus room_background_status(
+    const MaterialPack& material_pack,
+    dungeon::DungeonElement ecology) noexcept {
+    const RoomBackgroundRenderPlan plan = room_background_render_plan(ecology);
+    return {
+        ecology,
+        plan.atlas,
+        material_pack.available(plan.atlas),
+        false,
+        static_cast<std::uint16_t>(plan.source.width),
+        static_cast<std::uint16_t>(plan.source.height),
+        room_background_scale(static_cast<float>(GetScreenWidth()),
+            static_cast<float>(GetScreenHeight())),
+    };
+}
+
 }  // namespace
+
+RoomBackgroundDrawRuntimeStatus CombatRenderer::draw_room_background_only(
+    dungeon::DungeonElement ecology) noexcept {
+    static_cast<void>(material_pack_.load(material_ecology(ecology)));
+    room_background_draw_status_ = room_background_status(material_pack_, ecology);
+    room_background_draw_status_.drawn = room_background_draw_status_.resident
+        && draw_environment_room(material_pack_, ecology);
+    if (!room_background_draw_status_.drawn) {
+        draw_graybox_room(ecology);
+    }
+    return room_background_draw_status_;
+}
 
 void CombatRenderer::draw_room(
     const dungeon::DungeonSnapshot& current,
     const GroundLootView& ground_loot,
-    const MaterialLootView& material_loot) const noexcept {
+    const MaterialLootView& material_loot) noexcept {
     const float width = static_cast<float>(GetScreenWidth());
     const float height = static_cast<float>(GetScreenHeight());
+    room_background_draw_status_ = room_background_status(
+        material_pack_, current.ecology);
     const bool draw_material_environment = can_draw_room_environment(current,
         material_pack_) && draw_environment_room(material_pack_, current.ecology);
+    room_background_draw_status_.drawn = draw_material_environment;
     if (!draw_material_environment) {
         draw_graybox_room(current.ecology);
     }

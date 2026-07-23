@@ -52,6 +52,19 @@ struct MonsterMaterialDrawRuntimeStatus final {
     bool drawn{};
 };
 
+struct RoomBackgroundDrawRuntimeStatus final {
+    dungeon::DungeonElement ecology{dungeon::DungeonElement::fire};
+    MaterialAtlasId atlas{MaterialAtlasId::count};
+    bool resident{};
+    bool drawn{};
+    std::uint16_t source_width{};
+    std::uint16_t source_height{};
+    float scale{};
+};
+
+[[nodiscard]] MaterialEcology material_ecology(
+    dungeon::DungeonElement ecology) noexcept;
+
 [[nodiscard]] CombatRenderPlan make_combat_render_plan(
     const dungeon::DungeonSnapshot& snapshot,
     settings::LootFilterMode mode,
@@ -91,6 +104,10 @@ public:
         MaterialSpriteId sprite) const noexcept;
     [[nodiscard]] MonsterMaterialDrawRuntimeStatus monster_material_draw_status(
         combat::MonsterId monster) const noexcept;
+    [[nodiscard]] RoomBackgroundDrawRuntimeStatus draw_room_background_only(
+        dungeon::DungeonElement ecology) noexcept;
+    [[nodiscard]] RoomBackgroundDrawRuntimeStatus room_background_draw_status()
+        const noexcept;
     void consume_event(const combat::CombatEvent& event) noexcept;
     void consume_dungeon_event(const dungeon::DungeonEvent& event) noexcept;
     void clear_combat_transients() noexcept;
@@ -136,7 +153,7 @@ private:
     void draw_room(
         const dungeon::DungeonSnapshot& current,
         const GroundLootView& ground_loot,
-        const MaterialLootView& material_loot) const noexcept;
+        const MaterialLootView& material_loot) noexcept;
     void draw_actors(
         const dungeon::DungeonSnapshot& previous,
         const dungeon::DungeonSnapshot& current,
@@ -168,6 +185,7 @@ private:
     std::array<MonsterMaterialDrawRuntimeStatus,
         static_cast<std::size_t>(combat::MonsterId::count)>
         monster_material_draw_statuses_{};
+    RoomBackgroundDrawRuntimeStatus room_background_draw_status_{};
     HudViewModelProjector hud_projector_{};
     HudViewModel hud_model_{};
     ActiveSkillHudModel active_skill_hud_model_{};

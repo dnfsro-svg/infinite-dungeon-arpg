@@ -1,4 +1,4 @@
-"""Build the deterministic Stage 12 material-pack handoff archive.
+"""Build the deterministic Stage 12 v3 material-pack handoff archive.
 
 The archive is intentionally a review/handoff package, not a release bundle.
 It contains the selected tracked art, the static CJK font used by the current
@@ -41,18 +41,31 @@ from typing import Any, BinaryIO, Callable, Iterable
 import zipfile
 
 
-PACKAGE_NAME = "arpg-material-pack-v2-highres-text.zip"
-PACKAGE_VERSION = "2.0.0-highres-text"
+PACKAGE_NAME = "arpg-material-pack-v3-native-backgrounds.zip"
+PACKAGE_VERSION = "3.0.0-native-backgrounds"
 PACKAGE_DATE = "2026-07-23"
 ZIP_TIMESTAMP = (2026, 7, 23, 0, 0, 0)
 BUFFER_SIZE = 1024 * 1024
+FULL_PACK_BYTES = 302170112
+RESIDENT_PEAK_BYTES = 163708928
+RESIDENT_HARD_CAP_BYTES = 268435456
+
+LEGACY_PACKAGE_SHA256 = {
+    "deliverables/arpg-material-pack-v1.zip":
+        "b61c54be14e99fc083d4ea5d665ec24d899e565c835e077926ce46cd86d0f2a4",
+    "deliverables/arpg-material-pack-v2-highres-text.zip":
+        "3c1c47de0e20fc3c4e97806cd2719ff44357563abf3d8c5d9b4bebfe301e6d1c",
+}
 
 VARIABLE_FONT = "assets/fonts/NotoSansSC[wght].ttf"
 STATIC_FONT = "assets/fonts/NotoSansCJKsc-Medium.otf"
+BACKGROUND_CANDIDATE_PREFIX = "art_source/stage12/backgrounds/candidates/"
 
 PLAN_FILES = (
     "docs/superpowers/plans/2026-07-21-full-material-pack-rebuild.md",
     "docs/superpowers/plans/2026-07-19-stage12-comic-material-pack.md",
+    "docs/superpowers/plans/2026-07-23-native-room-backgrounds.md",
+    "docs/validation/native-room-backgrounds.md",
 )
 
 INTEGRATION_FILES = (
@@ -85,16 +98,25 @@ INTEGRATION_FILES = (
     "src/platform/raylib/active_skill_view.cpp",
     "src/platform/raylib/active_skill_view.hpp",
     "src/platform/raylib/actor_renderer.cpp",
+    "src/platform/raylib/combat_renderer.hpp",
+    "src/platform/raylib/combat_renderer.cpp",
     "src/platform/raylib/combat_view_math.cpp",
     "src/platform/raylib/combat_view_math.hpp",
     "src/platform/raylib/room_renderer.cpp",
+    "src/platform/raylib/room_background_render_plan.hpp",
+    "src/platform/raylib/room_background_render_plan.cpp",
+    "src/platform/raylib/material_asset_validation.cpp",
+    "src/platform/raylib/material_manifest.hpp",
     "src/platform/raylib/raylib_host.cpp",
     "src/platform/raylib/raylib_host.hpp",
     "src/app/arpg_game.manifest",
+    "tests/platform/CMakeLists.txt",
     "tests/platform/stage12_material_formal_game_validation.cpp",
     "tests/platform/stage12_material_validator.ps1",
     "tests/platform/ui_dpi_manifest_test.cmake",
     "tests/platform/ui_material_asset_pipeline_tests.py",
+    "tests/platform/native_room_background_asset_pipeline_tests.py",
+    "tools/build_native_room_backgrounds.py",
 )
 
 EVIDENCE_DIRECTORY = (
@@ -102,17 +124,34 @@ EVIDENCE_DIRECTORY = (
     "stage12 material evidence/stage12-run"
 )
 EVIDENCE_FILE = "stage12-material-evidence.txt"
-PREVIEW_FILES = (
-    "ui-hud-1920x1080.png",
-    "ui-inventory-1920x1080.png",
-    "ui-skill-stones-1920x1080.png",
-    "ui-pause-1920x1080.png",
-)
-FORMAL_PREVIEW_FIELDS = (
+UI_PREVIEW_FIELDS = (
     ("hud_ui_screenshot_1920", "ui-hud-1920x1080.png"),
     ("inventory_ui_screenshot_1920", "ui-inventory-1920x1080.png"),
     ("skill_ui_screenshot_1920", "ui-skill-stones-1920x1080.png"),
     ("pause_ui_screenshot_1920", "ui-pause-1920x1080.png"),
+)
+ECOLOGIES = ("fire", "water", "lightning", "chaos")
+NATIVE_BACKGROUND_PREVIEW_FIELDS = tuple(
+    (
+        f"{ecology}_{view}_screenshot_{short_resolution}",
+        f"{ecology}-{view.replace('_', '-')}-{full_resolution}.png",
+    )
+    for ecology in ECOLOGIES
+    for view in ("background_only", "gameplay")
+    for short_resolution, full_resolution in (
+        ("1280", "1280x720"),
+        ("1920", "1920x1080"),
+    )
+)
+FORMAL_PREVIEW_FIELDS = UI_PREVIEW_FIELDS + NATIVE_BACKGROUND_PREVIEW_FIELDS
+PREVIEW_FILES = tuple(filename for _, filename in FORMAL_PREVIEW_FIELDS)
+BACKGROUND_PROVENANCE = "assets/stage12/room-background-build.json"
+
+LEGACY_BACKGROUND_SPECS = (
+    ("fire", "assets/stage12/fire_environment.png", 256, 256),
+    ("water", "assets/stage12/water_environment.png", 512, 512),
+    ("lightning", "assets/stage12/lightning_environment.png", 512, 512),
+    ("chaos", "assets/stage12/chaos_environment.png", 512, 512),
 )
 
 GENERATED_PATHS = (
@@ -122,7 +161,7 @@ GENERATED_PATHS = (
     "metadata/formal-evidence.json",
     "metadata/resolution-audit.json",
     "metadata/text-rendering-root-cause.md",
-    "metadata/changelog-v2.md",
+    "metadata/changelog-v3.md",
 )
 
 @dataclass(frozen=True)
@@ -257,11 +296,28 @@ def git_tracked_material_paths(root: Path) -> list[str]:
         if item
     ]
     allowed_prefixes = ("assets/", "art_source/stage12/")
+    excluded_prefixes = (BACKGROUND_CANDIDATE_PREFIX,)
     for path in paths:
         normalized = normalized_archive_path(path)
         if normalized != path or not path.startswith(allowed_prefixes):
             raise RuntimeError(f"unexpected Git material path: {path}")
-    return sorted(paths)
+    return sorted(
+        path for path in paths
+        if not path.startswith(excluded_prefixes))
+
+
+def material_selection_policy() -> dict[str, Any]:
+    return {
+        "automatic": (
+            "Git-tracked files below assets/ and art_source/stage12/ only"
+        ),
+        "automatic_exclusions": [
+            VARIABLE_FONT,
+            BACKGROUND_CANDIDATE_PREFIX,
+        ],
+        "explicit_inclusion": STATIC_FONT,
+        "untracked_candidate_art_included": False,
+    }
 
 
 def add_entry(entries: dict[str, PackageEntry], entry: PackageEntry) -> None:
@@ -324,6 +380,16 @@ def digest_entry(entry: PackageEntry) -> str:
 def digest_path(path: Path) -> str:
     with path.open("rb") as stream:
         return digest_stream(stream)
+
+
+def validate_legacy_packages(root: Path) -> None:
+    for relative_path, expected_sha256 in LEGACY_PACKAGE_SHA256.items():
+        path = require_source(root, relative_path)
+        actual_sha256 = digest_path(path)
+        if actual_sha256 != expected_sha256:
+            raise RuntimeError(
+                f"legacy package SHA-256 changed: {relative_path} "
+                f"expected={expected_sha256} actual={actual_sha256}")
 
 
 def formal_archive_path(relative_path: str) -> str:
@@ -396,6 +462,8 @@ def validate_formal_evidence(root: Path) -> FormalEvidenceSnapshot:
 
     required_lines = (
         "result=pass",
+        f"full_pack_bytes={FULL_PACK_BYTES}",
+        f"resident_peak_bytes={RESIDENT_PEAK_BYTES}",
         "bundled_font_source_base_size=96",
         "ui_text_solid_fill=pass",
         "ui_text_physical_scale=pass",
@@ -403,6 +471,18 @@ def validate_formal_evidence(root: Path) -> FormalEvidenceSnapshot:
         "inventory_real_font_bounds_1920=pass",
         "skill_real_font_bounds_1920=pass",
         "pause_real_font_bounds_1920=pass",
+    ) + tuple(
+        line
+        for ecology in ECOLOGIES
+        for line in (
+            f"{ecology}_background_atlas=assets/stage12/{ecology}_room_background.png",
+            f"{ecology}_background_material_atlas=assets/stage12/{ecology}_room_background_material.png",
+            f"{ecology}_background_master=art_source/stage12/backgrounds/{ecology}/{ecology}-room-background-master.png",
+            f"{ecology}_background_provenance={BACKGROUND_PROVENANCE}",
+            f"{ecology}_background_source=2560x1440",
+            f"{ecology}_background_scale_1280=1/2",
+            f"{ecology}_background_scale_1920=3/4",
+        )
     )
     report_lines = set(report.splitlines())
     missing = [line for line in required_lines if line not in report_lines]
@@ -410,6 +490,41 @@ def validate_formal_evidence(root: Path) -> FormalEvidenceSnapshot:
         raise RuntimeError(
             "formal evidence is not the verified high-resolution run; missing: "
             + ", ".join(missing))
+
+    provenance_path = require_source(root, BACKGROUND_PROVENANCE)
+    try:
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise RuntimeError("native background provenance is invalid") from error
+    provenance_ecologies = provenance.get("ecologies", {})
+    for ecology in ECOLOGIES:
+        build = provenance_ecologies.get(ecology, {})
+        outputs = build.get("output_sha256", {})
+        if build.get("master_size") != [3840, 2160] or (
+                build.get("runtime_size") != [2560, 1440]):
+            raise RuntimeError(
+                f"native background provenance dimensions disagree: {ecology}")
+        for kind, suffix, relative_path, expected_dimensions in (
+                ("runtime", "background_runtime_sha256",
+                 f"assets/stage12/{ecology}_room_background.png", (2560, 1440)),
+                ("material", "background_material_sha256",
+                 f"assets/stage12/{ecology}_room_background_material.png", (2560, 1440)),
+                ("master", "background_master_sha256",
+                 f"art_source/stage12/backgrounds/{ecology}/"
+                 f"{ecology}-room-background-master.png", (3840, 2160))):
+            source = require_source(root, relative_path)
+            actual = digest_path(source)
+            reported = report_fields.get(f"{ecology}_{suffix}", "")
+            if reported != actual or outputs.get(kind) != actual:
+                raise RuntimeError(
+                    f"native background SHA-256/provenance mismatch: "
+                    f"{ecology}_{kind}")
+            with source.open("rb") as stream:
+                dimensions = png_info_from_bytes(
+                    stream.read(33), relative_path)
+            if (dimensions["width"], dimensions["height"]) != expected_dimensions:
+                raise RuntimeError(
+                    f"native background dimensions disagree: {relative_path}")
 
     for field, filename in FORMAL_PREVIEW_FIELDS:
         if report_fields.get(field) != filename:
@@ -564,18 +679,30 @@ def cover_scale(source_width: int, source_height: int) -> float:
 
 def resolution_audit(
         records_by_path: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    backgrounds = (
-        ("fire", "assets/stage12/fire_environment.png", 256, 256),
-        ("water", "assets/stage12/water_environment.png", 512, 512),
-        ("lightning", "assets/stage12/lightning_environment.png", 512, 512),
-        ("chaos", "assets/stage12/chaos_environment.png", 512, 512),
-    )
-    audited: list[dict[str, Any]] = []
-    for ecology, path, source_width, source_height in backgrounds:
+    def required_record(
+            path: str, width: int | None = None,
+            height: int | None = None) -> dict[str, Any]:
+        record = records_by_path.get(path)
+        if record is None:
+            raise RuntimeError(f"native background package input is missing: {path}")
+        digest = str(record.get("sha256", ""))
+        if len(digest) != 64 or any(
+                character not in "0123456789abcdef" for character in digest):
+            raise RuntimeError(f"invalid indexed SHA-256 for native background: {path}")
+        if width is not None or height is not None:
+            png = record.get("png")
+            if not isinstance(png, dict) or png.get("width") != width or (
+                    png.get("height") != height):
+                raise RuntimeError(
+                    f"native background PNG dimensions disagree: {path}")
+        return record
+
+    legacy: list[dict[str, Any]] = []
+    for ecology, path, source_width, source_height in LEGACY_BACKGROUND_SPECS:
         record = records_by_path.get(path)
         if record is None or "png" not in record:
             raise RuntimeError(f"background was not indexed as PNG: {path}")
-        audited.append({
+        legacy.append({
             "ecology": ecology,
             "atlas_path": path,
             "atlas_dimensions": {
@@ -593,8 +720,76 @@ def resolution_audit(
             "status": "native-redraw-required",
             "fake_upscale_accepted": False,
         })
+
+    provenance = required_record(BACKGROUND_PROVENANCE)
+    audited: list[dict[str, Any]] = []
+    for ecology in ECOLOGIES:
+        master_path = (
+            f"art_source/stage12/backgrounds/{ecology}/"
+            f"{ecology}-room-background-master.png")
+        runtime_path = f"assets/stage12/{ecology}_room_background.png"
+        material_path = (
+            f"assets/stage12/{ecology}_room_background_material.png")
+        master = required_record(master_path, 3840, 2160)
+        runtime = required_record(runtime_path, 2560, 1440)
+        material = required_record(material_path, 2560, 1440)
+        evidence: dict[str, Any] = {}
+        for view_key, view_name in (
+                ("background_only", "background-only"),
+                ("gameplay", "gameplay")):
+            for short_resolution, resolution, width, height in (
+                    ("1280", "1280x720", 1280, 720),
+                    ("1920", "1920x1080", 1920, 1080)):
+                path = f"previews/{ecology}-{view_name}-{resolution}.png"
+                record = required_record(path, width, height)
+                evidence[f"{view_key}_{short_resolution}"] = {
+                    "path": path,
+                    "sha256": record["sha256"],
+                }
+        audited.append({
+            "ecology": ecology,
+            "status": "native-background-verified",
+            "master": {
+                "path": master_path,
+                "dimensions": {"width": 3840, "height": 2160},
+                "sha256": master["sha256"],
+            },
+            "runtime": {
+                "path": runtime_path,
+                "dimensions": {"width": 2560, "height": 1440},
+                "sha256": runtime["sha256"],
+            },
+            "material": {
+                "path": material_path,
+                "dimensions": {"width": 2560, "height": 1440},
+                "sha256": material["sha256"],
+            },
+            "provenance": {
+                "path": BACKGROUND_PROVENANCE,
+                "sha256": provenance["sha256"],
+                "builder": "tools/build_native_room_backgrounds.py",
+            },
+            "runtime_background_source_rect": {
+                "x": 0, "y": 0, "width": 2560, "height": 1440,
+            },
+            "source_to_screen_scale": {
+                "1280x720": "1/2",
+                "1920x1080": "3/4",
+                "upscale_allowed": False,
+            },
+            "evidence": evidence,
+        })
+
+    master_hashes = {item["master"]["sha256"] for item in audited}
+    runtime_hashes = {item["runtime"]["sha256"] for item in audited}
+    material_hashes = {item["material"]["sha256"] for item in audited}
+    if (len(master_hashes) != len(ECOLOGIES)
+            or len(runtime_hashes) != len(ECOLOGIES)
+            or len(material_hashes) != len(ECOLOGIES)):
+        raise RuntimeError("cross-ecology native background hashes are not unique")
+
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "audit_date": PACKAGE_DATE,
         "reference_viewport": {"width": 1920, "height": 1080},
         "text": {
@@ -614,12 +809,18 @@ def resolution_audit(
             },
             "formal_evidence": f"previews/{EVIDENCE_FILE}",
         },
+        "legacy_room_backgrounds": legacy,
         "room_backgrounds": audited,
+        "runtime_memory": {
+            "full_pack_bytes": FULL_PACK_BYTES,
+            "resident_peak_bytes": RESIDENT_PEAK_BYTES,
+            "resident_hard_cap_bytes": RESIDENT_HARD_CAP_BYTES,
+        },
         "room_background_conclusion": (
-            "The fire, water, lightning, and chaos room backgrounds are still "
-            "low-resolution runtime crops. They require native re-authoring; "
-            "resampling or AI upscaling the current pixels must not be reported "
-            "as a completed resolution upgrade."
+            "The prior low-resolution crop audit is retained verbatim under "
+            "legacy_room_backgrounds. Fire, water, lightning, and chaos now use "
+            "independent 3840x2160 masters and 2560x1440 runtime backgrounds, "
+            "verified at downscale-only 1280x720 and 1920x1080 viewports."
         ),
         "recommended_background_delivery": {
             "master_per_ecology": "3840x2160-or-larger native artwork",
@@ -671,32 +872,33 @@ DWM 当成唯一根因。
 - `ui_text_physical_scale=pass`
 - 四个主要 UI 的 1920 文本布局和真实字体边界全部为 `pass`
 
-## 明确未完成
+## 背景后续状态
 
-这次完成的是高分辨率文字链路。火、水、雷、混沌四种房间背景仍是
-256×256 或 512×512 的运行时裁片放大显示，必须从原生高分辨率源重新绘制。
-禁止把简单插值放大描述成背景已经升级。详见 `resolution-audit.json`。
+v2 首次记录的 256×256/512×512 放大问题仍保存在
+`resolution-audit.json` 的 `legacy_room_backgrounds`。v3 已用四张独立
+3840×2160 master 导出 2560×1440 runtime，并在 1280×720 与
+1920×1080 真实 raylib 画面中仅做 1/2、3/4 下采样验证。
 """
 
 
 def changelog_markdown() -> str:
-    return """# v2 变更记录
+    return """# v3 变更记录
 
-相对已有 v1 交接包，本包：
+相对已有 v2 交接包，本包：
 
-- 加入静态 Noto Sans CJK SC Medium 字体，并排除运行时不再使用的可变字体；
-- 加入统一文字渲染器、纯色文字策略、整数像素定位和 DPI manifest 参考源；
-- 加入按视口缩放后的 HUD、背包、技能页、暂停页实现参考；
-- 加入 1920×1080 四张正式 UI 主预览、报告和完整正式证据树；
+- 保留已验收的静态 Noto Sans CJK SC Medium 高分辨率文字链路；
+- 新增火、水、雷、混沌四张 3840×2160 master、2560×1440 runtime 和 material；
+- 新增四生态 background-only/gameplay 的 1280×720 与 1920×1080 共 16 张正式截图；
+- 记录 full pack 302170112 bytes、resident peak 163708928 bytes；
 - 为每个文件生成 SHA-256，并记录每张 PNG 的 IHDR 原始尺寸；
-- 明确标记四个房间背景仍需原生高分辨率重绘，没有伪称插值放大已完成。
+- 保留 v2 的旧放大倍率历史，并将新背景标记为 `native-background-verified`。
 
-已有 `arpg-material-pack-v1.zip` 不会被覆盖或删除。
+已有 v1/v2 ZIP 在打包前按固定 SHA-256 校验，不会被覆盖或删除。
 """
 
 
 def readme_markdown(source_count: int) -> str:
-    return f"""# ARPG 材质包 v2（高分辨率文字版）
+    return f"""# ARPG 材质包 v3（原生高分辨率房间背景版）
 
 这是给 ChatGPT/Codex 和美术、程序共同审查的单文件交接包，共收录
 {source_count} 个源文件/证据文件，另带机器可读元数据。
@@ -707,14 +909,14 @@ def readme_markdown(source_count: int) -> str:
 2. `metadata/asset-index.json`：源文件 SHA-256、字节数、PNG IHDR 尺寸。
 3. `metadata/formal-evidence.json`：完整正式证据文件、字段绑定和 SHA-256。
 4. `metadata/text-rendering-root-cause.md`：文字长期模糊的真正原因与修复。
-5. `metadata/resolution-audit.json`：哪些内容已修复、哪些仍需原生重绘。
-6. `previews/`：四张 1920×1080 主预览、报告和完整正式证据树。
+5. `metadata/resolution-audit.json`：旧倍率历史与四生态原生背景哈希、scale、证据。
+6. `previews/`：UI 主预览、16 张背景正式截图、报告和完整正式证据树。
 
 ## 结论
 
 - **文字已完成高分辨率修复并通过正式验收。**
-- **火、水、雷、混沌四个房间背景仍未完成原生高分辨率重绘。** 当前运行时
-  裁片只有 256×256 或 512×512；禁止把插值放大/AI 超分输出伪称为原生升级。
+- **火、水、雷、混沌四个房间背景已完成原生高分辨率重制与正式验收。**
+  runtime source 固定 2560×1440，1280/1920 画面分别按 1/2、3/4 下采样。
 - 其余角色、技能、道具、UI 图集不应盲目整体放大，应按实际绘制尺寸审计。
 
 ## 目录
@@ -722,8 +924,8 @@ def readme_markdown(source_count: int) -> str:
 - `assets/`：Git 已跟踪运行时素材，以及显式加入的静态 Medium 字体。
 - `art_source/stage12/`：Git 已跟踪、已选用的 Stage 12 原始美术源。
 - `docs/`：完整重制与 Stage 12 材质包计划。
-- `integration_reference/`：本次文字修复所需的 C++/manifest 参考实现。
-- `previews/`：正式报告、四张主 UI 截图和 `formal-evidence/` 完整证据树。
+- `integration_reference/`：文字与原生背景运行时 C++/manifest 参考实现。
+- `previews/`：正式报告、UI 与四生态背景截图及完整证据树。
 - `metadata/`：索引、分辨率审计、根因、变更记录。
 
 ## 完整性校验
@@ -735,9 +937,8 @@ def readme_markdown(source_count: int) -> str:
 ## 给 ChatGPT 的处理规则
 
 把本文件和 `metadata/*.json` 作为入口；只把 `asset-index.json` 中列出的文件
-视为本次正式交付。不要把仓库中未跟踪的候选图当作正式素材，也不要宣称
-四个房间背景已经升级。需要继续做背景时，应从每个生态独立的原生 4K master
-创作，再导出 2560×1440 运行时背景，并保持门、洞口、障碍物等玩法对象分层。
+视为本次正式交付。不要把仓库中未跟踪的候选图当作正式素材。四生态必须继续
+保持独立 4K master、2560×1440 runtime 与门、洞口、障碍物等玩法对象分层。
 """
 
 
@@ -767,9 +968,11 @@ def package_metadata(
         },
         "scope": {
             "text_rendering": "high-resolution-fix-verified",
-            "room_backgrounds": "native-redraw-still-required",
+            "room_backgrounds": "native-background-verified",
             "room_background_ecologies": ["fire", "water", "lightning", "chaos"],
             "fake_background_upscale_accepted": False,
+            "full_pack_bytes": FULL_PACK_BYTES,
+            "resident_peak_bytes": RESIDENT_PEAK_BYTES,
         },
         "font": {
             "runtime_path": STATIC_FONT,
@@ -834,7 +1037,7 @@ def build_source_entries(
     add_formal_evidence_entries(entries, root, formal_snapshot)
 
     if VARIABLE_FONT in entries:
-        raise RuntimeError("legacy variable font must not enter the v2 archive")
+        raise RuntimeError("legacy variable font must not enter the v3 archive")
     return entries
 
 
@@ -858,10 +1061,17 @@ def validate_formal_inputs(
     for binding in snapshot.previews:
         entry = entries[binding.archive_path]
         dimensions = png_info(entry)
-        if dimensions is None or (
-                dimensions["width"], dimensions["height"]) != (1920, 1080):
+        if "1280x720" in binding.filename:
+            expected_dimensions = (1280, 720)
+        elif "1920x1080" in binding.filename:
+            expected_dimensions = (1920, 1080)
+        else:
             raise RuntimeError(
-                f"formal preview is not 1920x1080: {binding.filename}")
+                f"formal preview has no declared resolution: {binding.filename}")
+        if dimensions is None or (
+                dimensions["width"], dimensions["height"]) != expected_dimensions:
+            raise RuntimeError(
+                f"formal preview dimensions mismatch: {binding.filename}")
 
 
 def manifest_text(entries: dict[str, PackageEntry]) -> str:
@@ -937,11 +1147,89 @@ def verify_archive(output: Path | BinaryIO, expected_paths: list[str]) -> str:
         metadata = json.loads(archive.read("metadata/package.json"))
         if metadata.get("package_version") != PACKAGE_VERSION:
             raise RuntimeError("package metadata version mismatch")
+        scope = metadata.get("scope", {})
+        if scope.get("room_backgrounds") != "native-background-verified" or (
+                scope.get("full_pack_bytes") != FULL_PACK_BYTES) or (
+                scope.get("resident_peak_bytes") != RESIDENT_PEAK_BYTES):
+            raise RuntimeError("package metadata lacks native background verification")
         audit = json.loads(archive.read("metadata/resolution-audit.json"))
-        if any(
-                item.get("status") != "native-redraw-required"
-                for item in audit.get("room_backgrounds", [])):
-            raise RuntimeError("room background limitation was not preserved")
+        legacy = audit.get("legacy_room_backgrounds")
+        native = audit.get("room_backgrounds")
+        if not isinstance(legacy, list) or len(legacy) != len(ECOLOGIES) or any(
+                not isinstance(item, dict)
+                or item.get("status") != "native-redraw-required"
+                for item in legacy):
+            raise RuntimeError("legacy room background audit history was not preserved")
+        if not isinstance(native, list) or len(native) != len(ECOLOGIES) or any(
+                not isinstance(item, dict)
+                or item.get("status") != "native-background-verified"
+                or item.get("runtime_background_source_rect") != {
+                    "x": 0, "y": 0, "width": 2560, "height": 1440}
+                or item.get("source_to_screen_scale") != {
+                    "1280x720": "1/2", "1920x1080": "3/4",
+                    "upscale_allowed": False}
+                for item in native):
+            raise RuntimeError("native room background audit is incomplete")
+        if audit.get("runtime_memory") != {
+                "full_pack_bytes": FULL_PACK_BYTES,
+                "resident_peak_bytes": RESIDENT_PEAK_BYTES,
+                "resident_hard_cap_bytes": RESIDENT_HARD_CAP_BYTES}:
+            raise RuntimeError("native room background memory audit disagrees")
+
+        native_by_ecology = {
+            str(item.get("ecology")): item for item in native
+        }
+        if set(native_by_ecology) != set(ECOLOGIES):
+            raise RuntimeError("native room background ecology coverage mismatch")
+        master_hashes: set[str] = set()
+        runtime_hashes: set[str] = set()
+        material_hashes: set[str] = set()
+        provenance = json.loads(archive.read(BACKGROUND_PROVENANCE))
+        provenance_ecologies = provenance.get("ecologies", {})
+        for ecology in ECOLOGIES:
+            item = native_by_ecology[ecology]
+            build = provenance_ecologies.get(ecology, {})
+            outputs = build.get("output_sha256", {})
+            for kind, expected_dimensions in (
+                    ("master", {"width": 3840, "height": 2160}),
+                    ("runtime", {"width": 2560, "height": 1440}),
+                    ("material", {"width": 2560, "height": 1440})):
+                binding = item.get(kind, {})
+                path = normalized_archive_path(str(binding.get("path", "")))
+                if path not in names or binding.get("dimensions") != expected_dimensions:
+                    raise RuntimeError(
+                        f"native background {kind} binding mismatch: {ecology}")
+                with archive.open(path, mode="r") as stream:
+                    actual_sha256 = digest_stream(stream)
+                if actual_sha256 != binding.get("sha256") or (
+                        actual_sha256 != outputs.get(kind)):
+                    raise RuntimeError(
+                        f"native background {kind} SHA-256 mismatch: {ecology}")
+                if kind == "master":
+                    master_hashes.add(actual_sha256)
+                elif kind == "runtime":
+                    runtime_hashes.add(actual_sha256)
+                elif kind == "material":
+                    material_hashes.add(actual_sha256)
+            evidence = item.get("evidence", {})
+            if not isinstance(evidence, dict) or set(evidence) != {
+                    "background_only_1280", "background_only_1920",
+                    "gameplay_1280", "gameplay_1920"}:
+                raise RuntimeError(
+                    f"native background evidence coverage mismatch: {ecology}")
+            for binding in evidence.values():
+                path = normalized_archive_path(str(binding.get("path", "")))
+                if path not in names:
+                    raise RuntimeError(
+                        f"native background evidence path is absent: {path}")
+                with archive.open(path, mode="r") as stream:
+                    if digest_stream(stream) != binding.get("sha256"):
+                        raise RuntimeError(
+                            f"native background evidence SHA-256 mismatch: {path}")
+        if (len(master_hashes) != len(ECOLOGIES)
+                or len(runtime_hashes) != len(ECOLOGIES)
+                or len(material_hashes) != len(ECOLOGIES)):
+            raise RuntimeError("cross-ecology native backgrounds are duplicated")
 
         formal = json.loads(archive.read("metadata/formal-evidence.json"))
         formal_files = formal.get("files")
@@ -1124,6 +1412,7 @@ def build_package() -> Path:
     root = repo_root()
     output = root / "deliverables" / PACKAGE_NAME
     validate_output_destination(output)
+    validate_legacy_packages(root)
 
     formal_snapshot = validate_formal_evidence(root)
     entries = build_source_entries(root, formal_snapshot)
@@ -1135,14 +1424,7 @@ def build_package() -> Path:
     asset_index = {
         "schema_version": 1,
         "package_version": PACKAGE_VERSION,
-        "selection_policy": {
-            "automatic": (
-                "Git-tracked files below assets/ and art_source/stage12/ only"
-            ),
-            "automatic_exclusion": VARIABLE_FONT,
-            "explicit_untracked_inclusion": STATIC_FONT,
-            "untracked_candidate_art_included": False,
-        },
+        "selection_policy": material_selection_policy(),
         "item_count": len(source_records),
         "items": source_records,
     }
@@ -1153,7 +1435,7 @@ def build_package() -> Path:
         entries, "metadata/text-rendering-root-cause.md",
         root_cause_markdown())
     add_generated_entry(
-        entries, "metadata/changelog-v2.md", changelog_markdown())
+        entries, "metadata/changelog-v3.md", changelog_markdown())
     add_generated_entry(
         entries, "metadata/asset-index.json", json_text(asset_index))
     add_generated_entry(

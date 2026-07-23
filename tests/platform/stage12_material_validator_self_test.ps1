@@ -30,6 +30,17 @@ function Save-MutatedBitmap([string]$Path, [scriptblock]$Mutation) {
     } finally { $copy.Dispose() }
 }
 
+function Get-Sha256([string]$Path) {
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try { $digest = $sha256.ComputeHash($stream) }
+        finally { $sha256.Dispose() }
+    } finally { $stream.Dispose() }
+    return [System.BitConverter]::ToString($digest).Replace(
+        '-', '').ToLowerInvariant()
+}
+
 $mutations = @()
 $solidItems = New-Mutation 'solid-gray-items'
 Save-MutatedBitmap (Join-Path $solidItems 'items-materials-1280x720.png') {
@@ -304,6 +315,85 @@ $reportPath = Join-Path $invalidChaosFrame 'stage12-material-evidence.txt'
     Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
 $mutations += @{ Name='invalid-chaos-runtime-frame'; Path=$invalidChaosFrame }
 
+$missingNative1080 = New-Mutation 'missing-fire-background-only-1080'
+Remove-Item -LiteralPath (Join-Path $missingNative1080 `
+    'fire-background-only-1920x1080.png') -Force
+$mutations += @{
+    Name='missing-fire-background-only-1080'; Path=$missingNative1080 }
+
+$upscaledNative = New-Mutation 'upscaled-native-background'
+$reportPath = Join-Path $upscaledNative 'stage12-material-evidence.txt'
+(Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8).Replace(
+    'fire_background_scale_1920=3/4', 'fire_background_scale_1920=5/4') |
+    Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+$mutations += @{ Name='upscaled-native-background'; Path=$upscaledNative }
+
+$missingProvenance = New-Mutation 'missing-native-provenance'
+$reportPath = Join-Path $missingProvenance 'stage12-material-evidence.txt'
+(Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) -replace `
+    '(?m)^fire_background_provenance=.*\r?\n?', '' |
+    Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+$mutations += @{ Name='missing-native-provenance'; Path=$missingProvenance }
+
+$forgedNativeHash = New-Mutation 'forged-native-background-hash'
+$reportPath = Join-Path $forgedNativeHash 'stage12-material-evidence.txt'
+(Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) -replace `
+    '(?m)^fire_background_runtime_sha256=[0-9a-f]{64}\r?$', `
+    ('fire_background_runtime_sha256=' + ('0' * 64)) |
+    Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+$mutations += @{ Name='forged-native-background-hash'; Path=$forgedNativeHash }
+
+$duplicateNativeReportField = New-Mutation 'duplicate-native-report-field'
+$reportPath = Join-Path $duplicateNativeReportField `
+    'stage12-material-evidence.txt'
+Add-Content -LiteralPath $reportPath -Encoding UTF8 `
+    -Value 'native_background_status=native-background-verified'
+$mutations += @{
+    Name='duplicate-native-report-field'; Path=$duplicateNativeReportField }
+
+$emptyReportKey = New-Mutation 'empty-report-key'
+$reportPath = Join-Path $emptyReportKey 'stage12-material-evidence.txt'
+$reportContent = Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8
+Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline `
+    -Value ("=invalid`r`n" + $reportContent)
+$mutations += @{ Name='empty-report-key'; Path=$emptyReportKey }
+
+$duplicateEcology = New-Mutation 'duplicate-native-background-ecology'
+Copy-Item -LiteralPath (Join-Path $duplicateEcology `
+    'fire-background-only-1920x1080.png') -Destination (Join-Path `
+    $duplicateEcology 'water-background-only-1920x1080.png') -Force
+$reportPath = Join-Path $duplicateEcology 'stage12-material-evidence.txt'
+$duplicateHash = Get-Sha256 (Join-Path $duplicateEcology `
+    'water-background-only-1920x1080.png')
+(Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) -replace
+    '(?m)^water_background_only_screenshot_1920_sha256=[0-9a-f]{64}\r?$',
+    "water_background_only_screenshot_1920_sha256=$duplicateHash" |
+    Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+$mutations += @{
+    Name='duplicate-native-background-ecology'; Path=$duplicateEcology }
+
+$duplicateGameplay = New-Mutation 'duplicate-native-gameplay'
+Copy-Item -LiteralPath (Join-Path $duplicateGameplay `
+    'fire-background-only-1280x720.png') -Destination (Join-Path `
+    $duplicateGameplay 'fire-gameplay-1280x720.png') -Force
+$reportPath = Join-Path $duplicateGameplay 'stage12-material-evidence.txt'
+$duplicateHash = Get-Sha256 (Join-Path $duplicateGameplay `
+    'fire-gameplay-1280x720.png')
+(Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) -replace
+    '(?m)^fire_gameplay_screenshot_1280_sha256=[0-9a-f]{64}\r?$',
+    "fire_gameplay_screenshot_1280_sha256=$duplicateHash" |
+    Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+$mutations += @{ Name='duplicate-native-gameplay'; Path=$duplicateGameplay }
+
+$wrongHudEcology = New-Mutation 'wrong-native-gameplay-hud-ecology'
+$reportPath = Join-Path $wrongHudEcology 'stage12-material-evidence.txt'
+(Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8).Replace(
+    'water_gameplay_hud_ecology_1920=pass',
+    'water_gameplay_hud_ecology_1920=fail') |
+    Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+$mutations += @{
+    Name='wrong-native-gameplay-hud-ecology'; Path=$wrongHudEcology }
+
 $failures = @()
 foreach ($mutation in $mutations) {
     $savedPreference = $ErrorActionPreference
@@ -317,4 +407,4 @@ foreach ($mutation in $mutations) {
     }
 }
 if ($failures.Count -ne 0) { throw ($failures -join [Environment]::NewLine) }
-Write-Output 'stage12 material validator rejected hidden/fallback UI, missing UI/item telemetry, solid/no-item evidence, wrong ecology, and invalid runtime draw/frame proof'
+Write-Output 'stage12 material validator rejected malformed reports, forged native backgrounds, hidden/fallback UI, missing UI/item telemetry, solid/no-item evidence, wrong ecology, and invalid runtime draw/frame proof'

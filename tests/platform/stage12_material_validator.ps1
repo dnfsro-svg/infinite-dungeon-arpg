@@ -5,6 +5,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
+$ProjectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 
 [uint64]$ExpectedFullPackBytes = 302170112
 [uint64]$ExpectedResidentPeakBytes = 163708928
@@ -15,9 +16,19 @@ if (-not (Test-Path -LiteralPath $EvidenceDirectory -PathType Container)) {
 
 function Read-Report([string]$Path) {
     $values = @{}
-    Get-Content -LiteralPath $Path -Encoding UTF8 | ForEach-Object {
-        $pair = $_ -split '=', 2
-        if ($pair.Count -eq 2) { $values[$pair[0]] = $pair[1] }
+    [int]$lineNumber = 0
+    foreach ($line in Get-Content -LiteralPath $Path -Encoding UTF8) {
+        ++$lineNumber
+        $pair = $line -split '=', 2
+        if ($pair.Count -ne 2) { continue }
+        $key = $pair[0]
+        if ([string]::IsNullOrWhiteSpace($key)) {
+            throw "empty report key at line ${lineNumber}: $Path"
+        }
+        if ($values.ContainsKey($key)) {
+            throw "duplicate report key '$key' at line ${lineNumber}: $Path"
+        }
+        $values[$key] = $pair[1]
     }
     return $values
 }
@@ -510,9 +521,216 @@ function Assert-UiDrawMask([uint64]$Mask, [int[]]$Bits, [string]$Name) {
     }
 }
 
+function Get-Sha256([string]$Path) {
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try { $digest = $sha256.ComputeHash($stream) }
+        finally { $sha256.Dispose() }
+    } finally { $stream.Dispose() }
+    return [System.BitConverter]::ToString($digest).Replace(
+        '-', '').ToLowerInvariant()
+}
+
+function Measure-SampledPixelDifference([string]$LeftPath, [string]$RightPath) {
+    $left = [System.Drawing.Bitmap]::FromFile($LeftPath)
+    $right = [System.Drawing.Bitmap]::FromFile($RightPath)
+    try {
+        if ($left.Width -ne $right.Width -or $left.Height -ne $right.Height) {
+            throw 'native background/gameplay comparison dimensions differ'
+        }
+        [int]$changed = 0
+        for ($y = 0; $y -lt $left.Height; $y += 8) {
+            for ($x = 0; $x -lt $left.Width; $x += 8) {
+                $a = $left.GetPixel($x, $y)
+                $b = $right.GetPixel($x, $y)
+                $difference = [Math]::Abs([int]$a.R - [int]$b.R) +
+                    [Math]::Abs([int]$a.G - [int]$b.G) +
+                    [Math]::Abs([int]$a.B - [int]$b.B)
+                if ($difference -ge 24) { ++$changed }
+            }
+        }
+        return $changed
+    } finally {
+        $left.Dispose()
+        $right.Dispose()
+    }
+}
+
+function Assert-NativeBackgroundEvidence([hashtable]$Report,
+        [string]$EvidenceRoot, [string]$SourceRoot) {
+    if (-not $Report.ContainsKey('native_background_status') -or
+            $Report.native_background_status -ne 'native-background-verified') {
+        throw 'native room background status is not verified'
+    }
+
+    $ecologies = @('fire','water','lightning','chaos')
+    $provenanceRelative = 'assets/stage12/room-background-build.json'
+    $provenancePath = Join-Path $SourceRoot `
+        ($provenanceRelative -replace '/', [System.IO.Path]::DirectorySeparatorChar)
+    if (-not (Test-Path -LiteralPath $provenancePath -PathType Leaf)) {
+        throw 'missing native room background provenance'
+    }
+    $provenance = Get-Content -Raw -LiteralPath $provenancePath -Encoding UTF8 |
+        ConvertFrom-Json
+    if ([int]$provenance.schema_version -ne 1 -or
+            $null -eq $provenance.ecologies) {
+        throw 'native room background provenance schema rejected'
+    }
+
+    $masterHashes = [System.Collections.Generic.HashSet[string]]::new()
+    $runtimeHashes = [System.Collections.Generic.HashSet[string]]::new()
+    $materialHashes = [System.Collections.Generic.HashSet[string]]::new()
+    $backgroundHashes = @{
+        '1280' = [System.Collections.Generic.HashSet[string]]::new()
+        '1920' = [System.Collections.Generic.HashSet[string]]::new()
+    }
+
+    foreach ($ecology in $ecologies) {
+        $expected = @{
+            "${ecology}_background_atlas" =
+                "assets/stage12/${ecology}_room_background.png"
+            "${ecology}_background_atlas_id" = "${ecology}_room_background"
+            "${ecology}_background_material_atlas" =
+                "assets/stage12/${ecology}_room_background_material.png"
+            "${ecology}_background_master" =
+                "art_source/stage12/backgrounds/$ecology/${ecology}-room-background-master.png"
+            "${ecology}_background_provenance" = $provenanceRelative
+            "${ecology}_background_source" = '2560x1440'
+            "${ecology}_background_source_xywh" = '0,0,2560,1440'
+            "${ecology}_background_scale_1280" = '1/2'
+            "${ecology}_background_scale_1920" = '3/4'
+        }
+        foreach ($field in $expected.Keys) {
+            if (-not $Report.ContainsKey($field)) {
+                throw "missing report field: $field"
+            }
+            if ($Report[$field] -ne $expected[$field]) {
+                throw "native room background report binding rejected: $field"
+            }
+        }
+
+        $buildProperty = $provenance.ecologies.PSObject.Properties[$ecology]
+        if ($null -eq $buildProperty) {
+            throw "native provenance ecology missing: $ecology"
+        }
+        $build = $buildProperty.Value
+        if (($build.master_size -join 'x') -ne '3840x2160' -or
+                ($build.runtime_size -join 'x') -ne '2560x1440' -or
+                [int]$build.runtime_from_master.passes -ne 1) {
+            throw "native provenance dimensions rejected: $ecology"
+        }
+
+        foreach ($asset in @(
+                @{ Kind='master'; Field="${ecology}_background_master";
+                   Hash="${ecology}_background_master_sha256";
+                   Width=3840; Height=2160; Set=$masterHashes },
+                @{ Kind='runtime'; Field="${ecology}_background_atlas";
+                   Hash="${ecology}_background_runtime_sha256";
+                   Width=2560; Height=1440; Set=$runtimeHashes },
+                @{ Kind='material'; Field="${ecology}_background_material_atlas";
+                   Hash="${ecology}_background_material_sha256";
+                   Width=2560; Height=1440; Set=$materialHashes })) {
+            if (-not $Report.ContainsKey($asset.Hash) -or
+                    $Report[$asset.Hash] -notmatch '^[0-9a-f]{64}$') {
+                throw "missing or invalid native background SHA-256: $($asset.Hash)"
+            }
+            $assetPath = Join-Path $SourceRoot `
+                ($Report[$asset.Field] -replace '/',
+                    [System.IO.Path]::DirectorySeparatorChar)
+            if (-not (Test-Path -LiteralPath $assetPath -PathType Leaf)) {
+                throw "missing native background asset: $($Report[$asset.Field])"
+            }
+            $size = Read-PngSize $assetPath
+            if ($size[0] -ne $asset.Width -or $size[1] -ne $asset.Height) {
+                throw "wrong native background asset dimensions: $($asset.Kind) $ecology"
+            }
+            $actualHash = Get-Sha256 $assetPath
+            $provenanceHashProperty =
+                $build.output_sha256.PSObject.Properties[$asset.Kind]
+            if ($null -eq $provenanceHashProperty -or
+                    $actualHash -ne $Report[$asset.Hash] -or
+                    $actualHash -ne [string]$provenanceHashProperty.Value) {
+                throw "native background SHA-256/provenance mismatch: $($asset.Kind) $ecology"
+            }
+            if (-not $asset.Set.Add($actualHash)) {
+                throw "cross-ecology native background duplicated: $($asset.Kind) $ecology"
+            }
+        }
+
+        foreach ($resolution in @(
+                @{ Short='1280'; Full='1280x720'; Width=1280; Height=720 },
+                @{ Short='1920'; Full='1920x1080'; Width=1920; Height=1080 })) {
+            $short = $resolution.Short
+            $backgroundField = "${ecology}_background_only_screenshot_$short"
+            $gameplayField = "${ecology}_gameplay_screenshot_$short"
+            $backgroundHashField = "${backgroundField}_sha256"
+            $gameplayHashField = "${gameplayField}_sha256"
+            $expectedBackground = "${ecology}-background-only-$($resolution.Full).png"
+            $expectedGameplay = "${ecology}-gameplay-$($resolution.Full).png"
+            foreach ($binding in @(
+                    @($backgroundField, $backgroundHashField, $expectedBackground),
+                    @($gameplayField, $gameplayHashField, $expectedGameplay))) {
+                if (-not $Report.ContainsKey($binding[0]) -or
+                        $Report[$binding[0]] -ne $binding[2] -or
+                        -not $Report.ContainsKey($binding[1]) -or
+                        $Report[$binding[1]] -notmatch '^[0-9a-f]{64}$') {
+                    throw "native screenshot report binding rejected: $($binding[0])"
+                }
+                $screenshot = Join-Path $EvidenceRoot $binding[2]
+                if (-not (Test-Path -LiteralPath $screenshot -PathType Leaf) -or
+                        (Get-Item -LiteralPath $screenshot).Length -le 1024) {
+                    throw "missing or empty native screenshot: $($binding[2])"
+                }
+                $size = Read-PngSize $screenshot
+                if ($size[0] -ne $resolution.Width -or
+                        $size[1] -ne $resolution.Height) {
+                    throw "wrong native screenshot dimensions: $($binding[2])"
+                }
+                if ((Get-Sha256 $screenshot) -ne $Report[$binding[1]]) {
+                    throw "native screenshot SHA-256 mismatch: $($binding[2])"
+                }
+            }
+            foreach ($runtimeField in @(
+                    "${ecology}_background_only_runtime_$short",
+                    "${ecology}_background_only_resident_$short",
+                    "${ecology}_background_only_drawn_$short",
+                    "${ecology}_background_only_hud_ecology_$short",
+                    "${ecology}_gameplay_runtime_$short",
+                    "${ecology}_gameplay_resident_$short",
+                    "${ecology}_gameplay_drawn_$short",
+                    "${ecology}_gameplay_hud_ecology_$short")) {
+                if (-not $Report.ContainsKey($runtimeField) -or
+                        $Report[$runtimeField] -ne 'pass') {
+                    throw "native runtime telemetry rejected: $runtimeField"
+                }
+            }
+            $backgroundPath = Join-Path $EvidenceRoot $expectedBackground
+            $gameplayPath = Join-Path $EvidenceRoot $expectedGameplay
+            $backgroundHash = Get-Sha256 $backgroundPath
+            $gameplayHash = Get-Sha256 $gameplayPath
+            if (-not $backgroundHashes[$short].Add($backgroundHash)) {
+                throw "duplicate native ecology screenshot: $ecology $short"
+            }
+            if ($backgroundHash -eq $gameplayHash -or
+                    (Measure-SampledPixelDifference $backgroundPath $gameplayPath) -lt 200) {
+                throw "native gameplay screenshot lacks gameplay layers: $ecology $short"
+            }
+        }
+    }
+
+    if ($masterHashes.Count -ne 4 -or $runtimeHashes.Count -ne 4 -or
+            $materialHashes.Count -ne 4 -or
+            $backgroundHashes['1280'].Count -ne 4 -or
+            $backgroundHashes['1920'].Count -ne 4) {
+        throw 'native room background ecology coverage is incomplete'
+    }
+}
+
 $reportPath = Join-Path $EvidenceDirectory 'stage12-material-evidence.txt'
 if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { throw 'missing material report' }
 $report = Read-Report $reportPath
+Assert-NativeBackgroundEvidence $report $EvidenceDirectory $ProjectRoot
 foreach ($key in @('manifest','atlas_bytes','full_pack_bytes',
         'resident_peak_bytes','fallback','input_hole_regression',
         'monsters','monster_screenshot','item_screenshot','item_baseline_screenshot','items_ui_pair',

@@ -8,9 +8,8 @@
 #include <algorithm>
 
 namespace arpg::platform {
-namespace {
 
-[[nodiscard]] constexpr MaterialEcology material_ecology(
+MaterialEcology material_ecology(
     dungeon::DungeonElement ecology) noexcept {
     switch (ecology) {
     case dungeon::DungeonElement::fire: return MaterialEcology::fire;
@@ -20,8 +19,6 @@ namespace {
     }
     return MaterialEcology::common;
 }
-
-}  // namespace
 
 CombatRenderPlan make_combat_render_plan(
     const dungeon::DungeonSnapshot& snapshot,
@@ -108,6 +105,11 @@ MonsterMaterialDrawRuntimeStatus CombatRenderer::monster_material_draw_status(
     const std::size_t index = static_cast<std::size_t>(monster);
     if (index >= monster_material_draw_statuses_.size()) return {};
     return monster_material_draw_statuses_[index];
+}
+
+RoomBackgroundDrawRuntimeStatus CombatRenderer::room_background_draw_status()
+    const noexcept {
+    return room_background_draw_status_;
 }
 
 DoorRenderDecision door_render_decision(

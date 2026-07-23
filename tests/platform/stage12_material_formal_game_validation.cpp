@@ -13,12 +13,17 @@
 
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <initializer_list>
+#include <memory>
+#include <sstream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -28,6 +33,35 @@ struct Resolution final { int width{}; int height{}; const char* name{}; };
 constexpr std::array<Resolution, 2> kResolutions{{
     {1280, 720, "game-1280x720.png"}, {1920, 1080, "game-1920x1080.png"},
 }};
+struct NativeBackgroundSpec final {
+    const char* name{};
+    arpg::dungeon::DungeonElement ecology{};
+    platform::MaterialAtlasId atlas{platform::MaterialAtlasId::count};
+};
+constexpr std::array<NativeBackgroundSpec, 4> kNativeBackgrounds{{
+    {"fire", arpg::dungeon::DungeonElement::fire,
+        platform::MaterialAtlasId::fire_room_background},
+    {"water", arpg::dungeon::DungeonElement::water,
+        platform::MaterialAtlasId::water_room_background},
+    {"lightning", arpg::dungeon::DungeonElement::lightning,
+        platform::MaterialAtlasId::lightning_room_background},
+    {"chaos", arpg::dungeon::DungeonElement::chaos,
+        platform::MaterialAtlasId::chaos_room_background},
+}};
+
+bool native_background_runtime_valid(
+    const platform::Stage12MaterialRuntimeStatus& status,
+    const NativeBackgroundSpec& spec,
+    const Resolution& resolution) noexcept {
+    const float expected_scale = resolution.width == 1280 ? 0.5F : 0.75F;
+    return status.hud_ecology == spec.ecology
+        && status.room_background_ecology == spec.ecology
+        && status.room_background_atlas == spec.atlas
+        && status.room_background_resident && status.room_background_drawn
+        && status.room_background_source_width == 2560U
+        && status.room_background_source_height == 1440U
+        && std::fabs(status.room_background_scale - expected_scale) < 0.0001F;
+}
 bool png_has_size(const std::filesystem::path& path, int width, int height) {
     const Image image = LoadImage(path.string().c_str());
     const bool valid = image.data != nullptr && image.width == width
@@ -54,6 +88,94 @@ bool copy_materials(const std::filesystem::path& executable) {
         }
     }
     return true;
+}
+
+bool sha256_file(const std::filesystem::path& path, std::string& result) {
+    std::ifstream input(path, std::ios::binary);
+    if (!input) return false;
+    std::vector<unsigned char> bytes{
+        std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
+    if (input.bad()) return false;
+    constexpr std::array<std::uint32_t, 64> kRoundConstants{{
+        0x428A2F98U, 0x71374491U, 0xB5C0FBCFU, 0xE9B5DBA5U,
+        0x3956C25BU, 0x59F111F1U, 0x923F82A4U, 0xAB1C5ED5U,
+        0xD807AA98U, 0x12835B01U, 0x243185BEU, 0x550C7DC3U,
+        0x72BE5D74U, 0x80DEB1FEU, 0x9BDC06A7U, 0xC19BF174U,
+        0xE49B69C1U, 0xEFBE4786U, 0x0FC19DC6U, 0x240CA1CCU,
+        0x2DE92C6FU, 0x4A7484AAU, 0x5CB0A9DCU, 0x76F988DAU,
+        0x983E5152U, 0xA831C66DU, 0xB00327C8U, 0xBF597FC7U,
+        0xC6E00BF3U, 0xD5A79147U, 0x06CA6351U, 0x14292967U,
+        0x27B70A85U, 0x2E1B2138U, 0x4D2C6DFCU, 0x53380D13U,
+        0x650A7354U, 0x766A0ABBU, 0x81C2C92EU, 0x92722C85U,
+        0xA2BFE8A1U, 0xA81A664BU, 0xC24B8B70U, 0xC76C51A3U,
+        0xD192E819U, 0xD6990624U, 0xF40E3585U, 0x106AA070U,
+        0x19A4C116U, 0x1E376C08U, 0x2748774CU, 0x34B0BCB5U,
+        0x391C0CB3U, 0x4ED8AA4AU, 0x5B9CCA4FU, 0x682E6FF3U,
+        0x748F82EEU, 0x78A5636FU, 0x84C87814U, 0x8CC70208U,
+        0x90BEFFFAU, 0xA4506CEBU, 0xBEF9A3F7U, 0xC67178F2U,
+    }};
+    auto rotate_right = [](std::uint32_t value, unsigned int shift) noexcept {
+        return (value >> shift) | (value << (32U - shift));
+    };
+    const std::uint64_t bit_length =
+        static_cast<std::uint64_t>(bytes.size()) * 8U;
+    bytes.push_back(0x80U);
+    while (bytes.size() % 64U != 56U) bytes.push_back(0U);
+    for (int shift = 56; shift >= 0; shift -= 8) {
+        bytes.push_back(static_cast<unsigned char>(bit_length >> shift));
+    }
+    std::array<std::uint32_t, 8> state{{
+        0x6A09E667U, 0xBB67AE85U, 0x3C6EF372U, 0xA54FF53AU,
+        0x510E527FU, 0x9B05688CU, 0x1F83D9ABU, 0x5BE0CD19U,
+    }};
+    for (std::size_t offset{}; offset < bytes.size(); offset += 64U) {
+        std::array<std::uint32_t, 64> words{};
+        for (std::size_t index{}; index < 16U; ++index) {
+            const std::size_t at = offset + index * 4U;
+            words[index] = (static_cast<std::uint32_t>(bytes[at]) << 24U)
+                | (static_cast<std::uint32_t>(bytes[at + 1U]) << 16U)
+                | (static_cast<std::uint32_t>(bytes[at + 2U]) << 8U)
+                | static_cast<std::uint32_t>(bytes[at + 3U]);
+        }
+        for (std::size_t index = 16U; index < words.size(); ++index) {
+            const std::uint32_t a = words[index - 15U];
+            const std::uint32_t b = words[index - 2U];
+            const std::uint32_t small0 = rotate_right(a, 7U)
+                ^ rotate_right(a, 18U) ^ (a >> 3U);
+            const std::uint32_t small1 = rotate_right(b, 17U)
+                ^ rotate_right(b, 19U) ^ (b >> 10U);
+            words[index] = words[index - 16U] + small0
+                + words[index - 7U] + small1;
+        }
+        std::uint32_t a = state[0];
+        std::uint32_t b = state[1];
+        std::uint32_t c = state[2];
+        std::uint32_t d = state[3];
+        std::uint32_t e = state[4];
+        std::uint32_t f = state[5];
+        std::uint32_t g = state[6];
+        std::uint32_t h = state[7];
+        for (std::size_t index{}; index < words.size(); ++index) {
+            const std::uint32_t big1 = rotate_right(e, 6U)
+                ^ rotate_right(e, 11U) ^ rotate_right(e, 25U);
+            const std::uint32_t choice = (e & f) ^ ((~e) & g);
+            const std::uint32_t temporary1 = h + big1 + choice
+                + kRoundConstants[index] + words[index];
+            const std::uint32_t big0 = rotate_right(a, 2U)
+                ^ rotate_right(a, 13U) ^ rotate_right(a, 22U);
+            const std::uint32_t majority = (a & b) ^ (a & c) ^ (b & c);
+            const std::uint32_t temporary2 = big0 + majority;
+            h = g; g = f; f = e; e = d + temporary1;
+            d = c; c = b; b = a; a = temporary1 + temporary2;
+        }
+        state[0] += a; state[1] += b; state[2] += c; state[3] += d;
+        state[4] += e; state[5] += f; state[6] += g; state[7] += h;
+    }
+    std::ostringstream encoded{};
+    encoded << std::hex << std::setfill('0');
+    for (const std::uint32_t word : state) encoded << std::setw(8) << word;
+    result = encoded.str();
+    return result.size() == 64U;
 }
 
 template <std::size_t Size>
@@ -249,7 +371,8 @@ bool capture(const std::filesystem::path& root, const Resolution& resolution,
     platform::Stage12UiShowcase ui_showcase =
         platform::Stage12UiShowcase::none,
     platform::Stage11CHudValidationScenario hud_scenario =
-        platform::Stage11CHudValidationScenario::none) {
+        platform::Stage11CHudValidationScenario::none,
+    bool background_only = false) {
     const std::filesystem::path capture = root / (image_name == nullptr
         ? resolution.name : image_name);
     platform::RaylibHostConfig config{};
@@ -270,6 +393,7 @@ bool capture(const std::filesystem::path& root, const Resolution& resolution,
     config.stage12_material_showcase_ecology = showcase_ecology;
     config.stage12_material_runtime_status = material_status;
     config.stage12_material_showcase_hide_monsters = hide_showcase_monsters;
+    config.stage12_material_background_only = background_only;
     config.stage12_ui_showcase = ui_showcase;
     config.stage11c_hud_validation = hud_scenario;
     if (baseline_image_name != nullptr) {
@@ -348,7 +472,107 @@ int main(int argc, char** argv) {
         platform::full_pack_bytes(material_manifest);
     const std::size_t material_resident_peak_bytes =
         platform::resident_peak_bytes(material_manifest);
-    platform::Stage12MaterialRuntimeStatus item_runtime{};
+    using RuntimeGrid =
+        std::array<std::array<platform::Stage12MaterialRuntimeStatus, 2>, 4>;
+    using StringGrid = std::array<std::array<std::string, 2>, 4>;
+    const auto background_runtime_storage = std::make_unique<RuntimeGrid>();
+    const auto gameplay_runtime_storage = std::make_unique<RuntimeGrid>();
+    const auto background_names_storage = std::make_unique<StringGrid>();
+    const auto gameplay_names_storage = std::make_unique<StringGrid>();
+    const auto background_hashes_storage = std::make_unique<StringGrid>();
+    const auto gameplay_hashes_storage = std::make_unique<StringGrid>();
+    RuntimeGrid& native_background_only_runtime = *background_runtime_storage;
+    RuntimeGrid& native_gameplay_runtime = *gameplay_runtime_storage;
+    StringGrid& native_background_only_names = *background_names_storage;
+    StringGrid& native_gameplay_names = *gameplay_names_storage;
+    StringGrid& native_background_only_hashes = *background_hashes_storage;
+    StringGrid& native_gameplay_hashes = *gameplay_hashes_storage;
+    bool native_background_captures_ok = true;
+    for (std::size_t ecology_index{};
+         ecology_index < kNativeBackgrounds.size(); ++ecology_index) {
+        const NativeBackgroundSpec& spec = kNativeBackgrounds[ecology_index];
+        for (std::size_t resolution_index{};
+             resolution_index < kResolutions.size(); ++resolution_index) {
+            const Resolution& resolution = kResolutions[resolution_index];
+            const std::string suffix = resolution.width == 1280
+                ? "1280x720.png" : "1920x1080.png";
+            native_background_only_names[ecology_index][resolution_index] =
+                std::string{spec.name} + "-background-only-" + suffix;
+            native_gameplay_names[ecology_index][resolution_index] =
+                std::string{spec.name} + "-gameplay-" + suffix;
+            const bool background_only_ok = capture(root, resolution,
+                native_background_only_names[ecology_index][resolution_index].c_str(),
+                true, false, spec.ecology,
+                &native_background_only_runtime[ecology_index][resolution_index],
+                true, nullptr, platform::Stage12UiShowcase::none,
+                platform::Stage11CHudValidationScenario::none, true);
+            const bool gameplay_ok = capture(root, resolution,
+                native_gameplay_names[ecology_index][resolution_index].c_str(),
+                true, false, spec.ecology,
+                &native_gameplay_runtime[ecology_index][resolution_index]);
+            const bool background_hash_ok = sha256_file(
+                root / native_background_only_names[ecology_index][resolution_index],
+                native_background_only_hashes[ecology_index][resolution_index]);
+            const bool gameplay_hash_ok = sha256_file(
+                root / native_gameplay_names[ecology_index][resolution_index],
+                native_gameplay_hashes[ecology_index][resolution_index]);
+            native_background_captures_ok = background_only_ok && gameplay_ok
+                && background_hash_ok && gameplay_hash_ok
+                && native_background_runtime_valid(
+                    native_background_only_runtime[ecology_index][resolution_index],
+                    spec, resolution)
+                && native_background_runtime_valid(
+                    native_gameplay_runtime[ecology_index][resolution_index],
+                    spec, resolution)
+                && native_background_captures_ok;
+        }
+    }
+    bool native_visual_hashes_ok = true;
+    for (std::size_t resolution_index{};
+         resolution_index < kResolutions.size(); ++resolution_index) {
+        for (std::size_t ecology_index{};
+             ecology_index < kNativeBackgrounds.size(); ++ecology_index) {
+            native_visual_hashes_ok =
+                native_background_only_hashes[ecology_index][resolution_index]
+                    != native_gameplay_hashes[ecology_index][resolution_index]
+                && native_visual_hashes_ok;
+            for (std::size_t other = ecology_index + 1U;
+                 other < kNativeBackgrounds.size(); ++other) {
+                native_visual_hashes_ok =
+                    native_background_only_hashes[ecology_index][resolution_index]
+                        != native_background_only_hashes[other][resolution_index]
+                    && native_visual_hashes_ok;
+            }
+        }
+    }
+    native_background_captures_ok = native_background_captures_ok
+        && native_visual_hashes_ok;
+    struct NativeBackgroundHashes final {
+        std::string master{};
+        std::string runtime{};
+        std::string material{};
+    };
+    std::array<NativeBackgroundHashes, 4> native_asset_hashes{};
+    bool native_asset_hashes_ok = true;
+    const std::filesystem::path project{ARPG_PROJECT_SOURCE_DIR};
+    for (std::size_t index{}; index < kNativeBackgrounds.size(); ++index) {
+        const std::string ecology{kNativeBackgrounds[index].name};
+        native_asset_hashes_ok = sha256_file(
+            project / "art_source" / "stage12" / "backgrounds" / ecology
+                / (ecology + "-room-background-master.png"),
+            native_asset_hashes[index].master) && native_asset_hashes_ok;
+        native_asset_hashes_ok = sha256_file(
+            project / "assets" / "stage12"
+                / (ecology + "_room_background.png"),
+            native_asset_hashes[index].runtime) && native_asset_hashes_ok;
+        native_asset_hashes_ok = sha256_file(
+            project / "assets" / "stage12"
+                / (ecology + "_room_background_material.png"),
+            native_asset_hashes[index].material) && native_asset_hashes_ok;
+    }
+    const auto item_runtime_storage =
+        std::make_unique<platform::Stage12MaterialRuntimeStatus>();
+    platform::Stage12MaterialRuntimeStatus& item_runtime = *item_runtime_storage;
     const bool item_showcase_ok = capture(root, kResolutions[0],
         "items-materials-1280x720.png", true, false,
         arpg::dungeon::DungeonElement::fire, &item_runtime, true,
@@ -369,47 +593,73 @@ int main(int argc, char** argv) {
         "ui-baseline-1280x720.png");
     const bool ui_baseline_1920_ok = capture(root, kResolutions[1],
         "ui-baseline-1920x1080.png");
-    platform::Stage12MaterialRuntimeStatus ui_runtime{};
+    const auto ui_runtime_storage =
+        std::make_unique<platform::Stage12MaterialRuntimeStatus>();
+    platform::Stage12MaterialRuntimeStatus& ui_runtime = *ui_runtime_storage;
     const bool ui_gallery_ok = capture(root, kResolutions[0],
         "ui-gallery-1280x720.png", false, false, std::nullopt,
         &ui_runtime, false, nullptr,
         platform::Stage12UiShowcase::material_gallery);
-    platform::Stage12MaterialRuntimeStatus hud_ui_runtime{};
+    const auto hud_ui_runtime_storage =
+        std::make_unique<platform::Stage12MaterialRuntimeStatus>();
+    platform::Stage12MaterialRuntimeStatus& hud_ui_runtime =
+        *hud_ui_runtime_storage;
     const bool hud_ui_ok = capture(root, kResolutions[0],
         "ui-hud-1280x720.png", false, false, std::nullopt,
         &hud_ui_runtime, false, nullptr, platform::Stage12UiShowcase::none,
         platform::Stage11CHudValidationScenario::low_health_status);
-    platform::Stage12MaterialRuntimeStatus hud_ui_1920_runtime{};
+    const auto hud_ui_1920_runtime_storage =
+        std::make_unique<platform::Stage12MaterialRuntimeStatus>();
+    platform::Stage12MaterialRuntimeStatus& hud_ui_1920_runtime =
+        *hud_ui_1920_runtime_storage;
     const bool hud_ui_1920_ok = capture(root, kResolutions[1],
         "ui-hud-1920x1080.png", false, false, std::nullopt,
         &hud_ui_1920_runtime, false, nullptr,
         platform::Stage12UiShowcase::none,
         platform::Stage11CHudValidationScenario::low_health_status);
-    platform::Stage12MaterialRuntimeStatus inventory_ui_runtime{};
+    const auto inventory_ui_runtime_storage =
+        std::make_unique<platform::Stage12MaterialRuntimeStatus>();
+    platform::Stage12MaterialRuntimeStatus& inventory_ui_runtime =
+        *inventory_ui_runtime_storage;
     const bool inventory_ui_ok = capture(root, kResolutions[0],
         "ui-inventory-1280x720.png", false, false, std::nullopt,
         &inventory_ui_runtime, false, nullptr,
         platform::Stage12UiShowcase::inventory);
-    platform::Stage12MaterialRuntimeStatus inventory_ui_1920_runtime{};
+    const auto inventory_ui_1920_runtime_storage =
+        std::make_unique<platform::Stage12MaterialRuntimeStatus>();
+    platform::Stage12MaterialRuntimeStatus& inventory_ui_1920_runtime =
+        *inventory_ui_1920_runtime_storage;
     const bool inventory_ui_1920_ok = capture(root, kResolutions[1],
         "ui-inventory-1920x1080.png", false, false, std::nullopt,
         &inventory_ui_1920_runtime, false, nullptr,
         platform::Stage12UiShowcase::inventory);
-    platform::Stage12MaterialRuntimeStatus skill_ui_runtime{};
+    const auto skill_ui_runtime_storage =
+        std::make_unique<platform::Stage12MaterialRuntimeStatus>();
+    platform::Stage12MaterialRuntimeStatus& skill_ui_runtime =
+        *skill_ui_runtime_storage;
     const bool skill_ui_ok = capture(root, kResolutions[0],
         "ui-skill-stones-1280x720.png", false, false, std::nullopt,
         &skill_ui_runtime, false, nullptr,
         platform::Stage12UiShowcase::skill_stones);
-    platform::Stage12MaterialRuntimeStatus skill_ui_1920_runtime{};
+    const auto skill_ui_1920_runtime_storage =
+        std::make_unique<platform::Stage12MaterialRuntimeStatus>();
+    platform::Stage12MaterialRuntimeStatus& skill_ui_1920_runtime =
+        *skill_ui_1920_runtime_storage;
     const bool skill_ui_1920_ok = capture(root, kResolutions[1],
         "ui-skill-stones-1920x1080.png", false, false, std::nullopt,
         &skill_ui_1920_runtime, false, nullptr,
         platform::Stage12UiShowcase::skill_stones);
-    platform::Stage12MaterialRuntimeStatus pause_ui_runtime{};
+    const auto pause_ui_runtime_storage =
+        std::make_unique<platform::Stage12MaterialRuntimeStatus>();
+    platform::Stage12MaterialRuntimeStatus& pause_ui_runtime =
+        *pause_ui_runtime_storage;
     const bool pause_ui_ok = capture(root, kResolutions[0],
         "ui-pause-1280x720.png", false, false, std::nullopt,
         &pause_ui_runtime, false, nullptr, platform::Stage12UiShowcase::pause);
-    platform::Stage12MaterialRuntimeStatus pause_ui_1920_runtime{};
+    const auto pause_ui_1920_runtime_storage =
+        std::make_unique<platform::Stage12MaterialRuntimeStatus>();
+    platform::Stage12MaterialRuntimeStatus& pause_ui_1920_runtime =
+        *pause_ui_1920_runtime_storage;
     const bool pause_ui_1920_ok = capture(root, kResolutions[1],
         "ui-pause-1920x1080.png", false, false, std::nullopt,
         &pause_ui_1920_runtime, false, nullptr,
@@ -644,7 +894,9 @@ int main(int argc, char** argv) {
         ui_readability_contract_ok && real_font_text_bounds_ok;
     const bool showcase_ok = capture(root, kResolutions[0],
         "monsters-1280x720.png", true, true);
-    platform::Stage12MaterialRuntimeStatus water_runtime{};
+    const auto water_runtime_storage =
+        std::make_unique<platform::Stage12MaterialRuntimeStatus>();
+    platform::Stage12MaterialRuntimeStatus& water_runtime = *water_runtime_storage;
     const bool water_showcase_ok = capture(root, kResolutions[0],
         "water-monsters-1280x720.png", true, false,
         arpg::dungeon::DungeonElement::water, &water_runtime);
@@ -654,7 +906,10 @@ int main(int argc, char** argv) {
         && water_runtime.water_environment_resident
         && water_runtime.water_bulwark_resident
         && water_runtime.water_support_resident;
-    platform::Stage12MaterialRuntimeStatus lightning_runtime{};
+    const auto lightning_runtime_storage =
+        std::make_unique<platform::Stage12MaterialRuntimeStatus>();
+    platform::Stage12MaterialRuntimeStatus& lightning_runtime =
+        *lightning_runtime_storage;
     const bool lightning_showcase_ok = capture(root, kResolutions[0],
         "lightning-monsters-1280x720.png", true, false,
         arpg::dungeon::DungeonElement::lightning, &lightning_runtime);
@@ -679,7 +934,9 @@ int main(int argc, char** argv) {
             == platform::MaterialAtlasId::lightning_dasher
         && lightning_runtime.lightning_dasher_draw.frame_index < 12U
         && lightning_runtime.lightning_dasher_draw.drawn;
-    platform::Stage12MaterialRuntimeStatus chaos_runtime{};
+    const auto chaos_runtime_storage =
+        std::make_unique<platform::Stage12MaterialRuntimeStatus>();
+    platform::Stage12MaterialRuntimeStatus& chaos_runtime = *chaos_runtime_storage;
     const bool chaos_showcase_ok = capture(root, kResolutions[0],
         "chaos-monsters-1280x720.png", true, false,
         arpg::dungeon::DungeonElement::chaos, &chaos_runtime);
@@ -715,7 +972,81 @@ int main(int argc, char** argv) {
     report << "manifest=" << (manifest_ok ? "pass" : "fail") << '\n'
            << "atlas_bytes=" << material_full_pack_bytes << '\n'
            << "full_pack_bytes=" << material_full_pack_bytes << '\n'
-           << "resident_peak_bytes=" << material_resident_peak_bytes << '\n'
+           << "resident_peak_bytes=" << material_resident_peak_bytes << '\n';
+    for (std::size_t ecology_index{};
+         ecology_index < kNativeBackgrounds.size(); ++ecology_index) {
+        const NativeBackgroundSpec& spec = kNativeBackgrounds[ecology_index];
+        const std::string ecology{spec.name};
+        report << ecology << "_background_atlas=assets/stage12/" << ecology
+               << "_room_background.png\n"
+               << ecology << "_background_atlas_id=" << ecology
+               << "_room_background\n"
+               << ecology << "_background_material_atlas=assets/stage12/"
+               << ecology << "_room_background_material.png\n"
+               << ecology << "_background_master=art_source/stage12/backgrounds/"
+               << ecology << '/' << ecology << "-room-background-master.png\n"
+               << ecology << "_background_provenance="
+               << "assets/stage12/room-background-build.json\n"
+               << ecology << "_background_source=2560x1440\n"
+               << ecology << "_background_source_xywh=0,0,2560,1440\n"
+               << ecology << "_background_scale_1280=1/2\n"
+               << ecology << "_background_scale_1920=3/4\n"
+               << ecology << "_background_runtime_sha256="
+               << native_asset_hashes[ecology_index].runtime << '\n'
+               << ecology << "_background_material_sha256="
+               << native_asset_hashes[ecology_index].material << '\n'
+               << ecology << "_background_master_sha256="
+               << native_asset_hashes[ecology_index].master << '\n';
+        for (std::size_t resolution_index{};
+             resolution_index < kResolutions.size(); ++resolution_index) {
+            const char* resolution = resolution_index == 0U ? "1280" : "1920";
+            const bool background_runtime_ok = native_background_runtime_valid(
+                native_background_only_runtime[ecology_index][resolution_index],
+                spec, kResolutions[resolution_index]);
+            const bool gameplay_runtime_ok = native_background_runtime_valid(
+                native_gameplay_runtime[ecology_index][resolution_index],
+                spec, kResolutions[resolution_index]);
+            report << ecology << "_background_only_screenshot_" << resolution
+                   << '=' << native_background_only_names[ecology_index][resolution_index]
+                   << '\n'
+                   << ecology << "_background_only_screenshot_" << resolution
+                   << "_sha256="
+                   << native_background_only_hashes[ecology_index][resolution_index]
+                   << '\n'
+                   << ecology << "_gameplay_screenshot_" << resolution
+                   << '=' << native_gameplay_names[ecology_index][resolution_index]
+                   << '\n'
+                   << ecology << "_gameplay_screenshot_" << resolution
+                   << "_sha256="
+                   << native_gameplay_hashes[ecology_index][resolution_index]
+                   << '\n'
+                   << ecology << "_background_only_runtime_" << resolution
+                   << '=' << (background_runtime_ok ? "pass" : "fail") << '\n'
+                   << ecology << "_background_only_resident_" << resolution
+                   << '=' << (native_background_only_runtime[ecology_index][resolution_index]
+                            .room_background_resident ? "pass" : "fail") << '\n'
+                   << ecology << "_background_only_drawn_" << resolution
+                   << '=' << (native_background_only_runtime[ecology_index][resolution_index]
+                            .room_background_drawn ? "pass" : "fail") << '\n'
+                   << ecology << "_background_only_hud_ecology_" << resolution
+                   << '=' << (native_background_only_runtime[ecology_index][resolution_index]
+                            .hud_ecology == spec.ecology ? "pass" : "fail") << '\n'
+                   << ecology << "_gameplay_runtime_" << resolution
+                   << '=' << (gameplay_runtime_ok ? "pass" : "fail") << '\n'
+                   << ecology << "_gameplay_resident_" << resolution
+                   << '=' << (native_gameplay_runtime[ecology_index][resolution_index]
+                            .room_background_resident ? "pass" : "fail") << '\n'
+                   << ecology << "_gameplay_drawn_" << resolution
+                   << '=' << (native_gameplay_runtime[ecology_index][resolution_index]
+                            .room_background_drawn ? "pass" : "fail") << '\n'
+                   << ecology << "_gameplay_hud_ecology_" << resolution
+                   << '=' << (native_gameplay_runtime[ecology_index][resolution_index]
+                            .hud_ecology == spec.ecology ? "pass" : "fail") << '\n';
+        }
+    }
+    report << "native_background_status="
+           << (native_background_captures_ok && native_asset_hashes_ok
+                ? "native-background-verified" : "fail") << '\n'
            << "fallback=" << (fallback_capture && !error ? "pass" : "fail") << '\n'
            << "input_hole_regression=" << (input_hole_ok ? "pass" : "fail") << '\n'
            << "monsters=" << (showcase_ok ? "fire_bomber,fire_charger,water_bulwark,water_support,lightning_shooter,lightning_dasher,chaos_chaser,chaos_hazard" : "") << '\n'
@@ -882,13 +1213,14 @@ int main(int argc, char** argv) {
            << "chaos_hazard_drawn=" << (chaos_runtime.chaos_hazard_draw.drawn ? "pass" : "fail") << '\n'
            << "f12_screenshot=f12-monsters-1280x720.png/stage8-equipment-loot.png\n"
            << "screenshot_isolation=" << (f12_ok ? "pass" : "fail") << '\n'
-           << "screenshot_decode=" << (captures_ok && showcase_ok && item_baseline_ok && item_showcase_ok && ui_baseline_ok && ui_baseline_1920_ok && ui_gallery_ok && hud_ui_ok && hud_ui_1920_ok && inventory_ui_ok && inventory_ui_1920_ok && skill_ui_ok && skill_ui_1920_ok && pause_ui_ok && pause_ui_1920_ok && water_showcase_ok && lightning_showcase_ok && lightning_background_ok && chaos_showcase_ok && chaos_background_ok && f12_ok ? "pass" : "fail") << '\n'
-           << "result=" << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && item_baseline_ok && item_runtime_ok && ui_runtime_ok && hud_ui_runtime_ok && inventory_ui_runtime_ok && skill_ui_runtime_ok && pause_ui_runtime_ok && hud_ui_1920_runtime_ok && inventory_ui_1920_runtime_ok && skill_ui_1920_runtime_ok && pause_ui_1920_runtime_ok && ui_readability_contract_with_real_bounds_ok && ui_baseline_ok && ui_baseline_1920_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "pass" : "fail")
+           << "screenshot_decode=" << (captures_ok && native_background_captures_ok && showcase_ok && item_baseline_ok && item_showcase_ok && ui_baseline_ok && ui_baseline_1920_ok && ui_gallery_ok && hud_ui_ok && hud_ui_1920_ok && inventory_ui_ok && inventory_ui_1920_ok && skill_ui_ok && skill_ui_1920_ok && pause_ui_ok && pause_ui_1920_ok && water_showcase_ok && lightning_showcase_ok && lightning_background_ok && chaos_showcase_ok && chaos_background_ok && f12_ok ? "pass" : "fail") << '\n'
+           << "result=" << (captures_ok && native_background_captures_ok && native_asset_hashes_ok && fallback_capture && !error && manifest_ok && showcase_ok && item_baseline_ok && item_runtime_ok && ui_runtime_ok && hud_ui_runtime_ok && inventory_ui_runtime_ok && skill_ui_runtime_ok && pause_ui_runtime_ok && hud_ui_1920_runtime_ok && inventory_ui_1920_runtime_ok && skill_ui_1920_runtime_ok && pause_ui_1920_runtime_ok && ui_readability_contract_with_real_bounds_ok && ui_baseline_ok && ui_baseline_1920_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "pass" : "fail")
            << '\n';
     std::cout << "stage12 material formal "
-               << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && item_baseline_ok && item_runtime_ok && ui_runtime_ok && hud_ui_runtime_ok && inventory_ui_runtime_ok && skill_ui_runtime_ok && pause_ui_runtime_ok && hud_ui_1920_runtime_ok && inventory_ui_1920_runtime_ok && skill_ui_1920_runtime_ok && pause_ui_1920_runtime_ok && ui_readability_contract_with_real_bounds_ok && ui_baseline_ok && ui_baseline_1920_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "PASS" : "FAIL")
+               << (captures_ok && native_background_captures_ok && native_asset_hashes_ok && fallback_capture && !error && manifest_ok && showcase_ok && item_baseline_ok && item_runtime_ok && ui_runtime_ok && hud_ui_runtime_ok && inventory_ui_runtime_ok && skill_ui_runtime_ok && pause_ui_runtime_ok && hud_ui_1920_runtime_ok && inventory_ui_1920_runtime_ok && skill_ui_1920_runtime_ok && pause_ui_1920_runtime_ok && ui_readability_contract_with_real_bounds_ok && ui_baseline_ok && ui_baseline_1920_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "PASS" : "FAIL")
               << std::endl;
-    return report && captures_ok && fallback_capture && !error && manifest_ok
+    return report && captures_ok && native_background_captures_ok
+        && native_asset_hashes_ok && fallback_capture && !error && manifest_ok
         && showcase_ok && item_baseline_ok && item_runtime_ok && ui_runtime_ok
         && hud_ui_runtime_ok && inventory_ui_runtime_ok
         && skill_ui_runtime_ok && pause_ui_runtime_ok

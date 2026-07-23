@@ -199,6 +199,7 @@ if(TARGET arpg_raylib)
     target_link_libraries(arpg_stage12_material_formal PRIVATE arpg_raylib)
     if(MSVC)
         target_compile_options(arpg_stage12_material_formal PRIVATE /utf-8)
+        target_link_options(arpg_stage12_material_formal PRIVATE /STACK:2097152)
     endif()
     arpg_enable_project_warnings(arpg_stage12_material_formal)
     add_custom_command(TARGET arpg_stage12_material_formal POST_BUILD
