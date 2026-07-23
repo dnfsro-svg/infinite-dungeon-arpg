@@ -44,7 +44,7 @@
         {"path": "art_source/stage12/backgrounds/water/water-periphery-wide-v4.png", "role": "periphery_wide"},
         {"path": "art_source/stage12/backgrounds/water/water-open-room-v5.png", "role": "open_room"},
         {"path": "art_source/stage12/backgrounds/water/water-near-wide-v3.png", "role": "near_wide"},
-        {"path": "art_source/stage12/backgrounds/water/water-open-right-v5.png", "role": "right_extension"}
+        {"path": "art_source/stage12/backgrounds/water/water-open-right-v6.png", "role": "right_extension"}
       ]
     },
     "lightning": {
@@ -54,7 +54,7 @@
         {"path": "art_source/stage12/backgrounds/lightning/lightning-open-room-v5.png", "role": "open_room"},
         {"path": "art_source/stage12/backgrounds/lightning/lightning-open-near-v5.png", "role": "near_wide"},
         {"path": "art_source/stage12/backgrounds/lightning/lightning-periphery-wide-v5.png", "role": "periphery_wide"},
-        {"path": "art_source/stage12/backgrounds/lightning/lightning-open-right-v5.png", "role": "right_extension"}
+        {"path": "art_source/stage12/backgrounds/lightning/lightning-open-right-v6.png", "role": "right_extension"}
       ]
     },
     "chaos": {
@@ -64,7 +64,7 @@
         {"path": "art_source/stage12/backgrounds/chaos/chaos-open-room-v5.png", "role": "open_room"},
         {"path": "art_source/stage12/backgrounds/chaos/chaos-open-near-v5.png", "role": "near_wide"},
         {"path": "art_source/stage12/backgrounds/chaos/chaos-periphery-wide-v5.png", "role": "periphery_wide"},
-        {"path": "art_source/stage12/backgrounds/chaos/chaos-open-right-v5.png", "role": "right_extension"}
+        {"path": "art_source/stage12/backgrounds/chaos/chaos-open-right-v6.png", "role": "right_extension"}
       ]
     }
   }

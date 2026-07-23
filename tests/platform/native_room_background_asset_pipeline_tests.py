@@ -11,6 +11,7 @@ import tempfile
 import unittest
 from collections import Counter
 from pathlib import Path
+from shutil import copy2
 
 from PIL import Image, ImageStat
 
@@ -18,6 +19,7 @@ from PIL import Image, ImageStat
 ROOT = Path(__file__).resolve().parents[2]
 ECOLOGIES = ("fire", "water", "lightning", "chaos")
 SOURCE_MANIFEST = ROOT / "art_source/stage12/backgrounds/background-sources.json"
+CANDIDATE_MANIFEST = ROOT / "art_source/stage12/backgrounds/candidates/candidate-manifest.json"
 BUILDER = ROOT / "tools/build_native_room_backgrounds.py"
 REPORT = ROOT / "assets/stage12/room-background-build.json"
 CONTINUOUS_ROOM_ROI = (864, 486, 2976, 1674)
@@ -116,65 +118,52 @@ def edge_band_profile_jump(image: Image.Image, band: str) -> float:
     return max(abs(current - previous) for previous, current in zip(profile, profile[1:]))
 
 
+def right_overlap_metrics(image: Image.Image, main: dict[str, object], right: dict[str, object]) -> dict[str, float]:
+    """Measure the full main/right feather overlap, not one nominal boundary."""
+    main_left, main_top, main_right, main_bottom = main["target_rect"]  # type: ignore[index]
+    right_left, right_top, right_right, right_bottom = right["target_rect"]  # type: ignore[index]
+    left, end = max(main_left, right_left), min(main_right, right_right)
+    top, bottom = max(main_top, right_top) + 80, min(main_bottom, right_bottom) - 80
+    if end - left < 40 or bottom <= top:
+        raise AssertionError("main/right overlap is unexpectedly small")
+    luma = image.convert("L")
+    profile = [ImageStat.Stat(luma.crop((x, top, x + 1, bottom))).mean[0] for x in range(left, end)]
+    gradients = [abs(current - previous) for previous, current in zip(profile, profile[1:])]
+    band = max(12, len(profile) // 8)
+    return {
+        "start_luma": sum(profile[:band]) / band,
+        "end_luma": sum(profile[-band:]) / band,
+        "endpoint_drift": abs(sum(profile[:band]) / band - sum(profile[-band:]) / band),
+        "start_gradient": max(gradients[:band]),
+        "end_gradient": max(gradients[-band:]),
+        "internal_peak_gradient": max(gradients),
+    }
+
+
 class NativeRoomBackgroundAssetPipelineTests(unittest.TestCase):
-    def test_manifest_declares_four_isolated_ecologies_with_native_sources(self) -> None:
-        manifest = json.loads(SOURCE_MANIFEST.read_text(encoding="utf-8"))
-        self.assertEqual(set(manifest["ecologies"]), set(ECOLOGIES))
+    def _assert_all_ecology_build_contracts(self, root: Path) -> None:
+        builder = root / "tools/build_native_room_backgrounds.py"
+        self.assertTrue(builder.is_file())
         for ecology in ECOLOGIES:
-            entries = declared_sources(ecology)
-            self.assertGreaterEqual(len(entries), 3)
-            self.assertEqual(len({entry["path"] for entry in entries}), len(entries))
-            for entry in entries:
-                source = ROOT / entry["path"]
-                self.assertIn(f"/backgrounds/{ecology}/", entry["path"])
-                self.assertTrue(source.is_file(), source)
-                with Image.open(source) as image:
-                    self.assertGreaterEqual(image.width, 720)
-                    self.assertGreaterEqual(image.height, 720)
-
-    def test_indexed_clean_tree_contains_every_source_and_rebuilds_all_ecologies(self) -> None:
-        inputs = [entry["path"] for ecology in ECOLOGIES for entry in declared_sources(ecology)]
-        tracked = subprocess.run(["git", "ls-files", "--error-unmatch", "--", *inputs], cwd=ROOT, text=True, capture_output=True)
-        self.assertEqual(tracked.returncode, 0, tracked.stderr)
-        tree = subprocess.check_output(["git", "write-tree"], cwd=ROOT, text=True).strip()
-        with tempfile.TemporaryDirectory() as temporary:
-            archive = Path(temporary) / "candidate.tar"
-            with archive.open("wb") as stream:
-                subprocess.run(["git", "archive", "--format=tar", tree], cwd=ROOT, stdout=stream, check=True)
-            with tarfile.open(archive) as bundle:
-                bundle.extractall(temporary, filter="data")
-            clean_root = Path(temporary)
-            for path in inputs:
-                self.assertTrue((clean_root / path).is_file(), f"archive missing manifest input: {path}")
-            for ecology in ECOLOGIES:
-                rebuilt = subprocess.run([sys.executable, str(clean_root / "tools/build_native_room_backgrounds.py"), "--ecology", ecology], cwd=clean_root, text=True, capture_output=True)
-                self.assertEqual(rebuilt.returncode, 0, rebuilt.stderr or rebuilt.stdout)
-
-    def test_all_ecology_builds_are_native_distinct_and_combat_readable(self) -> None:
-        self.assertTrue(BUILDER.is_file())
-        for ecology in ECOLOGIES:
-            result = subprocess.run([sys.executable, str(BUILDER), "--ecology", ecology], cwd=ROOT, text=True, capture_output=True)
+            result = subprocess.run([sys.executable, str(builder), "--ecology", ecology], cwd=root, text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
-        report = json.loads(REPORT.read_text(encoding="utf-8"))
-        runtime_hashes: set[str] = set()
+        report = json.loads((root / "assets/stage12/room-background-build.json").read_text(encoding="utf-8"))
+        output_hashes = {"master": set(), "runtime": set(), "material": set()}
         for ecology in ECOLOGIES:
-            with self.subTest(ecology=ecology):
-                entries = declared_sources(ecology)
+            with self.subTest(root=root, ecology=ecology):
+                entries = declared_sources(ecology, root)
                 data = report["ecologies"][ecology]
-                master = ROOT / f"art_source/stage12/backgrounds/{ecology}/{ecology}-room-background-master.png"
-                runtime = ROOT / f"assets/stage12/{ecology}_room_background.png"
-                material = ROOT / f"assets/stage12/{ecology}_room_background_material.png"
+                master = root / f"art_source/stage12/backgrounds/{ecology}/{ecology}-room-background-master.png"
+                runtime = root / f"assets/stage12/{ecology}_room_background.png"
+                material = root / f"assets/stage12/{ecology}_room_background_material.png"
                 self.assertEqual(data["master_size"], [3840, 2160])
                 self.assertEqual(data["runtime_size"], [2560, 1440])
                 self.assertEqual(data["runtime_from_master"], {"resampling": "LANCZOS", "passes": 1})
-                self.assertEqual(data["source_sha256"], {entry["path"]: sha256(ROOT / entry["path"]) for entry in entries})
+                self.assertEqual(data["source_sha256"], {entry["path"]: sha256(root / entry["path"]) for entry in entries})
                 self.assertEqual(data["output_sha256"], {"master": sha256(master), "runtime": sha256(runtime), "material": sha256(material)})
                 self.assertTrue(all(f"/backgrounds/{ecology}/" in source for source in data["source_sha256"]))
-                self.assertEqual(
-                    {entry["path"] for entry in entries},
-                    {placement["source"] for placement in data["placements"]},
-                    "every declared source must be consumed by an actual placement",
-                )
+                self.assertTrue(all("/backgrounds/candidates/" not in source for source in data["source_sha256"]))
+                self.assertEqual({entry["path"] for entry in entries}, {placement["source"] for placement in data["placements"]}, "every declared source must be consumed by an actual placement")
                 continuous = [placement["target_rect"] for placement in data["placements"] if placement.get("continuous_room")]
                 self.assertTrue(rectangles_cover_roi(continuous, CONTINUOUS_ROOM_ROI))
                 continuous_details = [placement for placement in data["placements"] if placement.get("continuous_room")]
@@ -197,10 +186,6 @@ class NativeRoomBackgroundAssetPipelineTests(unittest.TestCase):
                     center = master_image.crop((1120, 1030, 2720, 1870))
                     edge = master_image.crop((864, 486, 1084, 1674))
                     self.assertGreater(len(set(center.convert("RGB").getdata())), 1)
-                    # A combat floor must be visibly textured but controlled;
-                    # the new continuous native art intentionally has a softly
-                    # vignetted outer context, so edge variance is not a proxy
-                    # for room readability.
                     self.assertGreater(luminance_stddev(center), 5.0)
                     self.assertLess(luminance_stddev(center), 42.0)
                     internal_x = sorted({rect[0] for rect in continuous if CONTINUOUS_ROOM_ROI[0] + 100 < rect[0] < CONTINUOUS_ROOM_ROI[2] - 100})
@@ -209,6 +194,14 @@ class NativeRoomBackgroundAssetPipelineTests(unittest.TestCase):
                         self.assertLess(seam_jump(master_image, "x", x, CONTINUOUS_ROOM_ROI[1] + 36, CONTINUOUS_ROOM_ROI[3] - 36), 46.0, f"hard vertical seam at x={x}")
                     for y in internal_y:
                         self.assertLess(seam_jump(master_image, "y", y, CONTINUOUS_ROOM_ROI[0] + 36, CONTINUOUS_ROOM_ROI[2] - 36), 46.0, f"hard horizontal seam at y={y}")
+                    if ecology != "fire":
+                        main = next(placement for placement in data["placements"] if placement.get("continuous_room") and "open-room" in placement["source"])
+                        right = next(placement for placement in data["placements"] if placement.get("continuous_room") and "open-right" in placement["source"])
+                        overlap = right_overlap_metrics(master_image, main, right)
+                        self.assertLess(overlap["endpoint_drift"], 5.0, f"{ecology} main/right overlap fades into a visible panel")
+                        self.assertLess(overlap["start_gradient"], 3.0, f"{ecology} main/right feather starts with a hard edge")
+                        self.assertLess(overlap["end_gradient"], 3.0, f"{ecology} main/right feather ends with a hard edge")
+                        self.assertLess(overlap["internal_peak_gradient"], 9.0, f"{ecology} main/right overlap has a structural spike")
                     share = ecology_color_share(runtime_image, ecology)
                     self.assertGreater(share, 0.008, f"{ecology} accent share too small: {share}")
                     self.assertLess(share, 0.45, f"{ecology} accent share too dominant: {share}")
@@ -216,8 +209,90 @@ class NativeRoomBackgroundAssetPipelineTests(unittest.TestCase):
                         self.assertGreater(variance, 1.0, f"{ecology} {band} edge lacks native texture")
                         self.assertLess(dominant_share, 0.45, f"{ecology} {band} edge is too close to a blank fill")
                         self.assertLess(edge_band_profile_jump(runtime_image, band), 3.0, f"{ecology} {band} has a hard panel edge")
-                runtime_hashes.add(sha256(runtime))
-        self.assertEqual(len(runtime_hashes), len(ECOLOGIES))
+                output_hashes["master"].add(sha256(master))
+                output_hashes["runtime"].add(sha256(runtime))
+                output_hashes["material"].add(sha256(material))
+        for output_kind, hashes in output_hashes.items():
+            self.assertEqual(len(hashes), len(ECOLOGIES), f"{output_kind} outputs must be unique across ecologies")
+
+    def _copy_to_clean_tree(self, destination: Path) -> None:
+        """Copy only the builder's declared formal input closure, never ROOT."""
+        destination.mkdir(parents=True)
+        builder_destination = destination / "tools/build_native_room_backgrounds.py"
+        builder_destination.parent.mkdir(parents=True)
+        copy2(ROOT / "tools/build_native_room_backgrounds.py", builder_destination)
+        manifest_destination = destination / SOURCE_MANIFEST.relative_to(ROOT)
+        manifest_destination.parent.mkdir(parents=True)
+        copy2(SOURCE_MANIFEST, manifest_destination)
+        (destination / "assets/stage12").mkdir(parents=True)
+        for ecology in ECOLOGIES:
+            for entry in declared_sources(ecology):
+                source = ROOT / entry["path"]
+                target = destination / entry["path"]
+                target.parent.mkdir(parents=True, exist_ok=True)
+                copy2(source, target)
+
+    def test_manifest_declares_four_isolated_ecologies_with_native_sources(self) -> None:
+        manifest = json.loads(SOURCE_MANIFEST.read_text(encoding="utf-8"))
+        self.assertEqual(set(manifest["ecologies"]), set(ECOLOGIES))
+        for ecology in ECOLOGIES:
+            entries = declared_sources(ecology)
+            self.assertGreaterEqual(len(entries), 3)
+            self.assertEqual(len({entry["path"] for entry in entries}), len(entries))
+            for entry in entries:
+                source = ROOT / entry["path"]
+                self.assertIn(f"/backgrounds/{ecology}/", entry["path"])
+                self.assertTrue(source.is_file(), source)
+                with Image.open(source) as image:
+                    self.assertGreaterEqual(image.width, 720)
+                    self.assertGreaterEqual(image.height, 720)
+
+    def test_retained_candidates_are_traceable_but_never_formal_inputs(self) -> None:
+        self.assertTrue(CANDIDATE_MANIFEST.is_file())
+        candidate_manifest = json.loads(CANDIDATE_MANIFEST.read_text(encoding="utf-8"))
+        self.assertEqual(candidate_manifest["schema_version"], 1)
+        formal_sources = {entry["path"] for ecology in ECOLOGIES for entry in declared_sources(ecology)}
+        candidates = candidate_manifest["candidates"]
+        self.assertGreaterEqual(len(candidates), 11)
+        for entry in candidates:
+            with self.subTest(path=entry["path"]):
+                candidate = ROOT / entry["path"]
+                self.assertIn("/backgrounds/candidates/", entry["path"])
+                self.assertTrue(candidate.is_file(), candidate)
+                self.assertNotIn(entry["path"], formal_sources)
+                self.assertIn(entry["status"], {"rejected", "superseded"})
+                self.assertTrue(entry["reason"])
+                self.assertTrue(entry["prompt"])
+                self.assertEqual(entry["generated_on"], "2026-07-23")
+                self.assertEqual(sha256(candidate), entry["sha256"])
+                with Image.open(candidate) as image:
+                    self.assertEqual(list(image.size), entry["dimensions"])
+                self.assertIn(entry["replaced_by"], formal_sources)
+
+    def test_indexed_clean_tree_contains_every_source_and_rebuilds_all_ecologies(self) -> None:
+        inside_worktree = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], cwd=ROOT, text=True, capture_output=True)
+        if inside_worktree.returncode != 0 or inside_worktree.stdout.strip() != "true":
+            self.skipTest("Git index source check requires a Git worktree; portable clean-tree rebuild remains covered separately")
+        inputs = [entry["path"] for ecology in ECOLOGIES for entry in declared_sources(ecology)]
+        tracked = subprocess.run(["git", "ls-files", "--error-unmatch", "--", *inputs], cwd=ROOT, text=True, capture_output=True)
+        self.assertEqual(tracked.returncode, 0, tracked.stderr)
+        tree = subprocess.check_output(["git", "write-tree"], cwd=ROOT, text=True).strip()
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "candidate.tar"
+            with archive.open("wb") as stream:
+                subprocess.run(["git", "archive", "--format=tar", tree], cwd=ROOT, stdout=stream, check=True)
+            with tarfile.open(archive) as bundle:
+                bundle.extractall(temporary, filter="data")
+            clean_root = Path(temporary)
+            for path in inputs:
+                self.assertTrue((clean_root / path).is_file(), f"archive missing manifest input: {path}")
+            self._assert_all_ecology_build_contracts(clean_root)
+
+    def test_all_ecology_builds_are_native_distinct_and_combat_readable(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            clean_root = Path(temporary) / "clean-tree"
+            self._copy_to_clean_tree(clean_root)
+            self._assert_all_ecology_build_contracts(clean_root)
 
 
 if __name__ == "__main__":
