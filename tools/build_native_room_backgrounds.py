@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageChops, ImageDraw, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter
 
 
 MASTER_SIZE = (3840, 2160)
@@ -60,9 +60,12 @@ def _read_sources(ecology: str, root: Path) -> dict[str, Path]:
         if candidate.parent != permitted_directory or not candidate.is_file():
             raise ValueError(f"invalid declared source: {candidate}")
         sources[role] = candidate
-    required_roles = {"floor_legacy", "floor_near", "floor_mid", "wall_legacy", "wall_far", "room_layout", "room_right_extension", "room_near_extension"}
-    if set(sources) != required_roles:
-        raise ValueError("fire build requires declared floor, wall, and native room layout sources")
+    required_roles = (
+        {"floor_legacy", "floor_near", "floor_mid", "wall_legacy", "wall_far", "room_layout", "room_right_extension", "room_near_extension"}
+        if ecology == "fire" else {"wall", "floor", "open_room", "near_wide", "periphery_wide", "right_extension"}
+    )
+    if not required_roles.issubset(sources):
+        raise ValueError(f"{ecology} build requires its declared native source roles")
     return sources
 
 
@@ -216,11 +219,174 @@ def _save_png(image: Image.Image, path: Path) -> None:
     image.save(path, format="PNG")
 
 
+_ECOLOGY_STYLE = {
+    "water": ((13, 25, 29, 255), (49, 161, 182, 155), (142, 112, 61, 190)),
+    "lightning": ((17, 21, 27, 255), (112, 178, 238, 155), (154, 100, 50, 190)),
+    "chaos": ((19, 15, 23, 255), (176, 46, 139, 150), (132, 106, 54, 185)),
+}
+
+
+def _cover_native_area(
+    canvas: Image.Image,
+    source: Image.Image,
+    source_path: Path,
+    root: Path,
+    area: tuple[int, int, int, int],
+    placements: list[dict[str, Any]],
+    seed: int,
+    *,
+    continuous_room: bool = False,
+) -> None:
+    """Cover an area with shifted native crops, never enlarging an input crop."""
+    left, top, right, bottom = area
+    cell_width, cell_height = 960, 540
+    row = 0
+    for y in range(top, bottom, cell_height):
+        column = 0
+        for x in range(left, right, cell_width):
+            width, height = min(cell_width, right - x), min(cell_height, bottom - y)
+            source_x = (seed * 71 + row * 137 + column * 229) % (source.width - width + 1)
+            source_y = (seed * 43 + row * 113 + column * 67) % (source.height - height + 1)
+            _place_native(
+                canvas, source, source_path, root,
+                (source_x, source_y, source_x + width, source_y + height),
+                (x, y, x + width, y + height), placements,
+                continuous_room=continuous_room,
+            )
+            column += 1
+        row += 1
+
+
+def _apply_ecology_frame(master: Image.Image, ecology: str) -> None:
+    """Add only low-key edge architecture; central gameplay floor remains clear."""
+    _, accent, gold = _ECOLOGY_STYLE[ecology]
+    draw = ImageDraw.Draw(master)
+    horizon = [(86, 660), (650, 500), (1920, 452), (3190, 500), (3754, 660)]
+    draw.line(horizon, fill=(9, 11, 14, 205), width=34, joint="curve")
+    draw.line(horizon, fill=gold, width=4, joint="curve")
+    draw.line(horizon, fill=accent, width=2, joint="curve")
+    for x in (80, 3760):
+        draw.line([(x, 120), (x, 1760), (1920 + (x - 1920) * 0.82, 2120)], fill=(8, 10, 13, 185), width=28)
+        draw.line([(x, 120), (x, 1760), (1920 + (x - 1920) * 0.82, 2120)], fill=gold, width=3)
+
+
+def _make_ecology_material(runtime: Image.Image, ecology: str) -> Image.Image:
+    rgba = runtime.convert("RGBA")
+    red, green, blue, _ = rgba.split()
+    coverage = rgba.convert("L").point(lambda value: min(255, value + 24))
+    if ecology == "water":
+        accent = ImageChops.subtract(blue, red)
+    elif ecology == "lightning":
+        accent = ImageChops.subtract(blue, green)
+    else:
+        accent = ImageChops.subtract(red, green)
+    gradient = Image.linear_gradient("L").resize(RUNTIME_SIZE)
+    return Image.merge("RGBA", (coverage, accent, gradient.point(lambda value: value // 3), Image.new("L", RUNTIME_SIZE, 255)))
+
+
+def _apply_outer_edge_shade(master: Image.Image) -> None:
+    """Fade only the outer frame; the central 55% is intentionally untouched."""
+    low_width, low_height = 320, 180
+    central_left, central_top = 72, 40
+    central_right, central_bottom = 248, 140
+    mask = Image.new("L", (low_width, low_height), 0)
+    pixels = mask.load()
+    for y in range(low_height):
+        for x in range(low_width):
+            distance = max(central_left - x, x - central_right, central_top - y, y - central_bottom, 0)
+            pixels[x, y] = min(74, distance * 2)
+    shade = Image.new("RGBA", MASTER_SIZE, (4, 5, 7, 0))
+    shade.putalpha(mask.resize(MASTER_SIZE, Image.Resampling.LANCZOS))
+    master.alpha_composite(shade)
+
+
+def _build_generic_ecology(ecology: str, root: Path) -> BuildReport:
+    if ecology not in _ECOLOGY_STYLE:
+        raise ValueError(f"unsupported ecology: {ecology!r}")
+    sources = _read_sources(ecology, root)
+    with Image.open(sources["wall"]) as wall_input, Image.open(sources["floor"]) as floor_input, Image.open(sources["open_room"]) as room_input, Image.open(sources["near_wide"]) as near_input, Image.open(sources["right_extension"]) as right_input, Image.open(sources["periphery_wide"]) as periphery_input:
+        wall, floor, room_wide, near_wide, right_extension, periphery = (
+            wall_input.convert("RGBA"), floor_input.convert("RGBA"),
+            room_input.convert("RGBA"), near_input.convert("RGBA"),
+            right_input.convert("RGBA"), periphery_input.convert("RGBA"),
+        )
+        if any(image.width < 720 or image.height < 720 for image in (wall, floor, room_wide, near_wide, right_extension, periphery)):
+            raise ValueError("native ecology source images must each be at least 720 by 720")
+        master = Image.new("RGBA", MASTER_SIZE, _ECOLOGY_STYLE[ecology][0])
+        outer = Image.new("RGBA", MASTER_SIZE, (0, 0, 0, 0))
+        placements: list[dict[str, Any]] = []
+        # Eight broad, overlapping crops make the outer context continuous;
+        # no regular full-screen tile grid is permitted.
+        wide_width = min(1536, periphery.width)
+        wide_x = (periphery.width - wide_width) // 2
+        top_height = min(760, periphery.height)
+        side_width, side_height = min(1152, periphery.width), min(1024, periphery.height)
+        left_x = 0
+        right_x = periphery.width - side_width
+        _place_native(outer, periphery, sources["periphery_wide"], root, (wide_x, 0, wide_x + wide_width, top_height), (1152, 0, 1152 + wide_width, top_height), placements, feather_px=170)
+        _place_native(outer, periphery, sources["periphery_wide"], root, (left_x, 0, left_x + side_width, side_height), (0, 0, side_width, side_height), placements, feather_px=170)
+        _place_native(outer, periphery, sources["periphery_wide"], root, (right_x, 0, right_x + side_width, side_height), (3840 - side_width, 0, 3840, side_height), placements, feather_px=170)
+        bottom_height = 680
+        bottom_y = periphery.height - bottom_height
+        _place_native(outer, periphery, sources["periphery_wide"], root, (wide_x, bottom_y, wide_x + wide_width, periphery.height), (1152, 1480, 1152 + wide_width, 2160), placements, feather_px=170)
+        wall_height = min(860, wall.height)
+        _place_native(outer, wall, sources["wall"], root, (0, 0, 950, wall_height), (0, 720, 950, 720 + wall_height), placements, feather_px=160)
+        _place_native(outer, wall, sources["wall"], root, (wall.width - 950, wall.height - wall_height, wall.width, wall.height), (2890, 720, 3840, 720 + wall_height), placements, feather_px=160)
+        floor_height = min(760, floor.height)
+        _place_native(outer, floor, sources["floor"], root, (0, floor.height - floor_height, 1250, floor.height), (0, 1400, 1250, 2160), placements, feather_px=160)
+        _place_native(outer, floor, sources["floor"], root, (floor.width - 1250, floor.height - floor_height, floor.width, floor.height), (2590, 1400, 3840, 2160), placements, feather_px=160)
+        outer = ImageEnhance.Contrast(outer.filter(ImageFilter.GaussianBlur(6))).enhance(0.78)
+        outer = ImageEnhance.Brightness(outer).enhance(1.40 if ecology == "chaos" else 1.10)
+        outer.putalpha(outer.getchannel("A").point(lambda value: value * 100 // 255))
+        master.alpha_composite(outer)
+        _apply_outer_edge_shade(master)
+        continuous_room_rect = (864, 486, 2976, 1674)
+        room_left = 560 if ecology == "chaos" else 700
+        near_left = 760 if ecology == "chaos" else 900
+        wide_width, wide_height = room_wide.size
+        _place_native(master, room_wide, sources["open_room"], root, (0, 0, wide_width, wide_height), (room_left, 486, room_left + wide_width, 486 + wide_height), placements, feather_px=85, continuous_room=True)
+        right_start = max(room_left + wide_width - 180, 3150 - right_extension.width)
+        right_width = 3150 - right_start
+        _place_native(master, right_extension, sources["right_extension"], root, (0, 0, right_width, 1188), (right_start, 486, 3150, 1674), placements, feather_px=75 if ecology == "chaos" else 90, continuous_room=True)
+        near_width, near_height = near_wide.size
+        near_target_height = min(near_height, MASTER_SIZE[1] - 1259)
+        near_source_top = near_height - near_target_height
+        _place_native(master, near_wide, sources["near_wide"], root, (0, near_source_top, near_width, near_height), (near_left, 1259, near_left + near_width, 1259 + near_target_height), placements, feather_px=90, continuous_room=True)
+        _place_native(master, near_wide, sources["near_wide"], root, (0, near_source_top, 200, near_height), (room_left, 1200, near_left, 1200 + near_target_height), placements, feather_px=75, continuous_room=True)
+
+    master_path = root / f"art_source/stage12/backgrounds/{ecology}/{ecology}-room-background-master.png"
+    runtime_path = root / f"assets/stage12/{ecology}_room_background.png"
+    material_path = root / f"assets/stage12/{ecology}_room_background_material.png"
+    if ecology == "chaos":
+        # Keep the dark obsidian value range while making the restrained
+        # magenta/acid-green ecology legible after the runtime downsample.
+        master = ImageEnhance.Color(master).enhance(1.07)
+    _save_png(master, master_path)
+    runtime = master.resize(RUNTIME_SIZE, Image.Resampling.LANCZOS)
+    _save_png(runtime, runtime_path)
+    _save_png(_make_ecology_material(runtime, ecology), material_path)
+    report = BuildReport(
+        ecology=ecology, master_size=MASTER_SIZE, runtime_size=RUNTIME_SIZE,
+        source_sha256={_relative(path, root): _sha256(path) for path in sources.values()},
+        placements=placements, continuous_room_rect=continuous_room_rect,
+        runtime_from_master={"resampling": "LANCZOS", "passes": 1},
+        output_sha256={"master": _sha256(master_path), "runtime": _sha256(runtime_path), "material": _sha256(material_path)},
+    )
+    report_path = root / "assets/stage12/room-background-build.json"
+    existing: dict[str, Any] = {"schema_version": 1, "ecologies": {}}
+    if report_path.exists():
+        existing = json.loads(report_path.read_text(encoding="utf-8"))
+    existing.setdefault("schema_version", 1)
+    existing.setdefault("ecologies", {})[ecology] = report.as_json()
+    report_path.write_text(json.dumps(existing, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return report
+
+
 def build_ecology(ecology: str, root: Path) -> BuildReport:
     """Build one ecology strictly from its declared native source directory."""
     root = root.resolve()
     if ecology != "fire":
-        raise ValueError(f"Task 1 only supports fire, not {ecology!r}")
+        return _build_generic_ecology(ecology, root)
     sources = _read_sources(ecology, root)
     with (
         Image.open(sources["floor_legacy"]) as floor_legacy_input,

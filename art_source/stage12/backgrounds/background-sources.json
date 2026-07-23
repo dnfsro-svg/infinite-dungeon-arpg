@@ -36,6 +36,36 @@
           "role": "room_near_extension"
         }
       ]
+    },
+    "water": {
+      "sources": [
+        {"path": "art_source/stage12/backgrounds/water/water-wall-tile-v1.png", "role": "wall"},
+        {"path": "art_source/stage12/backgrounds/water/water-floor-tile-v1.png", "role": "floor"},
+        {"path": "art_source/stage12/backgrounds/water/water-periphery-wide-v4.png", "role": "periphery_wide"},
+        {"path": "art_source/stage12/backgrounds/water/water-open-room-v5.png", "role": "open_room"},
+        {"path": "art_source/stage12/backgrounds/water/water-near-wide-v3.png", "role": "near_wide"},
+        {"path": "art_source/stage12/backgrounds/water/water-open-right-v5.png", "role": "right_extension"}
+      ]
+    },
+    "lightning": {
+      "sources": [
+        {"path": "art_source/stage12/backgrounds/lightning/lightning-wall-tile-v1.png", "role": "wall"},
+        {"path": "art_source/stage12/backgrounds/lightning/lightning-floor-tile-v1.png", "role": "floor"},
+        {"path": "art_source/stage12/backgrounds/lightning/lightning-open-room-v5.png", "role": "open_room"},
+        {"path": "art_source/stage12/backgrounds/lightning/lightning-open-near-v5.png", "role": "near_wide"},
+        {"path": "art_source/stage12/backgrounds/lightning/lightning-periphery-wide-v5.png", "role": "periphery_wide"},
+        {"path": "art_source/stage12/backgrounds/lightning/lightning-open-right-v5.png", "role": "right_extension"}
+      ]
+    },
+    "chaos": {
+      "sources": [
+        {"path": "art_source/stage12/backgrounds/chaos/chaos-wall-tile-v1.png", "role": "wall"},
+        {"path": "art_source/stage12/backgrounds/chaos/chaos-floor-tile-v1.png", "role": "floor"},
+        {"path": "art_source/stage12/backgrounds/chaos/chaos-open-room-v5.png", "role": "open_room"},
+        {"path": "art_source/stage12/backgrounds/chaos/chaos-open-near-v5.png", "role": "near_wide"},
+        {"path": "art_source/stage12/backgrounds/chaos/chaos-periphery-wide-v5.png", "role": "periphery_wide"},
+        {"path": "art_source/stage12/backgrounds/chaos/chaos-open-right-v5.png", "role": "right_extension"}
+      ]
     }
   }
 }

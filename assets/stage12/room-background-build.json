@@ -1,5 +1,269 @@
 {
   "ecologies": {
+    "chaos": {
+      "continuous_room_rect": [
+        864,
+        486,
+        2976,
+        1674
+      ],
+      "ecology": "chaos",
+      "master_size": [
+        3840,
+        2160
+      ],
+      "output_sha256": {
+        "master": "2957f08659de3d173b5d1e7d2d7b8148b943ebdd65ad167c5b5e385d26bfc578",
+        "material": "e3768c285bf72849e64197d9f4b14250c3ad303f09bcec6b10afef7ef3c59adc",
+        "runtime": "b702a3dfa62cfe8e3b864499f8a230e4e27caa2cb18c5175f6e2fab7609dbed0"
+      },
+      "placements": [
+        {
+          "alpha_feather_px": 170,
+          "continuous_room": false,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/chaos/chaos-periphery-wide-v5.png",
+          "source_rect": [
+            0,
+            0,
+            1536,
+            760
+          ],
+          "target_rect": [
+            1152,
+            0,
+            2688,
+            760
+          ]
+        },
+        {
+          "alpha_feather_px": 170,
+          "continuous_room": false,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/chaos/chaos-periphery-wide-v5.png",
+          "source_rect": [
+            0,
+            0,
+            1152,
+            1024
+          ],
+          "target_rect": [
+            0,
+            0,
+            1152,
+            1024
+          ]
+        },
+        {
+          "alpha_feather_px": 170,
+          "continuous_room": false,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/chaos/chaos-periphery-wide-v5.png",
+          "source_rect": [
+            384,
+            0,
+            1536,
+            1024
+          ],
+          "target_rect": [
+            2688,
+            0,
+            3840,
+            1024
+          ]
+        },
+        {
+          "alpha_feather_px": 170,
+          "continuous_room": false,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/chaos/chaos-periphery-wide-v5.png",
+          "source_rect": [
+            0,
+            344,
+            1536,
+            1024
+          ],
+          "target_rect": [
+            1152,
+            1480,
+            2688,
+            2160
+          ]
+        },
+        {
+          "alpha_feather_px": 160,
+          "continuous_room": false,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/chaos/chaos-wall-tile-v1.png",
+          "source_rect": [
+            0,
+            0,
+            950,
+            860
+          ],
+          "target_rect": [
+            0,
+            720,
+            950,
+            1580
+          ]
+        },
+        {
+          "alpha_feather_px": 160,
+          "continuous_room": false,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/chaos/chaos-wall-tile-v1.png",
+          "source_rect": [
+            304,
+            394,
+            1254,
+            1254
+          ],
+          "target_rect": [
+            2890,
+            720,
+            3840,
+            1580
+          ]
+        },
+        {
+          "alpha_feather_px": 160,
+          "continuous_room": false,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/chaos/chaos-floor-tile-v1.png",
+          "source_rect": [
+            0,
+            494,
+            1250,
+            1254
+          ],
+          "target_rect": [
+            0,
+            1400,
+            1250,
+            2160
+          ]
+        },
+        {
+          "alpha_feather_px": 160,
+          "continuous_room": false,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/chaos/chaos-floor-tile-v1.png",
+          "source_rect": [
+            4,
+            494,
+            1254,
+            1254
+          ],
+          "target_rect": [
+            2590,
+            1400,
+            3840,
+            2160
+          ]
+        },
+        {
+          "alpha_feather_px": 85,
+          "continuous_room": true,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/chaos/chaos-open-room-v5.png",
+          "source_rect": [
+            0,
+            0,
+            1774,
+            887
+          ],
+          "target_rect": [
+            560,
+            486,
+            2334,
+            1373
+          ]
+        },
+        {
+          "alpha_feather_px": 75,
+          "continuous_room": true,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/chaos/chaos-open-right-v5.png",
+          "source_rect": [
+            0,
+            0,
+            996,
+            1188
+          ],
+          "target_rect": [
+            2154,
+            486,
+            3150,
+            1674
+          ]
+        },
+        {
+          "alpha_feather_px": 90,
+          "continuous_room": true,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/chaos/chaos-open-near-v5.png",
+          "source_rect": [
+            0,
+            123,
+            1536,
+            1024
+          ],
+          "target_rect": [
+            760,
+            1259,
+            2296,
+            2160
+          ]
+        },
+        {
+          "alpha_feather_px": 75,
+          "continuous_room": true,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/chaos/chaos-open-near-v5.png",
+          "source_rect": [
+            0,
+            123,
+            200,
+            1024
+          ],
+          "target_rect": [
+            560,
+            1200,
+            760,
+            2101
+          ]
+        }
+      ],
+      "runtime_from_master": {
+        "passes": 1,
+        "resampling": "LANCZOS"
+      },
+      "runtime_size": [
+        2560,
+        1440
+      ],
+      "source_sha256": {
+        "art_source/stage12/backgrounds/chaos/chaos-floor-tile-v1.png": "4d16b8267bd4e1b0ee09e89a640f8832f7ce2f68f5b0af7063e81e372e96ce77",
+        "art_source/stage12/backgrounds/chaos/chaos-open-near-v5.png": "da08599308df25eda34631af9b81035e963df4f7a0f6c05ea7bf85fe58adabc0",
+        "art_source/stage12/backgrounds/chaos/chaos-open-right-v5.png": "67ae8fcc0e3eb274240e2e435d7b26279a2ebcba6b8ba3403a637024413f863f",
+        "art_source/stage12/backgrounds/chaos/chaos-open-room-v5.png": "d4c29c429e6f83f19a03f400ec88dcdb402b51897689952589d4ea01bcb0efbd",
+        "art_source/stage12/backgrounds/chaos/chaos-periphery-wide-v5.png": "06bfc526699aa43f118db40ebddf33fa14fb6a5ae7ebca42c66c49bac2afe7c4",
+        "art_source/stage12/backgrounds/chaos/chaos-wall-tile-v1.png": "08a326670d6cec8cba6c395164ce055ed70277433fee52f7e901ae9dc6b875f3"
+      }
+    },
     "fire": {
       "continuous_room_rect": [
         864,
@@ -1005,6 +1269,534 @@
         "art_source/stage12/backgrounds/fire/fire-room-right-extension-v3.png": "b518d9cc0a74f7fbb9343473bcb3c20fe4c3e088058ddb58b6c0fb320d5cebd1",
         "art_source/stage12/backgrounds/fire/fire-wall-tile-v1.png": "6f566db9435856b2b81ccaf027335eb778877dcc1676198428881b136e878963",
         "art_source/stage12/backgrounds/fire/fire-wall-tile-v2.png": "eacb75a200d43d652c01477da529a478287d158b9ef6fad6befe19daab4e2155"
+      }
+    },
+    "lightning": {
+      "continuous_room_rect": [
+        864,
+        486,
+        2976,
+        1674
+      ],
+      "ecology": "lightning",
+      "master_size": [
+        3840,
+        2160
+      ],
+      "output_sha256": {
+        "master": "2ae52870f21e8d3b21665337f7ea9f88c16425392ea520279206a25ee3480558",
+        "material": "ae29a71f8f5c97af31699f89c3d402a5c9f9497705373ea02ee76d56d8f59f2f",
+        "runtime": "eb02114b3d352c03454b53c1d843b388c02aea8bf6aeeae1d63c8277f364cab7"
+      },
+      "placements": [
+        {
+          "alpha_feather_px": 170,
+          "continuous_room": false,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/lightning/lightning-periphery-wide-v5.png",
+          "source_rect": [
+            78,
+            0,
+            1614,
+            760
+          ],
+          "target_rect": [
+            1152,
+            0,
+            2688,
+            760
+          ]
+        },
+        {
+          "alpha_feather_px": 170,
+          "continuous_room": false,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/lightning/lightning-periphery-wide-v5.png",
+          "source_rect": [
+            0,
+            0,
+            1152,
+            929
+          ],
+          "target_rect": [
+            0,
+            0,
+            1152,
+            929
+          ]
+        },
+        {
+          "alpha_feather_px": 170,
+          "continuous_room": false,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/lightning/lightning-periphery-wide-v5.png",
+          "source_rect": [
+            541,
+            0,
+            1693,
+            929
+          ],
+          "target_rect": [
+            2688,
+            0,
+            3840,
+            929
+          ]
+        },
+        {
+          "alpha_feather_px": 170,
+          "continuous_room": false,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/lightning/lightning-periphery-wide-v5.png",
+          "source_rect": [
+            78,
+            249,
+            1614,
+            929
+          ],
+          "target_rect": [
+            1152,
+            1480,
+            2688,
+            2160
+          ]
+        },
+        {
+          "alpha_feather_px": 160,
+          "continuous_room": false,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/lightning/lightning-wall-tile-v1.png",
+          "source_rect": [
+            0,
+            0,
+            950,
+            860
+          ],
+          "target_rect": [
+            0,
+            720,
+            950,
+            1580
+          ]
+        },
+        {
+          "alpha_feather_px": 160,
+          "continuous_room": false,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/lightning/lightning-wall-tile-v1.png",
+          "source_rect": [
+            304,
+            394,
+            1254,
+            1254
+          ],
+          "target_rect": [
+            2890,
+            720,
+            3840,
+            1580
+          ]
+        },
+        {
+          "alpha_feather_px": 160,
+          "continuous_room": false,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/lightning/lightning-floor-tile-v1.png",
+          "source_rect": [
+            0,
+            494,
+            1250,
+            1254
+          ],
+          "target_rect": [
+            0,
+            1400,
+            1250,
+            2160
+          ]
+        },
+        {
+          "alpha_feather_px": 160,
+          "continuous_room": false,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/lightning/lightning-floor-tile-v1.png",
+          "source_rect": [
+            4,
+            494,
+            1254,
+            1254
+          ],
+          "target_rect": [
+            2590,
+            1400,
+            3840,
+            2160
+          ]
+        },
+        {
+          "alpha_feather_px": 85,
+          "continuous_room": true,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/lightning/lightning-open-room-v5.png",
+          "source_rect": [
+            0,
+            0,
+            1744,
+            902
+          ],
+          "target_rect": [
+            700,
+            486,
+            2444,
+            1388
+          ]
+        },
+        {
+          "alpha_feather_px": 90,
+          "continuous_room": true,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/lightning/lightning-open-right-v5.png",
+          "source_rect": [
+            0,
+            0,
+            886,
+            1188
+          ],
+          "target_rect": [
+            2264,
+            486,
+            3150,
+            1674
+          ]
+        },
+        {
+          "alpha_feather_px": 90,
+          "continuous_room": true,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/lightning/lightning-open-near-v5.png",
+          "source_rect": [
+            0,
+            0,
+            1746,
+            901
+          ],
+          "target_rect": [
+            900,
+            1259,
+            2646,
+            2160
+          ]
+        },
+        {
+          "alpha_feather_px": 75,
+          "continuous_room": true,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/lightning/lightning-open-near-v5.png",
+          "source_rect": [
+            0,
+            0,
+            200,
+            901
+          ],
+          "target_rect": [
+            700,
+            1200,
+            900,
+            2101
+          ]
+        }
+      ],
+      "runtime_from_master": {
+        "passes": 1,
+        "resampling": "LANCZOS"
+      },
+      "runtime_size": [
+        2560,
+        1440
+      ],
+      "source_sha256": {
+        "art_source/stage12/backgrounds/lightning/lightning-floor-tile-v1.png": "681dee4b870a992d03bfaf7204e950a04e5428a4575531c2f513418d5fc2cce6",
+        "art_source/stage12/backgrounds/lightning/lightning-open-near-v5.png": "19082f0852409ccaa8b64cd5b4c4020b36205766bf0e06c87e393a4add069091",
+        "art_source/stage12/backgrounds/lightning/lightning-open-right-v5.png": "abfc34591470133fc1589b5c2efc9c6ef45556737e6af3ab25d6ceff77366806",
+        "art_source/stage12/backgrounds/lightning/lightning-open-room-v5.png": "c846e27ca751b1b955972fdaed20d1175d6de0be77b05ed84fcd4ffda50f2735",
+        "art_source/stage12/backgrounds/lightning/lightning-periphery-wide-v5.png": "53a96892cfaa3bca73e009e705ec911ddf136bb5cf3af154fbe939150ac970a4",
+        "art_source/stage12/backgrounds/lightning/lightning-wall-tile-v1.png": "f07e038258e1d7bb664944b784bc5cb55b07f060335736af171a02d77badee4d"
+      }
+    },
+    "water": {
+      "continuous_room_rect": [
+        864,
+        486,
+        2976,
+        1674
+      ],
+      "ecology": "water",
+      "master_size": [
+        3840,
+        2160
+      ],
+      "output_sha256": {
+        "master": "c86b6f5fcb0fcd696a076af3d9c43c04513cc0c1d0f61ab59decf4603ab3e282",
+        "material": "5809534dfca69af6378f095460c6e60813003805ab8a174e5f04bd1a0f3d9d21",
+        "runtime": "0a7dd7ab93e09593314783694ded5db2a2ee80e966e642eacdf33d6131e30155"
+      },
+      "placements": [
+        {
+          "alpha_feather_px": 170,
+          "continuous_room": false,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/water/water-periphery-wide-v4.png",
+          "source_rect": [
+            0,
+            0,
+            1536,
+            760
+          ],
+          "target_rect": [
+            1152,
+            0,
+            2688,
+            760
+          ]
+        },
+        {
+          "alpha_feather_px": 170,
+          "continuous_room": false,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/water/water-periphery-wide-v4.png",
+          "source_rect": [
+            0,
+            0,
+            1152,
+            1024
+          ],
+          "target_rect": [
+            0,
+            0,
+            1152,
+            1024
+          ]
+        },
+        {
+          "alpha_feather_px": 170,
+          "continuous_room": false,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/water/water-periphery-wide-v4.png",
+          "source_rect": [
+            384,
+            0,
+            1536,
+            1024
+          ],
+          "target_rect": [
+            2688,
+            0,
+            3840,
+            1024
+          ]
+        },
+        {
+          "alpha_feather_px": 170,
+          "continuous_room": false,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/water/water-periphery-wide-v4.png",
+          "source_rect": [
+            0,
+            344,
+            1536,
+            1024
+          ],
+          "target_rect": [
+            1152,
+            1480,
+            2688,
+            2160
+          ]
+        },
+        {
+          "alpha_feather_px": 160,
+          "continuous_room": false,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/water/water-wall-tile-v1.png",
+          "source_rect": [
+            0,
+            0,
+            950,
+            860
+          ],
+          "target_rect": [
+            0,
+            720,
+            950,
+            1580
+          ]
+        },
+        {
+          "alpha_feather_px": 160,
+          "continuous_room": false,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/water/water-wall-tile-v1.png",
+          "source_rect": [
+            304,
+            394,
+            1254,
+            1254
+          ],
+          "target_rect": [
+            2890,
+            720,
+            3840,
+            1580
+          ]
+        },
+        {
+          "alpha_feather_px": 160,
+          "continuous_room": false,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/water/water-floor-tile-v1.png",
+          "source_rect": [
+            0,
+            494,
+            1250,
+            1254
+          ],
+          "target_rect": [
+            0,
+            1400,
+            1250,
+            2160
+          ]
+        },
+        {
+          "alpha_feather_px": 160,
+          "continuous_room": false,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/water/water-floor-tile-v1.png",
+          "source_rect": [
+            4,
+            494,
+            1254,
+            1254
+          ],
+          "target_rect": [
+            2590,
+            1400,
+            3840,
+            2160
+          ]
+        },
+        {
+          "alpha_feather_px": 85,
+          "continuous_room": true,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/water/water-open-room-v5.png",
+          "source_rect": [
+            0,
+            0,
+            1536,
+            1024
+          ],
+          "target_rect": [
+            700,
+            486,
+            2236,
+            1510
+          ]
+        },
+        {
+          "alpha_feather_px": 90,
+          "continuous_room": true,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/water/water-open-right-v5.png",
+          "source_rect": [
+            0,
+            0,
+            1024,
+            1188
+          ],
+          "target_rect": [
+            2126,
+            486,
+            3150,
+            1674
+          ]
+        },
+        {
+          "alpha_feather_px": 90,
+          "continuous_room": true,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/water/water-near-wide-v3.png",
+          "source_rect": [
+            0,
+            0,
+            1774,
+            887
+          ],
+          "target_rect": [
+            900,
+            1259,
+            2674,
+            2146
+          ]
+        },
+        {
+          "alpha_feather_px": 75,
+          "continuous_room": true,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "source": "art_source/stage12/backgrounds/water/water-near-wide-v3.png",
+          "source_rect": [
+            0,
+            0,
+            200,
+            887
+          ],
+          "target_rect": [
+            700,
+            1200,
+            900,
+            2087
+          ]
+        }
+      ],
+      "runtime_from_master": {
+        "passes": 1,
+        "resampling": "LANCZOS"
+      },
+      "runtime_size": [
+        2560,
+        1440
+      ],
+      "source_sha256": {
+        "art_source/stage12/backgrounds/water/water-floor-tile-v1.png": "ac92ec5cb181442015ccbc21e270aa8924c3dd42ee85073af4b2fb2996b47748",
+        "art_source/stage12/backgrounds/water/water-near-wide-v3.png": "f33a7756394533782f0918fc18dd1eaad0ac404787c4add27b010a75ae222c75",
+        "art_source/stage12/backgrounds/water/water-open-right-v5.png": "7f028f348ca65f9d63213eaa91f8253c9a6a2546237f1e4ce8b84bd88ba8437d",
+        "art_source/stage12/backgrounds/water/water-open-room-v5.png": "5183e59dbf4c277ccd4be82fcf972400f1948cc554167b81ac7e363b0602361b",
+        "art_source/stage12/backgrounds/water/water-periphery-wide-v4.png": "4dfd6d888621ec1da3f4d13ecaf170b029ba12cfca6d65f5adb9c5f5668f500b",
+        "art_source/stage12/backgrounds/water/water-wall-tile-v1.png": "fde2c89da44e12481b510a3b1d121142df15b7f8d47536c1e15369a226fb3bbd"
       }
     }
   },
