@@ -25,6 +25,19 @@ REPORT = ROOT / "assets/stage12/room-background-build.json"
 CONTINUOUS_ROOM_ROI = (864, 486, 2976, 1674)
 
 
+def output_paths(root: Path, ecology: str) -> dict[str, Path]:
+    """Return the committed/generated three-piece output contract for one ecology."""
+    return {
+        "master": root / f"art_source/stage12/backgrounds/{ecology}/{ecology}-room-background-master.png",
+        "runtime": root / f"assets/stage12/{ecology}_room_background.png",
+        "material": root / f"assets/stage12/{ecology}_room_background_material.png",
+    }
+
+
+def normalized_json(path: Path) -> str:
+    return json.dumps(json.loads(path.read_text(encoding="utf-8")), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -141,21 +154,43 @@ def right_overlap_metrics(image: Image.Image, main: dict[str, object], right: di
 
 
 class NativeRoomBackgroundAssetPipelineTests(unittest.TestCase):
-    def _assert_all_ecology_build_contracts(self, root: Path) -> None:
+    def _snapshot_committed_output_contract(self, root: Path) -> dict[str, object]:
+        """Capture the pre-build artefacts that the temporary rebuild must reproduce."""
+        outputs: dict[str, dict[str, str]] = {}
+        for ecology in ECOLOGIES:
+            outputs[ecology] = {kind: sha256(path) for kind, path in output_paths(root, ecology).items()}
+        return {
+            "outputs": outputs,
+            "report": normalized_json(root / "assets/stage12/room-background-build.json"),
+        }
+
+    def _assert_all_ecology_build_contracts(self, root: Path, expected_root: Path) -> None:
+        expected = self._snapshot_committed_output_contract(expected_root)
         builder = root / "tools/build_native_room_backgrounds.py"
         self.assertTrue(builder.is_file())
         for ecology in ECOLOGIES:
             result = subprocess.run([sys.executable, str(builder), "--ecology", ecology], cwd=root, text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
         report = json.loads((root / "assets/stage12/room-background-build.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            normalized_json(root / "assets/stage12/room-background-build.json"),
+            expected["report"],
+            "temporary rebuild changed the committed build report contract",
+        )
         output_hashes = {"master": set(), "runtime": set(), "material": set()}
         for ecology in ECOLOGIES:
             with self.subTest(root=root, ecology=ecology):
                 entries = declared_sources(ecology, root)
                 data = report["ecologies"][ecology]
-                master = root / f"art_source/stage12/backgrounds/{ecology}/{ecology}-room-background-master.png"
-                runtime = root / f"assets/stage12/{ecology}_room_background.png"
-                material = root / f"assets/stage12/{ecology}_room_background_material.png"
+                outputs = output_paths(root, ecology)
+                expected_outputs = expected["outputs"][ecology]  # type: ignore[index]
+                master, runtime, material = outputs["master"], outputs["runtime"], outputs["material"]
+                for kind, path in outputs.items():
+                    self.assertEqual(
+                        sha256(path),
+                        expected_outputs[kind],  # type: ignore[index]
+                        f"{ecology} rebuilt {kind} no longer matches its committed output",
+                    )
                 self.assertEqual(data["master_size"], [3840, 2160])
                 self.assertEqual(data["runtime_size"], [2560, 1440])
                 self.assertEqual(data["runtime_from_master"], {"resampling": "LANCZOS", "passes": 1})
@@ -253,7 +288,14 @@ class NativeRoomBackgroundAssetPipelineTests(unittest.TestCase):
         self.assertEqual(candidate_manifest["schema_version"], 1)
         formal_sources = {entry["path"] for ecology in ECOLOGIES for entry in declared_sources(ecology)}
         candidates = candidate_manifest["candidates"]
-        self.assertGreaterEqual(len(candidates), 11)
+        self.assertEqual(len(candidates), 14)
+        manifest_paths = [entry["path"] for entry in candidates]
+        self.assertEqual(len(manifest_paths), len(set(manifest_paths)), "candidate manifest contains duplicate paths")
+        candidate_pngs = {
+            path.relative_to(ROOT).as_posix()
+            for path in CANDIDATE_MANIFEST.parent.rglob("*.png")
+        }
+        self.assertEqual(candidate_pngs, set(manifest_paths), "candidate PNG files and manifest paths must match exactly")
         for entry in candidates:
             with self.subTest(path=entry["path"]):
                 candidate = ROOT / entry["path"]
@@ -286,13 +328,13 @@ class NativeRoomBackgroundAssetPipelineTests(unittest.TestCase):
             clean_root = Path(temporary)
             for path in inputs:
                 self.assertTrue((clean_root / path).is_file(), f"archive missing manifest input: {path}")
-            self._assert_all_ecology_build_contracts(clean_root)
+            self._assert_all_ecology_build_contracts(clean_root, expected_root=clean_root)
 
     def test_all_ecology_builds_are_native_distinct_and_combat_readable(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             clean_root = Path(temporary) / "clean-tree"
             self._copy_to_clean_tree(clean_root)
-            self._assert_all_ecology_build_contracts(clean_root)
+            self._assert_all_ecology_build_contracts(clean_root, expected_root=ROOT)
 
 
 if __name__ == "__main__":

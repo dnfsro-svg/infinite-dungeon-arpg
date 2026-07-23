@@ -76,3 +76,7 @@
 - 候选治理：审查指出的 11 张未消费候选已 `git mv` 到 `art_source/stage12/backgrounds/candidates/{water,lightning,chaos}/`；为防止 v6 替换后遗留，3 张 v5 右延展也一并移入，现共 14 张。`candidates/candidate-manifest.json` 对每张记录 `status`、replacement、ImageGen prompt、日期、尺寸与 SHA-256；README 明确禁止正式清单、构建器、runtime 和 package 消费该目录。
 - 右延展 RED：旧 v5 的 main/right 全重叠端点亮度漂移为 water `7.55`、lightning `27.23`，在 `< 5.0` 的连续性门槛下可靠失败。以对应 `open-room-v5` 编辑生成 portrait `open-right-v6` 后，三生态变为 water `1.62`、lightning `0.90`、chaos `3.16`；起点与结束梯度均 `< 3.0`。雷图 overlap 内的 `7.93` 内部峰值被定位为合法蓝白裂隙纹理，结构峰值阈值为 `< 9.0`，不是放宽端点门槛。
 - 最终人工复核：water、lightning、chaos 的 v6 右延展均 PASS；完整 16:9 中中央地面连通，无门、洞、柱、能量束、瀑布、障碍、文字或 UI。
+- 第二轮复审的产物绑定 RED：在 `git archive 5b1f427` 的无 Git 副本中，用已提交的 lightning runtime 覆盖 water runtime；旧测试仍错误返回 `OK (skipped=1)`，证明临时构建的自校验不能保护正式提交产物。
+- 第二轮复审的产物绑定 GREEN：临时最小闭包重建后，逐项比较四生态共 12 个 master/runtime/material SHA-256 与测试根目录中的已提交版本，并比较规范化后的完整 `room-background-build.json`；同一故障注入现在会以 `water rebuilt runtime no longer matches its committed output` 明确失败，共享工作树仍只读。
+- 候选双向闭包：候选数量固定为 14，manifest path 必须唯一，且 `candidates/**/*.png` 文件集合必须与 manifest path 集合完全相等；未登记候选或悬空记录都会失败。
+- 第二轮修复最终验证：工作树完整模块 4/4 PASS（30.673 秒）；最终暂存树经 `git write-tree` + `git archive` 解压后确认无 `.git`，完整模块 3 PASS、1 个 Git-index 专属检查按设计 SKIP（14.092 秒）；`git diff --cached --check` PASS。
