@@ -27,7 +27,11 @@
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
+#define CloseWindow CloseWindowWin32
+#define ShowCursor ShowCursorWin32
 #include <windows.h>
+#undef ShowCursor
+#undef CloseWindow
 #endif
 
 namespace {
