@@ -59,8 +59,9 @@ def _read_sources(ecology: str, root: Path) -> dict[str, Path]:
         if candidate.parent != permitted_directory or not candidate.is_file():
             raise ValueError(f"invalid declared source: {candidate}")
         sources[role] = candidate
-    if set(sources) != {"floor", "wall"}:
-        raise ValueError("fire build requires exactly one floor and one wall source")
+    required_roles = {"floor_legacy", "floor_near", "floor_mid", "wall_legacy", "wall_far", "room_layout"}
+    if set(sources) != required_roles:
+        raise ValueError("fire build requires declared floor, wall, and native room layout sources")
     return sources
 
 
@@ -70,60 +71,95 @@ def _place_native(
     source_path: Path,
     root: Path,
     source_rect: tuple[int, int, int, int],
-    target_xy: tuple[int, int],
+    target_rect: tuple[int, int, int, int],
     placements: list[dict[str, Any]],
+    feather_px: int = 0,
+    opacity: int = 255,
 ) -> None:
     left, top, right, bottom = source_rect
-    width, height = right - left, bottom - top
-    if width <= 0 or height <= 0 or right > source.width or bottom > source.height:
+    source_width, source_height = right - left, bottom - top
+    target_left, target_top, target_right, target_bottom = target_rect
+    target_width, target_height = target_right - target_left, target_bottom - target_top
+    if source_width <= 0 or source_height <= 0 or right > source.width or bottom > source.height:
         raise ValueError(f"invalid source crop {source_rect} for {source_path}")
-    target_rect = (target_xy[0], target_xy[1], target_xy[0] + width, target_xy[1] + height)
-    if target_rect[2] > canvas.width or target_rect[3] > canvas.height:
+    if target_width <= 0 or target_height <= 0:
+        raise ValueError(f"invalid target rectangle: {target_rect}")
+    if target_right > canvas.width or target_bottom > canvas.height:
         raise ValueError(f"target rectangle outside master: {target_rect}")
-    canvas.alpha_composite(source.crop(source_rect), target_xy)
+    if target_width > source_width or target_height > source_height:
+        raise ValueError(f"native source upscale is forbidden: {source_rect} -> {target_rect}")
+    crop = source.crop(source_rect)
+    if crop.size != (target_width, target_height):
+        crop = crop.resize((target_width, target_height), Image.Resampling.LANCZOS)
+    if feather_px or opacity < 255:
+        feather = min(feather_px, target_width // 3, target_height // 3)
+        mask = Image.new("L", crop.size, opacity)
+        if feather:
+            mask = Image.new("L", crop.size, 0)
+            ImageDraw.Draw(mask).rectangle(
+                (feather, feather, target_width - feather - 1, target_height - feather - 1),
+                fill=opacity,
+            )
+            mask = mask.filter(ImageFilter.GaussianBlur(max(1, feather // 2)))
+        crop.putalpha(ImageChops.multiply(crop.getchannel("A"), mask))
+    canvas.alpha_composite(crop, (target_left, target_top))
     placements.append(
         {
             "source": _relative(source_path, root),
             "source_rect": list(source_rect),
             "target_rect": list(target_rect),
-            "scale_x": 1.0,
-            "scale_y": 1.0,
+            "scale_x": target_width / source_width,
+            "scale_y": target_height / source_height,
+            "alpha_feather_px": feather_px,
         }
     )
 
 
-def _cover_native_area(
+def _cover_perspective_band(
     canvas: Image.Image,
-    source: Image.Image,
-    source_path: Path,
+    samples: list[tuple[Path, Image.Image]],
     root: Path,
     area: tuple[int, int, int, int],
-    phase: tuple[int, int],
+    sample_scale: float,
+    seed: int,
     placements: list[dict[str, Any]],
+    cell_target: tuple[int, int],
+    feather_px: int = 0,
+    opacity: int = 255,
 ) -> None:
     left, top, right, bottom = area
     y = top
     row = 0
     while y < bottom:
-        source_y = (phase[1] + row * 173) % source.height
-        height = min(source.height - source_y, bottom - y)
+        source_path, source = samples[(seed + row * 2) % len(samples)]
+        target_height = min(max(1, int(cell_target[1] * sample_scale)), bottom - y)
+        source_height = min(source.height, max(target_height, round(target_height / sample_scale)))
+        source_y = (seed * 53 + row * 193) % (source.height - source_height + 1)
         x = left
         column = 0
         while x < right:
-            source_x = (phase[0] + column * 211 + row * 97) % source.width
-            width = min(source.width - source_x, right - x)
+            source_path, source = samples[(seed + row * 3 + column) % len(samples)]
+            target_width = min(max(1, int(cell_target[0] * sample_scale)), right - x)
+            source_width = min(source.width, max(target_width, round(target_width / sample_scale)))
+            source_x = (seed * 71 + row * 107 + column * 251) % (source.width - source_width + 1)
+            source_height = min(source.height, max(target_height, round(target_height / sample_scale)))
+            source_y = (seed * 53 + row * 193 + column * 89) % (source.height - source_height + 1)
+            target_width = min(target_width, round(source_width * sample_scale), right - x)
+            target_height_actual = min(target_height, round(source_height * sample_scale), bottom - y)
             _place_native(
                 canvas,
                 source,
                 source_path,
                 root,
-                (source_x, source_y, source_x + width, source_y + height),
-                (x, y),
+                (source_x, source_y, source_x + source_width, source_y + source_height),
+                (x, y, x + target_width, y + target_height_actual),
                 placements,
+                feather_px=feather_px,
+                opacity=opacity,
             )
-            x += width
+            x += target_width
             column += 1
-        y += height
+        y += target_height
         row += 1
 
 
@@ -141,19 +177,25 @@ def _apply_room_structure(master: Image.Image) -> None:
     dark_steel = (20, 23, 25, 238)
     gold = (137, 103, 46, 220)
     ember = (223, 76, 20, 195)
-    horizon = [(0, 680), (560, 485), (1920, 415), (3280, 485), (3840, 680)]
+    horizon = [(120, 690), (690, 505), (1920, 445), (3150, 505), (3720, 690)]
     draw.line(horizon, fill=dark_steel, width=44, joint="curve")
     draw.line(horizon, fill=gold, width=6, joint="curve")
     draw.line(horizon, fill=ember, width=2, joint="curve")
-    draw.line([(80, 100), (80, 1800), (500, 2110)], fill=dark_steel, width=34)
-    draw.line([(3760, 100), (3760, 1800), (3340, 2110)], fill=dark_steel, width=34)
-    draw.line([(80, 100), (80, 1800), (500, 2110)], fill=gold, width=4)
-    draw.line([(3760, 100), (3760, 1800), (3340, 2110)], fill=gold, width=4)
-    for x in (420, 3420):
-        draw.rectangle((x - 92, 532, x + 92, 696), outline=dark_steel, width=28)
-        draw.rectangle((x - 92, 532, x + 92, 696), outline=gold, width=4)
-    draw.rectangle((1570, 58, 2270, 248), outline=dark_steel, width=32)
-    draw.rectangle((1570, 58, 2270, 248), outline=gold, width=4)
+    draw.line([(92, 130), (92, 1740), (530, 2110)], fill=dark_steel, width=34)
+    draw.line([(3748, 130), (3748, 1740), (3310, 2110)], fill=dark_steel, width=34)
+    draw.line([(92, 130), (92, 1740), (530, 2110)], fill=gold, width=4)
+    draw.line([(3748, 130), (3748, 1740), (3310, 2110)], fill=gold, width=4)
+    for y, left, right in ((835, 470, 3370), (1250, 350, 3490)):
+        draw.line([(left, y), (right, y)], fill=(12, 14, 16, 115), width=18)
+        draw.line([(left + 24, y), (right - 24, y)], fill=(114, 76, 35, 95), width=2)
+
+
+def _apply_quiet_outer_vignette(master: Image.Image) -> None:
+    overlay = Image.new("RGBA", master.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    for inset, alpha in ((0, 55), (110, 32), (230, 14)):
+        draw.rectangle((inset, inset, master.width - inset - 1, master.height - inset - 1), outline=(5, 6, 7, alpha), width=110)
+    master.alpha_composite(overlay)
 
 
 def _make_material(runtime: Image.Image) -> Image.Image:
@@ -177,17 +219,29 @@ def build_ecology(ecology: str, root: Path) -> BuildReport:
     if ecology != "fire":
         raise ValueError(f"Task 1 only supports fire, not {ecology!r}")
     sources = _read_sources(ecology, root)
-    floor_path, wall_path = sources["floor"], sources["wall"]
-    with Image.open(floor_path) as floor_input, Image.open(wall_path) as wall_input:
-        floor = floor_input.convert("RGBA")
-        wall = wall_input.convert("RGBA")
-        if min(floor.size) < 1024 or min(wall.size) < 1024:
+    with (
+        Image.open(sources["floor_legacy"]) as floor_legacy_input,
+        Image.open(sources["floor_near"]) as floor_near_input,
+        Image.open(sources["floor_mid"]) as floor_mid_input,
+        Image.open(sources["wall_legacy"]) as wall_legacy_input,
+        Image.open(sources["wall_far"]) as wall_far_input,
+        Image.open(sources["room_layout"]) as room_layout_input,
+    ):
+        loaded = {"floor_legacy": floor_legacy_input.convert("RGBA"), "floor_near": floor_near_input.convert("RGBA"), "floor_mid": floor_mid_input.convert("RGBA"), "wall_legacy": wall_legacy_input.convert("RGBA"), "wall_far": wall_far_input.convert("RGBA"), "room_layout": room_layout_input.convert("RGBA")}
+        if any(min(image.size) < 1024 for role, image in loaded.items() if role != "room_layout"):
             raise ValueError("native source tiles must each be at least 1024 by 1024")
+        if loaded["room_layout"].width < 1024 or loaded["room_layout"].height < 720:
+            raise ValueError("native room layout source is unexpectedly small")
         master = Image.new("RGBA", MASTER_SIZE, (20, 21, 22, 255))
         placements: list[dict[str, Any]] = []
-        _cover_native_area(master, wall, wall_path, root, (0, 0, 3840, 690), (83, 37), placements)
-        _cover_native_area(master, floor, floor_path, root, (0, 610, 3840, 2160), (171, 259), placements)
-        _apply_room_structure(master)
+        wall_samples = [(sources["wall_far"], loaded["wall_far"]), (sources["wall_legacy"], loaded["wall_legacy"])]
+        _cover_perspective_band(master, wall_samples, root, (0, 0, 3840, 650), 0.78, 17, placements, (760, 540), 75, 150)
+        _cover_perspective_band(master, [(sources["floor_mid"], loaded["floor_mid"]), (sources["floor_legacy"], loaded["floor_legacy"])], root, (0, 1450, 3840, 2160), 0.80, 29, placements, (760, 560), 85, 140)
+        _cover_perspective_band(master, [(sources["wall_far"], loaded["wall_far"]), (sources["floor_mid"], loaded["floor_mid"])], root, (0, 420, 1050, 1710), 0.74, 43, placements, (680, 600), 75, 130)
+        _cover_perspective_band(master, [(sources["wall_legacy"], loaded["wall_legacy"]), (sources["floor_mid"], loaded["floor_mid"])], root, (2790, 420, 3840, 1710), 0.74, 59, placements, (680, 600), 75, 130)
+        layout = loaded["room_layout"]
+        _place_native(master, layout, sources["room_layout"], root, (0, 0, layout.width, layout.height), (1084, 536, 1084 + layout.width, 536 + layout.height), placements, feather_px=36)
+        _apply_quiet_outer_vignette(master)
 
     master_path = root / "art_source/stage12/backgrounds/fire/fire-room-background-master.png"
     runtime_path = root / "assets/stage12/fire_room_background.png"
@@ -201,7 +255,7 @@ def build_ecology(ecology: str, root: Path) -> BuildReport:
         ecology=ecology,
         master_size=MASTER_SIZE,
         runtime_size=RUNTIME_SIZE,
-        source_sha256={_relative(path, root): _sha256(path) for path in (floor_path, wall_path)},
+        source_sha256={_relative(path, root): _sha256(path) for path in sources.values()},
         placements=placements,
         runtime_from_master={"resampling": "LANCZOS", "passes": 1},
         output_sha256={

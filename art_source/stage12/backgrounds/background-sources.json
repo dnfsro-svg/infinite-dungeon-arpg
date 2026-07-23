@@ -5,11 +5,27 @@
       "sources": [
         {
           "path": "art_source/stage12/backgrounds/fire/fire-floor-tile-v1.png",
-          "role": "floor"
+          "role": "floor_legacy"
+        },
+        {
+          "path": "art_source/stage12/backgrounds/fire/fire-floor-tile-v2-a.png",
+          "role": "floor_near"
+        },
+        {
+          "path": "art_source/stage12/backgrounds/fire/fire-floor-tile-v2-b.png",
+          "role": "floor_mid"
         },
         {
           "path": "art_source/stage12/backgrounds/fire/fire-wall-tile-v1.png",
-          "role": "wall"
+          "role": "wall_legacy"
+        },
+        {
+          "path": "art_source/stage12/backgrounds/fire/fire-wall-tile-v2.png",
+          "role": "wall_far"
+        },
+        {
+          "path": "art_source/stage12/backgrounds/fire/fire-room-layout-v2.png",
+          "role": "room_layout"
         }
       ]
     }
