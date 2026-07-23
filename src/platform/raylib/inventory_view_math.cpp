@@ -2,6 +2,7 @@
 
 #include "items/item_catalog.hpp"
 #include "skills/active_skill_catalog.hpp"
+#include "ui_typography.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -17,8 +18,8 @@ constexpr float kEquipmentFraction = 0.27F;
 constexpr float kGridFraction = 0.42F;
 constexpr double kDoubleClickSeconds = 0.30;
 
-constexpr float kSkillMainWidth = 132.0F;
-constexpr float kSkillMainHeight = 72.0F;
+constexpr float kSkillMainWidth = 204.0F;
+constexpr float kSkillMainHeight = 92.0F;
 constexpr float kSkillMainGap = 12.0F;
 constexpr float kSkillSupportSize = 54.0F;
 constexpr float kSkillSupportGap = 12.0F;
@@ -128,19 +129,23 @@ InventoryLayout inventory_layout(int width, int height) noexcept {
     if (width <= 0 || height <= 0) return {};
     const float viewport_width = static_cast<float>(width);
     const float viewport_height = static_cast<float>(height);
+    const float scale = ui_viewport_scale(width, height);
+    const float margin = kMargin * scale;
+    const float top = kTop * scale;
+    const float gap = kGap * scale;
     const float content_width = std::max(0.0F,
-        viewport_width - kMargin * 2.0F - kGap * 2.0F);
+        viewport_width - margin * 2.0F - gap * 2.0F);
     const float content_height = std::max(0.0F,
-        viewport_height - kTop - kMargin);
+        viewport_height - top - margin);
     const float equipment_width = std::floor(content_width * kEquipmentFraction);
     const float grid_width = std::floor(content_width * kGridFraction);
     const float detail_width = std::max(0.0F,
         content_width - equipment_width - grid_width);
-    const Rectangle equipment{kMargin, kTop, equipment_width, content_height};
-    const Rectangle grid{equipment.x + equipment.width + kGap, kTop,
+    const Rectangle equipment{margin, top, equipment_width, content_height};
+    const Rectangle grid{equipment.x + equipment.width + gap, top,
         grid_width, content_height};
     return {equipment, grid,
-        {grid.x + grid.width + kGap, kTop, detail_width, content_height}};
+        {grid.x + grid.width + gap, top, detail_width, content_height}, scale};
 }
 
 ActiveSkillLoadoutLayout active_skill_loadout_layout(
@@ -148,66 +153,69 @@ ActiveSkillLoadoutLayout active_skill_loadout_layout(
     if (width <= 0 || height <= 0) return {};
     const float screen_width = static_cast<float>(width);
     const float screen_height = static_cast<float>(height);
+    const float scale = ui_viewport_scale(width, height);
     ActiveSkillLoadoutLayout layout{};
-    layout.panel = {40.0F, 70.0F, std::max(0.0F, screen_width - 80.0F),
-        std::max(0.0F, screen_height - 100.0F)};
+    layout.scale = scale;
+    layout.panel = {40.0F * scale, 70.0F * scale,
+        std::max(0.0F, screen_width - 80.0F * scale),
+        std::max(0.0F, screen_height - 100.0F * scale)};
     layout.equipment_page_button = {
-        screen_width * 0.5F - kPageButtonWidth - 6.0F,
-        18.0F, kPageButtonWidth, kPageButtonHeight,
+        screen_width * 0.5F - (kPageButtonWidth + 6.0F) * scale,
+        18.0F * scale, kPageButtonWidth * scale, kPageButtonHeight * scale,
     };
     layout.skill_stones_page_button = {
-        screen_width * 0.5F + 6.0F,
-        18.0F, kPageButtonWidth, kPageButtonHeight,
+        screen_width * 0.5F + 6.0F * scale,
+        18.0F * scale, kPageButtonWidth * scale, kPageButtonHeight * scale,
     };
 
-    constexpr float kMainWidth =
+    const float main_width = scale * (
         static_cast<float>(skills::kActiveSkillSlotCount) * kSkillMainWidth
         + static_cast<float>(skills::kActiveSkillSlotCount - 1U)
-            * kSkillMainGap;
-    const float main_x = (screen_width - kMainWidth) * 0.5F;
-    const float main_y = layout.panel.y + 62.0F;
+            * kSkillMainGap);
+    const float main_x = (screen_width - main_width) * 0.5F;
+    const float main_y = layout.panel.y + 62.0F * scale;
     for (std::size_t index = 0U; index < layout.main_slots.size(); ++index) {
         layout.main_slots[index] = {
             main_x + static_cast<float>(index)
-                * (kSkillMainWidth + kSkillMainGap),
-            main_y, kSkillMainWidth, kSkillMainHeight,
+                * (kSkillMainWidth + kSkillMainGap) * scale,
+            main_y, kSkillMainWidth * scale, kSkillMainHeight * scale,
         };
     }
 
-    constexpr float kSupportWidth =
+    const float support_width = scale * (
         static_cast<float>(skills::kSupportSlotsPerActive) * kSkillSupportSize
         + static_cast<float>(skills::kSupportSlotsPerActive - 1U)
-            * kSkillSupportGap;
-    const float support_x = (screen_width - kSupportWidth) * 0.5F;
-    const float support_y = main_y + kSkillMainHeight + 78.0F;
+            * kSkillSupportGap);
+    const float support_x = (screen_width - support_width) * 0.5F;
+    const float support_y = main_y + (kSkillMainHeight + 78.0F) * scale;
     for (std::size_t index = 0U; index < layout.support_slots.size(); ++index) {
         layout.support_slots[index] = {
             support_x + static_cast<float>(index)
-                * (kSkillSupportSize + kSkillSupportGap),
-            support_y, kSkillSupportSize, kSkillSupportSize,
+                * (kSkillSupportSize + kSkillSupportGap) * scale,
+            support_y, kSkillSupportSize * scale, kSkillSupportSize * scale,
         };
     }
 
     constexpr float kInventoryWidth = 180.0F;
     constexpr float kInventoryHeight = 62.0F;
     constexpr float kInventoryGap = 18.0F;
-    const float inventory_total =
+    const float inventory_total = scale * (
         static_cast<float>(skills::kActiveSkillCount) * kInventoryWidth
-        + static_cast<float>(skills::kActiveSkillCount - 1U) * kInventoryGap;
+        + static_cast<float>(skills::kActiveSkillCount - 1U) * kInventoryGap);
     const float inventory_x = (screen_width - inventory_total) * 0.5F;
-    const float inventory_y = support_y + kSkillSupportSize + 82.0F;
+    const float inventory_y = support_y + (kSkillSupportSize + 82.0F) * scale;
     for (std::size_t index = 0U; index < layout.inventory_slots.size(); ++index) {
         layout.inventory_slots[index] = {
             inventory_x + static_cast<float>(index)
-                * (kInventoryWidth + kInventoryGap),
-            inventory_y, kInventoryWidth, kInventoryHeight,
+                * (kInventoryWidth + kInventoryGap) * scale,
+            inventory_y, kInventoryWidth * scale, kInventoryHeight * scale,
         };
     }
     layout.remove_button = {
-        (screen_width - 164.0F) * 0.5F,
-        std::min(inventory_y + kInventoryHeight + 42.0F,
-            screen_height - 62.0F),
-        164.0F, 38.0F,
+        (screen_width - 164.0F * scale) * 0.5F,
+        std::min(inventory_y + (kInventoryHeight + 42.0F) * scale,
+            screen_height - 62.0F * scale),
+        164.0F * scale, 38.0F * scale,
     };
     return layout;
 }
@@ -218,22 +226,26 @@ InventoryTextSafeLayout inventory_text_safe_layout(
     const InventoryLayout panels = inventory_layout(width, height);
     const ActiveSkillLoadoutLayout skill = active_skill_loadout_layout(
         width, height);
-    const auto panel_title = [](Rectangle panel) noexcept {
-        return Rectangle{panel.x + 40.0F, panel.y + 10.0F,
-            std::max(0.0F, panel.width - 56.0F), 26.0F};
+    const float scale = panels.scale;
+    const auto panel_title = [scale](Rectangle panel) noexcept {
+        return Rectangle{panel.x + 40.0F * scale, panel.y + 10.0F * scale,
+            std::max(0.0F, panel.width - 56.0F * scale), 26.0F * scale};
     };
     return {
-        {14.0F, 24.0F,
-            std::max(0.0F, skill.equipment_page_button.x - 28.0F), 34.0F},
+        {14.0F * scale, 24.0F * scale,
+            std::max(0.0F, skill.equipment_page_button.x - 28.0F * scale),
+            34.0F * scale},
         panel_title(panels.equipment),
         panel_title(panels.grid),
         panel_title(panels.detail),
-        {skill.panel.x + 40.0F, skill.panel.y + 14.0F,
-            std::max(0.0F, skill.panel.width - 80.0F), 28.0F},
+        {skill.panel.x + 40.0F * scale, skill.panel.y + 14.0F * scale,
+            std::max(0.0F, skill.panel.width - 80.0F * scale), 28.0F * scale},
         {skill.support_slots[0U].x,
-            skill.support_slots[0U].y - 29.0F, 240.0F, 23.0F},
+            skill.support_slots[0U].y - 29.0F * scale,
+            240.0F * scale, 23.0F * scale},
         {skill.inventory_slots[0U].x,
-            skill.inventory_slots[0U].y - 29.0F, 240.0F, 23.0F},
+            skill.inventory_slots[0U].y - 29.0F * scale,
+            240.0F * scale, 23.0F * scale},
     };
 }
 
@@ -407,10 +419,12 @@ Rectangle equipment_slot_rectangle(InventoryLayout layout,
     constexpr float kSlotGap = 4.0F;
     const std::size_t index = static_cast<std::size_t>(slot);
     if (index >= static_cast<std::size_t>(items::ItemSlot::count)) return {};
-    return {layout.equipment.x + kInset,
-        layout.equipment.y + 36.0F
-            + static_cast<float>(index) * (kSlotHeight + kSlotGap),
-        std::max(0.0F, layout.equipment.width - kInset * 2.0F), kSlotHeight};
+    const float scale = layout.scale;
+    return {layout.equipment.x + kInset * scale,
+        layout.equipment.y + 36.0F * scale
+            + static_cast<float>(index) * (kSlotHeight + kSlotGap) * scale,
+        std::max(0.0F, layout.equipment.width - kInset * 2.0F * scale),
+        kSlotHeight * scale};
 }
 
 std::optional<items::ItemSlot> hit_test_equipped_slot(Vector2 point,
@@ -614,10 +628,13 @@ Rectangle detail_line_rectangle(InventoryLayout layout,
     std::size_t line) noexcept {
     constexpr float kInsetX = 12.0F;
     constexpr float kDetailTop = 40.0F;
-    constexpr float kLineHeight = 12.0F;
-    return {layout.detail.x + kInsetX,
-        layout.detail.y + kDetailTop + static_cast<float>(line) * kLineHeight,
-        std::max(0.0F, layout.detail.width - kInsetX * 2.0F), 11.0F};
+    constexpr float kLineHeight = 20.0F;
+    const float scale = layout.scale;
+    return {layout.detail.x + kInsetX * scale,
+        layout.detail.y + kDetailTop * scale
+            + static_cast<float>(line) * kLineHeight * scale,
+        std::max(0.0F, layout.detail.width - kInsetX * 2.0F * scale),
+        20.0F * scale};
 }
 
 bool detail_content_fits(InventoryLayout layout,
@@ -631,9 +648,9 @@ bool detail_content_fits(InventoryLayout layout,
 
 std::size_t detail_line_character_capacity(InventoryLayout layout) noexcept {
     const Rectangle line = detail_line_rectangle(layout, 0U);
-    constexpr float kConservativeCharacterWidth = 5.2F;
+    const float conservative_character_width = 8.0F * layout.scale;
     return static_cast<std::size_t>(std::floor(
-        line.width / kConservativeCharacterWidth));
+        line.width / conservative_character_width));
 }
 
 bool detail_text_fits(InventoryLayout layout,

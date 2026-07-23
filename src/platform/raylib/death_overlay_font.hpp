@@ -7,10 +7,10 @@ namespace arpg::platform {
 
 inline constexpr std::size_t kDeathOverlayFontCandidateCapacity = 4U;
 inline constexpr std::size_t kDeathOverlayCodepointCapacity = 384U;
-inline constexpr int kUiFontSourceBaseSize = 64;
-inline constexpr int kUiFontMaximumDisplaySize = 26;
+inline constexpr int kUiFontSourceBaseSize = 96;
+inline constexpr int kUiFontMaximumDisplaySize = 39;
 inline constexpr std::size_t kUiFontAtlasBytesPerPixel = 2U;
-inline constexpr std::size_t kUiFontAtlasByteBudget = 8U * 1024U * 1024U;
+inline constexpr std::size_t kUiFontAtlasByteBudget = 16U * 1024U * 1024U;
 inline constexpr std::size_t kUiFontAtlasInstanceCount = 3U;
 inline constexpr std::size_t kUiFontTotalAtlasByteBudget =
     kUiFontAtlasByteBudget * kUiFontAtlasInstanceCount;

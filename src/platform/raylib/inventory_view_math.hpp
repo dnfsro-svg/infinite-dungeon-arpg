@@ -19,6 +19,7 @@ struct InventoryLayout final {
     Rectangle equipment{};
     Rectangle grid{};
     Rectangle detail{};
+    float scale{1.0F};
 };
 
 enum class InventoryPage : std::uint8_t {
@@ -66,6 +67,7 @@ struct ActiveSkillLoadoutLayout final {
     Rectangle remove_button{};
     Rectangle equipment_page_button{};
     Rectangle skill_stones_page_button{};
+    float scale{1.0F};
 };
 
 struct InventoryTextSafeLayout final {

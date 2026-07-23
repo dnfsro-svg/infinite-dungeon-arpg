@@ -5,6 +5,7 @@
 #include "combat/active_skill_runtime.hpp"
 #include "skills/active_skill_catalog.hpp"
 #include "skills/skill_loadout.hpp"
+#include "ui_typography.hpp"
 
 #include <array>
 #include <cstddef>
@@ -40,7 +41,7 @@ arpg::test::Failure hud_projects_exactly_five_numbered_slots_and_catalog_names()
     ARPG_REQUIRE(view.slots[4U].empty);
     ARPG_REQUIRE(std::strcmp(view.slots[0U].name.data(), u8"拔刀斩") == 0);
     ARPG_REQUIRE(std::strcmp(
-        view.slots[1U].name.data(), u8"极·鬼剑术（暴风式）") == 0);
+        view.slots[1U].name.data(), u8"暴风式") == 0);
     ARPG_REQUIRE(view.slots[2U].name[0U] == '\0');
     return {};
 }
@@ -64,28 +65,32 @@ arpg::test::Failure hud_cooldown_ratios_are_clamped_and_empty_slots_stay_zero()
     return {};
 }
 
-arpg::test::Failure hud_layout_is_bottom_centered_with_fixed_slot_geometry()
+arpg::test::Failure hud_layout_is_bottom_centered_with_scaled_slot_geometry()
     noexcept {
     constexpr std::array<std::array<int, 2>, 3> kViewports{{
         {{1280, 720}}, {{1600, 900}}, {{1920, 1080}},
     }};
-    constexpr float kExpectedWidth = 5.0F * 58.0F + 4.0F * 8.0F;
     for (const auto viewport : kViewports) {
+        const float scale = platform::ui_viewport_scale(
+            viewport[0], viewport[1]);
+        const float expected_width = (5.0F * 76.0F + 4.0F * 8.0F) * scale;
         const platform::ActiveSkillHudLayout layout =
             platform::active_skill_hud_layout(viewport[0], viewport[1]);
-        ARPG_REQUIRE(arpg::test::near(layout.bounds.width, kExpectedWidth));
+        ARPG_REQUIRE(arpg::test::near(layout.bounds.width, expected_width));
         ARPG_REQUIRE(arpg::test::near(layout.bounds.x
             + layout.bounds.width * 0.5F,
             static_cast<float>(viewport[0]) * 0.5F));
         ARPG_REQUIRE(layout.bounds.y + layout.bounds.height
             <= static_cast<float>(viewport[1]));
         for (std::size_t index = 0U; index < layout.slots.size(); ++index) {
-            ARPG_REQUIRE(arpg::test::near(layout.slots[index].width, 58.0F));
-            ARPG_REQUIRE(arpg::test::near(layout.slots[index].height, 58.0F));
+            ARPG_REQUIRE(arpg::test::near(
+                layout.slots[index].width, 76.0F * scale));
+            ARPG_REQUIRE(arpg::test::near(
+                layout.slots[index].height, 76.0F * scale));
             if (index != 0U) {
                 ARPG_REQUIRE(arpg::test::near(layout.slots[index].x
                     - (layout.slots[index - 1U].x
-                        + layout.slots[index - 1U].width), 8.0F));
+                        + layout.slots[index - 1U].width), 8.0F * scale));
                 ARPG_REQUIRE(!overlaps(
                     layout.slots[index - 1U], layout.slots[index]));
             }
@@ -250,7 +255,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"active skill HUD cooldown clamp", &hud_cooldown_ratios_are_clamped_and_empty_slots_stay_zero},
     {"active skill HUD continuous cooldown overlay",
         &hud_cooldown_overlay_keeps_continuous_material_feedback},
-    {"active skill HUD fixed layout", &hud_layout_is_bottom_centered_with_fixed_slot_geometry},
+    {"active skill HUD responsive layout",
+        &hud_layout_is_bottom_centered_with_scaled_slot_geometry},
     {"active skill native effect plan", &native_effect_plan_uses_snapshot_timing_and_twelve_swords},
     {"storm finisher snapshot lifetime", &storm_finisher_persists_from_snapshot_without_hit_event},
     {"storm sword lifecycle uses ground and aerial bands",

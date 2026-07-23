@@ -20,6 +20,12 @@ enum class SkillStoneVisualKind : std::uint8_t {
 [[nodiscard]] MaterialSpriteId material_bag_sprite(
     items::MaterialId id) noexcept;
 
+[[nodiscard]] const char* material_bag_display_name(
+    items::MaterialId id) noexcept;
+
+[[nodiscard]] Rectangle material_bag_text_backing(
+    Rectangle slot, float scale) noexcept;
+
 [[nodiscard]] MaterialSpriteId skill_stone_sprite(
     SkillStoneVisualKind kind) noexcept;
 

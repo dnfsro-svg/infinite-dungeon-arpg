@@ -1,6 +1,7 @@
 #include "active_skill_view.hpp"
 
 #include "skills/active_skill_catalog.hpp"
+#include "ui_typography.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -8,9 +9,16 @@
 namespace arpg::platform {
 namespace {
 
-constexpr float kSlotSize = 58.0F;
+constexpr float kSlotSize = 76.0F;
 constexpr float kSlotGap = 8.0F;
 constexpr float kBottomMargin = 20.0F;
+
+[[nodiscard]] const char* active_skill_hud_name(
+    skills::ActiveSkillId id,
+    const skills::ActiveSkillDefinition& definition) noexcept {
+    if (id == skills::ActiveSkillId::storm_swords) return u8"暴风式";
+    return definition.display_name;
+}
 
 }  // namespace
 
@@ -33,7 +41,7 @@ ActiveSkillHudModel make_active_skill_hud_model(
             continue;
         }
         static_cast<void>(std::snprintf(slot.name.data(), slot.name.size(),
-            "%s", definition->display_name));
+            "%s", active_skill_hud_name(slot.id, *definition)));
         slot.name.back() = '\0';
         const std::size_t cooldown_index = static_cast<std::size_t>(slot.id);
         if (cooldown_index < cooldowns.size()) {
@@ -49,17 +57,19 @@ ActiveSkillHudModel make_active_skill_hud_model(
 ActiveSkillHudLayout active_skill_hud_layout(
     int width, int height) noexcept {
     if (width <= 0 || height <= 0) return {};
-    constexpr float kTotalWidth =
+    const float scale = ui_viewport_scale(width, height);
+    const float total_width = scale * (
         static_cast<float>(skills::kActiveSkillSlotCount) * kSlotSize
-        + static_cast<float>(skills::kActiveSkillSlotCount - 1U) * kSlotGap;
-    const float x = (static_cast<float>(width) - kTotalWidth) * 0.5F;
-    const float y = static_cast<float>(height) - kSlotSize - kBottomMargin;
+        + static_cast<float>(skills::kActiveSkillSlotCount - 1U) * kSlotGap);
+    const float x = (static_cast<float>(width) - total_width) * 0.5F;
+    const float y = static_cast<float>(height)
+        - (kSlotSize + kBottomMargin) * scale;
     ActiveSkillHudLayout result{};
-    result.bounds = {x, y, kTotalWidth, kSlotSize};
+    result.bounds = {x, y, total_width, kSlotSize * scale};
     for (std::size_t index = 0U; index < result.slots.size(); ++index) {
         result.slots[index] = {
-            x + static_cast<float>(index) * (kSlotSize + kSlotGap),
-            y, kSlotSize, kSlotSize,
+            x + static_cast<float>(index) * (kSlotSize + kSlotGap) * scale,
+            y, kSlotSize * scale, kSlotSize * scale,
         };
     }
     return result;

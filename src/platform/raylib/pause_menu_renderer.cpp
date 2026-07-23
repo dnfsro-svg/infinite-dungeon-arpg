@@ -3,11 +3,15 @@
 #include "death_overlay_font.hpp"
 #include "pause_menu_view.hpp"
 #include "ui_material.hpp"
+#include "ui_text_bounds_audit.hpp"
 #include "ui_text_contrast.hpp"
+#include "ui_text_renderer.hpp"
+#include "ui_typography.hpp"
 
 #include <raylib.h>
 
 #include <cstddef>
+#include <algorithm>
 
 namespace arpg::platform {
 namespace {
@@ -17,32 +21,32 @@ void draw_centered_text(
     const char* text,
     Rectangle bounds,
     int font_size,
-    Color color) noexcept {
+    Color color,
+    UiTextAuditRole role,
+    float minimum_font_size) noexcept {
     constexpr float kSpacing = 1.0F;
-    const int text_width = static_cast<int>(MeasureTextEx(
-        font, text, static_cast<float>(font_size), kSpacing).x);
+    const float scaled_font_size = scaled_ui_font_size(
+        static_cast<float>(font_size), GetScreenWidth(), GetScreenHeight());
+    minimum_font_size = scaled_ui_font_size(
+        minimum_font_size, GetScreenWidth(), GetScreenHeight());
+    const Vector2 measured = MeasureTextEx(
+        font, text, scaled_font_size, kSpacing);
+    const int text_width = static_cast<int>(measured.x);
     const int x = static_cast<int>(
         bounds.x + (bounds.width - static_cast<float>(text_width)) * 0.5F);
     const int y = static_cast<int>(
-        bounds.y + (bounds.height - static_cast<float>(font_size)) * 0.5F);
+        bounds.y + (bounds.height - measured.y) * 0.5F);
     const Vector2 position{static_cast<float>(x), static_cast<float>(y)};
     const UiTextContrastStyle style = ui_text_contrast_style();
     color.a = 255U;
     if (ui_luma_contrast_ratio(color, style.backing) < 4.5F) {
         color = style.muted;
     }
-    DrawTextEx(font, text,
-        {position.x + static_cast<float>(style.shadow_pixels),
-         position.y + static_cast<float>(style.shadow_pixels)},
-        static_cast<float>(font_size), kSpacing, style.shadow);
-    DrawTextEx(font, text, {position.x - 1.0F, position.y},
-        static_cast<float>(font_size), kSpacing, style.shadow);
-    DrawTextEx(font, text, {position.x, position.y - 1.0F},
-        static_cast<float>(font_size), kSpacing, style.shadow);
-    DrawTextEx(font, text, {position.x + 1.0F, position.y},
-        static_cast<float>(font_size), kSpacing, color);
-    DrawTextEx(font, text, position, static_cast<float>(font_size),
-        kSpacing, color);
+    record_ui_text_bounds(UiTextAuditPage::pause, role, font, text,
+        position, scaled_font_size, kSpacing, bounds,
+        minimum_font_size);
+    draw_crisp_ui_text(font, text, position,
+        scaled_font_size, kSpacing, color);
 }
 
 }  // namespace
@@ -92,7 +96,7 @@ void draw_pause_menu_with_font(
         switch (op.kind) {
             case PauseMenuRenderOpKind::dim:
                 DrawRectangle(0, 0, screen_width, screen_height,
-                    Color{2, 4, 8, 190});
+                    Color{2, 4, 8, 255});
                 break;
             case PauseMenuRenderOpKind::panel:
                 if (assets == nullptr || !assets->draw_nine_slice(ui_material_sprite(
@@ -106,7 +110,8 @@ void draw_pause_menu_with_font(
                 break;
             case PauseMenuRenderOpKind::title:
                 draw_centered_text(font, view.title, layout.title, 26,
-                    ui_text_contrast_style().primary);
+                    ui_text_contrast_style().primary,
+                    UiTextAuditRole::pause_title, 20.0F);
                 break;
             case PauseMenuRenderOpKind::row: {
                 const Rectangle bounds = layout.rows[op.row_index];
@@ -127,31 +132,41 @@ void draw_pause_menu_with_font(
                         Color{121, 197, 244, 255});
                 }
                 const UiTextContrastStyle style = ui_text_contrast_style();
-                const Vector2 row_position{bounds.x + 14.0F, bounds.y};
+                const float viewport_scale = ui_viewport_scale(
+                    screen_width, screen_height);
+                const float row_font_size = scaled_ui_font_size(
+                    ui_typography().kPauseRowFontSize,
+                    screen_width, screen_height);
+                const Vector2 row_position{
+                    bounds.x + 14.0F * viewport_scale,
+                    bounds.y + 2.0F * viewport_scale};
                 const float row_text_width = MeasureTextEx(font,
-                    view.rows[op.row_index].data(), 17.0F, 0.5F).x;
+                    view.rows[op.row_index].data(), row_font_size, 0.5F).x;
                 DrawRectangleRounded(
-                    {bounds.x + 8.0F, bounds.y + 1.0F,
-                     row_text_width + 16.0F, bounds.height - 2.0F},
+                    {bounds.x + 8.0F * viewport_scale,
+                     bounds.y + 1.0F * viewport_scale,
+                     (std::min)(row_text_width + 16.0F * viewport_scale,
+                         bounds.width - 16.0F * viewport_scale),
+                     bounds.height - 2.0F * viewport_scale},
                     0.20F, 4, style.backing);
-                DrawTextEx(font, view.rows[op.row_index].data(),
-                    {row_position.x + 2.0F, row_position.y + 2.0F},
-                    17.0F, 0.5F, style.shadow);
-                DrawTextEx(font, view.rows[op.row_index].data(),
-                    {row_position.x - 1.0F, row_position.y},
-                    17.0F, 0.5F, style.shadow);
-                DrawTextEx(font, view.rows[op.row_index].data(),
-                    {row_position.x + 1.0F, row_position.y},
-                    17.0F, 0.5F,
-                    op.selected ? style.interaction : style.primary);
-                DrawTextEx(font, view.rows[op.row_index].data(),
-                    row_position, 17.0F, 0.5F,
+                record_ui_text_bounds(UiTextAuditPage::pause,
+                    UiTextAuditRole::pause_row, font,
+                    view.rows[op.row_index].data(), row_position,
+                    row_font_size, 0.5F,
+                    {bounds.x + 8.0F * viewport_scale,
+                        bounds.y + 1.0F * viewport_scale,
+                        bounds.width - 16.0F * viewport_scale,
+                        bounds.height - 2.0F * viewport_scale},
+                    row_font_size);
+                draw_crisp_ui_text(font, view.rows[op.row_index].data(),
+                    row_position, row_font_size, 0.5F,
                     op.selected ? style.interaction : style.primary);
                 break;
             }
             case PauseMenuRenderOpKind::message:
                 draw_centered_text(font, view.message, layout.footer, 16,
-                    Color{255, 139, 139, 255});
+                    Color{255, 139, 139, 255},
+                    UiTextAuditRole::pause_footer, 16.0F);
                 break;
             case PauseMenuRenderOpKind::footer:
                 if (assets == nullptr || !assets->draw_horizontal_slice(
@@ -177,8 +192,10 @@ void draw_pause_menu_with_font(
                     draw_centered_text(font,
                         "Arrow keys navigate | Enter select | Esc back",
                         layout.footer,
-                        16,
-                        ui_text_contrast_style().muted);
+                        static_cast<int>(ui_typography().pause_footer_font_size),
+                        ui_text_contrast_style().muted,
+                        UiTextAuditRole::pause_footer,
+                        ui_typography().pause_footer_font_size);
                 }
                 break;
         }

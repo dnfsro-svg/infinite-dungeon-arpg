@@ -527,7 +527,10 @@ foreach ($key in @('manifest','atlas_bytes','fallback','input_hole_regression',
         'ui_text_contrast','ui_text_solid_fill','ui_text_primary_contrast',
         'ui_text_secondary_contrast','ui_text_muted_contrast',
         'ui_text_outline_pixels','ui_text_shadow_pixels',
-        'ui_text_backing_alpha',
+        'ui_text_backing_alpha','ui_text_physical_scale',
+        'inventory_min_font_1280','inventory_min_font_1920',
+        'skill_min_font_1280','skill_min_font_1920',
+        'pause_min_font_1280','pause_min_font_1920',
         'hud_decorative_stretch','inventory_decorative_stretch',
         'skill_decorative_stretch','pause_decorative_stretch',
         'hud_decorative_stretch_1920','inventory_decorative_stretch_1920',
@@ -563,6 +566,7 @@ foreach ($key in @('manifest','atlas_bytes','fallback','input_hole_regression',
     if (-not $report.ContainsKey($key)) { throw "missing report field: $key" }
 }
 foreach ($key in @('bundled_font_runtime','ui_text_contrast','ui_text_solid_fill',
+        'ui_text_physical_scale',
         'hud_decorative_stretch','inventory_decorative_stretch',
         'skill_decorative_stretch','pause_decorative_stretch',
         'hud_decorative_stretch_1920','inventory_decorative_stretch_1920',
@@ -575,12 +579,25 @@ foreach ($key in @('bundled_font_runtime','ui_text_contrast','ui_text_solid_fill
         throw "UI readability contract failed: $key"
     }
 }
+$fontScalePairs = @(
+    @([double]$report.inventory_min_font_1280,
+      [double]$report.inventory_min_font_1920),
+    @([double]$report.skill_min_font_1280,
+      [double]$report.skill_min_font_1920),
+    @([double]$report.pause_min_font_1280,
+      [double]$report.pause_min_font_1920)
+)
+foreach ($pair in $fontScalePairs) {
+    if ($pair[0] -le 0.0 -or $pair[1] -lt $pair[0] * 1.49) {
+        throw 'full-HD UI font did not scale by 1.5x'
+    }
+}
 $primaryContrast = [double]$report.ui_text_primary_contrast
 $secondaryContrast = [double]$report.ui_text_secondary_contrast
 $mutedContrast = [double]$report.ui_text_muted_contrast
 if ($primaryContrast -lt 7.0 -or $secondaryContrast -lt 6.0 -or
         $mutedContrast -lt 4.5 -or
-        [int]$report.ui_text_outline_pixels -lt 1 -or
+        [int]$report.ui_text_outline_pixels -ne 0 -or
         [int]$report.ui_text_shadow_pixels -lt 2 -or
         [int]$report.ui_text_backing_alpha -lt 220) {
     throw 'UI text contrast metrics failed'

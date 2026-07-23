@@ -3,6 +3,8 @@
 #include "material_bag_renderer.hpp"
 #include "material_manifest.hpp"
 
+#include <string_view>
+
 namespace {
 
 namespace items = arpg::items;
@@ -13,6 +15,26 @@ arpg::test::Failure material_bag_has_all_fourteen_slots() noexcept {
         platform::material_bag_layout(1280, 720);
     ARPG_REQUIRE(layout.contains_all_slots());
     ARPG_REQUIRE(layout.slots.size() == items::kMaterialCount);
+
+    const platform::MaterialBagLayout full_hd =
+        platform::material_bag_layout(1920, 1080);
+    ARPG_REQUIRE(full_hd.contains_all_slots());
+    ARPG_REQUIRE(full_hd.slots[0].width >= 240.0F);
+    ARPG_REQUIRE(full_hd.slots[2].x == full_hd.slots[0].x);
+    ARPG_REQUIRE(full_hd.slots[2].y > full_hd.slots[0].y);
+
+    const Rectangle text_backing = platform::material_bag_text_backing(
+        full_hd.slots[0], 1.5F);
+    ARPG_REQUIRE(text_backing.x >= full_hd.slots[0].x);
+    ARPG_REQUIRE(text_backing.y >= full_hd.slots[0].y);
+    ARPG_REQUIRE(text_backing.x + text_backing.width
+        <= full_hd.slots[0].x + full_hd.slots[0].width);
+    ARPG_REQUIRE(text_backing.y + text_backing.height
+        <= full_hd.slots[0].y + full_hd.slots[0].height);
+    ARPG_REQUIRE(text_backing.width >= 185.0F);
+
+    ARPG_REQUIRE(std::string_view{platform::material_bag_display_name(
+        items::MaterialId::reinforcement_stone)} == "Reinf. Stone");
     return {};
 }
 

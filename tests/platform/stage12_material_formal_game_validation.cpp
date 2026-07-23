@@ -7,6 +7,7 @@
 #include "dungeon/dungeon_types.hpp"
 #include "ui_material.hpp"
 #include "ui_text_contrast.hpp"
+#include "ui_text_bounds_audit.hpp"
 
 #include <raylib.h>
 
@@ -16,6 +17,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <initializer_list>
 #include <string>
 
 namespace {
@@ -107,6 +109,29 @@ bool rectangles_separated(Rectangle first, Rectangle second) noexcept {
         || second.x + second.width <= first.x
         || first.y + first.height <= second.y
         || second.y + second.height <= first.y;
+}
+
+std::uint64_t ui_text_role_mask(
+    std::initializer_list<platform::UiTextAuditRole> roles) noexcept {
+    std::uint64_t mask{};
+    for (const platform::UiTextAuditRole role : roles) {
+        mask |= 1ULL << static_cast<std::size_t>(role);
+    }
+    return mask;
+}
+
+bool real_font_text_bounds_safe(
+    const platform::Stage12MaterialRuntimeStatus& status,
+    platform::UiTextAuditPage page, std::uint64_t required_roles,
+    std::uint32_t minimum_measurements) noexcept {
+    const std::size_t index = static_cast<std::size_t>(page);
+    return index < status.ui_text_bounds_safe.size()
+        && status.bundled_font_ready
+        && status.ui_text_bounds_safe[index]
+        && status.ui_text_sizes_readable[index]
+        && status.ui_text_measured_counts[index] >= minimum_measurements
+        && (status.ui_text_observed_roles[index] & required_roles)
+            == required_roles;
 }
 
 bool hud_text_layout_safe(int width, int height) noexcept {
@@ -504,6 +529,78 @@ int main(int argc, char** argv) {
     const bool inventory_text_1920_ok = inventory_text_layout_safe(1920, 1080);
     const bool skill_text_1920_ok = skill_text_layout_safe(1920, 1080);
     const bool pause_text_1920_ok = pause_text_layout_safe(1920, 1080);
+    const std::uint64_t hud_required_roles = ui_text_role_mask({
+        platform::UiTextAuditRole::hud_health,
+        platform::UiTextAuditRole::hud_barrier,
+        platform::UiTextAuditRole::hud_experience,
+        platform::UiTextAuditRole::hud_progression,
+        platform::UiTextAuditRole::hud_objective,
+        platform::UiTextAuditRole::hud_navigation,
+        platform::UiTextAuditRole::hud_skill_name,
+    });
+    const std::uint64_t inventory_required_roles = ui_text_role_mask({
+        platform::UiTextAuditRole::inventory_page_title,
+        platform::UiTextAuditRole::inventory_equipment_slot,
+        platform::UiTextAuditRole::inventory_statistics,
+        platform::UiTextAuditRole::inventory_grid_entry,
+        platform::UiTextAuditRole::inventory_material_entry,
+        platform::UiTextAuditRole::inventory_detail,
+        platform::UiTextAuditRole::inventory_status,
+    });
+    const std::uint64_t skill_required_roles = ui_text_role_mask({
+        platform::UiTextAuditRole::skill_page_title,
+        platform::UiTextAuditRole::skill_main_slot,
+        platform::UiTextAuditRole::skill_description,
+        platform::UiTextAuditRole::skill_inventory_entry,
+    });
+    const std::uint64_t pause_required_roles = ui_text_role_mask({
+        platform::UiTextAuditRole::pause_title,
+        platform::UiTextAuditRole::pause_row,
+        platform::UiTextAuditRole::pause_footer,
+    });
+    const bool hud_real_text_1280_ok = real_font_text_bounds_safe(
+        hud_ui_runtime, platform::UiTextAuditPage::hud,
+        hud_required_roles, 12U);
+    const bool hud_real_text_1920_ok = real_font_text_bounds_safe(
+        hud_ui_1920_runtime, platform::UiTextAuditPage::hud,
+        hud_required_roles, 12U);
+    const bool inventory_real_text_1280_ok = real_font_text_bounds_safe(
+        inventory_ui_runtime, platform::UiTextAuditPage::inventory,
+        inventory_required_roles, 20U);
+    const bool inventory_real_text_1920_ok = real_font_text_bounds_safe(
+        inventory_ui_1920_runtime, platform::UiTextAuditPage::inventory,
+        inventory_required_roles, 20U);
+    const bool skill_real_text_1280_ok = real_font_text_bounds_safe(
+        skill_ui_runtime, platform::UiTextAuditPage::skill,
+        skill_required_roles, 10U);
+    const bool skill_real_text_1920_ok = real_font_text_bounds_safe(
+        skill_ui_1920_runtime, platform::UiTextAuditPage::skill,
+        skill_required_roles, 10U);
+    const bool pause_real_text_1280_ok = real_font_text_bounds_safe(
+        pause_ui_runtime, platform::UiTextAuditPage::pause,
+        pause_required_roles, 5U);
+    const bool pause_real_text_1920_ok = real_font_text_bounds_safe(
+        pause_ui_1920_runtime, platform::UiTextAuditPage::pause,
+        pause_required_roles, 5U);
+    const auto physical_font_scale_ok = [](const auto& base_status,
+            const auto& full_hd_status,
+            platform::UiTextAuditPage page) noexcept {
+        const std::size_t index = static_cast<std::size_t>(page);
+        return index < base_status.ui_text_minimum_display_sizes.size()
+            && base_status.ui_text_minimum_display_sizes[index] > 0.0F
+            && full_hd_status.ui_text_minimum_display_sizes[index]
+                >= base_status.ui_text_minimum_display_sizes[index] * 1.49F;
+    };
+    const bool ui_text_physical_scale_ok =
+        physical_font_scale_ok(hud_ui_runtime, hud_ui_1920_runtime,
+            platform::UiTextAuditPage::hud)
+        && physical_font_scale_ok(
+            inventory_ui_runtime, inventory_ui_1920_runtime,
+            platform::UiTextAuditPage::inventory)
+        && physical_font_scale_ok(skill_ui_runtime, skill_ui_1920_runtime,
+            platform::UiTextAuditPage::skill)
+        && physical_font_scale_ok(pause_ui_runtime, pause_ui_1920_runtime,
+            platform::UiTextAuditPage::pause);
     const auto text_contrast = platform::ui_text_contrast_style();
     const float primary_contrast = platform::ui_luma_contrast_ratio(
         text_contrast.primary, text_contrast.backing);
@@ -529,7 +626,7 @@ int main(int argc, char** argv) {
         && text_contrast.secondary.a == 255U
         && text_contrast.muted.a == 255U
         && primary_contrast >= 7.0F && secondary_contrast >= 6.0F
-        && muted_contrast >= 4.5F && text_contrast.outline_pixels >= 1
+        && muted_contrast >= 4.5F && text_contrast.outline_pixels == 0
         && text_contrast.shadow_pixels >= 2
         && text_contrast.backing.a >= 220U;
     const bool ui_readability_contract_ok = bundled_font_runtime_ok
@@ -542,6 +639,14 @@ int main(int argc, char** argv) {
         && skill_text_1280_ok && pause_text_1280_ok
         && hud_text_1920_ok && inventory_text_1920_ok
         && skill_text_1920_ok && pause_text_1920_ok;
+    const bool real_font_text_bounds_ok = hud_real_text_1280_ok
+        && hud_real_text_1920_ok
+        && inventory_real_text_1280_ok && inventory_real_text_1920_ok
+        && skill_real_text_1280_ok && skill_real_text_1920_ok
+        && pause_real_text_1280_ok && pause_real_text_1920_ok
+        && ui_text_physical_scale_ok;
+    const bool ui_readability_contract_with_real_bounds_ok =
+        ui_readability_contract_ok && real_font_text_bounds_ok;
     const bool showcase_ok = capture(root, kResolutions[0],
         "monsters-1280x720.png", true, true);
     platform::Stage12MaterialRuntimeStatus water_runtime{};
@@ -659,6 +764,20 @@ int main(int argc, char** argv) {
            << "ui_text_outline_pixels=" << text_contrast.outline_pixels << '\n'
            << "ui_text_shadow_pixels=" << text_contrast.shadow_pixels << '\n'
            << "ui_text_backing_alpha=" << static_cast<unsigned>(text_contrast.backing.a) << '\n'
+           << "ui_text_physical_scale="
+           << (ui_text_physical_scale_ok ? "pass" : "fail") << '\n'
+           << "inventory_min_font_1280="
+           << inventory_ui_runtime.ui_text_minimum_display_sizes[1] << '\n'
+           << "inventory_min_font_1920="
+           << inventory_ui_1920_runtime.ui_text_minimum_display_sizes[1] << '\n'
+           << "skill_min_font_1280="
+           << skill_ui_runtime.ui_text_minimum_display_sizes[2] << '\n'
+           << "skill_min_font_1920="
+           << skill_ui_1920_runtime.ui_text_minimum_display_sizes[2] << '\n'
+           << "pause_min_font_1280="
+           << pause_ui_runtime.ui_text_minimum_display_sizes[3] << '\n'
+           << "pause_min_font_1920="
+           << pause_ui_1920_runtime.ui_text_minimum_display_sizes[3] << '\n'
            << "hud_decorative_stretch=" << (hud_non_stretch_ok ? "pass" : "fail") << '\n'
            << "inventory_decorative_stretch=" << (inventory_non_stretch_ok ? "pass" : "fail") << '\n'
            << "skill_decorative_stretch=" << (skill_non_stretch_ok ? "pass" : "fail") << '\n'
@@ -675,6 +794,35 @@ int main(int argc, char** argv) {
            << "inventory_text_layout_1920=" << (inventory_text_1920_ok ? "pass" : "fail") << '\n'
            << "skill_text_layout_1920=" << (skill_text_1920_ok ? "pass" : "fail") << '\n'
            << "pause_text_layout_1920=" << (pause_text_1920_ok ? "pass" : "fail") << '\n'
+           << "hud_real_font_bounds=" << (hud_real_text_1280_ok ? "pass" : "fail") << '\n'
+           << "inventory_real_font_bounds=" << (inventory_real_text_1280_ok ? "pass" : "fail") << '\n'
+           << "skill_real_font_bounds=" << (skill_real_text_1280_ok ? "pass" : "fail") << '\n'
+           << "pause_real_font_bounds=" << (pause_real_text_1280_ok ? "pass" : "fail") << '\n'
+           << "hud_real_font_bounds_1920=" << (hud_real_text_1920_ok ? "pass" : "fail") << '\n'
+           << "inventory_real_font_bounds_1920=" << (inventory_real_text_1920_ok ? "pass" : "fail") << '\n'
+           << "skill_real_font_bounds_1920=" << (skill_real_text_1920_ok ? "pass" : "fail") << '\n'
+           << "pause_real_font_bounds_1920=" << (pause_real_text_1920_ok ? "pass" : "fail") << '\n'
+           << "hud_observed_text_roles="
+           << hud_ui_runtime.ui_text_observed_roles[0] << '\n'
+           << "hud_required_text_roles=" << hud_required_roles << '\n'
+           << "hud_observed_text_roles_1920="
+           << hud_ui_1920_runtime.ui_text_observed_roles[0] << '\n'
+           << "hud_real_font_measurements=" << hud_ui_runtime.ui_text_measured_counts[0] << '\n'
+           << "inventory_real_font_measurements=" << inventory_ui_runtime.ui_text_measured_counts[1] << '\n'
+           << "skill_real_font_measurements=" << skill_ui_runtime.ui_text_measured_counts[2] << '\n'
+           << "pause_real_font_measurements=" << pause_ui_runtime.ui_text_measured_counts[3] << '\n'
+           << "hud_failed_bounds_roles=" << hud_ui_runtime.ui_text_failed_bounds_roles[0] << '\n'
+           << "inventory_failed_bounds_roles=" << inventory_ui_runtime.ui_text_failed_bounds_roles[1] << '\n'
+           << "skill_failed_bounds_roles=" << skill_ui_runtime.ui_text_failed_bounds_roles[2] << '\n'
+           << "pause_failed_bounds_roles=" << pause_ui_runtime.ui_text_failed_bounds_roles[3] << '\n'
+           << "hud_failed_bounds_roles_1920=" << hud_ui_1920_runtime.ui_text_failed_bounds_roles[0] << '\n'
+           << "inventory_failed_bounds_roles_1920=" << inventory_ui_1920_runtime.ui_text_failed_bounds_roles[1] << '\n'
+           << "skill_failed_bounds_roles_1920=" << skill_ui_1920_runtime.ui_text_failed_bounds_roles[2] << '\n'
+           << "pause_failed_bounds_roles_1920=" << pause_ui_1920_runtime.ui_text_failed_bounds_roles[3] << '\n'
+           << "hud_failed_size_roles=" << hud_ui_runtime.ui_text_failed_size_roles[0] << '\n'
+           << "inventory_failed_size_roles=" << inventory_ui_runtime.ui_text_failed_size_roles[1] << '\n'
+           << "skill_failed_size_roles=" << skill_ui_runtime.ui_text_failed_size_roles[2] << '\n'
+           << "pause_failed_size_roles=" << pause_ui_runtime.ui_text_failed_size_roles[3] << '\n'
            << "ui_baseline_screenshot=ui-baseline-1280x720.png\n"
            << "ui_baseline_screenshot_1920=ui-baseline-1920x1080.png\n"
            << "hud_ui_screenshot=ui-hud-1280x720.png\n"
@@ -738,10 +886,10 @@ int main(int argc, char** argv) {
            << "f12_screenshot=f12-monsters-1280x720.png/stage8-equipment-loot.png\n"
            << "screenshot_isolation=" << (f12_ok ? "pass" : "fail") << '\n'
            << "screenshot_decode=" << (captures_ok && showcase_ok && item_baseline_ok && item_showcase_ok && ui_baseline_ok && ui_baseline_1920_ok && ui_gallery_ok && hud_ui_ok && hud_ui_1920_ok && inventory_ui_ok && inventory_ui_1920_ok && skill_ui_ok && skill_ui_1920_ok && pause_ui_ok && pause_ui_1920_ok && water_showcase_ok && lightning_showcase_ok && lightning_background_ok && chaos_showcase_ok && chaos_background_ok && f12_ok ? "pass" : "fail") << '\n'
-           << "result=" << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && item_baseline_ok && item_runtime_ok && ui_runtime_ok && hud_ui_runtime_ok && inventory_ui_runtime_ok && skill_ui_runtime_ok && pause_ui_runtime_ok && hud_ui_1920_runtime_ok && inventory_ui_1920_runtime_ok && skill_ui_1920_runtime_ok && pause_ui_1920_runtime_ok && ui_readability_contract_ok && ui_baseline_ok && ui_baseline_1920_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "pass" : "fail")
+           << "result=" << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && item_baseline_ok && item_runtime_ok && ui_runtime_ok && hud_ui_runtime_ok && inventory_ui_runtime_ok && skill_ui_runtime_ok && pause_ui_runtime_ok && hud_ui_1920_runtime_ok && inventory_ui_1920_runtime_ok && skill_ui_1920_runtime_ok && pause_ui_1920_runtime_ok && ui_readability_contract_with_real_bounds_ok && ui_baseline_ok && ui_baseline_1920_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "pass" : "fail")
            << '\n';
     std::cout << "stage12 material formal "
-               << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && item_baseline_ok && item_runtime_ok && ui_runtime_ok && hud_ui_runtime_ok && inventory_ui_runtime_ok && skill_ui_runtime_ok && pause_ui_runtime_ok && hud_ui_1920_runtime_ok && inventory_ui_1920_runtime_ok && skill_ui_1920_runtime_ok && pause_ui_1920_runtime_ok && ui_readability_contract_ok && ui_baseline_ok && ui_baseline_1920_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "PASS" : "FAIL")
+               << (captures_ok && fallback_capture && !error && manifest_ok && showcase_ok && item_baseline_ok && item_runtime_ok && ui_runtime_ok && hud_ui_runtime_ok && inventory_ui_runtime_ok && skill_ui_runtime_ok && pause_ui_runtime_ok && hud_ui_1920_runtime_ok && inventory_ui_1920_runtime_ok && skill_ui_1920_runtime_ok && pause_ui_1920_runtime_ok && ui_readability_contract_with_real_bounds_ok && ui_baseline_ok && ui_baseline_1920_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "PASS" : "FAIL")
               << std::endl;
     return report && captures_ok && fallback_capture && !error && manifest_ok
         && showcase_ok && item_baseline_ok && item_runtime_ok && ui_runtime_ok
@@ -749,7 +897,7 @@ int main(int argc, char** argv) {
         && skill_ui_runtime_ok && pause_ui_runtime_ok
         && hud_ui_1920_runtime_ok && inventory_ui_1920_runtime_ok
         && skill_ui_1920_runtime_ok && pause_ui_1920_runtime_ok
-        && ui_readability_contract_ok
+        && ui_readability_contract_with_real_bounds_ok
         && ui_baseline_ok && ui_baseline_1920_ok
         && water_runtime_ok && lightning_runtime_ok
         && lightning_background_ok && chaos_runtime_ok && chaos_background_ok

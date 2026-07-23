@@ -53,6 +53,8 @@ struct ObjectivePanelPlan final {
     HudRect bounds{};
     HudText96 primary{};
     HudText96 secondary{};
+    HudText96 movement{};
+    std::array<HudText96, 3U> controls{};
 };
 
 struct NavigationPanelPlan final {
@@ -96,9 +98,9 @@ struct HudReadabilityStyle final {
     float navigation_primary_font_size{21.0F};
     float navigation_secondary_font_size{19.0F};
     float navigation_element_font_size{16.0F};
-    int outline_pixels{1};
+    int outline_pixels{0};
     int shadow_pixels{2};
-    int embolden_pixels{1};
+    int embolden_pixels{0};
 };
 
 [[nodiscard]] PlayerPanelPlan make_player_panel_plan(

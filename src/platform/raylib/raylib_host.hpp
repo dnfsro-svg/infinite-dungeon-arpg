@@ -5,6 +5,7 @@
 #include "material_asset_types.hpp"
 
 #include <cstdint>
+#include <array>
 #include <filesystem>
 #include <optional>
 
@@ -138,6 +139,13 @@ struct Stage12MaterialRuntimeStatus final {
     std::uint64_t bundled_font_atlas_bytes{};
     std::uint64_t bundled_font_total_atlas_bytes{};
     std::uint64_t bundled_font_total_atlas_byte_budget{};
+    std::array<bool, 4U> ui_text_bounds_safe{};
+    std::array<bool, 4U> ui_text_sizes_readable{};
+    std::array<std::uint64_t, 4U> ui_text_observed_roles{};
+    std::array<std::uint64_t, 4U> ui_text_failed_bounds_roles{};
+    std::array<std::uint64_t, 4U> ui_text_failed_size_roles{};
+    std::array<std::uint32_t, 4U> ui_text_measured_counts{};
+    std::array<float, 4U> ui_text_minimum_display_sizes{};
 };
 
 struct RaylibHostConfig final {

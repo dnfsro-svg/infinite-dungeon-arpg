@@ -17,6 +17,7 @@
 #include "pause_menu_state.hpp"
 #include "pause_menu_view.hpp"
 #include "ui_material.hpp"
+#include "ui_text_bounds_audit.hpp"
 #include "persistence/save_paths.hpp"
 #include "platform/settings/settings_store.hpp"
 #include "platform/settings/settings_types.hpp"
@@ -3035,6 +3036,13 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 audio_bus_levels(presented_audio_settings), ui_audio_cues,
                 frame_seconds);
 
+            if (config.stage11c_hud_validation
+                    == Stage11CHudValidationScenario::low_health_status
+                    && current.combat.has_value()) {
+                current.combat->player.max_barrier = 1000;
+                current.combat->player.barrier = 625;
+            }
+
             // Observe after all possible fixed-step changes and before every
             // presented frame, including death/recovery-owned overlay frames.
             const HudPresentedFrame hud_presented_frame = current.death.has_value()
@@ -3070,6 +3078,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     == config.validation_exit_after_presented_frames;
             BeginDrawing();
             ClearBackground(Color{13, 17, 27, 255});
+            reset_ui_text_bounds_audit();
             presented_snapshot = current;
             if (config.stage12_material_showcase) {
                 apply_stage12_material_showcase(presented_snapshot,
@@ -3304,6 +3313,28 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             if (!capture_path.has_value() && stage12_item_baseline_frame) {
                 capture_path =
                     config.stage12_material_baseline_capture_file->string();
+            }
+            if (config.stage12_material_runtime_status != nullptr) {
+                const UiTextBoundsAuditStatus audit =
+                    ui_text_bounds_audit_status();
+                auto& material_status =
+                    *config.stage12_material_runtime_status;
+                for (std::size_t page{}; page < audit.pages.size(); ++page) {
+                    material_status.ui_text_bounds_safe[page] =
+                        audit.pages[page].bounds_safe;
+                    material_status.ui_text_sizes_readable[page] =
+                        audit.pages[page].sizes_readable;
+                    material_status.ui_text_observed_roles[page] =
+                        audit.pages[page].observed_roles;
+                    material_status.ui_text_failed_bounds_roles[page] =
+                        audit.pages[page].failed_bounds_roles;
+                    material_status.ui_text_failed_size_roles[page] =
+                        audit.pages[page].failed_size_roles;
+                    material_status.ui_text_measured_counts[page] =
+                        audit.pages[page].measured_text_count;
+                    material_status.ui_text_minimum_display_sizes[page] =
+                        audit.pages[page].minimum_display_font_size;
+                }
             }
             if (config.stage12_ui_showcase
                     == Stage12UiShowcase::material_gallery) {

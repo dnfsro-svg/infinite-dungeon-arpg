@@ -9,6 +9,8 @@
 #include "material_loot_view.hpp"
 #include "lightning_room_material_slice.hpp"
 #include "render_layout.hpp"
+#include "ui_text_renderer.hpp"
+#include "ui_typography.hpp"
 #include "water_room_material_slice.hpp"
 
 #include <raylib.h>
@@ -229,7 +231,8 @@ bool can_draw_room_environment(const dungeon::DungeonSnapshot& snapshot,
 
 void draw_doors(const dungeon::DungeonSnapshot& snapshot,
     float width, float height, const MaterialPack& material_pack,
-    bool draw_material_environment) noexcept {
+    bool draw_material_environment, Font hud_font,
+    bool hud_font_ready) noexcept {
     const DoorVisualMode mode = door_visual_mode(snapshot.phase,
         snapshot.has_active_room, snapshot.exits_open[0]);
     if (mode == DoorVisualMode::hidden) {
@@ -284,9 +287,24 @@ void draw_doors(const dungeon::DungeonSnapshot& snapshot,
             DrawPolyLinesEx(marker, 4, 9.0F * projected.scale, 45.0F,
                 2.0F * projected.scale, Color{255, 155, 221, 255});
         }
-        DrawText(visual.label, static_cast<int>(frame.x),
-            static_cast<int>(frame.y - 15.0F * projected.scale),
-            static_cast<int>(11.0F * projected.scale), text_color);
+        const MonsterLabelTextStyle scene_text = monster_label_text_style(
+            ui_viewport_scale(static_cast<int>(width),
+                static_cast<int>(height)));
+        const int label_size = scene_text.role_font_size;
+        const Font label_font = hud_font_ready ? hud_font : GetFontDefault();
+        const Vector2 measured = MeasureTextEx(label_font, visual.label,
+            static_cast<float>(label_size), 1.0F);
+        const Vector2 label_position{
+            projected.x - measured.x * 0.5F,
+            frame.y - static_cast<float>(label_size) - 4.0F};
+        if (hud_font_ready && IsFontValid(label_font)) {
+            draw_crisp_ui_text(label_font, visual.label, label_position,
+                static_cast<float>(label_size), 1.0F, text_color);
+        } else {
+            DrawText(visual.label, static_cast<int>(std::round(label_position.x)),
+                static_cast<int>(std::round(label_position.y)),
+                label_size, text_color);
+        }
     }
 }
 
@@ -549,7 +567,9 @@ void CombatRenderer::draw_room(
     } else if (current.ecology == dungeon::DungeonElement::chaos) {
         draw_chaos_room_props(material_pack_, width, height);
     }
-    draw_doors(current, width, height, material_pack_, draw_material_environment);
+    draw_doors(current, width, height, material_pack_,
+        draw_material_environment, hud_renderer_.hud_font(),
+        hud_renderer_.font_ready());
     draw_hole(current, material_pack_, draw_material_environment);
 }
 

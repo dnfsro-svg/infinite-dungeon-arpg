@@ -5,6 +5,8 @@
 #include "hud_palette.hpp"
 #include "hud_renderer.hpp"
 #include "hud_view_model.hpp"
+#include "ui_text_contrast.hpp"
+#include "ui_typography.hpp"
 
 #include <cstddef>
 #include <cstring>
@@ -160,7 +162,7 @@ arpg::test::Failure bundled_noto_sans_sc_is_the_required_runtime_font() noexcept
     ARPG_REQUIRE(plan.shared.candidate_count == 1U);
     ARPG_REQUIRE(plan.shared.candidate_paths[0] != nullptr);
     ARPG_REQUIRE(std::strcmp(plan.shared.candidate_paths[0],
-        "assets/fonts/NotoSansSC[wght].ttf") == 0);
+        "assets/fonts/NotoSansCJKsc-Medium.otf") == 0);
     ARPG_REQUIRE(plan.shared.codepoint_count < plan.shared.codepoints.size());
     constexpr const char* kReadableUiCorpus[] = {
         u8"装备背包 技能石 暂停 继续 设置 退出游戏",
@@ -175,13 +177,39 @@ arpg::test::Failure bundled_noto_sans_sc_is_the_required_runtime_font() noexcept
     return {};
 }
 
+arpg::test::Failure ui_text_uses_one_solid_foreground_without_fake_bold() noexcept {
+    const platform::UiTextContrastStyle contrast =
+        platform::ui_text_contrast_style();
+    const platform::HudReadabilityStyle readability =
+        platform::hud_readability_style();
+    ARPG_REQUIRE(contrast.outline_pixels == 0);
+    ARPG_REQUIRE(readability.outline_pixels == 0);
+    ARPG_REQUIRE(readability.embolden_pixels == 0);
+    ARPG_REQUIRE(contrast.primary.a == 255U);
+    ARPG_REQUIRE(contrast.secondary.a == 255U);
+    return {};
+}
+
+arpg::test::Failure ui_typography_scales_to_physical_full_hd_pixels() noexcept {
+    ARPG_REQUIRE(arpg::test::near(platform::ui_viewport_scale(1280, 720), 1.0F));
+    ARPG_REQUIRE(arpg::test::near(platform::ui_viewport_scale(1920, 1080), 1.5F));
+    ARPG_REQUIRE(arpg::test::near(platform::ui_viewport_scale(3840, 2160), 1.5F));
+    ARPG_REQUIRE(arpg::test::near(platform::scaled_ui_font_size(
+        platform::ui_typography().kInventoryBodyFontSize, 1920, 1080),
+        24.0F));
+    ARPG_REQUIRE(arpg::test::near(platform::scaled_ui_font_size(
+        platform::ui_typography().kPauseRowFontSize, 1920, 1080),
+        27.0F));
+    return {};
+}
+
 arpg::test::Failure bundled_font_uses_bounded_high_resolution_glyph_atlas() noexcept {
-    static_assert(platform::kUiFontSourceBaseSize >= 64);
-    static_assert(platform::kUiFontMaximumDisplaySize >= 26);
+    static_assert(platform::kUiFontSourceBaseSize >= 96);
+    static_assert(platform::kUiFontMaximumDisplaySize >= 39);
     static_assert(platform::kUiFontSourceBaseSize
         >= platform::kUiFontMaximumDisplaySize * 2);
     static_assert(platform::kUiFontAtlasByteBudget > 0U);
-    static_assert(platform::kUiFontAtlasByteBudget <= 8U * 1024U * 1024U);
+    static_assert(platform::kUiFontAtlasByteBudget <= 16U * 1024U * 1024U);
     static_assert(platform::kDeathOverlayCodepointCapacity <= 384U);
     const platform::DeathOverlayFontPlan plan =
         platform::death_overlay_font_plan();
@@ -228,6 +256,10 @@ constexpr arpg::test::TestCase kCases[] = {
         &bundled_noto_sans_sc_is_the_required_runtime_font},
     {"bounded high-resolution glyph atlas",
         &bundled_font_uses_bounded_high_resolution_glyph_atlas},
+    {"single solid text foreground",
+        &ui_text_uses_one_solid_foreground_without_fake_bold},
+    {"full-HD physical typography scaling",
+        &ui_typography_scales_to_physical_full_hd_pixels},
     {"opaque distinct HUD palette", &hud_palette_key_colors_are_opaque_and_distinct},
     {"safe uninitialized renderer shutdown", &renderer_shutdown_is_safe_before_initialization},
 };

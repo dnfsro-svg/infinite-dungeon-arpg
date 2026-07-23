@@ -39,8 +39,39 @@ def connected_components(mask: Image.Image) -> list[int]:
 
 
 class UiMaterialAssetPipelineTests(unittest.TestCase):
+    def test_final_ui_typography_has_readable_sizes_and_real_font_bounds_audit(self) -> None:
+        typography = ROOT / "src/platform/raylib/ui_typography.hpp"
+        audit_header = ROOT / "src/platform/raylib/ui_text_bounds_audit.hpp"
+        audit_source = ROOT / "src/platform/raylib/ui_text_bounds_audit.cpp"
+        self.assertTrue(typography.is_file())
+        self.assertTrue(audit_header.is_file())
+        self.assertTrue(audit_source.is_file())
+        contract = typography.read_text(encoding="utf-8")
+        for declaration in (
+            "kHudSkillNameFontSize{16.0F}",
+            "kInventoryBodyFontSize{16.0F}",
+            "kInventoryDetailFontSize{16.0F}",
+            "kSkillDescriptionFontSize{18.0F}",
+            "kPauseRowFontSize{18.0F}",
+        ):
+            self.assertIn(declaration, contract)
+        self.assertIn("ui_viewport_scale", contract)
+        self.assertIn("scaled_ui_font_size", contract)
+        audit = audit_source.read_text(encoding="utf-8")
+        self.assertIn("MeasureTextEx", audit)
+        self.assertIn("ui_text_bounds_inside", audit)
+        self.assertIn("ui_text_bounds_separated", audit)
+        for filename in (
+            "hud_renderer.cpp", "active_skill_renderer.cpp",
+            "inventory_renderer.cpp", "material_bag_renderer.cpp",
+            "pause_menu_renderer.cpp",
+        ):
+            source = (ROOT / "src/platform/raylib" / filename).read_text(
+                encoding="utf-8")
+            self.assertIn("record_ui_text_bounds", source, filename)
+
     def test_bundled_cjk_font_and_runtime_archive_are_required(self) -> None:
-        font = ROOT / "assets/fonts/NotoSansSC[wght].ttf"
+        font = ROOT / "assets/fonts/NotoSansCJKsc-Medium.otf"
         license_file = ROOT / "assets/fonts/OFL.txt"
         self.assertTrue(font.is_file())
         self.assertGreater(font.stat().st_size, 10_000_000)
@@ -52,14 +83,15 @@ class UiMaterialAssetPipelineTests(unittest.TestCase):
         app_cmake = (ROOT / "src/app/CMakeLists.txt").read_text(encoding="utf-8")
         formal_cmake = (ROOT / "tests/platform/CMakeLists.txt").read_text(
             encoding="utf-8")
-        self.assertIn('assets/fonts/NotoSansSC[wght].ttf', font_source)
+        self.assertIn('assets/fonts/NotoSansCJKsc-Medium.otf', font_source)
+        self.assertNotIn('NotoSansSC[wght].ttf', font_source)
         self.assertIn('${PROJECT_SOURCE_DIR}/assets/fonts', app_cmake)
         self.assertIn('${PROJECT_SOURCE_DIR}/assets/fonts', formal_cmake)
 
         contract = (ROOT / "src/platform/raylib/death_overlay_font.hpp").read_text(
             encoding="utf-8")
-        self.assertIn("kUiFontSourceBaseSize = 64", contract)
-        self.assertIn("kUiFontMaximumDisplaySize = 26", contract)
+        self.assertIn("kUiFontSourceBaseSize = 96", contract)
+        self.assertIn("kUiFontMaximumDisplaySize = 39", contract)
         self.assertIn("kUiFontAtlasByteBudget", contract)
         for filename in ("hud_renderer.cpp", "pause_menu_renderer.cpp",
                          "death_overlay_renderer.cpp"):
@@ -100,13 +132,16 @@ class UiMaterialAssetPipelineTests(unittest.TestCase):
                 encoding="utf-8")
             self.assertIn('ui_text_contrast.hpp', source, filename)
             self.assertIn('ui_text_contrast_style()', source, filename)
+            self.assertIn('ui_text_renderer.hpp', source, filename)
+            self.assertIn('draw_crisp_ui_text', source, filename)
+            self.assertNotIn('DrawTextEx(', source, filename)
         contract = (ROOT / "src/platform/raylib/ui_text_contrast.hpp").read_text(
             encoding="utf-8")
         self.assertIn("Color primary{248, 246, 238, 255}", contract)
         self.assertIn("Color secondary{194, 229, 255, 255}", contract)
         self.assertIn("Color interaction{194, 229, 255, 255}", contract)
         self.assertIn("Color muted{184, 204, 220, 255}", contract)
-        self.assertIn("int outline_pixels{1}", contract)
+        self.assertIn("int outline_pixels{0}", contract)
         self.assertIn("int shadow_pixels{2}", contract)
         self.assertIn("ui_luma_contrast_ratio", contract)
         for filename in critical_renderers:
@@ -114,6 +149,40 @@ class UiMaterialAssetPipelineTests(unittest.TestCase):
                 encoding="utf-8")
             self.assertNotIn("DrawTextGradient", source, filename)
             self.assertNotRegex(source, r"DrawTextEx\([^;]*Fade\(", filename)
+
+    def test_modal_pages_fully_occlude_underlying_hud_text(self) -> None:
+        inventory = (ROOT / "src/platform/raylib/inventory_renderer.cpp").read_text(
+            encoding="utf-8")
+        pause = (ROOT / "src/platform/raylib/pause_menu_renderer.cpp").read_text(
+            encoding="utf-8")
+        self.assertIn("Color{3, 5, 9, 255}", inventory)
+        self.assertIn("Color{2, 4, 8, 255}", pause)
+
+    def test_skill_names_and_remove_action_have_opaque_text_backings(self) -> None:
+        inventory = (ROOT / "src/platform/raylib/inventory_renderer.cpp").read_text(
+            encoding="utf-8")
+        material_bag = (
+            ROOT / "src/platform/raylib/material_bag_renderer.cpp"
+        ).read_text(encoding="utf-8")
+        self.assertIn("draw_opaque_skill_text_backing", inventory)
+        self.assertGreaterEqual(
+            inventory.count("draw_opaque_skill_text_backing("), 4)
+        self.assertIn("combine_button(layout.grid, layout.scale)", inventory)
+        self.assertIn("draw_opaque_material_text_backing", material_bag)
+        self.assertIn("Color{5, 9, 16, 255}", material_bag)
+        self.assertIn("Color{5, 9, 16, 255}", inventory)
+
+    def test_combine_label_has_an_opaque_text_backing(self) -> None:
+        inventory = (ROOT / "src/platform/raylib/inventory_renderer.cpp").read_text(
+            encoding="utf-8")
+        self.assertIn("bool active = false, bool opaque_label_plate = false",
+                      inventory)
+        self.assertIn("if (opaque_label_plate)", inventory)
+        self.assertRegex(
+            inventory,
+            r"TextFormat\(\"Combine \(%u/3\)\"[\s\S]{0,180}"
+            r"hud_font_ready, false, true\);",
+        )
 
     def test_paired_atlases_exist_with_matching_alpha(self) -> None:
         color = Image.open(ROOT / "assets/stage12/ui_material.png").convert("RGBA")

@@ -3,6 +3,7 @@
 #include "death_overlay_font.hpp"
 #include "death_overlay_view.hpp"
 #include "ui_text_contrast.hpp"
+#include "ui_text_renderer.hpp"
 
 #include <cstddef>
 
@@ -27,23 +28,8 @@ void draw_text(Font font, const char* text, DeathOverlayRect bounds,
     if (ui_luma_contrast_ratio(color, style.backing) < 4.5F) {
         color = style.muted;
     }
-    DrawTextEx(font, text,
-        {x + static_cast<float>(style.shadow_pixels),
-         bounds.y + static_cast<float>(style.shadow_pixels)},
-        static_cast<float>(font_size), kSpacing, style.shadow);
-    const int kOutlinePixels = style.outline_pixels;
-    for (int offset_y = -kOutlinePixels; offset_y <= kOutlinePixels; ++offset_y) {
-        for (int offset_x = -kOutlinePixels; offset_x <= kOutlinePixels; ++offset_x) {
-            if (offset_x == 0 && offset_y == 0) continue;
-            DrawTextEx(font, text, {x + static_cast<float>(offset_x),
-                bounds.y + static_cast<float>(offset_y)},
-                static_cast<float>(font_size), kSpacing, style.shadow);
-        }
-    }
-    DrawTextEx(font, text, {x + 1.0F, bounds.y},
+    draw_crisp_ui_text(font, text, {x, bounds.y},
         static_cast<float>(font_size), kSpacing, color);
-    DrawTextEx(font, text, {x, bounds.y}, static_cast<float>(font_size),
-        kSpacing, color);
 }
 
 void draw_panel(const DeathOverlayLayout& layout) noexcept {

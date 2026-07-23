@@ -1,5 +1,9 @@
 add_executable(arpg_game main.cpp)
 
+if(WIN32)
+    target_sources(arpg_game PRIVATE arpg_game.manifest)
+endif()
+
 target_compile_features(arpg_game PRIVATE cxx_std_17)
 target_link_libraries(arpg_game PRIVATE arpg_raylib)
 

@@ -60,6 +60,13 @@ if(TARGET arpg_raylib)
     set_tests_properties(
         platform.units PROPERTIES LABELS "headless;platform")
 
+    add_test(NAME platform.ui_dpi_manifest
+        COMMAND "${CMAKE_COMMAND}"
+            "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/ui_dpi_manifest_test.cmake")
+    set_tests_properties(platform.ui_dpi_manifest PROPERTIES
+        LABELS "headless;platform;ui")
+
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_test(NAME stage12.lightning_asset_pipeline
         COMMAND "${Python3_EXECUTABLE}"

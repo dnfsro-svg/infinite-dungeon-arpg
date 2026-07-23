@@ -10,12 +10,12 @@ constexpr float kLogicalHeight = 720.0F;
 constexpr float kMinimumScale = 0.8F;
 constexpr float kMaximumScale = 1.5F;
 constexpr float kLogicalMargin = 16.0F;
-constexpr float kPlayerWidth = 300.0F;
+constexpr float kPlayerWidth = 420.0F;
 constexpr float kPlayerHeight = 144.0F;
-constexpr float kObjectiveWidth = 340.0F;
-constexpr float kObjectiveHeight = 72.0F;
+constexpr float kObjectiveWidth = 620.0F;
+constexpr float kObjectiveHeight = 142.0F;
 constexpr float kNavigationWidth = 270.0F;
-constexpr float kNavigationHeight = 116.0F;
+constexpr float kNavigationHeight = 160.0F;
 constexpr float kPrimaryNoticeWidth = 600.0F;
 constexpr float kPrimaryNoticeHeight = 36.0F;
 constexpr float kSecondaryNoticeHeight = 28.0F;
@@ -23,7 +23,7 @@ constexpr float kNoticeGap = 6.0F;
 constexpr float kAbyssConfirmationHeight = 56.0F;
 constexpr float kAbyssConfirmationGap = 8.0F;
 constexpr float kCombatExclusionX = 360.0F;
-constexpr float kCombatExclusionY = 148.0F;
+constexpr float kCombatExclusionY = 164.0F;
 constexpr float kCombatExclusionWidth = 560.0F;
 constexpr float kCombatExclusionHeight = 310.0F;
 constexpr float kDebugWidth = 300.0F;
@@ -109,12 +109,33 @@ HudTextSafeLayout make_hud_text_safe_layout(
             std::max(0.0F, panel.width - x * 2.0F * scale),
             height * scale};
     };
-    return {
-        inset(layout.objective_panel, 18.0F, 8.0F, 23.0F),
-        inset(layout.objective_panel, 18.0F, 39.0F, 20.0F),
-        inset(layout.navigation_panel, 18.0F, 9.0F, 21.0F),
-        inset(layout.navigation_panel, 18.0F, 37.0F, 19.0F),
-    };
+    HudTextSafeLayout text{};
+    text.player_bar_labels = {{
+            {layout.player_panel.x + 12.0F * scale,
+                layout.player_panel.y + 21.0F * scale,
+                164.0F * scale, 24.0F * scale},
+            {layout.player_panel.x + 12.0F * scale,
+                layout.player_panel.y + 47.0F * scale,
+                164.0F * scale, 24.0F * scale},
+            {layout.player_panel.x + 12.0F * scale,
+                layout.player_panel.y + 70.0F * scale,
+                164.0F * scale, 29.0F * scale},
+        }};
+    text.player_progression = {layout.player_panel.x + 12.0F * scale,
+        layout.player_panel.y + 99.0F * scale,
+        layout.player_panel.width - 24.0F * scale, 24.0F * scale};
+    text.objective_title = inset(layout.objective_panel, 18.0F, 3.0F, 27.0F);
+    text.objective_hint = inset(layout.objective_panel, 18.0F, 30.0F, 22.0F);
+    text.objective_movement = inset(
+        layout.objective_panel, 18.0F, 52.0F, 22.0F);
+    for (std::size_t index{}; index < text.objective_controls.size(); ++index) {
+        text.objective_controls[index] = inset(layout.objective_panel, 18.0F,
+            74.0F + static_cast<float>(index) * 22.0F, 22.0F);
+    }
+    text.navigation_title = inset(layout.navigation_panel, 18.0F, 7.0F, 28.0F);
+    text.navigation_ecology = inset(
+        layout.navigation_panel, 18.0F, 36.0F, 26.0F);
+    return text;
 }
 
 bool hud_rects_overlap(HudRect lhs, HudRect rhs) noexcept {

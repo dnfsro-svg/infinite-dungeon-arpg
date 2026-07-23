@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <limits>
 
 namespace arpg::platform {
@@ -142,25 +143,116 @@ void build_navigation(NavigationHudModel& navigation,
     }
 }
 
-void append_text(HudText96& output,
+[[nodiscard]] std::size_t bounded_hint_length(
+    const std::array<char, 160U>& source) noexcept {
+    std::size_t length{};
+    while (length < source.size() && source[length] != '\0') ++length;
+    return length;
+}
+
+void mark_truncated(HudText96& output,
+    HudBuildDiagnostics& diagnostics) noexcept {
+    if (output.truncated) return;
+    output.truncated = true;
+    ++diagnostics.truncated_texts;
+}
+
+void copy_movement_hint(HudText96& output,
     HudBuildDiagnostics& diagnostics,
-    const HudText96& suffix) noexcept {
-    std::size_t destination{};
-    while (destination + 1U < output.bytes.size()
-        && output.bytes[destination] != '\0') {
-        ++destination;
+    const std::array<char, 160U>& source) noexcept {
+    const std::size_t length = bounded_hint_length(source);
+    const std::size_t copied = std::min(length, output.bytes.size() - 1U);
+    if (copied != 0U) {
+        std::memcpy(output.bytes.data(), source.data(), copied);
     }
-    std::size_t source{};
-    while (suffix.bytes[source] != '\0'
-        && destination + 1U < output.bytes.size()) {
-        output.bytes[destination++] = suffix.bytes[source++];
+    output.bytes[copied] = '\0';
+    if (copied != length || length == source.size()) {
+        mark_truncated(output, diagnostics);
     }
-    output.bytes[destination] = '\0';
-    if (suffix.bytes[source] != '\0') {
-        if (!output.truncated) {
-            ++diagnostics.truncated_texts;
+}
+
+[[nodiscard]] std::size_t text_length(const HudText96& text) noexcept {
+    std::size_t length{};
+    while (length < text.bytes.size() && text.bytes[length] != '\0') ++length;
+    return length;
+}
+
+void split_control_hints(std::array<HudText96, 3U>& output,
+    HudBuildDiagnostics& diagnostics,
+    const std::array<char, 160U>& source) noexcept {
+    constexpr std::size_t kPreferredLineBytes = 42U;
+    const std::size_t source_length = bounded_hint_length(source);
+    std::size_t cursor{};
+    std::size_t line_index{};
+    while (cursor < source_length) {
+        while (cursor < source_length && source[cursor] == ' ') ++cursor;
+        if (cursor == source_length) break;
+
+        const std::size_t token_begin = cursor;
+        while (cursor < source_length) {
+            if (source[cursor] == ' ' && cursor + 1U < source_length
+                && source[cursor + 1U] == ' ') {
+                break;
+            }
+            ++cursor;
         }
-        output.truncated = true;
+        std::size_t token_end = cursor;
+        while (token_end > token_begin && source[token_end - 1U] == ' ') {
+            --token_end;
+        }
+        const std::size_t token_length = token_end - token_begin;
+        if (token_length == 0U) continue;
+
+        for (;;) {
+            HudText96& line = output[line_index];
+            const std::size_t line_length = text_length(line);
+            const std::size_t separator = line_length == 0U ? 0U : 2U;
+            const std::size_t required = separator + token_length;
+            if (line_length != 0U
+                && line_length + required > kPreferredLineBytes
+                && line_index + 1U < output.size()) {
+                ++line_index;
+                continue;
+            }
+            if (line_length + required >= line.bytes.size()) {
+                if (line_length != 0U && line_index + 1U < output.size()) {
+                    ++line_index;
+                    continue;
+                }
+                const std::size_t available = line.bytes.size() - 1U
+                    - line_length - separator;
+                std::size_t destination = line_length;
+                if (separator != 0U) {
+                    line.bytes[destination++] = ' ';
+                    line.bytes[destination++] = ' ';
+                }
+                if (available != 0U) {
+                    std::memcpy(line.bytes.data() + destination,
+                        source.data() + token_begin, available);
+                    destination += available;
+                }
+                line.bytes[destination] = '\0';
+                mark_truncated(line, diagnostics);
+                return;
+            }
+
+            std::size_t destination = line_length;
+            if (separator != 0U) {
+                line.bytes[destination++] = ' ';
+                line.bytes[destination++] = ' ';
+            }
+            std::memcpy(line.bytes.data() + destination,
+                source.data() + token_begin, token_length);
+            destination += token_length;
+            line.bytes[destination] = '\0';
+            break;
+        }
+
+        while (cursor < source_length && source[cursor] == ' ') ++cursor;
+    }
+
+    if (source_length == source.size()) {
+        mark_truncated(output[line_index], diagnostics);
     }
 }
 
@@ -218,10 +310,12 @@ void HudViewModelProjector::build(HudViewModel& output,
 
     if (!control_hints_ready_
         || control_hints_revision_ != hints.revision) {
-        cached_control_hint_suffix_ = {};
+        cached_movement_hint_ = {};
+        cached_control_hint_lines_ = {};
         HudBuildDiagnostics diagnostics{};
-        format_text(cached_control_hint_suffix_, diagnostics,
-            u8" | %.32s | %.32s", hints.primary.data(), hints.secondary.data());
+        copy_movement_hint(cached_movement_hint_, diagnostics, hints.primary);
+        split_control_hints(cached_control_hint_lines_, diagnostics,
+            hints.secondary);
         cached_control_hint_truncations_ = diagnostics.truncated_texts;
         control_hints_revision_ = hints.revision;
         control_hints_ready_ = true;
@@ -229,12 +323,12 @@ void HudViewModelProjector::build(HudViewModel& output,
             static_formatting_diagnostics_.control_hint_rebuilds);
     }
     output.diagnostics.truncated_texts += cached_control_hint_truncations_;
+    output.room.movement = cached_movement_hint_;
+    output.room.controls = cached_control_hint_lines_;
     if (!output.room.abyss) {
         format_text(output.room.secondary, output.diagnostics,
             u8"待结算经验 +%llu",
             static_cast<unsigned long long>(snapshot.pending_room_experience));
-        append_text(output.room.secondary, output.diagnostics,
-            cached_control_hint_suffix_);
     }
 
     const NavigationKey navigation_key{

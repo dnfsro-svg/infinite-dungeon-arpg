@@ -56,7 +56,7 @@ void add_text(DeathOverlayFontPlan& plan, const char* text) noexcept {
 DeathOverlayFontPlan death_overlay_font_plan() noexcept {
     DeathOverlayFontPlan plan{};
     plan.candidate_paths = {{
-        "assets/fonts/NotoSansSC[wght].ttf",
+        "assets/fonts/NotoSansCJKsc-Medium.otf",
         nullptr,
         nullptr,
         nullptr,

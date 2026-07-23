@@ -158,8 +158,29 @@ arpg::test::Failure hud_text_safe_boxes_do_not_intersect_or_cross_panels() noexc
             text.objective_title, layout.objective_panel));
         ARPG_REQUIRE(platform::hud_rect_inside(
             text.objective_hint, layout.objective_panel));
-        ARPG_REQUIRE(!platform::hud_rects_overlap(
-            text.objective_title, text.objective_hint));
+        ARPG_REQUIRE(platform::hud_rect_inside(
+            text.objective_movement, layout.objective_panel));
+        for (const platform::HudRect control : text.objective_controls) {
+            ARPG_REQUIRE(platform::hud_rect_inside(
+                control, layout.objective_panel));
+        }
+        const std::array<platform::HudRect, 6U> objective_rows{{
+            text.objective_title,
+            text.objective_hint,
+            text.objective_movement,
+            text.objective_controls[0],
+            text.objective_controls[1],
+            text.objective_controls[2],
+        }};
+        for (std::size_t first{}; first < objective_rows.size(); ++first) {
+            for (std::size_t second = first + 1U;
+                 second < objective_rows.size(); ++second) {
+                ARPG_REQUIRE(!platform::hud_rects_overlap(
+                    objective_rows[first], objective_rows[second]));
+            }
+        }
+        ARPG_REQUIRE(layout.objective_panel.width >= 620.0F * layout.scale);
+        ARPG_REQUIRE(layout.objective_panel.height <= 142.0F * layout.scale);
         ARPG_REQUIRE(platform::hud_rect_inside(
             text.navigation_title, layout.navigation_panel));
         ARPG_REQUIRE(platform::hud_rect_inside(
@@ -178,9 +199,9 @@ arpg::test::Failure hud_typography_has_readable_minimums_and_contrast() noexcept
     ARPG_REQUIRE(style.objective_primary_font_size >= 23.0F);
     ARPG_REQUIRE(style.objective_secondary_font_size >= 19.0F);
     ARPG_REQUIRE(style.navigation_secondary_font_size >= 19.0F);
-    ARPG_REQUIRE(style.outline_pixels == 1);
+    ARPG_REQUIRE(style.outline_pixels == 0);
     ARPG_REQUIRE(style.shadow_pixels >= 2);
-    ARPG_REQUIRE(style.embolden_pixels >= 1);
+    ARPG_REQUIRE(style.embolden_pixels == 0);
     const platform::UiTextContrastStyle contrast =
         platform::ui_text_contrast_style();
     ARPG_REQUIRE(contrast.primary.a == 255U);
@@ -204,7 +225,7 @@ arpg::test::Failure hud_typography_has_readable_minimums_and_contrast() noexcept
         contrast.secondary, contrast.backing) >= 6.0F);
     ARPG_REQUIRE(platform::ui_luma_contrast_ratio(
         contrast.muted, contrast.backing) >= 4.5F);
-    ARPG_REQUIRE(contrast.outline_pixels >= 1);
+    ARPG_REQUIRE(contrast.outline_pixels == 0);
     ARPG_REQUIRE(contrast.shadow_pixels >= 2);
     ARPG_REQUIRE(contrast.backing.a >= 220U);
     return {};

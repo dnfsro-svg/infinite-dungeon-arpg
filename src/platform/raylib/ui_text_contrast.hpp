@@ -15,7 +15,7 @@ struct UiTextContrastStyle final {
     Color danger{255, 152, 152, 255};
     Color backing{5, 9, 16, 232};
     Color shadow{1, 3, 7, 248};
-    int outline_pixels{1};
+    int outline_pixels{0};
     int shadow_pixels{2};
 };
 

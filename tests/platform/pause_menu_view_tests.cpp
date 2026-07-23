@@ -60,9 +60,6 @@ test::Failure layouts_are_bounded_centered_and_fixed() noexcept {
     constexpr std::array<std::array<int, 2>, 3> kSizes{{
         {{1024, 576}}, {{1280, 720}}, {{1920, 1080}},
     }};
-    float panel_width = 0.0F;
-    float panel_height = 0.0F;
-    float row_height = 0.0F;
     for (const auto& size : kSizes) {
         const Rectangle screen{
             0.0F, 0.0F,
@@ -70,7 +67,7 @@ test::Failure layouts_are_bounded_centered_and_fixed() noexcept {
         const platform::PauseMenuLayout layout =
             platform::pause_menu_layout(size[0], size[1]);
         ARPG_REQUIRE(inside(layout.panel, screen));
-        ARPG_REQUIRE(layout.panel.width <= 760.0F);
+        ARPG_REQUIRE(layout.panel.width <= 1140.0F);
         ARPG_REQUIRE(layout.panel.x >= 32.0F);
         ARPG_REQUIRE(layout.panel.x + layout.panel.width
             <= screen.width - 32.0F);
@@ -84,78 +81,99 @@ test::Failure layouts_are_bounded_centered_and_fixed() noexcept {
         ARPG_REQUIRE(inside(layout.footer, layout.panel));
         ARPG_REQUIRE(inside(layout.title, layout.panel));
         ARPG_REQUIRE(separated(layout.title, layout.rows[0]));
+        const float scale = layout.panel.width / 760.0F;
         ARPG_REQUIRE(test::near(
-            layout.footer.x - layout.panel.x, 24.0F));
+            layout.panel.height, 620.0F * scale, 0.01));
         ARPG_REQUIRE(test::near(
-            layout.footer.y - layout.panel.y, 496.0F));
-        ARPG_REQUIRE(test::near(layout.footer.width, 712.0F));
-        ARPG_REQUIRE(test::near(layout.footer.height, 28.0F));
+            layout.footer.x - layout.panel.x, 24.0F * scale, 0.01));
+        ARPG_REQUIRE(test::near(
+            layout.footer.y - layout.panel.y, 580.0F * scale, 0.01));
+        ARPG_REQUIRE(test::near(
+            layout.footer.width, 712.0F * scale, 0.01));
+        ARPG_REQUIRE(test::near(
+            layout.footer.height, 28.0F * scale, 0.01));
         for (std::size_t row = 0U; row < 21U; ++row) {
             ARPG_REQUIRE(inside(layout.rows[row], layout.panel));
             ARPG_REQUIRE(separated(layout.rows[row], layout.footer));
             ARPG_REQUIRE(test::near(
-                layout.rows[row].x - layout.panel.x, 24.0F));
+                layout.rows[row].x - layout.panel.x, 24.0F * scale, 0.01));
             ARPG_REQUIRE(test::near(
                 layout.rows[row].y - layout.panel.y,
-                60.0F + static_cast<float>(row) * 20.0F));
-            ARPG_REQUIRE(test::near(layout.rows[row].width, 712.0F));
-            ARPG_REQUIRE(test::near(layout.rows[row].height, 18.0F));
+                (62.0F + static_cast<float>(row) * 24.0F) * scale,
+                0.01));
+            ARPG_REQUIRE(test::near(
+                layout.rows[row].width, 712.0F * scale, 0.01));
+            ARPG_REQUIRE(test::near(
+                layout.rows[row].height, 23.0F * scale, 0.01));
             if (row != 0U) {
                 ARPG_REQUIRE(separated(layout.rows[row - 1U], layout.rows[row]));
                 ARPG_REQUIRE(layout.rows[row - 1U].y
                     + layout.rows[row - 1U].height < layout.rows[row].y);
             }
         }
-        if (panel_width == 0.0F) {
-            panel_width = layout.panel.width;
-            panel_height = layout.panel.height;
-            row_height = layout.rows[0].height;
-        } else {
-            ARPG_REQUIRE(test::near(layout.panel.width, panel_width));
-            ARPG_REQUIRE(test::near(layout.panel.height, panel_height));
-            ARPG_REQUIRE(test::near(layout.rows[0].height, row_height));
-        }
     }
+    return {};
+}
+
+test::Failure full_hd_layout_scales_panel_and_rows_by_one_and_a_half() noexcept {
+    const platform::PauseMenuLayout layout =
+        platform::pause_menu_layout(1920, 1080);
+    ARPG_REQUIRE(test::near(layout.panel.width, 1140.0F, 0.01));
+    ARPG_REQUIRE(test::near(layout.panel.height, 930.0F, 0.01));
+    ARPG_REQUIRE(test::near(layout.rows[0].height, 34.5F, 0.01));
+    ARPG_REQUIRE(test::near(layout.rows[1].y - layout.rows[0].y,
+        36.0F, 0.01));
     return {};
 }
 
 test::Failure layout_has_exact_1024_golden_geometry() noexcept {
     const platform::PauseMenuLayout layout =
         platform::pause_menu_layout(1024, 576);
-    ARPG_REQUIRE(test::near(layout.panel.x, 132.0F));
-    ARPG_REQUIRE(test::near(layout.panel.y, 16.0F));
-    ARPG_REQUIRE(test::near(layout.panel.width, 760.0F));
-    ARPG_REQUIRE(test::near(layout.panel.height, 544.0F));
-    ARPG_REQUIRE(test::near(layout.title.x, 156.0F));
-    ARPG_REQUIRE(test::near(layout.title.y, 36.0F));
-    ARPG_REQUIRE(test::near(layout.title.width, 712.0F));
-    ARPG_REQUIRE(test::near(layout.title.height, 28.0F));
+    constexpr float kScale = 544.0F / 620.0F;
+    ARPG_REQUIRE(test::near(layout.panel.x,
+        (1024.0F - 760.0F * kScale) * 0.5F, 0.01));
+    ARPG_REQUIRE(test::near(layout.panel.y, 16.0F, 0.01));
+    ARPG_REQUIRE(test::near(layout.panel.width, 760.0F * kScale, 0.01));
+    ARPG_REQUIRE(test::near(layout.panel.height, 620.0F * kScale, 0.01));
+    ARPG_REQUIRE(test::near(layout.title.x,
+        layout.panel.x + 24.0F * kScale, 0.01));
+    ARPG_REQUIRE(test::near(layout.title.y,
+        layout.panel.y + 20.0F * kScale, 0.01));
+    ARPG_REQUIRE(test::near(layout.title.width, 712.0F * kScale, 0.01));
+    ARPG_REQUIRE(test::near(layout.title.height, 30.0F * kScale, 0.01));
 
-    ARPG_REQUIRE(test::near(layout.rows[0].x, 156.0F));
-    ARPG_REQUIRE(test::near(layout.rows[0].y, 76.0F));
-    ARPG_REQUIRE(test::near(layout.rows[0].width, 712.0F));
-    ARPG_REQUIRE(test::near(layout.rows[0].height, 18.0F));
+    ARPG_REQUIRE(test::near(layout.rows[0].x,
+        layout.panel.x + 24.0F * kScale, 0.01));
+    ARPG_REQUIRE(test::near(layout.rows[0].y,
+        layout.panel.y + 62.0F * kScale, 0.01));
+    ARPG_REQUIRE(test::near(layout.rows[0].width, 712.0F * kScale, 0.01));
+    ARPG_REQUIRE(test::near(layout.rows[0].height, 23.0F * kScale, 0.01));
     ARPG_REQUIRE(test::near(
-        layout.rows[0].y - layout.panel.y, 60.0F));
+        layout.rows[0].y - layout.panel.y, 62.0F * kScale, 0.01));
 
-    ARPG_REQUIRE(test::near(layout.rows[20].x, 156.0F));
-    ARPG_REQUIRE(test::near(layout.rows[20].y, 476.0F));
-    ARPG_REQUIRE(test::near(layout.rows[20].width, 712.0F));
-    ARPG_REQUIRE(test::near(layout.rows[20].height, 18.0F));
+    ARPG_REQUIRE(test::near(layout.rows[20].x,
+        layout.panel.x + 24.0F * kScale, 0.01));
+    ARPG_REQUIRE(test::near(layout.rows[20].y,
+        layout.panel.y + (62.0F + 20.0F * 24.0F) * kScale, 0.01));
+    ARPG_REQUIRE(test::near(layout.rows[20].width, 712.0F * kScale, 0.01));
+    ARPG_REQUIRE(test::near(layout.rows[20].height, 23.0F * kScale, 0.01));
     for (std::size_t row = 1U; row < 21U; ++row) {
         ARPG_REQUIRE(test::near(
-            layout.rows[row].y - layout.rows[row - 1U].y, 20.0F));
+            layout.rows[row].y - layout.rows[row - 1U].y,
+            24.0F * kScale, 0.01));
         ARPG_REQUIRE(test::near(
             layout.rows[row].y
                 - (layout.rows[row - 1U].y
                     + layout.rows[row - 1U].height),
-            2.0F));
+            1.0F * kScale, 0.01));
     }
 
-    ARPG_REQUIRE(test::near(layout.footer.x, 156.0F));
-    ARPG_REQUIRE(test::near(layout.footer.y, 512.0F));
-    ARPG_REQUIRE(test::near(layout.footer.width, 712.0F));
-    ARPG_REQUIRE(test::near(layout.footer.height, 28.0F));
+    ARPG_REQUIRE(test::near(layout.footer.x,
+        layout.panel.x + 24.0F * kScale, 0.01));
+    ARPG_REQUIRE(test::near(layout.footer.y,
+        layout.panel.y + 580.0F * kScale, 0.01));
+    ARPG_REQUIRE(test::near(layout.footer.width, 712.0F * kScale, 0.01));
+    ARPG_REQUIRE(test::near(layout.footer.height, 28.0F * kScale, 0.01));
     return {};
 }
 
@@ -184,7 +202,7 @@ test::Failure hit_test_uses_half_open_rows_only() noexcept {
         {layout.panel.x + 2.0F, layout.panel.y + 2.0F}).has_value());
     ARPG_REQUIRE(!platform::hit_test_pause_row(layout,
         {layout.rows[0].x,
-         layout.rows[0].y + layout.rows[0].height + 1.0F}).has_value());
+         layout.rows[0].y + layout.rows[0].height + 0.5F}).has_value());
     ARPG_REQUIRE(!platform::hit_test_pause_row(layout,
         {layout.footer.x + 2.0F, layout.footer.y + 2.0F}).has_value());
     ARPG_REQUIRE(!platform::hit_test_pause_row(layout,
@@ -431,6 +449,8 @@ test::Failure all_view_layout_and_hit_paths_allocate_nothing() noexcept {
 constexpr test::TestCase kCases[] = {
     {"layouts are bounded and centered", &layouts_are_bounded_centered_and_fixed},
     {"layout has exact 1024 golden geometry", &layout_has_exact_1024_golden_geometry},
+    {"full-HD layout scales physical pixels",
+        &full_hd_layout_scales_panel_and_rows_by_one_and_a_half},
     {"hit test is half open", &hit_test_uses_half_open_rows_only},
     {"root and quit content", &root_and_quit_views_have_complete_content},
     {"settings draft and committed content", &settings_view_shows_all_draft_and_committed_values},

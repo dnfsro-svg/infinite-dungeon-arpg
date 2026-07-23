@@ -34,6 +34,8 @@ add_library(arpg_raylib STATIC
     hud_renderer.cpp
     inventory_renderer.cpp
     inventory_view_math.cpp
+    ui_text_bounds_audit.cpp
+    ui_text_renderer.cpp
     material_animation.cpp
     material_asset_validation.cpp
     material_pack.cpp

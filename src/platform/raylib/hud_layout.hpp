@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+
 namespace arpg::platform {
 
 struct HudRect final {
@@ -22,8 +24,12 @@ struct HudLayout final {
 };
 
 struct HudTextSafeLayout final {
+    std::array<HudRect, 3U> player_bar_labels{};
+    HudRect player_progression{};
     HudRect objective_title{};
     HudRect objective_hint{};
+    HudRect objective_movement{};
+    std::array<HudRect, 3U> objective_controls{};
     HudRect navigation_title{};
     HudRect navigation_ecology{};
 };

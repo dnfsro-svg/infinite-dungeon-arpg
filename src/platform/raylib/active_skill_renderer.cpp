@@ -1,6 +1,9 @@
 #include "active_skill_renderer.hpp"
 
 #include "ui_text_contrast.hpp"
+#include "ui_text_bounds_audit.hpp"
+#include "ui_text_renderer.hpp"
+#include "ui_typography.hpp"
 
 #include "combat/active_skill_runtime.hpp"
 #include "combat_view_math.hpp"
@@ -11,6 +14,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <string>
 
 namespace arpg::platform {
 namespace {
@@ -67,11 +71,7 @@ void draw_skill_text(Font font, const char* text,
     if (ui_luma_contrast_ratio(color, style.backing) < 4.5F) {
         color = style.muted;
     }
-    DrawTextEx(font, text, {x + 2.0F, y + 2.0F}, size, 0.5F,
-        style.shadow);
-    DrawTextEx(font, text, {x - 1.0F, y}, size, 0.5F, style.shadow);
-    DrawTextEx(font, text, {x + 1.0F, y}, size, 0.5F, color);
-    DrawTextEx(font, text, {x, y}, size, 0.5F, color);
+    draw_crisp_ui_text(font, text, {x, y}, size, 0.5F, color);
 }
 
 void draw_draw_slash(const DrawSlashVisualPlan& plan,
@@ -109,6 +109,28 @@ void draw_draw_slash(const DrawSlashVisualPlan& plan,
             {projected.x, projected.ground_y},
             plan.facing == combat::Facing::left, projected.scale * 0.72F,
             Fade(WHITE, plan.opacity)));
+    }
+}
+
+void fit_skill_label(Font font, const char* source, char* output,
+    std::size_t capacity, float width, float size) noexcept {
+    if (output == nullptr || capacity == 0U) return;
+    static_cast<void>(std::snprintf(output, capacity, "%s",
+        source == nullptr ? "" : source));
+    output[capacity - 1U] = '\0';
+    if (MeasureTextEx(font, output, size, 0.5F).x <= width) return;
+    std::size_t length = std::char_traits<char>::length(output);
+    while (length > 0U) {
+        do {
+            --length;
+        } while (length > 0U
+            && (static_cast<unsigned char>(output[length]) & 0xC0U) == 0x80U);
+        output[length] = '\0';
+        if (length + 4U >= capacity) continue;
+        static_cast<void>(std::snprintf(output + length,
+            capacity - length, "..."));
+        if (MeasureTextEx(font, output, size, 0.5F).x <= width) return;
+        output[length] = '\0';
     }
 }
 
@@ -315,6 +337,7 @@ void ActiveSkillRenderer::draw_hud(const ActiveSkillHudModel& model,
     const ActiveSkillHudLayout& layout,
     Font hud_font, bool hud_font_ready,
     const MaterialPack& material_pack) const noexcept {
+    const float scale = ui_viewport_scale(GetScreenWidth(), GetScreenHeight());
     for (std::size_t index = 0U; index < model.slots.size(); ++index) {
         const ActiveSkillHudSlot& slot = model.slots[index];
         const Rectangle bounds = layout.slots[index];
@@ -361,11 +384,26 @@ void ActiveSkillRenderer::draw_hud(const ActiveSkillHudModel& model,
         }
         if (!hud_font_ready) continue;
         char key[2]{static_cast<char>('0' + slot.key_number), '\0'};
-        draw_skill_text(hud_font, key, bounds.x + 4.0F,
-            bounds.y + 2.0F, 14.0F, ui_text_contrast_style().primary);
+        draw_skill_text(hud_font, key, bounds.x + 5.0F * scale,
+            bounds.y + 3.0F * scale, 16.0F * scale,
+            ui_text_contrast_style().primary);
         if (!slot.empty) {
-            draw_skill_text(hud_font, slot.name.data(), bounds.x + 3.0F,
-                bounds.y + bounds.height - 15.0F, 11.0F,
+            const float name_size =
+                ui_typography().kHudSkillNameFontSize * scale;
+            const Rectangle name_container{bounds.x + 3.0F * scale,
+                bounds.y + bounds.height - 24.0F * scale,
+                bounds.width - 6.0F * scale, 23.0F * scale};
+            char fitted_name[48]{};
+            fit_skill_label(hud_font, slot.name.data(), fitted_name,
+                sizeof(fitted_name),
+                name_container.width - 6.0F * scale, name_size);
+            const Vector2 name_position{name_container.x + 3.0F * scale,
+                name_container.y + 2.0F * scale};
+            record_ui_text_bounds(UiTextAuditPage::hud,
+                UiTextAuditRole::hud_skill_name, hud_font, fitted_name,
+                name_position, name_size, 0.5F, name_container, name_size);
+            draw_skill_text(hud_font, fitted_name, name_position.x,
+                name_position.y, name_size,
                 ui_text_contrast_style().primary);
         }
         if (slot.cooldown_ratio <= 0.0F || slot.empty) continue;
@@ -377,8 +415,9 @@ void ActiveSkillRenderer::draw_hud(const ActiveSkillHudModel& model,
         char remaining[12]{};
         static_cast<void>(std::snprintf(remaining, sizeof(remaining),
             "%.0fs", seconds));
-        draw_skill_text(hud_font, remaining, bounds.x + 18.0F,
-            bounds.y + 20.0F, 15.0F, ui_text_contrast_style().primary);
+        draw_skill_text(hud_font, remaining, bounds.x + 18.0F * scale,
+            bounds.y + 22.0F * scale, 16.0F * scale,
+            ui_text_contrast_style().primary);
     }
 }
 
