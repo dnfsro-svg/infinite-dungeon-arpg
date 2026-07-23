@@ -4,6 +4,7 @@ add_library(arpg_dungeon STATIC
     dungeon_rules.cpp
     encounter_director.cpp
     encounter_budget.cpp
+    encounter_wave_builder.cpp
     dungeon_session.cpp
     dungeon_transition.cpp
     dungeon_snapshot.cpp
