@@ -16,14 +16,14 @@ function Test-Stage9FormalCapture {
             throw "Stage9 formal capture rejects unexpected size: $($image.Width)x$($image.Height)"
         }
         $corner = $image.GetPixel(0, 0)
-        if ($corner.R -ne 22 -or $corner.G -ne 27 -or $corner.B -ne 39) {
+        if ($corner.R -ne 17 -or $corner.G -ne 18 -or $corner.B -ne 19) {
             throw "Stage9 formal capture rejects submitted background mismatch: $corner"
         }
 
         # These whole-frame metrics are intentionally independent of any Stage11-C
-        # panel rectangle.  Stage11-B/Stage11-C fresh references measured at least
-        # 44 colors, 2927 non-background samples, 848 2D transitions, a 203414
-        # luminance span, 1363 dark samples and 1901 mid-tone samples.  The gates
+        # panel rectangle.  Fresh native fire-room references measured at least
+        # 1152 colors, 3433 non-background samples, 3351 2D transitions, a 253875
+        # luminance span, 2951 dark samples and 607 mid-tone samples.  The gates
         # retain wide margins while rejecting sparse or exposure-only mutations.
         $uniqueColors = [System.Collections.Generic.HashSet[int]]::new()
         $nonBackgroundSamples = 0
@@ -42,7 +42,7 @@ function Test-Stage9FormalCapture {
                 $packed = ([int]$pixel.R -shl 16) -bor
                     ([int]$pixel.G -shl 8) -bor [int]$pixel.B
                 [void]$uniqueColors.Add($packed)
-                if ($pixel.R -ne 22 -or $pixel.G -ne 27 -or $pixel.B -ne 39) {
+                if ($pixel.R -ne 17 -or $pixel.G -ne 18 -or $pixel.B -ne 19) {
                     $nonBackgroundSamples++
                 }
                 $luminance = $pixel.R * 299 + $pixel.G * 587 + $pixel.B * 114

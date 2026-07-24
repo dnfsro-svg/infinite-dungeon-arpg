@@ -1,6 +1,8 @@
 #include "test_framework.hpp"
 
+#include "combat_test_support.hpp"
 #include "combat/combat_world.hpp"
+#include "combat/fire_room_obstacle.hpp"
 
 #include "abyss/abyss_rules.hpp"
 
@@ -216,6 +218,63 @@ arpg::test::Failure heavy_steps_scales_only_ground_horizontal_motion() noexcept 
     return {};
 }
 
+arpg::test::Failure player_inside_fire_brazier_can_move_out() noexcept {
+    CombatEncounterConfig config{};
+    config.player_spawn = {-1.06F, 0.38F, 0.0F};
+    config.fire_room_obstacles = true;
+    CombatWorld world{config};
+    arpg::test::CombatWorldTestAccess::set_player_position(
+        world, {-1.06F, 0.38F, 0.0F});
+
+    for (int tick = 0; tick < 5; ++tick) {
+        world.tick(MovementInput{-1, 0});
+    }
+
+    const CombatSnapshot snapshot = world.snapshot();
+    ARPG_REQUIRE(snapshot.player.position.x < -1.40F);
+    ARPG_REQUIRE(arpg::test::near(
+        snapshot.player.position.y, 0.38, kFloatTolerance));
+
+    CombatEncounterConfig outside_config{};
+    outside_config.player_spawn = {-1.45F, 0.0F, 0.0F};
+    outside_config.fire_room_obstacles = true;
+    CombatWorld outside{outside_config};
+    outside.tick(MovementInput{1, 0});
+    ARPG_REQUIRE(!fire_room_obstacle::contains(
+        outside.snapshot().player.position));
+    return {};
+}
+
+arpg::test::Failure attack_lunge_does_not_enter_fire_brazier() noexcept {
+    CombatEncounterConfig config{};
+    config.player_spawn = {-1.45F, 0.0F, 0.0F};
+    config.fire_room_obstacles = true;
+    CombatWorld world{config};
+
+    ARPG_REQUIRE(world.queue_action(Action::light));
+    world.tick(MovementInput{});
+
+    ARPG_REQUIRE(!fire_room_obstacle::contains(
+        world.snapshot().player.position));
+    return {};
+}
+
+arpg::test::Failure active_skill_movement_does_not_enter_fire_brazier() noexcept {
+    CombatEncounterConfig config{};
+    config.player_spawn = {-1.45F, 0.0F, 0.0F};
+    config.fire_room_obstacles = true;
+    CombatWorld world{config};
+
+    ARPG_REQUIRE(world.request_active_skill(
+        arpg::skills::ActiveSkillId::draw_slash)
+        == SkillCastResult::accepted);
+    world.tick(MovementInput{1, 0});
+
+    ARPG_REQUIRE(!fire_room_obstacle::contains(
+        world.snapshot().player.position));
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"fixed ground motion and normalized diagonal",
      &ground_motion_is_fixed_and_diagonal_is_normalized},
@@ -225,6 +284,12 @@ constexpr arpg::test::TestCase kCases[] = {
     {"seventy percent air control", &airborne_motion_uses_seventy_percent_control},
     {"heavy steps only scales ground movement",
      &heavy_steps_scales_only_ground_horizontal_motion},
+    {"player inside fire brazier can move out",
+     &player_inside_fire_brazier_can_move_out},
+    {"attack lunge does not enter fire brazier",
+     &attack_lunge_does_not_enter_fire_brazier},
+    {"active skill movement does not enter fire brazier",
+     &active_skill_movement_does_not_enter_fire_brazier},
 };
 
 }  // namespace

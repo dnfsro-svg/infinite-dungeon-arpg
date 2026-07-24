@@ -4,6 +4,7 @@
 
 #include "combat/combat_collision.hpp"
 #include "combat/combat_world.hpp"
+#include "combat/fire_room_obstacle.hpp"
 
 #include <array>
 #include <cstddef>
@@ -268,6 +269,23 @@ arpg::test::Failure hit_confirm_opens_j1_cancel_at_eight_not_thirteen() noexcept
     return {};
 }
 
+arpg::test::Failure attack_assist_does_not_enter_fire_brazier() noexcept {
+    CombatLabConfig config{};
+    config.player_spawn = {-1.55F, 0.0F, 0.0F};
+    config.dummy_spawns = {{{0.58F, 0.20F, 0.0F},
+                            {6.00F, 2.0F, 0.0F},
+                            {7.00F, -2.0F, 0.0F}}};
+    CombatWorld world{config};
+    arpg::test::CombatWorldTestAccess::enable_fire_room_obstacles(world);
+
+    ARPG_REQUIRE(world.queue_action(Action::light));
+    world.tick(MovementInput{});
+
+    ARPG_REQUIRE(!fire_room_obstacle::contains(
+        world.snapshot().player.position));
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"inclusive XYZ, facing mirror, and depth",
      &inclusive_xyz_mirror_and_depth_are_deterministic},
@@ -279,6 +297,8 @@ constexpr arpg::test::TestCase kCases[] = {
      &three_targets_resolve_independently_with_one_summary},
     {"J1 hit-confirm cancel window",
      &hit_confirm_opens_j1_cancel_at_eight_not_thirteen},
+    {"attack assist does not enter fire brazier",
+     &attack_assist_does_not_enter_fire_brazier},
 };
 
 }  // namespace

@@ -124,7 +124,7 @@ std::filesystem::path g_executable{};
     config.new_run_seed = seed;
     config.validation_steps_per_frame = 1U;
     config.validation_exit_after_presented_frames =
-        scenario == "production" ? 900U : 300U;
+        scenario == "production" ? 1200U : 300U;
     if (scenario == "production") {
         config.stage17_skill_stones_validation =
             platform::Stage17SkillStonesValidationScenario::production_sequence;
@@ -156,7 +156,7 @@ std::filesystem::path g_executable{};
         && field_is(fields, "draw_frame_peak", "35")
         && field_is(fields, "draw_hit_count", "2")
         && field_is(fields, "storm_accepted", "1")
-        && field_is(fields, "storm_strike_hit_count", "11")
+        && field_is(fields, "storm_strike_hit_count", "5")
         && field_is(fields, "storm_finisher_hit_count", "0")
         && field_is(fields, "storm_strike_count", "12")
         && field_is(fields, "storm_sword_peak", "24")
@@ -200,7 +200,7 @@ std::filesystem::path g_executable{};
            << "draw_windup_captured=true\n"
            << "draw_frame_peak=35\n"
            << "draw_slash_hit_count=2\n"
-           << "storm_strike_hit_count=11\n"
+           << "storm_strike_hit_count=5\n"
            << "storm_finisher_hit_count=0\n"
            << "storm_strike_count=12\n"
            << "storm_sword_peak=24\n"

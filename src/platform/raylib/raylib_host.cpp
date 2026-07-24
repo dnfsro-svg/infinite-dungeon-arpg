@@ -2,7 +2,10 @@
 
 #include "combat_feedback.hpp"
 #include "combat_renderer.hpp"
+#include "combat/active_skill_runtime.hpp"
+#include "combat/fire_room_obstacle.hpp"
 #include "combat/monster_affix_generation.hpp"
+#include "combat/room_bounds.hpp"
 #include "control_hints.hpp"
 #include "death_overlay_font.hpp"
 #include "core/fixed_step.hpp"
@@ -484,6 +487,7 @@ struct Stage17SkillStonesValidationState final {
     std::uint8_t storm_sword_peak{};
     std::uint16_t draw_frame_peak{};
     std::uint32_t presented_frames{};
+    std::int8_t draw_retreat_direction{};
 };
 
 void observe_stage17_combat_event(
@@ -640,10 +644,32 @@ void stage17_apply_movement(PhysicalKeySnapshot& snapshot,
     }
 }
 
+[[nodiscard]] combat::MovementInput validation_route_fire_movement(
+    combat::Vec3 player,
+    combat::Vec3 target,
+    combat::MovementInput movement) noexcept {
+    combat::Vec3 candidate = player;
+    candidate.x += 0.10F * static_cast<float>(movement.x);
+    candidate.y += 0.10F * static_cast<float>(movement.y);
+    if (!combat::fire_room_obstacle::blocks_player(player, candidate)) {
+        return movement;
+    }
+    const combat::Vec3 routed = combat::fire_room_obstacle::route_monster(
+        player, candidate, target);
+    return {
+        static_cast<std::int8_t>(routed.x > player.x ? 1
+            : (routed.x < player.x ? -1 : 0)),
+        static_cast<std::int8_t>(routed.y > player.y ? 1
+            : (routed.y < player.y ? -1 : 0)),
+    };
+}
+
 [[nodiscard]] bool stage17_prepare_skill_lane(
     PhysicalKeySnapshot& snapshot,
     const settings::SettingsData& input_settings,
-    const combat::CombatSnapshot& combat_state) noexcept {
+    const combat::CombatSnapshot& combat_state,
+    const bool fire_room,
+    std::int8_t& retreat_direction) noexcept {
     const combat::MonsterSnapshot* const target =
         stage17_nearest_monster(combat_state);
     if (target == nullptr) return false;
@@ -656,15 +682,29 @@ void stage17_apply_movement(PhysicalKeySnapshot& snapshot,
         movement.y = y > 0.0F ? 1 : -1;
     }
     if (std::fabs(x) > 3.8F) {
+        retreat_direction = 0;
         movement.x = static_cast<std::int8_t>(toward);
     } else if (std::fabs(x) < 3.15F) {
-        movement.x = static_cast<std::int8_t>(-toward);
+        if (retreat_direction == 0) {
+            retreat_direction = static_cast<std::int8_t>(-toward);
+        }
+        if (player.x <= -8.0F && retreat_direction < 0) {
+            retreat_direction = 1;
+        } else if (player.x >= 8.0F && retreat_direction > 0) {
+            retreat_direction = -1;
+        }
+        movement.x = retreat_direction;
     } else {
+        retreat_direction = 0;
         const combat::Facing expected = toward > 0
             ? combat::Facing::right : combat::Facing::left;
         if (combat_state.player.facing != expected) {
             movement.x = static_cast<std::int8_t>(toward);
         }
+    }
+    if (fire_room && movement.x != 0) {
+        movement = validation_route_fire_movement(
+            player, target->position, movement);
     }
     if (movement.x != 0 || movement.y != 0) {
         stage17_apply_movement(snapshot, input_settings, movement);
@@ -714,7 +754,10 @@ void stage17_click(PhysicalKeySnapshot& snapshot,
     case Stage17ValidationStep::approach_draw:
         if (current.combat.has_value()
                 && stage17_prepare_skill_lane(
-                    snapshot, input_settings, *current.combat)) {
+                    snapshot, input_settings, *current.combat,
+                    current.ecology
+                        == dungeon::checkpoint::DungeonElement::fire,
+                    state.draw_retreat_direction)) {
             snapshot.active_skill_slots[0] = true;
         }
         break;
@@ -1340,7 +1383,9 @@ combat::MovementInput stage11d_safe_movement_toward(
             from.y + static_cast<float>(candidate.y) * step,
             from.z,
         };
-        bool safe = true;
+        bool safe = snapshot.ecology
+                != dungeon::checkpoint::DungeonElement::fire
+            || !combat::fire_room_obstacle::blocks_player(from, next);
         const auto approaches_pickup = [&](combat::Vec3 position) noexcept {
             const float current_x = position.x - from.x;
             const float current_y = position.y - from.y;
@@ -1376,8 +1421,15 @@ combat::MovementInput stage11d_safe_movement_toward(
         const float target_x = to.x - next.x;
         const float target_y = to.y - next.y;
         const bool stopped = candidate.x == 0 && candidate.y == 0;
+        const float current_target_x = to.x - from.x;
+        const float current_target_y = to.y - from.y;
+        const bool fire_route_pending = snapshot.ecology
+                == dungeon::checkpoint::DungeonElement::fire
+            && current_target_x * current_target_x
+                    + current_target_y * current_target_y > 0.25F;
         const float score = target_x * target_x + target_y * target_y
-            + (stopped && avoidance_active ? 1.0F : 0.0F);
+            + (stopped && (avoidance_active || fire_route_pending)
+                ? 1.0F : 0.0F);
         if (score < best_score) {
             best = candidate;
             best_score = score;
@@ -1516,9 +1568,14 @@ void inject_stage11c_movement(PhysicalKeySnapshot& snapshot,
         for (std::size_t index = 0U; index < current.ground_item_count; ++index) {
             const auto& item = current.ground_items[index];
             if (item.item_id != state.abyss_item_id) continue;
-            inject_stage11c_movement(snapshot, settings_data,
-                validation_movement_toward(current.combat->player.position,
-                    item.position));
+            combat::MovementInput movement = validation_movement_toward(
+                current.combat->player.position, item.position);
+            if (current.ecology
+                    == dungeon::checkpoint::DungeonElement::fire) {
+                movement = validation_route_fire_movement(
+                    current.combat->player.position, item.position, movement);
+            }
+            inject_stage11c_movement(snapshot, settings_data, movement);
             state.abyss_claim_requested = true;
             break;
         }
@@ -1541,9 +1598,15 @@ void inject_stage11c_movement(PhysicalKeySnapshot& snapshot,
         if (config.stage11d_loot_validation == Scenario::pickup_feedback) {
             const auto* ground = stage11d_nearest_ground(current);
             if (ground != nullptr && current.combat.has_value()) {
-                inject_stage11c_movement(snapshot, settings_data,
-                    validation_movement_toward(current.combat->player.position,
-                        ground->position));
+                combat::MovementInput movement = validation_movement_toward(
+                    current.combat->player.position, ground->position);
+                if (current.ecology
+                        == dungeon::checkpoint::DungeonElement::fire) {
+                    movement = validation_route_fire_movement(
+                        current.combat->player.position,
+                        ground->position, movement);
+                }
+                inject_stage11c_movement(snapshot, settings_data, movement);
             }
         }
         return snapshot;
@@ -1561,8 +1624,14 @@ void inject_stage11c_movement(PhysicalKeySnapshot& snapshot,
     if (target == nullptr) return snapshot;
     state.target_ordinal = target->spawn_ordinal;
     if (aggressive_abyss) {
-        inject_stage11c_movement(snapshot, settings_data,
-            validation_movement_toward(player.position, target->position));
+        combat::MovementInput movement = validation_movement_toward(
+            player.position, target->position);
+        if (current.ecology
+                == dungeon::checkpoint::DungeonElement::fire) {
+            movement = validation_route_fire_movement(
+                player.position, target->position, movement);
+        }
+        inject_stage11c_movement(snapshot, settings_data, movement);
         if (player.hurt_ticks == 0U
                 && current.combat->diagnostics.input_size == 0U
                 && validation_attack_lane(*current.combat, *target)) {
@@ -1571,16 +1640,83 @@ void inject_stage11c_movement(PhysicalKeySnapshot& snapshot,
         }
         return snapshot;
     }
+    if (current.combat->active_skill.id != skills::ActiveSkillId::none) {
+        const float active_x = target->position.x - player.position.x;
+        const float active_y = target->position.y - player.position.y;
+        if (current.combat->active_skill.id
+                    == skills::ActiveSkillId::draw_slash
+                && active_x * active_x + active_y * active_y
+                    < 2.40F * 2.40F) {
+            combat::MovementInput retreat{};
+            retreat.x = active_x >= 0.0F ? -1 : 1;
+            if ((player.position.x <= combat::room_bounds::min_x + 0.20F
+                        && retreat.x < 0)
+                    || (player.position.x
+                            >= combat::room_bounds::max_x - 0.20F
+                        && retreat.x > 0)) {
+                retreat.x = 0;
+                retreat.y = active_y >= 0.0F ? -1 : 1;
+            }
+            if (current.ecology
+                    == dungeon::checkpoint::DungeonElement::fire) {
+                combat::Vec3 retreat_target = player.position;
+                retreat_target.x += 3.0F * static_cast<float>(retreat.x);
+                retreat_target.y += 3.0F * static_cast<float>(retreat.y);
+                retreat = validation_route_fire_movement(
+                    player.position, retreat_target, retreat);
+            }
+            inject_stage11c_movement(snapshot, settings_data, retreat);
+        }
+        return snapshot;
+    }
+    const bool facing_target = std::fabs(target->position.x - player.position.x)
+            <= 0.20F
+        || (target->position.x > player.position.x
+            && player.facing == combat::Facing::right)
+        || (target->position.x < player.position.x
+            && player.facing == combat::Facing::left);
+    const float draw_forward = std::fabs(
+        target->position.x - player.position.x);
+    const float draw_half_width = combat::kDrawSlashHalfWidthAtEnd
+        * (draw_forward / combat::kDrawSlashRange);
+    if (current.combat->skill_cooldowns[0] == 0U
+            && player.hurt_ticks == 0U
+            && player.active_attack == combat::AttackId::none
+            && current.combat->diagnostics.input_size == 0U
+            && facing_target
+            && draw_forward <= combat::kDrawSlashRange
+            && std::fabs(target->position.y - player.position.y)
+                <= draw_half_width) {
+        snapshot.active_skill_slots[0] = true;
+        return snapshot;
+    }
     const bool needs_launcher_setup = target->hp == target->max_hp;
     constexpr float kLauncherDistance = 1.68F;
     constexpr float kComboDistance = 1.98F;
     const float action_distance = needs_launcher_setup
         ? kLauncherDistance : kComboDistance;
     combat::Vec3 destination = target->position;
-    destination.x += player.position.x <= target->position.x
-        ? -action_distance : action_distance;
-    const combat::MovementInput movement = stage11d_safe_movement_toward(
+    const float near_side = target->position.x
+        + (player.position.x <= target->position.x
+            ? -action_distance : action_distance);
+    const float far_side = target->position.x
+        + (player.position.x <= target->position.x
+            ? action_distance : -action_distance);
+    destination.x = near_side >= combat::room_bounds::min_x
+            && near_side <= combat::room_bounds::max_x
+        ? near_side : far_side;
+    combat::MovementInput movement = stage11d_safe_movement_toward(
         player.position, destination, current);
+    if (movement.x == 0 && movement.y == 0 && !facing_target) {
+        combat::Vec3 facing_step = player.position;
+        movement.x = target->position.x > player.position.x ? 1 : -1;
+        facing_step.x += 0.10F * static_cast<float>(movement.x);
+        if (current.ecology == dungeon::checkpoint::DungeonElement::fire
+                && combat::fire_room_obstacle::blocks_player(
+                    player.position, facing_step)) {
+            movement = {};
+        }
+    }
     inject_stage11c_movement(snapshot, settings_data, movement);
     bool nearby_threat = false;
     for (std::size_t index = 0U;
@@ -2531,13 +2667,18 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         }
 #endif
         core::FixedStepRunner fixed_step;
-        CombatRenderer renderer;
+        const auto renderer_storage = std::make_unique<CombatRenderer>();
+        CombatRenderer& renderer = *renderer_storage;
         const bool hud_resources_ready = renderer.initialize_resources();
-        PauseMenuRenderer pause_menu_renderer;
+        const auto pause_menu_renderer_storage =
+            std::make_unique<PauseMenuRenderer>();
+        PauseMenuRenderer& pause_menu_renderer = *pause_menu_renderer_storage;
         static_cast<void>(pause_menu_renderer.initialize());
         CombatFeedback feedback;
-        GameAudio audio;
-        InventoryRenderer inventory;
+        const auto audio_storage = std::make_unique<GameAudio>();
+        GameAudio& audio = *audio_storage;
+        const auto inventory_storage = std::make_unique<InventoryRenderer>();
+        InventoryRenderer& inventory = *inventory_storage;
         const bool audio_ready = audio.initialize();
         if (audio_ready) {
             SetMasterVolume(1.0F);
@@ -3104,16 +3245,17 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             BeginDrawing();
             ClearBackground(Color{13, 17, 27, 255});
             reset_ui_text_bounds_audit();
-            GroundLootView ground_loot_view{};
-            if (config.stage12_material_background_only) {
-                static_cast<void>(renderer.draw_room_background_only(
-                    presented_snapshot.ecology));
-            } else {
-                ground_loot_view = renderer.draw(
+            const GroundLootView ground_loot_view = [&]() noexcept {
+                if (config.stage12_material_background_only) {
+                    static_cast<void>(renderer.draw_room_background_only(
+                        presented_snapshot.ecology));
+                    return GroundLootView{};
+                }
+                return renderer.draw(
                     previous, presented_snapshot, runtime.render_status(),
                     static_cast<float>(frame.interpolation_alpha), draw_debug,
                     feedback, audio_ready);
-            }
+            }();
             if (config.stage12_material_runtime_status != nullptr) {
                 const MonsterMaterialDrawRuntimeStatus shooter_draw =
                     renderer.monster_material_draw_status(

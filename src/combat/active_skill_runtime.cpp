@@ -46,12 +46,14 @@ void CombatWorld::simulate_active_skill_movement(MovementInput movement) noexcep
     player_.velocity.x = static_cast<float>(x_direction) * speed * diagonal;
     player_.velocity.y = static_cast<float>(y_direction) * speed * diagonal;
     player_.facing = active_skill_.locked_facing;
-    player_.position.x = std::clamp(player_.position.x
+    Vec3 candidate = player_.position;
+    candidate.x = std::clamp(candidate.x
         + player_.velocity.x * kTickSeconds,
         room_bounds::min_x, room_bounds::max_x);
-    player_.position.y = std::clamp(player_.position.y
+    candidate.y = std::clamp(candidate.y
         + player_.velocity.y * kTickSeconds,
         room_bounds::min_y, room_bounds::max_y);
+    move_player_to(candidate);
     if (!airborne) {
         player_.velocity.z = 0.0F;
         return;

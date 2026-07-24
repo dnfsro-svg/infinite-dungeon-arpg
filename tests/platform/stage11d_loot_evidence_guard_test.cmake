@@ -253,7 +253,8 @@ if(NOT _renderer_plan_count EQUAL 2)
     message(FATAL_ERROR "Stage11D loot evidence guard requires the one production renderer plan")
 endif()
 foreach(_required IN ITEMS
-        "const GroundLootView ground_loot_view = renderer.draw("
+        "const GroundLootView ground_loot_view = [&]() noexcept {"
+        "return GroundLootView{};" "return renderer.draw("
         "stage11d_record_semantics(stage11d_validation_state, current,"
         "present_frame_and_maybe_capture(capture_path.has_value()"
         "stage11d_validation_state.captured = true;")

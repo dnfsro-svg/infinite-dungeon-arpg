@@ -87,9 +87,11 @@ void CombatWorld::apply_attack_assist(
     }
 
     if (best_gap != std::numeric_limits<float>::max()) {
-        player_.position.x = std::clamp(
-            player_.position.x + best_correction,
+        Vec3 candidate = player_.position;
+        candidate.x = std::clamp(
+            candidate.x + best_correction,
             room_bounds::min_x, room_bounds::max_x);
+        move_player_to(candidate);
     }
 }
 

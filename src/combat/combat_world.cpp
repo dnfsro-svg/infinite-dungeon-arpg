@@ -4,6 +4,7 @@
 #include "combat/attack_catalog.hpp"
 #include "combat/active_skill_runtime.hpp"
 #include "combat/combat_scaling.hpp"
+#include "combat/fire_room_obstacle.hpp"
 #include "combat/monster_affix_catalog.hpp"
 #include "combat/monster_affix_generation.hpp"
 #include "combat/monster_catalog.hpp"
@@ -628,9 +629,11 @@ void CombatWorld::tick(MovementInput movement) noexcept {
             }
             continue;
         }
+        const Vec3 previous_position = monster.position;
         tick_monster_affix_resources(monster);
         tick_active_affixes(index, monster);
         if (monster.affix_warning == MonsterAffixWarning::blink) {
+            resolve_fire_brazier_overlap(monster, previous_position);
             continue;
         }
         const bool dummy_frozen = monster.hit_stop_ticks != 0;
@@ -647,6 +650,7 @@ void CombatWorld::tick(MovementInput movement) noexcept {
                 return;
             }
         }
+        resolve_fire_brazier_overlap(monster, previous_position);
     }
 
     if (!player_frozen && !player_hurt && player_.hurt_ticks == 0) {
@@ -671,6 +675,22 @@ void CombatWorld::tick(MovementInput movement) noexcept {
 
     input_buffer_.age(player_frozen || player_hurt);
     ++tick_;
+}
+
+void CombatWorld::resolve_fire_brazier_overlap(
+    MonsterRuntime& monster, Vec3 previous_position) noexcept {
+    if (encounter_config_.fire_room_obstacles) {
+        monster.position = fire_room_obstacle::route_monster(
+            previous_position, monster.position, player_.position);
+    }
+}
+
+void CombatWorld::move_player_to(Vec3 candidate) noexcept {
+    if (!encounter_config_.fire_room_obstacles
+            || !fire_room_obstacle::blocks_player(
+                player_.position, candidate)) {
+        player_.position = candidate;
+    }
 }
 
 void CombatWorld::reset() noexcept {
@@ -786,6 +806,9 @@ void CombatWorld::initialize_runtime() noexcept {
 void CombatWorld::initialize_player() noexcept {
     player_ = PlayerRuntime{};
     player_.position = encounter_config_.player_spawn;
+    if (encounter_config_.fire_room_obstacles) {
+        player_.position = fire_room_obstacle::eject(player_.position);
+    }
     player_.facing = encounter_config_.initial_facing;
     DerivedPlayerBuild derived{};
     if (!derive_player_build(encounter_config_.player_build, derived)) {

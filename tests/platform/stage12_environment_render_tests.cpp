@@ -232,14 +232,12 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
     ARPG_REQUIRE(host_gate_block.find("renderer.draw(") == std::string::npos);
     ARPG_REQUIRE(host_gate_block.find("draw_hud") == std::string::npos);
     const std::size_t normal_draw = host.find(
-        "ground_loot_view = renderer.draw(", host_gate);
-    const std::size_t normal_else = host.find("} else {", host_gate);
+        "return renderer.draw(", host_gate);
     const std::size_t runtime_status = host.find(
         "if (config.stage12_material_runtime_status", host_gate);
     ARPG_REQUIRE(normal_draw != std::string::npos);
-    ARPG_REQUIRE(normal_else != std::string::npos);
     ARPG_REQUIRE(runtime_status != std::string::npos);
-    ARPG_REQUIRE(normal_else < normal_draw);
+    ARPG_REQUIRE(host_background_draw < normal_draw);
     ARPG_REQUIRE(normal_draw < runtime_status);
 
     const std::size_t normal_hud_observe = host.find(

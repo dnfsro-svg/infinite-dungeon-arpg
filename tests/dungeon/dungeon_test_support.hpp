@@ -1,7 +1,9 @@
 #pragma once
 
+#include "combat/fire_room_obstacle.hpp"
 #include "dungeon/dungeon_session.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -641,6 +643,193 @@ inline combat::MovementInput movement_toward(
         movement.y = 1;
     } else if (delta_y < -kDepthTolerance) {
         movement.y = -1;
+    }
+    return movement;
+}
+
+inline bool segment_crosses_fire_brazier(
+    combat::Vec3 from,
+    combat::Vec3 to) noexcept {
+    float enter = 0.0F;
+    float leave = 1.0F;
+    const auto clip_axis = [&enter, &leave](float start, float delta,
+                               float minimum, float maximum) noexcept {
+        constexpr float kParallelTolerance = 1.0e-6F;
+        if (delta >= -kParallelTolerance && delta <= kParallelTolerance) {
+            return start >= minimum && start <= maximum;
+        }
+        float first = (minimum - start) / delta;
+        float second = (maximum - start) / delta;
+        if (first > second) std::swap(first, second);
+        enter = (std::max)(enter, first);
+        leave = (std::min)(leave, second);
+        return enter <= leave;
+    };
+
+    return clip_axis(from.x, to.x - from.x,
+               -combat::fire_room_obstacle::half_width,
+               combat::fire_room_obstacle::half_width)
+        && clip_axis(from.y, to.y - from.y,
+               -combat::fire_room_obstacle::half_height,
+               combat::fire_room_obstacle::half_height)
+        && enter < 1.0F && leave > 0.0F;
+}
+
+inline float planar_distance(
+    combat::Vec3 from,
+    combat::Vec3 to) noexcept {
+    const float x = to.x - from.x;
+    const float y = to.y - from.y;
+    return std::sqrt(x * x + y * y);
+}
+
+inline combat::MovementInput movement_to_waypoint(
+    combat::Vec3 from,
+    combat::Vec3 to) noexcept {
+    constexpr float kTolerance = 0.10F;
+    return {
+        static_cast<std::int8_t>(to.x > from.x + kTolerance ? 1
+            : (to.x < from.x - kTolerance ? -1 : 0)),
+        static_cast<std::int8_t>(to.y > from.y + kTolerance ? 1
+            : (to.y < from.y - kTolerance ? -1 : 0)),
+    };
+}
+
+inline combat::MovementInput fire_room_robot_movement(
+    combat::Vec3 player,
+    combat::Vec3 target) noexcept {
+    if (combat::fire_room_obstacle::contains(player)) {
+        const float x_progress = player.x
+            / combat::fire_room_obstacle::half_width;
+        const float y_progress = player.y
+            / combat::fire_room_obstacle::half_height;
+        if (x_progress * x_progress >= y_progress * y_progress) {
+            return {static_cast<std::int8_t>(
+                        player.x < 0.0F ? -1 : 1), 0};
+        }
+        return {0, static_cast<std::int8_t>(
+                       player.y < 0.0F ? -1 : 1)};
+    }
+    if (!segment_crosses_fire_brazier(player, target)) {
+        return movement_toward(player, target);
+    }
+
+    constexpr float kLaneX =
+        combat::fire_room_obstacle::half_width + 1.10F;
+    constexpr float kLaneY =
+        combat::fire_room_obstacle::half_height + 0.80F;
+    constexpr std::size_t kNodeCount = 6U;
+    constexpr std::size_t kTargetNode = kNodeCount - 1U;
+    const std::array<combat::Vec3, kNodeCount> nodes{{
+        player,
+        {-kLaneX, -kLaneY, 0.0F},
+        {-kLaneX, kLaneY, 0.0F},
+        {kLaneX, -kLaneY, 0.0F},
+        {kLaneX, kLaneY, 0.0F},
+        target,
+    }};
+    std::array<float, kNodeCount> distance{};
+    distance.fill(1.0e30F);
+    std::array<std::size_t, kNodeCount> first_hop{};
+    first_hop.fill(kNodeCount);
+    std::array<bool, kNodeCount> visited{};
+    distance[0U] = 0.0F;
+
+    for (std::size_t iteration = 0U; iteration < kNodeCount; ++iteration) {
+        std::size_t current = kNodeCount;
+        for (std::size_t node = 0U; node < kNodeCount; ++node) {
+            if (!visited[node] && (current == kNodeCount
+                    || distance[node] < distance[current])) {
+                current = node;
+            }
+        }
+        if (current == kNodeCount || distance[current] >= 1.0e29F) break;
+        visited[current] = true;
+        for (std::size_t next = 0U; next < kNodeCount; ++next) {
+            if (visited[next] || next == current
+                    || segment_crosses_fire_brazier(
+                        nodes[current], nodes[next])) {
+                continue;
+            }
+            const float edge = planar_distance(nodes[current], nodes[next]);
+            if (current == 0U && edge < 0.20F) continue;
+            const float candidate = distance[current] + edge;
+            if (candidate >= distance[next]) continue;
+            distance[next] = candidate;
+            first_hop[next] = current == 0U
+                ? next : first_hop[current];
+        }
+    }
+
+    const std::size_t waypoint = first_hop[kTargetNode];
+    return waypoint < kNodeCount
+        ? movement_to_waypoint(player, nodes[waypoint])
+        : movement_toward(player, target);
+}
+
+inline combat::MovementInput exit_outward(
+    dungeon::ExitDirection direction) noexcept {
+    switch (direction) {
+    case dungeon::ExitDirection::up: return {0, -1};
+    case dungeon::ExitDirection::down: return {0, 1};
+    case dungeon::ExitDirection::left: return {-1, 0};
+    case dungeon::ExitDirection::right: return {1, 0};
+    case dungeon::ExitDirection::none: return {};
+    }
+    return {};
+}
+
+inline combat::MovementInput exit_alignment_movement(
+    const dungeon::DungeonSnapshot& state,
+    dungeon::ExitDirection direction) noexcept {
+    constexpr float kTolerance = 0.10F;
+    constexpr float kBypassLane = 2.50F;
+    constexpr float kBrazierClearX =
+        combat::fire_room_obstacle::half_width + 0.15F;
+    constexpr float kBrazierClearY =
+        combat::fire_room_obstacle::half_height + 0.15F;
+    combat::MovementInput movement{};
+    const combat::Vec3 position = state.combat->player.position;
+
+    if (state.ecology == dungeon::checkpoint::DungeonElement::fire) {
+        if (direction == dungeon::ExitDirection::left
+                || direction == dungeon::ExitDirection::right) {
+            const bool must_cross_brazier =
+                direction == dungeon::ExitDirection::left
+                ? position.x >= -kBrazierClearX
+                : position.x <= kBrazierClearX;
+            if (must_cross_brazier) {
+                const float lane = position.y < -kTolerance
+                    ? -kBypassLane : kBypassLane;
+                movement.y = position.y > lane + kTolerance ? -1
+                    : (position.y < lane - kTolerance ? 1 : 0);
+                return movement.y == 0
+                    ? exit_outward(direction) : movement;
+            }
+        } else if (direction == dungeon::ExitDirection::up
+                || direction == dungeon::ExitDirection::down) {
+            const bool must_cross_brazier =
+                direction == dungeon::ExitDirection::up
+                ? position.y >= -kBrazierClearY
+                : position.y <= kBrazierClearY;
+            if (must_cross_brazier) {
+                const float lane = position.x < -kTolerance
+                    ? -kBypassLane : kBypassLane;
+                movement.x = position.x > lane + kTolerance ? -1
+                    : (position.x < lane - kTolerance ? 1 : 0);
+                return movement.x == 0
+                    ? exit_outward(direction) : movement;
+            }
+        }
+    }
+
+    if (direction == dungeon::ExitDirection::left
+            || direction == dungeon::ExitDirection::right) {
+        movement.y = position.y > kTolerance ? -1
+            : (position.y < -kTolerance ? 1 : 0);
+    } else {
+        movement.x = position.x > kTolerance ? -1
+            : (position.x < -kTolerance ? 1 : 0);
     }
     return movement;
 }

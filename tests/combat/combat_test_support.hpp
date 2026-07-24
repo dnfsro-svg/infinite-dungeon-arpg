@@ -166,6 +166,17 @@ struct CombatWorldTestAccess final {
         world.player_.barrier = barrier;
     }
 
+    static void set_player_position(
+        combat::CombatWorld& world,
+        combat::Vec3 position) noexcept {
+        world.player_.position = position;
+    }
+
+    static void enable_fire_room_obstacles(
+        combat::CombatWorld& world) noexcept {
+        world.encounter_config_.fire_room_obstacles = true;
+    }
+
     static void set_player_evasion_rate_bp(
         combat::CombatWorld& world, std::int32_t basis_points) noexcept {
         world.player_.evasion_rate_bp = basis_points;

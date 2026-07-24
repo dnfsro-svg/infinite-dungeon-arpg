@@ -36,7 +36,7 @@ void draw_panel(const DeathOverlayLayout& layout) noexcept {
     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
         Color{2, 4, 8, 205});
     DrawRectangleRounded(rectangle(layout.panel), 0.04F, 8,
-        Color{10, 13, 21, 247});
+        Color{10, 13, 21, 255});
     DrawRectangleRoundedLines(rectangle(layout.panel), 0.04F, 8,
         Color{176, 63, 77, 255});
 }

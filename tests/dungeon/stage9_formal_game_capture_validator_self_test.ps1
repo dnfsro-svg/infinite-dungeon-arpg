@@ -125,7 +125,7 @@ if (-not (Test-Path -LiteralPath $ReferenceImage -PathType Leaf)) {
 }
 New-Item -ItemType Directory -Path $MutationRoot -Force | Out-Null
 Add-Type -AssemblyName System.Drawing
-$background = [System.Drawing.Color]::FromArgb(22, 27, 39)
+$background = [System.Drawing.Color]::FromArgb(17, 18, 19)
 
 Invoke-Stage9Validator -Path $ReferenceImage
 

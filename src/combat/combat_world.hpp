@@ -95,6 +95,9 @@ private:
     };
 
     void simulate_player(MovementInput movement) noexcept;
+    void move_player_to(Vec3 candidate) noexcept;
+    void resolve_fire_brazier_overlap(
+        MonsterRuntime& monster, Vec3 previous_position) noexcept;
     void simulate_active_skill_movement(MovementInput movement) noexcept;
     void tick_active_skill_cooldowns() noexcept;
     void tick_active_skill() noexcept;
