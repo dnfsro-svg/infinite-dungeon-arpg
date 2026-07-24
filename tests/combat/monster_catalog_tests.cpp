@@ -40,10 +40,45 @@ arpg::test::Failure catalog_has_two_preferred_roles_per_ecology() noexcept {
     return {};
 }
 
+arpg::test::Failure catalog_matches_approved_health_and_damage_table() noexcept {
+    struct Expected final {
+        MonsterId id;
+        int max_hp;
+        arpg::modifiers::DamageType damage_type;
+        int damage;
+    };
+    constexpr std::array<Expected, 8U> kExpected{{
+        {MonsterId::fire_bomber, 100, arpg::modifiers::DamageType::fire, 36},
+        {MonsterId::fire_charger, 190, arpg::modifiers::DamageType::fire, 27},
+        {MonsterId::water_bulwark, 315, arpg::modifiers::DamageType::water, 21},
+        {MonsterId::water_support, 135, arpg::modifiers::DamageType::water, 0},
+        {MonsterId::lightning_shooter, 110,
+         arpg::modifiers::DamageType::lightning, 12},
+        {MonsterId::lightning_dasher, 125,
+         arpg::modifiers::DamageType::lightning, 18},
+        {MonsterId::chaos_chaser, 120, arpg::modifiers::DamageType::chaos, 14},
+        {MonsterId::chaos_hazard, 145, arpg::modifiers::DamageType::chaos, 11},
+    }};
+    for (const Expected expected : kExpected) {
+        const MonsterDefinition* definition = monster_definition(expected.id);
+        ARPG_REQUIRE(definition != nullptr);
+        ARPG_REQUIRE(definition->max_hp == expected.max_hp);
+        for (std::size_t index = 0U;
+             index < definition->contact_damage.amount.size(); ++index) {
+            const int amount = index == arpg::modifiers::damage_index(expected.damage_type)
+                ? expected.damage : 0;
+            ARPG_REQUIRE(definition->contact_damage.amount[index] == amount);
+        }
+    }
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"eight unique stable ids", &catalog_contains_eight_unique_stable_ids},
     {"two preferred roles per ecology",
      &catalog_has_two_preferred_roles_per_ecology},
+    {"catalog matches approved health and damage table",
+     &catalog_matches_approved_health_and_damage_table},
 };
 
 }  // namespace

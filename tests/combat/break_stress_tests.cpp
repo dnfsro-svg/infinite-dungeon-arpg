@@ -755,20 +755,20 @@ arpg::test::Failure mixed_role_golden_replay_preserves_public_behavior() noexcep
     ARPG_REQUIRE(early_events[2].tick == 5U);
     ARPG_REQUIRE(early_events[3].kind == CombatEventKind::player_hit);
     ARPG_REQUIRE(early_events[3].tick == 39U);
-    ARPG_REQUIRE(early_events[3].value == 45);
+    ARPG_REQUIRE(early_events[3].value == 14);
     ARPG_REQUIRE(early_events[4].kind == CombatEventKind::player_hurt_started);
     ARPG_REQUIRE(early_events[4].tick == 39U);
-    ARPG_REQUIRE(early_events[4].value == 45);
+    ARPG_REQUIRE(early_events[4].value == 14);
 
     ARPG_REQUIRE(tick_45.tick == 46U);
-    ARPG_REQUIRE(tick_45.player.hp == 955);
+    ARPG_REQUIRE(tick_45.player.hp == 986);
     ARPG_REQUIRE(tick_45.monster_count == 5U);
     ARPG_REQUIRE(tick_45.monsters[0].id == MonsterId::water_bulwark);
     ARPG_REQUIRE(tick_45.monsters[0].ai_phase == MonsterAiPhase::telegraph);
     ARPG_REQUIRE(tick_45.monsters[0].shield == 90);
     ARPG_REQUIRE(tick_45.monsters[0].shield_ticks == 119U);
     ARPG_REQUIRE(tick_45.monsters[1].id == MonsterId::chaos_chaser);
-    ARPG_REQUIRE(tick_45.monsters[1].hp == 232);
+    ARPG_REQUIRE(tick_45.monsters[1].hp == 92);
     ARPG_REQUIRE(tick_45.monsters[1].ai_phase == MonsterAiPhase::recovery);
     ARPG_REQUIRE(tick_45.monsters[2].id == MonsterId::lightning_shooter);
     ARPG_REQUIRE(tick_45.monsters[2].ai_phase == MonsterAiPhase::recovery);
@@ -785,7 +785,7 @@ arpg::test::Failure mixed_role_golden_replay_preserves_public_behavior() noexcep
     ARPG_REQUIRE(tick_45.diagnostics.effect_command_overflow_count == 0U);
 
     ARPG_REQUIRE(tick_180.tick == 181U);
-    ARPG_REQUIRE(tick_180.player.hp == 845);
+    ARPG_REQUIRE(tick_180.player.hp == 952);
     ARPG_REQUIRE(tick_180.monsters[0].shield == 0);
     ARPG_REQUIRE(tick_180.monsters[0].shield_ticks == 0U);
     ARPG_REQUIRE(tick_180.hazard_count == 1U);

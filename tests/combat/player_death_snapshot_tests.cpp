@@ -207,7 +207,7 @@ arpg::test::Failure chain_lightning_reports_real_affix_source() noexcept {
 arpg::test::Failure death_blast_reports_defeated_owner_source() noexcept {
     CombatWorld world{one_monster(
         MonsterId::fire_bomber, Vec3{0.8F, 0.0F, 0.0F},
-        one_affix(MonsterAffixId::death_blast), 2000)};
+        one_affix(MonsterAffixId::death_blast), 1500)};
     ARPG_REQUIRE(tick_until_defeated(world, 180));
     ARPG_REQUIRE(world.death_snapshot()->source.kind
                  == PlayerDamageSourceKind::monster_affix);
@@ -347,7 +347,7 @@ arpg::test::Failure delayed_corrosion_keeps_the_affix_owner_source() noexcept {
     corrosion.count = 1U;
     CombatWorld world{one_monster(
         MonsterId::chaos_chaser, Vec3{0.65F, 0.0F, 0.0F}, corrosion)};
-    arpg::test::CombatWorldTestAccess::set_player_resources(world, 65, 0);
+    arpg::test::CombatWorldTestAccess::set_player_resources(world, 30, 0);
     ARPG_REQUIRE(tick_until_defeated(world));
     const auto& death = *world.death_snapshot();
     ARPG_REQUIRE(death.source.kind == PlayerDamageSourceKind::monster_affix);

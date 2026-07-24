@@ -155,9 +155,9 @@ arpg::test::Failure multishot_spawns_four_fanned_projectiles() noexcept {
     const CombatSnapshot snapshot = world.snapshot();
     ARPG_REQUIRE(snapshot.projectile_count == 4U);
     ARPG_REQUIRE(snapshot.projectiles[0].damage.amount[
-        arpg::modifiers::damage_index(arpg::modifiers::DamageType::lightning)] == 20);
+        arpg::modifiers::damage_index(arpg::modifiers::DamageType::lightning)] == 6);
     ARPG_REQUIRE(snapshot.projectiles[1].damage.amount[
-        arpg::modifiers::damage_index(arpg::modifiers::DamageType::lightning)] == 20);
+        arpg::modifiers::damage_index(arpg::modifiers::DamageType::lightning)] == 6);
     ARPG_REQUIRE(snapshot.projectiles[0].velocity.y
                  != snapshot.projectiles[1].velocity.y);
     return {};
@@ -511,7 +511,7 @@ arpg::test::Failure blink_warning_pauses_ai_then_real_hit_consumes_frenzied_empo
     }
     const CombatSnapshot after_hit = world.snapshot();
     ARPG_REQUIRE(actual_hit);
-    ARPG_REQUIRE(after_hit.player.hp == hp_before_warning - 100);
+    ARPG_REQUIRE(after_hit.player.hp == hp_before_warning - 31);
     ARPG_REQUIRE(!after_hit.monsters[0].blink_empowered);
     return {};
 }
@@ -520,7 +520,7 @@ arpg::test::Failure tiered_multishot_and_burning_values_are_frozen() noexcept {
     constexpr MonsterAffixTier kTiers[] = {
         MonsterAffixTier::m1, MonsterAffixTier::m2, MonsterAffixTier::m3};
     constexpr std::size_t kProjectileCounts[] = {2U, 3U, 4U};
-    constexpr int kProjectileDamage[] = {30, 24, 20};
+    constexpr int kProjectileDamage[] = {9, 7, 6};
     constexpr int kBurnIntervals[] = {180, 150, 120};
     constexpr float kBurnRadii[] = {0.75F, 0.90F, 1.05F};
     constexpr int kBurnDamage[] = {25, 35, 45};
