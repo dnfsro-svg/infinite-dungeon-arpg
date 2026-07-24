@@ -2263,6 +2263,8 @@ combat::MovementInput stage10_validation_input(
     if (snapshot.phase == dungeon::RoomPhase::combat) {
         const auto* const target = nearest_living_monster(*snapshot.combat);
         if (target == nullptr) return {};
+        const auto movement = validation_movement_toward(
+            snapshot.combat->player.position, target->position);
         if (scenario == Stage10ValidationScenario::abyss_hole_descent
                 && snapshot.is_abyss && snapshot.remaining_targets == 1U) {
             const auto& monster = target->position;
@@ -2273,8 +2275,48 @@ combat::MovementInput stage10_validation_input(
                     snapshot.combat->player.position, kHoleCenter);
             }
         }
-        const auto movement = validation_movement_toward(
-            snapshot.combat->player.position, target->position);
+        const auto& player = snapshot.combat->player;
+        const bool skill_ready = (!snapshot.is_abyss
+                || scenario == Stage10ValidationScenario::abyss_hole_descent)
+            && player.hp > 0
+            && player.hurt_ticks == 0U && player.hit_stop_ticks == 0U
+            && player.active_attack == combat::AttackId::none
+            && snapshot.combat->active_skill.id == skills::ActiveSkillId::none
+            && snapshot.combat->diagnostics.input_size == 0U;
+        if (skill_ready) {
+            const float facing = player.facing == combat::Facing::right
+                ? 1.0F : -1.0F;
+            const float storm_center_x = player.position.x
+                + facing * combat::kStormCenterForward;
+            const float storm_dx = target->position.x - storm_center_x;
+            const float storm_dy = target->position.y - player.position.y;
+            const bool storm_target = storm_dx * storm_dx
+                    + storm_dy * storm_dy
+                <= combat::kStormStrikeRadius * combat::kStormStrikeRadius;
+            combat::SkillCastResult storm = combat::SkillCastResult::none;
+            if (storm_target) {
+                storm = session.request_active_skill_slot(1U);
+                if (storm == combat::SkillCastResult::accepted) return movement;
+            }
+            if (!storm_target
+                    || storm == combat::SkillCastResult::cooling_down) {
+                const float forward =
+                    (target->position.x - player.position.x) * facing;
+                const float half_width = forward >= 0.0F
+                        && forward <= combat::kDrawSlashRange
+                    ? combat::kDrawSlashHalfWidthAtEnd
+                        * (forward / combat::kDrawSlashRange)
+                    : -1.0F;
+                const bool draw_target = half_width >= 0.0F
+                    && std::fabs(target->position.y - player.position.y)
+                        <= half_width;
+                if (draw_target
+                        && session.request_active_skill_slot(0U)
+                            == combat::SkillCastResult::accepted) {
+                    return movement;
+                }
+            }
+        }
         if (snapshot.combat->player.hurt_ticks == 0U
                 && snapshot.combat->player.active_attack
                     == combat::AttackId::none
@@ -2443,6 +2485,51 @@ bool stage10_validation_reached(
 
 }  // namespace
 
+bool stage10_transaction_path_only(
+    const RaylibHostConfig& config) noexcept {
+    bool transaction_scenario = false;
+    switch (config.stage10_validation) {
+    case Stage10ValidationScenario::player_death:
+    case Stage10ValidationScenario::room_reset:
+    case Stage10ValidationScenario::leave_started:
+    case Stage10ValidationScenario::restarted_failed:
+    case Stage10ValidationScenario::abyss_hole_descent:
+        transaction_scenario = true;
+        break;
+    case Stage10ValidationScenario::none:
+    case Stage10ValidationScenario::abyss_door:
+    case Stage10ValidationScenario::thunderstorm_warning:
+    case Stage10ValidationScenario::hunting_flames_warning:
+    case Stage10ValidationScenario::chaos_expansion:
+    case Stage10ValidationScenario::reward_chest:
+    case Stage10ValidationScenario::pending_reward:
+    case Stage10ValidationScenario::exit_confirmation:
+        break;
+    }
+    return transaction_scenario && config.save_directory.has_value()
+        && config.validation_steps_per_frame != 0U
+        && config.validation_exit_after_presented_frames != 0U
+        && !config.validation_capture
+        && !config.validation_capture_file.has_value()
+        && !config.validation_request_screenshot
+        && !config.screenshot_directory.has_value()
+        && config.stage11_validation == Stage11ValidationScenario::none
+        && config.stage11b_validation == Stage11BValidationScenario::none
+        && config.stage11c_hud_validation
+            == Stage11CHudValidationScenario::none
+        && config.stage11d_loot_validation
+            == Stage11DLootValidationScenario::none
+        && config.stage17_skill_stones_validation
+            == Stage17SkillStonesValidationScenario::none
+        && !config.stage12_material_showcase
+        && !config.stage12_material_showcase_hide_monsters
+        && !config.stage12_material_background_only
+        && config.stage12_ui_showcase == Stage12UiShowcase::none
+        && !config.stage12_material_showcase_ecology.has_value()
+        && !config.stage12_material_baseline_capture_file.has_value()
+        && config.stage12_material_runtime_status == nullptr;
+}
+
 HostFrameGateResult gate_host_frame(
     core::FixedStepRunner& fixed_step,
     bool& pause_latched,
@@ -2601,6 +2688,8 @@ bool settle_host_pause_command(
 HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
     bool window_ready = false;
     try {
+        const bool transaction_path_only =
+            stage10_transaction_path_only(config);
         const auto save_directory = config.save_directory.has_value()
             ? config.save_directory : persistence::default_save_directory();
         if (!save_directory.has_value()) {
@@ -2669,17 +2758,20 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         core::FixedStepRunner fixed_step;
         const auto renderer_storage = std::make_unique<CombatRenderer>();
         CombatRenderer& renderer = *renderer_storage;
-        const bool hud_resources_ready = renderer.initialize_resources();
+        const bool hud_resources_ready = !transaction_path_only
+            && renderer.initialize_resources();
         const auto pause_menu_renderer_storage =
             std::make_unique<PauseMenuRenderer>();
         PauseMenuRenderer& pause_menu_renderer = *pause_menu_renderer_storage;
-        static_cast<void>(pause_menu_renderer.initialize());
+        if (!transaction_path_only) {
+            static_cast<void>(pause_menu_renderer.initialize());
+        }
         CombatFeedback feedback;
         const auto audio_storage = std::make_unique<GameAudio>();
         GameAudio& audio = *audio_storage;
         const auto inventory_storage = std::make_unique<InventoryRenderer>();
         InventoryRenderer& inventory = *inventory_storage;
-        const bool audio_ready = audio.initialize();
+        const bool audio_ready = !transaction_path_only && audio.initialize();
         if (audio_ready) {
             SetMasterVolume(1.0F);
         }
@@ -3246,6 +3338,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             ClearBackground(Color{13, 17, 27, 255});
             reset_ui_text_bounds_audit();
             const GroundLootView ground_loot_view = [&]() noexcept {
+                if (transaction_path_only) return GroundLootView{};
                 if (config.stage12_material_background_only) {
                     static_cast<void>(renderer.draw_room_background_only(
                         presented_snapshot.ecology));
@@ -3394,28 +3487,33 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     renderer.hud_notice_view());
             }
 // STAGE11D_LOOT_VALIDATION_SEAM_END presented_semantics
-            if (!config.stage12_material_background_only
-                && passive_overlay_open) {
-                draw_passive_tree_overlay(current, runtime.render_status());
-            }
-            if (!config.stage12_material_background_only
-                && inventory.is_open()) {
-                inventory.draw(*session, current, runtime.render_status(),
-                    renderer.material_pack(), renderer.hud_font(),
-                    renderer.hud_font_ready());
+            if (!transaction_path_only) {
+                if (!config.stage12_material_background_only
+                    && passive_overlay_open) {
+                    draw_passive_tree_overlay(current, runtime.render_status());
+                }
+                if (!config.stage12_material_background_only
+                    && inventory.is_open()) {
+                    inventory.draw(*session, current, runtime.render_status(),
+                        renderer.material_pack(), renderer.hud_font(),
+                        renderer.hud_font_ready());
+                }
             }
             if (stage11b_validation_state.resume_observed) {
                 stage11b_validation_state.resume_ticks_after =
                     stage11b_validation_state.fixed_ticks;
             }
-            if (!config.stage12_material_background_only
-                && pause_menu.screen != PauseScreen::closed) {
-                pause_menu_renderer.draw(pause_menu, renderer.material_pack());
-                if (config.stage11b_validation
-                        == Stage11BValidationScenario::corrupt_defaults
-                    && pause_menu.message == kSettingsRecoveredDefaults
-                    && pause_menu_renderer.has_cjk_font()) {
-                    stage11b_validation_state.recovery_notice_visible = true;
+            if (!transaction_path_only) {
+                if (!config.stage12_material_background_only
+                    && pause_menu.screen != PauseScreen::closed) {
+                    pause_menu_renderer.draw(
+                        pause_menu, renderer.material_pack());
+                    if (config.stage11b_validation
+                            == Stage11BValidationScenario::corrupt_defaults
+                        && pause_menu.message == kSettingsRecoveredDefaults
+                        && pause_menu_renderer.has_cjk_font()) {
+                        stage11b_validation_state.recovery_notice_visible = true;
+                    }
                 }
             }
             if (config.stage11b_validation
@@ -3553,8 +3651,10 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             } else if (!capture_path.has_value()) {
                 capture_path = validation_capture_path();
             }
-            present_frame_and_maybe_capture(capture_path.has_value()
-                ? capture_path->c_str() : nullptr);
+            present_frame_and_maybe_capture(transaction_path_only
+                ? nullptr
+                : (capture_path.has_value()
+                    ? capture_path->c_str() : nullptr));
             if (stage17_capture_requested) {
                 mark_stage17_capture_complete(*stage17_validation_state);
             }

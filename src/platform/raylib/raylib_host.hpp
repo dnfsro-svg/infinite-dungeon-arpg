@@ -196,6 +196,9 @@ struct RaylibHostConfig final {
     Stage12MaterialRuntimeStatus* stage12_material_runtime_status{};
 };
 
+[[nodiscard]] bool stage10_transaction_path_only(
+    const RaylibHostConfig& config) noexcept;
+
 struct HostFrameGateResult final {
     bool forward_gameplay{};
     core::FixedStepFrame fixed_step{};

@@ -8,6 +8,7 @@
 #include "raylib_host.hpp"
 #include "window_settings.hpp"
 
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -48,6 +49,16 @@ bool memory_replace(void* context, const std::filesystem::path& path,
 settings::SettingsStore memory_store(MemorySettingsFiles& files) {
     return settings::SettingsStore{"memory-settings",
         {&files, &memory_read, &memory_replace}};
+}
+
+platform::RaylibHostConfig stage10_transaction_config(
+    platform::Stage10ValidationScenario scenario) {
+    platform::RaylibHostConfig config{};
+    config.save_directory = "stage10-transaction-save";
+    config.validation_exit_after_presented_frames = 1U;
+    config.validation_steps_per_frame = 64U;
+    config.stage10_validation = scenario;
+    return config;
 }
 
 struct ApplyRollbackFailureBackend final {
@@ -379,6 +390,109 @@ arpg::test::Failure apply_rollback_failure_still_restores_committed_loot_policy(
     return {};
 }
 
+arpg::test::Failure stage10_transaction_paths_use_path_only_resources()
+    noexcept {
+    constexpr std::array scenarios{
+        platform::Stage10ValidationScenario::player_death,
+        platform::Stage10ValidationScenario::room_reset,
+        platform::Stage10ValidationScenario::leave_started,
+        platform::Stage10ValidationScenario::restarted_failed,
+        platform::Stage10ValidationScenario::abyss_hole_descent,
+    };
+    for (const auto scenario : scenarios) {
+        auto config = stage10_transaction_config(scenario);
+        ARPG_REQUIRE(platform::stage10_transaction_path_only(config));
+        config.validation_summary_file = "stage10-summary.txt";
+        ARPG_REQUIRE(platform::stage10_transaction_path_only(config));
+    }
+    return {};
+}
+
+arpg::test::Failure stage10_path_only_resources_reject_visual_and_conflicting_modes()
+    noexcept {
+    constexpr std::array visual_scenarios{
+        platform::Stage10ValidationScenario::none,
+        platform::Stage10ValidationScenario::abyss_door,
+        platform::Stage10ValidationScenario::thunderstorm_warning,
+        platform::Stage10ValidationScenario::hunting_flames_warning,
+        platform::Stage10ValidationScenario::chaos_expansion,
+        platform::Stage10ValidationScenario::reward_chest,
+        platform::Stage10ValidationScenario::pending_reward,
+        platform::Stage10ValidationScenario::exit_confirmation,
+    };
+    for (const auto scenario : visual_scenarios) {
+        const auto config = stage10_transaction_config(scenario);
+        ARPG_REQUIRE(!platform::stage10_transaction_path_only(config));
+    }
+
+    const auto accepted = stage10_transaction_config(
+        platform::Stage10ValidationScenario::player_death);
+    auto config = accepted;
+    config.save_directory.reset();
+    ARPG_REQUIRE(!platform::stage10_transaction_path_only(config));
+    config = accepted;
+    config.validation_steps_per_frame = 0U;
+    ARPG_REQUIRE(!platform::stage10_transaction_path_only(config));
+    config = accepted;
+    config.validation_exit_after_presented_frames = 0U;
+    ARPG_REQUIRE(!platform::stage10_transaction_path_only(config));
+    config = accepted;
+    config.validation_capture = true;
+    ARPG_REQUIRE(!platform::stage10_transaction_path_only(config));
+    config = accepted;
+    config.validation_capture_file = "stage10-capture.png";
+    ARPG_REQUIRE(!platform::stage10_transaction_path_only(config));
+    config = accepted;
+    config.validation_request_screenshot = true;
+    ARPG_REQUIRE(!platform::stage10_transaction_path_only(config));
+    config = accepted;
+    config.screenshot_directory = "stage10-screenshots";
+    ARPG_REQUIRE(!platform::stage10_transaction_path_only(config));
+    config = accepted;
+    config.stage11_validation =
+        platform::Stage11ValidationScenario::normal_death_recap;
+    ARPG_REQUIRE(!platform::stage10_transaction_path_only(config));
+    config = accepted;
+    config.stage11b_validation =
+        platform::Stage11BValidationScenario::paused_freeze;
+    ARPG_REQUIRE(!platform::stage10_transaction_path_only(config));
+    config = accepted;
+    config.stage11c_hud_validation =
+        platform::Stage11CHudValidationScenario::normal_combat;
+    ARPG_REQUIRE(!platform::stage10_transaction_path_only(config));
+    config = accepted;
+    config.stage11d_loot_validation =
+        platform::Stage11DLootValidationScenario::show_all;
+    ARPG_REQUIRE(!platform::stage10_transaction_path_only(config));
+    config = accepted;
+    config.stage17_skill_stones_validation =
+        platform::Stage17SkillStonesValidationScenario::production_sequence;
+    ARPG_REQUIRE(!platform::stage10_transaction_path_only(config));
+    config = accepted;
+    config.stage12_material_showcase = true;
+    ARPG_REQUIRE(!platform::stage10_transaction_path_only(config));
+    config = accepted;
+    config.stage12_material_showcase_hide_monsters = true;
+    ARPG_REQUIRE(!platform::stage10_transaction_path_only(config));
+    config = accepted;
+    config.stage12_material_background_only = true;
+    ARPG_REQUIRE(!platform::stage10_transaction_path_only(config));
+    config = accepted;
+    config.stage12_ui_showcase = platform::Stage12UiShowcase::inventory;
+    ARPG_REQUIRE(!platform::stage10_transaction_path_only(config));
+    config = accepted;
+    config.stage12_material_showcase_ecology = dungeon::DungeonElement::water;
+    ARPG_REQUIRE(!platform::stage10_transaction_path_only(config));
+    config = accepted;
+    config.stage12_material_baseline_capture_file = "stage12-baseline.png";
+    ARPG_REQUIRE(!platform::stage10_transaction_path_only(config));
+    config = accepted;
+    platform::Stage12MaterialRuntimeStatus runtime_status{};
+    config.stage12_material_runtime_status = &runtime_status;
+    ARPG_REQUIRE(!platform::stage10_transaction_path_only(config));
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"600 paused frames freeze simulation",
         &six_hundred_paused_presented_frames_freeze_simulation},
@@ -398,6 +512,10 @@ constexpr arpg::test::TestCase kCases[] = {
         &loot_filter_preview_is_renderer_only_until_commit},
     {"Apply rollback failure restores committed loot policy",
         &apply_rollback_failure_still_restores_committed_loot_policy},
+    {"Stage 10 transaction paths use path-only resources",
+        &stage10_transaction_paths_use_path_only_resources},
+    {"Stage 10 path-only mode rejects visual and conflicting modes",
+        &stage10_path_only_resources_reject_visual_and_conflicting_modes},
 };
 
 }  // namespace
