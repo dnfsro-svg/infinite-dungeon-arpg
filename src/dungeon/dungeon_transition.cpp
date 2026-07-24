@@ -1656,6 +1656,7 @@ void DungeonSession::commit_pending_save(
         rolled_drop_bits_ = {};
         ground_materials_ = {};
         rolled_material_bits_ = {};
+        ground_health_potions_ = {};
         combat_.reset();
         phase_ = RoomPhase::transitioning;
         emit_committed(previous_room, stable_state_);

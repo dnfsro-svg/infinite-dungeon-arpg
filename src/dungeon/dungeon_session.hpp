@@ -202,6 +202,8 @@ private:
         GroundMaterialSource source,
         combat::Vec3 position,
         items::MaterialId material) noexcept;
+    [[nodiscard]] bool place_ground_health_potion(
+        std::uint16_t spawn_ordinal, combat::Vec3 position) noexcept;
     [[nodiscard]] bool materialize_abyss_clear_materials() noexcept;
     void vacuum_room_materials() noexcept;
     [[nodiscard]] bool has_ground_materials() const noexcept;
@@ -273,6 +275,9 @@ private:
     std::array<GroundMaterial, kGroundMaterialCapacity> ground_materials_{};
     std::array<std::uint64_t, kMaterialDropBitWordCount>
         rolled_material_bits_{};
+    std::array<GroundHealthPotion, kGroundHealthPotionCapacity>
+        ground_health_potions_{};
+    HealthPotionPickupReceipt health_potion_pickup_receipt_{};
     MaterialPickupReceipt material_pickup_receipt_{};
     ReinforcementReceipt reinforcement_receipt_{};
     RoomEncounterPlan encounter_plan_{};

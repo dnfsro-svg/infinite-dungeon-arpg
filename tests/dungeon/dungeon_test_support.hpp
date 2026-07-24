@@ -318,6 +318,10 @@ struct DungeonSessionTestAccess final {
         const dungeon::DungeonSession& session) noexcept {
         return session.ground_materials_;
     }
+    static void clear_rolled_material_claims(
+        dungeon::DungeonSession& session) noexcept {
+        session.rolled_material_bits_ = {};
+    }
 };
 
 inline void force_defeat_current_wave(dungeon::DungeonSession& session) noexcept {
@@ -524,6 +528,11 @@ inline const std::array<dungeon::GroundItem,
     dungeon::kGroundDropCapacity>& ground_items(
     const dungeon::DungeonSession& session) noexcept {
     return DungeonSessionTestAccess::ground_items(session);
+}
+
+inline void clear_rolled_material_claims(
+    dungeon::DungeonSession& session) noexcept {
+    DungeonSessionTestAccess::clear_rolled_material_claims(session);
 }
 
 inline bool same_encounter_plan(const dungeon::RoomEncounterPlan& left,

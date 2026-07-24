@@ -480,6 +480,7 @@ void DungeonSession::construct_current_room() noexcept {
     rolled_drop_bits_ = {};
     ground_materials_ = {};
     rolled_material_bits_ = {};
+    ground_health_potions_ = {};
     if (stable_state_.current_room.depth == 0U) {
         enter_fault(DungeonFault::invalid_item_state);
         return;
@@ -560,6 +561,7 @@ void DungeonSession::clear_transient_room_state() noexcept {
     rolled_drop_bits_ = {};
     ground_materials_ = {};
     rolled_material_bits_ = {};
+    ground_health_potions_ = {};
     encounter_plan_ = {};
     wave_index_ = 0U;
     wave_delay_ticks_ = 0U;
@@ -1459,6 +1461,20 @@ bool DungeonSession::place_ground_material(
     return true;
 }
 
+bool DungeonSession::place_ground_health_potion(
+    std::uint16_t spawn_ordinal, combat::Vec3 position) noexcept {
+    if (spawn_ordinal >= ground_health_potions_.size()) return false;
+    GroundHealthPotion& slot = ground_health_potions_[spawn_ordinal];
+    if (slot.active) {
+        saturating_increment(
+            diagnostics_.health_potion_ground_saturation_count);
+        return false;
+    }
+    slot = {true, spawn_ordinal,
+        health_potion_claim_ordinal(spawn_ordinal), position};
+    return true;
+}
+
 void DungeonSession::roll_ground_materials(
     const combat::CombatEvent& event) noexcept {
     const std::uint16_t spawn_ordinal = event.spawn_ordinal;
@@ -1495,6 +1511,10 @@ void DungeonSession::roll_ground_materials(
             static_cast<void>(place_ground_material(
                 coupon_ordinal, GroundMaterialSource::monster_coupon,
                 position, *coupon));
+        } else if (roll_health_potion_drop(
+                stable_state_.current_room.seed, spawn_ordinal)) {
+            static_cast<void>(place_ground_health_potion(
+                spawn_ordinal, position));
         }
     }
 }
