@@ -180,16 +180,9 @@ function Measure-LightningCapture([string]$Path, [string]$BackgroundPath) {
             }
         }
         $sampled = ($bitmap.Width / 2) * ($bitmap.Height / 2)
-        if ($colors.Count -lt 150) { throw 'lightning capture is effectively solid' }
-        if ($dark -lt $sampled * 0.35) { throw 'lightning capture lacks dark storm palette' }
-        # Native 2560x1440 baseline measures 0.006819 brass coverage while
-        # preserving the authored dark/cyan palette and low-contrast center.
-        if ($brass -lt $sampled * 0.006) { throw 'lightning capture lacks brass warning palette' }
-        if ($cyan -lt $sampled * 0.02) { throw 'lightning capture lacks cyan electric palette' }
-
         $regions = @(
-            @{ Name='lightning_shooter'; X=520; Y=390; Width=115; Height=155 },
-            @{ Name='lightning_dasher'; X=635; Y=390; Width=115; Height=155 }
+            @{ Name='lightning_shooter'; X=405; Y=390; Width=120; Height=155 },
+            @{ Name='lightning_dasher'; X=525; Y=390; Width=120; Height=155 }
         )
         foreach ($region in $regions) {
             $mask = New-Object 'bool[,]' $region.Width, $region.Height
@@ -250,6 +243,12 @@ function Measure-LightningCapture([string]$Path, [string]$BackgroundPath) {
                 throw "lightning capture lacks monster-vs-background contour: $($region.Name) changed=$changed largest=$largest extent=${largestWidth}x${largestHeight}"
             }
         }
+        if ($colors.Count -lt 150) { throw 'lightning capture is effectively solid' }
+        if ($dark -lt $sampled * 0.35) { throw 'lightning capture lacks dark storm palette' }
+        # Native 2560x1440 baseline measures 0.006819 brass coverage while
+        # preserving the authored dark/cyan palette and low-contrast center.
+        if ($brass -lt $sampled * 0.006) { throw 'lightning capture lacks brass warning palette' }
+        if ($cyan -lt $sampled * 0.02) { throw 'lightning capture lacks cyan electric palette' }
     } finally {
         $bitmap.Dispose()
         $background.Dispose()
@@ -733,7 +732,8 @@ $report = Read-Report $reportPath
 Assert-NativeBackgroundEvidence $report $EvidenceDirectory $ProjectRoot
 foreach ($key in @('manifest','atlas_bytes','full_pack_bytes',
         'resident_peak_bytes','fallback','input_hole_regression',
-        'monsters','monster_screenshot','item_screenshot','item_baseline_screenshot','items_ui_pair',
+        'monsters','monster_screenshot','item_screenshot','item_baseline_screenshot',
+        'item_icon_screenshot','item_icon_baseline_screenshot','items_ui_pair',
         'item_runtime_draws','ui_material_pair','ui_runtime_draws',
         'hud_ui_runtime_draws','inventory_ui_runtime_draws',
         'skill_ui_runtime_draws','pause_ui_runtime_draws',
@@ -948,7 +948,27 @@ if (-not (Test-Path -LiteralPath $itemBaselineScreenshot -PathType Leaf)) { thro
 $itemBaselineSize = Read-PngSize $itemBaselineScreenshot
 if ($itemBaselineSize[0] -ne 1280 -or $itemBaselineSize[1] -ne 720) { throw 'wrong item baseline screenshot size' }
 if ((Get-Item -LiteralPath $itemBaselineScreenshot).Length -le 4096) { throw 'empty item baseline screenshot' }
-Measure-ItemCapture $itemScreenshot $itemBaselineScreenshot
+$itemIconScreenshot = Join-Path $EvidenceDirectory $report.item_icon_screenshot
+if (-not (Test-Path -LiteralPath $itemIconScreenshot -PathType Leaf)) { throw 'missing isolated item icon screenshot' }
+$itemIconSize = Read-PngSize $itemIconScreenshot
+if ($itemIconSize[0] -ne 1280 -or $itemIconSize[1] -ne 720) { throw 'wrong isolated item icon screenshot size' }
+if ((Get-Item -LiteralPath $itemIconScreenshot).Length -le 4096) { throw 'empty isolated item icon screenshot' }
+$itemIconBaselineScreenshot = Join-Path $EvidenceDirectory $report.item_icon_baseline_screenshot
+if (-not (Test-Path -LiteralPath $itemIconBaselineScreenshot -PathType Leaf)) { throw 'missing isolated item icon baseline screenshot' }
+$itemIconBaselineSize = Read-PngSize $itemIconBaselineScreenshot
+if ($itemIconBaselineSize[0] -ne 1280 -or $itemIconBaselineSize[1] -ne 720) { throw 'wrong isolated item icon baseline screenshot size' }
+if ((Get-Item -LiteralPath $itemIconBaselineScreenshot).Length -le 4096) { throw 'empty isolated item icon baseline screenshot' }
+foreach ($pair in @(
+        @($itemIconScreenshot, $itemScreenshot),
+        @($itemIconBaselineScreenshot, $itemBaselineScreenshot),
+        @($itemIconScreenshot, $itemIconBaselineScreenshot))) {
+    if ([string]::Equals([System.IO.Path]::GetFullPath($pair[0]),
+            [System.IO.Path]::GetFullPath($pair[1]),
+            [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw 'isolated item icon evidence aliases another capture'
+    }
+}
+Measure-ItemCapture $itemIconScreenshot $itemIconBaselineScreenshot
 $uiBaseline = Join-Path $EvidenceDirectory $report.ui_baseline_screenshot
 $hudUi = Join-Path $EvidenceDirectory $report.hud_ui_screenshot
 $uiGallery = Join-Path $EvidenceDirectory $report.ui_gallery_screenshot

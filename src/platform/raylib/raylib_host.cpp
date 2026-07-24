@@ -226,12 +226,13 @@ std::optional<std::string> host_screenshot_path(
 
 void apply_stage12_material_showcase(dungeon::DungeonSnapshot& snapshot,
     std::optional<dungeon::DungeonElement> ecology,
-    bool hide_monsters, bool hide_items) noexcept {
+    bool hide_monsters, bool hide_loot) noexcept {
     if (!snapshot.combat.has_value()) return;
     if (ecology.has_value()) snapshot.ecology = *ecology;
-    if (hide_items) {
+    if (hide_loot) {
         snapshot.ground_item_count = 0U;
         snapshot.ground_material_count = 0U;
+        snapshot.ground_health_potion_count = 0U;
     } else {
         constexpr std::array<items::ItemSlot, 6U> item_slots{{
             items::ItemSlot::weapon, items::ItemSlot::helmet,
@@ -239,8 +240,8 @@ void apply_stage12_material_showcase(dungeon::DungeonSnapshot& snapshot,
             items::ItemSlot::boots, items::ItemSlot::accessory,
         }};
         constexpr std::array<items::ItemRarity, 6U> item_rarities{{
-            items::ItemRarity::normal, items::ItemRarity::magic,
-            items::ItemRarity::rare, items::ItemRarity::normal,
+            items::ItemRarity::rare, items::ItemRarity::magic,
+            items::ItemRarity::normal, items::ItemRarity::normal,
             items::ItemRarity::magic, items::ItemRarity::rare,
         }};
         snapshot.ground_item_count = static_cast<std::uint16_t>(
@@ -2528,7 +2529,10 @@ bool stage10_transaction_path_only(
             == Stage17SkillStonesValidationScenario::none
         && !config.stage12_material_showcase
         && !config.stage12_material_showcase_hide_monsters
+        && !config.stage12_material_showcase_hide_loot
         && !config.stage12_material_background_only
+        && !config.stage12_material_icons_only
+        && !config.stage12_lightning_palette_showcase
         && config.stage12_ui_showcase == Stage12UiShowcase::none
         && !config.stage12_material_showcase_ecology.has_value()
         && !config.stage12_material_baseline_capture_file.has_value()
@@ -2724,7 +2728,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         if (!initialized && runtime.state() != DungeonRuntimeState::recovery_required) {
             return HostExitCode::save_initialization_failed;
         }
-        if (config.stage12_material_background_only
+        if ((config.stage12_material_background_only
+                || config.stage12_material_icons_only)
                 && runtime.state() == DungeonRuntimeState::recovery_required) {
             TraceLog(LOG_ERROR,
                 "Stage 12 background-only capture refused a recovery save");
@@ -2889,7 +2894,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 }
             }
             if (runtime.state() == DungeonRuntimeState::recovery_required) {
-                if (config.stage12_material_background_only) {
+                if (config.stage12_material_background_only
+                    || config.stage12_material_icons_only) {
                     TraceLog(LOG_ERROR,
                         "Stage 12 background-only capture entered recovery state");
                     exit_requested = true;
@@ -3303,7 +3309,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 apply_stage12_material_showcase(presented_snapshot,
                     config.stage12_material_showcase_ecology,
                     config.stage12_material_showcase_hide_monsters,
-                    stage12_item_baseline_frame);
+                    stage12_item_baseline_frame
+                        || config.stage12_material_showcase_hide_loot);
             }
             const dungeon::DungeonSnapshot& presented_hud_previous =
                 config.stage12_material_showcase ? presented_snapshot : previous;
@@ -3349,10 +3356,20 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                         presented_snapshot.ecology));
                     return GroundLootView{};
                 }
+                if (config.stage12_material_icons_only) {
+                    return renderer.draw_ground_loot_icons_only(
+                        presented_snapshot);
+                }
+                const bool lightning_palette_showcase =
+                    config.stage12_lightning_palette_showcase
+                    && config.stage12_material_showcase
+                    && config.stage12_material_showcase_hide_loot
+                    && presented_snapshot.ecology
+                        == dungeon::DungeonElement::lightning;
                 return renderer.draw(
                     previous, presented_snapshot, runtime.render_status(),
                     static_cast<float>(frame.interpolation_alpha), draw_debug,
-                    feedback, audio_ready);
+                    feedback, audio_ready, lightning_palette_showcase);
             }();
             if (config.stage12_material_runtime_status != nullptr) {
                 const MonsterMaterialDrawRuntimeStatus shooter_draw =
@@ -3494,10 +3511,12 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
 // STAGE11D_LOOT_VALIDATION_SEAM_END presented_semantics
             if (!transaction_path_only) {
                 if (!config.stage12_material_background_only
+                    && !config.stage12_material_icons_only
                     && passive_overlay_open) {
                     draw_passive_tree_overlay(current, runtime.render_status());
                 }
                 if (!config.stage12_material_background_only
+                    && !config.stage12_material_icons_only
                     && inventory.is_open()) {
                     inventory.draw(*session, current, runtime.render_status(),
                         renderer.material_pack(), renderer.hud_font(),
@@ -3510,6 +3529,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             }
             if (!transaction_path_only) {
                 if (!config.stage12_material_background_only
+                    && !config.stage12_material_icons_only
                     && pause_menu.screen != PauseScreen::closed) {
                     pause_menu_renderer.draw(
                         pause_menu, renderer.material_pack());
@@ -3621,6 +3641,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 }
             }
             if (!config.stage12_material_background_only
+                && !config.stage12_material_icons_only
                 && config.stage12_ui_showcase
                     == Stage12UiShowcase::material_gallery) {
                 draw_stage12_ui_material_gallery(renderer.material_pack());

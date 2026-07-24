@@ -43,7 +43,7 @@ function Get-Sha256([string]$Path) {
 
 $mutations = @()
 $solidItems = New-Mutation 'solid-gray-items'
-Save-MutatedBitmap (Join-Path $solidItems 'items-materials-1280x720.png') {
+Save-MutatedBitmap (Join-Path $solidItems 'items-icons-1280x720.png') {
     param($bitmap)
     $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
     try { $graphics.Clear([System.Drawing.Color]::FromArgb(255, 64, 64, 64)) }
@@ -52,9 +52,17 @@ Save-MutatedBitmap (Join-Path $solidItems 'items-materials-1280x720.png') {
 $mutations += @{ Name='solid-gray-items'; Path=$solidItems }
 
 $noItems = New-Mutation 'no-item-capture'
-Copy-Item -LiteralPath (Join-Path $noItems 'items-baseline-1280x720.png') `
-    -Destination (Join-Path $noItems 'items-materials-1280x720.png') -Force
+Copy-Item -LiteralPath (Join-Path $noItems 'items-icons-baseline-1280x720.png') `
+    -Destination (Join-Path $noItems 'items-icons-1280x720.png') -Force
 $mutations += @{ Name='no-item-capture'; Path=$noItems }
+
+$aliasedItemIcons = New-Mutation 'aliased-item-icon-evidence'
+$reportPath = Join-Path $aliasedItemIcons 'stage12-material-evidence.txt'
+(Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8).Replace(
+    'item_icon_screenshot=items-icons-1280x720.png',
+    'item_icon_screenshot=items-materials-1280x720.png') |
+    Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+$mutations += @{ Name='aliased-item-icon-evidence'; Path=$aliasedItemIcons }
 
 $missingItemRuntime = New-Mutation 'missing-item-runtime-draw'
 $reportPath = Join-Path $missingItemRuntime 'stage12-material-evidence.txt'
@@ -242,8 +250,8 @@ Save-MutatedBitmap (Join-Path $missingMonsters 'lightning-monsters-1280x720.png'
     $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
     try {
         foreach ($region in @(
-                [System.Drawing.Rectangle]::new(520, 390, 115, 155),
-                [System.Drawing.Rectangle]::new(635, 390, 115, 155))) {
+                [System.Drawing.Rectangle]::new(405, 390, 120, 155),
+                [System.Drawing.Rectangle]::new(525, 390, 120, 155))) {
             $graphics.DrawImage($background, $region, $region,
                 [System.Drawing.GraphicsUnit]::Pixel)
         }

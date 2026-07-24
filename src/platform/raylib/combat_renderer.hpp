@@ -106,6 +106,8 @@ public:
         combat::MonsterId monster) const noexcept;
     [[nodiscard]] RoomBackgroundDrawRuntimeStatus draw_room_background_only(
         dungeon::DungeonElement ecology) noexcept;
+    [[nodiscard]] GroundLootView draw_ground_loot_icons_only(
+        const dungeon::DungeonSnapshot& snapshot) noexcept;
     [[nodiscard]] RoomBackgroundDrawRuntimeStatus room_background_draw_status()
         const noexcept;
     void consume_event(const combat::CombatEvent& event) noexcept;
@@ -147,13 +149,15 @@ public:
         float interpolation_alpha,
         bool draw_debug,
         const CombatFeedback& feedback,
-        bool audio_ready) noexcept;
+        bool audio_ready,
+        bool lightning_palette_showcase = false) noexcept;
 
 private:
     void draw_room(
         const dungeon::DungeonSnapshot& current,
         const GroundLootView& ground_loot,
-        const MaterialLootView& material_loot) noexcept;
+        const MaterialLootView& material_loot,
+        bool lightning_palette_showcase) noexcept;
     void draw_actors(
         const dungeon::DungeonSnapshot& previous,
         const dungeon::DungeonSnapshot& current,

@@ -252,7 +252,8 @@ GroundLootView CombatRenderer::draw(
     float interpolation_alpha,
     bool draw_debug,
     const CombatFeedback& feedback,
-    bool audio_ready) noexcept {
+    bool audio_ready,
+    bool lightning_palette_showcase) noexcept {
     static_cast<void>(material_pack_.load(material_ecology(current.ecology)));
     transition_ = transition_after_room_phase(transition_, current.phase);
 
@@ -274,7 +275,8 @@ GroundLootView CombatRenderer::draw(
         }
         switch (stage) {
         case CombatRenderStage::room:
-            draw_room(current, render_plan.ground_loot, render_plan.material_loot);
+            draw_room(current, render_plan.ground_loot,
+                render_plan.material_loot, lightning_palette_showcase);
             break;
         case CombatRenderStage::actors:
             draw_actors(previous, current,

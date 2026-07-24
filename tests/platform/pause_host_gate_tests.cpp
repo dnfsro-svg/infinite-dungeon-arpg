@@ -475,7 +475,16 @@ arpg::test::Failure stage10_path_only_resources_reject_visual_and_conflicting_mo
     config.stage12_material_showcase_hide_monsters = true;
     ARPG_REQUIRE(!platform::stage10_transaction_path_only(config));
     config = accepted;
+    config.stage12_material_showcase_hide_loot = true;
+    ARPG_REQUIRE(!platform::stage10_transaction_path_only(config));
+    config = accepted;
     config.stage12_material_background_only = true;
+    ARPG_REQUIRE(!platform::stage10_transaction_path_only(config));
+    config = accepted;
+    config.stage12_material_icons_only = true;
+    ARPG_REQUIRE(!platform::stage10_transaction_path_only(config));
+    config = accepted;
+    config.stage12_lightning_palette_showcase = true;
     ARPG_REQUIRE(!platform::stage10_transaction_path_only(config));
     config = accepted;
     config.stage12_ui_showcase = platform::Stage12UiShowcase::inventory;

@@ -99,7 +99,7 @@ void draw_water_room_props(const MaterialPack& material_pack,
 }
 
 void draw_lightning_room_props(const MaterialPack& material_pack,
-    float width, float height) noexcept {
+    float width, float height, bool lightning_palette_showcase) noexcept {
     if (!material_pack.available(MaterialAtlasId::lightning_environment)) return;
     constexpr std::array<Vector2, 5> kPositions{{
         {0.12F, 0.34F}, {0.88F, 0.35F}, {0.18F, 0.82F},
@@ -114,9 +114,14 @@ void draw_lightning_room_props(const MaterialPack& material_pack,
     const LightningRoomMaterialSlice& slice = lightning_room_material_slice();
     for (std::size_t index{}; index < kProps.size(); ++index) {
         const auto& prop = slice.props[static_cast<std::size_t>(kProps[index])];
+        Vector2 position = kPositions[index];
+        float scale = index == 1U ? 0.90F : 0.55F;
+        if (lightning_palette_showcase && index == 4U) {
+            position = {0.70F, 0.82F};
+            scale = 0.64F;
+        }
         static_cast<void>(material_pack.draw(prop.sprite,
-            {kPositions[index].x * width, kPositions[index].y * height},
-            false, index == 1U ? 0.90F : 0.55F));
+            {position.x * width, position.y * height}, false, scale));
     }
 }
 
@@ -485,7 +490,7 @@ void draw_ground_materials(const dungeon::DungeonSnapshot& snapshot,
                 radius * 1.55F, Fade(color, 0.78F));
         }
         if (!material_pack.draw(label.sprite, center, false,
-                (label.emphasized ? 0.24F : 0.20F) * projected.scale)) {
+                (label.emphasized ? 0.24F : 0.22F) * projected.scale)) {
             DrawCircleV(center, radius, color);
         }
         DrawCircleLines(static_cast<int>(center.x), static_cast<int>(center.y),
@@ -575,10 +580,31 @@ RoomBackgroundDrawRuntimeStatus CombatRenderer::draw_room_background_only(
     return room_background_draw_status_;
 }
 
+GroundLootView CombatRenderer::draw_ground_loot_icons_only(
+    const dungeon::DungeonSnapshot& snapshot) noexcept {
+    static_cast<void>(material_pack_.load(material_ecology(snapshot.ecology)));
+    const float width = static_cast<float>(GetScreenWidth());
+    const float height = static_cast<float>(GetScreenHeight());
+    const GroundLootView ground_loot = build_ground_loot_view(
+        snapshot, loot_filter_mode_, width, height);
+    const MaterialLootView material_loot = build_material_loot_view(
+        snapshot, width, height);
+
+    Camera2D world_camera{};
+    world_camera.zoom = 1.0F;
+    BeginMode2D(world_camera);
+    static_cast<void>(draw_room_background_only(snapshot.ecology));
+    draw_ground_materials(snapshot, material_loot, material_pack_, width, height);
+    draw_ground_items(snapshot, ground_loot, material_pack_, width, height);
+    EndMode2D();
+    return ground_loot;
+}
+
 void CombatRenderer::draw_room(
     const dungeon::DungeonSnapshot& current,
     const GroundLootView& ground_loot,
-    const MaterialLootView& material_loot) noexcept {
+    const MaterialLootView& material_loot,
+    bool lightning_palette_showcase) noexcept {
     const float width = static_cast<float>(GetScreenWidth());
     const float height = static_cast<float>(GetScreenHeight());
     room_background_draw_status_ = room_background_status(
@@ -599,7 +625,8 @@ void CombatRenderer::draw_room(
         } else if (current.ecology == dungeon::DungeonElement::water) {
             draw_water_room_props(material_pack_, width, height);
         } else if (current.ecology == dungeon::DungeonElement::lightning) {
-            draw_lightning_room_props(material_pack_, width, height);
+            draw_lightning_room_props(material_pack_, width, height,
+                lightning_palette_showcase);
         } else if (current.ecology == dungeon::DungeonElement::chaos) {
             draw_chaos_room_props(material_pack_, width, height);
         }

@@ -188,7 +188,10 @@ struct RaylibHostConfig final {
     bool validation_request_screenshot{};
     bool stage12_material_showcase{};
     bool stage12_material_showcase_hide_monsters{};
+    bool stage12_material_showcase_hide_loot{};
     bool stage12_material_background_only{};
+    bool stage12_material_icons_only{};
+    bool stage12_lightning_palette_showcase{};
     Stage12UiShowcase stage12_ui_showcase{Stage12UiShowcase::none};
     std::optional<dungeon::DungeonElement> stage12_material_showcase_ecology{};
     std::optional<std::filesystem::path>

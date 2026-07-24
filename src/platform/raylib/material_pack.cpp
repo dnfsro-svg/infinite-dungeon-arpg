@@ -266,6 +266,7 @@ void draw_material(Texture2D color, Texture2D material, Rectangle source,
         static_cast<float>(parameters.emissive_tint.r) / 255.0F,
         static_cast<float>(parameters.emissive_tint.g) / 255.0F,
         static_cast<float>(parameters.emissive_tint.b) / 255.0F};
+    BeginShaderMode(g_material_shader.shader);
     SetShaderValueTexture(g_material_shader.shader,
         g_material_shader.material_map_location, material);
     SetShaderValue(g_material_shader.shader,
@@ -277,7 +278,6 @@ void draw_material(Texture2D color, Texture2D material, Rectangle source,
     SetShaderValue(g_material_shader.shader,
         g_material_shader.emissive_tint_location, emissive_tint,
         SHADER_UNIFORM_VEC3);
-    BeginShaderMode(g_material_shader.shader);
     DrawTexturePro(color, source, destination, origin, rotation, tint);
     EndShaderMode();
 }
