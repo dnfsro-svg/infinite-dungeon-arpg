@@ -243,6 +243,8 @@ private:
         std::uint8_t right) noexcept;
     [[nodiscard]] RequestResult request_health_potion_pickup(
         std::uint16_t spawn_ordinal) noexcept;
+    [[nodiscard]] bool health_potion_abyss_clear_retry_gate_active()
+        const noexcept;
     [[nodiscard]] bool pending_health_potion_cache_consistent() const noexcept;
     void apply_committed_health_potions(
         const PendingHealthPotionClaim& claim, bool room_clear) noexcept;

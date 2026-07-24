@@ -372,6 +372,10 @@ struct DungeonSessionTestAccess final {
             500U,
             modifiers::DamageType::lightning);
     }
+    static bool health_potion_abyss_clear_retry_pending(
+        const dungeon::DungeonSession& session) noexcept {
+        return session.retry_health_potion_abyss_clear_before_combat_;
+    }
     static void offset_pending_next_room_depth(
         dungeon::DungeonSession& session, std::uint64_t offset) noexcept {
         if (session.pending_save_.has_value()) {

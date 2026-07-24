@@ -247,7 +247,7 @@ int main() {
         const arpg::test::TestSuite potion_only[] = {
             dungeon_health_potion_suite(),
         };
-        return arpg::test::run_suites(potion_only, 18,
+        return arpg::test::run_suites(potion_only, 19,
             "task 6 health potion atomic auto-use");
     }
 
@@ -259,6 +259,6 @@ int main() {
             "stage 17 task 3 skill loadout transactions");
     }
 
-    return arpg::test::run_suites(suites, 305,
+    return arpg::test::run_suites(suites, 306,
         "stage 18 dungeon queries");
 }

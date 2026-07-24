@@ -138,6 +138,7 @@ std::uint8_t popcount8(std::uint8_t value) noexcept {
 }  // namespace
 
 bool DungeonSession::request_descent(bool player_in_range) noexcept {
+    if (health_potion_abyss_clear_retry_gate_active()) return false;
     if (phase_ != RoomPhase::awaiting_exit || !combat_.has_value()
             || !player_in_range || pending_save_.has_value()
             || !stable_state_.current_room.has_hole) {
@@ -156,6 +157,7 @@ bool DungeonSession::request_descent(bool player_in_range) noexcept {
 
 void DungeonSession::resolve_pending_transition(
     const TransitionSaveResult& result) noexcept {
+    if (health_potion_abyss_clear_retry_gate_active()) return;
     if (!pending_save_.has_value()
             || (pending_save_->kind != PendingSaveKind::transition
                 && pending_save_->kind != PendingSaveKind::abyss_abandon)) {
@@ -167,6 +169,7 @@ void DungeonSession::resolve_pending_transition(
 
 void DungeonSession::resolve_pending_save(
     const PendingSaveResult& result) noexcept {
+    if (health_potion_abyss_clear_retry_gate_active()) return;
     commit_pending_save(result);
 }
 
@@ -410,6 +413,7 @@ bool DungeonSession::request_passive_refund(
 
 bool DungeonSession::prepare_passive_mutation(
     passives::PassiveNodeId node, bool refund) noexcept {
+    if (health_potion_abyss_clear_retry_gate_active()) return false;
     if (!pending_item_cache_consistent()) {
         enter_fault(DungeonFault::save_receipt_mismatch);
         return false;
@@ -816,6 +820,9 @@ bool DungeonSession::pending_health_potion_cache_consistent() const noexcept {
 }
 
 RequestResult DungeonSession::request_equip(std::uint64_t item_id) noexcept {
+    if (health_potion_abyss_clear_retry_gate_active()) {
+        return RequestResult::rejected;
+    }
     if (!pending_item_cache_consistent()) {
         enter_fault(DungeonFault::save_receipt_mismatch);
         return RequestResult::faulted;
@@ -862,6 +869,9 @@ RequestResult DungeonSession::request_equip(std::uint64_t item_id) noexcept {
 }
 
 RequestResult DungeonSession::request_unequip(items::ItemSlot slot) noexcept {
+    if (health_potion_abyss_clear_retry_gate_active()) {
+        return RequestResult::rejected;
+    }
     if (!pending_item_cache_consistent()) {
         enter_fault(DungeonFault::save_receipt_mismatch);
         return RequestResult::faulted;
@@ -902,6 +912,9 @@ RequestResult DungeonSession::request_craft(
     items::MaterialId material,
     std::uint64_t item_id,
     std::optional<items::DirectedCategory> directed_category) noexcept {
+    if (health_potion_abyss_clear_retry_gate_active()) {
+        return RequestResult::rejected;
+    }
     if (!pending_item_cache_consistent()) {
         enter_fault(DungeonFault::save_receipt_mismatch);
         return RequestResult::faulted;
@@ -958,6 +971,9 @@ RequestResult DungeonSession::request_craft(
 
 RequestResult DungeonSession::request_reinforcement(
     std::uint64_t item_id) noexcept {
+    if (health_potion_abyss_clear_retry_gate_active()) {
+        return RequestResult::rejected;
+    }
     if (!pending_item_cache_consistent()) {
         enter_fault(DungeonFault::save_receipt_mismatch);
         return RequestResult::faulted;
@@ -1047,6 +1063,9 @@ RequestResult DungeonSession::request_reinforcement(
 
 RequestResult DungeonSession::request_coupon(
     items::MaterialId coupon, std::uint64_t item_id) noexcept {
+    if (health_potion_abyss_clear_retry_gate_active()) {
+        return RequestResult::rejected;
+    }
     if (!pending_item_cache_consistent()) {
         enter_fault(DungeonFault::save_receipt_mismatch);
         return RequestResult::faulted;
@@ -1099,6 +1118,9 @@ RequestResult DungeonSession::request_coupon(
 
 RequestResult DungeonSession::request_recipe(
     const std::array<std::uint64_t, 3>& item_ids) noexcept {
+    if (health_potion_abyss_clear_retry_gate_active()) {
+        return RequestResult::rejected;
+    }
     if (!pending_item_cache_consistent()) {
         enter_fault(DungeonFault::save_receipt_mismatch);
         return RequestResult::faulted;
@@ -1183,6 +1205,9 @@ RequestResult DungeonSession::request_recipe(
 
 RequestResult DungeonSession::request_pickup(
     std::uint16_t drop_ordinal) noexcept {
+    if (health_potion_abyss_clear_retry_gate_active()) {
+        return RequestResult::rejected;
+    }
     if (!pending_item_cache_consistent()) {
         enter_fault(DungeonFault::save_receipt_mismatch);
         return RequestResult::faulted;
@@ -1312,6 +1337,9 @@ RequestResult DungeonSession::request_pickup(
 
 RequestResult DungeonSession::request_material_pickup(
     std::uint16_t ordinal) noexcept {
+    if (health_potion_abyss_clear_retry_gate_active()) {
+        return RequestResult::rejected;
+    }
     if (!pending_item_cache_consistent()
             || !pending_material_cache_consistent()) {
         enter_fault(DungeonFault::save_receipt_mismatch);
@@ -1385,6 +1413,9 @@ RequestResult DungeonSession::request_material_pickup(
 
 RequestResult DungeonSession::request_health_potion_pickup(
     std::uint16_t spawn_ordinal) noexcept {
+    if (health_potion_abyss_clear_retry_gate_active()) {
+        return RequestResult::rejected;
+    }
     if (!pending_item_cache_consistent()
             || !pending_material_cache_consistent()
             || !pending_health_potion_cache_consistent()) {
@@ -1479,6 +1510,9 @@ RequestResult DungeonSession::request_skill_loadout_mutation(
     skills::ActiveSkillId skill,
     std::uint8_t left,
     std::uint8_t right) noexcept {
+    if (health_potion_abyss_clear_retry_gate_active()) {
+        return RequestResult::rejected;
+    }
     if (!pending_item_cache_consistent()) {
         enter_fault(DungeonFault::save_receipt_mismatch);
         return RequestResult::faulted;
@@ -1550,6 +1584,7 @@ bool auto_pickup_eligible(
 void DungeonSession::request_nearby_pickups(
     combat::Vec3 player_position,
     AutoPickupPolicy pickup_policy) noexcept {
+    if (health_potion_abyss_clear_retry_gate_active()) return;
     if (!item_request_phase(phase_) || !combat_.has_value()
             || pending_save_.has_value()) {
         return;

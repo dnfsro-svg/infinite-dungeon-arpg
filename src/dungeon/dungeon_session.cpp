@@ -261,17 +261,22 @@ DungeonSession::DungeonSession(
 
 bool DungeonSession::queue_action(combat::Action action) noexcept {
     return phase_ == RoomPhase::combat
-        && !retry_health_potion_abyss_clear_before_combat_
+        && !health_potion_abyss_clear_retry_gate_active()
         && combat_.has_value()
         ? combat_->queue_action(action)
         : false;
+}
+
+bool DungeonSession::health_potion_abyss_clear_retry_gate_active()
+    const noexcept {
+    return retry_health_potion_abyss_clear_before_combat_;
 }
 
 combat::SkillCastResult DungeonSession::request_active_skill_slot(
     std::uint8_t slot) noexcept {
     const std::size_t index = static_cast<std::size_t>(slot);
     if (phase_ != RoomPhase::combat
-            || retry_health_potion_abyss_clear_before_combat_
+            || health_potion_abyss_clear_retry_gate_active()
             || !combat_.has_value()
             || index >= skills::kActiveSkillSlotCount) {
         return combat::SkillCastResult::none;
@@ -418,7 +423,8 @@ const items::ItemOwnershipState& DungeonSession::item_state() const noexcept {
 }
 
 RequestResult DungeonSession::reset_current_room() noexcept {
-    if (phase_ == RoomPhase::transitioning
+    if (health_potion_abyss_clear_retry_gate_active()
+            || phase_ == RoomPhase::transitioning
             || phase_ == RoomPhase::committing
             || phase_ == RoomPhase::death_pending
             || phase_ == RoomPhase::faulted) {
@@ -1277,6 +1283,9 @@ void DungeonSession::publish_run_state_reusing_items(
 }
 
 RequestResult DungeonSession::request_death_continue() noexcept {
+    if (health_potion_abyss_clear_retry_gate_active()) {
+        return RequestResult::rejected;
+    }
     if (phase_ == RoomPhase::faulted) return RequestResult::faulted;
     if (phase_ != RoomPhase::death_pending || pending_save_.has_value()
             || combat_.has_value()
