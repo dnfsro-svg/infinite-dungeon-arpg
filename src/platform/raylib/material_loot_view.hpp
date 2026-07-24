@@ -38,8 +38,9 @@ struct MaterialLootView final {
 };
 
 struct MaterialLootPlacementDiagnostics final {
-    std::uint64_t placement_probe_count{};
-    std::uint64_t collision_operation_count{};
+    std::uint64_t direct_collision_check_count{};
+    std::uint64_t candidate_probe_count{};
+    std::uint64_t occupancy_mark_check_count{};
 };
 
 struct MaterialPickupFeedback final {

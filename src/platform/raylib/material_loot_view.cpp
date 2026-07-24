@@ -69,6 +69,64 @@ struct PlacementGrid final {
         * (static_cast<float>(index) / static_cast<float>(count - 1U));
 }
 
+void compress_axis_counts(std::size_t natural_columns,
+    std::size_t natural_rows, std::size_t& columns,
+    std::size_t& rows) noexcept {
+    columns = natural_columns;
+    rows = natural_rows;
+    if (natural_rows == 0U
+            || natural_columns <= kLabelCapacity / natural_rows) {
+        return;
+    }
+
+    const float scale = std::sqrt(
+        static_cast<float>(kLabelCapacity)
+        / static_cast<float>(natural_columns * natural_rows));
+    columns = (std::max)(std::size_t{1U},
+        static_cast<std::size_t>(
+            std::floor(static_cast<float>(natural_columns) * scale)));
+    rows = (std::max)(std::size_t{1U},
+        static_cast<std::size_t>(
+            std::floor(static_cast<float>(natural_rows) * scale)));
+
+    for (;;) {
+        const bool can_add_column = columns < natural_columns
+            && columns + 1U <= kLabelCapacity / rows;
+        const bool can_add_row = rows < natural_rows
+            && columns <= kLabelCapacity / (rows + 1U);
+        if (!can_add_column && !can_add_row) return;
+        if (can_add_column && can_add_row) {
+            const float column_fraction = static_cast<float>(columns)
+                / static_cast<float>(natural_columns);
+            const float row_fraction = static_cast<float>(rows)
+                / static_cast<float>(natural_rows);
+            if (column_fraction <= row_fraction) {
+                ++columns;
+            } else {
+                ++rows;
+            }
+        } else if (can_add_column) {
+            ++columns;
+        } else {
+            ++rows;
+        }
+    }
+}
+
+void append_unique_slot(PlacementGrid& grid, LootLabelRect slot) noexcept {
+    for (std::size_t index = 0U; index < grid.count; ++index) {
+        const LootLabelRect existing = grid.slots[index];
+        if (existing.x == slot.x && existing.y == slot.y
+                && existing.width == slot.width
+                && existing.height == slot.height) {
+            return;
+        }
+    }
+    if (grid.count < grid.slots.size()) {
+        grid.slots[grid.count++] = slot;
+    }
+}
+
 [[nodiscard]] PlacementGrid make_placement_grid(
     const MaterialLootView& view, float width, float height) noexcept {
     PlacementGrid grid{};
@@ -82,19 +140,24 @@ struct PlacementGrid final {
         - kGroundLootSafetyInset - label_width;
     const float maximum_y = usable_screen_extent(height)
         - kGroundLootSafetyInset - label_height;
-    const std::size_t column_count = axis_slot_count(
+    const std::size_t natural_column_count = axis_slot_count(
         maximum_x - minimum_x, label_width + kPlacementGap);
-    const std::size_t row_count = axis_slot_count(
+    const std::size_t natural_row_count = axis_slot_count(
         maximum_y - minimum_y, label_height + kPlacementGap);
+    std::size_t column_count{};
+    std::size_t row_count{};
+    compress_axis_counts(natural_column_count, natural_row_count,
+        column_count, row_count);
     for (std::size_t row = 0U;
-         row < row_count && grid.count < grid.slots.size(); ++row) {
+         row < row_count; ++row) {
         const float y = axis_slot_position(
             minimum_y, maximum_y, row, row_count);
         for (std::size_t column = 0U;
-             column < column_count && grid.count < grid.slots.size(); ++column) {
+             column < column_count; ++column) {
             const float x = axis_slot_position(
                 minimum_x, maximum_x, column, column_count);
-            grid.slots[grid.count++] = {x, y, label_width, label_height};
+            append_unique_slot(
+                grid, {x, y, label_width, label_height});
         }
     }
     return grid;
@@ -113,37 +176,94 @@ void occupancy_set(std::array<std::uint64_t, kOccupancyWordCount>& occupancy,
         std::uint64_t{1U} << (slot % kOccupancyWordBits);
 }
 
-[[nodiscard]] bool place_in_fixed_grid(MaterialLootLabel& label,
-    const PlacementGrid& grid,
+[[nodiscard]] bool overlaps_retained(const MaterialLootView& view,
+    std::size_t retained_count, LootLabelRect candidate,
+    MaterialLootPlacementDiagnostics* diagnostics) noexcept {
+    for (std::size_t index = 0U; index < retained_count; ++index) {
+        if (diagnostics != nullptr) {
+            ++diagnostics->direct_collision_check_count;
+        }
+        if (loot_label_rects_overlap(candidate, view.labels[index].rect)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void mark_intersecting_slots(const PlacementGrid& grid,
+    LootLabelRect placed,
     std::array<std::uint64_t, kOccupancyWordCount>& occupancy,
     MaterialLootPlacementDiagnostics* diagnostics) noexcept {
+    for (std::size_t slot = 0U; slot < grid.count; ++slot) {
+        if (diagnostics != nullptr) {
+            ++diagnostics->occupancy_mark_check_count;
+        }
+        if (loot_label_rects_overlap(placed, grid.slots[slot])) {
+            occupancy_set(occupancy, slot);
+        }
+    }
+}
+
+[[nodiscard]] bool try_preferred_upward(MaterialLootLabel& label,
+    const MaterialLootView& view, std::size_t retained_count,
+    float width, float height,
+    MaterialLootPlacementDiagnostics* diagnostics) noexcept {
+    LootLabelRect candidate = label.rect;
+    const float minimum_upward_step = label.rect.height + kPlacementGap;
+    candidate.y -= minimum_upward_step;
+    clamp_rect(candidate, width, height);
+    if (candidate.y > label.rect.y - minimum_upward_step) return false;
+    if (overlaps_retained(
+            view, retained_count, candidate, diagnostics)) {
+        return false;
+    }
+    label.rect = candidate;
+    return true;
+}
+
+[[nodiscard]] std::uint8_t candidate_direction_priority(
+    LootLabelRect original, LootLabelRect candidate) noexcept {
+    const float vertical_step = original.height + kPlacementGap;
+    if (candidate.y <= original.y - vertical_step) return 0U;
+    if (candidate.y >= original.y + vertical_step) return 2U;
+    return 1U;
+}
+
+[[nodiscard]] bool place_in_fixed_grid(MaterialLootLabel& label,
+    const PlacementGrid& grid,
+    const std::array<std::uint64_t, kOccupancyWordCount>& occupancy,
+    MaterialLootPlacementDiagnostics* diagnostics) noexcept {
     std::size_t best_slot = grid.count;
+    std::uint8_t best_priority{};
     float best_distance{};
     for (std::size_t slot = 0U; slot < grid.count; ++slot) {
         if (diagnostics != nullptr) {
-            ++diagnostics->placement_probe_count;
-            ++diagnostics->collision_operation_count;
+            ++diagnostics->candidate_probe_count;
         }
         if (occupancy_test(occupancy, slot)) continue;
         const LootLabelRect candidate = grid.slots[slot];
+        const std::uint8_t priority = candidate_direction_priority(
+            label.rect, candidate);
         const float x_distance = candidate.x - label.rect.x;
         const float y_distance = candidate.y - label.rect.y;
         const float distance = x_distance * x_distance
             + y_distance * y_distance;
-        const bool better_distance = best_slot == grid.count
-            || distance < best_distance;
-        const bool upward_tie = best_slot != grid.count
-            && distance == best_distance
-            && (candidate.y < grid.slots[best_slot].y
-                || (candidate.y == grid.slots[best_slot].y
-                    && candidate.x < grid.slots[best_slot].x));
-        if (!better_distance && !upward_tie) continue;
+        const bool better = best_slot == grid.count
+            || priority < best_priority
+            || (priority == best_priority
+                && (distance < best_distance
+                    || (distance == best_distance
+                        && (candidate.y < grid.slots[best_slot].y
+                            || (candidate.y == grid.slots[best_slot].y
+                                && candidate.x
+                                    < grid.slots[best_slot].x)))));
+        if (!better) continue;
         best_slot = slot;
+        best_priority = priority;
         best_distance = distance;
     }
     if (best_slot == grid.count) return false;
     label.rect = grid.slots[best_slot];
-    occupancy_set(occupancy, best_slot);
     return true;
 }
 
@@ -156,11 +276,23 @@ void resolve_label_overlaps(MaterialLootView& view,
     std::size_t retained_count{};
     for (std::size_t index = 0U; index < source_count; ++index) {
         MaterialLootLabel label = view.labels[index];
-        if (!place_in_fixed_grid(label, grid, occupancy, diagnostics)) {
+        bool placed = !overlaps_retained(
+            view, retained_count, label.rect, diagnostics);
+        if (!placed) {
+            placed = try_preferred_upward(label, view, retained_count,
+                width, height, diagnostics);
+        }
+        if (!placed) {
+            placed = place_in_fixed_grid(
+                label, grid, occupancy, diagnostics);
+        }
+        if (!placed) {
             ++view.capacity_saturation_count;
             continue;
         }
         view.labels[retained_count++] = label;
+        mark_intersecting_slots(
+            grid, label.rect, occupancy, diagnostics);
     }
     for (std::size_t index = retained_count; index < source_count; ++index) {
         view.labels[index] = {};

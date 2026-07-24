@@ -2,8 +2,12 @@
 
 #include "material_loot_view.hpp"
 #include "material_manifest.hpp"
+#include "combat_view_math.hpp"
+#include "combat/room_bounds.hpp"
 
 #include <array>
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -12,6 +16,48 @@ namespace {
 namespace dungeon = arpg::dungeon;
 namespace items = arpg::items;
 namespace platform = arpg::platform;
+
+constexpr float kExpectedLabelWidth = 190.0F;
+constexpr float kExpectedLabelHeight = 23.0F;
+constexpr float kExpectedLabelGap = 13.0F;
+constexpr float kExpectedPlacementGap = 3.0F;
+constexpr float kPlacementEpsilon = 0.001F;
+
+[[nodiscard]] bool nearly_equal(float left, float right) noexcept {
+    return std::fabs(left - right) <= kPlacementEpsilon;
+}
+
+[[nodiscard]] platform::LootLabelRect expected_original_label_rect(
+    platform::ScreenProjection projection, float width, float height) noexcept {
+    platform::LootLabelRect expected{
+        projection.x - kExpectedLabelWidth * 0.5F,
+        projection.y - kExpectedLabelGap - kExpectedLabelHeight,
+        kExpectedLabelWidth,
+        kExpectedLabelHeight};
+    const float usable_width = (std::max)(
+        platform::kGroundLootSafetyInset * 2.0F, width);
+    const float usable_height = (std::max)(
+        platform::kGroundLootSafetyInset * 2.0F, height);
+    expected.width = (std::min)(expected.width,
+        usable_width - platform::kGroundLootSafetyInset * 2.0F);
+    expected.height = (std::min)(expected.height,
+        usable_height - platform::kGroundLootSafetyInset * 2.0F);
+    expected.x = std::clamp(expected.x, platform::kGroundLootSafetyInset,
+        usable_width - platform::kGroundLootSafetyInset - expected.width);
+    expected.y = std::clamp(expected.y, platform::kGroundLootSafetyInset,
+        usable_height - platform::kGroundLootSafetyInset - expected.height);
+    return expected;
+}
+
+arpg::test::Failure require_rect_near(
+    platform::LootLabelRect actual,
+    platform::LootLabelRect expected) noexcept {
+    ARPG_REQUIRE(nearly_equal(actual.x, expected.x));
+    ARPG_REQUIRE(nearly_equal(actual.y, expected.y));
+    ARPG_REQUIRE(nearly_equal(actual.width, expected.width));
+    ARPG_REQUIRE(nearly_equal(actual.height, expected.height));
+    return {};
+}
 
 arpg::test::Failure labels_and_emphasis_are_player_facing() noexcept {
     ARPG_REQUIRE(platform::material_label(items::MaterialId::coupon_12)
@@ -140,6 +186,131 @@ arpg::test::Failure overlapping_secondary_loot_labels_are_resolved() noexcept {
     return {};
 }
 
+arpg::test::Failure single_secondary_label_preserves_original_clamped_rect() noexcept {
+    struct Scenario final {
+        float width;
+        float height;
+        arpg::combat::Vec3 position;
+    };
+    constexpr std::array<Scenario, 4U> kScenarios{{
+        {1280.0F, 720.0F,
+            {0.0F, arpg::combat::room_bounds::max_y, 0.0F}},
+        {1280.0F, 720.0F,
+            {0.0F, arpg::combat::room_bounds::max_y, 100.0F}},
+        {3440.0F, 1440.0F,
+            {0.0F, arpg::combat::room_bounds::max_y, 0.0F}},
+        {3840.0F, 2160.0F,
+            {0.0F, arpg::combat::room_bounds::max_y, 0.0F}},
+    }};
+
+    for (const Scenario& scenario : kScenarios) {
+        dungeon::DungeonSnapshot snapshot{};
+        snapshot.ground_health_potion_count = 1U;
+        snapshot.ground_health_potions[0] = {
+            1U, 1U, scenario.position};
+        const platform::ScreenProjection projection =
+            platform::project_combat_position(
+                scenario.position, scenario.width, scenario.height);
+        const platform::LootLabelRect expected = expected_original_label_rect(
+            projection, scenario.width, scenario.height);
+        const auto view = platform::build_material_loot_view(
+            snapshot, scenario.width, scenario.height);
+
+        ARPG_REQUIRE(view.count == 1U);
+        ARPG_REQUIRE(view.capacity_saturation_count == 0U);
+        ARPG_REQUIRE(nearly_equal(view.labels[0].anchor_x, projection.x));
+        ARPG_REQUIRE(nearly_equal(view.labels[0].anchor_y, projection.y));
+        const auto rect_result = require_rect_near(view.labels[0].rect, expected);
+        if (rect_result.expression != nullptr) return rect_result;
+    }
+    return {};
+}
+
+arpg::test::Failure identical_anchors_keep_first_and_prefer_upward() noexcept {
+    dungeon::DungeonSnapshot snapshot{};
+    snapshot.ground_health_potion_count = 2U;
+    const arpg::combat::Vec3 bottom_position{
+        0.0F, arpg::combat::room_bounds::max_y, 0.0F};
+    snapshot.ground_health_potions[0] = {1U, 1U, bottom_position};
+    snapshot.ground_health_potions[1] = {2U, 2U, bottom_position};
+    auto view = platform::build_material_loot_view(snapshot, 1280.0F, 720.0F);
+    ARPG_REQUIRE(view.count == 2U);
+    const auto projection = platform::project_combat_position(
+        bottom_position, 1280.0F, 720.0F);
+    const auto original = expected_original_label_rect(
+        projection, 1280.0F, 720.0F);
+    auto rect_result = require_rect_near(view.labels[0].rect, original);
+    if (rect_result.expression != nullptr) return rect_result;
+    ARPG_REQUIRE(nearly_equal(view.labels[1].rect.x, original.x));
+    ARPG_REQUIRE(view.labels[1].rect.y <= original.y
+        - kExpectedLabelHeight - kExpectedPlacementGap
+        + kPlacementEpsilon);
+    ARPG_REQUIRE(!platform::loot_label_rects_overlap(
+        view.labels[0].rect, view.labels[1].rect));
+
+    const arpg::combat::Vec3 top_position{
+        0.0F, arpg::combat::room_bounds::max_y, 100.0F};
+    snapshot.ground_health_potions[0].position = top_position;
+    snapshot.ground_health_potions[1].position = top_position;
+    view = platform::build_material_loot_view(snapshot, 1280.0F, 720.0F);
+    ARPG_REQUIRE(view.count == 2U);
+    const auto top_projection = platform::project_combat_position(
+        top_position, 1280.0F, 720.0F);
+    const auto top_original = expected_original_label_rect(
+        top_projection, 1280.0F, 720.0F);
+    rect_result = require_rect_near(view.labels[0].rect, top_original);
+    if (rect_result.expression != nullptr) return rect_result;
+    ARPG_REQUIRE(view.labels[1].rect.y + kPlacementEpsilon
+        >= top_original.y);
+    ARPG_REQUIRE(!platform::loot_label_rects_overlap(
+        view.labels[0].rect, view.labels[1].rect));
+    return {};
+}
+
+arpg::test::Failure large_viewport_candidates_reach_bottom_near_anchor() noexcept {
+    struct Viewport final {
+        float width;
+        float height;
+    };
+    constexpr std::array<Viewport, 2U> kViewports{{
+        {3440.0F, 1440.0F},
+        {3840.0F, 2160.0F},
+    }};
+    constexpr float kMaximumLocalVerticalOffset =
+        (kExpectedLabelHeight + kExpectedPlacementGap) * 5.0F;
+
+    for (const Viewport viewport : kViewports) {
+        dungeon::DungeonSnapshot snapshot{};
+        snapshot.ground_health_potion_count = 3U;
+        const arpg::combat::Vec3 position{
+            0.0F, arpg::combat::room_bounds::max_y, 0.0F};
+        for (std::size_t index = 0U; index < 3U; ++index) {
+            snapshot.ground_health_potions[index] = {
+                static_cast<std::uint16_t>(index),
+                static_cast<std::uint16_t>(index), position};
+        }
+        platform::MaterialLootPlacementDiagnostics diagnostics{};
+        const auto view = platform::build_material_loot_view_with_diagnostics(
+            snapshot, viewport.width, viewport.height, diagnostics);
+        ARPG_REQUIRE(view.count == 3U);
+        const auto projection = platform::project_combat_position(
+            position, viewport.width, viewport.height);
+        const auto original = expected_original_label_rect(
+            projection, viewport.width, viewport.height);
+        const auto rect_result = require_rect_near(view.labels[0].rect, original);
+        if (rect_result.expression != nullptr) return rect_result;
+        ARPG_REQUIRE(std::fabs(view.labels[2].rect.y - original.y)
+            <= kMaximumLocalVerticalOffset);
+        for (std::size_t left = 0U; left < view.count; ++left) {
+            for (std::size_t right = left + 1U; right < view.count; ++right) {
+                ARPG_REQUIRE(!platform::loot_label_rects_overlap(
+                    view.labels[left].rect, view.labels[right].rect));
+            }
+        }
+    }
+    return {};
+}
+
 arpg::test::Failure top_clamped_secondary_labels_resolve_without_overlap() noexcept {
     dungeon::DungeonSnapshot snapshot{};
     snapshot.ground_health_potion_count = 2U;
@@ -230,12 +401,24 @@ arpg::test::Failure verify_secondary_loot_pressure_view(
     ARPG_REQUIRE(view.capacity_saturation_count > 0U);
     ARPG_REQUIRE(view.count + view.invalid_material_count
         + view.capacity_saturation_count == kSourceCount);
-    ARPG_REQUIRE(diagnostics.placement_probe_count > 0U);
-    ARPG_REQUIRE(diagnostics.placement_probe_count <= kOperationUpperBound);
-    ARPG_REQUIRE(diagnostics.collision_operation_count
+    ARPG_REQUIRE(diagnostics.direct_collision_check_count > 0U);
+    ARPG_REQUIRE(diagnostics.direct_collision_check_count
         <= kOperationUpperBound);
-    ARPG_REQUIRE(diagnostics.collision_operation_count
-        <= diagnostics.placement_probe_count);
+    ARPG_REQUIRE(diagnostics.candidate_probe_count > 0U);
+    ARPG_REQUIRE(diagnostics.candidate_probe_count <= kOperationUpperBound);
+    ARPG_REQUIRE(diagnostics.occupancy_mark_check_count > 0U);
+    ARPG_REQUIRE(diagnostics.occupancy_mark_check_count
+        <= kOperationUpperBound);
+    std::printf(
+        "[material-loot-pressure] z=%.0f retained=%zu saturated=%u "
+        "direct=%llu candidates=%llu occupancy=%llu\n",
+        snapshot.ground_health_potions[0].position.z,
+        view.count, view.capacity_saturation_count,
+        static_cast<unsigned long long>(
+            diagnostics.direct_collision_check_count),
+        static_cast<unsigned long long>(diagnostics.candidate_probe_count),
+        static_cast<unsigned long long>(
+            diagnostics.occupancy_mark_check_count));
     for (std::size_t index = 1U; index < view.count; ++index) {
         ARPG_REQUIRE(view.labels[index - 1U].ordinal
             < view.labels[index].ordinal);
@@ -384,6 +567,9 @@ constexpr arpg::test::TestCase kCases[] = {
     {"every material uses a unique resource", &every_material_has_a_unique_authored_resource},
     {"health potion uses dedicated sprite and pure-red label", &health_potion_uses_dedicated_sprite_and_pure_red_label},
     {"overlapping secondary-loot labels are resolved", &overlapping_secondary_loot_labels_are_resolved},
+    {"single secondary label preserves original clamped rect", &single_secondary_label_preserves_original_clamped_rect},
+    {"identical anchors keep first and prefer upward", &identical_anchors_keep_first_and_prefer_upward},
+    {"large viewport candidates reach bottom near anchor", &large_viewport_candidates_reach_bottom_near_anchor},
     {"top-clamped secondary labels resolve without overlap", &top_clamped_secondary_labels_resolve_without_overlap},
     {"health potion feedback observes new committed receipts", &health_potion_feedback_only_observes_new_committed_receipts},
     {"simultaneous potion and material feedback preserves both", &simultaneous_potion_and_material_feedback_preserves_both},
