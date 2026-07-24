@@ -45,6 +45,8 @@ public:
     void reset() noexcept;
     void apply_player_build(PlayerCombatBuild build) noexcept;
     void restore_player_resources(int hp, int barrier) noexcept;
+    [[nodiscard]] int restore_player_health_percent(
+        std::uint16_t maximum_health_basis_points) noexcept;
     void clear_abyss_rule_preserving_resources() noexcept;
     [[nodiscard]] bool load_wave(
         const EncounterWave& wave,
