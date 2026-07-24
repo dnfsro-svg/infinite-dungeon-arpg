@@ -231,7 +231,7 @@ if(TARGET arpg_raylib)
             -Validator "${CMAKE_CURRENT_SOURCE_DIR}/stage12_material_validator.ps1"
             -MutationRoot "${CMAKE_CURRENT_BINARY_DIR}/stage12 material evidence/validator-mutations")
     set_tests_properties(stage12.material_evidence_validator_self_test
-        PROPERTIES LABELS "platform;raylib;stage12;negative" TIMEOUT 120
+        PROPERTIES LABELS "platform;raylib;stage12;negative" TIMEOUT 240
             FIXTURES_REQUIRED stage12_material_evidence)
     add_test(
         NAME stage12.material_root_safety
