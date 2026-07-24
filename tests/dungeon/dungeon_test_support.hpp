@@ -346,6 +346,45 @@ struct DungeonSessionTestAccess final {
             session.ground_health_potions_[slot] = replacement;
         }
     }
+    static void quiesce_current_room_for_clear_retry(
+        dungeon::DungeonSession& session) noexcept {
+        session.encounter_plan_.wave_count = static_cast<std::uint8_t>(
+            session.wave_index_ + 1U);
+        if (!session.combat_.has_value()) return;
+        for (combat::MonsterRuntime& monster
+                : session.combat_->monsters_.slots_) {
+            monster.active = false;
+            monster.hp = 0;
+        }
+    }
+    static void offset_pending_next_room_depth(
+        dungeon::DungeonSession& session, std::uint64_t offset) noexcept {
+        if (session.pending_save_.has_value()) {
+            session.pending_save_->next_state.current_room.depth += offset;
+        }
+    }
+    static void set_pending_health_potion_claim_count(
+        dungeon::DungeonSession& session, std::uint8_t count) noexcept {
+        if (session.pending_save_.has_value()
+                && session.pending_save_->health_potion_claim.has_value()) {
+            session.pending_save_->health_potion_claim->count = count;
+        }
+    }
+    static void set_pending_next_material_claim_bit(
+        dungeon::DungeonSession& session, std::uint16_t ordinal) noexcept {
+        if (!session.pending_save_.has_value()) return;
+        auto& bits = session.pending_save_->next_state.item_ownership
+            .material_claimed_drop_bits;
+        const std::size_t word = ordinal / 64U;
+        const std::uint8_t bit = static_cast<std::uint8_t>(ordinal % 64U);
+        if (word < bits.size()) {
+            bits[word] |= std::uint64_t{1U} << bit;
+        }
+    }
+    static bool pending_material_cache_consistent(
+        const dungeon::DungeonSession& session) noexcept {
+        return session.pending_material_cache_consistent();
+    }
     static void prepare_room_clear(
         dungeon::DungeonSession& session) noexcept {
         session.prepare_room_clear();
@@ -589,6 +628,34 @@ inline void replace_ground_health_potion(
     dungeon::GroundHealthPotion replacement) noexcept {
     DungeonSessionTestAccess::replace_ground_health_potion(
         session, slot, replacement);
+}
+
+inline void quiesce_current_room_for_clear_retry(
+    dungeon::DungeonSession& session) noexcept {
+    DungeonSessionTestAccess::quiesce_current_room_for_clear_retry(session);
+}
+
+inline void offset_pending_next_room_depth(
+    dungeon::DungeonSession& session, std::uint64_t offset) noexcept {
+    DungeonSessionTestAccess::offset_pending_next_room_depth(session, offset);
+}
+
+inline void set_pending_health_potion_claim_count(
+    dungeon::DungeonSession& session, std::uint8_t count) noexcept {
+    DungeonSessionTestAccess::set_pending_health_potion_claim_count(
+        session, count);
+}
+
+inline void set_pending_next_material_claim_bit(
+    dungeon::DungeonSession& session, std::uint16_t ordinal) noexcept {
+    DungeonSessionTestAccess::set_pending_next_material_claim_bit(
+        session, ordinal);
+}
+
+inline bool pending_material_cache_consistent(
+    const dungeon::DungeonSession& session) noexcept {
+    return DungeonSessionTestAccess::pending_material_cache_consistent(
+        session);
 }
 
 inline void prepare_room_clear(

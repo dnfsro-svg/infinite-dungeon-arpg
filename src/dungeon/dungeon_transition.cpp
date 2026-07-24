@@ -705,6 +705,10 @@ bool DungeonSession::pending_material_cache_consistent() const noexcept {
     if (vacuum && pending_save_->health_potion_claim.has_value()) {
         const PendingHealthPotionClaim& claim =
             *pending_save_->health_potion_claim;
+        if (claim.count == 0U
+                || claim.count > kPendingHealthPotionClaimCapacity) {
+            return false;
+        }
         for (std::uint8_t index = 0U; index < claim.count; ++index) {
             const std::uint16_t ordinal = health_potion_claim_ordinal(
                 claim.spawn_ordinals[index]);
@@ -803,25 +807,12 @@ bool DungeonSession::pending_health_potion_cache_consistent() const noexcept {
         return false;
     }
 
-    const auto& stable = stable_state_.item_ownership;
-    const auto& next = pending_save_->next_state.item_ownership;
-    if (next.items.size() != stable.items.size()
-            || next.equipment.equipped_ids
-                != stable.equipment.equipped_ids
-            || next.materials != stable.materials
-            || next.material_discovery_bits
-                != stable.material_discovery_bits
-            || next.claimed_drop_bits != stable.claimed_drop_bits
-            || next.next_item_sequence != stable.next_item_sequence) {
-        return false;
-    }
-    for (std::size_t index = 0U; index < stable.items.size(); ++index) {
-        if (!same_item(next.items[index], stable.items[index])) return false;
-    }
-    auto expected_claims = stable.material_claimed_drop_bits;
-    set_bit(expected_claims,
+    DungeonRunState& expected = death_validation_scratch_;
+    if (!copy_run_state_reusing_items(expected, stable_state_)) return false;
+    expected.commit_generation = pending_save_->expected_generation;
+    set_bit(expected.item_ownership.material_claimed_drop_bits,
         health_potion_claim_ordinal(claim.spawn_ordinals[0]));
-    return next.material_claimed_drop_bits == expected_claims;
+    return same_run_state(expected, pending_save_->next_state);
 }
 
 RequestResult DungeonSession::request_equip(std::uint64_t item_id) noexcept {
@@ -1636,7 +1627,7 @@ void DungeonSession::commit_pending_save(
         enter_fault(DungeonFault::save_receipt_mismatch);
         return;
     }
-    if (pending_save_->kind == PendingSaveKind::health_potion_pickup
+    if (pending_save_->health_potion_claim.has_value()
             && result.kind.has_value()
             && *result.kind != pending_save_->kind) {
         enter_fault(DungeonFault::save_receipt_mismatch);
@@ -1657,8 +1648,12 @@ void DungeonSession::commit_pending_save(
         == PendingSaveKind::abyss_abandon;
     const bool protected_abyss_commit = abyss_commit || claim_pending
         || abandon_pending;
+    const bool retryable_health_potion_abyss_clear =
+        pending_save_->kind == PendingSaveKind::abyss_clear
+        && pending_save_->health_potion_claim.has_value();
     if (result.disposition == SaveDisposition::not_committed
-            && protected_abyss_commit) {
+            && protected_abyss_commit
+            && !retryable_health_potion_abyss_clear) {
         enter_fault(DungeonFault::save_receipt_mismatch);
         return;
     }

@@ -1605,7 +1605,24 @@ bool DungeonSession::materialize_abyss_clear_materials() noexcept {
                     ordinal)) {
                 continue;
             }
-            return false;
+            const auto expected_material = roll_abyss_material(
+                stable_state_.current_room.seed,
+                stable_state_.current_room.depth,
+                index);
+            const auto expected_position = abyss_reward_position(index);
+            const GroundMaterial& ground = ground_materials_[ordinal];
+            if (!expected_material.has_value()
+                    || !expected_position.has_value()
+                    || !ground.active
+                    || ground.ordinal != ordinal
+                    || ground.source != GroundMaterialSource::abyss_reward
+                    || ground.material != *expected_material
+                    || ground.position.x != expected_position->x
+                    || ground.position.y != expected_position->y
+                    || ground.position.z != expected_position->z) {
+                return false;
+            }
+            continue;
         }
         const auto material = roll_abyss_material(
             stable_state_.current_room.seed,
@@ -1745,6 +1762,10 @@ void DungeonSession::prepare_room_clear() noexcept {
                 ? DungeonFault::invalid_abyss_state
                 : DungeonFault::invalid_item_state);
             return;
+        }
+        if (started_abyss && pending_save_.has_value()
+                && pending_save_->health_potion_claim.has_value()) {
+            pending_save_->resume_phase = RoomPhase::combat;
         }
     } catch (...) {
         pending_save_.reset();

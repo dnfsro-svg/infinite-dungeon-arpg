@@ -581,6 +581,42 @@ failed_or_indeterminate_save_never_heals_removes_or_reports_success()
     ARPG_REQUIRE(!visible.health_potion_pickup_receipt.valid);
     ARPG_REQUIRE(!claim_bit_is_set(arpg::test::stable_state(indeterminate),
         arpg::dungeon::health_potion_claim_ordinal(4U)));
+
+    DungeonSession oversized{DungeonRules{}, potion_state(206U)};
+    arpg::test::set_phase(oversized, arpg::dungeon::RoomPhase::combat);
+    arpg::test::set_player_health(oversized, 1, 1000);
+    install_potion(oversized, 2U);
+    install_potion(oversized, 3U);
+    install_potion(oversized, 6U);
+    arpg::test::prepare_room_clear(oversized);
+    ARPG_REQUIRE(oversized.pending_save().has_value());
+    ARPG_REQUIRE(oversized.pending_save()->health_potion_claim.has_value());
+    ARPG_REQUIRE(oversized.pending_save()->health_potion_claim->count == 3U);
+    const DungeonRunState oversized_stable_before =
+        arpg::test::stable_state(oversized);
+    arpg::test::set_pending_health_potion_claim_count(oversized, 5U);
+    arpg::test::set_pending_next_material_claim_bit(oversized,
+        arpg::dungeon::health_potion_claim_ordinal(0U));
+    arpg::test::set_pending_next_material_claim_bit(oversized,
+        arpg::dungeon::health_potion_claim_ordinal(5U));
+    ARPG_REQUIRE(!arpg::test::pending_material_cache_consistent(oversized));
+    const auto oversized_pending = oversized.pending_save();
+    ARPG_REQUIRE(oversized_pending.has_value());
+    oversized.resolve_pending_save({
+        arpg::dungeon::SaveDisposition::committed,
+        oversized_pending->expected_generation,
+        oversized_pending->next_state,
+        oversized_pending->kind,
+    });
+    visible = oversized.snapshot();
+    ARPG_REQUIRE(visible.phase == arpg::dungeon::RoomPhase::faulted);
+    ARPG_REQUIRE(visible.diagnostics.fault
+        == arpg::dungeon::DungeonFault::save_receipt_mismatch);
+    ARPG_REQUIRE(visible.combat->player.hp == 1);
+    ARPG_REQUIRE(visible.ground_health_potion_count == 3U);
+    ARPG_REQUIRE(!visible.health_potion_pickup_receipt.valid);
+    ARPG_REQUIRE(arpg::dungeon::same_run_state(
+        arpg::test::stable_state(oversized), oversized_stable_before));
     return {};
 }
 
@@ -656,6 +692,28 @@ mismatched_pending_or_replaced_ground_faults_before_health_side_effects()
     ARPG_REQUIRE(assert_unchanged_fault(replaced, 500, 1U));
     ARPG_REQUIRE(!claim_bit_is_set(arpg::test::stable_state(replaced),
         arpg::dungeon::health_potion_claim_ordinal(5U)));
+
+    DungeonSession polluted{DungeonRules{}, potion_state(207U)};
+    arpg::test::set_phase(
+        polluted, arpg::dungeon::RoomPhase::awaiting_exit);
+    arpg::test::set_player_health(polluted, 500, 1000);
+    install_potion(polluted, 5U);
+    polluted.request_nearby_pickups({});
+    ARPG_REQUIRE(polluted.pending_save().has_value());
+    const DungeonRunState polluted_stable_before =
+        arpg::test::stable_state(polluted);
+    arpg::test::offset_pending_next_room_depth(polluted, 1U);
+    const auto polluted_pending = polluted.pending_save();
+    ARPG_REQUIRE(polluted_pending.has_value());
+    polluted.resolve_pending_save({
+        arpg::dungeon::SaveDisposition::committed,
+        polluted_pending->expected_generation,
+        polluted_pending->next_state,
+        polluted_pending->kind,
+    });
+    ARPG_REQUIRE(assert_unchanged_fault(polluted, 500, 1U));
+    ARPG_REQUIRE(arpg::dungeon::same_run_state(
+        arpg::test::stable_state(polluted), polluted_stable_before));
     return {};
 }
 
@@ -771,10 +829,11 @@ final_kill_low_health_folds_sorted_potions_into_clear_transaction() noexcept {
     arpg::test::set_started_abyss_room(
         abyss, arpg::abyss::AbyssDanger::low);
     arpg::test::set_player_health(abyss, 500, 1000);
+    arpg::test::quiesce_current_room_for_clear_retry(abyss);
     install_potion(abyss, 4U);
     arpg::test::install_ground_material(abyss, kMaterialOrdinal,
         arpg::items::MaterialId::chaos, {4.0F, 5.0F, 0.0F});
-    arpg::test::prepare_room_clear(abyss);
+    abyss.tick({});
     const auto abyss_pending = abyss.pending_save();
     ARPG_REQUIRE(abyss_pending.has_value());
     ARPG_REQUIRE(abyss_pending->kind
@@ -793,6 +852,79 @@ final_kill_low_health_folds_sorted_potions_into_clear_transaction() noexcept {
     ARPG_REQUIRE(abyss.snapshot().combat->player.hp == 500);
     ARPG_REQUIRE(abyss.snapshot().ground_health_potion_count == 1U);
     ARPG_REQUIRE(!abyss.snapshot().health_potion_pickup_receipt.valid);
+    const DungeonRunState abyss_stable_before =
+        arpg::test::stable_state(abyss);
+    const auto abyss_before_failure = abyss.snapshot();
+    abyss.resolve_pending_save({
+        arpg::dungeon::SaveDisposition::not_committed,
+        abyss_pending->expected_generation,
+        abyss_pending->next_state,
+        abyss_pending->kind,
+    });
+    const auto abyss_after_failure = abyss.snapshot();
+    ARPG_REQUIRE(abyss_after_failure.phase
+        == arpg::dungeon::RoomPhase::combat);
+    ARPG_REQUIRE(abyss_after_failure.combat->player.hp
+        == abyss_before_failure.combat->player.hp);
+    ARPG_REQUIRE(abyss_after_failure.ground_health_potion_count
+        == abyss_before_failure.ground_health_potion_count);
+    ARPG_REQUIRE(abyss_after_failure.ground_material_count
+        == abyss_before_failure.ground_material_count);
+    for (std::uint16_t index = 0U;
+            index < abyss_after_failure.ground_health_potion_count; ++index) {
+        const auto& before = abyss_before_failure.ground_health_potions[index];
+        const auto& after = abyss_after_failure.ground_health_potions[index];
+        ARPG_REQUIRE(after.spawn_ordinal == before.spawn_ordinal);
+        ARPG_REQUIRE(after.claim_ordinal == before.claim_ordinal);
+        ARPG_REQUIRE(after.position.x == before.position.x);
+        ARPG_REQUIRE(after.position.y == before.position.y);
+        ARPG_REQUIRE(after.position.z == before.position.z);
+    }
+    for (std::uint16_t index = 0U;
+            index < abyss_after_failure.ground_material_count; ++index) {
+        const auto& before = abyss_before_failure.ground_materials[index];
+        const auto& after = abyss_after_failure.ground_materials[index];
+        ARPG_REQUIRE(after.ordinal == before.ordinal);
+        ARPG_REQUIRE(after.source == before.source);
+        ARPG_REQUIRE(after.material == before.material);
+        ARPG_REQUIRE(after.position.x == before.position.x);
+        ARPG_REQUIRE(after.position.y == before.position.y);
+        ARPG_REQUIRE(after.position.z == before.position.z);
+    }
+    const auto& receipt_before =
+        abyss_before_failure.health_potion_pickup_receipt;
+    const auto& receipt_after =
+        abyss_after_failure.health_potion_pickup_receipt;
+    ARPG_REQUIRE(receipt_after.valid == receipt_before.valid);
+    ARPG_REQUIRE(receipt_after.room_clear == receipt_before.room_clear);
+    ARPG_REQUIRE(receipt_after.consumed_count == receipt_before.consumed_count);
+    ARPG_REQUIRE(receipt_after.commit_generation
+        == receipt_before.commit_generation);
+    ARPG_REQUIRE(receipt_after.restored_hp == receipt_before.restored_hp);
+    for (const bool exit_open : abyss_after_failure.exits_open) {
+        ARPG_REQUIRE(!exit_open);
+    }
+    ARPG_REQUIRE(arpg::dungeon::same_run_state(
+        arpg::test::stable_state(abyss), abyss_stable_before));
+    ARPG_REQUIRE(!claim_bit_is_set(arpg::test::stable_state(abyss),
+        arpg::dungeon::health_potion_claim_ordinal(4U)));
+    abyss.tick({});
+    const auto abyss_retry = abyss.pending_save();
+    ARPG_REQUIRE(abyss_retry.has_value());
+    ARPG_REQUIRE(abyss_retry->kind == abyss_pending->kind);
+    ARPG_REQUIRE(abyss_retry->expected_generation
+        == abyss_pending->expected_generation);
+    ARPG_REQUIRE(arpg::dungeon::same_run_state(
+        abyss_retry->next_state, abyss_pending->next_state));
+    ARPG_REQUIRE(abyss_retry->health_potion_claim.has_value());
+    ARPG_REQUIRE(abyss_retry->health_potion_claim->spawn_ordinals
+        == abyss_pending->health_potion_claim->spawn_ordinals);
+    ARPG_REQUIRE(abyss_retry->health_potion_claim->count
+        == abyss_pending->health_potion_claim->count);
+    ARPG_REQUIRE(abyss_retry->health_potion_claim->expected_hp
+        == abyss_pending->health_potion_claim->expected_hp);
+    ARPG_REQUIRE(abyss_retry->health_potion_claim->expected_max_hp
+        == abyss_pending->health_potion_claim->expected_max_hp);
     return {};
 }
 
@@ -841,6 +973,34 @@ clear_batch_selects_only_until_health_is_strictly_above_75_percent()
         arpg::dungeon::health_potion_claim_ordinal(6U)));
     ARPG_REQUIRE(!claim_bit_is_set(arpg::test::stable_state(session),
         arpg::dungeon::health_potion_claim_ordinal(9U)));
+
+    DungeonSession wrong_kind_normal{DungeonRules{}, potion_state(306U)};
+    arpg::test::set_phase(
+        wrong_kind_normal, arpg::dungeon::RoomPhase::combat);
+    arpg::test::set_player_health(wrong_kind_normal, 500, 1000);
+    install_potion(wrong_kind_normal, 4U);
+    arpg::test::prepare_room_clear(wrong_kind_normal);
+    const auto wrong_kind_pending = wrong_kind_normal.pending_save();
+    ARPG_REQUIRE(wrong_kind_pending.has_value());
+    const DungeonRunState wrong_kind_stable_before =
+        arpg::test::stable_state(wrong_kind_normal);
+    wrong_kind_normal.resolve_pending_save({
+        arpg::dungeon::SaveDisposition::committed,
+        wrong_kind_pending->expected_generation,
+        wrong_kind_pending->next_state,
+        arpg::dungeon::PendingSaveKind::material_pickup,
+    });
+    const auto wrong_kind_visible = wrong_kind_normal.snapshot();
+    ARPG_REQUIRE(wrong_kind_visible.phase
+        == arpg::dungeon::RoomPhase::faulted);
+    ARPG_REQUIRE(wrong_kind_visible.diagnostics.fault
+        == arpg::dungeon::DungeonFault::save_receipt_mismatch);
+    ARPG_REQUIRE(wrong_kind_visible.combat->player.hp == 500);
+    ARPG_REQUIRE(wrong_kind_visible.ground_health_potion_count == 1U);
+    ARPG_REQUIRE(!wrong_kind_visible.health_potion_pickup_receipt.valid);
+    ARPG_REQUIRE(arpg::dungeon::same_run_state(
+        arpg::test::stable_state(wrong_kind_normal),
+        wrong_kind_stable_before));
     return {};
 }
 
@@ -917,6 +1077,36 @@ abyss_clear_potion_uses_post_clear_actual_max_health() noexcept {
     ARPG_REQUIRE(committed.health_potion_pickup_receipt.restored_hp
         == expected_restore);
     ARPG_REQUIRE(committed.ground_health_potion_count == 0U);
+
+    DungeonSession wrong_kind_abyss{DungeonRules{}, potion_state(307U)};
+    arpg::test::set_phase(
+        wrong_kind_abyss, arpg::dungeon::RoomPhase::combat);
+    arpg::test::set_started_abyss_room(
+        wrong_kind_abyss, arpg::abyss::AbyssDanger::low);
+    arpg::test::set_player_health(wrong_kind_abyss, 500, 1000);
+    install_potion(wrong_kind_abyss, 4U);
+    arpg::test::prepare_room_clear(wrong_kind_abyss);
+    const auto wrong_kind_pending = wrong_kind_abyss.pending_save();
+    ARPG_REQUIRE(wrong_kind_pending.has_value());
+    const DungeonRunState wrong_kind_stable_before =
+        arpg::test::stable_state(wrong_kind_abyss);
+    wrong_kind_abyss.resolve_pending_save({
+        arpg::dungeon::SaveDisposition::committed,
+        wrong_kind_pending->expected_generation,
+        wrong_kind_pending->next_state,
+        arpg::dungeon::PendingSaveKind::room_clear,
+    });
+    const auto wrong_kind_visible = wrong_kind_abyss.snapshot();
+    ARPG_REQUIRE(wrong_kind_visible.phase
+        == arpg::dungeon::RoomPhase::faulted);
+    ARPG_REQUIRE(wrong_kind_visible.diagnostics.fault
+        == arpg::dungeon::DungeonFault::save_receipt_mismatch);
+    ARPG_REQUIRE(wrong_kind_visible.combat->player.hp == 500);
+    ARPG_REQUIRE(wrong_kind_visible.ground_health_potion_count == 1U);
+    ARPG_REQUIRE(!wrong_kind_visible.health_potion_pickup_receipt.valid);
+    ARPG_REQUIRE(arpg::dungeon::same_run_state(
+        arpg::test::stable_state(wrong_kind_abyss),
+        wrong_kind_stable_before));
     return {};
 }
 
