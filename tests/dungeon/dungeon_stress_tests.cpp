@@ -6,10 +6,13 @@
 #include "dungeon/room_generation.hpp"
 #include "dungeon/dungeon_progression.hpp"
 #include "dungeon/encounter_director.hpp"
+#include "combat/fire_room_obstacle.hpp"
 #include "items/item_generation.hpp"
 #include "passives/passive_tree_catalog.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -545,31 +548,6 @@ bool confirm_pending_save(
         && !saved.has_active_room && !saved.combat.has_value();
 }
 
-MovementInput outward(ExitDirection direction) noexcept {
-    switch (direction) {
-    case ExitDirection::up: return {0, -1};
-    case ExitDirection::down: return {0, 1};
-    case ExitDirection::left: return {-1, 0};
-    case ExitDirection::right: return {1, 0};
-    case ExitDirection::none: return {};
-    }
-    return {};
-}
-
-MovementInput align_center(const DungeonSnapshot& state, ExitDirection direction) noexcept {
-    constexpr float kTolerance = 0.10F;
-    MovementInput movement{};
-    const auto position = state.combat->player.position;
-    if (direction == ExitDirection::left || direction == ExitDirection::right) {
-        movement.y = position.y > kTolerance ? -1
-            : (position.y < -kTolerance ? 1 : 0);
-    } else {
-        movement.x = position.x > kTolerance ? -1
-            : (position.x < -kTolerance ? 1 : 0);
-    }
-    return movement;
-}
-
 bool drive_clear(DungeonSession& session, StressSummary& summary) noexcept {
     for (int tick = 0; tick < 8192; ++tick) {
         const DungeonSnapshot state = session.snapshot();
@@ -608,7 +586,8 @@ bool drive_to_transition(
             drain(session, summary);
             continue;
         }
-        const MovementInput movement = align_center(state, direction);
+        const MovementInput movement =
+            arpg::test::exit_alignment_movement(state, direction);
         if (movement.x == 0 && movement.y == 0) {
             break;
         }
@@ -616,7 +595,7 @@ bool drive_to_transition(
         drain(session, summary);
     }
     for (int tick = 0; tick < 512; ++tick) {
-        tracked_tick(session, outward(direction), summary);
+        tracked_tick(session, arpg::test::exit_outward(direction), summary);
         drain(session, summary);
         if (session.snapshot().phase == RoomPhase::committing) {
             if (!confirm_pending_save(session, summary)) {
@@ -650,7 +629,7 @@ bool drive_to_locked(
     DungeonSession& session,
     ExitDirection direction,
     StressSummary& summary) noexcept {
-    tracked_tick(session, outward(direction), summary);
+    tracked_tick(session, arpg::test::exit_outward(direction), summary);
     drain(session, summary);
     if (session.snapshot().phase == RoomPhase::committing) {
         if (!confirm_pending_save(session, summary)) return false;
@@ -670,7 +649,7 @@ bool drive_to_combat(
     StressSummary& summary,
     std::uint64_t transition_room_index,
     bool verify_phases) noexcept {
-    tracked_tick(session, outward(direction), summary);
+    tracked_tick(session, arpg::test::exit_outward(direction), summary);
     drain(session, summary);
     const DungeonSnapshot combat = session.snapshot();
     return combat.phase == RoomPhase::combat && combat.has_active_room
@@ -853,9 +832,12 @@ DungeonRules single_chaser_rules() noexcept {
 
 MovementInput launcher_robot_movement(
     const arpg::combat::PlayerSnapshot& player,
-    const arpg::combat::MonsterSnapshot& target) noexcept {
-    MovementInput movement = arpg::test::movement_toward(
-        player.position, target.position);
+    const arpg::combat::MonsterSnapshot& target,
+    bool fire_room) noexcept {
+    MovementInput movement = fire_room
+        ? arpg::test::fire_room_robot_movement(
+            player.position, target.position)
+        : arpg::test::movement_toward(player.position, target.position);
     const float delta_x = target.position.x - player.position.x;
     const bool target_is_left = delta_x < 0.0F;
     const bool target_is_right = delta_x > 0.0F;
@@ -1033,7 +1015,8 @@ bool drive_real_input_clear(
             const auto* target = arpg::test::nearest_living_monster(*state.combat);
             if (target != nullptr) {
                 movement = launcher_robot_movement(
-                    state.combat->player, *target);
+                    state.combat->player, *target,
+                    state.ecology == checkpoint::DungeonElement::fire);
                 if (state.combat->player.hurt_ticks == 0U
                         && state.combat->player.active_attack
                             == arpg::combat::AttackId::none
@@ -1063,7 +1046,8 @@ void print_real_input_trace(
     std::printf("[real-input] %s room=%llu cleared=%u initial-player=%.2f,%.2f "
         "initial-target=%.2f,%.2f hp=%d queues=%u/%u rejected=%u swings=%u "
         "active=%u hits=%u defeated=%u player-hit/hurt=%u/%u first-whiff=%u "
-        "whiff-tick=%llu dx=%.2f dy=%.2f facing=%d ai/reaction=%u/%u\n",
+        "whiff-tick=%llu dx=%.2f dy=%.2f facing=%d ai/reaction=%u/%u "
+        "final-player=%.2f,%.2f final-target=%.2f,%.2f\n",
         label, static_cast<unsigned long long>(trace.room_index),
         static_cast<unsigned>(cleared), trace.initial_player_position.x,
         trace.initial_player_position.y, trace.initial_target_position.x,
@@ -1076,7 +1060,9 @@ void print_real_input_trace(
         trace.first_whiff_dx, trace.first_whiff_dy,
         static_cast<int>(trace.first_whiff_facing),
         static_cast<unsigned>(trace.first_whiff_ai),
-        static_cast<unsigned>(trace.first_whiff_reaction));
+        static_cast<unsigned>(trace.first_whiff_reaction),
+        trace.player_position.x, trace.player_position.y,
+        trace.target_position.x, trace.target_position.y);
 }
 
 arpg::test::Failure launcher_input_robot_clears_ten_minimal_committed_rooms() noexcept {
@@ -1171,9 +1157,12 @@ arpg::test::Failure launcher_input_robot_clears_thousand_minimal_committed_rooms
                 kRoute[room % kRoute.size()]), summary, true);
         if (!exited) {
             const auto failed = session.snapshot();
+            const auto player = failed.combat.has_value()
+                ? failed.combat->player.position : arpg::combat::Vec3{};
             std::fprintf(stderr,
                 "[launcher-1000-exit-failure] loop=%llu room=%llu phase=%u "
-                "fault=%u pending=%u abyss=%u\n",
+                "fault=%u pending=%u abyss=%u ecology=%u direction=%u "
+                "player=%.2f,%.2f crates=%llu\n",
                 static_cast<unsigned long long>(room),
                 static_cast<unsigned long long>(failed.room_index),
                 static_cast<unsigned>(failed.phase),
@@ -1181,7 +1170,13 @@ arpg::test::Failure launcher_input_robot_clears_thousand_minimal_committed_rooms
                 static_cast<unsigned>(failed.pending_save_kind.has_value()
                     ? *failed.pending_save_kind
                     : arpg::dungeon::PendingSaveKind::transition),
-                static_cast<unsigned>(failed.is_abyss));
+                static_cast<unsigned>(failed.is_abyss),
+                static_cast<unsigned>(failed.ecology),
+                static_cast<unsigned>(ordinary_direction(failed,
+                    kRoute[room % kRoute.size()])),
+                player.x, player.y,
+                static_cast<unsigned long long>(failed.combat.has_value()
+                    ? failed.combat->fire_crate_count : 0U));
         }
         ARPG_REQUIRE(exited);
     }
@@ -1318,9 +1313,9 @@ arpg::test::Failure identical_seed_and_route_are_field_equal() noexcept {
             arpg::test::force_defeat_current_wave(*rhs);
         } else if (state.phase == RoomPhase::awaiting_exit) {
             const ExitDirection direction = kRoute[exits];
-            movement = align_center(state, direction);
+            movement = arpg::test::exit_alignment_movement(state, direction);
             if (movement.x == 0 && movement.y == 0) {
-                movement = outward(direction);
+                movement = arpg::test::exit_outward(direction);
             }
         }
         const std::uint64_t before_index = state.room_index;

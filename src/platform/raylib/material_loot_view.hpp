@@ -17,6 +17,7 @@ struct MaterialLootLabel final {
     float anchor_y{};
     LootLabelRect rect{};
     Rgba8 text_color{};
+    MaterialSpriteId sprite{MaterialSpriteId::missing};
     bool emphasized{};
     std::array<char, kGroundLootTextCapacity> text{};
 };
@@ -50,6 +51,8 @@ private:
 [[nodiscard]] Rgba8 material_color(items::MaterialId) noexcept;
 [[nodiscard]] std::string_view material_label(items::MaterialId) noexcept;
 [[nodiscard]] bool material_is_emphasized(items::MaterialId) noexcept;
+[[nodiscard]] MaterialSpriteId material_loot_sprite(
+    items::MaterialId) noexcept;
 [[nodiscard]] MaterialLootView build_material_loot_view(
     const dungeon::DungeonSnapshot&, float width, float height) noexcept;
 

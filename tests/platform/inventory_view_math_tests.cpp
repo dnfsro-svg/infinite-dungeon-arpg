@@ -29,7 +29,7 @@ bool separated(Rectangle left, Rectangle right) noexcept {
 
 test::Failure layouts_are_bounded_and_non_overlapping() noexcept {
     constexpr std::array<std::array<int, 2>, 3> kSizes{{
-        {{800, 450}}, {{1280, 720}}, {{1920, 1080}},
+        {{1280, 720}}, {{1600, 900}}, {{1920, 1080}},
     }};
     for (const auto& size : kSizes) {
         const Rectangle viewport{0.0F, 0.0F,
@@ -376,13 +376,13 @@ test::Failure all_catalog_affixes_use_semantic_value_units() noexcept {
 
 test::Failure detail_content_stays_inside_all_required_viewports() noexcept {
     constexpr std::array<std::array<int, 2>, 3> kSizes{{
-        {{800, 450}}, {{1280, 720}}, {{1920, 1080}},
+        {{1280, 720}}, {{1600, 900}}, {{1920, 1080}},
     }};
     for (const auto& size : kSizes) {
         const platform::InventoryLayout layout =
             platform::inventory_layout(size[0], size[1]);
-        ARPG_REQUIRE(platform::detail_content_fits(layout, 27U));
-        for (std::size_t line = 0U; line < 27U; ++line) {
+        ARPG_REQUIRE(platform::detail_content_fits(layout, 21U));
+        for (std::size_t line = 0U; line < 21U; ++line) {
             const Rectangle rectangle =
                 platform::detail_line_rectangle(layout, line);
             ARPG_REQUIRE(inside(rectangle, layout.detail));
@@ -400,6 +400,59 @@ test::Failure detail_content_stays_inside_all_required_viewports() noexcept {
             ARPG_REQUIRE(platform::detail_text_fits(layout, line));
         }
     }
+    return {};
+}
+
+test::Failure inventory_and_skill_text_boxes_use_disjoint_safe_areas() noexcept {
+    constexpr std::array<std::array<int, 2>, 2> kSizes{{
+        {{1280, 720}}, {{1920, 1080}},
+    }};
+    for (const auto size : kSizes) {
+        const Rectangle viewport{0.0F, 0.0F,
+            static_cast<float>(size[0]), static_cast<float>(size[1])};
+        const platform::InventoryLayout panels =
+            platform::inventory_layout(size[0], size[1]);
+        const platform::ActiveSkillLoadoutLayout skill =
+            platform::active_skill_loadout_layout(size[0], size[1]);
+        const platform::InventoryTextSafeLayout text =
+            platform::inventory_text_safe_layout(size[0], size[1]);
+        ARPG_REQUIRE(inside(text.page_title, viewport));
+        ARPG_REQUIRE(separated(text.page_title,
+            skill.equipment_page_button));
+        ARPG_REQUIRE(separated(text.page_title,
+            skill.skill_stones_page_button));
+        ARPG_REQUIRE(inside(text.equipment_panel_title, panels.equipment));
+        ARPG_REQUIRE(inside(text.grid_panel_title, panels.grid));
+        ARPG_REQUIRE(inside(text.detail_panel_title, panels.detail));
+        ARPG_REQUIRE(inside(text.skill_panel_title, skill.panel));
+        ARPG_REQUIRE(separated(text.skill_panel_title, skill.main_slots[0]));
+        ARPG_REQUIRE(separated(text.support_section_title,
+            skill.support_slots[0]));
+        ARPG_REQUIRE(separated(text.inventory_section_title,
+            skill.inventory_slots[0]));
+    }
+    return {};
+}
+
+test::Failure full_hd_inventory_and_skill_geometry_scales_by_one_and_a_half()
+    noexcept {
+    const platform::InventoryLayout inventory_720 =
+        platform::inventory_layout(1280, 720);
+    const platform::InventoryLayout inventory_1080 =
+        platform::inventory_layout(1920, 1080);
+    const platform::ActiveSkillLoadoutLayout skill_720 =
+        platform::active_skill_loadout_layout(1280, 720);
+    const platform::ActiveSkillLoadoutLayout skill_1080 =
+        platform::active_skill_loadout_layout(1920, 1080);
+    ARPG_REQUIRE(test::near(inventory_720.scale, 1.0F));
+    ARPG_REQUIRE(test::near(inventory_1080.scale, 1.5F));
+    ARPG_REQUIRE(test::near(skill_720.scale, 1.0F));
+    ARPG_REQUIRE(test::near(skill_1080.scale, 1.5F));
+    ARPG_REQUIRE(skill_720.main_slots[0].width >= 200.0F);
+    ARPG_REQUIRE(test::near(skill_1080.main_slots[0].width,
+        skill_720.main_slots[0].width * 1.5F, 0.01));
+    ARPG_REQUIRE(test::near(skill_1080.remove_button.height,
+        skill_720.remove_button.height * 1.5F, 0.01));
     return {};
 }
 
@@ -422,6 +475,10 @@ constexpr test::TestCase kCases[] = {
         &all_catalog_affixes_use_semantic_value_units},
     {"inventory detail content boundaries",
         &detail_content_stays_inside_all_required_viewports},
+    {"inventory and skill text safe areas",
+        &inventory_and_skill_text_boxes_use_disjoint_safe_areas},
+    {"full-HD inventory and skill scaling",
+        &full_hd_inventory_and_skill_geometry_scales_by_one_and_a_half},
 };
 
 }  // namespace

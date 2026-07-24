@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 
 #include "material_loot_view.hpp"
+#include "material_manifest.hpp"
 
 #include <cstring>
 
@@ -76,10 +77,33 @@ arpg::test::Failure pickup_feedback_aggregates_counts_by_material() noexcept {
     return {};
 }
 
+arpg::test::Failure every_material_has_a_unique_authored_resource() noexcept {
+    std::array<platform::MaterialSpriteId, items::kMaterialCount> sprites{};
+    const platform::MaterialManifestDefinition manifest =
+        platform::default_material_manifest();
+    for (std::size_t index{}; index < sprites.size(); ++index) {
+        const auto id = static_cast<items::MaterialId>(index);
+        sprites[index] = platform::material_loot_sprite(id);
+        ARPG_REQUIRE(sprites[index] != platform::MaterialSpriteId::missing);
+        const auto* frame = platform::find_material_frame(manifest, sprites[index]);
+        ARPG_REQUIRE(frame != nullptr);
+        ARPG_REQUIRE(frame->atlas == platform::MaterialAtlasId::items_ui);
+        ARPG_REQUIRE(frame->material_class == platform::MaterialClass::loot);
+        ARPG_REQUIRE(frame->foot_anchor.x > 0.0F);
+        ARPG_REQUIRE(frame->foot_anchor.y > 0.0F);
+        ARPG_REQUIRE(frame->perceptual_hash != 0U);
+        for (std::size_t previous{}; previous < index; ++previous) {
+            ARPG_REQUIRE(sprites[index] != sprites[previous]);
+        }
+    }
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"Chinese labels and emphasis", &labels_and_emphasis_are_player_facing},
     {"material view ignores equipment filter", &material_view_ignores_equipment_filter_and_orders_ordinals},
     {"pickup feedback aggregates material counts", &pickup_feedback_aggregates_counts_by_material},
+    {"every material uses a unique resource", &every_material_has_a_unique_authored_resource},
 };
 
 }  // namespace

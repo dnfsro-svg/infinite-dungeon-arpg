@@ -1,5 +1,7 @@
 #include "combat_renderer.hpp"
 #include "control_hints.hpp"
+#include "dungeon_test_support.hpp"
+#include "combat/fire_room_obstacle.hpp"
 #include "combat/monster_affix_generation.hpp"
 #include "dungeon/dungeon_progression.hpp"
 #include "dungeon/encounter_director.hpp"
@@ -308,8 +310,16 @@ bool drive_real_material_pickup(const std::filesystem::path& run,
                         "stage16-ground-material-1280x720.png");
                     if (!result.ground_material_visible) return false;
                 }
-                movement = toward(snapshot->combat->player.position,
-                    snapshot->ground_materials[0].position);
+                const combat::Vec3 player =
+                    snapshot->combat->player.position;
+                const combat::Vec3 material =
+                    snapshot->ground_materials[0].position;
+                movement = snapshot->ecology
+                            == dungeon::checkpoint::DungeonElement::fire
+                        && arpg::test::segment_crosses_fire_brazier(
+                            player, material)
+                    ? arpg::test::fire_room_robot_movement(player, material)
+                    : toward(player, material);
             } else if (const auto* const target = nearest(*snapshot->combat)) {
                 const float dx = target->position.x - snapshot->combat->player.position.x;
                 const float dy = target->position.y - snapshot->combat->player.position.y;
@@ -317,7 +327,16 @@ bool drive_real_material_pickup(const std::filesystem::path& run,
                 const bool target_on_right = dx >= 0.0F;
                 const combat::Facing desired_facing = target_on_right
                     ? combat::Facing::right : combat::Facing::left;
-                if (snapshot->combat->player.active_attack != combat::AttackId::none) {
+                const bool fire_path_blocked = snapshot->ecology
+                        == dungeon::checkpoint::DungeonElement::fire
+                    && arpg::test::segment_crosses_fire_brazier(
+                        snapshot->combat->player.position, target->position);
+                if (fire_path_blocked) {
+                    retreat_direction = 0;
+                    movement = arpg::test::fire_room_robot_movement(
+                        snapshot->combat->player.position, target->position);
+                } else if (snapshot->combat->player.active_attack
+                        != combat::AttackId::none) {
                     // Movement is suppressed during attacks by CombatWorld.  Keeping the
                     // input neutral prevents a recovery frame from entering pickup range.
                     movement = {};
@@ -344,6 +363,16 @@ bool drive_real_material_pickup(const std::filesystem::path& run,
                         retreat_direction = 1;
                     } else if (player_x >= 8.0F && retreat_direction > 0) {
                         retreat_direction = -1;
+                    }
+                    if (snapshot->ecology
+                            == dungeon::checkpoint::DungeonElement::fire) {
+                        auto candidate = snapshot->combat->player.position;
+                        candidate.x += 0.10F
+                            * static_cast<float>(retreat_direction);
+                        if (combat::fire_room_obstacle::blocks_player(
+                                snapshot->combat->player.position, candidate)) {
+                            retreat_direction = -retreat_direction;
+                        }
                     }
                     movement = {retreat_direction, 0};
                 } else if (horizontal > 2.55F) {
@@ -434,7 +463,7 @@ bool render_inventory_capture(const std::filesystem::path& run,
     static_cast<void>(room->draw(*current, *current, runtime.render_status(), 1.0F,
         false, feedback, false));
     inventory.draw(*runtime.session(), *current, runtime.render_status(),
-        room->hud_font(), room->hud_font_ready());
+        room->material_pack(), room->hud_font(), room->hud_font_ready());
     EndDrawing();
     const auto image = run / name;
     const auto relative = std::filesystem::relative(image,

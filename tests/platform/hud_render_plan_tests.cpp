@@ -14,6 +14,8 @@ namespace {
 namespace platform = arpg::platform;
 namespace combat = arpg::combat;
 
+float monospace_measure(const char* text, float font_size, void*) noexcept;
+
 bool same_color(Color lhs, Color rhs) noexcept {
     return lhs.r == rhs.r && lhs.g == rhs.g && lhs.b == rhs.b
         && lhs.a == rhs.a;
@@ -235,10 +237,22 @@ arpg::test::Failure monster_resource_plan_consumes_snapshot_values_and_palette_i
 }
 
 arpg::test::Failure objective_navigation_and_context_plans_stay_in_their_layout_panels() noexcept {
-    const platform::HudLayout layout = player_layout();
+    const platform::HudLayout layout = platform::make_hud_layout(1920, 1080, false);
     platform::RoomHudModel room{};
     static_cast<void>(std::snprintf(room.objective.bytes.data(), room.objective.bytes.size(),
         u8"第 1/2 波 · 剩余 3"));
+    static_cast<void>(std::snprintf(room.secondary.bytes.data(), room.secondary.bytes.size(),
+        "Pending room experience +18446744073709551615"));
+    static_cast<void>(std::snprintf(room.movement.bytes.data(), room.movement.bytes.size(),
+        "W Move Up  S Move Down  A Move Left  D Move Right"));
+    static_cast<void>(std::snprintf(room.controls[0].bytes.data(),
+        room.controls[0].bytes.size(), "J Light Attack  K Jump  L Launcher"));
+    static_cast<void>(std::snprintf(room.controls[1].bytes.data(),
+        room.controls[1].bytes.size(),
+        "E Interact  I Inventory  P Passive Tree"));
+    static_cast<void>(std::snprintf(room.controls[2].bytes.data(),
+        room.controls[2].bytes.size(),
+        "F1 Debug  F12 Screenshot  Esc Pause"));
     platform::NavigationHudModel navigation{};
     static_cast<void>(std::snprintf(navigation.primary.bytes.data(), navigation.primary.bytes.size(),
         u8"深度 1 · 层房间 2"));
@@ -257,7 +271,43 @@ arpg::test::Failure objective_navigation_and_context_plans_stay_in_their_layout_
 
     ARPG_REQUIRE(objective.visible);
     ARPG_REQUIRE(objective.primary.bytes == room.objective.bytes);
+    ARPG_REQUIRE(objective.secondary.bytes == room.secondary.bytes);
+    ARPG_REQUIRE(objective.movement.bytes == room.movement.bytes);
+    ARPG_REQUIRE(objective.controls[0].bytes == room.controls[0].bytes);
+    ARPG_REQUIRE(objective.controls[1].bytes == room.controls[1].bytes);
+    ARPG_REQUIRE(objective.controls[2].bytes == room.controls[2].bytes);
     ARPG_REQUIRE(rect_inside(objective.bounds, layout.objective_panel));
+
+    const platform::HudTextSafeLayout safe =
+        platform::make_hud_text_safe_layout(layout);
+    const platform::HudReadabilityStyle style =
+        platform::hud_readability_style();
+    const std::array<platform::HudText96, 5U> complete_secondary_lines{{
+        objective.secondary,
+        objective.movement,
+        objective.controls[0],
+        objective.controls[1],
+        objective.controls[2],
+    }};
+    const std::array<platform::HudRect, 5U> complete_secondary_bounds{{
+        safe.objective_hint,
+        safe.objective_movement,
+        safe.objective_controls[0],
+        safe.objective_controls[1],
+        safe.objective_controls[2],
+    }};
+    const float preferred = style.objective_secondary_font_size * layout.scale;
+    for (std::size_t index{}; index < complete_secondary_lines.size(); ++index) {
+        const platform::HudTextDrawPlan text = platform::make_hud_text_draw_plan(
+            complete_secondary_lines[index],
+            complete_secondary_bounds[index].width - 20.0F * layout.scale,
+            preferred, style.panel_minimum_font_size * layout.scale,
+            &monospace_measure, nullptr);
+        ARPG_REQUIRE(text.visible);
+        ARPG_REQUIRE(!text.truncated);
+        ARPG_REQUIRE(arpg::test::near(text.font_size, preferred));
+        ARPG_REQUIRE(text.text.bytes == complete_secondary_lines[index].bytes);
+    }
     ARPG_REQUIRE(navigation_plan.visible);
     ARPG_REQUIRE(navigation_plan.primary.bytes == navigation.primary.bytes);
     ARPG_REQUIRE(rect_inside(navigation_plan.bounds, layout.navigation_panel));
@@ -351,7 +401,7 @@ arpg::test::Failure hud_text_style_keeps_key_labels_readable_at_720p() noexcept 
     ARPG_REQUIRE(style.panel_minimum_font_size >= 13.0F);
     ARPG_REQUIRE(style.player_bar_font_size >= 17.0F);
     ARPG_REQUIRE(style.objective_primary_font_size >= 20.0F);
-    ARPG_REQUIRE(style.outline_pixels >= 1);
+    ARPG_REQUIRE(style.outline_pixels == 0);
     return {};
 }
 

@@ -33,7 +33,11 @@ arpg::test::Failure monster_labels_keep_a_readable_size_and_outline() noexcept {
     ARPG_REQUIRE(style.role_font_size >= 14);
     ARPG_REQUIRE(style.phase_font_size >= 12);
     ARPG_REQUIRE(style.affix_font_size >= 11);
-    ARPG_REQUIRE(style.outline_pixels >= 2);
+    ARPG_REQUIRE(style.outline_pixels == 0);
+    const auto full_hd = arpg::platform::monster_label_text_style(1.5F);
+    ARPG_REQUIRE(full_hd.role_font_size >= 24);
+    ARPG_REQUIRE(full_hd.phase_font_size >= 24);
+    ARPG_REQUIRE(full_hd.affix_font_size >= 24);
     return {};
 }
 

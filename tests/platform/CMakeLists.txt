@@ -5,6 +5,7 @@ if(TARGET arpg_raylib)
         host_input_tests.cpp
         active_skill_input_tests.cpp
         active_skill_view_tests.cpp
+        active_skill_asset_tests.cpp
         active_skill_loadout_view_tests.cpp
         audio_pack_tests.cpp
         audio_routing_tests.cpp
@@ -34,9 +35,13 @@ if(TARGET arpg_raylib)
         ground_loot_view_tests.cpp
         material_loot_view_tests.cpp
         material_bag_renderer_tests.cpp
+        ui_material_slice_tests.cpp
         audio_asset_validation_tests.cpp
         material_asset_validation_tests.cpp
         material_animation_tests.cpp
+        fire_room_material_slice_tests.cpp
+        ecology_material_coverage_tests.cpp
+        room_background_render_plan_tests.cpp
         stage12_environment_render_tests.cpp
         stage12_actor_render_tests.cpp
         stage12_material_render_tests.cpp)
@@ -56,6 +61,48 @@ if(TARGET arpg_raylib)
     set_tests_properties(
         platform.units PROPERTIES LABELS "headless;platform")
 
+    add_test(NAME platform.ui_dpi_manifest
+        COMMAND "${CMAKE_COMMAND}"
+            "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/ui_dpi_manifest_test.cmake")
+    set_tests_properties(platform.ui_dpi_manifest PROPERTIES
+        LABELS "headless;platform;ui")
+
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME stage12.lightning_asset_pipeline
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/lightning_asset_pipeline_tests.py")
+    set_tests_properties(stage12.lightning_asset_pipeline PROPERTIES
+        LABELS "headless;platform;stage12" TIMEOUT 120)
+
+    add_test(NAME stage12.chaos_asset_pipeline
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/chaos_asset_pipeline_tests.py")
+    set_tests_properties(stage12.chaos_asset_pipeline PROPERTIES
+        LABELS "headless;platform;stage12" TIMEOUT 120)
+
+    add_test(NAME stage12.item_material_asset_pipeline
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/item_material_asset_pipeline_tests.py")
+    set_tests_properties(stage12.item_material_asset_pipeline PROPERTIES
+        LABELS "headless;platform;assets;stage12"
+        TIMEOUT 120)
+
+    add_test(NAME stage12.ui_material_asset_pipeline
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/ui_material_asset_pipeline_tests.py")
+    set_tests_properties(stage12.ui_material_asset_pipeline PROPERTIES
+        LABELS "headless;platform;assets;stage12"
+        TIMEOUT 120)
+
+    add_test(NAME stage12.native_room_background_asset_pipeline
+        COMMAND "${Python3_EXECUTABLE}" -m unittest
+            tests.platform.native_room_background_asset_pipeline_tests -v)
+    set_tests_properties(stage12.native_room_background_asset_pipeline PROPERTIES
+        LABELS "headless;platform;assets;stage12"
+        TIMEOUT 180
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+
     add_executable(arpg_stage16_loot_reinforcement_game_validation
         stage16_loot_reinforcement_game_validation.cpp)
     target_compile_features(arpg_stage16_loot_reinforcement_game_validation
@@ -68,11 +115,25 @@ if(TARGET arpg_raylib)
         target_compile_options(arpg_stage16_loot_reinforcement_game_validation PRIVATE /utf-8)
     endif()
     arpg_enable_project_warnings(arpg_stage16_loot_reinforcement_game_validation)
+    add_custom_command(TARGET arpg_stage16_loot_reinforcement_game_validation POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            "${PROJECT_SOURCE_DIR}/assets/stage12"
+            "$<TARGET_FILE_DIR:arpg_stage16_loot_reinforcement_game_validation>/assets/stage12"
+        COMMENT "Copying item material atlases for Stage 16 validation"
+        VERBATIM)
+    add_custom_command(TARGET arpg_stage16_loot_reinforcement_game_validation POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            "${PROJECT_SOURCE_DIR}/assets/fonts"
+            "$<TARGET_FILE_DIR:arpg_stage16_loot_reinforcement_game_validation>/assets/fonts"
+        COMMENT "Copying bundled UI font for Stage 16 validation"
+        VERBATIM)
     add_test(NAME stage16.loot_reinforcement.real_raylib
         COMMAND "$<TARGET_FILE:arpg_stage16_loot_reinforcement_game_validation>"
             "${CMAKE_CURRENT_BINARY_DIR}/stage16 loot reinforcement evidence")
     set_tests_properties(stage16.loot_reinforcement.real_raylib PROPERTIES
-        LABELS "platform;raylib;stage16;validation" TIMEOUT 90 RUN_SERIAL TRUE)
+        LABELS "platform;raylib;stage16;validation" TIMEOUT 90 RUN_SERIAL TRUE
+        WORKING_DIRECTORY
+            "$<TARGET_FILE_DIR:arpg_stage16_loot_reinforcement_game_validation>")
 
     add_executable(arpg_stage17_skill_stones_game_validation
         stage17_skill_stones_game_validation.cpp)
@@ -85,6 +146,24 @@ if(TARGET arpg_raylib)
             PRIVATE /utf-8)
     endif()
     arpg_enable_project_warnings(arpg_stage17_skill_stones_game_validation)
+    add_custom_command(TARGET arpg_stage17_skill_stones_game_validation POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            "${PROJECT_SOURCE_DIR}/assets/skills"
+            "$<TARGET_FILE_DIR:arpg_stage17_skill_stones_game_validation>/assets/skills"
+        COMMENT "Copying active-skill frame atlases for Stage 17 validation"
+        VERBATIM)
+    add_custom_command(TARGET arpg_stage17_skill_stones_game_validation POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            "${PROJECT_SOURCE_DIR}/assets/stage12"
+            "$<TARGET_FILE_DIR:arpg_stage17_skill_stones_game_validation>/assets/stage12"
+        COMMENT "Copying item material atlases for Stage 17 validation"
+        VERBATIM)
+    add_custom_command(TARGET arpg_stage17_skill_stones_game_validation POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            "${PROJECT_SOURCE_DIR}/assets/fonts"
+            "$<TARGET_FILE_DIR:arpg_stage17_skill_stones_game_validation>/assets/fonts"
+        COMMENT "Copying bundled UI font for Stage 17 validation"
+        VERBATIM)
     set(_stage17_evidence_root
         "${CMAKE_CURRENT_BINARY_DIR}/stage17 skill stones evidence")
     set(_stage17_evidence_run "${_stage17_evidence_root}/stage17-run")
@@ -120,8 +199,15 @@ if(TARGET arpg_raylib)
     target_link_libraries(arpg_stage12_material_formal PRIVATE arpg_raylib)
     if(MSVC)
         target_compile_options(arpg_stage12_material_formal PRIVATE /utf-8)
+        target_link_options(arpg_stage12_material_formal PRIVATE /STACK:2097152)
     endif()
     arpg_enable_project_warnings(arpg_stage12_material_formal)
+    add_custom_command(TARGET arpg_stage12_material_formal POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            "${PROJECT_SOURCE_DIR}/assets/fonts"
+            "$<TARGET_FILE_DIR:arpg_stage12_material_formal>/assets/fonts"
+        COMMENT "Copying bundled Noto Sans SC font for Stage 12 validation"
+        VERBATIM)
     add_test(
         NAME stage12.material_formal
         COMMAND "$<TARGET_FILE:arpg_stage12_material_formal>"
@@ -136,6 +222,16 @@ if(TARGET arpg_raylib)
             -EvidenceDirectory "${CMAKE_CURRENT_BINARY_DIR}/stage12 material evidence/stage12-run")
     set_tests_properties(stage12.material_evidence_validator
         PROPERTIES LABELS "platform;raylib;stage12" TIMEOUT 60
+            FIXTURES_REQUIRED stage12_material_evidence)
+    add_test(
+        NAME stage12.material_evidence_validator_self_test
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/stage12_material_validator_self_test.ps1"
+            -EvidenceDirectory "${CMAKE_CURRENT_BINARY_DIR}/stage12 material evidence/stage12-run"
+            -Validator "${CMAKE_CURRENT_SOURCE_DIR}/stage12_material_validator.ps1"
+            -MutationRoot "${CMAKE_CURRENT_BINARY_DIR}/stage12 material evidence/validator-mutations")
+    set_tests_properties(stage12.material_evidence_validator_self_test
+        PROPERTIES LABELS "platform;raylib;stage12;negative" TIMEOUT 120
             FIXTURES_REQUIRED stage12_material_evidence)
     add_test(
         NAME stage12.material_root_safety

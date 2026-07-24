@@ -15,6 +15,7 @@ arpg::test::TestSuite stage15_audio_pack_suite() noexcept;
 arpg::test::TestSuite host_input_suite() noexcept;
 arpg::test::TestSuite active_skill_input_suite() noexcept;
 arpg::test::TestSuite active_skill_view_suite() noexcept;
+arpg::test::TestSuite active_skill_asset_suite() noexcept;
 arpg::test::TestSuite active_skill_loadout_view_suite() noexcept;
 arpg::test::TestSuite dungeon_view_math_suite() noexcept;
 arpg::test::TestSuite passive_tree_view_suite() noexcept;
@@ -38,9 +39,13 @@ arpg::test::TestSuite hud_host_integration_suite() noexcept;
 arpg::test::TestSuite ground_loot_view_suite() noexcept;
 arpg::test::TestSuite material_loot_view_suite() noexcept;
 arpg::test::TestSuite material_bag_renderer_suite() noexcept;
+arpg::test::TestSuite ui_material_slice_suite() noexcept;
 arpg::test::TestSuite audio_asset_validation_suite() noexcept;
 arpg::test::TestSuite material_asset_validation_suite() noexcept;
 arpg::test::TestSuite material_animation_suite() noexcept;
+arpg::test::TestSuite fire_room_material_slice_suite() noexcept;
+arpg::test::TestSuite ecology_material_coverage_suite() noexcept;
+arpg::test::TestSuite room_background_render_plan_suite() noexcept;
 arpg::test::TestSuite stage12_environment_render_suite() noexcept;
 arpg::test::TestSuite stage12_actor_render_suite() noexcept;
 arpg::test::TestSuite stage12_material_render_suite() noexcept;
@@ -66,6 +71,7 @@ int main() {
         host_input_suite(),
         active_skill_input_suite(),
         active_skill_view_suite(),
+        active_skill_asset_suite(),
         active_skill_loadout_view_suite(),
         dungeon_view_math_suite(),
         passive_tree_view_suite(),
@@ -89,13 +95,18 @@ int main() {
         ground_loot_view_suite(),
         material_loot_view_suite(),
         material_bag_renderer_suite(),
+        ui_material_slice_suite(),
         audio_asset_validation_suite(),
         material_asset_validation_suite(),
         material_animation_suite(),
+        fire_room_material_slice_suite(),
+        ecology_material_coverage_suite(),
+        room_background_render_plan_suite(),
         stage12_environment_render_suite(),
         stage12_actor_render_suite(),
         stage12_material_render_suite(),
     };
 
-    return arpg::test::run_suites(suites, 374, "stage 17 active skill UI");
+    return arpg::test::run_suites(suites, 443,
+        "HUD and UI material slice contract");
 }

@@ -154,6 +154,38 @@ arpg::test::Failure objective_uses_chinese_target_text() noexcept {
     return {};
 }
 
+arpg::test::Failure objective_preserves_the_complete_movement_hint() noexcept {
+    dungeon::DungeonSnapshot snapshot = normal_snapshot();
+    snapshot.pending_room_experience = 75U;
+    platform::ControlHints hints{};
+    static_cast<void>(std::snprintf(hints.primary.data(), hints.primary.size(),
+        "W Move Up  S Move Down  A Move Left  D Move Right"));
+    static_cast<void>(std::snprintf(hints.secondary.data(), hints.secondary.size(),
+        "J Light Attack  K Jump  L Launcher  E Interact  I Inventory  "
+        "P Passive Tree  F1 Debug  F12 Screenshot  Esc Pause"));
+    platform::HudViewModel output{};
+    platform::build_hud_view_model(output, snapshot, {}, hints);
+
+    ARPG_REQUIRE(std::strcmp(output.room.secondary.bytes.data(),
+        u8"待结算经验 +75") == 0);
+    ARPG_REQUIRE(std::strcmp(output.room.movement.bytes.data(),
+        "W Move Up  S Move Down  A Move Left  D Move Right") == 0);
+    ARPG_REQUIRE(std::strcmp(output.room.controls[0].bytes.data(),
+        "J Light Attack  K Jump  L Launcher") == 0);
+    ARPG_REQUIRE(std::strcmp(output.room.controls[1].bytes.data(),
+        "E Interact  I Inventory  P Passive Tree") == 0);
+    ARPG_REQUIRE(std::strcmp(output.room.controls[2].bytes.data(),
+        "F1 Debug  F12 Screenshot  Esc Pause") == 0);
+    ARPG_REQUIRE(!output.room.secondary.truncated);
+    ARPG_REQUIRE(!output.room.movement.truncated);
+    for (const platform::HudText96& line : output.room.controls) {
+        ARPG_REQUIRE(!line.truncated);
+        ARPG_REQUIRE(line.bytes.back() == '\0');
+    }
+    ARPG_REQUIRE(output.diagnostics.truncated_texts == 0U);
+    return {};
+}
+
 arpg::test::Failure non_terminated_hint_buffers_are_bounded_and_terminated() noexcept {
     dungeon::DungeonSnapshot snapshot = normal_snapshot();
     snapshot.pending_room_experience = 1U;
@@ -164,13 +196,17 @@ arpg::test::Failure non_terminated_hint_buffers_are_bounded_and_terminated() noe
     platform::HudViewModel output{};
     platform::build_hud_view_model(output, snapshot, {}, hints);
 
-    ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(),
+    ARPG_REQUIRE(std::strstr(output.room.movement.bytes.data(),
         "PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP") != nullptr);
-    ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(),
-        "SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS") != nullptr);
-    ARPG_REQUIRE(!output.room.secondary.truncated);
-    ARPG_REQUIRE(output.room.secondary.bytes.back() == '\0');
-    ARPG_REQUIRE(output.diagnostics.truncated_texts == 0U);
+    ARPG_REQUIRE(std::strstr(output.room.controls[0].bytes.data(), "SSSS")
+        != nullptr);
+    ARPG_REQUIRE(output.room.movement.truncated);
+    ARPG_REQUIRE(output.room.controls[0].truncated);
+    ARPG_REQUIRE(output.room.movement.bytes.back() == '\0');
+    for (const platform::HudText96& line : output.room.controls) {
+        ARPG_REQUIRE(line.bytes.back() == '\0');
+    }
+    ARPG_REQUIRE(output.diagnostics.truncated_texts == 2U);
     return {};
 }
 
@@ -179,13 +215,17 @@ arpg::test::Failure truncated_secondary_text_remains_nul_terminated() noexcept {
     snapshot.pending_room_experience =
         (std::numeric_limits<std::uint64_t>::max)();
     platform::ControlHints hints{};
-    hints.primary.fill('P');
+    static_cast<void>(std::snprintf(hints.primary.data(), hints.primary.size(),
+        "W Move Up  S Move Down  A Move Left  D Move Right"));
     hints.secondary.fill('S');
+    hints.secondary.back() = '\0';
     platform::HudViewModel output{};
     platform::build_hud_view_model(output, snapshot, {}, hints);
 
-    ARPG_REQUIRE(output.room.secondary.truncated);
+    ARPG_REQUIRE(!output.room.secondary.truncated);
     ARPG_REQUIRE(output.room.secondary.bytes.back() == '\0');
+    ARPG_REQUIRE(output.room.controls[0].truncated);
+    ARPG_REQUIRE(output.room.controls[0].bytes.back() == '\0');
     ARPG_REQUIRE(output.diagnostics.truncated_texts == 1U);
     return {};
 }
@@ -216,9 +256,19 @@ arpg::test::Failure objective_describes_every_player_visible_room_state() noexce
     snapshot.is_abyss = true;
     snapshot.abyss_danger = arpg::abyss::AbyssDanger::high;
     snapshot.abyss_rule = arpg::abyss::AbyssRuleId::abyss_fury;
+    snapshot.abyss_pending_rewards = 3U;
+    snapshot.abyss_unpicked_rewards = 2U;
     platform::build_hud_view_model(output, snapshot, {}, default_hints());
     ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"深渊") != nullptr);
     ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), "ABYSS HIGH") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(),
+        u8"待领奖励 3") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.secondary.bytes.data(),
+        u8"未领取 2") != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.movement.bytes.data(), "W Move Up")
+        != nullptr);
+    ARPG_REQUIRE(std::strstr(output.room.controls[0].bytes.data(), "J Attack")
+        != nullptr);
     return {};
 }
 
@@ -367,6 +417,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"status tag capacity", &active_statuses_project_in_fixed_priority_order},
     {"uint32 navigation biases", &navigation_preserves_all_uint32_biases},
     {"Chinese objective text", &objective_uses_chinese_target_text},
+    {"complete movement objective hint",
+        &objective_preserves_the_complete_movement_hint},
     {"non-terminated hint buffers", &non_terminated_hint_buffers_are_bounded_and_terminated},
     {"truncated secondary text", &truncated_secondary_text_remains_nul_terminated},
     {"room objective states", &objective_describes_every_player_visible_room_state},

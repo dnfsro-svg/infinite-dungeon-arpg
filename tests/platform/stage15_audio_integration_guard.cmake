@@ -66,7 +66,9 @@ foreach(_token IN ITEMS "InitAudioDevice" "CloseAudioDevice"
 endforeach()
 
 file(READ "${_host}" _host_text)
-foreach(_token IN ITEMS "#include \"game_audio.hpp\"" "GameAudio audio;"
+foreach(_token IN ITEMS "#include \"game_audio.hpp\""
+        "const auto audio_storage = std::make_unique<GameAudio>();"
+        "GameAudio& audio = *audio_storage;"
         "audio.update({combat_audio_active" "audio_bus_levels(presented_audio_settings)")
     string(FIND "${_host_text}" "${_token}" _found)
     if(_found EQUAL -1)

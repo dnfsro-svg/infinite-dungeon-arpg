@@ -57,7 +57,8 @@ foreach(_required IN ITEMS
         message(FATAL_ERROR "Stage11B evidence guard missing real persistence path: ${_required}")
     endif()
 endforeach()
-foreach(_required IN ITEMS "PauseMenuRenderer" "DrawTextEx" "设置已恢复默认值")
+foreach(_required IN ITEMS "PauseMenuRenderer" "draw_crisp_ui_text"
+        "record_ui_text_bounds" "设置已恢复默认值")
     string(FIND "${_pause_renderer_text}${_font_source_text}" "${_required}" _found)
     if(_found EQUAL -1)
         message(FATAL_ERROR "Stage11B evidence guard missing CJK notice rendering: ${_required}")

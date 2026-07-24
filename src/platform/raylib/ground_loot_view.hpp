@@ -2,6 +2,7 @@
 
 #include "dungeon/dungeon_types.hpp"
 #include "dungeon_view_math.hpp"
+#include "material_asset_types.hpp"
 #include "platform/settings/settings_types.hpp"
 
 #include <array>
@@ -27,6 +28,8 @@ struct GroundLootLabel final {
     LootLabelRect rect{};
     Rgba8 text_color{};
     Rgba8 border_color{};
+    MaterialSpriteId item_sprite{MaterialSpriteId::missing};
+    MaterialSpriteId rarity_sprite{MaterialSpriteId::missing};
     bool abyss{};
     std::array<char, kGroundLootTextCapacity> text{};
 };
@@ -47,6 +50,11 @@ struct GroundLootView final {
 [[nodiscard]] bool ground_loot_visible(
     const dungeon::GroundItemSnapshot& item,
     settings::LootFilterMode mode) noexcept;
+
+[[nodiscard]] MaterialSpriteId ground_loot_item_sprite(
+    items::ItemSlot slot) noexcept;
+[[nodiscard]] MaterialSpriteId ground_loot_rarity_sprite(
+    items::ItemRarity rarity, bool abyss) noexcept;
 
 [[nodiscard]] GroundLootView build_ground_loot_view(
     const dungeon::DungeonSnapshot& snapshot,

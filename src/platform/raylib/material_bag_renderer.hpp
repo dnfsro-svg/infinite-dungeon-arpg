@@ -1,6 +1,8 @@
 #pragma once
 
 #include "inventory_view_math.hpp"
+#include "material_loot_view.hpp"
+#include "material_pack.hpp"
 #include "items/item_crafting.hpp"
 #include "items/material_catalog.hpp"
 
@@ -9,6 +11,23 @@
 #include <optional>
 
 namespace arpg::platform {
+
+enum class SkillStoneVisualKind : std::uint8_t {
+    active,
+    support,
+};
+
+[[nodiscard]] MaterialSpriteId material_bag_sprite(
+    items::MaterialId id) noexcept;
+
+[[nodiscard]] const char* material_bag_display_name(
+    items::MaterialId id) noexcept;
+
+[[nodiscard]] Rectangle material_bag_text_backing(
+    Rectangle slot, float scale) noexcept;
+
+[[nodiscard]] MaterialSpriteId skill_stone_sprite(
+    SkillStoneVisualKind kind) noexcept;
 
 struct MaterialBagLayout final {
     Rectangle panel{};
@@ -46,8 +65,10 @@ public:
         Vector2, int width, int height) noexcept;
     [[nodiscard]] std::optional<items::MaterialId> selected_material() const noexcept;
     [[nodiscard]] items::DirectedCategory directed_category() const noexcept;
-    void draw(const items::ItemOwnershipState&, int width, int height) const noexcept;
-    void draw_reinforcement_confirmation(int width, int height) const noexcept;
+    void draw(const items::ItemOwnershipState&, const MaterialPack&,
+        Font font, bool font_ready, int width, int height) const noexcept;
+    void draw_reinforcement_confirmation(const MaterialPack&,
+        Font font, bool font_ready, int width, int height) const noexcept;
 
 private:
     std::optional<items::MaterialId> selected_{};

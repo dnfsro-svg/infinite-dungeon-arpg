@@ -5,6 +5,7 @@
 #include "hud_view_model.hpp"
 #include "ground_loot_view.hpp"
 #include "material_loot_view.hpp"
+#include "material_pack.hpp"
 
 #include <raylib.h>
 
@@ -52,6 +53,8 @@ struct ObjectivePanelPlan final {
     HudRect bounds{};
     HudText96 primary{};
     HudText96 secondary{};
+    HudText96 movement{};
+    std::array<HudText96, 3U> controls{};
 };
 
 struct NavigationPanelPlan final {
@@ -86,16 +89,18 @@ struct HudTextDrawPlan final {
 };
 
 struct HudReadabilityStyle final {
-    float panel_minimum_font_size{15.0F};
-    float player_bar_font_size{19.0F};
-    float progression_font_size{17.0F};
-    float status_tag_font_size{15.0F};
-    float objective_primary_font_size{22.0F};
-    float objective_secondary_font_size{18.0F};
-    float navigation_primary_font_size{20.0F};
-    float navigation_secondary_font_size{18.0F};
+    float panel_minimum_font_size{17.0F};
+    float player_bar_font_size{20.0F};
+    float progression_font_size{18.0F};
+    float status_tag_font_size{16.0F};
+    float objective_primary_font_size{23.0F};
+    float objective_secondary_font_size{19.0F};
+    float navigation_primary_font_size{21.0F};
+    float navigation_secondary_font_size{19.0F};
     float navigation_element_font_size{16.0F};
-    int outline_pixels{2};
+    int outline_pixels{0};
+    int shadow_pixels{2};
+    int embolden_pixels{0};
 };
 
 [[nodiscard]] PlayerPanelPlan make_player_panel_plan(
@@ -127,6 +132,8 @@ public:
     void draw_ground_loot(const GroundLootView&) const noexcept;
     void draw_material_loot(const MaterialLootView&) const noexcept;
     void draw(const HudViewModel&, const HudLayout&) const noexcept;
+    void draw(const HudViewModel&, const HudLayout&,
+        const MaterialPack&) const noexcept;
 
 private:
     Font font_{};

@@ -21,6 +21,7 @@ make_combat_encounter_config(
     bool reset_player_health,
     abyss::AbyssCombatConfig abyss_config,
     combat::PlayerCombatBuild player_build = {},
-    std::uint64_t evasion_seed = 0U) noexcept;
+    std::uint64_t evasion_seed = 0U,
+    bool fire_room_obstacles = false) noexcept;
 
 }  // namespace arpg::dungeon

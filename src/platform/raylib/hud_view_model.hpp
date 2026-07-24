@@ -48,6 +48,8 @@ struct PlayerHudModel final {
 struct RoomHudModel final {
     HudText96 objective{};
     HudText96 secondary{};
+    HudText96 movement{};
+    std::array<HudText96, 3U> controls{};
     bool abyss{};
     std::uint8_t remaining_targets{};
 };
@@ -141,7 +143,8 @@ private:
     std::uint64_t control_hints_revision_{};
     RoomHudModel cached_objective_{};
     NavigationHudModel cached_navigation_{};
-    HudText96 cached_control_hint_suffix_{};
+    HudText96 cached_movement_hint_{};
+    std::array<HudText96, 3U> cached_control_hint_lines_{};
     std::uint32_t cached_objective_truncations_{};
     std::uint32_t cached_navigation_truncations_{};
     std::uint32_t cached_control_hint_truncations_{};

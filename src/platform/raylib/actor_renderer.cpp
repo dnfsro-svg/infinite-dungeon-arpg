@@ -1,9 +1,12 @@
 #include "combat_renderer.hpp"
 
+#include "combat/attack_catalog.hpp"
 #include "combat_view_math.hpp"
 #include "hud_renderer.hpp"
 #include "dungeon_view_math.hpp"
 #include "material_animation.hpp"
+#include "ui_text_renderer.hpp"
+#include "ui_typography.hpp"
 
 #include <raylib.h>
 
@@ -38,7 +41,12 @@ const char* monster_phase_name(MonsterAiPhase phase) noexcept {
     return "?";
 }
 
-struct RenderActor final { Vec3 position{}; std::uint8_t monster_index{}; bool player{}; };
+struct RenderActor final {
+    Vec3 position{};
+    std::uint8_t monster_index{};
+    bool player{};
+    MonsterMaterialDrawPlan material_plan{};
+};
 
 bool render_actor_precedes(const RenderActor& lhs, const RenderActor& rhs) noexcept {
     if (lhs.position.y != rhs.position.y) return lhs.position.y < rhs.position.y;
@@ -93,6 +101,17 @@ void draw_outlined_text(const char* text, int x, int y, int font_size,
         }
     }
     DrawText(text, x, y, font_size, color);
+}
+
+void draw_scene_label(Font font, bool font_ready, const char* text,
+    float x, float y, int font_size, Color color) noexcept {
+    if (font_ready && IsFontValid(font)) {
+        draw_crisp_ui_text(font, text, {x, y},
+            static_cast<float>(font_size), 1.0F, color);
+        return;
+    }
+    DrawText(text, static_cast<int>(std::round(x)),
+        static_cast<int>(std::round(y)), font_size, color);
 }
 
 void draw_effects(const CombatFeedback& feedback, const MaterialPack& material_pack,
@@ -252,6 +271,73 @@ bool draw_material_actor(const MaterialPack& material_pack,
     return true;
 }
 
+std::uint16_t player_loop_duration_ticks(
+    const PlayerAnimationClipDefinition& clip) noexcept {
+    return static_cast<std::uint16_t>((static_cast<std::uint32_t>(clip.frame_count)
+        * 60U + clip.frames_per_second - 1U) / clip.frames_per_second);
+}
+
+bool draw_player_animation(const MaterialPack& material_pack,
+    const PlayerSnapshot& player, std::uint64_t world_tick,
+    const ScreenProjection& projected) noexcept {
+    PlayerAnimationClipId clip_id = select_player_animation_clip(
+        player.state, player.active_attack);
+    std::uint64_t elapsed_ticks = world_tick;
+    std::uint16_t duration_ticks{};
+    bool loop = true;
+    if (player.hp <= 0) {
+        clip_id = PlayerAnimationClipId::death;
+        elapsed_ticks = 1U;
+        duration_ticks = 1U;
+        loop = false;
+    } else if (player.hurt_ticks > 0U) {
+        clip_id = PlayerAnimationClipId::hurt;
+    } else if (player.active_attack != AttackId::none
+        && (player.state == PlayerState::attack_startup
+            || player.state == PlayerState::attack_active
+            || player.state == PlayerState::attack_recovery)) {
+        const AttackDefinition* const attack = find_attack_definition(
+            player.active_attack);
+        if (attack != nullptr) {
+            elapsed_ticks = player.attack_elapsed_ticks;
+            duration_ticks = static_cast<std::uint16_t>(attack->startup_ticks
+                + attack->active_ticks + attack->recovery_ticks);
+            loop = false;
+        }
+    }
+    const PlayerAnimationClipDefinition* const clip = player_animation_clip(clip_id);
+    if (clip == nullptr) return false;
+    if (duration_ticks == 0U) duration_ticks = player_loop_duration_ticks(*clip);
+    const std::uint16_t frame_index = player_animation_frame_index(*clip,
+        elapsed_ticks, duration_ticks, loop);
+    const auto frame = player_animation_frame(*clip, frame_index);
+    if (!frame.has_value()) return false;
+    return material_pack.draw_frame(frame->atlas, frame->source, frame->foot_anchor,
+        {projected.x, projected.y}, player.facing == Facing::left,
+        material_actor_draw_scale(true, projected.scale));
+}
+
+bool draw_monster_animation(const MaterialPack& material_pack,
+    const MonsterSnapshot& monster, const MonsterMaterialDrawPlan& plan,
+    const ScreenProjection& projected, float hit_flash_seconds) noexcept {
+    if (!plan.use_material_frame || !plan.frame.has_value()) return false;
+    const MonsterAnimationFrame& frame = *plan.frame;
+    constexpr float kWaterMonsterScale = 0.92F;
+    const float scale = kWaterMonsterScale * projected.scale;
+    const bool drawn = material_pack.draw_frame(frame.atlas, frame.source,
+        frame.foot_anchor, {projected.x, projected.y},
+        monster.facing == Facing::left, scale);
+    if (drawn && hit_flash_seconds > 0.0F) {
+        BeginBlendMode(BLEND_ADDITIVE);
+        static_cast<void>(material_pack.draw_frame(frame.atlas, frame.source,
+            frame.foot_anchor, {projected.x, projected.y},
+            monster.facing == Facing::left, scale,
+            Color{230, 248, 255, 175}));
+        EndBlendMode();
+    }
+    return drawn;
+}
+
 void draw_player_geometry(const ScreenProjection& projected) noexcept {
     const float body_width = 42.0F * projected.scale;
     const float body_height = 82.0F * projected.scale;
@@ -296,17 +382,25 @@ void draw_player_hit_direction(const CombatFeedback& feedback,
 
 void draw_monster_presentation(const MonsterSnapshot& monster, Vec3 position,
     dungeon::DungeonElement ecology, float width, float height,
-    std::uint64_t tick, std::size_t label_lane) noexcept {
+    std::uint64_t tick, std::size_t label_lane,
+    Font hud_font, bool hud_font_ready) noexcept {
     const ScreenProjection projected = project_combat_position(position, width, height);
     const MonsterVisual visual = monster_visual(monster.id, monster.ai_phase, ecology);
-    const MonsterLabelTextStyle text_style = monster_label_text_style(projected.scale);
+    const float viewport_scale = ui_viewport_scale(
+        static_cast<int>(width), static_cast<int>(height));
+    const MonsterLabelTextStyle text_style =
+        monster_label_text_style(viewport_scale);
     const float scale = projected.scale;
     const float x = projected.x;
     const float y = projected.y;
     // Keep each monster's complete information block in a stable screen lane.
     // Close combat naturally stacks actors; placing every label at the actor's
     // feet made role and phase names unreadable precisely when they mattered.
-    const float label_offset = static_cast<float>(label_lane % 4U) * 38.0F * scale;
+    const float label_offset = static_cast<float>(label_lane % 4U)
+        * 54.0F * viewport_scale;
+    const float role_y = y - 120.0F * scale - label_offset;
+    const float phase_y = role_y
+        + static_cast<float>(text_style.role_font_size) + 2.0F;
     const std::size_t affix_count = std::min<std::size_t>(
         monster.affixes.count, monster.affixes.values.size());
     for (std::size_t index = 0U; index < affix_count; ++index) {
@@ -319,36 +413,36 @@ void draw_monster_presentation(const MonsterSnapshot& monster, Vec3 position,
     }
     const MonsterBarVisualPlan bar_visual = make_monster_bar_visual_plan(monster);
     const float bar_width = 54.0F * scale;
-    constexpr float kBarOffsets[] = {102.0F, 95.0F, 88.0F};
     for (std::size_t index = 0U; index < bar_visual.bars.size(); ++index) {
         const MonsterBarPlan& bar = bar_visual.bars[index];
         if (!bar.visible) continue;
         draw_bar(x - bar_width * .5F,
-            y - kBarOffsets[index] * scale - label_offset,
+            role_y - 8.0F - static_cast<float>(index) * 7.0F,
             bar_width, bar.ratio, hud_palette_color(bar.palette_id));
     }
     for (std::size_t index = 0U; index < affix_count; ++index) {
         const AffixBadge badge = monster_affix_badge(monster.affixes.values[index]);
-        draw_outlined_text(TextFormat("%s %s", badge.short_name, badge.tier_text),
-            static_cast<int>(x - bar_width * .5F),
-            static_cast<int>(y - (80.0F - static_cast<float>(index) * 12.0F) * scale
-                - label_offset),
-            text_style.affix_font_size, to_color(badge.color), text_style.outline_pixels);
+        draw_scene_label(hud_font, hud_font_ready,
+            TextFormat("%s %s", badge.short_name, badge.tier_text),
+            x - bar_width * .5F,
+            phase_y + static_cast<float>(text_style.phase_font_size + 2)
+                + static_cast<float>(index)
+                    * static_cast<float>(text_style.affix_font_size + 2),
+            text_style.affix_font_size, to_color(badge.color));
     }
-    draw_outlined_text(visual.role_label, static_cast<int>(x - bar_width * .5F),
-        static_cast<int>(y - 120.0F * scale - label_offset), text_style.role_font_size,
-        Color{238, 243, 252, 255}, text_style.outline_pixels);
-    draw_outlined_text(monster_phase_name(monster.ai_phase),
-        static_cast<int>(x - bar_width * .5F),
-        static_cast<int>(y - 102.0F * scale - label_offset),
-        text_style.phase_font_size, Color{205, 218, 237, 255},
-        text_style.outline_pixels);
+    draw_scene_label(hud_font, hud_font_ready, visual.role_label,
+        x - bar_width * .5F, role_y, text_style.role_font_size,
+        Color{248, 246, 238, 255});
+    draw_scene_label(hud_font, hud_font_ready,
+        monster_phase_name(monster.ai_phase), x - bar_width * .5F,
+        phase_y, text_style.phase_font_size, Color{205, 218, 237, 255});
 }
 
 void draw_monster_silhouette(const MonsterSnapshot& monster, Vec3 position,
     dungeon::DungeonElement ecology, float width, float height,
     const CombatFeedback& feedback, std::size_t monster_index,
-    std::uint64_t tick, std::size_t label_lane) noexcept {
+    std::uint64_t tick, std::size_t label_lane,
+    Font hud_font, bool hud_font_ready) noexcept {
     const ScreenProjection projected = project_combat_position(position, width, height);
     const MonsterVisual visual = monster_visual(monster.id, monster.ai_phase, ecology);
     Color body = to_color(visual.body);
@@ -388,7 +482,7 @@ void draw_monster_silhouette(const MonsterSnapshot& monster, Vec3 position,
     }
 
     draw_monster_presentation(monster, position, ecology, width, height,
-        tick, label_lane);
+        tick, label_lane, hud_font, hud_font_ready);
 }
 
 }  // namespace
@@ -409,7 +503,8 @@ MonsterBarVisualPlan make_monster_bar_visual_plan(
 
 void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
     const dungeon::DungeonSnapshot& current, float alpha, bool draw_debug,
-    const CombatFeedback& feedback) const noexcept {
+    const CombatFeedback& feedback) noexcept {
+    monster_material_draw_statuses_.fill({});
     if (!current.combat.has_value()) return;
     const float width = static_cast<float>(GetScreenWidth());
     const float height = static_cast<float>(GetScreenHeight());
@@ -418,15 +513,29 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
         ? *previous.combat : current_combat;
     std::array<RenderActor, kMonsterCapacity + 1> draw_items{};
     std::size_t draw_count = 0;
-    draw_items[draw_count++] = {current_combat.player.position, 0U, true};
+    draw_items[draw_count++] = {current_combat.player.position, 0U, true, {}};
     for (std::size_t index = 0; index < current_combat.monsters.size(); ++index) {
         const MonsterSnapshot& monster = current_combat.monsters[index];
-        if (!monster_visible(monster)) continue;
+        const MonsterMaterialDrawPlan material_plan =
+            monster_presenter_.collect_draw_plan(index, monster,
+                current_combat.tick,
+                feedback.target_flash_seconds(index) > 0.0F);
+        if (!material_plan.visible) continue;
+        MonsterMaterialDrawRuntimeStatus& material_status =
+            monster_material_draw_statuses_[static_cast<std::size_t>(monster.id)];
+        material_status.presenter_visible = true;
+        material_status.use_material_frame = material_plan.use_material_frame;
+        material_status.frame_index = material_plan.frame_index;
+        if (material_plan.frame.has_value()) {
+            material_status.atlas = material_plan.frame->atlas;
+        }
         Vec3 position = monster.position;
         const MonsterSnapshot& previous_monster = previous_combat.monsters[index];
         if (monster.id == previous_monster.id && monster.generation == previous_monster.generation
-            && monster_visible(previous_monster)) position = interpolate(previous_monster.position, monster.position, alpha);
-        draw_items[draw_count++] = {position, static_cast<std::uint8_t>(index), false};
+            && previous_monster.active) position = interpolate(
+                previous_monster.position, monster.position, alpha);
+        draw_items[draw_count++] = {position, static_cast<std::uint8_t>(index),
+            false, material_plan};
         draw_monster_warning(monster, position, current.ecology, width, height);
         draw_blink_affix_warning(monster, position, width, height);
     }
@@ -451,7 +560,9 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
             } else if (current_combat.player.hurt_ticks > 0) {
                 sprite = MaterialSpriteId::player_hurt;
             }
-            if (!draw_material_actor(material_pack_, sprite,
+            if (!draw_player_animation(material_pack_, current_combat.player,
+                    current_combat.tick, projected)
+                && !draw_material_actor(material_pack_, sprite,
                     current_combat.player.facing, true, projected)) {
                 draw_player_geometry(projected);
             }
@@ -465,14 +576,24 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
                     {projected.x, projected.ground_y}, false, 0.72F * projected.scale,
                     Color{230, 142, 255, 155}));
             }
-            if (draw_material_actor(material_pack_, sprite, monster.facing, false,
-                    projected, feedback.target_flash_seconds(item.monster_index))) {
+            const float hit_flash_seconds = feedback.target_flash_seconds(
+                item.monster_index);
+            const bool material_frame_drawn = draw_monster_animation(
+                material_pack_, monster, item.material_plan, projected,
+                hit_flash_seconds);
+            monster_material_draw_statuses_[static_cast<std::size_t>(monster.id)]
+                .drawn |= material_frame_drawn;
+            if (material_frame_drawn
+                || draw_material_actor(material_pack_, sprite, monster.facing,
+                    false, projected, hit_flash_seconds)) {
                 draw_monster_presentation(monster, item.position, current.ecology,
-                    width, height, current_combat.tick, item.monster_index);
+                    width, height, current_combat.tick, item.monster_index,
+                    hud_renderer_.hud_font(), hud_renderer_.font_ready());
             } else {
                 draw_monster_silhouette(monster, item.position, current.ecology,
                     width, height, feedback, item.monster_index, current_combat.tick,
-                    item.monster_index);
+                    item.monster_index, hud_renderer_.hud_font(),
+                    hud_renderer_.font_ready());
             }
         }
     }

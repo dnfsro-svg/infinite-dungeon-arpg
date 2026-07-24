@@ -15,6 +15,7 @@ inline constexpr std::size_t kPauseMenuRowTextCapacity = 64U;
 
 struct PauseMenuLayout final {
     Rectangle panel{};
+    Rectangle title{};
     Rectangle rows[kPauseMenuRowCapacity]{};
     Rectangle footer{};
 };

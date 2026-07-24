@@ -23,10 +23,12 @@ $markerTime = (Get-Item -LiteralPath $marker).LastWriteTimeUtc
 
 $images = @(
     '01-new-default-1280x720.png',
-    '02-draw-slash-hit-1280x720.png',
-    '03-storm-array-1280x720.png',
-    '04-storm-finisher-1280x720.png',
-    '05-restarted-loadout-1280x720.png'
+    '02-draw-slash-windup-1280x720.png',
+    '03-draw-slash-hit-1280x720.png',
+    '04-storm-ground-array-1280x720.png',
+    '05-storm-aerial-array-1280x720.png',
+    '06-storm-finisher-1280x720.png',
+    '07-restarted-loadout-1280x720.png'
 )
 $pixelHashes = [System.Collections.Generic.HashSet[string]]::new()
 $pixelHashesByImage = [ordered]@{}
@@ -83,7 +85,7 @@ foreach ($line in $lines) {
     $fields[$pair[0]] = $pair[1]
 }
 $expected = [ordered]@{
-    schema = 'stage17-skill-stones-evidence-v1'
+    schema = 'stage17-active-skill-rework-evidence-v2'
     result = 'PASS'
     renderer = 'raylib-6.0-opengl'
     window = '1280x720'
@@ -96,10 +98,17 @@ $expected = [ordered]@{
     digit_1_cast = 'accepted'
     digit_2_cast = 'accepted'
     digit_3_5_effect = 'none'
+    draw_windup_captured = 'true'
+    draw_frame_peak = '35'
     draw_slash_hit_count = '2'
-    storm_strike_hit_count = '3'
-    storm_finisher_hit_count = '1'
+    storm_strike_hit_count = '5'
+    storm_finisher_hit_count = '0'
     storm_strike_count = '12'
+    storm_sword_peak = '24'
+    storm_invulnerable_seen = 'true'
+    storm_finisher_phase_seen = 'true'
+    storm_aerial_captured = 'true'
+    active_skill_atlases_ready = 'true'
     storm_center_locked = 'true'
     loadout_transactions = 'remove1,equip5,swap2_5'
     restart_persisted = 'true'

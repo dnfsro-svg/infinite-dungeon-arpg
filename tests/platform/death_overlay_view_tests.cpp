@@ -286,8 +286,8 @@ arpg::test::Failure font_plan_covers_all_overlay_text_and_ascii() noexcept {
     const auto plan = platform::death_overlay_font_plan();
     ARPG_REQUIRE(plan.codepoint_count > 95U);
     ARPG_REQUIRE(std::strcmp(plan.candidate_paths[0],
-        "C:/Windows/Fonts/NotoSansSC-VF.ttf") == 0);
-    ARPG_REQUIRE(plan.candidate_count >= 3U);
+        "assets/fonts/NotoSansCJKsc-Medium.otf") == 0);
+    ARPG_REQUIRE(plan.candidate_count == 1U);
     for (int codepoint = 32; codepoint <= 126; ++codepoint) {
         ARPG_REQUIRE(platform::death_overlay_font_has_codepoint(plan, codepoint));
     }

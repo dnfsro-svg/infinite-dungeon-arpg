@@ -20,6 +20,11 @@ using arpg::skills::ActiveSkillId;
 using arpg::test::tick_n;
 
 constexpr double kFloatTolerance = 1.0e-4;
+constexpr std::uint16_t kStormStrikesTick = 72U;
+constexpr std::uint16_t kStormFirstDamageTick = 108U;
+constexpr std::uint16_t kStormDamageIntervalTicks = 18U;
+constexpr std::uint16_t kStormFinisherTick = 324U;
+constexpr std::uint16_t kStormRecoveryTick = 342U;
 
 CombatLabConfig storm_config() noexcept {
     CombatLabConfig config{};
@@ -78,49 +83,68 @@ arpg::test::Failure accepts_storm_and_locks_center_ahead_of_cast_facing() noexce
     return {};
 }
 
-arpg::test::Failure twelve_strikes_follow_six_tick_cadence_then_finish_and_recover() noexcept {
+arpg::test::Failure twelve_strikes_follow_timeline_events_then_finish_and_recover() noexcept {
     CombatWorld world{storm_config()};
     ARPG_REQUIRE(world.request_active_skill(ActiveSkillId::storm_swords)
                  == SkillCastResult::accepted);
 
-    tick_n(world, 23);
-    ARPG_REQUIRE(world.snapshot().active_skill.phase == ActiveSkillPhase::startup);
-    ARPG_REQUIRE(world.snapshot().active_skill.elapsed_ticks == 23U);
-    ARPG_REQUIRE(world.snapshot().active_skill.strike_index == 0U);
+    tick_n(world, kStormStrikesTick - 1U);
+    CombatSnapshot snapshot = world.snapshot();
+    ARPG_REQUIRE(snapshot.active_skill.phase == ActiveSkillPhase::startup);
+    ARPG_REQUIRE(snapshot.active_skill.elapsed_ticks == kStormStrikesTick - 1U);
+    ARPG_REQUIRE(snapshot.active_skill.strike_index == 0U);
+    world.tick(MovementInput{});
+    snapshot = world.snapshot();
+    ARPG_REQUIRE(snapshot.active_skill.phase == ActiveSkillPhase::strikes);
+    ARPG_REQUIRE(snapshot.active_skill.elapsed_ticks == kStormStrikesTick);
+    tick_n(world, 24U);
+    snapshot = world.snapshot();
+    ARPG_REQUIRE(snapshot.active_skill.elapsed_ticks == 96U);
+    ARPG_REQUIRE(snapshot.active_skill.frame_index == 38U);
+    ARPG_REQUIRE(snapshot.active_skill.spawned_sword_count == 15U);
+    ARPG_REQUIRE(snapshot.active_skill.player_invulnerable);
 
     for (std::uint8_t strike = 1U; strike <= 12U; ++strike) {
         const std::uint16_t boundary = static_cast<std::uint16_t>(
-            24U + static_cast<std::uint16_t>(strike - 1U) * 6U);
-        const std::uint16_t elapsed = world.snapshot().active_skill.elapsed_ticks;
+            kStormFirstDamageTick
+            + static_cast<std::uint16_t>(strike - 1U) * kStormDamageIntervalTicks);
+        const std::uint16_t elapsed = snapshot.active_skill.elapsed_ticks;
         tick_n(world, static_cast<int>(boundary - elapsed));
-        const CombatSnapshot snapshot = world.snapshot();
+        snapshot = world.snapshot();
         ARPG_REQUIRE(snapshot.active_skill.phase == ActiveSkillPhase::strikes);
         ARPG_REQUIRE(snapshot.active_skill.elapsed_ticks == boundary);
         ARPG_REQUIRE(snapshot.active_skill.strike_index == strike);
         if (strike != 12U) {
-            tick_n(world, 5);
-            ARPG_REQUIRE(world.snapshot().active_skill.phase
+            tick_n(world, kStormDamageIntervalTicks - 1U);
+            snapshot = world.snapshot();
+            ARPG_REQUIRE(snapshot.active_skill.phase
                          == ActiveSkillPhase::strikes);
-            ARPG_REQUIRE(world.snapshot().active_skill.strike_index == strike);
+            ARPG_REQUIRE(snapshot.active_skill.strike_index == strike);
         }
     }
 
-    tick_n(world, 5);
-    ARPG_REQUIRE(world.snapshot().active_skill.elapsed_ticks == 95U);
-    ARPG_REQUIRE(world.snapshot().active_skill.strike_index == 12U);
+    tick_n(world, kStormFinisherTick - 1U - snapshot.active_skill.elapsed_ticks);
+    snapshot = world.snapshot();
+    ARPG_REQUIRE(snapshot.active_skill.elapsed_ticks == kStormFinisherTick - 1U);
+    ARPG_REQUIRE(snapshot.active_skill.strike_index == 12U);
     world.tick(MovementInput{});
-    ARPG_REQUIRE(world.snapshot().active_skill.phase == ActiveSkillPhase::finisher);
-    ARPG_REQUIRE(world.snapshot().active_skill.elapsed_ticks == 96U);
-    ARPG_REQUIRE(world.snapshot().active_skill.strike_index == 12U);
+    snapshot = world.snapshot();
+    ARPG_REQUIRE(snapshot.active_skill.phase == ActiveSkillPhase::finisher);
+    ARPG_REQUIRE(snapshot.active_skill.elapsed_ticks == kStormFinisherTick);
+    ARPG_REQUIRE(snapshot.active_skill.strike_index == 12U);
 
+    tick_n(world, kStormRecoveryTick - kStormFinisherTick - 1U);
+    snapshot = world.snapshot();
+    ARPG_REQUIRE(snapshot.active_skill.elapsed_ticks == kStormRecoveryTick - 1U);
     world.tick(MovementInput{});
-    ARPG_REQUIRE(world.snapshot().active_skill.phase == ActiveSkillPhase::recovery);
-    tick_n(world, 23);
-    ARPG_REQUIRE(world.snapshot().active_skill.elapsed_ticks == 120U);
-    ARPG_REQUIRE(world.snapshot().active_skill.phase == ActiveSkillPhase::recovery);
-    world.tick(MovementInput{});
-    ARPG_REQUIRE(world.snapshot().active_skill.id == ActiveSkillId::none);
-    ARPG_REQUIRE(world.snapshot().active_skill.phase == ActiveSkillPhase::none);
+    snapshot = world.snapshot();
+    ARPG_REQUIRE(snapshot.active_skill.phase == ActiveSkillPhase::recovery);
+    ARPG_REQUIRE(!snapshot.active_skill.player_invulnerable);
+    ARPG_REQUIRE(snapshot.active_skill.spawned_sword_count == 24U);
+    tick_n(world, 18U);
+    snapshot = world.snapshot();
+    ARPG_REQUIRE(snapshot.active_skill.id == ActiveSkillId::none);
+    ARPG_REQUIRE(snapshot.active_skill.phase == ActiveSkillPhase::none);
     return {};
 }
 
@@ -135,7 +159,7 @@ arpg::test::Failure each_strike_hits_each_target_once_and_latch_resets_next_stri
     ARPG_REQUIRE(world.request_active_skill(ActiveSkillId::storm_swords)
                  == SkillCastResult::accepted);
 
-    tick_n(world, 24);
+    tick_n(world, kStormFirstDamageTick);
     CombatSnapshot snapshot = world.snapshot();
     for (std::size_t index = 0U; index < 3U; ++index) {
         ARPG_REQUIRE(before.monsters[index].hp - snapshot.monsters[index].hp == 42);
@@ -153,7 +177,7 @@ arpg::test::Failure each_strike_hits_each_target_once_and_latch_resets_next_stri
     }
     ARPG_REQUIRE(first_strike_hits == 3U);
 
-    tick_n(world, 5);
+    tick_n(world, kStormDamageIntervalTicks - 1U);
     snapshot = world.snapshot();
     for (std::size_t index = 0U; index < 3U; ++index) {
         ARPG_REQUIRE(before.monsters[index].hp - snapshot.monsters[index].hp == 42);
@@ -177,14 +201,14 @@ arpg::test::Failure normal_and_finisher_radii_are_independent_and_finisher_launc
     ARPG_REQUIRE(world.request_active_skill(ActiveSkillId::storm_swords)
                  == SkillCastResult::accepted);
 
-    tick_n(world, 24);
+    tick_n(world, kStormFirstDamageTick);
     CombatSnapshot snapshot = world.snapshot();
     ARPG_REQUIRE(before.monsters[0].hp - snapshot.monsters[0].hp == 42);
     ARPG_REQUIRE(before.monsters[1].hp == snapshot.monsters[1].hp);
     ARPG_REQUIRE(before.monsters[2].hp == snapshot.monsters[2].hp);
 
     arpg::test::drain_events(world);
-    tick_n(world, 72);
+    tick_n(world, kStormFinisherTick - kStormFirstDamageTick);
     snapshot = world.snapshot();
     ARPG_REQUIRE(snapshot.active_skill.phase == ActiveSkillPhase::finisher);
     ARPG_REQUIRE(before.monsters[1].hp - snapshot.monsters[1].hp == 360);
@@ -213,7 +237,7 @@ arpg::test::Failure normal_and_finisher_radii_are_independent_and_finisher_launc
     CombatWorld left{left_config};
     ARPG_REQUIRE(left.request_active_skill(ActiveSkillId::storm_swords)
                  == SkillCastResult::accepted);
-    tick_n(left, 96);
+    tick_n(left, kStormFinisherTick);
     const CombatSnapshot left_snapshot = left.snapshot();
     ARPG_REQUIRE(left_snapshot.monsters[1].reaction
                  == ReactionState::airborne);
@@ -230,7 +254,7 @@ arpg::test::Failure reset_cancels_remaining_storm_damage_and_cooldown() noexcept
     CombatWorld world{config};
     ARPG_REQUIRE(world.request_active_skill(ActiveSkillId::storm_swords)
                  == SkillCastResult::accepted);
-    tick_n(world, 24);
+    tick_n(world, kStormFirstDamageTick);
     ARPG_REQUIRE(world.snapshot().monsters[0].hp == 258);
 
     world.reset();
@@ -254,7 +278,7 @@ arpg::test::Failure load_wave_cancels_remaining_storm_without_late_hits() noexce
     CombatWorld world{config};
     ARPG_REQUIRE(world.request_active_skill(ActiveSkillId::storm_swords)
                  == SkillCastResult::accepted);
-    tick_n(world, 24);
+    tick_n(world, kStormFirstDamageTick);
 
     EncounterWave empty{};
     ARPG_REQUIRE(world.load_wave(empty));
@@ -273,7 +297,7 @@ arpg::test::Failure lethal_damage_cancels_remaining_storm_without_late_hits() no
     CombatWorld world{config};
     ARPG_REQUIRE(world.request_active_skill(ActiveSkillId::storm_swords)
                  == SkillCastResult::accepted);
-    tick_n(world, 24);
+    tick_n(world, kStormStrikesTick);
     const int hp_after_first_strike = world.snapshot().monsters[0].hp;
 
     arpg::test::CombatWorldTestAccess::apply_damage(
@@ -314,12 +338,12 @@ arpg::test::Failure storm_hot_paths_allocate_nothing() noexcept {
                  == SkillCastResult::accepted);
     ARPG_REQUIRE(arpg::test::allocation_count() == request_before);
 
-    tick_n(world, 23);
+    tick_n(world, kStormFirstDamageTick - 1U);
     const std::uint64_t strike_before = arpg::test::allocation_count();
     world.tick(MovementInput{});
     ARPG_REQUIRE(arpg::test::allocation_count() == strike_before);
 
-    tick_n(world, 71);
+    tick_n(world, kStormFinisherTick - kStormFirstDamageTick - 1U);
     const std::uint64_t finisher_before = arpg::test::allocation_count();
     world.tick(MovementInput{});
     ARPG_REQUIRE(arpg::test::allocation_count() == finisher_before);
@@ -329,8 +353,8 @@ arpg::test::Failure storm_hot_paths_allocate_nothing() noexcept {
 constexpr arpg::test::TestCase kCases[] = {
     {"accepts storm and locks center ahead of facing",
      &accepts_storm_and_locks_center_ahead_of_cast_facing},
-    {"twelve strikes use six tick cadence then finisher and recovery",
-     &twelve_strikes_follow_six_tick_cadence_then_finish_and_recover},
+    {"twelve strikes use timeline events then finisher and recovery",
+     &twelve_strikes_follow_timeline_events_then_finish_and_recover},
     {"per-strike latch resets only for next strike",
      &each_strike_hits_each_target_once_and_latch_resets_next_strike},
     {"normal and finisher radii are independent and finisher launches",

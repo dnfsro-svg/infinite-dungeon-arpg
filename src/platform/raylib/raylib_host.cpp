@@ -2,8 +2,12 @@
 
 #include "combat_feedback.hpp"
 #include "combat_renderer.hpp"
+#include "combat/active_skill_runtime.hpp"
+#include "combat/fire_room_obstacle.hpp"
 #include "combat/monster_affix_generation.hpp"
+#include "combat/room_bounds.hpp"
 #include "control_hints.hpp"
+#include "death_overlay_font.hpp"
 #include "core/fixed_step.hpp"
 #include "dungeon_runtime.hpp"
 #include "dungeon_view_math.hpp"
@@ -15,6 +19,8 @@
 #include "pause_menu_renderer.hpp"
 #include "pause_menu_state.hpp"
 #include "pause_menu_view.hpp"
+#include "ui_material.hpp"
+#include "ui_text_bounds_audit.hpp"
 #include "persistence/save_paths.hpp"
 #include "platform/settings/settings_store.hpp"
 #include "platform/settings/settings_types.hpp"
@@ -177,6 +183,29 @@ void present_frame_and_maybe_capture(const char* path) noexcept {
     UnloadImage(image);
 }
 
+void draw_stage12_ui_material_gallery(const MaterialPack& assets) noexcept {
+    constexpr float kCell = 104.0F;
+    constexpr float kGap = 8.0F;
+    constexpr std::size_t kColumns = 8U;
+    constexpr std::size_t kRows = 5U;
+    const float width = kCell * static_cast<float>(kColumns)
+        + kGap * static_cast<float>(kColumns - 1U);
+    const float height = kCell * static_cast<float>(kRows)
+        + kGap * static_cast<float>(kRows - 1U);
+    const float left = (static_cast<float>(GetScreenWidth()) - width) * 0.5F;
+    const float top = (static_cast<float>(GetScreenHeight()) - height) * 0.5F;
+    DrawRectangleRounded({left - 16.0F, top - 16.0F,
+        width + 32.0F, height + 32.0F}, 0.025F, 6,
+        Color{3, 6, 11, 244});
+    for (std::size_t index{}; index < kUiMaterialSprites.size(); ++index) {
+        const std::size_t row = index / kColumns;
+        const std::size_t column = index % kColumns;
+        static_cast<void>(assets.draw_to(kUiMaterialSprites[index],
+            {left + static_cast<float>(column) * (kCell + kGap),
+             top + static_cast<float>(row) * (kCell + kGap), kCell, kCell}));
+    }
+}
+
 std::optional<std::string> host_screenshot_path(
     const RaylibHostConfig& config) noexcept {
     try {
@@ -195,8 +224,60 @@ std::optional<std::string> host_screenshot_path(
     }
 }
 
-void apply_stage12_material_showcase(dungeon::DungeonSnapshot& snapshot) noexcept {
+void apply_stage12_material_showcase(dungeon::DungeonSnapshot& snapshot,
+    std::optional<dungeon::DungeonElement> ecology,
+    bool hide_monsters, bool hide_items) noexcept {
     if (!snapshot.combat.has_value()) return;
+    if (ecology.has_value()) snapshot.ecology = *ecology;
+    if (hide_items) {
+        snapshot.ground_item_count = 0U;
+        snapshot.ground_material_count = 0U;
+    } else {
+        constexpr std::array<items::ItemSlot, 6U> item_slots{{
+            items::ItemSlot::weapon, items::ItemSlot::helmet,
+            items::ItemSlot::chest, items::ItemSlot::gloves,
+            items::ItemSlot::boots, items::ItemSlot::accessory,
+        }};
+        constexpr std::array<items::ItemRarity, 6U> item_rarities{{
+            items::ItemRarity::normal, items::ItemRarity::magic,
+            items::ItemRarity::rare, items::ItemRarity::normal,
+            items::ItemRarity::magic, items::ItemRarity::rare,
+        }};
+        snapshot.ground_item_count = static_cast<std::uint16_t>(
+            item_slots.size());
+        for (std::size_t index{}; index < item_slots.size(); ++index) {
+            dungeon::GroundItemSnapshot& item = snapshot.ground_items[index];
+            item = {};
+            item.ordinal = static_cast<std::uint16_t>(index + 1U);
+            item.source = index == 3U
+                ? dungeon::GroundItemSource::abyss_chest
+                : dungeon::GroundItemSource::monster_drop;
+            item.abyss_reward_ordinal = index == 3U ? 0U : 0xFFU;
+            item.position = {-5.0F + static_cast<float>(index) * 2.0F,
+                -3.2F, 0.0F};
+            item.item_id = index + 1U;
+            item.base_id = static_cast<std::uint8_t>(index + 1U);
+            item.item_level = 60U;
+            item.slot = item_slots[index];
+            item.rarity = item_rarities[index];
+        }
+        snapshot.ground_material_count = static_cast<std::uint16_t>(
+            items::kMaterialCount);
+        for (std::size_t index{}; index < items::kMaterialCount; ++index) {
+            dungeon::GroundMaterialSnapshot& material =
+                snapshot.ground_materials[index];
+            material = {};
+            material.ordinal = static_cast<std::uint16_t>(index + 1U);
+            material.source = items::material_is_coupon(
+                    static_cast<items::MaterialId>(index))
+                ? dungeon::GroundMaterialSource::monster_coupon
+                : dungeon::GroundMaterialSource::monster_common;
+            material.position = {
+                -4.5F + static_cast<float>(index % 7U) * 1.5F,
+                2.0F + static_cast<float>(index / 7U) * 1.6F, 0.0F};
+            material.material = static_cast<items::MaterialId>(index);
+        }
+    }
     constexpr std::array<combat::MonsterId, 8> ids{{
         combat::MonsterId::fire_bomber, combat::MonsterId::fire_charger,
         combat::MonsterId::water_bulwark, combat::MonsterId::water_support,
@@ -209,6 +290,14 @@ void apply_stage12_material_showcase(dungeon::DungeonSnapshot& snapshot) noexcep
         {1.3F, 1.5F, 0.0F}, {4.0F, 1.5F, 0.0F},
     }};
     auto& combat_snapshot = *snapshot.combat;
+    if (hide_monsters) {
+        combat_snapshot.monster_count = 0U;
+        snapshot.remaining_targets = 0U;
+        for (combat::MonsterSnapshot& monster : combat_snapshot.monsters) {
+            monster = {};
+        }
+        return;
+    }
     combat_snapshot.monster_count = ids.size();
     snapshot.remaining_targets = static_cast<std::uint8_t>(ids.size());
     for (std::size_t index = 0U; index < ids.size(); ++index) {
@@ -354,8 +443,10 @@ enum class Stage17ValidationStep : std::uint8_t {
 enum class Stage17Capture : std::uint8_t {
     none,
     initial,
+    draw_windup,
     draw_hit,
     storm_array,
+    storm_aerial,
     storm_finisher,
     restarted,
 };
@@ -370,25 +461,33 @@ struct Stage17SkillStonesValidationState final {
     bool initial_recorded{};
     bool initial_captured{};
     bool draw_accepted{};
+    bool draw_windup_captured{};
     bool draw_captured{};
     bool storm_accepted{};
     bool storm_lock_recorded{};
     bool storm_center_locked{true};
     bool storm_player_moved{};
     bool storm_array_captured{};
+    bool storm_aerial_captured{};
     bool storm_finisher_captured{};
     bool restart_captured{};
     bool restart_persisted{};
     bool restart_cooldowns_zero{};
     bool public_input_path{};
     bool production_transactions{};
+    bool active_skill_atlases_ready{};
+    bool storm_invulnerable_seen{};
+    bool storm_finisher_phase_seen{};
     bool aborted_by_death{};
     std::array<bool, 3> empty_slots_none{};
     std::uint32_t draw_hit_count{};
     std::uint32_t storm_strike_hit_count{};
     std::uint32_t storm_finisher_hit_count{};
     std::uint8_t storm_strike_count{};
+    std::uint8_t storm_sword_peak{};
+    std::uint16_t draw_frame_peak{};
     std::uint32_t presented_frames{};
+    std::int8_t draw_retreat_direction{};
 };
 
 void observe_stage17_combat_event(
@@ -545,10 +644,32 @@ void stage17_apply_movement(PhysicalKeySnapshot& snapshot,
     }
 }
 
+[[nodiscard]] combat::MovementInput validation_route_fire_movement(
+    combat::Vec3 player,
+    combat::Vec3 target,
+    combat::MovementInput movement) noexcept {
+    combat::Vec3 candidate = player;
+    candidate.x += 0.10F * static_cast<float>(movement.x);
+    candidate.y += 0.10F * static_cast<float>(movement.y);
+    if (!combat::fire_room_obstacle::blocks_player(player, candidate)) {
+        return movement;
+    }
+    const combat::Vec3 routed = combat::fire_room_obstacle::route_monster(
+        player, candidate, target);
+    return {
+        static_cast<std::int8_t>(routed.x > player.x ? 1
+            : (routed.x < player.x ? -1 : 0)),
+        static_cast<std::int8_t>(routed.y > player.y ? 1
+            : (routed.y < player.y ? -1 : 0)),
+    };
+}
+
 [[nodiscard]] bool stage17_prepare_skill_lane(
     PhysicalKeySnapshot& snapshot,
     const settings::SettingsData& input_settings,
-    const combat::CombatSnapshot& combat_state) noexcept {
+    const combat::CombatSnapshot& combat_state,
+    const bool fire_room,
+    std::int8_t& retreat_direction) noexcept {
     const combat::MonsterSnapshot* const target =
         stage17_nearest_monster(combat_state);
     if (target == nullptr) return false;
@@ -561,15 +682,29 @@ void stage17_apply_movement(PhysicalKeySnapshot& snapshot,
         movement.y = y > 0.0F ? 1 : -1;
     }
     if (std::fabs(x) > 3.8F) {
+        retreat_direction = 0;
         movement.x = static_cast<std::int8_t>(toward);
     } else if (std::fabs(x) < 3.15F) {
-        movement.x = static_cast<std::int8_t>(-toward);
+        if (retreat_direction == 0) {
+            retreat_direction = static_cast<std::int8_t>(-toward);
+        }
+        if (player.x <= -8.0F && retreat_direction < 0) {
+            retreat_direction = 1;
+        } else if (player.x >= 8.0F && retreat_direction > 0) {
+            retreat_direction = -1;
+        }
+        movement.x = retreat_direction;
     } else {
+        retreat_direction = 0;
         const combat::Facing expected = toward > 0
             ? combat::Facing::right : combat::Facing::left;
         if (combat_state.player.facing != expected) {
             movement.x = static_cast<std::int8_t>(toward);
         }
+    }
+    if (fire_room && movement.x != 0) {
+        movement = validation_route_fire_movement(
+            player, target->position, movement);
     }
     if (movement.x != 0 || movement.y != 0) {
         stage17_apply_movement(snapshot, input_settings, movement);
@@ -619,7 +754,10 @@ void stage17_click(PhysicalKeySnapshot& snapshot,
     case Stage17ValidationStep::approach_draw:
         if (current.combat.has_value()
                 && stage17_prepare_skill_lane(
-                    snapshot, input_settings, *current.combat)) {
+                    snapshot, input_settings, *current.combat,
+                    current.ecology
+                        == dungeon::checkpoint::DungeonElement::fire,
+                    state.draw_retreat_direction)) {
             snapshot.active_skill_slots[0] = true;
         }
         break;
@@ -630,7 +768,9 @@ void stage17_click(PhysicalKeySnapshot& snapshot,
         }
         break;
     case Stage17ValidationStep::storm_active:
-        stage17_apply_movement(snapshot, input_settings, {-1, -1});
+        if (!state.storm_player_moved) {
+            stage17_apply_movement(snapshot, input_settings, {-1, -1});
+        }
         break;
     case Stage17ValidationStep::open_inventory:
     case Stage17ValidationStep::restart_open_inventory:
@@ -754,7 +894,16 @@ void observe_stage17_snapshot(const RaylibHostConfig& config,
     if (!current.combat.has_value()) return;
     const combat::CombatSnapshot& combat_state = *current.combat;
     if (state.step == Stage17ValidationStep::draw_active
-            && state.draw_captured
+            && combat_state.active_skill.id == skills::ActiveSkillId::draw_slash) {
+        state.draw_frame_peak = std::max(state.draw_frame_peak,
+            combat_state.active_skill.frame_index);
+        if (!state.draw_windup_captured
+                && combat_state.active_skill.frame_index >= 6U
+                && combat_state.active_skill.frame_index < 18U) {
+            state.capture_pending = Stage17Capture::draw_windup;
+        }
+    } else if (state.step == Stage17ValidationStep::draw_active
+            && state.draw_windup_captured && state.draw_captured
             && combat_state.active_skill.id == skills::ActiveSkillId::none) {
         state.step = Stage17ValidationStep::approach_storm;
     }
@@ -774,15 +923,24 @@ void observe_stage17_snapshot(const RaylibHostConfig& config,
         }
         state.storm_strike_count = std::max(
             state.storm_strike_count, skill.strike_index);
+        state.storm_sword_peak = std::max(state.storm_sword_peak,
+            skill.spawned_sword_count);
+        state.storm_invulnerable_seen = state.storm_invulnerable_seen
+            || skill.player_invulnerable;
         if (skill.phase == combat::ActiveSkillPhase::strikes
                 && !state.storm_array_captured) {
             state.capture_pending = Stage17Capture::storm_array;
+        }
+        if (skill.spawned_sword_count > 12U && !state.storm_aerial_captured) {
+            state.capture_pending = Stage17Capture::storm_aerial;
         }
         if (skill.phase == combat::ActiveSkillPhase::finisher
                 && !state.storm_finisher_captured) {
             state.capture_pending = Stage17Capture::storm_finisher;
         }
-    } else if (state.storm_array_captured
+        state.storm_finisher_phase_seen = state.storm_finisher_phase_seen
+            || skill.phase == combat::ActiveSkillPhase::finisher;
+    } else if (state.storm_array_captured && state.storm_aerial_captured
             && state.storm_finisher_captured) {
         state.step = Stage17ValidationStep::open_inventory;
     }
@@ -823,10 +981,12 @@ void observe_stage17_inventory(const RaylibHostConfig& config,
     const Stage17Capture capture) noexcept {
     switch (capture) {
     case Stage17Capture::initial: return "01-new-default-1280x720.png";
-    case Stage17Capture::draw_hit: return "02-draw-slash-hit-1280x720.png";
-    case Stage17Capture::storm_array: return "03-storm-array-1280x720.png";
-    case Stage17Capture::storm_finisher: return "04-storm-finisher-1280x720.png";
-    case Stage17Capture::restarted: return "05-restarted-loadout-1280x720.png";
+    case Stage17Capture::draw_windup: return "02-draw-slash-windup-1280x720.png";
+    case Stage17Capture::draw_hit: return "03-draw-slash-hit-1280x720.png";
+    case Stage17Capture::storm_array: return "04-storm-ground-array-1280x720.png";
+    case Stage17Capture::storm_aerial: return "05-storm-aerial-array-1280x720.png";
+    case Stage17Capture::storm_finisher: return "06-storm-finisher-1280x720.png";
+    case Stage17Capture::restarted: return "07-restarted-loadout-1280x720.png";
     case Stage17Capture::none: break;
     }
     return nullptr;
@@ -857,11 +1017,17 @@ void mark_stage17_capture_complete(
         state.initial_captured = true;
         state.step = Stage17ValidationStep::empty_slot_3;
         break;
+    case Stage17Capture::draw_windup:
+        state.draw_windup_captured = true;
+        break;
     case Stage17Capture::draw_hit:
         state.draw_captured = true;
         break;
     case Stage17Capture::storm_array:
         state.storm_array_captured = true;
+        break;
+    case Stage17Capture::storm_aerial:
+        state.storm_aerial_captured = true;
         break;
     case Stage17Capture::storm_finisher:
         state.storm_finisher_captured = true;
@@ -934,10 +1100,15 @@ void write_stage17_validation_summary(const RaylibHostConfig& config,
         const bool passed = production
             ? state.step == Stage17ValidationStep::complete
                 && state.initial_captured && state.draw_accepted
-                && state.draw_captured && state.storm_accepted
-                && state.storm_array_captured && state.storm_finisher_captured
+                && state.draw_windup_captured && state.draw_captured
+                && state.storm_accepted && state.storm_array_captured
+                && state.storm_aerial_captured && state.storm_finisher_captured
                 && state.storm_center_locked && state.storm_player_moved
-                && state.public_input_path && state.production_transactions
+                && state.active_skill_atlases_ready
+                && state.storm_invulnerable_seen
+                && state.storm_finisher_phase_seen
+                && state.public_input_path
+                && state.production_transactions
                 && empty_slots
             : state.step == Stage17ValidationStep::complete
                 && state.restart_captured && state.restart_persisted
@@ -957,12 +1128,25 @@ void write_stage17_validation_summary(const RaylibHostConfig& config,
                << stage17_support_none_count(state.initial_loadout) << '\n'
                << "empty_slots_none=" << (empty_slots ? 1 : 0) << '\n'
                << "draw_accepted=" << (state.draw_accepted ? 1 : 0) << '\n'
+               << "draw_windup_captured="
+               << (state.draw_windup_captured ? 1 : 0) << '\n'
+               << "draw_frame_peak=" << state.draw_frame_peak << '\n'
                << "draw_hit_count=" << state.draw_hit_count << '\n'
                << "storm_accepted=" << (state.storm_accepted ? 1 : 0) << '\n'
                << "storm_strike_hit_count=" << state.storm_strike_hit_count << '\n'
                << "storm_finisher_hit_count=" << state.storm_finisher_hit_count << '\n'
                << "storm_strike_count="
                << static_cast<unsigned>(state.storm_strike_count) << '\n'
+               << "storm_sword_peak="
+               << static_cast<unsigned>(state.storm_sword_peak) << '\n'
+               << "storm_invulnerable_seen="
+               << (state.storm_invulnerable_seen ? 1 : 0) << '\n'
+               << "storm_finisher_phase_seen="
+               << (state.storm_finisher_phase_seen ? 1 : 0) << '\n'
+               << "storm_aerial_captured="
+               << (state.storm_aerial_captured ? 1 : 0) << '\n'
+               << "active_skill_atlases_ready="
+               << (state.active_skill_atlases_ready ? 1 : 0) << '\n'
                << "storm_center_locked=" << (state.storm_center_locked ? 1 : 0) << '\n'
                << "storm_player_moved=" << (state.storm_player_moved ? 1 : 0) << '\n'
                << "public_input_path=" << (state.public_input_path ? 1 : 0) << '\n'
@@ -1199,7 +1383,9 @@ combat::MovementInput stage11d_safe_movement_toward(
             from.y + static_cast<float>(candidate.y) * step,
             from.z,
         };
-        bool safe = true;
+        bool safe = snapshot.ecology
+                != dungeon::checkpoint::DungeonElement::fire
+            || !combat::fire_room_obstacle::blocks_player(from, next);
         const auto approaches_pickup = [&](combat::Vec3 position) noexcept {
             const float current_x = position.x - from.x;
             const float current_y = position.y - from.y;
@@ -1235,8 +1421,15 @@ combat::MovementInput stage11d_safe_movement_toward(
         const float target_x = to.x - next.x;
         const float target_y = to.y - next.y;
         const bool stopped = candidate.x == 0 && candidate.y == 0;
+        const float current_target_x = to.x - from.x;
+        const float current_target_y = to.y - from.y;
+        const bool fire_route_pending = snapshot.ecology
+                == dungeon::checkpoint::DungeonElement::fire
+            && current_target_x * current_target_x
+                    + current_target_y * current_target_y > 0.25F;
         const float score = target_x * target_x + target_y * target_y
-            + (stopped && avoidance_active ? 1.0F : 0.0F);
+            + (stopped && (avoidance_active || fire_route_pending)
+                ? 1.0F : 0.0F);
         if (score < best_score) {
             best = candidate;
             best_score = score;
@@ -1375,9 +1568,14 @@ void inject_stage11c_movement(PhysicalKeySnapshot& snapshot,
         for (std::size_t index = 0U; index < current.ground_item_count; ++index) {
             const auto& item = current.ground_items[index];
             if (item.item_id != state.abyss_item_id) continue;
-            inject_stage11c_movement(snapshot, settings_data,
-                validation_movement_toward(current.combat->player.position,
-                    item.position));
+            combat::MovementInput movement = validation_movement_toward(
+                current.combat->player.position, item.position);
+            if (current.ecology
+                    == dungeon::checkpoint::DungeonElement::fire) {
+                movement = validation_route_fire_movement(
+                    current.combat->player.position, item.position, movement);
+            }
+            inject_stage11c_movement(snapshot, settings_data, movement);
             state.abyss_claim_requested = true;
             break;
         }
@@ -1400,9 +1598,15 @@ void inject_stage11c_movement(PhysicalKeySnapshot& snapshot,
         if (config.stage11d_loot_validation == Scenario::pickup_feedback) {
             const auto* ground = stage11d_nearest_ground(current);
             if (ground != nullptr && current.combat.has_value()) {
-                inject_stage11c_movement(snapshot, settings_data,
-                    validation_movement_toward(current.combat->player.position,
-                        ground->position));
+                combat::MovementInput movement = validation_movement_toward(
+                    current.combat->player.position, ground->position);
+                if (current.ecology
+                        == dungeon::checkpoint::DungeonElement::fire) {
+                    movement = validation_route_fire_movement(
+                        current.combat->player.position,
+                        ground->position, movement);
+                }
+                inject_stage11c_movement(snapshot, settings_data, movement);
             }
         }
         return snapshot;
@@ -1420,8 +1624,14 @@ void inject_stage11c_movement(PhysicalKeySnapshot& snapshot,
     if (target == nullptr) return snapshot;
     state.target_ordinal = target->spawn_ordinal;
     if (aggressive_abyss) {
-        inject_stage11c_movement(snapshot, settings_data,
-            validation_movement_toward(player.position, target->position));
+        combat::MovementInput movement = validation_movement_toward(
+            player.position, target->position);
+        if (current.ecology
+                == dungeon::checkpoint::DungeonElement::fire) {
+            movement = validation_route_fire_movement(
+                player.position, target->position, movement);
+        }
+        inject_stage11c_movement(snapshot, settings_data, movement);
         if (player.hurt_ticks == 0U
                 && current.combat->diagnostics.input_size == 0U
                 && validation_attack_lane(*current.combat, *target)) {
@@ -1430,16 +1640,83 @@ void inject_stage11c_movement(PhysicalKeySnapshot& snapshot,
         }
         return snapshot;
     }
+    if (current.combat->active_skill.id != skills::ActiveSkillId::none) {
+        const float active_x = target->position.x - player.position.x;
+        const float active_y = target->position.y - player.position.y;
+        if (current.combat->active_skill.id
+                    == skills::ActiveSkillId::draw_slash
+                && active_x * active_x + active_y * active_y
+                    < 2.40F * 2.40F) {
+            combat::MovementInput retreat{};
+            retreat.x = active_x >= 0.0F ? -1 : 1;
+            if ((player.position.x <= combat::room_bounds::min_x + 0.20F
+                        && retreat.x < 0)
+                    || (player.position.x
+                            >= combat::room_bounds::max_x - 0.20F
+                        && retreat.x > 0)) {
+                retreat.x = 0;
+                retreat.y = active_y >= 0.0F ? -1 : 1;
+            }
+            if (current.ecology
+                    == dungeon::checkpoint::DungeonElement::fire) {
+                combat::Vec3 retreat_target = player.position;
+                retreat_target.x += 3.0F * static_cast<float>(retreat.x);
+                retreat_target.y += 3.0F * static_cast<float>(retreat.y);
+                retreat = validation_route_fire_movement(
+                    player.position, retreat_target, retreat);
+            }
+            inject_stage11c_movement(snapshot, settings_data, retreat);
+        }
+        return snapshot;
+    }
+    const bool facing_target = std::fabs(target->position.x - player.position.x)
+            <= 0.20F
+        || (target->position.x > player.position.x
+            && player.facing == combat::Facing::right)
+        || (target->position.x < player.position.x
+            && player.facing == combat::Facing::left);
+    const float draw_forward = std::fabs(
+        target->position.x - player.position.x);
+    const float draw_half_width = combat::kDrawSlashHalfWidthAtEnd
+        * (draw_forward / combat::kDrawSlashRange);
+    if (current.combat->skill_cooldowns[0] == 0U
+            && player.hurt_ticks == 0U
+            && player.active_attack == combat::AttackId::none
+            && current.combat->diagnostics.input_size == 0U
+            && facing_target
+            && draw_forward <= combat::kDrawSlashRange
+            && std::fabs(target->position.y - player.position.y)
+                <= draw_half_width) {
+        snapshot.active_skill_slots[0] = true;
+        return snapshot;
+    }
     const bool needs_launcher_setup = target->hp == target->max_hp;
     constexpr float kLauncherDistance = 1.68F;
     constexpr float kComboDistance = 1.98F;
     const float action_distance = needs_launcher_setup
         ? kLauncherDistance : kComboDistance;
     combat::Vec3 destination = target->position;
-    destination.x += player.position.x <= target->position.x
-        ? -action_distance : action_distance;
-    const combat::MovementInput movement = stage11d_safe_movement_toward(
+    const float near_side = target->position.x
+        + (player.position.x <= target->position.x
+            ? -action_distance : action_distance);
+    const float far_side = target->position.x
+        + (player.position.x <= target->position.x
+            ? action_distance : -action_distance);
+    destination.x = near_side >= combat::room_bounds::min_x
+            && near_side <= combat::room_bounds::max_x
+        ? near_side : far_side;
+    combat::MovementInput movement = stage11d_safe_movement_toward(
         player.position, destination, current);
+    if (movement.x == 0 && movement.y == 0 && !facing_target) {
+        combat::Vec3 facing_step = player.position;
+        movement.x = target->position.x > player.position.x ? 1 : -1;
+        facing_step.x += 0.10F * static_cast<float>(movement.x);
+        if (current.ecology == dungeon::checkpoint::DungeonElement::fire
+                && combat::fire_room_obstacle::blocks_player(
+                    player.position, facing_step)) {
+            movement = {};
+        }
+    }
     inject_stage11c_movement(snapshot, settings_data, movement);
     bool nearby_threat = false;
     for (std::size_t index = 0U;
@@ -2353,6 +2630,12 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         if (!initialized && runtime.state() != DungeonRuntimeState::recovery_required) {
             return HostExitCode::save_initialization_failed;
         }
+        if (config.stage12_material_background_only
+                && runtime.state() == DungeonRuntimeState::recovery_required) {
+            TraceLog(LOG_ERROR,
+                "Stage 12 background-only capture refused a recovery save");
+            return HostExitCode::save_initialization_failed;
+        }
 
         SetConfigFlags(initial_window_flags(committed_settings));
         InitWindow(config.window_width, config.window_height, config.window_title);
@@ -2384,13 +2667,18 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         }
 #endif
         core::FixedStepRunner fixed_step;
-        CombatRenderer renderer;
+        const auto renderer_storage = std::make_unique<CombatRenderer>();
+        CombatRenderer& renderer = *renderer_storage;
         const bool hud_resources_ready = renderer.initialize_resources();
-        PauseMenuRenderer pause_menu_renderer;
+        const auto pause_menu_renderer_storage =
+            std::make_unique<PauseMenuRenderer>();
+        PauseMenuRenderer& pause_menu_renderer = *pause_menu_renderer_storage;
         static_cast<void>(pause_menu_renderer.initialize());
         CombatFeedback feedback;
-        GameAudio audio;
-        InventoryRenderer inventory;
+        const auto audio_storage = std::make_unique<GameAudio>();
+        GameAudio& audio = *audio_storage;
+        const auto inventory_storage = std::make_unique<InventoryRenderer>();
+        InventoryRenderer& inventory = *inventory_storage;
         const bool audio_ready = audio.initialize();
         if (audio_ready) {
             SetMasterVolume(1.0F);
@@ -2422,6 +2710,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
 // STAGE11D_LOOT_VALIDATION_SEAM_END runtime_state
         const auto stage17_validation_state =
             std::make_unique<Stage17SkillStonesValidationState>();
+        stage17_validation_state->active_skill_atlases_ready =
+            renderer.active_skill_assets_ready();
         bool stage10_validation_captured = false;
         const std::string validation_capture_prefix = config.validation_capture
             ? (*save_directory / "stage8-validation-").string()
@@ -2455,6 +2745,19 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 config, *stage17_validation_state, current);
             drain_events(*runtime.session(), renderer, feedback, audio,
                 stage17_validation_state.get());
+            if (config.stage12_ui_showcase == Stage12UiShowcase::inventory
+                    || config.stage12_ui_showcase
+                        == Stage12UiShowcase::skill_stones) {
+                inventory.open(*runtime.session(), current);
+                if (config.stage12_ui_showcase
+                        == Stage12UiShowcase::skill_stones) {
+                    inventory.show_skill_stones_page();
+                }
+            } else if (config.stage12_ui_showcase
+                    == Stage12UiShowcase::pause) {
+                pause_menu.screen = PauseScreen::root;
+                pause_menu.selected_row = 1U;
+            }
         }
 
         while (!exit_requested) {
@@ -2489,6 +2792,12 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 }
             }
             if (runtime.state() == DungeonRuntimeState::recovery_required) {
+                if (config.stage12_material_background_only) {
+                    TraceLog(LOG_ERROR,
+                        "Stage 12 background-only capture entered recovery state");
+                    exit_requested = true;
+                    continue;
+                }
                 if (inventory.is_open()) {
                     inventory.close();
                     fixed_step.clear_accumulator();
@@ -2880,12 +3189,37 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 audio_bus_levels(presented_audio_settings), ui_audio_cues,
                 frame_seconds);
 
+            if (config.stage11c_hud_validation
+                    == Stage11CHudValidationScenario::low_health_status
+                    && current.combat.has_value()) {
+                current.combat->player.max_barrier = 1000;
+                current.combat->player.barrier = 625;
+            }
+
+            const bool stage12_item_baseline_frame =
+                config.stage12_material_baseline_capture_file.has_value()
+                && config.validation_exit_after_presented_frames >= 2U
+                && presented_frame_count + 2U
+                    == config.validation_exit_after_presented_frames;
+            presented_snapshot = current;
+            if (config.stage12_material_showcase) {
+                apply_stage12_material_showcase(presented_snapshot,
+                    config.stage12_material_showcase_ecology,
+                    config.stage12_material_showcase_hide_monsters,
+                    stage12_item_baseline_frame);
+            }
+            const dungeon::DungeonSnapshot& presented_hud_previous =
+                config.stage12_material_showcase ? presented_snapshot : previous;
+            const dungeon::DungeonSnapshot& presented_hud_current =
+                config.stage12_material_showcase ? presented_snapshot : current;
+
             // Observe after all possible fixed-step changes and before every
             // presented frame, including death/recovery-owned overlay frames.
             const HudPresentedFrame hud_presented_frame = current.death.has_value()
                 ? HudPresentedFrame::death_overlay : HudPresentedFrame::normal;
             renderer.observe_presented_hud_frame(hud_presented_frame,
-                previous, current, runtime.render_status(), control_hints,
+                presented_hud_previous, presented_hud_current,
+                runtime.render_status(), control_hints,
                 frame_seconds, pause_blocks_gameplay);
             const bool stage11c_target_visible = stage11c_hud_validation_reached(
                 current, config.stage11c_hud_validation,
@@ -2910,14 +3244,144 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             renderer.set_loot_filter_mode(presented_loot_filter);
             BeginDrawing();
             ClearBackground(Color{13, 17, 27, 255});
-            presented_snapshot = current;
-            if (config.stage12_material_showcase) {
-                apply_stage12_material_showcase(presented_snapshot);
+            reset_ui_text_bounds_audit();
+            const GroundLootView ground_loot_view = [&]() noexcept {
+                if (config.stage12_material_background_only) {
+                    static_cast<void>(renderer.draw_room_background_only(
+                        presented_snapshot.ecology));
+                    return GroundLootView{};
+                }
+                return renderer.draw(
+                    previous, presented_snapshot, runtime.render_status(),
+                    static_cast<float>(frame.interpolation_alpha), draw_debug,
+                    feedback, audio_ready);
+            }();
+            if (config.stage12_material_runtime_status != nullptr) {
+                const MonsterMaterialDrawRuntimeStatus shooter_draw =
+                    renderer.monster_material_draw_status(
+                        combat::MonsterId::lightning_shooter);
+                const MonsterMaterialDrawRuntimeStatus dasher_draw =
+                    renderer.monster_material_draw_status(
+                        combat::MonsterId::lightning_dasher);
+                const MonsterMaterialDrawRuntimeStatus chaser_draw =
+                    renderer.monster_material_draw_status(
+                        combat::MonsterId::chaos_chaser);
+                const MonsterMaterialDrawRuntimeStatus hazard_draw =
+                    renderer.monster_material_draw_status(
+                        combat::MonsterId::chaos_hazard);
+                *config.stage12_material_runtime_status = {
+                    renderer.material_pipeline_ready(),
+                    renderer.material_ecology_ready(MaterialEcology::water),
+                    renderer.material_atlas_available(
+                        MaterialAtlasId::water_environment),
+                    renderer.material_atlas_available(
+                        MaterialAtlasId::water_bulwark),
+                    renderer.material_atlas_available(
+                        MaterialAtlasId::water_support),
+                    renderer.material_ecology_ready(MaterialEcology::lightning),
+                    renderer.material_atlas_available(
+                        MaterialAtlasId::lightning_environment),
+                    renderer.material_atlas_available(
+                        MaterialAtlasId::lightning_shooter),
+                    renderer.material_atlas_available(
+                        MaterialAtlasId::lightning_dasher),
+                    {shooter_draw.presenter_visible,
+                        shooter_draw.use_material_frame, shooter_draw.atlas,
+                        shooter_draw.frame_index, shooter_draw.drawn},
+                    {dasher_draw.presenter_visible,
+                        dasher_draw.use_material_frame, dasher_draw.atlas,
+                        dasher_draw.frame_index, dasher_draw.drawn},
+                    renderer.material_ecology_ready(MaterialEcology::chaos),
+                    renderer.material_atlas_available(
+                        MaterialAtlasId::chaos_environment),
+                    renderer.material_atlas_available(
+                        MaterialAtlasId::chaos_chaser),
+                    renderer.material_atlas_available(
+                        MaterialAtlasId::chaos_hazard),
+                    {chaser_draw.presenter_visible,
+                        chaser_draw.use_material_frame, chaser_draw.atlas,
+                        chaser_draw.frame_index, chaser_draw.drawn},
+                    {hazard_draw.presenter_visible,
+                        hazard_draw.use_material_frame, hazard_draw.atlas,
+                        hazard_draw.frame_index, hazard_draw.drawn},
+                };
+                auto& material_status =
+                    *config.stage12_material_runtime_status;
+                material_status.hud_ecology = renderer.hud_model().navigation.ecology;
+                const RoomBackgroundDrawRuntimeStatus background_draw =
+                    renderer.room_background_draw_status();
+                material_status.room_background_ecology = background_draw.ecology;
+                material_status.room_background_atlas = background_draw.atlas;
+                material_status.room_background_resident = background_draw.resident;
+                material_status.room_background_drawn = background_draw.drawn;
+                material_status.room_background_source_width =
+                    background_draw.source_width;
+                material_status.room_background_source_height =
+                    background_draw.source_height;
+                material_status.room_background_scale = background_draw.scale;
+                material_status.items_ui_resident =
+                    renderer.material_atlas_available(MaterialAtlasId::items_ui);
+                constexpr std::array<MaterialSpriteId, 6U> equipment_sprites{{
+                    MaterialSpriteId::item_weapon, MaterialSpriteId::item_helmet,
+                    MaterialSpriteId::item_chest, MaterialSpriteId::item_gloves,
+                    MaterialSpriteId::item_boots, MaterialSpriteId::item_accessory,
+                }};
+                constexpr std::array<MaterialSpriteId, 4U> rarity_sprites{{
+                    MaterialSpriteId::loot_rarity_normal,
+                    MaterialSpriteId::loot_rarity_magic,
+                    MaterialSpriteId::loot_rarity_rare,
+                    MaterialSpriteId::loot_rarity_abyss,
+                }};
+                for (std::size_t index{}; index < equipment_sprites.size(); ++index) {
+                    material_status.equipment_slot_draws[index] =
+                        renderer.material_sprite_draw_count(equipment_sprites[index]);
+                }
+                for (std::size_t index{}; index < rarity_sprites.size(); ++index) {
+                    material_status.rarity_draws[index] =
+                        renderer.material_sprite_draw_count(rarity_sprites[index]);
+                }
+                for (std::size_t index{}; index < items::kMaterialCount; ++index) {
+                    material_status.material_draws[index] =
+                        renderer.material_sprite_draw_count(material_loot_sprite(
+                            static_cast<items::MaterialId>(index)));
+                }
+                material_status.ui_material_resident =
+                    renderer.material_atlas_available(
+                        MaterialAtlasId::ui_material);
+                for (std::size_t index{}; index < kUiMaterialSprites.size();
+                     ++index) {
+                    material_status.ui_material_draws[index] =
+                        renderer.material_sprite_draw_count(
+                            kUiMaterialSprites[index]);
+                    material_status.ui_direct_stretch_draws[index] =
+                        renderer.material_direct_stretch_draw_count(
+                            kUiMaterialSprites[index]);
+                }
+                material_status.bundled_font_ready =
+                    renderer.hud_font_ready()
+                    && pause_menu_renderer.has_cjk_font();
+                material_status.bundled_font_glyph_count =
+                    renderer.hud_font_ready()
+                    ? static_cast<std::uint16_t>((std::min)(
+                        renderer.hud_font().glyphCount, 65535))
+                    : 0U;
+                const Font runtime_font = renderer.hud_font();
+                material_status.bundled_font_source_base_size =
+                    renderer.hud_font_ready()
+                    ? static_cast<std::uint16_t>((std::max)(
+                        runtime_font.baseSize, 0))
+                    : 0U;
+                material_status.bundled_font_atlas_bytes =
+                    renderer.hud_font_ready()
+                    ? ui_font_atlas_bytes(runtime_font.texture.width,
+                        runtime_font.texture.height)
+                    : 0U;
+                material_status.bundled_font_total_atlas_bytes =
+                    material_status.bundled_font_atlas_bytes
+                        * kUiFontAtlasInstanceCount;
+                material_status.bundled_font_total_atlas_byte_budget =
+                    kUiFontTotalAtlasByteBudget;
             }
-            const GroundLootView ground_loot_view = renderer.draw(
-                previous, presented_snapshot, runtime.render_status(),
-                static_cast<float>(frame.interpolation_alpha), draw_debug,
-                feedback, audio_ready);
 // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN presented_semantics
             stage11d_validation_state.target_visible = stage11d_target_visible(
                 config, current, pause_menu, runtime.render_status(),
@@ -2930,19 +3394,23 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     renderer.hud_notice_view());
             }
 // STAGE11D_LOOT_VALIDATION_SEAM_END presented_semantics
-            if (passive_overlay_open) {
+            if (!config.stage12_material_background_only
+                && passive_overlay_open) {
                 draw_passive_tree_overlay(current, runtime.render_status());
             }
-            if (inventory.is_open()) {
+            if (!config.stage12_material_background_only
+                && inventory.is_open()) {
                 inventory.draw(*session, current, runtime.render_status(),
-                    renderer.hud_font(), renderer.hud_font_ready());
+                    renderer.material_pack(), renderer.hud_font(),
+                    renderer.hud_font_ready());
             }
             if (stage11b_validation_state.resume_observed) {
                 stage11b_validation_state.resume_ticks_after =
                     stage11b_validation_state.fixed_ticks;
             }
-            if (pause_menu.screen != PauseScreen::closed) {
-                pause_menu_renderer.draw(pause_menu);
+            if (!config.stage12_material_background_only
+                && pause_menu.screen != PauseScreen::closed) {
+                pause_menu_renderer.draw(pause_menu, renderer.material_pack());
                 if (config.stage11b_validation
                         == Stage11BValidationScenario::corrupt_defaults
                     && pause_menu.message == kSettingsRecoveredDefaults
@@ -3023,6 +3491,37 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 config, *stage17_validation_state);
             const bool stage17_capture_requested = capture_path.has_value();
             bool captured_stage10_target = false;
+            if (!capture_path.has_value() && stage12_item_baseline_frame) {
+                capture_path =
+                    config.stage12_material_baseline_capture_file->string();
+            }
+            if (config.stage12_material_runtime_status != nullptr) {
+                const UiTextBoundsAuditStatus audit =
+                    ui_text_bounds_audit_status();
+                auto& material_status =
+                    *config.stage12_material_runtime_status;
+                for (std::size_t page{}; page < audit.pages.size(); ++page) {
+                    material_status.ui_text_bounds_safe[page] =
+                        audit.pages[page].bounds_safe;
+                    material_status.ui_text_sizes_readable[page] =
+                        audit.pages[page].sizes_readable;
+                    material_status.ui_text_observed_roles[page] =
+                        audit.pages[page].observed_roles;
+                    material_status.ui_text_failed_bounds_roles[page] =
+                        audit.pages[page].failed_bounds_roles;
+                    material_status.ui_text_failed_size_roles[page] =
+                        audit.pages[page].failed_size_roles;
+                    material_status.ui_text_measured_counts[page] =
+                        audit.pages[page].measured_text_count;
+                    material_status.ui_text_minimum_display_sizes[page] =
+                        audit.pages[page].minimum_display_font_size;
+                }
+            }
+            if (!config.stage12_material_background_only
+                && config.stage12_ui_showcase
+                    == Stage12UiShowcase::material_gallery) {
+                draw_stage12_ui_material_gallery(renderer.material_pack());
+            }
             if (!capture_path.has_value()
                     && (validation_reached || loot_validation_visible_capture
                     || stage11b_visible_capture

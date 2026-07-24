@@ -4,6 +4,7 @@
 
 #include "combat/combat_scaling.hpp"
 #include "combat/combat_world.hpp"
+#include "combat/fire_room_obstacle.hpp"
 
 #include "abyss/abyss_rules.hpp"
 
@@ -78,12 +79,66 @@ arpg::test::Failure basis_point_scaling_has_locked_integer_edges() noexcept {
     return {};
 }
 
+arpg::test::Failure fire_brazier_rejects_monster_occupancy() noexcept {
+    using namespace arpg::combat;
+    CombatEncounterConfig config{};
+    config.player_spawn = {0.0F, 4.75F, 0.0F};
+    config.wave.spawn_count = 1U;
+    config.wave.spawns[0] = MonsterSpawnSpec{
+        MonsterId::chaos_chaser, {0.89F, 1.08F, 0.0F}};
+    config.fire_room_obstacles = true;
+    CombatWorld world{config};
+
+    world.tick(MovementInput{});
+
+    const Vec3 position = world.snapshot().monsters[0].position;
+    ARPG_REQUIRE(!fire_room_obstacle::contains(position));
+    return {};
+}
+
+arpg::test::Failure monster_routes_around_fire_brazier() noexcept {
+    using namespace arpg::combat;
+    CombatEncounterConfig config{};
+    config.player_spawn = {6.0F, 0.0F, 0.0F};
+    config.wave.spawn_count = 1U;
+    config.wave.spawns[0] = MonsterSpawnSpec{
+        MonsterId::chaos_chaser, {-6.0F, 0.0F, 0.0F}};
+    config.fire_room_obstacles = true;
+    CombatWorld world{config};
+    const int initial_hp = world.snapshot().player.hp;
+
+    for (int tick = 0; tick < 1200; ++tick) {
+        world.tick(MovementInput{});
+    }
+
+    ARPG_REQUIRE(world.snapshot().player.hp < initial_hp);
+    return {};
+}
+
+arpg::test::Failure fire_brazier_ejects_player_spawn() noexcept {
+    using namespace arpg::combat;
+    CombatEncounterConfig config{};
+    config.player_spawn = {};
+    config.fire_room_obstacles = true;
+    CombatWorld world{config};
+
+    ARPG_REQUIRE(!fire_room_obstacle::contains(
+        world.snapshot().player.position));
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"configured facing survives reset", &configured_facing_survives_reset},
     {"disabled respawn stays defeated", &disabled_respawn_stays_defeated},
     {"encounter exposes neutral abyss config",
      &encounter_config_exposes_neutral_abyss_rules},
     {"basis point integer edges", &basis_point_scaling_has_locked_integer_edges},
+    {"fire brazier rejects monster occupancy",
+     &fire_brazier_rejects_monster_occupancy},
+    {"monster routes around fire brazier",
+     &monster_routes_around_fire_brazier},
+    {"fire brazier ejects player spawn",
+     &fire_brazier_ejects_player_spawn},
 };
 
 }  // namespace

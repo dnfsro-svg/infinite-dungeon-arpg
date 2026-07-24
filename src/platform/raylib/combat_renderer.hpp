@@ -12,6 +12,7 @@
 #include "loot_pickup_feedback.hpp"
 #include "material_loot_view.hpp"
 #include "material_pack.hpp"
+#include "monster_material_presenter.hpp"
 
 #include <cstdint>
 #include <array>
@@ -43,6 +44,27 @@ struct CombatRenderPlan final {
     std::size_t stage_count{};
 };
 
+struct MonsterMaterialDrawRuntimeStatus final {
+    bool presenter_visible{};
+    bool use_material_frame{};
+    MaterialAtlasId atlas{MaterialAtlasId::count};
+    std::uint16_t frame_index{};
+    bool drawn{};
+};
+
+struct RoomBackgroundDrawRuntimeStatus final {
+    dungeon::DungeonElement ecology{dungeon::DungeonElement::fire};
+    MaterialAtlasId atlas{MaterialAtlasId::count};
+    bool resident{};
+    bool drawn{};
+    std::uint16_t source_width{};
+    std::uint16_t source_height{};
+    float scale{};
+};
+
+[[nodiscard]] MaterialEcology material_ecology(
+    dungeon::DungeonElement ecology) noexcept;
+
 [[nodiscard]] CombatRenderPlan make_combat_render_plan(
     const dungeon::DungeonSnapshot& snapshot,
     settings::LootFilterMode mode,
@@ -69,6 +91,23 @@ class CombatRenderer final {
 public:
     [[nodiscard]] bool initialize_resources() noexcept;
     void shutdown_resources() noexcept;
+    [[nodiscard]] bool active_skill_assets_ready() const noexcept;
+    [[nodiscard]] bool material_pipeline_ready() const noexcept;
+    [[nodiscard]] bool material_ecology_ready(
+        MaterialEcology ecology) const noexcept;
+    [[nodiscard]] bool material_atlas_available(
+        MaterialAtlasId atlas) const noexcept;
+    [[nodiscard]] const MaterialPack& material_pack() const noexcept;
+    [[nodiscard]] std::uint64_t material_sprite_draw_count(
+        MaterialSpriteId sprite) const noexcept;
+    [[nodiscard]] std::uint64_t material_direct_stretch_draw_count(
+        MaterialSpriteId sprite) const noexcept;
+    [[nodiscard]] MonsterMaterialDrawRuntimeStatus monster_material_draw_status(
+        combat::MonsterId monster) const noexcept;
+    [[nodiscard]] RoomBackgroundDrawRuntimeStatus draw_room_background_only(
+        dungeon::DungeonElement ecology) noexcept;
+    [[nodiscard]] RoomBackgroundDrawRuntimeStatus room_background_draw_status()
+        const noexcept;
     void consume_event(const combat::CombatEvent& event) noexcept;
     void consume_dungeon_event(const dungeon::DungeonEvent& event) noexcept;
     void clear_combat_transients() noexcept;
@@ -114,13 +153,13 @@ private:
     void draw_room(
         const dungeon::DungeonSnapshot& current,
         const GroundLootView& ground_loot,
-        const MaterialLootView& material_loot) const noexcept;
+        const MaterialLootView& material_loot) noexcept;
     void draw_actors(
         const dungeon::DungeonSnapshot& previous,
         const dungeon::DungeonSnapshot& current,
         float interpolation_alpha,
         bool draw_debug,
-        const CombatFeedback& feedback) const noexcept;
+        const CombatFeedback& feedback) noexcept;
     void draw_hud() const noexcept;
     void draw_abyss_hud(
         const dungeon::DungeonSnapshot& current,
@@ -142,6 +181,11 @@ private:
     LootPickupFeedbackState loot_pickup_feedback_{};
     MaterialPickupFeedbackState material_pickup_feedback_{};
     MaterialPack material_pack_{};
+    MonsterMaterialPresenter monster_presenter_{};
+    std::array<MonsterMaterialDrawRuntimeStatus,
+        static_cast<std::size_t>(combat::MonsterId::count)>
+        monster_material_draw_statuses_{};
+    RoomBackgroundDrawRuntimeStatus room_background_draw_status_{};
     HudViewModelProjector hud_projector_{};
     HudViewModel hud_model_{};
     ActiveSkillHudModel active_skill_hud_model_{};

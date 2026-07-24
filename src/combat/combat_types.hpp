@@ -68,6 +68,10 @@ struct ActiveSkillSnapshot final {
     std::uint16_t elapsed_ticks{};
     Vec3 locked_center{};
     std::uint8_t strike_index{};
+    std::uint16_t frame_index{};
+    std::uint8_t spawned_sword_count{};
+    bool player_invulnerable{};
+    bool transients_active{};
 };
 
 enum class FeedbackLevel : std::uint8_t {
@@ -456,6 +460,7 @@ struct CombatEncounterConfig final {
     PlayerCombatBuild player_build{};
     std::uint64_t evasion_seed{};
     abyss::AbyssCombatConfig abyss{};
+    bool fire_room_obstacles{};
 };
 
 struct PlayerSnapshot final {
@@ -570,6 +575,14 @@ struct CombatDiagnostics final {
     std::uint32_t effect_command_overflow_count{};
 };
 
+inline constexpr std::size_t kFireRoomCrateCapacity = 2U;
+
+struct FireRoomCrateSnapshot final {
+    Vec3 position{};
+    std::uint64_t broken_tick{};
+    bool intact{true};
+};
+
 struct CombatSnapshot final {
     std::uint64_t tick{};
     PlayerSnapshot player{};
@@ -583,6 +596,8 @@ struct CombatSnapshot final {
     std::size_t hazard_count{};
     // Compatibility projection only; runtime state is owned by monsters.
     std::array<DummySnapshot, kDummyCount> dummies{};
+    std::array<FireRoomCrateSnapshot, kFireRoomCrateCapacity> fire_crates{};
+    std::size_t fire_crate_count{};
     CombatDiagnostics diagnostics{};
 };
 

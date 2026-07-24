@@ -24,10 +24,10 @@ enum class HudPaletteId : std::uint8_t {
     case HudPaletteId::water: return {64U, 169U, 222U, 255U};
     case HudPaletteId::lightning: return {240U, 211U, 73U, 255U};
     case HudPaletteId::chaos: return {166U, 91U, 205U, 255U};
-    case HudPaletteId::text: return {230U, 235U, 242U, 255U};
+    case HudPaletteId::text: return {248U, 246U, 238U, 255U};
     case HudPaletteId::error: return {255U, 127U, 110U, 255U};
     }
-    return {230U, 235U, 242U, 255U};
+    return {248U, 246U, 238U, 255U};
 }
 
 }  // namespace arpg::platform

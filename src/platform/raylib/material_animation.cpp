@@ -1,5 +1,11 @@
 #include "material_animation.hpp"
 
+#include "material_manifest.hpp"
+
+#include <algorithm>
+#include <array>
+#include <cstddef>
+
 namespace arpg::platform {
 namespace {
 
@@ -7,6 +13,90 @@ constexpr float kPlayerTrimmedHeight = 172.0F;
 constexpr float kPlayerTargetHeight = 82.0F;
 constexpr float kMonsterTrimmedHeight = 176.0F;
 constexpr float kMonsterTargetHeight = 78.0F;
+constexpr float kPlayerAnimationCell = 128.0F;
+constexpr std::uint8_t kPlayerAnimationColumns = 8U;
+constexpr float kWaterMonsterAnimationCell = 96.0F;
+constexpr std::uint16_t kWaterMonsterAnimationColumns = 9U;
+
+constexpr std::array<PlayerAnimationClipDefinition,
+    static_cast<std::size_t>(PlayerAnimationClipId::count)> kPlayerClips{{
+    {PlayerAnimationClipId::idle, MaterialAtlasId::player_locomotion, 0U, 16U},
+    {PlayerAnimationClipId::move, MaterialAtlasId::player_locomotion, 16U, 20U},
+    {PlayerAnimationClipId::jump, MaterialAtlasId::player_locomotion, 36U, 24U},
+    {PlayerAnimationClipId::j1, MaterialAtlasId::player_combo_a, 0U, 18U},
+    {PlayerAnimationClipId::j2, MaterialAtlasId::player_combo_a, 18U, 22U},
+    {PlayerAnimationClipId::j3, MaterialAtlasId::player_combo_b, 0U, 26U},
+    {PlayerAnimationClipId::launcher, MaterialAtlasId::player_combo_b, 26U, 24U},
+    {PlayerAnimationClipId::air_j, MaterialAtlasId::player_air, 0U, 18U},
+    {PlayerAnimationClipId::landing, MaterialAtlasId::player_air, 18U, 14U},
+    {PlayerAnimationClipId::hurt, MaterialAtlasId::player_reaction, 0U, 10U},
+    {PlayerAnimationClipId::down, MaterialAtlasId::player_reaction, 10U, 16U},
+    {PlayerAnimationClipId::get_up, MaterialAtlasId::player_reaction, 26U, 14U},
+    {PlayerAnimationClipId::death, MaterialAtlasId::player_reaction, 40U, 24U},
+}};
+
+constexpr std::array<MonsterAnimationClipDefinition, 30> kEcologyMonsterClips{{
+    {combat::MonsterId::water_bulwark, MonsterAnimationState::idle,
+        MaterialAtlasId::water_bulwark, 0U, 12U, 12U},
+    {combat::MonsterId::water_bulwark, MonsterAnimationState::move,
+        MaterialAtlasId::water_bulwark, 12U, 16U, 18U},
+    {combat::MonsterId::water_bulwark, MonsterAnimationState::special,
+        MaterialAtlasId::water_bulwark, 28U, 20U, 20U},
+    {combat::MonsterId::water_bulwark, MonsterAnimationState::hurt,
+        MaterialAtlasId::water_bulwark, 48U, 8U, 20U},
+    {combat::MonsterId::water_bulwark, MonsterAnimationState::death,
+        MaterialAtlasId::water_bulwark, 56U, 16U, 16U},
+    {combat::MonsterId::water_support, MonsterAnimationState::idle,
+        MaterialAtlasId::water_support, 0U, 12U, 12U},
+    {combat::MonsterId::water_support, MonsterAnimationState::move,
+        MaterialAtlasId::water_support, 12U, 16U, 18U},
+    {combat::MonsterId::water_support, MonsterAnimationState::special,
+        MaterialAtlasId::water_support, 28U, 20U, 20U},
+    {combat::MonsterId::water_support, MonsterAnimationState::hurt,
+        MaterialAtlasId::water_support, 48U, 8U, 20U},
+    {combat::MonsterId::water_support, MonsterAnimationState::death,
+        MaterialAtlasId::water_support, 56U, 16U, 16U},
+    {combat::MonsterId::lightning_shooter, MonsterAnimationState::idle,
+        MaterialAtlasId::lightning_shooter, 0U, 12U, 12U},
+    {combat::MonsterId::lightning_shooter, MonsterAnimationState::move,
+        MaterialAtlasId::lightning_shooter, 12U, 16U, 18U},
+    {combat::MonsterId::lightning_shooter, MonsterAnimationState::special,
+        MaterialAtlasId::lightning_shooter, 28U, 20U, 20U},
+    {combat::MonsterId::lightning_shooter, MonsterAnimationState::hurt,
+        MaterialAtlasId::lightning_shooter, 48U, 8U, 20U},
+    {combat::MonsterId::lightning_shooter, MonsterAnimationState::death,
+        MaterialAtlasId::lightning_shooter, 56U, 16U, 16U},
+    {combat::MonsterId::lightning_dasher, MonsterAnimationState::idle,
+        MaterialAtlasId::lightning_dasher, 0U, 12U, 12U},
+    {combat::MonsterId::lightning_dasher, MonsterAnimationState::move,
+        MaterialAtlasId::lightning_dasher, 12U, 16U, 18U},
+    {combat::MonsterId::lightning_dasher, MonsterAnimationState::special,
+        MaterialAtlasId::lightning_dasher, 28U, 20U, 20U},
+    {combat::MonsterId::lightning_dasher, MonsterAnimationState::hurt,
+        MaterialAtlasId::lightning_dasher, 48U, 8U, 20U},
+    {combat::MonsterId::lightning_dasher, MonsterAnimationState::death,
+        MaterialAtlasId::lightning_dasher, 56U, 16U, 16U},
+    {combat::MonsterId::chaos_chaser, MonsterAnimationState::idle,
+        MaterialAtlasId::chaos_chaser, 0U, 12U, 12U},
+    {combat::MonsterId::chaos_chaser, MonsterAnimationState::move,
+        MaterialAtlasId::chaos_chaser, 12U, 16U, 18U},
+    {combat::MonsterId::chaos_chaser, MonsterAnimationState::special,
+        MaterialAtlasId::chaos_chaser, 28U, 20U, 20U},
+    {combat::MonsterId::chaos_chaser, MonsterAnimationState::hurt,
+        MaterialAtlasId::chaos_chaser, 48U, 8U, 20U},
+    {combat::MonsterId::chaos_chaser, MonsterAnimationState::death,
+        MaterialAtlasId::chaos_chaser, 56U, 16U, 16U},
+    {combat::MonsterId::chaos_hazard, MonsterAnimationState::idle,
+        MaterialAtlasId::chaos_hazard, 0U, 12U, 12U},
+    {combat::MonsterId::chaos_hazard, MonsterAnimationState::move,
+        MaterialAtlasId::chaos_hazard, 12U, 16U, 18U},
+    {combat::MonsterId::chaos_hazard, MonsterAnimationState::special,
+        MaterialAtlasId::chaos_hazard, 28U, 20U, 20U},
+    {combat::MonsterId::chaos_hazard, MonsterAnimationState::hurt,
+        MaterialAtlasId::chaos_hazard, 48U, 8U, 20U},
+    {combat::MonsterId::chaos_hazard, MonsterAnimationState::death,
+        MaterialAtlasId::chaos_hazard, 56U, 16U, 16U},
+}};
 
 [[nodiscard]] MaterialSpriteId select_attack_sprite(
     combat::AttackId attack) noexcept {
@@ -25,6 +115,19 @@ constexpr float kMonsterTargetHeight = 78.0F;
         return MaterialSpriteId::player_idle;
     }
     return MaterialSpriteId::missing;
+}
+
+[[nodiscard]] PlayerAnimationClipId select_attack_clip(
+    combat::AttackId attack) noexcept {
+    switch (attack) {
+    case combat::AttackId::j1: return PlayerAnimationClipId::j1;
+    case combat::AttackId::j2: return PlayerAnimationClipId::j2;
+    case combat::AttackId::j3: return PlayerAnimationClipId::j3;
+    case combat::AttackId::launcher: return PlayerAnimationClipId::launcher;
+    case combat::AttackId::air_j: return PlayerAnimationClipId::air_j;
+    case combat::AttackId::none: return PlayerAnimationClipId::idle;
+    }
+    return PlayerAnimationClipId::idle;
 }
 
 }  // namespace
@@ -49,6 +152,52 @@ MaterialSpriteId select_player_sprite(
         return MaterialSpriteId::player_landing;
     }
     return MaterialSpriteId::missing;
+}
+
+PlayerAnimationClipId select_player_animation_clip(
+    combat::PlayerState state, combat::AttackId attack) noexcept {
+    switch (state) {
+    case combat::PlayerState::idle: return PlayerAnimationClipId::idle;
+    case combat::PlayerState::move: return PlayerAnimationClipId::move;
+    case combat::PlayerState::attack_startup:
+    case combat::PlayerState::attack_active:
+    case combat::PlayerState::attack_recovery: return select_attack_clip(attack);
+    case combat::PlayerState::jump_rise:
+    case combat::PlayerState::jump_fall: return PlayerAnimationClipId::jump;
+    case combat::PlayerState::landing: return PlayerAnimationClipId::landing;
+    }
+    return PlayerAnimationClipId::idle;
+}
+
+const PlayerAnimationClipDefinition* player_animation_clip(
+    PlayerAnimationClipId id) noexcept {
+    const std::size_t index = static_cast<std::size_t>(id);
+    return index < kPlayerClips.size() ? &kPlayerClips[index] : nullptr;
+}
+
+std::optional<PlayerAnimationFrame> player_animation_frame(
+    const PlayerAnimationClipDefinition& clip, std::uint16_t frame) noexcept {
+    if (frame >= clip.frame_count) return std::nullopt;
+    const std::uint16_t cell = static_cast<std::uint16_t>(clip.first_cell) + frame;
+    const std::uint16_t column = cell % kPlayerAnimationColumns;
+    const std::uint16_t row = cell / kPlayerAnimationColumns;
+    return PlayerAnimationFrame{clip.atlas,
+        {static_cast<float>(column) * kPlayerAnimationCell,
+         static_cast<float>(row) * kPlayerAnimationCell,
+         kPlayerAnimationCell, kPlayerAnimationCell},
+        {64.0F, 124.0F}, {88.0F, 64.0F}};
+}
+
+std::uint16_t player_animation_frame_index(
+    const PlayerAnimationClipDefinition& clip, std::uint64_t elapsed_ticks,
+    std::uint16_t duration_ticks, bool loop) noexcept {
+    if (clip.frame_count == 0U || duration_ticks == 0U) return 0U;
+    const std::uint64_t timeline_ticks = loop
+        ? elapsed_ticks % duration_ticks : std::min<std::uint64_t>(
+            elapsed_ticks, duration_ticks);
+    const std::uint64_t frame = timeline_ticks * clip.frame_count / duration_ticks;
+    return static_cast<std::uint16_t>(std::min<std::uint64_t>(
+        frame, static_cast<std::uint64_t>(clip.frame_count - 1U)));
 }
 
 MaterialSpriteId select_monster_sprite(
@@ -149,18 +298,54 @@ MaterialSpriteId select_monster_sprite(
     return MaterialSpriteId::missing;
 }
 
-MaterialSpriteId select_floor_sprite(dungeon::DungeonElement element) noexcept {
-    switch (element) {
-    case dungeon::DungeonElement::fire:
-        return MaterialSpriteId::environment_floor_fire;
-    case dungeon::DungeonElement::water:
-        return MaterialSpriteId::environment_floor_water;
-    case dungeon::DungeonElement::lightning:
-        return MaterialSpriteId::environment_floor_lightning;
-    case dungeon::DungeonElement::chaos:
-        return MaterialSpriteId::environment_floor_chaos;
+MonsterAnimationState select_monster_animation_state(
+    combat::MonsterAiPhase phase, bool hurt) noexcept {
+    if (phase == combat::MonsterAiPhase::defeated) {
+        return MonsterAnimationState::death;
     }
-    return MaterialSpriteId::missing;
+    if (hurt) return MonsterAnimationState::hurt;
+    switch (phase) {
+    case combat::MonsterAiPhase::idle: return MonsterAnimationState::idle;
+    case combat::MonsterAiPhase::move: return MonsterAnimationState::move;
+    case combat::MonsterAiPhase::telegraph:
+    case combat::MonsterAiPhase::active:
+    case combat::MonsterAiPhase::recovery:
+    case combat::MonsterAiPhase::cooldown: return MonsterAnimationState::special;
+    case combat::MonsterAiPhase::defeated: return MonsterAnimationState::death;
+    }
+    return MonsterAnimationState::idle;
+}
+
+const MonsterAnimationClipDefinition* monster_animation_clip(
+    combat::MonsterId monster, MonsterAnimationState state) noexcept {
+    for (const MonsterAnimationClipDefinition& clip : kEcologyMonsterClips) {
+        if (clip.monster == monster && clip.state == state) return &clip;
+    }
+    return nullptr;
+}
+
+std::optional<MonsterAnimationFrame> monster_animation_frame(
+    const MonsterAnimationClipDefinition& clip, std::uint16_t frame) noexcept {
+    if (frame >= clip.frame_count) return std::nullopt;
+    const std::uint16_t cell = clip.first_cell + frame;
+    const std::uint16_t column = cell % kWaterMonsterAnimationColumns;
+    const std::uint16_t row = cell / kWaterMonsterAnimationColumns;
+    return MonsterAnimationFrame{clip.atlas,
+        {static_cast<float>(column) * kWaterMonsterAnimationCell,
+         static_cast<float>(row) * kWaterMonsterAnimationCell,
+         kWaterMonsterAnimationCell, kWaterMonsterAnimationCell},
+        {48.0F, 93.0F}, static_cast<std::uint8_t>((std::min)(3U,
+            static_cast<unsigned int>(frame) * clip.key_pose_count
+                / clip.frame_count))};
+}
+
+std::uint16_t monster_animation_frame_index(
+    const MonsterAnimationClipDefinition& clip, std::uint64_t elapsed_ticks,
+    bool loop) noexcept {
+    if (clip.frame_count == 0U || clip.frames_per_second == 0U) return 0U;
+    const std::uint64_t frame = elapsed_ticks * clip.frames_per_second / 60U;
+    return static_cast<std::uint16_t>(loop ? frame % clip.frame_count
+        : (std::min)(frame, static_cast<std::uint64_t>(clip.frame_count - 1U)));
 }
 
 MaterialSpriteId select_door_sprite(dungeon::DungeonElement element) noexcept {
@@ -194,6 +379,24 @@ float material_actor_draw_scale(bool player, float projection_scale) noexcept {
     const float target_height = player ? kPlayerTargetHeight
                                        : kMonsterTargetHeight;
     return projection_scale * target_height / trimmed_height;
+}
+
+const AnimationClipDefinition* material_animation_clip(AnimationClipId id) noexcept {
+    const MaterialManifestDefinition manifest = default_material_manifest();
+    for (std::size_t index = 0U; index < manifest.clip_count; ++index) {
+        if (manifest.clips[index].id == id) return &manifest.clips[index];
+    }
+    return nullptr;
+}
+
+MaterialSpriteId material_animation_frame_sprite(
+    const AnimationClipDefinition& clip, std::uint16_t frame) noexcept {
+    const MaterialManifestDefinition manifest = default_material_manifest();
+    if (clip.frame_count == 0U || frame >= clip.frame_count
+        || static_cast<std::size_t>(clip.first_frame) + frame >= manifest.frame_count) {
+        return MaterialSpriteId::missing;
+    }
+    return manifest.frames[clip.first_frame + frame].id;
 }
 
 }  // namespace arpg::platform

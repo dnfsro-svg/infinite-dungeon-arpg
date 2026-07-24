@@ -1,8 +1,11 @@
 #pragma once
 
 #include "core/fixed_step.hpp"
+#include "dungeon/dungeon_types.hpp"
+#include "material_asset_types.hpp"
 
 #include <cstdint>
+#include <array>
 #include <filesystem>
 #include <optional>
 
@@ -89,6 +92,71 @@ enum class Stage17SkillStonesValidationScenario : std::uint8_t {
     restarted_loadout,
 };
 
+enum class Stage12UiShowcase : std::uint8_t {
+    none,
+    material_gallery,
+    inventory,
+    skill_stones,
+    pause,
+};
+
+struct Stage12MonsterMaterialDrawStatus final {
+    bool presenter_visible{};
+    bool use_material_frame{};
+    MaterialAtlasId atlas{MaterialAtlasId::count};
+    std::uint16_t frame_index{};
+    bool drawn{};
+};
+
+struct Stage12MaterialRuntimeStatus final {
+    bool shader_pipeline_ready{};
+    bool water_ecology_ready{};
+    bool water_environment_resident{};
+    bool water_bulwark_resident{};
+    bool water_support_resident{};
+    bool lightning_ecology_ready{};
+    bool lightning_environment_resident{};
+    bool lightning_shooter_resident{};
+    bool lightning_dasher_resident{};
+    Stage12MonsterMaterialDrawStatus lightning_shooter_draw{};
+    Stage12MonsterMaterialDrawStatus lightning_dasher_draw{};
+    bool chaos_ecology_ready{};
+    bool chaos_environment_resident{};
+    bool chaos_chaser_resident{};
+    bool chaos_hazard_resident{};
+    Stage12MonsterMaterialDrawStatus chaos_chaser_draw{};
+    Stage12MonsterMaterialDrawStatus chaos_hazard_draw{};
+    bool items_ui_resident{};
+    std::array<std::uint64_t, 6U> equipment_slot_draws{};
+    std::array<std::uint64_t, 4U> rarity_draws{};
+    std::array<std::uint64_t, items::kMaterialCount> material_draws{};
+    bool ui_material_resident{};
+    std::array<std::uint64_t, 40U> ui_material_draws{};
+    std::array<std::uint64_t, 40U> ui_direct_stretch_draws{};
+    bool bundled_font_ready{};
+    std::uint16_t bundled_font_glyph_count{};
+    std::uint16_t bundled_font_source_base_size{};
+    std::uint64_t bundled_font_atlas_bytes{};
+    std::uint64_t bundled_font_total_atlas_bytes{};
+    std::uint64_t bundled_font_total_atlas_byte_budget{};
+    std::array<bool, 4U> ui_text_bounds_safe{};
+    std::array<bool, 4U> ui_text_sizes_readable{};
+    std::array<std::uint64_t, 4U> ui_text_observed_roles{};
+    std::array<std::uint64_t, 4U> ui_text_failed_bounds_roles{};
+    std::array<std::uint64_t, 4U> ui_text_failed_size_roles{};
+    std::array<std::uint32_t, 4U> ui_text_measured_counts{};
+    std::array<float, 4U> ui_text_minimum_display_sizes{};
+    dungeon::DungeonElement hud_ecology{dungeon::DungeonElement::fire};
+    dungeon::DungeonElement room_background_ecology{
+        dungeon::DungeonElement::fire};
+    MaterialAtlasId room_background_atlas{MaterialAtlasId::count};
+    bool room_background_resident{};
+    bool room_background_drawn{};
+    std::uint16_t room_background_source_width{};
+    std::uint16_t room_background_source_height{};
+    float room_background_scale{};
+};
+
 struct RaylibHostConfig final {
     int window_width{1280};
     int window_height{720};
@@ -119,6 +187,13 @@ struct RaylibHostConfig final {
     std::optional<std::filesystem::path> validation_summary_file{};
     bool validation_request_screenshot{};
     bool stage12_material_showcase{};
+    bool stage12_material_showcase_hide_monsters{};
+    bool stage12_material_background_only{};
+    Stage12UiShowcase stage12_ui_showcase{Stage12UiShowcase::none};
+    std::optional<dungeon::DungeonElement> stage12_material_showcase_ecology{};
+    std::optional<std::filesystem::path>
+        stage12_material_baseline_capture_file{};
+    Stage12MaterialRuntimeStatus* stage12_material_runtime_status{};
 };
 
 struct HostFrameGateResult final {

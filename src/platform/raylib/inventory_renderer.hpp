@@ -2,6 +2,7 @@
 
 #include "inventory_view_math.hpp"
 #include "material_bag_renderer.hpp"
+#include "material_pack.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -22,6 +23,7 @@ public:
     void open(const dungeon::DungeonSession& session,
         const dungeon::DungeonSnapshot& snapshot);
     void close() noexcept;
+    void show_skill_stones_page() noexcept;
     [[nodiscard]] bool is_open() const noexcept;
     [[nodiscard]] bool process_input(DungeonRuntime& runtime,
         const dungeon::DungeonSnapshot& snapshot,
@@ -29,6 +31,7 @@ public:
     void draw(const dungeon::DungeonSession& session,
         const dungeon::DungeonSnapshot& snapshot,
         const DungeonRenderStatus& status,
+        const MaterialPack& material_pack,
         Font hud_font, bool hud_font_ready);
 
 private:

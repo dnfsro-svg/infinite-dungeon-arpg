@@ -95,9 +95,15 @@ private:
     };
 
     void simulate_player(MovementInput movement) noexcept;
+    void move_player_to(Vec3 candidate) noexcept;
+    void resolve_fire_brazier_overlap(
+        MonsterRuntime& monster, Vec3 previous_position) noexcept;
     void simulate_active_skill_movement(MovementInput movement) noexcept;
     void tick_active_skill_cooldowns() noexcept;
     void tick_active_skill() noexcept;
+    void apply_active_skill_events_at(std::uint16_t tick) noexcept;
+    void pull_storm_swords_targets() noexcept;
+    void clear_active_skill() noexcept;
     void resolve_draw_slash_hits() noexcept;
     void resolve_storm_swords_hits(bool finisher) noexcept;
     [[nodiscard]] bool resolve_player_attack_hit(
@@ -122,6 +128,7 @@ private:
     void respawn_dummy(std::size_t index) noexcept;
     void apply_attack_assist(const AttackDefinition& definition) noexcept;
     void resolve_attack_hits() noexcept;
+    void resolve_fire_crate_hits(Aabb attack_box) noexcept;
     bool apply_player_damage(
         DamagePacket damage,
         DamageDelivery delivery,
@@ -232,6 +239,7 @@ private:
     AbyssEnvironmentRuntime abyss_environment_{};
     AttackRuntime attack_{};
     ActiveSkillRuntime active_skill_{};
+    std::array<FireRoomCrateSnapshot, kFireRoomCrateCapacity> fire_crates_{};
     InputBuffer input_buffer_{};
     struct EffectOwner final {
         std::size_t monster_slot{};

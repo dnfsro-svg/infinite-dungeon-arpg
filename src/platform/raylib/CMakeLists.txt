@@ -1,5 +1,6 @@
 add_library(arpg_raylib STATIC
     active_skill_renderer.cpp
+    active_skill_assets.cpp
     active_skill_view.cpp
     actor_renderer.cpp
     audio_pack.cpp
@@ -16,6 +17,7 @@ add_library(arpg_raylib STATIC
     death_overlay_view.cpp
     debug_renderer.cpp
     debug_overlay_renderer.cpp
+    fire_room_material_slice.cpp
     dungeon_view_math.cpp
     dungeon_runtime.cpp
     game_audio.cpp
@@ -32,9 +34,12 @@ add_library(arpg_raylib STATIC
     hud_renderer.cpp
     inventory_renderer.cpp
     inventory_view_math.cpp
+    ui_text_bounds_audit.cpp
+    ui_text_renderer.cpp
     material_animation.cpp
     material_asset_validation.cpp
     material_pack.cpp
+    monster_material_presenter.cpp
     passive_tree_renderer.cpp
     passive_tree_view_math.cpp
     pause_menu_state.cpp
@@ -43,11 +48,15 @@ add_library(arpg_raylib STATIC
     procedural_audio.cpp
     raylib_input.cpp
     raylib_host.cpp
+    room_background_render_plan.cpp
     room_renderer.cpp
     stable_key_raylib.cpp
     stream_pack.cpp
     ui_audio_pack.cpp
     window_settings.cpp)
+target_sources(arpg_raylib PRIVATE water_room_material_slice.cpp)
+target_sources(arpg_raylib PRIVATE lightning_room_material_slice.cpp)
+target_sources(arpg_raylib PRIVATE chaos_room_material_slice.cpp)
 
 target_include_directories(arpg_raylib
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")

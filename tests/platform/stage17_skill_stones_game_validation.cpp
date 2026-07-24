@@ -124,7 +124,7 @@ std::filesystem::path g_executable{};
     config.new_run_seed = seed;
     config.validation_steps_per_frame = 1U;
     config.validation_exit_after_presented_frames =
-        scenario == "production" ? 900U : 300U;
+        scenario == "production" ? 1200U : 300U;
     if (scenario == "production") {
         config.stage17_skill_stones_validation =
             platform::Stage17SkillStonesValidationScenario::production_sequence;
@@ -152,11 +152,18 @@ std::filesystem::path g_executable{};
         && field_is(fields, "support_none_count", "25")
         && field_is(fields, "empty_slots_none", "1")
         && field_is(fields, "draw_accepted", "1")
+        && field_is(fields, "draw_windup_captured", "1")
+        && field_is(fields, "draw_frame_peak", "35")
         && field_is(fields, "draw_hit_count", "2")
         && field_is(fields, "storm_accepted", "1")
-        && field_is(fields, "storm_strike_hit_count", "3")
-        && field_is(fields, "storm_finisher_hit_count", "1")
+        && field_is(fields, "storm_strike_hit_count", "5")
+        && field_is(fields, "storm_finisher_hit_count", "0")
         && field_is(fields, "storm_strike_count", "12")
+        && field_is(fields, "storm_sword_peak", "24")
+        && field_is(fields, "storm_invulnerable_seen", "1")
+        && field_is(fields, "storm_finisher_phase_seen", "1")
+        && field_is(fields, "storm_aerial_captured", "1")
+        && field_is(fields, "active_skill_atlases_ready", "1")
         && field_is(fields, "storm_center_locked", "1")
         && field_is(fields, "storm_player_moved", "1")
         && field_is(fields, "public_input_path", "1")
@@ -177,7 +184,7 @@ std::filesystem::path g_executable{};
     static_assert(persistence::kCheckpointFormatVersion == 8U);
     std::ofstream stream(run / "stage17-skill-stones-state.txt",
         std::ios::out | std::ios::trunc | std::ios::binary);
-    stream << "schema=stage17-skill-stones-evidence-v1\n"
+    stream << "schema=stage17-active-skill-rework-evidence-v2\n"
            << "result=PASS\n"
            << "renderer=raylib-6.0-opengl\n"
            << "window=1280x720\n"
@@ -190,10 +197,17 @@ std::filesystem::path g_executable{};
            << "digit_1_cast=accepted\n"
            << "digit_2_cast=accepted\n"
            << "digit_3_5_effect=none\n"
+           << "draw_windup_captured=true\n"
+           << "draw_frame_peak=35\n"
            << "draw_slash_hit_count=2\n"
-           << "storm_strike_hit_count=3\n"
-           << "storm_finisher_hit_count=1\n"
+           << "storm_strike_hit_count=5\n"
+           << "storm_finisher_hit_count=0\n"
            << "storm_strike_count=12\n"
+           << "storm_sword_peak=24\n"
+           << "storm_invulnerable_seen=true\n"
+           << "storm_finisher_phase_seen=true\n"
+           << "storm_aerial_captured=true\n"
+           << "active_skill_atlases_ready=true\n"
            << "storm_center_locked=true\n"
            << "loadout_transactions=remove1,equip5,swap2_5\n"
            << "restart_persisted=true\n"

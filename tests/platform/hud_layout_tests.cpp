@@ -1,6 +1,8 @@
 #include "test_framework.hpp"
 
 #include "hud_layout.hpp"
+#include "hud_renderer.hpp"
+#include "ui_text_contrast.hpp"
 
 #include <array>
 
@@ -143,12 +145,102 @@ arpg::test::Failure hud_rect_helpers_distinguish_touching_from_overlapping() noe
     return {};
 }
 
+arpg::test::Failure hud_text_safe_boxes_do_not_intersect_or_cross_panels() noexcept {
+    constexpr std::array<std::array<int, 2>, 2> kViewports{{
+        {{1280, 720}}, {{1920, 1080}},
+    }};
+    for (const auto viewport : kViewports) {
+        const platform::HudLayout layout =
+            platform::make_hud_layout(viewport[0], viewport[1], false);
+        const platform::HudTextSafeLayout text =
+            platform::make_hud_text_safe_layout(layout);
+        ARPG_REQUIRE(platform::hud_rect_inside(
+            text.objective_title, layout.objective_panel));
+        ARPG_REQUIRE(platform::hud_rect_inside(
+            text.objective_hint, layout.objective_panel));
+        ARPG_REQUIRE(platform::hud_rect_inside(
+            text.objective_movement, layout.objective_panel));
+        for (const platform::HudRect control : text.objective_controls) {
+            ARPG_REQUIRE(platform::hud_rect_inside(
+                control, layout.objective_panel));
+        }
+        const std::array<platform::HudRect, 6U> objective_rows{{
+            text.objective_title,
+            text.objective_hint,
+            text.objective_movement,
+            text.objective_controls[0],
+            text.objective_controls[1],
+            text.objective_controls[2],
+        }};
+        for (std::size_t first{}; first < objective_rows.size(); ++first) {
+            for (std::size_t second = first + 1U;
+                 second < objective_rows.size(); ++second) {
+                ARPG_REQUIRE(!platform::hud_rects_overlap(
+                    objective_rows[first], objective_rows[second]));
+            }
+        }
+        ARPG_REQUIRE(layout.objective_panel.width >= 620.0F * layout.scale);
+        ARPG_REQUIRE(layout.objective_panel.height <= 142.0F * layout.scale);
+        ARPG_REQUIRE(platform::hud_rect_inside(
+            text.navigation_title, layout.navigation_panel));
+        ARPG_REQUIRE(platform::hud_rect_inside(
+            text.navigation_ecology, layout.navigation_panel));
+        ARPG_REQUIRE(!platform::hud_rects_overlap(
+            text.navigation_title, text.navigation_ecology));
+    }
+    return {};
+}
+
+arpg::test::Failure hud_typography_has_readable_minimums_and_contrast() noexcept {
+    const platform::HudReadabilityStyle style =
+        platform::hud_readability_style();
+    ARPG_REQUIRE(style.panel_minimum_font_size >= 17.0F);
+    ARPG_REQUIRE(style.player_bar_font_size >= 20.0F);
+    ARPG_REQUIRE(style.objective_primary_font_size >= 23.0F);
+    ARPG_REQUIRE(style.objective_secondary_font_size >= 19.0F);
+    ARPG_REQUIRE(style.navigation_secondary_font_size >= 19.0F);
+    ARPG_REQUIRE(style.outline_pixels == 0);
+    ARPG_REQUIRE(style.shadow_pixels >= 2);
+    ARPG_REQUIRE(style.embolden_pixels == 0);
+    const platform::UiTextContrastStyle contrast =
+        platform::ui_text_contrast_style();
+    ARPG_REQUIRE(contrast.primary.a == 255U);
+    ARPG_REQUIRE(contrast.secondary.a == 255U);
+    ARPG_REQUIRE(contrast.interaction.r == 194U);
+    ARPG_REQUIRE(contrast.interaction.g == 229U);
+    ARPG_REQUIRE(contrast.interaction.b == 255U);
+    ARPG_REQUIRE(contrast.interaction.a == 255U);
+    ARPG_REQUIRE(contrast.primary.r == 248U);
+    ARPG_REQUIRE(contrast.primary.g == 246U);
+    ARPG_REQUIRE(contrast.primary.b == 238U);
+    ARPG_REQUIRE(contrast.muted.a == 255U);
+    ARPG_REQUIRE(contrast.warning.r == 255U);
+    ARPG_REQUIRE(contrast.warning.g == 210U);
+    ARPG_REQUIRE(contrast.warning.b == 118U);
+    ARPG_REQUIRE(contrast.warning.a == 255U);
+    ARPG_REQUIRE(contrast.shadow.a >= 235U);
+    ARPG_REQUIRE(platform::ui_luma_contrast_ratio(
+        contrast.primary, contrast.backing) >= 7.0F);
+    ARPG_REQUIRE(platform::ui_luma_contrast_ratio(
+        contrast.secondary, contrast.backing) >= 6.0F);
+    ARPG_REQUIRE(platform::ui_luma_contrast_ratio(
+        contrast.muted, contrast.backing) >= 4.5F);
+    ARPG_REQUIRE(contrast.outline_pixels == 0);
+    ARPG_REQUIRE(contrast.shadow_pixels >= 2);
+    ARPG_REQUIRE(contrast.backing.a >= 220U);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"resolution safe layout matrices", &resolution_matrices_are_safe_and_do_not_cover_combat},
     {"notices above abyss confirmation", &notices_remain_above_the_bottom_abyss_confirmation_area},
     {"debug layout opt in", &debug_panel_is_opt_in_and_keeps_the_combat_exclusion_clear},
     {"invalid viewport layout", &invalid_viewports_return_an_empty_layout},
     {"HUD rectangle helpers", &hud_rect_helpers_distinguish_touching_from_overlapping},
+    {"HUD text safe boxes",
+        &hud_text_safe_boxes_do_not_intersect_or_cross_panels},
+    {"HUD typography readability",
+        &hud_typography_has_readable_minimums_and_contrast},
 };
 
 }  // namespace

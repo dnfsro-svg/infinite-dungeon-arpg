@@ -110,11 +110,11 @@ arpg_expect_hud_guard_rejects(dynamic_string debug_overlay_renderer.cpp ""
     "std::string stage11c_bad_string;"
     "HUD boundary rejects dynamic std::string")
 arpg_expect_hud_guard_rejects(dynamic_vector raylib_host.cpp
-    "const GroundLootView ground_loot_view = renderer.draw("
+    "const GroundLootView ground_loot_view = [&]() noexcept {"
     "std::vector<int> stage11c_bad_vector;"
     "HUD boundary rejects dynamic std::vector")
 arpg_expect_hud_guard_rejects(legacy_budget raylib_host.cpp
-    "const GroundLootView ground_loot_view = renderer.draw("
+    "const GroundLootView ground_loot_view = [&]() noexcept {"
     "constexpr const char* stage11c_bad_text = \"Budget\";"
     "Normal HUD rejects legacy Budget text")
 arpg_expect_hud_guard_rejects(fourth_status_tag hud_view_model.cpp ""

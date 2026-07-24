@@ -292,45 +292,19 @@ bool drive_door_pending(dungeon::DungeonSession& session,
     if (!clear_and_await(session)) {
         return false;
     }
-    for (int tick = 0; tick < 256; ++tick) {
+    if (direction == dungeon::ExitDirection::none) return false;
+    for (int tick = 0; tick < 512; ++tick) {
         const auto snapshot = session.snapshot();
-        if (!snapshot.combat.has_value()) {
-            return false;
-        }
-        const auto position = snapshot.combat->player.position;
-        arpg::combat::MovementInput alignment{};
-        if (direction == dungeon::ExitDirection::left
-                || direction == dungeon::ExitDirection::right) {
-            alignment.y = position.y > 0.1F ? -1 : (position.y < -0.1F ? 1 : 0);
-        } else {
-            alignment.x = position.x > 0.1F ? -1 : (position.x < -0.1F ? 1 : 0);
-        }
-        if (alignment.x == 0 && alignment.y == 0) {
-            break;
-        }
-        session.tick(alignment);
+        if (!snapshot.combat.has_value()) return false;
+        const combat::MovementInput movement =
+            arpg::test::exit_alignment_movement(snapshot, direction);
+        if (movement.x == 0 && movement.y == 0) break;
+        session.tick(movement);
         arpg::test::EventSummary summary;
         arpg::test::drain_all_events(session, summary);
     }
-    arpg::combat::MovementInput outward{};
-    switch (direction) {
-    case dungeon::ExitDirection::up:
-        outward = {0, -1};
-        break;
-    case dungeon::ExitDirection::down:
-        outward = {0, 1};
-        break;
-    case dungeon::ExitDirection::left:
-        outward = {-1, 0};
-        break;
-    case dungeon::ExitDirection::right:
-        outward = {1, 0};
-        break;
-    case dungeon::ExitDirection::none:
-        return false;
-    }
-    for (int tick = 0; tick < 256; ++tick) {
-        session.tick(outward);
+    for (int tick = 0; tick < 512; ++tick) {
+        session.tick(arpg::test::exit_outward(direction));
         arpg::test::EventSummary summary;
         arpg::test::drain_all_events(session, summary);
         if (session.snapshot().phase == dungeon::RoomPhase::committing) {

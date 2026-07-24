@@ -102,7 +102,7 @@ function Assert-ValidatorRejects([string]$Name, [scriptblock]$Mutate) {
 Assert-ValidatorRejects 'broken-png' {
     param($caseRun)
     [System.IO.File]::WriteAllBytes(
-        (Join-Path $caseRun '02-draw-slash-hit-1280x720.png'),
+        (Join-Path $caseRun '03-draw-slash-hit-1280x720.png'),
         [byte[]](0x89, 0x50, 0x4E, 0x47))
 }
 Assert-ValidatorRejects 'forged-state' {
@@ -116,7 +116,7 @@ Assert-ValidatorRejects 'forged-state' {
 Assert-ValidatorRejects 'stale-png' {
     param($caseRun)
     $marker = Get-Item -LiteralPath (Join-Path $caseRun 'run.marker')
-    (Get-Item -LiteralPath (Join-Path $caseRun '03-storm-array-1280x720.png')).LastWriteTimeUtc =
+    (Get-Item -LiteralPath (Join-Path $caseRun '04-storm-ground-array-1280x720.png')).LastWriteTimeUtc =
         $marker.LastWriteTimeUtc.AddSeconds(-1)
 }
 

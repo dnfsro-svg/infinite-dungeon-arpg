@@ -16,6 +16,7 @@ using arpg::skills::ActiveSkillId;
 using arpg::test::tick_n;
 
 constexpr double kFloatTolerance = 1.0e-4;
+constexpr std::uint16_t kDrawSlashDamageTick = 46U;
 
 CombatLabConfig draw_slash_config() noexcept {
     CombatLabConfig config{};
@@ -34,6 +35,8 @@ arpg::test::Failure accepts_draw_slash_and_locks_facing() noexcept {
     ARPG_REQUIRE(snapshot.active_skill.id == ActiveSkillId::draw_slash);
     ARPG_REQUIRE(snapshot.active_skill.phase == ActiveSkillPhase::startup);
     ARPG_REQUIRE(snapshot.active_skill.elapsed_ticks == 0U);
+    ARPG_REQUIRE(snapshot.active_skill.frame_index == 0U);
+    ARPG_REQUIRE(snapshot.active_skill.transients_active);
     ARPG_REQUIRE(snapshot.skill_cooldowns[0] == 240U);
 
     world.tick(MovementInput{-1, 0});
@@ -86,7 +89,7 @@ arpg::test::Failure startup_has_no_damage_and_draw_slash_hits_each_front_target_
     ARPG_REQUIRE(world.request_active_skill(ActiveSkillId::draw_slash)
                  == SkillCastResult::accepted);
 
-    tick_n(world, kDrawSlashStartupTicks - 1U);
+    tick_n(world, kDrawSlashDamageTick - 1U);
     CombatSnapshot snapshot = world.snapshot();
     ARPG_REQUIRE(snapshot.monsters[0].hp == before.monsters[0].hp);
     ARPG_REQUIRE(snapshot.monsters[1].hp == before.monsters[1].hp);
@@ -114,27 +117,30 @@ arpg::test::Failure startup_has_no_damage_and_draw_slash_hits_each_front_target_
     CombatWorld left{left_config};
     ARPG_REQUIRE(left.request_active_skill(ActiveSkillId::draw_slash)
                  == SkillCastResult::accepted);
-    tick_n(left, kDrawSlashStartupTicks);
+    tick_n(left, kDrawSlashDamageTick);
     ARPG_REQUIRE(arpg::test::near(
         left.snapshot().monsters[1].velocity.x, -0.22, kFloatTolerance));
     return {};
 }
 
-arpg::test::Failure draw_slash_strikes_on_tick_ten_then_recovers_for_fourteen_ticks() noexcept {
+arpg::test::Failure draw_slash_uses_the_locked_timeline_for_frames_damage_and_recovery() noexcept {
     CombatWorld world{draw_slash_config()};
     ARPG_REQUIRE(world.request_active_skill(ActiveSkillId::draw_slash)
                  == SkillCastResult::accepted);
 
-    tick_n(world, 9);
+    tick_n(world, 44);
     ARPG_REQUIRE(world.snapshot().active_skill.phase == ActiveSkillPhase::startup);
-    ARPG_REQUIRE(world.snapshot().active_skill.elapsed_ticks == 9U);
+    ARPG_REQUIRE(world.snapshot().active_skill.elapsed_ticks == 44U);
     world.tick(MovementInput{});
     ARPG_REQUIRE(world.snapshot().active_skill.phase == ActiveSkillPhase::strikes);
-    ARPG_REQUIRE(world.snapshot().active_skill.elapsed_ticks == 10U);
-    tick_n(world, 14);
-    ARPG_REQUIRE(world.snapshot().active_skill.phase == ActiveSkillPhase::recovery);
-    ARPG_REQUIRE(world.snapshot().active_skill.elapsed_ticks == 24U);
+    ARPG_REQUIRE(world.snapshot().active_skill.elapsed_ticks == 45U);
+    ARPG_REQUIRE(world.snapshot().active_skill.frame_index == 18U);
     world.tick(MovementInput{});
+    ARPG_REQUIRE(world.snapshot().active_skill.elapsed_ticks == 46U);
+    tick_n(world, 20);
+    ARPG_REQUIRE(world.snapshot().active_skill.phase == ActiveSkillPhase::recovery);
+    ARPG_REQUIRE(world.snapshot().active_skill.elapsed_ticks == 66U);
+    tick_n(world, 24);
     ARPG_REQUIRE(world.snapshot().active_skill.id == ActiveSkillId::none);
     ARPG_REQUIRE(world.snapshot().active_skill.phase == ActiveSkillPhase::none);
     return {};
@@ -146,7 +152,7 @@ arpg::test::Failure draw_slash_uses_220_physical_and_36_break_damage() noexcept 
     arpg::test::drain_events(world);
     ARPG_REQUIRE(world.request_active_skill(ActiveSkillId::draw_slash)
                  == SkillCastResult::accepted);
-    tick_n(world, kDrawSlashStartupTicks);
+    tick_n(world, kDrawSlashDamageTick);
     const CombatSnapshot after = world.snapshot();
     ARPG_REQUIRE(before.monsters[0].hp - after.monsters[0].hp == 220);
     ARPG_REQUIRE(before.monsters[2].break_value - after.monsters[2].break_value
@@ -169,7 +175,7 @@ arpg::test::Failure draw_slash_respects_five_range_and_three_point_two_width_bou
     const int inside_hp = inside.snapshot().monsters[0].hp;
     ARPG_REQUIRE(inside.request_active_skill(ActiveSkillId::draw_slash)
                  == SkillCastResult::accepted);
-    tick_n(inside, kDrawSlashStartupTicks);
+    tick_n(inside, kDrawSlashDamageTick);
     ARPG_REQUIRE(inside.snapshot().monsters[0].hp == inside_hp - 220);
 
     CombatLabConfig outside_config = draw_slash_config();
@@ -178,7 +184,7 @@ arpg::test::Failure draw_slash_respects_five_range_and_three_point_two_width_bou
     const int outside_hp = outside.snapshot().monsters[0].hp;
     ARPG_REQUIRE(outside.request_active_skill(ActiveSkillId::draw_slash)
                  == SkillCastResult::accepted);
-    tick_n(outside, kDrawSlashStartupTicks);
+    tick_n(outside, kDrawSlashDamageTick);
     ARPG_REQUIRE(outside.snapshot().monsters[0].hp == outside_hp);
 
     CombatLabConfig forward_outside_config = draw_slash_config();
@@ -188,7 +194,7 @@ arpg::test::Failure draw_slash_respects_five_range_and_three_point_two_width_bou
     ARPG_REQUIRE(forward_outside.request_active_skill(
                      ActiveSkillId::draw_slash)
                  == SkillCastResult::accepted);
-    tick_n(forward_outside, kDrawSlashStartupTicks);
+    tick_n(forward_outside, kDrawSlashDamageTick);
     ARPG_REQUIRE(forward_outside.snapshot().monsters[0].hp
                  == forward_outside_hp);
     return {};
@@ -201,7 +207,7 @@ arpg::test::Failure draw_slash_does_not_hit_behind_the_player() noexcept {
     const int hp = world.snapshot().monsters[2].hp;
     ARPG_REQUIRE(world.request_active_skill(ActiveSkillId::draw_slash)
                  == SkillCastResult::accepted);
-    tick_n(world, kDrawSlashStartupTicks);
+    tick_n(world, kDrawSlashDamageTick);
     ARPG_REQUIRE(world.snapshot().monsters[2].hp == hp);
     return {};
 }
@@ -280,7 +286,7 @@ arpg::test::Failure draw_slash_hot_paths_allocate_nothing() noexcept {
     CombatWorld hit{draw_slash_config()};
     ARPG_REQUIRE(hit.request_active_skill(ActiveSkillId::draw_slash)
                  == SkillCastResult::accepted);
-    tick_n(hit, kDrawSlashStartupTicks - 1U);
+    tick_n(hit, kDrawSlashDamageTick - 1U);
     const std::uint64_t hit_before = arpg::test::allocation_count();
     hit.tick(MovementInput{});
     ARPG_REQUIRE(arpg::test::allocation_count() == hit_before);
@@ -298,8 +304,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"rejects unavailable and attacking player", &rejects_skill_when_player_is_unavailable_or_attacking},
     {"startup delays damage and hits front targets once",
      &startup_has_no_damage_and_draw_slash_hits_each_front_target_once},
-    {"strikes on tick ten with fourteen recovery ticks",
-     &draw_slash_strikes_on_tick_ten_then_recovers_for_fourteen_ticks},
+    {"uses timeline frames damage and recovery",
+     &draw_slash_uses_the_locked_timeline_for_frames_damage_and_recovery},
     {"uses exact physical and break damage",
      &draw_slash_uses_220_physical_and_36_break_damage},
     {"respects range and width boundary",

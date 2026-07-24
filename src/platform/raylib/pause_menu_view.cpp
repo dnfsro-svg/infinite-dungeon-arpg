@@ -1,19 +1,21 @@
 #include "pause_menu_view.hpp"
 
 #include "stable_key_raylib.hpp"
+#include "ui_typography.hpp"
 
 #include <cstdio>
+#include <algorithm>
 
 namespace arpg::platform {
 namespace {
 
 constexpr float kPanelWidth = 760.0F;
-constexpr float kPanelHeight = 544.0F;
+constexpr float kPanelHeight = 620.0F;
 constexpr float kRowInsetX = 24.0F;
-constexpr float kFirstRowY = 60.0F;
-constexpr float kRowHeight = 18.0F;
-constexpr float kRowStride = 20.0F;
-constexpr float kFooterY = 496.0F;
+constexpr float kFirstRowY = 62.0F;
+constexpr float kRowHeight = 23.0F;
+constexpr float kRowStride = 24.0F;
+constexpr float kFooterY = 580.0F;
 constexpr float kFooterHeight = 28.0F;
 
 template <typename... Arguments>
@@ -97,27 +99,39 @@ void build_settings_rows(
 PauseMenuLayout pause_menu_layout(int width, int height) noexcept {
     const float screen_width = static_cast<float>(width);
     const float screen_height = static_cast<float>(height);
+    const float desired_scale = ui_viewport_scale(width, height);
+    const float scale = (std::min)({desired_scale,
+        (std::max)(0.0F, screen_width - 64.0F) / kPanelWidth,
+        (std::max)(0.0F, screen_height - 32.0F) / kPanelHeight});
+    const float panel_width = kPanelWidth * scale;
+    const float panel_height = kPanelHeight * scale;
     PauseMenuLayout layout{};
     layout.panel = {
-        (screen_width - kPanelWidth) * 0.5F,
-        (screen_height - kPanelHeight) * 0.5F,
-        kPanelWidth,
-        kPanelHeight,
+        (screen_width - panel_width) * 0.5F,
+        (screen_height - panel_height) * 0.5F,
+        panel_width,
+        panel_height,
+    };
+    layout.title = {
+        layout.panel.x + kRowInsetX * scale,
+        layout.panel.y + 20.0F * scale,
+        layout.panel.width - kRowInsetX * 2.0F * scale,
+        30.0F * scale,
     };
     for (std::size_t row = 0U; row < kPauseMenuRowCapacity; ++row) {
         layout.rows[row] = {
-            layout.panel.x + kRowInsetX,
-            layout.panel.y + kFirstRowY
-                + static_cast<float>(row) * kRowStride,
-            layout.panel.width - kRowInsetX * 2.0F,
-            kRowHeight,
+            layout.panel.x + kRowInsetX * scale,
+            layout.panel.y + (kFirstRowY
+                + static_cast<float>(row) * kRowStride) * scale,
+            layout.panel.width - kRowInsetX * 2.0F * scale,
+            kRowHeight * scale,
         };
     }
     layout.footer = {
-        layout.panel.x + kRowInsetX,
-        layout.panel.y + kFooterY,
-        layout.panel.width - kRowInsetX * 2.0F,
-        kFooterHeight,
+        layout.panel.x + kRowInsetX * scale,
+        layout.panel.y + kFooterY * scale,
+        layout.panel.width - kRowInsetX * 2.0F * scale,
+        kFooterHeight * scale,
     };
     return layout;
 }

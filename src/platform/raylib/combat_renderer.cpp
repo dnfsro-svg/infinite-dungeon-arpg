@@ -9,6 +9,17 @@
 
 namespace arpg::platform {
 
+MaterialEcology material_ecology(
+    dungeon::DungeonElement ecology) noexcept {
+    switch (ecology) {
+    case dungeon::DungeonElement::fire: return MaterialEcology::fire;
+    case dungeon::DungeonElement::water: return MaterialEcology::water;
+    case dungeon::DungeonElement::lightning: return MaterialEcology::lightning;
+    case dungeon::DungeonElement::chaos: return MaterialEcology::chaos;
+    }
+    return MaterialEcology::common;
+}
+
 CombatRenderPlan make_combat_render_plan(
     const dungeon::DungeonSnapshot& snapshot,
     settings::LootFilterMode mode,
@@ -37,18 +48,68 @@ std::optional<std::size_t> hud_presented_frame_index(
 bool CombatRenderer::initialize_resources() noexcept {
     const bool death_font_ready = death_overlay_.initialize();
     const bool hud_font_ready = hud_renderer_.initialize();
+    const bool skill_assets_ready = active_skill_renderer_.initialize_resources();
     static_cast<void>(material_pack_.load());
     if (!death_font_ready || !hud_font_ready) {
         TraceLog(LOG_WARNING,
             "HUD overlays are using a fallback font; formal CJK validation will fail");
     }
+    if (!skill_assets_ready) {
+        TraceLog(LOG_WARNING,
+            "Active skill atlases are unavailable; using program effect fallback");
+    }
     return death_font_ready && hud_font_ready;
 }
 
 void CombatRenderer::shutdown_resources() noexcept {
+    active_skill_renderer_.shutdown_resources();
     material_pack_.unload();
     hud_renderer_.shutdown();
     death_overlay_.shutdown();
+}
+
+bool CombatRenderer::active_skill_assets_ready() const noexcept {
+    return active_skill_renderer_.assets_ready();
+}
+
+bool CombatRenderer::material_pipeline_ready() const noexcept {
+    return material_pack_.material_pipeline_ready();
+}
+
+bool CombatRenderer::material_ecology_ready(
+    MaterialEcology ecology) const noexcept {
+    return material_pack_.ecology_ready(ecology);
+}
+
+bool CombatRenderer::material_atlas_available(
+    MaterialAtlasId atlas) const noexcept {
+    return material_pack_.available(atlas);
+}
+
+const MaterialPack& CombatRenderer::material_pack() const noexcept {
+    return material_pack_;
+}
+
+std::uint64_t CombatRenderer::material_sprite_draw_count(
+    MaterialSpriteId sprite) const noexcept {
+    return material_pack_.sprite_draw_count(sprite);
+}
+
+std::uint64_t CombatRenderer::material_direct_stretch_draw_count(
+    MaterialSpriteId sprite) const noexcept {
+    return material_pack_.direct_stretch_draw_count(sprite);
+}
+
+MonsterMaterialDrawRuntimeStatus CombatRenderer::monster_material_draw_status(
+    combat::MonsterId monster) const noexcept {
+    const std::size_t index = static_cast<std::size_t>(monster);
+    if (index >= monster_material_draw_statuses_.size()) return {};
+    return monster_material_draw_statuses_[index];
+}
+
+RoomBackgroundDrawRuntimeStatus CombatRenderer::room_background_draw_status()
+    const noexcept {
+    return room_background_draw_status_;
 }
 
 DoorRenderDecision door_render_decision(
@@ -78,6 +139,7 @@ void CombatRenderer::consume_dungeon_event(
 void CombatRenderer::clear_combat_transients() noexcept {
     last_event_ = combat::CombatEvent{};
     has_last_event_ = false;
+    monster_presenter_.reset();
 }
 
 void CombatRenderer::set_loot_filter_mode(
@@ -191,6 +253,7 @@ GroundLootView CombatRenderer::draw(
     bool draw_debug,
     const CombatFeedback& feedback,
     bool audio_ready) noexcept {
+    static_cast<void>(material_pack_.load(material_ecology(current.ecology)));
     transition_ = transition_after_room_phase(transition_, current.phase);
 
     const CombatRenderPlan render_plan = make_combat_render_plan(current,
@@ -232,7 +295,8 @@ GroundLootView CombatRenderer::draw(
             draw_hud();
             active_skill_renderer_.draw_hud(active_skill_hud_model_,
                 active_skill_hud_layout(GetScreenWidth(), GetScreenHeight()),
-                hud_renderer_.hud_font(), hud_renderer_.font_ready());
+                hud_renderer_.hud_font(), hud_renderer_.font_ready(),
+                material_pack_);
             break;
         }
     }

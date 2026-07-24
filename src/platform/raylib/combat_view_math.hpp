@@ -88,7 +88,7 @@ void sort_actor_draw_items(
     combat::MonsterAiPhase phase,
     dungeon::DungeonElement ecology) noexcept;
 [[nodiscard]] MonsterLabelTextStyle monster_label_text_style(
-    float projection_scale) noexcept;
+    float viewport_scale) noexcept;
 [[nodiscard]] AffixBadge monster_affix_badge(
     combat::MonsterAffixInstance affix) noexcept;
 [[nodiscard]] AffixOutline monster_affix_outline(

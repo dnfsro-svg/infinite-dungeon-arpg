@@ -78,6 +78,10 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
         }
     }
     result.hazard_count = hazards_.active_count();
+    if (encounter_config_.fire_room_obstacles) {
+        result.fire_crates = fire_crates_;
+        result.fire_crate_count = fire_crates_.size();
+    }
     std::size_t compatibility_index = 0U;
     for (std::size_t index = 0;
          index < monsters_.slots().size() && compatibility_index < kDummyCount;

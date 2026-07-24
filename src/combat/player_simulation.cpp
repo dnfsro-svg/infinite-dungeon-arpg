@@ -111,10 +111,12 @@ void CombatWorld::simulate_player(MovementInput movement) noexcept {
         player_.velocity.x = 0.0F;
         player_.velocity.y = 0.0F;
         const float facing = player_.facing == Facing::right ? 1.0F : -1.0F;
-        player_.position.x = std::clamp(
-            player_.position.x + definition->lunge_distance * facing,
+        Vec3 candidate = player_.position;
+        candidate.x = std::clamp(
+            candidate.x + definition->lunge_distance * facing,
             room_bounds::min_x,
             room_bounds::max_x);
+        move_player_to(candidate);
         apply_attack_assist(*definition);
         player_.state = PlayerState::attack_startup;
         if (id == AttackId::air_j) {
@@ -243,14 +245,16 @@ void CombatWorld::simulate_player(MovementInput movement) noexcept {
         player_.facing = Facing::right;
     }
 
-    player_.position.x = std::clamp(
-        player_.position.x + player_.velocity.x * kTickSeconds,
+    Vec3 candidate = player_.position;
+    candidate.x = std::clamp(
+        candidate.x + player_.velocity.x * kTickSeconds,
         room_bounds::min_x,
         room_bounds::max_x);
-    player_.position.y = std::clamp(
-        player_.position.y + player_.velocity.y * kTickSeconds,
+    candidate.y = std::clamp(
+        candidate.y + player_.velocity.y * kTickSeconds,
         room_bounds::min_y,
         room_bounds::max_y);
+    move_player_to(candidate);
 
     if (airborne) {
         advance_vertical(false);
