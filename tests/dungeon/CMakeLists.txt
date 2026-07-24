@@ -19,6 +19,7 @@ add_executable(arpg_dungeon_tests
     dungeon_equipment_stress_tests.cpp
     dungeon_loot_drop_tests.cpp
     dungeon_material_loot_tests.cpp
+    dungeon_health_potion_tests.cpp
     dungeon_transaction_tests.cpp
     dungeon_abyss_reward_tests.cpp
     dungeon_abyss_stress_tests.cpp

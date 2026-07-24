@@ -25,6 +25,7 @@ arpg::test::TestSuite dungeon_skill_cast_suite() noexcept;
 arpg::test::TestSuite dungeon_equipment_stress_suite() noexcept;
 arpg::test::TestSuite dungeon_loot_drop_suite() noexcept;
 arpg::test::TestSuite dungeon_material_loot_suite() noexcept;
+arpg::test::TestSuite dungeon_health_potion_suite() noexcept;
 arpg::test::TestSuite dungeon_transaction_suite() noexcept;
 arpg::test::TestSuite dungeon_abyss_reward_suite() noexcept;
 arpg::test::TestSuite dungeon_abyss_stress_suite() noexcept;
@@ -116,6 +117,16 @@ bool stage16_crafting_transaction_only() noexcept {
     return enabled;
 }
 
+bool health_potion_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_HEALTH_POTION_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
 bool stage17_skill_loadout_only() noexcept {
     char* value = nullptr;
     std::size_t length = 0U;
@@ -156,6 +167,7 @@ int main() {
         dungeon_equipment_stress_suite(),
         dungeon_loot_drop_suite(),
         dungeon_material_loot_suite(),
+        dungeon_health_potion_suite(),
         dungeon_transaction_suite(),
         dungeon_abyss_reward_suite(),
         dungeon_abyss_stress_suite(),
@@ -231,6 +243,14 @@ int main() {
             "stage 16 task 7 crafting and reinforcement transactions");
     }
 
+    if (health_potion_only()) {
+        const arpg::test::TestSuite potion_only[] = {
+            dungeon_health_potion_suite(),
+        };
+        return arpg::test::run_suites(potion_only, 3,
+            "task 4 health potion loot");
+    }
+
     if (stage17_skill_loadout_only()) {
         const arpg::test::TestSuite loadout_only[] = {
             dungeon_skill_loadout_transaction_suite(),
@@ -239,6 +259,6 @@ int main() {
             "stage 17 task 3 skill loadout transactions");
     }
 
-    return arpg::test::run_suites(suites, 287,
+    return arpg::test::run_suites(suites, 290,
         "stage 18 dungeon queries");
 }
