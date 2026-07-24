@@ -204,6 +204,9 @@ private:
         items::MaterialId material) noexcept;
     [[nodiscard]] bool place_ground_health_potion(
         std::uint16_t spawn_ordinal, combat::Vec3 position) noexcept;
+    [[nodiscard]] bool has_claimable_health_potion() const noexcept;
+    [[nodiscard]] bool append_clear_health_potion_claims(
+        PendingSave& pending) noexcept;
     [[nodiscard]] bool materialize_abyss_clear_materials() noexcept;
     void vacuum_room_materials() noexcept;
     [[nodiscard]] bool has_ground_materials() const noexcept;
@@ -238,6 +241,11 @@ private:
         skills::ActiveSkillId skill,
         std::uint8_t left,
         std::uint8_t right) noexcept;
+    [[nodiscard]] RequestResult request_health_potion_pickup(
+        std::uint16_t spawn_ordinal) noexcept;
+    [[nodiscard]] bool pending_health_potion_cache_consistent() const noexcept;
+    void apply_committed_health_potions(
+        const PendingHealthPotionClaim& claim, bool room_clear) noexcept;
     [[nodiscard]] PlayerBuildResult build_for(
         const checkpoint::DungeonRunState& state,
         const items::EquipmentState* equipment_override = nullptr) const noexcept;

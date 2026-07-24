@@ -167,6 +167,10 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
             result.pending_material_pickup_ordinal =
                 pending_save_->pickup_ordinal;
         }
+        if (pending_save_->kind == PendingSaveKind::health_potion_pickup) {
+            result.pending_health_potion_spawn_ordinal =
+                pending_save_->pickup_ordinal;
+        }
     }
     if (combat_.has_value()) {
         result.combat.emplace(combat_->snapshot());

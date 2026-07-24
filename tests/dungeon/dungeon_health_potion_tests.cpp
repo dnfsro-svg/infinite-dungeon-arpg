@@ -6,11 +6,17 @@
 #include "dungeon/health_potion_loot.hpp"
 #include "dungeon/material_loot.hpp"
 #include "dungeon/dungeon_progression.hpp"
+#include "combat/combat_scaling.hpp"
+#include "persistence/save_store.hpp"
 
 #include <array>
 #include <cstring>
 #include <cstdint>
+#include <filesystem>
+#include <functional>
 #include <optional>
+#include <string>
+#include <utility>
 
 namespace {
 
@@ -18,6 +24,27 @@ using arpg::dungeon::DungeonRules;
 using arpg::dungeon::DungeonRunState;
 using arpg::dungeon::DungeonSession;
 using arpg::dungeon::GroundMaterialSource;
+
+struct PotionTempDirectory final {
+    std::filesystem::path path{};
+
+    PotionTempDirectory() noexcept {
+        std::error_code error;
+        path = std::filesystem::temp_directory_path(error)
+            / "arpg_health_potion_transaction"
+            / std::to_string(static_cast<unsigned long long>(
+                std::hash<std::string>{}(std::to_string(
+                    reinterpret_cast<std::uintptr_t>(this)))));
+        std::filesystem::remove_all(path, error);
+        std::filesystem::create_directories(path, error);
+        if (error) path.clear();
+    }
+
+    ~PotionTempDirectory() noexcept {
+        std::error_code error;
+        std::filesystem::remove_all(path, error);
+    }
+};
 
 struct DropSeedRequirements final {
     bool common{};
@@ -69,7 +96,8 @@ bool relay_drop(
         true,
         arpg::combat::MonsterId::fire_bomber,
         spawn_ordinal,
-        affix_score);
+        affix_score,
+        false);
     static_cast<void>(session.try_pop_combat_event());
     return relayed;
 }
@@ -84,6 +112,20 @@ const arpg::dungeon::GroundMaterialSnapshot* find_ground_material_snapshot(
         }
     }
     return nullptr;
+}
+
+bool claim_bit_is_set(
+    const arpg::dungeon::DungeonRunState& state,
+    std::uint16_t ordinal) noexcept {
+    const std::size_t word = static_cast<std::size_t>(ordinal / 64U);
+    const std::uint64_t mask = std::uint64_t{1U} << (ordinal % 64U);
+    return word < state.item_ownership.material_claimed_drop_bits.size()
+        && (state.item_ownership.material_claimed_drop_bits[word] & mask) != 0U;
+}
+
+void install_potion(DungeonSession& session, std::uint16_t spawn,
+    arpg::combat::Vec3 position = {100.0F, 0.0F, 0.0F}) noexcept {
+    arpg::test::install_ground_health_potion(session, spawn, position);
 }
 
 arpg::test::Failure health_potion_rules_are_frozen() noexcept {
@@ -312,6 +354,572 @@ potion_snapshot_is_sorted_by_spawn_ordinal_and_clears_on_room_exit() noexcept {
     return {};
 }
 
+arpg::test::Failure
+potion_above_threshold_stays_grounded_but_75_percent_ignores_distance()
+    noexcept {
+    DungeonSession session{DungeonRules{}, potion_state(101U)};
+    arpg::test::set_phase(session, arpg::dungeon::RoomPhase::awaiting_exit);
+    arpg::test::set_player_position(session, {0.0F, 0.0F, 0.0F});
+    arpg::test::set_player_health(session, 751, 1000);
+    install_potion(session, 7U, {100.0F, 0.0F, 0.0F});
+
+    session.tick({});
+    auto visible = session.snapshot();
+    ARPG_REQUIRE(!session.pending_save().has_value());
+    ARPG_REQUIRE(visible.combat.has_value());
+    ARPG_REQUIRE(visible.combat->player.hp == 751);
+    ARPG_REQUIRE(visible.ground_health_potion_count == 1U);
+    ARPG_REQUIRE(!visible.health_potion_pickup_receipt.valid);
+
+    arpg::test::set_player_health(session, 750, 1000);
+    const std::uint64_t allocations_before = arpg::test::allocation_count();
+    session.tick({});
+    ARPG_REQUIRE(arpg::test::allocation_count() == allocations_before);
+    const auto pending = session.pending_save();
+    visible = session.snapshot();
+    ARPG_REQUIRE(pending.has_value());
+    ARPG_REQUIRE(pending->kind
+        == arpg::dungeon::PendingSaveKind::health_potion_pickup);
+    ARPG_REQUIRE(pending->health_potion_claim.has_value());
+    ARPG_REQUIRE(pending->health_potion_claim->count == 1U);
+    ARPG_REQUIRE(pending->health_potion_claim->spawn_ordinals[0] == 7U);
+    ARPG_REQUIRE(visible.pending_health_potion_spawn_ordinal == 7U);
+    ARPG_REQUIRE(visible.combat->player.hp == 750);
+    ARPG_REQUIRE(visible.ground_health_potion_count == 1U);
+    ARPG_REQUIRE(!visible.health_potion_pickup_receipt.valid);
+    ARPG_REQUIRE(!claim_bit_is_set(arpg::test::stable_state(session),
+        arpg::dungeon::health_potion_claim_ordinal(7U)));
+    ARPG_REQUIRE(claim_bit_is_set(pending->next_state,
+        arpg::dungeon::health_potion_claim_ordinal(7U)));
+    return {};
+}
+
+arpg::test::Failure
+potion_auto_use_scans_stable_spawn_order_and_rechecks_after_commit() noexcept {
+    DungeonSession session{DungeonRules{}, potion_state(102U)};
+    arpg::test::set_phase(session, arpg::dungeon::RoomPhase::awaiting_exit);
+    arpg::test::set_player_health(session, 749, 1000);
+    install_potion(session, 9U);
+    install_potion(session, 6U);
+    install_potion(session, 2U);
+
+    session.request_nearby_pickups({-500.0F, 0.0F, 0.0F});
+    ARPG_REQUIRE(session.pending_save().has_value());
+    ARPG_REQUIRE(session.pending_save()->health_potion_claim.has_value());
+    ARPG_REQUIRE(session.pending_save()->health_potion_claim
+        ->spawn_ordinals[0] == 2U);
+    ARPG_REQUIRE(arpg::test::commit_pending(session));
+    ARPG_REQUIRE(session.snapshot().combat->player.hp == 999);
+
+    session.request_nearby_pickups({500.0F, 0.0F, 0.0F});
+    ARPG_REQUIRE(!session.pending_save().has_value());
+    ARPG_REQUIRE(session.snapshot().ground_health_potion_count == 2U);
+    arpg::test::set_player_health(session, 750, 1000);
+    session.request_nearby_pickups({500.0F, 0.0F, 0.0F});
+    ARPG_REQUIRE(session.pending_save().has_value());
+    ARPG_REQUIRE(session.pending_save()->health_potion_claim
+        ->spawn_ordinals[0] == 6U);
+    return {};
+}
+
+arpg::test::Failure
+dead_player_or_death_snapshot_never_requests_or_consumes_potion() noexcept {
+    DungeonSession dead{DungeonRules{}, potion_state(103U)};
+    arpg::test::set_phase(dead, arpg::dungeon::RoomPhase::awaiting_exit);
+    arpg::test::set_player_health(dead, 0, 1000);
+    install_potion(dead, 3U);
+    dead.request_nearby_pickups({});
+    ARPG_REQUIRE(!dead.pending_save().has_value());
+    ARPG_REQUIRE(dead.snapshot().combat->player.hp == 0);
+    ARPG_REQUIRE(dead.snapshot().ground_health_potion_count == 1U);
+    ARPG_REQUIRE(!dead.snapshot().health_potion_pickup_receipt.valid);
+
+    DungeonSession death_snapshot{DungeonRules{}, potion_state(104U)};
+    ARPG_REQUIRE(arpg::test::kill_current_player_through_combat(death_snapshot));
+    arpg::test::set_player_health(death_snapshot, 750, 1000);
+    arpg::test::set_phase(
+        death_snapshot, arpg::dungeon::RoomPhase::awaiting_exit);
+    install_potion(death_snapshot, 3U);
+    death_snapshot.request_nearby_pickups({});
+    ARPG_REQUIRE(!death_snapshot.pending_save().has_value());
+    ARPG_REQUIRE(death_snapshot.snapshot().combat->player.hp == 750);
+    ARPG_REQUIRE(death_snapshot.snapshot().ground_health_potion_count == 1U);
+    ARPG_REQUIRE(!death_snapshot.snapshot().health_potion_pickup_receipt.valid);
+
+    DungeonSession no_combat{DungeonRules{}, potion_state(105U)};
+    arpg::test::set_phase(no_combat, arpg::dungeon::RoomPhase::awaiting_exit);
+    install_potion(no_combat, 3U);
+    arpg::test::clear_combat_world(no_combat);
+    no_combat.request_nearby_pickups({});
+    ARPG_REQUIRE(!no_combat.pending_save().has_value());
+    ARPG_REQUIRE(no_combat.snapshot().ground_health_potion_count == 1U);
+    ARPG_REQUIRE(!no_combat.snapshot().health_potion_pickup_receipt.valid);
+
+    DungeonSession wrong_phase{DungeonRules{}, potion_state(106U)};
+    arpg::test::set_player_health(wrong_phase, 750, 1000);
+    arpg::test::set_phase(
+        wrong_phase, arpg::dungeon::RoomPhase::transitioning);
+    install_potion(wrong_phase, 3U);
+    wrong_phase.request_nearby_pickups({});
+    ARPG_REQUIRE(!wrong_phase.pending_save().has_value());
+    ARPG_REQUIRE(wrong_phase.snapshot().combat->player.hp == 750);
+    ARPG_REQUIRE(wrong_phase.snapshot().ground_health_potion_count == 1U);
+    ARPG_REQUIRE(!wrong_phase.snapshot().health_potion_pickup_receipt.valid);
+    return {};
+}
+
+arpg::test::Failure
+committed_pickup_heals_caps_removes_and_publishes_exact_receipt() noexcept {
+    DungeonSession session{DungeonRules{}, potion_state(107U)};
+    arpg::test::set_phase(session, arpg::dungeon::RoomPhase::awaiting_exit);
+    arpg::test::set_player_health(session, 750, 1000);
+    install_potion(session, 9U);
+    install_potion(session, 2U);
+    const std::uint64_t generation_before =
+        session.snapshot().commit_generation;
+    const std::uint64_t allocations_before_request =
+        arpg::test::allocation_count();
+
+    session.request_nearby_pickups({-1000.0F, -1000.0F, 0.0F});
+    ARPG_REQUIRE(arpg::test::allocation_count()
+        == allocations_before_request);
+    const auto pending = session.pending_save();
+    ARPG_REQUIRE(pending.has_value());
+    ARPG_REQUIRE(session.snapshot().combat->player.hp == 750);
+    ARPG_REQUIRE(session.snapshot().ground_health_potion_count == 2U);
+    ARPG_REQUIRE(!session.snapshot().health_potion_pickup_receipt.valid);
+    const arpg::dungeon::PendingSaveResult receipt{
+        arpg::dungeon::SaveDisposition::committed,
+        pending->expected_generation,
+        pending->next_state,
+    };
+    const std::uint64_t allocations_before_resolve =
+        arpg::test::allocation_count();
+    {
+        arpg::test::ScopedAllocationFailure fail{0U};
+        session.resolve_pending_save(receipt);
+    }
+    ARPG_REQUIRE(arpg::test::allocation_count() == allocations_before_resolve);
+
+    const auto committed = session.snapshot();
+    ARPG_REQUIRE(committed.phase
+        == arpg::dungeon::RoomPhase::awaiting_exit);
+    ARPG_REQUIRE(committed.combat->player.hp == 1000);
+    ARPG_REQUIRE(committed.ground_health_potion_count == 1U);
+    ARPG_REQUIRE(committed.ground_health_potions[0].spawn_ordinal == 9U);
+    ARPG_REQUIRE(committed.health_potion_pickup_receipt.valid);
+    ARPG_REQUIRE(!committed.health_potion_pickup_receipt.room_clear);
+    ARPG_REQUIRE(committed.health_potion_pickup_receipt.restored_hp == 250);
+    ARPG_REQUIRE(committed.health_potion_pickup_receipt.consumed_count == 1U);
+    ARPG_REQUIRE(committed.health_potion_pickup_receipt.commit_generation
+        == generation_before + 1U);
+    ARPG_REQUIRE(claim_bit_is_set(arpg::test::stable_state(session),
+        arpg::dungeon::health_potion_claim_ordinal(2U)));
+    ARPG_REQUIRE(!claim_bit_is_set(arpg::test::stable_state(session),
+        arpg::dungeon::health_potion_claim_ordinal(9U)));
+    return {};
+}
+
+arpg::test::Failure
+failed_or_indeterminate_save_never_heals_removes_or_reports_success()
+    noexcept {
+    DungeonSession rollback{DungeonRules{}, potion_state(201U)};
+    arpg::test::set_phase(
+        rollback, arpg::dungeon::RoomPhase::awaiting_exit);
+    arpg::test::set_player_health(rollback, 500, 1000);
+    install_potion(rollback, 4U);
+    rollback.request_nearby_pickups({});
+    const auto first = rollback.pending_save();
+    ARPG_REQUIRE(first.has_value());
+    const DungeonRunState stable_before = arpg::test::stable_state(rollback);
+    rollback.resolve_pending_save({
+        arpg::dungeon::SaveDisposition::not_committed,
+        first->expected_generation,
+        first->next_state,
+        first->kind,
+    });
+    auto visible = rollback.snapshot();
+    ARPG_REQUIRE(visible.phase
+        == arpg::dungeon::RoomPhase::awaiting_exit);
+    ARPG_REQUIRE(visible.combat->player.hp == 500);
+    ARPG_REQUIRE(visible.ground_health_potion_count == 1U);
+    ARPG_REQUIRE(!visible.health_potion_pickup_receipt.valid);
+    ARPG_REQUIRE(arpg::dungeon::same_run_state(
+        arpg::test::stable_state(rollback), stable_before));
+    ARPG_REQUIRE(!claim_bit_is_set(arpg::test::stable_state(rollback),
+        arpg::dungeon::health_potion_claim_ordinal(4U)));
+
+    rollback.request_nearby_pickups({999.0F, 999.0F, 0.0F});
+    const auto retry = rollback.pending_save();
+    ARPG_REQUIRE(retry.has_value());
+    ARPG_REQUIRE(arpg::dungeon::same_run_state(
+        retry->next_state, first->next_state));
+    ARPG_REQUIRE(retry->health_potion_claim.has_value());
+    ARPG_REQUIRE(retry->health_potion_claim->spawn_ordinals
+        == first->health_potion_claim->spawn_ordinals);
+    ARPG_REQUIRE(retry->health_potion_claim->count
+        == first->health_potion_claim->count);
+    ARPG_REQUIRE(retry->health_potion_claim->expected_hp
+        == first->health_potion_claim->expected_hp);
+    ARPG_REQUIRE(retry->health_potion_claim->expected_max_hp
+        == first->health_potion_claim->expected_max_hp);
+
+    DungeonSession indeterminate{DungeonRules{}, potion_state(202U)};
+    arpg::test::set_phase(
+        indeterminate, arpg::dungeon::RoomPhase::awaiting_exit);
+    arpg::test::set_player_health(indeterminate, 500, 1000);
+    install_potion(indeterminate, 4U);
+    indeterminate.request_nearby_pickups({});
+    indeterminate.resolve_pending_save({
+        arpg::dungeon::SaveDisposition::indeterminate, 0U, {}});
+    visible = indeterminate.snapshot();
+    ARPG_REQUIRE(visible.phase == arpg::dungeon::RoomPhase::faulted);
+    ARPG_REQUIRE(visible.diagnostics.fault
+        == arpg::dungeon::DungeonFault::save_commit_indeterminate);
+    ARPG_REQUIRE(visible.combat->player.hp == 500);
+    ARPG_REQUIRE(visible.ground_health_potion_count == 1U);
+    ARPG_REQUIRE(!visible.health_potion_pickup_receipt.valid);
+    ARPG_REQUIRE(!claim_bit_is_set(arpg::test::stable_state(indeterminate),
+        arpg::dungeon::health_potion_claim_ordinal(4U)));
+    return {};
+}
+
+arpg::test::Failure
+mismatched_pending_or_replaced_ground_faults_before_health_side_effects()
+    noexcept {
+    const auto assert_unchanged_fault = [](const DungeonSession& session,
+        int expected_hp, std::uint16_t expected_ground) noexcept {
+        const auto visible = session.snapshot();
+        return visible.phase == arpg::dungeon::RoomPhase::faulted
+            && visible.diagnostics.fault
+                == arpg::dungeon::DungeonFault::save_receipt_mismatch
+            && visible.combat.has_value()
+            && visible.combat->player.hp == expected_hp
+            && visible.ground_health_potion_count == expected_ground
+            && !visible.health_potion_pickup_receipt.valid;
+    };
+
+    DungeonSession wrong_generation{DungeonRules{}, potion_state(203U)};
+    arpg::test::set_phase(
+        wrong_generation, arpg::dungeon::RoomPhase::awaiting_exit);
+    arpg::test::set_player_health(wrong_generation, 500, 1000);
+    install_potion(wrong_generation, 5U);
+    wrong_generation.request_nearby_pickups({});
+    const auto generation_pending = wrong_generation.pending_save();
+    ARPG_REQUIRE(generation_pending.has_value());
+    wrong_generation.resolve_pending_save({
+        arpg::dungeon::SaveDisposition::committed,
+        generation_pending->expected_generation + 1U,
+        generation_pending->next_state,
+        generation_pending->kind,
+    });
+    ARPG_REQUIRE(assert_unchanged_fault(wrong_generation, 500, 1U));
+    ARPG_REQUIRE(!claim_bit_is_set(
+        arpg::test::stable_state(wrong_generation),
+        arpg::dungeon::health_potion_claim_ordinal(5U)));
+
+    DungeonSession wrong_kind{DungeonRules{}, potion_state(204U)};
+    arpg::test::set_phase(
+        wrong_kind, arpg::dungeon::RoomPhase::awaiting_exit);
+    arpg::test::set_player_health(wrong_kind, 500, 1000);
+    install_potion(wrong_kind, 5U);
+    wrong_kind.request_nearby_pickups({});
+    const auto kind_pending = wrong_kind.pending_save();
+    ARPG_REQUIRE(kind_pending.has_value());
+    wrong_kind.resolve_pending_save({
+        arpg::dungeon::SaveDisposition::committed,
+        kind_pending->expected_generation,
+        kind_pending->next_state,
+        arpg::dungeon::PendingSaveKind::material_pickup,
+    });
+    ARPG_REQUIRE(assert_unchanged_fault(wrong_kind, 500, 1U));
+    ARPG_REQUIRE(!claim_bit_is_set(arpg::test::stable_state(wrong_kind),
+        arpg::dungeon::health_potion_claim_ordinal(5U)));
+
+    DungeonSession replaced{DungeonRules{}, potion_state(205U)};
+    arpg::test::set_phase(
+        replaced, arpg::dungeon::RoomPhase::awaiting_exit);
+    arpg::test::set_player_health(replaced, 500, 1000);
+    install_potion(replaced, 5U);
+    replaced.request_nearby_pickups({});
+    const auto replaced_pending = replaced.pending_save();
+    ARPG_REQUIRE(replaced_pending.has_value());
+    arpg::test::replace_ground_health_potion(replaced, 5U, {
+        true, 6U, arpg::dungeon::health_potion_claim_ordinal(6U),
+        {17.0F, 18.0F, 0.0F}});
+    replaced.resolve_pending_save({
+        arpg::dungeon::SaveDisposition::committed,
+        replaced_pending->expected_generation,
+        replaced_pending->next_state,
+        replaced_pending->kind,
+    });
+    ARPG_REQUIRE(assert_unchanged_fault(replaced, 500, 1U));
+    ARPG_REQUIRE(!claim_bit_is_set(arpg::test::stable_state(replaced),
+        arpg::dungeon::health_potion_claim_ordinal(5U)));
+    return {};
+}
+
+arpg::test::Failure
+committed_claim_without_runtime_resolve_does_not_replay_after_reload()
+    noexcept {
+    constexpr std::uint16_t kSpawn = 8U;
+    constexpr std::uint64_t kDepth = 90U;
+    constexpr std::uint16_t kScore = 18U;
+    const std::uint64_t seed = find_drop_seed(
+        kSpawn, kDepth, kScore, {false, false, true});
+    ARPG_REQUIRE(seed != 0U);
+    PotionTempDirectory directory;
+    ARPG_REQUIRE(!directory.path.empty());
+    arpg::persistence::SaveStore store({directory.path});
+    auto seeded = store.commit(potion_state(seed, kDepth));
+    ARPG_REQUIRE(seeded.state
+        == arpg::persistence::SaveCommitState::committed);
+
+    DungeonSession before_crash{
+        DungeonRules{}, std::move(seeded.verified_state)};
+    ARPG_REQUIRE(relay_drop(before_crash, seed, kSpawn, kScore,
+        {2.0F, 3.0F, 0.0F}));
+    ARPG_REQUIRE(before_crash.snapshot().ground_health_potion_count == 1U);
+    arpg::test::set_phase(
+        before_crash, arpg::dungeon::RoomPhase::awaiting_exit);
+    arpg::test::set_player_health(before_crash, 500, 1000);
+    before_crash.request_nearby_pickups({});
+    const arpg::dungeon::PendingSave* const pending =
+        before_crash.pending_save_view();
+    ARPG_REQUIRE(pending != nullptr);
+    auto durable = store.commit(pending->next_state);
+    ARPG_REQUIRE(durable.state
+        == arpg::persistence::SaveCommitState::committed);
+
+    auto loaded = store.load();
+    ARPG_REQUIRE(loaded.state == arpg::persistence::SaveLoadState::ready);
+    ARPG_REQUIRE(claim_bit_is_set(loaded.checkpoint,
+        arpg::dungeon::health_potion_claim_ordinal(kSpawn)));
+    DungeonSession reloaded{
+        DungeonRules{}, std::move(loaded.checkpoint)};
+    arpg::test::set_phase(
+        reloaded, arpg::dungeon::RoomPhase::awaiting_exit);
+    arpg::test::set_player_health(reloaded, 500, 1000);
+    ARPG_REQUIRE(relay_drop(reloaded, seed, kSpawn, kScore,
+        {2.0F, 3.0F, 0.0F}));
+    reloaded.tick({});
+    const auto visible = reloaded.snapshot();
+    ARPG_REQUIRE(visible.combat->player.hp == 500);
+    ARPG_REQUIRE(visible.ground_health_potion_count == 0U);
+    ARPG_REQUIRE(!visible.pending_health_potion_spawn_ordinal.has_value());
+    ARPG_REQUIRE(!visible.health_potion_pickup_receipt.valid);
+    ARPG_REQUIRE(claim_bit_is_set(arpg::test::stable_state(reloaded),
+        arpg::dungeon::health_potion_claim_ordinal(kSpawn)));
+    return {};
+}
+
+arpg::test::Failure
+final_kill_low_health_folds_sorted_potions_into_clear_transaction() noexcept {
+    constexpr std::uint16_t kMaterialOrdinal = 40U;
+    const std::size_t chaos_index = arpg::items::material_index(
+        arpg::items::MaterialId::chaos);
+    DungeonSession normal{DungeonRules{}, potion_state(301U)};
+    arpg::test::set_phase(normal, arpg::dungeon::RoomPhase::combat);
+    arpg::test::set_player_health(normal, 500, 1000);
+    install_potion(normal, 8U);
+    install_potion(normal, 3U);
+    arpg::test::install_ground_material(normal, kMaterialOrdinal,
+        arpg::items::MaterialId::chaos, {4.0F, 5.0F, 0.0F});
+    arpg::test::prepare_room_clear(normal);
+    const auto first = normal.pending_save();
+    ARPG_REQUIRE(first.has_value());
+    ARPG_REQUIRE(first->kind == arpg::dungeon::PendingSaveKind::room_clear);
+    ARPG_REQUIRE(first->health_potion_claim.has_value());
+    ARPG_REQUIRE(first->health_potion_claim->count == 2U);
+    ARPG_REQUIRE(first->health_potion_claim->spawn_ordinals[0] == 3U);
+    ARPG_REQUIRE(first->health_potion_claim->spawn_ordinals[1] == 8U);
+    ARPG_REQUIRE(first->next_state.item_ownership.materials[chaos_index]
+        == arpg::test::stable_state(normal)
+            .item_ownership.materials[chaos_index] + 1U);
+    ARPG_REQUIRE(claim_bit_is_set(first->next_state, kMaterialOrdinal));
+    ARPG_REQUIRE(claim_bit_is_set(first->next_state,
+        arpg::dungeon::health_potion_claim_ordinal(3U)));
+    ARPG_REQUIRE(claim_bit_is_set(first->next_state,
+        arpg::dungeon::health_potion_claim_ordinal(8U)));
+    ARPG_REQUIRE(normal.snapshot().combat->player.hp == 500);
+    ARPG_REQUIRE(normal.snapshot().ground_health_potion_count == 2U);
+    ARPG_REQUIRE(normal.snapshot().ground_material_count == 1U);
+    ARPG_REQUIRE(!normal.snapshot().health_potion_pickup_receipt.valid);
+
+    normal.resolve_pending_save({
+        arpg::dungeon::SaveDisposition::not_committed,
+        first->expected_generation,
+        first->next_state,
+        first->kind,
+    });
+    ARPG_REQUIRE(normal.snapshot().phase
+        == arpg::dungeon::RoomPhase::combat);
+    ARPG_REQUIRE(normal.snapshot().combat->player.hp == 500);
+    ARPG_REQUIRE(normal.snapshot().ground_health_potion_count == 2U);
+    ARPG_REQUIRE(normal.snapshot().ground_material_count == 1U);
+    ARPG_REQUIRE(!normal.snapshot().health_potion_pickup_receipt.valid);
+    arpg::test::prepare_room_clear(normal);
+    const auto retry = normal.pending_save();
+    ARPG_REQUIRE(retry.has_value());
+    ARPG_REQUIRE(arpg::dungeon::same_run_state(
+        retry->next_state, first->next_state));
+    ARPG_REQUIRE(retry->health_potion_claim->spawn_ordinals
+        == first->health_potion_claim->spawn_ordinals);
+
+    DungeonSession abyss{DungeonRules{}, potion_state(302U)};
+    arpg::test::set_phase(abyss, arpg::dungeon::RoomPhase::combat);
+    arpg::test::set_started_abyss_room(
+        abyss, arpg::abyss::AbyssDanger::low);
+    arpg::test::set_player_health(abyss, 500, 1000);
+    install_potion(abyss, 4U);
+    arpg::test::install_ground_material(abyss, kMaterialOrdinal,
+        arpg::items::MaterialId::chaos, {4.0F, 5.0F, 0.0F});
+    arpg::test::prepare_room_clear(abyss);
+    const auto abyss_pending = abyss.pending_save();
+    ARPG_REQUIRE(abyss_pending.has_value());
+    ARPG_REQUIRE(abyss_pending->kind
+        == arpg::dungeon::PendingSaveKind::abyss_clear);
+    ARPG_REQUIRE(abyss_pending->health_potion_claim.has_value());
+    ARPG_REQUIRE(abyss_pending->health_potion_claim->count == 1U);
+    ARPG_REQUIRE(abyss_pending->health_potion_claim->spawn_ordinals[0] == 4U);
+    ARPG_REQUIRE(claim_bit_is_set(
+        abyss_pending->next_state, kMaterialOrdinal));
+    ARPG_REQUIRE(claim_bit_is_set(abyss_pending->next_state,
+        arpg::dungeon::health_potion_claim_ordinal(4U)));
+    ARPG_REQUIRE(abyss_pending->next_state.item_ownership
+        .materials[chaos_index]
+        > arpg::test::stable_state(abyss)
+            .item_ownership.materials[chaos_index]);
+    ARPG_REQUIRE(abyss.snapshot().combat->player.hp == 500);
+    ARPG_REQUIRE(abyss.snapshot().ground_health_potion_count == 1U);
+    ARPG_REQUIRE(!abyss.snapshot().health_potion_pickup_receipt.valid);
+    return {};
+}
+
+arpg::test::Failure
+clear_batch_selects_only_until_health_is_strictly_above_75_percent()
+    noexcept {
+    DungeonSession session{DungeonRules{}, potion_state(303U)};
+    arpg::test::set_phase(session, arpg::dungeon::RoomPhase::combat);
+    arpg::test::set_player_health(session, 1, 1000);
+    install_potion(session, 9U);
+    install_potion(session, 2U);
+    install_potion(session, 6U);
+    install_potion(session, 3U);
+    arpg::test::prepare_room_clear(session);
+    const auto pending = session.pending_save();
+    ARPG_REQUIRE(pending.has_value());
+    ARPG_REQUIRE(pending->kind == arpg::dungeon::PendingSaveKind::room_clear);
+    ARPG_REQUIRE(pending->health_potion_claim.has_value());
+    ARPG_REQUIRE(pending->health_potion_claim->count == 3U);
+    ARPG_REQUIRE(pending->health_potion_claim->spawn_ordinals[0] == 2U);
+    ARPG_REQUIRE(pending->health_potion_claim->spawn_ordinals[1] == 3U);
+    ARPG_REQUIRE(pending->health_potion_claim->spawn_ordinals[2] == 6U);
+    ARPG_REQUIRE(session.snapshot().combat->player.hp == 1);
+    ARPG_REQUIRE(session.snapshot().ground_health_potion_count == 4U);
+    ARPG_REQUIRE(!session.snapshot().health_potion_pickup_receipt.valid);
+    session.resolve_pending_save({
+        arpg::dungeon::SaveDisposition::committed,
+        pending->expected_generation,
+        pending->next_state,
+        pending->kind,
+    });
+    const auto committed = session.snapshot();
+    ARPG_REQUIRE(committed.phase == arpg::dungeon::RoomPhase::cleared);
+    ARPG_REQUIRE(committed.combat->player.hp == 751);
+    ARPG_REQUIRE(committed.ground_health_potion_count == 1U);
+    ARPG_REQUIRE(committed.ground_health_potions[0].spawn_ordinal == 9U);
+    ARPG_REQUIRE(committed.health_potion_pickup_receipt.valid);
+    ARPG_REQUIRE(committed.health_potion_pickup_receipt.room_clear);
+    ARPG_REQUIRE(committed.health_potion_pickup_receipt.consumed_count == 3U);
+    ARPG_REQUIRE(committed.health_potion_pickup_receipt.restored_hp == 750);
+    ARPG_REQUIRE(claim_bit_is_set(arpg::test::stable_state(session),
+        arpg::dungeon::health_potion_claim_ordinal(2U)));
+    ARPG_REQUIRE(claim_bit_is_set(arpg::test::stable_state(session),
+        arpg::dungeon::health_potion_claim_ordinal(3U)));
+    ARPG_REQUIRE(claim_bit_is_set(arpg::test::stable_state(session),
+        arpg::dungeon::health_potion_claim_ordinal(6U)));
+    ARPG_REQUIRE(!claim_bit_is_set(arpg::test::stable_state(session),
+        arpg::dungeon::health_potion_claim_ordinal(9U)));
+    return {};
+}
+
+arpg::test::Failure
+final_kill_high_health_keeps_potion_until_room_transition() noexcept {
+    DungeonSession session{DungeonRules{}, potion_state(304U)};
+    arpg::test::set_phase(session, arpg::dungeon::RoomPhase::combat);
+    arpg::test::set_player_health(session, 751, 1000);
+    install_potion(session, 5U);
+    arpg::test::prepare_room_clear(session);
+    ARPG_REQUIRE(!session.pending_save().has_value());
+    ARPG_REQUIRE(session.snapshot().phase == arpg::dungeon::RoomPhase::cleared);
+    ARPG_REQUIRE(session.snapshot().ground_health_potion_count == 1U);
+    ARPG_REQUIRE(session.snapshot().combat->player.hp == 751);
+    ARPG_REQUIRE(!session.snapshot().health_potion_pickup_receipt.valid);
+    session.tick({});
+    ARPG_REQUIRE(session.snapshot().phase
+        == arpg::dungeon::RoomPhase::awaiting_exit);
+    ARPG_REQUIRE(session.snapshot().ground_health_potion_count == 1U);
+    arpg::test::set_current_room_hole(session, true);
+    ARPG_REQUIRE(session.request_descent(true));
+    const auto pending = session.pending_transition();
+    ARPG_REQUIRE(pending.has_value());
+    ARPG_REQUIRE(session.snapshot().ground_health_potion_count == 1U);
+    session.resolve_pending_transition({
+        arpg::dungeon::SaveDisposition::committed,
+        pending->expected_generation,
+        pending->next_state,
+    });
+    ARPG_REQUIRE(session.snapshot().phase
+        == arpg::dungeon::RoomPhase::transitioning);
+    ARPG_REQUIRE(session.snapshot().ground_health_potion_count == 0U);
+    return {};
+}
+
+arpg::test::Failure
+abyss_clear_potion_uses_post_clear_actual_max_health() noexcept {
+    DungeonSession session{DungeonRules{}, potion_state(305U)};
+    arpg::test::set_phase(session, arpg::dungeon::RoomPhase::combat);
+    const int base_max = session.snapshot().combat->player.max_hp;
+    arpg::test::set_started_life_sacrifice_abyss_room(session);
+    const int sacrificed_max = session.snapshot().combat->player.max_hp;
+    ARPG_REQUIRE(sacrificed_max > 0);
+    ARPG_REQUIRE(sacrificed_max < base_max);
+    arpg::test::set_player_health(session, 1, sacrificed_max);
+    install_potion(session, 7U);
+    arpg::test::prepare_room_clear(session);
+    const auto pending = session.pending_save();
+    ARPG_REQUIRE(pending.has_value());
+    ARPG_REQUIRE(pending->kind == arpg::dungeon::PendingSaveKind::abyss_clear);
+    ARPG_REQUIRE(pending->health_potion_claim.has_value());
+    ARPG_REQUIRE(pending->health_potion_claim->expected_max_hp
+        == sacrificed_max);
+    ARPG_REQUIRE(session.snapshot().combat->player.hp == 1);
+    ARPG_REQUIRE(session.snapshot().ground_health_potion_count == 1U);
+    session.resolve_pending_save({
+        arpg::dungeon::SaveDisposition::committed,
+        pending->expected_generation,
+        pending->next_state,
+        pending->kind,
+    });
+    const auto committed = session.snapshot();
+    const int mapped = arpg::abyss::map_resource_ratio(
+        1, sacrificed_max, base_max, true).value_or(0);
+    const int expected_restore = arpg::combat::scale_basis_points(
+        base_max, arpg::dungeon::kHealthPotionRestoreBp,
+        arpg::combat::BasisPointRounding::ceil);
+    ARPG_REQUIRE(committed.phase == arpg::dungeon::RoomPhase::cleared);
+    ARPG_REQUIRE(committed.combat->player.max_hp == base_max);
+    ARPG_REQUIRE(committed.combat->player.hp == mapped + expected_restore);
+    ARPG_REQUIRE(committed.health_potion_pickup_receipt.valid);
+    ARPG_REQUIRE(committed.health_potion_pickup_receipt.room_clear);
+    ARPG_REQUIRE(committed.health_potion_pickup_receipt.consumed_count == 1U);
+    ARPG_REQUIRE(committed.health_potion_pickup_receipt.restored_hp
+        == expected_restore);
+    ARPG_REQUIRE(committed.ground_health_potion_count == 0U);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"health potion rules frozen", &health_potion_rules_are_frozen},
     {"health potion deterministic roll",
@@ -325,6 +933,28 @@ constexpr arpg::test::TestCase kCases[] = {
         &ground_potion_pool_accepts_spawn_zero_and_191_without_overwrite},
     {"potion snapshot sorted and room exit clears",
         &potion_snapshot_is_sorted_by_spawn_ordinal_and_clears_on_room_exit},
+    {"potion threshold and distance-free auto-use",
+        &potion_above_threshold_stays_grounded_but_75_percent_ignores_distance},
+    {"potion stable scan and post-commit recheck",
+        &potion_auto_use_scans_stable_spawn_order_and_rechecks_after_commit},
+    {"dead player and death snapshot reject potion",
+        &dead_player_or_death_snapshot_never_requests_or_consumes_potion},
+    {"committed potion publishes exact receipt",
+        &committed_pickup_heals_caps_removes_and_publishes_exact_receipt},
+    {"failed potion save outcomes stay atomic",
+        &failed_or_indeterminate_save_never_heals_removes_or_reports_success},
+    {"potion cache mismatches fault before side effects",
+        &mismatched_pending_or_replaced_ground_faults_before_health_side_effects},
+    {"durable potion claim never replays after reload",
+        &committed_claim_without_runtime_resolve_does_not_replay_after_reload},
+    {"final kill folds sorted potions into clear save",
+        &final_kill_low_health_folds_sorted_potions_into_clear_transaction},
+    {"clear potion batch stops strictly above threshold",
+        &clear_batch_selects_only_until_health_is_strictly_above_75_percent},
+    {"high health clear preserves potion until transition",
+        &final_kill_high_health_keeps_potion_until_room_transition},
+    {"abyss clear potion uses post-clear max health",
+        &abyss_clear_potion_uses_post_clear_actual_max_health},
 };
 
 }  // namespace
