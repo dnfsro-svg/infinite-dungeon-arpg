@@ -488,6 +488,7 @@ struct Stage17SkillStonesValidationState final {
     std::uint16_t draw_frame_peak{};
     std::uint32_t presented_frames{};
     std::int8_t draw_retreat_direction{};
+    std::int8_t storm_retreat_direction{};
 };
 
 void observe_stage17_combat_event(
@@ -763,12 +764,16 @@ void stage17_click(PhysicalKeySnapshot& snapshot,
         break;
     case Stage17ValidationStep::approach_storm:
         if (current.combat.has_value()
-                && stage17_nearest_monster(*current.combat) != nullptr) {
+                && stage17_prepare_skill_lane(
+                    snapshot, input_settings, *current.combat,
+                    current.ecology
+                        == dungeon::checkpoint::DungeonElement::fire,
+                    state.storm_retreat_direction)) {
             snapshot.active_skill_slots[1] = true;
         }
         break;
     case Stage17ValidationStep::storm_active:
-        if (!state.storm_player_moved) {
+        if (state.storm_strike_hit_count > 0 && !state.storm_player_moved) {
             stage17_apply_movement(snapshot, input_settings, {-1, -1});
         }
         break;
