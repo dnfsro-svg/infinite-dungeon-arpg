@@ -33,7 +33,84 @@ void insert_label(MaterialLootView& view, MaterialLootLabel label) noexcept {
     ++view.count;
 }
 
+[[nodiscard]] bool overlaps_previous(const MaterialLootView& view,
+    std::size_t index, LootLabelRect rect) noexcept {
+    for (std::size_t previous = 0U; previous < index; ++previous) {
+        if (loot_label_rects_overlap(rect, view.labels[previous].rect)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+[[nodiscard]] bool place_without_overlap(MaterialLootView& view,
+    std::size_t index, float width, float height) noexcept {
+    const LootLabelRect original = view.labels[index].rect;
+    LootLabelRect candidate = original;
+
+    for (std::size_t attempt = 0U; attempt < view.labels.size(); ++attempt) {
+        if (!overlaps_previous(view, index, candidate)) {
+            view.labels[index].rect = candidate;
+            return true;
+        }
+        const float previous_y = candidate.y;
+        candidate.y -= kLabelHeight + 3.0F;
+        clamp_rect(candidate, width, height);
+        if (candidate.y == previous_y) break;
+    }
+
+    LootLabelRect row = original;
+    for (std::size_t vertical = 0U;
+         vertical < view.labels.size(); ++vertical) {
+        for (std::size_t side = 0U; side < 2U; ++side) {
+            candidate = row;
+            const float direction = side == 0U ? 1.0F : -1.0F;
+            for (std::size_t horizontal = 0U;
+                 horizontal < view.labels.size(); ++horizontal) {
+                const float previous_x = candidate.x;
+                candidate.x += direction * (original.width + 3.0F);
+                clamp_rect(candidate, width, height);
+                if (candidate.x == previous_x) break;
+                if (!overlaps_previous(view, index, candidate)) {
+                    view.labels[index].rect = candidate;
+                    return true;
+                }
+            }
+        }
+        const float previous_y = row.y;
+        row.y -= kLabelHeight + 3.0F;
+        clamp_rect(row, width, height);
+        if (row.y == previous_y) break;
+    }
+    return false;
+}
+
+void resolve_label_overlaps(MaterialLootView& view,
+    float width, float height) noexcept {
+    std::size_t index = 1U;
+    while (index < view.count) {
+        if (place_without_overlap(view, index, width, height)) {
+            ++index;
+            continue;
+        }
+        for (std::size_t shift = index + 1U; shift < view.count; ++shift) {
+            view.labels[shift - 1U] = view.labels[shift];
+        }
+        --view.count;
+        view.labels[view.count] = {};
+        ++view.capacity_saturation_count;
+    }
+}
+
 }  // namespace
+
+bool loot_label_rects_overlap(
+    LootLabelRect left, LootLabelRect right) noexcept {
+    return left.x < right.x + right.width
+        && left.x + left.width > right.x
+        && left.y < right.y + right.height
+        && left.y + left.height > right.y;
+}
 
 Rgba8 material_color(items::MaterialId id) noexcept {
     switch (id) {
@@ -125,6 +202,7 @@ MaterialLootView build_material_loot_view(
         const ScreenProjection projection = project_combat_position(
             material.position, width, height);
         MaterialLootLabel label{};
+        label.kind = SecondaryLootKind::material;
         label.ordinal = material.ordinal;
         label.anchor_x = projection.x;
         label.anchor_y = projection.y;
@@ -140,6 +218,38 @@ MaterialLootView build_material_loot_view(
         label.text.back() = '\0';
         insert_label(view, label);
     }
+    const std::size_t potion_source_count = (std::min)(
+        static_cast<std::size_t>(snapshot.ground_health_potion_count),
+        snapshot.ground_health_potions.size());
+    view.capacity_saturation_count += static_cast<std::uint32_t>(
+        static_cast<std::size_t>(snapshot.ground_health_potion_count)
+        - potion_source_count);
+    for (std::size_t index = 0U; index < potion_source_count; ++index) {
+        if (view.count == view.labels.size()) {
+            ++view.capacity_saturation_count;
+            continue;
+        }
+        const dungeon::GroundHealthPotionSnapshot& potion =
+            snapshot.ground_health_potions[index];
+        const ScreenProjection projection = project_combat_position(
+            potion.position, width, height);
+        MaterialLootLabel label{};
+        label.kind = SecondaryLootKind::health_potion;
+        label.ordinal = potion.claim_ordinal;
+        label.anchor_x = projection.x;
+        label.anchor_y = projection.y;
+        label.rect = {projection.x - kLabelWidth * 0.5F,
+            projection.y - kLabelGap - kLabelHeight, kLabelWidth, kLabelHeight};
+        clamp_rect(label.rect, width, height);
+        label.text_color = {255U, 48U, 48U, 255U};
+        label.sprite = MaterialSpriteId::health_potion;
+        label.emphasized = true;
+        static_cast<void>(std::snprintf(
+            label.text.data(), label.text.size(), "%s", "生命药"));
+        label.text.back() = '\0';
+        insert_label(view, label);
+    }
+    resolve_label_overlaps(view, width, height);
     return view;
 }
 
@@ -156,51 +266,80 @@ void MaterialPickupFeedbackState::update(float frame_seconds,
 
 MaterialPickupFeedback MaterialPickupFeedbackState::observe(
     const dungeon::DungeonSnapshot& snapshot) noexcept {
-    MaterialPickupFeedback feedback{};
-    const dungeon::MaterialPickupReceipt& receipt =
+    MaterialPickupFeedback material_feedback{};
+    MaterialPickupFeedback potion_feedback{};
+    const dungeon::MaterialPickupReceipt& material_receipt =
         snapshot.material_pickup_receipt;
+    const dungeon::HealthPotionPickupReceipt& potion_receipt =
+        snapshot.health_potion_pickup_receipt;
     if (!baseline_set_) {
         baseline_set_ = true;
-        if (!receipt.valid) return feedback;
+        generation_ = material_receipt.valid
+            ? material_receipt.commit_generation : 0U;
+        health_potion_generation_ = potion_receipt.valid
+            ? potion_receipt.commit_generation : 0U;
+        return {};
     }
-    if (!receipt.valid || receipt.commit_generation == 0U
-            || receipt.commit_generation <= generation_) {
-        return feedback;
+    if (pending_material_feedback_.ready) {
+        const MaterialPickupFeedback pending = pending_material_feedback_;
+        pending_material_feedback_ = {};
+        return pending;
     }
-    generation_ = receipt.commit_generation;
-    bool received{};
-    for (std::size_t index = 0U; index < receipt.counts.size(); ++index) {
-        if (receipt.counts[index] == 0U) continue;
-        accumulated_[index] += receipt.counts[index];
-        received = true;
-    }
-    if (!received) return feedback;
-    seconds_left_ = 2.0F;
-
-    int written = std::snprintf(feedback.text.bytes.data(),
-        feedback.text.bytes.size(), "已拾取：");
-    if (written < 0) return feedback;
-    std::size_t used = static_cast<std::size_t>(written);
-    for (std::size_t index = 0U; index < accumulated_.size(); ++index) {
-        if (accumulated_[index] == 0U) continue;
-        const items::MaterialId id = static_cast<items::MaterialId>(index);
-        const std::string_view label = material_label(id);
-        const int appended = std::snprintf(feedback.text.bytes.data() + used,
-            feedback.text.bytes.size() - used, "%s%.*s x%llu",
-            used == sizeof("已拾取：") - 1U ? "" : "、",
-            static_cast<int>(label.size()), label.data(),
-            static_cast<unsigned long long>(accumulated_[index]));
-        if (appended < 0) return {};
-        if (static_cast<std::size_t>(appended) >= feedback.text.bytes.size() - used) {
-            feedback.text.truncated = true;
-            break;
+    if (material_receipt.valid && material_receipt.commit_generation != 0U
+            && material_receipt.commit_generation > generation_) {
+        generation_ = material_receipt.commit_generation;
+        bool received{};
+        for (std::size_t index = 0U; index < material_receipt.counts.size(); ++index) {
+            if (material_receipt.counts[index] == 0U) continue;
+            accumulated_[index] += material_receipt.counts[index];
+            received = true;
         }
-        used += static_cast<std::size_t>(appended);
-        feedback.emphasized = feedback.emphasized || material_is_emphasized(id);
+        if (received) {
+            seconds_left_ = 2.0F;
+            int written = std::snprintf(material_feedback.text.bytes.data(),
+                material_feedback.text.bytes.size(), "已拾取：");
+            if (written >= 0) {
+                std::size_t used = static_cast<std::size_t>(written);
+                for (std::size_t index = 0U; index < accumulated_.size(); ++index) {
+                    if (accumulated_[index] == 0U) continue;
+                    const items::MaterialId id = static_cast<items::MaterialId>(index);
+                    const std::string_view label = material_label(id);
+                    const int appended = std::snprintf(
+                        material_feedback.text.bytes.data() + used,
+                        material_feedback.text.bytes.size() - used,
+                        "%s%.*s x%llu",
+                        used == sizeof("已拾取：") - 1U ? "" : "、",
+                        static_cast<int>(label.size()), label.data(),
+                        static_cast<unsigned long long>(accumulated_[index]));
+                    if (appended < 0) return {};
+                    if (static_cast<std::size_t>(appended)
+                            >= material_feedback.text.bytes.size() - used) {
+                        material_feedback.text.truncated = true;
+                        break;
+                    }
+                    used += static_cast<std::size_t>(appended);
+                    material_feedback.emphasized = material_feedback.emphasized
+                        || material_is_emphasized(id);
+                }
+                material_feedback.text.bytes.back() = '\0';
+                material_feedback.ready = true;
+            }
+        }
     }
-    feedback.text.bytes.back() = '\0';
-    feedback.ready = true;
-    return feedback;
+    if (potion_receipt.valid && potion_receipt.commit_generation != 0U
+            && potion_receipt.commit_generation > health_potion_generation_) {
+        health_potion_generation_ = potion_receipt.commit_generation;
+        std::snprintf(potion_feedback.text.bytes.data(),
+            potion_feedback.text.bytes.size(), "生命药 +%d HP",
+            potion_receipt.restored_hp);
+        potion_feedback.ready = potion_receipt.restored_hp > 0;
+        potion_feedback.emphasized = potion_feedback.ready;
+        if (potion_feedback.ready) seconds_left_ = 2.0F;
+    }
+    if (potion_feedback.ready && material_feedback.ready) {
+        pending_material_feedback_ = material_feedback;
+    }
+    return potion_feedback.ready ? potion_feedback : material_feedback;
 }
 
 }  // namespace arpg::platform

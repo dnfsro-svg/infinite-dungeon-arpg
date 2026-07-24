@@ -11,7 +11,13 @@
 
 namespace arpg::platform {
 
+enum class SecondaryLootKind : std::uint8_t {
+    material,
+    health_potion,
+};
+
 struct MaterialLootLabel final {
+    SecondaryLootKind kind{SecondaryLootKind::material};
     std::uint16_t ordinal{};
     float anchor_x{};
     float anchor_y{};
@@ -23,7 +29,9 @@ struct MaterialLootLabel final {
 };
 
 struct MaterialLootView final {
-    std::array<MaterialLootLabel, dungeon::kGroundMaterialCapacity> labels{};
+    std::array<MaterialLootLabel,
+        dungeon::kGroundMaterialCapacity + dungeon::kGroundHealthPotionCapacity>
+        labels{};
     std::size_t count{};
     std::uint32_t invalid_material_count{};
     std::uint32_t capacity_saturation_count{};
@@ -43,7 +51,9 @@ public:
 
 private:
     std::array<std::uint64_t, items::kMaterialCount> accumulated_{};
+    MaterialPickupFeedback pending_material_feedback_{};
     std::uint64_t generation_{};
+    std::uint64_t health_potion_generation_{};
     float seconds_left_{};
     bool baseline_set_{};
 };
@@ -53,6 +63,8 @@ private:
 [[nodiscard]] bool material_is_emphasized(items::MaterialId) noexcept;
 [[nodiscard]] MaterialSpriteId material_loot_sprite(
     items::MaterialId) noexcept;
+[[nodiscard]] bool loot_label_rects_overlap(
+    LootLabelRect left, LootLabelRect right) noexcept;
 [[nodiscard]] MaterialLootView build_material_loot_view(
     const dungeon::DungeonSnapshot&, float width, float height) noexcept;
 

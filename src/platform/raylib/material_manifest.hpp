@@ -295,6 +295,7 @@ inline constexpr MaterialFrameDefinition kDefaultMaterialFrames[] = {
     ARPG_ITEM_FRAME(material_coupon_9, 23, MaterialLayer::body, MaterialClass::loot),
     ARPG_ITEM_FRAME(material_coupon_12, 24, MaterialLayer::body, MaterialClass::loot),
     ARPG_ITEM_FRAME(material_coupon_15, 25, MaterialLayer::body, MaterialClass::loot),
+    ARPG_ITEM_FRAME(health_potion, 30, MaterialLayer::body, MaterialClass::loot),
     ARPG_ITEM_FRAME(bag_frame_nw, 26, MaterialLayer::front_effect, MaterialClass::ui),
     ARPG_ITEM_FRAME(bag_frame_ne, 27, MaterialLayer::front_effect, MaterialClass::ui),
     ARPG_ITEM_FRAME(bag_frame_sw, 28, MaterialLayer::front_effect, MaterialClass::ui),

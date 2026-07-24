@@ -438,16 +438,38 @@ const dungeon::GroundMaterialSnapshot* ground_material_with_ordinal(
     return nullptr;
 }
 
+const dungeon::GroundHealthPotionSnapshot* ground_health_potion_with_ordinal(
+    const dungeon::DungeonSnapshot& snapshot, std::uint16_t ordinal) noexcept {
+    const std::size_t count = (std::min)(
+        static_cast<std::size_t>(snapshot.ground_health_potion_count),
+        snapshot.ground_health_potions.size());
+    for (std::size_t index = 0U; index < count; ++index) {
+        if (snapshot.ground_health_potions[index].claim_ordinal == ordinal) {
+            return &snapshot.ground_health_potions[index];
+        }
+    }
+    return nullptr;
+}
+
 void draw_ground_materials(const dungeon::DungeonSnapshot& snapshot,
     const MaterialLootView& view, const MaterialPack& material_pack,
     float width, float height) noexcept {
     for (std::size_t index = 0U; index < view.count; ++index) {
         const MaterialLootLabel& label = view.labels[index];
-        const auto* material = ground_material_with_ordinal(snapshot, label.ordinal);
-        if (material == nullptr) continue;
+        combat::Vec3 position{};
+        if (label.kind == SecondaryLootKind::health_potion) {
+            const auto* potion = ground_health_potion_with_ordinal(
+                snapshot, label.ordinal);
+            if (potion == nullptr) continue;
+            position = potion->position;
+        } else {
+            const auto* material = ground_material_with_ordinal(
+                snapshot, label.ordinal);
+            if (material == nullptr) continue;
+            position = material->position;
+        }
         const RenderProjection projected = project_render_world(
-            material->position.x, material->position.y, material->position.z,
-            width, height);
+            position.x, position.y, position.z, width, height);
         const Color color{label.text_color.r, label.text_color.g,
             label.text_color.b, label.text_color.a};
         const float radius = (label.emphasized ? 9.0F : 6.0F) * projected.scale;
