@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 
+#include "combat_renderer.hpp"
 #include "material_loot_view.hpp"
 #include "material_manifest.hpp"
 #include "combat_view_math.hpp"
@@ -25,6 +26,11 @@ constexpr float kPlacementEpsilon = 0.001F;
 
 [[nodiscard]] bool nearly_equal(float left, float right) noexcept {
     return std::fabs(left - right) <= kPlacementEpsilon;
+}
+
+[[nodiscard]] bool fits_within_bytes(
+    std::size_t actual, std::size_t maximum) noexcept {
+    return actual <= maximum;
 }
 
 [[nodiscard]] platform::LootLabelRect expected_original_label_rect(
@@ -87,7 +93,7 @@ arpg::test::Failure material_view_ignores_equipment_filter_and_orders_ordinals()
     ARPG_REQUIRE(view.count == 2U);
     ARPG_REQUIRE(view.labels[0].ordinal == 4U);
     ARPG_REQUIRE(view.labels[1].ordinal == 18U);
-    ARPG_REQUIRE(std::strcmp(view.labels[0].text.data(), "+12强化券") == 0);
+    ARPG_REQUIRE(view.labels[0].text == "+12强化券");
     ARPG_REQUIRE(view.labels[0].emphasized);
     ARPG_REQUIRE(!view.labels[1].emphasized);
     return {};
@@ -163,7 +169,7 @@ arpg::test::Failure health_potion_uses_dedicated_sprite_and_pure_red_label() noe
     ARPG_REQUIRE(view.labels[0].text_color.b == 48U);
     ARPG_REQUIRE(view.labels[0].text_color.a == 255U);
     ARPG_REQUIRE(view.labels[0].emphasized);
-    ARPG_REQUIRE(std::strcmp(view.labels[0].text.data(), "生命药") == 0);
+    ARPG_REQUIRE(view.labels[0].text == "生命药");
     const auto manifest = platform::default_material_manifest();
     const auto* frame = platform::find_material_frame(
         manifest, platform::MaterialSpriteId::health_potion);
@@ -320,6 +326,19 @@ arpg::test::Failure top_clamped_secondary_labels_resolve_without_overlap() noexc
     ARPG_REQUIRE(view.count == 2U);
     ARPG_REQUIRE(!platform::loot_label_rects_overlap(
         view.labels[0].rect, view.labels[1].rect));
+    return {};
+}
+
+arpg::test::Failure material_loot_view_stays_within_fixed_stack_budget() noexcept {
+    constexpr std::size_t kMaximumMaterialLootViewBytes = 40U * 1024U;
+    std::printf(
+        "[material-loot-size] label=%zu view=%zu plan=%zu budget=%zu\n",
+        sizeof(platform::MaterialLootLabel),
+        sizeof(platform::MaterialLootView),
+        sizeof(platform::CombatRenderPlan),
+        kMaximumMaterialLootViewBytes);
+    ARPG_REQUIRE(fits_within_bytes(
+        sizeof(platform::MaterialLootView), kMaximumMaterialLootViewBytes));
     return {};
 }
 
@@ -571,6 +590,7 @@ constexpr arpg::test::TestCase kCases[] = {
     {"identical anchors keep first and prefer upward", &identical_anchors_keep_first_and_prefer_upward},
     {"large viewport candidates reach bottom near anchor", &large_viewport_candidates_reach_bottom_near_anchor},
     {"top-clamped secondary labels resolve without overlap", &top_clamped_secondary_labels_resolve_without_overlap},
+    {"material loot view stays within fixed stack budget", &material_loot_view_stays_within_fixed_stack_budget},
     {"health potion feedback observes new committed receipts", &health_potion_feedback_only_observes_new_committed_receipts},
     {"simultaneous potion and material feedback preserves both", &simultaneous_potion_and_material_feedback_preserves_both},
     {"saturated same-position and top labels have bounded work", &saturated_same_position_and_top_labels_have_bounded_work},

@@ -413,10 +413,7 @@ MaterialLootView build_material_loot_view_internal(
         label.text_color = material_color(material.material);
         label.sprite = material_loot_sprite(material.material);
         label.emphasized = material_is_emphasized(material.material);
-        const std::string_view text = material_label(material.material);
-        static_cast<void>(std::snprintf(label.text.data(), label.text.size(), "%.*s",
-            static_cast<int>(text.size()), text.data()));
-        label.text.back() = '\0';
+        label.text = material_label(material.material);
         insert_label(view, label);
     }
     const std::size_t potion_source_count = (std::min)(
@@ -445,9 +442,7 @@ MaterialLootView build_material_loot_view_internal(
         label.text_color = {255U, 48U, 48U, 255U};
         label.sprite = MaterialSpriteId::health_potion;
         label.emphasized = true;
-        static_cast<void>(std::snprintf(
-            label.text.data(), label.text.size(), "%s", "生命药"));
-        label.text.back() = '\0';
+        label.text = "生命药";
         insert_label(view, label);
     }
     resolve_label_overlaps(view, width, height, diagnostics);

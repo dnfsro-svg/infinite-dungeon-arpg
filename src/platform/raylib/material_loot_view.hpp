@@ -25,7 +25,8 @@ struct MaterialLootLabel final {
     Rgba8 text_color{};
     MaterialSpriteId sprite{MaterialSpriteId::missing};
     bool emphasized{};
-    std::array<char, kGroundLootTextCapacity> text{};
+    // Label text is selected exclusively from static string literals.
+    std::string_view text{};
 };
 
 struct MaterialLootView final {
