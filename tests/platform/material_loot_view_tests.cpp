@@ -3,6 +3,8 @@
 #include "material_loot_view.hpp"
 #include "material_manifest.hpp"
 
+#include <array>
+#include <cstdio>
 #include <cstring>
 
 namespace {
@@ -187,6 +189,194 @@ arpg::test::Failure simultaneous_potion_and_material_feedback_preserves_both() n
     return {};
 }
 
+void fill_secondary_loot_pressure_snapshot(
+    dungeon::DungeonSnapshot& snapshot, float z) noexcept {
+    snapshot.ground_material_count = static_cast<std::uint16_t>(
+        dungeon::kGroundMaterialCapacity);
+    for (std::size_t index = 0U;
+         index < snapshot.ground_materials.size(); ++index) {
+        snapshot.ground_materials[index] = {
+            static_cast<std::uint16_t>(index),
+            dungeon::GroundMaterialSource::monster_common,
+            {0.0F, 0.0F, z}, items::MaterialId::chaos};
+    }
+    snapshot.ground_materials.back().material = items::MaterialId::count;
+
+    snapshot.ground_health_potion_count = static_cast<std::uint16_t>(
+        dungeon::kGroundHealthPotionCapacity);
+    for (std::size_t index = 0U;
+         index < snapshot.ground_health_potions.size(); ++index) {
+        snapshot.ground_health_potions[index] = {
+            static_cast<std::uint16_t>(index),
+            static_cast<std::uint16_t>(
+                dungeon::kGroundMaterialCapacity + index),
+            {0.0F, 0.0F, z}};
+    }
+}
+
+arpg::test::Failure verify_secondary_loot_pressure_view(
+    const dungeon::DungeonSnapshot& snapshot) noexcept {
+    constexpr std::size_t kSourceCount = dungeon::kGroundMaterialCapacity
+        + dungeon::kGroundHealthPotionCapacity;
+    constexpr std::uint64_t kOperationUpperBound =
+        static_cast<std::uint64_t>(kSourceCount) * kSourceCount;
+    platform::MaterialLootPlacementDiagnostics diagnostics{};
+    const auto view = platform::build_material_loot_view_with_diagnostics(
+        snapshot, 1280.0F, 720.0F, diagnostics);
+
+    ARPG_REQUIRE(view.count > 0U);
+    ARPG_REQUIRE(view.count < kSourceCount);
+    ARPG_REQUIRE(view.invalid_material_count == 1U);
+    ARPG_REQUIRE(view.capacity_saturation_count > 0U);
+    ARPG_REQUIRE(view.count + view.invalid_material_count
+        + view.capacity_saturation_count == kSourceCount);
+    ARPG_REQUIRE(diagnostics.placement_probe_count > 0U);
+    ARPG_REQUIRE(diagnostics.placement_probe_count <= kOperationUpperBound);
+    ARPG_REQUIRE(diagnostics.collision_operation_count
+        <= kOperationUpperBound);
+    ARPG_REQUIRE(diagnostics.collision_operation_count
+        <= diagnostics.placement_probe_count);
+    for (std::size_t index = 1U; index < view.count; ++index) {
+        ARPG_REQUIRE(view.labels[index - 1U].ordinal
+            < view.labels[index].ordinal);
+    }
+    for (std::size_t left = 0U; left < view.count; ++left) {
+        for (std::size_t right = left + 1U; right < view.count; ++right) {
+            ARPG_REQUIRE(!platform::loot_label_rects_overlap(
+                view.labels[left].rect, view.labels[right].rect));
+        }
+    }
+    return {};
+}
+
+arpg::test::Failure saturated_same_position_and_top_labels_have_bounded_work() noexcept {
+    dungeon::DungeonSnapshot snapshot{};
+    fill_secondary_loot_pressure_snapshot(snapshot, 100.0F);
+    const auto top = verify_secondary_loot_pressure_view(snapshot);
+    if (top.expression != nullptr) return top;
+
+    fill_secondary_loot_pressure_snapshot(snapshot, 0.0F);
+    return verify_secondary_loot_pressure_view(snapshot);
+}
+
+arpg::test::Failure continuous_feedback_receipts_are_consumed_before_publish() noexcept {
+    platform::MaterialPickupFeedbackState feedback{};
+    dungeon::DungeonSnapshot snapshot{};
+    ARPG_REQUIRE(!feedback.observe(snapshot).ready);
+
+    snapshot.material_pickup_receipt.valid = true;
+    snapshot.material_pickup_receipt.commit_generation = 10U;
+    snapshot.material_pickup_receipt.counts[
+        items::material_index(items::MaterialId::chaos)] = 1U;
+    snapshot.health_potion_pickup_receipt = {true, false, 1U, 10U, 250};
+    auto published = feedback.observe(snapshot);
+    ARPG_REQUIRE(published.ready);
+    ARPG_REQUIRE(std::strcmp(
+        published.text.bytes.data(), "生命药 +250 HP") == 0);
+
+    snapshot.health_potion_pickup_receipt.commit_generation = 11U;
+    snapshot.health_potion_pickup_receipt.restored_hp = 251;
+    published = feedback.observe(snapshot);
+    ARPG_REQUIRE(published.ready);
+    ARPG_REQUIRE(std::strcmp(
+        published.text.bytes.data(), "生命药 +251 HP") == 0);
+
+    snapshot.health_potion_pickup_receipt.commit_generation = 12U;
+    snapshot.health_potion_pickup_receipt.restored_hp = 252;
+    published = feedback.observe(snapshot);
+    ARPG_REQUIRE(published.ready);
+    ARPG_REQUIRE(std::strcmp(
+        published.text.bytes.data(), "生命药 +252 HP") == 0);
+
+    published = feedback.observe(snapshot);
+    ARPG_REQUIRE(published.ready);
+    ARPG_REQUIRE(std::strcmp(
+        published.text.bytes.data(), "已拾取：混沌石 x1") == 0);
+    ARPG_REQUIRE(!feedback.observe(snapshot).ready);
+
+    snapshot.material_pickup_receipt.valid = false;
+    snapshot.material_pickup_receipt.commit_generation = 11U;
+    snapshot.material_pickup_receipt.counts[
+        items::material_index(items::MaterialId::chaos)] = 2U;
+    snapshot.health_potion_pickup_receipt.valid = false;
+    snapshot.health_potion_pickup_receipt.commit_generation = 13U;
+    snapshot.health_potion_pickup_receipt.restored_hp = 253;
+    ARPG_REQUIRE(!feedback.observe(snapshot).ready);
+
+    snapshot.material_pickup_receipt.valid = true;
+    snapshot.health_potion_pickup_receipt.valid = true;
+    snapshot.health_potion_pickup_receipt.restored_hp = 0;
+    published = feedback.observe(snapshot);
+    ARPG_REQUIRE(published.ready);
+    ARPG_REQUIRE(std::strcmp(
+        published.text.bytes.data(), "已拾取：混沌石 x3") == 0);
+    ARPG_REQUIRE(!feedback.observe(snapshot).ready);
+
+    snapshot.material_pickup_receipt.commit_generation = 12U;
+    snapshot.material_pickup_receipt.counts.fill(0U);
+    snapshot.health_potion_pickup_receipt.restored_hp = 253;
+    ARPG_REQUIRE(!feedback.observe(snapshot).ready);
+    snapshot.material_pickup_receipt.counts[
+        items::material_index(items::MaterialId::chaos)] = 9U;
+    ARPG_REQUIRE(!feedback.observe(snapshot).ready);
+    snapshot.health_potion_pickup_receipt.commit_generation = 14U;
+    snapshot.health_potion_pickup_receipt.restored_hp = 254;
+    published = feedback.observe(snapshot);
+    ARPG_REQUIRE(published.ready);
+    ARPG_REQUIRE(std::strcmp(
+        published.text.bytes.data(), "生命药 +254 HP") == 0);
+    ARPG_REQUIRE(!feedback.observe(snapshot).ready);
+
+    platform::MaterialPickupFeedbackState sustained{};
+    dungeon::DungeonSnapshot sustained_snapshot{};
+    ARPG_REQUIRE(!sustained.observe(sustained_snapshot).ready);
+    constexpr std::size_t kReceiptCount = 64U;
+    std::array<bool, kReceiptCount> potion_seen{};
+    std::size_t potion_seen_count{};
+    bool saw_final_material_total{};
+    const auto record = [&](const platform::MaterialPickupFeedback& value) {
+        if (!value.ready) return true;
+        if (std::strncmp(value.text.bytes.data(), "生命药 +",
+                sizeof("生命药 +") - 1U) == 0) {
+            bool matched{};
+            for (std::size_t index = 0U; index < kReceiptCount; ++index) {
+                std::array<char, 96U> expected{};
+                static_cast<void>(std::snprintf(expected.data(), expected.size(),
+                    "生命药 +%zu HP", 1001U + index));
+                if (std::strcmp(value.text.bytes.data(), expected.data()) != 0) {
+                    continue;
+                }
+                if (potion_seen[index]) return false;
+                potion_seen[index] = true;
+                ++potion_seen_count;
+                matched = true;
+                break;
+            }
+            if (!matched) return false;
+        }
+        saw_final_material_total = saw_final_material_total
+            || std::strcmp(value.text.bytes.data(),
+                "已拾取：混沌石 x64") == 0;
+        return true;
+    };
+    for (std::size_t index = 0U; index < kReceiptCount; ++index) {
+        sustained_snapshot.material_pickup_receipt.valid = true;
+        sustained_snapshot.material_pickup_receipt.commit_generation = index + 1U;
+        sustained_snapshot.material_pickup_receipt.counts[
+            items::material_index(items::MaterialId::chaos)] = 1U;
+        sustained_snapshot.health_potion_pickup_receipt = {true, false, 1U,
+            index + 1U, static_cast<int>(1001U + index)};
+        ARPG_REQUIRE(record(sustained.observe(sustained_snapshot)));
+    }
+    for (std::size_t drain = 0U; drain < kReceiptCount + 2U; ++drain) {
+        ARPG_REQUIRE(record(sustained.observe(sustained_snapshot)));
+    }
+    ARPG_REQUIRE(potion_seen_count == kReceiptCount);
+    ARPG_REQUIRE(saw_final_material_total);
+    ARPG_REQUIRE(!sustained.observe(sustained_snapshot).ready);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"Chinese labels and emphasis", &labels_and_emphasis_are_player_facing},
     {"material view ignores equipment filter", &material_view_ignores_equipment_filter_and_orders_ordinals},
@@ -197,6 +387,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"top-clamped secondary labels resolve without overlap", &top_clamped_secondary_labels_resolve_without_overlap},
     {"health potion feedback observes new committed receipts", &health_potion_feedback_only_observes_new_committed_receipts},
     {"simultaneous potion and material feedback preserves both", &simultaneous_potion_and_material_feedback_preserves_both},
+    {"saturated same-position and top labels have bounded work", &saturated_same_position_and_top_labels_have_bounded_work},
+    {"continuous feedback receipts are consumed before publish", &continuous_feedback_receipts_are_consumed_before_publish},
 };
 
 }  // namespace

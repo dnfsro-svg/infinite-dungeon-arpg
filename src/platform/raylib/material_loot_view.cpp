@@ -3,6 +3,8 @@
 #include "combat_view_math.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstdio>
 
 namespace arpg::platform {
@@ -11,10 +13,22 @@ namespace {
 constexpr float kLabelWidth = 190.0F;
 constexpr float kLabelHeight = 23.0F;
 constexpr float kLabelGap = 13.0F;
+constexpr float kPlacementGap = 3.0F;
+constexpr std::size_t kLabelCapacity = dungeon::kGroundMaterialCapacity
+    + dungeon::kGroundHealthPotionCapacity;
+constexpr std::size_t kOccupancyWordBits = 64U;
+constexpr std::size_t kOccupancyWordCount =
+    (kLabelCapacity + kOccupancyWordBits - 1U) / kOccupancyWordBits;
+
+[[nodiscard]] float usable_screen_extent(float extent) noexcept {
+    return std::isfinite(extent)
+        ? (std::max)(kGroundLootSafetyInset * 2.0F, extent)
+        : kGroundLootSafetyInset * 2.0F;
+}
 
 void clamp_rect(LootLabelRect& rect, float width, float height) noexcept {
-    const float usable_width = (std::max)(kGroundLootSafetyInset * 2.0F, width);
-    const float usable_height = (std::max)(kGroundLootSafetyInset * 2.0F, height);
+    const float usable_width = usable_screen_extent(width);
+    const float usable_height = usable_screen_extent(height);
     rect.width = (std::min)(rect.width, usable_width - kGroundLootSafetyInset * 2.0F);
     rect.height = (std::min)(rect.height, usable_height - kGroundLootSafetyInset * 2.0F);
     rect.x = std::clamp(rect.x, kGroundLootSafetyInset,
@@ -33,73 +47,125 @@ void insert_label(MaterialLootView& view, MaterialLootLabel label) noexcept {
     ++view.count;
 }
 
-[[nodiscard]] bool overlaps_previous(const MaterialLootView& view,
-    std::size_t index, LootLabelRect rect) noexcept {
-    for (std::size_t previous = 0U; previous < index; ++previous) {
-        if (loot_label_rects_overlap(rect, view.labels[previous].rect)) {
-            return true;
-        }
+struct PlacementGrid final {
+    std::array<LootLabelRect, kLabelCapacity> slots{};
+    std::size_t count{};
+};
+
+[[nodiscard]] std::size_t axis_slot_count(
+    float span, float minimum_step) noexcept {
+    std::size_t count = 1U;
+    while (count < kLabelCapacity
+            && minimum_step * static_cast<float>(count) <= span) {
+        ++count;
     }
-    return false;
+    return count;
 }
 
-[[nodiscard]] bool place_without_overlap(MaterialLootView& view,
-    std::size_t index, float width, float height) noexcept {
-    const LootLabelRect original = view.labels[index].rect;
-    LootLabelRect candidate = original;
+[[nodiscard]] float axis_slot_position(float minimum, float maximum,
+    std::size_t index, std::size_t count) noexcept {
+    if (count == 1U) return minimum + (maximum - minimum) * 0.5F;
+    return minimum + (maximum - minimum)
+        * (static_cast<float>(index) / static_cast<float>(count - 1U));
+}
 
-    for (std::size_t attempt = 0U; attempt < view.labels.size(); ++attempt) {
-        if (!overlaps_previous(view, index, candidate)) {
-            view.labels[index].rect = candidate;
-            return true;
-        }
-        const float previous_y = candidate.y;
-        candidate.y -= kLabelHeight + 3.0F;
-        clamp_rect(candidate, width, height);
-        if (candidate.y == previous_y) break;
-    }
+[[nodiscard]] PlacementGrid make_placement_grid(
+    const MaterialLootView& view, float width, float height) noexcept {
+    PlacementGrid grid{};
+    if (view.count == 0U) return grid;
 
-    LootLabelRect row = original;
-    for (std::size_t vertical = 0U;
-         vertical < view.labels.size(); ++vertical) {
-        for (std::size_t side = 0U; side < 2U; ++side) {
-            candidate = row;
-            const float direction = side == 0U ? 1.0F : -1.0F;
-            for (std::size_t horizontal = 0U;
-                 horizontal < view.labels.size(); ++horizontal) {
-                const float previous_x = candidate.x;
-                candidate.x += direction * (original.width + 3.0F);
-                clamp_rect(candidate, width, height);
-                if (candidate.x == previous_x) break;
-                if (!overlaps_previous(view, index, candidate)) {
-                    view.labels[index].rect = candidate;
-                    return true;
-                }
-            }
+    const float label_width = view.labels[0].rect.width;
+    const float label_height = view.labels[0].rect.height;
+    const float minimum_x = kGroundLootSafetyInset;
+    const float minimum_y = kGroundLootSafetyInset;
+    const float maximum_x = usable_screen_extent(width)
+        - kGroundLootSafetyInset - label_width;
+    const float maximum_y = usable_screen_extent(height)
+        - kGroundLootSafetyInset - label_height;
+    const std::size_t column_count = axis_slot_count(
+        maximum_x - minimum_x, label_width + kPlacementGap);
+    const std::size_t row_count = axis_slot_count(
+        maximum_y - minimum_y, label_height + kPlacementGap);
+    for (std::size_t row = 0U;
+         row < row_count && grid.count < grid.slots.size(); ++row) {
+        const float y = axis_slot_position(
+            minimum_y, maximum_y, row, row_count);
+        for (std::size_t column = 0U;
+             column < column_count && grid.count < grid.slots.size(); ++column) {
+            const float x = axis_slot_position(
+                minimum_x, maximum_x, column, column_count);
+            grid.slots[grid.count++] = {x, y, label_width, label_height};
         }
-        const float previous_y = row.y;
-        row.y -= kLabelHeight + 3.0F;
-        clamp_rect(row, width, height);
-        if (row.y == previous_y) break;
     }
-    return false;
+    return grid;
+}
+
+[[nodiscard]] bool occupancy_test(
+    const std::array<std::uint64_t, kOccupancyWordCount>& occupancy,
+    std::size_t slot) noexcept {
+    return (occupancy[slot / kOccupancyWordBits]
+        & (std::uint64_t{1U} << (slot % kOccupancyWordBits))) != 0U;
+}
+
+void occupancy_set(std::array<std::uint64_t, kOccupancyWordCount>& occupancy,
+    std::size_t slot) noexcept {
+    occupancy[slot / kOccupancyWordBits] |=
+        std::uint64_t{1U} << (slot % kOccupancyWordBits);
+}
+
+[[nodiscard]] bool place_in_fixed_grid(MaterialLootLabel& label,
+    const PlacementGrid& grid,
+    std::array<std::uint64_t, kOccupancyWordCount>& occupancy,
+    MaterialLootPlacementDiagnostics* diagnostics) noexcept {
+    std::size_t best_slot = grid.count;
+    float best_distance{};
+    for (std::size_t slot = 0U; slot < grid.count; ++slot) {
+        if (diagnostics != nullptr) {
+            ++diagnostics->placement_probe_count;
+            ++diagnostics->collision_operation_count;
+        }
+        if (occupancy_test(occupancy, slot)) continue;
+        const LootLabelRect candidate = grid.slots[slot];
+        const float x_distance = candidate.x - label.rect.x;
+        const float y_distance = candidate.y - label.rect.y;
+        const float distance = x_distance * x_distance
+            + y_distance * y_distance;
+        const bool better_distance = best_slot == grid.count
+            || distance < best_distance;
+        const bool upward_tie = best_slot != grid.count
+            && distance == best_distance
+            && (candidate.y < grid.slots[best_slot].y
+                || (candidate.y == grid.slots[best_slot].y
+                    && candidate.x < grid.slots[best_slot].x));
+        if (!better_distance && !upward_tie) continue;
+        best_slot = slot;
+        best_distance = distance;
+    }
+    if (best_slot == grid.count) return false;
+    label.rect = grid.slots[best_slot];
+    occupancy_set(occupancy, best_slot);
+    return true;
 }
 
 void resolve_label_overlaps(MaterialLootView& view,
-    float width, float height) noexcept {
-    std::size_t index = 1U;
-    while (index < view.count) {
-        if (place_without_overlap(view, index, width, height)) {
-            ++index;
+    float width, float height,
+    MaterialLootPlacementDiagnostics* diagnostics) noexcept {
+    const PlacementGrid grid = make_placement_grid(view, width, height);
+    std::array<std::uint64_t, kOccupancyWordCount> occupancy{};
+    const std::size_t source_count = view.count;
+    std::size_t retained_count{};
+    for (std::size_t index = 0U; index < source_count; ++index) {
+        MaterialLootLabel label = view.labels[index];
+        if (!place_in_fixed_grid(label, grid, occupancy, diagnostics)) {
+            ++view.capacity_saturation_count;
             continue;
         }
-        for (std::size_t shift = index + 1U; shift < view.count; ++shift) {
-            view.labels[shift - 1U] = view.labels[shift];
-        }
-        --view.count;
-        view.labels[view.count] = {};
-        ++view.capacity_saturation_count;
+        view.labels[retained_count++] = label;
     }
+    for (std::size_t index = retained_count; index < source_count; ++index) {
+        view.labels[index] = {};
+    }
+    view.count = retained_count;
 }
 
 }  // namespace
@@ -181,8 +247,11 @@ MaterialSpriteId material_loot_sprite(items::MaterialId id) noexcept {
     return MaterialSpriteId::missing;
 }
 
-MaterialLootView build_material_loot_view(
-    const dungeon::DungeonSnapshot& snapshot, float width, float height) noexcept {
+namespace {
+
+MaterialLootView build_material_loot_view_internal(
+    const dungeon::DungeonSnapshot& snapshot, float width, float height,
+    MaterialLootPlacementDiagnostics* diagnostics) noexcept {
     MaterialLootView view{};
     const std::size_t source_count = (std::min)(
         static_cast<std::size_t>(snapshot.ground_material_count),
@@ -249,8 +318,23 @@ MaterialLootView build_material_loot_view(
         label.text.back() = '\0';
         insert_label(view, label);
     }
-    resolve_label_overlaps(view, width, height);
+    resolve_label_overlaps(view, width, height, diagnostics);
     return view;
+}
+
+}  // namespace
+
+MaterialLootView build_material_loot_view(
+    const dungeon::DungeonSnapshot& snapshot, float width, float height) noexcept {
+    return build_material_loot_view_internal(snapshot, width, height, nullptr);
+}
+
+MaterialLootView build_material_loot_view_with_diagnostics(
+    const dungeon::DungeonSnapshot& snapshot, float width, float height,
+    MaterialLootPlacementDiagnostics& diagnostics) noexcept {
+    diagnostics = {};
+    return build_material_loot_view_internal(
+        snapshot, width, height, &diagnostics);
 }
 
 void MaterialPickupFeedbackState::update(float frame_seconds,
@@ -262,6 +346,48 @@ void MaterialPickupFeedbackState::update(float frame_seconds,
     }
     accumulated_.fill(0U);
     seconds_left_ = 0.0F;
+}
+
+void MaterialPickupFeedbackState::enqueue_feedback(
+    MaterialPickupFeedback feedback, PendingFeedbackKind kind) noexcept {
+    if (!feedback.ready) return;
+    if (kind == PendingFeedbackKind::material) {
+        for (std::size_t index = 0U;
+             index < pending_feedback_count_; ++index) {
+            if (pending_feedback_[index].kind == PendingFeedbackKind::material) {
+                pending_feedback_[index].value = feedback;
+                return;
+            }
+        }
+    }
+    if (pending_feedback_count_ == pending_feedback_.size()) return;
+
+    std::size_t insertion = pending_feedback_count_;
+    if (kind == PendingFeedbackKind::health_potion) {
+        for (std::size_t index = 0U;
+             index < pending_feedback_count_; ++index) {
+            if (pending_feedback_[index].kind == PendingFeedbackKind::material) {
+                insertion = index;
+                break;
+            }
+        }
+    }
+    for (std::size_t index = pending_feedback_count_; index > insertion; --index) {
+        pending_feedback_[index] = pending_feedback_[index - 1U];
+    }
+    pending_feedback_[insertion] = {feedback, kind};
+    ++pending_feedback_count_;
+}
+
+MaterialPickupFeedback MaterialPickupFeedbackState::publish_next() noexcept {
+    if (pending_feedback_count_ == 0U) return {};
+    const MaterialPickupFeedback published = pending_feedback_[0].value;
+    for (std::size_t index = 1U; index < pending_feedback_count_; ++index) {
+        pending_feedback_[index - 1U] = pending_feedback_[index];
+    }
+    --pending_feedback_count_;
+    pending_feedback_[pending_feedback_count_] = {};
+    return published;
 }
 
 MaterialPickupFeedback MaterialPickupFeedbackState::observe(
@@ -279,11 +405,6 @@ MaterialPickupFeedback MaterialPickupFeedbackState::observe(
         health_potion_generation_ = potion_receipt.valid
             ? potion_receipt.commit_generation : 0U;
         return {};
-    }
-    if (pending_material_feedback_.ready) {
-        const MaterialPickupFeedback pending = pending_material_feedback_;
-        pending_material_feedback_ = {};
-        return pending;
     }
     if (material_receipt.valid && material_receipt.commit_generation != 0U
             && material_receipt.commit_generation > generation_) {
@@ -311,7 +432,10 @@ MaterialPickupFeedback MaterialPickupFeedbackState::observe(
                         used == sizeof("已拾取：") - 1U ? "" : "、",
                         static_cast<int>(label.size()), label.data(),
                         static_cast<unsigned long long>(accumulated_[index]));
-                    if (appended < 0) return {};
+                    if (appended < 0) {
+                        material_feedback = {};
+                        break;
+                    }
                     if (static_cast<std::size_t>(appended)
                             >= material_feedback.text.bytes.size() - used) {
                         material_feedback.text.truncated = true;
@@ -321,8 +445,10 @@ MaterialPickupFeedback MaterialPickupFeedbackState::observe(
                     material_feedback.emphasized = material_feedback.emphasized
                         || material_is_emphasized(id);
                 }
-                material_feedback.text.bytes.back() = '\0';
-                material_feedback.ready = true;
+                if (material_feedback.text.bytes[0] != '\0') {
+                    material_feedback.text.bytes.back() = '\0';
+                    material_feedback.ready = true;
+                }
             }
         }
     }
@@ -336,10 +462,9 @@ MaterialPickupFeedback MaterialPickupFeedbackState::observe(
         potion_feedback.emphasized = potion_feedback.ready;
         if (potion_feedback.ready) seconds_left_ = 2.0F;
     }
-    if (potion_feedback.ready && material_feedback.ready) {
-        pending_material_feedback_ = material_feedback;
-    }
-    return potion_feedback.ready ? potion_feedback : material_feedback;
+    enqueue_feedback(potion_feedback, PendingFeedbackKind::health_potion);
+    enqueue_feedback(material_feedback, PendingFeedbackKind::material);
+    return publish_next();
 }
 
 }  // namespace arpg::platform
