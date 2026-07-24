@@ -131,5 +131,5 @@ int main() {
         storm_swords_skill_suite(),
     };
 
-    return arpg::test::run_suites(suites, 243, "stage 18 combat queries");
+    return arpg::test::run_suites(suites, 245, "stage 18 combat queries");
 }

@@ -740,6 +740,20 @@ void CombatWorld::restore_player_resources(int hp, int barrier) noexcept {
         : player_.barrier + restored_barrier;
 }
 
+int CombatWorld::restore_player_health_percent(
+    std::uint16_t maximum_health_basis_points) noexcept {
+    if (maximum_health_basis_points == 0U || player_.max_hp <= 0
+            || player_defeated()) {
+        return 0;
+    }
+    const int requested = scale_basis_points(player_.max_hp,
+        maximum_health_basis_points, BasisPointRounding::ceil);
+    const int missing = (std::max)(0, player_.max_hp - player_.hp);
+    const int actual = (std::min)(requested, missing);
+    player_.hp += actual;
+    return actual;
+}
+
 void CombatWorld::clear_abyss_rule_preserving_resources() noexcept {
     DerivedPlayerBuild derived{};
     if (!derive_player_build(encounter_config_.player_build, derived)) return;

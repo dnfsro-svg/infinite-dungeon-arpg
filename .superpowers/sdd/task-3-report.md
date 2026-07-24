@@ -189,3 +189,67 @@ ctest --test-dir out/build/windows-msvc-core-debug -R '^(dungeon\.units|stage16\
 - 总计 2/2，通过率 100%，0 failures。
 
 本轮额外修改测试支持文件：`tests/dungeon/dungeon_test_support.hpp`，只增加设置运行中 `room_progression_` 的既有 friend 测试 seam。
+
+---
+
+# Stage 18 Task 3 Report — Fixed-percent player health restoration
+
+- Status: DONE
+- Commit: pending
+
+## Scope
+
+- Added only `CombatWorld::restore_player_health_percent(std::uint16_t)`.
+- The method calculates from the actual player `max_hp` with ceil basis-point
+  scaling, clamps to missing health, returns the amount restored, and rejects
+  zero basis points, invalid max HP, full-health, and defeated players.
+- It does not call or change `restore_player_resources()`, so the new API
+  bypasses the abyss `player_resource_restore_bp` multiplier as required.
+- No potion drops/pools/persistence/auto-use/UI/assets were added, and no
+  existing abyss restoration, player max-health, damage, defense, or death
+  behavior was changed.
+
+## RED evidence
+
+The two required cases were added and registered before production code. In a
+VS 2022 x64 development environment, this command failed as expected:
+
+```powershell
+cmake --build --preset windows-msvc-core-debug --target arpg_combat_tests -- -j1
+```
+
+`player_health_tests.cpp` reported C2039 for
+`CombatWorld::restore_player_health_percent`: it was not a member of
+`CombatWorld`. This is the expected missing-interface compilation RED.
+
+## GREEN evidence
+
+After the minimal declaration and implementation:
+
+```powershell
+cmake --build --preset windows-msvc-core-debug --target arpg_combat_tests -- -j1
+ctest --preset windows-msvc-core-debug -R '^combat\.units$' --output-on-failure
+```
+
+Build completed successfully and `combat.units` passed (1/1). Direct execution
+of `out/build/windows-msvc-core-debug/bin/arpg_combat_tests.exe` reported:
+
+```text
+245 cases, 0 failures
+```
+
+## Changed files
+
+- `src/combat/combat_world.hpp`
+- `src/combat/combat_world.cpp`
+- `tests/combat/player_health_tests.cpp`
+- `tests/combat/combat_test_main.cpp`
+- `.superpowers/sdd/task-3-report.md`
+
+## Self-check and concerns
+
+- `git diff --check` passed.
+- The initial ordinary PowerShell build could not locate the MSVC standard
+  header `cmath`; it was not treated as RED. Loading the VS development
+  environment yielded the valid missing-API RED above.
+- No functional concerns remain.
