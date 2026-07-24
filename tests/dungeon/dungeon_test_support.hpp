@@ -357,6 +357,21 @@ struct DungeonSessionTestAccess final {
             monster.hp = 0;
         }
     }
+    static bool install_delayed_abyss_environment_hazard(
+        dungeon::DungeonSession& session) noexcept {
+        if (!session.combat_.has_value()) return false;
+        combat::CombatWorld& world = *session.combat_;
+        return world.spawn_environment_hazard(
+            combat::HazardKind::thunderstorm,
+            world.player_.position,
+            1.0F,
+            2U,
+            8U,
+            1U,
+            combat::DamagePacket{1},
+            500U,
+            modifiers::DamageType::lightning);
+    }
     static void offset_pending_next_room_depth(
         dungeon::DungeonSession& session, std::uint64_t offset) noexcept {
         if (session.pending_save_.has_value()) {
@@ -633,6 +648,12 @@ inline void replace_ground_health_potion(
 inline void quiesce_current_room_for_clear_retry(
     dungeon::DungeonSession& session) noexcept {
     DungeonSessionTestAccess::quiesce_current_room_for_clear_retry(session);
+}
+
+inline bool install_delayed_abyss_environment_hazard(
+    dungeon::DungeonSession& session) noexcept {
+    return DungeonSessionTestAccess::install_delayed_abyss_environment_hazard(
+        session);
 }
 
 inline void offset_pending_next_room_depth(

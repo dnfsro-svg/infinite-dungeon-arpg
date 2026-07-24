@@ -829,6 +829,7 @@ final_kill_low_health_folds_sorted_potions_into_clear_transaction() noexcept {
     arpg::test::set_started_abyss_room(
         abyss, arpg::abyss::AbyssDanger::low);
     arpg::test::set_player_health(abyss, 500, 1000);
+    ARPG_REQUIRE(arpg::test::install_delayed_abyss_environment_hazard(abyss));
     arpg::test::quiesce_current_room_for_clear_retry(abyss);
     install_potion(abyss, 4U);
     arpg::test::install_ground_material(abyss, kMaterialOrdinal,
@@ -908,7 +909,28 @@ final_kill_low_health_folds_sorted_potions_into_clear_transaction() noexcept {
         arpg::test::stable_state(abyss), abyss_stable_before));
     ARPG_REQUIRE(!claim_bit_is_set(arpg::test::stable_state(abyss),
         arpg::dungeon::health_potion_claim_ordinal(4U)));
+    ARPG_REQUIRE(abyss_before_failure.combat->hazard_count == 1U);
+    const auto hazard_before_retry =
+        abyss_before_failure.combat->hazards[0];
+    ARPG_REQUIRE(hazard_before_retry.active);
+    ARPG_REQUIRE(hazard_before_retry.telegraph_ticks == 1U);
+    const bool accepted_combat_action =
+        abyss.queue_action(arpg::combat::Action::light);
     abyss.tick({});
+    const auto abyss_after_retry = abyss.snapshot();
+    ARPG_REQUIRE(abyss_after_retry.combat->player.hp
+        == abyss_before_failure.combat->player.hp);
+    ARPG_REQUIRE(abyss_after_retry.combat->hazard_count == 1U);
+    const auto hazard_after_retry = abyss_after_retry.combat->hazards[0];
+    ARPG_REQUIRE(hazard_after_retry.telegraph_ticks
+        == hazard_before_retry.telegraph_ticks);
+    ARPG_REQUIRE(hazard_after_retry.active_ticks
+        == hazard_before_retry.active_ticks);
+    ARPG_REQUIRE(hazard_after_retry.lifetime_ticks
+        == hazard_before_retry.lifetime_ticks);
+    ARPG_REQUIRE(hazard_after_retry.player_latched
+        == hazard_before_retry.player_latched);
+    ARPG_REQUIRE(!accepted_combat_action);
     const auto abyss_retry = abyss.pending_save();
     ARPG_REQUIRE(abyss_retry.has_value());
     ARPG_REQUIRE(abyss_retry->kind == abyss_pending->kind);

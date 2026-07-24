@@ -260,7 +260,9 @@ DungeonSession::DungeonSession(
 }
 
 bool DungeonSession::queue_action(combat::Action action) noexcept {
-    return phase_ == RoomPhase::combat && combat_.has_value()
+    return phase_ == RoomPhase::combat
+        && !retry_health_potion_abyss_clear_before_combat_
+        && combat_.has_value()
         ? combat_->queue_action(action)
         : false;
 }
@@ -268,7 +270,9 @@ bool DungeonSession::queue_action(combat::Action action) noexcept {
 combat::SkillCastResult DungeonSession::request_active_skill_slot(
     std::uint8_t slot) noexcept {
     const std::size_t index = static_cast<std::size_t>(slot);
-    if (phase_ != RoomPhase::combat || !combat_.has_value()
+    if (phase_ != RoomPhase::combat
+            || retry_health_potion_abyss_clear_before_combat_
+            || !combat_.has_value()
             || index >= skills::kActiveSkillSlotCount) {
         return combat::SkillCastResult::none;
     }
@@ -286,6 +290,17 @@ RoomPhase DungeonSession::phase() const noexcept {
 void DungeonSession::tick(
     combat::MovementInput movement,
     AutoPickupPolicy pickup_policy) noexcept {
+    if (retry_health_potion_abyss_clear_before_combat_) {
+        retry_health_potion_abyss_clear_before_combat_ = false;
+        if (phase_ != RoomPhase::combat || pending_save_.has_value()
+                || !combat_.has_value()) {
+            enter_fault(DungeonFault::save_receipt_mismatch);
+        } else {
+            prepare_room_clear();
+        }
+        ++session_tick_;
+        return;
+    }
     if (phase_ == RoomPhase::committing
             || phase_ == RoomPhase::death_pending
             || phase_ == RoomPhase::faulted) {
@@ -409,6 +424,7 @@ RequestResult DungeonSession::reset_current_room() noexcept {
             || phase_ == RoomPhase::faulted) {
         return RequestResult::rejected;
     }
+    retry_health_potion_abyss_clear_before_combat_ = false;
     if (stable_state_.current_room.is_abyss
             && stable_state_.abyss.lifecycle
                 == abyss::AbyssLifecycle::started) {
@@ -461,6 +477,7 @@ DungeonSession::try_pop_combat_event() noexcept {
 }
 
 void DungeonSession::construct_current_room() noexcept {
+    retry_health_potion_abyss_clear_before_combat_ = false;
     if (stable_state_.death.lifecycle
             == checkpoint::DeathLifecycle::pending_continue) {
         clear_transient_room_state();
@@ -557,6 +574,7 @@ bool DungeonSession::validate_pending_death_state() const noexcept {
 }
 
 void DungeonSession::clear_transient_room_state() noexcept {
+    retry_health_potion_abyss_clear_before_combat_ = false;
     combat_.reset();
     ground_items_ = {};
     rolled_drop_bits_ = {};
@@ -832,6 +850,7 @@ void DungeonSession::construct_normal_room() noexcept {
 }
 
 void DungeonSession::reset_to_normal_room(bool clear_queues) noexcept {
+    retry_health_potion_abyss_clear_before_combat_ = false;
     if (clear_queues) {
         while (events_.try_pop().has_value()) {
         }
@@ -1794,6 +1813,7 @@ void DungeonSession::enter_fault(DungeonFault fault) noexcept {
     if (fault == DungeonFault::none) {
         return;
     }
+    retry_health_potion_abyss_clear_before_combat_ = false;
     diagnostics_.fault = fault;
     phase_ = RoomPhase::faulted;
     clear_abyss_exit_confirmation();

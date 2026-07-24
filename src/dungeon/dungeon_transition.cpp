@@ -1671,6 +1671,9 @@ void DungeonSession::commit_pending_save(
             pending_save_->next_state.last_direction));
         pending_save_.reset();
         pending_item_build_.reset();
+        retry_health_potion_abyss_clear_before_combat_ =
+            retryable_health_potion_abyss_clear
+            && phase_ != RoomPhase::faulted;
         return;
     }
     if (result.generation != pending_save_->expected_generation
@@ -1682,6 +1685,7 @@ void DungeonSession::commit_pending_save(
         return;
     }
 
+    retry_health_potion_abyss_clear_before_combat_ = false;
     const PendingSaveKind kind = pending_save_->kind;
     const bool item_commit = kind == PendingSaveKind::equipment
         || kind == PendingSaveKind::craft

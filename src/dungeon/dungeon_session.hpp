@@ -286,6 +286,7 @@ private:
     std::array<GroundHealthPotion, kGroundHealthPotionCapacity>
         ground_health_potions_{};
     HealthPotionPickupReceipt health_potion_pickup_receipt_{};
+    bool retry_health_potion_abyss_clear_before_combat_{};
     MaterialPickupReceipt material_pickup_receipt_{};
     ReinforcementReceipt reinforcement_receipt_{};
     RoomEncounterPlan encounter_plan_{};
