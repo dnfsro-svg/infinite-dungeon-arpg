@@ -19,6 +19,33 @@ enum class LauncherButton {
     exit,
 };
 
+enum class RendererStage {
+    none,
+    create_hwnd_render_target,
+    create_gradient_stop_collection,
+    create_linear_gradient_brush,
+    create_solid_color_brush,
+    create_text_layout,
+    set_word_wrapping,
+    set_trimming,
+    end_draw,
+};
+
+struct RendererResult {
+    HRESULT hresult;
+    RendererStage stage;
+};
+
+struct RenderTargetDiagnostics {
+    D2D1_WINDOW_STATE window_state{D2D1_WINDOW_STATE_NONE};
+    D2D1_SIZE_U pixel_size{};
+    D2D1_SIZE_F logical_size{};
+    FLOAT dpi_x{0.0F};
+    FLOAT dpi_y{0.0F};
+};
+
+std::wstring_view renderer_stage_name(RendererStage stage) noexcept;
+
 struct LauncherView {
     LauncherLayout layout;
     std::wstring_view status_text;
@@ -41,7 +68,8 @@ public:
     bool initialize(HWND window) noexcept;
     void resize(UINT width, UINT height) noexcept;
     void set_dpi(UINT dpi) noexcept;
-    HRESULT render(const LauncherView& view) noexcept;
+    RendererResult render(const LauncherView& view) noexcept;
+    RenderTargetDiagnostics diagnostics() const noexcept;
     void discard_device_resources() noexcept;
 
 private:
@@ -54,11 +82,12 @@ private:
         ID2D1Brush* brush,
         DWRITE_WORD_WRAPPING wrapping = DWRITE_WORD_WRAPPING_WRAP,
         bool ellipsis = false) noexcept;
-    void draw_button(
+    HRESULT draw_button(
         RectF rectangle,
         std::wstring_view label,
         LauncherButton button,
         const LauncherView& view) noexcept;
+    HRESULT record_failure(RendererStage stage, HRESULT result) noexcept;
 
     HWND window_{};
     UINT dpi_{96U};
@@ -81,6 +110,7 @@ private:
     Microsoft::WRL::ComPtr<IDWriteTextFormat> button_format_;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> path_format_;
     Microsoft::WRL::ComPtr<IDWriteInlineObject> ellipsis_;
+    RendererStage failure_stage_{RendererStage::none};
 };
 
 }  // namespace arpg::launcher

@@ -7,6 +7,8 @@
 #include <windowsx.h>
 
 #include <filesystem>
+#include <cmath>
+#include <cwchar>
 #include <optional>
 #include <string>
 #include <vector>
@@ -46,6 +48,169 @@ std::optional<std::wstring> local_app_data_value() noexcept {
     catch (...) {
         return std::nullopt;
     }
+}
+
+std::wstring render_failure_message(const RendererResult& result) {
+    const std::wstring_view stage = renderer_stage_name(result.stage);
+    wchar_t hresult[11]{};
+    std::swprintf(
+        hresult,
+        std::size(hresult),
+        L"%08X",
+        static_cast<unsigned int>(result.hresult));
+    return L"渲染失败：" + std::wstring{stage} + L"（HRESULT 0x" + hresult + L"）";
+}
+
+RECT fallback_rectangle(const RectF rectangle, const float scale) noexcept {
+    return {
+        static_cast<LONG>(std::lround(rectangle.left * scale)),
+        static_cast<LONG>(std::lround(rectangle.top * scale)),
+        static_cast<LONG>(std::lround(rectangle.right * scale)),
+        static_cast<LONG>(std::lround(rectangle.bottom * scale)),
+    };
+}
+
+void draw_fallback_text(
+    const HDC device_context,
+    const std::wstring_view text,
+    const RectF rectangle,
+    const float scale,
+    const int font_size,
+    const COLORREF color,
+    const UINT format) noexcept {
+    const HFONT font = CreateFontW(
+        -static_cast<int>(std::lround(static_cast<float>(font_size) * scale)),
+        0,
+        0,
+        0,
+        FW_NORMAL,
+        FALSE,
+        FALSE,
+        FALSE,
+        DEFAULT_CHARSET,
+        OUT_DEFAULT_PRECIS,
+        CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE,
+        L"Microsoft YaHei UI");
+    if (font == nullptr) {
+        return;
+    }
+    const HGDIOBJ previous_font = SelectObject(device_context, font);
+    SetTextColor(device_context, color);
+    SetBkMode(device_context, TRANSPARENT);
+    RECT destination = fallback_rectangle(rectangle, scale);
+    DrawTextW(
+        device_context,
+        text.data(),
+        static_cast<int>(text.size()),
+        &destination,
+        format);
+    SelectObject(device_context, previous_font);
+    DeleteObject(font);
+}
+
+void fill_fallback_rectangle(
+    const HDC device_context,
+    const RectF rectangle,
+    const float scale,
+    const COLORREF color) noexcept {
+    const RECT destination = fallback_rectangle(rectangle, scale);
+    const HBRUSH brush = CreateSolidBrush(color);
+    FillRect(device_context, &destination, brush);
+    DeleteObject(brush);
+    FrameRect(device_context, &destination, GetSysColorBrush(COLOR_3DLIGHT));
+}
+
+void paint_native_fallback(
+    const HDC device_context,
+    const HWND window,
+    const LauncherView& view,
+    const UINT dpi,
+    const std::wstring_view message) noexcept {
+    const float scale = static_cast<float>(dpi == 0U ? 96U : dpi) / 96.0F;
+    RECT client{};
+    if (GetClientRect(window, &client) == FALSE) {
+        return;
+    }
+    const HBRUSH background = CreateSolidBrush(RGB(6, 23, 36));
+    FillRect(device_context, &client, background);
+    DeleteObject(background);
+
+    const COLORREF normal_button = RGB(36, 69, 94);
+    fill_fallback_rectangle(
+        device_context,
+        view.layout.start,
+        scale,
+        view.start_enabled ? normal_button : RGB(85, 91, 99));
+    fill_fallback_rectangle(device_context, view.layout.verify, scale, normal_button);
+    fill_fallback_rectangle(device_context, view.layout.save, scale, normal_button);
+    fill_fallback_rectangle(device_context, view.layout.exit, scale, normal_button);
+
+    draw_fallback_text(
+        device_context,
+        L"无限地下城",
+        view.layout.title,
+        scale,
+        32,
+        RGB(255, 255, 255),
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_fallback_text(
+        device_context,
+        L"版本 0.1.0 · 单人无限地下城",
+        view.layout.subtitle,
+        scale,
+        16,
+        RGB(255, 255, 255),
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_fallback_text(
+        device_context,
+        message,
+        view.layout.status,
+        scale,
+        18,
+        RGB(255, 80, 80),
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_fallback_text(
+        device_context,
+        L"开始游戏",
+        view.layout.start,
+        scale,
+        18,
+        RGB(255, 255, 255),
+        DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    draw_fallback_text(
+        device_context,
+        L"检查游戏文件",
+        view.layout.verify,
+        scale,
+        18,
+        RGB(255, 255, 255),
+        DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    draw_fallback_text(
+        device_context,
+        L"打开存档目录",
+        view.layout.save,
+        scale,
+        18,
+        RGB(255, 255, 255),
+        DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    draw_fallback_text(
+        device_context,
+        L"退出",
+        view.layout.exit,
+        scale,
+        18,
+        RGB(255, 255, 255),
+        DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    draw_fallback_text(
+        device_context,
+        view.path_text,
+        view.layout.path,
+        scale,
+        13,
+        RGB(255, 255, 255),
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 }
 
 class WindowController final {
@@ -371,7 +536,34 @@ private:
             status_ready_,
             show_full_path_,
         };
-        renderer_.render(view);
+        const RendererResult result = renderer_.render(view);
+        const RenderTargetDiagnostics diagnostics = renderer_.diagnostics();
+        if (FAILED(result.hresult)) {
+            const std::wstring message = render_failure_message(result);
+            SetWindowTextW(window_, (std::wstring{kWindowTitle} + L" - " + message).c_str());
+            renderer_.discard_device_resources();
+            if (!render_retry_requested_) {
+                render_retry_requested_ = true;
+                invalidate();
+            }
+            paint_native_fallback(
+                paint_structure.hdc,
+                window_,
+                view,
+                dpi_,
+                message);
+        }
+        else if ((diagnostics.window_state & D2D1_WINDOW_STATE_OCCLUDED) != 0U) {
+            paint_native_fallback(
+                paint_structure.hdc,
+                window_,
+                view,
+                dpi_,
+                L"Direct2D 客户区不可用，已切换兼容显示");
+        }
+        else {
+            render_retry_requested_ = false;
+        }
         EndPaint(window_, &paint_structure);
     }
 
@@ -396,6 +588,7 @@ private:
     bool window_focused_{false};
     bool status_ready_{false};
     bool show_full_path_{false};
+    bool render_retry_requested_{false};
 };
 
 LRESULT CALLBACK launcher_window_proc(

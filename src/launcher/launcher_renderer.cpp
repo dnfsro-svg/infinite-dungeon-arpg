@@ -22,6 +22,30 @@ D2D1_ROUNDED_RECT rounded_rectangle(const RectF rectangle) noexcept {
 
 }  // namespace
 
+std::wstring_view renderer_stage_name(const RendererStage stage) noexcept {
+    switch (stage) {
+    case RendererStage::none:
+        return L"none";
+    case RendererStage::create_hwnd_render_target:
+        return L"CreateHwndRenderTarget";
+    case RendererStage::create_gradient_stop_collection:
+        return L"CreateGradientStopCollection";
+    case RendererStage::create_linear_gradient_brush:
+        return L"CreateLinearGradientBrush";
+    case RendererStage::create_solid_color_brush:
+        return L"CreateSolidColorBrush";
+    case RendererStage::create_text_layout:
+        return L"CreateTextLayout";
+    case RendererStage::set_word_wrapping:
+        return L"IDWriteTextLayout::SetWordWrapping";
+    case RendererStage::set_trimming:
+        return L"IDWriteTextLayout::SetTrimming";
+    case RendererStage::end_draw:
+        return L"ID2D1RenderTarget::EndDraw";
+    }
+    return L"unknown";
+}
+
 bool LauncherRenderer::initialize(const HWND window) noexcept {
     window_ = window;
     dpi_ = GetDpiForWindow(window_);
@@ -122,7 +146,7 @@ HRESULT LauncherRenderer::ensure_render_target() noexcept {
         D2D1::HwndRenderTargetProperties(window_, pixel_size),
         render_target_.ReleaseAndGetAddressOf());
     if (FAILED(result)) {
-        return result;
+        return record_failure(RendererStage::create_hwnd_render_target, result);
     }
     render_target_->SetDpi(static_cast<FLOAT>(dpi_), static_cast<FLOAT>(dpi_));
 
@@ -135,6 +159,9 @@ HRESULT LauncherRenderer::ensure_render_target() noexcept {
         stops.data(),
         static_cast<UINT32>(stops.size()),
         stop_collection.GetAddressOf());
+    if (FAILED(result)) {
+        return record_failure(RendererStage::create_gradient_stop_collection, result);
+    }
     if (SUCCEEDED(result)) {
         const D2D1_SIZE_F size = render_target_->GetSize();
         result = render_target_->CreateLinearGradientBrush(
@@ -142,6 +169,9 @@ HRESULT LauncherRenderer::ensure_render_target() noexcept {
                 D2D1::Point2F(0.0F, 0.0F), D2D1::Point2F(size.width, size.height)),
             stop_collection.Get(),
             background_brush_.ReleaseAndGetAddressOf());
+    }
+    if (FAILED(result)) {
+        return record_failure(RendererStage::create_linear_gradient_brush, result);
     }
 
     const auto create_solid = [this](
@@ -178,6 +208,7 @@ HRESULT LauncherRenderer::ensure_render_target() noexcept {
         result = create_solid(0x0A1C2B, card_brush_.ReleaseAndGetAddressOf());
     }
     if (FAILED(result)) {
+        record_failure(RendererStage::create_solid_color_brush, result);
         discard_device_resources();
     }
     return result;
@@ -186,7 +217,7 @@ HRESULT LauncherRenderer::ensure_render_target() noexcept {
 void LauncherRenderer::resize(const UINT width, const UINT height) noexcept {
     if (render_target_ && width != 0U && height != 0U) {
         const HRESULT result = render_target_->Resize(D2D1::SizeU(width, height));
-        if (result == D2DERR_RECREATE_TARGET) {
+        if (FAILED(result)) {
             discard_device_resources();
             InvalidateRect(window_, nullptr, FALSE);
         }
@@ -220,13 +251,19 @@ HRESULT LauncherRenderer::draw_text(
         rectangle.bottom - rectangle.top,
         layout.GetAddressOf());
     if (FAILED(result)) {
-        return result;
+        return record_failure(RendererStage::create_text_layout, result);
     }
     result = layout->SetWordWrapping(wrapping);
+    if (FAILED(result)) {
+        return record_failure(RendererStage::set_word_wrapping, result);
+    }
     if (SUCCEEDED(result) && ellipsis) {
         const DWRITE_TRIMMING trimming{
             DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0U, 0U};
         result = layout->SetTrimming(&trimming, ellipsis_.Get());
+        if (FAILED(result)) {
+            return record_failure(RendererStage::set_trimming, result);
+        }
     }
     if (SUCCEEDED(result)) {
         render_target_->DrawTextLayout(
@@ -238,7 +275,7 @@ HRESULT LauncherRenderer::draw_text(
     return result;
 }
 
-void LauncherRenderer::draw_button(
+HRESULT LauncherRenderer::draw_button(
     const RectF rectangle,
     const std::wstring_view label,
     const LauncherButton button,
@@ -258,7 +295,7 @@ void LauncherRenderer::draw_button(
     const D2D1_ROUNDED_RECT shape = rounded_rectangle(rectangle);
     render_target_->FillRoundedRectangle(shape, fill);
     render_target_->DrawRoundedRectangle(shape, border, hovered || focused ? 2.5F : 1.5F);
-    draw_text(
+    return draw_text(
         label,
         button_format_.Get(),
         rectangle,
@@ -266,10 +303,11 @@ void LauncherRenderer::draw_button(
         DWRITE_WORD_WRAPPING_NO_WRAP);
 }
 
-HRESULT LauncherRenderer::render(const LauncherView& view) noexcept {
+RendererResult LauncherRenderer::render(const LauncherView& view) noexcept {
+    failure_stage_ = RendererStage::none;
     HRESULT result = ensure_render_target();
     if (FAILED(result)) {
-        return result;
+        return {result, failure_stage_};
     }
 
     render_target_->BeginDraw();
@@ -307,13 +345,21 @@ HRESULT LauncherRenderer::render(const LauncherView& view) noexcept {
             DWRITE_WORD_WRAPPING_NO_WRAP);
     }
 
-    draw_button(
+    if (SUCCEEDED(result)) {
+        result = draw_button(
         view.layout.start, L"开始游戏", LauncherButton::start, view);
-    draw_button(
-        view.layout.verify, L"检查游戏文件", LauncherButton::verify, view);
-    draw_button(
-        view.layout.save, L"打开存档目录", LauncherButton::save, view);
-    draw_button(view.layout.exit, L"退出", LauncherButton::exit, view);
+    }
+    if (SUCCEEDED(result)) {
+        result = draw_button(
+            view.layout.verify, L"检查游戏文件", LauncherButton::verify, view);
+    }
+    if (SUCCEEDED(result)) {
+        result = draw_button(
+            view.layout.save, L"打开存档目录", LauncherButton::save, view);
+    }
+    if (SUCCEEDED(result)) {
+        result = draw_button(view.layout.exit, L"退出", LauncherButton::exit, view);
+    }
 
     render_target_->DrawRoundedRectangle(
         rounded_rectangle(view.layout.path), silver_brush_.Get(), 1.5F);
@@ -357,9 +403,38 @@ HRESULT LauncherRenderer::render(const LauncherView& view) noexcept {
     if (end_result == D2DERR_RECREATE_TARGET) {
         discard_device_resources();
         InvalidateRect(window_, nullptr, FALSE);
-        return S_OK;
+        return {
+            record_failure(RendererStage::end_draw, end_result), failure_stage_};
     }
-    return FAILED(result) ? result : end_result;
+    if (FAILED(result)) {
+        return {result, failure_stage_};
+    }
+    if (FAILED(end_result)) {
+        return {
+            record_failure(RendererStage::end_draw, end_result), failure_stage_};
+    }
+    return {S_OK, RendererStage::end_draw};
+}
+
+RenderTargetDiagnostics LauncherRenderer::diagnostics() const noexcept {
+    if (!render_target_) {
+        return {};
+    }
+    RenderTargetDiagnostics diagnostics;
+    diagnostics.window_state = render_target_->CheckWindowState();
+    diagnostics.pixel_size = render_target_->GetPixelSize();
+    diagnostics.logical_size = render_target_->GetSize();
+    render_target_->GetDpi(&diagnostics.dpi_x, &diagnostics.dpi_y);
+    return diagnostics;
+}
+
+HRESULT LauncherRenderer::record_failure(
+    const RendererStage stage,
+    const HRESULT result) noexcept {
+    if (FAILED(result)) {
+        failure_stage_ = stage;
+    }
+    return result;
 }
 
 void LauncherRenderer::discard_device_resources() noexcept {
