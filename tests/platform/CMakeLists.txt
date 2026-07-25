@@ -1708,6 +1708,15 @@ set_tests_properties(
     PROPERTIES LABELS "headless;platform;architecture;stage14")
 
 add_test(
+    NAME audio.process_guard_common_self_test
+    COMMAND "${CMAKE_COMMAND}"
+        "-DGUARD_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/audio-process-guard-common"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/audio_process_guard_common_self_test.cmake")
+set_tests_properties(
+    audio.process_guard_common_self_test
+    PROPERTIES LABELS "headless;platform;architecture")
+
+add_test(
     NAME stage15.audio_sources
     COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
         "${CMAKE_CURRENT_SOURCE_DIR}/stage15_audio_source_validator.ps1"

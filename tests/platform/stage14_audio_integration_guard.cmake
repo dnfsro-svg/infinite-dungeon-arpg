@@ -32,14 +32,7 @@ file(GLOB_RECURSE _stage14_production_cmake LIST_DIRECTORIES false
     "${_stage14_repository_root}/src/*/CMakeLists.txt")
 set(_stage14_production_files
     ${_stage14_production_sources} ${_stage14_production_cmake})
-set(_stage14_process_function_family
-    "(system|_wsystem|popen|_popen|_wpopen|createprocess[a-z]*|shellexecute[a-z]*|winexec|posix_spawn[a-z]*|_spawn(l|le|lp|lpe|v|ve|vp|vpe)?|_wspawn(l|le|lp|lpe|v|ve|vp|vpe)?|exec(l|le|lp|lpe|v|ve|vp|vpe)?|_exec(l|le|lp|lpe|v|ve|vp|vpe)?)")
-set(_stage14_bare_process_call_pattern
-    "(^|[^A-Za-z0-9_:>.])${_stage14_process_function_family}[ \\t\\r\\n]*\\(")
-set(_stage14_std_process_call_pattern
-    "(^|[^A-Za-z0-9_:>.])std::system[ \\t\\r\\n]*\\(")
-set(_stage14_global_process_call_pattern
-    "(^|[^A-Za-z0-9_:>.])::${_stage14_process_function_family}[ \\t\\r\\n]*\\(")
+include("${CMAKE_CURRENT_LIST_DIR}/audio_process_guard_common.cmake")
 
 foreach(_stage14_source IN LISTS _stage14_production_files)
     file(READ "${_stage14_source}" _stage14_source_text)
@@ -52,9 +45,10 @@ foreach(_stage14_source IN LISTS _stage14_production_files)
         message(FATAL_ERROR
             "Stage14 production source must not invoke or reference ffmpeg: ${_stage14_source}")
     endif()
-    if(_stage14_source_lower MATCHES "${_stage14_bare_process_call_pattern}"
-            OR _stage14_source_lower MATCHES "${_stage14_std_process_call_pattern}"
-            OR _stage14_source_lower MATCHES "${_stage14_global_process_call_pattern}")
+    arpg_audio_process_guard_process_call_detected(
+        "${_stage14_repository_root}" "${_stage14_source}"
+        "${_stage14_source_text}" _stage14_process_call_detected)
+    if(_stage14_process_call_detected)
         message(FATAL_ERROR
             "Stage14 production source must not launch a process: ${_stage14_source}")
     endif()
