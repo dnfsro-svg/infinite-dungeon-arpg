@@ -19,7 +19,7 @@ Observed result: physical client `1150x700`, only `366 / 50400` sampled pixels w
 
 ## Stage and HRESULT diagnosis
 
-The stage-aware diagnostic build recorded:
+Temporary session instrumentation in the original investigation recorded the following values. These are session observations, not replayable artifacts of the final commit:
 
 ```text
 paint_count=3
@@ -63,3 +63,11 @@ Both configurations built `arpg_launcher` successfully and passed all five focus
 - Render resources: Direct2D target and brushes are released after a failed render; fallback is immediate when `D2D1_WINDOW_STATE_OCCLUDED` persists.
 - Resource monitoring found no concurrently active `cmake`, `ninja`, `cl`, `link`, or `msbuild` chain before each build.
 - Commit: `fix: render desktop launcher client`
+
+## Review round 1
+
+- `D2DERR_RECREATE_TARGET` and `Resize` now return stage-aware `RendererResult` values without renderer-owned invalidation. The controller owns resource discard and a single retry latch, and displays the failure stage/HRESULT when a failure reaches the UI.
+- A later successful paint, including an OCCLUDED-compatible fallback paint, restores the exact base title and clears the retry latch.
+- The fallback now uses `LauncherView`: current ready/error status text with pure green/red status color, disabled/normal/pressed fills, hover/focus cyan borders, a path box, and the full-path tooltip.
+- `launcher.window_smoke` constructs a missing-`assets/skills` fixture and verifies physical DPI dimensions, monitor placement, bounded ownership-checked capture, fallback colors/text distribution/status color, hover/pressed state, and tooltip. It is `interactive;windows-ui;launcher`, `RUN_SERIAL`, with a 20-second timeout.
+- Review commit: `fix: harden launcher render fallback`

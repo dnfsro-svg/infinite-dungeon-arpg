@@ -110,16 +110,59 @@ void draw_fallback_text(
     DeleteObject(font);
 }
 
-void fill_fallback_rectangle(
+void draw_fallback_card(
     const HDC device_context,
     const RectF rectangle,
     const float scale,
-    const COLORREF color) noexcept {
+    const COLORREF fill_color,
+    const COLORREF border_color,
+    const int border_width = 1) noexcept {
     const RECT destination = fallback_rectangle(rectangle, scale);
-    const HBRUSH brush = CreateSolidBrush(color);
-    FillRect(device_context, &destination, brush);
+    const HBRUSH brush = CreateSolidBrush(fill_color);
+    const HPEN pen = CreatePen(PS_SOLID, border_width, border_color);
+    const HGDIOBJ previous_brush = SelectObject(device_context, brush);
+    const HGDIOBJ previous_pen = SelectObject(device_context, pen);
+    RoundRect(
+        device_context,
+        destination.left,
+        destination.top,
+        destination.right,
+        destination.bottom,
+        static_cast<int>(std::lround(6.0F * scale)),
+        static_cast<int>(std::lround(6.0F * scale)));
+    SelectObject(device_context, previous_pen);
+    SelectObject(device_context, previous_brush);
+    DeleteObject(pen);
     DeleteObject(brush);
-    FrameRect(device_context, &destination, GetSysColorBrush(COLOR_3DLIGHT));
+}
+
+void draw_fallback_button(
+    const HDC device_context,
+    const RectF rectangle,
+    const std::wstring_view label,
+    const LauncherButton button,
+    const LauncherView& view,
+    const float scale) noexcept {
+    const bool disabled = button == LauncherButton::start && !view.start_enabled;
+    const bool active = !disabled &&
+        (view.hovered_button == button || view.focused_button == button);
+    const bool pressed = !disabled && view.pressed_button == button;
+    draw_fallback_card(
+        device_context,
+        rectangle,
+        scale,
+        disabled ? RGB(85, 91, 99) : (pressed ? RGB(21, 54, 79) : RGB(36, 69, 94)),
+        active ? RGB(0, 217, 255) : RGB(192, 199, 209),
+        active ? static_cast<int>(std::lround(2.5F * scale))
+               : static_cast<int>(std::lround(1.5F * scale)));
+    draw_fallback_text(
+        device_context,
+        label,
+        rectangle,
+        scale,
+        18,
+        RGB(255, 255, 255),
+        DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 }
 
 void paint_native_fallback(
@@ -137,15 +180,18 @@ void paint_native_fallback(
     FillRect(device_context, &client, background);
     DeleteObject(background);
 
-    const COLORREF normal_button = RGB(36, 69, 94);
-    fill_fallback_rectangle(
-        device_context,
-        view.layout.start,
-        scale,
-        view.start_enabled ? normal_button : RGB(85, 91, 99));
-    fill_fallback_rectangle(device_context, view.layout.verify, scale, normal_button);
-    fill_fallback_rectangle(device_context, view.layout.save, scale, normal_button);
-    fill_fallback_rectangle(device_context, view.layout.exit, scale, normal_button);
+    draw_fallback_card(
+        device_context, view.layout.status, scale, RGB(6, 23, 36), RGB(192, 199, 209));
+    draw_fallback_button(
+        device_context, view.layout.start, L"开始游戏", LauncherButton::start, view, scale);
+    draw_fallback_button(
+        device_context, view.layout.verify, L"检查游戏文件", LauncherButton::verify, view, scale);
+    draw_fallback_button(
+        device_context, view.layout.save, L"打开存档目录", LauncherButton::save, view, scale);
+    draw_fallback_button(
+        device_context, view.layout.exit, L"退出", LauncherButton::exit, view, scale);
+    draw_fallback_card(
+        device_context, view.layout.path, scale, RGB(6, 23, 36), RGB(192, 199, 209));
 
     draw_fallback_text(
         device_context,
@@ -165,44 +211,12 @@ void paint_native_fallback(
         DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_fallback_text(
         device_context,
-        message,
+        message.empty() ? view.status_text : message,
         view.layout.status,
         scale,
         18,
-        RGB(255, 80, 80),
+        message.empty() && view.status_ready ? RGB(0, 255, 0) : RGB(255, 0, 0),
         DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_fallback_text(
-        device_context,
-        L"开始游戏",
-        view.layout.start,
-        scale,
-        18,
-        RGB(255, 255, 255),
-        DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-    draw_fallback_text(
-        device_context,
-        L"检查游戏文件",
-        view.layout.verify,
-        scale,
-        18,
-        RGB(255, 255, 255),
-        DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-    draw_fallback_text(
-        device_context,
-        L"打开存档目录",
-        view.layout.save,
-        scale,
-        18,
-        RGB(255, 255, 255),
-        DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-    draw_fallback_text(
-        device_context,
-        L"退出",
-        view.layout.exit,
-        scale,
-        18,
-        RGB(255, 255, 255),
-        DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     draw_fallback_text(
         device_context,
         view.path_text,
@@ -211,6 +225,26 @@ void paint_native_fallback(
         13,
         RGB(255, 255, 255),
         DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    if (view.show_full_path) {
+        const RectF tooltip{58.0F, 430.0F, 862.0F, 522.0F};
+        draw_fallback_card(
+            device_context, tooltip, scale, RGB(10, 28, 43), RGB(0, 217, 255),
+            static_cast<int>(std::lround(2.0F * scale)));
+        const RectF tooltip_content{
+            tooltip.left + 12.0F,
+            tooltip.top + 8.0F,
+            tooltip.right - 12.0F,
+            tooltip.bottom - 8.0F,
+        };
+        draw_fallback_text(
+            device_context,
+            view.full_path,
+            tooltip_content,
+            scale,
+            13,
+            RGB(255, 255, 255),
+            DT_LEFT | DT_WORDBREAK);
+    }
 }
 
 class WindowController final {
@@ -243,7 +277,11 @@ public:
             return 1;
         case WM_SIZE:
             if (w_param != SIZE_MINIMIZED) {
-                renderer_.resize(LOWORD(l_param), HIWORD(l_param));
+                const RendererResult result = renderer_.resize(
+                    LOWORD(l_param), HIWORD(l_param));
+                if (FAILED(result.hresult)) {
+                    handle_renderer_failure(result);
+                }
             }
             return 0;
         case WM_DPICHANGED:
@@ -537,15 +575,9 @@ private:
             show_full_path_,
         };
         const RendererResult result = renderer_.render(view);
-        const RenderTargetDiagnostics diagnostics = renderer_.diagnostics();
         if (FAILED(result.hresult)) {
             const std::wstring message = render_failure_message(result);
-            SetWindowTextW(window_, (std::wstring{kWindowTitle} + L" - " + message).c_str());
-            renderer_.discard_device_resources();
-            if (!render_retry_requested_) {
-                render_retry_requested_ = true;
-                invalidate();
-            }
+            handle_renderer_failure(result);
             paint_native_fallback(
                 paint_structure.hdc,
                 window_,
@@ -553,16 +585,17 @@ private:
                 dpi_,
                 message);
         }
-        else if ((diagnostics.window_state & D2D1_WINDOW_STATE_OCCLUDED) != 0U) {
-            paint_native_fallback(
-                paint_structure.hdc,
-                window_,
-                view,
-                dpi_,
-                L"Direct2D 客户区不可用，已切换兼容显示");
-        }
         else {
+            SetWindowTextW(window_, kWindowTitle);
             render_retry_requested_ = false;
+            if ((renderer_.window_state() & D2D1_WINDOW_STATE_OCCLUDED) != 0U) {
+                paint_native_fallback(
+                    paint_structure.hdc,
+                    window_,
+                    view,
+                    dpi_,
+                    {});
+            }
         }
         EndPaint(window_, &paint_structure);
     }
@@ -570,6 +603,16 @@ private:
     void invalidate() noexcept {
         if (window_ != nullptr) {
             InvalidateRect(window_, nullptr, FALSE);
+        }
+    }
+
+    void handle_renderer_failure(const RendererResult& result) noexcept {
+        const std::wstring message = render_failure_message(result);
+        SetWindowTextW(window_, (std::wstring{kWindowTitle} + L" - " + message).c_str());
+        renderer_.discard_device_resources();
+        if (!render_retry_requested_) {
+            render_retry_requested_ = true;
+            invalidate();
         }
     }
 

@@ -34,6 +34,8 @@ std::wstring_view renderer_stage_name(const RendererStage stage) noexcept {
         return L"CreateLinearGradientBrush";
     case RendererStage::create_solid_color_brush:
         return L"CreateSolidColorBrush";
+    case RendererStage::resize:
+        return L"ID2D1HwndRenderTarget::Resize";
     case RendererStage::create_text_layout:
         return L"CreateTextLayout";
     case RendererStage::set_word_wrapping:
@@ -214,14 +216,14 @@ HRESULT LauncherRenderer::ensure_render_target() noexcept {
     return result;
 }
 
-void LauncherRenderer::resize(const UINT width, const UINT height) noexcept {
+RendererResult LauncherRenderer::resize(const UINT width, const UINT height) noexcept {
     if (render_target_ && width != 0U && height != 0U) {
         const HRESULT result = render_target_->Resize(D2D1::SizeU(width, height));
         if (FAILED(result)) {
-            discard_device_resources();
-            InvalidateRect(window_, nullptr, FALSE);
+            return {record_failure(RendererStage::resize, result), failure_stage_};
         }
     }
+    return {S_OK, RendererStage::none};
 }
 
 void LauncherRenderer::set_dpi(const UINT dpi) noexcept {
@@ -401,8 +403,6 @@ RendererResult LauncherRenderer::render(const LauncherView& view) noexcept {
 
     const HRESULT end_result = render_target_->EndDraw();
     if (end_result == D2DERR_RECREATE_TARGET) {
-        discard_device_resources();
-        InvalidateRect(window_, nullptr, FALSE);
         return {
             record_failure(RendererStage::end_draw, end_result), failure_stage_};
     }
@@ -416,16 +416,11 @@ RendererResult LauncherRenderer::render(const LauncherView& view) noexcept {
     return {S_OK, RendererStage::end_draw};
 }
 
-RenderTargetDiagnostics LauncherRenderer::diagnostics() const noexcept {
+D2D1_WINDOW_STATE LauncherRenderer::window_state() const noexcept {
     if (!render_target_) {
-        return {};
+        return D2D1_WINDOW_STATE_NONE;
     }
-    RenderTargetDiagnostics diagnostics;
-    diagnostics.window_state = render_target_->CheckWindowState();
-    diagnostics.pixel_size = render_target_->GetPixelSize();
-    diagnostics.logical_size = render_target_->GetSize();
-    render_target_->GetDpi(&diagnostics.dpi_x, &diagnostics.dpi_y);
-    return diagnostics;
+    return render_target_->CheckWindowState();
 }
 
 HRESULT LauncherRenderer::record_failure(

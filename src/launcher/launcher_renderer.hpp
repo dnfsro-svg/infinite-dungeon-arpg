@@ -25,6 +25,7 @@ enum class RendererStage {
     create_gradient_stop_collection,
     create_linear_gradient_brush,
     create_solid_color_brush,
+    resize,
     create_text_layout,
     set_word_wrapping,
     set_trimming,
@@ -34,14 +35,6 @@ enum class RendererStage {
 struct RendererResult {
     HRESULT hresult;
     RendererStage stage;
-};
-
-struct RenderTargetDiagnostics {
-    D2D1_WINDOW_STATE window_state{D2D1_WINDOW_STATE_NONE};
-    D2D1_SIZE_U pixel_size{};
-    D2D1_SIZE_F logical_size{};
-    FLOAT dpi_x{0.0F};
-    FLOAT dpi_y{0.0F};
 };
 
 std::wstring_view renderer_stage_name(RendererStage stage) noexcept;
@@ -66,10 +59,10 @@ public:
     LauncherRenderer& operator=(const LauncherRenderer&) = delete;
 
     bool initialize(HWND window) noexcept;
-    void resize(UINT width, UINT height) noexcept;
+    RendererResult resize(UINT width, UINT height) noexcept;
     void set_dpi(UINT dpi) noexcept;
     RendererResult render(const LauncherView& view) noexcept;
-    RenderTargetDiagnostics diagnostics() const noexcept;
+    D2D1_WINDOW_STATE window_state() const noexcept;
     void discard_device_resources() noexcept;
 
 private:

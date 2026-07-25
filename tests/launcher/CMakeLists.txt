@@ -36,6 +36,10 @@ if(TARGET arpg_launcher)
         COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
             "${CMAKE_CURRENT_SOURCE_DIR}/launcher_window_smoke_test.ps1"
             -Launcher "$<TARGET_FILE:arpg_launcher>")
+    set_tests_properties(launcher.window_smoke PROPERTIES
+        LABELS "interactive;windows-ui;launcher"
+        RUN_SERIAL TRUE
+        TIMEOUT 20)
 endif()
 
 add_test(NAME launcher.deploy_self_test
