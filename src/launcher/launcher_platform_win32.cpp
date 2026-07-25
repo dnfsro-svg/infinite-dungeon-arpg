@@ -26,7 +26,9 @@ std::wstring format_failure(
         nullptr);
 
     std::wstring message{operation};
-    message += L"：";
+    message += L"（错误代码 ";
+    message += std::to_wstring(error_code);
+    message += L"）：";
     if (length != 0U && system_message != nullptr) {
         std::wstring detail{system_message, length};
         LocalFree(system_message);
@@ -38,8 +40,7 @@ std::wstring format_failure(
         message += detail;
     }
     else {
-        message += L"错误代码 ";
-        message += std::to_wstring(error_code);
+        message += L"无法获取系统错误消息";
     }
     return message;
 }

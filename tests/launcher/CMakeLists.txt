@@ -1,12 +1,14 @@
 add_executable(arpg_launcher_tests
     launcher_test_main.cpp
     launcher_core_tests.cpp
-    launcher_layout_tests.cpp)
+    launcher_layout_tests.cpp
+    launcher_platform_win32_tests.cpp
+    "${PROJECT_SOURCE_DIR}/src/launcher/launcher_platform_win32.cpp")
 
 target_compile_features(arpg_launcher_tests PRIVATE cxx_std_17)
 target_include_directories(arpg_launcher_tests
     PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
-target_link_libraries(arpg_launcher_tests PRIVATE arpg_launcher_core)
+target_link_libraries(arpg_launcher_tests PRIVATE arpg_launcher_core shell32)
 arpg_enable_project_warnings(arpg_launcher_tests)
 if(MSVC)
     target_compile_options(arpg_launcher_tests PRIVATE /utf-8)
