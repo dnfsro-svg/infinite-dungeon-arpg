@@ -25,3 +25,13 @@ add_test(
 set_tests_properties(launcher.icon_asset PROPERTIES
     LABELS "headless;launcher;assets"
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+
+add_test(NAME launcher.manifest
+    COMMAND "${CMAKE_COMMAND}" -P
+        "${CMAKE_CURRENT_SOURCE_DIR}/launcher_manifest_test.cmake")
+if(TARGET arpg_launcher)
+    add_test(NAME launcher.window_smoke
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+            "${CMAKE_CURRENT_SOURCE_DIR}/launcher_window_smoke_test.ps1"
+            -Launcher "$<TARGET_FILE:arpg_launcher>")
+endif()
