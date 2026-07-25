@@ -37,3 +37,10 @@ if(TARGET arpg_launcher)
             "${CMAKE_CURRENT_SOURCE_DIR}/launcher_window_smoke_test.ps1"
             -Launcher "$<TARGET_FILE:arpg_launcher>")
 endif()
+
+add_test(NAME launcher.deploy_self_test
+    COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+        "${CMAKE_CURRENT_SOURCE_DIR}/deploy_launcher_self_test.ps1"
+        -DeployScript "${PROJECT_SOURCE_DIR}/scripts/DeployLauncher.ps1")
+set_tests_properties(launcher.deploy_self_test PROPERTIES
+    LABELS "headless;launcher;deployment")
