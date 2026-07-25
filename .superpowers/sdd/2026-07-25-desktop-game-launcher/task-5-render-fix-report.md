@@ -78,3 +78,10 @@ Both configurations built `arpg_launcher` successfully and passed all five focus
 - Only the final unsuccessful capture reports dark-sample count, Start and Verify RGB values, and pure-red pixel count.
 - Placement now uses normal `HWND_TOP` foreground ordering rather than persistent `HWND_TOPMOST`; the `HWND_NOTOPMOST` cleanup is no longer needed. Physical-DPI sizing, monitor-workarea placement, `RUN_SERIAL`, and the 20-second timeout remain unchanged.
 - The focused five-test launcher suite passed in both Debug and Release; `launcher.window_smoke` completed in 6.21 seconds and 6.14 seconds respectively.
+
+## Scoped test fix round 3
+
+- `launcher.window_smoke` creates a dedicated Windows Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` before launching the copied launcher and assigns that child process immediately. Assignment failures include their Win32 error; they are never skipped.
+- On the normal path the test still sends `CloseMainWindow` and waits before closing the job handle. If CTest or the system terminates the test, closing the inherited job handle causes Windows to reclaim the launcher process.
+- The fixture now uses the dedicated `arpg-launcher-window-smoke-` Temp prefix. Before each run it removes only stale direct children of the system Temp directory with that prefix; normal `finally` cleanup remains in place, and a force-killed run is reclaimed on the next test start.
+- The focused five-test launcher suite passed in both Debug and Release; the Job Object was created and assignment succeeded in the current CTest environment.

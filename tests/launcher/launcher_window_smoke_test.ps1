@@ -94,6 +94,58 @@ public static class LauncherPixelSmokeNative {
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool RedrawWindow(IntPtr window, IntPtr rectangle, IntPtr region, uint flags);
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct JOBOBJECT_BASIC_LIMIT_INFORMATION {
+        public long PerProcessUserTimeLimit;
+        public long PerJobUserTimeLimit;
+        public uint LimitFlags;
+        public UIntPtr MinimumWorkingSetSize;
+        public UIntPtr MaximumWorkingSetSize;
+        public uint ActiveProcessLimit;
+        public UIntPtr Affinity;
+        public uint PriorityClass;
+        public uint SchedulingClass;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct IO_COUNTERS {
+        public ulong ReadOperationCount;
+        public ulong WriteOperationCount;
+        public ulong OtherOperationCount;
+        public ulong ReadTransferCount;
+        public ulong WriteTransferCount;
+        public ulong OtherTransferCount;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
+        public JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation;
+        public IO_COUNTERS IoInfo;
+        public UIntPtr ProcessMemoryLimit;
+        public UIntPtr JobMemoryLimit;
+        public UIntPtr PeakProcessMemoryUsed;
+        public UIntPtr PeakJobMemoryUsed;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern IntPtr CreateJobObject(IntPtr jobAttributes, string name);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetInformationJobObject(
+        IntPtr job,
+        int jobObjectInfoClass,
+        ref JOBOBJECT_EXTENDED_LIMIT_INFORMATION jobObjectInfo,
+        uint jobObjectInfoLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool CloseHandle(IntPtr handle);
+
 }
 '@
 
@@ -131,6 +183,23 @@ function Get-PeSubsystem {
     finally {
         $stream.Dispose()
     }
+}
+
+function New-LauncherSmokeJob {
+    $job = [LauncherPixelSmokeNative]::CreateJobObject([IntPtr]::Zero, $null)
+    if ($job -eq [IntPtr]::Zero) {
+        throw "Could not create launcher smoke Job Object: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+    }
+
+    $limits = [LauncherPixelSmokeNative+JOBOBJECT_EXTENDED_LIMIT_INFORMATION]::new()
+    $limits.BasicLimitInformation.LimitFlags = 0x00002000 # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    $limitSize = [uint32][Runtime.InteropServices.Marshal]::SizeOf($limits)
+    if (-not [LauncherPixelSmokeNative]::SetInformationJobObject($job, 9, [ref] $limits, $limitSize)) {
+        $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        [void][LauncherPixelSmokeNative]::CloseHandle($job)
+        throw "Could not configure launcher smoke Job Object: $errorCode"
+    }
+    return $job
 }
 
 function Convert-DipToPixels {
@@ -359,9 +428,15 @@ function Assert-RenderedClientPixels {
 }
 
 $source = (Resolve-Path -LiteralPath $Launcher).Path
-$temporaryDirectory = Join-Path ([System.IO.Path]::GetTempPath()) (
-    'arpg-launcher-smoke-' + [guid]::NewGuid().ToString('N'))
+$temporaryDirectoryPrefix = 'arpg-launcher-window-smoke-'
+$temporaryRoot = [System.IO.Path]::GetTempPath()
+Get-ChildItem -LiteralPath $temporaryRoot -Directory -Filter "${temporaryDirectoryPrefix}*" | ForEach-Object {
+    Remove-Item -LiteralPath $_.FullName -Recurse -Force
+}
+$temporaryDirectory = Join-Path $temporaryRoot (
+    $temporaryDirectoryPrefix + [guid]::NewGuid().ToString('N'))
 $process = $null
+$jobHandle = [IntPtr]::Zero
 $originalCursor = [LauncherPixelSmokeNative+POINT]::new()
 [void][LauncherPixelSmokeNative]::GetCursorPos([ref] $originalCursor)
 
@@ -382,7 +457,11 @@ try {
         throw "Expected Windows GUI subsystem 2, found $subsystem"
     }
 
+    $jobHandle = New-LauncherSmokeJob
     $process = Start-Process -FilePath $copiedLauncher -WorkingDirectory $temporaryDirectory -PassThru
+    if (-not [LauncherPixelSmokeNative]::AssignProcessToJobObject($jobHandle, $process.Handle)) {
+        throw "Could not assign launcher process $($process.Id) to smoke Job Object: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+    }
     $deadline = [DateTime]::UtcNow.AddSeconds(5)
     do {
         Start-Sleep -Milliseconds 50
@@ -413,15 +492,33 @@ try {
     }
 }
 finally {
-    [void][LauncherPixelSmokeNative]::SetCursorPos($originalCursor.X, $originalCursor.Y)
-    if ($null -ne $process -and -not $process.HasExited) {
-        [void] $process.CloseMainWindow()
-        if (-not $process.WaitForExit(2000)) {
-            Stop-Process -Id $process.Id -Force
-            $process.WaitForExit()
+    $closeJobError = $null
+    try {
+        [void][LauncherPixelSmokeNative]::SetCursorPos($originalCursor.X, $originalCursor.Y)
+        if ($null -ne $process -and -not $process.HasExited) {
+            [void] $process.CloseMainWindow()
+            if (-not $process.WaitForExit(2000)) {
+                Stop-Process -Id $process.Id -Force
+                $process.WaitForExit()
+            }
         }
     }
-    if (Test-Path -LiteralPath $temporaryDirectory) {
-        Remove-Item -LiteralPath $temporaryDirectory -Recurse -Force
+    finally {
+        try {
+            if ($jobHandle -ne [IntPtr]::Zero) {
+                if (-not [LauncherPixelSmokeNative]::CloseHandle($jobHandle)) {
+                    $closeJobError = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+                }
+                $jobHandle = [IntPtr]::Zero
+            }
+        }
+        finally {
+            if (Test-Path -LiteralPath $temporaryDirectory) {
+                Remove-Item -LiteralPath $temporaryDirectory -Recurse -Force
+            }
+        }
+    }
+    if ($null -ne $closeJobError) {
+        throw "Could not close launcher smoke Job Object: $closeJobError"
     }
 }
