@@ -1,5 +1,6 @@
 add_library(arpg_launcher_core STATIC
-    launcher_core.cpp)
+    launcher_core.cpp
+    launcher_layout.cpp)
 
 target_include_directories(arpg_launcher_core
     PUBLIC "${PROJECT_SOURCE_DIR}/src/launcher")
