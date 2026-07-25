@@ -1,9 +1,16 @@
 param(
     [Parameter(Mandatory = $true)]
-    [string] $Launcher
+    [string] $Launcher,
+    [switch] $SelfTestStaleCleanup
 )
 
 $ErrorActionPreference = 'Stop'
+
+$LauncherSmokeDirectoryPrefix = 'arpg-launcher-window-smoke-'
+$LauncherSmokeDirectoryPattern = '^arpg-launcher-window-smoke-[0-9a-f]{32}$'
+$LauncherSmokeMarkerName = '.launcher-window-smoke-owner.marker'
+$LauncherSmokeMarkerMagic = 'ARPG_LAUNCHER_WINDOW_SMOKE_OWNER_V1'
+$LauncherSmokeStaleAgeSeconds = 15
 
 Add-Type -AssemblyName System.Drawing
 
@@ -200,6 +207,129 @@ function New-LauncherSmokeJob {
         throw "Could not configure launcher smoke Job Object: $errorCode"
     }
     return $job
+}
+
+function Write-LauncherSmokeMarker {
+    param(
+        [System.IO.DirectoryInfo] $Directory,
+        [int] $OwnerPid = $PID,
+        [int64] $OwnerStartTimeUtcTicks = 0
+    )
+
+    if ($OwnerStartTimeUtcTicks -eq 0) {
+        $OwnerStartTimeUtcTicks = (Get-Process -Id $OwnerPid -ErrorAction Stop).StartTime.ToUniversalTime().Ticks
+    }
+    [System.IO.File]::WriteAllText(
+        (Join-Path $Directory.FullName $LauncherSmokeMarkerName),
+        "$LauncherSmokeMarkerMagic`n$OwnerPid`n$OwnerStartTimeUtcTicks`n",
+        [System.Text.UTF8Encoding]::new($false))
+}
+
+function Remove-StaleLauncherSmokeDirectories {
+    param([string] $TemporaryRoot, [DateTime] $NowUtc)
+
+    try {
+        $directories = @(Get-ChildItem -Path $TemporaryRoot -Directory -Force -ErrorAction Stop)
+    }
+    catch {
+        return
+    }
+    $cutoff = $NowUtc.AddSeconds(-$LauncherSmokeStaleAgeSeconds)
+    $expectedRoot = [System.IO.Path]::GetFullPath($TemporaryRoot).TrimEnd('\')
+    foreach ($directory in $directories) {
+        try {
+            if ($directory.Name -cnotmatch $LauncherSmokeDirectoryPattern -or
+                ($directory.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or
+                $directory.CreationTimeUtc -gt $cutoff -or
+                -not [string]::Equals([System.IO.Path]::GetFullPath($directory.Parent.FullName).TrimEnd('\'), $expectedRoot, [StringComparison]::OrdinalIgnoreCase)) {
+                continue
+            }
+            $marker = Get-Item -LiteralPath (Join-Path $directory.FullName $LauncherSmokeMarkerName) -Force -ErrorAction Stop
+            if ($marker.PSIsContainer -or ($marker.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or $marker.Length -gt 128) { continue }
+            $lines = [System.IO.File]::ReadAllLines($marker.FullName, [System.Text.Encoding]::UTF8)
+            [int] $ownerPid = 0
+            [int64] $ownerStartTicks = 0
+            if ($lines.Count -ne 3 -or $lines[0] -cne $LauncherSmokeMarkerMagic -or
+                -not [int]::TryParse($lines[1], [ref] $ownerPid) -or $ownerPid -le 0 -or
+                -not [int64]::TryParse($lines[2], [ref] $ownerStartTicks) -or $ownerStartTicks -le 0) {
+                continue
+            }
+            $owner = $null
+            try {
+                $owner = [System.Diagnostics.Process]::GetProcessById($ownerPid)
+            }
+            catch [System.ArgumentException] {
+                $owner = $null
+            }
+            catch {
+                continue
+            }
+            if ($null -ne $owner) {
+                try {
+                    if ($owner.StartTime.ToUniversalTime().Ticks -eq $ownerStartTicks) { continue }
+                }
+                catch {
+                    continue
+                }
+                finally {
+                    $owner.Dispose()
+                }
+            }
+            Remove-Item -LiteralPath $directory.FullName -Recurse -Force -ErrorAction Stop
+        }
+        catch {
+            continue
+        }
+    }
+}
+
+function Invoke-LauncherSmokeStaleCleanupSelfTest {
+    param([string] $TemporaryRoot)
+
+    $oldTime = [DateTime]::UtcNow.AddSeconds(-($LauncherSmokeStaleAgeSeconds + 5))
+    $names = @([guid]::NewGuid().ToString('N'), [guid]::NewGuid().ToString('N'), [guid]::NewGuid().ToString('N')) |
+        ForEach-Object { Join-Path $TemporaryRoot ($LauncherSmokeDirectoryPrefix + $_) }
+    $unmarkedPath, $liveOwnerPath, $deadOwnerPath = $names
+    try {
+        $unmarked = [System.IO.Directory]::CreateDirectory($unmarkedPath)
+        $liveOwner = [System.IO.Directory]::CreateDirectory($liveOwnerPath)
+        $deadOwner = [System.IO.Directory]::CreateDirectory($deadOwnerPath)
+        Write-LauncherSmokeMarker $liveOwner
+        Write-LauncherSmokeMarker $deadOwner 999999 1
+        foreach ($directory in @($unmarked, $liveOwner, $deadOwner)) {
+            [System.IO.Directory]::SetCreationTimeUtc($directory.FullName, $oldTime)
+        }
+        $cleanupDefinition = (Get-Command Remove-StaleLauncherSmokeDirectories).Definition
+        if ($cleanupDefinition -notmatch '(?s)\$directory\.Attributes.*?ReparsePoint') {
+            throw 'Stale cleanup must skip reparse-point directories'
+        }
+        $reparseAttributes = [System.IO.FileAttributes]::Directory -bor [System.IO.FileAttributes]::ReparsePoint
+        if ($deadOwner.Name -cmatch $LauncherSmokeDirectoryPattern -and ($reparseAttributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0) {
+            throw 'Reparse-point attributes must not be cleanup candidates'
+        }
+        Remove-StaleLauncherSmokeDirectories $TemporaryRoot ([DateTime]::UtcNow)
+        if (-not (Test-Path -LiteralPath $unmarkedPath)) { throw 'Cleanup removed an unmarked directory' }
+        if (-not (Test-Path -LiteralPath $liveOwnerPath)) { throw 'Cleanup removed a live-owner directory' }
+        if (Test-Path -LiteralPath $deadOwnerPath) { throw 'Cleanup did not remove an old dead-owner directory' }
+    }
+    finally {
+        try {
+            foreach ($path in @($unmarkedPath, $liveOwnerPath)) {
+                if (-not (Test-Path -LiteralPath $path)) { continue }
+                $directory = Get-Item -LiteralPath $path -Force
+                Write-LauncherSmokeMarker $directory 999999 1
+                [System.IO.Directory]::SetCreationTimeUtc($directory.FullName, $oldTime)
+            }
+            Remove-StaleLauncherSmokeDirectories $TemporaryRoot ([DateTime]::UtcNow)
+        }
+        finally {
+            foreach ($path in $names) {
+                if (Test-Path -LiteralPath $path) {
+                    Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop
+                }
+            }
+        }
+    }
 }
 
 function Convert-DipToPixels {
@@ -427,21 +557,23 @@ function Assert-RenderedClientPixels {
     finally { $tooltip.Dispose() }
 }
 
-$source = (Resolve-Path -LiteralPath $Launcher).Path
-$temporaryDirectoryPrefix = 'arpg-launcher-window-smoke-'
 $temporaryRoot = [System.IO.Path]::GetTempPath()
-Get-ChildItem -LiteralPath $temporaryRoot -Directory -Filter "${temporaryDirectoryPrefix}*" | ForEach-Object {
-    Remove-Item -LiteralPath $_.FullName -Recurse -Force
+if ($SelfTestStaleCleanup) {
+    Invoke-LauncherSmokeStaleCleanupSelfTest $temporaryRoot
+    exit 0
 }
+Remove-StaleLauncherSmokeDirectories $temporaryRoot ([DateTime]::UtcNow)
+$source = (Resolve-Path -LiteralPath $Launcher).Path
 $temporaryDirectory = Join-Path $temporaryRoot (
-    $temporaryDirectoryPrefix + [guid]::NewGuid().ToString('N'))
+    $LauncherSmokeDirectoryPrefix + [guid]::NewGuid().ToString('N'))
 $process = $null
 $jobHandle = [IntPtr]::Zero
 $originalCursor = [LauncherPixelSmokeNative+POINT]::new()
 [void][LauncherPixelSmokeNative]::GetCursorPos([ref] $originalCursor)
 
 try {
-    [System.IO.Directory]::CreateDirectory($temporaryDirectory) | Out-Null
+    $fixtureDirectory = [System.IO.Directory]::CreateDirectory($temporaryDirectory)
+    Write-LauncherSmokeMarker $fixtureDirectory
     $copiedLauncher = Join-Path $temporaryDirectory ([System.IO.Path]::GetFileName($source))
     Copy-Item -LiteralPath $source -Destination $copiedLauncher
     [System.IO.File]::WriteAllBytes((Join-Path $temporaryDirectory 'arpg_game.exe'), [byte[]]@())

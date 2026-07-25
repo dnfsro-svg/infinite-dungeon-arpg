@@ -85,3 +85,10 @@ Both configurations built `arpg_launcher` successfully and passed all five focus
 - On the normal path the test still sends `CloseMainWindow` and waits before closing the job handle. If CTest or the system terminates the test, closing the inherited job handle causes Windows to reclaim the launcher process.
 - The fixture now uses the dedicated `arpg-launcher-window-smoke-` Temp prefix. Before each run it removes only stale direct children of the system Temp directory with that prefix; normal `finally` cleanup remains in place, and a force-killed run is reclaimed on the next test start.
 - The focused five-test launcher suite passed in both Debug and Release; the Job Object was created and assignment succeeded in the current CTest environment.
+
+## Scoped test fix round 4
+
+- Stale fixture cleanup now accepts only direct system-Temp children whose names exactly match `arpg-launcher-window-smoke-` plus 32 lowercase hexadecimal characters. Reparse-point directories, malformed names, inaccessible paths, and malformed or absent markers are retained.
+- Each fixture writes a three-line owner marker immediately after creation: fixed magic, PowerShell owner PID, and owner process start time in UTC ticks. A directory is eligible only after 15 seconds and only when that owner is gone or its start ticks no longer match; parse and access failures conservatively skip deletion.
+- The opt-in stale-cleanup self-test uses three exact-name Temp fixtures to confirm that unmarked and live-owner directories remain while an old dead-owner directory is removed. It statically checks the reparse-point guard without creating a junction and has direct cleanup for its own generated paths.
+- The self-test, Debug five-test launcher suite, and Release five-test launcher suite passed; `launcher.window_smoke` completed in 5.83 seconds and 6.44 seconds respectively, with no dedicated fixture directory or launcher-process residue.
