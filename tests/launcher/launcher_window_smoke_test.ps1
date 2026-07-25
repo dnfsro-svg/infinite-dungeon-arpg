@@ -170,29 +170,82 @@ function Assert-LauncherOwnsPoints {
 }
 
 function Get-VerifiedClientBitmap {
-    param($Process, $Origin, [int] $Width, [int] $Height)
+    param($Process, $Origin, [int] $Width, [int] $Height, [uint32] $ReadinessDpi = 0)
+    $lastFailure = 'no client bitmap was captured'
+    $lastReadiness = $null
     for ($attempt = 1; $attempt -le 3; ++$attempt) {
-        if ([LauncherPixelSmokeNative]::DwmFlush() -ne 0) {
-            throw 'DwmFlush failed before launcher pixel capture'
-        }
-        Assert-LauncherOwnsPoints $Process $Origin $Width $Height
-        $bitmap = [System.Drawing.Bitmap]::new($Width, $Height)
-        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        $bitmap = $null
         try {
-            $graphics.CopyFromScreen($Origin.X, $Origin.Y, 0, 0, $bitmap.Size)
-        }
-        finally {
-            $graphics.Dispose()
-        }
-        try {
+            if ([LauncherPixelSmokeNative]::DwmFlush() -ne 0) {
+                throw 'DwmFlush failed before launcher pixel capture'
+            }
             Assert-LauncherOwnsPoints $Process $Origin $Width $Height
-            return $bitmap
+            $bitmap = [System.Drawing.Bitmap]::new($Width, $Height)
+            $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+            try {
+                $graphics.CopyFromScreen($Origin.X, $Origin.Y, 0, 0, $bitmap.Size)
+            }
+            finally {
+                $graphics.Dispose()
+            }
+            Assert-LauncherOwnsPoints $Process $Origin $Width $Height
+            if ($ReadinessDpi -eq 0) { return $bitmap }
+            $lastReadiness = Get-InitialPixelReadiness $bitmap $ReadinessDpi
+            if ($lastReadiness.Ready) { return $bitmap }
+            $lastFailure = 'launcher key pixels were not ready'
         }
         catch {
-            $bitmap.Dispose()
-            if ($attempt -eq 3) { throw }
+            $lastFailure = $_.Exception.Message
+        }
+
+        if ($null -ne $bitmap) { $bitmap.Dispose() }
+        if ($attempt -lt 3) {
             Start-Sleep -Milliseconds 80
         }
+    }
+
+    if ($null -ne $lastReadiness) {
+        $start = $lastReadiness.StartPixel
+        $verify = $lastReadiness.VerifyPixel
+        throw "Launcher client was not ready after 3 captures ($lastFailure): dark=$($lastReadiness.DarkPixels)/$($lastReadiness.SampleCount), disabledStart=RGB($($start.R),$($start.G),$($start.B)), verify=RGB($($verify.R),$($verify.G),$($verify.B)), pureRed=$($lastReadiness.PureRed)"
+    }
+    throw "Launcher client was not ready after 3 captures: $lastFailure; pixel diagnostics unavailable"
+}
+
+function Get-InitialPixelReadiness {
+    param($Bitmap, [uint32] $Dpi)
+
+    $darkPixels = 0
+    for ($y = 0; $y -lt $Bitmap.Height; $y += 4) {
+        for ($x = 0; $x -lt $Bitmap.Width; $x += 4) {
+            $pixel = $Bitmap.GetPixel($x, $y)
+            if ((($pixel.R * 30) + ($pixel.G * 59) + ($pixel.B * 11)) -lt 24000) { ++$darkPixels }
+        }
+    }
+    $sampleCount = [math]::Ceiling($Bitmap.Width / 4) * [math]::Ceiling($Bitmap.Height / 4)
+    $scale = $Dpi / 96.0
+    $startX = Convert-DipToPixels 58 $Dpi
+    $startY = Convert-DipToPixels 260 $Dpi
+    $verifyY = Convert-DipToPixels 370 $Dpi
+    $startPixel = $Bitmap.GetPixel($startX + [int](20 * $scale), $startY + [int](20 * $scale))
+    $verifyPixel = $Bitmap.GetPixel($startX + [int](20 * $scale), $verifyY + [int](20 * $scale))
+    $pureRed = 0
+    for ($y = (Convert-DipToPixels 174 $Dpi); $y -lt (Convert-DipToPixels 226 $Dpi); ++$y) {
+        for ($x = (Convert-DipToPixels 58 $Dpi); $x -lt (Convert-DipToPixels 862 $Dpi); ++$x) {
+            $pixel = $Bitmap.GetPixel($x, $y)
+            if ($pixel.R -ge 220 -and $pixel.G -le 20 -and $pixel.B -le 20) { ++$pureRed }
+        }
+    }
+    [pscustomobject]@{
+        Ready = ($darkPixels -ge ($sampleCount * 0.55)) -and
+            ([math]::Abs($startPixel.R - 85) -le 6) -and ([math]::Abs($startPixel.G - 91) -le 6) -and ([math]::Abs($startPixel.B - 99) -le 6) -and
+            ([math]::Abs($verifyPixel.R - 36) -le 6) -and ([math]::Abs($verifyPixel.G - 69) -le 6) -and ([math]::Abs($verifyPixel.B - 94) -le 6) -and
+            ($pureRed -ge 8)
+        DarkPixels = $darkPixels
+        SampleCount = $sampleCount
+        StartPixel = $startPixel
+        VerifyPixel = $verifyPixel
+        PureRed = $pureRed
     }
 }
 
@@ -217,6 +270,7 @@ function Assert-RenderedClientPixels {
     $MONITOR_DEFAULTTONEAREST = 2
     $SWP_NOSIZE = 0x0001
     $SWP_SHOWWINDOW = 0x0040
+    $HWND_TOP = [IntPtr]::Zero
     $dpi = [LauncherPixelSmokeNative]::GetDpiForWindow($Process.MainWindowHandle)
     if ($dpi -eq 0) { throw 'GetDpiForWindow returned zero' }
     $monitor = [LauncherPixelSmokeNative]::MonitorFromWindow($Process.MainWindowHandle, $MONITOR_DEFAULTTONEAREST)
@@ -236,7 +290,7 @@ function Assert-RenderedClientPixels {
     $targetX = [math]::Max($monitorInfo.Work.Left, $monitorInfo.Work.Right - $windowWidth - 16)
     $targetY = [math]::Max($monitorInfo.Work.Top, $monitorInfo.Work.Bottom - $windowHeight - 16)
     if (-not [LauncherPixelSmokeNative]::SetWindowPos(
-        $Process.MainWindowHandle, [IntPtr](-1), $targetX, $targetY, 0, 0,
+        $Process.MainWindowHandle, $HWND_TOP, $targetX, $targetY, 0, 0,
         $SWP_NOSIZE -bor $SWP_SHOWWINDOW)) {
         throw "Could not place launcher for pixel capture: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
     }
@@ -263,27 +317,11 @@ function Assert-RenderedClientPixels {
         throw "Could not resolve launcher client origin: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
     }
     $scale = $dpi / 96.0
-    $bitmap = Get-VerifiedClientBitmap $Process $origin $width $height
+    $bitmap = Get-VerifiedClientBitmap $Process $origin $width $height $dpi
     try {
-        $darkPixels = 0
-        for ($y = 0; $y -lt $height; $y += 4) {
-            for ($x = 0; $x -lt $width; $x += 4) {
-                $pixel = $bitmap.GetPixel($x, $y)
-                if ((($pixel.R * 30) + ($pixel.G * 59) + ($pixel.B * 11)) -lt 24000) { ++$darkPixels }
-            }
-        }
-        $sampleCount = [math]::Ceiling($width / 4) * [math]::Ceiling($height / 4)
-        if ($darkPixels -lt ($sampleCount * 0.55)) {
-            throw "Launcher client did not contain substantial dark rendering: $darkPixels of $sampleCount sampled pixels"
-        }
-
         $startX = Convert-DipToPixels 58 $dpi
         $startY = Convert-DipToPixels 260 $dpi
         $verifyY = Convert-DipToPixels 370 $dpi
-        $statusX = Convert-DipToPixels 58 $dpi
-        $statusY = Convert-DipToPixels 174 $dpi
-        Assert-ColorNear ($bitmap.GetPixel($startX + [int](20 * $scale), $startY + [int](20 * $scale))) 85 91 99 'Disabled Start fill'
-        Assert-ColorNear ($bitmap.GetPixel($startX + [int](20 * $scale), $verifyY + [int](20 * $scale))) 36 69 94 'Verify fill'
 
         $brightXs = @()
         for ($y = $startY; $y -lt ($startY + (Convert-DipToPixels 82 $dpi)); ++$y) {
@@ -295,15 +333,6 @@ function Assert-RenderedClientPixels {
         if ($brightXs.Count -lt 40 -or (($brightXs | Measure-Object -Maximum).Maximum - ($brightXs | Measure-Object -Minimum).Minimum) -lt (60 * $scale)) {
             throw 'Launcher Start text was not high-contrast and spatially distributed'
         }
-
-        $pureRed = 0
-        for ($y = $statusY; $y -lt ($statusY + (Convert-DipToPixels 52 $dpi)); ++$y) {
-            for ($x = $statusX; $x -lt (Convert-DipToPixels 862 $dpi); ++$x) {
-                $pixel = $bitmap.GetPixel($x, $y)
-                if ($pixel.R -ge 220 -and $pixel.G -le 20 -and $pixel.B -le 20) { ++$pureRed }
-            }
-        }
-        if ($pureRed -lt 8) { throw 'Missing-assets status did not contain pure-red text pixels' }
     }
     finally {
         $bitmap.Dispose()
@@ -386,8 +415,6 @@ try {
 finally {
     [void][LauncherPixelSmokeNative]::SetCursorPos($originalCursor.X, $originalCursor.Y)
     if ($null -ne $process -and -not $process.HasExited) {
-        [void][LauncherPixelSmokeNative]::SetWindowPos(
-            $process.MainWindowHandle, [IntPtr](-2), 0, 0, 0, 0, 0x0001 -bor 0x0002)
         [void] $process.CloseMainWindow()
         if (-not $process.WaitForExit(2000)) {
             Stop-Process -Id $process.Id -Force

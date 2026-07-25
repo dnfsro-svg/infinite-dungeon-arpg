@@ -71,3 +71,10 @@ Both configurations built `arpg_launcher` successfully and passed all five focus
 - The fallback now uses `LauncherView`: current ready/error status text with pure green/red status color, disabled/normal/pressed fills, hover/focus cyan borders, a path box, and the full-path tooltip.
 - `launcher.window_smoke` constructs a missing-`assets/skills` fixture and verifies physical DPI dimensions, monitor placement, bounded ownership-checked capture, fallback colors/text distribution/status color, hover/pressed state, and tooltip. It is `interactive;windows-ui;launcher`, `RUN_SERIAL`, with a 20-second timeout.
 - Review commit: `fix: harden launcher render fallback`
+
+## Scoped test fix round 2
+
+- The initial capture now retries up to three times until both pre/post multi-point ownership and the key rendered pixels are ready: dark coverage, disabled Start fill, Verify fill, and the missing-assets red status text.
+- Only the final unsuccessful capture reports dark-sample count, Start and Verify RGB values, and pure-red pixel count.
+- Placement now uses normal `HWND_TOP` foreground ordering rather than persistent `HWND_TOPMOST`; the `HWND_NOTOPMOST` cleanup is no longer needed. Physical-DPI sizing, monitor-workarea placement, `RUN_SERIAL`, and the 20-second timeout remain unchanged.
+- The focused five-test launcher suite passed in both Debug and Release; `launcher.window_smoke` completed in 6.21 seconds and 6.14 seconds respectively.
