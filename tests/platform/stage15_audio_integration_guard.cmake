@@ -22,16 +22,20 @@ file(GLOB_RECURSE _production_files LIST_DIRECTORIES false
     "${_repository_root}/src/*.cpp" "${_repository_root}/src/*.cxx"
     "${_repository_root}/src/*.h" "${_repository_root}/src/*.hpp")
 include("${CMAKE_CURRENT_LIST_DIR}/audio_process_guard_common.cmake")
+set(_process_pattern
+    "(^|[^A-Za-z0-9_:>.])(system|_wsystem|popen|_popen|createprocess[a-z]*|shellexecute[a-z]*|winexec|posix_spawn[a-z]*|_spawn[a-z]*|_wspawn[a-z]*|exec[a-z]*|_exec[a-z]*)[ \\t\\r\\n]*\\(")
 foreach(_source IN LISTS _production_files)
     file(READ "${_source}" _text)
     string(TOLOWER "${_text}" _lower)
     if(_lower MATCHES "(https?|ftp)://")
         message(FATAL_ERROR "Stage15 production source contains a download URL: ${_source}")
     endif()
-    arpg_audio_process_guard_process_call_detected(
+    arpg_audio_process_guard_mask_launcher_calls(
         "${_repository_root}" "${_source}" "${_text}"
-        _process_call_detected)
-    if(_process_call_detected)
+        _process_scan_text)
+    string(TOLOWER "${_process_scan_text}" _process_scan_lower)
+    if(_process_scan_lower MATCHES "${_process_pattern}"
+            OR _process_scan_lower MATCHES "std::system[ \\t\\r\\n]*\\(")
         message(FATAL_ERROR "Stage15 production source launches a process: ${_source}")
     endif()
 endforeach()
