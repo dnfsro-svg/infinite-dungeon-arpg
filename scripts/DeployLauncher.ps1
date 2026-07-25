@@ -54,7 +54,8 @@ function Assert-ReleaseBuildDirectory([string]$Directory) {
         throw "GameBuildDirectory has no sibling CMakeCache.txt: $cachePath"
     }
     $cacheContents = Get-Content -LiteralPath $cachePath -Raw
-    if ($cacheContents -notmatch '(?m)^CMAKE_BUILD_TYPE:STRING=Release\r?$') {
+    $buildTypeAssignments = [regex]::Matches($cacheContents, '(?m)^CMAKE_BUILD_TYPE:STRING=([^\r\n]*)\r?$')
+    if ($buildTypeAssignments.Count -ne 1 -or $buildTypeAssignments[0].Groups[1].Value -cne 'Release') {
         throw "GameBuildDirectory is not a Release CMake build: $cachePath"
     }
 }

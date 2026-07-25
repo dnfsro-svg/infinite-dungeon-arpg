@@ -90,6 +90,23 @@ try {
     Require (Test-Path -LiteralPath $sentinelPath -PathType Leaf) 'Invalid input changed the existing installed app.'
     Require ((Get-Content -LiteralPath $sentinelPath -Raw) -eq 'preserve-me') 'Invalid input changed the existing installed app sentinel.'
 
+    $conflictedRoot = Join-Path $temporaryRoot 'conflicted-cache'
+    $conflictedBin = New-ReleaseFixture -Root $conflictedRoot
+    Set-Content -LiteralPath (Join-Path $conflictedRoot 'CMakeCache.txt') -Value @(
+        'CMAKE_BUILD_TYPE:STRING=Release',
+        'CMAKE_BUILD_TYPE:STRING=Debug'
+    )
+    $conflictedDeploymentFailed = $false
+    try {
+        & $DeployScript -GameBuildDirectory $conflictedBin -InstallRoot $installRoot -DesktopDirectory $desktopRoot
+    }
+    catch {
+        $conflictedDeploymentFailed = $true
+    }
+    Require $conflictedDeploymentFailed 'Conflicting CMAKE_BUILD_TYPE assignments unexpectedly deployed.'
+    Require (Test-Path -LiteralPath $sentinelPath -PathType Leaf) 'Conflicting CMakeCache input changed the existing installed app.'
+    Require ((Get-Content -LiteralPath $sentinelPath -Raw) -eq 'preserve-me') 'Conflicting CMakeCache input changed the existing installed app sentinel.'
+
     Require (Test-Path -LiteralPath $saveDirectory -PathType Container) 'Deployment removed the existing save directory.'
     Require (Test-Path -LiteralPath $saveSentinel -PathType Leaf) 'Deployment moved or removed the existing save sentinel.'
     Require (-not (Test-Path -LiteralPath (Join-Path $installRoot 'save'))) 'Deployment created a save directory in the app layout.'
