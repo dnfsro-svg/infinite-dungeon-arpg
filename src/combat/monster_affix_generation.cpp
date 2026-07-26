@@ -44,7 +44,7 @@ struct AffixDepthBand final {
 };
 
 constexpr std::array<AffixDepthBand, 5> kAffixDepthBands{{
-    {3U, {{80U, 20U, 0U, 0U}}, {{100U, 0U, 0U}}},
+    {3U, {{100U, 0U, 0U, 0U}}, {{100U, 0U, 0U}}},
     {9U, {{55U, 38U, 7U, 0U}}, {{80U, 20U, 0U}}},
     {19U, {{30U, 45U, 20U, 5U}}, {{50U, 40U, 10U}}},
     {39U, {{15U, 35U, 35U, 15U}}, {{25U, 50U, 25U}}},
@@ -316,6 +316,7 @@ std::optional<MonsterAffixSet> supplement_abyss_affixes_with_catalog(
             || !affix_set_valid_for_monster(normal, monster, catalog)) {
         return std::nullopt;
     }
+    if (depth <= 3U) return MonsterAffixSet{};
     const std::uint8_t target_count = abyss::minimum_abyss_affixes(depth);
     if (normal.count >= target_count) return normal;
 

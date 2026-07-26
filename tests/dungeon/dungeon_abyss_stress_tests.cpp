@@ -533,7 +533,7 @@ arpg::test::Failure thousand_room_abyss_trace_matches_golden_and_reload() noexce
     constexpr std::array<std::uint32_t, 4> kGoldenHits{{9U, 11U, 9U, 7U}};
     ARPG_REQUIRE(first->door_trials == kGoldenTrials);
     ARPG_REQUIRE(first->door_hits == kGoldenHits);
-    ARPG_REQUIRE(first->hash == 0xe102b17e6423351bULL);
+    ARPG_REQUIRE(first->hash == 0x0d55b41ebb0b1128ULL);
     return {};
 }
 
