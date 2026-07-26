@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <memory>
+#include <optional>
 
 namespace {
 
@@ -235,6 +236,19 @@ bool same_ground_health_potion(
         && same_vec(lhs.position, rhs.position);
 }
 
+bool same_pending_health_potion_claim(
+    const std::optional<arpg::dungeon::PendingHealthPotionClaim>& lhs,
+    const std::optional<arpg::dungeon::PendingHealthPotionClaim>& rhs) noexcept {
+    if (lhs.has_value() != rhs.has_value()) {
+        return false;
+    }
+    return !lhs.has_value()
+        || (lhs->spawn_ordinals == rhs->spawn_ordinals
+            && lhs->count == rhs->count
+            && lhs->expected_hp == rhs->expected_hp
+            && lhs->expected_max_hp == rhs->expected_max_hp);
+}
+
 bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexcept {
     if (lhs.session_tick != rhs.session_tick || lhs.root_seed != rhs.root_seed
             || lhs.commit_generation != rhs.commit_generation
@@ -291,6 +305,8 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
             || lhs.pending_pickup_ordinal != rhs.pending_pickup_ordinal
             || lhs.pending_material_pickup_ordinal
                 != rhs.pending_material_pickup_ordinal
+            || lhs.pending_health_potion_spawn_ordinal
+                != rhs.pending_health_potion_spawn_ordinal
             || lhs.encounter.total_budget != rhs.encounter.total_budget
             || lhs.encounter.current_wave_budget
                 != rhs.encounter.current_wave_budget
@@ -499,6 +515,8 @@ bool commit_equal(
             || a->resume_phase != b->resume_phase
             || a->pickup_ordinal != b->pickup_ordinal
             || a->expected_generation != b->expected_generation
+            || !same_pending_health_potion_claim(
+                a->health_potion_claim, b->health_potion_claim)
             || !arpg::dungeon::same_run_state(a->next_state, b->next_state)) {
         return false;
     }
@@ -1350,6 +1368,57 @@ arpg::test::Failure identical_seed_and_route_are_field_equal() noexcept {
     auto lhs = std::make_unique<DungeonSession>(config);
     auto rhs = std::make_unique<DungeonSession>(config);
     ARPG_REQUIRE(same_snapshot(lhs->snapshot(), rhs->snapshot()));
+
+    auto snapshot_lhs = std::make_unique<DungeonSnapshot>(lhs->snapshot());
+    auto snapshot_rhs = std::make_unique<DungeonSnapshot>(rhs->snapshot());
+    snapshot_lhs->pending_health_potion_spawn_ordinal =
+        static_cast<std::uint16_t>(6U);
+    snapshot_rhs->pending_health_potion_spawn_ordinal =
+        static_cast<std::uint16_t>(7U);
+    ARPG_REQUIRE(!same_snapshot(*snapshot_lhs, *snapshot_rhs));
+
+    using PendingHealthPotionClaim =
+        arpg::dungeon::PendingHealthPotionClaim;
+    const std::optional<PendingHealthPotionClaim> no_claim;
+    const std::optional<PendingHealthPotionClaim> claim{
+        PendingHealthPotionClaim{{{2U, 5U, 8U, 13U}}, 4U, 250, 1000}};
+    ARPG_REQUIRE(!same_pending_health_potion_claim(no_claim, claim));
+    ARPG_REQUIRE(!same_pending_health_potion_claim(claim, no_claim));
+
+    auto changed_claim = claim;
+    changed_claim->count = 3U;
+    ARPG_REQUIRE(!same_pending_health_potion_claim(claim, changed_claim));
+    for (std::size_t index = 0U;
+            index < claim->spawn_ordinals.size(); ++index) {
+        changed_claim = claim;
+        ++changed_claim->spawn_ordinals[index];
+        ARPG_REQUIRE(!same_pending_health_potion_claim(claim, changed_claim));
+    }
+    changed_claim = claim;
+    ++changed_claim->expected_hp;
+    ARPG_REQUIRE(!same_pending_health_potion_claim(claim, changed_claim));
+    changed_claim = claim;
+    ++changed_claim->expected_max_hp;
+    ARPG_REQUIRE(!same_pending_health_potion_claim(claim, changed_claim));
+
+    auto pending_lhs = std::make_unique<DungeonSession>(config);
+    auto pending_rhs = std::make_unique<DungeonSession>(config);
+    arpg::test::set_phase(*pending_lhs, RoomPhase::awaiting_exit);
+    arpg::test::set_phase(*pending_rhs, RoomPhase::awaiting_exit);
+    arpg::test::set_player_health(*pending_lhs, 500, 1000);
+    arpg::test::set_player_health(*pending_rhs, 500, 1000);
+    arpg::test::install_ground_health_potion(
+        *pending_lhs, 6U, {0.0F, 0.0F, 0.0F});
+    arpg::test::install_ground_health_potion(
+        *pending_rhs, 6U, {0.0F, 0.0F, 0.0F});
+    pending_lhs->tick({});
+    pending_rhs->tick({});
+    ARPG_REQUIRE(pending_lhs->pending_save_view() != nullptr);
+    ARPG_REQUIRE(pending_rhs->pending_save_view() != nullptr);
+    arpg::test::set_pending_health_potion_claim_count(*pending_rhs, 2U);
+    ARPG_REQUIRE(!commit_equal(*pending_lhs, *pending_rhs));
+    ARPG_REQUIRE(pending_lhs->pending_save_view() != nullptr);
+    ARPG_REQUIRE(pending_rhs->pending_save_view() != nullptr);
 
     const auto player = lhs->snapshot().combat->player.position;
     const auto normal = arpg::items::generate_item({
