@@ -47,10 +47,11 @@
 ```powershell
 git status --short --branch --untracked-files=all
 git rev-parse HEAD
+git diff --name-status d710e01..HEAD
 ctest --preset windows-msvc-core-debug -R '^core\.units$' --output-on-failure
 ```
 
-Expected: branch is `codex/integration-large-square-rooms`, HEAD is `d710e01`, and `core.units` passes.
+Expected: branch is `codex/integration-large-square-rooms`; the only differences from source baseline `d710e01` are the three approved files under `docs/superpowers/plans/`; and `core.units` passes.
 
 - [ ] **Step 2: Perform a no-commit merge and verify the expected conflict set**
 
