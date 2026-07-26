@@ -3,10 +3,13 @@
 #include "material_asset_validation.hpp"
 #include "material_animation.hpp"
 #include "material_pack.hpp"
+#include "material_residency.hpp"
+#include "allocation_probe.hpp"
 
 #include <array>
 #include <cstdio>
 #include <cstddef>
+#include <cstring>
 #include <filesystem>
 #include <limits>
 #include <string>
@@ -29,10 +32,17 @@ using arpg::platform::MaterialSpriteId;
 struct FakeMaterialTextures final {
     static constexpr std::size_t kTextureCapacity =
         static_cast<std::size_t>(MaterialAtlasId::count) * 2U;
+    static constexpr std::size_t kCallHistoryCapacity =
+        static_cast<std::size_t>(MaterialAtlasId::count) * 8U;
     static constexpr std::size_t kDrawCapacity = 4096U;
+    enum class CallKind : std::uint8_t { load, unload };
+    struct Call final {
+        CallKind kind{};
+    };
     std::array<Texture2D, kTextureCapacity> loaded{};
-    std::array<std::array<char, 512>, kTextureCapacity> loaded_paths{};
-    std::array<unsigned int, kTextureCapacity> unloaded_ids{};
+    std::array<std::array<char, 512>, kCallHistoryCapacity> loaded_paths{};
+    std::array<unsigned int, kCallHistoryCapacity> unloaded_ids{};
+    std::array<Call, kCallHistoryCapacity> calls{};
     std::array<unsigned int, kDrawCapacity> drawn_color_ids{};
     std::array<unsigned int, kDrawCapacity> drawn_material_ids{};
     std::array<Rectangle, kDrawCapacity> drawn_sources{};
@@ -40,6 +50,7 @@ struct FakeMaterialTextures final {
     std::array<MaterialCompositeParameters, kDrawCapacity> composites{};
     std::size_t load_count{};
     std::size_t unload_count{};
+    std::size_t call_count{};
     std::size_t draw_count{};
     std::size_t pipeline_initialize_count{};
     std::size_t pipeline_shutdown_count{};
@@ -57,16 +68,19 @@ Texture2D fake_load_texture(const char* path) noexcept {
     const std::size_t record_index = g_fake_material_textures->load_count++;
     std::snprintf(g_fake_material_textures->loaded_paths[record_index].data(),
         g_fake_material_textures->loaded_paths[record_index].size(), "%s", path);
+    if (g_fake_material_textures->call_count
+        < g_fake_material_textures->calls.size()) {
+        g_fake_material_textures->calls[
+            g_fake_material_textures->call_count++] = {
+            FakeMaterialTextures::CallKind::load};
+    }
     const MaterialManifestDefinition manifest =
         arpg::platform::default_material_manifest();
-    const std::string loaded_path{path};
     for (std::size_t index{}; index < manifest.atlas_count; ++index) {
-        if (loaded_path.find(manifest.atlases[index].color_path)
-            != std::string::npos) {
+        if (std::strstr(path, manifest.atlases[index].color_path) != nullptr) {
             return g_fake_material_textures->loaded[index * 2U];
         }
-        if (loaded_path.find(manifest.atlases[index].material_path)
-            != std::string::npos) {
+        if (std::strstr(path, manifest.atlases[index].material_path) != nullptr) {
             return g_fake_material_textures->loaded[index * 2U + 1U];
         }
     }
@@ -85,6 +99,12 @@ void fake_unload_texture(Texture2D texture) noexcept {
     }
     g_fake_material_textures->unloaded_ids[
         g_fake_material_textures->unload_count++] = texture.id;
+    if (g_fake_material_textures->call_count
+        < g_fake_material_textures->calls.size()) {
+        g_fake_material_textures->calls[
+            g_fake_material_textures->call_count++] = {
+            FakeMaterialTextures::CallKind::unload};
+    }
 }
 
 bool fake_initialize_material_pipeline() noexcept {
@@ -481,6 +501,161 @@ arpg::test::Failure material_pack_switches_ecology_without_reloading_common() no
     return {};
 }
 
+arpg::test::Failure material_residency_request_selects_drawable_room_and_monster_atlases() noexcept {
+    static_assert(static_cast<std::size_t>(MaterialAtlasId::count) <= 64U);
+    arpg::dungeon::DungeonSnapshot snapshot{};
+    snapshot.has_active_room = true;
+    snapshot.ecology = arpg::dungeon::DungeonElement::fire;
+    snapshot.combat.emplace();
+    snapshot.combat->monster_count = 3U;
+    snapshot.combat->monsters[0].active = true;
+    snapshot.combat->monsters[0].id = arpg::combat::MonsterId::chaos_chaser;
+    snapshot.combat->monsters[0].hp = 1;
+    snapshot.combat->monsters[1].active = true;
+    snapshot.combat->monsters[1].id = arpg::combat::MonsterId::fire_bomber;
+    snapshot.combat->monsters[1].hp = 0;
+    snapshot.combat->monsters[2].active = false;
+    snapshot.combat->monsters[2].id = arpg::combat::MonsterId::water_support;
+
+    const auto request = arpg::platform::make_material_residency_request(snapshot);
+    ARPG_REQUIRE(request.contains(MaterialAtlasId::fire_environment));
+    ARPG_REQUIRE(request.contains(MaterialAtlasId::fire_room_background));
+    ARPG_REQUIRE(request.contains(MaterialAtlasId::chaos_chaser));
+    ARPG_REQUIRE(request.contains(MaterialAtlasId::fire_bomber));
+    ARPG_REQUIRE(!request.contains(MaterialAtlasId::water_support));
+    ARPG_REQUIRE(!request.contains(MaterialAtlasId::chaos_environment));
+    ARPG_REQUIRE(arpg::platform::material_residency_bytes(
+        arpg::platform::default_material_manifest(), request)
+        <= 256U * 1024U * 1024U);
+    return {};
+}
+
+arpg::test::Failure material_residency_noop_sync_is_allocation_free() noexcept {
+    FakeMaterialTextures fake{};
+    const MaterialManifestDefinition manifest =
+        arpg::platform::default_material_manifest();
+    for (std::size_t index{}; index < manifest.atlas_count; ++index) {
+        const auto& atlas = manifest.atlases[index];
+        fake.loaded[index * 2U] = {
+            static_cast<unsigned int>(8000U + index * 2U),
+            atlas.width, atlas.height, 1, 7};
+        fake.loaded[index * 2U + 1U] = {
+            static_cast<unsigned int>(8001U + index * 2U),
+            atlas.width, atlas.height, 1, 7};
+    }
+    arpg::dungeon::DungeonSnapshot snapshot{};
+    snapshot.has_active_room = true;
+    snapshot.ecology = arpg::dungeon::DungeonElement::fire;
+    const auto request = arpg::platform::make_material_residency_request(snapshot);
+    g_fake_material_textures = &fake;
+    arpg::platform::MaterialPack pack{fake_material_texture_api()};
+    ARPG_REQUIRE(pack.synchronize_residency(request));
+    const auto loads = fake.load_count;
+    const auto unloads = fake.unload_count;
+    ARPG_REQUIRE(pack.synchronize_residency(request));
+    ARPG_REQUIRE(fake.load_count == loads);
+    ARPG_REQUIRE(fake.unload_count == unloads);
+    const std::uint64_t before = arpg::test::allocation_count();
+    for (std::size_t iteration{}; iteration < 10'000U; ++iteration) {
+        ARPG_REQUIRE(pack.synchronize_residency(request));
+    }
+    ARPG_REQUIRE(arpg::test::allocation_count() == before);
+    ARPG_REQUIRE(fake.load_count == loads);
+    ARPG_REQUIRE(fake.unload_count == unloads);
+    pack.unload();
+    g_fake_material_textures = nullptr;
+    return {};
+}
+
+arpg::test::Failure material_residency_failure_isolated_and_not_retried() noexcept {
+    FakeMaterialTextures fake{};
+    const MaterialManifestDefinition manifest =
+        arpg::platform::default_material_manifest();
+    for (std::size_t index{}; index < manifest.atlas_count; ++index) {
+        const auto& atlas = manifest.atlases[index];
+        fake.loaded[index * 2U] = {
+            static_cast<unsigned int>(9000U + index * 2U),
+            atlas.width, atlas.height, 1, 7};
+        fake.loaded[index * 2U + 1U] = {
+            static_cast<unsigned int>(9001U + index * 2U),
+            atlas.width, atlas.height, 1, 7};
+    }
+    const std::size_t chaos = static_cast<std::size_t>(MaterialAtlasId::chaos_chaser);
+    fake.loaded[chaos * 2U + 1U] = {};
+    arpg::dungeon::DungeonSnapshot snapshot{};
+    snapshot.has_active_room = true;
+    snapshot.ecology = arpg::dungeon::DungeonElement::fire;
+    snapshot.combat.emplace();
+    snapshot.combat->monster_count = 1U;
+    snapshot.combat->monsters[0].active = true;
+    snapshot.combat->monsters[0].id = arpg::combat::MonsterId::chaos_chaser;
+    g_fake_material_textures = &fake;
+    arpg::platform::MaterialPack pack{fake_material_texture_api()};
+    const auto request = arpg::platform::make_material_residency_request(snapshot);
+    ARPG_REQUIRE(!pack.synchronize_residency(request));
+    ARPG_REQUIRE(pack.available(MaterialAtlasId::fire_room_background));
+    ARPG_REQUIRE(!pack.available(MaterialAtlasId::chaos_chaser));
+    const auto loads = fake.load_count;
+    const auto unloads = fake.unload_count;
+    ARPG_REQUIRE(!pack.synchronize_residency(request));
+    ARPG_REQUIRE(fake.load_count == loads);
+    ARPG_REQUIRE(fake.unload_count == unloads);
+    pack.unload();
+    g_fake_material_textures = nullptr;
+    return {};
+}
+
+arpg::test::Failure material_residency_loads_before_unloading_and_rejects_budget() noexcept {
+    FakeMaterialTextures fake{};
+    const MaterialManifestDefinition manifest =
+        arpg::platform::default_material_manifest();
+    for (std::size_t index{}; index < manifest.atlas_count; ++index) {
+        const auto& atlas = manifest.atlases[index];
+        fake.loaded[index * 2U] = {
+            static_cast<unsigned int>(10'000U + index * 2U),
+            atlas.width, atlas.height, 1, 7};
+        fake.loaded[index * 2U + 1U] = {
+            static_cast<unsigned int>(10'001U + index * 2U),
+            atlas.width, atlas.height, 1, 7};
+    }
+    arpg::dungeon::DungeonSnapshot fire{};
+    fire.has_active_room = true;
+    fire.ecology = arpg::dungeon::DungeonElement::fire;
+    arpg::dungeon::DungeonSnapshot water{};
+    water.has_active_room = true;
+    water.ecology = arpg::dungeon::DungeonElement::water;
+    g_fake_material_textures = &fake;
+    arpg::platform::MaterialPack pack{fake_material_texture_api()};
+    ARPG_REQUIRE(pack.synchronize_residency(
+        arpg::platform::make_material_residency_request(fire)));
+    const std::size_t first_transition_call = fake.call_count;
+    ARPG_REQUIRE(pack.synchronize_residency(
+        arpg::platform::make_material_residency_request(water)));
+    bool saw_unload{};
+    for (std::size_t index = first_transition_call; index < fake.call_count; ++index) {
+        const auto kind = fake.calls[index].kind;
+        if (kind == FakeMaterialTextures::CallKind::unload) {
+            saw_unload = true;
+        } else {
+            ARPG_REQUIRE(!saw_unload);
+        }
+    }
+    ARPG_REQUIRE(saw_unload);
+    arpg::platform::MaterialResidencyRequest every_atlas{};
+    for (std::size_t index{};
+            index < static_cast<std::size_t>(MaterialAtlasId::count); ++index) {
+        every_atlas.require(static_cast<MaterialAtlasId>(index));
+    }
+    const auto loads = fake.load_count;
+    const auto unloads = fake.unload_count;
+    ARPG_REQUIRE(!pack.synchronize_residency(every_atlas));
+    ARPG_REQUIRE(fake.load_count == loads);
+    ARPG_REQUIRE(fake.unload_count == unloads);
+    pack.unload();
+    g_fake_material_textures = nullptr;
+    return {};
+}
+
 arpg::test::Failure material_manifest_all_texture_pairs_exist_and_match() noexcept {
     const MaterialManifestDefinition manifest =
         arpg::platform::default_material_manifest();
@@ -709,7 +884,8 @@ arpg::test::Failure material_manifest_rejects_oversized_atlas_and_memory_budget(
 
 arpg::test::Failure material_manifest_reports_true_resident_peak() noexcept {
     constexpr std::size_t kExpectedFullPackBytes = 302'170'112U;
-    constexpr std::size_t kExpectedResidentPeakBytes = 163'708'928U;
+    constexpr std::size_t kExpectedResidentPeakBytes = 199'540'736U;
+    constexpr std::size_t kExpectedFireEcologyPeakBytes = 163'708'928U;
     constexpr std::size_t kExpectedNonFirePeakBytes = 155'205'632U;
     const MaterialManifestDefinition manifest =
         arpg::platform::default_material_manifest();
@@ -735,7 +911,7 @@ arpg::test::Failure material_manifest_reports_true_resident_peak() noexcept {
             resident.data(), resident_count, nullptr, 0U};
         ARPG_REQUIRE(arpg::platform::resident_peak_bytes(ecology_manifest)
             == (ecology == MaterialEcology::fire
-                ? kExpectedResidentPeakBytes : kExpectedNonFirePeakBytes));
+                ? kExpectedFireEcologyPeakBytes : kExpectedNonFirePeakBytes));
     }
     return {};
 }
@@ -1024,6 +1200,14 @@ constexpr arpg::test::TestCase kCases[] = {
         &material_pack_horizontal_slice_preserves_decorated_caps},
     {"switches ecology without reloading common atlases",
         &material_pack_switches_ecology_without_reloading_common},
+    {"residency request selects drawable room and monster atlases",
+        &material_residency_request_selects_drawable_room_and_monster_atlases},
+    {"residency noop sync is allocation free",
+        &material_residency_noop_sync_is_allocation_free},
+    {"residency failure is isolated and not retried",
+        &material_residency_failure_isolated_and_not_retried},
+    {"residency loads before unloading and rejects budget",
+        &material_residency_loads_before_unloading_and_rejects_budget},
     {"all manifest texture pairs exist and match declared dimensions",
         &material_manifest_all_texture_pairs_exist_and_match},
     {"player action atlas files have transparent borders",

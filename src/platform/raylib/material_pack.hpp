@@ -1,6 +1,7 @@
 #pragma once
 
 #include "material_manifest.hpp"
+#include "material_residency.hpp"
 
 #include <array>
 #include <cstddef>
@@ -48,6 +49,13 @@ public:
     explicit MaterialPack(MaterialTextureApi texture_api) noexcept;
     [[nodiscard]] bool load(
         MaterialEcology ecology = MaterialEcology::common) noexcept;
+    [[nodiscard]] bool synchronize_residency(
+        MaterialResidencyRequest request) noexcept;
+    [[nodiscard]] bool residency_satisfied(
+        MaterialResidencyRequest request) const noexcept;
+    [[nodiscard]] MaterialResidencyRequest requested_residency() const noexcept;
+    [[nodiscard]] MaterialAtlasMask resident_atlases() const noexcept;
+    [[nodiscard]] std::size_t resident_bytes() const noexcept;
     void unload() noexcept;
     [[nodiscard]] MaterialEcology current_ecology() const noexcept;
     [[nodiscard]] bool material_pipeline_ready() const noexcept;
@@ -92,6 +100,8 @@ private:
         static_cast<std::size_t>(MaterialSpriteId::count)>
         direct_stretch_draw_counts_{};
     MaterialEcology current_ecology_{MaterialEcology::common};
+    MaterialResidencyRequest requested_residency_{};
+    MaterialAtlasMask resident_atlases_{};
     bool material_pipeline_ready_{};
 };
 

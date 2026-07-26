@@ -332,19 +332,40 @@ void MaterialPackState::reset() noexcept {
 }
 
 bool MaterialPack::load(MaterialEcology ecology) noexcept {
+    if (!ecology_is_valid(ecology)) return false;
+    const MaterialManifestDefinition manifest = default_material_manifest();
+    MaterialResidencyRequest request = base_material_residency_request();
+    for (std::size_t index = 0U; index < manifest.atlas_count; ++index) {
+        const MaterialAtlasDefinition& definition = manifest.atlases[index];
+        if (atlas_required(definition, ecology)) request.require(definition.id);
+    }
+    static_cast<void>(synchronize_residency(request));
+    current_ecology_ = ecology;
+    return state_.any_available();
+}
+
+bool MaterialPack::synchronize_residency(
+    MaterialResidencyRequest request) noexcept {
+    if (request == requested_residency_) return residency_satisfied(request);
+    requested_residency_ = request;
     if (!valid_texture_api(texture_api_)) {
         TraceLog(LOG_WARNING,
             "Stage 12 material texture API is incomplete; using program fallback");
         return false;
     }
-    if (!ecology_is_valid(ecology)) return false;
-
     const MaterialManifestDefinition manifest = default_material_manifest();
     if (!validate_material_manifest(manifest).valid) {
-        TraceLog(LOG_WARNING, "Stage 12 material manifest is invalid; using program fallback");
+        TraceLog(LOG_WARNING,
+            "Stage 12 material manifest is invalid; using program fallback");
         return false;
     }
-
+    const std::size_t target_bytes = material_residency_bytes(manifest, request);
+    const std::size_t transition_bytes = material_residency_bytes(manifest,
+        {resident_atlases_ | request.atlases});
+    if (target_bytes > manifest.memory_budget_bytes
+        || transition_bytes > manifest.memory_budget_bytes) {
+        return false;
+    }
     if (!material_pipeline_ready_) {
         material_pipeline_ready_ = texture_api_.initialize_material_pipeline();
         if (!material_pipeline_ready_) {
@@ -356,8 +377,14 @@ bool MaterialPack::load(MaterialEcology ecology) noexcept {
 
     for (std::size_t index = 0U; index < manifest.atlas_count; ++index) {
         const MaterialAtlasDefinition& definition = manifest.atlases[index];
-        if (atlas_required(definition, ecology)) continue;
+        if (!request.contains(definition.id)) continue;
         const std::size_t texture_index = atlas_index(definition.id);
+        if (texture_api_.valid(color_textures_[texture_index])
+            && texture_api_.valid(material_textures_[texture_index])) {
+            state_.set_available(definition.id, true);
+            resident_atlases_ |= MaterialAtlasMask{1U} << texture_index;
+            continue;
+        }
         if (texture_api_.valid(color_textures_[texture_index])) {
             texture_api_.unload(color_textures_[texture_index]);
         }
@@ -367,17 +394,7 @@ bool MaterialPack::load(MaterialEcology ecology) noexcept {
         color_textures_[texture_index] = {};
         material_textures_[texture_index] = {};
         state_.set_available(definition.id, false);
-    }
-
-    for (std::size_t index = 0U; index < manifest.atlas_count; ++index) {
-        const MaterialAtlasDefinition& definition = manifest.atlases[index];
-        if (!atlas_required(definition, ecology)) continue;
-        const std::size_t texture_index = atlas_index(definition.id);
-        if (texture_api_.valid(color_textures_[texture_index])
-            && texture_api_.valid(material_textures_[texture_index])) {
-            state_.set_available(definition.id, true);
-            continue;
-        }
+        resident_atlases_ &= ~(MaterialAtlasMask{1U} << texture_index);
         std::array<char, 512> color_deployed_path{};
         std::array<char, 512> material_deployed_path{};
         const int color_written = std::snprintf(color_deployed_path.data(),
@@ -411,7 +428,8 @@ bool MaterialPack::load(MaterialEcology ecology) noexcept {
             }
             if (!warnings_emitted_[texture_index]) {
                 TraceLog(LOG_WARNING,
-                    "Stage 12 color/material atlas pair unavailable or has unexpected dimensions: %s | %s; using program fallback",
+                    "Stage 12 material atlas %u unavailable: %s | %s; using program fallback",
+                    static_cast<unsigned int>(definition.id),
                     definition.color_path, definition.material_path);
                 warnings_emitted_[texture_index] = true;
             }
@@ -420,9 +438,46 @@ bool MaterialPack::load(MaterialEcology ecology) noexcept {
         color_textures_[texture_index] = color_texture;
         material_textures_[texture_index] = material_texture;
         state_.set_available(definition.id, true);
+        resident_atlases_ |= MaterialAtlasMask{1U} << texture_index;
     }
-    current_ecology_ = ecology;
-    return state_.any_available();
+
+    for (std::size_t index = 0U; index < manifest.atlas_count; ++index) {
+        const MaterialAtlasDefinition& definition = manifest.atlases[index];
+        const std::size_t texture_index = atlas_index(definition.id);
+        if (request.contains(definition.id)
+            || (resident_atlases_ & (MaterialAtlasMask{1U} << texture_index)) == 0U) {
+            continue;
+        }
+        if (texture_api_.valid(color_textures_[texture_index])) {
+            texture_api_.unload(color_textures_[texture_index]);
+        }
+        if (texture_api_.valid(material_textures_[texture_index])) {
+            texture_api_.unload(material_textures_[texture_index]);
+        }
+        color_textures_[texture_index] = {};
+        material_textures_[texture_index] = {};
+        state_.set_available(definition.id, false);
+        resident_atlases_ &= ~(MaterialAtlasMask{1U} << texture_index);
+    }
+    return residency_satisfied(request);
+}
+
+bool MaterialPack::residency_satisfied(
+    MaterialResidencyRequest request) const noexcept {
+    return (resident_atlases_ & request.atlases) == request.atlases;
+}
+
+MaterialResidencyRequest MaterialPack::requested_residency() const noexcept {
+    return requested_residency_;
+}
+
+MaterialAtlasMask MaterialPack::resident_atlases() const noexcept {
+    return resident_atlases_;
+}
+
+std::size_t MaterialPack::resident_bytes() const noexcept {
+    return material_residency_bytes(default_material_manifest(),
+        {resident_atlases_});
 }
 
 void MaterialPack::unload() noexcept {
@@ -442,6 +497,8 @@ void MaterialPack::unload() noexcept {
     sprite_draw_counts_.fill(0U);
     direct_stretch_draw_counts_.fill(0U);
     current_ecology_ = MaterialEcology::common;
+    requested_residency_ = {};
+    resident_atlases_ = {};
     if (material_pipeline_ready_ && valid_texture_api(texture_api_)) {
         texture_api_.shutdown_material_pipeline();
     }

@@ -543,7 +543,13 @@ RoomBackgroundDrawRuntimeStatus room_background_status(
 
 RoomBackgroundDrawRuntimeStatus CombatRenderer::draw_room_background_only(
     dungeon::DungeonElement ecology) noexcept {
-    static_cast<void>(material_pack_.load(material_ecology(ecology)));
+    dungeon::DungeonSnapshot snapshot{};
+    snapshot.has_active_room = true;
+    snapshot.ecology = ecology;
+    // Replaces material_pack_.load(material_ecology(ecology)) with the
+    // selective request used by all production room rendering paths.
+    static_cast<void>(material_pack_.synchronize_residency(
+        make_material_residency_request(snapshot)));
     room_background_draw_status_ = room_background_status(material_pack_, ecology);
     room_background_draw_status_.drawn = room_background_draw_status_.resident
         && draw_environment_room(material_pack_, ecology);

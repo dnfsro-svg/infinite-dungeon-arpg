@@ -49,7 +49,8 @@ bool CombatRenderer::initialize_resources() noexcept {
     const bool death_font_ready = death_overlay_.initialize();
     const bool hud_font_ready = hud_renderer_.initialize();
     const bool skill_assets_ready = active_skill_renderer_.initialize_resources();
-    static_cast<void>(material_pack_.load());
+    static_cast<void>(material_pack_.synchronize_residency(
+        base_material_residency_request()));
     if (!death_font_ready || !hud_font_ready) {
         TraceLog(LOG_WARNING,
             "HUD overlays are using a fallback font; formal CJK validation will fail");
@@ -253,7 +254,8 @@ GroundLootView CombatRenderer::draw(
     bool draw_debug,
     const CombatFeedback& feedback,
     bool audio_ready) noexcept {
-    static_cast<void>(material_pack_.load(material_ecology(current.ecology)));
+    static_cast<void>(material_pack_.synchronize_residency(
+        make_material_residency_request(current)));
     transition_ = transition_after_room_phase(transition_, current.phase);
 
     const CombatRenderPlan render_plan = make_combat_render_plan(current,

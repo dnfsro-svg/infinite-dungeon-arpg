@@ -1,5 +1,7 @@
 #include "material_asset_validation.hpp"
 
+#include "material_residency.hpp"
+
 #include <cmath>
 #include <array>
 #include <cstddef>
@@ -66,37 +68,61 @@ constexpr std::uint16_t kMaximumClipFrames = 256U;
     return nullptr;
 }
 
+[[nodiscard]] MaterialResidencyRequest legal_worst_residency_request(
+    const MaterialManifestDefinition& manifest) noexcept {
+    MaterialResidencyRequest request = base_material_residency_request();
+    constexpr std::array<MaterialAtlasId, 8> kMonsterAtlases{{
+        MaterialAtlasId::fire_bomber,
+        MaterialAtlasId::fire_charger,
+        MaterialAtlasId::water_bulwark,
+        MaterialAtlasId::water_support,
+        MaterialAtlasId::lightning_shooter,
+        MaterialAtlasId::lightning_dasher,
+        MaterialAtlasId::chaos_chaser,
+        MaterialAtlasId::chaos_hazard,
+    }};
+    for (const MaterialAtlasId id : kMonsterAtlases) request.require(id);
+
+    constexpr std::array<std::array<MaterialAtlasId, 2>, 4> kRoomAtlases{{
+        {{MaterialAtlasId::fire_environment,
+            MaterialAtlasId::fire_room_background}},
+        {{MaterialAtlasId::water_environment,
+            MaterialAtlasId::water_room_background}},
+        {{MaterialAtlasId::lightning_environment,
+            MaterialAtlasId::lightning_room_background}},
+        {{MaterialAtlasId::chaos_environment,
+            MaterialAtlasId::chaos_room_background}},
+    }};
+    MaterialResidencyRequest worst = request;
+    std::size_t worst_bytes{};
+    for (const auto& room : kRoomAtlases) {
+        MaterialResidencyRequest candidate = request;
+        candidate.require(room[0]);
+        candidate.require(room[1]);
+        const std::size_t candidate_bytes = material_residency_bytes(
+            manifest, candidate);
+        if (candidate_bytes > worst_bytes) {
+            worst = candidate;
+            worst_bytes = candidate_bytes;
+        }
+    }
+    return worst;
+}
+
 }  // namespace
 
 std::size_t resident_peak_bytes(
     const MaterialManifestDefinition& manifest) noexcept {
-    constexpr std::size_t kEcologyCount =
-        static_cast<std::size_t>(MaterialEcology::count);
-    std::array<std::size_t, kEcologyCount> ecology_bytes{};
     if (manifest.atlas_count != 0U && manifest.atlases == nullptr) {
         return (std::numeric_limits<std::size_t>::max)();
     }
     for (std::size_t index{}; index < manifest.atlas_count; ++index) {
-        const MaterialAtlasDefinition& atlas = manifest.atlases[index];
-        const std::size_t ecology = static_cast<std::size_t>(atlas.ecology);
-        if (ecology >= ecology_bytes.size()) {
+        if (manifest.atlases[index].ecology >= MaterialEcology::count) {
             return (std::numeric_limits<std::size_t>::max)();
         }
-        const std::size_t paired = saturating_add(
-            atlas.rgba_bytes, atlas.rgba_bytes);
-        ecology_bytes[ecology] = saturating_add(
-            ecology_bytes[ecology], paired);
     }
-    std::size_t maximum_ecology{};
-    for (std::size_t ecology = static_cast<std::size_t>(MaterialEcology::fire);
-            ecology < ecology_bytes.size(); ++ecology) {
-        if (ecology_bytes[ecology] > maximum_ecology) {
-            maximum_ecology = ecology_bytes[ecology];
-        }
-    }
-    return saturating_add(
-        ecology_bytes[static_cast<std::size_t>(MaterialEcology::common)],
-        maximum_ecology);
+    return material_residency_bytes(manifest,
+        legal_worst_residency_request(manifest));
 }
 
 std::size_t full_pack_bytes(
