@@ -78,6 +78,12 @@ struct MonsterAnimationFrame final {
     std::uint8_t key_pose_index{};
 };
 
+enum class MonsterRenderPath : std::uint8_t {
+    material,
+    legacy,
+    silhouette,
+};
+
 [[nodiscard]] MaterialSpriteId select_player_sprite(
     combat::PlayerState state,
     combat::AttackId attack) noexcept;
@@ -112,6 +118,11 @@ struct MonsterAnimationFrame final {
 
 [[nodiscard]] float material_actor_draw_scale(
     bool player, float projection_scale) noexcept;
+[[nodiscard]] float monster_material_draw_scale(
+    MaterialAtlasId atlas, float projection_scale) noexcept;
+[[nodiscard]] MonsterRenderPath select_monster_render_path(
+    bool use_material_frame, bool material_frame_drawn,
+    bool legacy_frame_drawn) noexcept;
 
 [[nodiscard]] const AnimationClipDefinition* material_animation_clip(
     AnimationClipId id) noexcept;

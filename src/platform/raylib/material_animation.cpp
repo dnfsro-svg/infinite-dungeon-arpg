@@ -411,6 +411,36 @@ float material_actor_draw_scale(bool player, float projection_scale) noexcept {
     return projection_scale * target_height / trimmed_height;
 }
 
+float monster_material_draw_scale(
+    MaterialAtlasId atlas, float projection_scale) noexcept {
+    if (projection_scale <= 0.0F) return 0.0F;
+    switch (atlas) {
+    case MaterialAtlasId::water_bulwark:
+    case MaterialAtlasId::water_support:
+    case MaterialAtlasId::lightning_shooter:
+    case MaterialAtlasId::lightning_dasher:
+    case MaterialAtlasId::chaos_chaser:
+    case MaterialAtlasId::chaos_hazard:
+        return 0.92F * projection_scale;
+    case MaterialAtlasId::fire_bomber:
+    case MaterialAtlasId::fire_charger:
+        return material_actor_draw_scale(false, projection_scale);
+    default:
+        return material_actor_draw_scale(false, projection_scale);
+    }
+}
+
+MonsterRenderPath select_monster_render_path(bool use_material_frame,
+    bool material_frame_drawn, bool legacy_frame_drawn) noexcept {
+    if (use_material_frame && material_frame_drawn) {
+        return MonsterRenderPath::material;
+    }
+    if (!use_material_frame && legacy_frame_drawn) {
+        return MonsterRenderPath::legacy;
+    }
+    return MonsterRenderPath::silhouette;
+}
+
 const AnimationClipDefinition* material_animation_clip(AnimationClipId id) noexcept {
     const MaterialManifestDefinition manifest = default_material_manifest();
     for (std::size_t index = 0U; index < manifest.clip_count; ++index) {

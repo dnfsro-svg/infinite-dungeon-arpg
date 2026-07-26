@@ -85,6 +85,22 @@ arpg::test::Failure stage12_actor_material_scale_matches_existing_geometry() noe
     ARPG_REQUIRE(monster_scale * kMonsterTrimmedHeight <= kMonsterTargetHeight + 0.1F);
     ARPG_REQUIRE(arpg::platform::material_actor_draw_scale(true, 0.5F)
         == player_scale * 0.5F);
+    const float bomber_scale = arpg::platform::monster_material_draw_scale(
+        arpg::platform::MaterialAtlasId::fire_bomber, 1.0F);
+    const float charger_scale = arpg::platform::monster_material_draw_scale(
+        arpg::platform::MaterialAtlasId::fire_charger, 1.0F);
+    ARPG_REQUIRE(arpg::test::near(
+        bomber_scale * kMonsterTrimmedHeight, kMonsterTargetHeight, 0.1F));
+    ARPG_REQUIRE(arpg::test::near(charger_scale, bomber_scale));
+    for (const auto atlas : {arpg::platform::MaterialAtlasId::water_bulwark,
+             arpg::platform::MaterialAtlasId::water_support,
+             arpg::platform::MaterialAtlasId::lightning_shooter,
+             arpg::platform::MaterialAtlasId::lightning_dasher,
+             arpg::platform::MaterialAtlasId::chaos_chaser,
+             arpg::platform::MaterialAtlasId::chaos_hazard}) {
+        ARPG_REQUIRE(arpg::test::near(
+            arpg::platform::monster_material_draw_scale(atlas, 1.0F), 0.92F));
+    }
     return {};
 }
 
@@ -200,17 +216,27 @@ arpg::test::Failure active_monsters_produce_phase_aware_material_draw_plans() no
     fire_snapshot.ecology = arpg::dungeon::DungeonElement::fire;
     fire_snapshot.combat.emplace();
     fire_snapshot.combat->monster_count = 1U;
-    fire_snapshot.combat->monsters[0] = monster;
+    fire_snapshot.combat->monsters[0].active = false;
+    fire_snapshot.combat->monsters[0].id = MonsterId::fire_bomber;
+    const std::size_t sparse_slot = fire_snapshot.combat->monsters.size() - 1U;
+    fire_snapshot.combat->monsters[sparse_slot] = monster;
     const auto residency = arpg::platform::make_material_residency_request(
         fire_snapshot);
     ARPG_REQUIRE(residency.contains(arpg::platform::MaterialAtlasId::fire_environment));
     ARPG_REQUIRE(residency.contains(arpg::platform::MaterialAtlasId::chaos_chaser));
-    const auto chaos = presenter.collect_draw_plan(0U, monster, 100U, false);
+    const auto chaos = presenter.collect_draw_plan(
+        sparse_slot, monster, 100U, false);
     ARPG_REQUIRE(chaos.visible);
     ARPG_REQUIRE(chaos.use_material_frame);
     ARPG_REQUIRE(chaos.animation_state
         == arpg::platform::MonsterAnimationState::active);
     ARPG_REQUIRE(chaos.frame.has_value());
+    ARPG_REQUIRE(arpg::platform::select_monster_render_path(
+        chaos.use_material_frame, true, false)
+        == arpg::platform::MonsterRenderPath::material);
+    ARPG_REQUIRE(arpg::platform::select_monster_render_path(
+        chaos.use_material_frame, false, false)
+        == arpg::platform::MonsterRenderPath::silhouette);
 
     monster.generation = 42U;
     monster.id = MonsterId::fire_bomber;

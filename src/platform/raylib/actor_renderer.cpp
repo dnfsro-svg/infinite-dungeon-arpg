@@ -322,8 +322,7 @@ bool draw_monster_animation(const MaterialPack& material_pack,
     const ScreenProjection& projected, float hit_flash_seconds) noexcept {
     if (!plan.use_material_frame || !plan.frame.has_value()) return false;
     const MonsterAnimationFrame& frame = *plan.frame;
-    constexpr float kWaterMonsterScale = 0.92F;
-    const float scale = kWaterMonsterScale * projected.scale;
+    const float scale = monster_material_draw_scale(frame.atlas, projected.scale);
     const bool drawn = material_pack.draw_frame(frame.atlas, frame.source,
         frame.foot_anchor, {projected.x, projected.y},
         monster.facing == Facing::left, scale);
@@ -586,7 +585,10 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
             const bool legacy_frame_drawn = !item.material_plan.use_material_frame
                 && draw_material_actor(material_pack_, sprite, monster.facing,
                     false, projected, hit_flash_seconds);
-            if (material_frame_drawn || legacy_frame_drawn) {
+            const MonsterRenderPath render_path = select_monster_render_path(
+                item.material_plan.use_material_frame, material_frame_drawn,
+                legacy_frame_drawn);
+            if (render_path != MonsterRenderPath::silhouette) {
                 draw_monster_presentation(monster, item.position, current.ecology,
                     width, height, current_combat.tick, item.monster_index,
                     hud_renderer_.hud_font(), hud_renderer_.font_ready());

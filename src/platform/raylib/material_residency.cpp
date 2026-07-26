@@ -1,6 +1,5 @@
 #include "material_residency.hpp"
 
-#include <algorithm>
 #include <limits>
 
 namespace arpg::platform {
@@ -110,9 +109,7 @@ MaterialResidencyRequest make_material_residency_request(
     }
     if (!snapshot.combat.has_value()) return request;
     const combat::CombatSnapshot& combat = *snapshot.combat;
-    const std::size_t count = std::min(combat.monster_count, combat.monsters.size());
-    for (std::size_t index{}; index < count; ++index) {
-        const combat::MonsterSnapshot& monster = combat.monsters[index];
+    for (const combat::MonsterSnapshot& monster : combat.monsters) {
         if (monster.active) require_monster_atlas(request, monster.id);
     }
     return request;
