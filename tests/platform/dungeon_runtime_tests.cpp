@@ -1497,6 +1497,20 @@ arpg::test::Failure production_startup_auto_continues_pending_death() noexcept {
     ARPG_REQUIRE(saved.state == persistence::SaveLoadState::ready);
     ARPG_REQUIRE(dungeon::same_run_state(saved.checkpoint, expected));
 
+    platform::DungeonRuntime relaunched(config);
+    ARPG_REQUIRE(relaunched.initialize());
+    const auto already_clear = relaunched.session()->snapshot();
+    ARPG_REQUIRE(!already_clear.death.has_value());
+    ARPG_REQUIRE(already_clear.commit_generation == expected.commit_generation);
+
+    const auto saved_after_relaunch = store.load();
+    ARPG_REQUIRE(saved_after_relaunch.state
+        == persistence::SaveLoadState::ready);
+    ARPG_REQUIRE(saved_after_relaunch.checkpoint.death.lifecycle
+        == dungeon::checkpoint::DeathLifecycle::none);
+    ARPG_REQUIRE(saved_after_relaunch.checkpoint.commit_generation
+        == expected.commit_generation);
+
     runtime.fixed_tick({});
     const auto playable = runtime.session()->snapshot();
     ARPG_REQUIRE(playable.phase == dungeon::RoomPhase::locked);
