@@ -453,7 +453,7 @@ void draw_hole(const dungeon::DungeonSnapshot& snapshot,
     else if (hole == HoleVisualMode::busy) color = Color{255, 194, 74, 255};
     if (!material_pack.draw(hole_sprite(snapshot.ecology),
             {projected.x, projected.ground_y}, false,
-            0.77F * projected.scale)) {
+            kEnvironmentGameplayHoleScale * projected.scale)) {
         DrawEllipse(x, y, 74.0F, 25.0F, Color{5, 2, 9, 235});
     }
     DrawEllipseLines(x, y, 74.0F, 25.0F, color);

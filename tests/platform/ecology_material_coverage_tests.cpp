@@ -1,11 +1,13 @@
 #include "test_framework.hpp"
 
 #include "chaos_room_material_slice.hpp"
+#include "dungeon_view_math.hpp"
 #include "environment_prop_layout.hpp"
 #include "material_animation.hpp"
 #include "material_asset_validation.hpp"
 #include "material_manifest.hpp"
 #include "monster_material_presenter.hpp"
+#include "render_layout.hpp"
 #include "lightning_room_material_slice.hpp"
 #include "water_room_material_slice.hpp"
 
@@ -1049,6 +1051,7 @@ arpg::test::Failure ecology_prop_layout_is_resolution_safe(
     constexpr std::array<Vector2, 3> kResolutions{{
         {800.0F, 450.0F}, {1280.0F, 720.0F}, {1920.0F, 1080.0F},
     }};
+    std::size_t hole_overlap_count{};
     for (const Vector2 resolution : kResolutions) {
         const auto layout = arpg::platform::environment_prop_layout(
             ecology, resolution.x, resolution.y);
@@ -1056,6 +1059,23 @@ arpg::test::Failure ecology_prop_layout_is_resolution_safe(
         std::array<Rectangle, 9> bounds{};
         const float bottom = resolution.y
             - std::max(72.0F, 0.12F * resolution.y) - 8.0F;
+        const auto hole_projection = arpg::platform::project_render_world(
+            arpg::platform::kHoleCenter.x, arpg::platform::kHoleCenter.y,
+            arpg::platform::kHoleCenter.z, resolution.x, resolution.y);
+        const auto* const hole_definition =
+            arpg::platform::environment_prop_definition(hole_sprite);
+        ARPG_REQUIRE(hole_definition != nullptr);
+        const arpg::platform::EnvironmentPropPlacement hole_placement{
+            hole_sprite,
+            {hole_projection.x / resolution.x,
+                hole_projection.ground_y / resolution.y},
+            false,
+            arpg::platform::kEnvironmentGameplayHoleScale
+                * hole_projection.scale,
+        };
+        const Rectangle hole_bounds =
+            arpg::platform::project_environment_prop_bounds(
+                *hole_definition, hole_placement, resolution.x, resolution.y);
         for (std::size_t index{}; index < layout.count; ++index) {
             ARPG_REQUIRE(layout.props[index].sprite != hole_sprite);
             const auto* const definition =
@@ -1069,6 +1089,17 @@ arpg::test::Failure ecology_prop_layout_is_resolution_safe(
             ARPG_REQUIRE(bounds[index].x + bounds[index].width
                 <= resolution.x - 8.0F);
             ARPG_REQUIRE(bounds[index].y + bounds[index].height <= bottom);
+            const float hole_overlap_width = std::max(0.0F,
+                std::min(bounds[index].x + bounds[index].width,
+                    hole_bounds.x + hole_bounds.width)
+                    - std::max(bounds[index].x, hole_bounds.x));
+            const float hole_overlap_height = std::max(0.0F,
+                std::min(bounds[index].y + bounds[index].height,
+                    hole_bounds.y + hole_bounds.height)
+                    - std::max(bounds[index].y, hole_bounds.y));
+            if (hole_overlap_width * hole_overlap_height > 0.0F) {
+                ++hole_overlap_count;
+            }
         }
         for (std::size_t left{}; left < layout.count; ++left) {
             for (std::size_t right = left + 1U; right < layout.count; ++right) {
@@ -1088,6 +1119,7 @@ arpg::test::Failure ecology_prop_layout_is_resolution_safe(
             }
         }
     }
+    ARPG_REQUIRE(hole_overlap_count == 0U);
     return {};
 }
 

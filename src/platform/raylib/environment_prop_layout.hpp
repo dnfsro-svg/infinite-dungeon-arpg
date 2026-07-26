@@ -11,6 +11,8 @@
 
 namespace arpg::platform {
 
+inline constexpr float kEnvironmentGameplayHoleScale = 0.77F;
+
 struct EnvironmentPropDefinition final {
     MaterialSpriteId sprite{MaterialSpriteId::missing};
     MaterialLayer layer{MaterialLayer::body};
