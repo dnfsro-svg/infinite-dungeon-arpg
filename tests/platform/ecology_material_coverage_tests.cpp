@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 
 #include "chaos_room_material_slice.hpp"
+#include "environment_prop_layout.hpp"
 #include "material_animation.hpp"
 #include "material_asset_validation.hpp"
 #include "material_manifest.hpp"
@@ -1042,6 +1043,72 @@ arpg::test::Failure common_element_doors_have_unique_frames() noexcept {
     return {};
 }
 
+arpg::test::Failure ecology_prop_layout_is_resolution_safe(
+    arpg::dungeon::DungeonElement ecology,
+    arpg::platform::MaterialSpriteId hole_sprite) noexcept {
+    constexpr std::array<Vector2, 3> kResolutions{{
+        {800.0F, 450.0F}, {1280.0F, 720.0F}, {1920.0F, 1080.0F},
+    }};
+    for (const Vector2 resolution : kResolutions) {
+        const auto layout = arpg::platform::environment_prop_layout(
+            ecology, resolution.x, resolution.y);
+        ARPG_REQUIRE(layout.count == 5U);
+        std::array<Rectangle, 9> bounds{};
+        const float bottom = resolution.y
+            - std::max(72.0F, 0.12F * resolution.y) - 8.0F;
+        for (std::size_t index{}; index < layout.count; ++index) {
+            ARPG_REQUIRE(layout.props[index].sprite != hole_sprite);
+            const auto* const definition =
+                arpg::platform::environment_prop_definition(
+                    layout.props[index].sprite);
+            ARPG_REQUIRE(definition != nullptr);
+            bounds[index] = arpg::platform::project_environment_prop_bounds(
+                *definition, layout.props[index], resolution.x, resolution.y);
+            ARPG_REQUIRE(bounds[index].x >= 8.0F);
+            ARPG_REQUIRE(bounds[index].y >= 8.0F);
+            ARPG_REQUIRE(bounds[index].x + bounds[index].width
+                <= resolution.x - 8.0F);
+            ARPG_REQUIRE(bounds[index].y + bounds[index].height <= bottom);
+        }
+        for (std::size_t left{}; left < layout.count; ++left) {
+            for (std::size_t right = left + 1U; right < layout.count; ++right) {
+                const float overlap_width = std::max(0.0F,
+                    std::min(bounds[left].x + bounds[left].width,
+                        bounds[right].x + bounds[right].width)
+                        - std::max(bounds[left].x, bounds[right].x));
+                const float overlap_height = std::max(0.0F,
+                    std::min(bounds[left].y + bounds[left].height,
+                        bounds[right].y + bounds[right].height)
+                        - std::max(bounds[left].y, bounds[right].y));
+                const float smaller_area = std::min(
+                    bounds[left].width * bounds[left].height,
+                    bounds[right].width * bounds[right].height);
+                ARPG_REQUIRE(overlap_width * overlap_height
+                    <= smaller_area * 0.15F);
+            }
+        }
+    }
+    return {};
+}
+
+arpg::test::Failure water_prop_layout_is_resolution_safe() noexcept {
+    return ecology_prop_layout_is_resolution_safe(
+        arpg::dungeon::DungeonElement::water,
+        arpg::platform::MaterialSpriteId::water_hole);
+}
+
+arpg::test::Failure lightning_prop_layout_is_resolution_safe() noexcept {
+    return ecology_prop_layout_is_resolution_safe(
+        arpg::dungeon::DungeonElement::lightning,
+        arpg::platform::MaterialSpriteId::lightning_hole);
+}
+
+arpg::test::Failure chaos_prop_layout_is_resolution_safe() noexcept {
+    return ecology_prop_layout_is_resolution_safe(
+        arpg::dungeon::DungeonElement::chaos,
+        arpg::platform::MaterialSpriteId::chaos_hole);
+}
+
 arpg::test::Failure ecology_prop_records_match_emitted_layout() noexcept {
     const auto records = parse_environment_prop_records();
     ARPG_REQUIRE(records.size() == 15U);
@@ -1058,6 +1125,18 @@ arpg::test::Failure ecology_prop_records_match_emitted_layout() noexcept {
             && frame->source.height == record.source_rect[3]);
         ARPG_REQUIRE(frame->foot_anchor.x == record.foot_anchor[0]
             && frame->foot_anchor.y == record.foot_anchor[1]);
+        const auto* const definition =
+            arpg::platform::environment_prop_definition(record.sprite);
+        ARPG_REQUIRE(definition != nullptr);
+        ARPG_REQUIRE(definition->alpha_bounds.x == record.alpha_bbox[0]);
+        ARPG_REQUIRE(definition->alpha_bounds.y == record.alpha_bbox[1]);
+        ARPG_REQUIRE(definition->alpha_bounds.width
+            == record.alpha_bbox[2] - record.alpha_bbox[0]);
+        ARPG_REQUIRE(definition->alpha_bounds.height
+            == record.alpha_bbox[3] - record.alpha_bbox[1]);
+        ARPG_REQUIRE(definition->foot_anchor.x == record.foot_anchor[0]
+            && definition->foot_anchor.y == record.foot_anchor[1]);
+        ARPG_REQUIRE(definition->recommended_scale > 0.0F);
         ARPG_REQUIRE(frame->source.x >= 0.0F && frame->source.y >= 0.0F);
         ARPG_REQUIRE(frame->source.x + frame->source.width <= static_cast<float>(atlas->width));
         ARPG_REQUIRE(frame->source.y + frame->source.height <= static_cast<float>(atlas->height));
@@ -1106,6 +1185,9 @@ constexpr arpg::test::TestCase kCases[] = {
         &chaos_ecology_stays_inside_manifest_loading_budget},
     {"common element doors use four unique frames", &common_element_doors_have_unique_frames},
     {"ecology props match emitted layout records", &ecology_prop_records_match_emitted_layout},
+    {"water props remain resolution safe", &water_prop_layout_is_resolution_safe},
+    {"lightning props remain resolution safe", &lightning_prop_layout_is_resolution_safe},
+    {"chaos props remain resolution safe", &chaos_prop_layout_is_resolution_safe},
 };
 
 }  // namespace

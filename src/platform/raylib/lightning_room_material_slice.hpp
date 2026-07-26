@@ -1,5 +1,6 @@
 #pragma once
 
+#include "environment_prop_layout.hpp"
 #include "material_asset_types.hpp"
 
 #include "dungeon/dungeon_types.hpp"
@@ -29,6 +30,7 @@ struct LightningRoomPropDefinition final {
 struct LightningRoomMaterialSlice final {
     std::array<LightningRoomPropDefinition,
         static_cast<std::size_t>(LightningRoomPropId::count)> props{};
+    std::array<EnvironmentPropDefinition, 5> environment_props{};
 };
 
 [[nodiscard]] const LightningRoomMaterialSlice&

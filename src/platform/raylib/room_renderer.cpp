@@ -3,6 +3,7 @@
 #include "combat/room_bounds.hpp"
 #include "chaos_room_material_slice.hpp"
 #include "dungeon_view_math.hpp"
+#include "environment_prop_layout.hpp"
 #include "environment_render_plan.hpp"
 #include "fire_room_material_slice.hpp"
 #include "material_animation.hpp"
@@ -77,68 +78,25 @@ bool draw_environment_room(const MaterialPack& material_pack,
         room_background_scale(width, height));
 }
 
-void draw_water_room_props(const MaterialPack& material_pack,
-    float width, float height) noexcept {
-    if (!material_pack.available(MaterialAtlasId::water_environment)) return;
-    constexpr std::array<Vector2, 5> kPositions{{
-        {0.13F, 0.35F}, {0.87F, 0.35F}, {0.18F, 0.82F},
-        {0.82F, 0.82F}, {0.50F, 0.86F},
-    }};
-    constexpr std::array<WaterRoomPropId, 5> kProps{{
-        WaterRoomPropId::lantern, WaterRoomPropId::wall,
-        WaterRoomPropId::coral, WaterRoomPropId::coral,
-        WaterRoomPropId::grate,
-    }};
-    const WaterRoomMaterialSlice& slice = water_room_material_slice();
-    for (std::size_t index{}; index < kProps.size(); ++index) {
-        const auto& prop = slice.props[static_cast<std::size_t>(kProps[index])];
-        static_cast<void>(material_pack.draw(prop.sprite,
-            {kPositions[index].x * width, kPositions[index].y * height},
-            index == 3U, index == 1U ? 0.92F : 0.58F));
-    }
-}
-
-void draw_lightning_room_props(const MaterialPack& material_pack,
-    float width, float height) noexcept {
-    if (!material_pack.available(MaterialAtlasId::lightning_environment)) return;
-    constexpr std::array<Vector2, 5> kPositions{{
-        {0.12F, 0.34F}, {0.88F, 0.35F}, {0.18F, 0.82F},
-        {0.82F, 0.82F}, {0.50F, 0.86F},
-    }};
-    constexpr std::array<LightningRoomPropId, 5> kProps{{
-        LightningRoomPropId::arc_lamp, LightningRoomPropId::wall,
-        LightningRoomPropId::capacitor_bank,
-        LightningRoomPropId::grounding_rod,
-        LightningRoomPropId::capacitor_bank,
-    }};
-    const LightningRoomMaterialSlice& slice = lightning_room_material_slice();
-    for (std::size_t index{}; index < kProps.size(); ++index) {
-        const auto& prop = slice.props[static_cast<std::size_t>(kProps[index])];
-        static_cast<void>(material_pack.draw(prop.sprite,
-            {kPositions[index].x * width, kPositions[index].y * height},
-            false, index == 1U ? 0.90F : 0.55F));
-    }
-}
-
-void draw_chaos_room_props(const MaterialPack& material_pack,
-    float width, float height) noexcept {
-    if (!material_pack.available(MaterialAtlasId::chaos_environment)) return;
-    constexpr std::array<Vector2, 5> kPositions{{
-        {0.12F, 0.34F}, {0.88F, 0.35F}, {0.18F, 0.82F},
-        {0.82F, 0.82F}, {0.50F, 0.86F},
-    }};
-    constexpr std::array<ChaosRoomPropId, 5> kProps{{
-        ChaosRoomPropId::rift_lantern, ChaosRoomPropId::wall,
-        ChaosRoomPropId::anomaly_condenser,
-        ChaosRoomPropId::warning_obelisk,
-        ChaosRoomPropId::anomaly_condenser,
-    }};
-    const ChaosRoomMaterialSlice& slice = chaos_room_material_slice();
-    for (std::size_t index{}; index < kProps.size(); ++index) {
-        const auto& prop = slice.props[static_cast<std::size_t>(kProps[index])];
-        static_cast<void>(material_pack.draw(prop.sprite,
-            {kPositions[index].x * width, kPositions[index].y * height},
-            false, index == 1U ? 0.90F : 0.55F));
+void draw_environment_room_props(const MaterialPack& material_pack,
+    dungeon::DungeonElement ecology, float width, float height) noexcept {
+    const EnvironmentPropLayout layout = environment_prop_layout(
+        ecology, width, height);
+    for (std::size_t index{}; index < layout.count; ++index) {
+        const EnvironmentPropPlacement& placement = layout.props[index];
+        const EnvironmentPropDefinition* const definition =
+            environment_prop_definition(placement.sprite);
+        if (definition == nullptr) continue;
+        const Vector2 foot_position{
+            placement.normalized_foot_position.x * width,
+            placement.normalized_foot_position.y * height,
+        };
+        if (!material_pack.draw(placement.sprite, foot_position,
+                placement.flip_x, placement.scale)) {
+            const Rectangle bounds = project_environment_prop_bounds(
+                *definition, placement, width, height);
+            DrawRectangleLinesEx(bounds, 2.0F, Color{35, 48, 62, 72});
+        }
     }
 }
 
@@ -184,29 +142,6 @@ void draw_fire_room_props(const MaterialPack& material_pack,
             {kPositions[index].x * width, kPositions[index].y * height}, false,
             index == 8U ? 1.10F : 0.72F));
     }
-}
-
-bool can_draw_room_environment(const dungeon::DungeonSnapshot& snapshot,
-    const MaterialPack& material_pack) noexcept {
-    const HoleVisualMode hole_mode = hole_visual_mode(snapshot);
-    const RoomBackgroundRenderPlan background =
-        room_background_render_plan(snapshot.ecology);
-    MaterialAtlasId props_atlas = MaterialAtlasId::fire_environment;
-    if (snapshot.ecology == dungeon::DungeonElement::water) {
-        props_atlas = MaterialAtlasId::water_environment;
-    } else if (snapshot.ecology == dungeon::DungeonElement::lightning) {
-        props_atlas = MaterialAtlasId::lightning_environment;
-    } else if (snapshot.ecology == dungeon::DungeonElement::chaos) {
-        props_atlas = MaterialAtlasId::chaos_environment;
-    }
-    return should_draw_material_environment({
-        material_pack.available(background.atlas),
-        false,
-        material_pack.can_draw(hole_sprite(snapshot.ecology)),
-        material_pack.available(props_atlas),
-        false,
-        hole_mode != HoleVisualMode::hidden,
-    });
 }
 
 void draw_doors(const dungeon::DungeonSnapshot& snapshot,
@@ -503,7 +438,7 @@ void draw_abyss(const dungeon::DungeonSnapshot& snapshot, float elapsed_seconds)
 }
 
 void draw_hole(const dungeon::DungeonSnapshot& snapshot,
-    const MaterialPack& material_pack, bool draw_material_environment) noexcept {
+    const MaterialPack& material_pack) noexcept {
     const HoleVisualMode hole = hole_visual_mode(snapshot);
     if (hole == HoleVisualMode::hidden) {
         return;
@@ -516,10 +451,9 @@ void draw_hole(const dungeon::DungeonSnapshot& snapshot,
     Color color{43, 25, 55, 255};
     if (hole == HoleVisualMode::ready) color = Color{230, 79, 186, 255};
     else if (hole == HoleVisualMode::busy) color = Color{255, 194, 74, 255};
-    if (draw_material_environment) {
-        static_cast<void>(material_pack.draw(hole_sprite(snapshot.ecology),
-            {projected.x, projected.ground_y}, false, 0.77F * projected.scale));
-    } else {
+    if (!material_pack.draw(hole_sprite(snapshot.ecology),
+            {projected.x, projected.ground_y}, false,
+            0.77F * projected.scale)) {
         DrawEllipse(x, y, 74.0F, 25.0F, Color{5, 2, 9, 235});
     }
     DrawEllipseLines(x, y, 74.0F, 25.0F, color);
@@ -578,30 +512,25 @@ void CombatRenderer::draw_room(
     const float height = static_cast<float>(GetScreenHeight());
     room_background_draw_status_ = room_background_status(
         material_pack_, current.ecology);
-    const bool draw_material_environment = can_draw_room_environment(current,
-        material_pack_) && draw_environment_room(material_pack_, current.ecology);
-    room_background_draw_status_.drawn = draw_material_environment;
-    if (!draw_material_environment) {
+    const bool draw_material_background = room_background_draw_status_.resident
+        && draw_environment_room(material_pack_, current.ecology);
+    room_background_draw_status_.drawn = draw_material_background;
+    if (!draw_material_background) {
         draw_graybox_room(current.ecology);
     }
     draw_abyss(current, static_cast<float>(GetTime()));
     draw_environment_hazards(current, width, height);
     draw_ground_materials(current, material_loot, material_pack_, width, height);
     draw_ground_items(current, ground_loot, material_pack_, width, height);
-    if (draw_material_environment) {
-        if (current.ecology == dungeon::DungeonElement::fire) {
-            draw_fire_room_props(material_pack_, current, width, height);
-        } else if (current.ecology == dungeon::DungeonElement::water) {
-            draw_water_room_props(material_pack_, width, height);
-        } else if (current.ecology == dungeon::DungeonElement::lightning) {
-            draw_lightning_room_props(material_pack_, width, height);
-        } else if (current.ecology == dungeon::DungeonElement::chaos) {
-            draw_chaos_room_props(material_pack_, width, height);
-        }
+    if (current.ecology == dungeon::DungeonElement::fire) {
+        draw_fire_room_props(material_pack_, current, width, height);
+    } else {
+        draw_environment_room_props(material_pack_, current.ecology,
+            width, height);
     }
     draw_doors(current, width, height, material_pack_, hud_renderer_.hud_font(),
         hud_renderer_.font_ready());
-    draw_hole(current, material_pack_, draw_material_environment);
+    draw_hole(current, material_pack_);
 }
 
 }  // namespace arpg::platform

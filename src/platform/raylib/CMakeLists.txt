@@ -20,6 +20,7 @@ add_library(arpg_raylib STATIC
     fire_room_material_slice.cpp
     dungeon_view_math.cpp
     dungeon_runtime.cpp
+    environment_prop_layout.cpp
     game_audio.cpp
     ground_loot_view.cpp
     host_input.cpp

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "environment_prop_layout.hpp"
 #include "material_asset_types.hpp"
 
 #include "dungeon/dungeon_types.hpp"
@@ -29,6 +30,7 @@ struct WaterRoomPropDefinition final {
 struct WaterRoomMaterialSlice final {
     std::array<WaterRoomPropDefinition,
         static_cast<std::size_t>(WaterRoomPropId::count)> props{};
+    std::array<EnvironmentPropDefinition, 5> environment_props{};
 };
 
 [[nodiscard]] const WaterRoomMaterialSlice&

@@ -45,7 +45,7 @@ std::size_t occurrence_count(const std::string& source,
     return count;
 }
 
-arpg::test::Failure environment_renderer_uses_only_the_atomic_native_plan() noexcept {
+arpg::test::Failure environment_renderer_uses_independent_native_paths() noexcept {
     const std::string renderer = read_project_source(
         "src/platform/raylib/room_renderer.cpp");
     ARPG_REQUIRE(!renderer.empty());
@@ -84,12 +84,12 @@ arpg::test::Failure environment_renderer_uses_only_the_atomic_native_plan() noex
     ARPG_REQUIRE(draw_room != std::string::npos);
     const std::string draw_room_block = braced_block_after(renderer, draw_room);
     ARPG_REQUIRE(draw_room_block.find("can_draw_room_environment(current,")
-        != std::string::npos);
+        == std::string::npos);
     ARPG_REQUIRE(draw_room_block.find(
         "&& draw_environment_room(material_pack_, current.ecology)")
         != std::string::npos);
     const std::size_t graybox_gate = draw_room_block.find(
-        "if (!draw_material_environment)");
+        "if (!draw_material_background)");
     ARPG_REQUIRE(graybox_gate != std::string::npos);
     ARPG_REQUIRE(braced_block_after(draw_room_block, graybox_gate).find(
         "draw_graybox_room") != std::string::npos);
@@ -100,20 +100,37 @@ arpg::test::Failure environment_renderer_uses_only_the_atomic_native_plan() noex
     const std::string door_call = draw_room_block.substr(doors,
         door_call_end - doors + 2U);
     ARPG_REQUIRE(door_call.find(
-        "draw_material_environment") == std::string::npos);
+        "draw_material_background") == std::string::npos);
     ARPG_REQUIRE(draw_room_block.find(
-        "draw_hole(current, material_pack_, draw_material_environment)")
+        "draw_hole(current, material_pack_)")
         != std::string::npos);
-    const std::size_t gate = renderer.find(
-        "if (draw_material_environment) {", draw_room);
-    ARPG_REQUIRE(gate != std::string::npos);
-    const std::string guarded_props = braced_block_after(renderer, gate);
-    for (const char* draw_props : {"draw_fire_room_props(",
-             "draw_water_room_props(", "draw_lightning_room_props(",
-             "draw_chaos_room_props("}) {
-        ARPG_REQUIRE(occurrence_count(draw_room_block, draw_props) == 1U);
-        ARPG_REQUIRE(occurrence_count(guarded_props, draw_props) == 1U);
+    ARPG_REQUIRE(occurrence_count(draw_room_block,
+        "draw_fire_room_props(") == 1U);
+    ARPG_REQUIRE(occurrence_count(draw_room_block,
+        "draw_environment_room_props(") == 1U);
+    for (const char* old_loop : {"draw_water_room_props(",
+             "draw_lightning_room_props(", "draw_chaos_room_props("}) {
+        ARPG_REQUIRE(renderer.find(old_loop) == std::string::npos);
     }
+    const std::size_t shared_props = renderer.find(
+        "void draw_environment_room_props");
+    ARPG_REQUIRE(shared_props != std::string::npos);
+    const std::string shared_props_block = braced_block_after(
+        renderer, shared_props);
+    ARPG_REQUIRE(occurrence_count(shared_props_block, "for (") == 1U);
+    ARPG_REQUIRE(shared_props_block.find(
+        "environment_prop_layout(") != std::string::npos);
+    ARPG_REQUIRE(shared_props_block.find(
+        "DrawRectangleLinesEx(bounds, 2.0F, Color{35, 48, 62, 72})")
+        != std::string::npos);
+    const std::size_t draw_hole = renderer.find("void draw_hole");
+    ARPG_REQUIRE(draw_hole != std::string::npos);
+    const std::string draw_hole_block = braced_block_after(renderer, draw_hole);
+    ARPG_REQUIRE(draw_hole_block.find(
+        "if (!material_pack.draw(hole_sprite(snapshot.ecology)")
+        != std::string::npos);
+    ARPG_REQUIRE(draw_hole_block.find("DrawEllipse(x, y")
+        != std::string::npos);
 
     constexpr std::array<const char*, 8> legacy_plan_sources{{
         "src/platform/raylib/material_animation.hpp",
@@ -131,6 +148,16 @@ arpg::test::Failure environment_renderer_uses_only_the_atomic_native_plan() noex
         ARPG_REQUIRE(source.find("select_floor_sprite") == std::string::npos);
         ARPG_REQUIRE(source.find("RoomRenderPlan") == std::string::npos);
         ARPG_REQUIRE(source.find("_room_render_plan") == std::string::npos);
+    }
+    for (const char* runtime_source : {
+             "src/platform/raylib/environment_prop_layout.cpp",
+             "src/platform/raylib/water_room_material_slice.cpp",
+             "src/platform/raylib/lightning_room_material_slice.cpp",
+             "src/platform/raylib/chaos_room_material_slice.cpp",
+             "src/platform/raylib/room_renderer.cpp"}) {
+        const std::string source = read_project_source(runtime_source);
+        ARPG_REQUIRE(!source.empty());
+        ARPG_REQUIRE(source.find(".json") == std::string::npos);
     }
     return {};
 }
@@ -151,11 +178,9 @@ arpg::test::Failure directional_door_atlas_is_drawable_without_gating_background
         "src/platform/raylib/room_renderer.cpp");
     const std::size_t can_draw = renderer.find("bool can_draw_room_environment");
     const std::size_t draw_doors = renderer.find("void draw_doors");
-    ARPG_REQUIRE(can_draw != std::string::npos);
+    ARPG_REQUIRE(can_draw == std::string::npos);
     ARPG_REQUIRE(draw_doors != std::string::npos);
-    const std::string environment_gate = braced_block_after(renderer, can_draw);
     const std::string doors = braced_block_after(renderer, draw_doors);
-    ARPG_REQUIRE(environment_gate.find("select_door_sprite") == std::string::npos);
     ARPG_REQUIRE(doors.find("material_pack.draw(visual.sprite") != std::string::npos);
     ARPG_REQUIRE(doors.find("DrawRectangleRec") == std::string::npos);
     ARPG_REQUIRE(doors.find("visual.arrow") == std::string::npos);
@@ -338,8 +363,8 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
 }
 
 constexpr arpg::test::TestCase kCases[] = {
-    {"uses only the atomic native background plan",
-        &environment_renderer_uses_only_the_atomic_native_plan},
+    {"uses independent native background prop and hole paths",
+        &environment_renderer_uses_independent_native_paths},
     {"falls back atomically when a required frame is missing",
         &environment_falls_back_atomically_when_a_required_frame_is_missing},
     {"directional door atlas leaves room background independent",
