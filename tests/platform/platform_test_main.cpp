@@ -14,6 +14,7 @@ arpg::test::TestSuite audio_scene_suite() noexcept;
 arpg::test::TestSuite stage15_audio_pack_suite() noexcept;
 arpg::test::TestSuite host_input_suite() noexcept;
 arpg::test::TestSuite active_skill_input_suite() noexcept;
+arpg::test::TestSuite raylib_input_suite() noexcept;
 arpg::test::TestSuite active_skill_view_suite() noexcept;
 arpg::test::TestSuite active_skill_asset_suite() noexcept;
 arpg::test::TestSuite active_skill_loadout_view_suite() noexcept;
@@ -70,6 +71,7 @@ int main() {
         stage15_audio_pack_suite(),
         host_input_suite(),
         active_skill_input_suite(),
+        raylib_input_suite(),
         active_skill_view_suite(),
         active_skill_asset_suite(),
         active_skill_loadout_view_suite(),
@@ -107,6 +109,6 @@ int main() {
         stage12_material_render_suite(),
     };
 
-    return arpg::test::run_suites(suites, 469,
+    return arpg::test::run_suites(suites, 473,
         "HUD and UI material slice contract");
 }

@@ -146,11 +146,16 @@ test::Failure sampler_queries_every_stable_key_once_per_state() noexcept {
 
     for (std::size_t index = 0U; index < kStableKeyCount; ++index) {
         const int code = kExpectedRaylibKeys[index];
-        const unsigned expected_pressed = code >= KEY_ONE && code <= KEY_FIVE
-            ? 2U : 1U;
         ARPG_REQUIRE(log.pressed[static_cast<std::size_t>(code)]
-            == expected_pressed);
+            == 1U);
         ARPG_REQUIRE(log.down[static_cast<std::size_t>(code)] == 1U);
+    }
+    constexpr std::array<int, skills::kActiveSkillSlotCount> skill_keys{{
+        KEY_KP_1, KEY_KP_2, KEY_KP_3, KEY_KP_4, KEY_KP_5,
+    }};
+    for (int key : skill_keys) {
+        ARPG_REQUIRE(log.pressed[static_cast<std::size_t>(key)] == 1U);
+        ARPG_REQUIRE(log.down[static_cast<std::size_t>(key)] == 0U);
     }
     ARPG_REQUIRE(log.pressed[KEY_ESCAPE] == 1U);
     ARPG_REQUIRE(log.pressed[KEY_ENTER] == 1U);

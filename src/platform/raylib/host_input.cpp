@@ -12,6 +12,8 @@ namespace {
 
 constexpr std::size_t kStableKeyCount =
     static_cast<std::size_t>(settings::StableKey::count);
+constexpr std::array<int, skills::kActiveSkillSlotCount>
+    kActiveSkillKeys{{KEY_KP_1, KEY_KP_2, KEY_KP_3, KEY_KP_4, KEY_KP_5}};
 
 [[nodiscard]] constexpr std::size_t stable_index(
     settings::StableKey key) noexcept {
@@ -111,7 +113,7 @@ PhysicalKeySnapshot sample_physical_keys(
     for (std::size_t index = 0U;
             index < snapshot.active_skill_slots.size(); ++index) {
         snapshot.active_skill_slots[index] = source.pressed(
-            source.context, KEY_ONE + static_cast<int>(index));
+            source.context, kActiveSkillKeys[index]);
     }
     snapshot.mouse_left = source.mouse_left_pressed != nullptr
         && source.mouse_left_pressed(source.context);

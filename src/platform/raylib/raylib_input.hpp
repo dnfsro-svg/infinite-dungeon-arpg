@@ -27,6 +27,7 @@ struct FrameKeyState final {
     bool focus_lost{};
 };
 
+[[nodiscard]] int win32_virtual_key_for_raylib(int raylib_key) noexcept;
 [[nodiscard]] bool platform_key_pressed(int raylib_key) noexcept;
 [[nodiscard]] bool platform_key_down(int raylib_key) noexcept;
 [[nodiscard]] DeathInputGate death_input_gate(

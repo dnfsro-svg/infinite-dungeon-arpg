@@ -9,7 +9,6 @@ extern "C" __declspec(dllimport) short __stdcall GetAsyncKeyState(int key);
 namespace arpg::platform {
 namespace {
 
-#if defined(_WIN32)
 constexpr int kVkBack = 0x08;
 constexpr int kVkTab = 0x09;
 constexpr int kVkReturn = 0x0D;
@@ -20,6 +19,11 @@ constexpr int kVkRight = 0x27;
 constexpr int kVkDown = 0x28;
 constexpr int kVkInsert = 0x2D;
 constexpr int kVkDelete = 0x2E;
+constexpr int kVkNumpad1 = 0x61;
+constexpr int kVkNumpad2 = 0x62;
+constexpr int kVkNumpad3 = 0x63;
+constexpr int kVkNumpad4 = 0x64;
+constexpr int kVkNumpad5 = 0x65;
 constexpr int kVkF1 = 0x70;
 constexpr int kVkLeftShift = 0xA0;
 constexpr int kVkRightShift = 0xA1;
@@ -28,7 +32,15 @@ constexpr int kVkRightControl = 0xA3;
 constexpr int kVkLeftAlt = 0xA4;
 constexpr int kVkRightAlt = 0xA5;
 
-int virtual_key(int key) noexcept {
+#if defined(_WIN32)
+short asynchronous_key_state(int virtual_key) noexcept {
+    return virtual_key == 0 ? 0 : GetAsyncKeyState(virtual_key);
+}
+#endif
+
+}  // namespace
+
+int win32_virtual_key_for_raylib(int key) noexcept {
     if ((key >= KEY_ZERO && key <= KEY_NINE)
             || (key >= KEY_A && key <= KEY_Z)) {
         return key;
@@ -42,6 +54,11 @@ int virtual_key(int key) noexcept {
     case KEY_BACKSPACE: return kVkBack;
     case KEY_INSERT: return kVkInsert;
     case KEY_DELETE: return kVkDelete;
+    case KEY_KP_1: return kVkNumpad1;
+    case KEY_KP_2: return kVkNumpad2;
+    case KEY_KP_3: return kVkNumpad3;
+    case KEY_KP_4: return kVkNumpad4;
+    case KEY_KP_5: return kVkNumpad5;
     case KEY_LEFT_CONTROL: return kVkLeftControl;
     case KEY_RIGHT_CONTROL: return kVkRightControl;
     case KEY_LEFT_SHIFT: return kVkLeftShift;
@@ -56,18 +73,11 @@ int virtual_key(int key) noexcept {
     }
 }
 
-short asynchronous_key_state(int key) noexcept {
-    const int mapped = virtual_key(key);
-    return mapped == 0 ? 0 : GetAsyncKeyState(mapped);
-}
-#endif
-
-}  // namespace
-
 bool platform_key_pressed(int key) noexcept {
 #if defined(_WIN32)
     return IsKeyPressed(key)
-        || (asynchronous_key_state(key) & 0x0001) != 0;
+        || (asynchronous_key_state(win32_virtual_key_for_raylib(key))
+            & 0x0001) != 0;
 #else
     return IsKeyPressed(key);
 #endif
@@ -75,7 +85,8 @@ bool platform_key_pressed(int key) noexcept {
 
 bool platform_key_down(int key) noexcept {
 #if defined(_WIN32)
-    const short state = asynchronous_key_state(key);
+    const short state = asynchronous_key_state(
+        win32_virtual_key_for_raylib(key));
     return IsKeyDown(key)
         || (state & static_cast<short>(0x8000)) != 0
         || (state & 0x0001) != 0;

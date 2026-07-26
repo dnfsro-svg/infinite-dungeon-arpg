@@ -13,6 +13,14 @@ namespace {
 
 using namespace arpg;
 
+constexpr std::array<int, skills::kActiveSkillSlotCount> kNumpadSkillKeys{{
+    KEY_KP_1, KEY_KP_2, KEY_KP_3, KEY_KP_4, KEY_KP_5,
+}};
+
+constexpr std::array<int, skills::kActiveSkillSlotCount> kMainNumberKeys{{
+    KEY_ONE, KEY_TWO, KEY_THREE, KEY_FOUR, KEY_FIVE,
+}};
+
 struct KeySourceState final {
     std::array<bool, 512> pressed{};
     std::array<bool, 512> down{};
@@ -43,10 +51,33 @@ void commit_pending_save(dungeon::DungeonSession& session) noexcept {
         pending->kind});
 }
 
-test::Failure sampler_maps_number_key_edges_to_active_skill_slots() noexcept {
-    for (std::size_t slot = 0U; slot < skills::kActiveSkillSlotCount; ++slot) {
+test::Failure sampler_preserves_multiple_numpad_pressed_edges() noexcept {
+    KeySourceState state{};
+    state.pressed[KEY_KP_1] = true;
+    state.pressed[KEY_KP_5] = true;
+    const auto snapshot = platform::sample_physical_keys(source_for(state));
+    ARPG_REQUIRE(snapshot.active_skill_slots[0U]);
+    ARPG_REQUIRE(!snapshot.active_skill_slots[1U]);
+    ARPG_REQUIRE(!snapshot.active_skill_slots[2U]);
+    ARPG_REQUIRE(!snapshot.active_skill_slots[3U]);
+    ARPG_REQUIRE(snapshot.active_skill_slots[4U]);
+    return {};
+}
+
+test::Failure held_numpad_keys_do_not_repeat_as_active_skill_edges() noexcept {
+    KeySourceState state{};
+    state.down[KEY_KP_1] = true;
+    const auto snapshot = platform::sample_physical_keys(source_for(state));
+    for (bool pressed : snapshot.active_skill_slots) {
+        ARPG_REQUIRE(!pressed);
+    }
+    return {};
+}
+
+test::Failure numpad_pressed_edges_map_to_exact_active_skill_slots() noexcept {
+    for (std::size_t slot = 0U; slot < kNumpadSkillKeys.size(); ++slot) {
         KeySourceState state{};
-        state.pressed[static_cast<std::size_t>(KEY_ONE) + slot] = true;
+        state.pressed[static_cast<std::size_t>(kNumpadSkillKeys[slot])] = true;
         const auto snapshot = platform::sample_physical_keys(source_for(state));
         for (std::size_t candidate = 0U;
                 candidate < skills::kActiveSkillSlotCount; ++candidate) {
@@ -57,12 +88,24 @@ test::Failure sampler_maps_number_key_edges_to_active_skill_slots() noexcept {
     return {};
 }
 
-test::Failure held_number_keys_do_not_repeat_as_active_skill_edges() noexcept {
+test::Failure main_numbers_are_rejected_and_down_is_not_a_pressed_edge()
+    noexcept {
     KeySourceState state{};
-    state.down[KEY_ONE] = true;
-    const auto snapshot = platform::sample_physical_keys(source_for(state));
-    for (bool pressed : snapshot.active_skill_slots) {
-        ARPG_REQUIRE(!pressed);
+    for (int key : kMainNumberKeys) {
+        state.pressed[static_cast<std::size_t>(key)] = true;
+    }
+    for (int key : kNumpadSkillKeys) {
+        state.down[static_cast<std::size_t>(key)] = true;
+    }
+    auto snapshot = platform::sample_physical_keys(source_for(state));
+    for (bool requested : snapshot.active_skill_slots) {
+        ARPG_REQUIRE(!requested);
+    }
+
+    state.pressed[KEY_KP_3] = true;
+    snapshot = platform::sample_physical_keys(source_for(state));
+    for (std::size_t slot = 0U; slot < skills::kActiveSkillSlotCount; ++slot) {
+        ARPG_REQUIRE(snapshot.active_skill_slots[slot] == (slot == 2U));
     }
     return {};
 }
@@ -137,11 +180,24 @@ test::Failure submit_skips_a_cooling_earlier_slot_and_accepts_later_slot()
     return {};
 }
 
+test::Failure submit_semantics_keep_only_the_first_accepted_slot() noexcept {
+    dungeon::DungeonSession session{};
+    session.tick({});
+    platform::HostFrameInput input{};
+    input.active_skill_slots.fill(true);
+    const auto submitted = platform::submit_frame_actions(session, input);
+    ARPG_REQUIRE(submitted.skills[0U] == combat::SkillCastResult::accepted);
+    for (std::size_t slot = 1U; slot < skills::kActiveSkillSlotCount; ++slot) {
+        ARPG_REQUIRE(submitted.skills[slot] == combat::SkillCastResult::none);
+    }
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
-    {"number key edges map to active skill slots",
-        &sampler_maps_number_key_edges_to_active_skill_slots},
-    {"held number keys do not repeat",
-        &held_number_keys_do_not_repeat_as_active_skill_edges},
+    {"multiple numpad edges remain distinct",
+        &sampler_preserves_multiple_numpad_pressed_edges},
+    {"held numpad keys do not repeat",
+        &held_numpad_keys_do_not_repeat_as_active_skill_edges},
     {"mapper forwards skill slots through attack gate",
         &mapper_forwards_slots_and_counts_them_as_attack_input},
     {"submit routes same frame skill slots in order",
@@ -150,6 +206,12 @@ constexpr arpg::test::TestCase kCases[] = {
         &submit_skips_an_empty_earlier_slot_and_accepts_later_slot},
     {"submit skips cooling earlier skill slot",
         &submit_skips_a_cooling_earlier_slot_and_accepts_later_slot},
+    {"numpad edges map to exact active skill slots",
+        &numpad_pressed_edges_map_to_exact_active_skill_slots},
+    {"main numbers are rejected and held keys do not repeat",
+        &main_numbers_are_rejected_and_down_is_not_a_pressed_edge},
+    {"submit semantics keep only the first accepted slot",
+        &submit_semantics_keep_only_the_first_accepted_slot},
 };
 
 }  // namespace

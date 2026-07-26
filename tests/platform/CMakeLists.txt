@@ -4,6 +4,7 @@ if(TARGET arpg_raylib)
         platform_test_main.cpp
         host_input_tests.cpp
         active_skill_input_tests.cpp
+        raylib_input_tests.cpp
         active_skill_view_tests.cpp
         active_skill_asset_tests.cpp
         active_skill_loadout_view_tests.cpp
