@@ -3,6 +3,8 @@
 #include "material_animation.hpp"
 #include "material_asset_validation.hpp"
 #include "material_manifest.hpp"
+#include "material_residency.hpp"
+#include "monster_material_presenter.hpp"
 
 #include <raylib.h>
 
@@ -186,6 +188,45 @@ arpg::test::Failure stage12_player_attack_actions_have_distinct_material_frames(
     return {};
 }
 
+arpg::test::Failure active_monsters_produce_phase_aware_material_draw_plans() noexcept {
+    arpg::platform::MonsterMaterialPresenter presenter{};
+    arpg::combat::MonsterSnapshot monster{};
+    monster.active = true;
+    monster.generation = 41U;
+    monster.id = MonsterId::chaos_chaser;
+    monster.ai_phase = MonsterAiPhase::active;
+    arpg::dungeon::DungeonSnapshot fire_snapshot{};
+    fire_snapshot.has_active_room = true;
+    fire_snapshot.ecology = arpg::dungeon::DungeonElement::fire;
+    fire_snapshot.combat.emplace();
+    fire_snapshot.combat->monster_count = 1U;
+    fire_snapshot.combat->monsters[0] = monster;
+    const auto residency = arpg::platform::make_material_residency_request(
+        fire_snapshot);
+    ARPG_REQUIRE(residency.contains(arpg::platform::MaterialAtlasId::fire_environment));
+    ARPG_REQUIRE(residency.contains(arpg::platform::MaterialAtlasId::chaos_chaser));
+    const auto chaos = presenter.collect_draw_plan(0U, monster, 100U, false);
+    ARPG_REQUIRE(chaos.visible);
+    ARPG_REQUIRE(chaos.use_material_frame);
+    ARPG_REQUIRE(chaos.animation_state
+        == arpg::platform::MonsterAnimationState::active);
+    ARPG_REQUIRE(chaos.frame.has_value());
+
+    monster.generation = 42U;
+    monster.id = MonsterId::fire_bomber;
+    monster.ai_phase = MonsterAiPhase::telegraph;
+    const auto telegraph = presenter.collect_draw_plan(0U, monster, 200U, false);
+    ARPG_REQUIRE(telegraph.use_material_frame);
+    ARPG_REQUIRE(telegraph.frame_index == 0U);
+    monster.ai_phase = MonsterAiPhase::active;
+    const auto active = presenter.collect_draw_plan(0U, monster, 206U, false);
+    ARPG_REQUIRE(active.use_material_frame);
+    ARPG_REQUIRE(active.animation_state
+        == arpg::platform::MonsterAnimationState::active);
+    ARPG_REQUIRE(active.frame_index == 0U);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"maps every monster phase to a distinct material frame",
         &stage12_monster_phases_use_distinct_material_frames},
@@ -197,6 +238,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &stage12_monster_phase_frames_have_unique_exported_pixels},
     {"exports content for every actor manifest frame",
         &stage12_all_actor_manifest_frames_have_exported_content},
+    {"active monsters produce phase-aware material draw plans",
+        &active_monsters_produce_phase_aware_material_draw_plans},
 };
 
 }  // namespace

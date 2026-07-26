@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 
 #include "material_animation.hpp"
+#include "material_manifest.hpp"
 
 #include <array>
 
@@ -12,6 +13,7 @@ using arpg::combat::MonsterId;
 using arpg::combat::PlayerState;
 using arpg::platform::AnimationClipId;
 using arpg::platform::MaterialSpriteId;
+using arpg::platform::MonsterAnimationState;
 using arpg::platform::PlayerAnimationClipId;
 
 arpg::test::Failure player_animation_clips_have_required_unique_uv_frames() noexcept {
@@ -127,6 +129,57 @@ arpg::test::Failure material_animation_covers_monsters_and_ai_phases() noexcept 
     return {};
 }
 
+arpg::test::Failure every_monster_exposes_every_drawable_phase_clip() noexcept {
+    constexpr std::array<MonsterId, 8> kMonsters{{
+        MonsterId::fire_bomber, MonsterId::fire_charger,
+        MonsterId::water_bulwark, MonsterId::water_support,
+        MonsterId::lightning_shooter, MonsterId::lightning_dasher,
+        MonsterId::chaos_chaser, MonsterId::chaos_hazard,
+    }};
+    constexpr std::array<MonsterAnimationState, 8> kStates{{
+        MonsterAnimationState::idle, MonsterAnimationState::move,
+        MonsterAnimationState::telegraph, MonsterAnimationState::active,
+        MonsterAnimationState::recovery, MonsterAnimationState::cooldown,
+        MonsterAnimationState::hurt, MonsterAnimationState::death,
+    }};
+    for (const MonsterId monster : kMonsters) {
+        for (const MonsterAnimationState state : kStates) {
+            const auto* const clip = arpg::platform::monster_animation_clip(
+                monster, state);
+            ARPG_REQUIRE(clip != nullptr);
+            ARPG_REQUIRE(clip->frame_count > 0U);
+            for (std::uint16_t frame{}; frame < clip->frame_count; ++frame) {
+                const auto material_frame =
+                    arpg::platform::monster_animation_frame(*clip, frame);
+                ARPG_REQUIRE(material_frame.has_value());
+                const auto manifest = arpg::platform::default_material_manifest();
+                const auto* atlas = [&]() noexcept
+                    -> const arpg::platform::MaterialAtlasDefinition* {
+                    for (std::size_t index{}; index < manifest.atlas_count; ++index) {
+                        if (manifest.atlases[index].id == material_frame->atlas) {
+                            return &manifest.atlases[index];
+                        }
+                    }
+                    return nullptr;
+                }();
+                ARPG_REQUIRE(atlas != nullptr);
+                ARPG_REQUIRE(material_frame->source.x >= 0.0F);
+                ARPG_REQUIRE(material_frame->source.y >= 0.0F);
+                ARPG_REQUIRE(material_frame->source.x + material_frame->source.width
+                    <= static_cast<float>(atlas->width));
+                ARPG_REQUIRE(material_frame->source.y + material_frame->source.height
+                    <= static_cast<float>(atlas->height));
+            }
+        }
+    }
+    for (const AnimationClipId id : {AnimationClipId::monster_idle,
+             AnimationClipId::monster_move, AnimationClipId::monster_attack,
+             AnimationClipId::monster_hurt, AnimationClipId::monster_death}) {
+        ARPG_REQUIRE(arpg::platform::material_animation_clip(id) == nullptr);
+    }
+    return {};
+}
+
 
 arpg::test::Failure material_animation_exposes_fixed_capacity_clips() noexcept {
     const auto* idle = arpg::platform::material_animation_clip(AnimationClipId::player_idle);
@@ -137,9 +190,6 @@ arpg::test::Failure material_animation_exposes_fixed_capacity_clips() noexcept {
         != MaterialSpriteId::missing);
     ARPG_REQUIRE(arpg::platform::material_animation_frame_sprite(*idle, idle->frame_count)
         == MaterialSpriteId::missing);
-    const auto* attack = arpg::platform::material_animation_clip(AnimationClipId::monster_attack);
-    ARPG_REQUIRE(attack != nullptr);
-    ARPG_REQUIRE(attack->frame_count >= 20U);
     return {};
 }
 
@@ -153,6 +203,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &material_animation_covers_all_player_states_and_attacks},
     {"covers monsters and ai phases",
         &material_animation_covers_monsters_and_ai_phases},
+    {"exposes every drawable phase clip for every monster",
+        &every_monster_exposes_every_drawable_phase_clip},
     {"exposes fixed capacity clips",
         &material_animation_exposes_fixed_capacity_clips},
 };

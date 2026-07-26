@@ -311,14 +311,18 @@ arpg::test::Failure water_room_consumes_only_water_environment_materials() noexc
 arpg::test::Failure monsters_expose_complete_multiframe_state_groups(
     const std::array<MonsterId, 2>& monsters,
     const std::array<MaterialAtlasId, 2>& atlases) noexcept {
-    constexpr std::array<MonsterAnimationState, 5> kStates{{
+    constexpr std::array<MonsterAnimationState, 8> kStates{{
         MonsterAnimationState::idle,
         MonsterAnimationState::move,
-        MonsterAnimationState::special,
+        MonsterAnimationState::telegraph,
+        MonsterAnimationState::active,
+        MonsterAnimationState::recovery,
+        MonsterAnimationState::cooldown,
         MonsterAnimationState::hurt,
         MonsterAnimationState::death,
     }};
-    constexpr std::array<std::uint16_t, 5> kMinimumFrames{{12U, 16U, 20U, 8U, 16U}};
+    constexpr std::array<std::uint16_t, 8> kMinimumFrames{{
+        12U, 16U, 20U, 20U, 20U, 20U, 8U, 16U}};
     for (std::size_t monster_index{}; monster_index < monsters.size();
          ++monster_index) {
         const MaterialAtlasDefinition* const atlas = find_atlas(
@@ -579,7 +583,7 @@ arpg::test::Failure water_monster_presentation_restarts_non_looping_states() noe
 
     monster.ai_phase = MonsterAiPhase::telegraph;
     const auto special = presenter.collect_draw_plan(1U, monster, 49U, false);
-    ARPG_REQUIRE(special.animation_state == MonsterAnimationState::special);
+    ARPG_REQUIRE(special.animation_state == MonsterAnimationState::telegraph);
     ARPG_REQUIRE(special.frame_index == 0U);
 
     const auto hurt = presenter.collect_draw_plan(1U, monster, 50U, true);
@@ -599,12 +603,14 @@ arpg::test::Failure water_monster_runtime_states_select_frame_groups() noexcept 
         MonsterAiPhase::idle, false) == MonsterAnimationState::idle);
     ARPG_REQUIRE(arpg::platform::select_monster_animation_state(
         MonsterAiPhase::move, false) == MonsterAnimationState::move);
-    for (const MonsterAiPhase phase : {MonsterAiPhase::telegraph,
-             MonsterAiPhase::active, MonsterAiPhase::recovery,
-             MonsterAiPhase::cooldown}) {
-        ARPG_REQUIRE(arpg::platform::select_monster_animation_state(
-            phase, false) == MonsterAnimationState::special);
-    }
+    ARPG_REQUIRE(arpg::platform::select_monster_animation_state(
+        MonsterAiPhase::telegraph, false) == MonsterAnimationState::telegraph);
+    ARPG_REQUIRE(arpg::platform::select_monster_animation_state(
+        MonsterAiPhase::active, false) == MonsterAnimationState::active);
+    ARPG_REQUIRE(arpg::platform::select_monster_animation_state(
+        MonsterAiPhase::recovery, false) == MonsterAnimationState::recovery);
+    ARPG_REQUIRE(arpg::platform::select_monster_animation_state(
+        MonsterAiPhase::cooldown, false) == MonsterAnimationState::cooldown);
     ARPG_REQUIRE(arpg::platform::select_monster_animation_state(
         MonsterAiPhase::move, true) == MonsterAnimationState::hurt);
     ARPG_REQUIRE(arpg::platform::select_monster_animation_state(
@@ -639,7 +645,7 @@ arpg::test::Failure lightning_monster_presentation_runs_special_hurt_and_death()
     monster.ai_phase = MonsterAiPhase::telegraph;
     const auto special = presenter.collect_draw_plan(0U, monster, 49U, false);
     ARPG_REQUIRE(special.use_material_frame);
-    ARPG_REQUIRE(special.animation_state == MonsterAnimationState::special);
+    ARPG_REQUIRE(special.animation_state == MonsterAnimationState::telegraph);
     ARPG_REQUIRE(special.frame_index == 0U);
     const auto hurt = presenter.collect_draw_plan(0U, monster, 50U, true);
     ARPG_REQUIRE(hurt.animation_state == MonsterAnimationState::hurt);
@@ -778,7 +784,7 @@ arpg::test::Failure chaos_monster_presentation_runs_special_hurt_and_death() noe
     monster.ai_phase = MonsterAiPhase::telegraph;
     const auto special = presenter.collect_draw_plan(0U, monster, 49U, false);
     ARPG_REQUIRE(special.use_material_frame);
-    ARPG_REQUIRE(special.animation_state == MonsterAnimationState::special);
+    ARPG_REQUIRE(special.animation_state == MonsterAnimationState::telegraph);
     ARPG_REQUIRE(special.frame_index == 0U);
     const auto hurt = presenter.collect_draw_plan(0U, monster, 50U, true);
     ARPG_REQUIRE(hurt.animation_state == MonsterAnimationState::hurt);

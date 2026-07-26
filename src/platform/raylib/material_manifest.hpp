@@ -355,11 +355,6 @@ inline constexpr AnimationClipDefinition kDefaultAnimationClips[] = {
     {AnimationClipId::player_j3, MaterialSpriteId::player_j3, 0U, 26U, 26U, 24U, 1U, 1U, MaterialEcology::common},
     {AnimationClipId::player_launcher, MaterialSpriteId::player_launcher, 0U, 24U, 24U, 24U, 1U, 1U, MaterialEcology::common},
     {AnimationClipId::player_jump, MaterialSpriteId::player_jump_rise, 0U, 24U, 24U, 24U, 0U, 0U, MaterialEcology::common},
-    {AnimationClipId::monster_idle, MaterialSpriteId::fire_bomber_idle, 0U, 12U, 12U, 24U, 0U, 0U, MaterialEcology::fire},
-    {AnimationClipId::monster_move, MaterialSpriteId::fire_bomber_move, 0U, 16U, 16U, 24U, 0U, 1U, MaterialEcology::fire},
-    {AnimationClipId::monster_attack, MaterialSpriteId::fire_bomber_active, 0U, 20U, 20U, 24U, 1U, 1U, MaterialEcology::fire},
-    {AnimationClipId::monster_hurt, MaterialSpriteId::fire_bomber_recovery, 0U, 8U, 8U, 24U, 0U, 0U, MaterialEcology::fire},
-    {AnimationClipId::monster_death, MaterialSpriteId::fire_bomber_defeated, 0U, 16U, 16U, 24U, 0U, 0U, MaterialEcology::fire},
 };
 
 #undef ARPG_ACTOR_FRAME

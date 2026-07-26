@@ -44,10 +44,20 @@ struct PlayerAnimationFrame final {
 enum class MonsterAnimationState : std::uint8_t {
     idle,
     move,
-    special,
+    telegraph,
+    active,
+    recovery,
+    cooldown,
     hurt,
     death,
     count,
+};
+
+struct ExplicitMonsterAnimationFrame final {
+    Rectangle source{};
+    Vector2 foot_anchor{};
+    std::uint8_t duration_ticks{1U};
+    std::uint8_t key_pose_index{};
 };
 
 struct MonsterAnimationClipDefinition final {
@@ -58,6 +68,7 @@ struct MonsterAnimationClipDefinition final {
     std::uint16_t frame_count{};
     std::uint8_t frames_per_second{18U};
     std::uint8_t key_pose_count{4U};
+    const ExplicitMonsterAnimationFrame* explicit_frames{};
 };
 
 struct MonsterAnimationFrame final {

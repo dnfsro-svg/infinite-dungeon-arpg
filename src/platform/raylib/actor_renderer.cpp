@@ -583,9 +583,10 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
                 hit_flash_seconds);
             monster_material_draw_statuses_[static_cast<std::size_t>(monster.id)]
                 .drawn |= material_frame_drawn;
-            if (material_frame_drawn
-                || draw_material_actor(material_pack_, sprite, monster.facing,
-                    false, projected, hit_flash_seconds)) {
+            const bool legacy_frame_drawn = !item.material_plan.use_material_frame
+                && draw_material_actor(material_pack_, sprite, monster.facing,
+                    false, projected, hit_flash_seconds);
+            if (material_frame_drawn || legacy_frame_drawn) {
                 draw_monster_presentation(monster, item.position, current.ecology,
                     width, height, current_combat.tick, item.monster_index,
                     hud_renderer_.hud_font(), hud_renderer_.font_ready());

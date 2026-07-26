@@ -2,6 +2,7 @@
 
 #include "combat/combat_world.hpp"
 #include "fire_room_material_slice.hpp"
+#include "material_animation.hpp"
 #include "material_asset_validation.hpp"
 #include "material_manifest.hpp"
 
@@ -9,6 +10,9 @@
 #include <cstddef>
 
 namespace {
+
+using arpg::combat::MonsterId;
+using arpg::platform::MonsterAnimationState;
 
 arpg::test::Failure fire_room_has_required_layered_props() noexcept {
     const arpg::platform::FireRoomMaterialSlice& slice =
@@ -106,12 +110,89 @@ arpg::test::Failure fire_room_attack_snapshot_hides_only_hit_crate() noexcept {
     return {};
 }
 
+arpg::test::Failure fire_monster_clips_reach_only_committed_opaque_cells() noexcept {
+    struct ExpectedFrame final {
+        std::uint16_t cell;
+        std::uint8_t duration;
+        Vector2 anchor;
+    };
+    struct ExpectedClip final {
+        MonsterId monster;
+        MonsterAnimationState state;
+        const ExpectedFrame* frames;
+        std::size_t count;
+    };
+#define EXPECTED_FRAME(cell, duration, x, y) ExpectedFrame{cell, duration, {x, y}}
+    constexpr ExpectedFrame kBomberIdle[]{EXPECTED_FRAME(0U, 6U, 125.0F, 234.0F)};
+    constexpr ExpectedFrame kBomberMove[]{EXPECTED_FRAME(1U, 4U, 111.0F, 235.0F)};
+    constexpr ExpectedFrame kBomberTelegraph[]{EXPECTED_FRAME(2U, 6U, 141.0F, 235.0F), EXPECTED_FRAME(7U, 6U, 113.0F, 229.0F)};
+    constexpr ExpectedFrame kBomberActive[]{EXPECTED_FRAME(8U, 3U, 121.0F, 222.0F), EXPECTED_FRAME(3U, 3U, 112.0F, 228.0F), EXPECTED_FRAME(9U, 4U, 109.0F, 224.0F)};
+    constexpr ExpectedFrame kBomberRecovery[]{EXPECTED_FRAME(4U, 4U, 121.0F, 221.0F), EXPECTED_FRAME(10U, 6U, 128.0F, 220.0F)};
+    constexpr ExpectedFrame kBomberCooldown[]{EXPECTED_FRAME(5U, 6U, 110.0F, 222.0F)};
+    constexpr ExpectedFrame kBomberHurt[]{EXPECTED_FRAME(4U, 5U, 121.0F, 221.0F)};
+    constexpr ExpectedFrame kBomberDeath[]{EXPECTED_FRAME(6U, 6U, 130.0F, 225.0F), EXPECTED_FRAME(11U, 12U, 116.0F, 220.0F)};
+    constexpr ExpectedFrame kChargerIdle[]{EXPECTED_FRAME(0U, 6U, 125.0F, 250.0F)};
+    constexpr ExpectedFrame kChargerMove[]{EXPECTED_FRAME(1U, 4U, 119.0F, 249.0F)};
+    constexpr ExpectedFrame kChargerTelegraph[]{EXPECTED_FRAME(2U, 5U, 132.0F, 253.0F), EXPECTED_FRAME(8U, 5U, 144.0F, 227.0F)};
+    constexpr ExpectedFrame kChargerActive[]{EXPECTED_FRAME(9U, 3U, 128.0F, 231.0F), EXPECTED_FRAME(3U, 3U, 123.0F, 250.0F), EXPECTED_FRAME(10U, 4U, 128.0F, 229.0F)};
+    constexpr ExpectedFrame kChargerRecovery[]{EXPECTED_FRAME(4U, 6U, 132.0F, 249.0F)};
+    constexpr ExpectedFrame kChargerCooldown[]{EXPECTED_FRAME(5U, 6U, 155.0F, 252.0F)};
+    constexpr ExpectedFrame kChargerHurt[]{EXPECTED_FRAME(4U, 5U, 132.0F, 249.0F)};
+    constexpr ExpectedFrame kChargerDeath[]{EXPECTED_FRAME(6U, 6U, 114.0F, 249.0F), EXPECTED_FRAME(11U, 12U, 109.0F, 229.0F)};
+#undef EXPECTED_FRAME
+#define EXPECTED_CLIP(monster, state, frames) ExpectedClip{MonsterId::monster, MonsterAnimationState::state, frames, std::size(frames)}
+    const ExpectedClip kClips[]{
+        EXPECTED_CLIP(fire_bomber, idle, kBomberIdle), EXPECTED_CLIP(fire_bomber, move, kBomberMove),
+        EXPECTED_CLIP(fire_bomber, telegraph, kBomberTelegraph), EXPECTED_CLIP(fire_bomber, active, kBomberActive),
+        EXPECTED_CLIP(fire_bomber, recovery, kBomberRecovery), EXPECTED_CLIP(fire_bomber, cooldown, kBomberCooldown),
+        EXPECTED_CLIP(fire_bomber, hurt, kBomberHurt), EXPECTED_CLIP(fire_bomber, death, kBomberDeath),
+        EXPECTED_CLIP(fire_charger, idle, kChargerIdle), EXPECTED_CLIP(fire_charger, move, kChargerMove),
+        EXPECTED_CLIP(fire_charger, telegraph, kChargerTelegraph), EXPECTED_CLIP(fire_charger, active, kChargerActive),
+        EXPECTED_CLIP(fire_charger, recovery, kChargerRecovery), EXPECTED_CLIP(fire_charger, cooldown, kChargerCooldown),
+        EXPECTED_CLIP(fire_charger, hurt, kChargerHurt), EXPECTED_CLIP(fire_charger, death, kChargerDeath),
+    };
+#undef EXPECTED_CLIP
+    std::array<bool, 12> bomber_cells{};
+    std::array<bool, 12> charger_cells{};
+    for (const ExpectedClip& expected_clip : kClips) {
+        const auto* const clip = arpg::platform::monster_animation_clip(
+            expected_clip.monster, expected_clip.state);
+        ARPG_REQUIRE(clip != nullptr);
+        ARPG_REQUIRE(clip->frame_count == expected_clip.count);
+        std::uint64_t elapsed{};
+        for (std::size_t index{}; index < expected_clip.count; ++index) {
+            ARPG_REQUIRE(arpg::platform::monster_animation_frame_index(
+                *clip, elapsed, false) == index);
+            const auto frame = arpg::platform::monster_animation_frame(
+                *clip, static_cast<std::uint16_t>(index));
+            ARPG_REQUIRE(frame.has_value());
+            const std::uint16_t cell = static_cast<std::uint16_t>(
+                frame->source.y / 256.0F * 4.0F + frame->source.x / 256.0F);
+            ARPG_REQUIRE(frame->source.width == 256.0F);
+            ARPG_REQUIRE(frame->source.height == 256.0F);
+            ARPG_REQUIRE(cell == expected_clip.frames[index].cell);
+            ARPG_REQUIRE(frame->foot_anchor.x == expected_clip.frames[index].anchor.x);
+            ARPG_REQUIRE(frame->foot_anchor.y == expected_clip.frames[index].anchor.y);
+            (expected_clip.monster == MonsterId::fire_bomber
+                    ? bomber_cells : charger_cells)[cell] = true;
+            elapsed += expected_clip.frames[index].duration;
+        }
+    }
+    for (const bool reachable : bomber_cells) ARPG_REQUIRE(reachable);
+    for (std::size_t cell{}; cell < charger_cells.size(); ++cell) {
+        ARPG_REQUIRE(charger_cells[cell] == (cell != 7U));
+    }
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"contains all layered fire-room props", &fire_room_has_required_layered_props},
     {"preserves two fire-room navigation routes",
         &fire_room_preserves_two_navigation_routes},
     {"projects attack-broken crate state into fire-room rendering",
         &fire_room_attack_snapshot_hides_only_hit_crate},
+    {"fire monster clips reach only committed opaque cells",
+        &fire_monster_clips_reach_only_committed_opaque_cells},
 };
 
 }  // namespace

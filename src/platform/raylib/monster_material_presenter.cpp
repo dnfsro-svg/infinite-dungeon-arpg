@@ -3,20 +3,6 @@
 #include "combat_view_math.hpp"
 
 namespace arpg::platform {
-namespace {
-
-[[nodiscard]] bool has_complete_material_animation(
-    combat::MonsterId monster) noexcept {
-    return monster == combat::MonsterId::water_bulwark
-        || monster == combat::MonsterId::water_support
-        || monster == combat::MonsterId::lightning_shooter
-        || monster == combat::MonsterId::lightning_dasher
-        || monster == combat::MonsterId::chaos_chaser
-        || monster == combat::MonsterId::chaos_hazard;
-}
-
-}  // namespace
-
 MonsterMaterialDrawPlan MonsterMaterialPresenter::collect_draw_plan(
     std::size_t slot_index, const combat::MonsterSnapshot& monster,
     std::uint64_t world_tick, bool hurt) noexcept {
@@ -26,11 +12,6 @@ MonsterMaterialDrawPlan MonsterMaterialPresenter::collect_draw_plan(
         slot = {};
         return {};
     }
-    if (!has_complete_material_animation(monster.id)) {
-        slot = {};
-        return {monster_visible(monster), false};
-    }
-
     const MonsterAnimationState desired = select_monster_animation_state(
         monster.ai_phase, hurt);
     const bool identity_changed = !slot.occupied
@@ -46,11 +27,18 @@ MonsterMaterialDrawPlan MonsterMaterialPresenter::collect_draw_plan(
         bool hurt_complete = true;
         if (slot.state == MonsterAnimationState::hurt) {
             const auto* clip = monster_animation_clip(monster.id, slot.state);
-            if (clip != nullptr && clip->frames_per_second != 0U) {
-                const std::uint64_t duration =
-                    (static_cast<std::uint64_t>(clip->frame_count) * 60U
-                        + clip->frames_per_second - 1U)
-                    / clip->frames_per_second;
+            if (clip != nullptr) {
+                std::uint64_t duration{};
+                if (clip->explicit_frames != nullptr) {
+                    for (std::uint16_t index{}; index < clip->frame_count; ++index) {
+                        duration += clip->explicit_frames[index].duration_ticks;
+                    }
+                } else if (clip->frames_per_second != 0U) {
+                    duration =
+                        (static_cast<std::uint64_t>(clip->frame_count) * 60U
+                            + clip->frames_per_second - 1U)
+                        / clip->frames_per_second;
+                }
                 hurt_complete = world_tick - slot.state_started_tick >= duration;
             }
         }
