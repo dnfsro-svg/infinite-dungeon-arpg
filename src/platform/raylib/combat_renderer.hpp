@@ -75,12 +75,11 @@ struct RoomBackgroundDrawRuntimeStatus final {
     HudPresentedFrame) noexcept;
 
 struct DoorRenderDecision final {
+    MaterialSpriteId sprite{MaterialSpriteId::missing};
     const char* label{};
-    const char* arrow{};
-    Rgba8 frame{};
+    Rgba8 body_tint{};
     Rgba8 text{};
-    Rgba8 locked_interior{};
-    bool draw_locked_interior{};
+    bool draw_lock_marker{};
 };
 
 [[nodiscard]] DoorRenderDecision door_render_decision(

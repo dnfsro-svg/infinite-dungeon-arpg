@@ -34,12 +34,15 @@ namespace {
         return MaterialAtlasId::ui_material;
     }
     switch (id) {
-    case MaterialSpriteId::environment_floor_fire:
     case MaterialSpriteId::environment_door_fire:
+    case MaterialSpriteId::environment_door_water:
+    case MaterialSpriteId::environment_door_lightning:
+    case MaterialSpriteId::environment_door_chaos:
+        return MaterialAtlasId::element_doors;
+    case MaterialSpriteId::environment_floor_fire:
     case MaterialSpriteId::environment_hole:
         return MaterialAtlasId::environment;
     case MaterialSpriteId::environment_floor_water:
-    case MaterialSpriteId::environment_door_water:
     case MaterialSpriteId::water_wall:
     case MaterialSpriteId::water_hole:
     case MaterialSpriteId::water_lantern:
@@ -47,7 +50,6 @@ namespace {
     case MaterialSpriteId::water_grate:
         return MaterialAtlasId::water_environment;
     case MaterialSpriteId::environment_floor_lightning:
-    case MaterialSpriteId::environment_door_lightning:
     case MaterialSpriteId::lightning_wall:
     case MaterialSpriteId::lightning_hole:
     case MaterialSpriteId::lightning_arc_lamp:
@@ -55,7 +57,6 @@ namespace {
     case MaterialSpriteId::lightning_grounding_rod:
         return MaterialAtlasId::lightning_environment;
     case MaterialSpriteId::environment_floor_chaos:
-    case MaterialSpriteId::environment_door_chaos:
     case MaterialSpriteId::chaos_wall:
     case MaterialSpriteId::chaos_hole:
     case MaterialSpriteId::chaos_rift_lantern:

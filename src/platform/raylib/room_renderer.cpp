@@ -188,8 +188,6 @@ void draw_fire_room_props(const MaterialPack& material_pack,
 
 bool can_draw_room_environment(const dungeon::DungeonSnapshot& snapshot,
     const MaterialPack& material_pack) noexcept {
-    const DoorVisualMode door_mode = door_visual_mode(snapshot.phase,
-        snapshot.has_active_room, snapshot.exits_open[0]);
     const HoleVisualMode hole_mode = hole_visual_mode(snapshot);
     const RoomBackgroundRenderPlan background =
         room_background_render_plan(snapshot.ecology);
@@ -203,17 +201,16 @@ bool can_draw_room_environment(const dungeon::DungeonSnapshot& snapshot,
     }
     return should_draw_material_environment({
         material_pack.available(background.atlas),
-        material_pack.can_draw(select_door_sprite(snapshot.ecology)),
+        false,
         material_pack.can_draw(hole_sprite(snapshot.ecology)),
         material_pack.available(props_atlas),
-        door_mode != DoorVisualMode::hidden,
+        false,
         hole_mode != HoleVisualMode::hidden,
     });
 }
 
 void draw_doors(const dungeon::DungeonSnapshot& snapshot,
-    float width, float height, const MaterialPack& material_pack,
-    bool draw_material_environment, Font hud_font,
+    float width, float height, const MaterialPack& material_pack, Font hud_font,
     bool hud_font_ready) noexcept {
     const DoorVisualMode mode = door_visual_mode(snapshot.phase,
         snapshot.has_active_room, snapshot.exits_open[0]);
@@ -234,31 +231,45 @@ void draw_doors(const dungeon::DungeonSnapshot& snapshot,
             kDoorCenters[index].x, kDoorCenters[index].y, kDoorCenters[index].z,
             width, height);
         const DoorRenderDecision visual = door_render_decision(mode, kDirections[index]);
-        const Color frame_color{visual.frame.r, visual.frame.g, visual.frame.b, visual.frame.a};
+        const Color body_tint{visual.body_tint.r, visual.body_tint.g,
+            visual.body_tint.b, visual.body_tint.a};
         const Color text_color{visual.text.r, visual.text.g, visual.text.b, visual.text.a};
         const float door_width = 82.0F * projected.scale;
         const float door_height = 70.0F * projected.scale;
         const Rectangle frame{projected.x - door_width * 0.5F,
             projected.ground_y - door_height, door_width, door_height};
-        if (draw_material_environment) {
-            static_cast<void>(material_pack.draw(select_door_sprite(snapshot.ecology),
-                {projected.x, projected.ground_y}, false,
-                0.72F * projected.scale));
-        } else {
-            DrawRectangleLinesEx(frame, 5.0F * projected.scale, frame_color);
+        if (!material_pack.draw(visual.sprite, {projected.x, projected.ground_y},
+                false, 0.72F * projected.scale, body_tint)) {
+            DrawRectangleLinesEx(frame, 5.0F * projected.scale, text_color);
         }
-        if (visual.draw_locked_interior) {
-            DrawRectangleRec({frame.x + 7.0F * projected.scale,
-                frame.y + 7.0F * projected.scale,
-                frame.width - 14.0F * projected.scale,
-                frame.height - 7.0F * projected.scale},
-                Color{visual.locked_interior.r, visual.locked_interior.g,
-                    visual.locked_interior.b, visual.locked_interior.a});
+        if (visual.draw_lock_marker) {
+            const Rectangle lock{frame.x + frame.width - 16.0F * projected.scale,
+                frame.y + 10.0F * projected.scale,
+                12.0F * projected.scale, 14.0F * projected.scale};
+            const Color steel{35, 48, 62, 245};
+            DrawRectangle(static_cast<int>(std::round(lock.x)),
+                static_cast<int>(std::round(lock.y)),
+                static_cast<int>(std::round(lock.width)),
+                static_cast<int>(std::round(lock.height)), steel);
+            DrawCircleSectorLines({lock.x + lock.width * 0.5F,
+                lock.y + 8.0F * projected.scale}, 8.0F * projected.scale,
+                180.0F, 360.0F, 8, steel);
         }
-        const int font_size = static_cast<int>(22.0F * projected.scale);
-        const int arrow_width = MeasureText(visual.arrow, font_size);
-        DrawText(visual.arrow, static_cast<int>(projected.x) - arrow_width / 2,
-            static_cast<int>(frame.y + 17.0F * projected.scale), font_size, text_color);
+        const DoorArrowGeometry arrow = door_arrow_geometry(kDirections[index],
+            projected.x, frame.y + 35.0F * projected.scale, projected.scale);
+        DrawLineEx(arrow.tail, arrow.tip, arrow.thickness, text_color);
+        DrawLineEx(arrow.tip, arrow.head_left, arrow.thickness, text_color);
+        DrawLineEx(arrow.tip, arrow.head_right, arrow.thickness, text_color);
+        if (mode == DoorVisualMode::open) {
+            const Color edge = Fade(text_color, 0.32F);
+            DrawLineEx({frame.x + 5.0F * projected.scale, frame.y},
+                {frame.x + 5.0F * projected.scale, frame.y + frame.height},
+                2.0F * projected.scale, edge);
+            DrawLineEx({frame.x + frame.width - 5.0F * projected.scale, frame.y},
+                {frame.x + frame.width - 5.0F * projected.scale,
+                    frame.y + frame.height},
+                2.0F * projected.scale, edge);
+        }
         if (abyss_door_marker(snapshot, kDirections[index])) {
             const Vector2 marker{
                 frame.x + frame.width - 12.0F * projected.scale,
@@ -588,8 +599,7 @@ void CombatRenderer::draw_room(
             draw_chaos_room_props(material_pack_, width, height);
         }
     }
-    draw_doors(current, width, height, material_pack_,
-        draw_material_environment, hud_renderer_.hud_font(),
+    draw_doors(current, width, height, material_pack_, hud_renderer_.hud_font(),
         hud_renderer_.font_ready());
     draw_hole(current, material_pack_, draw_material_environment);
 }

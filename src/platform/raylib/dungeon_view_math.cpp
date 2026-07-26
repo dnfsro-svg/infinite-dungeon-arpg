@@ -45,6 +45,46 @@ DoorTheme door_theme(dungeon::ExitDirection direction) noexcept {
     return {dungeon::DungeonElement::chaos, "UNKNOWN", "?", kChaosFrame};
 }
 
+DoorArrowGeometry door_arrow_geometry(dungeon::ExitDirection direction,
+    float center_x, float center_y, float scale) noexcept {
+    const float safe_scale = std::max(0.0F, scale);
+    Vector2 outward{};
+    switch (direction) {
+    case dungeon::ExitDirection::up:
+        outward = {0.0F, -1.0F};
+        break;
+    case dungeon::ExitDirection::down:
+        outward = {0.0F, 1.0F};
+        break;
+    case dungeon::ExitDirection::left:
+        outward = {-1.0F, 0.0F};
+        break;
+    case dungeon::ExitDirection::right:
+        outward = {1.0F, 0.0F};
+        break;
+    case dungeon::ExitDirection::none:
+        outward = {0.0F, -1.0F};
+        break;
+    }
+    const Vector2 perpendicular{-outward.y, outward.x};
+    const float shaft = 14.0F * safe_scale;
+    const float tip = 20.0F * safe_scale;
+    const float head_length = 9.0F * safe_scale;
+    const float head_width = 7.0F * safe_scale;
+    const Vector2 center{center_x, center_y};
+    const Vector2 arrow_tip{center.x + outward.x * tip,
+        center.y + outward.y * tip};
+    return {
+        {center.x - outward.x * shaft, center.y - outward.y * shaft},
+        arrow_tip,
+        {arrow_tip.x - outward.x * head_length + perpendicular.x * head_width,
+            arrow_tip.y - outward.y * head_length + perpendicular.y * head_width},
+        {arrow_tip.x - outward.x * head_length - perpendicular.x * head_width,
+            arrow_tip.y - outward.y * head_length - perpendicular.y * head_width},
+        2.5F * safe_scale,
+    };
+}
+
 bool abyss_door_marker(
     const dungeon::DungeonSnapshot& snapshot,
     dungeon::ExitDirection direction) noexcept {

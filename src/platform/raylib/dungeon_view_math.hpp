@@ -3,6 +3,8 @@
 #include "dungeon/dungeon_types.hpp"
 #include "progression/progression_rules.hpp"
 
+#include <raylib.h>
+
 #include <cstdint>
 
 namespace arpg::platform {
@@ -19,6 +21,14 @@ struct DoorTheme final {
     const char* label{};
     const char* arrow{};
     Rgba8 frame{};
+};
+
+struct DoorArrowGeometry final {
+    Vector2 tail{};
+    Vector2 tip{};
+    Vector2 head_left{};
+    Vector2 head_right{};
+    float thickness{};
 };
 
 enum class HoleVisualMode : std::uint8_t {
@@ -95,6 +105,9 @@ inline constexpr float kHoleInteractionRadius = 3.25F;
     bool exits_open) noexcept;
 [[nodiscard]] DoorTheme door_theme(
     dungeon::ExitDirection direction) noexcept;
+[[nodiscard]] DoorArrowGeometry door_arrow_geometry(
+    dungeon::ExitDirection direction, float center_x, float center_y,
+    float scale) noexcept;
 [[nodiscard]] bool abyss_door_marker(
     const dungeon::DungeonSnapshot& snapshot,
     dungeon::ExitDirection direction) noexcept;

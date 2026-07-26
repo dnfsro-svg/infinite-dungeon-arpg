@@ -4,6 +4,7 @@
 #include "dungeon_view_math.hpp"
 #include "progression/progression_rules.hpp"
 
+#include <array>
 #include <cstring>
 
 namespace {
@@ -75,15 +76,80 @@ arpg::test::Failure door_themes_match_directional_elements() noexcept {
     ARPG_REQUIRE(rgba_equals(left.frame, {236U, 218U, 72U, 255U}));
     ARPG_REQUIRE(rgba_equals(right.frame, {154U, 76U, 210U, 255U}));
 
+    return {};
+}
+
+arpg::test::Failure directional_door_decisions_use_element_sprites_and_modes() noexcept {
+    struct Expected final {
+        ExitDirection direction;
+        arpg::dungeon::DungeonElement element;
+        arpg::platform::MaterialSpriteId sprite;
+    };
+    constexpr std::array<Expected, 4> kExpected{{
+        {ExitDirection::up, arpg::dungeon::DungeonElement::fire,
+            arpg::platform::MaterialSpriteId::environment_door_fire},
+        {ExitDirection::down, arpg::dungeon::DungeonElement::water,
+            arpg::platform::MaterialSpriteId::environment_door_water},
+        {ExitDirection::left, arpg::dungeon::DungeonElement::lightning,
+            arpg::platform::MaterialSpriteId::environment_door_lightning},
+        {ExitDirection::right, arpg::dungeon::DungeonElement::chaos,
+            arpg::platform::MaterialSpriteId::environment_door_chaos},
+    }};
+    for (const Expected& expected : kExpected) {
+        const DoorTheme theme = arpg::platform::door_theme(expected.direction);
+        const auto closed = arpg::platform::door_render_decision(
+            DoorVisualMode::closed, expected.direction);
+        const auto open = arpg::platform::door_render_decision(
+            DoorVisualMode::open, expected.direction);
+        ARPG_REQUIRE(theme.element == expected.element);
+        ARPG_REQUIRE(closed.sprite == expected.sprite);
+        ARPG_REQUIRE(open.sprite == expected.sprite);
+        ARPG_REQUIRE(std::strcmp(closed.label, theme.label) == 0);
+        ARPG_REQUIRE(rgba_equals(closed.text, theme.frame));
+        ARPG_REQUIRE(rgba_equals(closed.body_tint, {150U, 150U, 150U, 255U}));
+        ARPG_REQUIRE(rgba_equals(open.body_tint, {255U, 255U, 255U, 255U}));
+        ARPG_REQUIRE(closed.draw_lock_marker);
+        ARPG_REQUIRE(!open.draw_lock_marker);
+    }
+    return {};
+}
+
+arpg::test::Failure door_arrow_geometry_points_outward_inside_scaled_box() noexcept {
+    constexpr float kCenterX = 240.0F;
+    constexpr float kCenterY = 160.0F;
+    constexpr float kScale = 2.0F;
+    const auto inside = [](Vector2 point) noexcept {
+        return point.x >= kCenterX - 24.0F * kScale
+            && point.x <= kCenterX + 24.0F * kScale
+            && point.y >= kCenterY - 24.0F * kScale
+            && point.y <= kCenterY + 24.0F * kScale;
+    };
     for (const ExitDirection direction : {ExitDirection::up,
              ExitDirection::down, ExitDirection::left, ExitDirection::right}) {
-        const DoorTheme theme = arpg::platform::door_theme(direction);
-        const auto locked = arpg::platform::door_render_decision(
-            DoorVisualMode::closed, direction);
-        ARPG_REQUIRE(locked.draw_locked_interior);
-        ARPG_REQUIRE(std::strcmp(locked.label, theme.label) == 0);
-        ARPG_REQUIRE(std::strcmp(locked.arrow, theme.arrow) == 0);
-        ARPG_REQUIRE(rgba_equals(locked.frame, theme.frame));
+        const auto arrow = arpg::platform::door_arrow_geometry(
+            direction, kCenterX, kCenterY, kScale);
+        ARPG_REQUIRE(arrow.thickness > 0.0F);
+        ARPG_REQUIRE(inside(arrow.tail));
+        ARPG_REQUIRE(inside(arrow.tip));
+        ARPG_REQUIRE(inside(arrow.head_left));
+        ARPG_REQUIRE(inside(arrow.head_right));
+        switch (direction) {
+        case ExitDirection::up:
+            ARPG_REQUIRE(arrow.tip.y < arrow.tail.y);
+            break;
+        case ExitDirection::down:
+            ARPG_REQUIRE(arrow.tip.y > arrow.tail.y);
+            break;
+        case ExitDirection::left:
+            ARPG_REQUIRE(arrow.tip.x < arrow.tail.x);
+            break;
+        case ExitDirection::right:
+            ARPG_REQUIRE(arrow.tip.x > arrow.tail.x);
+            break;
+        case ExitDirection::none:
+            ARPG_REQUIRE(false);
+            break;
+        }
     }
     return {};
 }
@@ -113,8 +179,8 @@ arpg::test::Failure abyss_door_markers_follow_only_directional_preview() noexcep
             DoorVisualMode::closed, selected);
         const auto open = arpg::platform::door_render_decision(
             DoorVisualMode::open, selected);
-        ARPG_REQUIRE(closed.draw_locked_interior);
-        ARPG_REQUIRE(!open.draw_locked_interior);
+        ARPG_REQUIRE(closed.draw_lock_marker);
+        ARPG_REQUIRE(!open.draw_lock_marker);
     }
     return {};
 }
@@ -452,6 +518,10 @@ constexpr arpg::test::TestCase kCases[] = {
     {"cleanup routing and labels", &cleanup_routing_and_labels_are_stable},
     {"transition fade alpha", &fade_alpha_clamps_to_transition_window},
     {"directional door themes", &door_themes_match_directional_elements},
+    {"directional door sprites and modes",
+        &directional_door_decisions_use_element_sprites_and_modes},
+    {"directional door arrow geometry",
+        &door_arrow_geometry_points_outward_inside_scaled_box},
     {"abyss door marker preview", &abyss_door_markers_follow_only_directional_preview},
     {"environment hazard snapshot visuals", &environment_hazards_use_snapshot_geometry_and_phase},
     {"abyss HUD snapshot values", &abyss_hud_uses_committed_snapshot_labels_and_counts},

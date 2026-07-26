@@ -118,11 +118,12 @@ DoorRenderDecision door_render_decision(
     dungeon::ExitDirection direction) noexcept {
     const DoorTheme theme = door_theme(direction);
     return {
+        select_door_sprite(theme.element),
         theme.label,
-        theme.arrow,
+        mode == DoorVisualMode::closed
+            ? Rgba8{150U, 150U, 150U, 255U}
+            : Rgba8{255U, 255U, 255U, 255U},
         theme.frame,
-        theme.frame,
-        {177U, 31U, 46U, 235U},
         mode == DoorVisualMode::closed,
     };
 }
