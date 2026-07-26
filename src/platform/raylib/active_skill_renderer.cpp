@@ -254,7 +254,7 @@ ActiveSkillEffectPlan make_active_skill_effect_plan(
         }
     }
 
-    if (!material_ready && skill.id == skills::ActiveSkillId::storm_swords) {
+    if (skill.id == skills::ActiveSkillId::storm_swords) {
         result.storm_swords.sword_count = std::min<std::size_t>(
             skill.spawned_sword_count, result.storm_swords.swords.size());
         result.storm_swords.visible = skill.transients_active
@@ -308,6 +308,7 @@ void ActiveSkillRenderer::draw_world(
     float width, float height) const noexcept {
     if (plan.mode == ActiveSkillVisualMode::material) {
         draw_material_active_skill(plan, material_pack, width, height);
+        draw_storm_swords(plan.storm_swords, width, height);
     } else if (plan.mode == ActiveSkillVisualMode::procedural_fallback) {
         draw_draw_slash(plan.draw_slash, width, height);
         draw_storm_swords(plan.storm_swords, width, height);

@@ -92,6 +92,9 @@ arpg::test::Failure material_and_fallback_skill_plans_are_exclusive_and_allocate
     ARPG_REQUIRE(healthy.suppress_base_player);
     ARPG_REQUIRE(healthy.procedural_main_visual_count == 0U);
     ARPG_REQUIRE(healthy.atlas == platform::MaterialAtlasId::skill_storm_swords);
+    ARPG_REQUIRE(healthy.storm_swords.visible);
+    ARPG_REQUIRE(healthy.storm_swords.sword_count == 24U);
+    ARPG_REQUIRE(!healthy.storm_swords.finisher_visible);
 
     const platform::ActiveSkillEffectPlan fallback =
         platform::make_active_skill_effect_plan(snapshot, nullptr, false);
