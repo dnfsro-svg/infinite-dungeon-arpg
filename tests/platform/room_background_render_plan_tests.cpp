@@ -33,7 +33,7 @@ arpg::test::Failure background_manifest_preserves_old_ids_and_adds_four_pairs() 
         MaterialAtlasId::lightning_room_background) == 24U);
     static_assert(static_cast<std::size_t>(
         MaterialAtlasId::chaos_room_background) == 25U);
-    static_assert(static_cast<std::size_t>(MaterialAtlasId::count) == 27U);
+    static_assert(static_cast<std::size_t>(MaterialAtlasId::count) == 29U);
 
     const auto manifest = arpg::platform::default_material_manifest();
     ARPG_REQUIRE(manifest.atlas_count

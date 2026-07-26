@@ -48,22 +48,16 @@ std::optional<std::size_t> hud_presented_frame_index(
 bool CombatRenderer::initialize_resources() noexcept {
     const bool death_font_ready = death_overlay_.initialize();
     const bool hud_font_ready = hud_renderer_.initialize();
-    const bool skill_assets_ready = active_skill_renderer_.initialize_resources();
     static_cast<void>(material_pack_.synchronize_residency(
         base_material_residency_request()));
     if (!death_font_ready || !hud_font_ready) {
         TraceLog(LOG_WARNING,
             "HUD overlays are using a fallback font; formal CJK validation will fail");
     }
-    if (!skill_assets_ready) {
-        TraceLog(LOG_WARNING,
-            "Active skill atlases are unavailable; using program effect fallback");
-    }
     return death_font_ready && hud_font_ready;
 }
 
 void CombatRenderer::shutdown_resources() noexcept {
-    active_skill_renderer_.shutdown_resources();
     material_pack_.unload();
     hud_renderer_.shutdown();
     death_overlay_.shutdown();
@@ -287,7 +281,7 @@ GroundLootView CombatRenderer::draw(
                 active_skill_renderer_.draw_world(*current.combat,
                     has_last_event_ ? &last_event_ : nullptr,
                     static_cast<float>(GetScreenWidth()),
-                    static_cast<float>(GetScreenHeight()));
+                    static_cast<float>(GetScreenHeight()), material_pack_);
             }
             break;
         case CombatRenderStage::ground_loot_labels:

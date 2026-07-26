@@ -75,7 +75,7 @@ void draw_skill_text(Font font, const char* text,
 }
 
 void draw_draw_slash(const DrawSlashVisualPlan& plan,
-    const ActiveSkillAssets& assets,
+    const MaterialPack& material_pack,
     float width, float height) noexcept {
     if (!plan.visible) return;
     const ScreenProjection projected = project_combat_position(
@@ -105,10 +105,15 @@ void draw_draw_slash(const DrawSlashVisualPlan& plan,
             Fade(Color{236, 251, 255, 255}, plan.opacity));
     }
     if (plan.use_atlas) {
-        static_cast<void>(assets.draw(plan.atlas, plan.atlas_frame,
-            {projected.x, projected.ground_y},
-            plan.facing == combat::Facing::left, projected.scale * 0.72F,
-            Fade(WHITE, plan.opacity)));
+        const auto frame = active_skill_atlas_frame(
+            plan.atlas, plan.atlas_frame);
+        if (frame.has_value()) {
+            static_cast<void>(material_pack.draw_frame(frame->atlas,
+                frame->source, frame->foot_anchor,
+                {projected.x, projected.ground_y},
+                plan.facing == combat::Facing::left,
+                projected.scale * 0.72F, Fade(WHITE, plan.opacity)));
+        }
     }
 }
 
@@ -173,15 +178,20 @@ void draw_sword(Vector2 center, float angle, float scale,
 }
 
 void draw_storm_swords(const StormSwordsVisualPlan& plan,
-    const ActiveSkillAssets& assets,
+    const MaterialPack& material_pack,
     float width, float height) noexcept {
     if (!plan.visible && !plan.finisher_visible) return;
     const ScreenProjection projected = project_combat_position(
         plan.center, width, height);
     if (plan.use_atlas) {
-        static_cast<void>(assets.draw(plan.atlas, plan.atlas_frame,
-            {projected.x, projected.ground_y}, false, projected.scale * 0.70F,
-            WHITE));
+        const auto frame = active_skill_atlas_frame(
+            plan.atlas, plan.atlas_frame);
+        if (frame.has_value()) {
+            static_cast<void>(material_pack.draw_frame(frame->atlas,
+                frame->source, frame->foot_anchor,
+                {projected.x, projected.ground_y}, false,
+                projected.scale * 0.70F, WHITE));
+        }
     }
     if (plan.visible) {
         for (std::size_t index = 0U; index < plan.sword_count; ++index) {
@@ -297,28 +307,20 @@ ActiveSkillEffectPlan make_active_skill_effect_plan(
 void ActiveSkillRenderer::draw_world(
     const combat::CombatSnapshot& snapshot,
     const combat::CombatEvent* last_event,
-    float width, float height) const noexcept {
+    float width, float height,
+    const MaterialPack& material_pack) const noexcept {
     const ActiveSkillEffectPlan plan = make_active_skill_effect_plan(
         snapshot, last_event);
-    draw_draw_slash(plan.draw_slash, assets_, width, height);
-    draw_storm_swords(plan.storm_swords, assets_, width, height);
+    draw_draw_slash(plan.draw_slash, material_pack, width, height);
+    draw_storm_swords(plan.storm_swords, material_pack, width, height);
     if (plan.screen_flash_alpha > 0.0F) {
         DrawRectangle(0, 0, static_cast<int>(width), static_cast<int>(height),
             Fade(Color{220, 244, 255, 255}, plan.screen_flash_alpha));
     }
 }
 
-bool ActiveSkillRenderer::initialize_resources() noexcept {
-    return assets_.load();
-}
-
-void ActiveSkillRenderer::shutdown_resources() noexcept {
-    assets_.unload();
-}
-
 bool ActiveSkillRenderer::assets_ready() const noexcept {
-    return assets_.ready(ActiveSkillAtlasId::draw_slash)
-        && assets_.ready(ActiveSkillAtlasId::storm_swords);
+    return active_skill_assets_ready();
 }
 
 ActiveSkillCooldownOverlayPlan make_active_skill_cooldown_overlay(

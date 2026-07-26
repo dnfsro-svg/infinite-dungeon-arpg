@@ -82,6 +82,8 @@ constexpr std::uint16_t kMaximumClipFrames = 256U;
         MaterialAtlasId::chaos_hazard,
     }};
     for (const MaterialAtlasId id : kMonsterAtlases) request.require(id);
+    request.require(MaterialAtlasId::skill_draw_slash);
+    request.require(MaterialAtlasId::skill_storm_swords);
 
     constexpr std::array<std::array<MaterialAtlasId, 2>, 4> kRoomAtlases{{
         {{MaterialAtlasId::fire_environment,

@@ -1,4 +1,5 @@
 #include "material_residency.hpp"
+#include "active_skill_assets.hpp"
 
 #include <limits>
 
@@ -104,6 +105,11 @@ MaterialResidencyRequest base_material_residency_request() noexcept {
 MaterialResidencyRequest make_material_residency_request(
     const dungeon::DungeonSnapshot& snapshot) noexcept {
     MaterialResidencyRequest request = base_material_residency_request();
+    for (const skills::ActiveSkillSlot& slot : snapshot.skill_loadout.slots) {
+        if (slot.active != skills::ActiveSkillId::none) {
+            request.require(active_skill_material_atlas(slot.active));
+        }
+    }
     if (snapshot.has_active_room) {
         require_room_atlases(request, snapshot.ecology);
     }

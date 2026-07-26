@@ -530,6 +530,51 @@ arpg::test::Failure material_residency_request_selects_drawable_room_and_monster
     return {};
 }
 
+arpg::test::Failure material_residency_requests_only_equipped_draw_slash()
+    noexcept {
+    arpg::dungeon::DungeonSnapshot snapshot{};
+    snapshot.skill_loadout.slots[0].active =
+        arpg::skills::ActiveSkillId::draw_slash;
+    const auto request = arpg::platform::make_material_residency_request(snapshot);
+    ARPG_REQUIRE(request.contains(MaterialAtlasId::skill_draw_slash));
+    ARPG_REQUIRE(!request.contains(MaterialAtlasId::skill_storm_swords));
+    return {};
+}
+
+arpg::test::Failure material_residency_requests_both_equipped_skill_atlases_under_budget()
+    noexcept {
+    arpg::dungeon::DungeonSnapshot snapshot{};
+    snapshot.has_active_room = true;
+    snapshot.ecology = arpg::dungeon::DungeonElement::fire;
+    snapshot.skill_loadout.slots[0].active =
+        arpg::skills::ActiveSkillId::draw_slash;
+    snapshot.skill_loadout.slots[1].active =
+        arpg::skills::ActiveSkillId::storm_swords;
+    snapshot.combat.emplace();
+    constexpr std::array<arpg::combat::MonsterId, 8> kWorstMonsters{{
+        arpg::combat::MonsterId::fire_bomber,
+        arpg::combat::MonsterId::fire_charger,
+        arpg::combat::MonsterId::water_bulwark,
+        arpg::combat::MonsterId::water_support,
+        arpg::combat::MonsterId::lightning_shooter,
+        arpg::combat::MonsterId::lightning_dasher,
+        arpg::combat::MonsterId::chaos_chaser,
+        arpg::combat::MonsterId::chaos_hazard,
+    }};
+    snapshot.combat->monster_count = kWorstMonsters.size();
+    for (std::size_t index{}; index < kWorstMonsters.size(); ++index) {
+        snapshot.combat->monsters[index].active = true;
+        snapshot.combat->monsters[index].id = kWorstMonsters[index];
+    }
+    const auto request = arpg::platform::make_material_residency_request(snapshot);
+    ARPG_REQUIRE(request.contains(MaterialAtlasId::skill_draw_slash));
+    ARPG_REQUIRE(request.contains(MaterialAtlasId::skill_storm_swords));
+    ARPG_REQUIRE(arpg::platform::material_residency_bytes(
+        arpg::platform::default_material_manifest(), request)
+        <= 256U * 1024U * 1024U);
+    return {};
+}
+
 arpg::test::Failure material_residency_noop_sync_is_allocation_free() noexcept {
     FakeMaterialTextures fake{};
     const MaterialManifestDefinition manifest =
@@ -883,8 +928,8 @@ arpg::test::Failure material_manifest_rejects_oversized_atlas_and_memory_budget(
 }
 
 arpg::test::Failure material_manifest_reports_true_resident_peak() noexcept {
-    constexpr std::size_t kExpectedFullPackBytes = 304'267'264U;
-    constexpr std::size_t kExpectedResidentPeakBytes = 201'637'888U;
+    constexpr std::size_t kExpectedFullPackBytes = 329'430'304U;
+    constexpr std::size_t kExpectedResidentPeakBytes = 226'800'928U;
     constexpr std::size_t kExpectedFireEcologyPeakBytes = 165'806'080U;
     constexpr std::size_t kExpectedNonFirePeakBytes = 157'302'784U;
     const MaterialManifestDefinition manifest =
@@ -1202,6 +1247,10 @@ constexpr arpg::test::TestCase kCases[] = {
         &material_pack_switches_ecology_without_reloading_common},
     {"residency request selects drawable room and monster atlases",
         &material_residency_request_selects_drawable_room_and_monster_atlases},
+    {"residency requests only equipped draw slash",
+        &material_residency_requests_only_equipped_draw_slash},
+    {"residency requests both equipped skill atlases under budget",
+        &material_residency_requests_both_equipped_skill_atlases_under_budget},
     {"residency noop sync is allocation free",
         &material_residency_noop_sync_is_allocation_free},
     {"residency failure is isolated and not retried",

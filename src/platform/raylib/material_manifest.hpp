@@ -60,6 +60,8 @@ inline constexpr MaterialAtlasDefinition kDefaultMaterialAtlases[] = {
     {MaterialAtlasId::lightning_room_background, 2560, 1440, 14'745'600U, "assets/stage12/lightning_room_background.png", "assets/stage12/lightning_room_background_material.png", MaterialEcology::lightning},
     {MaterialAtlasId::chaos_room_background, 2560, 1440, 14'745'600U, "assets/stage12/chaos_room_background.png", "assets/stage12/chaos_room_background_material.png", MaterialEcology::chaos},
     {MaterialAtlasId::element_doors, 1024, 256, 1'048'576U, "assets/stage12/element_doors.png", "assets/stage12/element_doors_material.png", MaterialEcology::common},
+    {MaterialAtlasId::skill_draw_slash, 1254, 1254, 1254U * 1254U * 4U, "assets/skills/draw_slash_atlas.png", "assets/skills/draw_slash_atlas_material.png", MaterialEcology::skill},
+    {MaterialAtlasId::skill_storm_swords, 1024, 1536, 1024U * 1536U * 4U, "assets/skills/storm_swords_atlas.png", "assets/skills/storm_swords_atlas_material.png", MaterialEcology::skill},
 };
 
 #define ARPG_ACTOR_FRAME(sprite, column, row) \

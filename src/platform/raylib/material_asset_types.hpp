@@ -35,6 +35,8 @@ enum class MaterialAtlasId : std::uint8_t {
     lightning_room_background,
     chaos_room_background,
     element_doors,
+    skill_draw_slash,
+    skill_storm_swords,
     count,
 };
 
@@ -62,6 +64,7 @@ enum class MaterialEcology : std::uint8_t {
     water,
     lightning,
     chaos,
+    skill,
     count,
 };
 

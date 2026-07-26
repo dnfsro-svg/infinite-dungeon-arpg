@@ -59,19 +59,16 @@ struct ActiveSkillEffectPlan final {
 
 class ActiveSkillRenderer final {
 public:
-    [[nodiscard]] bool initialize_resources() noexcept;
-    void shutdown_resources() noexcept;
     [[nodiscard]] bool assets_ready() const noexcept;
     void draw_world(const combat::CombatSnapshot& snapshot,
         const combat::CombatEvent* last_event,
-        float width, float height) const noexcept;
+        float width, float height,
+        const MaterialPack& material_pack) const noexcept;
     void draw_hud(const ActiveSkillHudModel& model,
         const ActiveSkillHudLayout& layout,
         Font hud_font, bool hud_font_ready,
         const MaterialPack& material_pack) const noexcept;
 
-private:
-    ActiveSkillAssets assets_{};
 };
 
 struct ActiveSkillCooldownOverlayPlan final {
