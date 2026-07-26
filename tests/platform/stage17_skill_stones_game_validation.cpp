@@ -104,6 +104,18 @@ std::filesystem::path g_executable{};
     return found != fields.end() && found->second == expected;
 }
 
+[[nodiscard]] bool field_is_positive(
+    const std::map<std::string, std::string>& fields,
+    const char* key) noexcept {
+    const auto found = fields.find(key);
+    if (found == fields.end()) return false;
+    try {
+        return std::stoull(found->second) > 0U;
+    } catch (...) {
+        return false;
+    }
+}
+
 [[nodiscard]] bool run_child(const std::filesystem::path& run,
     const char* scenario, std::uint64_t seed) {
     const std::filesystem::path command = run /
@@ -169,6 +181,17 @@ std::filesystem::path g_executable{};
         && field_is(fields, "storm_finisher_phase_seen", "1")
         && field_is(fields, "storm_aerial_captured", "1")
         && field_is(fields, "active_skill_atlases_ready", "1")
+        && field_is_positive(fields, "draw_renderer_samples")
+        && field_is(fields, "draw_material_frame_drawn", "1")
+        && field_is(fields, "draw_base_player_drawn", "0")
+        && field_is(fields, "draw_procedural_main_visual_peak", "0")
+        && field_is(fields, "draw_renderer_status_valid", "1")
+        && field_is_positive(fields, "storm_renderer_samples")
+        && field_is(fields, "storm_material_frame_drawn", "1")
+        && field_is(fields, "storm_base_player_drawn", "0")
+        && field_is(fields, "storm_procedural_main_visual_peak", "0")
+        && field_is(fields, "storm_renderer_status_valid", "1")
+        && field_is(fields, "renderer_status_failure_latched", "0")
         && field_is(fields, "storm_center_locked", "1")
         && field_is(fields, "storm_player_moved", "1")
         && field_is(fields, "public_input_path", "1")
@@ -185,12 +208,9 @@ std::filesystem::path g_executable{};
         && field_is(fields, "restart_cooldowns_zero", "1");
 }
 
-struct MaterialTimelineEvidence final {
+struct PureTimelineEvidence final {
     std::array<bool, 36> draw_frames{};
     std::array<bool, 24> storm_frames{};
-    platform::ActiveSkillEffectPlan healthy_draw{};
-    platform::ActiveSkillEffectPlan healthy_storm{};
-    platform::ActiveSkillEffectPlan missing_map{};
 
     [[nodiscard]] bool draw_complete() const noexcept {
         return std::all_of(draw_frames.begin(), draw_frames.end(),
@@ -205,22 +225,12 @@ struct MaterialTimelineEvidence final {
     [[nodiscard]] bool valid() const noexcept {
         return draw_complete() && storm_complete()
             && draw_frames.front() && draw_frames.back()
-            && storm_frames.front() && storm_frames.back()
-            && healthy_draw.mode == platform::ActiveSkillVisualMode::material
-            && healthy_storm.mode == platform::ActiveSkillVisualMode::material
-            && healthy_draw.suppress_base_player
-            && healthy_storm.suppress_base_player
-            && healthy_draw.procedural_main_visual_count == 0U
-            && healthy_storm.procedural_main_visual_count == 0U
-            && missing_map.mode
-                == platform::ActiveSkillVisualMode::procedural_fallback
-            && !missing_map.suppress_base_player
-            && missing_map.procedural_main_visual_count == 1U;
+            && storm_frames.front() && storm_frames.back();
     }
 };
 
-[[nodiscard]] MaterialTimelineEvidence material_timeline_evidence() noexcept {
-    MaterialTimelineEvidence evidence{};
+[[nodiscard]] PureTimelineEvidence pure_timeline_evidence() noexcept {
+    PureTimelineEvidence evidence{};
     for (std::uint16_t tick{}; tick < 90U; ++tick) {
         const std::size_t frame = platform::active_skill_visual_frame_index(
             skills::ActiveSkillId::draw_slash, tick);
@@ -232,33 +242,17 @@ struct MaterialTimelineEvidence final {
         if (frame < evidence.storm_frames.size()) evidence.storm_frames[frame] = true;
     }
 
-    combat::CombatSnapshot snapshot{};
-    snapshot.player.position = {1.0F, 2.0F, 0.0F};
-    snapshot.active_skill.id = skills::ActiveSkillId::draw_slash;
-    snapshot.active_skill.elapsed_ticks = 45U;
-    snapshot.active_skill.locked_center = {3.0F, 4.0F, 0.0F};
-    snapshot.active_skill.transients_active = true;
-    evidence.healthy_draw = platform::make_active_skill_effect_plan(
-        snapshot, nullptr, true);
-    evidence.missing_map = platform::make_active_skill_effect_plan(
-        snapshot, nullptr, false);
-
-    snapshot.active_skill.id = skills::ActiveSkillId::storm_swords;
-    snapshot.active_skill.elapsed_ticks = 180U;
-    snapshot.active_skill.phase = combat::ActiveSkillPhase::strikes;
-    snapshot.active_skill.spawned_sword_count = 24U;
-    evidence.healthy_storm = platform::make_active_skill_effect_plan(
-        snapshot, nullptr, true);
     return evidence;
 }
 
 [[nodiscard]] bool write_final_state(const std::filesystem::path& run,
-    const MaterialTimelineEvidence& timeline) {
+    const PureTimelineEvidence& timeline,
+    const std::map<std::string, std::string>& production) {
     static_assert(persistence::kCheckpointFormatVersion == 8U);
     if (!timeline.valid()) return false;
     std::ofstream stream(run / "stage17-skill-stones-state.txt",
         std::ios::out | std::ios::trunc | std::ios::binary);
-    stream << "schema=stage17-active-skill-rework-evidence-v2\n"
+    stream << "schema=stage17-active-skill-rework-evidence-v3\n"
            << "result=PASS\n"
            << "renderer=raylib-6.0-opengl\n"
            << "window=1280x720\n"
@@ -296,22 +290,29 @@ struct MaterialTimelineEvidence final {
            << "storm_finisher_phase_seen=true\n"
            << "storm_aerial_captured=true\n"
            << "active_skill_atlases_ready=true\n"
-           << "healthy_base_player_suppressed="
-           << (timeline.healthy_draw.suppress_base_player
-                    && timeline.healthy_storm.suppress_base_player
-               ? "true" : "false") << "\n"
-           << "healthy_procedural_main_visual_count="
-           << (timeline.healthy_draw.procedural_main_visual_count
-                + timeline.healthy_storm.procedural_main_visual_count) << "\n"
-           << "missing_map_base_player_suppressed="
-           << (timeline.missing_map.suppress_base_player ? "true" : "false")
-           << "\n"
-           << "missing_map_procedural_main_visual_count="
-           << timeline.missing_map.procedural_main_visual_count << "\n"
-           << "missing_map_visual_mode="
-           << (timeline.missing_map.mode
-                    == platform::ActiveSkillVisualMode::procedural_fallback
-               ? "procedural_fallback" : "unexpected") << "\n"
+           << "renderer_status_source=production-summary.txt\n"
+           << "draw_renderer_samples="
+           << production.at("draw_renderer_samples") << "\n"
+           << "draw_material_frame_drawn="
+           << production.at("draw_material_frame_drawn") << "\n"
+           << "draw_base_player_drawn="
+           << production.at("draw_base_player_drawn") << "\n"
+           << "draw_procedural_main_visual_peak="
+           << production.at("draw_procedural_main_visual_peak") << "\n"
+           << "draw_renderer_status_valid="
+           << production.at("draw_renderer_status_valid") << "\n"
+           << "storm_renderer_samples="
+           << production.at("storm_renderer_samples") << "\n"
+           << "storm_material_frame_drawn="
+           << production.at("storm_material_frame_drawn") << "\n"
+           << "storm_base_player_drawn="
+           << production.at("storm_base_player_drawn") << "\n"
+           << "storm_procedural_main_visual_peak="
+           << production.at("storm_procedural_main_visual_peak") << "\n"
+           << "storm_renderer_status_valid="
+           << production.at("storm_renderer_status_valid") << "\n"
+           << "renderer_status_failure_latched="
+           << production.at("renderer_status_failure_latched") << "\n"
            << "storm_center_locked=true\n"
            << "loadout_transactions=remove1,equip5,swap2_5\n"
            << "restart_persisted=true\n"
@@ -358,9 +359,9 @@ int main(int argc, char** argv) {
         std::cerr << "stage17 restart summary rejected\n";
         return 8;
     }
-    const MaterialTimelineEvidence timeline = material_timeline_evidence();
+    const PureTimelineEvidence timeline = pure_timeline_evidence();
     if (!timeline.valid()) return 9;
-    if (!write_final_state(run, timeline)) return 10;
+    if (!write_final_state(run, timeline, production)) return 10;
     std::cout << "stage17 raylib skill stones scenario=PASS\n";
     return 0;
 }

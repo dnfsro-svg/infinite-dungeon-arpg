@@ -77,6 +77,26 @@ arpg::test::Failure active_skill_plan_separates_player_and_effect_positions()
 
 arpg::test::Failure material_and_fallback_skill_plans_are_exclusive_and_allocate_nothing()
     noexcept {
+    const platform::ActiveSkillDrawRuntimeStatus untouched_runtime{};
+    ARPG_REQUIRE(untouched_runtime.mode
+        == platform::ActiveSkillVisualMode::none);
+    ARPG_REQUIRE(untouched_runtime.atlas == platform::MaterialAtlasId::count);
+    ARPG_REQUIRE(untouched_runtime.atlas_frame == 0U);
+    ARPG_REQUIRE(!untouched_runtime.material_frame_drawn);
+    ARPG_REQUIRE(!untouched_runtime.base_player_drawn);
+    ARPG_REQUIRE(untouched_runtime.procedural_main_visual_count == 0U);
+
+    platform::ActiveSkillEffectPlan empty_procedural_plan{};
+    empty_procedural_plan.mode =
+        platform::ActiveSkillVisualMode::procedural_fallback;
+    empty_procedural_plan.storm_swords.visible = true;
+    const platform::ActiveSkillDrawRuntimeStatus empty_procedural_runtime =
+        platform::ActiveSkillRenderer{}.draw_world(
+            empty_procedural_plan, platform::MaterialPack{},
+            1280.0F, 720.0F);
+    ARPG_REQUIRE(
+        empty_procedural_runtime.procedural_main_visual_count == 0U);
+
     combat::CombatSnapshot snapshot{};
     snapshot.player.position = {3.0F, 4.0F, 0.0F};
     snapshot.active_skill.id = skills::ActiveSkillId::storm_swords;
@@ -92,8 +112,8 @@ arpg::test::Failure material_and_fallback_skill_plans_are_exclusive_and_allocate
     ARPG_REQUIRE(healthy.suppress_base_player);
     ARPG_REQUIRE(healthy.procedural_main_visual_count == 0U);
     ARPG_REQUIRE(healthy.atlas == platform::MaterialAtlasId::skill_storm_swords);
-    ARPG_REQUIRE(healthy.storm_swords.visible);
-    ARPG_REQUIRE(healthy.storm_swords.sword_count == 24U);
+    ARPG_REQUIRE(!healthy.storm_swords.visible);
+    ARPG_REQUIRE(healthy.storm_swords.sword_count == 0U);
     ARPG_REQUIRE(!healthy.storm_swords.finisher_visible);
 
     const platform::ActiveSkillEffectPlan fallback =

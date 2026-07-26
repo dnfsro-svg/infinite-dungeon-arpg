@@ -66,6 +66,15 @@ struct ActiveSkillEffectPlan final {
     float screen_flash_alpha{};
 };
 
+struct ActiveSkillDrawRuntimeStatus final {
+    ActiveSkillVisualMode mode{ActiveSkillVisualMode::none};
+    MaterialAtlasId atlas{MaterialAtlasId::count};
+    std::size_t atlas_frame{};
+    bool material_frame_drawn{};
+    bool base_player_drawn{};
+    std::size_t procedural_main_visual_count{};
+};
+
 [[nodiscard]] std::size_t active_skill_visual_frame_index(
     skills::ActiveSkillId id, std::uint16_t elapsed_ticks) noexcept;
 
@@ -77,7 +86,8 @@ struct ActiveSkillEffectPlan final {
 class ActiveSkillRenderer final {
 public:
     [[nodiscard]] bool assets_ready() const noexcept;
-    void draw_world(const ActiveSkillEffectPlan& plan,
+    [[nodiscard]] ActiveSkillDrawRuntimeStatus draw_world(
+        const ActiveSkillEffectPlan& plan,
         const MaterialPack& material_pack,
         float width, float height) const noexcept;
     void draw_hud(const ActiveSkillHudModel& model,

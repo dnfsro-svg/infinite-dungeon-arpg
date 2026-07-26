@@ -65,7 +65,7 @@ function Assert-FrameUnion([object[]]$Rows, [int]$LastFrame,
 }
 
 function Assert-SkillTimelineRows([object[]]$Rows, [int]$ExpectedPerResolution,
-        [int[]]$CaptureTicks, [string]$Name) {
+        [int[]]$CaptureTicks, [string]$Name, [int]$ExpectedAtlas) {
     foreach ($width in @(800,1280,1920)) {
         $resolutionRows = @($Rows | Where-Object { [int]$_.width -eq $width })
         if ($resolutionRows.Count -ne $ExpectedPerResolution) {
@@ -81,11 +81,112 @@ function Assert-SkillTimelineRows([object[]]$Rows, [int]$ExpectedPerResolution,
         }
     }
     foreach ($frame in $Rows) {
-        if ([int]$frame.skill_drawn -ne 1 -or
+        if ([int]$frame.skill_mode -ne 1 -or
+                [int]$frame.skill_atlas -ne $ExpectedAtlas -or
+                [int]$frame.skill_drawn -ne 1 -or
                 [int]$frame.suppress_base_player -ne 1 -or
+                [int]$frame.base_player_drawn -ne 0 -or
                 [int]$frame.procedural_main_visual_count -ne 0) {
             throw "$Name healthy material path rejected"
         }
+    }
+}
+
+function Assert-SkillRoiDifference([string]$Path, [string]$BaselinePath,
+        [object]$Frame, [string]$Name) {
+    $bitmap = [System.Drawing.Bitmap]::FromFile($Path)
+    $baseline = [System.Drawing.Bitmap]::FromFile($BaselinePath)
+    try {
+        if ($bitmap.Width -ne $baseline.Width -or
+                $bitmap.Height -ne $baseline.Height) {
+            throw "$Name skill/baseline dimensions differ"
+        }
+        [int]$left = [int]$Frame.skill_roi_x
+        [int]$top = [int]$Frame.skill_roi_y
+        [int]$width = [int]$Frame.skill_roi_width
+        [int]$height = [int]$Frame.skill_roi_height
+        if ($left -lt 0 -or $top -lt 0 -or $width -le 0 -or $height -le 0 -or
+                $left + $width -gt $bitmap.Width -or
+                $top + $height -gt $bitmap.Height) {
+            throw "$Name production skill ROI rejected"
+        }
+        $mask = New-Object 'bool[,]' $width, $height
+        [int]$changed = 0
+        for ($y = 0; $y -lt $height; ++$y) {
+            for ($x = 0; $x -lt $width; ++$x) {
+                $pixel = $bitmap.GetPixel($left + $x, $top + $y)
+                $reference = $baseline.GetPixel($left + $x, $top + $y)
+                $difference = [Math]::Abs([int]$pixel.R - [int]$reference.R) +
+                    [Math]::Abs([int]$pixel.G - [int]$reference.G) +
+                    [Math]::Abs([int]$pixel.B - [int]$reference.B)
+                if ($difference -ge 48) {
+                    $mask[$x, $y] = $true
+                    ++$changed
+                }
+            }
+        }
+        [int]$largest = 0
+        [int]$largestWidth = 0
+        [int]$largestHeight = 0
+        for ($y = 0; $y -lt $height; ++$y) {
+            for ($x = 0; $x -lt $width; ++$x) {
+                if (-not $mask[$x, $y]) { continue }
+                $queue = [System.Collections.Generic.Queue[int]]::new()
+                $queue.Enqueue($y * $width + $x)
+                $mask[$x, $y] = $false
+                [int]$component = 0
+                [int]$minX = $x; [int]$maxX = $x
+                [int]$minY = $y; [int]$maxY = $y
+                while ($queue.Count -gt 0) {
+                    $point = $queue.Dequeue()
+                    $px = $point % $width
+                    $py = [Math]::Floor($point / $width)
+                    ++$component
+                    $minX = [Math]::Min($minX, $px)
+                    $maxX = [Math]::Max($maxX, $px)
+                    $minY = [Math]::Min($minY, $py)
+                    $maxY = [Math]::Max($maxY, $py)
+                    foreach ($offset in @(
+                            @(-1,-1),@(0,-1),@(1,-1),@(-1,0),@(1,0),
+                            @(-1,1),@(0,1),@(1,1))) {
+                        $nx = $px + $offset[0]; $ny = $py + $offset[1]
+                        if ($nx -ge 0 -and $nx -lt $width -and
+                                $ny -ge 0 -and $ny -lt $height -and
+                                $mask[$nx, $ny]) {
+                            $mask[$nx, $ny] = $false
+                            $queue.Enqueue($ny * $width + $nx)
+                        }
+                    }
+                }
+                if ($component -gt $largest) {
+                    $largest = $component
+                    $largestWidth = $maxX - $minX + 1
+                    $largestHeight = $maxY - $minY + 1
+                }
+            }
+        }
+        $area = $width * $height
+        $minimumChanged = [Math]::Max(120, [Math]::Floor($area / 100))
+        $minimumConnected = [Math]::Max(48, [Math]::Floor($area / 500))
+        [int]$minimumWidth = 8
+        [int]$minimumHeight = 8
+        if ($Frame.roi_kind -eq 'procedural_fallback') {
+            $minimumChanged = 300
+            $minimumConnected = 300
+            $minimumWidth = 32
+            $minimumHeight = 100
+        }
+        Write-Output ("[stage12-skill-roi] {0} kind={1} changed={2} " +
+            "largest={3} extent={4}x{5}" -f $Name, $Frame.roi_kind,
+            $changed, $largest, $largestWidth, $largestHeight)
+        if ($changed -lt $minimumChanged -or $largest -lt $minimumConnected -or
+                $largestWidth -lt $minimumWidth -or
+                $largestHeight -lt $minimumHeight) {
+            throw "$Name skill ROI lacks meaningful connected difference: changed=$changed largest=$largest extent=${largestWidth}x${largestHeight}"
+        }
+    } finally {
+        $bitmap.Dispose()
+        $baseline.Dispose()
     }
 }
 
@@ -201,6 +302,7 @@ function Assert-MaterialRuntimeIntegration([string]$EvidenceRoot) {
     $framePath = Join-Path $EvidenceRoot 'material-runtime-frames.csv'
     $doorPath = Join-Path $EvidenceRoot 'material-runtime-doors.csv'
     $propPath = Join-Path $EvidenceRoot 'material-runtime-environment-props.csv'
+    $skillRoiPath = Join-Path $EvidenceRoot 'material-runtime-skill-roi.csv'
     foreach ($path in @($integrationPath, $framePath, $doorPath, $propPath)) {
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
             throw "missing material runtime integration evidence: $path"
@@ -232,7 +334,7 @@ function Assert-MaterialRuntimeIntegration([string]$EvidenceRoot) {
             'fallback_unload_calls','screenshot_count','capture_prime_count',
             'screenshot_pixel_guard','screenshot_nonblack_failures',
             'scene_sentinel_failures','frame_csv','door_csv',
-            'environment_prop_csv','result')) {
+            'environment_prop_csv','skill_roi_csv','result')) {
         if (-not $integration.ContainsKey($key)) {
             throw "missing integration report field: $key"
         }
@@ -264,8 +366,8 @@ function Assert-MaterialRuntimeIntegration([string]$EvidenceRoot) {
             $integration.missing_map_fallback -ne 'pass' -or
             [int]$integration.stress_warmup_frames -ne 300 -or
             [int]$integration.stress_measured_frames -ne 1800 -or
-            [int]$integration.screenshot_count -ne 64 -or
-            [int]$integration.capture_prime_count -ne 64 -or
+            [int]$integration.screenshot_count -ne 70 -or
+            [int]$integration.capture_prime_count -ne 70 -or
             $integration.screenshot_pixel_guard -ne 'pass' -or
             [int]$integration.screenshot_nonblack_failures -ne 0 -or
             [int]$integration.scene_sentinel_failures -ne 0 -or
@@ -314,7 +416,8 @@ function Assert-MaterialRuntimeIntegration([string]$EvidenceRoot) {
     $frames = @(Import-Csv -LiteralPath $framePath)
     $doors = @(Import-Csv -LiteralPath $doorPath)
     $props = @(Import-Csv -LiteralPath $propPath)
-    if ($frames.Count -ne 3539 -or $doors.Count -ne 24 -or
+    $skillRois = @(Import-Csv -LiteralPath $skillRoiPath)
+    if ($frames.Count -ne 3551 -or $doors.Count -ne 24 -or
             $props.Count -ne 45) {
         throw "integration CSV row counts rejected: frames=$($frames.Count) doors=$($doors.Count) props=$($props.Count)"
     }
@@ -326,14 +429,14 @@ function Assert-MaterialRuntimeIntegration([string]$EvidenceRoot) {
     }
     $actual = @($frames | Where-Object { $_.capture_prime -eq '0' })
     $primes = @($frames | Where-Object { $_.capture_prime -eq '1' })
-    if ($primes.Count -ne 64 -or
+    if ($primes.Count -ne 70 -or
             @($primes | Where-Object { -not [string]::IsNullOrEmpty($_.screenshot) }).Count -ne 0) {
         throw 'capture-prime telemetry rejected'
     }
 
     $screenshotFrames = @($actual | Where-Object {
         -not [string]::IsNullOrEmpty($_.screenshot) })
-    if ($screenshotFrames.Count -ne 64) {
+    if ($screenshotFrames.Count -ne 70) {
         throw 'integration screenshot binding count rejected'
     }
     $screenshotNames = [System.Collections.Generic.HashSet[string]]::new()
@@ -418,16 +521,84 @@ function Assert-MaterialRuntimeIntegration([string]$EvidenceRoot) {
     }
     Assert-FrameUnion $drawRows 35 'draw-slash'
     Assert-FrameUnion $stormRows 23 'storm-swords'
-    Assert-SkillTimelineRows $drawRows 90 @(0,45,46,66,89) 'draw-slash'
-    Assert-SkillTimelineRows $stormRows 360 @(0,71,72,180,323,324,342,359) 'storm-swords'
+    Assert-SkillTimelineRows $drawRows 90 @(0,45,46,66,89) 'draw-slash' 27
+    Assert-SkillTimelineRows $stormRows 360 @(0,71,72,180,323,324,342,359) 'storm-swords' 28
+    $drawBaselines = @($frames | Where-Object {
+        $_.mode -eq 'draw-slash-baseline' })
+    $stormBaselines = @($frames | Where-Object {
+        $_.mode -eq 'storm-swords-baseline' })
+    if ($drawBaselines.Count -ne 6 -or $stormBaselines.Count -ne 6) {
+        throw 'skill-off baseline frame coverage rejected'
+    }
+    foreach ($baseline in @($drawBaselines + $stormBaselines)) {
+        if ($baseline.skill_id -ne 'none' -or [int]$baseline.skill_mode -ne 0 -or
+                [int]$baseline.skill_atlas -ne 29 -or
+                [int]$baseline.skill_drawn -ne 0 -or
+                [int]$baseline.suppress_base_player -ne 0 -or
+                [int]$baseline.base_player_drawn -ne 1 -or
+                [int]$baseline.procedural_main_visual_count -ne 0) {
+            throw 'skill-off runtime status did not reset'
+        }
+    }
     $fallback = @($actual | Where-Object { $_.mode -eq 'draw-slash-missing-map' })
     if ($fallback.Count -ne 3) { throw 'missing-map resolution coverage rejected' }
     foreach ($frame in $fallback) {
-        if ([int]$frame.skill_drawn -ne 0 -or
+        if ([int]$frame.skill_mode -ne 2 -or [int]$frame.skill_atlas -ne 27 -or
+                [int]$frame.skill_drawn -ne 0 -or
                 [int]$frame.suppress_base_player -ne 0 -or
+                [int]$frame.base_player_drawn -ne 1 -or
                 [int]$frame.procedural_main_visual_count -le 0) {
             throw 'missing-map procedural fallback inverse rejected'
         }
+    }
+    if ($skillRois.Count -ne 9) { throw 'skill ROI row coverage rejected' }
+    foreach ($width in @(800,1280,1920)) {
+        $resolution = if ($width -eq 800) { '800x450' } elseif (
+            $width -eq 1280) { '1280x720' } else { '1920x1080' }
+        $drawBaseline = @($drawBaselines | Where-Object {
+            [int]$_.width -eq $width -and -not [string]::IsNullOrEmpty($_.screenshot) })
+        $stormBaseline = @($stormBaselines | Where-Object {
+            [int]$_.width -eq $width -and -not [string]::IsNullOrEmpty($_.screenshot) })
+        $drawFrame = @($skillRois | Where-Object {
+            $_.mode -eq 'draw-slash' -and [int]$_.width -eq $width })
+        $stormFrame = @($skillRois | Where-Object {
+            $_.mode -eq 'storm-swords' -and [int]$_.width -eq $width })
+        $fallbackFrame = @($skillRois | Where-Object {
+            $_.mode -eq 'draw-slash-missing-map' -and
+            [int]$_.width -eq $width })
+        if ($drawBaseline.Count -ne 1 -or $stormBaseline.Count -ne 1 -or
+                $drawFrame.Count -ne 1 -or $stormFrame.Count -ne 1 -or
+                $fallbackFrame.Count -ne 1) {
+            throw "skill ROI pair coverage rejected: $resolution"
+        }
+        $drawBaselinePath = Join-Path $EvidenceRoot $drawBaseline[0].screenshot
+        $stormBaselinePath = Join-Path $EvidenceRoot $stormBaseline[0].screenshot
+        if ([int]$drawFrame[0].tick -ne 45 -or
+                $drawFrame[0].roi_kind -ne 'material_atlas' -or
+                [int]$drawFrame[0].material_frame_drawn -ne 1 -or
+                [int]$drawFrame[0].base_player_drawn -ne 0 -or
+                [int]$drawFrame[0].procedural_main_visual_count -ne 0 -or
+                [int]$stormFrame[0].tick -ne 180 -or
+                $stormFrame[0].roi_kind -ne 'material_atlas' -or
+                [int]$stormFrame[0].material_frame_drawn -ne 1 -or
+                [int]$stormFrame[0].base_player_drawn -ne 0 -or
+                [int]$stormFrame[0].procedural_main_visual_count -ne 0 -or
+                [int]$fallbackFrame[0].tick -ne 45 -or
+                $fallbackFrame[0].roi_kind -ne 'procedural_fallback' -or
+                [int]$fallbackFrame[0].material_frame_drawn -ne 0 -or
+                [int]$fallbackFrame[0].base_player_drawn -ne 1 -or
+                [int]$fallbackFrame[0].procedural_main_visual_count -le 0 -or
+                $drawFrame[0].baseline_path -ne $drawBaseline[0].screenshot -or
+                $stormFrame[0].baseline_path -ne $stormBaseline[0].screenshot -or
+                $fallbackFrame[0].baseline_path -ne $drawBaseline[0].screenshot) {
+            throw "skill ROI runtime/path gate rejected: $resolution"
+        }
+        Assert-SkillRoiDifference (Join-Path $EvidenceRoot $drawFrame[0].skill_path) `
+            $drawBaselinePath $drawFrame[0] "draw-slash-$resolution"
+        Assert-SkillRoiDifference (Join-Path $EvidenceRoot $stormFrame[0].skill_path) `
+            $stormBaselinePath $stormFrame[0] "storm-swords-$resolution"
+        Assert-SkillRoiDifference (Join-Path $EvidenceRoot $fallbackFrame[0].skill_path) `
+            $drawBaselinePath $fallbackFrame[0] "draw-slash-missing-map-$resolution"
     }
 
     $warmup = @($actual | Where-Object { $_.mode -eq 'stress-warmup' })

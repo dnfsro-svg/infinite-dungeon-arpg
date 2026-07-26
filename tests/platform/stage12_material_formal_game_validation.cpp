@@ -20,6 +20,7 @@
 #include "ui_text_bounds_audit.hpp"
 
 #include <raylib.h>
+#include <rlgl.h>
 
 #include <algorithm>
 #include <array>
@@ -599,13 +600,70 @@ PixelRoi lightning_material_frame_roi(combat::MonsterId monster,
     return {x, y, right_pixel - x, bottom_pixel - y};
 }
 
+PixelRoi active_skill_material_frame_roi(skills::ActiveSkillId skill,
+    combat::Vec3 player_position, std::size_t frame_index,
+    const IntegrationResolution& resolution) noexcept {
+    const auto frame = platform::active_skill_atlas_frame(skill, frame_index);
+    if (!frame.has_value()) return {};
+    const platform::ScreenProjection projected =
+        platform::project_combat_position(player_position,
+            static_cast<float>(resolution.width),
+            static_cast<float>(resolution.height));
+    const float scale = projected.scale
+        * (skill == skills::ActiveSkillId::draw_slash ? 0.72F : 0.70F);
+    const float padding = 8.0F * projected.scale;
+    const float left = projected.x - frame->foot_anchor.x * scale - padding;
+    const float top = projected.ground_y
+        - frame->foot_anchor.y * scale - padding;
+    const float right = projected.x
+        + (frame->source.width - frame->foot_anchor.x) * scale + padding;
+    const float bottom = projected.ground_y
+        + (frame->source.height - frame->foot_anchor.y) * scale + padding;
+    const int x = (std::max)(0, static_cast<int>(std::floor(left)));
+    const int y = (std::max)(0, static_cast<int>(std::floor(top)));
+    const int right_pixel = (std::min)(resolution.width,
+        static_cast<int>(std::ceil(right)));
+    const int bottom_pixel = (std::min)(resolution.height,
+        static_cast<int>(std::ceil(bottom)));
+    return {x, y, right_pixel - x, bottom_pixel - y};
+}
+
+PixelRoi draw_slash_procedural_roi(combat::Vec3 effect_center,
+    combat::Facing facing,
+    const IntegrationResolution& resolution) noexcept {
+    const platform::ScreenProjection projected =
+        platform::project_combat_position(effect_center,
+            static_cast<float>(resolution.width),
+            static_cast<float>(resolution.height));
+    const float origin_x = projected.x;
+    const float origin_y = projected.ground_y - 42.0F * projected.scale;
+    const float radius = 250.0F * projected.scale;
+    const float vertical_radius = radius * 0.58F;
+    const float padding = 8.0F * projected.scale;
+    const bool left_facing = facing == combat::Facing::left;
+    const float left = left_facing
+        ? origin_x - radius - padding : origin_x - padding;
+    const float right = left_facing
+        ? origin_x + padding : origin_x + radius + padding;
+    const float top = origin_y - vertical_radius - padding;
+    const float bottom = origin_y + vertical_radius + padding;
+    const int x = (std::max)(0, static_cast<int>(std::floor(left)));
+    const int y = (std::max)(0, static_cast<int>(std::floor(top)));
+    const int right_pixel = (std::min)(resolution.width,
+        static_cast<int>(std::ceil(right)));
+    const int bottom_pixel = (std::min)(resolution.height,
+        static_cast<int>(std::ceil(bottom)));
+    return {x, y, right_pixel - x, bottom_pixel - y};
+}
+
 struct IntegrationFrameObservation final {
     bool screenshot_ok{true};
     bool screenshot_nonblack{true};
     bool scene_sentinel_matches{true};
     std::array<bool, kIntegrationMonsterIds.size()> monster_drawn{};
     std::array<bool, kIntegrationDoorDirections.size()> door_drawn{};
-    platform::ActiveSkillEffectPlan skill_plan{};
+    platform::ActiveSkillDrawRuntimeStatus skill_draw{};
+    PixelRoi skill_roi{};
     double frame_ms{};
 };
 
@@ -810,20 +868,17 @@ void equip_skill(dungeon::DungeonSnapshot& snapshot,
     return samples != 0U && visible * 20U >= samples;
 }
 
-[[nodiscard]] bool export_presented_frame(
-    const std::filesystem::path& path, Color expected_sentinel,
+[[nodiscard]] Image capture_presented_frame(Color expected_sentinel,
     bool& nonblack, bool& sentinel_matches) noexcept {
     try {
         Image image = LoadImageFromScreen();
-        if (image.data == nullptr) return false;
+        if (image.data == nullptr) return {};
         nonblack = sampled_image_is_nonblack(image);
         sentinel_matches = image.width >= 4 && image.height >= 4
             && colors_equal(GetImageColor(image, 1, 1), expected_sentinel);
-        const bool exported = ExportImage(image, path.string().c_str());
-        UnloadImage(image);
-        return exported;
+        return image;
     } catch (...) {
-        return false;
+        return {};
     }
 }
 
@@ -920,18 +975,33 @@ void equip_skill(dungeon::DungeonSnapshot& snapshot,
     platform::CombatFeedback feedback{};
     static_cast<void>(renderer.draw(snapshot, snapshot, runtime_status,
         0.0F, false, feedback, false));
+    observation.skill_draw = renderer.active_skill_draw_status();
     const Color expected_sentinel = integration_scene_sentinel(
         mode, tick, resolution);
     DrawRectangle(0, 0, 4, 4, expected_sentinel);
+    Image captured_image{};
+    if (screenshot != nullptr) {
+        rlDrawRenderBatchActive();
+        captured_image = capture_presented_frame(expected_sentinel,
+            observation.screenshot_nonblack,
+            observation.scene_sentinel_matches);
+    }
     EndDrawing();
     const auto finished = std::chrono::steady_clock::now();
     observation.frame_ms = std::chrono::duration<double, std::milli>(
         finished - started).count();
 
     if (screenshot != nullptr) {
-        const bool exported = export_presented_frame(*screenshot,
-            expected_sentinel, observation.screenshot_nonblack,
-            observation.scene_sentinel_matches);
+        bool exported = false;
+        if (captured_image.data != nullptr) {
+            try {
+                exported = ExportImage(
+                    captured_image, screenshot->string().c_str());
+            } catch (...) {
+                exported = false;
+            }
+            UnloadImage(captured_image);
+        }
         observation.screenshot_ok = exported
             && observation.screenshot_nonblack
             && observation.scene_sentinel_matches;
@@ -961,20 +1031,23 @@ void equip_skill(dungeon::DungeonSnapshot& snapshot,
     }
 
     skills::ActiveSkillId active_skill = skills::ActiveSkillId::none;
-    std::size_t active_frame{};
-    bool skill_drawn = false;
     if (snapshot.combat.has_value()) {
         active_skill = snapshot.combat->active_skill.id;
-        const bool material_ready = active_skill != skills::ActiveSkillId::none
-            && renderer.material_atlas_available(
-                platform::active_skill_material_atlas(active_skill));
-        observation.skill_plan = platform::make_active_skill_effect_plan(
-            *snapshot.combat, nullptr, material_ready);
-        active_frame = observation.skill_plan.atlas_frame;
-        skill_drawn = observation.skill_plan.mode
-            == platform::ActiveSkillVisualMode::material
-            && material_ready;
+        if (active_skill != skills::ActiveSkillId::none) {
+            observation.skill_roi = observation.skill_draw.mode
+                    == platform::ActiveSkillVisualMode::procedural_fallback
+                && active_skill == skills::ActiveSkillId::draw_slash
+                ? draw_slash_procedural_roi(
+                    snapshot.combat->active_skill.locked_center,
+                    snapshot.combat->player.facing, resolution)
+                : active_skill_material_frame_roi(active_skill,
+                    snapshot.combat->player.position,
+                    observation.skill_draw.atlas_frame, resolution);
+        }
     }
+    const bool base_player_suppressed =
+        active_skill != skills::ActiveSkillId::none
+        && !observation.skill_draw.base_player_drawn;
 
     const platform::MaterialPack& pack = renderer.material_pack();
     result.observed_resident_peak_bytes = (std::max)(
@@ -991,10 +1064,17 @@ void equip_skill(dungeon::DungeonSnapshot& snapshot,
     for (const bool drawn : observation.door_drawn) {
         frames << ',' << (drawn ? 1 : 0);
     }
-    frames << ',' << skill_name(active_skill) << ',' << active_frame << ','
-           << (skill_drawn ? 1 : 0) << ','
-           << (observation.skill_plan.suppress_base_player ? 1 : 0) << ','
-           << observation.skill_plan.procedural_main_visual_count << ','
+    frames << ',' << skill_name(active_skill) << ','
+           << static_cast<unsigned int>(observation.skill_draw.mode) << ','
+           << static_cast<unsigned int>(observation.skill_draw.atlas) << ','
+           << observation.skill_draw.atlas_frame << ','
+           << (observation.skill_draw.material_frame_drawn ? 1 : 0) << ','
+           << (base_player_suppressed ? 1 : 0) << ','
+           << (observation.skill_draw.base_player_drawn ? 1 : 0) << ','
+           << observation.skill_draw.procedural_main_visual_count << ','
+           << observation.skill_roi.x << ',' << observation.skill_roi.y << ','
+           << observation.skill_roi.width << ','
+           << observation.skill_roi.height << ','
            << std::fixed << std::setprecision(6) << observation.frame_ms << ','
            << (capture_prime ? 1 : 0) << ','
            << static_cast<unsigned int>(expected_sentinel.r) << ','
@@ -1030,19 +1110,54 @@ void equip_skill(dungeon::DungeonSnapshot& snapshot,
         std::ios::out | std::ios::trunc);
     std::ofstream props(root / "material-runtime-environment-props.csv",
         std::ios::out | std::ios::trunc);
-    if (!frames || !doors || !props) return result;
+    std::ofstream skill_rois(root / "material-runtime-skill-roi.csv",
+        std::ios::out | std::ios::trunc);
+    if (!frames || !doors || !props || !skill_rois) return result;
     frames << "sequence,mode,width,height,tick,showcase,requested_mask,"
               "resident_mask,resident_bytes,load_calls,unload_calls,"
               "fire_bomber,fire_charger,water_bulwark,water_support,"
               "lightning_shooter,lightning_dasher,chaos_chaser,chaos_hazard,"
-              "door_up,door_down,door_left,door_right,skill_id,skill_frame,"
-              "skill_drawn,suppress_base_player,procedural_main_visual_count,"
+              "door_up,door_down,door_left,door_right,skill_id,skill_mode,"
+              "skill_atlas,skill_frame,skill_drawn,suppress_base_player,"
+              "base_player_drawn,procedural_main_visual_count,skill_roi_x,"
+              "skill_roi_y,skill_roi_width,skill_roi_height,"
               "frame_ms,capture_prime,sentinel_r,sentinel_g,sentinel_b,"
               "screenshot_nonblack,scene_sentinel,screenshot\n";
     doors << "mode,width,height,direction,sprite_id,x,y,width_px,height_px,"
              "drawn,screenshot\n";
     props << "ecology,width,height,sprite_id,x,y,width_px,height_px,hud_top,"
              "inside,drawn,screenshot\n";
+    skill_rois << "mode,width,height,tick,skill_path,baseline_path,roi_kind,"
+                  "skill_roi_x,skill_roi_y,skill_roi_width,skill_roi_height,"
+                  "material_frame_drawn,base_player_drawn,"
+                  "procedural_main_visual_count\n";
+    const auto write_skill_roi = [&skill_rois](const char* mode,
+        const IntegrationResolution& resolution, std::uint16_t tick,
+        const std::filesystem::path& skill_path,
+        const std::filesystem::path& baseline_path,
+        const IntegrationFrameObservation& observation) {
+        const PixelRoi& roi = observation.skill_roi;
+        const bool valid = roi.x >= 0 && roi.y >= 0
+            && roi.width > 0 && roi.height > 0
+            && roi.x + roi.width <= resolution.width
+            && roi.y + roi.height <= resolution.height;
+        if (!valid) return false;
+        skill_rois << mode << ',' << resolution.width << ','
+                   << resolution.height << ',' << tick << ','
+                   << skill_path.filename().string() << ','
+                   << baseline_path.filename().string() << ','
+                   << (observation.skill_draw.mode
+                            == platform::ActiveSkillVisualMode::material
+                        ? "material_atlas" : "procedural_fallback") << ','
+                   << roi.x << ',' << roi.y << ',' << roi.width << ','
+                   << roi.height << ','
+                   << (observation.skill_draw.material_frame_drawn ? 1 : 0)
+                   << ',' << (observation.skill_draw.base_player_drawn ? 1 : 0)
+                   << ','
+                   << observation.skill_draw.procedural_main_visual_count
+                   << '\n';
+        return static_cast<bool>(skill_rois);
+    };
 
     SetConfigFlags(FLAG_WINDOW_UNDECORATED);
     InitWindow(800, 450, "Material Runtime Integration Formal Validation");
@@ -1234,8 +1349,26 @@ void equip_skill(dungeon::DungeonSnapshot& snapshot,
         result.death_ok = result.death_ok && death_observation.screenshot_ok
             && warning_after > warning_before && label_after > label_before;
 
-        dungeon::DungeonSnapshot draw = integration_snapshot(
+        dungeon::DungeonSnapshot draw_baseline = integration_snapshot(
             dungeon::DungeonElement::fire);
+        const std::filesystem::path draw_baseline_screenshot = root /
+            (std::string{"integration-draw-slash-baseline-"}
+                + resolution.tag + ".png");
+        const IntegrationFrameObservation draw_baseline_observation =
+            present_integration_frame(renderer, draw_baseline, resolution,
+                "draw-slash-baseline", 0U, &draw_baseline_screenshot,
+                frames, sequence, result);
+        result.skill_timeline_ok = result.skill_timeline_ok
+            && draw_baseline_observation.screenshot_ok
+            && draw_baseline_observation.skill_draw.mode
+                == platform::ActiveSkillVisualMode::none
+            && draw_baseline_observation.skill_draw.atlas
+                == platform::MaterialAtlasId::count
+            && !draw_baseline_observation.skill_draw.material_frame_drawn
+            && draw_baseline_observation.skill_draw.base_player_drawn
+            && draw_baseline_observation.skill_draw
+                .procedural_main_visual_count == 0U;
+        dungeon::DungeonSnapshot draw = draw_baseline;
         for (std::uint16_t tick{}; tick < 90U; ++tick) {
             equip_skill(draw, skills::ActiveSkillId::draw_slash, tick);
             std::filesystem::path capture_path{};
@@ -1248,21 +1381,52 @@ void equip_skill(dungeon::DungeonSnapshot& snapshot,
             const IntegrationFrameObservation skill_observation =
                 present_integration_frame(renderer, draw, resolution,
                     "draw-slash", tick, capture, frames, sequence, result);
-            if (skill_observation.skill_plan.atlas_frame
+            if (skill_observation.skill_draw.atlas_frame
                     < result.draw_slash_frames.size()) {
                 result.draw_slash_frames[
-                    skill_observation.skill_plan.atlas_frame] = true;
+                    skill_observation.skill_draw.atlas_frame] = true;
             }
+            const std::size_t expected_frame =
+                platform::active_skill_visual_frame_index(
+                    skills::ActiveSkillId::draw_slash, tick);
             result.skill_timeline_ok = result.skill_timeline_ok
-                && skill_observation.skill_plan.mode
+                && skill_observation.skill_draw.mode
                     == platform::ActiveSkillVisualMode::material
-                && skill_observation.skill_plan.suppress_base_player
-                && skill_observation.skill_plan.procedural_main_visual_count == 0U
+                && skill_observation.skill_draw.atlas
+                    == platform::MaterialAtlasId::skill_draw_slash
+                && skill_observation.skill_draw.atlas_frame == expected_frame
+                && skill_observation.skill_draw.material_frame_drawn
+                && !skill_observation.skill_draw.base_player_drawn
+                && skill_observation.skill_draw.procedural_main_visual_count == 0U
                 && (capture == nullptr || skill_observation.screenshot_ok);
+            if (tick == 45U) {
+                result.skill_timeline_ok = write_skill_roi("draw-slash",
+                    resolution, tick, capture_path,
+                    draw_baseline_screenshot, skill_observation)
+                    && result.skill_timeline_ok;
+            }
         }
 
-        dungeon::DungeonSnapshot storm = integration_snapshot(
+        dungeon::DungeonSnapshot storm_baseline = integration_snapshot(
             dungeon::DungeonElement::chaos);
+        const std::filesystem::path storm_baseline_screenshot = root /
+            (std::string{"integration-storm-swords-baseline-"}
+                + resolution.tag + ".png");
+        const IntegrationFrameObservation storm_baseline_observation =
+            present_integration_frame(renderer, storm_baseline, resolution,
+                "storm-swords-baseline", 0U, &storm_baseline_screenshot,
+                frames, sequence, result);
+        result.skill_timeline_ok = result.skill_timeline_ok
+            && storm_baseline_observation.screenshot_ok
+            && storm_baseline_observation.skill_draw.mode
+                == platform::ActiveSkillVisualMode::none
+            && storm_baseline_observation.skill_draw.atlas
+                == platform::MaterialAtlasId::count
+            && !storm_baseline_observation.skill_draw.material_frame_drawn
+            && storm_baseline_observation.skill_draw.base_player_drawn
+            && storm_baseline_observation.skill_draw
+                .procedural_main_visual_count == 0U;
+        dungeon::DungeonSnapshot storm = storm_baseline;
         for (std::uint16_t tick{}; tick < 360U; ++tick) {
             equip_skill(storm, skills::ActiveSkillId::storm_swords, tick);
             std::filesystem::path capture_path{};
@@ -1275,17 +1439,30 @@ void equip_skill(dungeon::DungeonSnapshot& snapshot,
             const IntegrationFrameObservation skill_observation =
                 present_integration_frame(renderer, storm, resolution,
                     "storm-swords", tick, capture, frames, sequence, result);
-            if (skill_observation.skill_plan.atlas_frame
+            if (skill_observation.skill_draw.atlas_frame
                     < result.storm_frames.size()) {
                 result.storm_frames[
-                    skill_observation.skill_plan.atlas_frame] = true;
+                    skill_observation.skill_draw.atlas_frame] = true;
             }
+            const std::size_t expected_frame =
+                platform::active_skill_visual_frame_index(
+                    skills::ActiveSkillId::storm_swords, tick);
             result.skill_timeline_ok = result.skill_timeline_ok
-                && skill_observation.skill_plan.mode
+                && skill_observation.skill_draw.mode
                     == platform::ActiveSkillVisualMode::material
-                && skill_observation.skill_plan.suppress_base_player
-                && skill_observation.skill_plan.procedural_main_visual_count == 0U
+                && skill_observation.skill_draw.atlas
+                    == platform::MaterialAtlasId::skill_storm_swords
+                && skill_observation.skill_draw.atlas_frame == expected_frame
+                && skill_observation.skill_draw.material_frame_drawn
+                && !skill_observation.skill_draw.base_player_drawn
+                && skill_observation.skill_draw.procedural_main_visual_count == 0U
                 && (capture == nullptr || skill_observation.screenshot_ok);
+            if (tick == 180U) {
+                result.skill_timeline_ok = write_skill_roi("storm-swords",
+                    resolution, tick, capture_path,
+                    storm_baseline_screenshot, skill_observation)
+                    && result.skill_timeline_ok;
+            }
         }
     }
 
@@ -1447,12 +1624,25 @@ void equip_skill(dungeon::DungeonSnapshot& snapshot,
                     &fallback_screenshot, frames, sequence, result);
             result.skill_fallback_ok = result.skill_fallback_ok
                 && fallback_core_ready && observation.screenshot_ok
-                && observation.skill_plan.mode
+                && observation.skill_draw.mode
                     == platform::ActiveSkillVisualMode::procedural_fallback
-                && !observation.skill_plan.suppress_base_player
-                && observation.skill_plan.procedural_main_visual_count > 0U
+                && observation.skill_draw.atlas
+                    == platform::MaterialAtlasId::skill_draw_slash
+                && observation.skill_draw.atlas_frame
+                    == platform::active_skill_visual_frame_index(
+                        skills::ActiveSkillId::draw_slash, 45U)
+                && !observation.skill_draw.material_frame_drawn
+                && observation.skill_draw.base_player_drawn
+                && observation.skill_draw.procedural_main_visual_count > 0U
                 && !fallback_renderer.material_atlas_available(
                     platform::MaterialAtlasId::skill_draw_slash);
+            const std::filesystem::path baseline_screenshot = root /
+                (std::string{"integration-draw-slash-baseline-"}
+                    + resolution.tag + ".png");
+            result.skill_fallback_ok = write_skill_roi(
+                "draw-slash-missing-map", resolution, 45U,
+                fallback_screenshot, baseline_screenshot, observation)
+                && result.skill_fallback_ok;
         }
         result.fallback_load_calls =
             fallback_renderer.material_pack().texture_load_call_count();
@@ -1486,7 +1676,8 @@ void equip_skill(dungeon::DungeonSnapshot& snapshot,
         && result.door_question_glyph_count == 0U;
 
     result.evidence_written = static_cast<bool>(frames)
-        && static_cast<bool>(doors) && static_cast<bool>(props);
+        && static_cast<bool>(doors) && static_cast<bool>(props)
+        && static_cast<bool>(skill_rois);
     std::ofstream report(root / "material-runtime-integration-evidence.txt",
         std::ios::out | std::ios::trunc);
     report << "schema=material-runtime-integration-v1\n"
@@ -1552,6 +1743,7 @@ void equip_skill(dungeon::DungeonSnapshot& snapshot,
            << "frame_csv=material-runtime-frames.csv\n"
            << "door_csv=material-runtime-doors.csv\n"
            << "environment_prop_csv=material-runtime-environment-props.csv\n"
+           << "skill_roi_csv=material-runtime-skill-roi.csv\n"
            << "result=" << (result.passed() ? "pass" : "fail") << '\n';
     result.evidence_written = result.evidence_written
         && static_cast<bool>(report);
@@ -1569,12 +1761,6 @@ int main(int argc, char** argv) {
     std::filesystem::path root{};
     if (!prepare_evidence_run(std::filesystem::absolute(argv[1]), root)
         || !copy_materials(std::filesystem::absolute(argv[0]))) return 3;
-    const IntegrationValidationResult integration =
-        run_integration_validation(root);
-    if (!integration.graphics_context) {
-        std::cerr << "stage12 material formal graphics-context failure\n";
-        return 10;
-    }
     std::error_code error{};
     bool captures_ok = true;
     for (const Resolution& resolution : kResolutions) {
@@ -2111,6 +2297,16 @@ int main(int argc, char** argv) {
     const bool f12_ok = std::filesystem::is_regular_file(f12_capture, f12_error)
         && !f12_error && png_has_size(f12_capture, 1280, 720);
     const bool input_hole_ok = run_input_hole_evidence(root, executable);
+    // Keep the resize-heavy single-window integration context after all
+    // production-host captures. On raylib 6/Windows, closing that context before
+    // re-creating a full-display host window can make its default framebuffer
+    // unreadable even though raylib reports the correct 1920x1080 dimensions.
+    const IntegrationValidationResult integration =
+        run_integration_validation(root);
+    if (!integration.graphics_context) {
+        std::cerr << "stage12 material formal graphics-context failure\n";
+        return 10;
+    }
     std::ofstream report(root / "stage12-material-evidence.txt",
         std::ios::out | std::ios::trunc);
     report << "manifest=" << (manifest_ok ? "pass" : "fail") << '\n'

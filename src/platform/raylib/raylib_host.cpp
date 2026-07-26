@@ -174,16 +174,17 @@ void draw_recovery_screen(const DungeonRenderStatus& status) noexcept {
         48, 156, 16, Color{255, 202, 126, 255});
 }
 
-void present_frame_and_maybe_capture(const char* path) noexcept {
-    if (path == nullptr) {
-        EndDrawing();
-        return;
-    }
-    Image image = LoadImageFromScreen();
+// Production screenshots intentionally read after EndDrawing presents the frame.
+// With raylib 6 on Windows, reading the default framebuffer before that point
+// produced black 1920x1080 captures despite correct render/framebuffer dimensions.
+[[nodiscard]] bool present_frame_and_maybe_capture(const char* path) noexcept {
     EndDrawing();
-    if (image.data == nullptr) return;
-    static_cast<void>(ExportImage(image, path));
+    if (path == nullptr) return true;
+    Image image = LoadImageFromScreen();
+    if (image.data == nullptr) return false;
+    const bool exported = ExportImage(image, path);
     UnloadImage(image);
+    return exported;
 }
 
 void draw_stage12_ui_material_gallery(const MaterialPack& assets) noexcept {
@@ -454,6 +455,14 @@ enum class Stage17Capture : std::uint8_t {
     restarted,
 };
 
+struct Stage17SkillDrawRuntimeEvidence final {
+    std::uint32_t samples{};
+    bool material_frame_drawn{};
+    bool base_player_drawn{};
+    std::size_t procedural_main_visual_peak{};
+    bool valid{true};
+};
+
 struct Stage17SkillStonesValidationState final {
     Stage17ValidationStep step{Stage17ValidationStep::initial};
     Stage17Capture capture_pending{Stage17Capture::none};
@@ -482,6 +491,9 @@ struct Stage17SkillStonesValidationState final {
     bool storm_invulnerable_seen{};
     bool storm_finisher_phase_seen{};
     bool aborted_by_death{};
+    bool renderer_status_failure_latched{};
+    Stage17SkillDrawRuntimeEvidence draw_runtime{};
+    Stage17SkillDrawRuntimeEvidence storm_runtime{};
     std::array<bool, 3> empty_slots_none{};
     std::uint32_t draw_hit_count{};
     std::uint32_t storm_strike_hit_count{};
@@ -492,6 +504,52 @@ struct Stage17SkillStonesValidationState final {
     std::uint32_t presented_frames{};
     std::int8_t draw_retreat_direction{};
 };
+
+void observe_stage17_draw_runtime(const RaylibHostConfig& config,
+    Stage17SkillStonesValidationState& state,
+    const dungeon::DungeonSnapshot& presented,
+    const ActiveSkillDrawRuntimeStatus& status) noexcept {
+    if (config.stage17_skill_stones_validation
+            != Stage17SkillStonesValidationScenario::production_sequence
+        || !presented.combat.has_value()) {
+        return;
+    }
+    const combat::ActiveSkillSnapshot& skill =
+        presented.combat->active_skill;
+    Stage17SkillDrawRuntimeEvidence* evidence = nullptr;
+    if (skill.id == skills::ActiveSkillId::draw_slash) {
+        evidence = &state.draw_runtime;
+    } else if (skill.id == skills::ActiveSkillId::storm_swords) {
+        evidence = &state.storm_runtime;
+    } else {
+        return;
+    }
+    ++evidence->samples;
+    evidence->material_frame_drawn = evidence->material_frame_drawn
+        || status.material_frame_drawn;
+    evidence->base_player_drawn = evidence->base_player_drawn
+        || status.base_player_drawn;
+    evidence->procedural_main_visual_peak = (std::max)(
+        evidence->procedural_main_visual_peak,
+        status.procedural_main_visual_count);
+    const bool sample_valid = status.mode == ActiveSkillVisualMode::material
+        && status.atlas == active_skill_material_atlas(skill.id)
+        && status.atlas_frame == active_skill_visual_frame_index(
+            skill.id, skill.elapsed_ticks)
+        && status.material_frame_drawn
+        && !status.base_player_drawn
+        && status.procedural_main_visual_count == 0U;
+    evidence->valid = evidence->valid && sample_valid;
+    state.renderer_status_failure_latched =
+        state.renderer_status_failure_latched || !sample_valid;
+}
+
+[[nodiscard]] bool stage17_draw_runtime_valid(
+    const Stage17SkillDrawRuntimeEvidence& evidence) noexcept {
+    return evidence.samples > 0U && evidence.valid
+        && evidence.material_frame_drawn && !evidence.base_player_drawn
+        && evidence.procedural_main_visual_peak == 0U;
+}
 
 void observe_stage17_combat_event(
     Stage17SkillStonesValidationState* const state,
@@ -1110,6 +1168,9 @@ void write_stage17_validation_summary(const RaylibHostConfig& config,
                 && state.active_skill_atlases_ready
                 && state.storm_invulnerable_seen
                 && state.storm_finisher_phase_seen
+                && stage17_draw_runtime_valid(state.draw_runtime)
+                && stage17_draw_runtime_valid(state.storm_runtime)
+                && !state.renderer_status_failure_latched
                 && state.public_input_path
                 && state.production_transactions
                 && empty_slots
@@ -1150,6 +1211,29 @@ void write_stage17_validation_summary(const RaylibHostConfig& config,
                << (state.storm_aerial_captured ? 1 : 0) << '\n'
                << "active_skill_atlases_ready="
                << (state.active_skill_atlases_ready ? 1 : 0) << '\n'
+               << "draw_renderer_samples=" << state.draw_runtime.samples << '\n'
+               << "draw_material_frame_drawn="
+               << (state.draw_runtime.material_frame_drawn ? 1 : 0) << '\n'
+               << "draw_base_player_drawn="
+               << (state.draw_runtime.base_player_drawn ? 1 : 0) << '\n'
+               << "draw_procedural_main_visual_peak="
+               << state.draw_runtime.procedural_main_visual_peak << '\n'
+               << "draw_renderer_status_valid="
+               << (stage17_draw_runtime_valid(state.draw_runtime) ? 1 : 0)
+               << '\n'
+               << "storm_renderer_samples=" << state.storm_runtime.samples
+               << '\n'
+               << "storm_material_frame_drawn="
+               << (state.storm_runtime.material_frame_drawn ? 1 : 0) << '\n'
+               << "storm_base_player_drawn="
+               << (state.storm_runtime.base_player_drawn ? 1 : 0) << '\n'
+               << "storm_procedural_main_visual_peak="
+               << state.storm_runtime.procedural_main_visual_peak << '\n'
+               << "storm_renderer_status_valid="
+               << (stage17_draw_runtime_valid(state.storm_runtime) ? 1 : 0)
+               << '\n'
+               << "renderer_status_failure_latched="
+               << (state.renderer_status_failure_latched ? 1 : 0) << '\n'
                << "storm_center_locked=" << (state.storm_center_locked ? 1 : 0) << '\n'
                << "storm_player_moved=" << (state.storm_player_moved ? 1 : 0) << '\n'
                << "public_input_path=" << (state.public_input_path ? 1 : 0) << '\n'
@@ -2825,8 +2909,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 if (frame_input.keys.f12 || frame_input.keys.v) {
                     capture_path = host_screenshot_path(config);
                 }
-                present_frame_and_maybe_capture(capture_path.has_value()
-                    ? capture_path->c_str() : nullptr);
+                static_cast<void>(present_frame_and_maybe_capture(
+                    capture_path.has_value() ? capture_path->c_str() : nullptr));
                 ++presented_frame_count;
                 continue;
             }
@@ -3259,6 +3343,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     static_cast<float>(frame.interpolation_alpha), draw_debug,
                     feedback, audio_ready);
             }();
+            observe_stage17_draw_runtime(config, *stage17_validation_state,
+                presented_snapshot, renderer.active_skill_draw_status());
             if (config.stage12_material_runtime_status != nullptr) {
                 const MonsterMaterialDrawRuntimeStatus shooter_draw =
                     renderer.monster_material_draw_status(
@@ -3556,23 +3642,26 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             } else if (!capture_path.has_value()) {
                 capture_path = validation_capture_path();
             }
-            present_frame_and_maybe_capture(capture_path.has_value()
-                ? capture_path->c_str() : nullptr);
-            if (stage17_capture_requested) {
+            const bool capture_succeeded =
+                present_frame_and_maybe_capture(capture_path.has_value()
+                    ? capture_path->c_str() : nullptr);
+            if (stage17_capture_requested && capture_succeeded) {
                 mark_stage17_capture_complete(*stage17_validation_state);
             }
             ++presented_frame_count;
-            if (captured_stage10_target && stage11c_reached) {
+            const bool captured_stage10_frame = captured_stage10_target
+                && capture_succeeded;
+            if (captured_stage10_frame && stage11c_reached) {
                 stage11c_validation_state.captured = true;
             }
 // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN captured
-            if (captured_stage10_target
+            if (captured_stage10_frame
                     && stage11d_validation_state.target_visible) {
                 stage11d_validation_state.captured = true;
             }
 // STAGE11D_LOOT_VALIDATION_SEAM_END captured
             stage10_validation_captured = stage10_validation_captured
-                || captured_stage10_target;
+                || captured_stage10_frame;
             if (config.validation_exit_after_presented_frames != 0U
                     && presented_frame_count
                         >= config.validation_exit_after_presented_frames) {

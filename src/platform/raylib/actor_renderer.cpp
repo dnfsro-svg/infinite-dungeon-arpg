@@ -516,13 +516,14 @@ MonsterBarVisualPlan make_monster_bar_visual_plan(
     return plan;
 }
 
-void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
+bool CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
     const dungeon::DungeonSnapshot& current,
     const ActiveSkillEffectPlan& active_skill_plan,
     float alpha, bool draw_debug,
     const CombatFeedback& feedback) noexcept {
     monster_material_draw_statuses_.fill({});
-    if (!current.combat.has_value()) return;
+    if (!current.combat.has_value()) return false;
+    bool base_player_drawn = false;
     const float width = static_cast<float>(GetScreenWidth());
     const float height = static_cast<float>(GetScreenHeight());
     const CombatSnapshot& current_combat = *current.combat;
@@ -574,6 +575,7 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
         const RenderActor& item = draw_items[index];
         const ScreenProjection projected = project_combat_position(item.position, width, height);
         if (item.player) {
+            base_player_drawn = true;
             MaterialSpriteId sprite = select_player_sprite(
                 current_combat.player.state, current_combat.player.active_attack);
             if (current_combat.player.hp <= 0) {
@@ -625,6 +627,7 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
     draw_effects(feedback, material_pack_, width, height, true,
         hud_renderer_.hud_font(), hud_renderer_.font_ready());
     if (draw_debug) draw_debug_world_volumes(current_combat, width, height);
+    return base_player_drawn;
 }
 
 }  // namespace arpg::platform

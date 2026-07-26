@@ -107,6 +107,11 @@ RoomBackgroundDrawRuntimeStatus CombatRenderer::room_background_draw_status()
     return room_background_draw_status_;
 }
 
+ActiveSkillDrawRuntimeStatus CombatRenderer::active_skill_draw_status()
+    const noexcept {
+    return active_skill_draw_status_;
+}
+
 DoorRenderDecision door_render_decision(
     DoorVisualMode mode,
     dungeon::ExitDirection direction) noexcept {
@@ -249,6 +254,7 @@ GroundLootView CombatRenderer::draw(
     bool draw_debug,
     const CombatFeedback& feedback,
     bool audio_ready) noexcept {
+    active_skill_draw_status_ = {};
     static_cast<void>(material_pack_.synchronize_residency(
         make_material_residency_request(current)));
     transition_ = transition_after_room_phase(transition_, current.phase);
@@ -284,13 +290,19 @@ GroundLootView CombatRenderer::draw(
             draw_room(current, render_plan.ground_loot, render_plan.material_loot);
             break;
         case CombatRenderStage::actors:
-            draw_actors(previous, current, active_skill_plan,
+            active_skill_draw_status_.base_player_drawn = draw_actors(
+                previous, current, active_skill_plan,
                 std::clamp(interpolation_alpha, 0.0F, 1.0F),
                 draw_debug, feedback);
             if (current.combat.has_value()) {
-                active_skill_renderer_.draw_world(active_skill_plan,
+                const bool base_player_drawn =
+                    active_skill_draw_status_.base_player_drawn;
+                active_skill_draw_status_ = active_skill_renderer_.draw_world(
+                    active_skill_plan,
                     material_pack_, static_cast<float>(GetScreenWidth()),
                     static_cast<float>(GetScreenHeight()));
+                active_skill_draw_status_.base_player_drawn =
+                    base_player_drawn;
             }
             break;
         case CombatRenderStage::ground_loot_labels:

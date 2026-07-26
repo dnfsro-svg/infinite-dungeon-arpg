@@ -107,6 +107,8 @@ public:
         dungeon::DungeonElement ecology) noexcept;
     [[nodiscard]] RoomBackgroundDrawRuntimeStatus room_background_draw_status()
         const noexcept;
+    [[nodiscard]] ActiveSkillDrawRuntimeStatus active_skill_draw_status()
+        const noexcept;
     void consume_event(const combat::CombatEvent& event) noexcept;
     void consume_dungeon_event(const dungeon::DungeonEvent& event) noexcept;
     void clear_combat_transients() noexcept;
@@ -153,7 +155,7 @@ private:
         const dungeon::DungeonSnapshot& current,
         const GroundLootView& ground_loot,
         const MaterialLootView& material_loot) noexcept;
-    void draw_actors(
+    [[nodiscard]] bool draw_actors(
         const dungeon::DungeonSnapshot& previous,
         const dungeon::DungeonSnapshot& current,
         const ActiveSkillEffectPlan& active_skill_plan,
@@ -186,6 +188,7 @@ private:
         static_cast<std::size_t>(combat::MonsterId::count)>
         monster_material_draw_statuses_{};
     RoomBackgroundDrawRuntimeStatus room_background_draw_status_{};
+    ActiveSkillDrawRuntimeStatus active_skill_draw_status_{};
     HudViewModelProjector hud_projector_{};
     HudViewModel hud_model_{};
     ActiveSkillHudModel active_skill_hud_model_{};

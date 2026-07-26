@@ -78,8 +78,18 @@ string(REPLACE "${whitespace_tab}" "" host_compact "${host_compact}")
 string(REPLACE "${whitespace_lf}" "" host_compact "${host_compact}")
 string(REPLACE "${whitespace_cr}" "" host_compact "${host_compact}")
 set(present_helper
-    "voidpresent_frame_and_maybe_capture(constchar*path)noexcept{EndDrawing();if(path==nullptr)return;Imageimage=LoadImageFromScreen();if(image.data==nullptr)return;static_cast<void>(ExportImage(image,path));UnloadImage(image);}")
+    "[[nodiscard]]boolpresent_frame_and_maybe_capture(constchar*path)noexcept{EndDrawing();if(path==nullptr)returntrue;Imageimage=LoadImageFromScreen();if(image.data==nullptr)returnfalse;constboolexported=ExportImage(image,path);UnloadImage(image);returnexported;}")
 string(FIND "${host_compact}" "${present_helper}" present_helper_index)
+set(capture_result_gate
+    "constboolcapture_succeeded=present_frame_and_maybe_capture(capture_path.has_value()?capture_path->c_str():nullptr);")
+string(FIND "${host_compact}" "${capture_result_gate}" capture_result_gate_index)
+set(stage10_result_gate
+    "constboolcaptured_stage10_frame=captured_stage10_target&&capture_succeeded;")
+string(FIND "${host_compact}" "${stage10_result_gate}" stage10_result_gate_index)
+set(stage10_completion_gate
+    "stage10_validation_captured=stage10_validation_captured||captured_stage10_frame;")
+string(FIND "${host_compact}" "${stage10_completion_gate}"
+    stage10_completion_gate_index)
 string(REGEX MATCHALL "EndDrawing\\(\\)" end_drawing_calls "${host_compact}")
 string(REGEX MATCHALL "LoadImageFromScreen\\(\\)" screen_load_calls "${host_compact}")
 string(REGEX MATCHALL "ExportImage\\(" export_image_calls "${host_compact}")
@@ -97,6 +107,9 @@ if(host_source MATCHES "export_screenshot"
     message(FATAL_ERROR "Stage 10 host may not expose a detached screenshot helper")
 endif()
 if(present_helper_index EQUAL -1
+        OR capture_result_gate_index EQUAL -1
+        OR stage10_result_gate_index EQUAL -1
+        OR stage10_completion_gate_index EQUAL -1
         OR NOT end_drawing_count EQUAL 1
         OR NOT screen_load_count EQUAL 1
         OR NOT export_image_count EQUAL 1

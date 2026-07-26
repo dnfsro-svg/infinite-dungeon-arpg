@@ -85,7 +85,7 @@ foreach ($line in $lines) {
     $fields[$pair[0]] = $pair[1]
 }
 $expected = [ordered]@{
-    schema = 'stage17-active-skill-rework-evidence-v2'
+    schema = 'stage17-active-skill-rework-evidence-v3'
     result = 'PASS'
     renderer = 'raylib-6.0-opengl'
     window = '1280x720'
@@ -117,11 +117,18 @@ $expected = [ordered]@{
     storm_finisher_phase_seen = 'true'
     storm_aerial_captured = 'true'
     active_skill_atlases_ready = 'true'
-    healthy_base_player_suppressed = 'true'
-    healthy_procedural_main_visual_count = '0'
-    missing_map_base_player_suppressed = 'false'
-    missing_map_procedural_main_visual_count = '1'
-    missing_map_visual_mode = 'procedural_fallback'
+    renderer_status_source = 'production-summary.txt'
+    draw_renderer_samples = '<positive>'
+    draw_material_frame_drawn = '1'
+    draw_base_player_drawn = '0'
+    draw_procedural_main_visual_peak = '0'
+    draw_renderer_status_valid = '1'
+    storm_renderer_samples = '<positive>'
+    storm_material_frame_drawn = '1'
+    storm_base_player_drawn = '0'
+    storm_procedural_main_visual_peak = '0'
+    storm_renderer_status_valid = '1'
+    renderer_status_failure_latched = '0'
     storm_center_locked = 'true'
     loadout_transactions = 'remove1,equip5,swap2_5'
     restart_persisted = 'true'
@@ -134,7 +141,13 @@ if ($fields.Count -ne $expected.Count) {
 }
 foreach ($key in $expected.Keys) {
     if (-not $fields.ContainsKey($key)) { throw "missing state field: $key" }
-    if ($fields[$key] -cne $expected[$key]) {
+    if ($expected[$key] -eq '<positive>') {
+        [uint64]$sampleCount = 0
+        if (-not [uint64]::TryParse($fields[$key], [ref]$sampleCount) -or
+                $sampleCount -eq 0) {
+            throw "state sample count rejected: $key=$($fields[$key])"
+        }
+    } elseif ($fields[$key] -cne $expected[$key]) {
         throw "state field rejected: $key=$($fields[$key])"
     }
 }
