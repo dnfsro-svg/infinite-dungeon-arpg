@@ -299,7 +299,8 @@ arpg::test::Failure water_room_consumes_only_water_environment_materials() noexc
             }
         }
         ARPG_REQUIRE(frame != nullptr);
-        ARPG_REQUIRE(frame->atlas == MaterialAtlasId::water_environment);
+        ARPG_REQUIRE(frame->atlas == (index == 2U
+            ? MaterialAtlasId::element_doors : MaterialAtlasId::water_environment));
     }
     return {};
 }
@@ -485,7 +486,8 @@ arpg::test::Failure lightning_room_consumes_only_lightning_environment_materials
             }
         }
         ARPG_REQUIRE(frame != nullptr);
-        ARPG_REQUIRE(frame->atlas == MaterialAtlasId::lightning_environment);
+        ARPG_REQUIRE(frame->atlas == (index == 2U
+            ? MaterialAtlasId::element_doors : MaterialAtlasId::lightning_environment));
     }
     return {};
 }
@@ -719,7 +721,8 @@ arpg::test::Failure chaos_room_consumes_only_chaos_environment_materials() noexc
             }
         }
         ARPG_REQUIRE(frame != nullptr);
-        ARPG_REQUIRE(frame->atlas == MaterialAtlasId::chaos_environment);
+        ARPG_REQUIRE(frame->atlas == (index == 2U
+            ? MaterialAtlasId::element_doors : MaterialAtlasId::chaos_environment));
     }
     return {};
 }
@@ -799,6 +802,54 @@ arpg::test::Failure chaos_ecology_stays_inside_manifest_loading_budget() noexcep
     return {};
 }
 
+arpg::test::Failure common_element_doors_have_unique_frames() noexcept {
+    const auto manifest = arpg::platform::default_material_manifest();
+    const auto* const atlas = find_atlas(MaterialAtlasId::element_doors);
+    ARPG_REQUIRE(atlas != nullptr);
+    ARPG_REQUIRE(atlas->ecology == MaterialEcology::common);
+    ARPG_REQUIRE(atlas->width == 1024 && atlas->height == 256);
+    ARPG_REQUIRE(atlas->rgba_bytes == 1'048'576U);
+    constexpr std::array<arpg::platform::MaterialSpriteId, 4> kDoors{{
+        arpg::platform::MaterialSpriteId::environment_door_fire,
+        arpg::platform::MaterialSpriteId::environment_door_water,
+        arpg::platform::MaterialSpriteId::environment_door_lightning,
+        arpg::platform::MaterialSpriteId::environment_door_chaos,
+    }};
+    for (std::size_t index{}; index < kDoors.size(); ++index) {
+        const auto* const frame = arpg::platform::find_material_frame(manifest, kDoors[index]);
+        ARPG_REQUIRE(frame != nullptr);
+        ARPG_REQUIRE(frame->atlas == MaterialAtlasId::element_doors);
+        ARPG_REQUIRE(frame->source.x == static_cast<float>(index * 256U));
+        ARPG_REQUIRE(frame->source.y == 0.0F);
+        ARPG_REQUIRE(frame->source.width == 256.0F && frame->source.height == 256.0F);
+        ARPG_REQUIRE(frame->foot_anchor.x == 128.0F && frame->foot_anchor.y == 244.0F);
+    }
+    return {};
+}
+
+arpg::test::Failure ecology_prop_records_match_emitted_layout() noexcept {
+    struct Expected final { arpg::platform::MaterialSpriteId id; float x; float y; float ax; float ay; };
+    constexpr std::array<Expected, 15> kProps{{
+        {arpg::platform::MaterialSpriteId::water_wall, 512.0F, 0.0F, 128.0F, 237.0F}, {arpg::platform::MaterialSpriteId::water_grate, 512.0F, 256.0F, 128.0F, 241.0F}, {arpg::platform::MaterialSpriteId::water_hole, 0.0F, 512.0F, 129.0F, 244.0F}, {arpg::platform::MaterialSpriteId::water_lantern, 256.0F, 512.0F, 128.0F, 236.0F}, {arpg::platform::MaterialSpriteId::water_coral, 512.0F, 512.0F, 127.0F, 236.0F},
+        {arpg::platform::MaterialSpriteId::lightning_wall, 512.0F, 0.0F, 127.0F, 236.0F}, {arpg::platform::MaterialSpriteId::lightning_capacitor_bank, 512.0F, 256.0F, 131.0F, 240.0F}, {arpg::platform::MaterialSpriteId::lightning_hole, 0.0F, 512.0F, 127.0F, 244.0F}, {arpg::platform::MaterialSpriteId::lightning_arc_lamp, 256.0F, 512.0F, 127.0F, 238.0F}, {arpg::platform::MaterialSpriteId::lightning_grounding_rod, 512.0F, 512.0F, 132.0F, 244.0F},
+        {arpg::platform::MaterialSpriteId::chaos_wall, 512.0F, 0.0F, 128.0F, 236.0F}, {arpg::platform::MaterialSpriteId::chaos_anomaly_condenser, 512.0F, 256.0F, 123.0F, 236.0F}, {arpg::platform::MaterialSpriteId::chaos_hole, 0.0F, 512.0F, 128.0F, 244.0F}, {arpg::platform::MaterialSpriteId::chaos_rift_lantern, 256.0F, 512.0F, 128.0F, 236.0F}, {arpg::platform::MaterialSpriteId::chaos_warning_obelisk, 512.0F, 512.0F, 124.0F, 236.0F},
+    }};
+    const auto manifest = arpg::platform::default_material_manifest();
+    for (const Expected expected : kProps) {
+        const auto* const frame = arpg::platform::find_material_frame(manifest, expected.id);
+        ARPG_REQUIRE(frame != nullptr);
+        const auto* const atlas = find_atlas(frame->atlas);
+        ARPG_REQUIRE(atlas != nullptr);
+        ARPG_REQUIRE(frame->source.x == expected.x && frame->source.y == expected.y);
+        ARPG_REQUIRE(frame->source.width == 256.0F && frame->source.height == 256.0F);
+        ARPG_REQUIRE(frame->foot_anchor.x == expected.ax && frame->foot_anchor.y == expected.ay);
+        ARPG_REQUIRE(frame->source.x >= 0.0F && frame->source.y >= 0.0F);
+        ARPG_REQUIRE(frame->source.x + frame->source.width <= static_cast<float>(atlas->width));
+        ARPG_REQUIRE(frame->source.y + frame->source.height <= static_cast<float>(atlas->height));
+    }
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"loads independent water color and material atlases",
         &water_ecology_has_independent_loadable_color_and_material_atlases},
@@ -838,6 +889,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &chaos_monster_presentation_runs_special_hurt_and_death},
     {"chaos ecology remains inside loading budget",
         &chaos_ecology_stays_inside_manifest_loading_budget},
+    {"common element doors use four unique frames", &common_element_doors_have_unique_frames},
+    {"ecology props match emitted layout records", &ecology_prop_records_match_emitted_layout},
 };
 
 }  // namespace

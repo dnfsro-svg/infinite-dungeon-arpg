@@ -69,6 +69,14 @@ if(TARGET arpg_raylib)
         LABELS "headless;platform;ui")
 
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME stage12.environment_prop_asset_pipeline
+        COMMAND "${Python3_EXECUTABLE}" -m unittest
+            tests.platform.environment_prop_asset_pipeline_tests -v)
+    set_tests_properties(stage12.environment_prop_asset_pipeline PROPERTIES
+        LABELS "headless;platform;assets;stage12"
+        TIMEOUT 180
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+
     add_test(NAME stage12.lightning_asset_pipeline
         COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/lightning_asset_pipeline_tests.py")

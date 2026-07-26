@@ -89,6 +89,7 @@ bool MaterialResidencyRequest::contains(MaterialAtlasId id) const noexcept {
 MaterialResidencyRequest base_material_residency_request() noexcept {
     MaterialResidencyRequest request{};
     request.require(MaterialAtlasId::environment);
+    request.require(MaterialAtlasId::element_doors);
     request.require(MaterialAtlasId::actors);
     request.require(MaterialAtlasId::effects_ui);
     request.require(MaterialAtlasId::player_locomotion);

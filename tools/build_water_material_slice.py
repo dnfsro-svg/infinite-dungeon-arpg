@@ -61,22 +61,10 @@ def material_map(color: Image.Image) -> Image.Image:
 
 
 def build_environment() -> None:
-    source = Image.open(SOURCE / "water-environment-concept-v1.png").convert("RGBA")
-    atlas = Image.new("RGBA", (ENV_SIZE, ENV_SIZE))
-    room = ImageEnhance.Contrast(cover(source, (512, 512))).enhance(1.08)
-    atlas.alpha_composite(room, (0, 0))
-    crops = {
-        (512, 0): (360, 0, 900, 350),       # sealed door
-        (512, 256): (690, 900, 1240, 1254), # bronze drainage grate
-        (0, 512): (20, 880, 690, 1254),     # flooded abyss opening
-        (256, 512): (965, 420, 1254, 840),  # cyan glass lantern
-        (512, 512): (1000, 295, 1254, 620), # mineral coral
-    }
-    for position, box in crops.items():
-        prop = contain(source.crop(box), (256, 256))
-        atlas.alpha_composite(prop, position)
-    atlas.save(OUTPUT / "water_environment.png")
-    material_map(atlas).save(OUTPUT / "water_environment_material.png")
+    from build_environment_props import _atomic_image, build_ecology_environment
+    atlas, material, _ = build_ecology_environment("water", ROOT)
+    _atomic_image(OUTPUT / "water_environment.png", atlas)
+    _atomic_image(OUTPUT / "water_environment_material.png", material)
 
 
 def alpha_bbox(image: Image.Image) -> tuple[int, int, int, int]:

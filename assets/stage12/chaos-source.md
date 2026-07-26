@@ -35,3 +35,7 @@ Rejected source candidates are intentionally retained as untracked evidence:
 `chaos-chaser-special-20-v1`, `chaos-hazard-idle-12-v1` and
 `chaos-hazard-move-16-v1` (and their alpha derivatives). They are not referenced
 by the builder and must not be staged.
+# Chaos ecology environment export
+
+Chaos room field、wall 和四个独立道具由 `tools/build_environment_props.py` 生成；其固定
+五格布局及每格 alpha 边界/足部锚点以 `environment-props-build.json` 为准。

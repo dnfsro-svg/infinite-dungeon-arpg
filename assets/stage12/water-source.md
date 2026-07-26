@@ -25,3 +25,7 @@ rebuild the three color atlases and their deterministic material maps.
 - Water support: one full-body agile tide-channeler in charcoal cloth and dark
   steel, crescent staff with water orb and compact cyan support rings, facing
   right on a flat `#ff00ff` chroma-key background; no text or shadow.
+# Water ecology environment export
+
+Water room field、wall 和四个独立道具由 `tools/build_environment_props.py` 生成；其固定
+五格布局及每格 alpha 边界/足部锚点以 `environment-props-build.json` 为准。

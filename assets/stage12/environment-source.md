@@ -57,3 +57,10 @@ python "$env:CODEX_HOME/skills/.system/imagegen/scripts/remove_chroma_key.py" `
 | `environment_hole` | `448,704,192,160` | `96,80` | 深渊洞口主体 |
 
 下方未使用的透明区域留给后续道具帧；不被运行时读取。
+
+## 公共元素门与独立生态道具
+
+`tools/build_environment_props.py` 从火环境图集的既有火门帧，以及水、雷、混沌的
+原始概念门区域生成 `element_doors.png`。每帧取最大前景连通域、保留透明边距并落脚
+到 y=244。生态道具使用对应 `backgrounds/<ecology>/<ecology>-wall-tile-v1.png` 的 wall
+原图和既有概念裁剪区域，生成记录写入 `environment-props-build.json`。

@@ -34,3 +34,7 @@ to rebuild and validate the three color atlases and their paired RGBA material
 maps. Material channels encode roughness, electric emission, metal response and
 coverage. The environment builder retains the dark storm palette while lifting
 authored brass and warning-lamp accents for gameplay readability.
+# Lightning ecology environment export
+
+Lightning room field、wall 和四个独立道具由 `tools/build_environment_props.py` 生成；其固定
+五格布局及每格 alpha 边界/足部锚点以 `environment-props-build.json` 为准。

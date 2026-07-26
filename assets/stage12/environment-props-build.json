@@ -1,0 +1,287 @@
+{
+  "ecologies": {
+    "chaos": {
+      "objects": {
+        "hole": {
+          "alpha_bbox": [
+            53,
+            46,
+            203,
+            244
+          ],
+          "foot_anchor": [
+            128,
+            244
+          ],
+          "source_rect": [
+            0,
+            512,
+            256,
+            256
+          ]
+        },
+        "light": {
+          "alpha_bbox": [
+            109,
+            170,
+            147,
+            236
+          ],
+          "foot_anchor": [
+            128,
+            236
+          ],
+          "source_rect": [
+            256,
+            512,
+            256,
+            256
+          ]
+        },
+        "solid_prop": {
+          "alpha_bbox": [
+            76,
+            68,
+            172,
+            236
+          ],
+          "foot_anchor": [
+            124,
+            236
+          ],
+          "source_rect": [
+            512,
+            512,
+            256,
+            256
+          ]
+        },
+        "surface_prop": {
+          "alpha_bbox": [
+            80,
+            67,
+            167,
+            236
+          ],
+          "foot_anchor": [
+            123,
+            236
+          ],
+          "source_rect": [
+            512,
+            256,
+            256,
+            256
+          ]
+        },
+        "wall": {
+          "alpha_bbox": [
+            111,
+            150,
+            145,
+            236
+          ],
+          "foot_anchor": [
+            128,
+            236
+          ],
+          "source_rect": [
+            512,
+            0,
+            256,
+            256
+          ]
+        }
+      }
+    },
+    "lightning": {
+      "objects": {
+        "hole": {
+          "alpha_bbox": [
+            14,
+            8,
+            241,
+            244
+          ],
+          "foot_anchor": [
+            127,
+            244
+          ],
+          "source_rect": [
+            0,
+            512,
+            256,
+            256
+          ]
+        },
+        "light": {
+          "alpha_bbox": [
+            63,
+            12,
+            192,
+            238
+          ],
+          "foot_anchor": [
+            127,
+            238
+          ],
+          "source_rect": [
+            256,
+            512,
+            256,
+            256
+          ]
+        },
+        "solid_prop": {
+          "alpha_bbox": [
+            78,
+            15,
+            186,
+            244
+          ],
+          "foot_anchor": [
+            132,
+            244
+          ],
+          "source_rect": [
+            512,
+            512,
+            256,
+            256
+          ]
+        },
+        "surface_prop": {
+          "alpha_bbox": [
+            62,
+            11,
+            201,
+            240
+          ],
+          "foot_anchor": [
+            131,
+            240
+          ],
+          "source_rect": [
+            512,
+            256,
+            256,
+            256
+          ]
+        },
+        "wall": {
+          "alpha_bbox": [
+            72,
+            55,
+            183,
+            236
+          ],
+          "foot_anchor": [
+            127,
+            236
+          ],
+          "source_rect": [
+            512,
+            0,
+            256,
+            256
+          ]
+        }
+      }
+    },
+    "water": {
+      "objects": {
+        "hole": {
+          "alpha_bbox": [
+            13,
+            119,
+            246,
+            244
+          ],
+          "foot_anchor": [
+            129,
+            244
+          ],
+          "source_rect": [
+            0,
+            512,
+            256,
+            256
+          ]
+        },
+        "light": {
+          "alpha_bbox": [
+            91,
+            135,
+            165,
+            236
+          ],
+          "foot_anchor": [
+            128,
+            236
+          ],
+          "source_rect": [
+            256,
+            512,
+            256,
+            256
+          ]
+        },
+        "solid_prop": {
+          "alpha_bbox": [
+            53,
+            83,
+            202,
+            236
+          ],
+          "foot_anchor": [
+            127,
+            236
+          ],
+          "source_rect": [
+            512,
+            512,
+            256,
+            256
+          ]
+        },
+        "surface_prop": {
+          "alpha_bbox": [
+            17,
+            112,
+            239,
+            241
+          ],
+          "foot_anchor": [
+            128,
+            241
+          ],
+          "source_rect": [
+            512,
+            256,
+            256,
+            256
+          ]
+        },
+        "wall": {
+          "alpha_bbox": [
+            10,
+            110,
+            246,
+            237
+          ],
+          "foot_anchor": [
+            128,
+            237
+          ],
+          "source_rect": [
+            512,
+            0,
+            256,
+            256
+          ]
+        }
+      }
+    }
+  },
+  "schema_version": 1
+}

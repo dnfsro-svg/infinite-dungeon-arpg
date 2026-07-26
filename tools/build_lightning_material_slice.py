@@ -84,22 +84,10 @@ def boost_warning_accents(image: Image.Image) -> Image.Image:
 
 
 def build_environment() -> None:
-    source = Image.open(SOURCE / "lightning-environment-concept-v1.png").convert("RGBA")
-    atlas = Image.new("RGBA", (ENV_SIZE, ENV_SIZE))
-    room = ImageEnhance.Contrast(cover(source, (512, 512))).enhance(1.10)
-    atlas.alpha_composite(room, (0, 0))
-    crops = {
-        (512, 0): (350, 0, 910, 470),       # sealed storm door
-        (512, 256): (860, 100, 1254, 610),  # capacitor bank
-        (0, 512): (0, 300, 470, 790),       # energized abyss hole
-        (256, 512): (0, 40, 320, 470),      # arc lamp
-        (512, 512): (900, 540, 1254, 1080), # grounding rod
-    }
-    for position, box in crops.items():
-        atlas.alpha_composite(contain(source.crop(box), (256, 256)), position)
-    atlas = boost_warning_accents(atlas)
-    atlas.save(OUTPUT / "lightning_environment.png")
-    material_map(atlas).save(OUTPUT / "lightning_environment_material.png")
+    from build_environment_props import _atomic_image, build_ecology_environment
+    atlas, material, _ = build_ecology_environment("lightning", ROOT)
+    _atomic_image(OUTPUT / "lightning_environment.png", atlas)
+    _atomic_image(OUTPUT / "lightning_environment_material.png", material)
 
 
 def alpha_bbox(image: Image.Image) -> tuple[int, int, int, int]:

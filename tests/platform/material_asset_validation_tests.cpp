@@ -883,10 +883,10 @@ arpg::test::Failure material_manifest_rejects_oversized_atlas_and_memory_budget(
 }
 
 arpg::test::Failure material_manifest_reports_true_resident_peak() noexcept {
-    constexpr std::size_t kExpectedFullPackBytes = 302'170'112U;
-    constexpr std::size_t kExpectedResidentPeakBytes = 199'540'736U;
-    constexpr std::size_t kExpectedFireEcologyPeakBytes = 163'708'928U;
-    constexpr std::size_t kExpectedNonFirePeakBytes = 155'205'632U;
+    constexpr std::size_t kExpectedFullPackBytes = 304'267'264U;
+    constexpr std::size_t kExpectedResidentPeakBytes = 201'637'888U;
+    constexpr std::size_t kExpectedFireEcologyPeakBytes = 165'806'080U;
+    constexpr std::size_t kExpectedNonFirePeakBytes = 157'302'784U;
     const MaterialManifestDefinition manifest =
         arpg::platform::default_material_manifest();
     ARPG_REQUIRE(arpg::platform::full_pack_bytes(manifest)

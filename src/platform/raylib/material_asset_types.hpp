@@ -34,6 +34,7 @@ enum class MaterialAtlasId : std::uint8_t {
     water_room_background,
     lightning_room_background,
     chaos_room_background,
+    element_doors,
     count,
 };
 
