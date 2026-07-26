@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from collections import deque
 from pathlib import Path
@@ -57,6 +59,71 @@ def alpha_components(image: Image.Image, threshold: int = 8) -> list[int]:
 
 
 class EnvironmentPropAssetPipelineTests(unittest.TestCase):
+    def test_chaos_wall_cell_preserves_complete_authored_tile_coverage(self) -> None:
+        color_path = ROOT / "assets/stage12/chaos_environment.png"
+        with Image.open(color_path).convert("RGBA") as atlas:
+            bbox = atlas.crop((512, 0, 768, 256)).getchannel("A").getbbox()
+        self.assertIsNotNone(bbox)
+        assert bbox is not None
+        self.assertGreaterEqual(bbox[2] - bbox[0], 224)
+        self.assertGreaterEqual(bbox[3] - bbox[1], 224)
+
+    def test_bootstrap_doors_read_old_ecology_atlas_cells(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            assets = root / "assets" / "stage12"
+            sources = root / "art_source" / "stage12"
+            assets.mkdir(parents=True)
+            sources.mkdir(parents=True)
+            colors = {
+                "fire": (201, 31, 29, 255),
+                "water": (23, 151, 213, 255),
+                "lightning": (240, 205, 31, 255),
+                "chaos": (160, 44, 196, 255),
+            }
+            for ecology, color in colors.items():
+                size = (1024, 1024) if ecology == "fire" else (768, 768)
+                atlas = Image.new("RGBA", size)
+                rect = (768, 0, 1024, 256) if ecology == "fire" else (512, 0, 768, 256)
+                atlas.paste(color, rect)
+                atlas.save(assets / f"{ecology}_environment.png")
+                # Old code re-crops these concept files instead of the atlas.
+                Image.new("RGBA", (1254, 1254), (255, 0, 255, 255)).save(
+                    sources / f"{ecology}-environment-concept-v1.png")
+            source = ROOT / "tools" / "build_environment_props.py"
+            result = subprocess.run(
+                [sys.executable, "-c", (
+                    "import importlib.util, pathlib; "
+                    f"spec=importlib.util.spec_from_file_location('builder', r'{source}'); "
+                    "module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); "
+                    f"image, _ = module.build_element_doors(pathlib.Path(r'{root}')); "
+                    f"image.save(pathlib.Path(r'{root}') / 'doors.png')")],
+                text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            with Image.open(root / "doors.png").convert("RGBA") as doors:
+                for index, ecology in enumerate(("water", "lightning", "chaos"), 1):
+                    cell = doors.crop((index * 256, 0, (index + 1) * 256, 256))
+                    pixels = [pixel for pixel in cell.get_flattened_data() if pixel[3] > 128]
+                    self.assertTrue(pixels)
+                    self.assertEqual(max(set(pixels), key=pixels.count), colors[ecology])
+
+    def test_forced_staged_validation_failure_leaves_destinations_unchanged(self) -> None:
+        outputs = [
+            ROOT / "assets/stage12/element_doors.png",
+            ROOT / "assets/stage12/element_doors_material.png",
+            REPORT,
+        ]
+        for ecology in ECOLOGIES:
+            outputs.extend((ROOT / f"assets/stage12/{ecology}_environment.png",
+                            ROOT / f"assets/stage12/{ecology}_environment_material.png"))
+        before = {path: sha256(path) for path in outputs}
+        environment = os.environ | {"ARPG_ENVIRONMENT_PROPS_FAIL_VALIDATION": "1"}
+        result = subprocess.run([sys.executable, str(BUILDER), "--root", str(ROOT)],
+                                cwd=ROOT, text=True, capture_output=True, env=environment)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("forced staged validation failure", result.stderr)
+        self.assertEqual({path: sha256(path) for path in outputs}, before)
+
     def test_builder_repeat_generation_is_byte_for_byte_stable(self) -> None:
         self.assertTrue(BUILDER.is_file(), "shared environment prop builder is missing")
         outputs = [

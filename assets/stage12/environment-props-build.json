@@ -76,14 +76,14 @@
         },
         "wall": {
           "alpha_bbox": [
-            111,
-            150,
-            145,
-            236
+            10,
+            8,
+            246,
+            244
           ],
           "foot_anchor": [
             128,
-            236
+            244
           ],
           "source_rect": [
             512,
@@ -170,14 +170,14 @@
         },
         "wall": {
           "alpha_bbox": [
-            72,
-            55,
-            183,
-            236
+            10,
+            8,
+            246,
+            244
           ],
           "foot_anchor": [
-            127,
-            236
+            128,
+            244
           ],
           "source_rect": [
             512,
@@ -265,13 +265,13 @@
         "wall": {
           "alpha_bbox": [
             10,
-            110,
+            8,
             246,
-            237
+            244
           ],
           "foot_anchor": [
             128,
-            237
+            244
           ],
           "source_rect": [
             512,
@@ -282,6 +282,9 @@
         }
       }
     }
+  },
+  "element_doors": {
+    "rgba_sha256": "d280b4cd1f6dc621ed16ad395656e71b571e58e8a7cfd75f12eda73d3c84124a"
   },
   "schema_version": 1
 }

@@ -16,7 +16,10 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -802,6 +805,212 @@ arpg::test::Failure chaos_ecology_stays_inside_manifest_loading_budget() noexcep
     return {};
 }
 
+struct EmittedPropRecord final {
+    arpg::platform::MaterialSpriteId sprite{arpg::platform::MaterialSpriteId::missing};
+    std::array<float, 4> source_rect{};
+    std::array<float, 2> foot_anchor{};
+    std::array<float, 4> alpha_bbox{};
+};
+
+class JsonCursor final {
+public:
+    explicit JsonCursor(const std::string& text) noexcept : text_{text} {}
+
+    bool consume(char expected) noexcept {
+        skip_space();
+        if (position_ == text_.size() || text_[position_] != expected) return false;
+        ++position_;
+        return true;
+    }
+
+    bool string(std::string& value) noexcept {
+        if (!consume('\"')) return false;
+        value.clear();
+        while (position_ < text_.size() && text_[position_] != '\"') {
+            if (text_[position_] == '\\' || text_[position_] < ' ') return false;
+            value += text_[position_++];
+        }
+        if (position_ == text_.size()) return false;
+        ++position_;
+        return true;
+    }
+
+    bool numbers(float* values, std::size_t count) noexcept {
+        if (!consume('[')) return false;
+        for (std::size_t index{}; index < count; ++index) {
+            skip_space();
+            bool negative{};
+            if (position_ < text_.size() && text_[position_] == '-') {
+                negative = true;
+                ++position_;
+            }
+            if (position_ == text_.size() || text_[position_] < '0'
+                || text_[position_] > '9') return false;
+            unsigned int number{};
+            while (position_ < text_.size() && text_[position_] >= '0'
+                && text_[position_] <= '9') {
+                number = number * 10U + static_cast<unsigned int>(text_[position_] - '0');
+                ++position_;
+            }
+            values[index] = static_cast<float>(negative ? -static_cast<int>(number) : number);
+            if (index + 1U != count && !consume(',')) return false;
+        }
+        return consume(']');
+    }
+
+    bool skip_value() noexcept {
+        skip_space();
+        if (position_ == text_.size()) return false;
+        if (text_[position_] == '\"') {
+            std::string ignored;
+            return string(ignored);
+        }
+        if (text_[position_] == '{') return skip_container('{', '}');
+        if (text_[position_] == '[') return skip_container('[', ']');
+        const std::size_t start = position_;
+        while (position_ < text_.size() && text_[position_] != ','
+            && text_[position_] != '}' && text_[position_] != ']'
+            && text_[position_] != ' ' && text_[position_] != '\n') ++position_;
+        return position_ != start;
+    }
+
+private:
+    bool skip_container(char open, char close) noexcept {
+        if (!consume(open)) return false;
+        skip_space();
+        if (position_ < text_.size() && text_[position_] == close) {
+            ++position_;
+            return true;
+        }
+        while (true) {
+            if (open == '{') {
+                std::string key;
+                if (!string(key) || !consume(':')) return false;
+            }
+            if (!skip_value()) return false;
+            skip_space();
+            if (position_ < text_.size() && text_[position_] == close) {
+                ++position_;
+                return true;
+            }
+            if (!consume(',')) return false;
+        }
+    }
+
+    void skip_space() noexcept {
+        while (position_ < text_.size() && (text_[position_] == ' '
+            || text_[position_] == '\n' || text_[position_] == '\r'
+            || text_[position_] == '\t')) ++position_;
+    }
+
+    const std::string& text_;
+    std::size_t position_{};
+};
+
+arpg::platform::MaterialSpriteId sprite_for_prop(const std::string& ecology,
+    const std::string& name) noexcept {
+    using arpg::platform::MaterialSpriteId;
+    if (ecology == "water") {
+        if (name == "wall") return MaterialSpriteId::water_wall;
+        if (name == "surface_prop") return MaterialSpriteId::water_grate;
+        if (name == "hole") return MaterialSpriteId::water_hole;
+        if (name == "light") return MaterialSpriteId::water_lantern;
+        if (name == "solid_prop") return MaterialSpriteId::water_coral;
+    }
+    if (ecology == "lightning") {
+        if (name == "wall") return MaterialSpriteId::lightning_wall;
+        if (name == "surface_prop") return MaterialSpriteId::lightning_capacitor_bank;
+        if (name == "hole") return MaterialSpriteId::lightning_hole;
+        if (name == "light") return MaterialSpriteId::lightning_arc_lamp;
+        if (name == "solid_prop") return MaterialSpriteId::lightning_grounding_rod;
+    }
+    if (ecology == "chaos") {
+        if (name == "wall") return MaterialSpriteId::chaos_wall;
+        if (name == "surface_prop") return MaterialSpriteId::chaos_anomaly_condenser;
+        if (name == "hole") return MaterialSpriteId::chaos_hole;
+        if (name == "light") return MaterialSpriteId::chaos_rift_lantern;
+        if (name == "solid_prop") return MaterialSpriteId::chaos_warning_obelisk;
+    }
+    return MaterialSpriteId::missing;
+}
+
+bool parse_prop_record(JsonCursor& cursor, const std::string& ecology,
+    const std::string& name, EmittedPropRecord& record) noexcept {
+    if (!cursor.consume('{')) return false;
+    bool source_seen{};
+    bool anchor_seen{};
+    bool alpha_seen{};
+    while (true) {
+        std::string field;
+        if (!cursor.string(field) || !cursor.consume(':')) return false;
+        if (field == "source_rect") source_seen = cursor.numbers(record.source_rect.data(), 4U);
+        else if (field == "foot_anchor") anchor_seen = cursor.numbers(record.foot_anchor.data(), 2U);
+        else if (field == "alpha_bbox") alpha_seen = cursor.numbers(record.alpha_bbox.data(), 4U);
+        else if (!cursor.skip_value()) return false;
+        if (!source_seen && field == "source_rect") return false;
+        if (!anchor_seen && field == "foot_anchor") return false;
+        if (!alpha_seen && field == "alpha_bbox") return false;
+        if (cursor.consume('}')) break;
+        if (!cursor.consume(',')) return false;
+    }
+    record.sprite = sprite_for_prop(ecology, name);
+    return source_seen && anchor_seen && alpha_seen
+        && record.sprite != arpg::platform::MaterialSpriteId::missing;
+}
+
+bool parse_props(JsonCursor& cursor, const std::string& ecology,
+    std::vector<EmittedPropRecord>& records) noexcept {
+    if (!cursor.consume('{')) return false;
+    while (true) {
+        std::string name;
+        EmittedPropRecord record;
+        if (!cursor.string(name) || !cursor.consume(':')
+            || !parse_prop_record(cursor, ecology, name, record)) return false;
+        records.push_back(record);
+        if (cursor.consume('}')) return true;
+        if (!cursor.consume(',')) return false;
+    }
+}
+
+std::vector<EmittedPropRecord> parse_environment_prop_records() noexcept {
+    const std::filesystem::path path = std::filesystem::path{ARPG_PROJECT_SOURCE_DIR}
+        / "assets/stage12/environment-props-build.json";
+    std::ifstream file{path};
+    std::ostringstream stream;
+    stream << file.rdbuf();
+    const std::string text = stream.str();
+    JsonCursor cursor{text};
+    std::vector<EmittedPropRecord> records;
+    if (!file.good() && !file.eof()) return records;
+    if (!cursor.consume('{')) return records;
+    while (true) {
+        std::string root_key;
+        if (!cursor.string(root_key) || !cursor.consume(':')) return {};
+        if (root_key != "ecologies") {
+            if (!cursor.skip_value()) return {};
+        } else if (!cursor.consume('{')) return {};
+        else {
+            while (true) {
+                std::string ecology;
+                if (!cursor.string(ecology) || !cursor.consume(':') || !cursor.consume('{')) return {};
+                while (true) {
+                    std::string field;
+                    if (!cursor.string(field) || !cursor.consume(':')) return {};
+                    if (field == "objects") {
+                        if (!parse_props(cursor, ecology, records)) return {};
+                    } else if (!cursor.skip_value()) return {};
+                    if (cursor.consume('}')) break;
+                    if (!cursor.consume(',')) return {};
+                }
+                if (cursor.consume('}')) break;
+                if (!cursor.consume(',')) return {};
+            }
+        }
+        if (cursor.consume('}')) return records;
+        if (!cursor.consume(',')) return {};
+    }
+}
+
 arpg::test::Failure common_element_doors_have_unique_frames() noexcept {
     const auto manifest = arpg::platform::default_material_manifest();
     const auto* const atlas = find_atlas(MaterialAtlasId::element_doors);
@@ -828,21 +1037,21 @@ arpg::test::Failure common_element_doors_have_unique_frames() noexcept {
 }
 
 arpg::test::Failure ecology_prop_records_match_emitted_layout() noexcept {
-    struct Expected final { arpg::platform::MaterialSpriteId id; float x; float y; float ax; float ay; };
-    constexpr std::array<Expected, 15> kProps{{
-        {arpg::platform::MaterialSpriteId::water_wall, 512.0F, 0.0F, 128.0F, 237.0F}, {arpg::platform::MaterialSpriteId::water_grate, 512.0F, 256.0F, 128.0F, 241.0F}, {arpg::platform::MaterialSpriteId::water_hole, 0.0F, 512.0F, 129.0F, 244.0F}, {arpg::platform::MaterialSpriteId::water_lantern, 256.0F, 512.0F, 128.0F, 236.0F}, {arpg::platform::MaterialSpriteId::water_coral, 512.0F, 512.0F, 127.0F, 236.0F},
-        {arpg::platform::MaterialSpriteId::lightning_wall, 512.0F, 0.0F, 127.0F, 236.0F}, {arpg::platform::MaterialSpriteId::lightning_capacitor_bank, 512.0F, 256.0F, 131.0F, 240.0F}, {arpg::platform::MaterialSpriteId::lightning_hole, 0.0F, 512.0F, 127.0F, 244.0F}, {arpg::platform::MaterialSpriteId::lightning_arc_lamp, 256.0F, 512.0F, 127.0F, 238.0F}, {arpg::platform::MaterialSpriteId::lightning_grounding_rod, 512.0F, 512.0F, 132.0F, 244.0F},
-        {arpg::platform::MaterialSpriteId::chaos_wall, 512.0F, 0.0F, 128.0F, 236.0F}, {arpg::platform::MaterialSpriteId::chaos_anomaly_condenser, 512.0F, 256.0F, 123.0F, 236.0F}, {arpg::platform::MaterialSpriteId::chaos_hole, 0.0F, 512.0F, 128.0F, 244.0F}, {arpg::platform::MaterialSpriteId::chaos_rift_lantern, 256.0F, 512.0F, 128.0F, 236.0F}, {arpg::platform::MaterialSpriteId::chaos_warning_obelisk, 512.0F, 512.0F, 124.0F, 236.0F},
-    }};
+    const auto records = parse_environment_prop_records();
+    ARPG_REQUIRE(records.size() == 15U);
     const auto manifest = arpg::platform::default_material_manifest();
-    for (const Expected expected : kProps) {
-        const auto* const frame = arpg::platform::find_material_frame(manifest, expected.id);
+    for (const auto& record : records) {
+        const auto* const frame = arpg::platform::find_material_frame(
+            manifest, record.sprite);
         ARPG_REQUIRE(frame != nullptr);
         const auto* const atlas = find_atlas(frame->atlas);
         ARPG_REQUIRE(atlas != nullptr);
-        ARPG_REQUIRE(frame->source.x == expected.x && frame->source.y == expected.y);
-        ARPG_REQUIRE(frame->source.width == 256.0F && frame->source.height == 256.0F);
-        ARPG_REQUIRE(frame->foot_anchor.x == expected.ax && frame->foot_anchor.y == expected.ay);
+        ARPG_REQUIRE(frame->source.x == record.source_rect[0]
+            && frame->source.y == record.source_rect[1]);
+        ARPG_REQUIRE(frame->source.width == record.source_rect[2]
+            && frame->source.height == record.source_rect[3]);
+        ARPG_REQUIRE(frame->foot_anchor.x == record.foot_anchor[0]
+            && frame->foot_anchor.y == record.foot_anchor[1]);
         ARPG_REQUIRE(frame->source.x >= 0.0F && frame->source.y >= 0.0F);
         ARPG_REQUIRE(frame->source.x + frame->source.width <= static_cast<float>(atlas->width));
         ARPG_REQUIRE(frame->source.y + frame->source.height <= static_cast<float>(atlas->height));

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from collections import deque
@@ -82,6 +83,7 @@ def _background_to_alpha(image: Image.Image) -> Image.Image:
     def close(pixel: tuple[int, int, int]) -> bool:
         return sum((pixel[index] - reference[index]) ** 2 for index in range(3)) <= 28 ** 2
     transparent: set[tuple[int, int]] = set()
+    visited: set[tuple[int, int]] = set()
     queue = deque()
     for x in range(rgb.width):
         queue.extend(((x, 0), (x, rgb.height - 1)))
@@ -89,8 +91,9 @@ def _background_to_alpha(image: Image.Image) -> Image.Image:
         queue.extend(((0, y), (rgb.width - 1, y)))
     while queue:
         point = queue.popleft()
-        if point in transparent:
+        if point in visited:
             continue
+        visited.add(point)
         x, y = point
         if not close(rgb.getpixel(point)):
             continue
@@ -174,44 +177,65 @@ def _boost_warning_accents(image: Image.Image, ecology: str) -> Image.Image:
     return result
 
 
-def _atomic_image(path: Path, image: Image.Image) -> None:
+def _stage_image(path: Path, image: Image.Image) -> Path:
     with NamedTemporaryFile(suffix=".png", dir=path.parent, delete=False) as temporary:
         temp = Path(temporary.name)
-    try:
-        image.save(temp)
-        os.replace(temp, path)
-    finally:
-        temp.unlink(missing_ok=True)
+    image.save(temp)
+    return temp
 
 
-def _atomic_json(path: Path, value: dict) -> None:
+def _stage_json(path: Path, value: dict) -> Path:
     with NamedTemporaryFile(mode="w", suffix=".json", dir=path.parent,
                             encoding="utf-8", delete=False) as temporary:
         json.dump(value, temporary, indent=2, sort_keys=True)
         temporary.write("\n")
         temp = Path(temporary.name)
+    return temp
+
+
+def _rgba_hash(image: Image.Image) -> str:
+    return hashlib.sha256(image.convert("RGBA").tobytes()).hexdigest()
+
+
+def _canonical_element_doors(root: Path) -> Image.Image | None:
+    assets = root / "assets" / "stage12"
+    report_path = assets / "environment-props-build.json"
+    color_path = assets / "element_doors.png"
+    material_path = assets / "element_doors_material.png"
+    if not all(path.is_file() for path in (report_path, color_path, material_path)):
+        return None
     try:
-        os.replace(temp, path)
-    finally:
-        temp.unlink(missing_ok=True)
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        expected_hash = report["element_doors"]["rgba_sha256"]
+        color = Image.open(color_path).convert("RGBA")
+        material = Image.open(material_path).convert("RGBA")
+    except (OSError, KeyError, TypeError, json.JSONDecodeError):
+        return None
+    if (color.size != (1024, 256) or material.size != color.size
+            or color.getchannel("A").tobytes() != material.getchannel("A").tobytes()
+            or _rgba_hash(color) != expected_hash):
+        return None
+    return color.copy()
 
 
 def build_element_doors(root: Path) -> tuple[Image.Image, Image.Image]:
+    canonical = _canonical_element_doors(root)
+    if canonical is not None:
+        return canonical, _material_map(canonical)
     output = Image.new("RGBA", (CELL * 4, CELL))
     sources = (("fire", root / "assets" / "stage12" / "fire_environment.png",
                 (768, 0, 1024, 256)),
-               # These are the exact door-source regions used by the old
-               # ecology builders.  Reading the authored source keeps repeat
-               # generation independent from the atlas we are replacing.
-               ("water", root / "art_source" / "stage12" / "water-environment-concept-v1.png",
-                (360, 0, 900, 350)),
-               ("lightning", root / "art_source" / "stage12" / "lightning-environment-concept-v1.png",
-                (350, 0, 910, 470)),
-               ("chaos", root / "art_source" / "stage12" / "chaos-environment-concept-v1.png",
-                (350, 0, 910, 470)))
+               ("water", root / "assets" / "stage12" / "water_environment.png",
+                (512, 0, 768, 256)),
+               ("lightning", root / "assets" / "stage12" / "lightning_environment.png",
+                (512, 0, 768, 256)),
+               ("chaos", root / "assets" / "stage12" / "chaos_environment.png",
+                (512, 0, 768, 256)))
     assets = root / "assets" / "stage12"
-    for index, (name, path, box) in enumerate(sources):
-        source = Image.open(path).convert("RGBA").crop(box)
+    # Capture every legacy source before callers can replace an ecology atlas.
+    captured = [(name, Image.open(path).convert("RGBA").crop(box))
+                for name, path, box in sources]
+    for index, (name, source) in enumerate(captured):
         if max(source.size) > CELL:
             scale = CELL / max(source.size)
             source = source.resize((round(source.width * scale), round(source.height * scale)),
@@ -233,7 +257,6 @@ def build_element_doors(root: Path) -> tuple[Image.Image, Image.Image]:
 def build_ecology_environment(ecology: str, root: Path) -> tuple[Image.Image, Image.Image, dict]:
     if ecology not in ECOLOGIES:
         raise ValueError(f"unknown ecology: {ecology}")
-    assets = root / "assets" / "stage12"
     source_root = root / "art_source" / "stage12"
     concept = Image.open(source_root / f"{ecology}-environment-concept-v1.png").convert("RGBA")
     atlas = Image.new("RGBA", (768, 768))
@@ -244,9 +267,10 @@ def build_ecology_environment(ecology: str, root: Path) -> tuple[Image.Image, Im
     object_sources = {"wall": wall}
     object_sources.update({name: concept.crop(box) for name, box in CONCEPT_CROPS[ecology].items()})
     for name, position in LAYOUT.items():
-        # The concept crops contain decorative fragments.  Without semantic
-        # linkage evidence they are unrelated, so retain the single subject.
-        isolated = _retain_subject(object_sources[name], 8, keep_small=False)
+        # A wall tile is authored as a complete opaque background surface;
+        # unlike isolated concept props it must not be reduced to one fragment.
+        isolated = (object_sources[name] if name == "wall"
+                    else _retain_subject(object_sources[name], 8, keep_small=False))
         cell = _fit_to_cell(isolated, 8, 244)
         atlas.alpha_composite(cell, position)
         bbox = cell.getchannel("A").getbbox()
@@ -262,17 +286,50 @@ def build_ecology_environment(ecology: str, root: Path) -> tuple[Image.Image, Im
     return atlas, _material_map(atlas), {"objects": objects}
 
 
-def validate_outputs(root: Path) -> None:
-    assets = root / "assets" / "stage12"
-    color = Image.open(assets / "element_doors.png").convert("RGBA")
-    material = Image.open(assets / "element_doors_material.png").convert("RGBA")
+def _validate_staged_outputs(staged: dict[Path, Path]) -> None:
+    def image(path: Path) -> Image.Image:
+        return Image.open(staged[path]).convert("RGBA")
+    assets = next(iter(staged)).parent
+    color = image(assets / "element_doors.png")
+    material = image(assets / "element_doors_material.png")
     if color.size != (1024, 256) or color.getchannel("A").tobytes() != material.getchannel("A").tobytes():
         raise RuntimeError("element doors color/material validation failed")
     for ecology in ECOLOGIES:
-        color = Image.open(assets / f"{ecology}_environment.png").convert("RGBA")
-        material = Image.open(assets / f"{ecology}_environment_material.png").convert("RGBA")
+        color = image(assets / f"{ecology}_environment.png")
+        material = image(assets / f"{ecology}_environment_material.png")
         if color.size != (768, 768) or color.getchannel("A").tobytes() != material.getchannel("A").tobytes():
             raise RuntimeError(f"{ecology}: color/material validation failed")
+    report = json.loads(staged[assets / "environment-props-build.json"].read_text(encoding="utf-8"))
+    if report.get("schema_version") != 1 or set(report.get("ecologies", {})) != set(ECOLOGIES):
+        raise RuntimeError("environment props report schema validation failed")
+    if report.get("element_doors", {}).get("rgba_sha256") != _rgba_hash(image(assets / "element_doors.png")):
+        raise RuntimeError("element doors hash validation failed")
+    for ecology in ECOLOGIES:
+        color = image(assets / f"{ecology}_environment.png")
+        objects = report["ecologies"][ecology].get("objects", {})
+        if set(objects) != set(LAYOUT):
+            raise RuntimeError(f"{ecology}: report object set validation failed")
+        for name, (x, y) in LAYOUT.items():
+            record = objects[name]
+            if record.get("source_rect") != [x, y, CELL, CELL]:
+                raise RuntimeError(f"{ecology}/{name}: report source rectangle validation failed")
+            bbox = color.crop((x, y, x + CELL, y + CELL)).getchannel("A").getbbox()
+            if bbox is None or record.get("alpha_bbox") != list(bbox):
+                raise RuntimeError(f"{ecology}/{name}: report alpha validation failed")
+            if record.get("foot_anchor") != [(bbox[0] + bbox[2]) // 2, bbox[3]]:
+                raise RuntimeError(f"{ecology}/{name}: report anchor validation failed")
+    if os.environ.get("ARPG_ENVIRONMENT_PROPS_FAIL_VALIDATION") == "1":
+        raise RuntimeError("forced staged validation failure")
+
+
+def validate_outputs(root: Path) -> None:
+    assets = root / "assets" / "stage12"
+    _validate_staged_outputs({path: path for path in (
+        assets / "element_doors.png", assets / "element_doors_material.png",
+        assets / "environment-props-build.json", *(
+            path for ecology in ECOLOGIES for path in (
+                assets / f"{ecology}_environment.png",
+                assets / f"{ecology}_environment_material.png")))})
 
 
 def main() -> None:
@@ -285,15 +342,25 @@ def main() -> None:
     door_color, door_material = build_element_doors(root)
     staged: list[tuple[Path, Image.Image]] = [(assets / "element_doors.png", door_color),
                                                 (assets / "element_doors_material.png", door_material)]
-    report = {"schema_version": 1, "ecologies": {}}
+    report = {"schema_version": 1, "element_doors": {"rgba_sha256": _rgba_hash(door_color)},
+              "ecologies": {}}
     for ecology in ECOLOGIES:
         color, material, record = build_ecology_environment(ecology, root)
         staged.extend(((assets / f"{ecology}_environment.png", color),
                        (assets / f"{ecology}_environment_material.png", material)))
         report["ecologies"][ecology] = record
-    for path, image in staged: _atomic_image(path, image)
-    _atomic_json(assets / "environment-props-build.json", report)
-    validate_outputs(root)
+    temporary: dict[Path, Path] = {}
+    try:
+        for path, image in staged:
+            temporary[path] = _stage_image(path, image)
+        report_path = assets / "environment-props-build.json"
+        temporary[report_path] = _stage_json(report_path, report)
+        _validate_staged_outputs(temporary)
+        for path, temporary_path in temporary.items():
+            os.replace(temporary_path, path)
+    finally:
+        for temporary_path in temporary.values():
+            temporary_path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

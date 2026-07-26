@@ -60,7 +60,9 @@ python "$env:CODEX_HOME/skills/.system/imagegen/scripts/remove_chroma_key.py" `
 
 ## 公共元素门与独立生态道具
 
-`tools/build_environment_props.py` 从火环境图集的既有火门帧，以及水、雷、混沌的
-原始概念门区域生成 `element_doors.png`。每帧取最大前景连通域、保留透明边距并落脚
-到 y=244。生态道具使用对应 `backgrounds/<ecology>/<ecology>-wall-tile-v1.png` 的 wall
-原图和既有概念裁剪区域，生成记录写入 `environment-props-build.json`。
+`tools/build_environment_props.py` 首次从火环境图集的既有火门帧以及水、雷、混沌旧图集
+`(512,0,768,256)` 门格生成 `element_doors.png`，并在替换任何生态输出前一次性读入四个
+来源。后续仅在 `environment-props-build.json` 的 RGBA hash 验证通过时复用公共门图集，避免
+重排后的 wall 格被递归当成门。每帧取最大前景连通域、保留透明边距并落脚到 y=244。生态
+道具使用对应 `backgrounds/<ecology>/<ecology>-wall-tile-v1.png` 的完整 wall 原图和既有概念
+裁剪区域，生成记录写入 `environment-props-build.json`。
