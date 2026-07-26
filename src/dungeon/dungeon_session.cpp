@@ -7,6 +7,7 @@
 #include "dungeon/room_navigation.hpp"
 #include "abyss/abyss_rewards.hpp"
 #include "abyss/abyss_rules.hpp"
+#include "combat/combat_scaling.hpp"
 #include "core/deterministic_rng.hpp"
 #include "items/item_catalog.hpp"
 #include "items/item_generation.hpp"
@@ -259,15 +260,24 @@ DungeonSession::DungeonSession(
 }
 
 bool DungeonSession::queue_action(combat::Action action) noexcept {
-    return phase_ == RoomPhase::combat && combat_.has_value()
+    return phase_ == RoomPhase::combat
+        && !health_potion_abyss_clear_retry_gate_active()
+        && combat_.has_value()
         ? combat_->queue_action(action)
         : false;
+}
+
+bool DungeonSession::health_potion_abyss_clear_retry_gate_active()
+    const noexcept {
+    return retry_health_potion_abyss_clear_before_combat_;
 }
 
 combat::SkillCastResult DungeonSession::request_active_skill_slot(
     std::uint8_t slot) noexcept {
     const std::size_t index = static_cast<std::size_t>(slot);
-    if (phase_ != RoomPhase::combat || !combat_.has_value()
+    if (phase_ != RoomPhase::combat
+            || health_potion_abyss_clear_retry_gate_active()
+            || !combat_.has_value()
             || index >= skills::kActiveSkillSlotCount) {
         return combat::SkillCastResult::none;
     }
@@ -285,6 +295,17 @@ RoomPhase DungeonSession::phase() const noexcept {
 void DungeonSession::tick(
     combat::MovementInput movement,
     AutoPickupPolicy pickup_policy) noexcept {
+    if (retry_health_potion_abyss_clear_before_combat_) {
+        retry_health_potion_abyss_clear_before_combat_ = false;
+        if (phase_ != RoomPhase::combat || pending_save_.has_value()
+                || !combat_.has_value()) {
+            enter_fault(DungeonFault::save_receipt_mismatch);
+        } else {
+            prepare_room_clear();
+        }
+        ++session_tick_;
+        return;
+    }
     if (phase_ == RoomPhase::committing
             || phase_ == RoomPhase::death_pending
             || phase_ == RoomPhase::faulted) {
@@ -402,12 +423,14 @@ const items::ItemOwnershipState& DungeonSession::item_state() const noexcept {
 }
 
 RequestResult DungeonSession::reset_current_room() noexcept {
-    if (phase_ == RoomPhase::transitioning
+    if (health_potion_abyss_clear_retry_gate_active()
+            || phase_ == RoomPhase::transitioning
             || phase_ == RoomPhase::committing
             || phase_ == RoomPhase::death_pending
             || phase_ == RoomPhase::faulted) {
         return RequestResult::rejected;
     }
+    retry_health_potion_abyss_clear_before_combat_ = false;
     if (stable_state_.current_room.is_abyss
             && stable_state_.abyss.lifecycle
                 == abyss::AbyssLifecycle::started) {
@@ -460,6 +483,7 @@ DungeonSession::try_pop_combat_event() noexcept {
 }
 
 void DungeonSession::construct_current_room() noexcept {
+    retry_health_potion_abyss_clear_before_combat_ = false;
     if (stable_state_.death.lifecycle
             == checkpoint::DeathLifecycle::pending_continue) {
         clear_transient_room_state();
@@ -480,6 +504,7 @@ void DungeonSession::construct_current_room() noexcept {
     rolled_drop_bits_ = {};
     ground_materials_ = {};
     rolled_material_bits_ = {};
+    ground_health_potions_ = {};
     if (stable_state_.current_room.depth == 0U) {
         enter_fault(DungeonFault::invalid_item_state);
         return;
@@ -555,11 +580,13 @@ bool DungeonSession::validate_pending_death_state() const noexcept {
 }
 
 void DungeonSession::clear_transient_room_state() noexcept {
+    retry_health_potion_abyss_clear_before_combat_ = false;
     combat_.reset();
     ground_items_ = {};
     rolled_drop_bits_ = {};
     ground_materials_ = {};
     rolled_material_bits_ = {};
+    ground_health_potions_ = {};
     encounter_plan_ = {};
     wave_index_ = 0U;
     wave_delay_ticks_ = 0U;
@@ -829,6 +856,7 @@ void DungeonSession::construct_normal_room() noexcept {
 }
 
 void DungeonSession::reset_to_normal_room(bool clear_queues) noexcept {
+    retry_health_potion_abyss_clear_before_combat_ = false;
     if (clear_queues) {
         while (events_.try_pop().has_value()) {
         }
@@ -1255,6 +1283,9 @@ void DungeonSession::publish_run_state_reusing_items(
 }
 
 RequestResult DungeonSession::request_death_continue() noexcept {
+    if (health_potion_abyss_clear_retry_gate_active()) {
+        return RequestResult::rejected;
+    }
     if (phase_ == RoomPhase::faulted) return RequestResult::faulted;
     if (phase_ != RoomPhase::death_pending || pending_save_.has_value()
             || combat_.has_value()
@@ -1459,6 +1490,92 @@ bool DungeonSession::place_ground_material(
     return true;
 }
 
+bool DungeonSession::place_ground_health_potion(
+    std::uint16_t spawn_ordinal, combat::Vec3 position) noexcept {
+    if (spawn_ordinal >= ground_health_potions_.size()) return false;
+    GroundHealthPotion& slot = ground_health_potions_[spawn_ordinal];
+    if (slot.active) {
+        saturating_increment(
+            diagnostics_.health_potion_ground_saturation_count);
+        return false;
+    }
+    slot = {true, spawn_ordinal,
+        health_potion_claim_ordinal(spawn_ordinal), position};
+    return true;
+}
+
+bool DungeonSession::has_claimable_health_potion() const noexcept {
+    if (!combat_.has_value() || combat_->death_snapshot().has_value()) {
+        return false;
+    }
+    const combat::CombatSnapshot snapshot = combat_->snapshot();
+    if (!health_potion_auto_use_eligible(
+            snapshot.player.hp, snapshot.player.max_hp)) {
+        return false;
+    }
+    for (const GroundHealthPotion& ground : ground_health_potions_) {
+        if (ground.active) return true;
+    }
+    return false;
+}
+
+bool DungeonSession::append_clear_health_potion_claims(
+    PendingSave& pending) noexcept {
+    if ((pending.kind != PendingSaveKind::room_clear
+            && pending.kind != PendingSaveKind::abyss_clear)
+            || !combat_.has_value()) {
+        return false;
+    }
+    pending.health_potion_claim.reset();
+    if (combat_->death_snapshot().has_value()) return true;
+    const combat::CombatSnapshot snapshot = combat_->snapshot();
+    if (!health_potion_auto_use_eligible(
+            snapshot.player.hp, snapshot.player.max_hp)) {
+        return true;
+    }
+
+    PendingHealthPotionClaim claim{};
+    claim.expected_hp = snapshot.player.hp;
+    claim.expected_max_hp = snapshot.player.max_hp;
+    int projected_hp = snapshot.player.hp;
+    const int restore = combat::scale_basis_points(
+        snapshot.player.max_hp, kHealthPotionRestoreBp,
+        combat::BasisPointRounding::ceil);
+    for (std::uint16_t spawn = 0U;
+         spawn < ground_health_potions_.size(); ++spawn) {
+        const GroundHealthPotion& ground = ground_health_potions_[spawn];
+        if (!ground.active) continue;
+        const std::uint16_t claim_ordinal =
+            health_potion_claim_ordinal(spawn);
+        if (ground.spawn_ordinal != spawn
+                || ground.claim_ordinal != claim_ordinal
+                || bit_is_set(stable_state_.item_ownership
+                        .material_claimed_drop_bits,
+                    claim_ordinal)
+                || bit_is_set(pending.next_state.item_ownership
+                        .material_claimed_drop_bits,
+                    claim_ordinal)) {
+            return false;
+        }
+        claim.spawn_ordinals[claim.count++] = spawn;
+        set_bit(pending.next_state.item_ownership
+                .material_claimed_drop_bits,
+            claim_ordinal);
+        projected_hp = (std::min)(
+            snapshot.player.max_hp, projected_hp + restore);
+        const bool strictly_above_threshold =
+            static_cast<std::int64_t>(projected_hp) * 10000
+                > static_cast<std::int64_t>(snapshot.player.max_hp)
+                    * kHealthPotionAutoUseThresholdBp;
+        if (strictly_above_threshold
+                || claim.count == kPendingHealthPotionClaimCapacity) {
+            break;
+        }
+    }
+    if (claim.count != 0U) pending.health_potion_claim = claim;
+    return true;
+}
+
 void DungeonSession::roll_ground_materials(
     const combat::CombatEvent& event) noexcept {
     const std::uint16_t spawn_ordinal = event.spawn_ordinal;
@@ -1495,6 +1612,10 @@ void DungeonSession::roll_ground_materials(
             static_cast<void>(place_ground_material(
                 coupon_ordinal, GroundMaterialSource::monster_coupon,
                 position, *coupon));
+        } else if (roll_health_potion_drop(
+                stable_state_.current_room.seed, spawn_ordinal)) {
+            static_cast<void>(place_ground_health_potion(
+                spawn_ordinal, position));
         }
     }
 }
@@ -1512,7 +1633,24 @@ bool DungeonSession::materialize_abyss_clear_materials() noexcept {
                     ordinal)) {
                 continue;
             }
-            return false;
+            const auto expected_material = roll_abyss_material(
+                stable_state_.current_room.seed,
+                stable_state_.current_room.depth,
+                index);
+            const auto expected_position = abyss_reward_position(index);
+            const GroundMaterial& ground = ground_materials_[ordinal];
+            if (!expected_material.has_value()
+                    || !expected_position.has_value()
+                    || !ground.active
+                    || ground.ordinal != ordinal
+                    || ground.source != GroundMaterialSource::abyss_reward
+                    || ground.material != *expected_material
+                    || ground.position.x != expected_position->x
+                    || ground.position.y != expected_position->y
+                    || ground.position.z != expected_position->z) {
+                return false;
+            }
+            continue;
         }
         const auto material = roll_abyss_material(
             stable_state_.current_room.seed,
@@ -1579,7 +1717,8 @@ void DungeonSession::settle_room_experience() noexcept {
 void DungeonSession::prepare_room_clear() noexcept {
     const bool started_abyss = stable_state_.current_room.is_abyss
         && stable_state_.abyss.lifecycle == abyss::AbyssLifecycle::started;
-    if (!started_abyss && !has_ground_materials()) {
+    if (!started_abyss && !has_ground_materials()
+            && !has_claimable_health_potion()) {
         settle_room_experience();
         publish_room_clear();
         return;
@@ -1644,6 +1783,18 @@ void DungeonSession::prepare_room_clear() noexcept {
             started_abyss ? RoomPhase::cleared : RoomPhase::combat,
         };
         vacuum_room_materials();
+        if (phase_ != RoomPhase::faulted && pending_save_.has_value()
+                && !append_clear_health_potion_claims(*pending_save_)) {
+            pending_save_.reset();
+            enter_fault(started_abyss
+                ? DungeonFault::invalid_abyss_state
+                : DungeonFault::invalid_item_state);
+            return;
+        }
+        if (started_abyss && pending_save_.has_value()
+                && pending_save_->health_potion_claim.has_value()) {
+            pending_save_->resume_phase = RoomPhase::combat;
+        }
     } catch (...) {
         pending_save_.reset();
         enter_fault(started_abyss
@@ -1671,6 +1822,7 @@ void DungeonSession::enter_fault(DungeonFault fault) noexcept {
     if (fault == DungeonFault::none) {
         return;
     }
+    retry_health_potion_abyss_clear_before_combat_ = false;
     diagnostics_.fault = fault;
     phase_ = RoomPhase::faulted;
     clear_abyss_exit_confirmation();

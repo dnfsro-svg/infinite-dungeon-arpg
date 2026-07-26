@@ -11,6 +11,7 @@ add_library(arpg_dungeon STATIC
     death_checkpoint.cpp
     dungeon_progression.cpp
     material_loot.cpp
+    health_potion_loot.cpp
     room_generation.cpp
     room_combat_template.cpp
     room_navigation.cpp)

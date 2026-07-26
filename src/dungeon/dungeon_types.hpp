@@ -3,6 +3,7 @@
 #include "combat/combat_types.hpp"
 #include "dungeon/dungeon_checkpoint.hpp"
 #include "dungeon/dungeon_rules.hpp"
+#include "dungeon/health_potion_loot.hpp"
 #include "dungeon/material_loot.hpp"
 
 #include <array>
@@ -94,6 +95,7 @@ struct DungeonDiagnostics final {
     std::uint32_t material_ground_saturation_count{};
     DungeonFault fault{DungeonFault::none};
     bool room_index_overflow{};
+    std::uint32_t health_potion_ground_saturation_count{};
 };
 
 struct DungeonEncounterDiagnostics final {
@@ -116,6 +118,7 @@ struct RoomDescriptor final {
 };
 
 inline constexpr std::size_t kGroundDropCapacity = 192U;
+static_assert(kGroundHealthPotionCapacity == kGroundDropCapacity);
 inline constexpr float kPickupRadius = 1.5F;
 
 enum class GroundItemSource : std::uint8_t {
@@ -235,6 +238,11 @@ struct DungeonSnapshot final {
     std::uint64_t pending_room_experience{};
     std::uint64_t last_room_experience{};
     std::uint8_t last_levels_gained{};
+    std::uint16_t ground_health_potion_count{};
+    std::array<GroundHealthPotionSnapshot, kGroundHealthPotionCapacity>
+        ground_health_potions{};
+    HealthPotionPickupReceipt health_potion_pickup_receipt{};
+    std::optional<std::uint16_t> pending_health_potion_spawn_ordinal{};
 };
 
 struct PendingTransition final {
@@ -263,6 +271,7 @@ enum class PendingSaveKind : std::uint8_t {
     abyss_abandon,
     death_retreat,
     death_continue,
+    health_potion_pickup,
 };
 
 struct PendingSave final {
@@ -275,6 +284,7 @@ struct PendingSave final {
     std::uint16_t pickup_ordinal{0xFFFFU};
     std::optional<combat::CombatDeathSnapshot> death_snapshot{};
     std::optional<ReinforcementReceipt> reinforcement_receipt{};
+    std::optional<PendingHealthPotionClaim> health_potion_claim{};
 };
 
 struct PendingSaveResult final {

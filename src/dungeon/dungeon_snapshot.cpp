@@ -144,6 +144,16 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
         packed.position = ground.position;
         packed.material = ground.material;
     }
+    for (const GroundHealthPotion& ground : ground_health_potions_) {
+        if (!ground.active) continue;
+        GroundHealthPotionSnapshot& packed =
+            result.ground_health_potions[
+                result.ground_health_potion_count++];
+        packed.spawn_ordinal = ground.spawn_ordinal;
+        packed.claim_ordinal = ground.claim_ordinal;
+        packed.position = ground.position;
+    }
+    result.health_potion_pickup_receipt = health_potion_pickup_receipt_;
     result.material_pickup_receipt = material_pickup_receipt_;
     result.reinforcement_receipt = reinforcement_receipt_;
     if (pending_save_.has_value()) {
@@ -155,6 +165,10 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
         }
         if (pending_save_->kind == PendingSaveKind::material_pickup) {
             result.pending_material_pickup_ordinal =
+                pending_save_->pickup_ordinal;
+        }
+        if (pending_save_->kind == PendingSaveKind::health_potion_pickup) {
+            result.pending_health_potion_spawn_ordinal =
                 pending_save_->pickup_ordinal;
         }
     }
