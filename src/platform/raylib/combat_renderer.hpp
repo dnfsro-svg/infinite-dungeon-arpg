@@ -156,6 +156,7 @@ private:
     void draw_actors(
         const dungeon::DungeonSnapshot& previous,
         const dungeon::DungeonSnapshot& current,
+        const ActiveSkillEffectPlan& active_skill_plan,
         float interpolation_alpha,
         bool draw_debug,
         const CombatFeedback& feedback) noexcept;

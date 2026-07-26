@@ -1,7 +1,9 @@
 #include "test_framework.hpp"
 
 #include "active_skill_assets.hpp"
+#include "active_skill_view.hpp"
 #include "material_manifest.hpp"
+#include "skills/skill_loadout.hpp"
 
 #include <cstddef>
 
@@ -63,11 +65,60 @@ arpg::test::Failure active_skill_atlases_are_registered_as_material_pairs()
     return {};
 }
 
+arpg::test::Failure active_skill_hud_uses_distinct_registered_material_icons()
+    noexcept {
+    const auto manifest = platform::default_material_manifest();
+    const platform::MaterialSpriteId draw_icon =
+        platform::active_skill_icon_sprite(
+            arpg::skills::ActiveSkillId::draw_slash);
+    const platform::MaterialSpriteId storm_icon =
+        platform::active_skill_icon_sprite(
+            arpg::skills::ActiveSkillId::storm_swords);
+    ARPG_REQUIRE(draw_icon != platform::MaterialSpriteId::missing);
+    ARPG_REQUIRE(storm_icon != platform::MaterialSpriteId::missing);
+    ARPG_REQUIRE(draw_icon != storm_icon);
+    ARPG_REQUIRE(platform::active_skill_icon_sprite(
+        arpg::skills::ActiveSkillId::none)
+        == platform::MaterialSpriteId::missing);
+
+    const platform::MaterialFrameDefinition* const draw_frame =
+        platform::find_material_frame(manifest, draw_icon);
+    const platform::MaterialFrameDefinition* const storm_frame =
+        platform::find_material_frame(manifest, storm_icon);
+    ARPG_REQUIRE(draw_frame != nullptr);
+    ARPG_REQUIRE(storm_frame != nullptr);
+    ARPG_REQUIRE(draw_frame->atlas
+        == platform::MaterialAtlasId::skill_draw_slash);
+    ARPG_REQUIRE(draw_frame->source.x == 0.0F);
+    ARPG_REQUIRE(draw_frame->source.y == 627.0F);
+    ARPG_REQUIRE(draw_frame->source.width == 209.0F);
+    ARPG_REQUIRE(draw_frame->source.height == 209.0F);
+    ARPG_REQUIRE(storm_frame->atlas
+        == platform::MaterialAtlasId::skill_storm_swords);
+    ARPG_REQUIRE(storm_frame->source.x == 0.0F);
+    ARPG_REQUIRE(storm_frame->source.y == 1280.0F);
+    ARPG_REQUIRE(storm_frame->source.width == 256.0F);
+    ARPG_REQUIRE(storm_frame->source.height == 256.0F);
+
+    const platform::ActiveSkillHudModel hud =
+        platform::make_active_skill_hud_model(
+            arpg::skills::default_skill_loadout(), {});
+    ARPG_REQUIRE(hud.slots[0U].icon == draw_icon);
+    ARPG_REQUIRE(hud.slots[1U].icon == storm_icon);
+    for (std::size_t index = 2U; index < hud.slots.size(); ++index) {
+        ARPG_REQUIRE(hud.slots[index].icon
+            == platform::MaterialSpriteId::missing);
+    }
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"active skill atlases expose complete original frame grids",
      &active_skill_atlases_define_complete_original_frame_grids},
     {"active skill atlases are registered as material pairs",
      &active_skill_atlases_are_registered_as_material_pairs},
+    {"active skill HUD uses distinct registered material icons",
+     &active_skill_hud_uses_distinct_registered_material_icons},
 };
 
 }  // namespace

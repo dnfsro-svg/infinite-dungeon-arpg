@@ -1,5 +1,6 @@
 #pragma once
 
+#include "material_asset_types.hpp"
 #include "skills/active_skill_types.hpp"
 
 #include <raylib.h>
@@ -12,10 +13,14 @@ namespace arpg::platform {
 struct ActiveSkillHudSlot final {
     std::uint8_t key_number{};
     skills::ActiveSkillId id{skills::ActiveSkillId::none};
+    MaterialSpriteId icon{MaterialSpriteId::missing};
     std::array<char, 48> name{};
     float cooldown_ratio{};
     bool empty{};
 };
+
+[[nodiscard]] MaterialSpriteId active_skill_icon_sprite(
+    skills::ActiveSkillId id) noexcept;
 
 struct ActiveSkillHudModel final {
     std::array<ActiveSkillHudSlot,

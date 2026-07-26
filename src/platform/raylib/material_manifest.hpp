@@ -342,6 +342,16 @@ inline constexpr MaterialFrameDefinition kDefaultMaterialFrames[] = {
     ARPG_UI_FRAME(ui_label_plate, 37),
     ARPG_UI_FRAME(ui_reinforcement_confirm, 38),
     ARPG_UI_FRAME(ui_reinforcement_cancel, 39),
+    {MaterialSpriteId::skill_icon_draw_slash,
+        MaterialAtlasId::skill_draw_slash,
+        {0.0F, 627.0F, 209.0F, 209.0F}, {104.5F, 209.0F}, 0U,
+        {104.5F, 104.5F}, MaterialLayer::front_effect,
+        MaterialClass::ui, 18'001U},
+    {MaterialSpriteId::skill_icon_storm_swords,
+        MaterialAtlasId::skill_storm_swords,
+        {0.0F, 1280.0F, 256.0F, 256.0F}, {128.0F, 256.0F}, 0U,
+        {128.0F, 128.0F}, MaterialLayer::front_effect,
+        MaterialClass::ui, 20'001U},
 };
 
 inline constexpr AnimationEventDefinition kDefaultAnimationEvents[] = {

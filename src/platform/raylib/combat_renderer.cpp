@@ -253,6 +253,16 @@ GroundLootView CombatRenderer::draw(
         make_material_residency_request(current)));
     transition_ = transition_after_room_phase(transition_, current.phase);
 
+    ActiveSkillEffectPlan active_skill_plan{};
+    if (current.combat.has_value()) {
+        const combat::CombatSnapshot& combat = *current.combat;
+        const skills::ActiveSkillId active_id = combat.active_skill.id;
+        const bool material_ready = active_id != skills::ActiveSkillId::none
+            && material_pack_.available(active_skill_material_atlas(active_id));
+        active_skill_plan = make_active_skill_effect_plan(combat,
+            has_last_event_ ? &last_event_ : nullptr, material_ready);
+    }
+
     const CombatRenderPlan render_plan = make_combat_render_plan(current,
         loot_filter_mode_, static_cast<float>(GetScreenWidth()),
         static_cast<float>(GetScreenHeight()));
@@ -274,14 +284,13 @@ GroundLootView CombatRenderer::draw(
             draw_room(current, render_plan.ground_loot, render_plan.material_loot);
             break;
         case CombatRenderStage::actors:
-            draw_actors(previous, current,
+            draw_actors(previous, current, active_skill_plan,
                 std::clamp(interpolation_alpha, 0.0F, 1.0F),
                 draw_debug, feedback);
             if (current.combat.has_value()) {
-                active_skill_renderer_.draw_world(*current.combat,
-                    has_last_event_ ? &last_event_ : nullptr,
-                    static_cast<float>(GetScreenWidth()),
-                    static_cast<float>(GetScreenHeight()), material_pack_);
+                active_skill_renderer_.draw_world(active_skill_plan,
+                    material_pack_, static_cast<float>(GetScreenWidth()),
+                    static_cast<float>(GetScreenHeight()));
             }
             break;
         case CombatRenderStage::ground_loot_labels:

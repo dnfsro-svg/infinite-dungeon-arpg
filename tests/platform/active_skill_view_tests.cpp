@@ -1,4 +1,5 @@
 #include "test_framework.hpp"
+#include "allocation_probe.hpp"
 
 #include "active_skill_renderer.hpp"
 #include "active_skill_view.hpp"
@@ -22,6 +23,91 @@ bool overlaps(Rectangle left, Rectangle right) noexcept {
         && right.x < left.x + left.width
         && left.y < right.y + right.height
         && right.y < left.y + left.height;
+}
+
+arpg::test::Failure active_skill_visual_frames_reach_complete_material_timelines()
+    noexcept {
+    std::array<bool, 36U> draw_slash_frames{};
+    for (std::uint16_t tick = 0U; tick < 90U; ++tick) {
+        const std::size_t frame = platform::active_skill_visual_frame_index(
+            skills::ActiveSkillId::draw_slash, tick);
+        ARPG_REQUIRE(frame < draw_slash_frames.size());
+        draw_slash_frames[frame] = true;
+    }
+    for (const bool reached : draw_slash_frames) ARPG_REQUIRE(reached);
+
+    std::array<bool, 24U> storm_frames{};
+    for (std::uint16_t tick = 0U; tick < 360U; ++tick) {
+        const std::size_t frame = platform::active_skill_visual_frame_index(
+            skills::ActiveSkillId::storm_swords, tick);
+        ARPG_REQUIRE(frame < storm_frames.size());
+        storm_frames[frame] = true;
+    }
+    for (const bool reached : storm_frames) ARPG_REQUIRE(reached);
+    ARPG_REQUIRE(storm_frames[16U]);
+    for (std::size_t frame = 20U; frame < 24U; ++frame) {
+        ARPG_REQUIRE(storm_frames[frame]);
+    }
+    return {};
+}
+
+arpg::test::Failure active_skill_plan_separates_player_and_effect_positions()
+    noexcept {
+    combat::CombatSnapshot snapshot{};
+    snapshot.player.position = {7.0F, -3.0F, 2.0F};
+    snapshot.active_skill.id = skills::ActiveSkillId::draw_slash;
+    snapshot.active_skill.locked_center = {-11.0F, 5.0F, 0.0F};
+    const platform::ActiveSkillEffectPlan first =
+        platform::make_active_skill_effect_plan(snapshot, nullptr, true);
+    ARPG_REQUIRE(arpg::test::near(first.player_position.x, 7.0F));
+    ARPG_REQUIRE(arpg::test::near(first.player_position.y, -3.0F));
+    ARPG_REQUIRE(arpg::test::near(first.player_position.z, 2.0F));
+    ARPG_REQUIRE(arpg::test::near(first.effect_center.x, -11.0F));
+    ARPG_REQUIRE(arpg::test::near(first.effect_center.y, 5.0F));
+
+    snapshot.active_skill.locked_center = {23.0F, 17.0F, 0.0F};
+    const platform::ActiveSkillEffectPlan moved_effect =
+        platform::make_active_skill_effect_plan(snapshot, nullptr, true);
+    ARPG_REQUIRE(arpg::test::near(moved_effect.player_position.x, 7.0F));
+    ARPG_REQUIRE(arpg::test::near(moved_effect.player_position.y, -3.0F));
+    ARPG_REQUIRE(arpg::test::near(moved_effect.effect_center.x, 23.0F));
+    ARPG_REQUIRE(arpg::test::near(moved_effect.effect_center.y, 17.0F));
+    return {};
+}
+
+arpg::test::Failure material_and_fallback_skill_plans_are_exclusive_and_allocate_nothing()
+    noexcept {
+    combat::CombatSnapshot snapshot{};
+    snapshot.player.position = {3.0F, 4.0F, 0.0F};
+    snapshot.active_skill.id = skills::ActiveSkillId::storm_swords;
+    snapshot.active_skill.phase = combat::ActiveSkillPhase::strikes;
+    snapshot.active_skill.elapsed_ticks = 200U;
+    snapshot.active_skill.locked_center = {9.0F, -8.0F, 0.0F};
+    snapshot.active_skill.spawned_sword_count = 24U;
+    snapshot.active_skill.transients_active = true;
+
+    const platform::ActiveSkillEffectPlan healthy =
+        platform::make_active_skill_effect_plan(snapshot, nullptr, true);
+    ARPG_REQUIRE(healthy.mode == platform::ActiveSkillVisualMode::material);
+    ARPG_REQUIRE(healthy.suppress_base_player);
+    ARPG_REQUIRE(healthy.procedural_main_visual_count == 0U);
+    ARPG_REQUIRE(healthy.atlas == platform::MaterialAtlasId::skill_storm_swords);
+
+    const platform::ActiveSkillEffectPlan fallback =
+        platform::make_active_skill_effect_plan(snapshot, nullptr, false);
+    ARPG_REQUIRE(fallback.mode
+        == platform::ActiveSkillVisualMode::procedural_fallback);
+    ARPG_REQUIRE(!fallback.suppress_base_player);
+    ARPG_REQUIRE(fallback.procedural_main_visual_count > 0U);
+
+    const std::uint64_t before = arpg::test::allocation_count();
+    for (std::size_t iteration = 0U; iteration < 10'000U; ++iteration) {
+        const auto plan = platform::make_active_skill_effect_plan(
+            snapshot, nullptr, (iteration & 1U) == 0U);
+        ARPG_REQUIRE(plan.atlas_frame < 24U);
+    }
+    ARPG_REQUIRE(arpg::test::allocation_count() == before);
+    return {};
 }
 
 arpg::test::Failure hud_projects_exactly_five_numbered_slots_and_catalog_names()
@@ -109,30 +195,26 @@ arpg::test::Failure native_effect_plan_uses_snapshot_timing_and_twelve_swords()
     snapshot.active_skill.frame_index = 18U;
     snapshot.active_skill.locked_center = {2.0F, 3.0F, 0.0F};
     platform::ActiveSkillEffectPlan plan =
-        platform::make_active_skill_effect_plan(snapshot, nullptr);
+        platform::make_active_skill_effect_plan(snapshot, nullptr, false);
     ARPG_REQUIRE(plan.draw_slash.visible);
-    ARPG_REQUIRE(plan.draw_slash.use_atlas);
-    ARPG_REQUIRE(plan.draw_slash.atlas
-        == platform::ActiveSkillAtlasId::draw_slash);
-    ARPG_REQUIRE(plan.draw_slash.atlas_frame == 18U);
+    ARPG_REQUIRE(plan.atlas == platform::MaterialAtlasId::skill_draw_slash);
+    ARPG_REQUIRE(plan.atlas_frame == 18U);
     ARPG_REQUIRE(plan.draw_slash.facing == combat::Facing::left);
     ARPG_REQUIRE(arpg::test::near(plan.draw_slash.center.x, 2.0F));
     snapshot.active_skill.elapsed_ticks = static_cast<std::uint16_t>(
         46U + 8U);
-    plan = platform::make_active_skill_effect_plan(snapshot, nullptr);
-    ARPG_REQUIRE(!plan.draw_slash.visible);
+    plan = platform::make_active_skill_effect_plan(snapshot, nullptr, false);
+    ARPG_REQUIRE(plan.draw_slash.visible);
 
     snapshot.active_skill.id = skills::ActiveSkillId::storm_swords;
     snapshot.active_skill.phase = combat::ActiveSkillPhase::strikes;
     snapshot.active_skill.strike_index = 4U;
     snapshot.active_skill.spawned_sword_count = 12U;
     snapshot.active_skill.transients_active = true;
-    plan = platform::make_active_skill_effect_plan(snapshot, nullptr);
+    plan = platform::make_active_skill_effect_plan(snapshot, nullptr, false);
     ARPG_REQUIRE(plan.storm_swords.visible);
-    ARPG_REQUIRE(plan.storm_swords.use_atlas);
-    ARPG_REQUIRE(plan.storm_swords.atlas
-        == platform::ActiveSkillAtlasId::storm_swords);
-    ARPG_REQUIRE(plan.storm_swords.atlas_frame < 24U);
+    ARPG_REQUIRE(plan.atlas == platform::MaterialAtlasId::skill_storm_swords);
+    ARPG_REQUIRE(plan.atlas_frame < 24U);
     ARPG_REQUIRE(plan.storm_swords.sword_count == 12U);
     for (std::size_t index = 0U; index < plan.storm_swords.sword_count; ++index) {
         ARPG_REQUIRE(plan.storm_swords.swords[index].highlighted
@@ -145,11 +227,11 @@ arpg::test::Failure native_effect_plan_uses_snapshot_timing_and_twelve_swords()
     finisher.finisher = true;
     snapshot.tick = 103U;
     snapshot.active_skill.phase = combat::ActiveSkillPhase::recovery;
-    plan = platform::make_active_skill_effect_plan(snapshot, &finisher);
+    plan = platform::make_active_skill_effect_plan(snapshot, &finisher, false);
     ARPG_REQUIRE(plan.storm_swords.finisher_visible);
     ARPG_REQUIRE(plan.screen_flash_alpha > 0.0F);
     snapshot.tick = 108U;
-    plan = platform::make_active_skill_effect_plan(snapshot, &finisher);
+    plan = platform::make_active_skill_effect_plan(snapshot, &finisher, false);
     ARPG_REQUIRE(!plan.storm_swords.finisher_visible);
     ARPG_REQUIRE(arpg::test::near(plan.screen_flash_alpha, 0.0F));
     return {};
@@ -165,16 +247,16 @@ arpg::test::Failure storm_finisher_persists_from_snapshot_without_hit_event()
     snapshot.active_skill.elapsed_ticks = kFinisherTick;
     snapshot.active_skill.frame_index = 129U;
     platform::ActiveSkillEffectPlan plan =
-        platform::make_active_skill_effect_plan(snapshot, nullptr);
+        platform::make_active_skill_effect_plan(snapshot, nullptr, false);
     ARPG_REQUIRE(plan.storm_swords.finisher_visible);
-    ARPG_REQUIRE(plan.storm_swords.atlas_frame == 17U);
+    ARPG_REQUIRE(plan.atlas_frame == 20U);
     ARPG_REQUIRE(plan.screen_flash_alpha > 0.0F);
 
     snapshot.active_skill.phase = combat::ActiveSkillPhase::recovery;
     for (std::uint16_t age = 1U; age <= 7U; ++age) {
         snapshot.active_skill.elapsed_ticks = static_cast<std::uint16_t>(
             kFinisherTick + age);
-        plan = platform::make_active_skill_effect_plan(snapshot, nullptr);
+        plan = platform::make_active_skill_effect_plan(snapshot, nullptr, false);
         ARPG_REQUIRE(plan.storm_swords.finisher_visible);
         ARPG_REQUIRE(plan.storm_swords.finisher_opacity > 0.0F);
         ARPG_REQUIRE(plan.screen_flash_alpha > 0.0F);
@@ -186,7 +268,7 @@ arpg::test::Failure storm_finisher_persists_from_snapshot_without_hit_event()
 
     snapshot.active_skill.elapsed_ticks = static_cast<std::uint16_t>(
         kFinisherTick + 8U);
-    plan = platform::make_active_skill_effect_plan(snapshot, nullptr);
+    plan = platform::make_active_skill_effect_plan(snapshot, nullptr, false);
     ARPG_REQUIRE(!plan.storm_swords.finisher_visible);
     ARPG_REQUIRE(arpg::test::near(plan.screen_flash_alpha, 0.0F));
     return {};
@@ -223,7 +305,7 @@ arpg::test::Failure storm_sword_plan_uses_spawned_sword_lifecycle_and_two_bands(
     snapshot.active_skill.spawned_sword_count = 15U;
     snapshot.active_skill.transients_active = true;
     const platform::ActiveSkillEffectPlan plan =
-        platform::make_active_skill_effect_plan(snapshot, nullptr);
+        platform::make_active_skill_effect_plan(snapshot, nullptr, false);
 
     ARPG_REQUIRE(plan.storm_swords.sword_count == 15U);
     ARPG_REQUIRE(plan.storm_swords.swords.size() == 24U);
@@ -244,13 +326,19 @@ arpg::test::Failure storm_sword_plan_uses_spawned_sword_lifecycle_and_two_bands(
     snapshot.active_skill.transients_active = false;
     snapshot.active_skill.id = skills::ActiveSkillId::none;
     const platform::ActiveSkillEffectPlan cleared =
-        platform::make_active_skill_effect_plan(snapshot, nullptr);
+        platform::make_active_skill_effect_plan(snapshot, nullptr, false);
     ARPG_REQUIRE(cleared.storm_swords.sword_count == 0U);
     ARPG_REQUIRE(!cleared.storm_swords.visible);
     return {};
 }
 
 constexpr arpg::test::TestCase kCases[] = {
+    {"active skill visual frames reach complete material timelines",
+        &active_skill_visual_frames_reach_complete_material_timelines},
+    {"active skill plan separates player and effect positions",
+        &active_skill_plan_separates_player_and_effect_positions},
+    {"active skill material and fallback plans are exclusive and allocation free",
+        &material_and_fallback_skill_plans_are_exclusive_and_allocate_nothing},
     {"active skill HUD fixed slots", &hud_projects_exactly_five_numbered_slots_and_catalog_names},
     {"active skill HUD cooldown clamp", &hud_cooldown_ratios_are_clamped_and_empty_slots_stay_zero},
     {"active skill HUD continuous cooldown overlay",

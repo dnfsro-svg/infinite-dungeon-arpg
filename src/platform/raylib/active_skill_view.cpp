@@ -22,6 +22,19 @@ constexpr float kBottomMargin = 20.0F;
 
 }  // namespace
 
+MaterialSpriteId active_skill_icon_sprite(skills::ActiveSkillId id) noexcept {
+    switch (id) {
+    case skills::ActiveSkillId::draw_slash:
+        return MaterialSpriteId::skill_icon_draw_slash;
+    case skills::ActiveSkillId::storm_swords:
+        return MaterialSpriteId::skill_icon_storm_swords;
+    case skills::ActiveSkillId::none:
+    case skills::ActiveSkillId::count:
+        return MaterialSpriteId::missing;
+    }
+    return MaterialSpriteId::missing;
+}
+
 ActiveSkillHudModel make_active_skill_hud_model(
     const skills::SkillLoadoutState& loadout,
     const std::array<std::uint16_t, skills::kActiveSkillCount>& cooldowns)
@@ -31,12 +44,14 @@ ActiveSkillHudModel make_active_skill_hud_model(
         ActiveSkillHudSlot& slot = result.slots[index];
         slot.key_number = static_cast<std::uint8_t>(index + 1U);
         slot.id = loadout.slots[index].active;
+        slot.icon = active_skill_icon_sprite(slot.id);
         slot.empty = slot.id == skills::ActiveSkillId::none;
         if (slot.empty) continue;
         const skills::ActiveSkillDefinition* const definition =
             skills::active_skill_definition(slot.id);
         if (definition == nullptr || definition->cooldown_ticks == 0U) {
             slot.id = skills::ActiveSkillId::none;
+            slot.icon = MaterialSpriteId::missing;
             slot.empty = true;
             continue;
         }

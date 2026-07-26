@@ -272,6 +272,8 @@ enum class MaterialSpriteId : std::uint16_t {
     ui_label_plate,
     ui_reinforcement_confirm,
     ui_reinforcement_cancel,
+    skill_icon_draw_slash,
+    skill_icon_storm_swords,
     count,
 };
 

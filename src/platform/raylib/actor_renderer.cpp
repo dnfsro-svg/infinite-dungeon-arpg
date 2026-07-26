@@ -501,7 +501,9 @@ MonsterBarVisualPlan make_monster_bar_visual_plan(
 }
 
 void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
-    const dungeon::DungeonSnapshot& current, float alpha, bool draw_debug,
+    const dungeon::DungeonSnapshot& current,
+    const ActiveSkillEffectPlan& active_skill_plan,
+    float alpha, bool draw_debug,
     const CombatFeedback& feedback) noexcept {
     monster_material_draw_statuses_.fill({});
     if (!current.combat.has_value()) return;
@@ -512,7 +514,10 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
         ? *previous.combat : current_combat;
     std::array<RenderActor, kMonsterCapacity + 1> draw_items{};
     std::size_t draw_count = 0;
-    draw_items[draw_count++] = {current_combat.player.position, 0U, true, {}};
+    if (!active_skill_plan.suppress_base_player) {
+        draw_items[draw_count++] = {
+            current_combat.player.position, 0U, true, {}};
+    }
     for (std::size_t index = 0; index < current_combat.monsters.size(); ++index) {
         const MonsterSnapshot& monster = current_combat.monsters[index];
         const MonsterMaterialDrawPlan material_plan =
