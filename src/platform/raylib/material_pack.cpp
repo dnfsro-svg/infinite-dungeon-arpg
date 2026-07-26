@@ -7,9 +7,14 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <limits>
 
 namespace arpg::platform {
 namespace {
+
+void saturating_increment(std::uint64_t& value) noexcept {
+    if (value != (std::numeric_limits<std::uint64_t>::max)()) ++value;
+}
 
 [[nodiscard]] constexpr bool is_known_atlas(MaterialAtlasId id) noexcept {
     return id < MaterialAtlasId::count;
@@ -176,6 +181,7 @@ namespace {
     case MaterialSpriteId::ui_inventory_panel_detail: return {40.0F, 68.0F};
     case MaterialSpriteId::ui_skill_panel: return {88.0F, 88.0F};
     case MaterialSpriteId::ui_pause_panel: return {84.0F, 56.0F};
+    case MaterialSpriteId::ui_warning_modal: return {64.0F, 64.0F};
     default: return {40.0F, 40.0F};
     }
 }
@@ -387,9 +393,11 @@ bool MaterialPack::synchronize_residency(
             continue;
         }
         if (texture_api_.valid(color_textures_[texture_index])) {
+            saturating_increment(texture_unload_call_count_);
             texture_api_.unload(color_textures_[texture_index]);
         }
         if (texture_api_.valid(material_textures_[texture_index])) {
+            saturating_increment(texture_unload_call_count_);
             texture_api_.unload(material_textures_[texture_index]);
         }
         color_textures_[texture_index] = {};
@@ -412,7 +420,9 @@ bool MaterialPack::synchronize_residency(
                 && static_cast<std::size_t>(material_written)
                     < material_deployed_path.size()
             ? material_deployed_path.data() : definition.material_path;
+        saturating_increment(texture_load_call_count_);
         Texture2D color_texture = texture_api_.load(color_path);
+        saturating_increment(texture_load_call_count_);
         Texture2D material_texture = texture_api_.load(material_path);
         const bool color_dimensions_match = texture_api_.valid(color_texture)
             && color_texture.width == definition.width
@@ -422,9 +432,11 @@ bool MaterialPack::synchronize_residency(
             && material_texture.height == definition.height;
         if (!color_dimensions_match || !material_dimensions_match) {
             if (texture_api_.valid(color_texture)) {
+                saturating_increment(texture_unload_call_count_);
                 texture_api_.unload(color_texture);
             }
             if (texture_api_.valid(material_texture)) {
+                saturating_increment(texture_unload_call_count_);
                 texture_api_.unload(material_texture);
             }
             if (!warnings_emitted_[texture_index]) {
@@ -450,9 +462,11 @@ bool MaterialPack::synchronize_residency(
             continue;
         }
         if (texture_api_.valid(color_textures_[texture_index])) {
+            saturating_increment(texture_unload_call_count_);
             texture_api_.unload(color_textures_[texture_index]);
         }
         if (texture_api_.valid(material_textures_[texture_index])) {
+            saturating_increment(texture_unload_call_count_);
             texture_api_.unload(material_textures_[texture_index]);
         }
         color_textures_[texture_index] = {};
@@ -481,14 +495,24 @@ std::size_t MaterialPack::resident_bytes() const noexcept {
         {resident_atlases_});
 }
 
+std::uint64_t MaterialPack::texture_load_call_count() const noexcept {
+    return texture_load_call_count_;
+}
+
+std::uint64_t MaterialPack::texture_unload_call_count() const noexcept {
+    return texture_unload_call_count_;
+}
+
 void MaterialPack::unload() noexcept {
     for (std::size_t index{}; index < color_textures_.size(); ++index) {
         if (valid_texture_api(texture_api_)
             && texture_api_.valid(color_textures_[index])) {
+            saturating_increment(texture_unload_call_count_);
             texture_api_.unload(color_textures_[index]);
         }
         if (valid_texture_api(texture_api_)
             && texture_api_.valid(material_textures_[index])) {
+            saturating_increment(texture_unload_call_count_);
             texture_api_.unload(material_textures_[index]);
         }
         color_textures_[index] = Texture2D{};
@@ -684,10 +708,12 @@ bool MaterialPack::draw_nine_slice(MaterialSpriteId id,
         {destination.x + destination.width - 32.0F,
             destination.y + (destination.height - 48.0F) * 0.5F,
             32.0F, 48.0F});
-    draw_part({32.0F, 32.0F, 64.0F, 64.0F},
-        {destination.x + (destination.width - 64.0F) * 0.5F,
-            destination.y + (destination.height - 64.0F) * 0.5F,
-            64.0F, 64.0F});
+    if (id != MaterialSpriteId::ui_warning_modal) {
+        draw_part({32.0F, 32.0F, 64.0F, 64.0F},
+            {destination.x + (destination.width - 64.0F) * 0.5F,
+                destination.y + (destination.height - 64.0F) * 0.5F,
+                64.0F, 64.0F});
+    }
     ++sprite_draw_counts_[static_cast<std::size_t>(id)];
     return true;
 }

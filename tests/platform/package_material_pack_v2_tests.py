@@ -37,6 +37,44 @@ EXPECTED_NATIVE_PREVIEW_FIELDS = tuple(
         ("1920", "1920x1080"),
     )
 )
+EXPECTED_TASK10_PLAN_FILES = {
+    "docs/superpowers/specs/2026-07-25-material-runtime-integration-repair-design.md",
+    "docs/superpowers/plans/2026-07-25-material-runtime-integration-repair.md",
+    "docs/validation/material-runtime-integration-repair.md",
+}
+EXPECTED_TASK10_INTEGRATION_FILES = {
+    "src/platform/raylib/material_residency.hpp",
+    "src/platform/raylib/material_residency.cpp",
+    "src/platform/raylib/material_pack.hpp",
+    "src/platform/raylib/material_pack.cpp",
+    "src/platform/raylib/material_asset_types.hpp",
+    "src/platform/raylib/material_animation.hpp",
+    "src/platform/raylib/material_animation.cpp",
+    "src/platform/raylib/monster_material_presenter.hpp",
+    "src/platform/raylib/monster_material_presenter.cpp",
+    "src/platform/raylib/environment_prop_layout.hpp",
+    "src/platform/raylib/environment_prop_layout.cpp",
+    "src/platform/raylib/active_skill_assets.hpp",
+    "src/platform/raylib/active_skill_assets.cpp",
+    "src/platform/raylib/host_input.cpp",
+    "src/platform/raylib/raylib_input.hpp",
+    "src/platform/raylib/raylib_input.cpp",
+    "tools/build_environment_props.py",
+    "tools/build_active_skill_material_maps.py",
+    "tests/platform/environment_prop_asset_pipeline_tests.py",
+    "tests/platform/active_skill_material_asset_pipeline_tests.py",
+    "tests/platform/stage17_skill_stones_game_validation.cpp",
+    "tests/platform/stage17_skill_stones_validator.ps1",
+    "tests/platform/package_material_pack_v2_tests.py",
+    "tools/package_material_pack_v2.py",
+}
+EXPECTED_TASK10_REQUIRED_ASSETS = {
+    "assets/stage12/element_doors.png",
+    "assets/stage12/element_doors_material.png",
+    "assets/skills/draw_slash_atlas_material.png",
+    "assets/skills/storm_swords_atlas_material.png",
+    "assets/stage12/environment-props-build.json",
+}
 
 
 def fake_png(width: int = 1920, height: int = 1080) -> bytes:
@@ -54,8 +92,9 @@ class PackageMaterialPackV2Tests(unittest.TestCase):
         evidence.mkdir(parents=True)
         report_lines = [
             "result=pass",
-            "full_pack_bytes=302170112",
-            "resident_peak_bytes=163708928",
+            "full_pack_bytes=329430304",
+            "resident_peak_bytes=226800928",
+            "transition_peak_bytes=261010720",
             "bundled_font_source_base_size=96",
             "ui_text_solid_fill=pass",
             "ui_text_physical_scale=pass",
@@ -110,6 +149,34 @@ class PackageMaterialPackV2Tests(unittest.TestCase):
             (evidence / filename).write_bytes(fake_png(*dimensions))
         (evidence / PACKAGER.EVIDENCE_FILE).write_text(
             "\n".join(report_lines) + "\n", encoding="utf-8")
+        (evidence / "material-runtime-integration-evidence.txt").write_text(
+            "\n".join((
+                "schema=material-runtime-integration-v1",
+                "fixture_path=production-room-renderer",
+                "showcase_capture_count=0",
+                "graphics_context=pass",
+                "renderer_initialized=pass",
+                "full_pack_bytes=329430304",
+                "resident_peak_bytes=226800928",
+                "transition_peak_bytes=261010720",
+                "observed_resident_peak_bytes=226800928",
+                "cross_ecology=pass",
+                "door_sprite_unique=pass",
+                "environment=pass",
+                "death=pass",
+                "draw_slash_frame_union=0..35",
+                "storm_swords_frame_union=0..23",
+                "healthy_skill_suppression=pass",
+                "missing_map_fallback=pass",
+                "stress_warmup_frames=300",
+                "stress_measured_frames=1800",
+                "screenshot_count=64",
+                "capture_prime_count=64",
+                "screenshot_pixel_guard=pass",
+                "screenshot_nonblack_failures=0",
+                "scene_sentinel_failures=0",
+                "result=pass",
+            )) + "\n", encoding="utf-8")
         (evidence / "nested").mkdir()
         (evidence / "nested/validator-detail.txt").write_text(
             "full formal detail\n", encoding="utf-8")
@@ -210,7 +277,8 @@ class PackageMaterialPackV2Tests(unittest.TestCase):
             for relative in (
                     PACKAGER.STATIC_FONT,
                     *PACKAGER.PLAN_FILES,
-                    *PACKAGER.INTEGRATION_FILES):
+                    *PACKAGER.INTEGRATION_FILES,
+                    *EXPECTED_TASK10_REQUIRED_ASSETS):
                 source = root / relative
                 source.parent.mkdir(parents=True, exist_ok=True)
                 source.write_bytes(b"integration fixture\n")
@@ -233,6 +301,41 @@ class PackageMaterialPackV2Tests(unittest.TestCase):
             self.assertEqual(entry.archive_path, f"integration_reference/{source}")
             self.assertEqual(entry.origin, "explicit-integration-reference")
             self.assertEqual(entry.category, "integration-reference")
+
+    def test_task10_contract_is_packaged_with_exact_memory_and_source_hashes(
+            self) -> None:
+        self.assertEqual(PACKAGER.FULL_PACK_BYTES, 329430304)
+        self.assertEqual(PACKAGER.RESIDENT_PEAK_BYTES, 226800928)
+        self.assertEqual(PACKAGER.TRANSITION_PEAK_BYTES, 261010720)
+        self.assertTrue(EXPECTED_TASK10_PLAN_FILES.issubset(PACKAGER.PLAN_FILES))
+        self.assertTrue(
+            EXPECTED_TASK10_INTEGRATION_FILES.issubset(PACKAGER.INTEGRATION_FILES))
+        self.assertEqual(
+            set(PACKAGER.MATERIAL_RUNTIME_REQUIRED_FILES),
+            EXPECTED_TASK10_REQUIRED_ASSETS)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for relative in (
+                    PACKAGER.STATIC_FONT,
+                    *PACKAGER.PLAN_FILES,
+                    *PACKAGER.INTEGRATION_FILES,
+                    *EXPECTED_TASK10_REQUIRED_ASSETS):
+                source = root / relative
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_bytes((relative + "\n").encode("utf-8"))
+            snapshot = PACKAGER.FormalEvidenceSnapshot(
+                directory=root, report_sha256="0" * 64,
+                files=(), previews=())
+            with mock.patch.object(
+                    PACKAGER, "git_tracked_material_paths", return_value=[]):
+                entries = PACKAGER.build_source_entries(root, snapshot)
+            for relative in EXPECTED_TASK10_REQUIRED_ASSETS:
+                entry = entries[relative]
+                self.assertEqual(entry.source_path, root / relative)
+                self.assertEqual(
+                    PACKAGER.digest_entry(entry),
+                    hashlib.sha256((relative + "\n").encode("utf-8")).hexdigest())
 
     def test_selection_policy_reports_every_automatic_exclusion(self) -> None:
         self.assertEqual(PACKAGER.material_selection_policy(), {
@@ -326,8 +429,9 @@ class PackageMaterialPackV2Tests(unittest.TestCase):
             [entry["status"] for entry in audit["legacy_room_backgrounds"]],
             ["native-redraw-required"] * 4)
         self.assertEqual(audit["runtime_memory"], {
-            "full_pack_bytes": 302170112,
-            "resident_peak_bytes": 163708928,
+            "full_pack_bytes": 329430304,
+            "resident_peak_bytes": 226800928,
+            "transition_peak_bytes": 261010720,
             "resident_hard_cap_bytes": 268435456,
         })
         self.assertEqual(len(audit["room_backgrounds"]), 4)
@@ -375,6 +479,22 @@ class PackageMaterialPackV2Tests(unittest.TestCase):
                     PACKAGER.validate_formal_evidence(root)
             run.assert_not_called()
 
+    def test_formal_validation_rejects_wrong_integration_transition_peak(
+            self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            evidence = self.make_formal_fixture(root)
+            integration = evidence / "material-runtime-integration-evidence.txt"
+            integration.write_text(
+                integration.read_text(encoding="utf-8").replace(
+                    "transition_peak_bytes=261010720",
+                    "transition_peak_bytes=1"),
+                encoding="utf-8")
+            with mock.patch.object(PACKAGER.subprocess, "run") as run:
+                with self.assertRaisesRegex(RuntimeError, "integration|transition"):
+                    PACKAGER.validate_formal_evidence(root)
+            run.assert_not_called()
+
     def test_formal_validation_rejects_forged_native_background_hash(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -418,7 +538,7 @@ class PackageMaterialPackV2Tests(unittest.TestCase):
                 "previews/formal-evidence/nested/validator-detail.txt",
                 archive_paths)
             self.assertEqual(
-                records["file_count"], len(PACKAGER.FORMAL_PREVIEW_FIELDS) + 2)
+                records["file_count"], len(PACKAGER.FORMAL_PREVIEW_FIELDS) + 3)
             for item in records["files"]:
                 self.assertRegex(item["sha256"], r"^[0-9a-f]{64}$")
 

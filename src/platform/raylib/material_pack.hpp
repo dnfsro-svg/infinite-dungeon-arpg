@@ -56,6 +56,8 @@ public:
     [[nodiscard]] MaterialResidencyRequest requested_residency() const noexcept;
     [[nodiscard]] MaterialAtlasMask resident_atlases() const noexcept;
     [[nodiscard]] std::size_t resident_bytes() const noexcept;
+    [[nodiscard]] std::uint64_t texture_load_call_count() const noexcept;
+    [[nodiscard]] std::uint64_t texture_unload_call_count() const noexcept;
     void unload() noexcept;
     [[nodiscard]] MaterialEcology current_ecology() const noexcept;
     [[nodiscard]] bool material_pipeline_ready() const noexcept;
@@ -102,6 +104,8 @@ private:
     MaterialEcology current_ecology_{MaterialEcology::common};
     MaterialResidencyRequest requested_residency_{};
     MaterialAtlasMask resident_atlases_{};
+    std::uint64_t texture_load_call_count_{};
+    std::uint64_t texture_unload_call_count_{};
     bool material_pipeline_ready_{};
 };
 

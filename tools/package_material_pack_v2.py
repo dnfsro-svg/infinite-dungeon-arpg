@@ -46,8 +46,9 @@ PACKAGE_VERSION = "3.0.0-native-backgrounds"
 PACKAGE_DATE = "2026-07-23"
 ZIP_TIMESTAMP = (2026, 7, 23, 0, 0, 0)
 BUFFER_SIZE = 1024 * 1024
-FULL_PACK_BYTES = 302170112
-RESIDENT_PEAK_BYTES = 163708928
+FULL_PACK_BYTES = 329430304
+RESIDENT_PEAK_BYTES = 226800928
+TRANSITION_PEAK_BYTES = 261010720
 RESIDENT_HARD_CAP_BYTES = 268435456
 
 LEGACY_PACKAGE_SHA256 = {
@@ -66,6 +67,9 @@ PLAN_FILES = (
     "docs/superpowers/plans/2026-07-19-stage12-comic-material-pack.md",
     "docs/superpowers/plans/2026-07-23-native-room-backgrounds.md",
     "docs/validation/native-room-backgrounds.md",
+    "docs/superpowers/specs/2026-07-25-material-runtime-integration-repair-design.md",
+    "docs/superpowers/plans/2026-07-25-material-runtime-integration-repair.md",
+    "docs/validation/material-runtime-integration-repair.md",
 )
 
 INTEGRATION_FILES = (
@@ -117,6 +121,38 @@ INTEGRATION_FILES = (
     "tests/platform/ui_material_asset_pipeline_tests.py",
     "tests/platform/native_room_background_asset_pipeline_tests.py",
     "tools/build_native_room_backgrounds.py",
+    "src/platform/raylib/material_residency.hpp",
+    "src/platform/raylib/material_residency.cpp",
+    "src/platform/raylib/material_pack.hpp",
+    "src/platform/raylib/material_pack.cpp",
+    "src/platform/raylib/material_asset_types.hpp",
+    "src/platform/raylib/material_animation.hpp",
+    "src/platform/raylib/material_animation.cpp",
+    "src/platform/raylib/monster_material_presenter.hpp",
+    "src/platform/raylib/monster_material_presenter.cpp",
+    "src/platform/raylib/environment_prop_layout.hpp",
+    "src/platform/raylib/environment_prop_layout.cpp",
+    "src/platform/raylib/active_skill_assets.hpp",
+    "src/platform/raylib/active_skill_assets.cpp",
+    "src/platform/raylib/host_input.cpp",
+    "src/platform/raylib/raylib_input.hpp",
+    "src/platform/raylib/raylib_input.cpp",
+    "tools/build_environment_props.py",
+    "tools/build_active_skill_material_maps.py",
+    "tests/platform/environment_prop_asset_pipeline_tests.py",
+    "tests/platform/active_skill_material_asset_pipeline_tests.py",
+    "tests/platform/stage17_skill_stones_game_validation.cpp",
+    "tests/platform/stage17_skill_stones_validator.ps1",
+    "tests/platform/package_material_pack_v2_tests.py",
+    "tools/package_material_pack_v2.py",
+)
+
+MATERIAL_RUNTIME_REQUIRED_FILES = (
+    "assets/stage12/element_doors.png",
+    "assets/stage12/element_doors_material.png",
+    "assets/skills/draw_slash_atlas_material.png",
+    "assets/skills/storm_swords_atlas_material.png",
+    "assets/stage12/environment-props-build.json",
 )
 
 EVIDENCE_DIRECTORY = (
@@ -124,6 +160,7 @@ EVIDENCE_DIRECTORY = (
     "stage12 material evidence/stage12-run"
 )
 EVIDENCE_FILE = "stage12-material-evidence.txt"
+INTEGRATION_EVIDENCE_FILE = "material-runtime-integration-evidence.txt"
 UI_PREVIEW_FIELDS = (
     ("hud_ui_screenshot_1920", "ui-hud-1920x1080.png"),
     ("inventory_ui_screenshot_1920", "ui-inventory-1920x1080.png"),
@@ -436,6 +473,10 @@ def collect_formal_evidence(directory: Path) -> tuple[FormalEvidenceFile, ...]:
 
 def parse_evidence_report(report_path: Path) -> tuple[str, dict[str, str]]:
     report = report_path.read_text(encoding="utf-8")
+    return report, parse_evidence_report_text(report)
+
+
+def parse_evidence_report_text(report: str) -> dict[str, str]:
     fields: dict[str, str] = {}
     for line in report.splitlines():
         key, separator, value = line.partition("=")
@@ -444,7 +485,14 @@ def parse_evidence_report(report_path: Path) -> tuple[str, dict[str, str]]:
         if not key or key in fields:
             raise RuntimeError(f"invalid or duplicate formal evidence field: {key}")
         fields[key] = value
-    return report, fields
+    return fields
+
+
+def parse_evidence_report_bytes(payload: bytes) -> dict[str, str]:
+    try:
+        return parse_evidence_report_text(payload.decode("utf-8"))
+    except UnicodeDecodeError as error:
+        raise RuntimeError("formal evidence is not valid UTF-8") from error
 
 
 def validate_formal_evidence(root: Path) -> FormalEvidenceSnapshot:
@@ -464,6 +512,7 @@ def validate_formal_evidence(root: Path) -> FormalEvidenceSnapshot:
         "result=pass",
         f"full_pack_bytes={FULL_PACK_BYTES}",
         f"resident_peak_bytes={RESIDENT_PEAK_BYTES}",
+        f"transition_peak_bytes={TRANSITION_PEAK_BYTES}",
         "bundled_font_source_base_size=96",
         "ui_text_solid_fill=pass",
         "ui_text_physical_scale=pass",
@@ -490,6 +539,50 @@ def validate_formal_evidence(root: Path) -> FormalEvidenceSnapshot:
         raise RuntimeError(
             "formal evidence is not the verified high-resolution run; missing: "
             + ", ".join(missing))
+
+    integration_file = before_by_path.get(INTEGRATION_EVIDENCE_FILE)
+    if integration_file is None:
+        raise FileNotFoundError(
+            "material runtime integration evidence is missing: "
+            f"{evidence_directory / INTEGRATION_EVIDENCE_FILE}")
+    _, integration_fields = parse_evidence_report(
+        integration_file.source_path)
+    expected_integration_fields = {
+        "schema": "material-runtime-integration-v1",
+        "fixture_path": "production-room-renderer",
+        "showcase_capture_count": "0",
+        "graphics_context": "pass",
+        "renderer_initialized": "pass",
+        "full_pack_bytes": str(FULL_PACK_BYTES),
+        "resident_peak_bytes": str(RESIDENT_PEAK_BYTES),
+        "transition_peak_bytes": str(TRANSITION_PEAK_BYTES),
+        "observed_resident_peak_bytes": str(RESIDENT_PEAK_BYTES),
+        "cross_ecology": "pass",
+        "door_sprite_unique": "pass",
+        "environment": "pass",
+        "death": "pass",
+        "draw_slash_frame_union": "0..35",
+        "storm_swords_frame_union": "0..23",
+        "healthy_skill_suppression": "pass",
+        "missing_map_fallback": "pass",
+        "stress_warmup_frames": "300",
+        "stress_measured_frames": "1800",
+        "screenshot_count": "64",
+        "capture_prime_count": "64",
+        "screenshot_pixel_guard": "pass",
+        "screenshot_nonblack_failures": "0",
+        "scene_sentinel_failures": "0",
+        "result": "pass",
+    }
+    rejected_integration = [
+        f"{key}={integration_fields.get(key, '<missing>')}"
+        for key, expected in expected_integration_fields.items()
+        if integration_fields.get(key) != expected
+    ]
+    if rejected_integration:
+        raise RuntimeError(
+            "material runtime integration evidence rejected: "
+            + ", ".join(rejected_integration))
 
     provenance_path = require_source(root, BACKGROUND_PROVENANCE)
     try:
@@ -570,6 +663,11 @@ def validate_formal_evidence(root: Path) -> FormalEvidenceSnapshot:
 
 def formal_evidence_metadata(
         snapshot: FormalEvidenceSnapshot) -> dict[str, Any]:
+    integration = next(
+        (item for item in snapshot.files
+         if item.relative_path == INTEGRATION_EVIDENCE_FILE), None)
+    if integration is None:
+        raise RuntimeError("formal snapshot lacks material runtime integration evidence")
     return {
         "schema_version": 1,
         "validator": "tests/platform/stage12_material_validator.ps1",
@@ -577,6 +675,11 @@ def formal_evidence_metadata(
             "relative_path": EVIDENCE_FILE,
             "archive_path": f"previews/{EVIDENCE_FILE}",
             "sha256": snapshot.report_sha256,
+        },
+        "integration_evidence": {
+            "relative_path": integration.relative_path,
+            "archive_path": integration.archive_path,
+            "sha256": integration.sha256,
         },
         "file_count": len(snapshot.files),
         "total_bytes": sum(item.bytes for item in snapshot.files),
@@ -814,6 +917,7 @@ def resolution_audit(
         "runtime_memory": {
             "full_pack_bytes": FULL_PACK_BYTES,
             "resident_peak_bytes": RESIDENT_PEAK_BYTES,
+            "transition_peak_bytes": TRANSITION_PEAK_BYTES,
             "resident_hard_cap_bytes": RESIDENT_HARD_CAP_BYTES,
         },
         "room_background_conclusion": (
@@ -973,6 +1077,8 @@ def package_metadata(
             "fake_background_upscale_accepted": False,
             "full_pack_bytes": FULL_PACK_BYTES,
             "resident_peak_bytes": RESIDENT_PEAK_BYTES,
+            "transition_peak_bytes": TRANSITION_PEAK_BYTES,
+            "material_runtime_integration": "formal-raylib-verified",
         },
         "font": {
             "runtime_path": STATIC_FONT,
@@ -1017,7 +1123,8 @@ def build_source_entries(
         formal_snapshot: FormalEvidenceSnapshot) -> dict[str, PackageEntry]:
     entries: dict[str, PackageEntry] = {}
     for path in git_tracked_material_paths(root):
-        if path in (VARIABLE_FONT, STATIC_FONT):
+        if path in (VARIABLE_FONT, STATIC_FONT) or (
+                path in MATERIAL_RUNTIME_REQUIRED_FILES):
             continue
         category = "runtime-assets" if path.startswith("assets/") else "art-source"
         add_source_entry(entries, root, path, path, "git-tracked", category)
@@ -1025,6 +1132,11 @@ def build_source_entries(
     add_source_entry(
         entries, root, STATIC_FONT, STATIC_FONT,
         "explicit-reviewed-static-font", "runtime-assets")
+
+    for path in MATERIAL_RUNTIME_REQUIRED_FILES:
+        add_source_entry(
+            entries, root, path, path,
+            "explicit-material-runtime-contract", "runtime-assets")
 
     for path in PLAN_FILES:
         add_source_entry(entries, root, path, path, "explicit-plan", "documentation")
@@ -1150,8 +1262,17 @@ def verify_archive(output: Path | BinaryIO, expected_paths: list[str]) -> str:
         scope = metadata.get("scope", {})
         if scope.get("room_backgrounds") != "native-background-verified" or (
                 scope.get("full_pack_bytes") != FULL_PACK_BYTES) or (
-                scope.get("resident_peak_bytes") != RESIDENT_PEAK_BYTES):
+                scope.get("resident_peak_bytes") != RESIDENT_PEAK_BYTES) or (
+                scope.get("transition_peak_bytes") != TRANSITION_PEAK_BYTES) or (
+                scope.get("material_runtime_integration")
+                    != "formal-raylib-verified"):
             raise RuntimeError("package metadata lacks native background verification")
+        required_contract_paths = set(MATERIAL_RUNTIME_REQUIRED_FILES)
+        required_contract_paths.update(PLAN_FILES)
+        required_contract_paths.update(
+            f"integration_reference/{path}" for path in INTEGRATION_FILES)
+        if not required_contract_paths.issubset(names):
+            raise RuntimeError("material runtime contract files are absent")
         audit = json.loads(archive.read("metadata/resolution-audit.json"))
         legacy = audit.get("legacy_room_backgrounds")
         native = audit.get("room_backgrounds")
@@ -1173,6 +1294,7 @@ def verify_archive(output: Path | BinaryIO, expected_paths: list[str]) -> str:
         if audit.get("runtime_memory") != {
                 "full_pack_bytes": FULL_PACK_BYTES,
                 "resident_peak_bytes": RESIDENT_PEAK_BYTES,
+                "transition_peak_bytes": TRANSITION_PEAK_BYTES,
                 "resident_hard_cap_bytes": RESIDENT_HARD_CAP_BYTES}:
             raise RuntimeError("native room background memory audit disagrees")
 
@@ -1272,6 +1394,35 @@ def verify_archive(output: Path | BinaryIO, expected_paths: list[str]) -> str:
                 or report_metadata.get("archive_path") != report_archive_path
                 or report_metadata.get("sha256") != report_record.get("sha256")):
             raise RuntimeError("formal evidence report SHA-256 binding mismatch")
+
+        integration_metadata = formal.get("integration_evidence")
+        integration_archive_path = (
+            f"previews/formal-evidence/{INTEGRATION_EVIDENCE_FILE}")
+        integration_record = formal_by_archive.get(integration_archive_path)
+        if not isinstance(integration_metadata, dict) or (
+                integration_record is None) or (
+                integration_metadata.get("relative_path")
+                    != INTEGRATION_EVIDENCE_FILE) or (
+                integration_metadata.get("archive_path")
+                    != integration_archive_path) or (
+                integration_metadata.get("sha256")
+                    != integration_record.get("sha256")):
+            raise RuntimeError(
+                "material runtime integration evidence SHA-256 binding mismatch")
+        integration_fields = parse_evidence_report_bytes(
+            archive.read(integration_archive_path))
+        for key, expected in {
+                "fixture_path": "production-room-renderer",
+                "showcase_capture_count": "0",
+                "full_pack_bytes": str(FULL_PACK_BYTES),
+                "resident_peak_bytes": str(RESIDENT_PEAK_BYTES),
+                "transition_peak_bytes": str(TRANSITION_PEAK_BYTES),
+                "screenshot_pixel_guard": "pass",
+                "result": "pass",
+        }.items():
+            if integration_fields.get(key) != expected:
+                raise RuntimeError(
+                    f"material runtime integration archive field mismatch: {key}")
 
         bindings = formal.get("preview_bindings")
         if not isinstance(bindings, list) or len(bindings) != len(

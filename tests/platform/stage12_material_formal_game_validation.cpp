@@ -1,8 +1,18 @@
 #include "material_asset_validation.hpp"
+#include "active_skill_renderer.hpp"
+#include "combat/room_bounds.hpp"
+#include "combat_renderer.hpp"
+#include "combat_view_math.hpp"
+#include "control_hints.hpp"
+#include "dungeon_view_math.hpp"
+#include "dungeon_runtime.hpp"
+#include "environment_prop_layout.hpp"
 #include "raylib_host.hpp"
+#include "render_layout.hpp"
 #include "hud_font.hpp"
 #include "hud_layout.hpp"
 #include "inventory_view_math.hpp"
+#include "material_animation.hpp"
 #include "pause_menu_view.hpp"
 #include "dungeon/dungeon_types.hpp"
 #include "ui_material.hpp"
@@ -11,6 +21,7 @@
 
 #include <raylib.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -21,6 +32,7 @@
 #include <iostream>
 #include <initializer_list>
 #include <memory>
+#include <numeric>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -28,11 +40,62 @@
 namespace {
 
 namespace platform = arpg::platform;
+namespace combat = arpg::combat;
+namespace dungeon = arpg::dungeon;
+namespace skills = arpg::skills;
 
 struct Resolution final { int width{}; int height{}; const char* name{}; };
 constexpr std::array<Resolution, 2> kResolutions{{
     {1280, 720, "game-1280x720.png"}, {1920, 1080, "game-1920x1080.png"},
 }};
+
+struct IntegrationResolution final {
+    int width{};
+    int height{};
+    const char* tag{};
+};
+
+constexpr std::array<IntegrationResolution, 3> kIntegrationResolutions{{
+    {800, 450, "800x450"},
+    {1280, 720, "1280x720"},
+    {1920, 1080, "1920x1080"},
+}};
+
+constexpr std::array<combat::MonsterId, 8> kIntegrationMonsterIds{{
+    combat::MonsterId::fire_bomber,
+    combat::MonsterId::fire_charger,
+    combat::MonsterId::water_bulwark,
+    combat::MonsterId::water_support,
+    combat::MonsterId::lightning_shooter,
+    combat::MonsterId::lightning_dasher,
+    combat::MonsterId::chaos_chaser,
+    combat::MonsterId::chaos_hazard,
+}};
+
+constexpr std::array<dungeon::ExitDirection, 4> kIntegrationDoorDirections{{
+    dungeon::ExitDirection::up,
+    dungeon::ExitDirection::down,
+    dungeon::ExitDirection::left,
+    dungeon::ExitDirection::right,
+}};
+
+constexpr std::array<combat::Vec3, 4> kIntegrationDoorCenters{{
+    {0.0F, combat::room_bounds::min_y, 0.0F},
+    {0.0F, combat::room_bounds::max_y, 0.0F},
+    {combat::room_bounds::min_x, 0.0F, 0.0F},
+    {combat::room_bounds::max_x, 0.0F, 0.0F},
+}};
+
+constexpr std::array<std::uint16_t, 5> kDrawSlashCaptureTicks{{
+    0U, 45U, 46U, 66U, 89U,
+}};
+
+constexpr std::array<std::uint16_t, 8> kStormCaptureTicks{{
+    0U, 71U, 72U, 180U, 323U, 324U, 342U, 359U,
+}};
+constexpr std::size_t kExpectedFullPackBytes = 329'430'304U;
+constexpr std::size_t kExpectedResidentPeakBytes = 226'800'928U;
+constexpr std::size_t kExpectedTransitionPeakBytes = 261'010'720U;
 struct NativeBackgroundSpec final {
     const char* name{};
     arpg::dungeon::DungeonElement ecology{};
@@ -440,6 +503,1061 @@ bool run_input_hole_evidence(const std::filesystem::path& root,
         && text_contains(copied_summary, "resolution_valid=1");
 }
 
+bool formal_hud_viewport_safe(int width, int height) noexcept {
+    const platform::HudLayout layout =
+        platform::make_hud_layout(width, height, false);
+    const platform::HudTextSafeLayout text =
+        platform::make_hud_text_safe_layout(layout);
+    const platform::HudRect screen{0.0F, 0.0F,
+        static_cast<float>(width), static_cast<float>(height)};
+    const std::array<platform::HudRect, 6U> panels{{
+        layout.player_panel, layout.objective_panel, layout.navigation_panel,
+        layout.primary_notice, layout.secondary_notice,
+        layout.combat_exclusion,
+    }};
+    for (const platform::HudRect panel : panels) {
+        if (!platform::hud_rect_inside(panel, screen)) return false;
+    }
+    for (const platform::HudRect label : text.player_bar_labels) {
+        if (!platform::hud_rect_inside(label, layout.player_panel)
+                || !platform::hud_rect_inside(label, screen)) return false;
+    }
+    if (!platform::hud_rect_inside(text.player_progression, layout.player_panel)
+            || !platform::hud_rect_inside(text.player_progression, screen)) {
+        return false;
+    }
+    const std::array<platform::HudRect, 6U> objective_rows{{
+        text.objective_title, text.objective_hint, text.objective_movement,
+        text.objective_controls[0], text.objective_controls[1],
+        text.objective_controls[2],
+    }};
+    for (std::size_t first{}; first < objective_rows.size(); ++first) {
+        if (!platform::hud_rect_inside(
+                objective_rows[first], layout.objective_panel)
+                || !platform::hud_rect_inside(objective_rows[first], screen)) {
+            return false;
+        }
+        for (std::size_t second = first + 1U;
+             second < objective_rows.size(); ++second) {
+            if (platform::hud_rects_overlap(
+                    objective_rows[first], objective_rows[second])) {
+                return false;
+            }
+        }
+    }
+    return platform::hud_rect_inside(
+               text.navigation_title, layout.navigation_panel)
+        && platform::hud_rect_inside(
+               text.navigation_ecology, layout.navigation_panel)
+        && platform::hud_rect_inside(text.navigation_title, screen)
+        && platform::hud_rect_inside(text.navigation_ecology, screen)
+        && !platform::hud_rects_overlap(
+               text.navigation_title, text.navigation_ecology);
+}
+
+struct PixelRoi final {
+    int x{};
+    int y{};
+    int width{};
+    int height{};
+
+    [[nodiscard]] bool valid() const noexcept {
+        return x >= 0 && y >= 0 && width > 0 && height > 0
+            && x + width <= 1280 && y + height <= 720;
+    }
+};
+
+PixelRoi lightning_material_frame_roi(combat::MonsterId monster,
+    combat::Vec3 position, std::uint16_t frame_index) noexcept {
+    const platform::MonsterAnimationClipDefinition* const clip =
+        platform::monster_animation_clip(
+            monster, platform::MonsterAnimationState::active);
+    if (clip == nullptr) return {};
+    const auto frame = platform::monster_animation_frame(*clip, frame_index);
+    if (!frame.has_value()) return {};
+    const platform::ScreenProjection projected =
+        platform::project_combat_position(position, 1280.0F, 720.0F);
+    const float scale = platform::monster_material_draw_scale(
+        frame->atlas, projected.scale);
+    constexpr float kEvidencePadding = 12.0F;
+    const float left = projected.x - frame->foot_anchor.x * scale
+        - kEvidencePadding;
+    const float top = projected.ground_y - frame->foot_anchor.y * scale
+        - kEvidencePadding;
+    const float right = projected.x
+        + (frame->source.width - frame->foot_anchor.x) * scale
+        + kEvidencePadding;
+    const float bottom = projected.ground_y
+        + (frame->source.height - frame->foot_anchor.y) * scale
+        + kEvidencePadding;
+    const int x = (std::max)(0, static_cast<int>(std::floor(left)));
+    const int y = (std::max)(0, static_cast<int>(std::floor(top)));
+    const int right_pixel = (std::min)(1280,
+        static_cast<int>(std::ceil(right)));
+    const int bottom_pixel = (std::min)(720,
+        static_cast<int>(std::ceil(bottom)));
+    return {x, y, right_pixel - x, bottom_pixel - y};
+}
+
+struct IntegrationFrameObservation final {
+    bool screenshot_ok{true};
+    bool screenshot_nonblack{true};
+    bool scene_sentinel_matches{true};
+    std::array<bool, kIntegrationMonsterIds.size()> monster_drawn{};
+    std::array<bool, kIntegrationDoorDirections.size()> door_drawn{};
+    platform::ActiveSkillEffectPlan skill_plan{};
+    double frame_ms{};
+};
+
+struct IntegrationValidationResult final {
+    bool graphics_context{};
+    bool renderer_initialized{};
+    bool overlay_resources_initialized{};
+    bool evidence_written{};
+    bool cross_ecology_ok{true};
+    bool doors_ok{true};
+    bool environment_ok{true};
+    bool death_ok{true};
+    bool skill_timeline_ok{true};
+    bool skill_fallback_ok{true};
+    bool screenshot_pixel_guard_ok{true};
+    bool working_directory_ready{};
+    bool working_directory_restored{};
+    bool ecology_transition_current_residency{};
+    bool ecology_transition_old_ecology_unloaded{};
+    bool stress_ok{};
+    bool hud_viewport_safe{true};
+    std::uint8_t hud_resolution_mask{};
+    std::array<bool, 36> draw_slash_frames{};
+    std::array<bool, 24> storm_frames{};
+    std::size_t full_pack_bytes{};
+    std::size_t resident_peak_bytes{};
+    std::size_t transition_peak_bytes{};
+    std::size_t observed_resident_peak_bytes{};
+    platform::MaterialAtlasMask ecology_transition_old_mask{};
+    platform::MaterialAtlasMask ecology_transition_new_mask{};
+    platform::MaterialAtlasMask ecology_transition_after_requested_mask{};
+    platform::MaterialAtlasMask ecology_transition_after_resident_mask{};
+    std::uint64_t ecology_transition_unload_delta{};
+    std::uint64_t stress_warmup_load_calls{};
+    std::uint64_t stress_warmup_unload_calls{};
+    std::uint64_t stress_final_load_calls{};
+    std::uint64_t stress_final_unload_calls{};
+    std::uint64_t shutdown_load_calls{};
+    std::uint64_t shutdown_unload_calls{};
+    std::uint64_t fallback_load_calls{};
+    std::uint64_t fallback_unload_calls{};
+    std::uint64_t death_warning_draws{};
+    std::uint64_t death_label_draws{};
+    std::uint32_t screenshot_count{};
+    std::uint32_t environment_capture_count{};
+    std::uint32_t environment_prop_row_count{};
+    std::uint32_t door_question_glyph_count{};
+    std::uint32_t capture_prime_count{};
+    std::uint32_t screenshot_nonblack_failures{};
+    std::uint32_t scene_sentinel_failures{};
+    double stress_average_fps{};
+    double stress_p99_ms{};
+    double stress_one_percent_low_fps{};
+
+    [[nodiscard]] bool passed() const noexcept {
+        return graphics_context && renderer_initialized && evidence_written
+            && working_directory_ready && working_directory_restored
+            && cross_ecology_ok && doors_ok && environment_ok && death_ok
+            && skill_timeline_ok && skill_fallback_ok
+            && screenshot_pixel_guard_ok
+            && hud_viewport_safe && hud_resolution_mask == 0x07U
+            && ecology_transition_current_residency
+            && ecology_transition_old_ecology_unloaded && stress_ok;
+    }
+};
+
+[[nodiscard]] const char* ecology_name(
+    dungeon::DungeonElement ecology) noexcept {
+    switch (ecology) {
+    case dungeon::DungeonElement::fire: return "fire";
+    case dungeon::DungeonElement::water: return "water";
+    case dungeon::DungeonElement::lightning: return "lightning";
+    case dungeon::DungeonElement::chaos: return "chaos";
+    }
+    return "unknown";
+}
+
+[[nodiscard]] const char* skill_name(skills::ActiveSkillId skill) noexcept {
+    switch (skill) {
+    case skills::ActiveSkillId::draw_slash: return "draw_slash";
+    case skills::ActiveSkillId::storm_swords: return "storm_swords";
+    case skills::ActiveSkillId::none:
+    case skills::ActiveSkillId::count:
+        return "none";
+    }
+    return "none";
+}
+
+template <std::size_t Size>
+[[nodiscard]] bool contains_tick(
+    const std::array<std::uint16_t, Size>& values,
+    std::uint16_t tick) noexcept {
+    return std::find(values.begin(), values.end(), tick) != values.end();
+}
+
+[[nodiscard]] dungeon::DungeonSnapshot integration_snapshot(
+    dungeon::DungeonElement ecology) noexcept {
+    dungeon::DungeonSnapshot snapshot{};
+    snapshot.root_seed = 10'012U;
+    snapshot.room_seed = 20'012U;
+    snapshot.depth = 3U;
+    snapshot.floor_room_index = 7U;
+    snapshot.phase = dungeon::RoomPhase::combat;
+    snapshot.has_active_room = true;
+    snapshot.ecology = ecology;
+    snapshot.wave_count = 1U;
+    snapshot.remaining_targets = 0U;
+    snapshot.combat.emplace();
+    snapshot.combat->player.position = {0.0F, 1.5F, 0.0F};
+    snapshot.combat->player.facing = combat::Facing::right;
+    snapshot.combat->player.hp = 1'000;
+    snapshot.combat->player.max_hp = 1'000;
+    return snapshot;
+}
+
+void set_monster(combat::MonsterSnapshot& monster, combat::MonsterId id,
+    combat::Vec3 position, std::uint16_t ordinal) noexcept {
+    monster = {};
+    monster.active = true;
+    monster.generation = 1U;
+    monster.id = id;
+    monster.spawn_ordinal = ordinal;
+    monster.spawn = position;
+    monster.position = position;
+    monster.facing = combat::Facing::right;
+    monster.hp = 100;
+    monster.max_hp = 100;
+    monster.ai_phase = combat::MonsterAiPhase::active;
+}
+
+void equip_skill(dungeon::DungeonSnapshot& snapshot,
+    skills::ActiveSkillId skill, std::uint16_t tick) noexcept {
+    snapshot.skill_loadout = {};
+    snapshot.skill_loadout.slots[0].active = skill;
+    snapshot.skill_loadout.owned_active_bits =
+        1ULL << static_cast<std::size_t>(skill);
+    if (!snapshot.combat.has_value()) snapshot.combat.emplace();
+    snapshot.combat->active_skill = {};
+    snapshot.combat->active_skill.id = skill;
+    snapshot.combat->active_skill.elapsed_ticks = tick;
+    snapshot.combat->active_skill.locked_center = {0.5F, 0.0F, 0.0F};
+    snapshot.combat->active_skill.phase = skill == skills::ActiveSkillId::draw_slash
+        ? combat::ActiveSkillPhase::startup
+        : combat::ActiveSkillPhase::strikes;
+    snapshot.combat->active_skill.spawned_sword_count = 24U;
+    snapshot.combat->active_skill.transients_active = true;
+}
+
+[[nodiscard]] bool resize_integration_window(
+    const IntegrationResolution& resolution) noexcept {
+    if (GetScreenWidth() != resolution.width
+            || GetScreenHeight() != resolution.height) {
+        SetWindowSize(resolution.width, resolution.height);
+    }
+    return GetScreenWidth() == resolution.width
+        && GetScreenHeight() == resolution.height;
+}
+
+[[nodiscard]] Color integration_scene_sentinel(const char* mode,
+    std::uint16_t tick, const IntegrationResolution& resolution) noexcept {
+    std::uint32_t hash = 2'166'136'261U;
+    const char* cursor = mode;
+    while (cursor != nullptr && *cursor != '\0') {
+        hash = (hash ^ static_cast<std::uint8_t>(*cursor++)) * 16'777'619U;
+    }
+    hash = (hash ^ tick) * 16'777'619U;
+    hash = (hash ^ static_cast<std::uint32_t>(resolution.width)) * 16'777'619U;
+    hash = (hash ^ static_cast<std::uint32_t>(resolution.height)) * 16'777'619U;
+    return {
+        static_cast<unsigned char>(64U + (hash & 0x7FU)),
+        static_cast<unsigned char>(64U + ((hash >> 8U) & 0x7FU)),
+        static_cast<unsigned char>(64U + ((hash >> 16U) & 0x7FU)),
+        255U,
+    };
+}
+
+[[nodiscard]] bool colors_equal(Color left, Color right) noexcept {
+    return left.r == right.r && left.g == right.g && left.b == right.b
+        && left.a == right.a;
+}
+
+[[nodiscard]] bool sampled_image_is_nonblack(Image image) noexcept {
+    if (image.data == nullptr || image.width <= 0 || image.height <= 0) {
+        return false;
+    }
+    constexpr int kColumns = 64;
+    constexpr int kRows = 36;
+    std::size_t visible{};
+    std::size_t samples{};
+    for (int row{}; row < kRows; ++row) {
+        const int y = (row * (image.height - 1)) / (kRows - 1);
+        for (int column{}; column < kColumns; ++column) {
+            const int x = (column * (image.width - 1)) / (kColumns - 1);
+            const Color pixel = GetImageColor(image, x, y);
+            ++samples;
+            if (pixel.a != 0U
+                    && (pixel.r > 12U || pixel.g > 12U || pixel.b > 12U)) {
+                ++visible;
+            }
+        }
+    }
+    return samples != 0U && visible * 20U >= samples;
+}
+
+[[nodiscard]] bool export_presented_frame(
+    const std::filesystem::path& path, Color expected_sentinel,
+    bool& nonblack, bool& sentinel_matches) noexcept {
+    try {
+        Image image = LoadImageFromScreen();
+        if (image.data == nullptr) return false;
+        nonblack = sampled_image_is_nonblack(image);
+        sentinel_matches = image.width >= 4 && image.height >= 4
+            && colors_equal(GetImageColor(image, 1, 1), expected_sentinel);
+        const bool exported = ExportImage(image, path.string().c_str());
+        UnloadImage(image);
+        return exported;
+    } catch (...) {
+        return false;
+    }
+}
+
+[[nodiscard]] Rectangle integration_door_bounds(
+    dungeon::ExitDirection direction,
+    const IntegrationResolution& resolution) noexcept {
+    const std::size_t direction_index = static_cast<std::size_t>(direction);
+    if (direction_index >= kIntegrationDoorCenters.size()) return {};
+    const platform::RenderProjection projected = platform::project_render_world(
+        kIntegrationDoorCenters[direction_index].x,
+        kIntegrationDoorCenters[direction_index].y,
+        kIntegrationDoorCenters[direction_index].z,
+        static_cast<float>(resolution.width),
+        static_cast<float>(resolution.height));
+    const platform::DoorRenderDecision decision =
+        platform::door_render_decision(platform::DoorVisualMode::open, direction);
+    const platform::MaterialFrameDefinition* const frame =
+        platform::find_material_frame(
+            platform::default_material_manifest(), decision.sprite);
+    if (frame == nullptr) return {};
+    const float scale = 0.72F * projected.scale;
+    return {
+        projected.x - frame->foot_anchor.x * scale,
+        projected.ground_y - frame->foot_anchor.y * scale,
+        frame->source.width * scale,
+        frame->source.height * scale,
+    };
+}
+
+[[nodiscard]] bool rectangle_inside_viewport_and_hud(
+    Rectangle bounds, const IntegrationResolution& resolution) noexcept {
+    const float hud_reserve = (std::max)(
+        72.0F, static_cast<float>(resolution.height) * 0.12F);
+    return bounds.width > 0.0F && bounds.height > 0.0F
+        && bounds.x >= 0.0F && bounds.y >= 0.0F
+        && bounds.x + bounds.width <= static_cast<float>(resolution.width)
+        && bounds.y + bounds.height
+            <= static_cast<float>(resolution.height) - hud_reserve;
+}
+
+[[nodiscard]] IntegrationFrameObservation present_integration_frame(
+    platform::CombatRenderer& renderer,
+    const dungeon::DungeonSnapshot& snapshot,
+    const IntegrationResolution& resolution,
+    const char* mode,
+    std::uint16_t tick,
+    const std::filesystem::path* screenshot,
+    std::ofstream& frames,
+    std::uint64_t& sequence,
+    IntegrationValidationResult& result,
+    bool capture_prime = false) noexcept {
+    IntegrationFrameObservation observation{};
+    if (!resize_integration_window(resolution)) {
+        observation.screenshot_ok = false;
+        return observation;
+    }
+
+    if (screenshot != nullptr && !capture_prime) {
+        const IntegrationFrameObservation prime = present_integration_frame(
+            renderer, snapshot, resolution, mode, tick, nullptr,
+            frames, sequence, result, true);
+        ++result.capture_prime_count;
+        if (!prime.screenshot_ok) {
+            observation.screenshot_ok = false;
+            return observation;
+        }
+    }
+
+    const platform::MaterialResidencyRequest request =
+        platform::make_material_residency_request(snapshot);
+    const platform::MaterialAtlasMask transition =
+        renderer.material_pack().resident_atlases() | request.atlases;
+    result.transition_peak_bytes = (std::max)(result.transition_peak_bytes,
+        platform::material_residency_bytes(
+            platform::default_material_manifest(), {transition}));
+
+    std::array<std::uint64_t, kIntegrationDoorDirections.size()> door_before{};
+    for (std::size_t index{}; index < kIntegrationDoorDirections.size(); ++index) {
+        door_before[index] = renderer.material_sprite_draw_count(
+            platform::door_render_decision(platform::DoorVisualMode::open,
+                kIntegrationDoorDirections[index]).sprite);
+    }
+
+    const platform::DungeonRenderStatus runtime_status{};
+    const platform::ControlHints control_hints{};
+    renderer.observe_presented_hud_frame(snapshot.death.has_value()
+            ? platform::HudPresentedFrame::death_overlay
+            : platform::HudPresentedFrame::normal,
+        snapshot, snapshot, runtime_status, control_hints, 1.0F / 60.0F, false);
+
+    const auto started = std::chrono::steady_clock::now();
+    BeginDrawing();
+    ClearBackground(Color{13, 17, 27, 255});
+    platform::CombatFeedback feedback{};
+    static_cast<void>(renderer.draw(snapshot, snapshot, runtime_status,
+        0.0F, false, feedback, false));
+    const Color expected_sentinel = integration_scene_sentinel(
+        mode, tick, resolution);
+    DrawRectangle(0, 0, 4, 4, expected_sentinel);
+    EndDrawing();
+    const auto finished = std::chrono::steady_clock::now();
+    observation.frame_ms = std::chrono::duration<double, std::milli>(
+        finished - started).count();
+
+    if (screenshot != nullptr) {
+        const bool exported = export_presented_frame(*screenshot,
+            expected_sentinel, observation.screenshot_nonblack,
+            observation.scene_sentinel_matches);
+        observation.screenshot_ok = exported
+            && observation.screenshot_nonblack
+            && observation.scene_sentinel_matches;
+        if (exported) ++result.screenshot_count;
+        if (!observation.screenshot_nonblack) {
+            ++result.screenshot_nonblack_failures;
+        }
+        if (!observation.scene_sentinel_matches) {
+            ++result.scene_sentinel_failures;
+        }
+        result.screenshot_pixel_guard_ok = result.screenshot_pixel_guard_ok
+            && observation.screenshot_nonblack
+            && observation.scene_sentinel_matches;
+    }
+
+    for (std::size_t index{}; index < kIntegrationMonsterIds.size(); ++index) {
+        observation.monster_drawn[index] =
+            renderer.monster_material_draw_status(
+                kIntegrationMonsterIds[index]).drawn;
+    }
+    for (std::size_t index{}; index < kIntegrationDoorDirections.size(); ++index) {
+        const platform::MaterialSpriteId sprite =
+            platform::door_render_decision(platform::DoorVisualMode::open,
+                kIntegrationDoorDirections[index]).sprite;
+        observation.door_drawn[index] =
+            renderer.material_sprite_draw_count(sprite) > door_before[index];
+    }
+
+    skills::ActiveSkillId active_skill = skills::ActiveSkillId::none;
+    std::size_t active_frame{};
+    bool skill_drawn = false;
+    if (snapshot.combat.has_value()) {
+        active_skill = snapshot.combat->active_skill.id;
+        const bool material_ready = active_skill != skills::ActiveSkillId::none
+            && renderer.material_atlas_available(
+                platform::active_skill_material_atlas(active_skill));
+        observation.skill_plan = platform::make_active_skill_effect_plan(
+            *snapshot.combat, nullptr, material_ready);
+        active_frame = observation.skill_plan.atlas_frame;
+        skill_drawn = observation.skill_plan.mode
+            == platform::ActiveSkillVisualMode::material
+            && material_ready;
+    }
+
+    const platform::MaterialPack& pack = renderer.material_pack();
+    result.observed_resident_peak_bytes = (std::max)(
+        result.observed_resident_peak_bytes, pack.resident_bytes());
+    frames << sequence++ << ',' << mode << ','
+           << resolution.width << ',' << resolution.height << ',' << tick
+           << ",0," << pack.requested_residency().atlases << ','
+           << pack.resident_atlases() << ',' << pack.resident_bytes() << ','
+           << pack.texture_load_call_count() << ','
+           << pack.texture_unload_call_count();
+    for (const bool drawn : observation.monster_drawn) {
+        frames << ',' << (drawn ? 1 : 0);
+    }
+    for (const bool drawn : observation.door_drawn) {
+        frames << ',' << (drawn ? 1 : 0);
+    }
+    frames << ',' << skill_name(active_skill) << ',' << active_frame << ','
+           << (skill_drawn ? 1 : 0) << ','
+           << (observation.skill_plan.suppress_base_player ? 1 : 0) << ','
+           << observation.skill_plan.procedural_main_visual_count << ','
+           << std::fixed << std::setprecision(6) << observation.frame_ms << ','
+           << (capture_prime ? 1 : 0) << ','
+           << static_cast<unsigned int>(expected_sentinel.r) << ','
+           << static_cast<unsigned int>(expected_sentinel.g) << ','
+           << static_cast<unsigned int>(expected_sentinel.b) << ','
+           << (screenshot == nullptr ? "na"
+               : (observation.screenshot_nonblack ? "pass" : "fail")) << ','
+           << (screenshot == nullptr ? "na"
+               : (observation.scene_sentinel_matches ? "pass" : "fail")) << ','
+           << (screenshot == nullptr ? "" : screenshot->filename().string())
+           << '\n';
+    return observation;
+}
+
+[[nodiscard]] bool all_frames_seen(const std::array<bool, 36>& frames) noexcept {
+    return std::all_of(frames.begin(), frames.end(), [](bool seen) {
+        return seen;
+    });
+}
+
+[[nodiscard]] bool all_frames_seen(const std::array<bool, 24>& frames) noexcept {
+    return std::all_of(frames.begin(), frames.end(), [](bool seen) {
+        return seen;
+    });
+}
+
+[[nodiscard]] IntegrationValidationResult run_integration_validation(
+    const std::filesystem::path& root) noexcept {
+    IntegrationValidationResult result{};
+    std::ofstream frames(root / "material-runtime-frames.csv",
+        std::ios::out | std::ios::trunc);
+    std::ofstream doors(root / "material-runtime-doors.csv",
+        std::ios::out | std::ios::trunc);
+    std::ofstream props(root / "material-runtime-environment-props.csv",
+        std::ios::out | std::ios::trunc);
+    if (!frames || !doors || !props) return result;
+    frames << "sequence,mode,width,height,tick,showcase,requested_mask,"
+              "resident_mask,resident_bytes,load_calls,unload_calls,"
+              "fire_bomber,fire_charger,water_bulwark,water_support,"
+              "lightning_shooter,lightning_dasher,chaos_chaser,chaos_hazard,"
+              "door_up,door_down,door_left,door_right,skill_id,skill_frame,"
+              "skill_drawn,suppress_base_player,procedural_main_visual_count,"
+              "frame_ms,capture_prime,sentinel_r,sentinel_g,sentinel_b,"
+              "screenshot_nonblack,scene_sentinel,screenshot\n";
+    doors << "mode,width,height,direction,sprite_id,x,y,width_px,height_px,"
+             "drawn,screenshot\n";
+    props << "ecology,width,height,sprite_id,x,y,width_px,height_px,hud_top,"
+             "inside,drawn,screenshot\n";
+
+    SetConfigFlags(FLAG_WINDOW_UNDECORATED);
+    InitWindow(800, 450, "Material Runtime Integration Formal Validation");
+    if (!IsWindowReady()) {
+        std::ofstream report(root / "material-runtime-integration-evidence.txt",
+            std::ios::out | std::ios::trunc);
+        report << "schema=material-runtime-integration-v1\n"
+               << "fixture_path=production-room-renderer\n"
+               << "graphics_context=fail\n"
+               << "result=graphics-context-failure\n";
+        result.evidence_written = static_cast<bool>(report);
+        return result;
+    }
+    result.graphics_context = true;
+    SetExitKey(KEY_NULL);
+    SetTargetFPS(0);
+
+    std::error_code working_directory_error{};
+    const std::filesystem::path previous_working_directory =
+        std::filesystem::current_path(working_directory_error);
+    if (!working_directory_error) {
+        std::filesystem::current_path(
+            std::filesystem::path{GetApplicationDirectory()},
+            working_directory_error);
+    }
+    result.working_directory_ready = !working_directory_error;
+
+    platform::CombatRenderer renderer{};
+    result.overlay_resources_initialized = renderer.initialize_resources();
+    const platform::MaterialResidencyRequest base_request =
+        platform::base_material_residency_request();
+    result.renderer_initialized = renderer.material_pipeline_ready()
+        && renderer.material_pack().residency_satisfied(base_request)
+        && renderer.material_pack().texture_load_call_count() != 0U;
+    std::uint64_t sequence{};
+
+    for (const IntegrationResolution& resolution : kIntegrationResolutions) {
+        const bool hud_safe = formal_hud_viewport_safe(
+            resolution.width, resolution.height);
+        result.hud_viewport_safe = result.hud_viewport_safe && hud_safe;
+        if (hud_safe) {
+            const std::size_t resolution_index = static_cast<std::size_t>(
+                &resolution - kIntegrationResolutions.data());
+            result.hud_resolution_mask |= static_cast<std::uint8_t>(
+                1U << resolution_index);
+        }
+        dungeon::DungeonSnapshot cross = integration_snapshot(
+            dungeon::DungeonElement::fire);
+        cross.combat->monster_count = 1U;
+        cross.remaining_targets = 1U;
+        set_monster(cross.combat->monsters[0],
+            combat::MonsterId::chaos_chaser, {1.5F, 0.0F, 0.0F}, 1U);
+        const std::filesystem::path screenshot = root /
+            (std::string{"integration-cross-ecology-"} + resolution.tag + ".png");
+        const IntegrationFrameObservation observation =
+            present_integration_frame(renderer, cross, resolution,
+                "cross-ecology", 0U, &screenshot, frames, sequence, result);
+        const platform::RoomBackgroundDrawRuntimeStatus background =
+            renderer.room_background_draw_status();
+        result.cross_ecology_ok = result.cross_ecology_ok
+            && observation.screenshot_ok
+            && renderer.material_atlas_available(
+                platform::MaterialAtlasId::fire_room_background)
+            && renderer.material_atlas_available(
+                platform::MaterialAtlasId::chaos_chaser)
+            && background.atlas == platform::MaterialAtlasId::fire_room_background
+            && background.resident && background.drawn
+            && observation.monster_drawn[static_cast<std::size_t>(
+                combat::MonsterId::chaos_chaser)];
+
+        for (const bool open : {false, true}) {
+            dungeon::DungeonSnapshot door_snapshot = integration_snapshot(
+                dungeon::DungeonElement::fire);
+            door_snapshot.phase = open
+                ? dungeon::RoomPhase::awaiting_exit
+                : dungeon::RoomPhase::combat;
+            door_snapshot.exits_open.fill(open);
+            const std::string mode = open ? "doors-open" : "doors-closed";
+            const std::filesystem::path door_screenshot = root /
+                (std::string{"integration-"} + mode + '-' + resolution.tag
+                    + ".png");
+            const IntegrationFrameObservation door_observation =
+                present_integration_frame(renderer, door_snapshot, resolution,
+                    mode.c_str(), 0U, &door_screenshot, frames, sequence, result);
+            result.doors_ok = result.doors_ok && door_observation.screenshot_ok;
+            for (std::size_t index{};
+                 index < kIntegrationDoorDirections.size(); ++index) {
+                const platform::DoorRenderDecision decision =
+                    platform::door_render_decision(open
+                            ? platform::DoorVisualMode::open
+                            : platform::DoorVisualMode::closed,
+                        kIntegrationDoorDirections[index]);
+                const Rectangle bounds = integration_door_bounds(
+                    kIntegrationDoorDirections[index], resolution);
+                const bool question = decision.label == nullptr
+                    || std::string{decision.label}.find('?') != std::string::npos;
+                result.door_question_glyph_count += question ? 1U : 0U;
+                result.doors_ok = result.doors_ok
+                    && door_observation.door_drawn[index] && !question
+                    && bounds.width > 0.0F && bounds.height > 0.0F;
+                doors << mode << ',' << resolution.width << ','
+                      << resolution.height << ',' << index << ','
+                      << static_cast<std::size_t>(decision.sprite) << ','
+                      << bounds.x << ',' << bounds.y << ',' << bounds.width
+                      << ',' << bounds.height << ','
+                      << (door_observation.door_drawn[index] ? 1 : 0) << ','
+                      << door_screenshot.filename().string() << '\n';
+            }
+        }
+
+        for (const dungeon::DungeonElement ecology : {
+                dungeon::DungeonElement::water,
+                dungeon::DungeonElement::lightning,
+                dungeon::DungeonElement::chaos}) {
+            dungeon::DungeonSnapshot environment = integration_snapshot(ecology);
+            const platform::EnvironmentPropLayout layout =
+                platform::environment_prop_layout(ecology,
+                    static_cast<float>(resolution.width),
+                    static_cast<float>(resolution.height));
+            std::array<std::uint64_t, 9> before{};
+            for (std::size_t index{}; index < layout.count; ++index) {
+                before[index] = renderer.material_sprite_draw_count(
+                    layout.props[index].sprite);
+            }
+            const std::string mode = std::string{"environment-"}
+                + ecology_name(ecology);
+            const std::filesystem::path environment_screenshot = root /
+                (std::string{"integration-"} + mode + '-' + resolution.tag
+                    + ".png");
+            const IntegrationFrameObservation environment_observation =
+                present_integration_frame(renderer, environment, resolution,
+                    mode.c_str(), 0U, &environment_screenshot,
+                    frames, sequence, result);
+            ++result.environment_capture_count;
+            result.environment_ok = result.environment_ok
+                && environment_observation.screenshot_ok && layout.count == 5U;
+            for (std::size_t index{}; index < layout.count; ++index) {
+                const platform::EnvironmentPropPlacement& placement =
+                    layout.props[index];
+                const platform::EnvironmentPropDefinition* definition =
+                    platform::environment_prop_definition(placement.sprite);
+                const Rectangle bounds = definition == nullptr ? Rectangle{}
+                    : platform::project_environment_prop_bounds(*definition,
+                        placement, static_cast<float>(resolution.width),
+                        static_cast<float>(resolution.height));
+                const bool inside = rectangle_inside_viewport_and_hud(
+                    bounds, resolution);
+                const bool drawn = renderer.material_sprite_draw_count(
+                    placement.sprite) > before[index];
+                result.environment_ok = result.environment_ok
+                    && definition != nullptr && inside && drawn;
+                ++result.environment_prop_row_count;
+                const float hud_top = static_cast<float>(resolution.height)
+                    - (std::max)(72.0F,
+                        static_cast<float>(resolution.height) * 0.12F);
+                props << ecology_name(ecology) << ',' << resolution.width
+                      << ',' << resolution.height << ','
+                      << static_cast<std::size_t>(placement.sprite) << ','
+                      << bounds.x << ',' << bounds.y << ',' << bounds.width
+                      << ',' << bounds.height << ',' << hud_top << ','
+                      << (inside ? 1 : 0) << ',' << (drawn ? 1 : 0) << ','
+                      << environment_screenshot.filename().string() << '\n';
+            }
+        }
+
+        dungeon::DungeonSnapshot death = integration_snapshot(
+            dungeon::DungeonElement::chaos);
+        death.death.emplace();
+        death.death->can_continue = true;
+        death.death->checkpoint.death_depth = 3U;
+        death.death->checkpoint.death_floor_room_index = 7U;
+        death.death->checkpoint.hp = 0;
+        death.death->checkpoint.max_hp = 1'000;
+        const std::uint64_t warning_before = renderer.material_sprite_draw_count(
+            platform::MaterialSpriteId::ui_warning_modal);
+        const std::uint64_t label_before = renderer.material_sprite_draw_count(
+            platform::MaterialSpriteId::ui_label_plate);
+        const std::filesystem::path death_screenshot = root /
+            (std::string{"integration-death-"} + resolution.tag + ".png");
+        const IntegrationFrameObservation death_observation =
+            present_integration_frame(renderer, death, resolution,
+                "death", 0U, &death_screenshot, frames, sequence, result);
+        const std::uint64_t warning_after = renderer.material_sprite_draw_count(
+            platform::MaterialSpriteId::ui_warning_modal);
+        const std::uint64_t label_after = renderer.material_sprite_draw_count(
+            platform::MaterialSpriteId::ui_label_plate);
+        result.death_warning_draws += warning_after - warning_before;
+        result.death_label_draws += label_after - label_before;
+        result.death_ok = result.death_ok && death_observation.screenshot_ok
+            && warning_after > warning_before && label_after > label_before;
+
+        dungeon::DungeonSnapshot draw = integration_snapshot(
+            dungeon::DungeonElement::fire);
+        for (std::uint16_t tick{}; tick < 90U; ++tick) {
+            equip_skill(draw, skills::ActiveSkillId::draw_slash, tick);
+            std::filesystem::path capture_path{};
+            const std::filesystem::path* capture = nullptr;
+            if (contains_tick(kDrawSlashCaptureTicks, tick)) {
+                capture_path = root / (std::string{"integration-draw-slash-t"}
+                    + std::to_string(tick) + '-' + resolution.tag + ".png");
+                capture = &capture_path;
+            }
+            const IntegrationFrameObservation skill_observation =
+                present_integration_frame(renderer, draw, resolution,
+                    "draw-slash", tick, capture, frames, sequence, result);
+            if (skill_observation.skill_plan.atlas_frame
+                    < result.draw_slash_frames.size()) {
+                result.draw_slash_frames[
+                    skill_observation.skill_plan.atlas_frame] = true;
+            }
+            result.skill_timeline_ok = result.skill_timeline_ok
+                && skill_observation.skill_plan.mode
+                    == platform::ActiveSkillVisualMode::material
+                && skill_observation.skill_plan.suppress_base_player
+                && skill_observation.skill_plan.procedural_main_visual_count == 0U
+                && (capture == nullptr || skill_observation.screenshot_ok);
+        }
+
+        dungeon::DungeonSnapshot storm = integration_snapshot(
+            dungeon::DungeonElement::chaos);
+        for (std::uint16_t tick{}; tick < 360U; ++tick) {
+            equip_skill(storm, skills::ActiveSkillId::storm_swords, tick);
+            std::filesystem::path capture_path{};
+            const std::filesystem::path* capture = nullptr;
+            if (contains_tick(kStormCaptureTicks, tick)) {
+                capture_path = root / (std::string{"integration-storm-swords-t"}
+                    + std::to_string(tick) + '-' + resolution.tag + ".png");
+                capture = &capture_path;
+            }
+            const IntegrationFrameObservation skill_observation =
+                present_integration_frame(renderer, storm, resolution,
+                    "storm-swords", tick, capture, frames, sequence, result);
+            if (skill_observation.skill_plan.atlas_frame
+                    < result.storm_frames.size()) {
+                result.storm_frames[
+                    skill_observation.skill_plan.atlas_frame] = true;
+            }
+            result.skill_timeline_ok = result.skill_timeline_ok
+                && skill_observation.skill_plan.mode
+                    == platform::ActiveSkillVisualMode::material
+                && skill_observation.skill_plan.suppress_base_player
+                && skill_observation.skill_plan.procedural_main_visual_count == 0U
+                && (capture == nullptr || skill_observation.screenshot_ok);
+        }
+    }
+
+    result.skill_timeline_ok = result.skill_timeline_ok
+        && all_frames_seen(result.draw_slash_frames)
+        && all_frames_seen(result.storm_frames)
+        && result.draw_slash_frames.front() && result.draw_slash_frames.back()
+        && result.storm_frames.front() && result.storm_frames.back();
+
+    const IntegrationResolution& stress_resolution =
+        kIntegrationResolutions.back();
+    dungeon::DungeonSnapshot stress = integration_snapshot(
+        dungeon::DungeonElement::fire);
+    stress.skill_loadout.slots[0].active = skills::ActiveSkillId::draw_slash;
+    stress.skill_loadout.slots[1].active = skills::ActiveSkillId::storm_swords;
+    stress.skill_loadout.owned_active_bits = 3U;
+    equip_skill(stress, skills::ActiveSkillId::storm_swords, 180U);
+    stress.skill_loadout.slots[0].active = skills::ActiveSkillId::draw_slash;
+    stress.skill_loadout.slots[1].active = skills::ActiveSkillId::storm_swords;
+    stress.skill_loadout.owned_active_bits = 3U;
+    stress.combat->monster_count = 30U;
+    stress.remaining_targets = 30U;
+    for (std::size_t index{}; index < 30U; ++index) {
+        const float x = -7.5F + static_cast<float>(index % 10U) * 1.65F;
+        const float y = -2.8F + static_cast<float>(index / 10U) * 2.2F;
+        set_monster(stress.combat->monsters[index],
+            kIntegrationMonsterIds[index % kIntegrationMonsterIds.size()],
+            {x, y, 0.0F}, static_cast<std::uint16_t>(index + 1U));
+    }
+    static_cast<void>(present_integration_frame(renderer, stress,
+        stress_resolution, "stress-residency-prime", 0U, nullptr,
+        frames, sequence, result));
+    const auto atlas_mask = [](platform::MaterialAtlasId atlas) noexcept {
+        return platform::MaterialAtlasMask{1U}
+            << static_cast<std::size_t>(atlas);
+    };
+    result.ecology_transition_old_mask =
+        atlas_mask(platform::MaterialAtlasId::fire_environment)
+        | atlas_mask(platform::MaterialAtlasId::fire_room_background);
+    result.ecology_transition_new_mask =
+        atlas_mask(platform::MaterialAtlasId::chaos_environment)
+        | atlas_mask(platform::MaterialAtlasId::chaos_room_background);
+    const platform::MaterialResidencyRequest fire_transition_request =
+        platform::make_material_residency_request(stress);
+    result.ecology_transition_current_residency =
+        renderer.material_pack().residency_satisfied(fire_transition_request)
+        && (renderer.material_pack().resident_atlases()
+                & result.ecology_transition_old_mask)
+            == result.ecology_transition_old_mask;
+    const std::uint64_t transition_unload_before =
+        renderer.material_pack().texture_unload_call_count();
+    stress.ecology = dungeon::DungeonElement::chaos;
+    const platform::MaterialResidencyRequest chaos_transition_request =
+        platform::make_material_residency_request(stress);
+    for (std::uint16_t frame{}; frame < 300U; ++frame) {
+        static_cast<void>(present_integration_frame(renderer, stress,
+            stress_resolution, "stress-warmup", frame, nullptr,
+            frames, sequence, result));
+        if (frame == 0U) {
+            result.ecology_transition_after_requested_mask =
+                renderer.material_pack().requested_residency().atlases;
+            result.ecology_transition_after_resident_mask =
+                renderer.material_pack().resident_atlases();
+            result.ecology_transition_unload_delta =
+                renderer.material_pack().texture_unload_call_count()
+                - transition_unload_before;
+            result.ecology_transition_current_residency =
+                result.ecology_transition_current_residency
+                && renderer.material_pack().residency_satisfied(
+                    chaos_transition_request)
+                && (result.ecology_transition_after_resident_mask
+                        & result.ecology_transition_new_mask)
+                    == result.ecology_transition_new_mask;
+            result.ecology_transition_old_ecology_unloaded =
+                (result.ecology_transition_after_requested_mask
+                        & result.ecology_transition_old_mask) == 0U
+                && (result.ecology_transition_after_resident_mask
+                        & result.ecology_transition_old_mask) == 0U
+                && result.ecology_transition_unload_delta > 0U;
+        }
+    }
+    result.stress_warmup_load_calls =
+        renderer.material_pack().texture_load_call_count();
+    result.stress_warmup_unload_calls =
+        renderer.material_pack().texture_unload_call_count();
+    std::array<double, 1800> measured_ms{};
+    for (std::uint16_t frame{}; frame < measured_ms.size(); ++frame) {
+        std::filesystem::path capture_path{};
+        const std::filesystem::path* capture = nullptr;
+        if (frame + 1U == measured_ms.size()) {
+            capture_path = root / "integration-stress-1920x1080.png";
+            capture = &capture_path;
+        }
+        const IntegrationFrameObservation observation =
+            present_integration_frame(renderer, stress, stress_resolution,
+                "stress", frame, capture, frames, sequence, result);
+        measured_ms[frame] = observation.frame_ms;
+        result.stress_ok = (frame != measured_ms.size() - 1U
+                || observation.screenshot_ok)
+            && (frame == 0U || result.stress_ok);
+    }
+    result.stress_final_load_calls =
+        renderer.material_pack().texture_load_call_count();
+    result.stress_final_unload_calls =
+        renderer.material_pack().texture_unload_call_count();
+    const double elapsed_ms = std::accumulate(
+        measured_ms.begin(), measured_ms.end(), 0.0);
+    result.stress_average_fps = elapsed_ms > 0.0
+        ? 1000.0 * static_cast<double>(measured_ms.size()) / elapsed_ms : 0.0;
+    std::sort(measured_ms.begin(), measured_ms.end());
+    const std::size_t p99_index = static_cast<std::size_t>(
+        std::ceil(static_cast<double>(measured_ms.size()) * 0.99)) - 1U;
+    result.stress_p99_ms = measured_ms[p99_index];
+    result.stress_one_percent_low_fps = result.stress_p99_ms > 0.0
+        ? 1000.0 / result.stress_p99_ms : 0.0;
+    result.stress_ok = result.stress_ok
+        && renderer.material_pack().resident_bytes() <= 268'435'456U
+        && result.stress_final_load_calls == result.stress_warmup_load_calls
+        && result.stress_final_unload_calls == result.stress_warmup_unload_calls
+        && result.stress_average_fps >= 60.0
+        && result.stress_one_percent_low_fps >= 45.0;
+
+    result.full_pack_bytes = platform::full_pack_bytes(
+        platform::default_material_manifest());
+    result.resident_peak_bytes = platform::resident_peak_bytes(
+        platform::default_material_manifest());
+    result.stress_ok = result.stress_ok
+        && result.full_pack_bytes == kExpectedFullPackBytes
+        && result.resident_peak_bytes == kExpectedResidentPeakBytes
+        && result.transition_peak_bytes == kExpectedTransitionPeakBytes;
+    renderer.shutdown_resources();
+    result.shutdown_load_calls = renderer.material_pack().texture_load_call_count();
+    result.shutdown_unload_calls =
+        renderer.material_pack().texture_unload_call_count();
+
+    const std::filesystem::path missing_map =
+        std::filesystem::path{GetApplicationDirectory()}
+        / "assets/skills/draw_slash_atlas_material.png";
+    const std::filesystem::path held_map = missing_map.string() + ".missing-map";
+    std::error_code file_error{};
+    std::filesystem::rename(missing_map, held_map, file_error);
+    if (!file_error) {
+        platform::CombatRenderer fallback_renderer{};
+        static_cast<void>(fallback_renderer.initialize_resources());
+        const bool fallback_core_ready = fallback_renderer.material_pipeline_ready()
+            && fallback_renderer.material_pack().residency_satisfied(
+                platform::base_material_residency_request())
+            && fallback_renderer.material_pack().texture_load_call_count() != 0U;
+        for (const IntegrationResolution& resolution : kIntegrationResolutions) {
+            dungeon::DungeonSnapshot fallback = integration_snapshot(
+                dungeon::DungeonElement::fire);
+            equip_skill(fallback, skills::ActiveSkillId::draw_slash, 45U);
+            const std::filesystem::path fallback_screenshot = root /
+                (std::string{"integration-draw-slash-missing-map-"}
+                    + resolution.tag + ".png");
+            const IntegrationFrameObservation observation =
+                present_integration_frame(fallback_renderer, fallback,
+                    resolution, "draw-slash-missing-map", 45U,
+                    &fallback_screenshot, frames, sequence, result);
+            result.skill_fallback_ok = result.skill_fallback_ok
+                && fallback_core_ready && observation.screenshot_ok
+                && observation.skill_plan.mode
+                    == platform::ActiveSkillVisualMode::procedural_fallback
+                && !observation.skill_plan.suppress_base_player
+                && observation.skill_plan.procedural_main_visual_count > 0U
+                && !fallback_renderer.material_atlas_available(
+                    platform::MaterialAtlasId::skill_draw_slash);
+        }
+        result.fallback_load_calls =
+            fallback_renderer.material_pack().texture_load_call_count();
+        result.fallback_unload_calls =
+            fallback_renderer.material_pack().texture_unload_call_count();
+        fallback_renderer.shutdown_resources();
+        file_error.clear();
+        std::filesystem::rename(held_map, missing_map, file_error);
+        result.skill_fallback_ok = result.skill_fallback_ok && !file_error;
+    } else {
+        result.skill_fallback_ok = false;
+    }
+    CloseWindow();
+    working_directory_error.clear();
+    if (result.working_directory_ready) {
+        std::filesystem::current_path(
+            previous_working_directory, working_directory_error);
+    }
+    result.working_directory_restored = !working_directory_error;
+
+    std::array<std::size_t, 4> door_sprite_ids{};
+    for (std::size_t index{}; index < kIntegrationDoorDirections.size(); ++index) {
+        door_sprite_ids[index] = static_cast<std::size_t>(
+            platform::door_render_decision(platform::DoorVisualMode::open,
+                kIntegrationDoorDirections[index]).sprite);
+    }
+    std::sort(door_sprite_ids.begin(), door_sprite_ids.end());
+    result.doors_ok = result.doors_ok
+        && std::adjacent_find(door_sprite_ids.begin(), door_sprite_ids.end())
+            == door_sprite_ids.end()
+        && result.door_question_glyph_count == 0U;
+
+    result.evidence_written = static_cast<bool>(frames)
+        && static_cast<bool>(doors) && static_cast<bool>(props);
+    std::ofstream report(root / "material-runtime-integration-evidence.txt",
+        std::ios::out | std::ios::trunc);
+    report << "schema=material-runtime-integration-v1\n"
+           << "fixture_path=production-room-renderer\n"
+           << "showcase_capture_count=0\n"
+           << "graphics_context=" << (result.graphics_context ? "pass" : "fail") << '\n'
+           << "renderer_initialized=" << (result.renderer_initialized ? "pass" : "fail") << '\n'
+           << "overlay_resources_initialized=" << (result.overlay_resources_initialized ? "pass" : "fail") << '\n'
+           << "working_directory_ready=" << (result.working_directory_ready ? "pass" : "fail") << '\n'
+           << "working_directory_restored=" << (result.working_directory_restored ? "pass" : "fail") << '\n'
+           << "full_pack_bytes=" << result.full_pack_bytes << '\n'
+           << "resident_peak_bytes=" << result.resident_peak_bytes << '\n'
+           << "transition_peak_bytes=" << result.transition_peak_bytes << '\n'
+           << "observed_resident_peak_bytes=" << result.observed_resident_peak_bytes << '\n'
+           << "ecology_transition_current_residency="
+           << (result.ecology_transition_current_residency ? "pass" : "fail") << '\n'
+           << "ecology_transition_old_ecology_unloaded="
+           << (result.ecology_transition_old_ecology_unloaded ? "pass" : "fail") << '\n'
+           << "ecology_transition_old_mask=" << result.ecology_transition_old_mask << '\n'
+           << "ecology_transition_new_mask=" << result.ecology_transition_new_mask << '\n'
+           << "ecology_transition_after_requested_mask="
+           << result.ecology_transition_after_requested_mask << '\n'
+           << "ecology_transition_after_resident_mask="
+           << result.ecology_transition_after_resident_mask << '\n'
+           << "ecology_transition_unload_delta="
+           << result.ecology_transition_unload_delta << '\n'
+           << "cross_ecology=" << (result.cross_ecology_ok ? "pass" : "fail") << '\n'
+           << "door_sprite_unique=" << (result.doors_ok ? "pass" : "fail") << '\n'
+           << "door_question_glyph_count=" << result.door_question_glyph_count << '\n'
+           << "environment=" << (result.environment_ok ? "pass" : "fail") << '\n'
+           << "environment_capture_count=" << result.environment_capture_count << '\n'
+           << "environment_prop_row_count=" << result.environment_prop_row_count << '\n'
+           << "death=" << (result.death_ok ? "pass" : "fail") << '\n'
+           << "death_warning_modal_draws=" << result.death_warning_draws << '\n'
+           << "death_label_plate_draws=" << result.death_label_draws << '\n'
+           << "hud_viewport_safe="
+           << (result.hud_viewport_safe ? "pass" : "fail") << '\n'
+           << "hud_resolution_mask="
+           << static_cast<unsigned int>(result.hud_resolution_mask) << '\n'
+           << "draw_slash_frame_union=" << (all_frames_seen(result.draw_slash_frames) ? "0..35" : "incomplete") << '\n'
+           << "storm_swords_frame_union=" << (all_frames_seen(result.storm_frames) ? "0..23" : "incomplete") << '\n'
+           << "healthy_skill_suppression=" << (result.skill_timeline_ok ? "pass" : "fail") << '\n'
+           << "missing_map_fallback=" << (result.skill_fallback_ok ? "pass" : "fail") << '\n'
+           << "stress_warmup_frames=300\n"
+           << "stress_measured_frames=1800\n"
+           << "stress_warmup_load_calls=" << result.stress_warmup_load_calls << '\n'
+           << "stress_warmup_unload_calls=" << result.stress_warmup_unload_calls << '\n'
+           << "stress_final_load_calls=" << result.stress_final_load_calls << '\n'
+           << "stress_final_unload_calls=" << result.stress_final_unload_calls << '\n'
+           << "stress_average_fps=" << std::fixed << std::setprecision(3)
+           << result.stress_average_fps << '\n'
+           << "stress_p99_ms=" << result.stress_p99_ms << '\n'
+           << "stress_1_percent_low_fps=" << result.stress_one_percent_low_fps << '\n'
+           << "shutdown_load_calls=" << result.shutdown_load_calls << '\n'
+           << "shutdown_unload_calls=" << result.shutdown_unload_calls << '\n'
+           << "fallback_load_calls=" << result.fallback_load_calls << '\n'
+           << "fallback_unload_calls=" << result.fallback_unload_calls << '\n'
+           << "screenshot_count=" << result.screenshot_count << '\n'
+           << "capture_prime_count=" << result.capture_prime_count << '\n'
+           << "screenshot_pixel_guard=" << (result.screenshot_pixel_guard_ok ? "pass" : "fail") << '\n'
+           << "screenshot_nonblack_failures=" << result.screenshot_nonblack_failures << '\n'
+           << "scene_sentinel_failures=" << result.scene_sentinel_failures << '\n'
+           << "frame_csv=material-runtime-frames.csv\n"
+           << "door_csv=material-runtime-doors.csv\n"
+           << "environment_prop_csv=material-runtime-environment-props.csv\n"
+           << "result=" << (result.passed() ? "pass" : "fail") << '\n';
+    result.evidence_written = result.evidence_written
+        && static_cast<bool>(report);
+    return result;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -451,6 +1569,12 @@ int main(int argc, char** argv) {
     std::filesystem::path root{};
     if (!prepare_evidence_run(std::filesystem::absolute(argv[1]), root)
         || !copy_materials(std::filesystem::absolute(argv[0]))) return 3;
+    const IntegrationValidationResult integration =
+        run_integration_validation(root);
+    if (!integration.graphics_context) {
+        std::cerr << "stage12 material formal graphics-context failure\n";
+        return 10;
+    }
     std::error_code error{};
     bool captures_ok = true;
     for (const Resolution& resolution : kResolutions) {
@@ -900,12 +2024,13 @@ int main(int argc, char** argv) {
     const bool water_showcase_ok = capture(root, kResolutions[0],
         "water-monsters-1280x720.png", true, false,
         arpg::dungeon::DungeonElement::water, &water_runtime);
-    const bool water_runtime_ok = water_showcase_ok
-        && water_runtime.shader_pipeline_ready
-        && water_runtime.water_ecology_ready
-        && water_runtime.water_environment_resident
+    const bool water_showcase_pair_residency_ok =
+        water_runtime.water_environment_resident
         && water_runtime.water_bulwark_resident
         && water_runtime.water_support_resident;
+    const bool water_runtime_ok = water_showcase_ok
+        && water_runtime.shader_pipeline_ready
+        && water_showcase_pair_residency_ok;
     const auto lightning_runtime_storage =
         std::make_unique<platform::Stage12MaterialRuntimeStatus>();
     platform::Stage12MaterialRuntimeStatus& lightning_runtime =
@@ -916,12 +2041,30 @@ int main(int argc, char** argv) {
     const bool lightning_background_ok = capture(root, kResolutions[0],
         "lightning-background-1280x720.png", true, false,
         arpg::dungeon::DungeonElement::lightning, nullptr, true);
+    const bool lightning_showcase_pair_residency_ok =
+        lightning_runtime.lightning_environment_resident
+        && lightning_runtime.lightning_shooter_resident
+        && lightning_runtime.lightning_dasher_resident;
+    const PixelRoi lightning_shooter_roi = lightning_material_frame_roi(
+        combat::MonsterId::lightning_shooter, {-4.0F, 1.5F, 0.0F},
+        lightning_runtime.lightning_shooter_draw.frame_index);
+    const PixelRoi lightning_dasher_roi = lightning_material_frame_roi(
+        combat::MonsterId::lightning_dasher, {-1.3F, 1.5F, 0.0F},
+        lightning_runtime.lightning_dasher_draw.frame_index);
+    const bool lightning_rois_ok = lightning_shooter_roi.valid()
+        && lightning_dasher_roi.valid()
+        && (lightning_shooter_roi.x + lightning_shooter_roi.width
+                <= lightning_dasher_roi.x
+            || lightning_dasher_roi.x + lightning_dasher_roi.width
+                <= lightning_shooter_roi.x
+            || lightning_shooter_roi.y + lightning_shooter_roi.height
+                <= lightning_dasher_roi.y
+            || lightning_dasher_roi.y + lightning_dasher_roi.height
+                <= lightning_shooter_roi.y);
     const bool lightning_runtime_ok = lightning_showcase_ok
         && lightning_runtime.shader_pipeline_ready
-        && lightning_runtime.lightning_ecology_ready
-        && lightning_runtime.lightning_environment_resident
-        && lightning_runtime.lightning_shooter_resident
-        && lightning_runtime.lightning_dasher_resident
+        && lightning_showcase_pair_residency_ok
+        && lightning_rois_ok
         && lightning_runtime.lightning_shooter_draw.presenter_visible
         && lightning_runtime.lightning_shooter_draw.use_material_frame
         && lightning_runtime.lightning_shooter_draw.atlas
@@ -943,12 +2086,13 @@ int main(int argc, char** argv) {
     const bool chaos_background_ok = capture(root, kResolutions[0],
         "chaos-background-1280x720.png", true, false,
         arpg::dungeon::DungeonElement::chaos, nullptr, true);
+    const bool chaos_showcase_pair_residency_ok =
+        chaos_runtime.chaos_environment_resident
+        && chaos_runtime.chaos_chaser_resident
+        && chaos_runtime.chaos_hazard_resident;
     const bool chaos_runtime_ok = chaos_showcase_ok
         && chaos_runtime.shader_pipeline_ready
-        && chaos_runtime.chaos_ecology_ready
-        && chaos_runtime.chaos_environment_resident
-        && chaos_runtime.chaos_chaser_resident
-        && chaos_runtime.chaos_hazard_resident
+        && chaos_showcase_pair_residency_ok
         && chaos_runtime.chaos_chaser_draw.presenter_visible
         && chaos_runtime.chaos_chaser_draw.use_material_frame
         && chaos_runtime.chaos_chaser_draw.atlas
@@ -972,7 +2116,11 @@ int main(int argc, char** argv) {
     report << "manifest=" << (manifest_ok ? "pass" : "fail") << '\n'
            << "atlas_bytes=" << material_full_pack_bytes << '\n'
            << "full_pack_bytes=" << material_full_pack_bytes << '\n'
-           << "resident_peak_bytes=" << material_resident_peak_bytes << '\n';
+           << "resident_peak_bytes=" << material_resident_peak_bytes << '\n'
+           << "transition_peak_bytes=" << integration.transition_peak_bytes << '\n'
+           << "integration_evidence=material-runtime-integration-evidence.txt\n"
+           << "integration_result="
+           << (integration.passed() ? "pass" : "fail") << '\n';
     for (std::size_t ecology_index{};
          ecology_index < kNativeBackgrounds.size(); ++ecology_index) {
         const NativeBackgroundSpec& spec = kNativeBackgrounds[ecology_index];
@@ -1171,7 +2319,7 @@ int main(int argc, char** argv) {
                     && lightning_runtime.shader_pipeline_ready
                     && chaos_runtime.shader_pipeline_ready
                 ? "pass" : "fail") << '\n'
-           << "water_ecology_residency=" << (water_runtime.water_ecology_ready
+           << "water_showcase_pair_residency=" << (water_showcase_pair_residency_ok
                 ? "pass" : "fail") << '\n'
            << "water_environment_pair=" << (water_runtime.water_environment_resident
                 ? "resident" : "missing") << '\n'
@@ -1179,7 +2327,7 @@ int main(int argc, char** argv) {
                 ? "resident" : "missing") << '\n'
            << "water_support_pair=" << (water_runtime.water_support_resident
                 ? "resident" : "missing") << '\n'
-           << "lightning_ecology_residency=" << (lightning_runtime.lightning_ecology_ready
+           << "lightning_showcase_pair_residency=" << (lightning_showcase_pair_residency_ok
                 ? "pass" : "fail") << '\n'
            << "lightning_environment_pair=" << (lightning_runtime.lightning_environment_resident
                 ? "resident" : "missing") << '\n'
@@ -1191,13 +2339,19 @@ int main(int argc, char** argv) {
            << "lightning_shooter_use_material_frame=" << (lightning_runtime.lightning_shooter_draw.use_material_frame ? "pass" : "fail") << '\n'
            << "lightning_shooter_atlas=" << (lightning_runtime.lightning_shooter_draw.atlas == platform::MaterialAtlasId::lightning_shooter ? "lightning_shooter" : "wrong") << '\n'
            << "lightning_shooter_frame=" << lightning_runtime.lightning_shooter_draw.frame_index << '\n'
+           << "lightning_shooter_roi=" << lightning_shooter_roi.x << ','
+           << lightning_shooter_roi.y << ',' << lightning_shooter_roi.width
+           << ',' << lightning_shooter_roi.height << '\n'
            << "lightning_shooter_drawn=" << (lightning_runtime.lightning_shooter_draw.drawn ? "pass" : "fail") << '\n'
            << "lightning_dasher_presenter=" << (lightning_runtime.lightning_dasher_draw.presenter_visible ? "pass" : "fail") << '\n'
            << "lightning_dasher_use_material_frame=" << (lightning_runtime.lightning_dasher_draw.use_material_frame ? "pass" : "fail") << '\n'
            << "lightning_dasher_atlas=" << (lightning_runtime.lightning_dasher_draw.atlas == platform::MaterialAtlasId::lightning_dasher ? "lightning_dasher" : "wrong") << '\n'
            << "lightning_dasher_frame=" << lightning_runtime.lightning_dasher_draw.frame_index << '\n'
+           << "lightning_dasher_roi=" << lightning_dasher_roi.x << ','
+           << lightning_dasher_roi.y << ',' << lightning_dasher_roi.width
+           << ',' << lightning_dasher_roi.height << '\n'
            << "lightning_dasher_drawn=" << (lightning_runtime.lightning_dasher_draw.drawn ? "pass" : "fail") << '\n'
-           << "chaos_ecology_residency=" << (chaos_runtime.chaos_ecology_ready ? "pass" : "fail") << '\n'
+           << "chaos_showcase_pair_residency=" << (chaos_showcase_pair_residency_ok ? "pass" : "fail") << '\n'
            << "chaos_environment_pair=" << (chaos_runtime.chaos_environment_resident ? "resident" : "missing") << '\n'
            << "chaos_chaser_pair=" << (chaos_runtime.chaos_chaser_resident ? "resident" : "missing") << '\n'
            << "chaos_hazard_pair=" << (chaos_runtime.chaos_hazard_resident ? "resident" : "missing") << '\n'
@@ -1214,12 +2368,13 @@ int main(int argc, char** argv) {
            << "f12_screenshot=f12-monsters-1280x720.png/stage8-equipment-loot.png\n"
            << "screenshot_isolation=" << (f12_ok ? "pass" : "fail") << '\n'
            << "screenshot_decode=" << (captures_ok && native_background_captures_ok && showcase_ok && item_baseline_ok && item_showcase_ok && ui_baseline_ok && ui_baseline_1920_ok && ui_gallery_ok && hud_ui_ok && hud_ui_1920_ok && inventory_ui_ok && inventory_ui_1920_ok && skill_ui_ok && skill_ui_1920_ok && pause_ui_ok && pause_ui_1920_ok && water_showcase_ok && lightning_showcase_ok && lightning_background_ok && chaos_showcase_ok && chaos_background_ok && f12_ok ? "pass" : "fail") << '\n'
-           << "result=" << (captures_ok && native_background_captures_ok && native_asset_hashes_ok && fallback_capture && !error && manifest_ok && showcase_ok && item_baseline_ok && item_runtime_ok && ui_runtime_ok && hud_ui_runtime_ok && inventory_ui_runtime_ok && skill_ui_runtime_ok && pause_ui_runtime_ok && hud_ui_1920_runtime_ok && inventory_ui_1920_runtime_ok && skill_ui_1920_runtime_ok && pause_ui_1920_runtime_ok && ui_readability_contract_with_real_bounds_ok && ui_baseline_ok && ui_baseline_1920_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "pass" : "fail")
+           << "result=" << (integration.passed() && captures_ok && native_background_captures_ok && native_asset_hashes_ok && fallback_capture && !error && manifest_ok && showcase_ok && item_baseline_ok && item_runtime_ok && ui_runtime_ok && hud_ui_runtime_ok && inventory_ui_runtime_ok && skill_ui_runtime_ok && pause_ui_runtime_ok && hud_ui_1920_runtime_ok && inventory_ui_1920_runtime_ok && skill_ui_1920_runtime_ok && pause_ui_1920_runtime_ok && ui_readability_contract_with_real_bounds_ok && ui_baseline_ok && ui_baseline_1920_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "pass" : "fail")
            << '\n';
     std::cout << "stage12 material formal "
-               << (captures_ok && native_background_captures_ok && native_asset_hashes_ok && fallback_capture && !error && manifest_ok && showcase_ok && item_baseline_ok && item_runtime_ok && ui_runtime_ok && hud_ui_runtime_ok && inventory_ui_runtime_ok && skill_ui_runtime_ok && pause_ui_runtime_ok && hud_ui_1920_runtime_ok && inventory_ui_1920_runtime_ok && skill_ui_1920_runtime_ok && pause_ui_1920_runtime_ok && ui_readability_contract_with_real_bounds_ok && ui_baseline_ok && ui_baseline_1920_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "PASS" : "FAIL")
+               << (integration.passed() && captures_ok && native_background_captures_ok && native_asset_hashes_ok && fallback_capture && !error && manifest_ok && showcase_ok && item_baseline_ok && item_runtime_ok && ui_runtime_ok && hud_ui_runtime_ok && inventory_ui_runtime_ok && skill_ui_runtime_ok && pause_ui_runtime_ok && hud_ui_1920_runtime_ok && inventory_ui_1920_runtime_ok && skill_ui_1920_runtime_ok && pause_ui_1920_runtime_ok && ui_readability_contract_with_real_bounds_ok && ui_baseline_ok && ui_baseline_1920_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "PASS" : "FAIL")
               << std::endl;
-    return report && captures_ok && native_background_captures_ok
+    return report && integration.passed()
+        && captures_ok && native_background_captures_ok
         && native_asset_hashes_ok && fallback_capture && !error && manifest_ok
         && showcase_ok && item_baseline_ok && item_runtime_ok && ui_runtime_ok
         && hud_ui_runtime_ok && inventory_ui_runtime_ok

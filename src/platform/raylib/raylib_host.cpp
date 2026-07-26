@@ -175,9 +175,12 @@ void draw_recovery_screen(const DungeonRenderStatus& status) noexcept {
 }
 
 void present_frame_and_maybe_capture(const char* path) noexcept {
-    EndDrawing();
-    if (path == nullptr) return;
+    if (path == nullptr) {
+        EndDrawing();
+        return;
+    }
     Image image = LoadImageFromScreen();
+    EndDrawing();
     if (image.data == nullptr) return;
     static_cast<void>(ExportImage(image, path));
     UnloadImage(image);

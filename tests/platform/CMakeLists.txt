@@ -210,6 +210,8 @@ if(TARGET arpg_raylib)
 
     add_executable(arpg_stage12_material_formal
         stage12_material_formal_game_validation.cpp)
+    add_dependencies(arpg_stage12_material_formal
+        arpg_stage10_formal_game_validation)
     target_compile_features(arpg_stage12_material_formal PRIVATE cxx_std_17)
     target_compile_definitions(arpg_stage12_material_formal
         PRIVATE ARPG_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

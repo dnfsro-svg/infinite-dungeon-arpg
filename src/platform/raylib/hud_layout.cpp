@@ -7,7 +7,7 @@ namespace {
 
 constexpr float kLogicalWidth = 1280.0F;
 constexpr float kLogicalHeight = 720.0F;
-constexpr float kMinimumScale = 0.8F;
+constexpr float kMinimumScale = 0.625F;
 constexpr float kMaximumScale = 1.5F;
 constexpr float kLogicalMargin = 16.0F;
 constexpr float kPlayerWidth = 420.0F;

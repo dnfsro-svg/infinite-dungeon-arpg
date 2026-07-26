@@ -327,9 +327,11 @@ bool overlaps(
 
 arpg::test::Failure layouts_stay_in_bounds_and_clear_of_prompt() noexcept {
     constexpr struct Viewport { int width; int height; } viewports[] = {
-        {1280, 720}, {800, 450},
+        {800, 450}, {1280, 720}, {1920, 1080},
     };
     for (const auto viewport : viewports) {
+        const auto view = platform::build_death_overlay_view(
+            death_snapshot(checkpoint::DeathSourceKind::monster_affix));
         const auto layout = platform::death_overlay_layout(
             viewport.width, viewport.height);
         const platform::DeathOverlayRect screen{
@@ -339,9 +341,15 @@ arpg::test::Failure layouts_stay_in_bounds_and_clear_of_prompt() noexcept {
         ARPG_REQUIRE(inside(layout.panel, screen));
         ARPG_REQUIRE(inside(layout.title, layout.panel));
         ARPG_REQUIRE(inside(layout.prompt, layout.panel));
-        for (const auto bounds : layout.line_bounds) {
+        for (std::size_t index = 0U; index < view.line_count; ++index) {
+            const auto bounds = layout.line_bounds[index];
             ARPG_REQUIRE(inside(bounds, layout.panel));
+            ARPG_REQUIRE(!overlaps(bounds, layout.title));
             ARPG_REQUIRE(!overlaps(bounds, layout.prompt));
+            for (std::size_t other = index + 1U;
+                 other < view.line_count; ++other) {
+                ARPG_REQUIRE(!overlaps(bounds, layout.line_bounds[other]));
+            }
         }
     }
     return {};

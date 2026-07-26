@@ -368,6 +368,35 @@ arpg::test::Failure material_pack_nine_slice_preserves_panel_corners() noexcept 
         }
     }
     ARPG_REQUIRE(preserved_centerpieces == 1U);
+
+    const MaterialFrameDefinition* const warning_frame =
+        arpg::platform::find_material_frame(
+            manifest, MaterialSpriteId::ui_warning_modal);
+    ARPG_REQUIRE(warning_frame != nullptr);
+    const std::size_t before_warning = fake.draw_count;
+    ARPG_REQUIRE(pack.draw_nine_slice(
+        MaterialSpriteId::ui_warning_modal,
+        {20.0F, 30.0F, 720.0F, 390.0F}, 32.0F));
+    ARPG_REQUIRE(fake.draw_count > before_warning);
+    const Rectangle warning_background = fake.drawn_sources[before_warning];
+    ARPG_REQUIRE(arpg::test::near(warning_background.width, 1.0F));
+    ARPG_REQUIRE(arpg::test::near(warning_background.height, 1.0F));
+    ARPG_REQUIRE(arpg::test::near(warning_background.x,
+        warning_frame->source.x + 64.0F));
+    ARPG_REQUIRE(arpg::test::near(warning_background.y,
+        warning_frame->source.y + 64.0F));
+    std::size_t warning_centerpieces{};
+    for (std::size_t index = before_warning; index < fake.draw_count; ++index) {
+        const Rectangle source = fake.drawn_sources[index];
+        const Rectangle destination = fake.drawn_destinations[index];
+        if (arpg::test::near(source.width, 64.0F)
+                && arpg::test::near(source.height, 64.0F)
+                && arpg::test::near(destination.width, 64.0F)
+                && arpg::test::near(destination.height, 64.0F)) {
+            ++warning_centerpieces;
+        }
+    }
+    ARPG_REQUIRE(warning_centerpieces == 0U);
     const std::size_t before_label = fake.draw_count;
     ARPG_REQUIRE(pack.draw_region_fit(MaterialSpriteId::ui_label_plate,
         {4.0F, 30.0F, 120.0F, 67.0F},

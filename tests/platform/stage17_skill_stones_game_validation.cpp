@@ -1,6 +1,9 @@
 #include "persistence/checkpoint_codec.hpp"
+#include "active_skill_renderer.hpp"
 #include "raylib_host.hpp"
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -15,6 +18,8 @@ namespace {
 
 namespace platform = arpg::platform;
 namespace persistence = arpg::persistence;
+namespace combat = arpg::combat;
+namespace skills = arpg::skills;
 
 std::filesystem::path g_executable{};
 
@@ -180,14 +185,85 @@ std::filesystem::path g_executable{};
         && field_is(fields, "restart_cooldowns_zero", "1");
 }
 
-[[nodiscard]] bool write_final_state(const std::filesystem::path& run) {
+struct MaterialTimelineEvidence final {
+    std::array<bool, 36> draw_frames{};
+    std::array<bool, 24> storm_frames{};
+    platform::ActiveSkillEffectPlan healthy_draw{};
+    platform::ActiveSkillEffectPlan healthy_storm{};
+    platform::ActiveSkillEffectPlan missing_map{};
+
+    [[nodiscard]] bool draw_complete() const noexcept {
+        return std::all_of(draw_frames.begin(), draw_frames.end(),
+            [](bool seen) { return seen; });
+    }
+
+    [[nodiscard]] bool storm_complete() const noexcept {
+        return std::all_of(storm_frames.begin(), storm_frames.end(),
+            [](bool seen) { return seen; });
+    }
+
+    [[nodiscard]] bool valid() const noexcept {
+        return draw_complete() && storm_complete()
+            && draw_frames.front() && draw_frames.back()
+            && storm_frames.front() && storm_frames.back()
+            && healthy_draw.mode == platform::ActiveSkillVisualMode::material
+            && healthy_storm.mode == platform::ActiveSkillVisualMode::material
+            && healthy_draw.suppress_base_player
+            && healthy_storm.suppress_base_player
+            && healthy_draw.procedural_main_visual_count == 0U
+            && healthy_storm.procedural_main_visual_count == 0U
+            && missing_map.mode
+                == platform::ActiveSkillVisualMode::procedural_fallback
+            && !missing_map.suppress_base_player
+            && missing_map.procedural_main_visual_count == 1U;
+    }
+};
+
+[[nodiscard]] MaterialTimelineEvidence material_timeline_evidence() noexcept {
+    MaterialTimelineEvidence evidence{};
+    for (std::uint16_t tick{}; tick < 90U; ++tick) {
+        const std::size_t frame = platform::active_skill_visual_frame_index(
+            skills::ActiveSkillId::draw_slash, tick);
+        if (frame < evidence.draw_frames.size()) evidence.draw_frames[frame] = true;
+    }
+    for (std::uint16_t tick{}; tick < 360U; ++tick) {
+        const std::size_t frame = platform::active_skill_visual_frame_index(
+            skills::ActiveSkillId::storm_swords, tick);
+        if (frame < evidence.storm_frames.size()) evidence.storm_frames[frame] = true;
+    }
+
+    combat::CombatSnapshot snapshot{};
+    snapshot.player.position = {1.0F, 2.0F, 0.0F};
+    snapshot.active_skill.id = skills::ActiveSkillId::draw_slash;
+    snapshot.active_skill.elapsed_ticks = 45U;
+    snapshot.active_skill.locked_center = {3.0F, 4.0F, 0.0F};
+    snapshot.active_skill.transients_active = true;
+    evidence.healthy_draw = platform::make_active_skill_effect_plan(
+        snapshot, nullptr, true);
+    evidence.missing_map = platform::make_active_skill_effect_plan(
+        snapshot, nullptr, false);
+
+    snapshot.active_skill.id = skills::ActiveSkillId::storm_swords;
+    snapshot.active_skill.elapsed_ticks = 180U;
+    snapshot.active_skill.phase = combat::ActiveSkillPhase::strikes;
+    snapshot.active_skill.spawned_sword_count = 24U;
+    evidence.healthy_storm = platform::make_active_skill_effect_plan(
+        snapshot, nullptr, true);
+    return evidence;
+}
+
+[[nodiscard]] bool write_final_state(const std::filesystem::path& run,
+    const MaterialTimelineEvidence& timeline) {
     static_assert(persistence::kCheckpointFormatVersion == 8U);
+    if (!timeline.valid()) return false;
     std::ofstream stream(run / "stage17-skill-stones-state.txt",
         std::ios::out | std::ios::trunc | std::ios::binary);
     stream << "schema=stage17-active-skill-rework-evidence-v2\n"
            << "result=PASS\n"
            << "renderer=raylib-6.0-opengl\n"
            << "window=1280x720\n"
+           << "fixture_path=production-raylib-host\n"
+           << "showcase_capture_count=0\n"
            << "save_version=" << persistence::kCheckpointFormatVersion << "\n"
            << "initial_slots=draw_slash,storm_swords,none,none,none\n"
            << "final_slots=none,draw_slash,none,none,storm_swords\n"
@@ -199,15 +275,43 @@ std::filesystem::path g_executable{};
            << "digit_3_5_effect=none\n"
            << "draw_windup_captured=true\n"
            << "draw_frame_peak=35\n"
+           << "draw_slash_frame_union="
+           << (timeline.draw_complete() ? "0..35" : "incomplete") << "\n"
+           << "draw_slash_frame_zero="
+           << (timeline.draw_frames.front() ? "true" : "false") << "\n"
+           << "draw_slash_frame_last="
+           << (timeline.draw_frames.back() ? "true" : "false") << "\n"
            << "draw_slash_hit_count=2\n"
            << "storm_strike_hit_count=5\n"
            << "storm_finisher_hit_count=0\n"
            << "storm_strike_count=12\n"
            << "storm_sword_peak=24\n"
+           << "storm_swords_frame_union="
+           << (timeline.storm_complete() ? "0..23" : "incomplete") << "\n"
+           << "storm_swords_frame_zero="
+           << (timeline.storm_frames.front() ? "true" : "false") << "\n"
+           << "storm_swords_frame_last="
+           << (timeline.storm_frames.back() ? "true" : "false") << "\n"
            << "storm_invulnerable_seen=true\n"
            << "storm_finisher_phase_seen=true\n"
            << "storm_aerial_captured=true\n"
            << "active_skill_atlases_ready=true\n"
+           << "healthy_base_player_suppressed="
+           << (timeline.healthy_draw.suppress_base_player
+                    && timeline.healthy_storm.suppress_base_player
+               ? "true" : "false") << "\n"
+           << "healthy_procedural_main_visual_count="
+           << (timeline.healthy_draw.procedural_main_visual_count
+                + timeline.healthy_storm.procedural_main_visual_count) << "\n"
+           << "missing_map_base_player_suppressed="
+           << (timeline.missing_map.suppress_base_player ? "true" : "false")
+           << "\n"
+           << "missing_map_procedural_main_visual_count="
+           << timeline.missing_map.procedural_main_visual_count << "\n"
+           << "missing_map_visual_mode="
+           << (timeline.missing_map.mode
+                    == platform::ActiveSkillVisualMode::procedural_fallback
+               ? "procedural_fallback" : "unexpected") << "\n"
            << "storm_center_locked=true\n"
            << "loadout_transactions=remove1,equip5,swap2_5\n"
            << "restart_persisted=true\n"
@@ -254,7 +358,9 @@ int main(int argc, char** argv) {
         std::cerr << "stage17 restart summary rejected\n";
         return 8;
     }
-    if (!write_final_state(run)) return 9;
+    const MaterialTimelineEvidence timeline = material_timeline_evidence();
+    if (!timeline.valid()) return 9;
+    if (!write_final_state(run, timeline)) return 10;
     std::cout << "stage17 raylib skill stones scenario=PASS\n";
     return 0;
 }

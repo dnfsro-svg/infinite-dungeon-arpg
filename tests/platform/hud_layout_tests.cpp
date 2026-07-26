@@ -36,7 +36,8 @@ arpg::test::Failure resolution_matrices_are_safe_and_do_not_cover_combat() noexc
         int height;
         float expected_scale;
     };
-    constexpr std::array<ResolutionCase, 3> kCases{{
+    constexpr std::array<ResolutionCase, 4> kCases{{
+        {800, 450, 0.625F},
         {1024, 576, 0.8F},
         {1280, 720, 1.0F},
         {1920, 1080, 1.5F},
@@ -52,6 +53,9 @@ arpg::test::Failure resolution_matrices_are_safe_and_do_not_cover_combat() noexc
             layout.primary_notice,
             layout.secondary_notice,
         };
+        const platform::HudRect screen{0.0F, 0.0F,
+            static_cast<float>(values.width),
+            static_cast<float>(values.height)};
 
         ARPG_REQUIRE(arpg::test::near(layout.scale, values.expected_scale, 1.0e-6));
         ARPG_REQUIRE(arpg::test::near(layout.safe_area.x,
@@ -60,6 +64,7 @@ arpg::test::Failure resolution_matrices_are_safe_and_do_not_cover_combat() noexc
             kLogicalMargin * values.expected_scale, 1.0e-6));
         for (const platform::HudRect panel : visible) {
             ARPG_REQUIRE(platform::hud_rect_inside(panel, layout.safe_area));
+            ARPG_REQUIRE(platform::hud_rect_inside(panel, screen));
             ARPG_REQUIRE(!platform::hud_rects_overlap(panel,
                 layout.combat_exclusion));
         }
@@ -75,8 +80,8 @@ arpg::test::Failure resolution_matrices_are_safe_and_do_not_cover_combat() noexc
 }
 
 arpg::test::Failure notices_remain_above_the_bottom_abyss_confirmation_area() noexcept {
-    constexpr std::array<std::array<int, 2>, 3> kViewports{{
-        {{1024, 576}}, {{1280, 720}}, {{1920, 1080}},
+    constexpr std::array<std::array<int, 2>, 4> kViewports{{
+        {{800, 450}}, {{1024, 576}}, {{1280, 720}}, {{1920, 1080}},
     }};
     for (const auto viewport : kViewports) {
         const platform::HudLayout layout =
@@ -146,14 +151,24 @@ arpg::test::Failure hud_rect_helpers_distinguish_touching_from_overlapping() noe
 }
 
 arpg::test::Failure hud_text_safe_boxes_do_not_intersect_or_cross_panels() noexcept {
-    constexpr std::array<std::array<int, 2>, 2> kViewports{{
-        {{1280, 720}}, {{1920, 1080}},
+    constexpr std::array<std::array<int, 2>, 3> kViewports{{
+        {{800, 450}}, {{1280, 720}}, {{1920, 1080}},
     }};
     for (const auto viewport : kViewports) {
         const platform::HudLayout layout =
             platform::make_hud_layout(viewport[0], viewport[1], false);
         const platform::HudTextSafeLayout text =
             platform::make_hud_text_safe_layout(layout);
+        const platform::HudRect screen{0.0F, 0.0F,
+            static_cast<float>(viewport[0]),
+            static_cast<float>(viewport[1])};
+        for (const platform::HudRect label : text.player_bar_labels) {
+            ARPG_REQUIRE(platform::hud_rect_inside(label, layout.player_panel));
+            ARPG_REQUIRE(platform::hud_rect_inside(label, screen));
+        }
+        ARPG_REQUIRE(platform::hud_rect_inside(
+            text.player_progression, layout.player_panel));
+        ARPG_REQUIRE(platform::hud_rect_inside(text.player_progression, screen));
         ARPG_REQUIRE(platform::hud_rect_inside(
             text.objective_title, layout.objective_panel));
         ARPG_REQUIRE(platform::hud_rect_inside(
@@ -187,6 +202,11 @@ arpg::test::Failure hud_text_safe_boxes_do_not_intersect_or_cross_panels() noexc
             text.navigation_ecology, layout.navigation_panel));
         ARPG_REQUIRE(!platform::hud_rects_overlap(
             text.navigation_title, text.navigation_ecology));
+        for (const platform::HudRect bounds : objective_rows) {
+            ARPG_REQUIRE(platform::hud_rect_inside(bounds, screen));
+        }
+        ARPG_REQUIRE(platform::hud_rect_inside(text.navigation_title, screen));
+        ARPG_REQUIRE(platform::hud_rect_inside(text.navigation_ecology, screen));
     }
     return {};
 }
