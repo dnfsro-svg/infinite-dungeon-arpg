@@ -1,5 +1,7 @@
 #include "hud_font.hpp"
 
+#include "ui_typography.hpp"
+
 namespace arpg::platform {
 namespace {
 
@@ -83,6 +85,12 @@ HudFontSelectionPlan make_hud_font_selection_plan(bool cjk_font_ready) noexcept 
     const HudFontDrawMode mode = hud_font_draw_mode(cjk_font_ready);
     return {mode, mode == HudFontDrawMode::fallback,
         mode == HudFontDrawMode::cjk_ready};
+}
+
+CombatTextStyle combat_text_style(
+    int screen_width, int screen_height) noexcept {
+    const float scale = ui_viewport_scale(screen_width, screen_height);
+    return {20.0F * scale, 24.0F * scale, 1.0F};
 }
 
 }  // namespace arpg::platform

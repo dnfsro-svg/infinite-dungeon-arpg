@@ -6,6 +6,8 @@
 
 namespace arpg::platform {
 
+class MaterialPack;
+
 class DeathOverlayRenderer final {
 public:
     DeathOverlayRenderer() noexcept = default;
@@ -15,7 +17,8 @@ public:
 
     [[nodiscard]] bool initialize() noexcept;
     void shutdown() noexcept;
-    void draw(const dungeon::DungeonSnapshot& snapshot) const noexcept;
+    void draw(const dungeon::DungeonSnapshot& snapshot,
+        const MaterialPack& material_pack) const noexcept;
 
 private:
     Font font_{};

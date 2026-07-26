@@ -391,6 +391,22 @@ arpg::test::Failure worst_case_values_fit_compact_columns() noexcept {
     return {};
 }
 
+arpg::test::Failure death_overlay_material_plan_selects_authored_ui() noexcept {
+    const platform::DeathOverlayMaterialPlan hidden =
+        platform::death_overlay_material_plan(false);
+    ARPG_REQUIRE(!hidden.visible);
+
+    const platform::DeathOverlayMaterialPlan visible =
+        platform::death_overlay_material_plan(true);
+    ARPG_REQUIRE(visible.visible);
+    ARPG_REQUIRE(visible.panel
+        == platform::MaterialSpriteId::ui_warning_modal);
+    ARPG_REQUIRE(visible.title_plate
+        == platform::MaterialSpriteId::ui_label_plate);
+    ARPG_REQUIRE(arpg::test::near(visible.panel_border_pixels, 32.0F));
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"hidden and complete recap mapping", &hidden_without_death_and_maps_complete_recap},
     {"abyss unknown and prompt states", &maps_abyss_unknown_and_all_prompt_states},
@@ -400,6 +416,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"font plan covers overlay text", &font_plan_covers_all_overlay_text_and_ascii},
     {"layouts fit supported windows", &layouts_stay_in_bounds_and_clear_of_prompt},
     {"worst case values fit compact columns", &worst_case_values_fit_compact_columns},
+    {"death overlay selects authored UI materials",
+        &death_overlay_material_plan_selects_authored_ui},
 };
 
 }  // namespace

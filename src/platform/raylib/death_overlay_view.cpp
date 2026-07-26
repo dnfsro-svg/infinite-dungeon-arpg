@@ -488,4 +488,10 @@ DeathOverlayLayout death_overlay_layout(
     return layout;
 }
 
+DeathOverlayMaterialPlan death_overlay_material_plan(bool visible) noexcept {
+    DeathOverlayMaterialPlan plan{};
+    plan.visible = visible;
+    return plan;
+}
+
 }  // namespace arpg::platform

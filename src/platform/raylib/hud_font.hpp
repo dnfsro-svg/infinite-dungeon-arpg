@@ -19,9 +19,17 @@ struct HudFontPlan final {
     bool covers_required_text{};
 };
 
+struct CombatTextStyle final {
+    float damage_font_size{};
+    float defeated_font_size{};
+    float spacing{1.0F};
+};
+
 [[nodiscard]] HudFontPlan hud_font_plan() noexcept;
 [[nodiscard]] HudFontDrawMode hud_font_draw_mode(bool cjk_font_ready) noexcept;
 [[nodiscard]] HudFontSelectionPlan make_hud_font_selection_plan(
     bool cjk_font_ready) noexcept;
+[[nodiscard]] CombatTextStyle combat_text_style(
+    int screen_width, int screen_height) noexcept;
 
 }  // namespace arpg::platform

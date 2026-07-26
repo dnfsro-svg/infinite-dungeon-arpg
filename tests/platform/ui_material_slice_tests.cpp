@@ -114,12 +114,53 @@ arpg::test::Failure label_plate_is_used_by_runtime_hud() noexcept {
     return {};
 }
 
+arpg::test::Failure death_overlay_uses_independent_material_fallbacks() noexcept {
+    const std::filesystem::path renderer_source = std::filesystem::path{
+        ARPG_PROJECT_SOURCE_DIR}
+        / "src/platform/raylib/death_overlay_renderer.cpp";
+    std::ifstream renderer_input(renderer_source);
+    const std::string renderer(
+        (std::istreambuf_iterator<char>(renderer_input)), {});
+    ARPG_REQUIRE(renderer_input.good() || renderer_input.eof());
+
+    const std::size_t plan = renderer.find("death_overlay_material_plan(");
+    const std::size_t hidden_guard = renderer.find("if (!plan.visible) return;");
+    const std::size_t panel = renderer.find("material_pack.draw_nine_slice(");
+    const std::size_t title = renderer.find("material_pack.draw_region_fit(");
+    ARPG_REQUIRE(hidden_guard != std::string::npos);
+    ARPG_REQUIRE(plan != std::string::npos);
+    ARPG_REQUIRE(panel != std::string::npos);
+    ARPG_REQUIRE(title != std::string::npos);
+    ARPG_REQUIRE(plan < hidden_guard);
+    ARPG_REQUIRE(hidden_guard < panel);
+    ARPG_REQUIRE(renderer.find("plan.panel_border_pixels", panel)
+        != std::string::npos);
+    ARPG_REQUIRE(renderer.find("plan.title_plate", title)
+        != std::string::npos);
+    ARPG_REQUIRE(renderer.find("if (!material_pack.draw_nine_slice(")
+        != std::string::npos);
+    ARPG_REQUIRE(renderer.find("if (!material_pack.draw_region_fit(")
+        != std::string::npos);
+
+    const std::filesystem::path combat_source = std::filesystem::path{
+        ARPG_PROJECT_SOURCE_DIR} / "src/platform/raylib/combat_renderer.cpp";
+    std::ifstream combat_input(combat_source);
+    const std::string combat(
+        (std::istreambuf_iterator<char>(combat_input)), {});
+    ARPG_REQUIRE(combat_input.good() || combat_input.eof());
+    ARPG_REQUIRE(combat.find("death_overlay_.draw(current, material_pack_)")
+        != std::string::npos);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"every UI element has a unique material frame",
         &every_ui_element_has_a_unique_material_frame},
     {"semantic UI states use authored resources",
         &semantic_states_use_distinct_authored_resources},
     {"label plate is used by runtime HUD", &label_plate_is_used_by_runtime_hud},
+    {"death overlay material fallbacks are independent",
+        &death_overlay_uses_independent_material_fallbacks},
 };
 
 }  // namespace

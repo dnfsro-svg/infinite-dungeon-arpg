@@ -11,7 +11,8 @@ Vector2 snap_ui_text_position(Vector2 position) noexcept {
 }
 
 void draw_crisp_ui_text(Font font, const char* text, Vector2 position,
-    float font_size, float spacing, Color color) noexcept {
+    float font_size, float spacing, Color color,
+    int shadow_pixels) noexcept {
     if (!IsFontValid(font) || text == nullptr || text[0] == '\0'
             || !(font_size > 0.0F)) {
         return;
@@ -22,9 +23,11 @@ void draw_crisp_ui_text(Font font, const char* text, Vector2 position,
         color = style.muted;
     }
     const Vector2 foreground = snap_ui_text_position(position);
+    const float shadow_offset = static_cast<float>(
+        shadow_pixels > 0 ? shadow_pixels : 0);
     const Vector2 shadow{
-        foreground.x + static_cast<float>(style.shadow_pixels),
-        foreground.y + static_cast<float>(style.shadow_pixels),
+        foreground.x + shadow_offset,
+        foreground.y + shadow_offset,
     };
     DrawTextEx(font, text, shadow, font_size, spacing, style.shadow);
     DrawTextEx(font, text, foreground, font_size, spacing, color);

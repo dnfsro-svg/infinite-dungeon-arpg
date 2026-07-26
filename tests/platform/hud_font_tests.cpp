@@ -245,6 +245,25 @@ arpg::test::Failure renderer_shutdown_is_safe_before_initialization() noexcept {
     return {};
 }
 
+arpg::test::Failure combat_text_has_shared_font_coverage_and_scaled_sizes() noexcept {
+    const platform::HudFontPlan font = platform::hud_font_plan();
+    constexpr const char* kCombatText = "0123456789-+%DEFEATED";
+    ARPG_REQUIRE(platform::death_overlay_font_covers_text(
+        font.shared, kCombatText));
+
+    const platform::CombatTextStyle compact =
+        platform::combat_text_style(800, 450);
+    const platform::CombatTextStyle full_hd =
+        platform::combat_text_style(1920, 1080);
+    ARPG_REQUIRE(compact.damage_font_size > 0.0F);
+    ARPG_REQUIRE(compact.defeated_font_size > compact.damage_font_size);
+    ARPG_REQUIRE(arpg::test::near(compact.spacing, 1.0F));
+    ARPG_REQUIRE(full_hd.damage_font_size > compact.damage_font_size);
+    ARPG_REQUIRE(full_hd.defeated_font_size > compact.defeated_font_size);
+    ARPG_REQUIRE(arpg::test::near(full_hd.spacing, 1.0F));
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"required Chinese coverage", &required_hud_text_is_covered_by_shared_font_plan},
     {"ground loot Chinese coverage",
@@ -262,6 +281,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &ui_typography_scales_to_physical_full_hd_pixels},
     {"opaque distinct HUD palette", &hud_palette_key_colors_are_opaque_and_distinct},
     {"safe uninitialized renderer shutdown", &renderer_shutdown_is_safe_before_initialization},
+    {"combat text font coverage and scaling",
+        &combat_text_has_shared_font_coverage_and_scaled_sizes},
 };
 
 }  // namespace

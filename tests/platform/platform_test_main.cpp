@@ -107,6 +107,6 @@ int main() {
         stage12_material_render_suite(),
     };
 
-    return arpg::test::run_suites(suites, 465,
+    return arpg::test::run_suites(suites, 469,
         "HUD and UI material slice contract");
 }

@@ -2,6 +2,7 @@
 
 #include "combat/attack_catalog.hpp"
 #include "combat_view_math.hpp"
+#include "hud_font.hpp"
 #include "hud_renderer.hpp"
 #include "dungeon_view_math.hpp"
 #include "material_animation.hpp"
@@ -115,7 +116,23 @@ void draw_scene_label(Font font, bool font_ready, const char* text,
 }
 
 void draw_effects(const CombatFeedback& feedback, const MaterialPack& material_pack,
-    float width, float height, bool foreground) noexcept {
+    float width, float height, bool foreground,
+    Font hud_font, bool hud_font_ready) noexcept {
+    constexpr int kCombatTextShadowPixels = 1;
+    const CombatTextStyle text_style = combat_text_style(
+        static_cast<int>(width), static_cast<int>(height));
+    const Font draw_font = hud_font_ready && IsFontValid(hud_font)
+        ? hud_font : GetFontDefault();
+    const auto draw_combat_text = [&](const char* text, float center_x,
+                                      float y, float font_size,
+                                      Color color) noexcept {
+        const Vector2 measured = MeasureTextEx(
+            draw_font, text, font_size, text_style.spacing);
+        color.a = 255U;
+        draw_crisp_ui_text(draw_font, text,
+            {center_x - measured.x * 0.5F, y}, font_size,
+            text_style.spacing, color, kCombatTextShadowPixels);
+    };
     for (const VisualEffect& effect : feedback.effects()) {
         if (!effect.active) continue;
         const bool is_foreground = effect.kind == VisualEffectKind::spark
@@ -149,18 +166,16 @@ void draw_effects(const CombatFeedback& feedback, const MaterialPack& material_p
                 {projected.x + 25.0F, projected.y - 30.0F}, 3.0F,
                 Fade(Color{255, 248, 210, 255}, opacity)); break;
         case VisualEffectKind::damage_number:
-            DrawText(TextFormat("%d", effect.value), static_cast<int>(projected.x + 8.0F),
-                static_cast<int>(projected.y - 90.0F - progress * 32.0F), 20,
-                Fade(Color{255, 238, 156, 255}, opacity)); break;
+            draw_combat_text(TextFormat("%d", effect.value),
+                projected.x + 8.0F,
+                projected.y - 90.0F - progress * 32.0F,
+                text_style.damage_font_size, Color{255, 238, 156, 255});
+            break;
         case VisualEffectKind::defeat_marker: {
             constexpr const char* kLabel = "DEFEATED";
-            const int font_size = 24;
-            const int label_x = static_cast<int>(projected.x)
-                - MeasureText(kLabel, font_size) / 2;
-            const int label_y = static_cast<int>(projected.y
-                - 112.0F - progress * 24.0F);
-            draw_outlined_text(kLabel, label_x, label_y, font_size,
-                Fade(Color{255, 196, 92, 255}, opacity), 2);
+            draw_combat_text(kLabel, projected.x,
+                projected.y - 112.0F - progress * 24.0F,
+                text_style.defeated_font_size, Color{255, 196, 92, 255});
             DrawCircleLines(static_cast<int>(projected.x),
                 static_cast<int>(projected.y - 46.0F * projected.scale),
                 (30.0F + progress * 18.0F) * projected.scale,
@@ -545,7 +560,8 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
     }
     sort_render_actors(draw_items, draw_count);
     draw_hazards(current_combat, width, height);
-    draw_effects(feedback, material_pack_, width, height, false);
+    draw_effects(feedback, material_pack_, width, height, false,
+        hud_renderer_.hud_font(), hud_renderer_.font_ready());
     draw_projectiles(current_combat, material_pack_, width, height, current.ecology);
     for (std::size_t index = 0; index < draw_count; ++index) {
         const RenderActor& item = draw_items[index];
@@ -605,7 +621,8 @@ void CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
             }
         }
     }
-    draw_effects(feedback, material_pack_, width, height, true);
+    draw_effects(feedback, material_pack_, width, height, true,
+        hud_renderer_.hud_font(), hud_renderer_.font_ready());
     if (draw_debug) draw_debug_world_volumes(current_combat, width, height);
 }
 

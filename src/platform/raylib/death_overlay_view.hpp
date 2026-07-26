@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dungeon/dungeon_types.hpp"
+#include "material_asset_types.hpp"
 
 #include <array>
 #include <cstddef>
@@ -47,6 +48,13 @@ struct DeathOverlayLayout final {
     int prompt_font_size{};
 };
 
+struct DeathOverlayMaterialPlan final {
+    bool visible{};
+    MaterialSpriteId panel{MaterialSpriteId::ui_warning_modal};
+    MaterialSpriteId title_plate{MaterialSpriteId::ui_label_plate};
+    float panel_border_pixels{32.0F};
+};
+
 [[nodiscard]] DeathOverlayView build_death_overlay_view(
     const dungeon::DungeonSnapshot& snapshot) noexcept;
 
@@ -56,5 +64,8 @@ struct DeathOverlayLayout final {
 [[nodiscard]] DeathOverlayLayout death_overlay_layout(
     int screen_width,
     int screen_height) noexcept;
+
+[[nodiscard]] DeathOverlayMaterialPlan death_overlay_material_plan(
+    bool visible) noexcept;
 
 }  // namespace arpg::platform

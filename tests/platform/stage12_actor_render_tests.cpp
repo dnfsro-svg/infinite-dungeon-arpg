@@ -10,6 +10,10 @@
 
 #include <array>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <string>
 
 namespace {
 
@@ -253,6 +257,37 @@ arpg::test::Failure active_monsters_produce_phase_aware_material_draw_plans() no
     return {};
 }
 
+arpg::test::Failure combat_text_uses_crisp_shared_font_path() noexcept {
+    const std::filesystem::path actor_source = std::filesystem::path{
+        ARPG_PROJECT_SOURCE_DIR} / "src/platform/raylib/actor_renderer.cpp";
+    std::ifstream actor_input(actor_source);
+    const std::string actor((std::istreambuf_iterator<char>(actor_input)), {});
+    ARPG_REQUIRE(actor_input.good() || actor_input.eof());
+    const std::size_t begin = actor.find("void draw_effects(");
+    const std::size_t end = actor.find("void draw_hazards(", begin);
+    ARPG_REQUIRE(begin != std::string::npos);
+    ARPG_REQUIRE(end != std::string::npos);
+    const std::string effects = actor.substr(begin, end - begin);
+    ARPG_REQUIRE(effects.find("Font hud_font") != std::string::npos);
+    ARPG_REQUIRE(effects.find("bool hud_font_ready") != std::string::npos);
+    ARPG_REQUIRE(effects.find("MeasureTextEx(") != std::string::npos);
+    ARPG_REQUIRE(effects.find("draw_crisp_ui_text(") != std::string::npos);
+    ARPG_REQUIRE(effects.find("GetFontDefault()") != std::string::npos);
+    ARPG_REQUIRE(effects.find("kCombatTextShadowPixels = 1")
+        != std::string::npos);
+    ARPG_REQUIRE(effects.find("DrawText(") == std::string::npos);
+    ARPG_REQUIRE(effects.find("MeasureText(") == std::string::npos);
+    ARPG_REQUIRE(effects.find("DrawTextGradient") == std::string::npos);
+
+    const std::filesystem::path crisp_header = std::filesystem::path{
+        ARPG_PROJECT_SOURCE_DIR} / "src/platform/raylib/ui_text_renderer.hpp";
+    std::ifstream crisp_input(crisp_header);
+    const std::string crisp((std::istreambuf_iterator<char>(crisp_input)), {});
+    ARPG_REQUIRE(crisp_input.good() || crisp_input.eof());
+    ARPG_REQUIRE(crisp.find("int shadow_pixels = 2") != std::string::npos);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"maps every monster phase to a distinct material frame",
         &stage12_monster_phases_use_distinct_material_frames},
@@ -266,6 +301,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &stage12_all_actor_manifest_frames_have_exported_content},
     {"active monsters produce phase-aware material draw plans",
         &active_monsters_produce_phase_aware_material_draw_plans},
+    {"combat text uses crisp shared HUD font",
+        &combat_text_uses_crisp_shared_font_path},
 };
 
 }  // namespace

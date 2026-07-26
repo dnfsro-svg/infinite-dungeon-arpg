@@ -2,6 +2,7 @@
 
 #include "death_overlay_font.hpp"
 #include "death_overlay_view.hpp"
+#include "material_pack.hpp"
 #include "ui_text_contrast.hpp"
 #include "ui_text_renderer.hpp"
 
@@ -32,13 +33,23 @@ void draw_text(Font font, const char* text, DeathOverlayRect bounds,
         static_cast<float>(font_size), kSpacing, color);
 }
 
-void draw_panel(const DeathOverlayLayout& layout) noexcept {
+void draw_screen_dimmer() noexcept {
     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
         Color{2, 4, 8, 205});
+}
+
+void draw_panel_fallback(const DeathOverlayLayout& layout) noexcept {
     DrawRectangleRounded(rectangle(layout.panel), 0.04F, 8,
         Color{10, 13, 21, 255});
     DrawRectangleRoundedLines(rectangle(layout.panel), 0.04F, 8,
         Color{176, 63, 77, 255});
+}
+
+void draw_title_plate_fallback(const DeathOverlayLayout& layout) noexcept {
+    DrawRectangleRounded(rectangle(layout.title), 0.12F, 6,
+        Color{22, 19, 25, 255});
+    DrawRectangleRoundedLines(rectangle(layout.title), 0.12F, 6,
+        Color{132, 101, 68, 255});
 }
 
 }  // namespace
@@ -81,14 +92,25 @@ void DeathOverlayRenderer::shutdown() noexcept {
 }
 
 void DeathOverlayRenderer::draw(
-    const dungeon::DungeonSnapshot& snapshot) const noexcept {
+    const dungeon::DungeonSnapshot& snapshot,
+    const MaterialPack& material_pack) const noexcept {
     const DeathOverlayView view = owns_font_
         ? build_death_overlay_view(snapshot)
         : build_death_overlay_ascii_view(snapshot);
-    if (!view.visible) return;
+    const DeathOverlayMaterialPlan plan =
+        death_overlay_material_plan(view.visible);
+    if (!plan.visible) return;
     const DeathOverlayLayout layout = death_overlay_layout(
         GetScreenWidth(), GetScreenHeight());
-    draw_panel(layout);
+    draw_screen_dimmer();
+    if (!material_pack.draw_nine_slice(
+            plan.panel, rectangle(layout.panel), plan.panel_border_pixels)) {
+        draw_panel_fallback(layout);
+    }
+    if (!material_pack.draw_region_fit(plan.title_plate,
+            {4.0F, 52.0F, 120.0F, 24.0F}, rectangle(layout.title))) {
+        draw_title_plate_fallback(layout);
+    }
     const Font draw_font = IsFontValid(font_) ? font_ : GetFontDefault();
     draw_text(draw_font, view.title.data(), layout.title,
         layout.title_font_size, ui_text_contrast_style().danger, true);
