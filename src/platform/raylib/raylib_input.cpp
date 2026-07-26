@@ -75,9 +75,10 @@ int win32_virtual_key_for_raylib(int key) noexcept {
 
 bool platform_key_pressed(int key) noexcept {
 #if defined(_WIN32)
-    return IsKeyPressed(key)
-        || (asynchronous_key_state(win32_virtual_key_for_raylib(key))
-            & 0x0001) != 0;
+    const bool raylib_pressed = IsKeyPressed(key);
+    const short asynchronous_state = asynchronous_key_state(
+        win32_virtual_key_for_raylib(key));
+    return raylib_pressed || (asynchronous_state & 0x0001) != 0;
 #else
     return IsKeyPressed(key);
 #endif
