@@ -273,6 +273,17 @@ arpg::test::Failure combat_text_uses_crisp_shared_font_path() noexcept {
     ARPG_REQUIRE(effects.find("MeasureTextEx(") != std::string::npos);
     ARPG_REQUIRE(effects.find("draw_crisp_ui_text(") != std::string::npos);
     ARPG_REQUIRE(effects.find("GetFontDefault()") != std::string::npos);
+    const std::size_t font_choice_begin =
+        effects.find("const Font draw_font =");
+    const std::size_t font_choice_end =
+        effects.find(';', font_choice_begin);
+    ARPG_REQUIRE(font_choice_begin != std::string::npos);
+    ARPG_REQUIRE(font_choice_end != std::string::npos);
+    const std::string font_choice = effects.substr(
+        font_choice_begin, font_choice_end - font_choice_begin);
+    ARPG_REQUIRE(font_choice.find("IsFontValid(hud_font)")
+        != std::string::npos);
+    ARPG_REQUIRE(font_choice.find("hud_font_ready") == std::string::npos);
     ARPG_REQUIRE(effects.find("kCombatTextShadowPixels = 1")
         != std::string::npos);
     ARPG_REQUIRE(effects.find("DrawText(") == std::string::npos);

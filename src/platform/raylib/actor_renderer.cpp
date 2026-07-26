@@ -119,9 +119,10 @@ void draw_effects(const CombatFeedback& feedback, const MaterialPack& material_p
     float width, float height, bool foreground,
     Font hud_font, bool hud_font_ready) noexcept {
     constexpr int kCombatTextShadowPixels = 1;
+    static_cast<void>(hud_font_ready);
     const CombatTextStyle text_style = combat_text_style(
         static_cast<int>(width), static_cast<int>(height));
-    const Font draw_font = hud_font_ready && IsFontValid(hud_font)
+    const Font draw_font = IsFontValid(hud_font)
         ? hud_font : GetFontDefault();
     const auto draw_combat_text = [&](const char* text, float center_x,
                                       float y, float font_size,
