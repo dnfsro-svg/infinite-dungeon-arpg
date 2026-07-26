@@ -202,19 +202,28 @@ def _canonical_element_doors(root: Path) -> Image.Image | None:
     report_path = assets / "environment-props-build.json"
     color_path = assets / "element_doors.png"
     material_path = assets / "element_doors_material.png"
-    if not all(path.is_file() for path in (report_path, color_path, material_path)):
+    # Legacy atlas bootstrap is legal only for a root with no published report.
+    if not report_path.exists():
         return None
     try:
+        if not report_path.is_file() or not color_path.is_file() or not material_path.is_file():
+            raise RuntimeError("published report or public door files are missing")
         report = json.loads(report_path.read_text(encoding="utf-8"))
+        if (report.get("schema_version") != 1
+                or set(report.get("ecologies", {})) != set(ECOLOGIES)):
+            raise RuntimeError("published report schema is invalid")
         expected_hash = report["element_doors"]["rgba_sha256"]
+        if not isinstance(expected_hash, str) or len(expected_hash) != 64:
+            raise RuntimeError("published public door hash is invalid")
         color = Image.open(color_path).convert("RGBA")
         material = Image.open(material_path).convert("RGBA")
-    except (OSError, KeyError, TypeError, json.JSONDecodeError):
-        return None
+    except (OSError, KeyError, TypeError, json.JSONDecodeError, RuntimeError) as error:
+        raise RuntimeError(f"published element doors validation failed: {error}") from error
     if (color.size != (1024, 256) or material.size != color.size
             or color.getchannel("A").tobytes() != material.getchannel("A").tobytes()
+            or material.tobytes() != _material_map(color).tobytes()
             or _rgba_hash(color) != expected_hash):
-        return None
+        raise RuntimeError("published element doors validation failed")
     return color.copy()
 
 

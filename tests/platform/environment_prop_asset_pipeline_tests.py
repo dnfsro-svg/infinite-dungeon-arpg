@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -123,6 +124,43 @@ class EnvironmentPropAssetPipelineTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("forced staged validation failure", result.stderr)
         self.assertEqual({path: sha256(path) for path in outputs}, before)
+
+    def test_invalid_published_door_hash_fails_closed_without_reusing_wall_cells(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            assets = root / "assets" / "stage12"
+            assets.mkdir(parents=True)
+            outputs = [assets / "element_doors.png", assets / "element_doors_material.png",
+                       assets / "environment-props-build.json"]
+            for ecology in ECOLOGIES:
+                outputs.extend((assets / f"{ecology}_environment.png",
+                                assets / f"{ecology}_environment_material.png"))
+            for output in outputs:
+                shutil.copy2(ROOT / "assets/stage12" / output.name, output)
+            shutil.copy2(ROOT / "assets/stage12/fire_environment.png",
+                         assets / "fire_environment.png")
+            source_root = ROOT / "art_source" / "stage12"
+            for ecology in ECOLOGIES:
+                target = root / "art_source" / "stage12"
+                (target / "backgrounds" / ecology).mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source_root / f"{ecology}-environment-concept-v1.png",
+                             target / f"{ecology}-environment-concept-v1.png")
+                shutil.copy2(source_root / "backgrounds" / ecology / f"{ecology}-wall-tile-v1.png",
+                             target / "backgrounds" / ecology / f"{ecology}-wall-tile-v1.png")
+                with Image.open(assets / f"{ecology}_environment.png").convert("RGBA") as image:
+                    image.paste((17, 19, 23, 255), (512, 0, 768, 256))
+                    image.save(assets / f"{ecology}_environment.png")
+            report_path = assets / "environment-props-build.json"
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            report["element_doors"]["rgba_sha256"] = "0" * 64
+            report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n",
+                                   encoding="utf-8")
+            before = {path: sha256(path) for path in outputs}
+            result = subprocess.run([sys.executable, str(BUILDER), "--root", str(root)],
+                                    cwd=root, text=True, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("published element doors validation failed", result.stderr)
+            self.assertEqual({path: sha256(path) for path in outputs}, before)
 
     def test_builder_repeat_generation_is_byte_for_byte_stable(self) -> None:
         self.assertTrue(BUILDER.is_file(), "shared environment prop builder is missing")
