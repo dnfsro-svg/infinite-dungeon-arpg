@@ -22,6 +22,7 @@ class SettingsStore;
 
 namespace arpg::platform {
 
+struct HostLaunchOptions;
 struct DeathInputGate;
 struct FrameKeyState;
 struct PhysicalKeySnapshot;
@@ -167,6 +168,7 @@ struct RaylibHostConfig final {
     // concurrent formal runs from the legacy executable-directory capture.
     std::optional<std::filesystem::path> screenshot_directory{};
     std::optional<std::uint64_t> new_run_seed{};
+    bool continue_pending_death_on_launch{};
     bool validation_capture{};
     std::uint32_t validation_exit_after_presented_frames{};
     Stage10ValidationScenario stage10_validation{
@@ -195,6 +197,9 @@ struct RaylibHostConfig final {
         stage12_material_baseline_capture_file{};
     Stage12MaterialRuntimeStatus* stage12_material_runtime_status{};
 };
+
+[[nodiscard]] RaylibHostConfig make_production_host_config(
+    HostLaunchOptions options);
 
 struct HostFrameGateResult final {
     bool forward_gameplay{};

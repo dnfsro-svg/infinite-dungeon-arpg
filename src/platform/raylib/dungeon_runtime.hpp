@@ -26,6 +26,7 @@ struct DungeonRuntimeConfig final {
     std::optional<std::uint64_t> new_run_seed{};
     RootSeedProvider seed_provider{};
     void* seed_context{};
+    bool continue_pending_death_on_initialize{};
 };
 
 struct LootPickupReceipt final {
@@ -83,6 +84,9 @@ public:
 
 private:
     [[nodiscard]] std::optional<std::uint64_t> select_new_run_seed() const noexcept;
+    [[nodiscard]] bool repair_pending_death_target(
+        dungeon::DungeonRunState& checkpoint) const noexcept;
+    [[nodiscard]] bool continue_pending_death_on_initialize() noexcept;
     void sync_load_status(const persistence::SaveLoadResult& result) noexcept;
     void sync_commit_status(const persistence::SaveCommitResult& result) noexcept;
     [[nodiscard]] bool commit_and_resolve_pending(

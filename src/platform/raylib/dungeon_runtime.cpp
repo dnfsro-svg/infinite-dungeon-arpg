@@ -1,6 +1,7 @@
 #include "dungeon_runtime.hpp"
 
 #include "dungeon/abyss_checkpoint_migration.hpp"
+#include "dungeon/room_generation.hpp"
 #include "persistence/save_paths.hpp"
 
 #include <limits>
@@ -98,6 +99,56 @@ std::optional<std::uint64_t> DungeonRuntime::select_new_run_seed() const noexcep
         return config_.seed_provider(config_.seed_context);
     }
     return persistence::system_root_seed();
+}
+
+bool DungeonRuntime::repair_pending_death_target(
+    dungeon::DungeonRunState& checkpoint) const noexcept {
+    if (!config_.continue_pending_death_on_initialize
+            || checkpoint.death.lifecycle
+                != dungeon::checkpoint::DeathLifecycle::pending_continue) {
+        return true;
+    }
+    if (checkpoint.commit_generation < 2U
+            || checkpoint.death_sequence == 0U) {
+        return false;
+    }
+
+    dungeon::checkpoint::RoomDescriptor death_anchor =
+        checkpoint.current_room;
+    death_anchor.is_abyss = checkpoint.death.death_was_abyss;
+    const dungeon::DeathRetreatTargetResult regenerated =
+        dungeon::make_death_retreat_target(
+            death_anchor, checkpoint.commit_generation - 1U,
+            checkpoint.death_sequence - 1U, checkpoint.death_sequence,
+            config_.rules);
+    if (regenerated.fault != dungeon::DungeonFault::none) {
+        return false;
+    }
+    checkpoint.death.target_room = regenerated.room;
+    return true;
+}
+
+bool DungeonRuntime::continue_pending_death_on_initialize() noexcept {
+    if (!session_.has_value()
+            || session_->phase() == dungeon::RoomPhase::faulted) {
+        state_ = DungeonRuntimeState::faulted;
+        return false;
+    }
+    if (!config_.continue_pending_death_on_initialize
+            || session_->phase() != dungeon::RoomPhase::death_pending) {
+        return true;
+    }
+    if (request_death_continue() != dungeon::RequestResult::accepted) {
+        state_ = DungeonRuntimeState::faulted;
+        return false;
+    }
+    service_pending_save();
+    if (state() != DungeonRuntimeState::running
+            || session_->phase() != dungeon::RoomPhase::transitioning) {
+        state_ = DungeonRuntimeState::faulted;
+        return false;
+    }
+    return true;
 }
 
 void DungeonRuntime::sync_load_status(
@@ -199,9 +250,13 @@ bool DungeonRuntime::initialize() noexcept {
             }
             checkpoint = std::move(published.verified_state);
         }
+        if (!repair_pending_death_target(checkpoint)) {
+            state_ = DungeonRuntimeState::faulted;
+            return false;
+        }
         session_.emplace(config_.rules, std::move(checkpoint));
         state_ = DungeonRuntimeState::running;
-        return true;
+        return continue_pending_death_on_initialize();
     }
     if (loaded.state == persistence::SaveLoadState::recovery_required) {
         state_ = DungeonRuntimeState::recovery_required;
