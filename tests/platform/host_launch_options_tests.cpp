@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 
 #include "host_launch_options.hpp"
+#include "raylib_host.hpp"
 
 #include <cstdio>
 #include <cstdint>
@@ -8,6 +9,7 @@
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <utility>
 
 namespace {
 
@@ -81,6 +83,26 @@ arpg::test::Failure no_arguments_leave_options_empty() noexcept {
     ARPG_REQUIRE(!result.options.settings_directory.has_value());
     ARPG_REQUIRE(!result.options.screenshot_directory.has_value());
     ARPG_REQUIRE(!result.options.new_run_seed.has_value());
+    return {};
+}
+
+arpg::test::Failure production_config_maps_options_and_continues_death()
+    noexcept {
+    arpg::platform::HostLaunchOptions options{};
+    options.save_directory = "save";
+    options.settings_directory = "settings";
+    options.screenshot_directory = "screenshots";
+    options.new_run_seed = 42U;
+
+    const auto config = arpg::platform::make_production_host_config(
+        std::move(options));
+    ARPG_REQUIRE(config.save_directory == std::filesystem::path{"save"});
+    ARPG_REQUIRE(config.settings_directory
+        == std::filesystem::path{"settings"});
+    ARPG_REQUIRE(config.screenshot_directory
+        == std::filesystem::path{"screenshots"});
+    ARPG_REQUIRE(config.new_run_seed == 42U);
+    ARPG_REQUIRE(config.continue_pending_death_on_launch);
     return {};
 }
 
@@ -226,6 +248,8 @@ arpg::test::Failure missing_and_invalid_seed_values_are_rejected() noexcept {
 
 constexpr arpg::test::TestCase kCases[] = {
     {"no arguments", &no_arguments_leave_options_empty},
+    {"production config continues death",
+        &production_config_maps_options_and_continues_death},
     {"decimal and hexadecimal seed", &decimal_and_hex_seeds_parse_to_same_value},
     {"absolute save directory", &save_directory_with_spaces_is_frozen_absolute},
     {"isolated settings directory", &settings_directory_is_frozen_and_isolated_from_save},

@@ -1456,6 +1456,136 @@ arpg::test::Failure v6_pending_death_load_preserves_generation_and_target() noex
     return {};
 }
 
+arpg::test::Failure production_startup_auto_continues_pending_death() noexcept {
+    TempDirectory directory;
+    auto config = config_for(directory, 0xD34D17U);
+    persistence::SaveStore store(config.save);
+    const auto initial = dungeon::make_initial_run_state(
+        *config.new_run_seed, config.rules).state;
+    ARPG_REQUIRE(store.commit(initial).state
+        == persistence::SaveCommitState::committed);
+
+    dungeon::DungeonSession source{config.rules, initial};
+    source.tick({});
+    ARPG_REQUIRE(arpg::test::kill_current_player_through_combat(source));
+    source.tick({});
+    const dungeon::PendingSave* const pending = source.pending_save_view();
+    ARPG_REQUIRE(pending != nullptr);
+    ARPG_REQUIRE(pending->kind == dungeon::PendingSaveKind::death_retreat);
+    const dungeon::DungeonRunState dead = pending->next_state;
+    ARPG_REQUIRE(store.commit(dead).state
+        == persistence::SaveCommitState::committed);
+
+    config.continue_pending_death_on_initialize = true;
+    platform::DungeonRuntime runtime(config);
+    ARPG_REQUIRE(runtime.initialize());
+
+    const auto resumed = runtime.session()->snapshot();
+    ARPG_REQUIRE(resumed.phase == dungeon::RoomPhase::transitioning);
+    ARPG_REQUIRE(!resumed.death.has_value());
+    ARPG_REQUIRE(!resumed.combat.has_value());
+    ARPG_REQUIRE(resumed.commit_generation == dead.commit_generation + 1U);
+    ARPG_REQUIRE(resumed.room_seed == dead.death.target_room.seed);
+    ARPG_REQUIRE(resumed.depth == dead.death.target_room.depth);
+
+    dungeon::DungeonRunState expected = dead;
+    ++expected.commit_generation;
+    expected.current_room = dead.death.target_room;
+    expected.abyss = {};
+    expected.death = {};
+    const auto saved = store.load();
+    ARPG_REQUIRE(saved.state == persistence::SaveLoadState::ready);
+    ARPG_REQUIRE(dungeon::same_run_state(saved.checkpoint, expected));
+
+    runtime.fixed_tick({});
+    const auto playable = runtime.session()->snapshot();
+    ARPG_REQUIRE(playable.phase == dungeon::RoomPhase::locked);
+    ARPG_REQUIRE(playable.combat.has_value());
+    ARPG_REQUIRE(playable.combat->player.hp > 0);
+    ARPG_REQUIRE(playable.combat->player.hp
+        == playable.combat->player.max_hp);
+    return {};
+}
+
+arpg::test::Failure production_startup_repairs_stale_death_target() noexcept {
+    TempDirectory directory;
+    auto config = config_for(directory, 0xD34D18U);
+    persistence::SaveStore store(config.save);
+    const auto initial = dungeon::make_initial_run_state(
+        *config.new_run_seed, config.rules).state;
+    ARPG_REQUIRE(store.commit(initial).state
+        == persistence::SaveCommitState::committed);
+
+    dungeon::DungeonSession source{config.rules, initial};
+    source.tick({});
+    ARPG_REQUIRE(arpg::test::kill_current_player_through_combat(source));
+    source.tick({});
+    const dungeon::PendingSave* const pending = source.pending_save_view();
+    ARPG_REQUIRE(pending != nullptr);
+    dungeon::DungeonRunState stale = pending->next_state;
+    const auto expected_target = stale.death.target_room;
+    stale.death.target_room.seed ^= 0x5A5A5A5A5A5A5A5AULL;
+    ARPG_REQUIRE(store.commit(stale).state
+        == persistence::SaveCommitState::committed);
+
+    config.continue_pending_death_on_initialize = true;
+    platform::DungeonRuntime runtime(config);
+    ARPG_REQUIRE(runtime.initialize());
+    const auto resumed = runtime.session()->snapshot();
+    ARPG_REQUIRE(runtime.state() == platform::DungeonRuntimeState::running);
+    ARPG_REQUIRE(resumed.phase == dungeon::RoomPhase::transitioning);
+    ARPG_REQUIRE(!resumed.death.has_value());
+    ARPG_REQUIRE(resumed.room_seed == expected_target.seed);
+    ARPG_REQUIRE(resumed.depth == expected_target.depth);
+    ARPG_REQUIRE(resumed.commit_generation == stale.commit_generation + 1U);
+
+    const auto saved = store.load();
+    ARPG_REQUIRE(saved.state == persistence::SaveLoadState::ready);
+    ARPG_REQUIRE(saved.checkpoint.death.lifecycle
+        == dungeon::checkpoint::DeathLifecycle::none);
+    ARPG_REQUIRE(saved.checkpoint.current_room.seed == expected_target.seed);
+    ARPG_REQUIRE(saved.checkpoint.current_room.depth == expected_target.depth);
+    return {};
+}
+
+arpg::test::Failure production_startup_death_continue_commit_failures_fault()
+    noexcept {
+    constexpr std::array<persistence::SaveFaultPoint, 2U> kFaultPoints{{
+        persistence::SaveFaultPoint::before_publish,
+        persistence::SaveFaultPoint::after_publish,
+    }};
+    std::uint64_t seed = 0xD34D20U;
+    for (const auto point : kFaultPoints) {
+        TempDirectory directory;
+        auto config = config_for(directory, seed++);
+        FaultContext fault{point, false};
+        config.save.fault_hook = &fail_when_enabled;
+        config.save.fault_context = &fault;
+        persistence::SaveStore store(config.save);
+        const auto initial = dungeon::make_initial_run_state(
+            *config.new_run_seed, config.rules).state;
+        ARPG_REQUIRE(store.commit(initial).state
+            == persistence::SaveCommitState::committed);
+
+        dungeon::DungeonSession source{config.rules, initial};
+        source.tick({});
+        ARPG_REQUIRE(arpg::test::kill_current_player_through_combat(source));
+        source.tick({});
+        const dungeon::PendingSave* const pending = source.pending_save_view();
+        ARPG_REQUIRE(pending != nullptr);
+        ARPG_REQUIRE(store.commit(pending->next_state).state
+            == persistence::SaveCommitState::committed);
+
+        fault.enabled = true;
+        config.continue_pending_death_on_initialize = true;
+        platform::DungeonRuntime runtime(config);
+        ARPG_REQUIRE(!runtime.initialize());
+        ARPG_REQUIRE(runtime.state() == platform::DungeonRuntimeState::faulted);
+        ARPG_REQUIRE(runtime.render_status().faulted);
+    }
+    return {};
+}
+
 arpg::test::Failure item_request_fault_matrix_is_atomic_and_restart_consistent() noexcept {
     constexpr std::array<ItemRequestKind, 4> kKinds{{
         ItemRequestKind::pickup,
@@ -1631,6 +1761,10 @@ constexpr arpg::test::TestCase kCases[] = {
     {"fixed tick indeterminate faults synchronously", &fixed_tick_indeterminate_faults_synchronously},
     {"runtime continue is narrow and fixed tick commits it", &runtime_continue_is_narrow_and_fixed_tick_commits_it},
     {"v6 pending death load preserves generation and target", &v6_pending_death_load_preserves_generation_and_target},
+    {"production startup auto continues pending death", &production_startup_auto_continues_pending_death},
+    {"production startup repairs stale death target", &production_startup_repairs_stale_death_target},
+    {"production startup death continue commit failures fault",
+        &production_startup_death_continue_commit_failures_fault},
     {"item request fault matrix is atomic and restart consistent", &item_request_fault_matrix_is_atomic_and_restart_consistent},
 };
 

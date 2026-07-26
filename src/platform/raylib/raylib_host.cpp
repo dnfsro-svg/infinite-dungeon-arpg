@@ -13,6 +13,7 @@
 #include "dungeon_view_math.hpp"
 #include "game_audio.hpp"
 #include "host_input.hpp"
+#include "host_launch_options.hpp"
 #include "inventory_renderer.hpp"
 #include "passive_tree_renderer.hpp"
 #include "passive_tree_view_math.hpp"
@@ -40,6 +41,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 
 #ifdef _WIN32
 extern "C" __declspec(dllimport) int __stdcall SetForegroundWindow(void*);
@@ -2598,6 +2600,16 @@ bool settle_host_pause_command(
     return window_close_requested;
 }
 
+RaylibHostConfig make_production_host_config(HostLaunchOptions options) {
+    RaylibHostConfig config{};
+    config.save_directory = std::move(options.save_directory);
+    config.settings_directory = std::move(options.settings_directory);
+    config.screenshot_directory = std::move(options.screenshot_directory);
+    config.new_run_seed = options.new_run_seed;
+    config.continue_pending_death_on_launch = true;
+    return config;
+}
+
 HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
     bool window_ready = false;
     try {
@@ -2623,6 +2635,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         DungeonRuntimeConfig runtime_config{};
         runtime_config.save.directory = *save_directory;
         runtime_config.new_run_seed = config.new_run_seed;
+        runtime_config.continue_pending_death_on_initialize =
+            config.continue_pending_death_on_launch;
         const auto runtime_storage =
             std::make_unique<DungeonRuntime>(runtime_config);
         DungeonRuntime& runtime = *runtime_storage;
@@ -2638,7 +2652,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         }
 
         SetConfigFlags(initial_window_flags(committed_settings));
-        InitWindow(config.window_width, config.window_height, config.window_title);
+        InitWindow(config.window_width, config.window_height,
+            config.window_title);
         window_ready = IsWindowReady();
         if (!window_ready) {
             TraceLog(LOG_ERROR, "raylib window initialization failed");
