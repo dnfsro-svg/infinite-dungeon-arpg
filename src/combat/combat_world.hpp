@@ -8,6 +8,7 @@
 #include "combat/player_damage_history.hpp"
 #include "combat/room_monster_field.hpp"
 #include "combat/room_obstacle_runtime.hpp"
+#include "combat/room_combat_checkpoint.hpp"
 #include "core/deterministic_rng.hpp"
 #include "modifiers/effect_set.hpp"
 #include "core/bounded_queue.hpp"
@@ -52,6 +53,7 @@ public:
     void tick(MovementInput movement) noexcept;
     void reset() noexcept;
     void apply_player_build(PlayerCombatBuild build) noexcept;
+    void clear_buffered_input() noexcept;
     void restore_player_resources(int hp, int barrier) noexcept;
     [[nodiscard]] int restore_player_health_percent(
         std::uint16_t maximum_health_basis_points) noexcept;
@@ -75,6 +77,15 @@ public:
     [[nodiscard]] bool player_defeated() const noexcept;
     [[nodiscard]] const std::optional<CombatDeathSnapshot>&
     death_snapshot() const noexcept;
+    [[nodiscard]] bool capture_room_checkpoint(
+        RoomCombatCheckpoint& out) const noexcept;
+    [[nodiscard]] bool capture_room_checkpoint_post_mutation(
+        RoomCombatCheckpoint& out, const PlayerCombatBuild* player_build,
+        std::uint8_t health_potion_count,
+        std::uint16_t health_potion_restore_bp,
+        bool clear_abyss_rule) const noexcept;
+    [[nodiscard]] bool restore_room_checkpoint(
+        const RoomCombatCheckpoint& checkpoint) noexcept;
 
 private:
     struct PlayerRuntime final {

@@ -157,9 +157,8 @@ SaveLoadResult load_recovered(const SaveStoreConfig& config) noexcept {
         }
         if (scan.a.state == SlotFileState::valid
                 && scan.b.state == SlotFileState::valid) {
-            if (scan.a.checkpoint.commit_generation
-                    == scan.b.checkpoint.commit_generation
-                && !same_state(scan.a.checkpoint, scan.b.checkpoint)) {
+            if (scan.a.persistence_revision == scan.b.persistence_revision
+                    && !same_slot_checkpoint(scan.a, scan.b)) {
                 return {SaveLoadState::recovery_required,
                     SaveError::conflicting_slots, SaveSlot::none, false, {}};
             }
@@ -231,9 +230,8 @@ SaveCommitResult verify_published_transaction(const SaveStoreConfig& config,
     if (target_info.state == SlotFileState::valid
             && same_state(target_info.checkpoint, expected)) {
         if (other_info.state == SlotFileState::valid) {
-            if (other_info.checkpoint.commit_generation
-                    > expected.commit_generation
-                || (other_info.checkpoint.commit_generation
+            if (other_info.persistence_revision > expected.commit_generation
+                || (other_info.persistence_revision
                         == expected.commit_generation
                     && !same_state(other_info.checkpoint, expected))) {
                 return commit_failure(SaveCommitState::indeterminate,
