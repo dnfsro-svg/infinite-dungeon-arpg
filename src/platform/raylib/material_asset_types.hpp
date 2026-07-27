@@ -228,6 +228,7 @@ enum class MaterialSpriteId : std::uint16_t {
     material_coupon_9,
     material_coupon_12,
     material_coupon_15,
+    health_potion,
     bag_frame_nw,
     bag_frame_ne,
     bag_frame_sw,

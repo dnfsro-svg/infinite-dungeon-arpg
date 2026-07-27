@@ -436,7 +436,10 @@ bool capture(const std::filesystem::path& root, const Resolution& resolution,
         platform::Stage12UiShowcase::none,
     platform::Stage11CHudValidationScenario hud_scenario =
         platform::Stage11CHudValidationScenario::none,
-    bool background_only = false) {
+    bool background_only = false,
+    bool icons_only = false,
+    std::uint32_t fixed_steps_per_frame = 0U,
+    bool hide_showcase_items = false) {
     const std::filesystem::path capture = root / (image_name == nullptr
         ? resolution.name : image_name);
     platform::RaylibHostConfig config{};
@@ -451,13 +454,16 @@ bool capture(const std::filesystem::path& root, const Resolution& resolution,
     config.validation_exit_after_presented_frames = hud_scenario
         == platform::Stage11CHudValidationScenario::none ? 4U : 600U;
     config.validation_steps_per_frame = hud_scenario
-        == platform::Stage11CHudValidationScenario::none ? 0U : 8U;
+        == platform::Stage11CHudValidationScenario::none
+        ? fixed_steps_per_frame : 8U;
     config.validation_capture_file = capture;
     config.stage12_material_showcase = showcase;
     config.stage12_material_showcase_ecology = showcase_ecology;
     config.stage12_material_runtime_status = material_status;
     config.stage12_material_showcase_hide_monsters = hide_showcase_monsters;
+    config.stage12_material_showcase_hide_items = hide_showcase_items;
     config.stage12_material_background_only = background_only;
+    config.stage12_material_icons_only = icons_only;
     config.stage12_ui_showcase = ui_showcase;
     config.stage11c_hud_validation = hud_scenario;
     if (baseline_image_name != nullptr) {
@@ -1894,11 +1900,32 @@ int main(int argc, char** argv) {
             item_baseline, error) && !error
         && std::filesystem::file_size(item_baseline, error) > 1024U && !error
         && png_has_size(item_baseline, 1280, 720);
-    const bool item_runtime_ok = item_showcase_ok
-        && item_runtime.items_ui_resident
+    const auto item_icon_runtime_storage =
+        std::make_unique<platform::Stage12MaterialRuntimeStatus>();
+    platform::Stage12MaterialRuntimeStatus& item_icon_runtime =
+        *item_icon_runtime_storage;
+    const bool item_icon_showcase_ok = capture(root, kResolutions[0],
+        "items-icons-1280x720.png", true, false,
+        arpg::dungeon::DungeonElement::fire, &item_icon_runtime, true,
+        "items-icons-baseline-1280x720.png",
+        platform::Stage12UiShowcase::none,
+        platform::Stage11CHudValidationScenario::none, false, true);
+    const std::filesystem::path item_icon_baseline =
+        root / "items-icons-baseline-1280x720.png";
+    error.clear();
+    const bool item_icon_baseline_ok = std::filesystem::is_regular_file(
+            item_icon_baseline, error) && !error
+        && std::filesystem::file_size(item_icon_baseline, error) > 1024U
+        && !error && png_has_size(item_icon_baseline, 1280, 720);
+    const bool item_runtime_ok = item_showcase_ok && item_icon_showcase_ok
+        && item_icon_baseline_ok && item_runtime.items_ui_resident
+        && item_icon_runtime.items_ui_resident
         && every_resource_drawn(item_runtime.equipment_slot_draws)
         && every_resource_drawn(item_runtime.rarity_draws)
-        && every_resource_drawn(item_runtime.material_draws);
+        && every_resource_drawn(item_runtime.material_draws)
+        && every_resource_drawn(item_icon_runtime.equipment_slot_draws)
+        && every_resource_drawn(item_icon_runtime.rarity_draws)
+        && every_resource_drawn(item_icon_runtime.material_draws);
     const bool ui_baseline_ok = capture(root, kResolutions[0],
         "ui-baseline-1280x720.png");
     const bool ui_baseline_1920_ok = capture(root, kResolutions[1],
@@ -2223,10 +2250,34 @@ int main(int argc, char** argv) {
         *lightning_runtime_storage;
     const bool lightning_showcase_ok = capture(root, kResolutions[0],
         "lightning-monsters-1280x720.png", true, false,
-        arpg::dungeon::DungeonElement::lightning, &lightning_runtime);
+        arpg::dungeon::DungeonElement::lightning, &lightning_runtime, false,
+        nullptr, platform::Stage12UiShowcase::none,
+        platform::Stage11CHudValidationScenario::none, false, false, 2U);
     const bool lightning_background_ok = capture(root, kResolutions[0],
         "lightning-background-1280x720.png", true, false,
-        arpg::dungeon::DungeonElement::lightning, nullptr, true);
+        arpg::dungeon::DungeonElement::lightning, nullptr, true, nullptr,
+        platform::Stage12UiShowcase::none,
+        platform::Stage11CHudValidationScenario::none, false, false, 2U);
+    const bool lightning_isolated_showcase_ok = capture(root, kResolutions[0],
+        "lightning-monsters-isolated-1280x720.png", true, false,
+        arpg::dungeon::DungeonElement::lightning, nullptr, false, nullptr,
+        platform::Stage12UiShowcase::none,
+        platform::Stage11CHudValidationScenario::none,
+        false, false, 2U, true);
+    const bool lightning_isolated_background_ok = capture(root, kResolutions[0],
+        "lightning-background-isolated-1280x720.png", true, false,
+        arpg::dungeon::DungeonElement::lightning, nullptr, true, nullptr,
+        platform::Stage12UiShowcase::none,
+        platform::Stage11CHudValidationScenario::none,
+        false, false, 2U, true);
+    const bool lightning_isolated_paths_distinct =
+        std::filesystem::path{"lightning-monsters-isolated-1280x720.png"}
+            != std::filesystem::path{"lightning-monsters-1280x720.png"}
+        && std::filesystem::path{"lightning-background-isolated-1280x720.png"}
+            != std::filesystem::path{"lightning-background-1280x720.png"}
+        && std::filesystem::path{"lightning-monsters-isolated-1280x720.png"}
+            != std::filesystem::path{
+                "lightning-background-isolated-1280x720.png"};
     const bool lightning_showcase_pair_residency_ok =
         lightning_runtime.lightning_environment_resident
         && lightning_runtime.lightning_shooter_resident
@@ -2248,6 +2299,9 @@ int main(int argc, char** argv) {
             || lightning_dasher_roi.y + lightning_dasher_roi.height
                 <= lightning_shooter_roi.y);
     const bool lightning_runtime_ok = lightning_showcase_ok
+        && lightning_isolated_showcase_ok
+        && lightning_isolated_background_ok
+        && lightning_isolated_paths_distinct
         && lightning_runtime.shader_pipeline_ready
         && lightning_showcase_pair_residency_ok
         && lightning_rois_ok
@@ -2255,7 +2309,7 @@ int main(int argc, char** argv) {
         && lightning_runtime.lightning_shooter_draw.use_material_frame
         && lightning_runtime.lightning_shooter_draw.atlas
             == platform::MaterialAtlasId::lightning_shooter
-        && lightning_runtime.lightning_shooter_draw.frame_index < 12U
+        && lightning_runtime.lightning_shooter_draw.frame_index == 2U
         && lightning_runtime.lightning_shooter_draw.drawn
         && lightning_runtime.lightning_dasher_draw.presenter_visible
         && lightning_runtime.lightning_dasher_draw.use_material_frame
@@ -2397,6 +2451,8 @@ int main(int argc, char** argv) {
            << "monster_screenshot=monsters-1280x720.png\n"
            << "item_screenshot=items-materials-1280x720.png\n"
            << "item_baseline_screenshot=items-baseline-1280x720.png\n"
+           << "item_icon_screenshot=items-icons-1280x720.png\n"
+           << "item_icon_baseline_screenshot=items-icons-baseline-1280x720.png\n"
            << "items_ui_pair=" << (item_runtime.items_ui_resident
                 ? "resident" : "missing") << '\n'
            << "item_runtime_draws=" << (item_runtime_ok ? "pass" : "fail") << '\n'
@@ -2509,6 +2565,8 @@ int main(int argc, char** argv) {
            << "water_monster_screenshot=water-monsters-1280x720.png\n"
            << "lightning_monster_screenshot=lightning-monsters-1280x720.png\n"
            << "lightning_background_screenshot=lightning-background-1280x720.png\n"
+           << "lightning_isolated_monster_screenshot=lightning-monsters-isolated-1280x720.png\n"
+           << "lightning_isolated_background_screenshot=lightning-background-isolated-1280x720.png\n"
            << "chaos_monster_screenshot=chaos-monsters-1280x720.png\n"
            << "chaos_background_screenshot=chaos-background-1280x720.png\n"
            << "shader_pipeline=" << (water_runtime.shader_pipeline_ready
@@ -2563,7 +2621,7 @@ int main(int argc, char** argv) {
            << "chaos_hazard_drawn=" << (chaos_runtime.chaos_hazard_draw.drawn ? "pass" : "fail") << '\n'
            << "f12_screenshot=f12-monsters-1280x720.png/stage8-equipment-loot.png\n"
            << "screenshot_isolation=" << (f12_ok ? "pass" : "fail") << '\n'
-           << "screenshot_decode=" << (captures_ok && native_background_captures_ok && showcase_ok && item_baseline_ok && item_showcase_ok && ui_baseline_ok && ui_baseline_1920_ok && ui_gallery_ok && hud_ui_ok && hud_ui_1920_ok && inventory_ui_ok && inventory_ui_1920_ok && skill_ui_ok && skill_ui_1920_ok && pause_ui_ok && pause_ui_1920_ok && water_showcase_ok && lightning_showcase_ok && lightning_background_ok && chaos_showcase_ok && chaos_background_ok && f12_ok ? "pass" : "fail") << '\n'
+           << "screenshot_decode=" << (captures_ok && native_background_captures_ok && showcase_ok && item_baseline_ok && item_showcase_ok && item_icon_baseline_ok && item_icon_showcase_ok && ui_baseline_ok && ui_baseline_1920_ok && ui_gallery_ok && hud_ui_ok && hud_ui_1920_ok && inventory_ui_ok && inventory_ui_1920_ok && skill_ui_ok && skill_ui_1920_ok && pause_ui_ok && pause_ui_1920_ok && water_showcase_ok && lightning_showcase_ok && lightning_background_ok && lightning_isolated_showcase_ok && lightning_isolated_background_ok && lightning_isolated_paths_distinct && chaos_showcase_ok && chaos_background_ok && f12_ok ? "pass" : "fail") << '\n'
            << "result=" << (integration.passed() && captures_ok && native_background_captures_ok && native_asset_hashes_ok && fallback_capture && !error && manifest_ok && showcase_ok && item_baseline_ok && item_runtime_ok && ui_runtime_ok && hud_ui_runtime_ok && inventory_ui_runtime_ok && skill_ui_runtime_ok && pause_ui_runtime_ok && hud_ui_1920_runtime_ok && inventory_ui_1920_runtime_ok && skill_ui_1920_runtime_ok && pause_ui_1920_runtime_ok && ui_readability_contract_with_real_bounds_ok && ui_baseline_ok && ui_baseline_1920_ok && water_runtime_ok && lightning_runtime_ok && lightning_background_ok && chaos_runtime_ok && chaos_background_ok && f12_ok && input_hole_ok ? "pass" : "fail")
            << '\n';
     std::cout << "stage12 material formal "

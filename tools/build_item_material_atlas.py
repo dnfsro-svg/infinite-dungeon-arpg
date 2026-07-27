@@ -12,6 +12,8 @@ from PIL import Image, ImageChops, ImageFilter, ImageStat
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / "art_source" / "stage12" / "items"
           / "dark-steel-ancient-gold-item-board-v1.png")
+HEALTH_POTION_SOURCE = (
+    ROOT / "art_source" / "stage12" / "items" / "health-potion-v1.png")
 OUTPUT = ROOT / "assets" / "stage12"
 ATLAS_SIZE = 1024
 CELL = 128
@@ -19,7 +21,7 @@ SOURCE_COLUMNS = 6
 SOURCE_ROWS = 5
 SAFE_ICON_SIZE = 116
 
-ICON_NAMES = (
+BOARD_ICON_NAMES = (
     "equipment_weapon", "equipment_helmet", "equipment_chest",
     "equipment_gloves", "equipment_boots", "equipment_accessory",
     "rarity_normal", "rarity_magic", "rarity_rare", "rarity_abyss",
@@ -32,7 +34,8 @@ ICON_NAMES = (
     "frame_corner_nw", "frame_corner_ne", "frame_corner_sw",
     "frame_corner_se",
 )
-ICON_CELLS = {name: index for index, name in enumerate(ICON_NAMES)}
+ICON_CELLS = {name: index for index, name in enumerate(BOARD_ICON_NAMES)}
+ICON_CELLS["health_potion"] = len(BOARD_ICON_NAMES)
 
 
 def source_cell(board: Image.Image, index: int) -> Image.Image:
@@ -275,13 +278,20 @@ def outline_contrast_score(icon: Image.Image) -> float:
 def build_color_atlas() -> Image.Image:
     board = Image.open(SOURCE).convert("RGBA")
     atlas = Image.new("RGBA", (ATLAS_SIZE, ATLAS_SIZE))
-    for index, name in enumerate(ICON_NAMES):
+    for index, name in enumerate(BOARD_ICON_NAMES):
         icon = contain_icon(remove_magenta_key(source_cell(board, index)))
         if outline_contrast_score(icon) < 0.18:
             raise RuntimeError(f"{name}: authored outline contrast is too low")
         column = index % (ATLAS_SIZE // CELL)
         row = index // (ATLAS_SIZE // CELL)
         atlas.alpha_composite(icon, (column * CELL, row * CELL))
+    potion = contain_icon(Image.open(HEALTH_POTION_SOURCE).convert("RGBA"))
+    if outline_contrast_score(potion) < 0.18:
+        raise RuntimeError("health_potion: authored outline contrast is too low")
+    cell = ICON_CELLS["health_potion"]
+    column = cell % (ATLAS_SIZE // CELL)
+    row = cell // (ATLAS_SIZE // CELL)
+    atlas.alpha_composite(potion, (column * CELL, row * CELL))
     return atlas
 
 
@@ -308,13 +318,14 @@ def material_map(color: Image.Image) -> Image.Image:
 
 
 def main() -> None:
-    if not SOURCE.is_file():
-        raise RuntimeError(f"missing authored item board: {SOURCE}")
+    for source in (SOURCE, HEALTH_POTION_SOURCE):
+        if not source.is_file():
+            raise RuntimeError(f"missing authored item source: {source}")
     OUTPUT.mkdir(parents=True, exist_ok=True)
     color = build_color_atlas()
     color.save(OUTPUT / "items_ui.png")
     material_map(color).save(OUTPUT / "items_ui_material.png")
-    print(f"built {len(ICON_NAMES)} item icons from {SOURCE.name}")
+    print(f"built {len(ICON_CELLS)} item icons from authored sources")
 
 
 if __name__ == "__main__":

@@ -239,21 +239,62 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
         "src/platform/raylib/combat_renderer.hpp");
     const std::string renderer = read_project_source(
         "src/platform/raylib/room_renderer.cpp");
+    const std::string material_pack = read_project_source(
+        "src/platform/raylib/material_pack.cpp");
     const std::string platform_cmake = read_project_source(
         "tests/platform/CMakeLists.txt");
+    const std::string formal = read_project_source(
+        "tests/platform/stage12_material_formal_game_validation.cpp");
+    const std::string validator = read_project_source(
+        "tests/platform/stage12_material_validator.ps1");
+    const std::string validator_self_test = read_project_source(
+        "tests/platform/stage12_material_validator_self_test.ps1");
     ARPG_REQUIRE(!host_header.empty());
     ARPG_REQUIRE(!host.empty());
     ARPG_REQUIRE(!renderer_header.empty());
     ARPG_REQUIRE(!renderer.empty());
+    ARPG_REQUIRE(!material_pack.empty());
     ARPG_REQUIRE(!platform_cmake.empty());
+    ARPG_REQUIRE(!formal.empty());
+    ARPG_REQUIRE(!validator.empty());
+    ARPG_REQUIRE(!validator_self_test.empty());
 
     ARPG_REQUIRE(platform_cmake.find(
         "target_link_options(arpg_stage12_material_formal PRIVATE /STACK:2097152)")
         != std::string::npos);
     ARPG_REQUIRE(occurrence_count(platform_cmake, "/STACK:2097152") == 1U);
 
+    const std::size_t material_draw = material_pack.find(
+        "void draw_material(");
+    ARPG_REQUIRE(material_draw != std::string::npos);
+    const std::string material_draw_block = braced_block_after(
+        material_pack, material_draw);
+    const std::size_t begin_shader = material_draw_block.find(
+        "BeginShaderMode(");
+    const std::size_t set_texture = material_draw_block.find(
+        "SetShaderValueTexture(");
+    const std::size_t set_value_1 = material_draw_block.find(
+        "SetShaderValue(", set_texture);
+    const std::size_t set_value_2 = material_draw_block.find(
+        "SetShaderValue(", set_value_1 + 1U);
+    const std::size_t set_value_3 = material_draw_block.find(
+        "SetShaderValue(", set_value_2 + 1U);
+    const std::size_t draw_texture = material_draw_block.find(
+        "DrawTexturePro(");
+    const std::size_t end_shader = material_draw_block.find("EndShaderMode(");
+    ARPG_REQUIRE(begin_shader < set_texture);
+    ARPG_REQUIRE(set_texture < set_value_1);
+    ARPG_REQUIRE(set_value_1 < set_value_2);
+    ARPG_REQUIRE(set_value_2 < set_value_3);
+    ARPG_REQUIRE(set_value_3 < draw_texture);
+    ARPG_REQUIRE(draw_texture < end_shader);
+
     ARPG_REQUIRE(host_header.find(
         "bool stage12_material_background_only{};") != std::string::npos);
+    ARPG_REQUIRE(host_header.find(
+        "bool stage12_material_icons_only{};") != std::string::npos);
+    ARPG_REQUIRE(host_header.find(
+        "bool stage12_material_showcase_hide_items{};") != std::string::npos);
     for (const char* field : {"hud_ecology", "room_background_ecology",
              "room_background_atlas", "room_background_resident",
              "room_background_drawn", "room_background_source_width",
@@ -262,6 +303,8 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
     }
     ARPG_REQUIRE(renderer_header.find(
         "draw_room_background_only") != std::string::npos);
+    ARPG_REQUIRE(renderer_header.find(
+        "draw_ground_loot_icons_only") != std::string::npos);
 
     const std::size_t background_only = renderer.find(
         "CombatRenderer::draw_room_background_only");
@@ -283,6 +326,22 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
         ARPG_REQUIRE(background_only_block.find(forbidden) == std::string::npos);
     }
 
+    const std::size_t icons_only = renderer.find(
+        "CombatRenderer::draw_ground_loot_icons_only");
+    ARPG_REQUIRE(icons_only != std::string::npos);
+    const std::string icons_only_block = braced_block_after(renderer, icons_only);
+    for (const char* required : {"build_ground_loot_view(",
+             "draw_room_background_only(", "draw_ground_materials(",
+             "draw_ground_items("}) {
+        ARPG_REQUIRE(icons_only_block.find(required) != std::string::npos);
+    }
+    for (const char* forbidden : {"draw_room(", "draw_actors(", "draw_hud(",
+             "draw_abyss(", "draw_environment_hazards(",
+             "draw_environment_room_props(", "draw_fire_room_props(",
+             "draw_doors(", "draw_hole("}) {
+        ARPG_REQUIRE(icons_only_block.find(forbidden) == std::string::npos);
+    }
+
     const std::size_t host_background_draw = host.find(
         "renderer.draw_room_background_only(");
     ARPG_REQUIRE(host_background_draw != std::string::npos);
@@ -302,6 +361,51 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
     ARPG_REQUIRE(runtime_status != std::string::npos);
     ARPG_REQUIRE(host_background_draw < normal_draw);
     ARPG_REQUIRE(normal_draw < runtime_status);
+    const std::size_t host_icons_draw = host.find(
+        "renderer.draw_ground_loot_icons_only(", host_background_draw);
+    ARPG_REQUIRE(host_icons_draw != std::string::npos);
+    ARPG_REQUIRE(host_background_draw < host_icons_draw);
+    ARPG_REQUIRE(host_icons_draw < normal_draw);
+
+    for (const char* required : {"items-icons-1280x720.png",
+             "items-icons-baseline-1280x720.png",
+             "config.stage12_material_icons_only = icons_only;",
+             "bool icons_only = false,\n"
+             "    std::uint32_t fixed_steps_per_frame = 0U,\n"
+             "    bool hide_showcase_items = false)",
+             "== platform::Stage11CHudValidationScenario::none\n"
+             "        ? fixed_steps_per_frame : 8U;",
+             "lightning_runtime.lightning_shooter_draw.frame_index == 2U"}) {
+        ARPG_REQUIRE(formal.find(required) != std::string::npos);
+    }
+    for (const char* required : {"lightning-monsters-isolated-1280x720.png",
+             "lightning-background-isolated-1280x720.png",
+             "config.stage12_material_showcase_hide_items = hide_showcase_items;"}) {
+        ARPG_REQUIRE(formal.find(required) != std::string::npos);
+    }
+    ARPG_REQUIRE(host.find(
+        "(config.stage12_material_showcase\n"
+        "                            && config.validation_capture_file.has_value())")
+        != std::string::npos);
+    ARPG_REQUIRE(host.find(
+        "items::ItemRarity::rare, items::ItemRarity::magic,\n"
+        "            items::ItemRarity::normal, items::ItemRarity::normal,")
+        != std::string::npos);
+    ARPG_REQUIRE(validator.find(
+        "Measure-ItemCapture $itemIconScreenshot $itemIconBaselineScreenshot")
+        != std::string::npos);
+    ARPG_REQUIRE(validator.find("$brightChroma -ge 600")
+        != std::string::npos);
+    ARPG_REQUIRE(validator.find("$authoredOverrides") == std::string::npos);
+    ARPG_REQUIRE(validator.find(
+        "$darkAuthoredRegions = @('material_6')") != std::string::npos);
+    for (const char* mutation : {"aliased-item-icon-evidence",
+             "missing-equipment-weapon-roi", "missing-material6-roi",
+             "missing-material9-roi", "aliased-lightning-isolated-evidence",
+             "lightning-shooter-horizontal-strip",
+             "lightning-shooter-grayscale"}) {
+        ARPG_REQUIRE(validator_self_test.find(mutation) != std::string::npos);
+    }
 
     const std::size_t normal_hud_observe = host.find(
         "renderer.observe_presented_hud_frame(hud_presented_frame,");
@@ -331,7 +435,7 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
     }
 
     const std::size_t init_background_recovery = host.find(
-        "if (config.stage12_material_background_only");
+        "if ((config.stage12_material_background_only");
     const std::size_t init_window = host.find("InitWindow(");
     ARPG_REQUIRE(init_background_recovery != std::string::npos);
     ARPG_REQUIRE(init_window != std::string::npos);
@@ -353,10 +457,12 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
     ARPG_REQUIRE(recovery_ui != std::string::npos);
     const std::string recovery_ui_block = braced_block_after(host, recovery_ui);
     const std::size_t recovery_background_guard = recovery_ui_block.find(
-        "if (config.stage12_material_background_only)");
+        "if (config.stage12_material_background_only");
     const std::size_t recovery_draw = recovery_ui_block.find(
         "draw_recovery_screen(");
     ARPG_REQUIRE(recovery_background_guard != std::string::npos);
+    ARPG_REQUIRE(recovery_ui_block.find("config.stage12_material_icons_only",
+        recovery_background_guard) != std::string::npos);
     ARPG_REQUIRE(recovery_draw != std::string::npos);
     ARPG_REQUIRE(recovery_background_guard < recovery_draw);
     return {};

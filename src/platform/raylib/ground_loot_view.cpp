@@ -102,31 +102,98 @@ void clamp_to_safety_area(LootLabelRect& rect,
         viewport_height - kGroundLootSafetyInset - rect.height);
 }
 
-void layout_labels(GroundLootView& view,
-    float width,
-    float height) noexcept {
-    for (std::size_t index = 0U; index < view.count; ++index) {
-        GroundLootLabel& label = view.labels[index];
-        LootLabelRect& rect = label.rect;
-        rect = {label.anchor_x - kLabelWidth * 0.5F,
-            label.anchor_y - kLabelAnchorGap - kLabelHeight,
-            kLabelWidth, kLabelHeight};
-
-        for (std::size_t attempt = 0U;
-             attempt < dungeon::kGroundDropCapacity; ++attempt) {
-            bool collision = false;
-            for (std::size_t previous = 0U; previous < index; ++previous) {
-                if (overlaps(rect, view.labels[previous].rect)) {
-                    collision = true;
-                    break;
-                }
-            }
-            if (!collision) break;
-            rect.y -= kLabelHeight + kOverlapGap;
-            ++view.diagnostics.overlap_adjustment_count;
-        }
-        clamp_to_safety_area(rect, width, height);
+[[nodiscard]] bool obstacle_free(LootLabelRect candidate,
+    const LootLabelObstacleSet& obstacles) noexcept {
+    for (std::size_t index = 0U; index < obstacles.count; ++index) {
+        if (overlaps(candidate, obstacles.rects[index])) return false;
     }
+    return true;
+}
+
+[[nodiscard]] bool place_label(GroundLootLabel& label, float width,
+    float height, const LootLabelObstacleSet& obstacles,
+    GroundLootViewDiagnostics& diagnostics) noexcept {
+    LootLabelRect original{label.anchor_x - kLabelWidth * 0.5F,
+        label.anchor_y - kLabelAnchorGap - kLabelHeight,
+        kLabelWidth, kLabelHeight};
+    clamp_to_safety_area(original, width, height);
+    if (obstacle_free(original, obstacles)) {
+        label.rect = original;
+        return true;
+    }
+    ++diagnostics.overlap_adjustment_count;
+
+    const float viewport_width = usable_dimension(width);
+    const float viewport_height = usable_dimension(height);
+    const float minimum_x = kGroundLootSafetyInset;
+    const float minimum_y = kGroundLootSafetyInset;
+    const float maximum_x = viewport_width - kGroundLootSafetyInset
+        - original.width;
+    const float maximum_y = viewport_height - kGroundLootSafetyInset
+        - original.height;
+    const float x_span = (std::max)(0.0F, maximum_x - minimum_x);
+    const float y_span = (std::max)(0.0F, maximum_y - minimum_y);
+    const std::size_t columns = (std::max)(std::size_t{1U},
+        static_cast<std::size_t>(
+            std::floor(x_span / (original.width + kOverlapGap))) + 1U);
+    const std::size_t rows = (std::max)(std::size_t{1U},
+        static_cast<std::size_t>(
+            std::floor(y_span / (original.height + kOverlapGap))) + 1U);
+
+    bool found{};
+    LootLabelRect best{};
+    std::uint8_t best_priority{};
+    float best_distance{};
+    for (std::size_t row = 0U; row < rows; ++row) {
+        const float y = rows == 1U ? minimum_y
+            : minimum_y + y_span * static_cast<float>(row)
+                / static_cast<float>(rows - 1U);
+        for (std::size_t column = 0U; column < columns; ++column) {
+            const float x = columns == 1U ? minimum_x
+                : minimum_x + x_span * static_cast<float>(column)
+                    / static_cast<float>(columns - 1U);
+            const LootLabelRect candidate{x, y, original.width, original.height};
+            if (!obstacle_free(candidate, obstacles)) continue;
+            const std::uint8_t priority = candidate.y < original.y
+                ? 0U : candidate.y > original.y ? 2U : 1U;
+            const float dx = candidate.x - original.x;
+            const float dy = candidate.y - original.y;
+            const float distance = dx * dx + dy * dy;
+            const bool better = !found || priority < best_priority
+                || (priority == best_priority
+                    && (distance < best_distance
+                        || (distance == best_distance
+                            && (candidate.y < best.y
+                                || (candidate.y == best.y
+                                    && candidate.x < best.x)))));
+            if (!better) continue;
+            found = true;
+            best = candidate;
+            best_priority = priority;
+            best_distance = distance;
+        }
+    }
+    if (found) label.rect = best;
+    return found;
+}
+
+void layout_labels(GroundLootView& view, float width, float height,
+    LootLabelObstacleSet& obstacles) noexcept {
+    const std::size_t source_count = view.count;
+    std::size_t retained_count{};
+    for (std::size_t index = 0U; index < source_count; ++index) {
+        GroundLootLabel label = view.labels[index];
+        if (!place_label(label, width, height, obstacles, view.diagnostics)
+                || !obstacles.append(label.rect)) {
+            ++view.diagnostics.label_drop_count;
+            continue;
+        }
+        view.labels[retained_count++] = label;
+    }
+    for (std::size_t index = retained_count; index < source_count; ++index) {
+        view.labels[index] = {};
+    }
+    view.count = retained_count;
 }
 
 }  // namespace
@@ -177,6 +244,16 @@ GroundLootView build_ground_loot_view(
     settings::LootFilterMode mode,
     float width,
     float height) noexcept {
+    LootLabelObstacleSet obstacles{};
+    return build_ground_loot_view(snapshot, mode, width, height, obstacles);
+}
+
+GroundLootView build_ground_loot_view(
+    const dungeon::DungeonSnapshot& snapshot,
+    settings::LootFilterMode mode,
+    float width,
+    float height,
+    LootLabelObstacleSet& obstacles) noexcept {
     GroundLootView view{};
     const std::size_t source_count = (std::min)(
         static_cast<std::size_t>(snapshot.ground_item_count),
@@ -209,7 +286,7 @@ GroundLootView build_ground_loot_view(
         insert_by_ordinal(view, label);
     }
 
-    layout_labels(view, width, height);
+    layout_labels(view, width, height, obstacles);
     return view;
 }
 
