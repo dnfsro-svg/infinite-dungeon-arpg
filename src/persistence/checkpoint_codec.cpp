@@ -263,21 +263,25 @@ bool valid_abyss_checkpoint(
 
 bool valid_last_resolution(
     const checkpoint::LastAbyssResolution& value) noexcept {
-    if (!valid_abyss_rule(static_cast<std::uint8_t>(value.rule)))
+    if (!valid_abyss_rule(static_cast<std::uint8_t>(value.rule))
+            || (value.lifecycle != AbyssLifecycle::none
+                && value.lifecycle != AbyssLifecycle::failed)) {
         return false;
+    }
     if (!value.valid) {
         return value.room_seed == 0U
             && value.rule == AbyssRuleId::none
             && value.total == 0U
             && value.generated == 0U
             && value.claimed == 0U
-            && value.abandoned == 0U;
+            && value.abandoned == 0U
+            && value.lifecycle == AbyssLifecycle::none;
     }
     const auto danger = abyss::danger_for_rule(value.rule);
     if (!danger.has_value())
         return false;
     const auto expected_total = abyss::reward_profile_for(*danger, 1U).item_count;
-    return value.rule != AbyssRuleId::none
+    const bool valid_counts = value.rule != AbyssRuleId::none
         && value.total != 0U
         && value.total <= 3U
         && value.total == expected_total
@@ -286,6 +290,10 @@ bool valid_last_resolution(
         && value.abandoned <= value.total
         && static_cast<std::uint16_t>(value.generated)
             + static_cast<std::uint16_t>(value.abandoned) == value.total;
+    return valid_counts
+        && (value.lifecycle != AbyssLifecycle::failed
+            || (value.generated == 0U && value.claimed == 0U
+                && value.abandoned == value.total));
 }
 
 bool valid_checkpoint_fields(
@@ -325,15 +333,18 @@ DecodeResult error_result(CodecError error) noexcept {
 
 }  // namespace
 
-CodecError encode_checkpoint_into(
+CodecError encode_checkpoint_into_impl(
     const dungeon::checkpoint::DungeonRunState& state,
     std::uint8_t* bytes,
     const std::size_t capacity,
-    std::size_t& written) noexcept {
+    std::size_t& written,
+    const bool v9_durable) noexcept {
     written = 0U;
     if (!valid_checkpoint_fields(state, true)
         || !valid_abyss_checkpoint(state)
         || !valid_last_resolution(state.last_abyss_resolution)
+        || (!v9_durable && state.last_abyss_resolution.lifecycle
+            != abyss::AbyssLifecycle::none)
         || !checkpoint::valid_death_checkpoint_structural(state.death)
         || skills::validate_skill_loadout(state.skill_loadout)
             != skills::SkillLoadoutError::none) {
@@ -406,6 +417,7 @@ CodecError encode_checkpoint_into(
     bytes[147U] = state.last_abyss_resolution.generated;
     bytes[148U] = state.last_abyss_resolution.claimed;
     bytes[149U] = state.last_abyss_resolution.abandoned;
+    bytes[150U] = static_cast<std::uint8_t>(AbyssLifecycle::none);
 
     write_u32(bytes + 152U, static_cast<std::uint32_t>(item_count));
     write_u64(bytes + 156U, state.item_ownership.next_item_sequence);
@@ -523,10 +535,29 @@ CodecError encode_checkpoint_into(
     return CodecError::none;
 }
 
-CodecError verify_checkpoint_v8_readback_fields(
+CodecError encode_checkpoint_into(
+    const dungeon::checkpoint::DungeonRunState& state,
+    std::uint8_t* bytes,
+    const std::size_t capacity,
+    std::size_t& written) noexcept {
+    return encode_checkpoint_into_impl(
+        state, bytes, capacity, written, false);
+}
+
+CodecError encode_checkpoint_v9_durable_into(
+    const dungeon::checkpoint::DungeonRunState& state,
+    std::uint8_t* bytes,
+    const std::size_t capacity,
+    std::size_t& written) noexcept {
+    return encode_checkpoint_into_impl(
+        state, bytes, capacity, written, true);
+}
+
+CodecError verify_checkpoint_readback_fields_impl(
     const std::uint8_t* const bytes,
     const std::size_t size,
-    const dungeon::checkpoint::DungeonRunState& expected) noexcept {
+    const dungeon::checkpoint::DungeonRunState& expected,
+    const bool v9_durable) noexcept {
     const std::size_t item_count = expected.item_ownership.items.size();
     if (bytes == nullptr || item_count > kMaximumCheckpointItemCount
             || item_count > ((std::numeric_limits<std::size_t>::max)()
@@ -537,6 +568,8 @@ CodecError verify_checkpoint_v8_readback_fields(
             || !valid_checkpoint_fields(expected, true)
             || !valid_abyss_checkpoint(expected)
             || !valid_last_resolution(expected.last_abyss_resolution)
+            || (!v9_durable && expected.last_abyss_resolution.lifecycle
+                != abyss::AbyssLifecycle::none)
             || !checkpoint::valid_death_checkpoint_structural(expected.death)
             || skills::validate_skill_loadout(expected.skill_loadout)
                 != skills::SkillLoadoutError::none) {
@@ -617,6 +650,8 @@ CodecError verify_checkpoint_v8_readback_fields(
             || !u8(147U, resolution.generated)
             || !u8(148U, resolution.claimed)
             || !u8(149U, resolution.abandoned)
+            || !u8(150U, static_cast<std::uint8_t>(
+                    abyss::AbyssLifecycle::none))
             || !u32(152U, static_cast<std::uint32_t>(item_count))
             || !u64(156U, expected.item_ownership.next_item_sequence)) {
         return CodecError::invalid_state;
@@ -765,6 +800,22 @@ CodecError verify_checkpoint_v8_readback_fields(
     return CodecError::none;
 }
 
+CodecError verify_checkpoint_v8_readback_fields(
+    const std::uint8_t* const bytes,
+    const std::size_t size,
+    const dungeon::checkpoint::DungeonRunState& expected) noexcept {
+    return verify_checkpoint_readback_fields_impl(
+        bytes, size, expected, false);
+}
+
+CodecError verify_checkpoint_v9_durable_readback_fields(
+    const std::uint8_t* const bytes,
+    const std::size_t size,
+    const dungeon::checkpoint::DungeonRunState& expected) noexcept {
+    return verify_checkpoint_readback_fields_impl(
+        bytes, size, expected, true);
+}
+
 std::optional<EncodedCheckpoint> encode_checkpoint(
     const dungeon::checkpoint::DungeonRunState& state) noexcept {
     const std::size_t item_count = state.item_ownership.items.size();
@@ -786,8 +837,9 @@ std::optional<EncodedCheckpoint> encode_checkpoint(
     return out;
 }
 
-DecodeResult decode_checkpoint(
-    const std::uint8_t* bytes, std::size_t size) noexcept {
+DecodeResult decode_checkpoint_impl(
+    const std::uint8_t* bytes,
+    std::size_t size) noexcept {
     if (bytes == nullptr || size < kCheckpointHeaderSize) {
         return error_result(CodecError::wrong_size);
     }
@@ -1008,6 +1060,7 @@ DecodeResult decode_checkpoint(
         const auto rule = bytes[122U];
         const auto resolution_valid = bytes[136U];
         const auto resolution_rule = bytes[145U];
+        const auto resolution_lifecycle = bytes[150U];
         if (!valid_abyss_lifecycle(lifecycle)
             || !valid_abyss_danger(danger)
             || !valid_abyss_rule(rule)
@@ -1016,7 +1069,10 @@ DecodeResult decode_checkpoint(
         }
         if (resolution_valid > 1U)
             return error_result(CodecError::invalid_boolean);
-        if (bytes[123U] != 0U || bytes[150U] != 0U || bytes[151U] != 0U)
+        const bool valid_resolution_lifecycle = resolution_lifecycle
+            == static_cast<std::uint8_t>(AbyssLifecycle::none);
+        if (bytes[123U] != 0U || !valid_resolution_lifecycle
+                || bytes[151U] != 0U)
             return error_result(CodecError::invalid_state);
 
         state.abyss.lifecycle = static_cast<AbyssLifecycle>(lifecycle);
@@ -1045,6 +1101,8 @@ DecodeResult decode_checkpoint(
         state.last_abyss_resolution.generated = bytes[147U];
         state.last_abyss_resolution.claimed = bytes[148U];
         state.last_abyss_resolution.abandoned = bytes[149U];
+        state.last_abyss_resolution.lifecycle =
+            static_cast<AbyssLifecycle>(resolution_lifecycle);
     }
     if (format == kSixthCheckpointFormatVersion
             || format == kSeventhCheckpointFormatVersion
@@ -1327,6 +1385,11 @@ DecodeResult decode_checkpoint(
         state.skill_loadout = skills::default_skill_loadout();
     result.migrated = format != kCheckpointFormatVersion;
     return result;
+}
+
+DecodeResult decode_checkpoint(
+    const std::uint8_t* bytes, const std::size_t size) noexcept {
+    return decode_checkpoint_impl(bytes, size);
 }
 
 }  // namespace arpg::persistence

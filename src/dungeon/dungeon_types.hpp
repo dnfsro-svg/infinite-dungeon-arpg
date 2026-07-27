@@ -107,9 +107,17 @@ struct DungeonEncounterDiagnostics final {
     bool plan_valid{};
 };
 
+[[nodiscard]] constexpr std::uint32_t required_kills(
+    std::uint32_t initial_monsters) noexcept {
+    return (initial_monsters + 3U) / 4U;
+}
+
 struct RoomProgressState final {
     std::uint32_t initial_monster_count{};
     std::uint32_t defeated_monster_count{};
+    std::uint32_t required_kills{};
+    bool exits_unlocked{};
+    bool full_clear{};
     std::array<std::uint64_t, limits::kRoomEquipmentClaimWords>
         defeated_monster_bits{};
 };
@@ -205,6 +213,7 @@ struct DungeonSnapshot final {
     std::array<std::uint32_t, 4> biases{};
     RoomPhase phase{RoomPhase::locked};
     bool has_active_room{};
+    bool exits_unlocked{};
     std::array<bool, 4> exits_open{};
     std::array<bool, 4> abyss_doors{};
     std::uint8_t wave_index{};
@@ -290,6 +299,8 @@ enum class PendingSaveKind : std::uint8_t {
     death_retreat,
     death_continue,
     health_potion_pickup,
+    room_unlock,
+    abyss_early_exit,
 };
 
 struct PendingSave final {

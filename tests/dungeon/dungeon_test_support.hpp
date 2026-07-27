@@ -669,6 +669,13 @@ struct DungeonSessionTestAccess final {
     }
     static void prepare_room_clear(
         dungeon::DungeonSession& session) noexcept {
+        quiesce_current_room_for_clear_retry(session);
+        if (session.phase_ == dungeon::RoomPhase::faulted) return;
+        session.room_progress_.exits_unlocked = true;
+        session.prepare_room_clear();
+    }
+    static void prepare_room_clear_with_live_targets(
+        dungeon::DungeonSession& session) noexcept {
         session.prepare_room_clear();
     }
     static void offset_pending_abyss_reward_position(
@@ -1026,6 +1033,11 @@ inline bool pending_material_cache_consistent(
 inline void prepare_room_clear(
     dungeon::DungeonSession& session) noexcept {
     DungeonSessionTestAccess::prepare_room_clear(session);
+}
+
+inline void prepare_room_clear_with_live_targets(
+    dungeon::DungeonSession& session) noexcept {
+    DungeonSessionTestAccess::prepare_room_clear_with_live_targets(session);
 }
 
 inline void offset_pending_abyss_reward_position(
@@ -1431,6 +1443,8 @@ inline bool drive_until_cleared(
         if (state.phase == dungeon::RoomPhase::committing
                 && state.pending_save_kind.has_value()
                 && (*state.pending_save_kind
+                        == dungeon::PendingSaveKind::room_unlock
+                    || *state.pending_save_kind
                         == dungeon::PendingSaveKind::room_clear
                     || *state.pending_save_kind
                         == dungeon::PendingSaveKind::abyss_clear)) {

@@ -632,13 +632,22 @@ arpg::test::Failure rollback_keeps_health_but_committed_room_resets_it() noexcep
     const auto reach_awaiting = [](DungeonSession& session) noexcept {
         session.tick({});
         arpg::test::force_defeat_current_wave(session);
-        session.tick({});
-        if (session.snapshot().phase == RoomPhase::committing
-                && session.snapshot().pending_save_kind
-                    == arpg::dungeon::PendingSaveKind::room_clear) {
-            if (!arpg::test::commit_pending(session)) return false;
+        for (int step = 0; step < 8; ++step) {
+            const auto state = session.snapshot();
+            if (state.phase == RoomPhase::awaiting_exit) return true;
+            if (state.phase == RoomPhase::committing) {
+                if (!state.pending_save_kind.has_value()
+                        || (*state.pending_save_kind
+                                != arpg::dungeon::PendingSaveKind::room_unlock
+                            && *state.pending_save_kind
+                                != arpg::dungeon::PendingSaveKind::room_clear)
+                        || !arpg::test::commit_pending(session)) {
+                    return false;
+                }
+                continue;
+            }
+            session.tick({});
         }
-        if (session.snapshot().phase == RoomPhase::cleared) session.tick({});
         return session.snapshot().phase == RoomPhase::awaiting_exit;
     };
 

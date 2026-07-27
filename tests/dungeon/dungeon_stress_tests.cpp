@@ -448,13 +448,17 @@ void tracked_tick(
             || *state.pending_save_kind
                 == arpg::dungeon::PendingSaveKind::room_clear
             || *state.pending_save_kind
+                == arpg::dungeon::PendingSaveKind::room_unlock
+            || *state.pending_save_kind
                 == arpg::dungeon::PendingSaveKind::abyss_reward_materialized);
     const bool protected_abyss_boundary = state.phase == RoomPhase::committing
         && state.pending_save_kind.has_value()
         && (*state.pending_save_kind
                 == arpg::dungeon::PendingSaveKind::abyss_reward_claim
             || *state.pending_save_kind
-                == arpg::dungeon::PendingSaveKind::abyss_abandon);
+                == arpg::dungeon::PendingSaveKind::abyss_abandon
+            || *state.pending_save_kind
+                == arpg::dungeon::PendingSaveKind::abyss_early_exit);
     const bool room_load = phase_before == RoomPhase::transitioning
         && (state.phase == RoomPhase::locked
             || (state.phase == RoomPhase::committing
@@ -606,6 +610,12 @@ bool confirm_pending_save(
             && !saved.pending_save_kind.has_value()
             && saved.commit_generation == expected_generation;
     }
+    if (kind == arpg::dungeon::PendingSaveKind::room_unlock) {
+        return saved.phase == RoomPhase::combat
+            && saved.exits_unlocked
+            && !saved.pending_save_kind.has_value()
+            && saved.commit_generation == expected_generation;
+    }
     if (kind
             == arpg::dungeon::PendingSaveKind::abyss_reward_materialized) {
         return saved.phase == resume_phase
@@ -613,7 +623,8 @@ bool confirm_pending_save(
             && saved.commit_generation == expected_generation;
     }
     return (kind == arpg::dungeon::PendingSaveKind::transition
-            || kind == arpg::dungeon::PendingSaveKind::abyss_abandon)
+            || kind == arpg::dungeon::PendingSaveKind::abyss_abandon
+            || kind == arpg::dungeon::PendingSaveKind::abyss_early_exit)
         && saved.phase == RoomPhase::transitioning
         && !saved.has_pending_transition
         && saved.commit_generation == expected_generation

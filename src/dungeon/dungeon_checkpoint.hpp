@@ -283,6 +283,7 @@ struct LastAbyssResolution final {
     std::uint8_t generated{};
     std::uint8_t claimed{};
     std::uint8_t abandoned{};
+    abyss::AbyssLifecycle lifecycle{abyss::AbyssLifecycle::none};
 };
 
 struct DungeonRunState final {

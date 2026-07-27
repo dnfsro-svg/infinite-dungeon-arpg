@@ -8,6 +8,7 @@
 arpg::test::TestSuite checkpoint_codec_suite() noexcept;
 arpg::test::TestSuite checkpoint_v8_skill_loadout_suite() noexcept;
 arpg::test::TestSuite checkpoint_v9_suite() noexcept;
+arpg::test::TestSuite checkpoint_v9_unlock_suite() noexcept;
 arpg::test::TestSuite death_checkpoint_codec_suite() noexcept;
 arpg::test::TestSuite passive_tree_checkpoint_suite() noexcept;
 arpg::test::TestSuite save_store_suite() noexcept;
@@ -35,7 +36,8 @@ int main() {
         save_commit_worker_suite(),
         dungeon_save_integration_suite(),
         checkpoint_v9_suite(),
+        checkpoint_v9_unlock_suite(),
     };
 
-    return arpg::test::run_suites(suites, 100, "checkpoint v9 persistence");
+    return arpg::test::run_suites(suites, 106, "checkpoint v9 persistence");
 }

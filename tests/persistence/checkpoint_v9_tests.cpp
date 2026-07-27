@@ -1,8 +1,12 @@
 #include "test_framework.hpp"
 
+#include "abyss/abyss_rewards.hpp"
+#include "abyss/abyss_rules.hpp"
 #include "combat/combat_world.hpp"
 #include "dungeon_test_support.hpp"
+#include "dungeon/death_checkpoint.hpp"
 #include "dungeon/dungeon_progression.hpp"
+#include "dungeon/room_generation.hpp"
 #include "dungeon/dungeon_session.hpp"
 #include "dungeon/room_progress_checkpoint.hpp"
 #include "persistence/room_progress_codec.hpp"
@@ -155,6 +159,34 @@ std::uint32_t v9_authority_hash(const std::uint8_t* bytes) noexcept {
         | (static_cast<std::uint32_t>(bytes[31U]) << 24U);
 }
 
+std::uint32_t read_u32(const std::uint8_t* bytes,
+    const std::size_t offset) noexcept {
+    return static_cast<std::uint32_t>(bytes[offset])
+        | (static_cast<std::uint32_t>(bytes[offset + 1U]) << 8U)
+        | (static_cast<std::uint32_t>(bytes[offset + 2U]) << 16U)
+        | (static_cast<std::uint32_t>(bytes[offset + 3U]) << 24U);
+}
+
+void write_u32(std::uint8_t* bytes, const std::size_t offset,
+    const std::uint32_t value) noexcept {
+    for (std::size_t index = 0U; index < sizeof(value); ++index) {
+        bytes[offset + index] = static_cast<std::uint8_t>(
+            value >> (index * 8U));
+    }
+}
+
+void refresh_v9_envelope(std::uint8_t* bytes,
+    const std::size_t size) noexcept {
+    const auto payload_size = static_cast<std::uint32_t>(
+        size - persistence::kCheckpointHeaderSize);
+    write_u32(bytes, 24U, payload_size);
+    auto checksum = persistence::crc32_update(
+        0U, bytes + 8U, 20U);
+    checksum = persistence::crc32_update(checksum,
+        bytes + persistence::kCheckpointHeaderSize, payload_size);
+    write_u32(bytes, 28U, checksum);
+}
+
 bool ten_thousand_tick_reload_trace_matches() noexcept {
     constexpr std::uint64_t kRootSeed = 0x51A7E10ADULL;
     constexpr std::uint64_t kFollowingTicks = 10000U;
@@ -299,6 +331,89 @@ bool make_cleared_abyss_fixture(
     return true;
 }
 
+combat::CombatDeathSnapshot minimal_death_snapshot() noexcept {
+    combat::CombatDeathSnapshot result{};
+    result.source.kind = combat::PlayerDamageSourceKind::unknown;
+    result.source.monster = combat::MonsterId::count;
+    result.raw_damage = 20U;
+    result.health_loss = 20U;
+    result.final_damage = 20U;
+    result.recent_damage[0U] = 20U;
+    result.defense.max_hp = 100;
+    result.defense.damage_reduction_cap.fill(7500);
+    return result;
+}
+
+bool make_pending_death_fixture(
+    dungeon::checkpoint::SaveCheckpointSlot& slot,
+    const bool death_was_abyss,
+    const bool retain_failed_abyss = false) noexcept {
+    dungeon::checkpoint::clear_save_checkpoint_slot(slot);
+    dungeon::DungeonRules rules{};
+    auto state = dungeon::make_initial_run_state(0x51A6E11U, rules).state;
+    state.current_room.index = 17U;
+    state.current_room.seed = 0x150U;
+    state.current_room.depth = 9U;
+    state.current_room.floor_room_index = 7U;
+    state.current_room.entry = dungeon::EntrySide::left;
+    state.current_room.ecology = dungeon::DungeonElement::lightning;
+    state.current_room.has_hole = true;
+    state.current_room.is_abyss = death_was_abyss;
+    state.commit_generation = 11U;
+    state.death_sequence = 3U;
+    state.biases = {};
+
+    const auto target = dungeon::make_death_retreat_target(state, 4U, rules);
+    if (target.fault != dungeon::DungeonFault::none) return false;
+    state.death = dungeon::make_death_checkpoint(
+        minimal_death_snapshot(), state.current_room, target.room);
+
+    if (death_was_abyss || retain_failed_abyss) {
+        const auto selection = abyss::select_abyss_rule(
+            state.current_room.seed, state.current_room.depth);
+        if (!selection.has_value()) return false;
+        state.abyss.lifecycle = abyss::AbyssLifecycle::failed;
+        state.abyss.danger = selection->danger;
+        state.abyss.rule = selection->rule;
+        state.abyss.rules_version = selection->rules_version;
+        const auto total = abyss::reward_profile_for(
+            selection->danger, 1U).item_count;
+        state.last_abyss_resolution = {
+            true, state.current_room.seed, selection->rule,
+            total, 0U, 0U, total,
+            death_was_abyss ? abyss::AbyssLifecycle::failed
+                            : abyss::AbyssLifecycle::none};
+    }
+
+    ++state.commit_generation;
+    ++state.death_sequence;
+    state.current_room.is_abyss = false;
+    state.last_transition = dungeon::TransitionKind::death_retreat;
+    state.last_direction = dungeon::ExitDirection::none;
+    slot.state = std::move(state);
+    slot.persistence_revision = slot.state.commit_generation;
+    return dungeon::checkpoint::valid_room_progress_checkpoint_structural(
+        slot.room_progress, slot.state);
+}
+
+bool encode_legacy_v9_without_lifecycle(
+    const dungeon::checkpoint::SaveCheckpointSlot& source,
+    std::uint8_t* const bytes,
+    const std::size_t capacity,
+    std::size_t& written) noexcept {
+    if (persistence::encode_checkpoint_v9_into(
+            source, bytes, capacity, written)
+            != persistence::CodecError::none
+            || written <= persistence::kCheckpointHeaderSize
+            || bytes[written - 1U] != static_cast<std::uint8_t>(
+                source.state.last_abyss_resolution.lifecycle)) {
+        return false;
+    }
+    --written;
+    refresh_v9_envelope(bytes, written);
+    return true;
+}
+
 test::Failure v9_round_trip_preserves_large_room_fields() noexcept {
     std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> source{
         new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
@@ -391,6 +506,378 @@ test::Failure v9_rejects_crc_and_length_corruption() noexcept {
     ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
         bytes.get(), written, *decoded, migrated)
         == persistence::CodecError::bad_payload_length);
+    return {};
+}
+
+test::Failure v9_partial_unlock_round_trip_restores_combat() noexcept {
+    dungeon::DungeonRules rules{};
+    const auto initial = dungeon::make_initial_run_state(0x25100CULL, rules);
+    ARPG_REQUIRE(initial.fault == dungeon::DungeonFault::none);
+    dungeon::DungeonSession session{rules, initial.state};
+    session.tick({});
+    test::set_player_health(session, 1000000, 1000000);
+    drain_events(session);
+    const std::uint32_t required = dungeon::required_kills(
+        session.snapshot().initial_monster_count);
+    for (std::uint32_t ordinal = 0U; ordinal < required; ++ordinal) {
+        ARPG_REQUIRE(test::relay_defeated(session, 0U,
+            static_cast<combat::MonsterOrdinal>(ordinal),
+            {20.0F, 20.0F, 0.0F}, true,
+            combat::MonsterId::fire_bomber,
+            static_cast<std::uint16_t>(ordinal), 0U, false));
+    }
+    session.tick({});
+    const dungeon::PendingSave* const pending = session.pending_save_view();
+    ARPG_REQUIRE(pending != nullptr);
+    ARPG_REQUIRE(pending->kind == dungeon::PendingSaveKind::room_unlock);
+    session.resolve_pending_save({dungeon::SaveDisposition::committed,
+        pending->expected_generation, pending->next_state, pending->kind});
+    ARPG_REQUIRE(session.snapshot().phase == dungeon::RoomPhase::combat);
+    ARPG_REQUIRE(session.snapshot().exits_unlocked);
+
+    std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> saved{
+        new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> decoded{
+        new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<std::uint8_t[]> bytes{
+        new (std::nothrow) std::uint8_t[
+            persistence::kMaximumEncodedCheckpointBytes]};
+    ARPG_REQUIRE(saved != nullptr && decoded != nullptr && bytes != nullptr);
+    ARPG_REQUIRE(session.capture_save_checkpoint(*saved, 55U));
+    ARPG_REQUIRE(saved->room_progress.exits_unlocked);
+    ARPG_REQUIRE(!saved->room_progress.full_clear);
+    std::size_t written{};
+    ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(*saved, bytes.get(),
+        persistence::kMaximumEncodedCheckpointBytes, written)
+        == persistence::CodecError::none);
+    ARPG_REQUIRE(persistence::verify_checkpoint_v9_readback(
+        bytes.get(), written, *saved, bytes.get(), written)
+        == persistence::CodecError::none);
+    bool migrated = true;
+    ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
+        bytes.get(), written, *decoded, migrated)
+        == persistence::CodecError::none);
+    ARPG_REQUIRE(!migrated);
+    ARPG_REQUIRE(decoded->room_progress.exits_unlocked);
+    ARPG_REQUIRE(!decoded->room_progress.full_clear);
+
+    dungeon::DungeonSession reloaded{rules, decoded->state};
+    test::set_player_health(reloaded, 1000000, 1000000);
+    ARPG_REQUIRE(reloaded.restore_room_progress_checkpoint(*decoded));
+    const auto restored = reloaded.snapshot();
+    ARPG_REQUIRE(restored.phase == dungeon::RoomPhase::combat);
+    ARPG_REQUIRE(restored.exits_unlocked);
+    ARPG_REQUIRE(restored.remaining_targets > 0U);
+    for (const bool open : restored.exits_open) ARPG_REQUIRE(open);
+    return {};
+}
+
+test::Failure v9_resolution_lifecycle_tail_is_backward_compatible() noexcept {
+    std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> source{
+        new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> decoded{
+        new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<std::uint8_t[]> bytes{
+        new (std::nothrow) std::uint8_t[
+            persistence::kMaximumEncodedCheckpointBytes]};
+    ARPG_REQUIRE(source != nullptr && decoded != nullptr && bytes != nullptr);
+    ARPG_REQUIRE(make_fixture(*source));
+
+    std::size_t written{};
+    const auto encode = [&]() noexcept {
+        return persistence::encode_checkpoint_v9_into(*source, bytes.get(),
+            persistence::kMaximumEncodedCheckpointBytes, written);
+    };
+    ARPG_REQUIRE(encode() == persistence::CodecError::none);
+    ARPG_REQUIRE(bytes[written - 1U]
+        == static_cast<std::uint8_t>(abyss::AbyssLifecycle::none));
+
+    const std::size_t old_v9_size = written - 1U;
+    refresh_v9_envelope(bytes.get(), old_v9_size);
+    bool migrated = true;
+    ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
+        bytes.get(), old_v9_size, *decoded, migrated)
+        == persistence::CodecError::none);
+    ARPG_REQUIRE(!migrated);
+    ARPG_REQUIRE(decoded->state.last_abyss_resolution.lifecycle
+        == abyss::AbyssLifecycle::none);
+    ARPG_REQUIRE(persistence::verify_checkpoint_v9_readback(
+        bytes.get(), old_v9_size, *source, bytes.get(), old_v9_size)
+        == persistence::CodecError::none);
+
+    ARPG_REQUIRE(encode() == persistence::CodecError::none);
+    const std::size_t truncated_size = written - 2U;
+    refresh_v9_envelope(bytes.get(), truncated_size);
+    ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
+        bytes.get(), truncated_size, *decoded, migrated)
+        == persistence::CodecError::bad_payload_length);
+
+    ARPG_REQUIRE(encode() == persistence::CodecError::none);
+    bytes[written] = 0U;
+    refresh_v9_envelope(bytes.get(), written + 1U);
+    ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
+        bytes.get(), written + 1U, *decoded, migrated)
+        == persistence::CodecError::bad_payload_length);
+
+    ARPG_REQUIRE(encode() == persistence::CodecError::none);
+    bytes[written - 1U] = 0xFEU;
+    refresh_v9_envelope(bytes.get(), written);
+    ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
+        bytes.get(), written, *decoded, migrated)
+        == persistence::CodecError::invalid_enum);
+    return {};
+}
+
+test::Failure v9_legacy_abyss_death_restores_and_rewrites_failed() noexcept {
+    std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> source{
+        new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> decoded{
+        new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<std::uint8_t[]> bytes{
+        new (std::nothrow) std::uint8_t[
+            persistence::kMaximumEncodedCheckpointBytes]};
+    ARPG_REQUIRE(source != nullptr && decoded != nullptr && bytes != nullptr);
+    ARPG_REQUIRE(make_pending_death_fixture(*source, true));
+
+    const auto historical_resolution = source->state.last_abyss_resolution;
+    std::size_t old_v9_size{};
+    ARPG_REQUIRE(encode_legacy_v9_without_lifecycle(
+        *source, bytes.get(), persistence::kMaximumEncodedCheckpointBytes,
+        old_v9_size));
+    bool migrated = true;
+    ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
+        bytes.get(), old_v9_size, *decoded, migrated)
+        == persistence::CodecError::none);
+    ARPG_REQUIRE(!migrated);
+    dungeon::DungeonSession restored{dungeon::DungeonRules{}, decoded->state};
+    const auto restored_snapshot = restored.snapshot();
+    if (decoded->state.last_abyss_resolution.lifecycle
+                == abyss::AbyssLifecycle::none
+            && restored_snapshot.phase == dungeon::RoomPhase::faulted
+            && restored_snapshot.diagnostics.fault
+                == dungeon::DungeonFault::death_sequence_mismatch) {
+        return {"legacy V9 abyss death kept lifecycle none and restore faulted",
+            __FILE__, __LINE__};
+    }
+    ARPG_REQUIRE(decoded->state.last_abyss_resolution.lifecycle
+        == abyss::AbyssLifecycle::failed);
+    ARPG_REQUIRE(restored_snapshot.phase == dungeon::RoomPhase::death_pending);
+    ARPG_REQUIRE(restored_snapshot.diagnostics.fault
+        == dungeon::DungeonFault::none);
+
+    std::size_t rewritten_size{};
+    ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(
+        *decoded, bytes.get(), persistence::kMaximumEncodedCheckpointBytes,
+        rewritten_size) == persistence::CodecError::none);
+    ARPG_REQUIRE(rewritten_size == old_v9_size + 1U);
+    ARPG_REQUIRE(bytes[rewritten_size - 1U] == static_cast<std::uint8_t>(
+        abyss::AbyssLifecycle::failed));
+
+    dungeon::checkpoint::clear_save_checkpoint_slot(*source);
+    ARPG_REQUIRE(make_fixture(*source));
+    source->state.last_abyss_resolution = historical_resolution;
+    source->state.last_abyss_resolution.lifecycle =
+        abyss::AbyssLifecycle::none;
+    ARPG_REQUIRE(encode_legacy_v9_without_lifecycle(
+        *source, bytes.get(), persistence::kMaximumEncodedCheckpointBytes,
+        old_v9_size));
+    ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
+        bytes.get(), old_v9_size, *decoded, migrated)
+        == persistence::CodecError::none);
+    ARPG_REQUIRE(!migrated);
+    ARPG_REQUIRE(decoded->state.last_abyss_resolution.lifecycle
+        == abyss::AbyssLifecycle::none);
+
+    ARPG_REQUIRE(make_pending_death_fixture(*source, false, true));
+    ARPG_REQUIRE(source->state.last_abyss_resolution.lifecycle
+        == abyss::AbyssLifecycle::none);
+    ARPG_REQUIRE(encode_legacy_v9_without_lifecycle(
+        *source, bytes.get(), persistence::kMaximumEncodedCheckpointBytes,
+        old_v9_size));
+    ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
+        bytes.get(), old_v9_size, *decoded, migrated)
+        == persistence::CodecError::none);
+    ARPG_REQUIRE(!migrated);
+    ARPG_REQUIRE(decoded->state.last_abyss_resolution.lifecycle
+        == abyss::AbyssLifecycle::none);
+    dungeon::DungeonSession ordinary_restored{
+        dungeon::DungeonRules{}, decoded->state};
+    ARPG_REQUIRE(ordinary_restored.snapshot().phase
+        == dungeon::RoomPhase::death_pending);
+    return {};
+}
+
+test::Failure v9_started_abyss_early_exit_round_trip(
+    bool expect_next_abyss) noexcept {
+    dungeon::DungeonRules rules{};
+    dungeon::DungeonRunState state{};
+    dungeon::ExitDirection direction = dungeon::ExitDirection::none;
+    bool found = false;
+    for (std::uint64_t seed = 1U; seed < 100000U && !found; ++seed) {
+        if (!abyss::is_abyss_roll(seed)) continue;
+        state = dungeon::make_initial_run_state(0xAB155EEDULL, rules).state;
+        state.current_room.seed = seed;
+        state.current_room.depth = 40U;
+        state.current_room.entry = dungeon::EntrySide::left;
+        state.current_room.ecology = dungeon::DungeonElement::water;
+        state.current_room.has_hole = true;
+        state.current_room.is_abyss = true;
+        state.last_transition = dungeon::TransitionKind::door;
+        state.last_direction = dungeon::ExitDirection::right;
+        const auto selection = abyss::select_abyss_rule(seed, 40U);
+        if (!selection.has_value()) continue;
+        state.abyss.lifecycle = abyss::AbyssLifecycle::available;
+        state.abyss.danger = selection->danger;
+        state.abyss.rule = selection->rule;
+        state.abyss.rules_version = selection->rules_version;
+        const auto preview = dungeon::preview_abyss_doors(state.current_room);
+        constexpr std::array<dungeon::ExitDirection, 4> directions{{
+            dungeon::ExitDirection::up,
+            dungeon::ExitDirection::down,
+            dungeon::ExitDirection::left,
+            dungeon::ExitDirection::right,
+        }};
+        for (std::size_t index = 0U; index < preview.size(); ++index) {
+            if (preview[index] == expect_next_abyss) {
+                direction = directions[index];
+                found = true;
+                break;
+            }
+        }
+    }
+    ARPG_REQUIRE(found);
+    const std::uint64_t failed_room_seed = state.current_room.seed;
+
+    dungeon::DungeonSession session{rules, state};
+    ARPG_REQUIRE(session.pending_save_view() != nullptr);
+    ARPG_REQUIRE(session.pending_save_view()->kind
+        == dungeon::PendingSaveKind::abyss_start);
+    ARPG_REQUIRE(test::commit_pending(session));
+    session.tick({});
+    test::set_player_health(session, 1000000, 1000000);
+    drain_events(session);
+    const std::uint32_t required = dungeon::required_kills(
+        session.snapshot().initial_monster_count);
+    for (std::uint32_t ordinal = 0U; ordinal < required; ++ordinal) {
+        ARPG_REQUIRE(test::relay_defeated(session, 0U,
+            static_cast<combat::MonsterOrdinal>(ordinal),
+            {20.0F, 20.0F, 0.0F}, true,
+            combat::MonsterId::fire_bomber,
+            static_cast<std::uint16_t>(ordinal), 0U, false));
+    }
+    session.tick({});
+    ARPG_REQUIRE(session.pending_save_view() != nullptr);
+    ARPG_REQUIRE(session.pending_save_view()->kind
+        == dungeon::PendingSaveKind::room_unlock);
+    ARPG_REQUIRE(test::commit_pending(session));
+    test::attempt_exit(session, direction);
+    const dungeon::PendingSave* const pending = session.pending_save_view();
+    ARPG_REQUIRE(pending != nullptr);
+    ARPG_REQUIRE(pending->kind
+        == dungeon::PendingSaveKind::abyss_early_exit);
+
+    std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> saved{
+        new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> decoded{
+        new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<std::uint8_t[]> bytes{
+        new (std::nothrow) std::uint8_t[
+            persistence::kMaximumEncodedCheckpointBytes]};
+    ARPG_REQUIRE(saved != nullptr && decoded != nullptr && bytes != nullptr);
+    saved->state.item_ownership.items.reserve(
+        pending->next_state.item_ownership.items.size());
+    ARPG_REQUIRE(session.capture_save_checkpoint(
+        *saved, 56U, &pending->next_state));
+    ARPG_REQUIRE(saved->room_progress.lifecycle
+        == dungeon::checkpoint::RoomProgressLifecycle::none);
+    std::size_t written{};
+    ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(*saved, bytes.get(),
+        persistence::kMaximumEncodedCheckpointBytes, written)
+        == persistence::CodecError::none);
+    const std::uint32_t durable_size = read_u32(bytes.get(), 32U);
+    const std::uint8_t* const durable = bytes.get() + 36U;
+    ARPG_REQUIRE(durable_size > 150U);
+    ARPG_REQUIRE(durable[150U] == 0U);
+    const auto public_v8 = persistence::decode_checkpoint(
+        durable, durable_size);
+    ARPG_REQUIRE(public_v8.error == persistence::CodecError::none);
+    ARPG_REQUIRE(public_v8.state.last_abyss_resolution.lifecycle
+        == abyss::AbyssLifecycle::none);
+    ARPG_REQUIRE(bytes[written - 1U]
+        == static_cast<std::uint8_t>(abyss::AbyssLifecycle::failed));
+    ARPG_REQUIRE(persistence::verify_checkpoint_v9_readback(
+        bytes.get(), written, *saved, bytes.get(), written)
+        == persistence::CodecError::none);
+    bool migrated = true;
+    ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
+        bytes.get(), written, *decoded, migrated)
+        == persistence::CodecError::none);
+    ARPG_REQUIRE(!migrated);
+    ARPG_REQUIRE(decoded->state.current_room.is_abyss == expect_next_abyss);
+    ARPG_REQUIRE(decoded->state.abyss.lifecycle
+        == (expect_next_abyss ? abyss::AbyssLifecycle::available
+                              : abyss::AbyssLifecycle::none));
+    ARPG_REQUIRE(decoded->state.last_abyss_resolution.valid);
+    ARPG_REQUIRE(decoded->state.last_abyss_resolution.lifecycle
+        == abyss::AbyssLifecycle::failed);
+    ARPG_REQUIRE(decoded->state.last_abyss_resolution.room_seed
+        == failed_room_seed);
+    ARPG_REQUIRE(decoded->state.last_abyss_resolution.generated == 0U);
+    ARPG_REQUIRE(decoded->state.last_abyss_resolution.claimed == 0U);
+    ARPG_REQUIRE(decoded->state.last_abyss_resolution.abandoned
+        == decoded->state.last_abyss_resolution.total);
+    std::size_t v8_written{};
+    ARPG_REQUIRE(persistence::encode_checkpoint_into(
+        saved->state, bytes.get(), persistence::kMaximumEncodedCheckpointBytes,
+        v8_written) == persistence::CodecError::invalid_state);
+    saved->state.last_abyss_resolution.lifecycle =
+        abyss::AbyssLifecycle::cleared;
+    std::size_t rejected_written{};
+    ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(
+        *saved, bytes.get(), persistence::kMaximumEncodedCheckpointBytes,
+        rejected_written) == persistence::CodecError::invalid_state);
+    return {};
+}
+
+test::Failure v9_started_abyss_early_exit_to_normal_round_trip() noexcept {
+    return v9_started_abyss_early_exit_round_trip(false);
+}
+
+test::Failure v9_started_abyss_early_exit_to_abyss_round_trip() noexcept {
+    return v9_started_abyss_early_exit_round_trip(true);
+}
+
+test::Failure v8_reserved_resolution_lifecycle_remains_zero() noexcept {
+    dungeon::DungeonRules rules{};
+    const auto initial = dungeon::make_initial_run_state(0x25100CULL, rules);
+    ARPG_REQUIRE(initial.fault == dungeon::DungeonFault::none);
+    std::unique_ptr<std::uint8_t[]> bytes{
+        new (std::nothrow) std::uint8_t[
+            persistence::kMaximumEncodedCheckpointBytes]};
+    ARPG_REQUIRE(bytes != nullptr);
+    std::size_t written{};
+    ARPG_REQUIRE(persistence::encode_checkpoint_into(
+        initial.state, bytes.get(), persistence::kMaximumEncodedCheckpointBytes,
+        written) == persistence::CodecError::none);
+    ARPG_REQUIRE(written > 150U);
+    ARPG_REQUIRE(bytes[150U] == 0U);
+    const auto decoded = persistence::decode_checkpoint(bytes.get(), written);
+    ARPG_REQUIRE(decoded.error == persistence::CodecError::none);
+    ARPG_REQUIRE(decoded.state.last_abyss_resolution.lifecycle
+        == abyss::AbyssLifecycle::none);
+
+    bytes[150U] = static_cast<std::uint8_t>(abyss::AbyssLifecycle::failed);
+    auto checksum = persistence::crc32_update(
+        0U, bytes.get() + 8U, 20U);
+    checksum = persistence::crc32_update(
+        checksum, bytes.get() + persistence::kCheckpointHeaderSize,
+        written - persistence::kCheckpointHeaderSize);
+    for (std::size_t index = 0U; index < sizeof(checksum); ++index) {
+        bytes[28U + index] = static_cast<std::uint8_t>(
+            checksum >> (index * 8U));
+    }
+    ARPG_REQUIRE(persistence::decode_checkpoint(bytes.get(), written).error
+        == persistence::CodecError::invalid_state);
     return {};
 }
 
@@ -490,8 +977,27 @@ constexpr test::TestCase kCases[] = {
     {"v9 structural validation", &structural_validation_rejects_identity_and_order_faults},
 };
 
+constexpr test::TestCase kUnlockCases[] = {
+    {"v9 partial unlock round trip restores combat",
+        &v9_partial_unlock_round_trip_restores_combat},
+    {"v9 started abyss early exit to normal round trip",
+        &v9_started_abyss_early_exit_to_normal_round_trip},
+    {"v9 started abyss early exit to abyss round trip",
+        &v9_started_abyss_early_exit_to_abyss_round_trip},
+    {"v8 reserved resolution lifecycle remains zero",
+        &v8_reserved_resolution_lifecycle_remains_zero},
+    {"v9 resolution lifecycle tail is backward compatible",
+        &v9_resolution_lifecycle_tail_is_backward_compatible},
+    {"v9 legacy abyss death restores and rewrites failed",
+        &v9_legacy_abyss_death_restores_and_rewrites_failed},
+};
+
 }  // namespace
 
 arpg::test::TestSuite checkpoint_v9_suite() noexcept {
     return arpg::test::make_suite("checkpoint_v9", kCases);
+}
+
+arpg::test::TestSuite checkpoint_v9_unlock_suite() noexcept {
+    return arpg::test::make_suite("checkpoint_v9_unlock", kUnlockCases);
 }

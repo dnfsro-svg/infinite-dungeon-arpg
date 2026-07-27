@@ -315,6 +315,8 @@ bool same_run_state(
             == rhs.last_abyss_resolution.claimed
         && lhs.last_abyss_resolution.abandoned
             == rhs.last_abyss_resolution.abandoned
+        && lhs.last_abyss_resolution.lifecycle
+            == rhs.last_abyss_resolution.lifecycle
         && lhs.progression.level == rhs.progression.level
         && lhs.progression.experience == rhs.progression.experience
         && lhs.progression.earned_passive_points
