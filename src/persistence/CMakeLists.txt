@@ -1,5 +1,7 @@
 add_library(arpg_persistence STATIC
     checkpoint_codec.cpp
+    room_progress_codec.cpp
+    save_commit_worker.cpp
     save_paths.cpp
     save_slot.cpp
     save_transaction.cpp

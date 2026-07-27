@@ -20,11 +20,18 @@ bool equipped(const items::EquipmentState& equipment,
 }  // namespace
 
 DungeonSnapshot DungeonSession::snapshot() const noexcept {
-    return build_dungeon_snapshot();
+    DungeonSnapshot result{};
+    build_dungeon_snapshot(result);
+    return result;
 }
 
-DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
-    DungeonSnapshot result{};
+void DungeonSession::snapshot(DungeonSnapshot& destination) const noexcept {
+    build_dungeon_snapshot(destination);
+}
+
+void DungeonSession::build_dungeon_snapshot(
+    DungeonSnapshot& result) const noexcept {
+    result = {};
     result.session_tick = session_tick_;
     result.root_seed = stable_state_.root_seed;
     result.commit_generation = stable_state_.commit_generation;
@@ -200,7 +207,6 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
     result.pending_room_experience = pending_room_experience_;
     result.last_room_experience = last_room_experience_;
     result.last_levels_gained = last_levels_gained_;
-    return result;
 }
 
 }  // namespace arpg::dungeon

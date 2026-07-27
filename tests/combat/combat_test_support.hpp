@@ -8,6 +8,22 @@
 namespace arpg::test {
 
 struct CombatWorldTestAccess final {
+    [[nodiscard]] static combat::MonsterHandle first_active_monster(
+        combat::CombatWorld& world) noexcept {
+        for (std::size_t index = 0U; index < world.monsters_.slots_.size();
+                ++index) {
+            const auto& runtime = world.monsters_.slots_[index];
+            if (runtime.active) return {
+                static_cast<std::uint16_t>(index), runtime.generation};
+        }
+        return {};
+    }
+
+    static void set_player_hit_stop(
+        combat::CombatWorld& world, std::uint16_t ticks) noexcept {
+        world.player_.hit_stop_ticks = ticks;
+    }
+
     [[nodiscard]] static combat::MonsterOrdinal monster_ordinal(
         combat::CombatWorld& world,
         combat::MonsterHandle handle) noexcept {

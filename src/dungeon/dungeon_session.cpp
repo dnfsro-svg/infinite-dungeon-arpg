@@ -7,6 +7,7 @@
 #include "dungeon/room_environment.hpp"
 #include "dungeon/room_monster_plan_builder.hpp"
 #include "dungeon/room_navigation.hpp"
+#include "dungeon/room_progress_checkpoint.hpp"
 #include "abyss/abyss_rewards.hpp"
 #include "abyss/abyss_rules.hpp"
 #include "combat/combat_scaling.hpp"
@@ -299,7 +300,7 @@ void DungeonSession::tick(
     if (retry_health_potion_abyss_clear_before_combat_) {
         retry_health_potion_abyss_clear_before_combat_ = false;
         if (phase_ != RoomPhase::combat || pending_save_.has_value()
-                || !combat_.has_value()) {
+                || !combat_.has_value() || remaining_targets() != 0U) {
             enter_fault(DungeonFault::save_receipt_mismatch);
         } else {
             prepare_room_clear();
@@ -470,6 +471,319 @@ DungeonSession::try_pop_combat_event() noexcept {
     return combat_events_.try_pop();
 }
 
+bool DungeonSession::capture_save_checkpoint(
+    checkpoint::SaveCheckpointSlot& destination,
+    const std::uint64_t persistence_revision,
+    const DungeonRunState* const durable_override) const noexcept {
+    if (persistence_revision == 0U) return false;
+    const DungeonRunState& durable = durable_override == nullptr
+        ? stable_state_ : *durable_override;
+    if (!copy_run_state_reusing_items(destination.state, durable)) return false;
+    destination.persistence_revision = persistence_revision;
+    checkpoint::clear_room_progress_checkpoint(destination.room_progress);
+
+    const auto& durable_room = durable.current_room;
+    const auto& stable_room = stable_state_.current_room;
+    const bool same_room_geometry = durable_room.index == stable_room.index
+        && durable_room.seed == stable_room.seed
+        && durable_room.depth == stable_room.depth
+        && durable_room.floor_room_index == stable_room.floor_room_index
+        && durable_room.entry == stable_room.entry
+        && durable_room.ecology == stable_room.ecology
+        && durable_room.has_hole == stable_room.has_hole;
+    const bool same_room = same_room_geometry
+        && durable_room.is_abyss == stable_room.is_abyss;
+    const bool death_room = same_room_geometry
+        && durable.death.lifecycle
+            == checkpoint::DeathLifecycle::pending_continue
+        && combat_.has_value() && combat_->death_snapshot().has_value()
+        && durable.death.death_was_abyss == stable_room.is_abyss;
+    if ((!same_room && !death_room)
+            || !combat_.has_value() || room_environment_ == nullptr) {
+        return checkpoint::valid_room_progress_checkpoint_structural(
+            destination.room_progress, destination.state);
+    }
+    const combat::RoomMonsterField* const field =
+        combat_->room_monster_field();
+    if (field == nullptr) return false;
+
+    checkpoint::RoomProgressCheckpoint& room = destination.room_progress;
+    room.lifecycle = combat_->death_snapshot().has_value()
+        ? checkpoint::RoomProgressLifecycle::death_pending
+        : checkpoint::RoomProgressLifecycle::active;
+    room.room_index = durable.current_room.index;
+    room.room_seed = durable.current_room.seed;
+    room.monster_generator_version = field->plan().generator_version;
+    room.monster_blueprint_hash = field->plan().blueprint_hash;
+    room.environment_generator_version = room_environment_->generator_version;
+    room.environment_blueprint_hash = room_environment_->blueprint_hash;
+    room.generated_monsters = room_progress_.initial_monster_count;
+    room.defeated_monsters = room_progress_.defeated_monster_count;
+    room.required_kills = (room.generated_monsters + 3U) / 4U;
+    room.defeat_bits = room_progress_.defeated_monster_bits;
+    const bool full_clear_pending = phase_ == RoomPhase::committing
+        && pending_save_.has_value()
+        && (pending_save_->kind == PendingSaveKind::room_clear
+            || pending_save_->kind == PendingSaveKind::abyss_clear);
+    room.exits_unlocked = phase_ == RoomPhase::cleared
+        || phase_ == RoomPhase::awaiting_exit
+        || full_clear_pending
+        || (phase_ == RoomPhase::committing && pending_save_.has_value()
+            && (pending_save_->resume_phase == RoomPhase::cleared
+                || pending_save_->resume_phase == RoomPhase::awaiting_exit));
+    room.full_clear = room.defeated_monsters == room.generated_monsters;
+    room.reward_committed = room.full_clear && room.exits_unlocked;
+    for (std::size_t index = 0U;
+            index < durable.item_ownership.claimed_drop_bits.size(); ++index) {
+        room.equipment_claim_bits[index] =
+            durable.item_ownership.claimed_drop_bits[index];
+    }
+    for (std::uint16_t ordinal = 0U;
+            ordinal < durable.item_ownership.material_claimed_drop_bits.size()
+                * 64U; ++ordinal) {
+        if (bit_is_set(
+                durable.item_ownership.material_claimed_drop_bits, ordinal)) {
+            set_bit(room.secondary_claim_bits,
+                checkpoint_material_ordinal(ordinal));
+            if ((ordinal & 1U) != 0U
+                    && ordinal < kGroundHealthPotionCapacity * 2U) {
+                set_bit(room.secondary_claim_bits, ordinal);
+            }
+        }
+    }
+    const bool post_mutation = durable_override != nullptr
+        && pending_save_.has_value()
+        && durable_override == &pending_save_->next_state;
+    const combat::PlayerCombatBuild* const post_build = post_mutation
+            && pending_item_build_.has_value()
+        ? &*pending_item_build_ : nullptr;
+    const std::uint8_t potion_count = post_mutation
+            && pending_save_->health_potion_claim.has_value()
+        ? pending_save_->health_potion_claim->count : 0U;
+    const bool clear_abyss = post_mutation
+        && pending_save_->kind == PendingSaveKind::abyss_clear;
+    if (!combat_->capture_room_checkpoint_post_mutation(room.combat,
+            post_build, potion_count, kHealthPotionRestoreBp, clear_abyss)) {
+        return false;
+    }
+
+    std::uint16_t previous_equipment = 0U;
+    bool have_equipment = false;
+    for (std::uint16_t ground_index = 0U;
+            ground_index < ground_items_.size(); ++ground_index) {
+        const GroundItem* ground_ptr = &ground_items_[ground_index];
+        if (!ground_ptr->active && post_mutation
+                && pending_abyss_reward_.has_value()
+                && pending_abyss_reward_->ground_index == ground_index) {
+            ground_ptr = &pending_abyss_reward_->ground;
+        }
+        const GroundItem& ground = *ground_ptr;
+        const bool abyss_claimed = ground.source
+                == GroundItemSource::abyss_chest
+            && ground.abyss_reward_ordinal < 3U
+            && (durable.abyss.claimed_mask
+                & static_cast<std::uint8_t>(
+                    1U << ground.abyss_reward_ordinal)) != 0U;
+        if (!ground.active
+                || bit_is_set(room.equipment_claim_bits,
+                    ground.drop_ordinal)
+                || abyss_claimed) continue;
+        if (room.equipment_ground_count >= room.equipment_ground.size()
+                || (have_equipment
+                    && ground.drop_ordinal <= previous_equipment)) {
+            return false;
+        }
+        auto& packed = room.equipment_ground[room.equipment_ground_count++];
+        packed.ordinal = ground.drop_ordinal;
+        packed.source = static_cast<std::uint8_t>(ground.source);
+        packed.reward_ordinal = ground.abyss_reward_ordinal;
+        packed.position = ground.position;
+        packed.item = ground.item;
+        previous_equipment = ground.drop_ordinal;
+        have_equipment = true;
+    }
+
+    for (std::uint16_t canonical = 0U;
+            canonical < checkpoint::kRoomSecondaryGroundCapacity; ++canonical) {
+        if (bit_is_set(room.secondary_claim_bits, canonical)) continue;
+        const bool abyss_material = canonical
+            >= kCheckpointAbyssSecondaryOrdinalBegin;
+        if (abyss_material || (canonical & 1U) == 0U) {
+            const std::uint16_t material_ordinal =
+                material_ordinal_from_checkpoint(canonical);
+            if (material_ordinal >= ground_materials_.size()) continue;
+            const GroundMaterial& material = ground_materials_[material_ordinal];
+            if (!material.active) continue;
+            if (material.ordinal != material_ordinal
+                    || (material.source == GroundMaterialSource::abyss_reward)
+                        != abyss_material
+                    || room.secondary_ground_count
+                        >= room.secondary_ground.size()) {
+                return false;
+            }
+            auto& packed =
+                room.secondary_ground[room.secondary_ground_count++];
+            packed.tag = checkpoint::SecondaryGroundTag::material;
+            packed.ordinal = canonical;
+            packed.source = static_cast<std::uint8_t>(material.source);
+            packed.position = material.position;
+            packed.material = material.material;
+            continue;
+        }
+        const std::uint16_t spawn = static_cast<std::uint16_t>(canonical / 2U);
+        if (spawn >= ground_health_potions_.size()) continue;
+        const GroundHealthPotion& potion = ground_health_potions_[spawn];
+        if (!potion.active) continue;
+        if (potion.spawn_ordinal != spawn
+                || potion.claim_ordinal != canonical
+                || room.secondary_ground_count
+                    >= room.secondary_ground.size()) {
+            return false;
+        }
+        auto& packed = room.secondary_ground[room.secondary_ground_count++];
+        packed.tag = checkpoint::SecondaryGroundTag::health_potion;
+        packed.ordinal = canonical;
+        packed.source = 0U;
+        packed.position = potion.position;
+        packed.material = items::MaterialId::count;
+    }
+    return checkpoint::valid_room_progress_checkpoint_structural(
+        room, destination.state);
+}
+
+void DungeonSession::clear_buffered_gameplay_input() noexcept {
+    if (combat_.has_value()) combat_->clear_buffered_input();
+}
+
+bool DungeonSession::restore_room_progress_checkpoint(
+    const checkpoint::SaveCheckpointSlot& source) noexcept {
+    const checkpoint::RoomProgressCheckpoint& room = source.room_progress;
+    if (room.lifecycle == checkpoint::RoomProgressLifecycle::none) return true;
+    if (!checkpoint::valid_room_progress_checkpoint_structural(
+            room, source.state)
+            || stable_state_.current_room.index != room.room_index
+            || stable_state_.current_room.seed != room.room_seed) {
+        return false;
+    }
+    if (room.lifecycle
+            == checkpoint::RoomProgressLifecycle::death_pending
+            && stable_state_.death.lifecycle
+                == checkpoint::DeathLifecycle::pending_continue
+            && (!combat_.has_value() || room_environment_ == nullptr)) {
+        const checkpoint::DeathCheckpoint durable_death = stable_state_.death;
+        const bool durable_is_abyss = stable_state_.current_room.is_abyss;
+        const abyss::AbyssLifecycle durable_abyss_lifecycle =
+            stable_state_.abyss.lifecycle;
+        stable_state_.death = {};
+        stable_state_.current_room.is_abyss = durable_death.death_was_abyss;
+        if (durable_death.death_was_abyss) {
+            stable_state_.abyss.lifecycle = abyss::AbyssLifecycle::started;
+        }
+        construct_current_room();
+        stable_state_.death = durable_death;
+        stable_state_.current_room.is_abyss = durable_is_abyss;
+        stable_state_.abyss.lifecycle = durable_abyss_lifecycle;
+        if (phase_ == RoomPhase::faulted) return false;
+    }
+    if (!combat_.has_value() || room_environment_ == nullptr) {
+        return false;
+    }
+    combat::RoomMonsterField* const field =
+        combat_->room_monster_field();
+    if (field == nullptr
+            || field->plan().generator_version
+                != room.monster_generator_version
+            || field->plan().blueprint_hash != room.monster_blueprint_hash
+            || room_environment_->generator_version
+                != room.environment_generator_version
+            || room_environment_->blueprint_hash
+                != room.environment_blueprint_hash) {
+        return false;
+    }
+    for (std::uint32_t ordinal = 0U;
+            ordinal < room.generated_monsters; ++ordinal) {
+        const auto monster_ordinal =
+            static_cast<combat::MonsterOrdinal>(ordinal);
+        const combat::MonsterPersistentState* const current =
+            field->persistent_state(monster_ordinal);
+        const bool defeated = (room.defeat_bits[ordinal / 64U]
+            & (std::uint64_t{1U} << (ordinal % 64U))) != 0U;
+        if (current == nullptr || (!defeated && current->defeated)
+                || (defeated && !current->defeated
+                    && !field->mark_defeated(monster_ordinal))) {
+            return false;
+        }
+    }
+    if (field->defeated_count() != room.defeated_monsters
+            || !combat_->restore_room_checkpoint(room.combat)) {
+        return false;
+    }
+
+    room_progress_.initial_monster_count = room.generated_monsters;
+    room_progress_.defeated_monster_count = room.defeated_monsters;
+    room_progress_.defeated_monster_bits = room.defeat_bits;
+    ground_items_ = {};
+    ground_materials_ = {};
+    ground_health_potions_ = {};
+    rolled_drop_bits_ = {};
+    rolled_material_bits_ = {};
+    for (std::uint16_t index = 0U;
+            index < room.equipment_ground_count; ++index) {
+        const auto& packed = room.equipment_ground[index];
+        if (packed.ordinal >= ground_items_.size()
+                || packed.source
+                    > static_cast<std::uint8_t>(GroundItemSource::abyss_chest)) {
+            return false;
+        }
+        ground_items_[packed.ordinal] = GroundItem{true, packed.ordinal,
+            static_cast<GroundItemSource>(packed.source),
+            packed.reward_ordinal, packed.position, packed.item};
+    }
+    for (std::uint16_t index = 0U;
+            index < room.secondary_ground_count; ++index) {
+        const auto& packed = room.secondary_ground[index];
+        if (packed.tag == checkpoint::SecondaryGroundTag::material) {
+            const std::uint16_t material_ordinal =
+                material_ordinal_from_checkpoint(packed.ordinal);
+            const bool abyss_material = packed.ordinal
+                >= kCheckpointAbyssSecondaryOrdinalBegin;
+            if (material_ordinal >= ground_materials_.size()
+                    || packed.source > static_cast<std::uint8_t>(
+                        GroundMaterialSource::abyss_reward)
+                    || (static_cast<GroundMaterialSource>(packed.source)
+                            == GroundMaterialSource::abyss_reward)
+                        != abyss_material
+                    || (!abyss_material && (packed.ordinal & 1U) != 0U)) {
+                return false;
+            }
+            ground_materials_[material_ordinal] = GroundMaterial{true,
+                material_ordinal,
+                static_cast<GroundMaterialSource>(packed.source),
+                packed.position, packed.material};
+            continue;
+        }
+        if ((packed.ordinal & 1U) == 0U
+                || packed.ordinal >= kCheckpointAbyssSecondaryOrdinalBegin) {
+            return false;
+        }
+        const std::uint16_t spawn =
+            static_cast<std::uint16_t>(packed.ordinal / 2U);
+        if (spawn >= ground_health_potions_.size()
+                || health_potion_claim_ordinal(spawn) != packed.ordinal) {
+            return false;
+        }
+        ground_health_potions_[spawn] = GroundHealthPotion{
+            true, spawn, packed.ordinal, packed.position};
+    }
+    while (events_.try_pop().has_value()) {}
+    while (combat_events_.try_pop().has_value()) {}
+    pending_save_.reset();
+    phase_ = room.lifecycle == checkpoint::RoomProgressLifecycle::death_pending
+        ? RoomPhase::death_pending
+        : room.exits_unlocked ? RoomPhase::awaiting_exit : RoomPhase::combat;
+    return true;
+}
+
 void DungeonSession::construct_current_room() noexcept {
     retry_health_potion_abyss_clear_before_combat_ = false;
     if (stable_state_.death.lifecycle
@@ -507,6 +821,10 @@ void DungeonSession::construct_current_room() noexcept {
     }
     if (stable_state_.abyss.lifecycle == abyss::AbyssLifecycle::available) {
         static_cast<void>(prepare_abyss_start());
+        return;
+    }
+    if (stable_state_.abyss.lifecycle == abyss::AbyssLifecycle::started) {
+        construct_started_abyss_room();
         return;
     }
     if (stable_state_.current_room.is_abyss
@@ -644,13 +962,27 @@ void DungeonSession::construct_cleared_abyss_room() noexcept {
         enter_fault(DungeonFault::invalid_rules);
         return;
     }
-    combat_.emplace(*navigation_config);
-    room_environment_.reset();
-    clear_staged_room_population();
-    room_progress_ = {};
-    encounter_plan_ = {};
-    wave_index_ = 0U;
-    wave_delay_ticks_ = 0U;
+    if (!stage_current_room_population(*navigation_config)
+            || !activate_staged_room_population(false)) {
+        return;
+    }
+    combat::RoomMonsterField* const field = combat_->room_monster_field();
+    if (field == nullptr) {
+        enter_fault(DungeonFault::invalid_monster_plan);
+        return;
+    }
+    room_progress_.defeated_monster_count =
+        room_progress_.initial_monster_count;
+    for (std::uint32_t ordinal = 0U;
+            ordinal < room_progress_.initial_monster_count; ++ordinal) {
+        room_progress_.defeated_monster_bits[ordinal / 64U] |=
+            std::uint64_t{1U} << (ordinal % 64U);
+        if (!field->mark_defeated(
+                static_cast<combat::MonsterOrdinal>(ordinal))) {
+            enter_fault(DungeonFault::invalid_monster_plan);
+            return;
+        }
+    }
     phase_ = RoomPhase::cleared;
     rebuild_committed_abyss_rewards();
 }
@@ -684,7 +1016,10 @@ void DungeonSession::rebuild_committed_abyss_rewards() noexcept {
         if (existing == nullptr) {
             for (std::uint16_t index = 0U;
                  index < ground_items_.size(); ++index) {
-                if (!ground_items_[index].active) {
+                if (!ground_items_[index].active
+                        && !bit_is_set(
+                            stable_state_.item_ownership.claimed_drop_bits,
+                            index)) {
                     target_index = index;
                     break;
                 }
@@ -749,7 +1084,9 @@ void DungeonSession::attempt_abyss_reward_materialization() noexcept {
 
     std::uint16_t free_index = 0xFFFFU;
     for (std::uint16_t index = 0U; index < ground_items_.size(); ++index) {
-        if (!ground_items_[index].active) {
+        if (!ground_items_[index].active
+                && !bit_is_set(
+                    stable_state_.item_ownership.claimed_drop_bits, index)) {
             free_index = index;
             break;
         }
@@ -840,6 +1177,48 @@ void DungeonSession::construct_normal_room() noexcept {
     phase_ = RoomPhase::locked;
 }
 
+void DungeonSession::construct_started_abyss_room() noexcept {
+    if (!stable_state_.current_room.is_abyss) {
+        enter_fault(DungeonFault::invalid_abyss_state);
+        return;
+    }
+    const auto selection = abyss::select_abyss_rule(
+        stable_state_.current_room.seed, stable_state_.current_room.depth);
+    if (!selection.has_value()
+            || selection->danger != stable_state_.abyss.danger
+            || selection->rule != stable_state_.abyss.rule
+            || selection->rules_version != stable_state_.abyss.rules_version) {
+        enter_fault(DungeonFault::invalid_abyss_state);
+        return;
+    }
+    const PlayerBuildResult player_build = build_for(stable_state_);
+    if (player_build.status != PlayerBuildStatus::valid) {
+        enter_fault(DungeonFault::invalid_item_state);
+        return;
+    }
+    auto evasion_stream = core::DeterministicRng::derive_stream(
+        stable_state_.current_room.seed, kPlayerEvasionSeedDomain);
+    const combat::EncounterWave empty_wave{};
+    const auto config = make_combat_encounter_config(
+        stable_state_.current_room.entry,
+        rules_.rules_version,
+        empty_wave,
+        true,
+        abyss::combat_config_for(selection->rule),
+        player_build.build,
+        evasion_stream.next_u64(),
+        stable_state_.current_room.ecology
+            == checkpoint::DungeonElement::fire);
+    if (!config.has_value() || !stage_current_room_population(*config)
+            || !activate_staged_room_population()) {
+        if (phase_ != RoomPhase::faulted) {
+            enter_fault(DungeonFault::abyss_generation_failed);
+        }
+        return;
+    }
+    phase_ = RoomPhase::locked;
+}
+
 bool DungeonSession::stage_current_room_population(
     combat::CombatEncounterConfig config) noexcept {
     clear_staged_room_population();
@@ -885,7 +1264,8 @@ bool DungeonSession::stage_current_room_population(
     return true;
 }
 
-bool DungeonSession::activate_staged_room_population() noexcept {
+bool DungeonSession::activate_staged_room_population(
+    const bool publish_population_event) noexcept {
     if (!staged_room_combat_.has_value()
             || staged_room_monster_field_ == nullptr
             || staged_room_environment_ == nullptr
@@ -920,7 +1300,10 @@ bool DungeonSession::activate_staged_room_population() noexcept {
     encounter_plan_.wave_count = 1U;
     wave_index_ = 0U;
     wave_delay_ticks_ = 0U;
-    if (!emit(DungeonEventKind::population_generated)) return false;
+    if (publish_population_event
+            && !emit(DungeonEventKind::population_generated)) {
+        return false;
+    }
     return true;
 }
 
@@ -1307,7 +1690,6 @@ bool DungeonSession::build_death_continue_next(
             == (std::numeric_limits<std::uint64_t>::max)()
             || stable_state_.death.lifecycle
                 != checkpoint::DeathLifecycle::pending_continue
-            || combat_.has_value()
             || !validate_pending_death_state()) {
         return false;
     }
@@ -1388,7 +1770,6 @@ RequestResult DungeonSession::request_death_continue() noexcept {
     }
     if (phase_ == RoomPhase::faulted) return RequestResult::faulted;
     if (phase_ != RoomPhase::death_pending || pending_save_.has_value()
-            || combat_.has_value()
             || stable_state_.death.lifecycle
                 != checkpoint::DeathLifecycle::pending_continue) {
         return RequestResult::rejected;
@@ -1435,12 +1816,22 @@ bool DungeonSession::pending_death_cache_consistent() const noexcept {
     if (!pending_save_.has_value()) return true;
     if (pending_save_->kind == PendingSaveKind::death_continue) {
         if (pending_save_->death_snapshot.has_value()
-                || combat_.has_value()
                 || pending_save_->transition != TransitionKind::death_retreat
                 || pending_save_->direction != ExitDirection::none
                 || pending_save_->resume_phase != RoomPhase::death_pending
                 || pending_save_->pickup_ordinal != 0xFFFFU) {
             return false;
+        }
+        if (combat_.has_value()) {
+            if (!combat_->death_snapshot().has_value()) return false;
+            checkpoint::RoomDescriptor death_room = stable_state_.current_room;
+            death_room.is_abyss = stable_state_.death.death_was_abyss;
+            const checkpoint::DeathCheckpoint expected_death =
+                make_death_checkpoint(*combat_->death_snapshot(), death_room,
+                    stable_state_.death.target_room);
+            if (!same_death_checkpoint(expected_death, stable_state_.death)) {
+                return false;
+            }
         }
         DungeonRunState& exact = death_validation_scratch_;
         return build_death_continue_next(exact)
@@ -1817,8 +2208,12 @@ void DungeonSession::settle_room_experience() noexcept {
 void DungeonSession::prepare_room_clear() noexcept {
     const bool started_abyss = stable_state_.current_room.is_abyss
         && stable_state_.abyss.lifecycle == abyss::AbyssLifecycle::started;
-    if (!started_abyss && !has_ground_materials()
-            && !has_claimable_health_potion()) {
+    // The authority path reaches this function only after the final target is
+    // defeated. Preserve the legacy synchronous behavior for diagnostic/test
+    // hooks that force a normal-room clear while live targets remain; real
+    // full clears still enter the exact transactional boundary below.
+    if (!started_abyss && remaining_targets() != 0U
+            && !has_ground_materials() && !has_claimable_health_potion()) {
         settle_room_experience();
         publish_room_clear();
         return;

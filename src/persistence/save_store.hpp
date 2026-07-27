@@ -28,6 +28,9 @@ enum class SaveError : std::uint8_t {
     read_failed,
     write_failed,
     flush_failed,
+    close_failed,
+    cleanup_failed,
+    readback_failed,
     publish_failed,
     final_scan_failed,
     conflicting_slots,
@@ -43,7 +46,11 @@ enum class SaveFaultPoint : std::uint8_t {
     after_publish,
     final_scan_a,
     final_scan_b,
-    before_archive
+    temp_flush,
+    temp_close,
+    temp_readback,
+    before_archive,
+    worker_start
 };
 
 using SaveFaultHook = bool (*)(SaveFaultPoint point, void* context) noexcept;

@@ -22,6 +22,10 @@ struct DungeonDeathStressFixture;
 
 namespace arpg::dungeon {
 
+namespace checkpoint {
+struct SaveCheckpointSlot;
+}
+
 [[nodiscard]] std::uint16_t affix_drop_chance_bp(
     std::uint16_t score) noexcept;
 [[nodiscard]] std::uint8_t affix_item_level(
@@ -146,6 +150,14 @@ public:
     [[nodiscard]] RequestResult reset_current_room() noexcept;
     [[nodiscard]] RoomPhase phase() const noexcept;
     [[nodiscard]] DungeonSnapshot snapshot() const noexcept;
+    void snapshot(DungeonSnapshot& destination) const noexcept;
+    [[nodiscard]] bool capture_save_checkpoint(
+        checkpoint::SaveCheckpointSlot& destination,
+        std::uint64_t persistence_revision,
+        const DungeonRunState* durable_override = nullptr) const noexcept;
+    void clear_buffered_gameplay_input() noexcept;
+    [[nodiscard]] bool restore_room_progress_checkpoint(
+        const checkpoint::SaveCheckpointSlot& source) noexcept;
     [[nodiscard]] std::optional<DungeonEvent> try_pop_event() noexcept;
     [[nodiscard]] std::optional<combat::CombatEvent>
     try_pop_combat_event() noexcept;
@@ -179,9 +191,11 @@ private:
     void rebuild_committed_abyss_rewards() noexcept;
     void attempt_abyss_reward_materialization() noexcept;
     void construct_normal_room() noexcept;
+    void construct_started_abyss_room() noexcept;
     [[nodiscard]] bool stage_current_room_population(
         combat::CombatEncounterConfig config) noexcept;
-    [[nodiscard]] bool activate_staged_room_population() noexcept;
+    [[nodiscard]] bool activate_staged_room_population(
+        bool publish_population_event = true) noexcept;
     void clear_staged_room_population() noexcept;
     void reset_to_normal_room(bool clear_queues) noexcept;
     [[nodiscard]] bool prepare_abyss_start() noexcept;
@@ -264,7 +278,7 @@ private:
     [[nodiscard]] bool pending_death_cache_consistent() const noexcept;
     [[nodiscard]] bool pending_material_cache_consistent() const noexcept;
     void commit_pending_save(const PendingSaveResult& result) noexcept;
-    [[nodiscard]] DungeonSnapshot build_dungeon_snapshot() const noexcept;
+    void build_dungeon_snapshot(DungeonSnapshot& destination) const noexcept;
     void enter_fault(DungeonFault fault) noexcept;
     void emit_committed(
         const checkpoint::RoomDescriptor& previous_room,

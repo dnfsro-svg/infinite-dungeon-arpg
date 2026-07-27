@@ -4,10 +4,16 @@
 #include "dungeon/dungeon_session.hpp"
 #include "dungeon_view_math.hpp"
 #include "persistence/save_store.hpp"
+#include "persistence/save_commit_worker.hpp"
 
 #include <array>
 #include <cstdint>
 #include <optional>
+#include <memory>
+
+namespace arpg::test {
+struct DungeonRuntimeTestAccess;
+}
 
 namespace arpg::platform {
 
@@ -15,6 +21,14 @@ enum class DungeonRuntimeState : std::uint8_t {
     uninitialized,
     running,
     recovery_required,
+    faulted,
+};
+
+enum class CleanShutdownState : std::uint8_t {
+    idle,
+    closing,
+    ready,
+    canceled,
     faulted,
 };
 
@@ -51,6 +65,7 @@ struct DungeonRenderStatus final {
 class DungeonRuntime final {
 public:
     explicit DungeonRuntime(DungeonRuntimeConfig config);
+    ~DungeonRuntime();
 
     [[nodiscard]] bool initialize() noexcept;
     [[nodiscard]] DungeonRuntimeState state() const noexcept;
@@ -78,27 +93,61 @@ public:
     void fixed_tick(combat::MovementInput movement,
         dungeon::AutoPickupPolicy pickup_policy = {}) noexcept;
     void service_pending_save() noexcept;
-    // Kept until the host is migrated to the generic pending-save entry point.
-    void service_pending_transition() noexcept;
+    void pump_persistence_frame() noexcept;
+    [[nodiscard]] bool request_clean_shutdown() noexcept;
+    [[nodiscard]] CleanShutdownState clean_shutdown_state() const noexcept;
+    [[nodiscard]] bool gameplay_rearm_required() const noexcept;
+    [[nodiscard]] bool authority_requests_enabled() const noexcept;
+    void acknowledge_gameplay_rearmed() noexcept;
     [[nodiscard]] bool recover_with_new_run() noexcept;
 
 private:
+    friend struct ::arpg::test::DungeonRuntimeTestAccess;
     [[nodiscard]] std::optional<std::uint64_t> select_new_run_seed() const noexcept;
     [[nodiscard]] bool repair_pending_death_target(
         dungeon::DungeonRunState& checkpoint) const noexcept;
     [[nodiscard]] bool continue_pending_death_on_initialize() noexcept;
-    void sync_load_status(const persistence::SaveLoadResult& result) noexcept;
-    void sync_commit_status(const persistence::SaveCommitResult& result) noexcept;
-    [[nodiscard]] bool commit_and_resolve_pending(
-        const dungeon::PendingSave&,
-        dungeon::PendingSaveKind,
-        std::uint64_t expected_generation) noexcept;
-    [[nodiscard]] static dungeon::PendingSaveResult to_session_result(
-        persistence::SaveCommitResult&& saved) noexcept;
+    [[nodiscard]] bool start_worker() noexcept;
+    [[nodiscard]] bool commit_initial_checkpoint() noexcept;
+    void poll_save_completion() noexcept;
+    void apply_save_completion(
+        const persistence::SaveCommitCompletion& completion) noexcept;
+    void submit_pending_exact() noexcept;
+    void submit_shutdown_exact() noexcept;
+    void submit_background_if_due() noexcept;
+    void fault_persistence_runtime(persistence::SaveError error) noexcept;
 
     DungeonRuntimeConfig config_{};
-    persistence::SaveStore store_;
-    std::optional<dungeon::DungeonSession> session_{};
+    std::unique_ptr<persistence::SaveCommitStorage> save_storage_{};
+    std::unique_ptr<persistence::SaveCommitWorker> save_worker_{};
+    std::unique_ptr<dungeon::DungeonSession> session_{};
+    struct ExactFlight final {
+        bool active{};
+        std::uint64_t revision{};
+        std::uint64_t intent{};
+        std::uint64_t token{};
+        std::uint64_t epoch{};
+        std::uint64_t expected_generation{};
+        dungeon::PendingSaveKind kind{dungeon::PendingSaveKind::transition};
+        std::optional<LootPickupReceipt> pickup{};
+        std::uint16_t pickup_ordinal{0xFFFFU};
+        bool shutdown{};
+        bool recovery_initial{};
+    } exact_flight_{};
+    std::uint64_t authority_revision_{};
+    std::uint64_t durable_revision_{};
+    struct BackgroundFlight final {
+        bool active{};
+        std::uint64_t revision{};
+        std::uint64_t token{};
+        std::uint64_t epoch{};
+    } background_flight_{};
+    std::uint64_t fixed_tick_count_{};
+    std::uint64_t next_background_tick_{300U};
+    bool background_due_{};
+    bool progress_dirty_{};
+    bool gameplay_rearm_required_{};
+    CleanShutdownState clean_shutdown_state_{CleanShutdownState::idle};
     DungeonRuntimeState state_{DungeonRuntimeState::uninitialized};
     DungeonRenderStatus status_{};
 };

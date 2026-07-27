@@ -11,6 +11,8 @@ endif()
 file(READ "${RAYLIB_SOURCE_DIR}/raylib_host.cpp" HOST_SOURCE)
 file(READ "${RAYLIB_SOURCE_DIR}/inventory_renderer.cpp" INVENTORY_SOURCE)
 file(READ "${RAYLIB_SOURCE_DIR}/host_input.cpp" INPUT_AUTHORITY_SOURCE)
+file(READ "${RAYLIB_SOURCE_DIR}/../../dungeon/dungeon_session.cpp"
+    DUNGEON_SESSION_SOURCE)
 file(READ "${POISON_HEADER}" POISON_SOURCE)
 include("${CMAKE_CURRENT_LIST_DIR}/cpp_source_lexer.cmake")
 
@@ -22,6 +24,472 @@ function(require_match_count SOURCE PATTERN EXPECTED LABEL)
             "${LABEL}: expected ${EXPECTED} matches, found ${ACTUAL}")
     endif()
 endfunction()
+
+function(host_large_state_construction_valid SOURCE OUT_VALID)
+    set(WS "[ \t\r\n]*")
+    set(WS1 "[ \t\r\n]+")
+    string(REGEX MATCHALL
+        "(^|[^A-Za-z0-9_])(const${WS1})?(dungeon::)?DungeonSnapshot${WS1}[A-Za-z_][A-Za-z0-9_]*${WS}(\\{|\\(|;|=)"
+        AUTOMATIC_SNAPSHOT_DECLARATIONS "${SOURCE}")
+    list(LENGTH AUTOMATIC_SNAPSHOT_DECLARATIONS
+        AUTOMATIC_SNAPSHOT_DECLARATION_COUNT)
+    string(REGEX MATCHALL
+        "(^|[^A-Za-z0-9_])DungeonSnapshot${WS}(\\{|\\()"
+        DIRECT_SNAPSHOT_CONSTRUCTIONS "${SOURCE}")
+    list(LENGTH DIRECT_SNAPSHOT_CONSTRUCTIONS
+        DIRECT_SNAPSHOT_CONSTRUCTION_COUNT)
+    string(REGEX MATCHALL
+        "(^|[^A-Za-z0-9_])(const${WS1})?HostValidationStates${WS1}[A-Za-z_][A-Za-z0-9_]*${WS}(\\{|\\(|;|=)"
+        AUTOMATIC_VALIDATION_DECLARATIONS "${SOURCE}")
+    list(LENGTH AUTOMATIC_VALIDATION_DECLARATIONS
+        AUTOMATIC_VALIDATION_DECLARATION_COUNT)
+    string(REGEX MATCHALL
+        "(^|[^A-Za-z0-9_])HostValidationStates${WS}(\\{|\\()"
+        DIRECT_VALIDATION_CONSTRUCTIONS "${SOURCE}")
+    list(LENGTH DIRECT_VALIDATION_CONSTRUCTIONS
+        DIRECT_VALIDATION_CONSTRUCTION_COUNT)
+    string(REGEX MATCHALL
+        "new${WS}\\(${WS}std::nothrow${WS}\\)${WS}HostValidationStates${WS}\\{"
+        APPROVED_VALIDATION_OWNER_CONSTRUCTIONS "${SOURCE}")
+    list(LENGTH APPROVED_VALIDATION_OWNER_CONSTRUCTIONS
+        APPROVED_VALIDATION_OWNER_CONSTRUCTION_COUNT)
+    if(AUTOMATIC_SNAPSHOT_DECLARATION_COUNT EQUAL 0
+            AND DIRECT_SNAPSHOT_CONSTRUCTION_COUNT EQUAL 0
+            AND AUTOMATIC_VALIDATION_DECLARATION_COUNT EQUAL 0
+            AND APPROVED_VALIDATION_OWNER_CONSTRUCTION_COUNT EQUAL 1
+            AND DIRECT_VALIDATION_CONSTRUCTION_COUNT EQUAL
+                APPROVED_VALIDATION_OWNER_CONSTRUCTION_COUNT)
+        set("${OUT_VALID}" TRUE PARENT_SCOPE)
+    else()
+        set("${OUT_VALID}" FALSE PARENT_SCOPE)
+    endif()
+endfunction()
+
+function(require_host_large_construction_mutations_rejected SOURCE)
+    set(AUTO_LARGE_STATE_ACCEPTANCES)
+    set(AUTO_NAMESPACED_SNAPSHOT_MUTATION
+        "${SOURCE}\nauto stack_snapshot = dungeon::DungeonSnapshot{};\n")
+    host_large_state_construction_valid(
+        "${AUTO_NAMESPACED_SNAPSHOT_MUTATION}" AUTO_NAMESPACED_SNAPSHOT_VALID)
+    if(AUTO_NAMESPACED_SNAPSHOT_VALID)
+        list(APPEND AUTO_LARGE_STATE_ACCEPTANCES
+            "auto-namespaced-DungeonSnapshot")
+    endif()
+    set(AUTO_UNQUALIFIED_SNAPSHOT_MUTATION
+        "${SOURCE}\nconst auto stack_snapshot =\n    DungeonSnapshot { };\n")
+    host_large_state_construction_valid(
+        "${AUTO_UNQUALIFIED_SNAPSHOT_MUTATION}" AUTO_UNQUALIFIED_SNAPSHOT_VALID)
+    if(AUTO_UNQUALIFIED_SNAPSHOT_VALID)
+        list(APPEND AUTO_LARGE_STATE_ACCEPTANCES
+            "auto-unqualified-DungeonSnapshot")
+    endif()
+    set(AUTO_CONST_SNAPSHOT_MUTATION
+        "${SOURCE}\nauto const stack_snapshot = dungeon::DungeonSnapshot{};\n")
+    host_large_state_construction_valid(
+        "${AUTO_CONST_SNAPSHOT_MUTATION}" AUTO_CONST_SNAPSHOT_VALID)
+    if(AUTO_CONST_SNAPSHOT_VALID)
+        list(APPEND AUTO_LARGE_STATE_ACCEPTANCES
+            "auto-const-DungeonSnapshot")
+    endif()
+    set(AUTO_GLOBAL_NAMESPACE_SNAPSHOT_MUTATION
+        "${SOURCE}\nauto stack_snapshot = ::dungeon::DungeonSnapshot{};\n")
+    host_large_state_construction_valid(
+        "${AUTO_GLOBAL_NAMESPACE_SNAPSHOT_MUTATION}"
+        AUTO_GLOBAL_NAMESPACE_SNAPSHOT_VALID)
+    if(AUTO_GLOBAL_NAMESPACE_SNAPSHOT_VALID)
+        list(APPEND AUTO_LARGE_STATE_ACCEPTANCES
+            "global-namespace-DungeonSnapshot")
+    endif()
+    set(AUTO_SPACED_NAMESPACE_SNAPSHOT_MUTATION
+        "${SOURCE}\nauto stack_snapshot = dungeon :: DungeonSnapshot{};\n")
+    host_large_state_construction_valid(
+        "${AUTO_SPACED_NAMESPACE_SNAPSHOT_MUTATION}"
+        AUTO_SPACED_NAMESPACE_SNAPSHOT_VALID)
+    if(AUTO_SPACED_NAMESPACE_SNAPSHOT_VALID)
+        list(APPEND AUTO_LARGE_STATE_ACCEPTANCES
+            "spaced-namespace-DungeonSnapshot")
+    endif()
+    set(PAREN_SNAPSHOT_MUTATION
+        "${SOURCE}\nauto stack_snapshot = dungeon::DungeonSnapshot();\n")
+    host_large_state_construction_valid(
+        "${PAREN_SNAPSHOT_MUTATION}" PAREN_SNAPSHOT_VALID)
+    if(PAREN_SNAPSHOT_VALID)
+        list(APPEND AUTO_LARGE_STATE_ACCEPTANCES
+            "paren-DungeonSnapshot")
+    endif()
+    set(AUTO_VALIDATION_MUTATION
+        "${SOURCE}\nauto stack_validation =\n    HostValidationStates { };\n")
+    host_large_state_construction_valid(
+        "${AUTO_VALIDATION_MUTATION}" AUTO_VALIDATION_VALID)
+    if(AUTO_VALIDATION_VALID)
+        list(APPEND AUTO_LARGE_STATE_ACCEPTANCES
+            "auto-HostValidationStates")
+    endif()
+    set(AUTO_CONST_VALIDATION_MUTATION
+        "${SOURCE}\nauto const stack_validation = HostValidationStates{};\n")
+    host_large_state_construction_valid(
+        "${AUTO_CONST_VALIDATION_MUTATION}" AUTO_CONST_VALIDATION_VALID)
+    if(AUTO_CONST_VALIDATION_VALID)
+        list(APPEND AUTO_LARGE_STATE_ACCEPTANCES
+            "auto-const-HostValidationStates")
+    endif()
+    set(AUTO_GLOBAL_VALIDATION_MUTATION
+        "${SOURCE}\nauto stack_validation = ::HostValidationStates{};\n")
+    host_large_state_construction_valid(
+        "${AUTO_GLOBAL_VALIDATION_MUTATION}" AUTO_GLOBAL_VALIDATION_VALID)
+    if(AUTO_GLOBAL_VALIDATION_VALID)
+        list(APPEND AUTO_LARGE_STATE_ACCEPTANCES
+            "global-HostValidationStates")
+    endif()
+    set(PAREN_VALIDATION_MUTATION
+        "${SOURCE}\nauto stack_validation = HostValidationStates();\n")
+    host_large_state_construction_valid(
+        "${PAREN_VALIDATION_MUTATION}" PAREN_VALIDATION_VALID)
+    if(PAREN_VALIDATION_VALID)
+        list(APPEND AUTO_LARGE_STATE_ACCEPTANCES
+            "paren-HostValidationStates")
+    endif()
+    if(AUTO_LARGE_STATE_ACCEPTANCES)
+        list(JOIN AUTO_LARGE_STATE_ACCEPTANCES ", " AUTO_LARGE_STATE_NAMES)
+        message(FATAL_ERROR
+            "host large-state guard accepted mutations: ${AUTO_LARGE_STATE_NAMES}")
+    endif()
+endfunction()
+
+if(ARPG_HOST_AUTO_GUARD_SELF_TEST_ONLY)
+    set(HOST_AUTO_GUARD_REFERENCE [=[
+const auto current_storage = std::make_unique<dungeon::DungeonSnapshot>();
+dungeon::DungeonSnapshot& current = *current_storage;
+const std::unique_ptr<HostValidationStates> validation_states{
+    new (std::nothrow) HostValidationStates{}};
+]=])
+    host_large_state_construction_valid(
+        "${HOST_AUTO_GUARD_REFERENCE}" HOST_AUTO_GUARD_REFERENCE_VALID)
+    if(NOT HOST_AUTO_GUARD_REFERENCE_VALID)
+        message(FATAL_ERROR
+            "host large-state construction guard rejected heap owners/reference aliases")
+    endif()
+    require_host_large_construction_mutations_rejected(
+        "${HOST_AUTO_GUARD_REFERENCE}")
+    return()
+endif()
+
+arpg_sanitize_cpp_source("${HOST_SOURCE}" SANITIZED_HOST_SOURCE)
+arpg_sanitize_cpp_source(
+    "${DUNGEON_SESSION_SOURCE}" SANITIZED_DUNGEON_SESSION_SOURCE)
+string(FIND "${SANITIZED_HOST_SOURCE}"
+    "HostExitCode run_raylib_host" SANITIZED_HOST_ENTRY_INDEX)
+if(SANITIZED_HOST_ENTRY_INDEX EQUAL -1)
+    message(FATAL_ERROR "raylib host entry is missing")
+endif()
+string(SUBSTRING "${SANITIZED_HOST_SOURCE}"
+    ${SANITIZED_HOST_ENTRY_INDEX} -1 SANITIZED_HOST_ENTRY_SOURCE)
+host_large_state_construction_valid(
+    "${SANITIZED_HOST_ENTRY_SOURCE}" HOST_LARGE_STATE_CONSTRUCTION_VALID)
+if(NOT HOST_LARGE_STATE_CONSTRUCTION_VALID)
+    message(FATAL_ERROR
+        "raylib host must not create automatic large state objects")
+endif()
+require_host_large_construction_mutations_rejected(
+    "${SANITIZED_HOST_ENTRY_SOURCE}")
+
+require_match_count(
+    "${SANITIZED_HOST_SOURCE}"
+    "new[ \t\r\n]*\\([ \t\r\n]*std::nothrow[ \t\r\n]*\\)[ \t\r\n]*HostValidationStates[ \t\r\n]*\\{[ \t\r\n]*\\}"
+    1
+    "raylib host nothrow heap validation-state allocation")
+require_match_count(
+    "${SANITIZED_HOST_ENTRY_SOURCE}"
+    "(^|[^A-Za-z0-9_])(const[ \t\r\n]+)?HostValidationStates[ \t\r\n]+[A-Za-z_][A-Za-z0-9_]*[ \t\r\n]*(\\{|;|=)"
+    0
+    "raylib host automatic aggregate validation-state declarations")
+foreach(SNAPSHOT_NAME IN ITEMS current previous presented_snapshot)
+    require_match_count(
+        "${SANITIZED_HOST_SOURCE}"
+        "const[ \t\r\n]+auto[ \t\r\n]+${SNAPSHOT_NAME}_storage[ \t\r\n]*=[ \t\r\n]*std::make_unique[ \t\r\n]*<[ \t\r\n]*dungeon::DungeonSnapshot[ \t\r\n]*>[ \t\r\n]*\\([ \t\r\n]*\\)"
+        1
+        "raylib host ${SNAPSHOT_NAME} owning heap snapshot storage")
+    require_match_count(
+        "${SANITIZED_HOST_SOURCE}"
+        "dungeon::DungeonSnapshot[ \t\r\n]*&[ \t\r\n]*${SNAPSHOT_NAME}[ \t\r\n]*=[ \t\r\n]*\\*[ \t\r\n]*${SNAPSHOT_NAME}_storage"
+        1
+        "raylib host ${SNAPSHOT_NAME} snapshot reference alias")
+endforeach()
+require_match_count(
+    "${SANITIZED_HOST_SOURCE}"
+    "(runtime\\.session\\(\\)|session)->snapshot[ \t\r\n]*\\([ \t\r\n]*current[ \t\r\n]*\\)"
+    9
+    "raylib host preallocated snapshot captures")
+require_match_count(
+    "${SANITIZED_HOST_SOURCE}"
+    "(runtime\\.session\\(\\)|session)->snapshot[ \t\r\n]*\\([ \t\r\n]*\\)"
+    0
+    "raylib host by-value snapshot captures")
+require_match_count(
+    "${SANITIZED_HOST_SOURCE}"
+    "(^|[^A-Za-z0-9_])(const[ \t\r\n]+)?dungeon::DungeonSnapshot[ \t\r\n]+[A-Za-z_][A-Za-z0-9_]*[ \t\r\n]*(\\{|;|=)"
+    0
+    "raylib host automatic DungeonSnapshot declarations")
+string(FIND "${SANITIZED_HOST_SOURCE}"
+    "const std::unique_ptr<HostValidationStates> validation_states{"
+    VALIDATION_STATES_OWNER_INDEX)
+string(FIND "${SANITIZED_HOST_SOURCE}"
+    "if (validation_states == nullptr)" VALIDATION_STATES_NULL_INDEX)
+string(FIND "${SANITIZED_HOST_SOURCE}"
+    "SetConfigFlags(initial_window_flags(committed_settings))"
+    INITIAL_WINDOW_FLAGS_INDEX)
+string(FIND "${SANITIZED_HOST_SOURCE}" "InitWindow(" INIT_WINDOW_INDEX)
+string(FIND "${SANITIZED_HOST_SOURCE}"
+    "const auto renderer_storage = std::make_unique<CombatRenderer>()"
+    RENDERER_STORAGE_INDEX)
+if(VALIDATION_STATES_OWNER_INDEX EQUAL -1
+        OR VALIDATION_STATES_NULL_INDEX EQUAL -1
+        OR INITIAL_WINDOW_FLAGS_INDEX EQUAL -1 OR INIT_WINDOW_INDEX EQUAL -1
+        OR RENDERER_STORAGE_INDEX EQUAL -1
+        OR NOT VALIDATION_STATES_OWNER_INDEX LESS VALIDATION_STATES_NULL_INDEX
+        OR NOT VALIDATION_STATES_NULL_INDEX LESS INITIAL_WINDOW_FLAGS_INDEX
+        OR NOT INITIAL_WINDOW_FLAGS_INDEX LESS INIT_WINDOW_INDEX
+        OR NOT INIT_WINDOW_INDEX LESS RENDERER_STORAGE_INDEX)
+    message(FATAL_ERROR
+        "HostValidationStates allocation/null check must precede window and renderer resources")
+endif()
+foreach(AUTOMATIC_VALIDATION_STATE IN ITEMS
+        "Stage10ValidationState stage10_validation_state{}"
+        "Stage11ValidationState stage11_validation_state{}"
+        "Stage11BValidationState stage11b_validation_state{}"
+        "Stage11CHudValidationState stage11c_validation_state{}"
+        "Stage11DLootValidationState stage11d_validation_state{}")
+    string(FIND "${SANITIZED_HOST_SOURCE}"
+        "${AUTOMATIC_VALIDATION_STATE}" AUTOMATIC_VALIDATION_STATE_INDEX)
+    if(NOT AUTOMATIC_VALIDATION_STATE_INDEX EQUAL -1)
+        message(FATAL_ERROR
+            "raylib host validation states must not return to the stack")
+    endif()
+endforeach()
+
+set(PRODUCTION_FINAL_TARGET_CLEAR_GUARD [=[
+handle_player_defeat();
+
+        if (phase_ == RoomPhase::combat && remaining_targets() == 0U) {
+            prepare_room_clear();
+        }
+]=])
+string(FIND "${SANITIZED_DUNGEON_SESSION_SOURCE}"
+    "${PRODUCTION_FINAL_TARGET_CLEAR_GUARD}"
+    PRODUCTION_FINAL_TARGET_CLEAR_GUARD_INDEX)
+if(PRODUCTION_FINAL_TARGET_CLEAR_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "production room-clear must remain behind the final-target gate")
+endif()
+string(LENGTH "${PRODUCTION_FINAL_TARGET_CLEAR_GUARD}"
+    PRODUCTION_FINAL_TARGET_CLEAR_GUARD_LENGTH)
+math(EXPR PRODUCTION_FINAL_TARGET_CLEAR_GUARD_END
+    "${PRODUCTION_FINAL_TARGET_CLEAR_GUARD_INDEX} + ${PRODUCTION_FINAL_TARGET_CLEAR_GUARD_LENGTH}")
+string(SUBSTRING "${SANITIZED_DUNGEON_SESSION_SOURCE}"
+    ${PRODUCTION_FINAL_TARGET_CLEAR_GUARD_END} -1
+    DUNGEON_SESSION_AFTER_PRODUCTION_CLEAR)
+string(FIND "${DUNGEON_SESSION_AFTER_PRODUCTION_CLEAR}"
+    "${PRODUCTION_FINAL_TARGET_CLEAR_GUARD}"
+    DUPLICATE_PRODUCTION_FINAL_TARGET_CLEAR_GUARD_INDEX)
+if(NOT DUPLICATE_PRODUCTION_FINAL_TARGET_CLEAR_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "production room-clear final-target gate must remain unique")
+endif()
+set(HEALTH_POTION_RETRY_GUARD [=[
+if (phase_ != RoomPhase::combat || pending_save_.has_value()
+                || !combat_.has_value() || remaining_targets() != 0U) {
+            enter_fault(DungeonFault::save_receipt_mismatch);
+        } else {
+            prepare_room_clear();
+        }
+]=])
+string(FIND "${SANITIZED_DUNGEON_SESSION_SOURCE}"
+    "${HEALTH_POTION_RETRY_GUARD}" HEALTH_POTION_RETRY_GUARD_INDEX)
+if(HEALTH_POTION_RETRY_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "health-potion retry must reject live targets before room clear")
+endif()
+
+set(LEGACY_FORCED_CLEAR_GUARD [=[
+if (!started_abyss && remaining_targets() != 0U
+            && !has_ground_materials() && !has_claimable_health_potion()) {
+        settle_room_experience();
+        publish_room_clear();
+        return;
+    }
+]=])
+string(FIND "${SANITIZED_DUNGEON_SESSION_SOURCE}"
+    "${LEGACY_FORCED_CLEAR_GUARD}" LEGACY_FORCED_CLEAR_GUARD_INDEX)
+if(LEGACY_FORCED_CLEAR_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "legacy forced-clear compatibility trigger must remain narrow")
+endif()
+
+set(STAGE17_AUTHORITATIVE_LOADOUT_GUARD [=[
+if (state.step == Stage17ValidationStep::open_inventory
+            && inventory.is_open()) {
+        state.step = Stage17ValidationStep::open_skill_page;
+    } else if (state.step == Stage17ValidationStep::remove_slot_1
+            && current.skill_loadout.slots[0].active
+                == skills::ActiveSkillId::none) {
+        state.step = Stage17ValidationStep::select_draw_inventory;
+    } else if (state.step == Stage17ValidationStep::equip_slot_5
+            && current.skill_loadout.slots[4].active
+                == skills::ActiveSkillId::draw_slash) {
+        state.step = Stage17ValidationStep::swap_slots_2_5;
+    } else if (state.step == Stage17ValidationStep::swap_slots_2_5
+            && stage17_final_loadout(current.skill_loadout)) {
+        state.final_loadout = current.skill_loadout;
+        state.production_transactions =
+            !current.pending_save_kind.has_value();
+        if (state.production_transactions) {
+            state.step = Stage17ValidationStep::close_inventory;
+        }
+    } else if (state.step == Stage17ValidationStep::close_inventory
+            && !inventory.is_open() && current.combat.has_value()) {
+        state.production_inventory_closed = true;
+        state.production_cooldown_start_ticks =
+            current.combat->skill_cooldowns[0U];
+        state.production_cooldown_wait_start_tick = current.combat->tick;
+        state.production_cooldown_wait_started =
+            state.production_cooldown_start_ticks != 0U;
+        state.step = Stage17ValidationStep::cooldown_drain;
+]=])
+string(FIND "${SANITIZED_HOST_SOURCE}"
+    "${STAGE17_AUTHORITATIVE_LOADOUT_GUARD}"
+    STAGE17_AUTHORITATIVE_LOADOUT_GUARD_INDEX)
+if(STAGE17_AUTHORITATIVE_LOADOUT_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "Stage17 must wait for each authoritative loadout publication")
+endif()
+
+set(STAGE17_NATURAL_COOLDOWN_DRAIN_GUARD [=[
+if (state.step == Stage17ValidationStep::cooldown_drain
+            && state.production_cooldown_wait_started
+            && stage17_all_cooldowns_zero(combat_state)) {
+        state.production_cooldown_wait_end_tick = combat_state.tick;
+        state.production_cooldowns_zero_before_shutdown =
+            state.production_cooldown_wait_end_tick
+                > state.production_cooldown_wait_start_tick;
+        state.step = Stage17ValidationStep::complete;
+    }
+]=])
+string(FIND "${SANITIZED_HOST_SOURCE}"
+    "${STAGE17_NATURAL_COOLDOWN_DRAIN_GUARD}"
+    STAGE17_NATURAL_COOLDOWN_DRAIN_GUARD_INDEX)
+if(STAGE17_NATURAL_COOLDOWN_DRAIN_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "Stage17 must naturally drain cooldown through authoritative fixed ticks before shutdown")
+endif()
+require_match_count(
+    "${SANITIZED_HOST_SOURCE}"
+    "case[ \t\r\n]+Stage17ValidationStep::cooldown_drain:[ \t\r\n]+break"
+    1
+    "Stage17 cooldown drain injects empty gameplay input")
+set(STAGE17_EXACT_SHUTDOWN_READY_GUARD [=[
+stage17_validation_state->clean_shutdown_exact_ready =
+            runtime.clean_shutdown_state() == CleanShutdownState::ready;
+]=])
+string(FIND "${SANITIZED_HOST_SOURCE}"
+    "${STAGE17_EXACT_SHUTDOWN_READY_GUARD}"
+    STAGE17_EXACT_SHUTDOWN_READY_GUARD_INDEX)
+if(STAGE17_EXACT_SHUTDOWN_READY_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "Stage17 summary must record completed clean-shutdown exact save")
+endif()
+
+set(STAGE17_STORM_LOCK_ONCE_GUARD [=[
+if (!state.storm_approach_locked) {
+        const Stage17IsolatedStormTarget target =
+            stage17_isolated_storm_target(combat_state);
+        if (target.monster == nullptr) return false;
+        state.storm_approach_center = target.projected_center;
+        state.storm_approach_target_start = target.monster->position;
+        state.storm_approach_player_start = combat_state.player.position;
+        state.storm_approach_initial_clearance =
+            std::sqrt(target.clearance_squared);
+        state.storm_approach_target_ordinal = target.monster->monster_ordinal;
+        state.storm_approach_locked = true;
+    }
+]=])
+string(FIND "${SANITIZED_HOST_SOURCE}" "${STAGE17_STORM_LOCK_ONCE_GUARD}"
+    STAGE17_STORM_LOCK_ONCE_GUARD_INDEX)
+if(STAGE17_STORM_LOCK_ONCE_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "Stage17 storm isolation must be selected and locked exactly once")
+endif()
+set(STAGE17_STORM_FAIL_CLOSED_GUARD [=[
+if (targets_in_finisher != 1U || !locked_target_in_finisher) {
+        state.storm_isolation_invalidated = true;
+        state.storm_isolation_invalidated_frame = state.storm_approach_frames;
+        state.storm_isolation_invalidated_target_count = targets_in_finisher;
+        return false;
+    }
+]=])
+string(FIND "${SANITIZED_HOST_SOURCE}" "${STAGE17_STORM_FAIL_CLOSED_GUARD}"
+    STAGE17_STORM_FAIL_CLOSED_GUARD_INDEX)
+if(STAGE17_STORM_FAIL_CLOSED_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "Stage17 locked storm isolation must fail closed instead of reselecting")
+endif()
+set(STAGE17_STORM_PRELUDE_GUARD [=[
+if (config.stage17_skill_stones_validation
+                == Stage17SkillStonesValidationScenario::storm_sequence) {
+            state.suppress_draw_captures = true;
+            state.step = Stage17ValidationStep::approach_draw;
+]=])
+string(FIND "${SANITIZED_HOST_SOURCE}" "${STAGE17_STORM_PRELUDE_GUARD}"
+    STAGE17_STORM_PRELUDE_GUARD_INDEX)
+if(STAGE17_STORM_PRELUDE_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "Stage17 storm scenario must use an explicit draw prelude")
+endif()
+set(STAGE17_DRAW_TO_TRANSACTIONS_GUARD [=[
+} else if (state.draw_windup_captured && state.draw_captured) {
+            state.step = Stage17ValidationStep::open_inventory;
+]=])
+string(FIND "${SANITIZED_HOST_SOURCE}" "${STAGE17_DRAW_TO_TRANSACTIONS_GUARD}"
+    STAGE17_DRAW_TO_TRANSACTIONS_GUARD_INDEX)
+if(STAGE17_DRAW_TO_TRANSACTIONS_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "Stage17 production draw must proceed directly to authoritative transactions")
+endif()
+set(STAGE17_PRELUDE_HIT_GATE_GUARD [=[
+if (state.draw_accepted && state.draw_hit_count == 2U) {
+                state.step = Stage17ValidationStep::approach_storm;
+]=])
+string(FIND "${SANITIZED_HOST_SOURCE}" "${STAGE17_PRELUDE_HIT_GATE_GUARD}"
+    STAGE17_PRELUDE_HIT_GATE_GUARD_INDEX)
+if(STAGE17_PRELUDE_HIT_GATE_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "Stage17 storm prelude must complete exactly two production hits")
+endif()
+set(STAGE17_STORM_THREAT_PULL_GUARD [=[
+if (state.storm_threat_pull_locked) {
+            stage17_apply_movement(
+                snapshot, input_settings, state.storm_threat_pull_movement);
+        }
+]=])
+string(FIND "${SANITIZED_HOST_SOURCE}"
+    "${STAGE17_STORM_THREAT_PULL_GUARD}"
+    STAGE17_STORM_THREAT_PULL_GUARD_INDEX)
+if(STAGE17_STORM_THREAT_PULL_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "Stage17 storm threat pull must remain fixed normal movement input")
+endif()
+set(STAGE17_RENDERER_OBSERVER_GUARD [=[
+if (config.stage17_skill_stones_validation
+            == Stage17SkillStonesValidationScenario::none
+        || config.stage17_skill_stones_validation
+            == Stage17SkillStonesValidationScenario::restarted_loadout
+        || !presented.combat.has_value()) {
+]=])
+string(FIND "${SANITIZED_HOST_SOURCE}" "${STAGE17_RENDERER_OBSERVER_GUARD}"
+    STAGE17_RENDERER_OBSERVER_GUARD_INDEX)
+if(STAGE17_RENDERER_OBSERVER_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "Stage17 renderer evidence must observe production and storm scenarios")
+endif()
 
 set(SOURCE_LINE_START "(^|\n)[ \t]*")
 set(SOURCE_LINE_END "[ \t]*(\r?\n|$)")
@@ -92,6 +560,8 @@ HostFrameInput frame_input = map_host_frame_input(
 DeathInputGate death_gate = host_death_input_gate(
     death_saving, death_pending, frame_input.keys, physical_keys);
 const bool pause_blocks_gameplay = pause_open || pause_was_open;
+const bool gameplay_armed = runtime.authority_requests_enabled()
+    && !gameplay_rearm_was_required;
 HostFrameGateResult host_gate{};
 if (pause_open) {
     host_gate = gate_host_frame(fixed_step, pause_latched, true,
@@ -107,19 +577,26 @@ const InventoryInputGate inventory_gate = inventory_input_gate(
 const bool forward_actions = passive_input_gate.forward_actions
     && inventory_gate.forward_actions
     && death_gate.forward_gameplay
-    && host_gate.forward_gameplay && !pause_blocks_gameplay;
+    && host_gate.forward_gameplay && !pause_blocks_gameplay
+    && gameplay_armed;
+const bool forward_movement = passive_input_gate.forward_movement
+    && inventory_gate.forward_movement
+    && death_gate.forward_gameplay
+    && host_gate.forward_gameplay && !pause_blocks_gameplay
+    && gameplay_armed;
 const bool forward_descent = passive_input_gate.forward_descent
     && inventory_gate.forward_descent
     && death_gate.forward_gameplay
-    && host_gate.forward_gameplay && !pause_blocks_gameplay;
+    && host_gate.forward_gameplay && !pause_blocks_gameplay
+    && gameplay_armed;
 if (forward_actions) {
     const SubmittedFrameActions submitted_actions =
         submit_frame_actions(*session, frame_input);
 }
 if (forward_descent && frame_input.keys.e) {
-    const auto snapshot = session->snapshot();
-    const bool in_range = snapshot.combat.has_value()
-        && can_prompt_descent(snapshot, snapshot.combat->player.position);
+    session->snapshot(current);
+    const bool in_range = current.combat.has_value()
+        && can_prompt_descent(current, current.combat->player.position);
     static_cast<void>(session->request_descent(in_range));
 }
 const combat::MovementInput movement = forward_movement
@@ -225,10 +702,12 @@ function(physical_input_chain_valid SOURCE OUT_VARIABLE)
     string(FIND "${SOURCE}" "HostFrameInput frame_input = map_host_frame_input(" MAP_INDEX)
     string(FIND "${SOURCE}" "DeathInputGate death_gate = host_death_input_gate(" DEATH_GATE_INDEX)
     string(FIND "${SOURCE}" "const bool pause_blocks_gameplay =" PAUSE_BLOCK_INDEX)
+    string(FIND "${SOURCE}" "const bool gameplay_armed =" GAMEPLAY_ARMED_INDEX)
     string(FIND "${SOURCE}" "HostFrameGateResult host_gate{}" HOST_GATE_INDEX)
     string(FIND "${SOURCE}" "const PassiveOverlayInputGate passive_input_gate =" PASSIVE_GATE_INDEX)
     string(FIND "${SOURCE}" "const InventoryInputGate inventory_gate =" INVENTORY_GATE_INDEX)
     string(FIND "${SOURCE}" "const bool forward_actions =" FORWARD_ACTIONS_INDEX)
+    string(FIND "${SOURCE}" "const bool forward_movement =" FORWARD_MOVEMENT_DECL_INDEX)
     string(FIND "${SOURCE}" "const bool forward_descent =" FORWARD_DESCENT_DECL_INDEX)
     string(FIND "${SOURCE}" "if (forward_actions) {" FORWARD_ACTIONS_IF_INDEX)
     string(FIND "${SOURCE}" "submit_frame_actions(*session, frame_input)" SUBMIT_ACTIONS_INDEX)
@@ -237,9 +716,11 @@ function(physical_input_chain_valid SOURCE OUT_VARIABLE)
     string(FIND "${SOURCE}" "const combat::MovementInput movement = forward_movement" MOVEMENT_INPUT_INDEX)
     if(SAMPLE_INDEX EQUAL -1 OR STAGE11B_INDEX EQUAL -1 OR STAGE11C_INDEX EQUAL -1
             OR STAGE11D_INDEX EQUAL -1 OR STAGE17_INDEX EQUAL -1
-            OR MAP_INDEX EQUAL -1 OR DEATH_GATE_INDEX EQUAL -1 OR PAUSE_BLOCK_INDEX EQUAL -1
+            OR MAP_INDEX EQUAL -1 OR DEATH_GATE_INDEX EQUAL -1
+            OR PAUSE_BLOCK_INDEX EQUAL -1 OR GAMEPLAY_ARMED_INDEX EQUAL -1
             OR HOST_GATE_INDEX EQUAL -1 OR PASSIVE_GATE_INDEX EQUAL -1 OR INVENTORY_GATE_INDEX EQUAL -1
-            OR FORWARD_ACTIONS_INDEX EQUAL -1 OR FORWARD_DESCENT_DECL_INDEX EQUAL -1
+            OR FORWARD_ACTIONS_INDEX EQUAL -1 OR FORWARD_MOVEMENT_DECL_INDEX EQUAL -1
+            OR FORWARD_DESCENT_DECL_INDEX EQUAL -1
             OR FORWARD_ACTIONS_IF_INDEX EQUAL -1 OR SUBMIT_ACTIONS_INDEX EQUAL -1
             OR FORWARD_DESCENT_INDEX EQUAL -1 OR REQUEST_DESCENT_INDEX EQUAL -1
             OR MOVEMENT_INPUT_INDEX EQUAL -1
@@ -248,10 +729,13 @@ function(physical_input_chain_valid SOURCE OUT_VARIABLE)
             OR NOT STAGE11D_INDEX LESS STAGE17_INDEX
             OR NOT STAGE17_INDEX LESS MAP_INDEX
             OR NOT MAP_INDEX LESS DEATH_GATE_INDEX
-            OR NOT DEATH_GATE_INDEX LESS PAUSE_BLOCK_INDEX OR NOT PAUSE_BLOCK_INDEX LESS HOST_GATE_INDEX
+            OR NOT DEATH_GATE_INDEX LESS PAUSE_BLOCK_INDEX
+            OR NOT PAUSE_BLOCK_INDEX LESS GAMEPLAY_ARMED_INDEX
+            OR NOT GAMEPLAY_ARMED_INDEX LESS HOST_GATE_INDEX
             OR NOT HOST_GATE_INDEX LESS PASSIVE_GATE_INDEX OR NOT PASSIVE_GATE_INDEX LESS INVENTORY_GATE_INDEX
             OR NOT INVENTORY_GATE_INDEX LESS FORWARD_ACTIONS_INDEX
-            OR NOT FORWARD_ACTIONS_INDEX LESS FORWARD_DESCENT_DECL_INDEX
+            OR NOT FORWARD_ACTIONS_INDEX LESS FORWARD_MOVEMENT_DECL_INDEX
+            OR NOT FORWARD_MOVEMENT_DECL_INDEX LESS FORWARD_DESCENT_DECL_INDEX
             OR NOT FORWARD_DESCENT_DECL_INDEX LESS FORWARD_ACTIONS_IF_INDEX
             OR NOT FORWARD_ACTIONS_IF_INDEX LESS SUBMIT_ACTIONS_INDEX
             OR NOT SUBMIT_ACTIONS_INDEX LESS FORWARD_DESCENT_INDEX
@@ -272,10 +756,17 @@ function(physical_input_chain_valid SOURCE OUT_VARIABLE)
     string(SUBSTRING "${SOURCE}" ${MAP_INDEX} -1 MAP_SOURCE)
     math(EXPR HOST_GATE_LENGTH "${PASSIVE_GATE_INDEX} - ${HOST_GATE_INDEX}")
     string(SUBSTRING "${SOURCE}" ${HOST_GATE_INDEX} ${HOST_GATE_LENGTH} HOST_GATE_SOURCE)
+    math(EXPR GAMEPLAY_ARMED_LENGTH "${HOST_GATE_INDEX} - ${GAMEPLAY_ARMED_INDEX}")
+    string(SUBSTRING "${SOURCE}" ${GAMEPLAY_ARMED_INDEX}
+        ${GAMEPLAY_ARMED_LENGTH} GAMEPLAY_ARMED_SOURCE)
     math(EXPR HOST_CHAIN_LENGTH "${MOVEMENT_INPUT_INDEX} - ${MAP_INDEX}")
     string(SUBSTRING "${SOURCE}" ${MAP_INDEX} ${HOST_CHAIN_LENGTH} HOST_CHAIN_SOURCE)
     math(EXPR FORWARD_ACTIONS_LENGTH "${FORWARD_ACTIONS_IF_INDEX} - ${FORWARD_ACTIONS_INDEX}")
     string(SUBSTRING "${SOURCE}" ${FORWARD_ACTIONS_INDEX} ${FORWARD_ACTIONS_LENGTH} FORWARD_ACTIONS_SOURCE)
+    math(EXPR FORWARD_MOVEMENT_LENGTH
+        "${FORWARD_DESCENT_DECL_INDEX} - ${FORWARD_MOVEMENT_DECL_INDEX}")
+    string(SUBSTRING "${SOURCE}" ${FORWARD_MOVEMENT_DECL_INDEX}
+        ${FORWARD_MOVEMENT_LENGTH} FORWARD_MOVEMENT_SOURCE)
     math(EXPR CONTROLLED_SUBMIT_LENGTH "${FORWARD_DESCENT_INDEX} - ${FORWARD_ACTIONS_IF_INDEX}")
     string(SUBSTRING "${SOURCE}" ${FORWARD_ACTIONS_IF_INDEX} ${CONTROLLED_SUBMIT_LENGTH} CONTROLLED_SUBMIT_SOURCE)
     math(EXPR FORWARD_DESCENT_LENGTH "${FORWARD_DESCENT_INDEX} - ${FORWARD_DESCENT_DECL_INDEX}")
@@ -291,6 +782,12 @@ function(physical_input_chain_valid SOURCE OUT_VARIABLE)
     list(LENGTH REQUEST_DESCENT_CALLS REQUEST_DESCENT_CALL_COUNT)
     string(REGEX MATCHALL "forward_descent${WS}=" FORWARD_DESCENT_ASSIGNMENTS "${HOST_CHAIN_SOURCE}")
     list(LENGTH FORWARD_DESCENT_ASSIGNMENTS FORWARD_DESCENT_ASSIGNMENT_COUNT)
+    string(REGEX MATCHALL "gameplay_armed${WS}=" GAMEPLAY_ARMED_ASSIGNMENTS
+        "${HOST_CHAIN_SOURCE}")
+    list(LENGTH GAMEPLAY_ARMED_ASSIGNMENTS GAMEPLAY_ARMED_ASSIGNMENT_COUNT)
+    string(REGEX MATCHALL "forward_movement${WS}=" FORWARD_MOVEMENT_ASSIGNMENTS
+        "${HOST_CHAIN_SOURCE}")
+    list(LENGTH FORWARD_MOVEMENT_ASSIGNMENTS FORWARD_MOVEMENT_ASSIGNMENT_COUNT)
 
     if(NOT STAGE11B_SOURCE MATCHES "inject_stage11b_physical_edges${WS}\\(${WS}sampled_physical_keys,${WS}config,${WS}stage11b_validation_state${WS}\\)"
             OR NOT STAGE11C_SOURCE MATCHES "inject_stage11c_physical_edges${WS}\\(${WS}stage11b_physical_keys,${WS}config,${WS}input_settings,${WS}current,${WS}stage11c_validation_state${WS}\\)"
@@ -304,13 +801,18 @@ function(physical_input_chain_valid SOURCE OUT_VARIABLE)
             OR HOST_CHAIN_SOURCE MATCHES "host_gate\\.forward_gameplay${WS}=${WS}[^=]"
             OR NOT SOURCE MATCHES "const PassiveOverlayInputGate passive_input_gate =${WS}passive_overlay_input_gate${WS}\\(${WS}passive_overlay_open${WS}\\)${WS};"
             OR NOT SOURCE MATCHES "const InventoryInputGate inventory_gate =${WS}inventory_input_gate${WS}\\(${WS}inventory\\.is_open${WS}\\(${WS}\\)${WS}\\|\\|${WS}inventory_toggled_this_frame${WS}\\)${WS};"
+            OR NOT GAMEPLAY_ARMED_ASSIGNMENT_COUNT EQUAL 1
+            OR NOT GAMEPLAY_ARMED_SOURCE MATCHES "const bool gameplay_armed =${WS}runtime\\.authority_requests_enabled${WS}\\(${WS}\\)${WS}&&${WS}!gameplay_rearm_was_required${WS};"
             OR NOT SUBMIT_ACTION_CALL_COUNT EQUAL 1
-            OR NOT FORWARD_ACTIONS_SOURCE MATCHES "const bool forward_actions =${WS}passive_input_gate\\.forward_actions${WS}&&${WS}inventory_gate\\.forward_actions${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS};"
+            OR NOT FORWARD_ACTIONS_SOURCE MATCHES "const bool forward_actions =${WS}passive_input_gate\\.forward_actions${WS}&&${WS}inventory_gate\\.forward_actions${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS}&&${WS}gameplay_armed${WS};"
             OR NOT CONTROLLED_SUBMIT_SOURCE MATCHES "if${WS}\\(${WS}forward_actions${WS}\\)${WS}\\{${WS}const${WS1}SubmittedFrameActions${WS1}submitted_actions${WS}=${WS}submit_frame_actions${WS}\\(${WS}\\*session,${WS}frame_input${WS}\\)${WS};"
+            OR NOT FORWARD_MOVEMENT_ASSIGNMENT_COUNT EQUAL 1
+            OR NOT FORWARD_MOVEMENT_SOURCE MATCHES "const bool forward_movement =${WS}passive_input_gate\\.forward_movement${WS}&&${WS}inventory_gate\\.forward_movement${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS}&&${WS}gameplay_armed${WS};"
+            OR NOT SOURCE MATCHES "const combat::MovementInput movement =${WS}forward_movement${WS}\\?${WS}frame_input\\.movement${WS}:${WS}combat::MovementInput${WS}\\{${WS}\\}${WS};"
             OR NOT FORWARD_DESCENT_ASSIGNMENT_COUNT EQUAL 1
-            OR NOT FORWARD_DESCENT_SOURCE MATCHES "const bool forward_descent =${WS}passive_input_gate\\.forward_descent${WS}&&${WS}inventory_gate\\.forward_descent${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS};"
+            OR NOT FORWARD_DESCENT_SOURCE MATCHES "const bool forward_descent =${WS}passive_input_gate\\.forward_descent${WS}&&${WS}inventory_gate\\.forward_descent${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS}&&${WS}gameplay_armed${WS};"
             OR NOT REQUEST_DESCENT_CALL_COUNT EQUAL 1
-            OR NOT CONTROLLED_DESCENT_SOURCE MATCHES "if${WS}\\(${WS}forward_descent${WS}&&${WS}frame_input\\.keys\\.e${WS}\\)${WS}\\{${WS}const auto snapshot =${WS}session->snapshot${WS}\\(${WS}\\)${WS};${WS}const bool in_range =${WS}snapshot\\.combat\\.has_value${WS}\\(${WS}\\)${WS}&&${WS}can_prompt_descent${WS}\\(${WS}snapshot,${WS}snapshot\\.combat->player\\.position${WS}\\)${WS};${WS}static_cast<void>${WS}\\(${WS}session->request_descent${WS}\\(${WS}in_range${WS}\\)${WS}\\)${WS};")
+            OR NOT CONTROLLED_DESCENT_SOURCE MATCHES "if${WS}\\(${WS}forward_descent${WS}&&${WS}frame_input\\.keys\\.e${WS}\\)${WS}\\{${WS}session->snapshot${WS}\\(${WS}current${WS}\\)${WS};${WS}const bool in_range =${WS}current\\.combat\\.has_value${WS}\\(${WS}\\)${WS}&&${WS}can_prompt_descent${WS}\\(${WS}current,${WS}current\\.combat->player\\.position${WS}\\)${WS};${WS}static_cast<void>${WS}\\(${WS}session->request_descent${WS}\\(${WS}in_range${WS}\\)${WS}\\)${WS};")
         set("${OUT_VARIABLE}" FALSE PARENT_SCOPE)
         return()
     endif()
@@ -325,6 +827,35 @@ endif()
 physical_input_chain_valid("${REAL_STRUCTURE}" REFERENCE_INPUT_CHAIN_VALID)
 if(NOT REFERENCE_INPUT_CHAIN_VALID)
     message(FATAL_ERROR "host input chain self-check rejected reference")
+endif()
+set(GAMEPLAY_ARMED_DEFINITION [=[const bool gameplay_armed = runtime.authority_requests_enabled()
+    && !gameplay_rearm_was_required;]=])
+string(REPLACE "${GAMEPLAY_ARMED_DEFINITION}"
+    "const bool gameplay_armed = true;"
+    UNCONDITIONAL_GAMEPLAY_ARMED_STRUCTURE "${REAL_STRUCTURE}")
+if(UNCONDITIONAL_GAMEPLAY_ARMED_STRUCTURE STREQUAL REAL_STRUCTURE)
+    message(FATAL_ERROR "gameplay_armed mutation setup did not modify reference")
+endif()
+physical_input_chain_valid("${UNCONDITIONAL_GAMEPLAY_ARMED_STRUCTURE}"
+    UNCONDITIONAL_GAMEPLAY_ARMED_STRUCTURE_VALID)
+if(UNCONDITIONAL_GAMEPLAY_ARMED_STRUCTURE_VALID)
+    message(FATAL_ERROR "host input chain accepted gameplay_armed = true")
+endif()
+set(FORWARD_MOVEMENT_DEFINITION [=[const bool forward_movement = passive_input_gate.forward_movement
+    && inventory_gate.forward_movement
+    && death_gate.forward_gameplay
+    && host_gate.forward_gameplay && !pause_blocks_gameplay
+    && gameplay_armed;]=])
+string(REPLACE "${FORWARD_MOVEMENT_DEFINITION}"
+    "const bool forward_movement = true;"
+    UNCONDITIONAL_FORWARD_MOVEMENT_STRUCTURE "${REAL_STRUCTURE}")
+if(UNCONDITIONAL_FORWARD_MOVEMENT_STRUCTURE STREQUAL REAL_STRUCTURE)
+    message(FATAL_ERROR "forward_movement mutation setup did not modify reference")
+endif()
+physical_input_chain_valid("${UNCONDITIONAL_FORWARD_MOVEMENT_STRUCTURE}"
+    UNCONDITIONAL_FORWARD_MOVEMENT_STRUCTURE_VALID)
+if(UNCONDITIONAL_FORWARD_MOVEMENT_STRUCTURE_VALID)
+    message(FATAL_ERROR "host input chain accepted forward_movement = true")
 endif()
 set(INPUT_CHAIN_SPOOF_ACCEPTANCES)
 set(COMMENT_ONLY_INPUT_CHAIN "/*${REAL_STRUCTURE}*/")
@@ -430,7 +961,8 @@ set(FORWARD_DESCENT_DECLARATION [=[
             const bool forward_descent = passive_input_gate.forward_descent
                 && inventory_gate.forward_descent
                 && death_gate.forward_gameplay
-                && host_gate.forward_gameplay && !pause_blocks_gameplay;
+                && host_gate.forward_gameplay && !pause_blocks_gameplay
+                && gameplay_armed;
 ]=])
 string(REPLACE "${FORWARD_DESCENT_DECLARATION}"
     "            const bool forward_descent = true;"

@@ -81,6 +81,7 @@ public:
     [[nodiscard]] bool clamp_to_home_leash(
         MonsterOrdinal ordinal, Vec3& position) const noexcept;
     void rebind_active_pool(MonsterPool& active_pool) noexcept;
+    void discard_active_residency() noexcept;
     [[nodiscard]] MonsterPool& active_pool() noexcept;
     [[nodiscard]] const MonsterPool& active_pool() const noexcept;
 

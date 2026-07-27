@@ -325,167 +325,172 @@ DecodeResult error_result(CodecError error) noexcept {
 
 }  // namespace
 
-std::optional<EncodedCheckpoint> encode_checkpoint(
-    const dungeon::checkpoint::DungeonRunState& state) noexcept {
+CodecError encode_checkpoint_into(
+    const dungeon::checkpoint::DungeonRunState& state,
+    std::uint8_t* bytes,
+    const std::size_t capacity,
+    std::size_t& written) noexcept {
+    written = 0U;
     if (!valid_checkpoint_fields(state, true)
         || !valid_abyss_checkpoint(state)
         || !valid_last_resolution(state.last_abyss_resolution)
         || !checkpoint::valid_death_checkpoint_structural(state.death)
         || skills::validate_skill_loadout(state.skill_loadout)
-            != skills::SkillLoadoutError::none
-        || items::validate_ownership_detailed(state.item_ownership)
-            != items::OwnershipValidationResult::valid) {
-        return std::nullopt;
+            != skills::SkillLoadoutError::none) {
+        return CodecError::invalid_state;
     }
     const auto item_count = state.item_ownership.items.size();
     if (item_count > kMaximumCheckpointItemCount
         || item_count > (std::numeric_limits<std::size_t>::max()
                 - kV8BasePayloadSize) / kV7ItemRecordSize) {
-        return std::nullopt;
+        return CodecError::bad_payload_length;
     }
     const auto payload_size = kV8BasePayloadSize
         + item_count * kV7ItemRecordSize;
     if (payload_size > std::numeric_limits<std::size_t>::max()
             - kCheckpointHeaderSize) {
-        return std::nullopt;
+        return CodecError::bad_payload_length;
     }
     const auto encoded_size = kCheckpointHeaderSize + payload_size;
-    EncodedCheckpoint out;
-    try {
-        out.resize(encoded_size, 0U);
-    } catch (const std::bad_alloc&) {
-        return std::nullopt;
-    } catch (...) {
-        return std::nullopt;
+    if (bytes == nullptr || capacity < encoded_size) return CodecError::wrong_size;
+    const items::OwnershipValidationResult ownership =
+        items::validate_ownership_with_scratch(
+            state.item_ownership, bytes, capacity);
+    if (ownership == items::OwnershipValidationResult::allocation_failure) {
+        return CodecError::allocation_failure;
     }
+    if (ownership != items::OwnershipValidationResult::valid) {
+        return CodecError::invalid_state;
+    }
+    std::fill(bytes, bytes + encoded_size, std::uint8_t{0U});
 
-    std::copy(kV8Magic.begin(), kV8Magic.end(), out.begin());
-    write_u32(out.data() + 8U, kCheckpointFormatVersion);
-    write_u32(out.data() + 12U, kCheckpointRulesVersion);
-    write_u64(out.data() + 16U, state.commit_generation);
-    write_u32(out.data() + 24U, static_cast<std::uint32_t>(payload_size));
+    std::copy(kV8Magic.begin(), kV8Magic.end(), bytes);
+    write_u32(bytes + 8U, kCheckpointFormatVersion);
+    write_u32(bytes + 12U, kCheckpointRulesVersion);
+    write_u64(bytes + 16U, state.commit_generation);
+    write_u32(bytes + 24U, static_cast<std::uint32_t>(payload_size));
 
-    write_u64(out.data() + 32U, state.root_seed);
+    write_u64(bytes + 32U, state.root_seed);
     for (std::size_t index = 0; index < state.biases.size(); ++index) {
-        write_u32(out.data() + 40U + index * 4U, state.biases[index]);
+        write_u32(bytes + 40U + index * 4U, state.biases[index]);
     }
-    write_u64(out.data() + 56U, state.current_room.index);
-    write_u64(out.data() + 64U, state.current_room.seed);
-    write_u64(out.data() + 72U, state.current_room.depth);
-    write_u64(out.data() + 80U, state.current_room.floor_room_index);
-    out[88U] = static_cast<std::uint8_t>(state.current_room.entry);
-    out[89U] = static_cast<std::uint8_t>(state.current_room.ecology);
-    out[90U] = state.current_room.has_hole ? 1U : 0U;
-    out[91U] = state.current_room.is_abyss ? 1U : 0U;
-    out[92U] = static_cast<std::uint8_t>(state.last_transition);
-    out[93U] = static_cast<std::uint8_t>(state.last_direction);
-    out[94U] = state.progression.level;
-    out[95U] = state.progression.earned_passive_points;
-    out[96U] = state.progression.unspent_passive_points;
-    write_u64(out.data() + 98U, state.progression.experience);
-    write_u64(out.data() + 106U, state.passive_tree.allocated_bits);
+    write_u64(bytes + 56U, state.current_room.index);
+    write_u64(bytes + 64U, state.current_room.seed);
+    write_u64(bytes + 72U, state.current_room.depth);
+    write_u64(bytes + 80U, state.current_room.floor_room_index);
+    bytes[88U] = static_cast<std::uint8_t>(state.current_room.entry);
+    bytes[89U] = static_cast<std::uint8_t>(state.current_room.ecology);
+    bytes[90U] = state.current_room.has_hole ? 1U : 0U;
+    bytes[91U] = state.current_room.is_abyss ? 1U : 0U;
+    bytes[92U] = static_cast<std::uint8_t>(state.last_transition);
+    bytes[93U] = static_cast<std::uint8_t>(state.last_direction);
+    bytes[94U] = state.progression.level;
+    bytes[95U] = state.progression.earned_passive_points;
+    bytes[96U] = state.progression.unspent_passive_points;
+    write_u64(bytes + 98U, state.progression.experience);
+    write_u64(bytes + 106U, state.passive_tree.allocated_bits);
 
-    out[120U] = static_cast<std::uint8_t>(state.abyss.lifecycle);
-    out[121U] = static_cast<std::uint8_t>(state.abyss.danger);
-    out[122U] = static_cast<std::uint8_t>(state.abyss.rule);
-    write_u32(out.data() + 124U, state.abyss.rules_version);
-    out[128U] = state.abyss.reward_total;
-    out[129U] = state.abyss.generated_mask;
-    out[130U] = state.abyss.claimed_mask;
-    out[131U] = state.abyss.abandoned_mask;
-    write_u32(out.data() + 132U, state.abyss.reward_revision);
-    out[136U] = state.last_abyss_resolution.valid ? 1U : 0U;
-    write_u64(out.data() + 137U, state.last_abyss_resolution.room_seed);
-    out[145U] = static_cast<std::uint8_t>(state.last_abyss_resolution.rule);
-    out[146U] = state.last_abyss_resolution.total;
-    out[147U] = state.last_abyss_resolution.generated;
-    out[148U] = state.last_abyss_resolution.claimed;
-    out[149U] = state.last_abyss_resolution.abandoned;
+    bytes[120U] = static_cast<std::uint8_t>(state.abyss.lifecycle);
+    bytes[121U] = static_cast<std::uint8_t>(state.abyss.danger);
+    bytes[122U] = static_cast<std::uint8_t>(state.abyss.rule);
+    write_u32(bytes + 124U, state.abyss.rules_version);
+    bytes[128U] = state.abyss.reward_total;
+    bytes[129U] = state.abyss.generated_mask;
+    bytes[130U] = state.abyss.claimed_mask;
+    bytes[131U] = state.abyss.abandoned_mask;
+    write_u32(bytes + 132U, state.abyss.reward_revision);
+    bytes[136U] = state.last_abyss_resolution.valid ? 1U : 0U;
+    write_u64(bytes + 137U, state.last_abyss_resolution.room_seed);
+    bytes[145U] = static_cast<std::uint8_t>(state.last_abyss_resolution.rule);
+    bytes[146U] = state.last_abyss_resolution.total;
+    bytes[147U] = state.last_abyss_resolution.generated;
+    bytes[148U] = state.last_abyss_resolution.claimed;
+    bytes[149U] = state.last_abyss_resolution.abandoned;
 
-    write_u32(out.data() + 152U, static_cast<std::uint32_t>(item_count));
-    write_u64(out.data() + 156U, state.item_ownership.next_item_sequence);
+    write_u32(bytes + 152U, static_cast<std::uint32_t>(item_count));
+    write_u64(bytes + 156U, state.item_ownership.next_item_sequence);
     for (std::size_t index = 0U;
             index < state.item_ownership.claimed_drop_bits.size(); ++index) {
-        write_u64(out.data() + 164U + index * 8U,
+        write_u64(bytes + 164U + index * 8U,
             state.item_ownership.claimed_drop_bits[index]);
     }
     for (std::size_t index = 0U;
             index < state.item_ownership.equipment.equipped_ids.size(); ++index) {
-        write_u64(out.data() + 188U + index * 8U,
+        write_u64(bytes + 188U + index * 8U,
             state.item_ownership.equipment.equipped_ids[index]);
     }
 
     const auto& death = state.death;
-    write_u64(out.data() + 236U, state.death_sequence);
-    out[244U] = static_cast<std::uint8_t>(death.lifecycle);
-    out[245U] = death.data_version;
-    out[246U] = static_cast<std::uint8_t>(death.source_kind);
-    out[247U] = static_cast<std::uint8_t>(death.damage_type);
-    out[248U] = death.source_monster_id;
-    write_u16(out.data() + 250U, death.source_detail_id);
-    out[252U] = death.death_was_abyss ? 1U : 0U;
-    out[253U] = static_cast<std::uint8_t>(death.death_ecology);
-    write_u64(out.data() + 256U, death.death_depth);
-    write_u64(out.data() + 264U, death.death_floor_room_index);
-    write_u64(out.data() + 272U, death.raw_damage);
-    write_u64(out.data() + 280U, death.barrier_loss);
-    write_u64(out.data() + 288U, death.health_loss);
-    write_u64(out.data() + 296U, death.final_damage);
+    write_u64(bytes + 236U, state.death_sequence);
+    bytes[244U] = static_cast<std::uint8_t>(death.lifecycle);
+    bytes[245U] = death.data_version;
+    bytes[246U] = static_cast<std::uint8_t>(death.source_kind);
+    bytes[247U] = static_cast<std::uint8_t>(death.damage_type);
+    bytes[248U] = death.source_monster_id;
+    write_u16(bytes + 250U, death.source_detail_id);
+    bytes[252U] = death.death_was_abyss ? 1U : 0U;
+    bytes[253U] = static_cast<std::uint8_t>(death.death_ecology);
+    write_u64(bytes + 256U, death.death_depth);
+    write_u64(bytes + 264U, death.death_floor_room_index);
+    write_u64(bytes + 272U, death.raw_damage);
+    write_u64(bytes + 280U, death.barrier_loss);
+    write_u64(bytes + 288U, death.health_loss);
+    write_u64(bytes + 296U, death.final_damage);
     for (std::size_t index = 0U; index < death.recent_damage.size(); ++index)
-        write_u64(out.data() + 304U + index * 8U, death.recent_damage[index]);
-    write_u32(out.data() + 344U, static_cast<std::uint32_t>(death.hp));
-    write_u32(out.data() + 348U, static_cast<std::uint32_t>(death.max_hp));
-    write_u32(out.data() + 352U, static_cast<std::uint32_t>(death.barrier));
-    write_u32(out.data() + 356U, static_cast<std::uint32_t>(death.max_barrier));
-    write_u64(out.data() + 360U, static_cast<std::uint64_t>(death.armor));
-    write_u64(out.data() + 368U, static_cast<std::uint64_t>(death.evasion));
-    write_u32(out.data() + 376U,
+        write_u64(bytes + 304U + index * 8U, death.recent_damage[index]);
+    write_u32(bytes + 344U, static_cast<std::uint32_t>(death.hp));
+    write_u32(bytes + 348U, static_cast<std::uint32_t>(death.max_hp));
+    write_u32(bytes + 352U, static_cast<std::uint32_t>(death.barrier));
+    write_u32(bytes + 356U, static_cast<std::uint32_t>(death.max_barrier));
+    write_u64(bytes + 360U, static_cast<std::uint64_t>(death.armor));
+    write_u64(bytes + 368U, static_cast<std::uint64_t>(death.evasion));
+    write_u32(bytes + 376U,
         static_cast<std::uint32_t>(death.armor_reduction_bp));
-    write_u32(out.data() + 380U,
+    write_u32(bytes + 380U,
         static_cast<std::uint32_t>(death.evasion_rate_bp));
     for (std::size_t index = 0U; index < death.damage_reduction.size(); ++index) {
-        write_u32(out.data() + 384U + index * 4U,
+        write_u32(bytes + 384U + index * 4U,
             static_cast<std::uint32_t>(death.damage_reduction[index]));
-        write_u32(out.data() + 400U + index * 4U,
+        write_u32(bytes + 400U + index * 4U,
             static_cast<std::uint32_t>(death.damage_reduction_cap[index]));
     }
-    write_u64(out.data() + 416U, death.target_room.index);
-    write_u64(out.data() + 424U, death.target_room.seed);
-    write_u64(out.data() + 432U, death.target_room.depth);
-    write_u64(out.data() + 440U, death.target_room.floor_room_index);
-    out[448U] = static_cast<std::uint8_t>(death.target_room.entry);
-    out[449U] = static_cast<std::uint8_t>(death.target_room.ecology);
-    out[450U] = death.target_room.has_hole ? 1U : 0U;
-    out[451U] = death.target_room.is_abyss ? 1U : 0U;
+    write_u64(bytes + 416U, death.target_room.index);
+    write_u64(bytes + 424U, death.target_room.seed);
+    write_u64(bytes + 432U, death.target_room.depth);
+    write_u64(bytes + 440U, death.target_room.floor_room_index);
+    bytes[448U] = static_cast<std::uint8_t>(death.target_room.entry);
+    bytes[449U] = static_cast<std::uint8_t>(death.target_room.ecology);
+    bytes[450U] = death.target_room.has_hole ? 1U : 0U;
+    bytes[451U] = death.target_room.is_abyss ? 1U : 0U;
 
     for (std::size_t material_index = 0U;
             material_index < items::kMaterialCount; ++material_index) {
         const auto material_id = static_cast<items::MaterialId>(material_index);
         const auto* const definition = items::material_definition(material_id);
         if (definition == nullptr)
-            return std::nullopt;
-        auto* record = out.data() + kV6BaseEncodedCheckpointSize
+            return CodecError::invalid_state;
+        auto* record = bytes + kV6BaseEncodedCheckpointSize
             + material_index * kV7MaterialRecordSize;
         record[0U] = definition->stable_id;
         write_u64(record + 8U, state.item_ownership.materials[material_index]);
     }
-    write_u16(out.data() + 684U,
+    write_u16(bytes + 684U,
         state.item_ownership.material_discovery_bits);
     for (std::size_t index = 0U;
             index < state.item_ownership.material_claimed_drop_bits.size();
             ++index) {
-        write_u64(out.data() + 692U + index * 8U,
+        write_u64(bytes + 692U + index * 8U,
             state.item_ownership.material_claimed_drop_bits[index]);
     }
 
-    write_u64(out.data() + 748U, state.skill_loadout.owned_active_bits);
+    write_u64(bytes + 748U, state.skill_loadout.owned_active_bits);
     for (std::size_t slot = 0U; slot < state.skill_loadout.slots.size(); ++slot) {
-        out[756U + slot] = static_cast<std::uint8_t>(
+        bytes[756U + slot] = static_cast<std::uint8_t>(
             state.skill_loadout.slots[slot].active);
         for (std::size_t support = 0U;
                 support < state.skill_loadout.slots[slot].supports.size();
                 ++support) {
-            out[761U + slot * skills::kSupportSlotsPerActive + support] =
+            bytes[761U + slot * skills::kSupportSlotsPerActive + support] =
                 static_cast<std::uint8_t>(
                     state.skill_loadout.slots[slot].supports[support]);
         }
@@ -493,7 +498,7 @@ std::optional<EncodedCheckpoint> encode_checkpoint(
 
     for (std::size_t item_index = 0U; item_index < item_count; ++item_index) {
         const auto& item = state.item_ownership.items[item_index];
-        auto* record = out.data() + kV8BaseEncodedCheckpointSize
+        auto* record = bytes + kV8BaseEncodedCheckpointSize
             + item_index * kV7ItemRecordSize;
         write_u64(record, item.id);
         record[8U] = item.base_id;
@@ -513,8 +518,271 @@ std::optional<EncodedCheckpoint> encode_checkpoint(
         write_u32(record + 52U, item.reinforcement);
     }
 
-    write_u32(out.data() + 28U,
-        checkpoint_crc(out.data(), payload_size));
+    write_u32(bytes + 28U, checkpoint_crc(bytes, payload_size));
+    written = encoded_size;
+    return CodecError::none;
+}
+
+CodecError verify_checkpoint_v8_readback_fields(
+    const std::uint8_t* const bytes,
+    const std::size_t size,
+    const dungeon::checkpoint::DungeonRunState& expected) noexcept {
+    const std::size_t item_count = expected.item_ownership.items.size();
+    if (bytes == nullptr || item_count > kMaximumCheckpointItemCount
+            || item_count > ((std::numeric_limits<std::size_t>::max)()
+                - kV8BaseEncodedCheckpointSize) / kV7ItemRecordSize
+            || size != kV8BaseEncodedCheckpointSize
+                + item_count * kV7ItemRecordSize
+            || !std::equal(kV8Magic.begin(), kV8Magic.end(), bytes)
+            || !valid_checkpoint_fields(expected, true)
+            || !valid_abyss_checkpoint(expected)
+            || !valid_last_resolution(expected.last_abyss_resolution)
+            || !checkpoint::valid_death_checkpoint_structural(expected.death)
+            || skills::validate_skill_loadout(expected.skill_loadout)
+                != skills::SkillLoadoutError::none) {
+        return CodecError::invalid_state;
+    }
+    const auto u8 = [bytes, size](const std::size_t offset,
+                        const std::uint8_t expected_value) noexcept {
+        return offset < size && bytes[offset] == expected_value;
+    };
+    const auto u16 = [bytes, size](const std::size_t offset,
+                         const std::uint16_t expected_value) noexcept {
+        DecodeCursor cursor{reinterpret_cast<const std::byte*>(bytes),
+            size, offset};
+        std::uint16_t actual{};
+        return cursor.read_u16(actual) && actual == expected_value;
+    };
+    const auto u32 = [bytes, size](const std::size_t offset,
+                         const std::uint32_t expected_value) noexcept {
+        DecodeCursor cursor{reinterpret_cast<const std::byte*>(bytes),
+            size, offset};
+        std::uint32_t actual{};
+        return cursor.read_u32(actual) && actual == expected_value;
+    };
+    const auto u64 = [bytes, size](const std::size_t offset,
+                         const std::uint64_t expected_value) noexcept {
+        DecodeCursor cursor{reinterpret_cast<const std::byte*>(bytes),
+            size, offset};
+        std::uint64_t actual{};
+        return cursor.read_u64(actual) && actual == expected_value;
+    };
+
+    const std::size_t payload_size = size - kCheckpointHeaderSize;
+    if (!u32(8U, kCheckpointFormatVersion)
+            || !u32(12U, kCheckpointRulesVersion)
+            || !u64(16U, expected.commit_generation)
+            || !u32(24U, static_cast<std::uint32_t>(payload_size))
+            || !u32(28U, checkpoint_crc(bytes, payload_size))
+            || !u64(32U, expected.root_seed)) {
+        return CodecError::invalid_state;
+    }
+    for (std::size_t index = 0U; index < expected.biases.size(); ++index) {
+        if (!u32(40U + index * 4U, expected.biases[index])) {
+            return CodecError::invalid_state;
+        }
+    }
+    const auto& room = expected.current_room;
+    if (!u64(56U, room.index) || !u64(64U, room.seed)
+            || !u64(72U, room.depth)
+            || !u64(80U, room.floor_room_index)
+            || !u8(88U, static_cast<std::uint8_t>(room.entry))
+            || !u8(89U, static_cast<std::uint8_t>(room.ecology))
+            || !u8(90U, room.has_hole ? 1U : 0U)
+            || !u8(91U, room.is_abyss ? 1U : 0U)
+            || !u8(92U, static_cast<std::uint8_t>(expected.last_transition))
+            || !u8(93U, static_cast<std::uint8_t>(expected.last_direction))
+            || !u8(94U, expected.progression.level)
+            || !u8(95U, expected.progression.earned_passive_points)
+            || !u8(96U, expected.progression.unspent_passive_points)
+            || !u64(98U, expected.progression.experience)
+            || !u64(106U, expected.passive_tree.allocated_bits)) {
+        return CodecError::invalid_state;
+    }
+    const auto& abyss_state = expected.abyss;
+    const auto& resolution = expected.last_abyss_resolution;
+    if (!u8(120U, static_cast<std::uint8_t>(abyss_state.lifecycle))
+            || !u8(121U, static_cast<std::uint8_t>(abyss_state.danger))
+            || !u8(122U, static_cast<std::uint8_t>(abyss_state.rule))
+            || !u32(124U, abyss_state.rules_version)
+            || !u8(128U, abyss_state.reward_total)
+            || !u8(129U, abyss_state.generated_mask)
+            || !u8(130U, abyss_state.claimed_mask)
+            || !u8(131U, abyss_state.abandoned_mask)
+            || !u32(132U, abyss_state.reward_revision)
+            || !u8(136U, resolution.valid ? 1U : 0U)
+            || !u64(137U, resolution.room_seed)
+            || !u8(145U, static_cast<std::uint8_t>(resolution.rule))
+            || !u8(146U, resolution.total)
+            || !u8(147U, resolution.generated)
+            || !u8(148U, resolution.claimed)
+            || !u8(149U, resolution.abandoned)
+            || !u32(152U, static_cast<std::uint32_t>(item_count))
+            || !u64(156U, expected.item_ownership.next_item_sequence)) {
+        return CodecError::invalid_state;
+    }
+    for (std::size_t index = 0U;
+            index < expected.item_ownership.claimed_drop_bits.size();
+            ++index) {
+        if (!u64(164U + index * 8U,
+                expected.item_ownership.claimed_drop_bits[index])) {
+            return CodecError::invalid_state;
+        }
+    }
+    for (std::size_t index = 0U;
+            index < expected.item_ownership.equipment.equipped_ids.size();
+            ++index) {
+        if (!u64(188U + index * 8U,
+                expected.item_ownership.equipment.equipped_ids[index])) {
+            return CodecError::invalid_state;
+        }
+    }
+
+    const auto& death = expected.death;
+    if (!u64(236U, expected.death_sequence)
+            || !u8(244U, static_cast<std::uint8_t>(death.lifecycle))
+            || !u8(245U, death.data_version)
+            || !u8(246U, static_cast<std::uint8_t>(death.source_kind))
+            || !u8(247U, static_cast<std::uint8_t>(death.damage_type))
+            || !u8(248U, death.source_monster_id)
+            || !u16(250U, death.source_detail_id)
+            || !u8(252U, death.death_was_abyss ? 1U : 0U)
+            || !u8(253U, static_cast<std::uint8_t>(death.death_ecology))
+            || !u64(256U, death.death_depth)
+            || !u64(264U, death.death_floor_room_index)
+            || !u64(272U, death.raw_damage)
+            || !u64(280U, death.barrier_loss)
+            || !u64(288U, death.health_loss)
+            || !u64(296U, death.final_damage)) {
+        return CodecError::invalid_state;
+    }
+    for (std::size_t index = 0U; index < death.recent_damage.size(); ++index) {
+        if (!u64(304U + index * 8U, death.recent_damage[index])) {
+            return CodecError::invalid_state;
+        }
+    }
+    if (!u32(344U, static_cast<std::uint32_t>(death.hp))
+            || !u32(348U, static_cast<std::uint32_t>(death.max_hp))
+            || !u32(352U, static_cast<std::uint32_t>(death.barrier))
+            || !u32(356U, static_cast<std::uint32_t>(death.max_barrier))
+            || !u64(360U, static_cast<std::uint64_t>(death.armor))
+            || !u64(368U, static_cast<std::uint64_t>(death.evasion))
+            || !u32(376U,
+                static_cast<std::uint32_t>(death.armor_reduction_bp))
+            || !u32(380U,
+                static_cast<std::uint32_t>(death.evasion_rate_bp))) {
+        return CodecError::invalid_state;
+    }
+    for (std::size_t index = 0U;
+            index < death.damage_reduction.size(); ++index) {
+        if (!u32(384U + index * 4U,
+                    static_cast<std::uint32_t>(
+                        death.damage_reduction[index]))
+                || !u32(400U + index * 4U,
+                    static_cast<std::uint32_t>(
+                        death.damage_reduction_cap[index]))) {
+            return CodecError::invalid_state;
+        }
+    }
+    const auto& target = death.target_room;
+    if (!u64(416U, target.index) || !u64(424U, target.seed)
+            || !u64(432U, target.depth)
+            || !u64(440U, target.floor_room_index)
+            || !u8(448U, static_cast<std::uint8_t>(target.entry))
+            || !u8(449U, static_cast<std::uint8_t>(target.ecology))
+            || !u8(450U, target.has_hole ? 1U : 0U)
+            || !u8(451U, target.is_abyss ? 1U : 0U)) {
+        return CodecError::invalid_state;
+    }
+
+    for (std::size_t index = 0U; index < items::kMaterialCount; ++index) {
+        const auto* const definition = items::material_definition(
+            static_cast<items::MaterialId>(index));
+        const std::size_t offset = kV6BaseEncodedCheckpointSize
+            + index * kV7MaterialRecordSize;
+        if (definition == nullptr || !u8(offset, definition->stable_id)
+                || !u64(offset + 8U,
+                    expected.item_ownership.materials[index])) {
+            return CodecError::invalid_state;
+        }
+    }
+    if (!u16(684U, expected.item_ownership.material_discovery_bits)) {
+        return CodecError::invalid_state;
+    }
+    for (std::size_t index = 0U;
+            index < expected.item_ownership.material_claimed_drop_bits.size();
+            ++index) {
+        if (!u64(692U + index * 8U,
+                expected.item_ownership.material_claimed_drop_bits[index])) {
+            return CodecError::invalid_state;
+        }
+    }
+    if (!u64(748U, expected.skill_loadout.owned_active_bits)) {
+        return CodecError::invalid_state;
+    }
+    for (std::size_t slot = 0U;
+            slot < expected.skill_loadout.slots.size(); ++slot) {
+        if (!u8(756U + slot, static_cast<std::uint8_t>(
+                expected.skill_loadout.slots[slot].active))) {
+            return CodecError::invalid_state;
+        }
+        for (std::size_t support = 0U;
+                support < expected.skill_loadout.slots[slot].supports.size();
+                ++support) {
+            if (!u8(761U + slot * skills::kSupportSlotsPerActive + support,
+                    static_cast<std::uint8_t>(expected.skill_loadout
+                        .slots[slot].supports[support]))) {
+                return CodecError::invalid_state;
+            }
+        }
+    }
+    for (std::size_t item_index = 0U; item_index < item_count; ++item_index) {
+        const auto& item = expected.item_ownership.items[item_index];
+        const std::size_t offset = kV8BaseEncodedCheckpointSize
+            + item_index * kV7ItemRecordSize;
+        if (!u64(offset, item.id) || !u8(offset + 8U, item.base_id)
+                || !u8(offset + 9U,
+                    static_cast<std::uint8_t>(item.rarity))
+                || !u8(offset + 10U, item.item_level)
+                || !u8(offset + 11U, item.required_level)
+                || !u8(offset + 12U, item.affix_count)) {
+            return CodecError::invalid_state;
+        }
+        for (std::size_t roll = 0U; roll < item.affixes.size(); ++roll) {
+            const auto& affix = item.affixes[roll];
+            const std::size_t affix_offset = offset + 16U + roll * 6U;
+            if (!u16(affix_offset, affix.affix_id)
+                    || !u8(affix_offset + 2U, affix.tier)
+                    || !u8(affix_offset + 3U, affix.variant)
+                    || !u16(affix_offset + 4U, affix.value_roll_bp)) {
+                return CodecError::invalid_state;
+            }
+        }
+        if (!u32(offset + 52U, item.reinforcement)) {
+            return CodecError::invalid_state;
+        }
+    }
+    return CodecError::none;
+}
+
+std::optional<EncodedCheckpoint> encode_checkpoint(
+    const dungeon::checkpoint::DungeonRunState& state) noexcept {
+    const std::size_t item_count = state.item_ownership.items.size();
+    if (item_count > kMaximumCheckpointItemCount
+            || item_count > ((std::numeric_limits<std::size_t>::max)()
+                - kV8BaseEncodedCheckpointSize) / kV7ItemRecordSize) {
+        return std::nullopt;
+    }
+    EncodedCheckpoint out{};
+    try {
+        out.resize(kV8BaseEncodedCheckpointSize
+            + item_count * kV7ItemRecordSize);
+    } catch (...) {
+        return std::nullopt;
+    }
+    std::size_t written{};
+    if (encode_checkpoint_into(state, out.data(), out.size(), written)
+            != CodecError::none || written != out.size()) return std::nullopt;
     return out;
 }
 

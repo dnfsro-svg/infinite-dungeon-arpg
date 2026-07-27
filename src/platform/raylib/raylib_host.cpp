@@ -39,6 +39,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <new>
 #include <limits>
 #include <optional>
 #include <string>
@@ -429,6 +430,14 @@ struct Stage11DLootValidationState final {
 };
 // STAGE11D_LOOT_VALIDATION_SEAM_END state
 
+struct HostValidationStates final {
+    Stage10ValidationState stage10{};
+    Stage11ValidationState stage11{};
+    Stage11BValidationState stage11b{};
+    Stage11CHudValidationState stage11c{};
+    Stage11DLootValidationState stage11d{};
+};
+
 enum class Stage17ValidationStep : std::uint8_t {
     initial,
     empty_slot_3,
@@ -444,6 +453,8 @@ enum class Stage17ValidationStep : std::uint8_t {
     select_draw_inventory,
     equip_slot_5,
     swap_slots_2_5,
+    close_inventory,
+    cooldown_drain,
     restart_open_inventory,
     restart_open_skill_page,
     restart_capture,
@@ -476,13 +487,28 @@ struct Stage17SkillStonesValidationState final {
     skills::SkillLoadoutState final_loadout{};
     combat::Vec3 storm_center{};
     combat::Vec3 storm_player_start{};
+    combat::Vec3 storm_player_last{};
+    combat::Vec3 storm_approach_center{};
+    combat::Vec3 storm_approach_target_start{};
+    combat::Vec3 storm_approach_player_start{};
+    combat::Vec3 storm_approach_player_last{};
+    std::array<combat::Vec3, 4U> storm_approach_samples{};
+    std::array<bool, 4U> storm_approach_sampled{};
+    std::array<std::uint16_t, combat::kStormStrikeCount>
+        storm_targets_per_strike{};
+    combat::MovementInput storm_threat_pull_movement{};
+    std::uint16_t storm_approach_target_ordinal{
+        (std::numeric_limits<std::uint16_t>::max)()};
     bool initial_recorded{};
     bool initial_captured{};
     bool draw_accepted{};
     bool draw_windup_captured{};
     bool draw_captured{};
     bool storm_accepted{};
+    bool storm_approach_locked{};
+    bool storm_isolation_invalidated{};
     bool storm_lock_recorded{};
+    bool storm_threat_pull_locked{};
     bool storm_center_locked{true};
     bool storm_player_moved{};
     bool storm_array_captured{};
@@ -493,11 +519,17 @@ struct Stage17SkillStonesValidationState final {
     bool restart_cooldowns_zero{};
     bool public_input_path{};
     bool production_transactions{};
+    bool production_inventory_closed{};
+    bool production_cooldown_wait_started{};
+    bool production_cooldowns_zero_before_shutdown{};
+    bool clean_shutdown_exact_ready{};
     bool active_skill_atlases_ready{};
     bool storm_invulnerable_seen{};
     bool storm_finisher_phase_seen{};
     bool aborted_by_death{};
     bool renderer_status_failure_latched{};
+    bool suspend_injection{};
+    bool suppress_draw_captures{};
     Stage17SkillDrawRuntimeEvidence draw_runtime{};
     Stage17SkillDrawRuntimeEvidence storm_runtime{};
     std::array<bool, 3> empty_slots_none{};
@@ -506,10 +538,17 @@ struct Stage17SkillStonesValidationState final {
     std::uint32_t storm_finisher_hit_count{};
     std::uint8_t storm_strike_count{};
     std::uint8_t storm_sword_peak{};
+    std::uint16_t production_cooldown_start_ticks{};
+    std::uint64_t production_cooldown_wait_start_tick{};
+    std::uint64_t production_cooldown_wait_end_tick{};
+    std::uint8_t storm_sampled_strike_count{};
     std::uint16_t draw_frame_peak{};
     std::uint32_t presented_frames{};
-    std::int8_t draw_retreat_direction{};
-    std::int8_t storm_retreat_direction{};
+    std::uint32_t storm_approach_frames{};
+    std::uint32_t storm_approach_movement_injections{};
+    std::uint32_t storm_isolation_invalidated_frame{};
+    std::size_t storm_isolation_invalidated_target_count{};
+    float storm_approach_initial_clearance{};
 };
 
 void observe_stage17_draw_runtime(const RaylibHostConfig& config,
@@ -517,7 +556,9 @@ void observe_stage17_draw_runtime(const RaylibHostConfig& config,
     const dungeon::DungeonSnapshot& presented,
     const ActiveSkillDrawRuntimeStatus& status) noexcept {
     if (config.stage17_skill_stones_validation
-            != Stage17SkillStonesValidationScenario::production_sequence
+            == Stage17SkillStonesValidationScenario::none
+        || config.stage17_skill_stones_validation
+            == Stage17SkillStonesValidationScenario::restarted_loadout
         || !presented.combat.has_value()) {
         return;
     }
@@ -564,7 +605,7 @@ void observe_stage17_combat_event(
     if (state == nullptr || event.kind != combat::CombatEventKind::hit) return;
     if (event.skill == skills::ActiveSkillId::draw_slash) {
         ++state->draw_hit_count;
-        if (!state->draw_captured) {
+        if (!state->suppress_draw_captures && !state->draw_captured) {
             state->capture_pending = Stage17Capture::draw_hit;
         }
     } else if (event.skill == skills::ActiveSkillId::storm_swords) {
@@ -661,23 +702,6 @@ void inject_stage11b_pressed(PhysicalKeySnapshot& snapshot,
     }
 }
 
-[[nodiscard]] const combat::MonsterSnapshot* stage17_nearest_monster(
-    const combat::CombatSnapshot& combat_state) noexcept {
-    const combat::MonsterSnapshot* nearest = nullptr;
-    float nearest_distance = 0.0F;
-    for (const combat::MonsterSnapshot& monster : combat_state.monsters) {
-        if (!monster.active || monster.hp <= 0) continue;
-        const float x = monster.position.x - combat_state.player.position.x;
-        const float y = monster.position.y - combat_state.player.position.y;
-        const float distance = x * x + y * y;
-        if (nearest == nullptr || distance < nearest_distance) {
-            nearest = &monster;
-            nearest_distance = distance;
-        }
-    }
-    return nearest;
-}
-
 void stage17_press_action(PhysicalKeySnapshot& snapshot,
     const settings::SettingsData& input_settings,
     const settings::SettingAction action) noexcept {
@@ -732,52 +756,131 @@ void stage17_apply_movement(PhysicalKeySnapshot& snapshot,
     };
 }
 
-[[nodiscard]] bool stage17_prepare_skill_lane(
+struct Stage17IsolatedStormTarget final {
+    const combat::MonsterSnapshot* monster{};
+    combat::Vec3 projected_center{};
+    float route_distance_squared{};
+    float clearance_squared{};
+};
+
+[[nodiscard]] Stage17IsolatedStormTarget stage17_isolated_storm_target(
+    const combat::CombatSnapshot& combat_state) noexcept {
+    Stage17IsolatedStormTarget best{};
+    combat::Vec3 projected_center = combat_state.player.position;
+    projected_center.x += combat::kStormCenterForward;
+    const float finisher_radius_squared =
+        combat::kStormFinisherRadius * combat::kStormFinisherRadius;
+    for (const combat::MonsterSnapshot& candidate : combat_state.monsters) {
+        if (!candidate.active || candidate.hp <= 0
+                || candidate.id != combat::MonsterId::fire_bomber) {
+            continue;
+        }
+        const float route_x = candidate.position.x - projected_center.x;
+        const float route_y = candidate.position.y - projected_center.y;
+        const float route_distance_squared =
+            route_x * route_x + route_y * route_y;
+        if (route_distance_squared > finisher_radius_squared) continue;
+        float clearance_squared = (std::numeric_limits<float>::max)();
+        std::size_t targets_in_finisher = 0U;
+        for (const combat::MonsterSnapshot& other : combat_state.monsters) {
+            if (!other.active || other.hp <= 0) continue;
+            const float x = other.position.x - projected_center.x;
+            const float y = other.position.y - projected_center.y;
+            const float distance_squared = x * x + y * y;
+            targets_in_finisher += distance_squared <= finisher_radius_squared;
+            if (other.monster_ordinal != candidate.monster_ordinal) {
+                clearance_squared = (std::min)(
+                    clearance_squared, distance_squared);
+            }
+        }
+        if (targets_in_finisher != 1U) continue;
+        if (best.monster == nullptr
+                || clearance_squared > best.clearance_squared
+                || (clearance_squared == best.clearance_squared
+                    && route_distance_squared < best.route_distance_squared)) {
+            best = {&candidate, projected_center, route_distance_squared,
+                clearance_squared};
+        }
+    }
+    return best;
+}
+
+[[nodiscard]] bool stage17_prepare_isolated_storm(
     PhysicalKeySnapshot& snapshot,
     const settings::SettingsData& input_settings,
     const combat::CombatSnapshot& combat_state,
     const bool fire_room,
-    std::int8_t& retreat_direction) noexcept {
-    const combat::MonsterSnapshot* const target =
-        stage17_nearest_monster(combat_state);
-    if (target == nullptr) return false;
+    Stage17SkillStonesValidationState& state) noexcept {
+    if (state.storm_isolation_invalidated) return false;
+    ++state.storm_approach_frames;
+    if (!state.storm_approach_locked) {
+        const Stage17IsolatedStormTarget target =
+            stage17_isolated_storm_target(combat_state);
+        if (target.monster == nullptr) return false;
+        state.storm_approach_center = target.projected_center;
+        state.storm_approach_target_start = target.monster->position;
+        state.storm_approach_player_start = combat_state.player.position;
+        state.storm_approach_initial_clearance =
+            std::sqrt(target.clearance_squared);
+        state.storm_approach_target_ordinal = target.monster->monster_ordinal;
+        state.storm_approach_locked = true;
+    }
+    state.storm_approach_player_last = combat_state.player.position;
+    if (state.storm_approach_frames % 300U == 0U) {
+        const std::size_t sample = state.storm_approach_frames / 300U - 1U;
+        if (sample < state.storm_approach_samples.size()) {
+            state.storm_approach_samples[sample] = combat_state.player.position;
+            state.storm_approach_sampled[sample] = true;
+        }
+    }
+
+    std::size_t targets_in_finisher = 0U;
+    bool locked_target_in_finisher = false;
+    const combat::MonsterSnapshot* locked_target = nullptr;
+    combat::Vec3 projected_center = combat_state.player.position;
+    projected_center.x += combat::kStormCenterForward;
+    const float finisher_radius_squared =
+        combat::kStormFinisherRadius * combat::kStormFinisherRadius;
+    for (const combat::MonsterSnapshot& monster : combat_state.monsters) {
+        if (!monster.active || monster.hp <= 0) continue;
+        const float x = monster.position.x - projected_center.x;
+        const float y = monster.position.y - projected_center.y;
+        if (x * x + y * y > finisher_radius_squared) continue;
+        ++targets_in_finisher;
+        if (monster.monster_ordinal == state.storm_approach_target_ordinal) {
+            locked_target_in_finisher = true;
+            locked_target = &monster;
+        }
+    }
+    if (targets_in_finisher != 1U || !locked_target_in_finisher) {
+        state.storm_isolation_invalidated = true;
+        state.storm_isolation_invalidated_frame = state.storm_approach_frames;
+        state.storm_isolation_invalidated_target_count = targets_in_finisher;
+        return false;
+    }
+
     const combat::Vec3& player = combat_state.player.position;
-    const float x = target->position.x - player.x;
-    const float y = target->position.y - player.y;
-    const int toward = x >= 0.0F ? 1 : -1;
     combat::MovementInput movement{};
-    if (std::fabs(y) > 0.28F) {
-        movement.y = y > 0.0F ? 1 : -1;
+    const float target_x = locked_target->position.x - projected_center.x;
+    const float target_y = locked_target->position.y - projected_center.y;
+    constexpr float kRouteTargetRadius = 2.65F;
+    if (target_x * target_x + target_y * target_y
+            > kRouteTargetRadius * kRouteTargetRadius) {
+        movement.x = static_cast<std::int8_t>(target_x > 0.0F ? 1 : -1);
+        movement.y = static_cast<std::int8_t>(target_y > 0.0F ? 1 : -1);
+    } else if (combat_state.player.facing != combat::Facing::right) {
+        movement.x = 1;
     }
-    if (std::fabs(x) > 3.8F) {
-        retreat_direction = 0;
-        movement.x = static_cast<std::int8_t>(toward);
-    } else if (std::fabs(x) < 3.15F) {
-        if (retreat_direction == 0) {
-            retreat_direction = static_cast<std::int8_t>(-toward);
-        }
-        if (player.x <= -8.0F && retreat_direction < 0) {
-            retreat_direction = 1;
-        } else if (player.x >= 8.0F && retreat_direction > 0) {
-            retreat_direction = -1;
-        }
-        movement.x = retreat_direction;
-    } else {
-        retreat_direction = 0;
-        const combat::Facing expected = toward > 0
-            ? combat::Facing::right : combat::Facing::left;
-        if (combat_state.player.facing != expected) {
-            movement.x = static_cast<std::int8_t>(toward);
-        }
-    }
-    if (fire_room && movement.x != 0) {
+    if (fire_room && (movement.x != 0 || movement.y != 0)) {
         movement = validation_route_fire_movement(
-            player, target->position, movement);
+            player, locked_target->position, movement);
     }
     if (movement.x != 0 || movement.y != 0) {
+        ++state.storm_approach_movement_injections;
         stage17_apply_movement(snapshot, input_settings, movement);
         return false;
     }
+
     return true;
 }
 
@@ -799,7 +902,7 @@ void stage17_click(PhysicalKeySnapshot& snapshot,
     Stage17SkillStonesValidationState& state) noexcept {
     if (config.stage17_skill_stones_validation
             == Stage17SkillStonesValidationScenario::none
-        || snapshot.focus_lost) {
+        || snapshot.focus_lost || state.suspend_injection) {
         return snapshot;
     }
     const ActiveSkillLoadoutLayout layout = active_skill_loadout_layout(
@@ -809,6 +912,7 @@ void stage17_click(PhysicalKeySnapshot& snapshot,
     case Stage17ValidationStep::draw_active:
     case Stage17ValidationStep::complete:
     case Stage17ValidationStep::restart_capture:
+    case Stage17ValidationStep::cooldown_drain:
         break;
     case Stage17ValidationStep::empty_slot_3:
         snapshot.active_skill_slots[2] = true;
@@ -820,28 +924,24 @@ void stage17_click(PhysicalKeySnapshot& snapshot,
         snapshot.active_skill_slots[4] = true;
         break;
     case Stage17ValidationStep::approach_draw:
-        if (current.combat.has_value()
-                && stage17_prepare_skill_lane(
-                    snapshot, input_settings, *current.combat,
-                    current.ecology
-                        == dungeon::checkpoint::DungeonElement::fire,
-                    state.draw_retreat_direction)) {
-            snapshot.active_skill_slots[0] = true;
-        }
+        // Seed 753 starts with the locked two-target draw-slash geometry.
+        // Exercise the production binding directly before AI movement changes it.
+        snapshot.active_skill_slots[0] = true;
         break;
     case Stage17ValidationStep::approach_storm:
         if (current.combat.has_value()
-                && stage17_prepare_skill_lane(
+                && stage17_prepare_isolated_storm(
                     snapshot, input_settings, *current.combat,
                     current.ecology
                         == dungeon::checkpoint::DungeonElement::fire,
-                    state.storm_retreat_direction)) {
+                    state)) {
             snapshot.active_skill_slots[1] = true;
         }
         break;
     case Stage17ValidationStep::storm_active:
-        if (state.storm_strike_hit_count > 0 && !state.storm_player_moved) {
-            stage17_apply_movement(snapshot, input_settings, {-1, -1});
+        if (state.storm_threat_pull_locked) {
+            stage17_apply_movement(
+                snapshot, input_settings, state.storm_threat_pull_movement);
         }
         break;
     case Stage17ValidationStep::open_inventory:
@@ -865,6 +965,10 @@ void stage17_click(PhysicalKeySnapshot& snapshot,
         break;
     case Stage17ValidationStep::swap_slots_2_5:
         stage17_click(snapshot, layout.main_slots[1]);
+        break;
+    case Stage17ValidationStep::close_inventory:
+        stage17_press_action(snapshot, input_settings,
+            settings::SettingAction::inventory);
         break;
     case Stage17ValidationStep::restart_open_skill_page:
         stage17_click(snapshot, layout.skill_stones_page_button);
@@ -952,6 +1056,10 @@ void observe_stage17_snapshot(const RaylibHostConfig& config,
         state.initial_loadout = current.skill_loadout;
         state.initial_recorded = true;
         if (config.stage17_skill_stones_validation
+                == Stage17SkillStonesValidationScenario::storm_sequence) {
+            state.suppress_draw_captures = true;
+            state.step = Stage17ValidationStep::approach_draw;
+        } else if (config.stage17_skill_stones_validation
                 == Stage17SkillStonesValidationScenario::restarted_loadout) {
             state.restart_persisted = stage17_final_loadout(current.skill_loadout);
             state.restart_cooldowns_zero = current.combat.has_value()
@@ -969,15 +1077,32 @@ void observe_stage17_snapshot(const RaylibHostConfig& config,
             && combat_state.active_skill.id == skills::ActiveSkillId::draw_slash) {
         state.draw_frame_peak = std::max(state.draw_frame_peak,
             combat_state.active_skill.frame_index);
-        if (!state.draw_windup_captured
+        if (config.stage17_skill_stones_validation
+                != Stage17SkillStonesValidationScenario::storm_sequence
+                && !state.draw_windup_captured
                 && combat_state.active_skill.frame_index >= 6U
                 && combat_state.active_skill.frame_index < 18U) {
             state.capture_pending = Stage17Capture::draw_windup;
         }
     } else if (state.step == Stage17ValidationStep::draw_active
-            && state.draw_windup_captured && state.draw_captured
             && combat_state.active_skill.id == skills::ActiveSkillId::none) {
-        state.step = Stage17ValidationStep::approach_storm;
+        if (config.stage17_skill_stones_validation
+                == Stage17SkillStonesValidationScenario::storm_sequence) {
+            if (state.draw_accepted && state.draw_hit_count == 2U) {
+                state.step = Stage17ValidationStep::approach_storm;
+            }
+        } else if (state.draw_windup_captured && state.draw_captured) {
+            state.step = Stage17ValidationStep::open_inventory;
+        }
+    }
+    if (state.step == Stage17ValidationStep::cooldown_drain
+            && state.production_cooldown_wait_started
+            && stage17_all_cooldowns_zero(combat_state)) {
+        state.production_cooldown_wait_end_tick = combat_state.tick;
+        state.production_cooldowns_zero_before_shutdown =
+            state.production_cooldown_wait_end_tick
+                > state.production_cooldown_wait_start_tick;
+        state.step = Stage17ValidationStep::complete;
     }
     if (state.step != Stage17ValidationStep::storm_active) return;
     const combat::ActiveSkillSnapshot& skill = combat_state.active_skill;
@@ -986,6 +1111,39 @@ void observe_stage17_snapshot(const RaylibHostConfig& config,
             state.storm_lock_recorded = true;
             state.storm_center = skill.locked_center;
             state.storm_player_start = combat_state.player.position;
+            state.storm_player_last = combat_state.player.position;
+            const combat::MonsterSnapshot* threat = nullptr;
+            float threat_distance_squared =
+                (std::numeric_limits<float>::max)();
+            for (const combat::MonsterSnapshot& monster :
+                    combat_state.monsters) {
+                if (!monster.active || monster.hp <= 0
+                        || monster.monster_ordinal
+                            == state.storm_approach_target_ordinal) {
+                    continue;
+                }
+                const float x = monster.position.x - state.storm_center.x;
+                const float y = monster.position.y - state.storm_center.y;
+                const float distance_squared = x * x + y * y;
+                if (threat == nullptr
+                        || distance_squared < threat_distance_squared) {
+                    threat = &monster;
+                    threat_distance_squared = distance_squared;
+                }
+            }
+            if (threat != nullptr) {
+                const float x = threat->position.x - state.storm_center.x;
+                const float y = threat->position.y - state.storm_center.y;
+                state.storm_threat_pull_movement = {
+                    static_cast<std::int8_t>(x > 0.0F ? 1
+                        : (x < 0.0F ? -1 : 0)),
+                    static_cast<std::int8_t>(y > 0.0F ? 1
+                        : (y < 0.0F ? -1 : 0)),
+                };
+                state.storm_threat_pull_locked =
+                    state.storm_threat_pull_movement.x != 0
+                    || state.storm_threat_pull_movement.y != 0;
+            }
         } else {
             state.storm_center_locked = state.storm_center_locked
                 && stage17_same_point(state.storm_center, skill.locked_center);
@@ -993,10 +1151,26 @@ void observe_stage17_snapshot(const RaylibHostConfig& config,
                 || !stage17_same_point(
                     state.storm_player_start, combat_state.player.position);
         }
+        state.storm_player_last = combat_state.player.position;
         state.storm_strike_count = std::max(
             state.storm_strike_count, skill.strike_index);
         state.storm_sword_peak = std::max(state.storm_sword_peak,
             skill.spawned_sword_count);
+        if (skill.strike_index > state.storm_sampled_strike_count
+                && skill.strike_index <= combat::kStormStrikeCount) {
+            std::uint16_t targets = 0U;
+            const float strike_radius_squared =
+                combat::kStormStrikeRadius * combat::kStormStrikeRadius;
+            for (const combat::MonsterSnapshot& monster :
+                    combat_state.monsters) {
+                if (!monster.active || monster.hp <= 0) continue;
+                const float x = monster.position.x - skill.locked_center.x;
+                const float y = monster.position.y - skill.locked_center.y;
+                targets += x * x + y * y <= strike_radius_squared;
+            }
+            state.storm_targets_per_strike[skill.strike_index - 1U] = targets;
+            state.storm_sampled_strike_count = skill.strike_index;
+        }
         state.storm_invulnerable_seen = state.storm_invulnerable_seen
             || skill.player_invulnerable;
         if (skill.phase == combat::ActiveSkillPhase::strikes
@@ -1014,7 +1188,10 @@ void observe_stage17_snapshot(const RaylibHostConfig& config,
             || skill.phase == combat::ActiveSkillPhase::finisher;
     } else if (state.storm_array_captured && state.storm_aerial_captured
             && state.storm_finisher_captured) {
-        state.step = Stage17ValidationStep::open_inventory;
+        state.step = config.stage17_skill_stones_validation
+                == Stage17SkillStonesValidationScenario::storm_sequence
+            ? Stage17ValidationStep::complete
+            : Stage17ValidationStep::open_inventory;
     }
 }
 
@@ -1042,7 +1219,18 @@ void observe_stage17_inventory(const RaylibHostConfig& config,
         state.final_loadout = current.skill_loadout;
         state.production_transactions =
             !current.pending_save_kind.has_value();
-        state.step = Stage17ValidationStep::complete;
+        if (state.production_transactions) {
+            state.step = Stage17ValidationStep::close_inventory;
+        }
+    } else if (state.step == Stage17ValidationStep::close_inventory
+            && !inventory.is_open() && current.combat.has_value()) {
+        state.production_inventory_closed = true;
+        state.production_cooldown_start_ticks =
+            current.combat->skill_cooldowns[0U];
+        state.production_cooldown_wait_start_tick = current.combat->tick;
+        state.production_cooldown_wait_started =
+            state.production_cooldown_start_ticks != 0U;
+        state.step = Stage17ValidationStep::cooldown_drain;
     } else if (state.step == Stage17ValidationStep::restart_open_inventory
             && inventory.is_open()) {
         state.step = Stage17ValidationStep::restart_open_skill_page;
@@ -1165,31 +1353,58 @@ void write_stage17_validation_summary(const RaylibHostConfig& config,
         if (!stream) return;
         const bool production = config.stage17_skill_stones_validation
             == Stage17SkillStonesValidationScenario::production_sequence;
+        const bool storm = config.stage17_skill_stones_validation
+            == Stage17SkillStonesValidationScenario::storm_sequence;
         const bool empty_slots = std::all_of(state.empty_slots_none.begin(),
             state.empty_slots_none.end(), [](const bool value) noexcept {
                 return value;
             });
+        const float approach_x = state.storm_approach_center.x
+            - state.storm_approach_player_last.x;
+        const float approach_y = state.storm_approach_center.y
+            - state.storm_approach_player_last.y;
+        const float approach_distance =
+            std::sqrt(approach_x * approach_x + approach_y * approach_y);
+        const float storm_player_x = state.storm_player_last.x
+            - state.storm_player_start.x;
+        const float storm_player_y = state.storm_player_last.y
+            - state.storm_player_start.y;
+        const float storm_player_displacement = std::sqrt(
+            storm_player_x * storm_player_x + storm_player_y * storm_player_y);
         const bool passed = production
             ? state.step == Stage17ValidationStep::complete
                 && state.initial_captured && state.draw_accepted
                 && state.draw_windup_captured && state.draw_captured
-                && state.storm_accepted && state.storm_array_captured
-                && state.storm_aerial_captured && state.storm_finisher_captured
-                && state.storm_center_locked && state.storm_player_moved
-                && state.active_skill_atlases_ready
-                && state.storm_invulnerable_seen
-                && state.storm_finisher_phase_seen
                 && stage17_draw_runtime_valid(state.draw_runtime)
-                && stage17_draw_runtime_valid(state.storm_runtime)
                 && !state.renderer_status_failure_latched
                 && state.public_input_path
                 && state.production_transactions
+                && state.production_inventory_closed
+                && state.production_cooldown_wait_started
+                && state.production_cooldowns_zero_before_shutdown
+                && state.clean_shutdown_exact_ready
                 && empty_slots
-            : state.step == Stage17ValidationStep::complete
+            : storm
+                ? state.step == Stage17ValidationStep::complete
+                    && state.draw_accepted && state.draw_hit_count == 2U
+                    && state.storm_accepted && state.storm_array_captured
+                    && state.storm_aerial_captured
+                    && state.storm_finisher_captured
+                    && state.storm_center_locked && state.storm_player_moved
+                    && !state.storm_isolation_invalidated
+                    && state.active_skill_atlases_ready
+                    && state.storm_invulnerable_seen
+                    && state.storm_finisher_phase_seen
+                    && stage17_draw_runtime_valid(state.storm_runtime)
+                    && !state.renderer_status_failure_latched
+                    && state.clean_shutdown_exact_ready
+                    && state.public_input_path
+                : state.step == Stage17ValidationStep::complete
                 && state.restart_captured && state.restart_persisted
-                && state.restart_cooldowns_zero;
-        stream << "scenario=" << (production
-                ? "production_sequence" : "restarted_loadout") << '\n'
+                && state.restart_cooldowns_zero
+                && state.clean_shutdown_exact_ready;
+        stream << "scenario=" << (production ? "production_sequence"
+                : storm ? "storm_sequence" : "restarted_loadout") << '\n'
                << "result=" << (passed ? "pass" : "fail") << '\n'
                << "final_step=" << static_cast<unsigned>(state.step) << '\n'
                << "aborted_by_death=" << (state.aborted_by_death ? 1 : 0) << '\n'
@@ -1207,6 +1422,8 @@ void write_stage17_validation_summary(const RaylibHostConfig& config,
                << (state.draw_windup_captured ? 1 : 0) << '\n'
                << "draw_frame_peak=" << state.draw_frame_peak << '\n'
                << "draw_hit_count=" << state.draw_hit_count << '\n'
+               << "storm_prelude_draw_hit_count="
+               << (storm ? state.draw_hit_count : 0U) << '\n'
                << "storm_accepted=" << (state.storm_accepted ? 1 : 0) << '\n'
                << "storm_strike_hit_count=" << state.storm_strike_hit_count << '\n'
                << "storm_finisher_hit_count=" << state.storm_finisher_hit_count << '\n'
@@ -1246,13 +1463,76 @@ void write_stage17_validation_summary(const RaylibHostConfig& config,
                << "renderer_status_failure_latched="
                << (state.renderer_status_failure_latched ? 1 : 0) << '\n'
                << "storm_center_locked=" << (state.storm_center_locked ? 1 : 0) << '\n'
+               << "storm_isolation_invalidated="
+               << (state.storm_isolation_invalidated ? 1 : 0) << '\n'
+               << "storm_approach_center=" << state.storm_approach_center.x
+               << ',' << state.storm_approach_center.y << '\n'
+               << "storm_approach_target_start="
+               << state.storm_approach_target_start.x << ','
+               << state.storm_approach_target_start.y << '\n'
+               << "storm_approach_player_start="
+               << state.storm_approach_player_start.x << ','
+               << state.storm_approach_player_start.y << '\n'
+               << "storm_approach_player_last="
+               << state.storm_approach_player_last.x << ','
+               << state.storm_approach_player_last.y << '\n'
+               << "storm_approach_distance=" << approach_distance << '\n'
+               << "storm_approach_initial_clearance="
+               << state.storm_approach_initial_clearance << '\n'
+               << "storm_approach_frames=" << state.storm_approach_frames << '\n'
+               << "storm_approach_movement_injections="
+               << state.storm_approach_movement_injections << '\n'
+               << "storm_isolation_invalidated_frame="
+               << state.storm_isolation_invalidated_frame << '\n'
+               << "storm_isolation_invalidated_target_count="
+               << state.storm_isolation_invalidated_target_count << '\n'
                << "storm_player_moved=" << (state.storm_player_moved ? 1 : 0) << '\n'
+               << "storm_player_displacement="
+               << storm_player_displacement << '\n'
+               << "storm_threat_pull_movement="
+               << static_cast<int>(state.storm_threat_pull_movement.x) << ','
+               << static_cast<int>(state.storm_threat_pull_movement.y) << '\n'
                << "public_input_path=" << (state.public_input_path ? 1 : 0) << '\n'
                << "production_transactions="
                << (state.production_transactions ? 1 : 0) << '\n'
+               << "production_inventory_closed="
+               << (state.production_inventory_closed ? 1 : 0) << '\n'
+               << "production_cooldown_wait_started="
+               << (state.production_cooldown_wait_started ? 1 : 0) << '\n'
+               << "production_cooldown_start_ticks="
+               << state.production_cooldown_start_ticks << '\n'
+               << "production_cooldown_wait_ticks="
+               << (state.production_cooldown_wait_end_tick
+                       >= state.production_cooldown_wait_start_tick
+                   ? state.production_cooldown_wait_end_tick
+                       - state.production_cooldown_wait_start_tick
+                   : 0U) << '\n'
+               << "production_cooldowns_zero_before_shutdown="
+               << (state.production_cooldowns_zero_before_shutdown ? 1 : 0)
+               << '\n'
+               << "clean_shutdown_exact_ready="
+               << (state.clean_shutdown_exact_ready ? 1 : 0) << '\n'
                << "restart_persisted=" << (state.restart_persisted ? 1 : 0) << '\n'
                << "restart_cooldowns_zero="
                << (state.restart_cooldowns_zero ? 1 : 0) << '\n';
+        for (std::size_t index = 0U;
+                index < state.storm_approach_samples.size(); ++index) {
+            stream << "storm_approach_sample_" << (index + 1U) * 300U << '=';
+            if (state.storm_approach_sampled[index]) {
+                stream << state.storm_approach_samples[index].x << ','
+                       << state.storm_approach_samples[index].y;
+            } else {
+                stream << "none";
+            }
+            stream << '\n';
+        }
+        stream << "storm_targets_per_strike=";
+        for (std::size_t index = 0U;
+                index < state.storm_targets_per_strike.size(); ++index) {
+            if (index != 0U) stream << ',';
+            stream << state.storm_targets_per_strike[index];
+        }
+        stream << '\n';
     } catch (...) {
         TraceLog(LOG_WARNING, "failed to write stage17 validation summary");
     }
@@ -2794,6 +3074,11 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             return HostExitCode::save_initialization_failed;
         }
 
+        const std::unique_ptr<HostValidationStates> validation_states{
+            new (std::nothrow) HostValidationStates{}};
+        if (validation_states == nullptr) {
+            return HostExitCode::save_initialization_failed;
+        }
         SetConfigFlags(initial_window_flags(committed_settings));
         InitWindow(config.window_width, config.window_height,
             config.window_title);
@@ -2854,17 +3139,36 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         bool draw_debug = false;
         bool passive_overlay_open = false;
         bool exit_requested = false;
+        bool window_close_latched = false;
+        const auto begin_clean_exit = [&]() noexcept {
+            if (runtime.state() == DungeonRuntimeState::running
+                    && runtime.session() != nullptr) {
+                if (runtime.clean_shutdown_state()
+                        == CleanShutdownState::ready) {
+                    exit_requested = true;
+                } else {
+                    static_cast<void>(runtime.request_clean_shutdown());
+                }
+                return;
+            }
+            exit_requested = true;
+        };
         std::uint32_t presented_frame_count = 0U;
         unsigned validation_capture_tick = 0U;
         unsigned validation_capture_count = 0U;
-        Stage10ValidationState stage10_validation_state{};
-        Stage11ValidationState stage11_validation_state{};
-        Stage11BValidationState stage11b_validation_state{};
+        Stage10ValidationState& stage10_validation_state =
+            validation_states->stage10;
+        Stage11ValidationState& stage11_validation_state =
+            validation_states->stage11;
+        Stage11BValidationState& stage11b_validation_state =
+            validation_states->stage11b;
         stage11b_validation_state.load_status = loaded.status;
-        Stage11CHudValidationState stage11c_validation_state{};
+        Stage11CHudValidationState& stage11c_validation_state =
+            validation_states->stage11c;
         stage11c_validation_state.cjk_font_ready = hud_resources_ready;
 // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN runtime_state
-        Stage11DLootValidationState stage11d_validation_state{};
+        Stage11DLootValidationState& stage11d_validation_state =
+            validation_states->stage11d;
 // STAGE11D_LOOT_VALIDATION_SEAM_END runtime_state
         const auto stage17_validation_state =
             std::make_unique<Stage17SkillStonesValidationState>();
@@ -2897,7 +3201,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         dungeon::DungeonSnapshot& presented_snapshot =
             *presented_snapshot_storage;
         if (runtime.session() != nullptr) {
-            current = runtime.session()->snapshot();
+            runtime.session()->snapshot(current);
             previous = current;
             observe_stage17_snapshot(
                 config, *stage17_validation_state, current);
@@ -2919,9 +3223,30 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         }
 
         while (!exit_requested) {
+            runtime.pump_persistence_frame();
+            if (runtime.clean_shutdown_state()
+                    == CleanShutdownState::canceled) {
+                // PollInputEvents clears raylib's native GLFW close flag after
+                // each close event. Re-arm only our edge latch here so a later
+                // genuine close request can start a new exact-save attempt.
+                window_close_latched = false;
+            }
+            if (runtime.clean_shutdown_state() == CleanShutdownState::ready
+                    || runtime.clean_shutdown_state()
+                        == CleanShutdownState::faulted) {
+                exit_requested = true;
+                continue;
+            }
+            if (runtime.session() != nullptr) {
+                previous = current;
+                runtime.session()->snapshot(current);
+                drain_events(*runtime.session(), renderer, feedback, audio,
+                    stage17_validation_state.get());
+            }
             observe_stage17_snapshot(
                 config, *stage17_validation_state, current);
             const bool window_close_requested = WindowShouldClose();
+            if (!window_close_requested) window_close_latched = false;
             const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();
             const PhysicalKeySnapshot stage11b_physical_keys =
                 inject_stage11b_physical_edges(
@@ -2934,16 +3259,25 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 stage11c_physical_keys, config, input_settings, current,
                 stage11d_validation_state);
 // STAGE11D_LOOT_VALIDATION_SEAM_END runtime_input
+            const bool gameplay_rearm_was_required =
+                runtime.gameplay_rearm_required();
+            stage17_validation_state->suspend_injection =
+                gameplay_rearm_was_required;
             const PhysicalKeySnapshot stage17_physical_keys =
                 inject_stage17_physical_edges(physical_keys,
                     config, input_settings, current,
                     *stage17_validation_state);
+            if (gameplay_rearm_was_required
+                    && gameplay_controls_physically_released(
+                        stage17_physical_keys)) {
+                runtime.acknowledge_gameplay_rearmed();
+            }
             HostFrameInput frame_input = map_host_frame_input(
                 input_settings, stage17_physical_keys);
             if (recovery_requested(runtime.state() == DungeonRuntimeState::recovery_required,
                     frame_input.keys.recovery)) {
                 if (runtime.recover_with_new_run() && runtime.session() != nullptr) {
-                    current = runtime.session()->snapshot();
+                    runtime.session()->snapshot(current);
                     previous = current;
                     drain_events(*runtime.session(), renderer, feedback, audio,
                         stage17_validation_state.get());
@@ -2961,8 +3295,11 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     inventory.close();
                     fixed_step.clear_accumulator();
                 }
-                if (frame_input.keys.escape || window_close_requested) {
-                    exit_requested = true;
+                if (frame_input.keys.escape
+                        || (window_close_requested
+                            && !window_close_latched)) {
+                    if (window_close_requested) window_close_latched = true;
+                    begin_clean_exit();
                     continue;
                 }
                 const float recovery_frame_seconds = GetFrameTime();
@@ -3024,8 +3361,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 passive_overlay_open = false;
             }
             if (death_gate.exit && !death_gate.forward_gameplay) {
-                exit_requested = true;
-                continue;
+                begin_clean_exit();
             }
             dungeon::RequestResult death_continue_result =
                 dungeon::RequestResult::rejected;
@@ -3034,7 +3370,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 if (death_continue_result
                         != dungeon::RequestResult::rejected) {
                     previous = current;
-                    current = session->snapshot();
+                    session->snapshot(current);
                 }
             }
             if (validation_continue
@@ -3042,9 +3378,10 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                         != dungeon::RequestResult::rejected) {
                 stage11_validation_state.continue_requested = true;
             }
-            if (!death_gate.forward_gameplay && window_close_requested) {
-                exit_requested = true;
-                continue;
+            if (!death_gate.forward_gameplay && window_close_requested
+                    && !window_close_latched) {
+                window_close_latched = true;
+                begin_clean_exit();
             }
             bool escape_consumed = false;
             if (death_gate.forward_gameplay && frame_input.keys.escape) {
@@ -3090,7 +3427,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 && pause_menu.screen == PauseScreen::closed
                 && inventory.is_open()
                 && inventory.process_input(runtime, current, frame_input)) {
-                current = session->snapshot();
+                session->snapshot(current);
                 previous = current;
                 drain_events(*session, renderer, feedback, audio,
                     stage17_validation_state.get());
@@ -3134,14 +3471,18 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     pause_command, window_close_requested,
                     pause_menu, live_settings, input_settings,
                     settings_store, settings_backend)) {
-                exit_requested = true;
-                continue;
+                if (!window_close_requested || !window_close_latched) {
+                    if (window_close_requested) window_close_latched = true;
+                    begin_clean_exit();
+                }
             }
             if (input_settings.revision != input_revision_before) {
                 refresh_control_hints(control_hints, input_settings);
             }
             const bool pause_open = pause_menu.screen != PauseScreen::closed;
             const bool pause_blocks_gameplay = pause_open || pause_was_open;
+            const bool gameplay_armed = runtime.authority_requests_enabled()
+                && !gameplay_rearm_was_required;
             if (config.stage11b_validation
                     == Stage11BValidationScenario::paused_freeze
                 && pause_was_open && !pause_open
@@ -3170,27 +3511,31 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             const bool forward_actions = passive_input_gate.forward_actions
                 && inventory_gate.forward_actions
                 && death_gate.forward_gameplay
-                && host_gate.forward_gameplay && !pause_blocks_gameplay;
+                && host_gate.forward_gameplay && !pause_blocks_gameplay
+                && gameplay_armed;
             const bool forward_movement = passive_input_gate.forward_movement
                 && inventory_gate.forward_movement
                 && death_gate.forward_gameplay
-                && host_gate.forward_gameplay && !pause_blocks_gameplay;
+                && host_gate.forward_gameplay && !pause_blocks_gameplay
+                && gameplay_armed;
             const bool forward_descent = passive_input_gate.forward_descent
                 && inventory_gate.forward_descent
                 && death_gate.forward_gameplay
-                && host_gate.forward_gameplay && !pause_blocks_gameplay;
+                && host_gate.forward_gameplay && !pause_blocks_gameplay
+                && gameplay_armed;
             if (forward_actions && inventory_gate.forward_room_reset
                 && frame_input.keys.reset) {
                 const dungeon::RequestResult reset =
                     session->reset_current_room();
                 if (reset != dungeon::RequestResult::rejected) {
-                    current = session->snapshot();
+                    session->snapshot(current);
                     previous = current;
                     drain_events(*session, renderer, feedback, audio,
                         stage17_validation_state.get());
                 }
             }
-            if (!pause_blocks_gameplay && death_gate.forward_gameplay
+            if (gameplay_armed && !pause_blocks_gameplay
+                    && death_gate.forward_gameplay
                     && passive_overlay_open
                     && frame_input.keys.mouse_gameplay) {
                 const auto selected = hit_test_passive_node(
@@ -3202,7 +3547,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     static_cast<void>(allocated
                         ? session->request_passive_refund(*selected)
                         : session->request_passive_allocation(*selected));
-                    current = session->snapshot();
+                    session->snapshot(current);
                 }
             }
             if (forward_actions) {
@@ -3223,10 +3568,10 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 }
             }
             if (forward_descent && frame_input.keys.e) {
-                const auto snapshot = session->snapshot();
-                const bool in_range = snapshot.combat.has_value()
+                session->snapshot(current);
+                const bool in_range = current.combat.has_value()
                     && can_prompt_descent(
-                        snapshot, snapshot.combat->player.position);
+                        current, current.combat->player.position);
                 static_cast<void>(session->request_descent(in_range));
             }
 
@@ -3279,7 +3624,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 runtime.fixed_tick(step_movement,
                     loot_pickup_policy(live_settings.loot_filter_mode));
                 ++stage11b_validation_state.fixed_ticks;
-                current = session->snapshot();
+                session->snapshot(current);
                 observe_stage17_snapshot(
                     config, *stage17_validation_state, current);
 // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN abyss_claim
@@ -3748,14 +4093,16 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             if (config.validation_exit_after_presented_frames != 0U
                     && presented_frame_count
                         >= config.validation_exit_after_presented_frames) {
-                exit_requested = true;
+                begin_clean_exit();
             }
             if (validation_reached
                     && (!config.validation_capture_file.has_value()
                         || stage10_validation_captured)) {
-                exit_requested = true;
+                begin_clean_exit();
             }
         }
+        stage17_validation_state->clean_shutdown_exact_ready =
+            runtime.clean_shutdown_state() == CleanShutdownState::ready;
         write_stage11b_validation_summary(config, stage11b_validation_state,
             pause_menu);
         write_stage11c_hud_validation_summary(config,

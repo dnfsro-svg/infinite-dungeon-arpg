@@ -131,6 +131,28 @@ arpg::test::Failure streams_are_isolated() noexcept {
     return {};
 }
 
+arpg::test::Failure exported_state_restores_exact_next_sample() noexcept {
+    DeterministicRng source{0xA55A1234U};
+    for (int index = 0; index < 37; ++index) {
+        static_cast<void>(source.next_u64());
+    }
+    const DeterministicRng::State checkpoint = source.export_state();
+    const std::uint64_t expected = source.next_u64();
+
+    DeterministicRng restored{1U};
+    ARPG_REQUIRE(restored.import_state(checkpoint));
+    ARPG_REQUIRE(restored.next_u64() == expected);
+    return {};
+}
+
+arpg::test::Failure all_zero_state_is_rejected_without_mutation() noexcept {
+    DeterministicRng rng{0x55AAU};
+    const DeterministicRng::State before = rng.export_state();
+    ARPG_REQUIRE(!rng.import_state({}));
+    ARPG_REQUIRE(rng.export_state() == before);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"seed zero golden", &seed_zero_golden_sequence},
     {"seed one golden", &seed_one_golden_sequence},
@@ -139,6 +161,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"identical seeds", &identical_seeds_remain_identical},
     {"derived streams golden", &derived_stream_golden_sequences},
     {"stream isolation", &streams_are_isolated},
+    {"state round trip", &exported_state_restores_exact_next_sample},
+    {"zero state rejected", &all_zero_state_is_rejected_without_mutation},
 };
 
 }  // namespace

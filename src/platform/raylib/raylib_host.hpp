@@ -90,6 +90,7 @@ enum class Stage11DLootValidationScenario : std::uint8_t {
 enum class Stage17SkillStonesValidationScenario : std::uint8_t {
     none,
     production_sequence,
+    storm_sequence,
     restarted_loadout,
 };
 

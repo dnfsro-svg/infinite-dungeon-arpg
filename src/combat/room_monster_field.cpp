@@ -397,6 +397,11 @@ void RoomMonsterField::rebind_active_pool(MonsterPool& active_pool) noexcept {
     active_pool_->clear();
 }
 
+void RoomMonsterField::discard_active_residency() noexcept {
+    active_pool_->clear();
+    clear_residency();
+}
+
 MonsterPool& RoomMonsterField::active_pool() noexcept { return *active_pool_; }
 
 const MonsterPool& RoomMonsterField::active_pool() const noexcept {

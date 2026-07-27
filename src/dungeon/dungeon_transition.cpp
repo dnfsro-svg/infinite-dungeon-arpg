@@ -432,6 +432,14 @@ bool DungeonSession::prepare_passive_mutation(
     if (!mutation.changed) {
         return false;
     }
+    const PlayerBuildResult candidate_build = build_for(next);
+    if (candidate_build.status == PlayerBuildStatus::allocation_failure) {
+        return false;
+    }
+    if (candidate_build.status != PlayerBuildStatus::valid) {
+        enter_fault(DungeonFault::invalid_item_state);
+        return false;
+    }
     if (next.commit_generation == (std::numeric_limits<std::uint64_t>::max)()) {
         enter_fault(DungeonFault::commit_generation_overflow);
         return false;
@@ -445,6 +453,7 @@ bool DungeonSession::prepare_passive_mutation(
         ExitDirection::none,
         RoomPhase::awaiting_exit,
     };
+    pending_item_build_.emplace(candidate_build.build);
     phase_ = RoomPhase::committing;
     return true;
 }
@@ -523,7 +532,8 @@ RequestResult DungeonSession::prepare_item_save(
 
 bool DungeonSession::pending_item_cache_consistent() const noexcept {
     const bool item_pending = pending_save_.has_value()
-        && (pending_save_->kind == PendingSaveKind::equipment
+        && (pending_save_->kind == PendingSaveKind::passive_tree
+            || pending_save_->kind == PendingSaveKind::equipment
             || pending_save_->kind == PendingSaveKind::craft
             || pending_save_->kind == PendingSaveKind::recipe
             || pending_save_->kind == PendingSaveKind::reinforcement);
@@ -1699,6 +1709,8 @@ void DungeonSession::commit_pending_save(
     }
     if (result.disposition == SaveDisposition::not_committed) {
         const RoomPhase resume_phase = pending_save_->resume_phase;
+        const bool canceled_abyss_start = pending_save_->kind
+            == PendingSaveKind::abyss_start;
         death_continue_failed_ = pending_save_->kind
             == PendingSaveKind::death_continue;
         phase_ = resume_phase;
@@ -1711,6 +1723,9 @@ void DungeonSession::commit_pending_save(
             pending_save_->next_state.last_direction));
         pending_save_.reset();
         pending_item_build_.reset();
+        pending_abyss_combat_.reset();
+        pending_abyss_reward_.reset();
+        if (canceled_abyss_start) clear_staged_room_population();
         retry_health_potion_abyss_clear_before_combat_ =
             retryable_health_potion_abyss_clear
             && phase_ != RoomPhase::faulted;
@@ -1727,8 +1742,8 @@ void DungeonSession::commit_pending_save(
 
     retry_health_potion_abyss_clear_before_combat_ = false;
     const PendingSaveKind kind = pending_save_->kind;
-    const bool item_commit = kind == PendingSaveKind::equipment
-        || kind == PendingSaveKind::craft
+    const bool player_build_commit = kind == PendingSaveKind::passive_tree
+        || kind == PendingSaveKind::equipment || kind == PendingSaveKind::craft
         || kind == PendingSaveKind::recipe
         || kind == PendingSaveKind::reinforcement;
     const bool reinforcement_commit = kind == PendingSaveKind::reinforcement;
@@ -1821,7 +1836,7 @@ void DungeonSession::commit_pending_save(
         }
     }
     combat::PlayerCombatBuild published_build{};
-    if (item_commit) {
+    if (player_build_commit) {
         if (!combat_.has_value()) {
             enter_fault(DungeonFault::invalid_item_state);
             return;
@@ -1932,7 +1947,7 @@ void DungeonSession::commit_pending_save(
         return;
     }
     room_progression_ = stable_state_.progression;
-    if (item_commit) {
+    if (player_build_commit) {
         combat_->apply_player_build(published_build);
         if (reinforcement_commit) {
             reinforcement_receipt_ = published_reinforcement_receipt;

@@ -40,6 +40,7 @@ target_include_directories(arpg_dungeon_tests
         "${PROJECT_SOURCE_DIR}/tests/combat")
 target_link_libraries(arpg_dungeon_tests PRIVATE arpg_dungeon arpg_persistence)
 arpg_enable_project_warnings(arpg_dungeon_tests)
+
 if(MSVC)
     # Several lifecycle fixtures intentionally keep multiple full fixed-capacity
     # sessions and snapshots alive at once. The Stage 16 material ground pool is
