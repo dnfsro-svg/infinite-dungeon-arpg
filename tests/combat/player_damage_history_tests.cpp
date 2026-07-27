@@ -167,6 +167,44 @@ arpg::test::Failure history_hot_path_performs_no_heap_allocations() noexcept {
     return {};
 }
 
+arpg::test::Failure history_checkpoint_round_trip_is_exact() noexcept {
+    PlayerDamageHistory source{};
+    source.begin_tick(412U);
+    source.record(ResolvedPlayerDamage{{{9U, 8U, 7U, 6U, 5U}}, 35U});
+    source.begin_tick(413U);
+    source.record(ResolvedPlayerDamage{{{1U, 2U, 3U, 4U, 5U}}, 15U});
+
+    PlayerDamageHistoryCheckpoint checkpoint{};
+    const std::uint64_t before = arpg::test::allocation_count();
+    source.capture_checkpoint(checkpoint);
+    PlayerDamageHistory restored{};
+    ARPG_REQUIRE(restored.restore_checkpoint(checkpoint));
+    const std::uint64_t after = arpg::test::allocation_count();
+
+    ARPG_REQUIRE(restored.totals() == source.totals());
+    ARPG_REQUIRE(restored.active_tick() == 413U);
+    ARPG_REQUIRE(restored.initialized());
+    ARPG_REQUIRE(after == before);
+    return {};
+}
+
+arpg::test::Failure malformed_history_checkpoint_is_rejected() noexcept {
+    PlayerDamageHistory history{};
+    PlayerDamageHistoryCheckpoint uninitialized_with_data{};
+    uninitialized_with_data.buckets[0U][kPhysical] = 1U;
+    ARPG_REQUIRE(!history.restore_checkpoint(uninitialized_with_data));
+
+    PlayerDamageHistoryCheckpoint overflow{};
+    overflow.initialized = true;
+    overflow.active_tick = 300U;
+    overflow.buckets[0U][kPhysical] =
+        (std::numeric_limits<std::uint64_t>::max)();
+    overflow.buckets[1U][kPhysical] = 1U;
+    ARPG_REQUIRE(!history.restore_checkpoint(overflow));
+    ARPG_REQUIRE(!history.initialized());
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"packet resolution preserves types", &packet_resolution_preserves_final_damage_by_type},
     {"packet resolution handles int max", &packet_resolution_handles_int_max_without_wrapping},
@@ -178,6 +216,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"300 tick jump resets history", &jump_of_300_ticks_resets_the_entire_history},
     {"history saturates", &history_accumulation_saturates_instead_of_wrapping},
     {"history allocates nothing", &history_hot_path_performs_no_heap_allocations},
+    {"history checkpoint round trip", &history_checkpoint_round_trip_is_exact},
+    {"malformed history checkpoint", &malformed_history_checkpoint_is_rejected},
 };
 
 }  // namespace
