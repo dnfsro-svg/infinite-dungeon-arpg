@@ -141,6 +141,24 @@ arpg::test::Failure inventory_selection_then_empty_slot_emits_equip_command()
     ARPG_REQUIRE(command->slot == 0U);
     ARPG_REQUIRE(selection.selected_inventory
         == skills::ActiveSkillId::draw_slash);
+
+    const skills::SkillLoadoutState authoritative = state;
+    platform::advance_active_skill_loadout_selection(selection, *command);
+    ARPG_REQUIRE(selection.selected_slot == 0U);
+    ARPG_REQUIRE(selection.selected_inventory == skills::ActiveSkillId::none);
+    ARPG_REQUIRE(authoritative.slots[0U].active
+        == skills::ActiveSkillId::none);
+    ARPG_REQUIRE(authoritative.slots[1U].active
+        == skills::ActiveSkillId::storm_swords);
+
+    platform::advance_active_skill_loadout_selection(selection,
+        {platform::ActiveSkillLoadoutActionKind::swap,
+            0U, 1U, skills::ActiveSkillId::none});
+    ARPG_REQUIRE(selection.selected_slot == 1U);
+    ARPG_REQUIRE(authoritative.slots[0U].active
+        == skills::ActiveSkillId::none);
+    ARPG_REQUIRE(authoritative.slots[1U].active
+        == skills::ActiveSkillId::storm_swords);
     return {};
 }
 
