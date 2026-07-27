@@ -394,6 +394,66 @@ test::Failure v9_rejects_crc_and_length_corruption() noexcept {
     return {};
 }
 
+test::Failure v9_partial_unlock_round_trip_restores_combat() noexcept {
+    dungeon::DungeonRules rules{};
+    const auto initial = dungeon::make_initial_run_state(0x25100CULL, rules);
+    ARPG_REQUIRE(initial.fault == dungeon::DungeonFault::none);
+    dungeon::DungeonSession session{rules, initial.state};
+    session.tick({});
+    test::set_player_health(session, 1000000, 1000000);
+    drain_events(session);
+    const std::uint32_t required = dungeon::required_kills(
+        session.snapshot().initial_monster_count);
+    for (std::uint32_t ordinal = 0U; ordinal < required; ++ordinal) {
+        ARPG_REQUIRE(test::relay_defeated(session, 0U,
+            static_cast<combat::MonsterOrdinal>(ordinal),
+            {20.0F, 20.0F, 0.0F}, true,
+            combat::MonsterId::fire_bomber,
+            static_cast<std::uint16_t>(ordinal), 0U, false));
+    }
+    session.tick({});
+    const dungeon::PendingSave* const pending = session.pending_save_view();
+    ARPG_REQUIRE(pending != nullptr);
+    ARPG_REQUIRE(pending->kind == dungeon::PendingSaveKind::room_unlock);
+    session.resolve_pending_save({dungeon::SaveDisposition::committed,
+        pending->expected_generation, pending->next_state, pending->kind});
+    ARPG_REQUIRE(session.snapshot().phase == dungeon::RoomPhase::combat);
+    ARPG_REQUIRE(session.snapshot().exits_unlocked);
+
+    std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> saved{
+        new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> decoded{
+        new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<std::uint8_t[]> bytes{
+        new (std::nothrow) std::uint8_t[
+            persistence::kMaximumEncodedCheckpointBytes]};
+    ARPG_REQUIRE(saved != nullptr && decoded != nullptr && bytes != nullptr);
+    ARPG_REQUIRE(session.capture_save_checkpoint(*saved, 55U));
+    ARPG_REQUIRE(saved->room_progress.exits_unlocked);
+    ARPG_REQUIRE(!saved->room_progress.full_clear);
+    std::size_t written{};
+    ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(*saved, bytes.get(),
+        persistence::kMaximumEncodedCheckpointBytes, written)
+        == persistence::CodecError::none);
+    bool migrated = true;
+    ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
+        bytes.get(), written, *decoded, migrated)
+        == persistence::CodecError::none);
+    ARPG_REQUIRE(!migrated);
+    ARPG_REQUIRE(decoded->room_progress.exits_unlocked);
+    ARPG_REQUIRE(!decoded->room_progress.full_clear);
+
+    dungeon::DungeonSession reloaded{rules, decoded->state};
+    test::set_player_health(reloaded, 1000000, 1000000);
+    ARPG_REQUIRE(reloaded.restore_room_progress_checkpoint(*decoded));
+    const auto restored = reloaded.snapshot();
+    ARPG_REQUIRE(restored.phase == dungeon::RoomPhase::combat);
+    ARPG_REQUIRE(restored.exits_unlocked);
+    ARPG_REQUIRE(restored.remaining_targets > 0U);
+    for (const bool open : restored.exits_open) ARPG_REQUIRE(open);
+    return {};
+}
+
 test::Failure structural_validation_rejects_identity_and_order_faults() noexcept {
     std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> slot{
         new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
@@ -494,4 +554,12 @@ constexpr test::TestCase kCases[] = {
 
 arpg::test::TestSuite checkpoint_v9_suite() noexcept {
     return arpg::test::make_suite("checkpoint_v9", kCases);
+}
+
+arpg::test::TestSuite checkpoint_v9_unlock_suite() noexcept {
+    constexpr test::TestCase cases[] = {
+        {"v9 partial unlock round trip restores combat",
+            &v9_partial_unlock_round_trip_restores_combat},
+    };
+    return arpg::test::make_suite("checkpoint_v9_unlock", cases);
 }

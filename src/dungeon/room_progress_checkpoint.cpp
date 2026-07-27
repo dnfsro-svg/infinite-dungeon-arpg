@@ -636,7 +636,8 @@ bool valid_room_progress_checkpoint_structural(
             || room.generated_monsters == 0U
             || room.generated_monsters > limits::kRoomMonsterCapacity
             || room.defeated_monsters > room.generated_monsters
-            || room.required_kills != (room.generated_monsters + 3U) / 4U
+            || room.required_kills
+                != dungeon::required_kills(room.generated_monsters)
             || popcount(room.defeat_bits) != room.defeated_monsters
             || !no_bits_at_or_above(
                 room.defeat_bits, room.generated_monsters)

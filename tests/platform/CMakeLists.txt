@@ -16,6 +16,7 @@ if(TARGET arpg_raylib)
         combat_view_math_tests.cpp
         monster_view_tests.cpp
         dungeon_view_math_tests.cpp
+        task6_exit_unlock_view_tests.cpp
         passive_tree_view_tests.cpp
         host_launch_options_tests.cpp
         dungeon_runtime_tests.cpp

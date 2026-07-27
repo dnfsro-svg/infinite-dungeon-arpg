@@ -332,15 +332,24 @@ void DungeonSession::tick(
 
         handle_player_defeat();
 
-        if (phase_ == RoomPhase::combat && remaining_targets() == 0U) {
-            prepare_room_clear();
+        if (phase_ == RoomPhase::combat) {
+            if (!room_progress_.exits_unlocked
+                    && room_progress_.required_kills != 0U
+                    && room_progress_.defeated_monster_count
+                        >= room_progress_.required_kills) {
+                prepare_room_unlock();
+            } else if (remaining_targets() == 0U) {
+                prepare_room_clear();
+            }
         }
 
     }
 
     if (abyss_exit_confirmation_.armed
             && (!combat_.has_value()
-                || phase_ != RoomPhase::awaiting_exit)) {
+                || (phase_ != RoomPhase::awaiting_exit
+                    && !(phase_ == RoomPhase::combat
+                        && room_progress_.exits_unlocked)))) {
         clear_abyss_exit_confirmation();
     }
 
@@ -357,7 +366,9 @@ void DungeonSession::tick(
             && phase_ != RoomPhase::transitioning
             && phase_ != RoomPhase::faulted) {
         const combat::Vec3 player_position = combat_->player_position();
-        if (phase_ == RoomPhase::awaiting_exit) {
+        if (phase_ == RoomPhase::awaiting_exit
+                || (phase_ == RoomPhase::combat
+                    && room_progress_.exits_unlocked)) {
             update_abyss_exit_confirmation_range(player_position);
             const auto requested = requested_exit(
                 player_position, movement);
@@ -372,7 +383,9 @@ void DungeonSession::tick(
                 }
             }
             request_nearby_pickups(player_position, pickup_policy);
-            if (phase_ == RoomPhase::awaiting_exit
+            if ((phase_ == RoomPhase::awaiting_exit
+                    || (phase_ == RoomPhase::combat
+                        && room_progress_.exits_unlocked))
                     && requested.has_value()) {
                 attempt_exit(*requested);
             }
@@ -388,7 +401,9 @@ std::optional<PendingTransition>
 DungeonSession::pending_transition() const noexcept {
     if (!pending_save_.has_value()
             || (pending_save_->kind != PendingSaveKind::transition
-                && pending_save_->kind != PendingSaveKind::abyss_abandon)) {
+                && pending_save_->kind != PendingSaveKind::abyss_abandon
+                && pending_save_->kind
+                    != PendingSaveKind::abyss_early_exit)) {
         return std::nullopt;
     }
     return PendingTransition{
@@ -519,20 +534,21 @@ bool DungeonSession::capture_save_checkpoint(
     room.environment_blueprint_hash = room_environment_->blueprint_hash;
     room.generated_monsters = room_progress_.initial_monster_count;
     room.defeated_monsters = room_progress_.defeated_monster_count;
-    room.required_kills = (room.generated_monsters + 3U) / 4U;
+    room.required_kills = room_progress_.required_kills;
     room.defeat_bits = room_progress_.defeated_monster_bits;
+    const bool post_mutation = durable_override != nullptr
+        && pending_save_.has_value()
+        && durable_override == &pending_save_->next_state;
+    const bool unlock_pending = post_mutation
+        && pending_save_->kind == PendingSaveKind::room_unlock;
     const bool full_clear_pending = phase_ == RoomPhase::committing
         && pending_save_.has_value()
         && (pending_save_->kind == PendingSaveKind::room_clear
             || pending_save_->kind == PendingSaveKind::abyss_clear);
-    room.exits_unlocked = phase_ == RoomPhase::cleared
-        || phase_ == RoomPhase::awaiting_exit
-        || full_clear_pending
-        || (phase_ == RoomPhase::committing && pending_save_.has_value()
-            && (pending_save_->resume_phase == RoomPhase::cleared
-                || pending_save_->resume_phase == RoomPhase::awaiting_exit));
-    room.full_clear = room.defeated_monsters == room.generated_monsters;
-    room.reward_committed = room.full_clear && room.exits_unlocked;
+    room.exits_unlocked = room_progress_.exits_unlocked
+        || unlock_pending || full_clear_pending;
+    room.full_clear = room_progress_.full_clear || full_clear_pending;
+    room.reward_committed = room.full_clear;
     for (std::size_t index = 0U;
             index < durable.item_ownership.claimed_drop_bits.size(); ++index) {
         room.equipment_claim_bits[index] =
@@ -551,9 +567,6 @@ bool DungeonSession::capture_save_checkpoint(
             }
         }
     }
-    const bool post_mutation = durable_override != nullptr
-        && pending_save_.has_value()
-        && durable_override == &pending_save_->next_state;
     const combat::PlayerCombatBuild* const post_build = post_mutation
             && pending_item_build_.has_value()
         ? &*pending_item_build_ : nullptr;
@@ -721,6 +734,9 @@ bool DungeonSession::restore_room_progress_checkpoint(
 
     room_progress_.initial_monster_count = room.generated_monsters;
     room_progress_.defeated_monster_count = room.defeated_monsters;
+    room_progress_.required_kills = room.required_kills;
+    room_progress_.exits_unlocked = room.exits_unlocked;
+    room_progress_.full_clear = room.full_clear;
     room_progress_.defeated_monster_bits = room.defeat_bits;
     ground_items_ = {};
     ground_materials_ = {};
@@ -780,7 +796,7 @@ bool DungeonSession::restore_room_progress_checkpoint(
     pending_save_.reset();
     phase_ = room.lifecycle == checkpoint::RoomProgressLifecycle::death_pending
         ? RoomPhase::death_pending
-        : room.exits_unlocked ? RoomPhase::awaiting_exit : RoomPhase::combat;
+        : room.full_clear ? RoomPhase::awaiting_exit : RoomPhase::combat;
     return true;
 }
 
@@ -1258,6 +1274,8 @@ bool DungeonSession::stage_current_room_population(
     staged_room_progress_ = {};
     staged_room_progress_.initial_monster_count =
         monster_field->total_count();
+    staged_room_progress_.required_kills = required_kills(
+        staged_room_progress_.initial_monster_count);
     staged_room_combat_ = config;
     staged_room_monster_field_ = std::move(monster_field);
     staged_room_environment_ = std::move(environment);
@@ -2208,23 +2226,18 @@ void DungeonSession::settle_room_experience() noexcept {
 void DungeonSession::prepare_room_clear() noexcept {
     const bool started_abyss = stable_state_.current_room.is_abyss
         && stable_state_.abyss.lifecycle == abyss::AbyssLifecycle::started;
-    // The authority path reaches this function only after the final target is
-    // defeated. Preserve the legacy synchronous behavior for diagnostic/test
-    // hooks that force a normal-room clear while live targets remain; real
-    // full clears still enter the exact transactional boundary below.
-    if (!started_abyss && remaining_targets() != 0U
-            && !has_ground_materials() && !has_claimable_health_potion()) {
-        settle_room_experience();
-        publish_room_clear();
-        return;
-    }
-    if (!combat_.has_value() || pending_save_.has_value()) {
+    if (!combat_.has_value() || pending_save_.has_value()
+            || !room_progress_.exits_unlocked
+            || room_progress_.initial_monster_count == 0U
+            || room_progress_.defeated_monster_count
+                != room_progress_.initial_monster_count
+            || remaining_targets() != 0U) {
         enter_fault(started_abyss
             ? DungeonFault::invalid_abyss_state
             : DungeonFault::invalid_item_state);
         return;
     }
-    constexpr std::size_t kClearPublicationEventCount = 2U;
+    constexpr std::size_t kClearPublicationEventCount = 1U;
     if (!can_emit(kClearPublicationEventCount)) {
         saturating_increment(diagnostics_.event_overflow_count);
         enter_fault(DungeonFault::event_overflow);
@@ -2302,11 +2315,10 @@ void DungeonSession::prepare_room_clear() noexcept {
 }
 
 void DungeonSession::publish_room_clear() noexcept {
+    room_progress_.exits_unlocked = true;
+    room_progress_.full_clear = true;
     phase_ = RoomPhase::cleared;
-    if (emit(DungeonEventKind::room_cleared)
-            && phase_ != RoomPhase::faulted) {
-        static_cast<void>(emit(DungeonEventKind::exits_opened));
-    }
+    static_cast<void>(emit(DungeonEventKind::room_cleared));
 }
 
 bool DungeonSession::can_emit(std::size_t count) const noexcept {
@@ -2398,6 +2410,44 @@ std::uint32_t DungeonSession::remaining_targets() const noexcept {
         ? room_progress_.initial_monster_count
             - room_progress_.defeated_monster_count
         : 0U;
+}
+
+void DungeonSession::prepare_room_unlock() noexcept {
+    if (phase_ != RoomPhase::combat || !combat_.has_value()
+            || pending_save_.has_value() || room_progress_.exits_unlocked
+            || room_progress_.required_kills == 0U
+            || room_progress_.defeated_monster_count
+                < room_progress_.required_kills) {
+        enter_fault(DungeonFault::save_receipt_mismatch);
+        return;
+    }
+    if (!can_emit(1U)) {
+        saturating_increment(diagnostics_.event_overflow_count);
+        enter_fault(DungeonFault::event_overflow);
+        return;
+    }
+    if (stable_state_.commit_generation
+            == (std::numeric_limits<std::uint64_t>::max)()) {
+        enter_fault(DungeonFault::commit_generation_overflow);
+        return;
+    }
+    try {
+        DungeonRunState next = stable_state_;
+        ++next.commit_generation;
+        pending_save_ = PendingSave{
+            PendingSaveKind::room_unlock,
+            next.commit_generation,
+            std::move(next),
+            TransitionKind::none,
+            ExitDirection::none,
+            RoomPhase::combat,
+        };
+    } catch (...) {
+        pending_save_.reset();
+        enter_fault(DungeonFault::invalid_item_state);
+        return;
+    }
+    phase_ = RoomPhase::committing;
 }
 
 }  // namespace arpg::dungeon

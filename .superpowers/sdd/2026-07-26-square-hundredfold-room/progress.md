@@ -11,3 +11,4 @@ Task 5: fix round 2/5 (auto-by-value DungeonSnapshot and HostValidationStates st
 Task 5: fix round 3/5 (prefix-independent direct-construction invariants close namespace, auto-const, and parenthesized large-state guard gaps)
 Task 5: fix round 4/5 (canonical comment-as-whitespace sanitization closes persistence stack-guard bypasses)
 Task 5: complete (commit aab2cbf, review clean P0/P1/P2=0; exact serial build current; final gate 9/9 passed)
+Task 6: implementation complete (quarter-kill exact unlock, atomic early exits, V9 restore; focused 15/15 passed; full gate deferred to controller after resource event)
