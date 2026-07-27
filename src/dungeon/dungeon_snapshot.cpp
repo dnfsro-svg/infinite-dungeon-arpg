@@ -79,15 +79,8 @@ void DungeonSession::build_dungeon_snapshot(
             !death_saving && death_continue_failed_,
         });
     }
-    bool exits_open = phase_ == RoomPhase::cleared
-        || phase_ == RoomPhase::awaiting_exit;
-    if (!exits_open && phase_ == RoomPhase::committing
-            && pending_save_.has_value()
-            && pending_save_->kind != PendingSaveKind::abyss_clear) {
-        exits_open = pending_save_->resume_phase == RoomPhase::cleared
-            || pending_save_->resume_phase == RoomPhase::awaiting_exit;
-    }
-    result.exits_open.fill(exits_open);
+    result.exits_unlocked = room_progress_.exits_unlocked;
+    result.exits_open.fill(result.exits_unlocked);
     result.abyss_doors = visible_death == nullptr
         ? preview_abyss_doors(stable_state_.current_room)
         : std::array<bool, 4>{};
@@ -128,7 +121,8 @@ void DungeonSession::build_dungeon_snapshot(
         abyss_exit_confirmation_.direction;
     result.has_pending_transition = pending_save_.has_value()
         && (pending_save_->kind == PendingSaveKind::transition
-            || pending_save_->kind == PendingSaveKind::abyss_abandon);
+            || pending_save_->kind == PendingSaveKind::abyss_abandon
+            || pending_save_->kind == PendingSaveKind::abyss_early_exit);
     result.passive_tree = stable_state_.passive_tree;
     result.skill_loadout = stable_state_.skill_loadout;
     result.passive_save_pending = pending_save_.has_value()

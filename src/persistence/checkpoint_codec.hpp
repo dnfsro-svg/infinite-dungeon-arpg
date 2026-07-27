@@ -78,10 +78,24 @@ using EncodedCheckpoint = std::vector<std::uint8_t>;
     std::size_t capacity,
     std::size_t& written) noexcept;
 
+// V9-only durable-image entry point. It validates the V9-owned resolution
+// lifecycle while producing a fully canonical embedded V8 image whose
+// reserved byte 150 remains zero; V9 stores that field in its outer payload.
+[[nodiscard]] CodecError encode_checkpoint_v9_durable_into(
+    const dungeon::checkpoint::DungeonRunState& state,
+    std::uint8_t* bytes,
+    std::size_t capacity,
+    std::size_t& written) noexcept;
+
 // Allocation-free field visitor used by the save worker's V9 readback scan.
 // This accepts only the canonical V8 durable payload embedded by V9 and
 // compares every encoded authoritative field with the immutable job slot.
 [[nodiscard]] CodecError verify_checkpoint_v8_readback_fields(
+    const std::uint8_t* bytes,
+    std::size_t size,
+    const dungeon::checkpoint::DungeonRunState& expected) noexcept;
+
+[[nodiscard]] CodecError verify_checkpoint_v9_durable_readback_fields(
     const std::uint8_t* bytes,
     std::size_t size,
     const dungeon::checkpoint::DungeonRunState& expected) noexcept;

@@ -139,7 +139,9 @@ std::uint8_t popcount8(std::uint8_t value) noexcept {
 
 bool DungeonSession::request_descent(bool player_in_range) noexcept {
     if (health_potion_abyss_clear_retry_gate_active()) return false;
-    if (phase_ != RoomPhase::awaiting_exit || !combat_.has_value()
+    const bool exit_phase = phase_ == RoomPhase::awaiting_exit
+        || (phase_ == RoomPhase::combat && room_progress_.exits_unlocked);
+    if (!exit_phase || !combat_.has_value()
             || !player_in_range || pending_save_.has_value()
             || !stable_state_.current_room.has_hole) {
         saturating_increment(diagnostics_.rejected_exit_count);
@@ -160,7 +162,9 @@ void DungeonSession::resolve_pending_transition(
     if (health_potion_abyss_clear_retry_gate_active()) return;
     if (!pending_save_.has_value()
             || (pending_save_->kind != PendingSaveKind::transition
-                && pending_save_->kind != PendingSaveKind::abyss_abandon)) {
+                && pending_save_->kind != PendingSaveKind::abyss_abandon
+                && pending_save_->kind
+                    != PendingSaveKind::abyss_early_exit)) {
         enter_fault(DungeonFault::save_receipt_mismatch);
         return;
     }
@@ -174,7 +178,9 @@ void DungeonSession::resolve_pending_save(
 }
 
 void DungeonSession::attempt_exit(ExitDirection direction) noexcept {
-    if (phase_ != RoomPhase::awaiting_exit || !combat_.has_value()
+    const bool exit_phase = phase_ == RoomPhase::awaiting_exit
+        || (phase_ == RoomPhase::combat && room_progress_.exits_unlocked);
+    if (!exit_phase || !combat_.has_value()
             || direction == ExitDirection::none || pending_save_.has_value()) {
         saturating_increment(diagnostics_.rejected_exit_count);
         return;
@@ -325,6 +331,12 @@ void DungeonSession::update_abyss_exit_confirmation_range(
 
 bool DungeonSession::finalize_abyss_exit(
     DungeonRunState& next, bool abandon) const noexcept {
+    if (stable_state_.current_room.is_abyss
+            && stable_state_.abyss.lifecycle
+                == abyss::AbyssLifecycle::started) {
+        return !abandon
+            && record_abyss_failure_resolution(next, stable_state_);
+    }
     if (!stable_state_.current_room.is_abyss
             || stable_state_.abyss.lifecycle
                 != abyss::AbyssLifecycle::cleared) {
@@ -349,6 +361,7 @@ bool DungeonSession::finalize_abyss_exit(
         static_cast<std::uint8_t>(reward.claimed_mask & valid));
     next.last_abyss_resolution.abandoned = popcount8(
         static_cast<std::uint8_t>(abandoned & valid));
+    next.last_abyss_resolution.lifecycle = abyss::AbyssLifecycle::none;
     return true;
 }
 
@@ -371,7 +384,16 @@ bool DungeonSession::prepare_transition(
         return false;
     }
 
-    next.state.progression = room_progression_;
+    const bool early_exit = phase_ == RoomPhase::combat
+        && room_progress_.exits_unlocked && !room_progress_.full_clear;
+    const bool started_abyss_early_exit = early_exit
+        && stable_state_.current_room.is_abyss
+        && stable_state_.abyss.lifecycle == abyss::AbyssLifecycle::started;
+    const progression::ProgressionAward early_award = early_exit
+        ? progression::apply_experience(room_progression_,
+            pending_room_experience_, progression_rules_)
+        : progression::ProgressionAward{room_progression_, 0U};
+    next.state.progression = early_award.state;
     next.state.item_ownership.claimed_drop_bits = {};
     next.state.item_ownership.material_claimed_drop_bits = {};
     if (!finalize_abyss_exit(next.state, abandon_abyss)) {
@@ -383,13 +405,14 @@ bool DungeonSession::prepare_transition(
     }
     const std::uint64_t expected_generation = next.state.commit_generation;
     pending_save_ = PendingSave{
-        abandon_abyss ? PendingSaveKind::abyss_abandon
-                      : PendingSaveKind::transition,
+        started_abyss_early_exit ? PendingSaveKind::abyss_early_exit
+            : abandon_abyss ? PendingSaveKind::abyss_abandon
+                            : PendingSaveKind::transition,
         expected_generation,
         std::move(next.state),
         kind,
         direction,
-        RoomPhase::awaiting_exit,
+        early_exit ? RoomPhase::combat : RoomPhase::awaiting_exit,
     };
     phase_ = RoomPhase::committing;
     const bool emitted = emit(
@@ -1758,6 +1781,9 @@ void DungeonSession::commit_pending_save(
     const bool fail_commit = kind == PendingSaveKind::abyss_fail;
     const bool abyss_clear_commit = kind == PendingSaveKind::abyss_clear;
     const bool room_clear_commit = kind == PendingSaveKind::room_clear;
+    const bool room_unlock_commit = kind == PendingSaveKind::room_unlock;
+    const bool abyss_early_exit_commit = kind
+        == PendingSaveKind::abyss_early_exit;
     const bool clear_commit = abyss_clear_commit || room_clear_commit;
     const bool reward_commit = kind
         == PendingSaveKind::abyss_reward_materialized;
@@ -1904,6 +1930,12 @@ void DungeonSession::commit_pending_save(
         reset_to_normal_room(false);
         return;
     }
+    if (room_unlock_commit) {
+        room_progress_.exits_unlocked = true;
+        phase_ = RoomPhase::combat;
+        static_cast<void>(emit(DungeonEventKind::exits_opened));
+        return;
+    }
     if (clear_commit) {
         settle_room_experience();
         room_progression_ = stable_state_.progression;
@@ -1916,7 +1948,7 @@ void DungeonSession::commit_pending_save(
             apply_committed_health_potions(
                 *committed_health_claim, true);
         }
-        // prepare_room_clear reserved both publication slots. While committing,
+        // prepare_room_clear reserved the publication slot. While committing,
         // tick() is frozen and no other dungeon-event producer can consume them.
         publish_room_clear();
         return;
@@ -1927,7 +1959,19 @@ void DungeonSession::commit_pending_save(
         return;
     }
     if (kind == PendingSaveKind::transition
-            || kind == PendingSaveKind::abyss_abandon) {
+            || kind == PendingSaveKind::abyss_abandon
+            || abyss_early_exit_commit) {
+        const bool early_exit_commit = resume_phase == RoomPhase::combat;
+        if (early_exit_commit) {
+            last_room_experience_ = pending_room_experience_;
+            const std::uint8_t previous_level = room_progression_.level;
+            room_progression_ = stable_state_.progression;
+            last_levels_gained_ = room_progression_.level >= previous_level
+                ? static_cast<std::uint8_t>(
+                    room_progression_.level - previous_level)
+                : 0U;
+            pending_room_experience_ = 0U;
+        }
         clear_abyss_exit_confirmation();
         ground_items_ = {};
         rolled_drop_bits_ = {};

@@ -264,11 +264,13 @@ void HudNoticeState::observe(const dungeon::DungeonSnapshot& previous,
     }
     const bool awaiting_exit = current.has_active_room
         && current.phase == dungeon::RoomPhase::awaiting_exit;
-    if (context_changed && awaiting_exit && current.has_hole) {
+    const bool exits_unlocked = current.has_active_room
+        && current.exits_unlocked;
+    if (context_changed && exits_unlocked && current.has_hole) {
         add_action_notice(notices_, dropped_count_, HudNoticeKind::hole_interact,
             kHolePriority, hints, "Interact", u8"进入下一层");
     }
-    if (context_changed && awaiting_exit && has_open_exit(current)) {
+    if (context_changed && exits_unlocked && has_open_exit(current)) {
         add_transient(notices_, dropped_count_, HudNoticeKind::exit_ready,
             kExitPriority, u8"进入出口");
     }

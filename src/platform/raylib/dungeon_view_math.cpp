@@ -220,11 +220,14 @@ HoleVisualMode hole_visual_mode(
     }
     switch (snapshot.phase) {
     case dungeon::RoomPhase::locked:
-    case dungeon::RoomPhase::combat:
         return HoleVisualMode::sealed;
+    case dungeon::RoomPhase::combat:
+        return snapshot.exits_unlocked
+            ? HoleVisualMode::ready : HoleVisualMode::sealed;
     case dungeon::RoomPhase::cleared:
     case dungeon::RoomPhase::awaiting_exit:
-        return HoleVisualMode::ready;
+        return snapshot.exits_unlocked
+            ? HoleVisualMode::ready : HoleVisualMode::sealed;
     case dungeon::RoomPhase::committing:
         return HoleVisualMode::busy;
     case dungeon::RoomPhase::faulted:

@@ -175,8 +175,20 @@ bool drive_to_abyss_clear_pending(DungeonSession& session) noexcept {
         const auto state = session.snapshot();
         if (state.phase == RoomPhase::committing) {
             const auto pending = session.pending_save();
-            return pending.has_value()
-                && pending->kind == PendingSaveKind::abyss_clear;
+            if (!pending.has_value()) return false;
+            if (pending->kind == PendingSaveKind::room_unlock) {
+                session.resolve_pending_save({SaveDisposition::committed,
+                    pending->expected_generation,
+                    pending->next_state,
+                    pending->kind});
+                if (session.snapshot().phase != RoomPhase::combat
+                        || !session.snapshot().exits_unlocked) {
+                    return false;
+                }
+                arpg::test::drain_all_events(session, events);
+                continue;
+            }
+            return pending->kind == PendingSaveKind::abyss_clear;
         }
         if (state.phase == RoomPhase::combat) {
             arpg::test::force_defeat_current_wave(session);
@@ -235,7 +247,8 @@ arpg::test::Failure abyss_clear_not_committed_faults_atomically() noexcept {
     ARPG_REQUIRE(after.commit_generation == before.commit_generation);
     ARPG_REQUIRE(after.pending_room_experience == before.pending_room_experience);
     ARPG_REQUIRE(after.progression.experience == before.progression.experience);
-    ARPG_REQUIRE(!after.exits_open[0]);
+    ARPG_REQUIRE(after.exits_unlocked);
+    ARPG_REQUIRE(after.exits_open[0]);
     ARPG_REQUIRE(arpg::test::DungeonSessionTestAccess::active_abyss_config(session)
         ->rule != arpg::abyss::AbyssRuleId::none);
     arpg::test::EventSummary events{};
@@ -257,7 +270,8 @@ arpg::test::Failure abyss_clear_indeterminate_faults_atomically() noexcept {
     ARPG_REQUIRE(after.commit_generation == before.commit_generation);
     ARPG_REQUIRE(after.pending_room_experience == before.pending_room_experience);
     ARPG_REQUIRE(after.progression.experience == before.progression.experience);
-    ARPG_REQUIRE(!after.exits_open[0]);
+    ARPG_REQUIRE(after.exits_unlocked);
+    ARPG_REQUIRE(after.exits_open[0]);
     return {};
 }
 
@@ -275,7 +289,8 @@ arpg::test::Failure abyss_clear_generation_mismatch_faults_atomically() noexcept
     ARPG_REQUIRE(after.commit_generation == before.commit_generation);
     ARPG_REQUIRE(after.pending_room_experience == before.pending_room_experience);
     ARPG_REQUIRE(after.progression.experience == before.progression.experience);
-    ARPG_REQUIRE(!after.exits_open[0]);
+    ARPG_REQUIRE(after.exits_unlocked);
+    ARPG_REQUIRE(after.exits_open[0]);
     return {};
 }
 
@@ -296,7 +311,8 @@ arpg::test::Failure abyss_clear_state_mismatch_faults_atomically() noexcept {
     ARPG_REQUIRE(after.commit_generation == before.commit_generation);
     ARPG_REQUIRE(after.pending_room_experience == before.pending_room_experience);
     ARPG_REQUIRE(after.progression.experience == before.progression.experience);
-    ARPG_REQUIRE(!after.exits_open[0]);
+    ARPG_REQUIRE(after.exits_unlocked);
+    ARPG_REQUIRE(after.exits_open[0]);
     return {};
 }
 

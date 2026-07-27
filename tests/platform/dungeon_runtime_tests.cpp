@@ -1891,26 +1891,54 @@ arpg::test::Failure v6_pending_death_load_preserves_generation_and_target() noex
         persistence::SaveStore store(config.save);
         ARPG_REQUIRE(store.commit(initial).state
             == persistence::SaveCommitState::committed);
-        dungeon::DungeonSession source{config.rules, initial};
-        if (abyss_death) {
-            const dungeon::PendingSave* const start = source.pending_save_view();
-            ARPG_REQUIRE(start != nullptr);
-            ARPG_REQUIRE(start->kind == dungeon::PendingSaveKind::abyss_start);
-            const auto saved = store.commit(start->next_state);
-            ARPG_REQUIRE(saved.state == persistence::SaveCommitState::committed);
-            source.resolve_pending_save({dungeon::SaveDisposition::committed,
-                saved.verified_state.commit_generation, saved.verified_state,
-                std::nullopt});
+        dungeon::DungeonRunState expected{};
+        if (!abyss_death) {
+            dungeon::DungeonSession source{config.rules, initial};
+            source.tick({});
+            ARPG_REQUIRE(arpg::test::kill_current_player_through_combat(source));
+            source.tick({});
+            const dungeon::PendingSave* const pending =
+                source.pending_save_view();
+            ARPG_REQUIRE(pending != nullptr);
+            ARPG_REQUIRE(pending->kind
+                == dungeon::PendingSaveKind::death_retreat);
+            expected = pending->next_state;
+            ARPG_REQUIRE(store.commit(expected).state
+                == persistence::SaveCommitState::committed);
+        } else {
+            auto source = std::make_unique<platform::DungeonRuntime>(config);
+            ARPG_REQUIRE(source->initialize());
+            settle_runtime_save(*source);
+            ARPG_REQUIRE(source->session()->snapshot().is_abyss);
+            source->session()->tick({});
+            ARPG_REQUIRE(arpg::test::kill_current_player_through_combat(
+                *source->session()));
+            source->session()->tick({});
+            const dungeon::PendingSave* const pending =
+                source->session()->pending_save_view();
+            ARPG_REQUIRE(pending != nullptr);
+            ARPG_REQUIRE(pending->kind
+                == dungeon::PendingSaveKind::death_retreat);
+            expected = pending->next_state;
+            ARPG_REQUIRE(expected.abyss.lifecycle
+                == arpg::abyss::AbyssLifecycle::failed);
+            ARPG_REQUIRE(expected.last_abyss_resolution.lifecycle
+                == arpg::abyss::AbyssLifecycle::failed);
+            settle_runtime_save(*source);
+            ARPG_REQUIRE(source->session()->snapshot().phase
+                == dungeon::RoomPhase::death_pending);
+
+            auto exact = std::make_unique<
+                dungeon::checkpoint::SaveCheckpointSlot>();
+            ARPG_REQUIRE(decode_active_v9(directory,
+                source->render_status().active_slot, *exact));
+            ARPG_REQUIRE(dungeon::same_run_state(exact->state, expected));
+            ARPG_REQUIRE(exact->state.last_abyss_resolution.lifecycle
+                == arpg::abyss::AbyssLifecycle::failed);
+            ARPG_REQUIRE(exact->room_progress.lifecycle
+                == dungeon::checkpoint::RoomProgressLifecycle::death_pending);
+            source.reset();
         }
-        source.tick({});
-        ARPG_REQUIRE(arpg::test::kill_current_player_through_combat(source));
-        source.tick({});
-        const dungeon::PendingSave* const pending = source.pending_save_view();
-        ARPG_REQUIRE(pending != nullptr);
-        ARPG_REQUIRE(pending->kind == dungeon::PendingSaveKind::death_retreat);
-        const auto expected = pending->next_state;
-        ARPG_REQUIRE(store.commit(expected).state
-            == persistence::SaveCommitState::committed);
 
         platform::DungeonRuntime runtime(config);
         ARPG_REQUIRE(runtime.initialize());
@@ -1929,6 +1957,8 @@ arpg::test::Failure v6_pending_death_load_preserves_generation_and_target() noex
         ARPG_REQUIRE(runtime.session()->pending_save_view() == nullptr);
         if (abyss_death) {
             ARPG_REQUIRE(expected.abyss.lifecycle
+                == arpg::abyss::AbyssLifecycle::failed);
+            ARPG_REQUIRE(disk.checkpoint.last_abyss_resolution.lifecycle
                 == arpg::abyss::AbyssLifecycle::failed);
             ARPG_REQUIRE(loaded.is_abyss == false);
         }

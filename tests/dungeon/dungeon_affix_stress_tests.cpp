@@ -312,15 +312,32 @@ bool defeat_all_generated_monsters(DungeonSession& session,
             return false;
         }
     }
-    session.tick({});
-    if (session.pending_save_view() != nullptr && !commit_pending(session)) {
-        return false;
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        const auto snapshot = session.snapshot();
+        if (snapshot.phase == RoomPhase::cleared
+                || snapshot.phase == RoomPhase::awaiting_exit) {
+            return all_defeat_payloads_recorded(trace);
+        }
+        if (snapshot.phase == RoomPhase::combat) {
+            session.tick({});
+            drain_events(session);
+            continue;
+        }
+        if (snapshot.phase != RoomPhase::committing) return false;
+        const auto* const pending = session.pending_save_view();
+        if (pending == nullptr
+                || (pending->kind
+                        != arpg::dungeon::PendingSaveKind::room_unlock
+                    && pending->kind
+                        != arpg::dungeon::PendingSaveKind::room_clear
+                    && pending->kind
+                        != arpg::dungeon::PendingSaveKind::abyss_clear)
+                || !commit_pending(session)) {
+            return false;
+        }
+        drain_events(session);
     }
-    drain_events(session);
-    const auto snapshot = session.snapshot();
-    return (snapshot.phase == RoomPhase::cleared
-            || snapshot.phase == RoomPhase::awaiting_exit)
-        && all_defeat_payloads_recorded(trace);
+    return false;
 }
 
 bool record_drops_and_claim(RoomTrace& trace, DungeonSession& session,

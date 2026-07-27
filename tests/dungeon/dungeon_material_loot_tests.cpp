@@ -283,7 +283,7 @@ arpg::test::Failure room_clear_vacuum_is_one_atomic_save() noexcept {
     return {};
 }
 
-arpg::test::Failure room_clear_save_failure_retries_vacuum_before_exits()
+arpg::test::Failure room_clear_save_failure_retries_vacuum_after_unlock()
     noexcept {
     DungeonRunState state = material_state(45U, 3U, 27U);
     for (std::size_t word = 0U; word < 6U; ++word) {
@@ -309,11 +309,23 @@ arpg::test::Failure room_clear_save_failure_retries_vacuum_before_exits()
         session.tick({});
     }
     ARPG_REQUIRE(session.pending_save().has_value());
+    const auto unlock = *session.pending_save();
+    ARPG_REQUIRE(unlock.kind
+        == arpg::dungeon::PendingSaveKind::room_unlock);
+    ARPG_REQUIRE(resolve_committed(session));
+    ARPG_REQUIRE(session.snapshot().phase
+        == arpg::dungeon::RoomPhase::combat);
+    for (const bool open : session.snapshot().exits_open) {
+        ARPG_REQUIRE(open);
+    }
+
+    session.tick({});
+    ARPG_REQUIRE(session.pending_save().has_value());
     const auto first = *session.pending_save();
     ARPG_REQUIRE(first.kind
         == arpg::dungeon::PendingSaveKind::room_clear);
     for (const bool open : session.snapshot().exits_open) {
-        ARPG_REQUIRE(!open);
+        ARPG_REQUIRE(open);
     }
 
     session.resolve_pending_save({
@@ -324,7 +336,7 @@ arpg::test::Failure room_clear_save_failure_retries_vacuum_before_exits()
     });
     ARPG_REQUIRE(session.snapshot().ground_material_count == 1U);
     for (const bool open : session.snapshot().exits_open) {
-        ARPG_REQUIRE(!open);
+        ARPG_REQUIRE(open);
     }
 
     session.tick({});
@@ -336,7 +348,7 @@ arpg::test::Failure room_clear_save_failure_retries_vacuum_before_exits()
     ARPG_REQUIRE(arpg::dungeon::same_run_state(
         retry.next_state, first.next_state));
     for (const bool open : session.snapshot().exits_open) {
-        ARPG_REQUIRE(!open);
+        ARPG_REQUIRE(open);
     }
 
     ARPG_REQUIRE(resolve_committed(session));
@@ -432,7 +444,7 @@ constexpr arpg::test::TestCase kCases[] = {
         &proximity_pickup_requires_combat_and_nearby_range},
     {"room clear vacuum atomic", &room_clear_vacuum_is_one_atomic_save},
     {"room clear save failure retries vacuum",
-        &room_clear_save_failure_retries_vacuum_before_exits},
+        &room_clear_save_failure_retries_vacuum_after_unlock},
     {"abyss clear material counts",
         &abyss_clear_adds_one_two_or_three_materials},
     {"death discards unpicked materials",

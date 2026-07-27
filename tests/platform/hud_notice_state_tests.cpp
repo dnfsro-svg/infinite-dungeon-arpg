@@ -56,6 +56,7 @@ arpg::test::Failure priority_order_and_two_line_limit_are_deterministic() noexce
     const dungeon::DungeonSnapshot previous = baseline_snapshot();
     dungeon::DungeonSnapshot current = previous;
     current.phase = dungeon::RoomPhase::awaiting_exit;
+    current.exits_unlocked = true;
     current.exits_open[0] = true;
     current.has_hole = true;
     current.abyss_exit_confirmation_armed = true;
@@ -99,6 +100,7 @@ arpg::test::Failure complete_priority_order_is_exposed_by_each_trigger() noexcep
     current.abyss_exit_confirmation_armed = false;
 
     current.phase = dungeon::RoomPhase::awaiting_exit;
+    current.exits_unlocked = true;
     current.has_hole = true;
     ARPG_REQUIRE(primary_for(current, saved_status(), false).priority == 90U);
     current.has_hole = false;
@@ -124,6 +126,7 @@ arpg::test::Failure complete_priority_order_is_exposed_by_each_trigger() noexcep
 
     current.inventory_count = 0U;
     current.phase = dungeon::RoomPhase::awaiting_exit;
+    current.exits_unlocked = false;
     current.exits_open.fill(false);
     current.progression.unspent_passive_points = 1U;
     const platform::HudNoticeView passive_view =
@@ -178,6 +181,7 @@ arpg::test::Failure room_transition_and_explicit_clear_remove_room_context() noe
     const dungeon::DungeonSnapshot previous = baseline_snapshot();
     dungeon::DungeonSnapshot contextual = previous;
     contextual.phase = dungeon::RoomPhase::awaiting_exit;
+    contextual.exits_unlocked = true;
     contextual.has_hole = true;
     contextual.exits_open[0] = true;
 
@@ -191,6 +195,7 @@ arpg::test::Failure room_transition_and_explicit_clear_remove_room_context() noe
     dungeon::DungeonSnapshot next_room = contextual;
     ++next_room.room_index;
     next_room.phase = dungeon::RoomPhase::combat;
+    next_room.exits_unlocked = false;
     next_room.has_hole = false;
     next_room.exits_open.fill(false);
     state.observe(contextual, next_room, saved_status(), rebound_hints(), false);
@@ -257,6 +262,7 @@ arpg::test::Failure room_zero_context_clears_on_next_room() noexcept {
     first_room.room_index = 0U;
     dungeon::DungeonSnapshot contextual = first_room;
     contextual.phase = dungeon::RoomPhase::awaiting_exit;
+    contextual.exits_unlocked = true;
     contextual.has_hole = true;
 
     platform::HudNoticeState state{};
@@ -266,6 +272,7 @@ arpg::test::Failure room_zero_context_clears_on_next_room() noexcept {
     dungeon::DungeonSnapshot next_room = contextual;
     next_room.room_index = 1U;
     next_room.phase = dungeon::RoomPhase::combat;
+    next_room.exits_unlocked = false;
     next_room.has_hole = false;
     state.observe(contextual, next_room, saved_status(), rebound_hints(), false);
     ARPG_REQUIRE(state.view().primary.kind == platform::HudNoticeKind::none);
@@ -296,6 +303,7 @@ arpg::test::Failure rebound_labels_and_non_terminated_arrays_are_bounded() noexc
 
     dungeon::DungeonSnapshot hole = previous;
     hole.phase = dungeon::RoomPhase::awaiting_exit;
+    hole.exits_unlocked = true;
     hole.has_hole = true;
     platform::HudNoticeState hole_state{};
     hole_state.observe(previous, hole, saved_status(), hints, false);
@@ -349,11 +357,13 @@ arpg::test::Failure production_visible_notices_are_chinese_first_and_font_covere
 
     current = previous;
     current.phase = dungeon::RoomPhase::awaiting_exit;
+    current.exits_unlocked = true;
     current.has_hole = true;
     ARPG_REQUIRE(require_primary(current, saved_status(), false, u8"Q 进入下一层"));
 
     current = previous;
     current.phase = dungeon::RoomPhase::awaiting_exit;
+    current.exits_unlocked = true;
     current.exits_open[0] = true;
     ARPG_REQUIRE(require_primary(current, saved_status(), false, u8"进入出口"));
 

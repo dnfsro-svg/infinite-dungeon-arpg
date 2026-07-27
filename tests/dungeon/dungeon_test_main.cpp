@@ -29,6 +29,7 @@ arpg::test::TestSuite dungeon_equipment_stress_suite() noexcept;
 arpg::test::TestSuite dungeon_loot_drop_suite() noexcept;
 arpg::test::TestSuite dungeon_material_loot_suite() noexcept;
 arpg::test::TestSuite dungeon_health_potion_suite() noexcept;
+arpg::test::TestSuite dungeon_exit_unlock_suite() noexcept;
 arpg::test::TestSuite dungeon_transaction_suite() noexcept;
 arpg::test::TestSuite dungeon_abyss_reward_suite() noexcept;
 arpg::test::TestSuite dungeon_abyss_stress_suite() noexcept;
@@ -170,6 +171,16 @@ bool stage17_skill_loadout_only() noexcept {
     return enabled;
 }
 
+bool task6_exit_unlock_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_TASK6_EXIT_UNLOCK_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
 }  // namespace
 
 int main() {
@@ -204,6 +215,7 @@ int main() {
         dungeon_loot_drop_suite(),
         dungeon_material_loot_suite(),
         dungeon_health_potion_suite(),
+        dungeon_exit_unlock_suite(),
         dungeon_transaction_suite(),
         dungeon_abyss_reward_suite(),
         dungeon_abyss_stress_suite(),
@@ -324,6 +336,14 @@ int main() {
             "stage 17 task 3 skill loadout transactions");
     }
 
-    return arpg::test::run_suites(suites, 330,
+    if (task6_exit_unlock_only()) {
+        const arpg::test::TestSuite unlock_only[] = {
+            dungeon_exit_unlock_suite(),
+        };
+        return arpg::test::run_suites(unlock_only, 13,
+            "task 6 quarter kill exit unlock");
+    }
+
+    return arpg::test::run_suites(suites, 343,
         "stage 18 dungeon queries");
 }

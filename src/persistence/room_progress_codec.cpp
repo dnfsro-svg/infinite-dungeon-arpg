@@ -1,5 +1,6 @@
 #include "persistence/room_progress_codec.hpp"
 
+#include "abyss/abyss_rewards.hpp"
 #include "dungeon/health_potion_loot.hpp"
 #include "dungeon/material_loot.hpp"
 #include "items/item_catalog.hpp"
@@ -927,6 +928,46 @@ bool read_room_progress(Reader& reader,
     return slot.room_progress.secondary_claim_bits == expected;
 }
 
+[[nodiscard]] bool valid_resolution_lifecycle_extension(
+    const checkpoint::LastAbyssResolution& value) noexcept {
+    if (value.lifecycle == abyss::AbyssLifecycle::none) return true;
+    return value.lifecycle == abyss::AbyssLifecycle::failed
+        && value.valid && value.generated == 0U && value.claimed == 0U
+        && value.abandoned == value.total;
+}
+
+[[nodiscard]] bool legacy_v9_abyss_death_requires_failed_resolution(
+    const checkpoint::DungeonRunState& state) noexcept {
+    const auto& death = state.death;
+    const auto& resolution = state.last_abyss_resolution;
+    if (death.lifecycle != checkpoint::DeathLifecycle::pending_continue
+            || !death.death_was_abyss
+            || state.commit_generation < 2U
+            || state.death_sequence == 0U
+            || state.current_room.is_abyss
+            || state.biases != std::array<std::uint32_t, 4>{}
+            || state.last_transition
+                != checkpoint::TransitionKind::death_retreat
+            || state.last_direction != checkpoint::ExitDirection::none
+            || death.death_depth != state.current_room.depth
+            || death.death_floor_room_index
+                != state.current_room.floor_room_index
+            || death.death_ecology != state.current_room.ecology
+            || state.abyss.lifecycle != abyss::AbyssLifecycle::failed
+            || !resolution.valid
+            || resolution.lifecycle != abyss::AbyssLifecycle::none
+            || resolution.room_seed != state.current_room.seed
+            || resolution.rule != state.abyss.rule) {
+        return false;
+    }
+    const std::uint8_t total = abyss::reward_profile_for(
+        state.abyss.danger, 1U).item_count;
+    return resolution.total == total
+        && resolution.generated == 0U
+        && resolution.claimed == 0U
+        && resolution.abandoned == total;
+}
+
 }  // namespace
 
 CodecError inspect_checkpoint_v9_envelope(const std::uint8_t* const bytes,
@@ -989,12 +1030,15 @@ CodecError encode_checkpoint_v9_into(
     Writer payload{bytes, capacity, kHeaderSize};
     if (!payload.u32(0U)) return CodecError::wrong_size;
     std::size_t durable_size{};
-    const CodecError durable_error = encode_checkpoint_into(source.state,
+    const CodecError durable_error = encode_checkpoint_v9_durable_into(
+        source.state,
         payload.current(), capacity - payload.offset(), durable_size);
     if (durable_error != CodecError::none) return durable_error;
     if (durable_size > (std::numeric_limits<std::uint32_t>::max)()
             || !payload.skip(durable_size)
-            || !write_room_progress(payload, source.room_progress)) {
+            || !write_room_progress(payload, source.room_progress)
+            || !payload.u8(static_cast<std::uint8_t>(
+                source.state.last_abyss_resolution.lifecycle))) {
         return CodecError::wrong_size;
     }
     Writer durable_length{bytes, capacity, kHeaderSize};
@@ -1077,9 +1121,35 @@ CodecError decode_checkpoint_v9_into_scratch(
     }
     destination.persistence_revision = revision;
     if (!payload.skip(durable_size)
-            || !read_room_progress(payload, destination.room_progress)
-            || payload.offset() != size) {
+            || !read_room_progress(payload, destination.room_progress)) {
         return CodecError::bad_payload_length;
+    }
+    const std::size_t extension_size = size - payload.offset();
+    if (extension_size > 1U) return CodecError::bad_payload_length;
+    if (extension_size == 0U
+            && legacy_v9_abyss_death_requires_failed_resolution(
+                destination.state)) {
+        destination.state.last_abyss_resolution.lifecycle =
+            abyss::AbyssLifecycle::failed;
+    } else if (extension_size == 1U) {
+        std::uint8_t resolution_lifecycle{};
+        if (!payload.u8(resolution_lifecycle)) {
+            return CodecError::bad_payload_length;
+        }
+        if (resolution_lifecycle
+                    != static_cast<std::uint8_t>(
+                        abyss::AbyssLifecycle::none)
+                && resolution_lifecycle
+                    != static_cast<std::uint8_t>(
+                        abyss::AbyssLifecycle::failed)) {
+            return CodecError::invalid_enum;
+        }
+        destination.state.last_abyss_resolution.lifecycle =
+            static_cast<abyss::AbyssLifecycle>(resolution_lifecycle);
+    }
+    if (!valid_resolution_lifecycle_extension(
+            destination.state.last_abyss_resolution)) {
+        return CodecError::invalid_state;
     }
     if (!checkpoint::valid_room_progress_checkpoint_structural(
             destination.room_progress, destination.state)
@@ -1242,7 +1312,7 @@ CodecError verify_checkpoint_v9_readback(
             durable + kCheckpointHeaderSize, durable_payload_size)) {
         return CodecError::bad_crc;
     }
-    if (verify_checkpoint_v8_readback_fields(
+    if (verify_checkpoint_v9_durable_readback_fields(
             durable, durable_size, expected.state) != CodecError::none) {
         return CodecError::invalid_state;
     }
@@ -1250,9 +1320,24 @@ CodecError verify_checkpoint_v9_readback(
         return CodecError::bad_payload_length;
     }
     ComparingReader room_fields{bytes, size, payload.offset()};
-    if (!write_room_progress(room_fields, expected.room_progress)
-            || room_fields.offset() != size) {
+    if (!write_room_progress(room_fields, expected.room_progress)) {
         return CodecError::invalid_state;
+    }
+    const std::size_t extension_size = size - room_fields.offset();
+    if (extension_size == 0U) {
+        if (expected.state.last_abyss_resolution.lifecycle
+                != abyss::AbyssLifecycle::none) {
+            return CodecError::invalid_state;
+        }
+    } else if (extension_size == 1U) {
+        ComparingReader extension{bytes, size, room_fields.offset()};
+        if (!extension.u8(static_cast<std::uint8_t>(
+                expected.state.last_abyss_resolution.lifecycle))
+                || extension.offset() != size) {
+            return CodecError::invalid_state;
+        }
+    } else {
+        return CodecError::bad_payload_length;
     }
     return CodecError::none;
 }

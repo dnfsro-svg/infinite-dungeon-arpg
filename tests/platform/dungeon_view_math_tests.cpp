@@ -338,6 +338,7 @@ arpg::test::Failure hole_modes_follow_room_phase() noexcept {
     snapshot.phase = RoomPhase::combat;
     ARPG_REQUIRE(arpg::platform::hole_visual_mode(snapshot)
         == HoleVisualMode::sealed);
+    snapshot.exits_unlocked = true;
     snapshot.phase = RoomPhase::cleared;
     ARPG_REQUIRE(arpg::platform::hole_visual_mode(snapshot)
         == HoleVisualMode::ready);

@@ -96,6 +96,33 @@ DungeonRunState retry_gate_state(std::uint64_t seed) {
     return state;
 }
 
+bool commit_pending_kind(DungeonSession& session,
+    arpg::dungeon::PendingSaveKind expected_kind) noexcept {
+    const auto pending = session.pending_save();
+    if (!pending.has_value() || pending->kind != expected_kind) return false;
+    session.resolve_pending_save({
+        arpg::dungeon::SaveDisposition::committed,
+        pending->expected_generation,
+        pending->next_state,
+        pending->kind,
+    });
+    return session.phase() != arpg::dungeon::RoomPhase::faulted;
+}
+
+bool commit_room_unlock_and_prepare_clear_save(
+    DungeonSession& session) noexcept {
+    if (!commit_pending_kind(
+            session, arpg::dungeon::PendingSaveKind::room_unlock)) {
+        return false;
+    }
+    if (session.phase() != arpg::dungeon::RoomPhase::combat
+            || !session.snapshot().exits_unlocked) {
+        return false;
+    }
+    arpg::test::prepare_room_clear(session);
+    return session.phase() != arpg::dungeon::RoomPhase::faulted;
+}
+
 bool enter_health_potion_abyss_clear_retry(
     DungeonSession& session, std::uint16_t potion_spawn = 4U) noexcept {
     arpg::test::set_phase(session, arpg::dungeon::RoomPhase::combat);
@@ -106,6 +133,7 @@ bool enter_health_potion_abyss_clear_retry(
     arpg::test::install_ground_health_potion(
         session, potion_spawn, {100.0F, 0.0F, 0.0F});
     session.tick({});
+    if (!commit_room_unlock_and_prepare_clear_save(session)) return false;
     const arpg::dungeon::PendingSave* const pending =
         session.pending_save_view();
     if (pending == nullptr
@@ -399,6 +427,11 @@ potion_snapshot_is_sorted_by_spawn_ordinal_and_clears_on_room_exit() noexcept {
 
     arpg::test::set_phase(session, arpg::dungeon::RoomPhase::combat);
     arpg::test::prepare_room_clear(session);
+    const auto clear = session.pending_save();
+    ARPG_REQUIRE(clear.has_value());
+    ARPG_REQUIRE(clear->kind == arpg::dungeon::PendingSaveKind::room_clear);
+    ARPG_REQUIRE(commit_pending_kind(
+        session, arpg::dungeon::PendingSaveKind::room_clear));
     ARPG_REQUIRE(session.snapshot().phase
         == arpg::dungeon::RoomPhase::cleared);
     ARPG_REQUIRE(session.snapshot().ground_health_potion_count == 3U);
@@ -904,6 +937,7 @@ final_kill_low_health_folds_sorted_potions_into_clear_transaction() noexcept {
     arpg::test::install_ground_material(abyss, kMaterialOrdinal,
         arpg::items::MaterialId::chaos, {4.0F, 5.0F, 0.0F});
     abyss.tick({});
+    ARPG_REQUIRE(commit_room_unlock_and_prepare_clear_save(abyss));
     const auto abyss_pending = abyss.pending_save();
     ARPG_REQUIRE(abyss_pending.has_value());
     ARPG_REQUIRE(abyss_pending->kind
@@ -972,7 +1006,7 @@ final_kill_low_health_folds_sorted_potions_into_clear_transaction() noexcept {
         == receipt_before.commit_generation);
     ARPG_REQUIRE(receipt_after.restored_hp == receipt_before.restored_hp);
     for (const bool exit_open : abyss_after_failure.exits_open) {
-        ARPG_REQUIRE(!exit_open);
+        ARPG_REQUIRE(exit_open);
     }
     ARPG_REQUIRE(arpg::dungeon::same_run_state(
         arpg::test::stable_state(abyss), abyss_stable_before));
@@ -1178,7 +1212,11 @@ final_kill_high_health_keeps_potion_until_room_transition() noexcept {
     arpg::test::set_player_health(session, 751, 1000);
     install_potion(session, 5U);
     arpg::test::prepare_room_clear(session);
-    ARPG_REQUIRE(!session.pending_save().has_value());
+    const auto clear = session.pending_save();
+    ARPG_REQUIRE(clear.has_value());
+    ARPG_REQUIRE(clear->kind == arpg::dungeon::PendingSaveKind::room_clear);
+    ARPG_REQUIRE(commit_pending_kind(
+        session, arpg::dungeon::PendingSaveKind::room_clear));
     ARPG_REQUIRE(session.snapshot().phase == arpg::dungeon::RoomPhase::cleared);
     ARPG_REQUIRE(session.snapshot().ground_health_potion_count == 1U);
     ARPG_REQUIRE(session.snapshot().combat->player.hp == 751);

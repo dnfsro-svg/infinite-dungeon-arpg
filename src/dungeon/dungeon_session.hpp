@@ -230,6 +230,7 @@ private:
     [[nodiscard]] bool materialize_abyss_clear_materials() noexcept;
     void vacuum_room_materials() noexcept;
     [[nodiscard]] bool has_ground_materials() const noexcept;
+    void prepare_room_unlock() noexcept;
     void prepare_room_clear() noexcept;
     void publish_room_clear() noexcept;
     void settle_room_experience() noexcept;

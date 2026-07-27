@@ -279,7 +279,7 @@ arpg::test::Failure same_run_state_compares_all_abyss_fields() noexcept {
     original.abyss.reward_revision = 4U;
     original.last_abyss_resolution = {
         true, 9U, arpg::abyss::AbyssRuleId::thunderstorm, 3U, 2U, 1U, 1U};
-    constexpr std::array<Case, 16U> cases{{
+    constexpr std::array<Case, 17U> cases{{
         {"lifecycle", [](State& s) noexcept {
             s.abyss.lifecycle = arpg::abyss::AbyssLifecycle::cleared;
         }},
@@ -324,6 +324,10 @@ arpg::test::Failure same_run_state_compares_all_abyss_fields() noexcept {
         }},
         {"resolution abandoned", [](State& s) noexcept {
             s.last_abyss_resolution.abandoned = 0U;
+        }},
+        {"resolution lifecycle", [](State& s) noexcept {
+            s.last_abyss_resolution.lifecycle =
+                arpg::abyss::AbyssLifecycle::failed;
         }},
     }};
     ARPG_REQUIRE(dungeon::same_run_state(original, original));

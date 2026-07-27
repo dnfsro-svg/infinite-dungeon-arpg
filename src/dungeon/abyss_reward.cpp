@@ -162,7 +162,7 @@ bool same_ground_item(
         && same_item_instance(left.item, right.item);
 }
 
-bool apply_abyss_failure_resolution(
+bool record_abyss_failure_resolution(
     DungeonRunState& next,
     const DungeonRunState& previous) noexcept {
     if (!previous.current_room.is_abyss
@@ -181,14 +181,6 @@ bool apply_abyss_failure_resolution(
         previous.abyss.danger, 1U).item_count;
     if (total == 0U || total > 3U) return false;
 
-    next.current_room.is_abyss = false;
-    next.abyss = previous.abyss;
-    next.abyss.lifecycle = abyss::AbyssLifecycle::failed;
-    next.abyss.reward_total = 0U;
-    next.abyss.generated_mask = 0U;
-    next.abyss.claimed_mask = 0U;
-    next.abyss.abandoned_mask = 0U;
-    next.abyss.reward_revision = 0U;
     next.last_abyss_resolution = {
         true,
         previous.current_room.seed,
@@ -197,7 +189,23 @@ bool apply_abyss_failure_resolution(
         0U,
         0U,
         total,
+        abyss::AbyssLifecycle::failed,
     };
+    return true;
+}
+
+bool apply_abyss_failure_resolution(
+    DungeonRunState& next,
+    const DungeonRunState& previous) noexcept {
+    if (!record_abyss_failure_resolution(next, previous)) return false;
+    next.current_room.is_abyss = false;
+    next.abyss = previous.abyss;
+    next.abyss.lifecycle = abyss::AbyssLifecycle::failed;
+    next.abyss.reward_total = 0U;
+    next.abyss.generated_mask = 0U;
+    next.abyss.claimed_mask = 0U;
+    next.abyss.abandoned_mask = 0U;
+    next.abyss.reward_revision = 0U;
     return true;
 }
 
