@@ -117,7 +117,7 @@ checkpoint::DungeonRunState pending_state(
             selection->danger, 1U).item_count;
         state.last_abyss_resolution = {
             true, state.current_room.seed, selection->rule,
-            total, 0U, 0U, total};
+            total, 0U, 0U, total, abyss::AbyssLifecycle::failed};
     }
 
     ++state.commit_generation;
@@ -335,7 +335,7 @@ arpg::test::Failure source_catalog_accepts_only_canonical_ids() noexcept {
 }
 
 arpg::test::Failure abyss_failure_relationships_are_defended() noexcept {
-    for (std::uint8_t mutation = 0U; mutation < 8U; ++mutation) {
+    for (std::uint8_t mutation = 0U; mutation < 9U; ++mutation) {
         auto state = pending_state(9U, true,
             DeathSourceKind::abyss_environment);
         switch (mutation) {
@@ -348,6 +348,10 @@ arpg::test::Failure abyss_failure_relationships_are_defended() noexcept {
             break;
         case 6U: state.last_abyss_resolution.generated = 1U; break;
         case 7U: state.last_abyss_resolution.abandoned = 0U; break;
+        case 8U:
+            state.last_abyss_resolution.lifecycle =
+                abyss::AbyssLifecycle::cleared;
+            break;
         }
         ARPG_REQUIRE(fail_closed(std::move(state)));
     }
@@ -481,6 +485,8 @@ arpg::test::Failure abyss_death_prepares_one_atomic_retreat() noexcept {
         started.abyss.danger, 1U).item_count;
     const auto& resolution = pending->next_state.last_abyss_resolution;
     ARPG_REQUIRE(resolution.valid);
+    ARPG_REQUIRE(resolution.lifecycle
+        == abyss::AbyssLifecycle::failed);
     ARPG_REQUIRE(resolution.room_seed == started.current_room.seed);
     ARPG_REQUIRE(resolution.rule == started.abyss.rule);
     ARPG_REQUIRE(resolution.total == total);

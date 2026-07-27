@@ -79,7 +79,7 @@ inline constexpr std::size_t kV8MaximumEncodedBytes =
     kV8BaseEncodedCheckpointSize
         + kMaximumCheckpointItemCount * kV7ItemRecordSize;
 inline constexpr std::size_t kV9MaximumEncodedBytes =
-    32U + 4U + kV8MaximumEncodedBytes + kV9MaximumRoomProgressBytes;
+    32U + 4U + kV8MaximumEncodedBytes + kV9MaximumRoomProgressBytes + 1U;
 static_assert(kV9MaximumEncodedBytes <= kMaximumEncodedCheckpointBytes);
 
 [[nodiscard]] CodecError encode_checkpoint_v9_into(

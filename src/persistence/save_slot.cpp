@@ -153,6 +153,8 @@ bool same_state(const checkpoint::DungeonRunState& lhs,
             == rhs.last_abyss_resolution.claimed
         && lhs.last_abyss_resolution.abandoned
             == rhs.last_abyss_resolution.abandoned
+        && lhs.last_abyss_resolution.lifecycle
+            == rhs.last_abyss_resolution.lifecycle
         && lhs.death_sequence == rhs.death_sequence
         && same_death(lhs.death, rhs.death)
         && lhs.progression.level == rhs.progression.level

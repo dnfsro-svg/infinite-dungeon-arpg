@@ -38,4 +38,10 @@ struct AbyssRewardSlot final {
     DungeonRunState& next,
     const DungeonRunState& previous) noexcept;
 
+// Records the destroyed started-abyss room without changing authority that
+// already belongs to a selected destination room.
+[[nodiscard]] bool record_abyss_failure_resolution(
+    DungeonRunState& next,
+    const DungeonRunState& previous) noexcept;
+
 }  // namespace arpg::dungeon

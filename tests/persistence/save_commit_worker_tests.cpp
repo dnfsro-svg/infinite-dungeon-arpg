@@ -1,5 +1,7 @@
 #include "test_framework.hpp"
 
+#include "abyss/abyss_rewards.hpp"
+#include "abyss/abyss_rules.hpp"
 #include "combat/combat_world.hpp"
 #include "persistence/save_commit_worker.hpp"
 
@@ -64,6 +66,21 @@ bool fixture(dungeon::checkpoint::SaveCheckpointSlot& slot,
     slot.state.commit_generation = 3U;
     slot.state.current_room.index = 9U;
     slot.state.current_room.seed = 11U;
+    const auto danger = abyss::danger_for_rule(
+        abyss::AbyssRuleId::thunderstorm);
+    if (!danger.has_value()) return false;
+    const std::uint8_t total = abyss::reward_profile_for(
+        *danger, 1U).item_count;
+    slot.state.last_abyss_resolution = {
+        true,
+        0xAB155U,
+        abyss::AbyssRuleId::thunderstorm,
+        total,
+        0U,
+        0U,
+        total,
+        abyss::AbyssLifecycle::failed,
+    };
     slot.room_progress.lifecycle =
         dungeon::checkpoint::RoomProgressLifecycle::active;
     slot.room_progress.room_index = 9U;
@@ -173,6 +190,8 @@ test::Failure worker_commits_v9_and_readback_verifies_exact_bytes() noexcept {
         == persistence::CodecError::none);
     ARPG_REQUIRE(!migrated);
     ARPG_REQUIRE(decoded->persistence_revision == 17U);
+    ARPG_REQUIRE(decoded->state.last_abyss_resolution.lifecycle
+        == abyss::AbyssLifecycle::failed);
 
     TempDirectory stale_directory{};
     ARPG_REQUIRE(std::filesystem::create_directory(
@@ -579,7 +598,10 @@ test::Failure equal_revision_conflict_archives_both_slots() noexcept {
     }
     {
         TempDirectory legacy_directory{};
-        const auto legacy = persistence::encode_checkpoint(first->state);
+        auto legacy_state = first->state;
+        legacy_state.last_abyss_resolution.lifecycle =
+            abyss::AbyssLifecycle::none;
+        const auto legacy = persistence::encode_checkpoint(legacy_state);
         ARPG_REQUIRE(legacy.has_value());
         ARPG_REQUIRE(write_bytes(
             legacy_directory.path / "run_a.sav", *legacy));

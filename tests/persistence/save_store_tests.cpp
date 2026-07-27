@@ -422,6 +422,10 @@ arpg::test::Failure same_state_includes_all_ownership_bytes_and_order() noexcept
     rhs.last_abyss_resolution.room_seed = 1U;
     ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
     rhs = lhs;
+    rhs.last_abyss_resolution.lifecycle =
+        arpg::abyss::AbyssLifecycle::failed;
+    ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+    rhs = lhs;
     ++rhs.death_sequence;
     ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
     lhs = with_pending_death(lhs);
