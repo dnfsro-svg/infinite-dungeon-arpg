@@ -41,9 +41,128 @@ function Get-Sha256([string]$Path) {
         '-', '').ToLowerInvariant()
 }
 
+function Read-ReportRoi([string]$Directory, [string]$Key) {
+    $report = Get-Content -Raw -LiteralPath (Join-Path $Directory `
+        'stage12-material-evidence.txt') -Encoding UTF8
+    $match = [regex]::Match($report,
+        "(?m)^$([regex]::Escape($Key))=(\d+),(\d+),(\d+),(\d+)\r?$")
+    if (-not $match.Success) { throw "missing ROI report field: $Key" }
+    return [System.Drawing.Rectangle]::new(
+        [int]$match.Groups[1].Value, [int]$match.Groups[2].Value,
+        [int]$match.Groups[3].Value, [int]$match.Groups[4].Value)
+}
+
+function Replace-Required([string]$Content, [string]$OldValue,
+        [string]$NewValue, [string]$MutationName) {
+    if (-not $Content.Contains($OldValue)) {
+        throw "mutation source text missing: $MutationName"
+    }
+    $updated = $Content.Replace($OldValue, $NewValue)
+    if ($updated -eq $Content) { throw "mutation was a no-op: $MutationName" }
+    return $updated
+}
+
+function Replace-RegexRequired([string]$Content, [string]$Pattern,
+        [string]$Replacement, [string]$MutationName) {
+    $updated = [regex]::Replace($Content, $Pattern, $Replacement)
+    if ($updated -eq $Content) { throw "mutation was a no-op: $MutationName" }
+    return $updated
+}
+
+function Invoke-Validator([string]$Directory,
+        [string]$PublishedItemAtlas = '') {
+    $savedPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $validatorArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass',
+            '-File', $Validator, '-EvidenceDirectory', $Directory)
+        if (-not [string]::IsNullOrWhiteSpace($PublishedItemAtlas)) {
+            $validatorArguments += @('-ItemAtlasPath', $PublishedItemAtlas)
+        }
+        & powershell.exe @validatorArguments *> $null
+        return [int]$LASTEXITCODE
+    } finally { $ErrorActionPreference = $savedPreference }
+}
+
+$pristineExitCode = Invoke-Validator $EvidenceDirectory
+if ($pristineExitCode -ne 0) {
+    throw "validator rejected pristine evidence: exit=$pristineExitCode"
+}
+
 $mutations = @()
+
+function New-AtlasPaletteCollapse([string]$Name, [int]$Cell) {
+    $source = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot `
+        '..\..\assets\stage12\items_ui.png'))
+    $target = Join-Path $MutationRoot "$Name-items_ui.png"
+    Copy-Item -LiteralPath $source -Destination $target -Force
+    Save-MutatedBitmap $target {
+        param($bitmap)
+        [int]$originX = ($Cell % 8) * 128
+        [int]$originY = [Math]::Floor($Cell / 8) * 128
+        for ([int]$y = 0; $y -lt 128; ++$y) {
+            for ([int]$x = 0; $x -lt 128; ++$x) {
+                $pixel = $bitmap.GetPixel($originX + $x, $originY + $y)
+                if ($pixel.A -ge 96) {
+                    $bitmap.SetPixel($originX + $x, $originY + $y,
+                        [System.Drawing.Color]::FromArgb(
+                            $pixel.A, 96, 96, 96))
+                }
+            }
+        }
+    }
+    return $target
+}
+
+foreach ($atlasMutation in @(
+        @{Name='collapsed-item-atlas-material0-palette'; Cell=12},
+        @{Name='collapsed-item-atlas-material6-palette'; Cell=18},
+        @{Name='collapsed-item-atlas-material9-palette'; Cell=21},
+        @{Name='collapsed-item-atlas-material10-palette'; Cell=22})) {
+    $mutations += @{
+        Name = $atlasMutation.Name
+        Path = $EvidenceDirectory
+        ItemAtlasPath = New-AtlasPaletteCollapse `
+            $atlasMutation.Name $atlasMutation.Cell
+    }
+}
+
+function New-PartialItemDegradation([string]$Name,
+        [int]$X, [int]$Y, [int]$Width, [int]$Height) {
+    $target = New-Mutation $Name
+    $baseline = [System.Drawing.Bitmap]::FromFile(
+        (Join-Path $target 'items-icons-baseline-1280x720.png'))
+    try {
+        $region = [System.Drawing.Rectangle]::new(
+            $X, $Y, $Width, $Height)
+        Save-MutatedBitmap (Join-Path $target `
+            'items-icons-1280x720.png') {
+            param($bitmap)
+            $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+            try {
+                $graphics.DrawImage($baseline, $region, $region,
+                    [System.Drawing.GraphicsUnit]::Pixel)
+            } finally { $graphics.Dispose() }
+        }
+    } finally { $baseline.Dispose() }
+    return $target
+}
+
+$partialMaterial6 = New-PartialItemDegradation `
+    'partial-material6-degradation' 839 504 3 29
+$mutations += @{
+    Name='partial-material6-degradation'; Path=$partialMaterial6 }
+$partialMaterial9 = New-PartialItemDegradation `
+    'partial-material9-degradation' 567 563 6 6
+$mutations += @{
+    Name='partial-material9-degradation'; Path=$partialMaterial9 }
+$partialMaterial10 = New-PartialItemDegradation `
+    'partial-material10-degradation' 636 562 8 8
+$mutations += @{
+    Name='partial-material10-degradation'; Path=$partialMaterial10 }
+
 $solidItems = New-Mutation 'solid-gray-items'
-Save-MutatedBitmap (Join-Path $solidItems 'items-materials-1280x720.png') {
+Save-MutatedBitmap (Join-Path $solidItems 'items-icons-1280x720.png') {
     param($bitmap)
     $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
     try { $graphics.Clear([System.Drawing.Color]::FromArgb(255, 64, 64, 64)) }
@@ -52,14 +171,77 @@ Save-MutatedBitmap (Join-Path $solidItems 'items-materials-1280x720.png') {
 $mutations += @{ Name='solid-gray-items'; Path=$solidItems }
 
 $noItems = New-Mutation 'no-item-capture'
-Copy-Item -LiteralPath (Join-Path $noItems 'items-baseline-1280x720.png') `
-    -Destination (Join-Path $noItems 'items-materials-1280x720.png') -Force
+Copy-Item -LiteralPath (Join-Path $noItems 'items-icons-baseline-1280x720.png') `
+    -Destination (Join-Path $noItems 'items-icons-1280x720.png') -Force
 $mutations += @{ Name='no-item-capture'; Path=$noItems }
+
+$aliasedItemIcons = New-Mutation 'aliased-item-icon-evidence'
+$reportPath = Join-Path $aliasedItemIcons 'stage12-material-evidence.txt'
+Replace-Required `
+    (Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) `
+    'item_icon_screenshot=items-icons-1280x720.png' `
+    'item_icon_screenshot=items-materials-1280x720.png' `
+    'aliased-item-icon-evidence' |
+    Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+$mutations += @{ Name='aliased-item-icon-evidence'; Path=$aliasedItemIcons }
+
+$missingWeaponRoi = New-Mutation 'missing-equipment-weapon-roi'
+$weaponBaseline = [System.Drawing.Bitmap]::FromFile(
+    (Join-Path $missingWeaponRoi 'items-icons-baseline-1280x720.png'))
+try {
+    Save-MutatedBitmap (Join-Path $missingWeaponRoi `
+        'items-icons-1280x720.png') {
+        param($bitmap)
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        try {
+            $region = [System.Drawing.Rectangle]::new(431, 317, 45, 45)
+            $graphics.DrawImage($weaponBaseline, $region, $region,
+                [System.Drawing.GraphicsUnit]::Pixel)
+        } finally { $graphics.Dispose() }
+    }
+} finally { $weaponBaseline.Dispose() }
+$mutations += @{ Name='missing-equipment-weapon-roi'; Path=$missingWeaponRoi }
+
+$missingMaterial6Roi = New-Mutation 'missing-material6-roi'
+$material6Baseline = [System.Drawing.Bitmap]::FromFile(
+    (Join-Path $missingMaterial6Roi 'items-icons-baseline-1280x720.png'))
+try {
+    Save-MutatedBitmap (Join-Path $missingMaterial6Roi `
+        'items-icons-1280x720.png') {
+        param($bitmap)
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        try {
+            $region = [System.Drawing.Rectangle]::new(822, 496, 37, 37)
+            $graphics.DrawImage($material6Baseline, $region, $region,
+                [System.Drawing.GraphicsUnit]::Pixel)
+        } finally { $graphics.Dispose() }
+    }
+} finally { $material6Baseline.Dispose() }
+$mutations += @{ Name='missing-material6-roi'; Path=$missingMaterial6Roi }
+
+$missingMaterial9Roi = New-Mutation 'missing-material9-roi'
+$material9Baseline = [System.Drawing.Bitmap]::FromFile(
+    (Join-Path $missingMaterial9Roi 'items-icons-baseline-1280x720.png'))
+try {
+    Save-MutatedBitmap (Join-Path $missingMaterial9Roi `
+        'items-icons-1280x720.png') {
+        param($bitmap)
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        try {
+            $region = [System.Drawing.Rectangle]::new(552, 548, 37, 37)
+            $graphics.DrawImage($material9Baseline, $region, $region,
+                [System.Drawing.GraphicsUnit]::Pixel)
+        } finally { $graphics.Dispose() }
+    }
+} finally { $material9Baseline.Dispose() }
+$mutations += @{ Name='missing-material9-roi'; Path=$missingMaterial9Roi }
 
 $missingItemRuntime = New-Mutation 'missing-item-runtime-draw'
 $reportPath = Join-Path $missingItemRuntime 'stage12-material-evidence.txt'
-(Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8).Replace(
-    'item_runtime_draws=pass', 'item_runtime_draws=fail') |
+Replace-Required `
+    (Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) `
+    'item_runtime_draws=pass' 'item_runtime_draws=fail' `
+    'missing-item-runtime-draw' |
     Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
 $mutations += @{ Name='missing-item-runtime-draw'; Path=$missingItemRuntime }
 
@@ -139,10 +321,12 @@ $mutations += @{ Name='oversize-resident-peak-bytes'; Path=$oversizeResidentPeak
 
 $twoFieldsLowReport = New-Mutation 'two-fields-low-report'
 $reportPath = Join-Path $twoFieldsLowReport 'stage12-material-evidence.txt'
-$lowReport = (Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8).Replace(
-    'atlas_bytes=302170112', 'atlas_bytes=0')
-$lowReport = $lowReport.Replace(
-    'full_pack_bytes=302170112', 'full_pack_bytes=0')
+$lowReport = Replace-RegexRequired `
+    (Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) `
+    '(?m)^atlas_bytes=\d+\r?$' 'atlas_bytes=0' 'two-fields-low-report-atlas'
+$lowReport = Replace-RegexRequired $lowReport `
+    '(?m)^full_pack_bytes=\d+\r?$' 'full_pack_bytes=0' `
+    'two-fields-low-report-full-pack'
 $lowReport | Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
 $mutations += @{ Name='two-fields-low-report'; Path=$twoFieldsLowReport }
 
@@ -233,17 +417,30 @@ Copy-Item -LiteralPath (Join-Path $wrongEcology 'water-monsters-1280x720.png') `
     -Destination (Join-Path $wrongEcology 'lightning-monsters-1280x720.png') -Force
 $mutations += @{ Name='wrong-ecology'; Path=$wrongEcology }
 
+$aliasedLightning = New-Mutation 'aliased-lightning-isolated-evidence'
+$reportPath = Join-Path $aliasedLightning 'stage12-material-evidence.txt'
+Replace-Required `
+    (Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) `
+    'lightning_isolated_monster_screenshot=lightning-monsters-isolated-1280x720.png' `
+    'lightning_isolated_monster_screenshot=lightning-monsters-1280x720.png' `
+    'aliased-lightning-isolated-evidence' |
+    Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
+$mutations += @{
+    Name='aliased-lightning-isolated-evidence'; Path=$aliasedLightning }
+
 $missingMonsters = New-Mutation 'missing-lightning-monsters'
 $background = [System.Drawing.Bitmap]::FromFile(
-    (Join-Path $missingMonsters 'lightning-background-1280x720.png'))
+    (Join-Path $missingMonsters `
+        'lightning-background-isolated-1280x720.png'))
 try {
-Save-MutatedBitmap (Join-Path $missingMonsters 'lightning-monsters-1280x720.png') {
+Save-MutatedBitmap (Join-Path $missingMonsters `
+    'lightning-monsters-isolated-1280x720.png') {
     param($bitmap)
     $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
     try {
         foreach ($region in @(
-                [System.Drawing.Rectangle]::new(520, 390, 115, 155),
-                [System.Drawing.Rectangle]::new(635, 390, 115, 155))) {
+                (Read-ReportRoi $missingMonsters 'lightning_shooter_roi'),
+                (Read-ReportRoi $missingMonsters 'lightning_dasher_roi'))) {
             $graphics.DrawImage($background, $region, $region,
                 [System.Drawing.GraphicsUnit]::Pixel)
         }
@@ -254,10 +451,69 @@ Save-MutatedBitmap (Join-Path $missingMonsters 'lightning-monsters-1280x720.png'
 } finally { $background.Dispose() }
 $mutations += @{ Name='missing-lightning-monsters'; Path=$missingMonsters }
 
+$horizontalShooter = New-Mutation 'lightning-shooter-horizontal-strip'
+$shooterRoi = Read-ReportRoi $horizontalShooter 'lightning_shooter_roi'
+$background = [System.Drawing.Bitmap]::FromFile(
+    (Join-Path $horizontalShooter `
+        'lightning-background-isolated-1280x720.png'))
+try {
+Save-MutatedBitmap (Join-Path $horizontalShooter `
+    'lightning-monsters-isolated-1280x720.png') {
+    param($bitmap)
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    try {
+        $graphics.DrawImage($background, $shooterRoi, $shooterRoi,
+            [System.Drawing.GraphicsUnit]::Pixel)
+    } finally { $graphics.Dispose() }
+    $left = $shooterRoi.X + [Math]::Floor(($shooterRoi.Width - 90) / 2)
+    $top = $shooterRoi.Y + [Math]::Floor(($shooterRoi.Height - 20) / 2)
+    for ($y = 0; $y -lt 20; ++$y) {
+        for ($x = 0; $x -lt 90; ++$x) {
+            $bitmap.SetPixel($left + $x, $top + $y,
+                [System.Drawing.Color]::FromArgb(255,
+                    128 + (($x * 7 + $y * 3) % 128),
+                    24 + (($x * 5 + $y) % 88),
+                    168 + (($x + $y * 3) % 88)))
+        }
+    }
+}
+} finally { $background.Dispose() }
+$mutations += @{
+    Name='lightning-shooter-horizontal-strip'; Path=$horizontalShooter }
+
+$grayscaleShooter = New-Mutation 'lightning-shooter-grayscale'
+$shooterRoi = Read-ReportRoi $grayscaleShooter 'lightning_shooter_roi'
+$background = [System.Drawing.Bitmap]::FromFile(
+    (Join-Path $grayscaleShooter `
+        'lightning-background-isolated-1280x720.png'))
+try {
+Save-MutatedBitmap (Join-Path $grayscaleShooter `
+    'lightning-monsters-isolated-1280x720.png') {
+    param($bitmap)
+    for ($y = $shooterRoi.Y; $y -lt $shooterRoi.Bottom; ++$y) {
+        for ($x = $shooterRoi.X; $x -lt $shooterRoi.Right; ++$x) {
+            $pixel = $bitmap.GetPixel($x, $y)
+            $base = $background.GetPixel($x, $y)
+            $difference = [Math]::Abs([int]$pixel.R - [int]$base.R) +
+                [Math]::Abs([int]$pixel.G - [int]$base.G) +
+                [Math]::Abs([int]$pixel.B - [int]$base.B)
+            if ($difference -ge 72) {
+                $bitmap.SetPixel($x, $y,
+                    [System.Drawing.Color]::FromArgb(255, 224, 224, 224))
+            }
+        }
+    }
+}
+} finally { $background.Dispose() }
+$mutations += @{
+    Name='lightning-shooter-grayscale'; Path=$grayscaleShooter }
+
 $missingRuntime = New-Mutation 'missing-runtime-draw'
 $reportPath = Join-Path $missingRuntime 'stage12-material-evidence.txt'
-(Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8).Replace(
-    'lightning_shooter_drawn=pass', 'lightning_shooter_drawn=fail') |
+Replace-Required `
+    (Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) `
+    'lightning_shooter_drawn=pass' 'lightning_shooter_drawn=fail' `
+    'missing-runtime-draw' |
     Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
 $mutations += @{ Name='missing-runtime-draw'; Path=$missingRuntime }
 
@@ -303,8 +559,10 @@ $mutations += @{ Name='missing-chaos-monsters'; Path=$missingChaos }
 
 $missingChaosRuntime = New-Mutation 'missing-chaos-runtime-draw'
 $reportPath = Join-Path $missingChaosRuntime 'stage12-material-evidence.txt'
-(Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8).Replace(
-    'chaos_chaser_drawn=pass', 'chaos_chaser_drawn=fail') |
+Replace-Required `
+    (Get-Content -Raw -LiteralPath $reportPath -Encoding UTF8) `
+    'chaos_chaser_drawn=pass' 'chaos_chaser_drawn=fail' `
+    'missing-chaos-runtime-draw' |
     Set-Content -LiteralPath $reportPath -Encoding UTF8 -NoNewline
 $mutations += @{ Name='missing-chaos-runtime-draw'; Path=$missingChaosRuntime }
 
@@ -394,14 +652,17 @@ $reportPath = Join-Path $wrongHudEcology 'stage12-material-evidence.txt'
 $mutations += @{
     Name='wrong-native-gameplay-hud-ecology'; Path=$wrongHudEcology }
 
+if ($mutations.Count -ne 80) {
+    throw "stage12 validator mutation inventory changed: expected=80 actual=$($mutations.Count)"
+}
 $failures = @()
 foreach ($mutation in $mutations) {
-    $savedPreference = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Validator `
-        -EvidenceDirectory $mutation.Path *> $null
-    $exitCode = $LASTEXITCODE
-    $ErrorActionPreference = $savedPreference
+    $publishedItemAtlas = if ($mutation.ContainsKey('ItemAtlasPath')) {
+        $mutation.ItemAtlasPath
+    } else {
+        ''
+    }
+    $exitCode = Invoke-Validator $mutation.Path $publishedItemAtlas
     if ($exitCode -eq 0) {
         $failures += "validator accepted mutation: $($mutation.Name)"
     }

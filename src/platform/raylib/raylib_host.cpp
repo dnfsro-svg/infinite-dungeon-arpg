@@ -238,6 +238,7 @@ void apply_stage12_material_showcase(dungeon::DungeonSnapshot& snapshot,
     if (hide_items) {
         snapshot.ground_item_count = 0U;
         snapshot.ground_material_count = 0U;
+        snapshot.ground_health_potion_count = 0U;
     } else {
         constexpr std::array<items::ItemSlot, 6U> item_slots{{
             items::ItemSlot::weapon, items::ItemSlot::helmet,
@@ -245,8 +246,8 @@ void apply_stage12_material_showcase(dungeon::DungeonSnapshot& snapshot,
             items::ItemSlot::boots, items::ItemSlot::accessory,
         }};
         constexpr std::array<items::ItemRarity, 6U> item_rarities{{
-            items::ItemRarity::normal, items::ItemRarity::magic,
-            items::ItemRarity::rare, items::ItemRarity::normal,
+            items::ItemRarity::rare, items::ItemRarity::magic,
+            items::ItemRarity::normal, items::ItemRarity::normal,
             items::ItemRarity::magic, items::ItemRarity::rare,
         }};
         snapshot.ground_item_count = static_cast<std::uint16_t>(
@@ -505,6 +506,7 @@ struct Stage17SkillStonesValidationState final {
     std::uint16_t draw_frame_peak{};
     std::uint32_t presented_frames{};
     std::int8_t draw_retreat_direction{};
+    std::int8_t storm_retreat_direction{};
 };
 
 void observe_stage17_draw_runtime(const RaylibHostConfig& config,
@@ -826,12 +828,16 @@ void stage17_click(PhysicalKeySnapshot& snapshot,
         break;
     case Stage17ValidationStep::approach_storm:
         if (current.combat.has_value()
-                && stage17_nearest_monster(*current.combat) != nullptr) {
+                && stage17_prepare_skill_lane(
+                    snapshot, input_settings, *current.combat,
+                    current.ecology
+                        == dungeon::checkpoint::DungeonElement::fire,
+                    state.storm_retreat_direction)) {
             snapshot.active_skill_slots[1] = true;
         }
         break;
     case Stage17ValidationStep::storm_active:
-        if (!state.storm_player_moved) {
+        if (state.storm_strike_hit_count > 0 && !state.storm_player_moved) {
             stage17_apply_movement(snapshot, input_settings, {-1, -1});
         }
         break;
@@ -2364,6 +2370,48 @@ combat::MovementInput stage10_validation_input(
         }
         const auto movement = validation_movement_toward(
             snapshot.combat->player.position, target->position);
+        const auto& player = snapshot.combat->player;
+        const bool skill_ready = (!snapshot.is_abyss
+                || scenario == Stage10ValidationScenario::abyss_hole_descent)
+            && player.hp > 0
+            && player.hurt_ticks == 0U && player.hit_stop_ticks == 0U
+            && player.active_attack == combat::AttackId::none
+            && snapshot.combat->active_skill.id == skills::ActiveSkillId::none
+            && snapshot.combat->diagnostics.input_size == 0U;
+        if (skill_ready) {
+            const float facing = player.facing == combat::Facing::right
+                ? 1.0F : -1.0F;
+            const float storm_center_x = player.position.x
+                + facing * combat::kStormCenterForward;
+            const float storm_dx = target->position.x - storm_center_x;
+            const float storm_dy = target->position.y - player.position.y;
+            const bool storm_target = storm_dx * storm_dx
+                    + storm_dy * storm_dy
+                <= combat::kStormStrikeRadius * combat::kStormStrikeRadius;
+            combat::SkillCastResult storm = combat::SkillCastResult::none;
+            if (storm_target) {
+                storm = session.request_active_skill_slot(1U);
+                if (storm == combat::SkillCastResult::accepted) return movement;
+            }
+            if (!storm_target
+                    || storm == combat::SkillCastResult::cooling_down) {
+                const float forward =
+                    (target->position.x - player.position.x) * facing;
+                const float half_width = forward >= 0.0F
+                        && forward <= combat::kDrawSlashRange
+                    ? combat::kDrawSlashHalfWidthAtEnd
+                        * (forward / combat::kDrawSlashRange)
+                    : -1.0F;
+                const bool draw_target = half_width >= 0.0F
+                    && std::fabs(target->position.y - player.position.y)
+                        <= half_width;
+                if (draw_target
+                        && session.request_active_skill_slot(0U)
+                            == combat::SkillCastResult::accepted) {
+                    return movement;
+                }
+            }
+        }
         if (snapshot.combat->player.hurt_ticks == 0U
                 && snapshot.combat->player.active_attack
                     == combat::AttackId::none
@@ -2731,7 +2779,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         if (!initialized && runtime.state() != DungeonRuntimeState::recovery_required) {
             return HostExitCode::save_initialization_failed;
         }
-        if (config.stage12_material_background_only
+        if ((config.stage12_material_background_only
+                || config.stage12_material_icons_only)
                 && runtime.state() == DungeonRuntimeState::recovery_required) {
             TraceLog(LOG_ERROR,
                 "Stage 12 background-only capture refused a recovery save");
@@ -2894,7 +2943,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 }
             }
             if (runtime.state() == DungeonRuntimeState::recovery_required) {
-                if (config.stage12_material_background_only) {
+                if (config.stage12_material_background_only
+                    || config.stage12_material_icons_only) {
                     TraceLog(LOG_ERROR,
                         "Stage 12 background-only capture entered recovery state");
                     exit_requested = true;
@@ -3193,6 +3243,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
 // STAGE11D_LOOT_VALIDATION_SEAM_END fixed_step
                         || config.stage17_skill_stones_validation
                             != Stage17SkillStonesValidationScenario::none
+                        || (config.stage12_material_showcase
+                            && config.validation_capture_file.has_value())
                         ) {
                     if (config.validation_steps_per_frame != 0U) {
                         frame.steps = config.validation_steps_per_frame;
@@ -3308,7 +3360,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 apply_stage12_material_showcase(presented_snapshot,
                     config.stage12_material_showcase_ecology,
                     config.stage12_material_showcase_hide_monsters,
-                    stage12_item_baseline_frame);
+                    config.stage12_material_showcase_hide_items
+                        || stage12_item_baseline_frame);
             }
             const dungeon::DungeonSnapshot& presented_hud_previous =
                 config.stage12_material_showcase ? presented_snapshot : previous;
@@ -3352,6 +3405,10 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     static_cast<void>(renderer.draw_room_background_only(
                         presented_snapshot.ecology));
                     return GroundLootView{};
+                }
+                if (config.stage12_material_icons_only) {
+                    return renderer.draw_ground_loot_icons_only(
+                        presented_snapshot);
                 }
                 return renderer.draw(
                     previous, presented_snapshot, runtime.render_status(),
@@ -3499,10 +3556,12 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             }
 // STAGE11D_LOOT_VALIDATION_SEAM_END presented_semantics
             if (!config.stage12_material_background_only
+                && !config.stage12_material_icons_only
                 && passive_overlay_open) {
                 draw_passive_tree_overlay(current, runtime.render_status());
             }
             if (!config.stage12_material_background_only
+                && !config.stage12_material_icons_only
                 && inventory.is_open()) {
                 inventory.draw(*session, current, runtime.render_status(),
                     renderer.material_pack(), renderer.hud_font(),
@@ -3513,6 +3572,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     stage11b_validation_state.fixed_ticks;
             }
             if (!config.stage12_material_background_only
+                && !config.stage12_material_icons_only
                 && pause_menu.screen != PauseScreen::closed) {
                 pause_menu_renderer.draw(pause_menu, renderer.material_pack());
                 if (config.stage11b_validation
@@ -3622,6 +3682,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 }
             }
             if (!config.stage12_material_background_only
+                && !config.stage12_material_icons_only
                 && config.stage12_ui_showcase
                     == Stage12UiShowcase::material_gallery) {
                 draw_stage12_ui_material_gallery(renderer.material_pack());

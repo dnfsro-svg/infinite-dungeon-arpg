@@ -70,6 +70,14 @@ struct RoomBackgroundDrawRuntimeStatus final {
     settings::LootFilterMode mode,
     float width,
     float height) noexcept;
+[[nodiscard]] CombatRenderPlan make_combat_render_plan(
+    const dungeon::DungeonSnapshot& previous,
+    const dungeon::DungeonSnapshot& current,
+    float interpolation_alpha,
+    CameraOffset camera_offset,
+    settings::LootFilterMode mode,
+    float width,
+    float height) noexcept;
 
 [[nodiscard]] std::optional<std::size_t> hud_presented_frame_index(
     HudPresentedFrame) noexcept;
@@ -105,6 +113,8 @@ public:
         combat::MonsterId monster) const noexcept;
     [[nodiscard]] RoomBackgroundDrawRuntimeStatus draw_room_background_only(
         dungeon::DungeonElement ecology) noexcept;
+    [[nodiscard]] GroundLootView draw_ground_loot_icons_only(
+        const dungeon::DungeonSnapshot& snapshot) noexcept;
     [[nodiscard]] RoomBackgroundDrawRuntimeStatus room_background_draw_status()
         const noexcept;
     [[nodiscard]] ActiveSkillDrawRuntimeStatus active_skill_draw_status()

@@ -173,7 +173,7 @@ std::filesystem::path g_executable{};
         && field_is(fields, "draw_frame_peak", "35")
         && field_is(fields, "draw_hit_count", "2")
         && field_is(fields, "storm_accepted", "1")
-        && field_is(fields, "storm_strike_hit_count", "5")
+        && field_is(fields, "storm_strike_hit_count", "3")
         && field_is(fields, "storm_finisher_hit_count", "0")
         && field_is(fields, "storm_strike_count", "12")
         && field_is(fields, "storm_sword_peak", "24")
@@ -276,7 +276,7 @@ struct PureTimelineEvidence final {
            << "draw_slash_frame_last="
            << (timeline.draw_frames.back() ? "true" : "false") << "\n"
            << "draw_slash_hit_count=2\n"
-           << "storm_strike_hit_count=5\n"
+           << "storm_strike_hit_count=3\n"
            << "storm_finisher_hit_count=0\n"
            << "storm_strike_count=12\n"
            << "storm_sword_peak=24\n"
