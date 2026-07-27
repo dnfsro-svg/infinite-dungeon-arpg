@@ -210,7 +210,7 @@ file(WRITE "${_path}" "${_mutated}")
 expect_rejected("snapshot mutation" HOST "${_path}"
     "rejected snapshot mutation")
 
-set(_site "EndDrawing();\n    if (path == nullptr) return;")
+set(_site "EndDrawing();\n    if (path == nullptr) return true;")
 string(FIND "${_host_text}" "${_site}" _site_index)
 if(_site_index EQUAL -1)
     message(FATAL_ERROR "pre-present-capture mutation site disappeared")
@@ -227,13 +227,13 @@ expect_rejected("pre-EndDrawing capture" HOST "${_path}"
     "rejected pre-EndDrawing capture")
 
 file(READ "${_renderer}" _renderer_text)
-set(_site "const CombatRenderPlan render_plan = make_combat_render_plan(current,")
+set(_site "const CombatRenderPlan render_plan = make_combat_render_plan(")
 string(FIND "${_renderer_text}" "${_site}" _site_index)
 if(_site_index EQUAL -1)
     message(FATAL_ERROR "second-render-plan mutation site disappeared")
 endif()
 string(REPLACE "${_site}"
-    "const CombatRenderPlan duplicate_plan = make_combat_render_plan(current,\n        loot_filter_mode_, static_cast<float>(GetScreenWidth()),\n        static_cast<float>(GetScreenHeight()));\n\n    ${_site}"
+    "const CombatRenderPlan duplicate_plan = make_combat_render_plan(\n        previous, current, clamped_interpolation_alpha, camera_offset,\n        loot_filter_mode_, static_cast<float>(GetScreenWidth()),\n        static_cast<float>(GetScreenHeight()));\n\n    ${_site}"
     _mutated "${_renderer_text}")
 if(_mutated STREQUAL _renderer_text)
     message(FATAL_ERROR "second-render-plan mutation made no change")
@@ -242,6 +242,23 @@ set(_path "${GUARD_TEST_ROOT}/second-render-plan.cpp")
 file(WRITE "${_path}" "${_mutated}")
 expect_rejected("second render plan" RENDERER "${_path}"
     "requires the one production renderer plan")
+
+set(_draw_site "GroundLootView CombatRenderer::draw(")
+string(FIND "${_renderer_text}" "${_draw_site}" _draw_site_index)
+if(_draw_site_index EQUAL -1)
+    message(FATAL_ERROR "draw-external-plan mutation site disappeared")
+endif()
+set(_draw_external_plan
+    "void stage11d_draw_external_plan(const dungeon::DungeonSnapshot& snapshot) noexcept {\n    static_cast<void>(make_combat_render_plan(\n        snapshot, settings::LootFilterMode::show_all, 1.0F, 1.0F));\n}\n\n${_draw_site}")
+string(REPLACE "${_draw_site}" "${_draw_external_plan}"
+    _mutated "${_renderer_text}")
+if(_mutated STREQUAL _renderer_text)
+    message(FATAL_ERROR "draw-external-plan mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/draw-external-plan.cpp")
+file(WRITE "${_path}" "${_mutated}")
+expect_rejected("draw-external render plan" RENDERER "${_path}"
+    "rejected a draw-external renderer plan")
 
 file(READ "${_validator}" _validator_text)
 set(_mutated "${_validator_text}")
@@ -288,4 +305,4 @@ expect_rejected("existence-only validation" VALIDATOR "${_path}"
     "missing semantic check: $feature")
 
 message(STATUS
-    "Stage11D loot evidence guard self-test passed: bad_mutations=21")
+    "Stage11D loot evidence guard self-test passed: bad_mutations=22")

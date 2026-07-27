@@ -54,6 +54,8 @@ function(stage11d_run_guard_case LABEL COMBAT ROOM HUD EXPECT_PASS EXPECT_REASON
     endif()
 endfunction()
 
+stage11d_run_guard_case(pristine "${_combat}" "${_room}" "${_hud}" TRUE "")
+
 set(_camera_line "    const CameraOffset camera_offset = feedback.camera_offset();")
 set(_duplicate_factory
     "    static_cast<void>(make_combat_render_plan(current, loot_filter_mode_, 1.0F, 1.0F));\n${_camera_line}")
@@ -68,7 +70,56 @@ set(_room_rebuild
 stage11d_replace_required(_room_duplicate "${_room}"
     "${_outer_close}" "${_room_rebuild}" room_rebuild)
 stage11d_run_guard_case(room_rebuild "${_combat}" "${_room_duplicate}"
-    "${_hud}" FALSE "room renderer.*rebuild")
+    "${_hud}" FALSE "room.*builder.*exactly once|icons-only builder")
+
+set(_canonical_predicate
+    "        if (!ground_loot_visible(item, mode)) continue;")
+stage11d_replace_required(_room_predicate_bypass "${_room}"
+    "${_canonical_predicate}" "        if (false) continue;"
+    canonical_predicate_bypass)
+stage11d_run_guard_case(canonical_predicate_bypass "${_combat}"
+    "${_room_predicate_bypass}" "${_hud}" FALSE
+    "canonical predicate.*exactly once")
+
+stage11d_replace_required(_room_predicate_ignored "${_room}"
+    "${_canonical_predicate}"
+    "        static_cast<void>(ground_loot_visible(item, mode));"
+    canonical_predicate_result_ignored)
+stage11d_run_guard_case(canonical_predicate_result_ignored "${_combat}"
+    "${_room_predicate_ignored}" "${_hud}" FALSE
+    "canonical predicate.*exactly once")
+
+set(_production_room_draw
+    "    draw_ground_items(current, loot_filter_mode_, material_pack_, width, height);")
+set(_production_mode_bypass
+    "    draw_ground_items(current, settings::LootFilterMode::show_all, material_pack_, width, height);")
+stage11d_replace_required(_room_mode_bypass "${_room}"
+    "${_production_room_draw}" "${_production_mode_bypass}"
+    production_mode_bypass)
+stage11d_run_guard_case(production_mode_bypass "${_combat}"
+    "${_room_mode_bypass}" "${_hud}" FALSE "production.*filter mode")
+
+set(_icons_only_builder
+    "    const GroundLootView ground_loot = build_ground_loot_view(\n        snapshot, loot_filter_mode_, width, height);")
+stage11d_replace_required(_room_without_icons_builder "${_room}"
+    "${_icons_only_builder}" "    const GroundLootView ground_loot{};"
+    icons_only_builder_removal)
+set(_builder_moved_to_room
+    "    static_cast<void>(build_ground_loot_view(\n        current, loot_filter_mode_, width, height));\n${_production_room_draw}")
+stage11d_replace_required(_room_builder_scope "${_room_without_icons_builder}"
+    "${_production_room_draw}" "${_builder_moved_to_room}"
+    builder_scope_move)
+stage11d_run_guard_case(builder_scope_move "${_combat}"
+    "${_room_builder_scope}" "${_hud}" FALSE "icons-only builder.*scope")
+
+set(_duplicate_predicate
+    "${_canonical_predicate}\n        static_cast<void>(ground_loot_visible(item, mode));")
+stage11d_replace_required(_room_duplicate_predicate "${_room}"
+    "${_canonical_predicate}" "${_duplicate_predicate}"
+    duplicate_canonical_predicate)
+stage11d_run_guard_case(duplicate_canonical_predicate "${_combat}"
+    "${_room_duplicate_predicate}" "${_hud}" FALSE
+    "canonical predicate.*exactly once")
 
 set(_hud_rebuild
     "void stage11d_hud_rebuild_mutation(const dungeon::DungeonSnapshot& snapshot) {\n    static_cast<void>(build_ground_loot_view(snapshot, settings::LootFilterMode::show_all, 1.0F, 1.0F));\n}\n\n${_outer_close}")
@@ -115,4 +166,4 @@ stage11d_run_guard_case(const_reference_alias "${_combat_alias_consumers}" "${_r
     "${_hud}" TRUE "")
 
 message(STATUS
-    "[stage11d-renderer-guard-self-test] bad_mutations=4 equivalent_variants=2")
+    "[stage11d-renderer-guard-self-test] bad_mutations=9 equivalent_variants=3")

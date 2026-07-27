@@ -477,9 +477,19 @@ function(hud_present_structure_valid SOURCE OUT_VARIABLE)
         return()
     endif()
 
+    set(CAPTURE_PATH_ARGUMENT_PATTERN
+        "capture_path[.]has_value\\([ \t\r\n]*\\)[ \t\r\n]*\\?[ \t\r\n]*capture_path->c_str\\([ \t\r\n]*\\)[ \t\r\n]*:[ \t\r\n]*nullptr")
+    set(RECOVERY_PRESENT_PATTERN
+        "static_cast[ \t\r\n]*<[ \t\r\n]*void[ \t\r\n]*>[ \t\r\n]*\\([ \t\r\n]*present_frame_and_maybe_capture[ \t\r\n]*\\([ \t\r\n]*${CAPTURE_PATH_ARGUMENT_PATTERN}[ \t\r\n]*\\)[ \t\r\n]*\\)[ \t\r\n]*;")
     string(FIND "${CODE}" "if (runtime.state() == DungeonRuntimeState::recovery_required)" RECOVERY_START)
     string(FIND "${CODE}" "draw_recovery_screen(runtime.render_status());" RECOVERY_DRAW)
-    string(FIND "${CODE}" "present_frame_and_maybe_capture(capture_path.has_value()" RECOVERY_PRESENT)
+    string(REGEX MATCH "${RECOVERY_PRESENT_PATTERN}"
+        RECOVERY_PRESENT_CALL_MATCH "${CODE}")
+    set(RECOVERY_PRESENT -1)
+    if(NOT RECOVERY_PRESENT_CALL_MATCH STREQUAL "")
+        string(FIND "${CODE}" "${RECOVERY_PRESENT_CALL_MATCH}"
+            RECOVERY_PRESENT)
+    endif()
     string(FIND "${CODE}" "renderer.observe_presented_hud_frame(" FIRST_OBSERVE)
     if(RECOVERY_START LESS 0 OR RECOVERY_DRAW LESS 0 OR RECOVERY_PRESENT LESS 0
             OR FIRST_OBSERVE LESS RECOVERY_START OR FIRST_OBSERVE GREATER RECOVERY_DRAW
@@ -499,7 +509,15 @@ function(hud_present_structure_valid SOURCE OUT_VARIABLE)
     math(EXPR AFTER_RECOVERY_PRESENT "${RECOVERY_PRESENT} + 1")
     string(SUBSTRING "${CODE}" ${AFTER_RECOVERY_PRESENT} -1 AFTER_RECOVERY_CODE)
     string(FIND "${AFTER_RECOVERY_CODE}" "BeginDrawing();" NORMAL_BEGIN_RELATIVE)
-    string(FIND "${AFTER_RECOVERY_CODE}" "present_frame_and_maybe_capture(capture_path.has_value()" NORMAL_PRESENT_RELATIVE)
+    set(NORMAL_PRESENT_PATTERN
+        "const[ \t\r\n]+bool[ \t\r\n]+capture_succeeded[ \t\r\n]*=[ \t\r\n]*present_frame_and_maybe_capture[ \t\r\n]*\\([ \t\r\n]*${CAPTURE_PATH_ARGUMENT_PATTERN}[ \t\r\n]*\\)[ \t\r\n]*;")
+    string(REGEX MATCH "${NORMAL_PRESENT_PATTERN}"
+        NORMAL_PRESENT_CALL_MATCH "${AFTER_RECOVERY_CODE}")
+    set(NORMAL_PRESENT_RELATIVE -1)
+    if(NOT NORMAL_PRESENT_CALL_MATCH STREQUAL "")
+        string(FIND "${AFTER_RECOVERY_CODE}" "${NORMAL_PRESENT_CALL_MATCH}"
+            NORMAL_PRESENT_RELATIVE)
+    endif()
     if(NORMAL_BEGIN_RELATIVE LESS 0 OR NORMAL_PRESENT_RELATIVE LESS 0)
         set("${OUT_VARIABLE}" FALSE PARENT_SCOPE)
         return()
@@ -538,6 +556,65 @@ endfunction()
 hud_present_structure_valid("${HOST_SOURCE}" HOST_PRESENT_STRUCTURE_VALID)
 if(NOT HOST_PRESENT_STRUCTURE_VALID)
     message(FATAL_ERROR "host HUD presentation seam structure is invalid")
+endif()
+set(RECOVERY_PRESENT_MULTILINE [=[static_cast<void>(present_frame_and_maybe_capture(
+                    capture_path.has_value() ? capture_path->c_str() : nullptr));]=])
+set(RECOVERY_PRESENT_SINGLE_LINE
+    "static_cast<void>(present_frame_and_maybe_capture(capture_path.has_value() ? capture_path->c_str() : nullptr));")
+string(REPLACE "${RECOVERY_PRESENT_MULTILINE}" "${RECOVERY_PRESENT_SINGLE_LINE}"
+    SINGLE_LINE_RECOVERY_PRESENT_SOURCE "${HOST_SOURCE}")
+if(SINGLE_LINE_RECOVERY_PRESENT_SOURCE STREQUAL HOST_SOURCE)
+    message(FATAL_ERROR "single-line recovery present fixture did not mutate")
+endif()
+hud_present_structure_valid("${SINGLE_LINE_RECOVERY_PRESENT_SOURCE}"
+    SINGLE_LINE_RECOVERY_PRESENT_VALID)
+if(NOT SINGLE_LINE_RECOVERY_PRESENT_VALID)
+    message(FATAL_ERROR "single-line recovery present formatting must validate")
+endif()
+set(RECOVERY_NULL_ARGUMENT_PRESENT
+    "static_cast<void>(present_frame_and_maybe_capture(nullptr));")
+string(REPLACE "${RECOVERY_PRESENT_MULTILINE}"
+    "${RECOVERY_NULL_ARGUMENT_PRESENT}"
+    RECOVERY_NULL_ARGUMENT_SOURCE "${HOST_SOURCE}")
+if(RECOVERY_NULL_ARGUMENT_SOURCE STREQUAL HOST_SOURCE)
+    message(FATAL_ERROR "recovery null-argument fixture did not mutate")
+endif()
+hud_present_structure_valid("${RECOVERY_NULL_ARGUMENT_SOURCE}"
+    RECOVERY_NULL_ARGUMENT_VALID)
+if(RECOVERY_NULL_ARGUMENT_VALID)
+    message(FATAL_ERROR "recovery present must retain the capture-path argument")
+endif()
+set(NORMAL_PRESENT_MULTILINE [=[const bool capture_succeeded =
+                present_frame_and_maybe_capture(capture_path.has_value()
+                    ? capture_path->c_str() : nullptr);]=])
+set(NORMAL_NULL_ARGUMENT_PRESENT [=[const bool capture_succeeded =
+                present_frame_and_maybe_capture(nullptr);]=])
+string(REPLACE "${NORMAL_PRESENT_MULTILINE}"
+    "${NORMAL_NULL_ARGUMENT_PRESENT}"
+    NORMAL_NULL_ARGUMENT_SOURCE "${HOST_SOURCE}")
+if(NORMAL_NULL_ARGUMENT_SOURCE STREQUAL HOST_SOURCE)
+    message(FATAL_ERROR "normal null-argument fixture did not mutate")
+endif()
+hud_present_structure_valid("${NORMAL_NULL_ARGUMENT_SOURCE}"
+    NORMAL_NULL_ARGUMENT_VALID)
+if(NORMAL_NULL_ARGUMENT_VALID)
+    message(FATAL_ERROR "normal present must retain the capture-path argument")
+endif()
+string(REPLACE "draw_recovery_screen(runtime.render_status());" ""
+    RECOVERY_PRESENT_BEFORE_DRAW_SOURCE "${HOST_SOURCE}")
+set(RECOVERY_PRESENT_WITH_LATE_DRAW
+    "${RECOVERY_PRESENT_MULTILINE}\n                draw_recovery_screen(runtime.render_status());")
+string(REPLACE "${RECOVERY_PRESENT_MULTILINE}"
+    "${RECOVERY_PRESENT_WITH_LATE_DRAW}"
+    RECOVERY_PRESENT_BEFORE_DRAW_SOURCE
+    "${RECOVERY_PRESENT_BEFORE_DRAW_SOURCE}")
+if(RECOVERY_PRESENT_BEFORE_DRAW_SOURCE STREQUAL HOST_SOURCE)
+    message(FATAL_ERROR "recovery present-before-draw fixture did not mutate")
+endif()
+hud_present_structure_valid("${RECOVERY_PRESENT_BEFORE_DRAW_SOURCE}"
+    RECOVERY_PRESENT_BEFORE_DRAW_VALID)
+if(RECOVERY_PRESENT_BEFORE_DRAW_VALID)
+    message(FATAL_ERROR "recovery present before draw must not validate")
 endif()
 set(COMMENT_ONLY_HUD_PRESENT [=[
 // renderer.observe_presented_hud_frame(HudPresentedFrame::recovery);

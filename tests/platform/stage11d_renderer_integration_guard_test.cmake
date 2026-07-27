@@ -48,8 +48,104 @@ function(stage11d_reject_consumer_rebuild SOURCE_TEXT CONSUMER_NAME)
     endforeach()
 endfunction()
 
-stage11d_reject_consumer_rebuild("${_room_source}" "room")
 stage11d_reject_consumer_rebuild("${_hud_source}" "HUD")
+
+# The room renderer intentionally keeps a label-free icon path for frame-start
+# capture. Permit only that fixed shape: one canonical visibility predicate in
+# draw_ground_items, one builder in draw_ground_loot_icons_only, and the same
+# renderer-owned filter mode at both room call sites.
+string(FIND "${_room_source}" "void draw_ground_items(" _room_items_start)
+string(FIND "${_room_source}" "void draw_secondary_loot_icon(" _room_items_end)
+string(FIND "${_room_source}"
+    "GroundLootView CombatRenderer::draw_ground_loot_icons_only("
+    _icons_only_start)
+string(FIND "${_room_source}" "void CombatRenderer::draw_room(" _draw_room_start)
+if(_room_items_start EQUAL -1 OR _room_items_end EQUAL -1 OR
+   _icons_only_start EQUAL -1 OR _draw_room_start EQUAL -1 OR
+   NOT _room_items_start LESS _room_items_end OR
+   NOT _icons_only_start LESS _draw_room_start)
+    message(FATAL_ERROR
+        "Stage11D room renderer structure is missing or reordered")
+endif()
+
+math(EXPR _room_items_length "${_room_items_end} - ${_room_items_start}")
+string(SUBSTRING "${_room_source}" ${_room_items_start}
+    ${_room_items_length} _room_items_source)
+math(EXPR _icons_only_length "${_draw_room_start} - ${_icons_only_start}")
+string(SUBSTRING "${_room_source}" ${_icons_only_start}
+    ${_icons_only_length} _icons_only_source)
+string(SUBSTRING "${_room_source}" ${_draw_room_start} -1 _draw_room_source)
+
+string(REGEX REPLACE "[ \t\r\n]+" "" _room_items_normalized
+    "${_room_items_source}")
+string(REGEX REPLACE "[ \t\r\n]+" "" _icons_only_normalized
+    "${_icons_only_source}")
+string(REGEX REPLACE "[ \t\r\n]+" "" _draw_room_normalized
+    "${_draw_room_source}")
+
+string(REGEX MATCHALL "ground_loot_visible[ \t\r\n]*\\("
+    _room_predicate_calls "${_room_source}")
+list(LENGTH _room_predicate_calls _room_predicate_count)
+if(NOT _room_predicate_count EQUAL 1)
+    message(FATAL_ERROR
+        "Stage11D room canonical predicate must appear exactly once; found ${_room_predicate_count}")
+endif()
+string(FIND "${_room_items_normalized}"
+    "if(!ground_loot_visible(item,mode))continue;"
+    _effective_predicate_index)
+if(_effective_predicate_index EQUAL -1)
+    message(FATAL_ERROR
+        "Stage11D room canonical predicate must be the effective condition in draw_ground_items exactly once")
+endif()
+
+string(REGEX MATCHALL "build_ground_loot_view[ \t\r\n]*\\("
+    _room_builder_calls "${_room_source}")
+list(LENGTH _room_builder_calls _room_builder_count)
+if(NOT _room_builder_count EQUAL 1)
+    message(FATAL_ERROR
+        "Stage11D room builder must appear exactly once; found ${_room_builder_count}")
+endif()
+string(REGEX MATCHALL
+    "build_ground_loot_view\\(snapshot,loot_filter_mode_,width,height\\)"
+    _icons_only_builder_calls "${_icons_only_normalized}")
+list(LENGTH _icons_only_builder_calls _icons_only_builder_count)
+if(NOT _icons_only_builder_count EQUAL 1)
+    message(FATAL_ERROR
+        "Stage11D icons-only builder must remain unique and locked to its dedicated scope")
+endif()
+
+string(REGEX MATCHALL
+    "draw_ground_items\\(snapshot,loot_filter_mode_,material_pack_,width,height\\)"
+    _icons_only_draw_calls "${_icons_only_normalized}")
+list(LENGTH _icons_only_draw_calls _icons_only_draw_count)
+if(NOT _icons_only_draw_count EQUAL 1)
+    message(FATAL_ERROR
+        "Stage11D icons-only draw must use the renderer loot filter mode exactly once")
+endif()
+string(REGEX MATCHALL
+    "draw_ground_items\\(current,loot_filter_mode_,material_pack_,width,height\\)"
+    _production_room_draw_calls "${_draw_room_normalized}")
+list(LENGTH _production_room_draw_calls _production_room_draw_count)
+if(NOT _production_room_draw_count EQUAL 1)
+    message(FATAL_ERROR
+        "Stage11D production room draw must use the renderer loot filter mode exactly once")
+endif()
+
+if(_room_source MATCHES "make_combat_render_plan[ \t\r\n]*\\(" OR
+   _room_source MATCHES "LootFilterMode::")
+    message(FATAL_ERROR
+        "Stage11D room renderer must not create an independent render plan or fixed filter mode")
+endif()
+string(REGEX MATCHALL "settings::LootFilterMode" _room_mode_type_uses
+    "${_room_source}")
+list(LENGTH _room_mode_type_uses _room_mode_type_count)
+string(REGEX MATCHALL "loot_filter_mode_" _room_mode_member_uses
+    "${_room_source}")
+list(LENGTH _room_mode_member_uses _room_mode_member_count)
+if(NOT _room_mode_type_count EQUAL 1 OR NOT _room_mode_member_count EQUAL 3)
+    message(FATAL_ERROR
+        "Stage11D room filter mode wiring must match the canonical predicate and two draw paths")
+endif()
 
 string(FIND "${_combat_source}" "GroundLootView CombatRenderer::draw(" _draw_start)
 if(_draw_start EQUAL -1)

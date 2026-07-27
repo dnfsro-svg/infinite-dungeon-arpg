@@ -247,10 +247,35 @@ string(FIND "${_host_text}" "make_combat_render_plan(" _host_second_plan)
 if(NOT _host_second_plan EQUAL -1)
     message(FATAL_ERROR "Stage11D loot evidence guard rejected a second host render plan")
 endif()
-string(REGEX MATCHALL "make_combat_render_plan[ \t\r\n]*\\(" _renderer_plans "${_renderer_text}")
+arpg_sanitize_cpp_source("${_renderer_text}" _renderer_code)
+string(FIND "${_renderer_code}" "GroundLootView CombatRenderer::draw("
+    _renderer_draw_start)
+if(_renderer_draw_start EQUAL -1)
+    message(FATAL_ERROR "Stage11D loot evidence guard cannot isolate CombatRenderer::draw")
+endif()
+string(SUBSTRING "${_renderer_code}" 0 ${_renderer_draw_start}
+    _renderer_before_draw_text)
+string(SUBSTRING "${_renderer_code}" ${_renderer_draw_start} -1
+    _renderer_draw_text)
+string(REGEX MATCHALL "make_combat_render_plan[ \t\r\n]*\\("
+    _renderer_plans "${_renderer_draw_text}")
 list(LENGTH _renderer_plans _renderer_plan_count)
-if(NOT _renderer_plan_count EQUAL 2)
+if(NOT _renderer_plan_count EQUAL 1)
     message(FATAL_ERROR "Stage11D loot evidence guard requires the one production renderer plan")
+endif()
+string(REGEX MATCHALL "make_combat_render_plan[ \t\r\n]*\\("
+    _renderer_before_draw_plans "${_renderer_before_draw_text}")
+list(LENGTH _renderer_before_draw_plans _renderer_before_draw_plan_count)
+if(NOT _renderer_before_draw_plan_count EQUAL 3)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected a draw-external renderer plan")
+endif()
+string(REGEX MATCHALL "make_combat_render_plan[ \t\r\n]*\\("
+    _renderer_all_plans "${_renderer_code}")
+list(LENGTH _renderer_all_plans _renderer_all_plan_count)
+if(NOT _renderer_all_plan_count EQUAL 4)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard requires the current four renderer-plan tokens")
 endif()
 foreach(_required IN ITEMS
         "const GroundLootView ground_loot_view = [&]() noexcept {"

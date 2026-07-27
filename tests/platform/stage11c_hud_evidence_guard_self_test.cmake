@@ -42,9 +42,12 @@ stage11c_expect_formal_rejection(
 
 set(_pre_present "${GUARD_TEST_ROOT}/host-pre-present.cpp")
 string(REPLACE
-    "EndDrawing();\n    if (path == nullptr) return;\n    Image image = LoadImageFromScreen();"
-    "Image image = LoadImageFromScreen();\n    EndDrawing();\n    if (path == nullptr) return;"
+    "EndDrawing();\n    if (path == nullptr) return true;\n    Image image = LoadImageFromScreen();"
+    "Image image = LoadImageFromScreen();\n    EndDrawing();\n    if (path == nullptr) return true;"
     _pre_present_source "${_host_source}")
+if(_pre_present_source STREQUAL _host_source)
+    message(FATAL_ERROR "pre-present capture mutation did not change production source")
+endif()
 file(WRITE "${_pre_present}" "${_pre_present_source}")
 execute_process(
     COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
