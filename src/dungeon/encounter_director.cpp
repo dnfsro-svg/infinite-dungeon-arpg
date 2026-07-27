@@ -167,6 +167,15 @@ constexpr float kRoomMaxY = combat::room_bounds::max_y;
 
 }  // namespace
 
+std::uint64_t detail::ecology_monster_weight(
+    const combat::MonsterDefinition& monster,
+    checkpoint::DungeonElement ecology,
+    const EncounterDirectorConfig& config) noexcept {
+    return monster.preferred_ecology == static_cast<std::uint8_t>(ecology)
+        ? config.matching_ecology_weight
+        : config.off_ecology_weight;
+}
+
 std::uint8_t encounter_budget(
     std::uint64_t depth,
     const EncounterDirectorConfig& config) noexcept {

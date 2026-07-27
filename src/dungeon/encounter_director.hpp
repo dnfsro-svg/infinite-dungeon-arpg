@@ -9,6 +9,15 @@
 
 namespace arpg::dungeon {
 
+namespace detail {
+
+[[nodiscard]] std::uint64_t ecology_monster_weight(
+    const combat::MonsterDefinition& monster,
+    checkpoint::DungeonElement ecology,
+    const EncounterDirectorConfig& config) noexcept;
+
+}  // namespace detail
+
 struct RoomEncounterPlan final {
     std::array<combat::EncounterWave, combat::kEncounterWaveCapacity> waves{};
     std::uint8_t wave_count{};

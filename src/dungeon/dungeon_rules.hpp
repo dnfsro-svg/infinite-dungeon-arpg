@@ -34,6 +34,13 @@ enum class DungeonFault : std::uint8_t {
     abyss_reward_revision_overflow,
     death_sequence_overflow,
     death_sequence_mismatch,
+    population_capacity,
+    monster_selection_failed,
+    monster_placement,
+    invalid_monster_plan,
+    environment_capacity,
+    environment_placement,
+    environment_navigation,
 };
 
 [[nodiscard]] constexpr std::string_view dungeon_fault_name(
@@ -68,6 +75,15 @@ enum class DungeonFault : std::uint8_t {
         return "death_sequence_overflow";
     case DungeonFault::death_sequence_mismatch:
         return "death_sequence_mismatch";
+    case DungeonFault::population_capacity: return "population_capacity";
+    case DungeonFault::monster_selection_failed:
+        return "monster_selection_failed";
+    case DungeonFault::monster_placement: return "monster_placement";
+    case DungeonFault::invalid_monster_plan: return "invalid_monster_plan";
+    case DungeonFault::environment_capacity: return "environment_capacity";
+    case DungeonFault::environment_placement: return "environment_placement";
+    case DungeonFault::environment_navigation:
+        return "environment_navigation";
     }
     return "unknown_dungeon_fault";
 }

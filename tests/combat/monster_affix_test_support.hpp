@@ -27,6 +27,10 @@ supplement_abyss_affixes_with_catalog(
 [[nodiscard]] std::uint64_t monster_affix_context_seed(
     std::uint64_t room_seed, std::uint64_t depth,
     std::uint8_t wave_index, std::uint8_t spawn_index) noexcept;
+[[nodiscard]] std::uint64_t monster_affix_ordinal_context_seed(
+    std::uint64_t room_seed, std::uint64_t depth,
+    std::uint32_t generator_version,
+    std::uint16_t spawn_ordinal) noexcept;
 [[nodiscard]] std::uint64_t monster_affix_count_seed(
     std::uint64_t room_seed, std::uint64_t depth,
     std::uint8_t wave_index, std::uint8_t spawn_index) noexcept;

@@ -13,6 +13,8 @@ add_library(arpg_dungeon STATIC
     material_loot.cpp
     health_potion_loot.cpp
     room_affix.cpp
+    room_monster_plan_builder.cpp
+    room_environment.cpp
     room_generation.cpp
     room_combat_template.cpp
     room_navigation.cpp)
