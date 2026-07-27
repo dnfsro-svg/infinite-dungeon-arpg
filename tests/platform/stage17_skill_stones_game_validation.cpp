@@ -1,4 +1,5 @@
 #include "persistence/checkpoint_codec.hpp"
+#include "persistence/room_progress_codec.hpp"
 #include "active_skill_renderer.hpp"
 #include "raylib_host.hpp"
 
@@ -135,17 +136,22 @@ std::filesystem::path g_executable{};
     config.window_width = 1280;
     config.window_height = 720;
     config.window_title = "Stage 17 Skill Stones Production Validation";
-    config.save_directory = run / "save";
-    config.settings_directory = run / "settings";
+    const bool storm = scenario == "storm";
+    config.save_directory = run / (storm ? "storm-save" : "save");
+    config.settings_directory = run / (storm ? "storm-settings" : "settings");
     config.screenshot_directory = run;
     config.new_run_seed = seed;
     config.validation_steps_per_frame = 1U;
     config.validation_exit_after_presented_frames =
-        scenario == "production" ? 1200U : 300U;
+        scenario == "restart" ? 300U : 1200U;
     if (scenario == "production") {
         config.stage17_skill_stones_validation =
             platform::Stage17SkillStonesValidationScenario::production_sequence;
         config.validation_summary_file = run / "production-summary.txt";
+    } else if (scenario == "storm") {
+        config.stage17_skill_stones_validation =
+            platform::Stage17SkillStonesValidationScenario::storm_sequence;
+        config.validation_summary_file = run / "storm-summary.txt";
     } else if (scenario == "restart") {
         config.stage17_skill_stones_validation =
             platform::Stage17SkillStonesValidationScenario::restarted_loadout;
@@ -172,6 +178,29 @@ std::filesystem::path g_executable{};
         && field_is(fields, "draw_windup_captured", "1")
         && field_is(fields, "draw_frame_peak", "35")
         && field_is(fields, "draw_hit_count", "2")
+        && field_is(fields, "storm_accepted", "0")
+        && field_is(fields, "storm_strike_hit_count", "0")
+        && field_is(fields, "storm_finisher_hit_count", "0")
+        && field_is(fields, "public_input_path", "1")
+        && field_is(fields, "production_transactions", "1")
+        && field_is(fields, "production_inventory_closed", "1")
+        && field_is(fields, "production_cooldown_wait_started", "1")
+        && field_is_positive(fields, "production_cooldown_start_ticks")
+        && field_is_positive(fields, "production_cooldown_wait_ticks")
+        && field_is(fields,
+            "production_cooldowns_zero_before_shutdown", "1")
+        && field_is(fields, "clean_shutdown_exact_ready", "1");
+}
+
+[[nodiscard]] bool storm_summary_valid(
+    const std::map<std::string, std::string>& fields) noexcept {
+    return field_is(fields, "scenario", "storm_sequence")
+        && field_is(fields, "result", "pass")
+        && field_is(fields, "initial_slots",
+            "draw_slash,storm_swords,none,none,none")
+        && field_is(fields, "draw_accepted", "1")
+        && field_is(fields, "draw_hit_count", "2")
+        && field_is(fields, "storm_prelude_draw_hit_count", "2")
         && field_is(fields, "storm_accepted", "1")
         && field_is(fields, "storm_strike_hit_count", "3")
         && field_is(fields, "storm_finisher_hit_count", "0")
@@ -181,11 +210,6 @@ std::filesystem::path g_executable{};
         && field_is(fields, "storm_finisher_phase_seen", "1")
         && field_is(fields, "storm_aerial_captured", "1")
         && field_is(fields, "active_skill_atlases_ready", "1")
-        && field_is_positive(fields, "draw_renderer_samples")
-        && field_is(fields, "draw_material_frame_drawn", "1")
-        && field_is(fields, "draw_base_player_drawn", "0")
-        && field_is(fields, "draw_procedural_main_visual_peak", "0")
-        && field_is(fields, "draw_renderer_status_valid", "1")
         && field_is_positive(fields, "storm_renderer_samples")
         && field_is(fields, "storm_material_frame_drawn", "1")
         && field_is(fields, "storm_base_player_drawn", "0")
@@ -193,9 +217,11 @@ std::filesystem::path g_executable{};
         && field_is(fields, "storm_renderer_status_valid", "1")
         && field_is(fields, "renderer_status_failure_latched", "0")
         && field_is(fields, "storm_center_locked", "1")
+        && field_is(fields, "storm_isolation_invalidated", "0")
         && field_is(fields, "storm_player_moved", "1")
         && field_is(fields, "public_input_path", "1")
-        && field_is(fields, "production_transactions", "1");
+        && field_is(fields, "production_transactions", "0")
+        && field_is(fields, "clean_shutdown_exact_ready", "1");
 }
 
 [[nodiscard]] bool restart_summary_valid(
@@ -205,7 +231,8 @@ std::filesystem::path g_executable{};
         && field_is(fields, "initial_slots",
             "none,draw_slash,none,none,storm_swords")
         && field_is(fields, "restart_persisted", "1")
-        && field_is(fields, "restart_cooldowns_zero", "1");
+        && field_is(fields, "restart_cooldowns_zero", "1")
+        && field_is(fields, "clean_shutdown_exact_ready", "1");
 }
 
 struct PureTimelineEvidence final {
@@ -247,8 +274,9 @@ struct PureTimelineEvidence final {
 
 [[nodiscard]] bool write_final_state(const std::filesystem::path& run,
     const PureTimelineEvidence& timeline,
-    const std::map<std::string, std::string>& production) {
-    static_assert(persistence::kCheckpointFormatVersion == 8U);
+    const std::map<std::string, std::string>& production,
+    const std::map<std::string, std::string>& storm) {
+    static_assert(persistence::kCheckpointFormatVersionV9 == 9U);
     if (!timeline.valid()) return false;
     std::ofstream stream(run / "stage17-skill-stones-state.txt",
         std::ios::out | std::ios::trunc | std::ios::binary);
@@ -258,7 +286,7 @@ struct PureTimelineEvidence final {
            << "window=1280x720\n"
            << "fixture_path=production-raylib-host\n"
            << "showcase_capture_count=0\n"
-           << "save_version=" << persistence::kCheckpointFormatVersion << "\n"
+           << "save_version=" << persistence::kCheckpointFormatVersionV9 << "\n"
            << "initial_slots=draw_slash,storm_swords,none,none,none\n"
            << "final_slots=none,draw_slash,none,none,storm_swords\n"
            << "restarted_slots=none,draw_slash,none,none,storm_swords\n"
@@ -290,7 +318,7 @@ struct PureTimelineEvidence final {
            << "storm_finisher_phase_seen=true\n"
            << "storm_aerial_captured=true\n"
            << "active_skill_atlases_ready=true\n"
-           << "renderer_status_source=production-summary.txt\n"
+           << "renderer_status_source=production-summary.txt,storm-summary.txt\n"
            << "draw_renderer_samples="
            << production.at("draw_renderer_samples") << "\n"
            << "draw_material_frame_drawn="
@@ -302,21 +330,28 @@ struct PureTimelineEvidence final {
            << "draw_renderer_status_valid="
            << production.at("draw_renderer_status_valid") << "\n"
            << "storm_renderer_samples="
-           << production.at("storm_renderer_samples") << "\n"
+           << storm.at("storm_renderer_samples") << "\n"
            << "storm_material_frame_drawn="
-           << production.at("storm_material_frame_drawn") << "\n"
+           << storm.at("storm_material_frame_drawn") << "\n"
            << "storm_base_player_drawn="
-           << production.at("storm_base_player_drawn") << "\n"
+           << storm.at("storm_base_player_drawn") << "\n"
            << "storm_procedural_main_visual_peak="
-           << production.at("storm_procedural_main_visual_peak") << "\n"
+           << storm.at("storm_procedural_main_visual_peak") << "\n"
            << "storm_renderer_status_valid="
-           << production.at("storm_renderer_status_valid") << "\n"
+           << storm.at("storm_renderer_status_valid") << "\n"
            << "renderer_status_failure_latched="
            << production.at("renderer_status_failure_latched") << "\n"
            << "storm_center_locked=true\n"
            << "loadout_transactions=remove1,equip5,swap2_5\n"
            << "restart_persisted=true\n"
            << "cooldown_persisted=false\n"
+           << "production_inventory_closed=true\n"
+           << "production_cooldown_start_ticks="
+           << production.at("production_cooldown_start_ticks") << "\n"
+           << "production_cooldown_wait_ticks="
+           << production.at("production_cooldown_wait_ticks") << "\n"
+           << "cooldown_naturally_elapsed=true\n"
+           << "clean_shutdown_exact_ready=true\n"
            << "public_input_path=true\n"
            << "production_transactions=true\n";
     return static_cast<bool>(stream);
@@ -346,22 +381,29 @@ int main(int argc, char** argv) {
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-    constexpr std::uint64_t kProductionSeed = 170017U;
+    constexpr std::uint64_t kProductionSeed = 753U;
+    constexpr std::uint64_t kStormSeed = 4989U;
     if (!run_child(run, "production", kProductionSeed)) return 5;
     const auto production = read_fields(run / "production-summary.txt");
     if (!production_summary_valid(production)) {
         std::cerr << "stage17 production summary rejected\n";
         return 6;
     }
-    if (!run_child(run, "restart", kProductionSeed)) return 7;
+    if (!run_child(run, "storm", kStormSeed)) return 7;
+    const auto storm = read_fields(run / "storm-summary.txt");
+    if (!storm_summary_valid(storm)) {
+        std::cerr << "stage17 storm summary rejected\n";
+        return 8;
+    }
+    if (!run_child(run, "restart", kProductionSeed)) return 9;
     const auto restart = read_fields(run / "restart-summary.txt");
     if (!restart_summary_valid(restart)) {
         std::cerr << "stage17 restart summary rejected\n";
-        return 8;
+        return 10;
     }
     const PureTimelineEvidence timeline = pure_timeline_evidence();
-    if (!timeline.valid()) return 9;
-    if (!write_final_state(run, timeline, production)) return 10;
+    if (!timeline.valid()) return 11;
+    if (!write_final_state(run, timeline, production, storm)) return 12;
     std::cout << "stage17 raylib skill stones scenario=PASS\n";
     return 0;
 }

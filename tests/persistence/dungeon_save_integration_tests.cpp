@@ -205,6 +205,10 @@ arpg::test::Failure abyss_start_fault_matrix_is_atomic() noexcept {
         } else {
             ARPG_REQUIRE(session.snapshot().phase == dungeon::RoomPhase::faulted);
             ARPG_REQUIRE(!session.snapshot().combat.has_value());
+            if (saved.state
+                    == persistence::SaveCommitState::not_committed) {
+                ARPG_REQUIRE(disk_old);
+            }
         }
     }
     return {};
@@ -245,6 +249,10 @@ arpg::test::Failure abyss_fail_fault_matrix_is_atomic() noexcept {
             ARPG_REQUIRE(disk_new);
         } else {
             ARPG_REQUIRE(session.snapshot().phase == dungeon::RoomPhase::faulted);
+            if (saved.state
+                    == persistence::SaveCommitState::not_committed) {
+                ARPG_REQUIRE(disk_old);
+            }
         }
     }
     return {};
@@ -277,7 +285,7 @@ bool same_descriptor(const dungeon::DungeonSnapshot& snapshot,
 
 bool clear_and_await(dungeon::DungeonSession& session) noexcept {
     arpg::test::EventSummary summary;
-    if (!arpg::test::drive_until_cleared(session, summary)) {
+    if (!arpg::test::drive_until_cleared(session, summary, 16384U)) {
         return false;
     }
     if (session.snapshot().phase == dungeon::RoomPhase::cleared) {
@@ -293,7 +301,7 @@ bool drive_door_pending(dungeon::DungeonSession& session,
         return false;
     }
     if (direction == dungeon::ExitDirection::none) return false;
-    for (int tick = 0; tick < 512; ++tick) {
+    for (int tick = 0; tick < 4096; ++tick) {
         const auto snapshot = session.snapshot();
         if (!snapshot.combat.has_value()) return false;
         const combat::MovementInput movement =
@@ -303,7 +311,7 @@ bool drive_door_pending(dungeon::DungeonSession& session,
         arpg::test::EventSummary summary;
         arpg::test::drain_all_events(session, summary);
     }
-    for (int tick = 0; tick < 512; ++tick) {
+    for (int tick = 0; tick < 4096; ++tick) {
         session.tick(arpg::test::exit_outward(direction));
         arpg::test::EventSummary summary;
         arpg::test::drain_all_events(session, summary);

@@ -97,9 +97,8 @@ SaveLoadResult SaveStore::archive_invalid_and_create(
         auto files_to_archive = files;
         const bool conflicting_slots = scan.a.state == detail::SlotFileState::valid
             && scan.b.state == detail::SlotFileState::valid
-            && scan.a.checkpoint.commit_generation
-                == scan.b.checkpoint.commit_generation
-            && !detail::same_state(scan.a.checkpoint, scan.b.checkpoint);
+            && scan.a.persistence_revision == scan.b.persistence_revision
+            && !detail::same_slot_checkpoint(scan.a, scan.b);
         if (conflicting_slots) {
             files_to_archive.push_back(
                 config_.directory / detail::slot_name(SaveSlot::a));

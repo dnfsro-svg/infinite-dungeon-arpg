@@ -11,6 +11,8 @@ endif()
 file(READ "${RAYLIB_SOURCE_DIR}/raylib_host.cpp" HOST_SOURCE)
 file(READ "${RAYLIB_SOURCE_DIR}/inventory_renderer.cpp" INVENTORY_SOURCE)
 file(READ "${RAYLIB_SOURCE_DIR}/host_input.cpp" INPUT_AUTHORITY_SOURCE)
+file(READ "${RAYLIB_SOURCE_DIR}/../../dungeon/dungeon_session.cpp"
+    DUNGEON_SESSION_SOURCE)
 file(READ "${POISON_HEADER}" POISON_SOURCE)
 include("${CMAKE_CURRENT_LIST_DIR}/cpp_source_lexer.cmake")
 
@@ -22,6 +24,263 @@ function(require_match_count SOURCE PATTERN EXPECTED LABEL)
             "${LABEL}: expected ${EXPECTED} matches, found ${ACTUAL}")
     endif()
 endfunction()
+
+arpg_sanitize_cpp_source("${HOST_SOURCE}" SANITIZED_HOST_SOURCE)
+arpg_sanitize_cpp_source(
+    "${DUNGEON_SESSION_SOURCE}" SANITIZED_DUNGEON_SESSION_SOURCE)
+
+require_match_count(
+    "${SANITIZED_HOST_SOURCE}"
+    "new[ \t\r\n]*\\([ \t\r\n]*std::nothrow[ \t\r\n]*\\)[ \t\r\n]*HostValidationStates[ \t\r\n]*\\{[ \t\r\n]*\\}"
+    1
+    "raylib host nothrow heap validation-state allocation")
+require_match_count(
+    "${SANITIZED_HOST_SOURCE}"
+    "(runtime\\.session\\(\\)|session)->snapshot[ \t\r\n]*\\([ \t\r\n]*current[ \t\r\n]*\\)"
+    8
+    "raylib host preallocated snapshot captures")
+require_match_count(
+    "${SANITIZED_HOST_SOURCE}"
+    "(runtime\\.session\\(\\)|session)->snapshot[ \t\r\n]*\\([ \t\r\n]*\\)"
+    0
+    "raylib host by-value snapshot captures")
+foreach(AUTOMATIC_VALIDATION_STATE IN ITEMS
+        "Stage10ValidationState stage10_validation_state{}"
+        "Stage11ValidationState stage11_validation_state{}"
+        "Stage11BValidationState stage11b_validation_state{}"
+        "Stage11CHudValidationState stage11c_validation_state{}"
+        "Stage11DLootValidationState stage11d_validation_state{}")
+    string(FIND "${SANITIZED_HOST_SOURCE}"
+        "${AUTOMATIC_VALIDATION_STATE}" AUTOMATIC_VALIDATION_STATE_INDEX)
+    if(NOT AUTOMATIC_VALIDATION_STATE_INDEX EQUAL -1)
+        message(FATAL_ERROR
+            "raylib host validation states must not return to the stack")
+    endif()
+endforeach()
+
+set(PRODUCTION_FINAL_TARGET_CLEAR_GUARD [=[
+handle_player_defeat();
+
+        if (phase_ == RoomPhase::combat && remaining_targets() == 0U) {
+            prepare_room_clear();
+        }
+]=])
+string(FIND "${SANITIZED_DUNGEON_SESSION_SOURCE}"
+    "${PRODUCTION_FINAL_TARGET_CLEAR_GUARD}"
+    PRODUCTION_FINAL_TARGET_CLEAR_GUARD_INDEX)
+if(PRODUCTION_FINAL_TARGET_CLEAR_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "production room-clear must remain behind the final-target gate")
+endif()
+string(LENGTH "${PRODUCTION_FINAL_TARGET_CLEAR_GUARD}"
+    PRODUCTION_FINAL_TARGET_CLEAR_GUARD_LENGTH)
+math(EXPR PRODUCTION_FINAL_TARGET_CLEAR_GUARD_END
+    "${PRODUCTION_FINAL_TARGET_CLEAR_GUARD_INDEX} + ${PRODUCTION_FINAL_TARGET_CLEAR_GUARD_LENGTH}")
+string(SUBSTRING "${SANITIZED_DUNGEON_SESSION_SOURCE}"
+    ${PRODUCTION_FINAL_TARGET_CLEAR_GUARD_END} -1
+    DUNGEON_SESSION_AFTER_PRODUCTION_CLEAR)
+string(FIND "${DUNGEON_SESSION_AFTER_PRODUCTION_CLEAR}"
+    "${PRODUCTION_FINAL_TARGET_CLEAR_GUARD}"
+    DUPLICATE_PRODUCTION_FINAL_TARGET_CLEAR_GUARD_INDEX)
+if(NOT DUPLICATE_PRODUCTION_FINAL_TARGET_CLEAR_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "production room-clear final-target gate must remain unique")
+endif()
+set(HEALTH_POTION_RETRY_GUARD [=[
+if (phase_ != RoomPhase::combat || pending_save_.has_value()
+                || !combat_.has_value() || remaining_targets() != 0U) {
+            enter_fault(DungeonFault::save_receipt_mismatch);
+        } else {
+            prepare_room_clear();
+        }
+]=])
+string(FIND "${SANITIZED_DUNGEON_SESSION_SOURCE}"
+    "${HEALTH_POTION_RETRY_GUARD}" HEALTH_POTION_RETRY_GUARD_INDEX)
+if(HEALTH_POTION_RETRY_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "health-potion retry must reject live targets before room clear")
+endif()
+
+set(LEGACY_FORCED_CLEAR_GUARD [=[
+if (!started_abyss && remaining_targets() != 0U
+            && !has_ground_materials() && !has_claimable_health_potion()) {
+        settle_room_experience();
+        publish_room_clear();
+        return;
+    }
+]=])
+string(FIND "${SANITIZED_DUNGEON_SESSION_SOURCE}"
+    "${LEGACY_FORCED_CLEAR_GUARD}" LEGACY_FORCED_CLEAR_GUARD_INDEX)
+if(LEGACY_FORCED_CLEAR_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "legacy forced-clear compatibility trigger must remain narrow")
+endif()
+
+set(STAGE17_AUTHORITATIVE_LOADOUT_GUARD [=[
+if (state.step == Stage17ValidationStep::open_inventory
+            && inventory.is_open()) {
+        state.step = Stage17ValidationStep::open_skill_page;
+    } else if (state.step == Stage17ValidationStep::remove_slot_1
+            && current.skill_loadout.slots[0].active
+                == skills::ActiveSkillId::none) {
+        state.step = Stage17ValidationStep::select_draw_inventory;
+    } else if (state.step == Stage17ValidationStep::equip_slot_5
+            && current.skill_loadout.slots[4].active
+                == skills::ActiveSkillId::draw_slash) {
+        state.step = Stage17ValidationStep::swap_slots_2_5;
+    } else if (state.step == Stage17ValidationStep::swap_slots_2_5
+            && stage17_final_loadout(current.skill_loadout)) {
+        state.final_loadout = current.skill_loadout;
+        state.production_transactions =
+            !current.pending_save_kind.has_value();
+        if (state.production_transactions) {
+            state.step = Stage17ValidationStep::close_inventory;
+        }
+    } else if (state.step == Stage17ValidationStep::close_inventory
+            && !inventory.is_open() && current.combat.has_value()) {
+        state.production_inventory_closed = true;
+        state.production_cooldown_start_ticks =
+            current.combat->skill_cooldowns[0U];
+        state.production_cooldown_wait_start_tick = current.combat->tick;
+        state.production_cooldown_wait_started =
+            state.production_cooldown_start_ticks != 0U;
+        state.step = Stage17ValidationStep::cooldown_drain;
+]=])
+string(FIND "${SANITIZED_HOST_SOURCE}"
+    "${STAGE17_AUTHORITATIVE_LOADOUT_GUARD}"
+    STAGE17_AUTHORITATIVE_LOADOUT_GUARD_INDEX)
+if(STAGE17_AUTHORITATIVE_LOADOUT_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "Stage17 must wait for each authoritative loadout publication")
+endif()
+
+set(STAGE17_NATURAL_COOLDOWN_DRAIN_GUARD [=[
+if (state.step == Stage17ValidationStep::cooldown_drain
+            && state.production_cooldown_wait_started
+            && stage17_all_cooldowns_zero(combat_state)) {
+        state.production_cooldown_wait_end_tick = combat_state.tick;
+        state.production_cooldowns_zero_before_shutdown =
+            state.production_cooldown_wait_end_tick
+                > state.production_cooldown_wait_start_tick;
+        state.step = Stage17ValidationStep::complete;
+    }
+]=])
+string(FIND "${SANITIZED_HOST_SOURCE}"
+    "${STAGE17_NATURAL_COOLDOWN_DRAIN_GUARD}"
+    STAGE17_NATURAL_COOLDOWN_DRAIN_GUARD_INDEX)
+if(STAGE17_NATURAL_COOLDOWN_DRAIN_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "Stage17 must naturally drain cooldown through authoritative fixed ticks before shutdown")
+endif()
+require_match_count(
+    "${SANITIZED_HOST_SOURCE}"
+    "case[ \t\r\n]+Stage17ValidationStep::cooldown_drain:[ \t\r\n]+break"
+    1
+    "Stage17 cooldown drain injects empty gameplay input")
+set(STAGE17_EXACT_SHUTDOWN_READY_GUARD [=[
+stage17_validation_state->clean_shutdown_exact_ready =
+            runtime.clean_shutdown_state() == CleanShutdownState::ready;
+]=])
+string(FIND "${SANITIZED_HOST_SOURCE}"
+    "${STAGE17_EXACT_SHUTDOWN_READY_GUARD}"
+    STAGE17_EXACT_SHUTDOWN_READY_GUARD_INDEX)
+if(STAGE17_EXACT_SHUTDOWN_READY_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "Stage17 summary must record completed clean-shutdown exact save")
+endif()
+
+set(STAGE17_STORM_LOCK_ONCE_GUARD [=[
+if (!state.storm_approach_locked) {
+        const Stage17IsolatedStormTarget target =
+            stage17_isolated_storm_target(combat_state);
+        if (target.monster == nullptr) return false;
+        state.storm_approach_center = target.projected_center;
+        state.storm_approach_target_start = target.monster->position;
+        state.storm_approach_player_start = combat_state.player.position;
+        state.storm_approach_initial_clearance =
+            std::sqrt(target.clearance_squared);
+        state.storm_approach_target_ordinal = target.monster->monster_ordinal;
+        state.storm_approach_locked = true;
+    }
+]=])
+string(FIND "${SANITIZED_HOST_SOURCE}" "${STAGE17_STORM_LOCK_ONCE_GUARD}"
+    STAGE17_STORM_LOCK_ONCE_GUARD_INDEX)
+if(STAGE17_STORM_LOCK_ONCE_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "Stage17 storm isolation must be selected and locked exactly once")
+endif()
+set(STAGE17_STORM_FAIL_CLOSED_GUARD [=[
+if (targets_in_finisher != 1U || !locked_target_in_finisher) {
+        state.storm_isolation_invalidated = true;
+        state.storm_isolation_invalidated_frame = state.storm_approach_frames;
+        state.storm_isolation_invalidated_target_count = targets_in_finisher;
+        return false;
+    }
+]=])
+string(FIND "${SANITIZED_HOST_SOURCE}" "${STAGE17_STORM_FAIL_CLOSED_GUARD}"
+    STAGE17_STORM_FAIL_CLOSED_GUARD_INDEX)
+if(STAGE17_STORM_FAIL_CLOSED_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "Stage17 locked storm isolation must fail closed instead of reselecting")
+endif()
+set(STAGE17_STORM_PRELUDE_GUARD [=[
+if (config.stage17_skill_stones_validation
+                == Stage17SkillStonesValidationScenario::storm_sequence) {
+            state.suppress_draw_captures = true;
+            state.step = Stage17ValidationStep::approach_draw;
+]=])
+string(FIND "${SANITIZED_HOST_SOURCE}" "${STAGE17_STORM_PRELUDE_GUARD}"
+    STAGE17_STORM_PRELUDE_GUARD_INDEX)
+if(STAGE17_STORM_PRELUDE_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "Stage17 storm scenario must use an explicit draw prelude")
+endif()
+set(STAGE17_DRAW_TO_TRANSACTIONS_GUARD [=[
+} else if (state.draw_windup_captured && state.draw_captured) {
+            state.step = Stage17ValidationStep::open_inventory;
+]=])
+string(FIND "${SANITIZED_HOST_SOURCE}" "${STAGE17_DRAW_TO_TRANSACTIONS_GUARD}"
+    STAGE17_DRAW_TO_TRANSACTIONS_GUARD_INDEX)
+if(STAGE17_DRAW_TO_TRANSACTIONS_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "Stage17 production draw must proceed directly to authoritative transactions")
+endif()
+set(STAGE17_PRELUDE_HIT_GATE_GUARD [=[
+if (state.draw_accepted && state.draw_hit_count == 2U) {
+                state.step = Stage17ValidationStep::approach_storm;
+]=])
+string(FIND "${SANITIZED_HOST_SOURCE}" "${STAGE17_PRELUDE_HIT_GATE_GUARD}"
+    STAGE17_PRELUDE_HIT_GATE_GUARD_INDEX)
+if(STAGE17_PRELUDE_HIT_GATE_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "Stage17 storm prelude must complete exactly two production hits")
+endif()
+set(STAGE17_STORM_THREAT_PULL_GUARD [=[
+if (state.storm_threat_pull_locked) {
+            stage17_apply_movement(
+                snapshot, input_settings, state.storm_threat_pull_movement);
+        }
+]=])
+string(FIND "${SANITIZED_HOST_SOURCE}"
+    "${STAGE17_STORM_THREAT_PULL_GUARD}"
+    STAGE17_STORM_THREAT_PULL_GUARD_INDEX)
+if(STAGE17_STORM_THREAT_PULL_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "Stage17 storm threat pull must remain fixed normal movement input")
+endif()
+set(STAGE17_RENDERER_OBSERVER_GUARD [=[
+if (config.stage17_skill_stones_validation
+            == Stage17SkillStonesValidationScenario::none
+        || config.stage17_skill_stones_validation
+            == Stage17SkillStonesValidationScenario::restarted_loadout
+        || !presented.combat.has_value()) {
+]=])
+string(FIND "${SANITIZED_HOST_SOURCE}" "${STAGE17_RENDERER_OBSERVER_GUARD}"
+    STAGE17_RENDERER_OBSERVER_GUARD_INDEX)
+if(STAGE17_RENDERER_OBSERVER_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "Stage17 renderer evidence must observe production and storm scenarios")
+endif()
 
 set(SOURCE_LINE_START "(^|\n)[ \t]*")
 set(SOURCE_LINE_END "[ \t]*(\r?\n|$)")
@@ -107,19 +366,20 @@ const InventoryInputGate inventory_gate = inventory_input_gate(
 const bool forward_actions = passive_input_gate.forward_actions
     && inventory_gate.forward_actions
     && death_gate.forward_gameplay
-    && host_gate.forward_gameplay && !pause_blocks_gameplay;
+    && host_gate.forward_gameplay && !pause_blocks_gameplay
+    && gameplay_armed;
 const bool forward_descent = passive_input_gate.forward_descent
     && inventory_gate.forward_descent
     && death_gate.forward_gameplay
-    && host_gate.forward_gameplay && !pause_blocks_gameplay;
+    && host_gate.forward_gameplay && !pause_blocks_gameplay
+    && gameplay_armed;
 if (forward_actions) {
     const SubmittedFrameActions submitted_actions =
         submit_frame_actions(*session, frame_input);
 }
 if (forward_descent && frame_input.keys.e) {
-    const auto snapshot = session->snapshot();
-    const bool in_range = snapshot.combat.has_value()
-        && can_prompt_descent(snapshot, snapshot.combat->player.position);
+    const bool in_range = current.combat.has_value()
+        && can_prompt_descent(current, current.combat->player.position);
     static_cast<void>(session->request_descent(in_range));
 }
 const combat::MovementInput movement = forward_movement
@@ -305,12 +565,12 @@ function(physical_input_chain_valid SOURCE OUT_VARIABLE)
             OR NOT SOURCE MATCHES "const PassiveOverlayInputGate passive_input_gate =${WS}passive_overlay_input_gate${WS}\\(${WS}passive_overlay_open${WS}\\)${WS};"
             OR NOT SOURCE MATCHES "const InventoryInputGate inventory_gate =${WS}inventory_input_gate${WS}\\(${WS}inventory\\.is_open${WS}\\(${WS}\\)${WS}\\|\\|${WS}inventory_toggled_this_frame${WS}\\)${WS};"
             OR NOT SUBMIT_ACTION_CALL_COUNT EQUAL 1
-            OR NOT FORWARD_ACTIONS_SOURCE MATCHES "const bool forward_actions =${WS}passive_input_gate\\.forward_actions${WS}&&${WS}inventory_gate\\.forward_actions${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS};"
+            OR NOT FORWARD_ACTIONS_SOURCE MATCHES "const bool forward_actions =${WS}passive_input_gate\\.forward_actions${WS}&&${WS}inventory_gate\\.forward_actions${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS}&&${WS}gameplay_armed${WS};"
             OR NOT CONTROLLED_SUBMIT_SOURCE MATCHES "if${WS}\\(${WS}forward_actions${WS}\\)${WS}\\{${WS}const${WS1}SubmittedFrameActions${WS1}submitted_actions${WS}=${WS}submit_frame_actions${WS}\\(${WS}\\*session,${WS}frame_input${WS}\\)${WS};"
             OR NOT FORWARD_DESCENT_ASSIGNMENT_COUNT EQUAL 1
-            OR NOT FORWARD_DESCENT_SOURCE MATCHES "const bool forward_descent =${WS}passive_input_gate\\.forward_descent${WS}&&${WS}inventory_gate\\.forward_descent${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS};"
+            OR NOT FORWARD_DESCENT_SOURCE MATCHES "const bool forward_descent =${WS}passive_input_gate\\.forward_descent${WS}&&${WS}inventory_gate\\.forward_descent${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS}&&${WS}gameplay_armed${WS};"
             OR NOT REQUEST_DESCENT_CALL_COUNT EQUAL 1
-            OR NOT CONTROLLED_DESCENT_SOURCE MATCHES "if${WS}\\(${WS}forward_descent${WS}&&${WS}frame_input\\.keys\\.e${WS}\\)${WS}\\{${WS}const auto snapshot =${WS}session->snapshot${WS}\\(${WS}\\)${WS};${WS}const bool in_range =${WS}snapshot\\.combat\\.has_value${WS}\\(${WS}\\)${WS}&&${WS}can_prompt_descent${WS}\\(${WS}snapshot,${WS}snapshot\\.combat->player\\.position${WS}\\)${WS};${WS}static_cast<void>${WS}\\(${WS}session->request_descent${WS}\\(${WS}in_range${WS}\\)${WS}\\)${WS};")
+            OR NOT CONTROLLED_DESCENT_SOURCE MATCHES "if${WS}\\(${WS}forward_descent${WS}&&${WS}frame_input\\.keys\\.e${WS}\\)${WS}\\{${WS}const bool in_range =${WS}current\\.combat\\.has_value${WS}\\(${WS}\\)${WS}&&${WS}can_prompt_descent${WS}\\(${WS}current,${WS}current\\.combat->player\\.position${WS}\\)${WS};${WS}static_cast<void>${WS}\\(${WS}session->request_descent${WS}\\(${WS}in_range${WS}\\)${WS}\\)${WS};")
         set("${OUT_VARIABLE}" FALSE PARENT_SCOPE)
         return()
     endif()
@@ -430,7 +690,8 @@ set(FORWARD_DESCENT_DECLARATION [=[
             const bool forward_descent = passive_input_gate.forward_descent
                 && inventory_gate.forward_descent
                 && death_gate.forward_gameplay
-                && host_gate.forward_gameplay && !pause_blocks_gameplay;
+                && host_gate.forward_gameplay && !pause_blocks_gameplay
+                && gameplay_armed;
 ]=])
 string(REPLACE "${FORWARD_DESCENT_DECLARATION}"
     "            const bool forward_descent = true;"

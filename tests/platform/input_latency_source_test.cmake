@@ -182,10 +182,10 @@ function(arpg_physical_input_chain_is_valid SOURCE OUT_VALID)
             OR NOT SOURCE MATCHES "const PassiveOverlayInputGate passive_input_gate =${WS}passive_overlay_input_gate${WS}\\(${WS}passive_overlay_open${WS}\\)${WS};"
             OR NOT SOURCE MATCHES "const InventoryInputGate inventory_gate =${WS}inventory_input_gate${WS}\\(${WS}inventory\\.is_open${WS}\\(${WS}\\)${WS}\\|\\|${WS}inventory_toggled_this_frame${WS}\\)${WS};"
             OR NOT SUBMIT_ACTION_CALL_COUNT EQUAL 1
-            OR NOT FORWARD_ACTIONS_SOURCE MATCHES "const bool forward_actions =${WS}passive_input_gate\\.forward_actions${WS}&&${WS}inventory_gate\\.forward_actions${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS};"
+            OR NOT FORWARD_ACTIONS_SOURCE MATCHES "const bool forward_actions =${WS}passive_input_gate\\.forward_actions${WS}&&${WS}inventory_gate\\.forward_actions${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS}&&${WS}gameplay_armed${WS};"
             OR NOT CONTROLLED_SUBMIT_SOURCE MATCHES "if${WS}\\(${WS}forward_actions${WS}\\)${WS}\\{${WS}const${WS1}SubmittedFrameActions${WS1}submitted_actions${WS}=${WS}submit_frame_actions${WS}\\(${WS}\\*session,${WS}frame_input${WS}\\)${WS};"
             OR NOT FORWARD_DESCENT_ASSIGNMENT_COUNT EQUAL 1
-            OR NOT FORWARD_DESCENT_SOURCE MATCHES "const bool forward_descent =${WS}passive_input_gate\\.forward_descent${WS}&&${WS}inventory_gate\\.forward_descent${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS};"
+            OR NOT FORWARD_DESCENT_SOURCE MATCHES "const bool forward_descent =${WS}passive_input_gate\\.forward_descent${WS}&&${WS}inventory_gate\\.forward_descent${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS}&&${WS}gameplay_armed${WS};"
             OR NOT REQUEST_DESCENT_CALL_COUNT EQUAL 1
             OR NOT CONTROLLED_DESCENT_SOURCE MATCHES "if${WS}\\(${WS}forward_descent${WS}&&${WS}frame_input\\.keys\\.e${WS}\\)${WS}\\{${WS}const auto snapshot =${WS}session->snapshot${WS}\\(${WS}\\)${WS};${WS}const bool in_range =${WS}snapshot\\.combat\\.has_value${WS}\\(${WS}\\)${WS}&&${WS}can_prompt_descent${WS}\\(${WS}snapshot,${WS}snapshot\\.combat->player\\.position${WS}\\)${WS};${WS}static_cast<void>${WS}\\(${WS}session->request_descent${WS}\\(${WS}in_range${WS}\\)${WS}\\)${WS};")
         set(${OUT_VALID} FALSE PARENT_SCOPE)
@@ -234,11 +234,13 @@ const InventoryInputGate inventory_gate = inventory_input_gate(
 const bool forward_actions = passive_input_gate.forward_actions
     && inventory_gate.forward_actions
     && death_gate.forward_gameplay
-    && host_gate.forward_gameplay && !pause_blocks_gameplay;
+    && host_gate.forward_gameplay && !pause_blocks_gameplay
+    && gameplay_armed;
 const bool forward_descent = passive_input_gate.forward_descent
     && inventory_gate.forward_descent
     && death_gate.forward_gameplay
-    && host_gate.forward_gameplay && !pause_blocks_gameplay;
+    && host_gate.forward_gameplay && !pause_blocks_gameplay
+    && gameplay_armed;
 if (forward_actions) {
     const SubmittedFrameActions submitted_actions =
         submit_frame_actions(*session, frame_input);
@@ -385,7 +387,8 @@ set(FORWARD_DESCENT_DECLARATION [=[
             const bool forward_descent = passive_input_gate.forward_descent
                 && inventory_gate.forward_descent
                 && death_gate.forward_gameplay
-                && host_gate.forward_gameplay && !pause_blocks_gameplay;
+                && host_gate.forward_gameplay && !pause_blocks_gameplay
+                && gameplay_armed;
 ]=])
 string(REPLACE "${FORWARD_DESCENT_DECLARATION}"
     "            const bool forward_descent = true;"

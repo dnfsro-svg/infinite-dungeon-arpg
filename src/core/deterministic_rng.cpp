@@ -75,4 +75,16 @@ DeterministicRng DeterministicRng::derive_stream(
     return DeterministicRng{child_seed};
 }
 
+DeterministicRng::State DeterministicRng::export_state() const noexcept {
+    return state_;
+}
+
+bool DeterministicRng::import_state(const State& state) noexcept {
+    if ((state[0] | state[1] | state[2] | state[3]) == 0U) {
+        return false;
+    }
+    state_ = state;
+    return true;
+}
+
 }  // namespace arpg::core

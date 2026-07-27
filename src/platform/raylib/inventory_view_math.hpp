@@ -187,6 +187,9 @@ active_skill_loadout_command_after_click(
     Vector2 point,
     ActiveSkillLoadoutSelection& selection,
     bool save_pending) noexcept;
+void advance_active_skill_loadout_selection(
+    ActiveSkillLoadoutSelection& selection,
+    const ActiveSkillLoadoutCommand& accepted_command) noexcept;
 [[nodiscard]] VisibleGridRange visible_grid_range(
     std::size_t filtered_count, int columns, float scroll_rows,
     float viewport_height, float cell_height) noexcept;

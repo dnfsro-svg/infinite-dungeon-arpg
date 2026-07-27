@@ -87,6 +87,8 @@ struct QueryLog final {
     std::array<unsigned, 512> down{};
     unsigned mouse_left_pressed{};
     unsigned mouse_right_pressed{};
+    unsigned mouse_left_down{};
+    unsigned mouse_right_down{};
     unsigned mouse_position{};
     unsigned mouse_wheel{};
     unsigned focus_lost{};
@@ -112,6 +114,16 @@ bool query_mouse_left_pressed(void* context) noexcept {
 bool query_mouse_right_pressed(void* context) noexcept {
     ++static_cast<QueryLog*>(context)->mouse_right_pressed;
     return true;
+}
+
+bool query_mouse_left_down(void* context) noexcept {
+    ++static_cast<QueryLog*>(context)->mouse_left_down;
+    return true;
+}
+
+bool query_mouse_right_down(void* context) noexcept {
+    ++static_cast<QueryLog*>(context)->mouse_right_down;
+    return false;
 }
 
 Vector2 query_mouse_position(void* context) noexcept {
@@ -140,6 +152,8 @@ test::Failure sampler_queries_every_stable_key_once_per_state() noexcept {
         &query_mouse_position,
         &query_mouse_wheel,
         &query_focus_lost,
+        &query_mouse_left_down,
+        &query_mouse_right_down,
     };
     const platform::PhysicalKeySnapshot snapshot =
         platform::sample_physical_keys(source);
@@ -155,7 +169,7 @@ test::Failure sampler_queries_every_stable_key_once_per_state() noexcept {
     }};
     for (int key : skill_keys) {
         ARPG_REQUIRE(log.pressed[static_cast<std::size_t>(key)] == 1U);
-        ARPG_REQUIRE(log.down[static_cast<std::size_t>(key)] == 0U);
+        ARPG_REQUIRE(log.down[static_cast<std::size_t>(key)] == 1U);
     }
     ARPG_REQUIRE(log.pressed[KEY_ESCAPE] == 1U);
     ARPG_REQUIRE(log.pressed[KEY_ENTER] == 1U);
@@ -166,17 +180,68 @@ test::Failure sampler_queries_every_stable_key_once_per_state() noexcept {
     ARPG_REQUIRE(log.pressed[KEY_N] == 1U);
     ARPG_REQUIRE(log.mouse_left_pressed == 1U);
     ARPG_REQUIRE(log.mouse_right_pressed == 1U);
+    ARPG_REQUIRE(log.mouse_left_down == 1U);
+    ARPG_REQUIRE(log.mouse_right_down == 1U);
     ARPG_REQUIRE(log.mouse_position == 1U);
     ARPG_REQUIRE(log.mouse_wheel == 1U);
     ARPG_REQUIRE(log.focus_lost == 1U);
     ARPG_REQUIRE(snapshot.v);
     ARPG_REQUIRE(snapshot.mouse_left);
     ARPG_REQUIRE(snapshot.mouse_right);
+    ARPG_REQUIRE(snapshot.mouse_left_down);
+    ARPG_REQUIRE(!snapshot.mouse_right_down);
     ARPG_REQUIRE(snapshot.mouse_wheel == 2.5F);
     ARPG_REQUIRE(snapshot.down[key_index(settings::StableKey::left_control)]);
     ARPG_REQUIRE(snapshot.focus_lost);
     ARPG_REQUIRE(snapshot.mouse_position.x == 123.0F);
     ARPG_REQUIRE(snapshot.mouse_position.y == 456.0F);
+    return {};
+}
+
+test::Failure rearm_waits_for_every_gameplay_control_to_be_released() noexcept {
+    platform::PhysicalKeySnapshot snapshot{};
+    ARPG_REQUIRE(platform::gameplay_controls_physically_released(snapshot));
+
+    for (std::size_t index = 0U; index < snapshot.down.size(); ++index) {
+        snapshot.down[index] = true;
+        ARPG_REQUIRE(!platform::gameplay_controls_physically_released(snapshot));
+        snapshot.down[index] = false;
+    }
+    for (std::size_t index = 0U;
+            index < snapshot.active_skill_slots_down.size(); ++index) {
+        snapshot.active_skill_slots_down[index] = true;
+        ARPG_REQUIRE(!platform::gameplay_controls_physically_released(snapshot));
+        snapshot.active_skill_slots_down[index] = false;
+    }
+    snapshot.mouse_left_down = true;
+    ARPG_REQUIRE(!platform::gameplay_controls_physically_released(snapshot));
+    snapshot.mouse_left_down = false;
+    snapshot.mouse_right_down = true;
+    ARPG_REQUIRE(!platform::gameplay_controls_physically_released(snapshot));
+    snapshot.mouse_right_down = false;
+    ARPG_REQUIRE(platform::gameplay_controls_physically_released(snapshot));
+
+    for (std::size_t index = 0U; index < snapshot.pressed.size(); ++index) {
+        snapshot.pressed[index] = true;
+        ARPG_REQUIRE(!platform::gameplay_controls_physically_released(snapshot));
+        snapshot.pressed[index] = false;
+    }
+    for (std::size_t index = 0U;
+            index < snapshot.active_skill_slots.size(); ++index) {
+        snapshot.active_skill_slots[index] = true;
+        ARPG_REQUIRE(!platform::gameplay_controls_physically_released(snapshot));
+        snapshot.active_skill_slots[index] = false;
+    }
+    snapshot.mouse_left = true;
+    ARPG_REQUIRE(!platform::gameplay_controls_physically_released(snapshot));
+    snapshot.mouse_left = false;
+    snapshot.mouse_right = true;
+    ARPG_REQUIRE(!platform::gameplay_controls_physically_released(snapshot));
+    snapshot.mouse_right = false;
+    snapshot.focus_lost = true;
+    ARPG_REQUIRE(!platform::gameplay_controls_physically_released(snapshot));
+    snapshot.focus_lost = false;
+    ARPG_REQUIRE(platform::gameplay_controls_physically_released(snapshot));
     return {};
 }
 
@@ -455,6 +520,8 @@ constexpr test::TestCase kCases[] = {
     {"45 stable keys round-trip with labels", &adapter_round_trips_all_45_keys_with_unique_codes_and_labels},
     {"unknown adapter values rejected", &adapter_rejects_unknown_values},
     {"stable keys sampled once per state", &sampler_queries_every_stable_key_once_per_state},
+    {"rearm waits for every gameplay control",
+        &rearm_waits_for_every_gameplay_control_to_be_released},
     {"default logical bindings", &default_bindings_map_movement_actions_and_overlays},
     {"all setting actions map exhaustively",
         &every_setting_action_maps_only_to_its_expected_output},

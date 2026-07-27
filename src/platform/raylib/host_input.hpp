@@ -28,6 +28,10 @@ struct PhysicalKeySnapshot final {
     std::array<bool, skills::kActiveSkillSlotCount> active_skill_slots{};
     bool mouse_left{};
     bool mouse_right{};
+    bool mouse_left_down{};
+    bool mouse_right_down{};
+    std::array<bool, skills::kActiveSkillSlotCount>
+        active_skill_slots_down{};
     bool focus_lost{};
     float mouse_wheel{};
     Vector2 mouse_position{};
@@ -54,6 +58,8 @@ struct PhysicalKeySource final {
     Vector2 (*mouse_position)(void*) noexcept{};
     float (*mouse_wheel)(void*) noexcept{};
     bool (*focus_lost)(void*) noexcept{};
+    bool (*mouse_left_down)(void*) noexcept{};
+    bool (*mouse_right_down)(void*) noexcept{};
 };
 
 [[nodiscard]] PhysicalKeySnapshot sample_physical_keys() noexcept;
@@ -61,6 +67,8 @@ struct PhysicalKeySource final {
     const PhysicalKeySource& source) noexcept;
 [[nodiscard]] HostFrameInput map_host_frame_input(
     const settings::SettingsData& settings,
+    const PhysicalKeySnapshot& snapshot) noexcept;
+[[nodiscard]] bool gameplay_controls_physically_released(
     const PhysicalKeySnapshot& snapshot) noexcept;
 struct SubmittedFrameActions final {
     std::array<bool, 3> combat{};

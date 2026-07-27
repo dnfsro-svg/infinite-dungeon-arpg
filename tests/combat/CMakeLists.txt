@@ -29,6 +29,7 @@ add_executable(arpg_combat_tests
     player_death_snapshot_tests.cpp
     player_defense_tests.cpp
     room_obstacle_runtime_tests.cpp
+    room_combat_checkpoint_tests.cpp
     storm_swords_skill_tests.cpp)
 
 target_compile_features(arpg_combat_tests PRIVATE cxx_std_17)
