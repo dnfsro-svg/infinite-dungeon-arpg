@@ -270,9 +270,16 @@ arpg::test::Failure transition_and_combat_start_are_separate_ticks() noexcept {
     ARPG_REQUIRE(clear_and_await(session));
     ARPG_REQUIRE(commit_exit(session, ExitDirection::up));
     const DungeonSnapshot transition = session.snapshot();
+    const ExitEvents committed = drain_dungeon(session);
+    ARPG_REQUIRE(committed.count == 3U);
+    ARPG_REQUIRE(committed.values[0].kind
+        == DungeonEventKind::transition_requested);
+    ARPG_REQUIRE(committed.values[1].kind
+        == DungeonEventKind::transition_committed);
+    ARPG_REQUIRE(committed.values[2].kind
+        == DungeonEventKind::room_destroyed);
 
     session.tick(outward(ExitDirection::up));
-    drain_dungeon(session);
     if (session.snapshot().phase == RoomPhase::committing) {
         ARPG_REQUIRE(session.pending_save_view() != nullptr);
         ARPG_REQUIRE(session.pending_save_view()->kind
@@ -290,6 +297,10 @@ arpg::test::Failure transition_and_combat_start_are_separate_ticks() noexcept {
     ARPG_REQUIRE(locked.combat->player.position.x == 0.0F);
     ARPG_REQUIRE(locked.combat->player.position.y
         == arpg::combat::room_bounds::max_y - 0.75F);
+    const ExitEvents generated = drain_dungeon(session);
+    ARPG_REQUIRE(generated.count == 1U);
+    ARPG_REQUIRE(generated.values[0].kind
+        == DungeonEventKind::population_generated);
 
     session.tick(outward(ExitDirection::up));
     const ExitEvents events = drain_dungeon(session);

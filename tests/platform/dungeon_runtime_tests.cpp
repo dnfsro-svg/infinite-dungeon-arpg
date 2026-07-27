@@ -392,7 +392,8 @@ bool clear_and_await(dungeon::DungeonSession& session) noexcept {
             continue;
         }
         if (snapshot.phase == dungeon::RoomPhase::combat) {
-            arpg::test::force_defeat_current_wave(session);
+            arpg::test::force_complete_current_room_without_visual_drops(
+                session);
         }
         session.tick({});
         drain(session);

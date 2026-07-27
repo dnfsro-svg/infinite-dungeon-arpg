@@ -4,6 +4,8 @@
 #include "dungeon/death_checkpoint.hpp"
 #include "dungeon/dungeon_progression.hpp"
 #include "dungeon/room_combat_template.hpp"
+#include "dungeon/room_environment.hpp"
+#include "dungeon/room_monster_plan_builder.hpp"
 #include "dungeon/room_navigation.hpp"
 #include "abyss/abyss_rewards.hpp"
 #include "abyss/abyss_rules.hpp"
@@ -26,7 +28,6 @@
 namespace arpg::dungeon {
 namespace {
 
-constexpr std::uint16_t kWaveDelayTicks = 45U;
 constexpr std::uint64_t kPlayerEvasionSeedDomain = 0x45564153494F4E31ULL;
 constexpr std::uint64_t kDropChanceDomain = 0x44524F505F43484EULL;
 constexpr std::uint64_t kDropSlotDomain = 0x44524F505F534C54ULL;
@@ -322,29 +323,16 @@ void DungeonSession::tick(
         construct_current_room();
     } else if (phase_ == RoomPhase::cleared) {
         phase_ = RoomPhase::awaiting_exit;
-    } else if (combat_.has_value()) {
-        if (phase_ == RoomPhase::wave_delay) {
-            if (wave_delay_ticks_ != 0U) {
-                --wave_delay_ticks_;
-            }
-            if (wave_delay_ticks_ == 0U) {
-                start_next_wave();
-            }
-        } else if (phase_ == RoomPhase::combat
-                || phase_ == RoomPhase::awaiting_exit) {
-            combat_->tick(movement);
-            relay_combat_events();
+    } else if (combat_.has_value()
+            && (phase_ == RoomPhase::combat
+                || phase_ == RoomPhase::awaiting_exit)) {
+        combat_->tick(movement);
+        relay_combat_events();
 
-            handle_player_defeat();
+        handle_player_defeat();
 
-            if (phase_ == RoomPhase::combat && remaining_targets() == 0U) {
-                if (wave_index_ + 1U < encounter_plan_.wave_count) {
-                    phase_ = RoomPhase::wave_delay;
-                    wave_delay_ticks_ = kWaveDelayTicks;
-                } else {
-                    prepare_room_clear();
-                }
-            }
+        if (phase_ == RoomPhase::combat && remaining_targets() == 0U) {
+            prepare_room_clear();
         }
 
     }
@@ -582,6 +570,9 @@ bool DungeonSession::validate_pending_death_state() const noexcept {
 void DungeonSession::clear_transient_room_state() noexcept {
     retry_health_potion_abyss_clear_before_combat_ = false;
     combat_.reset();
+    room_environment_.reset();
+    clear_staged_room_population();
+    room_progress_ = {};
     ground_items_ = {};
     rolled_drop_bits_ = {};
     ground_materials_ = {};
@@ -654,6 +645,9 @@ void DungeonSession::construct_cleared_abyss_room() noexcept {
         return;
     }
     combat_.emplace(*navigation_config);
+    room_environment_.reset();
+    clear_staged_room_population();
+    room_progress_ = {};
     encounter_plan_ = {};
     wave_index_ = 0U;
     wave_delay_ticks_ = 0U;
@@ -818,16 +812,6 @@ void DungeonSession::attempt_abyss_reward_materialization() noexcept {
 }
 
 void DungeonSession::construct_normal_room() noexcept {
-    const EncounterPlanResult plan = build_encounter_plan(
-        stable_state_.current_room.seed,
-        stable_state_.current_room.depth,
-        stable_state_.current_room.ecology,
-        rules_.encounter);
-    if (plan.fault != DungeonFault::none || plan.plan.wave_count == 0U) {
-        enter_fault(plan.fault == DungeonFault::none
-            ? DungeonFault::invalid_rules : plan.fault);
-        return;
-    }
     const auto player_build = build_for(stable_state_);
     if (player_build.status != PlayerBuildStatus::valid) {
         enter_fault(DungeonFault::invalid_item_state);
@@ -835,10 +819,11 @@ void DungeonSession::construct_normal_room() noexcept {
     }
     auto evasion_stream = core::DeterministicRng::derive_stream(
         stable_state_.current_room.seed, kPlayerEvasionSeedDomain);
+    const combat::EncounterWave empty_wave{};
     const auto config = make_combat_encounter_config(
         stable_state_.current_room.entry,
         rules_.rules_version,
-        plan.plan.waves[0],
+        empty_wave,
         true,
         abyss::combat_config_for(abyss::AbyssRuleId::none),
         player_build.build,
@@ -848,11 +833,102 @@ void DungeonSession::construct_normal_room() noexcept {
         enter_fault(DungeonFault::invalid_rules);
         return;
     }
-    encounter_plan_ = plan.plan;
+    if (!stage_current_room_population(*config)
+            || !activate_staged_room_population()) {
+        return;
+    }
+    phase_ = RoomPhase::locked;
+}
+
+bool DungeonSession::stage_current_room_population(
+    combat::CombatEncounterConfig config) noexcept {
+    clear_staged_room_population();
+    auto monster_field = std::unique_ptr<combat::RoomMonsterField>{
+        new (std::nothrow) combat::RoomMonsterField{}};
+    auto environment =
+        std::unique_ptr<combat::RoomEnvironmentBlueprint>{
+            new (std::nothrow) combat::RoomEnvironmentBlueprint{}};
+    if (monster_field == nullptr || environment == nullptr) {
+        enter_fault(DungeonFault::population_capacity);
+        return false;
+    }
+
+    const RoomMonsterPlanBuildResult population = build_room_monster_plan(
+        stable_state_.current_room, rules_, kRoomMonsterGeneratorVersion,
+        monster_field->plan_storage_for_construction());
+    if (population.fault != DungeonFault::none) {
+        enter_fault(population.fault);
+        return false;
+    }
+    if (monster_field->seal_plan(population)
+            != combat::RoomMonsterFieldFault::none) {
+        enter_fault(DungeonFault::invalid_monster_plan);
+        return false;
+    }
+
+    const RoomEnvironmentBuildResult environment_result =
+        build_room_environment(
+            stable_state_.current_room, rules_,
+            kRoomEnvironmentGeneratorVersion, monster_field->plan(),
+            *environment);
+    if (environment_result.fault != DungeonFault::none) {
+        enter_fault(environment_result.fault);
+        return false;
+    }
+
+    staged_room_progress_ = {};
+    staged_room_progress_.initial_monster_count =
+        monster_field->total_count();
+    staged_room_combat_ = config;
+    staged_room_monster_field_ = std::move(monster_field);
+    staged_room_environment_ = std::move(environment);
+    return true;
+}
+
+bool DungeonSession::activate_staged_room_population() noexcept {
+    if (!staged_room_combat_.has_value()
+            || staged_room_monster_field_ == nullptr
+            || staged_room_environment_ == nullptr
+            || staged_room_progress_.initial_monster_count == 0U) {
+        clear_staged_room_population();
+        enter_fault(DungeonFault::invalid_monster_plan);
+        return false;
+    }
+
+    combat_.reset();
+    room_environment_.reset();
+    room_environment_ = std::move(staged_room_environment_);
+    combat_.emplace(*staged_room_combat_,
+        std::move(staged_room_monster_field_),
+        combat::room_obstacle_plan_view(*room_environment_));
+    staged_room_combat_.reset();
+    if (combat_->fault() != combat::CombatFault::none) {
+        const DungeonFault fault = combat_->fault()
+                == combat::CombatFault::invalid_obstacle_plan
+            ? DungeonFault::environment_navigation
+            : DungeonFault::invalid_monster_plan;
+        combat_.reset();
+        room_environment_.reset();
+        staged_room_progress_ = {};
+        enter_fault(fault);
+        return false;
+    }
+
+    room_progress_ = staged_room_progress_;
+    staged_room_progress_ = {};
+    encounter_plan_ = {};
+    encounter_plan_.wave_count = 1U;
     wave_index_ = 0U;
     wave_delay_ticks_ = 0U;
-    combat_.emplace(*config);
-    phase_ = RoomPhase::locked;
+    if (!emit(DungeonEventKind::population_generated)) return false;
+    return true;
+}
+
+void DungeonSession::clear_staged_room_population() noexcept {
+    staged_room_combat_.reset();
+    staged_room_monster_field_.reset();
+    staged_room_environment_.reset();
+    staged_room_progress_ = {};
 }
 
 void DungeonSession::reset_to_normal_room(bool clear_queues) noexcept {
@@ -864,6 +940,9 @@ void DungeonSession::reset_to_normal_room(bool clear_queues) noexcept {
         }
     }
     combat_.reset();
+    room_environment_.reset();
+    clear_staged_room_population();
+    room_progress_ = {};
     pending_save_.reset();
     pending_item_build_.reset();
     pending_abyss_combat_.reset();
@@ -895,15 +974,6 @@ bool DungeonSession::prepare_abyss_start() noexcept {
         return false;
     }
 
-    EncounterPlanResult built = build_abyss_encounter_plan(
-        stable_state_.current_room.seed,
-        stable_state_.current_room.depth,
-        stable_state_.current_room.ecology,
-        rules_.encounter);
-    if (built.fault != DungeonFault::none || built.plan.wave_count == 0U) {
-        enter_fault(DungeonFault::abyss_generation_failed);
-        return false;
-    }
     const std::uint8_t base_item_level = static_cast<std::uint8_t>(
         std::min<std::uint64_t>(stable_state_.current_room.depth, 100U));
     const abyss::AbyssRewardProfile reward = abyss::reward_profile_for(
@@ -920,10 +990,11 @@ bool DungeonSession::prepare_abyss_start() noexcept {
     }
     auto evasion_stream = core::DeterministicRng::derive_stream(
         stable_state_.current_room.seed, kPlayerEvasionSeedDomain);
+    const combat::EncounterWave empty_wave{};
     const auto combat_config = make_combat_encounter_config(
         stable_state_.current_room.entry,
         rules_.rules_version,
-        built.plan.waves[0],
+        empty_wave,
         true,
         abyss::combat_config_for(selection->rule),
         player_build.build,
@@ -943,9 +1014,7 @@ bool DungeonSession::prepare_abyss_start() noexcept {
         DungeonRunState next = stable_state_;
         ++next.commit_generation;
         next.abyss.lifecycle = abyss::AbyssLifecycle::started;
-        encounter_plan_ = built.plan;
-        wave_index_ = 0U;
-        wave_delay_ticks_ = 0U;
+        if (!stage_current_room_population(*combat_config)) return false;
         pending_abyss_combat_ = *combat_config;
         pending_save_ = PendingSave{
             PendingSaveKind::abyss_start,
@@ -957,6 +1026,7 @@ bool DungeonSession::prepare_abyss_start() noexcept {
         };
     } catch (...) {
         pending_abyss_combat_.reset();
+        clear_staged_room_population();
         enter_fault(DungeonFault::abyss_generation_failed);
         return false;
     }
@@ -1055,39 +1125,69 @@ DungeonSession::preview_equipment_build(
         : std::nullopt;
 }
 
-void DungeonSession::start_next_wave() noexcept {
-    if (!combat_.has_value() || wave_index_ + 1U >= encounter_plan_.wave_count) {
-        enter_fault(DungeonFault::invalid_rules);
-        return;
-    }
-    const std::uint8_t next_wave = static_cast<std::uint8_t>(wave_index_ + 1U);
-    if (!combat_->load_wave(encounter_plan_.waves[next_wave], false)) {
-        enter_fault(DungeonFault::invalid_rules);
-        return;
-    }
-    wave_index_ = next_wave;
-    phase_ = RoomPhase::combat;
-}
-
-void DungeonSession::relay_combat_events() noexcept {
+void DungeonSession::relay_combat_defeats() noexcept {
     if (!combat_.has_value()) {
         return;
     }
+    const combat::CombatFault combat_fault = combat_->fault();
+    if (combat_fault == combat::CombatFault::defeat_ledger_overflow) {
+        enter_fault(DungeonFault::defeat_ledger_overflow);
+        return;
+    }
+    if (combat_fault != combat::CombatFault::none) {
+        enter_fault(combat_fault == combat::CombatFault::invalid_obstacle_plan
+            ? DungeonFault::environment_navigation
+            : DungeonFault::invalid_monster_plan);
+        return;
+    }
+
+    while (const auto defeat = combat_->try_pop_defeat_record()) {
+        const std::uint32_t ordinal = defeat->monster_ordinal;
+        if (ordinal >= room_progress_.initial_monster_count
+                || ordinal >= limits::kRoomMonsterCapacity) {
+            enter_fault(DungeonFault::invalid_monster_plan);
+            return;
+        }
+        const std::size_t word = ordinal / 64U;
+        const std::uint64_t mask = std::uint64_t{1U} << (ordinal % 64U);
+        if ((room_progress_.defeated_monster_bits[word] & mask) != 0U) {
+            enter_fault(DungeonFault::invalid_monster_plan);
+            return;
+        }
+        room_progress_.defeated_monster_bits[word] |= mask;
+        ++room_progress_.defeated_monster_count;
+        if (defeat->reward_eligible) {
+            const std::size_t monster_index = static_cast<std::size_t>(
+                defeat->monster_id);
+            if (monster_index
+                    < progression_rules_.monster_experience.size()) {
+                saturating_add(pending_room_experience_,
+                    affix_experience(
+                        progression_rules_.monster_experience[monster_index],
+                        defeat->affix_score));
+            }
+        }
+    }
+    const combat::RoomMonsterField* field = combat_->room_monster_field();
+    if (field == nullptr
+            && room_progress_.initial_monster_count == 0U) return;
+    if (field == nullptr
+            || field->defeated_count()
+                != room_progress_.defeated_monster_count) {
+        enter_fault(DungeonFault::invalid_monster_plan);
+    }
+}
+
+void DungeonSession::relay_combat_events() noexcept {
+    if (!combat_.has_value()) return;
+    relay_combat_defeats();
+    if (phase_ == RoomPhase::faulted) return;
     while (auto event = combat_->try_pop_event()) {
         if (event->kind == combat::CombatEventKind::defeated
                 && event->reward_eligible) {
             roll_ground_materials(*event);
             if (claim_defeat_reward(*event)) {
                 roll_ground_drop(*event);
-                const std::size_t monster_index = static_cast<std::size_t>(
-                    event->monster_id);
-                if (monster_index
-                        < progression_rules_.monster_experience.size()) {
-                    saturating_add(pending_room_experience_,
-                        affix_experience(
-                            progression_rules_.monster_experience[monster_index],
-                            event->affix_score));
-                }
             }
         }
         const bool relayed = combat_events_.try_push(*event);
@@ -1828,6 +1928,8 @@ void DungeonSession::enter_fault(DungeonFault fault) noexcept {
     clear_abyss_exit_confirmation();
     pending_item_build_.reset();
     pending_abyss_combat_.reset();
+    clear_staged_room_population();
+    if (!combat_.has_value()) room_environment_.reset();
 
     const DungeonEvent event{
         DungeonEventKind::faulted,
@@ -1895,14 +1997,12 @@ bool DungeonSession::emit(
     return emitted;
 }
 
-std::uint8_t DungeonSession::remaining_targets() const noexcept {
-    if (!combat_.has_value()) {
-        return 0U;
-    }
-    const std::size_t remaining = combat_->living_monster_count();
-    constexpr std::size_t maximum =
-        (std::numeric_limits<std::uint8_t>::max)();
-    return static_cast<std::uint8_t>(remaining > maximum ? maximum : remaining);
+std::uint32_t DungeonSession::remaining_targets() const noexcept {
+    return room_progress_.defeated_monster_count
+            <= room_progress_.initial_monster_count
+        ? room_progress_.initial_monster_count
+            - room_progress_.defeated_monster_count
+        : 0U;
 }
 
 }  // namespace arpg::dungeon

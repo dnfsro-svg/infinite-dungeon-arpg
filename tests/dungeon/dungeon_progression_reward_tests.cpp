@@ -30,7 +30,7 @@ arpg::test::Failure reset_discards_unsettled_room_experience() noexcept {
     DungeonSession session;
     session.tick({});
     arpg::test::EventSummary summary{};
-    arpg::test::force_defeat_current_wave(session);
+    ARPG_REQUIRE(arpg::test::defeat_next_live_monster(session));
     session.tick({});
     arpg::test::drain_all_events(session, summary);
     const DungeonSnapshot before_reset = session.snapshot();

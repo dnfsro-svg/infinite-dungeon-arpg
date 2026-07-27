@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <array>
+#include <memory>
 #include <optional>
 #include <utility>
 
@@ -178,10 +179,14 @@ private:
     void rebuild_committed_abyss_rewards() noexcept;
     void attempt_abyss_reward_materialization() noexcept;
     void construct_normal_room() noexcept;
+    [[nodiscard]] bool stage_current_room_population(
+        combat::CombatEncounterConfig config) noexcept;
+    [[nodiscard]] bool activate_staged_room_population() noexcept;
+    void clear_staged_room_population() noexcept;
     void reset_to_normal_room(bool clear_queues) noexcept;
     [[nodiscard]] bool prepare_abyss_start() noexcept;
     [[nodiscard]] RequestResult prepare_abyss_failure() noexcept;
-    void start_next_wave() noexcept;
+    void relay_combat_defeats() noexcept;
     void relay_combat_events() noexcept;
     void handle_player_defeat() noexcept;
     [[nodiscard]] bool prepare_death_retreat() noexcept;
@@ -270,7 +275,7 @@ private:
         const DungeonRunState* destination = nullptr,
         TransitionKind transition = TransitionKind::none,
         ExitDirection direction = ExitDirection::none) noexcept;
-    [[nodiscard]] std::uint8_t remaining_targets() const noexcept;
+    [[nodiscard]] std::uint32_t remaining_targets() const noexcept;
 
     DungeonRules rules_{};
     DungeonRunState stable_state_{};
@@ -278,8 +283,14 @@ private:
     mutable DungeonRunState death_validation_scratch_{};
     std::optional<combat::PlayerCombatBuild> pending_item_build_{};
     std::optional<combat::CombatEncounterConfig> pending_abyss_combat_{};
+    std::optional<combat::CombatEncounterConfig> staged_room_combat_{};
+    std::unique_ptr<combat::RoomMonsterField> staged_room_monster_field_{};
+    std::unique_ptr<combat::RoomEnvironmentBlueprint>
+        staged_room_environment_{};
+    RoomProgressState staged_room_progress_{};
     std::optional<PendingAbyssReward> pending_abyss_reward_{};
     AbyssExitConfirmation abyss_exit_confirmation_{};
+    std::unique_ptr<combat::RoomEnvironmentBlueprint> room_environment_{};
     std::optional<combat::CombatWorld> combat_{};
     std::array<GroundItem, kGroundDropCapacity> ground_items_{};
     std::array<std::uint64_t, 3> rolled_drop_bits_{};
@@ -295,6 +306,7 @@ private:
     RoomEncounterPlan encounter_plan_{};
     std::uint8_t wave_index_{};
     std::uint16_t wave_delay_ticks_{};
+    RoomProgressState room_progress_{};
     core::BoundedQueue<DungeonEvent, kDungeonEventCapacity> events_{};
     core::BoundedQueue<combat::CombatEvent, kCombatRelayCapacity>
         combat_events_{};

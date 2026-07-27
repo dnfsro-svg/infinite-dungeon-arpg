@@ -1,6 +1,7 @@
 #pragma once
 
 #include "combat/combat_types.hpp"
+#include "core/gameplay_limits.hpp"
 #include "dungeon/dungeon_checkpoint.hpp"
 #include "dungeon/dungeon_rules.hpp"
 #include "dungeon/health_potion_loot.hpp"
@@ -47,6 +48,7 @@ enum class RequestResult : std::uint8_t {
 
 enum class DungeonEventKind : std::uint8_t {
     room_entered,
+    population_generated,
     combat_started,
     room_cleared,
     exits_opened,
@@ -104,6 +106,16 @@ struct DungeonEncounterDiagnostics final {
     std::uint8_t current_wave_spawn_count{};
     bool plan_valid{};
 };
+
+struct RoomProgressState final {
+    std::uint32_t initial_monster_count{};
+    std::uint32_t defeated_monster_count{};
+    std::array<std::uint64_t, limits::kRoomEquipmentClaimWords>
+        defeated_monster_bits{};
+};
+
+static_assert(limits::kRoomEquipmentClaimWords * 64U
+    >= limits::kRoomMonsterCapacity);
 
 struct DungeonSessionConfig final {
     std::uint64_t root_seed{0x6D30305F5241594CULL};
@@ -198,7 +210,13 @@ struct DungeonSnapshot final {
     std::uint8_t wave_index{};
     std::uint8_t wave_count{};
     std::uint16_t wave_delay_ticks{};
-    std::uint8_t remaining_targets{};
+    std::uint32_t initial_monster_count{};
+    std::uint32_t defeated_monster_count{};
+    std::uint32_t remaining_targets{};
+    std::uint32_t monster_generator_version{};
+    std::uint64_t monster_blueprint_hash{};
+    std::uint32_t environment_generator_version{};
+    std::uint64_t environment_blueprint_hash{};
     EntrySide entry_side{EntrySide::initial};
     ExitDirection last_exit{ExitDirection::none};
     TransitionKind last_transition{TransitionKind::none};

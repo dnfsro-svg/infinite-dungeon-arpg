@@ -146,6 +146,20 @@ bool relay_drop(
     return relayed;
 }
 
+bool relay_visual_drop(
+    DungeonSession& session,
+    std::uint64_t seed,
+    std::uint16_t spawn_ordinal,
+    std::uint16_t affix_score,
+    arpg::combat::Vec3 position) noexcept {
+    arpg::test::set_current_room_seed(session, seed);
+    const bool relayed = arpg::test::relay_visual_defeated(
+        session, spawn_ordinal, position, true,
+        arpg::combat::MonsterId::fire_bomber, affix_score, false);
+    static_cast<void>(session.try_pop_combat_event());
+    return relayed;
+}
+
 const arpg::dungeon::GroundMaterialSnapshot* find_ground_material_snapshot(
     const arpg::dungeon::DungeonSnapshot& snapshot,
     std::uint16_t ordinal) noexcept {
@@ -347,7 +361,7 @@ ground_potion_pool_accepts_spawn_zero_and_191_without_overwrite() noexcept {
         full.diagnostics.health_potion_ground_saturation_count;
 
     arpg::test::clear_rolled_material_claims(session);
-    ARPG_REQUIRE(relay_drop(session, initial_seed, 0U, kScore,
+    ARPG_REQUIRE(relay_visual_drop(session, initial_seed, 0U, kScore,
         {-999.0F, -888.0F, 77.0F}));
     const auto after = session.snapshot();
     ARPG_REQUIRE(after.ground_health_potion_count

@@ -533,7 +533,12 @@ bool DungeonSession::pending_item_cache_consistent() const noexcept {
 bool DungeonSession::pending_abyss_cache_consistent() const noexcept {
     const bool start_pending = pending_save_.has_value()
         && pending_save_->kind == PendingSaveKind::abyss_start;
-    return start_pending == pending_abyss_combat_.has_value();
+    return start_pending == pending_abyss_combat_.has_value()
+        && start_pending == staged_room_combat_.has_value()
+        && start_pending == (staged_room_monster_field_ != nullptr)
+        && start_pending == (staged_room_environment_ != nullptr)
+        && (start_pending
+            || staged_room_progress_.initial_monster_count == 0U);
 }
 
 bool DungeonSession::pending_abyss_reward_cache_consistent() const noexcept {
@@ -1853,7 +1858,7 @@ void DungeonSession::commit_pending_save(
     pending_abyss_reward_.reset();
     if (!reinforcement_commit) reinforcement_receipt_ = {};
     if (start_commit) {
-        combat_.emplace(*pending_abyss_combat_);
+        if (!activate_staged_room_population()) return;
         pending_abyss_combat_.reset();
         room_progression_ = stable_state_.progression;
         phase_ = RoomPhase::locked;
@@ -1915,6 +1920,9 @@ void DungeonSession::commit_pending_save(
         rolled_material_bits_ = {};
         ground_health_potions_ = {};
         combat_.reset();
+        room_environment_.reset();
+        clear_staged_room_population();
+        room_progress_ = {};
         phase_ = RoomPhase::transitioning;
         emit_committed(previous_room, stable_state_);
         return;

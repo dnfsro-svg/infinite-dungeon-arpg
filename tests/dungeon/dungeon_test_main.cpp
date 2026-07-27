@@ -40,6 +40,36 @@ arpg::test::TestSuite dungeon_affix_stress_suite() noexcept;
 
 namespace {
 
+bool task4_population_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_TASK4_POPULATION_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
+bool task4_compatibility_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_TASK4_COMPATIBILITY_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
+bool task4_migration_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_TASK4_MIGRATION_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
 bool stage9_affix_stress_only() noexcept {
     char* value = nullptr;
     std::size_t length = 0U;
@@ -184,6 +214,35 @@ int main() {
         dungeon_affix_stress_suite(),
     };
 
+    if (task4_population_only()) {
+        const arpg::test::TestSuite population_only[] = {
+            dungeon_wave_suite(),
+        };
+        return arpg::test::run_suites(
+            population_only, 12, "task 4 room population lifecycle");
+    }
+
+    if (task4_compatibility_only()) {
+        const arpg::test::TestSuite compatibility_only[] = {
+            dungeon_lifecycle_suite(),
+            dungeon_navigation_suite(),
+            dungeon_stress_suite(),
+        };
+        return arpg::test::run_suites(
+            compatibility_only, 42, "task 4 compatibility regression");
+    }
+
+    if (task4_migration_only()) {
+        const arpg::test::TestSuite migration_only[] = {
+            dungeon_loot_drop_suite(),
+            dungeon_transaction_suite(),
+            dungeon_progression_reward_suite(),
+            dungeon_affix_stress_suite(),
+        };
+        return arpg::test::run_suites(
+            migration_only, 41, "task 4 legacy fixture migration");
+    }
+
     if (stage8_equipment_stress_only()) {
         const arpg::test::TestSuite stress_only[] = {
             dungeon_equipment_stress_suite(),
@@ -265,6 +324,6 @@ int main() {
             "stage 17 task 3 skill loadout transactions");
     }
 
-    return arpg::test::run_suites(suites, 328,
+    return arpg::test::run_suites(suites, 330,
         "stage 18 dungeon queries");
 }

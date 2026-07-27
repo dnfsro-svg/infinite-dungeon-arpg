@@ -9,6 +9,9 @@
 
 namespace arpg::dungeon {
 
+inline constexpr std::uint32_t kRoomMonsterGeneratorVersion = 1U;
+inline constexpr std::uint32_t kRoomEnvironmentGeneratorVersion = 1U;
+
 struct RoomEnvironmentBuildResult final {
     DungeonFault fault{DungeonFault::none};
 };

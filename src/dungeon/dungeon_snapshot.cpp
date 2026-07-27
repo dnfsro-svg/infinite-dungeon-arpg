@@ -84,10 +84,24 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
     result.abyss_doors = visible_death == nullptr
         ? preview_abyss_doors(stable_state_.current_room)
         : std::array<bool, 4>{};
-    result.wave_index = wave_index_;
-    result.wave_count = encounter_plan_.wave_count;
-    result.wave_delay_ticks = wave_delay_ticks_;
+    result.wave_index = 0U;
+    result.wave_count = room_progress_.initial_monster_count == 0U ? 0U : 1U;
+    result.wave_delay_ticks = 0U;
+    result.initial_monster_count = room_progress_.initial_monster_count;
+    result.defeated_monster_count = room_progress_.defeated_monster_count;
     result.remaining_targets = remaining_targets();
+    const combat::RoomMonsterField* monster_field = combat_.has_value()
+        ? combat_->room_monster_field() : nullptr;
+    if (monster_field != nullptr) {
+        result.monster_generator_version =
+            monster_field->plan().generator_version;
+        result.monster_blueprint_hash = monster_field->plan().blueprint_hash;
+    }
+    if (room_environment_ != nullptr) {
+        result.environment_generator_version =
+            room_environment_->generator_version;
+        result.environment_blueprint_hash = room_environment_->blueprint_hash;
+    }
     result.entry_side = stable_state_.current_room.entry;
     result.last_exit = last_exit_;
     result.last_transition = stable_state_.last_transition;
@@ -175,20 +189,12 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
     if (combat_.has_value()) {
         result.combat.emplace(combat_->snapshot());
     }
-    result.encounter.total_budget = encounter_plan_.total_budget;
-    if (stable_state_.current_room.is_abyss) {
-        const auto legality = abyss_encounter_legality_config(rules_.encounter);
-        result.encounter.plan_valid = legality.has_value()
-            && encounter_plan_legal(encounter_plan_, *legality);
-    } else {
-        result.encounter.plan_valid = encounter_plan_legal(
-            encounter_plan_, rules_.encounter);
-    }
-    if (wave_index_ < encounter_plan_.wave_count) {
-        const auto& wave = encounter_plan_.waves[wave_index_];
-        result.encounter.current_wave_budget = wave.spent_budget;
-        result.encounter.current_wave_spawn_count = wave.spawn_count;
-    }
+    result.encounter.plan_valid = monster_field != nullptr
+        && room_environment_ != nullptr
+        && result.monster_generator_version != 0U
+        && result.monster_blueprint_hash != 0U
+        && result.environment_generator_version != 0U
+        && result.environment_blueprint_hash != 0U;
     result.diagnostics = diagnostics_;
     result.progression = room_progression_;
     result.pending_room_experience = pending_room_experience_;

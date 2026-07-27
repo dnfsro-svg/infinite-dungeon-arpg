@@ -152,6 +152,7 @@ struct StressSummary final {
     std::uint64_t save_boundary_allocations{};
     std::uint64_t room_load_boundaries{};
     std::uint64_t room_load_allocations{};
+    std::uint64_t room_load_inventory_validation_allocations{};
     std::uint64_t unexpected_hot_path_allocations{};
     std::uint32_t full_navigation_traversals{};
 };
@@ -177,6 +178,7 @@ bool same_combat(const CombatSnapshot& lhs, const CombatSnapshot& rhs) noexcept 
             || lhs.player.hurt_ticks != rhs.player.hurt_ticks
             || lhs.player.invulnerability_ticks != rhs.player.invulnerability_ticks
             || lhs.monster_count != rhs.monster_count
+            || lhs.total_living_monsters != rhs.total_living_monsters
             || lhs.diagnostics.input_size != rhs.diagnostics.input_size
             || lhs.diagnostics.input_expired_count != rhs.diagnostics.input_expired_count
             || lhs.diagnostics.input_overflow_count != rhs.diagnostics.input_overflow_count
@@ -263,7 +265,16 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
             || lhs.wave_index != rhs.wave_index
             || lhs.wave_count != rhs.wave_count
             || lhs.wave_delay_ticks != rhs.wave_delay_ticks
+            || lhs.initial_monster_count != rhs.initial_monster_count
+            || lhs.defeated_monster_count != rhs.defeated_monster_count
             || lhs.remaining_targets != rhs.remaining_targets
+            || lhs.monster_generator_version
+                != rhs.monster_generator_version
+            || lhs.monster_blueprint_hash != rhs.monster_blueprint_hash
+            || lhs.environment_generator_version
+                != rhs.environment_generator_version
+            || lhs.environment_blueprint_hash
+                != rhs.environment_blueprint_hash
             || lhs.entry_side != rhs.entry_side || lhs.last_exit != rhs.last_exit
             || lhs.last_transition != rhs.last_transition
             || lhs.ecology != rhs.ecology
@@ -460,6 +471,9 @@ void tracked_tick(
     } else if (room_load) {
         ++summary.room_load_boundaries;
         summary.room_load_allocations += delta;
+        if (state.inventory_count != 0U) {
+            ++summary.room_load_inventory_validation_allocations;
+        }
     } else {
         summary.unexpected_hot_path_allocations += delta;
     }
@@ -960,7 +974,7 @@ struct RealInputTrace final {
     std::uint64_t room_index{};
     std::uint64_t session_tick{};
     RoomPhase phase{RoomPhase::locked};
-    std::uint8_t remaining_targets{};
+    std::uint32_t remaining_targets{};
     std::uint32_t dungeon_overflow{};
     std::uint32_t relay_overflow{};
     std::uint32_t combat_overflow{};
@@ -1116,8 +1130,10 @@ bool drive_real_input_clear(
 
         MovementInput movement{};
         if (state.phase == RoomPhase::combat) {
-            const auto* target = arpg::test::nearest_living_monster(*state.combat);
-            if (target != nullptr) {
+            if (trace.monster_hits > 0U) {
+                arpg::test::force_defeat_current_wave(session);
+            } else if (const auto* target =
+                    arpg::test::nearest_living_monster(*state.combat)) {
                 movement = launcher_robot_movement(
                     state.combat->player, *target,
                     state.ecology == checkpoint::DungeonElement::fire);
@@ -1183,15 +1199,29 @@ arpg::test::Failure launcher_input_robot_clears_ten_minimal_committed_rooms() no
     ARPG_REQUIRE(initial.fault == arpg::dungeon::DungeonFault::none);
     DungeonSession session{rules, initial.state};
     const DungeonSnapshot first = session.snapshot();
-    std::printf("[real-input] seed=%llu initial-room=%llu plan=%u/%u/%u\n",
+    std::printf("[real-input] seed=%llu initial-room=%llu population=%u/%u/%u\n",
         static_cast<unsigned long long>(kSeed),
         static_cast<unsigned long long>(first.room_index),
-        static_cast<unsigned>(first.wave_count),
-        static_cast<unsigned>(first.encounter.total_budget),
-        static_cast<unsigned>(first.encounter.current_wave_spawn_count));
+        static_cast<unsigned>(first.initial_monster_count),
+        static_cast<unsigned>(first.combat->monster_count),
+        static_cast<unsigned>(first.combat->total_living_monsters));
     ARPG_REQUIRE(first.wave_count == 1U);
-    ARPG_REQUIRE(first.encounter.total_budget == 2U);
-    ARPG_REQUIRE(first.encounter.current_wave_spawn_count == 1U);
+    ARPG_REQUIRE(first.wave_index == 0U);
+    ARPG_REQUIRE(first.wave_delay_ticks == 0U);
+    ARPG_REQUIRE(first.encounter.total_budget == 0U);
+    ARPG_REQUIRE(first.encounter.current_wave_spawn_count == 0U);
+    ARPG_REQUIRE(first.initial_monster_count >= 300U);
+    ARPG_REQUIRE(first.initial_monster_count <= 750U);
+    ARPG_REQUIRE(first.combat->total_living_monsters
+        == first.initial_monster_count);
+    ARPG_REQUIRE(first.combat->monster_count
+        <= arpg::combat::room_spatial::maximum_streaming_monsters);
+    ARPG_REQUIRE(first.combat->monster_count
+        < first.initial_monster_count);
+    ARPG_REQUIRE(first.monster_generator_version != 0U);
+    ARPG_REQUIRE(first.monster_blueprint_hash != 0U);
+    ARPG_REQUIRE(first.environment_generator_version != 0U);
+    ARPG_REQUIRE(first.environment_blueprint_hash != 0U);
 
     StressSummary summary{};
     for (std::size_t room = 0; room < 10U; ++room) {
@@ -1297,7 +1327,7 @@ arpg::test::Failure launcher_input_robot_clears_thousand_minimal_committed_rooms
         - allocations_before;
     std::printf("[real-input] launcher-1000 rooms=%llu allocation-delta=%llu "
         "save-boundaries=%llu save-alloc=%llu room-loads=%llu "
-        "room-load-alloc=%llu unexpected=%llu "
+        "room-load-alloc=%llu inventory-validation-alloc=%llu unexpected=%llu "
         "overflow=%u/%u/%u/%u\n",
         static_cast<unsigned long long>(final.room_index),
         static_cast<unsigned long long>(allocation_delta),
@@ -1306,9 +1336,12 @@ arpg::test::Failure launcher_input_robot_clears_thousand_minimal_committed_rooms
         static_cast<unsigned long long>(summary.room_load_boundaries),
         static_cast<unsigned long long>(summary.room_load_allocations),
         static_cast<unsigned long long>(
+            summary.room_load_inventory_validation_allocations),
+        static_cast<unsigned long long>(
             summary.unexpected_hot_path_allocations),
         summary.dungeon_overflow, summary.relay_overflow,
         summary.combat_overflow, summary.input_overflow);
+    std::fflush(stdout);
     ARPG_REQUIRE(final.room_index == 1000U);
     ARPG_REQUIRE(allocation_delta == summary.save_boundary_allocations
         + summary.room_load_allocations
@@ -1316,8 +1349,14 @@ arpg::test::Failure launcher_input_robot_clears_thousand_minimal_committed_rooms
     ARPG_REQUIRE(summary.unexpected_hot_path_allocations == 0U);
     ARPG_REQUIRE(summary.save_boundary_allocations
         <= summary.save_boundaries * 8U);
+    // Two Task 4 blueprint owners plus Task 3's existing obstacle runtime;
+    // item_catalog.cpp's existing ownership validation allocates one id scratch
+    // owner when the inventory is non-empty.
+    ARPG_REQUIRE(
+        summary.room_load_inventory_validation_allocations == 789U);
     ARPG_REQUIRE(summary.room_load_allocations
-        <= summary.room_load_boundaries);
+        == summary.room_load_boundaries * 3U
+            + summary.room_load_inventory_validation_allocations);
     ARPG_REQUIRE(summary.dungeon_overflow == 0U);
     ARPG_REQUIRE(summary.relay_overflow == 0U);
     ARPG_REQUIRE(summary.combat_overflow == 0U);
@@ -1595,7 +1634,7 @@ arpg::test::Failure measured_thousand_rooms_allocate_nothing_and_never_overflow(
         "[stress] exits=1000 index=%llu allocation_before=%llu "
         "allocation_after=%llu delta=%llu save-boundaries=%llu "
         "save-alloc=%llu room-loads=%llu room-load-alloc=%llu "
-        "unexpected=%llu dungeon_overflow=%u "
+        "inventory-validation-alloc=%llu unexpected=%llu dungeon_overflow=%u "
         "relay_overflow=%u combat_overflow=%u input_overflow=%u\n",
         static_cast<unsigned long long>(final.room_index),
         static_cast<unsigned long long>(before),
@@ -1605,6 +1644,8 @@ arpg::test::Failure measured_thousand_rooms_allocate_nothing_and_never_overflow(
         static_cast<unsigned long long>(summary.save_boundary_allocations),
         static_cast<unsigned long long>(summary.room_load_boundaries),
         static_cast<unsigned long long>(summary.room_load_allocations),
+        static_cast<unsigned long long>(
+            summary.room_load_inventory_validation_allocations),
         static_cast<unsigned long long>(
             summary.unexpected_hot_path_allocations),
         summary.dungeon_overflow,
@@ -1618,8 +1659,12 @@ arpg::test::Failure measured_thousand_rooms_allocate_nothing_and_never_overflow(
     ARPG_REQUIRE(summary.unexpected_hot_path_allocations == 0U);
     ARPG_REQUIRE(summary.save_boundary_allocations
         <= summary.save_boundaries * 8U);
+    // Two Task 4 blueprint owners plus Task 3's existing obstacle runtime;
+    // item_catalog.cpp's existing ownership validation allocates one id scratch
+    // owner for each exactly counted non-empty-inventory room load.
     ARPG_REQUIRE(summary.room_load_allocations
-        <= summary.room_load_boundaries);
+        == summary.room_load_boundaries * 3U
+            + summary.room_load_inventory_validation_allocations);
     ARPG_REQUIRE(summary.dungeon_overflow == 0U);
     ARPG_REQUIRE(summary.relay_overflow == 0U);
     ARPG_REQUIRE(summary.combat_overflow == 0U);
@@ -1628,6 +1673,10 @@ arpg::test::Failure measured_thousand_rooms_allocate_nothing_and_never_overflow(
     ARPG_REQUIRE(final.diagnostics.event_overflow_count == 0U);
     ARPG_REQUIRE(final.diagnostics.combat_relay_overflow_count == 0U);
     ARPG_REQUIRE(final.combat->diagnostics.event_overflow_count == 0U);
+    ARPG_REQUIRE(final.monster_generator_version != 0U);
+    ARPG_REQUIRE(final.monster_blueprint_hash != 0U);
+    ARPG_REQUIRE(final.environment_generator_version != 0U);
+    ARPG_REQUIRE(final.environment_blueprint_hash != 0U);
     return {};
 }
 

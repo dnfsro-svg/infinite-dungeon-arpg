@@ -1,6 +1,7 @@
 #pragma once
 
 #include "combat/fire_room_obstacle.hpp"
+#include "combat/monster_affix_generation.hpp"
 #include "combat/room_bounds.hpp"
 #include "abyss/abyss_rules.hpp"
 #include "dungeon/dungeon_session.hpp"
@@ -10,6 +11,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 
 namespace arpg::test {
 
@@ -48,6 +50,67 @@ struct DungeonSessionTestAccess final {
     static const combat::CombatWorld* combat_world_address(
         const dungeon::DungeonSession& session) noexcept {
         return session.combat_.has_value() ? &*session.combat_ : nullptr;
+    }
+    static const combat::RoomMonsterPlan* room_monster_plan(
+        const dungeon::DungeonSession& session) noexcept {
+        if (!session.combat_.has_value()) return nullptr;
+        const combat::RoomMonsterField* const field =
+            session.combat_->room_monster_field();
+        return field != nullptr ? &field->plan() : nullptr;
+    }
+    static const combat::RoomEnvironmentBlueprint* room_environment_blueprint(
+        const dungeon::DungeonSession& session) noexcept {
+        return session.room_environment_.get();
+    }
+    static const combat::RoomMonsterField* staged_room_monster_field(
+        const dungeon::DungeonSession& session) noexcept {
+        return session.staged_room_monster_field_.get();
+    }
+    static const combat::RoomEnvironmentBlueprint*
+    staged_room_environment_blueprint(
+        const dungeon::DungeonSession& session) noexcept {
+        return session.staged_room_environment_.get();
+    }
+    static const dungeon::RoomProgressState& staged_room_progress(
+        const dungeon::DungeonSession& session) noexcept {
+        return session.staged_room_progress_;
+    }
+    static const dungeon::RoomProgressState& room_progress(
+        const dungeon::DungeonSession& session) noexcept {
+        return session.room_progress_;
+    }
+    static void configure_current_room_construction(
+        dungeon::DungeonSession& session,
+        dungeon::DungeonRunState state) noexcept {
+        session.clear_transient_room_state();
+        session.stable_state_ = std::move(state);
+        session.phase_ = dungeon::RoomPhase::locked;
+        session.diagnostics_ = {};
+        while (session.events_.try_pop().has_value()) {
+        }
+        while (session.combat_events_.try_pop().has_value()) {
+        }
+    }
+    static void construct_current_room(
+        dungeon::DungeonSession& session) noexcept {
+        session.construct_current_room();
+    }
+    static void discard_staged_room_population(
+        dungeon::DungeonSession& session) noexcept {
+        session.clear_staged_room_population();
+    }
+    static bool stage_pending_abyss_population(
+        dungeon::DungeonSession& session) noexcept {
+        return session.pending_save_.has_value()
+            && session.pending_save_->kind
+                == dungeon::PendingSaveKind::abyss_start
+            && session.pending_abyss_combat_.has_value()
+            && session.stage_current_room_population(
+                *session.pending_abyss_combat_);
+    }
+    static bool activate_staged_room_population(
+        dungeon::DungeonSession& session) noexcept {
+        return session.activate_staged_room_population();
     }
     static void set_current_room_hole(
         dungeon::DungeonSession& session, bool has_hole) noexcept {
@@ -123,6 +186,48 @@ struct DungeonSessionTestAccess final {
             return;
         }
         combat::CombatWorld& world = *session.combat_;
+        if (combat::RoomMonsterField* field = world.room_monster_field()) {
+            for (std::size_t row = 0U;
+                 row < combat::room_spatial::rows;
+                 row += combat::room_spatial::maximum_streaming_rows) {
+                const std::size_t row_count = (std::min)(
+                    combat::room_spatial::maximum_streaming_rows,
+                    combat::room_spatial::rows - row);
+                for (std::size_t column = 0U;
+                     column < combat::room_spatial::columns;
+                     column +=
+                         combat::room_spatial::maximum_streaming_columns) {
+                    const std::size_t column_count = (std::min)(
+                        combat::room_spatial::maximum_streaming_columns,
+                        combat::room_spatial::columns - column);
+                    if (!field->synchronize_active_region({
+                            static_cast<std::uint8_t>(column),
+                            static_cast<std::uint8_t>(column_count),
+                            static_cast<std::uint8_t>(row),
+                            static_cast<std::uint8_t>(row_count)})) {
+                        return;
+                    }
+                    for (std::size_t index = 0U;
+                         index < world.monsters_.slots_.size(); ++index) {
+                        combat::MonsterRuntime& monster =
+                            world.monsters_.slots_[index];
+                        if (!monster.active || monster.hp <= 0
+                                || monster.reaction
+                                    == combat::ReactionState::defeated) {
+                            continue;
+                        }
+                        monster.hp = 0;
+                        world.defeat_monster(
+                            index, combat::AttackId::j1, true);
+                    }
+                    session.relay_combat_events();
+                    while (session.combat_events_.try_pop().has_value()) {
+                    }
+                    if (session.phase_ == dungeon::RoomPhase::faulted) return;
+                }
+            }
+            return;
+        }
         for (std::size_t index = 0; index < world.monsters_.slots_.size(); ++index) {
             combat::MonsterRuntime& monster = world.monsters_.slots_[index];
             if (!monster.active || monster.hp <= 0) {
@@ -159,6 +264,42 @@ struct DungeonSessionTestAccess final {
         }
         return false;
     }
+    static bool append_defeat_record(
+        dungeon::DungeonSession& session,
+        combat::MonsterOrdinal ordinal) noexcept {
+        return session.combat_.has_value()
+            && session.combat_->defeat_ledger_.append({
+                ordinal, combat::MonsterId::fire_bomber, 0U, true});
+    }
+    static bool inject_defeat_ledger_overflow(
+        dungeon::DungeonSession& session) noexcept {
+        if (!session.combat_.has_value()) return false;
+        for (std::size_t ordinal = 0U;
+             ordinal < combat::kDefeatLedgerCapacity; ++ordinal) {
+            if (!session.combat_->defeat_ledger_.append({
+                    static_cast<combat::MonsterOrdinal>(ordinal),
+                    combat::MonsterId::fire_bomber, 0U, true})) {
+                return false;
+            }
+        }
+        const bool rejected = !session.combat_->defeat_ledger_.append({
+            static_cast<combat::MonsterOrdinal>(
+                combat::kDefeatLedgerCapacity),
+            combat::MonsterId::fire_bomber, 0U, true});
+        if (rejected) {
+            session.combat_->fault_ = combat::CombatFault::defeat_ledger_overflow;
+        }
+        return rejected;
+    }
+    static void relay_combat_lifecycle(
+        dungeon::DungeonSession& session) noexcept {
+        session.relay_combat_events();
+    }
+    static std::size_t defeat_ledger_size(
+        const dungeon::DungeonSession& session) noexcept {
+        return session.combat_.has_value()
+            ? session.combat_->defeat_ledger_.size() : 0U;
+    }
     static bool relay_defeated(
         dungeon::DungeonSession& session,
         std::uint8_t wave_index,
@@ -169,26 +310,70 @@ struct DungeonSessionTestAccess final {
         std::uint16_t spawn_ordinal = 0xFFFFU,
         std::uint16_t affix_score = 0U,
         bool commit_health_potion = true) noexcept {
-        if (!session.combat_.has_value() || wave_index >= 2U) {
+        if (!session.combat_.has_value()) {
             return false;
         }
-        session.encounter_plan_.wave_count = 2U;
-        session.encounter_plan_.waves[wave_index].spawn_count = 96U;
-        session.wave_index_ = wave_index;
+        const std::uint32_t global_ordinal = spawn_ordinal == 0xFFFFU
+            ? static_cast<std::uint32_t>(wave_index) * 96U
+                + target_ordinal
+            : spawn_ordinal;
+        combat::RoomMonsterField* const field =
+            session.combat_->room_monster_field();
+        if (field == nullptr
+                || global_ordinal >= session.room_progress_.initial_monster_count
+                || global_ordinal >= limits::kRoomMonsterCapacity) {
+            return false;
+        }
+        const auto ordinal = static_cast<combat::MonsterOrdinal>(
+            global_ordinal);
+        if (!field->mark_defeated(ordinal)
+                || !session.combat_->defeat_ledger_.append({
+                    ordinal, monster_id, affix_score, reward_eligible})) {
+            return false;
+        }
         combat::CombatEvent event{};
         event.kind = combat::CombatEventKind::defeated;
-        event.target_ordinal = target_ordinal;
+        event.target_ordinal = ordinal;
         event.position = position;
         event.monster_id = monster_id;
-        event.spawn_ordinal = spawn_ordinal == 0xFFFFU
-            ? static_cast<std::uint16_t>(
-                static_cast<std::uint16_t>(wave_index) * 96U + target_ordinal)
-            : spawn_ordinal;
+        event.spawn_ordinal = ordinal;
         event.affix_score = affix_score;
         event.reward_eligible = reward_eligible;
         if (!session.combat_->events_.try_push(event)) {
             return false;
         }
+        session.relay_combat_events();
+        return !commit_health_potion
+            || commit_fixture_health_potion_if_eligible(session);
+    }
+    static bool relay_visual_defeated(
+        dungeon::DungeonSession& session,
+        combat::MonsterOrdinal global_ordinal,
+        combat::Vec3 position,
+        bool reward_eligible = true,
+        combat::MonsterId monster_id = combat::MonsterId::fire_bomber,
+        std::uint16_t affix_score = 0U,
+        bool commit_health_potion = true) noexcept {
+        if (!session.combat_.has_value()
+                || global_ordinal >= session.room_progress_.initial_monster_count) {
+            return false;
+        }
+        const std::size_t word = global_ordinal / 64U;
+        const std::uint64_t mask = std::uint64_t{1U}
+            << (global_ordinal % 64U);
+        if ((session.room_progress_.defeated_monster_bits[word] & mask)
+                == 0U) {
+            return false;
+        }
+        combat::CombatEvent event{};
+        event.kind = combat::CombatEventKind::defeated;
+        event.target_ordinal = global_ordinal;
+        event.position = position;
+        event.monster_id = monster_id;
+        event.spawn_ordinal = global_ordinal;
+        event.affix_score = affix_score;
+        event.reward_eligible = reward_eligible;
+        if (!session.combat_->events_.try_push(event)) return false;
         session.relay_combat_events();
         return !commit_health_potion
             || commit_fixture_health_potion_if_eligible(session);
@@ -225,6 +410,8 @@ struct DungeonSessionTestAccess final {
     static void clear_combat_world(
         dungeon::DungeonSession& session) noexcept {
         session.combat_.reset();
+        session.room_environment_.reset();
+        session.room_progress_ = {};
     }
     static void clear_ground_item(
         dungeon::DungeonSession& session,
@@ -263,6 +450,9 @@ struct DungeonSessionTestAccess final {
     static void install_combat_world(
         dungeon::DungeonSession& session,
         const combat::CombatEncounterConfig& config) noexcept {
+        session.combat_.reset();
+        session.room_environment_.reset();
+        session.room_progress_ = {};
         session.combat_.emplace(config);
     }
     static void fill_ground_pool(
@@ -316,6 +506,10 @@ struct DungeonSessionTestAccess final {
         dungeon::DungeonSession& session) noexcept {
         session.ground_items_ = {};
     }
+    static void clear_all_ground_health_potions(
+        dungeon::DungeonSession& session) noexcept {
+        session.ground_health_potions_ = {};
+    }
     static void install_ground_material(
         dungeon::DungeonSession& session,
         std::uint16_t ordinal,
@@ -349,14 +543,82 @@ struct DungeonSessionTestAccess final {
     }
     static void quiesce_current_room_for_clear_retry(
         dungeon::DungeonSession& session) noexcept {
+        if (!session.combat_.has_value()) return;
+        combat::CombatWorld& world = *session.combat_;
+        if (combat::RoomMonsterField* const field =
+                world.room_monster_field()) {
+            if (world.defeat_ledger_.size() != 0U) {
+                session.relay_combat_events();
+                if (session.phase_ == dungeon::RoomPhase::faulted) return;
+            }
+            const std::uint32_t count = field->total_count();
+            for (std::uint32_t ordinal = 0U; ordinal < count; ++ordinal) {
+                const auto monster_ordinal =
+                    static_cast<combat::MonsterOrdinal>(ordinal);
+                const combat::MonsterPersistentState* const persistent =
+                    field->persistent_state(monster_ordinal);
+                if (persistent == nullptr) return;
+                if (persistent->defeated) continue;
+                if (world.defeat_ledger_.size()
+                        == combat::kDefeatLedgerCapacity) {
+                    session.relay_combat_events();
+                    if (session.phase_ == dungeon::RoomPhase::faulted) return;
+                }
+                if (!field->mark_defeated(monster_ordinal)
+                        || !world.defeat_ledger_.append({
+                            monster_ordinal,
+                            persistent->id,
+                            0U,
+                            false})) {
+                    return;
+                }
+            }
+            session.relay_combat_events();
+            return;
+        }
         session.encounter_plan_.wave_count = static_cast<std::uint8_t>(
             session.wave_index_ + 1U);
-        if (!session.combat_.has_value()) return;
         for (combat::MonsterRuntime& monster
-                : session.combat_->monsters_.slots_) {
+                : world.monsters_.slots_) {
             monster.active = false;
             monster.hp = 0;
         }
+    }
+    static void force_complete_current_room_without_visual_drops(
+        dungeon::DungeonSession& session) noexcept {
+        if (!session.combat_.has_value()) return;
+        combat::CombatWorld& world = *session.combat_;
+        combat::RoomMonsterField* const field =
+            world.room_monster_field();
+        if (field == nullptr) return;
+        if (world.defeat_ledger_.size() != 0U) {
+            session.relay_combat_events();
+            if (session.phase_ == dungeon::RoomPhase::faulted) return;
+        }
+        const std::uint32_t count = field->total_count();
+        for (std::uint32_t ordinal = 0U; ordinal < count; ++ordinal) {
+            const auto monster_ordinal =
+                static_cast<combat::MonsterOrdinal>(ordinal);
+            const combat::MonsterPersistentState* const persistent =
+                field->persistent_state(monster_ordinal);
+            if (persistent == nullptr) return;
+            if (persistent->defeated) continue;
+            if (world.defeat_ledger_.size()
+                    == combat::kDefeatLedgerCapacity) {
+                session.relay_combat_events();
+                if (session.phase_ == dungeon::RoomPhase::faulted) return;
+            }
+            if (!field->mark_defeated(monster_ordinal)
+                    || !world.defeat_ledger_.append({
+                        monster_ordinal,
+                        persistent->id,
+                        combat::monster_affix_danger_score(
+                            persistent->affixes),
+                        true})) {
+                return;
+            }
+        }
+        session.relay_combat_events();
     }
     static bool install_delayed_abyss_environment_hazard(
         dungeon::DungeonSession& session) noexcept {
@@ -454,6 +716,11 @@ struct DungeonSessionTestAccess final {
         const dungeon::DungeonSession& session) noexcept {
         return session.ground_materials_;
     }
+    static const std::array<dungeon::GroundHealthPotion,
+        dungeon::kGroundHealthPotionCapacity>& ground_health_potions(
+        const dungeon::DungeonSession& session) noexcept {
+        return session.ground_health_potions_;
+    }
     static void clear_rolled_material_claims(
         dungeon::DungeonSession& session) noexcept {
         session.rolled_material_bits_ = {};
@@ -466,6 +733,27 @@ inline void force_defeat_current_wave(dungeon::DungeonSession& session) noexcept
 
 inline bool defeat_next_live_monster(dungeon::DungeonSession& session) noexcept {
     return DungeonSessionTestAccess::defeat_next_live_monster(session);
+}
+
+inline bool append_defeat_record(
+    dungeon::DungeonSession& session,
+    combat::MonsterOrdinal ordinal) noexcept {
+    return DungeonSessionTestAccess::append_defeat_record(session, ordinal);
+}
+
+inline bool inject_defeat_ledger_overflow(
+    dungeon::DungeonSession& session) noexcept {
+    return DungeonSessionTestAccess::inject_defeat_ledger_overflow(session);
+}
+
+inline void relay_combat_lifecycle(
+    dungeon::DungeonSession& session) noexcept {
+    DungeonSessionTestAccess::relay_combat_lifecycle(session);
+}
+
+inline std::size_t defeat_ledger_size(
+    const dungeon::DungeonSession& session) noexcept {
+    return DungeonSessionTestAccess::defeat_ledger_size(session);
 }
 
 inline void damage_current_player(
@@ -499,6 +787,33 @@ inline const combat::CombatWorld* combat_world_address(
     return DungeonSessionTestAccess::combat_world_address(session);
 }
 
+inline const combat::RoomMonsterPlan* room_monster_plan(
+    const dungeon::DungeonSession& session) noexcept {
+    return DungeonSessionTestAccess::room_monster_plan(session);
+}
+
+inline const combat::RoomEnvironmentBlueprint* room_environment_blueprint(
+    const dungeon::DungeonSession& session) noexcept {
+    return DungeonSessionTestAccess::room_environment_blueprint(session);
+}
+
+inline const combat::RoomMonsterField* staged_room_monster_field(
+    const dungeon::DungeonSession& session) noexcept {
+    return DungeonSessionTestAccess::staged_room_monster_field(session);
+}
+
+inline const combat::RoomEnvironmentBlueprint*
+staged_room_environment_blueprint(
+    const dungeon::DungeonSession& session) noexcept {
+    return DungeonSessionTestAccess::staged_room_environment_blueprint(
+        session);
+}
+
+inline const dungeon::RoomProgressState& staged_room_progress(
+    const dungeon::DungeonSession& session) noexcept {
+    return DungeonSessionTestAccess::staged_room_progress(session);
+}
+
 inline void set_current_room_hole(
     dungeon::DungeonSession& session, bool has_hole) noexcept {
     DungeonSessionTestAccess::set_current_room_hole(session, has_hole);
@@ -522,6 +837,19 @@ inline bool relay_defeated(
     return DungeonSessionTestAccess::relay_defeated(
         session, wave_index, target_ordinal, position, reward_eligible,
         monster_id, spawn_ordinal, affix_score, commit_health_potion);
+}
+
+inline bool relay_visual_defeated(
+    dungeon::DungeonSession& session,
+    combat::MonsterOrdinal global_ordinal,
+    combat::Vec3 position,
+    bool reward_eligible = true,
+    combat::MonsterId monster_id = combat::MonsterId::fire_bomber,
+    std::uint16_t affix_score = 0U,
+    bool commit_health_potion = true) noexcept {
+    return DungeonSessionTestAccess::relay_visual_defeated(
+        session, global_ordinal, position, reward_eligible,
+        monster_id, affix_score, commit_health_potion);
 }
 
 inline void set_current_room_seed(
@@ -623,6 +951,11 @@ inline void clear_all_ground_items(
     DungeonSessionTestAccess::clear_all_ground_items(session);
 }
 
+inline void clear_all_ground_health_potions(
+    dungeon::DungeonSession& session) noexcept {
+    DungeonSessionTestAccess::clear_all_ground_health_potions(session);
+}
+
 inline void install_ground_material(
     dungeon::DungeonSession& session,
     std::uint16_t ordinal,
@@ -653,6 +986,12 @@ inline void replace_ground_health_potion(
 inline void quiesce_current_room_for_clear_retry(
     dungeon::DungeonSession& session) noexcept {
     DungeonSessionTestAccess::quiesce_current_room_for_clear_retry(session);
+}
+
+inline void force_complete_current_room_without_visual_drops(
+    dungeon::DungeonSession& session) noexcept {
+    DungeonSessionTestAccess::force_complete_current_room_without_visual_drops(
+        session);
 }
 
 inline bool install_delayed_abyss_environment_hazard(

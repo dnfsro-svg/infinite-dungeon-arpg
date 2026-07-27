@@ -39,6 +39,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -306,7 +307,7 @@ void apply_stage12_material_showcase(dungeon::DungeonSnapshot& snapshot,
         return;
     }
     combat_snapshot.monster_count = static_cast<std::uint16_t>(ids.size());
-    snapshot.remaining_targets = static_cast<std::uint8_t>(ids.size());
+    snapshot.remaining_targets = static_cast<std::uint32_t>(ids.size());
     for (std::size_t index = 0U; index < ids.size(); ++index) {
         combat::MonsterSnapshot& monster = combat_snapshot.monsters[index];
         monster = {};
@@ -413,8 +414,9 @@ struct Stage11DLootValidationState final {
     std::uint8_t seen_ordinal_bits{};
     std::uint8_t defeated_ordinal_bits{};
     std::uint16_t target_ordinal{0xFFFFU};
-    std::uint8_t remaining_targets{};
-    std::uint8_t min_remaining_targets{255U};
+    std::uint32_t remaining_targets{};
+    std::uint32_t min_remaining_targets{
+        (std::numeric_limits<std::uint32_t>::max)()};
     std::uint32_t live_inventory_count{};
     dungeon::RoomPhase last_phase{dungeon::RoomPhase::locked};
     std::int32_t player_hp{};

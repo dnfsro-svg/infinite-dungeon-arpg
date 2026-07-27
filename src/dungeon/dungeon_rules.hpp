@@ -41,6 +41,7 @@ enum class DungeonFault : std::uint8_t {
     environment_capacity,
     environment_placement,
     environment_navigation,
+    defeat_ledger_overflow,
 };
 
 [[nodiscard]] constexpr std::string_view dungeon_fault_name(
@@ -84,6 +85,8 @@ enum class DungeonFault : std::uint8_t {
     case DungeonFault::environment_placement: return "environment_placement";
     case DungeonFault::environment_navigation:
         return "environment_navigation";
+    case DungeonFault::defeat_ledger_overflow:
+        return "defeat_ledger_overflow";
     }
     return "unknown_dungeon_fault";
 }

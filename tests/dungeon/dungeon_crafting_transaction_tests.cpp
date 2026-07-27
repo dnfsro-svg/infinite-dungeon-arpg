@@ -238,9 +238,7 @@ arpg::test::Failure successful_non_item_commit_clears_reinforcement_receipt() no
     ARPG_REQUIRE(commit_pending(session));
     ARPG_REQUIRE(session.snapshot().reinforcement_receipt.valid);
 
-    arpg::test::EventSummary events{};
-    ARPG_REQUIRE(arpg::test::drive_until_cleared(session, events));
-    if (session.snapshot().phase == RoomPhase::cleared) session.tick({});
+    arpg::test::set_phase(session, RoomPhase::awaiting_exit);
     ARPG_REQUIRE(session.snapshot().phase == RoomPhase::awaiting_exit);
     ARPG_REQUIRE(session.request_passive_allocation(2U));
     const auto failed = session.pending_save();

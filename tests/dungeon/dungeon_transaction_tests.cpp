@@ -60,7 +60,7 @@ DungeonRunState available_state_for_rule(
     }
 }
 
-arpg::test::Failure available_room_precomputes_then_queues_start() noexcept {
+arpg::test::Failure available_room_queues_start_without_population() noexcept {
     const DungeonRunState available = available_state();
     DungeonSession session{DungeonRules{}, available};
     const auto snapshot = session.snapshot();
@@ -78,16 +78,10 @@ arpg::test::Failure available_room_precomputes_then_queues_start() noexcept {
 
     const auto& plan = arpg::test::DungeonSessionTestAccess::encounter_plan(
         session);
-    ARPG_REQUIRE(plan.wave_count > 0U);
-    const auto minimum = arpg::abyss::minimum_abyss_affixes(
-        available.current_room.depth);
-    for (std::size_t wave = 0U; wave < plan.wave_count; ++wave) {
-        for (std::size_t spawn = 0U;
-             spawn < plan.waves[wave].spawn_count; ++spawn) {
-            ARPG_REQUIRE(plan.waves[wave].spawns[spawn].affixes.count
-                >= minimum);
-        }
-    }
+    ARPG_REQUIRE(plan.wave_count == 0U);
+    ARPG_REQUIRE(snapshot.initial_monster_count == 0U);
+    ARPG_REQUIRE(snapshot.monster_blueprint_hash == 0U);
+    ARPG_REQUIRE(snapshot.environment_blueprint_hash == 0U);
     return {};
 }
 
@@ -161,6 +155,15 @@ arpg::test::Failure abyss_start_commit_creates_combat_after_receipt() noexcept {
     ARPG_REQUIRE(active_config->rule == available.abyss.rule);
     ARPG_REQUIRE(active_config->monster_damage_bp == 14500U);
     ARPG_REQUIRE(active_config->monster_attack_speed_bp == 14500U);
+    const auto* const plan = arpg::test::room_monster_plan(session);
+    ARPG_REQUIRE(plan != nullptr);
+    ARPG_REQUIRE(plan->monster_count == snapshot.initial_monster_count);
+    const auto minimum = arpg::abyss::minimum_abyss_affixes(
+        available.current_room.depth);
+    for (std::uint16_t ordinal = 0U;
+         ordinal < plan->monster_count; ++ordinal) {
+        ARPG_REQUIRE(plan->monsters[ordinal].affixes.count >= minimum);
+    }
     return {};
 }
 
@@ -177,6 +180,7 @@ bool drive_to_abyss_clear_pending(DungeonSession& session) noexcept {
         }
         if (state.phase == RoomPhase::combat) {
             arpg::test::force_defeat_current_wave(session);
+            arpg::test::clear_all_ground_health_potions(session);
         }
         session.tick({});
         arpg::test::drain_all_events(session, events);
@@ -585,7 +589,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"abyss clear indeterminate faults atomically", &abyss_clear_indeterminate_faults_atomically},
     {"abyss clear generation mismatch faults atomically", &abyss_clear_generation_mismatch_faults_atomically},
     {"abyss clear state mismatch faults atomically", &abyss_clear_state_mismatch_faults_atomically},
-    {"available room precomputes then queues start", &available_room_precomputes_then_queues_start},
+    {"available room queues start without population",
+        &available_room_queues_start_without_population},
     {"abyss start not committed faults without combat", &abyss_start_not_committed_faults_without_combat},
     {"abyss start indeterminate faults without combat", &abyss_start_indeterminate_faults_without_combat},
     {"abyss start generation mismatch faults", &abyss_start_generation_mismatch_faults},
