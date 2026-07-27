@@ -330,7 +330,7 @@ bool drive_to_open_door(
     case ExitDirection::none:
         return false;
     }
-    for (int tick = 0; tick < 256; ++tick) {
+    for (int tick = 0; tick < 4096; ++tick) {
         const auto state = session.snapshot();
         MovementInput movement{};
         if (!state.combat.has_value()) {
@@ -351,7 +351,7 @@ bool drive_to_open_door(
         arpg::test::EventSummary ignored;
         arpg::test::drain_all_events(session, ignored);
     }
-    for (int tick = 0; tick < 256; ++tick) {
+    for (int tick = 0; tick < 4096; ++tick) {
         session.tick(outward);
         arpg::test::EventSummary ignored;
         arpg::test::drain_all_events(session, ignored);

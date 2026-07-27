@@ -733,7 +733,7 @@ arpg::test::Failure abyss_claim_requires_navigation_world_and_pickup_range() noe
     ARPG_REQUIRE(reward != nullptr);
     const std::uint16_t ordinal = reward->drop_ordinal;
     const auto player = session.snapshot().combat->player.position;
-    ARPG_REQUIRE(player.x < -9.0F);
+    ARPG_REQUIRE(player.x < arpg::combat::room_bounds::min_x + 3.0F);
 
     ARPG_REQUIRE(session.request_pickup(ordinal)
         == arpg::dungeon::RequestResult::rejected);
@@ -760,7 +760,8 @@ arpg::test::Failure generated_unrebuilt_reward_still_counts_and_warns() noexcept
     arpg::test::clear_ground_item(session, reward->drop_ordinal);
     fill_ground_pool(session);
     arpg::test::set_phase(session, RoomPhase::awaiting_exit);
-    set_player_position(session, {-12.0F, 0.0F, 0.0F});
+    set_player_position(session,
+        arpg::test::exit_boundary_position(ExitDirection::left));
 
     ARPG_REQUIRE(session.snapshot().abyss_pending_rewards == 0U);
     ARPG_REQUIRE(session.snapshot().abyss_unpicked_rewards == 1U);
@@ -853,7 +854,8 @@ arpg::test::Failure cleared_abyss_reset_is_rejected_without_state_drift() noexce
                 == arpg::dungeon::RequestResult::accepted);
         } else {
             arpg::test::set_phase(session, RoomPhase::awaiting_exit);
-            set_player_position(session, {-12.0F, 0.0F, 0.0F});
+            set_player_position(session, arpg::test::exit_boundary_position(
+                arpg::dungeon::ExitDirection::left));
             attempt_exit(session, arpg::dungeon::ExitDirection::left);
             ARPG_REQUIRE(session.pending_save().has_value());
             ARPG_REQUIRE(session.pending_save()->kind
@@ -871,7 +873,8 @@ arpg::test::Failure abyss_door_confirmation_warns_and_abandons_atomically() noex
     state.abyss.reward_revision = 3U;
     DungeonSession session{DungeonRules{}, state};
     arpg::test::set_phase(session, RoomPhase::awaiting_exit);
-    set_player_position(session, {-12.0F, 0.0F, 0.0F});
+    set_player_position(session,
+        arpg::test::exit_boundary_position(ExitDirection::left));
 
     attempt_exit(session, ExitDirection::left);
     const auto armed = session.snapshot();
@@ -937,7 +940,8 @@ arpg::test::Failure abyss_door_abandon_counts_only_ungenerated_rewards() noexcep
     ARPG_REQUIRE(generated != nullptr);
     const std::uint16_t generated_ground_ordinal = generated->drop_ordinal;
     fill_ground_pool(session, generated_ground_ordinal);
-    set_player_position(session, {-12.0F, 0.0F, 0.0F});
+    set_player_position(session,
+        arpg::test::exit_boundary_position(ExitDirection::left));
 
     session.tick({-1, 0});
     const auto armed = session.snapshot();
@@ -1001,7 +1005,8 @@ arpg::test::Failure abyss_confirmation_invalidates_on_key_range_revision_and_cap
 
     auto range = std::make_unique<DungeonSession>(DungeonRules{}, state);
     arpg::test::set_phase(*range, RoomPhase::awaiting_exit);
-    set_player_position(*range, {-12.0F, 0.0F, 0.0F});
+    set_player_position(*range,
+        arpg::test::exit_boundary_position(ExitDirection::left));
     attempt_exit(*range, ExitDirection::left);
     ARPG_REQUIRE(range->snapshot().abyss_exit_confirmation_armed);
     set_player_position(*range, {8.0F, 3.0F, 0.0F});
@@ -1010,7 +1015,8 @@ arpg::test::Failure abyss_confirmation_invalidates_on_key_range_revision_and_cap
 
     auto revision = std::make_unique<DungeonSession>(DungeonRules{}, state);
     arpg::test::set_phase(*revision, RoomPhase::awaiting_exit);
-    set_player_position(*revision, {-12.0F, 0.0F, 0.0F});
+    set_player_position(*revision,
+        arpg::test::exit_boundary_position(ExitDirection::left));
     attempt_exit(*revision, ExitDirection::left);
     const std::uint16_t claim = abyss_ground(*revision, 0U)->drop_ordinal;
     set_player_position(*revision,
@@ -1094,7 +1100,8 @@ arpg::test::Failure abyss_abandon_failure_stays_and_next_resolution_overwrites()
 
     DungeonSession failed{DungeonRules{}, state};
     arpg::test::set_phase(failed, RoomPhase::awaiting_exit);
-    set_player_position(failed, {12.0F, 0.0F, 0.0F});
+    set_player_position(failed,
+        arpg::test::exit_boundary_position(ExitDirection::right));
     attempt_exit(failed, ExitDirection::right);
     failed.tick({});
     attempt_exit(failed, ExitDirection::right);

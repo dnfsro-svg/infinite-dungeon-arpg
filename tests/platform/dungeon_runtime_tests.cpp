@@ -405,7 +405,7 @@ bool drive_door_pending(dungeon::DungeonSession& session) noexcept {
         return false;
     }
     combat::MovementInput movement{1, 0};
-    for (int tick = 0; tick < 512; ++tick) {
+    for (int tick = 0; tick < 4096; ++tick) {
         const auto snapshot = session.snapshot();
         if (snapshot.phase == dungeon::RoomPhase::committing) {
             return session.pending_transition().has_value();

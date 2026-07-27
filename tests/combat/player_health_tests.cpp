@@ -107,7 +107,8 @@ arpg::test::Failure player_defeat_latch_survives_event_overflow() noexcept {
     config.wave = {};
     CombatWorld world{config};
     drain_events(world);
-    arpg::test::CombatWorldTestAccess::fill_event_queue(world, 62U);
+    arpg::test::CombatWorldTestAccess::fill_event_queue(
+        world, kCombatEventCapacity - 2U);
     arpg::test::CombatWorldTestAccess::apply_damage(
         world, world.snapshot().player.max_hp,
         Vec3{1.0F, 0.0F, 0.0F}, FeedbackLevel::heavy);

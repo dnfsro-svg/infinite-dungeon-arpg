@@ -370,14 +370,9 @@ bool transition_room(DungeonSession& session, std::size_t room) noexcept {
         ExitDirection::down, ExitDirection::left,
     }};
     const ExitDirection direction = kDirections[room % kDirections.size()];
-    arpg::combat::Vec3 door_position{};
-    switch (direction) {
-    case ExitDirection::up: door_position.y = -5.5F; break;
-    case ExitDirection::down: door_position.y = 5.5F; break;
-    case ExitDirection::left: door_position.x = -12.0F; break;
-    case ExitDirection::right: door_position.x = 12.0F; break;
-    case ExitDirection::none: return false;
-    }
+    if (direction == ExitDirection::none) return false;
+    const arpg::combat::Vec3 door_position =
+        arpg::test::exit_boundary_position(direction);
     for (int attempt = 0; attempt < 16; ++attempt) {
         if (session.snapshot().phase == RoomPhase::committing) {
             if (!commit_pending(session)) return false;
@@ -440,7 +435,7 @@ MonsterAffixSet high_risk_affixes() noexcept {
 CombatWorld make_high_risk_world() noexcept {
     CombatEncounterConfig config{};
     config.wave.spawn_count = static_cast<std::uint8_t>(
-        arpg::combat::kMonsterCapacity);
+        arpg::combat::kEncounterSpawnCapacity);
     for (std::size_t index = 0U; index < config.wave.spawn_count; ++index) {
         config.wave.spawns[index] = {MonsterId::lightning_shooter,
             {static_cast<float>(index + 3U), 0.0F, 0.0F},
@@ -468,7 +463,8 @@ arpg::test::Failure one_thousand_room_affix_trace_is_deterministic() noexcept {
 arpg::test::Failure saturated_high_risk_affix_world_allocates_nothing() noexcept {
     CombatWorld world = make_high_risk_world();
     const auto initial = world.snapshot();
-    ARPG_REQUIRE(initial.monster_count == arpg::combat::kMonsterCapacity);
+    ARPG_REQUIRE(initial.monster_count
+        == arpg::combat::kEncounterSpawnCapacity);
     const MonsterHandle owner{0U, initial.monsters[0].generation};
     arpg::test::CombatWorldTestAccess::fill_projectiles(world, owner);
     arpg::test::CombatWorldTestAccess::fill_hazards(world, owner);

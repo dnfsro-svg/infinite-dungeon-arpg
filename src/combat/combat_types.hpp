@@ -7,6 +7,7 @@
 
 #include "abyss/abyss_types.hpp"
 #include "combat/monster_affix_types.hpp"
+#include "core/gameplay_limits.hpp"
 #include "modifiers/damage_types.hpp"
 #include "modifiers/player_modifier_values.hpp"
 #include "skills/active_skill_types.hpp"
@@ -233,11 +234,19 @@ struct MonsterDefinition final {
     return (definition.tags & static_cast<std::uint16_t>(value)) != 0U;
 }
 
-inline constexpr std::size_t kMonsterCapacity = 96;
-inline constexpr std::size_t kProjectileCapacity = 384;
-inline constexpr std::size_t kHazardCapacity = 96;
+inline constexpr std::size_t kMonsterCapacity =
+    limits::kActiveMonsterCapacity;
+inline constexpr std::size_t kProjectileCapacity =
+    limits::kProjectileCapacity;
+inline constexpr std::size_t kHazardCapacity = limits::kHazardCapacity;
+inline constexpr std::size_t kCombatEventCapacity =
+    limits::kCombatEventCapacity;
+inline constexpr std::size_t kDefeatLedgerCapacity =
+    limits::kDefeatLedgerCapacity;
 inline constexpr std::size_t kEncounterWaveCapacity = 2;
-inline constexpr std::size_t kEncounterSpawnCapacity = 96;
+// Legacy wave planning remains capped at 96 until Task 2 replaces it with
+// the room-owned 1,152-entry blueprint.
+inline constexpr std::size_t kEncounterSpawnCapacity = 96U;
 
 struct MonsterSpawnSpec final {
     MonsterId id{MonsterId::chaos_chaser};

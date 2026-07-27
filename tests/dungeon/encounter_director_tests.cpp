@@ -5,6 +5,7 @@
 #include "combat/monster_catalog.hpp"
 #include "combat/monster_affix_catalog.hpp"
 #include "combat/monster_affix_generation.hpp"
+#include "combat/room_bounds.hpp"
 #include "dungeon/dungeon_checkpoint.hpp"
 #include "dungeon/encounter_director.hpp"
 
@@ -109,8 +110,10 @@ bool test_encounter_plan_legal(
             ranged_count += test_has_tag(*definition, MonsterTag::ranged);
             support_count += test_has_tag(*definition, MonsterTag::support);
             hazard_count += test_has_tag(*definition, MonsterTag::ground_hazard);
-            if (spawn.position.x < -8.0F || spawn.position.x > 8.0F
-                    || spawn.position.y < -3.5F || spawn.position.y > 3.5F
+            if (spawn.position.x < arpg::combat::room_bounds::min_x
+                    || spawn.position.x > arpg::combat::room_bounds::max_x
+                    || spawn.position.y < arpg::combat::room_bounds::min_y
+                    || spawn.position.y > arpg::combat::room_bounds::max_y
                     || spawn.position.z != 0.0F) {
                 return false;
             }
@@ -250,10 +253,12 @@ arpg::test::Failure encounter_plan_is_deterministic_and_legal() noexcept {
             const auto& actual = wave.spawns[spawn_index];
             const auto& expected = kStage8BaseTrace[wave_index * 2U + spawn_index];
             ARPG_REQUIRE(actual.id == expected.id);
-            ARPG_REQUIRE(arpg::test::near(actual.position.x, expected.x,
-                0.002));
-            ARPG_REQUIRE(arpg::test::near(actual.position.y, expected.y,
-                0.002));
+            const float legacy_x = actual.position.x * 12.0F
+                / arpg::combat::room_bounds::half_extent;
+            const float legacy_y = actual.position.y * 5.5F
+                / arpg::combat::room_bounds::half_extent;
+            ARPG_REQUIRE(arpg::test::near(legacy_x, expected.x, 0.002));
+            ARPG_REQUIRE(arpg::test::near(legacy_y, expected.y, 0.002));
             ARPG_REQUIRE(actual.position.z == 0.0F);
         }
     }

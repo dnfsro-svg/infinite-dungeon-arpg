@@ -146,8 +146,9 @@ arpg::test::Failure support_without_ally_repositions_and_short_cooldown() noexce
 arpg::test::Failure projectile_saturation_is_reported_without_overwrite() noexcept {
     CombatEncounterConfig config = ranged_encounter(
         MonsterId::lightning_shooter, 4.5F);
-    config.wave.spawn_count = static_cast<std::uint8_t>(kMonsterCapacity);
-    for (std::size_t index = 0; index < kMonsterCapacity; ++index) {
+    config.wave.spawn_count = static_cast<std::uint8_t>(
+        kEncounterSpawnCapacity);
+    for (std::size_t index = 0; index < kEncounterSpawnCapacity; ++index) {
         config.wave.spawns[index] = MonsterSpawnSpec{
             MonsterId::lightning_shooter, Vec3{4.5F, 0.0F, 0.0F}};
     }

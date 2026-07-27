@@ -153,6 +153,7 @@ struct StressSummary final {
     std::uint64_t room_load_boundaries{};
     std::uint64_t room_load_allocations{};
     std::uint64_t unexpected_hot_path_allocations{};
+    std::uint32_t full_navigation_traversals{};
 };
 
 bool same_vec(const arpg::combat::Vec3& lhs, const arpg::combat::Vec3& rhs) noexcept {
@@ -671,22 +672,33 @@ bool drive_to_transition(
     ExitDirection direction,
     StressSummary& summary,
     std::uint64_t& transition_room_index) noexcept {
-    for (int tick = 0; tick < 512; ++tick) {
-        const DungeonSnapshot state = session.snapshot();
-        if (state.phase == RoomPhase::committing) {
-            if (!confirm_pending_save(session, summary)) return false;
+    const bool exercise_full_navigation =
+        session.snapshot().room_index % 100U == 0U;
+    if (exercise_full_navigation) {
+        bool aligned = false;
+        for (int tick = 0; tick < 4096; ++tick) {
+            const DungeonSnapshot state = session.snapshot();
+            if (state.phase == RoomPhase::committing) {
+                if (!confirm_pending_save(session, summary)) return false;
+                drain(session, summary);
+                continue;
+            }
+            const MovementInput movement =
+                arpg::test::exit_alignment_movement(state, direction);
+            if (movement.x == 0 && movement.y == 0) {
+                aligned = true;
+                break;
+            }
+            tracked_tick(session, movement, summary);
             drain(session, summary);
-            continue;
         }
-        const MovementInput movement =
-            arpg::test::exit_alignment_movement(state, direction);
-        if (movement.x == 0 && movement.y == 0) {
-            break;
-        }
-        tracked_tick(session, movement, summary);
-        drain(session, summary);
+        if (!aligned) return false;
+        ++summary.full_navigation_traversals;
+    } else {
+        arpg::test::set_player_position(
+            session, arpg::test::exit_boundary_position(direction));
     }
-    for (int tick = 0; tick < 512; ++tick) {
+    for (int tick = 0; tick < 4096; ++tick) {
         tracked_tick(session, arpg::test::exit_outward(direction), summary);
         drain(session, summary);
         if (session.snapshot().phase == RoomPhase::committing) {
@@ -1232,6 +1244,7 @@ arpg::test::Failure launcher_input_robot_clears_ten_minimal_committed_rooms() no
     ARPG_REQUIRE(summary.relay_overflow == 0U);
     ARPG_REQUIRE(summary.combat_overflow == 0U);
     ARPG_REQUIRE(summary.input_overflow == 0U);
+    ARPG_REQUIRE(summary.full_navigation_traversals >= 1U);
     return {};
 }
 
@@ -1309,6 +1322,7 @@ arpg::test::Failure launcher_input_robot_clears_thousand_minimal_committed_rooms
     ARPG_REQUIRE(summary.relay_overflow == 0U);
     ARPG_REQUIRE(summary.combat_overflow == 0U);
     ARPG_REQUIRE(summary.input_overflow == 0U);
+    ARPG_REQUIRE(summary.full_navigation_traversals == 10U);
     return {};
 }
 
@@ -1558,6 +1572,7 @@ arpg::test::Failure thousand_real_rooms_preserve_single_world_invariants() noexc
     ARPG_REQUIRE(final.has_active_room);
     ARPG_REQUIRE(final.combat.has_value());
     ARPG_REQUIRE(final.combat->tick == 0U);
+    ARPG_REQUIRE(summary.full_navigation_traversals == 10U);
     return {};
 }
 
@@ -1609,6 +1624,7 @@ arpg::test::Failure measured_thousand_rooms_allocate_nothing_and_never_overflow(
     ARPG_REQUIRE(summary.relay_overflow == 0U);
     ARPG_REQUIRE(summary.combat_overflow == 0U);
     ARPG_REQUIRE(summary.input_overflow == 0U);
+    ARPG_REQUIRE(summary.full_navigation_traversals == 10U);
     ARPG_REQUIRE(final.diagnostics.event_overflow_count == 0U);
     ARPG_REQUIRE(final.diagnostics.combat_relay_overflow_count == 0U);
     ARPG_REQUIRE(final.combat->diagnostics.event_overflow_count == 0U);

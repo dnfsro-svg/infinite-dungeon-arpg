@@ -250,7 +250,7 @@ private:
         bool occupied{};
     };
     std::array<EffectOwner, 8> effect_owners_{};
-    core::BoundedQueue<CombatEvent, 64> events_{};
+    core::BoundedQueue<CombatEvent, kCombatEventCapacity> events_{};
     std::uint64_t tick_{};
     std::uint32_t event_overflow_count_{};
     std::uint32_t projectile_saturation_count_{};

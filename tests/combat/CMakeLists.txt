@@ -34,6 +34,11 @@ target_include_directories(arpg_combat_tests
     PRIVATE "${PROJECT_SOURCE_DIR}/tests/core")
 target_link_libraries(arpg_combat_tests PRIVATE arpg_combat)
 arpg_enable_project_warnings(arpg_combat_tests)
+if(MSVC)
+    # Capacity tests intentionally keep several complete combat worlds and
+    # snapshots alive in one debug stack frame.
+    target_link_options(arpg_combat_tests PRIVATE /STACK:4194304)
+endif()
 
 add_test(NAME combat.units COMMAND arpg_combat_tests)
 set_tests_properties(combat.units PROPERTIES LABELS "headless;combat")

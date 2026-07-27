@@ -84,7 +84,8 @@ private:
 class DungeonSession final {
 public:
     static constexpr std::size_t kDungeonEventCapacity = 32;
-    static constexpr std::size_t kCombatRelayCapacity = 64;
+    static constexpr std::size_t kCombatRelayCapacity =
+        combat::kCombatEventCapacity;
 
     explicit DungeonSession(DungeonSessionConfig config = {}) noexcept;
     explicit DungeonSession(

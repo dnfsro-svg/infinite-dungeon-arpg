@@ -1537,10 +1537,14 @@ combat::MovementInput stage11d_safe_movement_toward(
 combat::Vec3 validation_door_position(
     dungeon::ExitDirection direction) noexcept {
     switch (direction) {
-    case dungeon::ExitDirection::up: return {0.0F, -5.5F, 0.0F};
-    case dungeon::ExitDirection::down: return {0.0F, 5.5F, 0.0F};
-    case dungeon::ExitDirection::left: return {-12.0F, 0.0F, 0.0F};
-    case dungeon::ExitDirection::right: return {12.0F, 0.0F, 0.0F};
+    case dungeon::ExitDirection::up:
+        return {0.0F, combat::room_bounds::min_y, 0.0F};
+    case dungeon::ExitDirection::down:
+        return {0.0F, combat::room_bounds::max_y, 0.0F};
+    case dungeon::ExitDirection::left:
+        return {combat::room_bounds::min_x, 0.0F, 0.0F};
+    case dungeon::ExitDirection::right:
+        return {combat::room_bounds::max_x, 0.0F, 0.0F};
     case dungeon::ExitDirection::none: return {};
     }
     return {};

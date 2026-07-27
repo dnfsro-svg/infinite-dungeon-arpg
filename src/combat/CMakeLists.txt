@@ -20,6 +20,7 @@ add_library(arpg_combat STATIC
     monster_pool.cpp
     player_damage_history.cpp
     player_simulation.cpp
+    room_spatial_grid.cpp
     target_simulation.cpp)
 
 target_include_directories(arpg_combat

@@ -487,7 +487,8 @@ arpg::test::Failure abyss_player_defeat_does_not_depend_on_event_delivery() noex
     }
     while (session.try_pop_combat_event().has_value()) {
     }
-    test::DungeonSessionTestAccess::fill_current_combat_events(session, 62U);
+    test::DungeonSessionTestAccess::fill_current_combat_events(
+        session, combat::kCombatEventCapacity - 2U);
     test::DungeonSessionTestAccess::damage_current_player(
         session, session.snapshot().combat->player.max_hp);
     ARPG_REQUIRE(session.snapshot().combat->player.hp == 0);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "combat/fire_room_obstacle.hpp"
+#include "combat/room_bounds.hpp"
 #include "abyss/abyss_rules.hpp"
 #include "dungeon/dungeon_session.hpp"
 
@@ -985,6 +986,23 @@ inline combat::MovementInput exit_outward(
     case dungeon::ExitDirection::left: return {-1, 0};
     case dungeon::ExitDirection::right: return {1, 0};
     case dungeon::ExitDirection::none: return {};
+    }
+    return {};
+}
+
+inline combat::Vec3 exit_boundary_position(
+    dungeon::ExitDirection direction) noexcept {
+    switch (direction) {
+    case dungeon::ExitDirection::up:
+        return {0.0F, combat::room_bounds::min_y, 0.0F};
+    case dungeon::ExitDirection::down:
+        return {0.0F, combat::room_bounds::max_y, 0.0F};
+    case dungeon::ExitDirection::left:
+        return {combat::room_bounds::min_x, 0.0F, 0.0F};
+    case dungeon::ExitDirection::right:
+        return {combat::room_bounds::max_x, 0.0F, 0.0F};
+    case dungeon::ExitDirection::none:
+        return {};
     }
     return {};
 }

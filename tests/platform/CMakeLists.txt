@@ -55,6 +55,9 @@ if(TARGET arpg_raylib)
     target_link_libraries(arpg_platform_tests PRIVATE arpg_raylib)
     if(MSVC)
         target_compile_options(arpg_platform_tests PRIVATE /utf-8)
+        # Capacity integration fixtures keep complete dungeon sessions and
+        # render snapshots alive in Debug stack frames.
+        target_link_options(arpg_platform_tests PRIVATE /STACK:4194304)
     endif()
     arpg_enable_project_warnings(arpg_platform_tests)
 

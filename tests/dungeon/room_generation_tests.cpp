@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 
 #include "abyss/abyss_rules.hpp"
+#include "combat/room_bounds.hpp"
 #include "dungeon/dungeon_progression.hpp"
 #include "dungeon/room_combat_template.hpp"
 #include "dungeon/room_generation.hpp"
@@ -229,7 +230,7 @@ arpg::test::Failure bias_only_changes_ecology_stream() noexcept {
     return {};
 }
 
-arpg::test::Failure entry_templates_preserve_stage_two_layout() noexcept {
+arpg::test::Failure entry_templates_derive_spawns_from_square_bounds() noexcept {
     using namespace arpg::combat;
     using namespace arpg::dungeon;
     using namespace arpg::dungeon::checkpoint;
@@ -245,21 +246,25 @@ arpg::test::Failure entry_templates_preserve_stage_two_layout() noexcept {
     ARPG_REQUIRE(same_position(initial->dummy_spawns[0], 2.30F, -0.35F));
     ARPG_REQUIRE(same_position(initial->dummy_spawns[1], 2.80F, 0.0F));
     ARPG_REQUIRE(same_position(initial->dummy_spawns[2], 3.30F, 0.35F));
-    ARPG_REQUIRE(same_position(left->player_spawn, -10.50F, 0.0F));
+    ARPG_REQUIRE(same_position(left->player_spawn,
+        room_bounds::min_x + 1.50F, 0.0F));
     ARPG_REQUIRE(left->initial_facing == Facing::right);
     ARPG_REQUIRE(same_position(left->dummy_spawns[0], 2.30F, -0.35F));
     ARPG_REQUIRE(same_position(left->dummy_spawns[1], 2.80F, 0.0F));
     ARPG_REQUIRE(same_position(left->dummy_spawns[2], 3.30F, 0.35F));
-    ARPG_REQUIRE(same_position(right->player_spawn, 10.50F, 0.0F));
+    ARPG_REQUIRE(same_position(right->player_spawn,
+        room_bounds::max_x - 1.50F, 0.0F));
     ARPG_REQUIRE(right->initial_facing == Facing::left);
     ARPG_REQUIRE(same_position(right->dummy_spawns[0], -2.30F, -0.35F));
     ARPG_REQUIRE(same_position(right->dummy_spawns[1], -2.80F, 0.0F));
     ARPG_REQUIRE(same_position(right->dummy_spawns[2], -3.30F, 0.35F));
-    ARPG_REQUIRE(same_position(top->player_spawn, 0.0F, -4.75F));
+    ARPG_REQUIRE(same_position(top->player_spawn, 0.0F,
+        room_bounds::min_y + 0.75F));
     ARPG_REQUIRE(same_position(top->dummy_spawns[0], 2.30F, 2.30F));
     ARPG_REQUIRE(same_position(top->dummy_spawns[1], 2.80F, 2.30F));
     ARPG_REQUIRE(same_position(top->dummy_spawns[2], 3.30F, 2.30F));
-    ARPG_REQUIRE(same_position(bottom->player_spawn, 0.0F, 4.75F));
+    ARPG_REQUIRE(same_position(bottom->player_spawn, 0.0F,
+        room_bounds::max_y - 0.75F));
     ARPG_REQUIRE(same_position(bottom->dummy_spawns[0], 2.30F, -2.30F));
     ARPG_REQUIRE(same_position(bottom->dummy_spawns[1], 2.80F, -2.30F));
     ARPG_REQUIRE(same_position(bottom->dummy_spawns[2], 3.30F, -2.30F));
@@ -286,7 +291,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"legacy abyss sample boundary is diagnostic only", &legacy_abyss_sample_boundary_is_diagnostic_only},
     {"hole and legacy abyss samples can coexist", &hole_and_legacy_abyss_samples_can_coexist},
     {"bias only changes ecology stream", &bias_only_changes_ecology_stream},
-    {"entry templates preserve stage two layout", &entry_templates_preserve_stage_two_layout},
+    {"entry templates derive spawns from square bounds",
+     &entry_templates_derive_spawns_from_square_bounds},
     {"non v1 combat template is rejected", &non_v1_combat_template_is_rejected},
     {"preview uses fixed direction slots and target seeds", &preview_uses_fixed_direction_slots_and_target_seeds},
     {"preview supports zero through four abyss doors", &preview_supports_zero_through_four_abyss_doors},

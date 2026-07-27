@@ -1,4 +1,5 @@
 #include "abyss/abyss_rules.hpp"
+#include "combat/room_bounds.hpp"
 #include "dungeon/dungeon_progression.hpp"
 #include "dungeon/dungeon_session.hpp"
 #include "dungeon/room_generation.hpp"
@@ -320,10 +321,14 @@ bool claim_reward(DungeonSession& session,
 
 Vec3 door_position(ExitDirection direction) noexcept {
     switch (direction) {
-    case ExitDirection::up: return {0.0F, -5.5F, 0.0F};
-    case ExitDirection::down: return {0.0F, 5.5F, 0.0F};
-    case ExitDirection::left: return {-12.0F, 0.0F, 0.0F};
-    case ExitDirection::right: return {12.0F, 0.0F, 0.0F};
+    case ExitDirection::up:
+        return {0.0F, arpg::combat::room_bounds::min_y, 0.0F};
+    case ExitDirection::down:
+        return {0.0F, arpg::combat::room_bounds::max_y, 0.0F};
+    case ExitDirection::left:
+        return {arpg::combat::room_bounds::min_x, 0.0F, 0.0F};
+    case ExitDirection::right:
+        return {arpg::combat::room_bounds::max_x, 0.0F, 0.0F};
     case ExitDirection::none: return {};
     }
     return {};

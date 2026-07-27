@@ -14,7 +14,7 @@ namespace {
 std::string read_project_source(const char* relative_path) {
     const std::filesystem::path path =
         std::filesystem::path{ARPG_PROJECT_SOURCE_DIR} / relative_path;
-    std::ifstream input{path, std::ios::binary};
+    std::ifstream input{path};
     return {std::istreambuf_iterator<char>{input},
         std::istreambuf_iterator<char>{}};
 }

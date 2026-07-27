@@ -2,6 +2,10 @@
 
 #include <cstdlib>
 
+#if defined(_WIN32) && defined(_DEBUG)
+#include <crtdbg.h>
+#endif
+
 arpg::test::TestSuite active_skill_timeline_suite() noexcept;
 arpg::test::TestSuite attack_catalog_suite() noexcept;
 arpg::test::TestSuite abyss_environment_suite() noexcept;
@@ -77,6 +81,15 @@ bool storm_swords_only_enabled() noexcept {
 }  // namespace
 
 int main() {
+#if defined(_WIN32) && defined(_DEBUG)
+    _set_error_mode(_OUT_TO_STDERR);
+    _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+    _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+    _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+    _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+    _set_abort_behavior(_WRITE_ABORT_MSG,
+        _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#endif
     if (active_skill_timeline_only_enabled()) {
         const arpg::test::TestSuite active_skill_timeline_suites[] = {
             active_skill_timeline_suite(),
@@ -131,5 +144,5 @@ int main() {
         storm_swords_skill_suite(),
     };
 
-    return arpg::test::run_suites(suites, 245, "stage 18 combat queries");
+    return arpg::test::run_suites(suites, 247, "stage 18 combat queries");
 }

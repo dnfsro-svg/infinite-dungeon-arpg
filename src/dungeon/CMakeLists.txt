@@ -12,6 +12,7 @@ add_library(arpg_dungeon STATIC
     dungeon_progression.cpp
     material_loot.cpp
     health_potion_loot.cpp
+    room_affix.cpp
     room_generation.cpp
     room_combat_template.cpp
     room_navigation.cpp)

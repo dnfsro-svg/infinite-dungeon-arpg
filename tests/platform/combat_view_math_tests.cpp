@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 
+#include "combat/room_bounds.hpp"
 #include "combat_view_math.hpp"
 #include "render_layout.hpp"
 
@@ -13,14 +14,16 @@ using arpg::platform::ScreenProjection;
 
 arpg::test::Failure back_and_front_projection_are_exact() noexcept {
     const ScreenProjection back = arpg::platform::project_combat_position(
-        Vec3{0.0F, -5.5F, 0.0F}, 1280.0F, 720.0F);
+        Vec3{0.0F, arpg::combat::room_bounds::min_y, 0.0F},
+        1280.0F, 720.0F);
     ARPG_REQUIRE(arpg::test::near(back.x, 640.0, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(back.ground_y, 273.6, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(back.y, back.ground_y, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(back.scale, 0.70, 1.0e-4));
 
     const ScreenProjection front = arpg::platform::project_combat_position(
-        Vec3{0.0F, 5.5F, 0.0F}, 1280.0F, 720.0F);
+        Vec3{0.0F, arpg::combat::room_bounds::max_y, 0.0F},
+        1280.0F, 720.0F);
     ARPG_REQUIRE(arpg::test::near(front.x, 640.0, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(front.ground_y, 633.6, 1.0e-4));
     ARPG_REQUIRE(arpg::test::near(front.y, front.ground_y, 1.0e-4));
@@ -30,8 +33,14 @@ arpg::test::Failure back_and_front_projection_are_exact() noexcept {
 
 arpg::test::Failure expanded_room_corners_remain_in_viewport() noexcept {
     constexpr std::array<Vec3, 4> corners{{
-        {-12.0F, -5.5F, 0.0F}, {12.0F, -5.5F, 0.0F},
-        {-12.0F, 5.5F, 0.0F}, {12.0F, 5.5F, 0.0F},
+        {arpg::combat::room_bounds::min_x,
+            arpg::combat::room_bounds::min_y, 0.0F},
+        {arpg::combat::room_bounds::max_x,
+            arpg::combat::room_bounds::min_y, 0.0F},
+        {arpg::combat::room_bounds::min_x,
+            arpg::combat::room_bounds::max_y, 0.0F},
+        {arpg::combat::room_bounds::max_x,
+            arpg::combat::room_bounds::max_y, 0.0F},
     }};
     for (const Vec3 corner : corners) {
         const ScreenProjection projected = arpg::platform::project_combat_position(

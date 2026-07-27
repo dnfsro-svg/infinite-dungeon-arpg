@@ -25,7 +25,7 @@ inline constexpr std::size_t kLootLabelObstacleCapacity = 1U
     + combat::kMonsterCapacity + dungeon::kGroundDropCapacity
     + dungeon::kGroundMaterialCapacity
     + dungeon::kGroundHealthPotionCapacity;
-static_assert(kLootLabelObstacleCapacity == 881U);
+static_assert(kLootLabelObstacleCapacity == 913U);
 
 struct LootLabelObstacleSet final {
     std::array<LootLabelRect, kLootLabelObstacleCapacity> rects{};
