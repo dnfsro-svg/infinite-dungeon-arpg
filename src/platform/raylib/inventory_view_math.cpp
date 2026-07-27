@@ -344,6 +344,18 @@ active_skill_loadout_command_after_click(
     return std::nullopt;
 }
 
+void advance_active_skill_loadout_selection(
+    ActiveSkillLoadoutSelection& selection,
+    const ActiveSkillLoadoutCommand& accepted_command) noexcept {
+    if (accepted_command.kind == ActiveSkillLoadoutActionKind::equip) {
+        selection.selected_slot = accepted_command.slot;
+        selection.selected_inventory = skills::ActiveSkillId::none;
+    } else if (accepted_command.kind
+            == ActiveSkillLoadoutActionKind::swap) {
+        selection.selected_slot = accepted_command.other_slot;
+    }
+}
+
 float clamp_inventory_scroll_rows(std::size_t filtered_count, int columns,
     float scroll_rows, float viewport_height, float cell_height) noexcept {
     if (columns <= 0 || viewport_height <= 0.0F || cell_height <= 0.0F

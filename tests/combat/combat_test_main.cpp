@@ -34,6 +34,7 @@ arpg::test::TestSuite player_damage_history_suite() noexcept;
 arpg::test::TestSuite player_death_snapshot_suite() noexcept;
 arpg::test::TestSuite player_defense_suite() noexcept;
 arpg::test::TestSuite room_obstacle_runtime_suite() noexcept;
+arpg::test::TestSuite room_combat_checkpoint_suite() noexcept;
 arpg::test::TestSuite storm_swords_skill_suite() noexcept;
 
 namespace {
@@ -145,8 +146,9 @@ int main() {
         player_death_snapshot_suite(),
         player_defense_suite(),
         room_obstacle_runtime_suite(),
+        room_combat_checkpoint_suite(),
         storm_swords_skill_suite(),
     };
 
-    return arpg::test::run_suites(suites, 266, "stage 20 room residency");
+    return arpg::test::run_suites(suites, 283, "checkpoint v9 combat");
 }

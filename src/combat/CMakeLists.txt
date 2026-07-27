@@ -23,6 +23,7 @@ add_library(arpg_combat STATIC
     player_damage_history.cpp
     player_simulation.cpp
     room_spatial_grid.cpp
+    room_combat_checkpoint.cpp
     room_monster_field.cpp
     room_obstacle_runtime.cpp
     target_simulation.cpp)

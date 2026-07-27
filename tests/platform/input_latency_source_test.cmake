@@ -166,6 +166,9 @@ function(arpg_physical_input_chain_is_valid SOURCE OUT_VALID)
     list(LENGTH HOST_GATE_CALLS HOST_GATE_CALL_COUNT)
     string(REGEX MATCHALL "session->request_descent${WS}\\(" REQUEST_DESCENT_CALLS "${SOURCE}")
     list(LENGTH REQUEST_DESCENT_CALLS REQUEST_DESCENT_CALL_COUNT)
+    string(REGEX MATCHALL "session->snapshot${WS}\\(${WS}\\)" BY_VALUE_SNAPSHOT_CALLS
+        "${CONTROLLED_DESCENT_SOURCE}")
+    list(LENGTH BY_VALUE_SNAPSHOT_CALLS BY_VALUE_SNAPSHOT_CALL_COUNT)
     string(REGEX MATCHALL "forward_descent${WS}=" FORWARD_DESCENT_ASSIGNMENTS "${HOST_CHAIN_SOURCE}")
     list(LENGTH FORWARD_DESCENT_ASSIGNMENTS FORWARD_DESCENT_ASSIGNMENT_COUNT)
 
@@ -182,12 +185,13 @@ function(arpg_physical_input_chain_is_valid SOURCE OUT_VALID)
             OR NOT SOURCE MATCHES "const PassiveOverlayInputGate passive_input_gate =${WS}passive_overlay_input_gate${WS}\\(${WS}passive_overlay_open${WS}\\)${WS};"
             OR NOT SOURCE MATCHES "const InventoryInputGate inventory_gate =${WS}inventory_input_gate${WS}\\(${WS}inventory\\.is_open${WS}\\(${WS}\\)${WS}\\|\\|${WS}inventory_toggled_this_frame${WS}\\)${WS};"
             OR NOT SUBMIT_ACTION_CALL_COUNT EQUAL 1
-            OR NOT FORWARD_ACTIONS_SOURCE MATCHES "const bool forward_actions =${WS}passive_input_gate\\.forward_actions${WS}&&${WS}inventory_gate\\.forward_actions${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS};"
+            OR NOT FORWARD_ACTIONS_SOURCE MATCHES "const bool forward_actions =${WS}passive_input_gate\\.forward_actions${WS}&&${WS}inventory_gate\\.forward_actions${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS}&&${WS}gameplay_armed${WS};"
             OR NOT CONTROLLED_SUBMIT_SOURCE MATCHES "if${WS}\\(${WS}forward_actions${WS}\\)${WS}\\{${WS}const${WS1}SubmittedFrameActions${WS1}submitted_actions${WS}=${WS}submit_frame_actions${WS}\\(${WS}\\*session,${WS}frame_input${WS}\\)${WS};"
             OR NOT FORWARD_DESCENT_ASSIGNMENT_COUNT EQUAL 1
-            OR NOT FORWARD_DESCENT_SOURCE MATCHES "const bool forward_descent =${WS}passive_input_gate\\.forward_descent${WS}&&${WS}inventory_gate\\.forward_descent${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS};"
+            OR NOT FORWARD_DESCENT_SOURCE MATCHES "const bool forward_descent =${WS}passive_input_gate\\.forward_descent${WS}&&${WS}inventory_gate\\.forward_descent${WS}&&${WS}death_gate\\.forward_gameplay${WS}&&${WS}host_gate\\.forward_gameplay${WS}&&${WS}!pause_blocks_gameplay${WS}&&${WS}gameplay_armed${WS};"
             OR NOT REQUEST_DESCENT_CALL_COUNT EQUAL 1
-            OR NOT CONTROLLED_DESCENT_SOURCE MATCHES "if${WS}\\(${WS}forward_descent${WS}&&${WS}frame_input\\.keys\\.e${WS}\\)${WS}\\{${WS}const auto snapshot =${WS}session->snapshot${WS}\\(${WS}\\)${WS};${WS}const bool in_range =${WS}snapshot\\.combat\\.has_value${WS}\\(${WS}\\)${WS}&&${WS}can_prompt_descent${WS}\\(${WS}snapshot,${WS}snapshot\\.combat->player\\.position${WS}\\)${WS};${WS}static_cast<void>${WS}\\(${WS}session->request_descent${WS}\\(${WS}in_range${WS}\\)${WS}\\)${WS};")
+            OR NOT BY_VALUE_SNAPSHOT_CALL_COUNT EQUAL 0
+            OR NOT CONTROLLED_DESCENT_SOURCE MATCHES "if${WS}\\(${WS}forward_descent${WS}&&${WS}frame_input\\.keys\\.e${WS}\\)${WS}\\{${WS}session->snapshot${WS}\\(${WS}current${WS}\\)${WS};${WS}const bool in_range =${WS}current\\.combat\\.has_value${WS}\\(${WS}\\)${WS}&&${WS}can_prompt_descent${WS}\\(${WS}current,${WS}current\\.combat->player\\.position${WS}\\)${WS};${WS}static_cast<void>${WS}\\(${WS}session->request_descent${WS}\\(${WS}in_range${WS}\\)${WS}\\)${WS};")
         set(${OUT_VALID} FALSE PARENT_SCOPE)
         return()
     endif()
@@ -234,19 +238,21 @@ const InventoryInputGate inventory_gate = inventory_input_gate(
 const bool forward_actions = passive_input_gate.forward_actions
     && inventory_gate.forward_actions
     && death_gate.forward_gameplay
-    && host_gate.forward_gameplay && !pause_blocks_gameplay;
+    && host_gate.forward_gameplay && !pause_blocks_gameplay
+    && gameplay_armed;
 const bool forward_descent = passive_input_gate.forward_descent
     && inventory_gate.forward_descent
     && death_gate.forward_gameplay
-    && host_gate.forward_gameplay && !pause_blocks_gameplay;
+    && host_gate.forward_gameplay && !pause_blocks_gameplay
+    && gameplay_armed;
 if (forward_actions) {
     const SubmittedFrameActions submitted_actions =
         submit_frame_actions(*session, frame_input);
 }
 if (forward_descent && frame_input.keys.e) {
-    const auto snapshot = session->snapshot();
-    const bool in_range = snapshot.combat.has_value()
-        && can_prompt_descent(snapshot, snapshot.combat->player.position);
+    session->snapshot(current);
+    const bool in_range = current.combat.has_value()
+        && can_prompt_descent(current, current.combat->player.position);
     static_cast<void>(session->request_descent(in_range));
 }
 const combat::MovementInput movement = forward_movement
@@ -256,6 +262,27 @@ arpg_physical_input_chain_is_valid("${STAGE11B_INPUT_CHAIN_REFERENCE}"
     STAGE11B_INPUT_CHAIN_REFERENCE_VALID)
 if(NOT STAGE11B_INPUT_CHAIN_REFERENCE_VALID)
     message(FATAL_ERROR "input chain self-check rejected its reference chain")
+endif()
+set(PREALLOCATED_DESCENT_CAPTURE [=[
+    session->snapshot(current);
+    const bool in_range = current.combat.has_value()
+        && can_prompt_descent(current, current.combat->player.position);
+]=])
+set(BY_VALUE_DESCENT_CAPTURE [=[
+    const auto snapshot = session->snapshot();
+    const bool in_range = snapshot.combat.has_value()
+        && can_prompt_descent(snapshot, snapshot.combat->player.position);
+]=])
+string(REPLACE "${PREALLOCATED_DESCENT_CAPTURE}"
+    "${BY_VALUE_DESCENT_CAPTURE}"
+    BY_VALUE_SNAPSHOT_CHAIN "${STAGE11B_INPUT_CHAIN_REFERENCE}")
+if(BY_VALUE_SNAPSHOT_CHAIN STREQUAL STAGE11B_INPUT_CHAIN_REFERENCE)
+    message(FATAL_ERROR "by-value snapshot mutation setup did not modify reference chain")
+endif()
+arpg_physical_input_chain_is_valid("${BY_VALUE_SNAPSHOT_CHAIN}"
+    BY_VALUE_SNAPSHOT_CHAIN_VALID)
+if(BY_VALUE_SNAPSHOT_CHAIN_VALID)
+    message(FATAL_ERROR "input chain self-check accepted by-value descent snapshot")
 endif()
 set(INPUT_CHAIN_SPOOF_ACCEPTANCES)
 set(COMMENT_ONLY_INPUT_CHAIN "/*${STAGE11B_INPUT_CHAIN_REFERENCE}*/")
@@ -385,7 +412,8 @@ set(FORWARD_DESCENT_DECLARATION [=[
             const bool forward_descent = passive_input_gate.forward_descent
                 && inventory_gate.forward_descent
                 && death_gate.forward_gameplay
-                && host_gate.forward_gameplay && !pause_blocks_gameplay;
+                && host_gate.forward_gameplay && !pause_blocks_gameplay
+                && gameplay_armed;
 ]=])
 string(REPLACE "${FORWARD_DESCENT_DECLARATION}"
     "            const bool forward_descent = true;"

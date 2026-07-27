@@ -179,7 +179,7 @@ arpg::test::Failure next_room_uses_committed_passive_player_build() noexcept {
     return {};
 }
 
-arpg::test::Failure current_room_keeps_old_build_until_transition() noexcept {
+arpg::test::Failure current_room_adopts_committed_passive_build() noexcept {
     DungeonSession session = session_with_passive_points(1U);
     ARPG_REQUIRE(clear_to_awaiting_exit(session));
     const auto before = session.snapshot();
@@ -197,12 +197,10 @@ arpg::test::Failure current_room_keeps_old_build_until_transition() noexcept {
     ARPG_REQUIRE(after_commit.combat.has_value());
     ARPG_REQUIRE(arpg::test::combat_world_address(session) == combat_before);
     ARPG_REQUIRE(after_commit.combat->tick == before.combat->tick);
-    ARPG_REQUIRE(after_commit.combat->player.max_barrier
-        == before.combat->player.max_barrier);
-    ARPG_REQUIRE(after_commit.combat->player.barrier
-        == before.combat->player.barrier);
-    ARPG_REQUIRE(after_commit.combat->player.damage_reduction
-        == before.combat->player.damage_reduction);
+    ARPG_REQUIRE(after_commit.combat->player.max_barrier == 10);
+    ARPG_REQUIRE(after_commit.combat->player.barrier == 0);
+    ARPG_REQUIRE(arpg::test::player_build(session).values.max_barrier
+        == 10 * arpg::modifiers::kFixedOne);
 
     arpg::test::set_current_room_hole(session, true);
     ARPG_REQUIRE(session.request_descent(true));
@@ -227,7 +225,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"committed passive bitset mismatch faults", &committed_passive_bitset_mismatch_faults},
     {"disconnecting passive refund is rejected", &disconnecting_refund_is_rejected_without_save},
     {"next room uses committed passive player build", &next_room_uses_committed_passive_player_build},
-    {"current room keeps old build until transition", &current_room_keeps_old_build_until_transition},
+    {"current room adopts committed passive build",
+        &current_room_adopts_committed_passive_build},
 };
 
 }  // namespace

@@ -1,10 +1,14 @@
 #include "persistence/save_store_detail.hpp"
+#include "persistence/room_progress_codec.hpp"
 
 #include "persistence/checkpoint_codec.hpp"
 
 #include <fstream>
 #include <iterator>
+#include <memory>
+#include <new>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 namespace arpg::persistence::detail {
@@ -164,6 +168,17 @@ bool same_state(const checkpoint::DungeonRunState& lhs,
         && same_ownership(lhs.item_ownership, rhs.item_ownership);
 }
 
+bool same_slot_checkpoint(const SlotInfo& lhs, const SlotInfo& rhs) noexcept {
+    if (lhs.state != SlotFileState::valid
+            || rhs.state != SlotFileState::valid
+            || lhs.persistence_revision != rhs.persistence_revision
+            || lhs.v9 != rhs.v9) {
+        return false;
+    }
+    return lhs.v9 ? lhs.encoded_bytes == rhs.encoded_bytes
+                  : same_state(lhs.checkpoint, rhs.checkpoint);
+}
+
 SlotInfo read_slot(const std::filesystem::path& path) {
     SlotInfo info{};
     std::error_code error;
@@ -188,6 +203,27 @@ SlotInfo read_slot(const std::filesystem::path& path) {
         info.error = SaveError::read_failed;
         return info;
     }
+    constexpr std::array<std::uint8_t, 8U> kV9Magic{{
+        'A', 'R', 'P', 'G', 'S', 'V', '9', '\0'}};
+    if (bytes.size() >= kV9Magic.size()
+            && std::equal(kV9Magic.begin(), kV9Magic.end(), bytes.begin())) {
+        std::unique_ptr<checkpoint::SaveCheckpointSlot> decoded{
+            new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+        bool migrated{};
+        if (decoded == nullptr || decode_checkpoint_v9_into(bytes.data(),
+                bytes.size(), *decoded, migrated) != CodecError::none
+                || migrated) {
+            info.state = SlotFileState::invalid;
+            info.error = SaveError::read_failed;
+            return info;
+        }
+        info.state = SlotFileState::valid;
+        info.checkpoint = decoded->state;
+        info.persistence_revision = decoded->persistence_revision;
+        info.v9 = true;
+        info.encoded_bytes = std::move(bytes);
+        return info;
+    }
     const auto decoded = decode_checkpoint(bytes.data(), bytes.size());
     if (decoded.error != CodecError::none) {
         info.state = SlotFileState::invalid;
@@ -196,7 +232,9 @@ SlotInfo read_slot(const std::filesystem::path& path) {
     }
     info.state = SlotFileState::valid;
     info.checkpoint = decoded.state;
+    info.persistence_revision = decoded.state.commit_generation;
     info.migrated = decoded.migrated;
+    info.encoded_bytes = std::move(bytes);
     return info;
 }
 
@@ -282,15 +320,13 @@ SaveSlot highest_slot(const ScanResult& scan) noexcept {
             && scan.a.state != SlotFileState::valid) {
         return SaveSlot::b;
     }
-    if (scan.a.checkpoint.commit_generation
-            > scan.b.checkpoint.commit_generation) {
+    if (scan.a.persistence_revision > scan.b.persistence_revision) {
         return SaveSlot::a;
     }
-    if (scan.b.checkpoint.commit_generation
-            > scan.a.checkpoint.commit_generation) {
+    if (scan.b.persistence_revision > scan.a.persistence_revision) {
         return SaveSlot::b;
     }
-    return same_state(scan.a.checkpoint, scan.b.checkpoint)
+    return same_slot_checkpoint(scan.a, scan.b)
         ? SaveSlot::a
         : SaveSlot::none;
 }

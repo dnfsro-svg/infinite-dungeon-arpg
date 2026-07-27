@@ -109,7 +109,24 @@ Assert-ValidatorRejects 'forged-state' {
     param($caseRun)
     $path = Join-Path $caseRun 'stage17-skill-stones-state.txt'
     $text = [System.IO.File]::ReadAllText($path).Replace(
-        'save_version=8', 'save_version=7')
+        'save_version=9', 'save_version=8')
+    [System.IO.File]::WriteAllText(
+        $path, $text, [System.Text.UTF8Encoding]::new($false))
+}
+Assert-ValidatorRejects 'forged-storm-summary' {
+    param($caseRun)
+    $path = Join-Path $caseRun 'storm-summary.txt'
+    $text = [System.IO.File]::ReadAllText($path).Replace(
+        'storm_strike_hit_count=3', 'storm_strike_hit_count=2')
+    [System.IO.File]::WriteAllText(
+        $path, $text, [System.Text.UTF8Encoding]::new($false))
+}
+Assert-ValidatorRejects 'forged-cooldown-drain-summary' {
+    param($caseRun)
+    $path = Join-Path $caseRun 'production-summary.txt'
+    $text = [System.IO.File]::ReadAllText($path).Replace(
+        'production_cooldowns_zero_before_shutdown=1',
+        'production_cooldowns_zero_before_shutdown=0')
     [System.IO.File]::WriteAllText(
         $path, $text, [System.Text.UTF8Encoding]::new($false))
 }
