@@ -89,8 +89,7 @@ bool same_packet(const DamagePacket& left, const DamagePacket& right) noexcept {
 bool same_projectile(
     const ProjectileSnapshot& left, const ProjectileSnapshot& right) noexcept {
     return left.active == right.active && left.generation == right.generation
-        && left.owner.index == right.owner.index
-        && left.owner.generation == right.owner.generation
+        && left.owner_ordinal == right.owner_ordinal
         && same_vec(left.position, right.position)
         && same_vec(left.velocity, right.velocity)
         && left.lifetime_ticks == right.lifetime_ticks
@@ -101,8 +100,7 @@ bool same_projectile(
 bool same_hazard(
     const HazardSnapshot& left, const HazardSnapshot& right) noexcept {
     return left.active == right.active && left.generation == right.generation
-        && left.owner.index == right.owner.index
-        && left.owner.generation == right.owner.generation
+        && left.owner_ordinal == right.owner_ordinal
         && left.source == right.source
         && left.kind == right.kind && same_vec(left.center, right.center)
         && left.radius == right.radius
@@ -379,7 +377,7 @@ arpg::test::Failure death_blast_cleans_owner_transients_and_persists() noexcept 
     while (const auto event = world.try_pop_event()) {
         if (event->kind == CombatEventKind::affix_death_warning) {
             ++death_warning_count;
-            ARPG_REQUIRE(event->target_index == 0U);
+            ARPG_REQUIRE(event->target_ordinal == 0U);
         }
         if (event->kind == CombatEventKind::defeated) {
             ++defeat_count;

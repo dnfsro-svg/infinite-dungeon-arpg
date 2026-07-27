@@ -47,7 +47,7 @@ bool event_equal(const CombatEvent& lhs, const CombatEvent& rhs) noexcept {
     return lhs.kind == rhs.kind
         && lhs.tick == rhs.tick
         && lhs.attack == rhs.attack
-        && lhs.target_index == rhs.target_index
+        && lhs.target_ordinal == rhs.target_ordinal
         && lhs.hit_count == rhs.hit_count
         && lhs.feedback == rhs.feedback
         && vec_equal(lhs.position, rhs.position)
@@ -214,7 +214,7 @@ arpg::test::Failure breaking_blow_has_exact_local_window() noexcept {
         kinds[static_cast<std::size_t>(event_count)] = event->kind;
         if (event->kind == CombatEventKind::break_started) {
             ARPG_REQUIRE(event->attack == AttackId::launcher);
-            ARPG_REQUIRE(event->target_index == 2);
+            ARPG_REQUIRE(event->target_ordinal == 2U);
             ARPG_REQUIRE(event->feedback == FeedbackLevel::medium);
             ARPG_REQUIRE(event->tick == snapshot.tick - 1);
         }
@@ -357,7 +357,7 @@ arpg::test::Failure reset_reconstructs_runtime_and_emits_once() noexcept {
     ARPG_REQUIRE(event->kind == CombatEventKind::reset);
     ARPG_REQUIRE(event->tick == 0);
     ARPG_REQUIRE(event->attack == AttackId::none);
-    ARPG_REQUIRE(event->target_index == 0xFF);
+    ARPG_REQUIRE(event->target_ordinal == kInvalidMonsterOrdinal);
     ARPG_REQUIRE(event->hit_count == 0);
     ARPG_REQUIRE(vec_equal(event->position, config.player_spawn));
     ARPG_REQUIRE(event->value == 0);
@@ -482,6 +482,8 @@ CombatWorld all_roles_world() noexcept {
             Vec3{2.0F + static_cast<float>(index % 4U) * 1.1F,
                 -1.5F + static_cast<float>(index / 4U) * 3.0F, 0.0F},
         };
+        wave.spawns[index].spawn_ordinal =
+            static_cast<MonsterOrdinal>(index);
     }
     CombatEncounterConfig config{};
     config.wave = wave;
@@ -503,8 +505,7 @@ bool same_projectiles(
         const ProjectileSnapshot& a = lhs.projectiles[index];
         const ProjectileSnapshot& b = rhs.projectiles[index];
         if (a.active != b.active || a.generation != b.generation
-                || a.owner.index != b.owner.index
-                || a.owner.generation != b.owner.generation
+                || a.owner_ordinal != b.owner_ordinal
                 || !vec_equal(a.position, b.position)
                 || !vec_equal(a.velocity, b.velocity)
                 || a.lifetime_ticks != b.lifetime_ticks
@@ -550,8 +551,7 @@ bool same_hazards(
         const HazardSnapshot& a = lhs.hazards[index];
         const HazardSnapshot& b = rhs.hazards[index];
         if (a.active != b.active || a.generation != b.generation
-                || a.owner.index != b.owner.index
-                || a.owner.generation != b.owner.generation
+                || a.owner_ordinal != b.owner_ordinal
                 || a.source != b.source || a.kind != b.kind
                 || !vec_equal(a.center, b.center) || a.radius != b.radius
                 || a.telegraph_ticks != b.telegraph_ticks
@@ -752,7 +752,7 @@ arpg::test::Failure mixed_role_golden_replay_preserves_public_behavior() noexcep
     ARPG_REQUIRE(early_events[0].tick == 0U);
     ARPG_REQUIRE(early_events[1].kind == CombatEventKind::hit);
     ARPG_REQUIRE(early_events[1].tick == 5U);
-    ARPG_REQUIRE(early_events[1].target_index == 1U);
+    ARPG_REQUIRE(early_events[1].target_ordinal == 1U);
     ARPG_REQUIRE(early_events[1].value == 28);
     ARPG_REQUIRE(early_events[2].kind == CombatEventKind::impact_summary);
     ARPG_REQUIRE(early_events[2].tick == 5U);
@@ -781,7 +781,7 @@ arpg::test::Failure mixed_role_golden_replay_preserves_public_behavior() noexcep
     ARPG_REQUIRE(tick_45.monsters[4].ai_phase == MonsterAiPhase::telegraph);
     ARPG_REQUIRE(tick_45.hazard_count == 1U);
     ARPG_REQUIRE(tick_45.hazards[0].active);
-    ARPG_REQUIRE(tick_45.hazards[0].owner.index == 4U);
+    ARPG_REQUIRE(tick_45.hazards[0].owner_ordinal == 4U);
     ARPG_REQUIRE(tick_45.diagnostics.effect_owner_count == 1U);
     ARPG_REQUIRE(tick_45.diagnostics.active_effect_count == 1U);
     ARPG_REQUIRE(tick_45.diagnostics.effect_overflow_count == 0U);

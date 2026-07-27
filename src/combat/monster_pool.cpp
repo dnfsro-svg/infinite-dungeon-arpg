@@ -80,6 +80,7 @@ std::optional<MonsterHandle> MonsterPool::spawn(
         runtime = MonsterRuntime{};
         runtime.active = true;
         runtime.generation = generation;
+        runtime.monster_ordinal = spec.spawn_ordinal;
         runtime.id = spec.id;
         runtime.affixes = spec.affixes;
         runtime.spawn_ordinal = spec.spawn_ordinal;
@@ -123,6 +124,12 @@ std::optional<MonsterHandle> MonsterPool::spawn(
     MonsterSpawnSpec spec{};
     spec.id = id;
     spec.position = position;
+    for (std::size_t index = 0U; index < slots_.size(); ++index) {
+        if (!slots_[index].active) {
+            spec.spawn_ordinal = static_cast<MonsterOrdinal>(index);
+            break;
+        }
+    }
     return spawn(spec);
 }
 
@@ -191,7 +198,7 @@ void ProjectilePool::clear() noexcept {
 }
 
 std::optional<ProjectileHandle> ProjectilePool::spawn(
-    MonsterHandle owner,
+    MonsterOrdinal owner_ordinal,
     Vec3 position,
     Vec3 velocity,
     std::uint16_t lifetime_ticks,
@@ -199,7 +206,7 @@ std::optional<ProjectileHandle> ProjectilePool::spawn(
     float radius,
     bool trigger_chain_on_end,
     MonsterAffixSet owner_affixes) noexcept {
-    if (owner.index >= kMonsterCapacity || owner.generation == 0U) {
+    if (owner_ordinal >= limits::kRoomMonsterCapacity) {
         return std::nullopt;
     }
     for (std::size_t index = 0; index < slots_.size(); ++index) {
@@ -213,7 +220,7 @@ std::optional<ProjectileHandle> ProjectilePool::spawn(
         runtime = ProjectileRuntime{};
         runtime.active = true;
         runtime.generation = generation;
-        runtime.owner = owner;
+        runtime.owner_ordinal = owner_ordinal;
         runtime.position = position;
         runtime.velocity = velocity;
         runtime.lifetime_ticks = lifetime_ticks;
@@ -229,7 +236,7 @@ std::optional<ProjectileHandle> ProjectilePool::spawn(
 }
 
 std::optional<ProjectileHandle> ProjectilePool::spawn(
-    MonsterHandle owner,
+    MonsterOrdinal owner_ordinal,
     Vec3 position,
     Vec3 velocity,
     std::uint16_t lifetime_ticks,
@@ -237,7 +244,7 @@ std::optional<ProjectileHandle> ProjectilePool::spawn(
     float radius,
     bool trigger_chain_on_end,
     MonsterAffixSet owner_affixes) noexcept {
-    return spawn(owner, position, velocity, lifetime_ticks,
+    return spawn(owner_ordinal, position, velocity, lifetime_ticks,
                  DamagePacket{damage}, radius, trigger_chain_on_end,
                  owner_affixes);
 }
@@ -315,7 +322,7 @@ void HazardPool::clear() noexcept {
 
 std::optional<HazardHandle> HazardPool::spawn(
     HazardSource source,
-    MonsterHandle owner,
+    MonsterOrdinal owner_ordinal,
     HazardKind kind,
     Vec3 center,
     float radius,
@@ -329,7 +336,7 @@ std::optional<HazardHandle> HazardPool::spawn(
     if ((source != HazardSource::monster
          && source != HazardSource::abyss_environment)
         || (source == HazardSource::monster
-         && (owner.index >= kMonsterCapacity || owner.generation == 0U))
+         && owner_ordinal >= limits::kRoomMonsterCapacity)
         || radius <= 0.0F || active_ticks == 0U) {
         return std::nullopt;
     }
@@ -346,7 +353,7 @@ std::optional<HazardHandle> HazardPool::spawn(
         runtime = HazardRuntime{};
         runtime.active = true;
         runtime.generation = generation;
-        runtime.owner = owner;
+        runtime.owner_ordinal = owner_ordinal;
         runtime.source = source;
         runtime.kind = kind;
         runtime.center = center;
@@ -368,7 +375,7 @@ std::optional<HazardHandle> HazardPool::spawn(
 }
 
 std::optional<HazardHandle> HazardPool::spawn(
-    MonsterHandle owner,
+    MonsterOrdinal owner_ordinal,
     HazardKind kind,
     Vec3 center,
     float radius,
@@ -377,13 +384,13 @@ std::optional<HazardHandle> HazardPool::spawn(
     std::uint16_t damage_interval_ticks,
     DamagePacket damage,
     bool persists_after_owner_death) noexcept {
-    return spawn(HazardSource::monster, owner, kind, center, radius,
+    return spawn(HazardSource::monster, owner_ordinal, kind, center, radius,
                  telegraph_ticks, active_ticks, damage_interval_ticks, damage,
                  persists_after_owner_death);
 }
 
 std::optional<HazardHandle> HazardPool::spawn(
-    MonsterHandle owner,
+    MonsterOrdinal owner_ordinal,
     HazardKind kind,
     Vec3 center,
     float radius,
@@ -392,7 +399,7 @@ std::optional<HazardHandle> HazardPool::spawn(
     std::uint16_t damage_interval_ticks,
     int damage,
     bool persists_after_owner_death) noexcept {
-    return spawn(owner, kind, center, radius, telegraph_ticks, active_ticks,
+    return spawn(owner_ordinal, kind, center, radius, telegraph_ticks, active_ticks,
                  damage_interval_ticks, DamagePacket{damage},
                  persists_after_owner_death);
 }

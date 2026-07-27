@@ -115,7 +115,7 @@ void CombatWorld::resolve_attack_hits() noexcept {
     std::size_t hit_count = 0;
     for (std::size_t index = 0; index < monsters_.slots_.size(); ++index) {
         const MonsterRuntime& dummy = monsters_.slots_[index];
-        if (attack_.hit_targets[index]
+        if (attack_.hit_targets.contains(dummy.monster_ordinal)
             || dummy.hp <= 0
             || dummy.reaction == ReactionState::defeated
             || dummy.reaction == ReactionState::respawning) {
@@ -157,6 +157,11 @@ void CombatWorld::resolve_attack_hits() noexcept {
 }
 
 void CombatWorld::resolve_fire_crate_hits(Aabb attack_box) noexcept {
+    if (room_obstacles_ != nullptr) {
+        static_cast<void>(room_obstacles_->damage_overlapping(
+            attack_box, tick_));
+        return;
+    }
     if (!encounter_config_.fire_room_obstacles) return;
     constexpr float kCrateHalfExtent = 0.80F;
     for (FireRoomCrateSnapshot& crate : fire_crates_) {
@@ -174,9 +179,10 @@ void CombatWorld::resolve_fire_crate_hits(Aabb attack_box) noexcept {
 bool CombatWorld::resolve_player_attack_hit(
     std::size_t index,
     const PlayerAttackHitSpec& spec,
-    std::array<bool, kMonsterCapacity>& hit_latch) noexcept {
-    if (index >= monsters_.slots_.size() || hit_latch[index]) return false;
+    MonsterOrdinalSet& hit_latch) noexcept {
+    if (index >= monsters_.slots_.size()) return false;
     MonsterRuntime& dummy = monsters_.slots_[index];
+    if (hit_latch.contains(dummy.monster_ordinal)) return false;
     if (!dummy.active || dummy.hp <= 0
         || dummy.reaction == ReactionState::defeated
         || dummy.reaction == ReactionState::respawning) {
@@ -186,7 +192,7 @@ bool CombatWorld::resolve_player_attack_hit(
         spec.base_physical, encounter_config_.player_build);
     if (!resolved_packet.has_value()) return false;
 
-    hit_latch[index] = true;
+    if (!hit_latch.insert(dummy.monster_ordinal)) return false;
     const DamagePacket& packet = *resolved_packet;
     const std::size_t physical_index = arpg::modifiers::damage_index(
         arpg::modifiers::DamageType::physical);
@@ -240,7 +246,7 @@ bool CombatWorld::resolve_player_attack_hit(
     hit.skill = spec.skill;
     hit.strike_index = spec.strike_index;
     hit.finisher = spec.finisher;
-    hit.target_index = static_cast<std::uint8_t>(index);
+    hit.target_ordinal = dummy.monster_ordinal;
     hit.hit_count = 1;
     hit.feedback = spec.feedback;
     hit.position = dummy.position;
@@ -254,7 +260,7 @@ bool CombatWorld::resolve_player_attack_hit(
         break_started.skill = spec.skill;
         break_started.strike_index = spec.strike_index;
         break_started.finisher = spec.finisher;
-        break_started.target_index = static_cast<std::uint8_t>(index);
+        break_started.target_ordinal = dummy.monster_ordinal;
         break_started.feedback = spec.feedback;
         break_started.position = dummy.position;
         emit_event(break_started);

@@ -143,6 +143,56 @@ const EffectDiagnostics& EffectSet::diagnostics() const noexcept {
     return diagnostics_;
 }
 
+bool EffectSet::same_state(const EffectSet& other) const noexcept {
+    const auto same_modifier = [](const Modifier& left,
+                                  const Modifier& right) noexcept {
+        return left.id == right.id && left.stat == right.stat
+            && left.operation == right.operation && left.value == right.value
+            && left.required_tags == right.required_tags
+            && left.forbidden_tags == right.forbidden_tags
+            && left.required_conditions == right.required_conditions
+            && left.priority == right.priority
+            && left.conversion_target == right.conversion_target;
+    };
+    const auto same_template = [](const EffectCommandTemplate& left,
+                                  const EffectCommandTemplate& right) noexcept {
+        return left.kind == right.kind && left.value == right.value;
+    };
+    const auto same_command = [](const EffectCommand& left,
+                                 const EffectCommand& right) noexcept {
+        return left.kind == right.kind && left.value == right.value
+            && left.effect_id == right.effect_id;
+    };
+
+    for (std::size_t index = 0U; index < effects_.size(); ++index) {
+        const ActiveEffect& left = effects_[index];
+        const ActiveEffect& right = other.effects_[index];
+        if (left.id != right.id
+            || left.remaining_ticks != right.remaining_ticks
+            || left.stacks != right.stacks
+            || left.max_stacks != right.max_stacks
+            || left.refresh_rule != right.refresh_rule
+            || left.strength != right.strength
+            || !same_modifier(left.modifier, right.modifier)
+            || left.has_modifier != right.has_modifier
+            || !same_template(left.on_expire, right.on_expire)
+            || left.occupied != right.occupied) {
+            return false;
+        }
+    }
+    for (std::size_t index = 0U; index < commands_.size(); ++index) {
+        if (!same_command(commands_[index], other.commands_[index])) {
+            return false;
+        }
+    }
+    return command_head_ == other.command_head_
+        && command_count_ == other.command_count_
+        && diagnostics_.effect_overflows
+            == other.diagnostics_.effect_overflows
+        && diagnostics_.command_overflows
+            == other.diagnostics_.command_overflows;
+}
+
 std::size_t EffectSet::copy_modifiers(
     std::array<Modifier, kCapacity>& output) const noexcept {
     std::size_t count = 0;

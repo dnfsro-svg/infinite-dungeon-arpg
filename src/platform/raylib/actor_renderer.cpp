@@ -455,13 +455,12 @@ void draw_monster_presentation(const MonsterSnapshot& monster, Vec3 position,
 
 void draw_monster_silhouette(const MonsterSnapshot& monster, Vec3 position,
     dungeon::DungeonElement ecology, float width, float height,
-    const CombatFeedback& feedback, std::size_t monster_index,
-    std::uint64_t tick, std::size_t label_lane,
+    const CombatFeedback& feedback, std::uint64_t tick, std::size_t label_lane,
     Font hud_font, bool hud_font_ready) noexcept {
     const ScreenProjection projected = project_combat_position(position, width, height);
     const MonsterVisual visual = monster_visual(monster.id, monster.ai_phase, ecology);
     Color body = to_color(visual.body);
-    if (feedback.target_flash_seconds(monster_index) > 0.0F) body = Color{255, 249, 220, 255};
+    if (feedback.target_flash_seconds(monster.monster_ordinal) > 0.0F) body = Color{255, 249, 220, 255};
     const Color accent = to_color(visual.accent);
     const float scale = projected.scale; const float x = projected.x; const float y = projected.y;
     switch (visual.shape) {
@@ -535,12 +534,12 @@ bool CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
         draw_items[draw_count++] = {
             current_combat.player.position, 0U, true, {}};
     }
-    for (std::size_t index = 0; index < current_combat.monsters.size(); ++index) {
+    for (std::size_t index = 0; index < current_combat.monster_count; ++index) {
         const MonsterSnapshot& monster = current_combat.monsters[index];
         const MonsterMaterialDrawPlan material_plan =
             monster_presenter_.collect_draw_plan(index, monster,
                 current_combat.tick,
-                feedback.target_flash_seconds(index) > 0.0F);
+                feedback.target_flash_seconds(monster.monster_ordinal) > 0.0F);
         if (!material_plan.visible) continue;
         MonsterMaterialDrawRuntimeStatus& material_status =
             monster_material_draw_statuses_[static_cast<std::size_t>(monster.id)];
@@ -552,7 +551,7 @@ bool CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
         }
         Vec3 position = monster.position;
         const MonsterSnapshot& previous_monster = previous_combat.monsters[index];
-        if (monster.id == previous_monster.id && monster.generation == previous_monster.generation
+        if (monster.monster_ordinal == previous_monster.monster_ordinal
             && previous_monster.active) position = interpolate(
                 previous_monster.position, monster.position, alpha);
         draw_items[draw_count++] = {position, static_cast<std::uint8_t>(index),
@@ -600,7 +599,7 @@ bool CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
                     Color{230, 142, 255, 155}));
             }
             const float hit_flash_seconds = feedback.target_flash_seconds(
-                item.monster_index);
+                monster.monster_ordinal);
             const bool material_frame_drawn = draw_monster_animation(
                 material_pack_, monster, item.material_plan, projected,
                 hit_flash_seconds);
@@ -618,7 +617,7 @@ bool CombatRenderer::draw_actors(const dungeon::DungeonSnapshot& previous,
                     hud_renderer_.hud_font(), hud_renderer_.font_ready());
             } else {
                 draw_monster_silhouette(monster, item.position, current.ecology,
-                    width, height, feedback, item.monster_index, current_combat.tick,
+                    width, height, feedback, current_combat.tick,
                     item.monster_index, hud_renderer_.hud_font(),
                     hud_renderer_.font_ready());
             }

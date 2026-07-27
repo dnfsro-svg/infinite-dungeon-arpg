@@ -79,7 +79,7 @@ arpg::test::Failure shooter_creates_deterministic_projectile() noexcept {
     ARPG_REQUIRE(first_snapshot.projectile_count == 1U);
     ARPG_REQUIRE(second_snapshot.projectile_count == 1U);
     ARPG_REQUIRE(first_snapshot.projectiles[0].active);
-    ARPG_REQUIRE(first_snapshot.projectiles[0].owner.index == 0U);
+    ARPG_REQUIRE(first_snapshot.projectiles[0].owner_ordinal == 0U);
     ARPG_REQUIRE(first_snapshot.projectiles[0].position.x
                  == second_snapshot.projectiles[0].position.x);
     ARPG_REQUIRE(first_snapshot.projectiles[0].velocity.x

@@ -64,7 +64,8 @@ struct MonsterTrace final {
     arpg::combat::CombatEventKind defeat_kind{};
     std::uint64_t defeat_tick{};
     arpg::combat::AttackId defeat_attack{arpg::combat::AttackId::none};
-    std::uint8_t defeat_target_index{0xFFU};
+    arpg::combat::MonsterOrdinal defeat_target_ordinal{
+        arpg::combat::kInvalidMonsterOrdinal};
     arpg::combat::FeedbackLevel defeat_feedback{};
     std::uint32_t defeat_position_x{};
     std::uint32_t defeat_position_y{};
@@ -89,7 +90,7 @@ struct MonsterTrace final {
             && left.defeat_kind == right.defeat_kind
             && left.defeat_tick == right.defeat_tick
             && left.defeat_attack == right.defeat_attack
-            && left.defeat_target_index == right.defeat_target_index
+            && left.defeat_target_ordinal == right.defeat_target_ordinal
             && left.defeat_feedback == right.defeat_feedback
             && left.defeat_position_x == right.defeat_position_x
             && left.defeat_position_y == right.defeat_position_y
@@ -258,7 +259,7 @@ bool record_defeat_payload(RoomTrace& trace,
         monster.defeat_kind = event.kind;
         monster.defeat_tick = event.tick;
         monster.defeat_attack = event.attack;
-        monster.defeat_target_index = event.target_index;
+        monster.defeat_target_ordinal = event.target_ordinal;
         monster.defeat_feedback = event.feedback;
         monster.defeat_position_x = float_bits(event.position.x);
         monster.defeat_position_y = float_bits(event.position.y);

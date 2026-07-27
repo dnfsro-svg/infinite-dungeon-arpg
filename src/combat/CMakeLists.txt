@@ -5,6 +5,7 @@ add_library(arpg_combat STATIC
     attack_catalog.cpp
     combat_collision.cpp
     combat_effects.cpp
+    combat_defeat_ledger.cpp
     combat_snapshot.cpp
     combat_world.cpp
     hit_resolution.cpp
@@ -18,9 +19,12 @@ add_library(arpg_combat STATIC
     monster_affix_runtime.cpp
     monster_catalog.cpp
     monster_pool.cpp
+    monster_persistent_state.cpp
     player_damage_history.cpp
     player_simulation.cpp
     room_spatial_grid.cpp
+    room_monster_field.cpp
+    room_obstacle_runtime.cpp
     target_simulation.cpp)
 
 target_include_directories(arpg_combat

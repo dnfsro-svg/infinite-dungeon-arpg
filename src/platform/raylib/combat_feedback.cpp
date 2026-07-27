@@ -67,8 +67,8 @@ void CombatFeedback::consume(const combat::CombatEvent& event) noexcept {
     }
 
     if (event.kind == combat::CombatEventKind::hit
-        && event.target_index < flash_seconds_.size()) {
-        flash_seconds_[event.target_index] = 2.0F / 60.0F;
+        && event.target_ordinal < flash_seconds_.size()) {
+        flash_seconds_[event.target_ordinal] = 2.0F / 60.0F;
     }
     if (event.kind == combat::CombatEventKind::player_hit) {
         player_hit_source_ = event.position;
@@ -174,9 +174,9 @@ CameraOffset CombatFeedback::camera_offset() const noexcept {
 }
 
 float CombatFeedback::target_flash_seconds(
-    std::size_t target_index) const noexcept {
-    return target_index < flash_seconds_.size()
-        ? flash_seconds_[target_index]
+    combat::MonsterOrdinal target_ordinal) const noexcept {
+    return target_ordinal < flash_seconds_.size()
+        ? flash_seconds_[target_ordinal]
         : 0.0F;
 }
 

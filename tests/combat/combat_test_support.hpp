@@ -8,6 +8,15 @@
 namespace arpg::test {
 
 struct CombatWorldTestAccess final {
+    [[nodiscard]] static combat::MonsterOrdinal monster_ordinal(
+        combat::CombatWorld& world,
+        combat::MonsterHandle handle) noexcept {
+        const combat::MonsterRuntime* runtime = world.monsters_.get(handle);
+        return runtime == nullptr
+            ? combat::kInvalidMonsterOrdinal
+            : runtime->monster_ordinal;
+    }
+
     static void fill_event_queue(
         combat::CombatWorld& world, std::size_t count) noexcept {
         combat::CombatEvent event{};
@@ -57,14 +66,16 @@ struct CombatWorldTestAccess final {
     static void fill_projectiles(
         combat::CombatWorld& world,
         combat::MonsterHandle owner) noexcept {
+        const combat::MonsterOrdinal owner_ordinal = monster_ordinal(
+            world, owner);
         for (std::size_t index = 0; index < combat::kProjectileCapacity;
              ++index) {
             static_cast<void>(world.spawn_projectile(
-                owner, combat::Vec3{10.0F, 5.0F, 0.0F}, combat::Vec3{},
+                owner_ordinal, combat::Vec3{10.0F, 5.0F, 0.0F}, combat::Vec3{},
                 1000U, 1, 0.1F));
         }
         static_cast<void>(world.spawn_projectile(
-            owner, combat::Vec3{10.0F, 5.0F, 0.0F}, combat::Vec3{},
+            owner_ordinal, combat::Vec3{10.0F, 5.0F, 0.0F}, combat::Vec3{},
             1000U, 1, 0.1F));
     }
 
@@ -72,7 +83,8 @@ struct CombatWorldTestAccess final {
         combat::CombatWorld& world,
         combat::MonsterHandle owner) noexcept {
         return world.spawn_projectile(
-            owner, combat::Vec3{}, combat::Vec3{}, 1000U, 1, 0.1F);
+            monster_ordinal(world, owner), combat::Vec3{}, combat::Vec3{},
+            1000U, 1, 0.1F);
     }
 
     static bool spawn_projectile(
@@ -85,15 +97,16 @@ struct CombatWorldTestAccess final {
         float radius,
         bool trigger_chain_on_end,
         combat::MonsterAffixSet owner_affixes) noexcept {
-        return world.spawn_projectile(owner, position, velocity, lifetime_ticks,
-            damage, radius, trigger_chain_on_end, owner_affixes);
+        return world.spawn_projectile(monster_ordinal(world, owner), position,
+            velocity, lifetime_ticks, damage, radius, trigger_chain_on_end,
+            owner_affixes);
     }
 
     static bool spawn_hazard(
         combat::CombatWorld& world,
         combat::MonsterHandle owner) noexcept {
-        return world.spawn_hazard(owner, combat::HazardKind::native,
-            combat::Vec3{}, 1.0F,
+        return world.spawn_hazard(monster_ordinal(world, owner),
+            combat::HazardKind::native, combat::Vec3{}, 1.0F,
             1000U, 1000U, 30U, 1);
     }
 
@@ -107,10 +120,12 @@ struct CombatWorldTestAccess final {
         combat::CombatWorld& world,
         combat::MonsterHandle owner,
         std::size_t count) noexcept {
+        const combat::MonsterOrdinal owner_ordinal = monster_ordinal(
+            world, owner);
         for (std::size_t index = 0; index < count; ++index) {
             static_cast<void>(world.spawn_hazard(
-                owner, combat::HazardKind::native, combat::Vec3{}, 1.0F,
-                1000U, 1000U, 30U, 1));
+                owner_ordinal, combat::HazardKind::native, combat::Vec3{},
+                1.0F, 1000U, 1000U, 30U, 1));
         }
     }
 
@@ -170,6 +185,20 @@ struct CombatWorldTestAccess final {
         combat::CombatWorld& world,
         combat::Vec3 position) noexcept {
         world.player_.position = position;
+    }
+
+    static bool trigger_chain_lightning(
+        combat::CombatWorld& world,
+        combat::MonsterOrdinal owner,
+        combat::MonsterAffixSet affixes,
+        combat::Vec3 center) noexcept {
+        return world.trigger_chain_lightning(owner, affixes, center);
+    }
+
+    static void resolve_obstacle_hits(
+        combat::CombatWorld& world,
+        combat::Aabb bounds) noexcept {
+        world.resolve_fire_crate_hits(bounds);
     }
 
     static void enable_fire_room_obstacles(

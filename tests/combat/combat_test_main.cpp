@@ -27,11 +27,13 @@ arpg::test::TestSuite monster_melee_suite() noexcept;
 arpg::test::TestSuite monster_ranged_suite() noexcept;
 arpg::test::TestSuite monster_special_suite() noexcept;
 arpg::test::TestSuite monster_pool_suite() noexcept;
+arpg::test::TestSuite monster_residency_suite() noexcept;
 arpg::test::TestSuite player_health_suite() noexcept;
 arpg::test::TestSuite player_build_suite() noexcept;
 arpg::test::TestSuite player_damage_history_suite() noexcept;
 arpg::test::TestSuite player_death_snapshot_suite() noexcept;
 arpg::test::TestSuite player_defense_suite() noexcept;
+arpg::test::TestSuite room_obstacle_runtime_suite() noexcept;
 arpg::test::TestSuite storm_swords_skill_suite() noexcept;
 
 namespace {
@@ -136,13 +138,15 @@ int main() {
         monster_ranged_suite(),
         monster_special_suite(),
         monster_pool_suite(),
+        monster_residency_suite(),
         player_health_suite(),
         player_build_suite(),
         player_damage_history_suite(),
         player_death_snapshot_suite(),
         player_defense_suite(),
+        room_obstacle_runtime_suite(),
         storm_swords_skill_suite(),
     };
 
-    return arpg::test::run_suites(suites, 247, "stage 18 combat queries");
+    return arpg::test::run_suites(suites, 266, "stage 20 room residency");
 }

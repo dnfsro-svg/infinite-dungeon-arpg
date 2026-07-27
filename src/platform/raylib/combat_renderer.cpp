@@ -49,15 +49,14 @@ LootLabelObstacleSet actor_label_obstacles(
         camera_offset, width, height);
     const float alpha = std::clamp(interpolation_alpha, 0.0F, 1.0F);
     for (std::size_t index = 0U;
-         index < current_combat.monsters.size(); ++index) {
+         index < current_combat.monster_count; ++index) {
         const combat::MonsterSnapshot& monster =
             current_combat.monsters[index];
         if (!monster.active) continue;
         combat::Vec3 position = monster.position;
         const combat::MonsterSnapshot& previous_monster =
             previous_combat.monsters[index];
-        if (monster.id == previous_monster.id
-                && monster.generation == previous_monster.generation
+        if (monster.monster_ordinal == previous_monster.monster_ordinal
                 && previous_monster.active) {
             position = interpolate_position(
                 previous_monster.position, monster.position, alpha);

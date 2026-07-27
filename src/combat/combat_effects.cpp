@@ -6,28 +6,18 @@ namespace arpg::combat {
 
 modifiers::EffectSet* CombatWorld::find_effects(
     std::size_t monster_slot) noexcept {
-    const auto& monster = monsters_.slots_[monster_slot];
-    for (auto& owner : effect_owners_) {
-        if (owner.occupied && owner.monster_slot == monster_slot
-            && owner.generation == monster.generation) {
-            return &owner.effects;
-        }
-    }
-    return nullptr;
+    if (monster_slot >= monsters_.slots_.size()) return nullptr;
+    MonsterRuntime& monster = monsters_.slots_[monster_slot];
+    return monster.active && monster.effects_touched
+        ? &monster.effects : nullptr;
 }
 
 modifiers::EffectSet* CombatWorld::ensure_effects(
     std::size_t monster_slot) noexcept {
-    if (auto* existing = find_effects(monster_slot)) return existing;
-    for (auto& owner : effect_owners_) {
-        if (owner.occupied) continue;
-        owner.monster_slot = monster_slot;
-        owner.generation = monsters_.slots_[monster_slot].generation;
-        owner.effects.clear();
-        owner.occupied = true;
-        return &owner.effects;
-    }
-    return nullptr;
+    if (monster_slot >= monsters_.slots_.size()) return nullptr;
+    MonsterRuntime& monster = monsters_.slots_[monster_slot];
+    monster.effects_touched = monster.active;
+    return monster.active ? &monster.effects : nullptr;
 }
 
 void CombatWorld::apply_effect_commands(

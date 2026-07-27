@@ -58,7 +58,7 @@ void CombatWorld::simulate_special_ai(
         };
         if (is_hazard) {
             static_cast<void>(spawn_hazard(
-                MonsterHandle{static_cast<std::uint16_t>(slot), monster.generation},
+                monster.monster_ordinal,
                 HazardKind::native, monster.attack_target_position, 1.25F,
                 abyss_monster_attack_ticks(
                     definition.telegraph_ticks, monster.affix_profile,

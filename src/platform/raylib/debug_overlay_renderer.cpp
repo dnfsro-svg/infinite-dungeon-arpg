@@ -169,7 +169,8 @@ void DebugOverlayRenderer::draw(const dungeon::DungeonSnapshot& current,
     y += layout.hud_line_step;
     DrawText(diagnostics.has_last_event
             ? TextFormat("Last event %s target %u",
-                event_name(diagnostics.last_event.kind), diagnostics.last_event.target_index)
+                event_name(diagnostics.last_event.kind),
+                static_cast<unsigned>(diagnostics.last_event.target_ordinal))
             : "Last event None",
         static_cast<int>(layout.hud_x), y, 16, text);
     y += layout.hud_line_step;

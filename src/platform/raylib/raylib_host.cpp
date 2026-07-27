@@ -305,13 +305,14 @@ void apply_stage12_material_showcase(dungeon::DungeonSnapshot& snapshot,
         }
         return;
     }
-    combat_snapshot.monster_count = ids.size();
+    combat_snapshot.monster_count = static_cast<std::uint16_t>(ids.size());
     snapshot.remaining_targets = static_cast<std::uint8_t>(ids.size());
     for (std::size_t index = 0U; index < ids.size(); ++index) {
         combat::MonsterSnapshot& monster = combat_snapshot.monsters[index];
         monster = {};
         monster.active = true;
         monster.generation = 1U;
+        monster.monster_ordinal = static_cast<combat::MonsterOrdinal>(index);
         monster.id = ids[index];
         monster.position = positions[index];
         monster.spawn = positions[index];

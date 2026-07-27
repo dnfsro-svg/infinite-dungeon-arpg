@@ -233,7 +233,8 @@ int main() {
               << " depth=" << fixture->initial_state.current_room.depth << '\n'
               << "defeat kind=" << static_cast<unsigned>(fixture->defeat.kind)
               << " tick=" << fixture->defeat.tick
-              << " target=" << static_cast<unsigned>(fixture->defeat.target_index)
+              << " target="
+              << static_cast<unsigned>(fixture->defeat.target_ordinal)
               << " monster=" << static_cast<unsigned>(fixture->defeat.monster_id)
               << " ordinal=" << fixture->defeat.spawn_ordinal
               << " score=" << fixture->defeat.affix_score

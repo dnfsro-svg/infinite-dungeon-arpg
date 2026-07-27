@@ -216,7 +216,7 @@ arpg::test::Failure jump_arc_has_deterministic_apex_and_one_landing_tick() noexc
     while (const auto event = world.try_pop_event()) {
         if (event->kind == CombatEventKind::landing) {
             ++landing_events;
-            ARPG_REQUIRE(event->target_index == 0xFF);
+            ARPG_REQUIRE(event->target_ordinal == kInvalidMonsterOrdinal);
             ARPG_REQUIRE(arpg::test::near(event->position.z, 0.0));
             ARPG_REQUIRE(event->tick + 1 == landing_snapshot_tick);
         }

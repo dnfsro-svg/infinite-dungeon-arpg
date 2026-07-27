@@ -191,7 +191,7 @@ void CombatWorld::simulate_monster(std::size_t slot) noexcept {
                 CombatEvent landing{};
                 landing.kind = CombatEventKind::landing;
                 landing.tick = tick_;
-                landing.target_index = static_cast<std::uint8_t>(slot);
+                landing.target_ordinal = monster.monster_ordinal;
                 landing.position = monster.position;
                 emit_event(landing);
             }

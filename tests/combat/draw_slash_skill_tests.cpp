@@ -162,7 +162,7 @@ arpg::test::Failure draw_slash_uses_220_physical_and_36_break_damage() noexcept 
     while (const auto event = world.try_pop_event()) {
         saw_physical_hit = saw_physical_hit
             || (event->kind == CombatEventKind::hit
-                && event->target_index == 0U && event->value == 220);
+                && event->target_ordinal == 0U && event->value == 220);
     }
     ARPG_REQUIRE(saw_physical_hit);
     return {};

@@ -21,12 +21,14 @@ add_executable(arpg_combat_tests
     monster_ranged_tests.cpp
     monster_special_tests.cpp
     monster_pool_tests.cpp
+    monster_residency_tests.cpp
     movement_jump_tests.cpp
     player_health_tests.cpp
     player_build_tests.cpp
     player_damage_history_tests.cpp
     player_death_snapshot_tests.cpp
     player_defense_tests.cpp
+    room_obstacle_runtime_tests.cpp
     storm_swords_skill_tests.cpp)
 
 target_compile_features(arpg_combat_tests PRIVATE cxx_std_17)

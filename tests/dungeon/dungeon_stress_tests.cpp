@@ -371,7 +371,7 @@ bool same_event(const DungeonEvent& lhs, const DungeonEvent& rhs) noexcept {
 bool same_event(const CombatEvent& lhs, const CombatEvent& rhs) noexcept {
     return lhs.kind == rhs.kind && lhs.tick == rhs.tick
         && lhs.attack == rhs.attack && lhs.feedback == rhs.feedback
-        && lhs.target_index == rhs.target_index
+        && lhs.target_ordinal == rhs.target_ordinal
         && lhs.hit_count == rhs.hit_count && lhs.value == rhs.value
         && same_vec(lhs.position, rhs.position);
 }

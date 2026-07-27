@@ -79,6 +79,7 @@ public:
     [[nodiscard]] std::uint8_t stack_count(EffectId id) const noexcept;
     [[nodiscard]] std::size_t queued_command_count() const noexcept;
     [[nodiscard]] const EffectDiagnostics& diagnostics() const noexcept;
+    [[nodiscard]] bool same_state(const EffectSet& other) const noexcept;
     std::size_t copy_modifiers(
         std::array<Modifier, kCapacity>& output) const noexcept;
     bool pop_command(EffectCommand& command) noexcept;

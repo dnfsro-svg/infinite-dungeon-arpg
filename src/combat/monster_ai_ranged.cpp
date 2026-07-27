@@ -156,8 +156,7 @@ void CombatWorld::simulate_ranged_ai(
                             packet, multishot->primary_bp);
                     }
                     if (!spawn_projectile(
-                            MonsterHandle{static_cast<std::uint16_t>(slot),
-                                          monster.generation},
+                            monster.monster_ordinal,
                             monster.position, fanned_velocities[projectile_index],
                             kProjectileLifetime, packet, kProjectileRadius,
                             chain != nullptr, monster.affixes)) {

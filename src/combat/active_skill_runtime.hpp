@@ -31,7 +31,7 @@ struct ActiveSkillRuntime final {
     ActiveSkillSnapshot snapshot{};
     Facing locked_facing{Facing::right};
     std::array<std::uint16_t, skills::kActiveSkillCount> cooldowns{};
-    std::array<bool, kMonsterCapacity> hit_latch{};
+    MonsterOrdinalSet hit_latch{};
 };
 
 }  // namespace arpg::combat

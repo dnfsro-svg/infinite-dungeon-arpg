@@ -163,7 +163,7 @@ arpg::test::Failure launcher_integrates_then_lands_in_knockdown() noexcept {
     while (const auto event = world.try_pop_event()) {
         if (event->kind == CombatEventKind::landing) {
             ++landing_events;
-            ARPG_REQUIRE(event->target_index == 1);
+            ARPG_REQUIRE(event->target_ordinal == 1U);
             ARPG_REQUIRE(arpg::test::near(event->position.z, 0.0));
         }
     }
@@ -307,7 +307,7 @@ arpg::test::Failure defeated_respawns_after_ninety_active_ticks() noexcept {
         kinds[event_count] = event->kind;
         if (event->kind == CombatEventKind::defeated) {
             ARPG_REQUIRE(event->attack == AttackId::j1);
-            ARPG_REQUIRE(event->target_index == 0);
+            ARPG_REQUIRE(event->target_ordinal == 0U);
         }
         ++event_count;
     }
@@ -354,7 +354,7 @@ arpg::test::Failure defeated_respawns_after_ninety_active_ticks() noexcept {
     while (const auto event = world.try_pop_event()) {
         if (event->kind == CombatEventKind::respawned) {
             ++respawn_events;
-            ARPG_REQUIRE(event->target_index == 0);
+            ARPG_REQUIRE(event->target_ordinal == 0U);
             ARPG_REQUIRE(event->attack == AttackId::none);
             ARPG_REQUIRE(arpg::test::near(
                 event->position.x, 1.20, 1.0e-4));

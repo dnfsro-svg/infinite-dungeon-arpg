@@ -162,7 +162,7 @@ struct DungeonSessionTestAccess final {
     static bool relay_defeated(
         dungeon::DungeonSession& session,
         std::uint8_t wave_index,
-        std::uint8_t target_index,
+        combat::MonsterOrdinal target_ordinal,
         combat::Vec3 position,
         bool reward_eligible = true,
         combat::MonsterId monster_id = combat::MonsterId::fire_bomber,
@@ -177,12 +177,12 @@ struct DungeonSessionTestAccess final {
         session.wave_index_ = wave_index;
         combat::CombatEvent event{};
         event.kind = combat::CombatEventKind::defeated;
-        event.target_index = target_index;
+        event.target_ordinal = target_ordinal;
         event.position = position;
         event.monster_id = monster_id;
         event.spawn_ordinal = spawn_ordinal == 0xFFFFU
             ? static_cast<std::uint16_t>(
-                static_cast<std::uint16_t>(wave_index) * 96U + target_index)
+                static_cast<std::uint16_t>(wave_index) * 96U + target_ordinal)
             : spawn_ordinal;
         event.affix_score = affix_score;
         event.reward_eligible = reward_eligible;
@@ -512,7 +512,7 @@ inline void attempt_exit(dungeon::DungeonSession& session,
 inline bool relay_defeated(
     dungeon::DungeonSession& session,
     std::uint8_t wave_index,
-    std::uint8_t target_index,
+    combat::MonsterOrdinal target_ordinal,
     combat::Vec3 position,
     bool reward_eligible = true,
     combat::MonsterId monster_id = combat::MonsterId::fire_bomber,
@@ -520,7 +520,7 @@ inline bool relay_defeated(
     std::uint16_t affix_score = 0U,
     bool commit_health_potion = true) noexcept {
     return DungeonSessionTestAccess::relay_defeated(
-        session, wave_index, target_index, position, reward_eligible,
+        session, wave_index, target_ordinal, position, reward_eligible,
         monster_id, spawn_ordinal, affix_score, commit_health_potion);
 }
 

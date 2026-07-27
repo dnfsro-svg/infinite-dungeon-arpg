@@ -146,7 +146,7 @@ arpg::test::Failure one_attack_hits_one_target_once_across_active_ticks() noexce
     while (const auto event = world.try_pop_event()) {
         if (event->kind == CombatEventKind::hit) {
             ++hit_events;
-            ARPG_REQUIRE(event->target_index == 0);
+            ARPG_REQUIRE(event->target_ordinal == 0U);
             ARPG_REQUIRE(event->value == 28);
         } else if (event->kind == CombatEventKind::impact_summary) {
             ++summaries;
@@ -198,7 +198,11 @@ arpg::test::Failure three_targets_resolve_independently_with_one_summary() noexc
     ARPG_REQUIRE(
         arpg::test::near(snapshot.monsters[1].velocity.z, 9.5, 1.0e-4));
 
-    std::array<std::uint8_t, kDummyCount> hit_order{{0xFF, 0xFF, 0xFF}};
+    std::array<MonsterOrdinal, kDummyCount> hit_order{{
+        kInvalidMonsterOrdinal,
+        kInvalidMonsterOrdinal,
+        kInvalidMonsterOrdinal,
+    }};
     int hit_events = 0;
     int summaries = 0;
     int event_index = 0;
@@ -207,9 +211,9 @@ arpg::test::Failure three_targets_resolve_independently_with_one_summary() noexc
             ARPG_REQUIRE(event_index == 0);
         } else if (event->kind == CombatEventKind::hit) {
             ARPG_REQUIRE(event_index == hit_events + 1);
-            ARPG_REQUIRE(event->target_index < kDummyCount);
+            ARPG_REQUIRE(event->target_ordinal < kDummyCount);
             hit_order[static_cast<std::size_t>(hit_events)] =
-                event->target_index;
+                event->target_ordinal;
             ++hit_events;
         } else if (event->kind == CombatEventKind::impact_summary) {
             ARPG_REQUIRE(event_index == 4);

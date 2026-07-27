@@ -29,8 +29,10 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
     result.skill_cooldowns = active_skill_.cooldowns;
     for (std::size_t index = 0; index < monsters_.slots().size(); ++index) {
         const MonsterRuntime& monster = monsters_.slots()[index];
-        result.monsters[index] = MonsterSnapshot{
-            monster.active, monster.generation, monster.id, monster.affixes,
+        if (!monster.active) continue;
+        result.monsters[result.monster_count++] = MonsterSnapshot{
+            true, monster.generation, monster.monster_ordinal,
+            monster.id, monster.affixes,
             monster.spawn_ordinal, monster.spawn,
             monster.position, monster.velocity, monster.kind, monster.facing,
             monster.reaction, monster.armor, monster.hp, monster.max_hp,
@@ -42,13 +44,19 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
             monster.blink_empowered,
         };
     }
-    result.monster_count = monsters_.active_count();
+    const std::uint32_t living = static_cast<std::uint32_t>(
+        living_monster_count());
+    result.total_living_monsters = living;
+    result.defeated_monsters = room_monster_field_ != nullptr
+        ? room_monster_field_->defeated_count()
+        : static_cast<std::uint32_t>(monsters_.active_count()) - living;
     if (projectiles_.active_count() != 0U) {
         for (std::size_t index = 0; index < projectiles_.slots().size(); ++index) {
             const ProjectileRuntime& projectile = projectiles_.slots()[index];
             if (!projectile.active) continue;
             result.projectiles[index] = ProjectileSnapshot{
-                projectile.active, projectile.generation, projectile.owner,
+                projectile.active, projectile.generation,
+                projectile.owner_ordinal,
                 projectile.position, projectile.velocity, projectile.lifetime_ticks,
                 projectile.damage, projectile.radius,
                 projectile.trigger_chain_on_end,
@@ -67,7 +75,8 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
                     hazard.environment_damage_type)
                 : hazard.damage;
             result.hazards[index] = HazardSnapshot{
-                hazard.active, hazard.generation, hazard.owner, hazard.source,
+                hazard.active, hazard.generation, hazard.owner_ordinal,
+                hazard.source,
                 hazard.kind, hazard.center,
                 hazard.radius, hazard.telegraph_ticks, hazard.active_ticks,
                 hazard.lifetime_ticks, hazard.damage_interval_ticks,
@@ -78,13 +87,14 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
         }
     }
     result.hazard_count = hazards_.active_count();
-    if (encounter_config_.fire_room_obstacles) {
+    if (room_obstacles_ == nullptr
+            && encounter_config_.fire_room_obstacles) {
         result.fire_crates = fire_crates_;
         result.fire_crate_count = fire_crates_.size();
     }
     std::size_t compatibility_index = 0U;
     for (std::size_t index = 0;
-         index < monsters_.slots().size() && compatibility_index < kDummyCount;
+         index < result.monster_count && compatibility_index < kDummyCount;
          ++index) {
         if (!result.monsters[index].active) continue;
         result.dummies[compatibility_index] = result.monsters[index];
@@ -94,12 +104,13 @@ CombatSnapshot CombatWorld::snapshot() const noexcept {
     std::size_t active_effect_count = 0;
     std::uint32_t effect_overflow_count = 0;
     std::uint32_t effect_command_overflow_count = 0;
-    for (const auto& owner : effect_owners_) {
-        if (!owner.occupied) continue;
+    for (const MonsterRuntime& monster : monsters_.slots()) {
+        if (!monster.active || !monster.effects_touched) continue;
         ++effect_owner_count;
-        active_effect_count += owner.effects.active_count();
-        effect_overflow_count += owner.effects.diagnostics().effect_overflows;
-        effect_command_overflow_count += owner.effects.diagnostics().command_overflows;
+        active_effect_count += monster.effects.active_count();
+        effect_overflow_count += monster.effects.diagnostics().effect_overflows;
+        effect_command_overflow_count +=
+            monster.effects.diagnostics().command_overflows;
     }
     result.diagnostics = CombatDiagnostics{
         input_buffer_.size(), input_buffer_.expired_count(),

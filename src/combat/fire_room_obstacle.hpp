@@ -11,9 +11,48 @@ inline constexpr float half_width = 1.40F;
 inline constexpr float half_height = 1.70F;
 inline constexpr float clearance = 0.01F;
 
+[[nodiscard]] inline bool contains(
+    const Aabb bounds, const Vec3 position) noexcept {
+    return position.x >= bounds.minimum.x && position.x <= bounds.maximum.x
+        && position.y >= bounds.minimum.y && position.y <= bounds.maximum.y;
+}
+
+[[nodiscard]] inline float escape_progress(
+    const Aabb bounds, const Vec3 position) noexcept {
+    const float center_x = (bounds.minimum.x + bounds.maximum.x) * 0.5F;
+    const float center_y = (bounds.minimum.y + bounds.maximum.y) * 0.5F;
+    const float extent_x = (bounds.maximum.x - bounds.minimum.x) * 0.5F;
+    const float extent_y = (bounds.maximum.y - bounds.minimum.y) * 0.5F;
+    return (std::max)(std::fabs(position.x - center_x) / extent_x,
+        std::fabs(position.y - center_y) / extent_y);
+}
+
+[[nodiscard]] inline bool blocks_player(
+    const Aabb bounds, const Vec3 current, const Vec3 candidate) noexcept {
+    if (!contains(bounds, candidate)) return false;
+    if (!contains(bounds, current)) return true;
+    return escape_progress(bounds, candidate) <= escape_progress(bounds, current);
+}
+
+[[nodiscard]] inline Vec3 eject(
+    const Aabb bounds, Vec3 position) noexcept {
+    if (!contains(bounds, position)) return position;
+    const float left = position.x - bounds.minimum.x;
+    const float right = bounds.maximum.x - position.x;
+    const float bottom = position.y - bounds.minimum.y;
+    const float top = bounds.maximum.y - position.y;
+    const float minimum = (std::min)((std::min)(left, right),
+        (std::min)(bottom, top));
+    if (minimum == left) position.x = bounds.minimum.x - clearance;
+    else if (minimum == right) position.x = bounds.maximum.x + clearance;
+    else if (minimum == bottom) position.y = bounds.minimum.y - clearance;
+    else position.y = bounds.maximum.y + clearance;
+    return position;
+}
+
 [[nodiscard]] inline bool contains(Vec3 position) noexcept {
-    return position.x >= -half_width && position.x <= half_width
-        && position.y >= -half_height && position.y <= half_height;
+    return contains({{-half_width, -half_height, 0.0F},
+        {half_width, half_height, 2.0F}}, position);
 }
 
 [[nodiscard]] inline float escape_progress(Vec3 position) noexcept {
@@ -23,23 +62,13 @@ inline constexpr float clearance = 0.01F;
 
 [[nodiscard]] inline bool blocks_player(
     Vec3 current, Vec3 candidate) noexcept {
-    if (!contains(candidate)) return false;
-    if (!contains(current)) return true;
-    return escape_progress(candidate) <= escape_progress(current);
+    return blocks_player({{-half_width, -half_height, 0.0F},
+        {half_width, half_height, 2.0F}}, current, candidate);
 }
 
 [[nodiscard]] inline Vec3 eject(Vec3 position) noexcept {
-    if (!contains(position)) return position;
-    const float horizontal_penetration = half_width - std::fabs(position.x);
-    const float vertical_penetration = half_height - std::fabs(position.y);
-    if (horizontal_penetration <= vertical_penetration) {
-        position.x = position.x < 0.0F
-            ? -half_width - clearance : half_width + clearance;
-    } else {
-        position.y = position.y < 0.0F
-            ? -half_height - clearance : half_height + clearance;
-    }
-    return position;
+    return eject({{-half_width, -half_height, 0.0F},
+        {half_width, half_height, 2.0F}}, position);
 }
 
 [[nodiscard]] inline Vec3 route_monster(

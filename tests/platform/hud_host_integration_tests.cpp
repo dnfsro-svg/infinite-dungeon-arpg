@@ -161,7 +161,7 @@ arpg::test::Failure debug_diagnostics_plan_carries_all_f1_only_counters() noexce
     value.combat->diagnostics.hazard_invalid_owner_count = 8U;
     arpg::combat::CombatEvent event{};
     event.kind = arpg::combat::CombatEventKind::hit;
-    event.target_index = 5U;
+    event.target_ordinal = 5U;
     platform::HudBuildDiagnostics hud{};
     hud.clamped_values = 1U;
     hud.truncated_texts = 2U;
@@ -184,7 +184,7 @@ arpg::test::Failure debug_diagnostics_plan_carries_all_f1_only_counters() noexce
     ARPG_REQUIRE(plan.notice_drops == 10U);
     ARPG_REQUIRE(plan.binding_revision == 99U);
     ARPG_REQUIRE(plan.has_last_event);
-    ARPG_REQUIRE(plan.last_event.target_index == 5U);
+    ARPG_REQUIRE(plan.last_event.target_ordinal == 5U);
     ARPG_REQUIRE(plan.cjk_font_ready);
     return {};
 }

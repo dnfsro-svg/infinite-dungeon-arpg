@@ -13,7 +13,7 @@ using namespace arpg::platform;
 arpg::test::Failure multi_target_feedback_uses_one_max_shake() noexcept {
     CombatEvent level_hit{};
     level_hit.kind = CombatEventKind::hit;
-    level_hit.target_index = 0;
+    level_hit.target_ordinal = 0;
     CombatFeedback levels;
     level_hit.feedback = FeedbackLevel::light;
     levels.consume(level_hit);
@@ -39,7 +39,7 @@ arpg::test::Failure multi_target_feedback_uses_one_max_shake() noexcept {
         CombatEvent hit{};
         hit.kind = CombatEventKind::hit;
         hit.tick = 10;
-        hit.target_index = index;
+        hit.target_ordinal = index;
         hit.feedback = FeedbackLevel::heavy;
         hit.position = Vec3{static_cast<float>(index), 0.0F, 0.0F};
         hit.value = 90;
