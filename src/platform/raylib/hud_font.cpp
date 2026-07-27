@@ -17,7 +17,7 @@ void add_ground_loot_codepoints(DeathOverlayFontPlan& plan) noexcept {
     constexpr int kCodepoints[] = {
         0x666E, 0x901A, 0x9B54, 0x6CD5, 0x7A00,
         0x6709, 0x5DF2, 0x62FE, 0x53D6, 0x672A,
-        0x77E5, 0x88C5, 0x5907,
+        0x77E5, 0x88C5, 0x5907, 0x836F,
     };
     for (const int codepoint : kCodepoints) {
         add_hud_codepoint(plan, codepoint);

@@ -184,6 +184,28 @@ arpg::test::Failure overlapping_anchors_resolve_upward_deterministically() noexc
     ARPG_REQUIRE(first.labels[1].rect.x == second.labels[1].rect.x);
     ARPG_REQUIRE(first.labels[1].rect.y == second.labels[1].rect.y);
     ARPG_REQUIRE(first.diagnostics.overlap_adjustment_count > 0U);
+
+    platform::LootLabelObstacleSet seeded{};
+    const platform::LootLabelRect actor{500.0F, 250.0F, 280.0F, 220.0F};
+    ARPG_REQUIRE(seeded.append(actor));
+    const auto actor_safe = platform::build_ground_loot_view(snapshot,
+        settings::LootFilterMode::show_all, 1280.0F, 720.0F, seeded);
+    ARPG_REQUIRE(actor_safe.count == 2U);
+    ARPG_REQUIRE(seeded.count == actor_safe.count + 1U);
+    for (std::size_t index = 0U; index < actor_safe.count; ++index) {
+        ARPG_REQUIRE(!overlaps(actor_safe.labels[index].rect, actor));
+    }
+    platform::LootLabelObstacleSet repeated_seed{};
+    ARPG_REQUIRE(repeated_seed.append(actor));
+    const auto repeated = platform::build_ground_loot_view(snapshot,
+        settings::LootFilterMode::show_all, 1280.0F, 720.0F,
+        repeated_seed);
+    ARPG_REQUIRE(repeated.count == actor_safe.count);
+    for (std::size_t index = 0U; index < repeated.count; ++index) {
+        ARPG_REQUIRE(std::memcmp(&repeated.labels[index].rect,
+            &actor_safe.labels[index].rect,
+            sizeof(platform::LootLabelRect)) == 0);
+    }
     return {};
 }
 
@@ -215,6 +237,16 @@ arpg::test::Failure supported_resolutions_keep_all_rects_in_safety_area() noexce
 }
 
 arpg::test::Failure full_capacity_extreme_layout_is_bounded() noexcept {
+    static_assert(platform::kLootLabelObstacleCapacity == 881U);
+    platform::LootLabelObstacleSet boundary{};
+    for (std::size_t index = 0U;
+         index < platform::kLootLabelObstacleCapacity; ++index) {
+        ARPG_REQUIRE(boundary.append({static_cast<float>(index), 0.0F,
+            0.0F, 0.0F}));
+    }
+    ARPG_REQUIRE(boundary.count == platform::kLootLabelObstacleCapacity);
+    ARPG_REQUIRE(!boundary.append({}));
+
     auto& snapshot = scratch_snapshot();
     snapshot.ground_item_count = static_cast<std::uint16_t>(
         dungeon::kGroundDropCapacity + 7U);
@@ -227,14 +259,20 @@ arpg::test::Failure full_capacity_extreme_layout_is_bounded() noexcept {
 
     const auto view = platform::build_ground_loot_view(snapshot,
         settings::LootFilterMode::show_all, 1024.0F, 576.0F);
-    ARPG_REQUIRE(view.count == dungeon::kGroundDropCapacity);
+    ARPG_REQUIRE(view.count > 0U);
+    ARPG_REQUIRE(view.count < dungeon::kGroundDropCapacity);
+    ARPG_REQUIRE(view.count + view.diagnostics.label_drop_count
+        == dungeon::kGroundDropCapacity);
     ARPG_REQUIRE(view.labels.size() == dungeon::kGroundDropCapacity);
     ARPG_REQUIRE(view.diagnostics.capacity_saturation_count == 7U);
     ARPG_REQUIRE(view.diagnostics.overlap_adjustment_count
         <= dungeon::kGroundDropCapacity * dungeon::kGroundDropCapacity);
     for (std::size_t index = 0U; index < view.count; ++index) {
         const auto rect = view.labels[index].rect;
-        ARPG_REQUIRE(view.labels[index].ordinal == index + 1U);
+        if (index > 0U) {
+            ARPG_REQUIRE(view.labels[index - 1U].ordinal
+                < view.labels[index].ordinal);
+        }
         ARPG_REQUIRE(view.labels[index].text.back() == '\0');
         ARPG_REQUIRE(rect.x >= platform::kGroundLootSafetyInset);
         ARPG_REQUIRE(rect.y >= platform::kGroundLootSafetyInset);
@@ -242,7 +280,21 @@ arpg::test::Failure full_capacity_extreme_layout_is_bounded() noexcept {
             <= 1024.0F - platform::kGroundLootSafetyInset);
         ARPG_REQUIRE(rect.y + rect.height
             <= 576.0F - platform::kGroundLootSafetyInset);
+        for (std::size_t other = index + 1U; other < view.count; ++other) {
+            ARPG_REQUIRE(!overlaps(rect, view.labels[other].rect));
+        }
     }
+
+    platform::LootLabelObstacleSet blocked{};
+    ARPG_REQUIRE(blocked.append({0.0F, 0.0F, 1024.0F, 576.0F}));
+    const auto dropped = platform::build_ground_loot_view(snapshot,
+        settings::LootFilterMode::show_all, 1024.0F, 576.0F, blocked);
+    ARPG_REQUIRE(dropped.count == 0U);
+    ARPG_REQUIRE(dropped.diagnostics.label_drop_count
+        == dungeon::kGroundDropCapacity);
+    ARPG_REQUIRE(dropped.count + dropped.diagnostics.label_drop_count
+        == dungeon::kGroundDropCapacity);
+    ARPG_REQUIRE(dropped.diagnostics.capacity_saturation_count == 7U);
     return {};
 }
 
