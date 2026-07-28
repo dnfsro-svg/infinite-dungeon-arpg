@@ -51,5 +51,11 @@ sequence guards use splice-aware small-file isolation with comment/string,
 forward, cross-function/lambda, LF/CRLF splice, and CMake-comment/quoted-decoy
 self-tests. VS2022 serial four-target build passed in 195.59s; exact Step3
 selector passed 8/8 in 844.80s. Step4 formal intentionally not rerun: same
-102-file staged asset, BASE-proven formal baseline remains applicable. Commit
-pending: `test: harden stage11c validation guards`.
+102-file staged asset, BASE-proven formal baseline remains applicable. Fix
+commit: 2486d32 (`test: harden stage11c validation guards`).
+Task 4: scoped re-review findings (round 2 required) — function-token guards
+still accept early-return plus unreachable original code; raw seam discovery is
+not unique or bound to the real run_raylib_host lexical/function scope; capture
+ordering, brace depth, and full layout RHS remain underconstrained; sequence
+keeps a raw CMake source check and architecture accepts a semicolon-split
+`# decoy;host_validation_stage11c.cpp` registration. FIX_BASE 2486d32.
