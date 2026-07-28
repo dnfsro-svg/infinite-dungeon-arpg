@@ -67,3 +67,12 @@ CMake source-registration parser. VS2022 serial four-target build passed in
 196.05s; exact Step3 selector passed 8/8 in 969.00s. Step4 formal intentionally
 not rerun: the same 102-file staged asset and BASE-proven formal baseline remain
 applicable. Fix commit: `test: close stage11c guard bypasses`.
+Task 4: scoped re-review findings (round 3 required) — core guards still count
+returns only at top-level function depth, so nested unconditional returns and a
+late direct hash overwrite can leave required tokens unreachable while passing;
+runtime seam checks preserve relative depth but do not bind marker pairs to the
+absolute executable depth of `run_raylib_host`; the shared CMake scanner does
+not persist bracket-comment state or distinguish bracket-quoted arguments, so
+disabled or quoted source text can be counted as a real registration. FIX_BASE
+4127669. Production behavior and the round-2 build/exact-eight evidence remain
+accepted; only these validation-guard gaps are open.
