@@ -55,7 +55,7 @@
   sample_physical_keys -> inject_stage11b_physical_edges -> inject_stage11c_physical_edges
   -> inject_stage11d_physical_edges -> inject_stage17_physical_edges -> map_host_frame_input
 
-  stage11_validation_input -> stage10_validation_input -> frame_input.movement
+  stage11_validation_input -> stage10_validation_input -> step_movement = movement;
 
   write_stage11b_validation_summary -> write_stage11c_hud_validation_summary
   -> write_stage11d_loot_validation_summary -> write_stage17_validation_summary
