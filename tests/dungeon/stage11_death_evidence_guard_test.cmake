@@ -8,7 +8,18 @@ file(READ "${FORMAL_SOURCE}" formal_source)
 file(READ "${CAPTURE_SCRIPT}" capture_script)
 file(READ "${HOST_HEADER}" host_header)
 file(READ "${HOST_SOURCE}" host_source)
-set(all_evidence "${fixture_source}\n${formal_source}\n${host_header}\n${host_source}")
+get_filename_component(host_directory "${HOST_HEADER}" DIRECTORY)
+set(stage_source "${host_directory}/host_validation_stage10_11.cpp")
+set(stage_header "${host_directory}/host_validation_stage10_11.hpp")
+if(NOT EXISTS "${stage_source}")
+    message(FATAL_ERROR "Stage 11 validation route target is missing: ${stage_source}")
+endif()
+if(NOT EXISTS "${stage_header}")
+    message(FATAL_ERROR "Stage 11 validation state target is missing: ${stage_header}")
+endif()
+file(READ "${stage_source}" stage_source_text)
+file(READ "${stage_header}" stage_header_text)
+set(all_evidence "${fixture_source}\n${formal_source}\n${host_header}\n${host_source}\n${stage_source_text}")
 
 set(public_death_mutation_scan "${all_evidence}")
 string(REPLACE "==" "__stage11_eq__" public_death_mutation_scan
@@ -55,12 +66,40 @@ foreach(required_fixture "SaveStore" "session.tick" "pending_save_view"
         message(FATAL_ERROR "Fixture lacks production API: ${required_fixture}")
     endif()
 endforeach()
-foreach(required_host "stage11_validation_input" "queue_action"
+foreach(required_host "stage11_validation_input"
         "MovementInput" "runtime.fixed_tick" "request_death_continue"
         "host_death_input_gate" "settings::StableKey::e"
         "death_gate.continue_death = true")
     if(NOT host_source MATCHES "${required_host}")
         message(FATAL_ERROR "Formal host lacks production input/save path: ${required_host}")
+    endif()
+endforeach()
+foreach(required_stage11_token
+        "combat::MovementInput stage11_validation_input("
+        "bool stage11_validation_reached("
+        "session.request_descent(true)"
+        "session.queue_action(combat::Action::light)"
+        "Stage11ValidationScenario::deep_continue"
+        "state.continue_requested && state.saw_depth_two")
+    string(FIND "${stage_source_text}" "${required_stage11_token}"
+        required_stage11_index)
+    if(required_stage11_index EQUAL -1)
+        message(FATAL_ERROR
+            "Stage 11 validation route lacks production algorithm: ${required_stage11_token}")
+    endif()
+endforeach()
+if(NOT stage_header_text MATCHES "struct Stage11ValidationState final")
+    message(FATAL_ERROR "Stage 11 validation state definition is missing")
+endif()
+foreach(required_host_stage11_token
+        "stage11_validation_input(*session,"
+        "stage11_validation_reached("
+        "stage11_validation_state.continue_requested = true;"
+        "++stage11_validation_state.target_presented_frames;")
+    string(FIND "${host_source}" "${required_host_stage11_token}" required_host_stage11_index)
+    if(required_host_stage11_index EQUAL -1)
+        message(FATAL_ERROR
+            "Stage 11 formal host call is missing: ${required_host_stage11_token}")
     endif()
 endforeach()
 string(ASCII 9 host_tab)
