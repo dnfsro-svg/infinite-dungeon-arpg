@@ -81,43 +81,79 @@ foreach(_forbidden IN ITEMS ".queue_action(" "request_descent(" "request_passive
 endforeach()
 
 string(FIND "${_host_text}"
-    "Stage11CHudValidationState stage11c_validation_state{};"
+    "Stage11CHudValidationState& stage11c_validation_state ="
     _stage11c_runtime_begin)
 string(FIND "${_host_text}"
-    "write_stage11c_hud_validation_summary(config,"
+    "while (!exit_requested) {"
     _stage11c_runtime_end)
 if(_stage11c_runtime_begin EQUAL -1 OR _stage11c_runtime_end EQUAL -1
         OR NOT _stage11c_runtime_begin LESS _stage11c_runtime_end)
     message(FATAL_ERROR "Stage11C evidence guard cannot bind complete host capture surface")
 endif()
 math(EXPR _stage11c_runtime_length
-    "${_stage11c_runtime_end} - ${_stage11c_runtime_begin} + 160")
+    "${_stage11c_runtime_end} - ${_stage11c_runtime_begin}")
 string(SUBSTRING "${_host_text}" ${_stage11c_runtime_begin}
     ${_stage11c_runtime_length} _stage11c_runtime)
-set(_stage11c_host_surface "${_stage11c_driver}\n${_stage11c_runtime}")
+
+string(FIND "${_host_text}"
+    "const bool stage11c_target_visible = stage11c_hud_validation_reached("
+    _stage11c_capture_begin)
+string(FIND "${_host_text}"
+    "stage10_validation_captured = stage10_validation_captured"
+    _stage11c_capture_end)
+if(_stage11c_capture_begin EQUAL -1 OR _stage11c_capture_end EQUAL -1
+        OR NOT _stage11c_capture_begin LESS _stage11c_capture_end)
+    message(FATAL_ERROR "Stage11C evidence guard cannot bind production capture assignment")
+endif()
+math(EXPR _stage11c_capture_length
+    "${_stage11c_capture_end} - ${_stage11c_capture_begin}")
+string(SUBSTRING "${_host_text}" ${_stage11c_capture_begin}
+    ${_stage11c_capture_length} _stage11c_capture)
+
+string(FIND "${_host_text}"
+    "write_stage11b_validation_summary(config,"
+    _stage11c_summary_begin)
+string(FIND "${_host_text}" "audio.shutdown();" _stage11c_summary_end)
+if(_stage11c_summary_begin EQUAL -1 OR _stage11c_summary_end EQUAL -1
+        OR NOT _stage11c_summary_begin LESS _stage11c_summary_end)
+    message(FATAL_ERROR "Stage11C evidence guard cannot isolate validation summary")
+endif()
+math(EXPR _stage11c_summary_length
+    "${_stage11c_summary_end} - ${_stage11c_summary_begin}")
+string(SUBSTRING "${_host_text}" ${_stage11c_summary_begin}
+    ${_stage11c_summary_length} _stage11c_summary)
+string(FIND "${_stage11c_summary}"
+    "write_stage11c_hud_validation_summary(config,"
+    _stage11c_summary_write)
+if(_stage11c_summary_write EQUAL -1)
+    message(FATAL_ERROR "Stage11C evidence guard missing HUD validation summary write")
+endif()
+
+set(_stage11c_host_surface
+    "${_stage11c_driver}\n${_stage11c_runtime}\n${_stage11c_capture}\n${_stage11c_summary}")
 
 string(REGEX MATCHALL
     "stage11c_validation_state\\.model[ \t\r\n]*="
-    _stage11c_model_assignments "${_stage11c_host_surface}")
+    _stage11c_model_assignments "${_stage11c_capture}")
 list(LENGTH _stage11c_model_assignments _stage11c_model_assignment_count)
 if(NOT _stage11c_model_assignment_count EQUAL 1)
     message(FATAL_ERROR "Stage11C evidence guard rejected direct model overwrite")
 endif()
 string(REGEX MATCH
     "stage11c_validation_state\\.model[ \t\r\n]*\\.[A-Za-z_]"
-    _stage11c_model_member_overwrite "${_stage11c_host_surface}")
+    _stage11c_model_member_overwrite "${_stage11c_capture}")
 if(_stage11c_model_member_overwrite)
     message(FATAL_ERROR "Stage11C evidence guard rejected direct model overwrite")
 endif()
 
 string(REGEX MATCHALL
     "stage11c_validation_state\\.production_snapshot_hash[ \t\r\n]*="
-    _stage11c_hash_assignments "${_stage11c_host_surface}")
+    _stage11c_hash_assignments "${_stage11c_capture}")
 list(LENGTH _stage11c_hash_assignments _stage11c_hash_assignment_count)
 if(NOT _stage11c_hash_assignment_count EQUAL 1)
     message(FATAL_ERROR "Stage11C evidence guard rejected fake snapshot hash")
 endif()
-string(FIND "${_stage11c_runtime}"
+string(FIND "${_stage11c_capture}"
     "stage11c_validation_state.production_snapshot_hash =\n                    stage11c_production_snapshot_hash(current);"
     _stage11c_real_hash)
 if(_stage11c_real_hash EQUAL -1)

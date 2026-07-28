@@ -126,3 +126,27 @@ stage11c_expect_host_rejection(host_bypassed_session_progression
     "${_model_copy}"
     "${_model_copy}\n                current.progression.level = 99U;"
     "bypassed Session progression")
+
+set(_state_alias
+    "Stage11CHudValidationState& stage11c_validation_state =\n            validation_states->stage11c;")
+string(REPLACE "${_state_alias}"
+    "Stage11CHudValidationState stage11c_validation_state{};"
+    _independent_state_source "${_host_source}")
+if(_independent_state_source STREQUAL _host_source)
+    message(FATAL_ERROR "independent Stage11C state mutation did not change production source")
+endif()
+set(_independent_state "${GUARD_TEST_ROOT}/host-independent-stage11c-state.cpp")
+file(WRITE "${_independent_state}" "${_independent_state_source}")
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+        "-DHOST_OVERRIDE=${_independent_state}" -P "${_guard}"
+    RESULT_VARIABLE _independent_state_result
+    OUTPUT_VARIABLE _independent_state_stdout
+    ERROR_VARIABLE _independent_state_stderr)
+if(_independent_state_result EQUAL 0)
+    message(FATAL_ERROR "Stage11C evidence guard accepted named host mutation: independent_stage11c_state")
+endif()
+if(NOT "${_independent_state_stdout}${_independent_state_stderr}" MATCHES
+        "cannot bind complete host capture surface")
+    message(FATAL_ERROR "named host mutation independent_stage11c_state failed for wrong reason: ${_independent_state_stdout}${_independent_state_stderr}")
+endif()
