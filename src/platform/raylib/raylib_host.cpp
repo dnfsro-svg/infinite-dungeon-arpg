@@ -29,7 +29,6 @@
 #include "persistence/save_paths.hpp"
 #include "platform/settings/settings_store.hpp"
 #include "platform/settings/settings_types.hpp"
-#include "stable_key_raylib.hpp"
 #include "window_settings.hpp"
 
 #include <raylib.h>

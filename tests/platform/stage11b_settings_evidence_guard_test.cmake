@@ -2,6 +2,8 @@ if(NOT DEFINED SOURCE_ROOT)
     message(FATAL_ERROR "SOURCE_ROOT is required")
 endif()
 
+include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
+
 if(DEFINED HOST_OVERRIDE)
     set(_host "${HOST_OVERRIDE}")
 else()
@@ -35,6 +37,25 @@ file(READ "${_formal}" _formal_text)
 file(READ "${_pause_renderer}" _pause_renderer_text)
 file(READ "${_font_source}" _font_source_text)
 set(_combined "${_header}\n${_host_text}\n${_formal_text}")
+evidence_extract_cpp_function_block("${_stage_text}"
+    "PhysicalKeySnapshot inject_stage11b_physical_edges(" _stage11b_injection_block)
+evidence_extract_cpp_function_block("${_stage_text}"
+    "bool stage11b_validation_complete(" _stage11b_complete_block)
+evidence_extract_cpp_function_block("${_stage_text}"
+    "std::uint64_t stage11b_snapshot_hash(" _stage11b_hash_block)
+evidence_extract_cpp_function_block("${_stage_text}"
+    "void write_stage11b_validation_summary(" _stage11b_summary_block)
+
+function(arpg_require_stage11b_block_token LABEL BLOCK TOKEN)
+    # The extractor returns a sanitized block, but sanitize again here so a
+    # future extractor refactor cannot accidentally make comment/literal decoys
+    # satisfy a Stage-local behavior requirement.
+    evidence_sanitize_cpp_for_scan("${BLOCK}" _sanitized_block)
+    string(FIND "${_sanitized_block}" "${TOKEN}" _token_found)
+    if(_token_found EQUAL -1)
+        message(FATAL_ERROR "Stage11B evidence guard missing ${LABEL} token: ${TOKEN}")
+    endif()
+endfunction()
 
 foreach(_required IN ITEMS
         "Stage11BValidationScenario"
@@ -55,21 +76,12 @@ foreach(_required IN ITEMS
     endif()
 endforeach()
 
-foreach(_stage_required IN ITEMS
-        "PhysicalKeySnapshot inject_stage11b_physical_edges("
-        "bool stage11b_validation_complete("
-        "std::uint64_t stage11b_snapshot_hash("
-        "void write_stage11b_validation_summary("
-        "StableKey::j"
-        "StableKey::u"
-        "state.pause_capture_while_paused"
-        "player_monster_hash_before="
-        "load_status=")
-    string(FIND "${_stage_text}" "${_stage_required}" _stage_found)
-    if(_stage_found EQUAL -1)
-        message(FATAL_ERROR "Stage11B evidence guard missing Stage source token: ${_stage_required}")
-    endif()
-endforeach()
+arpg_require_stage11b_block_token("Stage injection" "${_stage11b_injection_block}" "StableKey::j")
+arpg_require_stage11b_block_token("Stage injection" "${_stage11b_injection_block}" "StableKey::u")
+arpg_require_stage11b_block_token("Stage completion" "${_stage11b_complete_block}" "state.pause_capture_while_paused")
+arpg_require_stage11b_block_token("Stage hash" "${_stage11b_hash_block}" "mix(snapshot.depth)")
+arpg_require_stage11b_block_token("Stage summary" "${_stage11b_summary_block}" "state.player_monster_hash_before <<")
+arpg_require_stage11b_block_token("Stage summary" "${_stage11b_summary_block}" "state.load_status")
 if(NOT _stage_header_text MATCHES "struct Stage11BValidationState final")
     message(FATAL_ERROR "Stage11B evidence guard missing Stage state definition")
 endif()

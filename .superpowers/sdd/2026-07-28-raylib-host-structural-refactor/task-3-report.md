@@ -39,15 +39,15 @@ evidence guard, sequence guard, and the Stage-source mutations all pass.
   `platform.units`, both host-validation sequence tests, the Stage11B
   architecture guard, the evidence guard, and its mutation self-test.
 - `git diff --check` passed before the formal chain.
-- The formal Step 4 selector did not pass: `stage11b.settings_formal` failed
-  after 14.68 seconds and its dependent
-  `stage11b.settings_evidence_validator` was not run. The generated report
-  shows the Stage11B observations themselves are present (rebound new attack
-  accepted, pause tick/hash frozen, recovery notice visible), but save-file
-  fingerprints changed and the short-circuited formal harness never ran its
-  swap scenario. This task did not modify persistence or the formal harness;
-  that result is recorded as an unresolved failure, not claimed as a proven
-  pre-existing baseline failure.
+- The original formal Step 4 selector did not pass: `stage11b.settings_formal`
+  failed after 14.68 seconds and its dependent
+  `stage11b.settings_evidence_validator` was not run. The first failed
+  predicate is the pause resume check (`resume_tick_before=1`,
+  `resume_tick_after=5`, expected +1); because the harness chains assertions
+  with `ok = ok &&`, it then short-circuits its later settings/swap children.
+  The save-file fingerprint comparison occurs after that short circuit and was
+  not the causal failure. This task did not modify persistence or the formal
+  harness; BASE comparison is required before attributing the failure.
 
 ## Build Note
 
@@ -65,3 +65,32 @@ as minimal direct dependencies before the successful target links.
   field in copies of the actual Stage source; host mutations continue to copy
   the host source.
 - No known P0/P1/P2 issue was found in the Task 3 production or guard diff.
+
+## Review Fix Round 1
+
+- Reproduced Step 4 against detached BASE `22e73e4` with the same built
+  executable configuration and 101 staged assets. Two BASE runs failed at the
+  same pause-resume predicate, while the observed after tick varied from 4 to
+  5 (`resume_tick_before=1`). HEAD observed 5. This is therefore recorded as
+  the same failing predicate with variable observed tick count; the dependent
+  validator remained not run. No formal harness, persistence, or gameplay
+  code was changed.
+- Stage algorithms are now extracted with the Task 2 splice-aware scanner and
+  each required function is scanned independently. Mutation checks remove a
+  real Stage token while leaving comment decoys; they reject with the
+  Stage-specific missing-token diagnosis. The summary token includes its
+  expression boundary, avoiding prefix matches in renamed identifiers.
+- The host sequence guard extracts `run_raylib_host`, balances the actual
+  `while (!exit_requested)` braces, and scans only sanitized code. Its direct
+  scope check rejects a complete input declaration placed in a nested lambda,
+  a complete declaration outside the loop, and a complete Stage11B summary
+  call placed in a lambda. It also rejects a spliced comment decoy.
+- The Stage11B private header now participates in the forbidden-dependency
+  scan; its self-test injects a real `persistence/save_store.hpp` include.
+  The unused `stable_key_raylib.hpp` include was removed from the host.
+- Final verification: serial MSVC build of `arpg_game`,
+  `arpg_platform_tests`, and `arpg_stage11b_settings_formal` passed in
+  187.2 seconds. The focused six-test CTest selector listed exactly six tests
+  and passed 6/6 in 581.18 seconds. Direct/self guard timings: evidence
+  7.19/102.21 seconds, architecture including its mutation checks 34.43
+  seconds, and sequence 74.43/339.27 seconds.

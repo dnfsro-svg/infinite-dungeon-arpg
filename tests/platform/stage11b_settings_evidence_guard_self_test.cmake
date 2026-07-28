@@ -38,7 +38,7 @@ endforeach()
 set(_stage_mutation_index 0)
 foreach(_stage_mutation_pair IN ITEMS
         "settings::StableKey::j|settings::StableKey::q|StableKey::j"
-        "player_monster_hash_before=|player_monster_hash_before_removed=|player_monster_hash_before=")
+        "state.player_monster_hash_before <<|state.player_monster_hash_before_removed <<|state.player_monster_hash_before <<")
     string(REPLACE "|" ";" _stage_mutation_parts "${_stage_mutation_pair}")
     list(GET _stage_mutation_parts 0 _stage_before)
     list(GET _stage_mutation_parts 1 _stage_after)
@@ -49,6 +49,8 @@ foreach(_stage_mutation_pair IN ITEMS
     file(READ "${_stage_mutation}" _stage_mutation_text)
     string(REPLACE "${_stage_before}" "${_stage_after}"
         _stage_mutation_text "${_stage_mutation_text}")
+    string(APPEND _stage_mutation_text
+        "\n// decoy ${_stage_before}\\\n")
     file(WRITE "${_stage_mutation}" "${_stage_mutation_text}")
     execute_process(
         COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
@@ -59,7 +61,7 @@ foreach(_stage_mutation_pair IN ITEMS
         message(FATAL_ERROR "evidence guard self-test accepted Stage mutation: ${_stage_before}")
     endif()
     string(FIND "${_stage_mutation_stdout}${_stage_mutation_stderr}"
-        "Stage11B evidence guard missing Stage source token" _stage_reason)
+        "Stage11B evidence guard missing Stage" _stage_reason)
     string(FIND "${_stage_mutation_stdout}${_stage_mutation_stderr}"
         "${_stage_expected}" _stage_expected_failure)
     if(_stage_reason EQUAL -1 OR _stage_expected_failure EQUAL -1)

@@ -2,6 +2,8 @@ if(NOT DEFINED SOURCE_ROOT)
     message(FATAL_ERROR "SOURCE_ROOT is required")
 endif()
 
+include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
+
 set(_host "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
 if(DEFINED HOST_OVERRIDE)
     set(_host "${HOST_OVERRIDE}")
@@ -11,6 +13,14 @@ if(NOT EXISTS "${_host}")
 endif()
 
 file(READ "${_host}" _host_text)
+string(FIND "${_host_text}" "HostExitCode run_raylib_host(" _runtime_candidate)
+if(_runtime_candidate EQUAL -1)
+    message(FATAL_ERROR "Host validation sequence guard missing run_raylib_host candidate")
+endif()
+string(SUBSTRING "${_host_text}" ${_runtime_candidate} -1 _host_runtime_candidate)
+evidence_extract_cpp_function_block("${_host_runtime_candidate}"
+    "HostExitCode run_raylib_host(" _host_runtime)
+evidence_sanitize_cpp_for_scan("${_host_runtime}" _sanitized)
 
 set(_input_header
     "${SOURCE_ROOT}/src/platform/raylib/host_validation_input.hpp")
@@ -26,6 +36,9 @@ set(_stage10_11_source
     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage10_11.cpp")
 set(_stage11b_header
     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11b.hpp")
+if(DEFINED STAGE11B_HEADER_OVERRIDE)
+    set(_stage11b_header "${STAGE11B_HEADER_OVERRIDE}")
+endif()
 set(_stage11b_source
     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11b.cpp")
 set(_raylib_cmake "${SOURCE_ROOT}/src/platform/raylib/CMakeLists.txt")
@@ -50,7 +63,7 @@ file(READ "${_raylib_cmake}" _raylib_cmake_text)
 
 foreach(_header_text IN ITEMS
         "${_input_header_text}" "${_navigation_header_text}"
-        "${_stage10_11_header_text}")
+        "${_stage10_11_header_text}" "${_stage11b_header_text}")
     if(_header_text MATCHES "raylib[.]h|renderer|persistence|test")
         message(FATAL_ERROR "Host validation boundary header has a forbidden dependency")
     endif()
@@ -169,27 +182,70 @@ foreach(_registered_source IN ITEMS
     endif()
 endforeach()
 
-# Keep seam comments from satisfying a source-order assertion.
-string(REGEX REPLACE "/\\*([^*]|\\*+[^*/])*\\*+/" "" _sanitized "${_host_text}")
-string(REGEX REPLACE "//[^\r\n]*" "" _sanitized "${_sanitized}")
-
 string(FIND "${_sanitized}" "while (!exit_requested) {" _loop_begin)
-string(FIND "${_sanitized}" "audio.shutdown();" _loop_end)
-if(_loop_begin EQUAL -1 OR _loop_end EQUAL -1 OR NOT _loop_begin LESS _loop_end)
-    message(FATAL_ERROR "Host validation sequence guard cannot isolate host loop and summary")
+if(_loop_begin EQUAL -1)
+    message(FATAL_ERROR "Host validation sequence guard cannot isolate host loop")
 endif()
-math(EXPR _loop_length "${_loop_end} - ${_loop_begin}")
+string(SUBSTRING "${_sanitized}" ${_loop_begin} -1 _loop_tail)
+string(FIND "${_loop_tail}" "{" _loop_open_relative)
+if(_loop_open_relative EQUAL -1)
+    message(FATAL_ERROR "Host validation sequence guard cannot find host loop brace")
+endif()
+math(EXPR _loop_open "${_loop_begin} + ${_loop_open_relative}")
+string(LENGTH "${_sanitized}" _runtime_length)
+math(EXPR _runtime_last "${_runtime_length} - 1")
+set(_loop_depth 0)
+set(_loop_end -1)
+foreach(_index RANGE ${_loop_open} ${_runtime_last})
+    string(SUBSTRING "${_sanitized}" ${_index} 1 _character)
+    if(_character STREQUAL "{")
+        math(EXPR _loop_depth "${_loop_depth} + 1")
+    elseif(_character STREQUAL "}")
+        math(EXPR _loop_depth "${_loop_depth} - 1")
+        if(_loop_depth EQUAL 0)
+            set(_loop_end ${_index})
+            break()
+        endif()
+    endif()
+endforeach()
+if(_loop_end EQUAL -1)
+    message(FATAL_ERROR "Host validation sequence guard found unbalanced host loop")
+endif()
+math(EXPR _loop_length "${_loop_end} - ${_loop_begin} + 1")
 string(SUBSTRING "${_sanitized}" ${_loop_begin} ${_loop_length} _host_loop)
 
-function(assert_unique_ordered_host_tokens LABEL)
+function(host_token_brace_depth SURFACE POSITION OUTPUT)
+    if(POSITION EQUAL 0)
+        set(${OUTPUT} 0 PARENT_SCOPE)
+        return()
+    endif()
+    string(SUBSTRING "${SURFACE}" 0 ${POSITION} _prefix)
+    string(REGEX REPLACE "[^{}]" "" _braces "${_prefix}")
+    string(LENGTH "${_braces}" _brace_length)
+    set(_depth 0)
+    if(_brace_length GREATER 0)
+        math(EXPR _brace_last "${_brace_length} - 1")
+        foreach(_brace_index RANGE 0 ${_brace_last})
+            string(SUBSTRING "${_braces}" ${_brace_index} 1 _brace)
+            if(_brace STREQUAL "{")
+                math(EXPR _depth "${_depth} + 1")
+            else()
+                math(EXPR _depth "${_depth} - 1")
+            endif()
+        endforeach()
+    endif()
+    set(${OUTPUT} ${_depth} PARENT_SCOPE)
+endfunction()
+
+function(assert_unique_ordered_host_tokens LABEL SURFACE REQUIRED_DEPTH)
     set(_previous -1)
     foreach(_token IN ITEMS ${ARGN})
-        string(FIND "${_host_loop}" "${_token}" _position)
+        string(FIND "${SURFACE}" "${_token}" _position)
         if(_position EQUAL -1)
             message(FATAL_ERROR "Host validation sequence guard missing ${LABEL} token: ${_token}")
         endif()
         math(EXPR _after "${_position} + 1")
-        string(SUBSTRING "${_host_loop}" ${_after} -1 _remainder)
+        string(SUBSTRING "${SURFACE}" ${_after} -1 _remainder)
         string(FIND "${_remainder}" "${_token}" _duplicate)
         if(NOT _duplicate EQUAL -1)
             message(FATAL_ERROR "Host validation sequence guard found duplicate ${LABEL} token: ${_token}")
@@ -197,12 +253,16 @@ function(assert_unique_ordered_host_tokens LABEL)
         if(NOT _previous EQUAL -1 AND _position LESS _previous)
             message(FATAL_ERROR "Host validation sequence guard rejected ${LABEL} order")
         endif()
+        host_token_brace_depth("${SURFACE}" ${_position} _token_depth)
+        if(NOT _token_depth EQUAL REQUIRED_DEPTH)
+            message(FATAL_ERROR "Host validation sequence guard rejected ${LABEL} token outside direct host scope: ${_token}")
+        endif()
         set(_previous ${_position})
     endforeach()
 endfunction()
 
-assert_unique_ordered_host_tokens("input injection chain"
-    "sample_physical_keys()"
+assert_unique_ordered_host_tokens("input injection chain" "${_host_loop}" 1
+    "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();"
     "inject_stage11b_physical_edges("
     "inject_stage11c_physical_edges("
     "inject_stage11d_physical_edges("
@@ -248,7 +308,10 @@ foreach(_fixed_step_token IN ITEMS
     assert_unique_fixed_step_token("${_fixed_step_token}")
 endforeach()
 
-assert_unique_ordered_host_tokens("validation summary write"
+# run_raylib_host owns the frame loop and summary calls inside its single
+# top-level try block, so direct execution statements are at brace depth two
+# relative to the complete function block (function body plus try body).
+assert_unique_ordered_host_tokens("validation summary write" "${_host_runtime}" 2
     "write_stage11b_validation_summary("
     "write_stage11c_hud_validation_summary("
     "write_stage11d_loot_validation_summary("

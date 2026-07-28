@@ -22,8 +22,15 @@ Task 2: fix round 3/5 (2 addressed, 0 open — splice-aware comment scanning and
 Task 2: deferred full-selector evidence — 22 selected; the last full execution was 16 pass/6 non-guard failures, with no claim that those six failures are baseline-proven
 Task 2: complete (commits cdecc8b..7defd1c, review clean after 3 fix rounds)
 Task 3: Stage11B state/injection/completion/hash/summary extracted into
-host_validation_stage11b.hpp/.cpp; dual-surface guards and focused selector
-passed. Formal 11B evidence chain remains red: the formal harness observed
-changed run_a/run_b fingerprints before reaching its swap scenario, so its
-dependent evidence validator did not run. This is recorded as unresolved, not
-as a baseline-proven failure.
+host_validation_stage11b.hpp/.cpp. Formal 11B evidence remains red at the
+same pause-resume predicate: BASE comparable runs observed 1 -> 4 and 1 -> 5,
+while HEAD observed 1 -> 5. Record this as same failing predicate with
+variable observed tick count; dependent validator not run, and fingerprints
+were noncausal after the short circuit.
+Task 3: review findings (round 1 required) — formal Step 4 failed and report reversed the short-circuit cause; Stage/source and host/sequence guards permit comment or cross-scope decoys; Stage11B private header missing from dependency scan; unused host include remains
+Task 3: fix round 1/5 (all review findings addressed) — corrected formal
+causality with comparable BASE evidence; Stage function isolation and
+splice-safe decoys; host loop/function brace-depth scope checks including
+lambda/out-of-loop full-call decoys; Stage11B header dependency mutation;
+removed unused include. Serial build passed; focused selector lists exactly
+six and passed 6/6 (581.18s). Commit pending final diff check.

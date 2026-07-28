@@ -2,6 +2,8 @@ if(NOT DEFINED SOURCE_ROOT)
     message(FATAL_ERROR "SOURCE_ROOT is required")
 endif()
 
+include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
+
 function(arpg_assert_files_exclude REASON REGEX)
     foreach(_file IN LISTS ARGN)
         if(NOT EXISTS "${_file}")
@@ -79,6 +81,23 @@ file(READ "${_stage_header}" _stage_header_text)
 file(READ "${_stage_source}" _stage_source_text)
 file(READ "${_host_source}" _host_source_text)
 file(READ "${SOURCE_ROOT}/platform/raylib/CMakeLists.txt" _raylib_cmake_text)
+evidence_extract_cpp_function_block("${_stage_source_text}"
+    "PhysicalKeySnapshot inject_stage11b_physical_edges(" _stage11b_injection_block)
+evidence_extract_cpp_function_block("${_stage_source_text}"
+    "bool stage11b_validation_complete(" _stage11b_complete_block)
+evidence_extract_cpp_function_block("${_stage_source_text}"
+    "std::uint64_t stage11b_snapshot_hash(" _stage11b_hash_block)
+evidence_extract_cpp_function_block("${_stage_source_text}"
+    "void write_stage11b_validation_summary(" _stage11b_summary_block)
+
+function(arpg_assert_stage11b_block_tokens LABEL BLOCK)
+    foreach(_token IN ITEMS ${ARGN})
+        string(FIND "${BLOCK}" "${_token}" _token_found)
+        if(_token_found EQUAL -1)
+            message(FATAL_ERROR "Stage 11B ${LABEL} token is missing: ${_token}")
+        endif()
+    endforeach()
+endfunction()
 
 foreach(_stage_definition IN ITEMS
         "PhysicalKeySnapshot inject_stage11b_physical_edges("
@@ -100,17 +119,14 @@ endif()
 if(_host_source_text MATCHES "struct Stage11BValidationState final")
     message(FATAL_ERROR "Stage 11B validation state definition remains in raylib_host.cpp")
 endif()
-foreach(_stage_algorithm_token IN ITEMS
-        "StableKey::j"
-        "StableKey::u"
-        "state.pause_capture_while_paused"
-        "player_monster_hash_before="
-        "load_status=")
-    string(FIND "${_stage_source_text}" "${_stage_algorithm_token}" _stage_token_found)
-    if(_stage_token_found EQUAL -1)
-        message(FATAL_ERROR "Stage 11B validation algorithm token is missing: ${_stage_algorithm_token}")
-    endif()
-endforeach()
+arpg_assert_stage11b_block_tokens("injection" "${_stage11b_injection_block}"
+    "StableKey::j" "StableKey::u")
+arpg_assert_stage11b_block_tokens("completion" "${_stage11b_complete_block}"
+    "state.pause_capture_while_paused")
+arpg_assert_stage11b_block_tokens("snapshot hash" "${_stage11b_hash_block}"
+    "mix(snapshot.depth)" "mix(snapshot.room_index)")
+arpg_assert_stage11b_block_tokens("summary" "${_stage11b_summary_block}"
+    "state.player_monster_hash_before <<" "state.load_status")
 string(FIND "${_raylib_cmake_text}" "host_validation_stage11b.cpp" _stage_registered)
 if(_stage_registered EQUAL -1)
     message(FATAL_ERROR "arpg_raylib does not register host_validation_stage11b.cpp")
@@ -194,6 +210,8 @@ if(NOT DEFINED STAGE11B_GUARD_MUTATION_MODE)
     file(READ "${_stage_mutation}" _stage_mutation_text)
     string(REPLACE "settings::StableKey::j" "settings::StableKey::q"
         _stage_mutation_text "${_stage_mutation_text}")
+    string(APPEND _stage_mutation_text
+        "\n// decoy settings::StableKey::j\\\n")
     file(WRITE "${_stage_mutation}" "${_stage_mutation_text}")
     execute_process(
         COMMAND "${CMAKE_COMMAND}"
@@ -207,7 +225,7 @@ if(NOT DEFINED STAGE11B_GUARD_MUTATION_MODE)
         message(FATAL_ERROR "Stage 11b guard missed stage rebound-key mutation")
     endif()
     if(NOT "${_stage_stdout}${_stage_stderr}" MATCHES
-            "Stage 11B validation algorithm token is missing: StableKey::j")
+            "Stage 11B injection token is missing: StableKey::j")
         message(FATAL_ERROR "Stage 11b stage rebound-key mutation lacked the expected reason")
     endif()
 endif()
