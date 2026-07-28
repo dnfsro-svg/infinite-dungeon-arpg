@@ -2935,6 +2935,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 presented_hud_previous, presented_hud_current,
                 runtime.render_status(), control_hints,
                 frame_seconds, pause_blocks_gameplay);
+// STAGE11C_HUD_VALIDATION_SEAM_BEGIN observation
             const bool stage11c_target_visible = host_validation::stage11c_hud_validation_reached(
                 current, config.stage11c_hud_validation,
                 stage11c_validation_state, draw_debug);
@@ -2952,6 +2953,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             } else {
                 stage11c_validation_state.target_presented_frames = 0U;
             }
+// STAGE11C_HUD_VALIDATION_SEAM_END observation
             const settings::LootFilterMode presented_loot_filter =
                 renderer_loot_filter_mode(
                     pause_menu.screen, live_settings, pause_menu.draft);
@@ -3178,8 +3180,10 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 && stage11_validation_state.target_presented_frames >= 4U;
             const bool stage11b_reached = host_validation::stage11b_validation_complete(
                 config, stage11b_validation_state, pause_menu);
+// STAGE11C_HUD_VALIDATION_SEAM_BEGIN reached
             const bool stage11c_reached = stage11c_target_visible
                 && stage11c_validation_state.target_presented_frames >= 4U;
+// STAGE11C_HUD_VALIDATION_SEAM_END reached
 // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN reached
             const bool stage11d_reached = stage11d_validation_state.captured
                 && (config.stage11d_loot_validation
@@ -3277,6 +3281,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             } else if (!capture_path.has_value()) {
                 capture_path = validation_capture_path();
             }
+// STAGE11C_HUD_VALIDATION_SEAM_BEGIN presented_capture
             const bool capture_succeeded =
                 present_frame_and_maybe_capture(capture_path.has_value()
                     ? capture_path->c_str() : nullptr);
@@ -3289,6 +3294,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             if (captured_stage10_frame && stage11c_reached) {
                 stage11c_validation_state.captured = true;
             }
+// STAGE11C_HUD_VALIDATION_SEAM_END presented_capture
 // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN captured
             if (captured_stage10_frame
                     && stage11d_validation_state.target_visible) {

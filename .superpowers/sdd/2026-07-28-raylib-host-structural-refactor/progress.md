@@ -45,3 +45,11 @@ focused exact-six selector 6/6 (416.28s). No formal Step4 rerun. Fix commit:
 Task 3: complete (commits 22e73e4..9f0758c, review clean after 2 fix rounds; formal Step4 remains a BASE-proven variable-tick failure at the same predicate)
 Task 4: implementation complete pending independent review; Step3 focused selector passed 8/8. Step4 formal has a same-asset, BASE-proven baseline: BASE/HEAD staged bin assets each had 102 files with relative-path plus SHA256 DIFF_COUNT=0; combat/low-health/debug passed and cleared/abyss-warning/level-up failed on both, with identical zero snapshot and image hashes for the three failures. Low-health image hashes remain non-deterministic between runs but validator valid=1 on both sides.
 Task 4: review findings (round 1 required) — Stage11C evidence guard does not constrain injection/hash/reached/summary algorithms; host capture guard lacks comment/string-safe unique model/notices/layout/hash assignments and presented-frame/capture ordering; architecture/sequence boundary checks accept raw-text comment/string/forward-declaration/cross-function/CMake-comment decoys. FIX_BASE afa9637.
+Task 4: fix round 1/5 (all findings addressed) — Stage11C Stage-source
+function semantics and host capture ordering are guarded; architecture and
+sequence guards use splice-aware small-file isolation with comment/string,
+forward, cross-function/lambda, LF/CRLF splice, and CMake-comment/quoted-decoy
+self-tests. VS2022 serial four-target build passed in 195.59s; exact Step3
+selector passed 8/8 in 844.80s. Step4 formal intentionally not rerun: same
+102-file staged asset, BASE-proven formal baseline remains applicable. Commit
+pending: `test: harden stage11c validation guards`.

@@ -100,6 +100,50 @@ function(arpg_expect_hud_guard_rejects
     endif()
 endfunction()
 
+function(arpg_expect_hud_guard_rejects_after_replace
+        NAME TARGET_FILE SEARCH REPLACEMENT TAIL_MUTATION REASON)
+    set(_mutation_root "${GUARD_TEST_ROOT}/${NAME}")
+    file(MAKE_DIRECTORY "${_mutation_root}")
+    foreach(_production_source IN LISTS _production_hud_sources)
+        get_filename_component(_source_name "${_production_source}" NAME)
+        file(COPY_FILE "${_production_source}"
+            "${_mutation_root}/${_source_name}" ONLY_IF_DIFFERENT)
+    endforeach()
+
+    set(_mutated_source "${_mutation_root}/${TARGET_FILE}")
+    file(READ "${_mutated_source}" _mutated_text)
+    set(_original_text "${_mutated_text}")
+    string(REPLACE "${SEARCH}" "${REPLACEMENT}" _mutated_text "${_mutated_text}")
+    if(_mutated_text STREQUAL _original_text)
+        message(FATAL_ERROR
+            "Stage11C replacement mutation ${NAME} anchor is missing: ${SEARCH}")
+    endif()
+    if(NOT TAIL_MUTATION STREQUAL "")
+        string(APPEND _mutated_text "\n${TAIL_MUTATION}\n")
+    endif()
+    file(WRITE "${_mutated_source}" "${_mutated_text}")
+
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}"
+            "-DSOURCE_ROOT=${SOURCE_ROOT}"
+            "-DHUD_SOURCE_ROOT=${_mutation_root}"
+            -P "${GUARD_SCRIPT}"
+        RESULT_VARIABLE _result
+        OUTPUT_VARIABLE _stdout
+        ERROR_VARIABLE _stderr)
+    if(_result EQUAL 0)
+        message(FATAL_ERROR
+            "Stage11C HUD guard accepted ${NAME} production-source mutation")
+    endif()
+    set(_combined "${_stdout}\n${_stderr}")
+    string(FIND "${_combined}" "${REASON}" _reason_index)
+    if(_reason_index EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11C HUD replacement mutation ${NAME} failed for wrong reason; "
+            "expected '${REASON}', got: ${_combined}")
+    endif()
+endfunction()
+
 arpg_expect_hud_guard_rejects(get_key_pressed combat_renderer.cpp ""
     "int stage11c_bad_key() { return GetKeyPressed(); }"
     "HUD boundary rejects physical input sampling")
@@ -127,6 +171,30 @@ arpg_expect_hud_guard_rejects(legacy_budget raylib_host.cpp
 arpg_expect_hud_guard_rejects(fourth_status_tag hud_view_model.cpp ""
     "void stage11c_bad_fourth(HudViewModel& output) { append_status_tag(output.player, HudStatusTagKind::slow); }"
     "HUD visible status tag limit rejects fourth tag")
+arpg_expect_hud_guard_rejects_after_replace(stage_header_comment_decoy
+    host_validation_stage11c.hpp
+    "struct Stage11CHudValidationState final {"
+    "struct Stage11CHudValidationState;\n// struct Stage11CHudValidationState final {"
+    ""
+    "Stage11C HUD state definition is missing from private Stage header")
+arpg_expect_hud_guard_rejects_after_replace(stage_source_comment_string_decoy
+    host_validation_stage11c.cpp
+    "std::uint64_t stage11c_production_snapshot_hash("
+    "// std::uint64_t stage11c_production_snapshot_hash(\nconstexpr const char* stage11c_hash_decoy = \"std::uint64_t stage11c_production_snapshot_hash(\";\nstd::uint64_t stage11c_missing_snapshot_hash("
+    ""
+    "Evidence validation function is missing: std::uint64_t")
+arpg_expect_hud_guard_rejects_after_replace(stage_source_forward_decoy
+    host_validation_stage11c.cpp
+    "bool stage11c_hud_validation_reached(\n    const dungeon::DungeonSnapshot& snapshot,\n    Stage11CHudValidationScenario scenario,\n    const Stage11CHudValidationState& state, bool draw_debug) noexcept {"
+    "bool stage11c_hud_validation_reached(\n    const dungeon::DungeonSnapshot& snapshot,\n    Stage11CHudValidationScenario scenario,\n    const Stage11CHudValidationState& state, bool draw_debug) noexcept;\nbool stage11c_hud_validation_reached_moved(\n    const dungeon::DungeonSnapshot& snapshot,\n    Stage11CHudValidationScenario scenario,\n    const Stage11CHudValidationState& state, bool draw_debug) noexcept {"
+    ""
+    "Stage11C HUD definition is missing from Stage source")
+arpg_expect_hud_guard_rejects_after_replace(stage_cmake_comment_quoted_decoy
+    CMakeLists.txt
+    "    host_validation_stage11c.cpp"
+    "    # host_validation_stage11c.cpp\nmessage(STATUS \"host_validation_stage11c.cpp\")"
+    ""
+    "arpg_raylib does not register host_validation_stage11c.cpp exactly once")
 
 message(STATUS
-    "Stage 11C HUD architecture guard rejected all eight production-source mutations")
+    "Stage 11C HUD architecture guard rejected all twelve production-source mutations")

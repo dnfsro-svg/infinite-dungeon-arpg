@@ -201,10 +201,10 @@ stage11c_expect_input_rejection(input_skip_stable_binding
     "static_cast<settings::StableKey>(action)"
     "skipped stable binding")
 
-set(_runtime_font "stage11c_validation_state.cjk_font_ready = hud_resources_ready;")
+set(_runtime_font "stage11c_validation_state.model = renderer.hud_model();")
 stage11c_expect_host_text_rejection(host_runtime_model_and_hash_overwrite
     "${_runtime_font}"
-    "${_runtime_font}\n        stage11c_validation_state.model = {};\n        stage11c_validation_state.production_snapshot_hash = 1U;"
+    "${_runtime_font}\n                stage11c_validation_state.model = {};\n                stage11c_validation_state.production_snapshot_hash = 1U;"
     "direct model overwrite")
 
 set(_model_copy "stage11c_validation_state.model = renderer.hud_model();")
@@ -212,6 +212,30 @@ stage11c_expect_host_rejection(host_direct_model_overwrite
     "${_model_copy}"
     "${_model_copy}\n                stage11c_validation_state.model = {};"
     "direct model overwrite")
+stage11c_expect_host_text_rejection(host_model_comment_decoy
+    "stage11c_validation_state.model = renderer.hud_model();"
+    "// stage11c_validation_state.model = renderer.hud_model();"
+    "direct model overwrite")
+stage11c_expect_host_text_rejection(host_fake_notices_capture
+    "stage11c_validation_state.notices = renderer.hud_notice_view();"
+    "stage11c_validation_state.notices = {};"
+    "missing capture surface token")
+stage11c_expect_host_text_rejection(host_fake_layout_capture
+    "stage11c_validation_state.layout = make_hud_layout("
+    "stage11c_validation_state.layout = {};\n                make_hud_layout("
+    "missing capture surface token")
+stage11c_expect_host_text_rejection(host_duplicate_notices_capture
+    "stage11c_validation_state.notices = renderer.hud_notice_view();"
+    "stage11c_validation_state.notices = renderer.hud_notice_view();\n                stage11c_validation_state.notices = renderer.hud_notice_view();"
+    "notices overwrite")
+stage11c_expect_host_text_rejection(host_captured_early
+    "const bool capture_succeeded =\n                present_frame_and_maybe_capture("
+    "stage11c_validation_state.captured = true;\n            const bool capture_succeeded =\n                present_frame_and_maybe_capture("
+    "captured overwrite")
+stage11c_expect_host_text_rejection(host_capture_success_removed
+    "&& capture_succeeded;"
+    ";"
+    "missing capture success")
 
 set(_hash_copy "stage11c_validation_state.production_snapshot_hash =\n                    host_validation::stage11c_production_snapshot_hash(current);")
 stage11c_expect_host_rejection(host_fake_snapshot_hash
@@ -229,6 +253,18 @@ stage11c_expect_stage_rejection(stage_nonphysical_driver
     "++state.injected_frames;"
     "++state.injected_frames;\n    TestAccess stage11c_test_access{};"
     "non-physical scenario driver")
+stage11c_expect_stage_rejection(stage_hash_constant
+    "mix(snapshot.root_seed);"
+    "return 1U;"
+    "production hash token")
+stage11c_expect_stage_rejection(stage_reached_constant
+    "case Scenario::cleared_exit:"
+    "return true;"
+    "reached predicate token")
+stage11c_expect_stage_rejection(stage_summary_notice_removed
+    "state.notices.primary.kind"
+    "state.notices_primary_removed"
+    "summary token")
 
 stage11c_expect_host_rejection(host_bypassed_session_progression
     "${_model_copy}"

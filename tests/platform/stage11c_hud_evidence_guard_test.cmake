@@ -37,6 +37,22 @@ foreach(_file IN ITEMS "${_host}" "${_header}" "${_input_header}" "${_input_sour
     endif()
 endforeach()
 file(READ "${_host}" _host_text)
+function(stage11c_extract_seam LABEL OUT)
+    set(_begin "// STAGE11C_HUD_VALIDATION_SEAM_BEGIN ${LABEL}")
+    set(_end "// STAGE11C_HUD_VALIDATION_SEAM_END ${LABEL}")
+    string(FIND "${_host_text}" "${_begin}" _begin_at)
+    string(FIND "${_host_text}" "${_end}" _end_at)
+    if(_begin_at EQUAL -1 OR _end_at EQUAL -1 OR NOT _begin_at LESS _end_at)
+        message(FATAL_ERROR "Stage11C evidence guard cannot isolate ${LABEL} seam")
+    endif()
+    math(EXPR _length "${_end_at} - ${_begin_at}")
+    string(SUBSTRING "${_host_text}" ${_begin_at} ${_length} _raw)
+    evidence_sanitize_cpp_for_scan("${_raw}" _code)
+    set(${OUT} "${_code}" PARENT_SCOPE)
+endfunction()
+stage11c_extract_seam(observation _stage11c_observation)
+stage11c_extract_seam(reached _stage11c_reached_seam)
+stage11c_extract_seam(presented_capture _stage11c_presented_capture)
 file(READ "${_header}" _header_text)
 file(READ "${_input_header}" _input_header_text)
 file(READ "${_input_source}" _input_source_text)
@@ -120,6 +136,30 @@ evidence_extract_cpp_function_block("${_stage_source_text}"
     "bool stage11c_hud_validation_reached(" _stage11c_reached_function)
 evidence_extract_cpp_function_block("${_stage_source_text}"
     "void write_stage11c_hud_validation_summary(" _stage11c_summary_function)
+function(stage11c_require_function_tokens LABEL SURFACE)
+    foreach(_token IN LISTS ARGN)
+        string(FIND "${SURFACE}" "${_token}" _token_index)
+        if(_token_index EQUAL -1)
+            message(FATAL_ERROR "Stage11C evidence guard missing ${LABEL} token: ${_token}")
+        endif()
+    endforeach()
+endfunction()
+stage11c_require_function_tokens("physical driver" "${_stage11c_driver}"
+    "++state.injected_frames;" "nearest_living_monster(combat_snapshot)"
+    "inject_validation_movement(" "inject_validation_action(")
+stage11c_require_function_tokens("production hash" "${_stage11c_hash_function}"
+    "mix(snapshot.session_tick);" "mix(snapshot.root_seed);"
+    "mix(snapshot.progression.unspent_passive_points);"
+    "mix(monster.spawn_ordinal);" "return hash;")
+stage11c_require_function_tokens("reached predicate" "${_stage11c_reached_function}"
+    "case Scenario::low_health_status:" "player.hp > 0"
+    "case Scenario::cleared_exit:" "case Scenario::abyss_abandon:"
+    "case Scenario::level_up_points:" "case Scenario::debug_overlay:")
+stage11c_require_function_tokens("summary" "${_stage11c_summary_function}"
+    "state.model.player" "player.status_tag_count"
+    "state.notices.primary.kind" "state.notices.secondary.kind"
+    "state.model.navigation.depth" "state.cjk_font_ready"
+    "state.production_snapshot_hash" "stage11c_validation_result")
 foreach(_forbidden IN LISTS _physical_input_forbidden)
     string(FIND "${_stage11c_driver}" "${_forbidden}" _found)
     if(NOT _found EQUAL -1)
@@ -185,35 +225,84 @@ if(_stage11c_summary_write EQUAL -1)
 endif()
 
 set(_stage11c_host_surface
-    "${_stage11c_runtime}\n${_stage11c_capture}\n${_stage11c_summary}")
+    "${_stage11c_observation}\n${_stage11c_reached_seam}\n${_stage11c_presented_capture}")
+set(_stage11c_host_surface_code "${_stage11c_host_surface}")
+string(REGEX MATCHALL "stage11c_validation_state\\.captured[ \t\r\n]*=[ \t\r\n]*true"
+    _stage11c_captured_assignments "${_stage11c_presented_capture}")
+list(LENGTH _stage11c_captured_assignments _stage11c_captured_count)
+if(NOT _stage11c_captured_count EQUAL 1)
+    message(FATAL_ERROR "Stage11C evidence guard rejected captured overwrite")
+endif()
+string(FIND "${_stage11c_presented_capture}"
+    "stage11c_validation_state.captured = true;" _stage11c_captured_statement)
+if(_stage11c_captured_statement EQUAL -1)
+    message(FATAL_ERROR "Stage11C evidence guard rejected missing captured statement")
+endif()
 
 string(REGEX MATCHALL
     "stage11c_validation_state\\.model[ \t\r\n]*="
-    _stage11c_model_assignments "${_stage11c_host_surface}")
+    _stage11c_model_assignments "${_stage11c_host_surface_code}")
 list(LENGTH _stage11c_model_assignments _stage11c_model_assignment_count)
 if(NOT _stage11c_model_assignment_count EQUAL 1)
     message(FATAL_ERROR "Stage11C evidence guard rejected direct model overwrite")
 endif()
 string(REGEX MATCH
     "stage11c_validation_state\\.model[ \t\r\n]*\\.[A-Za-z_]"
-    _stage11c_model_member_overwrite "${_stage11c_host_surface}")
+    _stage11c_model_member_overwrite "${_stage11c_host_surface_code}")
 if(_stage11c_model_member_overwrite)
     message(FATAL_ERROR "Stage11C evidence guard rejected direct model overwrite")
 endif()
 
 string(REGEX MATCHALL
     "stage11c_validation_state\\.production_snapshot_hash[ \t\r\n]*="
-    _stage11c_hash_assignments "${_stage11c_host_surface}")
+    _stage11c_hash_assignments "${_stage11c_host_surface_code}")
 list(LENGTH _stage11c_hash_assignments _stage11c_hash_assignment_count)
 if(NOT _stage11c_hash_assignment_count EQUAL 1)
     message(FATAL_ERROR "Stage11C evidence guard rejected fake snapshot hash")
 endif()
-string(FIND "${_stage11c_host_surface}"
+string(FIND "${_stage11c_host_surface_code}"
     "stage11c_validation_state.production_snapshot_hash =\n                    host_validation::stage11c_production_snapshot_hash(current);"
     _stage11c_real_hash)
 if(_stage11c_real_hash EQUAL -1)
     message(FATAL_ERROR "Stage11C evidence guard rejected fake snapshot hash")
 endif()
+foreach(_capture_assignment IN ITEMS
+        "stage11c_validation_state.notices = renderer.hud_notice_view();"
+        "stage11c_validation_state.layout = make_hud_layout("
+        "++stage11c_validation_state.target_presented_frames;"
+        "present_frame_and_maybe_capture(capture_path.has_value()"
+        "stage11c_validation_state.captured = true;")
+    string(FIND "${_stage11c_host_surface_code}" "${_capture_assignment}" _capture_index)
+    if(_capture_index EQUAL -1)
+        message(FATAL_ERROR "Stage11C evidence guard missing capture surface token: ${_capture_assignment}")
+    endif()
+endforeach()
+string(FIND "${_stage11c_presented_capture}"
+    "const bool captured_stage10_frame = captured_stage10_target\n                && capture_succeeded;"
+    _captured_stage10_frame)
+if(_captured_stage10_frame EQUAL -1)
+    message(FATAL_ERROR "Stage11C evidence guard rejected missing capture success")
+endif()
+foreach(_field_rhs IN ITEMS
+        "model|renderer.hud_model();"
+        "notices|renderer.hud_notice_view();"
+        "layout|make_hud_layout(")
+    string(REPLACE "|" ";" _field_rhs_parts "${_field_rhs}")
+    list(GET _field_rhs_parts 0 _field)
+    list(GET _field_rhs_parts 1 _rhs)
+    string(REGEX MATCHALL
+        "stage11c_validation_state\\.${_field}[ \t\r\n]*=" _assignments
+        "${_stage11c_host_surface_code}")
+    list(LENGTH _assignments _assignment_count)
+    if(NOT _assignment_count EQUAL 1)
+        message(FATAL_ERROR "Stage11C evidence guard rejected ${_field} overwrite")
+    endif()
+    string(FIND "${_stage11c_host_surface_code}"
+        "stage11c_validation_state.${_field} = ${_rhs}" _rhs_index)
+    if(_rhs_index EQUAL -1)
+        message(FATAL_ERROR "Stage11C evidence guard rejected fake ${_field} capture")
+    endif()
+endforeach()
 
 string(FIND "${_stage11c_summary_function}"
     "const bool stage11c_validation_result = state.captured\n            && state.cjk_font_ready && state.production_snapshot_hash != 0U;"

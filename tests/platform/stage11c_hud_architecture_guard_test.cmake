@@ -48,6 +48,7 @@ endforeach()
 if(NOT EXISTS "${_raylib_cmake}")
     message(FATAL_ERROR "Stage11C HUD CMake source is missing: ${_raylib_cmake}")
 endif()
+include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
 
 foreach(_validation_header IN ITEMS
         "${_hud_root}/host_validation_input.hpp"
@@ -109,14 +110,56 @@ function(arpg_extract_hud_host_seam
     set("${OUT_SEAM}" "${_seam}" PARENT_SCOPE)
 endfunction()
 
+# This only accepts an unquoted, uncommented source entry inside arpg_raylib's
+# add_library block.  The production CMake file is small, so line-oriented
+# parsing is sufficient here and deliberately avoids treating a # comment or
+# quoted diagnostic text as a source registration.
+function(arpg_assert_stage11c_cmake_registration CMAKE_TEXT)
+    string(REPLACE "\r\n" "\n" _cmake_lines "${CMAKE_TEXT}")
+    string(REPLACE "\r" "\n" _cmake_lines "${_cmake_lines}")
+    string(REPLACE "\n" ";" _cmake_lines "${_cmake_lines}")
+    set(_inside_arpg_raylib FALSE)
+    set(_registration_count 0)
+    foreach(_line IN LISTS _cmake_lines)
+        string(REGEX REPLACE "#[^\n]*$" "" _line_code "${_line}")
+        if(NOT _inside_arpg_raylib)
+            if(_line_code MATCHES "^[ \t]*add_library[ \t]*[(][ \t]*arpg_raylib[ \t]+STATIC")
+                set(_inside_arpg_raylib TRUE)
+            endif()
+            continue()
+        endif()
+        if(_line_code MATCHES "^[ \t]*host_validation_stage11c[.]cpp[ \t]*$")
+            math(EXPR _registration_count "${_registration_count} + 1")
+        endif()
+        if(_line_code MATCHES "^[ \t]*[)][ \t]*$")
+            set(_inside_arpg_raylib FALSE)
+        endif()
+    endforeach()
+    if(NOT _registration_count EQUAL 1)
+        message(FATAL_ERROR
+            "arpg_raylib does not register host_validation_stage11c.cpp exactly once")
+    endif()
+endfunction()
+
 file(READ "${_host_source}" _host_text)
 file(READ "${_stage11c_header}" _stage11c_header_text)
 file(READ "${_stage11c_source}" _stage11c_source_text)
 file(READ "${_raylib_cmake}" _raylib_cmake_text)
-if(NOT _stage11c_header_text MATCHES
-        "struct[ \t\r\n]+Stage11CHudValidationState[ \t\r\n]+final")
+evidence_sanitize_cpp_for_scan("${_stage11c_header_text}" _stage11c_header_code)
+if(NOT _stage11c_header_code MATCHES
+        "struct[ \t\r\n]+Stage11CHudValidationState[ \t\r\n]+final[ \t\r\n]*[{]")
     message(FATAL_ERROR "Stage11C HUD state definition is missing from private Stage header")
 endif()
+foreach(_declaration IN ITEMS
+        "inject_stage11c_physical_edges[ \t\r\n]*[(]"
+        "stage11c_production_snapshot_hash[ \t\r\n]*[(]"
+        "stage11c_hud_validation_reached[ \t\r\n]*[(]"
+        "write_stage11c_hud_validation_summary[ \t\r\n]*[(]")
+    if(NOT _stage11c_header_code MATCHES "${_declaration}")
+        message(FATAL_ERROR
+            "Stage11C HUD declaration is missing from private Stage header: ${_declaration}")
+    endif()
+endforeach()
 if(_host_text MATCHES
         "struct[ \t\r\n]+Stage11CHudValidationState[ \t\r\n]+final")
     message(FATAL_ERROR "Stage11C HUD state definition remains in raylib_host.cpp")
@@ -126,8 +169,12 @@ foreach(_definition IN ITEMS
         "std::uint64_t stage11c_production_snapshot_hash("
         "bool stage11c_hud_validation_reached("
         "void write_stage11c_hud_validation_summary(")
-    string(FIND "${_stage11c_source_text}" "${_definition}" _stage_definition)
-    if(_stage_definition EQUAL -1)
+    evidence_extract_cpp_function_block("${_stage11c_source_text}" "${_definition}" _stage_function)
+    string(FIND "${_stage_function}" "{" _stage_definition)
+    string(FIND "${_stage_function}" ";" _stage_forward_declaration)
+    if(_stage_definition EQUAL -1
+            OR (NOT _stage_forward_declaration EQUAL -1
+                AND _stage_forward_declaration LESS _stage_definition))
         message(FATAL_ERROR "Stage11C HUD definition is missing from Stage source: ${_definition}")
     endif()
     string(FIND "${_host_text}" "${_definition}" _host_definition)
@@ -135,10 +182,7 @@ foreach(_definition IN ITEMS
         message(FATAL_ERROR "Stage11C HUD definition remains in raylib_host.cpp: ${_definition}")
     endif()
 endforeach()
-string(FIND "${_raylib_cmake_text}" "host_validation_stage11c.cpp" _stage_registration)
-if(_stage_registration EQUAL -1)
-    message(FATAL_ERROR "arpg_raylib does not register host_validation_stage11c.cpp")
-endif()
+arpg_assert_stage11c_cmake_registration("${_raylib_cmake_text}")
 arpg_extract_hud_host_seam("${_host_text}"
     "renderer.observe_presented_hud_frame(HudPresentedFrame::recovery,"
     "GetFrameTime(), true);"

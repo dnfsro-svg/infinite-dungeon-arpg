@@ -21,6 +21,40 @@ function(arpg_assert_lexical_token_equivalence LABEL SOURCE TOKEN EXPECTED_CODE)
     endif()
 endfunction()
 
+function(arpg_expect_stage11c_sequence_rejection
+        NAME TARGET_FILE SEARCH REPLACEMENT REASON)
+    set(_mutation_file "${GUARD_TEST_ROOT}/${NAME}-${TARGET_FILE}")
+    set(_production_file "${SOURCE_ROOT}/src/platform/raylib/${TARGET_FILE}")
+    file(READ "${_production_file}" _mutated_text)
+    set(_original_text "${_mutated_text}")
+    string(REPLACE "${SEARCH}" "${REPLACEMENT}" _mutated_text "${_mutated_text}")
+    if(_mutated_text STREQUAL _original_text)
+        message(FATAL_ERROR
+            "Stage11C sequence mutation ${NAME} anchor is missing: ${SEARCH}")
+    endif()
+    file(WRITE "${_mutation_file}" "${_mutated_text}")
+
+    set(_override "-DSTAGE11C_SOURCE_OVERRIDE=${_mutation_file}")
+    if(TARGET_FILE STREQUAL "host_validation_stage11c.hpp")
+        set(_override "-DSTAGE11C_HEADER_OVERRIDE=${_mutation_file}")
+    endif()
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}" "${_override}"
+            -P "${_guard}"
+        RESULT_VARIABLE _result OUTPUT_VARIABLE _stdout ERROR_VARIABLE _stderr)
+    if(_result EQUAL 0)
+        message(FATAL_ERROR
+            "Host validation sequence guard accepted Stage11C ${NAME} decoy")
+    endif()
+    set(_combined "${_stdout}\n${_stderr}")
+    string(FIND "${_combined}" "${REASON}" _reason_index)
+    if(_reason_index EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11C sequence mutation ${NAME} failed for wrong reason; "
+            "expected '${REASON}', got: ${_combined}")
+    endif()
+endfunction()
+
 set(_lexical_lf_fixture [=[
 // lexical_line_hidden \
 lexical_line_hidden
@@ -47,6 +81,54 @@ foreach(_fixture_name IN ITEMS lf crlf)
     arpg_assert_lexical_token_equivalence("${_fixture_name} block close visible"
         "${_fixture_source}" "lexical_block_visible" TRUE)
 endforeach()
+
+arpg_expect_stage11c_sequence_rejection(stage_header_comment_decoy
+    host_validation_stage11c.hpp
+    "struct Stage11CHudValidationState final {"
+    "struct Stage11CHudValidationState;\n// struct Stage11CHudValidationState final {"
+    "Host validation Stage11C state definition is missing")
+arpg_expect_stage11c_sequence_rejection(stage_source_comment_decoy
+    host_validation_stage11c.cpp
+    "std::uint64_t stage11c_production_snapshot_hash("
+    "// std::uint64_t stage11c_production_snapshot_hash(\nstd::uint64_t stage11c_missing_snapshot_hash("
+    "Evidence validation function is missing: std::uint64_t")
+arpg_expect_stage11c_sequence_rejection(stage_source_string_decoy
+    host_validation_stage11c.cpp
+    "std::uint64_t stage11c_production_snapshot_hash("
+    "constexpr const char* stage11c_hash_decoy = \"std::uint64_t stage11c_production_snapshot_hash(\";\nstd::uint64_t stage11c_missing_snapshot_hash("
+    "Evidence validation function is missing: std::uint64_t")
+arpg_expect_stage11c_sequence_rejection(stage_source_forward_decoy
+    host_validation_stage11c.cpp
+    "bool stage11c_hud_validation_reached(\n    const dungeon::DungeonSnapshot& snapshot,\n    Stage11CHudValidationScenario scenario,\n    const Stage11CHudValidationState& state, bool draw_debug) noexcept {"
+    "bool stage11c_hud_validation_reached(\n    const dungeon::DungeonSnapshot& snapshot,\n    Stage11CHudValidationScenario scenario,\n    const Stage11CHudValidationState& state, bool draw_debug) noexcept;\nbool stage11c_hud_validation_reached_moved(\n    const dungeon::DungeonSnapshot& snapshot,\n    Stage11CHudValidationScenario scenario,\n    const Stage11CHudValidationState& state, bool draw_debug) noexcept {"
+    "Host validation Stage11C definition is missing")
+arpg_expect_stage11c_sequence_rejection(stage_source_cross_function_decoy
+    host_validation_stage11c.cpp
+    "std::uint64_t stage11c_production_snapshot_hash("
+    "void stage11c_cross_function_decoy() {\n    const std::uint64_t stage11c_production_snapshot_hash(0);\n}\nstd::uint64_t stage11c_missing_snapshot_hash("
+    "Host validation Stage11C definition is missing")
+arpg_expect_stage11c_sequence_rejection(stage_source_lambda_decoy
+    host_validation_stage11c.cpp
+    "std::uint64_t stage11c_production_snapshot_hash("
+    "const auto stage11c_lambda_decoy = [] {\n    const std::uint64_t stage11c_production_snapshot_hash(0);\n};\nstd::uint64_t stage11c_missing_snapshot_hash("
+    "Host validation Stage11C definition is missing")
+string(ASCII 10 _stage11c_lf)
+string(ASCII 13 _stage11c_cr)
+string(ASCII 92 _stage11c_backslash)
+set(_stage11c_spliced_lf_decoy
+    "// std::uint64_t stage11c_production_snapshot_hash( ${_stage11c_backslash}${_stage11c_lf}std::uint64_t stage11c_missing_snapshot_hash(")
+set(_stage11c_spliced_crlf_decoy
+    "// std::uint64_t stage11c_production_snapshot_hash( ${_stage11c_backslash}${_stage11c_cr}${_stage11c_lf}std::uint64_t stage11c_missing_snapshot_hash(")
+arpg_expect_stage11c_sequence_rejection(stage_source_spliced_lf_comment_decoy
+    host_validation_stage11c.cpp
+    "std::uint64_t stage11c_production_snapshot_hash("
+    "${_stage11c_spliced_lf_decoy}"
+    "Evidence validation function is missing: std::uint64_t")
+arpg_expect_stage11c_sequence_rejection(stage_source_spliced_crlf_comment_decoy
+    host_validation_stage11c.cpp
+    "std::uint64_t stage11c_production_snapshot_hash("
+    "${_stage11c_spliced_crlf_decoy}"
+    "Evidence validation function is missing: std::uint64_t")
 
 set(_split_fixed_step "${GUARD_TEST_ROOT}/split-fixed-step-conditions.cpp")
 file(WRITE "${_split_fixed_step}" [=[

@@ -44,8 +44,14 @@ set(_stage11b_source
     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11b.cpp")
 set(_stage11c_header
     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11c.hpp")
+if(DEFINED STAGE11C_HEADER_OVERRIDE)
+    set(_stage11c_header "${STAGE11C_HEADER_OVERRIDE}")
+endif()
 set(_stage11c_source
     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11c.cpp")
+if(DEFINED STAGE11C_SOURCE_OVERRIDE)
+    set(_stage11c_source "${STAGE11C_SOURCE_OVERRIDE}")
+endif()
 set(_raylib_cmake "${SOURCE_ROOT}/src/platform/raylib/CMakeLists.txt")
 foreach(_required IN ITEMS
         "${_input_header}" "${_input_source}"
@@ -141,9 +147,13 @@ foreach(_stage11c_definition_token IN ITEMS
         "std::uint64_t stage11c_production_snapshot_hash("
         "bool stage11c_hud_validation_reached("
         "void write_stage11c_hud_validation_summary(")
-    string(FIND "${_stage11c_source_text}" "${_stage11c_definition_token}"
-        _stage11c_definition)
-    if(_stage11c_definition EQUAL -1)
+    evidence_extract_cpp_function_block("${_stage11c_source_text}"
+        "${_stage11c_definition_token}" _stage11c_function)
+    string(FIND "${_stage11c_function}" "{" _stage11c_definition)
+    string(FIND "${_stage11c_function}" ";" _stage11c_forward_declaration)
+    if(_stage11c_definition EQUAL -1
+            OR (NOT _stage11c_forward_declaration EQUAL -1
+                AND _stage11c_forward_declaration LESS _stage11c_definition))
         message(FATAL_ERROR
             "Host validation Stage11C definition is missing: ${_stage11c_definition_token}")
     endif()
@@ -154,7 +164,9 @@ foreach(_stage11c_definition_token IN ITEMS
             "Host validation Stage11C definition remains in raylib_host.cpp: ${_stage11c_definition_token}")
     endif()
 endforeach()
-if(NOT _stage11c_header_text MATCHES "struct Stage11CHudValidationState final")
+evidence_sanitize_cpp_for_scan("${_stage11c_header_text}" _stage11c_header_code)
+if(NOT _stage11c_header_code MATCHES
+        "struct[ \t\r\n]+Stage11CHudValidationState[ \t\r\n]+final[ \t\r\n]*[{]")
     message(FATAL_ERROR "Host validation Stage11C state definition is missing")
 endif()
 if(_host_text MATCHES "struct Stage11CHudValidationState final")
