@@ -13,7 +13,8 @@ if(NOT EXISTS "${_host}")
 endif()
 
 file(READ "${_host}" _host_text)
-string(FIND "${_host_text}" "HostExitCode run_raylib_host(" _runtime_candidate)
+evidence_find_cpp_code_token("${_host_text}" "HostExitCode run_raylib_host("
+    _runtime_candidate)
 if(_runtime_candidate EQUAL -1)
     message(FATAL_ERROR "Host validation sequence guard missing run_raylib_host candidate")
 endif()

@@ -94,3 +94,33 @@ as minimal direct dependencies before the successful target links.
   and passed 6/6 in 581.18 seconds. Direct/self guard timings: evidence
   7.19/102.21 seconds, architecture including its mutation checks 34.43
   seconds, and sequence 74.43/339.27 seconds.
+
+## Review Fix Round 2
+
+- RED: a copied real host with the actual complete sampled-keys declaration
+  renamed, plus a block comment opened before the real function and containing
+  a complete decoy `run_raylib_host`, was incorrectly accepted by the raw
+  pre-crop guard (46.47 seconds). This proved that cropping before determining
+  lexical state discarded the comment opener.
+- GREEN: the guard now uses a delimiter-driven lexical state walk to locate
+  `run_raylib_host` only while in code, then performs the existing crop. The
+  crop is consequently safe and the function extractor sanitizes its crop
+  once rather than twice. The same block fixture is rejected with the sole
+  missing sampled-keys token diagnosis in 50.00 seconds. A valid ordinary
+  escaped-multiline string fixture, whose opener likewise precedes the fake
+  signature and whose every payload newline is a backslash splice, is also
+  covered by the sequence self-test. Raw strings are not claimed or parsed.
+- The continuation-comment mutation now puts the guard's complete sampled
+  declaration on the next physical line, not merely its short call. It is
+  rejected with the same single missing input-injection-token diagnosis
+  (48.40 seconds).
+- The shared scanner now preserves a block-comment close formed across a
+  splice. Small LF/CRLF equivalence fixtures cover line-comment splices,
+  escaped ordinary strings/chars, and block-close splices against the existing
+  sanitizer; Task2 Stage10/11 production and mutation scanner tests passed
+  4/4 in 92.67 seconds.
+- No formal Step 4 rerun was made; its BASE evidence and scope remain
+  unchanged. Final round-2 verification: direct sequence/evidence/
+  architecture guards passed in 51.38/2.85/12.88 seconds; serial MSVC target
+  build passed in 188.1 seconds; the exact six-test selector passed 6/6 in
+  416.28 seconds (sequence self-test 295.93 seconds).

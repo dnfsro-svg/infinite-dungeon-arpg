@@ -2,8 +2,51 @@ if(NOT DEFINED SOURCE_ROOT OR NOT DEFINED GUARD_TEST_ROOT)
     message(FATAL_ERROR "SOURCE_ROOT and GUARD_TEST_ROOT are required")
 endif()
 
+include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
+
 set(_guard "${SOURCE_ROOT}/tests/platform/host_validation_sequence_guard_test.cmake")
 file(MAKE_DIRECTORY "${GUARD_TEST_ROOT}")
+
+function(arpg_assert_lexical_token_equivalence LABEL SOURCE TOKEN EXPECTED_CODE)
+    evidence_sanitize_cpp_for_scan("${SOURCE}" _sanitized_fixture)
+    string(FIND "${_sanitized_fixture}" "${TOKEN}" _sanitized_position)
+    evidence_find_cpp_code_token("${SOURCE}" "${TOKEN}" _fast_position)
+    if(EXPECTED_CODE)
+        if(_sanitized_position EQUAL -1 OR _fast_position EQUAL -1
+                OR NOT _sanitized_position EQUAL _fast_position)
+            message(FATAL_ERROR "lexical scanner mismatch for ${LABEL}: ${_sanitized_position}/${_fast_position}")
+        endif()
+    elseif(NOT _sanitized_position EQUAL -1 OR NOT _fast_position EQUAL -1)
+        message(FATAL_ERROR "lexical scanner exposed hidden token for ${LABEL}: ${_sanitized_position}/${_fast_position}")
+    endif()
+endfunction()
+
+set(_lexical_lf_fixture [=[
+// lexical_line_hidden \
+lexical_line_hidden
+lexical_line_visible;
+const char* escaped = "lexical_string_hidden \" still hidden";
+const char escaped_quote = '\'';
+/* lexical_block_hidden *\
+/ lexical_block_visible;
+]=])
+string(ASCII 10 _lexical_lf)
+string(ASCII 13 _lexical_cr)
+string(REPLACE "${_lexical_lf}" "${_lexical_cr}${_lexical_lf}"
+    _lexical_crlf_fixture "${_lexical_lf_fixture}")
+foreach(_fixture_name IN ITEMS lf crlf)
+    set(_fixture_source "${_lexical_${_fixture_name}_fixture}")
+    arpg_assert_lexical_token_equivalence("${_fixture_name} line splice"
+        "${_fixture_source}" "lexical_line_hidden" FALSE)
+    arpg_assert_lexical_token_equivalence("${_fixture_name} visible code"
+        "${_fixture_source}" "lexical_line_visible" TRUE)
+    arpg_assert_lexical_token_equivalence("${_fixture_name} escaped string"
+        "${_fixture_source}" "lexical_string_hidden" FALSE)
+    arpg_assert_lexical_token_equivalence("${_fixture_name} block close splice"
+        "${_fixture_source}" "lexical_block_hidden" FALSE)
+    arpg_assert_lexical_token_equivalence("${_fixture_name} block close visible"
+        "${_fixture_source}" "lexical_block_visible" TRUE)
+endforeach()
 
 set(_split_fixed_step "${GUARD_TEST_ROOT}/split-fixed-step-conditions.cpp")
 file(WRITE "${_split_fixed_step}" [=[
@@ -48,9 +91,103 @@ if(NOT "${_stdout}${_stderr}" MATCHES
 endif()
 
 file(READ "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp" _host_source)
+
+# The raw pre-crop used by the guard must not treat a signature inside a
+# comment that began before the candidate as executable code.
 string(REPLACE
     "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();"
-    "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys_removed();\n            // decoy continues \\\nsample_physical_keys()"
+    "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys_removed();"
+    _precrop_comment_host "${_host_source}")
+string(FIND "${_precrop_comment_host}" "HostExitCode run_raylib_host("
+    _actual_runtime_begin)
+set(_precrop_comment_decoy [=[/*
+HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
+    try {
+        while (!exit_requested) {
+            const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();
+            inject_stage11b_physical_edges();
+            inject_stage11c_physical_edges();
+            inject_stage11d_physical_edges();
+            inject_stage17_physical_edges();
+            map_host_frame_input();
+            if (!step_death) {
+                if (config.stage11_validation != Stage11ValidationScenario::none) {
+                    step_movement = host_validation::stage11_validation_input(config, stage11_validation_state);
+                } else if (config.stage10_validation != Stage10ValidationScenario::none) {
+                    step_movement = host_validation::stage10_validation_input(config, stage10_validation_state);
+                } else {
+                    step_movement = movement;
+                }
+            }
+            runtime.fixed_tick(step_movement,
+                loot_pickup_policy(live_settings.loot_filter_mode));
+        }
+        host_validation::write_stage11b_validation_summary(config, stage11b_validation_state,
+            pause_menu);
+        write_stage11c_hud_validation_summary(config, stage11c_validation_state);
+        write_stage11d_loot_validation_summary(config, stage11d_validation_state, pause_menu);
+        write_stage17_validation_summary(config, *stage17_validation_state);
+        audio.shutdown();
+    } catch (...) {
+    }
+}
+*/
+]=])
+string(SUBSTRING "${_precrop_comment_host}" 0 ${_actual_runtime_begin}
+    _precrop_prefix)
+string(SUBSTRING "${_precrop_comment_host}" ${_actual_runtime_begin} -1
+    _precrop_suffix)
+set(_precrop_comment_host
+    "${_precrop_prefix}${_precrop_comment_decoy}${_precrop_suffix}")
+set(_precrop_comment "${GUARD_TEST_ROOT}/precrop-comment-decoy.cpp")
+file(WRITE "${_precrop_comment}" "${_precrop_comment_host}")
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+        "-DHOST_OVERRIDE=${_precrop_comment}" -P "${_guard}"
+    RESULT_VARIABLE _precrop_comment_result
+    OUTPUT_VARIABLE _precrop_comment_stdout ERROR_VARIABLE _precrop_comment_stderr)
+if(_precrop_comment_result EQUAL 0)
+    message(FATAL_ERROR "Host validation sequence guard accepted pre-crop comment decoy")
+endif()
+if(NOT "${_precrop_comment_stdout}${_precrop_comment_stderr}" MATCHES
+        "missing input injection chain token")
+    message(FATAL_ERROR "pre-crop comment decoy failed for wrong reason: ${_precrop_comment_stdout}${_precrop_comment_stderr}")
+endif()
+
+string(SUBSTRING "${_precrop_comment_decoy}" 2 -1 _precrop_string_payload)
+string(ASCII 10 _string_newline)
+string(ASCII 92 _string_backslash)
+string(REPLACE "${_string_newline}" "${_string_backslash}${_string_newline}"
+    _precrop_string_payload "${_precrop_string_payload}")
+set(_precrop_string_decoy
+    "const char* ignored_runtime_signature = \"${_precrop_string_payload}\";")
+string(REPLACE "${_string_backslash}${_string_newline}" ""
+    _precrop_string_without_splices "${_precrop_string_decoy}")
+string(FIND "${_precrop_string_without_splices}" "${_string_newline}"
+    _precrop_unspliced_newline)
+if(NOT _precrop_unspliced_newline EQUAL -1)
+    message(FATAL_ERROR "pre-crop string fixture has a payload newline without a splice")
+endif()
+set(_precrop_string_host
+    "${_precrop_prefix}${_precrop_string_decoy}${_string_newline}${_precrop_suffix}")
+set(_precrop_string "${GUARD_TEST_ROOT}/precrop-string-decoy.cpp")
+file(WRITE "${_precrop_string}" "${_precrop_string_host}")
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+        "-DHOST_OVERRIDE=${_precrop_string}" -P "${_guard}"
+    RESULT_VARIABLE _precrop_string_result
+    OUTPUT_VARIABLE _precrop_string_stdout ERROR_VARIABLE _precrop_string_stderr)
+if(_precrop_string_result EQUAL 0)
+    message(FATAL_ERROR "Host validation sequence guard accepted pre-crop string decoy")
+endif()
+if(NOT "${_precrop_string_stdout}${_precrop_string_stderr}" MATCHES
+        "missing input injection chain token")
+    message(FATAL_ERROR "pre-crop string decoy failed for wrong reason: ${_precrop_string_stdout}${_precrop_string_stderr}")
+endif()
+
+string(REPLACE
+    "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();"
+    "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys_removed();\n            // decoy continues \\\nconst PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();"
     _spliced_input_host "${_host_source}")
 set(_spliced_input "${GUARD_TEST_ROOT}/spliced-input-decoy.cpp")
 file(WRITE "${_spliced_input}" "${_spliced_input_host}")

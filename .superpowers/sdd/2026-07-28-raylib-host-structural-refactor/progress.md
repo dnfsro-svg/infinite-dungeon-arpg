@@ -34,3 +34,11 @@ splice-safe decoys; host loop/function brace-depth scope checks including
 lambda/out-of-loop full-call decoys; Stage11B header dependency mutation;
 removed unused include. Serial build passed; focused selector lists exactly
 six and passed 6/6 (581.18s). Fix commit: 94ac373.
+Task 3: scoped re-review findings (round 2 required) — raw run_raylib_host pre-crop loses earlier comment/string lexical state; splice mutation retains only the short call rather than the guard's full sampled-keys declaration
+Task 3: fix round 2/5 (all review findings addressed) — code-state lexer proves
+the raw crop candidate before function isolation; one-pass cropped sanitizer;
+block and valid escaped-multiline string pre-open decoys; complete-declaration
+splice decoy; LF/CRLF lexical equivalence checks and splice block-close fix in
+shared scanner. Task2 Stage10/11 scanner tests 4/4; serial build passed;
+focused exact-six selector 6/6 (416.28s). No formal Step4 rerun; commit pending
+final diff check.
