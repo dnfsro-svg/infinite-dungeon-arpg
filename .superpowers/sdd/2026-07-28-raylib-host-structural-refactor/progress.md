@@ -19,3 +19,5 @@ Task 2: scoped re-review findings (round 2 required) — Stage10 capture mutatio
 Task 2: fix round 2/5 (2 addressed, 0 open — single-target capture mutations; shared comment/string-safe function isolation with adversarial mutations; scoped re-review required; FIX_BASE 0ef2305)
 Task 2: scoped re-review finding (round 3 required) — C++ backslash-newline splicing can continue or form line comments, letting commented route decoys satisfy the scanner
 Task 2: fix round 3/5 (2 addressed, 0 open — splice-aware comment scanning and Stage10/11 continuation-decoy mutations; scoped re-review required; FIX_BASE 894f3e6)
+Task 2: deferred full-selector evidence — 22 selected; the last full execution was 16 pass/6 non-guard failures, with no claim that those six failures are baseline-proven
+Task 2: complete (commits cdecc8b..7defd1c, review clean after 3 fix rounds)
