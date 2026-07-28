@@ -90,3 +90,11 @@ Task 4: complete — independent final review of `4127669..94acada` found no
 P1/P2/P3 findings and approved the card. Cross-audit confirmed HEAD 94acada,
 a clean worktree, all four rebuilt executables, the exact 8/8 CTest log, and no
 residual build/test processes. Task 5A is now the only active card.
+Task 5A: complete — Stage11D state, selectors, physical-input runtime, safe
+movement, fixed-step activation, and abyss-claim observation were extracted to
+`host_validation_stage11d.hpp/.cpp` without changing host ordering or report
+semantics. Independent round-2 review and final snapshot review found no
+P1/P2/P3 findings. Serial build passed; the final exact-seven selector passed
+7/7 in 1802.84s after correcting only the stale CTest self-test timeout metadata
+to 600/900 seconds. Code commit: 6566026.
+Task 5B: active — extract Stage11D presentation semantics and report behavior.
