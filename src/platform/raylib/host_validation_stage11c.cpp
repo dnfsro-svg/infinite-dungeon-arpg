@@ -51,7 +51,9 @@ PhysicalKeySnapshot inject_stage11c_physical_edges(
         if (!state.debug_visible) snapshot.f1 = true;
         return snapshot;
     }
-    if (!current.combat.has_value()) return snapshot;
+    if (!current.combat.has_value()) {
+        return snapshot;
+    }
     const combat::CombatSnapshot& combat_snapshot = *current.combat;
     if (current.phase == dungeon::RoomPhase::combat) {
         const combat::MonsterSnapshot* const target =
@@ -129,7 +131,9 @@ bool stage11c_hud_validation_reached(
     Stage11CHudValidationScenario scenario,
     const Stage11CHudValidationState& state, bool draw_debug) noexcept {
     using Scenario = Stage11CHudValidationScenario;
-    if (!snapshot.combat.has_value()) return false;
+    if (!snapshot.combat.has_value()) {
+        return false;
+    }
     const combat::PlayerSnapshot& player = snapshot.combat->player;
     switch (scenario) {
     case Scenario::none:

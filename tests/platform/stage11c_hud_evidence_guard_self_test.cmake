@@ -138,6 +138,24 @@ function(stage11c_expect_host_text_rejection LABEL NEEDLE REPLACEMENT EXPECTED)
     endif()
 endfunction()
 
+function(stage11c_expect_host_source_rejection LABEL MUTATED EXPECTED)
+    if(MUTATED STREQUAL _host_source)
+        message(FATAL_ERROR "host mutation ${LABEL} did not change production source")
+    endif()
+    set(_mutation "${GUARD_TEST_ROOT}/host-${LABEL}.cpp")
+    file(WRITE "${_mutation}" "${MUTATED}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+            "-DHOST_OVERRIDE=${_mutation}" -P "${_guard}"
+        RESULT_VARIABLE _result OUTPUT_VARIABLE _stdout ERROR_VARIABLE _stderr)
+    if(_result EQUAL 0)
+        message(FATAL_ERROR "Stage11C evidence guard accepted named host mutation: ${LABEL}")
+    endif()
+    if(NOT "${_stdout}${_stderr}" MATCHES "${EXPECTED}")
+        message(FATAL_ERROR "named host mutation ${LABEL} failed for wrong reason: ${_stdout}${_stderr}")
+    endif()
+endfunction()
+
 function(stage11c_expect_input_rejection LABEL NEEDLE REPLACEMENT EXPECTED)
     string(FIND "${_input_source}" "${NEEDLE}" _needle_found)
     if(_needle_found EQUAL -1)
@@ -215,27 +233,54 @@ stage11c_expect_host_rejection(host_direct_model_overwrite
 stage11c_expect_host_text_rejection(host_model_comment_decoy
     "stage11c_validation_state.model = renderer.hud_model();"
     "// stage11c_validation_state.model = renderer.hud_model();"
-    "direct model overwrite")
+    "observation scope")
 stage11c_expect_host_text_rejection(host_fake_notices_capture
     "stage11c_validation_state.notices = renderer.hud_notice_view();"
     "stage11c_validation_state.notices = {};"
-    "missing capture surface token")
+    "observation scope")
 stage11c_expect_host_text_rejection(host_fake_layout_capture
     "stage11c_validation_state.layout = make_hud_layout("
     "stage11c_validation_state.layout = {};\n                make_hud_layout("
-    "missing capture surface token")
+    "fake layout capture")
 stage11c_expect_host_text_rejection(host_duplicate_notices_capture
     "stage11c_validation_state.notices = renderer.hud_notice_view();"
     "stage11c_validation_state.notices = renderer.hud_notice_view();\n                stage11c_validation_state.notices = renderer.hud_notice_view();"
-    "notices overwrite")
+    "observation scope")
 stage11c_expect_host_text_rejection(host_captured_early
     "const bool capture_succeeded =\n                present_frame_and_maybe_capture("
     "stage11c_validation_state.captured = true;\n            const bool capture_succeeded =\n                present_frame_and_maybe_capture("
-    "captured overwrite")
+    "capture scope")
 stage11c_expect_host_text_rejection(host_capture_success_removed
     "&& capture_succeeded;"
     ";"
-    "missing capture success")
+    "capture ordering")
+
+set(_run_signature "HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {")
+string(REPLACE "${_run_signature}"
+    "// STAGE11C_HUD_VALIDATION_SEAM_BEGIN observation\nconstexpr const char* stage11c_marker_decoy = \"// STAGE11C_HUD_VALIDATION_SEAM_BEGIN observation\";\n${_run_signature}"
+    _marker_decoy_source "${_host_source}")
+stage11c_expect_host_source_rejection(host_marker_comment_string_decoy
+    "${_marker_decoy_source}" "cannot bind observation seam marker")
+
+set(_captured_block "if (captured_stage10_frame && stage11c_reached) {\n                stage11c_validation_state.captured = true;\n            }")
+string(REPLACE "${_captured_block}" "if (captured_stage10_frame && stage11c_reached) {\n            }"
+    _captured_early_source "${_host_source}")
+string(REPLACE "const bool capture_succeeded =\n                present_frame_and_maybe_capture("
+    "if (stage11c_reached) {\n                stage11c_validation_state.captured = true;\n            }\n            const bool capture_succeeded =\n                present_frame_and_maybe_capture("
+    _captured_early_source "${_captured_early_source}")
+stage11c_expect_host_source_rejection(host_captured_moved_before_present
+    "${_captured_early_source}" "rejected capture ordering")
+
+string(REPLACE "${_captured_block}"
+    "const auto stage11c_capture_decoy = [&] {\n                if (captured_stage10_frame && stage11c_reached) {\n                    stage11c_validation_state.captured = true;\n                }\n            };"
+    _captured_lambda_source "${_host_source}")
+stage11c_expect_host_source_rejection(host_captured_in_lambda
+    "${_captured_lambda_source}" "rejected capture scope")
+
+stage11c_expect_host_text_rejection(host_layout_wrong_dimensions
+    "GetScreenWidth(), GetScreenHeight(), true"
+    "1, 1, false"
+    "rejected fake layout capture")
 
 set(_hash_copy "stage11c_validation_state.production_snapshot_hash =\n                    host_validation::stage11c_production_snapshot_hash(current);")
 stage11c_expect_host_rejection(host_fake_snapshot_hash
@@ -265,6 +310,22 @@ stage11c_expect_stage_rejection(stage_summary_notice_removed
     "state.notices.primary.kind"
     "state.notices_primary_removed"
     "summary token")
+stage11c_expect_stage_rejection(stage_driver_early_return
+    "Stage11CHudValidationState& state) noexcept {"
+    "Stage11CHudValidationState& state) noexcept {\n    return snapshot;"
+    "physical driver early return")
+stage11c_expect_stage_rejection(stage_hash_early_return
+    "const dungeon::DungeonSnapshot& snapshot) noexcept {"
+    "const dungeon::DungeonSnapshot& snapshot) noexcept {\n    return 1U;"
+    "production hash early return")
+stage11c_expect_stage_rejection(stage_reached_early_return
+    "const Stage11CHudValidationState& state, bool draw_debug) noexcept {"
+    "const Stage11CHudValidationState& state, bool draw_debug) noexcept {\n    return true;"
+    "reached predicate early return")
+stage11c_expect_stage_rejection(stage_summary_early_return
+    "const Stage11CHudValidationState& state) noexcept {"
+    "const Stage11CHudValidationState& state) noexcept {\n    return;"
+    "summary early return")
 
 stage11c_expect_host_rejection(host_bypassed_session_progression
     "${_model_copy}"

@@ -192,7 +192,7 @@ arpg_expect_hud_guard_rejects_after_replace(stage_source_forward_decoy
 arpg_expect_hud_guard_rejects_after_replace(stage_cmake_comment_quoted_decoy
     CMakeLists.txt
     "    host_validation_stage11c.cpp"
-    "    # host_validation_stage11c.cpp\nmessage(STATUS \"host_validation_stage11c.cpp\")"
+    "    # decoy;host_validation_stage11c.cpp\nmessage(STATUS \"host_validation_stage11c.cpp\")"
     ""
     "arpg_raylib does not register host_validation_stage11c.cpp exactly once")
 

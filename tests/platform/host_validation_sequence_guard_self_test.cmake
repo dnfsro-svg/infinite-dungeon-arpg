@@ -7,6 +7,32 @@ include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
 set(_guard "${SOURCE_ROOT}/tests/platform/host_validation_sequence_guard_test.cmake")
 file(MAKE_DIRECTORY "${GUARD_TEST_ROOT}")
 
+set(_sequence_cmake_mutation "${GUARD_TEST_ROOT}/sequence-cmake-comment-decoy.cmake")
+file(READ "${SOURCE_ROOT}/src/platform/raylib/CMakeLists.txt" _sequence_cmake_text)
+string(REPLACE "    host_validation_stage11c.cpp"
+    "    # decoy;host_validation_stage11c.cpp\nmessage(STATUS \"host_validation_stage11c.cpp\")"
+    _sequence_cmake_mutated "${_sequence_cmake_text}")
+if(_sequence_cmake_mutated STREQUAL _sequence_cmake_text)
+    message(FATAL_ERROR "sequence CMake comment mutation anchor is missing")
+endif()
+file(WRITE "${_sequence_cmake_mutation}" "${_sequence_cmake_mutated}")
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+        "-DCMAKE_OVERRIDE=${_sequence_cmake_mutation}" -P "${_guard}"
+    RESULT_VARIABLE _sequence_cmake_result
+    OUTPUT_VARIABLE _sequence_cmake_stdout ERROR_VARIABLE _sequence_cmake_stderr)
+if(_sequence_cmake_result EQUAL 0)
+    message(FATAL_ERROR "Host validation sequence guard accepted CMake comment/quoted decoy")
+endif()
+if(NOT "${_sequence_cmake_stdout}${_sequence_cmake_stderr}" MATCHES
+        "arpg_raylib does not register host_validation_stage11c.cpp")
+    message(FATAL_ERROR "sequence CMake comment mutation failed for wrong reason: ${_sequence_cmake_stdout}${_sequence_cmake_stderr}")
+endif()
+if(DEFINED SEQUENCE_CMAKE_ONLY)
+    message(STATUS "Host validation sequence guard rejected CMake comment/quoted decoy")
+    return()
+endif()
+
 function(arpg_assert_lexical_token_equivalence LABEL SOURCE TOKEN EXPECTED_CODE)
     evidence_sanitize_cpp_for_scan("${SOURCE}" _sanitized_fixture)
     string(FIND "${_sanitized_fixture}" "${TOKEN}" _sanitized_position)

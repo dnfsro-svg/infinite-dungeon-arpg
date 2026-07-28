@@ -29,6 +29,9 @@ set(_host_source "${_hud_root}/raylib_host.cpp")
 set(_stage11c_header "${_hud_root}/host_validation_stage11c.hpp")
 set(_stage11c_source "${_hud_root}/host_validation_stage11c.cpp")
 set(_raylib_cmake "${_hud_root}/CMakeLists.txt")
+if(DEFINED CMAKE_OVERRIDE)
+    set(_raylib_cmake "${CMAKE_OVERRIDE}")
+endif()
 set(_validation_input_sources
     "${_hud_root}/host_validation_input.hpp"
     "${_hud_root}/host_validation_input.cpp")
@@ -49,6 +52,7 @@ if(NOT EXISTS "${_raylib_cmake}")
     message(FATAL_ERROR "Stage11C HUD CMake source is missing: ${_raylib_cmake}")
 endif()
 include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/cmake_source_registration_scan.cmake")
 
 foreach(_validation_header IN ITEMS
         "${_hud_root}/host_validation_input.hpp"
@@ -110,31 +114,9 @@ function(arpg_extract_hud_host_seam
     set("${OUT_SEAM}" "${_seam}" PARENT_SCOPE)
 endfunction()
 
-# This only accepts an unquoted, uncommented source entry inside arpg_raylib's
-# add_library block.  The production CMake file is small, so line-oriented
-# parsing is sufficient here and deliberately avoids treating a # comment or
-# quoted diagnostic text as a source registration.
 function(arpg_assert_stage11c_cmake_registration CMAKE_TEXT)
-    string(REPLACE "\r\n" "\n" _cmake_lines "${CMAKE_TEXT}")
-    string(REPLACE "\r" "\n" _cmake_lines "${_cmake_lines}")
-    string(REPLACE "\n" ";" _cmake_lines "${_cmake_lines}")
-    set(_inside_arpg_raylib FALSE)
-    set(_registration_count 0)
-    foreach(_line IN LISTS _cmake_lines)
-        string(REGEX REPLACE "#[^\n]*$" "" _line_code "${_line}")
-        if(NOT _inside_arpg_raylib)
-            if(_line_code MATCHES "^[ \t]*add_library[ \t]*[(][ \t]*arpg_raylib[ \t]+STATIC")
-                set(_inside_arpg_raylib TRUE)
-            endif()
-            continue()
-        endif()
-        if(_line_code MATCHES "^[ \t]*host_validation_stage11c[.]cpp[ \t]*$")
-            math(EXPR _registration_count "${_registration_count} + 1")
-        endif()
-        if(_line_code MATCHES "^[ \t]*[)][ \t]*$")
-            set(_inside_arpg_raylib FALSE)
-        endif()
-    endforeach()
+    arpg_cmake_count_arpg_raylib_source("${CMAKE_TEXT}"
+        "host_validation_stage11c.cpp" _registration_count)
     if(NOT _registration_count EQUAL 1)
         message(FATAL_ERROR
             "arpg_raylib does not register host_validation_stage11c.cpp exactly once")

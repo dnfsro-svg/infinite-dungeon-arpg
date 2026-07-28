@@ -59,3 +59,11 @@ not unique or bound to the real run_raylib_host lexical/function scope; capture
 ordering, brace depth, and full layout RHS remain underconstrained; sequence
 keeps a raw CMake source check and architecture accepts a semicolon-split
 `# decoy;host_validation_stage11c.cpp` registration. FIX_BASE 2486d32.
+Task 4: fix round 2/5 (all findings addressed) — production changes are only
+equivalent braces around two early returns; evidence guard rejects early
+top-level returns, binds code-state runtime seams, and enforces exact RHS plus
+capture scope/order; architecture and sequence share a quote-aware raw-line
+CMake source-registration parser. VS2022 serial four-target build passed in
+196.05s; exact Step3 selector passed 8/8 in 969.00s. Step4 formal intentionally
+not rerun: the same 102-file staged asset and BASE-proven formal baseline remain
+applicable. Fix commit: `test: close stage11c guard bypasses`.

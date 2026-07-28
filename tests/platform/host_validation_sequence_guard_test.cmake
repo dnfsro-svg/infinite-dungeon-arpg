@@ -3,6 +3,7 @@ if(NOT DEFINED SOURCE_ROOT)
 endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/cmake_source_registration_scan.cmake")
 
 set(_host "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
 if(DEFINED HOST_OVERRIDE)
@@ -53,6 +54,9 @@ if(DEFINED STAGE11C_SOURCE_OVERRIDE)
     set(_stage11c_source "${STAGE11C_SOURCE_OVERRIDE}")
 endif()
 set(_raylib_cmake "${SOURCE_ROOT}/src/platform/raylib/CMakeLists.txt")
+if(DEFINED CMAKE_OVERRIDE)
+    set(_raylib_cmake "${CMAKE_OVERRIDE}")
+endif()
 foreach(_required IN ITEMS
         "${_input_header}" "${_input_source}"
         "${_navigation_header}" "${_navigation_source}"
@@ -224,8 +228,9 @@ foreach(_registered_source IN ITEMS
         "host_validation_input.cpp" "host_validation_navigation.cpp"
         "host_validation_stage10_11.cpp" "host_validation_stage11b.cpp"
         "host_validation_stage11c.cpp")
-    string(FIND "${_raylib_cmake_text}" "${_registered_source}" _registered)
-    if(_registered EQUAL -1)
+    arpg_cmake_count_arpg_raylib_source("${_raylib_cmake_text}"
+        "${_registered_source}" _registered_count)
+    if(NOT _registered_count EQUAL 1)
         message(FATAL_ERROR "arpg_raylib does not register ${_registered_source}")
     endif()
 endforeach()
