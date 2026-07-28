@@ -42,3 +42,4 @@ splice decoy; LF/CRLF lexical equivalence checks and splice block-close fix in
 shared scanner. Task2 Stage10/11 scanner tests 4/4; serial build passed;
 focused exact-six selector 6/6 (416.28s). No formal Step4 rerun. Fix commit:
 7e2297b.
+Task 3: complete (commits 22e73e4..9f0758c, review clean after 2 fix rounds; formal Step4 remains a BASE-proven variable-tick failure at the same predicate)
