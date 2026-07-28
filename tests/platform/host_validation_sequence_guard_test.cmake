@@ -53,6 +53,16 @@ set(_stage11c_source
 if(DEFINED STAGE11C_SOURCE_OVERRIDE)
     set(_stage11c_source "${STAGE11C_SOURCE_OVERRIDE}")
 endif()
+set(_stage11d_header
+    "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d.hpp")
+if(DEFINED STAGE11D_HEADER_OVERRIDE)
+    set(_stage11d_header "${STAGE11D_HEADER_OVERRIDE}")
+endif()
+set(_stage11d_runtime
+    "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d_runtime.cpp")
+if(DEFINED STAGE11D_RUNTIME_OVERRIDE)
+    set(_stage11d_runtime "${STAGE11D_RUNTIME_OVERRIDE}")
+endif()
 set(_raylib_cmake "${SOURCE_ROOT}/src/platform/raylib/CMakeLists.txt")
 if(DEFINED CMAKE_OVERRIDE)
     set(_raylib_cmake "${CMAKE_OVERRIDE}")
@@ -62,7 +72,8 @@ foreach(_required IN ITEMS
         "${_navigation_header}" "${_navigation_source}"
         "${_stage10_11_header}" "${_stage10_11_source}"
         "${_stage11b_header}" "${_stage11b_source}"
-        "${_stage11c_header}" "${_stage11c_source}" "${_raylib_cmake}")
+        "${_stage11c_header}" "${_stage11c_source}"
+        "${_stage11d_header}" "${_stage11d_runtime}" "${_raylib_cmake}")
     if(NOT EXISTS "${_required}")
         message(FATAL_ERROR "Host validation boundary target is missing: ${_required}")
     endif()
@@ -77,12 +88,24 @@ file(READ "${_stage11b_header}" _stage11b_header_text)
 file(READ "${_stage11b_source}" _stage11b_source_text)
 file(READ "${_stage11c_header}" _stage11c_header_text)
 file(READ "${_stage11c_source}" _stage11c_source_text)
+file(READ "${_stage11d_header}" _stage11d_header_text)
+file(READ "${_stage11d_runtime}" _stage11d_runtime_text)
 file(READ "${_raylib_cmake}" _raylib_cmake_text)
+
+function(stage11d_find_host_code_token TOKEN OUT_POSITION)
+    string(FIND "${_host_text}" "${TOKEN}" _raw_position)
+    if(_raw_position EQUAL -1)
+        set(${OUT_POSITION} -1 PARENT_SCOPE)
+        return()
+    endif()
+    evidence_find_cpp_code_token("${_host_text}" "${TOKEN}" _code_position)
+    set(${OUT_POSITION} ${_code_position} PARENT_SCOPE)
+endfunction()
 
 foreach(_header_text IN ITEMS
         "${_input_header_text}" "${_navigation_header_text}"
         "${_stage10_11_header_text}" "${_stage11b_header_text}"
-        "${_stage11c_header_text}")
+        "${_stage11c_header_text}" "${_stage11d_header_text}")
     if(_header_text MATCHES "raylib[.]h|renderer|persistence|test")
         message(FATAL_ERROR "Host validation boundary header has a forbidden dependency")
     endif()
@@ -182,6 +205,41 @@ if(_host_text MATCHES "struct Stage11BValidationState final")
         "Host validation Stage11B state definition remains in raylib_host.cpp")
 endif()
 
+foreach(_stage11d_definition_token IN ITEMS
+        "bool stage11d_has_three_ordinary_rarities("
+        "const dungeon::GroundItemSnapshot* stage11d_nearest_ground("
+        "const combat::MonsterSnapshot* stage11d_priority_monster("
+        "bool stage11d_attack_lane("
+        "combat::MovementInput stage11d_safe_movement_toward("
+        "PhysicalKeySnapshot inject_stage11d_physical_edges("
+        "bool stage11d_validation_active("
+        "void observe_stage11d_abyss_claim(")
+    string(FIND "${_stage11d_runtime_text}"
+        "${_stage11d_definition_token}" _stage11d_definition)
+    if(_stage11d_definition EQUAL -1)
+        message(FATAL_ERROR
+            "Host validation Stage11D runtime definition is missing: ${_stage11d_definition_token}")
+    endif()
+    stage11d_find_host_code_token("${_stage11d_definition_token}"
+        _host_stage11d_definition)
+    if(NOT _host_stage11d_definition EQUAL -1)
+        message(FATAL_ERROR
+            "Host validation Stage11D runtime definition remains in raylib_host.cpp: ${_stage11d_definition_token}")
+    endif()
+endforeach()
+evidence_sanitize_cpp_for_scan("${_stage11d_header_text}"
+    _stage11d_header_code)
+if(NOT _stage11d_header_code MATCHES
+        "struct[ \t\r\n]+Stage11DLootValidationState[ \t\r\n]+final[ \t\r\n]*[{]")
+    message(FATAL_ERROR "Host validation Stage11D state definition is missing")
+endif()
+stage11d_find_host_code_token("struct Stage11DLootValidationState final"
+    _host_stage11d_state_definition)
+if(NOT _host_stage11d_state_definition EQUAL -1)
+    message(FATAL_ERROR
+        "Host validation Stage11D state definition remains in raylib_host.cpp")
+endif()
+
 set(_input_definition_tokens
     "void inject_validation_pressed("
     "void inject_validation_action("
@@ -227,7 +285,8 @@ endforeach()
 foreach(_registered_source IN ITEMS
         "host_validation_input.cpp" "host_validation_navigation.cpp"
         "host_validation_stage10_11.cpp" "host_validation_stage11b.cpp"
-        "host_validation_stage11c.cpp")
+        "host_validation_stage11c.cpp"
+        "host_validation_stage11d_runtime.cpp")
     arpg_cmake_count_arpg_raylib_source("${_raylib_cmake_text}"
         "${_registered_source}" _registered_count)
     if(NOT _registered_count EQUAL 1)

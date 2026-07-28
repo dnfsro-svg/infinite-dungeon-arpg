@@ -1397,7 +1397,7 @@ set_tests_properties(
     stage11d.architecture.loot_boundaries_self_test
     PROPERTIES
         LABELS "headless;platform;architecture;stage11d"
-        TIMEOUT 300)
+        TIMEOUT 600)
 
 add_test(
     NAME architecture.dungeon_no_raylib
@@ -1730,7 +1730,7 @@ add_test(
         -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11d_loot_evidence_guard_self_test.cmake")
 set_tests_properties(
     stage11d.loot_evidence_guard_self_test
-    PROPERTIES LABELS "headless;platform;architecture;stage11d" TIMEOUT 300)
+    PROPERTIES LABELS "headless;platform;architecture;stage11d" TIMEOUT 900)
 
 add_test(
     NAME stage14.audio_sources

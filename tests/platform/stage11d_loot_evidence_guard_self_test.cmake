@@ -2,11 +2,18 @@ if(NOT DEFINED SOURCE_ROOT OR NOT DEFINED GUARD_TEST_ROOT)
     message(FATAL_ERROR "SOURCE_ROOT and GUARD_TEST_ROOT are required")
 endif()
 set(_guard "${SOURCE_ROOT}/tests/platform/stage11d_loot_evidence_guard_test.cmake")
+set(_sequence_guard
+    "${SOURCE_ROOT}/tests/platform/host_validation_sequence_guard_test.cmake")
 set(_host "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
+set(_stage_header
+    "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d.hpp")
+set(_runtime
+    "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d_runtime.cpp")
 set(_renderer "${SOURCE_ROOT}/src/platform/raylib/combat_renderer.cpp")
 set(_formal "${SOURCE_ROOT}/tests/platform/stage11d_loot_formal_game_validation.cpp")
 set(_validator "${SOURCE_ROOT}/tests/platform/stage11d_loot_formal_validator.ps1")
-foreach(_file IN ITEMS "${_guard}" "${_host}" "${_renderer}"
+foreach(_file IN ITEMS "${_guard}" "${_sequence_guard}" "${_host}"
+        "${_stage_header}" "${_runtime}" "${_renderer}"
         "${_formal}" "${_validator}")
     if(NOT EXISTS "${_file}")
         message(FATAL_ERROR "Stage11D guard self-test input is missing: ${_file}")
@@ -22,6 +29,18 @@ if(NOT _baseline EQUAL 0)
 endif()
 
 function(expect_rejected NAME OVERRIDE PATH EXPECTED_REASON)
+    if(DEFINED TASK5A_TARGETED_ONLY AND TASK5A_TARGETED_ONLY)
+        set(_targeted_names
+            "stage11d header state payload cross scope"
+            "runtime selector payload cross scope"
+            "host pause call in uncalled lambda"
+            "host fixed-step activation payload cross scope"
+            "host real moved definition")
+        list(FIND _targeted_names "${NAME}" _targeted_index)
+        if(_targeted_index EQUAL -1)
+            return()
+        endif()
+    endif()
     execute_process(COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
         "-D${OVERRIDE}_OVERRIDE=${PATH}" -P "${_guard}"
         RESULT_VARIABLE _result OUTPUT_VARIABLE _output ERROR_VARIABLE _error)
@@ -38,6 +57,303 @@ function(expect_rejected NAME OVERRIDE PATH EXPECTED_REASON)
             "Stage11D guard rejected ${NAME} for the wrong reason: ${_log}")
     endif()
 endfunction()
+
+function(expect_guard_accepted NAME GUARD OVERRIDE PATH)
+    execute_process(COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+        "-D${OVERRIDE}_OVERRIDE=${PATH}" -P "${GUARD}"
+        RESULT_VARIABLE _result OUTPUT_VARIABLE _output ERROR_VARIABLE _error)
+    if(NOT _result EQUAL 0)
+        message(FATAL_ERROR
+            "${NAME} was rejected: ${_output}\n${_error}")
+    endif()
+endfunction()
+
+function(expect_sequence_rejected NAME PATH EXPECTED_REASON)
+    execute_process(COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+        "-DHOST_OVERRIDE=${PATH}" -P "${_sequence_guard}"
+        RESULT_VARIABLE _result OUTPUT_VARIABLE _output ERROR_VARIABLE _error)
+    if(_result EQUAL 0)
+        message(FATAL_ERROR "host sequence guard accepted mutation: ${NAME}")
+    endif()
+    set(_log "${_output}\n${_error}")
+    string(REGEX REPLACE "[ \t\r\n]+" " " _normalized_log "${_log}")
+    string(REGEX REPLACE "[ \t\r\n]+" " " _normalized_reason
+        "${EXPECTED_REASON}")
+    string(FIND "${_normalized_log}" "${_normalized_reason}" _reason)
+    if(_reason EQUAL -1)
+        message(FATAL_ERROR
+            "host sequence guard rejected ${NAME} for the wrong reason: ${_log}")
+    endif()
+endfunction()
+
+# Task 5A relocation RED: before the runtime exists, mutate the exact source
+# region that will move. The legacy guard ignores RUNTIME_OVERRIDE, which is
+# itself part of the RED proof. After extraction these same named mutations
+# exercise the real runtime source.
+if(EXISTS "${_runtime}")
+    file(READ "${_runtime}" _task5a_runtime_text)
+else()
+    file(READ "${_host}" _task5a_runtime_text)
+endif()
+set(_task5a_driver_open
+    "Stage11DLootValidationState& state) noexcept {\n    using Scenario = Stage11DLootValidationScenario;")
+set(_task5a_driver_close
+    "    return snapshot;\n}\n// STAGE11D_LOOT_VALIDATION_SEAM_END physical_driver")
+string(REPLACE "${_task5a_driver_open}"
+    "Stage11DLootValidationState& state) noexcept {\n    const auto stage11d_driver_decoy = [&]() noexcept {\n    using Scenario = Stage11DLootValidationScenario;"
+    _task5a_driver_lambda "${_task5a_runtime_text}")
+string(REPLACE "${_task5a_driver_close}"
+    "    return snapshot;\n    };\n    return snapshot;\n}\n// STAGE11D_LOOT_VALIDATION_SEAM_END physical_driver"
+    _task5a_driver_lambda "${_task5a_driver_lambda}")
+if(_task5a_driver_lambda STREQUAL _task5a_runtime_text)
+    message(FATAL_ERROR "runtime-driver-lambda mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/runtime-driver-uncalled-lambda.cpp")
+file(WRITE "${_path}" "${_task5a_driver_lambda}")
+expect_rejected("runtime driver in uncalled lambda" RUNTIME "${_path}"
+    "runtime physical driver scope")
+
+set(_task5a_driver_signature
+    "PhysicalKeySnapshot inject_stage11d_physical_edges(")
+string(REPLACE "${_task5a_driver_signature}"
+    "// ${_task5a_driver_signature}\nPhysicalKeySnapshot task5a_disabled_stage11d_physical_edges("
+    _task5a_driver_comment "${_task5a_runtime_text}")
+if(_task5a_driver_comment STREQUAL _task5a_runtime_text)
+    message(FATAL_ERROR "runtime-driver-comment mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/runtime-driver-comment-decoy.cpp")
+file(WRITE "${_path}" "${_task5a_driver_comment}")
+expect_rejected("runtime driver comment decoy" RUNTIME "${_path}"
+    "runtime physical driver definition")
+
+string(REPLACE "${_task5a_driver_signature}"
+    "constexpr const char* task5a_driver_signature = \"${_task5a_driver_signature}\";\nPhysicalKeySnapshot task5a_disabled_stage11d_physical_edges("
+    _task5a_driver_string "${_task5a_runtime_text}")
+if(_task5a_driver_string STREQUAL _task5a_runtime_text)
+    message(FATAL_ERROR "runtime-driver-string mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/runtime-driver-string-decoy.cpp")
+file(WRITE "${_path}" "${_task5a_driver_string}")
+expect_rejected("runtime driver string decoy" RUNTIME "${_path}"
+    "runtime physical driver definition")
+
+function(task5a_extract_seam SOURCE LABEL OUT_SEAM)
+    set(_begin "// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN ${LABEL}")
+    set(_end "// STAGE11D_LOOT_VALIDATION_SEAM_END ${LABEL}")
+    string(FIND "${SOURCE}" "${_begin}" _begin_at)
+    string(FIND "${SOURCE}" "${_end}" _end_at)
+    if(_begin_at EQUAL -1 OR _end_at EQUAL -1 OR NOT _begin_at LESS _end_at)
+        message(FATAL_ERROR "Task5A ${LABEL} mutation seam disappeared")
+    endif()
+    string(LENGTH "${_end}" _end_length)
+    math(EXPR _length "${_end_at} - ${_begin_at} + ${_end_length}")
+    string(SUBSTRING "${SOURCE}" ${_begin_at} ${_length} _seam)
+    set(${OUT_SEAM} "${_seam}" PARENT_SCOPE)
+endfunction()
+
+file(READ "${_stage_header}" _task5a_header_text)
+task5a_extract_seam("${_task5a_header_text}" state
+    _task5a_header_state_seam)
+string(REPLACE "${_task5a_header_state_seam}"
+    "namespace task5a_state_decoy {\n${_task5a_header_state_seam}\n}  // namespace task5a_state_decoy"
+    _task5a_header_cross_scope "${_task5a_header_text}")
+set(_path "${GUARD_TEST_ROOT}/stage11d-header-state-cross-scope.hpp")
+file(WRITE "${_path}" "${_task5a_header_cross_scope}")
+expect_rejected("stage11d header state cross scope" STAGE11D_HEADER "${_path}"
+    "stage_header state seam scope")
+
+set(_task5a_state_begin
+    "// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN state")
+set(_task5a_state_end
+    "// STAGE11D_LOOT_VALIDATION_SEAM_END state")
+string(REPLACE "${_task5a_state_begin}" "" _task5a_header_state_body
+    "${_task5a_header_state_seam}")
+string(REPLACE "${_task5a_state_end}" "" _task5a_header_state_body
+    "${_task5a_header_state_body}")
+set(_task5a_header_nested_state
+    "${_task5a_state_begin}\nnamespace task5a_nested_state {${_task5a_header_state_body}\n}  // namespace task5a_nested_state\n${_task5a_state_end}")
+string(REPLACE "${_task5a_header_state_seam}"
+    "${_task5a_header_nested_state}" _task5a_header_payload_cross_scope
+    "${_task5a_header_text}")
+if(_task5a_header_payload_cross_scope STREQUAL _task5a_header_text)
+    message(FATAL_ERROR "stage11d-header-state-payload mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/stage11d-header-state-payload-cross-scope.hpp")
+file(WRITE "${_path}" "${_task5a_header_payload_cross_scope}")
+expect_rejected("stage11d header state payload cross scope" STAGE11D_HEADER
+    "${_path}" "stage_header state definition scope")
+
+task5a_extract_seam("${_task5a_runtime_text}" selectors
+    _task5a_runtime_selectors_seam)
+string(REPLACE "${_task5a_runtime_selectors_seam}"
+    "namespace task5a_selector_decoy {\n${_task5a_runtime_selectors_seam}\n}  // namespace task5a_selector_decoy"
+    _task5a_selector_cross_scope "${_task5a_runtime_text}")
+set(_path "${GUARD_TEST_ROOT}/runtime-selector-cross-scope.cpp")
+file(WRITE "${_path}" "${_task5a_selector_cross_scope}")
+expect_rejected("runtime selector cross scope" RUNTIME "${_path}"
+    "runtime selectors seam scope")
+
+set(_task5a_selectors_begin
+    "// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN selectors")
+set(_task5a_selectors_end
+    "// STAGE11D_LOOT_VALIDATION_SEAM_END selectors")
+string(REPLACE "${_task5a_selectors_begin}" "" _task5a_selectors_body
+    "${_task5a_runtime_selectors_seam}")
+string(REPLACE "${_task5a_selectors_end}" "" _task5a_selectors_body
+    "${_task5a_selectors_body}")
+set(_task5a_nested_selectors
+    "${_task5a_selectors_begin}\nnamespace task5a_nested_selectors {${_task5a_selectors_body}\n}  // namespace task5a_nested_selectors\n${_task5a_selectors_end}")
+string(REPLACE "${_task5a_runtime_selectors_seam}"
+    "${_task5a_nested_selectors}" _task5a_selector_payload_cross_scope
+    "${_task5a_runtime_text}")
+if(_task5a_selector_payload_cross_scope STREQUAL _task5a_runtime_text)
+    message(FATAL_ERROR "runtime-selector-payload mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/runtime-selector-payload-cross-scope.cpp")
+file(WRITE "${_path}" "${_task5a_selector_payload_cross_scope}")
+expect_rejected("runtime selector payload cross scope" RUNTIME "${_path}"
+    "runtime ordinary rarity selector definition scope")
+
+# Task 5A relocation RED: the actual host-loop call may not be replaced with
+# an uncalled nested decoy while a pass-through snapshot feeds input mapping.
+file(READ "${_host}" _task5a_red_host_text)
+string(REPLACE "\r\n" "\n" _task5a_red_host_text
+    "${_task5a_red_host_text}")
+set(_task5a_host_include "#include \"host_validation_stage11d.hpp\"")
+set(_task5a_host_definition_decoys
+    "${_task5a_host_include}\n// bool stage11d_validation_active(\nconstexpr const char* task5a_stage11d_definition_decoy = \"bool stage11d_validation_active(\";")
+string(REPLACE "${_task5a_host_include}" "${_task5a_host_definition_decoys}"
+    _task5a_host_harmless_definition_decoys "${_task5a_red_host_text}")
+if(_task5a_host_harmless_definition_decoys STREQUAL _task5a_red_host_text)
+    message(FATAL_ERROR "host harmless definition decoys made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/host-harmless-definition-decoys.cpp")
+file(WRITE "${_path}" "${_task5a_host_harmless_definition_decoys}")
+expect_guard_accepted("Stage11D evidence guard harmless comment/string decoys"
+    "${_guard}" HOST "${_path}")
+expect_guard_accepted("host sequence guard harmless comment/string decoys"
+    "${_sequence_guard}" HOST "${_path}")
+set(_task5a_host_real_definition
+    "${_task5a_host_include}\nbool stage11d_validation_active(\n    const RaylibHostConfig&) noexcept { return false; }")
+string(REPLACE "${_task5a_host_include}" "${_task5a_host_real_definition}"
+    _task5a_host_with_real_definition "${_task5a_red_host_text}")
+if(_task5a_host_with_real_definition STREQUAL _task5a_red_host_text)
+    message(FATAL_ERROR "host real moved definition mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/host-real-moved-definition.cpp")
+file(WRITE "${_path}" "${_task5a_host_with_real_definition}")
+expect_rejected("host real moved definition" HOST "${_path}"
+    "runtime definition in host")
+expect_sequence_rejected("host real moved definition" "${_path}"
+    "runtime definition remains in raylib_host.cpp")
+set(_task5a_host_call
+    "const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges(\n                stage11c_physical_keys, config, input_settings, current,\n                stage11d_validation_state);")
+string(REPLACE "${_task5a_host_call}"
+    "const auto stage11d_input_decoy = [&]() noexcept {\n                ${_task5a_host_call}\n                return physical_keys;\n            };\n            const PhysicalKeySnapshot physical_keys = stage11c_physical_keys;"
+    _task5a_host_lambda "${_task5a_red_host_text}")
+if(_task5a_host_lambda STREQUAL _task5a_red_host_text)
+    message(FATAL_ERROR "host-input-lambda mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/host-input-uncalled-lambda.cpp")
+file(WRITE "${_path}" "${_task5a_host_lambda}")
+expect_rejected("host input call in uncalled lambda" HOST "${_path}"
+    "host input call scope")
+
+task5a_extract_seam("${_task5a_red_host_text}" runtime_input
+    _task5a_host_input_seam)
+set(_task5a_input_begin
+    "// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN runtime_input")
+set(_task5a_input_end
+    "// STAGE11D_LOOT_VALIDATION_SEAM_END runtime_input")
+string(REPLACE "${_task5a_input_begin}" "" _task5a_host_input_body
+    "${_task5a_host_input_seam}")
+string(REPLACE "${_task5a_input_end}" "" _task5a_host_input_body
+    "${_task5a_host_input_body}")
+set(_task5a_passthrough
+    "            const PhysicalKeySnapshot physical_keys = stage11c_physical_keys;")
+string(REPLACE "${_task5a_host_input_seam}"
+    "/*\n${_task5a_host_input_seam}\n*/\n${_task5a_passthrough}"
+    _task5a_host_input_comment "${_task5a_red_host_text}")
+set(_path "${GUARD_TEST_ROOT}/host-input-comment-decoy.cpp")
+file(WRITE "${_path}" "${_task5a_host_input_comment}")
+expect_rejected("host input comment decoy" HOST "${_path}"
+    "cannot bind host runtime_input seam marker")
+
+string(REPLACE "${_task5a_host_input_seam}"
+    "const char* task5a_input_decoy = R\"TASK5A(${_task5a_host_input_seam})TASK5A\";\n${_task5a_passthrough}"
+    _task5a_host_input_string "${_task5a_red_host_text}")
+set(_path "${GUARD_TEST_ROOT}/host-input-string-decoy.cpp")
+file(WRITE "${_path}" "${_task5a_host_input_string}")
+expect_rejected("host input string decoy" HOST "${_path}"
+    "cannot bind host runtime_input seam marker")
+
+string(REPLACE "${_task5a_host_input_seam}"
+    "${_task5a_input_begin}\n            if (false) {${_task5a_host_input_body}\n            }\n${_task5a_passthrough}\n${_task5a_input_end}"
+    _task5a_host_input_cross_scope "${_task5a_red_host_text}")
+set(_path "${GUARD_TEST_ROOT}/host-input-if-false.cpp")
+file(WRITE "${_path}" "${_task5a_host_input_cross_scope}")
+expect_rejected("host input call in false scope" HOST "${_path}"
+    "host input call scope")
+
+set(_task5a_pause_call
+    "const PauseCommand pause_command = update_pause_menu(\n                pause_menu, pause_context, pause_input);")
+string(REPLACE "${_task5a_pause_call}"
+    "const auto task5a_pause_decoy = [&]() noexcept {\n                ${_task5a_pause_call}\n                return pause_command;\n            };\n            const PauseCommand pause_command{};"
+    _task5a_pause_lambda "${_task5a_red_host_text}")
+if(_task5a_pause_lambda STREQUAL _task5a_red_host_text)
+    message(FATAL_ERROR "host-pause-lambda mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/host-pause-uncalled-lambda.cpp")
+file(WRITE "${_path}" "${_task5a_pause_lambda}")
+expect_rejected("host pause call in uncalled lambda" HOST "${_path}"
+    "host pause call scope")
+
+task5a_extract_seam("${_task5a_red_host_text}" fixed_step
+    _task5a_fixed_step_seam)
+string(REPLACE "${_task5a_fixed_step_seam}"
+    "/*\n${_task5a_fixed_step_seam}\n*/\n                        || false"
+    _task5a_fixed_step_comment "${_task5a_red_host_text}")
+set(_path "${GUARD_TEST_ROOT}/host-fixed-step-comment-decoy.cpp")
+file(WRITE "${_path}" "${_task5a_fixed_step_comment}")
+expect_rejected("host fixed-step activation comment decoy" HOST "${_path}"
+    "cannot bind host fixed_step seam marker")
+
+set(_task5a_fixed_step_begin
+    "// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN fixed_step")
+set(_task5a_fixed_step_end
+    "// STAGE11D_LOOT_VALIDATION_SEAM_END fixed_step")
+set(_task5a_nested_fixed_step
+    "${_task5a_fixed_step_begin}\n                        || ([&]() noexcept {\n                            if (false) {\n                                return host_validation::stage11d_validation_active(config);\n                            }\n                            return false;\n                        }())\n${_task5a_fixed_step_end}")
+string(REPLACE "${_task5a_fixed_step_seam}"
+    "${_task5a_nested_fixed_step}" _task5a_fixed_step_payload_cross_scope
+    "${_task5a_red_host_text}")
+if(_task5a_fixed_step_payload_cross_scope STREQUAL _task5a_red_host_text)
+    message(FATAL_ERROR "host-fixed-step-payload mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/host-fixed-step-payload-cross-scope.cpp")
+file(WRITE "${_path}" "${_task5a_fixed_step_payload_cross_scope}")
+expect_rejected("host fixed-step activation payload cross scope" HOST "${_path}"
+    "host fixed-step activation call scope")
+
+task5a_extract_seam("${_task5a_red_host_text}" abyss_claim
+    _task5a_abyss_seam)
+string(REPLACE "${_task5a_abyss_seam}"
+    "const auto task5a_abyss_decoy = [&]() noexcept {\n${_task5a_abyss_seam}\n                };"
+    _task5a_abyss_lambda "${_task5a_red_host_text}")
+set(_path "${GUARD_TEST_ROOT}/host-abyss-uncalled-lambda.cpp")
+file(WRITE "${_path}" "${_task5a_abyss_lambda}")
+expect_rejected("host abyss observer in uncalled lambda" HOST "${_path}"
+    "host abyss_claim seam scope")
+
+string(REPLACE "${_task5a_abyss_seam}" "" _task5a_abyss_early
+    "${_task5a_red_host_text}")
+string(REPLACE "                runtime.fixed_tick(step_movement,"
+    "${_task5a_abyss_seam}\n                runtime.fixed_tick(step_movement,"
+    _task5a_abyss_early "${_task5a_abyss_early}")
+set(_path "${GUARD_TEST_ROOT}/host-abyss-before-fixed-tick.cpp")
+file(WRITE "${_path}" "${_task5a_abyss_early}")
+expect_rejected("host abyss observer before fixed tick" HOST "${_path}"
+    "abyss claim observation order")
 
 file(READ "${_formal}" _formal_text)
 set(_site "platform::RaylibHostConfig config{};")
@@ -141,6 +457,7 @@ expect_rejected("recursive evidence cleanup" FORMAL "${_path}"
     "formal bypass: remove_all(")
 
 file(READ "${_host}" _host_text)
+string(REPLACE "\r\n" "\n" _host_text "${_host_text}")
 function(expect_host_insert NAME SLUG SITE INSERT EXPECTED_REASON)
     string(FIND "${_host_text}" "${SITE}" _site_index)
     if(_site_index EQUAL -1)
@@ -164,7 +481,7 @@ function(expect_host_insert NAME SLUG SITE INSERT EXPECTED_REASON)
 endfunction()
 
 set(_host_scope_site
-    "if (stage11d_validation_state.abyss_claim_requested) {")
+    "if (stage11d_validation_state.target_visible")
 expect_host_insert("host private access" "host-private-access"
     "${_host_scope_site}" "const auto* TestAccess = session;"
     "host-bypass-TestAccess")
@@ -196,18 +513,18 @@ expect_host_insert("host direct result pass" "host-result-pass"
     "host validation seam direct result pass")
 
 set(_site "const auto& item = current.ground_items[index];")
-string(FIND "${_host_text}" "${_site}" _site_index)
+string(FIND "${_task5a_runtime_text}" "${_site}" _site_index)
 if(_site_index EQUAL -1)
     message(FATAL_ERROR "snapshot-mutation site disappeared")
 endif()
 string(REPLACE "${_site}" "current.ground_items[0] = fabricated;"
-    _mutated "${_host_text}")
-if(_mutated STREQUAL _host_text)
+    _mutated "${_task5a_runtime_text}")
+if(_mutated STREQUAL _task5a_runtime_text)
     message(FATAL_ERROR "snapshot mutation made no change")
 endif()
 set(_path "${GUARD_TEST_ROOT}/snapshot-mutation.cpp")
 file(WRITE "${_path}" "${_mutated}")
-expect_rejected("snapshot mutation" HOST "${_path}"
+expect_rejected("snapshot mutation" RUNTIME "${_path}"
     "rejected snapshot mutation")
 
 set(_site "EndDrawing();\n    if (path == nullptr) return true;")
@@ -288,14 +605,21 @@ expect_rejected("duplicate PNG acceptance" VALIDATOR "${_path}"
     "missing semantic check: duplicate")
 
 set(_mutated "${_validator_text}")
-set(_site "$feature = Measure-Region $bitmap")
-string(FIND "${_validator_text}" "${_site}" _site_index)
-if(_site_index EQUAL -1)
+set(_item_feature_site
+    "$feature = Measure-Region $bitmap $rect.X $rect.Y $rect.W $rect.H")
+set(_notice_feature_site
+    "$feature = Measure-Region $bitmap $notice[0] $notice[1] $notice[2] $notice[3]")
+string(FIND "${_validator_text}" "${_item_feature_site}" _item_site_index)
+string(FIND "${_validator_text}" "${_notice_feature_site}" _notice_site_index)
+if(_item_site_index EQUAL -1 OR _notice_site_index EQUAL -1)
     message(FATAL_ERROR "existence-only mutation site disappeared")
 endif()
-string(REPLACE "${_site}"
+string(REPLACE "${_item_feature_site}"
     "$feature = [pscustomobject]@{ Colors = 99; Bright = 99; Dark = 99 } #"
     _mutated "${_validator_text}")
+string(REPLACE "${_notice_feature_site}"
+    "$feature = [pscustomobject]@{ Colors = 99; Bright = 99; Dark = 99 } #"
+    _mutated "${_mutated}")
 if(_mutated STREQUAL _validator_text)
     message(FATAL_ERROR "existence-only mutation made no change")
 endif()
@@ -304,5 +628,10 @@ file(WRITE "${_path}" "${_mutated}")
 expect_rejected("existence-only validation" VALIDATOR "${_path}"
     "missing semantic check: $feature")
 
-message(STATUS
-    "Stage11D loot evidence guard self-test passed: bad_mutations=22")
+if(DEFINED TASK5A_TARGETED_ONLY AND TASK5A_TARGETED_ONLY)
+    message(STATUS
+        "Stage11D Task5A targeted guard test passed: bad_mutations=5; harmless_decoys=2")
+else()
+    message(STATUS
+        "Stage11D loot evidence guard self-test passed: bad_mutations=39; harmless_decoys=2")
+endif()
