@@ -53,6 +53,8 @@ endfunction()
 set(_settings_types "${SOURCE_ROOT}/platform/settings/settings_types.cpp")
 set(_settings_store "${SOURCE_ROOT}/platform/settings/settings_store.cpp")
 set(_host_source "${SOURCE_ROOT}/platform/raylib/raylib_host.cpp")
+set(_stage_header "${SOURCE_ROOT}/platform/raylib/host_validation_stage11b.hpp")
+set(_stage_source "${SOURCE_ROOT}/platform/raylib/host_validation_stage11b.cpp")
 set(_hud_source "${SOURCE_ROOT}/platform/raylib/hud_renderer.cpp")
 if(DEFINED STAGE11B_GUARD_MUTATION_KIND)
     if(STAGE11B_GUARD_MUTATION_KIND STREQUAL "raylib")
@@ -63,7 +65,55 @@ if(DEFINED STAGE11B_GUARD_MUTATION_KIND)
         set(_hud_source "${STAGE11B_GUARD_MUTATION_FILE}")
     elseif(STAGE11B_GUARD_MUTATION_KIND STREQUAL "duplicate")
         set(_settings_types "${STAGE11B_GUARD_MUTATION_FILE}")
+    elseif(STAGE11B_GUARD_MUTATION_KIND STREQUAL "stage")
+        set(_stage_source "${STAGE11B_GUARD_MUTATION_FILE}")
     endif()
+endif()
+
+foreach(_stage_required IN ITEMS "${_stage_header}" "${_stage_source}")
+    if(NOT EXISTS "${_stage_required}")
+        message(FATAL_ERROR "Stage 11B validation target is missing: ${_stage_required}")
+    endif()
+endforeach()
+file(READ "${_stage_header}" _stage_header_text)
+file(READ "${_stage_source}" _stage_source_text)
+file(READ "${_host_source}" _host_source_text)
+file(READ "${SOURCE_ROOT}/platform/raylib/CMakeLists.txt" _raylib_cmake_text)
+
+foreach(_stage_definition IN ITEMS
+        "PhysicalKeySnapshot inject_stage11b_physical_edges("
+        "bool stage11b_validation_complete("
+        "std::uint64_t stage11b_snapshot_hash("
+        "void write_stage11b_validation_summary(")
+    string(FIND "${_stage_source_text}" "${_stage_definition}" _stage_found)
+    if(_stage_found EQUAL -1)
+        message(FATAL_ERROR "Stage 11B validation definition is missing: ${_stage_definition}")
+    endif()
+    string(FIND "${_host_source_text}" "${_stage_definition}" _host_found)
+    if(NOT _host_found EQUAL -1)
+        message(FATAL_ERROR "Stage 11B validation definition remains in raylib_host.cpp: ${_stage_definition}")
+    endif()
+endforeach()
+if(NOT _stage_header_text MATCHES "struct Stage11BValidationState final")
+    message(FATAL_ERROR "Stage 11B validation state definition is missing")
+endif()
+if(_host_source_text MATCHES "struct Stage11BValidationState final")
+    message(FATAL_ERROR "Stage 11B validation state definition remains in raylib_host.cpp")
+endif()
+foreach(_stage_algorithm_token IN ITEMS
+        "StableKey::j"
+        "StableKey::u"
+        "state.pause_capture_while_paused"
+        "player_monster_hash_before="
+        "load_status=")
+    string(FIND "${_stage_source_text}" "${_stage_algorithm_token}" _stage_token_found)
+    if(_stage_token_found EQUAL -1)
+        message(FATAL_ERROR "Stage 11B validation algorithm token is missing: ${_stage_algorithm_token}")
+    endif()
+endforeach()
+string(FIND "${_raylib_cmake_text}" "host_validation_stage11b.cpp" _stage_registered)
+if(_stage_registered EQUAL -1)
+    message(FATAL_ERROR "arpg_raylib does not register host_validation_stage11b.cpp")
 endif()
 
 file(GLOB_RECURSE _settings_sources LIST_DIRECTORIES FALSE
@@ -138,6 +188,28 @@ if(NOT DEFINED STAGE11B_GUARD_MUTATION_MODE)
         "${SOURCE_ROOT}/platform/settings/settings_types.cpp"
         ""
         "settings default bindings duplicate stable key")
+
+    set(_stage_mutation "${GUARD_TEST_ROOT}/stage11b-rebound-key.cpp")
+    file(COPY_FILE "${_stage_source}" "${_stage_mutation}")
+    file(READ "${_stage_mutation}" _stage_mutation_text)
+    string(REPLACE "settings::StableKey::j" "settings::StableKey::q"
+        _stage_mutation_text "${_stage_mutation_text}")
+    file(WRITE "${_stage_mutation}" "${_stage_mutation_text}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}"
+            "-DSOURCE_ROOT=${SOURCE_ROOT}"
+            "-DSTAGE11B_GUARD_MUTATION_MODE=1"
+            "-DSTAGE11B_GUARD_MUTATION_KIND=stage"
+            "-DSTAGE11B_GUARD_MUTATION_FILE=${_stage_mutation}"
+            -P "${CMAKE_CURRENT_LIST_FILE}"
+        RESULT_VARIABLE _stage_result OUTPUT_VARIABLE _stage_stdout ERROR_VARIABLE _stage_stderr)
+    if(_stage_result EQUAL 0)
+        message(FATAL_ERROR "Stage 11b guard missed stage rebound-key mutation")
+    endif()
+    if(NOT "${_stage_stdout}${_stage_stderr}" MATCHES
+            "Stage 11B validation algorithm token is missing: StableKey::j")
+        message(FATAL_ERROR "Stage 11b stage rebound-key mutation lacked the expected reason")
+    endif()
 endif()
 
 message(STATUS "Stage 11b settings architecture boundaries verified")

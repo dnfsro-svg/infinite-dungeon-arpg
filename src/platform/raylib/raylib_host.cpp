@@ -17,6 +17,7 @@
 #include "host_validation_input.hpp"
 #include "host_validation_navigation.hpp"
 #include "host_validation_stage10_11.hpp"
+#include "host_validation_stage11b.hpp"
 #include "inventory_renderer.hpp"
 #include "passive_tree_renderer.hpp"
 #include "passive_tree_view_math.hpp"
@@ -339,27 +340,6 @@ void apply_stage12_material_showcase(dungeon::DungeonSnapshot& snapshot,
     }
 }
 
-struct Stage11BValidationState final {
-    std::uint32_t injected_frame{};
-    std::uint32_t paused_presented{};
-    std::uint64_t fixed_ticks{};
-    std::uint64_t paused_ticks_before{};
-    std::uint64_t paused_ticks_after{};
-    std::uint64_t resume_ticks_before{};
-    std::uint64_t resume_ticks_after{};
-    std::uint64_t player_monster_hash_before{};
-    std::uint64_t player_monster_hash_after{};
-    std::uint32_t old_attack_count{};
-    std::uint32_t new_attack_count{};
-    bool old_attack_checked{};
-    bool pause_capture_while_paused{};
-    bool resume_input_injected{};
-    bool resume_observed{};
-    bool recovery_notice_visible{};
-    settings::SettingsLoadStatus load_status{
-        settings::SettingsLoadStatus::defaults_missing};
-};
-
 struct Stage11CHudValidationState final {
     std::uint32_t injected_frames{};
     std::uint32_t target_presented_frames{};
@@ -433,7 +413,7 @@ struct Stage11DLootValidationState final {
 struct HostValidationStates final {
     host_validation::Stage10ValidationState stage10{};
     host_validation::Stage11ValidationState stage11{};
-    Stage11BValidationState stage11b{};
+    host_validation::Stage11BValidationState stage11b{};
     Stage11CHudValidationState stage11c{};
     Stage11DLootValidationState stage11d{};
 };
@@ -1485,158 +1465,6 @@ void write_stage17_validation_summary(const RaylibHostConfig& config,
         stream << '\n';
     } catch (...) {
         TraceLog(LOG_WARNING, "failed to write stage17 validation summary");
-    }
-}
-
-void inject_stage11b_open_settings(PhysicalKeySnapshot& snapshot,
-    std::uint32_t frame) noexcept {
-    if (frame == 1U) snapshot.escape = true;
-    if (frame == 2U) inject_validation_pressed(snapshot, settings::StableKey::arrow_down);
-    if (frame == 3U) snapshot.enter = true;
-}
-
-[[nodiscard]] PhysicalKeySnapshot inject_stage11b_physical_edges(
-    PhysicalKeySnapshot snapshot, const RaylibHostConfig& config,
-    Stage11BValidationState& state) noexcept {
-    if (config.stage11b_validation == Stage11BValidationScenario::none) {
-        return snapshot;
-    }
-    // Preserve every sampled production input.  A deterministic scenario only
-    // adds physical key edges after the actual raylib window has focus.
-    if (snapshot.focus_lost) return snapshot;
-    const std::uint32_t frame = ++state.injected_frame;
-    switch (config.stage11b_validation) {
-    case Stage11BValidationScenario::paused_freeze:
-        if (frame == 2U || (state.paused_presented >= 120U
-                && !state.resume_input_injected)) {
-            snapshot.escape = true;
-            state.resume_input_injected = frame != 2U;
-        }
-        break;
-    case Stage11BValidationScenario::settings_page:
-    case Stage11BValidationScenario::restarted_settings:
-    case Stage11BValidationScenario::single_slot_recovery:
-    case Stage11BValidationScenario::corrupt_defaults:
-        inject_stage11b_open_settings(snapshot, frame);
-        break;
-    case Stage11BValidationScenario::rebound_attack:
-    case Stage11BValidationScenario::conflict_swap:
-        if (frame == 1U) snapshot.escape = true;
-        else if (frame == 2U || (frame >= 4U && frame <= 15U)
-            || (frame >= 18U && frame <= 24U)) {
-            inject_validation_pressed(snapshot, settings::StableKey::arrow_down);
-        } else if (frame == 3U || frame == 16U || frame == 25U) {
-            snapshot.enter = true;
-        } else if (frame == 17U) {
-            inject_validation_pressed(snapshot,
-                config.stage11b_validation == Stage11BValidationScenario::rebound_attack
-                    ? settings::StableKey::u : settings::StableKey::k);
-        } else if (config.stage11b_validation
-                       == Stage11BValidationScenario::rebound_attack
-                   && (frame == 26U || frame == 27U)) {
-            snapshot.escape = true;
-        } else if (config.stage11b_validation
-                       == Stage11BValidationScenario::rebound_attack
-                   && frame == 28U) {
-            inject_validation_pressed(snapshot, settings::StableKey::j);
-        } else if (config.stage11b_validation
-                       == Stage11BValidationScenario::rebound_attack
-                   && frame == 29U) {
-            inject_validation_pressed(snapshot, settings::StableKey::u);
-        }
-        break;
-    case Stage11BValidationScenario::none:
-        break;
-    }
-    return snapshot;
-}
-
-[[nodiscard]] bool stage11b_validation_complete(
-    const RaylibHostConfig& config, const Stage11BValidationState& state,
-    const PauseMenuState& pause_menu) noexcept {
-    switch (config.stage11b_validation) {
-    case Stage11BValidationScenario::none: return false;
-    case Stage11BValidationScenario::paused_freeze:
-        return state.paused_presented >= 120U && state.pause_capture_while_paused
-            && state.resume_observed
-            && state.resume_ticks_after == state.resume_ticks_before + 1U;
-    case Stage11BValidationScenario::settings_page:
-    case Stage11BValidationScenario::restarted_settings:
-    case Stage11BValidationScenario::single_slot_recovery:
-    case Stage11BValidationScenario::corrupt_defaults:
-        return state.injected_frame >= 4U
-            && pause_menu.screen == PauseScreen::settings;
-    case Stage11BValidationScenario::rebound_attack:
-        return state.injected_frame >= 29U && state.old_attack_checked
-            && state.new_attack_count != 0U
-            && pause_menu.screen == PauseScreen::closed;
-    case Stage11BValidationScenario::conflict_swap:
-        return state.injected_frame >= 25U
-            && pause_menu.screen == PauseScreen::settings;
-    }
-    return false;
-}
-
-[[nodiscard]] std::uint64_t stage11b_snapshot_hash(
-    const dungeon::DungeonSnapshot& snapshot) noexcept {
-    std::uint64_t hash = 1469598103934665603ULL;
-    const auto mix = [&hash](std::uint64_t value) noexcept {
-        hash ^= value;
-        hash *= 1099511628211ULL;
-    };
-    mix(snapshot.depth);
-    mix(snapshot.room_index);
-    if (snapshot.combat.has_value()) {
-        const combat::CombatSnapshot& combat = *snapshot.combat;
-        mix(static_cast<std::uint64_t>(combat.player.hp));
-        for (const combat::MonsterSnapshot& monster : combat.monsters) {
-            mix(static_cast<std::uint64_t>(monster.hp));
-            mix(monster.active ? 1U : 0U);
-        }
-    }
-    return hash;
-}
-
-void write_stage11b_validation_summary(const RaylibHostConfig& config,
-    const Stage11BValidationState& state,
-    const PauseMenuState& pause_menu) noexcept {
-    if (!config.validation_summary_file.has_value()
-        || config.stage11b_validation == Stage11BValidationScenario::none) {
-        return;
-    }
-    try {
-        std::ofstream stream(*config.validation_summary_file,
-            std::ios::out | std::ios::trunc);
-        if (!stream) return;
-        const auto light = settings::binding_for(pause_menu.committed,
-            settings::SettingAction::light_attack);
-        const auto jump = settings::binding_for(pause_menu.committed,
-            settings::SettingAction::jump);
-        const auto draft_light = settings::binding_for(pause_menu.draft,
-            settings::SettingAction::light_attack);
-        stream << "scenario=" << static_cast<unsigned>(config.stage11b_validation) << '\n'
-               << "injected_frame=" << state.injected_frame << '\n'
-               << "paused_tick_before=" << state.paused_ticks_before << '\n'
-               << "paused_tick_after=" << state.paused_ticks_after << '\n'
-               << "pause_capture_while_paused="
-               << (state.pause_capture_while_paused ? 1 : 0) << '\n'
-               << "resume_tick_before=" << state.resume_ticks_before << '\n'
-               << "resume_tick_after=" << state.resume_ticks_after << '\n'
-               << "player_monster_hash_before=" << state.player_monster_hash_before << '\n'
-               << "player_monster_hash_after=" << state.player_monster_hash_after << '\n'
-               << "committed_revision=" << pause_menu.committed.revision << '\n'
-               << "old_attack_count=" << state.old_attack_count << '\n'
-               << "new_attack_count=" << state.new_attack_count << '\n'
-               << "recovery_notice_visible="
-               << (state.recovery_notice_visible ? 1 : 0) << '\n'
-               << "pause_screen=" << static_cast<unsigned>(pause_menu.screen) << '\n'
-               << "pause_row=" << pause_menu.selected_row << '\n'
-               << "light_attack=" << stable_key_label(light) << '\n'
-               << "draft_light_attack=" << stable_key_label(draft_light) << '\n'
-               << "jump=" << stable_key_label(jump) << '\n'
-               << "load_status=" << static_cast<unsigned>(state.load_status) << '\n';
-    } catch (...) {
-        TraceLog(LOG_WARNING, "failed to write stage11b validation summary");
     }
 }
 
@@ -2755,7 +2583,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             validation_states->stage10;
         host_validation::Stage11ValidationState& stage11_validation_state =
             validation_states->stage11;
-        Stage11BValidationState& stage11b_validation_state =
+        host_validation::Stage11BValidationState& stage11b_validation_state =
             validation_states->stage11b;
         stage11b_validation_state.load_status = loaded.status;
         Stage11CHudValidationState& stage11c_validation_state =
@@ -2844,7 +2672,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             if (!window_close_requested) window_close_latched = false;
             const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();
             const PhysicalKeySnapshot stage11b_physical_keys =
-                inject_stage11b_physical_edges(
+                host_validation::inject_stage11b_physical_edges(
                 sampled_physical_keys, config, stage11b_validation_state);
             const PhysicalKeySnapshot stage11c_physical_keys = inject_stage11c_physical_edges(
                 stage11b_physical_keys, config, input_settings, current,
@@ -3536,13 +3364,13 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     stage11b_validation_state.paused_ticks_before =
                         stage11b_validation_state.fixed_ticks;
                     stage11b_validation_state.player_monster_hash_before =
-                        stage11b_snapshot_hash(current);
+                        host_validation::stage11b_snapshot_hash(current);
                 }
                 ++stage11b_validation_state.paused_presented;
                 stage11b_validation_state.paused_ticks_after =
                     stage11b_validation_state.fixed_ticks;
                 stage11b_validation_state.player_monster_hash_after =
-                    stage11b_snapshot_hash(current);
+                    host_validation::stage11b_snapshot_hash(current);
             }
             const bool stage10_target_visible = host_validation::stage10_validation_reached(
                 current, config, stage10_validation_state);
@@ -3564,7 +3392,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     || stage10_validation_state.chaos_presented_frames >= 16U);
             const bool stage11_reached = stage11_target_visible
                 && stage11_validation_state.target_presented_frames >= 4U;
-            const bool stage11b_reached = stage11b_validation_complete(
+            const bool stage11b_reached = host_validation::stage11b_validation_complete(
                 config, stage11b_validation_state, pause_menu);
             const bool stage11c_reached = stage11c_target_visible
                 && stage11c_validation_state.target_presented_frames >= 4U;
@@ -3698,7 +3526,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         }
         stage17_validation_state->clean_shutdown_exact_ready =
             runtime.clean_shutdown_state() == CleanShutdownState::ready;
-        write_stage11b_validation_summary(config, stage11b_validation_state,
+        host_validation::write_stage11b_validation_summary(config, stage11b_validation_state,
             pause_menu);
         write_stage11c_hud_validation_summary(config,
             stage11c_validation_state);

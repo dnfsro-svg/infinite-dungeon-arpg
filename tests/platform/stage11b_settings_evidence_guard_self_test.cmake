@@ -2,10 +2,14 @@ if(NOT DEFINED SOURCE_ROOT OR NOT DEFINED GUARD_TEST_ROOT)
     message(FATAL_ERROR "SOURCE_ROOT and GUARD_TEST_ROOT are required")
 endif()
 set(_guard "${SOURCE_ROOT}/tests/platform/stage11b_settings_evidence_guard_test.cmake")
+set(_stage_source "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11b.cpp")
 set(_fixture "${SOURCE_ROOT}/tests/platform/stage11b_settings_bad_host_input.txt")
 file(MAKE_DIRECTORY "${GUARD_TEST_ROOT}")
 file(READ "${SOURCE_ROOT}/tests/platform/stage11b_settings_formal_game_validation.cpp"
     _formal_source)
+if(NOT EXISTS "${_stage_source}")
+    message(FATAL_ERROR "Stage11B evidence self-test target is missing: ${_stage_source}")
+endif()
 file(READ "${_fixture}" _fixture_text)
 foreach(_fixture_forbidden IN ITEMS
         "TestAccess" "validation_input_setter" "queue_action"
@@ -28,6 +32,38 @@ foreach(_fixture_forbidden IN ITEMS
     if(NOT "${_fixture_stdout}${_fixture_stderr}" MATCHES
             "rejected forbidden token: ${_fixture_forbidden}")
         message(FATAL_ERROR "fixture mutation failed for the wrong reason: ${_fixture_forbidden}: ${_fixture_stdout}${_fixture_stderr}")
+    endif()
+endforeach()
+
+set(_stage_mutation_index 0)
+foreach(_stage_mutation_pair IN ITEMS
+        "settings::StableKey::j|settings::StableKey::q|StableKey::j"
+        "player_monster_hash_before=|player_monster_hash_before_removed=|player_monster_hash_before=")
+    string(REPLACE "|" ";" _stage_mutation_parts "${_stage_mutation_pair}")
+    list(GET _stage_mutation_parts 0 _stage_before)
+    list(GET _stage_mutation_parts 1 _stage_after)
+    list(GET _stage_mutation_parts 2 _stage_expected)
+    math(EXPR _stage_mutation_index "${_stage_mutation_index} + 1")
+    set(_stage_mutation "${GUARD_TEST_ROOT}/stage-${_stage_mutation_index}.cpp")
+    file(COPY_FILE "${_stage_source}" "${_stage_mutation}")
+    file(READ "${_stage_mutation}" _stage_mutation_text)
+    string(REPLACE "${_stage_before}" "${_stage_after}"
+        _stage_mutation_text "${_stage_mutation_text}")
+    file(WRITE "${_stage_mutation}" "${_stage_mutation_text}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+            "-DSTAGE_OVERRIDE=${_stage_mutation}" -P "${_guard}"
+        RESULT_VARIABLE _stage_mutation_result
+        OUTPUT_VARIABLE _stage_mutation_stdout ERROR_VARIABLE _stage_mutation_stderr)
+    if(_stage_mutation_result EQUAL 0)
+        message(FATAL_ERROR "evidence guard self-test accepted Stage mutation: ${_stage_before}")
+    endif()
+    string(FIND "${_stage_mutation_stdout}${_stage_mutation_stderr}"
+        "Stage11B evidence guard missing Stage source token" _stage_reason)
+    string(FIND "${_stage_mutation_stdout}${_stage_mutation_stderr}"
+        "${_stage_expected}" _stage_expected_failure)
+    if(_stage_reason EQUAL -1 OR _stage_expected_failure EQUAL -1)
+        message(FATAL_ERROR "Stage mutation failed for wrong reason: ${_stage_before}: ${_stage_mutation_stdout}${_stage_mutation_stderr}")
     endif()
 endforeach()
 set(_paused_capture_mutation "${GUARD_TEST_ROOT}/host-paused-capture.cpp")

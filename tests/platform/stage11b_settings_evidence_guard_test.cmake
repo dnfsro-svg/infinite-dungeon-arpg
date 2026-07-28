@@ -7,6 +7,12 @@ if(DEFINED HOST_OVERRIDE)
 else()
     set(_host "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
 endif()
+if(DEFINED STAGE_OVERRIDE)
+    set(_stage "${STAGE_OVERRIDE}")
+else()
+    set(_stage "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11b.cpp")
+endif()
+set(_stage_header "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11b.hpp")
 set(_header "${SOURCE_ROOT}/src/platform/raylib/raylib_host.hpp")
 set(_pause_renderer "${SOURCE_ROOT}/src/platform/raylib/pause_menu_renderer.cpp")
 set(_font_source "${SOURCE_ROOT}/src/platform/raylib/death_overlay_font.cpp")
@@ -15,13 +21,15 @@ if(DEFINED FORMAL_OVERRIDE)
 else()
     set(_formal "${SOURCE_ROOT}/tests/platform/stage11b_settings_formal_game_validation.cpp")
 endif()
-foreach(_required IN ITEMS "${_host}" "${_header}" "${_formal}" "${_pause_renderer}" "${_font_source}")
+foreach(_required IN ITEMS "${_host}" "${_stage}" "${_stage_header}" "${_header}" "${_formal}" "${_pause_renderer}" "${_font_source}")
     if(NOT EXISTS "${_required}")
         message(FATAL_ERROR "Stage11B evidence target is missing: ${_required}")
     endif()
 endforeach()
 
 file(READ "${_host}" _host_text)
+file(READ "${_stage}" _stage_text)
+file(READ "${_stage_header}" _stage_header_text)
 file(READ "${_header}" _header_text)
 file(READ "${_formal}" _formal_text)
 file(READ "${_pause_renderer}" _pause_renderer_text)
@@ -44,6 +52,35 @@ foreach(_required IN ITEMS
     string(FIND "${_combined}" "${_required}" _found)
     if(_found EQUAL -1)
         message(FATAL_ERROR "Stage11B evidence guard missing required token: ${_required}")
+    endif()
+endforeach()
+
+foreach(_stage_required IN ITEMS
+        "PhysicalKeySnapshot inject_stage11b_physical_edges("
+        "bool stage11b_validation_complete("
+        "std::uint64_t stage11b_snapshot_hash("
+        "void write_stage11b_validation_summary("
+        "StableKey::j"
+        "StableKey::u"
+        "state.pause_capture_while_paused"
+        "player_monster_hash_before="
+        "load_status=")
+    string(FIND "${_stage_text}" "${_stage_required}" _stage_found)
+    if(_stage_found EQUAL -1)
+        message(FATAL_ERROR "Stage11B evidence guard missing Stage source token: ${_stage_required}")
+    endif()
+endforeach()
+if(NOT _stage_header_text MATCHES "struct Stage11BValidationState final")
+    message(FATAL_ERROR "Stage11B evidence guard missing Stage state definition")
+endif()
+foreach(_host_definition IN ITEMS
+        "PhysicalKeySnapshot inject_stage11b_physical_edges("
+        "bool stage11b_validation_complete("
+        "std::uint64_t stage11b_snapshot_hash("
+        "void write_stage11b_validation_summary(")
+    string(FIND "${_host_text}" "${_host_definition}" _host_definition_found)
+    if(NOT _host_definition_found EQUAL -1)
+        message(FATAL_ERROR "Stage11B evidence guard found Stage definition in host: ${_host_definition}")
     endif()
 endforeach()
 

@@ -21,3 +21,9 @@ Task 2: scoped re-review finding (round 3 required) — C++ backslash-newline sp
 Task 2: fix round 3/5 (2 addressed, 0 open — splice-aware comment scanning and Stage10/11 continuation-decoy mutations; scoped re-review required; FIX_BASE 894f3e6)
 Task 2: deferred full-selector evidence — 22 selected; the last full execution was 16 pass/6 non-guard failures, with no claim that those six failures are baseline-proven
 Task 2: complete (commits cdecc8b..7defd1c, review clean after 3 fix rounds)
+Task 3: Stage11B state/injection/completion/hash/summary extracted into
+host_validation_stage11b.hpp/.cpp; dual-surface guards and focused selector
+passed. Formal 11B evidence chain remains red: the formal harness observed
+changed run_a/run_b fingerprints before reaching its swap scenario, so its
+dependent evidence validator did not run. This is recorded as unresolved, not
+as a baseline-proven failure.
