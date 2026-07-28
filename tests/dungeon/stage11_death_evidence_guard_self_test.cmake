@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/evidence_source_scan.cmake")
+
 foreach(required GUARD_SCRIPT VALID_FIXTURE VALID_FORMAL VALID_CAPTURE
         VALID_HOST_HEADER VALID_HOST_SOURCE BAD_TEST_ACCESS BAD_CAPTURE_ORDER)
     if(NOT DEFINED ${required})
@@ -149,42 +151,26 @@ expect_guard_rejection(validation_continue_in_gate_scope "${VALID_FIXTURE}"
     "Formal validation_continue must remain outside the death input gate scope")
 file(REMOVE "${validation_scope_mutation_file}")
 
-function(extract_braced_function_block source signature output)
-    string(FIND "${source}" "${signature}" function_begin)
-    if(function_begin EQUAL -1)
-        message(FATAL_ERROR "Stage 11 self-test function is missing: ${signature}")
-    endif()
-    string(SUBSTRING "${source}" ${function_begin} -1 function_tail)
-    string(FIND "${function_tail}" "{" brace_relative)
-    math(EXPR brace_open "${function_begin} + ${brace_relative}")
-    string(LENGTH "${source}" source_length)
-    math(EXPR source_last "${source_length} - 1")
-    set(brace_depth 0)
-    set(function_end -1)
-    foreach(character_index RANGE ${brace_open} ${source_last})
-        string(SUBSTRING "${source}" ${character_index} 1 character)
-        if(character STREQUAL "{")
-            math(EXPR brace_depth "${brace_depth} + 1")
-        elseif(character STREQUAL "}")
-            math(EXPR brace_depth "${brace_depth} - 1")
-            if(brace_depth EQUAL 0)
-                set(function_end ${character_index})
-                break()
-            endif()
-        endif()
-    endforeach()
-    math(EXPR function_length "${function_end} - ${function_begin} + 1")
-    string(SUBSTRING "${source}" ${function_begin} ${function_length} function_block)
-    set(${output} "${function_block}" PARENT_SCOPE)
-endfunction()
-
-function(expect_stage_route_rejection name token)
+function(expect_stage_route_rejection name token inject_brace_noise)
     file(READ "${VALID_STAGE_SOURCE}" stage_source)
-    extract_braced_function_block("${stage_source}"
-        "combat::MovementInput stage11_validation_input(" stage11_input)
+    evidence_find_cpp_function_bounds("${stage_source}"
+        "combat::MovementInput stage11_validation_input("
+        stage11_begin stage11_open stage11_end)
+    math(EXPR stage11_input_length "${stage11_end} - ${stage11_begin} + 1")
+    string(SUBSTRING "${stage_source}" ${stage11_begin} ${stage11_input_length}
+        stage11_input)
     string(REPLACE "${token}" "" mutated_input "${stage11_input}")
     if(mutated_input STREQUAL stage11_input)
         message(FATAL_ERROR "${name}: mutation token was not found")
+    endif()
+    if(inject_brace_noise)
+        math(EXPR stage11_open_after "${stage11_open} - ${stage11_begin} + 1")
+        string(SUBSTRING "${mutated_input}" 0 ${stage11_open_after}
+            input_prefix)
+        string(SUBSTRING "${mutated_input}" ${stage11_open_after} -1
+            input_suffix)
+        set(brace_noise "\n    // { line-comment brace\n    /* { block-comment brace } */\n    const char* evidence_brace_string = \"{\\\"}\";\n    const char evidence_brace_character = '{';\n")
+        set(mutated_input "${input_prefix}${brace_noise}${input_suffix}")
     endif()
     string(REPLACE "${stage11_input}" "${mutated_input}" mutated_source
         "${stage_source}")
@@ -218,8 +204,12 @@ function(expect_stage_route_rejection name token)
     endif()
 endfunction()
 
-expect_stage_route_rejection(missing_descent "session.request_descent(true)")
+expect_stage_route_rejection(missing_descent "session.request_descent(true)" FALSE)
 expect_stage_route_rejection(missing_queue_action
-    "session.queue_action(combat::Action::light)")
+    "session.queue_action(combat::Action::light)" FALSE)
+expect_stage_route_rejection(missing_descent_with_brace_noise
+    "session.request_descent(true)" TRUE)
+expect_stage_route_rejection(missing_queue_action_with_brace_noise
+    "session.queue_action(combat::Action::light)" TRUE)
 
 message(STATUS "Stage 11 guard mutation self-test passed")

@@ -136,3 +136,39 @@ the corrected full-selector runtime/formal failures are recorded below.
 - FINAL handoff SHA is reported outside this self-contained commit after amend;
   embedding the commit's own content-addressed SHA in this report would change
   that SHA.
+
+## Fix Round 2 Evidence
+
+- FIX_BASE: `0ef23055995e8e77338a684dbfea7949f6311944`.
+- Stage10 capture mutation self-test now derives both negative cases from the
+  real `VALID_HOST_SOURCE`, after asserting each textual anchor occurs exactly
+  once and the replacement occurred. One mutation only reverses the helper's
+  `EndDrawing()`/`LoadImageFromScreen()` order; the other leaves the formal
+  helper, gates, and helper mentions unchanged while adding one pre-present
+  Load/Export/Unload sequence. Guard diagnostics separately identify helper
+  order versus duplicate capture cardinality. Both existing static Stage10
+  negative fixtures now also retain the exact `captured_stage10_target &&
+  capture_succeeded` result gate, completion gate, required host calls, and at
+  least three helper mentions; each preserves only its intended capture error.
+- `evidence_source_scan.cmake` supplies the shared scan implementation for both
+  Stage10/11 guards and both mutation self-tests. It replaces comments,
+  ordinary escaped strings, and character literals with equal-length spaces
+  while preserving newlines, then finds braces and route tokens only in the
+  sanitized code view. Raw route mutations use the validated source bounds, so
+  replacement remains confined to the owning function.
+- Both Stage10 and Stage11 self-tests now add `// {`, a block-comment brace, an
+  escaped-string brace, and a character-literal brace inside the owning input
+  function while deleting its own descent or queue route. All four adversarial
+  mutations reject with the stage-specific missing-route diagnostic; they
+  cannot consume the other stage's input function.
+- Direct Stage10 and Stage11 production guard invocations passed. Both mutation
+  self-tests passed. The requested literal quick-selector expression matched
+  only `platform.host_validation_sequence` because its two prefix alternatives
+  omitted `.*`; that one test passed. The corrected prefix expression then ran
+  all intended quick tests: 11/11 passed, including both production guards,
+  all Stage10/11 negative evidence cases, both mutation self-tests, and the
+  platform sequence guard. The corrected full-selector `ctest -N` still lists
+  22 tests. `git diff --check` passed.
+- This round did not rerun the full 22-test execution; the Round 1 recorded
+  result remains 16 passed and 6 failed as described above. No production,
+  gameplay, dungeon, or persistence source was changed in this round.

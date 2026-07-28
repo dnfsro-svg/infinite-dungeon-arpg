@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/evidence_source_scan.cmake")
+
 foreach(required GUARD_SCRIPT VALID_FIXTURE VALIDATION_GAME_SOURCE FORMAL_SOURCE
         CAPTURE_SCRIPT FORMAL_CAPTURE_SCRIPT STRESS_SOURCE VALID_HOST_HEADER
         VALID_HOST_SOURCE BAD_CAPTURE_ORDER BAD_PRE_CAPTURE_DUMMY)
@@ -37,42 +39,45 @@ function(expect_guard_rejection name host expected)
     endif()
 endfunction()
 
-function(extract_braced_function_block source signature output)
-    string(FIND "${source}" "${signature}" function_begin)
-    if(function_begin EQUAL -1)
-        message(FATAL_ERROR "Stage 10 self-test function is missing: ${signature}")
-    endif()
-    string(SUBSTRING "${source}" ${function_begin} -1 function_tail)
-    string(FIND "${function_tail}" "{" brace_relative)
-    math(EXPR brace_open "${function_begin} + ${brace_relative}")
-    string(LENGTH "${source}" source_length)
-    math(EXPR source_last "${source_length} - 1")
-    set(brace_depth 0)
-    set(function_end -1)
-    foreach(character_index RANGE ${brace_open} ${source_last})
-        string(SUBSTRING "${source}" ${character_index} 1 character)
-        if(character STREQUAL "{")
-            math(EXPR brace_depth "${brace_depth} + 1")
-        elseif(character STREQUAL "}")
-            math(EXPR brace_depth "${brace_depth} - 1")
-            if(brace_depth EQUAL 0)
-                set(function_end ${character_index})
-                break()
-            endif()
+function(assert_unique_anchor source anchor name)
+    set(remaining "${source}")
+    set(match_count 0)
+    string(LENGTH "${anchor}" anchor_length)
+    while(TRUE)
+        string(FIND "${remaining}" "${anchor}" anchor_index)
+        if(anchor_index EQUAL -1)
+            break()
         endif()
-    endforeach()
-    math(EXPR function_length "${function_end} - ${function_begin} + 1")
-    string(SUBSTRING "${source}" ${function_begin} ${function_length} function_block)
-    set(${output} "${function_block}" PARENT_SCOPE)
+        math(EXPR match_count "${match_count} + 1")
+        math(EXPR next_index "${anchor_index} + ${anchor_length}")
+        string(SUBSTRING "${remaining}" ${next_index} -1 remaining)
+    endwhile()
+    if(NOT match_count EQUAL 1)
+        message(FATAL_ERROR
+            "${name}: expected one replacement anchor, found ${match_count}")
+    endif()
 endfunction()
 
-function(expect_stage_route_rejection name token)
+function(expect_stage_route_rejection name token inject_brace_noise)
     file(READ "${VALID_STAGE_SOURCE}" stage_source)
-    extract_braced_function_block("${stage_source}"
-        "combat::MovementInput stage10_validation_input(" stage10_input)
+    evidence_find_cpp_function_bounds("${stage_source}"
+        "combat::MovementInput stage10_validation_input("
+        stage10_begin stage10_open stage10_end)
+    math(EXPR stage10_input_length "${stage10_end} - ${stage10_begin} + 1")
+    string(SUBSTRING "${stage_source}" ${stage10_begin} ${stage10_input_length}
+        stage10_input)
     string(REPLACE "${token}" "" mutated_input "${stage10_input}")
     if(mutated_input STREQUAL stage10_input)
         message(FATAL_ERROR "${name}: mutation token was not found")
+    endif()
+    if(inject_brace_noise)
+        math(EXPR stage10_open_after "${stage10_open} - ${stage10_begin} + 1")
+        string(SUBSTRING "${mutated_input}" 0 ${stage10_open_after}
+            input_prefix)
+        string(SUBSTRING "${mutated_input}" ${stage10_open_after} -1
+            input_suffix)
+        set(brace_noise "\n    // { line-comment brace\n    /* { block-comment brace } */\n    const char* evidence_brace_string = \"{\\\"}\";\n    const char evidence_brace_character = '{';\n")
+        set(mutated_input "${input_prefix}${brace_noise}${input_suffix}")
     endif()
     string(REPLACE "${stage10_input}" "${mutated_input}" mutated_source
         "${stage_source}")
@@ -109,13 +114,49 @@ function(expect_stage_route_rejection name token)
     endif()
 endfunction()
 
-expect_guard_rejection(capture_before_present "${BAD_CAPTURE_ORDER}"
-    "Stage 10 presentation and capture must be owned by one helper")
-expect_guard_rejection(capture_before_present_with_dummy
-    "${BAD_PRE_CAPTURE_DUMMY}"
-    "Stage 10 presentation and capture must be owned by one helper")
-expect_stage_route_rejection(missing_descent "session.request_descent(true)")
+file(READ "${VALID_HOST_SOURCE}" valid_host_source)
+set(helper_order_anchor
+    "    EndDrawing();\n    if (path == nullptr) return true;\n    Image image = LoadImageFromScreen();")
+set(helper_order_mutation
+    "    Image image = LoadImageFromScreen();\n    if (path == nullptr) return true;\n    EndDrawing();")
+assert_unique_anchor("${valid_host_source}" "${helper_order_anchor}"
+    "capture_helper_order")
+string(REPLACE "${helper_order_anchor}" "${helper_order_mutation}"
+    helper_order_source "${valid_host_source}")
+if(helper_order_source STREQUAL valid_host_source)
+    message(FATAL_ERROR "capture_helper_order: replacement did not occur")
+endif()
+set(helper_order_file
+    "${CMAKE_CURRENT_BINARY_DIR}/stage10_capture_helper_order.cpp")
+file(WRITE "${helper_order_file}" "${helper_order_source}")
+expect_guard_rejection(capture_helper_order "${helper_order_file}"
+    "Stage 10 capture helper must call EndDrawing before LoadImageFromScreen")
+file(REMOVE "${helper_order_file}")
+
+set(capture_call_anchor
+    "            const bool capture_succeeded =\n                present_frame_and_maybe_capture(capture_path.has_value()\n                    ? capture_path->c_str() : nullptr);")
+set(pre_present_capture
+    "            Image pre_present_image = LoadImageFromScreen();\n            static_cast<void>(ExportImage(pre_present_image,\n                \"stage10-duplicate-before-present.png\"));\n            UnloadImage(pre_present_image);\n")
+assert_unique_anchor("${valid_host_source}" "${capture_call_anchor}"
+    "capture_duplicate_before_present")
+string(REPLACE "${capture_call_anchor}"
+    "${pre_present_capture}${capture_call_anchor}"
+    duplicate_capture_source "${valid_host_source}")
+if(duplicate_capture_source STREQUAL valid_host_source)
+    message(FATAL_ERROR "capture_duplicate_before_present: replacement did not occur")
+endif()
+set(duplicate_capture_file
+    "${CMAKE_CURRENT_BINARY_DIR}/stage10_capture_duplicate_before_present.cpp")
+file(WRITE "${duplicate_capture_file}" "${duplicate_capture_source}")
+expect_guard_rejection(capture_duplicate_before_present "${duplicate_capture_file}"
+    "Stage 10 capture/order must contain exactly one EndDrawing")
+file(REMOVE "${duplicate_capture_file}")
+expect_stage_route_rejection(missing_descent "session.request_descent(true)" FALSE)
 expect_stage_route_rejection(missing_queue_action
-    "session.queue_action(combat::Action::light)")
+    "session.queue_action(combat::Action::light)" FALSE)
+expect_stage_route_rejection(missing_descent_with_brace_noise
+    "session.request_descent(true)" TRUE)
+expect_stage_route_rejection(missing_queue_action_with_brace_noise
+    "session.queue_action(combat::Action::light)" TRUE)
 
 message(STATUS "Stage 10 guard mutation self-test passed")

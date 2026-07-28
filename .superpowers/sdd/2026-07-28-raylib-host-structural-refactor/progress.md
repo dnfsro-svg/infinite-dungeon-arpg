@@ -15,3 +15,5 @@ Task 1: deferred build noise — Ninja reported recoverable premature end of fil
 Task 1: complete (commits 0197327..cdecc8b, review clean)
 Task 2: review findings (round 1 required) — focused CTest selector matched no stage10/stage11 tests and capture-order mutations failed for the wrong prerequisite; shared Stage10/11 source token scans allowed cross-function substitution
 Task 2: fix round 1/5 (2 addressed, 0 open — corrected selector/mutation fixtures; per-function Session-route guards; scoped re-review required; FIX_BASE 67b1574)
+Task 2: scoped re-review findings (round 2 required) — Stage10 capture mutations still fail additional non-order gates; brace parser counts comment braces and can again span into Stage11
+Task 2: fix round 2/5 (2 addressed, 0 open — single-target capture mutations; shared comment/string-safe function isolation with adversarial mutations; scoped re-review required; FIX_BASE 0ef2305)

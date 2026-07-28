@@ -1,3 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/evidence_source_scan.cmake")
+
 foreach(required FIXTURE_SOURCE VALIDATION_GAME_SOURCE FORMAL_SOURCE
         CAPTURE_SCRIPT FORMAL_CAPTURE_SCRIPT STRESS_SOURCE HOST_HEADER HOST_SOURCE)
     if(NOT DEFINED ${required})
@@ -32,44 +34,9 @@ file(READ "${stage_source}" stage_source_text)
 file(READ "${stage_header}" stage_header_text)
 set(formal_evidence "${fixture_source}\n${validation_game_source}\n${formal_source}\n${capture_script}\n${formal_capture_script}\n${host_header}\n${host_source}\n${stage_source_text}")
 
-function(extract_braced_function_block source signature output)
-    string(FIND "${source}" "${signature}" function_begin)
-    if(function_begin EQUAL -1)
-        message(FATAL_ERROR "Stage 10 validation function is missing: ${signature}")
-    endif()
-    string(SUBSTRING "${source}" ${function_begin} -1 function_tail)
-    string(FIND "${function_tail}" "{" brace_relative)
-    if(brace_relative EQUAL -1)
-        message(FATAL_ERROR "Stage 10 validation function has no opening brace: ${signature}")
-    endif()
-    math(EXPR brace_open "${function_begin} + ${brace_relative}")
-    string(LENGTH "${source}" source_length)
-    math(EXPR source_last "${source_length} - 1")
-    set(brace_depth 0)
-    set(function_end -1)
-    foreach(character_index RANGE ${brace_open} ${source_last})
-        string(SUBSTRING "${source}" ${character_index} 1 character)
-        if(character STREQUAL "{")
-            math(EXPR brace_depth "${brace_depth} + 1")
-        elseif(character STREQUAL "}")
-            math(EXPR brace_depth "${brace_depth} - 1")
-            if(brace_depth EQUAL 0)
-                set(function_end ${character_index})
-                break()
-            endif()
-        endif()
-    endforeach()
-    if(function_end EQUAL -1)
-        message(FATAL_ERROR "Stage 10 validation function has unbalanced braces: ${signature}")
-    endif()
-    math(EXPR function_length "${function_end} - ${function_begin} + 1")
-    string(SUBSTRING "${source}" ${function_begin} ${function_length} function_block)
-    set(${output} "${function_block}" PARENT_SCOPE)
-endfunction()
-
-extract_braced_function_block("${stage_source_text}"
+evidence_extract_cpp_function_block("${stage_source_text}"
     "combat::MovementInput stage10_validation_input(" stage10_input_block)
-extract_braced_function_block("${stage_source_text}"
+evidence_extract_cpp_function_block("${stage_source_text}"
     "bool stage10_validation_reached(" stage10_reached_block)
 
 foreach(forbidden
@@ -201,19 +168,31 @@ if(host_source MATCHES "export_screenshot"
         OR host_source MATCHES "capture_after_presented_frame")
     message(FATAL_ERROR "Stage 10 host may not expose a detached screenshot helper")
 endif()
-if(present_helper_index EQUAL -1
-        OR capture_result_gate_index EQUAL -1
+if(capture_result_gate_index EQUAL -1
         OR stage10_result_gate_index EQUAL -1
         OR stage10_completion_gate_index EQUAL -1
-        OR NOT end_drawing_count EQUAL 1
-        OR NOT screen_load_count EQUAL 1
-        OR NOT export_image_count EQUAL 1
         OR present_helper_mention_count LESS 3)
     message(FATAL_ERROR
-        "Stage 10 presentation and capture must be owned by one helper "
-        "(helper=${present_helper_index}, end=${end_drawing_count}, "
-        "load=${screen_load_count}, export=${export_image_count}, "
-        "mentions=${present_helper_mention_count})")
+        "Stage 10 capture result and completion gates are incomplete "
+        "(capture=${capture_result_gate_index}, target=${stage10_result_gate_index}, "
+        "completion=${stage10_completion_gate_index}, mentions=${present_helper_mention_count})")
+endif()
+if(NOT end_drawing_count EQUAL 1 OR NOT screen_load_count EQUAL 1
+        OR NOT export_image_count EQUAL 1)
+    message(FATAL_ERROR
+        "Stage 10 capture/order must contain exactly one EndDrawing, LoadImageFromScreen, and ExportImage "
+        "(end=${end_drawing_count}, load=${screen_load_count}, export=${export_image_count})")
+endif()
+string(FIND "${host_compact}" "EndDrawing()" first_end_drawing_index)
+string(FIND "${host_compact}" "LoadImageFromScreen()" first_screen_load_index)
+if(first_end_drawing_index GREATER first_screen_load_index)
+    message(FATAL_ERROR
+        "Stage 10 capture helper must call EndDrawing before LoadImageFromScreen")
+endif()
+if(present_helper_index EQUAL -1)
+    message(FATAL_ERROR
+        "Stage 10 presentation and capture must be owned by the formal helper "
+        "(helper=${present_helper_index})")
 endif()
 
 foreach(script_text capture_script formal_capture_script)
