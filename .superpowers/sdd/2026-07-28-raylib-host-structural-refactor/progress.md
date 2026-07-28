@@ -33,4 +33,4 @@ causality with comparable BASE evidence; Stage function isolation and
 splice-safe decoys; host loop/function brace-depth scope checks including
 lambda/out-of-loop full-call decoys; Stage11B header dependency mutation;
 removed unused include. Serial build passed; focused selector lists exactly
-six and passed 6/6 (581.18s). Commit pending final diff check.
+six and passed 6/6 (581.18s). Fix commit: 94ac373.
