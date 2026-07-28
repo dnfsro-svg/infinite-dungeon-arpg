@@ -80,15 +80,23 @@ foreach(_forbidden IN ITEMS ".queue_action(" "request_descent(" "request_passive
     endif()
 endforeach()
 
-string(FIND "${_host_text}"
-    "Stage11CHudValidationState& stage11c_validation_state ="
+set(_stage11c_runtime_alias
+    "Stage11CHudValidationState& stage11c_validation_state =\n            validation_states->stage11c;")
+string(REGEX MATCHALL
+    "Stage11CHudValidationState&[ \t\r\n]+stage11c_validation_state[ \t\r\n]*="
+    _stage11c_runtime_aliases "${_host_text}")
+list(LENGTH _stage11c_runtime_aliases _stage11c_runtime_alias_count)
+if(NOT _stage11c_runtime_alias_count EQUAL 1)
+    message(FATAL_ERROR "Stage11C evidence guard cannot bind actual Stage11C runtime alias")
+endif()
+string(FIND "${_host_text}" "${_stage11c_runtime_alias}"
     _stage11c_runtime_begin)
 string(FIND "${_host_text}"
     "while (!exit_requested) {"
     _stage11c_runtime_end)
 if(_stage11c_runtime_begin EQUAL -1 OR _stage11c_runtime_end EQUAL -1
         OR NOT _stage11c_runtime_begin LESS _stage11c_runtime_end)
-    message(FATAL_ERROR "Stage11C evidence guard cannot bind complete host capture surface")
+    message(FATAL_ERROR "Stage11C evidence guard cannot bind actual Stage11C runtime alias")
 endif()
 math(EXPR _stage11c_runtime_length
     "${_stage11c_runtime_end} - ${_stage11c_runtime_begin}")
@@ -134,26 +142,26 @@ set(_stage11c_host_surface
 
 string(REGEX MATCHALL
     "stage11c_validation_state\\.model[ \t\r\n]*="
-    _stage11c_model_assignments "${_stage11c_capture}")
+    _stage11c_model_assignments "${_stage11c_host_surface}")
 list(LENGTH _stage11c_model_assignments _stage11c_model_assignment_count)
 if(NOT _stage11c_model_assignment_count EQUAL 1)
     message(FATAL_ERROR "Stage11C evidence guard rejected direct model overwrite")
 endif()
 string(REGEX MATCH
     "stage11c_validation_state\\.model[ \t\r\n]*\\.[A-Za-z_]"
-    _stage11c_model_member_overwrite "${_stage11c_capture}")
+    _stage11c_model_member_overwrite "${_stage11c_host_surface}")
 if(_stage11c_model_member_overwrite)
     message(FATAL_ERROR "Stage11C evidence guard rejected direct model overwrite")
 endif()
 
 string(REGEX MATCHALL
     "stage11c_validation_state\\.production_snapshot_hash[ \t\r\n]*="
-    _stage11c_hash_assignments "${_stage11c_capture}")
+    _stage11c_hash_assignments "${_stage11c_host_surface}")
 list(LENGTH _stage11c_hash_assignments _stage11c_hash_assignment_count)
 if(NOT _stage11c_hash_assignment_count EQUAL 1)
     message(FATAL_ERROR "Stage11C evidence guard rejected fake snapshot hash")
 endif()
-string(FIND "${_stage11c_capture}"
+string(FIND "${_stage11c_host_surface}"
     "stage11c_validation_state.production_snapshot_hash =\n                    stage11c_production_snapshot_hash(current);"
     _stage11c_real_hash)
 if(_stage11c_real_hash EQUAL -1)

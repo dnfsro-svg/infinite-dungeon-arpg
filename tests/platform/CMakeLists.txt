@@ -1641,6 +1641,16 @@ set_tests_properties(
     platform.host_validation_sequence
     PROPERTIES LABELS "headless;platform;architecture")
 
+add_test(
+    NAME platform.host_validation_sequence_self_test
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        "-DGUARD_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/host-validation-sequence-mutations"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/host_validation_sequence_guard_self_test.cmake")
+set_tests_properties(
+    platform.host_validation_sequence_self_test
+    PROPERTIES LABELS "headless;platform;architecture")
+
 # Task 11 deliberately registers the real-host evidence gate before the
 # harness exists.  This keeps the first execution red instead of silently
 # accepting an unvalidated settings path.

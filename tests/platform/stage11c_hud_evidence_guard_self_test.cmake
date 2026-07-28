@@ -104,6 +104,35 @@ function(stage11c_expect_host_rejection LABEL NEEDLE REPLACEMENT EXPECTED)
     endif()
 endfunction()
 
+function(stage11c_expect_host_text_rejection LABEL NEEDLE REPLACEMENT EXPECTED)
+    string(FIND "${_host_source}" "${NEEDLE}" _needle_found)
+    if(_needle_found EQUAL -1)
+        message(FATAL_ERROR "host mutation ${LABEL} cannot find production replacement site")
+    endif()
+    string(REPLACE "${NEEDLE}" "${REPLACEMENT}" _mutated "${_host_source}")
+    if(_mutated STREQUAL _host_source)
+        message(FATAL_ERROR "host mutation ${LABEL} did not change production source")
+    endif()
+    set(_mutation "${GUARD_TEST_ROOT}/host-${LABEL}.cpp")
+    file(WRITE "${_mutation}" "${_mutated}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+            "-DHOST_OVERRIDE=${_mutation}" -P "${_guard}"
+        RESULT_VARIABLE _result OUTPUT_VARIABLE _stdout ERROR_VARIABLE _stderr)
+    if(_result EQUAL 0)
+        message(FATAL_ERROR "Stage11C evidence guard accepted named host mutation: ${LABEL}")
+    endif()
+    if(NOT "${_stdout}${_stderr}" MATCHES "${EXPECTED}")
+        message(FATAL_ERROR "named host mutation ${LABEL} failed for wrong reason: ${_stdout}${_stderr}")
+    endif()
+endfunction()
+
+set(_runtime_font "stage11c_validation_state.cjk_font_ready = hud_resources_ready;")
+stage11c_expect_host_text_rejection(host_runtime_model_and_hash_overwrite
+    "${_runtime_font}"
+    "${_runtime_font}\n        stage11c_validation_state.model = {};\n        stage11c_validation_state.production_snapshot_hash = 1U;"
+    "direct model overwrite")
+
 set(_model_copy "stage11c_validation_state.model = renderer.hud_model();")
 stage11c_expect_host_rejection(host_direct_model_overwrite
     "${_model_copy}"
@@ -147,6 +176,11 @@ if(_independent_state_result EQUAL 0)
     message(FATAL_ERROR "Stage11C evidence guard accepted named host mutation: independent_stage11c_state")
 endif()
 if(NOT "${_independent_state_stdout}${_independent_state_stderr}" MATCHES
-        "cannot bind complete host capture surface")
+        "cannot bind actual Stage11C runtime alias")
     message(FATAL_ERROR "named host mutation independent_stage11c_state failed for wrong reason: ${_independent_state_stdout}${_independent_state_stderr}")
 endif()
+
+stage11c_expect_host_text_rejection(host_decoy_stage11c_alias
+    "${_state_alias}"
+    "Stage11CHudValidationState& stage11c_validation_state =\n            stage11c_decoy;"
+    "cannot bind actual Stage11C runtime alias")
