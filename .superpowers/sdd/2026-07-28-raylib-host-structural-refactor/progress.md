@@ -40,5 +40,5 @@ the raw crop candidate before function isolation; one-pass cropped sanitizer;
 block and valid escaped-multiline string pre-open decoys; complete-declaration
 splice decoy; LF/CRLF lexical equivalence checks and splice block-close fix in
 shared scanner. Task2 Stage10/11 scanner tests 4/4; serial build passed;
-focused exact-six selector 6/6 (416.28s). No formal Step4 rerun; commit pending
-final diff check.
+focused exact-six selector 6/6 (416.28s). No formal Step4 rerun. Fix commit:
+7e2297b.
