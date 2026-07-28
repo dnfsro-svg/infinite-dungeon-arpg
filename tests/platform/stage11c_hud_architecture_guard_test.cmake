@@ -26,12 +26,29 @@ set(_debug_overlay_sources
     "${_hud_root}/debug_overlay_renderer.hpp"
     "${_hud_root}/debug_overlay_renderer.cpp")
 set(_host_source "${_hud_root}/raylib_host.cpp")
+set(_validation_input_sources
+    "${_hud_root}/host_validation_input.hpp"
+    "${_hud_root}/host_validation_input.cpp")
+set(_validation_navigation_sources
+    "${_hud_root}/host_validation_navigation.hpp"
+    "${_hud_root}/host_validation_navigation.cpp")
 set(_hud_boundary_sources
-    ${_hud_sources} ${_combat_sources} ${_debug_overlay_sources})
+    ${_hud_sources} ${_combat_sources} ${_debug_overlay_sources}
+    ${_validation_input_sources} ${_validation_navigation_sources})
 foreach(_required_source IN LISTS _hud_boundary_sources)
     if(NOT EXISTS "${_required_source}")
         message(FATAL_ERROR
             "Stage11C HUD boundary source is missing: ${_required_source}")
+    endif()
+endforeach()
+
+foreach(_validation_header IN ITEMS
+        "${_hud_root}/host_validation_input.hpp"
+        "${_hud_root}/host_validation_navigation.hpp")
+    file(READ "${_validation_header}" _validation_header_text)
+    if(_validation_header_text MATCHES "raylib[.]h|renderer|persistence|test")
+        message(FATAL_ERROR
+            "Stage11C validation boundary header has a forbidden dependency: ${_validation_header}")
     endif()
 endforeach()
 if(NOT EXISTS "${_host_source}")

@@ -12,6 +12,84 @@ endif()
 
 file(READ "${_host}" _host_text)
 
+set(_input_header
+    "${SOURCE_ROOT}/src/platform/raylib/host_validation_input.hpp")
+set(_input_source
+    "${SOURCE_ROOT}/src/platform/raylib/host_validation_input.cpp")
+set(_navigation_header
+    "${SOURCE_ROOT}/src/platform/raylib/host_validation_navigation.hpp")
+set(_navigation_source
+    "${SOURCE_ROOT}/src/platform/raylib/host_validation_navigation.cpp")
+set(_raylib_cmake "${SOURCE_ROOT}/src/platform/raylib/CMakeLists.txt")
+foreach(_required IN ITEMS
+        "${_input_header}" "${_input_source}"
+        "${_navigation_header}" "${_navigation_source}" "${_raylib_cmake}")
+    if(NOT EXISTS "${_required}")
+        message(FATAL_ERROR "Host validation boundary target is missing: ${_required}")
+    endif()
+endforeach()
+file(READ "${_input_header}" _input_header_text)
+file(READ "${_input_source}" _input_source_text)
+file(READ "${_navigation_header}" _navigation_header_text)
+file(READ "${_navigation_source}" _navigation_source_text)
+file(READ "${_raylib_cmake}" _raylib_cmake_text)
+
+foreach(_header_text IN ITEMS "${_input_header_text}" "${_navigation_header_text}")
+    if(_header_text MATCHES "raylib[.]h|renderer|persistence|test")
+        message(FATAL_ERROR "Host validation boundary header has a forbidden dependency")
+    endif()
+endforeach()
+
+set(_input_definition_tokens
+    "void inject_validation_pressed("
+    "void inject_validation_action("
+    "void inject_validation_movement(")
+set(_navigation_definition_tokens
+    "combat::MovementInput validation_route_fire_movement("
+    "const combat::MonsterSnapshot* nearest_living_monster("
+    "combat::MovementInput validation_movement_toward("
+    "combat::Vec3 validation_door_position("
+    "combat::MovementInput validation_exit_movement("
+    "bool validation_attack_lane("
+    "dungeon::ExitDirection validation_direction(")
+foreach(_token IN LISTS _input_definition_tokens)
+    string(FIND "${_input_source_text}" "${_token}" _definition)
+    if(_definition EQUAL -1)
+        message(FATAL_ERROR "Host validation input definition is missing: ${_token}")
+    endif()
+    string(FIND "${_host_text}" "${_token}" _host_definition)
+    if(NOT _host_definition EQUAL -1)
+        message(FATAL_ERROR "Host validation input helper remains in raylib_host.cpp: ${_token}")
+    endif()
+endforeach()
+foreach(_token IN LISTS _navigation_definition_tokens)
+    string(FIND "${_navigation_source_text}" "${_token}" _definition)
+    if(_definition EQUAL -1)
+        message(FATAL_ERROR "Host validation navigation definition is missing: ${_token}")
+    endif()
+    string(FIND "${_host_text}" "${_token}" _host_definition)
+    if(NOT _host_definition EQUAL -1)
+        message(FATAL_ERROR "Host validation navigation helper remains in raylib_host.cpp: ${_token}")
+    endif()
+endforeach()
+
+foreach(_old_helper IN ITEMS
+        "void inject_stage11b_pressed(" "void inject_stage11c_binding("
+        "void inject_stage11c_movement(")
+    string(FIND "${_host_text}" "${_old_helper}" _old_definition)
+    if(NOT _old_definition EQUAL -1)
+        message(FATAL_ERROR "Host validation boundary old helper remains: ${_old_helper}")
+    endif()
+endforeach()
+
+foreach(_registered_source IN ITEMS
+        "host_validation_input.cpp" "host_validation_navigation.cpp")
+    string(FIND "${_raylib_cmake_text}" "${_registered_source}" _registered)
+    if(_registered EQUAL -1)
+        message(FATAL_ERROR "arpg_raylib does not register ${_registered_source}")
+    endif()
+endforeach()
+
 # Keep seam comments from satisfying a source-order assertion.
 string(REGEX REPLACE "/\\*([^*]|\\*+[^*/])*\\*+/" "" _sanitized "${_host_text}")
 string(REGEX REPLACE "//[^\r\n]*" "" _sanitized "${_sanitized}")

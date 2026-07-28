@@ -6,22 +6,31 @@ if(DEFINED HOST_OVERRIDE)
     set(_host "${HOST_OVERRIDE}")
 endif()
 set(_header "${SOURCE_ROOT}/src/platform/raylib/raylib_host.hpp")
+set(_input_header
+    "${SOURCE_ROOT}/src/platform/raylib/host_validation_input.hpp")
+set(_input_source
+    "${SOURCE_ROOT}/src/platform/raylib/host_validation_input.cpp")
+if(DEFINED INPUT_OVERRIDE)
+    set(_input_source "${INPUT_OVERRIDE}")
+endif()
 set(_formal "${SOURCE_ROOT}/tests/platform/stage11c_hud_formal_game_validation.cpp")
 if(DEFINED FORMAL_OVERRIDE)
     set(_formal "${FORMAL_OVERRIDE}")
 endif()
 set(_validator "${SOURCE_ROOT}/tests/platform/stage11c_hud_formal_validator.ps1")
 set(_bad "${SOURCE_ROOT}/tests/platform/stage11c_hud_bad_formal_input.txt")
-foreach(_file IN ITEMS "${_host}" "${_header}" "${_formal}" "${_validator}" "${_bad}")
+foreach(_file IN ITEMS "${_host}" "${_header}" "${_input_header}" "${_input_source}" "${_formal}" "${_validator}" "${_bad}")
     if(NOT EXISTS "${_file}")
         message(FATAL_ERROR "Stage11C HUD evidence target is missing: ${_file}")
     endif()
 endforeach()
 file(READ "${_host}" _host_text)
 file(READ "${_header}" _header_text)
+file(READ "${_input_header}" _input_header_text)
+file(READ "${_input_source}" _input_source_text)
 file(READ "${_formal}" _formal_text)
 file(READ "${_validator}" _validator_text)
-set(_combined "${_header_text}\n${_host_text}\n${_formal_text}")
+set(_combined "${_header_text}\n${_input_header_text}\n${_input_source_text}\n${_host_text}\n${_formal_text}")
 
 foreach(_required IN ITEMS
         "Stage11CHudValidationScenario"
@@ -66,7 +75,27 @@ foreach(_forbidden IN ITEMS
     endif()
 endforeach()
 
-string(FIND "${_host_text}" "void inject_stage11c_binding" _stage11c_begin)
+foreach(_required_input IN ITEMS
+        "void inject_validation_action("
+        "void inject_validation_movement("
+        "settings::binding_for(settings_data, action)"
+        "snapshot.down[index] = true;"
+        "if (pressed) snapshot.pressed[index] = true;")
+    string(FIND "${_input_source_text}" "${_required_input}" _found)
+    if(_found EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11C evidence guard rejected skipped stable binding: ${_required_input}")
+    endif()
+endforeach()
+foreach(_forbidden IN ITEMS ".queue_action(" "request_descent(" "request_passive_")
+    string(FIND "${_input_source_text}" "${_forbidden}" _found)
+    if(NOT _found EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11C evidence guard rejected logical action queue: ${_forbidden}")
+    endif()
+endforeach()
+
+string(FIND "${_host_text}" "[[nodiscard]] PhysicalKeySnapshot inject_stage11c_physical_edges" _stage11c_begin)
 string(FIND "${_host_text}" "combat::MovementInput stage10_validation_input" _stage11c_end)
 if(_stage11c_begin EQUAL -1 OR _stage11c_end EQUAL -1 OR NOT _stage11c_begin LESS _stage11c_end)
     message(FATAL_ERROR "Stage11C evidence guard cannot isolate physical scenario driver")

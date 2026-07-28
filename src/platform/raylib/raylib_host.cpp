@@ -14,6 +14,8 @@
 #include "game_audio.hpp"
 #include "host_input.hpp"
 #include "host_launch_options.hpp"
+#include "host_validation_input.hpp"
+#include "host_validation_navigation.hpp"
 #include "inventory_renderer.hpp"
 #include "passive_tree_renderer.hpp"
 #include "passive_tree_view_math.hpp"
@@ -66,6 +68,17 @@ static_assert(FLAG_VSYNC_HINT != 0, "raylib VSync flag must remain available");
 
 namespace arpg::platform {
 namespace {
+
+using host_validation::inject_validation_action;
+using host_validation::inject_validation_movement;
+using host_validation::inject_validation_pressed;
+using host_validation::nearest_living_monster;
+using host_validation::validation_attack_lane;
+using host_validation::validation_direction;
+using host_validation::validation_door_position;
+using host_validation::validation_exit_movement;
+using host_validation::validation_movement_toward;
+using host_validation::validation_route_fire_movement;
 
 constexpr char kSettingsPreviewFailed[] = "Live preview failed";
 constexpr char kSettingsSaveFailed[] = "Settings save failed; retry";
@@ -693,67 +706,17 @@ void observe_stage17_combat_event(
 }
 // STAGE11D_LOOT_VALIDATION_SEAM_END selectors
 
-void inject_stage11b_pressed(PhysicalKeySnapshot& snapshot,
-    settings::StableKey key) noexcept {
-    const std::size_t index = static_cast<std::size_t>(key);
-    if (index < snapshot.pressed.size()) {
-        snapshot.pressed[index] = true;
-        snapshot.down[index] = true;
-    }
-}
-
 void stage17_press_action(PhysicalKeySnapshot& snapshot,
     const settings::SettingsData& input_settings,
     const settings::SettingAction action) noexcept {
-    inject_stage11b_pressed(snapshot,
+    inject_validation_pressed(snapshot,
         settings::binding_for(input_settings, action));
-}
-
-void stage17_hold_action(PhysicalKeySnapshot& snapshot,
-    const settings::SettingsData& input_settings,
-    const settings::SettingAction action) noexcept {
-    const std::size_t index = static_cast<std::size_t>(
-        settings::binding_for(input_settings, action));
-    if (index < snapshot.down.size()) snapshot.down[index] = true;
 }
 
 void stage17_apply_movement(PhysicalKeySnapshot& snapshot,
     const settings::SettingsData& input_settings,
     const combat::MovementInput movement) noexcept {
-    if (movement.x < 0) {
-        stage17_hold_action(snapshot, input_settings,
-            settings::SettingAction::move_left);
-    } else if (movement.x > 0) {
-        stage17_hold_action(snapshot, input_settings,
-            settings::SettingAction::move_right);
-    }
-    if (movement.y < 0) {
-        stage17_hold_action(snapshot, input_settings,
-            settings::SettingAction::move_up);
-    } else if (movement.y > 0) {
-        stage17_hold_action(snapshot, input_settings,
-            settings::SettingAction::move_down);
-    }
-}
-
-[[nodiscard]] combat::MovementInput validation_route_fire_movement(
-    combat::Vec3 player,
-    combat::Vec3 target,
-    combat::MovementInput movement) noexcept {
-    combat::Vec3 candidate = player;
-    candidate.x += 0.10F * static_cast<float>(movement.x);
-    candidate.y += 0.10F * static_cast<float>(movement.y);
-    if (!combat::fire_room_obstacle::blocks_player(player, candidate)) {
-        return movement;
-    }
-    const combat::Vec3 routed = combat::fire_room_obstacle::route_monster(
-        player, candidate, target);
-    return {
-        static_cast<std::int8_t>(routed.x > player.x ? 1
-            : (routed.x < player.x ? -1 : 0)),
-        static_cast<std::int8_t>(routed.y > player.y ? 1
-            : (routed.y < player.y ? -1 : 0)),
-    };
+    inject_validation_movement(snapshot, input_settings, movement);
 }
 
 struct Stage17IsolatedStormTarget final {
@@ -1541,7 +1504,7 @@ void write_stage17_validation_summary(const RaylibHostConfig& config,
 void inject_stage11b_open_settings(PhysicalKeySnapshot& snapshot,
     std::uint32_t frame) noexcept {
     if (frame == 1U) snapshot.escape = true;
-    if (frame == 2U) inject_stage11b_pressed(snapshot, settings::StableKey::arrow_down);
+    if (frame == 2U) inject_validation_pressed(snapshot, settings::StableKey::arrow_down);
     if (frame == 3U) snapshot.enter = true;
 }
 
@@ -1574,11 +1537,11 @@ void inject_stage11b_open_settings(PhysicalKeySnapshot& snapshot,
         if (frame == 1U) snapshot.escape = true;
         else if (frame == 2U || (frame >= 4U && frame <= 15U)
             || (frame >= 18U && frame <= 24U)) {
-            inject_stage11b_pressed(snapshot, settings::StableKey::arrow_down);
+            inject_validation_pressed(snapshot, settings::StableKey::arrow_down);
         } else if (frame == 3U || frame == 16U || frame == 25U) {
             snapshot.enter = true;
         } else if (frame == 17U) {
-            inject_stage11b_pressed(snapshot,
+            inject_validation_pressed(snapshot,
                 config.stage11b_validation == Stage11BValidationScenario::rebound_attack
                     ? settings::StableKey::u : settings::StableKey::k);
         } else if (config.stage11b_validation
@@ -1588,11 +1551,11 @@ void inject_stage11b_open_settings(PhysicalKeySnapshot& snapshot,
         } else if (config.stage11b_validation
                        == Stage11BValidationScenario::rebound_attack
                    && frame == 28U) {
-            inject_stage11b_pressed(snapshot, settings::StableKey::j);
+            inject_validation_pressed(snapshot, settings::StableKey::j);
         } else if (config.stage11b_validation
                        == Stage11BValidationScenario::rebound_attack
                    && frame == 29U) {
-            inject_stage11b_pressed(snapshot, settings::StableKey::u);
+            inject_validation_pressed(snapshot, settings::StableKey::u);
         }
         break;
     case Stage11BValidationScenario::none:
@@ -1688,33 +1651,6 @@ void write_stage11b_validation_summary(const RaylibHostConfig& config,
     } catch (...) {
         TraceLog(LOG_WARNING, "failed to write stage11b validation summary");
     }
-}
-
-const combat::MonsterSnapshot* nearest_living_monster(
-    const combat::CombatSnapshot& state) noexcept {
-    const combat::MonsterSnapshot* best = nullptr;
-    float best_distance = 0.0F;
-    for (const combat::MonsterSnapshot& monster : state.monsters) {
-        if (!monster.active || monster.hp <= 0) continue;
-        const float x = monster.position.x - state.player.position.x;
-        const float y = monster.position.y - state.player.position.y;
-        const float distance = x * x + y * y;
-        if (best == nullptr || distance < best_distance) {
-            best = &monster;
-            best_distance = distance;
-        }
-    }
-    return best;
-}
-
-combat::MovementInput validation_movement_toward(
-    combat::Vec3 from, combat::Vec3 to) noexcept {
-    combat::MovementInput movement{};
-    if (to.x - from.x > 0.45F) movement.x = 1;
-    else if (to.x - from.x < -0.45F) movement.x = -1;
-    if (to.y - from.y > 0.25F) movement.y = 1;
-    else if (to.y - from.y < -0.25F) movement.y = -1;
-    return movement;
 }
 
 // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN safe_movement
@@ -1817,72 +1753,6 @@ combat::MovementInput stage11d_safe_movement_toward(
 }
 // STAGE11D_LOOT_VALIDATION_SEAM_END safe_movement
 
-combat::Vec3 validation_door_position(
-    dungeon::ExitDirection direction) noexcept {
-    switch (direction) {
-    case dungeon::ExitDirection::up:
-        return {0.0F, combat::room_bounds::min_y, 0.0F};
-    case dungeon::ExitDirection::down:
-        return {0.0F, combat::room_bounds::max_y, 0.0F};
-    case dungeon::ExitDirection::left:
-        return {combat::room_bounds::min_x, 0.0F, 0.0F};
-    case dungeon::ExitDirection::right:
-        return {combat::room_bounds::max_x, 0.0F, 0.0F};
-    case dungeon::ExitDirection::none: return {};
-    }
-    return {};
-}
-
-combat::MovementInput validation_exit_movement(
-    combat::Vec3 player,
-    dungeon::ExitDirection direction) noexcept {
-    combat::MovementInput movement = validation_movement_toward(
-        player, validation_door_position(direction));
-    switch (direction) {
-    case dungeon::ExitDirection::up: movement.y = -1; break;
-    case dungeon::ExitDirection::down: movement.y = 1; break;
-    case dungeon::ExitDirection::left: movement.x = -1; break;
-    case dungeon::ExitDirection::right: movement.x = 1; break;
-    case dungeon::ExitDirection::none: break;
-    }
-    return movement;
-}
-
-bool validation_attack_lane(
-    const combat::CombatSnapshot& state,
-    const combat::MonsterSnapshot& target) noexcept;
-dungeon::ExitDirection validation_direction(
-    const RaylibHostConfig& config) noexcept;
-
-void inject_stage11c_binding(PhysicalKeySnapshot& snapshot,
-    const settings::SettingsData& settings_data,
-    settings::SettingAction action, bool pressed) noexcept {
-    const settings::StableKey key = settings::binding_for(settings_data, action);
-    const std::size_t index = static_cast<std::size_t>(key);
-    if (index >= snapshot.down.size()) return;
-    snapshot.down[index] = true;
-    if (pressed) snapshot.pressed[index] = true;
-}
-
-void inject_stage11c_movement(PhysicalKeySnapshot& snapshot,
-    const settings::SettingsData& settings_data,
-    combat::MovementInput movement) noexcept {
-    if (movement.x < 0) {
-        inject_stage11c_binding(snapshot, settings_data,
-            settings::SettingAction::move_left, false);
-    } else if (movement.x > 0) {
-        inject_stage11c_binding(snapshot, settings_data,
-            settings::SettingAction::move_right, false);
-    }
-    if (movement.y < 0) {
-        inject_stage11c_binding(snapshot, settings_data,
-            settings::SettingAction::move_up, false);
-    } else if (movement.y > 0) {
-        inject_stage11c_binding(snapshot, settings_data,
-            settings::SettingAction::move_down, false);
-    }
-}
-
 [[nodiscard]] PhysicalKeySnapshot inject_stage11c_physical_edges(
     PhysicalKeySnapshot snapshot, const RaylibHostConfig& config,
     const settings::SettingsData& settings_data,
@@ -1913,11 +1783,11 @@ void inject_stage11c_movement(PhysicalKeySnapshot& snapshot,
             destination.x += combat_snapshot.player.position.x
                     <= target->position.x ? -1.0F : 1.0F;
         }
-        inject_stage11c_movement(snapshot, settings_data,
+        inject_validation_movement(snapshot, settings_data,
             validation_movement_toward(
                 combat_snapshot.player.position, destination));
         if (clears_room && validation_attack_lane(combat_snapshot, *target)) {
-            inject_stage11c_binding(snapshot, settings_data,
+            inject_validation_action(snapshot, settings_data,
                 settings::SettingAction::light_attack, true);
         }
         return snapshot;
@@ -1928,7 +1798,7 @@ void inject_stage11c_movement(PhysicalKeySnapshot& snapshot,
     }
     const dungeon::ExitDirection direction = current.is_abyss
         ? dungeon::ExitDirection::right : validation_direction(config);
-    inject_stage11c_movement(snapshot, settings_data,
+    inject_validation_movement(snapshot, settings_data,
         validation_exit_movement(combat_snapshot.player.position, direction));
     return snapshot;
 }
@@ -1957,7 +1827,7 @@ void inject_stage11c_movement(PhysicalKeySnapshot& snapshot,
                 movement = validation_route_fire_movement(
                     current.combat->player.position, item.position, movement);
             }
-            inject_stage11c_movement(snapshot, settings_data, movement);
+            inject_validation_movement(snapshot, settings_data, movement);
             state.abyss_claim_requested = true;
             break;
         }
@@ -1969,10 +1839,10 @@ void inject_stage11c_movement(PhysicalKeySnapshot& snapshot,
         const std::uint8_t phase = ++state.preview_phase;
         if (phase == 1U || phase == 12U || phase == 13U) snapshot.escape = true;
         else if (phase == 2U || (phase >= 4U && phase <= 10U)) {
-            inject_stage11b_pressed(snapshot, settings::StableKey::arrow_down);
+            inject_validation_pressed(snapshot, settings::StableKey::arrow_down);
         } else if (phase == 3U) snapshot.enter = true;
         else if (phase == 11U) {
-            inject_stage11b_pressed(snapshot, settings::StableKey::arrow_right);
+            inject_validation_pressed(snapshot, settings::StableKey::arrow_right);
         }
         return snapshot;
     }
@@ -1988,7 +1858,7 @@ void inject_stage11c_movement(PhysicalKeySnapshot& snapshot,
                         current.combat->player.position,
                         ground->position, movement);
                 }
-                inject_stage11c_movement(snapshot, settings_data, movement);
+                inject_validation_movement(snapshot, settings_data, movement);
             }
         }
         return snapshot;
@@ -2013,11 +1883,11 @@ void inject_stage11c_movement(PhysicalKeySnapshot& snapshot,
             movement = validation_route_fire_movement(
                 player.position, target->position, movement);
         }
-        inject_stage11c_movement(snapshot, settings_data, movement);
+        inject_validation_movement(snapshot, settings_data, movement);
         if (player.hurt_ticks == 0U
                 && current.combat->diagnostics.input_size == 0U
                 && validation_attack_lane(*current.combat, *target)) {
-            inject_stage11c_binding(snapshot, settings_data,
+            inject_validation_action(snapshot, settings_data,
                 settings::SettingAction::light_attack, true);
         }
         return snapshot;
@@ -2047,7 +1917,7 @@ void inject_stage11c_movement(PhysicalKeySnapshot& snapshot,
                 retreat = validation_route_fire_movement(
                     player.position, retreat_target, retreat);
             }
-            inject_stage11c_movement(snapshot, settings_data, retreat);
+            inject_validation_movement(snapshot, settings_data, retreat);
         }
         return snapshot;
     }
@@ -2099,7 +1969,7 @@ void inject_stage11c_movement(PhysicalKeySnapshot& snapshot,
             movement = {};
         }
     }
-    inject_stage11c_movement(snapshot, settings_data, movement);
+    inject_validation_movement(snapshot, settings_data, movement);
     bool nearby_threat = false;
     for (std::size_t index = 0U;
          index < current.combat->monster_count; ++index) {
@@ -2129,13 +1999,13 @@ void inject_stage11c_movement(PhysicalKeySnapshot& snapshot,
     if (needs_launcher_setup && action_ready
             && stage11d_attack_lane(
                 *current.combat, *target, 1.55F, 1.72F)) {
-        inject_stage11c_binding(snapshot, settings_data,
+        inject_validation_action(snapshot, settings_data,
             settings::SettingAction::launcher, true);
     } else if (priority_combo) {
-        inject_stage11c_binding(snapshot, settings_data,
+        inject_validation_action(snapshot, settings_data,
             settings::SettingAction::light_attack, true);
     } else if (action_ready && player.position.z <= 0.01F && nearby_threat) {
-        inject_stage11c_binding(snapshot, settings_data,
+        inject_validation_action(snapshot, settings_data,
             settings::SettingAction::jump, true);
     }
     return snapshot;
@@ -2602,25 +2472,6 @@ void write_stage11d_loot_validation_summary(const RaylibHostConfig& config,
     }
 }
 // STAGE11D_LOOT_VALIDATION_SEAM_END evidence_semantics
-
-bool validation_attack_lane(
-    const combat::CombatSnapshot& state,
-    const combat::MonsterSnapshot& target) noexcept {
-    const float x = target.position.x - state.player.position.x;
-    const float y = target.position.y - state.player.position.y;
-    const bool facing = std::fabs(x) <= 0.20F
-        || (x > 0.0F && state.player.facing == combat::Facing::right)
-        || (x < 0.0F && state.player.facing == combat::Facing::left);
-    return facing && std::fabs(x) <= 1.70F && std::fabs(y) <= 0.55F;
-}
-
-dungeon::ExitDirection validation_direction(
-    const RaylibHostConfig& config) noexcept {
-    return config.validation_abyss_direction < 4U
-        ? static_cast<dungeon::ExitDirection>(
-            config.validation_abyss_direction)
-        : dungeon::ExitDirection::none;
-}
 
 combat::MovementInput stage10_validation_input(
     dungeon::DungeonSession& session,
