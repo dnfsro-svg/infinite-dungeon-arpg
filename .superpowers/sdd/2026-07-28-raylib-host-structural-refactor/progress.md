@@ -43,3 +43,4 @@ shared scanner. Task2 Stage10/11 scanner tests 4/4; serial build passed;
 focused exact-six selector 6/6 (416.28s). No formal Step4 rerun. Fix commit:
 7e2297b.
 Task 3: complete (commits 22e73e4..9f0758c, review clean after 2 fix rounds; formal Step4 remains a BASE-proven variable-tick failure at the same predicate)
+Task 4: implementation complete pending independent review; Step3 focused selector passed 8/8. Step4 formal has a same-asset, BASE-proven baseline: BASE/HEAD staged bin assets each had 102 files with relative-path plus SHA256 DIFF_COUNT=0; combat/low-health/debug passed and cleared/abyss-warning/level-up failed on both, with identical zero snapshot and image hashes for the three failures. Low-health image hashes remain non-deterministic between runs but validator valid=1 on both sides.

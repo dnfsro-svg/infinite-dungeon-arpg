@@ -26,6 +26,9 @@ set(_debug_overlay_sources
     "${_hud_root}/debug_overlay_renderer.hpp"
     "${_hud_root}/debug_overlay_renderer.cpp")
 set(_host_source "${_hud_root}/raylib_host.cpp")
+set(_stage11c_header "${_hud_root}/host_validation_stage11c.hpp")
+set(_stage11c_source "${_hud_root}/host_validation_stage11c.cpp")
+set(_raylib_cmake "${_hud_root}/CMakeLists.txt")
 set(_validation_input_sources
     "${_hud_root}/host_validation_input.hpp"
     "${_hud_root}/host_validation_input.cpp")
@@ -34,13 +37,17 @@ set(_validation_navigation_sources
     "${_hud_root}/host_validation_navigation.cpp")
 set(_hud_boundary_sources
     ${_hud_sources} ${_combat_sources} ${_debug_overlay_sources}
-    ${_validation_input_sources} ${_validation_navigation_sources})
+    ${_validation_input_sources} ${_validation_navigation_sources}
+    "${_stage11c_header}" "${_stage11c_source}")
 foreach(_required_source IN LISTS _hud_boundary_sources)
     if(NOT EXISTS "${_required_source}")
         message(FATAL_ERROR
             "Stage11C HUD boundary source is missing: ${_required_source}")
     endif()
 endforeach()
+if(NOT EXISTS "${_raylib_cmake}")
+    message(FATAL_ERROR "Stage11C HUD CMake source is missing: ${_raylib_cmake}")
+endif()
 
 foreach(_validation_header IN ITEMS
         "${_hud_root}/host_validation_input.hpp"
@@ -103,6 +110,35 @@ function(arpg_extract_hud_host_seam
 endfunction()
 
 file(READ "${_host_source}" _host_text)
+file(READ "${_stage11c_header}" _stage11c_header_text)
+file(READ "${_stage11c_source}" _stage11c_source_text)
+file(READ "${_raylib_cmake}" _raylib_cmake_text)
+if(NOT _stage11c_header_text MATCHES
+        "struct[ \t\r\n]+Stage11CHudValidationState[ \t\r\n]+final")
+    message(FATAL_ERROR "Stage11C HUD state definition is missing from private Stage header")
+endif()
+if(_host_text MATCHES
+        "struct[ \t\r\n]+Stage11CHudValidationState[ \t\r\n]+final")
+    message(FATAL_ERROR "Stage11C HUD state definition remains in raylib_host.cpp")
+endif()
+foreach(_definition IN ITEMS
+        "PhysicalKeySnapshot inject_stage11c_physical_edges("
+        "std::uint64_t stage11c_production_snapshot_hash("
+        "bool stage11c_hud_validation_reached("
+        "void write_stage11c_hud_validation_summary(")
+    string(FIND "${_stage11c_source_text}" "${_definition}" _stage_definition)
+    if(_stage_definition EQUAL -1)
+        message(FATAL_ERROR "Stage11C HUD definition is missing from Stage source: ${_definition}")
+    endif()
+    string(FIND "${_host_text}" "${_definition}" _host_definition)
+    if(NOT _host_definition EQUAL -1)
+        message(FATAL_ERROR "Stage11C HUD definition remains in raylib_host.cpp: ${_definition}")
+    endif()
+endforeach()
+string(FIND "${_raylib_cmake_text}" "host_validation_stage11c.cpp" _stage_registration)
+if(_stage_registration EQUAL -1)
+    message(FATAL_ERROR "arpg_raylib does not register host_validation_stage11c.cpp")
+endif()
 arpg_extract_hud_host_seam("${_host_text}"
     "renderer.observe_presented_hud_frame(HudPresentedFrame::recovery,"
     "GetFrameTime(), true);"

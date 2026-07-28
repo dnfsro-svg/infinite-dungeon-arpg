@@ -28,6 +28,9 @@ list(APPEND _production_hud_sources
     "${_production_hud_root}/host_validation_input.cpp"
     "${_production_hud_root}/host_validation_navigation.hpp"
     "${_production_hud_root}/host_validation_navigation.cpp"
+    "${_production_hud_root}/host_validation_stage11c.hpp"
+    "${_production_hud_root}/host_validation_stage11c.cpp"
+    "${_production_hud_root}/CMakeLists.txt"
     "${_production_hud_root}/raylib_host.cpp")
 if(NOT _production_hud_sources)
     message(FATAL_ERROR "Stage11C production HUD sources are missing")
