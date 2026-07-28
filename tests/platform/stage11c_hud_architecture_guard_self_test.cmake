@@ -195,6 +195,28 @@ arpg_expect_hud_guard_rejects_after_replace(stage_cmake_comment_quoted_decoy
     "    # decoy;host_validation_stage11c.cpp\nmessage(STATUS \"host_validation_stage11c.cpp\")"
     ""
     "arpg_raylib does not register host_validation_stage11c.cpp exactly once")
+arpg_expect_hud_guard_rejects_after_replace(stage_cmake_bracket_comment_decoy
+    CMakeLists.txt
+    "    host_validation_stage11c.cpp"
+    [==[
+    #[=[
+    host_validation_stage11c.cpp
+    ]]
+    ]=]
+]==]
+    ""
+    "arpg_raylib does not register host_validation_stage11c.cpp exactly once")
+arpg_expect_hud_guard_rejects_after_replace(stage_cmake_bracket_argument_decoy
+    CMakeLists.txt
+    "    host_validation_stage11c.cpp"
+    [===[
+    [==[
+    host_validation_stage11c.cpp
+    # ; (add_library(arpg_raylib fake_target))
+    ]==]
+]===]
+    ""
+    "arpg_raylib does not register host_validation_stage11c.cpp exactly once")
 
 message(STATUS
     "Stage 11C HUD architecture guard rejected all twelve production-source mutations")

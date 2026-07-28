@@ -76,3 +76,13 @@ not persist bracket-comment state or distinguish bracket-quoted arguments, so
 disabled or quoted source text can be counted as a real registration. FIX_BASE
 4127669. Production behavior and the round-2 build/exact-eight evidence remain
 accepted; only these validation-guard gaps are open.
+Task 4: fix round 3/5 (all findings addressed) — Stage11C driver and summary
+use behavior-equivalent single-exit/nested control flow; guards now enforce
+all-depth return inventories, the executable FNV core and ordered mix chain,
+and one-pass absolute runtime seam depths with compile-valid relocation
+mutations. The shared CMake scanner preserves cross-line quote/comment state
+and rejects arbitrary-equals bracket comments and bracket arguments. VS2022
+x64 serial four-target build passed in 194.54s; the exact eight-test selector
+passed 8/8 in 1118.22s. Step4 formal was intentionally not rerun because the
+unchanged 102-file staged-asset BASE comparison still proves the known formal
+failures are pre-existing. Fix commit: `test: seal stage11c guard control flow`.

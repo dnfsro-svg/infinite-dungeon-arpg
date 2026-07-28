@@ -202,6 +202,24 @@ function(stage11c_expect_stage_rejection LABEL NEEDLE REPLACEMENT EXPECTED)
     endif()
 endfunction()
 
+function(stage11c_expect_stage_source_rejection LABEL MUTATED EXPECTED)
+    if(MUTATED STREQUAL _stage_source_text)
+        message(FATAL_ERROR "Stage source mutation ${LABEL} did not change production source")
+    endif()
+    set(_mutation "${GUARD_TEST_ROOT}/stage-${LABEL}.cpp")
+    file(WRITE "${_mutation}" "${MUTATED}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+            "-DSTAGE11C_SOURCE_OVERRIDE=${_mutation}" -P "${_guard}"
+        RESULT_VARIABLE _result OUTPUT_VARIABLE _stdout ERROR_VARIABLE _stderr)
+    if(_result EQUAL 0)
+        message(FATAL_ERROR "Stage11C evidence guard accepted named Stage mutation: ${LABEL}")
+    endif()
+    if(NOT "${_stdout}${_stderr}" MATCHES "${EXPECTED}")
+        message(FATAL_ERROR "named Stage mutation ${LABEL} failed for wrong reason: ${_stdout}${_stderr}")
+    endif()
+endfunction()
+
 stage11c_expect_input_rejection(input_test_access
     "snapshot.down[index] = true;"
     "snapshot.down[index] = true;\n    TestAccess stage11c_test_access{};"
@@ -262,6 +280,42 @@ string(REPLACE "${_run_signature}"
 stage11c_expect_host_source_rejection(host_marker_comment_string_decoy
     "${_marker_decoy_source}" "cannot bind observation seam marker")
 
+function(stage11c_extract_host_seam SOURCE NAME OUT_SEAM)
+    set(_begin "// STAGE11C_HUD_VALIDATION_SEAM_BEGIN ${NAME}")
+    set(_end "// STAGE11C_HUD_VALIDATION_SEAM_END ${NAME}")
+    string(FIND "${SOURCE}" "${_begin}" _begin_position)
+    string(FIND "${SOURCE}" "${_end}" _end_position)
+    if(_begin_position EQUAL -1 OR _end_position EQUAL -1
+            OR _end_position LESS _begin_position)
+        message(FATAL_ERROR "cannot extract Stage11C ${NAME} seam mutation")
+    endif()
+    string(LENGTH "${_end}" _end_length)
+    math(EXPR _seam_length "${_end_position} - ${_begin_position} + ${_end_length}")
+    string(SUBSTRING "${SOURCE}" ${_begin_position} ${_seam_length} _seam)
+    set(${OUT_SEAM} "${_seam}" PARENT_SCOPE)
+endfunction()
+
+stage11c_extract_host_seam("${_host_source}" observation _observation_seam)
+string(REPLACE "${_observation_seam}"
+    "const auto stage11c_observation_decoy = [&] {\n${_observation_seam}\n            };\n            const bool stage11c_target_visible = false;"
+    _observation_lambda_source "${_host_source}")
+stage11c_expect_host_source_rejection(host_observation_seam_in_lambda
+    "${_observation_lambda_source}" "observation seam scope")
+
+stage11c_extract_host_seam("${_host_source}" presented_capture _presented_capture_seam)
+string(REPLACE "${_presented_capture_seam}"
+    "const auto stage11c_presented_capture_decoy = [&] {\n${_presented_capture_seam}\n            };\n            static_cast<void>(present_frame_and_maybe_capture(nullptr));\n            ++presented_frame_count;\n            const bool capture_succeeded = false;\n            const bool captured_stage10_frame = false;"
+    _presented_capture_lambda_source "${_host_source}")
+stage11c_expect_host_source_rejection(host_presented_capture_seam_in_lambda
+    "${_presented_capture_lambda_source}" "presented capture seam scope")
+
+stage11c_extract_host_seam("${_host_source}" reached _reached_seam)
+string(REPLACE "${_reached_seam}"
+    "if (false) {\n${_reached_seam}\n            }\n            const bool stage11c_reached = false;"
+    _reached_if_false_source "${_host_source}")
+stage11c_expect_host_source_rejection(host_reached_seam_in_if_false
+    "${_reached_if_false_source}" "reached seam scope")
+
 set(_captured_block "if (captured_stage10_frame && stage11c_reached) {\n                stage11c_validation_state.captured = true;\n            }")
 string(REPLACE "${_captured_block}" "if (captured_stage10_frame && stage11c_reached) {\n            }"
     _captured_early_source "${_host_source}")
@@ -313,19 +367,74 @@ stage11c_expect_stage_rejection(stage_summary_notice_removed
 stage11c_expect_stage_rejection(stage_driver_early_return
     "Stage11CHudValidationState& state) noexcept {"
     "Stage11CHudValidationState& state) noexcept {\n    return snapshot;"
-    "physical driver early return")
+    "physical driver return inventory")
 stage11c_expect_stage_rejection(stage_hash_early_return
     "const dungeon::DungeonSnapshot& snapshot) noexcept {"
     "const dungeon::DungeonSnapshot& snapshot) noexcept {\n    return 1U;"
-    "production hash early return")
+    "production hash return inventory")
 stage11c_expect_stage_rejection(stage_reached_early_return
     "const Stage11CHudValidationState& state, bool draw_debug) noexcept {"
     "const Stage11CHudValidationState& state, bool draw_debug) noexcept {\n    return true;"
-    "reached predicate early return")
+    "reached predicate return inventory")
 stage11c_expect_stage_rejection(stage_summary_early_return
     "const Stage11CHudValidationState& state) noexcept {"
     "const Stage11CHudValidationState& state) noexcept {\n    return;"
-    "summary early return")
+    "summary return inventory")
+stage11c_expect_stage_rejection(stage_driver_unreachable_return
+    "Stage11CHudValidationState& state) noexcept {"
+    "Stage11CHudValidationState& state) noexcept {\n    if (true) {\n        return snapshot;\n    }"
+    "physical driver return inventory")
+stage11c_expect_stage_rejection(stage_hash_unreachable_return
+    "const dungeon::DungeonSnapshot& snapshot) noexcept {"
+    "const dungeon::DungeonSnapshot& snapshot) noexcept {\n    if (true) {\n        return 1U;\n    }"
+    "production hash return inventory")
+stage11c_expect_stage_rejection(stage_reached_unreachable_return
+    "const Stage11CHudValidationState& state, bool draw_debug) noexcept {"
+    "const Stage11CHudValidationState& state, bool draw_debug) noexcept {\n    if (true) {\n        return true;\n    }"
+    "reached predicate return inventory")
+stage11c_expect_stage_rejection(stage_summary_unreachable_return
+    "const Stage11CHudValidationState& state) noexcept {"
+    "const Stage11CHudValidationState& state) noexcept {\n    if (true) {\n        return;\n    }"
+    "summary return inventory")
+stage11c_expect_stage_rejection(stage_hash_direct_overwrite
+    "mix(snapshot.root_seed);"
+    "mix(snapshot.root_seed);\n    hash = 1U;"
+    "production hash direct overwrite")
+stage11c_expect_stage_rejection(stage_hash_offset_basis_changed
+    "1469598103934665603ULL"
+    "1469598103934665604ULL"
+    "production hash core")
+stage11c_expect_stage_rejection(stage_hash_xor_changed
+    "hash ^= value;"
+    "hash ^= value + 1U;"
+    "production hash core")
+stage11c_expect_stage_rejection(stage_hash_prime_changed
+    "hash *= 1099511628211ULL;"
+    "hash *= 1099511628213ULL;"
+    "production hash core")
+
+set(_hash_core_begin "    std::uint64_t hash = 1469598103934665603ULL;")
+set(_hash_core_return "    return hash;")
+string(FIND "${_stage_source_text}" "${_hash_core_begin}" _hash_core_begin_at)
+string(FIND "${_stage_source_text}" "${_hash_core_return}" _hash_core_return_at)
+if(_hash_core_begin_at EQUAL -1 OR _hash_core_return_at EQUAL -1
+        OR NOT _hash_core_begin_at LESS _hash_core_return_at)
+    message(FATAL_ERROR "hash relocation mutation anchor is missing")
+endif()
+string(SUBSTRING "${_stage_source_text}" 0 ${_hash_core_begin_at}
+    _hash_relocation_prefix)
+math(EXPR _hash_core_length "${_hash_core_return_at} - ${_hash_core_begin_at}")
+string(SUBSTRING "${_stage_source_text}" ${_hash_core_begin_at}
+    ${_hash_core_length} _hash_relocation_body)
+string(LENGTH "${_hash_core_return}" _hash_core_return_length)
+math(EXPR _hash_relocation_suffix_at
+    "${_hash_core_return_at} + ${_hash_core_return_length}")
+string(SUBSTRING "${_stage_source_text}" ${_hash_relocation_suffix_at} -1
+    _hash_relocation_suffix)
+set(_hash_relocation_source "${_hash_relocation_prefix}    [[maybe_unused]] const auto stage11c_hash_core_decoy = [&] {\n${_hash_relocation_body}    };\n    std::uint64_t hash{1U};\n    return hash;${_hash_relocation_suffix}")
+stage11c_expect_stage_source_rejection(stage_hash_core_in_uncalled_lambda
+    "${_hash_relocation_source}"
+    "production hash core")
 
 stage11c_expect_host_rejection(host_bypassed_session_progression
     "${_model_copy}"

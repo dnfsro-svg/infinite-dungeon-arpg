@@ -42,49 +42,47 @@ PhysicalKeySnapshot inject_stage11c_physical_edges(
     const dungeon::DungeonSnapshot& current,
     Stage11CHudValidationState& state) noexcept {
     using Scenario = Stage11CHudValidationScenario;
-    if (config.stage11c_hud_validation == Scenario::none
-            || snapshot.focus_lost) {
-        return snapshot;
-    }
-    ++state.injected_frames;
-    if (config.stage11c_hud_validation == Scenario::debug_overlay) {
-        if (!state.debug_visible) snapshot.f1 = true;
-        return snapshot;
-    }
-    if (!current.combat.has_value()) {
-        return snapshot;
-    }
-    const combat::CombatSnapshot& combat_snapshot = *current.combat;
-    if (current.phase == dungeon::RoomPhase::combat) {
-        const combat::MonsterSnapshot* const target =
-            nearest_living_monster(combat_snapshot);
-        if (target == nullptr) return snapshot;
-        const bool clears_room = config.stage11c_hud_validation
-                == Scenario::cleared_exit
-            || config.stage11c_hud_validation == Scenario::level_up_points
-            || config.stage11c_hud_validation == Scenario::abyss_abandon;
-        combat::Vec3 destination = target->position;
-        if (clears_room) {
-            destination.x += combat_snapshot.player.position.x
-                    <= target->position.x ? -1.0F : 1.0F;
+    if (config.stage11c_hud_validation != Scenario::none
+            && !snapshot.focus_lost) {
+        ++state.injected_frames;
+        if (config.stage11c_hud_validation == Scenario::debug_overlay) {
+            if (!state.debug_visible) snapshot.f1 = true;
+        } else if (current.combat.has_value()) {
+            const combat::CombatSnapshot& combat_snapshot = *current.combat;
+            if (current.phase == dungeon::RoomPhase::combat) {
+                const combat::MonsterSnapshot* const target =
+                    nearest_living_monster(combat_snapshot);
+                if (target != nullptr) {
+                    const bool clears_room = config.stage11c_hud_validation
+                            == Scenario::cleared_exit
+                        || config.stage11c_hud_validation
+                            == Scenario::level_up_points
+                        || config.stage11c_hud_validation
+                            == Scenario::abyss_abandon;
+                    combat::Vec3 destination = target->position;
+                    if (clears_room) {
+                        destination.x += combat_snapshot.player.position.x
+                                <= target->position.x ? -1.0F : 1.0F;
+                    }
+                    inject_validation_movement(snapshot, settings_data,
+                        validation_movement_toward(
+                            combat_snapshot.player.position, destination));
+                    if (clears_room
+                            && validation_attack_lane(combat_snapshot, *target)) {
+                        inject_validation_action(snapshot, settings_data,
+                            settings::SettingAction::light_attack, true);
+                    }
+                }
+            } else if (config.stage11c_hud_validation == Scenario::abyss_abandon
+                    && current.phase == dungeon::RoomPhase::awaiting_exit) {
+                const dungeon::ExitDirection direction = current.is_abyss
+                    ? dungeon::ExitDirection::right : validation_direction(config);
+                inject_validation_movement(snapshot, settings_data,
+                    validation_exit_movement(
+                        combat_snapshot.player.position, direction));
+            }
         }
-        inject_validation_movement(snapshot, settings_data,
-            validation_movement_toward(
-                combat_snapshot.player.position, destination));
-        if (clears_room && validation_attack_lane(combat_snapshot, *target)) {
-            inject_validation_action(snapshot, settings_data,
-                settings::SettingAction::light_attack, true);
-        }
-        return snapshot;
     }
-    if (config.stage11c_hud_validation != Scenario::abyss_abandon
-            || current.phase != dungeon::RoomPhase::awaiting_exit) {
-        return snapshot;
-    }
-    const dungeon::ExitDirection direction = current.is_abyss
-        ? dungeon::ExitDirection::right : validation_direction(config);
-    inject_validation_movement(snapshot, settings_data,
-        validation_exit_movement(combat_snapshot.player.position, direction));
     return snapshot;
 }
 
@@ -167,15 +165,13 @@ bool stage11c_hud_validation_reached(
 
 void write_stage11c_hud_validation_summary(const RaylibHostConfig& config,
     const Stage11CHudValidationState& state) noexcept {
-    if (!config.validation_summary_file.has_value()
-            || config.stage11c_hud_validation
-                == Stage11CHudValidationScenario::none) {
-        return;
-    }
-    try {
+    if (config.validation_summary_file.has_value()
+            && config.stage11c_hud_validation
+                != Stage11CHudValidationScenario::none) {
+        try {
         std::ofstream stream(*config.validation_summary_file,
             std::ios::out | std::ios::trunc);
-        if (!stream) return;
+        if (stream) {
         stream << "scenario="
                << stage11c_scenario_name(config.stage11c_hud_validation) << '\n';
         write_stage11c_rect(stream, "safe_rect", state.layout.safe_area);
@@ -219,8 +215,10 @@ void write_stage11c_hud_validation_summary(const RaylibHostConfig& config,
                << state.production_snapshot_hash << '\n'
                << "result="
                << (stage11c_validation_result ? "pass" : "fail") << '\n';
-    } catch (...) {
-        TraceLog(LOG_WARNING, "failed to write stage11c HUD validation summary");
+        }
+        } catch (...) {
+            TraceLog(LOG_WARNING, "failed to write stage11c HUD validation summary");
+        }
     }
 }
 

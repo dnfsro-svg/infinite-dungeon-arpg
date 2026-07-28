@@ -28,8 +28,42 @@ if(NOT "${_sequence_cmake_stdout}${_sequence_cmake_stderr}" MATCHES
         "arpg_raylib does not register host_validation_stage11c.cpp")
     message(FATAL_ERROR "sequence CMake comment mutation failed for wrong reason: ${_sequence_cmake_stdout}${_sequence_cmake_stderr}")
 endif()
+
+function(arpg_expect_sequence_cmake_rejection NAME REPLACEMENT)
+    set(_mutation "${GUARD_TEST_ROOT}/sequence-${NAME}.cmake")
+    string(REPLACE "    host_validation_stage11c.cpp" "${REPLACEMENT}"
+        _mutated "${_sequence_cmake_text}")
+    if(_mutated STREQUAL _sequence_cmake_text)
+        message(FATAL_ERROR "sequence ${NAME} mutation anchor is missing")
+    endif()
+    file(WRITE "${_mutation}" "${_mutated}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+            "-DCMAKE_OVERRIDE=${_mutation}" -P "${_guard}"
+        RESULT_VARIABLE _result OUTPUT_VARIABLE _stdout ERROR_VARIABLE _stderr)
+    if(_result EQUAL 0)
+        message(FATAL_ERROR "Host validation sequence guard accepted ${NAME}")
+    endif()
+    if(NOT "${_stdout}${_stderr}" MATCHES
+            "arpg_raylib does not register host_validation_stage11c.cpp")
+        message(FATAL_ERROR "sequence ${NAME} failed for wrong reason: ${_stdout}${_stderr}")
+    endif()
+endfunction()
+
+arpg_expect_sequence_cmake_rejection(sequence_cmake_bracket_comment_decoy [==[
+    #[=[
+    host_validation_stage11c.cpp
+    ]]
+    ]=]
+]==])
+arpg_expect_sequence_cmake_rejection(sequence_cmake_bracket_argument_decoy [===[
+    [==[
+    host_validation_stage11c.cpp
+    # ; (target_sources(arpg_raylib fake_target))
+    ]==]
+]===])
 if(DEFINED SEQUENCE_CMAKE_ONLY)
-    message(STATUS "Host validation sequence guard rejected CMake comment/quoted decoy")
+    message(STATUS "Host validation sequence guard rejected all CMake decoys")
     return()
 endif()
 
