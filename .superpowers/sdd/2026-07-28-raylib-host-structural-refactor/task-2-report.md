@@ -172,3 +172,27 @@ the corrected full-selector runtime/formal failures are recorded below.
 - This round did not rerun the full 22-test execution; the Round 1 recorded
   result remains 16 passed and 6 failed as described above. No production,
   gameplay, dungeon, or persistence source was changed in this round.
+
+## Fix Round 3 Evidence
+
+- FIX_BASE: `894f3e622dd04ea4c7d010dbb9fafaa2aac46acb`.
+- The shared scanner now models C++ phase-2 backslash-newline splicing while
+  preserving the original source length and line-ending positions. Logical
+  lookahead crosses `\\\n` and `\\\r\n` for line-comment starts,
+  block-comment starts, and block-comment ends. A line comment stays active
+  over a spliced line ending; string and character literal splice states retain
+  their escape state without exposing literal contents as code.
+- Each stage mutation self-test now deletes its real descent or queue route and
+  adds two separate comment decoys: a `// decoy follows` continuation whose
+  next physical line contains the deleted token, and `/\\` newline `/ token`,
+  which becomes a line comment only after splicing. The CMake fixtures construct
+  the trailing backslash via ASCII 92. All eight new Stage10/11 decoys reject
+  with their owning stage's missing-route diagnostic.
+- Direct Stage10 and Stage11 production guards passed. Stage10 mutation
+  self-test passed in 38.12 seconds; Stage11 mutation self-test passed in
+  94.53 seconds. The corrected quick selector ran 11/11 tests successfully in
+  156.80 seconds; the corrected full selector `ctest -N` still listed 22.
+  `git diff --check` passed.
+- This round intentionally did not rerun the full 22-test execution. The
+  Round 1 16-passed/6-failed record remains unchanged, and no production,
+  gameplay, dungeon, or persistence source changed in this round.

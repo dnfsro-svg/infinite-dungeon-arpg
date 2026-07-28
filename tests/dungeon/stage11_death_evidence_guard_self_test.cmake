@@ -151,7 +151,7 @@ expect_guard_rejection(validation_continue_in_gate_scope "${VALID_FIXTURE}"
     "Formal validation_continue must remain outside the death input gate scope")
 file(REMOVE "${validation_scope_mutation_file}")
 
-function(expect_stage_route_rejection name token inject_brace_noise)
+function(expect_stage_route_rejection name token inject_brace_noise decoy_kind)
     file(READ "${VALID_STAGE_SOURCE}" stage_source)
     evidence_find_cpp_function_bounds("${stage_source}"
         "combat::MovementInput stage11_validation_input("
@@ -163,14 +163,28 @@ function(expect_stage_route_rejection name token inject_brace_noise)
     if(mutated_input STREQUAL stage11_input)
         message(FATAL_ERROR "${name}: mutation token was not found")
     endif()
+    set(injected_noise "")
     if(inject_brace_noise)
+        string(APPEND injected_noise
+            "\n    // { line-comment brace\n    /* { block-comment brace } */\n    const char* evidence_brace_string = \"{\\\"}\";\n    const char evidence_brace_character = '{';\n")
+    endif()
+    string(ASCII 92 splice_backslash)
+    if(decoy_kind STREQUAL "continued_line")
+        string(APPEND injected_noise
+            "\n    // decoy follows ${splice_backslash}\n    ${token};\n")
+    elseif(decoy_kind STREQUAL "spliced_slashes")
+        string(APPEND injected_noise
+            "\n    /${splice_backslash}\n/ ${token};\n")
+    elseif(NOT decoy_kind STREQUAL "none")
+        message(FATAL_ERROR "${name}: unknown decoy kind ${decoy_kind}")
+    endif()
+    if(NOT injected_noise STREQUAL "")
         math(EXPR stage11_open_after "${stage11_open} - ${stage11_begin} + 1")
         string(SUBSTRING "${mutated_input}" 0 ${stage11_open_after}
             input_prefix)
         string(SUBSTRING "${mutated_input}" ${stage11_open_after} -1
             input_suffix)
-        set(brace_noise "\n    // { line-comment brace\n    /* { block-comment brace } */\n    const char* evidence_brace_string = \"{\\\"}\";\n    const char evidence_brace_character = '{';\n")
-        set(mutated_input "${input_prefix}${brace_noise}${input_suffix}")
+        set(mutated_input "${input_prefix}${injected_noise}${input_suffix}")
     endif()
     string(REPLACE "${stage11_input}" "${mutated_input}" mutated_source
         "${stage_source}")
@@ -204,12 +218,20 @@ function(expect_stage_route_rejection name token inject_brace_noise)
     endif()
 endfunction()
 
-expect_stage_route_rejection(missing_descent "session.request_descent(true)" FALSE)
+expect_stage_route_rejection(missing_descent "session.request_descent(true)" FALSE none)
 expect_stage_route_rejection(missing_queue_action
-    "session.queue_action(combat::Action::light)" FALSE)
+    "session.queue_action(combat::Action::light)" FALSE none)
 expect_stage_route_rejection(missing_descent_with_brace_noise
-    "session.request_descent(true)" TRUE)
+    "session.request_descent(true)" TRUE none)
 expect_stage_route_rejection(missing_queue_action_with_brace_noise
-    "session.queue_action(combat::Action::light)" TRUE)
+    "session.queue_action(combat::Action::light)" TRUE none)
+expect_stage_route_rejection(missing_descent_with_continued_line_comment
+    "session.request_descent(true)" FALSE continued_line)
+expect_stage_route_rejection(missing_queue_with_continued_line_comment
+    "session.queue_action(combat::Action::light)" FALSE continued_line)
+expect_stage_route_rejection(missing_descent_with_spliced_slashes
+    "session.request_descent(true)" FALSE spliced_slashes)
+expect_stage_route_rejection(missing_queue_with_spliced_slashes
+    "session.queue_action(combat::Action::light)" FALSE spliced_slashes)
 
 message(STATUS "Stage 11 guard mutation self-test passed")
