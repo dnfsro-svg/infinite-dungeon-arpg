@@ -88,6 +88,51 @@ than accepting the old in-host implementation.
 
 ## Remaining Issues
 
-None for Task 2. The known unrelated
-`architecture.persistence_checkpoint_only` baseline failure was not run or
-modified.
+No open Task 2 guard issue. The known unrelated
+`architecture.persistence_checkpoint_only` baseline failure was not modified;
+the corrected full-selector runtime/formal failures are recorded below.
+
+## Fix Round 1 Evidence
+
+- FIX_BASE: `67b1574a75bf578b0e463e7910adb13cda68b444`.
+- The original selector used `stage10\.` and `stage11\.` inside an anchored
+  expression, so it matched neither Stage prefix. Both the formal plan and
+  Task 2 brief now use `stage10\..*|stage11\..*`; `ctest -N` confirms 22
+  matching tests instead of the prior 3.
+- Stage10/11 guards accept `STAGE_SOURCE`/`STAGE_HEADER` overrides for mutation
+  testing while preserving the production-path defaults. Each guard now uses a
+  character-by-character brace-depth scan to isolate complete input and reached
+  function blocks. Route tokens are checked only in their owning input block;
+  completion tokens are checked only in their owning reached block.
+- Stage10 added `stage10.evidence.mutation_self_test`. Both capture-order
+  fixtures first satisfy the host call surface. The first models a pre-present
+  capture directly; the second models a pre-present Load/Export plus a legal
+  post-`EndDrawing()` dummy helper, and is rejected by aggregate capture/order
+  checks. Both self-test expected rejection categories pass.
+- Stage11's existing mutation self-test now has a valid capture-order fixture
+  and passes with the expected capture-order rejection.
+- Both Stage10 and Stage11 self-tests remove, one at a time, the owning
+  `session.request_descent(true)` and
+  `session.queue_action(combat::Action::light)` from a `STAGE_SOURCE` mutation.
+  Each is rejected by the matching Stage input-block check, proving no
+  cross-function substitution.
+- Direct Stage10 and Stage11 production guards passed after hardening; direct
+  Stage10 and Stage11 mutation self-tests also passed.
+- The corrected full selector ran 22 tests. 16 passed, including all Stage10/11
+  evidence guards, both mutation self-tests, Stage11 architecture boundaries,
+  `dungeon.units` (343 cases/0 failures), `platform.units` (497 cases/0
+  failures), and `platform.host_validation_sequence`. Six non-guard failures
+  were recorded without being masked: `stage11.death_stress.determinism_zero_alloc`
+  failed deterministic restart trace at `codec-17`; `stage10.validation_fixture.real_abyss_transactions`
+  stopped after 2.85 seconds without test output; the Stage10 validation game
+  did not produce its capture PNG; the Stage10 formal game exited with code 10;
+  `stage11.death_fixture.transactions` stopped after 21.80 seconds without
+  test output; and `stage11.death_formal.five_paths` timed out at its 300-second
+  CTest limit. No gameplay or persistence code was changed to address these
+  failures. A read-only `FIX_BASE` comparison confirms this fix did not change
+  the production host extraction files or any `src/dungeon`/`src/persistence`
+  path; that proves only that this guard/test fix left those production paths
+  untouched, not that the six failures predate `FIX_BASE`.
+- FINAL handoff SHA is reported outside this self-contained commit after amend;
+  embedding the commit's own content-addressed SHA in this report would change
+  that SHA.

@@ -289,6 +289,23 @@ set_tests_properties(stage10.evidence.rejects_pre_capture_with_post_dummy PROPER
     LABELS "headless;dungeon;stage10;evidence;negative"
     WILL_FAIL TRUE)
 
+add_test(NAME stage10.evidence.mutation_self_test
+    COMMAND ${CMAKE_COMMAND}
+        -DGUARD_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage10_evidence_guard_test.cmake
+        -DVALID_FIXTURE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_fixture.cpp
+        -DVALIDATION_GAME_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_game.cpp
+        -DFORMAL_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_formal_game_validation.cpp
+        -DCAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_capture_test.ps1
+        -DFORMAL_CAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage10_formal_game_capture_test.ps1
+        -DSTRESS_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/dungeon_abyss_stress_tests.cpp
+        -DVALID_HOST_HEADER=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.hpp
+        -DVALID_HOST_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.cpp
+        -DBAD_CAPTURE_ORDER=${CMAKE_CURRENT_SOURCE_DIR}/stage10_evidence_bad_capture_order.txt
+        -DBAD_PRE_CAPTURE_DUMMY=${CMAKE_CURRENT_SOURCE_DIR}/stage10_evidence_bad_pre_capture_with_dummy.txt
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/stage10_evidence_guard_self_test.cmake)
+set_tests_properties(stage10.evidence.mutation_self_test PROPERTIES
+    LABELS "headless;dungeon;stage10;evidence")
+
 add_executable(arpg_stage11_death_validation_fixture
     stage11_death_validation_fixture.cpp)
 target_compile_features(arpg_stage11_death_validation_fixture PRIVATE cxx_std_17)

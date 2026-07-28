@@ -11,6 +11,12 @@ file(READ "${HOST_SOURCE}" host_source)
 get_filename_component(host_directory "${HOST_HEADER}" DIRECTORY)
 set(stage_source "${host_directory}/host_validation_stage10_11.cpp")
 set(stage_header "${host_directory}/host_validation_stage10_11.hpp")
+if(DEFINED STAGE_SOURCE)
+    set(stage_source "${STAGE_SOURCE}")
+endif()
+if(DEFINED STAGE_HEADER)
+    set(stage_header "${STAGE_HEADER}")
+endif()
 if(NOT EXISTS "${stage_source}")
     message(FATAL_ERROR "Stage 11 validation route target is missing: ${stage_source}")
 endif()
@@ -20,6 +26,46 @@ endif()
 file(READ "${stage_source}" stage_source_text)
 file(READ "${stage_header}" stage_header_text)
 set(all_evidence "${fixture_source}\n${formal_source}\n${host_header}\n${host_source}\n${stage_source_text}")
+
+function(extract_braced_function_block source signature output)
+    string(FIND "${source}" "${signature}" function_begin)
+    if(function_begin EQUAL -1)
+        message(FATAL_ERROR "Stage 11 validation function is missing: ${signature}")
+    endif()
+    string(SUBSTRING "${source}" ${function_begin} -1 function_tail)
+    string(FIND "${function_tail}" "{" brace_relative)
+    if(brace_relative EQUAL -1)
+        message(FATAL_ERROR "Stage 11 validation function has no opening brace: ${signature}")
+    endif()
+    math(EXPR brace_open "${function_begin} + ${brace_relative}")
+    string(LENGTH "${source}" source_length)
+    math(EXPR source_last "${source_length} - 1")
+    set(brace_depth 0)
+    set(function_end -1)
+    foreach(character_index RANGE ${brace_open} ${source_last})
+        string(SUBSTRING "${source}" ${character_index} 1 character)
+        if(character STREQUAL "{")
+            math(EXPR brace_depth "${brace_depth} + 1")
+        elseif(character STREQUAL "}")
+            math(EXPR brace_depth "${brace_depth} - 1")
+            if(brace_depth EQUAL 0)
+                set(function_end ${character_index})
+                break()
+            endif()
+        endif()
+    endforeach()
+    if(function_end EQUAL -1)
+        message(FATAL_ERROR "Stage 11 validation function has unbalanced braces: ${signature}")
+    endif()
+    math(EXPR function_length "${function_end} - ${function_begin} + 1")
+    string(SUBSTRING "${source}" ${function_begin} ${function_length} function_block)
+    set(${output} "${function_block}" PARENT_SCOPE)
+endfunction()
+
+extract_braced_function_block("${stage_source_text}"
+    "combat::MovementInput stage11_validation_input(" stage11_input_block)
+extract_braced_function_block("${stage_source_text}"
+    "bool stage11_validation_reached(" stage11_reached_block)
 
 set(public_death_mutation_scan "${all_evidence}")
 string(REPLACE "==" "__stage11_eq__" public_death_mutation_scan
@@ -74,18 +120,24 @@ foreach(required_host "stage11_validation_input"
         message(FATAL_ERROR "Formal host lacks production input/save path: ${required_host}")
     endif()
 endforeach()
-foreach(required_stage11_token
-        "combat::MovementInput stage11_validation_input("
-        "bool stage11_validation_reached("
+foreach(required_stage11_input_token
         "session.request_descent(true)"
-        "session.queue_action(combat::Action::light)"
-        "Stage11ValidationScenario::deep_continue"
-        "state.continue_requested && state.saw_depth_two")
-    string(FIND "${stage_source_text}" "${required_stage11_token}"
+        "session.queue_action(combat::Action::light)")
+    string(FIND "${stage11_input_block}" "${required_stage11_input_token}"
         required_stage11_index)
     if(required_stage11_index EQUAL -1)
         message(FATAL_ERROR
-            "Stage 11 validation route lacks production algorithm: ${required_stage11_token}")
+            "Stage 11 validation input lacks production route: ${required_stage11_input_token}")
+    endif()
+endforeach()
+foreach(required_stage11_reached_token
+        "Stage11ValidationScenario::deep_continue"
+        "state.continue_requested && state.saw_depth_two")
+    string(FIND "${stage11_reached_block}" "${required_stage11_reached_token}"
+        required_stage11_reached_index)
+    if(required_stage11_reached_index EQUAL -1)
+        message(FATAL_ERROR
+            "Stage 11 validation completion lacks production predicate: ${required_stage11_reached_token}")
     endif()
 endforeach()
 if(NOT stage_header_text MATCHES "struct Stage11ValidationState final")

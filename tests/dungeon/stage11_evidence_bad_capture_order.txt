@@ -1,6 +1,11 @@
-void stage11_validation_input() {
+void stage11_capture_driver() {
     MovementInput movement{};
-    session.queue_action(Action::light);
+    host_validation::stage11_validation_input(*session,
+        current, config, stage11_validation_state);
+    const bool reached = host_validation::stage11_validation_reached(
+        current, config, stage11_validation_state);
+    ++stage11_validation_state.target_presented_frames;
+    stage11_validation_state.continue_requested = true;
     runtime.fixed_tick(movement);
     const auto death_key = settings::StableKey::e;
     DeathInputGate death_gate = host_death_input_gate(
@@ -9,7 +14,13 @@ void stage11_validation_input() {
     if (death_gate.continue_death) {
         runtime.request_death_continue();
     }
+}
+[[nodiscard]] bool present_frame_and_maybe_capture(const char* path) noexcept {
     Image image = LoadImageFromScreen();
-    ExportImage(image, path);
     EndDrawing();
+    if (path == nullptr) return true;
+    if (image.data == nullptr) return false;
+    const bool exported = ExportImage(image, path);
+    UnloadImage(image);
+    return exported;
 }

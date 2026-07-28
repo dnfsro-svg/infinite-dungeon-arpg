@@ -217,7 +217,7 @@ bool stage11_validation_reached(
 
   ```powershell
   cmake --build --preset windows-msvc-debug --target arpg_game arpg_dungeon_tests arpg_platform_tests -- -j1
-  ctest --test-dir out/build/windows-msvc-debug -R '^(platform\.host_validation_sequence|stage10\.|stage11\.|dungeon\.units|platform\.units)$' --output-on-failure -j1
+  ctest --test-dir out/build/windows-msvc-debug -R '^(platform\.host_validation_sequence|stage10\..*|stage11\..*|dungeon\.units|platform\.units)$' --output-on-failure -j1
   git diff --check
   ```
 

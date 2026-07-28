@@ -5,6 +5,12 @@ foreach(required GUARD_SCRIPT VALID_FIXTURE VALID_FORMAL VALID_CAPTURE
     endif()
 endforeach()
 
+get_filename_component(_stage_directory "${VALID_HOST_HEADER}" DIRECTORY)
+set(VALID_STAGE_SOURCE "${_stage_directory}/host_validation_stage10_11.cpp")
+if(NOT EXISTS "${VALID_STAGE_SOURCE}")
+    message(FATAL_ERROR "Stage 11 guard self-test missing production stage source")
+endif()
+
 function(expect_guard_rejection name fixture host expected)
     execute_process(
         COMMAND "${CMAKE_COMMAND}"
@@ -142,5 +148,78 @@ expect_guard_rejection(validation_continue_in_gate_scope "${VALID_FIXTURE}"
     "${validation_scope_mutation_file}"
     "Formal validation_continue must remain outside the death input gate scope")
 file(REMOVE "${validation_scope_mutation_file}")
+
+function(extract_braced_function_block source signature output)
+    string(FIND "${source}" "${signature}" function_begin)
+    if(function_begin EQUAL -1)
+        message(FATAL_ERROR "Stage 11 self-test function is missing: ${signature}")
+    endif()
+    string(SUBSTRING "${source}" ${function_begin} -1 function_tail)
+    string(FIND "${function_tail}" "{" brace_relative)
+    math(EXPR brace_open "${function_begin} + ${brace_relative}")
+    string(LENGTH "${source}" source_length)
+    math(EXPR source_last "${source_length} - 1")
+    set(brace_depth 0)
+    set(function_end -1)
+    foreach(character_index RANGE ${brace_open} ${source_last})
+        string(SUBSTRING "${source}" ${character_index} 1 character)
+        if(character STREQUAL "{")
+            math(EXPR brace_depth "${brace_depth} + 1")
+        elseif(character STREQUAL "}")
+            math(EXPR brace_depth "${brace_depth} - 1")
+            if(brace_depth EQUAL 0)
+                set(function_end ${character_index})
+                break()
+            endif()
+        endif()
+    endforeach()
+    math(EXPR function_length "${function_end} - ${function_begin} + 1")
+    string(SUBSTRING "${source}" ${function_begin} ${function_length} function_block)
+    set(${output} "${function_block}" PARENT_SCOPE)
+endfunction()
+
+function(expect_stage_route_rejection name token)
+    file(READ "${VALID_STAGE_SOURCE}" stage_source)
+    extract_braced_function_block("${stage_source}"
+        "combat::MovementInput stage11_validation_input(" stage11_input)
+    string(REPLACE "${token}" "" mutated_input "${stage11_input}")
+    if(mutated_input STREQUAL stage11_input)
+        message(FATAL_ERROR "${name}: mutation token was not found")
+    endif()
+    string(REPLACE "${stage11_input}" "${mutated_input}" mutated_source
+        "${stage_source}")
+    set(mutation_file "${CMAKE_CURRENT_BINARY_DIR}/stage11_${name}.cpp")
+    file(WRITE "${mutation_file}" "${mutated_source}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}"
+            -DFIXTURE_SOURCE=${VALID_FIXTURE}
+            -DFORMAL_SOURCE=${VALID_FORMAL}
+            -DCAPTURE_SCRIPT=${VALID_CAPTURE}
+            -DHOST_HEADER=${VALID_HOST_HEADER}
+            -DHOST_SOURCE=${VALID_HOST_SOURCE}
+            -DSTAGE_SOURCE=${mutation_file}
+            -P ${GUARD_SCRIPT}
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+    file(REMOVE "${mutation_file}")
+    set(combined "${output}\n${error}")
+    if(result EQUAL 0)
+        message(FATAL_ERROR "${name}: stage route mutation was accepted")
+    endif()
+    string(FIND "${combined}" "Stage 11 validation input lacks production route"
+        reason_index)
+    if(reason_index EQUAL -1)
+        message(FATAL_ERROR
+            "${name}: missing Stage 11 route rejection, got: ${combined}")
+    endif()
+    string(FIND "${combined}" "${token}" token_index)
+    if(token_index EQUAL -1)
+        message(FATAL_ERROR
+            "${name}: missing rejected route token '${token}', got: ${combined}")
+    endif()
+endfunction()
+
+expect_stage_route_rejection(missing_descent "session.request_descent(true)")
+expect_stage_route_rejection(missing_queue_action
+    "session.queue_action(combat::Action::light)")
 
 message(STATUS "Stage 11 guard mutation self-test passed")

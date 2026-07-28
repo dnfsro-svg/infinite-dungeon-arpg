@@ -16,6 +16,12 @@ file(READ "${HOST_SOURCE}" host_source)
 get_filename_component(host_directory "${HOST_HEADER}" DIRECTORY)
 set(stage_source "${host_directory}/host_validation_stage10_11.cpp")
 set(stage_header "${host_directory}/host_validation_stage10_11.hpp")
+if(DEFINED STAGE_SOURCE)
+    set(stage_source "${STAGE_SOURCE}")
+endif()
+if(DEFINED STAGE_HEADER)
+    set(stage_header "${STAGE_HEADER}")
+endif()
 if(NOT EXISTS "${stage_source}")
     message(FATAL_ERROR "Stage 10 validation route target is missing: ${stage_source}")
 endif()
@@ -25,6 +31,46 @@ endif()
 file(READ "${stage_source}" stage_source_text)
 file(READ "${stage_header}" stage_header_text)
 set(formal_evidence "${fixture_source}\n${validation_game_source}\n${formal_source}\n${capture_script}\n${formal_capture_script}\n${host_header}\n${host_source}\n${stage_source_text}")
+
+function(extract_braced_function_block source signature output)
+    string(FIND "${source}" "${signature}" function_begin)
+    if(function_begin EQUAL -1)
+        message(FATAL_ERROR "Stage 10 validation function is missing: ${signature}")
+    endif()
+    string(SUBSTRING "${source}" ${function_begin} -1 function_tail)
+    string(FIND "${function_tail}" "{" brace_relative)
+    if(brace_relative EQUAL -1)
+        message(FATAL_ERROR "Stage 10 validation function has no opening brace: ${signature}")
+    endif()
+    math(EXPR brace_open "${function_begin} + ${brace_relative}")
+    string(LENGTH "${source}" source_length)
+    math(EXPR source_last "${source_length} - 1")
+    set(brace_depth 0)
+    set(function_end -1)
+    foreach(character_index RANGE ${brace_open} ${source_last})
+        string(SUBSTRING "${source}" ${character_index} 1 character)
+        if(character STREQUAL "{")
+            math(EXPR brace_depth "${brace_depth} + 1")
+        elseif(character STREQUAL "}")
+            math(EXPR brace_depth "${brace_depth} - 1")
+            if(brace_depth EQUAL 0)
+                set(function_end ${character_index})
+                break()
+            endif()
+        endif()
+    endforeach()
+    if(function_end EQUAL -1)
+        message(FATAL_ERROR "Stage 10 validation function has unbalanced braces: ${signature}")
+    endif()
+    math(EXPR function_length "${function_end} - ${function_begin} + 1")
+    string(SUBSTRING "${source}" ${function_begin} ${function_length} function_block)
+    set(${output} "${function_block}" PARENT_SCOPE)
+endfunction()
+
+extract_braced_function_block("${stage_source_text}"
+    "combat::MovementInput stage10_validation_input(" stage10_input_block)
+extract_braced_function_block("${stage_source_text}"
+    "bool stage10_validation_reached(" stage10_reached_block)
 
 foreach(forbidden
         "DungeonSessionTestAccess"
@@ -57,21 +103,33 @@ if(NOT validation_game_source MATCHES "run_raylib_host"
         OR NOT formal_source MATCHES "run_raylib_host")
     message(FATAL_ERROR "Formal Stage 10 evidence must use generation and normal host inputs")
 endif()
-foreach(required_stage10_token
-        "combat::MovementInput stage10_validation_input("
-        "bool stage10_validation_reached("
+foreach(required_stage10_input_token
         "session.reset_current_room()"
         "session.request_descent(true)"
         "session.request_active_skill_slot(1U)"
-        "session.queue_action(combat::Action::light)"
-        "bool has_environment_visual(")
-    string(FIND "${stage_source_text}" "${required_stage10_token}"
+        "session.queue_action(combat::Action::light)")
+    string(FIND "${stage10_input_block}" "${required_stage10_input_token}"
         required_stage10_index)
     if(required_stage10_index EQUAL -1)
         message(FATAL_ERROR
-            "Stage 10 validation route lacks production algorithm: ${required_stage10_token}")
+            "Stage 10 validation input lacks production route: ${required_stage10_input_token}")
     endif()
 endforeach()
+foreach(required_stage10_reached_token
+        "has_environment_visual("
+        "state.entered_abyss && state.descent_warning_seen")
+    string(FIND "${stage10_reached_block}" "${required_stage10_reached_token}"
+        required_stage10_reached_index)
+    if(required_stage10_reached_index EQUAL -1)
+        message(FATAL_ERROR
+            "Stage 10 validation completion lacks production predicate: ${required_stage10_reached_token}")
+    endif()
+endforeach()
+string(FIND "${stage_source_text}" "bool has_environment_visual("
+    stage10_environment_visual_index)
+if(stage10_environment_visual_index EQUAL -1)
+    message(FATAL_ERROR "Stage 10 validation environment helper is missing")
+endif()
 if(NOT stage_header_text MATCHES "struct Stage10ValidationState final")
     message(FATAL_ERROR "Stage 10 validation state definition is missing")
 endif()
