@@ -86,3 +86,7 @@ x64 serial four-target build passed in 194.54s; the exact eight-test selector
 passed 8/8 in 1118.22s. Step4 formal was intentionally not rerun because the
 unchanged 102-file staged-asset BASE comparison still proves the known formal
 failures are pre-existing. Fix commit: `test: seal stage11c guard control flow`.
+Task 4: complete — independent final review of `4127669..94acada` found no
+P1/P2/P3 findings and approved the card. Cross-audit confirmed HEAD 94acada,
+a clean worktree, all four rebuilt executables, the exact 8/8 CTest log, and no
+residual build/test processes. Task 5A is now the only active card.
