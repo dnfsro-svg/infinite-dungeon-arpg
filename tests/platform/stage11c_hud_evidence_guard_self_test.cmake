@@ -155,10 +155,18 @@ function(stage11c_expect_input_rejection LABEL NEEDLE REPLACEMENT EXPECTED)
     endif()
 endfunction()
 
+stage11c_expect_input_rejection(input_test_access
+    "snapshot.down[index] = true;"
+    "snapshot.down[index] = true;\n    TestAccess stage11c_test_access{};"
+    "non-physical shared input")
+stage11c_expect_input_rejection(input_direct_viewmodel
+    "snapshot.down[index] = true;"
+    "snapshot.down[index] = true;\n    HudViewModel direct_model{};"
+    "non-physical shared input")
 stage11c_expect_input_rejection(input_direct_logical_action
     "snapshot.down[index] = true;"
     "snapshot.down[index] = true;\n    session.queue_action(combat::Action::light);"
-    "logical action queue")
+    "non-physical shared input")
 stage11c_expect_input_rejection(input_skip_stable_binding
     "settings::binding_for(settings_data, action)"
     "static_cast<settings::StableKey>(action)"

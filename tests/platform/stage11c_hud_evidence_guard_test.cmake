@@ -87,11 +87,14 @@ foreach(_required_input IN ITEMS
             "Stage11C evidence guard rejected skipped stable binding: ${_required_input}")
     endif()
 endforeach()
-foreach(_forbidden IN ITEMS ".queue_action(" "request_descent(" "request_passive_")
+set(_physical_input_forbidden
+    ".queue_action(" "request_descent(" "request_passive_"
+    "TestAccess" "HudViewModel direct_model")
+foreach(_forbidden IN LISTS _physical_input_forbidden)
     string(FIND "${_input_source_text}" "${_forbidden}" _found)
     if(NOT _found EQUAL -1)
         message(FATAL_ERROR
-            "Stage11C evidence guard rejected logical action queue: ${_forbidden}")
+            "Stage11C evidence guard rejected non-physical shared input: ${_forbidden}")
     endif()
 endforeach()
 
@@ -102,7 +105,7 @@ if(_stage11c_begin EQUAL -1 OR _stage11c_end EQUAL -1 OR NOT _stage11c_begin LES
 endif()
 math(EXPR _stage11c_length "${_stage11c_end} - ${_stage11c_begin}")
 string(SUBSTRING "${_host_text}" ${_stage11c_begin} ${_stage11c_length} _stage11c_driver)
-foreach(_forbidden IN ITEMS ".queue_action(" "request_descent(" "request_passive_" "TestAccess" "HudViewModel direct_model")
+foreach(_forbidden IN LISTS _physical_input_forbidden)
     string(FIND "${_stage11c_driver}" "${_forbidden}" _found)
     if(NOT _found EQUAL -1)
         message(FATAL_ERROR "Stage11C evidence guard rejected non-physical scenario driver: ${_forbidden}")
