@@ -235,6 +235,8 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
         "src/platform/raylib/raylib_host.hpp");
     const std::string host = read_project_source(
         "src/platform/raylib/raylib_host.cpp");
+    const std::string stage10_11 = read_project_source(
+        "src/platform/raylib/host_validation_stage10_11.cpp");
     const std::string renderer_header = read_project_source(
         "src/platform/raylib/combat_renderer.hpp");
     const std::string renderer = read_project_source(
@@ -251,6 +253,7 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
         "tests/platform/stage12_material_validator_self_test.ps1");
     ARPG_REQUIRE(!host_header.empty());
     ARPG_REQUIRE(!host.empty());
+    ARPG_REQUIRE(!stage10_11.empty());
     ARPG_REQUIRE(!renderer_header.empty());
     ARPG_REQUIRE(!renderer.empty());
     ARPG_REQUIRE(!material_pack.empty());
@@ -259,11 +262,11 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
     ARPG_REQUIRE(!validator.empty());
     ARPG_REQUIRE(!validator_self_test.empty());
 
-    const std::size_t stage10_input = host.find(
+    const std::size_t stage10_input = stage10_11.find(
         "combat::MovementInput stage10_validation_input");
     ARPG_REQUIRE(stage10_input != std::string::npos);
     const std::string stage10_input_block = braced_block_after(
-        host, stage10_input);
+        stage10_11, stage10_input);
     ARPG_REQUIRE(!stage10_input_block.empty());
     for (const char* validation_only : {
              "scenario == Stage10ValidationScenario::abyss_hole_descent",
@@ -275,7 +278,7 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
     }
     ARPG_REQUIRE(occurrence_count(stage10_input_block,
         "request_active_skill_slot") == 2U);
-    ARPG_REQUIRE(occurrence_count(host,
+    ARPG_REQUIRE(occurrence_count(stage10_11,
         "request_active_skill_slot")
         == occurrence_count(stage10_input_block,
             "request_active_skill_slot"));

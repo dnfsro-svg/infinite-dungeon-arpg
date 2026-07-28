@@ -20,10 +20,15 @@ set(_navigation_header
     "${SOURCE_ROOT}/src/platform/raylib/host_validation_navigation.hpp")
 set(_navigation_source
     "${SOURCE_ROOT}/src/platform/raylib/host_validation_navigation.cpp")
+set(_stage10_11_header
+    "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage10_11.hpp")
+set(_stage10_11_source
+    "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage10_11.cpp")
 set(_raylib_cmake "${SOURCE_ROOT}/src/platform/raylib/CMakeLists.txt")
 foreach(_required IN ITEMS
         "${_input_header}" "${_input_source}"
-        "${_navigation_header}" "${_navigation_source}" "${_raylib_cmake}")
+        "${_navigation_header}" "${_navigation_source}"
+        "${_stage10_11_header}" "${_stage10_11_source}" "${_raylib_cmake}")
     if(NOT EXISTS "${_required}")
         message(FATAL_ERROR "Host validation boundary target is missing: ${_required}")
     endif()
@@ -32,11 +37,51 @@ file(READ "${_input_header}" _input_header_text)
 file(READ "${_input_source}" _input_source_text)
 file(READ "${_navigation_header}" _navigation_header_text)
 file(READ "${_navigation_source}" _navigation_source_text)
+file(READ "${_stage10_11_header}" _stage10_11_header_text)
+file(READ "${_stage10_11_source}" _stage10_11_source_text)
 file(READ "${_raylib_cmake}" _raylib_cmake_text)
 
-foreach(_header_text IN ITEMS "${_input_header_text}" "${_navigation_header_text}")
+foreach(_header_text IN ITEMS
+        "${_input_header_text}" "${_navigation_header_text}"
+        "${_stage10_11_header_text}")
     if(_header_text MATCHES "raylib[.]h|renderer|persistence|test")
         message(FATAL_ERROR "Host validation boundary header has a forbidden dependency")
+    endif()
+endforeach()
+
+foreach(_stage10_11_definition_token IN ITEMS
+        "combat::MovementInput stage10_validation_input("
+        "combat::MovementInput stage11_validation_input("
+        "bool stage10_validation_reached("
+        "bool stage11_validation_reached(")
+    string(FIND "${_stage10_11_source_text}" "${_stage10_11_definition_token}"
+        _stage10_11_definition)
+    if(_stage10_11_definition EQUAL -1)
+        message(FATAL_ERROR
+            "Host validation Stage10/11 definition is missing: ${_stage10_11_definition_token}")
+    endif()
+    string(FIND "${_host_text}" "${_stage10_11_definition_token}"
+        _host_stage10_11_definition)
+    if(NOT _host_stage10_11_definition EQUAL -1)
+        message(FATAL_ERROR
+            "Host validation Stage10/11 definition remains in raylib_host.cpp: ${_stage10_11_definition_token}")
+    endif()
+endforeach()
+
+foreach(_stage10_11_state_token IN ITEMS
+        "struct Stage10ValidationState final"
+        "struct Stage11ValidationState final")
+    string(FIND "${_stage10_11_header_text}" "${_stage10_11_state_token}"
+        _stage10_11_state_definition)
+    if(_stage10_11_state_definition EQUAL -1)
+        message(FATAL_ERROR
+            "Host validation Stage10/11 state definition is missing: ${_stage10_11_state_token}")
+    endif()
+    string(FIND "${_host_text}" "${_stage10_11_state_token}"
+        _host_stage10_11_state_definition)
+    if(NOT _host_stage10_11_state_definition EQUAL -1)
+        message(FATAL_ERROR
+            "Host validation Stage10/11 state definition remains in raylib_host.cpp: ${_stage10_11_state_token}")
     endif()
 endforeach()
 
@@ -83,7 +128,8 @@ foreach(_old_helper IN ITEMS
 endforeach()
 
 foreach(_registered_source IN ITEMS
-        "host_validation_input.cpp" "host_validation_navigation.cpp")
+        "host_validation_input.cpp" "host_validation_navigation.cpp"
+        "host_validation_stage10_11.cpp")
     string(FIND "${_raylib_cmake_text}" "${_registered_source}" _registered)
     if(_registered EQUAL -1)
         message(FATAL_ERROR "arpg_raylib does not register ${_registered_source}")
@@ -143,7 +189,7 @@ string(SUBSTRING "${_host_loop}" ${_fixed_step_begin} ${_fixed_step_length}
 string(REGEX REPLACE "[ \t\r\n]+" " " _fixed_step_normalized
     "${_fixed_step_branch}")
 string(REGEX MATCH
-    "if \\(!step_death\\) \\{ if \\(config\\.stage11_validation != Stage11ValidationScenario::none\\) \\{ step_movement = stage11_validation_input\\(.*\\); \\} else if \\(config\\.stage10_validation != Stage10ValidationScenario::none\\) \\{ step_movement = stage10_validation_input\\(.*\\); \\} else \\{ step_movement = movement; \\} \\}"
+    "if \\(!step_death\\) \\{ if \\(config\\.stage11_validation != Stage11ValidationScenario::none\\) \\{ step_movement = host_validation::stage11_validation_input\\(.*\\); \\} else if \\(config\\.stage10_validation != Stage10ValidationScenario::none\\) \\{ step_movement = host_validation::stage10_validation_input\\(.*\\); \\} else \\{ step_movement = movement; \\} \\}"
     _fixed_step_priority_structure "${_fixed_step_normalized}")
 if(NOT _fixed_step_priority_structure)
     message(FATAL_ERROR "Host validation sequence guard rejected fixed-step movement priority structure")

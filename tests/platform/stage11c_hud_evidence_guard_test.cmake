@@ -99,7 +99,7 @@ foreach(_forbidden IN LISTS _physical_input_forbidden)
 endforeach()
 
 string(FIND "${_host_text}" "[[nodiscard]] PhysicalKeySnapshot inject_stage11c_physical_edges" _stage11c_begin)
-string(FIND "${_host_text}" "combat::MovementInput stage10_validation_input" _stage11c_end)
+string(FIND "${_host_text}" "void consume_host_settings_notice(" _stage11c_end)
 if(_stage11c_begin EQUAL -1 OR _stage11c_end EQUAL -1 OR NOT _stage11c_begin LESS _stage11c_end)
     message(FATAL_ERROR "Stage11C evidence guard cannot isolate physical scenario driver")
 endif()

@@ -13,7 +13,18 @@ file(READ "${FORMAL_CAPTURE_SCRIPT}" formal_capture_script)
 file(READ "${STRESS_SOURCE}" stress_source)
 file(READ "${HOST_HEADER}" host_header)
 file(READ "${HOST_SOURCE}" host_source)
-set(formal_evidence "${fixture_source}\n${validation_game_source}\n${formal_source}\n${capture_script}\n${formal_capture_script}\n${host_header}\n${host_source}")
+get_filename_component(host_directory "${HOST_HEADER}" DIRECTORY)
+set(stage_source "${host_directory}/host_validation_stage10_11.cpp")
+set(stage_header "${host_directory}/host_validation_stage10_11.hpp")
+if(NOT EXISTS "${stage_source}")
+    message(FATAL_ERROR "Stage 10 validation route target is missing: ${stage_source}")
+endif()
+if(NOT EXISTS "${stage_header}")
+    message(FATAL_ERROR "Stage 10 validation state target is missing: ${stage_header}")
+endif()
+file(READ "${stage_source}" stage_source_text)
+file(READ "${stage_header}" stage_header_text)
+set(formal_evidence "${fixture_source}\n${validation_game_source}\n${formal_source}\n${capture_script}\n${formal_capture_script}\n${host_header}\n${host_source}\n${stage_source_text}")
 
 foreach(forbidden
         "DungeonSessionTestAccess"
@@ -43,12 +54,38 @@ if(NOT fixture_source MATCHES "SaveStore"
 endif()
 if(NOT validation_game_source MATCHES "run_raylib_host"
         OR NOT formal_source MATCHES "make_door_transition"
-        OR NOT formal_source MATCHES "run_raylib_host"
-        OR NOT host_source MATCHES "queue_action"
-        OR NOT host_source MATCHES "request_descent"
-        OR NOT host_source MATCHES "reset_current_room")
+        OR NOT formal_source MATCHES "run_raylib_host")
     message(FATAL_ERROR "Formal Stage 10 evidence must use generation and normal host inputs")
 endif()
+foreach(required_stage10_token
+        "combat::MovementInput stage10_validation_input("
+        "bool stage10_validation_reached("
+        "session.reset_current_room()"
+        "session.request_descent(true)"
+        "session.request_active_skill_slot(1U)"
+        "session.queue_action(combat::Action::light)"
+        "bool has_environment_visual(")
+    string(FIND "${stage_source_text}" "${required_stage10_token}"
+        required_stage10_index)
+    if(required_stage10_index EQUAL -1)
+        message(FATAL_ERROR
+            "Stage 10 validation route lacks production algorithm: ${required_stage10_token}")
+    endif()
+endforeach()
+if(NOT stage_header_text MATCHES "struct Stage10ValidationState final")
+    message(FATAL_ERROR "Stage 10 validation state definition is missing")
+endif()
+foreach(required_host_stage10_token
+        "stage10_validation_input(*session,"
+        "stage10_validation_reached("
+        "++stage10_validation_state.chaos_presented_frames;"
+        "stage10_validation_captured = stage10_validation_captured")
+    string(FIND "${host_source}" "${required_host_stage10_token}" required_host_stage10_index)
+    if(required_host_stage10_index EQUAL -1)
+        message(FATAL_ERROR
+            "Stage 10 formal host call is missing: ${required_host_stage10_token}")
+    endif()
+endforeach()
 
 if(stress_source MATCHES "make_full_ground_pool"
         OR stress_source MATCHES "std::array<[^>]*GroundItem")
