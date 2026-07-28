@@ -1,6 +1,7 @@
 if(NOT DEFINED SOURCE_ROOT)
     message(FATAL_ERROR "SOURCE_ROOT is required")
 endif()
+include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
 set(_host "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
 if(DEFINED HOST_OVERRIDE)
     set(_host "${HOST_OVERRIDE}")
@@ -13,13 +14,24 @@ set(_input_source
 if(DEFINED INPUT_OVERRIDE)
     set(_input_source "${INPUT_OVERRIDE}")
 endif()
+set(_stage_header
+    "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11c.hpp")
+if(DEFINED STAGE11C_HEADER_OVERRIDE)
+    set(_stage_header "${STAGE11C_HEADER_OVERRIDE}")
+endif()
+set(_stage_source
+    "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11c.cpp")
+if(DEFINED STAGE11C_SOURCE_OVERRIDE)
+    set(_stage_source "${STAGE11C_SOURCE_OVERRIDE}")
+endif()
 set(_formal "${SOURCE_ROOT}/tests/platform/stage11c_hud_formal_game_validation.cpp")
 if(DEFINED FORMAL_OVERRIDE)
     set(_formal "${FORMAL_OVERRIDE}")
 endif()
 set(_validator "${SOURCE_ROOT}/tests/platform/stage11c_hud_formal_validator.ps1")
 set(_bad "${SOURCE_ROOT}/tests/platform/stage11c_hud_bad_formal_input.txt")
-foreach(_file IN ITEMS "${_host}" "${_header}" "${_input_header}" "${_input_source}" "${_formal}" "${_validator}" "${_bad}")
+foreach(_file IN ITEMS "${_host}" "${_header}" "${_input_header}" "${_input_source}"
+        "${_stage_header}" "${_stage_source}" "${_formal}" "${_validator}" "${_bad}")
     if(NOT EXISTS "${_file}")
         message(FATAL_ERROR "Stage11C HUD evidence target is missing: ${_file}")
     endif()
@@ -28,9 +40,11 @@ file(READ "${_host}" _host_text)
 file(READ "${_header}" _header_text)
 file(READ "${_input_header}" _input_header_text)
 file(READ "${_input_source}" _input_source_text)
+file(READ "${_stage_header}" _stage_header_text)
+file(READ "${_stage_source}" _stage_source_text)
 file(READ "${_formal}" _formal_text)
 file(READ "${_validator}" _validator_text)
-set(_combined "${_header_text}\n${_input_header_text}\n${_input_source_text}\n${_host_text}\n${_formal_text}")
+set(_combined "${_header_text}\n${_input_header_text}\n${_input_source_text}\n${_stage_header_text}\n${_stage_source_text}\n${_host_text}\n${_formal_text}")
 
 foreach(_required IN ITEMS
         "Stage11CHudValidationScenario"
@@ -98,13 +112,14 @@ foreach(_forbidden IN LISTS _physical_input_forbidden)
     endif()
 endforeach()
 
-string(FIND "${_host_text}" "[[nodiscard]] PhysicalKeySnapshot inject_stage11c_physical_edges" _stage11c_begin)
-string(FIND "${_host_text}" "void consume_host_settings_notice(" _stage11c_end)
-if(_stage11c_begin EQUAL -1 OR _stage11c_end EQUAL -1 OR NOT _stage11c_begin LESS _stage11c_end)
-    message(FATAL_ERROR "Stage11C evidence guard cannot isolate physical scenario driver")
-endif()
-math(EXPR _stage11c_length "${_stage11c_end} - ${_stage11c_begin}")
-string(SUBSTRING "${_host_text}" ${_stage11c_begin} ${_stage11c_length} _stage11c_driver)
+evidence_extract_cpp_function_block("${_stage_source_text}"
+    "PhysicalKeySnapshot inject_stage11c_physical_edges(" _stage11c_driver)
+evidence_extract_cpp_function_block("${_stage_source_text}"
+    "std::uint64_t stage11c_production_snapshot_hash(" _stage11c_hash_function)
+evidence_extract_cpp_function_block("${_stage_source_text}"
+    "bool stage11c_hud_validation_reached(" _stage11c_reached_function)
+evidence_extract_cpp_function_block("${_stage_source_text}"
+    "void write_stage11c_hud_validation_summary(" _stage11c_summary_function)
 foreach(_forbidden IN LISTS _physical_input_forbidden)
     string(FIND "${_stage11c_driver}" "${_forbidden}" _found)
     if(NOT _found EQUAL -1)
@@ -113,9 +128,9 @@ foreach(_forbidden IN LISTS _physical_input_forbidden)
 endforeach()
 
 set(_stage11c_runtime_alias
-    "Stage11CHudValidationState& stage11c_validation_state =\n            validation_states->stage11c;")
+    "host_validation::Stage11CHudValidationState& stage11c_validation_state =\n            validation_states->stage11c;")
 string(REGEX MATCHALL
-    "Stage11CHudValidationState&[ \t\r\n]+stage11c_validation_state[ \t\r\n]*="
+    "host_validation::Stage11CHudValidationState&[ \t\r\n]+stage11c_validation_state[ \t\r\n]*="
     _stage11c_runtime_aliases "${_host_text}")
 list(LENGTH _stage11c_runtime_aliases _stage11c_runtime_alias_count)
 if(NOT _stage11c_runtime_alias_count EQUAL 1)
@@ -136,7 +151,7 @@ string(SUBSTRING "${_host_text}" ${_stage11c_runtime_begin}
     ${_stage11c_runtime_length} _stage11c_runtime)
 
 string(FIND "${_host_text}"
-    "const bool stage11c_target_visible = stage11c_hud_validation_reached("
+    "const bool stage11c_target_visible = host_validation::stage11c_hud_validation_reached("
     _stage11c_capture_begin)
 string(FIND "${_host_text}"
     "stage10_validation_captured = stage10_validation_captured"
@@ -163,14 +178,14 @@ math(EXPR _stage11c_summary_length
 string(SUBSTRING "${_host_text}" ${_stage11c_summary_begin}
     ${_stage11c_summary_length} _stage11c_summary)
 string(FIND "${_stage11c_summary}"
-    "write_stage11c_hud_validation_summary(config,"
+    "host_validation::write_stage11c_hud_validation_summary(config,"
     _stage11c_summary_write)
 if(_stage11c_summary_write EQUAL -1)
     message(FATAL_ERROR "Stage11C evidence guard missing HUD validation summary write")
 endif()
 
 set(_stage11c_host_surface
-    "${_stage11c_driver}\n${_stage11c_runtime}\n${_stage11c_capture}\n${_stage11c_summary}")
+    "${_stage11c_runtime}\n${_stage11c_capture}\n${_stage11c_summary}")
 
 string(REGEX MATCHALL
     "stage11c_validation_state\\.model[ \t\r\n]*="
@@ -194,13 +209,13 @@ if(NOT _stage11c_hash_assignment_count EQUAL 1)
     message(FATAL_ERROR "Stage11C evidence guard rejected fake snapshot hash")
 endif()
 string(FIND "${_stage11c_host_surface}"
-    "stage11c_validation_state.production_snapshot_hash =\n                    stage11c_production_snapshot_hash(current);"
+    "stage11c_validation_state.production_snapshot_hash =\n                    host_validation::stage11c_production_snapshot_hash(current);"
     _stage11c_real_hash)
 if(_stage11c_real_hash EQUAL -1)
     message(FATAL_ERROR "Stage11C evidence guard rejected fake snapshot hash")
 endif()
 
-string(FIND "${_stage11c_driver}"
+string(FIND "${_stage11c_summary_function}"
     "const bool stage11c_validation_result = state.captured\n            && state.cjk_font_ready && state.production_snapshot_hash != 0U;"
     _stage11c_summary_gate)
 if(_stage11c_summary_gate EQUAL -1)
@@ -223,7 +238,7 @@ unset(_previous_order)
 foreach(_ordered IN ITEMS
         "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();"
         "const PhysicalKeySnapshot stage11b_physical_keys ="
-        "const PhysicalKeySnapshot stage11c_physical_keys = inject_stage11c_physical_edges("
+        "const PhysicalKeySnapshot stage11c_physical_keys = host_validation::inject_stage11c_physical_edges("
         "const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges("
         "HostFrameInput frame_input = map_host_frame_input("
         "HostFrameGateResult host_gate"

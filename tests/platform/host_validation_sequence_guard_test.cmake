@@ -42,12 +42,17 @@ if(DEFINED STAGE11B_HEADER_OVERRIDE)
 endif()
 set(_stage11b_source
     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11b.cpp")
+set(_stage11c_header
+    "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11c.hpp")
+set(_stage11c_source
+    "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11c.cpp")
 set(_raylib_cmake "${SOURCE_ROOT}/src/platform/raylib/CMakeLists.txt")
 foreach(_required IN ITEMS
         "${_input_header}" "${_input_source}"
         "${_navigation_header}" "${_navigation_source}"
         "${_stage10_11_header}" "${_stage10_11_source}"
-        "${_stage11b_header}" "${_stage11b_source}" "${_raylib_cmake}")
+        "${_stage11b_header}" "${_stage11b_source}"
+        "${_stage11c_header}" "${_stage11c_source}" "${_raylib_cmake}")
     if(NOT EXISTS "${_required}")
         message(FATAL_ERROR "Host validation boundary target is missing: ${_required}")
     endif()
@@ -60,11 +65,14 @@ file(READ "${_stage10_11_header}" _stage10_11_header_text)
 file(READ "${_stage10_11_source}" _stage10_11_source_text)
 file(READ "${_stage11b_header}" _stage11b_header_text)
 file(READ "${_stage11b_source}" _stage11b_source_text)
+file(READ "${_stage11c_header}" _stage11c_header_text)
+file(READ "${_stage11c_source}" _stage11c_source_text)
 file(READ "${_raylib_cmake}" _raylib_cmake_text)
 
 foreach(_header_text IN ITEMS
         "${_input_header_text}" "${_navigation_header_text}"
-        "${_stage10_11_header_text}" "${_stage11b_header_text}")
+        "${_stage10_11_header_text}" "${_stage11b_header_text}"
+        "${_stage11c_header_text}")
     if(_header_text MATCHES "raylib[.]h|renderer|persistence|test")
         message(FATAL_ERROR "Host validation boundary header has a forbidden dependency")
     endif()
@@ -127,6 +135,32 @@ endforeach()
 if(NOT _stage11b_header_text MATCHES "struct Stage11BValidationState final")
     message(FATAL_ERROR "Host validation Stage11B state definition is missing")
 endif()
+
+foreach(_stage11c_definition_token IN ITEMS
+        "PhysicalKeySnapshot inject_stage11c_physical_edges("
+        "std::uint64_t stage11c_production_snapshot_hash("
+        "bool stage11c_hud_validation_reached("
+        "void write_stage11c_hud_validation_summary(")
+    string(FIND "${_stage11c_source_text}" "${_stage11c_definition_token}"
+        _stage11c_definition)
+    if(_stage11c_definition EQUAL -1)
+        message(FATAL_ERROR
+            "Host validation Stage11C definition is missing: ${_stage11c_definition_token}")
+    endif()
+    string(FIND "${_host_text}" "${_stage11c_definition_token}"
+        _host_stage11c_definition)
+    if(NOT _host_stage11c_definition EQUAL -1)
+        message(FATAL_ERROR
+            "Host validation Stage11C definition remains in raylib_host.cpp: ${_stage11c_definition_token}")
+    endif()
+endforeach()
+if(NOT _stage11c_header_text MATCHES "struct Stage11CHudValidationState final")
+    message(FATAL_ERROR "Host validation Stage11C state definition is missing")
+endif()
+if(_host_text MATCHES "struct Stage11CHudValidationState final")
+    message(FATAL_ERROR
+        "Host validation Stage11C state definition remains in raylib_host.cpp")
+endif()
 if(_host_text MATCHES "struct Stage11BValidationState final")
     message(FATAL_ERROR
         "Host validation Stage11B state definition remains in raylib_host.cpp")
@@ -176,7 +210,8 @@ endforeach()
 
 foreach(_registered_source IN ITEMS
         "host_validation_input.cpp" "host_validation_navigation.cpp"
-        "host_validation_stage10_11.cpp" "host_validation_stage11b.cpp")
+        "host_validation_stage10_11.cpp" "host_validation_stage11b.cpp"
+        "host_validation_stage11c.cpp")
     string(FIND "${_raylib_cmake_text}" "${_registered_source}" _registered)
     if(_registered EQUAL -1)
         message(FATAL_ERROR "arpg_raylib does not register ${_registered_source}")

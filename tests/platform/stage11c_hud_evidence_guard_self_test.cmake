@@ -13,6 +13,12 @@ if(NOT EXISTS "${_input}")
     message(FATAL_ERROR "Stage11C input source is missing: ${_input}")
 endif()
 file(READ "${_input}" _input_source)
+set(_stage_source
+    "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11c.cpp")
+if(NOT EXISTS "${_stage_source}")
+    message(FATAL_ERROR "Stage11C validation source is missing: ${_stage_source}")
+endif()
+file(READ "${_stage_source}" _stage_source_text)
 file(READ "${_bad}" _bad_source)
 
 function(stage11c_expect_formal_rejection LABEL TOKEN EXPECTED)
@@ -155,6 +161,29 @@ function(stage11c_expect_input_rejection LABEL NEEDLE REPLACEMENT EXPECTED)
     endif()
 endfunction()
 
+function(stage11c_expect_stage_rejection LABEL NEEDLE REPLACEMENT EXPECTED)
+    string(FIND "${_stage_source_text}" "${NEEDLE}" _needle_found)
+    if(_needle_found EQUAL -1)
+        message(FATAL_ERROR "Stage source mutation ${LABEL} cannot find production replacement site")
+    endif()
+    string(REPLACE "${NEEDLE}" "${REPLACEMENT}" _mutated "${_stage_source_text}")
+    if(_mutated STREQUAL _stage_source_text)
+        message(FATAL_ERROR "Stage source mutation ${LABEL} did not change production source")
+    endif()
+    set(_mutation "${GUARD_TEST_ROOT}/stage-${LABEL}.cpp")
+    file(WRITE "${_mutation}" "${_mutated}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+            "-DSTAGE11C_SOURCE_OVERRIDE=${_mutation}" -P "${_guard}"
+        RESULT_VARIABLE _result OUTPUT_VARIABLE _stdout ERROR_VARIABLE _stderr)
+    if(_result EQUAL 0)
+        message(FATAL_ERROR "Stage11C evidence guard accepted named Stage mutation: ${LABEL}")
+    endif()
+    if(NOT "${_stdout}${_stderr}" MATCHES "${EXPECTED}")
+        message(FATAL_ERROR "named Stage mutation ${LABEL} failed for wrong reason: ${_stdout}${_stderr}")
+    endif()
+endfunction()
+
 stage11c_expect_input_rejection(input_test_access
     "snapshot.down[index] = true;"
     "snapshot.down[index] = true;\n    TestAccess stage11c_test_access{};"
@@ -184,17 +213,22 @@ stage11c_expect_host_rejection(host_direct_model_overwrite
     "${_model_copy}\n                stage11c_validation_state.model = {};"
     "direct model overwrite")
 
-set(_hash_copy "stage11c_validation_state.production_snapshot_hash =\n                    stage11c_production_snapshot_hash(current);")
+set(_hash_copy "stage11c_validation_state.production_snapshot_hash =\n                    host_validation::stage11c_production_snapshot_hash(current);")
 stage11c_expect_host_rejection(host_fake_snapshot_hash
     "${_hash_copy}"
     "${_hash_copy}\n                stage11c_validation_state.production_snapshot_hash = 1U;"
     "fake snapshot hash")
 
 set(_summary_gate "const bool stage11c_validation_result = state.captured")
-stage11c_expect_host_rejection(host_fake_summary_state
+stage11c_expect_stage_rejection(stage_fake_summary_state
     "${_summary_gate}"
     "const bool stage11c_validation_result = true || state.captured"
     "fake summary state")
+
+stage11c_expect_stage_rejection(stage_nonphysical_driver
+    "++state.injected_frames;"
+    "++state.injected_frames;\n    TestAccess stage11c_test_access{};"
+    "non-physical scenario driver")
 
 stage11c_expect_host_rejection(host_bypassed_session_progression
     "${_model_copy}"
@@ -202,9 +236,9 @@ stage11c_expect_host_rejection(host_bypassed_session_progression
     "bypassed Session progression")
 
 set(_state_alias
-    "Stage11CHudValidationState& stage11c_validation_state =\n            validation_states->stage11c;")
+    "host_validation::Stage11CHudValidationState& stage11c_validation_state =\n            validation_states->stage11c;")
 string(REPLACE "${_state_alias}"
-    "Stage11CHudValidationState stage11c_validation_state{};"
+    "host_validation::Stage11CHudValidationState stage11c_validation_state{};"
     _independent_state_source "${_host_source}")
 if(_independent_state_source STREQUAL _host_source)
     message(FATAL_ERROR "independent Stage11C state mutation did not change production source")
@@ -227,5 +261,5 @@ endif()
 
 stage11c_expect_host_text_rejection(host_decoy_stage11c_alias
     "${_state_alias}"
-    "Stage11CHudValidationState& stage11c_validation_state =\n            stage11c_decoy;"
+    "host_validation::Stage11CHudValidationState& stage11c_validation_state =\n            stage11c_decoy;"
     "cannot bind actual Stage11C runtime alias")
