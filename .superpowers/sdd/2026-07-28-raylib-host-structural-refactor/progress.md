@@ -97,4 +97,13 @@ semantics. Independent round-2 review and final snapshot review found no
 P1/P2/P3 findings. Serial build passed; the final exact-seven selector passed
 7/7 in 1802.84s after correcting only the stale CTest self-test timeout metadata
 to 600/900 seconds. Code commit: 6566026.
-Task 5B: active — extract Stage11D presentation semantics and report behavior.
+Task 5B: complete — Stage11D semantic recording, visibility evaluation, and
+summary/report implementation moved to `host_validation_stage11d_report.cpp`;
+the real host presented/reached/capture/captured/summary chain remained byte-
+equivalent. Independent review closed one fidelity P3 and one guard P2, then
+approved with no open P1/P2/P3. Three-target serial build passed in 217s and
+the exact headless selector passed 5/5 in 126.64s. Formal evidence remains
+deferred: both HEAD and a clean detached BASE `a9e34cd` build return exit 4 from
+`--select-only` before entering the host, with formal source and selector
+dependencies unchanged. Code commit: 18fb820.
+Task 6A: active — extract Stage17 active-skill validation runtime.
