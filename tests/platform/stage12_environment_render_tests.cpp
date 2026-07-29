@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -43,6 +44,265 @@ std::size_t occurrence_count(const std::string& source,
         position += std::char_traits<char>::length(token);
     }
     return count;
+}
+
+std::string cpp_code_only(std::string source) {
+    std::size_t write{};
+    for (std::size_t read = 0U; read < source.size(); ++read) {
+        if (source[read] == '\\' && read + 1U < source.size()) {
+            if (source[read + 1U] == '\n') {
+                ++read;
+                continue;
+            }
+            if (source[read + 1U] == '\r' && read + 2U < source.size()
+                    && source[read + 2U] == '\n') {
+                read += 2U;
+                continue;
+            }
+        }
+        source[write++] = source[read];
+    }
+    source.resize(write);
+
+    enum class State { code, line_comment, block_comment, string, character,
+        raw_string };
+    State state = State::code;
+    bool escaped = false;
+    std::string raw_closer{};
+    const auto blank = [&source](std::size_t index) noexcept {
+        if (source[index] != '\r' && source[index] != '\n') source[index] = ' ';
+    };
+    for (std::size_t index = 0U; index < source.size(); ++index) {
+        const char current = source[index];
+        const char next = index + 1U < source.size() ? source[index + 1U] : '\0';
+        if (state == State::code) {
+            if (current == '/' && next == '/') {
+                blank(index);
+                blank(++index);
+                state = State::line_comment;
+            } else if (current == '/' && next == '*') {
+                blank(index);
+                blank(++index);
+                state = State::block_comment;
+            } else if (current == 'R' && next == '"') {
+                const std::size_t delimiter_end = source.find('(', index + 2U);
+                if (delimiter_end != std::string::npos
+                        && delimiter_end - index <= 18U) {
+                    raw_closer = ")" + source.substr(
+                        index + 2U, delimiter_end - index - 2U) + '"';
+                    for (; index <= delimiter_end; ++index) blank(index);
+                    --index;
+                    state = State::raw_string;
+                }
+            } else if (current == '"' || current == '\'') {
+                state = current == '"' ? State::string : State::character;
+                escaped = false;
+                blank(index);
+            }
+        } else if (state == State::line_comment) {
+            blank(index);
+            if (current == '\n' || (current == '\r' && next != '\n')) {
+                state = State::code;
+            }
+        } else if (state == State::block_comment) {
+            blank(index);
+            if (current == '*' && next == '/') {
+                blank(++index);
+                state = State::code;
+            }
+        } else if (state == State::raw_string) {
+            if (source.compare(index, raw_closer.size(), raw_closer) == 0) {
+                for (std::size_t offset = 0U; offset < raw_closer.size(); ++offset) {
+                    blank(index + offset);
+                }
+                index += raw_closer.size() - 1U;
+                state = State::code;
+            } else {
+                blank(index);
+            }
+        } else {
+            const bool closes = !escaped
+                && ((state == State::string && current == '"')
+                    || (state == State::character && current == '\''));
+            if (!escaped && current == '\\') escaped = true;
+            else escaped = false;
+            blank(index);
+            if (closes) state = State::code;
+        }
+    }
+
+    struct ConditionalFrame {
+        bool parent_active{};
+        bool guaranteed_match{};
+    };
+    std::vector<ConditionalFrame> conditionals{};
+    bool active = true;
+    const auto blank_range = [&source](std::size_t begin,
+                                 std::size_t end) noexcept {
+        for (std::size_t index = begin; index < end; ++index) {
+            if (source[index] != '\r' && source[index] != '\n') {
+                source[index] = ' ';
+            }
+        }
+    };
+    const auto trim = [](std::string value) {
+        const std::size_t begin = value.find_first_not_of(" \t\r");
+        if (begin == std::string::npos) return std::string{};
+        const std::size_t end = value.find_last_not_of(" \t\r");
+        return value.substr(begin, end - begin + 1U);
+    };
+    enum class ConditionKnowledge { always_false, unknown, always_true };
+    const auto classify_condition = [&trim](std::string condition) {
+        condition = trim(condition);
+        while (condition.size() >= 2U && condition.front() == '('
+                && condition.back() == ')') {
+            condition = trim(condition.substr(1U, condition.size() - 2U));
+        }
+        if (condition == "0" || condition == "false") {
+            return ConditionKnowledge::always_false;
+        }
+        if (condition == "1" || condition == "true") {
+            return ConditionKnowledge::always_true;
+        }
+        return ConditionKnowledge::unknown;
+    };
+    for (std::size_t line_begin = 0U; line_begin < source.size();) {
+        const std::size_t newline = source.find('\n', line_begin);
+        const std::size_t line_end = newline == std::string::npos
+            ? source.size() : newline;
+        const std::string line = source.substr(line_begin, line_end - line_begin);
+        const std::size_t first = line.find_first_not_of(" \t\r");
+        const bool directive = first != std::string::npos && line[first] == '#';
+        if (directive) {
+            const std::string text = trim(line.substr(first + 1U));
+            const std::size_t keyword_end = text.find_first_not_of(
+                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_");
+            const std::string keyword = text.substr(0U, keyword_end);
+            const std::string argument = keyword_end == std::string::npos
+                ? std::string{} : trim(text.substr(keyword_end));
+            if (keyword == "if") {
+                const bool parent_active = active;
+                const ConditionKnowledge condition = classify_condition(argument);
+                conditionals.push_back({parent_active,
+                    condition == ConditionKnowledge::always_true});
+                active = parent_active
+                    && condition != ConditionKnowledge::always_false;
+            } else if (keyword == "ifdef" || keyword == "ifndef") {
+                conditionals.push_back({active, false});
+            } else if (keyword == "elif" && !conditionals.empty()) {
+                ConditionalFrame& frame = conditionals.back();
+                const ConditionKnowledge condition = classify_condition(argument);
+                active = frame.parent_active && !frame.guaranteed_match
+                    && condition != ConditionKnowledge::always_false;
+                frame.guaranteed_match = frame.guaranteed_match
+                    || condition == ConditionKnowledge::always_true;
+            } else if (keyword == "else" && !conditionals.empty()) {
+                ConditionalFrame& frame = conditionals.back();
+                active = frame.parent_active && !frame.guaranteed_match;
+                frame.guaranteed_match = true;
+            } else if (keyword == "endif" && !conditionals.empty()) {
+                active = conditionals.back().parent_active;
+                conditionals.pop_back();
+            }
+            blank_range(line_begin, line_end);
+        } else if (!active) {
+            blank_range(line_begin, line_end);
+        }
+        line_begin = newline == std::string::npos ? source.size() : newline + 1U;
+    }
+    return source;
+}
+
+arpg::test::Failure cpp_code_only_rejects_non_code_decoys() noexcept {
+    const std::string fixture =
+        "int real_code_marker = 1;\n"
+        "// ordinary_comment_decoy\n"
+        "/* block_comment_decoy */\n"
+        "const char* label = \"string_literal_decoy\";\n"
+        "const char* raw = R\"tag(raw_string_decoy)tag\";\n"
+        "// continued_lf_comment \\\n"
+        "continued_lf_decoy\n"
+        "// continued_crlf_comment \\\r\n"
+        "continued_crlf_decoy\r\n"
+        "/\\\n"
+        "/ split_line_comment_lf_decoy\n"
+        "int real_after_split_line_lf_marker = 8;\n"
+        "/\\\r\n"
+        "/ split_line_comment_crlf_decoy\r\n"
+        "int real_after_split_line_crlf_marker = 9;\r\n"
+        "/\\\n"
+        "* split_block_comment_lf_decoy */\n"
+        "int real_after_split_block_lf_marker = 10;\n"
+        "/\\\r\n"
+        "* split_block_comment_crlf_decoy */\r\n"
+        "int real_after_split_block_crlf_marker = 11;\r\n"
+        "#if 0\n"
+        "inactive_zero_decoy\n"
+        "#if 1\n"
+        "nested_inactive_decoy\n"
+        "#endif\n"
+        "#else\n"
+        "int real_zero_else_marker = 2;\n"
+        "#endif\n"
+        "#if false\n"
+        "inactive_false_decoy\n"
+        "#if 0\n"
+        "nested_false_decoy\n"
+        "#else\n"
+        "nested_else_still_inactive_decoy\n"
+        "#endif\n"
+        "#else\n"
+        "int real_false_else_marker = 3;\n"
+        "#endif\n"
+        "#if true\n"
+        "int real_true_marker = 4;\n"
+        "#else\n"
+        "inactive_true_else_decoy\n"
+        "#endif\n"
+        "#\\\n"
+        "if 0\n"
+        "lf_spliced_directive_decoy\n"
+        "#\\\n"
+        "endif\n"
+        "int real_after_lf_splice_marker = 5;\n"
+        "#\\\r\n"
+        "if 0\r\n"
+        "crlf_spliced_directive_decoy\r\n"
+        "#\\\r\n"
+        "endif\r\n"
+        "int real_after_crlf_splice_marker = 6;\r\n"
+        "#if(0)\n"
+        "compact_if_decoy\n"
+        "#endif\n"
+        "int real_after_compact_if_marker = 7;\n";
+    const std::string code = cpp_code_only(fixture);
+    for (const char* real : {"real_code_marker", "real_zero_else_marker",
+             "real_false_else_marker", "real_true_marker",
+             "real_after_lf_splice_marker",
+             "real_after_crlf_splice_marker",
+             "real_after_compact_if_marker",
+             "real_after_split_line_lf_marker",
+             "real_after_split_line_crlf_marker",
+             "real_after_split_block_lf_marker",
+             "real_after_split_block_crlf_marker",
+             "const char* label"}) {
+        ARPG_REQUIRE(code.find(real) != std::string::npos);
+    }
+    for (const char* decoy : {"ordinary_comment_decoy",
+             "block_comment_decoy", "string_literal_decoy",
+             "raw_string_decoy", "continued_lf_decoy",
+             "continued_crlf_decoy", "inactive_zero_decoy",
+             "nested_inactive_decoy", "inactive_false_decoy",
+             "nested_false_decoy", "nested_else_still_inactive_decoy",
+             "inactive_true_else_decoy", "lf_spliced_directive_decoy",
+             "crlf_spliced_directive_decoy", "compact_if_decoy",
+             "split_line_comment_lf_decoy",
+             "split_line_comment_crlf_decoy",
+             "split_block_comment_lf_decoy",
+             "split_block_comment_crlf_decoy"}) {
+        ARPG_REQUIRE(code.find(decoy) == std::string::npos);
+    }
+    return {};
 }
 
 arpg::test::Failure environment_renderer_uses_independent_native_paths() noexcept {
@@ -231,10 +491,15 @@ arpg::test::Failure environment_falls_back_atomically_when_a_required_frame_is_m
 }
 
 arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noexcept {
+    const arpg::test::Failure scanner_failure =
+        cpp_code_only_rejects_non_code_decoys();
+    if (scanner_failure.expression != nullptr) return scanner_failure;
     const std::string host_header = read_project_source(
         "src/platform/raylib/raylib_host.hpp");
     const std::string host = read_project_source(
         "src/platform/raylib/raylib_host.cpp");
+    const std::string stage17_runtime = read_project_source(
+        "src/platform/raylib/host_validation_stage17_runtime.cpp");
     const std::string stage10_11 = read_project_source(
         "src/platform/raylib/host_validation_stage10_11.cpp");
     const std::string renderer_header = read_project_source(
@@ -253,6 +518,7 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
         "tests/platform/stage12_material_validator_self_test.ps1");
     ARPG_REQUIRE(!host_header.empty());
     ARPG_REQUIRE(!host.empty());
+    ARPG_REQUIRE(!stage17_runtime.empty());
     ARPG_REQUIRE(!stage10_11.empty());
     ARPG_REQUIRE(!renderer_header.empty());
     ARPG_REQUIRE(!renderer.empty());
@@ -261,6 +527,19 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
     ARPG_REQUIRE(!formal.empty());
     ARPG_REQUIRE(!validator.empty());
     ARPG_REQUIRE(!validator_self_test.empty());
+
+    const std::string host_code = cpp_code_only(host);
+    const std::string stage17_runtime_code = cpp_code_only(stage17_runtime);
+    for (const char* stage12_host_only : {
+             "void apply_stage12_material_showcase(",
+             "const bool stage12_item_baseline_frame =",
+             "config.stage12_material_background_only",
+             "config.stage12_material_icons_only",
+             "config.stage12_material_baseline_capture_file"}) {
+        ARPG_REQUIRE(host_code.find(stage12_host_only) != std::string::npos);
+        ARPG_REQUIRE(stage17_runtime_code.find(stage12_host_only)
+            == std::string::npos);
+    }
 
     const std::size_t stage10_input = stage10_11.find(
         "combat::MovementInput stage10_validation_input");

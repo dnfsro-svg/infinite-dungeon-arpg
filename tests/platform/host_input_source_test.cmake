@@ -9,12 +9,15 @@ if(NOT EXISTS "${POISON_HEADER}")
 endif()
 
 file(READ "${RAYLIB_SOURCE_DIR}/raylib_host.cpp" HOST_SOURCE)
+file(READ "${RAYLIB_SOURCE_DIR}/host_validation_stage17_runtime.cpp"
+    STAGE17_RUNTIME_SOURCE)
 file(READ "${RAYLIB_SOURCE_DIR}/inventory_renderer.cpp" INVENTORY_SOURCE)
 file(READ "${RAYLIB_SOURCE_DIR}/host_input.cpp" INPUT_AUTHORITY_SOURCE)
 file(READ "${RAYLIB_SOURCE_DIR}/../../dungeon/dungeon_session.cpp"
     DUNGEON_SESSION_SOURCE)
 file(READ "${POISON_HEADER}" POISON_SOURCE)
 include("${CMAKE_CURRENT_LIST_DIR}/cpp_source_lexer.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
 
 function(require_match_count SOURCE PATTERN EXPECTED LABEL)
     string(REGEX MATCHALL "${PATTERN}" MATCHES "${SOURCE}")
@@ -174,16 +177,332 @@ const std::unique_ptr<HostValidationStates> validation_states{
     return()
 endif()
 
+# arpg_sanitize_cpp_source performs translation phase 2 before returning its
+# logical-line source. Conditional code is never unconditional evidence, so
+# mask every complete conditional group after the shared lexer has folded LF
+# and CRLF splices.
+function(mask_cpp_inactive_preprocessor_regions SOURCE OUT_SOURCE)
+    string(LENGTH "${SOURCE}" SOURCE_LENGTH)
+    set(MASKED_SOURCE "")
+    set(BRANCH_BOUNDARY "__ARPG_PREPROCESSOR_BRANCH_BOUNDARY__;")
+    set(LINE_CURSOR 0)
+    set(CONDITIONAL_DEPTH 0)
+    while(LINE_CURSOR LESS SOURCE_LENGTH)
+        string(SUBSTRING "${SOURCE}" ${LINE_CURSOR} -1 SOURCE_TAIL)
+        string(FIND "${SOURCE_TAIL}" "\n" NEWLINE_RELATIVE)
+        if(NEWLINE_RELATIVE EQUAL -1)
+            set(SOURCE_LINE "${SOURCE_TAIL}")
+            set(HAS_NEWLINE FALSE)
+            set(LINE_CURSOR ${SOURCE_LENGTH})
+        else()
+            string(SUBSTRING "${SOURCE_TAIL}"
+                0 ${NEWLINE_RELATIVE} SOURCE_LINE)
+            set(HAS_NEWLINE TRUE)
+            math(EXPR LINE_CURSOR
+                "${LINE_CURSOR} + ${NEWLINE_RELATIVE} + 1")
+        endif()
+
+        set(CONDITIONAL_DIRECTIVE FALSE)
+        set(DIRECTIVE_COMMAND "")
+        if("${SOURCE_LINE}" MATCHES
+                "^[ \\t]*#[ \\t]*([A-Za-z_][A-Za-z0-9_]*)(.*)$")
+            set(DIRECTIVE_COMMAND "${CMAKE_MATCH_1}")
+        endif()
+        if(DIRECTIVE_COMMAND STREQUAL "if"
+                OR DIRECTIVE_COMMAND STREQUAL "ifdef"
+                OR DIRECTIVE_COMMAND STREQUAL "ifndef")
+            set(CONDITIONAL_DIRECTIVE TRUE)
+            math(EXPR CONDITIONAL_DEPTH "${CONDITIONAL_DEPTH} + 1")
+        elseif(DIRECTIVE_COMMAND STREQUAL "elif"
+                OR DIRECTIVE_COMMAND STREQUAL "else")
+            set(CONDITIONAL_DIRECTIVE TRUE)
+            if(CONDITIONAL_DEPTH EQUAL 0)
+                message(FATAL_ERROR
+                    "inactive preprocessor scan found ${DIRECTIVE_COMMAND} without #if")
+            endif()
+        elseif(DIRECTIVE_COMMAND STREQUAL "endif")
+            set(CONDITIONAL_DIRECTIVE TRUE)
+            if(CONDITIONAL_DEPTH EQUAL 0)
+                message(FATAL_ERROR
+                    "inactive preprocessor scan found #endif without #if")
+            endif()
+            math(EXPR CONDITIONAL_DEPTH "${CONDITIONAL_DEPTH} - 1")
+        endif()
+
+        if(CONDITIONAL_DIRECTIVE)
+            string(APPEND MASKED_SOURCE "${BRANCH_BOUNDARY}")
+        elseif(CONDITIONAL_DEPTH EQUAL 0)
+            string(APPEND MASKED_SOURCE "${SOURCE_LINE}")
+        endif()
+        if(HAS_NEWLINE OR CONDITIONAL_DIRECTIVE)
+            string(APPEND MASKED_SOURCE "\n")
+        endif()
+    endwhile()
+    if(NOT CONDITIONAL_DEPTH EQUAL 0)
+        message(FATAL_ERROR
+            "inactive preprocessor scan found unterminated conditional")
+    endif()
+    set("${OUT_SOURCE}" "${MASKED_SOURCE}" PARENT_SCOPE)
+endfunction()
+
 arpg_sanitize_cpp_source("${HOST_SOURCE}" SANITIZED_HOST_SOURCE)
+arpg_sanitize_cpp_source("${STAGE17_RUNTIME_SOURCE}"
+    SANITIZED_STAGE17_RUNTIME_SOURCE)
 arpg_sanitize_cpp_source(
     "${DUNGEON_SESSION_SOURCE}" SANITIZED_DUNGEON_SESSION_SOURCE)
-string(FIND "${SANITIZED_HOST_SOURCE}"
-    "HostExitCode run_raylib_host" SANITIZED_HOST_ENTRY_INDEX)
-if(SANITIZED_HOST_ENTRY_INDEX EQUAL -1)
-    message(FATAL_ERROR "raylib host entry is missing")
+mask_cpp_inactive_preprocessor_regions(
+    "${SANITIZED_HOST_SOURCE}" ACTIVE_SANITIZED_HOST_SOURCE)
+mask_cpp_inactive_preprocessor_regions(
+    "${SANITIZED_STAGE17_RUNTIME_SOURCE}"
+    ACTIVE_SANITIZED_STAGE17_RUNTIME_SOURCE)
+mask_cpp_inactive_preprocessor_regions(
+    "${SANITIZED_DUNGEON_SESSION_SOURCE}"
+    ACTIVE_SANITIZED_DUNGEON_SESSION_SOURCE)
+
+# The shared evidence scanner finds balanced function bodies in already
+# sanitized C++. Require a unique definition first so a forward declaration
+# cannot borrow the next function's opening brace.
+function(find_balanced_cpp_scope_end_from_open
+        SOURCE OPEN_INDEX OUT_END OUT_VALID)
+    string(LENGTH "${SOURCE}" SOURCE_LENGTH)
+    if(OPEN_INDEX LESS 0 OR OPEN_INDEX GREATER_EQUAL SOURCE_LENGTH)
+        set("${OUT_END}" -1 PARENT_SCOPE)
+        set("${OUT_VALID}" FALSE PARENT_SCOPE)
+        return()
+    endif()
+    string(SUBSTRING "${SOURCE}" ${OPEN_INDEX} 1 OPEN_CHARACTER)
+    if(NOT OPEN_CHARACTER STREQUAL "{")
+        set("${OUT_END}" -1 PARENT_SCOPE)
+        set("${OUT_VALID}" FALSE PARENT_SCOPE)
+        return()
+    endif()
+    set(BRACE_CURSOR ${OPEN_INDEX})
+    set(BRACE_DEPTH 0)
+    while(BRACE_CURSOR LESS SOURCE_LENGTH)
+        string(SUBSTRING "${SOURCE}" ${BRACE_CURSOR} -1 BRACE_TAIL)
+        string(FIND "${BRACE_TAIL}" "{" NEXT_OPEN_RELATIVE)
+        string(FIND "${BRACE_TAIL}" "}" NEXT_CLOSE_RELATIVE)
+        if(NEXT_CLOSE_RELATIVE EQUAL -1)
+            set("${OUT_END}" -1 PARENT_SCOPE)
+            set("${OUT_VALID}" FALSE PARENT_SCOPE)
+            return()
+        endif()
+        if(NOT NEXT_OPEN_RELATIVE EQUAL -1
+                AND NEXT_OPEN_RELATIVE LESS NEXT_CLOSE_RELATIVE)
+            math(EXPR BRACE_CURSOR
+                "${BRACE_CURSOR} + ${NEXT_OPEN_RELATIVE} + 1")
+            math(EXPR BRACE_DEPTH "${BRACE_DEPTH} + 1")
+        else()
+            math(EXPR CLOSE_INDEX
+                "${BRACE_CURSOR} + ${NEXT_CLOSE_RELATIVE}")
+            math(EXPR BRACE_DEPTH "${BRACE_DEPTH} - 1")
+            if(BRACE_DEPTH EQUAL 0)
+                set("${OUT_END}" ${CLOSE_INDEX} PARENT_SCOPE)
+                set("${OUT_VALID}" TRUE PARENT_SCOPE)
+                return()
+            endif()
+            math(EXPR BRACE_CURSOR "${CLOSE_INDEX} + 1")
+        endif()
+    endwhile()
+    set("${OUT_END}" -1 PARENT_SCOPE)
+    set("${OUT_VALID}" FALSE PARENT_SCOPE)
+endfunction()
+
+function(try_extract_cpp_function_definition_from_sanitized
+        SOURCE SIGNATURE OUT_SOURCE OUT_VALID)
+    string(FIND "${SOURCE}" "${SIGNATURE}" FUNCTION_BEGIN)
+    if(FUNCTION_BEGIN EQUAL -1)
+        set("${OUT_SOURCE}" "" PARENT_SCOPE)
+        set("${OUT_VALID}" FALSE PARENT_SCOPE)
+        return()
+    endif()
+    string(LENGTH "${SIGNATURE}" SIGNATURE_LENGTH)
+    math(EXPR AFTER_SIGNATURE "${FUNCTION_BEGIN} + ${SIGNATURE_LENGTH}")
+    string(SUBSTRING "${SOURCE}" ${AFTER_SIGNATURE} -1 AFTER_SIGNATURE_SOURCE)
+    string(FIND "${AFTER_SIGNATURE_SOURCE}" "${SIGNATURE}" SECOND_SIGNATURE)
+    if(NOT SECOND_SIGNATURE EQUAL -1)
+        set("${OUT_SOURCE}" "" PARENT_SCOPE)
+        set("${OUT_VALID}" FALSE PARENT_SCOPE)
+        return()
+    endif()
+    string(SUBSTRING "${SOURCE}" ${FUNCTION_BEGIN} -1 FUNCTION_TAIL)
+    string(FIND "${FUNCTION_TAIL}" "{" OPEN_RELATIVE)
+    string(FIND "${FUNCTION_TAIL}" ";" SEMICOLON_RELATIVE)
+    if(OPEN_RELATIVE EQUAL -1
+            OR (NOT SEMICOLON_RELATIVE EQUAL -1
+                AND SEMICOLON_RELATIVE LESS OPEN_RELATIVE))
+        set("${OUT_SOURCE}" "" PARENT_SCOPE)
+        set("${OUT_VALID}" FALSE PARENT_SCOPE)
+        return()
+    endif()
+    math(EXPR FUNCTION_OPEN "${FUNCTION_BEGIN} + ${OPEN_RELATIVE}")
+    find_balanced_cpp_scope_end_from_open(
+        "${SOURCE}" ${FUNCTION_OPEN} FUNCTION_END FUNCTION_SCOPE_VALID)
+    if(NOT FUNCTION_SCOPE_VALID)
+        set("${OUT_SOURCE}" "" PARENT_SCOPE)
+        set("${OUT_VALID}" FALSE PARENT_SCOPE)
+        return()
+    endif()
+    math(EXPR FUNCTION_LENGTH "${FUNCTION_END} - ${FUNCTION_BEGIN} + 1")
+    string(SUBSTRING "${SOURCE}"
+        ${FUNCTION_BEGIN} ${FUNCTION_LENGTH} FUNCTION_SOURCE)
+    set("${OUT_SOURCE}" "${FUNCTION_SOURCE}" PARENT_SCOPE)
+    set("${OUT_VALID}" TRUE PARENT_SCOPE)
+endfunction()
+
+function(require_cpp_function_definition_from_sanitized
+        SOURCE SIGNATURE LABEL OUT_SOURCE)
+    try_extract_cpp_function_definition_from_sanitized(
+        "${SOURCE}" "${SIGNATURE}" FUNCTION_SOURCE FUNCTION_VALID)
+    if(NOT FUNCTION_VALID)
+        message(FATAL_ERROR
+            "${LABEL} must have one concrete function definition")
+    endif()
+    set("${OUT_SOURCE}" "${FUNCTION_SOURCE}" PARENT_SCOPE)
+endfunction()
+
+# Retain normal control-flow blocks, but mask nested lambdas and statically dead
+# branches. Evidence inside those scopes is not direct executable evidence for
+# the named production function.
+function(mask_cpp_non_direct_executable_scopes SOURCE OUT_SOURCE)
+    string(LENGTH "${SOURCE}" SOURCE_LENGTH)
+    if(SOURCE_LENGTH EQUAL 0)
+        set("${OUT_SOURCE}" "" PARENT_SCOPE)
+        return()
+    endif()
+    set(MASKED_SOURCE "")
+    set(COPY_CURSOR 0)
+    while(COPY_CURSOR LESS SOURCE_LENGTH)
+        string(SUBSTRING "${SOURCE}" ${COPY_CURSOR} -1 SOURCE_TAIL)
+        string(REGEX MATCH
+            "\\][ \\t\\r\\n]*(\\([^{};]*\\))?[ \\t\\r\\n]*(mutable[ \\t\\r\\n]*)?(noexcept([ \\t\\r\\n]*\\([^{};]*\\))?[ \\t\\r\\n]*)?(->[^{;]*)?[ \\t\\r\\n]*\\{"
+            LAMBDA_SCOPE_MATCH "${SOURCE_TAIL}")
+        string(REGEX MATCH
+            "(if|while)[ \\t\\r\\n]*(constexpr[ \\t\\r\\n]*)?\\([ \\t\\r\\n]*(false|0[uUlL]*|![ \\t\\r\\n]*true)[ \\t\\r\\n]*\\)[ \\t\\r\\n]*(do[ \\t\\r\\n]*)?([^{;]*\\{|[^{};]*;)"
+            DEAD_SCOPE_MATCH "${SOURCE_TAIL}")
+        set(SCOPE_MATCH "")
+        set(SCOPE_MATCH_RELATIVE -1)
+        set(SCOPE_MATCH_KIND "")
+        if(NOT LAMBDA_SCOPE_MATCH STREQUAL "")
+            string(FIND "${SOURCE_TAIL}"
+                "${LAMBDA_SCOPE_MATCH}" SCOPE_MATCH_RELATIVE)
+            set(SCOPE_MATCH "${LAMBDA_SCOPE_MATCH}")
+            set(SCOPE_MATCH_KIND lambda)
+        endif()
+        if(NOT DEAD_SCOPE_MATCH STREQUAL "")
+            string(FIND "${SOURCE_TAIL}"
+                "${DEAD_SCOPE_MATCH}" DEAD_SCOPE_RELATIVE)
+            if(SCOPE_MATCH_RELATIVE EQUAL -1
+                    OR DEAD_SCOPE_RELATIVE LESS SCOPE_MATCH_RELATIVE)
+                set(SCOPE_MATCH "${DEAD_SCOPE_MATCH}")
+                set(SCOPE_MATCH_RELATIVE ${DEAD_SCOPE_RELATIVE})
+                set(SCOPE_MATCH_KIND dead-control)
+            endif()
+        endif()
+        if(SCOPE_MATCH_RELATIVE EQUAL -1)
+            string(APPEND MASKED_SOURCE "${SOURCE_TAIL}")
+            break()
+        endif()
+        string(FIND "${SCOPE_MATCH}" "{" OPEN_IN_MATCH)
+        math(EXPR MATCH_INDEX "${COPY_CURSOR} + ${SCOPE_MATCH_RELATIVE}")
+        if(SCOPE_MATCH_KIND STREQUAL "dead-control")
+            set(REMOVE_BEGIN ${MATCH_INDEX})
+        else()
+            math(EXPR REMOVE_BEGIN "${MATCH_INDEX} + ${OPEN_IN_MATCH}")
+        endif()
+        math(EXPR COPY_LENGTH "${REMOVE_BEGIN} - ${COPY_CURSOR}")
+        if(COPY_LENGTH GREATER 0)
+            string(SUBSTRING "${SOURCE}"
+                ${COPY_CURSOR} ${COPY_LENGTH} COPY_CHUNK)
+            string(APPEND MASKED_SOURCE "${COPY_CHUNK}")
+        endif()
+        if(OPEN_IN_MATCH EQUAL -1)
+            string(LENGTH "${SCOPE_MATCH}" SCOPE_MATCH_LENGTH)
+            math(EXPR SCOPE_END
+                "${MATCH_INDEX} + ${SCOPE_MATCH_LENGTH} - 1")
+        else()
+            math(EXPR OPEN_INDEX "${MATCH_INDEX} + ${OPEN_IN_MATCH}")
+            find_balanced_cpp_scope_end_from_open(
+                "${SOURCE}" ${OPEN_INDEX} SCOPE_END SCOPE_VALID)
+            if(NOT SCOPE_VALID)
+                message(FATAL_ERROR
+                    "direct executable scope mutation has no closing brace")
+            endif()
+        endif()
+        math(EXPR COPY_CURSOR "${SCOPE_END} + 1")
+    endwhile()
+    set("${OUT_SOURCE}" "${MASKED_SOURCE}" PARENT_SCOPE)
+endfunction()
+
+function(direct_cpp_fragment_present FUNCTION_SOURCE FRAGMENT OUT_VALID)
+    mask_cpp_non_direct_executable_scopes(
+        "${FUNCTION_SOURCE}" DIRECT_FUNCTION_SOURCE)
+    string(FIND "${DIRECT_FUNCTION_SOURCE}" "${FRAGMENT}" FRAGMENT_INDEX)
+    if(FRAGMENT_INDEX EQUAL -1)
+        set("${OUT_VALID}" FALSE PARENT_SCOPE)
+    else()
+        set("${OUT_VALID}" TRUE PARENT_SCOPE)
+    endif()
+endfunction()
+
+require_cpp_function_definition_from_sanitized(
+    "${ACTIVE_SANITIZED_HOST_SOURCE}" "HostExitCode run_raylib_host("
+    "raylib host entry" SANITIZED_HOST_ENTRY_SOURCE)
+mask_cpp_non_direct_executable_scopes(
+    "${SANITIZED_HOST_ENTRY_SOURCE}" DIRECT_HOST_ENTRY_SOURCE)
+require_cpp_function_definition_from_sanitized(
+    "${ACTIVE_SANITIZED_STAGE17_RUNTIME_SOURCE}"
+    "void observe_stage17_draw_runtime("
+    "Stage17 draw runtime observer" STAGE17_DRAW_RUNTIME_SOURCE)
+require_cpp_function_definition_from_sanitized(
+    "${ACTIVE_SANITIZED_STAGE17_RUNTIME_SOURCE}"
+    "bool stage17_prepare_isolated_storm("
+    "Stage17 isolated storm preparation" STAGE17_PREPARE_STORM_SOURCE)
+# Reuse the shared evidence scanner on this bounded critical helper. The fast
+# outer extractor avoids rescanning the entire translation unit.
+evidence_find_cpp_function_bounds_in_sanitized(
+    "${STAGE17_PREPARE_STORM_SOURCE}"
+    "bool stage17_prepare_isolated_storm("
+    STAGE17_PREPARE_VERIFIED_BEGIN STAGE17_PREPARE_VERIFIED_OPEN
+    STAGE17_PREPARE_VERIFIED_END)
+string(LENGTH "${STAGE17_PREPARE_STORM_SOURCE}"
+    STAGE17_PREPARE_VERIFIED_LENGTH)
+math(EXPR STAGE17_PREPARE_EXPECTED_END
+    "${STAGE17_PREPARE_VERIFIED_LENGTH} - 1")
+if(NOT STAGE17_PREPARE_VERIFIED_BEGIN EQUAL 0
+        OR NOT STAGE17_PREPARE_VERIFIED_END EQUAL
+            STAGE17_PREPARE_EXPECTED_END)
+    message(FATAL_ERROR
+        "Stage17 isolated storm preparation bounds are unreliable")
 endif()
-string(SUBSTRING "${SANITIZED_HOST_SOURCE}"
-    ${SANITIZED_HOST_ENTRY_INDEX} -1 SANITIZED_HOST_ENTRY_SOURCE)
+require_cpp_function_definition_from_sanitized(
+    "${ACTIVE_SANITIZED_STAGE17_RUNTIME_SOURCE}"
+    "PhysicalKeySnapshot inject_stage17_physical_edges("
+    "Stage17 physical input injection" STAGE17_INJECT_SOURCE)
+require_cpp_function_definition_from_sanitized(
+    "${ACTIVE_SANITIZED_STAGE17_RUNTIME_SOURCE}"
+    "void observe_stage17_snapshot("
+    "Stage17 snapshot observer" STAGE17_SNAPSHOT_SOURCE)
+require_cpp_function_definition_from_sanitized(
+    "${ACTIVE_SANITIZED_STAGE17_RUNTIME_SOURCE}"
+    "void observe_stage17_inventory("
+    "Stage17 inventory observer" STAGE17_INVENTORY_SOURCE)
+require_cpp_function_definition_from_sanitized(
+    "${ACTIVE_SANITIZED_DUNGEON_SESSION_SOURCE}"
+    "void DungeonSession::tick("
+    "DungeonSession::tick" DUNGEON_TICK_SOURCE)
+require_cpp_function_definition_from_sanitized(
+    "${ACTIVE_SANITIZED_DUNGEON_SESSION_SOURCE}"
+    "void DungeonSession::prepare_room_clear("
+    "DungeonSession::prepare_room_clear" PREPARE_ROOM_CLEAR_SOURCE)
+foreach(FUNCTION_SOURCE_NAME IN ITEMS
+        STAGE17_DRAW_RUNTIME_SOURCE STAGE17_PREPARE_STORM_SOURCE
+        STAGE17_INJECT_SOURCE STAGE17_SNAPSHOT_SOURCE
+        STAGE17_INVENTORY_SOURCE DUNGEON_TICK_SOURCE
+        PREPARE_ROOM_CLEAR_SOURCE)
+    mask_cpp_non_direct_executable_scopes(
+        "${${FUNCTION_SOURCE_NAME}}" DIRECT_${FUNCTION_SOURCE_NAME})
+endforeach()
 host_large_state_construction_valid(
     "${SANITIZED_HOST_ENTRY_SOURCE}" HOST_LARGE_STATE_CONSTRUCTION_VALID)
 if(NOT HOST_LARGE_STATE_CONSTRUCTION_VALID)
@@ -270,22 +589,33 @@ endforeach()
 set(PRODUCTION_FINAL_TARGET_CLEAR_GUARD [=[
 handle_player_defeat();
 
-        if (phase_ == RoomPhase::combat && remaining_targets() == 0U) {
-            prepare_room_clear();
+        if (phase_ == RoomPhase::combat) {
+            if (!room_progress_.exits_unlocked
+                    && room_progress_.required_kills != 0U
+                    && room_progress_.defeated_monster_count
+                        >= room_progress_.required_kills) {
+                prepare_room_unlock();
+            } else if (remaining_targets() == 0U) {
+                prepare_room_clear();
+            }
         }
 ]=])
-string(FIND "${SANITIZED_DUNGEON_SESSION_SOURCE}"
+string(FIND "${DIRECT_DUNGEON_TICK_SOURCE}"
     "${PRODUCTION_FINAL_TARGET_CLEAR_GUARD}"
     PRODUCTION_FINAL_TARGET_CLEAR_GUARD_INDEX)
-if(PRODUCTION_FINAL_TARGET_CLEAR_GUARD_INDEX EQUAL -1)
+direct_cpp_fragment_present(
+    "${DUNGEON_TICK_SOURCE}" "${PRODUCTION_FINAL_TARGET_CLEAR_GUARD}"
+    PRODUCTION_FINAL_TARGET_CLEAR_GUARD_VALID)
+if(PRODUCTION_FINAL_TARGET_CLEAR_GUARD_INDEX EQUAL -1
+        OR NOT PRODUCTION_FINAL_TARGET_CLEAR_GUARD_VALID)
     message(FATAL_ERROR
-        "production room-clear must remain behind the final-target gate")
+        "production room-clear must preserve threshold unlock and final-target gates")
 endif()
 string(LENGTH "${PRODUCTION_FINAL_TARGET_CLEAR_GUARD}"
     PRODUCTION_FINAL_TARGET_CLEAR_GUARD_LENGTH)
 math(EXPR PRODUCTION_FINAL_TARGET_CLEAR_GUARD_END
     "${PRODUCTION_FINAL_TARGET_CLEAR_GUARD_INDEX} + ${PRODUCTION_FINAL_TARGET_CLEAR_GUARD_LENGTH}")
-string(SUBSTRING "${SANITIZED_DUNGEON_SESSION_SOURCE}"
+string(SUBSTRING "${DIRECT_DUNGEON_TICK_SOURCE}"
     ${PRODUCTION_FINAL_TARGET_CLEAR_GUARD_END} -1
     DUNGEON_SESSION_AFTER_PRODUCTION_CLEAR)
 string(FIND "${DUNGEON_SESSION_AFTER_PRODUCTION_CLEAR}"
@@ -303,26 +633,39 @@ if (phase_ != RoomPhase::combat || pending_save_.has_value()
             prepare_room_clear();
         }
 ]=])
-string(FIND "${SANITIZED_DUNGEON_SESSION_SOURCE}"
+string(FIND "${DIRECT_DUNGEON_TICK_SOURCE}"
     "${HEALTH_POTION_RETRY_GUARD}" HEALTH_POTION_RETRY_GUARD_INDEX)
-if(HEALTH_POTION_RETRY_GUARD_INDEX EQUAL -1)
+direct_cpp_fragment_present(
+    "${DUNGEON_TICK_SOURCE}" "${HEALTH_POTION_RETRY_GUARD}"
+    HEALTH_POTION_RETRY_GUARD_VALID)
+if(HEALTH_POTION_RETRY_GUARD_INDEX EQUAL -1
+        OR NOT HEALTH_POTION_RETRY_GUARD_VALID)
     message(FATAL_ERROR
         "health-potion retry must reject live targets before room clear")
 endif()
 
-set(LEGACY_FORCED_CLEAR_GUARD [=[
-if (!started_abyss && remaining_targets() != 0U
-            && !has_ground_materials() && !has_claimable_health_potion()) {
-        settle_room_experience();
-        publish_room_clear();
+set(ROOM_CLEAR_PRECONDITION_GUARD [=[
+if (!combat_.has_value() || pending_save_.has_value()
+            || !room_progress_.exits_unlocked
+            || room_progress_.initial_monster_count == 0U
+            || room_progress_.defeated_monster_count
+                != room_progress_.initial_monster_count
+            || remaining_targets() != 0U) {
+        enter_fault(started_abyss
+            ? DungeonFault::invalid_abyss_state
+            : DungeonFault::invalid_item_state);
         return;
     }
 ]=])
-string(FIND "${SANITIZED_DUNGEON_SESSION_SOURCE}"
-    "${LEGACY_FORCED_CLEAR_GUARD}" LEGACY_FORCED_CLEAR_GUARD_INDEX)
-if(LEGACY_FORCED_CLEAR_GUARD_INDEX EQUAL -1)
+string(FIND "${DIRECT_PREPARE_ROOM_CLEAR_SOURCE}"
+    "${ROOM_CLEAR_PRECONDITION_GUARD}" ROOM_CLEAR_PRECONDITION_GUARD_INDEX)
+direct_cpp_fragment_present(
+    "${PREPARE_ROOM_CLEAR_SOURCE}" "${ROOM_CLEAR_PRECONDITION_GUARD}"
+    ROOM_CLEAR_PRECONDITION_GUARD_VALID)
+if(ROOM_CLEAR_PRECONDITION_GUARD_INDEX EQUAL -1
+        OR NOT ROOM_CLEAR_PRECONDITION_GUARD_VALID)
     message(FATAL_ERROR
-        "legacy forced-clear compatibility trigger must remain narrow")
+        "room clear must require threshold unlock and a full clear")
 endif()
 
 set(STAGE17_AUTHORITATIVE_LOADOUT_GUARD [=[
@@ -355,7 +698,7 @@ if (state.step == Stage17ValidationStep::open_inventory
             state.production_cooldown_start_ticks != 0U;
         state.step = Stage17ValidationStep::cooldown_drain;
 ]=])
-string(FIND "${SANITIZED_HOST_SOURCE}"
+string(FIND "${DIRECT_STAGE17_INVENTORY_SOURCE}"
     "${STAGE17_AUTHORITATIVE_LOADOUT_GUARD}"
     STAGE17_AUTHORITATIVE_LOADOUT_GUARD_INDEX)
 if(STAGE17_AUTHORITATIVE_LOADOUT_GUARD_INDEX EQUAL -1)
@@ -374,7 +717,7 @@ if (state.step == Stage17ValidationStep::cooldown_drain
         state.step = Stage17ValidationStep::complete;
     }
 ]=])
-string(FIND "${SANITIZED_HOST_SOURCE}"
+string(FIND "${DIRECT_STAGE17_SNAPSHOT_SOURCE}"
     "${STAGE17_NATURAL_COOLDOWN_DRAIN_GUARD}"
     STAGE17_NATURAL_COOLDOWN_DRAIN_GUARD_INDEX)
 if(STAGE17_NATURAL_COOLDOWN_DRAIN_GUARD_INDEX EQUAL -1)
@@ -382,7 +725,7 @@ if(STAGE17_NATURAL_COOLDOWN_DRAIN_GUARD_INDEX EQUAL -1)
         "Stage17 must naturally drain cooldown through authoritative fixed ticks before shutdown")
 endif()
 require_match_count(
-    "${SANITIZED_HOST_SOURCE}"
+    "${DIRECT_STAGE17_INJECT_SOURCE}"
     "case[ \t\r\n]+Stage17ValidationStep::cooldown_drain:[ \t\r\n]+break"
     1
     "Stage17 cooldown drain injects empty gameplay input")
@@ -390,7 +733,7 @@ set(STAGE17_EXACT_SHUTDOWN_READY_GUARD [=[
 stage17_validation_state->clean_shutdown_exact_ready =
             runtime.clean_shutdown_state() == CleanShutdownState::ready;
 ]=])
-string(FIND "${SANITIZED_HOST_SOURCE}"
+string(FIND "${DIRECT_HOST_ENTRY_SOURCE}"
     "${STAGE17_EXACT_SHUTDOWN_READY_GUARD}"
     STAGE17_EXACT_SHUTDOWN_READY_GUARD_INDEX)
 if(STAGE17_EXACT_SHUTDOWN_READY_GUARD_INDEX EQUAL -1)
@@ -412,7 +755,7 @@ if (!state.storm_approach_locked) {
         state.storm_approach_locked = true;
     }
 ]=])
-string(FIND "${SANITIZED_HOST_SOURCE}" "${STAGE17_STORM_LOCK_ONCE_GUARD}"
+string(FIND "${DIRECT_STAGE17_PREPARE_STORM_SOURCE}" "${STAGE17_STORM_LOCK_ONCE_GUARD}"
     STAGE17_STORM_LOCK_ONCE_GUARD_INDEX)
 if(STAGE17_STORM_LOCK_ONCE_GUARD_INDEX EQUAL -1)
     message(FATAL_ERROR
@@ -426,7 +769,7 @@ if (targets_in_finisher != 1U || !locked_target_in_finisher) {
         return false;
     }
 ]=])
-string(FIND "${SANITIZED_HOST_SOURCE}" "${STAGE17_STORM_FAIL_CLOSED_GUARD}"
+string(FIND "${DIRECT_STAGE17_PREPARE_STORM_SOURCE}" "${STAGE17_STORM_FAIL_CLOSED_GUARD}"
     STAGE17_STORM_FAIL_CLOSED_GUARD_INDEX)
 if(STAGE17_STORM_FAIL_CLOSED_GUARD_INDEX EQUAL -1)
     message(FATAL_ERROR
@@ -438,7 +781,7 @@ if (config.stage17_skill_stones_validation
             state.suppress_draw_captures = true;
             state.step = Stage17ValidationStep::approach_draw;
 ]=])
-string(FIND "${SANITIZED_HOST_SOURCE}" "${STAGE17_STORM_PRELUDE_GUARD}"
+string(FIND "${DIRECT_STAGE17_SNAPSHOT_SOURCE}" "${STAGE17_STORM_PRELUDE_GUARD}"
     STAGE17_STORM_PRELUDE_GUARD_INDEX)
 if(STAGE17_STORM_PRELUDE_GUARD_INDEX EQUAL -1)
     message(FATAL_ERROR
@@ -448,7 +791,7 @@ set(STAGE17_DRAW_TO_TRANSACTIONS_GUARD [=[
 } else if (state.draw_windup_captured && state.draw_captured) {
             state.step = Stage17ValidationStep::open_inventory;
 ]=])
-string(FIND "${SANITIZED_HOST_SOURCE}" "${STAGE17_DRAW_TO_TRANSACTIONS_GUARD}"
+string(FIND "${DIRECT_STAGE17_SNAPSHOT_SOURCE}" "${STAGE17_DRAW_TO_TRANSACTIONS_GUARD}"
     STAGE17_DRAW_TO_TRANSACTIONS_GUARD_INDEX)
 if(STAGE17_DRAW_TO_TRANSACTIONS_GUARD_INDEX EQUAL -1)
     message(FATAL_ERROR
@@ -458,7 +801,7 @@ set(STAGE17_PRELUDE_HIT_GATE_GUARD [=[
 if (state.draw_accepted && state.draw_hit_count == 2U) {
                 state.step = Stage17ValidationStep::approach_storm;
 ]=])
-string(FIND "${SANITIZED_HOST_SOURCE}" "${STAGE17_PRELUDE_HIT_GATE_GUARD}"
+string(FIND "${DIRECT_STAGE17_SNAPSHOT_SOURCE}" "${STAGE17_PRELUDE_HIT_GATE_GUARD}"
     STAGE17_PRELUDE_HIT_GATE_GUARD_INDEX)
 if(STAGE17_PRELUDE_HIT_GATE_GUARD_INDEX EQUAL -1)
     message(FATAL_ERROR
@@ -470,7 +813,7 @@ if (state.storm_threat_pull_locked) {
                 snapshot, input_settings, state.storm_threat_pull_movement);
         }
 ]=])
-string(FIND "${SANITIZED_HOST_SOURCE}"
+string(FIND "${DIRECT_STAGE17_INJECT_SOURCE}"
     "${STAGE17_STORM_THREAT_PULL_GUARD}"
     STAGE17_STORM_THREAT_PULL_GUARD_INDEX)
 if(STAGE17_STORM_THREAT_PULL_GUARD_INDEX EQUAL -1)
@@ -484,12 +827,306 @@ if (config.stage17_skill_stones_validation
             == Stage17SkillStonesValidationScenario::restarted_loadout
         || !presented.combat.has_value()) {
 ]=])
-string(FIND "${SANITIZED_HOST_SOURCE}" "${STAGE17_RENDERER_OBSERVER_GUARD}"
+string(FIND "${DIRECT_STAGE17_DRAW_RUNTIME_SOURCE}" "${STAGE17_RENDERER_OBSERVER_GUARD}"
     STAGE17_RENDERER_OBSERVER_GUARD_INDEX)
 if(STAGE17_RENDERER_OBSERVER_GUARD_INDEX EQUAL -1)
     message(FATAL_ERROR
         "Stage17 renderer evidence must observe production and storm scenarios")
 endif()
+
+function(require_direct_scope_mutations_rejected
+        FUNCTION_SOURCE FRAGMENT MUTATION_PREFIX)
+    set(ACCEPTED_MUTATIONS)
+    foreach(MUTATION_KIND IN ITEMS
+            uncalled-lambda dead-if-braced dead-if-unbraced
+            dead-zero-u-braced dead-not-true-braced dead-do-while)
+        if(MUTATION_KIND STREQUAL "uncalled-lambda")
+            set(MUTATION_REPLACEMENT
+                "const auto evidence_spoof = [&]() {\n${FRAGMENT}\n};")
+        elseif(MUTATION_KIND STREQUAL "dead-if-braced")
+            set(MUTATION_REPLACEMENT "if (false) {\n${FRAGMENT}\n}")
+        elseif(MUTATION_KIND STREQUAL "dead-if-unbraced")
+            set(MUTATION_REPLACEMENT "if (false)\n${FRAGMENT}")
+        elseif(MUTATION_KIND STREQUAL "dead-zero-u-braced")
+            set(MUTATION_REPLACEMENT "if (0U) {\n${FRAGMENT}\n}")
+        elseif(MUTATION_KIND STREQUAL "dead-not-true-braced")
+            set(MUTATION_REPLACEMENT "if (!true) {\n${FRAGMENT}\n}")
+        else()
+            set(MUTATION_REPLACEMENT
+                "if (false) do {\n${FRAGMENT}\n} while (false);")
+        endif()
+        string(REPLACE "${FRAGMENT}" "${MUTATION_REPLACEMENT}"
+            MUTATED_FUNCTION_SOURCE "${FUNCTION_SOURCE}")
+        if(MUTATED_FUNCTION_SOURCE STREQUAL FUNCTION_SOURCE)
+            message(FATAL_ERROR
+                "${MUTATION_PREFIX}-${MUTATION_KIND} mutation setup did not modify its function")
+        endif()
+        direct_cpp_fragment_present(
+            "${MUTATED_FUNCTION_SOURCE}" "${FRAGMENT}" MUTATION_VALID)
+        if(MUTATION_VALID)
+            list(APPEND ACCEPTED_MUTATIONS
+                "${MUTATION_PREFIX}-${MUTATION_KIND}")
+        endif()
+    endforeach()
+    if(ACCEPTED_MUTATIONS)
+        list(JOIN ACCEPTED_MUTATIONS ", " ACCEPTED_MUTATION_NAMES)
+        message(FATAL_ERROR
+            "direct executable guard accepted mutations: ${ACCEPTED_MUTATION_NAMES}")
+    endif()
+endfunction()
+
+function(require_cross_scope_mutation_rejected
+        SANITIZED_SOURCE SIGNATURE FRAGMENT MUTATION_NAME)
+    string(REPLACE "${FRAGMENT}" ""
+        MUTATED_SOURCE "${SANITIZED_SOURCE}")
+    if(MUTATED_SOURCE STREQUAL SANITIZED_SOURCE)
+        message(FATAL_ERROR
+            "${MUTATION_NAME} mutation setup did not remove target evidence")
+    endif()
+    string(APPEND MUTATED_SOURCE
+        "\nvoid evidence_cross_scope_spoof() {\n${FRAGMENT}\n}\n")
+    try_extract_cpp_function_definition_from_sanitized(
+        "${MUTATED_SOURCE}" "${SIGNATURE}"
+        MUTATED_FUNCTION MUTATED_FUNCTION_VALID)
+    if(NOT MUTATED_FUNCTION_VALID)
+        message(FATAL_ERROR
+            "${MUTATION_NAME} mutation setup lost the target function definition")
+    endif()
+    direct_cpp_fragment_present(
+        "${MUTATED_FUNCTION}" "${FRAGMENT}" MUTATION_VALID)
+    if(MUTATION_VALID)
+        message(FATAL_ERROR
+            "direct executable guard accepted mutation: ${MUTATION_NAME}")
+    endif()
+endfunction()
+
+function(require_inactive_preprocessor_mutations_rejected
+        SANITIZED_SOURCE SIGNATURE FRAGMENT MUTATION_PREFIX)
+    set(ACCEPTED_MUTATIONS)
+    foreach(MUTATION_KIND IN ITEMS
+            ordinary nested unknown-first-elif-zero
+            unknown-first-elif-one-else hex-zero)
+        if(MUTATION_KIND STREQUAL "ordinary")
+            set(MUTATION_REPLACEMENT
+                "#if(0)\n${FRAGMENT}\n#endif")
+        elseif(MUTATION_KIND STREQUAL "nested")
+            set(MUTATION_REPLACEMENT
+                "#if 0\n#if 0\n#else\n${FRAGMENT}\n#endif\n#elif false\n${FRAGMENT}\n#else\n#endif")
+        elseif(MUTATION_KIND STREQUAL "unknown-first-elif-zero")
+            set(MUTATION_REPLACEMENT
+                "#if ARPG_REVIEW_UNKNOWN\n#elif 0\n${FRAGMENT}\n#else\n#endif")
+        elseif(MUTATION_KIND STREQUAL "unknown-first-elif-one-else")
+            set(MUTATION_REPLACEMENT
+                "#if ARPG_REVIEW_UNKNOWN\n#elif 1\n#else\n${FRAGMENT}\n#endif")
+        else()
+            set(MUTATION_REPLACEMENT
+                "#if 0x0\n${FRAGMENT}\n#endif")
+        endif()
+        string(REPLACE "${FRAGMENT}" "${MUTATION_REPLACEMENT}"
+            MUTATED_SOURCE "${SANITIZED_SOURCE}")
+        if(MUTATED_SOURCE STREQUAL SANITIZED_SOURCE)
+            message(FATAL_ERROR
+                "${MUTATION_PREFIX}-${MUTATION_KIND} inactive mutation setup did not modify source")
+        endif()
+        mask_cpp_inactive_preprocessor_regions(
+            "${MUTATED_SOURCE}" ACTIVE_MUTATED_SOURCE)
+        try_extract_cpp_function_definition_from_sanitized(
+            "${ACTIVE_MUTATED_SOURCE}" "${SIGNATURE}"
+            MUTATED_FUNCTION MUTATED_FUNCTION_VALID)
+        if(NOT MUTATED_FUNCTION_VALID)
+            message(FATAL_ERROR
+                "${MUTATION_PREFIX}-${MUTATION_KIND} inactive mutation lost target function")
+        endif()
+        direct_cpp_fragment_present(
+            "${MUTATED_FUNCTION}" "${FRAGMENT}" MUTATION_VALID)
+        if(MUTATION_VALID)
+            list(APPEND ACCEPTED_MUTATIONS
+                "${MUTATION_PREFIX}-${MUTATION_KIND}")
+        endif()
+    endforeach()
+    if(ACCEPTED_MUTATIONS)
+        list(JOIN ACCEPTED_MUTATIONS ", " ACCEPTED_MUTATION_NAMES)
+        message(FATAL_ERROR
+            "inactive preprocessor guard accepted mutations: ${ACCEPTED_MUTATION_NAMES}")
+    endif()
+endfunction()
+
+function(require_mutually_exclusive_fragment_split_rejected
+        FUNCTION_SOURCE SIGNATURE FRAGMENT MUTATION_NAME)
+    string(FIND "${FRAGMENT}" "\n\n" SPLIT_INDEX)
+    if(SPLIT_INDEX LESS 1)
+        message(FATAL_ERROR
+            "${MUTATION_NAME} requires a non-empty first statement before a double newline")
+    endif()
+    math(EXPR SECOND_BEGIN "${SPLIT_INDEX} + 2")
+    string(LENGTH "${FRAGMENT}" FRAGMENT_LENGTH)
+    if(SECOND_BEGIN GREATER_EQUAL FRAGMENT_LENGTH)
+        message(FATAL_ERROR
+            "${MUTATION_NAME} requires a non-empty fragment after the double newline")
+    endif()
+    string(SUBSTRING "${FRAGMENT}" 0 ${SPLIT_INDEX} FIRST_BRANCH_FRAGMENT)
+    string(SUBSTRING "${FRAGMENT}" ${SECOND_BEGIN} -1 SECOND_BRANCH_FRAGMENT)
+    set(MUTATION_REPLACEMENT
+        "#if ARPG_REVIEW_UNKNOWN\n${FIRST_BRANCH_FRAGMENT}\n#else\n${SECOND_BRANCH_FRAGMENT}\n#endif")
+    string(REPLACE "${FRAGMENT}" "${MUTATION_REPLACEMENT}"
+        MUTATED_SOURCE "${FUNCTION_SOURCE}")
+    if(MUTATED_SOURCE STREQUAL FUNCTION_SOURCE)
+        message(FATAL_ERROR
+            "${MUTATION_NAME} mutation setup did not split the production fragment")
+    endif()
+    mask_cpp_inactive_preprocessor_regions(
+        "${MUTATED_SOURCE}" ACTIVE_MUTATED_SOURCE)
+    try_extract_cpp_function_definition_from_sanitized(
+        "${ACTIVE_MUTATED_SOURCE}" "${SIGNATURE}"
+        MUTATED_FUNCTION MUTATED_FUNCTION_VALID)
+    if(NOT MUTATED_FUNCTION_VALID)
+        message(FATAL_ERROR
+            "${MUTATION_NAME} mutation setup lost the target function")
+    endif()
+    direct_cpp_fragment_present(
+        "${MUTATED_FUNCTION}" "${FRAGMENT}" MUTATION_VALID)
+    if(MUTATION_VALID)
+        message(FATAL_ERROR
+            "inactive preprocessor guard accepted mutation: ${MUTATION_NAME}")
+    endif()
+endfunction()
+
+function(require_inactive_function_definition_rejected
+        FUNCTION_SOURCE SIGNATURE MUTATION_NAME)
+    set(MUTATED_SOURCE
+        "#if 0\n${FUNCTION_SOURCE}\n#else\nvoid evidence_active_branch() {}\n#endif")
+    mask_cpp_inactive_preprocessor_regions(
+        "${MUTATED_SOURCE}" ACTIVE_MUTATED_SOURCE)
+    try_extract_cpp_function_definition_from_sanitized(
+        "${ACTIVE_MUTATED_SOURCE}" "${SIGNATURE}"
+        MUTATED_FUNCTION MUTATED_FUNCTION_VALID)
+    if(MUTATED_FUNCTION_VALID)
+        message(FATAL_ERROR
+            "inactive preprocessor guard accepted mutation: ${MUTATION_NAME}")
+    endif()
+endfunction()
+
+function(require_spliced_inactive_preprocessor_mutations_rejected)
+    string(ASCII 10 LF)
+    string(ASCII 13 CR)
+    string(ASCII 92 BACKSLASH)
+    set(SPLICE_FRAGMENT "evidence_marker();")
+    set(ACCEPTED_MUTATIONS)
+    foreach(MUTATION_KIND IN ITEMS spliced-lf spliced-crlf)
+        if(MUTATION_KIND STREQUAL "spliced-lf")
+            set(SPLICE_EOL "${LF}")
+        else()
+            set(SPLICE_EOL "${CR}${LF}")
+        endif()
+        set(RAW_FIXTURE
+            "void evidence_splice_fixture() {\n#${BACKSLASH}${SPLICE_EOL}if 0\n${SPLICE_FRAGMENT}\n#${BACKSLASH}${SPLICE_EOL}endif\n}\n")
+        arpg_sanitize_cpp_source("${RAW_FIXTURE}" SANITIZED_FIXTURE)
+        string(FIND "${SANITIZED_FIXTURE}" "#if 0" FOLDED_IF_INDEX)
+        string(FIND "${SANITIZED_FIXTURE}" "#endif" FOLDED_ENDIF_INDEX)
+        if(FOLDED_IF_INDEX EQUAL -1 OR FOLDED_ENDIF_INDEX EQUAL -1)
+            message(FATAL_ERROR
+                "inactive preprocessor ${MUTATION_KIND} setup did not fold phase-2 splice")
+        endif()
+        mask_cpp_inactive_preprocessor_regions(
+            "${SANITIZED_FIXTURE}" ACTIVE_FIXTURE)
+        try_extract_cpp_function_definition_from_sanitized(
+            "${ACTIVE_FIXTURE}" "void evidence_splice_fixture("
+            FIXTURE_FUNCTION FIXTURE_FUNCTION_VALID)
+        if(NOT FIXTURE_FUNCTION_VALID)
+            message(FATAL_ERROR
+                "inactive preprocessor ${MUTATION_KIND} setup lost fixture function")
+        endif()
+        direct_cpp_fragment_present(
+            "${FIXTURE_FUNCTION}" "${SPLICE_FRAGMENT}" MUTATION_VALID)
+        if(MUTATION_VALID)
+            list(APPEND ACCEPTED_MUTATIONS
+                "inactive-preprocessor-${MUTATION_KIND}")
+        endif()
+    endforeach()
+    if(ACCEPTED_MUTATIONS)
+        list(JOIN ACCEPTED_MUTATIONS ", " ACCEPTED_MUTATION_NAMES)
+        message(FATAL_ERROR
+            "inactive preprocessor guard accepted mutations: ${ACCEPTED_MUTATION_NAMES}")
+    endif()
+endfunction()
+
+# Named negative controls prove that semantic evidence cannot be borrowed from
+# non-executed or unrelated scopes.
+require_direct_scope_mutations_rejected(
+    "${STAGE17_PREPARE_STORM_SOURCE}"
+    "${STAGE17_STORM_LOCK_ONCE_GUARD}"
+    "stage17-storm-lock")
+require_direct_scope_mutations_rejected(
+    "${STAGE17_SNAPSHOT_SOURCE}"
+    "${STAGE17_NATURAL_COOLDOWN_DRAIN_GUARD}"
+    "stage17-cooldown-drain")
+require_direct_scope_mutations_rejected(
+    "${SANITIZED_HOST_ENTRY_SOURCE}"
+    "${STAGE17_EXACT_SHUTDOWN_READY_GUARD}"
+    "stage17-exact-shutdown")
+require_cross_scope_mutation_rejected(
+    "${ACTIVE_SANITIZED_STAGE17_RUNTIME_SOURCE}"
+    "PhysicalKeySnapshot inject_stage17_physical_edges("
+    "${STAGE17_STORM_THREAT_PULL_GUARD}"
+    "stage17-storm-threat-pull-cross-scope")
+
+set(STAGE17_PREPARE_STORM_FORWARD_MUTATION
+    "bool stage17_prepare_isolated_storm();\n${ACTIVE_SANITIZED_STAGE17_RUNTIME_SOURCE}")
+try_extract_cpp_function_definition_from_sanitized(
+    "${STAGE17_PREPARE_STORM_FORWARD_MUTATION}"
+    "bool stage17_prepare_isolated_storm("
+    STAGE17_PREPARE_STORM_FORWARD_FUNCTION
+    STAGE17_PREPARE_STORM_FORWARD_VALID)
+if(STAGE17_PREPARE_STORM_FORWARD_VALID)
+    message(FATAL_ERROR
+        "function definition guard accepted mutation: stage17-prepare-isolated-storm-forward")
+endif()
+
+require_direct_scope_mutations_rejected(
+    "${DUNGEON_TICK_SOURCE}"
+    "${PRODUCTION_FINAL_TARGET_CLEAR_GUARD}"
+    "dungeon-tick-final-target")
+require_direct_scope_mutations_rejected(
+    "${DUNGEON_TICK_SOURCE}"
+    "${HEALTH_POTION_RETRY_GUARD}"
+    "dungeon-tick-health-potion-retry")
+require_direct_scope_mutations_rejected(
+    "${PREPARE_ROOM_CLEAR_SOURCE}"
+    "${ROOM_CLEAR_PRECONDITION_GUARD}"
+    "dungeon-prepare-room-clear-precondition")
+require_inactive_preprocessor_mutations_rejected(
+    "${STAGE17_PREPARE_STORM_SOURCE}"
+    "bool stage17_prepare_isolated_storm("
+    "${STAGE17_STORM_LOCK_ONCE_GUARD}"
+    "stage17-storm-lock-inactive")
+require_inactive_preprocessor_mutations_rejected(
+    "${DUNGEON_TICK_SOURCE}"
+    "void DungeonSession::tick("
+    "${HEALTH_POTION_RETRY_GUARD}"
+    "dungeon-tick-health-potion-inactive")
+require_inactive_preprocessor_mutations_rejected(
+    "${PREPARE_ROOM_CLEAR_SOURCE}"
+    "void DungeonSession::prepare_room_clear("
+    "${ROOM_CLEAR_PRECONDITION_GUARD}"
+    "dungeon-prepare-room-clear-inactive")
+require_mutually_exclusive_fragment_split_rejected(
+    "${DUNGEON_TICK_SOURCE}"
+    "void DungeonSession::tick("
+    "${PRODUCTION_FINAL_TARGET_CLEAR_GUARD}"
+    "dungeon-tick-final-target-mutually-exclusive-branches")
+require_inactive_function_definition_rejected(
+    "${STAGE17_PREPARE_STORM_SOURCE}"
+    "bool stage17_prepare_isolated_storm("
+    "stage17-prepare-function-inactive")
+require_inactive_function_definition_rejected(
+    "${DUNGEON_TICK_SOURCE}"
+    "void DungeonSession::tick("
+    "dungeon-tick-function-inactive")
+require_inactive_function_definition_rejected(
+    "${PREPARE_ROOM_CLEAR_SOURCE}"
+    "void DungeonSession::prepare_room_clear("
+    "dungeon-prepare-room-clear-function-inactive")
+require_spliced_inactive_preprocessor_mutations_rejected()
 
 set(SOURCE_LINE_START "(^|\n)[ \t]*")
 set(SOURCE_LINE_END "[ \t]*(\r?\n|$)")
@@ -502,9 +1139,9 @@ set(ACTIVE_ASSERT_PATTERN
 set(SAMPLE_CALL_LINE_PATTERN
     "${SOURCE_LINE_START}const[ \t]+PhysicalKeySnapshot[ \t]+sampled_physical_keys[ \t]*=[ \t]*sample_physical_keys[ \t]*\\([ \t]*\\)")
 set(STAGE11B_INJECT_CALL_LINE_PATTERN
-    "${SOURCE_LINE_START}const[ \t]+PhysicalKeySnapshot[ \t]+stage11b_physical_keys[ \t]*=[ \t\r\n]*inject_stage11b_physical_edges[ \t]*\\(")
+    "${SOURCE_LINE_START}const[ \t]+PhysicalKeySnapshot[ \t]+stage11b_physical_keys[ \t]*=[ \t\r\n]*(host_validation::)?inject_stage11b_physical_edges[ \t]*\\(")
 set(STAGE11C_INJECT_CALL_LINE_PATTERN
-    "${SOURCE_LINE_START}const[ \t]+PhysicalKeySnapshot[ \t]+stage11c_physical_keys[ \t]*=[ \t]*inject_stage11c_physical_edges[ \t]*\\(")
+    "${SOURCE_LINE_START}const[ \t]+PhysicalKeySnapshot[ \t]+stage11c_physical_keys[ \t]*=[ \t]*(host_validation::)?inject_stage11c_physical_edges[ \t]*\\(")
 set(STAGE11D_INJECT_CALL_LINE_PATTERN
     "${SOURCE_LINE_START}const[ \t]+PhysicalKeySnapshot[ \t]+physical_keys[ \t]*=[ \t]*inject_stage11d_physical_edges[ \t]*\\(")
 set(STAGE17_INJECT_CALL_LINE_PATTERN
@@ -696,7 +1333,7 @@ function(physical_input_chain_valid SOURCE OUT_VARIABLE)
     set(WS1 "[ \t\r\n]+")
     string(FIND "${SOURCE}" "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys()" SAMPLE_INDEX)
     string(FIND "${SOURCE}" "const PhysicalKeySnapshot stage11b_physical_keys =" STAGE11B_INDEX)
-    string(FIND "${SOURCE}" "const PhysicalKeySnapshot stage11c_physical_keys = inject_stage11c_physical_edges(" STAGE11C_INDEX)
+    string(FIND "${SOURCE}" "const PhysicalKeySnapshot stage11c_physical_keys =" STAGE11C_INDEX)
     string(FIND "${SOURCE}" "const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges(" STAGE11D_INDEX)
     string(FIND "${SOURCE}" "const PhysicalKeySnapshot stage17_physical_keys =" STAGE17_INDEX)
     string(FIND "${SOURCE}" "HostFrameInput frame_input = map_host_frame_input(" MAP_INDEX)

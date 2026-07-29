@@ -3,9 +3,218 @@ if(NOT DEFINED RAYLIB_SOURCE_DIR)
 endif()
 
 file(READ "${RAYLIB_SOURCE_DIR}/raylib_host.cpp" HOST_SOURCE)
+file(READ "${RAYLIB_SOURCE_DIR}/host_validation_stage17_runtime.cpp"
+    STAGE17_RUNTIME_SOURCE)
+file(READ "${RAYLIB_SOURCE_DIR}/host_validation_stage11b.cpp"
+    STAGE11B_RUNTIME_SOURCE)
 file(READ "${RAYLIB_SOURCE_DIR}/combat_renderer.cpp" RENDERER_SOURCE)
 include("${CMAKE_CURRENT_LIST_DIR}/cpp_source_lexer.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
+
+# Stage17 runtime ownership is unconditional.  Fold phase-2 splices with the
+# shared lexer, then remove every conditional region so an inactive exact copy
+# cannot satisfy the BASE fingerprint for a weakened active definition.
+function(stage17_unconditional_cpp_surface SOURCE OUT_SURFACE)
+    arpg_sanitize_cpp_source("${SOURCE}" LOGICAL_SOURCE)
+    string(LENGTH "${LOGICAL_SOURCE}" SOURCE_LENGTH)
+    set(CURSOR 0)
+    set(CONDITIONAL_DEPTH 0)
+    set(SURFACE "")
+    while(CURSOR LESS SOURCE_LENGTH)
+        string(SUBSTRING "${LOGICAL_SOURCE}" ${CURSOR} -1 TAIL)
+        string(FIND "${TAIL}" "\n" NEWLINE)
+        if(NEWLINE EQUAL -1)
+            set(LINE "${TAIL}")
+            set(LINE_LENGTH -1)
+        else()
+            math(EXPR LINE_LENGTH "${NEWLINE} + 1")
+            string(SUBSTRING "${TAIL}" 0 ${LINE_LENGTH} LINE)
+        endif()
+        if(LINE MATCHES "^[ \t]*#[ \t]*(if|ifdef|ifndef)([ \t\r\n(]|$)")
+            math(EXPR CONDITIONAL_DEPTH "${CONDITIONAL_DEPTH} + 1")
+        elseif(LINE MATCHES "^[ \t]*#[ \t]*endif([ \t\r\n]|$)")
+            math(EXPR CONDITIONAL_DEPTH "${CONDITIONAL_DEPTH} - 1")
+            if(CONDITIONAL_DEPTH LESS 0)
+                message(FATAL_ERROR "Stage17 injector conditional is unbalanced")
+            endif()
+        elseif(CONDITIONAL_DEPTH EQUAL 0)
+            string(APPEND SURFACE "${LINE}")
+        endif()
+        if(NEWLINE EQUAL -1)
+            break()
+        endif()
+        math(EXPR CURSOR "${CURSOR} + ${LINE_LENGTH}")
+    endwhile()
+    if(NOT CONDITIONAL_DEPTH EQUAL 0)
+        message(FATAL_ERROR "Stage17 injector conditional is unbalanced")
+    endif()
+    set("${OUT_SURFACE}" "${SURFACE}" PARENT_SCOPE)
+endfunction()
+
 arpg_sanitize_cpp_source("${HOST_SOURCE}" HOST_SANITIZED_SOURCE)
+arpg_sanitize_cpp_source("${STAGE17_RUNTIME_SOURCE}"
+    STAGE17_RUNTIME_SANITIZED_SOURCE)
+arpg_sanitize_cpp_source("${STAGE11B_RUNTIME_SOURCE}"
+    STAGE11B_RUNTIME_SANITIZED_SOURCE)
+stage17_unconditional_cpp_surface("${STAGE17_RUNTIME_SOURCE}"
+    STAGE17_RUNTIME_ACTIVE_SOURCE)
+
+if(STAGE17_RUNTIME_ACTIVE_SOURCE MATCHES
+        "(^|[^A-Za-z0-9_])(sample_physical_keys|map_host_frame_input|submit_frame_actions|IsKeyPressed|IsKeyPressedRepeat|IsKeyDown|IsKeyReleased|IsKeyUp|GetKeyPressed|GetCharPressed|IsMouseButtonPressed|IsMouseButtonDown|IsMouseButtonReleased|IsMouseButtonUp|GetMouseX|GetMouseY|GetMousePosition|GetMouseDelta|GetMouseWheelMove|GetMouseWheelMoveV|IsWindowFocused|GetFrameTime)[ \t\r\n]*\\(")
+    message(FATAL_ERROR
+        "Stage17 runtime bypasses the sampled host input snapshot")
+endif()
+function(stage17_injector_is_valid SANITIZED_SOURCE OUT_VALID)
+    stage17_unconditional_cpp_surface("${SANITIZED_SOURCE}" ACTIVE_SOURCE)
+    string(REGEX MATCHALL
+        "PhysicalKeySnapshot[ \t\r\n]+inject_stage17_physical_edges[ \t\r\n]*\\("
+        ACTIVE_DEFINITIONS "${ACTIVE_SOURCE}")
+    list(LENGTH ACTIVE_DEFINITIONS ACTIVE_DEFINITION_COUNT)
+    if(NOT ACTIVE_DEFINITION_COUNT EQUAL 1)
+        set("${OUT_VALID}" FALSE PARENT_SCOPE)
+        return()
+    endif()
+    evidence_find_cpp_function_bounds_in_sanitized("${ACTIVE_SOURCE}"
+        "PhysicalKeySnapshot inject_stage17_physical_edges("
+        FUNCTION_BEGIN FUNCTION_OPEN FUNCTION_END)
+    math(EXPR FUNCTION_LENGTH "${FUNCTION_END} - ${FUNCTION_BEGIN} + 1")
+    string(SUBSTRING "${ACTIVE_SOURCE}" ${FUNCTION_BEGIN}
+        ${FUNCTION_LENGTH} FUNCTION_SOURCE)
+    set(WS "[ \t\r\n]*")
+    string(FIND "${FUNCTION_SOURCE}" "[&]" CAPTURE_BY_REFERENCE_LAMBDA)
+    string(FIND "${FUNCTION_SOURCE}" "[=]" CAPTURE_BY_VALUE_LAMBDA)
+    string(FIND "${FUNCTION_SOURCE}" "if (false)" DEAD_BRANCH_SPACED)
+    string(FIND "${FUNCTION_SOURCE}" "if(false)" DEAD_BRANCH_COMPACT)
+    string(REGEX REPLACE "[ \t\r\n]+" " " FUNCTION_NORMALIZED
+        "${FUNCTION_SOURCE}")
+    # Task 6A is a verbatim structural move.  Lock the complete executable
+    # injector (comments and whitespace excluded), not a subset of tokens that
+    # can be left behind after an early return or inside a decoy lambda.
+    string(SHA256 FUNCTION_SHA256 "${FUNCTION_NORMALIZED}")
+    set(EXPECTED_FUNCTION_SHA256
+        "c9638dd62a65d332e6d179509b340845ab02b42cbf31110fd99bfb651aad9ddd")
+    string(FIND "${FUNCTION_NORMALIZED}"
+        "PhysicalKeySnapshot inject_stage17_physical_edges( PhysicalKeySnapshot snapshot, const RaylibHostConfig& config"
+        SIGNATURE_BINDING)
+    string(FIND "${FUNCTION_NORMALIZED}"
+        "active_skill_loadout_layout( config.window_width, config.window_height)"
+        LAYOUT_BINDING)
+    string(FIND "${FUNCTION_NORMALIZED}"
+        "stage17_prepare_isolated_storm( snapshot, input_settings, *current.combat, current.ecology == dungeon::checkpoint::DungeonElement::fire, state)"
+        STORM_BINDING)
+    string(FIND "${FUNCTION_NORMALIZED}"
+        "stage17_apply_movement( snapshot, input_settings, state.storm_threat_pull_movement)"
+        MOVEMENT_BINDING)
+    string(FIND "${FUNCTION_NORMALIZED}"
+        "stage17_press_action(snapshot, input_settings,"
+        ACTION_BINDING)
+    string(FIND "${FUNCTION_NORMALIZED}"
+        "stage17_click(snapshot, layout." CLICK_BINDING)
+    string(FIND "${FUNCTION_NORMALIZED}"
+        "snapshot.focus_lost || state.suspend_injection) { return snapshot; }"
+        EARLY_RETURN_BINDING)
+    string(FIND "${FUNCTION_NORMALIZED}"
+        "state.capture_pending = Stage17Capture::restarted; break; } return snapshot; }"
+        FINAL_RETURN_BINDING)
+    if(SIGNATURE_BINDING EQUAL -1
+            OR NOT FUNCTION_SHA256 STREQUAL EXPECTED_FUNCTION_SHA256
+            OR LAYOUT_BINDING EQUAL -1
+            OR STORM_BINDING EQUAL -1
+            OR MOVEMENT_BINDING EQUAL -1
+            OR ACTION_BINDING EQUAL -1
+            OR CLICK_BINDING EQUAL -1
+            OR EARLY_RETURN_BINDING EQUAL -1
+            OR FINAL_RETURN_BINDING EQUAL -1
+            OR NOT CAPTURE_BY_REFERENCE_LAMBDA EQUAL -1
+            OR NOT CAPTURE_BY_VALUE_LAMBDA EQUAL -1
+            OR NOT DEAD_BRANCH_SPACED EQUAL -1
+            OR NOT DEAD_BRANCH_COMPACT EQUAL -1)
+        set("${OUT_VALID}" FALSE PARENT_SCOPE)
+        return()
+    endif()
+    set("${OUT_VALID}" TRUE PARENT_SCOPE)
+endfunction()
+
+stage17_injector_is_valid("${STAGE17_RUNTIME_SANITIZED_SOURCE}"
+    STAGE17_INJECTOR_VALID)
+if(NOT STAGE17_INJECTOR_VALID)
+    message(FATAL_ERROR
+        "Stage17 runtime must augment the shared stable input snapshot")
+endif()
+
+set(STAGE17_INJECTOR_MUTATION_ACCEPTANCES)
+string(REPLACE
+    "const ActiveSkillLoadoutLayout layout = active_skill_loadout_layout("
+    "[&] { }; const ActiveSkillLoadoutLayout layout = active_skill_loadout_layout("
+    STAGE17_UNCALLED_LAMBDA_MUTATION
+    "${STAGE17_RUNTIME_SANITIZED_SOURCE}")
+stage17_injector_is_valid("${STAGE17_UNCALLED_LAMBDA_MUTATION}"
+    STAGE17_UNCALLED_LAMBDA_VALID)
+if(STAGE17_UNCALLED_LAMBDA_VALID)
+    list(APPEND STAGE17_INJECTOR_MUTATION_ACCEPTANCES
+        "stage17_inject_uncalled_lambda")
+endif()
+string(REPLACE "config.window_height" "0"
+    STAGE17_LAYOUT_ARGUMENT_MUTATION "${STAGE17_RUNTIME_SANITIZED_SOURCE}")
+stage17_injector_is_valid("${STAGE17_LAYOUT_ARGUMENT_MUTATION}"
+    STAGE17_LAYOUT_ARGUMENT_VALID)
+if(STAGE17_LAYOUT_ARGUMENT_VALID)
+    list(APPEND STAGE17_INJECTOR_MUTATION_ACCEPTANCES
+        "stage17_layout_wrong_argument")
+endif()
+string(REPLACE "return snapshot;" "return PhysicalKeySnapshot{};"
+    STAGE17_SNAPSHOT_RETURN_MUTATION "${STAGE17_RUNTIME_SANITIZED_SOURCE}")
+stage17_injector_is_valid("${STAGE17_SNAPSHOT_RETURN_MUTATION}"
+    STAGE17_SNAPSHOT_RETURN_VALID)
+if(STAGE17_SNAPSHOT_RETURN_VALID)
+    list(APPEND STAGE17_INJECTOR_MUTATION_ACCEPTANCES
+        "stage17_snapshot_return_bypass")
+endif()
+set(STAGE17_INJECTOR_ANCHOR
+    "const ActiveSkillLoadoutLayout layout = active_skill_loadout_layout(")
+string(REPLACE "${STAGE17_INJECTOR_ANCHOR}"
+    "return snapshot; ${STAGE17_INJECTOR_ANCHOR}"
+    STAGE17_EARLY_RETURN_MUTATION "${STAGE17_RUNTIME_SANITIZED_SOURCE}")
+stage17_injector_is_valid("${STAGE17_EARLY_RETURN_MUTATION}"
+    STAGE17_EARLY_RETURN_VALID)
+if(STAGE17_EARLY_RETURN_VALID)
+    list(APPEND STAGE17_INJECTOR_MUTATION_ACCEPTANCES
+        "stage17_inject_early_return")
+endif()
+string(REPLACE "${STAGE17_INJECTOR_ANCHOR}"
+    "auto decoy = [&snapshot, &input_settings, &state] { return snapshot; }; ${STAGE17_INJECTOR_ANCHOR}"
+    STAGE17_CUSTOM_CAPTURE_MUTATION "${STAGE17_RUNTIME_SANITIZED_SOURCE}")
+stage17_injector_is_valid("${STAGE17_CUSTOM_CAPTURE_MUTATION}"
+    STAGE17_CUSTOM_CAPTURE_VALID)
+if(STAGE17_CUSTOM_CAPTURE_VALID)
+    list(APPEND STAGE17_INJECTOR_MUTATION_ACCEPTANCES
+        "stage17_inject_custom_capture_lambda")
+endif()
+string(REPLACE "snapshot.active_skill_slots[4] = true;" ""
+    STAGE17_SLOT_REMOVAL_MUTATION "${STAGE17_RUNTIME_SANITIZED_SOURCE}")
+stage17_injector_is_valid("${STAGE17_SLOT_REMOVAL_MUTATION}"
+    STAGE17_SLOT_REMOVAL_VALID)
+if(STAGE17_SLOT_REMOVAL_VALID)
+    list(APPEND STAGE17_INJECTOR_MUTATION_ACCEPTANCES
+        "stage17_inject_slot_removal")
+endif()
+string(REPLACE "${STAGE17_INJECTOR_ANCHOR}"
+    "return snapshot; ${STAGE17_INJECTOR_ANCHOR}"
+    STAGE17_WEAK_ACTIVE_SOURCE "${STAGE17_RUNTIME_SANITIZED_SOURCE}")
+set(STAGE17_INACTIVE_EXACT_COPY_MUTATION
+    "#if 0\n${STAGE17_RUNTIME_SANITIZED_SOURCE}\n#endif\n${STAGE17_WEAK_ACTIVE_SOURCE}")
+stage17_injector_is_valid("${STAGE17_INACTIVE_EXACT_COPY_MUTATION}"
+    STAGE17_INACTIVE_EXACT_COPY_VALID)
+if(STAGE17_INACTIVE_EXACT_COPY_VALID)
+    list(APPEND STAGE17_INJECTOR_MUTATION_ACCEPTANCES
+        "stage17_inject_inactive_exact_copy")
+endif()
+if(STAGE17_INJECTOR_MUTATION_ACCEPTANCES)
+    list(JOIN STAGE17_INJECTOR_MUTATION_ACCEPTANCES ", "
+        STAGE17_INJECTOR_MUTATION_NAMES)
+    message(FATAL_ERROR
+        "Stage17 input guard accepted mutations: ${STAGE17_INJECTOR_MUTATION_NAMES}")
+endif()
 
 if(HOST_SOURCE MATCHES "SetTargetFPS[ \t\r\n]*\\(")
     message(FATAL_ERROR "raylib host applies a software frame cap on top of VSync")
@@ -96,7 +305,7 @@ function(arpg_physical_input_chain_is_valid SOURCE OUT_VALID)
     set(WS1 "[ \t\r\n]+")
     string(FIND "${SOURCE}" "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys()" SAMPLE_INDEX)
     string(FIND "${SOURCE}" "const PhysicalKeySnapshot stage11b_physical_keys =" STAGE11B_INDEX)
-    string(FIND "${SOURCE}" "const PhysicalKeySnapshot stage11c_physical_keys = inject_stage11c_physical_edges(" STAGE11C_INDEX)
+    string(FIND "${SOURCE}" "const PhysicalKeySnapshot stage11c_physical_keys =" STAGE11C_INDEX)
     string(FIND "${SOURCE}" "const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges(" STAGE11D_INDEX)
     string(FIND "${SOURCE}" "const PhysicalKeySnapshot stage17_physical_keys =" STAGE17_INDEX)
     string(FIND "${SOURCE}" "HostFrameInput frame_input = map_host_frame_input(" MAP_INDEX)
@@ -441,11 +650,11 @@ if(ACCEPTED_GATE_DESCENT_MUTATIONS)
         "input chain self-check accepted mutations: ${ACCEPTED_GATE_DESCENT_MUTATION_NAMES}")
 endif()
 
-string(FIND "${HOST_SANITIZED_SOURCE}"
-    "[[nodiscard]] PhysicalKeySnapshot inject_stage11b_physical_edges("
+string(FIND "${STAGE11B_RUNTIME_SANITIZED_SOURCE}"
+    "PhysicalKeySnapshot inject_stage11b_physical_edges("
     STAGE11B_INJECT_HELPER_START)
-string(FIND "${HOST_SANITIZED_SOURCE}"
-    "[[nodiscard]] bool stage11b_validation_complete("
+string(FIND "${STAGE11B_RUNTIME_SANITIZED_SOURCE}"
+    "bool stage11b_validation_complete("
     STAGE11B_INJECT_HELPER_END)
 if(STAGE11B_INJECT_HELPER_START EQUAL -1 OR STAGE11B_INJECT_HELPER_END EQUAL -1
         OR NOT STAGE11B_INJECT_HELPER_START LESS STAGE11B_INJECT_HELPER_END)
@@ -453,7 +662,7 @@ if(STAGE11B_INJECT_HELPER_START EQUAL -1 OR STAGE11B_INJECT_HELPER_END EQUAL -1
 endif()
 math(EXPR STAGE11B_INJECT_HELPER_LENGTH
     "${STAGE11B_INJECT_HELPER_END} - ${STAGE11B_INJECT_HELPER_START}")
-string(SUBSTRING "${HOST_SANITIZED_SOURCE}" ${STAGE11B_INJECT_HELPER_START}
+string(SUBSTRING "${STAGE11B_RUNTIME_SANITIZED_SOURCE}" ${STAGE11B_INJECT_HELPER_START}
     ${STAGE11B_INJECT_HELPER_LENGTH} STAGE11B_INJECT_HELPER_SOURCE)
 if(NOT STAGE11B_INJECT_HELPER_SOURCE MATCHES
         "config\\.stage11b_validation[ \\t\\n]*==[ \\t\\n]*Stage11BValidationScenario::none"
