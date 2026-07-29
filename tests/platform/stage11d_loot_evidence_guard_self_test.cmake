@@ -5,6 +5,9 @@ set(_guard "${SOURCE_ROOT}/tests/platform/stage11d_loot_evidence_guard_test.cmak
 set(_sequence_guard
     "${SOURCE_ROOT}/tests/platform/host_validation_sequence_guard_test.cmake")
 set(_host "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
+get_filename_component(_host_source_dir "${_host}" DIRECTORY)
+set(_host_validation_runtime
+    "${_host_source_dir}/host_validation_runtime.cpp")
 set(_stage_header
     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d.hpp")
 set(_runtime
@@ -15,8 +18,8 @@ set(_renderer "${SOURCE_ROOT}/src/platform/raylib/combat_renderer.cpp")
 set(_formal "${SOURCE_ROOT}/tests/platform/stage11d_loot_formal_game_validation.cpp")
 set(_validator "${SOURCE_ROOT}/tests/platform/stage11d_loot_formal_validator.ps1")
 foreach(_file IN ITEMS "${_guard}" "${_sequence_guard}" "${_host}"
-        "${_stage_header}" "${_runtime}" "${_report}" "${_renderer}"
-        "${_formal}" "${_validator}")
+        "${_host_validation_runtime}" "${_stage_header}" "${_runtime}"
+        "${_report}" "${_renderer}" "${_formal}" "${_validator}")
     if(NOT EXISTS "${_file}")
         message(FATAL_ERROR "Stage11D guard self-test input is missing: ${_file}")
     endif()
@@ -53,8 +56,12 @@ function(expect_rejected NAME OVERRIDE PATH EXPECTED_REASON)
             return()
         endif()
     endif()
+    set(_guard_options "")
+    if(OVERRIDE STREQUAL "HOST_VALIDATION_RUNTIME")
+        list(APPEND _guard_options "-DSTAGE11D_INPUT_OWNER_ONLY=ON")
+    endif()
     execute_process(COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
-        "-D${OVERRIDE}_OVERRIDE=${PATH}" -P "${_guard}"
+        "-D${OVERRIDE}_OVERRIDE=${PATH}" ${_guard_options} -P "${_guard}"
         RESULT_VARIABLE _result OUTPUT_VARIABLE _output ERROR_VARIABLE _error)
     if(_result EQUAL 0)
         message(FATAL_ERROR "Stage11D loot evidence guard accepted mutation: ${NAME}")
@@ -318,54 +325,115 @@ expect_rejected("host real moved definition" HOST "${_path}"
     "runtime definition in host")
 expect_sequence_rejected("host real moved definition" "${_path}"
     "runtime definition remains in raylib_host.cpp")
-set(_task5a_host_call
-    "const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges(\n                stage11c_physical_keys, config, input_settings, current,\n                stage11d_validation_state);")
-string(REPLACE "${_task5a_host_call}"
-    "const auto stage11d_input_decoy = [&]() noexcept {\n                ${_task5a_host_call}\n                return physical_keys;\n            };\n            const PhysicalKeySnapshot physical_keys = stage11c_physical_keys;"
-    _task5a_host_lambda "${_task5a_red_host_text}")
-if(_task5a_host_lambda STREQUAL _task5a_red_host_text)
-    message(FATAL_ERROR "host-input-lambda mutation made no change")
+file(READ "${_host_validation_runtime}" _task7b_host_validation_runtime_text)
+string(REPLACE "\r\n" "\n" _task7b_host_validation_runtime_text
+    "${_task7b_host_validation_runtime_text}")
+set(_task7b_stage11d_input_leg [=[    const PhysicalKeySnapshot stage11d_physical_keys =
+        host_validation::inject_stage11d_physical_edges(
+            stage11c_physical_keys, *impl_->config, input_settings,
+            dungeon_snapshot, impl_->states.stage11d);]=])
+set(_task7b_stage11d_passthrough [=[    const PhysicalKeySnapshot stage11d_physical_keys =
+        stage11c_physical_keys;]=])
+string(FIND "${_task7b_host_validation_runtime_text}"
+    "${_task7b_stage11d_input_leg}" _task7b_stage11d_input_leg_position)
+if(_task7b_stage11d_input_leg_position EQUAL -1)
+    message(FATAL_ERROR "facade Stage11D input mutation site disappeared")
 endif()
-set(_path "${GUARD_TEST_ROOT}/host-input-uncalled-lambda.cpp")
-file(WRITE "${_path}" "${_task5a_host_lambda}")
-expect_rejected("host input call in uncalled lambda" HOST "${_path}"
-    "host input call scope")
 
-task5a_extract_seam("${_task5a_red_host_text}" runtime_input
-    _task5a_host_input_seam)
-set(_task5a_input_begin
-    "// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN runtime_input")
-set(_task5a_input_end
-    "// STAGE11D_LOOT_VALIDATION_SEAM_END runtime_input")
-string(REPLACE "${_task5a_input_begin}" "" _task5a_host_input_body
-    "${_task5a_host_input_seam}")
-string(REPLACE "${_task5a_input_end}" "" _task5a_host_input_body
-    "${_task5a_host_input_body}")
-set(_task5a_passthrough
-    "            const PhysicalKeySnapshot physical_keys = stage11c_physical_keys;")
-string(REPLACE "${_task5a_host_input_seam}"
-    "/*\n${_task5a_host_input_seam}\n*/\n${_task5a_passthrough}"
-    _task5a_host_input_comment "${_task5a_red_host_text}")
-set(_path "${GUARD_TEST_ROOT}/host-input-comment-decoy.cpp")
-file(WRITE "${_path}" "${_task5a_host_input_comment}")
-expect_rejected("host input comment decoy" HOST "${_path}"
-    "cannot bind host runtime_input seam marker")
+function(task7b_expect_stage11d_input_rejected NAME SLUG REPLACEMENT)
+    string(REPLACE "${_task7b_stage11d_input_leg}" "${REPLACEMENT}"
+        _mutated "${_task7b_host_validation_runtime_text}")
+    if(_mutated STREQUAL _task7b_host_validation_runtime_text)
+        message(FATAL_ERROR "${NAME} mutation made no change")
+    endif()
+    set(_path "${GUARD_TEST_ROOT}/${SLUG}.cpp")
+    file(WRITE "${_path}" "${_mutated}")
+    expect_rejected("${NAME}" HOST_VALIDATION_RUNTIME "${_path}"
+        "rejected host input call binding")
+endfunction()
 
-string(REPLACE "${_task5a_host_input_seam}"
-    "const char* task5a_input_decoy = R\"TASK5A(${_task5a_host_input_seam})TASK5A\";\n${_task5a_passthrough}"
-    _task5a_host_input_string "${_task5a_red_host_text}")
-set(_path "${GUARD_TEST_ROOT}/host-input-string-decoy.cpp")
-file(WRITE "${_path}" "${_task5a_host_input_string}")
-expect_rejected("host input string decoy" HOST "${_path}"
-    "cannot bind host runtime_input seam marker")
+set(_task7b_input_lambda [=[    const auto stage11d_input_decoy = [&]() noexcept {
+]=])
+string(APPEND _task7b_input_lambda
+    "${_task7b_stage11d_input_leg}\n        return stage11d_physical_keys;\n    };\n${_task7b_stage11d_passthrough}")
+task7b_expect_stage11d_input_rejected(
+    "facade Stage11D input in uncalled lambda"
+    "facade-stage11d-input-uncalled-lambda"
+    "${_task7b_input_lambda}")
 
-string(REPLACE "${_task5a_host_input_seam}"
-    "${_task5a_input_begin}\n            if (false) {${_task5a_host_input_body}\n            }\n${_task5a_passthrough}\n${_task5a_input_end}"
-    _task5a_host_input_cross_scope "${_task5a_red_host_text}")
-set(_path "${GUARD_TEST_ROOT}/host-input-if-false.cpp")
-file(WRITE "${_path}" "${_task5a_host_input_cross_scope}")
-expect_rejected("host input call in false scope" HOST "${_path}"
-    "host input call scope")
+set(_task7b_input_comment
+    "/*\n${_task7b_stage11d_input_leg}\n*/\n${_task7b_stage11d_passthrough}")
+task7b_expect_stage11d_input_rejected(
+    "facade Stage11D input comment decoy"
+    "facade-stage11d-input-comment-decoy"
+    "${_task7b_input_comment}")
+
+set(_task7b_input_string [=[    constexpr const char* stage11d_input_decoy =
+        "host_validation::inject_stage11d_physical_edges("
+        "stage11c_physical_keys, *impl_->config, input_settings, "
+        "dungeon_snapshot, impl_->states.stage11d);";
+]=])
+string(APPEND _task7b_input_string "${_task7b_stage11d_passthrough}")
+task7b_expect_stage11d_input_rejected(
+    "facade Stage11D input string decoy"
+    "facade-stage11d-input-string-decoy"
+    "${_task7b_input_string}")
+
+set(_task7b_input_raw
+    "    constexpr const char* stage11d_input_decoy = R\"TASK7B(\n${_task7b_stage11d_input_leg}\n)TASK7B\";\n${_task7b_stage11d_passthrough}")
+task7b_expect_stage11d_input_rejected(
+    "facade Stage11D input raw-string decoy"
+    "facade-stage11d-input-raw-string-decoy"
+    "${_task7b_input_raw}")
+
+set(_task7b_input_inactive
+    "#if 0\n${_task7b_stage11d_input_leg}\n#endif\n${_task7b_stage11d_passthrough}")
+task7b_expect_stage11d_input_rejected(
+    "facade Stage11D input inactive decoy"
+    "facade-stage11d-input-inactive-decoy"
+    "${_task7b_input_inactive}")
+
+set(_task7b_input_cross_scope "${_task7b_stage11d_passthrough}")
+string(REPLACE "${_task7b_stage11d_input_leg}"
+    "${_task7b_input_cross_scope}" _task7b_cross_scope_mutation
+    "${_task7b_host_validation_runtime_text}")
+string(APPEND _task7b_cross_scope_mutation
+    "\nnamespace task7b_input_decoy {\n${_task7b_stage11d_input_leg}\n}\n")
+set(_path "${GUARD_TEST_ROOT}/facade-stage11d-input-cross-scope.cpp")
+file(WRITE "${_path}" "${_task7b_cross_scope_mutation}")
+expect_rejected("facade Stage11D input cross-scope decoy"
+    HOST_VALIDATION_RUNTIME "${_path}"
+    "rejected host input call binding")
+
+set(_task7b_input_wrong_argument [=[    const PhysicalKeySnapshot stage11d_physical_keys =
+        host_validation::inject_stage11d_physical_edges(
+            stage11c_physical_keys, *impl_->config, input_settings,
+            impl_->death_input_snapshot, impl_->states.stage11d);]=])
+task7b_expect_stage11d_input_rejected(
+    "facade Stage11D input wrong argument"
+    "facade-stage11d-input-wrong-argument"
+    "${_task7b_input_wrong_argument}")
+
+set(_task7b_host_crop_end "core::FixedStepFrame frame = host_gate.fixed_step;")
+string(FIND "${_task5a_red_host_text}" "${_task7b_host_crop_end}"
+    _task7b_host_crop_end_position)
+if(_task7b_host_crop_end_position EQUAL -1)
+    message(FATAL_ERROR "host facade input duplicate mutation site disappeared")
+endif()
+set(_task7b_host_spliced_facade_input [=[            static_cast<void>(validation_runtime->inject_phy\
+sical_edges(
+                sampled_physical_keys, input_settings, current,
+                gameplay_rearm_was_required));]=])
+string(REPLACE "${_task7b_host_crop_end}"
+    "${_task7b_host_crop_end}\n${_task7b_host_spliced_facade_input}"
+    _task7b_host_duplicate_facade_input "${_task5a_red_host_text}")
+if(_task7b_host_duplicate_facade_input STREQUAL _task5a_red_host_text)
+    message(FATAL_ERROR "host facade input duplicate mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/host-facade-input-duplicate-outside-crop.cpp")
+file(WRITE "${_path}" "${_task7b_host_duplicate_facade_input}")
+expect_rejected("host facade input duplicate outside crop" HOST "${_path}"
+    "rejected host input call binding")
 
 set(_task5a_pause_call
     "const PauseCommand pause_command = update_pause_menu(\n                pause_menu, pause_context, pause_input);")
@@ -705,5 +773,5 @@ if(DEFINED TASK5A_TARGETED_ONLY AND TASK5A_TARGETED_ONLY)
         "Stage11D Task5A targeted guard test passed: bad_mutations=5; harmless_decoys=2")
 else()
     message(STATUS
-        "Stage11D loot evidence guard self-test passed: bad_mutations=43; harmless_decoys=2")
+        "Stage11D loot evidence guard self-test passed: bad_mutations=47; harmless_decoys=2")
 endif()

@@ -7,6 +7,9 @@ include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
 
 set(_header "${SOURCE_ROOT}/src/platform/raylib/raylib_host.hpp")
 set(_host "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
+get_filename_component(_host_source_dir "${_host}" DIRECTORY)
+set(_host_validation_runtime
+    "${_host_source_dir}/host_validation_runtime.cpp")
 set(_stage_header
     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d.hpp")
 set(_runtime
@@ -21,6 +24,9 @@ if(DEFINED HEADER_OVERRIDE)
 endif()
 if(DEFINED HOST_OVERRIDE)
     set(_host "${HOST_OVERRIDE}")
+endif()
+if(DEFINED HOST_VALIDATION_RUNTIME_OVERRIDE)
+    set(_host_validation_runtime "${HOST_VALIDATION_RUNTIME_OVERRIDE}")
 endif()
 if(DEFINED STAGE11D_HEADER_OVERRIDE)
     set(_stage_header "${STAGE11D_HEADER_OVERRIDE}")
@@ -40,8 +46,9 @@ endif()
 if(DEFINED VALIDATOR_OVERRIDE)
     set(_validator "${VALIDATOR_OVERRIDE}")
 endif()
-foreach(_file IN ITEMS "${_header}" "${_host}" "${_stage_header}"
-        "${_runtime}" "${_report}" "${_renderer}" "${_formal}" "${_validator}")
+foreach(_file IN ITEMS "${_header}" "${_host}" "${_host_validation_runtime}"
+        "${_stage_header}" "${_runtime}" "${_report}" "${_renderer}"
+        "${_formal}" "${_validator}")
     if(NOT EXISTS "${_file}")
         message(FATAL_ERROR "Stage11D loot evidence input is missing: ${_file}")
     endif()
@@ -49,6 +56,7 @@ endforeach()
 
 file(READ "${_header}" _header_text)
 file(READ "${_host}" _host_text)
+file(READ "${_host_validation_runtime}" _host_validation_runtime_text)
 file(READ "${_stage_header}" _stage_header_text)
 file(READ "${_runtime}" _runtime_text)
 file(READ "${_report}" _report_text)
@@ -66,6 +74,88 @@ function(stage11d_count_raw_token SOURCE TOKEN OUT_COUNT)
     math(EXPR _removed "${_source_length} - ${_without_length}")
     math(EXPR _count "${_removed} / ${_token_length}")
     set(${OUT_COUNT} ${_count} PARENT_SCOPE)
+endfunction()
+
+function(stage11d_fold_cpp_phase2_splices SOURCE OUT_SOURCE)
+    string(ASCII 92 _backslash)
+    string(ASCII 13 _carriage_return)
+    string(ASCII 10 _line_feed)
+    set(_folded "${SOURCE}")
+    string(REPLACE "${_backslash}${_carriage_return}${_line_feed}" ""
+        _folded "${_folded}")
+    string(REPLACE "${_backslash}${_line_feed}" ""
+        _folded "${_folded}")
+    set(${OUT_SOURCE} "${_folded}" PARENT_SCOPE)
+endfunction()
+
+# Prove the CMake byte construction for both C++ phase-2 newline forms before
+# relying on the cheap complete-Host inventory below.
+string(ASCII 92 _stage11d_probe_backslash)
+string(ASCII 13 _stage11d_probe_carriage_return)
+string(ASCII 10 _stage11d_probe_line_feed)
+set(_stage11d_probe_expected
+    "validation_runtime->inject_physical_edges(")
+set(_stage11d_probe_lf
+    "validation_runtime->inject_phy${_stage11d_probe_backslash}${_stage11d_probe_line_feed}sical_edges(")
+set(_stage11d_probe_crlf
+    "validation_runtime->inject_phy${_stage11d_probe_backslash}${_stage11d_probe_carriage_return}${_stage11d_probe_line_feed}sical_edges(")
+stage11d_fold_cpp_phase2_splices("${_stage11d_probe_lf}"
+    _stage11d_probe_lf_folded)
+stage11d_fold_cpp_phase2_splices("${_stage11d_probe_crlf}"
+    _stage11d_probe_crlf_folded)
+if(NOT _stage11d_probe_lf_folded STREQUAL _stage11d_probe_expected
+        OR NOT _stage11d_probe_crlf_folded STREQUAL
+            _stage11d_probe_expected)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard cannot fold C++ phase-2 line splices")
+endif()
+
+# Task 7A's facade runtime ownership is unconditional. Fold C++ phase-2
+# splices and remove complete conditional regions so an inactive exact leg
+# cannot satisfy the Stage11D owner binding.
+function(stage11d_unconditional_cpp_surface SOURCE OUT_SURFACE)
+    arpg_sanitize_cpp_source("${SOURCE}" _logical_source)
+    if(ARGC GREATER 2)
+        set(${ARGV2} "${_logical_source}" PARENT_SCOPE)
+    endif()
+    string(LENGTH "${_logical_source}" _source_length)
+    set(_cursor 0)
+    set(_conditional_depth 0)
+    set(_surface "")
+    while(_cursor LESS _source_length)
+        string(SUBSTRING "${_logical_source}" ${_cursor} -1 _tail)
+        string(FIND "${_tail}" "\n" _newline)
+        if(_newline EQUAL -1)
+            set(_line "${_tail}")
+            set(_line_length -1)
+        else()
+            math(EXPR _line_length "${_newline} + 1")
+            string(SUBSTRING "${_tail}" 0 ${_line_length} _line)
+        endif()
+
+        if(_line MATCHES
+                "^[ \t]*#[ \t]*(if|ifdef|ifndef)([ \t\r\n(]|$)")
+            math(EXPR _conditional_depth "${_conditional_depth} + 1")
+        elseif(_line MATCHES "^[ \t]*#[ \t]*endif([ \t\r\n]|$)")
+            math(EXPR _conditional_depth "${_conditional_depth} - 1")
+            if(_conditional_depth LESS 0)
+                message(FATAL_ERROR
+                    "Stage11D facade input conditional is unbalanced")
+            endif()
+        elseif(_conditional_depth EQUAL 0)
+            string(APPEND _surface "${_line}")
+        endif()
+
+        if(_newline EQUAL -1)
+            break()
+        endif()
+        math(EXPR _cursor "${_cursor} + ${_line_length}")
+    endwhile()
+    if(NOT _conditional_depth EQUAL 0)
+        message(FATAL_ERROR
+            "Stage11D facade input conditional is unbalanced")
+    endif()
+    set(${OUT_SURFACE} "${_surface}" PARENT_SCOPE)
 endfunction()
 
 # Replacing the complete `// marker` with an identifier before sanitizing is
@@ -165,6 +255,93 @@ function(stage11d_extract_raw_seam SOURCE LABEL OUT_REGION)
     set(${OUT_REGION} "${_region}" PARENT_SCOPE)
 endfunction()
 
+function(stage11d_validate_facade_input_owner ACTIVE_SURFACE LEXICAL_SURFACE)
+    set(_signature
+        "PhysicalKeySnapshot HostValidationRuntime::inject_physical_edges(")
+    stage11d_count_raw_token("${ACTIVE_SURFACE}" "${_signature}"
+        _active_signature_count)
+    stage11d_count_raw_token("${LEXICAL_SURFACE}" "${_signature}"
+        _lexical_signature_count)
+    if(NOT _active_signature_count EQUAL 1
+            OR NOT _lexical_signature_count EQUAL 1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard rejected host input call binding")
+    endif()
+    string(FIND "${ACTIVE_SURFACE}" "${_signature}" _signature_position)
+    stage11d_code_brace_depth("${ACTIVE_SURFACE}" ${_signature_position}
+        _signature_depth)
+    if(NOT _signature_depth EQUAL 1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard rejected host input call binding")
+    endif()
+
+    evidence_find_cpp_function_bounds_in_sanitized(
+        "${ACTIVE_SURFACE}" "${_signature}"
+        _function_begin _function_open _function_end)
+    math(EXPR _function_length
+        "${_function_end} - ${_function_begin} + 1")
+    string(SUBSTRING "${ACTIVE_SURFACE}" ${_function_begin}
+        ${_function_length} _function)
+    set(_stage11d_call
+        "host_validation::inject_stage11d_physical_edges(")
+    stage11d_count_raw_token("${_function}" "${_stage11d_call}"
+        _stage11d_call_count)
+    string(FIND "${_function}" "${_stage11d_call}"
+        _stage11d_call_position)
+    if(NOT _stage11d_call_count EQUAL 1
+            OR _stage11d_call_position EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard rejected host input call binding")
+    endif()
+    stage11d_code_brace_depth("${_function}" ${_stage11d_call_position}
+        _stage11d_call_depth)
+    if(NOT _stage11d_call_depth EQUAL 1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard rejected host input call binding")
+    endif()
+    string(REGEX REPLACE "[ \t\r\n]+" "" _normalized "${_function}")
+    string(FIND "${_normalized}"
+        "constPhysicalKeySnapshotstage11d_physical_keys=host_validation::inject_stage11d_physical_edges(stage11c_physical_keys,*impl_->config,input_settings,dungeon_snapshot,impl_->states.stage11d);"
+        _binding)
+    if(_binding EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard rejected host input call binding")
+    endif()
+endfunction()
+
+stage11d_unconditional_cpp_surface("${_host_validation_runtime_text}"
+    _host_validation_runtime_code _host_validation_runtime_lexical_code)
+stage11d_validate_facade_input_owner("${_host_validation_runtime_code}"
+    "${_host_validation_runtime_lexical_code}")
+if(DEFINED STAGE11D_INPUT_OWNER_ONLY AND STAGE11D_INPUT_OWNER_ONLY)
+    message(STATUS "Stage11D facade runtime input-owner guard passed")
+    return()
+endif()
+
+set(_host_facade_input_token
+    "validation_runtime->inject_physical_edges(")
+stage11d_fold_cpp_phase2_splices("${_host_text}" _host_phase2_text)
+stage11d_count_raw_token("${_host_phase2_text}"
+    "${_host_facade_input_token}" _host_raw_input_count)
+# The production Host has one raw occurrence. Its active scope, exact
+# arguments and ordering are proven again by the much smaller input crop
+# below. Only ambiguous raw inventories pay for the full 79 KiB lexical and
+# unconditional scans, which distinguish real/inactive duplicates from
+# harmless comment, string and raw-string decoys.
+if(NOT _host_raw_input_count EQUAL 1)
+    stage11d_unconditional_cpp_surface("${_host_text}"
+        _host_active_code _host_lexical_code)
+    stage11d_count_raw_token("${_host_active_code}"
+        "${_host_facade_input_token}" _host_active_input_count)
+    stage11d_count_raw_token("${_host_lexical_code}"
+        "${_host_facade_input_token}" _host_lexical_input_count)
+    if(NOT _host_active_input_count EQUAL 1
+            OR NOT _host_lexical_input_count EQUAL 1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard rejected host input call binding")
+    endif()
+endif()
+
 set(_stage_header_labels state)
 stage11d_prepare_marker_surface("${_stage_header_text}" stage_header
     "${_stage_header_labels}" _stage_header_code)
@@ -183,7 +360,7 @@ stage11d_prepare_marker_surface("${_report_text}" report
     "${_report_labels}" _report_code)
 stage11d_require_marker_depth("${_report_code}" report evidence_semantics 1)
 
-set(_host_labels foreground runtime_state runtime_input
+set(_host_labels foreground runtime_state
     fixed_step abyss_claim presented_semantics reached_merge reached
     visible_capture captured summary)
 string(REPLACE "\r\n" "\n" _host_marker_count_text "${_host_text}")
@@ -216,10 +393,7 @@ if(_host_input_end EQUAL -1)
 endif()
 string(SUBSTRING "${_host_input_tail}" 0 ${_host_input_end}
     _host_input_crop)
-set(_host_input_labels runtime_input)
-stage11d_prepare_marker_surface("${_host_input_crop}" host
-    "${_host_input_labels}" _host_input_code)
-stage11d_require_marker_depth("${_host_input_code}" host runtime_input 0)
+stage11d_unconditional_cpp_surface("${_host_input_crop}" _host_input_code)
 
 string(FIND "${_host_text}"
     "core::FixedStepFrame frame = host_gate.fixed_step;"
@@ -641,7 +815,8 @@ function(stage11d_require_ordered_host_tokens SURFACE EXPECTED_DEPTH)
         string(FIND "${SURFACE}" "${_token}" _position)
         stage11d_code_brace_depth("${SURFACE}" ${_position} _depth)
         if(NOT _depth EQUAL EXPECTED_DEPTH)
-            if(_token STREQUAL "inject_stage11d_physical_edges(")
+            if(_token STREQUAL
+                    "validation_runtime->inject_physical_edges(")
                 message(FATAL_ERROR
                     "Stage11D loot evidence guard rejected host input call scope")
             endif()
@@ -658,10 +833,7 @@ endfunction()
 
 stage11d_require_ordered_host_tokens("${_host_input_code}" 0
     "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();"
-    "host_validation::inject_stage11b_physical_edges("
-    "host_validation::inject_stage11c_physical_edges("
-    "inject_stage11d_physical_edges("
-    "inject_stage17_physical_edges("
+    "validation_runtime->inject_physical_edges("
     "HostFrameInput frame_input = map_host_frame_input(")
 string(FIND "${_host_input_code}"
     "HostFrameInput frame_input = map_host_frame_input(" _host_map_position)
@@ -699,16 +871,50 @@ if(_host_pause_position LESS _host_map_position
         "Stage11D loot evidence guard rejected physical sample-map-pause-submit order")
 endif()
 
-stage11d_extract_marker_region("${_host_input_code}" host runtime_input
-    _host_input_seam)
 string(REGEX REPLACE "[ \t\r\n]+" "" _host_input_normalized
-    "${_host_input_seam}")
+    "${_host_input_code}")
 string(FIND "${_host_input_normalized}"
-    "constPhysicalKeySnapshotphysical_keys=inject_stage11d_physical_edges(stage11c_physical_keys,config,input_settings,current,stage11d_validation_state);"
+    "constPhysicalKeySnapshotstage17_physical_keys=validation_runtime->inject_physical_edges(sampled_physical_keys,input_settings,current,gameplay_rearm_was_required);"
     _host_input_binding)
 if(_host_input_binding EQUAL -1)
     message(FATAL_ERROR
         "Stage11D loot evidence guard rejected host input call binding")
+endif()
+stage11d_count_raw_token("${_host_input_code}"
+    "inject_stage11d_physical_edges(" _host_direct_stage11d_input_count)
+if(NOT _host_direct_stage11d_input_count EQUAL 0)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected host input call binding")
+endif()
+
+set(_host_validation_snapshot_signature
+    "void HostValidationRuntime::observe_snapshot(")
+stage11d_count_raw_token("${_host_validation_runtime_code}"
+    "${_host_validation_snapshot_signature}"
+    _host_validation_snapshot_count)
+if(NOT _host_validation_snapshot_count EQUAL 1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard missing fixed-tick observation token: host_validation::observe_stage17_snapshot(")
+endif()
+evidence_find_cpp_function_bounds_in_sanitized(
+    "${_host_validation_runtime_code}"
+    "${_host_validation_snapshot_signature}"
+    _host_validation_snapshot_begin _host_validation_snapshot_open
+    _host_validation_snapshot_end)
+math(EXPR _host_validation_snapshot_length
+    "${_host_validation_snapshot_end} - ${_host_validation_snapshot_begin} + 1")
+string(SUBSTRING "${_host_validation_runtime_code}"
+    ${_host_validation_snapshot_begin} ${_host_validation_snapshot_length}
+    _host_validation_snapshot_function)
+string(REGEX REPLACE "[ \t\r\n]+" ""
+    _host_validation_snapshot_normalized
+    "${_host_validation_snapshot_function}")
+set(_host_validation_snapshot_expected
+    "voidHostValidationRuntime::observe_snapshot(constdungeon::DungeonSnapshot&snapshot)noexcept{host_validation::observe_stage17_snapshot(*impl_->config,impl_->states.stage17,snapshot);}")
+if(NOT _host_validation_snapshot_normalized STREQUAL
+        _host_validation_snapshot_expected)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard missing fixed-tick observation token: host_validation::observe_stage17_snapshot(")
 endif()
 
 stage11d_extract_marker_region("${_host_fixed_step_code}" host fixed_step
@@ -750,7 +956,7 @@ string(SUBSTRING "${_host_fixed_step_code}" ${_host_fixed_tick_begin} -1
 set(_previous -1)
 foreach(_token IN ITEMS
         "runtime.fixed_tick(" "session->snapshot(current);"
-        "observe_stage17_snapshot("
+        "validation_runtime->observe_snapshot(current);"
         "host_validation::observe_stage11d_abyss_claim(")
     stage11d_count_raw_token("${_host_fixed_tick_loop}" "${_token}" _count)
     if(NOT _count EQUAL 1)
