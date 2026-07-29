@@ -8,6 +8,11 @@ file(READ "${SOURCE_ROOT}/src/platform/raylib/combat_renderer.hpp" _header)
 file(READ "${SOURCE_ROOT}/src/platform/raylib/combat_renderer.cpp" _combat)
 file(READ "${SOURCE_ROOT}/src/platform/raylib/room_renderer.cpp" _room)
 file(READ "${SOURCE_ROOT}/src/platform/raylib/hud_renderer.cpp" _hud)
+file(READ "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp" _host)
+file(READ "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d_report.cpp"
+    _report)
+string(REPLACE "\r\n" "\n" _host "${_host}")
+string(REPLACE "\r\n" "\n" _report "${_report}")
 file(MAKE_DIRECTORY "${GUARD_TEST_ROOT}")
 
 function(stage11d_replace_required OUT_VAR SOURCE BEFORE AFTER LABEL)
@@ -26,13 +31,22 @@ endfunction()
 
 function(stage11d_run_guard_case LABEL COMBAT ROOM HUD EXPECT_PASS EXPECT_REASON)
     set(_root "${GUARD_TEST_ROOT}/${LABEL}")
-    file(MAKE_DIRECTORY "${_root}/src/platform/raylib")
-    file(WRITE "${_root}/src/platform/raylib/combat_renderer.hpp" "${_header}")
-    file(WRITE "${_root}/src/platform/raylib/combat_renderer.cpp" "${COMBAT}")
-    file(WRITE "${_root}/src/platform/raylib/room_renderer.cpp" "${ROOM}")
-    file(WRITE "${_root}/src/platform/raylib/hud_renderer.cpp" "${HUD}")
+    file(MAKE_DIRECTORY "${_root}")
+    set(_header_path "${_root}/combat_renderer.hpp")
+    set(_combat_path "${_root}/combat_renderer.cpp")
+    set(_room_path "${_root}/room_renderer.cpp")
+    set(_hud_path "${_root}/hud_renderer.cpp")
+    file(WRITE "${_header_path}" "${_header}")
+    file(WRITE "${_combat_path}" "${COMBAT}")
+    file(WRITE "${_room_path}" "${ROOM}")
+    file(WRITE "${_hud_path}" "${HUD}")
     execute_process(
-        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${_root}" -P "${_guard}"
+        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+            "-DCOMBAT_HEADER_OVERRIDE=${_header_path}"
+            "-DCOMBAT_SOURCE_OVERRIDE=${_combat_path}"
+            "-DROOM_SOURCE_OVERRIDE=${_room_path}"
+            "-DHUD_SOURCE_OVERRIDE=${_hud_path}"
+            -DTASK5B_RENDERER_ONLY=ON -P "${_guard}"
         RESULT_VARIABLE _result
         OUTPUT_VARIABLE _stdout
         ERROR_VARIABLE _stderr)
@@ -53,6 +67,220 @@ function(stage11d_run_guard_case LABEL COMBAT ROOM HUD EXPECT_PASS EXPECT_REASON
         endif()
     endif()
 endfunction()
+
+function(stage11d_run_report_guard_case LABEL REPORT EXPECT_PASS EXPECT_REASON)
+    set(_path "${GUARD_TEST_ROOT}/${LABEL}-report.cpp")
+    file(WRITE "${_path}" "${REPORT}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+            "-DREPORT_OVERRIDE=${_path}" -DTASK5B_REPORT_ONLY=ON
+            -P "${_guard}"
+        RESULT_VARIABLE _result
+        OUTPUT_VARIABLE _stdout
+        ERROR_VARIABLE _stderr)
+    set(_output "${_stdout}${_stderr}")
+    if(EXPECT_PASS)
+        if(NOT _result EQUAL 0)
+            message(FATAL_ERROR
+                "Stage11D guard rejected equivalent ${LABEL} report variant: ${_output}")
+        endif()
+    else()
+        if(_result EQUAL 0)
+            message(FATAL_ERROR
+                "Stage11D guard accepted bad ${LABEL} report mutation")
+        endif()
+        if(NOT _output MATCHES "${EXPECT_REASON}")
+            message(FATAL_ERROR
+                "Stage11D ${LABEL} report mutation failed for wrong reason; expected ${EXPECT_REASON}: ${_output}")
+        endif()
+    endif()
+endfunction()
+
+function(stage11d_run_host_guard_case LABEL HOST EXPECT_PASS EXPECT_REASON)
+    set(_path "${GUARD_TEST_ROOT}/${LABEL}-host.cpp")
+    file(WRITE "${_path}" "${HOST}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+            "-DHOST_OVERRIDE=${_path}" -P "${_guard}"
+        RESULT_VARIABLE _result
+        OUTPUT_VARIABLE _stdout
+        ERROR_VARIABLE _stderr)
+    set(_output "${_stdout}${_stderr}")
+    if(EXPECT_PASS)
+        if(NOT _result EQUAL 0)
+            message(FATAL_ERROR
+                "Stage11D guard rejected equivalent ${LABEL} host variant: ${_output}")
+        endif()
+    else()
+        if(_result EQUAL 0)
+            message(FATAL_ERROR
+                "Stage11D guard accepted bad ${LABEL} host mutation")
+        endif()
+        if(NOT _output MATCHES "${EXPECT_REASON}")
+            message(FATAL_ERROR
+                "Stage11D ${LABEL} host mutation failed for wrong reason; expected ${EXPECT_REASON}: ${_output}")
+        endif()
+    endif()
+endfunction()
+
+set(_stage11d_semantic_call
+    "stage11d_record_semantics(stage11d_validation_state, current,\n                    runtime.item_state(), ground_loot_view,\n                    renderer.hud_notice_view());")
+function(stage11d_run_summary_binding_mutations)
+    stage11d_replace_required(_report_affix_producer_constant "${_report}"
+        "combat::monster_affix_danger_score(monster.affixes)" "0U"
+        report_monster_affix_danger_producer_constant)
+    stage11d_run_report_guard_case(
+        report_monster_affix_danger_producer_constant
+        "${_report_affix_producer_constant}" FALSE
+        "monster_affix_danger producer binding")
+
+    stage11d_replace_required(_report_ai_producer_constant "${_report}"
+        "static_cast<std::uint8_t>(\n                monster.ai_phase)" "0U"
+        report_monster_ai_phase_producer_constant)
+    stage11d_run_report_guard_case(
+        report_monster_ai_phase_producer_constant
+        "${_report_ai_producer_constant}" FALSE
+        "monster_ai_phase producer binding")
+
+    stage11d_replace_required(_report_affix_output_constant "${_report}"
+        "state.monster_affix_danger[0]" "0U"
+        report_monster_affix_danger_output_constant)
+    stage11d_run_report_guard_case(
+        report_monster_affix_danger_output_constant
+        "${_report_affix_output_constant}" FALSE
+        "monster_affix_danger output binding")
+
+    stage11d_replace_required(_report_ai_output_constant "${_report}"
+        "static_cast<unsigned>(\n                state.monster_ai_phase[0])" "0U"
+        report_monster_ai_phase_output_constant)
+    stage11d_run_report_guard_case(
+        report_monster_ai_phase_output_constant
+        "${_report_ai_output_constant}" FALSE
+        "monster_ai_phase output binding")
+
+    stage11d_replace_required(_report_defeat_hp_output_constant "${_report}"
+        "state.defeat_player_hp[0]" "0"
+        report_defeat_player_hp_output_constant)
+    stage11d_run_report_guard_case(
+        report_defeat_player_hp_output_constant
+        "${_report_defeat_hp_output_constant}" FALSE
+        "defeat_player_hp output binding")
+
+    stage11d_replace_required(_report_target_ordinal_output_constant "${_report}"
+        "state.target_ordinal" "0U"
+        report_target_ordinal_output_constant)
+    stage11d_run_report_guard_case(
+        report_target_ordinal_output_constant
+        "${_report_target_ordinal_output_constant}" FALSE
+        "target_ordinal output binding")
+
+    set(_report_result_formula
+        "(state.captured\n            && (config.stage11d_loot_validation\n                    != Stage11DLootValidationScenario::rare_only_abyss\n                || state.abyss_claimed) ? \"pass\" : \"fail\")")
+    stage11d_replace_required(_report_result_constant "${_report}"
+        "${_report_result_formula}" "\"pass\""
+        report_result_constant_pass)
+    stage11d_run_report_guard_case(report_result_constant_pass
+        "${_report_result_constant}" FALSE "result output binding")
+
+endfunction()
+if(DEFINED TASK5B_SUMMARY_BINDINGS_ONLY AND TASK5B_SUMMARY_BINDINGS_ONLY)
+    stage11d_run_summary_binding_mutations()
+    message(STATUS
+        "[stage11d-renderer-task5b-summary-bindings] named_mutations=7")
+    return()
+endif()
+if(DEFINED TASK5B_ORDER_ONLY AND TASK5B_ORDER_ONLY)
+    stage11d_replace_required(_host_without_semantic_call "${_host}"
+        "${_stage11d_semantic_call}" "" host_semantic_after_capture_remove)
+    stage11d_replace_required(_host_semantic_after_capture
+        "${_host_without_semantic_call}"
+        "stage11d_validation_state.captured = true;"
+        "stage11d_validation_state.captured = true;\n                ${_stage11d_semantic_call}"
+        host_semantic_after_capture_insert)
+    stage11d_run_host_guard_case(host_semantic_after_capture_order_decoy
+        "${_host_semantic_after_capture}" FALSE "production run-chain order")
+    message(STATUS
+        "[stage11d-renderer-task5b-order] named_mutations=1")
+    return()
+endif()
+if(NOT DEFINED TASK5B_REPORT_CASES_ONLY OR NOT TASK5B_REPORT_CASES_ONLY)
+set(_stage11d_semantic_lambda
+    "const auto task5b_semantic_decoy = [&]() noexcept {\n                    ${_stage11d_semantic_call}\n                };")
+stage11d_replace_required(_host_semantic_lambda "${_host}"
+    "${_stage11d_semantic_call}" "${_stage11d_semantic_lambda}"
+    host_semantic_uncalled_lambda)
+stage11d_run_host_guard_case(host_semantic_uncalled_lambda
+    "${_host_semantic_lambda}" FALSE "production run-chain token scope")
+
+if(DEFINED TASK5B_RED_ONLY AND TASK5B_RED_ONLY)
+    message(STATUS "[stage11d-renderer-task5b-red] named_mutations=1")
+    return()
+endif()
+endif()
+
+stage11d_replace_required(_report_record_comment "${_report}"
+    "void stage11d_record_semantics("
+    "// void stage11d_record_semantics(\nvoid task5b_record_removed("
+    report_record_comment_decoy)
+stage11d_run_report_guard_case(report_record_comment_decoy
+    "${_report_record_comment}" FALSE "semantic recorder.*definition")
+
+stage11d_replace_required(_report_target_string "${_report}"
+    "bool stage11d_target_visible("
+    "const char* task5b_target_string = \"bool stage11d_target_visible(\";\nbool task5b_target_removed("
+    report_target_string_decoy)
+stage11d_run_report_guard_case(report_target_string_decoy
+    "${_report_target_string}" FALSE "target-visible evaluator.*definition")
+
+stage11d_replace_required(_report_summary_forward "${_report}"
+    "void write_stage11d_loot_validation_summary("
+    "void write_stage11d_loot_validation_summary();\nvoid task5b_summary_removed("
+    report_summary_forward_declaration_decoy)
+stage11d_run_report_guard_case(report_summary_forward_declaration_decoy
+    "${_report_summary_forward}" FALSE "summary writer forward declaration")
+
+set(_report_affix_payload
+    "            state.monster_affix_danger[ordinal] =\n                combat::monster_affix_danger_score(monster.affixes);")
+stage11d_replace_required(_report_without_affix_payload "${_report}"
+    "${_report_affix_payload}" "            static_cast<void>(ordinal);"
+    report_semantic_payload_removal)
+set(_report_outer_close "}  // namespace arpg::platform::host_validation")
+set(_report_cross_function
+    "void task5b_report_payload_decoy() {\n    ${_report_affix_payload}\n}\n\n${_report_outer_close}")
+stage11d_replace_required(_report_payload_cross_function
+    "${_report_without_affix_payload}" "${_report_outer_close}"
+    "${_report_cross_function}" report_semantic_payload_cross_function_decoy)
+stage11d_run_report_guard_case(report_semantic_payload_cross_function_decoy
+    "${_report_payload_cross_function}" FALSE
+    "target evaluator is missing.*monster_affix_danger")
+stage11d_run_summary_binding_mutations()
+
+if(DEFINED TASK5B_REPORT_CASES_ONLY AND TASK5B_REPORT_CASES_ONLY)
+    message(STATUS
+        "[stage11d-renderer-task5b-report] named_mutations=11")
+    return()
+endif()
+
+stage11d_replace_required(_host_outer_lambda_begin "${_host}"
+    "// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN presented_semantics"
+    "const auto task5b_outer_semantic_decoy = [&]() noexcept {\n// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN presented_semantics"
+    host_presented_outer_uncalled_lambda_begin)
+stage11d_replace_required(_host_outer_lambda "${_host_outer_lambda_begin}"
+    "// STAGE11D_LOOT_VALIDATION_SEAM_END presented_semantics"
+    "// STAGE11D_LOOT_VALIDATION_SEAM_END presented_semantics\n            };"
+    host_presented_outer_uncalled_lambda_end)
+stage11d_run_host_guard_case(host_presented_outer_uncalled_lambda
+    "${_host_outer_lambda}" FALSE "production run-chain token scope")
+
+stage11d_replace_required(_host_without_semantic_call "${_host}"
+    "${_stage11d_semantic_call}" "" host_semantic_after_capture_remove)
+stage11d_replace_required(_host_semantic_after_capture
+    "${_host_without_semantic_call}"
+    "stage11d_validation_state.captured = true;"
+    "stage11d_validation_state.captured = true;\n                ${_stage11d_semantic_call}"
+    host_semantic_after_capture_insert)
+stage11d_run_host_guard_case(host_semantic_after_capture_order_decoy
+    "${_host_semantic_after_capture}" FALSE "production run-chain order")
 
 stage11d_run_guard_case(pristine "${_combat}" "${_room}" "${_hud}" TRUE "")
 
@@ -166,4 +394,4 @@ stage11d_run_guard_case(const_reference_alias "${_combat_alias_consumers}" "${_r
     "${_hud}" TRUE "")
 
 message(STATUS
-    "[stage11d-renderer-guard-self-test] bad_mutations=9 equivalent_variants=3")
+    "[stage11d-renderer-guard-self-test] bad_mutations=23 equivalent_variants=3")
