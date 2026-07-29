@@ -1,4 +1,5 @@
 include("${CMAKE_CURRENT_LIST_DIR}/evidence_source_scan.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/../platform/cpp_source_lexer.cmake")
 
 foreach(required FIXTURE_SOURCE FORMAL_SOURCE CAPTURE_SCRIPT HOST_HEADER HOST_SOURCE)
     if(NOT DEFINED ${required})
@@ -13,11 +14,15 @@ file(READ "${HOST_SOURCE}" host_source)
 get_filename_component(host_directory "${HOST_HEADER}" DIRECTORY)
 set(stage_source "${host_directory}/host_validation_stage10_11.cpp")
 set(stage_header "${host_directory}/host_validation_stage10_11.hpp")
+set(runtime_source "${host_directory}/host_validation_runtime.cpp")
 if(DEFINED STAGE_SOURCE)
     set(stage_source "${STAGE_SOURCE}")
 endif()
 if(DEFINED STAGE_HEADER)
     set(stage_header "${STAGE_HEADER}")
+endif()
+if(DEFINED RUNTIME_SOURCE)
+    set(runtime_source "${RUNTIME_SOURCE}")
 endif()
 if(NOT EXISTS "${stage_source}")
     message(FATAL_ERROR "Stage 11 validation route target is missing: ${stage_source}")
@@ -25,9 +30,269 @@ endif()
 if(NOT EXISTS "${stage_header}")
     message(FATAL_ERROR "Stage 11 validation state target is missing: ${stage_header}")
 endif()
+if(NOT EXISTS "${runtime_source}")
+    message(FATAL_ERROR "Stage 11 validation runtime target is missing: ${runtime_source}")
+endif()
 file(READ "${stage_source}" stage_source_text)
 file(READ "${stage_header}" stage_header_text)
-set(all_evidence "${fixture_source}\n${formal_source}\n${host_header}\n${host_source}\n${stage_source_text}")
+file(READ "${runtime_source}" runtime_source_text)
+set(all_evidence "${fixture_source}\n${formal_source}\n${host_header}\n${host_source}\n${stage_source_text}\n${runtime_source_text}")
+
+# Match Task 7A's active-plus-lexical ownership model.  Translation-phase
+# splices and non-code text are removed first; all conditional regions are then
+# masked so an inactive implementation can never satisfy an owner contract.
+function(stage11_unconditional_cpp_surface SOURCE OUT_ACTIVE)
+    arpg_sanitize_cpp_source("${SOURCE}" logical_source)
+    if(ARGC GREATER 2)
+        set("${ARGV2}" "${logical_source}" PARENT_SCOPE)
+    endif()
+    string(LENGTH "${logical_source}" source_length)
+    set(cursor 0)
+    set(conditional_depth 0)
+    set(active_surface "")
+    while(cursor LESS source_length)
+        string(SUBSTRING "${logical_source}" ${cursor} -1 tail)
+        string(FIND "${tail}" "\n" newline)
+        if(newline EQUAL -1)
+            set(line "${tail}")
+            set(line_length -1)
+        else()
+            math(EXPR line_length "${newline} + 1")
+            string(SUBSTRING "${tail}" 0 ${line_length} line)
+        endif()
+        set(mask_line FALSE)
+        if(line MATCHES "^[ \t]*#[ \t]*(if|ifdef|ifndef)([ \t\r\n(]|$)")
+            math(EXPR conditional_depth "${conditional_depth} + 1")
+            set(mask_line TRUE)
+        elseif(line MATCHES "^[ \t]*#[ \t]*endif([ \t\r\n]|$)")
+            if(conditional_depth EQUAL 0)
+                message(FATAL_ERROR
+                    "Stage 11 inactive preprocessor surface is unbalanced")
+            endif()
+            set(mask_line TRUE)
+            math(EXPR conditional_depth "${conditional_depth} - 1")
+        elseif(conditional_depth GREATER 0)
+            set(mask_line TRUE)
+        endif()
+        if(mask_line)
+            string(REGEX REPLACE "[^\r\n]" " " line "${line}")
+        endif()
+        string(APPEND active_surface "${line}")
+        if(newline EQUAL -1)
+            break()
+        endif()
+        math(EXPR cursor "${cursor} + ${line_length}")
+    endwhile()
+    if(NOT conditional_depth EQUAL 0)
+        message(FATAL_ERROR
+            "Stage 11 inactive preprocessor surface is unbalanced")
+    endif()
+    set("${OUT_ACTIVE}" "${active_surface}" PARENT_SCOPE)
+endfunction()
+
+function(stage11_compact_cpp SOURCE OUT_COMPACT)
+    string(REGEX REPLACE "[ \t\r\n]+" "" compact "${SOURCE}")
+    set("${OUT_COMPACT}" "${compact}" PARENT_SCOPE)
+endfunction()
+
+function(stage11_count_literal SOURCE TOKEN OUT_COUNT)
+    string(LENGTH "${TOKEN}" token_length)
+    if(token_length EQUAL 0)
+        message(FATAL_ERROR "Stage 11 guard cannot count an empty token")
+    endif()
+    string(LENGTH "${SOURCE}" before_length)
+    string(REPLACE "${TOKEN}" "" without_token "${SOURCE}")
+    string(LENGTH "${without_token}" after_length)
+    math(EXPR count "(${before_length} - ${after_length}) / ${token_length}")
+    set("${OUT_COUNT}" ${count} PARENT_SCOPE)
+endfunction()
+
+function(stage11_find_balanced_scope_end SOURCE OPEN_INDEX OUT_END OUT_VALID)
+    string(LENGTH "${SOURCE}" source_length)
+    if(OPEN_INDEX LESS 0 OR OPEN_INDEX GREATER_EQUAL source_length)
+        set("${OUT_END}" -1 PARENT_SCOPE)
+        set("${OUT_VALID}" FALSE PARENT_SCOPE)
+        return()
+    endif()
+    set(cursor ${OPEN_INDEX})
+    set(depth 0)
+    while(cursor LESS source_length)
+        string(SUBSTRING "${SOURCE}" ${cursor} 1 character)
+        if(character STREQUAL "{")
+            math(EXPR depth "${depth} + 1")
+        elseif(character STREQUAL "}")
+            math(EXPR depth "${depth} - 1")
+            if(depth EQUAL 0)
+                set("${OUT_END}" ${cursor} PARENT_SCOPE)
+                set("${OUT_VALID}" TRUE PARENT_SCOPE)
+                return()
+            endif()
+        endif()
+        math(EXPR cursor "${cursor} + 1")
+    endwhile()
+    set("${OUT_END}" -1 PARENT_SCOPE)
+    set("${OUT_VALID}" FALSE PARENT_SCOPE)
+endfunction()
+
+function(stage11_mask_non_direct_scopes SOURCE OUT_SOURCE)
+    string(LENGTH "${SOURCE}" source_length)
+    set(masked "")
+    set(copy_cursor 0)
+    while(copy_cursor LESS source_length)
+        string(SUBSTRING "${SOURCE}" ${copy_cursor} -1 tail)
+        string(REGEX MATCH
+            "\\][ \t\r\n]*(\\([^{};]*\\))?[ \t\r\n]*(mutable[ \t\r\n]*)?(noexcept([ \t\r\n]*\\([^{};]*\\))?[ \t\r\n]*)?(->[^{;]*)?[ \t\r\n]*\\{"
+            lambda_match "${tail}")
+        string(REGEX MATCH
+            "(if|while)[ \t\r\n]*(constexpr[ \t\r\n]*)?\\([ \t\r\n]*(false|0[uUlL]*|![ \t\r\n]*true)[ \t\r\n]*\\)[ \t\r\n]*(do[ \t\r\n]*)?([^{;]*\\{|[^{};]*;)"
+            dead_match "${tail}")
+        set(scope_match "")
+        set(scope_relative -1)
+        set(scope_kind "")
+        if(NOT lambda_match STREQUAL "")
+            string(FIND "${tail}" "${lambda_match}" scope_relative)
+            set(scope_match "${lambda_match}")
+            set(scope_kind lambda)
+        endif()
+        if(NOT dead_match STREQUAL "")
+            string(FIND "${tail}" "${dead_match}" dead_relative)
+            if(scope_relative EQUAL -1 OR dead_relative LESS scope_relative)
+                set(scope_match "${dead_match}")
+                set(scope_relative ${dead_relative})
+                set(scope_kind dead)
+            endif()
+        endif()
+        if(scope_relative EQUAL -1)
+            string(APPEND masked "${tail}")
+            break()
+        endif()
+        string(FIND "${scope_match}" "{" open_in_match)
+        math(EXPR match_index "${copy_cursor} + ${scope_relative}")
+        if(scope_kind STREQUAL "dead")
+            set(remove_begin ${match_index})
+        else()
+            math(EXPR remove_begin "${match_index} + ${open_in_match}")
+        endif()
+        math(EXPR copy_length "${remove_begin} - ${copy_cursor}")
+        if(copy_length GREATER 0)
+            string(SUBSTRING "${SOURCE}" ${copy_cursor} ${copy_length} chunk)
+            string(APPEND masked "${chunk}")
+        endif()
+        if(open_in_match EQUAL -1)
+            string(LENGTH "${scope_match}" match_length)
+            math(EXPR scope_end "${match_index} + ${match_length} - 1")
+        else()
+            math(EXPR open_index "${match_index} + ${open_in_match}")
+            stage11_find_balanced_scope_end(
+                "${SOURCE}" ${open_index} scope_end scope_valid)
+            if(NOT scope_valid)
+                message(FATAL_ERROR
+                    "Stage 11 direct-scope fixture has no closing brace")
+            endif()
+        endif()
+        math(EXPR copy_cursor "${scope_end} + 1")
+    endwhile()
+    set("${OUT_SOURCE}" "${masked}" PARENT_SCOPE)
+endfunction()
+
+function(stage11_extract_unique_function SOURCE SIGNATURE LABEL OUT_BLOCK)
+    stage11_count_literal("${SOURCE}" "${SIGNATURE}" signature_count)
+    if(NOT signature_count EQUAL 1)
+        message(FATAL_ERROR "${LABEL}")
+    endif()
+    evidence_find_cpp_function_bounds_in_sanitized(
+        "${SOURCE}" "${SIGNATURE}" block_begin block_open block_end)
+    math(EXPR block_length "${block_end} - ${block_begin} + 1")
+    string(SUBSTRING "${SOURCE}" ${block_begin} ${block_length} block)
+    set("${OUT_BLOCK}" "${block}" PARENT_SCOPE)
+endfunction()
+
+function(stage11_brace_depth SOURCE POSITION OUT_DEPTH)
+    if(POSITION EQUAL 0)
+        set("${OUT_DEPTH}" 0 PARENT_SCOPE)
+        return()
+    endif()
+    string(SUBSTRING "${SOURCE}" 0 ${POSITION} prefix)
+    string(REGEX MATCHALL "\\{" opening_braces "${prefix}")
+    string(REGEX MATCHALL "\\}" closing_braces "${prefix}")
+    list(LENGTH opening_braces opening_count)
+    list(LENGTH closing_braces closing_count)
+    math(EXPR depth "${opening_count} - ${closing_count}")
+    set("${OUT_DEPTH}" ${depth} PARENT_SCOPE)
+endfunction()
+
+function(stage11_platform_definition_valid SOURCE SIGNATURE EXPECTED OUT_VALID)
+    set("${OUT_VALID}" FALSE PARENT_SCOPE)
+    set(namespace_token "namespace arpg::platform")
+    stage11_count_literal("${SOURCE}" "${namespace_token}" namespace_count)
+    stage11_count_literal("${SOURCE}" "${SIGNATURE}" signature_count)
+    if(NOT namespace_count EQUAL 1 OR NOT signature_count EQUAL 1)
+        return()
+    endif()
+    string(FIND "${SOURCE}" "${namespace_token}" namespace_begin)
+    stage11_brace_depth("${SOURCE}" ${namespace_begin} namespace_depth)
+    if(NOT namespace_depth EQUAL 0)
+        return()
+    endif()
+    string(SUBSTRING "${SOURCE}" ${namespace_begin} -1 namespace_tail)
+    string(FIND "${namespace_tail}" "{" namespace_relative_open)
+    if(namespace_relative_open EQUAL -1)
+        return()
+    endif()
+    math(EXPR namespace_open "${namespace_begin} + ${namespace_relative_open}")
+    stage11_find_balanced_scope_end(
+        "${SOURCE}" ${namespace_open} namespace_close namespace_valid)
+    if(NOT namespace_valid)
+        return()
+    endif()
+    string(FIND "${SOURCE}" "${SIGNATURE}" signature_begin)
+    stage11_brace_depth("${SOURCE}" ${signature_begin} signature_depth)
+    if(NOT signature_depth EQUAL 1
+            OR NOT signature_begin GREATER namespace_open
+            OR NOT signature_begin LESS namespace_close)
+        return()
+    endif()
+    stage11_extract_unique_function(
+        "${SOURCE}" "${SIGNATURE}" "Stage 11 internal definition error"
+        definition_block)
+    stage11_compact_cpp("${definition_block}" definition_compact)
+    stage11_compact_cpp("${EXPECTED}" expected_compact)
+    if(definition_compact STREQUAL expected_compact)
+        set("${OUT_VALID}" TRUE PARENT_SCOPE)
+    endif()
+endfunction()
+
+function(stage11_require_exact_runtime_definition LABEL SIGNATURE EXPECTED)
+    stage11_platform_definition_valid(
+        "${runtime_active}" "${SIGNATURE}" "${EXPECTED}" active_valid)
+    stage11_platform_definition_valid(
+        "${runtime_lexical}" "${SIGNATURE}" "${EXPECTED}" lexical_valid)
+    if(NOT active_valid OR NOT lexical_valid)
+        message(FATAL_ERROR "${LABEL}")
+    endif()
+endfunction()
+
+function(stage11_extract_token_block SOURCE TOKEN LABEL OUT_BLOCK)
+    stage11_count_literal("${SOURCE}" "${TOKEN}" token_count)
+    if(NOT token_count EQUAL 1)
+        message(FATAL_ERROR "${LABEL}")
+    endif()
+    string(FIND "${SOURCE}" "${TOKEN}" token_begin)
+    string(SUBSTRING "${SOURCE}" ${token_begin} -1 tail)
+    string(FIND "${tail}" "{" relative_open)
+    if(relative_open EQUAL -1)
+        message(FATAL_ERROR "${LABEL}")
+    endif()
+    math(EXPR open_index "${token_begin} + ${relative_open}")
+    stage11_find_balanced_scope_end(
+        "${SOURCE}" ${open_index} block_end block_valid)
+    if(NOT block_valid)
+        message(FATAL_ERROR "${LABEL}")
+    endif()
+    math(EXPR block_length "${block_end} - ${token_begin} + 1")
+    string(SUBSTRING "${SOURCE}" ${token_begin} ${block_length} block)
+    set("${OUT_BLOCK}" "${block}" PARENT_SCOPE)
+endfunction()
 
 evidence_extract_cpp_function_block("${stage_source_text}"
     "combat::MovementInput stage11_validation_input(" stage11_input_block)
@@ -79,14 +344,38 @@ foreach(required_fixture "SaveStore" "session.tick" "pending_save_view"
         message(FATAL_ERROR "Fixture lacks production API: ${required_fixture}")
     endif()
 endforeach()
-foreach(required_host "stage11_validation_input"
-        "MovementInput" "runtime.fixed_tick" "request_death_continue"
-        "host_death_input_gate" "settings::StableKey::e"
-        "death_gate.continue_death = true")
-    if(NOT host_source MATCHES "${required_host}")
-        message(FATAL_ERROR "Formal host lacks production input/save path: ${required_host}")
+
+if(NOT formal_source MATCHES "run_raylib_host"
+        OR NOT formal_source MATCHES "SaveStore"
+        OR NOT formal_source MATCHES "formal-path-summary.txt")
+    message(FATAL_ERROR "Formal Stage 11 executable lacks real host/save/summary evidence")
+endif()
+foreach(required_script "LastWriteTimeUtc" "System.Drawing" "GetPixel"
+        "nonBackground" "Get-PanelHash" "formal-path-summary.txt")
+    if(NOT capture_script MATCHES "${required_script}")
+        message(FATAL_ERROR "Capture validator lacks ${required_script}")
     endif()
 endforeach()
+
+# Preserve the original present-then-capture proof before owner checks.  This
+# lets the dedicated negative fixture continue to fail for capture order rather
+# than for an unrelated facade diagnostic.
+stage11_compact_cpp("${host_source}" compact_host_source)
+set(capture_helper
+    "boolpresent_frame_and_maybe_capture(constchar*path)noexcept{EndDrawing();if(path==nullptr)returntrue;Imageimage=LoadImageFromScreen();if(image.data==nullptr)returnfalse;constboolexported=ExportImage(image,path);UnloadImage(image);returnexported;}")
+string(FIND "${compact_host_source}" "${capture_helper}" capture_helper_index)
+string(REGEX MATCHALL "EndDrawing\\(\\)" capture_ends "${compact_host_source}")
+string(REGEX MATCHALL "LoadImageFromScreen\\(\\)" capture_loads "${compact_host_source}")
+string(REGEX MATCHALL "ExportImage\\(" capture_exports "${compact_host_source}")
+list(LENGTH capture_ends capture_end_count)
+list(LENGTH capture_loads capture_load_count)
+list(LENGTH capture_exports capture_export_count)
+if(capture_helper_index EQUAL -1 OR NOT capture_end_count EQUAL 1
+        OR NOT capture_load_count EQUAL 1 OR NOT capture_export_count EQUAL 1)
+    message(FATAL_ERROR
+        "Capture must occur once after EndDrawing (helper=${capture_helper_index} end=${capture_end_count} load=${capture_load_count} export=${capture_export_count})")
+endif()
+
 foreach(required_stage11_input_token
         "session.request_descent(true)"
         "session.queue_action(combat::Action::light)")
@@ -110,108 +399,234 @@ endforeach()
 if(NOT stage_header_text MATCHES "struct Stage11ValidationState final")
     message(FATAL_ERROR "Stage 11 validation state definition is missing")
 endif()
-foreach(required_host_stage11_token
-        "stage11_validation_input(*session,"
-        "stage11_validation_reached("
-        "stage11_validation_state.continue_requested = true;"
+
+stage11_unconditional_cpp_surface(
+    "${runtime_source_text}" runtime_active runtime_lexical)
+
+set(expected_should_continue_death [=[
+bool HostValidationRuntime::should_continue_death(
+    const dungeon::DungeonSnapshot& snapshot) const noexcept {
+    const bool pending = snapshot.death.has_value()
+        && snapshot.death->can_continue && !snapshot.death->saving;
+    const auto scenario = impl_->config->stage11_validation;
+    const bool validation_continue =
+        scenario == Stage11ValidationScenario::deep_continue
+        || scenario == Stage11ValidationScenario::floor_one_continue;
+    return pending && validation_continue
+        && !impl_->states.stage11.continue_requested;
+}
+]=])
+stage11_require_exact_runtime_definition(
+    "Stage 11 runtime should_continue_death owner contract is missing or altered"
+    "bool HostValidationRuntime::should_continue_death("
+    "${expected_should_continue_death}")
+
+set(expected_observe_death_continue_result [=[
+void HostValidationRuntime::observe_death_continue_result(
+    dungeon::RequestResult result) noexcept {
+    const auto scenario = impl_->config->stage11_validation;
+    const bool validation_continue =
+        scenario == Stage11ValidationScenario::deep_continue
+        || scenario == Stage11ValidationScenario::floor_one_continue;
+    if (validation_continue
+            && result != dungeon::RequestResult::rejected) {
+        impl_->states.stage11.continue_requested = true;
+    }
+}
+]=])
+stage11_require_exact_runtime_definition(
+    "Stage 11 runtime death-result observer contract is missing or altered"
+    "void HostValidationRuntime::observe_death_continue_result("
+    "${expected_observe_death_continue_result}")
+
+set(expected_fixed_step_movement [=[
+combat::MovementInput HostValidationRuntime::fixed_step_movement(
+    dungeon::DungeonSession& session,
+    const dungeon::DungeonSnapshot& snapshot,
+    combat::MovementInput production_input) noexcept {
+    if (impl_->config->stage11_validation
+            != Stage11ValidationScenario::none) {
+        return host_validation::stage11_validation_input(
+            session, snapshot, *impl_->config, impl_->states.stage11);
+    }
+    if (impl_->config->stage10_validation
+            != Stage10ValidationScenario::none) {
+        return host_validation::stage10_validation_input(
+            session, snapshot, *impl_->config, impl_->states.stage10);
+    }
+    return production_input;
+}
+]=])
+stage11_require_exact_runtime_definition(
+    "Stage 11 runtime fixed-step movement owner contract is missing or altered"
+    "combat::MovementInput HostValidationRuntime::fixed_step_movement("
+    "${expected_fixed_step_movement}")
+
+set(expected_fixed_step_target_reached [=[
+bool HostValidationRuntime::fixed_step_target_reached(
+    const dungeon::DungeonSnapshot& snapshot) const noexcept {
+    return host_validation::stage10_validation_reached(
+        snapshot, *impl_->config, impl_->states.stage10)
+        || host_validation::stage11_validation_reached(
+            snapshot, *impl_->config, impl_->states.stage11);
+}
+]=])
+stage11_require_exact_runtime_definition(
+    "Stage 11 runtime fixed-step reached owner contract is missing or altered"
+    "bool HostValidationRuntime::fixed_step_target_reached("
+    "${expected_fixed_step_target_reached}")
+
+stage11_count_literal("${runtime_active}" "request_death_continue("
+    facade_continue_request_count)
+if(NOT facade_continue_request_count EQUAL 0)
+    message(FATAL_ERROR
+        "Stage 11 validation facade must never submit a death continue request")
+endif()
+
+stage11_unconditional_cpp_surface("${host_source}" host_active host_lexical)
+stage11_count_literal("${host_active}" "HostExitCode run_raylib_host("
+    active_run_host_count)
+stage11_count_literal("${host_lexical}" "HostExitCode run_raylib_host("
+    lexical_run_host_count)
+if(NOT active_run_host_count EQUAL 1 OR NOT lexical_run_host_count EQUAL 1)
+    message(FATAL_ERROR
+        "Stage 11 formal Host must contain one active run_raylib_host definition")
+endif()
+stage11_extract_unique_function("${host_active}" "HostExitCode run_raylib_host("
+    "Stage 11 formal Host run function is missing" run_host_block)
+stage11_mask_non_direct_scopes("${run_host_block}" direct_run_host)
+
+foreach(required_host_token
+        "MovementInput" "runtime.fixed_tick" "host_death_input_gate"
         "++stage11_validation_state.target_presented_frames;")
-    string(FIND "${host_source}" "${required_host_stage11_token}" required_host_stage11_index)
-    if(required_host_stage11_index EQUAL -1)
+    string(FIND "${direct_run_host}" "${required_host_token}" required_host_index)
+    if(required_host_index EQUAL -1)
         message(FATAL_ERROR
-            "Stage 11 formal host call is missing: ${required_host_stage11_token}")
+            "Formal host lacks production input/save path: ${required_host_token}")
     endif()
 endforeach()
-string(ASCII 9 host_tab)
-string(ASCII 10 host_lf)
-string(ASCII 13 host_cr)
-string(REPLACE " " "" host_compact "${host_source}")
-string(REPLACE "${host_tab}" "" host_compact "${host_compact}")
-string(REPLACE "${host_lf}" "" host_compact "${host_compact}")
-string(REPLACE "${host_cr}" "" host_compact "${host_compact}")
-string(REGEX MATCHALL "if\\(death_gate[.]continue_death\\)\\{"
-    exact_death_gate_conditions "${host_compact}")
-list(LENGTH exact_death_gate_conditions exact_death_gate_condition_count)
-if(NOT exact_death_gate_condition_count EQUAL 1)
+string(FIND "${host_active}" "settings::StableKey::e" stable_e_mapping)
+if(stable_e_mapping EQUAL -1)
     message(FATAL_ERROR
-        "Formal death continue condition must be exactly death_gate.continue_death")
+        "Formal host lacks production input/save path: settings::StableKey::e")
 endif()
-string(REGEX MATCHALL "runtime[.]request_death_continue[ \t\r\n]*[(][ \t\r\n]*[)]"
-    host_continue_requests "${host_source}")
-list(LENGTH host_continue_requests host_continue_request_count)
+
+set(death_segment_begin_token
+    "DeathInputGate death_gate = host_death_input_gate(")
+set(death_segment_end_token
+    "if (!death_gate.forward_gameplay && window_close_requested")
+stage11_count_literal("${direct_run_host}" "${death_segment_begin_token}"
+    death_segment_begin_count)
+stage11_count_literal("${direct_run_host}" "${death_segment_end_token}"
+    death_segment_end_count)
+if(NOT death_segment_begin_count EQUAL 1 OR NOT death_segment_end_count EQUAL 1)
+    message(FATAL_ERROR "Stage 11 formal death segment boundary is missing")
+endif()
+string(FIND "${direct_run_host}" "${death_segment_begin_token}"
+    death_segment_begin)
+string(FIND "${direct_run_host}" "${death_segment_end_token}"
+    death_segment_end)
+if(NOT death_segment_begin LESS death_segment_end)
+    message(FATAL_ERROR "Stage 11 formal death segment boundary is reordered")
+endif()
+math(EXPR death_segment_length "${death_segment_end} - ${death_segment_begin}")
+string(SUBSTRING "${direct_run_host}" ${death_segment_begin}
+    ${death_segment_length} death_segment)
+
+foreach(forbidden_death_owner
+        "stage11_validation_state" "HostValidationStateAccess::stage11("
+        "continue_requested")
+    string(FIND "${death_segment}" "${forbidden_death_owner}"
+        forbidden_death_owner_index)
+    if(NOT forbidden_death_owner_index EQUAL -1)
+        message(FATAL_ERROR
+            "Stage 11 Host death segment must not access continue_requested state directly")
+    endif()
+endforeach()
+
+set(continue_decision_token
+    "if (validation_runtime->should_continue_death(current))")
+stage11_extract_token_block("${death_segment}" "${continue_decision_token}"
+    "Stage 11 Host continue decision must use the runtime facade only"
+    continue_decision_block)
+stage11_compact_cpp("${continue_decision_block}" continue_decision_compact)
+set(expected_continue_decision
+    "if(validation_runtime->should_continue_death(current)){death_gate.continue_death=true;}")
+if(NOT continue_decision_compact STREQUAL expected_continue_decision)
+    message(FATAL_ERROR
+        "Stage 11 Host continue decision must use the runtime facade only")
+endif()
+
+stage11_count_literal("${direct_run_host}" "runtime.request_death_continue()"
+    host_continue_request_count)
 if(NOT host_continue_request_count EQUAL 1)
     message(FATAL_ERROR
         "Formal validation continue must use the single death input gate request path")
 endif()
-set(death_gate_scope_prefix "if(death_gate.continue_death){")
-string(FIND "${host_compact}" "${death_gate_scope_prefix}"
-    death_gate_scope_begin)
-string(LENGTH "${death_gate_scope_prefix}" death_gate_scope_prefix_length)
-math(EXPR death_gate_open_brace
-    "${death_gate_scope_begin} + ${death_gate_scope_prefix_length} - 1")
-string(LENGTH "${host_compact}" host_compact_length)
-math(EXPR host_compact_last "${host_compact_length} - 1")
-set(death_gate_depth 0)
-set(death_gate_scope_end -1)
-foreach(character_index RANGE ${death_gate_open_brace} ${host_compact_last})
-    string(SUBSTRING "${host_compact}" ${character_index} 1 character)
-    if(character STREQUAL "{")
-        math(EXPR death_gate_depth "${death_gate_depth} + 1")
-    elseif(character STREQUAL "}")
-        math(EXPR death_gate_depth "${death_gate_depth} - 1")
-        if(death_gate_depth EQUAL 0)
-            set(death_gate_scope_end ${character_index})
-            break()
-        endif()
-    endif()
-endforeach()
-if(death_gate_scope_end EQUAL -1)
-    message(FATAL_ERROR "Formal death continue gate scope is unbalanced")
-endif()
-math(EXPR death_gate_scope_length
-    "${death_gate_scope_end} - ${death_gate_scope_begin} + 1")
-string(SUBSTRING "${host_compact}" ${death_gate_scope_begin}
-    ${death_gate_scope_length} death_gate_scope)
-string(FIND "${death_gate_scope}" "runtime.request_death_continue()"
-    scoped_continue_request)
-if(scoped_continue_request EQUAL -1)
+stage11_count_literal("${death_segment}" "if (death_gate.continue_death)"
+    exact_death_gate_condition_count)
+if(NOT exact_death_gate_condition_count EQUAL 1)
     message(FATAL_ERROR
-        "Formal death continue request must be inside the explicit death input gate scope")
+        "Formal death continue condition must be exactly death_gate.continue_death")
 endif()
-string(FIND "${death_gate_scope}" "validation_continue"
-    scoped_validation_continue)
-if(NOT scoped_validation_continue EQUAL -1)
+stage11_extract_token_block("${death_segment}"
+    "if (death_gate.continue_death)"
+    "Stage 11 death observer must follow the real request and snapshot refresh"
+    death_gate_block)
+stage11_compact_cpp("${death_gate_block}" death_gate_compact)
+set(expected_death_gate_block
+    "if(death_gate.continue_death){death_continue_result=runtime.request_death_continue();if(death_continue_result!=dungeon::RequestResult::rejected){previous=current;session->snapshot(current);}validation_runtime->observe_death_continue_result(death_continue_result);}")
+if(NOT death_gate_compact STREQUAL expected_death_gate_block)
     message(FATAL_ERROR
-        "Formal validation_continue must remain outside the death input gate scope")
+        "Stage 11 death observer must follow the real request and snapshot refresh")
 endif()
-if(NOT formal_source MATCHES "run_raylib_host"
-        OR NOT formal_source MATCHES "SaveStore"
-        OR NOT formal_source MATCHES "formal-path-summary.txt")
-    message(FATAL_ERROR "Formal Stage 11 executable lacks real host/save/summary evidence")
+stage11_count_literal("${death_segment}"
+    "validation_runtime->observe_death_continue_result("
+    death_observer_count)
+if(NOT death_observer_count EQUAL 1)
+    message(FATAL_ERROR
+        "Stage 11 death observer must follow the real request and snapshot refresh")
 endif()
-foreach(required_script "LastWriteTimeUtc" "System.Drawing" "GetPixel"
-        "nonBackground" "Get-PanelHash" "formal-path-summary.txt")
-    if(NOT capture_script MATCHES "${required_script}")
-        message(FATAL_ERROR "Capture validator lacks ${required_script}")
+
+set(fixed_loop_token
+    "for (std::uint32_t step = 0; step < frame.steps; ++step)")
+stage11_extract_token_block("${direct_run_host}" "${fixed_loop_token}"
+    "Stage 11 direct fixed-step loop is missing" fixed_loop_block)
+foreach(forbidden_fixed_owner
+        "host_validation::stage11_validation_input("
+        "host_validation::stage10_validation_input("
+        "host_validation::stage11_validation_reached("
+        "host_validation::stage10_validation_reached(")
+    string(FIND "${fixed_loop_block}" "${forbidden_fixed_owner}"
+        forbidden_fixed_owner_index)
+    if(NOT forbidden_fixed_owner_index EQUAL -1)
+        message(FATAL_ERROR
+            "Stage 11 direct fixed-step loop must not call old input/reached owners")
     endif()
 endforeach()
 
-string(ASCII 9 tab)
-string(ASCII 10 lf)
-string(ASCII 13 cr)
-string(REPLACE " " "" compact "${host_source}")
-string(REPLACE "${tab}" "" compact "${compact}")
-string(REPLACE "${lf}" "" compact "${compact}")
-string(REPLACE "${cr}" "" compact "${compact}")
-set(helper "boolpresent_frame_and_maybe_capture(constchar*path)noexcept{EndDrawing();if(path==nullptr)returntrue;Imageimage=LoadImageFromScreen();if(image.data==nullptr)returnfalse;constboolexported=ExportImage(image,path);UnloadImage(image);returnexported;}")
-string(FIND "${compact}" "${helper}" helper_index)
-string(REGEX MATCHALL "EndDrawing\\(\\)" ends "${compact}")
-string(REGEX MATCHALL "LoadImageFromScreen\\(\\)" loads "${compact}")
-string(REGEX MATCHALL "ExportImage\\(" exports "${compact}")
-list(LENGTH ends end_count)
-list(LENGTH loads load_count)
-list(LENGTH exports export_count)
-if(helper_index EQUAL -1 OR NOT end_count EQUAL 1
-        OR NOT load_count EQUAL 1 OR NOT export_count EQUAL 1)
-    message(FATAL_ERROR "Capture must occur once after EndDrawing (helper=${helper_index} end=${end_count} load=${load_count} export=${export_count})")
+stage11_extract_token_block("${fixed_loop_block}" "if (!step_death)"
+    "Stage 11 fixed-step movement result must feed step_movement under the death gate"
+    movement_gate_block)
+stage11_compact_cpp("${movement_gate_block}" movement_gate_compact)
+set(expected_movement_gate
+    "if(!step_death){step_movement=validation_runtime->fixed_step_movement(*session,current,movement);}")
+if(NOT movement_gate_compact STREQUAL expected_movement_gate)
+    message(FATAL_ERROR
+        "Stage 11 fixed-step movement result must feed step_movement under the death gate")
 endif()
+
+set(target_gate_token
+    "if (validation_runtime->fixed_step_target_reached(current))")
+stage11_extract_token_block("${fixed_loop_block}" "${target_gate_token}"
+    "Stage 11 fixed-step reached result must directly guard break"
+    target_gate_block)
+stage11_compact_cpp("${target_gate_block}" target_gate_compact)
+set(expected_target_gate
+    "if(validation_runtime->fixed_step_target_reached(current)){break;}")
+if(NOT target_gate_compact STREQUAL expected_target_gate)
+    message(FATAL_ERROR
+        "Stage 11 fixed-step reached result must directly guard break")
+endif()
+
 message(STATUS "Stage 11 production evidence guard passed")

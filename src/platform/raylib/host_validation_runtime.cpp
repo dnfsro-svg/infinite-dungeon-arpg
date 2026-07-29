@@ -72,6 +72,67 @@ PhysicalKeySnapshot HostValidationRuntime::inject_physical_edges(
         dungeon_snapshot, impl_->states.stage17);
 }
 
+bool HostValidationRuntime::should_continue_death(
+    const dungeon::DungeonSnapshot& snapshot) const noexcept {
+    const bool pending = snapshot.death.has_value()
+        && snapshot.death->can_continue && !snapshot.death->saving;
+    const auto scenario = impl_->config->stage11_validation;
+    const bool validation_continue =
+        scenario == Stage11ValidationScenario::deep_continue
+        || scenario == Stage11ValidationScenario::floor_one_continue;
+    return pending && validation_continue
+        && !impl_->states.stage11.continue_requested;
+}
+
+combat::MovementInput HostValidationRuntime::fixed_step_movement(
+    dungeon::DungeonSession& session,
+    const dungeon::DungeonSnapshot& snapshot,
+    combat::MovementInput production_input) noexcept {
+    if (impl_->config->stage11_validation
+            != Stage11ValidationScenario::none) {
+        return host_validation::stage11_validation_input(
+            session, snapshot, *impl_->config, impl_->states.stage11);
+    }
+    if (impl_->config->stage10_validation
+            != Stage10ValidationScenario::none) {
+        return host_validation::stage10_validation_input(
+            session, snapshot, *impl_->config, impl_->states.stage10);
+    }
+    return production_input;
+}
+
+void HostValidationRuntime::observe_fixed_tick() noexcept {
+    ++impl_->states.stage11b.fixed_ticks;
+}
+
+void HostValidationRuntime::observe_death_continue_result(
+    dungeon::RequestResult result) noexcept {
+    const auto scenario = impl_->config->stage11_validation;
+    const bool validation_continue =
+        scenario == Stage11ValidationScenario::deep_continue
+        || scenario == Stage11ValidationScenario::floor_one_continue;
+    if (validation_continue
+            && result != dungeon::RequestResult::rejected) {
+        impl_->states.stage11.continue_requested = true;
+    }
+}
+
+void HostValidationRuntime::observe_post_fixed_tick(
+    const dungeon::DungeonSnapshot& snapshot,
+    const items::ItemOwnershipState* ownership) noexcept {
+    if (ownership == nullptr) return;
+    host_validation::observe_stage11d_abyss_claim(
+        impl_->states.stage11d, snapshot, *ownership);
+}
+
+bool HostValidationRuntime::fixed_step_target_reached(
+    const dungeon::DungeonSnapshot& snapshot) const noexcept {
+    return host_validation::stage10_validation_reached(
+        snapshot, *impl_->config, impl_->states.stage10)
+        || host_validation::stage11_validation_reached(
+            snapshot, *impl_->config, impl_->states.stage11);
+}
+
 void HostValidationRuntime::observe_combat_event(
     const combat::CombatEvent& event) noexcept {
     host_validation::observe_stage17_combat_event(&impl_->states.stage17, event);

@@ -5,10 +5,17 @@
 
 namespace arpg::combat {
 struct CombatEvent;
+struct MovementInput;
 }
 
 namespace arpg::dungeon {
+class DungeonSession;
 struct DungeonSnapshot;
+enum class RequestResult : std::uint8_t;
+}
+
+namespace arpg::items {
+struct ItemOwnershipState;
 }
 
 namespace arpg::settings {
@@ -35,6 +42,19 @@ public:
         PhysicalKeySnapshot, const settings::SettingsData&,
         const dungeon::DungeonSnapshot&,
         bool gameplay_rearm_required) noexcept;
+    [[nodiscard]] bool should_continue_death(
+        const dungeon::DungeonSnapshot&) const noexcept;
+    combat::MovementInput fixed_step_movement(
+        dungeon::DungeonSession&, const dungeon::DungeonSnapshot&,
+        combat::MovementInput production_input) noexcept;
+    void observe_fixed_tick() noexcept;
+    void observe_death_continue_result(
+        dungeon::RequestResult) noexcept;
+    void observe_post_fixed_tick(
+        const dungeon::DungeonSnapshot&,
+        const items::ItemOwnershipState*) noexcept;
+    [[nodiscard]] bool fixed_step_target_reached(
+        const dungeon::DungeonSnapshot&) const noexcept;
     void observe_combat_event(const combat::CombatEvent&) noexcept;
     void observe_snapshot(const dungeon::DungeonSnapshot&) noexcept;
     void observe_inventory(const InventoryRenderer&,

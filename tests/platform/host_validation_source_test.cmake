@@ -592,6 +592,19 @@ public:
         PhysicalKeySnapshot, const settings::SettingsData&,
         const dungeon::DungeonSnapshot&,
         bool gameplay_rearm_required) noexcept;
+    [[nodiscard]] bool should_continue_death(
+        const dungeon::DungeonSnapshot&) const noexcept;
+    combat::MovementInput fixed_step_movement(
+        dungeon::DungeonSession&, const dungeon::DungeonSnapshot&,
+        combat::MovementInput production_input) noexcept;
+    void observe_fixed_tick() noexcept;
+    void observe_death_continue_result(
+        dungeon::RequestResult) noexcept;
+    void observe_post_fixed_tick(
+        const dungeon::DungeonSnapshot&,
+        const items::ItemOwnershipState*) noexcept;
+    [[nodiscard]] bool fixed_step_target_reached(
+        const dungeon::DungeonSnapshot&) const noexcept;
     void observe_combat_event(const combat::CombatEvent&) noexcept;
     void observe_snapshot(const dungeon::DungeonSnapshot&) noexcept;
     void observe_inventory(const InventoryRenderer&,
@@ -618,6 +631,12 @@ foreach(_token IN ITEMS
         "~HostValidationRuntime();"
         "void set_render_readiness("
         "PhysicalKeySnapshot inject_physical_edges("
+        "[[nodiscard]] bool should_continue_death("
+        "combat::MovementInput fixed_step_movement("
+        "void observe_fixed_tick() noexcept;"
+        "void observe_death_continue_result("
+        "void observe_post_fixed_tick("
+        "[[nodiscard]] bool fixed_step_target_reached("
         "void observe_combat_event("
         "void observe_snapshot("
         "void observe_inventory("
@@ -629,6 +648,38 @@ foreach(_token IN ITEMS
     host_validation_require_count("facade API" "${_facade_class}"
         "${_token}" 1)
 endforeach()
+
+# Keep the facade header raylib-free while making every new by-reference/value
+# type available through one exact forward declaration in active code.  These
+# checks deliberately follow the class contract so the pre-implementation RED
+# is the missing facade API rather than a secondary forward-declaration error.
+set(_combat_forward_contract [=[
+namespace arpg::combat {
+struct CombatEvent;
+struct MovementInput;
+}
+]=])
+set(_dungeon_forward_contract [=[
+namespace arpg::dungeon {
+class DungeonSession;
+struct DungeonSnapshot;
+enum class RequestResult : std::uint8_t;
+}
+]=])
+set(_items_forward_contract [=[
+namespace arpg::items {
+struct ItemOwnershipState;
+}
+]=])
+host_validation_require_active_exact_definition(
+    "combat facade forward declarations" "${_facade}" "${_facade_lexical}"
+    "namespace arpg::combat {" "${_combat_forward_contract}")
+host_validation_require_active_exact_definition(
+    "dungeon facade forward declarations" "${_facade}" "${_facade_lexical}"
+    "namespace arpg::dungeon {" "${_dungeon_forward_contract}")
+host_validation_require_active_exact_definition(
+    "item facade forward declaration" "${_facade}" "${_facade_lexical}"
+    "namespace arpg::items {" "${_items_forward_contract}")
 host_validation_require_count("facade class" "${_facade}"
     "class HostValidationRuntime final" 1)
 host_validation_require_count("facade friend-only transition seam" "${_facade}"
@@ -1042,6 +1093,394 @@ host_validation_require_active_exact_definition(
     "void HostValidationRuntime::observe_submitted_actions("
     "${_submitted_observer_contract}")
 
+# Task 7B moves only validation decisions and state observations behind the
+# facade.  Exact active-plus-lexical definitions prevent a correct copy in a
+# comment, literal, inactive branch, lambda, or second scope from masking the
+# real owner.
+set(_should_continue_death_contract [=[
+bool HostValidationRuntime::should_continue_death(
+    const dungeon::DungeonSnapshot& snapshot) const noexcept {
+    const bool pending = snapshot.death.has_value()
+        && snapshot.death->can_continue && !snapshot.death->saving;
+    const auto scenario = impl_->config->stage11_validation;
+    const bool validation_continue =
+        scenario == Stage11ValidationScenario::deep_continue
+        || scenario == Stage11ValidationScenario::floor_one_continue;
+    return pending && validation_continue
+        && !impl_->states.stage11.continue_requested;
+}
+]=])
+set(_fixed_step_movement_contract [=[
+combat::MovementInput HostValidationRuntime::fixed_step_movement(
+    dungeon::DungeonSession& session,
+    const dungeon::DungeonSnapshot& snapshot,
+    combat::MovementInput production_input) noexcept {
+    if (impl_->config->stage11_validation
+            != Stage11ValidationScenario::none) {
+        return host_validation::stage11_validation_input(
+            session, snapshot, *impl_->config, impl_->states.stage11);
+    }
+    if (impl_->config->stage10_validation
+            != Stage10ValidationScenario::none) {
+        return host_validation::stage10_validation_input(
+            session, snapshot, *impl_->config, impl_->states.stage10);
+    }
+    return production_input;
+}
+]=])
+set(_observe_fixed_tick_contract [=[
+void HostValidationRuntime::observe_fixed_tick() noexcept {
+    ++impl_->states.stage11b.fixed_ticks;
+}
+]=])
+set(_observe_death_continue_result_contract [=[
+void HostValidationRuntime::observe_death_continue_result(
+    dungeon::RequestResult result) noexcept {
+    const auto scenario = impl_->config->stage11_validation;
+    const bool validation_continue =
+        scenario == Stage11ValidationScenario::deep_continue
+        || scenario == Stage11ValidationScenario::floor_one_continue;
+    if (validation_continue
+            && result != dungeon::RequestResult::rejected) {
+        impl_->states.stage11.continue_requested = true;
+    }
+}
+]=])
+set(_observe_post_fixed_tick_contract [=[
+void HostValidationRuntime::observe_post_fixed_tick(
+    const dungeon::DungeonSnapshot& snapshot,
+    const items::ItemOwnershipState* ownership) noexcept {
+    if (ownership == nullptr) return;
+    host_validation::observe_stage11d_abyss_claim(
+        impl_->states.stage11d, snapshot, *ownership);
+}
+]=])
+set(_fixed_step_target_reached_contract [=[
+bool HostValidationRuntime::fixed_step_target_reached(
+    const dungeon::DungeonSnapshot& snapshot) const noexcept {
+    return host_validation::stage10_validation_reached(
+        snapshot, *impl_->config, impl_->states.stage10)
+        || host_validation::stage11_validation_reached(
+            snapshot, *impl_->config, impl_->states.stage11);
+}
+]=])
+
+function(host_validation_task7b_owner_namespace_valid
+        SURFACE OUT_NAMESPACE OUT_VALID)
+    set(_namespace_signature "namespace arpg::platform {")
+    host_validation_count_token(
+        "${SURFACE}" "${_namespace_signature}" _namespace_count)
+    if(NOT _namespace_count EQUAL 1)
+        set(${OUT_NAMESPACE} "" PARENT_SCOPE)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    string(FIND "${SURFACE}" "${_namespace_signature}" _namespace_position)
+    host_validation_brace_depth(
+        "${SURFACE}" ${_namespace_position} _namespace_depth)
+    string(SUBSTRING "${SURFACE}" 0 ${_namespace_position}
+        _namespace_prefix)
+    set(_namespace_line_prefix "\n${_namespace_prefix}")
+    if(NOT _namespace_depth EQUAL 0
+            OR NOT _namespace_line_prefix MATCHES "\n[ \t]*$")
+        set(${OUT_NAMESPACE} "" PARENT_SCOPE)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    host_validation_extract_sanitized_block(
+        "${SURFACE}" "${_namespace_signature}" _namespace)
+    set(${OUT_NAMESPACE} "${_namespace}" PARENT_SCOPE)
+    set(${OUT_VALID} TRUE PARENT_SCOPE)
+endfunction()
+
+function(host_validation_task7b_method_valid
+        ACTIVE LEXICAL ACTIVE_NAMESPACE LEXICAL_NAMESPACE
+        SIGNATURE EXPECTED OUT_VALID)
+    host_validation_active_exact_definition_valid(
+        "${ACTIVE}" "${LEXICAL}" "${SIGNATURE}" "${EXPECTED}"
+        _exact_valid)
+    if(NOT _exact_valid)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    host_validation_count_token(
+        "${ACTIVE_NAMESPACE}" "${SIGNATURE}" _active_owner_count)
+    host_validation_count_token(
+        "${LEXICAL_NAMESPACE}" "${SIGNATURE}" _lexical_owner_count)
+    if(NOT _active_owner_count EQUAL 1
+            OR NOT _lexical_owner_count EQUAL 1)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    string(FIND "${ACTIVE}" "${SIGNATURE}" _position)
+    host_validation_brace_depth("${ACTIVE}" ${_position} _depth)
+    if(NOT _depth EQUAL 1)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    set(${OUT_VALID} TRUE PARENT_SCOPE)
+endfunction()
+
+# Production and every full-source mutation below use this same non-fatal
+# owner validator.  It proves exact active-plus-lexical bodies and direct
+# namespace ownership for all six Task 7B methods.
+function(host_validation_task7b_runtime_contracts_valid
+        RAW_RUNTIME OUT_VALID OUT_ERROR)
+    host_validation_unconditional_cpp_surface(
+        "${RAW_RUNTIME}" _active _lexical)
+    host_validation_task7b_owner_namespace_valid(
+        "${_active}" _active_namespace _active_namespace_valid)
+    host_validation_task7b_owner_namespace_valid(
+        "${_lexical}" _lexical_namespace _lexical_namespace_valid)
+    if(NOT _active_namespace_valid OR NOT _lexical_namespace_valid)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        set(${OUT_ERROR} "arpg::platform namespace" PARENT_SCOPE)
+        return()
+    endif()
+    host_validation_task7b_method_valid(
+        "${_active}" "${_lexical}"
+        "${_active_namespace}" "${_lexical_namespace}"
+        "bool HostValidationRuntime::should_continue_death("
+        "${_should_continue_death_contract}" _method_valid)
+    if(NOT _method_valid)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        set(${OUT_ERROR} "should_continue_death" PARENT_SCOPE)
+        return()
+    endif()
+    host_validation_task7b_method_valid(
+        "${_active}" "${_lexical}"
+        "${_active_namespace}" "${_lexical_namespace}"
+        "combat::MovementInput HostValidationRuntime::fixed_step_movement("
+        "${_fixed_step_movement_contract}" _method_valid)
+    if(NOT _method_valid)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        set(${OUT_ERROR} "fixed_step_movement" PARENT_SCOPE)
+        return()
+    endif()
+    host_validation_task7b_method_valid(
+        "${_active}" "${_lexical}"
+        "${_active_namespace}" "${_lexical_namespace}"
+        "void HostValidationRuntime::observe_fixed_tick("
+        "${_observe_fixed_tick_contract}" _method_valid)
+    if(NOT _method_valid)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        set(${OUT_ERROR} "observe_fixed_tick" PARENT_SCOPE)
+        return()
+    endif()
+    host_validation_task7b_method_valid(
+        "${_active}" "${_lexical}"
+        "${_active_namespace}" "${_lexical_namespace}"
+        "void HostValidationRuntime::observe_death_continue_result("
+        "${_observe_death_continue_result_contract}" _method_valid)
+    if(NOT _method_valid)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        set(${OUT_ERROR} "observe_death_continue_result" PARENT_SCOPE)
+        return()
+    endif()
+    host_validation_task7b_method_valid(
+        "${_active}" "${_lexical}"
+        "${_active_namespace}" "${_lexical_namespace}"
+        "void HostValidationRuntime::observe_post_fixed_tick("
+        "${_observe_post_fixed_tick_contract}" _method_valid)
+    if(NOT _method_valid)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        set(${OUT_ERROR} "observe_post_fixed_tick" PARENT_SCOPE)
+        return()
+    endif()
+    host_validation_task7b_method_valid(
+        "${_active}" "${_lexical}"
+        "${_active_namespace}" "${_lexical_namespace}"
+        "bool HostValidationRuntime::fixed_step_target_reached("
+        "${_fixed_step_target_reached_contract}" _method_valid)
+    if(NOT _method_valid)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        set(${OUT_ERROR} "fixed_step_target_reached" PARENT_SCOPE)
+        return()
+    endif()
+    set(${OUT_VALID} TRUE PARENT_SCOPE)
+    set(${OUT_ERROR} "" PARENT_SCOPE)
+endfunction()
+
+host_validation_task7b_runtime_contracts_valid(
+    "${_runtime_text}" _task7b_runtime_valid _task7b_runtime_error)
+if(NOT _task7b_runtime_valid)
+    message(FATAL_ERROR
+        "Host validation Task 7B shared runtime validator rejected: ${_task7b_runtime_error}")
+endif()
+
+host_validation_require_depth("should_continue_death top-level definition"
+    "${_runtime}" "bool HostValidationRuntime::should_continue_death(" 1)
+host_validation_require_active_exact_definition(
+    "should_continue_death exact reachable contract"
+    "${_runtime}" "${_runtime_lexical}"
+    "bool HostValidationRuntime::should_continue_death("
+    "${_should_continue_death_contract}")
+host_validation_require_depth("fixed_step_movement top-level definition"
+    "${_runtime}"
+    "combat::MovementInput HostValidationRuntime::fixed_step_movement(" 1)
+host_validation_require_active_exact_definition(
+    "fixed_step_movement exact reachable contract"
+    "${_runtime}" "${_runtime_lexical}"
+    "combat::MovementInput HostValidationRuntime::fixed_step_movement("
+    "${_fixed_step_movement_contract}")
+foreach(_method IN ITEMS
+        observe_fixed_tick observe_death_continue_result observe_post_fixed_tick)
+    host_validation_require_depth("${_method} top-level definition"
+        "${_runtime}" "void HostValidationRuntime::${_method}(" 1)
+endforeach()
+host_validation_require_active_exact_definition(
+    "observe_fixed_tick exact reachable contract"
+    "${_runtime}" "${_runtime_lexical}"
+    "void HostValidationRuntime::observe_fixed_tick("
+    "${_observe_fixed_tick_contract}")
+host_validation_require_active_exact_definition(
+    "observe_death_continue_result exact reachable contract"
+    "${_runtime}" "${_runtime_lexical}"
+    "void HostValidationRuntime::observe_death_continue_result("
+    "${_observe_death_continue_result_contract}")
+host_validation_require_active_exact_definition(
+    "observe_post_fixed_tick exact reachable contract"
+    "${_runtime}" "${_runtime_lexical}"
+    "void HostValidationRuntime::observe_post_fixed_tick("
+    "${_observe_post_fixed_tick_contract}")
+host_validation_require_depth("fixed_step_target_reached top-level definition"
+    "${_runtime}"
+    "bool HostValidationRuntime::fixed_step_target_reached(" 1)
+host_validation_require_active_exact_definition(
+    "fixed_step_target_reached exact reachable contract"
+    "${_runtime}" "${_runtime_lexical}"
+    "bool HostValidationRuntime::fixed_step_target_reached("
+    "${_fixed_step_target_reached_contract}")
+
+# Full-source mutation checks state the behavioral breaks guarded by the exact
+# definitions.  In particular, Stage11 selection is a direct return rather
+# than a zero-value fallback, and every non-rejected continue result (including
+# faulted) records the one validation request.
+function(host_validation_expect_task7b_runtime_mutation_rejected
+        LABEL OLD_FRAGMENT NEW_FRAGMENT)
+    string(REPLACE "${OLD_FRAGMENT}" "${NEW_FRAGMENT}"
+        _mutation "${_runtime_text}")
+    if(_mutation STREQUAL _runtime_text)
+        message(FATAL_ERROR
+            "Host validation Task 7B runtime mutation anchor is missing: ${LABEL}")
+    endif()
+    host_validation_task7b_runtime_contracts_valid(
+        "${_mutation}" _mutation_valid _mutation_error)
+    if(_mutation_valid)
+        message(FATAL_ERROR
+            "Host validation shared Task 7B runtime validator accepted mutation: ${LABEL}")
+    endif()
+endfunction()
+
+host_validation_expect_task7b_runtime_mutation_rejected(
+    "Stage11 zero-output fallback into Stage10"
+    "return host_validation::stage11_validation_input("
+    "const auto stage11_input = host_validation::stage11_validation_input(")
+host_validation_expect_task7b_runtime_mutation_rejected(
+    "fixed-tick observer duplicate increment"
+    "++impl_->states.stage11b.fixed_ticks;"
+    "++impl_->states.stage11b.fixed_ticks; ++impl_->states.stage11b.fixed_ticks;")
+host_validation_expect_task7b_runtime_mutation_rejected(
+    "death observer accepts only accepted instead of every non-rejected result"
+    "result != dungeon::RequestResult::rejected"
+    "result == dungeon::RequestResult::accepted")
+host_validation_expect_task7b_runtime_mutation_rejected(
+    "death observer submits the gameplay transaction"
+    "const auto scenario ="
+    "impl_->request_death_continue(); const auto scenario =")
+host_validation_expect_task7b_runtime_mutation_rejected(
+    "post-tick observer snapshots again"
+    "if (ownership == nullptr) return;"
+    "impl_->session->snapshot(snapshot); if (ownership == nullptr) return;")
+host_validation_expect_task7b_runtime_mutation_rejected(
+    "post-tick observer uses nullable ownership"
+    "snapshot, *ownership);"
+    "snapshot, *static_cast<const items::ItemOwnershipState*>(nullptr));")
+host_validation_expect_task7b_runtime_mutation_rejected(
+    "target test reverses Stage10 and Stage11 short circuit"
+    "host_validation::stage10_validation_reached("
+    "host_validation::stage11_validation_reached(")
+
+function(host_validation_expect_task7b_runtime_fixture_rejected LABEL FIXTURE)
+    host_validation_task7b_runtime_contracts_valid(
+        "${FIXTURE}" _fixture_valid _fixture_error)
+    if(_fixture_valid)
+        message(FATAL_ERROR
+            "Host validation shared Task 7B runtime validator accepted fixture: ${LABEL}")
+    endif()
+    if(ARGC GREATER 2 AND NOT _fixture_error STREQUAL "${ARGV2}")
+        message(FATAL_ERROR
+            "Host validation Task 7B fixture was rejected for the wrong reason: ${LABEL}: ${_fixture_error}")
+    endif()
+endfunction()
+
+string(REPLACE "namespace arpg::platform {"
+    "namespace task7b_wrong_platform {"
+    _runtime_wrong_namespace_fixture "${_runtime_text}")
+if(_runtime_wrong_namespace_fixture STREQUAL _runtime_text)
+    message(FATAL_ERROR
+        "Host validation Task 7B wrong-namespace fixture anchor is missing")
+endif()
+string(APPEND _runtime_wrong_namespace_fixture
+    "\nnamespace arpg::platform {\n}\n")
+host_validation_expect_task7b_runtime_fixture_rejected(
+    "correct definitions in another top-level namespace"
+    "${_runtime_wrong_namespace_fixture}" "should_continue_death")
+
+set(_runtime_duplicate_namespace_fixture
+    "${_runtime_text}\nnamespace arpg::platform {\n}\n")
+host_validation_expect_task7b_runtime_fixture_rejected(
+    "duplicate active owner namespace"
+    "${_runtime_duplicate_namespace_fixture}" "arpg::platform namespace")
+
+string(REPLACE "namespace arpg::platform {"
+    "namespace arpg::platform_extra {"
+    _runtime_prefixed_namespace_fixture "${_runtime_text}")
+if(_runtime_prefixed_namespace_fixture STREQUAL _runtime_text)
+    message(FATAL_ERROR
+        "Host validation Task 7B prefixed-namespace fixture anchor is missing")
+endif()
+host_validation_expect_task7b_runtime_fixture_rejected(
+    "prefixed owner namespace"
+    "${_runtime_prefixed_namespace_fixture}" "arpg::platform namespace")
+
+string(REPLACE "bool HostValidationRuntime::should_continue_death("
+    "bool HostValidationRuntime::should_continue_death_removed("
+    _runtime_without_should_continue "${_runtime_text}")
+if(_runtime_without_should_continue STREQUAL _runtime_text)
+    message(FATAL_ERROR
+        "Host validation Task 7B hidden-owner fixture anchor is missing")
+endif()
+set(_runtime_comment_fixture
+    "${_runtime_without_should_continue}\n/*${_should_continue_death_contract}*/\n")
+host_validation_expect_task7b_runtime_fixture_rejected(
+    "correct definition only in comment" "${_runtime_comment_fixture}")
+set(_runtime_string_fixture
+    "${_runtime_without_should_continue}\nconstexpr const char* task7b_definition_decoy = \"bool HostValidationRuntime::should_continue_death(\";\n")
+host_validation_expect_task7b_runtime_fixture_rejected(
+    "correct signature only in normal string" "${_runtime_string_fixture}")
+set(_runtime_raw_fixture
+    "${_runtime_without_should_continue}\nconstexpr const char* task7b_raw_decoy = R\"task7b(${_should_continue_death_contract})task7b\";\n")
+host_validation_expect_task7b_runtime_fixture_rejected(
+    "correct definition only in raw string" "${_runtime_raw_fixture}")
+set(_runtime_inactive_fixture
+    "${_runtime_without_should_continue}\n#if 0\n${_should_continue_death_contract}\n#endif\n")
+host_validation_expect_task7b_runtime_fixture_rejected(
+    "correct definition only in inactive code" "${_runtime_inactive_fixture}")
+set(_runtime_lambda_fixture
+    "${_runtime_without_should_continue}\nvoid task7b_lambda_owner() { auto decoy = [] { ${_should_continue_death_contract} }; }\n")
+host_validation_expect_task7b_runtime_fixture_rejected(
+    "correct definition only in lambda scope" "${_runtime_lambda_fixture}")
+set(_runtime_dead_fixture
+    "${_runtime_without_should_continue}\nvoid task7b_dead_owner() { if (false) { ${_should_continue_death_contract} } }\n")
+host_validation_expect_task7b_runtime_fixture_rejected(
+    "correct definition only in dead scope" "${_runtime_dead_fixture}")
+set(_runtime_cross_scope_fixture
+    "${_runtime_without_should_continue}\n${_should_continue_death_contract}\n")
+host_validation_expect_task7b_runtime_fixture_rejected(
+    "correct definition outside the owner namespace"
+    "${_runtime_cross_scope_fixture}")
+
 host_validation_expect_exact_mutation_rejected("readiness unbraced dead-if"
     "${_readiness_lexical}" "${_readiness_contract}"
     "impl_->states.stage11c.cjk_font_ready = cjk_font_ready;"
@@ -1180,6 +1619,77 @@ host_validation_require_depth("Host entry top-level definition" "${_host}"
     "HostExitCode run_raylib_host(" 1)
 host_validation_require_depth("drain helper top-level definition" "${_host}"
     "void drain_events(" 2)
+
+# Scope the Task 7B ownership boundary to the executable death segment and the
+# real fixed-step loop.  Presentation-only Stage10/11 reads later in Host stay
+# legal until Task 7C.
+string(FIND "${_run_host}"
+    "DeathInputGate death_gate = host_death_input_gate(" _death_segment_begin)
+string(FIND "${_run_host}" "bool escape_consumed = false;"
+    _death_segment_end)
+if(_death_segment_begin EQUAL -1 OR _death_segment_end EQUAL -1
+        OR NOT _death_segment_begin LESS _death_segment_end)
+    message(FATAL_ERROR
+        "Host validation cannot isolate the Task 7B death-continue segment")
+endif()
+math(EXPR _death_segment_length
+    "${_death_segment_end} - ${_death_segment_begin}")
+string(SUBSTRING "${_run_host}" ${_death_segment_begin}
+    ${_death_segment_length} _death_segment)
+host_validation_extract_sanitized_block("${_run_host}"
+    "for (std::uint32_t step = 0; step < frame.steps; ++step)"
+    _task7b_fixed_step_loop)
+
+foreach(_death_call IN ITEMS
+        "validation_runtime->should_continue_death(current)"
+        "runtime.request_death_continue()"
+        "validation_runtime->observe_death_continue_result(")
+    host_validation_require_count("Task 7B death data flow"
+        "${_death_segment}" "${_death_call}" 1)
+endforeach()
+host_validation_require_depth("direct death decision facade call"
+    "${_death_segment}"
+    "validation_runtime->should_continue_death(current)" 0)
+host_validation_require_depth("direct death-continue transaction"
+    "${_death_segment}" "runtime.request_death_continue()" 1)
+host_validation_require_depth("direct death-result observer"
+    "${_death_segment}"
+    "validation_runtime->observe_death_continue_result(" 1)
+foreach(_old_death_owner IN ITEMS
+        "validation_continue" "stage11_validation_state.continue_requested")
+    host_validation_require_count("removed Host death owner"
+        "${_death_segment}" "${_old_death_owner}" 0)
+endforeach()
+
+foreach(_fixed_call IN ITEMS
+        "validation_runtime->fixed_step_movement("
+        "validation_runtime->observe_fixed_tick()"
+        "validation_runtime->observe_post_fixed_tick("
+        "validation_runtime->fixed_step_target_reached(")
+    host_validation_require_count("Task 7B fixed-step facade flow"
+        "${_task7b_fixed_step_loop}" "${_fixed_call}" 1)
+endforeach()
+host_validation_require_depth("fixed-step movement RHS"
+    "${_task7b_fixed_step_loop}"
+    "validation_runtime->fixed_step_movement(" 2)
+foreach(_direct_fixed_call IN ITEMS
+        "validation_runtime->observe_fixed_tick()"
+        "validation_runtime->observe_post_fixed_tick("
+        "validation_runtime->fixed_step_target_reached(")
+    host_validation_require_depth("direct Task 7B fixed-step facade call"
+        "${_task7b_fixed_step_loop}" "${_direct_fixed_call}" 1)
+endforeach()
+foreach(_old_fixed_owner IN ITEMS
+        "host_validation::stage11_validation_input("
+        "host_validation::stage10_validation_input("
+        "host_validation::stage10_validation_reached("
+        "host_validation::stage11_validation_reached("
+        "stage11b_validation_state.fixed_ticks"
+        "host_validation::observe_stage11d_abyss_claim(")
+    host_validation_require_count("removed Host fixed-step owner"
+        "${_task7b_fixed_step_loop}" "${_old_fixed_owner}" 0)
+endforeach()
+
 foreach(_old_call IN ITEMS
         "inject_stage11b_physical_edges("
         "inject_stage11c_physical_edges("

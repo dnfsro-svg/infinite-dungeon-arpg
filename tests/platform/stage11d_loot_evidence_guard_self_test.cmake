@@ -58,7 +58,12 @@ function(expect_rejected NAME OVERRIDE PATH EXPECTED_REASON)
     endif()
     set(_guard_options "")
     if(OVERRIDE STREQUAL "HOST_VALIDATION_RUNTIME")
-        list(APPEND _guard_options "-DSTAGE11D_INPUT_OWNER_ONLY=ON")
+        if(NAME MATCHES "^facade post-tick")
+            list(APPEND _guard_options
+                "-DSTAGE11D_POST_TICK_OWNER_ONLY=ON")
+        else()
+            list(APPEND _guard_options "-DSTAGE11D_INPUT_OWNER_ONLY=ON")
+        endif()
     endif()
     execute_process(COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
         "-D${OVERRIDE}_OVERRIDE=${PATH}" ${_guard_options} -P "${_guard}"
@@ -485,6 +490,122 @@ file(WRITE "${_path}" "${_task5a_abyss_lambda}")
 expect_rejected("host abyss observer in uncalled lambda" HOST "${_path}"
     "host abyss_claim seam scope")
 
+set(_task7b_post_tick_definition [=[void HostValidationRuntime::observe_post_fixed_tick(
+    const dungeon::DungeonSnapshot& snapshot,
+    const items::ItemOwnershipState* ownership) noexcept {
+    if (ownership == nullptr) return;
+    host_validation::observe_stage11d_abyss_claim(
+        impl_->states.stage11d, snapshot, *ownership);
+}]=])
+string(REPLACE "${_task7b_post_tick_definition}" ""
+    _task7b_post_tick_wrong_namespace
+    "${_task7b_host_validation_runtime_text}")
+string(APPEND _task7b_post_tick_wrong_namespace
+    "\nnamespace task7b_wrong_platform {\n${_task7b_post_tick_definition}\n}  // namespace task7b_wrong_platform\n")
+if(_task7b_post_tick_wrong_namespace STREQUAL
+        _task7b_host_validation_runtime_text)
+    message(FATAL_ERROR
+        "facade post-tick wrong-namespace mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/facade-post-tick-wrong-namespace.cpp")
+file(WRITE "${_path}" "${_task7b_post_tick_wrong_namespace}")
+expect_rejected("facade post-tick owner in wrong namespace"
+    HOST_VALIDATION_RUNTIME "${_path}"
+    "rejected facade abyss observer namespace")
+set(_task7b_post_tick_abyss_call [=[    host_validation::observe_stage11d_abyss_claim(
+        impl_->states.stage11d, snapshot, *ownership);]=])
+string(REPLACE "${_task7b_post_tick_abyss_call}"
+    "    const auto task7b_post_tick_decoy = [&]() noexcept {
+    ${_task7b_post_tick_abyss_call}
+    };"
+    _task7b_post_tick_lambda "${_task7b_host_validation_runtime_text}")
+if(_task7b_post_tick_lambda STREQUAL _task7b_host_validation_runtime_text)
+    message(FATAL_ERROR "facade post-tick lambda mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/facade-post-tick-uncalled-lambda.cpp")
+file(WRITE "${_path}" "${_task7b_post_tick_lambda}")
+expect_rejected("facade post-tick observer in uncalled lambda"
+    HOST_VALIDATION_RUNTIME "${_path}"
+    "rejected facade abyss observer binding")
+
+string(REPLACE "${_task7b_post_tick_abyss_call}"
+    "    host_validation::observe_stage17_snapshot(
+        *impl_->config, impl_->states.stage17, snapshot);
+${_task7b_post_tick_abyss_call}"
+    _task7b_post_tick_extra_snapshot "${_task7b_host_validation_runtime_text}")
+if(_task7b_post_tick_extra_snapshot STREQUAL
+        _task7b_host_validation_runtime_text)
+    message(FATAL_ERROR
+        "facade post-tick extra snapshot mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/facade-post-tick-extra-snapshot.cpp")
+file(WRITE "${_path}" "${_task7b_post_tick_extra_snapshot}")
+expect_rejected("facade post-tick extra snapshot observation"
+    HOST_VALIDATION_RUNTIME "${_path}"
+    "rejected facade abyss observer binding")
+
+string(REPLACE "${_task7b_post_tick_definition}"
+    "namespace task7b_post_tick_decoy {
+${_task7b_post_tick_definition}
+}  // namespace task7b_post_tick_decoy"
+    _task7b_post_tick_cross_scope "${_task7b_host_validation_runtime_text}")
+if(_task7b_post_tick_cross_scope STREQUAL
+        _task7b_host_validation_runtime_text)
+    message(FATAL_ERROR
+        "facade post-tick cross-scope mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/facade-post-tick-cross-scope.cpp")
+file(WRITE "${_path}" "${_task7b_post_tick_cross_scope}")
+expect_rejected("facade post-tick owner in cross scope"
+    HOST_VALIDATION_RUNTIME "${_path}"
+    "rejected facade abyss observer scope")
+
+string(REPLACE "if (ownership == nullptr) return;"
+    "if (ownership != nullptr) return;" _task7b_post_tick_altered
+    "${_task7b_post_tick_definition}")
+string(REPLACE "${_task7b_post_tick_definition}"
+    "#if 0
+${_task7b_post_tick_definition}
+#endif
+${_task7b_post_tick_altered}"
+    _task7b_post_tick_inactive_correct
+    "${_task7b_host_validation_runtime_text}")
+if(_task7b_post_tick_inactive_correct STREQUAL
+        _task7b_host_validation_runtime_text)
+    message(FATAL_ERROR
+        "facade post-tick inactive owner mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/facade-post-tick-inactive-correct.cpp")
+file(WRITE "${_path}" "${_task7b_post_tick_inactive_correct}")
+expect_rejected("facade post-tick inactive correct owner"
+    HOST_VALIDATION_RUNTIME "${_path}"
+    "missing facade abyss observer owner")
+
+string(REPLACE "current, &session->item_state()"
+    "previous, &session->item_state()" _task7b_abyss_previous
+    "${_task5a_abyss_seam}")
+if(_task7b_abyss_previous STREQUAL _task5a_abyss_seam)
+    message(FATAL_ERROR "host abyss previous snapshot mutation made no change")
+endif()
+string(REPLACE "${_task5a_abyss_seam}" "${_task7b_abyss_previous}"
+    _task7b_abyss_previous_host "${_task5a_red_host_text}")
+set(_path "${GUARD_TEST_ROOT}/host-abyss-previous-snapshot.cpp")
+file(WRITE "${_path}" "${_task7b_abyss_previous_host}")
+expect_rejected("host abyss observer previous snapshot" HOST "${_path}"
+    "rejected host abyss observer binding")
+
+string(REPLACE "&session->item_state()" "nullptr"
+    _task7b_abyss_null_ownership "${_task5a_abyss_seam}")
+if(_task7b_abyss_null_ownership STREQUAL _task5a_abyss_seam)
+    message(FATAL_ERROR "host abyss null ownership mutation made no change")
+endif()
+string(REPLACE "${_task5a_abyss_seam}" "${_task7b_abyss_null_ownership}"
+    _task7b_abyss_null_host "${_task5a_red_host_text}")
+set(_path "${GUARD_TEST_ROOT}/host-abyss-null-ownership.cpp")
+file(WRITE "${_path}" "${_task7b_abyss_null_host}")
+expect_rejected("host abyss observer null ownership" HOST "${_path}"
+    "rejected host abyss observer binding")
+
 string(REPLACE "${_task5a_abyss_seam}" "" _task5a_abyss_early
     "${_task5a_red_host_text}")
 string(REPLACE "                runtime.fixed_tick(step_movement,"
@@ -493,6 +614,41 @@ string(REPLACE "                runtime.fixed_tick(step_movement,"
 set(_path "${GUARD_TEST_ROOT}/host-abyss-before-fixed-tick.cpp")
 file(WRITE "${_path}" "${_task5a_abyss_early}")
 expect_rejected("host abyss observer before fixed tick" HOST "${_path}"
+    "abyss claim observation order")
+
+set(_task7b_drain_target_site [=[                drain_events(*session, renderer, feedback, audio,
+                    validation_runtime.get());
+                if (validation_runtime->fixed_step_target_reached(current)) {]=])
+string(REPLACE "${_task5a_abyss_seam}" "" _task7b_abyss_after_drain
+    "${_task5a_red_host_text}")
+string(FIND "${_task7b_abyss_after_drain}" "${_task7b_drain_target_site}"
+    _task7b_drain_target_site_position)
+if(_task7b_drain_target_site_position EQUAL -1)
+    message(FATAL_ERROR "host abyss after drain anchor is missing")
+endif()
+string(LENGTH "${_task7b_drain_target_site}"
+    _task7b_drain_target_site_length)
+math(EXPR _task7b_drain_target_tail_position
+    "${_task7b_drain_target_site_position} + ${_task7b_drain_target_site_length}")
+string(SUBSTRING "${_task7b_abyss_after_drain}"
+    ${_task7b_drain_target_tail_position} -1 _task7b_drain_target_tail)
+string(FIND "${_task7b_drain_target_tail}" "${_task7b_drain_target_site}"
+    _task7b_duplicate_drain_target_site_position)
+if(NOT _task7b_duplicate_drain_target_site_position EQUAL -1)
+    message(FATAL_ERROR "host abyss after drain anchor is duplicated")
+endif()
+string(REPLACE "${_task7b_drain_target_site}"
+    "                drain_events(*session, renderer, feedback, audio,
+                    validation_runtime.get());
+${_task5a_abyss_seam}
+                if (validation_runtime->fixed_step_target_reached(current)) {"
+    _task7b_abyss_after_drain "${_task7b_abyss_after_drain}")
+if(_task7b_abyss_after_drain STREQUAL _task5a_red_host_text)
+    message(FATAL_ERROR "host abyss after drain mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/host-abyss-after-drain.cpp")
+file(WRITE "${_path}" "${_task7b_abyss_after_drain}")
+expect_rejected("host abyss observer after drain" HOST "${_path}"
     "abyss claim observation order")
 
 file(READ "${_formal}" _formal_text)
@@ -773,5 +929,5 @@ if(DEFINED TASK5A_TARGETED_ONLY AND TASK5A_TARGETED_ONLY)
         "Stage11D Task5A targeted guard test passed: bad_mutations=5; harmless_decoys=2")
 else()
     message(STATUS
-        "Stage11D loot evidence guard self-test passed: bad_mutations=47; harmless_decoys=2")
+        "Stage11D loot evidence guard self-test passed: bad_mutations=55; harmless_decoys=2")
 endif()

@@ -810,15 +810,9 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 && current.death->saving;
             const bool death_pending = current.death.has_value()
                 && current.death->can_continue;
-            const bool validation_continue = death_pending
-                && (config.stage11_validation
-                        == Stage11ValidationScenario::deep_continue
-                    || config.stage11_validation
-                        == Stage11ValidationScenario::floor_one_continue);
             DeathInputGate death_gate = host_death_input_gate(
                 death_saving, death_pending, frame_input.keys, physical_keys);
-            if (validation_continue && !death_saving
-                    && !stage11_validation_state.continue_requested) {
+            if (validation_runtime->should_continue_death(current)) {
                 death_gate.continue_death = true;
             }
             if (!death_gate.forward_gameplay) {
@@ -841,11 +835,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     previous = current;
                     session->snapshot(current);
                 }
-            }
-            if (validation_continue
-                    && death_continue_result
-                        != dungeon::RequestResult::rejected) {
-                stage11_validation_state.continue_requested = true;
+                validation_runtime->observe_death_continue_result(
+                    death_continue_result);
             }
             if (!death_gate.forward_gameplay && window_close_requested
                     && !window_close_latched) {
@@ -1064,26 +1055,17 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 const bool step_death = current.death.has_value();
                 combat::MovementInput step_movement{};
                 if (!step_death) {
-                    if (config.stage11_validation
-                            != Stage11ValidationScenario::none) {
-                        step_movement = host_validation::stage11_validation_input(*session,
-                            current, config, stage11_validation_state);
-                    } else if (config.stage10_validation
-                            != Stage10ValidationScenario::none) {
-                        step_movement = host_validation::stage10_validation_input(*session,
-                            current, config, stage10_validation_state);
-                    } else {
-                        step_movement = movement;
-                    }
+                    step_movement = validation_runtime->fixed_step_movement(
+                        *session, current, movement);
                 }
                 runtime.fixed_tick(step_movement,
                     loot_pickup_policy(live_settings.loot_filter_mode));
-                ++stage11b_validation_state.fixed_ticks;
+                validation_runtime->observe_fixed_tick();
                 session->snapshot(current);
                 validation_runtime->observe_snapshot(current);
 // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN abyss_claim
-                host_validation::observe_stage11d_abyss_claim(
-                    stage11d_validation_state, current, session->item_state());
+                validation_runtime->observe_post_fixed_tick(
+                    current, &session->item_state());
 // STAGE11D_LOOT_VALIDATION_SEAM_END abyss_claim
                 if (current.death.has_value()) {
                     if (inventory.is_open()) inventory.close();
@@ -1099,12 +1081,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 }
                 drain_events(*session, renderer, feedback, audio,
                     validation_runtime.get());
-                if (host_validation::stage10_validation_reached(
-                        current, config, stage10_validation_state)) {
-                    break;
-                }
-                if (host_validation::stage11_validation_reached(
-                        current, config, stage11_validation_state)) {
+                if (validation_runtime->fixed_step_target_reached(current)) {
                     break;
                 }
             }

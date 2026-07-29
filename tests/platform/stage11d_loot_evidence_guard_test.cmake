@@ -176,7 +176,7 @@ function(stage11d_prepare_marker_surface SOURCE PREFIX LABELS OUT_CODE)
             string(REPLACE "${_marker}" "${_token}" _marked "${_marked}")
         endforeach()
     endforeach()
-    evidence_sanitize_cpp_for_scan("${_marked}" _code)
+    stage11d_unconditional_cpp_surface("${_marked}" _code)
     foreach(_label IN LISTS LABELS)
         foreach(_kind IN ITEMS BEGIN END)
             set(_token "TASK5A_${PREFIX}_${_label}_${_kind}_MARKER")
@@ -318,6 +318,119 @@ if(DEFINED STAGE11D_INPUT_OWNER_ONLY AND STAGE11D_INPUT_OWNER_ONLY)
     return()
 endif()
 
+set(_host_validation_post_tick_signature
+    "void HostValidationRuntime::observe_post_fixed_tick(")
+stage11d_count_raw_token("${_host_validation_runtime_code}"
+    "${_host_validation_post_tick_signature}"
+    _host_validation_post_tick_active_count)
+stage11d_count_raw_token("${_host_validation_runtime_lexical_code}"
+    "${_host_validation_post_tick_signature}"
+    _host_validation_post_tick_lexical_count)
+if(NOT _host_validation_post_tick_active_count EQUAL 1
+        OR NOT _host_validation_post_tick_lexical_count EQUAL 1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard missing facade abyss observer owner")
+endif()
+set(_host_validation_platform_namespace_signature
+    "namespace arpg::platform {")
+stage11d_count_raw_token("${_host_validation_runtime_code}"
+    "${_host_validation_platform_namespace_signature}"
+    _host_validation_platform_namespace_active_count)
+stage11d_count_raw_token("${_host_validation_runtime_lexical_code}"
+    "${_host_validation_platform_namespace_signature}"
+    _host_validation_platform_namespace_lexical_count)
+if(NOT _host_validation_platform_namespace_active_count EQUAL 1
+        OR NOT _host_validation_platform_namespace_lexical_count EQUAL 1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected facade abyss observer namespace")
+endif()
+evidence_find_cpp_function_bounds_in_sanitized(
+    "${_host_validation_runtime_code}"
+    "${_host_validation_platform_namespace_signature}"
+    _host_validation_platform_namespace_begin
+    _host_validation_platform_namespace_open
+    _host_validation_platform_namespace_end)
+math(EXPR _host_validation_platform_namespace_length
+    "${_host_validation_platform_namespace_end} - ${_host_validation_platform_namespace_begin} + 1")
+string(SUBSTRING "${_host_validation_runtime_code}"
+    ${_host_validation_platform_namespace_begin}
+    ${_host_validation_platform_namespace_length}
+    _host_validation_platform_namespace)
+evidence_find_cpp_function_bounds_in_sanitized(
+    "${_host_validation_runtime_lexical_code}"
+    "${_host_validation_platform_namespace_signature}"
+    _host_validation_platform_namespace_lexical_begin
+    _host_validation_platform_namespace_lexical_open
+    _host_validation_platform_namespace_lexical_end)
+math(EXPR _host_validation_platform_namespace_lexical_length
+    "${_host_validation_platform_namespace_lexical_end} - ${_host_validation_platform_namespace_lexical_begin} + 1")
+string(SUBSTRING "${_host_validation_runtime_lexical_code}"
+    ${_host_validation_platform_namespace_lexical_begin}
+    ${_host_validation_platform_namespace_lexical_length}
+    _host_validation_platform_namespace_lexical)
+stage11d_count_raw_token("${_host_validation_platform_namespace}"
+    "${_host_validation_post_tick_signature}"
+    _host_validation_post_tick_namespace_active_count)
+stage11d_count_raw_token("${_host_validation_platform_namespace_lexical}"
+    "${_host_validation_post_tick_signature}"
+    _host_validation_post_tick_namespace_lexical_count)
+if(NOT _host_validation_post_tick_namespace_active_count EQUAL 1
+        OR NOT _host_validation_post_tick_namespace_lexical_count EQUAL 1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected facade abyss observer namespace")
+endif()
+string(FIND "${_host_validation_runtime_code}"
+    "${_host_validation_post_tick_signature}"
+    _host_validation_post_tick_position)
+stage11d_code_brace_depth("${_host_validation_runtime_code}"
+    ${_host_validation_post_tick_position}
+    _host_validation_post_tick_depth)
+if(NOT _host_validation_post_tick_depth EQUAL 1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected facade abyss observer scope")
+endif()
+evidence_find_cpp_function_bounds_in_sanitized(
+    "${_host_validation_runtime_code}"
+    "${_host_validation_post_tick_signature}"
+    _host_validation_post_tick_begin _host_validation_post_tick_open
+    _host_validation_post_tick_end)
+math(EXPR _host_validation_post_tick_length
+    "${_host_validation_post_tick_end} - ${_host_validation_post_tick_begin} + 1")
+string(SUBSTRING "${_host_validation_runtime_code}"
+    ${_host_validation_post_tick_begin} ${_host_validation_post_tick_length}
+    _host_validation_post_tick_function)
+string(REGEX REPLACE "[ \t\r\n]+" ""
+    _host_validation_post_tick_normalized
+    "${_host_validation_post_tick_function}")
+evidence_find_cpp_function_bounds_in_sanitized(
+    "${_host_validation_runtime_lexical_code}"
+    "${_host_validation_post_tick_signature}"
+    _host_validation_post_tick_lexical_begin
+    _host_validation_post_tick_lexical_open
+    _host_validation_post_tick_lexical_end)
+math(EXPR _host_validation_post_tick_lexical_length
+    "${_host_validation_post_tick_lexical_end} - ${_host_validation_post_tick_lexical_begin} + 1")
+string(SUBSTRING "${_host_validation_runtime_lexical_code}"
+    ${_host_validation_post_tick_lexical_begin}
+    ${_host_validation_post_tick_lexical_length}
+    _host_validation_post_tick_lexical_function)
+string(REGEX REPLACE "[ \t\r\n]+" ""
+    _host_validation_post_tick_lexical_normalized
+    "${_host_validation_post_tick_lexical_function}")
+set(_host_validation_post_tick_expected
+    "voidHostValidationRuntime::observe_post_fixed_tick(constdungeon::DungeonSnapshot&snapshot,constitems::ItemOwnershipState*ownership)noexcept{if(ownership==nullptr)return;host_validation::observe_stage11d_abyss_claim(impl_->states.stage11d,snapshot,*ownership);}")
+if(NOT _host_validation_post_tick_normalized STREQUAL
+        _host_validation_post_tick_expected
+        OR NOT _host_validation_post_tick_lexical_normalized STREQUAL
+            _host_validation_post_tick_expected)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected facade abyss observer binding")
+endif()
+if(DEFINED STAGE11D_POST_TICK_OWNER_ONLY AND STAGE11D_POST_TICK_OWNER_ONLY)
+    message(STATUS "Stage11D facade post-tick owner guard passed")
+    return()
+endif()
+
 set(_host_facade_input_token
     "validation_runtime->inject_physical_edges(")
 stage11d_fold_cpp_phase2_splices("${_host_text}" _host_phase2_text)
@@ -405,7 +518,8 @@ endif()
 string(SUBSTRING "${_host_text}" ${_host_fixed_step_begin} -1
     _host_fixed_step_tail)
 string(FIND "${_host_fixed_step_tail}"
-    "if (current.death.has_value()) {" _host_fixed_step_end)
+    "if (inventory.is_open() != inventory_open_before"
+    _host_fixed_step_end)
 if(_host_fixed_step_end EQUAL -1)
     message(FATAL_ERROR
         "Stage11D loot evidence guard cannot isolate host fixed-step chain")
@@ -937,11 +1051,18 @@ stage11d_extract_marker_region("${_host_fixed_step_code}" host abyss_claim
 string(REGEX REPLACE "[ \t\r\n]+" "" _host_abyss_normalized
     "${_host_abyss_seam}")
 string(FIND "${_host_abyss_normalized}"
-    "host_validation::observe_stage11d_abyss_claim(stage11d_validation_state,current,session->item_state());"
+    "validation_runtime->observe_post_fixed_tick(current,&session->item_state());"
     _host_abyss_call)
 if(_host_abyss_call EQUAL -1)
     message(FATAL_ERROR
         "Stage11D loot evidence guard rejected host abyss observer binding")
+endif()
+stage11d_count_raw_token("${_host_fixed_step_code}"
+    "host_validation::observe_stage11d_abyss_claim("
+    _host_direct_abyss_observer_count)
+if(NOT _host_direct_abyss_observer_count EQUAL 0)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected direct host abyss observer")
 endif()
 
 string(FIND "${_host_fixed_step_code}"
@@ -957,7 +1078,8 @@ set(_previous -1)
 foreach(_token IN ITEMS
         "runtime.fixed_tick(" "session->snapshot(current);"
         "validation_runtime->observe_snapshot(current);"
-        "host_validation::observe_stage11d_abyss_claim(")
+        "validation_runtime->observe_post_fixed_tick("
+        "drain_events(")
     stage11d_count_raw_token("${_host_fixed_tick_loop}" "${_token}" _count)
     if(NOT _count EQUAL 1)
         message(FATAL_ERROR

@@ -428,6 +428,261 @@ function(cpp_token_brace_depth SURFACE POSITION OUTPUT)
     set(${OUTPUT} ${_depth} PARENT_SCOPE)
 endfunction()
 
+# Non-fatal balanced extraction used by both production and complete mutated
+# HOST_OVERRIDE fixtures.  Unlike the assertion helpers below, this returns a
+# status so a negative fixture can prove that the real validator rejected it.
+function(task7b_extract_unique_block
+        SOURCE SIGNATURE OUT_BLOCK OUT_BEGIN OUT_VALID)
+    string(FIND "${SOURCE}" "${SIGNATURE}" _begin)
+    if(_begin EQUAL -1)
+        set(${OUT_BLOCK} "" PARENT_SCOPE)
+        set(${OUT_BEGIN} -1 PARENT_SCOPE)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    math(EXPR _after_begin "${_begin} + 1")
+    string(SUBSTRING "${SOURCE}" ${_after_begin} -1 _remainder)
+    string(FIND "${_remainder}" "${SIGNATURE}" _duplicate)
+    if(NOT _duplicate EQUAL -1)
+        set(${OUT_BLOCK} "" PARENT_SCOPE)
+        set(${OUT_BEGIN} -1 PARENT_SCOPE)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    string(SUBSTRING "${SOURCE}" ${_begin} -1 _tail)
+    string(FIND "${_tail}" "{" _open_relative)
+    if(_open_relative EQUAL -1)
+        set(${OUT_BLOCK} "" PARENT_SCOPE)
+        set(${OUT_BEGIN} -1 PARENT_SCOPE)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    math(EXPR _open "${_begin} + ${_open_relative}")
+    string(LENGTH "${SOURCE}" _source_length)
+    set(_cursor ${_open})
+    set(_depth 0)
+    set(_end -1)
+    while(_cursor LESS _source_length)
+        string(SUBSTRING "${SOURCE}" ${_cursor} -1 _scope_tail)
+        string(FIND "${_scope_tail}" "{" _next_open)
+        string(FIND "${_scope_tail}" "}" _next_close)
+        if(_next_close EQUAL -1)
+            break()
+        endif()
+        if(NOT _next_open EQUAL -1 AND _next_open LESS _next_close)
+            math(EXPR _cursor "${_cursor} + ${_next_open} + 1")
+            math(EXPR _depth "${_depth} + 1")
+        else()
+            math(EXPR _close "${_cursor} + ${_next_close}")
+            math(EXPR _depth "${_depth} - 1")
+            if(_depth EQUAL 0)
+                set(_end ${_close})
+                break()
+            endif()
+            math(EXPR _cursor "${_close} + 1")
+        endif()
+    endwhile()
+    if(_end EQUAL -1)
+        set(${OUT_BLOCK} "" PARENT_SCOPE)
+        set(${OUT_BEGIN} -1 PARENT_SCOPE)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    math(EXPR _length "${_end} - ${_begin} + 1")
+    string(SUBSTRING "${SOURCE}" ${_begin} ${_length} _block)
+    set(${OUT_BLOCK} "${_block}" PARENT_SCOPE)
+    set(${OUT_BEGIN} ${_begin} PARENT_SCOPE)
+    set(${OUT_VALID} TRUE PARENT_SCOPE)
+endfunction()
+
+function(task7b_count_token SOURCE TOKEN OUT_COUNT)
+    set(_tail "${SOURCE}")
+    set(_count 0)
+    while(TRUE)
+        string(FIND "${_tail}" "${TOKEN}" _position)
+        if(_position EQUAL -1)
+            break()
+        endif()
+        math(EXPR _after "${_position} + 1")
+        string(SUBSTRING "${_tail}" ${_after} -1 _tail)
+        math(EXPR _count "${_count} + 1")
+    endwhile()
+    set(${OUT_COUNT} ${_count} PARENT_SCOPE)
+endfunction()
+
+function(task7b_normalize SOURCE OUT_NORMALIZED)
+    string(REGEX REPLACE "[ \t\r\n]+" " " _normalized "${SOURCE}")
+    string(STRIP "${_normalized}" _normalized)
+    set(${OUT_NORMALIZED} "${_normalized}" PARENT_SCOPE)
+endfunction()
+
+function(task7b_active_host_flow_valid
+        ACTIVE_HOST ALLOW_LEGACY OUT_VALID OUT_ERROR)
+    task7b_extract_unique_block("${ACTIVE_HOST}" "HostExitCode run_raylib_host("
+        _run_host _run_begin _run_valid)
+    if(NOT _run_valid)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        set(${OUT_ERROR} "missing_run_raylib_host" PARENT_SCOPE)
+        return()
+    endif()
+    task7b_extract_unique_block("${_run_host}" "while (!exit_requested) {"
+        _host_loop _loop_begin _loop_valid)
+    if(NOT _loop_valid)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        set(${OUT_ERROR} "missing_host_loop" PARENT_SCOPE)
+        return()
+    endif()
+
+    string(FIND "${_host_loop}"
+        "validation_runtime->inject_physical_edges(" _task7a_input)
+    string(FIND "${_host_loop}"
+        "validation_runtime->fixed_step_movement(" _task7b_input)
+    if(_task7a_input EQUAL -1 AND _task7b_input EQUAL -1)
+        if(ALLOW_LEGACY)
+            set(${OUT_VALID} TRUE PARENT_SCOPE)
+            set(${OUT_ERROR} "legacy" PARENT_SCOPE)
+        else()
+            set(${OUT_VALID} FALSE PARENT_SCOPE)
+            set(${OUT_ERROR} "legacy_not_allowed" PARENT_SCOPE)
+        endif()
+        return()
+    endif()
+    if(_task7a_input EQUAL -1)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        set(${OUT_ERROR} "missing_task7a_input_facade" PARENT_SCOPE)
+        return()
+    endif()
+    if(_task7b_input EQUAL -1)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        set(${OUT_ERROR} "missing_task7b_fixed_step_facade" PARENT_SCOPE)
+        return()
+    endif()
+
+    set(_death_decision_contract [=[
+if (validation_runtime->should_continue_death(current)) {
+    death_gate.continue_death = true;
+}
+]=])
+    set(_death_transaction_contract [=[
+if (death_gate.continue_death) {
+    death_continue_result = runtime.request_death_continue();
+    if (death_continue_result != dungeon::RequestResult::rejected) {
+        previous = current;
+        session->snapshot(current);
+    }
+    validation_runtime->observe_death_continue_result(
+        death_continue_result);
+}
+]=])
+    set(_fixed_step_contract [=[
+for (std::uint32_t step = 0; step < frame.steps; ++step) {
+    previous = current;
+    const bool step_death = current.death.has_value();
+    combat::MovementInput step_movement{};
+    if (!step_death) {
+        step_movement = validation_runtime->fixed_step_movement(
+            *session, current, movement);
+    }
+    runtime.fixed_tick(step_movement,
+        loot_pickup_policy(live_settings.loot_filter_mode));
+    validation_runtime->observe_fixed_tick();
+    session->snapshot(current);
+    validation_runtime->observe_snapshot(current);
+    validation_runtime->observe_post_fixed_tick(
+        current, &session->item_state());
+    if (current.death.has_value()) {
+        if (inventory.is_open()) inventory.close();
+        passive_overlay_open = false;
+    }
+    if (!passive_tree_can_open(current)) {
+        passive_overlay_open = false;
+    }
+    if (runtime.state() != DungeonRuntimeState::running
+        && inventory.is_open()) {
+        inventory.close();
+        fixed_step.clear_accumulator();
+    }
+    drain_events(*session, renderer, feedback, audio,
+        validation_runtime.get());
+    if (validation_runtime->fixed_step_target_reached(current)) {
+        break;
+    }
+}
+]=])
+
+    task7b_extract_unique_block("${_host_loop}"
+        "if (validation_runtime->should_continue_death(current))"
+        _death_decision _death_decision_begin _death_decision_valid)
+    task7b_extract_unique_block("${_host_loop}"
+        "if (death_gate.continue_death)"
+        _death_transaction _death_transaction_begin _death_transaction_valid)
+    task7b_extract_unique_block("${_host_loop}"
+        "for (std::uint32_t step = 0; step < frame.steps; ++step)"
+        _fixed_step _fixed_step_begin _fixed_step_valid)
+    if(NOT _death_decision_valid OR NOT _death_transaction_valid
+            OR NOT _fixed_step_valid)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        set(${OUT_ERROR} "missing_task7b_direct_block" PARENT_SCOPE)
+        return()
+    endif()
+
+    task7b_normalize("${_death_decision}" _death_decision_actual)
+    task7b_normalize("${_death_decision_contract}" _death_decision_expected)
+    task7b_normalize("${_death_transaction}" _death_transaction_actual)
+    task7b_normalize("${_death_transaction_contract}"
+        _death_transaction_expected)
+    task7b_normalize("${_fixed_step}" _fixed_step_actual)
+    task7b_normalize("${_fixed_step_contract}" _fixed_step_expected)
+    if(NOT _death_decision_actual STREQUAL _death_decision_expected)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        set(${OUT_ERROR} "death_decision_contract" PARENT_SCOPE)
+        return()
+    endif()
+    if(NOT _death_transaction_actual STREQUAL _death_transaction_expected)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        set(${OUT_ERROR} "death_transaction_contract" PARENT_SCOPE)
+        return()
+    endif()
+    if(NOT _fixed_step_actual STREQUAL _fixed_step_expected)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        set(${OUT_ERROR} "fixed_step_contract" PARENT_SCOPE)
+        return()
+    endif()
+    if(NOT _death_decision_begin LESS _death_transaction_begin
+            OR NOT _death_transaction_begin LESS _fixed_step_begin)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        set(${OUT_ERROR} "task7b_block_order" PARENT_SCOPE)
+        return()
+    endif()
+
+    foreach(_unique_call IN ITEMS
+            "validation_runtime->should_continue_death(current)"
+            "runtime.request_death_continue()"
+            "validation_runtime->observe_death_continue_result("
+            "validation_runtime->fixed_step_movement("
+            "validation_runtime->observe_fixed_tick()"
+            "validation_runtime->observe_post_fixed_tick("
+            "validation_runtime->fixed_step_target_reached(")
+        task7b_count_token("${_run_host}" "${_unique_call}" _call_count)
+        if(NOT _call_count EQUAL 1)
+            set(${OUT_VALID} FALSE PARENT_SCOPE)
+            set(${OUT_ERROR} "task7b_call_count:${_unique_call}"
+                PARENT_SCOPE)
+            return()
+        endif()
+    endforeach()
+    set(${OUT_VALID} TRUE PARENT_SCOPE)
+    set(${OUT_ERROR} "" PARENT_SCOPE)
+endfunction()
+
+function(task7b_host_flow_valid RAW_HOST ALLOW_LEGACY OUT_VALID OUT_ERROR)
+    stage17_mask_cpp_conditionals("${RAW_HOST}" _active)
+    task7b_active_host_flow_valid("${_active}" ${ALLOW_LEGACY}
+        _valid _error)
+    set(${OUT_VALID} ${_valid} PARENT_SCOPE)
+    set(${OUT_ERROR} "${_error}" PARENT_SCOPE)
+endfunction()
+
 function(assert_cpp_definition_in_scope LABEL SURFACE TOKEN EXPECTED_DEPTH
         SCOPE_OPEN SCOPE_END)
     assert_unique_cpp_definition("${LABEL}" "${SURFACE}" "${TOKEN}")
@@ -1243,44 +1498,59 @@ else()
     endif()
 endif()
 
-string(FIND "${_host_loop}" "if (!step_death) {" _fixed_step_begin)
-string(FIND "${_host_loop}" "runtime.fixed_tick(step_movement,"
-    _fixed_step_end)
-if(_fixed_step_begin EQUAL -1 OR _fixed_step_end EQUAL -1
-        OR NOT _fixed_step_begin LESS _fixed_step_end)
-    message(FATAL_ERROR "Host validation sequence guard cannot isolate fixed-step movement branch")
-endif()
-math(EXPR _fixed_step_length "${_fixed_step_end} - ${_fixed_step_begin}")
-string(SUBSTRING "${_host_loop}" ${_fixed_step_begin} ${_fixed_step_length}
-    _fixed_step_branch)
-string(REGEX REPLACE "[ \t\r\n]+" " " _fixed_step_normalized
-    "${_fixed_step_branch}")
-string(REGEX MATCH
-    "if \\(!step_death\\) \\{ if \\(config\\.stage11_validation != Stage11ValidationScenario::none\\) \\{ step_movement = host_validation::stage11_validation_input\\(.*\\); \\} else if \\(config\\.stage10_validation != Stage10ValidationScenario::none\\) \\{ step_movement = host_validation::stage10_validation_input\\(.*\\); \\} else \\{ step_movement = movement; \\} \\}"
-    _fixed_step_priority_structure "${_fixed_step_normalized}")
-if(NOT _fixed_step_priority_structure)
-    message(FATAL_ERROR "Host validation sequence guard rejected fixed-step movement priority structure")
+string(FIND "${_host_loop}"
+    "validation_runtime->fixed_step_movement(" _task7b_fixed_step_facade)
+if(DEFINED HOST_OVERRIDE
+        AND _facade_input_chain EQUAL -1
+        AND _task7b_fixed_step_facade EQUAL -1)
+    # Preserve the pre-Task-7B synthetic fixtures and their established
+    # diagnostics.  Production, and overrides derived from the current Host,
+    # take the final facade path below.
+    string(FIND "${_host_loop}" "if (!step_death) {" _fixed_step_begin)
+    string(FIND "${_host_loop}" "runtime.fixed_tick(step_movement,"
+        _fixed_step_end)
+    if(_fixed_step_begin EQUAL -1 OR _fixed_step_end EQUAL -1
+            OR NOT _fixed_step_begin LESS _fixed_step_end)
+        message(FATAL_ERROR "Host validation sequence guard cannot isolate fixed-step movement branch")
+    endif()
+    math(EXPR _fixed_step_length "${_fixed_step_end} - ${_fixed_step_begin}")
+    string(SUBSTRING "${_host_loop}" ${_fixed_step_begin}
+        ${_fixed_step_length} _fixed_step_branch)
+    string(REGEX REPLACE "[ \t\r\n]+" " " _fixed_step_normalized
+        "${_fixed_step_branch}")
+    string(REGEX MATCH
+        "if \\(!step_death\\) \\{ if \\(config\\.stage11_validation != Stage11ValidationScenario::none\\) \\{ step_movement = host_validation::stage11_validation_input\\(.*\\); \\} else if \\(config\\.stage10_validation != Stage10ValidationScenario::none\\) \\{ step_movement = host_validation::stage10_validation_input\\(.*\\); \\} else \\{ step_movement = movement; \\} \\}"
+        _fixed_step_priority_structure "${_fixed_step_normalized}")
+    if(NOT _fixed_step_priority_structure)
+        message(FATAL_ERROR "Host validation sequence guard rejected fixed-step movement priority structure")
+    endif()
+
+    foreach(_fixed_step_token IN ITEMS
+            "stage11_validation_input("
+            "stage10_validation_input("
+            "step_movement = movement;")
+        string(FIND "${_fixed_step_branch}" "${_fixed_step_token}" _position)
+        if(_position EQUAL -1)
+            message(FATAL_ERROR "Host validation sequence guard missing fixed-step movement token: ${_fixed_step_token}")
+        endif()
+        math(EXPR _after "${_position} + 1")
+        string(SUBSTRING "${_fixed_step_branch}" ${_after} -1 _remainder)
+        string(FIND "${_remainder}" "${_fixed_step_token}" _duplicate)
+        if(NOT _duplicate EQUAL -1)
+            message(FATAL_ERROR "Host validation sequence guard found duplicate fixed-step movement token: ${_fixed_step_token}")
+        endif()
+    endforeach()
+elseif(_task7b_fixed_step_facade EQUAL -1)
+    message(FATAL_ERROR
+        "Host validation sequence guard is missing Task 7B fixed-step facade call")
 endif()
 
-function(assert_unique_fixed_step_token TOKEN)
-    string(FIND "${_fixed_step_branch}" "${TOKEN}" _position)
-    if(_position EQUAL -1)
-        message(FATAL_ERROR "Host validation sequence guard missing fixed-step movement token: ${TOKEN}")
-    endif()
-    math(EXPR _after "${_position} + 1")
-    string(SUBSTRING "${_fixed_step_branch}" ${_after} -1 _remainder)
-    string(FIND "${_remainder}" "${TOKEN}" _duplicate)
-    if(NOT _duplicate EQUAL -1)
-        message(FATAL_ERROR "Host validation sequence guard found duplicate fixed-step movement token: ${TOKEN}")
-    endif()
-endfunction()
-
-foreach(_fixed_step_token IN ITEMS
-        "stage11_validation_input("
-        "stage10_validation_input("
-        "step_movement = movement;")
-    assert_unique_fixed_step_token("${_fixed_step_token}")
-endforeach()
+task7b_active_host_flow_valid("${_host_active_text}" TRUE
+    _task7b_host_flow_valid _task7b_host_flow_error)
+if(NOT _task7b_host_flow_valid)
+    message(FATAL_ERROR
+        "Host validation sequence guard rejected Task 7B host flow: ${_task7b_host_flow_error}")
+endif()
 
 function(count_nonempty_regex_matches SURFACE PATTERN OUT_COUNT)
     set(_remainder "${SURFACE}")
@@ -1810,6 +2080,128 @@ assert_token_depth_sequence("Stage17 draw observer"
 assert_token_depth_sequence("drain_events call"
     "${_host_runtime}" "drain_events(" 3 4 5 4 5 4)
 
+if(NOT _task7b_fixed_step_facade EQUAL -1)
+    extract_unique_direct_cpp_block("Task 7B death decision block"
+        "${_host_loop}"
+        "if (validation_runtime->should_continue_death(current))" 1
+        _task7b_death_decision_block _task7b_death_decision_begin)
+    extract_unique_direct_cpp_block("Task 7B death transaction block"
+        "${_host_loop}" "if (death_gate.continue_death)" 1
+        _task7b_death_transaction_block _task7b_death_transaction_begin)
+
+    string(REGEX REPLACE "[ \t\r\n]+" " " _task7b_death_decision_normalized
+        "${_task7b_death_decision_block}")
+    string(REGEX REPLACE "[ \t\r\n]+" " " _task7b_death_transaction_normalized
+        "${_task7b_death_transaction_block}")
+    set(_task7b_death_decision_contract [=[
+if (validation_runtime->should_continue_death(current)) {
+    death_gate.continue_death = true;
+}
+]=])
+    set(_task7b_death_transaction_contract [=[
+if (death_gate.continue_death) {
+    death_continue_result = runtime.request_death_continue();
+    if (death_continue_result != dungeon::RequestResult::rejected) {
+        previous = current;
+        session->snapshot(current);
+    }
+    validation_runtime->observe_death_continue_result(
+        death_continue_result);
+}
+]=])
+    string(REGEX REPLACE "[ \t\r\n]+" " "
+        _task7b_death_decision_expected
+        "${_task7b_death_decision_contract}")
+    string(REGEX REPLACE "[ \t\r\n]+" " "
+        _task7b_death_transaction_expected
+        "${_task7b_death_transaction_contract}")
+    foreach(_canonical IN ITEMS
+            _task7b_death_decision_normalized
+            _task7b_death_transaction_normalized
+            _task7b_death_decision_expected
+            _task7b_death_transaction_expected)
+        string(STRIP "${${_canonical}}" ${_canonical})
+    endforeach()
+    if(NOT _task7b_death_decision_normalized STREQUAL
+            _task7b_death_decision_expected)
+        message(FATAL_ERROR
+            "Host validation sequence guard rejected Task 7B death decision: facade may only set continue_death")
+    endif()
+    if(NOT _task7b_death_transaction_normalized STREQUAL
+            _task7b_death_transaction_expected)
+        message(FATAL_ERROR
+            "Host validation sequence guard rejected Task 7B death transaction/request/snapshot/observer chain")
+    endif()
+    if(NOT _task7b_death_decision_begin LESS
+            _task7b_death_transaction_begin)
+        message(FATAL_ERROR
+            "Host validation sequence guard rejected Task 7B death decision order")
+    endif()
+
+    function(task7b_expect_death_mutation_rejected
+        LABEL OLD_FRAGMENT NEW_FRAGMENT)
+        string(REPLACE "${OLD_FRAGMENT}" "${NEW_FRAGMENT}"
+            _mutation "${_host_active_text}")
+        if(_mutation STREQUAL _host_active_text)
+            message(FATAL_ERROR
+                "Task 7B death mutation anchor is missing: ${LABEL}")
+        endif()
+        task7b_active_host_flow_valid("${_mutation}" FALSE
+            _mutation_valid _mutation_error)
+        if(_mutation_valid)
+            message(FATAL_ERROR
+                "Task 7B shared host-flow validator accepted mutation: ${LABEL}")
+        endif()
+    endfunction()
+    task7b_expect_death_mutation_rejected(
+        "Host Stage11 state write beside facade decision"
+        "death_gate.continue_death = true;"
+        "death_gate.continue_death = true; stage11_validation_state.continue_requested = true;")
+    task7b_expect_death_mutation_rejected(
+        "death observer before real request"
+        "death_continue_result = runtime.request_death_continue();"
+        "validation_runtime->observe_death_continue_result(death_continue_result); death_continue_result = runtime.request_death_continue();")
+    task7b_expect_death_mutation_rejected(
+        "death observer before accepted/faulted snapshot refresh"
+        [=[if (death_continue_result
+                        != dungeon::RequestResult::rejected) {]=]
+        [=[validation_runtime->observe_death_continue_result(
+                    death_continue_result);
+                if (death_continue_result
+                        != dungeon::RequestResult::rejected) {]=])
+    task7b_expect_death_mutation_rejected(
+        "death observer receives fabricated result"
+        "death_continue_result);"
+        "dungeon::RequestResult::accepted);")
+
+    string(FIND "${_host_loop}"
+        "DeathInputGate death_gate = host_death_input_gate("
+        _task7b_death_segment_begin)
+    string(FIND "${_host_loop}" "bool escape_consumed = false;"
+        _task7b_death_segment_end)
+    if(_task7b_death_segment_begin EQUAL -1
+            OR _task7b_death_segment_end EQUAL -1
+            OR NOT _task7b_death_segment_begin LESS
+                _task7b_death_segment_end)
+        message(FATAL_ERROR
+            "Host validation sequence guard cannot isolate Task 7B death segment")
+    endif()
+    math(EXPR _task7b_death_segment_length
+        "${_task7b_death_segment_end} - ${_task7b_death_segment_begin}")
+    string(SUBSTRING "${_host_loop}" ${_task7b_death_segment_begin}
+        ${_task7b_death_segment_length} _task7b_death_segment)
+    foreach(_old_death_owner IN ITEMS
+            "validation_continue"
+            "stage11_validation_state.continue_requested")
+        string(FIND "${_task7b_death_segment}" "${_old_death_owner}"
+            _old_death_owner_position)
+        if(NOT _old_death_owner_position EQUAL -1)
+            message(FATAL_ERROR
+                "Host validation sequence guard found old Host death ownership: ${_old_death_owner}")
+        endif()
+    endforeach()
+endif()
+
 extract_unique_direct_cpp_block("forward-actions block" "${_host_loop}"
     "if (forward_actions)" 1 _forward_actions_block _forward_actions_begin)
 extract_unique_direct_cpp_block("fixed-step loop" "${_host_loop}"
@@ -1840,6 +2232,230 @@ string(REGEX REPLACE "[ \t\r\n]+" " " _stage17_fixed_step_normalized
     "${_stage17_fixed_step_loop}")
 string(REGEX REPLACE "[ \t\r\n]+" " " _ground_loot_draw_normalized
     "${_ground_loot_draw_block}")
+
+if(NOT _task7b_fixed_step_facade EQUAL -1)
+    set(_task7b_fixed_step_contract [=[
+for (std::uint32_t step = 0; step < frame.steps; ++step) {
+    previous = current;
+    const bool step_death = current.death.has_value();
+    combat::MovementInput step_movement{};
+    if (!step_death) {
+        step_movement = validation_runtime->fixed_step_movement(
+            *session, current, movement);
+    }
+    runtime.fixed_tick(step_movement,
+        loot_pickup_policy(live_settings.loot_filter_mode));
+    validation_runtime->observe_fixed_tick();
+    session->snapshot(current);
+    validation_runtime->observe_snapshot(current);
+    validation_runtime->observe_post_fixed_tick(
+        current, &session->item_state());
+    if (current.death.has_value()) {
+        if (inventory.is_open()) inventory.close();
+        passive_overlay_open = false;
+    }
+    if (!passive_tree_can_open(current)) {
+        passive_overlay_open = false;
+    }
+    if (runtime.state() != DungeonRuntimeState::running
+        && inventory.is_open()) {
+        inventory.close();
+        fixed_step.clear_accumulator();
+    }
+    drain_events(*session, renderer, feedback, audio,
+        validation_runtime.get());
+    if (validation_runtime->fixed_step_target_reached(current)) {
+        break;
+    }
+}
+]=])
+    string(REGEX REPLACE "[ \t\r\n]+" " "
+        _task7b_fixed_step_expected "${_task7b_fixed_step_contract}")
+    string(STRIP "${_stage17_fixed_step_normalized}"
+        _stage17_fixed_step_normalized)
+    string(STRIP "${_task7b_fixed_step_expected}"
+        _task7b_fixed_step_expected)
+    if(NOT _stage17_fixed_step_normalized STREQUAL
+            _task7b_fixed_step_expected)
+        message(FATAL_ERROR
+            "Host validation sequence guard rejected the exact Task 7B fixed-step data flow")
+    endif()
+
+    # Exercise the production validator against complete mutated Host sources.
+    # Each mutation is anchored in the accepted source, so a stale fixture
+    # fails rather than silently doing nothing.
+    function(task7b_expect_fixed_step_mutation_rejected
+            LABEL OLD_FRAGMENT NEW_FRAGMENT)
+        string(REPLACE "${OLD_FRAGMENT}" "${NEW_FRAGMENT}"
+            _mutated_loop "${_task7b_fixed_step_contract}")
+        if(_mutated_loop STREQUAL _task7b_fixed_step_contract)
+            message(FATAL_ERROR
+                "Task 7B fixed-step mutation anchor is missing: ${LABEL}")
+        endif()
+        string(REPLACE "${_stage17_fixed_step_loop}" "${_mutated_loop}"
+            _mutation "${_host_active_text}")
+        if(_mutation STREQUAL _host_active_text)
+            message(FATAL_ERROR
+                "Task 7B fixed-step production loop anchor is missing: ${LABEL}")
+        endif()
+        task7b_active_host_flow_valid("${_mutation}" FALSE
+            _mutation_valid _mutation_error)
+        if(_mutation_valid)
+            message(FATAL_ERROR
+                "Task 7B shared host-flow validator accepted mutation: ${LABEL}")
+        endif()
+    endfunction()
+
+    set(_task7b_raw_movement_call [=[step_movement = validation_runtime->fixed_step_movement(
+                        *session, current, movement);]=])
+    function(task7b_expect_fixed_step_raw_mutation_rejected
+            LABEL OLD_FRAGMENT NEW_FRAGMENT)
+        string(REPLACE "${OLD_FRAGMENT}" "${NEW_FRAGMENT}"
+            _mutation "${_host_text}")
+        if(_mutation STREQUAL _host_text)
+            message(FATAL_ERROR
+                "Task 7B raw fixed-step mutation anchor is missing: ${LABEL}")
+        endif()
+        task7b_host_flow_valid("${_mutation}" FALSE
+            _mutation_valid _mutation_error)
+        if(_mutation_valid)
+            message(FATAL_ERROR
+                "Task 7B shared raw host-flow validator accepted mutation: ${LABEL}")
+        endif()
+    endfunction()
+
+    task7b_expect_fixed_step_mutation_rejected(
+        "discarded movement result"
+        [=[step_movement = validation_runtime->fixed_step_movement(
+            *session, current, movement);]=]
+        [=[static_cast<void>(validation_runtime->fixed_step_movement(
+            *session, current, movement));]=])
+    task7b_expect_fixed_step_raw_mutation_rejected(
+        "movement call available only in a comment"
+        "${_task7b_raw_movement_call}"
+        [=[step_movement = movement;
+        /* step_movement = validation_runtime->fixed_step_movement(
+            *session, current, movement); */]=])
+    task7b_expect_fixed_step_raw_mutation_rejected(
+        "movement call available only in a normal string"
+        "${_task7b_raw_movement_call}"
+        [=[const char* movement_decoy =
+            "validation_runtime->fixed_step_movement(";
+        step_movement = movement;]=])
+    task7b_expect_fixed_step_raw_mutation_rejected(
+        "movement call available only in a raw string"
+        "${_task7b_raw_movement_call}"
+        [=[const char* movement_decoy = R"task7b(
+            step_movement = validation_runtime->fixed_step_movement(
+                *session, current, movement);
+        )task7b";
+        step_movement = movement;]=])
+    task7b_expect_fixed_step_raw_mutation_rejected(
+        "movement call available only in inactive code"
+        "${_task7b_raw_movement_call}"
+        [=[#if 0
+        step_movement = validation_runtime->fixed_step_movement(
+            *session, current, movement);
+        #endif
+        step_movement = movement;]=])
+    task7b_expect_fixed_step_mutation_rejected(
+        "movement call hidden in an uncalled lambda"
+        [=[step_movement = validation_runtime->fixed_step_movement(
+            *session, current, movement);]=]
+        [=[const auto movement_decoy = [&]() noexcept {
+            return validation_runtime->fixed_step_movement(
+                *session, current, movement);
+        };]=])
+    task7b_expect_fixed_step_mutation_rejected(
+        "movement call hidden in dead control flow"
+        [=[step_movement = validation_runtime->fixed_step_movement(
+            *session, current, movement);]=]
+        [=[if (false) {
+            step_movement = validation_runtime->fixed_step_movement(
+                *session, current, movement);
+        }]=])
+    task7b_expect_fixed_step_mutation_rejected(
+        "movement call moved across the step-death scope"
+        [=[step_movement = validation_runtime->fixed_step_movement(
+            *session, current, movement);]=]
+        [=[step_movement = movement;
+    }
+    step_movement = validation_runtime->fixed_step_movement(
+        *session, current, movement);
+    if (false) {]=])
+    task7b_expect_fixed_step_mutation_rejected(
+        "missing fixed-tick observation"
+        "validation_runtime->observe_fixed_tick();" "")
+    task7b_expect_fixed_step_mutation_rejected(
+        "duplicate fixed-tick observation"
+        "validation_runtime->observe_fixed_tick();"
+        "validation_runtime->observe_fixed_tick(); validation_runtime->observe_fixed_tick();")
+    task7b_expect_fixed_step_mutation_rejected(
+        "fixed-tick observation before gameplay tick"
+        [=[runtime.fixed_tick(step_movement,
+        loot_pickup_policy(live_settings.loot_filter_mode));
+    validation_runtime->observe_fixed_tick();]=]
+        [=[validation_runtime->observe_fixed_tick();
+    runtime.fixed_tick(step_movement,
+        loot_pickup_policy(live_settings.loot_filter_mode));]=])
+    task7b_expect_fixed_step_mutation_rejected(
+        "post-tick observer uses previous snapshot"
+        "current, &session->item_state());"
+        "previous, &session->item_state());")
+    task7b_expect_fixed_step_mutation_rejected(
+        "post-tick observer uses null ownership"
+        "current, &session->item_state());" "current, nullptr);")
+    task7b_expect_fixed_step_mutation_rejected(
+        "post-tick observer uses wrong ownership state"
+        "current, &session->item_state());"
+        "current, &runtime.item_state());")
+    task7b_expect_fixed_step_mutation_rejected(
+        "post-tick observer is moved after event drain"
+        [=[validation_runtime->observe_post_fixed_tick(
+        current, &session->item_state());
+    if (current.death.has_value()) {
+        if (inventory.is_open()) inventory.close();
+        passive_overlay_open = false;
+    }
+    if (!passive_tree_can_open(current)) {
+        passive_overlay_open = false;
+    }
+    if (runtime.state() != DungeonRuntimeState::running
+        && inventory.is_open()) {
+        inventory.close();
+        fixed_step.clear_accumulator();
+    }
+    drain_events(*session, renderer, feedback, audio,
+        validation_runtime.get());]=]
+        [=[if (current.death.has_value()) {
+        if (inventory.is_open()) inventory.close();
+        passive_overlay_open = false;
+    }
+    if (!passive_tree_can_open(current)) {
+        passive_overlay_open = false;
+    }
+    if (runtime.state() != DungeonRuntimeState::running
+        && inventory.is_open()) {
+        inventory.close();
+        fixed_step.clear_accumulator();
+    }
+    drain_events(*session, renderer, feedback, audio,
+        validation_runtime.get());
+    validation_runtime->observe_post_fixed_tick(
+        current, &session->item_state());]=])
+    task7b_expect_fixed_step_mutation_rejected(
+        "discarded target result with unconditional break"
+        [=[if (validation_runtime->fixed_step_target_reached(current)) {
+        break;
+    }]=]
+        [=[static_cast<void>(validation_runtime->fixed_step_target_reached(current));
+    break;]=])
+    task7b_expect_fixed_step_mutation_rejected(
+        "Host retains a Stage11B state write beside facade observation"
+        "validation_runtime->observe_fixed_tick();"
+        "validation_runtime->observe_fixed_tick(); ++stage11b_validation_state.fixed_ticks;")
+endif()
+
 assert_one_normalized_match("Stage17 inventory observer arguments"
     "${_host_loop_normalized}"
     "validation_runtime->observe_inventory\\([ ]*inventory,[ ]*current[ ]*\\)")
