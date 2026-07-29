@@ -32,6 +32,7 @@ add_library(arpg_raylib STATIC
     host_validation_stage11c.cpp
     host_validation_stage11d_report.cpp
     host_validation_stage11d_runtime.cpp
+    host_validation_stage17_report.cpp
     host_validation_stage17_runtime.cpp
     hud_font.cpp
     hud_view_model.cpp

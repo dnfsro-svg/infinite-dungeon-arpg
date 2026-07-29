@@ -57,6 +57,54 @@ function(stage17_mask_cpp_conditionals SOURCE OUT_SURFACE)
     set(${OUT_SURFACE} "${_surface}" PARENT_SCOPE)
 endfunction()
 
+# Preserve only the named string literals as identifier sentinels before the
+# shared lexer removes strings/comments; then apply the existing conditional
+# masker.  This makes literal evidence active-code evidence rather than raw
+# text that can be borrowed from a comment or #if 0 branch.
+function(stage17_active_report_literal_surface SOURCE OUT_SURFACE)
+    set(_prepared "${SOURCE}")
+    string(REPLACE "\"01-new-default-1280x720.png\"" "stage17_literal_01"
+        _prepared "${_prepared}")
+    string(REPLACE "\"02-draw-slash-windup-1280x720.png\"" "stage17_literal_02"
+        _prepared "${_prepared}")
+    string(REPLACE "\"03-draw-slash-hit-1280x720.png\"" "stage17_literal_03"
+        _prepared "${_prepared}")
+    string(REPLACE "\"04-storm-ground-array-1280x720.png\"" "stage17_literal_04"
+        _prepared "${_prepared}")
+    string(REPLACE "\"05-storm-aerial-array-1280x720.png\"" "stage17_literal_05"
+        _prepared "${_prepared}")
+    string(REPLACE "\"06-storm-finisher-1280x720.png\"" "stage17_literal_06"
+        _prepared "${_prepared}")
+    string(REPLACE "\"07-restarted-loadout-1280x720.png\"" "stage17_literal_07"
+        _prepared "${_prepared}")
+    string(REPLACE "\"clean_shutdown_exact_ready=\""
+        "stage17_literal_clean_shutdown" _prepared "${_prepared}")
+    string(REPLACE "\"result=\"" "stage17_literal_result"
+        _prepared "${_prepared}")
+    stage17_mask_cpp_conditionals("${_prepared}" _active)
+    set(${OUT_SURFACE} "${_active}" PARENT_SCOPE)
+endfunction()
+
+function(stage17_assert_literal_once LABEL SURFACE SENTINEL)
+    string(FIND "${SURFACE}" "${SENTINEL}" _first)
+    if(_first EQUAL -1)
+        message(FATAL_ERROR "Stage17 literal is missing from ${LABEL}: ${SENTINEL}")
+    endif()
+    math(EXPR _after "${_first} + 1")
+    string(SUBSTRING "${SURFACE}" ${_after} -1 _remainder)
+    string(FIND "${_remainder}" "${SENTINEL}" _second)
+    if(NOT _second EQUAL -1)
+        message(FATAL_ERROR "Stage17 literal is duplicated in ${LABEL}: ${SENTINEL}")
+    endif()
+endfunction()
+
+function(stage17_assert_literal_absent LABEL SURFACE SENTINEL)
+    string(FIND "${SURFACE}" "${SENTINEL}" _position)
+    if(NOT _position EQUAL -1)
+        message(FATAL_ERROR "Stage17 literal has invalid active owner ${LABEL}: ${SENTINEL}")
+    endif()
+endfunction()
+
 function(stage17_assert_spliced_conditional LABEL EOL)
     string(ASCII 92 _backslash)
     set(_fixture
@@ -228,6 +276,12 @@ set(_stage17_runtime
 if(DEFINED STAGE17_RUNTIME_OVERRIDE)
     set(_stage17_runtime "${STAGE17_RUNTIME_OVERRIDE}")
 endif()
+set(_stage17_report
+    "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage17_report.cpp")
+if(NOT EXISTS "${_stage17_report}")
+    message(FATAL_ERROR
+        "Stage17 report source is required: ${_stage17_report}")
+endif()
 set(_raylib_cmake "${SOURCE_ROOT}/src/platform/raylib/CMakeLists.txt")
 if(DEFINED CMAKE_OVERRIDE)
     set(_raylib_cmake "${CMAKE_OVERRIDE}")
@@ -240,7 +294,7 @@ foreach(_required IN ITEMS
         "${_stage11c_header}" "${_stage11c_source}"
         "${_stage11d_header}" "${_stage11d_runtime}"
         "${_stage11d_report}" "${_stage17_header}"
-        "${_stage17_runtime}" "${_raylib_cmake}")
+        "${_stage17_runtime}" "${_stage17_report}" "${_raylib_cmake}")
     if(NOT EXISTS "${_required}")
         message(FATAL_ERROR "Host validation boundary target is missing: ${_required}")
     endif()
@@ -260,6 +314,7 @@ file(READ "${_stage11d_runtime}" _stage11d_runtime_text)
 file(READ "${_stage11d_report}" _stage11d_report_text)
 file(READ "${_stage17_header}" _stage17_header_text)
 file(READ "${_stage17_runtime}" _stage17_runtime_text)
+file(READ "${_stage17_report}" _stage17_report_text)
 file(READ "${_raylib_cmake}" _raylib_cmake_text)
 
 if(DEFINED STAGE17_SEQUENCE_MUTATION)
@@ -312,6 +367,8 @@ stage17_mask_cpp_conditionals("${_stage17_header_text}"
     _stage17_header_active_text)
 stage17_mask_cpp_conditionals("${_stage17_runtime_text}"
     _stage17_runtime_active_text)
+stage17_mask_cpp_conditionals("${_stage17_report_text}"
+    _stage17_report_active_text)
 
 function(stage11d_find_host_code_token TOKEN OUT_POSITION)
     string(FIND "${_host_text}" "${TOKEN}" _raw_position)
@@ -402,6 +459,18 @@ evidence_sanitize_cpp_for_scan("${_stage17_header_active_text}"
     _stage17_header_code)
 evidence_sanitize_cpp_for_scan("${_stage17_runtime_active_text}"
     _stage17_runtime_code)
+evidence_sanitize_cpp_for_scan("${_stage17_report_active_text}"
+    _stage17_report_code)
+stage17_active_report_literal_surface("${_stage17_report_text}"
+    _stage17_report_literal_surface)
+if(NOT DEFINED HOST_OVERRIDE)
+    stage17_active_report_literal_surface("${_host_text}"
+        _stage17_host_literal_surface)
+    stage17_active_report_literal_surface("${_stage17_runtime_text}"
+        _stage17_runtime_literal_surface)
+    stage17_active_report_literal_surface("${_stage17_header_text}"
+        _stage17_header_literal_surface)
+endif()
 if(_stage17_header_code MATCHES
         "raylib[.]h|Rectangle|Vector2|GetScreenWidth|GetScreenHeight")
     message(FATAL_ERROR
@@ -514,43 +583,194 @@ foreach(_stage17_private_definition IN ITEMS
         ${_stage17_private_namespace_open} ${_stage17_private_namespace_end})
 endforeach()
 
-evidence_find_cpp_code_token("${_host_active_text}"
-    "bool stage17_draw_runtime_valid(" _stage17_report_slice_begin)
-evidence_find_cpp_code_token("${_host_active_text}"
-    "HostFrameGateResult gate_host_frame(" _stage17_report_slice_end)
-if(_stage17_report_slice_begin EQUAL -1
-        OR _stage17_report_slice_end EQUAL -1
-        OR NOT _stage17_report_slice_begin LESS _stage17_report_slice_end)
-    message(FATAL_ERROR
-        "Host validation Stage17 retained report region is missing")
+set(_stage17_report_namespace_token "namespace arpg::platform::host_validation")
+evidence_find_cpp_function_bounds_in_sanitized("${_stage17_report_code}"
+    "${_stage17_report_namespace_token}" _stage17_report_namespace_begin
+    _stage17_report_namespace_open _stage17_report_namespace_end)
+if(_stage17_report_namespace_begin EQUAL -1)
+    message(FATAL_ERROR "Host validation Stage17 report namespace is missing")
 endif()
-math(EXPR _stage17_report_slice_length
-    "${_stage17_report_slice_end} - ${_stage17_report_slice_begin}")
-string(SUBSTRING "${_host_active_text}" ${_stage17_report_slice_begin}
-    ${_stage17_report_slice_length} _stage17_report_slice)
-evidence_sanitize_cpp_for_scan("${_stage17_report_slice}"
-    _stage17_host_report_code)
-
-foreach(_stage17_host_report_definition IN ITEMS
-        "bool stage17_draw_runtime_valid("
-        "const char* stage17_capture_name("
-        "std::optional<std::string> stage17_capture_path("
-        "void mark_stage17_capture_complete("
-        "const char* stage17_skill_name("
-        "void write_stage17_loadout("
-        "std::size_t stage17_support_none_count("
-        "bool stage17_validation_complete("
-        "void write_stage17_validation_summary(")
-    assert_unique_cpp_definition("Stage17 retained report"
-        "${_stage17_host_report_code}" "${_stage17_host_report_definition}")
-    string(FIND "${_stage17_runtime_code}"
-        "${_stage17_host_report_definition}" _stage17_runtime_report)
-    if(NOT _stage17_runtime_report EQUAL -1)
+evidence_find_cpp_function_bounds_in_sanitized("${_stage17_report_code}"
+    "namespace {" _stage17_report_private_begin _stage17_report_private_open
+    _stage17_report_private_end)
+if(_stage17_report_private_begin EQUAL -1)
+    message(FATAL_ERROR "Host validation Stage17 report anonymous namespace is missing")
+endif()
+math(EXPR _stage17_report_after_first_private
+    "${_stage17_report_private_end} + 1")
+string(SUBSTRING "${_stage17_report_code}" ${_stage17_report_after_first_private}
+    -1 _stage17_report_after_first_private_text)
+string(FIND "${_stage17_report_after_first_private_text}" "namespace {"
+    _stage17_report_second_private_relative)
+if(_stage17_report_second_private_relative EQUAL -1)
+    message(FATAL_ERROR "Host validation Stage17 report second anonymous namespace is missing")
+endif()
+math(EXPR _stage17_report_second_private_begin
+    "${_stage17_report_after_first_private} + ${_stage17_report_second_private_relative}")
+string(SUBSTRING "${_stage17_report_code}"
+    ${_stage17_report_second_private_begin} -1 _stage17_report_second_private_tail)
+evidence_find_cpp_function_bounds_in_sanitized(
+    "${_stage17_report_second_private_tail}" "namespace {"
+    _stage17_report_second_private_tail_begin
+    _stage17_report_second_private_tail_open _stage17_report_second_private_tail_end)
+math(EXPR _stage17_report_second_private_open
+    "${_stage17_report_second_private_begin} + ${_stage17_report_second_private_tail_open}")
+math(EXPR _stage17_report_second_private_end
+    "${_stage17_report_second_private_begin} + ${_stage17_report_second_private_tail_end}")
+foreach(_anonymous_range IN ITEMS
+        "${_stage17_report_private_begin};${_stage17_report_private_open};${_stage17_report_private_end}"
+        "${_stage17_report_second_private_begin};${_stage17_report_second_private_open};${_stage17_report_second_private_end}")
+    list(GET _anonymous_range 0 _anonymous_begin)
+    list(GET _anonymous_range 1 _anonymous_open)
+    list(GET _anonymous_range 2 _anonymous_end)
+    if(_anonymous_begin LESS_EQUAL _stage17_report_namespace_open
+            OR _anonymous_end GREATER_EQUAL _stage17_report_namespace_end)
         message(FATAL_ERROR
-            "Task6A moved Stage17 capture/report code into runtime: ${_stage17_host_report_definition}")
+            "Stage17 report anonymous namespace is outside host_validation")
+    endif()
+    cpp_token_brace_depth("${_stage17_report_code}" ${_anonymous_begin}
+        _anonymous_depth)
+    if(NOT _anonymous_depth EQUAL 1)
+        message(FATAL_ERROR
+            "Stage17 report anonymous namespace is not direct host_validation scope")
     endif()
 endforeach()
 
+string(FIND "${_stage17_header_code}" "namespace arpg::platform {"
+    _stage17_header_platform_begin)
+if(_stage17_header_platform_begin EQUAL -1)
+    message(FATAL_ERROR "Stage17 report header platform namespace is missing")
+endif()
+evidence_find_cpp_function_bounds_in_sanitized("${_stage17_header_code}"
+    "namespace arpg::platform {" _stage17_header_platform_begin
+    _stage17_header_platform_open _stage17_header_platform_end)
+string(FIND "${_stage17_header_code}" "namespace host_validation {"
+    _stage17_header_namespace_begin)
+if(_stage17_header_namespace_begin EQUAL -1)
+    message(FATAL_ERROR "Stage17 report header namespace is missing")
+endif()
+evidence_find_cpp_function_bounds_in_sanitized("${_stage17_header_code}"
+    "namespace host_validation {" _stage17_header_namespace_begin
+    _stage17_header_namespace_open _stage17_header_namespace_end)
+if(_stage17_header_namespace_begin LESS_EQUAL _stage17_header_platform_open
+        OR _stage17_header_namespace_end GREATER_EQUAL _stage17_header_platform_end)
+    message(FATAL_ERROR
+        "Stage17 report header host_validation namespace is outside arpg::platform")
+endif()
+cpp_token_brace_depth("${_stage17_header_code}"
+    ${_stage17_header_namespace_begin} _stage17_header_namespace_depth)
+if(NOT _stage17_header_namespace_depth EQUAL 1)
+    message(FATAL_ERROR
+        "Stage17 report header host_validation namespace is not direct arpg::platform scope")
+endif()
+
+function(assert_unique_stage17_report_header_declaration TOKEN)
+    string(FIND "${_stage17_header_code}" "${TOKEN}" _declaration)
+    if(_declaration EQUAL -1)
+        message(FATAL_ERROR "Stage17 report declaration missing: ${TOKEN}")
+    endif()
+    string(LENGTH "${TOKEN}" _token_length)
+    math(EXPR _after "${_declaration} + ${_token_length}")
+    string(SUBSTRING "${_stage17_header_code}" ${_after} -1 _tail)
+    string(FIND "${_tail}" "${TOKEN}" _duplicate)
+    if(NOT _duplicate EQUAL -1)
+        message(FATAL_ERROR "Stage17 report declaration duplicated: ${TOKEN}")
+    endif()
+    string(FIND "${_tail}" ";" _semicolon)
+    string(FIND "${_tail}" "{" _open)
+    if(_semicolon EQUAL -1 OR (NOT _open EQUAL -1 AND _open LESS _semicolon))
+        message(FATAL_ERROR "Stage17 report declaration is not header-only: ${TOKEN}")
+    endif()
+    if(_declaration LESS_EQUAL _stage17_header_namespace_open
+            OR _declaration GREATER_EQUAL _stage17_header_namespace_end)
+        message(FATAL_ERROR "Stage17 report declaration is outside host_validation: ${TOKEN}")
+    endif()
+    cpp_token_brace_depth("${_stage17_header_code}" ${_declaration}
+        _declaration_depth)
+    if(NOT _declaration_depth EQUAL 2)
+        message(FATAL_ERROR "Stage17 report declaration is not direct host_validation scope: ${TOKEN}")
+    endif()
+endfunction()
+
+foreach(_stage17_report_public_definition IN ITEMS
+        "std::optional<std::string> stage17_capture_path("
+        "void mark_stage17_capture_complete("
+        "bool stage17_validation_complete("
+        "void write_stage17_validation_summary(")
+    assert_cpp_definition_in_scope("Stage17 report public definition"
+        "${_stage17_report_code}" "${_stage17_report_public_definition}" 1
+        ${_stage17_report_namespace_open} ${_stage17_report_namespace_end})
+    assert_unique_stage17_report_header_declaration("${_stage17_report_public_definition}")
+    foreach(_wrong_owner IN ITEMS "${_host_active_text}" "${_stage17_runtime_code}")
+        string(FIND "${_wrong_owner}" "${_stage17_report_public_definition}" _wrong_owner_definition)
+        if(NOT _wrong_owner_definition EQUAL -1)
+            message(FATAL_ERROR "Stage17 report public definition outside report: ${_stage17_report_public_definition}")
+        endif()
+    endforeach()
+endforeach()
+
+foreach(_stage17_report_private_definition IN ITEMS
+        "bool stage17_draw_runtime_valid("
+        "const char* stage17_capture_name("
+        "const char* stage17_skill_name("
+        "void write_stage17_loadout("
+        "std::size_t stage17_support_none_count(")
+    assert_unique_cpp_definition("Stage17 report private helper"
+        "${_stage17_report_code}" "${_stage17_report_private_definition}")
+    string(FIND "${_stage17_report_code}"
+        "${_stage17_report_private_definition}" _stage17_report_private_position)
+    cpp_token_brace_depth("${_stage17_report_code}"
+        ${_stage17_report_private_position} _stage17_report_private_depth)
+    if(_stage17_report_private_definition MATCHES
+            "stage17_draw_runtime_valid|stage17_capture_name")
+        set(_private_open ${_stage17_report_private_open})
+        set(_private_end ${_stage17_report_private_end})
+    else()
+        set(_private_open ${_stage17_report_second_private_open})
+        set(_private_end ${_stage17_report_second_private_end})
+    endif()
+    if(NOT _stage17_report_private_depth EQUAL 2
+            OR _stage17_report_private_position LESS_EQUAL _private_open
+            OR _stage17_report_private_position GREATER_EQUAL _private_end)
+        message(FATAL_ERROR "Stage17 report private helper is outside an anonymous namespace: ${_stage17_report_private_definition}")
+    endif()
+    foreach(_wrong_owner IN ITEMS "${_host_active_text}" "${_stage17_runtime_code}" "${_stage17_header_code}")
+        string(FIND "${_wrong_owner}" "${_stage17_report_private_definition}" _wrong_owner_definition)
+        if(NOT _wrong_owner_definition EQUAL -1)
+            message(FATAL_ERROR "Stage17 report private helper invalid owner: ${_stage17_report_private_definition}")
+        endif()
+    endforeach()
+endforeach()
+
+evidence_extract_cpp_function_block("${_stage17_report_literal_surface}"
+    "const char* stage17_capture_name(" _stage17_capture_name_literal_block)
+evidence_extract_cpp_function_block("${_stage17_report_literal_surface}"
+    "void write_stage17_validation_summary(" _stage17_summary_literal_block)
+foreach(_capture_literal IN ITEMS stage17_literal_01 stage17_literal_02
+        stage17_literal_03 stage17_literal_04 stage17_literal_05
+        stage17_literal_06 stage17_literal_07)
+    stage17_assert_literal_once("stage17_capture_name"
+        "${_stage17_capture_name_literal_block}" "${_capture_literal}")
+endforeach()
+foreach(_summary_literal IN ITEMS stage17_literal_result
+        stage17_literal_clean_shutdown)
+    stage17_assert_literal_once("write_stage17_validation_summary"
+        "${_stage17_summary_literal_block}" "${_summary_literal}")
+endforeach()
+if(NOT DEFINED HOST_OVERRIDE)
+    foreach(_literal_owner_surface IN ITEMS
+            "${_stage17_host_literal_surface}"
+            "${_stage17_runtime_literal_surface}"
+            "${_stage17_header_literal_surface}")
+        foreach(_forbidden_literal IN ITEMS stage17_literal_01 stage17_literal_02
+                stage17_literal_03 stage17_literal_04 stage17_literal_05
+                stage17_literal_06 stage17_literal_07 stage17_literal_result
+                stage17_literal_clean_shutdown)
+            stage17_assert_literal_absent("non-report source"
+                "${_literal_owner_surface}" "${_forbidden_literal}")
+        endforeach()
+    endforeach()
+endif()
 foreach(_stage10_11_definition_token IN ITEMS
         "combat::MovementInput stage10_validation_input("
         "combat::MovementInput stage11_validation_input("
@@ -767,7 +987,7 @@ foreach(_old_helper IN ITEMS
     endif()
 endforeach()
 
-function(assert_stage17_top_level_registration CMAKE_TEXT)
+function(assert_stage17_top_level_registration CMAKE_TEXT STAGE17_SOURCE LABEL)
     arpg_cmake_code_surface("${CMAKE_TEXT}" _cmake_code)
     string(TOLOWER "${_cmake_code}" _cmake_lower)
     string(LENGTH "${_cmake_lower}" _cmake_length)
@@ -792,7 +1012,7 @@ function(assert_stage17_top_level_registration CMAKE_TEXT)
         if(_registration_begin EQUAL -1
                 AND _trimmed MATCHES "^return[ \t]*\\(")
             message(FATAL_ERROR
-                "Stage17 runtime registration is unreachable after a pre-registration return")
+                "${LABEL} registration is unreachable after a pre-registration return")
         endif()
 
         if(_trimmed MATCHES
@@ -823,7 +1043,7 @@ function(assert_stage17_top_level_registration CMAKE_TEXT)
 
     if(NOT _top_level_count EQUAL 1)
         message(FATAL_ERROR
-            "Stage17 runtime must be registered by one top-level add_library(arpg_raylib STATIC ...)")
+            "${LABEL} must be registered by one top-level add_library(arpg_raylib STATIC ...)")
     endif()
 
     string(SUBSTRING "${_cmake_lower}" ${_registration_begin} -1
@@ -857,11 +1077,11 @@ function(assert_stage17_top_level_registration CMAKE_TEXT)
     string(SUBSTRING "${_cmake_lower}" ${_registration_begin}
         ${_registration_length} _registration)
 
-    set(_stage17_source "host_validation_stage17_runtime.cpp")
+    set(_stage17_source "${STAGE17_SOURCE}")
     string(FIND "${_registration}" "${_stage17_source}" _source_position)
     if(_source_position EQUAL -1)
         message(FATAL_ERROR
-            "Stage17 runtime is not a direct top-level arpg_raylib source")
+            "${LABEL} is not a direct top-level arpg_raylib source")
     endif()
     string(LENGTH "${_stage17_source}" _source_length)
     math(EXPR _source_after "${_source_position} + ${_source_length}")
@@ -869,7 +1089,7 @@ function(assert_stage17_top_level_registration CMAKE_TEXT)
     string(FIND "${_source_remainder}" "${_stage17_source}" _source_duplicate)
     if(NOT _source_duplicate EQUAL -1)
         message(FATAL_ERROR
-            "Stage17 runtime is duplicated in the top-level arpg_raylib source list")
+            "${LABEL} is duplicated in the top-level arpg_raylib source list")
     endif()
     if(_source_position EQUAL 0)
         set(_source_before "")
@@ -882,7 +1102,7 @@ function(assert_stage17_top_level_registration CMAKE_TEXT)
     if(NOT _source_before MATCHES "[ \t\r\n(]"
             OR NOT _source_after_character MATCHES "[ \t\r\n)]")
         message(FATAL_ERROR
-            "Stage17 runtime registration is not a direct add_library argument")
+            "${LABEL} registration is not a direct add_library argument")
     endif()
     string(SUBSTRING "${_registration}" 0 ${_source_position}
         _registration_prefix)
@@ -890,7 +1110,7 @@ function(assert_stage17_top_level_registration CMAKE_TEXT)
         _source_paren_depth)
     if(NOT _source_paren_depth EQUAL 1)
         message(FATAL_ERROR
-            "Stage17 runtime registration is nested inside an add_library argument")
+            "${LABEL} registration is nested inside an add_library argument")
     endif()
 endfunction()
 
@@ -900,6 +1120,7 @@ foreach(_registered_source IN ITEMS
         "host_validation_stage11c.cpp"
         "host_validation_stage11d_report.cpp"
         "host_validation_stage11d_runtime.cpp"
+        "host_validation_stage17_report.cpp"
         "host_validation_stage17_runtime.cpp")
     arpg_cmake_count_arpg_raylib_source("${_raylib_cmake_text}"
         "${_registered_source}" _registered_count)
@@ -907,7 +1128,10 @@ foreach(_registered_source IN ITEMS
         message(FATAL_ERROR "arpg_raylib does not register ${_registered_source}")
     endif()
 endforeach()
-assert_stage17_top_level_registration("${_raylib_cmake_text}")
+assert_stage17_top_level_registration("${_raylib_cmake_text}"
+    "host_validation_stage17_report.cpp" "Stage17 report")
+assert_stage17_top_level_registration("${_raylib_cmake_text}"
+    "host_validation_stage17_runtime.cpp" "Stage17 runtime")
 
 string(FIND "${_sanitized}" "while (!exit_requested) {" _loop_begin)
 if(_loop_begin EQUAL -1)
@@ -920,7 +1144,7 @@ if(NOT _loop_duplicate EQUAL -1)
     message(FATAL_ERROR "Host validation sequence guard found duplicate host loop")
 endif()
 cpp_token_brace_depth("${_sanitized}" ${_loop_begin} _loop_scope_depth)
-if(NOT _loop_scope_depth EQUAL 2)
+if(NOT DEFINED HOST_OVERRIDE AND NOT _loop_scope_depth EQUAL 2)
     message(FATAL_ERROR
         "Host validation sequence guard rejected host loop outside run/try scope")
 endif()
@@ -1062,6 +1286,321 @@ function(assert_direct_exact_call_count LABEL SURFACE TOKEN_PATTERN
         message(FATAL_ERROR
             "Host validation sequence guard rejected ${LABEL}: all=${_all_count}, direct_exact=${_direct_count}, expected=${EXPECTED_COUNT}")
     endif()
+endfunction()
+
+function(assert_unique_ordered_tokens LABEL SURFACE)
+    set(_previous -1)
+    foreach(_token IN ITEMS ${ARGN})
+        string(FIND "${SURFACE}" "${_token}" _position)
+        if(_position EQUAL -1)
+            message(FATAL_ERROR "Host validation sequence guard missing ${LABEL} token: ${_token}")
+        endif()
+        math(EXPR _after "${_position} + 1")
+        string(SUBSTRING "${SURFACE}" ${_after} -1 _remainder)
+        string(FIND "${_remainder}" "${_token}" _duplicate)
+        if(NOT _duplicate EQUAL -1)
+            message(FATAL_ERROR "Host validation sequence guard found duplicate ${LABEL} token: ${_token}")
+        endif()
+        if(NOT _previous EQUAL -1 AND _position LESS _previous)
+            message(FATAL_ERROR "Host validation sequence guard rejected ${LABEL} order")
+        endif()
+        set(_previous ${_position})
+    endforeach()
+endfunction()
+
+# Shared, non-fatal lifecycle validator. Production converts its error code to
+# a fatal diagnostic; direct in-memory negative fixtures assert the same code.
+macro(stage17_lifecycle_competition_token TOKEN EXPECTED_DEPTH)
+    if(_error STREQUAL "")
+        string(FIND "${_loop}" "${TOKEN}" _position)
+        if(_position EQUAL -1)
+            set(_error "capture_competition_missing")
+        else()
+            math(EXPR _token_after "${_position} + 1")
+            string(SUBSTRING "${_loop}" ${_token_after} -1 _remaining)
+            string(FIND "${_remaining}" "${TOKEN}" _duplicate)
+            if(NOT _duplicate EQUAL -1)
+                set(_error "capture_competition_duplicate")
+            elseif(NOT _previous EQUAL -1 AND _position LESS _previous)
+                set(_error "capture_competition_order")
+            else()
+                cpp_token_brace_depth("${_loop}" ${_position} _actual_depth)
+                if(NOT _actual_depth EQUAL ${EXPECTED_DEPTH})
+                    set(_error "capture_competition_scope")
+                endif()
+            endif()
+            set(_previous ${_position})
+        endif()
+    endif()
+endmacro()
+
+function(stage17_capture_lifecycle_status HOST_ACTIVE OUT_ERROR)
+    set(_error "")
+    evidence_find_cpp_code_token("${HOST_ACTIVE}" "HostExitCode run_raylib_host(" _run_begin)
+    if(_run_begin EQUAL -1)
+        set(${OUT_ERROR} "missing_run_host" PARENT_SCOPE)
+        return()
+    endif()
+    string(SUBSTRING "${HOST_ACTIVE}" ${_run_begin} -1 _run_tail)
+    evidence_extract_cpp_function_block("${_run_tail}" "HostExitCode run_raylib_host(" _run)
+    string(FIND "${_run}" "while (!exit_requested) {" _loop_begin)
+    if(_loop_begin EQUAL -1)
+        set(${OUT_ERROR} "missing_loop" PARENT_SCOPE)
+        return()
+    endif()
+    math(EXPR _after "${_loop_begin} + 1")
+    string(SUBSTRING "${_run}" ${_after} -1 _loop_tail)
+    string(FIND "${_loop_tail}" "{" _open_relative)
+    math(EXPR _open "${_loop_begin} + ${_open_relative}")
+    string(LENGTH "${_run}" _length)
+    math(EXPR _last "${_length} - 1")
+    set(_depth 0)
+    set(_end -1)
+    foreach(_index RANGE ${_open} ${_last})
+        string(SUBSTRING "${_run}" ${_index} 1 _character)
+        if(_character STREQUAL "{")
+            math(EXPR _depth "${_depth} + 1")
+        elseif(_character STREQUAL "}")
+            math(EXPR _depth "${_depth} - 1")
+            if(_depth EQUAL 0)
+                set(_end ${_index})
+                break()
+            endif()
+        endif()
+    endforeach()
+    if(_end EQUAL -1)
+        set(${OUT_ERROR} "unbalanced_loop" PARENT_SCOPE)
+        return()
+    endif()
+    math(EXPR _loop_length "${_end} - ${_loop_begin} + 1")
+    string(SUBSTRING "${_run}" ${_loop_begin} ${_loop_length} _loop)
+
+    set(_previous -1)
+    stage17_lifecycle_competition_token("stage17_capture_path(" 1)
+    stage17_lifecycle_competition_token(
+        "const bool stage17_capture_requested = capture_path.has_value();" 1)
+    stage17_lifecycle_competition_token(
+        "if (!capture_path.has_value() && stage12_item_baseline_frame) {" 1)
+    stage17_lifecycle_competition_token(
+        "if (!capture_path.has_value()\n                    && (validation_reached || loot_validation_visible_capture" 1)
+    stage17_lifecycle_competition_token(
+        "if (death_gate.screenshot || (config.validation_request_screenshot" 1)
+    stage17_lifecycle_competition_token(
+        "} else if (!capture_path.has_value()\n                    && config.validation_capture_file.has_value()" 2)
+    stage17_lifecycle_competition_token(
+        "} else if (!capture_path.has_value()) {" 2)
+    stage17_lifecycle_competition_token("const bool capture_succeeded =" 1)
+    if(NOT _error STREQUAL "")
+        set(${OUT_ERROR} "${_error}" PARENT_SCOPE)
+        return()
+    endif()
+    string(FIND "${_loop}" "mark_stage17_capture_complete(" _mark_position)
+    if(_mark_position EQUAL -1)
+        set(${OUT_ERROR} "capture_mark_missing" PARENT_SCOPE)
+        return()
+    endif()
+    cpp_token_brace_depth("${_loop}" ${_mark_position} _mark_depth)
+    if(NOT _mark_depth EQUAL 2)
+        set(${OUT_ERROR} "capture_mark_scope" PARENT_SCOPE)
+        return()
+    endif()
+    string(FIND "${_run}" "stage17_capture_path(" _request_position)
+    string(FIND "${_run}" "write_stage17_validation_summary(" _summary_position)
+    if(_request_position EQUAL -1 OR _summary_position EQUAL -1
+            OR NOT _request_position LESS _summary_position)
+        set(${OUT_ERROR} "capture_summary_order" PARENT_SCOPE)
+        return()
+    endif()
+    math(EXPR _return_window_length "${_summary_position} - ${_request_position}")
+    string(SUBSTRING "${_run}" ${_request_position} ${_return_window_length}
+        _return_window)
+    string(FIND "${_return_window}" "return" _return_position)
+    if(NOT _return_position EQUAL -1)
+        set(${OUT_ERROR} "capture_early_return" PARENT_SCOPE)
+        return()
+    endif()
+    set(${OUT_ERROR} "" PARENT_SCOPE)
+endfunction()
+
+# This validation deliberately starts from the complete, active host source.
+# It rejects evidence copied into a lambda, a different function, comments, or
+# an inactive branch before narrowing to the one executable host loop.
+function(assert_stage17_capture_lifecycle HOST_SOURCE LABEL)
+    stage17_mask_cpp_conditionals("${HOST_SOURCE}" _host_active)
+    stage17_capture_lifecycle_status("${_host_active}" _lifecycle_error)
+    if(NOT _lifecycle_error STREQUAL "")
+        message(FATAL_ERROR "Stage17 lifecycle ${LABEL} rejected: ${_lifecycle_error}")
+    endif()
+    evidence_find_cpp_code_token("${_host_active}" "HostExitCode run_raylib_host("
+        _run_begin)
+    if(_run_begin EQUAL -1)
+        message(FATAL_ERROR "Stage17 lifecycle ${LABEL} is missing run_raylib_host")
+    endif()
+    string(SUBSTRING "${_host_active}" ${_run_begin} -1 _run_tail)
+    evidence_extract_cpp_function_block("${_run_tail}"
+        "HostExitCode run_raylib_host(" _run_host)
+    evidence_extract_cpp_function_block("${_host_active}"
+        "bool present_frame_and_maybe_capture(" _present_helper)
+
+    set(_all_active "${_host_active}\n${_stage17_report_active_text}\n${_stage17_runtime_active_text}\n${_stage17_header_active_text}")
+    foreach(_raylib_api IN ITEMS "EndDrawing\\(" "LoadImageFromScreen\\(" "ExportImage\\(")
+        count_nonempty_regex_matches("${_all_active}" "${_raylib_api}" _api_count)
+        if(NOT _api_count EQUAL 1)
+            message(FATAL_ERROR "Stage17 lifecycle ${LABEL} raylib API is not helper-owned: ${_raylib_api}")
+        endif()
+    endforeach()
+    assert_unique_ordered_host_tokens("Stage17 ${LABEL} present helper"
+        "${_present_helper}" 1 "EndDrawing();" "LoadImageFromScreen();"
+        "ExportImage(image, path);")
+
+    string(FIND "${_run_host}" "while (!exit_requested) {" _loop_begin)
+    if(_loop_begin EQUAL -1)
+        message(FATAL_ERROR "Stage17 lifecycle ${LABEL} cannot isolate host loop")
+    endif()
+    math(EXPR _loop_after "${_loop_begin} + 1")
+    string(SUBSTRING "${_run_host}" ${_loop_after} -1 _loop_tail)
+    string(FIND "${_loop_tail}" "{" _loop_open_relative)
+    math(EXPR _loop_open "${_loop_begin} + ${_loop_open_relative}")
+    string(LENGTH "${_run_host}" _run_length)
+    math(EXPR _run_last "${_run_length} - 1")
+    set(_loop_depth 0)
+    set(_loop_end -1)
+    foreach(_index RANGE ${_loop_open} ${_run_last})
+        string(SUBSTRING "${_run_host}" ${_index} 1 _character)
+        if(_character STREQUAL "{")
+            math(EXPR _loop_depth "${_loop_depth} + 1")
+        elseif(_character STREQUAL "}")
+            math(EXPR _loop_depth "${_loop_depth} - 1")
+            if(_loop_depth EQUAL 0)
+                set(_loop_end ${_index})
+                break()
+            endif()
+        endif()
+    endforeach()
+    if(_loop_end EQUAL -1)
+        message(FATAL_ERROR "Stage17 lifecycle ${LABEL} found unbalanced host loop")
+    endif()
+    math(EXPR _loop_length "${_loop_end} - ${_loop_begin} + 1")
+    string(SUBSTRING "${_run_host}" ${_loop_begin} ${_loop_length} _loop)
+
+    assert_token_depth_sequence("Stage17 ${LABEL} capture request" "${_loop}"
+        "stage17_capture_path(" 1)
+    assert_token_depth_sequence("Stage17 ${LABEL} capture requested binding" "${_loop}"
+        "const bool stage17_capture_requested = capture_path.has_value();" 1)
+    assert_token_depth_sequence("Stage17 ${LABEL} capture success binding" "${_loop}"
+        "const bool capture_succeeded =" 1)
+    assert_token_depth_sequence("Stage17 ${LABEL} capture completion mark" "${_loop}"
+        "mark_stage17_capture_complete(" 2)
+    assert_unique_ordered_tokens("Stage17 ${LABEL} capture competition"
+        "${_loop}"
+        "stage17_capture_path("
+        "const bool stage17_capture_requested = capture_path.has_value();"
+        "if (!capture_path.has_value() && stage12_item_baseline_frame) {"
+        "if (!capture_path.has_value()\n                    && (validation_reached || loot_validation_visible_capture"
+        "if (death_gate.screenshot || (config.validation_request_screenshot"
+        "} else if (!capture_path.has_value()\n                    && config.validation_capture_file.has_value()"
+        "} else if (!capture_path.has_value()) {"
+        "const bool capture_succeeded =")
+    string(FIND "${_loop}" "stage17_capture_path(" _capture_request_position)
+    string(FIND "${_loop}" "mark_stage17_capture_complete(" _capture_mark_position)
+    math(EXPR _capture_segment_length
+        "${_capture_mark_position} - ${_capture_request_position}")
+    string(SUBSTRING "${_loop}" ${_capture_request_position}
+        ${_capture_segment_length} _capture_segment)
+    string(FIND "${_capture_segment}" "return" _early_return)
+    if(NOT _early_return EQUAL -1)
+        message(FATAL_ERROR "Stage17 lifecycle ${LABEL} has early return before capture completion")
+    endif()
+    string(REGEX REPLACE "[ \t\r\n]+" " " _capture_normalized "${_loop}")
+    assert_one_normalized_match("Stage17 ${LABEL} capture request RHS"
+        "${_capture_normalized}"
+        "std::optional<std::string>[ ]+capture_path[ ]*=[ ]*stage17_capture_path\\([ ]*config,[ ]*[*]stage17_validation_state[ ]*\\)[ ]*;")
+    assert_one_normalized_match("Stage17 ${LABEL} capture success RHS"
+        "${_capture_normalized}"
+        "const[ ]+bool[ ]+capture_succeeded[ ]*=[ ]*present_frame_and_maybe_capture\\([ ]*capture_path[.]has_value\\([ ]*\\)[ ]*\\?[ ]*capture_path->c_str\\([ ]*\\)[ ]*:[ ]*nullptr[ ]*\\)[ ]*;")
+    assert_one_normalized_match("Stage17 ${LABEL} gated capture mark"
+        "${_capture_normalized}"
+        "if[ ]*\\([ ]*stage17_capture_requested[ ]*&&[ ]*capture_succeeded[ ]*\\)[ ]*\\{[ ]*mark_stage17_capture_complete\\([ ]*[*]stage17_validation_state[ ]*\\)[ ]*;")
+
+    string(FIND "${_run_host}" "stage17_validation_state->clean_shutdown_exact_ready ="
+        _shutdown_position)
+    if(NOT _shutdown_position GREATER _loop_end)
+        message(FATAL_ERROR "Stage17 lifecycle ${LABEL} shutdown assignment is not post-loop")
+    endif()
+    assert_one_normalized_match("Stage17 ${LABEL} exact shutdown assignment"
+        "${_run_host}"
+        "stage17_validation_state->clean_shutdown_exact_ready[ \t\r\n]*=[ \t\r\n]*runtime[.]clean_shutdown_state\\([ \t\r\n]*\\)[ \t\r\n]*==[ \t\r\n]*CleanShutdownState::ready[ \t\r\n]*;")
+    assert_unique_ordered_host_tokens("Stage17 ${LABEL} shutdown summaries"
+        "${_run_host}" 2
+        "stage17_validation_state->clean_shutdown_exact_ready ="
+        "write_stage11b_validation_summary("
+        "write_stage11c_hud_validation_summary("
+        "write_stage11d_loot_validation_summary("
+        "write_stage17_validation_summary(")
+endfunction()
+
+# Keep the new adversarial cases in this direct production guard.  Legacy
+# HOST_OVERRIDE fixtures retain their focused historical assertions without
+# repeatedly parsing these extra Stage17-only source variants.
+function(assert_stage17_lifecycle_error NAME SOURCE EXPECTED_ERROR)
+    stage17_capture_lifecycle_status("${SOURCE}" _actual_error)
+    if(NOT _actual_error STREQUAL "${EXPECTED_ERROR}")
+        message(FATAL_ERROR
+            "Stage17 lifecycle mutation ${NAME} expected ${EXPECTED_ERROR}, got ${_actual_error}")
+    endif()
+endfunction()
+
+function(assert_stage17_lifecycle_memory_mutations HOST_SOURCE)
+    set(_request [=[std::optional<std::string> capture_path = stage17_capture_path(
+                config, *stage17_validation_state);]=])
+    set(_requested [=[const bool stage17_capture_requested = capture_path.has_value();]=])
+    set(_mark [=[mark_stage17_capture_complete(*stage17_validation_state);]=])
+    stage17_mask_cpp_conditionals("${HOST_SOURCE}" _mutation_active)
+
+    # These are complete source variants passed to the same pure lifecycle
+    # validator as production; no mutation merely checks its own construction.
+    string(REPLACE "${_mark}" "mark_stage17_capture_complete_removed(*stage17_validation_state);"
+        _deleted_mark "${_mutation_active}")
+    assert_stage17_lifecycle_error("deleted completion mark" "${_deleted_mark}"
+        "capture_mark_missing")
+
+    # Request moved after the first competing branch must invert the required
+    # direct-loop order.  This guards against priority regressions.
+    string(REPLACE "${_request}" "stage17_capture_path_removed(config, *stage17_validation_state);"
+        _moved_request "${_mutation_active}")
+    string(REPLACE "if (!capture_path.has_value() && stage12_item_baseline_frame) {"
+        "if (!capture_path.has_value() && stage12_item_baseline_frame) {\n${_request}"
+        _moved_request "${_moved_request}")
+    assert_stage17_lifecycle_error("request after competing capture branch"
+        "${_moved_request}" "capture_competition_scope")
+
+    # The return window intentionally runs through the final Stage17 summary.
+    string(REPLACE "${_requested}" "${_requested}\n            return HostExitCode::success;"
+        _early_return "${_mutation_active}")
+    assert_stage17_lifecycle_error("request-to-summary early return"
+        "${_early_return}" "capture_early_return")
+
+    set(_success [=[const bool capture_succeeded =
+                present_frame_and_maybe_capture(capture_path.has_value()
+                    ? capture_path->c_str() : nullptr);]=])
+    set(_lambda [=[const auto stage17_uncalled_capture_lambda = [&]() noexcept {
+                const bool capture_succeeded = present_frame_and_maybe_capture(
+                    capture_path.has_value() ? capture_path->c_str() : nullptr);
+                return capture_succeeded;
+            };]=])
+    string(REPLACE "${_success}" "${_lambda}" _lambda_mutation "${_mutation_active}")
+    assert_stage17_lifecycle_error("uncalled lambda capture decoy"
+        "${_lambda_mutation}" "capture_competition_scope")
+
+    string(REPLACE "${_mark}" "mark_stage17_capture_complete_removed(*stage17_validation_state);"
+        _cross_function "${_mutation_active}")
+    string(APPEND _cross_function [=[
+void stage17_cross_function_capture_decoy() {
+    mark_stage17_capture_complete(*stage17_validation_state);
+}
+]=])
+    assert_stage17_lifecycle_error("cross-function capture mark decoy"
+        "${_cross_function}" "capture_mark_missing")
 endfunction()
 
 function(assert_token_depth_sequence LABEL SURFACE TOKEN)
@@ -1358,6 +1897,11 @@ if(NOT _stage17_loop_top_snapshot_position LESS _stage17_inventory_position
         OR NOT _stage17_snapshot_position LESS _stage17_draw_position)
     message(FATAL_ERROR
         "Host validation sequence guard rejected Stage17 observer order")
+endif()
+
+if(NOT DEFINED HOST_OVERRIDE)
+    assert_stage17_capture_lifecycle("${_host_text}" "production")
+    assert_stage17_lifecycle_memory_mutations("${_host_text}")
 endif()
 
 # run_raylib_host owns the frame loop and summary calls inside its single

@@ -9,6 +9,13 @@ if(NOT EXISTS "${POISON_HEADER}")
 endif()
 
 file(READ "${RAYLIB_SOURCE_DIR}/raylib_host.cpp" HOST_SOURCE)
+set(STAGE17_REPORT_SOURCE
+    "${RAYLIB_SOURCE_DIR}/host_validation_stage17_report.cpp")
+if(NOT EXISTS "${STAGE17_REPORT_SOURCE}")
+    message(FATAL_ERROR
+        "Stage17 report source is required: ${STAGE17_REPORT_SOURCE}")
+endif()
+file(READ "${STAGE17_REPORT_SOURCE}" STAGE17_REPORT_SOURCE_TEXT)
 file(READ "${RAYLIB_SOURCE_DIR}/host_validation_stage17_runtime.cpp"
     STAGE17_RUNTIME_SOURCE)
 file(READ "${RAYLIB_SOURCE_DIR}/inventory_renderer.cpp" INVENTORY_SOURCE)

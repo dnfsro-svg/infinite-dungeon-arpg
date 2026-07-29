@@ -7,6 +7,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
+#include <string>
 
 namespace arpg::dungeon {
 struct DungeonSnapshot;
@@ -155,6 +157,13 @@ void observe_stage17_snapshot(const RaylibHostConfig&,
 void observe_stage17_inventory(const RaylibHostConfig&,
     Stage17SkillStonesValidationState&, const InventoryRenderer&,
     const dungeon::DungeonSnapshot&) noexcept;
+[[nodiscard]] std::optional<std::string> stage17_capture_path(
+    const RaylibHostConfig&, Stage17SkillStonesValidationState&) noexcept;
+void mark_stage17_capture_complete(Stage17SkillStonesValidationState&) noexcept;
+[[nodiscard]] bool stage17_validation_complete(const RaylibHostConfig&,
+    const Stage17SkillStonesValidationState&) noexcept;
+void write_stage17_validation_summary(const RaylibHostConfig&,
+    const Stage17SkillStonesValidationState&) noexcept;
 
 }  // namespace host_validation
 }  // namespace arpg::platform
