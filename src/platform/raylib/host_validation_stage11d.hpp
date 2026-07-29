@@ -12,10 +12,13 @@
 #include <limits>
 
 namespace arpg::settings {
+enum class LootFilterMode : std::uint8_t;
 struct SettingsData;
 }
 
 namespace arpg::platform {
+struct DungeonRenderStatus;
+struct PauseMenuState;
 struct PhysicalKeySnapshot;
 struct RaylibHostConfig;
 
@@ -90,6 +93,16 @@ struct Stage11DLootValidationState final {
 void observe_stage11d_abyss_claim(Stage11DLootValidationState&,
     const dungeon::DungeonSnapshot&,
     const items::ItemOwnershipState&) noexcept;
+[[nodiscard]] bool stage11d_target_visible(const RaylibHostConfig&,
+    const dungeon::DungeonSnapshot&, const PauseMenuState&,
+    const DungeonRenderStatus&, settings::LootFilterMode,
+    const GroundLootView&, HudNoticeView,
+    Stage11DLootValidationState&) noexcept;
+void stage11d_record_semantics(Stage11DLootValidationState&,
+    const dungeon::DungeonSnapshot&, const items::ItemOwnershipState*,
+    const GroundLootView&, HudNoticeView) noexcept;
+void write_stage11d_loot_validation_summary(const RaylibHostConfig&,
+    const Stage11DLootValidationState&, const PauseMenuState&) noexcept;
 
 }  // namespace host_validation
 }  // namespace arpg::platform

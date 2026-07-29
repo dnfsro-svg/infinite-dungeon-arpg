@@ -9,11 +9,13 @@ set(_stage_header
     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d.hpp")
 set(_runtime
     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d_runtime.cpp")
+set(_report
+    "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d_report.cpp")
 set(_renderer "${SOURCE_ROOT}/src/platform/raylib/combat_renderer.cpp")
 set(_formal "${SOURCE_ROOT}/tests/platform/stage11d_loot_formal_game_validation.cpp")
 set(_validator "${SOURCE_ROOT}/tests/platform/stage11d_loot_formal_validator.ps1")
 foreach(_file IN ITEMS "${_guard}" "${_sequence_guard}" "${_host}"
-        "${_stage_header}" "${_runtime}" "${_renderer}"
+        "${_stage_header}" "${_runtime}" "${_report}" "${_renderer}"
         "${_formal}" "${_validator}")
     if(NOT EXISTS "${_file}")
         message(FATAL_ERROR "Stage11D guard self-test input is missing: ${_file}")
@@ -40,6 +42,16 @@ function(expect_rejected NAME OVERRIDE PATH EXPECTED_REASON)
         if(_targeted_index EQUAL -1)
             return()
         endif()
+    elseif(DEFINED TASK5B_TARGETED_ONLY AND TASK5B_TARGETED_ONLY)
+        set(_targeted_names
+            "report semantic recorder comment decoy"
+            "report target evaluator string decoy"
+            "report summary forward declaration decoy"
+            "report semantic payload cross function decoy")
+        list(FIND _targeted_names "${NAME}" _targeted_index)
+        if(_targeted_index EQUAL -1)
+            return()
+        endif()
     endif()
     execute_process(COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
         "-D${OVERRIDE}_OVERRIDE=${PATH}" -P "${_guard}"
@@ -57,6 +69,66 @@ function(expect_rejected NAME OVERRIDE PATH EXPECTED_REASON)
             "Stage11D guard rejected ${NAME} for the wrong reason: ${_log}")
     endif()
 endfunction()
+
+file(READ "${_report}" _task5b_report_text)
+string(REPLACE "\r\n" "\n" _task5b_report_text
+    "${_task5b_report_text}")
+
+string(REPLACE "void stage11d_record_semantics("
+    "// void stage11d_record_semantics(\nvoid task5b_record_removed("
+    _task5b_report_record_comment "${_task5b_report_text}")
+if(_task5b_report_record_comment STREQUAL _task5b_report_text)
+    message(FATAL_ERROR "Task5B report recorder comment mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/report-record-comment-decoy.cpp")
+file(WRITE "${_path}" "${_task5b_report_record_comment}")
+expect_rejected("report semantic recorder comment decoy" REPORT "${_path}"
+    "report semantic recorder definition token inventory")
+
+string(REPLACE "bool stage11d_target_visible("
+    "const char* task5b_target_string = \"bool stage11d_target_visible(\";\nbool task5b_target_removed("
+    _task5b_report_target_string "${_task5b_report_text}")
+if(_task5b_report_target_string STREQUAL _task5b_report_text)
+    message(FATAL_ERROR "Task5B report target string mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/report-target-string-decoy.cpp")
+file(WRITE "${_path}" "${_task5b_report_target_string}")
+expect_rejected("report target evaluator string decoy" REPORT "${_path}"
+    "report target-visible evaluator definition token inventory")
+
+string(REPLACE "void write_stage11d_loot_validation_summary("
+    "void write_stage11d_loot_validation_summary();\nvoid task5b_summary_removed("
+    _task5b_report_summary_forward "${_task5b_report_text}")
+if(_task5b_report_summary_forward STREQUAL _task5b_report_text)
+    message(FATAL_ERROR "Task5B report summary forward mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/report-summary-forward-decoy.cpp")
+file(WRITE "${_path}" "${_task5b_report_summary_forward}")
+expect_rejected("report summary forward declaration decoy" REPORT "${_path}"
+    "missing report summary writer definition")
+
+set(_task5b_affix_payload
+    "            state.monster_affix_danger[ordinal] =\n                combat::monster_affix_danger_score(monster.affixes);")
+string(REPLACE "${_task5b_affix_payload}" "            static_cast<void>(ordinal);"
+    _task5b_report_payload_removed "${_task5b_report_text}")
+if(_task5b_report_payload_removed STREQUAL _task5b_report_text)
+    message(FATAL_ERROR "Task5B report payload mutation made no change")
+endif()
+set(_task5b_report_close "}  // namespace arpg::platform::host_validation")
+set(_task5b_cross_function
+    "void task5b_report_payload_decoy() {\n    ${_task5b_affix_payload}\n}\n\n${_task5b_report_close}")
+string(REPLACE "${_task5b_report_close}" "${_task5b_cross_function}"
+    _task5b_report_payload_cross_function "${_task5b_report_payload_removed}")
+set(_path "${GUARD_TEST_ROOT}/report-payload-cross-function-decoy.cpp")
+file(WRITE "${_path}" "${_task5b_report_payload_cross_function}")
+expect_rejected("report semantic payload cross function decoy" REPORT "${_path}"
+    "missing report evaluator semantic: state.monster_affix_danger")
+
+if(DEFINED TASK5B_TARGETED_ONLY AND TASK5B_TARGETED_ONLY)
+    message(STATUS
+        "Stage11D Task5B targeted evidence guard passed: bad_mutations=4")
+    return()
+endif()
 
 function(expect_guard_accepted NAME GUARD OVERRIDE PATH)
     execute_process(COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
@@ -633,5 +705,5 @@ if(DEFINED TASK5A_TARGETED_ONLY AND TASK5A_TARGETED_ONLY)
         "Stage11D Task5A targeted guard test passed: bad_mutations=5; harmless_decoys=2")
 else()
     message(STATUS
-        "Stage11D loot evidence guard self-test passed: bad_mutations=39; harmless_decoys=2")
+        "Stage11D loot evidence guard self-test passed: bad_mutations=43; harmless_decoys=2")
 endif()

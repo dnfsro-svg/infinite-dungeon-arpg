@@ -63,6 +63,11 @@ set(_stage11d_runtime
 if(DEFINED STAGE11D_RUNTIME_OVERRIDE)
     set(_stage11d_runtime "${STAGE11D_RUNTIME_OVERRIDE}")
 endif()
+set(_stage11d_report
+    "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d_report.cpp")
+if(DEFINED STAGE11D_REPORT_OVERRIDE)
+    set(_stage11d_report "${STAGE11D_REPORT_OVERRIDE}")
+endif()
 set(_raylib_cmake "${SOURCE_ROOT}/src/platform/raylib/CMakeLists.txt")
 if(DEFINED CMAKE_OVERRIDE)
     set(_raylib_cmake "${CMAKE_OVERRIDE}")
@@ -73,7 +78,8 @@ foreach(_required IN ITEMS
         "${_stage10_11_header}" "${_stage10_11_source}"
         "${_stage11b_header}" "${_stage11b_source}"
         "${_stage11c_header}" "${_stage11c_source}"
-        "${_stage11d_header}" "${_stage11d_runtime}" "${_raylib_cmake}")
+        "${_stage11d_header}" "${_stage11d_runtime}"
+        "${_stage11d_report}" "${_raylib_cmake}")
     if(NOT EXISTS "${_required}")
         message(FATAL_ERROR "Host validation boundary target is missing: ${_required}")
     endif()
@@ -90,6 +96,7 @@ file(READ "${_stage11c_header}" _stage11c_header_text)
 file(READ "${_stage11c_source}" _stage11c_source_text)
 file(READ "${_stage11d_header}" _stage11d_header_text)
 file(READ "${_stage11d_runtime}" _stage11d_runtime_text)
+file(READ "${_stage11d_report}" _stage11d_report_text)
 file(READ "${_raylib_cmake}" _raylib_cmake_text)
 
 function(stage11d_find_host_code_token TOKEN OUT_POSITION)
@@ -100,6 +107,31 @@ function(stage11d_find_host_code_token TOKEN OUT_POSITION)
     endif()
     evidence_find_cpp_code_token("${_host_text}" "${TOKEN}" _code_position)
     set(${OUT_POSITION} ${_code_position} PARENT_SCOPE)
+endfunction()
+
+function(assert_unique_cpp_definition LABEL SURFACE TOKEN)
+    string(FIND "${SURFACE}" "${TOKEN}" _position)
+    if(_position EQUAL -1)
+        message(FATAL_ERROR
+            "Host validation ${LABEL} definition is missing: ${TOKEN}")
+    endif()
+    string(LENGTH "${TOKEN}" _token_length)
+    math(EXPR _after "${_position} + ${_token_length}")
+    string(SUBSTRING "${SURFACE}" ${_after} -1 _remainder)
+    string(FIND "${_remainder}" "${TOKEN}" _duplicate)
+    if(NOT _duplicate EQUAL -1)
+        message(FATAL_ERROR
+            "Host validation ${LABEL} definition is duplicated: ${TOKEN}")
+    endif()
+    string(SUBSTRING "${SURFACE}" ${_position} -1 _tail)
+    string(FIND "${_tail}" "{" _open)
+    string(FIND "${_tail}" ";" _semicolon)
+    if(_open EQUAL -1 OR (NOT _semicolon EQUAL -1 AND _semicolon LESS _open))
+        message(FATAL_ERROR
+            "Host validation ${LABEL} is only a forward declaration: ${TOKEN}")
+    endif()
+    evidence_find_cpp_function_bounds_in_sanitized("${SURFACE}" "${TOKEN}"
+        _function_begin _function_open _function_end)
 endfunction()
 
 foreach(_header_text IN ITEMS
@@ -240,6 +272,51 @@ if(NOT _host_stage11d_state_definition EQUAL -1)
         "Host validation Stage11D state definition remains in raylib_host.cpp")
 endif()
 
+evidence_sanitize_cpp_for_scan("${_stage11d_report_text}"
+    _stage11d_report_code)
+foreach(_stage11d_report_definition IN ITEMS
+        "bool stage11d_view_has_rarity("
+        "void stage11d_record_semantics("
+        "bool stage11d_target_visible("
+        "const char* stage11d_scenario_name("
+        "void write_stage11d_loot_validation_summary(")
+    assert_unique_cpp_definition("Stage11D report"
+        "${_stage11d_report_code}" "${_stage11d_report_definition}")
+    stage11d_find_host_code_token("${_stage11d_report_definition}"
+        _host_stage11d_report_definition)
+    if(NOT _host_stage11d_report_definition EQUAL -1)
+        message(FATAL_ERROR
+            "Host validation Stage11D report definition remains in raylib_host.cpp: ${_stage11d_report_definition}")
+    endif()
+endforeach()
+
+foreach(_stage11d_report_declaration IN ITEMS
+        "bool stage11d_target_visible("
+        "void stage11d_record_semantics("
+        "void write_stage11d_loot_validation_summary(")
+    string(FIND "${_stage11d_header_code}"
+        "${_stage11d_report_declaration}" _declaration)
+    if(_declaration EQUAL -1)
+        message(FATAL_ERROR
+            "Host validation Stage11D report declaration is missing: ${_stage11d_report_declaration}")
+    endif()
+    string(LENGTH "${_stage11d_report_declaration}" _declaration_length)
+    math(EXPR _after "${_declaration} + ${_declaration_length}")
+    string(SUBSTRING "${_stage11d_header_code}" ${_after} -1 _remainder)
+    string(FIND "${_remainder}" "${_stage11d_report_declaration}" _duplicate)
+    if(NOT _duplicate EQUAL -1)
+        message(FATAL_ERROR
+            "Host validation Stage11D report declaration is duplicated: ${_stage11d_report_declaration}")
+    endif()
+    string(SUBSTRING "${_stage11d_header_code}" ${_declaration} -1 _tail)
+    string(FIND "${_tail}" ";" _semicolon)
+    string(FIND "${_tail}" "{" _open)
+    if(_semicolon EQUAL -1 OR (NOT _open EQUAL -1 AND _open LESS _semicolon))
+        message(FATAL_ERROR
+            "Host validation Stage11D report declaration is not header-only: ${_stage11d_report_declaration}")
+    endif()
+endforeach()
+
 set(_input_definition_tokens
     "void inject_validation_pressed("
     "void inject_validation_action("
@@ -286,6 +363,7 @@ foreach(_registered_source IN ITEMS
         "host_validation_input.cpp" "host_validation_navigation.cpp"
         "host_validation_stage10_11.cpp" "host_validation_stage11b.cpp"
         "host_validation_stage11c.cpp"
+        "host_validation_stage11d_report.cpp"
         "host_validation_stage11d_runtime.cpp")
     arpg_cmake_count_arpg_raylib_source("${_raylib_cmake_text}"
         "${_registered_source}" _registered_count)
@@ -428,3 +506,14 @@ assert_unique_ordered_host_tokens("validation summary write" "${_host_runtime}" 
     "write_stage11c_hud_validation_summary("
     "write_stage11d_loot_validation_summary("
     "write_stage17_validation_summary(")
+foreach(_summary_token IN ITEMS
+        "write_stage11b_validation_summary("
+        "write_stage11c_hud_validation_summary("
+        "write_stage11d_loot_validation_summary("
+        "write_stage17_validation_summary(")
+    string(FIND "${_host_runtime}" "${_summary_token}" _summary_position)
+    if(NOT _summary_position GREATER _loop_end)
+        message(FATAL_ERROR
+            "Host validation sequence guard rejected summary write before loop end: ${_summary_token}")
+    endif()
+endforeach()

@@ -11,6 +11,8 @@ set(_stage_header
     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d.hpp")
 set(_runtime
     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d_runtime.cpp")
+set(_report
+    "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d_report.cpp")
 set(_renderer "${SOURCE_ROOT}/src/platform/raylib/combat_renderer.cpp")
 set(_formal "${SOURCE_ROOT}/tests/platform/stage11d_loot_formal_game_validation.cpp")
 set(_validator "${SOURCE_ROOT}/tests/platform/stage11d_loot_formal_validator.ps1")
@@ -26,6 +28,9 @@ endif()
 if(DEFINED RUNTIME_OVERRIDE)
     set(_runtime "${RUNTIME_OVERRIDE}")
 endif()
+if(DEFINED REPORT_OVERRIDE)
+    set(_report "${REPORT_OVERRIDE}")
+endif()
 if(DEFINED RENDERER_OVERRIDE)
     set(_renderer "${RENDERER_OVERRIDE}")
 endif()
@@ -36,7 +41,7 @@ if(DEFINED VALIDATOR_OVERRIDE)
     set(_validator "${VALIDATOR_OVERRIDE}")
 endif()
 foreach(_file IN ITEMS "${_header}" "${_host}" "${_stage_header}"
-        "${_runtime}" "${_renderer}" "${_formal}" "${_validator}")
+        "${_runtime}" "${_report}" "${_renderer}" "${_formal}" "${_validator}")
     if(NOT EXISTS "${_file}")
         message(FATAL_ERROR "Stage11D loot evidence input is missing: ${_file}")
     endif()
@@ -46,11 +51,12 @@ file(READ "${_header}" _header_text)
 file(READ "${_host}" _host_text)
 file(READ "${_stage_header}" _stage_header_text)
 file(READ "${_runtime}" _runtime_text)
+file(READ "${_report}" _report_text)
 file(READ "${_renderer}" _renderer_text)
 file(READ "${_formal}" _formal_text)
 file(READ "${_validator}" _validator_text)
 set(_combined
-    "${_header_text}\n${_stage_header_text}\n${_runtime_text}\n${_host_text}\n${_formal_text}")
+    "${_header_text}\n${_stage_header_text}\n${_runtime_text}\n${_report_text}\n${_host_text}\n${_formal_text}")
 
 function(stage11d_count_raw_token SOURCE TOKEN OUT_COUNT)
     string(LENGTH "${SOURCE}" _source_length)
@@ -172,7 +178,12 @@ stage11d_require_marker_depth("${_runtime_code}" runtime safe_movement 2)
 stage11d_require_marker_depth("${_runtime_code}" runtime physical_driver 1)
 stage11d_require_marker_depth("${_runtime_code}" runtime fixed_step_runtime 1)
 
-set(_host_labels evidence_semantics foreground runtime_state runtime_input
+set(_report_labels evidence_semantics)
+stage11d_prepare_marker_surface("${_report_text}" report
+    "${_report_labels}" _report_code)
+stage11d_require_marker_depth("${_report_code}" report evidence_semantics 1)
+
+set(_host_labels foreground runtime_state runtime_input
     fixed_step abyss_claim presented_semantics reached_merge reached
     visible_capture captured summary)
 string(REPLACE "\r\n" "\n" _host_marker_count_text "${_host_text}")
@@ -238,7 +249,13 @@ foreach(_label IN LISTS _host_labels)
     stage11d_extract_raw_seam("${_host_text}" "${_label}" _region)
     string(APPEND _stage11d_host_seam "\n${_region}")
 endforeach()
+stage11d_extract_raw_seam("${_report_text}" evidence_semantics
+    _stage11d_report_seam)
+set(_stage11d_semantic_seam
+    "${_stage11d_host_seam}\n${_stage11d_report_seam}")
 arpg_sanitize_cpp_source("${_stage11d_host_seam}" _stage11d_host_code)
+arpg_sanitize_cpp_source("${_stage11d_semantic_seam}"
+    _stage11d_semantic_code)
 
 function(stage11d_extract_runtime_definition LABEL SIGNATURE OUT_FUNCTION)
     stage11d_count_raw_token("${_runtime_code}" "${SIGNATURE}" _count)
@@ -259,6 +276,29 @@ function(stage11d_extract_runtime_definition LABEL SIGNATURE OUT_FUNCTION)
     math(EXPR _function_length
         "${_function_end} - ${_function_begin} + 1")
     string(SUBSTRING "${_runtime_code}" ${_function_begin}
+        ${_function_length} _function)
+    set(${OUT_FUNCTION} "${_function}" PARENT_SCOPE)
+endfunction()
+
+function(stage11d_extract_report_definition LABEL SIGNATURE OUT_FUNCTION)
+    stage11d_count_raw_token("${_report_code}" "${SIGNATURE}" _count)
+    if(NOT _count EQUAL 1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard missing report ${LABEL} definition")
+    endif()
+    string(FIND "${_report_code}" "${SIGNATURE}" _begin)
+    string(SUBSTRING "${_report_code}" ${_begin} -1 _tail)
+    string(FIND "${_tail}" "{" _open)
+    string(FIND "${_tail}" ";" _semicolon)
+    if(_open EQUAL -1 OR (NOT _semicolon EQUAL -1 AND _semicolon LESS _open))
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard missing report ${LABEL} definition")
+    endif()
+    evidence_find_cpp_function_bounds_in_sanitized("${_report_code}"
+        "${SIGNATURE}" _function_begin _function_open _function_end)
+    math(EXPR _function_length
+        "${_function_end} - ${_function_begin} + 1")
+    string(SUBSTRING "${_report_code}" ${_function_begin}
         ${_function_length} _function)
     set(${OUT_FUNCTION} "${_function}" PARENT_SCOPE)
 endfunction()
@@ -301,7 +341,12 @@ foreach(_required IN ITEMS
         "bool abyss_claim_requested{};" "bool abyss_claimed{};"
         "PhysicalKeySnapshot inject_stage11d_physical_edges("
         "bool stage11d_validation_active("
-        "void observe_stage11d_abyss_claim(")
+        "void observe_stage11d_abyss_claim("
+        "bool stage11d_target_visible("
+        "void stage11d_record_semantics("
+        "void write_stage11d_loot_validation_summary("
+        "enum class LootFilterMode : std::uint8_t;"
+        "struct DungeonRenderStatus;" "struct PauseMenuState;")
     string(FIND "${_stage_header_code}" "${_required}" _found)
     if(_found EQUAL -1)
         message(FATAL_ERROR
@@ -321,6 +366,14 @@ if(NOT _host_state_definition EQUAL -1)
     message(FATAL_ERROR
         "Stage11D loot evidence guard found runtime state definition in host")
 endif()
+
+foreach(_declaration IN ITEMS
+        "bool stage11d_target_visible("
+        "void stage11d_record_semantics("
+        "void write_stage11d_loot_validation_summary(")
+    stage11d_require_unique_token_depth("report header declaration"
+        "${_stage_header_code}" "${_declaration}" 2)
+endforeach()
 
 set(_runtime_definitions
     "ordinary rarity selector|bool stage11d_has_three_ordinary_rarities(|1"
@@ -355,6 +408,55 @@ foreach(_signature IN ITEMS
     if(NOT _host_definition EQUAL -1)
         message(FATAL_ERROR
             "Stage11D loot evidence guard found runtime definition in host")
+    endif()
+endforeach()
+
+set(_report_definitions
+    "rarity-view helper|bool stage11d_view_has_rarity(|2"
+    "semantic recorder|void stage11d_record_semantics(|1"
+    "target-visible evaluator|bool stage11d_target_visible(|1"
+    "scenario-name helper|const char* stage11d_scenario_name(|2"
+    "summary writer|void write_stage11d_loot_validation_summary(|1")
+foreach(_entry IN LISTS _report_definitions)
+    string(REPLACE "|" ";" _parts "${_entry}")
+    list(GET _parts 0 _label)
+    list(GET _parts 1 _signature)
+    list(GET _parts 2 _expected_depth)
+    stage11d_require_unique_token_depth("report ${_label} definition"
+        "${_report_code}" "${_signature}" ${_expected_depth})
+    stage11d_extract_report_definition("${_label}" "${_signature}"
+        _definition)
+    stage11d_find_host_code_token("${_signature}" _host_definition)
+    if(NOT _host_definition EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard found report definition in host")
+    endif()
+endforeach()
+
+stage11d_extract_report_definition("semantic recorder"
+    "void stage11d_record_semantics(" _report_record_function)
+stage11d_extract_report_definition("target-visible evaluator"
+    "bool stage11d_target_visible(" _report_target_function)
+stage11d_extract_report_definition("summary writer"
+    "void write_stage11d_loot_validation_summary(" _report_summary_function)
+foreach(_required IN ITEMS
+        "state.snapshot_item_ids[index] = item.item_id;"
+        "state.inventory_item_ids[state.inventory_item_count++] = item.id;")
+    string(FIND "${_report_record_function}" "${_required}" _found)
+    if(_found EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard missing report recorder semantic: ${_required}")
+    endif()
+endforeach()
+foreach(_required IN ITEMS
+        "state.monster_affix_danger[ordinal] ="
+        "state.monster_ai_phase[ordinal] ="
+        "state.defeat_player_hp[ordinal] = snapshot.combat->player.hp;"
+        "state.pickup_commit_generation = status.loot_pickup.commit_generation;")
+    string(FIND "${_report_target_function}" "${_required}" _found)
+    if(_found EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard missing report evaluator semantic: ${_required}")
     endif()
 endforeach()
 
@@ -472,11 +574,12 @@ foreach(_required IN ITEMS
 endforeach()
 
 set(_host_code "${_host_text}")
+set(_semantic_ownership_text "${_host_text}\n${_report_text}")
 foreach(_forbidden IN ITEMS
         "TestAccess" "snapshot_override" "set_snapshot(" "FakeRenderer"
         "fake_renderer" "request_pickup(" "complete_pickup("
         "publish_pickup(")
-    string(FIND "${_host_code}" "${_forbidden}" _host_found)
+    string(FIND "${_semantic_ownership_text}" "${_forbidden}" _host_found)
     if(NOT _host_found EQUAL -1)
         message(FATAL_ERROR
             "Stage11D host-bypass-${_forbidden}")
@@ -485,19 +588,19 @@ endforeach()
 
 string(REGEX MATCH
     "pause_menu[ \t\r\n]*[.][ \t\r\n]*committed([^=;]*|)[=][^=]"
-    _committed_assignment "${_stage11d_host_code}")
+    _committed_assignment "${_stage11d_semantic_code}")
 if(_committed_assignment)
     message(FATAL_ERROR
         "Stage11D loot evidence guard rejected host validation seam direct committed settings write")
 endif()
 string(REGEX MATCH "live_settings([^=;]*|)[=][^=]"
-    _live_assignment "${_stage11d_host_code}")
+    _live_assignment "${_stage11d_semantic_code}")
 if(_live_assignment)
     message(FATAL_ERROR
         "Stage11D loot evidence guard rejected host validation seam direct live settings write")
 endif()
 string(REGEX MATCH "result[ \t\r\n]*=[ \t\r\n]*pass"
-    _direct_pass "${_stage11d_host_seam}")
+    _direct_pass "${_stage11d_semantic_seam}")
 if(_direct_pass)
     message(FATAL_ERROR
         "Stage11D loot evidence guard rejected host validation seam direct result pass")
@@ -522,7 +625,7 @@ endif()
 
 string(REGEX MATCH
     "ground_items[ \t\r\n]*\\[[^]]+\\][ \t\r\n]*=[^=]"
-    _host_ground_mutation "${_host_text}")
+    _host_ground_mutation "${_host_text}\n${_report_text}")
 if(_host_ground_mutation)
     message(FATAL_ERROR "Stage11D loot evidence guard rejected host snapshot mutation")
 endif()
