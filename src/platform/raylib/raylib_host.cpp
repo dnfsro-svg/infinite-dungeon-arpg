@@ -13,8 +13,10 @@
 #include "game_audio.hpp"
 #include "host_input.hpp"
 #include "host_launch_options.hpp"
+#include "host_validation.hpp"
 #include "host_validation_input.hpp"
 #include "host_validation_navigation.hpp"
+#include "host_validation_state.hpp"
 #include "host_validation_stage10_11.hpp"
 #include "host_validation_stage11b.hpp"
 #include "host_validation_stage11c.hpp"
@@ -44,7 +46,6 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
-#include <new>
 #include <limits>
 #include <optional>
 #include <string>
@@ -75,18 +76,12 @@ namespace {
 using host_validation::inject_validation_action;
 using host_validation::inject_validation_movement;
 using host_validation::inject_validation_pressed;
-using host_validation::inject_stage11d_physical_edges;
 using host_validation::nearest_living_monster;
 using host_validation::stage11d_has_three_ordinary_rarities;
 using host_validation::stage11d_record_semantics;
 using host_validation::stage11d_target_visible;
 using host_validation::Stage11DLootValidationState;
-using host_validation::inject_stage17_physical_edges;
-using host_validation::observe_stage17_combat_event;
 using host_validation::observe_stage17_draw_runtime;
-using host_validation::observe_stage17_inventory;
-using host_validation::observe_stage17_snapshot;
-using host_validation::observe_stage17_submitted_actions;
 using host_validation::stage17_capture_path;
 using host_validation::mark_stage17_capture_complete;
 using host_validation::stage17_validation_complete;
@@ -142,9 +137,9 @@ constexpr char kSettingsRecoveredDefaults[] = u8"设置已恢复默认值";
 
 void drain_events(dungeon::DungeonSession& session, CombatRenderer& renderer,
     CombatFeedback& feedback, GameAudio& audio,
-    Stage17SkillStonesValidationState* stage17 = nullptr) noexcept {
+    HostValidationRuntime* validation_runtime) noexcept {
     while (const auto event = session.try_pop_combat_event()) {
-        observe_stage17_combat_event(stage17, *event);
+        validation_runtime->observe_combat_event(*event);
         renderer.consume_event(*event);
         feedback.consume(*event);
         audio.consume_event(*event);
@@ -352,20 +347,6 @@ void apply_stage12_material_showcase(dungeon::DungeonSnapshot& snapshot,
         monster.ai_phase = combat::MonsterAiPhase::active;
     }
 }
-
-
-struct HostValidationStates final {
-    host_validation::Stage10ValidationState stage10{};
-    host_validation::Stage11ValidationState stage11{};
-    host_validation::Stage11BValidationState stage11b{};
-    host_validation::Stage11CHudValidationState stage11c{};
-    Stage11DLootValidationState stage11d{};
-};
-
-
-
-
-
 
 }  // namespace
 
@@ -576,9 +557,9 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             return HostExitCode::save_initialization_failed;
         }
 
-        const std::unique_ptr<HostValidationStates> validation_states{
-            new (std::nothrow) HostValidationStates{}};
-        if (validation_states == nullptr) {
+        const auto validation_runtime =
+            HostValidationRuntime::create(config, loaded.status);
+        if (validation_runtime == nullptr) {
             return HostExitCode::save_initialization_failed;
         }
         SetConfigFlags(initial_window_flags(committed_settings));
@@ -615,6 +596,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         const auto renderer_storage = std::make_unique<CombatRenderer>();
         CombatRenderer& renderer = *renderer_storage;
         const bool hud_resources_ready = renderer.initialize_resources();
+        validation_runtime->set_render_readiness(
+            hud_resources_ready, renderer.active_skill_assets_ready());
         const auto pause_menu_renderer_storage =
             std::make_unique<PauseMenuRenderer>();
         PauseMenuRenderer& pause_menu_renderer = *pause_menu_renderer_storage;
@@ -659,23 +642,19 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         unsigned validation_capture_tick = 0U;
         unsigned validation_capture_count = 0U;
         host_validation::Stage10ValidationState& stage10_validation_state =
-            validation_states->stage10;
+            HostValidationStateAccess::stage10(*validation_runtime);
         host_validation::Stage11ValidationState& stage11_validation_state =
-            validation_states->stage11;
+            HostValidationStateAccess::stage11(*validation_runtime);
         host_validation::Stage11BValidationState& stage11b_validation_state =
-            validation_states->stage11b;
-        stage11b_validation_state.load_status = loaded.status;
+            HostValidationStateAccess::stage11b(*validation_runtime);
         host_validation::Stage11CHudValidationState& stage11c_validation_state =
-            validation_states->stage11c;
-        stage11c_validation_state.cjk_font_ready = hud_resources_ready;
+            HostValidationStateAccess::stage11c(*validation_runtime);
 // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN runtime_state
         Stage11DLootValidationState& stage11d_validation_state =
-            validation_states->stage11d;
+            HostValidationStateAccess::stage11d(*validation_runtime);
 // STAGE11D_LOOT_VALIDATION_SEAM_END runtime_state
-        const auto stage17_validation_state =
-            std::make_unique<Stage17SkillStonesValidationState>();
-        stage17_validation_state->active_skill_atlases_ready =
-            renderer.active_skill_assets_ready();
+        Stage17SkillStonesValidationState* const stage17_validation_state =
+            &HostValidationStateAccess::stage17(*validation_runtime);
         bool stage10_validation_captured = false;
         const std::string validation_capture_prefix = config.validation_capture
             ? (*save_directory / "stage8-validation-").string()
@@ -705,10 +684,9 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         if (runtime.session() != nullptr) {
             runtime.session()->snapshot(current);
             previous = current;
-            observe_stage17_snapshot(
-                config, *stage17_validation_state, current);
+            validation_runtime->observe_snapshot(current);
             drain_events(*runtime.session(), renderer, feedback, audio,
-                stage17_validation_state.get());
+                validation_runtime.get());
             if (config.stage12_ui_showcase == Stage12UiShowcase::inventory
                     || config.stage12_ui_showcase
                         == Stage12UiShowcase::skill_stones) {
@@ -743,32 +721,21 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 previous = current;
                 runtime.session()->snapshot(current);
                 drain_events(*runtime.session(), renderer, feedback, audio,
-                    stage17_validation_state.get());
+                    validation_runtime.get());
             }
-            observe_stage17_snapshot(
-                config, *stage17_validation_state, current);
+            validation_runtime->observe_snapshot(current);
             const bool window_close_requested = WindowShouldClose();
             if (!window_close_requested) window_close_latched = false;
             const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();
-            const PhysicalKeySnapshot stage11b_physical_keys =
-                host_validation::inject_stage11b_physical_edges(
-                sampled_physical_keys, config, stage11b_validation_state);
-            const PhysicalKeySnapshot stage11c_physical_keys = host_validation::inject_stage11c_physical_edges(
-                stage11b_physical_keys, config, input_settings, current,
-                stage11c_validation_state);
-// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN runtime_input
-            const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges(
-                stage11c_physical_keys, config, input_settings, current,
-                stage11d_validation_state);
-// STAGE11D_LOOT_VALIDATION_SEAM_END runtime_input
             const bool gameplay_rearm_was_required =
                 runtime.gameplay_rearm_required();
-            stage17_validation_state->suspend_injection =
-                gameplay_rearm_was_required;
             const PhysicalKeySnapshot stage17_physical_keys =
-                inject_stage17_physical_edges(physical_keys,
-                    config, input_settings, current,
-                    *stage17_validation_state);
+                validation_runtime->inject_physical_edges(
+                    sampled_physical_keys, input_settings, current,
+                    gameplay_rearm_was_required);
+            const PhysicalKeySnapshot& physical_keys =
+                HostValidationStateAccess::death_input_snapshot(
+                    *validation_runtime);
             if (gameplay_rearm_was_required
                     && gameplay_controls_physically_released(
                         stage17_physical_keys)) {
@@ -782,7 +749,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     runtime.session()->snapshot(current);
                     previous = current;
                     drain_events(*runtime.session(), renderer, feedback, audio,
-                        stage17_validation_state.get());
+                        validation_runtime.get());
                 }
             }
             if (runtime.state() == DungeonRuntimeState::recovery_required) {
@@ -932,15 +899,14 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 session->snapshot(current);
                 previous = current;
                 drain_events(*session, renderer, feedback, audio,
-                    stage17_validation_state.get());
+                    validation_runtime.get());
                 if (runtime.state() != DungeonRuntimeState::running) {
                     inventory.close();
                     fixed_step.clear_accumulator();
                     inventory_toggled_this_frame = true;
                 }
             }
-            observe_stage17_inventory(config, *stage17_validation_state,
-                inventory, current);
+            validation_runtime->observe_inventory(inventory, current);
             const PauseScreen pause_screen_before = pause_menu.screen;
             const bool pause_was_open =
                 pause_screen_before != PauseScreen::closed;
@@ -1033,7 +999,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     session->snapshot(current);
                     previous = current;
                     drain_events(*session, renderer, feedback, audio,
-                        stage17_validation_state.get());
+                        validation_runtime.get());
                 }
             }
             if (gameplay_armed && !pause_blocks_gameplay
@@ -1055,19 +1021,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             if (forward_actions) {
                 const SubmittedFrameActions submitted_actions =
                     submit_frame_actions(*session, frame_input);
-                observe_stage17_submitted_actions(
-                    config, *stage17_validation_state, submitted_actions);
-                if (config.stage11b_validation
-                        == Stage11BValidationScenario::rebound_attack) {
-                    if (stage11b_validation_state.injected_frame == 28U) {
-                        stage11b_validation_state.old_attack_checked = true;
-                        stage11b_validation_state.old_attack_count +=
-                            submitted_actions.combat[0] ? 1U : 0U;
-                    } else if (stage11b_validation_state.injected_frame == 29U) {
-                        stage11b_validation_state.new_attack_count +=
-                            submitted_actions.combat[0] ? 1U : 0U;
-                    }
-                }
+                validation_runtime->observe_submitted_actions(submitted_actions);
             }
             if (forward_descent && frame_input.keys.e) {
                 session->snapshot(current);
@@ -1126,8 +1080,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     loot_pickup_policy(live_settings.loot_filter_mode));
                 ++stage11b_validation_state.fixed_ticks;
                 session->snapshot(current);
-                observe_stage17_snapshot(
-                    config, *stage17_validation_state, current);
+                validation_runtime->observe_snapshot(current);
 // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN abyss_claim
                 host_validation::observe_stage11d_abyss_claim(
                     stage11d_validation_state, current, session->item_state());
@@ -1145,7 +1098,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     fixed_step.clear_accumulator();
                 }
                 drain_events(*session, renderer, feedback, audio,
-                    stage17_validation_state.get());
+                    validation_runtime.get());
                 if (host_validation::stage10_validation_reached(
                         current, config, stage10_validation_state)) {
                     break;

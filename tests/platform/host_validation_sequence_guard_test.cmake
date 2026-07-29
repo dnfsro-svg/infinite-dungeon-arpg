@@ -140,8 +140,8 @@ if(DEFINED STAGE17_SEQUENCE_MUTATION)
     if(STAGE17_SEQUENCE_MUTATION STREQUAL
             "loop_top_snapshot_unbraced_dead_branch")
         string(REPLACE
-            "            }\n            observe_stage17_snapshot(\n                config, *stage17_validation_state, current);"
-            "            }\n            if (false)\n                observe_stage17_snapshot(\n                    config, *stage17_validation_state, current);"
+            "            }\n            validation_runtime->observe_snapshot(current);"
+            "            }\n            if (false)\n                validation_runtime->observe_snapshot(current);"
             _host_text "${_host_text}")
         set(_stage17_named_mutation_consumed TRUE)
     elseif(STAGE17_SEQUENCE_MUTATION STREQUAL
@@ -157,35 +157,35 @@ if(DEFINED STAGE17_SEQUENCE_MUTATION)
         set(_stage17_named_mutation_consumed TRUE)
     elseif(STAGE17_SEQUENCE_MUTATION STREQUAL
             "drain_missing_stage17_state")
-        string(REPLACE "stage17_validation_state.get());" "nullptr);"
+        string(REPLACE "validation_runtime.get());" "nullptr);"
             _host_text "${_host_text}")
         set(_stage17_named_mutation_consumed TRUE)
     elseif(STAGE17_SEQUENCE_MUTATION STREQUAL
             "combat_observer_unbraced_dead_branch")
         string(REPLACE
-            "        observe_stage17_combat_event(stage17, *event);"
-            "        if (false)\n            observe_stage17_combat_event(stage17, *event);"
+            "        validation_runtime->observe_combat_event(*event);"
+            "        if (false)\n            validation_runtime->observe_combat_event(*event);"
             _host_text "${_host_text}")
         set(_stage17_named_mutation_consumed TRUE)
     elseif(STAGE17_SEQUENCE_MUTATION STREQUAL
             "inventory_observer_unbraced_dead_branch")
         string(REPLACE
-            "            observe_stage17_inventory(config, *stage17_validation_state,"
-            "            if (false)\n                observe_stage17_inventory(config, *stage17_validation_state,"
+            "            validation_runtime->observe_inventory(inventory, current);"
+            "            if (false)\n                validation_runtime->observe_inventory(inventory, current);"
             _host_text "${_host_text}")
         set(_stage17_named_mutation_consumed TRUE)
     elseif(STAGE17_SEQUENCE_MUTATION STREQUAL
             "submitted_observer_unbraced_dead_branch")
         string(REPLACE
-            "                observe_stage17_submitted_actions("
-            "                if (false)\n                    observe_stage17_submitted_actions("
+            "                validation_runtime->observe_submitted_actions(submitted_actions);"
+            "                if (false)\n                    validation_runtime->observe_submitted_actions(submitted_actions);"
             _host_text "${_host_text}")
         set(_stage17_named_mutation_consumed TRUE)
     elseif(STAGE17_SEQUENCE_MUTATION STREQUAL
             "fixed_snapshot_unbraced_dead_branch")
         string(REPLACE
-            "                session->snapshot(current);\n                observe_stage17_snapshot("
-            "                session->snapshot(current);\n                if (false)\n                    observe_stage17_snapshot("
+            "                session->snapshot(current);\n                validation_runtime->observe_snapshot(current);"
+            "                session->snapshot(current);\n                if (false)\n                    validation_runtime->observe_snapshot(current);"
             _host_text "${_host_text}")
         set(_stage17_named_mutation_consumed TRUE)
     elseif(STAGE17_SEQUENCE_MUTATION STREQUAL
@@ -1200,13 +1200,48 @@ function(assert_unique_ordered_host_tokens LABEL SURFACE REQUIRED_DEPTH)
     endforeach()
 endfunction()
 
-assert_unique_ordered_host_tokens("input injection chain" "${_host_loop}" 1
-    "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();"
-    "inject_stage11b_physical_edges("
-    "inject_stage11c_physical_edges("
-    "inject_stage11d_physical_edges("
-    "inject_stage17_physical_edges("
-    "map_host_frame_input(")
+string(FIND "${_host_loop}" "validation_runtime->inject_physical_edges("
+    _facade_input_chain)
+if(DEFINED HOST_OVERRIDE AND _facade_input_chain EQUAL -1)
+    # Legacy synthetic HOST_OVERRIDE fixtures predate Task 7A. Preserve their
+    # route to the original targeted diagnostics without weakening production.
+    assert_unique_ordered_host_tokens("input injection chain" "${_host_loop}" 1
+        "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();"
+        "inject_stage11b_physical_edges("
+        "inject_stage11c_physical_edges("
+        "inject_stage11d_physical_edges("
+        "inject_stage17_physical_edges("
+        "map_host_frame_input(")
+else()
+    assert_unique_ordered_host_tokens("input injection chain" "${_host_loop}" 1
+        "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();"
+        "const bool gameplay_rearm_was_required ="
+        "runtime.gameplay_rearm_required();"
+        "validation_runtime->inject_physical_edges("
+        "HostValidationStateAccess::death_input_snapshot("
+        "gameplay_controls_physically_released("
+        "map_host_frame_input(")
+    set(_rearm_acknowledgement "runtime.acknowledge_gameplay_rearmed();")
+    string(FIND "${_host_loop}" "${_rearm_acknowledgement}" _rearm_ack_position)
+    if(_rearm_ack_position EQUAL -1)
+        message(FATAL_ERROR
+            "Host validation sequence guard is missing gameplay rearm acknowledgement occurrence")
+    endif()
+    math(EXPR _after_rearm_ack "${_rearm_ack_position} + 1")
+    string(SUBSTRING "${_host_loop}" ${_after_rearm_ack} -1 _rearm_ack_tail)
+    string(FIND "${_rearm_ack_tail}" "${_rearm_acknowledgement}"
+        _extra_rearm_ack)
+    if(NOT _extra_rearm_ack EQUAL -1)
+        message(FATAL_ERROR
+            "Host validation sequence guard found extra gameplay rearm acknowledgement occurrence")
+    endif()
+    cpp_token_brace_depth("${_host_loop}" ${_rearm_ack_position}
+        _rearm_ack_depth)
+    if(NOT _rearm_ack_depth EQUAL 2)
+        message(FATAL_ERROR
+            "Host validation sequence guard rejected gameplay rearm acknowledgement scope: expected=2, actual=${_rearm_ack_depth}")
+    endif()
+endif()
 
 string(FIND "${_host_loop}" "if (!step_death) {" _fixed_step_begin)
 string(FIND "${_host_loop}" "runtime.fixed_tick(step_movement,"
@@ -1635,18 +1670,15 @@ string(REGEX REPLACE "[ \t\r\n]+" " " _host_runtime_normalized
 assert_one_normalized_match("sampled physical-key producer"
     "${_host_loop_normalized}"
     "const[ ]+PhysicalKeySnapshot[ ]+sampled_physical_keys[ ]*=[ ]*sample_physical_keys\\([ ]*\\)")
-assert_one_normalized_match("Stage11B physical-key binding"
+assert_one_normalized_match("validation facade physical-key binding"
     "${_host_loop_normalized}"
-    "const[ ]+PhysicalKeySnapshot[ ]+stage11b_physical_keys[ ]*=[ ]*host_validation::inject_stage11b_physical_edges\\([ ]*sampled_physical_keys,[ ]*config,[ ]*stage11b_validation_state[ ]*\\)")
-assert_one_normalized_match("Stage11C physical-key binding"
+    "const[ ]+PhysicalKeySnapshot[ ]+stage17_physical_keys[ ]*=[ ]*validation_runtime->inject_physical_edges\\([ ]*sampled_physical_keys,[ ]*input_settings,[ ]*current,[ ]*gameplay_rearm_was_required[ ]*\\)")
+assert_one_normalized_match("cached Stage11D physical-key binding"
     "${_host_loop_normalized}"
-    "const[ ]+PhysicalKeySnapshot[ ]+stage11c_physical_keys[ ]*=[ ]*host_validation::inject_stage11c_physical_edges\\([ ]*stage11b_physical_keys,[ ]*config,[ ]*input_settings,[ ]*current,[ ]*stage11c_validation_state[ ]*\\)")
-assert_one_normalized_match("Stage11D physical-key binding"
+    "const[ ]+PhysicalKeySnapshot&[ ]+physical_keys[ ]*=[ ]*HostValidationStateAccess::death_input_snapshot\\([ ]*[*]validation_runtime[ ]*\\)")
+assert_one_normalized_match("final Stage17 release/rearm binding"
     "${_host_loop_normalized}"
-    "const[ ]+PhysicalKeySnapshot[ ]+physical_keys[ ]*=[ ]*inject_stage11d_physical_edges\\([ ]*stage11c_physical_keys,[ ]*config,[ ]*input_settings,[ ]*current,[ ]*stage11d_validation_state[ ]*\\)")
-assert_one_normalized_match("Stage17 physical-key binding"
-    "${_host_loop_normalized}"
-    "const[ ]+PhysicalKeySnapshot[ ]+stage17_physical_keys[ ]*=[ ]*inject_stage17_physical_edges\\([ ]*physical_keys,[ ]*config,[ ]*input_settings,[ ]*current,[ ]*[*]stage17_validation_state[ ]*\\)")
+    "if[ ]*\\([ ]*gameplay_rearm_was_required[ ]*&&[ ]*gameplay_controls_physically_released\\([ ]*stage17_physical_keys[ ]*\\)[ ]*\\)[ ]*\\{[ ]*runtime[.]acknowledge_gameplay_rearmed\\([ ]*\\)[ ]*;")
 assert_one_normalized_match("mapped Stage17 physical-key consumer"
     "${_host_loop_normalized}"
     "HostFrameInput[ ]+frame_input[ ]*=[ ]*map_host_frame_input\\([ ]*input_settings,[ ]*stage17_physical_keys[ ]*\\)")
@@ -1697,13 +1729,18 @@ assert_unique_cpp_definition("drain_events" "${_drain_events_code}"
     "void drain_events(")
 evidence_extract_cpp_function_block("${_drain_events_code}" "void drain_events("
     _drain_events_block)
+string(REGEX REPLACE "[ \t\r\n]+" " " _drain_events_normalized
+    "${_drain_events_block}")
+assert_one_normalized_match("drain_events validation-runtime signature"
+    "${_drain_events_normalized}"
+    "void[ ]+drain_events\\([ ]*dungeon::DungeonSession&[ ]+session,[ ]*CombatRenderer&[ ]+renderer,[ ]*CombatFeedback&[ ]+feedback,[ ]*GameAudio&[ ]+audio,[ ]*HostValidationRuntime[*][ ]+validation_runtime[ ]*\\)")
 extract_unique_direct_cpp_block("combat-event drain loop"
     "${_drain_events_block}"
     "while (const auto event = session.try_pop_combat_event())" 1
     _combat_event_drain_loop _combat_event_drain_begin)
 assert_unique_ordered_host_tokens("combat-event observer fanout"
     "${_combat_event_drain_loop}" 1
-    "observe_stage17_combat_event(stage17, *event);"
+    "validation_runtime->observe_combat_event(*event);"
     "renderer.consume_event(*event);"
     "feedback.consume(*event);"
     "audio.consume_event(*event);")
@@ -1711,11 +1748,11 @@ string(REGEX REPLACE "[ \t\r\n]+" " " _combat_event_drain_normalized
     "${_combat_event_drain_loop}")
 assert_one_normalized_match("complete direct combat-event observer fanout"
     "${_combat_event_drain_normalized}"
-    "while[ ]*\\(const auto event = session[.]try_pop_combat_event\\([ ]*\\)\\)[ ]*\\{[ ]*observe_stage17_combat_event\\([ ]*stage17,[ ]*[*]event[ ]*\\)[ ]*;[ ]*renderer[.]consume_event\\([ ]*[*]event[ ]*\\)[ ]*;[ ]*feedback[.]consume\\([ ]*[*]event[ ]*\\)[ ]*;[ ]*audio[.]consume_event\\([ ]*[*]event[ ]*\\)[ ]*;[ ]*\\}")
+    "while[ ]*\\(const auto event = session[.]try_pop_combat_event\\([ ]*\\)\\)[ ]*\\{[ ]*validation_runtime->observe_combat_event\\([ ]*[*]event[ ]*\\)[ ]*;[ ]*renderer[.]consume_event\\([ ]*[*]event[ ]*\\)[ ]*;[ ]*feedback[.]consume\\([ ]*[*]event[ ]*\\)[ ]*;[ ]*audio[.]consume_event\\([ ]*[*]event[ ]*\\)[ ]*;[ ]*\\}")
 assert_direct_exact_call_count("combat-event observer direct statement"
     "${_combat_event_drain_normalized}"
-    "observe_stage17_combat_event\\("
-    "([;{}])[ ]*observe_stage17_combat_event\\([ ]*stage17,[ ]*[*]event[ ]*\\)[ ]*;"
+    "observe_combat_event\\("
+    "([;{}])[ ]*validation_runtime->observe_combat_event\\([ ]*[*]event[ ]*\\)[ ]*;"
     1)
 
 string(SUBSTRING "${_host_runtime}" 0 ${_loop_begin} _host_pre_loop)
@@ -1729,7 +1766,7 @@ assert_unique_ordered_host_tokens("pre-loop Stage17 event observation"
     "${_initial_session_block}" 1
     "runtime.session()->snapshot(current);"
     "previous = current;"
-    "observe_stage17_snapshot("
+    "validation_runtime->observe_snapshot("
     "drain_events(")
 assert_unique_ordered_host_tokens("loop-top Stage17 event refresh"
     "${_loop_session_block}" 1
@@ -1737,37 +1774,37 @@ assert_unique_ordered_host_tokens("loop-top Stage17 event refresh"
     "runtime.session()->snapshot(current);"
     "drain_events(")
 
-assert_direct_exact_call_count("all Stage17 snapshot observer calls"
+assert_direct_exact_call_count("all Stage17 snapshot facade calls"
     "${_host_runtime_normalized}"
-    "observe_stage17_snapshot\\("
-    "([;{}])[ ]*observe_stage17_snapshot\\([ ]*config,[ ]*[*]stage17_validation_state,[ ]*current[ ]*\\)[ ]*;"
+    "observe_snapshot\\("
+    "([;{}])[ ]*validation_runtime->observe_snapshot\\([ ]*current[ ]*\\)[ ]*;"
     3)
-assert_direct_exact_call_count("all Stage17 inventory observer calls"
+assert_direct_exact_call_count("all Stage17 inventory facade calls"
     "${_host_runtime_normalized}"
-    "observe_stage17_inventory\\("
-    "([;{}])[ ]*observe_stage17_inventory\\([ ]*config,[ ]*[*]stage17_validation_state,[ ]*inventory,[ ]*current[ ]*\\)[ ]*;"
+    "observe_inventory\\("
+    "([;{}])[ ]*validation_runtime->observe_inventory\\([ ]*inventory,[ ]*current[ ]*\\)[ ]*;"
     1)
-assert_direct_exact_call_count("all Stage17 submitted-action observer calls"
+assert_direct_exact_call_count("all Stage17 submitted-action facade calls"
     "${_host_runtime_normalized}"
-    "observe_stage17_submitted_actions\\("
-    "([;{}])[ ]*observe_stage17_submitted_actions\\([ ]*config,[ ]*[*]stage17_validation_state,[ ]*submitted_actions[ ]*\\)[ ]*;"
+    "observe_submitted_actions\\("
+    "([;{}])[ ]*validation_runtime->observe_submitted_actions\\([ ]*submitted_actions[ ]*\\)[ ]*;"
     1)
 assert_direct_exact_call_count("all Stage17 draw observer calls"
     "${_host_runtime_normalized}"
     "observe_stage17_draw_runtime\\("
     "([;{}])[ ]*observe_stage17_draw_runtime\\([ ]*config,[ ]*[*]stage17_validation_state,[ ]*presented_snapshot,[ ]*renderer[.]active_skill_draw_status\\([ ]*\\)[ ]*\\)[ ]*;"
     1)
-assert_direct_exact_call_count("all drain_events Stage17 state arguments"
+assert_direct_exact_call_count("all drain_events validation runtime arguments"
     "${_host_runtime_normalized}"
     "drain_events\\("
-    "([;{}])[ ]*drain_events\\([ ]*[*](runtime[.]session\\([ ]*\\)|session),[ ]*renderer,[ ]*feedback,[ ]*audio,[ ]*stage17_validation_state[.]get\\([ ]*\\)[ ]*\\)[ ]*;"
+    "([;{}])[ ]*drain_events\\([ ]*[*](runtime[.]session\\([ ]*\\)|session),[ ]*renderer,[ ]*feedback,[ ]*audio,[ ]*validation_runtime[.]get\\([ ]*\\)[ ]*\\)[ ]*;"
     6)
 assert_token_depth_sequence("Stage17 snapshot observer"
-    "${_host_runtime}" "observe_stage17_snapshot(" 3 3 4)
+    "${_host_runtime}" "validation_runtime->observe_snapshot(" 3 3 4)
 assert_token_depth_sequence("Stage17 inventory observer"
-    "${_host_runtime}" "observe_stage17_inventory(" 3)
+    "${_host_runtime}" "validation_runtime->observe_inventory(" 3)
 assert_token_depth_sequence("Stage17 submitted-actions observer"
-    "${_host_runtime}" "observe_stage17_submitted_actions(" 4)
+    "${_host_runtime}" "validation_runtime->observe_submitted_actions(" 4)
 assert_token_depth_sequence("Stage17 draw observer"
     "${_host_runtime}" "observe_stage17_draw_runtime(" 3)
 assert_token_depth_sequence("drain_events call"
@@ -1785,14 +1822,14 @@ extract_unique_direct_cpp_block("ground-loot renderer draw lambda"
 
 assert_unique_ordered_host_tokens("Stage17 direct loop observer"
     "${_host_loop}" 1
-    "observe_stage17_inventory("
+    "validation_runtime->observe_inventory("
     "observe_stage17_draw_runtime(")
 assert_unique_ordered_host_tokens("Stage17 submitted-actions observer"
     "${_forward_actions_block}" 1
-    "observe_stage17_submitted_actions(")
+    "validation_runtime->observe_submitted_actions(")
 assert_unique_ordered_host_tokens("Stage17 fixed-step snapshot observer"
     "${_stage17_fixed_step_loop}" 1
-    "observe_stage17_snapshot(")
+    "validation_runtime->observe_snapshot(")
 assert_unique_ordered_host_tokens("real renderer draw return"
     "${_ground_loot_draw_block}" 1
     "return renderer.draw(")
@@ -1805,22 +1842,22 @@ string(REGEX REPLACE "[ \t\r\n]+" " " _ground_loot_draw_normalized
     "${_ground_loot_draw_block}")
 assert_one_normalized_match("Stage17 inventory observer arguments"
     "${_host_loop_normalized}"
-    "observe_stage17_inventory\\([ ]*config,[ ]*[*]stage17_validation_state,[ ]*inventory,[ ]*current[ ]*\\)")
+    "validation_runtime->observe_inventory\\([ ]*inventory,[ ]*current[ ]*\\)")
 assert_one_normalized_match("Stage17 submitted-actions observer arguments"
     "${_forward_actions_normalized}"
-    "observe_stage17_submitted_actions\\([ ]*config,[ ]*[*]stage17_validation_state,[ ]*submitted_actions[ ]*\\)")
+    "validation_runtime->observe_submitted_actions\\([ ]*submitted_actions[ ]*\\)")
 assert_one_normalized_match("Stage17 fixed-step snapshot observer arguments"
     "${_stage17_fixed_step_normalized}"
-    "observe_stage17_snapshot\\([ ]*config,[ ]*[*]stage17_validation_state,[ ]*current[ ]*\\)")
+    "validation_runtime->observe_snapshot\\([ ]*current[ ]*\\)")
 assert_one_normalized_match("Stage17 draw observer arguments"
     "${_host_loop_normalized}"
     "observe_stage17_draw_runtime\\([ ]*config,[ ]*[*]stage17_validation_state,[ ]*presented_snapshot,[ ]*renderer[.]active_skill_draw_status\\([ ]*\\)[ ]*\\)")
 assert_one_normalized_match("submitted-actions producer-to-observer binding"
     "${_forward_actions_normalized}"
-    "const[ ]+SubmittedFrameActions[ ]+submitted_actions[ ]*=[ ]*submit_frame_actions\\([ ]*[*]session,[ ]*frame_input[ ]*\\)[ ]*;[ ]*observe_stage17_submitted_actions\\([ ]*config,[ ]*[*]stage17_validation_state,[ ]*submitted_actions[ ]*\\)[ ]*;")
+    "const[ ]+SubmittedFrameActions[ ]+submitted_actions[ ]*=[ ]*submit_frame_actions\\([ ]*[*]session,[ ]*frame_input[ ]*\\)[ ]*;[ ]*validation_runtime->observe_submitted_actions\\([ ]*submitted_actions[ ]*\\)[ ]*;")
 assert_one_normalized_match("fixed-step snapshot producer-to-observer binding"
     "${_stage17_fixed_step_normalized}"
-    "session->snapshot\\([ ]*current[ ]*\\)[ ]*;[ ]*observe_stage17_snapshot\\([ ]*config,[ ]*[*]stage17_validation_state,[ ]*current[ ]*\\)[ ]*;")
+    "session->snapshot\\([ ]*current[ ]*\\)[ ]*;[ ]*validation_runtime->observe_snapshot\\([ ]*current[ ]*\\)[ ]*;")
 assert_direct_exact_call_count("real renderer draw return statement"
     "${_ground_loot_draw_normalized}"
     "renderer[.]draw\\("
@@ -1830,9 +1867,9 @@ assert_one_normalized_match("renderer draw completion-to-observer binding"
     "${_host_loop_normalized}"
     "feedback,[ ]*audio_ready[ ]*\\)[ ]*;[ ]*\\}[ ]*\\([ ]*\\)[ ]*;[ ]*observe_stage17_draw_runtime\\([ ]*config,[ ]*[*]stage17_validation_state,[ ]*presented_snapshot,[ ]*renderer[.]active_skill_draw_status\\([ ]*\\)[ ]*\\)[ ]*;")
 
-string(FIND "${_host_loop}" "observe_stage17_inventory("
+string(FIND "${_host_loop}" "validation_runtime->observe_inventory("
     _stage17_inventory_position)
-string(FIND "${_host_loop}" "observe_stage17_snapshot("
+string(FIND "${_host_loop}" "validation_runtime->observe_snapshot("
     _stage17_loop_top_snapshot_position)
 if(_stage17_loop_top_snapshot_position EQUAL -1)
     message(FATAL_ERROR
@@ -1842,7 +1879,7 @@ math(EXPR _stage17_loop_top_after
     "${_stage17_loop_top_snapshot_position} + 1")
 string(SUBSTRING "${_host_loop}" ${_stage17_loop_top_after} -1
     _stage17_snapshot_remainder)
-string(FIND "${_stage17_snapshot_remainder}" "observe_stage17_snapshot("
+string(FIND "${_stage17_snapshot_remainder}" "validation_runtime->observe_snapshot("
     _stage17_second_snapshot_relative)
 if(_stage17_second_snapshot_relative EQUAL -1)
     message(FATAL_ERROR
@@ -1854,7 +1891,7 @@ math(EXPR _stage17_second_snapshot_after
     "${_stage17_second_snapshot_position} + 1")
 string(SUBSTRING "${_host_loop}" ${_stage17_second_snapshot_after} -1
     _stage17_after_second_snapshot)
-string(FIND "${_stage17_after_second_snapshot}" "observe_stage17_snapshot("
+string(FIND "${_stage17_after_second_snapshot}" "validation_runtime->observe_snapshot("
     _stage17_extra_snapshot)
 if(NOT _stage17_extra_snapshot EQUAL -1)
     message(FATAL_ERROR
@@ -1866,11 +1903,13 @@ if(NOT _stage17_loop_top_snapshot_depth EQUAL 1)
     message(FATAL_ERROR
         "Host validation sequence guard rejected loop-top Stage17 snapshot scope")
 endif()
-string(FIND "${_forward_actions_block}" "observe_stage17_submitted_actions("
+string(FIND "${_forward_actions_block}"
+    "validation_runtime->observe_submitted_actions("
     _stage17_submitted_relative)
 math(EXPR _stage17_submitted_position
     "${_forward_actions_begin} + ${_stage17_submitted_relative}")
-string(FIND "${_stage17_fixed_step_loop}" "observe_stage17_snapshot("
+string(FIND "${_stage17_fixed_step_loop}"
+    "validation_runtime->observe_snapshot("
     _stage17_snapshot_relative)
 math(EXPR _stage17_snapshot_position
     "${_stage17_fixed_step_begin} + ${_stage17_snapshot_relative}")

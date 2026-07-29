@@ -14,6 +14,12 @@ if(DEFINED STAGE_OVERRIDE)
 else()
     set(_stage "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11b.cpp")
 endif()
+if(DEFINED RUNTIME_OVERRIDE)
+    set(_runtime "${RUNTIME_OVERRIDE}")
+else()
+    set(_runtime
+        "${SOURCE_ROOT}/src/platform/raylib/host_validation_runtime.cpp")
+endif()
 set(_stage_header "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11b.hpp")
 set(_header "${SOURCE_ROOT}/src/platform/raylib/raylib_host.hpp")
 set(_pause_renderer "${SOURCE_ROOT}/src/platform/raylib/pause_menu_renderer.cpp")
@@ -23,7 +29,9 @@ if(DEFINED FORMAL_OVERRIDE)
 else()
     set(_formal "${SOURCE_ROOT}/tests/platform/stage11b_settings_formal_game_validation.cpp")
 endif()
-foreach(_required IN ITEMS "${_host}" "${_stage}" "${_stage_header}" "${_header}" "${_formal}" "${_pause_renderer}" "${_font_source}")
+foreach(_required IN ITEMS "${_host}" "${_stage}" "${_runtime}"
+        "${_stage_header}" "${_header}" "${_formal}"
+        "${_pause_renderer}" "${_font_source}")
     if(NOT EXISTS "${_required}")
         message(FATAL_ERROR "Stage11B evidence target is missing: ${_required}")
     endif()
@@ -31,27 +39,58 @@ endforeach()
 
 file(READ "${_host}" _host_text)
 file(READ "${_stage}" _stage_text)
+file(READ "${_runtime}" _runtime_text)
 file(READ "${_stage_header}" _stage_header_text)
 file(READ "${_header}" _header_text)
 file(READ "${_formal}" _formal_text)
 file(READ "${_pause_renderer}" _pause_renderer_text)
 file(READ "${_font_source}" _font_source_text)
 set(_combined "${_header}\n${_host_text}\n${_formal_text}")
-evidence_extract_cpp_function_block("${_stage_text}"
+
+function(stage11b_extract_sanitized_block SANITIZED_SOURCE SIGNATURE OUT_BLOCK)
+    evidence_find_cpp_function_bounds_in_sanitized(
+        "${SANITIZED_SOURCE}" "${SIGNATURE}"
+        _block_begin _block_open _block_end)
+    math(EXPR _block_length "${_block_end} - ${_block_begin} + 1")
+    string(SUBSTRING "${SANITIZED_SOURCE}"
+        ${_block_begin} ${_block_length} _block)
+    set(${OUT_BLOCK} "${_block}" PARENT_SCOPE)
+endfunction()
+
+evidence_sanitize_cpp_for_scan("${_stage_text}" _stage_code)
+stage11b_extract_sanitized_block("${_stage_code}"
     "PhysicalKeySnapshot inject_stage11b_physical_edges(" _stage11b_injection_block)
-evidence_extract_cpp_function_block("${_stage_text}"
+stage11b_extract_sanitized_block("${_stage_code}"
     "bool stage11b_validation_complete(" _stage11b_complete_block)
-evidence_extract_cpp_function_block("${_stage_text}"
+stage11b_extract_sanitized_block("${_stage_code}"
     "std::uint64_t stage11b_snapshot_hash(" _stage11b_hash_block)
-evidence_extract_cpp_function_block("${_stage_text}"
+stage11b_extract_sanitized_block("${_stage_code}"
     "void write_stage11b_validation_summary(" _stage11b_summary_block)
+evidence_find_cpp_code_token("${_host_text}"
+    "if (forward_actions) {" _host_actions_begin)
+if(_host_actions_begin EQUAL -1)
+    message(FATAL_ERROR
+        "Stage11B evidence guard requires accepted queue_action evidence")
+endif()
+string(SUBSTRING "${_host_text}" ${_host_actions_begin} -1
+    _host_actions_tail)
+evidence_find_cpp_code_token("${_host_actions_tail}"
+    "if (forward_descent && frame_input.keys.e)" _host_actions_end)
+if(_host_actions_end EQUAL -1)
+    message(FATAL_ERROR
+        "Stage11B evidence guard requires accepted queue_action evidence")
+endif()
+string(SUBSTRING "${_host_actions_tail}" 0 ${_host_actions_end}
+    _host_actions_slice)
+evidence_sanitize_cpp_for_scan("${_host_actions_slice}"
+    _host_actions_block)
+evidence_extract_cpp_function_block("${_runtime_text}"
+    "void HostValidationRuntime::observe_submitted_actions("
+    _submitted_observer_block)
 
 function(arpg_require_stage11b_block_token LABEL BLOCK TOKEN)
-    # The extractor returns a sanitized block, but sanitize again here so a
-    # future extractor refactor cannot accidentally make comment/literal decoys
-    # satisfy a Stage-local behavior requirement.
-    evidence_sanitize_cpp_for_scan("${BLOCK}" _sanitized_block)
-    string(FIND "${_sanitized_block}" "${TOKEN}" _token_found)
+    # All callers pass blocks extracted from the single sanitized Stage surface.
+    string(FIND "${BLOCK}" "${TOKEN}" _token_found)
     if(_token_found EQUAL -1)
         message(FATAL_ERROR "Stage11B evidence guard missing ${LABEL} token: ${TOKEN}")
     endif()
@@ -186,11 +225,40 @@ if(_fixed_gate EQUAL -1 OR _live_policy_call EQUAL -1
     message(FATAL_ERROR
         "Stage11B evidence guard requires live loot policy behind host gate")
 endif()
-string(FIND "${_host_text}"
+string(FIND "${_host_actions_block}"
     "const SubmittedFrameActions submitted_actions =" _accepted_actions)
-string(FIND "${_host_text}"
-    "submitted_actions.combat[0] ? 1U : 0U" _accepted_attack_count)
-if(_accepted_actions EQUAL -1 OR _accepted_attack_count EQUAL -1)
+string(FIND "${_host_actions_block}"
+    "validation_runtime->observe_submitted_actions(submitted_actions);"
+    _accepted_observer)
+set(_accepted_runtime_tail "${_submitted_observer_block}")
+foreach(_accepted_runtime_token IN ITEMS
+        "observe_stage17_submitted_actions("
+        "Stage11BValidationScenario::rebound_attack"
+        "injected_frame == 28U"
+        "old_attack_checked = true;"
+        "old_attack_count +="
+        "submitted_actions.combat[0] ? 1U : 0U;"
+        "injected_frame == 29U"
+        "new_attack_count +="
+        "submitted_actions.combat[0] ? 1U : 0U;")
+    string(FIND "${_accepted_runtime_tail}" "${_accepted_runtime_token}"
+        _accepted_runtime_index)
+    if(_accepted_runtime_index EQUAL -1)
+        set(_accepted_runtime_valid FALSE)
+        break()
+    endif()
+    math(EXPR _accepted_runtime_after "${_accepted_runtime_index} + 1")
+    string(SUBSTRING "${_accepted_runtime_tail}" ${_accepted_runtime_after}
+        -1 _accepted_runtime_tail)
+    set(_accepted_runtime_valid TRUE)
+endforeach()
+string(REGEX MATCHALL
+    "submitted_actions[.]combat\\[0\\][ \t\r\n]*[?][ \t\r\n]*1U[ \t\r\n]*:[ \t\r\n]*0U"
+    _accepted_attack_counts "${_submitted_observer_block}")
+list(LENGTH _accepted_attack_counts _accepted_attack_count)
+if(_accepted_actions EQUAL -1 OR _accepted_observer EQUAL -1
+        OR NOT _accepted_actions LESS _accepted_observer
+        OR NOT _accepted_runtime_valid OR NOT _accepted_attack_count EQUAL 2)
     message(FATAL_ERROR "Stage11B evidence guard requires accepted queue_action evidence")
 endif()
 string(FIND "${_host_text}" "const bool stage11b_paused_visible_capture ="

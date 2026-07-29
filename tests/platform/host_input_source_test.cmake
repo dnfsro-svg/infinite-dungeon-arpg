@@ -9,6 +9,13 @@ if(NOT EXISTS "${POISON_HEADER}")
 endif()
 
 file(READ "${RAYLIB_SOURCE_DIR}/raylib_host.cpp" HOST_SOURCE)
+set(HOST_VALIDATION_RUNTIME_PATH
+    "${RAYLIB_SOURCE_DIR}/host_validation_runtime.cpp")
+if(NOT EXISTS "${HOST_VALIDATION_RUNTIME_PATH}")
+    message(FATAL_ERROR
+        "host validation runtime is required: ${HOST_VALIDATION_RUNTIME_PATH}")
+endif()
+file(READ "${HOST_VALIDATION_RUNTIME_PATH}" HOST_VALIDATION_RUNTIME_SOURCE)
 set(STAGE17_REPORT_SOURCE
     "${RAYLIB_SOURCE_DIR}/host_validation_stage17_report.cpp")
 if(NOT EXISTS "${STAGE17_REPORT_SOURCE}")
@@ -59,16 +66,15 @@ function(host_large_state_construction_valid SOURCE OUT_VALID)
     list(LENGTH DIRECT_VALIDATION_CONSTRUCTIONS
         DIRECT_VALIDATION_CONSTRUCTION_COUNT)
     string(REGEX MATCHALL
-        "new${WS}\\(${WS}std::nothrow${WS}\\)${WS}HostValidationStates${WS}\\{"
-        APPROVED_VALIDATION_OWNER_CONSTRUCTIONS "${SOURCE}")
-    list(LENGTH APPROVED_VALIDATION_OWNER_CONSTRUCTIONS
-        APPROVED_VALIDATION_OWNER_CONSTRUCTION_COUNT)
+        "HostValidationRuntime::create${WS}\\("
+        APPROVED_VALIDATION_RUNTIME_FACTORIES "${SOURCE}")
+    list(LENGTH APPROVED_VALIDATION_RUNTIME_FACTORIES
+        APPROVED_VALIDATION_RUNTIME_FACTORY_COUNT)
     if(AUTOMATIC_SNAPSHOT_DECLARATION_COUNT EQUAL 0
             AND DIRECT_SNAPSHOT_CONSTRUCTION_COUNT EQUAL 0
             AND AUTOMATIC_VALIDATION_DECLARATION_COUNT EQUAL 0
-            AND APPROVED_VALIDATION_OWNER_CONSTRUCTION_COUNT EQUAL 1
-            AND DIRECT_VALIDATION_CONSTRUCTION_COUNT EQUAL
-                APPROVED_VALIDATION_OWNER_CONSTRUCTION_COUNT)
+            AND DIRECT_VALIDATION_CONSTRUCTION_COUNT EQUAL 0
+            AND APPROVED_VALIDATION_RUNTIME_FACTORY_COUNT EQUAL 1)
         set("${OUT_VALID}" TRUE PARENT_SCOPE)
     else()
         set("${OUT_VALID}" FALSE PARENT_SCOPE)
@@ -170,8 +176,8 @@ if(ARPG_HOST_AUTO_GUARD_SELF_TEST_ONLY)
     set(HOST_AUTO_GUARD_REFERENCE [=[
 const auto current_storage = std::make_unique<dungeon::DungeonSnapshot>();
 dungeon::DungeonSnapshot& current = *current_storage;
-const std::unique_ptr<HostValidationStates> validation_states{
-    new (std::nothrow) HostValidationStates{}};
+const auto validation_runtime =
+    HostValidationRuntime::create(config, load_status);
 ]=])
     host_large_state_construction_valid(
         "${HOST_AUTO_GUARD_REFERENCE}" HOST_AUTO_GUARD_REFERENCE_VALID)
@@ -253,12 +259,17 @@ function(mask_cpp_inactive_preprocessor_regions SOURCE OUT_SOURCE)
 endfunction()
 
 arpg_sanitize_cpp_source("${HOST_SOURCE}" SANITIZED_HOST_SOURCE)
+arpg_sanitize_cpp_source("${HOST_VALIDATION_RUNTIME_SOURCE}"
+    SANITIZED_HOST_VALIDATION_RUNTIME_SOURCE)
 arpg_sanitize_cpp_source("${STAGE17_RUNTIME_SOURCE}"
     SANITIZED_STAGE17_RUNTIME_SOURCE)
 arpg_sanitize_cpp_source(
     "${DUNGEON_SESSION_SOURCE}" SANITIZED_DUNGEON_SESSION_SOURCE)
 mask_cpp_inactive_preprocessor_regions(
     "${SANITIZED_HOST_SOURCE}" ACTIVE_SANITIZED_HOST_SOURCE)
+mask_cpp_inactive_preprocessor_regions(
+    "${SANITIZED_HOST_VALIDATION_RUNTIME_SOURCE}"
+    ACTIVE_SANITIZED_HOST_VALIDATION_RUNTIME_SOURCE)
 mask_cpp_inactive_preprocessor_regions(
     "${SANITIZED_STAGE17_RUNTIME_SOURCE}"
     ACTIVE_SANITIZED_STAGE17_RUNTIME_SOURCE)
@@ -458,6 +469,13 @@ require_cpp_function_definition_from_sanitized(
 mask_cpp_non_direct_executable_scopes(
     "${SANITIZED_HOST_ENTRY_SOURCE}" DIRECT_HOST_ENTRY_SOURCE)
 require_cpp_function_definition_from_sanitized(
+    "${ACTIVE_SANITIZED_HOST_VALIDATION_RUNTIME_SOURCE}"
+    "PhysicalKeySnapshot HostValidationRuntime::inject_physical_edges("
+    "Host validation physical input composition"
+    HOST_VALIDATION_INJECT_SOURCE)
+mask_cpp_non_direct_executable_scopes(
+    "${HOST_VALIDATION_INJECT_SOURCE}" DIRECT_HOST_VALIDATION_INJECT_SOURCE)
+require_cpp_function_definition_from_sanitized(
     "${ACTIVE_SANITIZED_STAGE17_RUNTIME_SOURCE}"
     "void observe_stage17_draw_runtime("
     "Stage17 draw runtime observer" STAGE17_DRAW_RUNTIME_SOURCE)
@@ -521,14 +539,14 @@ require_host_large_construction_mutations_rejected(
 
 require_match_count(
     "${SANITIZED_HOST_SOURCE}"
-    "new[ \t\r\n]*\\([ \t\r\n]*std::nothrow[ \t\r\n]*\\)[ \t\r\n]*HostValidationStates[ \t\r\n]*\\{[ \t\r\n]*\\}"
+    "HostValidationRuntime::create[ \t\r\n]*\\("
     1
-    "raylib host nothrow heap validation-state allocation")
+    "raylib host validation-runtime factory call")
 require_match_count(
     "${SANITIZED_HOST_ENTRY_SOURCE}"
-    "(^|[^A-Za-z0-9_])(const[ \t\r\n]+)?HostValidationStates[ \t\r\n]+[A-Za-z_][A-Za-z0-9_]*[ \t\r\n]*(\\{|;|=)"
+    "HostValidationStates"
     0
-    "raylib host automatic aggregate validation-state declarations")
+    "raylib host direct aggregate validation-state ownership")
 foreach(SNAPSHOT_NAME IN ITEMS current previous presented_snapshot)
     require_match_count(
         "${SANITIZED_HOST_SOURCE}"
@@ -557,10 +575,10 @@ require_match_count(
     0
     "raylib host automatic DungeonSnapshot declarations")
 string(FIND "${SANITIZED_HOST_SOURCE}"
-    "const std::unique_ptr<HostValidationStates> validation_states{"
-    VALIDATION_STATES_OWNER_INDEX)
+    "HostValidationRuntime::create(config, loaded.status)"
+    VALIDATION_RUNTIME_OWNER_INDEX)
 string(FIND "${SANITIZED_HOST_SOURCE}"
-    "if (validation_states == nullptr)" VALIDATION_STATES_NULL_INDEX)
+    "if (validation_runtime == nullptr)" VALIDATION_RUNTIME_NULL_INDEX)
 string(FIND "${SANITIZED_HOST_SOURCE}"
     "SetConfigFlags(initial_window_flags(committed_settings))"
     INITIAL_WINDOW_FLAGS_INDEX)
@@ -568,16 +586,16 @@ string(FIND "${SANITIZED_HOST_SOURCE}" "InitWindow(" INIT_WINDOW_INDEX)
 string(FIND "${SANITIZED_HOST_SOURCE}"
     "const auto renderer_storage = std::make_unique<CombatRenderer>()"
     RENDERER_STORAGE_INDEX)
-if(VALIDATION_STATES_OWNER_INDEX EQUAL -1
-        OR VALIDATION_STATES_NULL_INDEX EQUAL -1
+if(VALIDATION_RUNTIME_OWNER_INDEX EQUAL -1
+        OR VALIDATION_RUNTIME_NULL_INDEX EQUAL -1
         OR INITIAL_WINDOW_FLAGS_INDEX EQUAL -1 OR INIT_WINDOW_INDEX EQUAL -1
         OR RENDERER_STORAGE_INDEX EQUAL -1
-        OR NOT VALIDATION_STATES_OWNER_INDEX LESS VALIDATION_STATES_NULL_INDEX
-        OR NOT VALIDATION_STATES_NULL_INDEX LESS INITIAL_WINDOW_FLAGS_INDEX
+        OR NOT VALIDATION_RUNTIME_OWNER_INDEX LESS VALIDATION_RUNTIME_NULL_INDEX
+        OR NOT VALIDATION_RUNTIME_NULL_INDEX LESS INITIAL_WINDOW_FLAGS_INDEX
         OR NOT INITIAL_WINDOW_FLAGS_INDEX LESS INIT_WINDOW_INDEX
         OR NOT INIT_WINDOW_INDEX LESS RENDERER_STORAGE_INDEX)
     message(FATAL_ERROR
-        "HostValidationStates allocation/null check must precede window and renderer resources")
+        "HostValidationRuntime allocation/null check must precede window and renderer resources")
 endif()
 foreach(AUTOMATIC_VALIDATION_STATE IN ITEMS
         "Stage10ValidationState stage10_validation_state{}"
@@ -1146,13 +1164,17 @@ set(ACTIVE_ASSERT_PATTERN
 set(SAMPLE_CALL_LINE_PATTERN
     "${SOURCE_LINE_START}const[ \t]+PhysicalKeySnapshot[ \t]+sampled_physical_keys[ \t]*=[ \t]*sample_physical_keys[ \t]*\\([ \t]*\\)")
 set(STAGE11B_INJECT_CALL_LINE_PATTERN
-    "${SOURCE_LINE_START}const[ \t]+PhysicalKeySnapshot[ \t]+stage11b_physical_keys[ \t]*=[ \t\r\n]*(host_validation::)?inject_stage11b_physical_edges[ \t]*\\(")
+    "${SOURCE_LINE_START}[ \t]*host_validation::inject_stage11b_physical_edges[ \t]*\\(")
 set(STAGE11C_INJECT_CALL_LINE_PATTERN
-    "${SOURCE_LINE_START}const[ \t]+PhysicalKeySnapshot[ \t]+stage11c_physical_keys[ \t]*=[ \t]*(host_validation::)?inject_stage11c_physical_edges[ \t]*\\(")
+    "${SOURCE_LINE_START}[ \t]*host_validation::inject_stage11c_physical_edges[ \t]*\\(")
 set(STAGE11D_INJECT_CALL_LINE_PATTERN
-    "${SOURCE_LINE_START}const[ \t]+PhysicalKeySnapshot[ \t]+physical_keys[ \t]*=[ \t]*inject_stage11d_physical_edges[ \t]*\\(")
+    "${SOURCE_LINE_START}[ \t]*host_validation::inject_stage11d_physical_edges[ \t]*\\(")
 set(STAGE17_INJECT_CALL_LINE_PATTERN
-    "${SOURCE_LINE_START}const[ \t]+PhysicalKeySnapshot[ \t]+stage17_physical_keys[ \t]*=[ \t\r\n]*inject_stage17_physical_edges[ \t]*\\(")
+    "${SOURCE_LINE_START}[ \t]*return[ \t]+host_validation::inject_stage17_physical_edges[ \t]*\\(")
+set(FACADE_INJECT_CALL_LINE_PATTERN
+    "${SOURCE_LINE_START}[ \t]*validation_runtime->[ \t]*inject_physical_edges[ \t]*\\(")
+set(CACHED_INPUT_ACCESS_LINE_PATTERN
+    "${SOURCE_LINE_START}[ \t]*HostValidationStateAccess::death_input_snapshot[ \t]*\\(")
 set(MAP_CALL_LINE_PATTERN
     "${SOURCE_LINE_START}HostFrameInput[ \t]+frame_input[ \t]*=[ \t]*map_host_frame_input[ \t]*\\(")
 set(ACTIVE_SENTINEL_PATTERN
@@ -1168,37 +1190,35 @@ set(COMMENT_ONLY_STRUCTURE [=[
 // #include "direct_input_poison.hpp"
 // static_assert(arpg::platform::direct_input_poison::active);
 // const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();
-// const PhysicalKeySnapshot stage11b_physical_keys =
-//     inject_stage11b_physical_edges(
-//     sampled_physical_keys, config, stage11b_validation_state);
-// const PhysicalKeySnapshot stage11c_physical_keys = inject_stage11c_physical_edges(
-//     stage11b_physical_keys, config, input_settings, current,
-//     stage11c_validation_state);
-// const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges(
-//     stage11c_physical_keys, config, input_settings, current,
-//     stage11d_validation_state);
 // const PhysicalKeySnapshot stage17_physical_keys =
-//     inject_stage17_physical_edges(physical_keys, config, input_settings,
-//         current, *stage17_validation_state);
+//     validation_runtime->inject_physical_edges(
+//         sampled_physical_keys, input_settings, current,
+//         gameplay_rearm_was_required);
+// const PhysicalKeySnapshot& physical_keys =
+//     HostValidationStateAccess::death_input_snapshot(*validation_runtime);
 // HostFrameInput frame_input = map_host_frame_input(settings, stage17_physical_keys);
+// host_validation::inject_stage11b_physical_edges(
+// host_validation::inject_stage11c_physical_edges(
+// host_validation::inject_stage11d_physical_edges(
+// return host_validation::inject_stage17_physical_edges(
 // #define IsKeyDown ::arpg::platform::direct_input_poison::blocked
 ]=])
 set(REAL_STRUCTURE [=[
 #include "direct_input_poison.hpp"
 static_assert(arpg::platform::direct_input_poison::active, "active");
 const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();
-const PhysicalKeySnapshot stage11b_physical_keys =
-    inject_stage11b_physical_edges(
-    sampled_physical_keys, config, stage11b_validation_state);
-const PhysicalKeySnapshot stage11c_physical_keys = inject_stage11c_physical_edges(
-    stage11b_physical_keys, config, input_settings, current,
-    stage11c_validation_state);
-const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges(
-    stage11c_physical_keys, config, input_settings, current,
-    stage11d_validation_state);
+const bool gameplay_rearm_was_required =
+    runtime.gameplay_rearm_required();
 const PhysicalKeySnapshot stage17_physical_keys =
-    inject_stage17_physical_edges(physical_keys, config, input_settings,
-        current, *stage17_validation_state);
+    validation_runtime->inject_physical_edges(
+        sampled_physical_keys, input_settings, current,
+        gameplay_rearm_was_required);
+const PhysicalKeySnapshot& physical_keys =
+    HostValidationStateAccess::death_input_snapshot(*validation_runtime);
+if (gameplay_rearm_was_required
+        && gameplay_controls_physically_released(stage17_physical_keys)) {
+    runtime.acknowledge_gameplay_rearmed();
+}
 HostFrameInput frame_input = map_host_frame_input(
     input_settings, stage17_physical_keys);
 DeathInputGate death_gate = host_death_input_gate(
@@ -1245,6 +1265,27 @@ if (forward_descent && frame_input.keys.e) {
 }
 const combat::MovementInput movement = forward_movement
     ? frame_input.movement : combat::MovementInput{};
+PhysicalKeySnapshot HostValidationRuntime::inject_physical_edges(
+    PhysicalKeySnapshot snapshot, const settings::SettingsData& input_settings,
+    const dungeon::DungeonSnapshot& dungeon_snapshot,
+    bool gameplay_rearm_required) noexcept {
+    const PhysicalKeySnapshot stage11b_physical_keys =
+        host_validation::inject_stage11b_physical_edges(
+            snapshot, *impl_->config, impl_->states.stage11b);
+    const PhysicalKeySnapshot stage11c_physical_keys =
+        host_validation::inject_stage11c_physical_edges(
+            stage11b_physical_keys, *impl_->config, input_settings,
+            dungeon_snapshot, impl_->states.stage11c);
+    const PhysicalKeySnapshot stage11d_physical_keys =
+        host_validation::inject_stage11d_physical_edges(
+            stage11c_physical_keys, *impl_->config, input_settings,
+            dungeon_snapshot, impl_->states.stage11d);
+    impl_->death_input_snapshot = stage11d_physical_keys;
+    impl_->states.stage17.suspend_injection = gameplay_rearm_required;
+    return host_validation::inject_stage17_physical_edges(
+        stage11d_physical_keys, *impl_->config, input_settings,
+        dungeon_snapshot, impl_->states.stage17);
+}
 #define IsKeyDown ::arpg::platform::direct_input_poison::blocked
 ]=])
 poison_macro_line_pattern(IsKeyDown SELF_TEST_MACRO_PATTERN)
@@ -1252,6 +1293,8 @@ foreach(STRUCTURE_PATTERN IN ITEMS
         POISON_INCLUDE_LINE_PATTERN
         ACTIVE_ASSERT_PATTERN
         SAMPLE_CALL_LINE_PATTERN
+        FACADE_INJECT_CALL_LINE_PATTERN
+        CACHED_INPUT_ACCESS_LINE_PATTERN
         STAGE11B_INJECT_CALL_LINE_PATTERN
         STAGE11C_INJECT_CALL_LINE_PATTERN
         STAGE11D_INJECT_CALL_LINE_PATTERN
@@ -1310,39 +1353,59 @@ require_match_count(
     "host physical snapshot calls")
 require_match_count(
     "${HOST_SOURCE}"
+    "${FACADE_INJECT_CALL_LINE_PATTERN}"
+    1
+    "host validation facade physical injection calls")
+require_match_count(
+    "${HOST_SOURCE}"
+    "${CACHED_INPUT_ACCESS_LINE_PATTERN}"
+    1
+    "host cached Stage11D physical snapshot access")
+require_match_count(
+    "${HOST_VALIDATION_RUNTIME_SOURCE}"
     "${STAGE11B_INJECT_CALL_LINE_PATTERN}"
     1
-    "host stage11b physical injection calls")
+    "validation runtime Stage11B physical injection calls")
 require_match_count(
-    "${HOST_SOURCE}"
+    "${HOST_VALIDATION_RUNTIME_SOURCE}"
     "${STAGE11C_INJECT_CALL_LINE_PATTERN}"
     1
-    "host stage11c physical injection calls")
+    "validation runtime Stage11C physical injection calls")
 require_match_count(
-    "${HOST_SOURCE}"
+    "${HOST_VALIDATION_RUNTIME_SOURCE}"
     "${STAGE11D_INJECT_CALL_LINE_PATTERN}"
     1
-    "host stage11d physical injection calls")
+    "validation runtime Stage11D physical injection calls")
 require_match_count(
-    "${HOST_SOURCE}"
+    "${HOST_VALIDATION_RUNTIME_SOURCE}"
     "${STAGE17_INJECT_CALL_LINE_PATTERN}"
     1
-    "host stage17 physical injection calls")
+    "validation runtime Stage17 physical injection calls")
 require_match_count(
     "${HOST_SOURCE}"
     "${MAP_CALL_LINE_PATTERN}"
     1
     "host logical mapping calls")
+foreach(OLD_DIRECT_INJECTOR IN ITEMS
+        inject_stage11b_physical_edges inject_stage11c_physical_edges
+        inject_stage11d_physical_edges inject_stage17_physical_edges)
+    require_match_count(
+        "${DIRECT_HOST_ENTRY_SOURCE}"
+        "${OLD_DIRECT_INJECTOR}[ \t\r\n]*\\("
+        0
+        "host migrated ${OLD_DIRECT_INJECTOR} calls")
+endforeach()
 
 function(physical_input_chain_valid SOURCE OUT_VARIABLE)
     arpg_sanitize_cpp_source("${SOURCE}" SOURCE)
     set(WS "[ \t\r\n]*")
     set(WS1 "[ \t\r\n]+")
     string(FIND "${SOURCE}" "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys()" SAMPLE_INDEX)
-    string(FIND "${SOURCE}" "const PhysicalKeySnapshot stage11b_physical_keys =" STAGE11B_INDEX)
-    string(FIND "${SOURCE}" "const PhysicalKeySnapshot stage11c_physical_keys =" STAGE11C_INDEX)
-    string(FIND "${SOURCE}" "const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges(" STAGE11D_INDEX)
-    string(FIND "${SOURCE}" "const PhysicalKeySnapshot stage17_physical_keys =" STAGE17_INDEX)
+    string(FIND "${SOURCE}" "const bool gameplay_rearm_was_required =" REARM_INDEX)
+    string(FIND "${SOURCE}" "const PhysicalKeySnapshot stage17_physical_keys =" FACADE_INDEX)
+    string(FIND "${SOURCE}" "const PhysicalKeySnapshot& physical_keys =" CACHED_INDEX)
+    string(FIND "${SOURCE}" "gameplay_controls_physically_released(" RELEASED_INDEX)
+    string(FIND "${SOURCE}" "runtime.acknowledge_gameplay_rearmed()" ACK_INDEX)
     string(FIND "${SOURCE}" "HostFrameInput frame_input = map_host_frame_input(" MAP_INDEX)
     string(FIND "${SOURCE}" "DeathInputGate death_gate = host_death_input_gate(" DEATH_GATE_INDEX)
     string(FIND "${SOURCE}" "const bool pause_blocks_gameplay =" PAUSE_BLOCK_INDEX)
@@ -1358,8 +1421,9 @@ function(physical_input_chain_valid SOURCE OUT_VARIABLE)
     string(FIND "${SOURCE}" "if (forward_descent && frame_input.keys.e)" FORWARD_DESCENT_INDEX)
     string(FIND "${SOURCE}" "session->request_descent(in_range)" REQUEST_DESCENT_INDEX)
     string(FIND "${SOURCE}" "const combat::MovementInput movement = forward_movement" MOVEMENT_INPUT_INDEX)
-    if(SAMPLE_INDEX EQUAL -1 OR STAGE11B_INDEX EQUAL -1 OR STAGE11C_INDEX EQUAL -1
-            OR STAGE11D_INDEX EQUAL -1 OR STAGE17_INDEX EQUAL -1
+    if(SAMPLE_INDEX EQUAL -1 OR REARM_INDEX EQUAL -1 OR FACADE_INDEX EQUAL -1
+            OR CACHED_INDEX EQUAL -1 OR RELEASED_INDEX EQUAL -1
+            OR ACK_INDEX EQUAL -1
             OR MAP_INDEX EQUAL -1 OR DEATH_GATE_INDEX EQUAL -1
             OR PAUSE_BLOCK_INDEX EQUAL -1 OR GAMEPLAY_ARMED_INDEX EQUAL -1
             OR HOST_GATE_INDEX EQUAL -1 OR PASSIVE_GATE_INDEX EQUAL -1 OR INVENTORY_GATE_INDEX EQUAL -1
@@ -1368,10 +1432,12 @@ function(physical_input_chain_valid SOURCE OUT_VARIABLE)
             OR FORWARD_ACTIONS_IF_INDEX EQUAL -1 OR SUBMIT_ACTIONS_INDEX EQUAL -1
             OR FORWARD_DESCENT_INDEX EQUAL -1 OR REQUEST_DESCENT_INDEX EQUAL -1
             OR MOVEMENT_INPUT_INDEX EQUAL -1
-            OR NOT SAMPLE_INDEX LESS STAGE11B_INDEX OR NOT STAGE11B_INDEX LESS STAGE11C_INDEX
-            OR NOT STAGE11C_INDEX LESS STAGE11D_INDEX
-            OR NOT STAGE11D_INDEX LESS STAGE17_INDEX
-            OR NOT STAGE17_INDEX LESS MAP_INDEX
+            OR NOT SAMPLE_INDEX LESS REARM_INDEX
+            OR NOT REARM_INDEX LESS FACADE_INDEX
+            OR NOT FACADE_INDEX LESS CACHED_INDEX
+            OR NOT CACHED_INDEX LESS RELEASED_INDEX
+            OR NOT RELEASED_INDEX LESS ACK_INDEX
+            OR NOT ACK_INDEX LESS MAP_INDEX
             OR NOT MAP_INDEX LESS DEATH_GATE_INDEX
             OR NOT DEATH_GATE_INDEX LESS PAUSE_BLOCK_INDEX
             OR NOT PAUSE_BLOCK_INDEX LESS GAMEPLAY_ARMED_INDEX
@@ -1389,14 +1455,12 @@ function(physical_input_chain_valid SOURCE OUT_VARIABLE)
         return()
     endif()
 
-    math(EXPR STAGE11B_LENGTH "${STAGE11C_INDEX} - ${STAGE11B_INDEX}")
-    string(SUBSTRING "${SOURCE}" ${STAGE11B_INDEX} ${STAGE11B_LENGTH} STAGE11B_SOURCE)
-    math(EXPR STAGE11C_LENGTH "${STAGE11D_INDEX} - ${STAGE11C_INDEX}")
-    string(SUBSTRING "${SOURCE}" ${STAGE11C_INDEX} ${STAGE11C_LENGTH} STAGE11C_SOURCE)
-    math(EXPR STAGE11D_LENGTH "${STAGE17_INDEX} - ${STAGE11D_INDEX}")
-    string(SUBSTRING "${SOURCE}" ${STAGE11D_INDEX} ${STAGE11D_LENGTH} STAGE11D_SOURCE)
-    math(EXPR STAGE17_LENGTH "${MAP_INDEX} - ${STAGE17_INDEX}")
-    string(SUBSTRING "${SOURCE}" ${STAGE17_INDEX} ${STAGE17_LENGTH} STAGE17_SOURCE)
+    math(EXPR FACADE_LENGTH "${CACHED_INDEX} - ${FACADE_INDEX}")
+    string(SUBSTRING "${SOURCE}" ${FACADE_INDEX} ${FACADE_LENGTH} FACADE_SOURCE)
+    math(EXPR CACHED_LENGTH "${RELEASED_INDEX} - ${CACHED_INDEX}")
+    string(SUBSTRING "${SOURCE}" ${CACHED_INDEX} ${CACHED_LENGTH} CACHED_SOURCE)
+    math(EXPR RELEASED_LENGTH "${MAP_INDEX} - ${RELEASED_INDEX}")
+    string(SUBSTRING "${SOURCE}" ${RELEASED_INDEX} ${RELEASED_LENGTH} RELEASED_SOURCE)
     string(SUBSTRING "${SOURCE}" ${MAP_INDEX} -1 MAP_SOURCE)
     math(EXPR HOST_GATE_LENGTH "${PASSIVE_GATE_INDEX} - ${HOST_GATE_INDEX}")
     string(SUBSTRING "${SOURCE}" ${HOST_GATE_INDEX} ${HOST_GATE_LENGTH} HOST_GATE_SOURCE)
@@ -1433,12 +1497,22 @@ function(physical_input_chain_valid SOURCE OUT_VARIABLE)
         "${HOST_CHAIN_SOURCE}")
     list(LENGTH FORWARD_MOVEMENT_ASSIGNMENTS FORWARD_MOVEMENT_ASSIGNMENT_COUNT)
 
-    if(NOT STAGE11B_SOURCE MATCHES "inject_stage11b_physical_edges${WS}\\(${WS}sampled_physical_keys,${WS}config,${WS}stage11b_validation_state${WS}\\)"
-            OR NOT STAGE11C_SOURCE MATCHES "inject_stage11c_physical_edges${WS}\\(${WS}stage11b_physical_keys,${WS}config,${WS}input_settings,${WS}current,${WS}stage11c_validation_state${WS}\\)"
-            OR NOT STAGE11D_SOURCE MATCHES "inject_stage11d_physical_edges${WS}\\(${WS}stage11c_physical_keys,${WS}config,${WS}input_settings,${WS}current,${WS}stage11d_validation_state${WS}\\)"
-            OR NOT STAGE17_SOURCE MATCHES "inject_stage17_physical_edges${WS}\\(${WS}physical_keys,${WS}config,${WS}input_settings,${WS}current,${WS}\\*stage17_validation_state${WS}\\)"
+    string(REGEX MATCHALL
+        "validation_runtime->inject_physical_edges${WS}\\("
+        FACADE_INJECT_CALLS "${SOURCE}")
+    list(LENGTH FACADE_INJECT_CALLS FACADE_INJECT_CALL_COUNT)
+    string(REGEX MATCHALL
+        "HostValidationStateAccess::death_input_snapshot${WS}\\("
+        CACHED_INPUT_CALLS "${SOURCE}")
+    list(LENGTH CACHED_INPUT_CALLS CACHED_INPUT_CALL_COUNT)
+    if(NOT FACADE_SOURCE MATCHES "validation_runtime->inject_physical_edges${WS}\\(${WS}sampled_physical_keys,${WS}input_settings,${WS}current,${WS}gameplay_rearm_was_required${WS}\\)"
+            OR NOT CACHED_SOURCE MATCHES "HostValidationStateAccess::death_input_snapshot${WS}\\(${WS}\\*validation_runtime${WS}\\)"
+            OR NOT RELEASED_SOURCE MATCHES "gameplay_controls_physically_released${WS}\\(${WS}stage17_physical_keys${WS}\\)"
+            OR NOT RELEASED_SOURCE MATCHES "runtime\\.acknowledge_gameplay_rearmed${WS}\\(${WS}\\)"
             OR NOT MAP_SOURCE MATCHES "map_host_frame_input${WS}\\(${WS}input_settings,${WS}stage17_physical_keys${WS}\\)"
             OR NOT SOURCE MATCHES "DeathInputGate death_gate =${WS}host_death_input_gate${WS}\\(${WS}death_saving,${WS}death_pending,${WS}frame_input\\.keys,${WS}physical_keys${WS}\\)${WS};"
+            OR NOT FACADE_INJECT_CALL_COUNT EQUAL 1
+            OR NOT CACHED_INPUT_CALL_COUNT EQUAL 1
             OR NOT HOST_GATE_CALL_COUNT EQUAL 2
             OR NOT HOST_GATE_SOURCE MATCHES "if${WS}\\(${WS}pause_open${WS}\\)${WS}\\{${WS}host_gate${WS}=${WS}gate_host_frame${WS}\\(${WS}fixed_step,${WS}pause_latched,${WS}true,${WS}static_cast<double>${WS}\\(${WS}frame_seconds${WS}\\)${WS}\\)${WS};"
             OR NOT HOST_GATE_SOURCE MATCHES "else${WS1}if${WS}\\(${WS}!inventory\\.is_open${WS}\\(${WS}\\)${WS}&&${WS}!inventory_toggled_this_frame${WS}\\)${WS}\\{${WS}host_gate${WS}=${WS}gate_host_frame${WS}\\(${WS}fixed_step,${WS}pause_latched,${WS}false,${WS}static_cast<double>${WS}\\(${WS}frame_seconds${WS}\\)${WS}\\)${WS};"
@@ -1463,10 +1537,79 @@ function(physical_input_chain_valid SOURCE OUT_VARIABLE)
     set("${OUT_VARIABLE}" TRUE PARENT_SCOPE)
 endfunction()
 
+function(validation_runtime_input_chain_valid SANITIZED_FUNCTION_SOURCE OUT_VARIABLE)
+    mask_cpp_non_direct_executable_scopes(
+        "${SANITIZED_FUNCTION_SOURCE}" DIRECT_FUNCTION_SOURCE)
+
+    set(WS "[ \t\r\n]*")
+    string(FIND "${DIRECT_FUNCTION_SOURCE}"
+        "const PhysicalKeySnapshot stage11b_physical_keys =" STAGE11B_INDEX)
+    string(FIND "${DIRECT_FUNCTION_SOURCE}"
+        "const PhysicalKeySnapshot stage11c_physical_keys =" STAGE11C_INDEX)
+    string(FIND "${DIRECT_FUNCTION_SOURCE}"
+        "const PhysicalKeySnapshot stage11d_physical_keys =" STAGE11D_INDEX)
+    string(FIND "${DIRECT_FUNCTION_SOURCE}"
+        "impl_->death_input_snapshot = stage11d_physical_keys" CACHE_INDEX)
+    string(FIND "${DIRECT_FUNCTION_SOURCE}"
+        "impl_->states.stage17.suspend_injection = gameplay_rearm_required"
+        SUSPEND_INDEX)
+    string(FIND "${DIRECT_FUNCTION_SOURCE}"
+        "return host_validation::inject_stage17_physical_edges("
+        STAGE17_INDEX)
+    if(STAGE11B_INDEX EQUAL -1 OR STAGE11C_INDEX EQUAL -1
+            OR STAGE11D_INDEX EQUAL -1 OR CACHE_INDEX EQUAL -1
+            OR SUSPEND_INDEX EQUAL -1 OR STAGE17_INDEX EQUAL -1
+            OR NOT STAGE11B_INDEX LESS STAGE11C_INDEX
+            OR NOT STAGE11C_INDEX LESS STAGE11D_INDEX
+            OR NOT STAGE11D_INDEX LESS CACHE_INDEX
+            OR NOT CACHE_INDEX LESS SUSPEND_INDEX
+            OR NOT SUSPEND_INDEX LESS STAGE17_INDEX)
+        set("${OUT_VARIABLE}" FALSE PARENT_SCOPE)
+        return()
+    endif()
+
+    string(SUBSTRING "${DIRECT_FUNCTION_SOURCE}" 0 ${STAGE11B_INDEX}
+        FUNCTION_PREFIX)
+    string(REGEX MATCHALL
+        "(^|[;{}])${WS}return([ \t\r\n;({]|$)"
+        EARLY_RETURNS "${FUNCTION_PREFIX}")
+    list(LENGTH EARLY_RETURNS EARLY_RETURN_COUNT)
+    foreach(INJECTOR IN ITEMS
+            inject_stage11b_physical_edges inject_stage11c_physical_edges
+            inject_stage11d_physical_edges inject_stage17_physical_edges)
+        string(REGEX MATCHALL "${INJECTOR}${WS}\\("
+            ${INJECTOR}_CALLS "${DIRECT_FUNCTION_SOURCE}")
+        list(LENGTH ${INJECTOR}_CALLS ${INJECTOR}_CALL_COUNT)
+        if(NOT ${INJECTOR}_CALL_COUNT EQUAL 1)
+            set("${OUT_VARIABLE}" FALSE PARENT_SCOPE)
+            return()
+        endif()
+    endforeach()
+    if(NOT EARLY_RETURN_COUNT EQUAL 0
+            OR NOT DIRECT_FUNCTION_SOURCE MATCHES
+                "inject_stage11b_physical_edges${WS}\\(${WS}snapshot,${WS}\\*impl_->config,${WS}impl_->states\\.stage11b${WS}\\)"
+            OR NOT DIRECT_FUNCTION_SOURCE MATCHES
+                "inject_stage11c_physical_edges${WS}\\(${WS}stage11b_physical_keys,${WS}\\*impl_->config,${WS}input_settings,${WS}dungeon_snapshot,${WS}impl_->states\\.stage11c${WS}\\)"
+            OR NOT DIRECT_FUNCTION_SOURCE MATCHES
+                "inject_stage11d_physical_edges${WS}\\(${WS}stage11c_physical_keys,${WS}\\*impl_->config,${WS}input_settings,${WS}dungeon_snapshot,${WS}impl_->states\\.stage11d${WS}\\)"
+            OR NOT DIRECT_FUNCTION_SOURCE MATCHES
+                "inject_stage17_physical_edges${WS}\\(${WS}stage11d_physical_keys,${WS}\\*impl_->config,${WS}input_settings,${WS}dungeon_snapshot,${WS}impl_->states\\.stage17${WS}\\)")
+        set("${OUT_VARIABLE}" FALSE PARENT_SCOPE)
+        return()
+    endif()
+    set("${OUT_VARIABLE}" TRUE PARENT_SCOPE)
+endfunction()
+
 physical_input_chain_valid("${HOST_SOURCE}" HOST_INPUT_CHAIN_VALID)
 if(NOT HOST_INPUT_CHAIN_VALID)
     message(FATAL_ERROR
         "host input chain must apply Stage11B, Stage11C, then Stage11D before mapping")
+endif()
+validation_runtime_input_chain_valid("${HOST_VALIDATION_INJECT_SOURCE}"
+    HOST_VALIDATION_RUNTIME_INPUT_CHAIN_VALID)
+if(NOT HOST_VALIDATION_RUNTIME_INPUT_CHAIN_VALID)
+    message(FATAL_ERROR
+        "host validation runtime must compose Stage11B, Stage11C, Stage11D, then Stage17 input")
 endif()
 physical_input_chain_valid("${REAL_STRUCTURE}" REFERENCE_INPUT_CHAIN_VALID)
 if(NOT REFERENCE_INPUT_CHAIN_VALID)
@@ -1520,36 +1663,32 @@ if(INPUT_CHAIN_SPOOF_ACCEPTANCES)
         "host input chain accepted source spoofs: ${INPUT_CHAIN_SPOOF_NAMES}")
 endif()
 string(REPLACE
-    "stage11b_physical_keys, config, input_settings, current,"
-    "sampled_physical_keys, config, input_settings, current,"
-    BYPASSED_STAGE11C_STRUCTURE "${REAL_STRUCTURE}")
-physical_input_chain_valid("${BYPASSED_STAGE11C_STRUCTURE}"
+    "stage11b_physical_keys, *impl_->config, input_settings,"
+    "snapshot, *impl_->config, input_settings,"
+    BYPASSED_STAGE11C_STRUCTURE "${HOST_VALIDATION_INJECT_SOURCE}")
+validation_runtime_input_chain_valid("${BYPASSED_STAGE11C_STRUCTURE}"
     BYPASSED_STAGE11C_STRUCTURE_VALID)
 if(BYPASSED_STAGE11C_STRUCTURE_VALID)
     message(FATAL_ERROR "host input chain accepted Stage11C bypass mutation")
 endif()
 string(REPLACE
-    "stage11c_physical_keys, config, input_settings, current,"
-    "stage11b_physical_keys, config, input_settings, current,"
-    BYPASSED_STAGE11D_STRUCTURE "${REAL_STRUCTURE}")
-physical_input_chain_valid("${BYPASSED_STAGE11D_STRUCTURE}"
+    "stage11c_physical_keys, *impl_->config, input_settings,"
+    "stage11b_physical_keys, *impl_->config, input_settings,"
+    BYPASSED_STAGE11D_STRUCTURE "${HOST_VALIDATION_INJECT_SOURCE}")
+validation_runtime_input_chain_valid("${BYPASSED_STAGE11D_STRUCTURE}"
     BYPASSED_STAGE11D_STRUCTURE_VALID)
 if(BYPASSED_STAGE11D_STRUCTURE_VALID)
     message(FATAL_ERROR "host input chain accepted Stage11D bypass mutation")
 endif()
-set(MAP_BEFORE_STAGE11C_STRUCTURE [=[
-const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();
-const PhysicalKeySnapshot stage11b_physical_keys =
-    inject_stage11b_physical_edges(
-    sampled_physical_keys, config, stage11b_validation_state);
-HostFrameInput frame_input = map_host_frame_input(settings, physical_keys);
-const PhysicalKeySnapshot stage11c_physical_keys = inject_stage11c_physical_edges(
-    stage11b_physical_keys, config, input_settings, current,
-    stage11c_validation_state);
-const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges(
-    stage11c_physical_keys, config, input_settings, current,
-    stage11d_validation_state);
+set(_MAP_DECLARATION [=[HostFrameInput frame_input = map_host_frame_input(
+    input_settings, stage17_physical_keys);
 ]=])
+string(REPLACE "${_MAP_DECLARATION}" ""
+    MAP_BEFORE_STAGE11C_STRUCTURE "${REAL_STRUCTURE}")
+string(REPLACE
+    "const PhysicalKeySnapshot stage17_physical_keys ="
+    "${_MAP_DECLARATION}const PhysicalKeySnapshot stage17_physical_keys ="
+    MAP_BEFORE_STAGE11C_STRUCTURE "${MAP_BEFORE_STAGE11C_STRUCTURE}")
 physical_input_chain_valid("${MAP_BEFORE_STAGE11C_STRUCTURE}"
     MAP_BEFORE_STAGE11C_STRUCTURE_VALID)
 if(MAP_BEFORE_STAGE11C_STRUCTURE_VALID)

@@ -3,6 +3,13 @@ if(NOT DEFINED RAYLIB_SOURCE_DIR)
 endif()
 
 file(READ "${RAYLIB_SOURCE_DIR}/raylib_host.cpp" HOST_SOURCE)
+set(HOST_VALIDATION_RUNTIME_PATH
+    "${RAYLIB_SOURCE_DIR}/host_validation_runtime.cpp")
+if(NOT EXISTS "${HOST_VALIDATION_RUNTIME_PATH}")
+    message(FATAL_ERROR
+        "host validation runtime is required: ${HOST_VALIDATION_RUNTIME_PATH}")
+endif()
+file(READ "${HOST_VALIDATION_RUNTIME_PATH}" HOST_VALIDATION_RUNTIME_SOURCE)
 set(STAGE17_REPORT_SOURCE
     "${RAYLIB_SOURCE_DIR}/host_validation_stage17_report.cpp")
 if(NOT EXISTS "${STAGE17_REPORT_SOURCE}")
@@ -306,15 +313,15 @@ if(NOT SAMPLE_CALL_COUNT EQUAL 1)
     message(FATAL_ERROR "raylib host must sample physical keys exactly once per frame")
 endif()
 
-function(arpg_physical_input_chain_is_valid SOURCE OUT_VALID)
-    arpg_sanitize_cpp_source("${SOURCE}" SOURCE)
+function(arpg_physical_input_chain_is_valid_from_sanitized SOURCE OUT_VALID)
     set(WS "[ \t\r\n]*")
     set(WS1 "[ \t\r\n]+")
     string(FIND "${SOURCE}" "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys()" SAMPLE_INDEX)
-    string(FIND "${SOURCE}" "const PhysicalKeySnapshot stage11b_physical_keys =" STAGE11B_INDEX)
-    string(FIND "${SOURCE}" "const PhysicalKeySnapshot stage11c_physical_keys =" STAGE11C_INDEX)
-    string(FIND "${SOURCE}" "const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges(" STAGE11D_INDEX)
-    string(FIND "${SOURCE}" "const PhysicalKeySnapshot stage17_physical_keys =" STAGE17_INDEX)
+    string(FIND "${SOURCE}" "const bool gameplay_rearm_was_required =" REARM_INDEX)
+    string(FIND "${SOURCE}" "const PhysicalKeySnapshot stage17_physical_keys =" FACADE_INDEX)
+    string(FIND "${SOURCE}" "const PhysicalKeySnapshot& physical_keys =" CACHED_INDEX)
+    string(FIND "${SOURCE}" "gameplay_controls_physically_released(" RELEASED_INDEX)
+    string(FIND "${SOURCE}" "runtime.acknowledge_gameplay_rearmed()" ACK_INDEX)
     string(FIND "${SOURCE}" "HostFrameInput frame_input = map_host_frame_input(" MAP_INDEX)
     string(FIND "${SOURCE}" "DeathInputGate death_gate = host_death_input_gate(" DEATH_GATE_INDEX)
     string(FIND "${SOURCE}" "const bool pause_blocks_gameplay =" PAUSE_BLOCK_INDEX)
@@ -328,18 +335,21 @@ function(arpg_physical_input_chain_is_valid SOURCE OUT_VALID)
     string(FIND "${SOURCE}" "if (forward_descent && frame_input.keys.e)" FORWARD_DESCENT_INDEX)
     string(FIND "${SOURCE}" "session->request_descent(in_range)" REQUEST_DESCENT_INDEX)
     string(FIND "${SOURCE}" "const combat::MovementInput movement = forward_movement" MOVEMENT_INPUT_INDEX)
-    if(SAMPLE_INDEX EQUAL -1 OR STAGE11B_INDEX EQUAL -1 OR STAGE11C_INDEX EQUAL -1
-            OR STAGE11D_INDEX EQUAL -1 OR STAGE17_INDEX EQUAL -1
+    if(SAMPLE_INDEX EQUAL -1 OR REARM_INDEX EQUAL -1 OR FACADE_INDEX EQUAL -1
+            OR CACHED_INDEX EQUAL -1 OR RELEASED_INDEX EQUAL -1
+            OR ACK_INDEX EQUAL -1
             OR MAP_INDEX EQUAL -1 OR DEATH_GATE_INDEX EQUAL -1 OR PAUSE_BLOCK_INDEX EQUAL -1
             OR HOST_GATE_INDEX EQUAL -1 OR PASSIVE_GATE_INDEX EQUAL -1 OR INVENTORY_GATE_INDEX EQUAL -1
             OR FORWARD_ACTIONS_INDEX EQUAL -1 OR FORWARD_DESCENT_DECL_INDEX EQUAL -1
             OR FORWARD_ACTIONS_IF_INDEX EQUAL -1 OR SUBMIT_ACTIONS_INDEX EQUAL -1
             OR FORWARD_DESCENT_INDEX EQUAL -1 OR REQUEST_DESCENT_INDEX EQUAL -1
             OR MOVEMENT_INPUT_INDEX EQUAL -1
-            OR NOT SAMPLE_INDEX LESS STAGE11B_INDEX OR NOT STAGE11B_INDEX LESS STAGE11C_INDEX
-            OR NOT STAGE11C_INDEX LESS STAGE11D_INDEX
-            OR NOT STAGE11D_INDEX LESS STAGE17_INDEX
-            OR NOT STAGE17_INDEX LESS MAP_INDEX
+            OR NOT SAMPLE_INDEX LESS REARM_INDEX
+            OR NOT REARM_INDEX LESS FACADE_INDEX
+            OR NOT FACADE_INDEX LESS CACHED_INDEX
+            OR NOT CACHED_INDEX LESS RELEASED_INDEX
+            OR NOT RELEASED_INDEX LESS ACK_INDEX
+            OR NOT ACK_INDEX LESS MAP_INDEX
             OR NOT MAP_INDEX LESS DEATH_GATE_INDEX
             OR NOT DEATH_GATE_INDEX LESS PAUSE_BLOCK_INDEX OR NOT PAUSE_BLOCK_INDEX LESS HOST_GATE_INDEX
             OR NOT HOST_GATE_INDEX LESS PASSIVE_GATE_INDEX OR NOT PASSIVE_GATE_INDEX LESS INVENTORY_GATE_INDEX
@@ -354,14 +364,12 @@ function(arpg_physical_input_chain_is_valid SOURCE OUT_VALID)
         return()
     endif()
 
-    math(EXPR STAGE11B_LENGTH "${STAGE11C_INDEX} - ${STAGE11B_INDEX}")
-    string(SUBSTRING "${SOURCE}" ${STAGE11B_INDEX} ${STAGE11B_LENGTH} STAGE11B_SOURCE)
-    math(EXPR STAGE11C_LENGTH "${STAGE11D_INDEX} - ${STAGE11C_INDEX}")
-    string(SUBSTRING "${SOURCE}" ${STAGE11C_INDEX} ${STAGE11C_LENGTH} STAGE11C_SOURCE)
-    math(EXPR STAGE11D_LENGTH "${STAGE17_INDEX} - ${STAGE11D_INDEX}")
-    string(SUBSTRING "${SOURCE}" ${STAGE11D_INDEX} ${STAGE11D_LENGTH} STAGE11D_SOURCE)
-    math(EXPR STAGE17_LENGTH "${MAP_INDEX} - ${STAGE17_INDEX}")
-    string(SUBSTRING "${SOURCE}" ${STAGE17_INDEX} ${STAGE17_LENGTH} STAGE17_SOURCE)
+    math(EXPR FACADE_LENGTH "${CACHED_INDEX} - ${FACADE_INDEX}")
+    string(SUBSTRING "${SOURCE}" ${FACADE_INDEX} ${FACADE_LENGTH} FACADE_SOURCE)
+    math(EXPR CACHED_LENGTH "${RELEASED_INDEX} - ${CACHED_INDEX}")
+    string(SUBSTRING "${SOURCE}" ${CACHED_INDEX} ${CACHED_LENGTH} CACHED_SOURCE)
+    math(EXPR RELEASED_LENGTH "${MAP_INDEX} - ${RELEASED_INDEX}")
+    string(SUBSTRING "${SOURCE}" ${RELEASED_INDEX} ${RELEASED_LENGTH} RELEASED_SOURCE)
     string(SUBSTRING "${SOURCE}" ${MAP_INDEX} -1 MAP_SOURCE)
     math(EXPR HOST_GATE_LENGTH "${PASSIVE_GATE_INDEX} - ${HOST_GATE_INDEX}")
     string(SUBSTRING "${SOURCE}" ${HOST_GATE_INDEX} ${HOST_GATE_LENGTH} HOST_GATE_SOURCE)
@@ -388,12 +396,23 @@ function(arpg_physical_input_chain_is_valid SOURCE OUT_VALID)
     string(REGEX MATCHALL "forward_descent${WS}=" FORWARD_DESCENT_ASSIGNMENTS "${HOST_CHAIN_SOURCE}")
     list(LENGTH FORWARD_DESCENT_ASSIGNMENTS FORWARD_DESCENT_ASSIGNMENT_COUNT)
 
-    if(NOT STAGE11B_SOURCE MATCHES "inject_stage11b_physical_edges${WS}\\(${WS}sampled_physical_keys,${WS}config,${WS}stage11b_validation_state${WS}\\)"
-            OR NOT STAGE11C_SOURCE MATCHES "inject_stage11c_physical_edges${WS}\\(${WS}stage11b_physical_keys,${WS}config,${WS}input_settings,${WS}current,${WS}stage11c_validation_state${WS}\\)"
-            OR NOT STAGE11D_SOURCE MATCHES "inject_stage11d_physical_edges${WS}\\(${WS}stage11c_physical_keys,${WS}config,${WS}input_settings,${WS}current,${WS}stage11d_validation_state${WS}\\)"
-            OR NOT STAGE17_SOURCE MATCHES "inject_stage17_physical_edges${WS}\\(${WS}physical_keys,${WS}config,${WS}input_settings,${WS}current,${WS}\\*stage17_validation_state${WS}\\)"
+    string(REGEX MATCHALL
+        "validation_runtime->inject_physical_edges${WS}\\("
+        FACADE_INJECT_CALLS "${SOURCE}")
+    list(LENGTH FACADE_INJECT_CALLS FACADE_INJECT_CALL_COUNT)
+    string(REGEX MATCHALL
+        "HostValidationStateAccess::death_input_snapshot${WS}\\("
+        CACHED_INPUT_CALLS "${SOURCE}")
+    list(LENGTH CACHED_INPUT_CALLS CACHED_INPUT_CALL_COUNT)
+
+    if(NOT FACADE_SOURCE MATCHES "validation_runtime->inject_physical_edges${WS}\\(${WS}sampled_physical_keys,${WS}input_settings,${WS}current,${WS}gameplay_rearm_was_required${WS}\\)"
+            OR NOT CACHED_SOURCE MATCHES "HostValidationStateAccess::death_input_snapshot${WS}\\(${WS}\\*validation_runtime${WS}\\)"
+            OR NOT RELEASED_SOURCE MATCHES "gameplay_controls_physically_released${WS}\\(${WS}stage17_physical_keys${WS}\\)"
+            OR NOT RELEASED_SOURCE MATCHES "runtime\\.acknowledge_gameplay_rearmed${WS}\\(${WS}\\)"
             OR NOT MAP_SOURCE MATCHES "map_host_frame_input${WS}\\(${WS}input_settings,${WS}stage17_physical_keys${WS}\\)"
             OR NOT SOURCE MATCHES "DeathInputGate death_gate =${WS}host_death_input_gate${WS}\\(${WS}death_saving,${WS}death_pending,${WS}frame_input\\.keys,${WS}physical_keys${WS}\\)${WS};"
+            OR NOT FACADE_INJECT_CALL_COUNT EQUAL 1
+            OR NOT CACHED_INPUT_CALL_COUNT EQUAL 1
             OR NOT HOST_GATE_CALL_COUNT EQUAL 2
             OR NOT HOST_GATE_SOURCE MATCHES "if${WS}\\(${WS}pause_open${WS}\\)${WS}\\{${WS}host_gate${WS}=${WS}gate_host_frame${WS}\\(${WS}fixed_step,${WS}pause_latched,${WS}true,${WS}static_cast<double>${WS}\\(${WS}frame_seconds${WS}\\)${WS}\\)${WS};"
             OR NOT HOST_GATE_SOURCE MATCHES "else${WS1}if${WS}\\(${WS}!inventory\\.is_open${WS}\\(${WS}\\)${WS}&&${WS}!inventory_toggled_this_frame${WS}\\)${WS}\\{${WS}host_gate${WS}=${WS}gate_host_frame${WS}\\(${WS}fixed_step,${WS}pause_latched,${WS}false,${WS}static_cast<double>${WS}\\(${WS}frame_seconds${WS}\\)${WS}\\)${WS};"
@@ -414,26 +433,246 @@ function(arpg_physical_input_chain_is_valid SOURCE OUT_VALID)
     set(${OUT_VALID} TRUE PARENT_SCOPE)
 endfunction()
 
-arpg_physical_input_chain_is_valid("${HOST_ENTRY_SOURCE}" HOST_INPUT_CHAIN_VALID)
+function(arpg_physical_input_chain_is_valid SOURCE OUT_VALID)
+    arpg_sanitize_cpp_source("${SOURCE}" SANITIZED_SOURCE)
+    arpg_physical_input_chain_is_valid_from_sanitized(
+        "${SANITIZED_SOURCE}" CHAIN_VALID)
+    set(${OUT_VALID} ${CHAIN_VALID} PARENT_SCOPE)
+endfunction()
+
+function(arpg_latency_cpp_prefix_has_only_namespace_scopes
+        SOURCE PREFIX_END OUT_VALID)
+    if(PREFIX_END EQUAL 0)
+        set(${OUT_VALID} TRUE PARENT_SCOPE)
+        return()
+    endif()
+    string(SUBSTRING "${SOURCE}" 0 ${PREFIX_END} PREFIX_SOURCE)
+    string(LENGTH "${PREFIX_SOURCE}" PREFIX_LENGTH)
+    math(EXPR PREFIX_LAST "${PREFIX_LENGTH} - 1")
+    set(SCOPE_KINDS)
+    foreach(CHARACTER_INDEX RANGE 0 ${PREFIX_LAST})
+        string(SUBSTRING "${PREFIX_SOURCE}" ${CHARACTER_INDEX} 1 CHARACTER)
+        if(CHARACTER STREQUAL "{")
+            string(SUBSTRING "${PREFIX_SOURCE}" 0 ${CHARACTER_INDEX}
+                BEFORE_OPEN)
+            if(BEFORE_OPEN MATCHES
+                    "namespace([ \t\r\n]+[A-Za-z_][A-Za-z0-9_]*([ \t]*::[ \t]*[A-Za-z_][A-Za-z0-9_]*)*)?[ \t\r\n]*$")
+                list(APPEND SCOPE_KINDS namespace)
+            else()
+                list(APPEND SCOPE_KINDS non_namespace)
+            endif()
+        elseif(CHARACTER STREQUAL "}")
+            list(LENGTH SCOPE_KINDS SCOPE_DEPTH)
+            if(SCOPE_DEPTH EQUAL 0)
+                set(${OUT_VALID} FALSE PARENT_SCOPE)
+                return()
+            endif()
+            list(POP_BACK SCOPE_KINDS)
+        endif()
+    endforeach()
+    foreach(SCOPE_KIND IN LISTS SCOPE_KINDS)
+        if(NOT SCOPE_KIND STREQUAL namespace)
+            set(${OUT_VALID} FALSE PARENT_SCOPE)
+            return()
+        endif()
+    endforeach()
+    set(${OUT_VALID} TRUE PARENT_SCOPE)
+endfunction()
+
+function(arpg_latency_cpp_direct_function_surface SOURCE OUT_SOURCE)
+    string(LENGTH "${SOURCE}" SOURCE_LENGTH)
+    math(EXPR SOURCE_LAST "${SOURCE_LENGTH} - 1")
+    set(DIRECT_SOURCE "")
+    set(BRACE_DEPTH 0)
+    foreach(CHARACTER_INDEX RANGE 0 ${SOURCE_LAST})
+        string(SUBSTRING "${SOURCE}" ${CHARACTER_INDEX} 1 CHARACTER)
+        if(CHARACTER STREQUAL "{")
+            math(EXPR BRACE_DEPTH "${BRACE_DEPTH} + 1")
+            if(BRACE_DEPTH LESS_EQUAL 1)
+                string(APPEND DIRECT_SOURCE "${CHARACTER}")
+            else()
+                string(APPEND DIRECT_SOURCE " ")
+            endif()
+        elseif(CHARACTER STREQUAL "}")
+            if(BRACE_DEPTH LESS_EQUAL 1)
+                string(APPEND DIRECT_SOURCE "${CHARACTER}")
+            else()
+                string(APPEND DIRECT_SOURCE " ")
+            endif()
+            math(EXPR BRACE_DEPTH "${BRACE_DEPTH} - 1")
+        elseif(BRACE_DEPTH LESS_EQUAL 1)
+            string(APPEND DIRECT_SOURCE "${CHARACTER}")
+        elseif(CHARACTER STREQUAL "\n")
+            string(APPEND DIRECT_SOURCE "\n")
+        else()
+            string(APPEND DIRECT_SOURCE " ")
+        endif()
+    endforeach()
+    set(${OUT_SOURCE} "${DIRECT_SOURCE}" PARENT_SCOPE)
+endfunction()
+
+function(arpg_validation_runtime_input_chain_is_valid SOURCE OUT_VALID)
+    # Sanitize before locating the signature. This is intentionally one
+    # raw-aware pass over production, while the mutation fixtures below are
+    # only function-sized strings.
+    stage17_unconditional_cpp_surface("${SOURCE}" ACTIVE_SOURCE)
+    string(REGEX MATCHALL
+        "PhysicalKeySnapshot[ \t\r\n]+HostValidationRuntime::inject_physical_edges[ \t\r\n]*\\("
+        FUNCTION_SIGNATURES "${ACTIVE_SOURCE}")
+    list(LENGTH FUNCTION_SIGNATURES FUNCTION_SIGNATURE_COUNT)
+    if(NOT FUNCTION_SIGNATURE_COUNT EQUAL 1)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    list(GET FUNCTION_SIGNATURES 0 FUNCTION_SIGNATURE)
+    string(FIND "${ACTIVE_SOURCE}" "${FUNCTION_SIGNATURE}" FUNCTION_BEGIN)
+    string(SUBSTRING "${ACTIVE_SOURCE}" ${FUNCTION_BEGIN} -1 FUNCTION_TAIL)
+    string(FIND "${FUNCTION_TAIL}" "{" FUNCTION_OPEN_RELATIVE)
+    string(FIND "${FUNCTION_TAIL}" ";" DECLARATION_END_RELATIVE)
+    if(FUNCTION_OPEN_RELATIVE EQUAL -1
+            OR (NOT DECLARATION_END_RELATIVE EQUAL -1
+                AND DECLARATION_END_RELATIVE LESS FUNCTION_OPEN_RELATIVE))
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    arpg_latency_cpp_prefix_has_only_namespace_scopes(
+        "${ACTIVE_SOURCE}" ${FUNCTION_BEGIN} FUNCTION_SCOPE_VALID)
+    if(NOT FUNCTION_SCOPE_VALID)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    evidence_find_cpp_function_bounds_in_sanitized(
+        "${ACTIVE_SOURCE}" "${FUNCTION_SIGNATURE}"
+        FUNCTION_BEGIN FUNCTION_OPEN FUNCTION_END)
+    math(EXPR FUNCTION_LENGTH "${FUNCTION_END} - ${FUNCTION_BEGIN} + 1")
+    string(SUBSTRING "${ACTIVE_SOURCE}"
+        ${FUNCTION_BEGIN} ${FUNCTION_LENGTH} FUNCTION_SOURCE)
+    arpg_latency_cpp_direct_function_surface(
+        "${FUNCTION_SOURCE}" DIRECT_FUNCTION_SOURCE)
+    set(WS "[ \t\r\n]*")
+    set(WS1 "[ \t\r\n]+")
+    string(FIND "${DIRECT_FUNCTION_SOURCE}"
+        "const PhysicalKeySnapshot stage11b_physical_keys =" STAGE11B_INDEX)
+    string(FIND "${DIRECT_FUNCTION_SOURCE}"
+        "const PhysicalKeySnapshot stage11c_physical_keys =" STAGE11C_INDEX)
+    string(FIND "${DIRECT_FUNCTION_SOURCE}"
+        "const PhysicalKeySnapshot stage11d_physical_keys =" STAGE11D_INDEX)
+    string(FIND "${DIRECT_FUNCTION_SOURCE}"
+        "impl_->death_input_snapshot = stage11d_physical_keys" CACHE_INDEX)
+    string(FIND "${DIRECT_FUNCTION_SOURCE}"
+        "impl_->states.stage17.suspend_injection = gameplay_rearm_required"
+        SUSPEND_INDEX)
+    string(FIND "${DIRECT_FUNCTION_SOURCE}"
+        "return host_validation::inject_stage17_physical_edges("
+        STAGE17_INDEX)
+    if(STAGE11B_INDEX EQUAL -1 OR STAGE11C_INDEX EQUAL -1
+            OR STAGE11D_INDEX EQUAL -1 OR CACHE_INDEX EQUAL -1
+            OR SUSPEND_INDEX EQUAL -1 OR STAGE17_INDEX EQUAL -1
+            OR NOT STAGE11B_INDEX LESS STAGE11C_INDEX
+            OR NOT STAGE11C_INDEX LESS STAGE11D_INDEX
+            OR NOT STAGE11D_INDEX LESS CACHE_INDEX
+            OR NOT CACHE_INDEX LESS SUSPEND_INDEX
+            OR NOT SUSPEND_INDEX LESS STAGE17_INDEX)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    string(REGEX MATCHALL
+        "(^|[^A-Za-z0-9_])return${WS1}"
+        ALL_RETURNS "${FUNCTION_SOURCE}")
+    list(LENGTH ALL_RETURNS ALL_RETURN_COUNT)
+    string(REGEX MATCHALL
+        "(^|[^A-Za-z0-9_])return${WS1}"
+        DIRECT_RETURNS "${DIRECT_FUNCTION_SOURCE}")
+    list(LENGTH DIRECT_RETURNS DIRECT_RETURN_COUNT)
+    if(NOT ALL_RETURN_COUNT EQUAL 1 OR NOT DIRECT_RETURN_COUNT EQUAL 1
+            OR FUNCTION_SOURCE MATCHES
+                "\\][ \t\r\n]*(\\([^{};]*\\))?[ \t\r\n]*(mutable[ \t\r\n]*)?(noexcept([ \t\r\n]*\\([^{};]*\\))?[ \t\r\n]*)?(->[^{};]*)?[ \t\r\n]*\\{"
+            OR FUNCTION_SOURCE MATCHES
+                "(if|while)[ \t\r\n]*(constexpr[ \t\r\n]*)?\\([ \t\r\n]*(false|0[uUlL]*|![ \t\r\n]*true)[ \t\r\n]*\\)")
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    foreach(INJECTOR IN ITEMS
+            inject_stage11b_physical_edges inject_stage11c_physical_edges
+            inject_stage11d_physical_edges inject_stage17_physical_edges)
+        string(REGEX MATCHALL "${INJECTOR}${WS}\\("
+            INJECTOR_CALLS "${FUNCTION_SOURCE}")
+        list(LENGTH INJECTOR_CALLS INJECTOR_CALL_COUNT)
+        string(REGEX MATCHALL "${INJECTOR}${WS}\\("
+            DIRECT_INJECTOR_CALLS "${DIRECT_FUNCTION_SOURCE}")
+        list(LENGTH DIRECT_INJECTOR_CALLS DIRECT_INJECTOR_CALL_COUNT)
+        if(NOT INJECTOR_CALL_COUNT EQUAL 1
+                OR NOT DIRECT_INJECTOR_CALL_COUNT EQUAL 1)
+            set(${OUT_VALID} FALSE PARENT_SCOPE)
+            return()
+        endif()
+    endforeach()
+    foreach(ASSIGNMENT_PATTERN IN ITEMS
+            "stage11b_physical_keys${WS}="
+            "stage11c_physical_keys${WS}="
+            "stage11d_physical_keys${WS}="
+            "impl_->death_input_snapshot${WS}="
+            "impl_->states\\.stage17\\.suspend_injection${WS}=")
+        string(REGEX MATCHALL "${ASSIGNMENT_PATTERN}"
+            ASSIGNMENTS "${FUNCTION_SOURCE}")
+        list(LENGTH ASSIGNMENTS ASSIGNMENT_COUNT)
+        string(REGEX MATCHALL "${ASSIGNMENT_PATTERN}"
+            DIRECT_ASSIGNMENTS "${DIRECT_FUNCTION_SOURCE}")
+        list(LENGTH DIRECT_ASSIGNMENTS DIRECT_ASSIGNMENT_COUNT)
+        if(NOT ASSIGNMENT_COUNT EQUAL 1
+                OR NOT DIRECT_ASSIGNMENT_COUNT EQUAL 1)
+            set(${OUT_VALID} FALSE PARENT_SCOPE)
+            return()
+        endif()
+    endforeach()
+    if(NOT DIRECT_FUNCTION_SOURCE MATCHES
+            "PhysicalKeySnapshot${WS1}HostValidationRuntime::inject_physical_edges${WS}\\(${WS}PhysicalKeySnapshot${WS1}snapshot,${WS}const${WS1}settings::SettingsData&${WS1}input_settings,${WS}const${WS1}dungeon::DungeonSnapshot&${WS1}dungeon_snapshot,${WS}bool${WS1}gameplay_rearm_required${WS}\\)${WS}noexcept${WS}\\{"
+            OR NOT DIRECT_FUNCTION_SOURCE MATCHES
+            "const${WS1}PhysicalKeySnapshot${WS1}stage11b_physical_keys${WS}=${WS}host_validation::inject_stage11b_physical_edges${WS}\\(${WS}snapshot,${WS}\\*impl_->config,${WS}impl_->states\\.stage11b${WS}\\)${WS};"
+            OR NOT DIRECT_FUNCTION_SOURCE MATCHES
+            "const${WS1}PhysicalKeySnapshot${WS1}stage11c_physical_keys${WS}=${WS}host_validation::inject_stage11c_physical_edges${WS}\\(${WS}stage11b_physical_keys,${WS}\\*impl_->config,${WS}input_settings,${WS}dungeon_snapshot,${WS}impl_->states\\.stage11c${WS}\\)${WS};"
+            OR NOT DIRECT_FUNCTION_SOURCE MATCHES
+            "const${WS1}PhysicalKeySnapshot${WS1}stage11d_physical_keys${WS}=${WS}host_validation::inject_stage11d_physical_edges${WS}\\(${WS}stage11c_physical_keys,${WS}\\*impl_->config,${WS}input_settings,${WS}dungeon_snapshot,${WS}impl_->states\\.stage11d${WS}\\)${WS};"
+            OR NOT DIRECT_FUNCTION_SOURCE MATCHES
+            "impl_->death_input_snapshot${WS}=${WS}stage11d_physical_keys${WS};"
+            OR NOT DIRECT_FUNCTION_SOURCE MATCHES
+            "impl_->states\\.stage17\\.suspend_injection${WS}=${WS}gameplay_rearm_required${WS};"
+            OR NOT DIRECT_FUNCTION_SOURCE MATCHES
+            "return${WS1}host_validation::inject_stage17_physical_edges${WS}\\(${WS}stage11d_physical_keys,${WS}\\*impl_->config,${WS}input_settings,${WS}dungeon_snapshot,${WS}impl_->states\\.stage17${WS}\\)${WS};${WS}\\}${WS}$")
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    set(${OUT_VALID} TRUE PARENT_SCOPE)
+endfunction()
+
+arpg_physical_input_chain_is_valid_from_sanitized(
+    "${HOST_ENTRY_SOURCE}" HOST_INPUT_CHAIN_VALID)
 if(NOT HOST_INPUT_CHAIN_VALID)
     message(FATAL_ERROR
         "host input must sample once, apply Stage11B, Stage11C, then Stage11D physical edges, and map that snapshot")
 endif()
+arpg_validation_runtime_input_chain_is_valid(
+    "${HOST_VALIDATION_RUNTIME_SOURCE}"
+    VALIDATION_RUNTIME_INPUT_CHAIN_VALID)
+if(NOT VALIDATION_RUNTIME_INPUT_CHAIN_VALID)
+    message(FATAL_ERROR
+        "host validation runtime must apply Stage11B, Stage11C, Stage11D, then Stage17 physical edges")
+endif()
 
 set(STAGE11B_INPUT_CHAIN_REFERENCE [=[
 const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();
-const PhysicalKeySnapshot stage11b_physical_keys =
-    inject_stage11b_physical_edges(
-    sampled_physical_keys, config, stage11b_validation_state);
-const PhysicalKeySnapshot stage11c_physical_keys = inject_stage11c_physical_edges(
-    stage11b_physical_keys, config, input_settings, current,
-    stage11c_validation_state);
-const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges(
-    stage11c_physical_keys, config, input_settings, current,
-    stage11d_validation_state);
+const bool gameplay_rearm_was_required =
+    runtime.gameplay_rearm_required();
 const PhysicalKeySnapshot stage17_physical_keys =
-    inject_stage17_physical_edges(physical_keys, config, input_settings,
-        current, *stage17_validation_state);
+    validation_runtime->inject_physical_edges(
+        sampled_physical_keys, input_settings, current,
+        gameplay_rearm_was_required);
+const PhysicalKeySnapshot& physical_keys =
+    HostValidationStateAccess::death_input_snapshot(*validation_runtime);
+if (gameplay_rearm_was_required
+        && gameplay_controls_physically_released(stage17_physical_keys)) {
+    runtime.acknowledge_gameplay_rearmed();
+}
 HostFrameInput frame_input = map_host_frame_input(
     input_settings, stage17_physical_keys);
 DeathInputGate death_gate = host_death_input_gate(
@@ -474,10 +713,40 @@ if (forward_descent && frame_input.keys.e) {
 const combat::MovementInput movement = forward_movement
     ? frame_input.movement : combat::MovementInput{};
 ]=])
+set(VALIDATION_RUNTIME_INPUT_CHAIN_REFERENCE [=[
+PhysicalKeySnapshot HostValidationRuntime::inject_physical_edges(
+    PhysicalKeySnapshot snapshot, const settings::SettingsData& input_settings,
+    const dungeon::DungeonSnapshot& dungeon_snapshot,
+    bool gameplay_rearm_required) noexcept {
+    const PhysicalKeySnapshot stage11b_physical_keys =
+        host_validation::inject_stage11b_physical_edges(
+            snapshot, *impl_->config, impl_->states.stage11b);
+    const PhysicalKeySnapshot stage11c_physical_keys =
+        host_validation::inject_stage11c_physical_edges(
+            stage11b_physical_keys, *impl_->config, input_settings,
+            dungeon_snapshot, impl_->states.stage11c);
+    const PhysicalKeySnapshot stage11d_physical_keys =
+        host_validation::inject_stage11d_physical_edges(
+            stage11c_physical_keys, *impl_->config, input_settings,
+            dungeon_snapshot, impl_->states.stage11d);
+    impl_->death_input_snapshot = stage11d_physical_keys;
+    impl_->states.stage17.suspend_injection = gameplay_rearm_required;
+    return host_validation::inject_stage17_physical_edges(
+        stage11d_physical_keys, *impl_->config, input_settings,
+        dungeon_snapshot, impl_->states.stage17);
+}
+]=])
 arpg_physical_input_chain_is_valid("${STAGE11B_INPUT_CHAIN_REFERENCE}"
     STAGE11B_INPUT_CHAIN_REFERENCE_VALID)
 if(NOT STAGE11B_INPUT_CHAIN_REFERENCE_VALID)
     message(FATAL_ERROR "input chain self-check rejected its reference chain")
+endif()
+arpg_validation_runtime_input_chain_is_valid(
+    "${VALIDATION_RUNTIME_INPUT_CHAIN_REFERENCE}"
+    VALIDATION_RUNTIME_INPUT_CHAIN_REFERENCE_VALID)
+if(NOT VALIDATION_RUNTIME_INPUT_CHAIN_REFERENCE_VALID)
+    message(FATAL_ERROR
+        "input chain self-check rejected its validation-runtime reference")
 endif()
 set(PREALLOCATED_DESCENT_CAPTURE [=[
     session->snapshot(current);
@@ -520,40 +789,33 @@ if(INPUT_CHAIN_SPOOF_ACCEPTANCES)
         "input chain self-check accepted source spoofs: ${INPUT_CHAIN_SPOOF_NAMES}")
 endif()
 
-set(STAGE11B_INPUT_CHAIN_SAMPLE_AFTER_INJECT [=[
-const PhysicalKeySnapshot stage11b_physical_keys =
-    inject_stage11b_physical_edges(
-    sampled_physical_keys, config, stage11b_validation_state);
-const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();
-const PhysicalKeySnapshot stage11c_physical_keys = inject_stage11c_physical_edges(
-    stage11b_physical_keys, config, input_settings, current,
-    stage11c_validation_state);
-const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges(
-    stage11c_physical_keys, config, input_settings, current,
-    stage11d_validation_state);
-HostFrameInput frame_input = map_host_frame_input(
-    input_settings, physical_keys);
-]=])
+set(_SAMPLE_DECLARATION
+    "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();")
+string(REPLACE "${_SAMPLE_DECLARATION}" ""
+    STAGE11B_INPUT_CHAIN_SAMPLE_AFTER_INJECT
+    "${STAGE11B_INPUT_CHAIN_REFERENCE}")
+string(REPLACE
+    "const PhysicalKeySnapshot& physical_keys ="
+    "const PhysicalKeySnapshot& physical_keys =\n${_SAMPLE_DECLARATION}"
+    STAGE11B_INPUT_CHAIN_SAMPLE_AFTER_INJECT
+    "${STAGE11B_INPUT_CHAIN_SAMPLE_AFTER_INJECT}")
 arpg_physical_input_chain_is_valid("${STAGE11B_INPUT_CHAIN_SAMPLE_AFTER_INJECT}"
     STAGE11B_INPUT_CHAIN_SAMPLE_AFTER_INJECT_VALID)
 if(STAGE11B_INPUT_CHAIN_SAMPLE_AFTER_INJECT_VALID)
     message(FATAL_ERROR "input chain self-check accepted sample-after-inject mutation")
 endif()
 
-set(STAGE11B_INPUT_CHAIN_MAP_BEFORE_INJECT [=[
-const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();
-const PhysicalKeySnapshot stage11b_physical_keys =
-    inject_stage11b_physical_edges(
-    sampled_physical_keys, config, stage11b_validation_state);
-HostFrameInput frame_input = map_host_frame_input(
-    input_settings, physical_keys);
-const PhysicalKeySnapshot stage11c_physical_keys = inject_stage11c_physical_edges(
-    stage11b_physical_keys, config, input_settings, current,
-    stage11c_validation_state);
-const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges(
-    stage11c_physical_keys, config, input_settings, current,
-    stage11d_validation_state);
+set(_MAP_DECLARATION [=[HostFrameInput frame_input = map_host_frame_input(
+    input_settings, stage17_physical_keys);
 ]=])
+string(REPLACE "${_MAP_DECLARATION}" ""
+    STAGE11B_INPUT_CHAIN_MAP_BEFORE_INJECT
+    "${STAGE11B_INPUT_CHAIN_REFERENCE}")
+string(REPLACE
+    "const PhysicalKeySnapshot stage17_physical_keys ="
+    "${_MAP_DECLARATION}const PhysicalKeySnapshot stage17_physical_keys ="
+    STAGE11B_INPUT_CHAIN_MAP_BEFORE_INJECT
+    "${STAGE11B_INPUT_CHAIN_MAP_BEFORE_INJECT}")
 arpg_physical_input_chain_is_valid("${STAGE11B_INPUT_CHAIN_MAP_BEFORE_INJECT}"
     STAGE11B_INPUT_CHAIN_MAP_BEFORE_INJECT_VALID)
 if(STAGE11B_INPUT_CHAIN_MAP_BEFORE_INJECT_VALID)
@@ -561,22 +823,199 @@ if(STAGE11B_INPUT_CHAIN_MAP_BEFORE_INJECT_VALID)
 endif()
 
 string(REPLACE
-    "stage11b_physical_keys, config, input_settings, current,"
-    "sampled_physical_keys, config, input_settings, current,"
-    STAGE11C_BYPASS_CHAIN "${STAGE11B_INPUT_CHAIN_REFERENCE}")
-arpg_physical_input_chain_is_valid("${STAGE11C_BYPASS_CHAIN}"
+    "stage11b_physical_keys, *impl_->config, input_settings,"
+    "snapshot, *impl_->config, input_settings,"
+    STAGE11C_BYPASS_CHAIN "${VALIDATION_RUNTIME_INPUT_CHAIN_REFERENCE}")
+arpg_validation_runtime_input_chain_is_valid("${STAGE11C_BYPASS_CHAIN}"
     STAGE11C_BYPASS_CHAIN_VALID)
 if(STAGE11C_BYPASS_CHAIN_VALID)
     message(FATAL_ERROR "input chain self-check accepted Stage11C bypass mutation")
 endif()
 string(REPLACE
-    "stage11c_physical_keys, config, input_settings, current,"
-    "stage11b_physical_keys, config, input_settings, current,"
-    STAGE11D_BYPASS_CHAIN "${STAGE11B_INPUT_CHAIN_REFERENCE}")
-arpg_physical_input_chain_is_valid("${STAGE11D_BYPASS_CHAIN}"
+    "stage11c_physical_keys, *impl_->config, input_settings,"
+    "stage11b_physical_keys, *impl_->config, input_settings,"
+    STAGE11D_BYPASS_CHAIN "${VALIDATION_RUNTIME_INPUT_CHAIN_REFERENCE}")
+arpg_validation_runtime_input_chain_is_valid("${STAGE11D_BYPASS_CHAIN}"
     STAGE11D_BYPASS_CHAIN_VALID)
 if(STAGE11D_BYPASS_CHAIN_VALID)
     message(FATAL_ERROR "input chain self-check accepted Stage11D bypass mutation")
+endif()
+
+set(VALIDATION_RUNTIME_INPUT_MUTATION_ACCEPTANCES)
+set(VALIDATION_RUNTIME_FIRST_DECLARATION
+    "    const PhysicalKeySnapshot stage11b_physical_keys =")
+set(VALIDATION_RUNTIME_STAGE11B_DECLARATION [=[    const PhysicalKeySnapshot stage11b_physical_keys =
+        host_validation::inject_stage11b_physical_edges(
+            snapshot, *impl_->config, impl_->states.stage11b);
+]=])
+set(VALIDATION_RUNTIME_STAGE11C_DECLARATION [=[    const PhysicalKeySnapshot stage11c_physical_keys =
+        host_validation::inject_stage11c_physical_edges(
+            stage11b_physical_keys, *impl_->config, input_settings,
+            dungeon_snapshot, impl_->states.stage11c);
+]=])
+set(VALIDATION_RUNTIME_STAGE11D_DECLARATION [=[    const PhysicalKeySnapshot stage11d_physical_keys =
+        host_validation::inject_stage11d_physical_edges(
+            stage11c_physical_keys, *impl_->config, input_settings,
+            dungeon_snapshot, impl_->states.stage11d);
+]=])
+set(VALIDATION_RUNTIME_STAGE11B_DISCARDED_RETURN [=[    const PhysicalKeySnapshot stage11b_physical_keys = snapshot;
+    static_cast<void>(host_validation::inject_stage11b_physical_edges(
+        snapshot, *impl_->config, impl_->states.stage11b));
+]=])
+set(VALIDATION_RUNTIME_STAGE11C_DISCARDED_RETURN [=[    const PhysicalKeySnapshot stage11c_physical_keys =
+        stage11b_physical_keys;
+    static_cast<void>(host_validation::inject_stage11c_physical_edges(
+        stage11b_physical_keys, *impl_->config, input_settings,
+        dungeon_snapshot, impl_->states.stage11c));
+]=])
+set(VALIDATION_RUNTIME_STAGE11D_DISCARDED_RETURN [=[    const PhysicalKeySnapshot stage11d_physical_keys =
+        stage11c_physical_keys;
+    static_cast<void>(host_validation::inject_stage11d_physical_edges(
+        stage11c_physical_keys, *impl_->config, input_settings,
+        dungeon_snapshot, impl_->states.stage11d));
+]=])
+foreach(STAGE IN ITEMS 11B 11C 11D)
+    string(REPLACE
+        "${VALIDATION_RUNTIME_STAGE${STAGE}_DECLARATION}"
+        "${VALIDATION_RUNTIME_STAGE${STAGE}_DISCARDED_RETURN}"
+        VALIDATION_RUNTIME_STAGE${STAGE}_DISCARDED_RETURN_MUTATION
+        "${VALIDATION_RUNTIME_INPUT_CHAIN_REFERENCE}")
+    if(VALIDATION_RUNTIME_STAGE${STAGE}_DISCARDED_RETURN_MUTATION STREQUAL
+            VALIDATION_RUNTIME_INPUT_CHAIN_REFERENCE)
+        message(FATAL_ERROR
+            "validation-runtime Stage${STAGE} return-binding mutation setup did not modify reference")
+    endif()
+    arpg_validation_runtime_input_chain_is_valid(
+        "${VALIDATION_RUNTIME_STAGE${STAGE}_DISCARDED_RETURN_MUTATION}"
+        VALIDATION_RUNTIME_STAGE${STAGE}_DISCARDED_RETURN_VALID)
+    if(VALIDATION_RUNTIME_STAGE${STAGE}_DISCARDED_RETURN_VALID)
+        list(APPEND VALIDATION_RUNTIME_INPUT_MUTATION_ACCEPTANCES
+            "stage${STAGE}-discarded-return")
+    endif()
+endforeach()
+
+string(REPLACE "${VALIDATION_RUNTIME_FIRST_DECLARATION}"
+    "    return snapshot;\n${VALIDATION_RUNTIME_FIRST_DECLARATION}"
+    VALIDATION_RUNTIME_EARLY_RETURN_MUTATION
+    "${VALIDATION_RUNTIME_INPUT_CHAIN_REFERENCE}")
+if(VALIDATION_RUNTIME_EARLY_RETURN_MUTATION STREQUAL
+        VALIDATION_RUNTIME_INPUT_CHAIN_REFERENCE)
+    message(FATAL_ERROR
+        "validation-runtime early-return mutation setup did not modify reference")
+endif()
+arpg_validation_runtime_input_chain_is_valid(
+    "${VALIDATION_RUNTIME_EARLY_RETURN_MUTATION}"
+    VALIDATION_RUNTIME_EARLY_RETURN_VALID)
+if(VALIDATION_RUNTIME_EARLY_RETURN_VALID)
+    list(APPEND VALIDATION_RUNTIME_INPUT_MUTATION_ACCEPTANCES early-return)
+endif()
+
+set(VALIDATION_RUNTIME_INACTIVE_EXACT_COPY_MUTATION
+    "#if 0\n${VALIDATION_RUNTIME_INPUT_CHAIN_REFERENCE}#endif\n${VALIDATION_RUNTIME_EARLY_RETURN_MUTATION}")
+arpg_validation_runtime_input_chain_is_valid(
+    "${VALIDATION_RUNTIME_INACTIVE_EXACT_COPY_MUTATION}"
+    VALIDATION_RUNTIME_INACTIVE_EXACT_COPY_VALID)
+if(VALIDATION_RUNTIME_INACTIVE_EXACT_COPY_VALID)
+    list(APPEND VALIDATION_RUNTIME_INPUT_MUTATION_ACCEPTANCES
+        inactive-exact-copy)
+endif()
+
+set(VALIDATION_RUNTIME_RAW_DECOY_PREFIX [=[const char* runtime_chain_decoy = R"arpg(
+legacy scanner sees an internal " quote and a )" non-closing pair
+]=])
+set(VALIDATION_RUNTIME_RAW_DECOY_SUFFIX [=[)arpg";
+]=])
+string(CONCAT VALIDATION_RUNTIME_RAW_STRING_MUTATION
+    "${VALIDATION_RUNTIME_RAW_DECOY_PREFIX}"
+    "${VALIDATION_RUNTIME_INPUT_CHAIN_REFERENCE}"
+    "${VALIDATION_RUNTIME_RAW_DECOY_SUFFIX}"
+    "${VALIDATION_RUNTIME_EARLY_RETURN_MUTATION}")
+arpg_validation_runtime_input_chain_is_valid(
+    "${VALIDATION_RUNTIME_RAW_STRING_MUTATION}"
+    VALIDATION_RUNTIME_RAW_STRING_VALID)
+if(VALIDATION_RUNTIME_RAW_STRING_VALID)
+    list(APPEND VALIDATION_RUNTIME_INPUT_MUTATION_ACCEPTANCES
+        raw-string-internal-quote)
+endif()
+
+set(VALIDATION_RUNTIME_DUPLICATE_CALL [=[    static_cast<void>(
+        host_validation::inject_stage11b_physical_edges(
+            snapshot, *impl_->config, impl_->states.stage11b));
+]=])
+string(REPLACE "${VALIDATION_RUNTIME_FIRST_DECLARATION}"
+    "${VALIDATION_RUNTIME_DUPLICATE_CALL}${VALIDATION_RUNTIME_FIRST_DECLARATION}"
+    VALIDATION_RUNTIME_DUPLICATE_MUTATION
+    "${VALIDATION_RUNTIME_INPUT_CHAIN_REFERENCE}")
+arpg_validation_runtime_input_chain_is_valid(
+    "${VALIDATION_RUNTIME_DUPLICATE_MUTATION}"
+    VALIDATION_RUNTIME_DUPLICATE_VALID)
+if(VALIDATION_RUNTIME_DUPLICATE_VALID)
+    list(APPEND VALIDATION_RUNTIME_INPUT_MUTATION_ACCEPTANCES duplicate-call)
+endif()
+
+set(VALIDATION_RUNTIME_DUPLICATE_DEFINITION_MUTATION
+    "${VALIDATION_RUNTIME_INPUT_CHAIN_REFERENCE}\n${VALIDATION_RUNTIME_INPUT_CHAIN_REFERENCE}")
+arpg_validation_runtime_input_chain_is_valid(
+    "${VALIDATION_RUNTIME_DUPLICATE_DEFINITION_MUTATION}"
+    VALIDATION_RUNTIME_DUPLICATE_DEFINITION_VALID)
+if(VALIDATION_RUNTIME_DUPLICATE_DEFINITION_VALID)
+    list(APPEND VALIDATION_RUNTIME_INPUT_MUTATION_ACCEPTANCES
+        duplicate-definition)
+endif()
+
+string(REPLACE "${VALIDATION_RUNTIME_STAGE11C_DECLARATION}"
+    "    {\n${VALIDATION_RUNTIME_STAGE11C_DECLARATION}    }\n"
+    VALIDATION_RUNTIME_CROSS_SCOPE_MUTATION
+    "${VALIDATION_RUNTIME_INPUT_CHAIN_REFERENCE}")
+if(VALIDATION_RUNTIME_CROSS_SCOPE_MUTATION STREQUAL
+        VALIDATION_RUNTIME_INPUT_CHAIN_REFERENCE)
+    message(FATAL_ERROR
+        "validation-runtime cross-scope mutation setup did not modify reference")
+endif()
+arpg_validation_runtime_input_chain_is_valid(
+    "${VALIDATION_RUNTIME_CROSS_SCOPE_MUTATION}"
+    VALIDATION_RUNTIME_CROSS_SCOPE_VALID)
+if(VALIDATION_RUNTIME_CROSS_SCOPE_VALID)
+    list(APPEND VALIDATION_RUNTIME_INPUT_MUTATION_ACCEPTANCES cross-scope)
+endif()
+
+string(REPLACE "${VALIDATION_RUNTIME_FIRST_DECLARATION}"
+    "    auto input_decoy = [&] { };\n${VALIDATION_RUNTIME_FIRST_DECLARATION}"
+    VALIDATION_RUNTIME_LAMBDA_MUTATION
+    "${VALIDATION_RUNTIME_INPUT_CHAIN_REFERENCE}")
+arpg_validation_runtime_input_chain_is_valid(
+    "${VALIDATION_RUNTIME_LAMBDA_MUTATION}"
+    VALIDATION_RUNTIME_LAMBDA_VALID)
+if(VALIDATION_RUNTIME_LAMBDA_VALID)
+    list(APPEND VALIDATION_RUNTIME_INPUT_MUTATION_ACCEPTANCES lambda)
+endif()
+
+string(REPLACE "${VALIDATION_RUNTIME_FIRST_DECLARATION}"
+    "    if (false)\n${VALIDATION_RUNTIME_FIRST_DECLARATION}"
+    VALIDATION_RUNTIME_DEAD_BRANCH_MUTATION
+    "${VALIDATION_RUNTIME_INPUT_CHAIN_REFERENCE}")
+arpg_validation_runtime_input_chain_is_valid(
+    "${VALIDATION_RUNTIME_DEAD_BRANCH_MUTATION}"
+    VALIDATION_RUNTIME_DEAD_BRANCH_VALID)
+if(VALIDATION_RUNTIME_DEAD_BRANCH_VALID)
+    list(APPEND VALIDATION_RUNTIME_INPUT_MUTATION_ACCEPTANCES dead-branch)
+endif()
+
+set(VALIDATION_RUNTIME_NESTED_FUNCTION_MUTATION
+    "void runtime_chain_decoy_owner() {\n${VALIDATION_RUNTIME_INPUT_CHAIN_REFERENCE}}\n")
+arpg_validation_runtime_input_chain_is_valid(
+    "${VALIDATION_RUNTIME_NESTED_FUNCTION_MUTATION}"
+    VALIDATION_RUNTIME_NESTED_FUNCTION_VALID)
+if(VALIDATION_RUNTIME_NESTED_FUNCTION_VALID)
+    list(APPEND VALIDATION_RUNTIME_INPUT_MUTATION_ACCEPTANCES
+        nested-function-definition)
+endif()
+
+if(VALIDATION_RUNTIME_INPUT_MUTATION_ACCEPTANCES)
+    list(JOIN VALIDATION_RUNTIME_INPUT_MUTATION_ACCEPTANCES ", "
+        VALIDATION_RUNTIME_INPUT_MUTATION_NAMES)
+    message(FATAL_ERROR
+        "input chain self-check accepted validation-runtime mutations: ${VALIDATION_RUNTIME_INPUT_MUTATION_NAMES}")
 endif()
 
 set(SUBMIT_DECLARATION [=[
@@ -594,12 +1033,12 @@ string(REPLACE "            if (forward_actions) {"
     "            {"
     UNCONDITIONAL_SUBMIT_CHAIN "${HOST_ENTRY_SOURCE}")
 set(ACCEPTED_SUBMIT_MUTATIONS)
-arpg_physical_input_chain_is_valid("${SUBMIT_BEFORE_GATE_CHAIN}"
+arpg_physical_input_chain_is_valid_from_sanitized("${SUBMIT_BEFORE_GATE_CHAIN}"
     SUBMIT_BEFORE_GATE_CHAIN_VALID)
 if(SUBMIT_BEFORE_GATE_CHAIN_VALID)
     list(APPEND ACCEPTED_SUBMIT_MUTATIONS "submit-before-gate")
 endif()
-arpg_physical_input_chain_is_valid("${UNCONDITIONAL_SUBMIT_CHAIN}"
+arpg_physical_input_chain_is_valid_from_sanitized("${UNCONDITIONAL_SUBMIT_CHAIN}"
     UNCONDITIONAL_SUBMIT_CHAIN_VALID)
 if(UNCONDITIONAL_SUBMIT_CHAIN_VALID)
     list(APPEND ACCEPTED_SUBMIT_MUTATIONS "unconditional-submit-bypass")
@@ -639,12 +1078,12 @@ if(HOST_GATE_BYPASS_CHAIN STREQUAL HOST_ENTRY_SOURCE
     message(FATAL_ERROR "input gate/descent mutation setup did not modify production source")
 endif()
 set(ACCEPTED_GATE_DESCENT_MUTATIONS)
-arpg_physical_input_chain_is_valid("${HOST_GATE_BYPASS_CHAIN}"
+arpg_physical_input_chain_is_valid_from_sanitized("${HOST_GATE_BYPASS_CHAIN}"
     HOST_GATE_BYPASS_CHAIN_VALID)
 if(HOST_GATE_BYPASS_CHAIN_VALID)
     list(APPEND ACCEPTED_GATE_DESCENT_MUTATIONS "host-gate-bypass")
 endif()
-arpg_physical_input_chain_is_valid("${UNCONDITIONAL_DESCENT_CHAIN}"
+arpg_physical_input_chain_is_valid_from_sanitized("${UNCONDITIONAL_DESCENT_CHAIN}"
     UNCONDITIONAL_DESCENT_CHAIN_VALID)
 if(UNCONDITIONAL_DESCENT_CHAIN_VALID)
     list(APPEND ACCEPTED_GATE_DESCENT_MUTATIONS

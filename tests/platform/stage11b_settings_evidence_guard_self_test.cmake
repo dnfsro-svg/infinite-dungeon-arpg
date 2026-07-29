@@ -3,13 +3,18 @@ if(NOT DEFINED SOURCE_ROOT OR NOT DEFINED GUARD_TEST_ROOT)
 endif()
 set(_guard "${SOURCE_ROOT}/tests/platform/stage11b_settings_evidence_guard_test.cmake")
 set(_stage_source "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11b.cpp")
+set(_runtime_source
+    "${SOURCE_ROOT}/src/platform/raylib/host_validation_runtime.cpp")
 set(_fixture "${SOURCE_ROOT}/tests/platform/stage11b_settings_bad_host_input.txt")
 file(MAKE_DIRECTORY "${GUARD_TEST_ROOT}")
 file(READ "${SOURCE_ROOT}/tests/platform/stage11b_settings_formal_game_validation.cpp"
     _formal_source)
-if(NOT EXISTS "${_stage_source}")
-    message(FATAL_ERROR "Stage11B evidence self-test target is missing: ${_stage_source}")
-endif()
+foreach(_required IN ITEMS "${_stage_source}" "${_runtime_source}")
+    if(NOT EXISTS "${_required}")
+        message(FATAL_ERROR
+            "Stage11B evidence self-test target is missing: ${_required}")
+    endif()
+endforeach()
 file(READ "${_fixture}" _fixture_text)
 foreach(_fixture_forbidden IN ITEMS
         "TestAccess" "validation_input_setter" "queue_action"
@@ -142,6 +147,59 @@ foreach(_mutation IN ITEMS
         message(FATAL_ERROR "count mutation failed for wrong reason: ${_source_mutation}: ${_mutation_stdout}${_mutation_stderr}")
     endif()
 endforeach()
+
+set(_submitted_runtime_mutation
+    "${GUARD_TEST_ROOT}/runtime-submitted-count.cpp")
+file(READ "${_runtime_source}" _submitted_runtime_source)
+string(REPLACE
+    "submitted_actions.combat[0] ? 1U : 0U"
+    "submitted_actions.combat[1] ? 1U : 0U"
+    _submitted_runtime_source "${_submitted_runtime_source}")
+string(APPEND _submitted_runtime_source
+    "\n// decoy submitted_actions.combat[0] ? 1U : 0U\n")
+file(WRITE "${_submitted_runtime_mutation}" "${_submitted_runtime_source}")
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+        "-DRUNTIME_OVERRIDE=${_submitted_runtime_mutation}" -P "${_guard}"
+    RESULT_VARIABLE _submitted_runtime_result
+    OUTPUT_VARIABLE _submitted_runtime_stdout
+    ERROR_VARIABLE _submitted_runtime_stderr)
+if(_submitted_runtime_result EQUAL 0)
+    message(FATAL_ERROR
+        "evidence guard self-test accepted submitted-action runtime mutation")
+endif()
+if(NOT "${_submitted_runtime_stdout}${_submitted_runtime_stderr}" MATCHES
+        "Stage11B evidence guard requires accepted queue_action evidence")
+    message(FATAL_ERROR
+        "submitted-action runtime mutation failed for wrong reason: ${_submitted_runtime_stdout}${_submitted_runtime_stderr}")
+endif()
+
+set(_submitted_host_mutation
+    "${GUARD_TEST_ROOT}/host-submitted-observer.cpp")
+file(READ "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp"
+    _submitted_host_source)
+string(REPLACE
+    "validation_runtime->observe_submitted_actions(submitted_actions);"
+    "validation_runtime->observe_submitted_actions_removed(submitted_actions);"
+    _submitted_host_source "${_submitted_host_source}")
+string(APPEND _submitted_host_source
+    "\n// decoy validation_runtime->observe_submitted_actions(submitted_actions);\n")
+file(WRITE "${_submitted_host_mutation}" "${_submitted_host_source}")
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+        "-DHOST_OVERRIDE=${_submitted_host_mutation}" -P "${_guard}"
+    RESULT_VARIABLE _submitted_host_result
+    OUTPUT_VARIABLE _submitted_host_stdout
+    ERROR_VARIABLE _submitted_host_stderr)
+if(_submitted_host_result EQUAL 0)
+    message(FATAL_ERROR
+        "evidence guard self-test accepted removed submitted-action facade call")
+endif()
+if(NOT "${_submitted_host_stdout}${_submitted_host_stderr}" MATCHES
+        "Stage11B evidence guard requires accepted queue_action evidence")
+    message(FATAL_ERROR
+        "submitted-action Host mutation failed for wrong reason: ${_submitted_host_stdout}${_submitted_host_stderr}")
+endif()
 
 set(_decoy_policy_host "${GUARD_TEST_ROOT}/host-decoy-loot-policy.cpp")
 file(READ "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp"

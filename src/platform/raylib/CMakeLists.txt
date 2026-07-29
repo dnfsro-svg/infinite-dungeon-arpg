@@ -27,6 +27,7 @@ add_library(arpg_raylib STATIC
     host_launch_options.cpp
     host_validation_input.cpp
     host_validation_navigation.cpp
+    host_validation_runtime.cpp
     host_validation_stage10_11.cpp
     host_validation_stage11b.cpp
     host_validation_stage11c.cpp

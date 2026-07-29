@@ -1633,6 +1633,15 @@ set_tests_properties(
     PROPERTIES LABELS "headless;platform;architecture")
 
 add_test(
+    NAME platform.host_validation_source
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/host_validation_source_test.cmake")
+set_tests_properties(
+    platform.host_validation_source
+    PROPERTIES LABELS "headless;platform;architecture")
+
+add_test(
     NAME platform.host_validation_sequence
     COMMAND "${CMAKE_COMMAND}"
         "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
