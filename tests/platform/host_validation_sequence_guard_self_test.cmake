@@ -7,6 +7,45 @@ include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
 set(_guard "${SOURCE_ROOT}/tests/platform/host_validation_sequence_guard_test.cmake")
 file(MAKE_DIRECTORY "${GUARD_TEST_ROOT}")
 
+if(DEFINED TASK9_REVIEW_MUTATION
+        AND TASK9_REVIEW_MUTATION STREQUAL moved_renderer_allocation_earlier)
+    file(READ "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp"
+        _task9_review_host)
+    set(_task9_review_original "${_task9_review_host}")
+    set(_task9_allocation_anchor [=[        core::FixedStepRunner fixed_step;
+        renderer_storage = std::make_unique<CombatRenderer>();
+        CombatRenderer& renderer = *renderer_storage;]=])
+    set(_task9_allocation_moved [=[        renderer_storage = std::make_unique<CombatRenderer>();
+        core::FixedStepRunner fixed_step;
+        CombatRenderer& renderer = *renderer_storage;]=])
+    string(REPLACE "${_task9_allocation_anchor}"
+        "${_task9_allocation_moved}" _task9_review_host
+        "${_task9_review_host}")
+    if(_task9_review_host STREQUAL _task9_review_original)
+        message(FATAL_ERROR
+            "Task 9 renderer allocation review mutation anchor is missing")
+    endif()
+    set(_task9_review_path
+        "${GUARD_TEST_ROOT}/task9-moved-renderer-allocation-earlier.cpp")
+    file(WRITE "${_task9_review_path}" "${_task9_review_host}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+            "-DHOST_OVERRIDE=${_task9_review_path}" -P "${_guard}"
+        RESULT_VARIABLE _task9_review_result
+        OUTPUT_VARIABLE _task9_review_stdout
+        ERROR_VARIABLE _task9_review_stderr)
+    if(_task9_review_result EQUAL 0)
+        message(FATAL_ERROR
+            "Host validation sequence guard accepted Task 9 moved renderer allocation")
+    endif()
+    if(NOT "${_task9_review_stdout}${_task9_review_stderr}" MATCHES
+            "Task 9 Host renderer owner/allocation/catch cleanup boundary is invalid")
+        message(FATAL_ERROR
+            "Task 9 moved renderer allocation failed for wrong reason: ${_task9_review_stdout}${_task9_review_stderr}")
+    endif()
+    return()
+endif()
+
 set(_sequence_cmake_mutation "${GUARD_TEST_ROOT}/sequence-cmake-comment-decoy.cmake")
 file(READ "${SOURCE_ROOT}/src/platform/raylib/CMakeLists.txt" _sequence_cmake_text)
 string(REPLACE "    host_validation_stage11c.cpp"
@@ -538,6 +577,13 @@ function(arpg_expect_task9_host_cleanup_rejection NAME MUTATION)
     try {
         std::unique_ptr<CombatRenderer> renderer_storage;
 ]=])
+    elseif(MUTATION STREQUAL moved_renderer_allocation_earlier)
+        set(_anchor [=[        core::FixedStepRunner fixed_step;
+        renderer_storage = std::make_unique<CombatRenderer>();
+        CombatRenderer& renderer = *renderer_storage;]=])
+        set(_replacement [=[        renderer_storage = std::make_unique<CombatRenderer>();
+        core::FixedStepRunner fixed_step;
+        CombatRenderer& renderer = *renderer_storage;]=])
     else()
         message(FATAL_ERROR "Unknown Task 9 Host cleanup mutation: ${MUTATION}")
     endif()
@@ -569,6 +615,8 @@ arpg_expect_task9_host_cleanup_rejection(
 arpg_expect_task9_host_cleanup_rejection(
     missing_unknown_cleanup missing_unknown_cleanup)
 arpg_expect_task9_host_cleanup_rejection(owner_inside_try owner_inside_try)
+arpg_expect_task9_host_cleanup_rejection(
+    moved_renderer_allocation_earlier moved_renderer_allocation_earlier)
 
 string(REPLACE
     "validation_runtime->write_summaries(\n            runtime.clean_shutdown_state(), pause_menu);"

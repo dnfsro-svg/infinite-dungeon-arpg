@@ -99,10 +99,11 @@ function(host_validation_unconditional_cpp_surface SOURCE OUT_SURFACE)
 
         set(_mask_line FALSE)
         if(_line MATCHES
-                "^[ \t]*#[ \t]*(if|ifdef|ifndef)([ \t\r\n(]|$)")
+                "^[ \t]*(#|%:)[ \t]*(if|ifdef|ifndef)([ \t\r\n(]|$)")
             math(EXPR _conditional_depth "${_conditional_depth} + 1")
             set(_mask_line TRUE)
-        elseif(_line MATCHES "^[ \t]*#[ \t]*endif([ \t\r\n]|$)")
+        elseif(_line MATCHES
+                "^[ \t]*(#|%:)[ \t]*endif([ \t\r\n]|$)")
             if(_conditional_depth EQUAL 0)
                 message(FATAL_ERROR
                     "Host validation inactive preprocessor surface is unbalanced")
@@ -2266,6 +2267,125 @@ if(NOT DEFINED TASK8C_REVIEW_MUTATION
     endif()
 endif()
 if(NOT DEFINED TASK8C_REVIEW_MUTATION
+        OR TASK8C_REVIEW_MUTATION STREQUAL backend_wrong_namespace_decoy)
+    set(_task8c_backend_mapping
+        "return {&set_config_flags_noexcept, &init_window_noexcept,
+        &is_window_ready_noexcept, &close_window_noexcept};")
+    string(REPLACE "${_task8c_backend_mapping}" "return {};"
+        _task8c_backend_wrong_namespace_decoy
+        "${_host_window_lifetime_source_active}")
+    string(PREPEND _task8c_backend_wrong_namespace_decoy
+        "namespace task8c_wrong_owner {\nHostWindowBackend raylib_host_window_backend() noexcept {\n    ${_task8c_backend_mapping}\n}\n}\n")
+    evidence_window_lifetime_boundary_is_valid(
+        "${_run_host_direct}" "${_task8c_backend_wrong_namespace_decoy}"
+        "${_task8c_backend_wrong_namespace_decoy}"
+        _task8c_backend_wrong_namespace_decoy_valid)
+    if(_task8c_backend_wrong_namespace_decoy_valid)
+        list(APPEND _task8c_review_mutation_acceptances
+            backend_wrong_namespace_decoy)
+    endif()
+endif()
+if(NOT DEFINED TASK8C_REVIEW_MUTATION
+        OR TASK8C_REVIEW_MUTATION STREQUAL wrapper_init_arguments_swapped)
+    string(REPLACE "InitWindow(width, height, title);"
+        "InitWindow(height, width, title);"
+        _task8c_wrapper_init_arguments_swapped
+        "${_host_window_lifetime_source_text}")
+    host_validation_unconditional_cpp_surface(
+        "${_task8c_wrapper_init_arguments_swapped}"
+        _task8c_wrapper_init_arguments_swapped_active
+        _task8c_wrapper_init_arguments_swapped_lexical)
+    evidence_window_lifetime_boundary_is_valid(
+        "${_run_host_direct}"
+        "${_task8c_wrapper_init_arguments_swapped_active}"
+        "${_task8c_wrapper_init_arguments_swapped_lexical}"
+        _task8c_wrapper_init_arguments_swapped_valid)
+    if(_task8c_wrapper_init_arguments_swapped_valid)
+        list(APPEND _task8c_review_mutation_acceptances
+            wrapper_init_arguments_swapped)
+    endif()
+endif()
+if(NOT DEFINED TASK8C_REVIEW_MUTATION
+        OR TASK8C_REVIEW_MUTATION STREQUAL wrapper_ready_false)
+    string(REPLACE "return IsWindowReady();"
+        "IsWindowReady();\n    return false;"
+        _task8c_wrapper_ready_false
+        "${_host_window_lifetime_source_text}")
+    host_validation_unconditional_cpp_surface(
+        "${_task8c_wrapper_ready_false}"
+        _task8c_wrapper_ready_false_active
+        _task8c_wrapper_ready_false_lexical)
+    evidence_window_lifetime_boundary_is_valid(
+        "${_run_host_direct}"
+        "${_task8c_wrapper_ready_false_active}"
+        "${_task8c_wrapper_ready_false_lexical}"
+        _task8c_wrapper_ready_false_valid)
+    if(_task8c_wrapper_ready_false_valid)
+        list(APPEND _task8c_review_mutation_acceptances wrapper_ready_false)
+    endif()
+endif()
+if(NOT DEFINED TASK8C_REVIEW_MUTATION
+        OR TASK8C_REVIEW_MUTATION STREQUAL subdir_owner_basename)
+    evidence_raylib_lifecycle_source_role(
+        "${SOURCE_ROOT}/src/platform/raylib/review-shadow/host_window_lifetime.cpp"
+        "${SOURCE_ROOT}"
+        _task8c_subdir_owner_role)
+    if(_task8c_subdir_owner_role STREQUAL owner)
+        list(APPEND _task8c_review_mutation_acceptances
+            subdir_owner_basename)
+    endif()
+endif()
+if(NOT DEFINED TASK8C_REVIEW_MUTATION
+        OR TASK8C_REVIEW_MUTATION STREQUAL nested_repo_suffix_owner)
+    evidence_raylib_lifecycle_source_role(
+        "${SOURCE_ROOT}/review-shadow/src/platform/raylib/host_window_lifetime.cpp"
+        "${SOURCE_ROOT}"
+        _task8c_nested_repo_suffix_role)
+    if(_task8c_nested_repo_suffix_role STREQUAL owner)
+        list(APPEND _task8c_review_mutation_acceptances
+            nested_repo_suffix_owner)
+    endif()
+endif()
+if(NOT DEFINED TASK8C_REVIEW_MUTATION
+        OR TASK8C_REVIEW_MUTATION STREQUAL external_cat_init)
+    set(_task8c_external_cat_init
+        "inline void task8c_external_cat_init() { CAT(Init, Window)(1, 1, nullptr); }")
+    evidence_window_lifecycle_owner_surface_is_valid(
+        "${_task8c_external_cat_init}" "${_task8c_external_cat_init}"
+        FALSE _task8c_external_cat_init_valid)
+    if(_task8c_external_cat_init_valid)
+        list(APPEND _task8c_review_mutation_acceptances external_cat_init)
+    endif()
+endif()
+if(NOT DEFINED TASK8C_REVIEW_MUTATION
+        OR TASK8C_REVIEW_MUTATION STREQUAL unrelated_token_paste)
+    set(_task8c_unrelated_token_paste
+        "#define TASK8C_UNRELATED_JOIN(a, b) a ## b\ninline int task8c_unrelated() { return TASK8C_UNRELATED_JOIN(alpha, beta); }")
+    evidence_window_lifecycle_owner_surface_is_valid(
+        "${_task8c_unrelated_token_paste}"
+        "${_task8c_unrelated_token_paste}" FALSE
+        _task8c_unrelated_token_paste_valid)
+    if(NOT _task8c_unrelated_token_paste_valid)
+        message(FATAL_ERROR
+            "Task 8C shared window guard rejected harmless unrelated token paste")
+    endif()
+endif()
+if(NOT DEFINED TASK8C_REVIEW_MUTATION
+        OR TASK8C_REVIEW_MUTATION STREQUAL digraph_inactive_surface)
+    set(_task8c_digraph_inactive_source
+        "%:if 0\ninline void task8c_inactive() { InitWindow(1, 1, nullptr); }\n%:endif\n")
+    host_validation_unconditional_cpp_surface(
+        "${_task8c_digraph_inactive_source}"
+        _task8c_digraph_inactive_active)
+    evidence_count_cpp_identifier(
+        "${_task8c_digraph_inactive_active}" InitWindow
+        _task8c_digraph_inactive_count)
+    if(NOT _task8c_digraph_inactive_count EQUAL 0)
+        list(APPEND _task8c_review_mutation_acceptances
+            digraph_inactive_surface)
+    endif()
+endif()
+if(NOT DEFINED TASK8C_REVIEW_MUTATION
         OR TASK8C_REVIEW_MUTATION STREQUAL direct_header_ready)
     set(_task8c_direct_header_ready
         "inline bool task8c_header_ready() { return IsWindowReady(); }")
@@ -2493,6 +2613,11 @@ host_validation_require_canonical_count("Task 9 renderer outer owner"
 host_validation_require_canonical_count("Task 9 renderer allocation"
     "${_run_host_direct}"
     "renderer_storage = std::make_unique<CombatRenderer>();" 1)
+host_validation_require_canonical_count("Task 9 renderer allocation anchor"
+    "${_run_host_direct}"
+    "core::FixedStepRunner fixed_step;
+    renderer_storage = std::make_unique<CombatRenderer>();
+    CombatRenderer& renderer = *renderer_storage;" 1)
 host_validation_require_canonical_count("Task 9 catch renderer cleanup"
     "${_run_host_direct}"
     "if (renderer_storage != nullptr) {
@@ -2523,7 +2648,8 @@ foreach(_task8c_production_source IN LISTS _task8c_raylib_production_sources)
     host_validation_unconditional_cpp_surface("${_task8c_production_text}"
         _task8c_production_active _task8c_production_lexical)
     evidence_raylib_lifecycle_source_role(
-        "${_task8c_production_source}" _task8c_lifecycle_source_role)
+        "${_task8c_production_source}" "${SOURCE_ROOT}"
+        _task8c_lifecycle_source_role)
     evidence_window_lifecycle_source_surface_is_valid(
         "${_task8c_production_active}" "${_task8c_production_lexical}"
         "${_task8c_lifecycle_source_role}" _task8c_owner_valid)

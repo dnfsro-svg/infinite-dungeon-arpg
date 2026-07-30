@@ -202,6 +202,50 @@ endfunction()
 file(READ "${_production_hud_root}/host_validation_stage11c.cpp"
     _stage11c_review_source)
 if(NOT DEFINED STAGE11C_REVIEW_MUTATION
+        OR STAGE11C_REVIEW_MUTATION STREQUAL wrong_namespace_decoy)
+    set(_stage11c_inject_signature [=[PhysicalKeySnapshot inject_stage11c_physical_edges(
+    PhysicalKeySnapshot snapshot, const RaylibHostConfig& config,
+    const settings::SettingsData& settings_data,
+    const dungeon::DungeonSnapshot& current,
+    Stage11CHudValidationState& state) noexcept {]=])
+    string(REPLACE "${_stage11c_inject_signature}"
+        "PhysicalKeySnapshot inject_stage11c_physical_edges_real(
+    PhysicalKeySnapshot snapshot, const RaylibHostConfig& config,
+    const settings::SettingsData& settings_data,
+    const dungeon::DungeonSnapshot& current,
+    Stage11CHudValidationState& state) noexcept {"
+        _stage11c_wrong_namespace_decoy "${_stage11c_review_source}")
+    string(PREPEND _stage11c_wrong_namespace_decoy
+        "namespace task11c_wrong_owner {\n${_stage11c_inject_signature}\n    return snapshot;\n}\n}\n")
+    arpg_expect_hud_guard_rejects_source(
+        stage_source_wrong_namespace_decoy host_validation_stage11c.cpp
+        "${_stage11c_wrong_namespace_decoy}"
+        "Stage11C HUD definition is missing from Stage source")
+endif()
+if(NOT DEFINED STAGE11C_REVIEW_MUTATION
+        OR STAGE11C_REVIEW_MUTATION STREQUAL digraph_inactive_definition)
+    string(REPLACE
+        "PhysicalKeySnapshot inject_stage11c_physical_edges("
+        "%:if 0\nPhysicalKeySnapshot inject_stage11c_physical_edges("
+        _stage11c_digraph_inactive_definition "${_stage11c_review_source}")
+    string(APPEND _stage11c_digraph_inactive_definition "\n%:endif\n")
+    arpg_expect_hud_guard_rejects_source(
+        stage_source_digraph_inactive_definition
+        host_validation_stage11c.cpp
+        "${_stage11c_digraph_inactive_definition}"
+        "Stage11C HUD definition is missing from Stage source")
+endif()
+if(NOT DEFINED STAGE11C_REVIEW_MUTATION
+        OR STAGE11C_REVIEW_MUTATION STREQUAL reformatted_signature)
+    string(REPLACE
+        "PhysicalKeySnapshot inject_stage11c_physical_edges(\n    PhysicalKeySnapshot snapshot, const RaylibHostConfig& config,"
+        "PhysicalKeySnapshot\ninject_stage11c_physical_edges ( PhysicalKeySnapshot snapshot,\n    const RaylibHostConfig& config,"
+        _stage11c_reformatted_signature "${_stage11c_review_source}")
+    arpg_expect_hud_guard_accepts_source(
+        stage_source_reformatted_signature host_validation_stage11c.cpp
+        "${_stage11c_reformatted_signature}")
+endif()
+if(NOT DEFINED STAGE11C_REVIEW_MUTATION
         OR STAGE11C_REVIEW_MUTATION STREQUAL inactive_definition)
     string(REPLACE
         "PhysicalKeySnapshot inject_stage11c_physical_edges("
@@ -386,4 +430,4 @@ arpg_expect_hud_guard_accepts_source(inactive_runtime_facade_decoy
     host_validation_runtime.cpp "${_inactive_runtime_decoy}")
 
 message(STATUS
-    "Stage 11C HUD architecture guard rejected 18 mutations and accepted 3 harmless variants")
+    "Stage 11C HUD architecture guard rejected 20 mutations and accepted 4 harmless variants")

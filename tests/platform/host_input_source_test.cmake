@@ -225,8 +225,8 @@ function(mask_cpp_inactive_preprocessor_regions SOURCE OUT_SOURCE)
         set(CONDITIONAL_DIRECTIVE FALSE)
         set(DIRECTIVE_COMMAND "")
         if("${SOURCE_LINE}" MATCHES
-                "^[ \\t]*#[ \\t]*([A-Za-z_][A-Za-z0-9_]*)(.*)$")
-            set(DIRECTIVE_COMMAND "${CMAKE_MATCH_1}")
+                "^[ \\t]*(#|%:)[ \\t]*([A-Za-z_][A-Za-z0-9_]*)(.*)$")
+            set(DIRECTIVE_COMMAND "${CMAKE_MATCH_2}")
         endif()
         if(DIRECTIVE_COMMAND STREQUAL "if"
                 OR DIRECTIVE_COMMAND STREQUAL "ifdef"
@@ -616,6 +616,8 @@ endif()
 file(GLOB_RECURSE RAYLIB_PRODUCTION_SOURCES LIST_DIRECTORIES FALSE
     "${RAYLIB_SOURCE_DIR}/*.cpp"
     "${RAYLIB_SOURCE_DIR}/*.hpp")
+get_filename_component(RAYLIB_REPO_ROOT
+    "${RAYLIB_SOURCE_DIR}/../../.." ABSOLUTE)
 foreach(RAYLIB_PRODUCTION_SOURCE IN LISTS RAYLIB_PRODUCTION_SOURCES)
     file(READ "${RAYLIB_PRODUCTION_SOURCE}" RAYLIB_PRODUCTION_TEXT)
     arpg_sanitize_cpp_source("${RAYLIB_PRODUCTION_TEXT}"
@@ -623,7 +625,8 @@ foreach(RAYLIB_PRODUCTION_SOURCE IN LISTS RAYLIB_PRODUCTION_SOURCES)
     mask_cpp_inactive_preprocessor_regions(
         "${RAYLIB_PRODUCTION_LEXICAL}" RAYLIB_PRODUCTION_ACTIVE)
     evidence_raylib_lifecycle_source_role(
-        "${RAYLIB_PRODUCTION_SOURCE}" RAYLIB_LIFECYCLE_SOURCE_ROLE)
+        "${RAYLIB_PRODUCTION_SOURCE}" "${RAYLIB_REPO_ROOT}"
+        RAYLIB_LIFECYCLE_SOURCE_ROLE)
     evidence_window_lifecycle_source_surface_is_valid(
         "${RAYLIB_PRODUCTION_ACTIVE}" "${RAYLIB_PRODUCTION_LEXICAL}"
         "${RAYLIB_LIFECYCLE_SOURCE_ROLE}" WINDOW_LIFETIME_OWNER_VALID)
@@ -997,11 +1000,14 @@ function(require_inactive_preprocessor_mutations_rejected
         SANITIZED_SOURCE SIGNATURE FRAGMENT MUTATION_PREFIX)
     set(ACCEPTED_MUTATIONS)
     foreach(MUTATION_KIND IN ITEMS
-            ordinary nested unknown-first-elif-zero
+            ordinary digraph nested unknown-first-elif-zero
             unknown-first-elif-one-else hex-zero)
         if(MUTATION_KIND STREQUAL "ordinary")
             set(MUTATION_REPLACEMENT
                 "#if(0)\n${FRAGMENT}\n#endif")
+        elseif(MUTATION_KIND STREQUAL "digraph")
+            set(MUTATION_REPLACEMENT
+                "%:if(0)\n${FRAGMENT}\n%:endif")
         elseif(MUTATION_KIND STREQUAL "nested")
             set(MUTATION_REPLACEMENT
                 "#if 0\n#if 0\n#else\n${FRAGMENT}\n#endif\n#elif false\n${FRAGMENT}\n#else\n#endif")

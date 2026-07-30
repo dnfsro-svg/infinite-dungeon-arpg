@@ -656,12 +656,165 @@ function(evidence_count_cpp_identifier source identifier output)
     set(${output} ${identifier_count} PARENT_SCOPE)
 endfunction()
 
-function(evidence_window_lifecycle_source_surface_is_valid
-        active_surface lexical_surface source_role output)
-    if(lexical_surface MATCHES "(#[ \t\r\n]*#|%:[ \t\r\n]*%:)")
-        set(${output} FALSE PARENT_SCOPE)
+function(evidence_cpp_normalize_token_whitespace source output)
+    string(REGEX REPLACE "[ \t\r\n]+" " " normalized "${source}")
+    foreach(punctuation IN ITEMS
+            "(" ")" "{" "}" "[" "]" "," ":" "&" "*" "<" ">" "=" "!")
+        string(REPLACE " ${punctuation}" "${punctuation}"
+            normalized "${normalized}")
+        string(REPLACE "${punctuation} " "${punctuation}"
+            normalized "${normalized}")
+    endforeach()
+    string(STRIP "${normalized}" normalized)
+    set(${output} "${normalized}" PARENT_SCOPE)
+endfunction()
+
+function(evidence_cpp_prefix_has_exact_namespace_scope_in_sanitized
+        source prefix_end expected_namespace output_valid)
+    set(${output_valid} FALSE PARENT_SCOPE)
+    if(prefix_end LESS_EQUAL 0)
         return()
     endif()
+    string(SUBSTRING "${source}" 0 ${prefix_end} prefix_source)
+    string(LENGTH "${prefix_source}" prefix_length)
+    if(prefix_length EQUAL 0)
+        return()
+    endif()
+    math(EXPR prefix_last "${prefix_length} - 1")
+    set(scope_names)
+    foreach(character_index RANGE 0 ${prefix_last})
+        string(SUBSTRING "${prefix_source}" ${character_index} 1 character)
+        if(character STREQUAL "{")
+            string(SUBSTRING "${prefix_source}" 0 ${character_index}
+                before_open)
+            if(before_open MATCHES
+                    "(^|[^A-Za-z0-9_])namespace[ \t\r\n]+([A-Za-z_][A-Za-z0-9_]*(::[A-Za-z_][A-Za-z0-9_]*)*)[ \t\r\n]*$")
+                list(APPEND scope_names "${CMAKE_MATCH_2}")
+            elseif(before_open MATCHES
+                    "(^|[^A-Za-z0-9_])namespace[ \t\r\n]*$")
+                list(APPEND scope_names "<anonymous>")
+            else()
+                list(APPEND scope_names "<non-namespace>")
+            endif()
+        elseif(character STREQUAL "}")
+            list(LENGTH scope_names scope_depth)
+            if(scope_depth EQUAL 0)
+                return()
+            endif()
+            list(POP_BACK scope_names)
+        endif()
+    endforeach()
+    list(LENGTH scope_names scope_depth)
+    if(NOT scope_depth EQUAL 1)
+        return()
+    endif()
+    list(GET scope_names 0 actual_namespace)
+    if(NOT actual_namespace STREQUAL expected_namespace)
+        return()
+    endif()
+    set(${output_valid} TRUE PARENT_SCOPE)
+endfunction()
+
+function(evidence_try_find_unique_cpp_function_in_namespace_in_sanitized
+        source signature expected_namespace output_begin output_open
+        output_end output_valid)
+    set(${output_begin} -1 PARENT_SCOPE)
+    set(${output_open} -1 PARENT_SCOPE)
+    set(${output_end} -1 PARENT_SCOPE)
+    set(${output_valid} FALSE PARENT_SCOPE)
+    string(LENGTH "${source}" source_length)
+    set(scan 0)
+    set(matching_definition_count 0)
+    while(scan LESS source_length)
+        string(SUBSTRING "${source}" ${scan} -1 tail)
+        string(FIND "${tail}" "${signature}" relative_begin)
+        if(relative_begin EQUAL -1)
+            break()
+        endif()
+        math(EXPR candidate_begin "${scan} + ${relative_begin}")
+        string(SUBSTRING "${source}" ${candidate_begin} -1 candidate_tail)
+        evidence_try_find_cpp_function_bounds_in_sanitized(
+            "${candidate_tail}" "${signature}"
+            relative_function_begin relative_open relative_end
+            candidate_valid)
+        if(candidate_valid)
+            math(EXPR candidate_open "${candidate_begin} + ${relative_open}")
+            math(EXPR candidate_end "${candidate_begin} + ${relative_end}")
+            evidence_cpp_prefix_has_exact_namespace_scope_in_sanitized(
+                "${source}" ${candidate_begin} "${expected_namespace}"
+                namespace_valid)
+            if(namespace_valid)
+                math(EXPR matching_definition_count
+                    "${matching_definition_count} + 1")
+                set(matching_begin ${candidate_begin})
+                set(matching_open ${candidate_open})
+                set(matching_end ${candidate_end})
+            endif()
+        endif()
+        math(EXPR scan "${candidate_begin} + 1")
+    endwhile()
+    if(NOT matching_definition_count EQUAL 1)
+        return()
+    endif()
+    set(${output_begin} ${matching_begin} PARENT_SCOPE)
+    set(${output_open} ${matching_open} PARENT_SCOPE)
+    set(${output_end} ${matching_end} PARENT_SCOPE)
+    set(${output_valid} TRUE PARENT_SCOPE)
+endfunction()
+
+function(evidence_cpp_surface_may_form_window_lifecycle_identifier
+        source output)
+    string(REGEX REPLACE "[ \t\r\n]+" "" compact "${source}")
+    set(paste_expanded "${compact}")
+    string(REPLACE "##" "" paste_expanded "${paste_expanded}")
+    string(REPLACE "%:%:" "" paste_expanded "${paste_expanded}")
+    foreach(identifier IN ITEMS
+            SetConfigFlags InitWindow IsWindowReady CloseWindow)
+        string(LENGTH "${compact}" compact_length)
+        string(REPLACE "${identifier}" "" compact_without
+            "${compact}")
+        string(LENGTH "${compact_without}" compact_without_length)
+        string(LENGTH "${paste_expanded}" expanded_length)
+        string(REPLACE "${identifier}" "" expanded_without
+            "${paste_expanded}")
+        string(LENGTH "${expanded_without}" expanded_without_length)
+        string(LENGTH "${identifier}" identifier_length)
+        math(EXPR compact_count
+            "(${compact_length} - ${compact_without_length}) / ${identifier_length}")
+        math(EXPR expanded_count
+            "(${expanded_length} - ${expanded_without_length}) / ${identifier_length}")
+        if(expanded_count GREATER compact_count)
+            set(${output} TRUE PARENT_SCOPE)
+            return()
+        endif()
+    endforeach()
+    string(REGEX MATCHALL
+        "\\([A-Za-z_][A-Za-z0-9_]*(,[A-Za-z_][A-Za-z0-9_]*)+\\)"
+        identifier_argument_lists "${compact}")
+    foreach(identifier_argument_list IN LISTS identifier_argument_lists)
+        string(REGEX REPLACE "[(),]" "" concatenated_identifier
+            "${identifier_argument_list}")
+        if(concatenated_identifier STREQUAL SetConfigFlags
+                OR concatenated_identifier STREQUAL InitWindow
+                OR concatenated_identifier STREQUAL IsWindowReady
+                OR concatenated_identifier STREQUAL CloseWindow)
+            set(${output} TRUE PARENT_SCOPE)
+            return()
+        endif()
+    endforeach()
+    set(${output} FALSE PARENT_SCOPE)
+endfunction()
+
+function(evidence_window_lifecycle_source_surface_is_valid
+        active_surface lexical_surface source_role output)
+    foreach(surface IN ITEMS "${active_surface}" "${lexical_surface}")
+        evidence_cpp_surface_may_form_window_lifecycle_identifier(
+            "${surface}" lifecycle_identifier_may_be_formed)
+        if(lifecycle_identifier_may_be_formed)
+            set(${output} FALSE PARENT_SCOPE)
+            return()
+        endif()
+    endforeach()
     set(expected_SetConfigFlags 0)
     set(expected_InitWindow 0)
     set(expected_IsWindowReady 0)
@@ -705,19 +858,33 @@ function(evidence_window_lifecycle_owner_surface_is_valid
     set(${output} ${source_surface_valid} PARENT_SCOPE)
 endfunction()
 
-function(evidence_raylib_lifecycle_source_role source_path output)
-    get_filename_component(source_name "${source_path}" NAME)
-    if(source_name STREQUAL "host_window_lifetime.cpp")
+function(evidence_raylib_lifecycle_source_role
+        source_path repo_root output)
+    file(TO_CMAKE_PATH "${repo_root}" normalized_root)
+    cmake_path(ABSOLUTE_PATH normalized_root NORMALIZE)
+    file(TO_CMAKE_PATH "${source_path}" normalized_path)
+    cmake_path(ABSOLUTE_PATH normalized_path
+        BASE_DIRECTORY "${normalized_root}" NORMALIZE)
+    file(RELATIVE_PATH repo_relative_path
+        "${normalized_root}" "${normalized_path}")
+    file(TO_CMAKE_PATH "${repo_relative_path}" repo_relative_path)
+    if(repo_relative_path STREQUAL
+            "src/platform/raylib/host_window_lifetime.cpp")
         set(source_role owner)
-    elseif(source_name STREQUAL "combat_renderer.cpp")
+    elseif(repo_relative_path STREQUAL
+            "src/platform/raylib/combat_renderer.cpp")
         set(source_role ready-1)
-    elseif(source_name STREQUAL "death_overlay_renderer.cpp")
+    elseif(repo_relative_path STREQUAL
+            "src/platform/raylib/death_overlay_renderer.cpp")
         set(source_role ready-2)
-    elseif(source_name STREQUAL "hud_renderer.cpp")
+    elseif(repo_relative_path STREQUAL
+            "src/platform/raylib/hud_renderer.cpp")
         set(source_role ready-4)
-    elseif(source_name STREQUAL "pause_menu_renderer.cpp")
+    elseif(repo_relative_path STREQUAL
+            "src/platform/raylib/pause_menu_renderer.cpp")
         set(source_role ready-1)
-    elseif(source_name STREQUAL "window_settings.cpp")
+    elseif(repo_relative_path STREQUAL
+            "src/platform/raylib/window_settings.cpp")
         set(source_role ready-2)
     else()
         set(source_role none)
@@ -727,22 +894,19 @@ endfunction()
 
 function(evidence_window_lifetime_boundary_is_valid
         host_direct owner_active owner_lexical output)
-    evidence_try_find_cpp_function_bounds_in_sanitized(
-        "${owner_active}" "bool HostWindowLifetime::initialize("
+    evidence_cpp_normalize_token_whitespace(
+        "${owner_active}" owner_token_surface)
+    evidence_try_find_unique_cpp_function_in_namespace_in_sanitized(
+        "${owner_token_surface}" "bool HostWindowLifetime::initialize("
+        "arpg::platform"
         initialize_begin initialize_open initialize_end initialize_valid)
     if(NOT initialize_valid)
         set(${output} FALSE PARENT_SCOPE)
         return()
     endif()
-    evidence_cpp_prefix_has_only_namespace_scopes_in_sanitized(
-        "${owner_active}" ${initialize_begin} initialize_scope_valid)
-    if(NOT initialize_scope_valid)
-        set(${output} FALSE PARENT_SCOPE)
-        return()
-    endif()
     math(EXPR initialize_length
         "${initialize_end} - ${initialize_begin} + 1")
-    string(SUBSTRING "${owner_active}" ${initialize_begin}
+    string(SUBSTRING "${owner_token_surface}" ${initialize_begin}
         ${initialize_length} initialize_function)
     evidence_cpp_contains_local_type_keyword_in_sanitized(
         "${initialize_function}" initialize_has_local_type)
@@ -753,21 +917,16 @@ function(evidence_window_lifetime_boundary_is_valid
     evidence_cpp_direct_execution_surface_in_sanitized(
         "${initialize_function}" initialize_direct)
 
-    evidence_try_find_cpp_function_bounds_in_sanitized(
-        "${owner_active}" "HostWindowBackend raylib_host_window_backend("
+    evidence_try_find_unique_cpp_function_in_namespace_in_sanitized(
+        "${owner_token_surface}" "HostWindowBackend raylib_host_window_backend("
+        "arpg::platform"
         backend_begin backend_open backend_end backend_valid)
     if(NOT backend_valid)
         set(${output} FALSE PARENT_SCOPE)
         return()
     endif()
-    evidence_cpp_prefix_has_only_namespace_scopes_in_sanitized(
-        "${owner_active}" ${backend_begin} backend_scope_valid)
-    if(NOT backend_scope_valid)
-        set(${output} FALSE PARENT_SCOPE)
-        return()
-    endif()
     math(EXPR backend_length "${backend_end} - ${backend_begin} + 1")
-    string(SUBSTRING "${owner_active}" ${backend_begin} ${backend_length}
+    string(SUBSTRING "${owner_token_surface}" ${backend_begin} ${backend_length}
         backend_function)
     evidence_cpp_direct_execution_surface_in_sanitized(
         "${backend_function}" backend_direct)
@@ -812,6 +971,42 @@ function(evidence_window_lifetime_boundary_is_valid
         set(${output} FALSE PARENT_SCOPE)
         return()
     endif()
+    set(wrapper_signature_set_config
+        "void set_config_flags_noexcept(")
+    set(wrapper_signature_init
+        "void init_window_noexcept(")
+    set(wrapper_signature_ready
+        "bool is_window_ready_noexcept(")
+    set(wrapper_signature_close
+        "void close_window_noexcept(")
+    set(wrapper_expected_set_config
+        "voidset_config_flags_noexcept(unsignedintflags)noexcept{SetConfigFlags(flags);}")
+    set(wrapper_expected_init
+        "voidinit_window_noexcept(intwidth,intheight,constchar*title)noexcept{InitWindow(width,height,title);}")
+    set(wrapper_expected_ready
+        "boolis_window_ready_noexcept()noexcept{returnIsWindowReady();}")
+    set(wrapper_expected_close
+        "voidclose_window_noexcept()noexcept{CloseWindow();}")
+    foreach(wrapper_id IN ITEMS set_config init ready close)
+        set(signature_variable "wrapper_signature_${wrapper_id}")
+        set(expected_variable "wrapper_expected_${wrapper_id}")
+        evidence_try_find_unique_cpp_function_in_namespace_in_sanitized(
+            "${owner_token_surface}" "${${signature_variable}}" "<anonymous>"
+            wrapper_begin wrapper_open wrapper_end wrapper_valid)
+        if(NOT wrapper_valid)
+            set(${output} FALSE PARENT_SCOPE)
+            return()
+        endif()
+        math(EXPR wrapper_length "${wrapper_end} - ${wrapper_begin} + 1")
+        string(SUBSTRING "${owner_token_surface}" ${wrapper_begin}
+            ${wrapper_length} wrapper_function)
+        string(REGEX REPLACE "[ \t\r\n]+" "" wrapper_compact
+            "${wrapper_function}")
+        if(NOT wrapper_compact STREQUAL "${${expected_variable}}")
+            set(${output} FALSE PARENT_SCOPE)
+            return()
+        endif()
+    endforeach()
     evidence_window_lifecycle_owner_surface_is_valid(
         "${owner_active}" "${owner_lexical}" TRUE owner_surface_valid)
     if(NOT owner_surface_valid)

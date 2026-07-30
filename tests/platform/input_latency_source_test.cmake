@@ -64,9 +64,11 @@ function(stage17_unconditional_cpp_surface SOURCE OUT_SURFACE)
             math(EXPR LINE_LENGTH "${NEWLINE} + 1")
             string(SUBSTRING "${TAIL}" 0 ${LINE_LENGTH} LINE)
         endif()
-        if(LINE MATCHES "^[ \t]*#[ \t]*(if|ifdef|ifndef)([ \t\r\n(]|$)")
+        if(LINE MATCHES
+                "^[ \t]*(#|%:)[ \t]*(if|ifdef|ifndef)([ \t\r\n(]|$)")
             math(EXPR CONDITIONAL_DEPTH "${CONDITIONAL_DEPTH} + 1")
-        elseif(LINE MATCHES "^[ \t]*#[ \t]*endif([ \t\r\n]|$)")
+        elseif(LINE MATCHES
+                "^[ \t]*(#|%:)[ \t]*endif([ \t\r\n]|$)")
             math(EXPR CONDITIONAL_DEPTH "${CONDITIONAL_DEPTH} - 1")
             if(CONDITIONAL_DEPTH LESS 0)
                 message(FATAL_ERROR "Stage17 injector conditional is unbalanced")
@@ -84,6 +86,18 @@ function(stage17_unconditional_cpp_surface SOURCE OUT_SURFACE)
     endif()
     set("${OUT_SURFACE}" "${SURFACE}" PARENT_SCOPE)
 endfunction()
+
+set(STAGE17_DIGRAPH_INACTIVE_FIXTURE
+    "%:if 0\nInitWindow(1, 1, nullptr);\n%:endif\n")
+stage17_unconditional_cpp_surface(
+    "${STAGE17_DIGRAPH_INACTIVE_FIXTURE}" STAGE17_DIGRAPH_ACTIVE_FIXTURE)
+evidence_count_cpp_identifier(
+    "${STAGE17_DIGRAPH_ACTIVE_FIXTURE}" InitWindow
+    STAGE17_DIGRAPH_INIT_WINDOW_COUNT)
+if(NOT STAGE17_DIGRAPH_INIT_WINDOW_COUNT EQUAL 0)
+    message(FATAL_ERROR
+        "Stage17 unconditional surface exposed digraph-inactive window lifecycle code")
+endif()
 
 arpg_sanitize_cpp_source("${HOST_SOURCE}" HOST_SANITIZED_SOURCE)
 arpg_sanitize_cpp_source("${HOST_WINDOW_LIFETIME_SOURCE}"
@@ -1532,6 +1546,8 @@ endif()
 file(GLOB_RECURSE RAYLIB_PRODUCTION_SOURCES LIST_DIRECTORIES FALSE
     "${RAYLIB_SOURCE_DIR}/*.cpp"
     "${RAYLIB_SOURCE_DIR}/*.hpp")
+get_filename_component(RAYLIB_REPO_ROOT
+    "${RAYLIB_SOURCE_DIR}/../../.." ABSOLUTE)
 foreach(RAYLIB_PRODUCTION_SOURCE IN LISTS RAYLIB_PRODUCTION_SOURCES)
     file(READ "${RAYLIB_PRODUCTION_SOURCE}" RAYLIB_PRODUCTION_TEXT)
     arpg_sanitize_cpp_source("${RAYLIB_PRODUCTION_TEXT}"
@@ -1539,7 +1555,8 @@ foreach(RAYLIB_PRODUCTION_SOURCE IN LISTS RAYLIB_PRODUCTION_SOURCES)
     stage17_unconditional_cpp_surface("${RAYLIB_PRODUCTION_TEXT}"
         RAYLIB_PRODUCTION_ACTIVE)
     evidence_raylib_lifecycle_source_role(
-        "${RAYLIB_PRODUCTION_SOURCE}" RAYLIB_LIFECYCLE_SOURCE_ROLE)
+        "${RAYLIB_PRODUCTION_SOURCE}" "${RAYLIB_REPO_ROOT}"
+        RAYLIB_LIFECYCLE_SOURCE_ROLE)
     evidence_window_lifecycle_source_surface_is_valid(
         "${RAYLIB_PRODUCTION_ACTIVE}" "${RAYLIB_PRODUCTION_LEXICAL}"
         "${RAYLIB_LIFECYCLE_SOURCE_ROLE}" WINDOW_LIFETIME_OWNER_VALID)

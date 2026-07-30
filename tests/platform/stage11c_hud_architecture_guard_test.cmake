@@ -136,9 +136,10 @@ function(stage11c_arch_unconditional_cpp_surface SOURCE OUT_SURFACE)
             string(SUBSTRING "${_tail}" 0 ${_line_length} _line)
         endif()
         if(_line MATCHES
-                "^[ \t]*#[ \t]*(if|ifdef|ifndef)([ \t\r\n(]|$)")
+                "^[ \t]*(#|%:)[ \t]*(if|ifdef|ifndef)([ \t\r\n(]|$)")
             math(EXPR _conditional_depth "${_conditional_depth} + 1")
-        elseif(_line MATCHES "^[ \t]*#[ \t]*endif([ \t\r\n]|$)")
+        elseif(_line MATCHES
+                "^[ \t]*(#|%:)[ \t]*endif([ \t\r\n]|$)")
             math(EXPR _conditional_depth "${_conditional_depth} - 1")
             if(_conditional_depth LESS 0)
                 message(FATAL_ERROR
@@ -297,7 +298,14 @@ endif()
 arpg_sanitize_cpp_source(
     "${_stage11c_source_text}" _stage11c_source_lexical)
 stage11c_arch_unconditional_cpp_surface(
-    "${_stage11c_source_text}" _stage11c_source_code)
+    "${_stage11c_source_text}" _stage11c_source_active)
+evidence_cpp_normalize_token_whitespace(
+    "${_stage11c_source_lexical}" _stage11c_source_lexical_code)
+evidence_cpp_normalize_token_whitespace(
+    "${_stage11c_source_active}" _stage11c_source_code)
+arpg_sanitize_cpp_source("${_host_text}" _host_lexical_source)
+evidence_cpp_normalize_token_whitespace(
+    "${_host_lexical_source}" _host_lexical_code)
 set(_stage11c_signature_inject [=[PhysicalKeySnapshot inject_stage11c_physical_edges(
     PhysicalKeySnapshot snapshot, const RaylibHostConfig& config,
     const settings::SettingsData& settings_data,
@@ -326,14 +334,17 @@ foreach(_definition_id IN ITEMS inject hash reached summary)
     set(_definition "${${_signature_variable}}")
     set(_definition_name "${${_name_variable}}")
     set(_definition_label "${${_label_variable}}")
-    stage11c_arch_count_token(
-        "${_stage11c_source_code}" "${_definition}"
-        _stage_signature_count)
-    evidence_try_find_cpp_function_bounds_in_sanitized(
-        "${_stage11c_source_code}" "${_definition}"
+    evidence_cpp_normalize_token_whitespace(
+        "${_definition}" _definition_token_signature)
+    evidence_cpp_normalize_token_whitespace(
+        "${_definition_name}" _definition_token_name)
+    evidence_try_find_unique_cpp_function_in_namespace_in_sanitized(
+        "${_stage11c_source_code}" "${_definition_token_signature}"
+        "arpg::platform::host_validation"
         _stage_begin _stage_open _stage_end _stage_definition_valid)
-    if(NOT _stage_signature_count EQUAL 1 OR NOT _stage_definition_valid)
-        string(FIND "${_stage11c_source_lexical}" "${_definition_name}"
+    if(NOT _stage_definition_valid)
+        string(FIND "${_stage11c_source_lexical_code}"
+            "${_definition_token_name}"
             _stage_signature_position)
         if(_stage_signature_position EQUAL -1)
             message(FATAL_ERROR
@@ -343,23 +354,8 @@ foreach(_definition_id IN ITEMS inject hash reached summary)
                 "Stage11C HUD definition is missing from Stage source: ${_definition_label}")
         endif()
     endif()
-    evidence_cpp_prefix_has_only_namespace_scopes_in_sanitized(
-        "${_stage11c_source_code}" ${_stage_begin} _stage_scope_valid)
-    if(NOT _stage_scope_valid)
-        message(FATAL_ERROR
-            "Stage11C HUD definition is missing from Stage source: ${_definition_label}")
-    endif()
-    math(EXPR _stage_length "${_stage_end} - ${_stage_begin} + 1")
-    string(SUBSTRING "${_stage11c_source_code}"
-        ${_stage_begin} ${_stage_length} _stage_function)
-    string(FIND "${_stage_function}" "{" _stage_definition)
-    string(FIND "${_stage_function}" ";" _stage_forward_declaration)
-    if(_stage_definition EQUAL -1
-            OR (NOT _stage_forward_declaration EQUAL -1
-                AND _stage_forward_declaration LESS _stage_definition))
-        message(FATAL_ERROR "Stage11C HUD definition is missing from Stage source: ${_definition_label}")
-    endif()
-    string(FIND "${_host_text}" "${_definition_name}" _host_definition)
+    string(FIND "${_host_lexical_code}" "${_definition_token_name}"
+        _host_definition)
     if(NOT _host_definition EQUAL -1)
         message(FATAL_ERROR "Stage11C HUD definition remains in raylib_host.cpp: ${_definition_label}")
     endif()

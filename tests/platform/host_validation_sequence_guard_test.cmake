@@ -27,10 +27,11 @@ function(stage17_mask_cpp_conditionals SOURCE OUT_SURFACE)
 
         set(_mask_line FALSE)
         if(_line MATCHES
-                "^[ \t]*#[ \t]*(if|ifdef|ifndef)([ \t\r\n(]|$)")
+                "^[ \t]*(#|%:)[ \t]*(if|ifdef|ifndef)([ \t\r\n(]|$)")
             math(EXPR _conditional_depth "${_conditional_depth} + 1")
             set(_mask_line TRUE)
-        elseif(_line MATCHES "^[ \t]*#[ \t]*endif([ \t\r\n]|$)")
+        elseif(_line MATCHES
+                "^[ \t]*(#|%:)[ \t]*endif([ \t\r\n]|$)")
             if(_conditional_depth EQUAL 0)
                 message(FATAL_ERROR
                     "Host validation Stage17 preprocessor conditional is unbalanced")
@@ -56,6 +57,19 @@ function(stage17_mask_cpp_conditionals SOURCE OUT_SURFACE)
     endif()
     set(${OUT_SURFACE} "${_surface}" PARENT_SCOPE)
 endfunction()
+
+set(_stage17_digraph_inactive_fixture
+    "%:if 0\nInitWindow(1, 1, nullptr);\n%:endif\n")
+stage17_mask_cpp_conditionals(
+    "${_stage17_digraph_inactive_fixture}"
+    _stage17_digraph_inactive_surface)
+evidence_count_cpp_identifier(
+    "${_stage17_digraph_inactive_surface}" InitWindow
+    _stage17_digraph_init_window_count)
+if(NOT _stage17_digraph_init_window_count EQUAL 0)
+    message(FATAL_ERROR
+        "Host validation sequence conditional surface exposed digraph-inactive code")
+endif()
 
 # Preserve only the named string literals as identifier sentinels before the
 # shared lexer removes strings/comments; then apply the existing conditional
@@ -1980,6 +1994,8 @@ set(_task9_renderer_owner
     "std::unique_ptr<CombatRenderer> renderer_storage;")
 set(_task9_renderer_allocation
     "renderer_storage = std::make_unique<CombatRenderer>();")
+set(_task9_renderer_allocation_anchor
+    "core::FixedStepRunner fixed_step; renderer_storage = std::make_unique<CombatRenderer>(); CombatRenderer& renderer = *renderer_storage;")
 set(_task9_renderer_cleanup
     "renderer_storage->shutdown_resources();")
 string(FIND "${_host_runtime}" "HostWindowLifetime window{"
@@ -1997,6 +2013,9 @@ string(FIND "${_host_runtime}" "catch (...) {"
     _task9_unknown_catch_position)
 task7b_count_token("${_host_runtime}" "${_task9_renderer_cleanup}"
     _task9_renderer_cleanup_count)
+task7b_count_token("${_host_runtime_normalized}"
+    "${_task9_renderer_allocation_anchor}"
+    _task9_renderer_allocation_anchor_count)
 if(_task9_window_owner_position EQUAL -1
         OR _task9_renderer_owner_position EQUAL -1
         OR _task9_try_position EQUAL -1
@@ -2005,6 +2024,7 @@ if(_task9_window_owner_position EQUAL -1
         OR _task9_standard_catch_position EQUAL -1
         OR _task9_unknown_catch_position EQUAL -1
         OR NOT _task9_renderer_cleanup_count EQUAL 2
+        OR NOT _task9_renderer_allocation_anchor_count EQUAL 1
         OR NOT _task9_window_owner_position LESS _task9_renderer_owner_position
         OR NOT _task9_renderer_owner_position LESS _task9_try_position
         OR NOT _task9_try_position LESS _task9_window_initialize_position
@@ -2015,7 +2035,7 @@ if(_task9_window_owner_position EQUAL -1
         OR NOT _task9_standard_catch_position LESS
             _task9_unknown_catch_position)
     message(FATAL_ERROR
-        "Task 9 Host renderer owner/allocation/catch cleanup boundary is invalid: window=${_task9_window_owner_position} owner=${_task9_renderer_owner_position} try=${_task9_try_position} init=${_task9_window_initialize_position} allocation=${_task9_renderer_allocation_position} standard=${_task9_standard_catch_position} unknown=${_task9_unknown_catch_position} cleanups=${_task9_renderer_cleanup_count}")
+        "Task 9 Host renderer owner/allocation/catch cleanup boundary is invalid: window=${_task9_window_owner_position} owner=${_task9_renderer_owner_position} try=${_task9_try_position} init=${_task9_window_initialize_position} allocation=${_task9_renderer_allocation_position} allocation_anchor=${_task9_renderer_allocation_anchor_count} standard=${_task9_standard_catch_position} unknown=${_task9_unknown_catch_position} cleanups=${_task9_renderer_cleanup_count}")
 endif()
 string(SUBSTRING "${_host_runtime}" ${_task9_standard_catch_position}
     -1 _task9_standard_catch_tail)
