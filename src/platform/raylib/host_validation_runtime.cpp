@@ -12,6 +12,7 @@
 #include "raylib_host.hpp"
 
 #include <new>
+#include <cstring>
 #include <utility>
 
 namespace arpg::platform {
@@ -231,7 +232,8 @@ PresentationDecision HostValidationRuntime::observe_presented_frame(
     }
     if (impl_->config->stage11b_validation
             == Stage11BValidationScenario::corrupt_defaults
-        && pause_menu.message == kSettingsRecoveredDefaults
+        && pause_menu.message != nullptr
+        && std::strcmp(pause_menu.message, kSettingsRecoveredDefaults) == 0
         && pause_cjk_ready) {
         impl_->states.stage11b.recovery_notice_visible = true;
     }

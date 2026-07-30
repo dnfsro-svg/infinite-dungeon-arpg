@@ -13,6 +13,7 @@
 #include "game_audio.hpp"
 #include "host_input.hpp"
 #include "host_launch_options.hpp"
+#include "host_settings_runtime.hpp"
 #include "host_validation.hpp"
 #include "inventory_renderer.hpp"
 #include "passive_tree_renderer.hpp"
@@ -64,12 +65,6 @@ static_assert(FLAG_VSYNC_HINT != 0, "raylib VSync flag must remain available");
 
 namespace arpg::platform {
 namespace {
-
-constexpr char kSettingsPreviewFailed[] = "Live preview failed";
-constexpr char kSettingsSaveFailed[] = "Settings save failed; retry";
-constexpr char kSettingsRollbackFailed[] = "Settings rollback failed";
-constexpr char kSettingsSaved[] = "Settings saved";
-constexpr char kSettingsRecoveredDefaults[] = u8"设置已恢复默认值";
 
 [[nodiscard]] bool stable_pressed(
     const PhysicalKeySnapshot& snapshot,
@@ -342,125 +337,6 @@ DeathInputGate host_death_input_gate(
     return death_input_gate(death_saving, death_pending, keys);
 }
 
-HostSettingsNotice make_host_settings_notice(
-    settings::SettingsLoadStatus status) noexcept {
-    return {status == settings::SettingsLoadStatus::defaults_corrupt};
-}
-
-settings::LootFilterMode renderer_loot_filter_mode(
-    PauseScreen screen,
-    const settings::SettingsData& live_settings,
-    const settings::SettingsData& draft_settings) noexcept {
-    return screen == PauseScreen::settings
-        ? draft_settings.loot_filter_mode
-        : live_settings.loot_filter_mode;
-}
-
-void consume_host_settings_notice(
-    HostSettingsNotice& notice,
-    PauseScreen previous_screen,
-    PauseMenuState& pause_menu) noexcept {
-    if (!notice.recovered_defaults_pending
-            || previous_screen != PauseScreen::root
-            || pause_menu.screen != PauseScreen::settings) {
-        return;
-    }
-    pause_menu.message = kSettingsRecoveredDefaults;
-    notice.recovered_defaults_pending = false;
-}
-
-bool settle_host_pause_command(
-    PauseCommand command,
-    bool window_close_requested,
-    PauseMenuState& pause_menu,
-    settings::SettingsData& live_settings,
-    settings::SettingsData& input_settings,
-    const settings::SettingsStore& settings_store,
-    WindowSettingsBackend settings_backend) {
-    switch (command) {
-    case PauseCommand::none:
-        break;
-    case PauseCommand::preview: {
-        settings::SettingsData preview_settings = pause_menu.draft;
-        preview_settings.loot_filter_mode =
-            pause_menu.committed.loot_filter_mode;
-        const LiveSettingsResult result = apply_live_settings(
-            live_settings, preview_settings, settings_backend);
-        if (result == LiveSettingsResult::applied) {
-            live_settings = preview_settings;
-            pause_menu.message = nullptr;
-        } else {
-            pause_menu.message = kSettingsPreviewFailed;
-        }
-        break;
-    }
-    case PauseCommand::apply: {
-        settings::SettingsData preview_settings = pause_menu.draft;
-        preview_settings.loot_filter_mode =
-            pause_menu.committed.loot_filter_mode;
-        const LiveSettingsResult preview = apply_live_settings(
-            live_settings, preview_settings, settings_backend);
-        if (preview != LiveSettingsResult::applied) {
-            const LiveSettingsResult rollback = rollback_live_settings(
-                live_settings, pause_menu.committed, settings_backend);
-            live_settings.loot_filter_mode =
-                pause_menu.committed.loot_filter_mode;
-            pause_menu.draft.loot_filter_mode =
-                pause_menu.committed.loot_filter_mode;
-            if (rollback == LiveSettingsResult::applied) {
-                live_settings = pause_menu.committed;
-                pause_menu.message = kSettingsPreviewFailed;
-            } else {
-                pause_menu.message = kSettingsRollbackFailed;
-            }
-            break;
-        }
-        const settings::SettingsData previewed = preview_settings;
-        live_settings = previewed;
-        settings::SettingsData save_draft = pause_menu.draft;
-        save_draft.revision = pause_menu.committed.revision;
-        const settings::SettingsSaveResult saved = settings_store.save(
-            pause_menu.committed, save_draft);
-        if (saved.status == settings::SettingsSaveStatus::committed) {
-            pause_menu.committed = saved.settings;
-            pause_menu.draft = saved.settings;
-            live_settings = saved.settings;
-            input_settings = saved.settings;
-            pause_menu.message = kSettingsSaved;
-            break;
-        }
-        const LiveSettingsResult rollback = rollback_live_settings(
-            previewed, pause_menu.committed, settings_backend);
-        live_settings.loot_filter_mode =
-            pause_menu.committed.loot_filter_mode;
-        pause_menu.draft.loot_filter_mode =
-            pause_menu.committed.loot_filter_mode;
-        if (rollback == LiveSettingsResult::applied) {
-            live_settings = pause_menu.committed;
-            pause_menu.message = kSettingsSaveFailed;
-        } else {
-            pause_menu.message = kSettingsRollbackFailed;
-        }
-        break;
-    }
-    case PauseCommand::rollback: {
-        const LiveSettingsResult result = rollback_live_settings(
-            live_settings, pause_menu.committed, settings_backend);
-        if (result == LiveSettingsResult::applied) {
-            live_settings = pause_menu.committed;
-        } else {
-            pause_menu.message = kSettingsRollbackFailed;
-        }
-        break;
-    }
-    case PauseCommand::resume:
-        break;
-    case PauseCommand::quit:
-        return true;
-    }
-    return window_close_requested;
-}
-
 RaylibHostConfig make_production_host_config(HostLaunchOptions options) {
     RaylibHostConfig config{};
     config.save_directory = std::move(options.save_directory);
@@ -574,6 +450,9 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         pause_menu.draft = committed_settings;
         settings::SettingsData live_settings = committed_settings;
         settings::SettingsData input_settings = committed_settings;
+        HostSettingsRuntime settings_runtime{&settings_notice, &pause_menu,
+            &live_settings, &input_settings, &settings_store,
+            settings_backend};
         ControlHints control_hints{};
         refresh_control_hints(control_hints, input_settings);
         bool pause_latched = false;
@@ -862,13 +741,10 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 pause_menu, pause_context, pause_input);
             UiAudioCueMask ui_audio_cues = pause_audio_cues(
                 pause_screen_before, pause_menu.screen, pause_command);
-            consume_host_settings_notice(
-                settings_notice, pause_screen_before, pause_menu);
+            settings_runtime.consume_notice(pause_screen_before);
             const std::uint64_t input_revision_before = input_settings.revision;
-            if (settle_host_pause_command(
-                    pause_command, window_close_requested,
-                    pause_menu, live_settings, input_settings,
-                    settings_store, settings_backend)) {
+            if (settings_runtime.settle(
+                    pause_command, window_close_requested)) {
                 if (!window_close_requested || !window_close_latched) {
                     if (window_close_requested) window_close_latched = true;
                     begin_clean_exit();

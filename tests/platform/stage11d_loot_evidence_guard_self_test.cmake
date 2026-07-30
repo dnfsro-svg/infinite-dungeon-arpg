@@ -8,6 +8,8 @@ set(_host "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
 get_filename_component(_host_source_dir "${_host}" DIRECTORY)
 set(_host_validation_runtime
     "${_host_source_dir}/host_validation_runtime.cpp")
+set(_settings_runtime
+    "${_host_source_dir}/host_settings_runtime.cpp")
 set(_stage_header
     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d.hpp")
 set(_runtime
@@ -18,7 +20,8 @@ set(_renderer "${SOURCE_ROOT}/src/platform/raylib/combat_renderer.cpp")
 set(_formal "${SOURCE_ROOT}/tests/platform/stage11d_loot_formal_game_validation.cpp")
 set(_validator "${SOURCE_ROOT}/tests/platform/stage11d_loot_formal_validator.ps1")
 foreach(_file IN ITEMS "${_guard}" "${_sequence_guard}" "${_host}"
-        "${_host_validation_runtime}" "${_stage_header}" "${_runtime}"
+        "${_host_validation_runtime}" "${_settings_runtime}"
+        "${_stage_header}" "${_runtime}"
         "${_report}" "${_renderer}" "${_formal}" "${_validator}")
     if(NOT EXISTS "${_file}")
         message(FATAL_ERROR "Stage11D guard self-test input is missing: ${_file}")
@@ -90,6 +93,244 @@ function(expect_rejected NAME OVERRIDE PATH EXPECTED_REASON)
             "Stage11D guard rejected ${NAME} for the wrong reason: ${_log}")
     endif()
 endfunction()
+
+function(task8b_expect_accepted NAME OVERRIDE PATH)
+    execute_process(COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+        "-D${OVERRIDE}_OVERRIDE=${PATH}" -P "${_guard}"
+        RESULT_VARIABLE _result OUTPUT_VARIABLE _output ERROR_VARIABLE _error)
+    if(NOT _result EQUAL 0)
+        message(FATAL_ERROR
+            "${NAME} was rejected: ${_output}\n${_error}")
+    endif()
+endfunction()
+
+function(task8b_run_owner_cases)
+    file(READ "${_settings_runtime}" _settings_text)
+    set(_rollback_write
+        "this->live->loot_filter_mode =\n                this->pause_menu->committed.loot_filter_mode;")
+    set(_rollback_write_one_line
+        "this->live->loot_filter_mode = this->pause_menu->committed.loot_filter_mode;")
+    string(REGEX REPLACE "[ \t\r\n]+" "" _settings_normalized
+        "${_settings_text}")
+    string(REGEX MATCHALL
+        "this->live->loot_filter_mode=this->pause_menu->committed[.]loot_filter_mode"
+        _rollback_writes "${_settings_normalized}")
+    list(LENGTH _rollback_writes _rollback_write_count)
+    if(NOT _rollback_write_count EQUAL 2)
+        message(FATAL_ERROR "Task8B rollback write mutation sites disappeared")
+    endif()
+
+    string(REPLACE "${_rollback_write}" "" _missing "${_settings_text}")
+    if(_missing STREQUAL _settings_text)
+        message(FATAL_ERROR "Task8B rollback-write removal anchor disappeared")
+    endif()
+    set(_path "${GUARD_TEST_ROOT}/settings-runtime-missing-writes.cpp")
+    file(WRITE "${_path}" "${_missing}")
+    expect_rejected("settings runtime missing rollback writes"
+        SETTINGS_RUNTIME "${_path}"
+        "requires exactly two canonical production live-settings rollback writes")
+
+    set(_inactive_decoy
+        "#if 0\nnamespace arpg::platform {\nstruct Task8BInactiveRollbackDecoy {\n    settings::SettingsData* live{};\n    PauseMenuState* pause_menu{};\n    void write() {\n        ${_rollback_write}\n        ${_rollback_write}\n    }\n};\n}\n#endif\n")
+    set(_inactive "${_missing}\n${_inactive_decoy}")
+    set(_path "${GUARD_TEST_ROOT}/settings-runtime-inactive-writes.cpp")
+    file(WRITE "${_path}" "${_inactive}")
+    expect_rejected("settings runtime inactive rollback writes"
+        SETTINGS_RUNTIME "${_path}"
+        "requires exactly two canonical production live-settings rollback writes")
+
+    set(_switch_anchor "    switch (command) {")
+    set(_lambda_decoy
+        "    const auto task8b_decoy = [this]() noexcept {\n        ${_rollback_write}\n        ${_rollback_write}\n    };\n    static_cast<void>(task8b_decoy);\n${_switch_anchor}")
+    string(REPLACE "${_switch_anchor}" "${_lambda_decoy}"
+        _lambda "${_missing}")
+    if(_lambda STREQUAL _missing)
+        message(FATAL_ERROR "Task8B lambda mutation anchor disappeared")
+    endif()
+    set(_path "${GUARD_TEST_ROOT}/settings-runtime-lambda-writes.cpp")
+    file(WRITE "${_path}" "${_lambda}")
+    expect_rejected("settings runtime lambda rollback writes"
+        SETTINGS_RUNTIME "${_path}"
+        "requires exactly two canonical production live-settings rollback writes")
+
+    set(_constexpr_lambda_decoy
+        "    const auto task8b_constexpr_decoy = [this]() constexpr {\n        ${_rollback_write}\n        ${_rollback_write}\n    };\n    static_cast<void>(task8b_constexpr_decoy);\n${_switch_anchor}")
+    string(REPLACE "${_switch_anchor}" "${_constexpr_lambda_decoy}"
+        _constexpr_lambda "${_missing}")
+    if(_constexpr_lambda STREQUAL _missing)
+        message(FATAL_ERROR "Task8B constexpr-lambda mutation anchor disappeared")
+    endif()
+    set(_path
+        "${GUARD_TEST_ROOT}/settings-runtime-constexpr-lambda-writes.cpp")
+    file(WRITE "${_path}" "${_constexpr_lambda}")
+    expect_rejected("settings runtime constexpr lambda rollback writes"
+        SETTINGS_RUNTIME "${_path}"
+        "requires exactly two canonical production live-settings rollback writes")
+
+    set(_local_type_decoy
+        "    struct Task8BRollbackDecoy {\n        settings::SettingsData* live{};\n        PauseMenuState* pause_menu{};\n        void write() {\n            ${_rollback_write}\n            ${_rollback_write}\n        }\n    };\n${_switch_anchor}")
+    string(REPLACE "${_switch_anchor}" "${_local_type_decoy}"
+        _local_type "${_missing}")
+    if(_local_type STREQUAL _missing)
+        message(FATAL_ERROR "Task8B local-type mutation anchor disappeared")
+    endif()
+    set(_path "${GUARD_TEST_ROOT}/settings-runtime-local-type-writes.cpp")
+    file(WRITE "${_path}" "${_local_type}")
+    expect_rejected("settings runtime local-type rollback writes"
+        SETTINGS_RUNTIME "${_path}"
+        "requires exactly two canonical production live-settings rollback writes")
+
+    set(_cross_function "${_missing}\nnamespace arpg::platform {\nvoid task8b_cross_function(settings::SettingsData* live,\n        const PauseMenuState* pause_menu) {\n    live->loot_filter_mode = pause_menu->committed.loot_filter_mode;\n    live->loot_filter_mode = pause_menu->committed.loot_filter_mode;\n}\n}\n")
+    set(_path "${GUARD_TEST_ROOT}/settings-runtime-cross-function-writes.cpp")
+    file(WRITE "${_path}" "${_cross_function}")
+    expect_rejected("settings runtime cross-function rollback writes"
+        SETTINGS_RUNTIME "${_path}"
+        "requires exactly two canonical production live-settings rollback writes")
+
+    set(_comment_decoys
+        "${_settings_text}\n// ${_rollback_write_one_line}\nconstexpr const char* task8b_decoy = \"${_rollback_write_one_line}\";\n")
+    set(_path "${GUARD_TEST_ROOT}/settings-runtime-comment-decoys.cpp")
+    file(WRITE "${_path}" "${_comment_decoys}")
+    task8b_expect_accepted("settings runtime comment decoys"
+        SETTINGS_RUNTIME "${_path}")
+
+    set(_shadow_write
+        "settings::SettingsData* const task8b_shadow_live = &pause_menu->draft;\n            task8b_shadow_live->loot_filter_mode = pause_menu->committed.loot_filter_mode;")
+    string(REPLACE "${_rollback_write}" "${_shadow_write}"
+        _shadowed_live "${_settings_text}")
+    if(_shadowed_live STREQUAL _settings_text)
+        message(FATAL_ERROR "Task8B shadowed-live mutation anchor disappeared")
+    endif()
+    set(_path "${GUARD_TEST_ROOT}/settings-runtime-shadowed-live.cpp")
+    file(WRITE "${_path}" "${_shadowed_live}")
+    expect_rejected("settings runtime shadowed live rollback writes"
+        SETTINGS_RUNTIME "${_path}"
+        "requires exactly two canonical production live-settings rollback writes")
+
+    set(_settings_owner_anchor "bool HostSettingsRuntime::settle(")
+    string(REPLACE "${_settings_owner_anchor}"
+        "#define live input\n${_settings_owner_anchor}"
+        _macro_rewrite "${_settings_text}")
+    if(_macro_rewrite STREQUAL _settings_text)
+        message(FATAL_ERROR "Task8B settings macro mutation anchor disappeared")
+    endif()
+    set(_path "${GUARD_TEST_ROOT}/settings-runtime-macro-rewrite.cpp")
+    file(WRITE "${_path}" "${_macro_rewrite}")
+    expect_rejected("settings runtime macro rewrite"
+        SETTINGS_RUNTIME "${_path}"
+        "forbids settings runtime preprocessor macros")
+
+    string(ASCII 92 _task8b_macro_backslash)
+    string(ASCII 10 _task8b_macro_line_feed)
+    set(_task8b_macro_names spliced digraph)
+    set(_task8b_macro_directives
+        "#defi${_task8b_macro_backslash}${_task8b_macro_line_feed}ne live input"
+        "%:define live input")
+    foreach(_task8b_macro_index RANGE 0 1)
+        list(GET _task8b_macro_names ${_task8b_macro_index}
+            _task8b_macro_name)
+        list(GET _task8b_macro_directives ${_task8b_macro_index}
+            _task8b_macro_directive)
+        string(REPLACE "${_settings_owner_anchor}"
+            "${_task8b_macro_directive}\n${_settings_owner_anchor}"
+            _task8b_macro_mutation "${_settings_text}")
+        if(_task8b_macro_mutation STREQUAL _settings_text)
+            message(FATAL_ERROR
+                "Task8B ${_task8b_macro_name} macro mutation anchor disappeared")
+        endif()
+        set(_path
+            "${GUARD_TEST_ROOT}/settings-runtime-macro-${_task8b_macro_name}.cpp")
+        file(WRITE "${_path}" "${_task8b_macro_mutation}")
+        expect_rejected("settings runtime ${_task8b_macro_name} macro rewrite"
+            SETTINGS_RUNTIME "${_path}"
+            "forbids settings runtime preprocessor macros")
+    endforeach()
+
+    set(_inactive_owner
+        "${_settings_text}\n#if 0\nnamespace arpg::platform {\nbool HostSettingsRuntime::settle(\n    PauseCommand, bool) { return false; }\n}\n#endif\n")
+    set(_path "${GUARD_TEST_ROOT}/settings-runtime-inactive-owner.cpp")
+    file(WRITE "${_path}" "${_inactive_owner}")
+    expect_rejected("settings runtime inactive duplicate owner"
+        SETTINGS_RUNTIME "${_path}"
+        "requires one active and lexical settings settlement owner")
+
+    set(_renamed_helper
+        "${_settings_text}\nnamespace arpg::platform {\nvoid task8b_external_filter_write(settings::SettingsData* target,\n        const PauseMenuState* menu) {\n    target->loot_filter_mode = menu->committed.loot_filter_mode;\n}\n}\n")
+    set(_path "${GUARD_TEST_ROOT}/settings-runtime-renamed-helper.cpp")
+    file(WRITE "${_path}" "${_renamed_helper}")
+    expect_rejected("settings runtime renamed helper write"
+        SETTINGS_RUNTIME "${_path}"
+        "forbids settings writes outside settlement")
+
+    file(READ "${_host}" _host_text)
+    string(APPEND _host_text
+        "\nnamespace arpg::platform {\nvoid task8b_host_write(settings::SettingsData& live_settings) {\n    live_settings.loot_filter_mode = settings::LootFilterMode::rare_only;\n}\n}\n")
+    set(_path "${GUARD_TEST_ROOT}/host-extra-live-filter-write.cpp")
+    file(WRITE "${_path}" "${_host_text}")
+    expect_rejected("host extra live filter write" HOST "${_path}"
+        "forbids Host live-settings filter writes")
+
+    file(READ "${_host}" _host_alias_text)
+    string(APPEND _host_alias_text
+        "\nnamespace arpg::platform {\nvoid task8b_host_alias_write(settings::SettingsData& live_settings) {\n    auto& active = live_settings;\n    active.loot_filter_mode = settings::LootFilterMode::rare_only;\n}\n}\n")
+    set(_path "${GUARD_TEST_ROOT}/host-alias-live-filter-write.cpp")
+    file(WRITE "${_path}" "${_host_alias_text}")
+    expect_rejected("host alias live filter write" HOST "${_path}"
+        "forbids Host live-settings filter writes")
+
+    set(_host_coordinator_anchor
+        "        HostSettingsRuntime settings_runtime{&settings_notice, &pause_menu,\n            &live_settings, &input_settings, &settings_store,\n            settings_backend};")
+    file(READ "${_host}" _host_second_coordinator_text)
+    set(_host_second_coordinator_replacement
+        "${_host_coordinator_anchor}\n        HostSettingsRuntime task8b_shadow{nullptr, &pause_menu,\n            &input_settings, &input_settings, &settings_store,\n            settings_backend};\n        static_cast<void>(task8b_shadow);")
+    string(REPLACE "${_host_coordinator_anchor}"
+        "${_host_second_coordinator_replacement}"
+        _host_second_coordinator_text "${_host_second_coordinator_text}")
+    file(READ "${_host}" _host_second_coordinator_original)
+    if(_host_second_coordinator_text STREQUAL _host_second_coordinator_original)
+        message(FATAL_ERROR
+            "Task8B second Host coordinator mutation anchor disappeared")
+    endif()
+    set(_path "${GUARD_TEST_ROOT}/host-second-settings-coordinator.cpp")
+    file(WRITE "${_path}" "${_host_second_coordinator_text}")
+    expect_rejected("host second settings coordinator" HOST "${_path}"
+        "requires exactly one Host settings coordinator")
+
+    set(_host_settings_anchor
+        "            settings_runtime.consume_notice(pause_screen_before);")
+    file(READ "${_host}" _host_helper_text)
+    set(_host_helper_original "${_host_helper_text}")
+    string(REPLACE "${_host_settings_anchor}"
+        "            const auto task8b_host_helper =\n                [](const settings::SettingsData&) noexcept {};\n            task8b_host_helper(live_settings);\n${_host_settings_anchor}"
+        _host_helper_text "${_host_helper_text}")
+    if(_host_helper_text STREQUAL _host_helper_original)
+        message(FATAL_ERROR "Task8B Host helper mutation anchor disappeared")
+    endif()
+    set(_path "${GUARD_TEST_ROOT}/host-live-settings-helper.cpp")
+    file(WRITE "${_path}" "${_host_helper_text}")
+    expect_rejected("host live-settings helper call" HOST "${_path}"
+        "rejected Host live-settings alias/helper drift")
+
+    file(READ "${_host}" _runtime_helper_text)
+    set(_runtime_helper_original "${_runtime_helper_text}")
+    string(REPLACE "${_host_settings_anchor}"
+        "            const auto task8b_runtime_helper =\n                [](const HostSettingsRuntime&) noexcept {};\n            task8b_runtime_helper(settings_runtime);\n${_host_settings_anchor}"
+        _runtime_helper_text "${_runtime_helper_text}")
+    if(_runtime_helper_text STREQUAL _runtime_helper_original)
+        message(FATAL_ERROR "Task8B runtime-helper mutation anchor disappeared")
+    endif()
+    set(_path "${GUARD_TEST_ROOT}/host-settings-runtime-helper.cpp")
+    file(WRITE "${_path}" "${_runtime_helper_text}")
+    expect_rejected("host settings-runtime helper call" HOST "${_path}"
+        "rejected Host settings-runtime helper drift")
+endfunction()
+
+if(DEFINED TASK8B_TARGETED_ONLY AND TASK8B_TARGETED_ONLY)
+    task8b_run_owner_cases()
+    message(STATUS
+        "Stage11D Task8B targeted owner self-test passed: bad_mutations=17; harmless_decoys=1")
+    return()
+endif()
 
 function(task7c_run_m24_m25_cases)
     file(READ "${_host}" _task7c_host_text)

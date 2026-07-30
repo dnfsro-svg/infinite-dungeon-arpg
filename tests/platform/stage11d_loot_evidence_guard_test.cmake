@@ -10,6 +10,8 @@ set(_host "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
 get_filename_component(_host_source_dir "${_host}" DIRECTORY)
 set(_host_validation_runtime
     "${_host_source_dir}/host_validation_runtime.cpp")
+set(_settings_runtime
+    "${_host_source_dir}/host_settings_runtime.cpp")
 set(_stage_header
     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d.hpp")
 set(_runtime
@@ -27,6 +29,9 @@ if(DEFINED HOST_OVERRIDE)
 endif()
 if(DEFINED HOST_VALIDATION_RUNTIME_OVERRIDE)
     set(_host_validation_runtime "${HOST_VALIDATION_RUNTIME_OVERRIDE}")
+endif()
+if(DEFINED SETTINGS_RUNTIME_OVERRIDE)
+    set(_settings_runtime "${SETTINGS_RUNTIME_OVERRIDE}")
 endif()
 if(DEFINED STAGE11D_HEADER_OVERRIDE)
     set(_stage_header "${STAGE11D_HEADER_OVERRIDE}")
@@ -47,6 +52,7 @@ if(DEFINED VALIDATOR_OVERRIDE)
     set(_validator "${VALIDATOR_OVERRIDE}")
 endif()
 foreach(_file IN ITEMS "${_header}" "${_host}" "${_host_validation_runtime}"
+        "${_settings_runtime}"
         "${_stage_header}" "${_runtime}" "${_report}" "${_renderer}"
         "${_formal}" "${_validator}")
     if(NOT EXISTS "${_file}")
@@ -57,6 +63,7 @@ endforeach()
 file(READ "${_header}" _header_text)
 file(READ "${_host}" _host_text)
 file(READ "${_host_validation_runtime}" _host_validation_runtime_text)
+file(READ "${_settings_runtime}" _settings_runtime_text)
 file(READ "${_stage_header}" _stage_header_text)
 file(READ "${_runtime}" _runtime_text)
 file(READ "${_report}" _report_text)
@@ -246,8 +253,11 @@ function(stage11d_mask_non_direct_executable_scopes SOURCE OUT_SOURCE)
     while(_copy_cursor LESS _source_length)
         string(SUBSTRING "${SOURCE}" ${_copy_cursor} -1 _tail)
         string(REGEX MATCH
-            "\\][ \t\r\n]*(\\([^{};]*\\))?[ \t\r\n]*(mutable[ \t\r\n]*)?(noexcept([ \t\r\n]*\\([^{};]*\\))?[ \t\r\n]*)?(->[^{;]*)?[ \t\r\n]*\\{"
+            "\\][ \t\r\n]*(\\([^{};]*\\))?[ \t\r\n]*((mutable|constexpr|consteval|static)[ \t\r\n]*)*(noexcept([ \t\r\n]*\\([^{};]*\\))?[ \t\r\n]*)?(->[^{;]*)?[ \t\r\n]*\\{"
             _lambda_match "${_tail}")
+        string(REGEX MATCH
+            "(class|struct)[ \t\r\n]+[A-Za-z_][A-Za-z0-9_]*[^;{}]*\\{"
+            _local_type_match "${_tail}")
         string(REGEX MATCH
             "(if|while)[ \t\r\n]*(constexpr[ \t\r\n]*)?\\([ \t\r\n]*${_dead_condition}[ \t\r\n]*\\)[ \t\r\n]*(do[ \t\r\n]*)?([^{;]*\\{|[^{};]*;)"
             _dead_branch_match "${_tail}")
@@ -261,6 +271,14 @@ function(stage11d_mask_non_direct_executable_scopes SOURCE OUT_SOURCE)
             string(FIND "${_tail}" "${_lambda_match}" _scope_relative)
             set(_scope_match "${_lambda_match}")
             set(_scope_kind lambda)
+        endif()
+        if(NOT _local_type_match STREQUAL "")
+            string(FIND "${_tail}" "${_local_type_match}" _local_relative)
+            if(_scope_relative EQUAL -1 OR _local_relative LESS _scope_relative)
+                set(_scope_match "${_local_type_match}")
+                set(_scope_relative ${_local_relative})
+                set(_scope_kind local-type)
+            endif()
         endif()
         foreach(_candidate IN ITEMS _dead_branch_match _dead_for_match)
             set(_dead_match "${${_candidate}}")
@@ -280,7 +298,8 @@ function(stage11d_mask_non_direct_executable_scopes SOURCE OUT_SOURCE)
         endif()
         string(FIND "${_scope_match}" "{" _open_in_match)
         math(EXPR _match_index "${_copy_cursor} + ${_scope_relative}")
-        if(_scope_kind STREQUAL "dead-control")
+        if(_scope_kind STREQUAL "dead-control"
+                OR _scope_kind STREQUAL "local-type")
             set(_remove_begin ${_match_index})
         else()
             math(EXPR _remove_begin "${_match_index} + ${_open_in_match}")
@@ -1353,7 +1372,6 @@ foreach(_required IN ITEMS
     endif()
 endforeach()
 
-set(_host_code "${_host_text}")
 set(_semantic_ownership_text "${_host_text}\n${_report_text}")
 foreach(_forbidden IN ITEMS
         "TestAccess" "snapshot_override" "set_snapshot(" "FakeRenderer"
@@ -1386,22 +1404,140 @@ if(_direct_pass)
         "Stage11D loot evidence guard rejected host validation seam direct result pass")
 endif()
 
-string(REGEX REPLACE "[ \t\r\n]+" "" _host_normalized "${_host_code}")
+string(REGEX REPLACE "[ \t\r\n]+" "" _host_normalized "${_host_text}")
+stage11d_fold_cpp_phase2_splices(
+    "${_settings_runtime_text}" _settings_runtime_phase2)
+stage11d_unconditional_cpp_surface(
+    "${_settings_runtime_phase2}" _settings_runtime_active
+    _settings_runtime_lexical)
+if(_settings_runtime_lexical MATCHES
+        "(^|\n)[ \t]*(#|%:)[ \t]*(define|undef)([ \t\r\n]|$)")
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard forbids settings runtime preprocessor macros")
+endif()
+set(_settings_settle_signature "bool HostSettingsRuntime::settle(")
+stage11d_count_raw_token("${_settings_runtime_active}"
+    "${_settings_settle_signature}" _settings_settle_active_count)
+stage11d_count_raw_token("${_settings_runtime_lexical}"
+    "${_settings_settle_signature}" _settings_settle_lexical_count)
+if(NOT _settings_settle_active_count EQUAL 1
+        OR NOT _settings_settle_lexical_count EQUAL 1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard requires one active and lexical settings settlement owner")
+endif()
+foreach(_settings_owner_surface IN ITEMS
+        _settings_runtime_active _settings_runtime_lexical)
+    string(FIND "${${_settings_owner_surface}}"
+        "${_settings_settle_signature}" _settings_settle_position)
+    stage11d_code_brace_depth("${${_settings_owner_surface}}"
+        ${_settings_settle_position} _settings_settle_depth)
+    if(NOT _settings_settle_depth EQUAL 1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard requires a namespace-level settings settlement owner")
+    endif()
+endforeach()
+evidence_find_cpp_function_bounds_in_sanitized(
+    "${_settings_runtime_active}" "${_settings_settle_signature}"
+    _settings_settle_begin _settings_settle_open _settings_settle_end)
+math(EXPR _settings_settle_length
+    "${_settings_settle_end} - ${_settings_settle_begin} + 1")
+string(SUBSTRING "${_settings_runtime_active}" ${_settings_settle_begin}
+    ${_settings_settle_length} _settings_settle_function)
+stage11d_mask_non_direct_executable_scopes(
+    "${_settings_settle_function}" _settings_settle_direct)
+string(REGEX REPLACE "[ \t\r\n]+" "" _settings_runtime_normalized
+    "${_settings_runtime_active}")
+string(REGEX REPLACE "[ \t\r\n]+" "" _settings_settle_normalized
+    "${_settings_settle_direct}")
 string(REGEX MATCHALL
-    "live_settings[.]loot_filter_mode=pause_menu[.]committed[.]loot_filter_mode"
-    _canonical_live_settings_writes "${_host_normalized}")
+    "this->live->loot_filter_mode=this->pause_menu->committed[.]loot_filter_mode"
+    _canonical_live_settings_writes "${_settings_settle_normalized}")
 list(LENGTH _canonical_live_settings_writes _canonical_live_settings_count)
 if(NOT _canonical_live_settings_count EQUAL 2)
     message(FATAL_ERROR
         "Stage11D loot evidence guard requires exactly two canonical production live-settings rollback writes")
 endif()
-string(REGEX MATCHALL "live_settings[.]loot_filter_mode="
-    _all_live_filter_writes "${_host_normalized}")
+string(REGEX MATCHALL "this->live->loot_filter_mode="
+    _all_live_filter_writes "${_settings_settle_normalized}")
 list(LENGTH _all_live_filter_writes _all_live_filter_write_count)
 if(NOT _all_live_filter_write_count EQUAL 2)
     message(FATAL_ERROR
         "Stage11D loot evidence guard rejected extra live-settings filter write")
 endif()
+string(REGEX MATCHALL "([.]|->)loot_filter_mode="
+    _settings_settle_filter_assignments "${_settings_settle_normalized}")
+list(LENGTH _settings_settle_filter_assignments
+    _settings_settle_filter_assignment_count)
+if(NOT _settings_settle_filter_assignment_count EQUAL 6)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard requires exactly six production settings filter assignments")
+endif()
+string(REGEX MATCHALL "([.]|->)loot_filter_mode="
+    _all_active_runtime_filter_assignments "${_settings_runtime_normalized}")
+list(LENGTH _all_active_runtime_filter_assignments
+    _all_active_runtime_filter_assignment_count)
+if(NOT _all_active_runtime_filter_assignment_count EQUAL 6)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard forbids settings writes outside settlement")
+endif()
+string(SHA256 _settings_settle_contract_sha256
+    "${_settings_settle_normalized}")
+set(_expected_settings_settle_contract_sha256
+    "e61f013c1387da1e64fcef26d696ce210132574d28a823edcb66dffde3c08f8e")
+if(NOT _settings_settle_contract_sha256 STREQUAL
+        _expected_settings_settle_contract_sha256)
+    message(FATAL_ERROR
+        "Stage11D settings settlement contract drifted: ${_settings_settle_contract_sha256}")
+endif()
+string(REGEX REPLACE "[ \t\r\n]+" "" _host_code_normalized
+    "${_stage11d_host_active}")
+string(REGEX MATCHALL "([.]|->)loot_filter_mode="
+    _host_live_filter_writes "${_host_code_normalized}")
+list(LENGTH _host_live_filter_writes _host_live_filter_write_count)
+if(NOT _host_live_filter_write_count EQUAL 0)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard forbids Host live-settings filter writes")
+endif()
+string(REPLACE ";" " " _host_identifier_surface
+    "${_stage11d_host_active}")
+string(REGEX MATCHALL "(^|[^A-Za-z0-9_])live_settings([^A-Za-z0-9_]|$)"
+    _host_live_settings_identifiers "${_host_identifier_surface}")
+list(LENGTH _host_live_settings_identifiers _host_live_settings_count)
+if(NOT _host_live_settings_count EQUAL 6)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected Host live-settings alias/helper drift: ${_host_live_settings_count}")
+endif()
+string(REGEX MATCHALL "(^|[^A-Za-z0-9_])settings_runtime([^A-Za-z0-9_]|$)"
+    _host_settings_runtime_identifiers "${_host_identifier_surface}")
+list(LENGTH _host_settings_runtime_identifiers _host_settings_runtime_count)
+if(NOT _host_settings_runtime_count EQUAL 3)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected Host settings-runtime helper drift: ${_host_settings_runtime_count}")
+endif()
+string(REGEX MATCHALL
+    "(^|[^A-Za-z0-9_])HostSettingsRuntime([^A-Za-z0-9_]|$)"
+    _host_settings_runtime_types "${_host_identifier_surface}")
+list(LENGTH _host_settings_runtime_types _host_settings_runtime_type_count)
+if(NOT _host_settings_runtime_type_count EQUAL 1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard requires exactly one Host settings coordinator")
+endif()
+foreach(_host_settings_context IN ITEMS
+        "settings::SettingsDatalive_settings=committed_settings;"
+        "HostSettingsRuntimesettings_runtime{&settings_notice,&pause_menu,&live_settings,&input_settings,&settings_store,settings_backend};"
+        "audio_bus_levels(live_settings)"
+        "loot_pickup_policy(live_settings.loot_filter_mode)"
+        "?pause_menu.draft:live_settings;"
+        "renderer_loot_filter_mode(pause_menu.screen,live_settings,pause_menu.draft)"
+        "settings_runtime.consume_notice(pause_screen_before);"
+        "settings_runtime.settle(")
+    stage11d_count_raw_token("${_host_code_normalized}"
+        "${_host_settings_context}" _host_settings_context_count)
+    if(NOT _host_settings_context_count EQUAL 1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard rejected Host settings context: ${_host_settings_context}")
+    endif()
+endforeach()
 
 string(REGEX MATCH
     "ground_items[ \t\r\n]*\\[[^]]+\\][ \t\r\n]*=[^=]"

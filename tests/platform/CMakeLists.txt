@@ -21,6 +21,7 @@ if(TARGET arpg_raylib)
         host_launch_options_tests.cpp
         dungeon_runtime_tests.cpp
         pause_host_gate_tests.cpp
+        host_settings_runtime_tests.cpp
         pause_menu_state_tests.cpp
         pause_menu_view_tests.cpp
         window_settings_tests.cpp
@@ -1351,7 +1352,7 @@ set_tests_properties(
     PROPERTIES
         ENVIRONMENT "ARPG_TEST_FILTER=stage11b.architecture"
         LABELS "headless;platform;architecture;stage11b"
-        TIMEOUT 300)
+        TIMEOUT 600)
 
 add_test(
     NAME stage11c.architecture.hud_boundaries
@@ -1682,7 +1683,24 @@ add_test(
         -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11b_settings_evidence_guard_self_test.cmake")
 set_tests_properties(
     stage11b.settings_evidence_guard_self_test
-    PROPERTIES LABELS "headless;platform;architecture;stage11b")
+    PROPERTIES
+        LABELS "headless;platform;architecture;stage11b"
+        TIMEOUT 1500
+        RUN_SERIAL TRUE)
+
+add_test(
+    NAME stage11b.task8b_settings_owner_guard_self_test
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        "-DGUARD_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/stage11b-task8b-owner-mutations"
+        "-DTASK8B_TARGETED_ONLY=ON"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11b_settings_evidence_guard_self_test.cmake")
+set_tests_properties(
+    stage11b.task8b_settings_owner_guard_self_test
+    PROPERTIES
+        LABELS "headless;platform;architecture;stage11b;task8b"
+        TIMEOUT 600
+        RUN_SERIAL TRUE)
 
 add_test(
     NAME stage11c.hud_evidence_guard
@@ -1739,7 +1757,24 @@ add_test(
         -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11d_loot_evidence_guard_self_test.cmake")
 set_tests_properties(
     stage11d.loot_evidence_guard_self_test
-    PROPERTIES LABELS "headless;platform;architecture;stage11d" TIMEOUT 1500)
+    PROPERTIES
+        LABELS "headless;platform;architecture;stage11d"
+        TIMEOUT 1500
+        RUN_SERIAL TRUE)
+
+add_test(
+    NAME stage11d.task8b_settings_owner_guard_self_test
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
+        "-DGUARD_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/stage11d-task8b-owner-mutations"
+        -DTASK8B_TARGETED_ONLY=ON
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11d_loot_evidence_guard_self_test.cmake")
+set_tests_properties(
+    stage11d.task8b_settings_owner_guard_self_test
+    PROPERTIES
+        LABELS "headless;platform;architecture;stage11d;task8b"
+        TIMEOUT 1200
+        RUN_SERIAL TRUE)
 
 add_test(
     NAME stage14.audio_sources

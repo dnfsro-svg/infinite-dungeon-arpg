@@ -20,6 +20,12 @@ else()
     set(_runtime
         "${SOURCE_ROOT}/src/platform/raylib/host_validation_runtime.cpp")
 endif()
+if(DEFINED SETTINGS_RUNTIME_OVERRIDE)
+    set(_settings_runtime "${SETTINGS_RUNTIME_OVERRIDE}")
+else()
+    set(_settings_runtime
+        "${SOURCE_ROOT}/src/platform/raylib/host_settings_runtime.cpp")
+endif()
 set(_stage_header "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11b.hpp")
 set(_header "${SOURCE_ROOT}/src/platform/raylib/raylib_host.hpp")
 set(_pause_renderer "${SOURCE_ROOT}/src/platform/raylib/pause_menu_renderer.cpp")
@@ -30,6 +36,7 @@ else()
     set(_formal "${SOURCE_ROOT}/tests/platform/stage11b_settings_formal_game_validation.cpp")
 endif()
 foreach(_required IN ITEMS "${_host}" "${_stage}" "${_runtime}"
+        "${_settings_runtime}"
         "${_stage_header}" "${_header}" "${_formal}"
         "${_pause_renderer}" "${_font_source}")
     if(NOT EXISTS "${_required}")
@@ -40,12 +47,14 @@ endforeach()
 file(READ "${_host}" _host_text)
 file(READ "${_stage}" _stage_text)
 file(READ "${_runtime}" _runtime_text)
+file(READ "${_settings_runtime}" _settings_runtime_text)
 file(READ "${_stage_header}" _stage_header_text)
 file(READ "${_header}" _header_text)
 file(READ "${_formal}" _formal_text)
 file(READ "${_pause_renderer}" _pause_renderer_text)
 file(READ "${_font_source}" _font_source_text)
-set(_combined "${_header}\n${_host_text}\n${_formal_text}")
+set(_combined
+    "${_header_text}\n${_host_text}\n${_settings_runtime_text}\n${_formal_text}")
 
 function(stage11b_extract_sanitized_block SANITIZED_SOURCE SIGNATURE OUT_BLOCK)
     evidence_find_cpp_function_bounds_in_sanitized(
@@ -65,6 +74,17 @@ function(stage11b_count_token SOURCE TOKEN OUT_COUNT)
     math(EXPR token_count
         "(${before_length} - ${after_length}) / ${token_length}")
     set(${OUT_COUNT} ${token_count} PARENT_SCOPE)
+endfunction()
+
+function(stage11b_fold_cpp_phase2_splices SOURCE OUT_SOURCE)
+    string(ASCII 92 backslash)
+    string(ASCII 13 carriage_return)
+    string(ASCII 10 line_feed)
+    set(folded "${SOURCE}")
+    string(REPLACE "${backslash}${carriage_return}${line_feed}" ""
+        folded "${folded}")
+    string(REPLACE "${backslash}${line_feed}" "" folded "${folded}")
+    set(${OUT_SOURCE} "${folded}" PARENT_SCOPE)
 endfunction()
 
 function(stage11b_brace_depth SOURCE POSITION OUT_DEPTH)
@@ -163,8 +183,11 @@ function(stage11b_mask_non_direct_scopes SOURCE OUT_SOURCE)
     while(copy_cursor LESS source_length)
         string(SUBSTRING "${SOURCE}" ${copy_cursor} -1 tail)
         string(REGEX MATCH
-            "\\][ \t\r\n]*(\\([^{};]*\\))?[ \t\r\n]*(mutable[ \t\r\n]*)?(noexcept([ \t\r\n]*\\([^{};]*\\))?[ \t\r\n]*)?(->[^{;]*)?[ \t\r\n]*\\{"
+            "\\][ \t\r\n]*(\\([^{};]*\\))?[ \t\r\n]*((mutable|constexpr|consteval|static)[ \t\r\n]*)*(noexcept([ \t\r\n]*\\([^{};]*\\))?[ \t\r\n]*)?(->[^{;]*)?[ \t\r\n]*\\{"
             lambda_match "${tail}")
+        string(REGEX MATCH
+            "(class|struct|union)[ \t\r\n]+[A-Za-z_][A-Za-z0-9_]*[^;{}]*\\{"
+            local_type_match "${tail}")
         string(REGEX MATCH
             "(if|while)[ \t\r\n]*(constexpr[ \t\r\n]*)?\\([ \t\r\n]*(false|0[uUlL]*|![ \t\r\n]*true)[ \t\r\n]*\\)[ \t\r\n]*(do[ \t\r\n]*)?([^{;]*\\{|[^{};]*;)"
             dead_match "${tail}")
@@ -175,6 +198,14 @@ function(stage11b_mask_non_direct_scopes SOURCE OUT_SOURCE)
             string(FIND "${tail}" "${lambda_match}" scope_relative)
             set(scope_match "${lambda_match}")
             set(scope_kind lambda)
+        endif()
+        if(NOT local_type_match STREQUAL "")
+            string(FIND "${tail}" "${local_type_match}" local_relative)
+            if(scope_relative EQUAL -1 OR local_relative LESS scope_relative)
+                set(scope_match "${local_type_match}")
+                set(scope_relative ${local_relative})
+                set(scope_kind local-type)
+            endif()
         endif()
         if(NOT dead_match STREQUAL "")
             string(FIND "${tail}" "${dead_match}" dead_relative)
@@ -190,7 +221,7 @@ function(stage11b_mask_non_direct_scopes SOURCE OUT_SOURCE)
         endif()
         string(FIND "${scope_match}" "{" open_in_match)
         math(EXPR match_index "${copy_cursor} + ${scope_relative}")
-        if(scope_kind STREQUAL "dead")
+        if(scope_kind STREQUAL "dead" OR scope_kind STREQUAL "local-type")
             set(remove_begin ${match_index})
         else()
             math(EXPR remove_begin "${match_index} + ${open_in_match}")
@@ -244,6 +275,15 @@ stage11b_unconditional_cpp_surface("${_runtime_text}"
     _runtime_active _runtime_lexical)
 stage11b_unconditional_cpp_surface("${_host_text}"
     _host_active _host_lexical)
+stage11b_fold_cpp_phase2_splices("${_settings_runtime_text}"
+    _settings_runtime_phase2)
+stage11b_unconditional_cpp_surface("${_settings_runtime_phase2}"
+    _settings_runtime_active _settings_runtime_lexical)
+if(_settings_runtime_lexical MATCHES
+        "(^|\n)[ \t]*(#|%:)[ \t]*(define|undef)([ \t\r\n]|$)")
+    message(FATAL_ERROR
+        "Stage11B settings settlement owner forbids preprocessor macros")
+endif()
 stage11b_extract_sanitized_block("${_stage_code}"
     "PhysicalKeySnapshot inject_stage11b_physical_edges(" _stage11b_injection_block)
 stage11b_extract_sanitized_block("${_stage_code}"
@@ -288,6 +328,10 @@ stage11b_extract_unique_owner("${_runtime_active}" "${_runtime_lexical}"
 stage11b_extract_unique_owner("${_host_active}" "${_host_lexical}"
     "HostExitCode run_raylib_host("
     "Host run owner" _host_run_block)
+stage11b_extract_unique_owner(
+    "${_settings_runtime_active}" "${_settings_runtime_lexical}"
+    "bool HostSettingsRuntime::settle("
+    "settings settlement owner" _settings_settle_block)
 
 function(arpg_require_stage11b_block_token LABEL BLOCK TOKEN)
     # All callers pass blocks extracted from the single sanitized Stage surface.
@@ -319,7 +363,6 @@ foreach(_required IN ITEMS
         "present_frame_and_maybe_capture"
         "SettingsStore"
         "settings_store.load()"
-        "settings_store.save("
         "run_child"
         "restarted_settings"
         "paused_freeze"
@@ -329,6 +372,61 @@ foreach(_required IN ITEMS
         message(FATAL_ERROR "Stage11B evidence guard missing required token: ${_required}")
     endif()
 endforeach()
+
+string(REGEX REPLACE "[ \t\r\n]+" "" _settings_settle_compact
+    "${_settings_settle_block}")
+foreach(_settings_runtime_surface IN ITEMS
+        _settings_runtime_active _settings_runtime_lexical)
+    string(REGEX REPLACE "[ \t\r\n]+" "" _settings_runtime_compact
+        "${${_settings_runtime_surface}}")
+    string(REGEX MATCHALL "([.]|->)save\\("
+        _settings_runtime_save_calls "${_settings_runtime_compact}")
+    list(LENGTH _settings_runtime_save_calls _settings_runtime_save_count)
+    string(REGEX MATCHALL "SettingsStore::save\\("
+        _settings_runtime_static_save_calls "${_settings_runtime_compact}")
+    list(LENGTH _settings_runtime_static_save_calls
+        _settings_runtime_static_save_count)
+    string(REPLACE ";" " " _settings_runtime_identifier_surface
+        "${${_settings_runtime_surface}}")
+    string(REGEX MATCHALL "(^|[^A-Za-z0-9_])save([^A-Za-z0-9_]|$)"
+        _settings_runtime_save_identifiers
+        "${_settings_runtime_identifier_surface}")
+    list(LENGTH _settings_runtime_save_identifiers
+        _settings_runtime_save_identifier_count)
+    if(NOT _settings_runtime_save_count EQUAL 1
+            OR NOT _settings_runtime_static_save_count EQUAL 0
+            OR NOT _settings_runtime_save_identifier_count EQUAL 1)
+        message(FATAL_ERROR
+            "Stage11B settings settlement owner requires exactly one settings-store save call in its translation unit")
+    endif()
+endforeach()
+set(_settings_save_contract
+    "constsettings::SettingsSaveResultsaved=store->save(pause_menu->committed,save_draft);")
+stage11b_count_token("${_settings_settle_compact}"
+    "${_settings_save_contract}" _settings_save_contract_count)
+if(NOT _settings_save_contract_count EQUAL 1)
+    message(FATAL_ERROR
+        "Stage11B settings settlement owner requires one direct save transaction")
+endif()
+string(FIND "${_settings_settle_compact}" "casePauseCommand::apply:{"
+    _settings_apply_case)
+string(FIND "${_settings_settle_compact}" "${_settings_save_contract}"
+    _settings_save_position)
+string(FIND "${_settings_settle_compact}" "casePauseCommand::rollback:{"
+    _settings_rollback_case)
+if(_settings_apply_case EQUAL -1 OR _settings_save_position EQUAL -1
+        OR _settings_rollback_case EQUAL -1
+        OR NOT _settings_apply_case LESS _settings_save_position
+        OR NOT _settings_save_position LESS _settings_rollback_case)
+    message(FATAL_ERROR
+        "Stage11B settings settlement save must remain in the apply case")
+endif()
+stage11b_brace_depth("${_settings_settle_compact}"
+    ${_settings_save_position} _settings_save_depth)
+if(NOT _settings_save_depth EQUAL 3)
+    message(FATAL_ERROR
+        "Stage11B settings settlement save must remain direct at apply depth")
+endif()
 
 arpg_require_stage11b_block_token("Stage injection" "${_stage11b_injection_block}" "StableKey::j")
 arpg_require_stage11b_block_token("Stage injection" "${_stage11b_injection_block}" "StableKey::u")

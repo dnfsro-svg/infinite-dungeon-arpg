@@ -15,6 +15,10 @@ set(_host_validation_runtime
 set(_host_header_path "${SOURCE_ROOT}/src/platform/raylib/raylib_host.hpp")
 set(_host_frame_gate
     "${SOURCE_ROOT}/src/platform/raylib/host_frame_gate.cpp")
+set(_host_settings_header
+    "${SOURCE_ROOT}/src/platform/raylib/host_settings_runtime.hpp")
+set(_host_settings_source
+    "${SOURCE_ROOT}/src/platform/raylib/host_settings_runtime.cpp")
 
 foreach(_target IN ITEMS
         "${_host_validation_header}"
@@ -30,6 +34,12 @@ if(NOT EXISTS "${_host_frame_gate}")
     message(FATAL_ERROR
         "T8A: Host frame gate source is missing: ${_host_frame_gate}")
 endif()
+foreach(_target IN ITEMS "${_host_settings_header}" "${_host_settings_source}")
+    if(NOT EXISTS "${_target}")
+        message(FATAL_ERROR
+            "T8B: Host settings runtime target is missing: ${_target}")
+    endif()
+endforeach()
 
 set(_host_source "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
 set(_raylib_cmake "${SOURCE_ROOT}/src/platform/raylib/CMakeLists.txt")
@@ -45,6 +55,8 @@ file(READ "${_host_validation_state}" _state_text)
 file(READ "${_host_validation_runtime}" _runtime_text)
 file(READ "${_host_header_path}" _host_header_text)
 file(READ "${_host_frame_gate}" _host_frame_gate_text)
+file(READ "${_host_settings_header}" _host_settings_header_text)
+file(READ "${_host_settings_source}" _host_settings_source_text)
 file(READ "${_host_source}" _host_text)
 file(READ "${_raylib_cmake}" _raylib_cmake_text)
 
@@ -303,12 +315,22 @@ function(host_validation_require_identifier_count
     endif()
 endfunction()
 
+function(host_validation_contains_preprocessor_mutation SOURCE OUT_CONTAINS)
+    string(REGEX MATCH
+        "(^|\n)[ \t]*(#|%:)[ \t]*(define|undef)([ \t\r\n]|$)"
+        _mutation_match "${SOURCE}")
+    if(_mutation_match STREQUAL "")
+        set(${OUT_CONTAINS} FALSE PARENT_SCOPE)
+    else()
+        set(${OUT_CONTAINS} TRUE PARENT_SCOPE)
+    endif()
+endfunction()
+
 function(host_validation_require_preprocessor_macro_free
         LABEL SOURCE)
-    string(REGEX MATCH
-        "(^|\n)[ \t]*#[ \t]*(define|undef)([ \t]|$)"
-        _mutation_match "${SOURCE}")
-    if(NOT _mutation_match STREQUAL "")
+    host_validation_contains_preprocessor_mutation(
+        "${SOURCE}" _contains_mutation)
+    if(_contains_mutation)
         message(FATAL_ERROR
             "Host validation ${LABEL} contains a forbidden #define or #undef")
     endif()
@@ -409,117 +431,16 @@ endfunction()
 
 function(host_validation_find_balanced_scope_end
         SOURCE OPEN_INDEX OUT_END OUT_VALID)
-    string(LENGTH "${SOURCE}" _source_length)
-    if(OPEN_INDEX LESS 0 OR OPEN_INDEX GREATER_EQUAL _source_length)
-        set("${OUT_END}" -1 PARENT_SCOPE)
-        set("${OUT_VALID}" FALSE PARENT_SCOPE)
-        return()
-    endif()
-    string(SUBSTRING "${SOURCE}" ${OPEN_INDEX} 1 _open_character)
-    if(NOT _open_character STREQUAL "{")
-        set("${OUT_END}" -1 PARENT_SCOPE)
-        set("${OUT_VALID}" FALSE PARENT_SCOPE)
-        return()
-    endif()
-    set(_cursor ${OPEN_INDEX})
-    set(_depth 0)
-    while(_cursor LESS _source_length)
-        string(SUBSTRING "${SOURCE}" ${_cursor} -1 _tail)
-        string(FIND "${_tail}" "{" _next_open)
-        string(FIND "${_tail}" "}" _next_close)
-        if(_next_close EQUAL -1)
-            set("${OUT_END}" -1 PARENT_SCOPE)
-            set("${OUT_VALID}" FALSE PARENT_SCOPE)
-            return()
-        endif()
-        if(NOT _next_open EQUAL -1 AND _next_open LESS _next_close)
-            math(EXPR _cursor "${_cursor} + ${_next_open} + 1")
-            math(EXPR _depth "${_depth} + 1")
-        else()
-            math(EXPR _close_index "${_cursor} + ${_next_close}")
-            math(EXPR _depth "${_depth} - 1")
-            if(_depth EQUAL 0)
-                set("${OUT_END}" ${_close_index} PARENT_SCOPE)
-                set("${OUT_VALID}" TRUE PARENT_SCOPE)
-                return()
-            endif()
-            math(EXPR _cursor "${_close_index} + 1")
-        endif()
-    endwhile()
-    set("${OUT_END}" -1 PARENT_SCOPE)
-    set("${OUT_VALID}" FALSE PARENT_SCOPE)
+    evidence_find_cpp_balanced_scope_end_in_sanitized(
+        "${SOURCE}" ${OPEN_INDEX} _scope_end _scope_valid)
+    set("${OUT_END}" ${_scope_end} PARENT_SCOPE)
+    set("${OUT_VALID}" ${_scope_valid} PARENT_SCOPE)
 endfunction()
 
 function(host_validation_mask_non_direct_executable_scopes SOURCE OUT_SOURCE)
-    string(LENGTH "${SOURCE}" _source_length)
-    set(_masked "")
-    set(_copy_cursor 0)
-    set(_dead_condition
-        "(false|0[uUlL]*|![ \\t\\r\\n]*true|1[uUlL]*[ \\t\\r\\n]*==[ \\t\\r\\n]*0[uUlL]*|0[uUlL]*[ \\t\\r\\n]*==[ \\t\\r\\n]*1[uUlL]*)")
-    while(_copy_cursor LESS _source_length)
-        string(SUBSTRING "${SOURCE}" ${_copy_cursor} -1 _tail)
-        string(REGEX MATCH
-            "\\][ \\t\\r\\n]*(\\([^{};]*\\))?[ \\t\\r\\n]*(mutable[ \\t\\r\\n]*)?(noexcept([ \\t\\r\\n]*\\([^{};]*\\))?[ \\t\\r\\n]*)?(->[^{;]*)?[ \\t\\r\\n]*\\{"
-            _lambda_match "${_tail}")
-        string(REGEX MATCH
-            "(if|while)[ \\t\\r\\n]*(constexpr[ \\t\\r\\n]*)?\\([ \\t\\r\\n]*${_dead_condition}[ \\t\\r\\n]*\\)[ \\t\\r\\n]*(do[ \\t\\r\\n]*)?([^{;]*\\{|[^{};]*;)"
-            _dead_branch_match "${_tail}")
-        string(REGEX MATCH
-            "for[ \\t\\r\\n]*\\([ \\t\\r\\n]*;[ \\t\\r\\n]*${_dead_condition}[ \\t\\r\\n]*;[^)]*\\)[ \\t\\r\\n]*([^{;]*\\{|[^{};]*;)"
-            _dead_for_match "${_tail}")
-        set(_scope_match "")
-        set(_scope_relative -1)
-        set(_scope_kind "")
-        if(NOT _lambda_match STREQUAL "")
-            string(FIND "${_tail}" "${_lambda_match}" _scope_relative)
-            set(_scope_match "${_lambda_match}")
-            set(_scope_kind lambda)
-        endif()
-        foreach(_dead_match_name IN ITEMS
-                _dead_branch_match _dead_for_match)
-            set(_dead_match "${${_dead_match_name}}")
-            if(_dead_match STREQUAL "")
-                continue()
-            endif()
-            string(FIND "${_tail}" "${_dead_match}" _dead_relative)
-            if(_scope_relative EQUAL -1 OR _dead_relative LESS _scope_relative)
-                set(_scope_match "${_dead_match}")
-                set(_scope_relative ${_dead_relative})
-                set(_scope_kind dead-control)
-            endif()
-        endforeach()
-        if(_scope_relative EQUAL -1)
-            string(APPEND _masked "${_tail}")
-            break()
-        endif()
-        string(FIND "${_scope_match}" "{" _open_in_match)
-        math(EXPR _match_index "${_copy_cursor} + ${_scope_relative}")
-        if(_scope_kind STREQUAL "dead-control")
-            set(_remove_begin ${_match_index})
-        else()
-            math(EXPR _remove_begin "${_match_index} + ${_open_in_match}")
-        endif()
-        math(EXPR _copy_length "${_remove_begin} - ${_copy_cursor}")
-        if(_copy_length GREATER 0)
-            string(SUBSTRING "${SOURCE}" ${_copy_cursor} ${_copy_length}
-                _copy_chunk)
-            string(APPEND _masked "${_copy_chunk}")
-        endif()
-        if(_open_in_match EQUAL -1)
-            string(LENGTH "${_scope_match}" _scope_length)
-            math(EXPR _scope_end "${_match_index} + ${_scope_length} - 1")
-        else()
-            math(EXPR _open_index "${_match_index} + ${_open_in_match}")
-            host_validation_find_balanced_scope_end(
-                "${SOURCE}" ${_open_index} _scope_end _scope_valid)
-            if(NOT _scope_valid)
-                message(FATAL_ERROR
-                    "Host validation direct-scope fixture has no closing brace")
-            endif()
-        endif()
-        math(EXPR _copy_cursor "${_scope_end} + 1")
-    endwhile()
-    set("${OUT_SOURCE}" "${_masked}" PARENT_SCOPE)
+    evidence_cpp_direct_execution_surface_in_sanitized(
+        "${SOURCE}" _direct_source)
+    set("${OUT_SOURCE}" "${_direct_source}" PARENT_SCOPE)
 endfunction()
 
 function(host_validation_run_host_snapshot_bindings_valid
@@ -650,6 +571,32 @@ function(host_validation_brace_depth SURFACE POSITION OUT_DEPTH)
     set(${OUT_DEPTH} ${_depth} PARENT_SCOPE)
 endfunction()
 
+function(host_validation_try_extract_namespace_run_host
+        SOURCE OUT_BLOCK OUT_VALID)
+    set("${OUT_BLOCK}" "" PARENT_SCOPE)
+    set("${OUT_VALID}" FALSE PARENT_SCOPE)
+    evidence_try_find_cpp_function_bounds_in_sanitized(
+        "${SOURCE}" "HostExitCode run_raylib_host("
+        _run_begin _run_open _run_end _run_definition_valid)
+    if(NOT _run_definition_valid)
+        return()
+    endif()
+    evidence_cpp_prefix_has_only_namespace_scopes_in_sanitized(
+        "${SOURCE}" ${_run_begin} _run_namespace_valid)
+    if(NOT _run_namespace_valid)
+        return()
+    endif()
+    math(EXPR _run_length "${_run_end} - ${_run_begin} + 1")
+    string(SUBSTRING "${SOURCE}" ${_run_begin} ${_run_length} _run_block)
+    evidence_cpp_contains_local_type_keyword_in_sanitized(
+        "${_run_block}" _run_has_local_type)
+    if(_run_has_local_type)
+        return()
+    endif()
+    set("${OUT_BLOCK}" "${_run_block}" PARENT_SCOPE)
+    set("${OUT_VALID}" TRUE PARENT_SCOPE)
+endfunction()
+
 function(host_validation_require_depth LABEL SURFACE TOKEN EXPECTED)
     host_validation_require_count("${LABEL} uniqueness" "${SURFACE}"
         "${TOKEN}" 1)
@@ -734,6 +681,12 @@ host_validation_unconditional_cpp_surface(
     "${_host_header_text}" _host_header _host_header_lexical)
 arpg_sanitize_cpp_source(
     "${_host_frame_gate_text}" _host_frame_gate_lexical)
+host_validation_unconditional_cpp_surface(
+    "${_host_settings_header_text}"
+    _host_settings_header _host_settings_header_lexical)
+host_validation_unconditional_cpp_surface(
+    "${_host_settings_source_text}"
+    _host_settings_source_active _host_settings_source_lexical)
 host_validation_unconditional_cpp_surface(
     "${_host_text}" _host _host_lexical)
 
@@ -1946,8 +1899,12 @@ endforeach()
 
 # Bind only the executable Host entry and drain helper. Comments, literals,
 # inactive branches and cross-function decoys have already been removed.
-host_validation_extract_sanitized_block("${_host}"
-    "HostExitCode run_raylib_host(" _run_host)
+host_validation_try_extract_namespace_run_host(
+    "${_host}" _run_host _run_host_boundary_valid)
+if(NOT _run_host_boundary_valid)
+    message(FATAL_ERROR
+        "Host validation run_raylib_host must be one namespace-level definition without local types")
+endif()
 host_validation_extract_sanitized_block("${_host}" "void drain_events(" _drain)
 host_validation_mask_non_direct_executable_scopes(
     "${_run_host}" _run_host_direct)
@@ -1955,6 +1912,51 @@ host_validation_require_depth("Host entry top-level definition" "${_host}"
     "HostExitCode run_raylib_host(" 1)
 host_validation_require_depth("drain helper top-level definition" "${_host}"
     "void drain_events(" 2)
+
+set(_run_host_forward_declaration_fixture [=[
+namespace arpg::platform {
+HostExitCode run_raylib_host(const RaylibHostConfig&);
+void decoy() {}
+}
+]=])
+host_validation_try_extract_namespace_run_host(
+    "${_run_host_forward_declaration_fixture}"
+    _run_host_forward_block _run_host_forward_valid)
+if(_run_host_forward_valid)
+    message(FATAL_ERROR
+        "Host validation function boundary borrowed a later definition body")
+endif()
+
+set(_run_host_local_owner_fixture [=[
+namespace arpg::platform {
+class LocalOwner {
+    HostExitCode run_raylib_host(const RaylibHostConfig&) { return {}; }
+};
+}
+]=])
+host_validation_try_extract_namespace_run_host(
+    "${_run_host_local_owner_fixture}"
+    _run_host_local_owner_block _run_host_local_owner_valid)
+if(_run_host_local_owner_valid)
+    message(FATAL_ERROR
+        "Host validation accepted a class-owned run_raylib_host")
+endif()
+
+set(_run_host_local_type_fixture [=[
+namespace arpg::platform {
+HostExitCode run_raylib_host(const RaylibHostConfig&) {
+    struct LocalDecoy {};
+    return {};
+}
+}
+]=])
+host_validation_try_extract_namespace_run_host(
+    "${_run_host_local_type_fixture}"
+    _run_host_local_type_block _run_host_local_type_valid)
+if(_run_host_local_type_valid)
+    message(FATAL_ERROR
+        "Host validation accepted local-type evidence in run_raylib_host")
+endif()
 
 # Task 8A keeps the public gate contract in the Host facade, gives the exact
 # implementation to one dedicated translation unit, and leaves Host with calls
@@ -2046,6 +2048,242 @@ foreach(_task8a_source IN LISTS _task8a_project_sources)
         "Task 8A foreign frame gate ownership: ${_task8a_source}"
         "${_task8a_source_lexical}" "gate_host_frame" 0)
 endforeach()
+
+# Task 8B gives settings notice, preview, persistence settlement, rollback and
+# renderer filter selection one value-type coordinator.  The public legacy
+# functions remain compatibility wrappers over that single algorithm.
+host_validation_canonicalize_cpp_surface(
+    "${_host_settings_header}" _host_settings_header_canonical)
+set(_host_settings_runtime_contract
+    "struct HostSettingsRuntime final{HostSettingsNotice*notice{};PauseMenuState*pause_menu{};settings::SettingsData*live{};settings::SettingsData*input{};const settings::SettingsStore*store{};WindowSettingsBackend backend{};void consume_notice(PauseScreen previous_screen)noexcept;[[nodiscard]]bool settle(PauseCommand command,bool window_close_requested);};")
+string(FIND "${_host_settings_header_canonical}"
+    "${_host_settings_runtime_contract}" _host_settings_contract_index)
+if(_host_settings_contract_index EQUAL -1)
+    message(FATAL_ERROR
+        "Host validation Task 8B coordinator has the wrong value interface")
+endif()
+foreach(_forbidden_owner IN ITEMS
+        "std::filesystem" "std::vector" "std::string"
+        "std::unique_ptr" "std::shared_ptr" "Renderer" "WindowHandle")
+    host_validation_require_count("Task 8B forbidden coordinator ownership"
+        "${_host_settings_header_lexical}" "${_forbidden_owner}" 0)
+endforeach()
+host_validation_require_preprocessor_macro_free(
+    "Task 8B header" "${_host_settings_header_lexical}")
+host_validation_require_preprocessor_macro_free(
+    "Task 8B source" "${_host_settings_source_lexical}")
+host_validation_require_preprocessor_macro_free(
+    "Task 8B Host" "${_host_lexical}")
+
+string(ASCII 92 _task8b_macro_backslash)
+string(ASCII 10 _task8b_macro_line_feed)
+set(_task8b_spliced_macro_fixture
+    "#defi${_task8b_macro_backslash}${_task8b_macro_line_feed}ne live input")
+arpg_sanitize_cpp_source(
+    "${_task8b_spliced_macro_fixture}" _task8b_spliced_macro_lexical)
+host_validation_contains_preprocessor_mutation(
+    "${_task8b_spliced_macro_lexical}" _task8b_spliced_macro_detected)
+if(NOT _task8b_spliced_macro_detected)
+    message(FATAL_ERROR
+        "Host validation Task 8B missed a phase-2 spliced settings macro")
+endif()
+set(_task8b_digraph_macro_fixture "%:define live input")
+arpg_sanitize_cpp_source(
+    "${_task8b_digraph_macro_fixture}" _task8b_digraph_macro_lexical)
+host_validation_contains_preprocessor_mutation(
+    "${_task8b_digraph_macro_lexical}" _task8b_digraph_macro_detected)
+if(NOT _task8b_digraph_macro_detected)
+    message(FATAL_ERROR
+        "Host validation Task 8B missed a digraph settings macro")
+endif()
+
+foreach(_moved_definition IN ITEMS
+        "HostSettingsNotice make_host_settings_notice("
+        "settings::LootFilterMode renderer_loot_filter_mode("
+        "void consume_host_settings_notice("
+        "bool settle_host_pause_command(")
+    host_validation_require_count("Task 8B moved Host settings definition"
+        "${_host_settings_source_active}" "${_moved_definition}" 1)
+    host_validation_require_count("Task 8B removed Host settings definition"
+        "${_host}" "${_moved_definition}" 0)
+endforeach()
+host_validation_extract_sanitized_block("${_host_settings_source_active}"
+    "HostSettingsNotice make_host_settings_notice("
+    _host_settings_make_notice)
+host_validation_extract_sanitized_block("${_host_settings_source_active}"
+    "settings::LootFilterMode renderer_loot_filter_mode("
+    _host_settings_renderer_filter)
+host_validation_extract_sanitized_block("${_host_settings_source_active}"
+    "bool HostSettingsRuntime::settle(" _host_settings_settle)
+host_validation_extract_sanitized_block("${_host_settings_source_active}"
+    "void consume_host_settings_notice(" _host_settings_notice_wrapper)
+host_validation_extract_sanitized_block("${_host_settings_source_active}"
+    "bool settle_host_pause_command(" _host_settings_settle_wrapper)
+host_validation_require_identifier_count(
+    "Task 8B single command settlement switch"
+    "${_host_settings_source_active}" "switch" 1)
+host_validation_require_identifier_count(
+    "Task 8B six command cases"
+    "${_host_settings_settle}" "case" 6)
+set(_host_settings_notice_wrapper_contract [=[
+void consume_host_settings_notice(
+    HostSettingsNotice& notice,
+    PauseScreen previous_screen,
+    PauseMenuState& pause_menu) noexcept {
+    HostSettingsRuntime runtime{&notice, &pause_menu};
+    runtime.consume_notice(previous_screen);
+}
+]=])
+host_validation_require_exact_surface("Task 8B notice thin wrapper"
+    "${_host_settings_notice_wrapper}"
+    "${_host_settings_notice_wrapper_contract}")
+set(_host_settings_settle_wrapper_contract [=[
+bool settle_host_pause_command(
+    PauseCommand command,
+    bool window_close_requested,
+    PauseMenuState& pause_menu,
+    settings::SettingsData& live_settings,
+    settings::SettingsData& input_settings,
+    const settings::SettingsStore& settings_store,
+    WindowSettingsBackend settings_backend) {
+    HostSettingsRuntime runtime{nullptr, &pause_menu, &live_settings,
+        &input_settings, &settings_store, settings_backend};
+    return runtime.settle(command, window_close_requested);
+}
+]=])
+host_validation_require_exact_surface("Task 8B settle thin wrapper"
+    "${_host_settings_settle_wrapper}"
+    "${_host_settings_settle_wrapper_contract}")
+foreach(_allocation_token IN ITEMS "new " "std::vector" "std::string"
+        "make_unique" "make_shared")
+    host_validation_require_count("Task 8B allocation-free settlement"
+        "${_host_settings_settle}" "${_allocation_token}" 0)
+endforeach()
+
+file(GLOB _task8b_raylib_sources LIST_DIRECTORIES FALSE
+    "${SOURCE_ROOT}/src/platform/raylib/*.cpp")
+file(REAL_PATH "${_host_settings_source}" _task8b_settings_source_real)
+foreach(_task8b_source IN LISTS _task8b_raylib_sources)
+    file(REAL_PATH "${_task8b_source}" _task8b_source_real)
+    if("${_task8b_source_real}" STREQUAL "${_task8b_settings_source_real}")
+        continue()
+    endif()
+    file(READ "${_task8b_source}" _task8b_source_text)
+    arpg_sanitize_cpp_source("${_task8b_source_text}"
+        _task8b_source_lexical)
+    foreach(_moved_definition IN ITEMS
+            "HostSettingsNotice make_host_settings_notice("
+            "settings::LootFilterMode renderer_loot_filter_mode("
+            "void consume_host_settings_notice("
+            "bool settle_host_pause_command(")
+        host_validation_require_count(
+            "Task 8B foreign settings ownership: ${_task8b_source}"
+            "${_task8b_source_lexical}" "${_moved_definition}" 0)
+    endforeach()
+endforeach()
+
+host_validation_require_count("Task 8B Host value coordinator"
+    "${_run_host_direct}" "HostSettingsRuntime settings_runtime{" 1)
+host_validation_require_identifier_count(
+    "Task 8B Host single coordinator type"
+    "${_run_host_direct}" "HostSettingsRuntime" 1)
+host_validation_canonicalize_cpp_surface(
+    "${_run_host_direct}" _task8b_run_host_canonical)
+host_validation_require_count("Task 8B Host exact coordinator binding"
+    "${_task8b_run_host_canonical}"
+    "HostSettingsRuntime settings_runtime{&settings_notice,&pause_menu,&live_settings,&input_settings,&settings_store,settings_backend};"
+    1)
+host_validation_require_count("Task 8B Host direct notice method"
+    "${_run_host_direct}" "settings_runtime.consume_notice(" 1)
+host_validation_require_count("Task 8B Host direct settle method"
+    "${_run_host_direct}" "settings_runtime.settle(" 1)
+host_validation_require_count("Task 8B Host legacy notice call removed"
+    "${_run_host_direct}" "consume_host_settings_notice(" 0)
+host_validation_require_count("Task 8B Host legacy settle call removed"
+    "${_run_host_direct}" "settle_host_pause_command(" 0)
+host_validation_require_canonical_order("Task 8B Host settings order"
+    "${_run_host_direct}"
+    "const PauseCommand pause_command = update_pause_menu("
+    "settings_runtime.consume_notice(pause_screen_before);"
+    "const std::uint64_t input_revision_before = input_settings.revision;"
+    "settings_runtime.settle("
+    "if (input_settings.revision != input_revision_before)")
+set(_task8b_coordinator_declaration [=[        HostSettingsRuntime settings_runtime{&settings_notice, &pause_menu,
+            &live_settings, &input_settings, &settings_store,
+            settings_backend};]=])
+set(_task8b_second_coordinator_mutation [=[        HostSettingsRuntime settings_runtime{&settings_notice, &pause_menu,
+            &live_settings, &input_settings, &settings_store,
+            settings_backend};
+        HostSettingsRuntime task8b_shadow_runtime{nullptr, &pause_menu,
+            &pause_menu.draft, &input_settings, &settings_store,
+            settings_backend};
+        static_cast<void>(task8b_shadow_runtime.settle(
+            PauseCommand::rollback, false));]=])
+string(REPLACE "${_task8b_coordinator_declaration}"
+    "${_task8b_second_coordinator_mutation}"
+    _task8b_double_coordinator_run "${_run_host_direct}")
+if(_task8b_double_coordinator_run STREQUAL _run_host_direct)
+    message(FATAL_ERROR
+        "Host validation Task 8B second-coordinator mutation anchor disappeared")
+endif()
+host_validation_count_identifier("${_task8b_double_coordinator_run}"
+    "HostSettingsRuntime" _task8b_double_coordinator_count)
+if(NOT _task8b_double_coordinator_count EQUAL 2)
+    message(FATAL_ERROR
+        "Host validation Task 8B failed to reject a renamed second coordinator")
+endif()
+set(_task8b_local_type_decoy [=[{
+    struct Task8BSettingsDecoy {
+        void run() {
+            HostSettingsRuntime settings_runtime{};
+            settings_runtime.consume_notice(PauseScreen::closed);
+            settings_runtime.settle(PauseCommand::none, false);
+        }
+    };
+}]=])
+evidence_cpp_contains_local_type_keyword_in_sanitized(
+    "${_task8b_local_type_decoy}" _task8b_local_type_detected)
+if(NOT _task8b_local_type_detected)
+    message(FATAL_ERROR
+        "Host validation local-type fail-closed guard missed a named struct")
+endif()
+
+set(_task8b_iife_fixture [=[{
+    [&]() noexcept {
+        settings_runtime.consume_notice(PauseScreen::closed);
+    }();
+}]=])
+host_validation_mask_non_direct_executable_scopes(
+    "${_task8b_iife_fixture}" _task8b_iife_direct)
+host_validation_require_count("Task 8B immediate lambda execution"
+    "${_task8b_iife_direct}" "settings_runtime.consume_notice(" 1)
+
+set(_task8b_nested_iife_decoy [=[{
+    [&]() noexcept {
+        const auto unused = [&]() noexcept {
+            settings_runtime.settle(PauseCommand::none, false);
+        };
+    }();
+}]=])
+host_validation_mask_non_direct_executable_scopes(
+    "${_task8b_nested_iife_decoy}" _task8b_nested_iife_direct)
+host_validation_require_count("Task 8B nested uncalled lambda masking"
+    "${_task8b_nested_iife_direct}" "settings_runtime.settle(" 0)
+
+set(_task8b_anonymous_functor_decoy [=[{
+    struct {
+        void operator()() {
+            settings_runtime.settle(PauseCommand::none, false);
+        }
+    } unused;
+}]=])
+evidence_cpp_contains_local_type_keyword_in_sanitized(
+    "${_task8b_anonymous_functor_decoy}"
+    _task8b_anonymous_functor_detected)
+if(NOT _task8b_anonymous_functor_detected)
+    message(FATAL_ERROR
+        "Host validation local-type fail-closed guard missed an anonymous functor")
+endif()
 
 # Scope the existing Task 7B ownership boundary to the executable death segment
 # and the real fixed-step loop. Task 7C additionally removes every remaining
@@ -2456,6 +2694,8 @@ host_validation_assert_top_level_registration(
     "${_raylib_cmake_text}" "host_validation_runtime.cpp")
 host_validation_assert_top_level_registration(
     "${_raylib_cmake_text}" "host_frame_gate.cpp")
+host_validation_assert_top_level_registration(
+    "${_raylib_cmake_text}" "host_settings_runtime.cpp")
 
 # Pressure-test both views: conditional code cannot lend positive evidence,
 # while forbidden dependencies in any conditional branch remain visible to

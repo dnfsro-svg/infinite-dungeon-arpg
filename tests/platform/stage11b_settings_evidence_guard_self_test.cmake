@@ -5,16 +5,205 @@ set(_guard "${SOURCE_ROOT}/tests/platform/stage11b_settings_evidence_guard_test.
 set(_stage_source "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11b.cpp")
 set(_runtime_source
     "${SOURCE_ROOT}/src/platform/raylib/host_validation_runtime.cpp")
+set(_settings_runtime_source
+    "${SOURCE_ROOT}/src/platform/raylib/host_settings_runtime.cpp")
 set(_fixture "${SOURCE_ROOT}/tests/platform/stage11b_settings_bad_host_input.txt")
 file(MAKE_DIRECTORY "${GUARD_TEST_ROOT}")
 file(READ "${SOURCE_ROOT}/tests/platform/stage11b_settings_formal_game_validation.cpp"
     _formal_source)
-foreach(_required IN ITEMS "${_stage_source}" "${_runtime_source}")
+foreach(_required IN ITEMS "${_stage_source}" "${_runtime_source}"
+        "${_settings_runtime_source}")
     if(NOT EXISTS "${_required}")
         message(FATAL_ERROR
             "Stage11B evidence self-test target is missing: ${_required}")
     endif()
 endforeach()
+
+file(READ "${_settings_runtime_source}" _settings_runtime_source_text)
+set(_settings_save_statement [=[const settings::SettingsSaveResult saved = store->save(
+            pause_menu->committed, save_draft);]=])
+string(REPLACE "${_settings_save_statement}" ""
+    _settings_without_save "${_settings_runtime_source_text}")
+if(_settings_without_save STREQUAL _settings_runtime_source_text)
+    message(FATAL_ERROR
+        "Stage11B Task8B settings-save mutation anchor disappeared")
+endif()
+set(_settings_switch_anchor "    switch (command) {")
+set(_settings_decoy_block [=[    const auto task8b_save_decoy = [&]() constexpr {
+        const settings::SettingsSaveResult saved = store->save(
+            pause_menu->committed, save_draft);
+    };
+    struct Task8BSaveDecoy {
+        static void save(const settings::SettingsStore* store,
+            const PauseMenuState* pause_menu,
+            const settings::SettingsData& save_draft) {
+            const settings::SettingsSaveResult saved = store->save(
+                pause_menu->committed, save_draft);
+        }
+    };
+    switch (command) {]=])
+string(REPLACE "${_settings_switch_anchor}" "${_settings_decoy_block}"
+    _settings_decoy_mutation "${_settings_without_save}")
+if(_settings_decoy_mutation STREQUAL _settings_without_save)
+    message(FATAL_ERROR
+        "Stage11B Task8B settings-decoy mutation anchor disappeared")
+endif()
+string(APPEND _settings_decoy_mutation [=[
+namespace arpg::platform {
+#if 0
+const settings::SettingsSaveResult inactive_saved = store->save(
+    pause_menu->committed, save_draft);
+#endif
+// store->save(pause_menu->committed, save_draft);
+constexpr const char* task8b_save_text = "store->save(pause_menu->committed, save_draft);";
+void task8b_cross_function_save(const settings::SettingsStore* store,
+    const PauseMenuState* pause_menu,
+    const settings::SettingsData& save_draft) {
+    const settings::SettingsSaveResult saved = store->save(
+        pause_menu->committed, save_draft);
+}
+}  // namespace arpg::platform
+]=])
+set(_settings_decoy_path
+    "${GUARD_TEST_ROOT}/settings-runtime-save-decoys.cpp")
+file(WRITE "${_settings_decoy_path}" "${_settings_decoy_mutation}")
+execute_process(COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+    "-DSETTINGS_RUNTIME_OVERRIDE=${_settings_decoy_path}" -P "${_guard}"
+    RESULT_VARIABLE _settings_decoy_result
+    OUTPUT_VARIABLE _settings_decoy_stdout ERROR_VARIABLE _settings_decoy_stderr)
+if(_settings_decoy_result EQUAL 0)
+    message(FATAL_ERROR
+        "Stage11B evidence guard accepted Task8B settings save decoys")
+endif()
+if(NOT "${_settings_decoy_stdout}${_settings_decoy_stderr}" MATCHES
+        "requires exactly one settings-store save")
+    message(FATAL_ERROR
+        "Task8B settings save decoys failed for wrong reason: ${_settings_decoy_stdout}${_settings_decoy_stderr}")
+endif()
+
+set(_settings_external_save_mutation
+    "${_settings_runtime_source_text}\nnamespace arpg::platform {\n[[maybe_unused]] settings::SettingsSaveResult task8b_external_save(\n    const settings::SettingsStore* target,\n    const settings::SettingsData& committed,\n    const settings::SettingsData& save_draft) {\n    return target->save(committed, save_draft);\n}\n}\n")
+set(_settings_external_save_path
+    "${GUARD_TEST_ROOT}/settings-runtime-external-save.cpp")
+file(WRITE "${_settings_external_save_path}"
+    "${_settings_external_save_mutation}")
+execute_process(COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+    "-DSETTINGS_RUNTIME_OVERRIDE=${_settings_external_save_path}" -P "${_guard}"
+    RESULT_VARIABLE _settings_external_save_result
+    OUTPUT_VARIABLE _settings_external_save_stdout
+    ERROR_VARIABLE _settings_external_save_stderr)
+if(_settings_external_save_result EQUAL 0)
+    message(FATAL_ERROR
+        "Stage11B evidence guard accepted an external settings save helper")
+endif()
+if(NOT "${_settings_external_save_stdout}${_settings_external_save_stderr}"
+        MATCHES "requires exactly one settings-store save")
+    message(FATAL_ERROR
+        "Task8B external settings save failed for wrong reason: ${_settings_external_save_stdout}${_settings_external_save_stderr}")
+endif()
+
+set(_settings_renamed_save_mutation
+    "${_settings_runtime_source_text}\nnamespace arpg::platform {\n[[maybe_unused]] settings::SettingsSaveResult task8b_renamed_save(\n    const settings::SettingsStore* target,\n    const settings::SettingsData& committed,\n    const settings::SettingsData& save_draft) {\n    const auto& renamed = *target;\n    return renamed.save(committed, save_draft);\n}\n}\n")
+set(_settings_renamed_save_path
+    "${GUARD_TEST_ROOT}/settings-runtime-renamed-save.cpp")
+file(WRITE "${_settings_renamed_save_path}"
+    "${_settings_renamed_save_mutation}")
+execute_process(COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+    "-DSETTINGS_RUNTIME_OVERRIDE=${_settings_renamed_save_path}" -P "${_guard}"
+    RESULT_VARIABLE _settings_renamed_save_result
+    OUTPUT_VARIABLE _settings_renamed_save_stdout
+    ERROR_VARIABLE _settings_renamed_save_stderr)
+if(_settings_renamed_save_result EQUAL 0)
+    message(FATAL_ERROR
+        "Stage11B evidence guard accepted a renamed settings save helper")
+endif()
+if(NOT "${_settings_renamed_save_stdout}${_settings_renamed_save_stderr}"
+        MATCHES "requires exactly one settings-store save")
+    message(FATAL_ERROR
+        "Task8B renamed settings save failed for wrong reason: ${_settings_renamed_save_stdout}${_settings_renamed_save_stderr}")
+endif()
+
+set(_settings_member_pointer_save_mutation
+    "${_settings_runtime_source_text}\nnamespace arpg::platform {\n[[maybe_unused]] settings::SettingsSaveResult task8b_member_pointer_save(\n    const settings::SettingsStore* target,\n    const settings::SettingsData& committed,\n    const settings::SettingsData& save_draft) {\n    return (target->*(&settings::SettingsStore::save))(\n        committed, save_draft);\n}\n}\n")
+set(_settings_member_pointer_save_path
+    "${GUARD_TEST_ROOT}/settings-runtime-member-pointer-save.cpp")
+file(WRITE "${_settings_member_pointer_save_path}"
+    "${_settings_member_pointer_save_mutation}")
+execute_process(COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+    "-DSETTINGS_RUNTIME_OVERRIDE=${_settings_member_pointer_save_path}"
+    -P "${_guard}"
+    RESULT_VARIABLE _settings_member_pointer_save_result
+    OUTPUT_VARIABLE _settings_member_pointer_save_stdout
+    ERROR_VARIABLE _settings_member_pointer_save_stderr)
+if(_settings_member_pointer_save_result EQUAL 0)
+    message(FATAL_ERROR
+        "Stage11B evidence guard accepted a member-pointer settings save helper")
+endif()
+if(NOT "${_settings_member_pointer_save_stdout}${_settings_member_pointer_save_stderr}"
+        MATCHES "requires exactly one settings-store save")
+    message(FATAL_ERROR
+        "Task8B member-pointer settings save failed for wrong reason: ${_settings_member_pointer_save_stdout}${_settings_member_pointer_save_stderr}")
+endif()
+
+set(_settings_harmless_mutation
+    "${_settings_runtime_source_text}\n// store->save(pause_menu->committed, save_draft);\nconstexpr const char* task8b_harmless_save_text = \"store->save(pause_menu->committed, save_draft);\";\n")
+set(_settings_harmless_path
+    "${GUARD_TEST_ROOT}/settings-runtime-harmless-decoys.cpp")
+file(WRITE "${_settings_harmless_path}" "${_settings_harmless_mutation}")
+execute_process(COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+    "-DSETTINGS_RUNTIME_OVERRIDE=${_settings_harmless_path}" -P "${_guard}"
+    RESULT_VARIABLE _settings_harmless_result
+    OUTPUT_VARIABLE _settings_harmless_stdout
+    ERROR_VARIABLE _settings_harmless_stderr)
+if(NOT _settings_harmless_result EQUAL 0)
+    message(FATAL_ERROR
+        "Stage11B evidence guard rejected harmless settings decoys: ${_settings_harmless_stdout}${_settings_harmless_stderr}")
+endif()
+
+string(ASCII 92 _settings_macro_backslash)
+string(ASCII 10 _settings_macro_line_feed)
+set(_settings_owner_anchor "bool HostSettingsRuntime::settle(")
+set(_settings_macro_names plain spliced digraph)
+set(_settings_macro_directives
+    "#define live input"
+    "#defi${_settings_macro_backslash}${_settings_macro_line_feed}ne live input"
+    "%:define live input")
+foreach(_settings_macro_index RANGE 0 2)
+    list(GET _settings_macro_names ${_settings_macro_index}
+        _settings_macro_name)
+    list(GET _settings_macro_directives ${_settings_macro_index}
+        _settings_macro_directive)
+    string(REPLACE "${_settings_owner_anchor}"
+        "${_settings_macro_directive}\n${_settings_owner_anchor}"
+        _settings_macro_mutation "${_settings_runtime_source_text}")
+    if(_settings_macro_mutation STREQUAL _settings_runtime_source_text)
+        message(FATAL_ERROR
+            "Stage11B ${_settings_macro_name} macro mutation anchor disappeared")
+    endif()
+    set(_settings_macro_path
+        "${GUARD_TEST_ROOT}/settings-runtime-macro-${_settings_macro_name}.cpp")
+    file(WRITE "${_settings_macro_path}" "${_settings_macro_mutation}")
+    execute_process(COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_ROOT=${SOURCE_ROOT}"
+        "-DSETTINGS_RUNTIME_OVERRIDE=${_settings_macro_path}" -P "${_guard}"
+        RESULT_VARIABLE _settings_macro_result
+        OUTPUT_VARIABLE _settings_macro_stdout
+        ERROR_VARIABLE _settings_macro_stderr)
+    if(_settings_macro_result EQUAL 0)
+        message(FATAL_ERROR
+            "Stage11B evidence guard accepted ${_settings_macro_name} settings macro")
+    endif()
+    if(NOT "${_settings_macro_stdout}${_settings_macro_stderr}" MATCHES
+            "settings settlement owner forbids preprocessor macros")
+        message(FATAL_ERROR
+            "Task8B ${_settings_macro_name} settings macro failed for wrong reason: ${_settings_macro_stdout}${_settings_macro_stderr}")
+    endif()
+endforeach()
+if(DEFINED TASK8B_TARGETED_ONLY AND TASK8B_TARGETED_ONLY)
+    message(STATUS
+        "Stage11B Task8B targeted settings-owner self-test passed: bad_mutations=7; harmless_decoys=1")
+    return()
+endif()
 file(READ "${_fixture}" _fixture_text)
 foreach(_fixture_forbidden IN ITEMS
         "TestAccess" "validation_input_setter" "queue_action"

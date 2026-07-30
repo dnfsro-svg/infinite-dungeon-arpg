@@ -9,6 +9,13 @@ if(NOT EXISTS "${HOST_FRAME_GATE_PATH}")
         "host frame gate source is required: ${HOST_FRAME_GATE_PATH}")
 endif()
 file(READ "${HOST_FRAME_GATE_PATH}" HOST_FRAME_GATE_SOURCE)
+set(HOST_SETTINGS_RUNTIME_PATH
+    "${RAYLIB_SOURCE_DIR}/host_settings_runtime.cpp")
+if(NOT EXISTS "${HOST_SETTINGS_RUNTIME_PATH}")
+    message(FATAL_ERROR
+        "host settings runtime is required: ${HOST_SETTINGS_RUNTIME_PATH}")
+endif()
+file(READ "${HOST_SETTINGS_RUNTIME_PATH}" HOST_SETTINGS_RUNTIME_SOURCE)
 set(HOST_VALIDATION_RUNTIME_PATH
     "${RAYLIB_SOURCE_DIR}/host_validation_runtime.cpp")
 if(NOT EXISTS "${HOST_VALIDATION_RUNTIME_PATH}")
@@ -74,6 +81,8 @@ endfunction()
 arpg_sanitize_cpp_source("${HOST_SOURCE}" HOST_SANITIZED_SOURCE)
 arpg_sanitize_cpp_source("${HOST_FRAME_GATE_SOURCE}"
     HOST_FRAME_GATE_SANITIZED_SOURCE)
+arpg_sanitize_cpp_source("${HOST_SETTINGS_RUNTIME_SOURCE}"
+    HOST_SETTINGS_RUNTIME_SANITIZED_SOURCE)
 arpg_sanitize_cpp_source("${HOST_VALIDATION_RUNTIME_SOURCE}"
     HOST_VALIDATION_RUNTIME_SANITIZED_SOURCE)
 arpg_sanitize_cpp_source("${STAGE17_RUNTIME_SOURCE}"
@@ -82,6 +91,9 @@ arpg_sanitize_cpp_source("${STAGE11B_RUNTIME_SOURCE}"
     STAGE11B_RUNTIME_SANITIZED_SOURCE)
 stage17_unconditional_cpp_surface("${STAGE17_RUNTIME_SOURCE}"
     STAGE17_RUNTIME_ACTIVE_SOURCE)
+stage17_unconditional_cpp_surface("${HOST_SETTINGS_RUNTIME_SOURCE}"
+    HOST_SETTINGS_RUNTIME_ACTIVE_SOURCE)
+stage17_unconditional_cpp_surface("${HOST_SOURCE}" HOST_ACTIVE_SOURCE)
 
 if(STAGE17_RUNTIME_ACTIVE_SOURCE MATCHES
         "(^|[^A-Za-z0-9_])(sample_physical_keys|map_host_frame_input|submit_frame_actions|IsKeyPressed|IsKeyPressedRepeat|IsKeyDown|IsKeyReleased|IsKeyUp|GetKeyPressed|GetCharPressed|IsMouseButtonPressed|IsMouseButtonDown|IsMouseButtonReleased|IsMouseButtonUp|GetMouseX|GetMouseY|GetMousePosition|GetMouseDelta|GetMouseWheelMove|GetMouseWheelMoveV|IsWindowFocused|GetFrameTime)[ \t\r\n]*\\(")
@@ -260,13 +272,9 @@ string(FIND
     "HostFrameGateResult gate_host_frame"
     PAUSE_GATE_START)
 string(FIND
-    "${HOST_SANITIZED_SOURCE}"
+    "${HOST_ACTIVE_SOURCE}"
     "HostExitCode run_raylib_host"
     HOST_ENTRY_START)
-string(FIND
-    "${HOST_SANITIZED_SOURCE}"
-    "bool settle_host_pause_command"
-    SETTINGS_SETTLE_START)
 if(PAUSE_GATE_START EQUAL -1)
     message(FATAL_ERROR "dedicated host pause frame gate is missing")
 endif()
@@ -302,13 +310,14 @@ endif()
 
 string(FIND "${HOST_SANITIZED_SOURCE}"
     "DeathInputGate host_death_input_gate" DEATH_HELPER_START)
-string(FIND "${HOST_SANITIZED_SOURCE}"
-    "HostSettingsNotice make_host_settings_notice" NOTICE_HELPER_START)
-if(DEATH_HELPER_START EQUAL -1 OR NOTICE_HELPER_START EQUAL -1
-        OR NOT DEATH_HELPER_START LESS NOTICE_HELPER_START)
+if(DEATH_HELPER_START EQUAL -1)
     message(FATAL_ERROR "fixed-E death input helper is missing")
 endif()
-math(EXPR DEATH_HELPER_LENGTH "${NOTICE_HELPER_START} - ${DEATH_HELPER_START}")
+evidence_find_cpp_function_bounds_in_sanitized(
+    "${HOST_SANITIZED_SOURCE}" "DeathInputGate host_death_input_gate("
+    DEATH_HELPER_START DEATH_HELPER_OPEN DEATH_HELPER_END)
+math(EXPR DEATH_HELPER_LENGTH
+    "${DEATH_HELPER_END} - ${DEATH_HELPER_START} + 1")
 string(SUBSTRING "${HOST_SANITIZED_SOURCE}" ${DEATH_HELPER_START}
     ${DEATH_HELPER_LENGTH} DEATH_HELPER_SOURCE)
 if(NOT DEATH_HELPER_SOURCE MATCHES
@@ -316,7 +325,29 @@ if(NOT DEATH_HELPER_SOURCE MATCHES
     message(FATAL_ERROR "death continue must use fixed StableKey::e from the frame snapshot")
 endif()
 
-string(SUBSTRING "${HOST_SANITIZED_SOURCE}" ${HOST_ENTRY_START} -1 HOST_ENTRY_SOURCE)
+evidence_try_find_cpp_function_bounds_in_sanitized(
+    "${HOST_ACTIVE_SOURCE}" "HostExitCode run_raylib_host("
+    HOST_ENTRY_START HOST_ENTRY_OPEN HOST_ENTRY_END HOST_ENTRY_DEFINITION_VALID)
+if(NOT HOST_ENTRY_DEFINITION_VALID)
+    message(FATAL_ERROR
+        "raylib host entry must be a concrete definition, not a declaration")
+endif()
+evidence_cpp_prefix_has_only_namespace_scopes_in_sanitized(
+    "${HOST_ACTIVE_SOURCE}" ${HOST_ENTRY_START} HOST_ENTRY_SCOPE_VALID)
+if(NOT HOST_ENTRY_SCOPE_VALID)
+    message(FATAL_ERROR
+        "raylib host entry must be owned directly by namespace scope")
+endif()
+math(EXPR HOST_ENTRY_LENGTH
+    "${HOST_ENTRY_END} - ${HOST_ENTRY_START} + 1")
+string(SUBSTRING "${HOST_ACTIVE_SOURCE}" ${HOST_ENTRY_START}
+    ${HOST_ENTRY_LENGTH} HOST_ENTRY_SOURCE)
+evidence_cpp_contains_local_type_keyword_in_sanitized(
+    "${HOST_ENTRY_SOURCE}" HOST_ENTRY_HAS_LOCAL_TYPE)
+if(HOST_ENTRY_HAS_LOCAL_TYPE)
+    message(FATAL_ERROR
+        "raylib host entry contains a local type and cannot be validated safely")
+endif()
 string(REGEX MATCHALL "sample_physical_keys[ \\t\\n]*\\(" SAMPLE_CALLS
     "${HOST_ENTRY_SOURCE}")
 list(LENGTH SAMPLE_CALLS SAMPLE_CALL_COUNT)
@@ -331,6 +362,14 @@ if(HOST_SANITIZED_SOURCE MATCHES "HostValidationStateAccess"
 endif()
 
 function(arpg_physical_input_chain_is_valid_from_sanitized SOURCE OUT_VALID)
+    evidence_cpp_contains_local_type_keyword_in_sanitized(
+        "${SOURCE}" SOURCE_HAS_LOCAL_TYPE)
+    if(SOURCE_HAS_LOCAL_TYPE)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    arpg_latency_cpp_executable_surface("${SOURCE}" EXECUTABLE_SOURCE)
+    set(SOURCE "${EXECUTABLE_SOURCE}")
     set(WS "[ \t\r\n]*")
     set(WS1 "[ \t\r\n]+")
     string(FIND "${SOURCE}" "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys()" SAMPLE_INDEX)
@@ -496,6 +535,19 @@ function(arpg_latency_cpp_prefix_has_only_namespace_scopes
     set(${OUT_VALID} TRUE PARENT_SCOPE)
 endfunction()
 
+function(arpg_latency_find_balanced_scope_end SOURCE OPEN_INDEX OUT_END OUT_VALID)
+    evidence_find_cpp_balanced_scope_end_in_sanitized(
+        "${SOURCE}" ${OPEN_INDEX} SCOPE_END SCOPE_VALID)
+    set(${OUT_END} ${SCOPE_END} PARENT_SCOPE)
+    set(${OUT_VALID} ${SCOPE_VALID} PARENT_SCOPE)
+endfunction()
+
+function(arpg_latency_cpp_executable_surface SOURCE OUT_SOURCE)
+    evidence_cpp_direct_execution_surface_in_sanitized(
+        "${SOURCE}" DIRECT_SOURCE)
+    set(${OUT_SOURCE} "${DIRECT_SOURCE}" PARENT_SCOPE)
+endfunction()
+
 function(arpg_latency_cpp_direct_function_surface SOURCE OUT_SOURCE)
     string(LENGTH "${SOURCE}" SOURCE_LENGTH)
     math(EXPR SOURCE_LAST "${SOURCE_LENGTH} - 1")
@@ -526,6 +578,51 @@ function(arpg_latency_cpp_direct_function_surface SOURCE OUT_SOURCE)
         endif()
     endforeach()
     set(${OUT_SOURCE} "${DIRECT_SOURCE}" PARENT_SCOPE)
+endfunction()
+
+function(arpg_latency_brace_depth SOURCE POSITION OUT_DEPTH)
+    if(POSITION EQUAL 0)
+        set(${OUT_DEPTH} 0 PARENT_SCOPE)
+        return()
+    endif()
+    string(SUBSTRING "${SOURCE}" 0 ${POSITION} PREFIX)
+    string(REGEX REPLACE "[^{}]" "" BRACES "${PREFIX}")
+    string(LENGTH "${BRACES}" BRACE_LENGTH)
+    set(DEPTH 0)
+    if(BRACE_LENGTH GREATER 0)
+        math(EXPR BRACE_LAST "${BRACE_LENGTH} - 1")
+        foreach(BRACE_INDEX RANGE 0 ${BRACE_LAST})
+            string(SUBSTRING "${BRACES}" ${BRACE_INDEX} 1 BRACE)
+            if(BRACE STREQUAL "{")
+                math(EXPR DEPTH "${DEPTH} + 1")
+            else()
+                math(EXPR DEPTH "${DEPTH} - 1")
+            endif()
+        endforeach()
+    endif()
+    set(${OUT_DEPTH} ${DEPTH} PARENT_SCOPE)
+endfunction()
+
+function(arpg_latency_count_identifier SOURCE IDENTIFIER OUT_COUNT)
+    string(REGEX REPLACE "[^A-Za-z0-9_]" ";" IDENTIFIER_TOKENS
+        "${SOURCE}")
+    set(IDENTIFIER_COUNT 0)
+    foreach(IDENTIFIER_TOKEN IN LISTS IDENTIFIER_TOKENS)
+        if("${IDENTIFIER_TOKEN}" STREQUAL "${IDENTIFIER}")
+            math(EXPR IDENTIFIER_COUNT "${IDENTIFIER_COUNT} + 1")
+        endif()
+    endforeach()
+    set(${OUT_COUNT} ${IDENTIFIER_COUNT} PARENT_SCOPE)
+endfunction()
+
+function(arpg_latency_contains_preprocessor_mutation SOURCE OUT_CONTAINS)
+    arpg_sanitize_cpp_source("${SOURCE}" LEXICAL_SOURCE)
+    if(LEXICAL_SOURCE MATCHES
+            "(^|\n)[ \t]*(#|%:)[ \t]*(define|undef)([ \t\r\n]|$)")
+        set(${OUT_CONTAINS} TRUE PARENT_SCOPE)
+    else()
+        set(${OUT_CONTAINS} FALSE PARENT_SCOPE)
+    endif()
 endfunction()
 
 function(arpg_validation_runtime_input_chain_is_valid SOURCE OUT_VALID)
@@ -661,6 +758,282 @@ function(arpg_validation_runtime_input_chain_is_valid SOURCE OUT_VALID)
     endif()
     set(${OUT_VALID} TRUE PARENT_SCOPE)
 endfunction()
+
+arpg_latency_cpp_executable_surface(
+    "${HOST_ENTRY_SOURCE}" HOST_ENTRY_DIRECT_SOURCE)
+set(TASK8B_LOCAL_TYPE_DECOY [=[{
+    struct Task8BInputDecoy {
+        void run() {
+            settings_runtime.consume_notice(PauseScreen::closed);
+            settings_runtime.settle(PauseCommand::none, false);
+        }
+    };
+}]=])
+evidence_cpp_contains_local_type_keyword_in_sanitized(
+    "${TASK8B_LOCAL_TYPE_DECOY}" TASK8B_LOCAL_TYPE_DETECTED)
+if(NOT TASK8B_LOCAL_TYPE_DETECTED)
+    message(FATAL_ERROR
+        "input latency fail-closed guard missed a local-type settings decoy")
+endif()
+
+function(arpg_latency_task8b_host_flow_is_valid SOURCE OUT_VALID)
+    arpg_latency_contains_preprocessor_mutation(
+        "${SOURCE}" HAS_PREPROCESSOR_MUTATION)
+    if(HAS_PREPROCESSOR_MUTATION)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    stage17_unconditional_cpp_surface("${SOURCE}" ACTIVE_SOURCE)
+    string(REGEX MATCHALL
+        "HostExitCode[ \t\r\n]+run_raylib_host[ \t\r\n]*\\("
+        RUN_SIGNATURES "${ACTIVE_SOURCE}")
+    list(LENGTH RUN_SIGNATURES RUN_SIGNATURE_COUNT)
+    if(NOT RUN_SIGNATURE_COUNT EQUAL 1)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    evidence_try_find_cpp_function_bounds_in_sanitized(
+        "${ACTIVE_SOURCE}" "HostExitCode run_raylib_host("
+        RUN_BEGIN RUN_OPEN RUN_END RUN_DEFINITION_VALID)
+    if(NOT RUN_DEFINITION_VALID)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    evidence_cpp_prefix_has_only_namespace_scopes_in_sanitized(
+        "${ACTIVE_SOURCE}" ${RUN_BEGIN} RUN_SCOPE_VALID)
+    if(NOT RUN_SCOPE_VALID)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    math(EXPR RUN_LENGTH "${RUN_END} - ${RUN_BEGIN} + 1")
+    string(SUBSTRING "${ACTIVE_SOURCE}" ${RUN_BEGIN}
+        ${RUN_LENGTH} RUN_SOURCE)
+    evidence_cpp_contains_local_type_keyword_in_sanitized(
+        "${RUN_SOURCE}" RUN_HAS_LOCAL_TYPE)
+    if(RUN_HAS_LOCAL_TYPE)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    arpg_latency_cpp_executable_surface("${RUN_SOURCE}" RUN_DIRECT)
+    arpg_latency_count_identifier(
+        "${RUN_DIRECT}" "HostSettingsRuntime" COORDINATOR_TYPE_COUNT)
+    if(NOT COORDINATOR_TYPE_COUNT EQUAL 1)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    string(REGEX REPLACE "[ \t\r\n]+" "" RUN_CANONICAL "${RUN_DIRECT}")
+    set(PREVIOUS_POSITION -1)
+    foreach(FLOW_TOKEN IN ITEMS
+            "constPauseCommandpause_command=update_pause_menu("
+            "settings_runtime.consume_notice(pause_screen_before);"
+            "conststd::uint64_tinput_revision_before=input_settings.revision;"
+            "settings_runtime.settle("
+            "if(input_settings.revision!=input_revision_before){")
+        string(LENGTH "${FLOW_TOKEN}" TOKEN_LENGTH)
+        string(LENGTH "${RUN_CANONICAL}" BEFORE_LENGTH)
+        string(REPLACE "${FLOW_TOKEN}" "" WITHOUT_TOKEN "${RUN_CANONICAL}")
+        string(LENGTH "${WITHOUT_TOKEN}" AFTER_LENGTH)
+        math(EXPR TOKEN_COUNT
+            "(${BEFORE_LENGTH} - ${AFTER_LENGTH}) / ${TOKEN_LENGTH}")
+        string(FIND "${RUN_CANONICAL}" "${FLOW_TOKEN}" TOKEN_POSITION)
+        if(NOT TOKEN_COUNT EQUAL 1 OR TOKEN_POSITION EQUAL -1
+                OR (NOT PREVIOUS_POSITION EQUAL -1
+                    AND NOT PREVIOUS_POSITION LESS TOKEN_POSITION))
+            set(${OUT_VALID} FALSE PARENT_SCOPE)
+            return()
+        endif()
+        arpg_latency_brace_depth("${RUN_CANONICAL}"
+            ${TOKEN_POSITION} TOKEN_DEPTH)
+        if(NOT TOKEN_DEPTH EQUAL 3)
+            set(${OUT_VALID} FALSE PARENT_SCOPE)
+            return()
+        endif()
+        set(PREVIOUS_POSITION ${TOKEN_POSITION})
+    endforeach()
+    set(COORDINATOR_TOKEN
+        "HostSettingsRuntimesettings_runtime{&settings_notice,&pause_menu,&live_settings,&input_settings,&settings_store,settings_backend};")
+    string(FIND "${RUN_CANONICAL}" "${COORDINATOR_TOKEN}"
+        COORDINATOR_POSITION)
+    if(COORDINATOR_POSITION EQUAL -1)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    arpg_latency_brace_depth("${RUN_CANONICAL}"
+        ${COORDINATOR_POSITION} COORDINATOR_DEPTH)
+    if(NOT COORDINATOR_DEPTH EQUAL 2)
+        set(${OUT_VALID} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    set(${OUT_VALID} TRUE PARENT_SCOPE)
+endfunction()
+
+arpg_latency_task8b_host_flow_is_valid(
+    "${HOST_SOURCE}" TASK8B_HOST_FLOW_VALID)
+if(NOT TASK8B_HOST_FLOW_VALID)
+    message(FATAL_ERROR "Task8B Host settings sequence must remain direct")
+endif()
+set(TASK8B_COORDINATOR_DECLARATION [=[        HostSettingsRuntime settings_runtime{&settings_notice, &pause_menu,
+            &live_settings, &input_settings, &settings_store,
+            settings_backend};]=])
+set(TASK8B_SECOND_COORDINATOR_REPLACEMENT [=[        HostSettingsRuntime settings_runtime{&settings_notice, &pause_menu,
+            &live_settings, &input_settings, &settings_store,
+            settings_backend};
+        HostSettingsRuntime task8b_shadow_runtime{nullptr, &pause_menu,
+            &pause_menu.draft, &input_settings, &settings_store,
+            settings_backend};
+        static_cast<void>(task8b_shadow_runtime.settle(
+            PauseCommand::rollback, false));]=])
+string(REPLACE "${TASK8B_COORDINATOR_DECLARATION}"
+    "${TASK8B_SECOND_COORDINATOR_REPLACEMENT}"
+    TASK8B_SECOND_COORDINATOR_MUTATION "${HOST_SOURCE}")
+if(TASK8B_SECOND_COORDINATOR_MUTATION STREQUAL HOST_SOURCE)
+    message(FATAL_ERROR
+        "Task8B second-coordinator mutation anchor disappeared")
+endif()
+arpg_latency_task8b_host_flow_is_valid(
+    "${TASK8B_SECOND_COORDINATOR_MUTATION}"
+    TASK8B_SECOND_COORDINATOR_VALID)
+if(TASK8B_SECOND_COORDINATOR_VALID)
+    message(FATAL_ERROR
+        "Task8B Host flow accepted a renamed second settings coordinator")
+endif()
+
+set(TASK8B_RUN_DEFINITION
+    "HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {")
+string(ASCII 92 TASK8B_MACRO_BACKSLASH)
+string(ASCII 10 TASK8B_MACRO_LINE_FEED)
+set(TASK8B_PHASE2_MACRO_PREFIX
+    "#defi${TASK8B_MACRO_BACKSLASH}${TASK8B_MACRO_LINE_FEED}ne settings_runtime task8b_runtime_alias\n")
+string(REPLACE "${TASK8B_RUN_DEFINITION}"
+    "${TASK8B_PHASE2_MACRO_PREFIX}${TASK8B_RUN_DEFINITION}"
+    TASK8B_PHASE2_MACRO_MUTATION "${HOST_SOURCE}")
+if(TASK8B_PHASE2_MACRO_MUTATION STREQUAL HOST_SOURCE)
+    message(FATAL_ERROR "Task8B phase-2 macro mutation anchor disappeared")
+endif()
+arpg_latency_task8b_host_flow_is_valid(
+    "${TASK8B_PHASE2_MACRO_MUTATION}" TASK8B_PHASE2_MACRO_VALID)
+if(TASK8B_PHASE2_MACRO_VALID)
+    message(FATAL_ERROR "Task8B Host flow accepted a phase-2 spliced macro")
+endif()
+
+set(TASK8B_DIGRAPH_MACRO_PREFIX
+    "%:define settings_runtime task8b_runtime_alias\n")
+string(REPLACE "${TASK8B_RUN_DEFINITION}"
+    "${TASK8B_DIGRAPH_MACRO_PREFIX}${TASK8B_RUN_DEFINITION}"
+    TASK8B_DIGRAPH_MACRO_MUTATION "${HOST_SOURCE}")
+if(TASK8B_DIGRAPH_MACRO_MUTATION STREQUAL HOST_SOURCE)
+    message(FATAL_ERROR "Task8B digraph macro mutation anchor disappeared")
+endif()
+arpg_latency_task8b_host_flow_is_valid(
+    "${TASK8B_DIGRAPH_MACRO_MUTATION}" TASK8B_DIGRAPH_MACRO_VALID)
+if(TASK8B_DIGRAPH_MACRO_VALID)
+    message(FATAL_ERROR "Task8B Host flow accepted a digraph macro")
+endif()
+set(TASK8B_NOTICE_CALL
+    "            settings_runtime.consume_notice(pause_screen_before);")
+set(TASK8B_LOCAL_CLASS_REPLACEMENT [=[            struct Task8BHostDecoy {
+                void run(HostSettingsRuntime& settings_runtime) {
+                    settings_runtime.consume_notice(PauseScreen::closed);
+                }
+            };]=])
+string(REPLACE "${TASK8B_NOTICE_CALL}" "${TASK8B_LOCAL_CLASS_REPLACEMENT}"
+    TASK8B_LOCAL_CLASS_MUTATION "${HOST_SOURCE}")
+if(TASK8B_LOCAL_CLASS_MUTATION STREQUAL HOST_SOURCE)
+    message(FATAL_ERROR "Task8B Host local-class mutation anchor disappeared")
+endif()
+arpg_latency_task8b_host_flow_is_valid(
+    "${TASK8B_LOCAL_CLASS_MUTATION}" TASK8B_LOCAL_CLASS_VALID)
+if(TASK8B_LOCAL_CLASS_VALID)
+    message(FATAL_ERROR "Task8B Host flow accepted a local-class decoy")
+endif()
+set(TASK8B_IIFE_REPLACEMENT [=[            [&]() noexcept {
+                settings_runtime.consume_notice(pause_screen_before);
+            }();]=])
+string(REPLACE "${TASK8B_NOTICE_CALL}" "${TASK8B_IIFE_REPLACEMENT}"
+    TASK8B_IIFE_MUTATION "${HOST_SOURCE}")
+if(TASK8B_IIFE_MUTATION STREQUAL HOST_SOURCE)
+    message(FATAL_ERROR "Task8B Host IIFE mutation anchor disappeared")
+endif()
+arpg_latency_task8b_host_flow_is_valid(
+    "${TASK8B_IIFE_MUTATION}" TASK8B_IIFE_VALID)
+if(NOT TASK8B_IIFE_VALID)
+    message(FATAL_ERROR "Task8B Host flow hid an immediately invoked lambda")
+endif()
+set(TASK8B_NESTED_LAMBDA_REPLACEMENT [=[            [&]() noexcept {
+                const auto task8b_deferred = [&]() noexcept {
+                    settings_runtime.consume_notice(pause_screen_before);
+                };
+            }();]=])
+string(REPLACE "${TASK8B_NOTICE_CALL}"
+    "${TASK8B_NESTED_LAMBDA_REPLACEMENT}"
+    TASK8B_NESTED_LAMBDA_MUTATION "${HOST_SOURCE}")
+arpg_latency_task8b_host_flow_is_valid(
+    "${TASK8B_NESTED_LAMBDA_MUTATION}" TASK8B_NESTED_LAMBDA_VALID)
+if(TASK8B_NESTED_LAMBDA_VALID)
+    message(FATAL_ERROR
+        "Task8B Host flow accepted a deferred lambda nested in an IIFE")
+endif()
+set(TASK8B_ANONYMOUS_FUNCTOR_REPLACEMENT [=[            struct {
+                void run(HostSettingsRuntime& settings_runtime) {
+                    settings_runtime.consume_notice(pause_screen_before);
+                }
+            } task8b_decoy;]=])
+string(REPLACE "${TASK8B_NOTICE_CALL}"
+    "${TASK8B_ANONYMOUS_FUNCTOR_REPLACEMENT}"
+    TASK8B_ANONYMOUS_FUNCTOR_MUTATION "${HOST_SOURCE}")
+arpg_latency_task8b_host_flow_is_valid(
+    "${TASK8B_ANONYMOUS_FUNCTOR_MUTATION}"
+    TASK8B_ANONYMOUS_FUNCTOR_VALID)
+if(TASK8B_ANONYMOUS_FUNCTOR_VALID)
+    message(FATAL_ERROR "Task8B Host flow accepted an anonymous functor decoy")
+endif()
+set(TASK8B_LAMBDA_REPLACEMENT [=[            const auto task8b_decoy = [&]() constexpr {
+                settings_runtime.consume_notice(PauseScreen::closed);
+            };]=])
+string(REPLACE "${TASK8B_NOTICE_CALL}" "${TASK8B_LAMBDA_REPLACEMENT}"
+    TASK8B_LAMBDA_MUTATION "${HOST_SOURCE}")
+if(TASK8B_LAMBDA_MUTATION STREQUAL HOST_SOURCE)
+    message(FATAL_ERROR "Task8B Host lambda mutation anchor disappeared")
+endif()
+arpg_latency_task8b_host_flow_is_valid(
+    "${TASK8B_LAMBDA_MUTATION}" TASK8B_LAMBDA_VALID)
+if(TASK8B_LAMBDA_VALID)
+    message(FATAL_ERROR "Task8B Host flow accepted a lambda decoy")
+endif()
+set(TASK8B_RUN_DECLARATION_BORROW
+    "HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept;\nvoid task8b_forward_decoy() {")
+string(REPLACE "${TASK8B_RUN_DEFINITION}"
+    "${TASK8B_RUN_DECLARATION_BORROW}"
+    TASK8B_FORWARD_DECLARATION_MUTATION "${HOST_SOURCE}")
+if(TASK8B_FORWARD_DECLARATION_MUTATION STREQUAL HOST_SOURCE)
+    message(FATAL_ERROR
+        "Task8B Host forward-declaration mutation anchor disappeared")
+endif()
+arpg_latency_task8b_host_flow_is_valid(
+    "${TASK8B_FORWARD_DECLARATION_MUTATION}"
+    TASK8B_FORWARD_DECLARATION_VALID)
+if(TASK8B_FORWARD_DECLARATION_VALID)
+    message(FATAL_ERROR
+        "Task8B Host flow borrowed a later body after a declaration")
+endif()
+string(CONCAT TASK8B_LOCAL_OWNER_MUTATION
+    "namespace arpg::platform {\nclass Task8BRunOwner {\n"
+    "${HOST_ENTRY_SOURCE}\n};\n}\n")
+arpg_latency_task8b_host_flow_is_valid(
+    "${TASK8B_LOCAL_OWNER_MUTATION}" TASK8B_LOCAL_OWNER_VALID)
+if(TASK8B_LOCAL_OWNER_VALID)
+    message(FATAL_ERROR
+        "Task8B Host flow accepted a class-owned run_raylib_host")
+endif()
+string(REPLACE "${TASK8B_NOTICE_CALL}" "            static_cast<void>(0);"
+    TASK8B_TRAILING_MUTATION "${HOST_SOURCE}")
+string(APPEND TASK8B_TRAILING_MUTATION
+    "\nnamespace arpg::platform {\nvoid task8b_trailing_decoy(HostSettingsRuntime& settings_runtime) {\n    settings_runtime.consume_notice(PauseScreen::closed);\n}\n}\n")
+arpg_latency_task8b_host_flow_is_valid(
+    "${TASK8B_TRAILING_MUTATION}" TASK8B_TRAILING_VALID)
+if(TASK8B_TRAILING_VALID)
+    message(FATAL_ERROR "Task8B Host flow accepted a trailing-function decoy")
+endif()
 
 arpg_physical_input_chain_is_valid_from_sanitized(
     "${HOST_ENTRY_SOURCE}" HOST_INPUT_CHAIN_VALID)
@@ -1135,12 +1508,12 @@ if(NOT STAGE11B_INJECT_HELPER_SOURCE MATCHES
         "normal host input must preserve the single sampled physical snapshot")
 endif()
 
-string(FIND "${HOST_ENTRY_SOURCE}" "settings_store.load()" SETTINGS_LOAD_INDEX)
-string(FIND "${HOST_ENTRY_SOURCE}" "make_host_settings_notice(loaded.status)"
+string(FIND "${HOST_ENTRY_DIRECT_SOURCE}" "settings_store.load()" SETTINGS_LOAD_INDEX)
+string(FIND "${HOST_ENTRY_DIRECT_SOURCE}" "make_host_settings_notice(loaded.status)"
     SETTINGS_NOTICE_INDEX)
-string(FIND "${HOST_ENTRY_SOURCE}" "SetConfigFlags(initial_window_flags(committed_settings))"
+string(FIND "${HOST_ENTRY_DIRECT_SOURCE}" "SetConfigFlags(initial_window_flags(committed_settings))"
     INITIAL_FLAGS_INDEX)
-string(FIND "${HOST_ENTRY_SOURCE}" "InitWindow(" INIT_WINDOW_INDEX)
+string(FIND "${HOST_ENTRY_DIRECT_SOURCE}" "InitWindow(" INIT_WINDOW_INDEX)
 if(SETTINGS_LOAD_INDEX EQUAL -1 OR SETTINGS_NOTICE_INDEX EQUAL -1
         OR INITIAL_FLAGS_INDEX EQUAL -1
         OR INIT_WINDOW_INDEX EQUAL -1
@@ -1150,14 +1523,14 @@ if(SETTINGS_LOAD_INDEX EQUAL -1 OR SETTINGS_NOTICE_INDEX EQUAL -1
     message(FATAL_ERROR "settings must load before initial flags and InitWindow")
 endif()
 
-if(HOST_ENTRY_SOURCE MATCHES
+if(HOST_ENTRY_DIRECT_SOURCE MATCHES
         "frame_input\\.keys\\.e[ \\t\\n]*=[ \\t\\n]*true")
     message(FATAL_ERROR "death continue must not mutate mapped interact input")
 endif()
 
-string(FIND "${HOST_ENTRY_SOURCE}" "DeathInputGate death_gate" DEATH_GATE_INDEX)
-string(FIND "${HOST_ENTRY_SOURCE}" "bool escape_consumed = false" ESCAPE_GATE_INDEX)
-string(FIND "${HOST_ENTRY_SOURCE}" "update_pause_menu(" PAUSE_UPDATE_INDEX)
+string(FIND "${HOST_ENTRY_DIRECT_SOURCE}" "DeathInputGate death_gate" DEATH_GATE_INDEX)
+string(FIND "${HOST_ENTRY_DIRECT_SOURCE}" "bool escape_consumed = false" ESCAPE_GATE_INDEX)
+string(FIND "${HOST_ENTRY_DIRECT_SOURCE}" "update_pause_menu(" PAUSE_UPDATE_INDEX)
 if(DEATH_GATE_INDEX EQUAL -1 OR ESCAPE_GATE_INDEX EQUAL -1
         OR PAUSE_UPDATE_INDEX EQUAL -1
         OR NOT DEATH_GATE_INDEX LESS ESCAPE_GATE_INDEX
@@ -1165,7 +1538,7 @@ if(DEATH_GATE_INDEX EQUAL -1 OR ESCAPE_GATE_INDEX EQUAL -1
     message(FATAL_ERROR "death and overlay Esc gates must precede pause update")
 endif()
 math(EXPR ESCAPE_GATE_LENGTH "${PAUSE_UPDATE_INDEX} - ${ESCAPE_GATE_INDEX}")
-string(SUBSTRING "${HOST_ENTRY_SOURCE}" ${ESCAPE_GATE_INDEX}
+string(SUBSTRING "${HOST_ENTRY_DIRECT_SOURCE}" ${ESCAPE_GATE_INDEX}
     ${ESCAPE_GATE_LENGTH} ESCAPE_GATE_SOURCE)
 if(NOT ESCAPE_GATE_SOURCE MATCHES "inventory\\.close[ \\t\\n]*\\("
         OR NOT ESCAPE_GATE_SOURCE MATCHES "passive_overlay_open[ \\t\\n]*=[ \\t\\n]*false"
@@ -1173,73 +1546,120 @@ if(NOT ESCAPE_GATE_SOURCE MATCHES "inventory\\.close[ \\t\\n]*\\("
     message(FATAL_ERROR "inventory/passive Esc must be consumed before normal pause")
 endif()
 
-if(SETTINGS_SETTLE_START EQUAL -1
-        OR NOT SETTINGS_SETTLE_START LESS HOST_ENTRY_START)
+string(FIND "${HOST_SETTINGS_RUNTIME_ACTIVE_SOURCE}"
+    "bool HostSettingsRuntime::settle" SETTINGS_SETTLE_START)
+if(SETTINGS_SETTLE_START EQUAL -1)
     message(FATAL_ERROR "pause Apply transaction is missing")
 endif()
+evidence_find_cpp_function_bounds_in_sanitized(
+    "${HOST_SETTINGS_RUNTIME_ACTIVE_SOURCE}"
+    "bool HostSettingsRuntime::settle("
+    SETTINGS_SETTLE_START SETTINGS_SETTLE_OPEN SETTINGS_SETTLE_END)
 math(EXPR SETTINGS_SETTLE_LENGTH
-    "${HOST_ENTRY_START} - ${SETTINGS_SETTLE_START}")
-string(SUBSTRING "${HOST_SANITIZED_SOURCE}" ${SETTINGS_SETTLE_START}
+    "${SETTINGS_SETTLE_END} - ${SETTINGS_SETTLE_START} + 1")
+string(SUBSTRING "${HOST_SETTINGS_RUNTIME_ACTIVE_SOURCE}"
+    ${SETTINGS_SETTLE_START}
     ${SETTINGS_SETTLE_LENGTH} SETTINGS_SETTLE_SOURCE)
-string(FIND "${SETTINGS_SETTLE_SOURCE}" "case PauseCommand::apply:"
+arpg_latency_cpp_executable_surface(
+    "${SETTINGS_SETTLE_SOURCE}" SETTINGS_SETTLE_DIRECT_SOURCE)
+string(FIND "${SETTINGS_SETTLE_DIRECT_SOURCE}" "case PauseCommand::apply:"
     APPLY_CASE_INDEX)
-string(FIND "${SETTINGS_SETTLE_SOURCE}" "case PauseCommand::rollback:"
+string(FIND "${SETTINGS_SETTLE_DIRECT_SOURCE}" "case PauseCommand::rollback:"
     ROLLBACK_CASE_INDEX)
 if(APPLY_CASE_INDEX EQUAL -1 OR ROLLBACK_CASE_INDEX EQUAL -1
         OR NOT APPLY_CASE_INDEX LESS ROLLBACK_CASE_INDEX)
     message(FATAL_ERROR "pause Apply transaction is missing")
 endif()
 math(EXPR APPLY_CASE_LENGTH "${ROLLBACK_CASE_INDEX} - ${APPLY_CASE_INDEX}")
-string(SUBSTRING "${SETTINGS_SETTLE_SOURCE}" ${APPLY_CASE_INDEX}
+string(SUBSTRING "${SETTINGS_SETTLE_DIRECT_SOURCE}" ${APPLY_CASE_INDEX}
     ${APPLY_CASE_LENGTH} APPLY_CASE_SOURCE)
 string(FIND "${APPLY_CASE_SOURCE}" "apply_live_settings(" APPLY_LIVE_INDEX)
-string(FIND "${APPLY_CASE_SOURCE}" "settings_store.save(" APPLY_SAVE_INDEX)
+string(FIND "${APPLY_CASE_SOURCE}" "store->save(" APPLY_SAVE_INDEX)
 string(FIND "${APPLY_CASE_SOURCE}" "SettingsSaveStatus::committed" APPLY_SUCCESS_INDEX)
-string(FIND "${APPLY_CASE_SOURCE}" "pause_menu.committed = saved.settings" APPLY_PUBLISH_INDEX)
-string(FIND "${APPLY_CASE_SOURCE}" "rollback_live_settings(" APPLY_ROLLBACK_INDEX)
+string(FIND "${APPLY_CASE_SOURCE}" "pause_menu->committed = saved.settings" APPLY_PUBLISH_INDEX)
+string(FIND "${APPLY_CASE_SOURCE}" "rollback_live_settings("
+    APPLY_FIRST_ROLLBACK_INDEX)
+if(NOT APPLY_FIRST_ROLLBACK_INDEX EQUAL -1)
+    math(EXPR APPLY_AFTER_FIRST_ROLLBACK
+        "${APPLY_FIRST_ROLLBACK_INDEX} + 1")
+    string(SUBSTRING "${APPLY_CASE_SOURCE}"
+        ${APPLY_AFTER_FIRST_ROLLBACK} -1 APPLY_AFTER_FIRST_ROLLBACK_SOURCE)
+    string(FIND "${APPLY_AFTER_FIRST_ROLLBACK_SOURCE}"
+        "rollback_live_settings(" APPLY_SECOND_ROLLBACK_RELATIVE)
+    if(NOT APPLY_SECOND_ROLLBACK_RELATIVE EQUAL -1)
+        math(EXPR APPLY_SECOND_ROLLBACK_INDEX
+            "${APPLY_AFTER_FIRST_ROLLBACK} + ${APPLY_SECOND_ROLLBACK_RELATIVE}")
+    endif()
+endif()
 if(APPLY_LIVE_INDEX EQUAL -1 OR APPLY_SAVE_INDEX EQUAL -1
         OR APPLY_SUCCESS_INDEX EQUAL -1 OR APPLY_PUBLISH_INDEX EQUAL -1
-        OR APPLY_ROLLBACK_INDEX EQUAL -1
+        OR APPLY_FIRST_ROLLBACK_INDEX EQUAL -1
+        OR NOT DEFINED APPLY_SECOND_ROLLBACK_INDEX
         OR NOT APPLY_LIVE_INDEX LESS APPLY_SAVE_INDEX
+        OR NOT APPLY_LIVE_INDEX LESS APPLY_FIRST_ROLLBACK_INDEX
+        OR NOT APPLY_FIRST_ROLLBACK_INDEX LESS APPLY_SAVE_INDEX
         OR NOT APPLY_SAVE_INDEX LESS APPLY_SUCCESS_INDEX
-        OR NOT APPLY_SUCCESS_INDEX LESS APPLY_PUBLISH_INDEX)
+        OR NOT APPLY_SUCCESS_INDEX LESS APPLY_PUBLISH_INDEX
+        OR NOT APPLY_PUBLISH_INDEX LESS APPLY_SECOND_ROLLBACK_INDEX)
     message(FATAL_ERROR "Apply must preview, save, publish only on success, and rollback")
 endif()
 
-string(FIND "${HOST_ENTRY_SOURCE}"
+string(FIND "${HOST_ENTRY_DIRECT_SOURCE}"
     "const bool window_close_requested = WindowShouldClose()"
     WINDOW_CLOSE_SAMPLE_INDEX)
-string(FIND "${HOST_ENTRY_SOURCE}"
+string(FIND "${HOST_ENTRY_DIRECT_SOURCE}"
     "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys()"
     SAMPLED_PHYSICAL_KEYS_INDEX)
-string(FIND "${HOST_ENTRY_SOURCE}" "consume_host_settings_notice("
+string(FIND "${HOST_ENTRY_DIRECT_SOURCE}" "settings_runtime.consume_notice("
     NOTICE_CONSUME_INDEX)
-string(FIND "${HOST_ENTRY_SOURCE}" "settle_host_pause_command("
+string(FIND "${HOST_ENTRY_DIRECT_SOURCE}"
+    "const std::uint64_t input_revision_before = input_settings.revision"
+    INPUT_REVISION_SNAPSHOT_INDEX)
+string(FIND "${HOST_ENTRY_DIRECT_SOURCE}" "settings_runtime.settle("
     SETTINGS_SETTLE_CALL_INDEX)
+string(FIND "${HOST_ENTRY_DIRECT_SOURCE}"
+    "if (input_settings.revision != input_revision_before)"
+    INPUT_REVISION_REFRESH_INDEX)
 if(WINDOW_CLOSE_SAMPLE_INDEX EQUAL -1 OR SAMPLED_PHYSICAL_KEYS_INDEX EQUAL -1
-        OR NOTICE_CONSUME_INDEX EQUAL -1 OR SETTINGS_SETTLE_CALL_INDEX EQUAL -1
+        OR NOTICE_CONSUME_INDEX EQUAL -1
+        OR INPUT_REVISION_SNAPSHOT_INDEX EQUAL -1
+        OR SETTINGS_SETTLE_CALL_INDEX EQUAL -1
+        OR INPUT_REVISION_REFRESH_INDEX EQUAL -1
         OR NOT WINDOW_CLOSE_SAMPLE_INDEX LESS SAMPLED_PHYSICAL_KEYS_INDEX
         OR NOT PAUSE_UPDATE_INDEX LESS NOTICE_CONSUME_INDEX
-        OR NOT NOTICE_CONSUME_INDEX LESS SETTINGS_SETTLE_CALL_INDEX)
+        OR NOT NOTICE_CONSUME_INDEX LESS INPUT_REVISION_SNAPSHOT_INDEX
+        OR NOT INPUT_REVISION_SNAPSHOT_INDEX LESS SETTINGS_SETTLE_CALL_INDEX
+        OR NOT SETTINGS_SETTLE_CALL_INDEX LESS INPUT_REVISION_REFRESH_INDEX)
     message(FATAL_ERROR
         "window close must be honored only after pause notice/Apply settlement")
 endif()
+foreach(TASK8B_HOST_POSITION IN ITEMS
+        ${PAUSE_UPDATE_INDEX} ${NOTICE_CONSUME_INDEX}
+        ${INPUT_REVISION_SNAPSHOT_INDEX} ${SETTINGS_SETTLE_CALL_INDEX}
+        ${INPUT_REVISION_REFRESH_INDEX})
+    arpg_latency_brace_depth("${HOST_ENTRY_DIRECT_SOURCE}"
+        ${TASK8B_HOST_POSITION} TASK8B_HOST_DEPTH)
+    if(NOT TASK8B_HOST_DEPTH EQUAL 3)
+        message(FATAL_ERROR
+            "Task8B Host settings sequence must remain direct")
+    endif()
+endforeach()
 
-string(FIND "${HOST_ENTRY_SOURCE}" "core::FixedStepFrame frame = host_gate.fixed_step"
+string(FIND "${HOST_ENTRY_DIRECT_SOURCE}" "core::FixedStepFrame frame = host_gate.fixed_step"
     HOST_FRAME_INDEX)
-string(FIND "${HOST_ENTRY_SOURCE}" "runtime.fixed_tick(" FIXED_TICK_INDEX)
+string(FIND "${HOST_ENTRY_DIRECT_SOURCE}" "runtime.fixed_tick(" FIXED_TICK_INDEX)
 if(HOST_FRAME_INDEX EQUAL -1 OR FIXED_TICK_INDEX EQUAL -1
         OR NOT HOST_FRAME_INDEX LESS FIXED_TICK_INDEX)
     message(FATAL_ERROR "runtime.fixed_tick must consume only the gated frame steps")
 endif()
 
-string(FIND "${HOST_ENTRY_SOURCE}"
+string(FIND "${HOST_ENTRY_DIRECT_SOURCE}"
     "pause_menu_renderer.draw(pause_menu, renderer.material_pack())"
     PAUSE_DRAW_INDEX)
 if(PAUSE_DRAW_INDEX EQUAL -1)
     message(FATAL_ERROR "pause overlay draw is missing")
 endif()
-string(SUBSTRING "${HOST_ENTRY_SOURCE}" ${PAUSE_DRAW_INDEX} -1 PAUSE_DRAW_TAIL)
+string(SUBSTRING "${HOST_ENTRY_DIRECT_SOURCE}" ${PAUSE_DRAW_INDEX} -1 PAUSE_DRAW_TAIL)
 if(NOT PAUSE_DRAW_TAIL MATCHES "present_frame_and_maybe_capture[ \\t\\n]*\\(")
     message(FATAL_ERROR "paused frames must still present and capture after drawing")
 endif()

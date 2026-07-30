@@ -30,6 +30,7 @@ arpg::test::TestSuite pause_menu_state_suite() noexcept;
 arpg::test::TestSuite pause_menu_view_suite() noexcept;
 arpg::test::TestSuite window_settings_suite() noexcept;
 arpg::test::TestSuite pause_host_gate_suite() noexcept;
+arpg::test::TestSuite host_settings_runtime_suite() noexcept;
 arpg::test::TestSuite control_hints_suite() noexcept;
 arpg::test::TestSuite hud_view_model_suite() noexcept;
 arpg::test::TestSuite hud_notice_state_suite() noexcept;
@@ -82,6 +83,7 @@ int main() {
         host_launch_options_suite(),
         dungeon_runtime_suite(),
         pause_host_gate_suite(),
+        host_settings_runtime_suite(),
         inventory_view_math_suite(),
         death_input_gate_suite(),
         death_overlay_view_suite(),
@@ -111,6 +113,6 @@ int main() {
         stage12_material_render_suite(),
     };
 
-    return arpg::test::run_suites(suites, 497,
-        "HUD and UI material slice contract");
+    return arpg::test::run_suites(suites, 510,
+        "host settings runtime contract");
 }
