@@ -510,6 +510,66 @@ arpg_expect_task7c_sequence_rejection(m25_post_shutdown host
     m25_post_shutdown
     "T7C-M25")
 
+function(arpg_expect_task9_host_cleanup_rejection NAME MUTATION)
+    file(READ "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp" _mutated)
+    set(_original "${_mutated}")
+    if(MUTATION STREQUAL missing_standard_cleanup)
+        set(_anchor [=[        TraceLog(LOG_ERROR, "raylib host failed: %s", exception.what());
+        if (renderer_storage != nullptr) {
+            renderer_storage->shutdown_resources();
+        }
+]=])
+        set(_replacement [=[        TraceLog(LOG_ERROR, "raylib host failed: %s", exception.what());
+]=])
+    elseif(MUTATION STREQUAL missing_unknown_cleanup)
+        set(_anchor [=[        TraceLog(LOG_ERROR, "raylib host failed with an unknown exception");
+        if (renderer_storage != nullptr) {
+            renderer_storage->shutdown_resources();
+        }
+]=])
+        set(_replacement [=[        TraceLog(LOG_ERROR, "raylib host failed with an unknown exception");
+]=])
+    elseif(MUTATION STREQUAL owner_inside_try)
+        set(_anchor [=[    HostWindowLifetime window{raylib_host_window_backend()};
+    std::unique_ptr<CombatRenderer> renderer_storage;
+    try {
+]=])
+        set(_replacement [=[    HostWindowLifetime window{raylib_host_window_backend()};
+    try {
+        std::unique_ptr<CombatRenderer> renderer_storage;
+]=])
+    else()
+        message(FATAL_ERROR "Unknown Task 9 Host cleanup mutation: ${MUTATION}")
+    endif()
+    string(REPLACE "${_anchor}" "${_replacement}" _mutated "${_mutated}")
+    if(_mutated STREQUAL _original)
+        message(FATAL_ERROR "Task 9 Host cleanup mutation anchor is missing: ${NAME}")
+    endif()
+    set(_mutation_path "${GUARD_TEST_ROOT}/task9-${NAME}.cpp")
+    file(WRITE "${_mutation_path}" "${_mutated}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+            "-DHOST_OVERRIDE=${_mutation_path}" -P "${_guard}"
+        RESULT_VARIABLE _result OUTPUT_VARIABLE _stdout
+        ERROR_VARIABLE _stderr)
+    if(_result EQUAL 0)
+        message(FATAL_ERROR
+            "Host validation sequence guard accepted Task 9 mutation: ${NAME}")
+    endif()
+    set(_combined "${_stdout}\n${_stderr}")
+    if(NOT _combined MATCHES
+            "Task 9 Host renderer owner/allocation/catch cleanup boundary is invalid")
+        message(FATAL_ERROR
+            "Task 9 mutation ${NAME} failed for wrong reason: ${_combined}")
+    endif()
+endfunction()
+
+arpg_expect_task9_host_cleanup_rejection(
+    missing_standard_cleanup missing_standard_cleanup)
+arpg_expect_task9_host_cleanup_rejection(
+    missing_unknown_cleanup missing_unknown_cleanup)
+arpg_expect_task9_host_cleanup_rejection(owner_inside_try owner_inside_try)
+
 string(REPLACE
     "validation_runtime->write_summaries(\n            runtime.clean_shutdown_state(), pause_menu);"
     "const auto summary_decoy = [&] {\n            validation_runtime->write_summaries(\n                runtime.clean_shutdown_state(), pause_menu);\n        };"

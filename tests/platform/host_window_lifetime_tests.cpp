@@ -7,11 +7,25 @@
 
 #include <array>
 #include <cstddef>
+#include <type_traits>
 
 namespace {
 
 namespace platform = arpg::platform;
 namespace settings = arpg::settings;
+
+static_assert(std::is_same_v<
+    decltype(platform::HostWindowBackend::set_config_flags),
+    void (*)(unsigned int) noexcept>);
+static_assert(std::is_same_v<
+    decltype(platform::HostWindowBackend::init_window),
+    void (*)(int, int, const char*) noexcept>);
+static_assert(std::is_same_v<
+    decltype(platform::HostWindowBackend::is_window_ready),
+    bool (*)() noexcept>);
+static_assert(std::is_same_v<
+    decltype(platform::HostWindowBackend::close_window),
+    void (*)() noexcept>);
 
 enum class BackendEvent : unsigned char {
     set_flags,
@@ -88,6 +102,28 @@ arpg::test::Failure failed_initialization_leaves_window_unowned() noexcept {
     return {};
 }
 
+arpg::test::Failure incomplete_backend_is_rejected_before_any_callback()
+    noexcept {
+    const settings::SettingsData settings = settings::default_settings();
+    for (std::size_t missing = 0U; missing < 4U; ++missing) {
+        CountingBackend backend{true};
+        platform::HostWindowBackend callbacks = backend_for(backend);
+        if (missing == 0U) callbacks.set_config_flags = nullptr;
+        if (missing == 1U) callbacks.init_window = nullptr;
+        if (missing == 2U) callbacks.is_window_ready = nullptr;
+        if (missing == 3U) callbacks.close_window = nullptr;
+        platform::HostWindowLifetime lifetime{callbacks};
+
+        ARPG_REQUIRE(!lifetime.initialize(configured_host(), settings));
+        ARPG_REQUIRE(!lifetime.ready());
+        ARPG_REQUIRE(backend.event_count == 0U);
+        ARPG_REQUIRE(backend.close_count == 0U);
+        lifetime.close();
+        ARPG_REQUIRE(backend.event_count == 0U);
+    }
+    return {};
+}
+
 arpg::test::Failure explicit_close_is_idempotent_after_ready_initialization()
     noexcept {
     CountingBackend backend{true};
@@ -140,6 +176,8 @@ arpg::test::Failure destructor_closes_ready_window_on_early_return_and_exception
 constexpr arpg::test::TestCase kCases[] = {
     {"failed initialization leaves window unowned",
         &failed_initialization_leaves_window_unowned},
+    {"incomplete backend is rejected before any callback",
+        &incomplete_backend_is_rejected_before_any_callback},
     {"explicit close is idempotent after ready initialization",
         &explicit_close_is_idempotent_after_ready_initialization},
     {"destructor closes ready window on early return and exception",

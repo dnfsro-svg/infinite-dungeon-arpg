@@ -1976,6 +1976,78 @@ string(REGEX REPLACE "[ \t\r\n]+" " " _host_loop_normalized
     "${_host_loop}")
 string(REGEX REPLACE "[ \t\r\n]+" " " _host_runtime_normalized
     "${_host_runtime}")
+set(_task9_renderer_owner
+    "std::unique_ptr<CombatRenderer> renderer_storage;")
+set(_task9_renderer_allocation
+    "renderer_storage = std::make_unique<CombatRenderer>();")
+set(_task9_renderer_cleanup
+    "renderer_storage->shutdown_resources();")
+string(FIND "${_host_runtime}" "HostWindowLifetime window{"
+    _task9_window_owner_position)
+string(FIND "${_host_runtime}" "${_task9_renderer_owner}"
+    _task9_renderer_owner_position)
+string(FIND "${_host_runtime}" "try {" _task9_try_position)
+string(FIND "${_host_runtime}" "window.initialize(config, committed_settings)"
+    _task9_window_initialize_position)
+string(FIND "${_host_runtime}" "${_task9_renderer_allocation}"
+    _task9_renderer_allocation_position)
+string(FIND "${_host_runtime}" "catch (const std::exception& exception) {"
+    _task9_standard_catch_position)
+string(FIND "${_host_runtime}" "catch (...) {"
+    _task9_unknown_catch_position)
+task7b_count_token("${_host_runtime}" "${_task9_renderer_cleanup}"
+    _task9_renderer_cleanup_count)
+if(_task9_window_owner_position EQUAL -1
+        OR _task9_renderer_owner_position EQUAL -1
+        OR _task9_try_position EQUAL -1
+        OR _task9_window_initialize_position EQUAL -1
+        OR _task9_renderer_allocation_position EQUAL -1
+        OR _task9_standard_catch_position EQUAL -1
+        OR _task9_unknown_catch_position EQUAL -1
+        OR NOT _task9_renderer_cleanup_count EQUAL 2
+        OR NOT _task9_window_owner_position LESS _task9_renderer_owner_position
+        OR NOT _task9_renderer_owner_position LESS _task9_try_position
+        OR NOT _task9_try_position LESS _task9_window_initialize_position
+        OR NOT _task9_window_initialize_position LESS
+            _task9_renderer_allocation_position
+        OR NOT _task9_renderer_allocation_position LESS
+            _task9_standard_catch_position
+        OR NOT _task9_standard_catch_position LESS
+            _task9_unknown_catch_position)
+    message(FATAL_ERROR
+        "Task 9 Host renderer owner/allocation/catch cleanup boundary is invalid: window=${_task9_window_owner_position} owner=${_task9_renderer_owner_position} try=${_task9_try_position} init=${_task9_window_initialize_position} allocation=${_task9_renderer_allocation_position} standard=${_task9_standard_catch_position} unknown=${_task9_unknown_catch_position} cleanups=${_task9_renderer_cleanup_count}")
+endif()
+string(SUBSTRING "${_host_runtime}" ${_task9_standard_catch_position}
+    -1 _task9_standard_catch_tail)
+string(FIND "${_task9_standard_catch_tail}" "${_task9_renderer_cleanup}"
+    _task9_standard_cleanup_relative)
+string(FIND "${_task9_standard_catch_tail}"
+    "return HostExitCode::save_initialization_failed;"
+    _task9_standard_return_relative)
+math(EXPR _task9_unknown_catch_relative
+    "${_task9_unknown_catch_position} - ${_task9_standard_catch_position}")
+string(SUBSTRING "${_host_runtime}" ${_task9_unknown_catch_position}
+    -1 _task9_unknown_catch_tail)
+string(FIND "${_task9_unknown_catch_tail}" "${_task9_renderer_cleanup}"
+    _task9_unknown_cleanup_relative)
+string(FIND "${_task9_unknown_catch_tail}"
+    "return HostExitCode::save_initialization_failed;"
+    _task9_unknown_return_relative)
+if(_task9_standard_cleanup_relative EQUAL -1
+        OR _task9_standard_return_relative EQUAL -1
+        OR NOT _task9_standard_cleanup_relative LESS
+            _task9_standard_return_relative
+        OR NOT _task9_standard_return_relative LESS
+            _task9_unknown_catch_relative
+        OR _task9_unknown_cleanup_relative EQUAL -1
+        OR _task9_unknown_return_relative EQUAL -1
+        OR NOT _task9_unknown_cleanup_relative LESS
+            _task9_unknown_return_relative)
+    message(FATAL_ERROR
+        "Task 9 Host both catch paths must clean renderer before returning")
+endif()
+assert_token_depth_sequence("Task 9 catch renderer cleanup"
+    "${_host_runtime}" "${_task9_renderer_cleanup}" 3 3)
 assert_one_normalized_match("sampled physical-key producer"
     "${_host_loop_normalized}"
     "const[ ]+PhysicalKeySnapshot[ ]+sampled_physical_keys[ ]*=[ ]*sample_physical_keys\\([ ]*\\)")

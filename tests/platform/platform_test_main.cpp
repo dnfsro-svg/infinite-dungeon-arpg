@@ -115,6 +115,6 @@ int main() {
         stage12_material_render_suite(),
     };
 
-    return arpg::test::run_suites(suites, 513,
+    return arpg::test::run_suites(suites, 514,
         "host settings runtime contract");
 }

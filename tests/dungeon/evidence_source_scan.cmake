@@ -804,9 +804,9 @@ function(evidence_window_lifetime_boundary_is_valid
     endforeach()
 
     set(expected_initialize
-        "boolHostWindowLifetime::initialize(constRaylibHostConfig&config,constsettings::SettingsData&settings)noexcept{backend_.set_config_flags(initial_window_flags(settings));backend_.init_window(config.window_width,config.window_height,config.window_title);ready_=backend_.is_window_ready();returnready_;}")
+        "boolHostWindowLifetime::initialize(constRaylibHostConfig&config,constsettings::SettingsData&settings)noexcept{if(!backend_.set_config_flags||!backend_.init_window||!backend_.is_window_ready||!backend_.close_window){ready_=false;returnfalse;}backend_.set_config_flags(initial_window_flags(settings));backend_.init_window(config.window_width,config.window_height,config.window_title);ready_=backend_.is_window_ready();returnready_;}")
     set(expected_backend
-        "HostWindowBackendraylib_host_window_backend()noexcept{return{&SetConfigFlags,&InitWindow,&IsWindowReady,&CloseWindow};}")
+        "HostWindowBackendraylib_host_window_backend()noexcept{return{&set_config_flags_noexcept,&init_window_noexcept,&is_window_ready_noexcept,&close_window_noexcept};}")
     if(NOT initialize_compact STREQUAL expected_initialize
             OR NOT backend_compact STREQUAL expected_backend)
         set(${output} FALSE PARENT_SCOPE)

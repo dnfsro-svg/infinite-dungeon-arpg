@@ -33,8 +33,14 @@ endforeach()
 
 set(host_source_path "${ROOT}/src/platform/raylib/raylib_host.cpp")
 file(READ "${host_source_path}" HOST_SOURCE)
+set(host_window_lifetime_path
+    "${ROOT}/src/platform/raylib/host_window_lifetime.cpp")
+file(READ "${host_window_lifetime_path}" HOST_WINDOW_LIFETIME_SOURCE)
 include("${CMAKE_CURRENT_LIST_DIR}/../platform/cpp_source_lexer.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
 arpg_sanitize_cpp_source("${HOST_SOURCE}" host_source)
+arpg_sanitize_cpp_source(
+    "${HOST_WINDOW_LIFETIME_SOURCE}" host_window_lifetime_source)
 
 function(host_large_state_ownership_valid SOURCE OUT_VALID)
     set(WS "[ \t\r\n]*")
@@ -100,62 +106,81 @@ function(host_large_state_ownership_valid SOURCE OUT_VALID)
     list(LENGTH DIRECT_VALIDATION_CONSTRUCTIONS
         DIRECT_VALIDATION_CONSTRUCTION_COUNT)
     string(REGEX MATCHALL
-        "new${WS}\\(${WS}std::nothrow${WS}\\)${WS}HostValidationStates${WS}\\{"
-        APPROVED_VALIDATION_OWNER_CONSTRUCTIONS "${HOST_ENTRY_SOURCE}")
-    list(LENGTH APPROVED_VALIDATION_OWNER_CONSTRUCTIONS
-        APPROVED_VALIDATION_OWNER_CONSTRUCTION_COUNT)
+        "HostValidationRuntime::create${WS}\\("
+        APPROVED_VALIDATION_RUNTIME_FACTORIES "${HOST_ENTRY_SOURCE}")
+    list(LENGTH APPROVED_VALIDATION_RUNTIME_FACTORIES
+        APPROVED_VALIDATION_RUNTIME_FACTORY_COUNT)
     if(NOT AUTOMATIC_SNAPSHOT_DECLARATION_COUNT EQUAL 0
             OR NOT DIRECT_SNAPSHOT_CONSTRUCTION_COUNT EQUAL 0
             OR NOT BY_VALUE_SNAPSHOT_CALL_COUNT EQUAL 0
             OR NOT AUTOMATIC_VALIDATION_DECLARATION_COUNT EQUAL 0
-            OR NOT APPROVED_VALIDATION_OWNER_CONSTRUCTION_COUNT EQUAL 1
-            OR NOT DIRECT_VALIDATION_CONSTRUCTION_COUNT EQUAL
-                APPROVED_VALIDATION_OWNER_CONSTRUCTION_COUNT)
+            OR NOT DIRECT_VALIDATION_CONSTRUCTION_COUNT EQUAL 0
+            OR NOT APPROVED_VALIDATION_RUNTIME_FACTORY_COUNT EQUAL 1)
         message(STATUS
-            "host ownership guard: automatic snapshots=${AUTOMATIC_SNAPSHOT_DECLARATION_COUNT} direct snapshot constructions=${DIRECT_SNAPSHOT_CONSTRUCTION_COUNT} by-value=${BY_VALUE_SNAPSHOT_CALL_COUNT} automatic validation=${AUTOMATIC_VALIDATION_DECLARATION_COUNT} validation constructions=${DIRECT_VALIDATION_CONSTRUCTION_COUNT} approved validation owners=${APPROVED_VALIDATION_OWNER_CONSTRUCTION_COUNT}")
+            "host ownership guard: automatic snapshots=${AUTOMATIC_SNAPSHOT_DECLARATION_COUNT} direct snapshot constructions=${DIRECT_SNAPSHOT_CONSTRUCTION_COUNT} by-value=${BY_VALUE_SNAPSHOT_CALL_COUNT} automatic validation=${AUTOMATIC_VALIDATION_DECLARATION_COUNT} validation constructions=${DIRECT_VALIDATION_CONSTRUCTION_COUNT} validation factories=${APPROVED_VALIDATION_RUNTIME_FACTORY_COUNT}")
         set("${OUT_VALID}" FALSE PARENT_SCOPE)
         return()
     endif()
 
     string(REGEX MATCH
-        "const${WS1}std::unique_ptr${WS}<${WS}HostValidationStates${WS}>${WS}validation_states${WS}\\{${WS}new${WS}\\(${WS}std::nothrow${WS}\\)${WS}HostValidationStates${WS}\\{${WS}\\}${WS}\\}${WS};"
+        "const${WS1}auto${WS1}validation_runtime${WS}=${WS}HostValidationRuntime::create${WS}\\(${WS}config,${WS}loaded\\.status${WS}\\)${WS};"
         VALIDATION_OWNER_MATCH "${HOST_ENTRY_SOURCE}")
     string(REGEX MATCH
-        "if${WS}\\(${WS}validation_states${WS}==${WS}nullptr${WS}\\)"
+        "if${WS}\\(${WS}validation_runtime${WS}==${WS}nullptr${WS}\\)"
         VALIDATION_NULL_MATCH "${HOST_ENTRY_SOURCE}")
     string(REGEX MATCH
-        "SetConfigFlags${WS}\\(${WS}initial_window_flags${WS}\\(${WS}committed_settings${WS}\\)${WS}\\)"
-        INITIAL_FLAGS_MATCH "${HOST_ENTRY_SOURCE}")
-    string(REGEX MATCH "InitWindow${WS}\\(" INIT_WINDOW_MATCH
-        "${HOST_ENTRY_SOURCE}")
+        "HostWindowLifetime${WS1}window${WS}\\{${WS}raylib_host_window_backend${WS}\\(${WS}\\)${WS}\\}${WS};"
+        WINDOW_OWNER_MATCH "${HOST_ENTRY_SOURCE}")
+    string(REGEX MATCH "try${WS}\\{" TRY_MATCH "${HOST_ENTRY_SOURCE}")
     string(REGEX MATCH
-        "const${WS1}auto${WS1}renderer_storage${WS}=${WS}std::make_unique${WS}<${WS}CombatRenderer${WS}>${WS}\\(${WS}\\)"
-        RENDERER_STORAGE_MATCH "${HOST_ENTRY_SOURCE}")
-    if(VALIDATION_OWNER_MATCH STREQUAL ""
-            OR VALIDATION_NULL_MATCH STREQUAL ""
-            OR INITIAL_FLAGS_MATCH STREQUAL "" OR INIT_WINDOW_MATCH STREQUAL ""
-            OR RENDERER_STORAGE_MATCH STREQUAL "")
-        message(STATUS
-            "host ownership guard: owner='${VALIDATION_OWNER_MATCH}' null='${VALIDATION_NULL_MATCH}' flags='${INITIAL_FLAGS_MATCH}' window='${INIT_WINDOW_MATCH}' renderer='${RENDERER_STORAGE_MATCH}'")
+        "window\\.initialize${WS}\\(${WS}config,${WS}committed_settings${WS}\\)"
+        WINDOW_INITIALIZE_MATCH "${HOST_ENTRY_SOURCE}")
+    string(REGEX MATCH
+        "std::unique_ptr${WS}<${WS}CombatRenderer${WS}>${WS1}renderer_storage${WS};"
+        RENDERER_OWNER_MATCH "${HOST_ENTRY_SOURCE}")
+    string(REGEX MATCH
+        "renderer_storage${WS}=${WS}std::make_unique${WS}<${WS}CombatRenderer${WS}>${WS}\\(${WS}\\)"
+        RENDERER_ALLOCATION_MATCH "${HOST_ENTRY_SOURCE}")
+    evidence_window_lifetime_boundary_is_valid(
+        "${HOST_ENTRY_SOURCE}" "${host_window_lifetime_source}"
+        "${host_window_lifetime_source}" WINDOW_LIFETIME_BOUNDARY_VALID)
+    if(NOT WINDOW_LIFETIME_BOUNDARY_VALID)
+        message(STATUS "host ownership guard: cross-file window lifetime boundary is invalid")
         set("${OUT_VALID}" FALSE PARENT_SCOPE)
         return()
     endif()
+    if(VALIDATION_OWNER_MATCH STREQUAL ""
+            OR VALIDATION_NULL_MATCH STREQUAL ""
+            OR WINDOW_OWNER_MATCH STREQUAL "" OR TRY_MATCH STREQUAL ""
+            OR WINDOW_INITIALIZE_MATCH STREQUAL ""
+            OR RENDERER_OWNER_MATCH STREQUAL ""
+            OR RENDERER_ALLOCATION_MATCH STREQUAL "")
+        message(STATUS
+            "host ownership guard: validation='${VALIDATION_OWNER_MATCH}' null='${VALIDATION_NULL_MATCH}' window-owner='${WINDOW_OWNER_MATCH}' try='${TRY_MATCH}' window-init='${WINDOW_INITIALIZE_MATCH}' renderer-owner='${RENDERER_OWNER_MATCH}' renderer-allocation='${RENDERER_ALLOCATION_MATCH}'")
+        set("${OUT_VALID}" FALSE PARENT_SCOPE)
+        return()
+    endif()
+    string(FIND "${HOST_ENTRY_SOURCE}" "${WINDOW_OWNER_MATCH}"
+        WINDOW_OWNER_INDEX)
+    string(FIND "${HOST_ENTRY_SOURCE}" "${RENDERER_OWNER_MATCH}"
+        RENDERER_OWNER_INDEX)
+    string(FIND "${HOST_ENTRY_SOURCE}" "${TRY_MATCH}" TRY_INDEX)
     string(FIND "${HOST_ENTRY_SOURCE}" "${VALIDATION_OWNER_MATCH}"
         VALIDATION_OWNER_INDEX)
     string(FIND "${HOST_ENTRY_SOURCE}" "${VALIDATION_NULL_MATCH}"
         VALIDATION_NULL_INDEX)
-    string(FIND "${HOST_ENTRY_SOURCE}" "${INITIAL_FLAGS_MATCH}"
-        INITIAL_FLAGS_INDEX)
-    string(FIND "${HOST_ENTRY_SOURCE}" "${INIT_WINDOW_MATCH}"
-        INIT_WINDOW_INDEX)
-    string(FIND "${HOST_ENTRY_SOURCE}" "${RENDERER_STORAGE_MATCH}"
-        RENDERER_STORAGE_INDEX)
-    if(NOT VALIDATION_OWNER_INDEX LESS VALIDATION_NULL_INDEX
-            OR NOT VALIDATION_NULL_INDEX LESS INITIAL_FLAGS_INDEX
-            OR NOT INITIAL_FLAGS_INDEX LESS INIT_WINDOW_INDEX
-            OR NOT INIT_WINDOW_INDEX LESS RENDERER_STORAGE_INDEX)
+    string(FIND "${HOST_ENTRY_SOURCE}" "${WINDOW_INITIALIZE_MATCH}"
+        WINDOW_INITIALIZE_INDEX)
+    string(FIND "${HOST_ENTRY_SOURCE}" "${RENDERER_ALLOCATION_MATCH}"
+        RENDERER_ALLOCATION_INDEX)
+    if(NOT WINDOW_OWNER_INDEX LESS RENDERER_OWNER_INDEX
+            OR NOT RENDERER_OWNER_INDEX LESS TRY_INDEX
+            OR NOT TRY_INDEX LESS VALIDATION_OWNER_INDEX
+            OR NOT VALIDATION_OWNER_INDEX LESS VALIDATION_NULL_INDEX
+            OR NOT VALIDATION_NULL_INDEX LESS WINDOW_INITIALIZE_INDEX
+            OR NOT WINDOW_INITIALIZE_INDEX LESS RENDERER_ALLOCATION_INDEX)
         message(STATUS
-            "host ownership guard: order owner=${VALIDATION_OWNER_INDEX} null=${VALIDATION_NULL_INDEX} flags=${INITIAL_FLAGS_INDEX} window=${INIT_WINDOW_INDEX} renderer=${RENDERER_STORAGE_INDEX}")
+            "host ownership guard: order window-owner=${WINDOW_OWNER_INDEX} renderer-owner=${RENDERER_OWNER_INDEX} try=${TRY_INDEX} validation=${VALIDATION_OWNER_INDEX} null=${VALIDATION_NULL_INDEX} window-init=${WINDOW_INITIALIZE_INDEX} renderer-allocation=${RENDERER_ALLOCATION_INDEX}")
         set("${OUT_VALID}" FALSE PARENT_SCOPE)
         return()
     endif()
@@ -249,9 +274,9 @@ if(BY_VALUE_SNAPSHOT_MUTATION_VALID)
     message(FATAL_ERROR "stack guard accepted by-value DungeonSnapshot mutation")
 endif()
 
-set(VALIDATION_STATES_OWNER [=[        const std::unique_ptr<HostValidationStates> validation_states{
-            new (std::nothrow) HostValidationStates{}};
-        if (validation_states == nullptr) {
+set(VALIDATION_STATES_OWNER [=[        const auto validation_runtime =
+            HostValidationRuntime::create(config, loaded.status);
+        if (validation_runtime == nullptr) {
             return HostExitCode::save_initialization_failed;
         }
 ]=])

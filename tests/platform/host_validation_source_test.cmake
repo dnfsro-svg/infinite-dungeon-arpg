@@ -2249,7 +2249,8 @@ set(_task8c_review_mutation_acceptances)
 if(NOT DEFINED TASK8C_REVIEW_MUTATION
         OR TASK8C_REVIEW_MUTATION STREQUAL mapping_namespace_decoy)
     set(_task8c_backend_mapping
-        "return {&SetConfigFlags, &InitWindow, &IsWindowReady, &CloseWindow};")
+        "return {&set_config_flags_noexcept, &init_window_noexcept,
+        &is_window_ready_noexcept, &close_window_noexcept};")
     string(REPLACE "${_task8c_backend_mapping}" "return {};"
         _task8c_mapping_namespace_decoy
         "${_host_window_lifetime_source_active}")
@@ -2303,22 +2304,25 @@ if(NOT DEFINED TASK8C_REVIEW_MUTATION
         OR TASK8C_REVIEW_MUTATION STREQUAL phase2_owner_mapping)
     string(ASCII 92 _task8c_backslash)
     string(ASCII 10 _task8c_line_feed)
-    string(REPLACE "&InitWindow"
-        "&Init${_task8c_backslash}${_task8c_line_feed}Window"
+    string(REPLACE "InitWindow("
+        "Init${_task8c_backslash}${_task8c_line_feed}Window("
         _task8c_phase2_owner_mapping
         "${_host_window_lifetime_source_text}")
-    host_validation_unconditional_cpp_surface(
-        "${_task8c_phase2_owner_mapping}"
-        _task8c_phase2_owner_mapping_active
-        _task8c_phase2_owner_mapping_lexical)
-    evidence_window_lifetime_boundary_is_valid(
-        "${_run_host_direct}"
-        "${_task8c_phase2_owner_mapping_active}"
-        "${_task8c_phase2_owner_mapping_lexical}"
-        _task8c_phase2_owner_mapping_valid)
-    if(NOT _task8c_phase2_owner_mapping_valid)
-        message(FATAL_ERROR
-            "Task 8C shared window guard rejected harmless phase-2-spliced owner mapping")
+    if(NOT _task8c_phase2_owner_mapping STREQUAL
+            _host_window_lifetime_source_text)
+        host_validation_unconditional_cpp_surface(
+            "${_task8c_phase2_owner_mapping}"
+            _task8c_phase2_owner_mapping_active
+            _task8c_phase2_owner_mapping_lexical)
+        evidence_window_lifetime_boundary_is_valid(
+            "${_run_host_direct}"
+            "${_task8c_phase2_owner_mapping_active}"
+            "${_task8c_phase2_owner_mapping_lexical}"
+            _task8c_phase2_owner_mapping_valid)
+        if(NOT _task8c_phase2_owner_mapping_valid)
+            message(FATAL_ERROR
+                "Task 8C shared window guard rejected harmless phase-2-spliced owner mapping")
+        endif()
     endif()
 endif()
 if(_task8c_review_mutation_acceptances)
@@ -2360,7 +2364,7 @@ void task8c_foreign_window_owner() {
 host_validation_require_count("Task 8C RED legacy Host-only witness"
     "${_run_host_direct}" "CloseWindow(" 0)
 host_validation_require_count("Task 8C RED legacy owner witness"
-    "${_host_window_lifetime_source_active}" "&CloseWindow" 1)
+    "${_host_window_lifetime_source_active}" "CloseWindow();" 1)
 host_validation_require_count("Task 8C RED foreign owner exists"
     "${_task8c_foreign_close_window_decoy}" "CloseWindow(" 1)
 message(STATUS "Task 8C RED witnesses: raw disabled interface and foreign CloseWindow owner pass predecessor-local checks")
@@ -2382,10 +2386,10 @@ task8c_compact_cpp_surface("${_host_window_lifetime_header_lexical}"
     _task8c_interface_lexical)
 foreach(_task8c_interface_member IN ITEMS
         "structHostWindowBackendfinal{"
-        "void(*set_config_flags)(unsignedint){}"
-        "void(*init_window)(int,int,constchar*){}"
-        "bool(*is_window_ready)(){}"
-        "void(*close_window)(){}"
+        "void(*set_config_flags)(unsignedint)noexcept{}"
+        "void(*init_window)(int,int,constchar*)noexcept{}"
+        "bool(*is_window_ready)()noexcept{}"
+        "void(*close_window)()noexcept{}"
         "classHostWindowLifetimefinal{"
         "explicitHostWindowLifetime(HostWindowBackendbackend)noexcept"
         "[[nodiscard]]boolinitialize("
@@ -2418,6 +2422,11 @@ set(_task8c_initialize_contract [=[
 bool HostWindowLifetime::initialize(
     const RaylibHostConfig& config,
     const settings::SettingsData& settings) noexcept {
+    if (!backend_.set_config_flags || !backend_.init_window
+            || !backend_.is_window_ready || !backend_.close_window) {
+        ready_ = false;
+        return false;
+    }
     backend_.set_config_flags(initial_window_flags(settings));
     backend_.init_window(config.window_width, config.window_height,
         config.window_title);
@@ -2435,7 +2444,7 @@ set(_task8c_close_contract [=[
 void HostWindowLifetime::close() noexcept {
     if (!ready_) return;
     ready_ = false;
-    backend_.close_window();
+    if (backend_.close_window != nullptr) backend_.close_window();
 }
 ]=])
 host_validation_require_exact_surface("Task 8C idempotent close"
@@ -2453,7 +2462,8 @@ host_validation_require_exact_surface("Task 8C destructor fallback"
     "${_task8c_destructor}" "${_task8c_destructor_contract}")
 host_validation_require_canonical_count("Task 8C real raylib backend"
     "${_host_window_lifetime_source_active}"
-    "return {&SetConfigFlags, &InitWindow, &IsWindowReady, &CloseWindow};" 1)
+    "return {&set_config_flags_noexcept, &init_window_noexcept,
+        &is_window_ready_noexcept, &close_window_noexcept};" 1)
 host_validation_require_canonical_count("Task 8C Host owns one lifetime"
     "${_run_host_direct}"
     "HostWindowLifetime window{raylib_host_window_backend()};" 1)
@@ -2477,6 +2487,34 @@ host_validation_require_canonical_order("Task 8C Host ready policy and shutdown"
     "renderer.shutdown_resources();"
     "pause_menu_renderer.shutdown();"
     "window.close();")
+host_validation_require_canonical_count("Task 9 renderer outer owner"
+    "${_run_host_direct}"
+    "std::unique_ptr<CombatRenderer> renderer_storage;" 1)
+host_validation_require_canonical_count("Task 9 renderer allocation"
+    "${_run_host_direct}"
+    "renderer_storage = std::make_unique<CombatRenderer>();" 1)
+host_validation_require_canonical_count("Task 9 catch renderer cleanup"
+    "${_run_host_direct}"
+    "if (renderer_storage != nullptr) {
+        renderer_storage->shutdown_resources();
+    }" 2)
+host_validation_require_canonical_order("Task 9 renderer exception lifetime"
+    "${_run_host_direct}"
+    "HostWindowLifetime window{raylib_host_window_backend()};"
+    "std::unique_ptr<CombatRenderer> renderer_storage;"
+    "try {"
+    "window.initialize(config, committed_settings)"
+    "renderer_storage = std::make_unique<CombatRenderer>();"
+    "catch (const std::exception& exception) {"
+    "if (renderer_storage != nullptr) {
+        renderer_storage->shutdown_resources();
+    }"
+    "return HostExitCode::save_initialization_failed;"
+    "catch (...) {"
+    "if (renderer_storage != nullptr) {
+        renderer_storage->shutdown_resources();
+    }"
+    "return HostExitCode::save_initialization_failed;")
 file(GLOB_RECURSE _task8c_raylib_production_sources LIST_DIRECTORIES FALSE
     "${SOURCE_ROOT}/src/platform/raylib/*.cpp"
     "${SOURCE_ROOT}/src/platform/raylib/*.hpp")

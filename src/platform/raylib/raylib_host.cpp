@@ -350,6 +350,7 @@ RaylibHostConfig make_production_host_config(HostLaunchOptions options) {
 
 HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
     HostWindowLifetime window{raylib_host_window_backend()};
+    std::unique_ptr<CombatRenderer> renderer_storage;
     try {
         const auto save_directory = config.save_directory.has_value()
             ? config.save_directory : persistence::default_save_directory();
@@ -422,7 +423,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         }
 #endif
         core::FixedStepRunner fixed_step;
-        const auto renderer_storage = std::make_unique<CombatRenderer>();
+        renderer_storage = std::make_unique<CombatRenderer>();
         CombatRenderer& renderer = *renderer_storage;
         const bool hud_resources_ready = renderer.initialize_resources();
         validation_runtime->set_render_readiness(
@@ -1230,9 +1231,15 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         return HostExitCode::success;
     } catch (const std::exception& exception) {
         TraceLog(LOG_ERROR, "raylib host failed: %s", exception.what());
+        if (renderer_storage != nullptr) {
+            renderer_storage->shutdown_resources();
+        }
         return HostExitCode::save_initialization_failed;
     } catch (...) {
         TraceLog(LOG_ERROR, "raylib host failed with an unknown exception");
+        if (renderer_storage != nullptr) {
+            renderer_storage->shutdown_resources();
+        }
         return HostExitCode::save_initialization_failed;
     }
 }

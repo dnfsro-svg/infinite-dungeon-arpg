@@ -9,10 +9,10 @@ namespace arpg::platform {
 struct RaylibHostConfig;
 
 struct HostWindowBackend final {
-    void (*set_config_flags)(unsigned int){};
-    void (*init_window)(int, int, const char*){};
-    bool (*is_window_ready)(){};
-    void (*close_window)(){};
+    void (*set_config_flags)(unsigned int) noexcept{};
+    void (*init_window)(int, int, const char*) noexcept{};
+    bool (*is_window_ready)() noexcept{};
+    void (*close_window)() noexcept{};
 };
 
 class HostWindowLifetime final {

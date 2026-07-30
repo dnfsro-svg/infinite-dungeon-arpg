@@ -597,6 +597,13 @@ string(FIND "${DIRECT_HOST_ENTRY_SOURCE}"
     VALIDATION_RUNTIME_OWNER_INDEX)
 string(FIND "${DIRECT_HOST_ENTRY_SOURCE}"
     "if (validation_runtime == nullptr)" VALIDATION_RUNTIME_NULL_INDEX)
+string(FIND "${DIRECT_HOST_ENTRY_SOURCE}"
+    "HostWindowLifetime window{raylib_host_window_backend()};"
+    WINDOW_OWNER_INDEX)
+string(FIND "${DIRECT_HOST_ENTRY_SOURCE}"
+    "std::unique_ptr<CombatRenderer> renderer_storage;"
+    RENDERER_OWNER_INDEX)
+string(FIND "${DIRECT_HOST_ENTRY_SOURCE}" "try {" HOST_TRY_INDEX)
 evidence_window_lifetime_boundary_is_valid(
     "${DIRECT_HOST_ENTRY_SOURCE}"
     "${ACTIVE_SANITIZED_HOST_WINDOW_LIFETIME_SOURCE}"
@@ -629,17 +636,23 @@ string(FIND "${DIRECT_HOST_ENTRY_SOURCE}"
     "window.initialize(config, committed_settings)"
     WINDOW_INITIALIZE_INDEX)
 string(FIND "${DIRECT_HOST_ENTRY_SOURCE}"
-    "const auto renderer_storage = std::make_unique<CombatRenderer>()"
-    RENDERER_STORAGE_INDEX)
+    "renderer_storage = std::make_unique<CombatRenderer>()"
+    RENDERER_ALLOCATION_INDEX)
 if(VALIDATION_RUNTIME_OWNER_INDEX EQUAL -1
         OR VALIDATION_RUNTIME_NULL_INDEX EQUAL -1
+        OR WINDOW_OWNER_INDEX EQUAL -1
+        OR RENDERER_OWNER_INDEX EQUAL -1
+        OR HOST_TRY_INDEX EQUAL -1
         OR WINDOW_INITIALIZE_INDEX EQUAL -1
-        OR RENDERER_STORAGE_INDEX EQUAL -1
+        OR RENDERER_ALLOCATION_INDEX EQUAL -1
+        OR NOT WINDOW_OWNER_INDEX LESS RENDERER_OWNER_INDEX
+        OR NOT RENDERER_OWNER_INDEX LESS HOST_TRY_INDEX
+        OR NOT HOST_TRY_INDEX LESS VALIDATION_RUNTIME_OWNER_INDEX
         OR NOT VALIDATION_RUNTIME_OWNER_INDEX LESS VALIDATION_RUNTIME_NULL_INDEX
         OR NOT VALIDATION_RUNTIME_NULL_INDEX LESS WINDOW_INITIALIZE_INDEX
-        OR NOT WINDOW_INITIALIZE_INDEX LESS RENDERER_STORAGE_INDEX)
+        OR NOT WINDOW_INITIALIZE_INDEX LESS RENDERER_ALLOCATION_INDEX)
     message(FATAL_ERROR
-        "HostValidationRuntime allocation/null check must precede window and renderer resources")
+        "renderer ownership, HostValidationRuntime, window, and renderer allocation order is invalid")
 endif()
 foreach(AUTOMATIC_VALIDATION_STATE IN ITEMS
         "Stage10ValidationState stage10_validation_state{}"
