@@ -23,6 +23,7 @@ add_library(arpg_raylib STATIC
     environment_prop_layout.cpp
     game_audio.cpp
     ground_loot_view.cpp
+    host_frame_gate.cpp
     host_input.cpp
     host_launch_options.cpp
     host_validation_input.cpp

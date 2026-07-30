@@ -320,20 +320,6 @@ void apply_stage12_material_showcase(dungeon::DungeonSnapshot& snapshot,
 
 }  // namespace
 
-HostFrameGateResult gate_host_frame(
-    core::FixedStepRunner& fixed_step,
-    bool& pause_latched,
-    bool paused,
-    double frame_seconds) noexcept {
-    if (paused) {
-        if (!pause_latched) fixed_step.clear_accumulator();
-        pause_latched = true;
-        return {};
-    }
-    pause_latched = false;
-    return {true, fixed_step.advance(frame_seconds)};
-}
-
 dungeon::AutoPickupPolicy loot_pickup_policy(
     settings::LootFilterMode mode) noexcept {
     switch (mode) {

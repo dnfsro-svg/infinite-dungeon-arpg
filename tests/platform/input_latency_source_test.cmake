@@ -3,6 +3,12 @@ if(NOT DEFINED RAYLIB_SOURCE_DIR)
 endif()
 
 file(READ "${RAYLIB_SOURCE_DIR}/raylib_host.cpp" HOST_SOURCE)
+set(HOST_FRAME_GATE_PATH "${RAYLIB_SOURCE_DIR}/host_frame_gate.cpp")
+if(NOT EXISTS "${HOST_FRAME_GATE_PATH}")
+    message(FATAL_ERROR
+        "host frame gate source is required: ${HOST_FRAME_GATE_PATH}")
+endif()
+file(READ "${HOST_FRAME_GATE_PATH}" HOST_FRAME_GATE_SOURCE)
 set(HOST_VALIDATION_RUNTIME_PATH
     "${RAYLIB_SOURCE_DIR}/host_validation_runtime.cpp")
 if(NOT EXISTS "${HOST_VALIDATION_RUNTIME_PATH}")
@@ -66,6 +72,8 @@ function(stage17_unconditional_cpp_surface SOURCE OUT_SURFACE)
 endfunction()
 
 arpg_sanitize_cpp_source("${HOST_SOURCE}" HOST_SANITIZED_SOURCE)
+arpg_sanitize_cpp_source("${HOST_FRAME_GATE_SOURCE}"
+    HOST_FRAME_GATE_SANITIZED_SOURCE)
 arpg_sanitize_cpp_source("${HOST_VALIDATION_RUNTIME_SOURCE}"
     HOST_VALIDATION_RUNTIME_SANITIZED_SOURCE)
 arpg_sanitize_cpp_source("${STAGE17_RUNTIME_SOURCE}"
@@ -248,7 +256,7 @@ if(RENDERER_SOURCE MATCHES
 endif()
 
 string(FIND
-    "${HOST_SANITIZED_SOURCE}"
+    "${HOST_FRAME_GATE_SANITIZED_SOURCE}"
     "HostFrameGateResult gate_host_frame"
     PAUSE_GATE_START)
 string(FIND
@@ -259,15 +267,16 @@ string(FIND
     "${HOST_SANITIZED_SOURCE}"
     "bool settle_host_pause_command"
     SETTINGS_SETTLE_START)
-if(PAUSE_GATE_START EQUAL -1 OR HOST_ENTRY_START EQUAL -1
-        OR NOT PAUSE_GATE_START LESS HOST_ENTRY_START)
-    message(FATAL_ERROR "raylib host pause frame gate is missing")
+if(PAUSE_GATE_START EQUAL -1)
+    message(FATAL_ERROR "dedicated host pause frame gate is missing")
 endif()
-math(EXPR PAUSE_GATE_LENGTH "${HOST_ENTRY_START} - ${PAUSE_GATE_START}")
+if(HOST_ENTRY_START EQUAL -1)
+    message(FATAL_ERROR "raylib host entry is missing")
+endif()
 string(SUBSTRING
-    "${HOST_SANITIZED_SOURCE}"
+    "${HOST_FRAME_GATE_SANITIZED_SOURCE}"
     ${PAUSE_GATE_START}
-    ${PAUSE_GATE_LENGTH}
+    -1
     PAUSE_GATE_SOURCE)
 if(NOT PAUSE_GATE_SOURCE MATCHES
         "if[ \\t\\n]*\\([ \\t\\n]*paused[ \\t\\n]*\\)")

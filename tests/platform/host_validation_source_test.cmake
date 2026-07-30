@@ -12,6 +12,9 @@ set(_host_validation_state
     "${SOURCE_ROOT}/src/platform/raylib/host_validation_state.hpp")
 set(_host_validation_runtime
     "${SOURCE_ROOT}/src/platform/raylib/host_validation_runtime.cpp")
+set(_host_header_path "${SOURCE_ROOT}/src/platform/raylib/raylib_host.hpp")
+set(_host_frame_gate
+    "${SOURCE_ROOT}/src/platform/raylib/host_frame_gate.cpp")
 
 foreach(_target IN ITEMS
         "${_host_validation_header}"
@@ -23,9 +26,14 @@ foreach(_target IN ITEMS
     endif()
 endforeach()
 
+if(NOT EXISTS "${_host_frame_gate}")
+    message(FATAL_ERROR
+        "T8A: Host frame gate source is missing: ${_host_frame_gate}")
+endif()
+
 set(_host_source "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
 set(_raylib_cmake "${SOURCE_ROOT}/src/platform/raylib/CMakeLists.txt")
-foreach(_target IN ITEMS "${_host_source}" "${_raylib_cmake}")
+foreach(_target IN ITEMS "${_host_header_path}" "${_host_source}" "${_raylib_cmake}")
     if(NOT EXISTS "${_target}")
         message(FATAL_ERROR
             "Host validation integration target is missing: ${_target}")
@@ -35,6 +43,8 @@ endforeach()
 file(READ "${_host_validation_header}" _facade_text)
 file(READ "${_host_validation_state}" _state_text)
 file(READ "${_host_validation_runtime}" _runtime_text)
+file(READ "${_host_header_path}" _host_header_text)
+file(READ "${_host_frame_gate}" _host_frame_gate_text)
 file(READ "${_host_source}" _host_text)
 file(READ "${_raylib_cmake}" _raylib_cmake_text)
 
@@ -266,6 +276,54 @@ function(host_validation_require_count LABEL SOURCE TOKEN EXPECTED)
         message(FATAL_ERROR
             "Host validation ${LABEL}: expected ${EXPECTED}, found ${_actual}: ${TOKEN}")
     endif()
+endfunction()
+
+function(host_validation_count_identifier SOURCE IDENTIFIER OUT_COUNT)
+    string(REGEX REPLACE "[^A-Za-z0-9_]" " " _identifier_surface
+        "${SOURCE}")
+    string(REGEX REPLACE "[ ]+" " " _identifier_surface
+        "${_identifier_surface}")
+    string(STRIP "${_identifier_surface}" _identifier_surface)
+    if(_identifier_surface STREQUAL "")
+        set(${OUT_COUNT} 0 PARENT_SCOPE)
+        return()
+    endif()
+    set(_identifier_surface " ${_identifier_surface} ")
+    host_validation_count_token("${_identifier_surface}"
+        " ${IDENTIFIER} " _identifier_count)
+    set(${OUT_COUNT} ${_identifier_count} PARENT_SCOPE)
+endfunction()
+
+function(host_validation_require_identifier_count
+        LABEL SOURCE IDENTIFIER EXPECTED)
+    host_validation_count_identifier("${SOURCE}" "${IDENTIFIER}" _actual)
+    if(NOT _actual EQUAL EXPECTED)
+        message(FATAL_ERROR
+            "Host validation ${LABEL}: expected ${EXPECTED}, found ${_actual}: ${IDENTIFIER}")
+    endif()
+endfunction()
+
+function(host_validation_require_preprocessor_macro_free
+        LABEL SOURCE)
+    string(REGEX MATCH
+        "(^|\n)[ \t]*#[ \t]*(define|undef)([ \t]|$)"
+        _mutation_match "${SOURCE}")
+    if(NOT _mutation_match STREQUAL "")
+        message(FATAL_ERROR
+            "Host validation ${LABEL} contains a forbidden #define or #undef")
+    endif()
+endfunction()
+
+function(host_validation_fold_cpp_phase2_splices SOURCE OUT_SOURCE)
+    string(ASCII 92 _backslash)
+    string(ASCII 13 _carriage_return)
+    string(ASCII 10 _line_feed)
+    set(_folded "${SOURCE}")
+    string(REPLACE "${_backslash}${_carriage_return}${_line_feed}" ""
+        _folded "${_folded}")
+    string(REPLACE "${_backslash}${_line_feed}" ""
+        _folded "${_folded}")
+    set(${OUT_SOURCE} "${_folded}" PARENT_SCOPE)
 endfunction()
 
 function(host_validation_runtime_allocation_surface_valid
@@ -626,10 +684,33 @@ function(host_validation_assert_top_level_registration CMAKE_TEXT SOURCE)
     arpg_cmake_code_surface("${CMAKE_TEXT}" _cmake_code)
     string(TOLOWER "${_cmake_code}" _cmake_lower)
     string(FIND "${_cmake_lower}" "add_library(arpg_raylib static" _library)
-    string(FIND "${_cmake_lower}" "${SOURCE}" _source)
-    if(_library EQUAL -1 OR _source EQUAL -1 OR NOT _library LESS _source)
+    string(TOLOWER "${SOURCE}" _source_lower)
+    string(REPLACE "." "[.]" _source_pattern "${_source_lower}")
+    string(REGEX MATCH
+        "(^|\n)[ \t]*${_source_pattern}[ \t]*(\n|$)"
+        _source_line "${_cmake_lower}")
+    string(FIND "${_cmake_lower}" "${_source_line}" _source_line_position)
+    string(FIND "${_source_line}" "${_source_lower}" _source_in_line)
+    if(_library EQUAL -1 OR _source_line STREQUAL ""
+            OR _source_line_position EQUAL -1 OR _source_in_line EQUAL -1)
         message(FATAL_ERROR
-            "Host validation runtime is not in the real top-level arpg_raylib source list")
+            "Host validation source is missing from the primary arpg_raylib list")
+    endif()
+    math(EXPR _source "${_source_line_position} + ${_source_in_line}")
+    string(SUBSTRING "${_cmake_lower}" 0 ${_library} _library_prefix)
+    string(REGEX REPLACE "[ \t\r\n]" ""
+        _library_prefix_compact "${_library_prefix}")
+    string(SUBSTRING "${_cmake_lower}" ${_library} -1 _library_tail)
+    string(FIND "${_library_tail}" ")" _library_close_relative)
+    if(NOT _library_prefix_compact STREQUAL ""
+            OR _library_close_relative EQUAL -1)
+        message(FATAL_ERROR
+            "Host validation primary arpg_raylib list is not a real top-level command")
+    endif()
+    math(EXPR _library_close "${_library} + ${_library_close_relative}")
+    if(NOT _library LESS _source OR NOT _source LESS _library_close)
+        message(FATAL_ERROR
+            "Host validation source is outside the primary arpg_raylib list")
     endif()
     string(SUBSTRING "${_cmake_lower}" 0 ${_source} _prefix)
     if(_prefix MATCHES "(^|\n)[ \t]*return[ \t]*\\(")
@@ -639,7 +720,7 @@ function(host_validation_assert_top_level_registration CMAKE_TEXT SOURCE)
     arpg_cmake_code_line_and_paren_delta("${_prefix}" _paren_depth)
     if(NOT _paren_depth EQUAL 1)
         message(FATAL_ERROR
-            "Host validation runtime registration is not a direct add_library argument")
+            "Host validation source registration is not a direct add_library argument")
     endif()
 endfunction()
 
@@ -649,6 +730,10 @@ host_validation_unconditional_cpp_surface(
     "${_state_text}" _state _state_lexical)
 host_validation_unconditional_cpp_surface(
     "${_runtime_text}" _runtime _runtime_lexical)
+host_validation_unconditional_cpp_surface(
+    "${_host_header_text}" _host_header _host_header_lexical)
+arpg_sanitize_cpp_source(
+    "${_host_frame_gate_text}" _host_frame_gate_lexical)
 host_validation_unconditional_cpp_surface(
     "${_host_text}" _host _host_lexical)
 
@@ -1871,6 +1956,97 @@ host_validation_require_depth("Host entry top-level definition" "${_host}"
 host_validation_require_depth("drain helper top-level definition" "${_host}"
     "void drain_events(" 2)
 
+# Task 8A keeps the public gate contract in the Host facade, gives the exact
+# implementation to one dedicated translation unit, and leaves Host with calls
+# only.  Both active and all-branch lexical views are checked so inactive or
+# string/comment decoys cannot lend ownership evidence.
+set(_host_frame_gate_signature "HostFrameGateResult gate_host_frame(")
+host_validation_require_depth("Task 8A frame gate declaration"
+    "${_host_header}" "${_host_frame_gate_signature}" 1)
+host_validation_require_count("Task 8A lexical frame gate declaration"
+    "${_host_header_lexical}" "${_host_frame_gate_signature}" 1)
+host_validation_require_identifier_count(
+    "Task 8A lexical frame gate declaration identifier"
+    "${_host_header_lexical}" "gate_host_frame" 1)
+host_validation_require_preprocessor_macro_free(
+    "Task 8A header" "${_host_header_lexical}")
+host_validation_normalize_cpp_surface(
+    "${_host_header_lexical}" _host_header_lexical_normalized)
+set(_host_frame_gate_declaration_pattern
+    "HostFrameGateResult[ ]+gate_host_frame\\([ ]*core::FixedStepRunner&([ ]*[A-Za-z_][A-Za-z0-9_]*)?[ ]*,[ ]*bool&([ ]*[A-Za-z_][A-Za-z0-9_]*)?[ ]*,[ ]*bool([ ]+[A-Za-z_][A-Za-z0-9_]*)?[ ]*,[ ]*double([ ]+[A-Za-z_][A-Za-z0-9_]*)?[ ]*\\)[ ]*noexcept")
+if(NOT _host_header_lexical_normalized MATCHES
+        "${_host_frame_gate_declaration_pattern}[ ]*;")
+    message(FATAL_ERROR
+        "Host validation Task 8A lexical declaration has the wrong interface")
+endif()
+
+set(_host_frame_gate_contract [=[
+HostFrameGateResult gate_host_frame(
+    core::FixedStepRunner& fixed_step,
+    bool& pause_latched,
+    bool paused,
+    double frame_seconds) noexcept {
+    if (paused) {
+        if (!pause_latched) fixed_step.clear_accumulator();
+        pause_latched = true;
+        return {};
+    }
+    pause_latched = false;
+    return {true, fixed_step.advance(frame_seconds)};
+}
+]=])
+string(CONCAT _host_frame_gate_translation_unit_contract
+    "#include \"raylib_host.hpp\"\n\n"
+    "namespace arpg::platform {\n\n"
+    "${_host_frame_gate_contract}\n"
+    "}  // namespace arpg::platform\n")
+arpg_sanitize_cpp_source(
+    "${_host_frame_gate_translation_unit_contract}"
+    _host_frame_gate_expected_lexical)
+host_validation_require_exact_surface(
+    "Task 8A lexical owner translation unit"
+    "${_host_frame_gate_lexical}" "${_host_frame_gate_expected_lexical}")
+host_validation_require_count("Task 8A owner public include"
+    "${_host_frame_gate_text}" "#include \"raylib_host.hpp\"" 1)
+host_validation_require_count("Task 8A run loop frame gate calls"
+    "${_run_host_direct}" "gate_host_frame(" 2)
+host_validation_require_identifier_count(
+    "Task 8A lexical Host frame gate identifiers"
+    "${_host_lexical}" "gate_host_frame" 2)
+host_validation_require_preprocessor_macro_free(
+    "Task 8A Host" "${_host_lexical}")
+
+file(GLOB_RECURSE _task8a_project_sources LIST_DIRECTORIES FALSE
+    "${SOURCE_ROOT}/src/*.h" "${SOURCE_ROOT}/src/*.hpp"
+    "${SOURCE_ROOT}/src/*.cpp")
+file(REAL_PATH "${_host_header_path}" _task8a_host_header_real)
+file(REAL_PATH "${_host_frame_gate}" _task8a_host_frame_gate_real)
+file(REAL_PATH "${_host_source}" _task8a_host_source_real)
+foreach(_task8a_source IN LISTS _task8a_project_sources)
+    file(REAL_PATH "${_task8a_source}" _task8a_source_real)
+    if("${_task8a_source_real}" STREQUAL "${_task8a_host_header_real}"
+            OR "${_task8a_source_real}" STREQUAL "${_task8a_host_frame_gate_real}"
+            OR "${_task8a_source_real}" STREQUAL "${_task8a_host_source_real}")
+        continue()
+    endif()
+    file(READ "${_task8a_source}" _task8a_source_text)
+    host_validation_fold_cpp_phase2_splices(
+        "${_task8a_source_text}" _task8a_source_phase2)
+    if(NOT _task8a_source_phase2 MATCHES
+            "gate_host_frame|##|%:%:")
+        continue()
+    endif()
+    arpg_sanitize_cpp_source("${_task8a_source_text}"
+        _task8a_source_lexical)
+    if(_task8a_source_lexical MATCHES "##|%:%:")
+        message(FATAL_ERROR
+            "Host validation Task 8A forbids project token-paste macros: ${_task8a_source}")
+    endif()
+    host_validation_require_identifier_count(
+        "Task 8A foreign frame gate ownership: ${_task8a_source}"
+        "${_task8a_source_lexical}" "gate_host_frame" 0)
+endforeach()
+
 # Scope the existing Task 7B ownership boundary to the executable death segment
 # and the real fixed-step loop. Task 7C additionally removes every remaining
 # presentation/capture/summary Stage owner from Host below.
@@ -2278,6 +2454,8 @@ endforeach()
 
 host_validation_assert_top_level_registration(
     "${_raylib_cmake_text}" "host_validation_runtime.cpp")
+host_validation_assert_top_level_registration(
+    "${_raylib_cmake_text}" "host_frame_gate.cpp")
 
 # Pressure-test both views: conditional code cannot lend positive evidence,
 # while forbidden dependencies in any conditional branch remain visible to
