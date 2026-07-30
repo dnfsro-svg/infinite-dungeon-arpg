@@ -643,3 +643,139 @@ function(evidence_find_cpp_code_token source token output)
     endwhile()
     set(${output} ${token_position} PARENT_SCOPE)
 endfunction()
+
+function(evidence_count_cpp_identifier source identifier output)
+    string(REGEX REPLACE "[^A-Za-z0-9_]" ";" identifier_tokens
+        "${source}")
+    set(identifier_count 0)
+    foreach(identifier_token IN LISTS identifier_tokens)
+        if("${identifier_token}" STREQUAL "${identifier}")
+            math(EXPR identifier_count "${identifier_count} + 1")
+        endif()
+    endforeach()
+    set(${output} ${identifier_count} PARENT_SCOPE)
+endfunction()
+
+function(evidence_window_lifecycle_owner_surface_is_valid
+        active_surface lexical_surface is_owner output)
+    foreach(lifecycle_identifier IN ITEMS
+            SetConfigFlags InitWindow CloseWindow)
+        if(is_owner)
+            set(expected_count 1)
+        else()
+            set(expected_count 0)
+        endif()
+        foreach(surface IN ITEMS "${active_surface}" "${lexical_surface}")
+            evidence_count_cpp_identifier(
+                "${surface}" "${lifecycle_identifier}" actual_count)
+            if(NOT actual_count EQUAL expected_count)
+                set(${output} FALSE PARENT_SCOPE)
+                return()
+            endif()
+        endforeach()
+    endforeach()
+    set(${output} TRUE PARENT_SCOPE)
+endfunction()
+
+function(evidence_window_lifetime_boundary_is_valid
+        host_direct owner_active owner_lexical output)
+    evidence_try_find_cpp_function_bounds_in_sanitized(
+        "${owner_active}" "bool HostWindowLifetime::initialize("
+        initialize_begin initialize_open initialize_end initialize_valid)
+    if(NOT initialize_valid)
+        set(${output} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    evidence_cpp_prefix_has_only_namespace_scopes_in_sanitized(
+        "${owner_active}" ${initialize_begin} initialize_scope_valid)
+    if(NOT initialize_scope_valid)
+        set(${output} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    math(EXPR initialize_length
+        "${initialize_end} - ${initialize_begin} + 1")
+    string(SUBSTRING "${owner_active}" ${initialize_begin}
+        ${initialize_length} initialize_function)
+    evidence_cpp_contains_local_type_keyword_in_sanitized(
+        "${initialize_function}" initialize_has_local_type)
+    if(initialize_has_local_type)
+        set(${output} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    evidence_cpp_direct_execution_surface_in_sanitized(
+        "${initialize_function}" initialize_direct)
+
+    string(REGEX REPLACE "[ \t\r\n]+" "" host_compact "${host_direct}")
+    string(REGEX REPLACE "[ \t\r\n]+" "" initialize_compact
+        "${initialize_direct}")
+    string(REGEX REPLACE "[ \t\r\n]+" "" owner_active_compact
+        "${owner_active}")
+
+    set(host_initialize_call
+        "window.initialize(config,committed_settings)")
+    string(LENGTH "${host_compact}" before_length)
+    string(REPLACE "${host_initialize_call}" "" without_initialize
+        "${host_compact}")
+    string(LENGTH "${without_initialize}" after_length)
+    string(LENGTH "${host_initialize_call}" initialize_call_length)
+    math(EXPR host_initialize_count
+        "(${before_length} - ${after_length}) / ${initialize_call_length}")
+    string(FIND "${host_compact}"
+        "if(!${host_initialize_call})" host_initialize_guard)
+    if(NOT host_initialize_count EQUAL 1 OR host_initialize_guard EQUAL -1)
+        set(${output} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    foreach(forbidden_host_call IN ITEMS
+            "SetConfigFlags(" "InitWindow(" "IsWindowReady(" "CloseWindow(")
+        string(FIND "${host_direct}" "${forbidden_host_call}"
+            forbidden_host_position)
+        if(NOT forbidden_host_position EQUAL -1)
+            set(${output} FALSE PARENT_SCOPE)
+            return()
+        endif()
+    endforeach()
+
+    set(previous_position -1)
+    foreach(initialize_call IN ITEMS
+            "backend_.set_config_flags(initial_window_flags(settings));"
+            "backend_.init_window(config.window_width,config.window_height,config.window_title);"
+            "ready_=backend_.is_window_ready();")
+        string(LENGTH "${initialize_compact}" before_length)
+        string(REPLACE "${initialize_call}" "" without_call
+            "${initialize_compact}")
+        string(LENGTH "${without_call}" after_length)
+        string(LENGTH "${initialize_call}" call_length)
+        math(EXPR call_count
+            "(${before_length} - ${after_length}) / ${call_length}")
+        string(FIND "${initialize_compact}" "${initialize_call}"
+            call_position)
+        if(NOT call_count EQUAL 1 OR call_position EQUAL -1
+                OR (NOT previous_position EQUAL -1
+                    AND NOT previous_position LESS call_position))
+            set(${output} FALSE PARENT_SCOPE)
+            return()
+        endif()
+        set(previous_position ${call_position})
+    endforeach()
+    set(backend_mapping
+        "return{&SetConfigFlags,&InitWindow,&IsWindowReady,&CloseWindow};")
+    string(LENGTH "${owner_active_compact}" before_length)
+    string(REPLACE "${backend_mapping}" "" without_mapping
+        "${owner_active_compact}")
+    string(LENGTH "${without_mapping}" after_length)
+    string(LENGTH "${backend_mapping}" mapping_length)
+    math(EXPR mapping_count
+        "(${before_length} - ${after_length}) / ${mapping_length}")
+    if(NOT mapping_count EQUAL 1)
+        set(${output} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    evidence_window_lifecycle_owner_surface_is_valid(
+        "${owner_active}" "${owner_lexical}" TRUE owner_surface_valid)
+    if(NOT owner_surface_valid)
+        set(${output} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    set(${output} TRUE PARENT_SCOPE)
+endfunction()

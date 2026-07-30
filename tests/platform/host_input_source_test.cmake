@@ -9,6 +9,13 @@ if(NOT EXISTS "${POISON_HEADER}")
 endif()
 
 file(READ "${RAYLIB_SOURCE_DIR}/raylib_host.cpp" HOST_SOURCE)
+set(HOST_WINDOW_LIFETIME_PATH
+    "${RAYLIB_SOURCE_DIR}/host_window_lifetime.cpp")
+if(NOT EXISTS "${HOST_WINDOW_LIFETIME_PATH}")
+    message(FATAL_ERROR
+        "host window lifetime source is required: ${HOST_WINDOW_LIFETIME_PATH}")
+endif()
+file(READ "${HOST_WINDOW_LIFETIME_PATH}" HOST_WINDOW_LIFETIME_SOURCE)
 set(HOST_VALIDATION_RUNTIME_PATH
     "${RAYLIB_SOURCE_DIR}/host_validation_runtime.cpp")
 if(NOT EXISTS "${HOST_VALIDATION_RUNTIME_PATH}")
@@ -259,6 +266,8 @@ function(mask_cpp_inactive_preprocessor_regions SOURCE OUT_SOURCE)
 endfunction()
 
 arpg_sanitize_cpp_source("${HOST_SOURCE}" SANITIZED_HOST_SOURCE)
+arpg_sanitize_cpp_source("${HOST_WINDOW_LIFETIME_SOURCE}"
+    SANITIZED_HOST_WINDOW_LIFETIME_SOURCE)
 arpg_sanitize_cpp_source("${HOST_VALIDATION_RUNTIME_SOURCE}"
     SANITIZED_HOST_VALIDATION_RUNTIME_SOURCE)
 arpg_sanitize_cpp_source("${STAGE17_RUNTIME_SOURCE}"
@@ -267,6 +276,9 @@ arpg_sanitize_cpp_source(
     "${DUNGEON_SESSION_SOURCE}" SANITIZED_DUNGEON_SESSION_SOURCE)
 mask_cpp_inactive_preprocessor_regions(
     "${SANITIZED_HOST_SOURCE}" ACTIVE_SANITIZED_HOST_SOURCE)
+mask_cpp_inactive_preprocessor_regions(
+    "${SANITIZED_HOST_WINDOW_LIFETIME_SOURCE}"
+    ACTIVE_SANITIZED_HOST_WINDOW_LIFETIME_SOURCE)
 mask_cpp_inactive_preprocessor_regions(
     "${SANITIZED_HOST_VALIDATION_RUNTIME_SOURCE}"
     ACTIVE_SANITIZED_HOST_VALIDATION_RUNTIME_SOURCE)
@@ -580,26 +592,58 @@ require_match_count(
     "(^|[^A-Za-z0-9_])(const[ \t\r\n]+)?dungeon::DungeonSnapshot[ \t\r\n]+[A-Za-z_][A-Za-z0-9_]*[ \t\r\n]*(\\{|;|=)"
     0
     "raylib host automatic DungeonSnapshot declarations")
-string(FIND "${SANITIZED_HOST_SOURCE}"
+string(FIND "${DIRECT_HOST_ENTRY_SOURCE}"
     "HostValidationRuntime::create(config, loaded.status)"
     VALIDATION_RUNTIME_OWNER_INDEX)
-string(FIND "${SANITIZED_HOST_SOURCE}"
+string(FIND "${DIRECT_HOST_ENTRY_SOURCE}"
     "if (validation_runtime == nullptr)" VALIDATION_RUNTIME_NULL_INDEX)
-string(FIND "${SANITIZED_HOST_SOURCE}"
-    "SetConfigFlags(initial_window_flags(committed_settings))"
-    INITIAL_WINDOW_FLAGS_INDEX)
-string(FIND "${SANITIZED_HOST_SOURCE}" "InitWindow(" INIT_WINDOW_INDEX)
-string(FIND "${SANITIZED_HOST_SOURCE}"
+evidence_window_lifetime_boundary_is_valid(
+    "${DIRECT_HOST_ENTRY_SOURCE}"
+    "${ACTIVE_SANITIZED_HOST_WINDOW_LIFETIME_SOURCE}"
+    "${SANITIZED_HOST_WINDOW_LIFETIME_SOURCE}"
+    WINDOW_LIFETIME_BOUNDARY_VALID)
+if(NOT WINDOW_LIFETIME_BOUNDARY_VALID)
+    message(FATAL_ERROR
+        "Host must delegate the ordered window initialization boundary exactly once")
+endif()
+file(GLOB RAYLIB_PRODUCTION_SOURCES LIST_DIRECTORIES FALSE
+    "${RAYLIB_SOURCE_DIR}/*.cpp")
+file(REAL_PATH "${HOST_WINDOW_LIFETIME_PATH}" WINDOW_LIFETIME_OWNER_REAL)
+foreach(RAYLIB_PRODUCTION_SOURCE IN LISTS RAYLIB_PRODUCTION_SOURCES)
+    file(READ "${RAYLIB_PRODUCTION_SOURCE}" RAYLIB_PRODUCTION_TEXT)
+    arpg_sanitize_cpp_source("${RAYLIB_PRODUCTION_TEXT}"
+        RAYLIB_PRODUCTION_LEXICAL)
+    mask_cpp_inactive_preprocessor_regions(
+        "${RAYLIB_PRODUCTION_LEXICAL}" RAYLIB_PRODUCTION_ACTIVE)
+    file(REAL_PATH "${RAYLIB_PRODUCTION_SOURCE}"
+        RAYLIB_PRODUCTION_SOURCE_REAL)
+    if("${RAYLIB_PRODUCTION_SOURCE_REAL}" STREQUAL
+            "${WINDOW_LIFETIME_OWNER_REAL}")
+        set(IS_WINDOW_LIFETIME_OWNER TRUE)
+    else()
+        set(IS_WINDOW_LIFETIME_OWNER FALSE)
+    endif()
+    evidence_window_lifecycle_owner_surface_is_valid(
+        "${RAYLIB_PRODUCTION_ACTIVE}" "${RAYLIB_PRODUCTION_LEXICAL}"
+        ${IS_WINDOW_LIFETIME_OWNER} WINDOW_LIFETIME_OWNER_VALID)
+    if(NOT WINDOW_LIFETIME_OWNER_VALID)
+        message(FATAL_ERROR
+            "direct raylib window lifecycle owner violation: ${RAYLIB_PRODUCTION_SOURCE}")
+    endif()
+endforeach()
+string(FIND "${DIRECT_HOST_ENTRY_SOURCE}"
+    "window.initialize(config, committed_settings)"
+    WINDOW_INITIALIZE_INDEX)
+string(FIND "${DIRECT_HOST_ENTRY_SOURCE}"
     "const auto renderer_storage = std::make_unique<CombatRenderer>()"
     RENDERER_STORAGE_INDEX)
 if(VALIDATION_RUNTIME_OWNER_INDEX EQUAL -1
         OR VALIDATION_RUNTIME_NULL_INDEX EQUAL -1
-        OR INITIAL_WINDOW_FLAGS_INDEX EQUAL -1 OR INIT_WINDOW_INDEX EQUAL -1
+        OR WINDOW_INITIALIZE_INDEX EQUAL -1
         OR RENDERER_STORAGE_INDEX EQUAL -1
         OR NOT VALIDATION_RUNTIME_OWNER_INDEX LESS VALIDATION_RUNTIME_NULL_INDEX
-        OR NOT VALIDATION_RUNTIME_NULL_INDEX LESS INITIAL_WINDOW_FLAGS_INDEX
-        OR NOT INITIAL_WINDOW_FLAGS_INDEX LESS INIT_WINDOW_INDEX
-        OR NOT INIT_WINDOW_INDEX LESS RENDERER_STORAGE_INDEX)
+        OR NOT VALIDATION_RUNTIME_NULL_INDEX LESS WINDOW_INITIALIZE_INDEX
+        OR NOT WINDOW_INITIALIZE_INDEX LESS RENDERER_STORAGE_INDEX)
     message(FATAL_ERROR
         "HostValidationRuntime allocation/null check must precede window and renderer resources")
 endif()

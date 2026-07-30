@@ -294,12 +294,36 @@ if(_host_text MATCHES
         "struct[ \t\r\n]+Stage11CHudValidationState[ \t\r\n]+final")
     message(FATAL_ERROR "Stage11C HUD state definition remains in raylib_host.cpp")
 endif()
+evidence_sanitize_cpp_for_scan(
+    "${_stage11c_source_text}" _stage11c_source_code)
 foreach(_definition IN ITEMS
         "PhysicalKeySnapshot inject_stage11c_physical_edges("
         "std::uint64_t stage11c_production_snapshot_hash("
         "bool stage11c_hud_validation_reached("
         "void write_stage11c_hud_validation_summary(")
-    evidence_extract_cpp_function_block("${_stage11c_source_text}" "${_definition}" _stage_function)
+    evidence_try_find_cpp_function_bounds_in_sanitized(
+        "${_stage11c_source_code}" "${_definition}"
+        _stage_begin _stage_open _stage_end _stage_definition_valid)
+    if(NOT _stage_definition_valid)
+        string(FIND "${_stage11c_source_code}" "${_definition}"
+            _stage_signature_position)
+        if(_stage_signature_position EQUAL -1)
+            message(FATAL_ERROR
+                "Evidence validation function is missing: ${_definition}")
+        else()
+            message(FATAL_ERROR
+                "Stage11C HUD definition is missing from Stage source: ${_definition}")
+        endif()
+    endif()
+    evidence_cpp_prefix_has_only_namespace_scopes_in_sanitized(
+        "${_stage11c_source_code}" ${_stage_begin} _stage_scope_valid)
+    if(NOT _stage_scope_valid)
+        message(FATAL_ERROR
+            "Stage11C HUD definition is missing from Stage source: ${_definition}")
+    endif()
+    math(EXPR _stage_length "${_stage_end} - ${_stage_begin} + 1")
+    string(SUBSTRING "${_stage11c_source_code}"
+        ${_stage_begin} ${_stage_length} _stage_function)
     string(FIND "${_stage_function}" "{" _stage_definition)
     string(FIND "${_stage_function}" ";" _stage_forward_declaration)
     if(_stage_definition EQUAL -1

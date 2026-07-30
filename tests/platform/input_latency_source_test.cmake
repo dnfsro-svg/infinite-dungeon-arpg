@@ -3,6 +3,13 @@ if(NOT DEFINED RAYLIB_SOURCE_DIR)
 endif()
 
 file(READ "${RAYLIB_SOURCE_DIR}/raylib_host.cpp" HOST_SOURCE)
+set(HOST_WINDOW_LIFETIME_PATH
+    "${RAYLIB_SOURCE_DIR}/host_window_lifetime.cpp")
+if(NOT EXISTS "${HOST_WINDOW_LIFETIME_PATH}")
+    message(FATAL_ERROR
+        "host window lifetime source is required: ${HOST_WINDOW_LIFETIME_PATH}")
+endif()
+file(READ "${HOST_WINDOW_LIFETIME_PATH}" HOST_WINDOW_LIFETIME_SOURCE)
 set(HOST_FRAME_GATE_PATH "${RAYLIB_SOURCE_DIR}/host_frame_gate.cpp")
 if(NOT EXISTS "${HOST_FRAME_GATE_PATH}")
     message(FATAL_ERROR
@@ -79,6 +86,8 @@ function(stage17_unconditional_cpp_surface SOURCE OUT_SURFACE)
 endfunction()
 
 arpg_sanitize_cpp_source("${HOST_SOURCE}" HOST_SANITIZED_SOURCE)
+arpg_sanitize_cpp_source("${HOST_WINDOW_LIFETIME_SOURCE}"
+    HOST_WINDOW_LIFETIME_LEXICAL_SOURCE)
 arpg_sanitize_cpp_source("${HOST_FRAME_GATE_SOURCE}"
     HOST_FRAME_GATE_SANITIZED_SOURCE)
 arpg_sanitize_cpp_source("${HOST_SETTINGS_RUNTIME_SOURCE}"
@@ -94,6 +103,8 @@ stage17_unconditional_cpp_surface("${STAGE17_RUNTIME_SOURCE}"
 stage17_unconditional_cpp_surface("${HOST_SETTINGS_RUNTIME_SOURCE}"
     HOST_SETTINGS_RUNTIME_ACTIVE_SOURCE)
 stage17_unconditional_cpp_surface("${HOST_SOURCE}" HOST_ACTIVE_SOURCE)
+stage17_unconditional_cpp_surface("${HOST_WINDOW_LIFETIME_SOURCE}"
+    HOST_WINDOW_LIFETIME_ACTIVE_SOURCE)
 
 if(STAGE17_RUNTIME_ACTIVE_SOURCE MATCHES
         "(^|[^A-Za-z0-9_])(sample_physical_keys|map_host_frame_input|submit_frame_actions|IsKeyPressed|IsKeyPressedRepeat|IsKeyDown|IsKeyReleased|IsKeyUp|GetKeyPressed|GetCharPressed|IsMouseButtonPressed|IsMouseButtonDown|IsMouseButtonReleased|IsMouseButtonUp|GetMouseX|GetMouseY|GetMousePosition|GetMouseDelta|GetMouseWheelMove|GetMouseWheelMoveV|IsWindowFocused|GetFrameTime)[ \t\r\n]*\\(")
@@ -1511,16 +1522,46 @@ endif()
 string(FIND "${HOST_ENTRY_DIRECT_SOURCE}" "settings_store.load()" SETTINGS_LOAD_INDEX)
 string(FIND "${HOST_ENTRY_DIRECT_SOURCE}" "make_host_settings_notice(loaded.status)"
     SETTINGS_NOTICE_INDEX)
-string(FIND "${HOST_ENTRY_DIRECT_SOURCE}" "SetConfigFlags(initial_window_flags(committed_settings))"
-    INITIAL_FLAGS_INDEX)
-string(FIND "${HOST_ENTRY_DIRECT_SOURCE}" "InitWindow(" INIT_WINDOW_INDEX)
+evidence_window_lifetime_boundary_is_valid(
+    "${HOST_ENTRY_DIRECT_SOURCE}" "${HOST_WINDOW_LIFETIME_ACTIVE_SOURCE}"
+    "${HOST_WINDOW_LIFETIME_LEXICAL_SOURCE}" WINDOW_LIFETIME_BOUNDARY_VALID)
+if(NOT WINDOW_LIFETIME_BOUNDARY_VALID)
+    message(FATAL_ERROR
+        "Host must delegate the ordered window initialization boundary exactly once")
+endif()
+file(GLOB RAYLIB_PRODUCTION_SOURCES LIST_DIRECTORIES FALSE
+    "${RAYLIB_SOURCE_DIR}/*.cpp")
+file(REAL_PATH "${HOST_WINDOW_LIFETIME_PATH}" WINDOW_LIFETIME_OWNER_REAL)
+foreach(RAYLIB_PRODUCTION_SOURCE IN LISTS RAYLIB_PRODUCTION_SOURCES)
+    file(READ "${RAYLIB_PRODUCTION_SOURCE}" RAYLIB_PRODUCTION_TEXT)
+    arpg_sanitize_cpp_source("${RAYLIB_PRODUCTION_TEXT}"
+        RAYLIB_PRODUCTION_LEXICAL)
+    stage17_unconditional_cpp_surface("${RAYLIB_PRODUCTION_TEXT}"
+        RAYLIB_PRODUCTION_ACTIVE)
+    file(REAL_PATH "${RAYLIB_PRODUCTION_SOURCE}"
+        RAYLIB_PRODUCTION_SOURCE_REAL)
+    if("${RAYLIB_PRODUCTION_SOURCE_REAL}" STREQUAL
+            "${WINDOW_LIFETIME_OWNER_REAL}")
+        set(IS_WINDOW_LIFETIME_OWNER TRUE)
+    else()
+        set(IS_WINDOW_LIFETIME_OWNER FALSE)
+    endif()
+    evidence_window_lifecycle_owner_surface_is_valid(
+        "${RAYLIB_PRODUCTION_ACTIVE}" "${RAYLIB_PRODUCTION_LEXICAL}"
+        ${IS_WINDOW_LIFETIME_OWNER} WINDOW_LIFETIME_OWNER_VALID)
+    if(NOT WINDOW_LIFETIME_OWNER_VALID)
+        message(FATAL_ERROR
+            "direct raylib window lifecycle owner violation: ${RAYLIB_PRODUCTION_SOURCE}")
+    endif()
+endforeach()
+string(FIND "${HOST_ENTRY_DIRECT_SOURCE}"
+    "window.initialize(config, committed_settings)" WINDOW_INITIALIZE_INDEX)
 if(SETTINGS_LOAD_INDEX EQUAL -1 OR SETTINGS_NOTICE_INDEX EQUAL -1
-        OR INITIAL_FLAGS_INDEX EQUAL -1
-        OR INIT_WINDOW_INDEX EQUAL -1
+        OR WINDOW_INITIALIZE_INDEX EQUAL -1
         OR NOT SETTINGS_LOAD_INDEX LESS SETTINGS_NOTICE_INDEX
-        OR NOT SETTINGS_LOAD_INDEX LESS INITIAL_FLAGS_INDEX
-        OR NOT INITIAL_FLAGS_INDEX LESS INIT_WINDOW_INDEX)
-    message(FATAL_ERROR "settings must load before initial flags and InitWindow")
+        OR NOT SETTINGS_LOAD_INDEX LESS WINDOW_INITIALIZE_INDEX)
+    message(FATAL_ERROR
+        "settings must load before HostWindowLifetime initialization")
 endif()
 
 if(HOST_ENTRY_DIRECT_SOURCE MATCHES
