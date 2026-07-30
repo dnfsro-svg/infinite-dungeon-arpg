@@ -89,3 +89,23 @@ The final Host has zero occurrences of `HostValidationStateAccess`, all six
 private Stage validation-state type names, direct `inject_stage*` or
 `observe_stage*` calls, and direct Stage validation-summary writers. Its only
 validation include is the public `host_validation.hpp` facade.
+
+## Task 8C window lifetime boundary
+
+Task 8C adds `HostWindowLifetime`, with a replaceable `HostWindowBackend`, as
+the only owner of the `SetConfigFlags` → `InitWindow` → `IsWindowReady`
+transaction and of `CloseWindow`.  `run_raylib_host` creates one lifetime
+object before its `try` block, explicitly closes it only after audio, combat
+renderer, and pause renderer shutdown, and relies on the destructor for all
+exceptional or early-return paths.  Its post-ready `ChangeDirectory`,
+`SetWindowMinSize`, `SetExitKey`, and validation foreground policy remain in
+the Host immediately after successful initialization.
+
+The Host remains above the 1,200-line target after this focused extraction.
+That remaining surface is intentional coordination rather than a mechanical
+split: startup owns save/settings/runtime and validation-facade construction;
+the main loop retains its frozen input, fixed-step, persistence, event-drain,
+and clean-exit transaction; and the presentation section retains draw order,
+capture ownership, evidence observation, and audio behavior.  These blocks
+cross the public runtime and renderer contracts, so moving them merely to
+reduce the line count would violate the structural-refactor behavior freeze.

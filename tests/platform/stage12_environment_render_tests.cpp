@@ -802,7 +802,8 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
 
     const std::size_t init_background_recovery = host.find(
         "if ((config.stage12_material_background_only");
-    const std::size_t init_window = host.find("InitWindow(");
+    const std::size_t init_window = host.find(
+        "window.initialize(config, committed_settings)");
     ARPG_REQUIRE(init_background_recovery != std::string::npos);
     ARPG_REQUIRE(init_window != std::string::npos);
     ARPG_REQUIRE(init_background_recovery < init_window);

@@ -19,6 +19,10 @@ set(_host_settings_header
     "${SOURCE_ROOT}/src/platform/raylib/host_settings_runtime.hpp")
 set(_host_settings_source
     "${SOURCE_ROOT}/src/platform/raylib/host_settings_runtime.cpp")
+set(_host_window_lifetime_header
+    "${SOURCE_ROOT}/src/platform/raylib/host_window_lifetime.hpp")
+set(_host_window_lifetime_source
+    "${SOURCE_ROOT}/src/platform/raylib/host_window_lifetime.cpp")
 
 foreach(_target IN ITEMS
         "${_host_validation_header}"
@@ -40,6 +44,14 @@ foreach(_target IN ITEMS "${_host_settings_header}" "${_host_settings_source}")
             "T8B: Host settings runtime target is missing: ${_target}")
     endif()
 endforeach()
+foreach(_target IN ITEMS
+        "${_host_window_lifetime_header}"
+        "${_host_window_lifetime_source}")
+    if(NOT EXISTS "${_target}")
+        message(FATAL_ERROR
+            "T8C: Host window lifetime target is missing: ${_target}")
+    endif()
+endforeach()
 
 set(_host_source "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
 set(_raylib_cmake "${SOURCE_ROOT}/src/platform/raylib/CMakeLists.txt")
@@ -57,6 +69,8 @@ file(READ "${_host_header_path}" _host_header_text)
 file(READ "${_host_frame_gate}" _host_frame_gate_text)
 file(READ "${_host_settings_header}" _host_settings_header_text)
 file(READ "${_host_settings_source}" _host_settings_source_text)
+file(READ "${_host_window_lifetime_header}" _host_window_lifetime_header_text)
+file(READ "${_host_window_lifetime_source}" _host_window_lifetime_source_text)
 file(READ "${_host_source}" _host_text)
 file(READ "${_raylib_cmake}" _raylib_cmake_text)
 
@@ -687,6 +701,12 @@ host_validation_unconditional_cpp_surface(
 host_validation_unconditional_cpp_surface(
     "${_host_settings_source_text}"
     _host_settings_source_active _host_settings_source_lexical)
+host_validation_unconditional_cpp_surface(
+    "${_host_window_lifetime_header_text}"
+    _host_window_lifetime_header_active _host_window_lifetime_header_lexical)
+host_validation_unconditional_cpp_surface(
+    "${_host_window_lifetime_source_text}"
+    _host_window_lifetime_source_active _host_window_lifetime_source_lexical)
 host_validation_unconditional_cpp_surface(
     "${_host_text}" _host _host_lexical)
 
@@ -2206,8 +2226,106 @@ host_validation_require_canonical_order("Task 8B Host settings order"
     "const PauseCommand pause_command = update_pause_menu("
     "settings_runtime.consume_notice(pause_screen_before);"
     "const std::uint64_t input_revision_before = input_settings.revision;"
-    "settings_runtime.settle("
+        "settings_runtime.settle("
     "if (input_settings.revision != input_revision_before)")
+
+# Task 8C centralizes only the raylib window's lifetime.  The Host retains
+# post-ready policy calls, while the dedicated owner preserves the exact
+# flags -> create -> readiness boundary and provides the sole CloseWindow call.
+foreach(_task8c_interface_member IN ITEMS
+        "struct HostWindowBackend final {"
+        "void (*set_config_flags)(unsigned int){}"
+        "void (*init_window)(int, int, const char*){}"
+        "bool (*is_window_ready)(){}"
+        "void (*close_window)(){}"
+        "class HostWindowLifetime final {"
+        "explicit HostWindowLifetime(HostWindowBackend backend) noexcept"
+        "[[nodiscard]] bool initialize("
+        "const RaylibHostConfig& config,"
+        "const settings::SettingsData& settings) noexcept"
+        "void close() noexcept"
+        "[[nodiscard]] bool ready() const noexcept"
+        "~HostWindowLifetime()"
+        "HostWindowLifetime(const HostWindowLifetime&) = delete"
+        "HostWindowLifetime& operator=(const HostWindowLifetime&) = delete"
+        "[[nodiscard]] HostWindowBackend raylib_host_window_backend() noexcept")
+    host_validation_require_count("Task 8C public interface member"
+        "${_host_window_lifetime_header_text}"
+        "${_task8c_interface_member}" 1)
+endforeach()
+foreach(_task8c_forbidden_owner IN ITEMS
+        "std::unique_ptr" "std::shared_ptr" "std::vector" "std::string")
+    host_validation_require_count("Task 8C lifetime heap ownership"
+        "${_host_window_lifetime_header_lexical}"
+        "${_task8c_forbidden_owner}" 0)
+endforeach()
+host_validation_extract_sanitized_block(
+    "${_host_window_lifetime_source_active}"
+    "bool HostWindowLifetime::initialize("
+    _task8c_initialize)
+set(_task8c_initialize_contract [=[
+bool HostWindowLifetime::initialize(
+    const RaylibHostConfig& config,
+    const settings::SettingsData& settings) noexcept {
+    backend_.set_config_flags(initial_window_flags(settings));
+    backend_.init_window(config.window_width, config.window_height,
+        config.window_title);
+    ready_ = backend_.is_window_ready();
+    return ready_;
+}
+]=])
+host_validation_require_exact_surface("Task 8C initialization order"
+    "${_task8c_initialize}" "${_task8c_initialize_contract}")
+host_validation_extract_sanitized_block(
+    "${_host_window_lifetime_source_active}"
+    "void HostWindowLifetime::close("
+    _task8c_close)
+set(_task8c_close_contract [=[
+void HostWindowLifetime::close() noexcept {
+    if (!ready_) return;
+    ready_ = false;
+    backend_.close_window();
+}
+]=])
+host_validation_require_exact_surface("Task 8C idempotent close"
+    "${_task8c_close}" "${_task8c_close_contract}")
+host_validation_extract_sanitized_block(
+    "${_host_window_lifetime_source_active}"
+    "HostWindowLifetime::~HostWindowLifetime("
+    _task8c_destructor)
+set(_task8c_destructor_contract [=[
+HostWindowLifetime::~HostWindowLifetime() {
+    close();
+}
+]=])
+host_validation_require_exact_surface("Task 8C destructor fallback"
+    "${_task8c_destructor}" "${_task8c_destructor_contract}")
+host_validation_require_canonical_count("Task 8C real raylib backend"
+    "${_host_window_lifetime_source_active}"
+    "return {&SetConfigFlags, &InitWindow, &IsWindowReady, &CloseWindow};" 1)
+host_validation_require_canonical_count("Task 8C Host owns one lifetime"
+    "${_run_host_direct}"
+    "HostWindowLifetime window{raylib_host_window_backend()};" 1)
+host_validation_require_canonical_count("Task 8C Host initializes one lifetime"
+    "${_run_host_direct}"
+    "if (!window.initialize(config, committed_settings))" 1)
+host_validation_require_canonical_count("Task 8C Host explicit close"
+    "${_run_host_direct}" "window.close();" 1)
+foreach(_task8c_removed_host_call IN ITEMS
+        "SetConfigFlags(" "InitWindow(" "IsWindowReady(" "CloseWindow(")
+    host_validation_require_count("Task 8C removed direct Host lifecycle"
+        "${_run_host_direct}" "${_task8c_removed_host_call}" 0)
+endforeach()
+host_validation_require_canonical_order("Task 8C Host ready policy and shutdown"
+    "${_run_host_direct}"
+    "window.initialize(config, committed_settings)"
+    "ChangeDirectory("
+    "SetWindowMinSize(800, 450);"
+    "SetExitKey(KEY_NULL);"
+    "audio.shutdown();"
+    "renderer.shutdown_resources();"
+    "pause_menu_renderer.shutdown();"
+    "window.close();")
 set(_task8b_coordinator_declaration [=[        HostSettingsRuntime settings_runtime{&settings_notice, &pause_menu,
             &live_settings, &input_settings, &settings_store,
             settings_backend};]=])
@@ -2502,7 +2620,7 @@ host_validation_require_order("Host initialization" "${_run_host}"
     "HostValidationRuntime::create(config, loaded.status)"
     "if (validation_runtime == nullptr)"
     "return HostExitCode::save_initialization_failed;"
-    "InitWindow("
+    "window.initialize(config, committed_settings)"
     "renderer.initialize_resources()"
     "validation_runtime->set_render_readiness("
     "hud_resources_ready, renderer.active_skill_assets_ready()")
@@ -2696,6 +2814,8 @@ host_validation_assert_top_level_registration(
     "${_raylib_cmake_text}" "host_frame_gate.cpp")
 host_validation_assert_top_level_registration(
     "${_raylib_cmake_text}" "host_settings_runtime.cpp")
+host_validation_assert_top_level_registration(
+    "${_raylib_cmake_text}" "host_window_lifetime.cpp")
 
 # Pressure-test both views: conditional code cannot lend positive evidence,
 # while forbidden dependencies in any conditional branch remain visible to

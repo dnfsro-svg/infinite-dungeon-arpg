@@ -15,6 +15,7 @@
 #include "host_launch_options.hpp"
 #include "host_settings_runtime.hpp"
 #include "host_validation.hpp"
+#include "host_window_lifetime.hpp"
 #include "inventory_renderer.hpp"
 #include "passive_tree_renderer.hpp"
 #include "passive_tree_view_math.hpp"
@@ -348,7 +349,7 @@ RaylibHostConfig make_production_host_config(HostLaunchOptions options) {
 }
 
 HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
-    bool window_ready = false;
+    HostWindowLifetime window{raylib_host_window_backend()};
     try {
         const auto save_directory = config.save_directory.has_value()
             ? config.save_directory : persistence::default_save_directory();
@@ -394,11 +395,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         if (validation_runtime == nullptr) {
             return HostExitCode::save_initialization_failed;
         }
-        SetConfigFlags(initial_window_flags(committed_settings));
-        InitWindow(config.window_width, config.window_height,
-            config.window_title);
-        window_ready = IsWindowReady();
-        if (!window_ready) {
+        if (!window.initialize(config, committed_settings)) {
             TraceLog(LOG_ERROR, "raylib window initialization failed");
             return HostExitCode::window_initialization_failed;
         }
@@ -1229,19 +1226,13 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         audio.shutdown();
         renderer.shutdown_resources();
         pause_menu_renderer.shutdown();
-        CloseWindow();
+        window.close();
         return HostExitCode::success;
     } catch (const std::exception& exception) {
         TraceLog(LOG_ERROR, "raylib host failed: %s", exception.what());
-        if (window_ready) {
-            CloseWindow();
-        }
         return HostExitCode::save_initialization_failed;
     } catch (...) {
         TraceLog(LOG_ERROR, "raylib host failed with an unknown exception");
-        if (window_ready) {
-            CloseWindow();
-        }
         return HostExitCode::save_initialization_failed;
     }
 }

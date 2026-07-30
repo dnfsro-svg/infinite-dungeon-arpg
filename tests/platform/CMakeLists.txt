@@ -22,6 +22,7 @@ if(TARGET arpg_raylib)
         dungeon_runtime_tests.cpp
         pause_host_gate_tests.cpp
         host_settings_runtime_tests.cpp
+        host_window_lifetime_tests.cpp
         pause_menu_state_tests.cpp
         pause_menu_view_tests.cpp
         window_settings_tests.cpp

@@ -1122,7 +1122,7 @@ string(SUBSTRING "${_stage11d_host_direct}" ${_task7c_post_loop_begin}
 string(REGEX REPLACE "[ \t\r\n]+" "" _task7c_post_loop_normalized
     "${_task7c_post_loop_surface}")
 set(_task7c_unconditional_summary_tail
-    "validation_runtime->write_summaries(runtime.clean_shutdown_state(),pause_menu);audio.shutdown();renderer.shutdown_resources();pause_menu_renderer.shutdown();CloseWindow();returnHostExitCode::success;")
+    "validation_runtime->write_summaries(runtime.clean_shutdown_state(),pause_menu);audio.shutdown();renderer.shutdown_resources();pause_menu_renderer.shutdown();window.close();returnHostExitCode::success;")
 string(FIND "${_task7c_post_loop_normalized}"
     "${_task7c_unconditional_summary_tail}" _task7c_summary_tail_position)
 if(NOT _task7c_summary_tail_position EQUAL 0)

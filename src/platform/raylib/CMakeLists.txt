@@ -25,6 +25,7 @@ add_library(arpg_raylib STATIC
     ground_loot_view.cpp
     host_frame_gate.cpp
     host_settings_runtime.cpp
+    host_window_lifetime.cpp
     host_input.cpp
     host_launch_options.cpp
     host_validation_input.cpp

@@ -1911,7 +1911,7 @@ function(task7c_assert_sequence_contract)
         _task7c_renderer_shutdown_position)
     string(FIND "${_host_runtime}" "pause_menu_renderer.shutdown();"
         _task7c_pause_shutdown_position)
-    string(FIND "${_host_runtime}" "CloseWindow();"
+    string(FIND "${_host_runtime}" "window.close();"
         _task7c_window_shutdown_position)
     if(NOT _task7c_host_summary_depth EQUAL 2
             OR NOT _loop_end LESS _task7c_host_summary_position
