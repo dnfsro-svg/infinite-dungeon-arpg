@@ -55,6 +55,7 @@ endfunction()
 set(_settings_types "${SOURCE_ROOT}/platform/settings/settings_types.cpp")
 set(_settings_store "${SOURCE_ROOT}/platform/settings/settings_store.cpp")
 set(_host_source "${SOURCE_ROOT}/platform/raylib/raylib_host.cpp")
+set(_runtime_source "${SOURCE_ROOT}/platform/raylib/host_validation_runtime.cpp")
 set(_stage_header "${SOURCE_ROOT}/platform/raylib/host_validation_stage11b.hpp")
 set(_stage_source "${SOURCE_ROOT}/platform/raylib/host_validation_stage11b.cpp")
 set(_hud_source "${SOURCE_ROOT}/platform/raylib/hud_renderer.cpp")
@@ -80,6 +81,7 @@ endforeach()
 file(READ "${_stage_header}" _stage_header_text)
 file(READ "${_stage_source}" _stage_source_text)
 file(READ "${_host_source}" _host_source_text)
+file(READ "${_runtime_source}" _runtime_source_text)
 file(READ "${SOURCE_ROOT}/platform/raylib/CMakeLists.txt" _raylib_cmake_text)
 evidence_extract_cpp_function_block("${_stage_source_text}"
     "PhysicalKeySnapshot inject_stage11b_physical_edges(" _stage11b_injection_block)
@@ -98,6 +100,224 @@ function(arpg_assert_stage11b_block_tokens LABEL BLOCK)
         endif()
     endforeach()
 endfunction()
+
+function(stage11b_arch_assert_direct_token LABEL BLOCK TOKEN)
+    stage11b_arch_count_token("${BLOCK}" "${TOKEN}" token_count)
+    string(FIND "${BLOCK}" "${TOKEN}" token_position)
+    if(NOT token_count EQUAL 1)
+        message(FATAL_ERROR
+            "Stage 11B ${LABEL} direct token is missing or duplicated: ${TOKEN}")
+    endif()
+    stage11b_arch_brace_depth("${BLOCK}" ${token_position} token_depth)
+    if(NOT token_depth EQUAL 1)
+        message(FATAL_ERROR
+            "Stage 11B ${LABEL} token is outside direct method scope: ${TOKEN}")
+    endif()
+endfunction()
+
+function(stage11b_arch_count_token SOURCE TOKEN OUT_COUNT)
+    string(LENGTH "${TOKEN}" token_length)
+    string(LENGTH "${SOURCE}" before_length)
+    string(REPLACE "${TOKEN}" "" without_token "${SOURCE}")
+    string(LENGTH "${without_token}" after_length)
+    math(EXPR token_count
+        "(${before_length} - ${after_length}) / ${token_length}")
+    set(${OUT_COUNT} ${token_count} PARENT_SCOPE)
+endfunction()
+
+function(stage11b_arch_brace_depth SOURCE POSITION OUT_DEPTH)
+    string(SUBSTRING "${SOURCE}" 0 ${POSITION} prefix)
+    string(REGEX REPLACE "[^{}]" "" braces "${prefix}")
+    string(LENGTH "${braces}" brace_length)
+    set(depth 0)
+    if(brace_length GREATER 0)
+        math(EXPR brace_last "${brace_length} - 1")
+        foreach(brace_index RANGE 0 ${brace_last})
+            string(SUBSTRING "${braces}" ${brace_index} 1 brace)
+            if(brace STREQUAL "{")
+                math(EXPR depth "${depth} + 1")
+            else()
+                math(EXPR depth "${depth} - 1")
+            endif()
+        endforeach()
+    endif()
+    set(${OUT_DEPTH} ${depth} PARENT_SCOPE)
+endfunction()
+
+function(stage11b_arch_unconditional_cpp_surface
+        SOURCE OUT_ACTIVE OUT_LEXICAL)
+    evidence_sanitize_cpp_for_scan("${SOURCE}" lexical)
+    string(LENGTH "${lexical}" source_length)
+    set(cursor 0)
+    set(conditional_depth 0)
+    set(active "")
+    while(cursor LESS source_length)
+        string(SUBSTRING "${lexical}" ${cursor} -1 tail)
+        string(FIND "${tail}" "\n" newline)
+        if(newline EQUAL -1)
+            set(line "${tail}")
+            set(line_length -1)
+        else()
+            math(EXPR line_length "${newline} + 1")
+            string(SUBSTRING "${tail}" 0 ${line_length} line)
+        endif()
+        set(mask_line FALSE)
+        if(line MATCHES
+                "^[ \t]*#[ \t]*(if|ifdef|ifndef)([ \t\r\n(]|$)")
+            math(EXPR conditional_depth "${conditional_depth} + 1")
+            set(mask_line TRUE)
+        elseif(line MATCHES "^[ \t]*#[ \t]*endif([ \t\r\n]|$)")
+            if(conditional_depth EQUAL 0)
+                message(FATAL_ERROR
+                    "Stage11B architecture conditional surface is unbalanced")
+            endif()
+            math(EXPR conditional_depth "${conditional_depth} - 1")
+            set(mask_line TRUE)
+        elseif(conditional_depth GREATER 0)
+            set(mask_line TRUE)
+        endif()
+        if(mask_line)
+            string(REGEX REPLACE "[^\r\n]" " " line "${line}")
+        endif()
+        string(APPEND active "${line}")
+        if(newline EQUAL -1)
+            break()
+        endif()
+        math(EXPR cursor "${cursor} + ${line_length}")
+    endwhile()
+    if(NOT conditional_depth EQUAL 0)
+        message(FATAL_ERROR
+            "Stage11B architecture conditional surface is unbalanced")
+    endif()
+    set(${OUT_ACTIVE} "${active}" PARENT_SCOPE)
+    set(${OUT_LEXICAL} "${lexical}" PARENT_SCOPE)
+endfunction()
+
+function(stage11b_arch_find_scope_end SOURCE OPEN_INDEX OUT_END OUT_VALID)
+    string(LENGTH "${SOURCE}" source_length)
+    set(cursor ${OPEN_INDEX})
+    set(depth 0)
+    while(cursor LESS source_length)
+        string(SUBSTRING "${SOURCE}" ${cursor} 1 character)
+        if(character STREQUAL "{")
+            math(EXPR depth "${depth} + 1")
+        elseif(character STREQUAL "}")
+            math(EXPR depth "${depth} - 1")
+            if(depth EQUAL 0)
+                set(${OUT_END} ${cursor} PARENT_SCOPE)
+                set(${OUT_VALID} TRUE PARENT_SCOPE)
+                return()
+            endif()
+        endif()
+        math(EXPR cursor "${cursor} + 1")
+    endwhile()
+    set(${OUT_END} -1 PARENT_SCOPE)
+    set(${OUT_VALID} FALSE PARENT_SCOPE)
+endfunction()
+
+function(stage11b_arch_mask_non_direct SOURCE OUT_SOURCE)
+    string(LENGTH "${SOURCE}" source_length)
+    set(masked "")
+    set(copy_cursor 0)
+    while(copy_cursor LESS source_length)
+        string(SUBSTRING "${SOURCE}" ${copy_cursor} -1 tail)
+        string(REGEX MATCH
+            "\\][ \t\r\n]*(\\([^{};]*\\))?[ \t\r\n]*(mutable[ \t\r\n]*)?(noexcept([ \t\r\n]*\\([^{};]*\\))?[ \t\r\n]*)?(->[^{;]*)?[ \t\r\n]*\\{"
+            lambda_match "${tail}")
+        string(REGEX MATCH
+            "(if|while)[ \t\r\n]*(constexpr[ \t\r\n]*)?\\([ \t\r\n]*(false|0[uUlL]*|![ \t\r\n]*true)[ \t\r\n]*\\)[ \t\r\n]*(do[ \t\r\n]*)?([^{;]*\\{|[^{};]*;)"
+            dead_match "${tail}")
+        set(scope_match "")
+        set(scope_relative -1)
+        set(scope_kind "")
+        if(NOT lambda_match STREQUAL "")
+            string(FIND "${tail}" "${lambda_match}" scope_relative)
+            set(scope_match "${lambda_match}")
+            set(scope_kind lambda)
+        endif()
+        if(NOT dead_match STREQUAL "")
+            string(FIND "${tail}" "${dead_match}" dead_relative)
+            if(scope_relative EQUAL -1 OR dead_relative LESS scope_relative)
+                set(scope_match "${dead_match}")
+                set(scope_relative ${dead_relative})
+                set(scope_kind dead)
+            endif()
+        endif()
+        if(scope_relative EQUAL -1)
+            string(APPEND masked "${tail}")
+            break()
+        endif()
+        string(FIND "${scope_match}" "{" open_in_match)
+        math(EXPR match_index "${copy_cursor} + ${scope_relative}")
+        if(scope_kind STREQUAL "dead")
+            set(remove_begin ${match_index})
+        else()
+            math(EXPR remove_begin "${match_index} + ${open_in_match}")
+        endif()
+        math(EXPR copy_length "${remove_begin} - ${copy_cursor}")
+        if(copy_length GREATER 0)
+            string(SUBSTRING "${SOURCE}" ${copy_cursor} ${copy_length} chunk)
+            string(APPEND masked "${chunk}")
+        endif()
+        if(open_in_match EQUAL -1)
+            string(LENGTH "${scope_match}" match_length)
+            math(EXPR scope_end "${match_index} + ${match_length} - 1")
+        else()
+            math(EXPR open_index "${match_index} + ${open_in_match}")
+            stage11b_arch_find_scope_end(
+                "${SOURCE}" ${open_index} scope_end scope_valid)
+            if(NOT scope_valid)
+                message(FATAL_ERROR
+                    "Stage11B architecture direct scope is unterminated")
+            endif()
+        endif()
+        math(EXPR copy_cursor "${scope_end} + 1")
+    endwhile()
+    set(${OUT_SOURCE} "${masked}" PARENT_SCOPE)
+endfunction()
+
+function(stage11b_arch_extract_unique_owner
+        ACTIVE LEXICAL SIGNATURE LABEL OUT_BLOCK)
+    stage11b_arch_count_token("${ACTIVE}" "${SIGNATURE}" active_count)
+    stage11b_arch_count_token("${LEXICAL}" "${SIGNATURE}" lexical_count)
+    if(NOT active_count EQUAL 1 OR NOT lexical_count EQUAL 1)
+        message(FATAL_ERROR
+            "Stage 11B ${LABEL} must have one active and lexical definition")
+    endif()
+    foreach(owner_surface IN ITEMS ACTIVE LEXICAL)
+        string(FIND "${${owner_surface}}" "${SIGNATURE}" owner_position)
+        stage11b_arch_brace_depth("${${owner_surface}}" ${owner_position}
+            owner_depth)
+        if(NOT owner_depth EQUAL 1)
+            message(FATAL_ERROR
+                "Stage 11B ${LABEL} must be namespace-level")
+        endif()
+    endforeach()
+    evidence_extract_cpp_function_block("${ACTIVE}" "${SIGNATURE}"
+        owner_block)
+    stage11b_arch_mask_non_direct("${owner_block}" owner_direct)
+    set(${OUT_BLOCK} "${owner_direct}" PARENT_SCOPE)
+endfunction()
+
+stage11b_arch_unconditional_cpp_surface("${_host_source_text}"
+    _host_active _host_lexical)
+stage11b_arch_unconditional_cpp_surface("${_runtime_source_text}"
+    _runtime_active _runtime_lexical)
+stage11b_arch_extract_unique_owner("${_runtime_active}" "${_runtime_lexical}"
+    "void HostValidationRuntime::observe_pause_transition("
+    "pause-transition owner" _stage11b_pause_transition_block)
+stage11b_arch_extract_unique_owner("${_runtime_active}" "${_runtime_lexical}"
+    "PresentationDecision HostValidationRuntime::observe_presented_frame("
+    "presented-frame owner" _stage11b_presented_block)
+stage11b_arch_extract_unique_owner("${_runtime_active}" "${_runtime_lexical}"
+    "void HostValidationRuntime::observe_capture_result("
+    "capture-result owner" _stage11b_capture_result_block)
+stage11b_arch_extract_unique_owner("${_runtime_active}" "${_runtime_lexical}"
+    "void HostValidationRuntime::write_summaries("
+    "summary owner" _stage11b_runtime_summary_block)
+stage11b_arch_extract_unique_owner("${_host_active}" "${_host_lexical}"
+    "HostExitCode run_raylib_host("
+    "Host run owner" _stage11b_host_run_block)
 
 foreach(_stage_definition IN ITEMS
         "PhysicalKeySnapshot inject_stage11b_physical_edges("
@@ -127,6 +347,81 @@ arpg_assert_stage11b_block_tokens("snapshot hash" "${_stage11b_hash_block}"
     "mix(snapshot.depth)" "mix(snapshot.room_index)")
 arpg_assert_stage11b_block_tokens("summary" "${_stage11b_summary_block}"
     "state.player_monster_hash_before <<" "state.load_status")
+arpg_assert_stage11b_block_tokens("pause transition owner"
+    "${_stage11b_pause_transition_block}"
+    "Stage11BValidationScenario::paused_freeze"
+    "impl_->states.stage11b.resume_input_injected"
+    "impl_->states.stage11b.resume_ticks_before ="
+    "impl_->states.stage11b.fixed_ticks")
+arpg_assert_stage11b_block_tokens("presented-frame owner"
+    "${_stage11b_presented_block}"
+    "impl_->states.stage11b.resume_ticks_after ="
+    "impl_->states.stage11b.paused_presented"
+    "host_validation::stage11b_snapshot_hash(snapshot)"
+    "host_validation::stage11b_validation_complete("
+    "stage11b_paused_visible_capture")
+arpg_assert_stage11b_block_tokens("capture-result owner"
+    "${_stage11b_capture_result_block}"
+    "CaptureOwner::generic_validation"
+    "pause_capture_while_paused =")
+arpg_assert_stage11b_block_tokens("runtime summary owner"
+    "${_stage11b_runtime_summary_block}"
+    "host_validation::write_stage11b_validation_summary(")
+stage11b_arch_assert_direct_token("pause transition"
+    "${_stage11b_pause_transition_block}"
+    "if (impl_->config->stage11b_validation")
+foreach(_stage11b_presented_direct_token IN ITEMS
+        "const bool stage11b_reached ="
+        "impl_->pending_stage11b_paused_visible_capture ="
+        "decision.validation_complete ="
+        "return decision;")
+    stage11b_arch_assert_direct_token("presented frame"
+        "${_stage11b_presented_block}"
+        "${_stage11b_presented_direct_token}")
+endforeach()
+stage11b_arch_assert_direct_token("capture result"
+    "${_stage11b_capture_result_block}"
+    "if (owner != CaptureOwner::generic_validation)")
+stage11b_arch_assert_direct_token("capture result"
+    "${_stage11b_capture_result_block}"
+    "impl_->states.stage11b.pause_capture_while_paused =")
+stage11b_arch_assert_direct_token("summary"
+    "${_stage11b_runtime_summary_block}"
+    "host_validation::write_stage11b_validation_summary(")
+foreach(_removed_host_stage11b IN ITEMS
+        "Stage11BValidationState"
+        "stage11b_validation_state"
+        "HostValidationStateAccess::stage11b("
+        "host_validation::write_stage11b_validation_summary(")
+    string(FIND "${_host_source_text}" "${_removed_host_stage11b}"
+        _removed_host_stage11b_index)
+    if(NOT _removed_host_stage11b_index EQUAL -1)
+        message(FATAL_ERROR
+            "Stage 11B Host still owns validation state or summary: ${_removed_host_stage11b}")
+    endif()
+endforeach()
+foreach(_required_host_stage11b_facade IN ITEMS
+        "validation_runtime->observe_pause_transition("
+        "validation_runtime->observe_presented_frame("
+        "validation_runtime->observe_capture_result("
+        "validation_runtime->write_summaries(")
+    foreach(_host_surface IN ITEMS _host_active _host_lexical)
+        stage11b_arch_count_token("${${_host_surface}}"
+            "${_required_host_stage11b_facade}"
+            _required_host_stage11b_facade_count)
+        if(NOT _required_host_stage11b_facade_count EQUAL 1)
+            message(FATAL_ERROR
+                "Stage 11B Host facade seam must be active and lexical unique: ${_required_host_stage11b_facade}")
+        endif()
+    endforeach()
+    stage11b_arch_count_token("${_stage11b_host_run_block}"
+        "${_required_host_stage11b_facade}"
+        _required_host_stage11b_run_count)
+    if(NOT _required_host_stage11b_run_count EQUAL 1)
+        message(FATAL_ERROR
+            "Stage 11B Host facade seam is outside the direct run owner: ${_required_host_stage11b_facade}")
+    endif()
+endforeach()
 string(FIND "${_raylib_cmake_text}" "host_validation_stage11b.cpp" _stage_registered)
 if(_stage_registered EQUAL -1)
     message(FATAL_ERROR "arpg_raylib does not register host_validation_stage11b.cpp")

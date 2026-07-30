@@ -65,3 +65,27 @@ The failure was caused by the guard's removed-text anchor
 `Stage11CHudValidationState stage11c_validation_state{};`. The actual runtime
 binding is the `Stage11CHudValidationState&` alias above. It predates this
 structural-refactor baseline and is not attributed to the refactor.
+
+## Task 7C completion metrics
+
+Task 7C uses `adacc409c16a5ed6e936b614651d588a19c6e0d1` as its frozen BASE.
+The final-candidate counts below were measured from the reviewed Task 7C
+worktree before staging. Physical counts include blank lines; nonblank counts
+exclude whitespace-only lines.
+
+| Surface | BASE physical | Final physical | BASE nonblank | Final nonblank |
+| --- | ---: | ---: | ---: | ---: |
+| Six Task 7C production files | 2,317 | 2,360 | 2,210 | 2,245 |
+| `run_raylib_host` | 1,039 | 898 | 1,032 | 891 |
+| Public facade plus runtime implementation | 277 | 512 | 238 | 462 |
+
+The six-file surface comprises `host_validation.hpp`,
+`host_validation_state.hpp`, `host_validation_runtime.cpp`,
+`host_validation_stage11d.hpp`, `host_validation_stage11d_report.cpp`, and
+`raylib_host.cpp`. The facade/runtime row comprises `host_validation.hpp` and
+`host_validation_runtime.cpp`.
+
+The final Host has zero occurrences of `HostValidationStateAccess`, all six
+private Stage validation-state type names, direct `inject_stage*` or
+`observe_stage*` calls, and direct Stage validation-summary writers. Its only
+validation include is the public `host_validation.hpp` facade.

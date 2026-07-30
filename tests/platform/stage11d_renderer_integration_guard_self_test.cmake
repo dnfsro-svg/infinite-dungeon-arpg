@@ -9,9 +9,12 @@ file(READ "${SOURCE_ROOT}/src/platform/raylib/combat_renderer.cpp" _combat)
 file(READ "${SOURCE_ROOT}/src/platform/raylib/room_renderer.cpp" _room)
 file(READ "${SOURCE_ROOT}/src/platform/raylib/hud_renderer.cpp" _hud)
 file(READ "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp" _host)
+file(READ "${SOURCE_ROOT}/src/platform/raylib/host_validation_runtime.cpp"
+    _runtime)
 file(READ "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d_report.cpp"
     _report)
 string(REPLACE "\r\n" "\n" _host "${_host}")
+string(REPLACE "\r\n" "\n" _runtime "${_runtime}")
 string(REPLACE "\r\n" "\n" _report "${_report}")
 file(MAKE_DIRECTORY "${GUARD_TEST_ROOT}")
 
@@ -123,8 +126,128 @@ function(stage11d_run_host_guard_case LABEL HOST EXPECT_PASS EXPECT_REASON)
     endif()
 endfunction()
 
+function(stage11d_run_runtime_guard_case LABEL RUNTIME EXPECT_PASS EXPECT_REASON)
+    set(_path "${GUARD_TEST_ROOT}/${LABEL}-runtime.cpp")
+    file(WRITE "${_path}" "${RUNTIME}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+            "-DHOST_VALIDATION_RUNTIME_OVERRIDE=${_path}" -P "${_guard}"
+        RESULT_VARIABLE _result
+        OUTPUT_VARIABLE _stdout
+        ERROR_VARIABLE _stderr)
+    set(_output "${_stdout}${_stderr}")
+    if(EXPECT_PASS)
+        if(NOT _result EQUAL 0)
+            message(FATAL_ERROR
+                "Stage11D guard rejected equivalent ${LABEL} runtime variant: ${_output}")
+        endif()
+    else()
+        if(_result EQUAL 0)
+            message(FATAL_ERROR
+                "Stage11D guard accepted bad ${LABEL} runtime mutation")
+        endif()
+        if(NOT _output MATCHES "${EXPECT_REASON}")
+            message(FATAL_ERROR
+                "Stage11D ${LABEL} runtime mutation failed for wrong reason; expected ${EXPECT_REASON}: ${_output}")
+        endif()
+    endif()
+endfunction()
+
 set(_stage11d_semantic_call
-    "stage11d_record_semantics(stage11d_validation_state, current,\n                    runtime.item_state(), ground_loot_view,\n                    renderer.hud_notice_view());")
+    "validation_runtime->observe_ground_loot(\n                current, pause_menu, runtime.render_status(),\n                presented_loot_filter, ground_loot_view,\n                renderer.hud_notice_view(), runtime.item_state(),\n                GetScreenWidth(), GetScreenHeight());")
+string(REPLACE "validation_runtime->observe_ground_loot("
+    "validation_runtime.get()->observe_ground_loot("
+    _stage11d_alternate_semantic_call "${_stage11d_semantic_call}")
+function(stage11d_expect_dead_ground_decoy LABEL WRONG_ORDER_ANCHOR
+        MOVE_AFTER REASON)
+    set(_dead_decoy
+        "if (false)\n                ${_stage11d_semantic_call}")
+    stage11d_replace_required(_with_dead_decoy "${_host}"
+        "${_stage11d_semantic_call}" "${_dead_decoy}"
+        "${LABEL}_dead_decoy")
+    if(MOVE_AFTER)
+        set(_wrong_order
+            "${WRONG_ORDER_ANCHOR}\n            ${_stage11d_alternate_semantic_call}")
+    else()
+        set(_wrong_order
+            "${_stage11d_alternate_semantic_call}\n            ${WRONG_ORDER_ANCHOR}")
+    endif()
+    stage11d_replace_required(_mutated "${_with_dead_decoy}"
+        "${WRONG_ORDER_ANCHOR}" "${_wrong_order}"
+        "${LABEL}_wrong_order")
+    stage11d_run_host_guard_case("${LABEL}" "${_mutated}" FALSE "${REASON}")
+endfunction()
+
+set(_stage17_draw_observer_call
+    "validation_runtime->observe_active_skill_draw(\n                presented_snapshot, renderer.active_skill_draw_status());")
+function(stage11d_expect_stage17_lambda_decoy LABEL)
+    set(_lambda_decoy
+        "const auto task7c_stage17_draw_decoy = [&]() noexcept {\n                ${_stage17_draw_observer_call}\n            };")
+    stage11d_replace_required(_with_lambda_decoy "${_host}"
+        "${_stage17_draw_observer_call}" "${_lambda_decoy}"
+        "${LABEL}_lambda_decoy")
+    stage11d_replace_required(_mutated "${_with_lambda_decoy}"
+        "${_stage11d_semantic_call}"
+        "${_stage11d_semantic_call}\n            ${_stage17_draw_observer_call}"
+        "${LABEL}_wrong_order")
+    stage11d_run_host_guard_case("${LABEL}" "${_mutated}" FALSE "T7C-M01")
+endfunction()
+
+set(_stage12_status_anchor
+    "if (config.stage12_material_runtime_status != nullptr) {\n                const MonsterMaterialDrawRuntimeStatus shooter_draw =")
+string(FIND "${_host}" "${_stage12_status_anchor}" _stage12_status_begin)
+string(FIND "${_host}" "${_stage11d_semantic_call}" _stage12_status_end)
+if(_stage12_status_begin EQUAL -1 OR _stage12_status_end EQUAL -1
+        OR NOT _stage12_status_begin LESS _stage12_status_end)
+    message(FATAL_ERROR
+        "Stage11D M02 mutation cannot locate the Stage12 status block")
+endif()
+math(EXPR _stage12_status_length
+    "${_stage12_status_end} - ${_stage12_status_begin}")
+string(SUBSTRING "${_host}" ${_stage12_status_begin}
+    ${_stage12_status_length} _stage12_status_block)
+function(stage11d_expect_stage12_lambda_decoy LABEL)
+    set(_lambda_decoy
+        "const auto task7c_stage12_status_decoy = [&]() noexcept {\n                ${_stage12_status_block}\n            };")
+    stage11d_replace_required(_with_lambda_decoy "${_host}"
+        "${_stage12_status_block}" "${_lambda_decoy}"
+        "${LABEL}_lambda_decoy")
+    stage11d_replace_required(_mutated "${_with_lambda_decoy}"
+        "${_stage11d_semantic_call}"
+        "${_stage11d_semantic_call}\n            ${_stage12_status_block}"
+        "${LABEL}_wrong_order")
+    stage11d_run_host_guard_case("${LABEL}" "${_mutated}" FALSE "T7C-M02")
+endfunction()
+
+set(_passive_overlay_block
+    "if (!config.stage12_material_background_only\n                && !config.stage12_material_icons_only\n                && passive_overlay_open) {\n                draw_passive_tree_overlay(current, runtime.render_status());\n            }")
+function(stage11d_run_task7c_scope_mutations)
+    stage11d_expect_dead_ground_decoy(task7c_m01_dead_decoy_before_stage17
+        "validation_runtime->observe_active_skill_draw(" FALSE "T7C-M01")
+    stage11d_expect_dead_ground_decoy(task7c_m02_dead_decoy_before_stage12
+        "${_stage12_status_anchor}" FALSE "T7C-M02")
+    stage11d_expect_dead_ground_decoy(task7c_m03_dead_decoy_after_passive
+        "${_passive_overlay_block}" TRUE "T7C-M03-passive")
+    stage11d_expect_stage17_lambda_decoy(task7c_m01_lambda_decoy)
+    stage11d_expect_stage12_lambda_decoy(task7c_m02_lambda_decoy)
+    stage11d_replace_required(_alternate_owner "${_host}"
+        "${_stage11d_semantic_call}" "${_stage11d_alternate_semantic_call}"
+        task7c_equivalent_alternate_owner)
+    stage11d_run_host_guard_case(task7c_equivalent_alternate_owner
+        "${_alternate_owner}" TRUE "")
+endfunction()
+if(DEFINED TASK7C_M01_SCOPE_RED_ONLY AND TASK7C_M01_SCOPE_RED_ONLY)
+    stage11d_expect_dead_ground_decoy(task7c_m01_dead_decoy_before_stage17
+        "validation_runtime->observe_active_skill_draw(" FALSE "T7C-M01")
+    message(STATUS "[stage11d-renderer-task7c-m01-scope-red] named_mutations=1")
+    return()
+endif()
+if(DEFINED TASK7C_ORDER_SCOPE_ONLY AND TASK7C_ORDER_SCOPE_ONLY)
+    stage11d_run_task7c_scope_mutations()
+    message(STATUS
+        "[stage11d-renderer-task7c-order-scope] named_mutations=5 equivalent_variants=1")
+    return()
+endif()
 function(stage11d_run_summary_binding_mutations)
     stage11d_replace_required(_report_affix_producer_constant "${_report}"
         "combat::monster_affix_danger_score(monster.affixes)" "0U"
@@ -194,11 +317,11 @@ if(DEFINED TASK5B_ORDER_ONLY AND TASK5B_ORDER_ONLY)
         "${_stage11d_semantic_call}" "" host_semantic_after_capture_remove)
     stage11d_replace_required(_host_semantic_after_capture
         "${_host_without_semantic_call}"
-        "stage11d_validation_state.captured = true;"
-        "stage11d_validation_state.captured = true;\n                ${_stage11d_semantic_call}"
+        "validation_runtime->observe_capture_result("
+        "${_stage11d_semantic_call}\n            validation_runtime->observe_capture_result("
         host_semantic_after_capture_insert)
     stage11d_run_host_guard_case(host_semantic_after_capture_order_decoy
-        "${_host_semantic_after_capture}" FALSE "production run-chain order")
+        "${_host_semantic_after_capture}" FALSE "ground-loot observer after")
     message(STATUS
         "[stage11d-renderer-task5b-order] named_mutations=1")
     return()
@@ -210,7 +333,7 @@ stage11d_replace_required(_host_semantic_lambda "${_host}"
     "${_stage11d_semantic_call}" "${_stage11d_semantic_lambda}"
     host_semantic_uncalled_lambda)
 stage11d_run_host_guard_case(host_semantic_uncalled_lambda
-    "${_host_semantic_lambda}" FALSE "production run-chain token scope")
+    "${_host_semantic_lambda}" FALSE "requires one ground-loot facade observer")
 
 if(DEFINED TASK5B_RED_ONLY AND TASK5B_RED_ONLY)
     message(STATUS "[stage11d-renderer-task5b-red] named_mutations=1")
@@ -261,26 +384,159 @@ if(DEFINED TASK5B_REPORT_CASES_ONLY AND TASK5B_REPORT_CASES_ONLY)
     return()
 endif()
 
-stage11d_replace_required(_host_outer_lambda_begin "${_host}"
-    "// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN presented_semantics"
-    "const auto task5b_outer_semantic_decoy = [&]() noexcept {\n// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN presented_semantics"
-    host_presented_outer_uncalled_lambda_begin)
-stage11d_replace_required(_host_outer_lambda "${_host_outer_lambda_begin}"
-    "// STAGE11D_LOOT_VALIDATION_SEAM_END presented_semantics"
-    "// STAGE11D_LOOT_VALIDATION_SEAM_END presented_semantics\n            };"
-    host_presented_outer_uncalled_lambda_end)
-stage11d_run_host_guard_case(host_presented_outer_uncalled_lambda
-    "${_host_outer_lambda}" FALSE "production run-chain token scope")
-
 stage11d_replace_required(_host_without_semantic_call "${_host}"
     "${_stage11d_semantic_call}" "" host_semantic_after_capture_remove)
 stage11d_replace_required(_host_semantic_after_capture
     "${_host_without_semantic_call}"
-    "stage11d_validation_state.captured = true;"
-    "stage11d_validation_state.captured = true;\n                ${_stage11d_semantic_call}"
+    "validation_runtime->observe_capture_result("
+    "${_stage11d_semantic_call}\n            validation_runtime->observe_capture_result("
     host_semantic_after_capture_insert)
 stage11d_run_host_guard_case(host_semantic_after_capture_order_decoy
-    "${_host_semantic_after_capture}" FALSE "production run-chain order")
+    "${_host_semantic_after_capture}" FALSE "T7C-M03-pause")
+
+function(stage11d_expect_moved_ground_observer LABEL ANCHOR MOVE_AFTER REASON)
+    stage11d_replace_required(_without_observer "${_host}"
+        "${_stage11d_semantic_call}" "" "${LABEL}_remove")
+    if(MOVE_AFTER)
+        set(_replacement "${ANCHOR}\n${_stage11d_semantic_call}")
+    else()
+        set(_replacement "${_stage11d_semantic_call}\n            ${ANCHOR}")
+    endif()
+    stage11d_replace_required(_mutated "${_without_observer}"
+        "${ANCHOR}" "${_replacement}" "${LABEL}_insert")
+    stage11d_run_host_guard_case("${LABEL}" "${_mutated}" FALSE "${REASON}")
+endfunction()
+
+function(stage11d_expect_ground_observer_after_block LABEL BLOCK REASON)
+    stage11d_replace_required(_without_observer "${_host}"
+        "${_stage11d_semantic_call}" "" "${LABEL}_remove")
+    stage11d_replace_required(_mutated "${_without_observer}"
+        "${BLOCK}" "${BLOCK}\n            ${_stage11d_semantic_call}"
+        "${LABEL}_insert")
+    stage11d_run_host_guard_case("${LABEL}" "${_mutated}" FALSE "${REASON}")
+endfunction()
+
+stage11d_run_task7c_scope_mutations()
+
+stage11d_expect_moved_ground_observer(task7c_m01_before_stage17
+    "validation_runtime->observe_active_skill_draw(" FALSE
+    "T7C-M01")
+stage11d_expect_moved_ground_observer(task7c_m02_before_stage12_status
+    "if (config.stage12_material_runtime_status != nullptr) {\n                const MonsterMaterialDrawRuntimeStatus shooter_draw =" FALSE
+    "T7C-M02")
+set(_inventory_overlay_block
+    "if (!config.stage12_material_background_only\n                && !config.stage12_material_icons_only\n                && inventory.is_open()) {\n                inventory.draw(*session, current, runtime.render_status(),\n                    renderer.material_pack(), renderer.hud_font(),\n                    renderer.hud_font_ready());\n            }")
+set(_pause_overlay_block
+    "if (!config.stage12_material_background_only\n                && !config.stage12_material_icons_only\n                && pause_menu.screen != PauseScreen::closed) {\n                pause_menu_renderer.draw(pause_menu, renderer.material_pack());\n                pause_cjk_ready = pause_menu_renderer.has_cjk_font();\n            }")
+stage11d_expect_ground_observer_after_block(task7c_m03_after_passive_overlay
+    "${_passive_overlay_block}"
+    "T7C-M03-passive")
+stage11d_expect_ground_observer_after_block(task7c_m03_after_inventory_overlay
+    "${_inventory_overlay_block}"
+    "T7C-M03-inventory")
+stage11d_expect_ground_observer_after_block(task7c_m03_after_pause_overlay
+    "${_pause_overlay_block}"
+    "T7C-M03-pause")
+
+stage11d_replace_required(_m04_second_view "${_host}"
+    "const GroundLootView ground_loot_view = [&]() noexcept {"
+    "const auto second_ground_loot_view = build_ground_loot_view(\n                presented_snapshot, presented_loot_filter, 1.0F, 1.0F);\n            const GroundLootView ground_loot_view = [&]() noexcept {"
+    task7c_m04_rebuild_second_view)
+stage11d_run_host_guard_case(task7c_m04_rebuild_second_view
+    "${_m04_second_view}" FALSE "T7C-M04-builder")
+stage11d_replace_required(_m04_declared_second "${_host}"
+    "            }();\n            validation_runtime->observe_active_skill_draw("
+    "            }();\n            const auto second_ground_loot_view = ground_loot_view;\n            validation_runtime->observe_active_skill_draw("
+    task7c_m04_declare_second_view)
+stage11d_replace_required(_m04_pass_second "${_m04_declared_second}"
+    "ground_loot_view,\n                renderer.hud_notice_view()"
+    "second_ground_loot_view,\n                renderer.hud_notice_view()"
+    task7c_m04_pass_second_view)
+stage11d_run_host_guard_case(task7c_m04_pass_second_view
+    "${_m04_pass_second}" FALSE "T7C-M04")
+
+foreach(_notice_variant IN ITEMS cached_hud_notices previous_hud_notices)
+    stage11d_replace_required(_mutated "${_host}"
+        "renderer.hud_notice_view(), runtime.item_state(),"
+        "${_notice_variant}, runtime.item_state(),"
+        "task7c_m05_${_notice_variant}")
+    stage11d_run_host_guard_case("task7c_m05_${_notice_variant}"
+        "${_mutated}" FALSE "T7C-M05")
+endforeach()
+set(_m06_dimension_tail
+    "renderer.hud_notice_view(), runtime.item_state(),\n                GetScreenWidth(), GetScreenHeight());")
+stage11d_replace_required(_m06_constants "${_host}"
+    "${_m06_dimension_tail}"
+    "renderer.hud_notice_view(), runtime.item_state(),\n                1280, 720);"
+    task7c_m06_constant_dimensions)
+stage11d_run_host_guard_case(task7c_m06_constant_dimensions
+    "${_m06_constants}" FALSE "T7C-M06")
+stage11d_replace_required(_m06_swapped "${_host}"
+    "${_m06_dimension_tail}"
+    "renderer.hud_notice_view(), runtime.item_state(),\n                GetScreenHeight(), GetScreenWidth());"
+    task7c_m06_swapped_dimensions)
+stage11d_run_host_guard_case(task7c_m06_swapped_dimensions
+    "${_m06_swapped}" FALSE "T7C-M06")
+stage11d_replace_required(_m06_globals "${_report}"
+    "make_hud_layout(\n            screen_width, screen_height, false)"
+    "make_hud_layout(\n            GetScreenWidth(), GetScreenHeight(), false)"
+    task7c_m06_global_dimensions)
+stage11d_run_report_guard_case(task7c_m06_global_dimensions
+    "${_m06_globals}" FALSE "T7C-M06-global")
+
+stage11d_replace_required(_ground_without_visible_gate "${_runtime}"
+    "if (impl_->states.stage11d.target_visible\n            && !impl_->states.stage11d.captured) {"
+    "if (!impl_->states.stage11d.captured) {"
+    task7c_ground_record_without_visible_gate)
+stage11d_run_runtime_guard_case(task7c_ground_record_without_visible_gate
+    "${_ground_without_visible_gate}" FALSE
+    "T7C-ground-condition")
+stage11d_replace_required(_ground_without_uncaptured_gate "${_runtime}"
+    "if (impl_->states.stage11d.target_visible\n            && !impl_->states.stage11d.captured) {"
+    "if (impl_->states.stage11d.target_visible) {"
+    task7c_ground_record_without_uncaptured_gate)
+stage11d_run_runtime_guard_case(task7c_ground_record_without_uncaptured_gate
+    "${_ground_without_uncaptured_gate}" FALSE
+    "T7C-ground-condition")
+set(_ground_record_block
+    "if (impl_->states.stage11d.target_visible\n            && !impl_->states.stage11d.captured) {\n        host_validation::stage11d_record_semantics(\n            impl_->states.stage11d, snapshot, ownership,\n            ground_loot_view, notices);\n    }")
+foreach(_ground_scope IN ITEMS lambda dead)
+    if(_ground_scope STREQUAL "lambda")
+        set(_ground_scope_replacement
+            "const auto ground_record_decoy = [&] { ${_ground_record_block} };")
+    else()
+        set(_ground_scope_replacement
+            "if (false) { ${_ground_record_block} }")
+    endif()
+    stage11d_replace_required(_ground_scoped_runtime "${_runtime}"
+        "${_ground_record_block}" "${_ground_scope_replacement}"
+        "task7c_ground_${_ground_scope}_scope")
+    stage11d_run_runtime_guard_case("task7c_ground_${_ground_scope}_scope"
+        "${_ground_scoped_runtime}" FALSE
+        "T7C-ground-condition")
+endforeach()
+
+set(_inactive_host_decoy
+    "#if 0\nvalidation_runtime->observe_ground_loot(current, pause_menu, runtime.render_status(), presented_loot_filter, ground_loot_view, renderer.hud_notice_view(), runtime.item_state(), GetScreenWidth(), GetScreenHeight());\n#endif\n            const GroundLootView ground_loot_view = [&]() noexcept {")
+stage11d_replace_required(_host_with_inactive_decoy "${_host}"
+    "const GroundLootView ground_loot_view = [&]() noexcept {"
+    "${_inactive_host_decoy}" inactive_host_facade_decoy)
+stage11d_run_host_guard_case(inactive_host_facade_decoy
+    "${_host_with_inactive_decoy}" TRUE "")
+set(_inactive_runtime_decoy
+    "#if 0\nvoid HostValidationRuntime::observe_ground_loot() {}\n#endif\nvoid HostValidationRuntime::observe_ground_loot(")
+stage11d_replace_required(_runtime_with_inactive_decoy "${_runtime}"
+    "void HostValidationRuntime::observe_ground_loot("
+    "${_inactive_runtime_decoy}" inactive_runtime_facade_decoy)
+stage11d_run_runtime_guard_case(inactive_runtime_facade_decoy
+    "${_runtime_with_inactive_decoy}" TRUE "")
+
+stage11d_replace_required(_m19_no_callback "${_host}"
+    "validation_runtime->observe_capture_result("
+    "validation_runtime->observe_capture_result_removed("
+    task7c_m19_omit_capture_callback)
+stage11d_run_host_guard_case(task7c_m19_omit_capture_callback
+    "${_m19_no_callback}" FALSE "T7C-M19")
 
 stage11d_run_guard_case(pristine "${_combat}" "${_room}" "${_hud}" TRUE "")
 
@@ -394,4 +650,4 @@ stage11d_run_guard_case(const_reference_alias "${_combat_alias_consumers}" "${_r
     "${_hud}" TRUE "")
 
 message(STATUS
-    "[stage11d-renderer-guard-self-test] bad_mutations=23 equivalent_variants=3")
+    "[stage11d-renderer-guard-self-test] task7c_mutations=22 equivalent_variants=6")

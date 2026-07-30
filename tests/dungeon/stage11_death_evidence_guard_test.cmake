@@ -476,6 +476,135 @@ stage11_require_exact_runtime_definition(
     "bool HostValidationRuntime::fixed_step_target_reached("
     "${expected_fixed_step_target_reached}")
 
+set(stage11_presentation_signature
+    "PresentationDecision HostValidationRuntime::observe_presented_frame(")
+stage11_extract_unique_function("${runtime_active}"
+    "${stage11_presentation_signature}"
+    "Stage 11 runtime presentation owner is missing or duplicated"
+    stage11_presentation_block)
+stage11_extract_unique_function("${runtime_lexical}"
+    "${stage11_presentation_signature}"
+    "Stage 11 runtime lexical presentation owner is missing or duplicated"
+    stage11_presentation_lexical_block)
+foreach(stage11_presentation_surface IN ITEMS runtime_active runtime_lexical)
+    string(FIND "${${stage11_presentation_surface}}"
+        "${stage11_presentation_signature}" stage11_presentation_position)
+    stage11_brace_depth("${${stage11_presentation_surface}}"
+        ${stage11_presentation_position} stage11_presentation_depth)
+    if(NOT stage11_presentation_depth EQUAL 1)
+        message(FATAL_ERROR
+            "Stage 11 runtime presentation owner must be a namespace-level definition")
+    endif()
+endforeach()
+stage11_mask_non_direct_scopes("${stage11_presentation_block}"
+    stage11_presentation_direct)
+stage11_compact_cpp("${stage11_presentation_direct}"
+    stage11_presentation_compact)
+foreach(stage11_direct_token IN ITEMS "const bool stage11_target_visible =")
+    stage11_count_literal("${stage11_presentation_direct}"
+        "${stage11_direct_token}" stage11_direct_token_count)
+    string(FIND "${stage11_presentation_direct}"
+        "${stage11_direct_token}" stage11_direct_token_position)
+    if(NOT stage11_direct_token_count EQUAL 1)
+        message(FATAL_ERROR
+            "T7C Stage11 presentation branch contract is missing or altered")
+    endif()
+    stage11_brace_depth("${stage11_presentation_direct}"
+        ${stage11_direct_token_position} stage11_direct_token_depth)
+    if(NOT stage11_direct_token_depth EQUAL 1)
+        message(FATAL_ERROR
+            "T7C Stage11 presentation branch contract is missing or altered")
+    endif()
+endforeach()
+foreach(stage11_decision_token IN ITEMS
+        "decision.validation_complete =" "return decision;")
+    stage11_count_literal("${stage11_presentation_direct}"
+        "${stage11_decision_token}" stage11_decision_token_count)
+    string(FIND "${stage11_presentation_direct}"
+        "${stage11_decision_token}" stage11_decision_token_position)
+    if(NOT stage11_decision_token_count EQUAL 1)
+        message(FATAL_ERROR
+            "T7C Stage11 decision completion contract is missing or altered")
+    endif()
+    stage11_brace_depth("${stage11_presentation_direct}"
+        ${stage11_decision_token_position} stage11_decision_token_depth)
+    if(NOT stage11_decision_token_depth EQUAL 1)
+        message(FATAL_ERROR
+            "T7C Stage11 decision completion contract is missing or altered")
+    endif()
+endforeach()
+
+set(stage11_presentation_update_contract [=[
+const bool stage11_target_visible = host_validation::stage11_validation_reached(
+    snapshot, *impl_->config, impl_->states.stage11);
+if (stage11_target_visible) {
+    ++impl_->states.stage11.target_presented_frames;
+} else {
+    impl_->states.stage11.target_presented_frames = 0U;
+}
+]=])
+set(stage11_reached_contract [=[
+const bool stage11_reached = stage11_target_visible
+    && impl_->states.stage11.target_presented_frames >= 4U;
+]=])
+stage11_compact_cpp("${stage11_presentation_update_contract}"
+    stage11_presentation_update_contract_compact)
+stage11_compact_cpp("${stage11_reached_contract}"
+    stage11_reached_contract_compact)
+stage11_count_literal("${stage11_presentation_compact}"
+    "${stage11_presentation_update_contract_compact}"
+    stage11_presentation_update_contract_count)
+stage11_count_literal("${stage11_presentation_compact}"
+    "${stage11_reached_contract_compact}"
+    stage11_reached_contract_count)
+if(NOT stage11_presentation_update_contract_count EQUAL 1
+        OR NOT stage11_reached_contract_count EQUAL 1)
+    message(FATAL_ERROR
+        "T7C Stage11 presentation branch contract is missing or altered")
+endif()
+
+set(stage11_completion_contract [=[
+decision.validation_complete = stage10_reached || stage11_reached
+    || stage11b_reached || stage11c_reached
+    || stage11d_reached || stage17_reached;
+]=])
+stage11_compact_cpp("${stage11_completion_contract}"
+    stage11_completion_contract_compact)
+stage11_count_literal("${stage11_presentation_compact}"
+    "${stage11_completion_contract_compact}"
+    stage11_completion_contract_count)
+stage11_count_literal("${stage11_presentation_compact}"
+    "returndecision;" stage11_decision_return_count)
+if(NOT stage11_completion_contract_count EQUAL 1
+        OR NOT stage11_decision_return_count EQUAL 1)
+    message(FATAL_ERROR
+        "T7C Stage11 decision completion contract is missing or altered")
+endif()
+string(FIND "${stage11_presentation_compact}"
+    "${stage11_presentation_update_contract_compact}"
+    stage11_presentation_update_contract_position)
+string(FIND "${stage11_presentation_compact}"
+    "${stage11_reached_contract_compact}"
+    stage11_reached_contract_position)
+string(FIND "${stage11_presentation_compact}"
+    "${stage11_completion_contract_compact}"
+    stage11_completion_contract_position)
+string(FIND "${stage11_presentation_compact}"
+    "returndecision;" stage11_decision_return_position)
+if(stage11_presentation_update_contract_position EQUAL -1
+        OR stage11_reached_contract_position EQUAL -1
+        OR stage11_completion_contract_position EQUAL -1
+        OR stage11_decision_return_position EQUAL -1
+        OR NOT stage11_presentation_update_contract_position LESS
+            stage11_reached_contract_position
+        OR NOT stage11_reached_contract_position LESS
+            stage11_completion_contract_position
+        OR NOT stage11_completion_contract_position LESS
+            stage11_decision_return_position)
+    message(FATAL_ERROR
+        "T7C Stage11 presentation result is missing, discarded, or reordered")
+endif()
+
 stage11_count_literal("${runtime_active}" "request_death_continue("
     facade_continue_request_count)
 if(NOT facade_continue_request_count EQUAL 0)
@@ -498,11 +627,24 @@ stage11_mask_non_direct_scopes("${run_host_block}" direct_run_host)
 
 foreach(required_host_token
         "MovementInput" "runtime.fixed_tick" "host_death_input_gate"
-        "++stage11_validation_state.target_presented_frames;")
+        "const PresentationDecision decision ="
+        "validation_runtime->observe_presented_frame(")
     string(FIND "${direct_run_host}" "${required_host_token}" required_host_index)
     if(required_host_index EQUAL -1)
         message(FATAL_ERROR
             "Formal host lacks production input/save path: ${required_host_token}")
+    endif()
+endforeach()
+foreach(forbidden_host_stage11_owner IN ITEMS
+        "Stage11ValidationState"
+        "stage11_validation_state"
+        "HostValidationStateAccess::stage11("
+        "host_validation::stage11_validation_reached(")
+    string(FIND "${direct_run_host}" "${forbidden_host_stage11_owner}"
+        forbidden_host_stage11_owner_index)
+    if(NOT forbidden_host_stage11_owner_index EQUAL -1)
+        message(FATAL_ERROR
+            "Stage 11 Host must not own presentation validation state directly: ${forbidden_host_stage11_owner}")
     endif()
 endforeach()
 string(FIND "${host_active}" "settings::StableKey::e" stable_e_mapping)

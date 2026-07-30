@@ -2,9 +2,15 @@ if(NOT DEFINED SOURCE_ROOT)
     message(FATAL_ERROR "SOURCE_ROOT is required")
 endif()
 include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/cpp_source_lexer.cmake")
 set(_host "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
 if(DEFINED HOST_OVERRIDE)
     set(_host "${HOST_OVERRIDE}")
+endif()
+set(_host_validation_runtime
+    "${SOURCE_ROOT}/src/platform/raylib/host_validation_runtime.cpp")
+if(DEFINED HOST_VALIDATION_RUNTIME_OVERRIDE)
+    set(_host_validation_runtime "${HOST_VALIDATION_RUNTIME_OVERRIDE}")
 endif()
 set(_header "${SOURCE_ROOT}/src/platform/raylib/raylib_host.hpp")
 set(_input_header
@@ -30,13 +36,15 @@ if(DEFINED FORMAL_OVERRIDE)
 endif()
 set(_validator "${SOURCE_ROOT}/tests/platform/stage11c_hud_formal_validator.ps1")
 set(_bad "${SOURCE_ROOT}/tests/platform/stage11c_hud_bad_formal_input.txt")
-foreach(_file IN ITEMS "${_host}" "${_header}" "${_input_header}" "${_input_source}"
+foreach(_file IN ITEMS "${_host}" "${_host_validation_runtime}" "${_header}"
+        "${_input_header}" "${_input_source}"
         "${_stage_header}" "${_stage_source}" "${_formal}" "${_validator}" "${_bad}")
     if(NOT EXISTS "${_file}")
         message(FATAL_ERROR "Stage11C HUD evidence target is missing: ${_file}")
     endif()
 endforeach()
 file(READ "${_host}" _host_text)
+file(READ "${_host_validation_runtime}" _host_validation_runtime_text)
 
 function(stage11c_count_raw_token SOURCE TOKEN OUT_COUNT)
     string(LENGTH "${SOURCE}" _source_length)
@@ -56,223 +64,46 @@ function(stage11c_count_raw_token SOURCE TOKEN OUT_COUNT)
     set(${OUT_COUNT} ${_count} PARENT_SCOPE)
 endfunction()
 
-# The input starts at a code-state-verified function signature. This streams
-# lexical delimiters only; it never builds a sanitized copy of the host.
-function(stage11c_find_stage11c_seam_markers SOURCE OUT_ENTRIES)
-    string(ASCII 10 _newline)
-    string(ASCII 13 _carriage_return)
-    string(ASCII 34 _double_quote)
-    string(ASCII 39 _single_quote)
-    string(ASCII 92 _backslash)
-    string(LENGTH "${SOURCE}" _source_length)
-    set(_scan 0)
-    set(_state code)
-    set(_brace_depth 0)
-    set(_entries)
-    while(_scan LESS _source_length)
-        if(_state STREQUAL "code")
-            set(_next -1)
-            foreach(_delimiter IN ITEMS "/" "${_double_quote}" "${_single_quote}" "{" "}")
-                evidence_find_cpp_from_offset("${SOURCE}" ${_scan}
-                    "${_delimiter}" _candidate)
-                if(NOT _candidate EQUAL -1
-                        AND (_next EQUAL -1 OR _candidate LESS _next))
-                    set(_next ${_candidate})
-                endif()
-            endforeach()
-            if(_next EQUAL -1)
-                break()
-            endif()
-            string(SUBSTRING "${SOURCE}" ${_next} 1 _character)
-            if(_character STREQUAL "/")
-                math(EXPR _after_slash "${_next} + 1")
-                evidence_cpp_logical_next_character("${SOURCE}" ${_after_slash}
-                    _next_character _next_found)
-                if(_next_found AND _next_character STREQUAL "/")
-                    string(SUBSTRING "${SOURCE}" ${_next} -1 _comment_tail)
-                    foreach(_name IN ITEMS observation reached presented_capture)
-                        foreach(_kind IN ITEMS BEGIN END)
-                            set(_marker
-                                "// STAGE11C_HUD_VALIDATION_SEAM_${_kind} ${_name}")
-                            string(FIND "${_comment_tail}" "${_marker}" _marker_at)
-                            if(_marker_at EQUAL 0)
-                                list(APPEND _entries
-                                    "${_name}|${_kind}|${_next}|${_brace_depth}")
-                            endif()
-                        endforeach()
-                    endforeach()
-                    set(_state line_comment)
-                elseif(_next_found AND _next_character STREQUAL "*")
-                    set(_state block_comment)
-                endif()
-            elseif(_character STREQUAL "${_double_quote}")
-                set(_state string_literal)
-            elseif(_character STREQUAL "{")
-                math(EXPR _brace_depth "${_brace_depth} + 1")
-            elseif(_character STREQUAL "}")
-                math(EXPR _brace_depth "${_brace_depth} - 1")
-            else()
-                set(_state character_literal)
-            endif()
-            math(EXPR _scan "${_next} + 1")
-        elseif(_state STREQUAL "line_comment")
-            set(_next -1)
-            foreach(_delimiter IN ITEMS "${_backslash}" "${_newline}" "${_carriage_return}")
-                evidence_find_cpp_from_offset("${SOURCE}" ${_scan}
-                    "${_delimiter}" _candidate)
-                if(NOT _candidate EQUAL -1
-                        AND (_next EQUAL -1 OR _candidate LESS _next))
-                    set(_next ${_candidate})
-                endif()
-            endforeach()
-            if(_next EQUAL -1)
-                break()
-            endif()
-            string(SUBSTRING "${SOURCE}" ${_next} 1 _character)
-            if(_character STREQUAL "${_backslash}")
-                evidence_is_cpp_splice("${SOURCE}" ${_next} _is_splice)
-                if(_is_splice)
-                    math(EXPR _after_backslash "${_next} + 1")
-                    string(SUBSTRING "${SOURCE}" ${_after_backslash} 1 _splice_character)
-                    if(_splice_character STREQUAL "${_carriage_return}")
-                        math(EXPR _scan "${_next} + 3")
-                    else()
-                        math(EXPR _scan "${_next} + 2")
-                    endif()
-                    continue()
-                endif()
-            elseif(_character STREQUAL "${_newline}"
-                    OR _character STREQUAL "${_carriage_return}")
-                set(_state code)
-            endif()
-            math(EXPR _scan "${_next} + 1")
-        elseif(_state STREQUAL "block_comment")
-            evidence_find_cpp_from_offset("${SOURCE}" ${_scan} "*" _next)
-            if(_next EQUAL -1)
-                break()
-            endif()
-            math(EXPR _after_star "${_next} + 1")
-            evidence_cpp_logical_next_character("${SOURCE}" ${_after_star}
-                _next_character _next_found)
-            if(_next_found AND _next_character STREQUAL "/")
-                set(_state code)
-            endif()
-            math(EXPR _scan "${_next} + 1")
+function(stage11c_unconditional_cpp_surface SOURCE OUT_SURFACE)
+    arpg_sanitize_cpp_source("${SOURCE}" _logical_source)
+    string(LENGTH "${_logical_source}" _source_length)
+    set(_cursor 0)
+    set(_conditional_depth 0)
+    set(_surface "")
+    while(_cursor LESS _source_length)
+        string(SUBSTRING "${_logical_source}" ${_cursor} -1 _tail)
+        string(FIND "${_tail}" "\n" _newline)
+        if(_newline EQUAL -1)
+            set(_line "${_tail}")
+            set(_line_length -1)
         else()
-            if(_state STREQUAL "string_literal")
-                set(_quote "${_double_quote}")
-            else()
-                set(_quote "${_single_quote}")
-            endif()
-            set(_next -1)
-            foreach(_delimiter IN ITEMS "${_backslash}" "${_quote}")
-                evidence_find_cpp_from_offset("${SOURCE}" ${_scan}
-                    "${_delimiter}" _candidate)
-                if(NOT _candidate EQUAL -1
-                        AND (_next EQUAL -1 OR _candidate LESS _next))
-                    set(_next ${_candidate})
-                endif()
-            endforeach()
-            if(_next EQUAL -1)
-                break()
-            endif()
-            string(SUBSTRING "${SOURCE}" ${_next} 1 _character)
-            if(_character STREQUAL "${_backslash}")
-                evidence_is_cpp_splice("${SOURCE}" ${_next} _is_splice)
-                if(_is_splice)
-                    math(EXPR _after_backslash "${_next} + 1")
-                    string(SUBSTRING "${SOURCE}" ${_after_backslash} 1 _splice_character)
-                    if(_splice_character STREQUAL "${_carriage_return}")
-                        math(EXPR _scan "${_next} + 3")
-                    else()
-                        math(EXPR _scan "${_next} + 2")
-                    endif()
-                else()
-                    math(EXPR _scan "${_next} + 2")
-                endif()
-            else()
-                set(_state code)
-                math(EXPR _scan "${_next} + 1")
-            endif()
+            math(EXPR _line_length "${_newline} + 1")
+            string(SUBSTRING "${_tail}" 0 ${_line_length} _line)
         endif()
+        if(_line MATCHES
+                "^[ \t]*#[ \t]*(if|ifdef|ifndef)([ \t\r\n(]|$)")
+            math(EXPR _conditional_depth "${_conditional_depth} + 1")
+        elseif(_line MATCHES "^[ \t]*#[ \t]*endif([ \t\r\n]|$)")
+            math(EXPR _conditional_depth "${_conditional_depth} - 1")
+            if(_conditional_depth LESS 0)
+                message(FATAL_ERROR
+                    "Stage11C evidence conditional surface is unbalanced")
+            endif()
+        elseif(_conditional_depth EQUAL 0)
+            string(APPEND _surface "${_line}")
+        endif()
+        if(_newline EQUAL -1)
+            break()
+        endif()
+        math(EXPR _cursor "${_cursor} + ${_line_length}")
     endwhile()
-    set(${OUT_ENTRIES} "${_entries}" PARENT_SCOPE)
+    if(NOT _conditional_depth EQUAL 0)
+        message(FATAL_ERROR
+            "Stage11C evidence conditional surface is unbalanced")
+    endif()
+    set(${OUT_SURFACE} "${_surface}" PARENT_SCOPE)
 endfunction()
 
-evidence_find_cpp_code_token("${_host_text}"
-    "HostExitCode run_raylib_host(" _stage11c_runtime_begin)
-if(_stage11c_runtime_begin EQUAL -1)
-    message(FATAL_ERROR "Stage11C evidence guard cannot bind run_raylib_host")
-endif()
-string(SUBSTRING "${_host_text}" ${_stage11c_runtime_begin} -1
-    _stage11c_runtime_tail)
-evidence_find_cpp_code_token("${_stage11c_runtime_tail}" "audio.shutdown();"
-    _stage11c_runtime_shutdown_relative)
-if(_stage11c_runtime_shutdown_relative EQUAL -1)
-    message(FATAL_ERROR "Stage11C evidence guard cannot bind run_raylib_host")
-endif()
-math(EXPR _stage11c_runtime_length
-    "${_stage11c_runtime_shutdown_relative} + 17")
-string(SUBSTRING "${_stage11c_runtime_tail}" 0 ${_stage11c_runtime_length}
-    _stage11c_runtime_crop)
-stage11c_find_stage11c_seam_markers("${_stage11c_runtime_crop}"
-    _stage11c_runtime_seam_markers)
-
-function(stage11c_lookup_runtime_seam_marker NAME KIND OUT_POSITION OUT_DEPTH)
-    set(_matches)
-    foreach(_entry IN LISTS _stage11c_runtime_seam_markers)
-        string(REPLACE "|" ";" _parts "${_entry}")
-        list(GET _parts 0 _entry_name)
-        list(GET _parts 1 _entry_kind)
-        if(_entry_name STREQUAL "${NAME}" AND _entry_kind STREQUAL "${KIND}")
-            list(APPEND _matches "${_entry}")
-        endif()
-    endforeach()
-    list(LENGTH _matches _match_count)
-    if(NOT _match_count EQUAL 1)
-        message(FATAL_ERROR "Stage11C evidence guard cannot bind ${NAME} seam marker")
-    endif()
-    list(GET _matches 0 _match)
-    string(REPLACE "|" ";" _match_parts "${_match}")
-    list(GET _match_parts 2 _position)
-    list(GET _match_parts 3 _depth)
-    set(${OUT_POSITION} ${_position} PARENT_SCOPE)
-    set(${OUT_DEPTH} ${_depth} PARENT_SCOPE)
-endfunction()
-
-function(stage11c_extract_seam NAME SCOPE_LABEL EXPECTED_DEPTH OUT)
-    set(_begin "// STAGE11C_HUD_VALIDATION_SEAM_BEGIN ${NAME}")
-    set(_end "// STAGE11C_HUD_VALIDATION_SEAM_END ${NAME}")
-    stage11c_count_raw_token("${_host_text}" "${_begin}" _raw_begin_count)
-    stage11c_count_raw_token("${_host_text}" "${_end}" _raw_end_count)
-    if(NOT _raw_begin_count EQUAL 1 OR NOT _raw_end_count EQUAL 1)
-        message(FATAL_ERROR "Stage11C evidence guard cannot bind ${NAME} seam marker")
-    endif()
-    stage11c_lookup_runtime_seam_marker("${NAME}" BEGIN _begin_at _begin_depth)
-    stage11c_lookup_runtime_seam_marker("${NAME}" END _end_at _end_depth)
-    if(NOT _begin_at LESS _end_at)
-        message(FATAL_ERROR "Stage11C evidence guard cannot isolate ${NAME} seam")
-    endif()
-    if(NOT _begin_depth EQUAL _end_depth
-            OR NOT _begin_depth EQUAL EXPECTED_DEPTH)
-        message(FATAL_ERROR "Stage11C evidence guard rejected ${SCOPE_LABEL} seam scope: expected ${EXPECTED_DEPTH}, begin ${_begin_depth}, end ${_end_depth}")
-    endif()
-    string(LENGTH "${_end}" _end_length)
-    math(EXPR _length "${_end_at} - ${_begin_at} + ${_end_length}")
-    string(SUBSTRING "${_stage11c_runtime_crop}" ${_begin_at} ${_length} _raw)
-    evidence_sanitize_cpp_for_scan("${_raw}" _code)
-    set(${OUT} "${_code}" PARENT_SCOPE)
-    set("_stage11c_${NAME}_begin" ${_begin_at} PARENT_SCOPE)
-    set("_stage11c_${NAME}_end" ${_end_at} PARENT_SCOPE)
-endfunction()
-stage11c_extract_seam(observation "observation" 3 _stage11c_observation)
-stage11c_extract_seam(reached "reached" 3 _stage11c_reached_seam)
-stage11c_extract_seam(presented_capture "presented capture" 3
-    _stage11c_presented_capture)
-if(NOT _stage11c_observation_end LESS _stage11c_reached_begin
-        OR NOT _stage11c_reached_end LESS _stage11c_presented_capture_begin)
-    message(FATAL_ERROR "Stage11C evidence guard rejected seam marker order")
-endif()
 file(READ "${_header}" _header_text)
 file(READ "${_input_header}" _input_header_text)
 file(READ "${_input_source}" _input_source_text)
@@ -280,7 +111,7 @@ file(READ "${_stage_header}" _stage_header_text)
 file(READ "${_stage_source}" _stage_source_text)
 file(READ "${_formal}" _formal_text)
 file(READ "${_validator}" _validator_text)
-set(_combined "${_header_text}\n${_input_header_text}\n${_input_source_text}\n${_stage_header_text}\n${_stage_source_text}\n${_host_text}\n${_formal_text}")
+set(_combined "${_header_text}\n${_input_header_text}\n${_input_source_text}\n${_stage_header_text}\n${_stage_source_text}\n${_host_validation_runtime_text}\n${_host_text}\n${_formal_text}")
 
 foreach(_required IN ITEMS
         "Stage11CHudValidationScenario"
@@ -424,6 +255,73 @@ function(stage11c_matching_brace_position SURFACE OPEN_POSITION OUT_POSITION)
     set(${OUT_POSITION} ${_close} PARENT_SCOPE)
 endfunction()
 
+function(stage11c_mask_non_direct_executable_scopes SOURCE OUT_SOURCE)
+    string(LENGTH "${SOURCE}" _source_length)
+    set(_masked "")
+    set(_copy_cursor 0)
+    set(_dead_condition
+        "(false|0[uUlL]*|![ \t\r\n]*true|1[uUlL]*[ \t\r\n]*==[ \t\r\n]*0[uUlL]*|0[uUlL]*[ \t\r\n]*==[ \t\r\n]*1[uUlL]*)")
+    while(_copy_cursor LESS _source_length)
+        string(SUBSTRING "${SOURCE}" ${_copy_cursor} -1 _tail)
+        string(REGEX MATCH
+            "\\][ \t\r\n]*(\\([^{};]*\\))?[ \t\r\n]*(mutable[ \t\r\n]*)?(noexcept([ \t\r\n]*\\([^{};]*\\))?[ \t\r\n]*)?(->[^{;]*)?[ \t\r\n]*\\{"
+            _lambda_match "${_tail}")
+        string(REGEX MATCH
+            "(if|while)[ \t\r\n]*(constexpr[ \t\r\n]*)?\\([ \t\r\n]*${_dead_condition}[ \t\r\n]*\\)[ \t\r\n]*(do[ \t\r\n]*)?([^{;]*\\{|[^{};]*;)"
+            _dead_branch_match "${_tail}")
+        string(REGEX MATCH
+            "for[ \t\r\n]*\\([ \t\r\n]*;[ \t\r\n]*${_dead_condition}[ \t\r\n]*;[^)]*\\)[ \t\r\n]*([^{;]*\\{|[^{};]*;)"
+            _dead_for_match "${_tail}")
+        set(_scope_match "")
+        set(_scope_relative -1)
+        set(_scope_kind "")
+        if(NOT _lambda_match STREQUAL "")
+            string(FIND "${_tail}" "${_lambda_match}" _scope_relative)
+            set(_scope_match "${_lambda_match}")
+            set(_scope_kind lambda)
+        endif()
+        foreach(_candidate IN ITEMS _dead_branch_match _dead_for_match)
+            set(_dead_match "${${_candidate}}")
+            if(_dead_match STREQUAL "")
+                continue()
+            endif()
+            string(FIND "${_tail}" "${_dead_match}" _dead_relative)
+            if(_scope_relative EQUAL -1 OR _dead_relative LESS _scope_relative)
+                set(_scope_match "${_dead_match}")
+                set(_scope_relative ${_dead_relative})
+                set(_scope_kind dead-control)
+            endif()
+        endforeach()
+        if(_scope_relative EQUAL -1)
+            string(APPEND _masked "${_tail}")
+            break()
+        endif()
+        string(FIND "${_scope_match}" "{" _open_in_match)
+        math(EXPR _match_index "${_copy_cursor} + ${_scope_relative}")
+        if(_scope_kind STREQUAL "dead-control")
+            set(_remove_begin ${_match_index})
+        else()
+            math(EXPR _remove_begin "${_match_index} + ${_open_in_match}")
+        endif()
+        math(EXPR _copy_length "${_remove_begin} - ${_copy_cursor}")
+        if(_copy_length GREATER 0)
+            string(SUBSTRING "${SOURCE}" ${_copy_cursor} ${_copy_length}
+                _copy_chunk)
+            string(APPEND _masked "${_copy_chunk}")
+        endif()
+        if(_open_in_match EQUAL -1)
+            string(LENGTH "${_scope_match}" _scope_length)
+            math(EXPR _scope_end "${_match_index} + ${_scope_length} - 1")
+        else()
+            math(EXPR _open_index "${_match_index} + ${_open_in_match}")
+            stage11c_matching_brace_position("${SOURCE}" ${_open_index}
+                _scope_end)
+        endif()
+        math(EXPR _copy_cursor "${_scope_end} + 1")
+    endwhile()
+    set(${OUT_SOURCE} "${_masked}" PARENT_SCOPE)
+endfunction()
+
 function(stage11c_require_hash_core SURFACE)
     stage11c_require_unique_hash_core_token("${SURFACE}"
         "std::uint64_t hash = 1469598103934665603ULL;" _initialization)
@@ -473,75 +371,6 @@ function(stage11c_require_hash_core SURFACE)
         set(_previous_chain_position ${_chain_position})
     endforeach()
 endfunction()
-
-function(stage11c_require_unique_seam_token LABEL SURFACE TOKEN EXPECTED_DEPTH)
-    string(FIND "${SURFACE}" "${TOKEN}" _position)
-    if(_position EQUAL -1)
-        message(FATAL_ERROR "Stage11C evidence guard rejected ${LABEL}")
-    endif()
-    math(EXPR _after "${_position} + 1")
-    string(SUBSTRING "${SURFACE}" ${_after} -1 _tail)
-    string(FIND "${_tail}" "${TOKEN}" _duplicate)
-    if(NOT _duplicate EQUAL -1)
-        message(FATAL_ERROR "Stage11C evidence guard rejected ${LABEL}")
-    endif()
-    stage11c_code_brace_depth("${SURFACE}" ${_position} _depth)
-    if(NOT _depth EQUAL EXPECTED_DEPTH)
-        message(FATAL_ERROR "Stage11C evidence guard rejected ${LABEL}")
-    endif()
-    set(_stage11c_unique_token_position ${_position} PARENT_SCOPE)
-endfunction()
-
-function(stage11c_require_ordered_seam_tokens LABEL SURFACE)
-    set(_previous -1)
-    foreach(_entry IN LISTS ARGN)
-        string(REPLACE "|" ";" _parts "${_entry}")
-        list(GET _parts 0 _token)
-        list(GET _parts 1 _depth)
-        stage11c_require_unique_seam_token("${LABEL}" "${SURFACE}"
-            "${_token}" ${_depth})
-        set(_position ${_stage11c_unique_token_position})
-        if(NOT _previous EQUAL -1 AND _position LESS _previous)
-            message(FATAL_ERROR "Stage11C evidence guard rejected ${LABEL}")
-        endif()
-        set(_previous ${_position})
-    endforeach()
-endfunction()
-
-set(_stage11c_layout_capture
-    "stage11c_validation_state.layout = make_hud_layout(\n                    GetScreenWidth(), GetScreenHeight(), true)")
-set(_stage11c_hash_capture
-    "stage11c_validation_state.production_snapshot_hash =\n                    host_validation::stage11c_production_snapshot_hash(current)")
-stage11c_require_unique_seam_token("fake layout capture"
-    "${_stage11c_observation}" "${_stage11c_layout_capture}" 1)
-stage11c_require_ordered_seam_tokens("observation scope"
-    "${_stage11c_observation}"
-    "const bool stage11c_target_visible = host_validation::stage11c_hud_validation_reached(|0"
-    "++stage11c_validation_state.target_presented_frames|1"
-    "${_stage11c_hash_capture}|1"
-    "stage11c_validation_state.model = renderer.hud_model()|1"
-    "stage11c_validation_state.notices = renderer.hud_notice_view()|1"
-    "${_stage11c_layout_capture}|1")
-stage11c_require_unique_seam_token("reached scope"
-    "${_stage11c_reached_seam}"
-    "const bool stage11c_reached = stage11c_target_visible" 0)
-stage11c_require_unique_seam_token("capture scope"
-    "${_stage11c_presented_capture}"
-    "stage11c_validation_state.captured = true;" 1)
-stage11c_require_ordered_seam_tokens("capture ordering"
-    "${_stage11c_presented_capture}"
-    "const bool capture_succeeded =|0"
-    "present_frame_and_maybe_capture(capture_path.has_value()|0"
-    "++presented_frame_count|0"
-    "const bool captured_stage10_frame = captured_stage10_target|0"
-    "if (captured_stage10_frame && stage11c_reached) {|0"
-    "stage11c_validation_state.captured = true|1")
-string(FIND "${_stage11c_presented_capture}"
-    "const bool captured_stage10_frame = captured_stage10_target\n                && capture_succeeded;"
-    _stage11c_capture_dependency)
-if(_stage11c_capture_dependency EQUAL -1)
-    message(FATAL_ERROR "Stage11C evidence guard rejected capture ordering")
-endif()
 
 function(stage11c_return_positions SURFACE OUT_POSITIONS)
     string(LENGTH "${SURFACE}" _length)
@@ -701,140 +530,131 @@ foreach(_forbidden IN LISTS _physical_input_forbidden)
     endif()
 endforeach()
 
-set(_stage11c_runtime_alias
-    "host_validation::Stage11CHudValidationState& stage11c_validation_state =\n            validation_states->stage11c;")
-string(REGEX MATCHALL
-    "host_validation::Stage11CHudValidationState&[ \t\r\n]+stage11c_validation_state[ \t\r\n]*="
-    _stage11c_runtime_aliases "${_host_text}")
-list(LENGTH _stage11c_runtime_aliases _stage11c_runtime_alias_count)
-if(NOT _stage11c_runtime_alias_count EQUAL 1)
-    message(FATAL_ERROR "Stage11C evidence guard cannot bind actual Stage11C runtime alias")
-endif()
-string(FIND "${_host_text}" "${_stage11c_runtime_alias}"
-    _stage11c_runtime_begin)
-string(FIND "${_host_text}"
-    "while (!exit_requested) {"
-    _stage11c_runtime_end)
-if(_stage11c_runtime_begin EQUAL -1 OR _stage11c_runtime_end EQUAL -1
-        OR NOT _stage11c_runtime_begin LESS _stage11c_runtime_end)
-    message(FATAL_ERROR "Stage11C evidence guard cannot bind actual Stage11C runtime alias")
-endif()
-math(EXPR _stage11c_runtime_length
-    "${_stage11c_runtime_end} - ${_stage11c_runtime_begin}")
-string(SUBSTRING "${_host_text}" ${_stage11c_runtime_begin}
-    ${_stage11c_runtime_length} _stage11c_runtime)
+stage11c_unconditional_cpp_surface("${_host_text}" _host_code)
+stage11c_unconditional_cpp_surface("${_host_validation_runtime_text}"
+    _host_validation_runtime_code)
 
-string(FIND "${_host_text}"
-    "const bool stage11c_target_visible = host_validation::stage11c_hud_validation_reached("
-    _stage11c_capture_begin)
-string(FIND "${_host_text}"
-    "stage10_validation_captured = stage10_validation_captured"
-    _stage11c_capture_end)
-if(_stage11c_capture_begin EQUAL -1 OR _stage11c_capture_end EQUAL -1
-        OR NOT _stage11c_capture_begin LESS _stage11c_capture_end)
-    message(FATAL_ERROR "Stage11C evidence guard cannot bind production capture assignment")
-endif()
-math(EXPR _stage11c_capture_length
-    "${_stage11c_capture_end} - ${_stage11c_capture_begin}")
-string(SUBSTRING "${_host_text}" ${_stage11c_capture_begin}
-    ${_stage11c_capture_length} _stage11c_capture)
-
-string(FIND "${_host_text}"
-    "write_stage11b_validation_summary(config,"
-    _stage11c_summary_begin)
-string(FIND "${_host_text}" "audio.shutdown();" _stage11c_summary_end)
-if(_stage11c_summary_begin EQUAL -1 OR _stage11c_summary_end EQUAL -1
-        OR NOT _stage11c_summary_begin LESS _stage11c_summary_end)
-    message(FATAL_ERROR "Stage11C evidence guard cannot isolate validation summary")
-endif()
-math(EXPR _stage11c_summary_length
-    "${_stage11c_summary_end} - ${_stage11c_summary_begin}")
-string(SUBSTRING "${_host_text}" ${_stage11c_summary_begin}
-    ${_stage11c_summary_length} _stage11c_summary)
-string(FIND "${_stage11c_summary}"
-    "host_validation::write_stage11c_hud_validation_summary(config,"
-    _stage11c_summary_write)
-if(_stage11c_summary_write EQUAL -1)
-    message(FATAL_ERROR "Stage11C evidence guard missing HUD validation summary write")
-endif()
-
-set(_stage11c_host_surface
-    "${_stage11c_observation}\n${_stage11c_reached_seam}\n${_stage11c_presented_capture}")
-set(_stage11c_host_surface_code "${_stage11c_host_surface}")
-string(REGEX MATCHALL "stage11c_validation_state\\.captured[ \t\r\n]*=[ \t\r\n]*true"
-    _stage11c_captured_assignments "${_stage11c_presented_capture}")
-list(LENGTH _stage11c_captured_assignments _stage11c_captured_count)
-if(NOT _stage11c_captured_count EQUAL 1)
-    message(FATAL_ERROR "Stage11C evidence guard rejected captured overwrite")
-endif()
-string(FIND "${_stage11c_presented_capture}"
-    "stage11c_validation_state.captured = true;" _stage11c_captured_statement)
-if(_stage11c_captured_statement EQUAL -1)
-    message(FATAL_ERROR "Stage11C evidence guard rejected missing captured statement")
-endif()
-
-string(REGEX MATCHALL
-    "stage11c_validation_state\\.model[ \t\r\n]*="
-    _stage11c_model_assignments "${_stage11c_host_surface_code}")
-list(LENGTH _stage11c_model_assignments _stage11c_model_assignment_count)
-if(NOT _stage11c_model_assignment_count EQUAL 1)
-    message(FATAL_ERROR "Stage11C evidence guard rejected direct model overwrite")
-endif()
-string(REGEX MATCH
-    "stage11c_validation_state\\.model[ \t\r\n]*\\.[A-Za-z_]"
-    _stage11c_model_member_overwrite "${_stage11c_host_surface_code}")
-if(_stage11c_model_member_overwrite)
-    message(FATAL_ERROR "Stage11C evidence guard rejected direct model overwrite")
-endif()
-
-string(REGEX MATCHALL
-    "stage11c_validation_state\\.production_snapshot_hash[ \t\r\n]*="
-    _stage11c_hash_assignments "${_stage11c_host_surface_code}")
-list(LENGTH _stage11c_hash_assignments _stage11c_hash_assignment_count)
-if(NOT _stage11c_hash_assignment_count EQUAL 1)
-    message(FATAL_ERROR "Stage11C evidence guard rejected fake snapshot hash")
-endif()
-string(FIND "${_stage11c_host_surface_code}"
-    "stage11c_validation_state.production_snapshot_hash =\n                    host_validation::stage11c_production_snapshot_hash(current);"
-    _stage11c_real_hash)
-if(_stage11c_real_hash EQUAL -1)
-    message(FATAL_ERROR "Stage11C evidence guard rejected fake snapshot hash")
-endif()
-foreach(_capture_assignment IN ITEMS
-        "stage11c_validation_state.notices = renderer.hud_notice_view();"
-        "stage11c_validation_state.layout = make_hud_layout("
-        "++stage11c_validation_state.target_presented_frames;"
-        "present_frame_and_maybe_capture(capture_path.has_value()"
-        "stage11c_validation_state.captured = true;")
-    string(FIND "${_stage11c_host_surface_code}" "${_capture_assignment}" _capture_index)
-    if(_capture_index EQUAL -1)
-        message(FATAL_ERROR "Stage11C evidence guard missing capture surface token: ${_capture_assignment}")
+function(stage11c_extract_runtime_method LABEL SIGNATURE OUT_METHOD)
+    stage11c_count_raw_token("${_host_validation_runtime_code}"
+        "${SIGNATURE}" _definition_count)
+    if(NOT _definition_count EQUAL 1)
+        message(FATAL_ERROR
+            "Stage11C evidence guard requires one active runtime ${LABEL} owner")
     endif()
+    string(FIND "${_host_validation_runtime_code}" "${SIGNATURE}"
+        _definition_position)
+    stage11c_code_brace_depth("${_host_validation_runtime_code}"
+        ${_definition_position} _definition_depth)
+    if(NOT _definition_depth EQUAL 1)
+        message(FATAL_ERROR
+            "Stage11C evidence guard rejected runtime ${LABEL} owner scope")
+    endif()
+    evidence_extract_cpp_function_block("${_host_validation_runtime_code}"
+        "${SIGNATURE}" _method)
+    set(${OUT_METHOD} "${_method}" PARENT_SCOPE)
+endfunction()
+
+stage11c_extract_runtime_method("HUD snapshot preparation"
+    "void HostValidationRuntime::prepare_hud_snapshot("
+    _stage11c_prepare_hud)
+stage11c_extract_runtime_method("T7C-HUD-observation"
+    "void HostValidationRuntime::observe_hud("
+    _stage11c_observe_hud)
+stage11c_extract_runtime_method("presented-frame completion"
+    "PresentationDecision HostValidationRuntime::observe_presented_frame("
+    _stage11c_observe_presented)
+stage11c_extract_runtime_method("capture result"
+    "void HostValidationRuntime::observe_capture_result("
+    _stage11c_observe_capture)
+stage11c_extract_runtime_method("summary"
+    "void HostValidationRuntime::write_summaries("
+    _stage11c_write_summaries)
+
+foreach(_method IN ITEMS
+        _stage11c_prepare_hud _stage11c_observe_hud
+        _stage11c_observe_presented _stage11c_observe_capture
+        _stage11c_write_summaries)
+    stage11c_mask_non_direct_executable_scopes("${${_method}}"
+        _stage11c_direct_method)
+    string(REGEX REPLACE "[ \t\r\n]+" "" ${_method}_normalized
+        "${_stage11c_direct_method}")
 endforeach()
-string(FIND "${_stage11c_presented_capture}"
-    "const bool captured_stage10_frame = captured_stage10_target\n                && capture_succeeded;"
-    _captured_stage10_frame)
-if(_captured_stage10_frame EQUAL -1)
-    message(FATAL_ERROR "Stage11C evidence guard rejected missing capture success")
-endif()
-foreach(_field_rhs IN ITEMS
-        "model|renderer.hud_model();"
-        "notices|renderer.hud_notice_view();"
-        "layout|make_hud_layout(")
-    string(REPLACE "|" ";" _field_rhs_parts "${_field_rhs}")
-    list(GET _field_rhs_parts 0 _field)
-    list(GET _field_rhs_parts 1 _rhs)
-    string(REGEX MATCHALL
-        "stage11c_validation_state\\.${_field}[ \t\r\n]*=" _assignments
-        "${_stage11c_host_surface_code}")
-    list(LENGTH _assignments _assignment_count)
-    if(NOT _assignment_count EQUAL 1)
-        message(FATAL_ERROR "Stage11C evidence guard rejected ${_field} overwrite")
+
+function(stage11c_require_runtime_binding LABEL SURFACE REGEX)
+    set(_remaining "${SURFACE}")
+    set(_match_count 0)
+    while(TRUE)
+        string(REGEX MATCH "${REGEX}" _match "${_remaining}")
+        if("${_match}" STREQUAL "")
+            break()
+        endif()
+        string(FIND "${_remaining}" "${_match}" _match_begin)
+        string(LENGTH "${_match}" _match_length)
+        if(_match_begin LESS 0 OR _match_length EQUAL 0)
+            message(FATAL_ERROR
+                "Stage11C evidence guard could not advance ${LABEL} scan")
+        endif()
+        math(EXPR _next_begin "${_match_begin} + ${_match_length}")
+        string(SUBSTRING "${_remaining}" ${_next_begin} -1 _remaining)
+        math(EXPR _match_count "${_match_count} + 1")
+    endwhile()
+    if(NOT _match_count EQUAL 1)
+        message(FATAL_ERROR "Stage11C evidence guard rejected ${LABEL}")
     endif()
-    string(FIND "${_stage11c_host_surface_code}"
-        "stage11c_validation_state.${_field} = ${_rhs}" _rhs_index)
-    if(_rhs_index EQUAL -1)
-        message(FATAL_ERROR "Stage11C evidence guard rejected fake ${_field} capture")
+endfunction()
+
+stage11c_require_runtime_binding("HUD fixture ownership"
+    "${_stage11c_prepare_hud_normalized}"
+    "Stage11CHudValidationScenario::low_health_status")
+stage11c_require_runtime_binding("HUD fixture max-barrier assignment"
+    "${_stage11c_prepare_hud_normalized}" "[.]max_barrier=1000;")
+stage11c_require_runtime_binding("HUD fixture barrier assignment"
+    "${_stage11c_prepare_hud_normalized}" "[.]barrier=625;")
+stage11c_require_runtime_binding("authoritative HUD model capture"
+    "${_stage11c_observe_hud_normalized}" "[.]model=model;")
+stage11c_require_runtime_binding("authoritative HUD notices capture"
+    "${_stage11c_observe_hud_normalized}" "[.]notices=notices;")
+stage11c_require_runtime_binding("T7C-M10 layout binding"
+    "${_stage11c_observe_hud_normalized}"
+    "[.]layout=make_hud_layout[(]screen_width,screen_height,true[)];")
+stage11c_require_runtime_binding("T7C-M10 hash binding"
+    "${_stage11c_observe_hud_normalized}"
+    "[.]production_snapshot_hash=host_validation::stage11c_production_snapshot_hash[(]snapshot[)];")
+stage11c_require_runtime_binding("per-frame HUD debug synchronization"
+    "${_stage11c_observe_hud_normalized}" "[.]debug_visible=draw_debug;")
+stage11c_require_runtime_binding("HUD target-frame increment"
+    "${_stage11c_observe_hud_normalized}" "[+][+][^;]*target_presented_frames;")
+stage11c_require_runtime_binding("HUD target-frame reset"
+    "${_stage11c_observe_hud_normalized}" "[.]target_presented_frames=0U;")
+stage11c_require_runtime_binding("four-frame HUD completion"
+    "${_stage11c_observe_presented_normalized}"
+    "[.]stage11c[.]target_presented_frames>=4U")
+stage11c_require_runtime_binding("Stage11C completion publication"
+    "${_stage11c_observe_presented_normalized}"
+    "validation_complete=.*stage11c_reached")
+stage11c_require_runtime_binding("T7C-Stage11C-pending"
+    "${_stage11c_observe_presented_normalized}"
+    "impl_->[A-Za-z_][A-Za-z0-9_]*=stage11c_reached;")
+string(REGEX MATCH
+    "impl_->([A-Za-z_][A-Za-z0-9_]*)=stage11c_reached;"
+    _stage11c_pending_match "${_stage11c_observe_presented_normalized}")
+if("${_stage11c_pending_match}" STREQUAL "")
+    message(FATAL_ERROR
+        "Stage11C evidence guard rejected pending capture publication")
+endif()
+set(_stage11c_pending_field "${CMAKE_MATCH_1}")
+stage11c_require_runtime_binding("T7C-Stage11C-capture"
+    "${_stage11c_observe_capture_normalized}"
+    "if[(]impl_->${_stage11c_pending_field}[)][{]impl_->states[.]stage11c[.]captured=true;[}]")
+stage11c_require_runtime_binding("T7C-M25 Stage11C summary ownership"
+    "${_stage11c_write_summaries_normalized}"
+    "write_stage11c_hud_validation_summary[(]")
+
+foreach(_forbidden_global IN ITEMS "GetScreenWidth(" "GetScreenHeight(")
+    string(FIND "${_stage11c_observe_hud}" "${_forbidden_global}" _global_found)
+    if(NOT _global_found EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11C evidence guard rejected authoritative HUD layout computation")
     endif()
 endforeach()
 
@@ -845,35 +665,184 @@ if(_stage11c_summary_gate EQUAL -1)
     message(FATAL_ERROR "Stage11C evidence guard rejected fake summary state")
 endif()
 
-string(REGEX MATCH
-    "(current|previous|snapshot|state)\\.progression\\.[A-Za-z_]+[ \t\r\n]*=[^=]"
-    _stage11c_progression_bypass "${_stage11c_host_surface}")
-if(NOT _stage11c_progression_bypass)
-    string(REGEX MATCH
-        "(current|previous|snapshot|state)\\.progression[ \t\r\n]*=[^=]"
-        _stage11c_progression_bypass "${_stage11c_host_surface}")
+evidence_extract_cpp_function_block("${_host_code}"
+    "HostExitCode run_raylib_host(" _host_run_code)
+stage11c_mask_non_direct_executable_scopes("${_host_run_code}"
+    _host_run_direct)
+string(REGEX REPLACE "[ \t\r\n]+" "" _host_run_normalized
+    "${_host_run_direct}")
+set(_ordinary_hud_anchor
+    "constHudPresentedFramehud_presented_frame=current.death.has_value()")
+string(FIND "${_host_run_normalized}" "${_ordinary_hud_anchor}"
+    _ordinary_hud_begin)
+if(_ordinary_hud_begin EQUAL -1)
+    message(FATAL_ERROR
+        "Stage11C evidence guard cannot bind ordinary HUD presentation")
 endif()
-if(_stage11c_progression_bypass)
-    message(FATAL_ERROR "Stage11C evidence guard rejected bypassed Session progression")
+string(SUBSTRING "${_host_run_normalized}" ${_ordinary_hud_begin} -1
+    _ordinary_hud_surface)
+
+stage11c_count_raw_token("${_ordinary_hud_surface}"
+    "validation_runtime->observe_hud(" _host_hud_arrow_count)
+stage11c_count_raw_token("${_ordinary_hud_surface}"
+    "validation_runtime.get()->observe_hud(" _host_hud_get_count)
+math(EXPR _host_hud_observer_count
+    "${_host_hud_arrow_count} + ${_host_hud_get_count}")
+if(NOT _host_hud_observer_count EQUAL 1)
+    message(FATAL_ERROR
+        "Stage11C evidence guard requires one direct ordinary-frame HUD observer")
+endif()
+set(_host_hud_observer_position -1)
+foreach(_host_hud_accessor IN ITEMS
+        "validation_runtime->" "validation_runtime.get()->")
+    string(FIND "${_ordinary_hud_surface}"
+        "${_host_hud_accessor}observe_hud(" _candidate_hud_observer_position)
+    if(NOT _candidate_hud_observer_position EQUAL -1)
+        set(_host_hud_observer_position ${_candidate_hud_observer_position})
+    endif()
+endforeach()
+string(SUBSTRING "${_ordinary_hud_surface}"
+    ${_host_hud_observer_position} -1 _host_hud_observer_tail)
+string(FIND "${_host_hud_observer_tail}" ";" _host_hud_observer_end)
+if(_host_hud_observer_end EQUAL -1)
+    message(FATAL_ERROR "T7C-M10: Stage11C HUD observer call is incomplete")
+endif()
+math(EXPR _host_hud_observer_length "${_host_hud_observer_end} + 1")
+string(SUBSTRING "${_host_hud_observer_tail}" 0
+    ${_host_hud_observer_length} _host_hud_observer_call)
+string(FIND "${_host_hud_observer_call}"
+    "observe_hud(current,renderer.hud_model()," _real_hud_model_argument)
+if(_real_hud_model_argument EQUAL -1)
+    message(FATAL_ERROR
+        "T7C-M10: Stage11C evidence guard rejected fabricated HUD model argument")
+endif()
+string(FIND "${_host_hud_observer_call}"
+    "renderer.hud_notice_view(),draw_debug,GetScreenWidth(),GetScreenHeight());"
+    _real_hud_notices_argument)
+if(_real_hud_notices_argument EQUAL -1)
+    message(FATAL_ERROR
+        "T7C-M10: Stage11C evidence guard rejected fabricated HUD notices argument")
 endif()
 
-unset(_previous_order)
+string(FIND "${_ordinary_hud_surface}"
+    "renderer.observe_presented_hud_frame(hud_presented_frame,"
+    _renderer_hud_position)
+string(FIND "${_ordinary_hud_surface}" "BeginDrawing();"
+    _begin_drawing_position)
+if(_renderer_hud_position EQUAL -1 OR _begin_drawing_position EQUAL -1)
+    message(FATAL_ERROR
+        "Stage11C evidence guard cannot bind HUD observer presentation order")
+elseif(NOT _renderer_hud_position LESS _host_hud_observer_position)
+    message(FATAL_ERROR "T7C-M08: HUD observer must follow renderer HUD")
+elseif(NOT _host_hud_observer_position LESS _begin_drawing_position)
+    message(FATAL_ERROR "T7C-M09: HUD observer must precede BeginDrawing")
+endif()
+
+unset(_previous_prepare_order)
 foreach(_ordered IN ITEMS
-        "const PhysicalKeySnapshot sampled_physical_keys = sample_physical_keys();"
-        "const PhysicalKeySnapshot stage11b_physical_keys ="
-        "const PhysicalKeySnapshot stage11c_physical_keys = host_validation::inject_stage11c_physical_edges("
-        "const PhysicalKeySnapshot physical_keys = inject_stage11d_physical_edges("
-        "HostFrameInput frame_input = map_host_frame_input("
-        "HostFrameGateResult host_gate"
-        "submit_frame_actions(*session, frame_input)")
-    string(FIND "${_host_text}" "${_ordered}" _index)
-    if(_index EQUAL -1)
-        message(FATAL_ERROR "Stage11C evidence guard missing production input stage: ${_ordered}")
+        "audio.update("
+        "validation_runtime->prepare_hud_snapshot(current);"
+        "presented_snapshot=current;")
+    string(FIND "${_host_run_normalized}" "${_ordered}" _ordered_position)
+    if(_ordered_position EQUAL -1
+            OR (DEFINED _previous_prepare_order
+                AND _ordered_position LESS _previous_prepare_order))
+        message(FATAL_ERROR
+            "Stage11C evidence guard rejected HUD snapshot preparation order")
     endif()
-    if(DEFINED _previous_order AND _index LESS _previous_order)
-        message(FATAL_ERROR "Stage11C evidence guard rejected physical sample-map-pause-submit order")
+    set(_previous_prepare_order ${_ordered_position})
+endforeach()
+
+string(FIND "${_host_run_normalized}"
+    "validation_runtime->set_render_readiness(hud_resources_ready,"
+    _real_font_readiness)
+if(_real_font_readiness EQUAL -1)
+    message(FATAL_ERROR "Stage11C evidence guard rejected fake font-ready")
+endif()
+string(REGEX REPLACE "[ \t\r\n]+" ""
+    _host_validation_runtime_normalized
+    "${_host_validation_runtime_code}")
+stage11c_require_runtime_binding("font-ready ownership"
+    "${_host_validation_runtime_normalized}"
+    "[.]stage11c[.]cjk_font_ready=cjk_font_ready;")
+
+string(REGEX MATCHALL "validation_runtime->observe_capture_result[(]"
+    _capture_callbacks "${_ordinary_hud_surface}")
+list(LENGTH _capture_callbacks _capture_callback_count)
+if(NOT _capture_callback_count EQUAL 1)
+    message(FATAL_ERROR
+        "T7C-M20: Stage11C requires one ordinary-frame capture-result callback")
+endif()
+string(FIND "${_ordinary_hud_surface}" "present_frame_and_maybe_capture("
+    _present_call)
+string(FIND "${_ordinary_hud_surface}"
+    "validation_runtime->observe_capture_result(" _capture_callback)
+if(_present_call EQUAL -1 OR _capture_callback EQUAL -1
+        OR NOT _present_call LESS _capture_callback)
+    message(FATAL_ERROR
+        "Stage11C evidence guard rejected post-present capture-result order")
+endif()
+
+string(REGEX MATCHALL "validation_runtime->write_summaries[(]"
+    _summary_calls "${_host_run_normalized}")
+list(LENGTH _summary_calls _summary_call_count)
+if(NOT _summary_call_count EQUAL 1)
+    message(FATAL_ERROR
+        "Stage11C evidence guard requires one facade summary call")
+endif()
+string(FIND "${_host_run_normalized}"
+    "validation_runtime->write_summaries(runtime.clean_shutdown_state(),pause_menu);"
+    _summary_call)
+string(FIND "${_host_run_normalized}" "audio.shutdown();" _audio_shutdown)
+if(_summary_call EQUAL -1 OR _audio_shutdown EQUAL -1
+        OR NOT _summary_call LESS _audio_shutdown)
+    message(FATAL_ERROR
+        "Stage11C evidence guard rejected facade summary binding/order")
+endif()
+
+foreach(_forbidden_host_owner IN ITEMS
+        "stage11c_validation_state"
+        "Stage11CHudValidationState"
+        "host_validation::stage11c_hud_validation_reached("
+        "host_validation::stage11c_production_snapshot_hash("
+        "host_validation::write_stage11c_hud_validation_summary(")
+    string(FIND "${_host_code}" "${_forbidden_host_owner}" _host_owner_found)
+    if(NOT _host_owner_found EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11C evidence guard rejected Host-owned Stage11C state")
     endif()
-    set(_previous_order ${_index})
+endforeach()
+
+set(_stage11c_runtime_surface
+    "${_stage11c_prepare_hud}\n${_stage11c_observe_hud}")
+string(REGEX MATCH
+    "(current|previous|snapshot|state)[.]progression[.][A-Za-z_]+[ \t\r\n]*=[^=]"
+    _stage11c_progression_bypass "${_stage11c_runtime_surface}")
+if(NOT _stage11c_progression_bypass)
+    string(REGEX MATCH
+        "(current|previous|snapshot|state)[.]progression[ \t\r\n]*=[^=]"
+        _stage11c_progression_bypass "${_stage11c_runtime_surface}")
+endif()
+if(_stage11c_progression_bypass)
+    message(FATAL_ERROR
+        "Stage11C evidence guard rejected bypassed Session progression")
+endif()
+
+unset(_previous_input_order)
+foreach(_ordered IN ITEMS
+        "constPhysicalKeySnapshotsampled_physical_keys=sample_physical_keys();"
+        "validation_runtime->inject_physical_edges("
+        "HostFrameInputframe_input=map_host_frame_input("
+        "HostFrameGateResulthost_gate"
+        "submit_frame_actions(*session,frame_input)")
+    string(FIND "${_host_run_normalized}" "${_ordered}" _index)
+    if(_index EQUAL -1
+            OR (DEFINED _previous_input_order
+                AND _index LESS _previous_input_order))
+        message(FATAL_ERROR
+            "Stage11C evidence guard rejected physical sample-map-pause-submit order")
+    endif()
+    set(_previous_input_order ${_index})
 endforeach()
 
 string(FIND "${_host_text}" "EndDrawing();" _present)
@@ -881,29 +850,13 @@ string(FIND "${_host_text}" "Image image = LoadImageFromScreen();" _capture)
 if(_present EQUAL -1 OR _capture EQUAL -1 OR NOT _present LESS _capture)
     message(FATAL_ERROR "Stage11C evidence guard rejected pre-Present capture")
 endif()
-string(REGEX MATCHALL "LoadImageFromScreen[ \t\n]*\\(" _loads "${_host_text}")
+string(REGEX MATCHALL "LoadImageFromScreen[ \t\n]*[(]" _loads "${_host_code}")
 list(LENGTH _loads _load_count)
 if(NOT _load_count EQUAL 1)
-    message(FATAL_ERROR "Stage11C evidence guard requires one post-Present capture helper")
+    message(FATAL_ERROR
+        "Stage11C evidence guard requires one post-Present capture helper")
 endif()
-string(FIND "${_host_text}"
-    "stage11c_validation_state.cjk_font_ready = hud_resources_ready;"
-    _real_font)
-if(_real_font EQUAL -1)
-    message(FATAL_ERROR "Stage11C evidence guard rejected fake font-ready")
-endif()
-foreach(_required IN ITEMS
-        "stage11c_hud_validation_reached("
-        "stage11c_validation_state.production_snapshot_hash ="
-        "stage11c_validation_state.model = renderer.hud_model();"
-        "stage11c_validation_state.notices = renderer.hud_notice_view();"
-        "present_frame_and_maybe_capture(capture_path.has_value()"
-        "stage11c_validation_state.captured = true;")
-    string(FIND "${_host_text}" "${_required}" _found)
-    if(_found EQUAL -1)
-        message(FATAL_ERROR "Stage11C evidence guard missing post-production evidence step: ${_required}")
-    endif()
-endforeach()
+
 
 foreach(_required IN ITEMS
         "137,80,78,71,13,10,26,10" "1280" "720" "LastWriteTimeUtc"

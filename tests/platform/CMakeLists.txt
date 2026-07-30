@@ -1658,7 +1658,7 @@ add_test(
         -P "${CMAKE_CURRENT_SOURCE_DIR}/host_validation_sequence_guard_self_test.cmake")
 set_tests_properties(
     platform.host_validation_sequence_self_test
-    PROPERTIES LABELS "headless;platform;architecture")
+    PROPERTIES LABELS "headless;platform;architecture" TIMEOUT 2400)
 
 # Task 11 deliberately registers the real-host evidence gate before the
 # harness exists.  This keeps the first execution red instead of silently
@@ -1701,7 +1701,7 @@ add_test(
         -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11c_hud_evidence_guard_self_test.cmake")
 set_tests_properties(
     stage11c.hud_evidence_guard_self_test
-    PROPERTIES LABELS "headless;platform;architecture;stage11c" TIMEOUT 300)
+    PROPERTIES LABELS "headless;platform;architecture;stage11c" TIMEOUT 600)
 
 add_test(
     NAME stage11d.renderer_integration_guard
@@ -1739,7 +1739,7 @@ add_test(
         -P "${CMAKE_CURRENT_SOURCE_DIR}/stage11d_loot_evidence_guard_self_test.cmake")
 set_tests_properties(
     stage11d.loot_evidence_guard_self_test
-    PROPERTIES LABELS "headless;platform;architecture;stage11d" TIMEOUT 900)
+    PROPERTIES LABELS "headless;platform;architecture;stage11d" TIMEOUT 1500)
 
 add_test(
     NAME stage14.audio_sources

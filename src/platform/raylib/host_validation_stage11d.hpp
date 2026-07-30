@@ -97,7 +97,7 @@ void observe_stage11d_abyss_claim(Stage11DLootValidationState&,
     const dungeon::DungeonSnapshot&, const PauseMenuState&,
     const DungeonRenderStatus&, settings::LootFilterMode,
     const GroundLootView&, HudNoticeView,
-    Stage11DLootValidationState&) noexcept;
+    Stage11DLootValidationState&, int, int) noexcept;
 void stage11d_record_semantics(Stage11DLootValidationState&,
     const dungeon::DungeonSnapshot&, const items::ItemOwnershipState*,
     const GroundLootView&, HudNoticeView) noexcept;

@@ -476,6 +476,12 @@ require_cpp_function_definition_from_sanitized(
 mask_cpp_non_direct_executable_scopes(
     "${HOST_VALIDATION_INJECT_SOURCE}" DIRECT_HOST_VALIDATION_INJECT_SOURCE)
 require_cpp_function_definition_from_sanitized(
+    "${ACTIVE_SANITIZED_HOST_VALIDATION_RUNTIME_SOURCE}"
+    "void HostValidationRuntime::write_summaries("
+    "Host validation summary owner" HOST_VALIDATION_SUMMARY_SOURCE)
+mask_cpp_non_direct_executable_scopes(
+    "${HOST_VALIDATION_SUMMARY_SOURCE}" DIRECT_HOST_VALIDATION_SUMMARY_SOURCE)
+require_cpp_function_definition_from_sanitized(
     "${ACTIVE_SANITIZED_STAGE17_RUNTIME_SOURCE}"
     "void observe_stage17_draw_runtime("
     "Stage17 draw runtime observer" STAGE17_DRAW_RUNTIME_SOURCE)
@@ -755,15 +761,26 @@ require_match_count(
     1
     "Stage17 cooldown drain injects empty gameplay input")
 set(STAGE17_EXACT_SHUTDOWN_READY_GUARD [=[
-stage17_validation_state->clean_shutdown_exact_ready =
-            runtime.clean_shutdown_state() == CleanShutdownState::ready;
+impl_->states.stage17.clean_shutdown_exact_ready =
+        clean_shutdown_state == CleanShutdownState::ready;
 ]=])
-string(FIND "${DIRECT_HOST_ENTRY_SOURCE}"
+string(FIND "${DIRECT_HOST_VALIDATION_SUMMARY_SOURCE}"
     "${STAGE17_EXACT_SHUTDOWN_READY_GUARD}"
     STAGE17_EXACT_SHUTDOWN_READY_GUARD_INDEX)
 if(STAGE17_EXACT_SHUTDOWN_READY_GUARD_INDEX EQUAL -1)
     message(FATAL_ERROR
         "Stage17 summary must record completed clean-shutdown exact save")
+endif()
+set(HOST_VALIDATION_SUMMARY_CALL_GUARD [=[
+validation_runtime->write_summaries(
+            runtime.clean_shutdown_state(), pause_menu);
+]=])
+string(FIND "${DIRECT_HOST_ENTRY_SOURCE}"
+    "${HOST_VALIDATION_SUMMARY_CALL_GUARD}"
+    HOST_VALIDATION_SUMMARY_CALL_GUARD_INDEX)
+if(HOST_VALIDATION_SUMMARY_CALL_GUARD_INDEX EQUAL -1)
+    message(FATAL_ERROR
+        "Host must forward final clean-shutdown state to validation summaries")
 endif()
 
 set(STAGE17_STORM_LOCK_ONCE_GUARD [=[
@@ -1086,9 +1103,13 @@ require_direct_scope_mutations_rejected(
     "${STAGE17_NATURAL_COOLDOWN_DRAIN_GUARD}"
     "stage17-cooldown-drain")
 require_direct_scope_mutations_rejected(
-    "${SANITIZED_HOST_ENTRY_SOURCE}"
+    "${HOST_VALIDATION_SUMMARY_SOURCE}"
     "${STAGE17_EXACT_SHUTDOWN_READY_GUARD}"
     "stage17-exact-shutdown")
+require_direct_scope_mutations_rejected(
+    "${SANITIZED_HOST_ENTRY_SOURCE}"
+    "${HOST_VALIDATION_SUMMARY_CALL_GUARD}"
+    "host-validation-summary-call")
 require_cross_scope_mutation_rejected(
     "${ACTIVE_SANITIZED_STAGE17_RUNTIME_SOURCE}"
     "PhysicalKeySnapshot inject_stage17_physical_edges("
@@ -1174,7 +1195,7 @@ set(STAGE17_INJECT_CALL_LINE_PATTERN
 set(FACADE_INJECT_CALL_LINE_PATTERN
     "${SOURCE_LINE_START}[ \t]*validation_runtime->[ \t]*inject_physical_edges[ \t]*\\(")
 set(CACHED_INPUT_ACCESS_LINE_PATTERN
-    "${SOURCE_LINE_START}[ \t]*HostValidationStateAccess::death_input_snapshot[ \t]*\\(")
+    "${SOURCE_LINE_START}[ \t]*validation_runtime->[ \t]*death_input_snapshot[ \t]*\\(")
 set(MAP_CALL_LINE_PATTERN
     "${SOURCE_LINE_START}HostFrameInput[ \t]+frame_input[ \t]*=[ \t]*map_host_frame_input[ \t]*\\(")
 set(ACTIVE_SENTINEL_PATTERN
@@ -1195,7 +1216,7 @@ set(COMMENT_ONLY_STRUCTURE [=[
 //         sampled_physical_keys, input_settings, current,
 //         gameplay_rearm_was_required);
 // const PhysicalKeySnapshot& physical_keys =
-//     HostValidationStateAccess::death_input_snapshot(*validation_runtime);
+//     validation_runtime->death_input_snapshot();
 // HostFrameInput frame_input = map_host_frame_input(settings, stage17_physical_keys);
 // host_validation::inject_stage11b_physical_edges(
 // host_validation::inject_stage11c_physical_edges(
@@ -1214,7 +1235,7 @@ const PhysicalKeySnapshot stage17_physical_keys =
         sampled_physical_keys, input_settings, current,
         gameplay_rearm_was_required);
 const PhysicalKeySnapshot& physical_keys =
-    HostValidationStateAccess::death_input_snapshot(*validation_runtime);
+    validation_runtime->death_input_snapshot();
 if (gameplay_rearm_was_required
         && gameplay_controls_physically_released(stage17_physical_keys)) {
     runtime.acknowledge_gameplay_rearmed();
@@ -1386,6 +1407,16 @@ require_match_count(
     "${MAP_CALL_LINE_PATTERN}"
     1
     "host logical mapping calls")
+require_match_count(
+    "${SANITIZED_HOST_SOURCE}"
+    "HostValidationStateAccess"
+    0
+    "removed host validation state-access shim")
+require_match_count(
+    "${SANITIZED_HOST_VALIDATION_RUNTIME_SOURCE}"
+    "HostValidationStateAccess"
+    0
+    "removed runtime validation state-access shim")
 foreach(OLD_DIRECT_INJECTOR IN ITEMS
         inject_stage11b_physical_edges inject_stage11c_physical_edges
         inject_stage11d_physical_edges inject_stage17_physical_edges)
@@ -1502,11 +1533,11 @@ function(physical_input_chain_valid SOURCE OUT_VARIABLE)
         FACADE_INJECT_CALLS "${SOURCE}")
     list(LENGTH FACADE_INJECT_CALLS FACADE_INJECT_CALL_COUNT)
     string(REGEX MATCHALL
-        "HostValidationStateAccess::death_input_snapshot${WS}\\("
+        "validation_runtime->death_input_snapshot${WS}\\("
         CACHED_INPUT_CALLS "${SOURCE}")
     list(LENGTH CACHED_INPUT_CALLS CACHED_INPUT_CALL_COUNT)
     if(NOT FACADE_SOURCE MATCHES "validation_runtime->inject_physical_edges${WS}\\(${WS}sampled_physical_keys,${WS}input_settings,${WS}current,${WS}gameplay_rearm_was_required${WS}\\)"
-            OR NOT CACHED_SOURCE MATCHES "HostValidationStateAccess::death_input_snapshot${WS}\\(${WS}\\*validation_runtime${WS}\\)"
+            OR NOT CACHED_SOURCE MATCHES "validation_runtime->death_input_snapshot${WS}\\(${WS}\\)"
             OR NOT RELEASED_SOURCE MATCHES "gameplay_controls_physically_released${WS}\\(${WS}stage17_physical_keys${WS}\\)"
             OR NOT RELEASED_SOURCE MATCHES "runtime\\.acknowledge_gameplay_rearmed${WS}\\(${WS}\\)"
             OR NOT MAP_SOURCE MATCHES "map_host_frame_input${WS}\\(${WS}input_settings,${WS}stage17_physical_keys${WS}\\)"

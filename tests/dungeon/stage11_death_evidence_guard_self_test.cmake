@@ -152,12 +152,41 @@ bool HostValidationRuntime::fixed_step_target_reached(
             snapshot, *impl_->config, impl_->states.stage11);
 }
 ]=])
+set(expected_observe_presented_frame [=[
+PresentationDecision HostValidationRuntime::observe_presented_frame(
+    const dungeon::DungeonSnapshot& snapshot,
+    const PauseMenuState& pause_menu,
+    bool pause_cjk_ready) noexcept {
+    const bool stage11_target_visible = host_validation::stage11_validation_reached(
+        snapshot, *impl_->config, impl_->states.stage11);
+    if (stage11_target_visible) {
+        ++impl_->states.stage11.target_presented_frames;
+    } else {
+        impl_->states.stage11.target_presented_frames = 0U;
+    }
+    const bool stage11_reached = stage11_target_visible
+        && impl_->states.stage11.target_presented_frames >= 4U;
+    const bool stage10_reached = false;
+    const bool stage11b_reached = false;
+    const bool stage11c_reached = false;
+    const bool stage11d_reached = false;
+    const bool stage17_reached = false;
+    PresentationDecision decision{};
+    decision.validation_complete = stage10_reached || stage11_reached
+        || stage11b_reached || stage11c_reached
+        || stage11d_reached || stage17_reached;
+    static_cast<void>(pause_menu);
+    static_cast<void>(pause_cjk_ready);
+    return decision;
+}
+]=])
 string(CONCAT reference_runtime_source
     "namespace arpg::platform {\n"
     "${expected_should_continue_death}\n"
     "${expected_observe_death_continue_result}\n"
     "${expected_fixed_step_movement}\n"
     "${expected_fixed_step_target_reached}\n"
+    "${expected_observe_presented_frame}\n"
     "}  // namespace arpg::platform\n")
 set(reference_runtime_file
     "${CMAKE_CURRENT_BINARY_DIR}/stage11_reference_runtime.cpp")
@@ -268,7 +297,10 @@ HostExitCode run_raylib_host() noexcept {
             break;
         }
     }
-    ++stage11_validation_state.target_presented_frames;
+    const PresentationDecision decision =
+        validation_runtime->observe_presented_frame(
+            current, pause_menu, pause_cjk_ready);
+    static_cast<void>(decision);
     return HostExitCode::success;
 }
 ]=])
@@ -341,7 +373,7 @@ endforeach()
 
 expect_host_replacement_rejection(host_hidden_continue_write
     "death_gate.continue_death = true;"
-    "stage11_validation_state.continue_requested = true;\n        death_gate.continue_death = true;"
+    "validation_runtime->stage11.continue_requested = true;\n        death_gate.continue_death = true;"
     "must not access continue_requested")
 
 # Runtime owner mutations: exact decision semantics, faulted acceptance, no
@@ -410,6 +442,82 @@ bool HostValidationRuntime::fixed_step_target_reached(
 expect_runtime_replacement_rejection(reached_order_swapped
     "${expected_fixed_step_target_reached}" "${swapped_target_reached}"
     "Stage 11 runtime fixed-step reached owner contract is missing or altered")
+expect_runtime_replacement_rejection(presentation_increment_missing
+    "++impl_->states.stage11.target_presented_frames;"
+    "static_cast<void>(impl_->states.stage11.target_presented_frames);"
+    "T7C Stage11 presentation branch contract is missing or altered")
+expect_runtime_replacement_rejection(presentation_reset_missing
+    "impl_->states.stage11.target_presented_frames = 0U;"
+    "static_cast<void>(impl_->states.stage11.target_presented_frames);"
+    "T7C Stage11 presentation branch contract is missing or altered")
+expect_runtime_replacement_rejection(presentation_branch_inverted
+    "if (stage11_target_visible) {"
+    "if (!stage11_target_visible) {"
+    "T7C Stage11 presentation branch contract is missing or altered")
+expect_runtime_replacement_rejection(presentation_threshold_changed
+    "impl_->states.stage11.target_presented_frames >= 4U"
+    "impl_->states.stage11.target_presented_frames >= 3U"
+    "T7C Stage11 presentation branch contract is missing or altered")
+expect_runtime_replacement_rejection(presentation_completion_discarded
+    "stage10_reached || stage11_reached"
+    "stage10_reached"
+    "T7C Stage11 decision completion contract is missing or altered")
+expect_runtime_replacement_rejection(presentation_default_return
+    "return decision;"
+    "return {};"
+    "T7C Stage11 decision completion contract is missing or altered")
+
+set(stage11_presentation_branch [=[
+    const bool stage11_target_visible = host_validation::stage11_validation_reached(
+        snapshot, *impl_->config, impl_->states.stage11);
+    if (stage11_target_visible) {
+        ++impl_->states.stage11.target_presented_frames;
+    } else {
+        impl_->states.stage11.target_presented_frames = 0U;
+    }
+    const bool stage11_reached = stage11_target_visible
+        && impl_->states.stage11.target_presented_frames >= 4U;
+]=])
+string(REGEX REPLACE "[ \t\r\n]+" " " stage11_presentation_branch_compact
+    "${stage11_presentation_branch}")
+foreach(stage11_decoy_kind IN ITEMS comment string raw inactive lambda dead)
+    if(stage11_decoy_kind STREQUAL "comment")
+        set(stage11_presentation_decoy
+            "    /* ${stage11_presentation_branch} */\n")
+    elseif(stage11_decoy_kind STREQUAL "string")
+        set(stage11_presentation_decoy
+            "    constexpr const char* stage11_decoy = \"${stage11_presentation_branch_compact}\";\n")
+    elseif(stage11_decoy_kind STREQUAL "raw")
+        set(stage11_presentation_decoy
+            "    constexpr const char* stage11_decoy = R\"guard(${stage11_presentation_branch})guard\";\n")
+    elseif(stage11_decoy_kind STREQUAL "inactive")
+        set(stage11_presentation_decoy
+            "#if 0\n${stage11_presentation_branch}#endif\n")
+    elseif(stage11_decoy_kind STREQUAL "lambda")
+        set(stage11_presentation_decoy
+            "    const auto stage11_decoy = [&] {\n${stage11_presentation_branch}    };\n")
+    else()
+        set(stage11_presentation_decoy
+            "    if (false) {\n${stage11_presentation_branch}    }\n")
+    endif()
+    expect_runtime_replacement_rejection(
+        "presentation_${stage11_decoy_kind}_decoy"
+        "${stage11_presentation_branch}" "${stage11_presentation_decoy}"
+        "T7C Stage11 presentation branch contract is missing or altered")
+endforeach()
+
+string(REPLACE "${stage11_presentation_branch}" ""
+    stage11_presentation_cross_scope_source "${reference_runtime_source}")
+string(APPEND stage11_presentation_cross_scope_source
+    "\nvoid stage11_presentation_cross_scope_decoy() {\n${stage11_presentation_branch}}\n")
+set(stage11_presentation_cross_scope_file
+    "${CMAKE_CURRENT_BINARY_DIR}/stage11_runtime_presentation_cross_scope.cpp")
+file(WRITE "${stage11_presentation_cross_scope_file}"
+    "${stage11_presentation_cross_scope_source}")
+expect_guard_rejection(presentation_cross_scope_decoy "${VALID_FIXTURE}"
+    "${reference_host_file}" "${stage11_presentation_cross_scope_file}"
+    "T7C Stage11 presentation branch contract is missing or altered")
+file(REMOVE "${stage11_presentation_cross_scope_file}")
 
 # A syntactically convincing facade decision outside the direct live scope must
 # never replace the real Host decision.
@@ -554,9 +662,9 @@ expect_stage_route_rejection(missing_queue_with_spliced_slashes
     "session.queue_action(combat::Action::light)" FALSE spliced_slashes)
 
 get_property(final_mutation_count GLOBAL PROPERTY STAGE11_MUTATION_COUNT)
-if(NOT final_mutation_count EQUAL 53)
+if(NOT final_mutation_count EQUAL 66)
     message(FATAL_ERROR
-        "Stage 11 guard mutation inventory drifted: expected 53, got ${final_mutation_count}")
+        "Stage 11 guard mutation inventory drifted: expected 66, got ${final_mutation_count}")
 endif()
 file(REMOVE "${reference_host_file}" "${reference_runtime_file}"
     "${reference_stage_file}")

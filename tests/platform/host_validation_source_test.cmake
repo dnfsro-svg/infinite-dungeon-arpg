@@ -113,15 +113,40 @@ function(host_validation_normalize_cpp_surface SOURCE OUT_NORMALIZED)
     set("${OUT_NORMALIZED}" "${_normalized}" PARENT_SCOPE)
 endfunction()
 
+function(host_validation_canonicalize_cpp_surface SOURCE OUT_CANONICAL)
+    host_validation_normalize_cpp_surface("${SOURCE}" _canonical)
+    string(REGEX REPLACE " ([^A-Za-z0-9_])" "\\1" _canonical
+        "${_canonical}")
+    string(REGEX REPLACE "([^A-Za-z0-9_]) " "\\1" _canonical
+        "${_canonical}")
+    set("${OUT_CANONICAL}" "${_canonical}" PARENT_SCOPE)
+endfunction()
+
 function(host_validation_exact_surface_valid SOURCE EXPECTED OUT_VALID)
-    host_validation_normalize_cpp_surface("${SOURCE}" _actual)
-    host_validation_normalize_cpp_surface("${EXPECTED}" _expected)
+    host_validation_canonicalize_cpp_surface("${SOURCE}" _actual)
+    host_validation_canonicalize_cpp_surface("${EXPECTED}" _expected)
     if("${_actual}" STREQUAL "${_expected}")
         set("${OUT_VALID}" TRUE PARENT_SCOPE)
     else()
         set("${OUT_VALID}" FALSE PARENT_SCOPE)
     endif()
 endfunction()
+
+set(_host_validation_formatting_contract [=[
+decision.stage17_capture_path = host_validation::stage17_capture_path(
+    *impl_->config, impl_->states.stage17);
+]=])
+set(_host_validation_formatting_variant [=[
+decision.stage17_capture_path=host_validation::stage17_capture_path(*impl_->config,impl_->states.stage17);
+]=])
+host_validation_exact_surface_valid(
+    "${_host_validation_formatting_variant}"
+    "${_host_validation_formatting_contract}"
+    _host_validation_harmless_formatting_valid)
+if(NOT _host_validation_harmless_formatting_valid)
+    message(FATAL_ERROR
+        "Host validation exact-surface guard rejected harmless punctuation whitespace")
+endif()
 
 function(host_validation_require_exact_surface LABEL SOURCE EXPECTED)
     host_validation_exact_surface_valid("${SOURCE}" "${EXPECTED}" _valid)
@@ -151,10 +176,18 @@ function(host_validation_count_regex SOURCE PATTERN OUT_COUNT)
     set("${OUT_COUNT}" ${_count} PARENT_SCOPE)
 endfunction()
 
+function(host_validation_require_regex_count LABEL SOURCE PATTERN EXPECTED)
+    host_validation_count_regex("${SOURCE}" "${PATTERN}" _actual)
+    if(NOT _actual EQUAL EXPECTED)
+        message(FATAL_ERROR
+            "Host validation ${LABEL}: expected ${EXPECTED}, found ${_actual}")
+    endif()
+endfunction()
+
 function(host_validation_snapshot_bindings_valid_from_normalized
         NORMALIZED_SOURCE OUT_VALID)
     foreach(_pattern IN ITEMS
-            "const[ ]+PhysicalKeySnapshot&[ ]+physical_keys[ ]*=[ ]*HostValidationStateAccess::death_input_snapshot\\([ ]*[*]validation_runtime[ ]*\\)"
+            "const[ ]+PhysicalKeySnapshot&[ ]+physical_keys[ ]*=[ ]*validation_runtime->death_input_snapshot\\([ ]*\\)"
             "gameplay_controls_physically_released\\([ ]*stage17_physical_keys[ ]*\\)"
             "map_host_frame_input\\([ ]*input_settings,[ ]*stage17_physical_keys[ ]*\\)"
             "host_death_input_gate\\([ ]*death_saving,[ ]*death_pending,[ ]*frame_input[.]keys,[ ]*physical_keys[ ]*\\)"
@@ -363,14 +396,19 @@ function(host_validation_mask_non_direct_executable_scopes SOURCE OUT_SOURCE)
     string(LENGTH "${SOURCE}" _source_length)
     set(_masked "")
     set(_copy_cursor 0)
+    set(_dead_condition
+        "(false|0[uUlL]*|![ \\t\\r\\n]*true|1[uUlL]*[ \\t\\r\\n]*==[ \\t\\r\\n]*0[uUlL]*|0[uUlL]*[ \\t\\r\\n]*==[ \\t\\r\\n]*1[uUlL]*)")
     while(_copy_cursor LESS _source_length)
         string(SUBSTRING "${SOURCE}" ${_copy_cursor} -1 _tail)
         string(REGEX MATCH
             "\\][ \\t\\r\\n]*(\\([^{};]*\\))?[ \\t\\r\\n]*(mutable[ \\t\\r\\n]*)?(noexcept([ \\t\\r\\n]*\\([^{};]*\\))?[ \\t\\r\\n]*)?(->[^{;]*)?[ \\t\\r\\n]*\\{"
             _lambda_match "${_tail}")
         string(REGEX MATCH
-            "(if|while)[ \\t\\r\\n]*(constexpr[ \\t\\r\\n]*)?\\([ \\t\\r\\n]*(false|0[uUlL]*|![ \\t\\r\\n]*true)[ \\t\\r\\n]*\\)[ \\t\\r\\n]*(do[ \\t\\r\\n]*)?([^{;]*\\{|[^{};]*;)"
-            _dead_match "${_tail}")
+            "(if|while)[ \\t\\r\\n]*(constexpr[ \\t\\r\\n]*)?\\([ \\t\\r\\n]*${_dead_condition}[ \\t\\r\\n]*\\)[ \\t\\r\\n]*(do[ \\t\\r\\n]*)?([^{;]*\\{|[^{};]*;)"
+            _dead_branch_match "${_tail}")
+        string(REGEX MATCH
+            "for[ \\t\\r\\n]*\\([ \\t\\r\\n]*;[ \\t\\r\\n]*${_dead_condition}[ \\t\\r\\n]*;[^)]*\\)[ \\t\\r\\n]*([^{;]*\\{|[^{};]*;)"
+            _dead_for_match "${_tail}")
         set(_scope_match "")
         set(_scope_relative -1)
         set(_scope_kind "")
@@ -379,14 +417,19 @@ function(host_validation_mask_non_direct_executable_scopes SOURCE OUT_SOURCE)
             set(_scope_match "${_lambda_match}")
             set(_scope_kind lambda)
         endif()
-        if(NOT _dead_match STREQUAL "")
+        foreach(_dead_match_name IN ITEMS
+                _dead_branch_match _dead_for_match)
+            set(_dead_match "${${_dead_match_name}}")
+            if(_dead_match STREQUAL "")
+                continue()
+            endif()
             string(FIND "${_tail}" "${_dead_match}" _dead_relative)
             if(_scope_relative EQUAL -1 OR _dead_relative LESS _scope_relative)
                 set(_scope_match "${_dead_match}")
                 set(_scope_relative ${_dead_relative})
                 set(_scope_kind dead-control)
             endif()
-        endif()
+        endforeach()
         if(_scope_relative EQUAL -1)
             string(APPEND _masked "${_tail}")
             break()
@@ -486,6 +529,50 @@ function(host_validation_require_order LABEL SOURCE)
     endforeach()
 endfunction()
 
+function(host_validation_require_canonical_count
+        LABEL SOURCE EXPECTED EXPECTED_COUNT)
+    host_validation_canonicalize_cpp_surface("${SOURCE}" _canonical_source)
+    host_validation_canonicalize_cpp_surface("${EXPECTED}" _canonical_expected)
+    host_validation_require_count("${LABEL}" "${_canonical_source}"
+        "${_canonical_expected}" ${EXPECTED_COUNT})
+endfunction()
+
+function(host_validation_require_canonical_order LABEL SOURCE)
+    host_validation_canonicalize_cpp_surface("${SOURCE}" _canonical_source)
+    set(_tail "${_canonical_source}")
+    foreach(_token IN LISTS ARGN)
+        host_validation_canonicalize_cpp_surface(
+            "${_token}" _canonical_token)
+        string(FIND "${_tail}" "${_canonical_token}" _position)
+        if(_position EQUAL -1)
+            message(FATAL_ERROR
+                "Host validation ${LABEL} token is missing or reordered: ${_token}")
+        endif()
+        math(EXPR _after "${_position} + 1")
+        string(SUBSTRING "${_tail}" ${_after} -1 _tail)
+    endforeach()
+endfunction()
+
+function(host_validation_require_canonical_direct_statement
+        LABEL SOURCE EXPECTED EXPECTED_DEPTH)
+    host_validation_canonicalize_cpp_surface("${SOURCE}" _canonical_source)
+    host_validation_canonicalize_cpp_surface("${EXPECTED}" _canonical_expected)
+    host_validation_count_token("${_canonical_source}"
+        "${_canonical_expected}" _statement_count)
+    string(FIND "${_canonical_source}"
+        "${_canonical_expected}" _statement_position)
+    if(NOT _statement_count EQUAL 1 OR _statement_position EQUAL -1)
+        message(FATAL_ERROR
+            "Host validation ${LABEL} is missing or duplicated")
+    endif()
+    host_validation_brace_depth("${_canonical_source}"
+        ${_statement_position} _statement_depth)
+    if(NOT _statement_depth EQUAL EXPECTED_DEPTH)
+        message(FATAL_ERROR
+            "Host validation ${LABEL} is outside direct executable scope")
+    endif()
+endfunction()
+
 function(host_validation_brace_depth SURFACE POSITION OUT_DEPTH)
     string(SUBSTRING "${SURFACE}" 0 ${POSITION} _prefix)
     string(REGEX REPLACE "[^{}]" "" _braces "${_prefix}")
@@ -565,6 +652,51 @@ host_validation_unconditional_cpp_surface(
 host_validation_unconditional_cpp_surface(
     "${_host_text}" _host _host_lexical)
 
+function(host_validation_expect_dead_control_hidden LABEL PREFIX SUFFIX)
+    set(_decision_anchor [=[decision.validation_complete = stage10_reached || stage11_reached
+        || stage11b_reached || stage11c_reached
+        || stage11d_reached || stage17_reached;]=])
+    host_validation_extract_sanitized_block("${_runtime}"
+        "PresentationDecision HostValidationRuntime::observe_presented_frame("
+        _decision_owner)
+    string(REPLACE "${_decision_anchor}"
+        "${PREFIX}${_decision_anchor}${SUFFIX}"
+        _mutation "${_decision_owner}")
+    if("${_mutation}" STREQUAL "${_decision_owner}")
+        message(FATAL_ERROR
+            "Host validation dead-control mutation anchor is missing: ${LABEL}")
+    endif()
+    host_validation_mask_non_direct_executable_scopes(
+        "${_mutation}" _direct_mutation)
+    host_validation_canonicalize_cpp_surface(
+        "${_direct_mutation}" _canonical_mutation)
+    host_validation_canonicalize_cpp_surface(
+        "${_decision_anchor}" _canonical_anchor)
+    host_validation_count_token("${_canonical_mutation}"
+        "${_canonical_anchor}" _surviving_anchor_count)
+    if(NOT _surviving_anchor_count EQUAL 0)
+        message(FATAL_ERROR
+            "Host validation direct-scope guard accepted dead control: ${LABEL}")
+    endif()
+endfunction()
+
+host_validation_expect_dead_control_hidden(
+    "for-false-braced" "for (\; false\;) {" "}")
+host_validation_expect_dead_control_hidden(
+    "for-false-unbraced" "for (\; false\;) " "")
+host_validation_expect_dead_control_hidden(
+    "for-zero-braced" "for (\; 0\;) {" "}")
+host_validation_expect_dead_control_hidden(
+    "for-zero-unbraced" "for (\; 0\;) " "")
+host_validation_expect_dead_control_hidden(
+    "if-equality-braced" "if (1 == 0) {" "}")
+host_validation_expect_dead_control_hidden(
+    "if-equality-unbraced" "if (1 == 0) " "")
+host_validation_expect_dead_control_hidden(
+    "while-equality-braced" "while (1 == 0) {" "}")
+host_validation_expect_dead_control_hidden(
+    "while-equality-unbraced" "while (1 == 0) " "")
+
 # The public facade is intentionally raylib-free and exposes only the approved
 # non-owning API plus one unique_ptr PImpl member.
 foreach(_forbidden IN ITEMS
@@ -579,6 +711,28 @@ host_validation_extract_sanitized_block("${_facade}"
     "class HostValidationRuntime final" _facade_class)
 host_validation_extract_sanitized_block("${_facade_lexical}"
     "class HostValidationRuntime final" _facade_class_lexical)
+set(_capture_owner_contract [=[
+enum class CaptureOwner : std::uint8_t {
+    none,
+    generic_validation,
+    stage17,
+}
+]=])
+set(_presentation_decision_contract [=[
+struct PresentationDecision final {
+    bool validation_complete{};
+    bool generic_capture_visible{};
+    bool generic_capture_complete{};
+    CaptureOwner capture_owner{CaptureOwner::none};
+    std::optional<std::string> stage17_capture_path{};
+}
+]=])
+host_validation_require_active_exact_definition(
+    "capture-owner exact API" "${_facade}" "${_facade_lexical}"
+    "enum class CaptureOwner : std::uint8_t" "${_capture_owner_contract}")
+host_validation_require_active_exact_definition(
+    "presentation-decision exact API" "${_facade}" "${_facade_lexical}"
+    "struct PresentationDecision final" "${_presentation_decision_contract}")
 set(_facade_class_contract [=[
 class HostValidationRuntime final {
 public:
@@ -605,6 +759,26 @@ public:
         const items::ItemOwnershipState*) noexcept;
     [[nodiscard]] bool fixed_step_target_reached(
         const dungeon::DungeonSnapshot&) const noexcept;
+    [[nodiscard]] const PhysicalKeySnapshot&
+    death_input_snapshot() const noexcept;
+    void observe_pause_transition(bool was_open, bool is_open) noexcept;
+    void prepare_hud_snapshot(dungeon::DungeonSnapshot&) noexcept;
+    void observe_hud(const dungeon::DungeonSnapshot&,
+        const HudViewModel&, HudNoticeView, bool draw_debug,
+        int screen_width, int screen_height) noexcept;
+    void observe_active_skill_draw(const dungeon::DungeonSnapshot&,
+        const ActiveSkillDrawRuntimeStatus&) noexcept;
+    void observe_ground_loot(const dungeon::DungeonSnapshot&,
+        const PauseMenuState&, const DungeonRenderStatus&,
+        settings::LootFilterMode, const GroundLootView&, HudNoticeView,
+        const items::ItemOwnershipState*, int screen_width,
+        int screen_height) noexcept;
+    [[nodiscard]] PresentationDecision observe_presented_frame(
+        const dungeon::DungeonSnapshot&, const PauseMenuState&,
+        bool pause_cjk_ready) noexcept;
+    void observe_capture_result(CaptureOwner, bool succeeded) noexcept;
+    void write_summaries(CleanShutdownState,
+        const PauseMenuState&) noexcept;
     void observe_combat_event(const combat::CombatEvent&) noexcept;
     void observe_snapshot(const dungeon::DungeonSnapshot&) noexcept;
     void observe_inventory(const InventoryRenderer&,
@@ -613,7 +787,6 @@ public:
 
 private:
     struct Impl;
-    friend struct HostValidationStateAccess;
     explicit HostValidationRuntime(std::unique_ptr<Impl>) noexcept;
     std::unique_ptr<Impl> impl_;
 }
@@ -637,12 +810,21 @@ foreach(_token IN ITEMS
         "void observe_death_continue_result("
         "void observe_post_fixed_tick("
         "[[nodiscard]] bool fixed_step_target_reached("
+        "[[nodiscard]] const PhysicalKeySnapshot&"
+        "death_input_snapshot() const noexcept;"
+        "void observe_pause_transition("
+        "void prepare_hud_snapshot("
+        "void observe_hud("
+        "void observe_active_skill_draw("
+        "void observe_ground_loot("
+        "[[nodiscard]] PresentationDecision observe_presented_frame("
+        "void observe_capture_result("
+        "void write_summaries("
         "void observe_combat_event("
         "void observe_snapshot("
         "void observe_inventory("
         "void observe_submitted_actions("
         "struct Impl;"
-        "friend struct HostValidationStateAccess;"
         "explicit HostValidationRuntime(std::unique_ptr<Impl>) noexcept;"
         "std::unique_ptr<Impl> impl_;")
     host_validation_require_count("facade API" "${_facade_class}"
@@ -671,6 +853,13 @@ namespace arpg::items {
 struct ItemOwnershipState;
 }
 ]=])
+set(_settings_forward_contract [=[
+namespace arpg::settings {
+enum class LootFilterMode : std::uint8_t;
+enum class SettingsLoadStatus : std::uint8_t;
+struct SettingsData;
+}
+]=])
 host_validation_require_active_exact_definition(
     "combat facade forward declarations" "${_facade}" "${_facade_lexical}"
     "namespace arpg::combat {" "${_combat_forward_contract}")
@@ -680,12 +869,34 @@ host_validation_require_active_exact_definition(
 host_validation_require_active_exact_definition(
     "item facade forward declaration" "${_facade}" "${_facade_lexical}"
     "namespace arpg::items {" "${_items_forward_contract}")
+host_validation_require_active_exact_definition(
+    "settings facade forward declarations" "${_facade}" "${_facade_lexical}"
+    "namespace arpg::settings {" "${_settings_forward_contract}")
+foreach(_declaration IN ITEMS
+        "struct ActiveSkillDrawRuntimeStatus;"
+        "enum class CleanShutdownState : std::uint8_t;"
+        "struct DungeonRenderStatus;"
+        "struct GroundLootView;"
+        "struct HudNoticeView;"
+        "struct HudViewModel;"
+        "struct PauseMenuState;")
+    host_validation_require_count("platform facade forward declaration"
+        "${_facade}" "${_declaration}" 1)
+    host_validation_require_count("lexical platform facade forward declaration"
+        "${_facade_lexical}" "${_declaration}" 1)
+endforeach()
+foreach(_include IN ITEMS "#include <optional>" "#include <string>")
+    host_validation_require_count("active facade standard include"
+        "${_facade}" "${_include}" 1)
+    host_validation_require_count("lexical facade standard include"
+        "${_facade_lexical}" "${_include}" 1)
+endforeach()
 host_validation_require_count("facade class" "${_facade}"
     "class HostValidationRuntime final" 1)
-host_validation_require_count("facade friend-only transition seam" "${_facade}"
-    "HostValidationStateAccess" 1)
-host_validation_require_count("facade lexical friend-only transition seam"
-    "${_facade_lexical}" "HostValidationStateAccess" 1)
+host_validation_require_count("removed facade transition seam" "${_facade}"
+    "HostValidationStateAccess" 0)
+host_validation_require_count("removed lexical facade transition seam"
+    "${_facade_lexical}" "HostValidationStateAccess" 0)
 host_validation_require_count("facade PImpl owner" "${_facade_class}"
     "std::unique_ptr<Impl>" 2)
 foreach(_forbidden IN ITEMS
@@ -699,8 +910,9 @@ foreach(_forbidden IN ITEMS
     endif()
 endforeach()
 
-# The internal state seam aggregates one of each existing Stage state and only
-# exposes temporary reference accessors. State definitions stay in Stage heads.
+# The internal state seam aggregates one of each existing Stage state.  Task 7C
+# removes the temporary reference-access shim entirely; Stage definitions stay
+# in their existing owner headers.
 host_validation_extract_sanitized_block("${_state}"
     "struct HostValidationStates final" _aggregate)
 host_validation_extract_sanitized_block("${_state_lexical}"
@@ -768,8 +980,8 @@ foreach(_state_type IN ITEMS
     string(FIND "${_runtime_lexical}" "${_state_type} "
         _runtime_direct_state)
     if(NOT _runtime_direct_state EQUAL -1)
-        # Runtime references in the temporary accessors are qualified return
-        # types, so only an unqualified declaration would be a second owner.
+        # Runtime algorithms may mention qualified Stage types, so only an
+        # unqualified declaration would be a second state owner.
         string(REGEX MATCH
             "(^|[;{}])[ \t\r\n]*${_state_type}[ \t\r\n]+[A-Za-z_]"
             _runtime_direct_state_declaration "${_runtime_lexical}")
@@ -779,44 +991,10 @@ foreach(_state_type IN ITEMS
         endif()
     endif()
 endforeach()
-host_validation_extract_sanitized_block("${_state}"
-    "struct HostValidationStateAccess final" _state_access)
-host_validation_extract_sanitized_block("${_state_lexical}"
-    "struct HostValidationStateAccess final" _state_access_lexical)
-set(_state_access_contract [=[
-struct HostValidationStateAccess final {
-    [[nodiscard]] static host_validation::Stage10ValidationState& stage10(
-        HostValidationRuntime&) noexcept;
-    [[nodiscard]] static host_validation::Stage11ValidationState& stage11(
-        HostValidationRuntime&) noexcept;
-    [[nodiscard]] static host_validation::Stage11BValidationState& stage11b(
-        HostValidationRuntime&) noexcept;
-    [[nodiscard]] static host_validation::Stage11CHudValidationState& stage11c(
-        HostValidationRuntime&) noexcept;
-    [[nodiscard]] static host_validation::Stage11DLootValidationState& stage11d(
-        HostValidationRuntime&) noexcept;
-    [[nodiscard]] static host_validation::Stage17SkillStonesValidationState& stage17(
-        HostValidationRuntime&) noexcept;
-    [[nodiscard]] static const PhysicalKeySnapshot& death_input_snapshot(
-        const HostValidationRuntime&) noexcept;
-}
-]=])
-host_validation_require_active_exact_definition(
-    "temporary state-access exact seven-accessor API"
-    "${_state}" "${_state_lexical}"
-    "struct HostValidationStateAccess final" "${_state_access_contract}")
-host_validation_expect_exact_mutation_rejected("extra temporary state accessor"
-    "${_state_access_lexical}" "${_state_access_contract}"
-    "const HostValidationRuntime&) noexcept;"
-    "const HostValidationRuntime&) noexcept; static int forbidden_extra_accessor(HostValidationRuntime&) noexcept;")
-foreach(_accessor IN ITEMS
-        "stage10(" "stage11(" "stage11b(" "stage11c("
-        "stage11d(" "stage17(" "death_input_snapshot(")
-    host_validation_require_count("temporary state accessor"
-        "${_state_access}" "${_accessor}" 1)
-endforeach()
-host_validation_require_count("state lexical transition declaration"
-    "${_state_lexical}" "HostValidationStateAccess" 1)
+host_validation_require_count("removed active state-access shim"
+    "${_state}" "HostValidationStateAccess" 0)
+host_validation_require_count("removed lexical state-access shim"
+    "${_state_lexical}" "HostValidationStateAccess" 0)
 foreach(_forbidden IN ITEMS "new (" "std::unique_ptr" "raylib.h")
     string(FIND "${_state_lexical}" "${_forbidden}" _position)
     if(NOT _position EQUAL -1)
@@ -825,47 +1003,34 @@ foreach(_forbidden IN ITEMS "new (" "std::unique_ptr" "raylib.h")
     endif()
 endforeach()
 
-# Impl/factory owns the six-state aggregate, one config pointer and one cached
-# pre-Stage17 physical snapshot. Both task allocations are explicit nothrow.
+# Impl/factory owns the six-state aggregate, one config pointer, the cached
+# pre-Stage17 physical snapshot, and the generic-capture completion latch.
+# Task 7C needs short-lived pending presentation facts too, so this guard keeps
+# their private names/layout flexible while freezing every brief-owned field.
 host_validation_extract_sanitized_block("${_runtime}"
     "struct HostValidationRuntime::Impl final" _impl)
 host_validation_extract_sanitized_block("${_runtime_lexical}"
     "struct HostValidationRuntime::Impl final" _impl_lexical)
-set(_impl_contract [=[
-struct HostValidationRuntime::Impl final {
-    explicit Impl(const RaylibHostConfig& host_config,
-        settings::SettingsLoadStatus load_status) noexcept
-        : config(&host_config) {
-        states.stage11b.load_status = load_status;
-    }
-
-    const RaylibHostConfig* config{};
-    HostValidationStates states{};
-    PhysicalKeySnapshot death_input_snapshot{};
-}
-]=])
-host_validation_require_active_exact_definition("Impl exact ownership"
-    "${_runtime}" "${_runtime_lexical}"
-    "struct HostValidationRuntime::Impl final" "${_impl_contract}")
-host_validation_expect_exact_mutation_rejected("extra Impl owner"
-    "${_impl_lexical}" "${_impl_contract}"
-    "PhysicalKeySnapshot death_input_snapshot{};"
-    "PhysicalKeySnapshot death_input_snapshot{}; int forbidden_extra_owner{};")
-string(REPLACE "PhysicalKeySnapshot death_input_snapshot{};"
-    "PhysicalKeySnapshot death_input_snapshot{}; int forbidden_extra_owner{};"
-    _impl_active_extra "${_impl_contract}")
-host_validation_expect_inactive_correct_active_mutation_rejected(
-    "inactive correct Impl plus active extra owner"
-    "struct HostValidationRuntime::Impl final" "${_impl_contract}"
-    "${_impl_active_extra}")
 host_validation_require_depth("Impl top-level owner" "${_runtime}"
     "struct HostValidationRuntime::Impl final" 1)
 foreach(_field IN ITEMS
         "const RaylibHostConfig* config{};"
         "HostValidationStates states{};"
-        "PhysicalKeySnapshot death_input_snapshot{};")
+        "PhysicalKeySnapshot death_input_snapshot{};"
+        "bool generic_capture_complete{};")
     host_validation_require_count("Impl ownership" "${_impl}" "${_field}" 1)
 endforeach()
+host_validation_require_count("Impl constructor" "${_impl}"
+    "explicit Impl(" 1)
+host_validation_require_order("Impl stable owner initialization" "${_impl}"
+    "explicit Impl(const RaylibHostConfig& host_config,"
+    "settings::SettingsLoadStatus load_status) noexcept"
+    ": config(&host_config)"
+    "states.stage11b.load_status = load_status;"
+    "const RaylibHostConfig* config{};"
+    "HostValidationStates states{};"
+    "PhysicalKeySnapshot death_input_snapshot{};"
+    "bool generic_capture_complete{};")
 foreach(_forbidden IN ITEMS "std::vector" "std::shared_ptr" "make_unique")
     string(FIND "${_runtime_lexical}" "${_forbidden}" _position)
     if(NOT _position EQUAL -1)
@@ -1526,103 +1691,189 @@ host_validation_expect_exact_mutation_rejected("submitted early return"
     "host_validation::observe_stage17_submitted_actions("
     "return; host_validation::observe_stage17_submitted_actions(")
 
-# The temporary transition shim is also exact at its seven implementation
-# sites. This prevents a declaration-correct shim from returning detached,
-# stale, or independently owned validation state.
-set(_state_access_signature_stage10
-    "host_validation::Stage10ValidationState& HostValidationStateAccess::stage10(")
-set(_state_access_signature_stage11
-    "host_validation::Stage11ValidationState& HostValidationStateAccess::stage11(")
-set(_state_access_signature_stage11b
-    "host_validation::Stage11BValidationState& HostValidationStateAccess::stage11b(")
-set(_state_access_signature_stage11c
-    "host_validation::Stage11CHudValidationState& HostValidationStateAccess::stage11c(")
-set(_state_access_signature_stage11d
-    "host_validation::Stage11DLootValidationState& HostValidationStateAccess::stage11d(")
-set(_state_access_signature_stage17 [=[host_validation::Stage17SkillStonesValidationState&
-HostValidationStateAccess::stage17(]=])
-set(_state_access_signature_death
-    "const PhysicalKeySnapshot& HostValidationStateAccess::death_input_snapshot(")
-
-set(_state_access_contract_stage10 [=[
-host_validation::Stage10ValidationState& HostValidationStateAccess::stage10(
-    HostValidationRuntime& runtime) noexcept {
-    return runtime.impl_->states.stage10;
+# The public death snapshot getter is the only exposed view into validation
+# state.  Its exact return keeps death/pause on the Stage11D-after,
+# Stage17-before snapshot rather than the injected Stage17 return value.
+set(_death_snapshot_signature [=[const PhysicalKeySnapshot&
+HostValidationRuntime::death_input_snapshot(]=])
+set(_death_snapshot_contract [=[
+const PhysicalKeySnapshot&
+HostValidationRuntime::death_input_snapshot() const noexcept {
+    return impl_->death_input_snapshot;
 }
 ]=])
-set(_state_access_contract_stage11 [=[
-host_validation::Stage11ValidationState& HostValidationStateAccess::stage11(
-    HostValidationRuntime& runtime) noexcept {
-    return runtime.impl_->states.stage11;
-}
-]=])
-set(_state_access_contract_stage11b [=[
-host_validation::Stage11BValidationState& HostValidationStateAccess::stage11b(
-    HostValidationRuntime& runtime) noexcept {
-    return runtime.impl_->states.stage11b;
-}
-]=])
-set(_state_access_contract_stage11c [=[
-host_validation::Stage11CHudValidationState& HostValidationStateAccess::stage11c(
-    HostValidationRuntime& runtime) noexcept {
-    return runtime.impl_->states.stage11c;
-}
-]=])
-set(_state_access_contract_stage11d [=[
-host_validation::Stage11DLootValidationState& HostValidationStateAccess::stage11d(
-    HostValidationRuntime& runtime) noexcept {
-    return runtime.impl_->states.stage11d;
-}
-]=])
-set(_state_access_contract_stage17 [=[
-host_validation::Stage17SkillStonesValidationState&
-HostValidationStateAccess::stage17(HostValidationRuntime& runtime) noexcept {
-    return runtime.impl_->states.stage17;
-}
-]=])
-set(_state_access_contract_death [=[
-const PhysicalKeySnapshot& HostValidationStateAccess::death_input_snapshot(
-    const HostValidationRuntime& runtime) noexcept {
-    return runtime.impl_->death_input_snapshot;
-}
-]=])
-foreach(_accessor IN ITEMS
-        stage10 stage11 stage11b stage11c stage11d stage17 death)
-    set(_signature_variable "_state_access_signature_${_accessor}")
-    set(_contract_variable "_state_access_contract_${_accessor}")
-    host_validation_require_active_exact_definition(
-        "state-access ${_accessor} exact implementation"
-        "${_runtime}" "${_runtime_lexical}"
-        "${${_signature_variable}}" "${${_contract_variable}}")
-endforeach()
+host_validation_require_active_exact_definition(
+    "public death snapshot exact implementation"
+    "${_runtime}" "${_runtime_lexical}"
+    "${_death_snapshot_signature}" "${_death_snapshot_contract}")
 host_validation_extract_sanitized_block("${_runtime_lexical}"
-    "${_state_access_signature_stage17}" _state_access_stage17_lexical)
+    "${_death_snapshot_signature}" _death_snapshot_lexical)
 host_validation_expect_exact_mutation_rejected(
-    "stage17 accessor returns independent static state"
-    "${_state_access_stage17_lexical}" "${_state_access_contract_stage17}"
-    "return runtime.impl_->states.stage17;"
-    "static host_validation::Stage17SkillStonesValidationState detached_state{}; return detached_state;")
-host_validation_extract_sanitized_block("${_runtime_lexical}"
-    "${_state_access_signature_death}" _state_access_death_lexical)
-host_validation_expect_exact_mutation_rejected(
-    "death accessor returns independent static snapshot"
-    "${_state_access_death_lexical}" "${_state_access_contract_death}"
-    "return runtime.impl_->death_input_snapshot;"
+    "public death getter returns detached snapshot"
+    "${_death_snapshot_lexical}" "${_death_snapshot_contract}"
+    "return impl_->death_input_snapshot;"
     "static PhysicalKeySnapshot detached_snapshot{}; return detached_snapshot;")
+
+# Every Task 7C facade method has one real, unconditional, namespace-level
+# runtime definition.  Stage-specific guards lock the detailed algorithms;
+# this central guard locks the exact public signatures and ownership surface.
+foreach(_method IN ITEMS
+        observe_pause_transition
+        prepare_hud_snapshot
+        observe_hud
+        observe_active_skill_draw
+        observe_ground_loot
+        observe_presented_frame
+        observe_capture_result
+        write_summaries)
+    host_validation_require_count("Task 7C active runtime definition"
+        "${_runtime}" "HostValidationRuntime::${_method}(" 1)
+    host_validation_require_count("Task 7C lexical runtime definition"
+        "${_runtime_lexical}" "HostValidationRuntime::${_method}(" 1)
+    host_validation_require_depth("Task 7C runtime definition"
+        "${_runtime}" "HostValidationRuntime::${_method}(" 1)
+endforeach()
+host_validation_normalize_cpp_surface("${_runtime}" _runtime_normalized)
+host_validation_require_regex_count("pause-transition exact definition"
+    "${_runtime_normalized}"
+    "void[ ]+HostValidationRuntime::observe_pause_transition\\([ ]*bool[ ]+was_open,[ ]*bool[ ]+is_open[ ]*\\)[ ]+noexcept[ ]*\\{" 1)
+host_validation_require_regex_count("HUD preparation exact definition"
+    "${_runtime_normalized}"
+    "void[ ]+HostValidationRuntime::prepare_hud_snapshot\\([ ]*dungeon::DungeonSnapshot&[ ]+snapshot[ ]*\\)[ ]+noexcept[ ]*\\{" 1)
+host_validation_require_regex_count("HUD observer exact definition"
+    "${_runtime_normalized}"
+    "void[ ]+HostValidationRuntime::observe_hud\\([ ]*const[ ]+dungeon::DungeonSnapshot&[ ]+snapshot,[ ]*const[ ]+HudViewModel&[ ]+model,[ ]*HudNoticeView[ ]+notices,[ ]*bool[ ]+draw_debug,[ ]*int[ ]+screen_width,[ ]*int[ ]+screen_height[ ]*\\)[ ]+noexcept[ ]*\\{" 1)
+host_validation_require_regex_count("active-skill observer exact definition"
+    "${_runtime_normalized}"
+    "void[ ]+HostValidationRuntime::observe_active_skill_draw\\([ ]*const[ ]+dungeon::DungeonSnapshot&[ ]+snapshot,[ ]*const[ ]+ActiveSkillDrawRuntimeStatus&[ ]+draw_status[ ]*\\)[ ]+noexcept[ ]*\\{" 1)
+host_validation_require_regex_count("ground-loot observer exact definition"
+    "${_runtime_normalized}"
+    "void[ ]+HostValidationRuntime::observe_ground_loot\\([ ]*const[ ]+dungeon::DungeonSnapshot&[ ]+snapshot,[ ]*const[ ]+PauseMenuState&[ ]+pause_menu,[ ]*const[ ]+DungeonRenderStatus&[ ]+render_status,[ ]*settings::LootFilterMode[ ]+loot_filter,[ ]*const[ ]+GroundLootView&[ ]+ground_loot_view,[ ]*HudNoticeView[ ]+notices,[ ]*const[ ]+items::ItemOwnershipState[*][ ]+ownership,[ ]*int[ ]+screen_width,[ ]*int[ ]+screen_height[ ]*\\)[ ]+noexcept[ ]*\\{" 1)
+host_validation_require_regex_count("presented observer exact definition"
+    "${_runtime_normalized}"
+    "PresentationDecision[ ]+HostValidationRuntime::observe_presented_frame\\([ ]*const[ ]+dungeon::DungeonSnapshot&[ ]+snapshot,[ ]*const[ ]+PauseMenuState&[ ]+pause_menu,[ ]*bool[ ]+pause_cjk_ready[ ]*\\)[ ]+noexcept[ ]*\\{" 1)
+host_validation_require_regex_count("capture-result exact definition"
+    "${_runtime_normalized}"
+    "void[ ]+HostValidationRuntime::observe_capture_result\\([ ]*CaptureOwner[ ]+owner,[ ]*bool[ ]+succeeded[ ]*\\)[ ]+noexcept[ ]*\\{" 1)
+host_validation_require_regex_count("summary exact definition"
+    "${_runtime_normalized}"
+    "void[ ]+HostValidationRuntime::write_summaries\\([ ]*CleanShutdownState[ ]+clean_shutdown_state,[ ]*const[ ]+PauseMenuState&[ ]+pause_menu[ ]*\\)[ ]+noexcept[ ]*\\{" 1)
+host_validation_require_count("removed runtime transition shim"
+    "${_runtime}" "HostValidationStateAccess" 0)
+host_validation_require_count("removed lexical runtime transition shim"
+    "${_runtime_lexical}" "HostValidationStateAccess" 0)
+
+# Freeze the decision values at the pre-capture point.  Private pending-field
+# names stay implementation details, but the six completion values, visibility
+# formula, prior generic result, single Stage17 query, owner priority and return
+# value are the public observable contract.
+host_validation_extract_sanitized_block("${_runtime}"
+    "PresentationDecision HostValidationRuntime::observe_presented_frame("
+    _presented_observer)
+host_validation_mask_non_direct_executable_scopes(
+    "${_presented_observer}" _presented_observer_direct)
+host_validation_require_canonical_order("presented decision construction"
+    "${_presented_observer_direct}"
+    "const bool stage10_reached ="
+    "const bool stage11_reached ="
+    "const bool stage11b_reached ="
+    "const bool stage11c_reached ="
+    "const bool stage11d_reached ="
+    "const bool stage17_reached ="
+    "const bool stage11b_visible_capture ="
+    "const bool stage11b_paused_visible_capture ="
+    "PresentationDecision decision{};"
+    "decision.validation_complete ="
+    "decision.generic_capture_visible ="
+    "decision.generic_capture_complete = impl_->generic_capture_complete;"
+    "decision.stage17_capture_path = host_validation::stage17_capture_path("
+    "decision.capture_owner = CaptureOwner::stage17;"
+    "decision.capture_owner = CaptureOwner::generic_validation;"
+    "return decision;")
+foreach(_exact_decision IN ITEMS
+        "decision.validation_complete = stage10_reached || stage11_reached || stage11b_reached || stage11c_reached || stage11d_reached || stage17_reached;"
+        "decision.generic_capture_visible = decision.validation_complete || impl_->states.stage11d.target_visible || stage11b_visible_capture || stage11b_paused_visible_capture;"
+        "decision.generic_capture_complete = impl_->generic_capture_complete;"
+        "decision.stage17_capture_path = host_validation::stage17_capture_path( *impl_->config, impl_->states.stage17);"
+        "if (decision.stage17_capture_path.has_value()) { decision.capture_owner = CaptureOwner::stage17; } else if (decision.generic_capture_visible && !decision.generic_capture_complete && impl_->config->validation_capture_file.has_value()) { decision.capture_owner = CaptureOwner::generic_validation; }"
+        "return decision;")
+    host_validation_require_canonical_direct_statement(
+        "exact presented decision" "${_presented_observer_direct}"
+        "${_exact_decision}" 1)
+endforeach()
+set(_stage17_path_multiline [=[decision.stage17_capture_path = host_validation::stage17_capture_path(
+        *impl_->config, impl_->states.stage17);]=])
+set(_stage17_path_compact [=[decision.stage17_capture_path=host_validation::stage17_capture_path(*impl_->config,impl_->states.stage17);]=])
+string(REPLACE "${_stage17_path_multiline}" "${_stage17_path_compact}"
+    _presented_harmless_formatting "${_presented_observer_direct}")
+if("${_presented_harmless_formatting}" STREQUAL
+        "${_presented_observer_direct}")
+    message(FATAL_ERROR
+        "Host validation Stage17 formatting mutation anchor is missing")
+endif()
+host_validation_require_canonical_direct_statement(
+    "harmless compact Stage17 path formatting"
+    "${_presented_harmless_formatting}" "${_stage17_path_compact}" 1)
+host_validation_require_count("single Stage17 path query"
+    "${_presented_observer}" "host_validation::stage17_capture_path(" 1)
+
+host_validation_extract_sanitized_block("${_runtime}"
+    "void HostValidationRuntime::observe_capture_result("
+    _capture_result_observer)
+host_validation_mask_non_direct_executable_scopes(
+    "${_capture_result_observer}" _capture_result_direct)
+host_validation_normalize_cpp_surface(
+    "${_capture_result_direct}" _capture_result_normalized)
+host_validation_require_canonical_count("generic capture completion promotion"
+    "${_capture_result_direct}"
+    "impl_->generic_capture_complete = true;" 1)
+host_validation_require_canonical_count("paused capture exact assignment"
+    "${_capture_result_direct}"
+    "impl_->states.stage11b.pause_capture_while_paused = impl_->pending_stage11b_paused_visible_capture;" 1)
+if(_capture_result_normalized MATCHES
+        "pause_capture_while_paused[ ]*=[^;]*[|][|]")
+    message(FATAL_ERROR
+        "Host validation capture result OR-latches paused capture state")
+endif()
+host_validation_require_count("Stage17 capture completion callback"
+    "${_capture_result_observer}"
+    "host_validation::mark_stage17_capture_complete(" 1)
+
+host_validation_extract_sanitized_block("${_runtime}"
+    "void HostValidationRuntime::write_summaries(" _summary_writer)
+host_validation_mask_non_direct_executable_scopes(
+    "${_summary_writer}" _summary_writer_direct)
+host_validation_require_canonical_order("summary writer exact order"
+    "${_summary_writer_direct}"
+    "impl_->states.stage17.clean_shutdown_exact_ready = clean_shutdown_state == CleanShutdownState::ready;"
+    "host_validation::write_stage11b_validation_summary("
+    "host_validation::write_stage11c_hud_validation_summary("
+    "host_validation::write_stage11d_loot_validation_summary("
+    "host_validation::write_stage17_validation_summary(")
+foreach(_summary_call IN ITEMS
+        "host_validation::write_stage11b_validation_summary("
+        "host_validation::write_stage11c_hud_validation_summary("
+        "host_validation::write_stage11d_loot_validation_summary("
+        "host_validation::write_stage17_validation_summary(")
+    host_validation_require_count("unique summary writer call"
+        "${_summary_writer_direct}" "${_summary_call}" 1)
+endforeach()
 
 # Bind only the executable Host entry and drain helper. Comments, literals,
 # inactive branches and cross-function decoys have already been removed.
 host_validation_extract_sanitized_block("${_host}"
     "HostExitCode run_raylib_host(" _run_host)
 host_validation_extract_sanitized_block("${_host}" "void drain_events(" _drain)
+host_validation_mask_non_direct_executable_scopes(
+    "${_run_host}" _run_host_direct)
 host_validation_require_depth("Host entry top-level definition" "${_host}"
     "HostExitCode run_raylib_host(" 1)
 host_validation_require_depth("drain helper top-level definition" "${_host}"
     "void drain_events(" 2)
 
-# Scope the Task 7B ownership boundary to the executable death segment and the
-# real fixed-step loop.  Presentation-only Stage10/11 reads later in Host stay
-# legal until Task 7C.
+# Scope the existing Task 7B ownership boundary to the executable death segment
+# and the real fixed-step loop. Task 7C additionally removes every remaining
+# presentation/capture/summary Stage owner from Host below.
 string(FIND "${_run_host}"
     "DeathInputGate death_gate = host_death_input_gate(" _death_segment_begin)
 string(FIND "${_run_host}" "bool escape_consumed = false;"
@@ -1724,6 +1975,115 @@ if(NOT _old_state_owner EQUAL -1)
     message(FATAL_ERROR "Host still owns HostValidationStates directly")
 endif()
 
+# Host may include and call only the public validation facade. It must not know
+# a Stage state type/field, the removed transition shim, or any Stage
+# presentation/capture/report implementation after Task 7C.
+foreach(_forbidden_host_token IN ITEMS
+        "HostValidationStateAccess"
+        "host_validation::"
+        "host_validation_"
+        "Stage10ValidationState"
+        "Stage11ValidationState"
+        "Stage11BValidationState"
+        "Stage11CHudValidationState"
+        "Stage11DLootValidationState"
+        "Stage17SkillStonesValidationState"
+        "stage10_validation_state"
+        "stage11_validation_state"
+        "stage11b_validation_state"
+        "stage11c_validation_state"
+        "stage11d_validation_state"
+        "stage17_validation_state"
+        "stage10_validation_captured"
+        "observe_stage17_draw_runtime("
+        "stage17_capture_path("
+        "mark_stage17_capture_complete("
+        "stage17_validation_complete("
+        "stage11d_target_visible("
+        "stage11d_record_semantics("
+        "stage11d_validation_active("
+        "write_stage11b_validation_summary("
+        "write_stage11c_hud_validation_summary("
+        "write_stage11d_loot_validation_summary("
+        "write_stage17_validation_summary(")
+    host_validation_require_count("removed direct Host validation owner"
+        "${_host_lexical}" "${_forbidden_host_token}" 0)
+endforeach()
+
+# Every new facade seam is consumed once by the ordinary Host path. Detailed
+# relative-position and adversarial ownership mutations live in the dedicated
+# sequence and Stage guards; these assertions prevent omitted/discarded facade
+# integration in the central architecture guard.
+foreach(_task7c_call IN ITEMS
+        "validation_runtime->observe_pause_transition("
+        "validation_runtime->prepare_hud_snapshot("
+        "validation_runtime->observe_hud("
+        "validation_runtime->observe_active_skill_draw("
+        "validation_runtime->observe_ground_loot("
+        "validation_runtime->observe_presented_frame("
+        "validation_runtime->observe_capture_result("
+        "validation_runtime->write_summaries(")
+    host_validation_require_count("Task 7C Host facade call"
+        "${_run_host}" "${_task7c_call}" 1)
+    host_validation_require_count("direct Task 7C Host facade call"
+        "${_run_host_direct}" "${_task7c_call}" 1)
+endforeach()
+host_validation_require_count("typed presented decision owner" "${_run_host}"
+    "const PresentationDecision decision =" 1)
+host_validation_require_count("direct typed presented decision owner"
+    "${_run_host_direct}" "const PresentationDecision decision =" 1)
+host_validation_normalize_cpp_surface(
+    "${_run_host_direct}" _run_host_normalized)
+host_validation_require_regex_count("pause-transition Host binding"
+    "${_run_host_normalized}"
+    "validation_runtime->observe_pause_transition\\([ ]*pause_was_open,[ ]*pause_open[ ]*\\)" 1)
+host_validation_require_regex_count("HUD preparation Host binding"
+    "${_run_host_normalized}"
+    "validation_runtime->prepare_hud_snapshot\\([ ]*current[ ]*\\)" 1)
+host_validation_require_regex_count("HUD observer Host binding"
+    "${_run_host_normalized}"
+    "validation_runtime->observe_hud\\([ ]*current,[ ]*renderer[.]hud_model\\([ ]*\\),[ ]*renderer[.]hud_notice_view\\([ ]*\\),[ ]*draw_debug,[ ]*GetScreenWidth\\([ ]*\\),[ ]*GetScreenHeight\\([ ]*\\)[ ]*\\)" 1)
+host_validation_require_regex_count("active-skill observer Host binding"
+    "${_run_host_normalized}"
+    "validation_runtime->observe_active_skill_draw\\([ ]*presented_snapshot,[ ]*renderer[.]active_skill_draw_status\\([ ]*\\)[ ]*\\)" 1)
+host_validation_require_regex_count("ground-loot observer Host binding"
+    "${_run_host_normalized}"
+    "validation_runtime->observe_ground_loot\\([ ]*current,[ ]*pause_menu,[ ]*runtime[.]render_status\\([ ]*\\),[ ]*presented_loot_filter,[ ]*ground_loot_view,[ ]*renderer[.]hud_notice_view\\([ ]*\\),[ ]*runtime[.]item_state\\([ ]*\\),[ ]*GetScreenWidth\\([ ]*\\),[ ]*GetScreenHeight\\([ ]*\\)[ ]*\\)" 1)
+host_validation_require_regex_count("presented-decision Host binding"
+    "${_run_host_normalized}"
+    "const PresentationDecision decision[ ]*=[ ]*validation_runtime->observe_presented_frame\\([ ]*current,[ ]*pause_menu,[ ]*pause_cjk_ready[ ]*\\)" 1)
+host_validation_require_regex_count("capture-result Host binding"
+    "${_run_host_normalized}"
+    "validation_runtime->observe_capture_result\\([ ]*selected_capture_owner,[ ]*selected_validation_capture_succeeded[ ]*\\)" 1)
+host_validation_require_regex_count("summary Host binding"
+    "${_run_host_normalized}"
+    "validation_runtime->write_summaries\\([ ]*runtime[.]clean_shutdown_state\\([ ]*\\),[ ]*pause_menu[ ]*\\)" 1)
+host_validation_require_canonical_count("same-frame generic completion formula"
+    "${_run_host_direct}"
+    "const bool effective_generic_complete = decision.generic_capture_complete || selected_generic_capture_succeeded_now" 1)
+host_validation_require_canonical_count("same-frame validation exit predicate"
+    "${_run_host_direct}"
+    "if (decision.validation_complete && (!config.validation_capture_file.has_value() || effective_generic_complete)) { begin_clean_exit(); }" 1)
+host_validation_require_canonical_order("Task 7C Host lifecycle"
+    "${_run_host_direct}"
+    "validation_runtime->observe_pause_transition("
+    "const float frame_seconds = GetFrameTime();"
+    "audio.update("
+    "validation_runtime->prepare_hud_snapshot("
+    "presented_snapshot = current;"
+    "renderer.observe_presented_hud_frame("
+    "validation_runtime->observe_hud("
+    "BeginDrawing();"
+    "validation_runtime->observe_active_skill_draw("
+    "validation_runtime->observe_ground_loot("
+    "const PresentationDecision decision ="
+    "std::optional<std::string> capture_path ="
+    "const bool selected_validation_capture_succeeded ="
+    "validation_runtime->observe_capture_result("
+    "const bool effective_generic_complete ="
+    "validation_runtime->write_summaries("
+    "audio.shutdown();")
+
 host_validation_require_order("Host initialization" "${_run_host}"
     "HostValidationRuntime::create(config, loaded.status)"
     "if (validation_runtime == nullptr)"
@@ -1744,7 +2104,7 @@ host_validation_require_order("Host physical input split" "${_run_host}"
     "const PhysicalKeySnapshot stage17_physical_keys ="
     "validation_runtime->inject_physical_edges("
     "const PhysicalKeySnapshot& physical_keys ="
-    "HostValidationStateAccess::death_input_snapshot("
+    "validation_runtime->death_input_snapshot("
     "gameplay_controls_physically_released("
     "stage17_physical_keys"
     "runtime.acknowledge_gameplay_rearmed();"
@@ -1752,8 +2112,8 @@ host_validation_require_order("Host physical input split" "${_run_host}"
     "input_settings, stage17_physical_keys)")
 host_validation_require_count("Host facade injection" "${_run_host}"
     "validation_runtime->inject_physical_edges(" 1)
-host_validation_require_count("cached Stage11D accessor" "${_run_host}"
-    "HostValidationStateAccess::death_input_snapshot(" 1)
+host_validation_require_count("public cached Stage11D accessor" "${_run_host}"
+    "validation_runtime->death_input_snapshot(" 1)
 foreach(_cached_consumer IN ITEMS
         "frame_input.keys, physical_keys)"
         "pause_was_open && physical_keys.mouse_left"
@@ -1864,46 +2224,34 @@ foreach(_direct_token IN ITEMS
         "${_direct_token}" 2)
 endforeach()
 
-# The temporary access shim is restricted to its declaration, implementation,
-# and the Host transition surface.
+# Task 7C removes the temporary access shim from the entire raylib platform
+# surface, including inactive preprocessor branches. Comments and literals do
+# not count as code, but no declaration, definition, or use may remain.
 file(GLOB _raylib_shim_surfaces LIST_DIRECTORIES FALSE
     "${SOURCE_ROOT}/src/platform/raylib/*.h"
     "${SOURCE_ROOT}/src/platform/raylib/*.hpp"
     "${SOURCE_ROOT}/src/platform/raylib/*.cpp")
-set(_shim_allowed_surfaces
-    "${_host_validation_header}"
-    "${_host_validation_state}"
-    "${_host_source}"
-    "${_host_validation_runtime}")
 foreach(_source IN LISTS _raylib_shim_surfaces)
-    list(FIND _shim_allowed_surfaces "${_source}" _allowed_index)
-    if(NOT _allowed_index EQUAL -1)
-        continue()
-    endif()
     file(READ "${_source}" _source_text)
-    string(FIND "${_source_text}" "HostValidationStateAccess" _raw_position)
-    if(_raw_position EQUAL -1)
-        continue()
-    endif()
     host_validation_lexical_token_present(
-        "${_source_text}" "HostValidationStateAccess" _shim_escaped)
-    if(_shim_escaped)
+        "${_source_text}" "HostValidationStateAccess" _shim_remains)
+    if(_shim_remains)
         message(FATAL_ERROR
-            "Host validation transition shim escaped its approved surfaces: ${_source}")
+            "Host validation removed transition shim remains: ${_source}")
     endif()
 endforeach()
-set(_shim_header_escape_fixture [=[
+set(_removed_shim_fixture [=[
 #pragma once
 #ifdef _WIN32
 inline void forbidden_header_escape(HostValidationStateAccess& access);
 #endif
 ]=])
 host_validation_lexical_token_present(
-    "${_shim_header_escape_fixture}" "HostValidationStateAccess"
-    _shim_header_escape_detected)
-if(NOT _shim_header_escape_detected)
+    "${_removed_shim_fixture}" "HostValidationStateAccess"
+    _removed_shim_detected)
+if(NOT _removed_shim_detected)
     message(FATAL_ERROR
-        "Host validation transition shim guard accepted a header escape fixture")
+        "Host validation removed-shim guard accepted a header escape fixture")
 endif()
 
 # Domain modules cannot learn about the platform validation facade or any

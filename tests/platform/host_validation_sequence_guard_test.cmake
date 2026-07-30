@@ -145,17 +145,6 @@ if(DEFINED STAGE17_SEQUENCE_MUTATION)
             _host_text "${_host_text}")
         set(_stage17_named_mutation_consumed TRUE)
     elseif(STAGE17_SEQUENCE_MUTATION STREQUAL
-            "draw_observer_before_renderer_draw")
-        set(_draw_observer [=[            observe_stage17_draw_runtime(config, *stage17_validation_state,
-                presented_snapshot, renderer.active_skill_draw_status());
-]=])
-        string(REPLACE "${_draw_observer}" "" _host_text "${_host_text}")
-        string(REPLACE
-            "            const GroundLootView ground_loot_view = [&]() noexcept {"
-            "${_draw_observer}            const GroundLootView ground_loot_view = [&]() noexcept {"
-            _host_text "${_host_text}")
-        set(_stage17_named_mutation_consumed TRUE)
-    elseif(STAGE17_SEQUENCE_MUTATION STREQUAL
             "drain_missing_stage17_state")
         string(REPLACE "validation_runtime.get());" "nullptr);"
             _host_text "${_host_text}")
@@ -189,13 +178,6 @@ if(DEFINED STAGE17_SEQUENCE_MUTATION)
             _host_text "${_host_text}")
         set(_stage17_named_mutation_consumed TRUE)
     elseif(STAGE17_SEQUENCE_MUTATION STREQUAL
-            "draw_observer_unbraced_dead_branch")
-        string(REPLACE
-            "            observe_stage17_draw_runtime(config, *stage17_validation_state,"
-            "            if (false)\n                observe_stage17_draw_runtime(config, *stage17_validation_state,"
-            _host_text "${_host_text}")
-        set(_stage17_named_mutation_consumed TRUE)
-    elseif(STAGE17_SEQUENCE_MUTATION STREQUAL
             "inactive_retained_report_if_false")
         string(REPLACE
             "[[nodiscard]] bool stage17_draw_runtime_valid("
@@ -226,6 +208,13 @@ set(_input_header
     "${SOURCE_ROOT}/src/platform/raylib/host_validation_input.hpp")
 set(_input_source
     "${SOURCE_ROOT}/src/platform/raylib/host_validation_input.cpp")
+set(_host_validation_header
+    "${SOURCE_ROOT}/src/platform/raylib/host_validation.hpp")
+set(_host_validation_runtime
+    "${SOURCE_ROOT}/src/platform/raylib/host_validation_runtime.cpp")
+if(DEFINED HOST_VALIDATION_RUNTIME_OVERRIDE)
+    set(_host_validation_runtime "${HOST_VALIDATION_RUNTIME_OVERRIDE}")
+endif()
 set(_navigation_header
     "${SOURCE_ROOT}/src/platform/raylib/host_validation_navigation.hpp")
 set(_navigation_source
@@ -288,6 +277,7 @@ if(DEFINED CMAKE_OVERRIDE)
 endif()
 foreach(_required IN ITEMS
         "${_input_header}" "${_input_source}"
+        "${_host_validation_header}" "${_host_validation_runtime}"
         "${_navigation_header}" "${_navigation_source}"
         "${_stage10_11_header}" "${_stage10_11_source}"
         "${_stage11b_header}" "${_stage11b_source}"
@@ -301,6 +291,8 @@ foreach(_required IN ITEMS
 endforeach()
 file(READ "${_input_header}" _input_header_text)
 file(READ "${_input_source}" _input_source_text)
+file(READ "${_host_validation_header}" _host_validation_header_text)
+file(READ "${_host_validation_runtime}" _host_validation_runtime_text)
 file(READ "${_navigation_header}" _navigation_header_text)
 file(READ "${_navigation_source}" _navigation_source_text)
 file(READ "${_stage10_11_header}" _stage10_11_header_text)
@@ -369,6 +361,10 @@ stage17_mask_cpp_conditionals("${_stage17_runtime_text}"
     _stage17_runtime_active_text)
 stage17_mask_cpp_conditionals("${_stage17_report_text}"
     _stage17_report_active_text)
+stage17_mask_cpp_conditionals("${_host_validation_header_text}"
+    _host_validation_header_active_text)
+stage17_mask_cpp_conditionals("${_host_validation_runtime_text}"
+    _host_validation_runtime_active_text)
 
 function(stage11d_find_host_code_token TOKEN OUT_POSITION)
     string(FIND "${_host_text}" "${TOKEN}" _raw_position)
@@ -716,6 +712,10 @@ evidence_sanitize_cpp_for_scan("${_stage17_runtime_active_text}"
     _stage17_runtime_code)
 evidence_sanitize_cpp_for_scan("${_stage17_report_active_text}"
     _stage17_report_code)
+evidence_sanitize_cpp_for_scan("${_host_validation_header_active_text}"
+    _host_validation_header_code)
+evidence_sanitize_cpp_for_scan("${_host_validation_runtime_active_text}"
+    _host_validation_runtime_code)
 stage17_active_report_literal_surface("${_stage17_report_text}"
     _stage17_report_literal_surface)
 if(NOT DEFINED HOST_OVERRIDE)
@@ -1473,7 +1473,7 @@ else()
         "const bool gameplay_rearm_was_required ="
         "runtime.gameplay_rearm_required();"
         "validation_runtime->inject_physical_edges("
-        "HostValidationStateAccess::death_input_snapshot("
+        "validation_runtime->death_input_snapshot("
         "gameplay_controls_physically_released("
         "map_host_frame_input(")
     set(_rearm_acknowledgement "runtime.acknowledge_gameplay_rearmed();")
@@ -1613,299 +1613,319 @@ function(assert_unique_ordered_tokens LABEL SURFACE)
     endforeach()
 endfunction()
 
-# Shared, non-fatal lifecycle validator. Production converts its error code to
-# a fatal diagnostic; direct in-memory negative fixtures assert the same code.
-macro(stage17_lifecycle_competition_token TOKEN EXPECTED_DEPTH)
-    if(_error STREQUAL "")
-        string(FIND "${_loop}" "${TOKEN}" _position)
-        if(_position EQUAL -1)
-            set(_error "capture_competition_missing")
-        else()
-            math(EXPR _token_after "${_position} + 1")
-            string(SUBSTRING "${_loop}" ${_token_after} -1 _remaining)
-            string(FIND "${_remaining}" "${TOKEN}" _duplicate)
-            if(NOT _duplicate EQUAL -1)
-                set(_error "capture_competition_duplicate")
-            elseif(NOT _previous EQUAL -1 AND _position LESS _previous)
-                set(_error "capture_competition_order")
-            else()
-                cpp_token_brace_depth("${_loop}" ${_position} _actual_depth)
-                if(NOT _actual_depth EQUAL ${EXPECTED_DEPTH})
-                    set(_error "capture_competition_scope")
-                endif()
-            endif()
-            set(_previous ${_position})
-        endif()
-    endif()
-endmacro()
-
-function(stage17_capture_lifecycle_status HOST_ACTIVE OUT_ERROR)
-    set(_error "")
-    evidence_find_cpp_code_token("${HOST_ACTIVE}" "HostExitCode run_raylib_host(" _run_begin)
-    if(_run_begin EQUAL -1)
-        set(${OUT_ERROR} "missing_run_host" PARENT_SCOPE)
-        return()
-    endif()
-    string(SUBSTRING "${HOST_ACTIVE}" ${_run_begin} -1 _run_tail)
-    evidence_extract_cpp_function_block("${_run_tail}" "HostExitCode run_raylib_host(" _run)
-    string(FIND "${_run}" "while (!exit_requested) {" _loop_begin)
-    if(_loop_begin EQUAL -1)
-        set(${OUT_ERROR} "missing_loop" PARENT_SCOPE)
-        return()
-    endif()
-    math(EXPR _after "${_loop_begin} + 1")
-    string(SUBSTRING "${_run}" ${_after} -1 _loop_tail)
-    string(FIND "${_loop_tail}" "{" _open_relative)
-    math(EXPR _open "${_loop_begin} + ${_open_relative}")
-    string(LENGTH "${_run}" _length)
-    math(EXPR _last "${_length} - 1")
-    set(_depth 0)
-    set(_end -1)
-    foreach(_index RANGE ${_open} ${_last})
-        string(SUBSTRING "${_run}" ${_index} 1 _character)
-        if(_character STREQUAL "{")
-            math(EXPR _depth "${_depth} + 1")
-        elseif(_character STREQUAL "}")
-            math(EXPR _depth "${_depth} - 1")
-            if(_depth EQUAL 0)
-                set(_end ${_index})
-                break()
-            endif()
+function(task7c_assert_sequence_contract)
+    task7b_normalize("${_host_validation_header_code}"
+        _task7c_header_normalized)
+    foreach(_task7c_declaration IN ITEMS
+            "death_input_snapshot() const noexcept;"
+            "void observe_active_skill_draw("
+            "PresentationDecision observe_presented_frame("
+            "void write_summaries(")
+        task7b_count_token("${_task7c_header_normalized}"
+            "${_task7c_declaration}" _task7c_declaration_count)
+        if(NOT _task7c_declaration_count EQUAL 1)
+            message(FATAL_ERROR
+                "Host validation Task 7C facade declaration is missing or duplicated: ${_task7c_declaration}")
         endif()
     endforeach()
-    if(_end EQUAL -1)
-        set(${OUT_ERROR} "unbalanced_loop" PARENT_SCOPE)
-        return()
-    endif()
-    math(EXPR _loop_length "${_end} - ${_loop_begin} + 1")
-    string(SUBSTRING "${_run}" ${_loop_begin} ${_loop_length} _loop)
 
-    set(_previous -1)
-    stage17_lifecycle_competition_token("stage17_capture_path(" 1)
-    stage17_lifecycle_competition_token(
-        "const bool stage17_capture_requested = capture_path.has_value();" 1)
-    stage17_lifecycle_competition_token(
-        "if (!capture_path.has_value() && stage12_item_baseline_frame) {" 1)
-    stage17_lifecycle_competition_token(
-        "if (!capture_path.has_value()\n                    && (validation_reached || loot_validation_visible_capture" 1)
-    stage17_lifecycle_competition_token(
-        "if (death_gate.screenshot || (config.validation_request_screenshot" 1)
-    stage17_lifecycle_competition_token(
-        "} else if (!capture_path.has_value()\n                    && config.validation_capture_file.has_value()" 2)
-    stage17_lifecycle_competition_token(
-        "} else if (!capture_path.has_value()) {" 2)
-    stage17_lifecycle_competition_token("const bool capture_succeeded =" 1)
-    if(NOT _error STREQUAL "")
-        set(${OUT_ERROR} "${_error}" PARENT_SCOPE)
-        return()
-    endif()
-    string(FIND "${_loop}" "mark_stage17_capture_complete(" _mark_position)
-    if(_mark_position EQUAL -1)
-        set(${OUT_ERROR} "capture_mark_missing" PARENT_SCOPE)
-        return()
-    endif()
-    cpp_token_brace_depth("${_loop}" ${_mark_position} _mark_depth)
-    if(NOT _mark_depth EQUAL 2)
-        set(${OUT_ERROR} "capture_mark_scope" PARENT_SCOPE)
-        return()
-    endif()
-    string(FIND "${_run}" "stage17_capture_path(" _request_position)
-    string(FIND "${_run}" "write_stage17_validation_summary(" _summary_position)
-    if(_request_position EQUAL -1 OR _summary_position EQUAL -1
-            OR NOT _request_position LESS _summary_position)
-        set(${OUT_ERROR} "capture_summary_order" PARENT_SCOPE)
-        return()
-    endif()
-    math(EXPR _return_window_length "${_summary_position} - ${_request_position}")
-    string(SUBSTRING "${_run}" ${_request_position} ${_return_window_length}
-        _return_window)
-    string(FIND "${_return_window}" "return" _return_position)
-    if(NOT _return_position EQUAL -1)
-        set(${OUT_ERROR} "capture_early_return" PARENT_SCOPE)
-        return()
-    endif()
-    set(${OUT_ERROR} "" PARENT_SCOPE)
-endfunction()
-
-# This validation deliberately starts from the complete, active host source.
-# It rejects evidence copied into a lambda, a different function, comments, or
-# an inactive branch before narrowing to the one executable host loop.
-function(assert_stage17_capture_lifecycle HOST_SOURCE LABEL)
-    stage17_mask_cpp_conditionals("${HOST_SOURCE}" _host_active)
-    stage17_capture_lifecycle_status("${_host_active}" _lifecycle_error)
-    if(NOT _lifecycle_error STREQUAL "")
-        message(FATAL_ERROR "Stage17 lifecycle ${LABEL} rejected: ${_lifecycle_error}")
-    endif()
-    evidence_find_cpp_code_token("${_host_active}" "HostExitCode run_raylib_host("
-        _run_begin)
-    if(_run_begin EQUAL -1)
-        message(FATAL_ERROR "Stage17 lifecycle ${LABEL} is missing run_raylib_host")
-    endif()
-    string(SUBSTRING "${_host_active}" ${_run_begin} -1 _run_tail)
-    evidence_extract_cpp_function_block("${_run_tail}"
-        "HostExitCode run_raylib_host(" _run_host)
-    evidence_extract_cpp_function_block("${_host_active}"
-        "bool present_frame_and_maybe_capture(" _present_helper)
-
-    set(_all_active "${_host_active}\n${_stage17_report_active_text}\n${_stage17_runtime_active_text}\n${_stage17_header_active_text}")
-    foreach(_raylib_api IN ITEMS "EndDrawing\\(" "LoadImageFromScreen\\(" "ExportImage\\(")
-        count_nonempty_regex_matches("${_all_active}" "${_raylib_api}" _api_count)
-        if(NOT _api_count EQUAL 1)
-            message(FATAL_ERROR "Stage17 lifecycle ${LABEL} raylib API is not helper-owned: ${_raylib_api}")
-        endif()
-    endforeach()
-    assert_unique_ordered_host_tokens("Stage17 ${LABEL} present helper"
-        "${_present_helper}" 1 "EndDrawing();" "LoadImageFromScreen();"
-        "ExportImage(image, path);")
-
-    string(FIND "${_run_host}" "while (!exit_requested) {" _loop_begin)
-    if(_loop_begin EQUAL -1)
-        message(FATAL_ERROR "Stage17 lifecycle ${LABEL} cannot isolate host loop")
-    endif()
-    math(EXPR _loop_after "${_loop_begin} + 1")
-    string(SUBSTRING "${_run_host}" ${_loop_after} -1 _loop_tail)
-    string(FIND "${_loop_tail}" "{" _loop_open_relative)
-    math(EXPR _loop_open "${_loop_begin} + ${_loop_open_relative}")
-    string(LENGTH "${_run_host}" _run_length)
-    math(EXPR _run_last "${_run_length} - 1")
-    set(_loop_depth 0)
-    set(_loop_end -1)
-    foreach(_index RANGE ${_loop_open} ${_run_last})
-        string(SUBSTRING "${_run_host}" ${_index} 1 _character)
-        if(_character STREQUAL "{")
-            math(EXPR _loop_depth "${_loop_depth} + 1")
-        elseif(_character STREQUAL "}")
-            math(EXPR _loop_depth "${_loop_depth} - 1")
-            if(_loop_depth EQUAL 0)
-                set(_loop_end ${_index})
-                break()
-            endif()
-        endif()
-    endforeach()
-    if(_loop_end EQUAL -1)
-        message(FATAL_ERROR "Stage17 lifecycle ${LABEL} found unbalanced host loop")
-    endif()
-    math(EXPR _loop_length "${_loop_end} - ${_loop_begin} + 1")
-    string(SUBSTRING "${_run_host}" ${_loop_begin} ${_loop_length} _loop)
-
-    assert_token_depth_sequence("Stage17 ${LABEL} capture request" "${_loop}"
-        "stage17_capture_path(" 1)
-    assert_token_depth_sequence("Stage17 ${LABEL} capture requested binding" "${_loop}"
-        "const bool stage17_capture_requested = capture_path.has_value();" 1)
-    assert_token_depth_sequence("Stage17 ${LABEL} capture success binding" "${_loop}"
-        "const bool capture_succeeded =" 1)
-    assert_token_depth_sequence("Stage17 ${LABEL} capture completion mark" "${_loop}"
-        "mark_stage17_capture_complete(" 2)
-    assert_unique_ordered_tokens("Stage17 ${LABEL} capture competition"
-        "${_loop}"
-        "stage17_capture_path("
-        "const bool stage17_capture_requested = capture_path.has_value();"
-        "if (!capture_path.has_value() && stage12_item_baseline_frame) {"
-        "if (!capture_path.has_value()\n                    && (validation_reached || loot_validation_visible_capture"
-        "if (death_gate.screenshot || (config.validation_request_screenshot"
-        "} else if (!capture_path.has_value()\n                    && config.validation_capture_file.has_value()"
-        "} else if (!capture_path.has_value()) {"
-        "const bool capture_succeeded =")
-    string(FIND "${_loop}" "stage17_capture_path(" _capture_request_position)
-    string(FIND "${_loop}" "mark_stage17_capture_complete(" _capture_mark_position)
-    math(EXPR _capture_segment_length
-        "${_capture_mark_position} - ${_capture_request_position}")
-    string(SUBSTRING "${_loop}" ${_capture_request_position}
-        ${_capture_segment_length} _capture_segment)
-    string(FIND "${_capture_segment}" "return" _early_return)
-    if(NOT _early_return EQUAL -1)
-        message(FATAL_ERROR "Stage17 lifecycle ${LABEL} has early return before capture completion")
-    endif()
-    string(REGEX REPLACE "[ \t\r\n]+" " " _capture_normalized "${_loop}")
-    assert_one_normalized_match("Stage17 ${LABEL} capture request RHS"
-        "${_capture_normalized}"
-        "std::optional<std::string>[ ]+capture_path[ ]*=[ ]*stage17_capture_path\\([ ]*config,[ ]*[*]stage17_validation_state[ ]*\\)[ ]*;")
-    assert_one_normalized_match("Stage17 ${LABEL} capture success RHS"
-        "${_capture_normalized}"
-        "const[ ]+bool[ ]+capture_succeeded[ ]*=[ ]*present_frame_and_maybe_capture\\([ ]*capture_path[.]has_value\\([ ]*\\)[ ]*\\?[ ]*capture_path->c_str\\([ ]*\\)[ ]*:[ ]*nullptr[ ]*\\)[ ]*;")
-    assert_one_normalized_match("Stage17 ${LABEL} gated capture mark"
-        "${_capture_normalized}"
-        "if[ ]*\\([ ]*stage17_capture_requested[ ]*&&[ ]*capture_succeeded[ ]*\\)[ ]*\\{[ ]*mark_stage17_capture_complete\\([ ]*[*]stage17_validation_state[ ]*\\)[ ]*;")
-
-    string(FIND "${_run_host}" "stage17_validation_state->clean_shutdown_exact_ready ="
-        _shutdown_position)
-    if(NOT _shutdown_position GREATER _loop_end)
-        message(FATAL_ERROR "Stage17 lifecycle ${LABEL} shutdown assignment is not post-loop")
-    endif()
-    assert_one_normalized_match("Stage17 ${LABEL} exact shutdown assignment"
-        "${_run_host}"
-        "stage17_validation_state->clean_shutdown_exact_ready[ \t\r\n]*=[ \t\r\n]*runtime[.]clean_shutdown_state\\([ \t\r\n]*\\)[ \t\r\n]*==[ \t\r\n]*CleanShutdownState::ready[ \t\r\n]*;")
-    assert_unique_ordered_host_tokens("Stage17 ${LABEL} shutdown summaries"
-        "${_run_host}" 2
-        "stage17_validation_state->clean_shutdown_exact_ready ="
-        "write_stage11b_validation_summary("
-        "write_stage11c_hud_validation_summary("
-        "write_stage11d_loot_validation_summary("
-        "write_stage17_validation_summary(")
-endfunction()
-
-# Keep the new adversarial cases in this direct production guard.  Legacy
-# HOST_OVERRIDE fixtures retain their focused historical assertions without
-# repeatedly parsing these extra Stage17-only source variants.
-function(assert_stage17_lifecycle_error NAME SOURCE EXPECTED_ERROR)
-    stage17_capture_lifecycle_status("${SOURCE}" _actual_error)
-    if(NOT _actual_error STREQUAL "${EXPECTED_ERROR}")
+    task7b_extract_unique_block("${_host_validation_runtime_code}"
+        "void HostValidationRuntime::observe_active_skill_draw("
+        _task7c_active_runtime _task7c_active_runtime_begin
+        _task7c_active_runtime_valid)
+    if(NOT _task7c_active_runtime_valid)
         message(FATAL_ERROR
-            "Stage17 lifecycle mutation ${NAME} expected ${EXPECTED_ERROR}, got ${_actual_error}")
+            "Host validation Task 7C active-skill runtime definition is missing or duplicated")
     endif()
-endfunction()
+    task7b_normalize("${_task7c_active_runtime}"
+        _task7c_active_runtime_normalized)
+    assert_direct_exact_call_count(
+        "Task 7C runtime Stage17 active-skill forwarding"
+        "${_task7c_active_runtime_normalized}"
+        "observe_stage17_draw_runtime\\("
+        "([;{}])[ ]*host_validation::observe_stage17_draw_runtime\\([ ]*[*]impl_->config,[ ]*impl_->states[.]stage17,[ ]*snapshot,[ ]*status[ ]*\\)[ ]*;"
+        1)
 
-function(assert_stage17_lifecycle_memory_mutations HOST_SOURCE)
-    set(_request [=[std::optional<std::string> capture_path = stage17_capture_path(
-                config, *stage17_validation_state);]=])
-    set(_requested [=[const bool stage17_capture_requested = capture_path.has_value();]=])
-    set(_mark [=[mark_stage17_capture_complete(*stage17_validation_state);]=])
-    stage17_mask_cpp_conditionals("${HOST_SOURCE}" _mutation_active)
+    task7b_extract_unique_block("${_host_validation_runtime_code}"
+        "PresentationDecision HostValidationRuntime::observe_presented_frame("
+        _task7c_presented_runtime _task7c_presented_runtime_begin
+        _task7c_presented_runtime_valid)
+    if(NOT _task7c_presented_runtime_valid)
+        message(FATAL_ERROR
+            "Host validation Task 7C presented-frame runtime definition is missing or duplicated")
+    endif()
+    task7b_normalize("${_task7c_presented_runtime}"
+        _task7c_presented_runtime_normalized)
+    task7b_count_token("${_task7c_presented_runtime}"
+        "host_validation::stage17_capture_path("
+        _task7c_stage17_query_count)
+    if(_task7c_stage17_query_count GREATER 1)
+        message(FATAL_ERROR
+            "T7C-M13 Stage17 path query must occur exactly once in observe_presented_frame")
+    elseif(_task7c_stage17_query_count EQUAL 0)
+        message(FATAL_ERROR
+            "T7C-M14 Stage17 path query is missing from the ordinary presented frame")
+    endif()
+    assert_one_normalized_match("Task 7C Stage17 path decision binding"
+        "${_task7c_presented_runtime_normalized}"
+        "decision[.]stage17_capture_path[ ]*=[ ]*host_validation::stage17_capture_path\\([ ]*[*]impl_->config,[ ]*impl_->states[.]stage17[ ]*\\)[ ]*;")
+    string(FIND "${_task7c_presented_runtime}"
+        "decision.stage17_capture_path =" _task7c_query_position)
+    cpp_token_brace_depth("${_task7c_presented_runtime}"
+        ${_task7c_query_position} _task7c_query_depth)
+    string(FIND "${_task7c_presented_runtime}"
+        "decision.stage17_capture_path.has_value()"
+        _task7c_stage17_owner_condition)
+    if(_task7c_stage17_owner_condition EQUAL -1)
+        message(FATAL_ERROR
+            "Host validation Task 7C Stage17 path does not select Stage17 capture ownership")
+    endif()
+    cpp_token_brace_depth("${_task7c_presented_runtime}"
+        ${_task7c_stage17_owner_condition} _task7c_stage17_condition_depth)
+    task7b_extract_unique_block("${_task7c_presented_runtime}"
+        "if (decision.stage17_capture_path.has_value())"
+        _task7c_stage17_owner_block _task7c_stage17_owner_begin
+        _task7c_stage17_owner_valid)
+    if(NOT _task7c_query_depth EQUAL 1
+            OR NOT _task7c_stage17_condition_depth EQUAL 1
+            OR NOT _task7c_query_position LESS
+                _task7c_stage17_owner_condition
+            OR NOT _task7c_stage17_owner_valid)
+        message(FATAL_ERROR
+            "Host validation Task 7C Stage17 owner decision is outside direct presented-frame scope")
+    endif()
+    task7b_count_token("${_task7c_stage17_owner_block}"
+        "decision.capture_owner = CaptureOwner::stage17;"
+        _task7c_stage17_owner_assignment_count)
+    string(FIND "${_task7c_stage17_owner_block}"
+        "decision.capture_owner = CaptureOwner::stage17;"
+        _task7c_stage17_owner_assignment)
+    if(NOT _task7c_stage17_owner_assignment_count EQUAL 1)
+        message(FATAL_ERROR
+            "Host validation Task 7C Stage17 path does not select Stage17 capture ownership")
+    endif()
+    cpp_token_brace_depth("${_task7c_stage17_owner_block}"
+        ${_task7c_stage17_owner_assignment} _task7c_stage17_assignment_depth)
+    if(NOT _task7c_stage17_assignment_depth EQUAL 1)
+        message(FATAL_ERROR
+            "Host validation Task 7C Stage17 owner assignment is not a direct decision")
+    endif()
 
-    # These are complete source variants passed to the same pure lifecycle
-    # validator as production; no mutation merely checks its own construction.
-    string(REPLACE "${_mark}" "mark_stage17_capture_complete_removed(*stage17_validation_state);"
-        _deleted_mark "${_mutation_active}")
-    assert_stage17_lifecycle_error("deleted completion mark" "${_deleted_mark}"
-        "capture_mark_missing")
+    task7b_extract_unique_block("${_host_loop}"
+        "const GroundLootView ground_loot_view = [&]() noexcept"
+        _task7c_ground_draw _task7c_ground_begin _task7c_ground_valid)
+    if(NOT _task7c_ground_valid)
+        message(FATAL_ERROR
+            "Host validation Task 7C cannot isolate the real renderer draw")
+    endif()
+    string(LENGTH "${_task7c_ground_draw}" _task7c_ground_length)
+    math(EXPR _task7c_ground_end
+        "${_task7c_ground_begin} + ${_task7c_ground_length}")
+    task7b_count_token("${_host_loop}"
+        "validation_runtime->observe_active_skill_draw("
+        _task7c_active_host_count)
+    if(NOT _task7c_active_host_count EQUAL 1)
+        message(FATAL_ERROR
+            "Host validation Task 7C active-skill observer must occur once on the ordinary frame")
+    endif()
+    string(FIND "${_host_loop}"
+        "validation_runtime->observe_active_skill_draw("
+        _task7c_active_host_position)
+    cpp_token_brace_depth("${_host_loop}" ${_task7c_active_host_position}
+        _task7c_active_host_depth)
+    string(FIND "${_host_loop}"
+        "if (config.stage12_material_runtime_status != nullptr)"
+        _task7c_material_status_position)
+    if(NOT _task7c_active_host_depth EQUAL 1
+            OR NOT _task7c_ground_end LESS _task7c_active_host_position
+            OR _task7c_material_status_position EQUAL -1
+            OR NOT _task7c_active_host_position LESS
+                _task7c_material_status_position)
+        message(FATAL_ERROR
+            "T7C-M11 active-skill observer must follow the real renderer draw and precede Stage12 status collection")
+    endif()
+    assert_one_normalized_match(
+        "T7C-M12 live active-skill draw-status binding"
+        "${_host_loop_normalized}"
+        "validation_runtime->observe_active_skill_draw\\([ ]*presented_snapshot,[ ]*renderer[.]active_skill_draw_status\\([ ]*\\)[ ]*\\)[ ]*;")
 
-    # Request moved after the first competing branch must invert the required
-    # direct-loop order.  This guards against priority regressions.
-    string(REPLACE "${_request}" "stage17_capture_path_removed(config, *stage17_validation_state);"
-        _moved_request "${_mutation_active}")
-    string(REPLACE "if (!capture_path.has_value() && stage12_item_baseline_frame) {"
-        "if (!capture_path.has_value() && stage12_item_baseline_frame) {\n${_request}"
-        _moved_request "${_moved_request}")
-    assert_stage17_lifecycle_error("request after competing capture branch"
-        "${_moved_request}" "capture_competition_scope")
+    task7b_count_token("${_host_loop}"
+        "validation_runtime->observe_presented_frame("
+        _task7c_presented_host_count)
+    if(NOT _task7c_presented_host_count EQUAL 1)
+        message(FATAL_ERROR
+            "Host validation Task 7C presented-frame facade must occur once")
+    endif()
+    string(FIND "${_host_loop}"
+        "validation_runtime->observe_presented_frame("
+        _task7c_presented_host_position)
+    cpp_token_brace_depth("${_host_loop}" ${_task7c_presented_host_position}
+        _task7c_presented_host_depth)
+    if(NOT _task7c_presented_host_depth EQUAL 1)
+        message(FATAL_ERROR
+            "Host validation Task 7C presented-frame facade is outside direct ordinary-frame scope")
+    endif()
+    assert_one_normalized_match("Task 7C presented-frame decision binding"
+        "${_host_loop_normalized}"
+        "const[ ]+PresentationDecision[ ]+decision[ ]*=[ ]*validation_runtime->observe_presented_frame\\([ ]*current,[ ]*pause_menu,[ ]*pause_cjk_ready[ ]*\\)[ ]*;")
+    assert_one_normalized_match("Task 7C Stage17 capture-path binding"
+        "${_host_loop_normalized}"
+        "std::optional<std::string>[ ]+capture_path[ ]*=[ ]*decision[.]stage17_capture_path[ ]*;")
+    assert_one_normalized_match("Task 7C selected Stage17 owner binding"
+        "${_host_loop_normalized}"
+        "CaptureOwner[ ]+selected_capture_owner[ ]*=[ ]*decision[.]capture_owner[ ]*==[ ]*CaptureOwner::stage17[ ]*\\?[ ]*CaptureOwner::stage17[ ]*:[ ]*CaptureOwner::none[ ]*;")
+    string(FIND "${_host_loop}"
+        "CaptureOwner selected_capture_owner ="
+        _task7c_selected_owner_declaration)
+    cpp_token_brace_depth("${_host_loop}"
+        ${_task7c_selected_owner_declaration}
+        _task7c_selected_owner_declaration_depth)
+    if(NOT _task7c_selected_owner_declaration_depth EQUAL 1)
+        message(FATAL_ERROR
+            "Host validation Task 7C selected Stage17 owner binding is outside direct ordinary-frame scope")
+    endif()
 
-    # The return window intentionally runs through the final Stage17 summary.
-    string(REPLACE "${_requested}" "${_requested}\n            return HostExitCode::success;"
-        _early_return "${_mutation_active}")
-    assert_stage17_lifecycle_error("request-to-summary early return"
-        "${_early_return}" "capture_early_return")
+    task7b_extract_unique_block("${_host_loop}"
+        "if (death_gate.screenshot || (config.validation_request_screenshot"
+        _task7c_manual_capture _task7c_manual_begin _task7c_manual_valid)
+    if(NOT _task7c_manual_valid)
+        message(FATAL_ERROR
+            "Host validation Task 7C cannot isolate manual screenshot override")
+    endif()
+    string(SUBSTRING "${_host_loop}" 0 ${_task7c_manual_begin}
+        _task7c_before_manual)
+    foreach(_task7c_stage17_owner_token IN ITEMS
+            "CaptureOwner selected_capture_owner"
+            "decision.capture_owner"
+            "CaptureOwner::stage17"
+            "decision.stage17_capture_path")
+        string(FIND "${_task7c_before_manual}"
+            "${_task7c_stage17_owner_token}" _task7c_owner_token_position)
+        if(_task7c_owner_token_position EQUAL -1)
+            message(FATAL_ERROR
+                "Host validation Task 7C selected Stage17 owner binding is missing: ${_task7c_stage17_owner_token}")
+        endif()
+    endforeach()
+    task7b_normalize("${_task7c_manual_capture}"
+        _task7c_manual_capture_normalized)
+    count_nonempty_regex_matches("${_task7c_manual_capture_normalized}"
+        "selected_capture_owner[ ]*=[ ]*CaptureOwner::"
+        _task7c_manual_owner_assignments)
+    if(NOT _task7c_manual_owner_assignments EQUAL 0)
+        message(FATAL_ERROR
+            "T7C-M16 manual screenshot override must preserve selected Stage17 ownership")
+    endif()
+    string(FIND "${_host_loop}"
+        "const bool selected_validation_capture_succeeded ="
+        _task7c_present_position)
+    string(FIND "${_host_loop}"
+        "validation_runtime->observe_capture_result("
+        _task7c_capture_result_position)
+    set(_task7c_capture_result_depth -1)
+    if(NOT _task7c_capture_result_position EQUAL -1)
+        cpp_token_brace_depth("${_host_loop}"
+            ${_task7c_capture_result_position} _task7c_capture_result_depth)
+    endif()
+    if(_task7c_present_position EQUAL -1
+            OR _task7c_capture_result_position EQUAL -1
+            OR NOT _task7c_capture_result_depth EQUAL 1
+            OR NOT _task7c_manual_begin LESS _task7c_present_position
+            OR NOT _task7c_present_position LESS
+                _task7c_capture_result_position)
+        message(FATAL_ERROR
+            "Host validation Task 7C capture result is not after the ordinary presentation")
+    endif()
+    assert_one_normalized_match("Task 7C selected capture-owner callback"
+        "${_host_loop_normalized}"
+        "validation_runtime->observe_capture_result\\([ ]*selected_capture_owner,")
 
-    set(_success [=[const bool capture_succeeded =
-                present_frame_and_maybe_capture(capture_path.has_value()
-                    ? capture_path->c_str() : nullptr);]=])
-    set(_lambda [=[const auto stage17_uncalled_capture_lambda = [&]() noexcept {
-                const bool capture_succeeded = present_frame_and_maybe_capture(
-                    capture_path.has_value() ? capture_path->c_str() : nullptr);
-                return capture_succeeded;
-            };]=])
-    string(REPLACE "${_success}" "${_lambda}" _lambda_mutation "${_mutation_active}")
-    assert_stage17_lifecycle_error("uncalled lambda capture decoy"
-        "${_lambda_mutation}" "capture_competition_scope")
+    task7b_extract_unique_block("${_host_validation_runtime_code}"
+        "void HostValidationRuntime::write_summaries("
+        _task7c_summary_runtime _task7c_summary_runtime_begin
+        _task7c_summary_runtime_valid)
+    if(NOT _task7c_summary_runtime_valid)
+        message(FATAL_ERROR
+            "Host validation Task 7C summary runtime definition is missing or duplicated")
+    endif()
+    set(_task7c_summary_previous -1)
+    foreach(_task7c_summary_token IN ITEMS
+            "impl_->states.stage17.clean_shutdown_exact_ready ="
+            "host_validation::write_stage11b_validation_summary("
+            "host_validation::write_stage11c_hud_validation_summary("
+            "host_validation::write_stage11d_loot_validation_summary("
+            "host_validation::write_stage17_validation_summary(")
+        task7b_count_token("${_task7c_summary_runtime}"
+            "${_task7c_summary_token}" _task7c_summary_count)
+        string(FIND "${_task7c_summary_runtime}"
+            "${_task7c_summary_token}" _task7c_summary_position)
+        if(NOT _task7c_summary_count EQUAL 1)
+            message(FATAL_ERROR
+                "T7C-M25 summary chain member is missing or duplicated: ${_task7c_summary_token}")
+        endif()
+        if(NOT _task7c_summary_previous EQUAL -1
+                AND _task7c_summary_position LESS _task7c_summary_previous)
+            message(FATAL_ERROR
+                "T7C-M25 summary chain must remain 11B, 11C, 11D, Stage17")
+        endif()
+        cpp_token_brace_depth("${_task7c_summary_runtime}"
+            ${_task7c_summary_position} _task7c_summary_depth)
+        if(NOT _task7c_summary_depth EQUAL 1)
+            message(FATAL_ERROR
+                "T7C-M25 summary chain member is outside direct runtime scope: ${_task7c_summary_token}")
+        endif()
+        set(_task7c_summary_previous ${_task7c_summary_position})
+    endforeach()
+    task7b_normalize("${_task7c_summary_runtime}"
+        _task7c_summary_runtime_normalized)
+    assert_one_normalized_match("Task 7C exact clean-shutdown readiness"
+        "${_task7c_summary_runtime_normalized}"
+        "impl_->states[.]stage17[.]clean_shutdown_exact_ready[ ]*=[ ]*clean_shutdown_state[ ]*==[ ]*CleanShutdownState::ready[ ]*;")
 
-    string(REPLACE "${_mark}" "mark_stage17_capture_complete_removed(*stage17_validation_state);"
-        _cross_function "${_mutation_active}")
-    string(APPEND _cross_function [=[
-void stage17_cross_function_capture_decoy() {
-    mark_stage17_capture_complete(*stage17_validation_state);
-}
-]=])
-    assert_stage17_lifecycle_error("cross-function capture mark decoy"
-        "${_cross_function}" "capture_mark_missing")
+    foreach(_task7c_old_summary IN ITEMS
+            "write_stage11b_validation_summary("
+            "write_stage11c_hud_validation_summary("
+            "write_stage11d_loot_validation_summary("
+            "write_stage17_validation_summary(")
+        string(FIND "${_host_runtime}" "${_task7c_old_summary}"
+            _task7c_old_summary_position)
+        if(NOT _task7c_old_summary_position EQUAL -1)
+            message(FATAL_ERROR
+                "Host validation Task 7C Host retains direct summary ownership: ${_task7c_old_summary}")
+        endif()
+    endforeach()
+    task7b_count_token("${_host_runtime}"
+        "validation_runtime->write_summaries("
+        _task7c_host_summary_count)
+    if(NOT _task7c_host_summary_count EQUAL 1)
+        message(FATAL_ERROR
+            "Host validation Task 7C summary facade must occur exactly once")
+    endif()
+    string(FIND "${_host_runtime}"
+        "validation_runtime->write_summaries("
+        _task7c_host_summary_position)
+    cpp_token_brace_depth("${_host_runtime}"
+        ${_task7c_host_summary_position} _task7c_host_summary_depth)
+    string(FIND "${_host_runtime}" "audio.shutdown();"
+        _task7c_audio_shutdown_position)
+    string(FIND "${_host_runtime}" "renderer.shutdown_resources();"
+        _task7c_renderer_shutdown_position)
+    string(FIND "${_host_runtime}" "pause_menu_renderer.shutdown();"
+        _task7c_pause_shutdown_position)
+    string(FIND "${_host_runtime}" "CloseWindow();"
+        _task7c_window_shutdown_position)
+    if(NOT _task7c_host_summary_depth EQUAL 2
+            OR NOT _loop_end LESS _task7c_host_summary_position
+            OR NOT _task7c_host_summary_position LESS
+                _task7c_audio_shutdown_position
+            OR NOT _task7c_audio_shutdown_position LESS
+                _task7c_renderer_shutdown_position
+            OR NOT _task7c_renderer_shutdown_position LESS
+                _task7c_pause_shutdown_position
+            OR NOT _task7c_pause_shutdown_position LESS
+                _task7c_window_shutdown_position)
+        message(FATAL_ERROR
+            "T7C-M25 summary facade must run after the loop and before resource shutdown")
+    endif()
 endfunction()
 
 function(assert_token_depth_sequence LABEL SURFACE TOKEN)
@@ -1945,7 +1965,7 @@ assert_one_normalized_match("validation facade physical-key binding"
     "const[ ]+PhysicalKeySnapshot[ ]+stage17_physical_keys[ ]*=[ ]*validation_runtime->inject_physical_edges\\([ ]*sampled_physical_keys,[ ]*input_settings,[ ]*current,[ ]*gameplay_rearm_was_required[ ]*\\)")
 assert_one_normalized_match("cached Stage11D physical-key binding"
     "${_host_loop_normalized}"
-    "const[ ]+PhysicalKeySnapshot&[ ]+physical_keys[ ]*=[ ]*HostValidationStateAccess::death_input_snapshot\\([ ]*[*]validation_runtime[ ]*\\)")
+    "const[ ]+PhysicalKeySnapshot&[ ]+physical_keys[ ]*=[ ]*validation_runtime->death_input_snapshot\\([ ]*\\)")
 assert_one_normalized_match("final Stage17 release/rearm binding"
     "${_host_loop_normalized}"
     "if[ ]*\\([ ]*gameplay_rearm_was_required[ ]*&&[ ]*gameplay_controls_physically_released\\([ ]*stage17_physical_keys[ ]*\\)[ ]*\\)[ ]*\\{[ ]*runtime[.]acknowledge_gameplay_rearmed\\([ ]*\\)[ ]*;")
@@ -2059,10 +2079,10 @@ assert_direct_exact_call_count("all Stage17 submitted-action facade calls"
     "observe_submitted_actions\\("
     "([;{}])[ ]*validation_runtime->observe_submitted_actions\\([ ]*submitted_actions[ ]*\\)[ ]*;"
     1)
-assert_direct_exact_call_count("all Stage17 draw observer calls"
+assert_direct_exact_call_count("all Stage17 active-skill facade calls"
     "${_host_runtime_normalized}"
-    "observe_stage17_draw_runtime\\("
-    "([;{}])[ ]*observe_stage17_draw_runtime\\([ ]*config,[ ]*[*]stage17_validation_state,[ ]*presented_snapshot,[ ]*renderer[.]active_skill_draw_status\\([ ]*\\)[ ]*\\)[ ]*;"
+    "observe_active_skill_draw\\("
+    "([;{}])[ ]*validation_runtime->observe_active_skill_draw\\("
     1)
 assert_direct_exact_call_count("all drain_events validation runtime arguments"
     "${_host_runtime_normalized}"
@@ -2075,8 +2095,8 @@ assert_token_depth_sequence("Stage17 inventory observer"
     "${_host_runtime}" "validation_runtime->observe_inventory(" 3)
 assert_token_depth_sequence("Stage17 submitted-actions observer"
     "${_host_runtime}" "validation_runtime->observe_submitted_actions(" 4)
-assert_token_depth_sequence("Stage17 draw observer"
-    "${_host_runtime}" "observe_stage17_draw_runtime(" 3)
+assert_token_depth_sequence("Stage17 active-skill facade"
+    "${_host_runtime}" "validation_runtime->observe_active_skill_draw(" 3)
 assert_token_depth_sequence("drain_events call"
     "${_host_runtime}" "drain_events(" 3 4 5 4 5 4)
 
@@ -2215,7 +2235,7 @@ extract_unique_direct_cpp_block("ground-loot renderer draw lambda"
 assert_unique_ordered_host_tokens("Stage17 direct loop observer"
     "${_host_loop}" 1
     "validation_runtime->observe_inventory("
-    "observe_stage17_draw_runtime(")
+    "validation_runtime->observe_active_skill_draw(")
 assert_unique_ordered_host_tokens("Stage17 submitted-actions observer"
     "${_forward_actions_block}" 1
     "validation_runtime->observe_submitted_actions(")
@@ -2465,9 +2485,6 @@ assert_one_normalized_match("Stage17 submitted-actions observer arguments"
 assert_one_normalized_match("Stage17 fixed-step snapshot observer arguments"
     "${_stage17_fixed_step_normalized}"
     "validation_runtime->observe_snapshot\\([ ]*current[ ]*\\)")
-assert_one_normalized_match("Stage17 draw observer arguments"
-    "${_host_loop_normalized}"
-    "observe_stage17_draw_runtime\\([ ]*config,[ ]*[*]stage17_validation_state,[ ]*presented_snapshot,[ ]*renderer[.]active_skill_draw_status\\([ ]*\\)[ ]*\\)")
 assert_one_normalized_match("submitted-actions producer-to-observer binding"
     "${_forward_actions_normalized}"
     "const[ ]+SubmittedFrameActions[ ]+submitted_actions[ ]*=[ ]*submit_frame_actions\\([ ]*[*]session,[ ]*frame_input[ ]*\\)[ ]*;[ ]*validation_runtime->observe_submitted_actions\\([ ]*submitted_actions[ ]*\\)[ ]*;")
@@ -2479,9 +2496,6 @@ assert_direct_exact_call_count("real renderer draw return statement"
     "renderer[.]draw\\("
     "([;{}])[ ]*return[ ]+renderer[.]draw\\([ ]*previous,[ ]*presented_snapshot,[ ]*runtime[.]render_status\\([ ]*\\),[ ]*static_cast<float>\\([ ]*frame[.]interpolation_alpha[ ]*\\),[ ]*draw_debug,[ ]*feedback,[ ]*audio_ready[ ]*\\)[ ]*;"
     1)
-assert_one_normalized_match("renderer draw completion-to-observer binding"
-    "${_host_loop_normalized}"
-    "feedback,[ ]*audio_ready[ ]*\\)[ ]*;[ ]*\\}[ ]*\\([ ]*\\)[ ]*;[ ]*observe_stage17_draw_runtime\\([ ]*config,[ ]*[*]stage17_validation_state,[ ]*presented_snapshot,[ ]*renderer[.]active_skill_draw_status\\([ ]*\\)[ ]*\\)[ ]*;")
 
 string(FIND "${_host_loop}" "validation_runtime->observe_inventory("
     _stage17_inventory_position)
@@ -2529,7 +2543,7 @@ string(FIND "${_stage17_fixed_step_loop}"
     _stage17_snapshot_relative)
 math(EXPR _stage17_snapshot_position
     "${_stage17_fixed_step_begin} + ${_stage17_snapshot_relative}")
-string(FIND "${_host_loop}" "observe_stage17_draw_runtime("
+string(FIND "${_host_loop}" "validation_runtime->observe_active_skill_draw("
     _stage17_draw_position)
 if(NOT _stage17_second_snapshot_position EQUAL _stage17_snapshot_position)
     message(FATAL_ERROR
@@ -2554,27 +2568,4 @@ if(NOT _stage17_loop_top_snapshot_position LESS _stage17_inventory_position
         "Host validation sequence guard rejected Stage17 observer order")
 endif()
 
-if(NOT DEFINED HOST_OVERRIDE)
-    assert_stage17_capture_lifecycle("${_host_text}" "production")
-    assert_stage17_lifecycle_memory_mutations("${_host_text}")
-endif()
-
-# run_raylib_host owns the frame loop and summary calls inside its single
-# top-level try block, so direct execution statements are at brace depth two
-# relative to the complete function block (function body plus try body).
-assert_unique_ordered_host_tokens("validation summary write" "${_host_runtime}" 2
-    "write_stage11b_validation_summary("
-    "write_stage11c_hud_validation_summary("
-    "write_stage11d_loot_validation_summary("
-    "write_stage17_validation_summary(")
-foreach(_summary_token IN ITEMS
-        "write_stage11b_validation_summary("
-        "write_stage11c_hud_validation_summary("
-        "write_stage11d_loot_validation_summary("
-        "write_stage17_validation_summary(")
-    string(FIND "${_host_runtime}" "${_summary_token}" _summary_position)
-    if(NOT _summary_position GREATER _loop_end)
-        message(FATAL_ERROR
-            "Host validation sequence guard rejected summary write before loop end: ${_summary_token}")
-    endif()
-endforeach()
+task7c_assert_sequence_contract()

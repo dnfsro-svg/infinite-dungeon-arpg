@@ -66,6 +66,8 @@ function(stage17_unconditional_cpp_surface SOURCE OUT_SURFACE)
 endfunction()
 
 arpg_sanitize_cpp_source("${HOST_SOURCE}" HOST_SANITIZED_SOURCE)
+arpg_sanitize_cpp_source("${HOST_VALIDATION_RUNTIME_SOURCE}"
+    HOST_VALIDATION_RUNTIME_SANITIZED_SOURCE)
 arpg_sanitize_cpp_source("${STAGE17_RUNTIME_SOURCE}"
     STAGE17_RUNTIME_SANITIZED_SOURCE)
 arpg_sanitize_cpp_source("${STAGE11B_RUNTIME_SOURCE}"
@@ -312,6 +314,12 @@ list(LENGTH SAMPLE_CALLS SAMPLE_CALL_COUNT)
 if(NOT SAMPLE_CALL_COUNT EQUAL 1)
     message(FATAL_ERROR "raylib host must sample physical keys exactly once per frame")
 endif()
+if(HOST_SANITIZED_SOURCE MATCHES "HostValidationStateAccess"
+        OR HOST_VALIDATION_RUNTIME_SANITIZED_SOURCE MATCHES
+            "HostValidationStateAccess")
+    message(FATAL_ERROR
+        "input latency boundary still depends on HostValidationStateAccess")
+endif()
 
 function(arpg_physical_input_chain_is_valid_from_sanitized SOURCE OUT_VALID)
     set(WS "[ \t\r\n]*")
@@ -401,12 +409,12 @@ function(arpg_physical_input_chain_is_valid_from_sanitized SOURCE OUT_VALID)
         FACADE_INJECT_CALLS "${SOURCE}")
     list(LENGTH FACADE_INJECT_CALLS FACADE_INJECT_CALL_COUNT)
     string(REGEX MATCHALL
-        "HostValidationStateAccess::death_input_snapshot${WS}\\("
+        "validation_runtime->death_input_snapshot${WS}\\("
         CACHED_INPUT_CALLS "${SOURCE}")
     list(LENGTH CACHED_INPUT_CALLS CACHED_INPUT_CALL_COUNT)
 
     if(NOT FACADE_SOURCE MATCHES "validation_runtime->inject_physical_edges${WS}\\(${WS}sampled_physical_keys,${WS}input_settings,${WS}current,${WS}gameplay_rearm_was_required${WS}\\)"
-            OR NOT CACHED_SOURCE MATCHES "HostValidationStateAccess::death_input_snapshot${WS}\\(${WS}\\*validation_runtime${WS}\\)"
+            OR NOT CACHED_SOURCE MATCHES "validation_runtime->death_input_snapshot${WS}\\(${WS}\\)"
             OR NOT RELEASED_SOURCE MATCHES "gameplay_controls_physically_released${WS}\\(${WS}stage17_physical_keys${WS}\\)"
             OR NOT RELEASED_SOURCE MATCHES "runtime\\.acknowledge_gameplay_rearmed${WS}\\(${WS}\\)"
             OR NOT MAP_SOURCE MATCHES "map_host_frame_input${WS}\\(${WS}input_settings,${WS}stage17_physical_keys${WS}\\)"
@@ -668,7 +676,7 @@ const PhysicalKeySnapshot stage17_physical_keys =
         sampled_physical_keys, input_settings, current,
         gameplay_rearm_was_required);
 const PhysicalKeySnapshot& physical_keys =
-    HostValidationStateAccess::death_input_snapshot(*validation_runtime);
+    validation_runtime->death_input_snapshot();
 if (gameplay_rearm_was_required
         && gameplay_controls_physically_released(stage17_physical_keys)) {
     runtime.acknowledge_gameplay_rearmed();

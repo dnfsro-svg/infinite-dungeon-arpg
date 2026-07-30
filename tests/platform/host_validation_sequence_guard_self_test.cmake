@@ -384,10 +384,139 @@ if(NOT "${_outside_stdout}${_outside_stderr}" MATCHES
     message(FATAL_ERROR "out-of-loop input decoy failed for wrong reason: ${_outside_stdout}${_outside_stderr}")
 endif()
 
+function(arpg_expect_task7c_sequence_rejection
+        NAME TARGET MUTATION EXPECTED_REASON)
+    if("${TARGET}" STREQUAL "host")
+        set(_source_path
+            "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
+        set(_override_name HOST_OVERRIDE)
+    elseif("${TARGET}" STREQUAL "runtime")
+        set(_source_path
+            "${SOURCE_ROOT}/src/platform/raylib/host_validation_runtime.cpp")
+        set(_override_name HOST_VALIDATION_RUNTIME_OVERRIDE)
+    else()
+        message(FATAL_ERROR "Unknown Task 7C mutation target: ${TARGET}")
+    endif()
+    file(READ "${_source_path}" _mutated)
+    set(_original "${_mutated}")
+
+    if(MUTATION STREQUAL "m11_before_renderer")
+        string(REPLACE
+            "validation_runtime->observe_active_skill_draw("
+            "validation_runtime->observe_active_skill_draw_removed("
+            _mutated "${_mutated}")
+        string(REPLACE
+            "            const GroundLootView ground_loot_view = [&]() noexcept {"
+            "            validation_runtime->observe_active_skill_draw(\n                presented_snapshot, renderer.active_skill_draw_status());\n            const GroundLootView ground_loot_view = [&]() noexcept {"
+            _mutated "${_mutated}")
+    elseif(MUTATION STREQUAL "m12_fabricated")
+        string(REPLACE "renderer.active_skill_draw_status()"
+            "ActiveSkillDrawRuntimeStatus{}" _mutated "${_mutated}")
+    elseif(MUTATION STREQUAL "m12_stale")
+        string(REPLACE "renderer.active_skill_draw_status()"
+            "stale_active_skill_draw_status" _mutated "${_mutated}")
+        string(REPLACE
+            "            const GroundLootView ground_loot_view = [&]() noexcept {"
+            "            const ActiveSkillDrawRuntimeStatus stale_active_skill_draw_status =\n                renderer.active_skill_draw_status();\n            const GroundLootView ground_loot_view = [&]() noexcept {"
+            _mutated "${_mutated}")
+    elseif(MUTATION STREQUAL "m13_duplicate_query")
+        string(REPLACE "host_validation::stage17_capture_path("
+            "host_validation::stage17_capture_path(*impl_->config, impl_->states.stage17);\n    decision.stage17_capture_path = host_validation::stage17_capture_path("
+            _mutated "${_mutated}")
+    elseif(MUTATION STREQUAL "m14_missing_query")
+        string(REPLACE "host_validation::stage17_capture_path("
+            "host_validation::stage17_capture_path_removed("
+            _mutated "${_mutated}")
+    elseif(MUTATION STREQUAL "m16_manual_loses_stage17")
+        set(_manual_anchor [=[if (death_gate.screenshot || (config.validation_request_screenshot
+                    && presented_frame_count == 1U)) {
+                generic_capture_path_selected = false;
+                capture_path = host_screenshot_path(config);]=])
+        set(_manual_mutation [=[if (death_gate.screenshot || (config.validation_request_screenshot
+                    && presented_frame_count == 1U)) {
+                generic_capture_path_selected = false;
+                capture_path = host_screenshot_path(config);
+                selected_capture_owner = CaptureOwner::none;]=])
+        string(REPLACE "${_manual_anchor}" "${_manual_mutation}"
+            _mutated "${_mutated}")
+    elseif(MUTATION STREQUAL "m25_reorder_summaries")
+        string(REPLACE "write_stage11b_validation_summary("
+            "write_task7c_swap_validation_summary("
+            _mutated "${_mutated}")
+        string(REPLACE "write_stage11c_hud_validation_summary("
+            "write_stage11b_validation_summary("
+            _mutated "${_mutated}")
+        string(REPLACE "write_task7c_swap_validation_summary("
+            "write_stage11c_hud_validation_summary("
+            _mutated "${_mutated}")
+    elseif(MUTATION STREQUAL "m25_post_shutdown")
+        string(REPLACE "validation_runtime->write_summaries("
+            "validation_runtime->write_summaries_removed("
+            _mutated "${_mutated}")
+        string(REPLACE "        audio.shutdown();"
+            "        audio.shutdown();\n        validation_runtime->write_summaries(\n            runtime.clean_shutdown_state(), pause_menu);"
+            _mutated "${_mutated}")
+    else()
+        message(FATAL_ERROR "Unknown Task 7C sequence mutation: ${MUTATION}")
+    endif()
+
+    if(_mutated STREQUAL _original)
+        message(FATAL_ERROR
+            "Task 7C sequence mutation anchor is missing: ${NAME}")
+    endif()
+    set(_mutation_path "${GUARD_TEST_ROOT}/task7c-${NAME}.cpp")
+    file(WRITE "${_mutation_path}" "${_mutated}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+            "-D${_override_name}=${_mutation_path}" -P "${_guard}"
+        RESULT_VARIABLE _result OUTPUT_VARIABLE _stdout
+        ERROR_VARIABLE _stderr)
+    if(_result EQUAL 0)
+        message(FATAL_ERROR
+            "Host validation sequence guard accepted Task 7C mutation: ${NAME}")
+    endif()
+    set(_combined "${_stdout}\n${_stderr}")
+    string(FIND "${_combined}" "${EXPECTED_REASON}" _reason_position)
+    if(_reason_position EQUAL -1)
+        message(FATAL_ERROR
+            "Task 7C mutation ${NAME} failed for wrong reason; expected '${EXPECTED_REASON}', got: ${_combined}")
+    endif()
+endfunction()
+
+# Task 7C assigns exactly these eight concrete cases to the central sequence
+# self-test. Other Task 7C mutation variants remain with their Stage owners.
+arpg_expect_task7c_sequence_rejection(m11_before_renderer host
+    m11_before_renderer
+    "T7C-M11")
+arpg_expect_task7c_sequence_rejection(m12_fabricated host
+    m12_fabricated
+    "T7C-M12")
+arpg_expect_task7c_sequence_rejection(m12_stale host
+    m12_stale
+    "T7C-M12")
+arpg_expect_task7c_sequence_rejection(m13_duplicate_query runtime
+    m13_duplicate_query
+    "T7C-M13")
+arpg_expect_task7c_sequence_rejection(m14_missing_query runtime
+    m14_missing_query
+    "T7C-M14")
+arpg_expect_task7c_sequence_rejection(m16_manual_loses_stage17 host
+    m16_manual_loses_stage17
+    "T7C-M16")
+arpg_expect_task7c_sequence_rejection(m25_reorder_summaries runtime
+    m25_reorder_summaries
+    "T7C-M25")
+arpg_expect_task7c_sequence_rejection(m25_post_shutdown host
+    m25_post_shutdown
+    "T7C-M25")
+
 string(REPLACE
-    "host_validation::write_stage11b_validation_summary(config, stage11b_validation_state,\n            pause_menu);"
-    "const auto summary_decoy = [&] {\n            host_validation::write_stage11b_validation_summary(config, stage11b_validation_state,\n                pause_menu);\n        };"
+    "validation_runtime->write_summaries(\n            runtime.clean_shutdown_state(), pause_menu);"
+    "const auto summary_decoy = [&] {\n            validation_runtime->write_summaries(\n                runtime.clean_shutdown_state(), pause_menu);\n        };"
     _lambda_summary_host "${_host_source}")
+if(_lambda_summary_host STREQUAL _host_source)
+    message(FATAL_ERROR "Task 7C lambda summary mutation anchor is missing")
+endif()
 set(_lambda_summary "${GUARD_TEST_ROOT}/lambda-summary-decoy.cpp")
 file(WRITE "${_lambda_summary}" "${_lambda_summary_host}")
 execute_process(
@@ -398,7 +527,7 @@ if(_summary_result EQUAL 0)
     message(FATAL_ERROR "Host validation sequence guard accepted lambda summary decoy")
 endif()
 if(NOT "${_summary_stdout}${_summary_stderr}" MATCHES
-        "rejected validation summary write token[ \t\r\n]+outside[ \t\r\n]+direct host scope")
+        "T7C-M25 summary facade must run after the loop and before resource shutdown")
     message(FATAL_ERROR "lambda summary decoy failed for wrong reason: ${_summary_stdout}${_summary_stderr}")
 endif()
 

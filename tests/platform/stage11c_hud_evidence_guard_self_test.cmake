@@ -4,10 +4,12 @@ endif()
 set(_guard "${SOURCE_ROOT}/tests/platform/stage11c_hud_evidence_guard_test.cmake")
 set(_formal "${SOURCE_ROOT}/tests/platform/stage11c_hud_formal_game_validation.cpp")
 set(_host "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
+set(_runtime "${SOURCE_ROOT}/src/platform/raylib/host_validation_runtime.cpp")
 set(_bad "${SOURCE_ROOT}/tests/platform/stage11c_hud_bad_formal_input.txt")
 file(MAKE_DIRECTORY "${GUARD_TEST_ROOT}")
 file(READ "${_formal}" _formal_source)
 file(READ "${_host}" _host_source)
+file(READ "${_runtime}" _runtime_source)
 set(_input "${SOURCE_ROOT}/src/platform/raylib/host_validation_input.cpp")
 if(NOT EXISTS "${_input}")
     message(FATAL_ERROR "Stage11C input source is missing: ${_input}")
@@ -20,6 +22,65 @@ if(NOT EXISTS "${_stage_source}")
 endif()
 file(READ "${_stage_source}" _stage_source_text)
 file(READ "${_bad}" _bad_source)
+
+function(stage11c_expect_task7c_host_rejection LABEL MUTATED EXPECTED)
+    set(_mutation "${GUARD_TEST_ROOT}/host-${LABEL}.cpp")
+    file(WRITE "${_mutation}" "${MUTATED}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+            "-DHOST_OVERRIDE=${_mutation}" -P "${_guard}"
+        RESULT_VARIABLE _result OUTPUT_VARIABLE _stdout ERROR_VARIABLE _stderr)
+    if(_result EQUAL 0)
+        message(FATAL_ERROR
+            "Stage11C evidence guard accepted Task7C Host mutation: ${LABEL}")
+    endif()
+    if(NOT "${_stdout}${_stderr}" MATCHES "${EXPECTED}")
+        message(FATAL_ERROR
+            "Task7C Host mutation ${LABEL} failed for wrong reason: ${_stdout}${_stderr}")
+    endif()
+endfunction()
+
+set(_task7c_mask_hud_observer
+    "            validation_runtime->observe_hud(\n                current, renderer.hud_model(), renderer.hud_notice_view(),\n                draw_debug, GetScreenWidth(), GetScreenHeight());")
+set(_task7c_mask_hud_observer_get
+    "            validation_runtime.get()->observe_hud(\n                current, renderer.hud_model(), renderer.hud_notice_view(),\n                draw_debug, GetScreenWidth(), GetScreenHeight());")
+set(_task7c_mask_renderer_hud_anchor
+    "            renderer.observe_presented_hud_frame(hud_presented_frame,")
+
+string(REPLACE "${_task7c_mask_hud_observer}"
+    "            if (false) {\n${_task7c_mask_hud_observer}\n            }"
+    _task7c_m08_mask_host "${_host_source}")
+string(REPLACE "${_task7c_mask_renderer_hud_anchor}"
+    "${_task7c_mask_hud_observer_get}\n${_task7c_mask_renderer_hud_anchor}"
+    _task7c_m08_mask_host "${_task7c_m08_mask_host}")
+stage11c_expect_task7c_host_rejection(task7c_m08_dead_decoy_get_call
+    "${_task7c_m08_mask_host}" "T7C-M08")
+
+string(REPLACE "${_task7c_mask_hud_observer}"
+    "            const auto task7c_hud_observer_decoy = [&] {\n${_task7c_mask_hud_observer}\n            };"
+    _task7c_m09_mask_host "${_host_source}")
+string(REPLACE "            BeginDrawing();"
+    "            BeginDrawing();\n${_task7c_mask_hud_observer_get}"
+    _task7c_m09_mask_host "${_task7c_m09_mask_host}")
+stage11c_expect_task7c_host_rejection(task7c_m09_lambda_decoy_get_call
+    "${_task7c_m09_mask_host}" "T7C-M09")
+
+string(REPLACE "${_task7c_mask_hud_observer}"
+    "            validation_runtime.get()->observe_hud(\n                current, HudViewModel{}, renderer.hud_notice_view(),\n                draw_debug, GetScreenWidth(), GetScreenHeight());\n            if (false) {\n${_task7c_mask_hud_observer}\n            }"
+    _task7c_m10_model_mask_host "${_host_source}")
+stage11c_expect_task7c_host_rejection(task7c_m10_model_dead_decoy_get_call
+    "${_task7c_m10_model_mask_host}" "T7C-M10")
+
+string(REPLACE "${_task7c_mask_hud_observer}"
+    "            validation_runtime.get()->observe_hud(\n                current, renderer.hud_model(), HudNoticeView{},\n                draw_debug, GetScreenWidth(), GetScreenHeight());\n            const auto task7c_hud_observer_decoy = [&] {\n${_task7c_mask_hud_observer}\n            };"
+    _task7c_m10_notices_mask_host "${_host_source}")
+stage11c_expect_task7c_host_rejection(task7c_m10_notices_lambda_decoy_get_call
+    "${_task7c_m10_notices_mask_host}" "T7C-M10")
+
+if(DEFINED STAGE11C_TASK7C_HOST_MASK_ONLY)
+    message(STATUS "Stage11C HUD evidence Task7C Host-mask cases passed")
+    return()
+endif()
 
 function(stage11c_expect_formal_rejection LABEL TOKEN EXPECTED)
     string(FIND "${_bad_source}" "${LABEL}:" _named)
@@ -69,23 +130,6 @@ if(_pre_result EQUAL 0)
 endif()
 if(NOT "${_pre_stdout}${_pre_stderr}" MATCHES "pre-Present capture")
     message(FATAL_ERROR "named mutation pre_present_capture failed for wrong reason: ${_pre_stdout}${_pre_stderr}")
-endif()
-
-set(_fake_font "${GUARD_TEST_ROOT}/host-fake-font.cpp")
-string(REPLACE
-    "stage11c_validation_state.cjk_font_ready = hud_resources_ready;"
-    "stage11c_validation_state.cjk_font_ready = true;"
-    _fake_font_source "${_host_source}")
-file(WRITE "${_fake_font}" "${_fake_font_source}")
-execute_process(
-    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
-        "-DHOST_OVERRIDE=${_fake_font}" -P "${_guard}"
-    RESULT_VARIABLE _font_result OUTPUT_VARIABLE _font_stdout ERROR_VARIABLE _font_stderr)
-if(_font_result EQUAL 0)
-    message(FATAL_ERROR "Stage11C evidence guard accepted named mutation: fake_font_ready")
-endif()
-if(NOT "${_font_stdout}${_font_stderr}" MATCHES "fake font-ready")
-    message(FATAL_ERROR "named mutation fake_font_ready failed for wrong reason: ${_font_stdout}${_font_stderr}")
 endif()
 
 function(stage11c_expect_host_rejection LABEL NEEDLE REPLACEMENT EXPECTED)
@@ -156,6 +200,58 @@ function(stage11c_expect_host_source_rejection LABEL MUTATED EXPECTED)
     endif()
 endfunction()
 
+function(stage11c_expect_runtime_rejection LABEL NEEDLE REPLACEMENT EXPECTED)
+    string(FIND "${_runtime_source}" "${NEEDLE}" _needle_found)
+    if(_needle_found EQUAL -1)
+        message(FATAL_ERROR
+            "runtime mutation ${LABEL} cannot find production replacement site")
+    endif()
+    string(REPLACE "${NEEDLE}" "${REPLACEMENT}" _mutated "${_runtime_source}")
+    if(_mutated STREQUAL _runtime_source)
+        message(FATAL_ERROR "runtime mutation ${LABEL} made no change")
+    endif()
+    set(_mutation "${GUARD_TEST_ROOT}/runtime-${LABEL}.cpp")
+    file(WRITE "${_mutation}" "${_mutated}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+            "-DHOST_VALIDATION_RUNTIME_OVERRIDE=${_mutation}" -P "${_guard}"
+        RESULT_VARIABLE _result OUTPUT_VARIABLE _stdout ERROR_VARIABLE _stderr)
+    if(_result EQUAL 0)
+        message(FATAL_ERROR
+            "Stage11C evidence guard accepted runtime mutation: ${LABEL}")
+    endif()
+    string(REGEX REPLACE "[ \t\r\n]+" " " _diagnostic
+        "${_stdout}${_stderr}")
+    string(REGEX REPLACE "[ \t\r\n]+" " " _expected "${EXPECTED}")
+    string(FIND "${_diagnostic}" "${_expected}" _expected_position)
+    if(_expected_position EQUAL -1)
+        message(FATAL_ERROR
+            "runtime mutation ${LABEL} failed for wrong reason: ${_stdout}${_stderr}")
+    endif()
+endfunction()
+
+function(stage11c_expect_runtime_acceptance LABEL NEEDLE REPLACEMENT)
+    string(FIND "${_runtime_source}" "${NEEDLE}" _needle_found)
+    if(_needle_found EQUAL -1)
+        message(FATAL_ERROR
+            "runtime variant ${LABEL} cannot find production replacement site")
+    endif()
+    string(REPLACE "${NEEDLE}" "${REPLACEMENT}" _mutated "${_runtime_source}")
+    if(_mutated STREQUAL _runtime_source)
+        message(FATAL_ERROR "runtime variant ${LABEL} made no change")
+    endif()
+    set(_mutation "${GUARD_TEST_ROOT}/runtime-${LABEL}.cpp")
+    file(WRITE "${_mutation}" "${_mutated}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+            "-DHOST_VALIDATION_RUNTIME_OVERRIDE=${_mutation}" -P "${_guard}"
+        RESULT_VARIABLE _result OUTPUT_VARIABLE _stdout ERROR_VARIABLE _stderr)
+    if(NOT _result EQUAL 0)
+        message(FATAL_ERROR
+            "Stage11C evidence guard rejected harmless runtime variant ${LABEL}: ${_stdout}${_stderr}")
+    endif()
+endfunction()
+
 function(stage11c_expect_input_rejection LABEL NEEDLE REPLACEMENT EXPECTED)
     string(FIND "${_input_source}" "${NEEDLE}" _needle_found)
     if(_needle_found EQUAL -1)
@@ -197,7 +293,11 @@ function(stage11c_expect_stage_rejection LABEL NEEDLE REPLACEMENT EXPECTED)
     if(_result EQUAL 0)
         message(FATAL_ERROR "Stage11C evidence guard accepted named Stage mutation: ${LABEL}")
     endif()
-    if(NOT "${_stdout}${_stderr}" MATCHES "${EXPECTED}")
+    string(REGEX REPLACE "[ \t\r\n]+" " " _diagnostic
+        "${_stdout}${_stderr}")
+    string(REGEX REPLACE "[ \t\r\n]+" " " _expected "${EXPECTED}")
+    string(FIND "${_diagnostic}" "${_expected}" _expected_position)
+    if(_expected_position EQUAL -1)
         message(FATAL_ERROR "named Stage mutation ${LABEL} failed for wrong reason: ${_stdout}${_stderr}")
     endif()
 endfunction()
@@ -215,7 +315,11 @@ function(stage11c_expect_stage_source_rejection LABEL MUTATED EXPECTED)
     if(_result EQUAL 0)
         message(FATAL_ERROR "Stage11C evidence guard accepted named Stage mutation: ${LABEL}")
     endif()
-    if(NOT "${_stdout}${_stderr}" MATCHES "${EXPECTED}")
+    string(REGEX REPLACE "[ \t\r\n]+" " " _diagnostic
+        "${_stdout}${_stderr}")
+    string(REGEX REPLACE "[ \t\r\n]+" " " _expected "${EXPECTED}")
+    string(FIND "${_diagnostic}" "${_expected}" _expected_position)
+    if(_expected_position EQUAL -1)
         message(FATAL_ERROR "named Stage mutation ${LABEL} failed for wrong reason: ${_stdout}${_stderr}")
     endif()
 endfunction()
@@ -237,112 +341,74 @@ stage11c_expect_input_rejection(input_skip_stable_binding
     "static_cast<settings::StableKey>(action)"
     "skipped stable binding")
 
-set(_runtime_font "stage11c_validation_state.model = renderer.hud_model();")
-stage11c_expect_host_text_rejection(host_runtime_model_and_hash_overwrite
-    "${_runtime_font}"
-    "${_runtime_font}\n                stage11c_validation_state.model = {};\n                stage11c_validation_state.production_snapshot_hash = 1U;"
-    "direct model overwrite")
+stage11c_expect_runtime_rejection(fake_font_ready
+    "impl_->states.stage11c.cjk_font_ready = cjk_font_ready;"
+    "impl_->states.stage11c.cjk_font_ready = true;"
+    "font-ready ownership")
 
-set(_model_copy "stage11c_validation_state.model = renderer.hud_model();")
-stage11c_expect_host_rejection(host_direct_model_overwrite
-    "${_model_copy}"
-    "${_model_copy}\n                stage11c_validation_state.model = {};"
-    "direct model overwrite")
-stage11c_expect_host_text_rejection(host_model_comment_decoy
-    "stage11c_validation_state.model = renderer.hud_model();"
-    "// stage11c_validation_state.model = renderer.hud_model();"
-    "observation scope")
-stage11c_expect_host_text_rejection(host_fake_notices_capture
-    "stage11c_validation_state.notices = renderer.hud_notice_view();"
-    "stage11c_validation_state.notices = {};"
-    "observation scope")
-stage11c_expect_host_text_rejection(host_fake_layout_capture
-    "stage11c_validation_state.layout = make_hud_layout("
-    "stage11c_validation_state.layout = {};\n                make_hud_layout("
-    "fake layout capture")
-stage11c_expect_host_text_rejection(host_duplicate_notices_capture
-    "stage11c_validation_state.notices = renderer.hud_notice_view();"
-    "stage11c_validation_state.notices = renderer.hud_notice_view();\n                stage11c_validation_state.notices = renderer.hud_notice_view();"
-    "observation scope")
-stage11c_expect_host_text_rejection(host_captured_early
-    "const bool capture_succeeded =\n                present_frame_and_maybe_capture("
-    "stage11c_validation_state.captured = true;\n            const bool capture_succeeded =\n                present_frame_and_maybe_capture("
-    "capture scope")
-stage11c_expect_host_text_rejection(host_capture_success_removed
-    "&& capture_succeeded;"
-    ";"
-    "capture ordering")
+stage11c_expect_host_text_rejection(task7c_m10_fabricated_hud_model
+    "current, renderer.hud_model(), renderer.hud_notice_view(),\n                draw_debug,"
+    "current, HudViewModel{}, renderer.hud_notice_view(),\n                draw_debug,"
+    "T7C-M10: Stage11C evidence guard rejected fabricated HUD model argument")
+stage11c_expect_host_text_rejection(task7c_m10_fabricated_hud_notices
+    "current, renderer.hud_model(), renderer.hud_notice_view(),\n                draw_debug,"
+    "current, renderer.hud_model(), HudNoticeView{},\n                draw_debug,"
+    "T7C-M10: Stage11C evidence guard rejected fabricated HUD notices argument")
+stage11c_expect_runtime_rejection(task7c_m10_corrupt_layout
+    "make_hud_layout(\n            screen_width, screen_height, true)"
+    "make_hud_layout(\n            screen_height, screen_width, true)"
+    "T7C-M10 layout")
+stage11c_expect_runtime_rejection(task7c_m10_corrupt_hash
+    "stage11c_production_snapshot_hash(snapshot)"
+    "stage11c_production_snapshot_hash(dungeon::DungeonSnapshot{})"
+    "T7C-M10 hash")
+stage11c_expect_host_text_rejection(task7c_m20_duplicate_capture_callback
+    "validation_runtime->observe_capture_result("
+    "validation_runtime->observe_capture_result(selected_capture_owner, selected_validation_capture_succeeded);\n            validation_runtime->observe_capture_result("
+    "T7C-M20")
+stage11c_expect_runtime_rejection(task7c_m25_duplicate_stage11c_summary
+    "host_validation::write_stage11c_hud_validation_summary("
+    "host_validation::write_stage11c_hud_validation_summary(*impl_->config, impl_->states.stage11c);\n    host_validation::write_stage11c_hud_validation_summary("
+    "T7C-M25")
+string(REGEX MATCH
+    "impl_->([A-Za-z_][A-Za-z0-9_]*)[ \t\r\n]*=[ \t\r\n]*stage11c_reached;"
+    _stage11c_pending_assignment "${_runtime_source}")
+if("${_stage11c_pending_assignment}" STREQUAL "")
+    message(FATAL_ERROR "Stage11C pending capture mutation anchor is missing")
+endif()
+set(_stage11c_pending_field "${CMAKE_MATCH_1}")
+set(_stage11c_capture_gate
+    "if (impl_->${_stage11c_pending_field}) {\n        impl_->states.stage11c.captured = true;\n    }")
+stage11c_expect_runtime_rejection(task7c_pending_capture_publication
+    "${_stage11c_pending_assignment}"
+    "impl_->${_stage11c_pending_field} = false;"
+    "T7C-Stage11C-pending")
+stage11c_expect_runtime_rejection(task7c_capture_result_pending_gate
+    "${_stage11c_capture_gate}"
+    "impl_->states.stage11c.captured = true;"
+    "T7C-Stage11C-capture")
+stage11c_expect_runtime_rejection(task7c_pending_capture_in_uncalled_lambda
+    "${_stage11c_pending_assignment}"
+    "const auto pending_capture_decoy = [&] { ${_stage11c_pending_assignment} };"
+    "T7C-Stage11C-pending")
+stage11c_expect_runtime_rejection(task7c_capture_gate_in_dead_branch
+    "${_stage11c_capture_gate}"
+    "if (false) { ${_stage11c_capture_gate} }"
+    "T7C-Stage11C-capture")
+stage11c_expect_runtime_acceptance(runtime_stage11c_pending_field_rename
+    "${_stage11c_pending_field}" "pending_hud_capture_ready")
+stage11c_expect_runtime_rejection(runtime_hud_owner_comment_string_decoy
+    "void HostValidationRuntime::observe_hud("
+    "// void HostValidationRuntime::observe_hud(\nconstexpr const char* task7c_hud_owner_decoy = \"void HostValidationRuntime::observe_hud(\";\nvoid HostValidationRuntime::observe_hud_removed("
+    "T7C-HUD-observation")
+stage11c_expect_runtime_acceptance(runtime_hud_owner_inactive_decoy
+    "void HostValidationRuntime::observe_hud("
+    "#if 0\nvoid HostValidationRuntime::observe_hud() {}\n#endif\nvoid HostValidationRuntime::observe_hud(")
 
-set(_run_signature "HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {")
-string(REPLACE "${_run_signature}"
-    "// STAGE11C_HUD_VALIDATION_SEAM_BEGIN observation\nconstexpr const char* stage11c_marker_decoy = \"// STAGE11C_HUD_VALIDATION_SEAM_BEGIN observation\";\n${_run_signature}"
-    _marker_decoy_source "${_host_source}")
-stage11c_expect_host_source_rejection(host_marker_comment_string_decoy
-    "${_marker_decoy_source}" "cannot bind observation seam marker")
-
-function(stage11c_extract_host_seam SOURCE NAME OUT_SEAM)
-    set(_begin "// STAGE11C_HUD_VALIDATION_SEAM_BEGIN ${NAME}")
-    set(_end "// STAGE11C_HUD_VALIDATION_SEAM_END ${NAME}")
-    string(FIND "${SOURCE}" "${_begin}" _begin_position)
-    string(FIND "${SOURCE}" "${_end}" _end_position)
-    if(_begin_position EQUAL -1 OR _end_position EQUAL -1
-            OR _end_position LESS _begin_position)
-        message(FATAL_ERROR "cannot extract Stage11C ${NAME} seam mutation")
-    endif()
-    string(LENGTH "${_end}" _end_length)
-    math(EXPR _seam_length "${_end_position} - ${_begin_position} + ${_end_length}")
-    string(SUBSTRING "${SOURCE}" ${_begin_position} ${_seam_length} _seam)
-    set(${OUT_SEAM} "${_seam}" PARENT_SCOPE)
-endfunction()
-
-stage11c_extract_host_seam("${_host_source}" observation _observation_seam)
-string(REPLACE "${_observation_seam}"
-    "const auto stage11c_observation_decoy = [&] {\n${_observation_seam}\n            };\n            const bool stage11c_target_visible = false;"
-    _observation_lambda_source "${_host_source}")
-stage11c_expect_host_source_rejection(host_observation_seam_in_lambda
-    "${_observation_lambda_source}" "observation seam scope")
-
-stage11c_extract_host_seam("${_host_source}" presented_capture _presented_capture_seam)
-string(REPLACE "${_presented_capture_seam}"
-    "const auto stage11c_presented_capture_decoy = [&] {\n${_presented_capture_seam}\n            };\n            static_cast<void>(present_frame_and_maybe_capture(nullptr));\n            ++presented_frame_count;\n            const bool capture_succeeded = false;\n            const bool captured_stage10_frame = false;"
-    _presented_capture_lambda_source "${_host_source}")
-stage11c_expect_host_source_rejection(host_presented_capture_seam_in_lambda
-    "${_presented_capture_lambda_source}" "presented capture seam scope")
-
-stage11c_extract_host_seam("${_host_source}" reached _reached_seam)
-string(REPLACE "${_reached_seam}"
-    "if (false) {\n${_reached_seam}\n            }\n            const bool stage11c_reached = false;"
-    _reached_if_false_source "${_host_source}")
-stage11c_expect_host_source_rejection(host_reached_seam_in_if_false
-    "${_reached_if_false_source}" "reached seam scope")
-
-set(_captured_block "if (captured_stage10_frame && stage11c_reached) {\n                stage11c_validation_state.captured = true;\n            }")
-string(REPLACE "${_captured_block}" "if (captured_stage10_frame && stage11c_reached) {\n            }"
-    _captured_early_source "${_host_source}")
-string(REPLACE "const bool capture_succeeded =\n                present_frame_and_maybe_capture("
-    "if (stage11c_reached) {\n                stage11c_validation_state.captured = true;\n            }\n            const bool capture_succeeded =\n                present_frame_and_maybe_capture("
-    _captured_early_source "${_captured_early_source}")
-stage11c_expect_host_source_rejection(host_captured_moved_before_present
-    "${_captured_early_source}" "rejected capture ordering")
-
-string(REPLACE "${_captured_block}"
-    "const auto stage11c_capture_decoy = [&] {\n                if (captured_stage10_frame && stage11c_reached) {\n                    stage11c_validation_state.captured = true;\n                }\n            };"
-    _captured_lambda_source "${_host_source}")
-stage11c_expect_host_source_rejection(host_captured_in_lambda
-    "${_captured_lambda_source}" "rejected capture scope")
-
-stage11c_expect_host_text_rejection(host_layout_wrong_dimensions
-    "GetScreenWidth(), GetScreenHeight(), true"
-    "1, 1, false"
-    "rejected fake layout capture")
-
-set(_hash_copy "stage11c_validation_state.production_snapshot_hash =\n                    host_validation::stage11c_production_snapshot_hash(current);")
-stage11c_expect_host_rejection(host_fake_snapshot_hash
-    "${_hash_copy}"
-    "${_hash_copy}\n                stage11c_validation_state.production_snapshot_hash = 1U;"
-    "fake snapshot hash")
-
-set(_summary_gate "const bool stage11c_validation_result = state.captured")
+set(_summary_gate
+    "const bool stage11c_validation_result = state.captured\n            && state.cjk_font_ready && state.production_snapshot_hash != 0U;")
+set(_driver_signature_tail
+    "const dungeon::DungeonSnapshot& current,\n    Stage11CHudValidationState& state) noexcept {")
 stage11c_expect_stage_rejection(stage_fake_summary_state
     "${_summary_gate}"
     "const bool stage11c_validation_result = true || state.captured"
@@ -365,8 +431,8 @@ stage11c_expect_stage_rejection(stage_summary_notice_removed
     "state.notices_primary_removed"
     "summary token")
 stage11c_expect_stage_rejection(stage_driver_early_return
-    "Stage11CHudValidationState& state) noexcept {"
-    "Stage11CHudValidationState& state) noexcept {\n    return snapshot;"
+    "${_driver_signature_tail}"
+    "${_driver_signature_tail}\n    return snapshot;"
     "physical driver return inventory")
 stage11c_expect_stage_rejection(stage_hash_early_return
     "const dungeon::DungeonSnapshot& snapshot) noexcept {"
@@ -381,8 +447,8 @@ stage11c_expect_stage_rejection(stage_summary_early_return
     "const Stage11CHudValidationState& state) noexcept {\n    return;"
     "summary return inventory")
 stage11c_expect_stage_rejection(stage_driver_unreachable_return
-    "Stage11CHudValidationState& state) noexcept {"
-    "Stage11CHudValidationState& state) noexcept {\n    if (true) {\n        return snapshot;\n    }"
+    "${_driver_signature_tail}"
+    "${_driver_signature_tail}\n    if (true) {\n        return snapshot;\n    }"
     "physical driver return inventory")
 stage11c_expect_stage_rejection(stage_hash_unreachable_return
     "const dungeon::DungeonSnapshot& snapshot) noexcept {"
@@ -436,36 +502,4 @@ stage11c_expect_stage_source_rejection(stage_hash_core_in_uncalled_lambda
     "${_hash_relocation_source}"
     "production hash core")
 
-stage11c_expect_host_rejection(host_bypassed_session_progression
-    "${_model_copy}"
-    "${_model_copy}\n                current.progression.level = 99U;"
-    "bypassed Session progression")
-
-set(_state_alias
-    "host_validation::Stage11CHudValidationState& stage11c_validation_state =\n            validation_states->stage11c;")
-string(REPLACE "${_state_alias}"
-    "host_validation::Stage11CHudValidationState stage11c_validation_state{};"
-    _independent_state_source "${_host_source}")
-if(_independent_state_source STREQUAL _host_source)
-    message(FATAL_ERROR "independent Stage11C state mutation did not change production source")
-endif()
-set(_independent_state "${GUARD_TEST_ROOT}/host-independent-stage11c-state.cpp")
-file(WRITE "${_independent_state}" "${_independent_state_source}")
-execute_process(
-    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
-        "-DHOST_OVERRIDE=${_independent_state}" -P "${_guard}"
-    RESULT_VARIABLE _independent_state_result
-    OUTPUT_VARIABLE _independent_state_stdout
-    ERROR_VARIABLE _independent_state_stderr)
-if(_independent_state_result EQUAL 0)
-    message(FATAL_ERROR "Stage11C evidence guard accepted named host mutation: independent_stage11c_state")
-endif()
-if(NOT "${_independent_state_stdout}${_independent_state_stderr}" MATCHES
-        "cannot bind actual Stage11C runtime alias")
-    message(FATAL_ERROR "named host mutation independent_stage11c_state failed for wrong reason: ${_independent_state_stdout}${_independent_state_stderr}")
-endif()
-
-stage11c_expect_host_text_rejection(host_decoy_stage11c_alias
-    "${_state_alias}"
-    "host_validation::Stage11CHudValidationState& stage11c_validation_state =\n            stage11c_decoy;"
-    "cannot bind actual Stage11C runtime alias")
+message(STATUS "Stage11C HUD evidence guard self-test passed")

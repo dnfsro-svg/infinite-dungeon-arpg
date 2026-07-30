@@ -27,8 +27,14 @@ endforeach()
 file(REMOVE_RECURSE "${GUARD_TEST_ROOT}")
 file(MAKE_DIRECTORY "${GUARD_TEST_ROOT}")
 
+set(_baseline_options "")
+if(DEFINED TASK7C_M24_M25_TARGETED_ONLY
+        AND TASK7C_M24_M25_TARGETED_ONLY)
+    list(APPEND _baseline_options "-DSTAGE11D_TASK7C_ONLY=ON")
+endif()
 execute_process(COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
-    -P "${_guard}" RESULT_VARIABLE _baseline OUTPUT_QUIET ERROR_QUIET)
+    ${_baseline_options} -P "${_guard}"
+    RESULT_VARIABLE _baseline OUTPUT_QUIET ERROR_QUIET)
 if(NOT _baseline EQUAL 0)
     message(FATAL_ERROR "Stage11D loot evidence guard rejected its baseline")
 endif()
@@ -57,11 +63,14 @@ function(expect_rejected NAME OVERRIDE PATH EXPECTED_REASON)
         endif()
     endif()
     set(_guard_options "")
+    if(EXPECTED_REASON MATCHES "^T7C-M2(4|5)")
+        list(APPEND _guard_options "-DSTAGE11D_TASK7C_ONLY=ON")
+    endif()
     if(OVERRIDE STREQUAL "HOST_VALIDATION_RUNTIME")
         if(NAME MATCHES "^facade post-tick")
             list(APPEND _guard_options
                 "-DSTAGE11D_POST_TICK_OWNER_ONLY=ON")
-        else()
+        elseif(NOT NAME MATCHES "^task7c ")
             list(APPEND _guard_options "-DSTAGE11D_INPUT_OWNER_ONLY=ON")
         endif()
     endif()
@@ -81,6 +90,398 @@ function(expect_rejected NAME OVERRIDE PATH EXPECTED_REASON)
             "Stage11D guard rejected ${NAME} for the wrong reason: ${_log}")
     endif()
 endfunction()
+
+function(task7c_run_m24_m25_cases)
+    file(READ "${_host}" _task7c_host_text)
+    string(REPLACE "\r\n" "\n" _task7c_host_text
+        "${_task7c_host_text}")
+    file(READ "${_host_validation_runtime}" _task7c_runtime_text)
+    set(_task7c_decision_observed [=[            const PresentationDecision decision =
+                validation_runtime->observe_presented_frame(
+                    current, pause_menu, pause_cjk_ready);]=])
+
+    set(_task7c_stage11d_summary [=[    host_validation::write_stage11d_loot_validation_summary(
+        *impl_->config, impl_->states.stage11d, pause_menu);]=])
+    set(_task7c_conditional_runtime_summary [=[    impl_->states.stage11d.target_visible
+        ? static_cast<void>(0)
+        : host_validation::write_stage11d_loot_validation_summary(
+            *impl_->config, impl_->states.stage11d, pause_menu);]=])
+    string(REPLACE "${_task7c_stage11d_summary}"
+        "${_task7c_conditional_runtime_summary}"
+        _task7c_m25_conditional_runtime_summary "${_task7c_runtime_text}")
+    if(_task7c_m25_conditional_runtime_summary STREQUAL _task7c_runtime_text)
+        message(FATAL_ERROR
+            "Task7C M25 conditional Runtime summary mutation site disappeared")
+    endif()
+    set(_path "${GUARD_TEST_ROOT}/task7c-m25-conditional-runtime-summary.cpp")
+    file(WRITE "${_path}" "${_task7c_m25_conditional_runtime_summary}")
+    expect_rejected("task7c M25 conditional Runtime summary"
+        HOST_VALIDATION_RUNTIME "${_path}" "T7C-M25")
+
+    set(_task7c_parenthesized_exit [=[            const PresentationDecision decision =
+                validation_runtime->observe_presented_frame(
+                    current, pause_menu, pause_cjk_ready);
+            if (decision.generic_capture_visible) {
+                (std::exit)(0);
+            }]=])
+    string(REPLACE "#include <cstdio>" "#include <cstdio>\n#include <cstdlib>"
+        _task7c_m24_parenthesized_exit_host "${_task7c_host_text}")
+    string(REPLACE "${_task7c_decision_observed}"
+        "${_task7c_parenthesized_exit}"
+        _task7c_m24_parenthesized_exit_host
+        "${_task7c_m24_parenthesized_exit_host}")
+    if(_task7c_m24_parenthesized_exit_host STREQUAL _task7c_host_text)
+        message(FATAL_ERROR
+            "Task7C M24 parenthesized exit mutation made no change")
+    endif()
+    set(_path "${GUARD_TEST_ROOT}/task7c-m24-parenthesized-exit.cpp")
+    file(WRITE "${_path}" "${_task7c_m24_parenthesized_exit_host}")
+    expect_rejected("task7c M24 parenthesized process exit" HOST "${_path}"
+        "T7C-M24")
+
+    set(_task7c_host_summary [=[        validation_runtime->write_summaries(
+            runtime.clean_shutdown_state(), pause_menu);]=])
+    set(_task7c_conditional_host_summary [=[        config.stage11d_loot_validation
+                == Stage11DLootValidationScenario::none
+            ? validation_runtime->write_summaries(
+                runtime.clean_shutdown_state(), pause_menu)
+            : static_cast<void>(0);]=])
+    string(REPLACE "${_task7c_host_summary}"
+        "${_task7c_conditional_host_summary}"
+        _task7c_m25_conditional_host_summary "${_task7c_host_text}")
+    if(_task7c_m25_conditional_host_summary STREQUAL _task7c_host_text)
+        message(FATAL_ERROR
+            "Task7C M25 conditional Host summary mutation site disappeared")
+    endif()
+    set(_path "${GUARD_TEST_ROOT}/task7c-m25-conditional-host-summary.cpp")
+    file(WRITE "${_path}" "${_task7c_m25_conditional_host_summary}")
+    expect_rejected("task7c M25 conditional Host summary" HOST "${_path}"
+        "T7C-M25")
+
+    set(_task7c_exit_declaration "        bool exit_requested = false;")
+    set(_task7c_exit_alias_declaration
+        "${_task7c_exit_declaration}\n        bool& task7c_exit_flag = exit_requested;")
+    string(REPLACE "${_task7c_exit_declaration}"
+        "${_task7c_exit_alias_declaration}" _task7c_m24_balanced_alias_host
+        "${_task7c_host_text}")
+    set(_task7c_ready_exit [=[                if (runtime.clean_shutdown_state()
+                        == CleanShutdownState::ready) {
+                    exit_requested = true;
+                } else {]=])
+    set(_task7c_ready_alias_exit [=[                if (runtime.clean_shutdown_state()
+                        == CleanShutdownState::ready) {
+                    task7c_exit_flag = true;
+                } else {]=])
+    string(REPLACE "${_task7c_ready_exit}" "${_task7c_ready_alias_exit}"
+        _task7c_m24_balanced_alias_host
+        "${_task7c_m24_balanced_alias_host}")
+    set(_task7c_balanced_alias_bypass
+        "${_task7c_decision_observed}\n            if (decision.generic_capture_visible) {\n                task7c_exit_flag = true;\n            }")
+    string(REPLACE "${_task7c_decision_observed}"
+        "${_task7c_balanced_alias_bypass}" _task7c_m24_balanced_alias_host
+        "${_task7c_m24_balanced_alias_host}")
+    if(_task7c_m24_balanced_alias_host STREQUAL _task7c_host_text)
+        message(FATAL_ERROR
+            "Task7C M24 balanced exit alias mutation made no change")
+    endif()
+    set(_path "${GUARD_TEST_ROOT}/task7c-m24-balanced-exit-alias.cpp")
+    file(WRITE "${_path}" "${_task7c_m24_balanced_alias_host}")
+    expect_rejected("task7c M24 balanced exit-flag alias" HOST "${_path}"
+        "T7C-M24")
+
+    set(_task7c_audio_shutdown "        audio.shutdown();")
+    set(_task7c_duplicate_host_summary [=[        audio.shutdown();
+        (*validation_runtime).write_summaries(
+            runtime.clean_shutdown_state(), pause_menu);]=])
+    string(REPLACE "${_task7c_audio_shutdown}"
+        "${_task7c_duplicate_host_summary}"
+        _task7c_m25_duplicate_host_summary "${_task7c_host_text}")
+    if(_task7c_m25_duplicate_host_summary STREQUAL _task7c_host_text)
+        message(FATAL_ERROR
+            "Task7C M25 duplicate Host summary mutation site disappeared")
+    endif()
+    set(_path "${GUARD_TEST_ROOT}/task7c-m25-duplicate-host-summary.cpp")
+    file(WRITE "${_path}" "${_task7c_m25_duplicate_host_summary}")
+    expect_rejected("task7c M25 alternate Host summary invocation" HOST
+        "${_path}" "T7C-M25")
+
+    set(_task7c_duplicate_runtime_summary [=[    host_validation::write_stage11d_loot_validation_summary(
+        *impl_->config, impl_->states.stage11d, pause_menu);
+    (*host_validation::write_stage11d_loot_validation_summary)(
+        *impl_->config, impl_->states.stage11d, pause_menu);]=])
+    string(REPLACE "${_task7c_stage11d_summary}"
+        "${_task7c_duplicate_runtime_summary}"
+        _task7c_m25_duplicate_runtime_summary "${_task7c_runtime_text}")
+    if(_task7c_m25_duplicate_runtime_summary STREQUAL _task7c_runtime_text)
+        message(FATAL_ERROR
+            "Task7C M25 duplicate Runtime summary mutation site disappeared")
+    endif()
+    set(_path "${GUARD_TEST_ROOT}/task7c-m25-duplicate-runtime-summary.cpp")
+    file(WRITE "${_path}" "${_task7c_m25_duplicate_runtime_summary}")
+    expect_rejected("task7c M25 alternate Runtime summary invocation"
+        HOST_VALIDATION_RUNTIME "${_path}" "T7C-M25")
+
+    set(_task7c_validation_exit
+        "if (decision.validation_complete\n                    && (!config.validation_capture_file.has_value()\n                        || effective_generic_complete)) {\n                begin_clean_exit();\n            }")
+    set(_task7c_exit_flag_alias [=[            bool& task7c_exit_flag = exit_requested;
+            const PresentationDecision decision =
+                validation_runtime->observe_presented_frame(
+                    current, pause_menu, pause_cjk_ready);
+            if (decision.generic_capture_visible) {
+                task7c_exit_flag = true;
+            }]=])
+    string(REPLACE "${_task7c_decision_observed}"
+        "${_task7c_exit_flag_alias}" _task7c_m24_exit_flag_alias_host
+        "${_task7c_host_text}")
+    if(_task7c_m24_exit_flag_alias_host STREQUAL _task7c_host_text)
+        message(FATAL_ERROR
+            "Task7C M24 exit-flag alias mutation site disappeared")
+    endif()
+    set(_path "${GUARD_TEST_ROOT}/task7c-m24-exit-flag-alias.cpp")
+    file(WRITE "${_path}" "${_task7c_m24_exit_flag_alias_host}")
+    expect_rejected("task7c M24 exit-flag reference alias" HOST "${_path}"
+        "T7C-M24")
+
+    set(_task7c_clean_exit_lambda [=[            const auto task7c_exit_alias = [&]() noexcept {
+                begin_clean_exit();
+            };
+            const PresentationDecision decision =
+                validation_runtime->observe_presented_frame(
+                    current, pause_menu, pause_cjk_ready);
+            if (decision.generic_capture_visible) {
+                task7c_exit_alias();
+            }]=])
+    string(REPLACE "${_task7c_decision_observed}"
+        "${_task7c_clean_exit_lambda}" _task7c_m24_clean_exit_lambda_host
+        "${_task7c_host_text}")
+    if(_task7c_m24_clean_exit_lambda_host STREQUAL _task7c_host_text)
+        message(FATAL_ERROR
+            "Task7C M24 clean-exit lambda mutation site disappeared")
+    endif()
+    set(_path "${GUARD_TEST_ROOT}/task7c-m24-clean-exit-lambda.cpp")
+    file(WRITE "${_path}" "${_task7c_m24_clean_exit_lambda_host}")
+    expect_rejected("task7c M24 clean-exit lambda alias" HOST "${_path}"
+        "T7C-M24")
+
+    foreach(_task7c_m24_case IN ITEMS premature-stage11d unrelated-capture)
+        if(_task7c_m24_case STREQUAL "premature-stage11d")
+            set(_task7c_m24_condition
+                "if ((decision.validation_complete\n                        || decision.generic_capture_visible)\n                    && (!config.validation_capture_file.has_value()\n                        || effective_generic_complete)) {\n                begin_clean_exit();\n            }")
+            set(_task7c_m24_name
+                "task7c M24 premature Stage11D exit")
+        else()
+            set(_task7c_m24_condition
+                "if ((decision.validation_complete\n                        || effective_generic_complete)\n                    && (!config.validation_capture_file.has_value()\n                        || effective_generic_complete)) {\n                begin_clean_exit();\n            }")
+            set(_task7c_m24_name
+                "task7c M24 unrelated capture-driven exit")
+        endif()
+        string(REPLACE "${_task7c_validation_exit}"
+            "${_task7c_m24_condition}" _task7c_m24_host
+            "${_task7c_host_text}")
+        if(_task7c_m24_host STREQUAL _task7c_host_text)
+            message(FATAL_ERROR
+                "Task7C M24 ${_task7c_m24_case} mutation site disappeared")
+        endif()
+        set(_path
+            "${GUARD_TEST_ROOT}/task7c-m24-${_task7c_m24_case}.cpp")
+        file(WRITE "${_path}" "${_task7c_m24_host}")
+        expect_rejected("${_task7c_m24_name}" HOST "${_path}"
+            "T7C-M24")
+    endforeach()
+
+    set(_task7c_pre_capture_exit [=[            const PresentationDecision decision =
+                validation_runtime->observe_presented_frame(
+                    current, pause_menu, pause_cjk_ready);
+            if (decision.generic_capture_visible) {
+                begin_clean_exit();
+            }]=])
+    string(REPLACE "${_task7c_decision_observed}"
+        "${_task7c_pre_capture_exit}" _task7c_m24_pre_capture_host
+        "${_task7c_host_text}")
+    if(_task7c_m24_pre_capture_host STREQUAL _task7c_host_text)
+        message(FATAL_ERROR
+            "Task7C M24 pre-capture exit mutation site disappeared")
+    endif()
+    set(_path "${GUARD_TEST_ROOT}/task7c-m24-pre-capture-exit.cpp")
+    file(WRITE "${_path}" "${_task7c_m24_pre_capture_host}")
+    expect_rejected("task7c M24 pre-capture exit" HOST "${_path}"
+        "T7C-M24")
+
+    foreach(_task7c_direct_bypass IN ITEMS
+            explicit-clean-exit counter-poison exit-requested loop-break)
+        if(_task7c_direct_bypass STREQUAL "explicit-clean-exit")
+            set(_task7c_direct_bypass_statement [=[            if (decision.generic_capture_visible) {
+                begin_clean_exit.operator()();
+            }]=])
+            set(_task7c_direct_bypass_name
+                "task7c M24 explicit clean-exit operator call")
+        elseif(_task7c_direct_bypass STREQUAL "counter-poison")
+            set(_task7c_direct_bypass_statement [=[            if (decision.generic_capture_visible) {
+                presented_frame_count =
+                    config.validation_exit_after_presented_frames;
+            }]=])
+            set(_task7c_direct_bypass_name
+                "task7c M24 presented-frame counter poison")
+        elseif(_task7c_direct_bypass STREQUAL "exit-requested")
+            set(_task7c_direct_bypass_statement [=[            if (decision.generic_capture_visible) {
+                exit_requested = true;
+            }]=])
+            set(_task7c_direct_bypass_name
+                "task7c M24 direct exit-requested bypass")
+        else()
+            set(_task7c_direct_bypass_statement [=[            if (decision.generic_capture_visible) {
+                break;
+            }]=])
+            set(_task7c_direct_bypass_name
+                "task7c M24 direct loop-break bypass")
+        endif()
+        set(_task7c_direct_bypass_replacement
+            "${_task7c_decision_observed}\n${_task7c_direct_bypass_statement}")
+        string(REPLACE "${_task7c_decision_observed}"
+            "${_task7c_direct_bypass_replacement}"
+            _task7c_direct_bypass_host "${_task7c_host_text}")
+        if(_task7c_direct_bypass_host STREQUAL _task7c_host_text)
+            message(FATAL_ERROR
+                "Task7C M24 ${_task7c_direct_bypass} mutation site disappeared")
+        endif()
+        set(_path
+            "${GUARD_TEST_ROOT}/task7c-m24-${_task7c_direct_bypass}.cpp")
+        file(WRITE "${_path}" "${_task7c_direct_bypass_host}")
+        expect_rejected("${_task7c_direct_bypass_name}" HOST "${_path}"
+            "T7C-M24")
+    endforeach()
+
+    string(REPLACE "const PresentationDecision decision ="
+        "const auto decision =" _task7c_m24_cross_function_host
+        "${_task7c_host_text}")
+    set(_task7c_run_signature "HostExitCode run_raylib_host(")
+    set(_task7c_cross_function_decoy [=[void task7c_m24_decision_decoy() {
+    const PresentationDecision decision = {};
+}
+
+HostExitCode run_raylib_host(]=])
+    string(REPLACE "${_task7c_run_signature}"
+        "${_task7c_cross_function_decoy}"
+        _task7c_m24_cross_function_host
+        "${_task7c_m24_cross_function_host}")
+    if(_task7c_m24_cross_function_host STREQUAL _task7c_host_text)
+        message(FATAL_ERROR
+            "Task7C M24 cross-function decision decoy mutation made no change")
+    endif()
+    set(_path "${GUARD_TEST_ROOT}/task7c-m24-cross-function-decoy.cpp")
+    file(WRITE "${_path}" "${_task7c_m24_cross_function_host}")
+    expect_rejected("task7c M24 cross-function decision decoy" HOST "${_path}"
+        "T7C-M24")
+
+    set(_task7c_predecision_alias [=[            auto* task7c_frame_counter = &presented_frame_count;
+            const PresentationDecision decision =
+                validation_runtime->observe_presented_frame(
+                    current, pause_menu, pause_cjk_ready);
+            if (decision.generic_capture_visible) {
+                *task7c_frame_counter =
+                    config.validation_exit_after_presented_frames;
+            }]=])
+    string(REPLACE "${_task7c_decision_observed}"
+        "${_task7c_predecision_alias}" _task7c_m24_alias_host
+        "${_task7c_host_text}")
+    if(_task7c_m24_alias_host STREQUAL _task7c_host_text)
+        message(FATAL_ERROR
+            "Task7C M24 pre-decision counter alias mutation site disappeared")
+    endif()
+    set(_path "${GUARD_TEST_ROOT}/task7c-m24-predecision-counter-alias.cpp")
+    file(WRITE "${_path}" "${_task7c_m24_alias_host}")
+    expect_rejected("task7c M24 pre-decision counter alias" HOST "${_path}"
+        "T7C-M24")
+
+    set(_task7c_frame_exit [=[            if (config.validation_exit_after_presented_frames != 0U
+                    && presented_frame_count
+                        >= config.validation_exit_after_presented_frames) {
+                begin_clean_exit();
+            }]=])
+    set(_task7c_capture_driven_frame_exit [=[            if (decision.generic_capture_visible
+                    || (config.validation_exit_after_presented_frames != 0U
+                        && presented_frame_count
+                            >= config.validation_exit_after_presented_frames)) {
+                begin_clean_exit();
+            }]=])
+    string(REPLACE "${_task7c_frame_exit}"
+        "${_task7c_capture_driven_frame_exit}"
+        _task7c_m24_frame_exit_host "${_task7c_host_text}")
+    if(_task7c_m24_frame_exit_host STREQUAL _task7c_host_text)
+        message(FATAL_ERROR
+            "Task7C M24 capture-driven frame exit mutation site disappeared")
+    endif()
+    set(_path "${GUARD_TEST_ROOT}/task7c-m24-capture-driven-frame-exit.cpp")
+    file(WRITE "${_path}" "${_task7c_m24_frame_exit_host}")
+    expect_rejected("task7c M24 capture-driven frame exit" HOST "${_path}"
+        "T7C-M24")
+
+    set(_task7c_counter_increment "            ++presented_frame_count;")
+    set(_task7c_double_increment [=[            for (unsigned task7c_repeat = 0U; task7c_repeat < 2U;
+                    ++task7c_repeat) {
+                ++presented_frame_count;
+            }]=])
+    string(REPLACE "${_task7c_counter_increment}"
+        "${_task7c_double_increment}" _task7c_m24_double_increment_host
+        "${_task7c_host_text}")
+    if(_task7c_m24_double_increment_host STREQUAL _task7c_host_text)
+        message(FATAL_ERROR
+            "Task7C M24 controlled double-increment mutation site disappeared")
+    endif()
+    set(_path "${GUARD_TEST_ROOT}/task7c-m24-double-increment.cpp")
+    file(WRITE "${_path}" "${_task7c_m24_double_increment_host}")
+    expect_rejected("task7c M24 controlled double increment" HOST "${_path}"
+        "T7C-M24")
+
+    set(_task7c_macro_exit
+        "            #define validation_complete generic_capture_visible\n${_task7c_validation_exit}\n            #undef validation_complete")
+    string(REPLACE "${_task7c_validation_exit}" "${_task7c_macro_exit}"
+        _task7c_m24_macro_host "${_task7c_host_text}")
+    if(_task7c_m24_macro_host STREQUAL _task7c_host_text)
+        message(FATAL_ERROR
+            "Task7C M24 validation-complete macro mutation site disappeared")
+    endif()
+    set(_path "${GUARD_TEST_ROOT}/task7c-m24-validation-macro.cpp")
+    file(WRITE "${_path}" "${_task7c_m24_macro_host}")
+    expect_rejected("task7c M24 validation-complete macro rewrite" HOST
+        "${_path}" "T7C-M24")
+
+    set(_task7c_generic_complete_assignment
+        "    decision.generic_capture_complete = impl_->generic_capture_complete;")
+    set(_task7c_validation_overwrite
+        "    decision.validation_complete = true;\n${_task7c_generic_complete_assignment}")
+    string(REPLACE "${_task7c_generic_complete_assignment}"
+        "${_task7c_validation_overwrite}"
+        _task7c_m24_runtime_overwrite "${_task7c_runtime_text}")
+    if(_task7c_m24_runtime_overwrite STREQUAL _task7c_runtime_text)
+        message(FATAL_ERROR
+            "Task7C M24 facade overwrite mutation site disappeared")
+    endif()
+    set(_path "${GUARD_TEST_ROOT}/task7c-m24-facade-overwrite.cpp")
+    file(WRITE "${_path}" "${_task7c_m24_runtime_overwrite}")
+    expect_rejected("task7c M24 facade validation-complete overwrite"
+        HOST_VALIDATION_RUNTIME "${_path}" "T7C-M24")
+
+    string(REPLACE
+        "host_validation::write_stage11d_loot_validation_summary("
+        "host_validation::write_stage11d_loot_validation_summary_removed("
+        _task7c_m25_runtime "${_task7c_runtime_text}")
+    if(_task7c_m25_runtime STREQUAL _task7c_runtime_text)
+        message(FATAL_ERROR "Task7C M25 mutation site disappeared")
+    endif()
+    set(_path "${GUARD_TEST_ROOT}/task7c-m25-omit-stage11d-summary.cpp")
+    file(WRITE "${_path}" "${_task7c_m25_runtime}")
+    expect_rejected("task7c M25 omit Stage11D summary"
+        HOST_VALIDATION_RUNTIME "${_path}" "T7C-M25")
+endfunction()
+
+if(DEFINED TASK7C_M24_M25_TARGETED_ONLY
+        AND TASK7C_M24_M25_TARGETED_ONLY)
+    task7c_run_m24_m25_cases()
+    message(STATUS
+        "Stage11D Task7C M24/M25 targeted guard self-test passed: cases=22")
+    return()
+endif()
 
 file(READ "${_report}" _task5b_report_text)
 string(REPLACE "\r\n" "\n" _task5b_report_text
@@ -303,7 +704,7 @@ expect_rejected("runtime selector payload cross scope" RUNTIME "${_path}"
 file(READ "${_host}" _task5a_red_host_text)
 string(REPLACE "\r\n" "\n" _task5a_red_host_text
     "${_task5a_red_host_text}")
-set(_task5a_host_include "#include \"host_validation_stage11d.hpp\"")
+set(_task5a_host_include "#include \"host_validation.hpp\"")
 set(_task5a_host_definition_decoys
     "${_task5a_host_include}\n// bool stage11d_validation_active(\nconstexpr const char* task5a_stage11d_definition_decoy = \"bool stage11d_validation_active(\";")
 string(REPLACE "${_task5a_host_include}" "${_task5a_host_definition_decoys}"
@@ -468,7 +869,7 @@ set(_task5a_fixed_step_begin
 set(_task5a_fixed_step_end
     "// STAGE11D_LOOT_VALIDATION_SEAM_END fixed_step")
 set(_task5a_nested_fixed_step
-    "${_task5a_fixed_step_begin}\n                        || ([&]() noexcept {\n                            if (false) {\n                                return host_validation::stage11d_validation_active(config);\n                            }\n                            return false;\n                        }())\n${_task5a_fixed_step_end}")
+    "${_task5a_fixed_step_begin}\n                        || ([&]() noexcept {\n                            if (false) {\n                                return config.stage11d_loot_validation\n                                    != Stage11DLootValidationScenario::none;\n                            }\n                            return false;\n                        }())\n${_task5a_fixed_step_end}")
 string(REPLACE "${_task5a_fixed_step_seam}"
     "${_task5a_nested_fixed_step}" _task5a_fixed_step_payload_cross_scope
     "${_task5a_red_host_text}")
@@ -777,7 +1178,7 @@ function(expect_host_insert NAME SLUG SITE INSERT EXPECTED_REASON)
 endfunction()
 
 set(_host_scope_site
-    "if (stage11d_validation_state.target_visible")
+    "validation_runtime->observe_post_fixed_tick(")
 expect_host_insert("host private access" "host-private-access"
     "${_host_scope_site}" "const auto* TestAccess = session;"
     "host-bypass-TestAccess")
@@ -924,10 +1325,132 @@ file(WRITE "${_path}" "${_mutated}")
 expect_rejected("existence-only validation" VALIDATOR "${_path}"
     "missing semantic check: $feature")
 
+task7c_run_m24_m25_cases()
+
+set(_task7c_ground_gate
+    "if (impl_->states.stage11d.target_visible\n            && !impl_->states.stage11d.captured) {")
+set(_task7c_ground_block
+    "${_task7c_ground_gate}\n        host_validation::stage11d_record_semantics(\n            impl_->states.stage11d, snapshot, ownership,\n            ground_loot_view, notices);\n    }")
+foreach(_task7c_ground_mutation IN ITEMS
+        "if (!impl_->states.stage11d.captured) {"
+        "if (impl_->states.stage11d.target_visible) {")
+    string(REPLACE "${_task7c_ground_gate}" "${_task7c_ground_mutation}"
+        _task7c_ground_runtime "${_task7b_host_validation_runtime_text}")
+    if(_task7c_ground_runtime STREQUAL _task7b_host_validation_runtime_text)
+        message(FATAL_ERROR "Task7C ground semantic gate mutation site disappeared")
+    endif()
+    string(MD5 _task7c_ground_slug "${_task7c_ground_mutation}")
+    set(_path "${GUARD_TEST_ROOT}/task7c-ground-${_task7c_ground_slug}.cpp")
+    file(WRITE "${_path}" "${_task7c_ground_runtime}")
+    expect_rejected("task7c ground semantic recording gate"
+        HOST_VALIDATION_RUNTIME "${_path}"
+        "target-visible uncaptured semantic recording")
+endforeach()
+foreach(_task7c_ground_scope IN ITEMS lambda dead)
+    if(_task7c_ground_scope STREQUAL "lambda")
+        set(_task7c_ground_replacement
+            "const auto ground_semantics_decoy = [&] { ${_task7c_ground_block} };")
+    else()
+        set(_task7c_ground_replacement
+            "if (false) { ${_task7c_ground_block} }")
+    endif()
+    string(REPLACE "${_task7c_ground_block}"
+        "${_task7c_ground_replacement}" _task7c_ground_scoped_runtime
+        "${_task7b_host_validation_runtime_text}")
+    if(_task7c_ground_scoped_runtime STREQUAL
+            _task7b_host_validation_runtime_text)
+        message(FATAL_ERROR
+            "Task7C ground ${_task7c_ground_scope} mutation made no change")
+    endif()
+    set(_path
+        "${GUARD_TEST_ROOT}/task7c-ground-${_task7c_ground_scope}.cpp")
+    file(WRITE "${_path}" "${_task7c_ground_scoped_runtime}")
+    expect_rejected("task7c ground semantic ${_task7c_ground_scope} scope"
+        HOST_VALIDATION_RUNTIME "${_path}"
+        "target-visible uncaptured semantic recording")
+endforeach()
+
+string(REGEX MATCH
+    "impl_->([A-Za-z_][A-Za-z0-9_]*)[ \t\r\n]*=[ \t\r\n]*impl_->states[.]stage11d[.]target_visible;"
+    _task7c_pending_assignment "${_task7b_host_validation_runtime_text}")
+if("${_task7c_pending_assignment}" STREQUAL "")
+    message(FATAL_ERROR "Task7C Stage11D pending capture anchor is missing")
+endif()
+set(_task7c_pending_field "${CMAKE_MATCH_1}")
+set(_task7c_capture_gate
+    "if (impl_->${_task7c_pending_field}) {\n        impl_->states.stage11d.captured = true;\n    }")
+string(REPLACE
+    "${_task7c_pending_assignment}"
+    "impl_->${_task7c_pending_field} = false;"
+    _task7c_pending_runtime "${_task7b_host_validation_runtime_text}")
+if(_task7c_pending_runtime STREQUAL _task7b_host_validation_runtime_text)
+    message(FATAL_ERROR "Task7C Stage11D pending capture mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/task7c-stage11d-pending-publication.cpp")
+file(WRITE "${_path}" "${_task7c_pending_runtime}")
+expect_rejected("task7c Stage11D pending capture publication"
+    HOST_VALIDATION_RUNTIME "${_path}"
+    "successful pending capture promotion")
+string(REPLACE "${_task7c_pending_assignment}"
+    "const auto pending_loot_decoy = [&] { ${_task7c_pending_assignment} };"
+    _task7c_pending_lambda "${_task7b_host_validation_runtime_text}")
+if(_task7c_pending_lambda STREQUAL _task7b_host_validation_runtime_text)
+    message(FATAL_ERROR "Task7C pending capture lambda mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/task7c-stage11d-pending-lambda.cpp")
+file(WRITE "${_path}" "${_task7c_pending_lambda}")
+expect_rejected("task7c Stage11D pending capture lambda"
+    HOST_VALIDATION_RUNTIME "${_path}"
+    "successful pending capture promotion")
+
+string(REPLACE
+    "${_task7c_capture_gate}"
+    "impl_->states.stage11d.captured = true;"
+    _task7c_capture_runtime "${_task7b_host_validation_runtime_text}")
+if(_task7c_capture_runtime STREQUAL _task7b_host_validation_runtime_text)
+    message(FATAL_ERROR "Task7C Stage11D capture gate mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/task7c-stage11d-capture-gate.cpp")
+file(WRITE "${_path}" "${_task7c_capture_runtime}")
+expect_rejected("task7c Stage11D capture result gate"
+    HOST_VALIDATION_RUNTIME "${_path}"
+    "successful pending capture promotion")
+string(REPLACE "${_task7c_capture_gate}"
+    "if (false) { ${_task7c_capture_gate} }"
+    _task7c_capture_dead "${_task7b_host_validation_runtime_text}")
+if(_task7c_capture_dead STREQUAL _task7b_host_validation_runtime_text)
+    message(FATAL_ERROR "Task7C capture dead-branch mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/task7c-stage11d-capture-dead.cpp")
+file(WRITE "${_path}" "${_task7c_capture_dead}")
+expect_rejected("task7c Stage11D capture dead branch"
+    HOST_VALIDATION_RUNTIME "${_path}"
+    "successful pending capture promotion")
+
+string(REPLACE "void HostValidationRuntime::observe_ground_loot("
+    "#if 0\nvoid HostValidationRuntime::observe_ground_loot() {}\n#endif\nvoid HostValidationRuntime::observe_ground_loot("
+    _task7c_inactive_facade "${_task7b_host_validation_runtime_text}")
+if(_task7c_inactive_facade STREQUAL _task7b_host_validation_runtime_text)
+    message(FATAL_ERROR "Task7C inactive facade mutation made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/task7c-inactive-facade.cpp")
+file(WRITE "${_path}" "${_task7c_inactive_facade}")
+expect_guard_accepted("Stage11D evidence guard inactive facade decoy"
+    "${_guard}" HOST_VALIDATION_RUNTIME "${_path}")
+string(REPLACE "${_task7c_pending_field}" "pending_loot_capture_ready"
+    _task7c_pending_rename "${_task7b_host_validation_runtime_text}")
+if(_task7c_pending_rename STREQUAL _task7b_host_validation_runtime_text)
+    message(FATAL_ERROR "Task7C Stage11D pending field rename made no change")
+endif()
+set(_path "${GUARD_TEST_ROOT}/task7c-stage11d-pending-rename.cpp")
+file(WRITE "${_path}" "${_task7c_pending_rename}")
+expect_guard_accepted("Stage11D evidence guard pending field rename"
+    "${_guard}" HOST_VALIDATION_RUNTIME "${_path}")
+
 if(DEFINED TASK5A_TARGETED_ONLY AND TASK5A_TARGETED_ONLY)
     message(STATUS
         "Stage11D Task5A targeted guard test passed: bad_mutations=5; harmless_decoys=2")
 else()
     message(STATUS
-        "Stage11D loot evidence guard self-test passed: bad_mutations=55; harmless_decoys=2")
+        "Stage11D loot evidence guard self-test passed: bad_mutations=66; harmless_decoys=4")
 endif()

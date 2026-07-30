@@ -28,6 +28,7 @@ list(APPEND _production_hud_sources
     "${_production_hud_root}/host_validation_input.cpp"
     "${_production_hud_root}/host_validation_navigation.hpp"
     "${_production_hud_root}/host_validation_navigation.cpp"
+    "${_production_hud_root}/host_validation_runtime.cpp"
     "${_production_hud_root}/host_validation_stage11c.hpp"
     "${_production_hud_root}/host_validation_stage11c.cpp"
     "${_production_hud_root}/CMakeLists.txt"
@@ -144,6 +145,99 @@ function(arpg_expect_hud_guard_rejects_after_replace
     endif()
 endfunction()
 
+function(arpg_expect_hud_guard_rejects_source NAME TARGET_FILE MUTATED REASON)
+    set(_mutation_root "${GUARD_TEST_ROOT}/${NAME}")
+    file(MAKE_DIRECTORY "${_mutation_root}")
+    foreach(_production_source IN LISTS _production_hud_sources)
+        get_filename_component(_source_name "${_production_source}" NAME)
+        file(COPY_FILE "${_production_source}"
+            "${_mutation_root}/${_source_name}" ONLY_IF_DIFFERENT)
+    endforeach()
+    set(_mutated_source "${_mutation_root}/${TARGET_FILE}")
+    file(WRITE "${_mutated_source}" "${MUTATED}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}"
+            "-DSOURCE_ROOT=${SOURCE_ROOT}"
+            "-DHUD_SOURCE_ROOT=${_mutation_root}"
+            -P "${GUARD_SCRIPT}"
+        RESULT_VARIABLE _result
+        OUTPUT_VARIABLE _stdout
+        ERROR_VARIABLE _stderr)
+    if(_result EQUAL 0)
+        message(FATAL_ERROR
+            "Stage11C HUD guard accepted ${NAME} production-source mutation")
+    endif()
+    set(_combined "${_stdout}\n${_stderr}")
+    string(FIND "${_combined}" "${REASON}" _reason_index)
+    if(_reason_index EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11C HUD mutation ${NAME} failed for wrong reason; "
+            "expected '${REASON}', got: ${_combined}")
+    endif()
+endfunction()
+
+function(arpg_expect_hud_guard_accepts_source NAME TARGET_FILE MUTATED)
+    set(_mutation_root "${GUARD_TEST_ROOT}/${NAME}")
+    file(MAKE_DIRECTORY "${_mutation_root}")
+    foreach(_production_source IN LISTS _production_hud_sources)
+        get_filename_component(_source_name "${_production_source}" NAME)
+        file(COPY_FILE "${_production_source}"
+            "${_mutation_root}/${_source_name}" ONLY_IF_DIFFERENT)
+    endforeach()
+    file(WRITE "${_mutation_root}/${TARGET_FILE}" "${MUTATED}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}"
+            "-DSOURCE_ROOT=${SOURCE_ROOT}"
+            "-DHUD_SOURCE_ROOT=${_mutation_root}"
+            -P "${GUARD_SCRIPT}"
+        RESULT_VARIABLE _result
+        OUTPUT_VARIABLE _stdout
+        ERROR_VARIABLE _stderr)
+    if(NOT _result EQUAL 0)
+        message(FATAL_ERROR
+            "Stage11C HUD guard rejected harmless ${NAME} variant: ${_stdout}${_stderr}")
+    endif()
+endfunction()
+
+set(_task7c_mask_hud_observer
+    "            validation_runtime->observe_hud(\n                current, renderer.hud_model(), renderer.hud_notice_view(),\n                draw_debug, GetScreenWidth(), GetScreenHeight());")
+set(_task7c_mask_hud_observer_get
+    "            validation_runtime.get()->observe_hud(\n                current, renderer.hud_model(), renderer.hud_notice_view(),\n                draw_debug, GetScreenWidth(), GetScreenHeight());")
+set(_task7c_mask_renderer_hud_anchor
+    "            renderer.observe_presented_hud_frame(hud_presented_frame,")
+file(READ "${_production_hud_root}/raylib_host.cpp"
+    _task7c_mask_host_source)
+
+string(REPLACE "${_task7c_mask_hud_observer}"
+    "            if (false) {\n${_task7c_mask_hud_observer}\n            }"
+    _task7c_m08_mask_host "${_task7c_mask_host_source}")
+string(REPLACE "${_task7c_mask_renderer_hud_anchor}"
+    "${_task7c_mask_hud_observer_get}\n${_task7c_mask_renderer_hud_anchor}"
+    _task7c_m08_mask_host "${_task7c_m08_mask_host}")
+arpg_expect_hud_guard_rejects_source(task7c_m08_dead_decoy_get_call
+    raylib_host.cpp "${_task7c_m08_mask_host}" "T7C-M08")
+
+string(REPLACE "${_task7c_mask_hud_observer}"
+    "            const auto task7c_hud_observer_decoy = [&] {\n${_task7c_mask_hud_observer}\n            };"
+    _task7c_m09_mask_host "${_task7c_mask_host_source}")
+string(REPLACE "            BeginDrawing();"
+    "            BeginDrawing();\n${_task7c_mask_hud_observer_get}"
+    _task7c_m09_mask_host "${_task7c_m09_mask_host}")
+arpg_expect_hud_guard_rejects_source(task7c_m09_lambda_decoy_get_call
+    raylib_host.cpp "${_task7c_m09_mask_host}" "T7C-M09")
+
+string(REPLACE "${_task7c_mask_hud_observer}"
+    "${_task7c_mask_hud_observer_get}"
+    _task7c_get_accessor_host "${_task7c_mask_host_source}")
+arpg_expect_hud_guard_accepts_source(task7c_get_accessor_equivalent
+    raylib_host.cpp "${_task7c_get_accessor_host}")
+
+if(DEFINED STAGE11C_TASK7C_HOST_MASK_ONLY)
+    message(STATUS
+        "Stage11C HUD architecture Task7C Host-mask cases passed")
+    return()
+endif()
+
 arpg_expect_hud_guard_rejects(get_key_pressed combat_renderer.cpp ""
     "int stage11c_bad_key() { return GetKeyPressed(); }"
     "HUD boundary rejects physical input sampling")
@@ -164,8 +258,7 @@ arpg_expect_hud_guard_rejects(dynamic_vector raylib_host.cpp
     "const GroundLootView ground_loot_view = [&]() noexcept {"
     "std::vector<int> stage11c_bad_vector;"
     "HUD boundary rejects dynamic std::vector")
-arpg_expect_hud_guard_rejects(legacy_budget raylib_host.cpp
-    "const GroundLootView ground_loot_view = [&]() noexcept {"
+arpg_expect_hud_guard_rejects(legacy_budget hud_renderer.cpp ""
     "constexpr const char* stage11c_bad_text = \"Budget\";"
     "Normal HUD rejects legacy Budget text")
 arpg_expect_hud_guard_rejects(fourth_status_tag hud_view_model.cpp ""
@@ -218,5 +311,47 @@ arpg_expect_hud_guard_rejects_after_replace(stage_cmake_bracket_argument_decoy
     ""
     "arpg_raylib does not register host_validation_stage11c.cpp exactly once")
 
+set(_task7c_hud_observer
+    "            validation_runtime->observe_hud(\n                current, renderer.hud_model(), renderer.hud_notice_view(),\n                draw_debug, GetScreenWidth(), GetScreenHeight());")
+set(_task7c_renderer_hud_anchor
+    "            renderer.observe_presented_hud_frame(hud_presented_frame,")
+file(READ "${_production_hud_root}/raylib_host.cpp" _task7c_host_source)
+string(REPLACE "${_task7c_hud_observer}\n" ""
+    _task7c_m08_host "${_task7c_host_source}")
+string(REPLACE "${_task7c_renderer_hud_anchor}"
+    "${_task7c_hud_observer}\n${_task7c_renderer_hud_anchor}"
+    _task7c_m08_host "${_task7c_m08_host}")
+if(_task7c_m08_host STREQUAL _task7c_host_source)
+    message(FATAL_ERROR "Task7C M08 HUD-order mutation anchor is missing")
+endif()
+arpg_expect_hud_guard_rejects_source(task7c_m08_hud_before_renderer
+    raylib_host.cpp "${_task7c_m08_host}"
+    "T7C-M08")
+
+string(REPLACE "${_task7c_hud_observer}\n" ""
+    _task7c_m09_host "${_task7c_host_source}")
+string(REPLACE "            BeginDrawing();"
+    "            BeginDrawing();\n${_task7c_hud_observer}"
+    _task7c_m09_host "${_task7c_m09_host}")
+if(_task7c_m09_host STREQUAL _task7c_host_source)
+    message(FATAL_ERROR "Task7C M09 HUD-order mutation anchor is missing")
+endif()
+arpg_expect_hud_guard_rejects_source(task7c_m09_hud_after_begin_drawing
+    raylib_host.cpp "${_task7c_m09_host}"
+    "T7C-M09")
+
+string(REPLACE "HostExitCode run_raylib_host("
+    "#if 0\nHostExitCode run_raylib_host() { validation_runtime->observe_hud(current, renderer.hud_model(), renderer.hud_notice_view(), draw_debug, GetScreenWidth(), GetScreenHeight()); }\n#endif\nHostExitCode run_raylib_host("
+    _inactive_host_decoy "${_task7c_host_source}")
+arpg_expect_hud_guard_accepts_source(inactive_host_facade_decoy
+    raylib_host.cpp "${_inactive_host_decoy}")
+file(READ "${_production_hud_root}/host_validation_runtime.cpp"
+    _task7c_runtime_source)
+string(REPLACE "void HostValidationRuntime::observe_hud("
+    "#if 0\nvoid HostValidationRuntime::observe_hud() {}\n#endif\nvoid HostValidationRuntime::observe_hud("
+    _inactive_runtime_decoy "${_task7c_runtime_source}")
+arpg_expect_hud_guard_accepts_source(inactive_runtime_facade_decoy
+    host_validation_runtime.cpp "${_inactive_runtime_decoy}")
+
 message(STATUS
-    "Stage 11C HUD architecture guard rejected all twelve production-source mutations")
+    "Stage 11C HUD architecture guard rejected 16 mutations and accepted 3 harmless variants")

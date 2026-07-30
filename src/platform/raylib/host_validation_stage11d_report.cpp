@@ -73,7 +73,8 @@ void stage11d_record_semantics(Stage11DLootValidationState& state,
     const RaylibHostConfig& config, const dungeon::DungeonSnapshot& snapshot,
     const PauseMenuState& pause_menu, const DungeonRenderStatus& status,
     settings::LootFilterMode mode, const GroundLootView& view,
-    HudNoticeView notices, Stage11DLootValidationState& state) noexcept {
+    HudNoticeView notices, Stage11DLootValidationState& state,
+    int screen_width, int screen_height) noexcept {
     using Scenario = Stage11DLootValidationScenario;
     const Scenario scenario = config.stage11d_loot_validation;
     if (scenario == Scenario::none) return false;
@@ -92,7 +93,7 @@ void stage11d_record_semantics(Stage11DLootValidationState& state,
     if (notices.primary.kind == HudNoticeKind::loot_pickup
             || notices.secondary.kind == HudNoticeKind::loot_pickup) {
         const HudLayout layout = make_hud_layout(
-            GetScreenWidth(), GetScreenHeight(), false);
+            screen_width, screen_height, false);
         state.pickup_notice_rect = notices.primary.kind
                 == HudNoticeKind::loot_pickup
             ? layout.primary_notice : layout.secondary_notice;

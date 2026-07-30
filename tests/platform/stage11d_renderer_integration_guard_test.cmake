@@ -3,12 +3,15 @@ if(NOT DEFINED SOURCE_ROOT)
 endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/cpp_source_lexer.cmake")
 
 set(_combat_header_path "${SOURCE_ROOT}/src/platform/raylib/combat_renderer.hpp")
 set(_combat_source_path "${SOURCE_ROOT}/src/platform/raylib/combat_renderer.cpp")
 set(_room_source_path "${SOURCE_ROOT}/src/platform/raylib/room_renderer.cpp")
 set(_hud_source_path "${SOURCE_ROOT}/src/platform/raylib/hud_renderer.cpp")
 set(_host_source_path "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp")
+set(_runtime_source_path
+    "${SOURCE_ROOT}/src/platform/raylib/host_validation_runtime.cpp")
 set(_report_source_path
     "${SOURCE_ROOT}/src/platform/raylib/host_validation_stage11d_report.cpp")
 if(DEFINED COMBAT_HEADER_OVERRIDE)
@@ -26,6 +29,9 @@ endif()
 if(DEFINED HOST_OVERRIDE)
     set(_host_source_path "${HOST_OVERRIDE}")
 endif()
+if(DEFINED HOST_VALIDATION_RUNTIME_OVERRIDE)
+    set(_runtime_source_path "${HOST_VALIDATION_RUNTIME_OVERRIDE}")
+endif()
 if(DEFINED REPORT_OVERRIDE)
     set(_report_source_path "${REPORT_OVERRIDE}")
 endif()
@@ -36,6 +42,7 @@ foreach(_required_path IN ITEMS
         "${_room_source_path}"
         "${_hud_source_path}"
         "${_host_source_path}"
+        "${_runtime_source_path}"
         "${_report_source_path}")
     if(NOT EXISTS "${_required_path}")
         message(FATAL_ERROR "Stage11D renderer integration guard input missing: ${_required_path}")
@@ -47,6 +54,7 @@ file(READ "${_combat_source_path}" _combat_source)
 file(READ "${_room_source_path}" _room_source)
 file(READ "${_hud_source_path}" _hud_source)
 file(READ "${_host_source_path}" _host_source)
+file(READ "${_runtime_source_path}" _runtime_source)
 file(READ "${_report_source_path}" _report_source)
 
 function(stage11d_count_token SOURCE TOKEN OUT_COUNT)
@@ -57,6 +65,46 @@ function(stage11d_count_token SOURCE TOKEN OUT_COUNT)
     math(EXPR _removed "${_source_length} - ${_without_length}")
     math(EXPR _count "${_removed} / ${_token_length}")
     set(${OUT_COUNT} ${_count} PARENT_SCOPE)
+endfunction()
+
+function(stage11d_renderer_unconditional_cpp_surface SOURCE OUT_SURFACE)
+    arpg_sanitize_cpp_source("${SOURCE}" _logical_source)
+    string(LENGTH "${_logical_source}" _source_length)
+    set(_cursor 0)
+    set(_conditional_depth 0)
+    set(_surface "")
+    while(_cursor LESS _source_length)
+        string(SUBSTRING "${_logical_source}" ${_cursor} -1 _tail)
+        string(FIND "${_tail}" "\n" _newline)
+        if(_newline EQUAL -1)
+            set(_line "${_tail}")
+            set(_line_length -1)
+        else()
+            math(EXPR _line_length "${_newline} + 1")
+            string(SUBSTRING "${_tail}" 0 ${_line_length} _line)
+        endif()
+        if(_line MATCHES
+                "^[ \t]*#[ \t]*(if|ifdef|ifndef)([ \t\r\n(]|$)")
+            math(EXPR _conditional_depth "${_conditional_depth} + 1")
+        elseif(_line MATCHES "^[ \t]*#[ \t]*endif([ \t\r\n]|$)")
+            math(EXPR _conditional_depth "${_conditional_depth} - 1")
+            if(_conditional_depth LESS 0)
+                message(FATAL_ERROR
+                    "Stage11D renderer conditional surface is unbalanced")
+            endif()
+        elseif(_conditional_depth EQUAL 0)
+            string(APPEND _surface "${_line}")
+        endif()
+        if(_newline EQUAL -1)
+            break()
+        endif()
+        math(EXPR _cursor "${_cursor} + ${_line_length}")
+    endwhile()
+    if(NOT _conditional_depth EQUAL 0)
+        message(FATAL_ERROR
+            "Stage11D renderer conditional surface is unbalanced")
+    endif()
+    set(${OUT_SURFACE} "${_surface}" PARENT_SCOPE)
 endfunction()
 
 function(stage11d_brace_depth SURFACE POSITION OUT_DEPTH)
@@ -80,6 +128,97 @@ function(stage11d_brace_depth SURFACE POSITION OUT_DEPTH)
         endforeach()
     endif()
     set(${OUT_DEPTH} ${_depth} PARENT_SCOPE)
+endfunction()
+
+function(stage11d_renderer_matching_brace SURFACE OPEN_POSITION OUT_POSITION)
+    string(LENGTH "${SURFACE}" _length)
+    set(_depth 0)
+    set(_close -1)
+    while(OPEN_POSITION LESS _length)
+        string(SUBSTRING "${SURFACE}" ${OPEN_POSITION} 1 _character)
+        if(_character STREQUAL "{")
+            math(EXPR _depth "${_depth} + 1")
+        elseif(_character STREQUAL "}")
+            math(EXPR _depth "${_depth} - 1")
+            if(_depth EQUAL 0)
+                set(_close ${OPEN_POSITION})
+                break()
+            endif()
+        endif()
+        math(EXPR OPEN_POSITION "${OPEN_POSITION} + 1")
+    endwhile()
+    if(_close EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D renderer direct-scope fixture has no closing brace")
+    endif()
+    set(${OUT_POSITION} ${_close} PARENT_SCOPE)
+endfunction()
+
+function(stage11d_renderer_mask_non_direct_scopes SOURCE OUT_SOURCE)
+    string(LENGTH "${SOURCE}" _source_length)
+    set(_masked "")
+    set(_copy_cursor 0)
+    set(_dead_condition
+        "(false|0[uUlL]*|![ \t\r\n]*true|1[uUlL]*[ \t\r\n]*==[ \t\r\n]*0[uUlL]*|0[uUlL]*[ \t\r\n]*==[ \t\r\n]*1[uUlL]*)")
+    while(_copy_cursor LESS _source_length)
+        string(SUBSTRING "${SOURCE}" ${_copy_cursor} -1 _tail)
+        string(REGEX MATCH
+            "\\][ \t\r\n]*(\\([^{};]*\\))?[ \t\r\n]*(mutable[ \t\r\n]*)?(noexcept([ \t\r\n]*\\([^{};]*\\))?[ \t\r\n]*)?(->[^{;]*)?[ \t\r\n]*\\{"
+            _lambda_match "${_tail}")
+        string(REGEX MATCH
+            "(if|while)[ \t\r\n]*(constexpr[ \t\r\n]*)?\\([ \t\r\n]*${_dead_condition}[ \t\r\n]*\\)[ \t\r\n]*(do[ \t\r\n]*)?([^{;]*\\{|[^{};]*;)"
+            _dead_branch_match "${_tail}")
+        string(REGEX MATCH
+            "for[ \t\r\n]*\\([ \t\r\n]*;[ \t\r\n]*${_dead_condition}[ \t\r\n]*;[^)]*\\)[ \t\r\n]*([^{;]*\\{|[^{};]*;)"
+            _dead_for_match "${_tail}")
+        set(_scope_match "")
+        set(_scope_relative -1)
+        set(_scope_kind "")
+        if(NOT _lambda_match STREQUAL "")
+            string(FIND "${_tail}" "${_lambda_match}" _scope_relative)
+            set(_scope_match "${_lambda_match}")
+            set(_scope_kind lambda)
+        endif()
+        foreach(_candidate IN ITEMS _dead_branch_match _dead_for_match)
+            set(_dead_match "${${_candidate}}")
+            if(_dead_match STREQUAL "")
+                continue()
+            endif()
+            string(FIND "${_tail}" "${_dead_match}" _dead_relative)
+            if(_scope_relative EQUAL -1 OR _dead_relative LESS _scope_relative)
+                set(_scope_match "${_dead_match}")
+                set(_scope_relative ${_dead_relative})
+                set(_scope_kind dead-control)
+            endif()
+        endforeach()
+        if(_scope_relative EQUAL -1)
+            string(APPEND _masked "${_tail}")
+            break()
+        endif()
+        string(FIND "${_scope_match}" "{" _open_in_match)
+        math(EXPR _match_index "${_copy_cursor} + ${_scope_relative}")
+        if(_scope_kind STREQUAL "dead-control")
+            set(_remove_begin ${_match_index})
+        else()
+            math(EXPR _remove_begin "${_match_index} + ${_open_in_match}")
+        endif()
+        math(EXPR _copy_length "${_remove_begin} - ${_copy_cursor}")
+        if(_copy_length GREATER 0)
+            string(SUBSTRING "${SOURCE}" ${_copy_cursor} ${_copy_length}
+                _copy_chunk)
+            string(APPEND _masked "${_copy_chunk}")
+        endif()
+        if(_open_in_match EQUAL -1)
+            string(LENGTH "${_scope_match}" _scope_length)
+            math(EXPR _scope_end "${_match_index} + ${_scope_length} - 1")
+        else()
+            math(EXPR _open_index "${_match_index} + ${_open_in_match}")
+            stage11d_renderer_matching_brace("${SOURCE}" ${_open_index}
+                _scope_end)
+        endif()
+        math(EXPR _copy_cursor "${_scope_end} + 1")
+    endwhile()
+    set(${OUT_SOURCE} "${_masked}" PARENT_SCOPE)
 endfunction()
 
 function(stage11d_require_definition LABEL SURFACE SIGNATURE EXPECTED_DEPTH
@@ -136,6 +275,22 @@ stage11d_require_definition("scenario-name helper" "${_report_code}"
     "const char* stage11d_scenario_name(" 2 _report_name_function)
 stage11d_require_definition("summary writer" "${_report_code}"
     "void write_stage11d_loot_validation_summary(" 1 _report_summary_function)
+string(REGEX REPLACE "[ \t\r\n]+" "" _report_target_normalized
+    "${_report_target_function}")
+if(_report_target_normalized MATCHES "GetScreen(Width|Height)[(]")
+    message(FATAL_ERROR
+        "T7C-M06-global: Stage11D target visibility rejected globals")
+endif()
+foreach(_required_dimension_binding IN ITEMS
+        "intscreen_width,intscreen_height"
+        "make_hud_layout(screen_width,screen_height,false)")
+    string(FIND "${_report_target_normalized}"
+        "${_required_dimension_binding}" _dimension_found)
+    if(_dimension_found EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D target visibility rejected explicit screen dimensions")
+    endif()
+endforeach()
 
 foreach(_required IN ITEMS
         "state.view = view;" "state.notices = notices;"
@@ -250,320 +405,202 @@ stage11d_require_summary_binding(result
     "TASK5B_SUMMARY_FIELD_result<<(state.captured&&(config.stage11d_loot_validation!=Stage11DLootValidationScenario::rare_only_abyss||state.abyss_claimed)?TASK5B_RESULT_PASS:TASK5B_RESULT_FAIL)<<TASK5B_SUMMARY_NEWLINE")
 
 if(NOT DEFINED TASK5B_REPORT_ONLY OR NOT TASK5B_REPORT_ONLY)
-function(stage11d_require_token_depth LABEL SURFACE TOKEN EXPECTED_DEPTH)
-    stage11d_count_token("${SURFACE}" "${TOKEN}" _count)
-    if(NOT _count EQUAL 1)
-        message(FATAL_ERROR
-            "Stage11D host requires one ${LABEL}; found ${_count}")
-    endif()
-    string(FIND "${SURFACE}" "${TOKEN}" _position)
-    stage11d_brace_depth("${SURFACE}" ${_position} _depth)
-    if(NOT _depth EQUAL EXPECTED_DEPTH)
-        message(FATAL_ERROR "Stage11D host rejected ${LABEL} scope")
-    endif()
-    set(stage11d_last_token_position ${_position} PARENT_SCOPE)
-endfunction()
+stage11d_renderer_unconditional_cpp_surface("${_host_source}" _host_code)
+stage11d_renderer_unconditional_cpp_surface("${_runtime_source}" _runtime_code)
+evidence_extract_cpp_function_block("${_host_code}"
+    "HostExitCode run_raylib_host(" _run_code)
+string(REGEX REPLACE "[ \t\r\n]+" "" _run_normalized "${_run_code}")
+stage11d_renderer_mask_non_direct_scopes("${_run_code}" _run_direct_code)
+string(REGEX REPLACE "[ \t\r\n]+" "" _run_direct_normalized
+    "${_run_direct_code}")
+string(REPLACE "validation_runtime.get()->" "validation_runtime->"
+    _run_direct_normalized "${_run_direct_normalized}")
 
-function(stage11d_extract_host_seam LABEL OUT_CODE)
-    set(_begin "// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN ${LABEL}")
-    set(_end "// STAGE11D_LOOT_VALIDATION_SEAM_END ${LABEL}")
-    stage11d_count_token("${_host_source}" "${_begin}" _begin_count)
-    stage11d_count_token("${_host_source}" "${_end}" _end_count)
-    if(NOT _begin_count EQUAL 1 OR NOT _end_count EQUAL 1)
-        message(FATAL_ERROR
-            "Stage11D host cannot bind ${LABEL} seam markers")
-    endif()
-    string(FIND "${_host_source}" "${_begin}" _begin_at)
-    string(FIND "${_host_source}" "${_end}" _end_at)
-    if(NOT _begin_at LESS _end_at)
-        message(FATAL_ERROR "Stage11D host rejected ${LABEL} seam order")
-    endif()
-    string(LENGTH "${_end}" _end_length)
-    math(EXPR _length "${_end_at} - ${_begin_at} + ${_end_length}")
-    string(SUBSTRING "${_host_source}" ${_begin_at} ${_length} _raw)
-    string(REPLACE "${_begin}" "TASK5B_${LABEL}_BEGIN" _marked "${_raw}")
-    string(REPLACE "${_end}" "TASK5B_${LABEL}_END" _marked "${_marked}")
-    evidence_sanitize_cpp_for_scan("${_marked}" _code)
-    foreach(_marker IN ITEMS "TASK5B_${LABEL}_BEGIN" "TASK5B_${LABEL}_END")
-        stage11d_count_token("${_code}" "${_marker}" _marker_count)
-        if(NOT _marker_count EQUAL 1)
-            message(FATAL_ERROR
-                "Stage11D host rejected ${LABEL} marker comment/string decoy")
-        endif()
-    endforeach()
-    set(${OUT_CODE} "${_code}" PARENT_SCOPE)
-endfunction()
-
-set(_run_signature "HostExitCode run_raylib_host(")
-evidence_find_cpp_code_token("${_host_source}" "${_run_signature}"
-    _run_raw_begin)
-if(_run_raw_begin EQUAL -1)
+stage11d_count_token("${_runtime_code}"
+    "void HostValidationRuntime::observe_ground_loot(" _ground_owner_count)
+if(NOT _ground_owner_count EQUAL 1)
     message(FATAL_ERROR
-        "Stage11D host cannot bind the production run_raylib_host definition")
+        "Stage11D renderer requires one active runtime ground-loot owner")
 endif()
-string(SUBSTRING "${_host_source}" ${_run_raw_begin} -1 _run_raw_tail)
-evidence_sanitize_cpp_for_scan("${_run_raw_tail}" _run_tail_code)
-stage11d_count_token("${_run_tail_code}" "${_run_signature}"
-    _run_signature_count)
-if(NOT _run_signature_count EQUAL 1)
+evidence_extract_cpp_function_block("${_runtime_code}"
+    "void HostValidationRuntime::observe_ground_loot(" _ground_owner)
+stage11d_renderer_mask_non_direct_scopes("${_ground_owner}"
+    _ground_owner_direct)
+string(REGEX REPLACE "[ \t\r\n]+" "" _ground_owner_normalized
+    "${_ground_owner_direct}")
+string(FIND "${_ground_owner_normalized}"
+    "if(impl_->states.stage11d.target_visible&&!impl_->states.stage11d.captured){host_validation::stage11d_record_semantics("
+    _ground_record_condition)
+if(_ground_record_condition EQUAL -1)
     message(FATAL_ERROR
-        "Stage11D host requires one production run_raylib_host definition")
+        "T7C-ground-condition: Stage11D rejected direct semantic gate")
 endif()
-evidence_find_cpp_function_bounds_in_sanitized("${_run_tail_code}"
-    "${_run_signature}" _run_begin _run_open _run_end)
-math(EXPR _run_length "${_run_end} - ${_run_begin} + 1")
-string(SUBSTRING "${_run_tail_code}" ${_run_begin} ${_run_length}
-    _run_function_code)
-evidence_find_cpp_function_bounds_in_sanitized("${_run_function_code}"
-    "while (!exit_requested)" _loop_begin _loop_open _loop_end)
-
-set(_run_loop_chain_tokens
-    "const settings::LootFilterMode presented_loot_filter ="
-    "renderer.set_loot_filter_mode("
-    "BeginDrawing()"
-    "const GroundLootView ground_loot_view = [&]() noexcept {"
-    "return renderer.draw("
-    "stage11d_target_visible("
-    "stage11d_record_semantics("
-    "const bool stage11d_reached ="
-    "const bool loot_validation_visible_capture ="
-    "captured_stage10_target = true"
-    "const bool capture_succeeded ="
-    "const bool captured_stage10_frame ="
-    "stage11d_validation_state.captured = true")
-set(_run_loop_chain_depths 3 3 3 3 4 3 4 3 3 4 3 3 4)
-set(_run_previous_position -1)
-list(LENGTH _run_loop_chain_tokens _run_loop_chain_count)
-math(EXPR _run_loop_chain_last "${_run_loop_chain_count} - 1")
-foreach(_index RANGE 0 ${_run_loop_chain_last})
-    list(GET _run_loop_chain_tokens ${_index} _token)
-    list(GET _run_loop_chain_depths ${_index} _depth)
-    stage11d_require_token_depth("production run-chain token"
-        "${_run_function_code}" "${_token}" ${_depth})
-    set(_position ${stage11d_last_token_position})
-    if(NOT _position GREATER _loop_open OR NOT _position LESS _loop_end)
-        message(FATAL_ERROR
-            "Stage11D host rejected production run-chain loop scope")
-    endif()
-    if(NOT _run_previous_position EQUAL -1
-            AND NOT _position GREATER _run_previous_position)
-        message(FATAL_ERROR
-            "Stage11D host rejected production run-chain order")
-    endif()
-    set(_run_previous_position ${_position})
-endforeach()
-
-string(REGEX REPLACE "[ \t\r\n]+" "" _run_function_normalized
-    "${_run_function_code}")
 foreach(_binding IN ITEMS
-        "renderer.set_loot_filter_mode(presented_loot_filter);BeginDrawing();"
-        "validation_reached||loot_validation_visible_capture"
-        "capture_path=config.validation_capture_file->string();captured_stage10_target=true;"
-        "constboolcaptured_stage10_frame=captured_stage10_target&&capture_succeeded;"
-        "if(captured_stage10_frame&&stage11d_validation_state.target_visible){stage11d_validation_state.captured=true;}")
-    string(FIND "${_run_function_normalized}" "${_binding}" _binding_found)
+        "stage11d_target_visible("
+        "stage11d_record_semantics("
+        "ground_loot_view"
+        "notices"
+        "screen_width"
+        "screen_height")
+    string(FIND "${_ground_owner_normalized}" "${_binding}" _binding_found)
     if(_binding_found EQUAL -1)
         message(FATAL_ERROR
-            "Stage11D host rejected production run-chain binding")
+            "Stage11D runtime ground-loot owner rejected binding: ${_binding}")
     endif()
 endforeach()
-
-set(_run_post_loop_chain_tokens
-    "stage17_validation_state->clean_shutdown_exact_ready ="
-    "host_validation::write_stage11b_validation_summary("
-    "host_validation::write_stage11c_hud_validation_summary("
-    "write_stage11d_loot_validation_summary("
-    "write_stage17_validation_summary("
-    "audio.shutdown()"
-    "renderer.shutdown_resources()"
-    "pause_menu_renderer.shutdown()"
-    "return HostExitCode::success")
-set(_run_previous_position ${_loop_end})
-foreach(_token IN LISTS _run_post_loop_chain_tokens)
-    stage11d_require_token_depth("production post-loop token"
-        "${_run_function_code}" "${_token}" 2)
-    set(_position ${stage11d_last_token_position})
-    if(NOT _position GREATER _run_previous_position)
-        message(FATAL_ERROR
-            "Stage11D host rejected production post-loop summary/shutdown order")
-    endif()
-    set(_run_previous_position ${_position})
-endforeach()
-string(FIND "${_run_function_normalized}"
-    "pause_menu_renderer.shutdown();CloseWindow();returnHostExitCode::success;"
-    _clean_shutdown_binding)
-if(_clean_shutdown_binding EQUAL -1)
+if(_ground_owner_normalized MATCHES "GetScreen(Width|Height)[(]")
     message(FATAL_ERROR
-        "Stage11D host rejected production clean-shutdown binding")
+        "T7C-M06-global: Stage11D runtime rejected global dimensions")
 endif()
 
-math(EXPR _run_raw_end "${_run_raw_begin} + ${_run_end}")
-foreach(_label IN ITEMS presented_semantics reached reached_merge
-        visible_capture captured summary)
-    foreach(_edge IN ITEMS BEGIN END)
-        set(_marker
-            "// STAGE11D_LOOT_VALIDATION_SEAM_${_edge} ${_label}")
-        string(FIND "${_host_source}" "${_marker}" _marker_position)
-        if(_marker_position EQUAL -1
-                OR NOT _marker_position GREATER _run_raw_begin
-                OR NOT _marker_position LESS _run_raw_end)
-            message(FATAL_ERROR
-                "Stage11D host rejected ${_label} seam outside production run scope")
-        endif()
-    endforeach()
-endforeach()
-
-set(_ground_view_anchor "const GroundLootView ground_loot_view = [&]() noexcept {")
-string(FIND "${_host_source}" "${_ground_view_anchor}" _ground_view_raw)
-string(FIND "${_host_source}"
-    "// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN presented_semantics"
-    _presented_marker_raw)
-if(_ground_view_raw EQUAL -1 OR _presented_marker_raw EQUAL -1
-        OR NOT _ground_view_raw LESS _presented_marker_raw)
+set(_ground_anchor "constGroundLootViewground_loot_view=[&]()noexcept{")
+string(FIND "${_run_normalized}" "${_ground_anchor}" _ground_begin)
+if(_ground_begin EQUAL -1)
     message(FATAL_ERROR
-        "Stage11D host cannot isolate the real GroundLootView presentation crop")
+        "Stage11D host cannot bind the presented GroundLootView")
 endif()
-math(EXPR _ground_crop_length "${_presented_marker_raw} - ${_ground_view_raw}")
-string(SUBSTRING "${_host_source}" ${_ground_view_raw}
-    ${_ground_crop_length} _ground_crop_raw)
-evidence_sanitize_cpp_for_scan("${_ground_crop_raw}" _ground_crop_code)
-stage11d_require_token_depth("presented GroundLootView construction"
-    "${_ground_crop_code}" "${_ground_view_anchor}" 0)
-stage11d_require_token_depth("production renderer GroundLootView result"
-    "${_ground_crop_code}" "return renderer.draw(" 1)
-
-stage11d_extract_host_seam(presented_semantics _presented_semantics_code)
-stage11d_require_token_depth("presented target-visible call"
-    "${_presented_semantics_code}" "stage11d_target_visible(" 0)
-set(_target_call_position ${stage11d_last_token_position})
-stage11d_require_token_depth("presented semantic call"
-    "${_presented_semantics_code}" "stage11d_record_semantics(" 1)
-set(_record_call_position ${stage11d_last_token_position})
-if(NOT _target_call_position LESS _record_call_position)
+string(SUBSTRING "${_run_normalized}" ${_ground_begin} -1 _presented_surface)
+set(_ground_direct_anchor
+    "constGroundLootViewground_loot_view=[&]()noexcept")
+string(FIND "${_run_direct_normalized}" "${_ground_direct_anchor}"
+    _ground_direct_begin)
+if(_ground_direct_begin EQUAL -1)
     message(FATAL_ERROR
-        "Stage11D host rejected target-visible to semantic-record order")
+        "Stage11D host cannot bind the direct presented GroundLootView")
 endif()
-stage11d_count_token("${_presented_semantics_code}"
-    "renderer.hud_notice_view()" _notice_sample_count)
-if(NOT _notice_sample_count EQUAL 2)
+string(SUBSTRING "${_run_direct_normalized}" ${_ground_direct_begin} -1
+    _presented_direct_surface)
+
+string(REGEX MATCHALL "constGroundLootView[A-Za-z_][A-Za-z0-9_]*="
+    _ground_views "${_run_normalized}")
+list(LENGTH _ground_views _ground_view_count)
+if(NOT _ground_view_count EQUAL 1)
     message(FATAL_ERROR
-        "Stage11D host requires two fresh HUD notice samples; found ${_notice_sample_count}")
+        "Stage11D host rejected rebuilt second GroundLootView")
 endif()
-string(REGEX REPLACE "[ \t\r\n]+" "" _presented_semantics_normalized
-    "${_presented_semantics_code}")
-foreach(_binding IN ITEMS
-        "stage11d_validation_state.target_visible=stage11d_target_visible(config,current,pause_menu,runtime.render_status(),presented_loot_filter,ground_loot_view,renderer.hud_notice_view(),stage11d_validation_state);"
-        "if(stage11d_validation_state.target_visible&&!stage11d_validation_state.captured){stage11d_record_semantics(stage11d_validation_state,current,runtime.item_state(),ground_loot_view,renderer.hud_notice_view());}")
-    string(FIND "${_presented_semantics_normalized}" "${_binding}" _binding_found)
-    if(_binding_found EQUAL -1)
-        message(FATAL_ERROR
-            "Stage11D host rejected presented semantic binding")
-    endif()
-endforeach()
+stage11d_count_token("${_run_normalized}" "build_ground_loot_view("
+    _host_ground_builder_count)
+if(NOT _host_ground_builder_count EQUAL 0)
+    message(FATAL_ERROR
+        "T7C-M04-builder: Stage11D rejected direct GroundLootView rebuild")
+endif()
+string(REGEX MATCHALL "validation_runtime->observe_ground_loot[(]"
+    _ground_observers "${_presented_direct_surface}")
+list(LENGTH _ground_observers _ground_observer_count)
+if(NOT _ground_observer_count EQUAL 1)
+    message(FATAL_ERROR
+        "Stage11D host requires one ground-loot facade observer")
+endif()
+set(_ground_observer_shared
+    "validation_runtime->observe_ground_loot(current,pause_menu,runtime.render_status(),presented_loot_filter,ground_loot_view,")
+set(_ground_observer_notices
+    "${_ground_observer_shared}renderer.hud_notice_view(),runtime.item_state(),")
+set(_ground_observer_call
+    "${_ground_observer_notices}GetScreenWidth(),GetScreenHeight());")
+string(FIND "${_presented_direct_surface}" "${_ground_observer_shared}"
+    _ground_shared_position)
+string(FIND "${_presented_direct_surface}" "${_ground_observer_notices}"
+    _ground_notices_position)
+string(FIND "${_presented_direct_surface}" "${_ground_observer_call}"
+    _ground_observer_position)
+if(_ground_shared_position EQUAL -1)
+    message(FATAL_ERROR "T7C-M04: Stage11D rejected shared GroundLootView")
+elseif(_ground_notices_position EQUAL -1)
+    message(FATAL_ERROR "T7C-M05: Stage11D rejected fresh HUD notices")
+elseif(_ground_observer_position EQUAL -1)
+    message(FATAL_ERROR "T7C-M06: Stage11D rejected real screen dimensions")
+endif()
+string(FIND "${_run_direct_normalized}" "${_ground_direct_anchor}"
+    _ground_run_position)
+string(FIND "${_run_direct_normalized}"
+    "validation_runtime->observe_ground_loot(" _observer_run_position)
+stage11d_brace_depth("${_run_direct_normalized}" ${_ground_run_position}
+    _ground_run_depth)
+stage11d_brace_depth("${_run_direct_normalized}" ${_observer_run_position}
+    _observer_run_depth)
+if(NOT _ground_run_depth EQUAL _observer_run_depth)
+    message(FATAL_ERROR
+        "Stage11D host rejected ground-loot observer owner scope")
+endif()
 
-evidence_find_cpp_code_token("${_host_source}"
-    "bool present_frame_and_maybe_capture(" _present_helper_start)
-if(_present_helper_start EQUAL -1)
-    message(FATAL_ERROR "Stage11D host is missing presentation helper")
+string(FIND "${_presented_direct_surface}"
+    "validation_runtime->observe_active_skill_draw("
+    _stage17_draw_observer_position)
+if(_stage17_draw_observer_position EQUAL -1
+        OR NOT _stage17_draw_observer_position LESS _ground_observer_position)
+    message(FATAL_ERROR
+        "T7C-M01: Stage11D ground-loot observer must follow the Stage17 draw observer")
 endif()
-string(SUBSTRING "${_host_source}" ${_present_helper_start} -1
-    _present_helper_tail)
-string(FIND "${_present_helper_tail}" "void draw_stage12_ui_material_gallery("
-    _present_helper_end)
-if(_present_helper_end EQUAL -1)
-    message(FATAL_ERROR "Stage11D host cannot isolate presentation helper")
-endif()
-string(SUBSTRING "${_present_helper_tail}" 0 ${_present_helper_end}
-    _present_helper_raw)
-evidence_sanitize_cpp_for_scan("${_present_helper_raw}" _present_helper_code)
-set(_present_helper_chain_tokens
-    "EndDrawing()"
-    "if (path == nullptr) return true"
-    "Image image = LoadImageFromScreen()"
-    "if (image.data == nullptr) return false"
-    "const bool exported = ExportImage(image, path)"
-    "UnloadImage(image)"
-    "return exported")
-set(_present_helper_previous -1)
-foreach(_token IN LISTS _present_helper_chain_tokens)
-    stage11d_require_token_depth("presentation-helper lifecycle token"
-        "${_present_helper_code}" "${_token}" 1)
-    set(_position ${stage11d_last_token_position})
-    if(NOT _present_helper_previous EQUAL -1
-            AND NOT _position GREATER _present_helper_previous)
-        message(FATAL_ERROR
-            "Stage11D host rejected presentation-helper lifecycle order")
-    endif()
-    set(_present_helper_previous ${_position})
-endforeach()
 
-set(_capture_region_begin
-    "// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN reached")
-set(_capture_region_end
-    "// STAGE11D_LOOT_VALIDATION_SEAM_END captured")
-string(FIND "${_host_source}" "${_capture_region_begin}" _capture_begin_at)
-string(FIND "${_host_source}" "${_capture_region_end}" _capture_end_at)
-if(_capture_begin_at EQUAL -1 OR _capture_end_at EQUAL -1
-        OR NOT _capture_begin_at LESS _capture_end_at)
-    message(FATAL_ERROR "Stage11D host cannot isolate capture-state chain")
+string(FIND "${_presented_direct_surface}"
+    "if(config.stage12_material_runtime_status!=nullptr){"
+    _stage12_status_position)
+string(FIND "${_presented_direct_surface}"
+    "material_status.bundled_font_total_atlas_byte_budget=kUiFontTotalAtlasByteBudget;"
+    _stage12_status_end_position)
+if(_stage12_status_position EQUAL -1
+        OR _stage12_status_end_position EQUAL -1
+        OR NOT _stage12_status_position LESS _stage12_status_end_position
+        OR NOT _stage12_status_end_position LESS _ground_observer_position)
+    message(FATAL_ERROR
+        "T7C-M02: Stage11D ground-loot observer must follow Stage12 runtime-status collection")
 endif()
-string(LENGTH "${_capture_region_end}" _capture_end_length)
-math(EXPR _capture_region_length
-    "${_capture_end_at} - ${_capture_begin_at} + ${_capture_end_length}")
-string(SUBSTRING "${_host_source}" ${_capture_begin_at}
-    ${_capture_region_length} _capture_region_raw)
-string(REPLACE "${_capture_region_begin}" "TASK5B_CAPTURE_BEGIN"
-    _capture_region_marked "${_capture_region_raw}")
-string(REPLACE "${_capture_region_end}" "TASK5B_CAPTURE_END"
-    _capture_region_marked "${_capture_region_marked}")
-evidence_sanitize_cpp_for_scan("${_capture_region_marked}" _capture_region_code)
-set(_capture_chain_tokens
-    "const bool stage11d_reached ="
-    "const bool loot_validation_visible_capture ="
-    "present_frame_and_maybe_capture("
-    "const bool captured_stage10_frame ="
-    "stage11d_validation_state.captured = true")
-set(_previous_position -1)
-foreach(_token IN LISTS _capture_chain_tokens)
-    if(_token STREQUAL "stage11d_validation_state.captured = true")
-        set(_expected_depth 1)
+
+foreach(_overlay IN ITEMS
+        "pause_menu_renderer.draw("
+        "inventory.draw("
+        "draw_passive_tree_overlay(")
+    if(_overlay STREQUAL "draw_passive_tree_overlay(")
+        set(_overlay_diagnostic "T7C-M03-passive")
+    elseif(_overlay STREQUAL "inventory.draw(")
+        set(_overlay_diagnostic "T7C-M03-inventory")
     else()
-        set(_expected_depth 0)
+        set(_overlay_diagnostic "T7C-M03-pause")
     endif()
-    stage11d_require_token_depth("capture-chain token"
-        "${_capture_region_code}" "${_token}" ${_expected_depth})
-    set(_position ${stage11d_last_token_position})
-    if(NOT _previous_position EQUAL -1 AND _position LESS _previous_position)
-        message(FATAL_ERROR "Stage11D host rejected capture-state order")
-    endif()
-    set(_previous_position ${_position})
-endforeach()
-string(REGEX REPLACE "[ \t\r\n]+" "" _capture_region_normalized
-    "${_capture_region_code}")
-foreach(_binding IN ITEMS
-        "constboolstage11d_reached=stage11d_validation_state.captured&&(config.stage11d_loot_validation!=Stage11DLootValidationScenario::rare_only_abyss||stage11d_validation_state.abyss_claimed);"
-        "constboolloot_validation_visible_capture=stage11d_validation_state.target_visible;"
-        "constboolcaptured_stage10_frame=captured_stage10_target&&capture_succeeded;"
-        "if(captured_stage10_frame&&stage11d_validation_state.target_visible){stage11d_validation_state.captured=true;}")
-    string(FIND "${_capture_region_normalized}" "${_binding}" _binding_found)
-    if(_binding_found EQUAL -1)
-        message(FATAL_ERROR "Stage11D host rejected capture-state binding")
+    string(FIND "${_presented_direct_surface}" "${_overlay}" _overlay_position)
+    if(_overlay_position EQUAL -1
+            OR NOT _ground_observer_position LESS _overlay_position)
+        message(FATAL_ERROR
+            "${_overlay_diagnostic}: Stage11D ground-loot observer must precede its overlay")
     endif()
 endforeach()
 
-stage11d_extract_host_seam(summary _summary_seam_code)
-stage11d_require_token_depth("summary call" "${_summary_seam_code}"
-    "write_stage11d_loot_validation_summary(" 0)
-string(REGEX REPLACE "[ \t\r\n]+" "" _summary_normalized
-    "${_summary_seam_code}")
-string(FIND "${_summary_normalized}"
-    "write_stage11d_loot_validation_summary(config,stage11d_validation_state,pause_menu);"
-    _summary_binding)
-if(_summary_binding EQUAL -1)
-    message(FATAL_ERROR "Stage11D host rejected summary call binding")
+string(FIND "${_presented_surface}"
+    "constPresentationDecisiondecision=validation_runtime->observe_presented_frame("
+    _presented_observer)
+if(_presented_observer EQUAL -1)
+    message(FATAL_ERROR
+        "Stage11D host rejected presented-frame facade observation")
+endif()
+foreach(_overlay IN ITEMS
+        "draw_passive_tree_overlay("
+        "inventory.draw("
+        "pause_menu_renderer.draw(")
+    string(FIND "${_presented_surface}" "${_overlay}" _overlay_position)
+    if(NOT _overlay_position LESS _presented_observer)
+        message(FATAL_ERROR
+            "Stage11D host rejected presented-frame observer before overlays")
+    endif()
+endforeach()
+
+string(REGEX MATCHALL "validation_runtime->observe_capture_result[(]"
+    _capture_callbacks "${_presented_surface}")
+list(LENGTH _capture_callbacks _capture_callback_count)
+if(NOT _capture_callback_count EQUAL 1)
+    message(FATAL_ERROR
+        "T7C-M19: Stage11D requires one capture-result callback")
+endif()
+string(FIND "${_presented_surface}" "present_frame_and_maybe_capture("
+    _present_call)
+string(FIND "${_presented_surface}"
+    "validation_runtime->observe_capture_result(" _capture_callback)
+if(_present_call EQUAL -1 OR NOT _present_call LESS _capture_callback)
+    message(FATAL_ERROR
+        "Stage11D host rejected post-present capture-result callback")
 endif()
 endif()
 endif()
+
 
 set(_legacy_tokens
     "GroundLootRenderConsumers"

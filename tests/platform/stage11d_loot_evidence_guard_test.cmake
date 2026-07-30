@@ -64,7 +64,7 @@ file(READ "${_renderer}" _renderer_text)
 file(READ "${_formal}" _formal_text)
 file(READ "${_validator}" _validator_text)
 set(_combined
-    "${_header_text}\n${_stage_header_text}\n${_runtime_text}\n${_report_text}\n${_host_text}\n${_formal_text}")
+    "${_header_text}\n${_stage_header_text}\n${_runtime_text}\n${_report_text}\n${_host_validation_runtime_text}\n${_host_text}\n${_formal_text}")
 
 function(stage11d_count_raw_token SOURCE TOKEN OUT_COUNT)
     string(LENGTH "${SOURCE}" _source_length)
@@ -213,6 +213,98 @@ function(stage11d_code_brace_depth SURFACE POSITION OUT_DEPTH)
     set(${OUT_DEPTH} ${_depth} PARENT_SCOPE)
 endfunction()
 
+function(stage11d_matching_brace_position SURFACE OPEN_POSITION OUT_POSITION)
+    string(LENGTH "${SURFACE}" _length)
+    set(_depth 0)
+    set(_close -1)
+    while(OPEN_POSITION LESS _length)
+        string(SUBSTRING "${SURFACE}" ${OPEN_POSITION} 1 _character)
+        if(_character STREQUAL "{")
+            math(EXPR _depth "${_depth} + 1")
+        elseif(_character STREQUAL "}")
+            math(EXPR _depth "${_depth} - 1")
+            if(_depth EQUAL 0)
+                set(_close ${OPEN_POSITION})
+                break()
+            endif()
+        endif()
+        math(EXPR OPEN_POSITION "${OPEN_POSITION} + 1")
+    endwhile()
+    if(_close EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D direct-scope fixture has no closing brace")
+    endif()
+    set(${OUT_POSITION} ${_close} PARENT_SCOPE)
+endfunction()
+
+function(stage11d_mask_non_direct_executable_scopes SOURCE OUT_SOURCE)
+    string(LENGTH "${SOURCE}" _source_length)
+    set(_masked "")
+    set(_copy_cursor 0)
+    set(_dead_condition
+        "(false|0[uUlL]*|![ \t\r\n]*true|1[uUlL]*[ \t\r\n]*==[ \t\r\n]*0[uUlL]*|0[uUlL]*[ \t\r\n]*==[ \t\r\n]*1[uUlL]*)")
+    while(_copy_cursor LESS _source_length)
+        string(SUBSTRING "${SOURCE}" ${_copy_cursor} -1 _tail)
+        string(REGEX MATCH
+            "\\][ \t\r\n]*(\\([^{};]*\\))?[ \t\r\n]*(mutable[ \t\r\n]*)?(noexcept([ \t\r\n]*\\([^{};]*\\))?[ \t\r\n]*)?(->[^{;]*)?[ \t\r\n]*\\{"
+            _lambda_match "${_tail}")
+        string(REGEX MATCH
+            "(if|while)[ \t\r\n]*(constexpr[ \t\r\n]*)?\\([ \t\r\n]*${_dead_condition}[ \t\r\n]*\\)[ \t\r\n]*(do[ \t\r\n]*)?([^{;]*\\{|[^{};]*;)"
+            _dead_branch_match "${_tail}")
+        string(REGEX MATCH
+            "for[ \t\r\n]*\\([ \t\r\n]*;[ \t\r\n]*${_dead_condition}[ \t\r\n]*;[^)]*\\)[ \t\r\n]*([^{;]*\\{|[^{};]*;)"
+            _dead_for_match "${_tail}")
+        set(_scope_match "")
+        set(_scope_relative -1)
+        set(_scope_kind "")
+        if(NOT _lambda_match STREQUAL "")
+            string(FIND "${_tail}" "${_lambda_match}" _scope_relative)
+            set(_scope_match "${_lambda_match}")
+            set(_scope_kind lambda)
+        endif()
+        foreach(_candidate IN ITEMS _dead_branch_match _dead_for_match)
+            set(_dead_match "${${_candidate}}")
+            if(_dead_match STREQUAL "")
+                continue()
+            endif()
+            string(FIND "${_tail}" "${_dead_match}" _dead_relative)
+            if(_scope_relative EQUAL -1 OR _dead_relative LESS _scope_relative)
+                set(_scope_match "${_dead_match}")
+                set(_scope_relative ${_dead_relative})
+                set(_scope_kind dead-control)
+            endif()
+        endforeach()
+        if(_scope_relative EQUAL -1)
+            string(APPEND _masked "${_tail}")
+            break()
+        endif()
+        string(FIND "${_scope_match}" "{" _open_in_match)
+        math(EXPR _match_index "${_copy_cursor} + ${_scope_relative}")
+        if(_scope_kind STREQUAL "dead-control")
+            set(_remove_begin ${_match_index})
+        else()
+            math(EXPR _remove_begin "${_match_index} + ${_open_in_match}")
+        endif()
+        math(EXPR _copy_length "${_remove_begin} - ${_copy_cursor}")
+        if(_copy_length GREATER 0)
+            string(SUBSTRING "${SOURCE}" ${_copy_cursor} ${_copy_length}
+                _copy_chunk)
+            string(APPEND _masked "${_copy_chunk}")
+        endif()
+        if(_open_in_match EQUAL -1)
+            string(LENGTH "${_scope_match}" _scope_length)
+            math(EXPR _scope_end "${_match_index} + ${_scope_length} - 1")
+        else()
+            math(EXPR _open_index "${_match_index} + ${_open_in_match}")
+            stage11d_matching_brace_position("${SOURCE}" ${_open_index}
+                _scope_end)
+        endif()
+        math(EXPR _copy_cursor "${_scope_end} + 1")
+    endwhile()
+    set(${OUT_SOURCE} "${_masked}" PARENT_SCOPE)
+endfunction()
+
+if(NOT (DEFINED STAGE11D_TASK7C_ONLY AND STAGE11D_TASK7C_ONLY))
 function(stage11d_require_marker_depth SURFACE PREFIX LABEL EXPECTED_DEPTH)
     foreach(_kind IN ITEMS BEGIN END)
         set(_token "TASK5A_${PREFIX}_${LABEL}_${_kind}_MARKER")
@@ -473,9 +565,7 @@ stage11d_prepare_marker_surface("${_report_text}" report
     "${_report_labels}" _report_code)
 stage11d_require_marker_depth("${_report_code}" report evidence_semantics 1)
 
-set(_host_labels foreground runtime_state
-    fixed_step abyss_claim presented_semantics reached_merge reached
-    visible_capture captured summary)
+set(_host_labels fixed_step abyss_claim)
 string(REPLACE "\r\n" "\n" _host_marker_count_text "${_host_text}")
 foreach(_label IN LISTS _host_labels)
     foreach(_kind IN ITEMS BEGIN END)
@@ -540,7 +630,7 @@ endforeach()
 stage11d_extract_raw_seam("${_report_text}" evidence_semantics
     _stage11d_report_seam)
 set(_stage11d_semantic_seam
-    "${_stage11d_host_seam}\n${_stage11d_report_seam}")
+    "${_stage11d_host_seam}\n${_stage11d_report_seam}\n${_host_validation_runtime_text}")
 arpg_sanitize_cpp_source("${_stage11d_host_seam}" _stage11d_host_code)
 arpg_sanitize_cpp_source("${_stage11d_semantic_seam}"
     _stage11d_semantic_code)
@@ -727,6 +817,408 @@ stage11d_extract_report_definition("target-visible evaluator"
     "bool stage11d_target_visible(" _report_target_function)
 stage11d_extract_report_definition("summary writer"
     "void write_stage11d_loot_validation_summary(" _report_summary_function)
+string(REGEX REPLACE "[ \t\r\n]+" "" _stage_header_normalized
+    "${_stage_header_code}")
+string(REGEX REPLACE "[ \t\r\n]+" "" _report_target_normalized
+    "${_report_target_function}")
+foreach(_dimension_binding IN ITEMS
+        "Stage11DLootValidationState&,int,int)noexcept;"
+        "intscreen_width,intscreen_height"
+        "make_hud_layout(screen_width,screen_height,false)")
+    if(_dimension_binding MATCHES "State")
+        set(_dimension_surface "${_stage_header_normalized}")
+    else()
+        set(_dimension_surface "${_report_target_normalized}")
+    endif()
+    string(FIND "${_dimension_surface}" "${_dimension_binding}"
+        _dimension_found)
+    if(_dimension_found EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard rejected explicit screen dimensions")
+    endif()
+endforeach()
+if(_report_target_normalized MATCHES "GetScreen(Width|Height)[(]")
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected global screen dimensions")
+endif()
+endif()
+
+stage11d_unconditional_cpp_surface("${_host_validation_runtime_text}"
+    _stage11d_facade_code _stage11d_facade_lexical)
+foreach(_entry IN ITEMS
+        "ground-loot|void HostValidationRuntime::observe_ground_loot("
+        "presented-frame|PresentationDecision HostValidationRuntime::observe_presented_frame("
+        "capture-result|void HostValidationRuntime::observe_capture_result("
+        "summary|void HostValidationRuntime::write_summaries(")
+    string(REPLACE "|" ";" _parts "${_entry}")
+    list(GET _parts 0 _label)
+    list(GET _parts 1 _signature)
+    stage11d_count_raw_token("${_stage11d_facade_code}" "${_signature}"
+        _definition_count)
+    if(NOT _definition_count EQUAL 1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard requires one active facade ${_label} owner")
+    endif()
+endforeach()
+evidence_extract_cpp_function_block("${_stage11d_facade_code}"
+    "void HostValidationRuntime::observe_ground_loot(" _facade_ground)
+evidence_extract_cpp_function_block("${_stage11d_facade_code}"
+    "PresentationDecision HostValidationRuntime::observe_presented_frame("
+    _facade_presented)
+evidence_extract_cpp_function_block("${_stage11d_facade_code}"
+    "void HostValidationRuntime::observe_capture_result(" _facade_capture)
+evidence_extract_cpp_function_block("${_stage11d_facade_code}"
+    "void HostValidationRuntime::write_summaries(" _facade_summaries)
+foreach(_surface IN ITEMS
+        _facade_ground _facade_presented _facade_capture _facade_summaries)
+    stage11d_mask_non_direct_executable_scopes("${${_surface}}"
+        _facade_direct_surface)
+    string(REGEX REPLACE "[ \t\r\n]+" "" ${_surface}_normalized
+        "${_facade_direct_surface}")
+endforeach()
+
+string(FIND "${_facade_ground_normalized}"
+    "if(impl_->states.stage11d.target_visible&&!impl_->states.stage11d.captured){host_validation::stage11d_record_semantics("
+    _ground_record_condition)
+if(_ground_record_condition EQUAL -1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected target-visible uncaptured semantic recording")
+endif()
+foreach(_binding IN ITEMS
+        "stage11d_target_visible(*impl_->config,snapshot,pause_menu,render_status,loot_filter,ground_loot_view,notices,impl_->states.stage11d,screen_width,screen_height)"
+        "stage11d_record_semantics(impl_->states.stage11d,snapshot,ownership,ground_loot_view,notices)")
+    string(FIND "${_facade_ground_normalized}" "${_binding}" _binding_found)
+    if(_binding_found EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard rejected facade semantic binding")
+    endif()
+endforeach()
+if(_facade_ground_normalized MATCHES "GetScreen(Width|Height)[(]")
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected facade global screen dimensions")
+endif()
+foreach(_binding IN ITEMS
+        "stage11d_reached"
+        "validation_complete="
+        "stage11d_reached"
+        "generic_capture_visible=")
+    string(FIND "${_facade_presented_normalized}" "${_binding}" _found)
+    if(_found EQUAL -1)
+        message(FATAL_ERROR
+            "T7C-M24: Stage11D loot evidence guard rejected decision.validation_complete binding")
+    endif()
+endforeach()
+string(FIND "${_facade_presented_normalized}"
+    "validation_complete=" _validation_complete_begin)
+string(SUBSTRING "${_facade_presented_normalized}"
+    ${_validation_complete_begin} -1 _validation_complete_tail)
+string(FIND "${_validation_complete_tail}" "stage11d_reached"
+    _stage11d_completion_member)
+if(_stage11d_completion_member EQUAL -1)
+    message(FATAL_ERROR
+        "T7C-M24: Stage11D loot evidence guard rejected decision.validation_complete binding")
+endif()
+string(FIND "${_facade_presented_normalized}"
+    "decision.validation_complete=stage10_reached||stage11_reached||stage11b_reached||stage11c_reached||stage11d_reached||stage17_reached;"
+    _exact_validation_complete)
+stage11d_count_raw_token("${_facade_presented_normalized}"
+    "decision" _facade_decision_identifier_count)
+foreach(_decision_field IN ITEMS
+        validation_complete generic_capture_visible generic_capture_complete
+        stage17_capture_path capture_owner)
+    stage11d_count_raw_token("${_facade_presented_normalized}"
+        "decision.${_decision_field}" _facade_decision_field_count)
+    if(NOT _facade_decision_field_count EQUAL 2)
+        message(FATAL_ERROR
+            "T7C-M24: Stage11D loot evidence guard rejected single-write PresentationDecision semantics")
+    endif()
+endforeach()
+if(_exact_validation_complete EQUAL -1
+        OR NOT _facade_decision_identifier_count EQUAL 12)
+    message(FATAL_ERROR
+        "T7C-M24: Stage11D loot evidence guard rejected decision.validation_complete binding")
+endif()
+string(REGEX MATCH
+    "impl_->([A-Za-z_][A-Za-z0-9_]*)=impl_->states[.]stage11d[.]target_visible;"
+    _pending_stage11d_binding "${_facade_presented_normalized}")
+set(_stage11d_pending_field "${CMAKE_MATCH_1}")
+string(FIND "${_facade_capture_normalized}"
+    "if(impl_->${_stage11d_pending_field}){impl_->states.stage11d.captured=true;}"
+    _captured_binding)
+if("${_pending_stage11d_binding}" STREQUAL ""
+        OR "${_stage11d_pending_field}" STREQUAL ""
+        OR _captured_binding EQUAL -1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard rejected successful pending capture promotion")
+endif()
+stage11d_count_raw_token("${_facade_summaries_normalized}"
+    "write_stage11d_loot_validation_summary(" _stage11d_summary_count)
+if(NOT _stage11d_summary_count EQUAL 1)
+    message(FATAL_ERROR
+        "T7C-M25: Stage11D loot evidence guard requires one Stage11D summary write")
+endif()
+foreach(_task7c_summary_identifier IN ITEMS
+        write_stage11b_validation_summary
+        write_stage11c_hud_validation_summary
+        write_stage11d_loot_validation_summary
+        write_stage17_validation_summary)
+    stage11d_count_raw_token("${_stage11d_facade_code}"
+        "${_task7c_summary_identifier}"
+        _task7c_runtime_summary_identifier_count)
+    if(NOT _task7c_runtime_summary_identifier_count EQUAL 1)
+        message(FATAL_ERROR
+            "T7C-M25: Stage11D loot evidence guard rejected Runtime summary inventory")
+    endif()
+endforeach()
+set(_task7c_expected_runtime_summaries
+    "voidHostValidationRuntime::write_summaries(CleanShutdownStateclean_shutdown_state,constPauseMenuState&pause_menu)noexcept{impl_->states.stage17.clean_shutdown_exact_ready=clean_shutdown_state==CleanShutdownState::ready;host_validation::write_stage11b_validation_summary(*impl_->config,impl_->states.stage11b,pause_menu);host_validation::write_stage11c_hud_validation_summary(*impl_->config,impl_->states.stage11c);host_validation::write_stage11d_loot_validation_summary(*impl_->config,impl_->states.stage11d,pause_menu);host_validation::write_stage17_validation_summary(*impl_->config,impl_->states.stage17);}")
+if(NOT _facade_summaries_normalized STREQUAL
+        _task7c_expected_runtime_summaries)
+    message(FATAL_ERROR
+        "T7C-M25: Stage11D loot evidence guard rejected the canonical Runtime summary body")
+endif()
+
+stage11d_fold_cpp_phase2_splices("${_host_text}" _stage11d_host_phase2)
+stage11d_unconditional_cpp_surface("${_stage11d_host_phase2}"
+    _stage11d_host_active _stage11d_host_lexical)
+set(_task7c_run_signature "HostExitCode run_raylib_host(")
+stage11d_count_raw_token("${_stage11d_host_active}"
+    "${_task7c_run_signature}" _task7c_active_run_count)
+stage11d_count_raw_token("${_stage11d_host_lexical}"
+    "${_task7c_run_signature}" _task7c_lexical_run_count)
+string(FIND "${_stage11d_host_active}" "${_task7c_run_signature}"
+    _task7c_run_position)
+if(NOT _task7c_active_run_count EQUAL 1
+        OR NOT _task7c_lexical_run_count EQUAL 1
+        OR _task7c_run_position EQUAL -1)
+    message(FATAL_ERROR
+        "T7C-M24: Stage11D loot evidence guard requires one real run_raylib_host owner")
+endif()
+stage11d_code_brace_depth("${_stage11d_host_active}"
+    ${_task7c_run_position} _task7c_run_depth)
+if(NOT _task7c_run_depth EQUAL 1)
+    message(FATAL_ERROR
+        "T7C-M24: Stage11D loot evidence guard rejected run_raylib_host scope")
+endif()
+evidence_find_cpp_function_bounds_in_sanitized(
+    "${_stage11d_host_active}" "${_task7c_run_signature}"
+    _task7c_run_begin _task7c_run_open _task7c_run_end)
+math(EXPR _task7c_run_length
+    "${_task7c_run_end} - ${_task7c_run_begin} + 1")
+string(SUBSTRING "${_stage11d_host_active}" ${_task7c_run_begin}
+    ${_task7c_run_length} _stage11d_host_run)
+stage11d_mask_non_direct_executable_scopes("${_stage11d_host_run}"
+    _stage11d_host_direct)
+
+foreach(_task7c_macro_surface IN ITEMS
+        _stage11d_host_lexical _stage11d_facade_lexical)
+    string(REGEX MATCH
+        "(^|\n)[ \t]*#[ \t]*(define|undef)([ \t\r\n]|$)"
+        _task7c_macro_directive "${${_task7c_macro_surface}}")
+    if(NOT "${_task7c_macro_directive}" STREQUAL "")
+        message(FATAL_ERROR
+            "T7C-M24: Stage11D loot evidence guard rejected validation macro rewriting")
+    endif()
+endforeach()
+
+foreach(_task7c_run_inventory IN ITEMS
+        "begin_clean_exit|7" "presented_frame_count|7"
+        "exit_requested|6" "request_clean_shutdown|1")
+    string(REPLACE "|" ";" _task7c_inventory_parts
+        "${_task7c_run_inventory}")
+    list(GET _task7c_inventory_parts 0 _task7c_inventory_token)
+    list(GET _task7c_inventory_parts 1 _task7c_inventory_expected)
+    stage11d_count_raw_token("${_stage11d_host_run}"
+        "${_task7c_inventory_token}" _task7c_inventory_count)
+    if(NOT _task7c_inventory_count EQUAL _task7c_inventory_expected)
+        message(FATAL_ERROR
+            "T7C-M24: Stage11D loot evidence guard rejected Host exit-state inventory")
+    endif()
+endforeach()
+
+string(REGEX REPLACE "[ \t\r\n]+" "" _task7c_host_run_normalized
+    "${_stage11d_host_run}")
+set(_task7c_exit_declaration "boolexit_requested=false;")
+set(_task7c_exit_lambda
+    "constautobegin_clean_exit=[&]()noexcept{if(runtime.state()==DungeonRuntimeState::running&&runtime.session()!=nullptr){if(runtime.clean_shutdown_state()==CleanShutdownState::ready){exit_requested=true;}else{static_cast<void>(runtime.request_clean_shutdown());}return;}exit_requested=true;};")
+set(_task7c_exit_loop "while(!exit_requested){")
+set(_task7c_exit_shutdown_ready
+    "if(runtime.clean_shutdown_state()==CleanShutdownState::ready||runtime.clean_shutdown_state()==CleanShutdownState::faulted){exit_requested=true;continue;}")
+set(_task7c_exit_stage12_recovery
+    "if(config.stage12_material_background_only||config.stage12_material_icons_only){TraceLog(LOG_ERROR,);exit_requested=true;continue;}")
+set(_task7c_exit_residual "${_task7c_host_run_normalized}")
+foreach(_task7c_exit_context IN ITEMS
+        declaration lambda loop shutdown_ready stage12_recovery)
+    set(_task7c_exit_context_variable
+        "_task7c_exit_${_task7c_exit_context}")
+    set(_task7c_exit_context_text
+        "${${_task7c_exit_context_variable}}")
+    stage11d_count_raw_token("${_task7c_exit_residual}"
+        "${_task7c_exit_context_text}" _task7c_exit_context_count)
+    if(NOT _task7c_exit_context_count EQUAL 1)
+        message(FATAL_ERROR
+            "T7C-M24: Stage11D loot evidence guard rejected canonical Host exit-state context")
+    endif()
+    string(REPLACE "${_task7c_exit_context_text}" ""
+        _task7c_exit_residual "${_task7c_exit_residual}")
+endforeach()
+stage11d_count_raw_token("${_task7c_exit_residual}"
+    "exit_requested" _task7c_residual_exit_state_count)
+if(NOT _task7c_residual_exit_state_count EQUAL 0)
+    message(FATAL_ERROR
+        "T7C-M24: Stage11D loot evidence guard rejected residual Host exit-state access")
+endif()
+string(REGEX MATCH
+    "(^|[^A-Za-z0-9_.>])(exit|quick_exit|_Exit|abort|terminate|ExitProcess|TerminateProcess|FatalExit|PostQuitMessage)([^A-Za-z0-9_]|$)"
+    _task7c_dangerous_exit_identifier "${_task7c_host_run_normalized}")
+if(NOT "${_task7c_dangerous_exit_identifier}" STREQUAL "")
+    message(FATAL_ERROR
+        "T7C-M24: Stage11D loot evidence guard rejected a dangerous Host exit identifier")
+endif()
+
+stage11d_count_raw_token("${_stage11d_host_active}"
+    "write_summaries" _task7c_host_summary_identifier_count)
+if(NOT _task7c_host_summary_identifier_count EQUAL 1)
+    message(FATAL_ERROR
+        "T7C-M25: Stage11D loot evidence guard requires one Host summary write")
+endif()
+set(_task7c_main_loop_begin "while (!exit_requested) {")
+stage11d_count_raw_token("${_stage11d_host_direct}"
+    "${_task7c_main_loop_begin}" _task7c_main_loop_count)
+string(FIND "${_stage11d_host_direct}" "${_task7c_main_loop_begin}"
+    _task7c_main_loop_position)
+string(LENGTH "${_task7c_main_loop_begin}" _task7c_main_loop_begin_length)
+math(EXPR _task7c_main_loop_open
+    "${_task7c_main_loop_position} + ${_task7c_main_loop_begin_length} - 1")
+if(NOT _task7c_main_loop_count EQUAL 1
+        OR _task7c_main_loop_position EQUAL -1)
+    message(FATAL_ERROR
+        "T7C-M25: Stage11D loot evidence guard cannot bind the Host main loop")
+endif()
+stage11d_matching_brace_position("${_stage11d_host_direct}"
+    ${_task7c_main_loop_open} _task7c_main_loop_close)
+math(EXPR _task7c_post_loop_begin "${_task7c_main_loop_close} + 1")
+string(SUBSTRING "${_stage11d_host_direct}" ${_task7c_post_loop_begin}
+    -1 _task7c_post_loop_surface)
+string(REGEX REPLACE "[ \t\r\n]+" "" _task7c_post_loop_normalized
+    "${_task7c_post_loop_surface}")
+set(_task7c_unconditional_summary_tail
+    "validation_runtime->write_summaries(runtime.clean_shutdown_state(),pause_menu);audio.shutdown();renderer.shutdown_resources();pause_menu_renderer.shutdown();CloseWindow();returnHostExitCode::success;")
+string(FIND "${_task7c_post_loop_normalized}"
+    "${_task7c_unconditional_summary_tail}" _task7c_summary_tail_position)
+if(NOT _task7c_summary_tail_position EQUAL 0)
+    message(FATAL_ERROR
+        "T7C-M25: Stage11D loot evidence guard rejected the unconditional Host summary tail")
+endif()
+
+set(_task7c_decision_begin "const PresentationDecision decision =")
+set(_task7c_summary_begin "validation_runtime->write_summaries(")
+foreach(_task7c_boundary IN ITEMS
+        _task7c_decision_begin _task7c_summary_begin)
+    stage11d_count_raw_token("${_stage11d_host_direct}"
+        "${${_task7c_boundary}}" _task7c_boundary_count)
+    if(NOT _task7c_boundary_count EQUAL 1)
+        message(FATAL_ERROR
+            "T7C-M24: Stage11D loot evidence guard cannot isolate the Host validation exit boundary")
+    endif()
+endforeach()
+string(FIND "${_stage11d_host_direct}" "${_task7c_decision_begin}"
+    _task7c_decision_begin_position)
+string(FIND "${_stage11d_host_direct}" "${_task7c_summary_begin}"
+    _task7c_summary_begin_absolute)
+stage11d_code_brace_depth("${_stage11d_host_direct}"
+    ${_task7c_decision_begin_position} _task7c_decision_depth)
+stage11d_code_brace_depth("${_stage11d_host_direct}"
+    ${_task7c_summary_begin_absolute} _task7c_summary_depth)
+string(SUBSTRING "${_stage11d_host_direct}"
+    ${_task7c_decision_begin_position} -1 _task7c_decision_tail)
+string(FIND "${_task7c_decision_tail}" "${_task7c_summary_begin}"
+    _task7c_summary_begin_position)
+if(_task7c_summary_begin_position EQUAL -1)
+    message(FATAL_ERROR
+        "T7C-M24: Stage11D loot evidence guard cannot isolate the Host validation exit boundary")
+endif()
+string(SUBSTRING "${_task7c_decision_tail}" 0
+    ${_task7c_summary_begin_position} _task7c_exit_surface)
+string(REGEX REPLACE "[ \t\r\n]+" "" _task7c_exit_normalized
+    "${_task7c_exit_surface}")
+set(_task7c_validation_exit
+    "if(decision.validation_complete&&(!config.validation_capture_file.has_value()||effective_generic_complete)){begin_clean_exit();}")
+string(FIND "${_task7c_exit_normalized}" "${_task7c_validation_exit}"
+    _task7c_validation_exit_position)
+set(_task7c_frame_exit
+    "if(config.validation_exit_after_presented_frames!=0U&&presented_frame_count>=config.validation_exit_after_presented_frames){begin_clean_exit();}")
+string(FIND "${_task7c_exit_normalized}" "${_task7c_frame_exit}"
+    _task7c_frame_exit_position)
+set(_task7c_canonical_tail
+    "validation_runtime->observe_capture_result(selected_capture_owner,selected_validation_capture_succeeded);++presented_frame_count;constbooleffective_generic_complete=decision.generic_capture_complete||selected_generic_capture_succeeded_now;${_task7c_frame_exit}${_task7c_validation_exit}")
+string(FIND "${_task7c_exit_normalized}" "${_task7c_canonical_tail}"
+    _task7c_canonical_tail_position)
+string(FIND "${_stage11d_host_direct}"
+    "validation_runtime->observe_capture_result("
+    _task7c_canonical_tail_absolute)
+if(_task7c_canonical_tail_absolute EQUAL -1)
+    message(FATAL_ERROR
+        "T7C-M24: Stage11D loot evidence guard rejected the Host capture-result tail")
+endif()
+stage11d_code_brace_depth("${_stage11d_host_direct}"
+    ${_task7c_canonical_tail_absolute} _task7c_canonical_tail_depth)
+stage11d_count_raw_token("${_task7c_exit_normalized}"
+    "decision.validation_complete" _task7c_validation_complete_count)
+stage11d_count_raw_token("${_task7c_exit_normalized}"
+    "begin_clean_exit();" _task7c_clean_exit_count)
+stage11d_count_raw_token("${_task7c_exit_normalized}"
+    "begin_clean_exit" _task7c_clean_exit_identifier_count)
+stage11d_count_raw_token("${_task7c_exit_normalized}"
+    "presented_frame_count" _task7c_presented_frame_count)
+string(FIND "${_task7c_exit_normalized}"
+    "constbooleffective_generic_complete=decision.generic_capture_complete||selected_generic_capture_succeeded_now;"
+    _task7c_effective_complete_binding)
+foreach(_task7c_forbidden_exit IN ITEMS
+        "exit_requested" "request_clean_shutdown" "CloseWindow("
+        "break;" "continue;" "return" "goto" "throw"
+        "std::exit(" "std::quick_exit(" "std::terminate("
+        "abort(" "_Exit(" "ExitProcess(")
+    stage11d_count_raw_token("${_task7c_exit_normalized}"
+        "${_task7c_forbidden_exit}" _task7c_forbidden_exit_count)
+    if(NOT _task7c_forbidden_exit_count EQUAL 0)
+        message(FATAL_ERROR
+            "T7C-M24: Stage11D loot evidence guard rejected an alternate Host exit path")
+    endif()
+endforeach()
+if(_task7c_validation_exit_position EQUAL -1
+        OR _task7c_frame_exit_position EQUAL -1
+        OR _task7c_canonical_tail_position EQUAL -1
+        OR NOT _task7c_decision_depth EQUAL 3
+        OR NOT _task7c_summary_depth EQUAL 2
+        OR NOT _task7c_canonical_tail_depth EQUAL 3
+        OR NOT _task7c_validation_complete_count EQUAL 1
+        OR NOT _task7c_clean_exit_count EQUAL 2
+        OR NOT _task7c_clean_exit_identifier_count EQUAL 2
+        OR NOT _task7c_presented_frame_count EQUAL 4
+        OR _task7c_effective_complete_binding EQUAL -1)
+    message(FATAL_ERROR
+        "T7C-M24: Stage11D loot evidence guard rejected a Host bypass of decision.validation_complete")
+endif()
+
+foreach(_forbidden_host_owner IN ITEMS
+        "stage11d_validation_state"
+        "Stage11DLootValidationState"
+        "stage11d_target_visible("
+        "stage11d_record_semantics("
+        "write_stage11d_loot_validation_summary(")
+    string(FIND "${_stage11d_host_active}" "${_forbidden_host_owner}"
+        _host_owner_found)
+    if(NOT _host_owner_found EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard rejected Host-owned Stage11D presentation state")
+    endif()
+endforeach()
+
+if(DEFINED STAGE11D_TASK7C_ONLY AND STAGE11D_TASK7C_ONLY)
+    message(STATUS "Stage11D Task7C host validation boundary guard passed")
+    return()
+endif()
 foreach(_required IN ITEMS
         "state.snapshot_item_ids[index] = item.item_id;"
         "state.inventory_item_ids[state.inventory_item_count++] = item.id;")
@@ -1035,15 +1527,21 @@ stage11d_extract_marker_region("${_host_fixed_step_code}" host fixed_step
     _host_fixed_step_seam)
 stage11d_require_unique_token_depth("host fixed-step activation call"
     "${_host_fixed_step_code}"
-    "host_validation::stage11d_validation_active(config)" 1)
+    "config.stage11d_loot_validation" 1)
 string(REGEX REPLACE "[ \t\r\n]+" "" _host_fixed_step_normalized
     "${_host_fixed_step_seam}")
 string(FIND "${_host_fixed_step_normalized}"
-    "||host_validation::stage11d_validation_active(config)"
+    "||config.stage11d_loot_validation!=Stage11DLootValidationScenario::none"
     _host_fixed_step_call)
 if(_host_fixed_step_call EQUAL -1)
     message(FATAL_ERROR
         "Stage11D loot evidence guard rejected fixed-step activation call")
+endif()
+string(FIND "${_host_text}"
+    "host_validation::stage11d_validation_active" _private_activation_call)
+if(NOT _private_activation_call EQUAL -1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard retained the private activation helper in Host")
 endif()
 
 stage11d_extract_marker_region("${_host_fixed_step_code}" host abyss_claim
@@ -1144,11 +1642,18 @@ if(NOT _renderer_all_plan_count EQUAL 4)
 endif()
 foreach(_required IN ITEMS
         "const GroundLootView ground_loot_view = [&]() noexcept {"
-        "return GroundLootView{};" "return renderer.draw("
-        "stage11d_record_semantics(stage11d_validation_state, current,"
-        "present_frame_and_maybe_capture(capture_path.has_value()"
-        "stage11d_validation_state.captured = true;")
+        "return GroundLootView{};" "return renderer.draw(")
     string(FIND "${_host_text}" "${_required}" _found)
+    if(_found EQUAL -1)
+        message(FATAL_ERROR "Stage11D loot evidence guard missing evidence binding: ${_required}")
+    endif()
+endforeach()
+foreach(_required IN ITEMS
+        "validation_runtime->observe_ground_loot(current,pause_menu,"
+        "validation_runtime->observe_presented_frame("
+        "validation_runtime->observe_capture_result("
+        "validation_runtime->write_summaries(")
+    string(FIND "${_host_normalized}" "${_required}" _found)
     if(_found EQUAL -1)
         message(FATAL_ERROR "Stage11D loot evidence guard missing evidence binding: ${_required}")
     endif()

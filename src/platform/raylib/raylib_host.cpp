@@ -14,14 +14,6 @@
 #include "host_input.hpp"
 #include "host_launch_options.hpp"
 #include "host_validation.hpp"
-#include "host_validation_input.hpp"
-#include "host_validation_navigation.hpp"
-#include "host_validation_state.hpp"
-#include "host_validation_stage10_11.hpp"
-#include "host_validation_stage11b.hpp"
-#include "host_validation_stage11c.hpp"
-#include "host_validation_stage11d.hpp"
-#include "host_validation_stage17.hpp"
 #include "inventory_renderer.hpp"
 #include "passive_tree_renderer.hpp"
 #include "passive_tree_view_math.hpp"
@@ -72,28 +64,6 @@ static_assert(FLAG_VSYNC_HINT != 0, "raylib VSync flag must remain available");
 
 namespace arpg::platform {
 namespace {
-
-using host_validation::inject_validation_action;
-using host_validation::inject_validation_movement;
-using host_validation::inject_validation_pressed;
-using host_validation::nearest_living_monster;
-using host_validation::stage11d_has_three_ordinary_rarities;
-using host_validation::stage11d_record_semantics;
-using host_validation::stage11d_target_visible;
-using host_validation::Stage11DLootValidationState;
-using host_validation::observe_stage17_draw_runtime;
-using host_validation::stage17_capture_path;
-using host_validation::mark_stage17_capture_complete;
-using host_validation::stage17_validation_complete;
-using host_validation::write_stage17_validation_summary;
-using host_validation::Stage17SkillStonesValidationState;
-using host_validation::validation_attack_lane;
-using host_validation::validation_direction;
-using host_validation::validation_door_position;
-using host_validation::validation_exit_movement;
-using host_validation::validation_movement_toward;
-using host_validation::validation_route_fire_movement;
-using host_validation::write_stage11d_loot_validation_summary;
 
 constexpr char kSettingsPreviewFailed[] = "Live preview failed";
 constexpr char kSettingsSaveFailed[] = "Settings save failed; retry";
@@ -641,21 +611,6 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
         std::uint32_t presented_frame_count = 0U;
         unsigned validation_capture_tick = 0U;
         unsigned validation_capture_count = 0U;
-        host_validation::Stage10ValidationState& stage10_validation_state =
-            HostValidationStateAccess::stage10(*validation_runtime);
-        host_validation::Stage11ValidationState& stage11_validation_state =
-            HostValidationStateAccess::stage11(*validation_runtime);
-        host_validation::Stage11BValidationState& stage11b_validation_state =
-            HostValidationStateAccess::stage11b(*validation_runtime);
-        host_validation::Stage11CHudValidationState& stage11c_validation_state =
-            HostValidationStateAccess::stage11c(*validation_runtime);
-// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN runtime_state
-        Stage11DLootValidationState& stage11d_validation_state =
-            HostValidationStateAccess::stage11d(*validation_runtime);
-// STAGE11D_LOOT_VALIDATION_SEAM_END runtime_state
-        Stage17SkillStonesValidationState* const stage17_validation_state =
-            &HostValidationStateAccess::stage17(*validation_runtime);
-        bool stage10_validation_captured = false;
         const std::string validation_capture_prefix = config.validation_capture
             ? (*save_directory / "stage8-validation-").string()
             : std::string{};
@@ -734,8 +689,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     sampled_physical_keys, input_settings, current,
                     gameplay_rearm_was_required);
             const PhysicalKeySnapshot& physical_keys =
-                HostValidationStateAccess::death_input_snapshot(
-                    *validation_runtime);
+                validation_runtime->death_input_snapshot();
             if (gameplay_rearm_was_required
                     && gameplay_controls_physically_released(
                         stage17_physical_keys)) {
@@ -881,7 +835,6 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             if ((!inventory.is_open() || !death_gate.forward_gameplay)
                     && death_gate.debug_toggle) {
                 draw_debug = !draw_debug;
-                stage11c_validation_state.debug_visible = draw_debug;
             }
             if (death_gate.forward_gameplay
                 && pause_menu.screen == PauseScreen::closed
@@ -942,14 +895,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             const bool pause_blocks_gameplay = pause_open || pause_was_open;
             const bool gameplay_armed = runtime.authority_requests_enabled()
                 && !gameplay_rearm_was_required;
-            if (config.stage11b_validation
-                    == Stage11BValidationScenario::paused_freeze
-                && pause_was_open && !pause_open
-                && stage11b_validation_state.resume_input_injected) {
-                stage11b_validation_state.resume_observed = true;
-                stage11b_validation_state.resume_ticks_before =
-                    stage11b_validation_state.fixed_ticks;
-            }
+            validation_runtime->observe_pause_transition(
+                pause_was_open, pause_open);
             const float frame_seconds = GetFrameTime();
             HostFrameGateResult host_gate{};
             if (pause_open) {
@@ -1037,7 +984,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                         || config.stage11c_hud_validation
                             != Stage11CHudValidationScenario::none
 // STAGE11D_LOOT_VALIDATION_SEAM_BEGIN fixed_step
-                        || host_validation::stage11d_validation_active(config)
+                        || config.stage11d_loot_validation
+                            != Stage11DLootValidationScenario::none
 // STAGE11D_LOOT_VALIDATION_SEAM_END fixed_step
                         || config.stage17_skill_stones_validation
                             != Stage17SkillStonesValidationScenario::none
@@ -1112,12 +1060,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 audio_bus_levels(presented_audio_settings), ui_audio_cues,
                 frame_seconds);
 
-            if (config.stage11c_hud_validation
-                    == Stage11CHudValidationScenario::low_health_status
-                    && current.combat.has_value()) {
-                current.combat->player.max_barrier = 1000;
-                current.combat->player.barrier = 625;
-            }
+            validation_runtime->prepare_hud_snapshot(current);
 
             const bool stage12_item_baseline_frame =
                 config.stage12_material_baseline_capture_file.has_value()
@@ -1145,25 +1088,9 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 presented_hud_previous, presented_hud_current,
                 runtime.render_status(), control_hints,
                 frame_seconds, pause_blocks_gameplay);
-// STAGE11C_HUD_VALIDATION_SEAM_BEGIN observation
-            const bool stage11c_target_visible = host_validation::stage11c_hud_validation_reached(
-                current, config.stage11c_hud_validation,
-                stage11c_validation_state, draw_debug);
-            if (stage11c_target_visible) {
-                ++stage11c_validation_state.target_presented_frames;
-                stage11c_validation_state.production_snapshot_hash =
-                    host_validation::stage11c_production_snapshot_hash(current);
-                stage11c_validation_state.model = renderer.hud_model();
-                stage11c_validation_state.notices = renderer.hud_notice_view();
-                // Evidence records every formal HUD slot, including the F1 slot
-                // while hidden; f1 remains the authoritative visibility flag.
-                stage11c_validation_state.layout = make_hud_layout(
-                    GetScreenWidth(), GetScreenHeight(), true);
-                stage11c_validation_state.debug_visible = draw_debug;
-            } else {
-                stage11c_validation_state.target_presented_frames = 0U;
-            }
-// STAGE11C_HUD_VALIDATION_SEAM_END observation
+            validation_runtime->observe_hud(
+                current, renderer.hud_model(), renderer.hud_notice_view(),
+                draw_debug, GetScreenWidth(), GetScreenHeight());
             const settings::LootFilterMode presented_loot_filter =
                 renderer_loot_filter_mode(
                     pause_menu.screen, live_settings, pause_menu.draft);
@@ -1186,7 +1113,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     static_cast<float>(frame.interpolation_alpha), draw_debug,
                     feedback, audio_ready);
             }();
-            observe_stage17_draw_runtime(config, *stage17_validation_state,
+            validation_runtime->observe_active_skill_draw(
                 presented_snapshot, renderer.active_skill_draw_status());
             if (config.stage12_material_runtime_status != nullptr) {
                 const MonsterMaterialDrawRuntimeStatus shooter_draw =
@@ -1314,18 +1241,11 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 material_status.bundled_font_total_atlas_byte_budget =
                     kUiFontTotalAtlasByteBudget;
             }
-// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN presented_semantics
-            stage11d_validation_state.target_visible = stage11d_target_visible(
-                config, current, pause_menu, runtime.render_status(),
+            validation_runtime->observe_ground_loot(
+                current, pause_menu, runtime.render_status(),
                 presented_loot_filter, ground_loot_view,
-                renderer.hud_notice_view(), stage11d_validation_state);
-            if (stage11d_validation_state.target_visible
-                    && !stage11d_validation_state.captured) {
-                stage11d_record_semantics(stage11d_validation_state, current,
-                    runtime.item_state(), ground_loot_view,
-                    renderer.hud_notice_view());
-            }
-// STAGE11D_LOOT_VALIDATION_SEAM_END presented_semantics
+                renderer.hud_notice_view(), runtime.item_state(),
+                GetScreenWidth(), GetScreenHeight());
             if (!config.stage12_material_background_only
                 && !config.stage12_material_icons_only
                 && passive_overlay_open) {
@@ -1338,96 +1258,22 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     renderer.material_pack(), renderer.hud_font(),
                     renderer.hud_font_ready());
             }
-            if (stage11b_validation_state.resume_observed) {
-                stage11b_validation_state.resume_ticks_after =
-                    stage11b_validation_state.fixed_ticks;
-            }
+            bool pause_cjk_ready = false;
             if (!config.stage12_material_background_only
                 && !config.stage12_material_icons_only
                 && pause_menu.screen != PauseScreen::closed) {
                 pause_menu_renderer.draw(pause_menu, renderer.material_pack());
-                if (config.stage11b_validation
-                        == Stage11BValidationScenario::corrupt_defaults
-                    && pause_menu.message == kSettingsRecoveredDefaults
-                    && pause_menu_renderer.has_cjk_font()) {
-                    stage11b_validation_state.recovery_notice_visible = true;
-                }
+                pause_cjk_ready = pause_menu_renderer.has_cjk_font();
             }
-            if (config.stage11b_validation
-                    == Stage11BValidationScenario::paused_freeze
-                && pause_menu.screen != PauseScreen::closed) {
-                if (stage11b_validation_state.paused_presented == 0U) {
-                    stage11b_validation_state.paused_ticks_before =
-                        stage11b_validation_state.fixed_ticks;
-                    stage11b_validation_state.player_monster_hash_before =
-                        host_validation::stage11b_snapshot_hash(current);
-                }
-                ++stage11b_validation_state.paused_presented;
-                stage11b_validation_state.paused_ticks_after =
-                    stage11b_validation_state.fixed_ticks;
-                stage11b_validation_state.player_monster_hash_after =
-                    host_validation::stage11b_snapshot_hash(current);
-            }
-            const bool stage10_target_visible = host_validation::stage10_validation_reached(
-                current, config, stage10_validation_state);
-            const bool stage11_target_visible = host_validation::stage11_validation_reached(
-                current, config, stage11_validation_state);
-            if (stage11_target_visible) {
-                ++stage11_validation_state.target_presented_frames;
-            } else {
-                stage11_validation_state.target_presented_frames = 0U;
-            }
-            if (config.stage10_validation
-                    == Stage10ValidationScenario::chaos_expansion
-                    && stage10_target_visible) {
-                ++stage10_validation_state.chaos_presented_frames;
-            }
-            const bool stage10_reached = stage10_target_visible
-                && (config.stage10_validation
-                        != Stage10ValidationScenario::chaos_expansion
-                    || stage10_validation_state.chaos_presented_frames >= 16U);
-            const bool stage11_reached = stage11_target_visible
-                && stage11_validation_state.target_presented_frames >= 4U;
-            const bool stage11b_reached = host_validation::stage11b_validation_complete(
-                config, stage11b_validation_state, pause_menu);
-// STAGE11C_HUD_VALIDATION_SEAM_BEGIN reached
-            const bool stage11c_reached = stage11c_target_visible
-                && stage11c_validation_state.target_presented_frames >= 4U;
-// STAGE11C_HUD_VALIDATION_SEAM_END reached
-// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN reached
-            const bool stage11d_reached = stage11d_validation_state.captured
-                && (config.stage11d_loot_validation
-                        != Stage11DLootValidationScenario::rare_only_abyss
-                    || stage11d_validation_state.abyss_claimed);
-// STAGE11D_LOOT_VALIDATION_SEAM_END reached
-            const bool stage17_reached = stage17_validation_complete(
-                config, *stage17_validation_state);
-            const bool stage11b_visible_capture =
-                (config.stage11b_validation == Stage11BValidationScenario::rebound_attack
-                    || config.stage11b_validation == Stage11BValidationScenario::conflict_swap)
-                && stage11b_validation_state.injected_frame == 21U;
-            const bool stage11b_paused_visible_capture =
-                config.stage11b_validation == Stage11BValidationScenario::paused_freeze
-                && pause_menu.screen != PauseScreen::closed
-                && stage11b_validation_state.paused_presented >= 120U
-                && !stage11b_validation_state.pause_capture_while_paused;
-            const bool prior_validation_reached = stage10_reached || stage11_reached
-                || stage11b_reached || stage11c_reached;
-// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN reached_merge
-            const bool validation_reached = prior_validation_reached
-                || stage11d_reached || stage17_reached;
-// STAGE11D_LOOT_VALIDATION_SEAM_END reached_merge
-// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN visible_capture
-            const bool loot_validation_visible_capture =
-                stage11d_validation_state.target_visible;
-            const bool no_loot_validation_active =
-                config.stage11d_loot_validation
-                    == Stage11DLootValidationScenario::none;
-// STAGE11D_LOOT_VALIDATION_SEAM_END visible_capture
-            std::optional<std::string> capture_path = stage17_capture_path(
-                config, *stage17_validation_state);
-            const bool stage17_capture_requested = capture_path.has_value();
-            bool captured_stage10_target = false;
+            const PresentationDecision decision =
+                validation_runtime->observe_presented_frame(
+                    current, pause_menu, pause_cjk_ready);
+            std::optional<std::string> capture_path =
+                decision.stage17_capture_path;
+            CaptureOwner selected_capture_owner =
+                decision.capture_owner == CaptureOwner::stage17
+                ? CaptureOwner::stage17 : CaptureOwner::none;
+            bool generic_capture_path_selected = false;
             if (!capture_path.has_value() && stage12_item_baseline_frame) {
                 capture_path =
                     config.stage12_material_baseline_capture_file->string();
@@ -1461,20 +1307,16 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 draw_stage12_ui_material_gallery(renderer.material_pack());
             }
             if (!capture_path.has_value()
-                    && (validation_reached || loot_validation_visible_capture
-                    || stage11b_visible_capture
-                    || stage11b_paused_visible_capture)
-                    && !stage10_validation_captured
-                    && config.validation_capture_file.has_value()) {
+                    && decision.capture_owner
+                        == CaptureOwner::generic_validation) {
                 capture_path = config.validation_capture_file->string();
-                captured_stage10_target = true;
-                stage11b_validation_state.pause_capture_while_paused =
-                    stage11b_paused_visible_capture;
+                selected_capture_owner = CaptureOwner::generic_validation;
+                generic_capture_path_selected = true;
             }
             if (death_gate.screenshot || (config.validation_request_screenshot
                     && presented_frame_count == 1U)) {
+                generic_capture_path_selected = false;
                 capture_path = host_screenshot_path(config);
-                captured_stage10_target = false;
             } else if (!capture_path.has_value()
                     && config.validation_capture_file.has_value()
                     && config.validation_exit_after_presented_frames != 0U
@@ -1482,7 +1324,8 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                     && config.stage11_validation == Stage11ValidationScenario::none
                     && config.stage11b_validation == Stage11BValidationScenario::none
                     && config.stage11c_hud_validation == Stage11CHudValidationScenario::none
-                    && no_loot_validation_active
+                    && config.stage11d_loot_validation
+                        == Stage11DLootValidationScenario::none
                     && presented_frame_count + 1U
                         >= config.validation_exit_after_presented_frames) {
                 // Formal material validation captures an ordinary gameplay frame
@@ -1491,50 +1334,36 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             } else if (!capture_path.has_value()) {
                 capture_path = validation_capture_path();
             }
-// STAGE11C_HUD_VALIDATION_SEAM_BEGIN presented_capture
             const bool capture_succeeded =
                 present_frame_and_maybe_capture(capture_path.has_value()
                     ? capture_path->c_str() : nullptr);
-            if (stage17_capture_requested && capture_succeeded) {
-                mark_stage17_capture_complete(*stage17_validation_state);
-            }
+            const bool selected_generic_capture_succeeded_now =
+                selected_capture_owner == CaptureOwner::generic_validation
+                && generic_capture_path_selected && capture_succeeded;
+            const bool selected_validation_capture_succeeded =
+                selected_capture_owner == CaptureOwner::stage17
+                ? capture_succeeded
+                : selected_generic_capture_succeeded_now;
+            validation_runtime->observe_capture_result(
+                selected_capture_owner,
+                selected_validation_capture_succeeded);
             ++presented_frame_count;
-            const bool captured_stage10_frame = captured_stage10_target
-                && capture_succeeded;
-            if (captured_stage10_frame && stage11c_reached) {
-                stage11c_validation_state.captured = true;
-            }
-// STAGE11C_HUD_VALIDATION_SEAM_END presented_capture
-// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN captured
-            if (captured_stage10_frame
-                    && stage11d_validation_state.target_visible) {
-                stage11d_validation_state.captured = true;
-            }
-// STAGE11D_LOOT_VALIDATION_SEAM_END captured
-            stage10_validation_captured = stage10_validation_captured
-                || captured_stage10_frame;
+            const bool effective_generic_complete =
+                decision.generic_capture_complete
+                || selected_generic_capture_succeeded_now;
             if (config.validation_exit_after_presented_frames != 0U
                     && presented_frame_count
                         >= config.validation_exit_after_presented_frames) {
                 begin_clean_exit();
             }
-            if (validation_reached
+            if (decision.validation_complete
                     && (!config.validation_capture_file.has_value()
-                        || stage10_validation_captured)) {
+                        || effective_generic_complete)) {
                 begin_clean_exit();
             }
         }
-        stage17_validation_state->clean_shutdown_exact_ready =
-            runtime.clean_shutdown_state() == CleanShutdownState::ready;
-        host_validation::write_stage11b_validation_summary(config, stage11b_validation_state,
-            pause_menu);
-        host_validation::write_stage11c_hud_validation_summary(config,
-            stage11c_validation_state);
-// STAGE11D_LOOT_VALIDATION_SEAM_BEGIN summary
-        write_stage11d_loot_validation_summary(config,
-            stage11d_validation_state, pause_menu);
-// STAGE11D_LOOT_VALIDATION_SEAM_END summary
-        write_stage17_validation_summary(config, *stage17_validation_state);
+        validation_runtime->write_summaries(
+            runtime.clean_shutdown_state(), pause_menu);
         audio.shutdown();
         renderer.shutdown_resources();
         pause_menu_renderer.shutdown();
