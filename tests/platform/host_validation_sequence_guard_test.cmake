@@ -1084,13 +1084,32 @@ if(NOT _stage11b_header_text MATCHES "struct Stage11BValidationState final")
     message(FATAL_ERROR "Host validation Stage11B state definition is missing")
 endif()
 
+evidence_sanitize_cpp_for_scan("${_stage11c_source_text}"
+    _stage11c_source_code)
 foreach(_stage11c_definition_token IN ITEMS
         "PhysicalKeySnapshot inject_stage11c_physical_edges("
         "std::uint64_t stage11c_production_snapshot_hash("
         "bool stage11c_hud_validation_reached("
         "void write_stage11c_hud_validation_summary(")
-    evidence_extract_cpp_function_block("${_stage11c_source_text}"
-        "${_stage11c_definition_token}" _stage11c_function)
+    evidence_try_find_cpp_function_bounds_in_sanitized(
+        "${_stage11c_source_code}" "${_stage11c_definition_token}"
+        _stage11c_function_begin _stage11c_function_open _stage11c_function_end
+        _stage11c_function_valid)
+    if(NOT _stage11c_function_valid)
+        string(FIND "${_stage11c_source_code}"
+            "${_stage11c_definition_token}" _stage11c_signature_position)
+        if(_stage11c_signature_position EQUAL -1)
+            message(FATAL_ERROR
+                "Evidence validation function is missing: ${_stage11c_definition_token}")
+        endif()
+        message(FATAL_ERROR
+            "Host validation Stage11C definition is missing: ${_stage11c_definition_token}")
+    endif()
+    math(EXPR _stage11c_function_length
+        "${_stage11c_function_end} - ${_stage11c_function_begin} + 1")
+    string(SUBSTRING "${_stage11c_source_code}"
+        ${_stage11c_function_begin} ${_stage11c_function_length}
+        _stage11c_function)
     string(FIND "${_stage11c_function}" "{" _stage11c_definition)
     string(FIND "${_stage11c_function}" ";" _stage11c_forward_declaration)
     if(_stage11c_definition EQUAL -1

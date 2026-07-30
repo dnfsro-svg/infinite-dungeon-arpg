@@ -2232,26 +2232,105 @@ host_validation_require_canonical_order("Task 8B Host settings order"
 # Task 8C centralizes only the raylib window's lifetime.  The Host retains
 # post-ready policy calls, while the dedicated owner preserves the exact
 # flags -> create -> readiness boundary and provides the sole CloseWindow call.
+function(task8c_compact_cpp_surface SOURCE OUT_COMPACT)
+    string(REGEX REPLACE "[ \t\r\n]" "" _compact "${SOURCE}")
+    set("${OUT_COMPACT}" "${_compact}" PARENT_SCOPE)
+endfunction()
+
+function(task8c_lifecycle_owner_surface_valid
+        ACTIVE_SURFACE LEXICAL_SURFACE IS_OWNER OUT_VALID)
+    foreach(_task8c_lifecycle_symbol IN ITEMS
+            "SetConfigFlags" "InitWindow" "CloseWindow")
+        if(IS_OWNER)
+            set(_expected_count 1)
+        else()
+            set(_expected_count 0)
+        endif()
+        foreach(_task8c_surface IN ITEMS
+                "${ACTIVE_SURFACE}" "${LEXICAL_SURFACE}")
+            host_validation_count_token("${_task8c_surface}"
+                "${_task8c_lifecycle_symbol}" _task8c_symbol_count)
+            if(NOT _task8c_symbol_count EQUAL _expected_count)
+                set("${OUT_VALID}" FALSE PARENT_SCOPE)
+                return()
+            endif()
+        endforeach()
+    endforeach()
+    set("${OUT_VALID}" TRUE PARENT_SCOPE)
+endfunction()
+
+# RED witnesses for the predecessor guard: it counted raw header text and only
+# inspected raylib_host.cpp.  Both fixtures therefore satisfy those old local
+# counts despite violating the intended ownership contract.
+set(_task8c_disabled_interface_decoy [=[
+// The following API is disabled and must not constitute public evidence.
+#if 0
+class HostWindowLifetime final {
+public:
+    void close() noexcept;
+};
+#endif
+]=])
+host_validation_require_count("Task 8C RED legacy raw interface witness"
+    "${_task8c_disabled_interface_decoy}"
+    "class HostWindowLifetime final {" 1)
+host_validation_unconditional_cpp_surface("${_task8c_disabled_interface_decoy}"
+    _task8c_disabled_interface_active _task8c_disabled_interface_lexical)
+host_validation_require_count("Task 8C RED disabled interface is inactive"
+    "${_task8c_disabled_interface_active}"
+    "class HostWindowLifetime final {" 0)
+
+set(_task8c_foreign_close_window_decoy [=[
+void task8c_foreign_window_owner() {
+    CloseWindow();
+}
+]=])
+host_validation_require_count("Task 8C RED legacy Host-only witness"
+    "${_run_host_direct}" "CloseWindow(" 0)
+host_validation_require_count("Task 8C RED legacy owner witness"
+    "${_host_window_lifetime_source_active}" "&CloseWindow" 1)
+host_validation_require_count("Task 8C RED foreign owner exists"
+    "${_task8c_foreign_close_window_decoy}" "CloseWindow(" 1)
+message(STATUS "Task 8C RED witnesses: raw disabled interface and foreign CloseWindow owner pass predecessor-local checks")
+
+host_validation_unconditional_cpp_surface("${_task8c_foreign_close_window_decoy}"
+    _task8c_foreign_close_window_active _task8c_foreign_close_window_lexical)
+task8c_lifecycle_owner_surface_valid(
+    "${_task8c_foreign_close_window_active}"
+    "${_task8c_foreign_close_window_lexical}" FALSE
+    _task8c_foreign_close_window_valid)
+if(_task8c_foreign_close_window_valid)
+    message(FATAL_ERROR
+        "Task 8C foreign CloseWindow owner escaped the lifetime-owner guard")
+endif()
+
+task8c_compact_cpp_surface("${_host_window_lifetime_header_active}"
+    _task8c_interface_active)
+task8c_compact_cpp_surface("${_host_window_lifetime_header_lexical}"
+    _task8c_interface_lexical)
 foreach(_task8c_interface_member IN ITEMS
-        "struct HostWindowBackend final {"
-        "void (*set_config_flags)(unsigned int){}"
-        "void (*init_window)(int, int, const char*){}"
-        "bool (*is_window_ready)(){}"
-        "void (*close_window)(){}"
-        "class HostWindowLifetime final {"
-        "explicit HostWindowLifetime(HostWindowBackend backend) noexcept"
-        "[[nodiscard]] bool initialize("
-        "const RaylibHostConfig& config,"
-        "const settings::SettingsData& settings) noexcept"
-        "void close() noexcept"
-        "[[nodiscard]] bool ready() const noexcept"
+        "structHostWindowBackendfinal{"
+        "void(*set_config_flags)(unsignedint){}"
+        "void(*init_window)(int,int,constchar*){}"
+        "bool(*is_window_ready)(){}"
+        "void(*close_window)(){}"
+        "classHostWindowLifetimefinal{"
+        "explicitHostWindowLifetime(HostWindowBackendbackend)noexcept"
+        "[[nodiscard]]boolinitialize("
+        "constRaylibHostConfig&config,"
+        "constsettings::SettingsData&settings)noexcept"
+        "voidclose()noexcept"
+        "[[nodiscard]]boolready()constnoexcept"
         "~HostWindowLifetime()"
-        "HostWindowLifetime(const HostWindowLifetime&) = delete"
-        "HostWindowLifetime& operator=(const HostWindowLifetime&) = delete"
-        "[[nodiscard]] HostWindowBackend raylib_host_window_backend() noexcept")
-    host_validation_require_count("Task 8C public interface member"
-        "${_host_window_lifetime_header_text}"
-        "${_task8c_interface_member}" 1)
+        "HostWindowLifetime(constHostWindowLifetime&)=delete"
+        "HostWindowLifetime&operator=(constHostWindowLifetime&)=delete"
+        "[[nodiscard]]HostWindowBackendraylib_host_window_backend()noexcept")
+    foreach(_task8c_interface_surface IN ITEMS
+            "${_task8c_interface_active}" "${_task8c_interface_lexical}")
+        host_validation_require_count("Task 8C active/lexical public interface member"
+            "${_task8c_interface_surface}"
+            "${_task8c_interface_member}" 1)
+    endforeach()
 endforeach()
 foreach(_task8c_forbidden_owner IN ITEMS
         "std::unique_ptr" "std::shared_ptr" "std::vector" "std::string")
@@ -2326,6 +2405,29 @@ host_validation_require_canonical_order("Task 8C Host ready policy and shutdown"
     "renderer.shutdown_resources();"
     "pause_menu_renderer.shutdown();"
     "window.close();")
+file(GLOB_RECURSE _task8c_raylib_production_sources LIST_DIRECTORIES FALSE
+    "${SOURCE_ROOT}/src/platform/raylib/*.cpp")
+file(REAL_PATH "${_host_window_lifetime_source}"
+    _task8c_lifetime_owner_source_real)
+foreach(_task8c_production_source IN LISTS _task8c_raylib_production_sources)
+    file(READ "${_task8c_production_source}" _task8c_production_text)
+    host_validation_unconditional_cpp_surface("${_task8c_production_text}"
+        _task8c_production_active _task8c_production_lexical)
+    file(REAL_PATH "${_task8c_production_source}" _task8c_production_source_real)
+    if("${_task8c_production_source_real}" STREQUAL
+            "${_task8c_lifetime_owner_source_real}")
+        set(_task8c_is_lifetime_owner TRUE)
+    else()
+        set(_task8c_is_lifetime_owner FALSE)
+    endif()
+    task8c_lifecycle_owner_surface_valid(
+        "${_task8c_production_active}" "${_task8c_production_lexical}"
+        ${_task8c_is_lifetime_owner} _task8c_owner_valid)
+    if(NOT _task8c_owner_valid)
+        message(FATAL_ERROR
+            "Task 8C direct raylib lifecycle owner violation: ${_task8c_production_source}")
+    endif()
+endforeach()
 set(_task8b_coordinator_declaration [=[        HostSettingsRuntime settings_runtime{&settings_notice, &pause_menu,
             &live_settings, &input_settings, &settings_store,
             settings_backend};]=])

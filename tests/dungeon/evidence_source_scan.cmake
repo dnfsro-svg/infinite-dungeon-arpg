@@ -257,8 +257,7 @@ function(evidence_find_cpp_function_bounds_in_sanitized sanitized_source signatu
         "${sanitized_source}" "${signature}"
         function_begin function_open function_end function_valid)
     if(NOT function_valid)
-        message(FATAL_ERROR
-            "Evidence validation function is missing or is not a concrete definition: ${signature}")
+        message(FATAL_ERROR "Evidence validation function is missing: ${signature}")
     endif()
     set(${output_begin} ${function_begin} PARENT_SCOPE)
     set(${output_open} ${function_open} PARENT_SCOPE)
