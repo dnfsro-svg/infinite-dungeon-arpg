@@ -294,32 +294,60 @@ if(_host_text MATCHES
         "struct[ \t\r\n]+Stage11CHudValidationState[ \t\r\n]+final")
     message(FATAL_ERROR "Stage11C HUD state definition remains in raylib_host.cpp")
 endif()
-evidence_sanitize_cpp_for_scan(
+arpg_sanitize_cpp_source(
+    "${_stage11c_source_text}" _stage11c_source_lexical)
+stage11c_arch_unconditional_cpp_surface(
     "${_stage11c_source_text}" _stage11c_source_code)
-foreach(_definition IN ITEMS
-        "PhysicalKeySnapshot inject_stage11c_physical_edges("
-        "std::uint64_t stage11c_production_snapshot_hash("
-        "bool stage11c_hud_validation_reached("
-        "void write_stage11c_hud_validation_summary(")
+set(_stage11c_signature_inject [=[PhysicalKeySnapshot inject_stage11c_physical_edges(
+    PhysicalKeySnapshot snapshot, const RaylibHostConfig& config,
+    const settings::SettingsData& settings_data,
+    const dungeon::DungeonSnapshot& current,
+    Stage11CHudValidationState& state) noexcept]=])
+set(_stage11c_signature_hash [=[std::uint64_t stage11c_production_snapshot_hash(
+    const dungeon::DungeonSnapshot& snapshot) noexcept]=])
+set(_stage11c_signature_reached [=[bool stage11c_hud_validation_reached(
+    const dungeon::DungeonSnapshot& snapshot,
+    Stage11CHudValidationScenario scenario,
+    const Stage11CHudValidationState& state, bool draw_debug) noexcept]=])
+set(_stage11c_signature_summary [=[void write_stage11c_hud_validation_summary(const RaylibHostConfig& config,
+    const Stage11CHudValidationState& state) noexcept]=])
+set(_stage11c_name_inject "inject_stage11c_physical_edges(")
+set(_stage11c_name_hash "stage11c_production_snapshot_hash(")
+set(_stage11c_name_reached "stage11c_hud_validation_reached(")
+set(_stage11c_name_summary "write_stage11c_hud_validation_summary(")
+set(_stage11c_label_inject "PhysicalKeySnapshot inject_stage11c_physical_edges(")
+set(_stage11c_label_hash "std::uint64_t stage11c_production_snapshot_hash(")
+set(_stage11c_label_reached "bool stage11c_hud_validation_reached(")
+set(_stage11c_label_summary "void write_stage11c_hud_validation_summary(")
+foreach(_definition_id IN ITEMS inject hash reached summary)
+    set(_signature_variable "_stage11c_signature_${_definition_id}")
+    set(_name_variable "_stage11c_name_${_definition_id}")
+    set(_label_variable "_stage11c_label_${_definition_id}")
+    set(_definition "${${_signature_variable}}")
+    set(_definition_name "${${_name_variable}}")
+    set(_definition_label "${${_label_variable}}")
+    stage11c_arch_count_token(
+        "${_stage11c_source_code}" "${_definition}"
+        _stage_signature_count)
     evidence_try_find_cpp_function_bounds_in_sanitized(
         "${_stage11c_source_code}" "${_definition}"
         _stage_begin _stage_open _stage_end _stage_definition_valid)
-    if(NOT _stage_definition_valid)
-        string(FIND "${_stage11c_source_code}" "${_definition}"
+    if(NOT _stage_signature_count EQUAL 1 OR NOT _stage_definition_valid)
+        string(FIND "${_stage11c_source_lexical}" "${_definition_name}"
             _stage_signature_position)
         if(_stage_signature_position EQUAL -1)
             message(FATAL_ERROR
-                "Evidence validation function is missing: ${_definition}")
+                "Evidence validation function is missing: ${_definition_label}")
         else()
             message(FATAL_ERROR
-                "Stage11C HUD definition is missing from Stage source: ${_definition}")
+                "Stage11C HUD definition is missing from Stage source: ${_definition_label}")
         endif()
     endif()
     evidence_cpp_prefix_has_only_namespace_scopes_in_sanitized(
         "${_stage11c_source_code}" ${_stage_begin} _stage_scope_valid)
     if(NOT _stage_scope_valid)
         message(FATAL_ERROR
-            "Stage11C HUD definition is missing from Stage source: ${_definition}")
+            "Stage11C HUD definition is missing from Stage source: ${_definition_label}")
     endif()
     math(EXPR _stage_length "${_stage_end} - ${_stage_begin} + 1")
     string(SUBSTRING "${_stage11c_source_code}"
@@ -329,11 +357,11 @@ foreach(_definition IN ITEMS
     if(_stage_definition EQUAL -1
             OR (NOT _stage_forward_declaration EQUAL -1
                 AND _stage_forward_declaration LESS _stage_definition))
-        message(FATAL_ERROR "Stage11C HUD definition is missing from Stage source: ${_definition}")
+        message(FATAL_ERROR "Stage11C HUD definition is missing from Stage source: ${_definition_label}")
     endif()
-    string(FIND "${_host_text}" "${_definition}" _host_definition)
+    string(FIND "${_host_text}" "${_definition_name}" _host_definition)
     if(NOT _host_definition EQUAL -1)
-        message(FATAL_ERROR "Stage11C HUD definition remains in raylib_host.cpp: ${_definition}")
+        message(FATAL_ERROR "Stage11C HUD definition remains in raylib_host.cpp: ${_definition_label}")
     endif()
 endforeach()
 arpg_assert_stage11c_cmake_registration("${_raylib_cmake_text}")

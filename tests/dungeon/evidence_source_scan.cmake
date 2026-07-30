@@ -656,15 +656,30 @@ function(evidence_count_cpp_identifier source identifier output)
     set(${output} ${identifier_count} PARENT_SCOPE)
 endfunction()
 
-function(evidence_window_lifecycle_owner_surface_is_valid
-        active_surface lexical_surface is_owner output)
+function(evidence_window_lifecycle_source_surface_is_valid
+        active_surface lexical_surface source_role output)
+    if(lexical_surface MATCHES "(#[ \t\r\n]*#|%:[ \t\r\n]*%:)")
+        set(${output} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    set(expected_SetConfigFlags 0)
+    set(expected_InitWindow 0)
+    set(expected_IsWindowReady 0)
+    set(expected_CloseWindow 0)
+    if(source_role STREQUAL owner)
+        set(expected_SetConfigFlags 1)
+        set(expected_InitWindow 1)
+        set(expected_IsWindowReady 1)
+        set(expected_CloseWindow 1)
+    elseif(source_role MATCHES "^ready-([0-9]+)$")
+        set(expected_IsWindowReady "${CMAKE_MATCH_1}")
+    elseif(NOT source_role STREQUAL none)
+        set(${output} FALSE PARENT_SCOPE)
+        return()
+    endif()
     foreach(lifecycle_identifier IN ITEMS
-            SetConfigFlags InitWindow CloseWindow)
-        if(is_owner)
-            set(expected_count 1)
-        else()
-            set(expected_count 0)
-        endif()
+            SetConfigFlags InitWindow IsWindowReady CloseWindow)
+        set(expected_count "${expected_${lifecycle_identifier}}")
         foreach(surface IN ITEMS "${active_surface}" "${lexical_surface}")
             evidence_count_cpp_identifier(
                 "${surface}" "${lifecycle_identifier}" actual_count)
@@ -675,6 +690,39 @@ function(evidence_window_lifecycle_owner_surface_is_valid
         endforeach()
     endforeach()
     set(${output} TRUE PARENT_SCOPE)
+endfunction()
+
+function(evidence_window_lifecycle_owner_surface_is_valid
+        active_surface lexical_surface is_owner output)
+    if(is_owner)
+        set(source_role owner)
+    else()
+        set(source_role none)
+    endif()
+    evidence_window_lifecycle_source_surface_is_valid(
+        "${active_surface}" "${lexical_surface}" "${source_role}"
+        source_surface_valid)
+    set(${output} ${source_surface_valid} PARENT_SCOPE)
+endfunction()
+
+function(evidence_raylib_lifecycle_source_role source_path output)
+    get_filename_component(source_name "${source_path}" NAME)
+    if(source_name STREQUAL "host_window_lifetime.cpp")
+        set(source_role owner)
+    elseif(source_name STREQUAL "combat_renderer.cpp")
+        set(source_role ready-1)
+    elseif(source_name STREQUAL "death_overlay_renderer.cpp")
+        set(source_role ready-2)
+    elseif(source_name STREQUAL "hud_renderer.cpp")
+        set(source_role ready-4)
+    elseif(source_name STREQUAL "pause_menu_renderer.cpp")
+        set(source_role ready-1)
+    elseif(source_name STREQUAL "window_settings.cpp")
+        set(source_role ready-2)
+    else()
+        set(source_role none)
+    endif()
+    set(${output} "${source_role}" PARENT_SCOPE)
 endfunction()
 
 function(evidence_window_lifetime_boundary_is_valid
@@ -705,11 +753,30 @@ function(evidence_window_lifetime_boundary_is_valid
     evidence_cpp_direct_execution_surface_in_sanitized(
         "${initialize_function}" initialize_direct)
 
+    evidence_try_find_cpp_function_bounds_in_sanitized(
+        "${owner_active}" "HostWindowBackend raylib_host_window_backend("
+        backend_begin backend_open backend_end backend_valid)
+    if(NOT backend_valid)
+        set(${output} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    evidence_cpp_prefix_has_only_namespace_scopes_in_sanitized(
+        "${owner_active}" ${backend_begin} backend_scope_valid)
+    if(NOT backend_scope_valid)
+        set(${output} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    math(EXPR backend_length "${backend_end} - ${backend_begin} + 1")
+    string(SUBSTRING "${owner_active}" ${backend_begin} ${backend_length}
+        backend_function)
+    evidence_cpp_direct_execution_surface_in_sanitized(
+        "${backend_function}" backend_direct)
+
     string(REGEX REPLACE "[ \t\r\n]+" "" host_compact "${host_direct}")
     string(REGEX REPLACE "[ \t\r\n]+" "" initialize_compact
         "${initialize_direct}")
-    string(REGEX REPLACE "[ \t\r\n]+" "" owner_active_compact
-        "${owner_active}")
+    string(REGEX REPLACE "[ \t\r\n]+" "" backend_compact
+        "${backend_direct}")
 
     set(host_initialize_call
         "window.initialize(config,committed_settings)")
@@ -736,38 +803,12 @@ function(evidence_window_lifetime_boundary_is_valid
         endif()
     endforeach()
 
-    set(previous_position -1)
-    foreach(initialize_call IN ITEMS
-            "backend_.set_config_flags(initial_window_flags(settings));"
-            "backend_.init_window(config.window_width,config.window_height,config.window_title);"
-            "ready_=backend_.is_window_ready();")
-        string(LENGTH "${initialize_compact}" before_length)
-        string(REPLACE "${initialize_call}" "" without_call
-            "${initialize_compact}")
-        string(LENGTH "${without_call}" after_length)
-        string(LENGTH "${initialize_call}" call_length)
-        math(EXPR call_count
-            "(${before_length} - ${after_length}) / ${call_length}")
-        string(FIND "${initialize_compact}" "${initialize_call}"
-            call_position)
-        if(NOT call_count EQUAL 1 OR call_position EQUAL -1
-                OR (NOT previous_position EQUAL -1
-                    AND NOT previous_position LESS call_position))
-            set(${output} FALSE PARENT_SCOPE)
-            return()
-        endif()
-        set(previous_position ${call_position})
-    endforeach()
-    set(backend_mapping
-        "return{&SetConfigFlags,&InitWindow,&IsWindowReady,&CloseWindow};")
-    string(LENGTH "${owner_active_compact}" before_length)
-    string(REPLACE "${backend_mapping}" "" without_mapping
-        "${owner_active_compact}")
-    string(LENGTH "${without_mapping}" after_length)
-    string(LENGTH "${backend_mapping}" mapping_length)
-    math(EXPR mapping_count
-        "(${before_length} - ${after_length}) / ${mapping_length}")
-    if(NOT mapping_count EQUAL 1)
+    set(expected_initialize
+        "boolHostWindowLifetime::initialize(constRaylibHostConfig&config,constsettings::SettingsData&settings)noexcept{backend_.set_config_flags(initial_window_flags(settings));backend_.init_window(config.window_width,config.window_height,config.window_title);ready_=backend_.is_window_ready();returnready_;}")
+    set(expected_backend
+        "HostWindowBackendraylib_host_window_backend()noexcept{return{&SetConfigFlags,&InitWindow,&IsWindowReady,&CloseWindow};}")
+    if(NOT initialize_compact STREQUAL expected_initialize
+            OR NOT backend_compact STREQUAL expected_backend)
         set(${output} FALSE PARENT_SCOPE)
         return()
     endif()

@@ -2239,25 +2239,97 @@ endfunction()
 
 function(task8c_lifecycle_owner_surface_valid
         ACTIVE_SURFACE LEXICAL_SURFACE IS_OWNER OUT_VALID)
-    foreach(_task8c_lifecycle_symbol IN ITEMS
-            "SetConfigFlags" "InitWindow" "CloseWindow")
-        if(IS_OWNER)
-            set(_expected_count 1)
-        else()
-            set(_expected_count 0)
-        endif()
-        foreach(_task8c_surface IN ITEMS
-                "${ACTIVE_SURFACE}" "${LEXICAL_SURFACE}")
-            host_validation_count_token("${_task8c_surface}"
-                "${_task8c_lifecycle_symbol}" _task8c_symbol_count)
-            if(NOT _task8c_symbol_count EQUAL _expected_count)
-                set("${OUT_VALID}" FALSE PARENT_SCOPE)
-                return()
-            endif()
-        endforeach()
-    endforeach()
-    set("${OUT_VALID}" TRUE PARENT_SCOPE)
+    evidence_window_lifecycle_owner_surface_is_valid(
+        "${ACTIVE_SURFACE}" "${LEXICAL_SURFACE}" ${IS_OWNER}
+        _task8c_surface_valid)
+    set("${OUT_VALID}" ${_task8c_surface_valid} PARENT_SCOPE)
 endfunction()
+
+set(_task8c_review_mutation_acceptances)
+if(NOT DEFINED TASK8C_REVIEW_MUTATION
+        OR TASK8C_REVIEW_MUTATION STREQUAL mapping_namespace_decoy)
+    set(_task8c_backend_mapping
+        "return {&SetConfigFlags, &InitWindow, &IsWindowReady, &CloseWindow};")
+    string(REPLACE "${_task8c_backend_mapping}" "return {};"
+        _task8c_mapping_namespace_decoy
+        "${_host_window_lifetime_source_active}")
+    string(APPEND _task8c_mapping_namespace_decoy
+        "\nnamespace task8c_decoy {\nHostWindowBackend forged_backend() noexcept {\n    ${_task8c_backend_mapping}\n}\n}\n")
+    evidence_window_lifetime_boundary_is_valid(
+        "${_run_host_direct}" "${_task8c_mapping_namespace_decoy}"
+        "${_task8c_mapping_namespace_decoy}"
+        _task8c_mapping_namespace_decoy_valid)
+    if(_task8c_mapping_namespace_decoy_valid)
+        list(APPEND _task8c_review_mutation_acceptances
+            mapping_namespace_decoy)
+    endif()
+endif()
+if(NOT DEFINED TASK8C_REVIEW_MUTATION
+        OR TASK8C_REVIEW_MUTATION STREQUAL direct_header_ready)
+    set(_task8c_direct_header_ready
+        "inline bool task8c_header_ready() { return IsWindowReady(); }")
+    evidence_window_lifecycle_owner_surface_is_valid(
+        "${_task8c_direct_header_ready}" "${_task8c_direct_header_ready}"
+        FALSE _task8c_direct_header_ready_valid)
+    if(_task8c_direct_header_ready_valid)
+        list(APPEND _task8c_review_mutation_acceptances direct_header_ready)
+    endif()
+endif()
+if(NOT DEFINED TASK8C_REVIEW_MUTATION
+        OR TASK8C_REVIEW_MUTATION STREQUAL macro_header_ready)
+    set(_task8c_macro_header_ready
+        "#define TASK8C_READY IsWindowReady\ninline bool task8c_header_ready() { return TASK8C_READY(); }")
+    evidence_window_lifecycle_owner_surface_is_valid(
+        "${_task8c_macro_header_ready}" "${_task8c_macro_header_ready}"
+        FALSE _task8c_macro_header_ready_valid)
+    if(_task8c_macro_header_ready_valid)
+        list(APPEND _task8c_review_mutation_acceptances macro_header_ready)
+    endif()
+endif()
+if(NOT DEFINED TASK8C_REVIEW_MUTATION
+        OR TASK8C_REVIEW_MUTATION STREQUAL token_paste_header_init)
+    set(_task8c_token_paste_header_init
+        "#define TASK8C_INIT Init ## Window\ninline void task8c_header_init() { TASK8C_INIT(1, 1, nullptr); }")
+    evidence_window_lifecycle_owner_surface_is_valid(
+        "${_task8c_token_paste_header_init}"
+        "${_task8c_token_paste_header_init}" FALSE
+        _task8c_token_paste_header_init_valid)
+    if(_task8c_token_paste_header_init_valid)
+        list(APPEND _task8c_review_mutation_acceptances
+            token_paste_header_init)
+    endif()
+endif()
+if(NOT DEFINED TASK8C_REVIEW_MUTATION
+        OR TASK8C_REVIEW_MUTATION STREQUAL phase2_owner_mapping)
+    string(ASCII 92 _task8c_backslash)
+    string(ASCII 10 _task8c_line_feed)
+    string(REPLACE "&InitWindow"
+        "&Init${_task8c_backslash}${_task8c_line_feed}Window"
+        _task8c_phase2_owner_mapping
+        "${_host_window_lifetime_source_text}")
+    host_validation_unconditional_cpp_surface(
+        "${_task8c_phase2_owner_mapping}"
+        _task8c_phase2_owner_mapping_active
+        _task8c_phase2_owner_mapping_lexical)
+    evidence_window_lifetime_boundary_is_valid(
+        "${_run_host_direct}"
+        "${_task8c_phase2_owner_mapping_active}"
+        "${_task8c_phase2_owner_mapping_lexical}"
+        _task8c_phase2_owner_mapping_valid)
+    if(NOT _task8c_phase2_owner_mapping_valid)
+        message(FATAL_ERROR
+            "Task 8C shared window guard rejected harmless phase-2-spliced owner mapping")
+    endif()
+endif()
+if(_task8c_review_mutation_acceptances)
+    list(JOIN _task8c_review_mutation_acceptances ", "
+        _task8c_review_mutation_names)
+    message(FATAL_ERROR
+        "Task 8C shared window guard accepted review mutations: ${_task8c_review_mutation_names}")
+endif()
+if(DEFINED TASK8C_REVIEW_MUTATION)
+    return()
+endif()
 
 # RED witnesses for the predecessor guard: it counted raw header text and only
 # inspected raylib_host.cpp.  Both fixtures therefore satisfy those old local
@@ -2406,23 +2478,17 @@ host_validation_require_canonical_order("Task 8C Host ready policy and shutdown"
     "pause_menu_renderer.shutdown();"
     "window.close();")
 file(GLOB_RECURSE _task8c_raylib_production_sources LIST_DIRECTORIES FALSE
-    "${SOURCE_ROOT}/src/platform/raylib/*.cpp")
-file(REAL_PATH "${_host_window_lifetime_source}"
-    _task8c_lifetime_owner_source_real)
+    "${SOURCE_ROOT}/src/platform/raylib/*.cpp"
+    "${SOURCE_ROOT}/src/platform/raylib/*.hpp")
 foreach(_task8c_production_source IN LISTS _task8c_raylib_production_sources)
     file(READ "${_task8c_production_source}" _task8c_production_text)
     host_validation_unconditional_cpp_surface("${_task8c_production_text}"
         _task8c_production_active _task8c_production_lexical)
-    file(REAL_PATH "${_task8c_production_source}" _task8c_production_source_real)
-    if("${_task8c_production_source_real}" STREQUAL
-            "${_task8c_lifetime_owner_source_real}")
-        set(_task8c_is_lifetime_owner TRUE)
-    else()
-        set(_task8c_is_lifetime_owner FALSE)
-    endif()
-    task8c_lifecycle_owner_surface_valid(
+    evidence_raylib_lifecycle_source_role(
+        "${_task8c_production_source}" _task8c_lifecycle_source_role)
+    evidence_window_lifecycle_source_surface_is_valid(
         "${_task8c_production_active}" "${_task8c_production_lexical}"
-        ${_task8c_is_lifetime_owner} _task8c_owner_valid)
+        "${_task8c_lifecycle_source_role}" _task8c_owner_valid)
     if(NOT _task8c_owner_valid)
         message(FATAL_ERROR
             "Task 8C direct raylib lifecycle owner violation: ${_task8c_production_source}")

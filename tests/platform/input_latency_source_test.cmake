@@ -1529,26 +1529,20 @@ if(NOT WINDOW_LIFETIME_BOUNDARY_VALID)
     message(FATAL_ERROR
         "Host must delegate the ordered window initialization boundary exactly once")
 endif()
-file(GLOB RAYLIB_PRODUCTION_SOURCES LIST_DIRECTORIES FALSE
-    "${RAYLIB_SOURCE_DIR}/*.cpp")
-file(REAL_PATH "${HOST_WINDOW_LIFETIME_PATH}" WINDOW_LIFETIME_OWNER_REAL)
+file(GLOB_RECURSE RAYLIB_PRODUCTION_SOURCES LIST_DIRECTORIES FALSE
+    "${RAYLIB_SOURCE_DIR}/*.cpp"
+    "${RAYLIB_SOURCE_DIR}/*.hpp")
 foreach(RAYLIB_PRODUCTION_SOURCE IN LISTS RAYLIB_PRODUCTION_SOURCES)
     file(READ "${RAYLIB_PRODUCTION_SOURCE}" RAYLIB_PRODUCTION_TEXT)
     arpg_sanitize_cpp_source("${RAYLIB_PRODUCTION_TEXT}"
         RAYLIB_PRODUCTION_LEXICAL)
     stage17_unconditional_cpp_surface("${RAYLIB_PRODUCTION_TEXT}"
         RAYLIB_PRODUCTION_ACTIVE)
-    file(REAL_PATH "${RAYLIB_PRODUCTION_SOURCE}"
-        RAYLIB_PRODUCTION_SOURCE_REAL)
-    if("${RAYLIB_PRODUCTION_SOURCE_REAL}" STREQUAL
-            "${WINDOW_LIFETIME_OWNER_REAL}")
-        set(IS_WINDOW_LIFETIME_OWNER TRUE)
-    else()
-        set(IS_WINDOW_LIFETIME_OWNER FALSE)
-    endif()
-    evidence_window_lifecycle_owner_surface_is_valid(
+    evidence_raylib_lifecycle_source_role(
+        "${RAYLIB_PRODUCTION_SOURCE}" RAYLIB_LIFECYCLE_SOURCE_ROLE)
+    evidence_window_lifecycle_source_surface_is_valid(
         "${RAYLIB_PRODUCTION_ACTIVE}" "${RAYLIB_PRODUCTION_LEXICAL}"
-        ${IS_WINDOW_LIFETIME_OWNER} WINDOW_LIFETIME_OWNER_VALID)
+        "${RAYLIB_LIFECYCLE_SOURCE_ROLE}" WINDOW_LIFETIME_OWNER_VALID)
     if(NOT WINDOW_LIFETIME_OWNER_VALID)
         message(FATAL_ERROR
             "direct raylib window lifecycle owner violation: ${RAYLIB_PRODUCTION_SOURCE}")

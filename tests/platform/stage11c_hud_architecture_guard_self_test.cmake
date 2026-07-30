@@ -199,6 +199,38 @@ function(arpg_expect_hud_guard_accepts_source NAME TARGET_FILE MUTATED)
     endif()
 endfunction()
 
+file(READ "${_production_hud_root}/host_validation_stage11c.cpp"
+    _stage11c_review_source)
+if(NOT DEFINED STAGE11C_REVIEW_MUTATION
+        OR STAGE11C_REVIEW_MUTATION STREQUAL inactive_definition)
+    string(REPLACE
+        "PhysicalKeySnapshot inject_stage11c_physical_edges("
+        "#if 0\nPhysicalKeySnapshot inject_stage11c_physical_edges("
+        _stage11c_inactive_definition "${_stage11c_review_source}")
+    string(APPEND _stage11c_inactive_definition "\n#endif\n")
+    arpg_expect_hud_guard_rejects_source(
+        stage_source_inactive_definition host_validation_stage11c.cpp
+        "${_stage11c_inactive_definition}"
+        "Stage11C HUD definition is missing from Stage source")
+endif()
+if(NOT DEFINED STAGE11C_REVIEW_MUTATION
+        OR STAGE11C_REVIEW_MUTATION STREQUAL wrong_overload)
+    set(_stage11c_reached_signature [=[bool stage11c_hud_validation_reached(
+    const dungeon::DungeonSnapshot& snapshot,
+    Stage11CHudValidationScenario scenario,
+    const Stage11CHudValidationState& state, bool draw_debug) noexcept {]=])
+    string(REPLACE "${_stage11c_reached_signature}"
+        "bool stage11c_hud_validation_reached(int wrong) noexcept {"
+        _stage11c_wrong_overload "${_stage11c_review_source}")
+    arpg_expect_hud_guard_rejects_source(
+        stage_source_wrong_overload host_validation_stage11c.cpp
+        "${_stage11c_wrong_overload}"
+        "Stage11C HUD definition is missing from Stage source")
+endif()
+if(DEFINED STAGE11C_REVIEW_MUTATION)
+    return()
+endif()
+
 set(_task7c_mask_hud_observer
     "            validation_runtime->observe_hud(\n                current, renderer.hud_model(), renderer.hud_notice_view(),\n                draw_debug, GetScreenWidth(), GetScreenHeight());")
 set(_task7c_mask_hud_observer_get
@@ -354,4 +386,4 @@ arpg_expect_hud_guard_accepts_source(inactive_runtime_facade_decoy
     host_validation_runtime.cpp "${_inactive_runtime_decoy}")
 
 message(STATUS
-    "Stage 11C HUD architecture guard rejected 16 mutations and accepted 3 harmless variants")
+    "Stage 11C HUD architecture guard rejected 18 mutations and accepted 3 harmless variants")
