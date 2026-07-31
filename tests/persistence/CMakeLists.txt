@@ -34,3 +34,20 @@ add_test(NAME persistence.save_commit_stack_guard
         -P "${CMAKE_CURRENT_SOURCE_DIR}/save_commit_stack_guard_test.cmake")
 set_tests_properties(persistence.save_commit_stack_guard PROPERTIES
     LABELS "headless;persistence")
+
+add_executable(arpg_checkpoint_v9_wire_baseline
+    checkpoint_v9_wire_baseline.cpp)
+target_compile_features(arpg_checkpoint_v9_wire_baseline PRIVATE cxx_std_17)
+target_include_directories(arpg_checkpoint_v9_wire_baseline PRIVATE
+    "${PROJECT_SOURCE_DIR}/tests/combat")
+target_link_libraries(arpg_checkpoint_v9_wire_baseline PRIVATE
+    arpg_persistence arpg_dungeon)
+arpg_enable_project_warnings(arpg_checkpoint_v9_wire_baseline)
+
+add_test(NAME persistence.v9_wire_baseline
+    COMMAND "${CMAKE_COMMAND}"
+        -DPROBE=$<TARGET_FILE:arpg_checkpoint_v9_wire_baseline>
+        -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/v9_wire_baseline
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/checkpoint_v9_wire_baseline_test.cmake")
+set_tests_properties(persistence.v9_wire_baseline PROPERTIES
+    LABELS "headless;persistence;checkpoint;wire")
