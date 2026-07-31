@@ -95,6 +95,11 @@ target_include_directories(arpg_stage9_validation_fixture
     PRIVATE "${PROJECT_SOURCE_DIR}/tests/dungeon")
 target_link_libraries(arpg_stage9_validation_fixture PRIVATE arpg_dungeon arpg_persistence)
 arpg_enable_project_warnings(arpg_stage9_validation_fixture)
+# Avoid stack-overflow failures in the standalone validation fixture on MSVC.
+if(MSVC)
+    target_link_options(arpg_stage9_validation_fixture
+        PRIVATE /STACK:4194304)
+endif()
 
 add_test(NAME stage9.validation_fixture.real_v4_reward_reload
     COMMAND arpg_stage9_validation_fixture)
@@ -107,6 +112,11 @@ target_compile_features(arpg_stage10_validation_fixture PRIVATE cxx_std_17)
 target_link_libraries(arpg_stage10_validation_fixture
     PRIVATE arpg_dungeon arpg_persistence)
 arpg_enable_project_warnings(arpg_stage10_validation_fixture)
+# Avoid stack-overflow failures in the standalone validation fixture on MSVC.
+if(MSVC)
+    target_link_options(arpg_stage10_validation_fixture
+        PRIVATE /STACK:4194304)
+endif()
 
 add_test(NAME stage10.validation_fixture.real_abyss_transactions
     COMMAND arpg_stage10_validation_fixture)
