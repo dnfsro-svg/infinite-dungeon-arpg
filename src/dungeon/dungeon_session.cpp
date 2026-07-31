@@ -912,11 +912,7 @@ bool DungeonSession::restore_room_progress_checkpoint_in_place(
         phase_ = RoomPhase::death_pending;
         return true;
     }
-    const bool committed_abyss_clear = room.full_clear
-        && stable_state_.current_room.is_abyss
-        && stable_state_.abyss.lifecycle == abyss::AbyssLifecycle::cleared;
-    phase_ = committed_abyss_clear ? RoomPhase::cleared
-        : room.full_clear ? RoomPhase::awaiting_exit : RoomPhase::combat;
+    phase_ = room.full_clear ? RoomPhase::awaiting_exit : RoomPhase::combat;
     return true;
 }
 

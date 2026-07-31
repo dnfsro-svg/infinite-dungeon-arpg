@@ -750,7 +750,7 @@ arpg::test::Failure cleared_abyss_rebuild_restores_committed_clear_flags_without
     const auto snapshot = rebuilt.snapshot();
     const auto& progress =
         arpg::test::DungeonSessionTestAccess::room_progress(rebuilt);
-    ARPG_REQUIRE(snapshot.phase == RoomPhase::cleared);
+    ARPG_REQUIRE(snapshot.phase == RoomPhase::awaiting_exit);
     ARPG_REQUIRE(snapshot.exits_unlocked);
     ARPG_REQUIRE(all_exits(snapshot, true));
     ARPG_REQUIRE(progress.exits_unlocked);
