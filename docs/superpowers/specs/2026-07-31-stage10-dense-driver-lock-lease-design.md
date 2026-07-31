@@ -44,6 +44,8 @@ The fixture-owned state contains:
 - the existing deterministic sweep waypoint;
 - an optional locked monster ordinal;
 - the frozen stance and facing computed when the lock is acquired;
+- an engagement mode that starts at the frozen ranged stance and may transition
+  once to live close pursuit for the light-attack fallback;
 - whether that stance has been reached with the required facing;
 - the prior commanded stance distance and player position needed to detect one
   controllable movement that made no progress;
@@ -85,8 +87,13 @@ from the next acquisition attempt, and sweep. Suppressed movement never counts
 as a stall.
 
 When both axes are within 0.25 units, establish the frozen facing with the
-existing one-tick horizontal input when required. Mark the stance reached only
-after position and facing both match.
+existing one-tick horizontal input when required. X arrival is one-sided: in
+addition to the absolute tolerance, `facing_sign * (player.x - stance.x)` must
+be nonnegative so the target's forward distance cannot exceed
+`kDrawSlashRange`. Continue horizontal input across the stance when the player
+is within tolerance but remains on the geometrically invalid outside side.
+Mark the stance reached only after position, the one-sided X condition, and
+facing all match.
 
 ### Engage
 
@@ -102,6 +109,22 @@ navigation target, using only production geometry constants and APIs:
 Rejected cooldown requests fall through to the next legal action. Accepted
 actions, cooldown, hit stop, hurt, basic-attack animation, and active-skill
 animation do not expire the lease.
+
+If the ranged stance has been reached, the player is action-ready, neither
+skill request is accepted, and light geometry is false, transition the same
+lease to close-pursuit mode. This transition is driven by a completed public
+action decision, not by elapsed cooldown time. In close-pursuit mode, use the
+existing `movement_toward(player, locked_target.position)` each tick; do not
+invent another attack range or close stance. Continue the same Storm, Draw,
+then light priority. Once a resident enters the existing light lane, real
+basic attacks provide throughput while skill cooldowns recover.
+
+Close pursuit retains the ordinal until normal immediate invalidation. A
+previously controllable close-pursuit movement that requested nonzero input but
+produced no XY position change releases the lease, excludes that ordinal for
+one acquisition attempt, and enters sweep escape. Hurt, hit stop, an active
+attack, an active skill, or an action accepted/queued in that iteration cannot
+be counted as a close-pursuit movement stall.
 
 After the frozen stance and facing have been reached, if no active living
 resident lies in any of the three current attack geometries, release the lease
@@ -126,6 +149,8 @@ become resident.
   has become geometrically stale.
 - Cooldown and animation timing cannot by themselves invalidate a useful
   engagement.
+- A reached ranged lease with no accepted skill and no light geometry switches
+  to real close pursuit instead of waiting in place for cooldown.
 - Every selection and sweep transition is deterministic for the same snapshot.
 - The existing real clear, save, abyss reward/lifecycle, abandonment, and
   reload assertions remain unchanged.
