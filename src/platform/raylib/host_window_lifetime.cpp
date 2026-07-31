@@ -3,7 +3,17 @@
 #include "raylib_host.hpp"
 #include "window_settings.hpp"
 
+#undef SetConfigFlags
+#undef InitWindow
+#undef IsWindowReady
+#undef CloseWindow
+
 #include <raylib.h>
+
+#undef SetConfigFlags
+#undef InitWindow
+#undef IsWindowReady
+#undef CloseWindow
 
 namespace {
 

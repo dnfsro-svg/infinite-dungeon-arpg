@@ -246,6 +246,19 @@ if(NOT DEFINED STAGE11C_REVIEW_MUTATION
         "${_stage11c_reformatted_signature}")
 endif()
 if(NOT DEFINED STAGE11C_REVIEW_MUTATION
+        OR STAGE11C_REVIEW_MUTATION STREQUAL layered_owner_namespace)
+    string(REPLACE "namespace arpg::platform::host_validation {"
+        "namespace arpg {\nnamespace platform {\nnamespace host_validation {"
+        _stage11c_layered_owner_namespace "${_stage11c_review_source}")
+    string(REPLACE "}  // namespace arpg::platform::host_validation"
+        "}  // namespace host_validation\n}  // namespace platform\n}  // namespace arpg"
+        _stage11c_layered_owner_namespace
+        "${_stage11c_layered_owner_namespace}")
+    arpg_expect_hud_guard_accepts_source(
+        stage_source_layered_owner_namespace host_validation_stage11c.cpp
+        "${_stage11c_layered_owner_namespace}")
+endif()
+if(NOT DEFINED STAGE11C_REVIEW_MUTATION
         OR STAGE11C_REVIEW_MUTATION STREQUAL inactive_definition)
     string(REPLACE
         "PhysicalKeySnapshot inject_stage11c_physical_edges("
@@ -430,4 +443,4 @@ arpg_expect_hud_guard_accepts_source(inactive_runtime_facade_decoy
     host_validation_runtime.cpp "${_inactive_runtime_decoy}")
 
 message(STATUS
-    "Stage 11C HUD architecture guard rejected 20 mutations and accepted 4 harmless variants")
+    "Stage 11C HUD architecture guard rejected 20 mutations and accepted 5 harmless variants")

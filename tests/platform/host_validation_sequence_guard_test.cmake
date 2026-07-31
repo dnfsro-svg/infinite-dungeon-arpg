@@ -149,6 +149,25 @@ if(NOT EXISTS "${_host}")
 endif()
 
 file(READ "${_host}" _host_text)
+if(DEFINED TASK9_RAYLIB_CODELIKE_OVERRIDE)
+    if(NOT EXISTS "${TASK9_RAYLIB_CODELIKE_OVERRIDE}"
+            OR NOT TASK9_RAYLIB_CODELIKE_OVERRIDE MATCHES
+            "\\.(cpp|hpp|h|inc|inl|ipp)$")
+        message(FATAL_ERROR
+            "Task 9 raylib renderer macro override must be a code-like file")
+    endif()
+    file(READ "${TASK9_RAYLIB_CODELIKE_OVERRIDE}"
+        _task9_raylib_codelike_text)
+    arpg_sanitize_cpp_source(
+        "${_task9_raylib_codelike_text}" _task9_raylib_codelike_lexical)
+    evidence_cpp_contains_forbidden_renderer_macro(
+        "${_task9_raylib_codelike_lexical}"
+        _task9_forbidden_renderer_macro)
+    if(_task9_forbidden_renderer_macro)
+        message(FATAL_ERROR
+            "Task 9 raylib renderer macro definition is forbidden: ${TASK9_RAYLIB_CODELIKE_OVERRIDE}")
+    endif()
+endif()
 if(DEFINED STAGE17_SEQUENCE_MUTATION)
     set(_host_before_mutation "${_host_text}")
     if(STAGE17_SEQUENCE_MUTATION STREQUAL
@@ -2016,6 +2035,10 @@ task7b_count_token("${_host_runtime}" "${_task9_renderer_cleanup}"
 task7b_count_token("${_host_runtime_normalized}"
     "${_task9_renderer_allocation_anchor}"
     _task9_renderer_allocation_anchor_count)
+evidence_cpp_direct_execution_surface_in_sanitized(
+    "${_host_runtime}" _task9_host_direct)
+evidence_renderer_allocation_boundary_is_valid(
+    "${_task9_host_direct}" _task9_renderer_allocation_boundary_valid)
 if(_task9_window_owner_position EQUAL -1
         OR _task9_renderer_owner_position EQUAL -1
         OR _task9_try_position EQUAL -1
@@ -2025,6 +2048,7 @@ if(_task9_window_owner_position EQUAL -1
         OR _task9_unknown_catch_position EQUAL -1
         OR NOT _task9_renderer_cleanup_count EQUAL 2
         OR NOT _task9_renderer_allocation_anchor_count EQUAL 1
+        OR NOT _task9_renderer_allocation_boundary_valid
         OR NOT _task9_window_owner_position LESS _task9_renderer_owner_position
         OR NOT _task9_renderer_owner_position LESS _task9_try_position
         OR NOT _task9_try_position LESS _task9_window_initialize_position
@@ -2035,7 +2059,7 @@ if(_task9_window_owner_position EQUAL -1
         OR NOT _task9_standard_catch_position LESS
             _task9_unknown_catch_position)
     message(FATAL_ERROR
-        "Task 9 Host renderer owner/allocation/catch cleanup boundary is invalid: window=${_task9_window_owner_position} owner=${_task9_renderer_owner_position} try=${_task9_try_position} init=${_task9_window_initialize_position} allocation=${_task9_renderer_allocation_position} allocation_anchor=${_task9_renderer_allocation_anchor_count} standard=${_task9_standard_catch_position} unknown=${_task9_unknown_catch_position} cleanups=${_task9_renderer_cleanup_count}")
+        "Task 9 Host renderer owner/allocation/catch cleanup boundary is invalid: window=${_task9_window_owner_position} owner=${_task9_renderer_owner_position} try=${_task9_try_position} init=${_task9_window_initialize_position} allocation=${_task9_renderer_allocation_position} allocation_anchor=${_task9_renderer_allocation_anchor_count} direct_boundary=${_task9_renderer_allocation_boundary_valid} standard=${_task9_standard_catch_position} unknown=${_task9_unknown_catch_position} cleanups=${_task9_renderer_cleanup_count}")
 endif()
 string(SUBSTRING "${_host_runtime}" ${_task9_standard_catch_position}
     -1 _task9_standard_catch_tail)

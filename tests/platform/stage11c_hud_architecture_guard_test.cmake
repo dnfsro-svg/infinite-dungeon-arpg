@@ -301,8 +301,10 @@ stage11c_arch_unconditional_cpp_surface(
     "${_stage11c_source_text}" _stage11c_source_active)
 evidence_cpp_normalize_token_whitespace(
     "${_stage11c_source_lexical}" _stage11c_source_lexical_code)
+evidence_cpp_mask_preprocessor_directives_in_sanitized(
+    "${_stage11c_source_active}" _stage11c_source_scope)
 evidence_cpp_normalize_token_whitespace(
-    "${_stage11c_source_active}" _stage11c_source_code)
+    "${_stage11c_source_scope}" _stage11c_source_code)
 arpg_sanitize_cpp_source("${_host_text}" _host_lexical_source)
 evidence_cpp_normalize_token_whitespace(
     "${_host_lexical_source}" _host_lexical_code)

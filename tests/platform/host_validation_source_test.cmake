@@ -23,6 +23,8 @@ set(_host_window_lifetime_header
     "${SOURCE_ROOT}/src/platform/raylib/host_window_lifetime.hpp")
 set(_host_window_lifetime_source
     "${SOURCE_ROOT}/src/platform/raylib/host_window_lifetime.cpp")
+set(_raylib_lifecycle_policy
+    "${SOURCE_ROOT}/src/platform/raylib/raylib_lifecycle_poison.hpp")
 
 foreach(_target IN ITEMS
         "${_host_validation_header}"
@@ -685,6 +687,46 @@ function(host_validation_assert_top_level_registration CMAKE_TEXT SOURCE)
             "Host validation source registration is not a direct add_library argument")
     endif()
 endfunction()
+
+set(_task9_lifecycle_force_include_contract [=[
+set(_arpg_raylib_lifecycle_policy
+    "${CMAKE_CURRENT_SOURCE_DIR}/raylib_lifecycle_poison.hpp")
+if(MSVC)
+    target_compile_options(arpg_raylib PRIVATE
+        "/FI${_arpg_raylib_lifecycle_policy}")
+else()
+    target_compile_options(arpg_raylib PRIVATE
+        -include "${_arpg_raylib_lifecycle_policy}")
+endif()
+]=])
+host_validation_require_canonical_count(
+    "Task 9 lifecycle force-include CMake contract"
+    "${_raylib_cmake_text}"
+    "${_task9_lifecycle_force_include_contract}" 1)
+
+set(_task9_lifecycle_allowlist_contract [=[
+set_source_files_properties(host_window_lifetime.cpp PROPERTIES
+    COMPILE_DEFINITIONS
+        "ARPG_ALLOW_RAYLIB_SET_CONFIG_FLAGS;ARPG_ALLOW_RAYLIB_INIT_WINDOW;ARPG_ALLOW_RAYLIB_IS_WINDOW_READY;ARPG_ALLOW_RAYLIB_CLOSE_WINDOW")
+set_source_files_properties(
+    combat_renderer.cpp
+    death_overlay_renderer.cpp
+    hud_renderer.cpp
+    pause_menu_renderer.cpp
+    window_settings.cpp
+    PROPERTIES COMPILE_DEFINITIONS ARPG_ALLOW_RAYLIB_IS_WINDOW_READY)
+set_source_files_properties(raylib_host.cpp PROPERTIES
+    COMPILE_DEFINITIONS ARPG_ALLOW_RAYLIB_WINDOW_SHOULD_CLOSE)
+]=])
+host_validation_require_canonical_count(
+    "Task 9 lifecycle exact source allowlist"
+    "${_raylib_cmake_text}"
+    "${_task9_lifecycle_allowlist_contract}" 1)
+
+if(NOT EXISTS "${_raylib_lifecycle_policy}")
+    message(FATAL_ERROR
+        "Task 9 lifecycle poison policy is missing: ${_raylib_lifecycle_policy}")
+endif()
 
 host_validation_unconditional_cpp_surface(
     "${_facade_text}" _facade _facade_lexical)
@@ -2325,6 +2367,46 @@ if(NOT DEFINED TASK8C_REVIEW_MUTATION
     endif()
 endif()
 if(NOT DEFINED TASK8C_REVIEW_MUTATION
+        OR TASK8C_REVIEW_MUTATION STREQUAL wrapper_external_include)
+    string(REPLACE "namespace {"
+        "#include \"task8c_wrapper_macros.inc\"\n\nnamespace {"
+        _task8c_wrapper_external_include
+        "${_host_window_lifetime_source_text}")
+    host_validation_unconditional_cpp_surface(
+        "${_task8c_wrapper_external_include}"
+        _task8c_wrapper_external_include_active
+        _task8c_wrapper_external_include_lexical)
+    evidence_window_lifetime_boundary_is_valid(
+        "${_run_host_direct}"
+        "${_task8c_wrapper_external_include_active}"
+        "${_task8c_wrapper_external_include_lexical}"
+        _task8c_wrapper_external_include_valid)
+    if(_task8c_wrapper_external_include_valid)
+        list(APPEND _task8c_review_mutation_acceptances
+            wrapper_external_include)
+    endif()
+endif()
+if(NOT DEFINED TASK8C_REVIEW_MUTATION
+        OR TASK8C_REVIEW_MUTATION STREQUAL wrapper_pre_raylib_macro)
+    string(REPLACE "#include <raylib.h>"
+        "#define InitWindow(width, height, title) InitWindow(height, width, title)\n#include <raylib.h>"
+        _task8c_wrapper_pre_raylib_macro
+        "${_host_window_lifetime_source_text}")
+    host_validation_unconditional_cpp_surface(
+        "${_task8c_wrapper_pre_raylib_macro}"
+        _task8c_wrapper_pre_raylib_macro_active
+        _task8c_wrapper_pre_raylib_macro_lexical)
+    evidence_window_lifetime_boundary_is_valid(
+        "${_run_host_direct}"
+        "${_task8c_wrapper_pre_raylib_macro_active}"
+        "${_task8c_wrapper_pre_raylib_macro_lexical}"
+        _task8c_wrapper_pre_raylib_macro_valid)
+    if(_task8c_wrapper_pre_raylib_macro_valid)
+        list(APPEND _task8c_review_mutation_acceptances
+            wrapper_pre_raylib_macro)
+    endif()
+endif()
+if(NOT DEFINED TASK8C_REVIEW_MUTATION
         OR TASK8C_REVIEW_MUTATION STREQUAL subdir_owner_basename)
     evidence_raylib_lifecycle_source_role(
         "${SOURCE_ROOT}/src/platform/raylib/review-shadow/host_window_lifetime.cpp"
@@ -2344,30 +2426,6 @@ if(NOT DEFINED TASK8C_REVIEW_MUTATION
     if(_task8c_nested_repo_suffix_role STREQUAL owner)
         list(APPEND _task8c_review_mutation_acceptances
             nested_repo_suffix_owner)
-    endif()
-endif()
-if(NOT DEFINED TASK8C_REVIEW_MUTATION
-        OR TASK8C_REVIEW_MUTATION STREQUAL external_cat_init)
-    set(_task8c_external_cat_init
-        "inline void task8c_external_cat_init() { CAT(Init, Window)(1, 1, nullptr); }")
-    evidence_window_lifecycle_owner_surface_is_valid(
-        "${_task8c_external_cat_init}" "${_task8c_external_cat_init}"
-        FALSE _task8c_external_cat_init_valid)
-    if(_task8c_external_cat_init_valid)
-        list(APPEND _task8c_review_mutation_acceptances external_cat_init)
-    endif()
-endif()
-if(NOT DEFINED TASK8C_REVIEW_MUTATION
-        OR TASK8C_REVIEW_MUTATION STREQUAL unrelated_token_paste)
-    set(_task8c_unrelated_token_paste
-        "#define TASK8C_UNRELATED_JOIN(a, b) a ## b\ninline int task8c_unrelated() { return TASK8C_UNRELATED_JOIN(alpha, beta); }")
-    evidence_window_lifecycle_owner_surface_is_valid(
-        "${_task8c_unrelated_token_paste}"
-        "${_task8c_unrelated_token_paste}" FALSE
-        _task8c_unrelated_token_paste_valid)
-    if(NOT _task8c_unrelated_token_paste_valid)
-        message(FATAL_ERROR
-            "Task 8C shared window guard rejected harmless unrelated token paste")
     endif()
 endif()
 if(NOT DEFINED TASK8C_REVIEW_MUTATION
@@ -2397,28 +2455,23 @@ if(NOT DEFINED TASK8C_REVIEW_MUTATION
     endif()
 endif()
 if(NOT DEFINED TASK8C_REVIEW_MUTATION
-        OR TASK8C_REVIEW_MUTATION STREQUAL macro_header_ready)
-    set(_task8c_macro_header_ready
-        "#define TASK8C_READY IsWindowReady\ninline bool task8c_header_ready() { return TASK8C_READY(); }")
-    evidence_window_lifecycle_owner_surface_is_valid(
-        "${_task8c_macro_header_ready}" "${_task8c_macro_header_ready}"
-        FALSE _task8c_macro_header_ready_valid)
-    if(_task8c_macro_header_ready_valid)
-        list(APPEND _task8c_review_mutation_acceptances macro_header_ready)
-    endif()
-endif()
-if(NOT DEFINED TASK8C_REVIEW_MUTATION
-        OR TASK8C_REVIEW_MUTATION STREQUAL token_paste_header_init)
-    set(_task8c_token_paste_header_init
-        "#define TASK8C_INIT Init ## Window\ninline void task8c_header_init() { TASK8C_INIT(1, 1, nullptr); }")
-    evidence_window_lifecycle_owner_surface_is_valid(
-        "${_task8c_token_paste_header_init}"
-        "${_task8c_token_paste_header_init}" FALSE
-        _task8c_token_paste_header_init_valid)
-    if(_task8c_token_paste_header_init_valid)
-        list(APPEND _task8c_review_mutation_acceptances
-            token_paste_header_init)
-    endif()
+        OR TASK8C_REVIEW_MUTATION STREQUAL lifecycle_escape_directives)
+    set(_task9_lifecycle_escape_surfaces
+        "#define TASK9_INIT_ALIAS InitWindow\n"
+        "#undef InitWindow\n"
+        "#pragma push_macro(\"InitWindow\")\n"
+        "#pragma pop_macro(\"InitWindow\")\n")
+    foreach(_task9_lifecycle_escape_surface IN LISTS
+            _task9_lifecycle_escape_surfaces)
+        evidence_window_lifecycle_owner_surface_is_valid(
+            "${_task9_lifecycle_escape_surface}"
+            "${_task9_lifecycle_escape_surface}" FALSE
+            _task9_lifecycle_escape_valid)
+        if(_task9_lifecycle_escape_valid)
+            list(APPEND _task8c_review_mutation_acceptances
+                lifecycle_escape_directives)
+        endif()
+    endforeach()
 endif()
 if(NOT DEFINED TASK8C_REVIEW_MUTATION
         OR TASK8C_REVIEW_MUTATION STREQUAL phase2_owner_mapping)
@@ -2443,6 +2496,121 @@ if(NOT DEFINED TASK8C_REVIEW_MUTATION
             message(FATAL_ERROR
                 "Task 8C shared window guard rejected harmless phase-2-spliced owner mapping")
         endif()
+    endif()
+endif()
+if(NOT DEFINED TASK8C_REVIEW_MUTATION
+        OR TASK8C_REVIEW_MUTATION STREQUAL layered_owner_namespace)
+    string(REPLACE "namespace arpg::platform {"
+        "namespace arpg {\nnamespace platform {"
+        _task8c_layered_owner_namespace
+        "${_host_window_lifetime_source_text}")
+    string(REPLACE "}  // namespace arpg::platform"
+        "}  // namespace platform\n}  // namespace arpg"
+        _task8c_layered_owner_namespace
+        "${_task8c_layered_owner_namespace}")
+    host_validation_unconditional_cpp_surface(
+        "${_task8c_layered_owner_namespace}"
+        _task8c_layered_owner_namespace_active
+        _task8c_layered_owner_namespace_lexical)
+    evidence_window_lifetime_boundary_is_valid(
+        "${_run_host_direct}"
+        "${_task8c_layered_owner_namespace_active}"
+        "${_task8c_layered_owner_namespace_lexical}"
+        _task8c_layered_owner_namespace_valid)
+    if(NOT _task8c_layered_owner_namespace_valid)
+        message(FATAL_ERROR
+            "Task 8C shared window guard rejected harmless layered owner namespace")
+    endif()
+endif()
+if(NOT DEFINED TASK8C_REVIEW_MUTATION
+        OR TASK8C_REVIEW_MUTATION STREQUAL inline_owner_namespace)
+    string(REPLACE "namespace arpg::platform {"
+        "namespace arpg {\ninline namespace platform {"
+        _task9_inline_owner_namespace
+        "${_host_window_lifetime_source_text}")
+    string(REPLACE "}  // namespace arpg::platform"
+        "}  // namespace platform\n}  // namespace arpg"
+        _task9_inline_owner_namespace
+        "${_task9_inline_owner_namespace}")
+    host_validation_unconditional_cpp_surface(
+        "${_task9_inline_owner_namespace}"
+        _task9_inline_owner_namespace_active
+        _task9_inline_owner_namespace_lexical)
+    evidence_window_lifetime_boundary_is_valid(
+        "${_run_host_direct}"
+        "${_task9_inline_owner_namespace_active}"
+        "${_task9_inline_owner_namespace_lexical}"
+        _task9_inline_owner_namespace_valid)
+    if(_task9_inline_owner_namespace_valid)
+        list(APPEND _task8c_review_mutation_acceptances
+            inline_owner_namespace)
+    endif()
+endif()
+if(NOT DEFINED TASK8C_REVIEW_MUTATION
+        OR TASK8C_REVIEW_MUTATION STREQUAL wrong_owner_namespace)
+    string(REPLACE "namespace arpg::platform {"
+        "namespace arpg::wrong {"
+        _task9_wrong_owner_namespace
+        "${_host_window_lifetime_source_text}")
+    host_validation_unconditional_cpp_surface(
+        "${_task9_wrong_owner_namespace}"
+        _task9_wrong_owner_namespace_active
+        _task9_wrong_owner_namespace_lexical)
+    evidence_window_lifetime_boundary_is_valid(
+        "${_run_host_direct}"
+        "${_task9_wrong_owner_namespace_active}"
+        "${_task9_wrong_owner_namespace_lexical}"
+        _task9_wrong_owner_namespace_valid)
+    if(_task9_wrong_owner_namespace_valid)
+        list(APPEND _task8c_review_mutation_acceptances
+            wrong_owner_namespace)
+    endif()
+endif()
+if(NOT DEFINED TASK8C_REVIEW_MUTATION
+        OR TASK8C_REVIEW_MUTATION STREQUAL detail_owner_namespace)
+    string(REPLACE "namespace arpg::platform {"
+        "namespace arpg::platform {\nnamespace detail {"
+        _task9_detail_owner_namespace
+        "${_host_window_lifetime_source_text}")
+    string(REPLACE "}  // namespace arpg::platform"
+        "}  // namespace detail\n}  // namespace arpg::platform"
+        _task9_detail_owner_namespace
+        "${_task9_detail_owner_namespace}")
+    host_validation_unconditional_cpp_surface(
+        "${_task9_detail_owner_namespace}"
+        _task9_detail_owner_namespace_active
+        _task9_detail_owner_namespace_lexical)
+    evidence_window_lifetime_boundary_is_valid(
+        "${_run_host_direct}"
+        "${_task9_detail_owner_namespace_active}"
+        "${_task9_detail_owner_namespace_lexical}"
+        _task9_detail_owner_namespace_valid)
+    if(_task9_detail_owner_namespace_valid)
+        list(APPEND _task8c_review_mutation_acceptances
+            detail_owner_namespace)
+    endif()
+endif()
+if(NOT DEFINED TASK8C_REVIEW_MUTATION
+        OR TASK8C_REVIEW_MUTATION STREQUAL phase2_directive_scope_decoy)
+    string(ASCII 92 _task9_backslash)
+    set(_task9_scope_directive
+        "#define TASK9_SCOPE_DECOY() ${_task9_backslash}\nnamespace fake { ${_task9_backslash}\nif (true) {\n\n")
+    string(REPLACE "namespace arpg::platform {"
+        "${_task9_scope_directive}namespace arpg::platform {"
+        _task9_phase2_directive_scope_decoy
+        "${_host_window_lifetime_source_text}")
+    host_validation_unconditional_cpp_surface(
+        "${_task9_phase2_directive_scope_decoy}"
+        _task9_phase2_directive_scope_decoy_active
+        _task9_phase2_directive_scope_decoy_lexical)
+    evidence_window_lifetime_boundary_is_valid(
+        "${_run_host_direct}"
+        "${_task9_phase2_directive_scope_decoy_active}"
+        "${_task9_phase2_directive_scope_decoy_lexical}"
+        _task9_phase2_directive_scope_decoy_valid)
+    if(NOT _task9_phase2_directive_scope_decoy_valid)
+        message(FATAL_ERROR
+            "Task 9 namespace guard rejected a harmless spliced directive body")
     endif()
 endif()
 if(_task8c_review_mutation_acceptances)
@@ -2618,6 +2786,34 @@ host_validation_require_canonical_count("Task 9 renderer allocation anchor"
     "core::FixedStepRunner fixed_step;
     renderer_storage = std::make_unique<CombatRenderer>();
     CombatRenderer& renderer = *renderer_storage;" 1)
+evidence_renderer_allocation_boundary_is_valid(
+    "${_run_host_direct}" _task9_renderer_allocation_boundary_valid)
+if(NOT _task9_renderer_allocation_boundary_valid)
+    message(FATAL_ERROR
+        "Task 9 Host renderer owner/allocation direct-scope boundary is invalid")
+endif()
+set(_task9_renderer_bypass_anchor [=[        core::FixedStepRunner fixed_step;
+        renderer_storage = std::make_unique<CombatRenderer>();
+        CombatRenderer& renderer = *renderer_storage;]=])
+set(_task9_renderer_bypass_replacement [=[        renderer_storage.reset(new CombatRenderer{});
+        if constexpr (sizeof(int) == 0) {
+            core::FixedStepRunner fixed_step;
+            renderer_storage = std::make_unique<CombatRenderer>();
+            CombatRenderer& renderer = *renderer_storage;
+        }
+        CombatRenderer& renderer = *renderer_storage;]=])
+string(REPLACE "${_task9_renderer_bypass_anchor}"
+    "${_task9_renderer_bypass_replacement}"
+    _task9_renderer_bypass_run "${_run_host_direct}")
+if(_task9_renderer_bypass_run STREQUAL _run_host_direct)
+    message(FATAL_ERROR "Task 9 renderer bypass self-test anchor is missing")
+endif()
+evidence_renderer_allocation_boundary_is_valid(
+    "${_task9_renderer_bypass_run}" _task9_renderer_bypass_valid)
+if(_task9_renderer_bypass_valid)
+    message(FATAL_ERROR
+        "Task 9 Host source guard accepted early reset with a dead exact anchor")
+endif()
 host_validation_require_canonical_count("Task 9 catch renderer cleanup"
     "${_run_host_direct}"
     "if (renderer_storage != nullptr) {
@@ -2641,12 +2837,23 @@ host_validation_require_canonical_order("Task 9 renderer exception lifetime"
     }"
     "return HostExitCode::save_initialization_failed;")
 file(GLOB_RECURSE _task8c_raylib_production_sources LIST_DIRECTORIES FALSE
+    "${SOURCE_ROOT}/src/platform/raylib/*.h"
     "${SOURCE_ROOT}/src/platform/raylib/*.cpp"
-    "${SOURCE_ROOT}/src/platform/raylib/*.hpp")
+    "${SOURCE_ROOT}/src/platform/raylib/*.hpp"
+    "${SOURCE_ROOT}/src/platform/raylib/*.inc"
+    "${SOURCE_ROOT}/src/platform/raylib/*.inl"
+    "${SOURCE_ROOT}/src/platform/raylib/*.ipp")
 foreach(_task8c_production_source IN LISTS _task8c_raylib_production_sources)
     file(READ "${_task8c_production_source}" _task8c_production_text)
     host_validation_unconditional_cpp_surface("${_task8c_production_text}"
         _task8c_production_active _task8c_production_lexical)
+    evidence_cpp_contains_forbidden_renderer_macro(
+        "${_task8c_production_lexical}"
+        _task9_forbidden_renderer_macro)
+    if(_task9_forbidden_renderer_macro)
+        message(FATAL_ERROR
+            "Task 9 raylib renderer macro definition is forbidden: ${_task8c_production_source}")
+    endif()
     evidence_raylib_lifecycle_source_role(
         "${_task8c_production_source}" "${SOURCE_ROOT}"
         _task8c_lifecycle_source_role)

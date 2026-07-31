@@ -1625,6 +1625,211 @@ endfunction()
 
 arpg_verify_direct_input_poison()
 
+function(arpg_try_compile_lifecycle_poison LABEL SOURCE OUT_RESULT OUT_OUTPUT)
+    set(_arpg_lifecycle_probe_includes "${raylib_SOURCE_DIR}/src")
+    set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+    try_compile(_arpg_lifecycle_probe_result
+        SOURCE_FROM_CONTENT "${LABEL}.cpp" "${SOURCE}"
+        CMAKE_FLAGS
+            "-DINCLUDE_DIRECTORIES:STRING=${_arpg_lifecycle_probe_includes}"
+        CXX_STANDARD 17
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS OFF
+        OUTPUT_VARIABLE _arpg_lifecycle_probe_output
+        NO_CACHE)
+    set(${OUT_RESULT} ${_arpg_lifecycle_probe_result} PARENT_SCOPE)
+    set(${OUT_OUTPUT} "${_arpg_lifecycle_probe_output}" PARENT_SCOPE)
+endfunction()
+
+function(arpg_expect_lifecycle_poison_compiles LABEL SOURCE)
+    arpg_try_compile_lifecycle_poison(
+        "${LABEL}" "${SOURCE}" _arpg_result _arpg_output)
+    if(NOT _arpg_result)
+        message(FATAL_ERROR
+            "lifecycle poison probe ${LABEL} must compile:\n${_arpg_output}")
+    endif()
+endfunction()
+
+function(arpg_expect_lifecycle_poison_rejects LABEL CONTROL_SOURCE POISON_SOURCE)
+    arpg_try_compile_lifecycle_poison(
+        "${LABEL}_control" "${CONTROL_SOURCE}"
+        _arpg_control_result _arpg_control_output)
+    if(NOT _arpg_control_result)
+        message(FATAL_ERROR
+            "lifecycle poison control ${LABEL} must compile before poisoning:\n${_arpg_control_output}")
+    endif()
+
+    arpg_try_compile_lifecycle_poison(
+        "${LABEL}_poison" "${POISON_SOURCE}"
+        _arpg_poison_result _arpg_poison_output)
+    if(_arpg_poison_result)
+        message(FATAL_ERROR
+            "lifecycle poison unexpectedly accepted ${LABEL}")
+    endif()
+    if(NOT _arpg_poison_output MATCHES "Blocked")
+        message(FATAL_ERROR
+            "lifecycle poison ${LABEL} failed without a Blocked diagnostic:\n${_arpg_poison_output}")
+    endif()
+endfunction()
+
+function(arpg_verify_lifecycle_poison)
+    file(TO_CMAKE_PATH
+        "${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_lifecycle_poison.hpp"
+        _arpg_lifecycle_policy)
+    file(TO_CMAKE_PATH
+        "${CMAKE_CURRENT_SOURCE_DIR}/raylib_lifecycle_poison_alias.inc"
+        _arpg_lifecycle_alias_include)
+    set(_arpg_raylib_control "#include <raylib.h>\n")
+    set(_arpg_policy_include
+        "#include \"${_arpg_lifecycle_policy}\"\n")
+
+    set(_arpg_active_sentinel [=[
+        static_assert(
+            ::arpg::platform::raylib_lifecycle_poison::active,
+            "lifecycle poison must be active");
+        int probe() { return 0; }
+    ]=])
+    arpg_expect_lifecycle_poison_compiles(active_sentinel
+        "${_arpg_policy_include}${_arpg_active_sentinel}")
+
+    set(_arpg_direct_call [=[
+        int probe() {
+            InitWindow(1, 1, "probe");
+            return 0;
+        }
+    ]=])
+    arpg_expect_lifecycle_poison_rejects(direct_call
+        "${_arpg_raylib_control}${_arpg_direct_call}"
+        "${_arpg_policy_include}${_arpg_direct_call}")
+
+    set(_arpg_parenthesized_call [=[
+        int probe() {
+            (InitWindow)(1, 1, "probe");
+            return 0;
+        }
+    ]=])
+    arpg_expect_lifecycle_poison_rejects(parenthesized_call
+        "${_arpg_raylib_control}${_arpg_parenthesized_call}"
+        "${_arpg_policy_include}${_arpg_parenthesized_call}")
+
+    set(_arpg_address [=[
+        int probe() {
+            static_cast<void>(&InitWindow);
+            return 0;
+        }
+    ]=])
+    arpg_expect_lifecycle_poison_rejects(address
+        "${_arpg_raylib_control}${_arpg_address}"
+        "${_arpg_policy_include}${_arpg_address}")
+
+    set(_arpg_cat [=[
+        #define ARPG_CAT_I(a, b) a ## b
+        #define ARPG_CAT(a, b) ARPG_CAT_I(a, b)
+        int probe() {
+            ARPG_CAT(Init, Window)(1, 1, "probe");
+            return 0;
+        }
+    ]=])
+    arpg_expect_lifecycle_poison_rejects(cat_init_window
+        "${_arpg_raylib_control}${_arpg_cat}"
+        "${_arpg_policy_include}${_arpg_cat}")
+
+    set(_arpg_cat3 [=[
+        #define ARPG_CAT3_I(a, b, c) a ## b ## c
+        #define ARPG_CAT3(a, b, c) ARPG_CAT3_I(a, b, c)
+        int probe() {
+            ARPG_CAT3(Init, Window,)(1, 1, "probe");
+            return 0;
+        }
+    ]=])
+    arpg_expect_lifecycle_poison_rejects(cat3_init_window
+        "${_arpg_raylib_control}${_arpg_cat3}"
+        "${_arpg_policy_include}${_arpg_cat3}")
+
+    set(_arpg_alias_forward [=[
+        #define ARPG_LIFECYCLE_ALIAS InitWindow
+        #define ARPG_LIFECYCLE_FORWARD(name) name
+        int probe() {
+            ARPG_LIFECYCLE_FORWARD(ARPG_LIFECYCLE_ALIAS)(1, 1, "probe");
+            return 0;
+        }
+    ]=])
+    arpg_expect_lifecycle_poison_rejects(alias_forward
+        "${_arpg_raylib_control}${_arpg_alias_forward}"
+        "${_arpg_policy_include}${_arpg_alias_forward}")
+
+    set(_arpg_include_alias [=[
+        int probe() {
+            ARPG_LIFECYCLE_INCLUDE_ALIAS(1, 1, "probe");
+            return 0;
+        }
+    ]=])
+    arpg_expect_lifecycle_poison_rejects(include_alias
+        "${_arpg_raylib_control}#include \"${_arpg_lifecycle_alias_include}\"\n${_arpg_include_alias}"
+        "${_arpg_policy_include}#include \"${_arpg_lifecycle_alias_include}\"\n${_arpg_include_alias}")
+
+    set(_arpg_harmless_embedded_paste [=[
+        #define ARPG_CAT_I(a, b) a ## b
+        #define ARPG_CAT(a, b) ARPG_CAT_I(a, b)
+        int ARPG_CAT(PreInit, WindowSuffix) = 0;
+        int probe() { return PreInitWindowSuffix; }
+    ]=])
+    arpg_expect_lifecycle_poison_compiles(harmless_embedded_paste
+        "${_arpg_policy_include}${_arpg_harmless_embedded_paste}")
+    set(_arpg_harmless_suffix_paste [=[
+        #define ARPG_CAT_I(a, b) a ## b
+        #define ARPG_CAT(a, b) ARPG_CAT_I(a, b)
+        int ARPG_CAT(InitSuffix, Window) = 0;
+        int probe() { return InitSuffixWindow; }
+    ]=])
+    arpg_expect_lifecycle_poison_compiles(harmless_suffix_paste
+        "${_arpg_policy_include}${_arpg_harmless_suffix_paste}")
+    set(_arpg_harmless_unrelated_paste [=[
+        #define ARPG_CAT_I(a, b) a ## b
+        #define ARPG_CAT(a, b) ARPG_CAT_I(a, b)
+        int ARPG_CAT(alpha, beta) = 0;
+        int probe() { return alphabeta; }
+    ]=])
+    arpg_expect_lifecycle_poison_compiles(harmless_unrelated_paste
+        "${_arpg_policy_include}${_arpg_harmless_unrelated_paste}")
+
+    set(_arpg_owner_allow_set [=[
+        #define ARPG_ALLOW_RAYLIB_SET_CONFIG_FLAGS
+        #define ARPG_ALLOW_RAYLIB_INIT_WINDOW
+        #define ARPG_ALLOW_RAYLIB_IS_WINDOW_READY
+        #define ARPG_ALLOW_RAYLIB_CLOSE_WINDOW
+    ]=])
+    string(APPEND _arpg_owner_allow_set "${_arpg_policy_include}")
+    string(APPEND _arpg_owner_allow_set [=[
+         int probe() {
+            SetConfigFlags(0);
+            InitWindow(1, 1, "probe");
+            static_cast<void>(IsWindowReady());
+            CloseWindow();
+            return 0;
+        }
+    ]=])
+    arpg_expect_lifecycle_poison_compiles(owner_allow_set
+        "${_arpg_owner_allow_set}")
+
+    set(_arpg_ready_only_allow [=[
+        #define ARPG_ALLOW_RAYLIB_IS_WINDOW_READY
+    ]=])
+    string(APPEND _arpg_ready_only_allow "${_arpg_policy_include}")
+    string(APPEND _arpg_ready_only_allow [=[
+        int probe() {
+            return IsWindowReady() ? 0 : 1;
+        }
+    ]=])
+    arpg_expect_lifecycle_poison_compiles(ready_only_allow
+        "${_arpg_ready_only_allow}")
+    arpg_expect_lifecycle_poison_rejects(ready_only_rejects_init
+        "${_arpg_raylib_control}int probe() { InitWindow(1, 1, \"probe\"); return 0; }"
+        "#define ARPG_ALLOW_RAYLIB_IS_WINDOW_READY\n${_arpg_policy_include}int probe() { InitWindow(1, 1, \"probe\"); return 0; }")
+endfunction()
+
+arpg_verify_lifecycle_poison()
+
 add_test(
     NAME platform.host_input_source
     COMMAND "${CMAKE_COMMAND}"

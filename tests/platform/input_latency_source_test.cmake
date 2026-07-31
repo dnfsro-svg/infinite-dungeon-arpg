@@ -1544,8 +1544,12 @@ if(NOT WINDOW_LIFETIME_BOUNDARY_VALID)
         "Host must delegate the ordered window initialization boundary exactly once")
 endif()
 file(GLOB_RECURSE RAYLIB_PRODUCTION_SOURCES LIST_DIRECTORIES FALSE
+    "${RAYLIB_SOURCE_DIR}/*.h"
     "${RAYLIB_SOURCE_DIR}/*.cpp"
-    "${RAYLIB_SOURCE_DIR}/*.hpp")
+    "${RAYLIB_SOURCE_DIR}/*.hpp"
+    "${RAYLIB_SOURCE_DIR}/*.inc"
+    "${RAYLIB_SOURCE_DIR}/*.inl"
+    "${RAYLIB_SOURCE_DIR}/*.ipp")
 get_filename_component(RAYLIB_REPO_ROOT
     "${RAYLIB_SOURCE_DIR}/../../.." ABSOLUTE)
 foreach(RAYLIB_PRODUCTION_SOURCE IN LISTS RAYLIB_PRODUCTION_SOURCES)

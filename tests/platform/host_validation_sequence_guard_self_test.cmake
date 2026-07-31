@@ -8,16 +8,71 @@ set(_guard "${SOURCE_ROOT}/tests/platform/host_validation_sequence_guard_test.cm
 file(MAKE_DIRECTORY "${GUARD_TEST_ROOT}")
 
 if(DEFINED TASK9_REVIEW_MUTATION
-        AND TASK9_REVIEW_MUTATION STREQUAL moved_renderer_allocation_earlier)
+        AND (TASK9_REVIEW_MUTATION STREQUAL renderer_macro_include
+            OR TASK9_REVIEW_MUTATION STREQUAL renderer_macro_paste_include))
+    file(READ "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp"
+        _task9_renderer_macro_host)
+    string(PREPEND _task9_renderer_macro_host
+        "#include \"task9_early.inc\"\n")
+    set(_task9_renderer_macro_host_path
+        "${GUARD_TEST_ROOT}/task9-renderer-macro-host.cpp")
+    set(_task9_renderer_macro_include_path
+        "${GUARD_TEST_ROOT}/task9_early.inc")
+    file(WRITE "${_task9_renderer_macro_host_path}"
+        "${_task9_renderer_macro_host}")
+    if(TASK9_REVIEW_MUTATION STREQUAL renderer_macro_include)
+        set(_task9_renderer_macro_definition
+            "#define TASK9_EARLY() renderer_storage.reset(new CombatRenderer{})\n")
+    else()
+        set(_task9_renderer_macro_definition
+            "#define TASK9_EARLY() renderer ## _storage.reset(new Combat ## Renderer{})\n")
+    endif()
+    file(WRITE "${_task9_renderer_macro_include_path}"
+        "${_task9_renderer_macro_definition}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+            "-DHOST_OVERRIDE=${_task9_renderer_macro_host_path}"
+            "-DTASK9_RAYLIB_CODELIKE_OVERRIDE=${_task9_renderer_macro_include_path}"
+            -P "${_guard}"
+        RESULT_VARIABLE _task9_renderer_macro_result
+        OUTPUT_VARIABLE _task9_renderer_macro_stdout
+        ERROR_VARIABLE _task9_renderer_macro_stderr)
+    if(_task9_renderer_macro_result EQUAL 0)
+        message(FATAL_ERROR
+            "Host validation sequence guard accepted Task 9 ${TASK9_REVIEW_MUTATION}")
+    endif()
+    if(NOT "${_task9_renderer_macro_stdout}${_task9_renderer_macro_stderr}"
+            MATCHES "Task 9 raylib renderer macro definition is forbidden")
+        message(FATAL_ERROR
+            "Task 9 renderer macro include failed for wrong reason: ${_task9_renderer_macro_stdout}${_task9_renderer_macro_stderr}")
+    endif()
+    message(STATUS
+        "Task 9 renderer macro include mutation was rejected for the intended reason")
+    return()
+endif()
+
+if(DEFINED TASK9_REVIEW_MUTATION
+        AND (TASK9_REVIEW_MUTATION STREQUAL moved_renderer_allocation_earlier
+            OR TASK9_REVIEW_MUTATION STREQUAL early_reset_dead_anchor))
     file(READ "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp"
         _task9_review_host)
     set(_task9_review_original "${_task9_review_host}")
     set(_task9_allocation_anchor [=[        core::FixedStepRunner fixed_step;
         renderer_storage = std::make_unique<CombatRenderer>();
         CombatRenderer& renderer = *renderer_storage;]=])
-    set(_task9_allocation_moved [=[        renderer_storage = std::make_unique<CombatRenderer>();
+    if(TASK9_REVIEW_MUTATION STREQUAL moved_renderer_allocation_earlier)
+        set(_task9_allocation_moved [=[        renderer_storage = std::make_unique<CombatRenderer>();
         core::FixedStepRunner fixed_step;
         CombatRenderer& renderer = *renderer_storage;]=])
+    else()
+        set(_task9_allocation_moved [=[        renderer_storage.reset(new CombatRenderer{});
+        if constexpr (sizeof(int) == 0) {
+            core::FixedStepRunner fixed_step;
+            renderer_storage = std::make_unique<CombatRenderer>();
+            CombatRenderer& renderer = *renderer_storage;
+        }
+        CombatRenderer& renderer = *renderer_storage;]=])
+    endif()
     string(REPLACE "${_task9_allocation_anchor}"
         "${_task9_allocation_moved}" _task9_review_host
         "${_task9_review_host}")
@@ -26,7 +81,7 @@ if(DEFINED TASK9_REVIEW_MUTATION
             "Task 9 renderer allocation review mutation anchor is missing")
     endif()
     set(_task9_review_path
-        "${GUARD_TEST_ROOT}/task9-moved-renderer-allocation-earlier.cpp")
+        "${GUARD_TEST_ROOT}/task9-${TASK9_REVIEW_MUTATION}.cpp")
     file(WRITE "${_task9_review_path}" "${_task9_review_host}")
     execute_process(
         COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
@@ -36,7 +91,7 @@ if(DEFINED TASK9_REVIEW_MUTATION
         ERROR_VARIABLE _task9_review_stderr)
     if(_task9_review_result EQUAL 0)
         message(FATAL_ERROR
-            "Host validation sequence guard accepted Task 9 moved renderer allocation")
+            "Host validation sequence guard accepted Task 9 ${TASK9_REVIEW_MUTATION}")
     endif()
     if(NOT "${_task9_review_stdout}${_task9_review_stderr}" MATCHES
             "Task 9 Host renderer owner/allocation/catch cleanup boundary is invalid")
@@ -584,6 +639,17 @@ function(arpg_expect_task9_host_cleanup_rejection NAME MUTATION)
         set(_replacement [=[        renderer_storage = std::make_unique<CombatRenderer>();
         core::FixedStepRunner fixed_step;
         CombatRenderer& renderer = *renderer_storage;]=])
+    elseif(MUTATION STREQUAL early_reset_dead_anchor)
+        set(_anchor [=[        core::FixedStepRunner fixed_step;
+        renderer_storage = std::make_unique<CombatRenderer>();
+        CombatRenderer& renderer = *renderer_storage;]=])
+        set(_replacement [=[        renderer_storage.reset(new CombatRenderer{});
+        if constexpr (sizeof(int) == 0) {
+            core::FixedStepRunner fixed_step;
+            renderer_storage = std::make_unique<CombatRenderer>();
+            CombatRenderer& renderer = *renderer_storage;
+        }
+        CombatRenderer& renderer = *renderer_storage;]=])
     else()
         message(FATAL_ERROR "Unknown Task 9 Host cleanup mutation: ${MUTATION}")
     endif()
@@ -617,6 +683,8 @@ arpg_expect_task9_host_cleanup_rejection(
 arpg_expect_task9_host_cleanup_rejection(owner_inside_try owner_inside_try)
 arpg_expect_task9_host_cleanup_rejection(
     moved_renderer_allocation_earlier moved_renderer_allocation_earlier)
+arpg_expect_task9_host_cleanup_rejection(
+    early_reset_dead_anchor early_reset_dead_anchor)
 
 string(REPLACE
     "validation_runtime->write_summaries(\n            runtime.clean_shutdown_state(), pause_menu);"
