@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <utility>
 
 namespace arpg::test {
@@ -263,6 +264,104 @@ struct DungeonSessionTestAccess final {
             return true;
         }
         return false;
+    }
+    static std::optional<combat::CombatEvent> defeat_room_monster_by_ordinal(
+        dungeon::DungeonSession& session,
+        combat::MonsterOrdinal ordinal) noexcept {
+        if (session.phase_ != dungeon::RoomPhase::combat
+                || !session.combat_.has_value()) {
+            return std::nullopt;
+        }
+        combat::CombatWorld& world = *session.combat_;
+        combat::RoomMonsterField* const field = world.room_monster_field();
+        if (world.fault() != combat::CombatFault::none || field == nullptr
+                || field->fault() != combat::RoomMonsterFieldFault::none
+                || ordinal >= field->plan().monster_count) {
+            return std::nullopt;
+        }
+
+        const combat::RoomMonsterBlueprint& blueprint =
+            field->plan().monsters[ordinal];
+        if (blueprint.spawn_ordinal != ordinal
+                || blueprint.home_cell >= combat::kRoomMonsterCellCount) {
+            return std::nullopt;
+        }
+        const std::size_t column =
+            blueprint.home_cell % combat::room_spatial::columns;
+        const std::size_t row =
+            blueprint.home_cell / combat::room_spatial::columns;
+        if (!field->synchronize_active_region({
+                static_cast<std::uint8_t>(column), 1U,
+                static_cast<std::uint8_t>(row), 1U})) {
+            return std::nullopt;
+        }
+
+        const std::optional<combat::MonsterHandle> handle =
+            field->resident_handle(ordinal);
+        combat::MonsterRuntime* const runtime = field->active_runtime(ordinal);
+        if (!handle.has_value() || runtime == nullptr || !runtime->active
+                || runtime->hp <= 0
+                || runtime->reaction == combat::ReactionState::defeated
+                || runtime->monster_ordinal != ordinal
+                || runtime->id != blueprint.id
+                || runtime->spawn_ordinal != blueprint.spawn_ordinal
+                || runtime->spawn.x != blueprint.initial_position.x
+                || runtime->spawn.y != blueprint.initial_position.y
+                || runtime->spawn.z != blueprint.initial_position.z
+                || !(runtime->affixes == blueprint.affixes)) {
+            return std::nullopt;
+        }
+
+        const std::uint32_t field_defeated_before = field->defeated_count();
+        const std::uint32_t session_defeated_before =
+            session.room_progress_.defeated_monster_count;
+        const std::size_t word = ordinal / 64U;
+        const std::uint64_t mask = std::uint64_t{1U} << (ordinal % 64U);
+        if (word >= session.room_progress_.defeated_monster_bits.size()
+                || (session.room_progress_.defeated_monster_bits[word] & mask)
+                    != 0U) {
+            return std::nullopt;
+        }
+
+        runtime->hp = 0;
+        world.defeat_monster(handle->index, combat::AttackId::j1, true);
+        session.relay_combat_events();
+
+        std::optional<combat::CombatEvent> defeated{};
+        bool invalid_event = false;
+        while (const auto event = session.combat_events_.try_pop()) {
+            if (event->kind == combat::CombatEventKind::defeated) {
+                if (defeated.has_value() || event->target_ordinal != ordinal) {
+                    invalid_event = true;
+                } else {
+                    defeated = *event;
+                }
+            } else if (event->kind
+                    != combat::CombatEventKind::affix_death_warning) {
+                invalid_event = true;
+            }
+        }
+
+        const std::uint16_t expected_affix_score =
+            combat::monster_affix_danger_score(blueprint.affixes);
+        if (invalid_event || !defeated.has_value()
+                || world.fault() != combat::CombatFault::none
+                || field->fault() != combat::RoomMonsterFieldFault::none
+                || session.phase_ == dungeon::RoomPhase::faulted
+                || field->defeated_count() != field_defeated_before + 1U
+                || session.room_progress_.defeated_monster_count
+                    != session_defeated_before + 1U
+                || (session.room_progress_.defeated_monster_bits[word] & mask)
+                    == 0U
+                || defeated->target_ordinal != ordinal
+                || defeated->monster_id != blueprint.id
+                || defeated->spawn_ordinal != blueprint.spawn_ordinal
+                || defeated->affix_score != expected_affix_score
+                || expected_affix_score == 0U
+                || !defeated->reward_eligible) {
+            return std::nullopt;
+        }
+        return defeated;
     }
     static bool append_defeat_record(
         dungeon::DungeonSession& session,
@@ -740,6 +839,13 @@ inline void force_defeat_current_wave(dungeon::DungeonSession& session) noexcept
 
 inline bool defeat_next_live_monster(dungeon::DungeonSession& session) noexcept {
     return DungeonSessionTestAccess::defeat_next_live_monster(session);
+}
+
+inline std::optional<combat::CombatEvent> defeat_room_monster_by_ordinal(
+    dungeon::DungeonSession& session,
+    combat::MonsterOrdinal ordinal) noexcept {
+    return DungeonSessionTestAccess::defeat_room_monster_by_ordinal(
+        session, ordinal);
 }
 
 inline bool append_defeat_record(
