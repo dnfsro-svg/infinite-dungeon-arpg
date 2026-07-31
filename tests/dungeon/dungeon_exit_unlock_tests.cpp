@@ -10,6 +10,8 @@
 #include "abyss/abyss_rules.hpp"
 
 #include <cstdint>
+#include <memory>
+#include <new>
 #include <utility>
 
 namespace {
@@ -188,12 +190,15 @@ arpg::test::Failure threshold_stays_closed_until_exact_commit() noexcept {
     ARPG_REQUIRE(pending != nullptr);
     ARPG_REQUIRE(pending->kind == PendingSaveKind::room_unlock);
 
-    arpg::dungeon::checkpoint::SaveCheckpointSlot pending_checkpoint{};
+    std::unique_ptr<arpg::dungeon::checkpoint::SaveCheckpointSlot>
+        pending_checkpoint{new (std::nothrow)
+            arpg::dungeon::checkpoint::SaveCheckpointSlot{}};
+    ARPG_REQUIRE(pending_checkpoint != nullptr);
     ARPG_REQUIRE(session.capture_save_checkpoint(
-        pending_checkpoint, 17U, &pending->next_state));
-    ARPG_REQUIRE(pending_checkpoint.room_progress.required_kills == required);
-    ARPG_REQUIRE(pending_checkpoint.room_progress.exits_unlocked);
-    ARPG_REQUIRE(!pending_checkpoint.room_progress.full_clear);
+        *pending_checkpoint, 17U, &pending->next_state));
+    ARPG_REQUIRE(pending_checkpoint->room_progress.required_kills == required);
+    ARPG_REQUIRE(pending_checkpoint->room_progress.exits_unlocked);
+    ARPG_REQUIRE(!pending_checkpoint->room_progress.full_clear);
 
     session.resolve_pending_save({SaveDisposition::committed,
         pending->expected_generation, pending->next_state, pending->kind});
@@ -298,14 +303,17 @@ arpg::test::Failure committed_partial_unlock_reloads_as_combat() noexcept {
     DungeonSession session = make_session();
     ARPG_REQUIRE(reach_unlock_pending(session));
     ARPG_REQUIRE(commit_current(session));
-    arpg::dungeon::checkpoint::SaveCheckpointSlot saved{};
-    ARPG_REQUIRE(session.capture_save_checkpoint(saved, 33U));
-    ARPG_REQUIRE(saved.room_progress.exits_unlocked);
-    ARPG_REQUIRE(!saved.room_progress.full_clear);
+    std::unique_ptr<arpg::dungeon::checkpoint::SaveCheckpointSlot> saved{
+        new (std::nothrow)
+            arpg::dungeon::checkpoint::SaveCheckpointSlot{}};
+    ARPG_REQUIRE(saved != nullptr);
+    ARPG_REQUIRE(session.capture_save_checkpoint(*saved, 33U));
+    ARPG_REQUIRE(saved->room_progress.exits_unlocked);
+    ARPG_REQUIRE(!saved->room_progress.full_clear);
 
-    DungeonSession reloaded{DungeonRules{}, saved.state};
+    DungeonSession reloaded{DungeonRules{}, saved->state};
     arpg::test::set_player_health(reloaded, 1000000, 1000000);
-    ARPG_REQUIRE(reloaded.restore_room_progress_checkpoint(saved));
+    ARPG_REQUIRE(reloaded.restore_room_progress_checkpoint(*saved));
     const auto restored = reloaded.snapshot();
     ARPG_REQUIRE(restored.phase == RoomPhase::combat);
     ARPG_REQUIRE(restored.exits_unlocked);
@@ -404,12 +412,15 @@ arpg::test::Failure normal_early_exit_commits_monster_xp_and_claimed_loot_only()
         pending->next_state.item_ownership, kClaimedItemId));
     ARPG_REQUIRE(pending->next_state.item_ownership.materials
         == materials_before);
-    arpg::dungeon::checkpoint::SaveCheckpointSlot leaving{};
-    leaving.state.item_ownership.items.reserve(
+    std::unique_ptr<arpg::dungeon::checkpoint::SaveCheckpointSlot> leaving{
+        new (std::nothrow)
+            arpg::dungeon::checkpoint::SaveCheckpointSlot{}};
+    ARPG_REQUIRE(leaving != nullptr);
+    leaving->state.item_ownership.items.reserve(
         pending->next_state.item_ownership.items.size());
     ARPG_REQUIRE(session.capture_save_checkpoint(
-        leaving, 41U, &pending->next_state));
-    ARPG_REQUIRE(leaving.room_progress.lifecycle
+        *leaving, 41U, &pending->next_state));
+    ARPG_REQUIRE(leaving->room_progress.lifecycle
         == arpg::dungeon::checkpoint::RoomProgressLifecycle::none);
 
     ARPG_REQUIRE(commit_current(session));
