@@ -153,7 +153,7 @@ After implementing the lease:
 2. build only `arpg_stage10_validation_fixture` with `-j1`;
 3. run the executable directly once and require native exit 0;
 4. only after direct GREEN, run exactly
-   `^stage10\.validation_fixture\.real_abyss_life_sacrifice$` with `-j1` and
+   `^stage10\.validation_fixture\.real_abyss_transactions$` with `-j1` and
    require exactly 1/1 passed;
 5. audit added lines for forbidden HP/defeat/remaining-target mutation,
    injected defeat/events, changed tick/timeout values, and more than one
