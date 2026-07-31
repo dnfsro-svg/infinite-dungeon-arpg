@@ -32,7 +32,7 @@ target_include_directories(arpg_combat
     PUBLIC "${PROJECT_SOURCE_DIR}/src")
 target_compile_features(arpg_combat PUBLIC cxx_std_17)
 target_link_libraries(arpg_combat
-    PUBLIC arpg_abyss
-    PRIVATE arpg_checkpoint arpg_core arpg_modifiers)
+    PUBLIC arpg_abyss arpg_checkpoint
+    PRIVATE arpg_core arpg_modifiers)
 
 arpg_enable_project_warnings(arpg_combat)

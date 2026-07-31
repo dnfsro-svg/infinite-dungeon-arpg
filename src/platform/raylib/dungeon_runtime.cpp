@@ -2,6 +2,7 @@
 
 #include "dungeon/abyss_checkpoint_migration.hpp"
 #include "dungeon/room_generation.hpp"
+#include "dungeon/room_progress_checkpoint.hpp"
 #include "persistence/save_paths.hpp"
 
 #include <algorithm>

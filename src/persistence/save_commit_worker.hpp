@@ -1,6 +1,6 @@
 #pragma once
 
-#include "dungeon/room_progress_checkpoint.hpp"
+#include "checkpoint/room_progress_checkpoint.hpp"
 #include "persistence/room_progress_codec.hpp"
 #include "persistence/save_store.hpp"
 
@@ -76,7 +76,7 @@ struct SaveCommitJobSlot final {
     SaveCommitJobSlot(SaveCommitJobSlot&&) = delete;
     SaveCommitJobSlot& operator=(SaveCommitJobSlot&&) = delete;
 
-    dungeon::checkpoint::SaveCheckpointSlot checkpoint{};
+    checkpoint::SaveCheckpointSlot checkpoint{};
     std::uint64_t revision{};
     std::uint64_t intent{};
     SaveCommitRequestKind kind{SaveCommitRequestKind::background};
@@ -99,7 +99,7 @@ public:
         std::size_t index) const noexcept;
     [[nodiscard]] SaveLoadState load_state() const noexcept;
     [[nodiscard]] SaveSlot loaded_slot() const noexcept;
-    [[nodiscard]] const dungeon::checkpoint::SaveCheckpointSlot*
+    [[nodiscard]] const checkpoint::SaveCheckpointSlot*
     loaded_checkpoint() const noexcept;
     [[nodiscard]] bool loaded_migrated() const noexcept;
     [[nodiscard]] std::uint32_t loaded_format() const noexcept;

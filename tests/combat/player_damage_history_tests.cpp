@@ -6,11 +6,15 @@
 
 #include <cstdint>
 #include <limits>
+#include <type_traits>
 
 namespace {
 
 using namespace arpg::combat;
 using namespace arpg::modifiers;
+
+static_assert(std::is_same_v<PlayerDamageHistoryCheckpoint,
+    arpg::checkpoint::PlayerDamageHistoryCheckpoint>);
 
 constexpr std::size_t kPhysical = damage_index(DamageType::physical);
 constexpr std::size_t kFire = damage_index(DamageType::fire);
@@ -174,7 +178,7 @@ arpg::test::Failure history_checkpoint_round_trip_is_exact() noexcept {
     source.begin_tick(413U);
     source.record(ResolvedPlayerDamage{{{1U, 2U, 3U, 4U, 5U}}, 15U});
 
-    PlayerDamageHistoryCheckpoint checkpoint{};
+    arpg::checkpoint::PlayerDamageHistoryCheckpoint checkpoint{};
     const std::uint64_t before = arpg::test::allocation_count();
     source.capture_checkpoint(checkpoint);
     PlayerDamageHistory restored{};
@@ -190,11 +194,11 @@ arpg::test::Failure history_checkpoint_round_trip_is_exact() noexcept {
 
 arpg::test::Failure malformed_history_checkpoint_is_rejected() noexcept {
     PlayerDamageHistory history{};
-    PlayerDamageHistoryCheckpoint uninitialized_with_data{};
+    arpg::checkpoint::PlayerDamageHistoryCheckpoint uninitialized_with_data{};
     uninitialized_with_data.buckets[0U][kPhysical] = 1U;
     ARPG_REQUIRE(!history.restore_checkpoint(uninitialized_with_data));
 
-    PlayerDamageHistoryCheckpoint overflow{};
+    arpg::checkpoint::PlayerDamageHistoryCheckpoint overflow{};
     overflow.initialized = true;
     overflow.active_tick = 300U;
     overflow.buckets[0U][kPhysical] =

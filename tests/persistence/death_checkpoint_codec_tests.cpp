@@ -11,7 +11,7 @@
 
 namespace {
 
-namespace checkpoint = arpg::dungeon::checkpoint;
+namespace checkpoint = arpg::checkpoint;
 namespace persistence = arpg::persistence;
 
 void write_u32(std::vector<std::uint8_t>& bytes,

@@ -15,16 +15,16 @@
 #include <optional>
 #include <utility>
 
+namespace arpg::checkpoint {
+struct SaveCheckpointSlot;
+}
+
 namespace arpg::test {
 struct DungeonSessionTestAccess;
 struct DungeonDeathStressFixture;
 }
 
 namespace arpg::dungeon {
-
-namespace checkpoint {
-struct SaveCheckpointSlot;
-}
 
 [[nodiscard]] std::uint16_t affix_drop_chance_bp(
     std::uint16_t score) noexcept;
@@ -152,12 +152,12 @@ public:
     [[nodiscard]] DungeonSnapshot snapshot() const noexcept;
     void snapshot(DungeonSnapshot& destination) const noexcept;
     [[nodiscard]] bool capture_save_checkpoint(
-        checkpoint::SaveCheckpointSlot& destination,
+        ::arpg::checkpoint::SaveCheckpointSlot& destination,
         std::uint64_t persistence_revision,
         const DungeonRunState* durable_override = nullptr) const noexcept;
     void clear_buffered_gameplay_input() noexcept;
     [[nodiscard]] bool restore_room_progress_checkpoint(
-        const checkpoint::SaveCheckpointSlot& source) noexcept;
+        const ::arpg::checkpoint::SaveCheckpointSlot& source) noexcept;
     [[nodiscard]] std::optional<DungeonEvent> try_pop_event() noexcept;
     [[nodiscard]] std::optional<combat::CombatEvent>
     try_pop_combat_event() noexcept;
@@ -165,6 +165,9 @@ public:
 private:
     friend struct ::arpg::test::DungeonSessionTestAccess;
     friend struct ::arpg::test::DungeonDeathStressFixture;
+    [[nodiscard]] bool restore_room_progress_checkpoint_in_place(
+        const ::arpg::checkpoint::SaveCheckpointSlot& source) noexcept;
+    void adopt_restored_session(DungeonSession&& source) noexcept;
     enum class PlayerBuildStatus : std::uint8_t {
         valid,
         invalid_state,

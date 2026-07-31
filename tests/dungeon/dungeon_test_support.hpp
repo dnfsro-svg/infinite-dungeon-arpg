@@ -52,6 +52,22 @@ struct DungeonSessionTestAccess final {
         const dungeon::DungeonSession& session) noexcept {
         return session.combat_.has_value() ? &*session.combat_ : nullptr;
     }
+    static bool room_monster_field_uses_combat_pool(
+        const dungeon::DungeonSession& session) noexcept {
+        if (!session.combat_.has_value()) return false;
+        const combat::CombatWorld& world = *session.combat_;
+        const combat::RoomMonsterField* const field =
+            world.room_monster_field();
+        return field != nullptr
+            && &field->active_pool() == &world.monsters_;
+    }
+    static void seed_checkpoint_unowned_runtime_state(
+        dungeon::DungeonSession& session) noexcept {
+        session.session_tick_ = 73U;
+        session.diagnostics_.rejected_exit_count = 5U;
+        session.last_exit_ = dungeon::ExitDirection::up;
+        session.pending_room_experience_ = 91U;
+    }
     static const combat::RoomMonsterPlan* room_monster_plan(
         const dungeon::DungeonSession& session) noexcept {
         if (!session.combat_.has_value()) return nullptr;
@@ -897,6 +913,12 @@ inline const combat::PlayerCombatBuild& player_build(
 inline const combat::CombatWorld* combat_world_address(
     const dungeon::DungeonSession& session) noexcept {
     return DungeonSessionTestAccess::combat_world_address(session);
+}
+
+inline bool room_monster_field_uses_combat_pool(
+    const dungeon::DungeonSession& session) noexcept {
+    return DungeonSessionTestAccess::room_monster_field_uses_combat_pool(
+        session);
 }
 
 inline const combat::RoomMonsterPlan* room_monster_plan(

@@ -19,10 +19,6 @@
 #include <optional>
 #include <memory>
 
-namespace arpg::checkpoint {
-struct RoomCombatCheckpoint;
-}
-
 namespace arpg::test {
 struct DungeonSessionTestAccess;
 }
@@ -83,23 +79,16 @@ public:
     death_snapshot() const noexcept;
     [[nodiscard]] bool capture_room_checkpoint(
         RoomCombatCheckpoint& out) const noexcept;
-    [[nodiscard]] bool capture_room_checkpoint(
-        checkpoint::RoomCombatCheckpoint& out) const noexcept;
     [[nodiscard]] bool capture_room_checkpoint_post_mutation(
         RoomCombatCheckpoint& out, const PlayerCombatBuild* player_build,
         std::uint8_t health_potion_count,
         std::uint16_t health_potion_restore_bp,
         bool clear_abyss_rule) const noexcept;
-    [[nodiscard]] bool capture_room_checkpoint_post_mutation(
-        checkpoint::RoomCombatCheckpoint& out,
-        const PlayerCombatBuild* player_build,
-        std::uint8_t health_potion_count,
-        std::uint16_t health_potion_restore_bp,
-        bool clear_abyss_rule) const noexcept;
     [[nodiscard]] bool restore_room_checkpoint(
         const RoomCombatCheckpoint& checkpoint) noexcept;
-    [[nodiscard]] bool restore_room_checkpoint(
-        const checkpoint::RoomCombatCheckpoint& checkpoint) noexcept;
+    void align_checkpoint_restore_authority_from(
+        const CombatWorld& source) noexcept;
+    void adopt_restored_state(CombatWorld&& source) noexcept;
 
 private:
     struct PlayerRuntime final {

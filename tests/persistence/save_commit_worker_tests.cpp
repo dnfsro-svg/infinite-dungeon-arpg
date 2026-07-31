@@ -2,6 +2,7 @@
 
 #include "abyss/abyss_rewards.hpp"
 #include "abyss/abyss_rules.hpp"
+#include "checkpoint/room_checkpoint_validation.hpp"
 #include "combat/combat_world.hpp"
 #include "persistence/save_commit_worker.hpp"
 
@@ -58,9 +59,9 @@ public:
     std::filesystem::path path{};
 };
 
-bool fixture(dungeon::checkpoint::SaveCheckpointSlot& slot,
+bool fixture(checkpoint::SaveCheckpointSlot& slot,
     std::uint64_t revision) noexcept {
-    dungeon::checkpoint::clear_save_checkpoint_slot(slot);
+    checkpoint::clear_save_checkpoint_slot(slot);
     slot.persistence_revision = revision;
     slot.state.root_seed = 0x9000U;
     slot.state.commit_generation = 3U;
@@ -82,7 +83,7 @@ bool fixture(dungeon::checkpoint::SaveCheckpointSlot& slot,
         abyss::AbyssLifecycle::failed,
     };
     slot.room_progress.lifecycle =
-        dungeon::checkpoint::RoomProgressLifecycle::active;
+        checkpoint::RoomProgressLifecycle::active;
     slot.room_progress.room_index = 9U;
     slot.room_progress.room_seed = 11U;
     slot.room_progress.monster_generator_version = 1U;
@@ -107,7 +108,7 @@ bool wait_completion(persistence::SaveCommitWorker& worker,
 }
 
 bool write_v9(const std::filesystem::path& path,
-    const dungeon::checkpoint::SaveCheckpointSlot& slot) {
+    const checkpoint::SaveCheckpointSlot& slot) {
     std::vector<std::uint8_t> bytes(
         persistence::kMaximumEncodedCheckpointBytes);
     std::size_t written{};
@@ -181,8 +182,8 @@ test::Failure worker_commits_v9_and_readback_verifies_exact_bytes() noexcept {
         std::istreambuf_iterator<char>{input},
         std::istreambuf_iterator<char>{}};
     ARPG_REQUIRE(!bytes.empty());
-    std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> decoded{
-        new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> decoded{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
     ARPG_REQUIRE(decoded != nullptr);
     bool migrated{};
     ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(bytes.data(),
@@ -535,10 +536,10 @@ test::Failure one_pending_slot_coalesces_background_for_exact() noexcept {
 
 test::Failure equal_revision_conflict_archives_both_slots() noexcept {
     TempDirectory directory{};
-    std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> first{
-        new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
-    std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> second{
-        new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> first{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> second{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
     ARPG_REQUIRE(first != nullptr && second != nullptr);
     ARPG_REQUIRE(fixture(*first, 41U));
     ARPG_REQUIRE(fixture(*second, 41U));
@@ -567,8 +568,8 @@ test::Failure equal_revision_conflict_archives_both_slots() noexcept {
 
     {
         TempDirectory corrupt_high_directory{};
-        std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> valid{
-            new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
+        std::unique_ptr<checkpoint::SaveCheckpointSlot> valid{
+            new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
         ARPG_REQUIRE(valid != nullptr);
         ARPG_REQUIRE(fixture(*valid, 50U));
         ARPG_REQUIRE(write_v9(
@@ -648,12 +649,12 @@ test::Failure equal_revision_conflict_archives_both_slots() noexcept {
     }
     {
         TempDirectory drift_directory{};
-        std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> current{
-            new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
-        std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> older{
-            new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
-        std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> injected{
-            new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
+        std::unique_ptr<checkpoint::SaveCheckpointSlot> current{
+            new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+        std::unique_ptr<checkpoint::SaveCheckpointSlot> older{
+            new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+        std::unique_ptr<checkpoint::SaveCheckpointSlot> injected{
+            new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
         ARPG_REQUIRE(current && older && injected);
         ARPG_REQUIRE(fixture(*current, 70U));
         ARPG_REQUIRE(fixture(*older, 69U));

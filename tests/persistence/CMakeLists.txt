@@ -28,6 +28,19 @@ add_test(NAME persistence.units COMMAND arpg_persistence_tests)
 set_tests_properties(
     persistence.units PROPERTIES LABELS "headless;persistence")
 
+add_executable(arpg_persistence_link_isolation_tests
+    persistence_link_isolation_test.cpp)
+target_compile_features(arpg_persistence_link_isolation_tests
+    PRIVATE cxx_std_17)
+target_link_libraries(arpg_persistence_link_isolation_tests
+    PRIVATE arpg_persistence)
+arpg_enable_project_warnings(arpg_persistence_link_isolation_tests)
+
+add_test(NAME persistence.link_isolation
+    COMMAND arpg_persistence_link_isolation_tests)
+set_tests_properties(persistence.link_isolation PROPERTIES
+    LABELS "headless;persistence;architecture")
+
 add_test(NAME persistence.save_commit_stack_guard
     COMMAND "${CMAKE_COMMAND}"
         -DROOT=${PROJECT_SOURCE_DIR}

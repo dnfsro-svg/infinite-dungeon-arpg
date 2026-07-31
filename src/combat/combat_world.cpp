@@ -1065,66 +1065,6 @@ void CombatWorld::clear_buffered_input() noexcept {
 }
 
 bool CombatWorld::capture_room_checkpoint_post_mutation(
-    RoomCombatCheckpoint& out,
-    const PlayerCombatBuild* const player_build,
-    const std::uint8_t health_potion_count,
-    const std::uint16_t health_potion_restore_bp,
-    const bool clear_abyss_rule) const noexcept {
-    if (!capture_room_checkpoint(out)) return false;
-
-    DerivedPlayerBuild derived{};
-    if (player_build != nullptr) {
-        if (!derive_player_build(*player_build, derived)) return false;
-        out.player.max_hp = scale_basis_points(derived.max_hp,
-            encounter_config_.abyss.player_max_health_bp,
-            BasisPointRounding::ceil);
-        out.player.max_barrier = derived.max_barrier;
-        out.player.damage_reduction = derived.damage_reduction;
-        out.player.damage_reduction_cap = derived.damage_reduction_cap;
-        out.player.armor = derived.armor;
-        out.player.evasion = derived.evasion;
-        out.player.armor_reduction_bp = derived.armor_reduction_bp;
-        out.player.evasion_rate_bp = derived.evasion_rate_bp;
-        out.player.hp = std::clamp(out.player.hp, 0, out.player.max_hp);
-        out.player.barrier = std::clamp(
-            out.player.barrier, 0, out.player.max_barrier);
-    }
-
-    if (clear_abyss_rule) {
-        if (!derive_player_build(encounter_config_.player_build, derived)) {
-            return false;
-        }
-        const std::int32_t old_max_hp = out.player.max_hp;
-        const std::int32_t old_hp = out.player.hp;
-        out.abyss_environment = AbyssEnvironmentRuntime{};
-        out.abyss_environment.expansion_stage = 0xFFU;
-        out.player.max_hp = derived.max_hp;
-        out.player.max_barrier = derived.max_barrier;
-        out.player.damage_reduction = derived.damage_reduction;
-        out.player.damage_reduction_cap = derived.damage_reduction_cap;
-        out.player.armor = derived.armor;
-        out.player.evasion = derived.evasion;
-        out.player.armor_reduction_bp = derived.armor_reduction_bp;
-        out.player.evasion_rate_bp = derived.evasion_rate_bp;
-        out.player.hp = abyss::map_resource_ratio(old_hp, old_max_hp,
-            out.player.max_hp, old_hp > 0).value_or(
-                std::clamp(old_hp, 0, out.player.max_hp));
-        out.player.barrier = std::clamp(
-            out.player.barrier, 0, out.player.max_barrier);
-    }
-
-    for (std::uint8_t index = 0U; index < health_potion_count; ++index) {
-        if (health_potion_restore_bp == 0U || out.player.max_hp <= 0
-                || out.player.hp <= 0) break;
-        const std::int32_t requested = scale_basis_points(out.player.max_hp,
-            health_potion_restore_bp, BasisPointRounding::ceil);
-        out.player.hp += (std::min)(requested,
-            (std::max)(0, out.player.max_hp - out.player.hp));
-    }
-    return true;
-}
-
-bool CombatWorld::capture_room_checkpoint_post_mutation(
     checkpoint::RoomCombatCheckpoint& out,
     const PlayerCombatBuild* const player_build,
     const std::uint8_t health_potion_count,

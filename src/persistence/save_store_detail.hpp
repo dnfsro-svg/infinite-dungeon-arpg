@@ -9,7 +9,7 @@
 
 namespace arpg::persistence::detail {
 
-namespace checkpoint = arpg::dungeon::checkpoint;
+namespace checkpoint = arpg::checkpoint;
 
 enum class SlotFileState : std::uint8_t { missing, valid, invalid, unavailable };
 

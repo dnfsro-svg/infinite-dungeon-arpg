@@ -1,25 +1,21 @@
 #pragma once
 
+#include "checkpoint/room_combat_checkpoint.hpp"
 #include "combat/combat_types.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
 
-namespace arpg::checkpoint {
-struct PlayerDamageHistoryCheckpoint;
-}
-
 namespace arpg::combat {
 
-inline constexpr std::size_t kPlayerDamageHistoryTicks = 300U;
+inline constexpr std::size_t kPlayerDamageHistoryTicks =
+    ::arpg::checkpoint::kPlayerDamageHistoryTicks;
+using PlayerDamageHistoryCheckpoint =
+    ::arpg::checkpoint::PlayerDamageHistoryCheckpoint;
 
-struct PlayerDamageHistoryCheckpoint final {
-    std::array<std::array<std::uint64_t, modifiers::kDamageTypeCount>,
-        kPlayerDamageHistoryTicks> buckets{};
-    std::uint64_t active_tick{};
-    bool initialized{};
-};
+static_assert(kPlayerDamageHistoryTicks
+    == ::arpg::checkpoint::kPlayerDamageHistoryTicks);
 
 class PlayerDamageHistory final {
 public:
@@ -28,12 +24,8 @@ public:
     [[nodiscard]] std::array<std::uint64_t,
         modifiers::kDamageTypeCount> totals() const noexcept;
     void capture_checkpoint(PlayerDamageHistoryCheckpoint& out) const noexcept;
-    void capture_checkpoint(
-        checkpoint::PlayerDamageHistoryCheckpoint& out) const noexcept;
     [[nodiscard]] bool restore_checkpoint(
         const PlayerDamageHistoryCheckpoint& checkpoint) noexcept;
-    [[nodiscard]] bool restore_checkpoint(
-        const checkpoint::PlayerDamageHistoryCheckpoint& checkpoint) noexcept;
     [[nodiscard]] std::uint64_t active_tick() const noexcept;
     [[nodiscard]] bool initialized() const noexcept;
 

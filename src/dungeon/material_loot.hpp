@@ -1,6 +1,7 @@
 #pragma once
 
 #include "abyss/abyss_types.hpp"
+#include "checkpoint/room_checkpoint_schema.hpp"
 #include "combat/combat_types.hpp"
 #include "items/material_catalog.hpp"
 
@@ -12,28 +13,29 @@ namespace arpg::dungeon {
 
 inline constexpr std::size_t kGroundMaterialCapacity = 400U;
 inline constexpr std::size_t kMaterialDropBitWordCount = 7U;
-inline constexpr std::uint16_t kAbyssMaterialOrdinalBegin = 384U;
+inline constexpr std::uint16_t kAbyssMaterialOrdinalBegin =
+    ::arpg::checkpoint::kAbyssMaterialOrdinalBegin;
 inline constexpr std::uint16_t kCheckpointOrdinarySecondaryOrdinalEnd =
-    kAbyssMaterialOrdinalBegin * 2U;
-inline constexpr std::uint16_t kCheckpointAbyssSecondaryOrdinalBegin = 2304U;
+    ::arpg::checkpoint::kOrdinarySecondaryOrdinalEnd;
+inline constexpr std::uint16_t kCheckpointAbyssSecondaryOrdinalBegin =
+    ::arpg::checkpoint::kAbyssSecondaryOrdinalBegin;
+
+static_assert(kAbyssMaterialOrdinalBegin
+    == ::arpg::checkpoint::kAbyssMaterialOrdinalBegin);
+static_assert(kCheckpointOrdinarySecondaryOrdinalEnd
+    == ::arpg::checkpoint::kOrdinarySecondaryOrdinalEnd);
+static_assert(kCheckpointAbyssSecondaryOrdinalBegin
+    == ::arpg::checkpoint::kAbyssSecondaryOrdinalBegin);
 
 [[nodiscard]] constexpr std::uint16_t checkpoint_material_ordinal(
     const std::uint16_t material_ordinal) noexcept {
-    return material_ordinal >= kAbyssMaterialOrdinalBegin
-        ? static_cast<std::uint16_t>(kCheckpointAbyssSecondaryOrdinalBegin
-            + material_ordinal - kAbyssMaterialOrdinalBegin)
-        : static_cast<std::uint16_t>(material_ordinal * 2U);
+    return ::arpg::checkpoint::checkpoint_material_ordinal(material_ordinal);
 }
 
 [[nodiscard]] constexpr std::uint16_t material_ordinal_from_checkpoint(
     const std::uint16_t checkpoint_ordinal) noexcept {
-    if (checkpoint_ordinal >= kCheckpointAbyssSecondaryOrdinalBegin) {
-        return static_cast<std::uint16_t>(kAbyssMaterialOrdinalBegin
-            + checkpoint_ordinal - kCheckpointAbyssSecondaryOrdinalBegin);
-    }
-    return checkpoint_ordinal < kCheckpointOrdinarySecondaryOrdinalEnd
-        ? static_cast<std::uint16_t>(checkpoint_ordinal / 2U)
-        : std::uint16_t{0xFFFFU};
+    return ::arpg::checkpoint::material_ordinal_from_checkpoint(
+        checkpoint_ordinal);
 }
 
 enum class GroundMaterialSource : std::uint8_t {

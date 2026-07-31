@@ -22,7 +22,10 @@ target_sources(arpg_dungeon PRIVATE room_progress_checkpoint.cpp)
 
 target_include_directories(arpg_dungeon PUBLIC "${PROJECT_SOURCE_DIR}/src")
 target_compile_features(arpg_dungeon PUBLIC cxx_std_17)
-target_link_libraries(arpg_dungeon PUBLIC arpg_combat arpg_progression arpg_passives arpg_items arpg_skills PRIVATE arpg_core arpg_abyss)
+target_link_libraries(arpg_dungeon
+    PUBLIC arpg_checkpoint arpg_combat arpg_progression arpg_passives
+        arpg_items arpg_skills
+    PRIVATE arpg_core arpg_abyss)
 arpg_enable_project_warnings(arpg_dungeon)
 if(MSVC)
     target_compile_options(arpg_dungeon PUBLIC /EHsc)

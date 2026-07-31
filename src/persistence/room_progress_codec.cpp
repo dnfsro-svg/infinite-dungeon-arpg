@@ -1,8 +1,7 @@
 #include "persistence/room_progress_codec.hpp"
 
 #include "abyss/abyss_rewards.hpp"
-#include "dungeon/health_potion_loot.hpp"
-#include "dungeon/material_loot.hpp"
+#include "checkpoint/room_checkpoint_validation.hpp"
 #include "items/item_catalog.hpp"
 #include "persistence/crc32.hpp"
 
@@ -16,7 +15,7 @@
 namespace arpg::persistence {
 namespace {
 
-namespace checkpoint = dungeon::checkpoint;
+namespace checkpoint = arpg::checkpoint;
 
 constexpr std::array<std::uint8_t, 8U> kMagic{{
     'A', 'R', 'P', 'G', 'S', 'V', '9', '\0'}};
@@ -230,11 +229,11 @@ private:
 };
 
 template <typename Sink>
-bool write_vec(Sink& writer, combat::Vec3 value) noexcept {
+bool write_vec(Sink& writer, checkpoint::CheckpointVec3 value) noexcept {
     return writer.f32(value.x) && writer.f32(value.y) && writer.f32(value.z);
 }
 
-bool read_vec(Reader& reader, combat::Vec3& value) noexcept {
+bool read_vec(Reader& reader, checkpoint::CheckpointVec3& value) noexcept {
     return reader.f32(value.x) && reader.f32(value.y) && reader.f32(value.z);
 }
 
@@ -363,7 +362,7 @@ bool read_item(Reader& reader, items::ItemInstance& item) noexcept {
 
 template <typename Sink>
 bool write_affixes(Sink& writer,
-    const combat::MonsterAffixSet& value) noexcept {
+    const checkpoint::MonsterAffixSet& value) noexcept {
     if (!writer.u8(value.count)) return false;
     for (const auto& affix : value.values) {
         if (!writer.u8(static_cast<std::uint8_t>(affix.id))
@@ -374,40 +373,40 @@ bool write_affixes(Sink& writer,
     return true;
 }
 
-bool read_affixes(Reader& reader, combat::MonsterAffixSet& value) noexcept {
+bool read_affixes(Reader& reader, checkpoint::MonsterAffixSet& value) noexcept {
     if (!reader.u8(value.count)) return false;
     for (auto& affix : value.values) {
         std::uint8_t id{};
         std::uint8_t tier{};
         if (!reader.u8(id) || !reader.u8(tier)) return false;
-        affix.id = static_cast<combat::MonsterAffixId>(id);
-        affix.tier = static_cast<combat::MonsterAffixTier>(tier);
+        affix.id = static_cast<checkpoint::MonsterAffixId>(id);
+        affix.tier = static_cast<checkpoint::MonsterAffixTier>(tier);
     }
     return true;
 }
 
 template <typename Sink>
 bool write_source(Sink& writer,
-    const combat::PlayerDamageSource& source) noexcept {
+    const checkpoint::PlayerDamageSource& source) noexcept {
     return writer.u8(static_cast<std::uint8_t>(source.kind))
         && writer.u8(static_cast<std::uint8_t>(source.monster))
         && writer.u16(source.detail_id);
 }
 
 bool read_source(Reader& reader,
-    combat::PlayerDamageSource& source) noexcept {
+    checkpoint::PlayerDamageSource& source) noexcept {
     std::uint8_t kind{};
     std::uint8_t monster{};
     if (!reader.u8(kind) || !reader.u8(monster)
             || !reader.u16(source.detail_id)) return false;
-    source.kind = static_cast<combat::PlayerDamageSourceKind>(kind);
-    source.monster = static_cast<combat::MonsterId>(monster);
+    source.kind = static_cast<checkpoint::PlayerDamageSourceKind>(kind);
+    source.monster = static_cast<checkpoint::MonsterId>(monster);
     return true;
 }
 
 template <typename Sink>
 bool write_player(Sink& writer,
-    const combat::PlayerCombatCheckpoint& value) noexcept {
+    const checkpoint::PlayerCombatCheckpoint& value) noexcept {
     if (!write_vec(writer, value.position) || !write_vec(writer, value.velocity)
             || !writer.u8(static_cast<std::uint8_t>(value.facing))
             || !writer.u8(static_cast<std::uint8_t>(value.state))
@@ -443,7 +442,7 @@ bool write_player(Sink& writer,
 }
 
 bool read_player(Reader& reader,
-    combat::PlayerCombatCheckpoint& value) noexcept {
+    checkpoint::PlayerCombatCheckpoint& value) noexcept {
     std::uint8_t facing{};
     std::uint8_t state{};
     if (!read_vec(reader, value.position) || !read_vec(reader, value.velocity)
@@ -454,8 +453,9 @@ bool read_player(Reader& reader,
             || !reader.i32(value.barrier) || !reader.i32(value.max_barrier)) {
         return false;
     }
-    value.facing = static_cast<combat::Facing>(static_cast<std::int8_t>(facing));
-    value.state = static_cast<combat::PlayerState>(state);
+    value.facing = static_cast<checkpoint::Facing>(
+        static_cast<std::int8_t>(facing));
+    value.state = static_cast<checkpoint::PlayerState>(state);
     for (std::int32_t& amount : value.damage_reduction) {
         if (!reader.i32(amount)) return false;
     }
@@ -483,7 +483,7 @@ bool read_player(Reader& reader,
 
 template <typename Sink>
 bool write_attack(Sink& writer,
-    const combat::AttackCheckpoint& value) noexcept {
+    const checkpoint::AttackCheckpoint& value) noexcept {
     if (!writer.u8(static_cast<std::uint8_t>(value.id))
             || !writer.u16(value.elapsed_ticks)
             || !writer.u16(value.startup_ticks)
@@ -496,14 +496,14 @@ bool write_attack(Sink& writer,
     return true;
 }
 
-bool read_attack(Reader& reader, combat::AttackCheckpoint& value) noexcept {
+bool read_attack(Reader& reader, checkpoint::AttackCheckpoint& value) noexcept {
     std::uint8_t id{};
     if (!reader.u8(id) || !reader.u16(value.elapsed_ticks)
             || !reader.u16(value.startup_ticks)
             || !reader.u16(value.recovery_ticks)
             || !reader.boolean(value.connected)
             || !reader.boolean(value.impact_event_emitted)) return false;
-    value.id = static_cast<combat::AttackId>(id);
+    value.id = static_cast<checkpoint::AttackId>(id);
     for (std::uint64_t& word : value.hit_targets.words) {
         if (!reader.u64(word)) return false;
     }
@@ -512,7 +512,7 @@ bool read_attack(Reader& reader, combat::AttackCheckpoint& value) noexcept {
 
 template <typename Sink>
 bool write_monster(Sink& writer,
-    const combat::MonsterCombatCheckpoint& value) noexcept {
+    const checkpoint::MonsterCombatCheckpoint& value) noexcept {
     if (!writer.u16(value.ordinal)
             || !writer.u8(static_cast<std::uint8_t>(value.id))
             || !write_affixes(writer, value.affixes)
@@ -556,7 +556,7 @@ bool write_monster(Sink& writer,
 }
 
 bool read_monster(Reader& reader,
-    combat::MonsterCombatCheckpoint& value) noexcept {
+    checkpoint::MonsterCombatCheckpoint& value) noexcept {
     std::uint8_t id{};
     std::uint8_t kind{};
     std::uint8_t facing{};
@@ -598,19 +598,21 @@ bool read_monster(Reader& reader,
             || !reader.u8(warning) || !reader.u16(value.affix_warning_ticks)
             || !read_effects(reader, value.effects)
             || !reader.boolean(value.effects_touched)) return false;
-    value.id = static_cast<combat::MonsterId>(id);
-    value.kind = static_cast<combat::DummyKind>(kind);
-    value.facing = static_cast<combat::Facing>(static_cast<std::int8_t>(facing));
-    value.reaction = static_cast<combat::ReactionState>(reaction);
-    value.armor = static_cast<combat::ArmorState>(armor);
-    value.ai_phase = static_cast<combat::MonsterAiPhase>(phase);
-    value.affix_warning = static_cast<combat::MonsterAffixWarning>(warning);
+    value.id = static_cast<checkpoint::MonsterId>(id);
+    value.kind = static_cast<checkpoint::DummyKind>(kind);
+    value.facing = static_cast<checkpoint::Facing>(
+        static_cast<std::int8_t>(facing));
+    value.reaction = static_cast<checkpoint::ReactionState>(reaction);
+    value.armor = static_cast<checkpoint::ArmorState>(armor);
+    value.ai_phase = static_cast<checkpoint::MonsterAiPhase>(phase);
+    value.affix_warning =
+        static_cast<checkpoint::MonsterAffixWarning>(warning);
     return true;
 }
 
 template <typename Sink>
 bool write_abyss_runtime(Sink& writer,
-    const combat::AbyssEnvironmentRuntime& value) noexcept {
+    const checkpoint::AbyssEnvironmentRuntime& value) noexcept {
     return writer.u8(static_cast<std::uint8_t>(value.rule))
         && writer.u16(value.cycle_tick) && writer.u16(value.stage_tick)
         && write_vec(writer, value.locked_center)
@@ -619,7 +621,7 @@ bool write_abyss_runtime(Sink& writer,
 }
 
 bool read_abyss_runtime(Reader& reader,
-    combat::AbyssEnvironmentRuntime& value) noexcept {
+    checkpoint::AbyssEnvironmentRuntime& value) noexcept {
     std::uint8_t rule{};
     if (!reader.u8(rule) || !reader.u16(value.cycle_tick)
             || !reader.u16(value.stage_tick)
@@ -633,7 +635,7 @@ bool read_abyss_runtime(Reader& reader,
 
 template <typename Sink>
 bool write_defense(Sink& writer,
-    const combat::PlayerDefenseSnapshot& value) noexcept {
+    const checkpoint::PlayerDefenseSnapshot& value) noexcept {
     if (!writer.i32(value.hp) || !writer.i32(value.max_hp)
             || !writer.i32(value.barrier) || !writer.i32(value.max_barrier)
             || !writer.i64(value.armor) || !writer.i64(value.evasion)
@@ -649,7 +651,7 @@ bool write_defense(Sink& writer,
 }
 
 bool read_defense(Reader& reader,
-    combat::PlayerDefenseSnapshot& value) noexcept {
+    checkpoint::PlayerDefenseSnapshot& value) noexcept {
     if (!reader.i32(value.hp) || !reader.i32(value.max_hp)
             || !reader.i32(value.barrier) || !reader.i32(value.max_barrier)
             || !reader.i64(value.armor) || !reader.i64(value.evasion)
@@ -666,7 +668,7 @@ bool read_defense(Reader& reader,
 
 template <typename Sink>
 bool write_death(Sink& writer,
-    const combat::CombatDeathSnapshot& value) noexcept {
+    const checkpoint::CombatDeathSnapshot& value) noexcept {
     if (!writer.u64(value.tick) || !write_source(writer, value.source)
             || !writer.u8(static_cast<std::uint8_t>(value.primary_type))
             || !writer.u64(value.raw_damage)
@@ -680,14 +682,14 @@ bool write_death(Sink& writer,
 }
 
 bool read_death(Reader& reader,
-    combat::CombatDeathSnapshot& value) noexcept {
+    checkpoint::CombatDeathSnapshot& value) noexcept {
     std::uint8_t type{};
     if (!reader.u64(value.tick) || !read_source(reader, value.source)
             || !reader.u8(type) || !reader.u64(value.raw_damage)
             || !reader.u64(value.barrier_loss)
             || !reader.u64(value.health_loss)
             || !reader.u64(value.final_damage)) return false;
-    value.primary_type = static_cast<modifiers::DamageType>(type);
+    value.primary_type = static_cast<checkpoint::DamageType>(type);
     for (std::uint64_t& amount : value.recent_damage) {
         if (!reader.u64(amount)) return false;
     }
@@ -696,7 +698,7 @@ bool read_death(Reader& reader,
 
 template <typename Sink>
 bool write_room_combat(Sink& writer,
-    const combat::RoomCombatCheckpoint& value) noexcept {
+    const checkpoint::RoomCombatCheckpoint& value) noexcept {
     if (!writer.u64(value.tick)) return false;
     for (const std::uint64_t word : value.evasion_rng_state) {
         if (!writer.u64(word)) return false;
@@ -737,7 +739,7 @@ bool write_room_combat(Sink& writer,
 }
 
 bool read_room_combat(Reader& reader,
-    combat::RoomCombatCheckpoint& value) noexcept {
+    checkpoint::RoomCombatCheckpoint& value) noexcept {
     if (!reader.u64(value.tick)) return false;
     for (std::uint64_t& word : value.evasion_rng_state) {
         if (!reader.u64(word)) return false;
@@ -919,9 +921,9 @@ bool read_room_progress(Reader& reader,
                 & (std::uint64_t{1U} << (ordinal % 64U))) == 0U) {
             continue;
         }
-        set_expected(dungeon::checkpoint_material_ordinal(ordinal));
+        set_expected(checkpoint::checkpoint_material_ordinal(ordinal));
         if ((ordinal & 1U) != 0U
-                && ordinal < dungeon::kGroundHealthPotionCapacity * 2U) {
+                && ordinal < checkpoint::kHealthPotionGroundCapacity * 2U) {
             set_expected(ordinal);
         }
     }
@@ -1069,7 +1071,7 @@ CodecError decode_checkpoint_v9_into_scratch(
     if (!std::equal(kMagic.begin(), kMagic.end(), bytes)) {
         DecodeResult legacy = decode_checkpoint(bytes, size);
         if (legacy.error != CodecError::none) return legacy.error;
-        clear_save_checkpoint_slot(destination);
+        checkpoint::clear_save_checkpoint_slot(destination);
         try {
             destination.state = legacy.state;
         } catch (...) {
@@ -1113,7 +1115,7 @@ CodecError decode_checkpoint_v9_into_scratch(
     const DecodeResult durable = decode_checkpoint(
         payload.current(), durable_size);
     if (durable.error != CodecError::none) return durable.error;
-    clear_save_checkpoint_slot(destination);
+    checkpoint::clear_save_checkpoint_slot(destination);
     try {
         destination.state = durable.state;
     } catch (...) {
@@ -1162,8 +1164,8 @@ CodecError decode_checkpoint_v9_into_scratch(
 namespace {
 
 void publish_room_combat_checkpoint(
-    combat::RoomCombatCheckpoint& destination,
-    const combat::RoomCombatCheckpoint& source) noexcept {
+    checkpoint::RoomCombatCheckpoint& destination,
+    const checkpoint::RoomCombatCheckpoint& source) noexcept {
     destination.tick = source.tick;
     destination.evasion_rng_state = source.evasion_rng_state;
     destination.player = source.player;

@@ -87,7 +87,7 @@ bool persistence_allocation_failure_is_armed() noexcept {
 
 namespace {
 
-namespace checkpoint = arpg::dungeon::checkpoint;
+namespace checkpoint = arpg::checkpoint;
 namespace abyss = arpg::abyss;
 namespace dungeon = arpg::dungeon;
 namespace persistence = arpg::persistence;

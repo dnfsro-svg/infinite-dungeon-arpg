@@ -1,6 +1,6 @@
 #pragma once
 
-#include "dungeon/dungeon_checkpoint.hpp"
+#include "checkpoint/dungeon_run_state.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -70,14 +70,14 @@ struct SaveLoadResult final {
     SaveSlot active_slot{SaveSlot::none};
     bool recovered{};
     bool migrated{};
-    dungeon::checkpoint::DungeonRunState checkpoint{};
+    checkpoint::DungeonRunState checkpoint{};
 };
 
 struct SaveCommitResult final {
     SaveCommitState state{SaveCommitState::indeterminate};
     SaveError error{SaveError::none};
     SaveSlot active_slot{SaveSlot::none};
-    dungeon::checkpoint::DungeonRunState verified_state{};
+    checkpoint::DungeonRunState verified_state{};
 };
 
 class SaveStore final {
@@ -87,10 +87,10 @@ public:
     [[nodiscard]] SaveLoadResult load() noexcept;
 
     [[nodiscard]] SaveCommitResult commit(
-        const dungeon::checkpoint::DungeonRunState& expected) noexcept;
+        const checkpoint::DungeonRunState& expected) noexcept;
 
     [[nodiscard]] SaveLoadResult archive_invalid_and_create(
-        const dungeon::checkpoint::DungeonRunState& initial) noexcept;
+        const checkpoint::DungeonRunState& initial) noexcept;
 
 private:
     SaveStoreConfig config_{};

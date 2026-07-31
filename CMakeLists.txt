@@ -98,3 +98,14 @@ foreach(_arpg_checkpoint_optional_forbidden IN ITEMS
 endforeach()
 arpg_assert_target_dependency_boundary(
     arpg_checkpoint ${_arpg_checkpoint_forbidden_targets})
+
+set(_arpg_persistence_boundary_roots arpg_persistence)
+if(TARGET arpg_persistence_link_isolation_tests)
+    list(APPEND _arpg_persistence_boundary_roots
+        arpg_persistence_link_isolation_tests)
+endif()
+foreach(_arpg_persistence_boundary_root IN LISTS
+        _arpg_persistence_boundary_roots)
+    arpg_assert_target_dependency_boundary(
+        "${_arpg_persistence_boundary_root}" arpg_combat arpg_dungeon)
+endforeach()

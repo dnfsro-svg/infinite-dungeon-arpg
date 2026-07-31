@@ -2,13 +2,13 @@
 
 #include "abyss/abyss_rewards.hpp"
 #include "abyss/abyss_rules.hpp"
+#include "checkpoint/room_checkpoint_validation.hpp"
 #include "combat/combat_world.hpp"
 #include "dungeon_test_support.hpp"
 #include "dungeon/death_checkpoint.hpp"
 #include "dungeon/dungeon_progression.hpp"
 #include "dungeon/room_generation.hpp"
 #include "dungeon/dungeon_session.hpp"
-#include "dungeon/room_progress_checkpoint.hpp"
 #include "persistence/room_progress_codec.hpp"
 
 #include <algorithm>
@@ -23,13 +23,13 @@ namespace {
 using namespace arpg;
 
 static_assert(!std::is_copy_constructible_v<
-    dungeon::checkpoint::SaveCheckpointSlot>);
+    checkpoint::SaveCheckpointSlot>);
 static_assert(!std::is_move_constructible_v<
-    dungeon::checkpoint::SaveCheckpointSlot>);
+    checkpoint::SaveCheckpointSlot>);
 static_assert(persistence::kMaximumEncodedCheckpointBytes == 8U * 1024U * 1024U);
 
 void set_first_defeated_after_live(
-    dungeon::checkpoint::RoomProgressCheckpoint& room,
+    checkpoint::RoomProgressCheckpoint& room,
     std::uint32_t count) noexcept {
     for (std::uint32_t ordinal = 3U; ordinal < 3U + count; ++ordinal) {
         room.defeat_bits[ordinal / 64U] |=
@@ -47,10 +47,11 @@ items::ItemInstance normal_item(std::uint64_t id) noexcept {
     return item;
 }
 
-bool same_vec(combat::Vec3 left, combat::Vec3 right) noexcept {
+template <typename Vec>
+bool same_vec(const Vec& left, const Vec& right) noexcept {
     std::uint32_t left_bits[3U]{};
     std::uint32_t right_bits[3U]{};
-    static_assert(sizeof(left_bits) == sizeof(left));
+    static_assert(sizeof(left_bits) == sizeof(Vec));
     std::memcpy(left_bits, &left, sizeof(left));
     std::memcpy(right_bits, &right, sizeof(right));
     return std::equal(std::begin(left_bits), std::end(left_bits),
@@ -117,7 +118,7 @@ bool matching_event_sequence(
 
 std::array<std::uint64_t, modifiers::kDamageTypeCount>
 damage_history_totals(
-    const combat::PlayerDamageHistoryCheckpoint& history) noexcept {
+    const checkpoint::PlayerDamageHistoryCheckpoint& history) noexcept {
     std::array<std::uint64_t, modifiers::kDamageTypeCount> totals{};
     for (const auto& bucket : history.buckets) {
         for (std::size_t type = 0U; type < bucket.size(); ++type) {
@@ -128,8 +129,8 @@ damage_history_totals(
 }
 
 bool same_obstacle_state(
-    const combat::RoomCombatCheckpoint& left,
-    const combat::RoomCombatCheckpoint& right) noexcept {
+    const checkpoint::RoomCombatCheckpoint& left,
+    const checkpoint::RoomCombatCheckpoint& right) noexcept {
     if (left.obstacle_count != right.obstacle_count
             || left.fire_crate_count != right.fire_crate_count) {
         return false;
@@ -205,10 +206,10 @@ bool ten_thousand_tick_reload_trace_matches() noexcept {
     // by room_combat_checkpoint.room checkpoint transients.
     uninterrupted->tick({});
 
-    auto saved = std::make_unique<dungeon::checkpoint::SaveCheckpointSlot>();
-    auto decoded = std::make_unique<dungeon::checkpoint::SaveCheckpointSlot>();
-    auto left = std::make_unique<dungeon::checkpoint::SaveCheckpointSlot>();
-    auto right = std::make_unique<dungeon::checkpoint::SaveCheckpointSlot>();
+    auto saved = std::make_unique<checkpoint::SaveCheckpointSlot>();
+    auto decoded = std::make_unique<checkpoint::SaveCheckpointSlot>();
+    auto left = std::make_unique<checkpoint::SaveCheckpointSlot>();
+    auto right = std::make_unique<checkpoint::SaveCheckpointSlot>();
     auto save_bytes = std::make_unique<std::uint8_t[]>(
         persistence::kMaximumEncodedCheckpointBytes);
     auto left_bytes = std::make_unique<std::uint8_t[]>(
@@ -248,7 +249,7 @@ bool ten_thousand_tick_reload_trace_matches() noexcept {
         const std::uint64_t revision = following + 2U;
         if (!uninterrupted->capture_save_checkpoint(*left, revision)
                 || !reloaded->capture_save_checkpoint(*right, revision)
-                || !dungeon::checkpoint::same_room_progress_checkpoint(
+                || !checkpoint::same_room_progress_checkpoint(
                     left->room_progress, right->room_progress)) {
             return false;
         }
@@ -280,7 +281,8 @@ bool ten_thousand_tick_reload_trace_matches() noexcept {
     return true;
 }
 
-bool make_fixture(dungeon::checkpoint::SaveCheckpointSlot& slot) noexcept {
+bool make_fixture(checkpoint::SaveCheckpointSlot& slot) noexcept {
+    static_assert(limits::kRoomMonsterCapacity == 1152U);
     slot.persistence_revision = 19U;
     slot.state.root_seed = 0x1234U;
     slot.state.commit_generation = 7U;
@@ -289,25 +291,25 @@ bool make_fixture(dungeon::checkpoint::SaveCheckpointSlot& slot) noexcept {
     slot.state.current_room.depth = 2U;
     slot.state.current_room.floor_room_index = 3U;
     auto& room = slot.room_progress;
-    room.lifecycle = dungeon::checkpoint::RoomProgressLifecycle::active;
+    room.lifecycle = checkpoint::RoomProgressLifecycle::active;
     room.room_index = 41U;
     room.room_seed = 43U;
     room.monster_generator_version = 1U;
-    room.monster_blueprint_hash = 0xA11CE1125ULL;
+    room.monster_blueprint_hash = 0xA11CE1152ULL;
     room.environment_generator_version = 1U;
     room.environment_blueprint_hash = 0xE1170001ULL;
-    room.generated_monsters = 1125U;
-    room.defeated_monsters = 282U;
-    room.required_kills = 282U;
+    room.generated_monsters = 1152U;
+    room.defeated_monsters = 288U;
+    room.required_kills = 288U;
     room.exits_unlocked = true;
-    set_first_defeated_after_live(room, 282U);
+    set_first_defeated_after_live(room, 288U);
     std::unique_ptr<combat::CombatWorld> world{
         new (std::nothrow) combat::CombatWorld{}};
     return world != nullptr && world->capture_room_checkpoint(room.combat);
 }
 
 bool make_cleared_abyss_fixture(
-    dungeon::checkpoint::SaveCheckpointSlot& slot) noexcept {
+    checkpoint::SaveCheckpointSlot& slot) noexcept {
     if (!make_fixture(slot)) return false;
     auto& state = slot.state;
     auto& room = slot.room_progress;
@@ -331,10 +333,10 @@ bool make_cleared_abyss_fixture(
     return true;
 }
 
-combat::CombatDeathSnapshot minimal_death_snapshot() noexcept {
-    combat::CombatDeathSnapshot result{};
-    result.source.kind = combat::PlayerDamageSourceKind::unknown;
-    result.source.monster = combat::MonsterId::count;
+checkpoint::CombatDeathSnapshot minimal_death_snapshot() noexcept {
+    checkpoint::CombatDeathSnapshot result{};
+    result.source.kind = checkpoint::PlayerDamageSourceKind::unknown;
+    result.source.monster = checkpoint::MonsterId::count;
     result.raw_damage = 20U;
     result.health_loss = 20U;
     result.final_damage = 20U;
@@ -344,11 +346,41 @@ combat::CombatDeathSnapshot minimal_death_snapshot() noexcept {
     return result;
 }
 
+combat::CombatDeathSnapshot to_runtime_death_snapshot(
+    const checkpoint::CombatDeathSnapshot& source) noexcept {
+    combat::CombatDeathSnapshot result{};
+    result.tick = source.tick;
+    result.source.kind = static_cast<combat::PlayerDamageSourceKind>(
+        source.source.kind);
+    result.source.monster = static_cast<combat::MonsterId>(
+        source.source.monster);
+    result.source.detail_id = source.source.detail_id;
+    result.primary_type = static_cast<modifiers::DamageType>(
+        source.primary_type);
+    result.raw_damage = source.raw_damage;
+    result.barrier_loss = source.barrier_loss;
+    result.health_loss = source.health_loss;
+    result.final_damage = source.final_damage;
+    result.recent_damage = source.recent_damage;
+    result.defense.hp = source.defense.hp;
+    result.defense.max_hp = source.defense.max_hp;
+    result.defense.barrier = source.defense.barrier;
+    result.defense.max_barrier = source.defense.max_barrier;
+    result.defense.armor = source.defense.armor;
+    result.defense.evasion = source.defense.evasion;
+    result.defense.armor_reduction_bp = source.defense.armor_reduction_bp;
+    result.defense.evasion_rate_bp = source.defense.evasion_rate_bp;
+    result.defense.damage_reduction = source.defense.damage_reduction;
+    result.defense.damage_reduction_cap =
+        source.defense.damage_reduction_cap;
+    return result;
+}
+
 bool make_pending_death_fixture(
-    dungeon::checkpoint::SaveCheckpointSlot& slot,
+    checkpoint::SaveCheckpointSlot& slot,
     const bool death_was_abyss,
     const bool retain_failed_abyss = false) noexcept {
-    dungeon::checkpoint::clear_save_checkpoint_slot(slot);
+    checkpoint::clear_save_checkpoint_slot(slot);
     dungeon::DungeonRules rules{};
     auto state = dungeon::make_initial_run_state(0x51A6E11U, rules).state;
     state.current_room.index = 17U;
@@ -366,7 +398,8 @@ bool make_pending_death_fixture(
     const auto target = dungeon::make_death_retreat_target(state, 4U, rules);
     if (target.fault != dungeon::DungeonFault::none) return false;
     state.death = dungeon::make_death_checkpoint(
-        minimal_death_snapshot(), state.current_room, target.room);
+        to_runtime_death_snapshot(minimal_death_snapshot()),
+        state.current_room, target.room);
 
     if (death_was_abyss || retain_failed_abyss) {
         const auto selection = abyss::select_abyss_rule(
@@ -392,12 +425,12 @@ bool make_pending_death_fixture(
     state.last_direction = dungeon::ExitDirection::none;
     slot.state = std::move(state);
     slot.persistence_revision = slot.state.commit_generation;
-    return dungeon::checkpoint::valid_room_progress_checkpoint_structural(
+    return checkpoint::valid_room_progress_checkpoint_structural(
         slot.room_progress, slot.state);
 }
 
 bool encode_legacy_v9_without_lifecycle(
-    const dungeon::checkpoint::SaveCheckpointSlot& source,
+    const checkpoint::SaveCheckpointSlot& source,
     std::uint8_t* const bytes,
     const std::size_t capacity,
     std::size_t& written) noexcept {
@@ -415,10 +448,10 @@ bool encode_legacy_v9_without_lifecycle(
 }
 
 test::Failure v9_round_trip_preserves_large_room_fields() noexcept {
-    std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> source{
-        new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
-    std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> decoded{
-        new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> source{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> decoded{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
     std::unique_ptr<std::uint8_t[]> bytes{
         new (std::nothrow) std::uint8_t[
             persistence::kMaximumEncodedCheckpointBytes]};
@@ -438,37 +471,37 @@ test::Failure v9_round_trip_preserves_large_room_fields() noexcept {
         bytes.get(), written, *decoded, migrated)
         == persistence::CodecError::none);
     ARPG_REQUIRE(!migrated);
-    ARPG_REQUIRE(dungeon::checkpoint::same_room_progress_checkpoint(
+    ARPG_REQUIRE(checkpoint::same_room_progress_checkpoint(
         source->room_progress, decoded->room_progress));
     ARPG_REQUIRE(decoded->persistence_revision == 19U);
     ARPG_REQUIRE(decoded->state.commit_generation == 7U);
-    ARPG_REQUIRE(decoded->room_progress.generated_monsters == 1125U);
-    ARPG_REQUIRE(decoded->room_progress.defeated_monsters == 282U);
-    ARPG_REQUIRE(decoded->room_progress.required_kills == 282U);
+    ARPG_REQUIRE(decoded->room_progress.generated_monsters == 1152U);
+    ARPG_REQUIRE(decoded->room_progress.defeated_monsters == 288U);
+    ARPG_REQUIRE(decoded->room_progress.required_kills == 288U);
     ARPG_REQUIRE(decoded->room_progress.exits_unlocked);
     ARPG_REQUIRE(decoded->room_progress.monster_blueprint_hash != 0U);
     ARPG_REQUIRE(decoded->room_progress.environment_blueprint_hash != 0U);
     decoded->room_progress.combat.player.velocity.x = -0.0F;
-    ARPG_REQUIRE(!dungeon::checkpoint::same_room_progress_checkpoint(
+    ARPG_REQUIRE(!checkpoint::same_room_progress_checkpoint(
         source->room_progress, decoded->room_progress));
     decoded->room_progress.combat.player.velocity.x = 0.0F;
     decoded->room_progress.combat.attack.elapsed_ticks += 1U;
-    ARPG_REQUIRE(!dungeon::checkpoint::same_room_progress_checkpoint(
+    ARPG_REQUIRE(!checkpoint::same_room_progress_checkpoint(
         source->room_progress, decoded->room_progress));
     decoded->room_progress.combat.attack.elapsed_ticks -= 1U;
     decoded->room_progress.combat.player_damage_history.buckets[299U][0U]
         += 1U;
-    ARPG_REQUIRE(!dungeon::checkpoint::same_room_progress_checkpoint(
+    ARPG_REQUIRE(!checkpoint::same_room_progress_checkpoint(
         source->room_progress, decoded->room_progress));
     decoded->room_progress.combat.player_damage_history.buckets[299U][0U]
         -= 1U;
-    ARPG_REQUIRE(dungeon::checkpoint::same_room_progress_checkpoint(
+    ARPG_REQUIRE(checkpoint::same_room_progress_checkpoint(
         source->room_progress, decoded->room_progress));
     ARPG_REQUIRE(persistence::verify_checkpoint_v9_readback(
         bytes.get(), written, *source, bytes.get(), written)
         == persistence::CodecError::none);
     source->room_progress.combat.player.position.x += 0.25F;
-    ARPG_REQUIRE(dungeon::checkpoint::valid_room_progress_checkpoint_structural(
+    ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
         source->room_progress, source->state));
     ARPG_REQUIRE(persistence::verify_checkpoint_v9_readback(
         bytes.get(), written, *source, bytes.get(), written)
@@ -479,10 +512,10 @@ test::Failure v9_round_trip_preserves_large_room_fields() noexcept {
 }
 
 test::Failure v9_rejects_crc_and_length_corruption() noexcept {
-    std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> source{
-        new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
-    std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> decoded{
-        new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> source{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> decoded{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
     std::unique_ptr<std::uint8_t[]> bytes{
         new (std::nothrow) std::uint8_t[
             persistence::kMaximumEncodedCheckpointBytes]};
@@ -535,10 +568,10 @@ test::Failure v9_partial_unlock_round_trip_restores_combat() noexcept {
     ARPG_REQUIRE(session.snapshot().phase == dungeon::RoomPhase::combat);
     ARPG_REQUIRE(session.snapshot().exits_unlocked);
 
-    std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> saved{
-        new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
-    std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> decoded{
-        new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> saved{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> decoded{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
     std::unique_ptr<std::uint8_t[]> bytes{
         new (std::nothrow) std::uint8_t[
             persistence::kMaximumEncodedCheckpointBytes]};
@@ -573,10 +606,10 @@ test::Failure v9_partial_unlock_round_trip_restores_combat() noexcept {
 }
 
 test::Failure v9_resolution_lifecycle_tail_is_backward_compatible() noexcept {
-    std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> source{
-        new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
-    std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> decoded{
-        new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> source{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> decoded{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
     std::unique_ptr<std::uint8_t[]> bytes{
         new (std::nothrow) std::uint8_t[
             persistence::kMaximumEncodedCheckpointBytes]};
@@ -629,10 +662,10 @@ test::Failure v9_resolution_lifecycle_tail_is_backward_compatible() noexcept {
 }
 
 test::Failure v9_legacy_abyss_death_restores_and_rewrites_failed() noexcept {
-    std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> source{
-        new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
-    std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> decoded{
-        new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> source{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> decoded{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
     std::unique_ptr<std::uint8_t[]> bytes{
         new (std::nothrow) std::uint8_t[
             persistence::kMaximumEncodedCheckpointBytes]};
@@ -673,7 +706,7 @@ test::Failure v9_legacy_abyss_death_restores_and_rewrites_failed() noexcept {
     ARPG_REQUIRE(bytes[rewritten_size - 1U] == static_cast<std::uint8_t>(
         abyss::AbyssLifecycle::failed));
 
-    dungeon::checkpoint::clear_save_checkpoint_slot(*source);
+    checkpoint::clear_save_checkpoint_slot(*source);
     ARPG_REQUIRE(make_fixture(*source));
     source->state.last_abyss_resolution = historical_resolution;
     source->state.last_abyss_resolution.lifecycle =
@@ -776,10 +809,10 @@ test::Failure v9_started_abyss_early_exit_round_trip(
     ARPG_REQUIRE(pending->kind
         == dungeon::PendingSaveKind::abyss_early_exit);
 
-    std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> saved{
-        new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
-    std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> decoded{
-        new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> saved{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> decoded{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
     std::unique_ptr<std::uint8_t[]> bytes{
         new (std::nothrow) std::uint8_t[
             persistence::kMaximumEncodedCheckpointBytes]};
@@ -789,7 +822,7 @@ test::Failure v9_started_abyss_early_exit_round_trip(
     ARPG_REQUIRE(session.capture_save_checkpoint(
         *saved, 56U, &pending->next_state));
     ARPG_REQUIRE(saved->room_progress.lifecycle
-        == dungeon::checkpoint::RoomProgressLifecycle::none);
+        == checkpoint::RoomProgressLifecycle::none);
     std::size_t written{};
     ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(*saved, bytes.get(),
         persistence::kMaximumEncodedCheckpointBytes, written)
@@ -882,44 +915,44 @@ test::Failure v8_reserved_resolution_lifecycle_remains_zero() noexcept {
 }
 
 test::Failure structural_validation_rejects_identity_and_order_faults() noexcept {
-    std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> slot{
-        new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> slot{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
     ARPG_REQUIRE(slot != nullptr);
     ARPG_REQUIRE(make_fixture(*slot));
-    ARPG_REQUIRE(dungeon::checkpoint::valid_room_progress_checkpoint_structural(
+    ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
         slot->room_progress, slot->state));
 
-    std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> none_slot{
-        new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> none_slot{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
     ARPG_REQUIRE(none_slot != nullptr);
-    ARPG_REQUIRE(dungeon::checkpoint::valid_room_progress_checkpoint_structural(
+    ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
         none_slot->room_progress, none_slot->state));
     none_slot->room_progress.combat.player.state =
-        combat::PlayerState::landing;
-    ARPG_REQUIRE(!dungeon::checkpoint::valid_room_progress_checkpoint_structural(
+        checkpoint::PlayerState::landing;
+    ARPG_REQUIRE(!checkpoint::valid_room_progress_checkpoint_structural(
         none_slot->room_progress, none_slot->state));
     none_slot->room_progress.combat.player.state =
-        combat::PlayerState::idle;
+        checkpoint::PlayerState::idle;
     none_slot->room_progress.combat.attack.elapsed_ticks = 1U;
-    ARPG_REQUIRE(!dungeon::checkpoint::valid_room_progress_checkpoint_structural(
+    ARPG_REQUIRE(!checkpoint::valid_room_progress_checkpoint_structural(
         none_slot->room_progress, none_slot->state));
     none_slot->room_progress.combat.attack.elapsed_ticks = 0U;
     none_slot->room_progress.combat.abyss_environment.warning = true;
-    ARPG_REQUIRE(!dungeon::checkpoint::valid_room_progress_checkpoint_structural(
+    ARPG_REQUIRE(!checkpoint::valid_room_progress_checkpoint_structural(
         none_slot->room_progress, none_slot->state));
     none_slot->room_progress.combat.abyss_environment.warning = false;
     none_slot->room_progress.combat.player_damage_history.buckets[299U][
-        modifiers::damage_index(modifiers::DamageType::chaos)] = 1U;
-    ARPG_REQUIRE(!dungeon::checkpoint::valid_room_progress_checkpoint_structural(
+        static_cast<std::size_t>(checkpoint::DamageType::chaos)] = 1U;
+    ARPG_REQUIRE(!checkpoint::valid_room_progress_checkpoint_structural(
         none_slot->room_progress, none_slot->state));
 
     slot->room_progress.room_seed ^= 1U;
-    ARPG_REQUIRE(!dungeon::checkpoint::valid_room_progress_checkpoint_structural(
+    ARPG_REQUIRE(!checkpoint::valid_room_progress_checkpoint_structural(
         slot->room_progress, slot->state));
     slot->room_progress.room_seed ^= 1U;
     slot->state.death.lifecycle =
-        dungeon::checkpoint::DeathLifecycle::pending_continue;
-    ARPG_REQUIRE(!dungeon::checkpoint::valid_room_progress_checkpoint_structural(
+        checkpoint::DeathLifecycle::pending_continue;
+    ARPG_REQUIRE(!checkpoint::valid_room_progress_checkpoint_structural(
         slot->room_progress, slot->state));
     slot->state.death = {};
     slot->state.current_room.is_abyss = true;
@@ -927,11 +960,11 @@ test::Failure structural_validation_rejects_identity_and_order_faults() noexcept
     slot->state.abyss.rule = abyss::AbyssRuleId::swift_pursuit;
     slot->room_progress.combat.abyss_environment.rule =
         abyss::AbyssRuleId::swift_pursuit;
-    ARPG_REQUIRE(dungeon::checkpoint::valid_room_progress_checkpoint_structural(
+    ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
         slot->room_progress, slot->state));
     slot->room_progress.combat.abyss_environment.rule =
         abyss::AbyssRuleId::heavy_steps;
-    ARPG_REQUIRE(!dungeon::checkpoint::valid_room_progress_checkpoint_structural(
+    ARPG_REQUIRE(!checkpoint::valid_room_progress_checkpoint_structural(
         slot->room_progress, slot->state));
     slot->state.current_room.is_abyss = false;
     slot->state.abyss = {};
@@ -940,39 +973,39 @@ test::Failure structural_validation_rejects_identity_and_order_faults() noexcept
     slot->room_progress.equipment_ground_count = 2U;
     slot->room_progress.equipment_ground[0U].ordinal = 7U;
     slot->room_progress.equipment_ground[1U].ordinal = 7U;
-    ARPG_REQUIRE(!dungeon::checkpoint::valid_room_progress_checkpoint_structural(
+    ARPG_REQUIRE(!checkpoint::valid_room_progress_checkpoint_structural(
         slot->room_progress, slot->state));
-    std::unique_ptr<dungeon::checkpoint::SaveCheckpointSlot> abyss_slot{
-        new (std::nothrow) dungeon::checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> abyss_slot{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
     ARPG_REQUIRE(abyss_slot != nullptr);
     ARPG_REQUIRE(make_cleared_abyss_fixture(*abyss_slot));
-    ARPG_REQUIRE(dungeon::checkpoint::valid_room_progress_checkpoint_structural(
+    ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
         abyss_slot->room_progress, abyss_slot->state));
 
     abyss_slot->state.abyss.generated_mask = 0x01U;
     abyss_slot->room_progress.equipment_ground_count = 1U;
-    ARPG_REQUIRE(dungeon::checkpoint::valid_room_progress_checkpoint_structural(
+    ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
         abyss_slot->room_progress, abyss_slot->state));
     abyss_slot->state.abyss.claimed_mask = 0x01U;
-    ARPG_REQUIRE(!dungeon::checkpoint::valid_room_progress_checkpoint_structural(
+    ARPG_REQUIRE(!checkpoint::valid_room_progress_checkpoint_structural(
         abyss_slot->room_progress, abyss_slot->state));
     abyss_slot->room_progress.equipment_ground_count = 0U;
-    ARPG_REQUIRE(dungeon::checkpoint::valid_room_progress_checkpoint_structural(
+    ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
         abyss_slot->room_progress, abyss_slot->state));
     abyss_slot->state.abyss.abandoned_mask = 0x01U;
-    ARPG_REQUIRE(!dungeon::checkpoint::valid_room_progress_checkpoint_structural(
+    ARPG_REQUIRE(!checkpoint::valid_room_progress_checkpoint_structural(
         abyss_slot->room_progress, abyss_slot->state));
     abyss_slot->state.abyss.abandoned_mask = 0U;
     abyss_slot->state.abyss.claimed_mask = 0U;
     abyss_slot->room_progress.equipment_ground_count = 1U;
     abyss_slot->room_progress.equipment_ground[0U].source = 0U;
-    ARPG_REQUIRE(!dungeon::checkpoint::valid_room_progress_checkpoint_structural(
+    ARPG_REQUIRE(!checkpoint::valid_room_progress_checkpoint_structural(
         abyss_slot->room_progress, abyss_slot->state));
     return {};
 }
 
 constexpr test::TestCase kCases[] = {
-    {"v9 large room round trip", &v9_round_trip_preserves_large_room_fields},
+    {"v9 maximum room round trip", &v9_round_trip_preserves_large_room_fields},
     {"v9 corruption", &v9_rejects_crc_and_length_corruption},
     {"v9 structural validation", &structural_validation_rejects_identity_and_order_faults},
 };

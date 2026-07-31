@@ -340,10 +340,10 @@ int main() {
         const arpg::test::TestSuite unlock_only[] = {
             dungeon_exit_unlock_suite(),
         };
-        return arpg::test::run_suites(unlock_only, 13,
+        return arpg::test::run_suites(unlock_only, 14,
             "task 6 quarter kill exit unlock");
     }
 
-    return arpg::test::run_suites(suites, 343,
+    return arpg::test::run_suites(suites, 344,
         "stage 18 dungeon queries");
 }

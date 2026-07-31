@@ -1,6 +1,8 @@
 #include "persistence/save_commit_worker.hpp"
 #include "persistence/save_store_detail.hpp"
 
+#include "checkpoint/room_checkpoint_validation.hpp"
+
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
@@ -30,7 +32,7 @@ std::size_t path_allocation_bytes(
 
 void SaveCommitStorage::reset_initialization() noexcept {
     for (SaveCommitJobSlot& job : jobs_) {
-        dungeon::checkpoint::clear_save_checkpoint_slot(job.checkpoint);
+        checkpoint::clear_save_checkpoint_slot(job.checkpoint);
         std::vector<items::ItemInstance>{}.swap(
             job.checkpoint.state.item_ownership.items);
         job.revision = 0U;
@@ -397,7 +399,7 @@ SaveSlot SaveCommitStorage::loaded_slot() const noexcept {
         : loaded_index_ == 1U ? SaveSlot::b : SaveSlot::none;
 }
 
-const dungeon::checkpoint::SaveCheckpointSlot*
+const checkpoint::SaveCheckpointSlot*
 SaveCommitStorage::loaded_checkpoint() const noexcept {
     return load_state_ == SaveLoadState::ready && loaded_index_ < jobs_.size()
         ? &jobs_[loaded_index_].checkpoint : nullptr;
@@ -462,7 +464,7 @@ bool SaveCommitStorage::archive_invalid_files() noexcept {
 
 void SaveCommitStorage::release_loaded_checkpoints() noexcept {
     for (SaveCommitJobSlot& job : jobs_) {
-        dungeon::checkpoint::clear_save_checkpoint_slot(job.checkpoint);
+        checkpoint::clear_save_checkpoint_slot(job.checkpoint);
     }
     loaded_index_ = 0xFFU;
 }

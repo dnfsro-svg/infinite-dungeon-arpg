@@ -14,7 +14,7 @@
 
 namespace {
 
-namespace checkpoint = arpg::dungeon::checkpoint;
+namespace checkpoint = arpg::checkpoint;
 namespace persistence = arpg::persistence;
 
 bool fail_final_scan_a(persistence::SaveFaultPoint point,

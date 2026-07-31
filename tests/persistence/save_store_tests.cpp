@@ -15,7 +15,7 @@
 
 namespace {
 
-namespace checkpoint = arpg::dungeon::checkpoint;
+namespace checkpoint = arpg::checkpoint;
 namespace persistence = arpg::persistence;
 namespace items = arpg::items;
 namespace skills = arpg::skills;

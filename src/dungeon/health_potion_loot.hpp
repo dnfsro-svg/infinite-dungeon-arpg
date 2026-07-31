@@ -1,5 +1,6 @@
 #pragma once
 
+#include "checkpoint/room_checkpoint_schema.hpp"
 #include "combat/combat_types.hpp"
 
 #include <array>
@@ -12,12 +13,16 @@ namespace arpg::dungeon {
 inline constexpr std::uint16_t kHealthPotionDropChanceBp = 3000U;
 inline constexpr std::uint16_t kHealthPotionRestoreBp = 2500U;
 inline constexpr std::uint16_t kHealthPotionAutoUseThresholdBp = 7500U;
-inline constexpr std::size_t kGroundHealthPotionCapacity = 192U;
+inline constexpr std::size_t kGroundHealthPotionCapacity =
+    ::arpg::checkpoint::kHealthPotionGroundCapacity;
 inline constexpr std::size_t kPendingHealthPotionClaimCapacity = 4U;
+
+static_assert(kGroundHealthPotionCapacity
+    == ::arpg::checkpoint::kHealthPotionGroundCapacity);
 
 [[nodiscard]] constexpr std::uint16_t health_potion_claim_ordinal(
     std::uint16_t spawn_ordinal) noexcept {
-    return static_cast<std::uint16_t>(spawn_ordinal * 2U + 1U);
+    return ::arpg::checkpoint::health_potion_claim_ordinal(spawn_ordinal);
 }
 
 struct GroundHealthPotion final {

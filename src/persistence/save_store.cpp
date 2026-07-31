@@ -10,7 +10,7 @@
 namespace arpg::persistence {
 namespace {
 
-namespace checkpoint = arpg::dungeon::checkpoint;
+namespace checkpoint = arpg::checkpoint;
 
 }  // namespace
 

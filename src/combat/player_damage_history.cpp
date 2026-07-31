@@ -57,13 +57,6 @@ PlayerDamageHistory::totals() const noexcept {
 }
 
 void PlayerDamageHistory::capture_checkpoint(
-    PlayerDamageHistoryCheckpoint& out) const noexcept {
-    out.buckets = buckets_;
-    out.active_tick = active_tick_;
-    out.initialized = initialized_;
-}
-
-void PlayerDamageHistory::capture_checkpoint(
     checkpoint::PlayerDamageHistoryCheckpoint& out) const noexcept {
     static_assert(kPlayerDamageHistoryTicks
         == checkpoint::kPlayerDamageHistoryTicks);
@@ -72,31 +65,6 @@ void PlayerDamageHistory::capture_checkpoint(
     out.buckets = buckets_;
     out.active_tick = active_tick_;
     out.initialized = initialized_;
-}
-
-bool PlayerDamageHistory::restore_checkpoint(
-    const PlayerDamageHistoryCheckpoint& checkpoint) noexcept {
-    if (!checkpoint.initialized) {
-        if (checkpoint.active_tick != 0U) return false;
-        for (const auto& bucket : checkpoint.buckets) {
-            for (const std::uint64_t value : bucket) {
-                if (value != 0U) return false;
-            }
-        }
-    } else {
-        std::array<std::uint64_t, modifiers::kDamageTypeCount> totals{};
-        const auto maximum = (std::numeric_limits<std::uint64_t>::max)();
-        for (const auto& bucket : checkpoint.buckets) {
-            for (std::size_t index = 0U; index < bucket.size(); ++index) {
-                if (totals[index] > maximum - bucket[index]) return false;
-                totals[index] += bucket[index];
-            }
-        }
-    }
-    buckets_ = checkpoint.buckets;
-    active_tick_ = checkpoint.active_tick;
-    initialized_ = checkpoint.initialized;
-    return true;
 }
 
 bool PlayerDamageHistory::restore_checkpoint(

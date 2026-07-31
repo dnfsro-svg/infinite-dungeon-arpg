@@ -21,8 +21,8 @@ namespace {
 
 using namespace arpg;
 
-static_assert(!std::is_copy_constructible_v<combat::RoomCombatCheckpoint>);
-static_assert(!std::is_move_constructible_v<combat::RoomCombatCheckpoint>);
+static_assert(std::is_same_v<combat::RoomCombatCheckpoint,
+    checkpoint::RoomCombatCheckpoint>);
 static_assert(!std::is_copy_constructible_v<checkpoint::RoomCombatCheckpoint>);
 static_assert(!std::is_move_constructible_v<checkpoint::RoomCombatCheckpoint>);
 
@@ -273,7 +273,7 @@ test::Failure runtime_catalogs_match_checkpoint_schema_exhaustively() noexcept {
     return {};
 }
 
-test::Failure neutral_checkpoint_overload_round_trips() noexcept {
+test::Failure compatibility_alias_uses_neutral_checkpoint_path() noexcept {
     combat::CombatWorld world{};
     ARPG_REQUIRE(world.queue_action(combat::Action::light));
     world.tick({});
@@ -430,7 +430,7 @@ test::Failure neutral_checkpoint_round_trips_maximum_room_authority() noexcept {
     ARPG_REQUIRE(before->player_damage_history.initialized);
     ARPG_REQUIRE(before->death_snapshot.final_damage != 0U);
     ARPG_REQUIRE(before->death_snapshot.recent_damage[
-        modifiers::damage_index(modifiers::DamageType::physical)] != 0U);
+        static_cast<std::size_t>(checkpoint::DamageType::physical)] != 0U);
     ARPG_REQUIRE(world.restore_room_checkpoint(*before));
     ARPG_REQUIRE(world.capture_room_checkpoint(*after));
     ARPG_REQUIRE(checkpoint::same_room_combat_checkpoint(*before, *after));
@@ -514,8 +514,8 @@ test::Failure room_checkpoint_round_trip_clears_only_transients() noexcept {
     ARPG_REQUIRE(world.snapshot().hazard_count != 0U);
     ARPG_REQUIRE(world.snapshot().diagnostics.input_size != 0U);
 
-    std::unique_ptr<combat::RoomCombatCheckpoint> checkpoint{
-        new (std::nothrow) combat::RoomCombatCheckpoint{}};
+    std::unique_ptr<checkpoint::RoomCombatCheckpoint> checkpoint{
+        new (std::nothrow) checkpoint::RoomCombatCheckpoint{}};
     ARPG_REQUIRE(checkpoint != nullptr);
     const std::uint64_t before = test::allocation_count();
     ARPG_REQUIRE(world.capture_room_checkpoint(*checkpoint));
@@ -540,8 +540,8 @@ test::Failure room_checkpoint_round_trip_clears_only_transients() noexcept {
 
 test::Failure malformed_rng_state_rejects_without_mutating_world() noexcept {
     combat::CombatWorld world{};
-    std::unique_ptr<combat::RoomCombatCheckpoint> checkpoint{
-        new (std::nothrow) combat::RoomCombatCheckpoint{}};
+    std::unique_ptr<checkpoint::RoomCombatCheckpoint> checkpoint{
+        new (std::nothrow) checkpoint::RoomCombatCheckpoint{}};
     ARPG_REQUIRE(checkpoint != nullptr);
     ARPG_REQUIRE(world.capture_room_checkpoint(*checkpoint));
     checkpoint->evasion_rng_state = {};
@@ -564,12 +564,14 @@ test::Failure active_skills_normalize_ground_and_air_player_state() noexcept {
         ARPG_REQUIRE(ground.request_active_skill(skill)
             == combat::SkillCastResult::accepted);
         ground.tick({1, 0});
-        std::unique_ptr<combat::RoomCombatCheckpoint> checkpoint{
-            new (std::nothrow) combat::RoomCombatCheckpoint{}};
+        std::unique_ptr<checkpoint::RoomCombatCheckpoint> checkpoint{
+            new (std::nothrow) checkpoint::RoomCombatCheckpoint{}};
         ARPG_REQUIRE(checkpoint != nullptr);
         ARPG_REQUIRE(ground.capture_room_checkpoint(*checkpoint));
-        ARPG_REQUIRE(checkpoint->attack.id == combat::AttackId::none);
-        ARPG_REQUIRE(checkpoint->player.state == combat::PlayerState::idle);
+        ARPG_REQUIRE(checkpoint->attack.id
+            == arpg::checkpoint::AttackId::none);
+        ARPG_REQUIRE(checkpoint->player.state
+            == arpg::checkpoint::PlayerState::idle);
         const auto cooldowns = checkpoint->player.skill_cooldowns;
         ARPG_REQUIRE(ground.restore_room_checkpoint(*checkpoint));
         ARPG_REQUIRE(ground.snapshot().active_skill.id
@@ -590,7 +592,7 @@ test::Failure active_skills_normalize_ground_and_air_player_state() noexcept {
             == combat::SkillCastResult::accepted);
         ARPG_REQUIRE(airborne.capture_room_checkpoint(*checkpoint));
         ARPG_REQUIRE(checkpoint->player.state
-            == combat::PlayerState::jump_rise);
+            == arpg::checkpoint::PlayerState::jump_rise);
         ARPG_REQUIRE(airborne.restore_room_checkpoint(*checkpoint));
         ARPG_REQUIRE(airborne.snapshot().active_skill.id
             == skills::ActiveSkillId::none);
@@ -622,13 +624,15 @@ test::Failure attack_state_death_checkpoint_round_trips() noexcept {
             {1.0F, 0.0F, 0.0F}, combat::FeedbackLevel::heavy);
         ARPG_REQUIRE(world.snapshot().player.hp == 0);
 
-        std::unique_ptr<combat::RoomCombatCheckpoint> checkpoint{
-            new (std::nothrow) combat::RoomCombatCheckpoint{}};
+        std::unique_ptr<checkpoint::RoomCombatCheckpoint> checkpoint{
+            new (std::nothrow) checkpoint::RoomCombatCheckpoint{}};
         ARPG_REQUIRE(checkpoint != nullptr);
         ARPG_REQUIRE(world.capture_room_checkpoint(*checkpoint));
         ARPG_REQUIRE(checkpoint->has_death_snapshot);
-        ARPG_REQUIRE(checkpoint->attack.id == combat::AttackId::none);
-        ARPG_REQUIRE(checkpoint->player.state == combat::PlayerState::idle);
+        ARPG_REQUIRE(checkpoint->attack.id
+            == arpg::checkpoint::AttackId::none);
+        ARPG_REQUIRE(checkpoint->player.state
+            == arpg::checkpoint::PlayerState::idle);
         ARPG_REQUIRE(world.restore_room_checkpoint(*checkpoint));
         ARPG_REQUIRE(world.snapshot().player.hp == 0);
         ARPG_REQUIRE(world.snapshot().player.state
@@ -661,8 +665,8 @@ test::Failure room_resident_restores_persistent_and_active_authority() noexcept 
         == modifiers::ApplyResult::applied);
     const int expected_hp = runtime->hp;
     const float expected_x = runtime->position.x;
-    std::unique_ptr<combat::RoomCombatCheckpoint> checkpoint{
-        new (std::nothrow) combat::RoomCombatCheckpoint{}};
+    std::unique_ptr<checkpoint::RoomCombatCheckpoint> checkpoint{
+        new (std::nothrow) checkpoint::RoomCombatCheckpoint{}};
     ARPG_REQUIRE(checkpoint != nullptr);
     ARPG_REQUIRE(world.capture_room_checkpoint(*checkpoint));
 
@@ -682,14 +686,14 @@ test::Failure room_resident_restores_persistent_and_active_authority() noexcept 
     return {};
 }
 
-test::Failure late_legacy_lookup_failure_is_atomic() noexcept {
+test::Failure late_checkpoint_lookup_failure_is_atomic() noexcept {
     combat::CombatWorld world{};
-    std::unique_ptr<combat::RoomCombatCheckpoint> candidate{
-        new (std::nothrow) combat::RoomCombatCheckpoint{}};
-    std::unique_ptr<combat::RoomCombatCheckpoint> before{
-        new (std::nothrow) combat::RoomCombatCheckpoint{}};
-    std::unique_ptr<combat::RoomCombatCheckpoint> after{
-        new (std::nothrow) combat::RoomCombatCheckpoint{}};
+    std::unique_ptr<checkpoint::RoomCombatCheckpoint> candidate{
+        new (std::nothrow) checkpoint::RoomCombatCheckpoint{}};
+    std::unique_ptr<checkpoint::RoomCombatCheckpoint> before{
+        new (std::nothrow) checkpoint::RoomCombatCheckpoint{}};
+    std::unique_ptr<checkpoint::RoomCombatCheckpoint> after{
+        new (std::nothrow) checkpoint::RoomCombatCheckpoint{}};
     ARPG_REQUIRE(candidate && before && after);
     ARPG_REQUIRE(world.capture_room_checkpoint(*candidate));
     ARPG_REQUIRE(world.capture_room_checkpoint(*before));
@@ -715,8 +719,8 @@ test::Failure malformed_cross_field_authority_is_rejected() noexcept {
     world.tick({});
     world.tick({});
     world.tick({});
-    std::unique_ptr<combat::RoomCombatCheckpoint> checkpoint{
-        new (std::nothrow) combat::RoomCombatCheckpoint{}};
+    std::unique_ptr<checkpoint::RoomCombatCheckpoint> checkpoint{
+        new (std::nothrow) checkpoint::RoomCombatCheckpoint{}};
     ARPG_REQUIRE(checkpoint != nullptr);
     ARPG_REQUIRE(world.capture_room_checkpoint(*checkpoint));
     const std::uint64_t history_tick =
@@ -743,7 +747,8 @@ test::Failure malformed_cross_field_authority_is_rejected() noexcept {
     checkpoint->monsters[0U].shield_recharge_ticks = 0U;
     const auto armor = checkpoint->monsters[0U].armor;
     const auto break_value = checkpoint->monsters[0U].break_value;
-    checkpoint->monsters[0U].armor = combat::ArmorState::broken;
+    checkpoint->monsters[0U].armor =
+        arpg::checkpoint::ArmorState::broken;
     checkpoint->monsters[0U].break_value = 0;
     checkpoint->monsters[0U].break_window_ticks = 0U;
     ARPG_REQUIRE(!world.restore_room_checkpoint(*checkpoint));
@@ -759,7 +764,8 @@ test::Failure malformed_cross_field_authority_is_rejected() noexcept {
     }
     ARPG_REQUIRE(breakable_index < checkpoint->monster_count);
     const auto breakable_armor = checkpoint->monsters[breakable_index].armor;
-    checkpoint->monsters[breakable_index].armor = combat::ArmorState::none;
+    checkpoint->monsters[breakable_index].armor =
+        arpg::checkpoint::ArmorState::none;
     ARPG_REQUIRE(!world.restore_room_checkpoint(*checkpoint));
     checkpoint->monsters[breakable_index].armor = breakable_armor;
     checkpoint->monsters[0U].burning_ground_ticks = 0xFFFFU;
@@ -778,8 +784,8 @@ test::Failure attack_latch_and_fire_crate_tampering_is_rejected() noexcept {
     combat::CombatWorld attack_world{};
     ARPG_REQUIRE(attack_world.queue_action(combat::Action::light));
     attack_world.tick({});
-    std::unique_ptr<combat::RoomCombatCheckpoint> checkpoint{
-        new (std::nothrow) combat::RoomCombatCheckpoint{}};
+    std::unique_ptr<checkpoint::RoomCombatCheckpoint> checkpoint{
+        new (std::nothrow) checkpoint::RoomCombatCheckpoint{}};
     ARPG_REQUIRE(checkpoint != nullptr);
     ARPG_REQUIRE(attack_world.capture_room_checkpoint(*checkpoint));
     ARPG_REQUIRE(checkpoint->attack.elapsed_ticks
@@ -802,8 +808,8 @@ test::Failure attack_latch_and_fire_crate_tampering_is_rejected() noexcept {
 test::Failure cleared_abyss_checkpoint_round_trips() noexcept {
     combat::CombatWorld world{};
     world.clear_abyss_rule_preserving_resources();
-    std::unique_ptr<combat::RoomCombatCheckpoint> checkpoint{
-        new (std::nothrow) combat::RoomCombatCheckpoint{}};
+    std::unique_ptr<checkpoint::RoomCombatCheckpoint> checkpoint{
+        new (std::nothrow) checkpoint::RoomCombatCheckpoint{}};
     ARPG_REQUIRE(checkpoint != nullptr);
     ARPG_REQUIRE(world.capture_room_checkpoint(*checkpoint));
     ARPG_REQUIRE(checkpoint->abyss_environment.expansion_stage == 0xFFU);
@@ -828,8 +834,8 @@ test::Failure active_abyss_timers_and_post_death_gap_round_trip() noexcept {
         config.environment.damage_interval_ticks = 1U;
         test::CombatWorldTestAccess::activate_abyss_environment(world, config);
         for (int tick = 0; tick < 8; ++tick) world.tick({});
-        std::unique_ptr<combat::RoomCombatCheckpoint> checkpoint{
-            new (std::nothrow) combat::RoomCombatCheckpoint{}};
+        std::unique_ptr<checkpoint::RoomCombatCheckpoint> checkpoint{
+            new (std::nothrow) checkpoint::RoomCombatCheckpoint{}};
         ARPG_REQUIRE(checkpoint != nullptr);
         ARPG_REQUIRE(world.capture_room_checkpoint(*checkpoint));
         ARPG_REQUIRE(world.restore_room_checkpoint(*checkpoint));
@@ -860,8 +866,8 @@ test::Failure near_landing_air_attack_checkpoint_round_trips() noexcept {
     }
     ARPG_REQUIRE(world.snapshot().player.state == combat::PlayerState::landing);
     ARPG_REQUIRE(world.snapshot().player.active_attack == combat::AttackId::air_j);
-    std::unique_ptr<combat::RoomCombatCheckpoint> checkpoint{
-        new (std::nothrow) combat::RoomCombatCheckpoint{}};
+    std::unique_ptr<checkpoint::RoomCombatCheckpoint> checkpoint{
+        new (std::nothrow) checkpoint::RoomCombatCheckpoint{}};
     ARPG_REQUIRE(checkpoint != nullptr);
     ARPG_REQUIRE(world.capture_room_checkpoint(*checkpoint));
     ARPG_REQUIRE(world.restore_room_checkpoint(*checkpoint));
@@ -873,8 +879,8 @@ test::Failure malformed_death_history_and_extreme_defense_are_rejected() noexcep
     test::CombatWorldTestAccess::set_player_resources(world, 1, 0);
     test::CombatWorldTestAccess::apply_damage(world, 100,
         {1.0F, 0.0F, 0.0F}, combat::FeedbackLevel::heavy);
-    std::unique_ptr<combat::RoomCombatCheckpoint> checkpoint{
-        new (std::nothrow) combat::RoomCombatCheckpoint{}};
+    std::unique_ptr<checkpoint::RoomCombatCheckpoint> checkpoint{
+        new (std::nothrow) checkpoint::RoomCombatCheckpoint{}};
     ARPG_REQUIRE(checkpoint != nullptr);
     ARPG_REQUIRE(world.capture_room_checkpoint(*checkpoint));
     const auto recent = checkpoint->death_snapshot.recent_damage;
@@ -889,16 +895,17 @@ test::Failure malformed_death_history_and_extreme_defense_are_rejected() noexcep
     return {};
 }
 
-test::Failure legacy_latch_rejects_absent_monster_ordinal() noexcept {
+test::Failure checkpoint_latch_rejects_absent_monster_ordinal() noexcept {
     combat::CombatWorld world{};
     ARPG_REQUIRE(world.queue_action(combat::Action::light));
     world.tick({});
-    std::unique_ptr<combat::RoomCombatCheckpoint> checkpoint{
-        new (std::nothrow) combat::RoomCombatCheckpoint{}};
+    std::unique_ptr<checkpoint::RoomCombatCheckpoint> checkpoint{
+        new (std::nothrow) checkpoint::RoomCombatCheckpoint{}};
     ARPG_REQUIRE(checkpoint != nullptr);
     ARPG_REQUIRE(world.capture_room_checkpoint(*checkpoint));
     checkpoint->attack.elapsed_ticks = checkpoint->attack.startup_ticks;
-    checkpoint->player.state = combat::PlayerState::attack_active;
+    checkpoint->player.state =
+        arpg::checkpoint::PlayerState::attack_active;
     ARPG_REQUIRE(checkpoint->attack.hit_targets.insert(1000U));
     checkpoint->attack.connected = true;
     checkpoint->attack.impact_event_emitted = true;
@@ -909,8 +916,8 @@ test::Failure legacy_latch_rejects_absent_monster_ordinal() noexcept {
 constexpr test::TestCase kCases[] = {
     {"checkpoint runtime catalog parity",
         &runtime_catalogs_match_checkpoint_schema_exhaustively},
-    {"neutral checkpoint overload round trip",
-        &neutral_checkpoint_overload_round_trips},
+    {"checkpoint compatibility alias uses neutral path",
+        &compatibility_alias_uses_neutral_checkpoint_path},
     {"neutral checkpoint maximum room authority",
         &neutral_checkpoint_round_trips_maximum_room_authority},
     {"effect checkpoint fields", &effect_checkpoint_preserves_commands_and_diagnostics},
@@ -920,14 +927,15 @@ constexpr test::TestCase kCases[] = {
     {"active skill checkpoint normalization", &active_skills_normalize_ground_and_air_player_state},
     {"attack death checkpoint", &attack_state_death_checkpoint_round_trips},
     {"room resident authority", &room_resident_restores_persistent_and_active_authority},
-    {"late failure atomicity", &late_legacy_lookup_failure_is_atomic},
+    {"late failure atomicity", &late_checkpoint_lookup_failure_is_atomic},
     {"cross field tampering", &malformed_cross_field_authority_is_rejected},
     {"attack and fire tampering", &attack_latch_and_fire_crate_tampering_is_rejected},
     {"cleared abyss round trip", &cleared_abyss_checkpoint_round_trips},
     {"active abyss timer round trip", &active_abyss_timers_and_post_death_gap_round_trip},
     {"near landing air attack", &near_landing_air_attack_checkpoint_round_trips},
     {"malformed death authority", &malformed_death_history_and_extreme_defense_are_rejected},
-    {"legacy absent latch", &legacy_latch_rejects_absent_monster_ordinal},
+    {"checkpoint absent latch",
+        &checkpoint_latch_rejects_absent_monster_ordinal},
 };
 
 }  // namespace

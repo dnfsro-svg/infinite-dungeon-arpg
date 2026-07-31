@@ -14,7 +14,7 @@
 namespace arpg::persistence {
 namespace {
 
-namespace checkpoint = arpg::dungeon::checkpoint;
+namespace checkpoint = arpg::checkpoint;
 using checkpoint::DungeonElement;
 using checkpoint::DeathDamageType;
 using checkpoint::DeathLifecycle;
@@ -297,7 +297,7 @@ bool valid_last_resolution(
 }
 
 bool valid_checkpoint_fields(
-    const dungeon::checkpoint::DungeonRunState& state,
+    const checkpoint::DungeonRunState& state,
     bool allow_death_retreat) noexcept {
     return state.commit_generation != 0U
         && state.current_room.depth != 0U
@@ -334,7 +334,7 @@ DecodeResult error_result(CodecError error) noexcept {
 }  // namespace
 
 CodecError encode_checkpoint_into_impl(
-    const dungeon::checkpoint::DungeonRunState& state,
+    const checkpoint::DungeonRunState& state,
     std::uint8_t* bytes,
     const std::size_t capacity,
     std::size_t& written,
@@ -536,7 +536,7 @@ CodecError encode_checkpoint_into_impl(
 }
 
 CodecError encode_checkpoint_into(
-    const dungeon::checkpoint::DungeonRunState& state,
+    const checkpoint::DungeonRunState& state,
     std::uint8_t* bytes,
     const std::size_t capacity,
     std::size_t& written) noexcept {
@@ -545,7 +545,7 @@ CodecError encode_checkpoint_into(
 }
 
 CodecError encode_checkpoint_v9_durable_into(
-    const dungeon::checkpoint::DungeonRunState& state,
+    const checkpoint::DungeonRunState& state,
     std::uint8_t* bytes,
     const std::size_t capacity,
     std::size_t& written) noexcept {
@@ -556,7 +556,7 @@ CodecError encode_checkpoint_v9_durable_into(
 CodecError verify_checkpoint_readback_fields_impl(
     const std::uint8_t* const bytes,
     const std::size_t size,
-    const dungeon::checkpoint::DungeonRunState& expected,
+    const checkpoint::DungeonRunState& expected,
     const bool v9_durable) noexcept {
     const std::size_t item_count = expected.item_ownership.items.size();
     if (bytes == nullptr || item_count > kMaximumCheckpointItemCount
@@ -803,7 +803,7 @@ CodecError verify_checkpoint_readback_fields_impl(
 CodecError verify_checkpoint_v8_readback_fields(
     const std::uint8_t* const bytes,
     const std::size_t size,
-    const dungeon::checkpoint::DungeonRunState& expected) noexcept {
+    const checkpoint::DungeonRunState& expected) noexcept {
     return verify_checkpoint_readback_fields_impl(
         bytes, size, expected, false);
 }
@@ -811,13 +811,13 @@ CodecError verify_checkpoint_v8_readback_fields(
 CodecError verify_checkpoint_v9_durable_readback_fields(
     const std::uint8_t* const bytes,
     const std::size_t size,
-    const dungeon::checkpoint::DungeonRunState& expected) noexcept {
+    const checkpoint::DungeonRunState& expected) noexcept {
     return verify_checkpoint_readback_fields_impl(
         bytes, size, expected, true);
 }
 
 std::optional<EncodedCheckpoint> encode_checkpoint(
-    const dungeon::checkpoint::DungeonRunState& state) noexcept {
+    const checkpoint::DungeonRunState& state) noexcept {
     const std::size_t item_count = state.item_ownership.items.size();
     if (item_count > kMaximumCheckpointItemCount
             || item_count > ((std::numeric_limits<std::size_t>::max)()

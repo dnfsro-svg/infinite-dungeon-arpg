@@ -4,6 +4,8 @@
 
 #include "dungeon/dungeon_progression.hpp"
 #include "dungeon/room_progress_checkpoint.hpp"
+#include "checkpoint/room_checkpoint_schema.hpp"
+#include "checkpoint/room_checkpoint_validation.hpp"
 #include "items/item_generation.hpp"
 #include "items/item_catalog.hpp"
 #include "progression/progression_rules.hpp"
@@ -190,9 +192,9 @@ arpg::test::Failure threshold_stays_closed_until_exact_commit() noexcept {
     ARPG_REQUIRE(pending != nullptr);
     ARPG_REQUIRE(pending->kind == PendingSaveKind::room_unlock);
 
-    std::unique_ptr<arpg::dungeon::checkpoint::SaveCheckpointSlot>
+    std::unique_ptr<arpg::checkpoint::SaveCheckpointSlot>
         pending_checkpoint{new (std::nothrow)
-            arpg::dungeon::checkpoint::SaveCheckpointSlot{}};
+            arpg::checkpoint::SaveCheckpointSlot{}};
     ARPG_REQUIRE(pending_checkpoint != nullptr);
     ARPG_REQUIRE(session.capture_save_checkpoint(
         *pending_checkpoint, 17U, &pending->next_state));
@@ -303,9 +305,9 @@ arpg::test::Failure committed_partial_unlock_reloads_as_combat() noexcept {
     DungeonSession session = make_session();
     ARPG_REQUIRE(reach_unlock_pending(session));
     ARPG_REQUIRE(commit_current(session));
-    std::unique_ptr<arpg::dungeon::checkpoint::SaveCheckpointSlot> saved{
+    std::unique_ptr<arpg::checkpoint::SaveCheckpointSlot> saved{
         new (std::nothrow)
-            arpg::dungeon::checkpoint::SaveCheckpointSlot{}};
+            arpg::checkpoint::SaveCheckpointSlot{}};
     ARPG_REQUIRE(saved != nullptr);
     ARPG_REQUIRE(session.capture_save_checkpoint(*saved, 33U));
     ARPG_REQUIRE(saved->room_progress.exits_unlocked);
@@ -319,6 +321,180 @@ arpg::test::Failure committed_partial_unlock_reloads_as_combat() noexcept {
     ARPG_REQUIRE(restored.exits_unlocked);
     ARPG_REQUIRE(all_exits(restored, true));
     ARPG_REQUIRE(restored.remaining_targets > 0U);
+    return {};
+}
+
+arpg::test::Failure neutral_checkpoint_slot_captures_and_restores_normal_room()
+    noexcept {
+    static_assert(arpg::dungeon::checkpoint_material_ordinal(0U)
+        == arpg::checkpoint::checkpoint_material_ordinal(0U));
+    static_assert(arpg::dungeon::checkpoint_material_ordinal(383U)
+        == arpg::checkpoint::checkpoint_material_ordinal(383U));
+    static_assert(arpg::dungeon::checkpoint_material_ordinal(384U)
+        == arpg::checkpoint::checkpoint_material_ordinal(384U));
+    static_assert(arpg::dungeon::health_potion_claim_ordinal(0U)
+        == arpg::checkpoint::health_potion_claim_ordinal(0U));
+    static_assert(arpg::dungeon::health_potion_claim_ordinal(191U)
+        == arpg::checkpoint::health_potion_claim_ordinal(191U));
+    static_assert(arpg::dungeon::kAbyssMaterialOrdinalBegin
+        == arpg::checkpoint::kAbyssMaterialOrdinalBegin);
+    static_assert(arpg::dungeon::kCheckpointOrdinarySecondaryOrdinalEnd
+        == arpg::checkpoint::kOrdinarySecondaryOrdinalEnd);
+    static_assert(arpg::dungeon::kCheckpointAbyssSecondaryOrdinalBegin
+        == arpg::checkpoint::kAbyssSecondaryOrdinalBegin);
+    static_assert(arpg::dungeon::kGroundHealthPotionCapacity
+        == arpg::checkpoint::kHealthPotionGroundCapacity);
+    for (std::uint16_t ordinal = 0U;
+            ordinal < arpg::dungeon::kGroundMaterialCapacity; ++ordinal) {
+        const std::uint16_t packed =
+            arpg::dungeon::checkpoint_material_ordinal(ordinal);
+        ARPG_REQUIRE(packed
+            == arpg::checkpoint::checkpoint_material_ordinal(ordinal));
+        ARPG_REQUIRE(arpg::dungeon::material_ordinal_from_checkpoint(packed)
+            == arpg::checkpoint::material_ordinal_from_checkpoint(packed));
+    }
+    for (std::uint16_t spawn = 0U;
+            spawn < arpg::dungeon::kGroundHealthPotionCapacity; ++spawn) {
+        ARPG_REQUIRE(arpg::dungeon::health_potion_claim_ordinal(spawn)
+            == arpg::checkpoint::health_potion_claim_ordinal(spawn));
+    }
+
+    DungeonSession session = make_session();
+    enter_combat(session);
+    const auto player = session.snapshot().combat->player.position;
+    constexpr std::uint64_t kItemId = 0xC0FFEEU;
+    constexpr std::uint16_t kItemOrdinal = 5U;
+    constexpr std::uint16_t kMaterialOrdinal = 7U;
+    constexpr std::uint16_t kPotionSpawn = 8U;
+    const auto item = normal_item(kItemId);
+    ARPG_REQUIRE(arpg::items::validate_item(item));
+    constexpr std::uint64_t kOwnedItemId = 0xBADC0DEU;
+    const auto owned_item = normal_item(kOwnedItemId);
+    ARPG_REQUIRE(arpg::items::validate_item(owned_item));
+    arpg::test::install_ground_item(session, 0U, owned_item, player);
+    ARPG_REQUIRE(session.request_pickup(0U)
+        == arpg::dungeon::RequestResult::accepted);
+    ARPG_REQUIRE(commit_current(session));
+    ARPG_REQUIRE(contains_item(session.item_state(), kOwnedItemId));
+    arpg::test::install_ground_item(session, kItemOrdinal, item,
+        {player.x + 3.0F, player.y, player.z});
+    arpg::test::install_ground_material(session, kMaterialOrdinal,
+        arpg::items::MaterialId::reinforcement_stone,
+        {player.x + 4.0F, player.y, player.z});
+    arpg::test::install_ground_health_potion(session, kPotionSpawn,
+        {player.x + 5.0F, player.y, player.z});
+    std::unique_ptr<arpg::checkpoint::SaveCheckpointSlot> saved{
+        new (std::nothrow) arpg::checkpoint::SaveCheckpointSlot{}};
+    ARPG_REQUIRE(saved != nullptr);
+    saved->state.item_ownership.items.reserve(
+        session.item_state().items.size());
+    ARPG_REQUIRE(session.capture_save_checkpoint(*saved, 61U));
+    ARPG_REQUIRE(saved->persistence_revision == 61U);
+    ARPG_REQUIRE(saved->room_progress.lifecycle
+        == arpg::checkpoint::RoomProgressLifecycle::active);
+    ARPG_REQUIRE(saved->room_progress.equipment_ground_count == 1U);
+    ARPG_REQUIRE(saved->room_progress.equipment_ground[0U].ordinal
+        == kItemOrdinal);
+    ARPG_REQUIRE(saved->room_progress.equipment_ground[0U].item.id
+        == kItemId);
+    ARPG_REQUIRE(saved->room_progress.secondary_ground_count == 2U);
+    ARPG_REQUIRE(saved->room_progress.secondary_ground[0U].tag
+        == arpg::checkpoint::SecondaryGroundTag::material);
+    ARPG_REQUIRE(saved->room_progress.secondary_ground[0U].ordinal
+        == arpg::checkpoint::checkpoint_material_ordinal(kMaterialOrdinal));
+    ARPG_REQUIRE(saved->room_progress.secondary_ground[1U].tag
+        == arpg::checkpoint::SecondaryGroundTag::health_potion);
+    ARPG_REQUIRE(saved->room_progress.secondary_ground[1U].ordinal
+        == arpg::checkpoint::health_potion_claim_ordinal(kPotionSpawn));
+
+    arpg::test::DungeonSessionTestAccess::seed_checkpoint_unowned_runtime_state(
+        session);
+    const auto live_before_restore = session.snapshot();
+    ARPG_REQUIRE(session.restore_room_progress_checkpoint(*saved));
+    const auto live_after_restore = session.snapshot();
+    ARPG_REQUIRE(live_after_restore.session_tick
+        == live_before_restore.session_tick);
+    ARPG_REQUIRE(live_after_restore.diagnostics.rejected_exit_count
+        == live_before_restore.diagnostics.rejected_exit_count);
+    ARPG_REQUIRE(live_after_restore.last_exit == live_before_restore.last_exit);
+    ARPG_REQUIRE(live_after_restore.pending_room_experience
+        == live_before_restore.pending_room_experience);
+
+    DungeonSession restored{DungeonRules{}, saved->state};
+    arpg::test::set_player_health(restored, 1000000, 1000000);
+    ARPG_REQUIRE(restored.restore_room_progress_checkpoint(*saved));
+    ARPG_REQUIRE(arpg::test::room_monster_field_uses_combat_pool(restored));
+    const auto restored_tick = restored.snapshot().combat->tick;
+    restored.tick({});
+    ARPG_REQUIRE(restored.snapshot().combat->tick == restored_tick + 1U);
+    ARPG_REQUIRE(arpg::test::defeat_room_monster_by_ordinal(restored, 0U)
+        .has_value());
+    const auto snapshot = restored.snapshot();
+    ARPG_REQUIRE(snapshot.phase == RoomPhase::combat);
+    ARPG_REQUIRE(snapshot.ground_item_count == 1U);
+    ARPG_REQUIRE(snapshot.ground_items[0U].ordinal == kItemOrdinal);
+    ARPG_REQUIRE(snapshot.ground_items[0U].item_id == kItemId);
+    ARPG_REQUIRE(snapshot.ground_material_count == 1U);
+    ARPG_REQUIRE(snapshot.ground_materials[0U].ordinal == kMaterialOrdinal);
+    ARPG_REQUIRE(snapshot.ground_materials[0U].material
+        == arpg::items::MaterialId::reinforcement_stone);
+    ARPG_REQUIRE(snapshot.ground_health_potion_count == 1U);
+    ARPG_REQUIRE(snapshot.ground_health_potions[0U].spawn_ordinal
+        == kPotionSpawn);
+    ARPG_REQUIRE(snapshot.ground_health_potions[0U].claim_ordinal
+        == arpg::checkpoint::health_potion_claim_ordinal(kPotionSpawn));
+
+    DungeonSession rejected{DungeonRules{}, saved->state};
+    arpg::test::set_player_health(rejected, 1000000, 1000000);
+    const auto before_rejection = rejected.snapshot();
+    const auto* const before_world =
+        arpg::test::DungeonSessionTestAccess::combat_world_address(rejected);
+    ARPG_REQUIRE(before_world != nullptr);
+    ARPG_REQUIRE(before_world->room_monster_field() != nullptr);
+    const std::uint32_t defeated_before =
+        before_world->room_monster_field()->defeated_count();
+    auto& invalid_room = saved->room_progress;
+    std::uint32_t defeated_ordinal = invalid_room.generated_monsters;
+    for (std::uint32_t candidate = invalid_room.generated_monsters;
+            candidate > 0U;) {
+        --candidate;
+        bool checkpointed = false;
+        for (std::uint16_t index = 0U;
+                index < invalid_room.combat.monster_count; ++index) {
+            checkpointed = checkpointed
+                || invalid_room.combat.monsters[index].ordinal == candidate;
+        }
+        if (!checkpointed) {
+            defeated_ordinal = candidate;
+            break;
+        }
+    }
+    ARPG_REQUIRE(defeated_ordinal < invalid_room.generated_monsters);
+    invalid_room.defeat_bits[defeated_ordinal / 64U] |=
+        std::uint64_t{1U} << (defeated_ordinal % 64U);
+    ++invalid_room.defeated_monsters;
+    ++invalid_room.combat.player.max_hp;
+    ARPG_REQUIRE(arpg::checkpoint::valid_room_progress_checkpoint_structural(
+        invalid_room, saved->state));
+    ARPG_REQUIRE(!rejected.restore_room_progress_checkpoint(*saved));
+    const auto after_rejection = rejected.snapshot();
+    ARPG_REQUIRE(after_rejection.phase == before_rejection.phase);
+    ARPG_REQUIRE(after_rejection.remaining_targets
+        == before_rejection.remaining_targets);
+    ARPG_REQUIRE(after_rejection.combat.has_value());
+    ARPG_REQUIRE(before_rejection.combat.has_value());
+    ARPG_REQUIRE(after_rejection.combat->tick
+        == before_rejection.combat->tick);
+    ARPG_REQUIRE(after_rejection.combat->player.max_hp
+        == before_rejection.combat->player.max_hp);
+    const auto* const after_world =
+        arpg::test::DungeonSessionTestAccess::combat_world_address(rejected);
+    ARPG_REQUIRE(after_world != nullptr);
+    ARPG_REQUIRE(after_world->room_monster_field() != nullptr);
+    ARPG_REQUIRE(after_world->room_monster_field()->defeated_count()
+        == defeated_before);
+    ARPG_REQUIRE(arpg::test::DungeonSessionTestAccess::room_progress(rejected)
+            .defeated_monster_count == 0U);
     return {};
 }
 
@@ -348,6 +524,20 @@ arpg::test::Failure same_tick_full_defeat_commits_unlock_before_clear() noexcept
     ARPG_REQUIRE(clear_events.room_cleared_count == 1U);
     ARPG_REQUIRE(session.snapshot().phase == RoomPhase::cleared);
     ARPG_REQUIRE(session.snapshot().exits_unlocked);
+
+    std::unique_ptr<arpg::checkpoint::SaveCheckpointSlot> cleared{
+        new (std::nothrow) arpg::checkpoint::SaveCheckpointSlot{}};
+    ARPG_REQUIRE(cleared != nullptr);
+    ARPG_REQUIRE(session.capture_save_checkpoint(*cleared, 62U));
+    ARPG_REQUIRE(cleared->room_progress.lifecycle
+        == arpg::checkpoint::RoomProgressLifecycle::active);
+    ARPG_REQUIRE(cleared->room_progress.full_clear);
+    ARPG_REQUIRE(cleared->room_progress.reward_committed);
+    DungeonSession restored{DungeonRules{}, cleared->state};
+    arpg::test::set_player_health(restored, 1000000, 1000000);
+    ARPG_REQUIRE(restored.restore_room_progress_checkpoint(*cleared));
+    ARPG_REQUIRE(restored.snapshot().phase == RoomPhase::awaiting_exit);
+    ARPG_REQUIRE(restored.snapshot().exits_unlocked);
 
     const std::uint64_t reward = session.snapshot().last_room_experience;
     session.tick({});
@@ -412,16 +602,16 @@ arpg::test::Failure normal_early_exit_commits_monster_xp_and_claimed_loot_only()
         pending->next_state.item_ownership, kClaimedItemId));
     ARPG_REQUIRE(pending->next_state.item_ownership.materials
         == materials_before);
-    std::unique_ptr<arpg::dungeon::checkpoint::SaveCheckpointSlot> leaving{
+    std::unique_ptr<arpg::checkpoint::SaveCheckpointSlot> leaving{
         new (std::nothrow)
-            arpg::dungeon::checkpoint::SaveCheckpointSlot{}};
+            arpg::checkpoint::SaveCheckpointSlot{}};
     ARPG_REQUIRE(leaving != nullptr);
     leaving->state.item_ownership.items.reserve(
         pending->next_state.item_ownership.items.size());
     ARPG_REQUIRE(session.capture_save_checkpoint(
         *leaving, 41U, &pending->next_state));
     ARPG_REQUIRE(leaving->room_progress.lifecycle
-        == arpg::dungeon::checkpoint::RoomProgressLifecycle::none);
+        == arpg::checkpoint::RoomProgressLifecycle::none);
 
     ARPG_REQUIRE(commit_current(session));
     const auto committed = session.snapshot();
@@ -546,7 +736,17 @@ arpg::test::Failure cleared_abyss_rebuild_restores_committed_clear_flags_without
     ARPG_REQUIRE(arpg::test::stable_state(live).abyss.lifecycle
         == arpg::abyss::AbyssLifecycle::cleared);
 
-    DungeonSession rebuilt{rules, arpg::test::stable_state(live)};
+    std::unique_ptr<arpg::checkpoint::SaveCheckpointSlot> saved{
+        new (std::nothrow) arpg::checkpoint::SaveCheckpointSlot{}};
+    ARPG_REQUIRE(saved != nullptr);
+    ARPG_REQUIRE(live.capture_save_checkpoint(*saved, 63U));
+    ARPG_REQUIRE(saved->state.current_room.is_abyss);
+    ARPG_REQUIRE(saved->state.abyss.lifecycle
+        == arpg::abyss::AbyssLifecycle::cleared);
+    ARPG_REQUIRE(saved->room_progress.full_clear);
+
+    DungeonSession rebuilt{rules, saved->state};
+    ARPG_REQUIRE(rebuilt.restore_room_progress_checkpoint(*saved));
     const auto snapshot = rebuilt.snapshot();
     const auto& progress =
         arpg::test::DungeonSessionTestAccess::room_progress(rebuilt);
@@ -571,6 +771,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &unlock_indeterminate_faults_without_publication},
     {"committed partial unlock reloads as combat",
         &committed_partial_unlock_reloads_as_combat},
+    {"neutral checkpoint slot captures and restores normal room",
+        &neutral_checkpoint_slot_captures_and_restores_normal_room},
     {"same tick full defeat commits unlock before clear",
         &same_tick_full_defeat_commits_unlock_before_clear},
     {"room clear rejects live target diagnostic shortcut",

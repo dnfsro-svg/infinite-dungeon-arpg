@@ -1,6 +1,6 @@
 #pragma once
 
-#include "dungeon/dungeon_checkpoint.hpp"
+#include "checkpoint/dungeon_run_state.hpp"
 #include "persistence/crc32.hpp"
 
 #include <cstddef>
@@ -63,17 +63,17 @@ enum class CodecError : std::uint8_t {
 
 struct DecodeResult final {
     CodecError error{CodecError::none};
-    dungeon::checkpoint::DungeonRunState state{};
+    checkpoint::DungeonRunState state{};
     bool migrated{};
 };
 
 using EncodedCheckpoint = std::vector<std::uint8_t>;
 
 [[nodiscard]] std::optional<EncodedCheckpoint> encode_checkpoint(
-    const dungeon::checkpoint::DungeonRunState& state) noexcept;
+    const checkpoint::DungeonRunState& state) noexcept;
 
 [[nodiscard]] CodecError encode_checkpoint_into(
-    const dungeon::checkpoint::DungeonRunState& state,
+    const checkpoint::DungeonRunState& state,
     std::uint8_t* bytes,
     std::size_t capacity,
     std::size_t& written) noexcept;
@@ -82,7 +82,7 @@ using EncodedCheckpoint = std::vector<std::uint8_t>;
 // lifecycle while producing a fully canonical embedded V8 image whose
 // reserved byte 150 remains zero; V9 stores that field in its outer payload.
 [[nodiscard]] CodecError encode_checkpoint_v9_durable_into(
-    const dungeon::checkpoint::DungeonRunState& state,
+    const checkpoint::DungeonRunState& state,
     std::uint8_t* bytes,
     std::size_t capacity,
     std::size_t& written) noexcept;
@@ -93,12 +93,12 @@ using EncodedCheckpoint = std::vector<std::uint8_t>;
 [[nodiscard]] CodecError verify_checkpoint_v8_readback_fields(
     const std::uint8_t* bytes,
     std::size_t size,
-    const dungeon::checkpoint::DungeonRunState& expected) noexcept;
+    const checkpoint::DungeonRunState& expected) noexcept;
 
 [[nodiscard]] CodecError verify_checkpoint_v9_durable_readback_fields(
     const std::uint8_t* bytes,
     std::size_t size,
-    const dungeon::checkpoint::DungeonRunState& expected) noexcept;
+    const checkpoint::DungeonRunState& expected) noexcept;
 
 [[nodiscard]] DecodeResult decode_checkpoint(
     const std::uint8_t* bytes, std::size_t size) noexcept;

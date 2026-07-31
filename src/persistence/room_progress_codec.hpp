@@ -1,6 +1,6 @@
 #pragma once
 
-#include "dungeon/room_progress_checkpoint.hpp"
+#include "checkpoint/room_progress_checkpoint.hpp"
 #include "persistence/checkpoint_codec.hpp"
 
 #include <cstddef>
@@ -34,7 +34,7 @@ inline constexpr std::size_t kV9PlayerBytes =
         + skills::kActiveSkillCount * 2U;
 inline constexpr std::size_t kV9AttackBytes =
     1U + 3U * 2U + 2U
-        + combat::kMonsterOrdinalWordCount * sizeof(std::uint64_t);
+        + checkpoint::kMonsterOrdinalWordCount * sizeof(std::uint64_t);
 inline constexpr std::size_t kV9MonsterBytes =
     2U + 1U + (1U + 3U * 2U)
         + (3U * 4U + 2U + 5U * 4U) + 1U
@@ -45,7 +45,7 @@ inline constexpr std::size_t kV9ObstacleBytes =
     3U * 2U + 8U + 1U + kV9EffectSetBytes;
 inline constexpr std::size_t kV9FireCrateBytes = kV9VecBytes + 8U + 1U;
 inline constexpr std::size_t kV9HistoryBytes =
-    1U + 8U + combat::kPlayerDamageHistoryTicks
+    1U + 8U + checkpoint::kPlayerDamageHistoryTicks
         * modifiers::kDamageTypeCount * sizeof(std::uint64_t);
 inline constexpr std::size_t kV9AbyssRuntimeBytes =
     1U + 2U + 2U + kV9VecBytes + 1U + 1U + 1U;
@@ -59,8 +59,8 @@ inline constexpr std::size_t kV9CombatBytes =
     8U + 4U * 8U + kV9PlayerBytes + kV9AbyssRuntimeBytes
         + kV9AttackBytes + 2U
         + limits::kRoomMonsterCapacity * kV9MonsterBytes + 2U
-        + combat::kRoomEnvironmentCellCount * kV9ObstacleBytes + 1U
-        + combat::kFireRoomCrateCapacity * kV9FireCrateBytes
+        + checkpoint::kRoomEnvironmentCellCount * kV9ObstacleBytes + 1U
+        + checkpoint::kFireRoomCrateCapacity * kV9FireCrateBytes
         + kV9HistoryBytes + 1U + kV9DeathBytes;
 inline constexpr std::size_t kV9RoomPrefixBytes =
     1U + 2U * 8U + 2U * (4U + 8U) + 3U * 4U + 3U
@@ -73,7 +73,7 @@ inline constexpr std::size_t kV9SecondaryGroundBytes =
 inline constexpr std::size_t kV9MaximumRoomProgressBytes =
     kV9RoomPrefixBytes + kV9CombatBytes + 2U
         + limits::kRoomMonsterCapacity * kV9EquipmentGroundBytes + 2U
-        + dungeon::checkpoint::kRoomSecondaryGroundCapacity
+        + checkpoint::kRoomSecondaryGroundCapacity
             * kV9SecondaryGroundBytes;
 inline constexpr std::size_t kV8MaximumEncodedBytes =
     kV8BaseEncodedCheckpointSize
@@ -83,7 +83,7 @@ inline constexpr std::size_t kV9MaximumEncodedBytes =
 static_assert(kV9MaximumEncodedBytes <= kMaximumEncodedCheckpointBytes);
 
 [[nodiscard]] CodecError encode_checkpoint_v9_into(
-    const dungeon::checkpoint::SaveCheckpointSlot& source,
+    const checkpoint::SaveCheckpointSlot& source,
     std::uint8_t* bytes,
     std::size_t capacity,
     std::size_t& written) noexcept;
@@ -91,7 +91,7 @@ static_assert(kV9MaximumEncodedBytes <= kMaximumEncodedCheckpointBytes);
 [[nodiscard]] CodecError decode_checkpoint_v9_into(
     const std::uint8_t* bytes,
     std::size_t size,
-    dungeon::checkpoint::SaveCheckpointSlot& destination,
+    checkpoint::SaveCheckpointSlot& destination,
     bool& migrated) noexcept;
 
 // Allocation-free worker readback verification. Both the embedded V8 durable
@@ -100,7 +100,7 @@ static_assert(kV9MaximumEncodedBytes <= kMaximumEncodedCheckpointBytes);
 [[nodiscard]] CodecError verify_checkpoint_v9_readback(
     const std::uint8_t* bytes,
     std::size_t size,
-    const dungeon::checkpoint::SaveCheckpointSlot& expected,
+    const checkpoint::SaveCheckpointSlot& expected,
     const std::uint8_t* canonical_bytes,
     std::size_t canonical_size) noexcept;
 
