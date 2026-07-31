@@ -733,6 +733,32 @@ function(evidence_cpp_mask_preprocessor_directives_in_sanitized
     set(${output} "${masked}" PARENT_SCOPE)
 endfunction()
 
+function(evidence_collect_project_production_code_like_files repo_root output)
+    file(TO_CMAKE_PATH "${repo_root}" normalized_root)
+    cmake_path(ABSOLUTE_PATH normalized_root NORMALIZE)
+    set(production_root "${normalized_root}/src")
+    file(GLOB_RECURSE production_candidates LIST_DIRECTORIES FALSE
+        "${production_root}/*.cpp"
+        "${production_root}/*.hpp"
+        "${production_root}/*.h"
+        "${production_root}/*.inc"
+        "${production_root}/*.inl"
+        "${production_root}/*.ipp")
+    set(production_sources)
+    foreach(production_candidate IN LISTS production_candidates)
+        file(RELATIVE_PATH production_relative
+            "${production_root}" "${production_candidate}")
+        file(TO_CMAKE_PATH "${production_relative}" production_relative)
+        if(production_relative MATCHES
+                "(^|/)(build|out|output|test|tests|third_party|vendor)(/|$)")
+            continue()
+        endif()
+        list(APPEND production_sources "${production_candidate}")
+    endforeach()
+    list(SORT production_sources)
+    set(${output} "${production_sources}" PARENT_SCOPE)
+endfunction()
+
 function(evidence_cpp_contains_forbidden_renderer_macro source output)
     set(${output} FALSE PARENT_SCOPE)
     string(REGEX MATCHALL
@@ -742,6 +768,10 @@ function(evidence_cpp_contains_forbidden_renderer_macro source output)
         string(REGEX REPLACE
             "^[\r\n \t]*(#|%:)[ \t]*define[ \t]+[A-Za-z_][A-Za-z0-9_]*([ \t]*\\([^\r\n)]*\\))?[ \t]*"
             "" replacement "${macro_definition}")
+        if(replacement MATCHES "##|%:%:")
+            set(${output} TRUE PARENT_SCOPE)
+            return()
+        endif()
         set(formed_replacement "${replacement}")
         string(REPLACE "##" "" formed_replacement
             "${formed_replacement}")
@@ -1009,6 +1039,12 @@ function(evidence_window_lifecycle_source_surface_is_valid
         set(${output} FALSE PARENT_SCOPE)
         return()
     endif()
+    if(NOT source_role STREQUAL policy
+            AND lexical_surface MATCHES
+                "(^|\n)[ \t]*(#|%:)[ \t]*pragma[ \t]+(push_macro|pop_macro)[ \t]*\\(")
+        set(${output} FALSE PARENT_SCOPE)
+        return()
+    endif()
     foreach(lifecycle_identifier IN ITEMS
             SetConfigFlags InitWindow IsWindowReady CloseWindow
             WindowShouldClose)
@@ -1047,11 +1083,6 @@ function(evidence_window_lifecycle_source_surface_is_valid
         list(LENGTH identifier_undefs identifier_undef_count)
         math(EXPR actual_undef_count
             "${actual_undef_count} + ${identifier_undef_count}")
-        if(lexical_surface MATCHES
-                "(^|\n)[ \t]*(#|%:)[ \t]*pragma[ \t]+(push_macro|pop_macro)[ \t]*\\([ \t]*\"${lifecycle_identifier}\"")
-            set(${output} FALSE PARENT_SCOPE)
-            return()
-        endif()
     endforeach()
     if(NOT actual_define_count EQUAL expected_define_count
             OR NOT actual_undef_count EQUAL expected_undef_count)

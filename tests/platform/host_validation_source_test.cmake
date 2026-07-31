@@ -75,6 +75,13 @@ file(READ "${_host_window_lifetime_header}" _host_window_lifetime_header_text)
 file(READ "${_host_window_lifetime_source}" _host_window_lifetime_source_text)
 file(READ "${_host_source}" _host_text)
 file(READ "${_raylib_cmake}" _raylib_cmake_text)
+if(DEFINED TASK9_ROUND5_MUTATION
+        AND TASK9_ROUND5_MUTATION STREQUAL cmake_extra_lifecycle_allow)
+    string(APPEND _raylib_cmake_text [=[
+set_source_files_properties(host_input.cpp PROPERTIES
+    COMPILE_DEFINITIONS ARPG_ALLOW_RAYLIB_INIT_WINDOW)
+]=])
+endif()
 
 # Translation-phase splices are folded by the shared lexer. Mask every
 # conditional region after lexing so #if 0, #ifdef and spliced directives can
@@ -722,6 +729,52 @@ host_validation_require_canonical_count(
     "Task 9 lifecycle exact source allowlist"
     "${_raylib_cmake_text}"
     "${_task9_lifecycle_allowlist_contract}" 1)
+function(host_validation_lifecycle_allowlist_is_valid SOURCE OUT_VALID)
+    set(_approved_identifiers
+        ARPG_ALLOW_RAYLIB_SET_CONFIG_FLAGS
+        ARPG_ALLOW_RAYLIB_INIT_WINDOW
+        ARPG_ALLOW_RAYLIB_IS_WINDOW_READY
+        ARPG_ALLOW_RAYLIB_CLOSE_WINDOW
+        ARPG_ALLOW_RAYLIB_WINDOW_SHOULD_CLOSE)
+    set(_expected_counts 1 1 2 1 1)
+    string(REGEX REPLACE "[^A-Za-z0-9_]" " " _identifier_surface
+        "${SOURCE}")
+    string(REGEX MATCHALL "ARPG_ALLOW_RAYLIB_[A-Za-z0-9_]+"
+        _allow_identifiers "${_identifier_surface}")
+    foreach(_allow_identifier IN LISTS _allow_identifiers)
+        if(NOT _allow_identifier IN_LIST _approved_identifiers)
+            set(${OUT_VALID} FALSE PARENT_SCOPE)
+            return()
+        endif()
+    endforeach()
+    list(LENGTH _approved_identifiers _approved_count)
+    math(EXPR _approved_last "${_approved_count} - 1")
+    foreach(_index RANGE 0 ${_approved_last})
+        list(GET _approved_identifiers ${_index} _approved_identifier)
+        list(GET _expected_counts ${_index} _expected_count)
+        host_validation_count_identifier(
+            "${SOURCE}" "${_approved_identifier}" _actual_count)
+        if(NOT _actual_count EQUAL _expected_count)
+            set(${OUT_VALID} FALSE PARENT_SCOPE)
+            return()
+        endif()
+    endforeach()
+    set(${OUT_VALID} TRUE PARENT_SCOPE)
+endfunction()
+host_validation_lifecycle_allowlist_is_valid(
+    "${_raylib_cmake_text}" _task9_lifecycle_allowlist_valid)
+if(NOT _task9_lifecycle_allowlist_valid)
+    message(FATAL_ERROR
+        "Task 9 lifecycle exemption allowlist is invalid")
+endif()
+if(DEFINED TASK9_ROUND5_MUTATION
+        AND TASK9_ROUND5_MUTATION STREQUAL cmake_extra_lifecycle_allow)
+    message(FATAL_ERROR
+        "Task 9 lifecycle exemption allowlist mutation was accepted")
+endif()
+if(DEFINED TASK9_CMAKE_CONTRACT_ONLY)
+    return()
+endif()
 
 if(NOT EXISTS "${_raylib_lifecycle_policy}")
     message(FATAL_ERROR
@@ -2454,18 +2507,32 @@ if(NOT DEFINED TASK8C_REVIEW_MUTATION
         list(APPEND _task8c_review_mutation_acceptances direct_header_ready)
     endif()
 endif()
-if(NOT DEFINED TASK8C_REVIEW_MUTATION
-        OR TASK8C_REVIEW_MUTATION STREQUAL lifecycle_escape_directives)
+if(NOT DEFINED TASK9_LIFECYCLE_SCAN_ROOT
+        AND (NOT DEFINED TASK8C_REVIEW_MUTATION
+            OR TASK8C_REVIEW_MUTATION STREQUAL lifecycle_escape_directives
+            OR TASK8C_REVIEW_MUTATION STREQUAL lifecycle_push_macro
+            OR TASK8C_REVIEW_MUTATION STREQUAL lifecycle_pop_macro))
     set(_task9_lifecycle_escape_surfaces
         "#define TASK9_INIT_ALIAS InitWindow\n"
         "#undef InitWindow\n"
         "#pragma push_macro(\"InitWindow\")\n"
         "#pragma pop_macro(\"InitWindow\")\n")
+    if(TASK8C_REVIEW_MUTATION STREQUAL lifecycle_push_macro)
+        set(_task9_lifecycle_escape_surfaces
+            "#pragma push_macro(\"InitWindow\")\n")
+    elseif(TASK8C_REVIEW_MUTATION STREQUAL lifecycle_pop_macro)
+        set(_task9_lifecycle_escape_surfaces
+            "#pragma pop_macro(\"InitWindow\")\n")
+    endif()
     foreach(_task9_lifecycle_escape_surface IN LISTS
             _task9_lifecycle_escape_surfaces)
-        evidence_window_lifecycle_owner_surface_is_valid(
+        host_validation_unconditional_cpp_surface(
             "${_task9_lifecycle_escape_surface}"
-            "${_task9_lifecycle_escape_surface}" FALSE
+            _task9_lifecycle_escape_active
+            _task9_lifecycle_escape_lexical)
+        evidence_window_lifecycle_source_surface_is_valid(
+            "${_task9_lifecycle_escape_active}"
+            "${_task9_lifecycle_escape_lexical}" none
             _task9_lifecycle_escape_valid)
         if(_task9_lifecycle_escape_valid)
             list(APPEND _task8c_review_mutation_acceptances
@@ -2836,35 +2903,47 @@ host_validation_require_canonical_order("Task 9 renderer exception lifetime"
         renderer_storage->shutdown_resources();
     }"
     "return HostExitCode::save_initialization_failed;")
-file(GLOB_RECURSE _task8c_raylib_production_sources LIST_DIRECTORIES FALSE
-    "${SOURCE_ROOT}/src/platform/raylib/*.h"
-    "${SOURCE_ROOT}/src/platform/raylib/*.cpp"
-    "${SOURCE_ROOT}/src/platform/raylib/*.hpp"
-    "${SOURCE_ROOT}/src/platform/raylib/*.inc"
-    "${SOURCE_ROOT}/src/platform/raylib/*.inl"
-    "${SOURCE_ROOT}/src/platform/raylib/*.ipp")
-foreach(_task8c_production_source IN LISTS _task8c_raylib_production_sources)
+set(_task9_lifecycle_scan_root "${SOURCE_ROOT}")
+if(DEFINED TASK9_LIFECYCLE_SCAN_ROOT)
+    set(_task9_lifecycle_scan_root "${TASK9_LIFECYCLE_SCAN_ROOT}")
+endif()
+evidence_collect_project_production_code_like_files(
+    "${_task9_lifecycle_scan_root}" _task9_project_production_sources)
+file(TO_CMAKE_PATH
+    "${_task9_lifecycle_scan_root}/src/platform/raylib/"
+    _task9_raylib_code_root)
+foreach(_task8c_production_source IN LISTS _task9_project_production_sources)
     file(READ "${_task8c_production_source}" _task8c_production_text)
     host_validation_unconditional_cpp_surface("${_task8c_production_text}"
         _task8c_production_active _task8c_production_lexical)
-    evidence_cpp_contains_forbidden_renderer_macro(
-        "${_task8c_production_lexical}"
-        _task9_forbidden_renderer_macro)
-    if(_task9_forbidden_renderer_macro)
-        message(FATAL_ERROR
-            "Task 9 raylib renderer macro definition is forbidden: ${_task8c_production_source}")
+    file(TO_CMAKE_PATH "${_task8c_production_source}"
+        _task9_project_production_source_normalized)
+    string(FIND "${_task9_project_production_source_normalized}"
+        "${_task9_raylib_code_root}" _task9_raylib_code_position)
+    if(_task9_raylib_code_position EQUAL 0)
+        evidence_cpp_contains_forbidden_renderer_macro(
+            "${_task8c_production_lexical}"
+            _task9_forbidden_renderer_macro)
+        if(_task9_forbidden_renderer_macro)
+            message(FATAL_ERROR
+                "Task 9 raylib renderer macro definition is forbidden: ${_task8c_production_source}")
+        endif()
     endif()
     evidence_raylib_lifecycle_source_role(
-        "${_task8c_production_source}" "${SOURCE_ROOT}"
+        "${_task8c_production_source}" "${_task9_lifecycle_scan_root}"
         _task8c_lifecycle_source_role)
     evidence_window_lifecycle_source_surface_is_valid(
         "${_task8c_production_active}" "${_task8c_production_lexical}"
         "${_task8c_lifecycle_source_role}" _task8c_owner_valid)
     if(NOT _task8c_owner_valid)
         message(FATAL_ERROR
-            "Task 8C direct raylib lifecycle owner violation: ${_task8c_production_source}")
+            "Task 9 project lifecycle ownership violation: ${_task8c_production_source}")
     endif()
 endforeach()
+if(DEFINED TASK9_LIFECYCLE_SCAN_ROOT)
+    message(FATAL_ERROR
+        "Task 9 project lifecycle scan accepted the cross-directory fixture")
+endif()
 set(_task8b_coordinator_declaration [=[        HostSettingsRuntime settings_runtime{&settings_notice, &pause_menu,
             &live_settings, &input_settings, &settings_store,
             settings_backend};]=])

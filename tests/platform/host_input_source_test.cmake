@@ -613,15 +613,10 @@ if(NOT WINDOW_LIFETIME_BOUNDARY_VALID)
     message(FATAL_ERROR
         "Host must delegate the ordered window initialization boundary exactly once")
 endif()
-file(GLOB_RECURSE RAYLIB_PRODUCTION_SOURCES LIST_DIRECTORIES FALSE
-    "${RAYLIB_SOURCE_DIR}/*.h"
-    "${RAYLIB_SOURCE_DIR}/*.cpp"
-    "${RAYLIB_SOURCE_DIR}/*.hpp"
-    "${RAYLIB_SOURCE_DIR}/*.inc"
-    "${RAYLIB_SOURCE_DIR}/*.inl"
-    "${RAYLIB_SOURCE_DIR}/*.ipp")
 get_filename_component(RAYLIB_REPO_ROOT
     "${RAYLIB_SOURCE_DIR}/../../.." ABSOLUTE)
+evidence_collect_project_production_code_like_files(
+    "${RAYLIB_REPO_ROOT}" RAYLIB_PRODUCTION_SOURCES)
 foreach(RAYLIB_PRODUCTION_SOURCE IN LISTS RAYLIB_PRODUCTION_SOURCES)
     file(READ "${RAYLIB_PRODUCTION_SOURCE}" RAYLIB_PRODUCTION_TEXT)
     arpg_sanitize_cpp_source("${RAYLIB_PRODUCTION_TEXT}"
@@ -636,7 +631,7 @@ foreach(RAYLIB_PRODUCTION_SOURCE IN LISTS RAYLIB_PRODUCTION_SOURCES)
         "${RAYLIB_LIFECYCLE_SOURCE_ROLE}" WINDOW_LIFETIME_OWNER_VALID)
     if(NOT WINDOW_LIFETIME_OWNER_VALID)
         message(FATAL_ERROR
-            "direct raylib window lifecycle owner violation: ${RAYLIB_PRODUCTION_SOURCE}")
+            "project lifecycle ownership violation: ${RAYLIB_PRODUCTION_SOURCE}")
     endif()
 endforeach()
 string(FIND "${DIRECT_HOST_ENTRY_SOURCE}"

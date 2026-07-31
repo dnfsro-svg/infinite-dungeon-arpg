@@ -5,11 +5,78 @@ endif()
 include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
 
 set(_guard "${SOURCE_ROOT}/tests/platform/host_validation_sequence_guard_test.cmake")
+set(_source_guard "${SOURCE_ROOT}/tests/platform/host_validation_source_test.cmake")
 file(MAKE_DIRECTORY "${GUARD_TEST_ROOT}")
 
 if(DEFINED TASK9_REVIEW_MUTATION
+        AND TASK9_REVIEW_MUTATION STREQUAL cmake_extra_lifecycle_allow)
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+            -DTASK9_ROUND5_MUTATION=cmake_extra_lifecycle_allow
+            -DTASK9_CMAKE_CONTRACT_ONLY=ON -P "${_source_guard}"
+        RESULT_VARIABLE _task9_allowlist_result
+        OUTPUT_VARIABLE _task9_allowlist_stdout
+        ERROR_VARIABLE _task9_allowlist_stderr)
+    if(_task9_allowlist_result EQUAL 0)
+        message(FATAL_ERROR
+            "Host validation source guard accepted an extra lifecycle exemption")
+    endif()
+    if(NOT "${_task9_allowlist_stdout}${_task9_allowlist_stderr}" MATCHES
+            "Task 9 lifecycle exemption allowlist is invalid")
+        message(FATAL_ERROR
+            "Task 9 lifecycle exemption allowlist failed for wrong reason: ${_task9_allowlist_stdout}${_task9_allowlist_stderr}")
+    endif()
+    message(STATUS
+        "Task 9 extra lifecycle exemption was rejected for the intended reason")
+    return()
+endif()
+
+if(DEFINED TASK9_REVIEW_MUTATION
+        AND (TASK9_REVIEW_MUTATION STREQUAL cross_directory_lifecycle_undef
+            OR TASK9_REVIEW_MUTATION STREQUAL sanitized_lifecycle_push_macro
+            OR TASK9_REVIEW_MUTATION STREQUAL sanitized_lifecycle_pop_macro))
+    set(_task9_lifecycle_fixture_root
+        "${GUARD_TEST_ROOT}/${TASK9_REVIEW_MUTATION}")
+    set(_task9_lifecycle_fixture
+        "${_task9_lifecycle_fixture_root}/src/core/task9_escape.hpp")
+    file(MAKE_DIRECTORY "${_task9_lifecycle_fixture_root}/src/core")
+    if(TASK9_REVIEW_MUTATION STREQUAL cross_directory_lifecycle_undef)
+        set(_task9_lifecycle_fixture_text "#undef InitWindow\n")
+    elseif(TASK9_REVIEW_MUTATION STREQUAL sanitized_lifecycle_push_macro)
+        set(_task9_lifecycle_fixture_text
+            "#pragma push_macro(\"InitWindow\")\n")
+    else()
+        set(_task9_lifecycle_fixture_text
+            "#pragma pop_macro(\"InitWindow\")\n")
+    endif()
+    file(WRITE "${_task9_lifecycle_fixture}"
+        "${_task9_lifecycle_fixture_text}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+            "-DTASK9_LIFECYCLE_SCAN_ROOT=${_task9_lifecycle_fixture_root}"
+            -P "${_source_guard}"
+        RESULT_VARIABLE _task9_lifecycle_result
+        OUTPUT_VARIABLE _task9_lifecycle_stdout
+        ERROR_VARIABLE _task9_lifecycle_stderr)
+    if(_task9_lifecycle_result EQUAL 0)
+        message(FATAL_ERROR
+            "Host validation source guard accepted ${TASK9_REVIEW_MUTATION}")
+    endif()
+    if(NOT "${_task9_lifecycle_stdout}${_task9_lifecycle_stderr}" MATCHES
+            "Task 9 project lifecycle ownership violation")
+        message(FATAL_ERROR
+            "Task 9 lifecycle fixture failed for wrong reason: ${_task9_lifecycle_stdout}${_task9_lifecycle_stderr}")
+    endif()
+    message(STATUS
+        "Task 9 lifecycle fixture was rejected for the intended reason")
+    return()
+endif()
+
+if(DEFINED TASK9_REVIEW_MUTATION
         AND (TASK9_REVIEW_MUTATION STREQUAL renderer_macro_include
-            OR TASK9_REVIEW_MUTATION STREQUAL renderer_macro_paste_include))
+            OR TASK9_REVIEW_MUTATION STREQUAL renderer_macro_paste_include
+            OR TASK9_REVIEW_MUTATION STREQUAL renderer_parameterized_paste_include
+            OR TASK9_REVIEW_MUTATION STREQUAL renderer_parameterized_digraph_paste_include))
     file(READ "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp"
         _task9_renderer_macro_host)
     string(PREPEND _task9_renderer_macro_host
@@ -23,9 +90,15 @@ if(DEFINED TASK9_REVIEW_MUTATION
     if(TASK9_REVIEW_MUTATION STREQUAL renderer_macro_include)
         set(_task9_renderer_macro_definition
             "#define TASK9_EARLY() renderer_storage.reset(new CombatRenderer{})\n")
-    else()
+    elseif(TASK9_REVIEW_MUTATION STREQUAL renderer_macro_paste_include)
         set(_task9_renderer_macro_definition
             "#define TASK9_EARLY() renderer ## _storage.reset(new Combat ## Renderer{})\n")
+    elseif(TASK9_REVIEW_MUTATION STREQUAL renderer_parameterized_paste_include)
+        set(_task9_renderer_macro_definition
+            "#define TASK9_EARLY(a,b,c,d) a ## b.reset(new c ## d{})\nTASK9_EARLY(renderer, _storage, Combat, Renderer)\n")
+    else()
+        set(_task9_renderer_macro_definition
+            "#define TASK9_EARLY(a,b,c,d) a %:%: b.reset(new c %:%: d{})\nTASK9_EARLY(renderer, _storage, Combat, Renderer)\n")
     endif()
     file(WRITE "${_task9_renderer_macro_include_path}"
         "${_task9_renderer_macro_definition}")

@@ -266,3 +266,81 @@ blockers remain separate; this round deliberately did not rerun or weaken
 those gates, as required by the round brief.  The two previously deferred P2
 items concerning throwing/null backend callbacks and renderer cleanup on
 allocation failure are also unchanged and outside this compile-policy fix.
+
+## Fix round 5/5: close lifecycle and renderer guard escapes
+
+### RED evidence
+
+All commands ran in `E:/game/.worktrees/whole-game-refactor-2026-07`.  Long
+commands were serialized, and the reported PID was allowed to exit before the
+next command started.
+
+| Mutation/check | Exit | Time | Intended RED diagnostic |
+| --- | ---: | ---: | --- |
+| Extra `ARPG_ALLOW_RAYLIB_INIT_WINDOW` source exemption appended while the canonical block remained intact | 1 | 0.132 s | The inner guard reported `Task 9 lifecycle exemption allowlist mutation was accepted`; the outer selective rejected that wrong reason. |
+| Cross-directory `src/core/task9_escape.hpp` with `#undef InitWindow` after isolating the fixture path | 1 | 90.801 s | The inner guard reported `Task 9 project lifecycle scan accepted the cross-directory fixture`; the outer selective rejected that wrong reason. |
+| Parameterized include macro `a ## b.reset(new c ## d{})` | 1 | 80.632 s | `Host validation sequence guard accepted Task 9 renderer_parameterized_paste_include`. |
+| Parameterized include macro using `%:%:` | 1 | 73.769 s | `Host validation sequence guard accepted Task 9 renderer_parameterized_digraph_paste_include`. |
+| Sanitized `#pragma push_macro("InitWindow")` | 1 | 91.275 s | `Task 8C shared window guard accepted review mutations: lifecycle_escape_directives`. |
+| Sanitized `#pragma pop_macro("InitWindow")` | 1 | 88.713 s | Same lifecycle escape acceptance diagnostic. |
+
+One cross-directory attempt is retained rather than hidden: it exited 1 after
+90.324 s for the unrelated newly exposed push/pop self-test RED.  The
+selective was isolated and rerun to obtain the scanner-specific RED above.  An
+initial batched renderer invocation also lost its output channel after a
+14.025 s harness wait; PIDs 21544/18172 were inspected until they exited, no
+orphan remained, and the two mutations were then rerun separately with the
+recorded results above.
+
+### Guard effect
+
+- The canonical CMake block check remains.  A second whole-file allowlist
+  check now permits only the five approved `ARPG_ALLOW_RAYLIB_*` identifiers
+  and requires exact counts `1,1,2,1,1`; unknown identifiers and extra
+  occurrences fail closed.
+- A shared production-file selector now supplies all three lifecycle gates.
+  It scans `.cpp/.hpp/.h/.inc/.inl/.ipp` under project `src`, excludes
+  build/output/vendor/test directory segments, and leaves every non-sanctioned
+  file at lifecycle role `none`.
+- Non-policy `push_macro` and `pop_macro` directives are rejected by directive
+  shape after the real phase-2 sanitizer, without depending on the quoted
+  lifecycle name that the sanitizer erases.
+- Raylib project macro definitions containing either token-paste operator
+  (`##` or `%:%:`) are rejected before replacement-name inference.  The
+  existing explicit renderer identifier checks and direct allocation/order
+  budgets remain unchanged.
+- No gameplay source, production runtime logic, golden value, timeout, Stage
+  interface, or B-G scope changed.
+
+### GREEN verification
+
+| Command/check | Exit | Time/result |
+| --- | ---: | --- |
+| Extra CMake exemption selective | 0 | 0.076 s; rejected for the allowlist-specific reason. |
+| Cross-directory lifecycle `#undef` selective | 0 | 90.761 s; rejected for project lifecycle ownership. |
+| Parameterized renderer `##` / `%:%:` selectives | 0 / 0 | 0.082 s / 0.075 s; both renderer-macro-specific. |
+| Sanitized push / pop selectives | 0 / 0 | 88.976 s / 89.293 s. |
+| `git diff --check` before final reporting | 0 | 0.060 s. |
+| MSVC DevShell `cmake --preset windows-msvc-debug` | 0 | 6.878 s; configure/generate completed and the `NO_CACHE` lifecycle compile probes reran.  No game binary rebuild was needed. |
+| Full `host_validation_source_test.cmake` | 0 | 335.154 s. |
+| Full `host_input_source_test.cmake` | 0 | 220.930 s. |
+| Full `input_latency_source_test.cmake` | 0 | 472.348 s. |
+| Full `host_validation_sequence_guard_self_test.cmake` | 0 | 1,435.392 s with a 2,400 s process budget. |
+
+No shared namespace or Stage11C helper was edited, so the conditional full
+Stage11C architecture self-test was not rerun.  Per the round contract, full
+Debug/Release CTest and real-window validation were not rerun.
+
+### Round 5 self-review and remaining concerns
+
+The final guard diff was reviewed against `23f94e8`.  The lifecycle roles,
+direct-depth/order/identifier budgets, canonical CMake block, and ordinary
+renderer replacement checks remain in place; the new rules only close the
+four reviewed escapes.  The deliberately unstaged progress ledger, Task 9
+baseline, Stage15 evidence, `raylib_host.hpp` line-ending dirt, and PYC files
+remain outside this change.
+
+Round 5's four findings are covered and green.  The original Task 9 full-suite,
+formal-evidence, real-window, idle-CPU, and deferred backend/renderer-lifetime
+concerns remain unchanged and are not represented as fixed by this guard-only
+commit.
