@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.25)
 
 project(infinite_dungeon_arpg VERSION 0.1.0 LANGUAGES C CXX)
 include(cmake/NormalizeMsvcShowIncludes.cmake)
+include(cmake/AssertTargetDependencyBoundary.cmake)
 
 option(ARPG_BUILD_GRAPHICS "Build the raylib host and game executable" ON)
 option(ARPG_BUILD_PERFORMANCE_PROBES "Build local performance probes" OFF)
@@ -44,11 +45,12 @@ include(CTest)
 add_subdirectory(src/core)
 add_subdirectory(src/abyss)
 add_subdirectory(src/skills)
-add_subdirectory(src/combat)
-add_subdirectory(src/progression)
 add_subdirectory(src/modifiers)
 add_subdirectory(src/items)
+add_subdirectory(src/progression)
 add_subdirectory(src/passives)
+add_subdirectory(src/checkpoint)
+add_subdirectory(src/combat)
 add_subdirectory(src/dungeon)
 add_subdirectory(src/persistence)
 add_subdirectory(src/platform/settings)
@@ -69,6 +71,7 @@ if(BUILD_TESTING)
     add_subdirectory(tests/core)
     add_subdirectory(tests/abyss)
     add_subdirectory(tests/skills)
+    add_subdirectory(tests/checkpoint)
     add_subdirectory(tests/combat)
     add_subdirectory(tests/dungeon)
     add_subdirectory(tests/persistence)
@@ -80,3 +83,18 @@ if(BUILD_TESTING)
     add_subdirectory(tests/settings)
     add_subdirectory(tests/launcher)
 endif()
+
+set(_arpg_checkpoint_forbidden_targets
+    arpg_combat
+    arpg_dungeon
+    arpg_persistence
+    arpg_settings)
+foreach(_arpg_checkpoint_optional_forbidden IN ITEMS
+        raylib arpg_raylib arpg_game)
+    if(TARGET "${_arpg_checkpoint_optional_forbidden}")
+        list(APPEND _arpg_checkpoint_forbidden_targets
+            "${_arpg_checkpoint_optional_forbidden}")
+    endif()
+endforeach()
+arpg_assert_target_dependency_boundary(
+    arpg_checkpoint ${_arpg_checkpoint_forbidden_targets})
