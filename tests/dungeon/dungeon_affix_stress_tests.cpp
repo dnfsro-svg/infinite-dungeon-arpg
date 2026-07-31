@@ -297,16 +297,8 @@ bool defeat_all_generated_monsters(DungeonSession& session,
     drain_events(session);
     for (std::uint16_t ordinal = 0U;
          ordinal < plan->monster_count; ++ordinal) {
-        const auto& source = plan->monsters[ordinal];
-        if (!arpg::test::relay_defeated(session,
-                static_cast<std::uint8_t>(ordinal / 96U),
-                static_cast<arpg::combat::MonsterOrdinal>(ordinal % 96U),
-                source.initial_position, true, source.id, ordinal,
-                arpg::combat::monster_affix_danger_score(source.affixes),
-                false)) {
-            return false;
-        }
-        const auto event = session.try_pop_combat_event();
+        const auto event = arpg::test::defeat_room_monster_by_ordinal(
+            session, ordinal);
         if (!event.has_value() || !record_defeat_payload(trace, *event)
                 || session.try_pop_combat_event().has_value()) {
             return false;

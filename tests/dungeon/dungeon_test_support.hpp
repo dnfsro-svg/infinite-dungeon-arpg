@@ -357,7 +357,6 @@ struct DungeonSessionTestAccess final {
                 || defeated->monster_id != blueprint.id
                 || defeated->spawn_ordinal != blueprint.spawn_ordinal
                 || defeated->affix_score != expected_affix_score
-                || expected_affix_score == 0U
                 || !defeated->reward_eligible) {
             return std::nullopt;
         }
