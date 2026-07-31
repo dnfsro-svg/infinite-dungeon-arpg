@@ -544,53 +544,19 @@ arpg::test::Failure descent_requires_clear_hole_range_and_edge() noexcept {
 
 arpg::test::Failure queue_overflow_faults_without_release_propagation() noexcept {
 #if defined(NDEBUG)
-    DungeonRules rules;
-    rules.hole_threshold = 10000U;
-    DungeonRunState saved = arpg::dungeon::make_initial_run_state(
-        0xF00DULL, rules).state;
-    saved.current_room.has_hole = true;
-    DungeonSession session{rules, saved};
-    for (int room = 0; room < 16
-            && session.snapshot().phase != RoomPhase::faulted; ++room) {
-        for (int tick = 0; tick < 4096
-                && session.snapshot().phase != RoomPhase::cleared
-                && session.snapshot().phase != RoomPhase::faulted; ++tick) {
-            const auto state = session.snapshot();
-            MovementInput movement{};
-            if (state.phase == RoomPhase::combat && state.combat.has_value()) {
-                const auto* target = arpg::test::nearest_living_monster(
-                    *state.combat);
-                if (target != nullptr) {
-                    movement = arpg::test::movement_toward(
-                        state.combat->player.position, target->position);
-                    if (arpg::test::in_light_attack_lane(
-                            state.combat->player, *target)
-                            && state.combat->player.active_attack
-                                == arpg::combat::AttackId::none) {
-                        static_cast<void>(session.queue_action(
-                            arpg::combat::Action::light));
-                    }
-                }
-            }
-            session.tick(movement);
-        }
-        if (session.snapshot().phase == RoomPhase::cleared) {
-            session.tick({});
-        }
-        if (session.snapshot().phase != RoomPhase::awaiting_exit) {
-            break;
-        }
-        if (!session.request_descent(true)
-                || !arpg::test::commit_pending(session)) {
-            break;
-        }
-        session.tick({});
-        session.tick({});
-    }
+    DungeonSession session;
+    arpg::test::EventSummary ignored{};
+    arpg::test::drain_all_events(session, ignored);
+    ARPG_REQUIRE(session.snapshot().phase == RoomPhase::locked);
+    ARPG_REQUIRE(arpg::test::fill_dungeon_events(
+        session, DungeonSession::kDungeonEventCapacity)
+        == DungeonSession::kDungeonEventCapacity);
+
+    session.tick({});
     const DungeonSnapshot state = session.snapshot();
-    ARPG_REQUIRE(state.diagnostics.event_overflow_count > 0U
-        || state.diagnostics.combat_relay_overflow_count > 0U);
     ARPG_REQUIRE(state.phase == RoomPhase::faulted);
+    ARPG_REQUIRE(state.diagnostics.fault == DungeonFault::event_overflow);
+    ARPG_REQUIRE(state.diagnostics.event_overflow_count > 0U);
 #else
     // The overflow branch intentionally asserts in Debug; Release is the
     // build where this no-propagation contract is exercised.
