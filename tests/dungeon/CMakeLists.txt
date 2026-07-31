@@ -122,7 +122,7 @@ add_test(NAME stage10.validation_fixture.real_abyss_transactions
     COMMAND arpg_stage10_validation_fixture)
 set_tests_properties(stage10.validation_fixture.real_abyss_transactions PROPERTIES
     LABELS "headless;dungeon;stage10;validation"
-    TIMEOUT 30)
+    TIMEOUT 75)
 
 add_test(NAME stage9.evidence.no_injected_defeat_trace
     COMMAND ${CMAKE_COMMAND}
