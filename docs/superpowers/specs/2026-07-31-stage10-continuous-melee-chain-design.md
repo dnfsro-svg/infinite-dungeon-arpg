@@ -51,8 +51,8 @@ accepted, and no light geometry.
 - acquiring or releasing a monster lock does not clear it;
 - target death, target streaming absence, action completion, cooldown, hurt,
   hit stop, and input-buffer state do not clear it;
-- a movement stall may release/exclude the current ordinal and enter sweep, but
-  the next resident acquisition remains melee;
+- a movement stall releases/excludes the current ordinal and enters
+  light-lane recovery sweep; the next acquisition remains melee;
 - an empty resident snapshot enters the existing deterministic sweep; when a
   resident becomes available, acquisition remains melee;
 - the flag lives only in the fixture driver and never enters save/checkpoint or
@@ -82,8 +82,21 @@ stance behavior exactly.
 
 ## Safety and diagnostics
 
-Retain the existing controllable close-movement no-progress check,
-one-attempt ordinal exclusion, and sweep escape. Add failure-only counters for:
+Retain the existing controllable close-movement no-progress check and
+one-attempt ordinal exclusion. A close-pursuit stall starts a fixture-owned
+`recover_until_light_lane` state. In that state, continue the existing
+deterministic sweep even after XY movement succeeds; do not reacquire a merely
+near resident. End recovery only when the public active-resident snapshot
+contains a living monster satisfying the existing `in_attack_lane()` geometry,
+then acquire that tier-1 target in the same deterministic distance/ordinal
+order. This is a geometry event, not a tick timeout. Existing zero-movement
+waypoint advancement remains responsible for navigating around obstacles.
+
+Ordinary no-resident sweep behavior outside this recovery remains unchanged.
+Storm/Draw/light requests may continue through their existing public path while
+recovery movement is active; they do not themselves end recovery.
+
+Add failure-only counters for:
 
 - melee-chain entry;
 - close handoffs after an absent lock;
@@ -91,6 +104,7 @@ one-attempt ordinal exclusion, and sweep escape. Add failure-only counters for:
   active;
 - ranged acquisitions after melee-chain entry, which must remain zero;
 - cumulative initial distance to each newly acquired melee target.
+- light-lane recovery entries, ticks, and successful lane reacquisitions.
 
 Diagnostics are observational only. No target HP, defeat/remaining count,
 phase, cooldown, input buffer, save state, or production data is written.
