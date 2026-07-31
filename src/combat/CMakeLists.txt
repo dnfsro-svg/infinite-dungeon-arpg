@@ -33,6 +33,6 @@ target_include_directories(arpg_combat
 target_compile_features(arpg_combat PUBLIC cxx_std_17)
 target_link_libraries(arpg_combat
     PUBLIC arpg_abyss
-    PRIVATE arpg_core arpg_modifiers)
+    PRIVATE arpg_checkpoint arpg_core arpg_modifiers)
 
 arpg_enable_project_warnings(arpg_combat)

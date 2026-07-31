@@ -150,5 +150,5 @@ int main() {
         storm_swords_skill_suite(),
     };
 
-    return arpg::test::run_suites(suites, 283, "checkpoint v9 combat");
+    return arpg::test::run_suites(suites, 286, "checkpoint v9 combat");
 }
