@@ -1,0 +1,51 @@
+name: Cloud CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'codex/**'
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: cloud-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository-checks:
+    name: Repository checks (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare cloud toolchain
+        run: bash scripts/cloud/setup.sh
+
+      - name: Validate cloud scripts
+        run: |
+          bash -n scripts/cloud/setup.sh
+          bash -n scripts/cloud/maintenance.sh
+          bash scripts/cloud/maintenance.sh
+
+  windows-build:
+    name: Build and test raylib game (Windows)
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure, build, and test
+        shell: pwsh
+        run: ./scripts/cloud/build-windows.ps1 -Configuration Release
+
+      - name: Upload playable build
+        uses: actions/upload-artifact@v4
+        with:
+          name: arpg-windows-${{ github.sha }}
+          path: out/artifacts/arpg-windows
+          if-no-files-found: error
+          retention-days: 14
