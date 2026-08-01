@@ -1,5 +1,6 @@
 #pragma once
 
+#include "checkpoint/room_combat_checkpoint.hpp"
 #include "combat/combat_types.hpp"
 
 #include <array>
@@ -8,7 +9,13 @@
 
 namespace arpg::combat {
 
-inline constexpr std::size_t kPlayerDamageHistoryTicks = 300U;
+inline constexpr std::size_t kPlayerDamageHistoryTicks =
+    ::arpg::checkpoint::kPlayerDamageHistoryTicks;
+using PlayerDamageHistoryCheckpoint =
+    ::arpg::checkpoint::PlayerDamageHistoryCheckpoint;
+
+static_assert(kPlayerDamageHistoryTicks
+    == ::arpg::checkpoint::kPlayerDamageHistoryTicks);
 
 class PlayerDamageHistory final {
 public:
@@ -16,6 +23,11 @@ public:
     void record(const ResolvedPlayerDamage& damage) noexcept;
     [[nodiscard]] std::array<std::uint64_t,
         modifiers::kDamageTypeCount> totals() const noexcept;
+    void capture_checkpoint(PlayerDamageHistoryCheckpoint& out) const noexcept;
+    [[nodiscard]] bool restore_checkpoint(
+        const PlayerDamageHistoryCheckpoint& checkpoint) noexcept;
+    [[nodiscard]] std::uint64_t active_tick() const noexcept;
+    [[nodiscard]] bool initialized() const noexcept;
 
 private:
     std::array<std::array<std::uint64_t, modifiers::kDamageTypeCount>,

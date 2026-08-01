@@ -15,7 +15,7 @@
 
 namespace {
 
-namespace checkpoint = arpg::dungeon::checkpoint;
+namespace checkpoint = arpg::checkpoint;
 namespace persistence = arpg::persistence;
 namespace items = arpg::items;
 namespace skills = arpg::skills;
@@ -420,6 +420,10 @@ arpg::test::Failure same_state_includes_all_ownership_bytes_and_order() noexcept
     ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
     rhs = lhs;
     rhs.last_abyss_resolution.room_seed = 1U;
+    ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
+    rhs = lhs;
+    rhs.last_abyss_resolution.lifecycle =
+        arpg::abyss::AbyssLifecycle::failed;
     ARPG_REQUIRE(!persistence::detail::same_state(lhs, rhs));
     rhs = lhs;
     ++rhs.death_sequence;

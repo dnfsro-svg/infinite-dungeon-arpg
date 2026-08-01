@@ -140,9 +140,9 @@ arpg::test::Failure duplicate_event_and_ineligible_event_do_not_reward_twice() n
     ARPG_REQUIRE(arpg::test::relay_defeated(session, 0U, 0xFFU,
         {7.0F, 3.0F, 0.0F}, true,
         arpg::combat::MonsterId::fire_bomber, 111U, 27U));
-    ARPG_REQUIRE(arpg::test::relay_defeated(session, 1U, 0xFEU,
+    ARPG_REQUIRE(arpg::test::relay_visual_defeated(session, 111U,
         {9.0F, 4.0F, 0.0F}, true,
-        arpg::combat::MonsterId::fire_bomber, 111U, 27U));
+        arpg::combat::MonsterId::fire_bomber, 27U));
     ARPG_REQUIRE(arpg::test::relay_defeated(session, 0U, 0U,
         {10.0F, 5.0F, 0.0F}, false,
         arpg::combat::MonsterId::fire_bomber, 112U, 27U));

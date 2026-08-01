@@ -105,7 +105,7 @@ void CombatWorld::simulate_player(MovementInput movement) noexcept {
             definition->recovery_ticks, attack_speed);
         attack_.connected = false;
         attack_.impact_event_emitted = false;
-        attack_.hit_targets.fill(false);
+        attack_.hit_targets.clear();
 
         player_.combo_stage = combo_stage_for(id);
         player_.velocity.x = 0.0F;
@@ -139,7 +139,7 @@ void CombatWorld::simulate_player(MovementInput movement) noexcept {
         attack_.recovery_ticks = 0;
         attack_.connected = false;
         attack_.impact_event_emitted = false;
-        attack_.hit_targets.fill(false);
+        attack_.hit_targets.clear();
         player_.combo_stage = 0;
         player_.state = is_airborne()
                             ? (player_.velocity.z > 0.0F

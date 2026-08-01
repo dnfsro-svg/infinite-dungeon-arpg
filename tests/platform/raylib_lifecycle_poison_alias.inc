@@ -1,0 +1,1 @@
+#define ARPG_LIFECYCLE_INCLUDE_ALIAS InitWindow

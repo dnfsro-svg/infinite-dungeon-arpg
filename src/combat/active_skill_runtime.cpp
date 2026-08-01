@@ -120,7 +120,7 @@ void CombatWorld::apply_active_skill_events_at(const std::uint16_t tick) noexcep
             player_.state = PlayerState::attack_recovery;
             break;
         case ActiveSkillTimelineEventKind::damage:
-            active_skill_.hit_latch.fill(false);
+            active_skill_.hit_latch.clear();
             if (cast.id == skills::ActiveSkillId::draw_slash) {
                 resolve_draw_slash_hits();
             } else {
@@ -156,7 +156,7 @@ void CombatWorld::pull_storm_swords_targets() noexcept {
 
 void CombatWorld::clear_active_skill() noexcept {
     active_skill_.snapshot = ActiveSkillSnapshot{};
-    active_skill_.hit_latch.fill(false);
+    active_skill_.hit_latch.clear();
 }
 
 void CombatWorld::resolve_draw_slash_hits() noexcept {
@@ -169,7 +169,8 @@ void CombatWorld::resolve_draw_slash_hits() noexcept {
         FeedbackLevel::medium, skills::ActiveSkillId::draw_slash, 0U, false};
     for (std::size_t index = 0U; index < monsters_.slots_.size(); ++index) {
         const MonsterRuntime& monster = monsters_.slots_[index];
-        if (active_skill_.hit_latch[index] || !monster.active || monster.hp <= 0
+        if (active_skill_.hit_latch.contains(monster.monster_ordinal)
+            || !monster.active || monster.hp <= 0
             || monster.reaction == ReactionState::defeated
             || monster.reaction == ReactionState::respawning) {
             continue;
@@ -204,7 +205,8 @@ void CombatWorld::resolve_storm_swords_hits(bool finisher) noexcept {
 
     for (std::size_t index = 0U; index < monsters_.slots_.size(); ++index) {
         const MonsterRuntime& monster = monsters_.slots_[index];
-        if (active_skill_.hit_latch[index] || !monster.active || monster.hp <= 0
+        if (active_skill_.hit_latch.contains(monster.monster_ordinal)
+            || !monster.active || monster.hp <= 0
             || monster.reaction == ReactionState::defeated
             || monster.reaction == ReactionState::respawning) {
             continue;

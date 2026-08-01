@@ -223,7 +223,7 @@ arpg::test::Failure normal_and_finisher_radii_are_independent_and_finisher_launc
     while (const auto event = world.try_pop_event()) {
         saw_finisher = saw_finisher
             || (event->kind == CombatEventKind::hit
-                && event->target_index == 1U && event->value == 360
+                && event->target_ordinal == 1U && event->value == 360
                 && event->attack == AttackId::none
                 && carries_storm_metadata(*event, 12U, true));
     }

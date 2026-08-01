@@ -333,6 +333,7 @@ arpg::test::Failure rebound_context_hints_use_committed_e_i_and_p_labels() noexc
     current.has_active_room = true;
     current.phase = dungeon::RoomPhase::awaiting_exit;
     current.has_hole = true;
+    current.exits_unlocked = true;
     platform::ControlHints hints{};
     static_cast<void>(std::snprintf(hints.secondary.data(), hints.secondary.size(),
         "E Interact  I Inventory  P Passive Tree"));

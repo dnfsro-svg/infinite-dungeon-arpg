@@ -205,9 +205,11 @@ arpg::test::Failure chain_lightning_reports_real_affix_source() noexcept {
 }
 
 arpg::test::Failure death_blast_reports_defeated_owner_source() noexcept {
+    MonsterAffixSet death_blast = one_affix(MonsterAffixId::death_blast);
+    death_blast.values[0].tier = MonsterAffixTier::m2;
     CombatWorld world{one_monster(
         MonsterId::fire_bomber, Vec3{0.8F, 0.0F, 0.0F},
-        one_affix(MonsterAffixId::death_blast), 2000)};
+        death_blast, 2000)};
     ARPG_REQUIRE(tick_until_defeated(world, 180));
     ARPG_REQUIRE(world.death_snapshot()->source.kind
                  == PlayerDamageSourceKind::monster_affix);
@@ -343,18 +345,24 @@ arpg::test::Failure evasion_does_not_enter_recent_damage() noexcept {
 arpg::test::Failure delayed_corrosion_keeps_the_affix_owner_source() noexcept {
     MonsterAffixSet corrosion{};
     corrosion.values[0] = {
-        MonsterAffixId::chaos_corrosion, MonsterAffixTier::m1};
+        MonsterAffixId::chaos_corrosion, MonsterAffixTier::m2};
     corrosion.count = 1U;
     CombatWorld world{one_monster(
         MonsterId::chaos_chaser, Vec3{0.65F, 0.0F, 0.0F}, corrosion)};
     arpg::test::CombatWorldTestAccess::set_player_resources(world, 65, 0);
+    for (int tick = 0; tick < 120
+         && world.snapshot().player.corrosion_damage_per_second == 0; ++tick) {
+        world.tick(MovementInput{});
+    }
+    ARPG_REQUIRE(world.snapshot().player.corrosion_damage_per_second == 30);
+    arpg::test::CombatWorldTestAccess::freeze_monster_ai(world, 0U, 240U);
     ARPG_REQUIRE(tick_until_defeated(world));
     const auto& death = *world.death_snapshot();
     ARPG_REQUIRE(death.source.kind == PlayerDamageSourceKind::monster_affix);
     ARPG_REQUIRE(death.source.monster == MonsterId::chaos_chaser);
     ARPG_REQUIRE(death.source.detail_id == static_cast<std::uint16_t>(
         MonsterAffixId::chaos_corrosion));
-    ARPG_REQUIRE(death.raw_damage == 20U);
+    ARPG_REQUIRE(death.raw_damage == 30U);
     ARPG_REQUIRE(death.primary_type == arpg::modifiers::DamageType::chaos);
     return {};
 }

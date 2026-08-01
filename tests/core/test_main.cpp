@@ -15,5 +15,5 @@ int main() {
         allocation_probe_suite(),
     };
 
-    return arpg::test::run_suites(suites, 26, "stage 8 task 9 core");
+    return arpg::test::run_suites(suites, 28, "checkpoint v9 core");
 }

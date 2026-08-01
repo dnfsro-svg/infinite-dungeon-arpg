@@ -1,9 +1,30 @@
-void export_screenshot(const char* path) noexcept { ExportImage(LoadImageFromScreen(), path); }
-void capture_after_presented_frame(const char* path) noexcept { export_screenshot(path); }
-capture_after_presented_frame("real-before-present.png");
-EndDrawing();
-++presented_frame_count;
-capture_after_presented_frame("dummy-after-present.png");
-queue_action(Action::light);
-request_descent(true);
-reset_current_room();
+void stage10_capture_driver() {
+    host_validation::stage10_validation_input(*session,
+        current, config, stage10_validation_state);
+    const bool captured_stage10_target = host_validation::stage10_validation_reached(
+        current, config, stage10_validation_state);
+    ++stage10_validation_state.chaos_presented_frames;
+    static_cast<void>(present_frame_and_maybe_capture(nullptr));
+    static_cast<void>(present_frame_and_maybe_capture(nullptr));
+    const bool captured_stage10_frame = captured_stage10_target && capture_succeeded;
+    stage10_validation_captured = stage10_validation_captured
+        || captured_stage10_frame;
+}
+Image pre_present_image = LoadImageFromScreen();
+const bool pre_present_exported = ExportImage(pre_present_image,
+    "real-before-present.png");
+UnloadImage(pre_present_image);
+[[nodiscard]] bool present_frame_and_maybe_capture(const char* path) noexcept {
+    EndDrawing();
+    if (path == nullptr) return true;
+    Image image = LoadImageFromScreen();
+    if (image.data == nullptr) return false;
+    const bool exported = ExportImage(image, path);
+    UnloadImage(image);
+    return exported;
+}
+const bool capture_succeeded = present_frame_and_maybe_capture(
+    capture_path.has_value() ? capture_path->c_str() : nullptr);
+const bool captured_stage10_frame = captured_stage10_target && capture_succeeded;
+stage10_validation_captured = stage10_validation_captured
+    || captured_stage10_frame;

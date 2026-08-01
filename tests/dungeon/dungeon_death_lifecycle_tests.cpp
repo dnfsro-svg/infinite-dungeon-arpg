@@ -2,6 +2,7 @@
 
 #include "abyss/abyss_rewards.hpp"
 #include "abyss/abyss_rules.hpp"
+#include "checkpoint/room_checkpoint_validation.hpp"
 #include "combat/monster_affix_types.hpp"
 #include "dungeon/death_checkpoint.hpp"
 #include "dungeon/dungeon_progression.hpp"
@@ -12,12 +13,14 @@
 #include <array>
 #include <cstdint>
 #include <limits>
+#include <memory>
+#include <new>
 #include <utility>
 
 namespace {
 
 namespace abyss = arpg::abyss;
-namespace checkpoint = arpg::dungeon::checkpoint;
+namespace checkpoint = arpg::checkpoint;
 namespace combat = arpg::combat;
 namespace dungeon = arpg::dungeon;
 
@@ -117,7 +120,7 @@ checkpoint::DungeonRunState pending_state(
             selection->danger, 1U).item_count;
         state.last_abyss_resolution = {
             true, state.current_room.seed, selection->rule,
-            total, 0U, 0U, total};
+            total, 0U, 0U, total, abyss::AbyssLifecycle::failed};
     }
 
     ++state.commit_generation;
@@ -335,7 +338,7 @@ arpg::test::Failure source_catalog_accepts_only_canonical_ids() noexcept {
 }
 
 arpg::test::Failure abyss_failure_relationships_are_defended() noexcept {
-    for (std::uint8_t mutation = 0U; mutation < 8U; ++mutation) {
+    for (std::uint8_t mutation = 0U; mutation < 9U; ++mutation) {
         auto state = pending_state(9U, true,
             DeathSourceKind::abyss_environment);
         switch (mutation) {
@@ -348,6 +351,10 @@ arpg::test::Failure abyss_failure_relationships_are_defended() noexcept {
             break;
         case 6U: state.last_abyss_resolution.generated = 1U; break;
         case 7U: state.last_abyss_resolution.abandoned = 0U; break;
+        case 8U:
+            state.last_abyss_resolution.lifecycle =
+                abyss::AbyssLifecycle::cleared;
+            break;
         }
         ARPG_REQUIRE(fail_closed(std::move(state)));
     }
@@ -481,6 +488,8 @@ arpg::test::Failure abyss_death_prepares_one_atomic_retreat() noexcept {
         started.abyss.danger, 1U).item_count;
     const auto& resolution = pending->next_state.last_abyss_resolution;
     ARPG_REQUIRE(resolution.valid);
+    ARPG_REQUIRE(resolution.lifecycle
+        == abyss::AbyssLifecycle::failed);
     ARPG_REQUIRE(resolution.room_seed == started.current_room.seed);
     ARPG_REQUIRE(resolution.rule == started.abyss.rule);
     ARPG_REQUIRE(resolution.total == total);
@@ -529,6 +538,18 @@ arpg::test::Failure abyss_death_retry_and_reload_preserve_exact_state() noexcept
     ARPG_REQUIRE(retry.death_snapshot->defense.damage_reduction
         == first.death_snapshot->defense.damage_reduction);
 
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> saved{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    ARPG_REQUIRE(saved != nullptr);
+    saved->state.item_ownership.items.reserve(
+        retry.next_state.item_ownership.items.size());
+    ARPG_REQUIRE(session.capture_save_checkpoint(
+        *saved, retry.expected_generation, &retry.next_state));
+    ARPG_REQUIRE(saved->state.death.lifecycle
+        == checkpoint::DeathLifecycle::pending_continue);
+    ARPG_REQUIRE(saved->room_progress.lifecycle
+        == checkpoint::RoomProgressLifecycle::death_pending);
+
     session.resolve_pending_save({SaveDisposition::committed,
         retry.expected_generation, retry.next_state,
         PendingSaveKind::death_retreat});
@@ -542,7 +563,22 @@ arpg::test::Failure abyss_death_retry_and_reload_preserve_exact_state() noexcept
     ARPG_REQUIRE(snapshot.abyss_unpicked_rewards == 0U);
     ARPG_REQUIRE(snapshot.pending_room_experience == 0U);
 
-    DungeonSession reloaded{DungeonRules{}, retry.next_state};
+    DungeonSession rejected{DungeonRules{}, saved->state};
+    const auto rejected_before = rejected.snapshot();
+    saved->room_progress.environment_blueprint_hash ^= 1U;
+    ARPG_REQUIRE(!rejected.restore_room_progress_checkpoint(*saved));
+    const auto rejected_after = rejected.snapshot();
+    ARPG_REQUIRE(rejected_after.phase == rejected_before.phase);
+    ARPG_REQUIRE(rejected_after.phase == RoomPhase::death_pending);
+    ARPG_REQUIRE(rejected_after.death.has_value());
+    ARPG_REQUIRE(!rejected_after.combat.has_value());
+    ARPG_REQUIRE(rejected_after.ground_item_count == 0U);
+    ARPG_REQUIRE(dungeon::same_run_state(
+        arpg::test::stable_state(rejected), saved->state));
+    saved->room_progress.environment_blueprint_hash ^= 1U;
+
+    DungeonSession reloaded{DungeonRules{}, saved->state};
+    ARPG_REQUIRE(reloaded.restore_room_progress_checkpoint(*saved));
     const auto restored = reloaded.snapshot();
     ARPG_REQUIRE(restored.phase == RoomPhase::death_pending);
     ARPG_REQUIRE(restored.death.has_value());

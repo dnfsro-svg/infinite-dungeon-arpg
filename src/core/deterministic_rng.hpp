@@ -8,6 +8,8 @@ namespace arpg::core {
 
 class DeterministicRng final {
 public:
+    using State = std::array<std::uint64_t, 4>;
+
     explicit DeterministicRng(std::uint64_t seed) noexcept;
 
     [[nodiscard]] std::uint64_t next_u64() noexcept;
@@ -19,8 +21,11 @@ public:
         std::uint64_t root_seed,
         std::uint64_t stream_id) noexcept;
 
+    [[nodiscard]] State export_state() const noexcept;
+    [[nodiscard]] bool import_state(const State& state) noexcept;
+
 private:
-    std::array<std::uint64_t, 4> state_{};
+    State state_{};
 };
 
 }  // namespace arpg::core

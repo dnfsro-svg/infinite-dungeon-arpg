@@ -1,6 +1,7 @@
 #include "items/item_catalog.hpp"
 
 #include <algorithm>
+#include <cstring>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -495,6 +496,89 @@ OwnershipValidationResult validate_ownership_detailed(
         const BaseDefinition* base = base_definition(equipped_item->base_id);
         if (base == nullptr || base->slot != static_cast<ItemSlot>(slot))
             return OwnershipValidationResult::invalid_state;
+    }
+    return OwnershipValidationResult::valid;
+}
+
+OwnershipValidationResult validate_ownership_with_scratch(
+    const ItemOwnershipState& state,
+    std::uint8_t* const scratch,
+    const std::size_t scratch_size) noexcept {
+    if (state.next_item_sequence == 0U || state.items.size() > 65535U
+            || (state.material_discovery_bits
+                & static_cast<std::uint16_t>(~kMaterialDiscoveryMask)) != 0U
+            || (state.material_claimed_drop_bits.back() & ~0xFFFFULL) != 0U) {
+        return OwnershipValidationResult::invalid_state;
+    }
+
+    std::size_t slot_count = state.items.empty() ? 0U : 1U;
+    while (slot_count < state.items.size() * 2U) slot_count <<= 1U;
+    const std::size_t required = slot_count * sizeof(std::uint64_t);
+    if (required > scratch_size || (required != 0U && scratch == nullptr)) {
+        return OwnershipValidationResult::allocation_failure;
+    }
+    if (required != 0U) {
+        std::memset(scratch, 0, required);
+    }
+    const auto load_slot = [scratch](const std::size_t index) noexcept {
+        std::uint64_t value{};
+        std::memcpy(&value, scratch + index * sizeof(value), sizeof(value));
+        return value;
+    };
+    const auto store_slot = [scratch](const std::size_t index,
+                                const std::uint64_t value) noexcept {
+        std::memcpy(scratch + index * sizeof(value), &value, sizeof(value));
+    };
+    for (const ItemInstance& item : state.items) {
+        if (item.id == 0U || !validate_item(item)) {
+            return OwnershipValidationResult::invalid_state;
+        }
+        std::uint64_t mixed = item.id;
+        mixed ^= mixed >> 33U;
+        mixed *= 0xff51afd7ed558ccdULL;
+        mixed ^= mixed >> 33U;
+        mixed *= 0xc4ceb9fe1a85ec53ULL;
+        mixed ^= mixed >> 33U;
+        std::size_t slot = static_cast<std::size_t>(mixed)
+            & (slot_count - 1U);
+        for (;;) {
+            const std::uint64_t existing = load_slot(slot);
+            if (existing == 0U) {
+                store_slot(slot, item.id);
+                break;
+            }
+            if (existing == item.id) {
+                return OwnershipValidationResult::invalid_state;
+            }
+            slot = (slot + 1U) & (slot_count - 1U);
+        }
+    }
+
+    for (std::size_t slot = 0U;
+            slot < state.equipment.equipped_ids.size(); ++slot) {
+        const std::uint64_t equipped_id =
+            state.equipment.equipped_ids[slot];
+        if (equipped_id == 0U) continue;
+        for (std::size_t prior = 0U; prior < slot; ++prior) {
+            if (state.equipment.equipped_ids[prior] == equipped_id) {
+                return OwnershipValidationResult::invalid_state;
+            }
+        }
+        const ItemInstance* equipped_item = nullptr;
+        for (const ItemInstance& item : state.items) {
+            if (item.id == equipped_id) {
+                equipped_item = &item;
+                break;
+            }
+        }
+        if (equipped_item == nullptr) {
+            return OwnershipValidationResult::invalid_state;
+        }
+        const BaseDefinition* const base =
+            base_definition(equipped_item->base_id);
+        if (base == nullptr || base->slot != static_cast<ItemSlot>(slot)) {
+            return OwnershipValidationResult::invalid_state;
+        }
     }
     return OwnershipValidationResult::valid;
 }

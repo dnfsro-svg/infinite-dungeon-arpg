@@ -1,5 +1,7 @@
 add_library(arpg_persistence STATIC
     checkpoint_codec.cpp
+    room_progress_codec.cpp
+    save_commit_worker.cpp
     save_paths.cpp
     save_slot.cpp
     save_transaction.cpp
@@ -12,4 +14,4 @@ if(MSVC)
     target_compile_options(arpg_persistence PUBLIC /EHsc)
 endif()
 arpg_enable_project_warnings(arpg_persistence)
-target_link_libraries(arpg_persistence PUBLIC arpg_progression arpg_passives arpg_skills PRIVATE arpg_items arpg_abyss arpg_core)
+target_link_libraries(arpg_persistence PUBLIC arpg_checkpoint)

@@ -1,5 +1,7 @@
 #include "combat/combat_world.hpp"
 
+#include "checkpoint/room_combat_checkpoint.hpp"
+
 #include "abyss/abyss_rules.hpp"
 #include "combat/attack_catalog.hpp"
 #include "combat/active_skill_runtime.hpp"
@@ -15,6 +17,8 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <memory>
+#include <new>
 
 namespace arpg::combat {
 
@@ -528,6 +532,35 @@ CombatWorld::CombatWorld(CombatEncounterConfig config) noexcept
     initialize_runtime();
 }
 
+CombatWorld::CombatWorld(
+    CombatEncounterConfig config,
+    std::unique_ptr<RoomMonsterField> monster_field,
+    const RoomObstaclePlanView obstacle_plan) noexcept
+    : encounter_config_(config), legacy_mode_(false),
+      room_monster_field_(std::move(monster_field)) {
+    DerivedPlayerBuild derived{};
+    if (!derive_player_build(encounter_config_.player_build, derived)) {
+        encounter_config_.player_build = PlayerCombatBuild{};
+    }
+    if (room_monster_field_ != nullptr) {
+        if (room_monster_field_->apply_abyss_config_for_construction(
+                encounter_config_.abyss) != RoomMonsterFieldFault::none) {
+            fault_ = CombatFault::invalid_monster_plan;
+        }
+    }
+    room_obstacles_.reset(new (std::nothrow) RoomObstacleRuntime{});
+    if (room_obstacles_ == nullptr
+        || !room_obstacles_->initialize(obstacle_plan)) {
+        room_obstacles_.reset();
+        fault_ = CombatFault::invalid_obstacle_plan;
+    }
+    initialize_runtime();
+    if (room_monster_field_ == nullptr
+        && fault_ == CombatFault::none) {
+        fault_ = CombatFault::invalid_monster_plan;
+    }
+}
+
 bool CombatWorld::queue_action(Action action) noexcept {
     return player_.hp > 0 && input_buffer_.push(action);
 }
@@ -564,7 +597,7 @@ SkillCastResult CombatWorld::request_active_skill(
     active_skill_.locked_facing = player_.facing;
     active_skill_.cooldowns[index] = skill == skills::ActiveSkillId::draw_slash
         ? skills::kDrawSlashCooldownTicks : skills::kStormSwordsCooldownTicks;
-    active_skill_.hit_latch.fill(false);
+    active_skill_.hit_latch.clear();
     apply_active_skill_events_at(0U);
     player_.velocity.x = 0.0F;
     player_.velocity.y = 0.0F;
@@ -608,6 +641,14 @@ void CombatWorld::tick(MovementInput movement) noexcept {
         }
     }
 
+    if (room_monster_field_ != nullptr
+        && !room_monster_field_->synchronize_active_region(
+            make_room_streaming_region(player_.position))) {
+        fault_ = CombatFault::monster_residency_capacity;
+        ++tick_;
+        return;
+    }
+
     if (player_.invulnerability_ticks != 0) {
         --player_.invulnerability_ticks;
     }
@@ -633,6 +674,10 @@ void CombatWorld::tick(MovementInput movement) noexcept {
         tick_monster_affix_resources(monster);
         tick_active_affixes(index, monster);
         if (monster.affix_warning == MonsterAffixWarning::blink) {
+            if (room_monster_field_ != nullptr) {
+                static_cast<void>(room_monster_field_->clamp_to_home_leash(
+                    monster.monster_ordinal, monster.position));
+            }
             resolve_fire_brazier_overlap(monster, previous_position);
             continue;
         }
@@ -649,6 +694,10 @@ void CombatWorld::tick(MovementInput movement) noexcept {
                 ++tick_;
                 return;
             }
+        }
+        if (room_monster_field_ != nullptr) {
+            static_cast<void>(room_monster_field_->clamp_to_home_leash(
+                monster.monster_ordinal, monster.position));
         }
         resolve_fire_brazier_overlap(monster, previous_position);
     }
@@ -679,18 +728,23 @@ void CombatWorld::tick(MovementInput movement) noexcept {
 
 void CombatWorld::resolve_fire_brazier_overlap(
     MonsterRuntime& monster, Vec3 previous_position) noexcept {
-    if (encounter_config_.fire_room_obstacles) {
+    if (room_obstacles_ != nullptr) {
+        monster.position = room_obstacles_->route_monster(
+            previous_position, monster.position);
+    } else if (encounter_config_.fire_room_obstacles) {
         monster.position = fire_room_obstacle::route_monster(
             previous_position, monster.position, player_.position);
     }
 }
 
 void CombatWorld::move_player_to(Vec3 candidate) noexcept {
-    if (!encounter_config_.fire_room_obstacles
-            || !fire_room_obstacle::blocks_player(
-                player_.position, candidate)) {
-        player_.position = candidate;
+    if (room_obstacles_ != nullptr
+        && room_obstacles_->blocks_player(player_.position, candidate)) return;
+    if (room_obstacles_ == nullptr && encounter_config_.fire_room_obstacles
+        && fire_room_obstacle::blocks_player(player_.position, candidate)) {
+        return;
     }
+    player_.position = candidate;
 }
 
 void CombatWorld::reset() noexcept {
@@ -740,6 +794,20 @@ void CombatWorld::restore_player_resources(int hp, int barrier) noexcept {
         : player_.barrier + restored_barrier;
 }
 
+int CombatWorld::restore_player_health_percent(
+    std::uint16_t maximum_health_basis_points) noexcept {
+    if (maximum_health_basis_points == 0U || player_.max_hp <= 0
+            || player_defeated()) {
+        return 0;
+    }
+    const int requested = scale_basis_points(player_.max_hp,
+        maximum_health_basis_points, BasisPointRounding::ceil);
+    const int missing = (std::max)(0, player_.max_hp - player_.hp);
+    const int actual = (std::min)(requested, missing);
+    player_.hp += actual;
+    return actual;
+}
+
 void CombatWorld::clear_abyss_rule_preserving_resources() noexcept {
     DerivedPlayerBuild derived{};
     if (!derive_player_build(encounter_config_.player_build, derived)) return;
@@ -749,6 +817,7 @@ void CombatWorld::clear_abyss_rule_preserving_resources() noexcept {
     const bool alive = old_hp > 0;
     remove_environment_hazards();
     abyss_environment_ = AbyssEnvironmentRuntime{};
+    abyss_environment_.expansion_stage = 0xFFU;
     encounter_config_.abyss = {};
     player_.max_hp = derived.max_hp;
     player_.max_barrier = derived.max_barrier;
@@ -765,20 +834,37 @@ void CombatWorld::clear_abyss_rule_preserving_resources() noexcept {
 }
 
 void CombatWorld::initialize_runtime() noexcept {
+    defeat_ledger_.clear();
     evasion_rng_ = core::DeterministicRng{encounter_config_.evasion_seed};
     player_damage_history_ = PlayerDamageHistory{};
     death_snapshot_.reset();
     initialize_player();
-    monsters_.clear();
-    for (auto& owner : effect_owners_) owner = {};
+    if (room_monster_field_ != nullptr) {
+        room_monster_field_->rebind_active_pool(monsters_);
+    } else {
+        monsters_.clear();
+    }
     projectiles_.clear();
     hazards_.clear();
     abyss_environment_ = AbyssEnvironmentRuntime{};
-    fire_crates_ = {{
-        {{-3.20F, 0.0F, 0.0F}, 0U, true},
-        {{3.20F, 0.0F, 0.0F}, 0U, true},
-    }};
-    if (legacy_mode_) {
+    fire_crates_ = {};
+    if (room_obstacles_ == nullptr
+            && encounter_config_.fire_room_obstacles) {
+        fire_crates_ = {{
+            {{-3.20F, 0.0F, 0.0F}, 0U, true},
+            {{3.20F, 0.0F, 0.0F}, 0U, true},
+        }};
+    }
+    if (room_monster_field_ != nullptr) {
+        if (!room_monster_field_->synchronize_active_region(
+                make_room_streaming_region(player_.position))
+                && fault_ == CombatFault::none) {
+            fault_ = room_monster_field_->fault()
+                    == RoomMonsterFieldFault::monster_residency_capacity
+                ? CombatFault::monster_residency_capacity
+                : CombatFault::invalid_monster_plan;
+        }
+    } else if (legacy_mode_) {
         initialize_legacy_monsters();
     } else {
         static_cast<void>(load_wave(
@@ -806,7 +892,8 @@ void CombatWorld::initialize_runtime() noexcept {
 void CombatWorld::initialize_player() noexcept {
     player_ = PlayerRuntime{};
     player_.position = encounter_config_.player_spawn;
-    if (encounter_config_.fire_room_obstacles) {
+    if (room_obstacles_ == nullptr
+            && encounter_config_.fire_room_obstacles) {
         player_.position = fire_room_obstacle::eject(player_.position);
     }
     player_.facing = encounter_config_.initial_facing;
@@ -863,23 +950,36 @@ void CombatWorld::initialize_legacy_monsters() noexcept {
 bool CombatWorld::load_wave(
     const EncounterWave& wave,
     bool reset_player_health) noexcept {
+    if (room_monster_field_ != nullptr) return false;
     if (wave.spawn_count > kEncounterSpawnCapacity) {
         return false;
     }
 
+    std::array<MonsterSpawnSpec, kEncounterSpawnCapacity> normalized{};
+    std::array<bool, limits::kRoomMonsterCapacity> ordinal_used{};
     for (std::size_t index = 0; index < wave.spawn_count; ++index) {
         if (monster_definition(wave.spawns[index].id) == nullptr) {
             return false;
         }
+        normalized[index] = wave.spawns[index];
+        MonsterOrdinal ordinal = normalized[index].spawn_ordinal;
+        if (ordinal >= ordinal_used.size() || ordinal_used[ordinal]) {
+            ordinal = 0U;
+            while (ordinal < ordinal_used.size() && ordinal_used[ordinal]) {
+                ++ordinal;
+            }
+            if (ordinal >= ordinal_used.size()) return false;
+            normalized[index].spawn_ordinal = ordinal;
+        }
+        ordinal_used[normalized[index].spawn_ordinal] = true;
     }
 
     monsters_.clear();
-    for (auto& owner : effect_owners_) owner = {};
     projectiles_.clear();
     remove_monster_hazards();
     for (std::size_t index = 0; index < wave.spawn_count; ++index) {
         const auto handle = monsters_.spawn(
-            wave.spawns[index], encounter_config_.abyss);
+            normalized[index], encounter_config_.abyss);
         if (!handle.has_value()) {
             monsters_.clear();
             return false;
@@ -933,6 +1033,9 @@ Vec3 CombatWorld::player_position() const noexcept {
 }
 
 std::size_t CombatWorld::living_monster_count() const noexcept {
+    if (room_monster_field_ != nullptr) {
+        return room_monster_field_->living_count();
+    }
     std::size_t count = 0U;
     for (const MonsterRuntime& monster : monsters_.slots()) {
         if (monster.active && monster.hp > 0) ++count;
@@ -945,22 +1048,141 @@ std::size_t CombatWorld::active_projectile_count() const noexcept {
 }
 
 bool CombatWorld::destroy_monster(MonsterHandle handle) noexcept {
+    if (room_monster_field_ != nullptr) return false;
+    const MonsterRuntime* const runtime = monsters_.get(handle);
+    if (runtime == nullptr) return false;
+    const MonsterOrdinal ordinal = runtime->monster_ordinal;
     if (!monsters_.destroy(handle)) {
         return false;
     }
-    remove_owned_projectiles(handle);
-    remove_owned_hazards(handle);
-    if (handle.index < attack_.hit_targets.size()) {
-        attack_.hit_targets[handle.index] = false;
+    remove_owned_projectiles(ordinal);
+    remove_owned_hazards(ordinal);
+    return true;
+}
+
+void CombatWorld::clear_buffered_input() noexcept {
+    input_buffer_.clear();
+}
+
+bool CombatWorld::capture_room_checkpoint_post_mutation(
+    checkpoint::RoomCombatCheckpoint& out,
+    const PlayerCombatBuild* const player_build,
+    const std::uint8_t health_potion_count,
+    const std::uint16_t health_potion_restore_bp,
+    const bool clear_abyss_rule) const noexcept {
+    if (!capture_room_checkpoint(out)) return false;
+
+    DerivedPlayerBuild derived{};
+    if (player_build != nullptr) {
+        if (!derive_player_build(*player_build, derived)) return false;
+        out.player.max_hp = scale_basis_points(derived.max_hp,
+            encounter_config_.abyss.player_max_health_bp,
+            BasisPointRounding::ceil);
+        out.player.max_barrier = derived.max_barrier;
+        out.player.damage_reduction = derived.damage_reduction;
+        out.player.damage_reduction_cap = derived.damage_reduction_cap;
+        out.player.armor = derived.armor;
+        out.player.evasion = derived.evasion;
+        out.player.armor_reduction_bp = derived.armor_reduction_bp;
+        out.player.evasion_rate_bp = derived.evasion_rate_bp;
+        out.player.hp = std::clamp(out.player.hp, 0, out.player.max_hp);
+        out.player.barrier = std::clamp(
+            out.player.barrier, 0, out.player.max_barrier);
     }
-    if (handle.index < active_skill_.hit_latch.size()) {
-        active_skill_.hit_latch[handle.index] = false;
+
+    if (clear_abyss_rule) {
+        if (!derive_player_build(encounter_config_.player_build, derived)) {
+            return false;
+        }
+        const std::int32_t old_max_hp = out.player.max_hp;
+        const std::int32_t old_hp = out.player.hp;
+        out.abyss_environment = checkpoint::AbyssEnvironmentRuntime{};
+        out.abyss_environment.expansion_stage = 0xFFU;
+        out.player.max_hp = derived.max_hp;
+        out.player.max_barrier = derived.max_barrier;
+        out.player.damage_reduction = derived.damage_reduction;
+        out.player.damage_reduction_cap = derived.damage_reduction_cap;
+        out.player.armor = derived.armor;
+        out.player.evasion = derived.evasion;
+        out.player.armor_reduction_bp = derived.armor_reduction_bp;
+        out.player.evasion_rate_bp = derived.evasion_rate_bp;
+        out.player.hp = abyss::map_resource_ratio(old_hp, old_max_hp,
+            out.player.max_hp, old_hp > 0).value_or(
+                std::clamp(old_hp, 0, out.player.max_hp));
+        out.player.barrier = std::clamp(
+            out.player.barrier, 0, out.player.max_barrier);
+    }
+
+    for (std::uint8_t index = 0U; index < health_potion_count; ++index) {
+        if (health_potion_restore_bp == 0U || out.player.max_hp <= 0
+                || out.player.hp <= 0) break;
+        const std::int32_t requested = scale_basis_points(out.player.max_hp,
+            health_potion_restore_bp, BasisPointRounding::ceil);
+        out.player.hp += (std::min)(requested,
+            (std::max)(0, out.player.max_hp - out.player.hp));
     }
     return true;
 }
 
 std::optional<CombatEvent> CombatWorld::try_pop_event() noexcept {
     return events_.try_pop();
+}
+
+std::optional<CombatDefeatRecord>
+CombatWorld::try_pop_defeat_record() noexcept {
+    return defeat_ledger_.try_pop();
+}
+
+CombatFault CombatWorld::fault() const noexcept { return fault_; }
+
+RoomMonsterField* CombatWorld::room_monster_field() noexcept {
+    return room_monster_field_.get();
+}
+
+const RoomMonsterField* CombatWorld::room_monster_field() const noexcept {
+    return room_monster_field_.get();
+}
+
+const RoomObstacleRuntime* CombatWorld::room_obstacles() const noexcept {
+    return room_obstacles_.get();
+}
+
+MonsterRuntime* CombatWorld::active_monster_by_ordinal(
+    const MonsterOrdinal ordinal) noexcept {
+    if (room_monster_field_ != nullptr) {
+        return room_monster_field_->active_runtime(ordinal);
+    }
+    for (MonsterRuntime& runtime : monsters_.slots_) {
+        if (runtime.active && runtime.monster_ordinal == ordinal) {
+            return &runtime;
+        }
+    }
+    return nullptr;
+}
+
+const MonsterRuntime* CombatWorld::active_monster_by_ordinal(
+    const MonsterOrdinal ordinal) const noexcept {
+    if (room_monster_field_ != nullptr) {
+        return room_monster_field_->active_runtime(ordinal);
+    }
+    for (const MonsterRuntime& runtime : monsters_.slots()) {
+        if (runtime.active && runtime.monster_ordinal == ordinal) {
+            return &runtime;
+        }
+    }
+    return nullptr;
+}
+
+bool CombatWorld::monster_ordinal_alive(
+    const MonsterOrdinal ordinal) const noexcept {
+    if (const MonsterRuntime* runtime = active_monster_by_ordinal(ordinal)) {
+        return runtime->hp > 0
+            && runtime->reaction != ReactionState::defeated;
+    }
+    if (room_monster_field_ == nullptr) return false;
+    const MonsterPersistentState* state =
+        room_monster_field_->persistent_state(ordinal);
+    return state != nullptr && !state->defeated && state->hp > 0;
 }
 
 bool CombatWorld::player_defeated() const noexcept {
@@ -1033,6 +1255,7 @@ bool CombatWorld::apply_player_damage(
     const std::uint64_t health_loss = actual_total - barrier_loss;
     player_.barrier -= static_cast<int>(barrier_loss);
     player_.hp -= static_cast<int>(health_loss);
+    player_damage_history_.begin_tick(tick_);
     player_damage_history_.record(actual);
     if (player_.hp == 0) {
         attack_ = AttackRuntime{};
@@ -1114,12 +1337,19 @@ void CombatWorld::defeat_monster(
     MonsterRuntime& monster = monsters_.slots_[slot];
     if (!monster.active || monster.reaction == ReactionState::defeated) return;
 
-    const MonsterHandle owner{static_cast<std::uint16_t>(slot),
-                              monster.generation};
+    const MonsterOrdinal owner = monster.monster_ordinal;
     const DefeatPayload payload{
         monster.id, monster.spawn_ordinal,
         monster_affix_danger_score(monster.affixes), reward_eligible};
     const Vec3 position = monster.position;
+
+    if (room_monster_field_ != nullptr) {
+        static_cast<void>(room_monster_field_->mark_defeated(owner));
+    }
+    if (!defeat_ledger_.append({owner, payload.monster_id,
+            payload.affix_score, payload.reward_eligible})) {
+        fault_ = CombatFault::defeat_ledger_overflow;
+    }
 
     if (const MonsterAffixTierValues* death = affix_values(
             monster.affixes, MonsterAffixId::death_blast)) {
@@ -1134,7 +1364,7 @@ void CombatWorld::defeat_monster(
             CombatEvent warning{};
             warning.kind = CombatEventKind::affix_death_warning;
             warning.tick = tick_;
-            warning.target_index = static_cast<std::uint8_t>(slot);
+            warning.target_ordinal = owner;
             warning.position = position;
             warning.monster_id = payload.monster_id;
             warning.spawn_ordinal = payload.spawn_ordinal;
@@ -1156,7 +1386,7 @@ void CombatWorld::defeat_monster(
     defeated.kind = CombatEventKind::defeated;
     defeated.tick = tick_;
     defeated.attack = attack;
-    defeated.target_index = static_cast<std::uint8_t>(slot);
+    defeated.target_ordinal = owner;
     if (const AttackDefinition* definition = find_attack_definition(attack)) {
         defeated.feedback = definition->feedback;
     }
@@ -1188,7 +1418,33 @@ bool CombatWorld::apply_monster_direct_hit(
     if (!monster.active || monster.hp <= 0
         || monster.reaction == ReactionState::defeated) return false;
 
-    const DirectHitAffixValues values = direct_hit_affix_values(monster.affixes);
+    return apply_monster_ordinal_hit(monster.monster_ordinal, packet,
+        source_position, feedback, trigger_chain, source_kind);
+}
+
+bool CombatWorld::apply_monster_ordinal_hit(
+    const MonsterOrdinal ordinal,
+    DamagePacket packet,
+    const Vec3 source_position,
+    const FeedbackLevel feedback,
+    const bool trigger_chain,
+    const PlayerDamageSourceKind source_kind) noexcept {
+    MonsterId monster_id = MonsterId::count;
+    MonsterAffixSet affixes{};
+    if (const MonsterRuntime* runtime = active_monster_by_ordinal(ordinal)) {
+        monster_id = runtime->id;
+        affixes = runtime->affixes;
+    } else if (room_monster_field_ != nullptr) {
+        const MonsterPersistentState* state =
+            room_monster_field_->persistent_state(ordinal);
+        if (state != nullptr && !state->defeated && state->hp > 0) {
+            monster_id = state->id;
+            affixes = state->affixes;
+        }
+    }
+    if (monster_id == MonsterId::count) return false;
+
+    const DirectHitAffixValues values = direct_hit_affix_values(affixes);
     const int raw_total = positive_packet_total(packet);
     const int added_water = ceil_basis_points(raw_total, values.added_water_bp);
     const std::size_t water = modifiers::damage_index(modifiers::DamageType::water);
@@ -1201,7 +1457,7 @@ bool CombatWorld::apply_monster_direct_hit(
         packet, encounter_config_.abyss.monster_damage_bp);
 
     if (!apply_player_damage(packet, DamageDelivery::direct,
-                             PlayerDamageSource{source_kind, monster.id, 0U},
+                             PlayerDamageSource{source_kind, monster_id, 0U},
                              source_position, feedback)) {
         return false;
     }
@@ -1224,7 +1480,7 @@ bool CombatWorld::apply_monster_direct_hit(
         player_.status.corrosion_ticks = values.corrosion_ticks;
         player_.status.corrosion_tick_phase = 0U;
         player_.status.corrosion_source = PlayerDamageSource{
-            PlayerDamageSourceKind::monster_affix, monster.id,
+            PlayerDamageSourceKind::monster_affix, monster_id,
             static_cast<std::uint16_t>(MonsterAffixId::chaos_corrosion)};
     } else if (corrosion_damage
                    == player_.status.corrosion_damage_per_second
@@ -1232,16 +1488,15 @@ bool CombatWorld::apply_monster_direct_hit(
         player_.status.corrosion_ticks = values.corrosion_ticks;
         player_.status.corrosion_tick_phase = 0U;
         player_.status.corrosion_source = PlayerDamageSource{
-            PlayerDamageSourceKind::monster_affix, monster.id,
+            PlayerDamageSourceKind::monster_affix, monster_id,
             static_cast<std::uint16_t>(MonsterAffixId::chaos_corrosion)};
     } else if (corrosion_damage > 0) {
         player_.status.corrosion_ticks = std::max(player_.status.corrosion_ticks,
                                                    values.corrosion_ticks);
     }
     if (trigger_chain) {
-        static_cast<void>(trigger_chain_lightning(MonsterHandle{
-            static_cast<std::uint16_t>(slot), monster.generation},
-            monster.affixes, source_position));
+        static_cast<void>(trigger_chain_lightning(
+            ordinal, affixes, source_position));
     }
     return true;
 }
@@ -1273,7 +1528,7 @@ void CombatWorld::tick_player_status() noexcept {
 }
 
 bool CombatWorld::spawn_projectile(
-    MonsterHandle owner,
+    MonsterOrdinal owner_ordinal,
     Vec3 position,
     Vec3 velocity,
     std::uint16_t lifetime_ticks,
@@ -1281,12 +1536,12 @@ bool CombatWorld::spawn_projectile(
     float radius,
     bool trigger_chain_on_end,
     MonsterAffixSet owner_affixes) noexcept {
-    if (monsters_.get(owner) == nullptr) {
+    if (!monster_ordinal_alive(owner_ordinal)) {
         saturating_increment(projectile_invalid_owner_count_);
         return false;
     }
     if (!projectiles_.spawn(
-            owner, position, velocity, lifetime_ticks, damage, radius,
+            owner_ordinal, position, velocity, lifetime_ticks, damage, radius,
             trigger_chain_on_end, owner_affixes)
              .has_value()) {
         saturating_increment(projectile_saturation_count_);
@@ -1296,7 +1551,7 @@ bool CombatWorld::spawn_projectile(
 }
 
 bool CombatWorld::spawn_projectile(
-    MonsterHandle owner,
+    MonsterOrdinal owner_ordinal,
     Vec3 position,
     Vec3 velocity,
     std::uint16_t lifetime_ticks,
@@ -1304,12 +1559,13 @@ bool CombatWorld::spawn_projectile(
     float radius,
     bool trigger_chain_on_end,
     MonsterAffixSet owner_affixes) noexcept {
-    return spawn_projectile(owner, position, velocity, lifetime_ticks,
+    return spawn_projectile(owner_ordinal, position, velocity, lifetime_ticks,
                             DamagePacket{damage}, radius, trigger_chain_on_end,
                             owner_affixes);
 }
 
-void CombatWorld::remove_owned_projectiles(MonsterHandle owner) noexcept {
+void CombatWorld::remove_owned_projectiles(
+    const MonsterOrdinal owner_ordinal) noexcept {
     for (std::size_t index = 0; index < kProjectileCapacity; ++index) {
         const ProjectileRuntime* projectile = projectiles_.get(ProjectileHandle{
             static_cast<std::uint16_t>(index),
@@ -1317,8 +1573,7 @@ void CombatWorld::remove_owned_projectiles(MonsterHandle owner) noexcept {
         if (projectile == nullptr) {
             continue;
         }
-        if (projectile->owner.index != owner.index
-            || projectile->owner.generation != owner.generation) {
+        if (projectile->owner_ordinal != owner_ordinal) {
             continue;
         }
         static_cast<void>(projectiles_.destroy(ProjectileHandle{
@@ -1327,7 +1582,7 @@ void CombatWorld::remove_owned_projectiles(MonsterHandle owner) noexcept {
 }
 
 bool CombatWorld::spawn_hazard(
-    MonsterHandle owner,
+    MonsterOrdinal owner_ordinal,
     HazardKind kind,
     Vec3 center,
     float radius,
@@ -1336,11 +1591,20 @@ bool CombatWorld::spawn_hazard(
     std::uint16_t damage_interval_ticks,
     DamagePacket damage,
     bool persists_after_owner_death) noexcept {
-    if (monsters_.get(owner) == nullptr) {
+    bool owner_valid = monster_ordinal_alive(owner_ordinal);
+    if (!owner_valid && persists_after_owner_death) {
+        owner_valid = active_monster_by_ordinal(owner_ordinal) != nullptr;
+        if (!owner_valid && room_monster_field_ != nullptr) {
+            owner_valid = room_monster_field_->persistent_state(
+                owner_ordinal) != nullptr;
+        }
+    }
+    if (!owner_valid) {
         saturating_increment(hazard_invalid_owner_count_);
         return false;
     }
-    if (!hazards_.spawn(owner, kind, center, radius, telegraph_ticks, active_ticks,
+    if (!hazards_.spawn(owner_ordinal, kind, center, radius,
+                        telegraph_ticks, active_ticks,
                         damage_interval_ticks, damage,
                         persists_after_owner_death).has_value()) {
         saturating_increment(hazard_saturation_count_);
@@ -1350,7 +1614,7 @@ bool CombatWorld::spawn_hazard(
 }
 
 bool CombatWorld::spawn_hazard(
-    MonsterHandle owner,
+    MonsterOrdinal owner_ordinal,
     HazardKind kind,
     Vec3 center,
     float radius,
@@ -1359,13 +1623,16 @@ bool CombatWorld::spawn_hazard(
     std::uint16_t damage_interval_ticks,
     int damage,
     bool persists_after_owner_death) noexcept {
-    return spawn_hazard(owner, kind, center, radius, telegraph_ticks, active_ticks,
+    return spawn_hazard(owner_ordinal, kind, center, radius,
+                        telegraph_ticks, active_ticks,
                         damage_interval_ticks, DamagePacket{damage},
                         persists_after_owner_death);
 }
 
 bool CombatWorld::trigger_chain_lightning(
-    MonsterHandle owner, MonsterAffixSet affixes, Vec3 center) noexcept {
+    MonsterOrdinal owner_ordinal,
+    MonsterAffixSet affixes,
+    Vec3 center) noexcept {
     const MonsterAffixTierValues* values = affix_values(
         affixes, MonsterAffixId::chain_lightning);
     if (values == nullptr) return false;
@@ -1374,7 +1641,7 @@ bool CombatWorld::trigger_chain_lightning(
         values->damage;
     damage = scale_monster_outgoing_damage(
         damage, encounter_config_.abyss.monster_damage_bp);
-    if (!spawn_hazard(owner, HazardKind::chain_lightning, center,
+    if (!spawn_hazard(owner_ordinal, HazardKind::chain_lightning, center,
                       values->radius,
                       static_cast<std::uint16_t>(values->interval_ticks + 1U),
                       1U, 1U,
@@ -1384,6 +1651,7 @@ bool CombatWorld::trigger_chain_lightning(
     CombatEvent warning{};
     warning.kind = CombatEventKind::affix_chain_warning;
     warning.tick = tick_;
+    warning.target_ordinal = owner_ordinal;
     warning.position = center;
     emit_event(warning);
     return true;
@@ -1391,8 +1659,8 @@ bool CombatWorld::trigger_chain_lightning(
 
 void CombatWorld::tick_active_affixes(
     std::size_t slot, MonsterRuntime& monster) noexcept {
-    const MonsterHandle owner{static_cast<std::uint16_t>(slot),
-                              monster.generation};
+    static_cast<void>(slot);
+    const MonsterOrdinal owner = monster.monster_ordinal;
     if (const MonsterAffixTierValues* burning = affix_values(
             monster.affixes, MonsterAffixId::burning_ground)) {
         if (monster.burning_ground_ticks < burning->interval_ticks) {
@@ -1452,18 +1720,18 @@ void CombatWorld::tick_active_affixes(
     CombatEvent warning{};
     warning.kind = CombatEventKind::affix_blink_warning;
     warning.tick = tick_;
-    warning.target_index = static_cast<std::uint8_t>(slot);
+    warning.target_ordinal = monster.monster_ordinal;
     warning.position = monster.position;
     emit_event(warning);
 }
 
-void CombatWorld::remove_owned_hazards(MonsterHandle owner) noexcept {
+void CombatWorld::remove_owned_hazards(
+    const MonsterOrdinal owner_ordinal) noexcept {
     for (std::size_t index = 0; index < kHazardCapacity; ++index) {
         const HazardRuntime& hazard = hazards_.slots()[index];
         if (!hazard.active || hazard.source != HazardSource::monster
             || hazard.kind == HazardKind::death_blast
-            || hazard.owner.index != owner.index
-            || hazard.owner.generation != owner.generation) {
+            || hazard.owner_ordinal != owner_ordinal) {
             continue;
         }
         static_cast<void>(hazards_.destroy(HazardHandle{
@@ -1484,10 +1752,8 @@ void CombatWorld::simulate_projectiles() noexcept {
             continue;
         }
         ProjectileRuntime& projectile = *active;
-        const MonsterHandle owner = projectile.owner;
-        const MonsterRuntime* owner_runtime = monsters_.get(owner);
-        if (owner_runtime == nullptr || owner_runtime->hp <= 0
-            || owner_runtime->reaction == ReactionState::defeated) {
+        const MonsterOrdinal owner = projectile.owner_ordinal;
+        if (!monster_ordinal_alive(owner)) {
             static_cast<void>(projectiles_.destroy(ProjectileHandle{
                 static_cast<std::uint16_t>(index), projectile.generation}));
             continue;
@@ -1514,10 +1780,10 @@ void CombatWorld::simulate_projectiles() noexcept {
                           || projectile.position.y > room_bounds::max_y;
         const bool expired = projectile.lifetime_ticks == 0;
         if (hit_player) {
-            apply_monster_direct_hit(
-                static_cast<std::size_t>(owner.index), projectile.damage,
-                projectile.position, FeedbackLevel::medium, false,
-                PlayerDamageSourceKind::projectile);
+            static_cast<void>(apply_monster_ordinal_hit(owner,
+                projectile.damage, projectile.position,
+                FeedbackLevel::medium, false,
+                PlayerDamageSourceKind::projectile));
             if (death_snapshot_.has_value()) return;
         }
         if (hit_player || outside || expired) {
@@ -1542,12 +1808,21 @@ void CombatWorld::simulate_hazards() noexcept {
             continue;
         }
         HazardRuntime& hazard = *active;
-        const MonsterRuntime* owner = hazard.source == HazardSource::monster
-            ? monsters_.get(hazard.owner) : nullptr;
+        MonsterId owner_id = MonsterId::count;
+        if (hazard.source == HazardSource::monster) {
+            if (const MonsterRuntime* owner_runtime =
+                    active_monster_by_ordinal(hazard.owner_ordinal)) {
+                owner_id = owner_runtime->id;
+            } else if (room_monster_field_ != nullptr) {
+                const MonsterPersistentState* owner_state =
+                    room_monster_field_->persistent_state(
+                        hazard.owner_ordinal);
+                if (owner_state != nullptr) owner_id = owner_state->id;
+            }
+        }
         if (hazard.source == HazardSource::monster
-            && (!hazard.persists_after_owner_death &&
-             (owner == nullptr || owner->hp <= 0
-              || owner->reaction == ReactionState::defeated))) {
+            && !hazard.persists_after_owner_death
+            && !monster_ordinal_alive(hazard.owner_ordinal)) {
             static_cast<void>(hazards_.destroy(HazardHandle{
                 static_cast<std::uint16_t>(index), hazard.generation}));
             continue;
@@ -1594,8 +1869,8 @@ void CombatWorld::simulate_hazards() noexcept {
                         PlayerDamageSourceKind::abyss_environment;
                     damage_source.detail_id = static_cast<std::uint16_t>(
                         abyss_environment_.rule);
-                } else if (owner != nullptr) {
-                    damage_source.monster = owner->id;
+                } else if (owner_id != MonsterId::count) {
+                    damage_source.monster = owner_id;
                     switch (hazard.kind) {
                     case HazardKind::burning:
                         damage_source.kind =

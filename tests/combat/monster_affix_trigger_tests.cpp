@@ -3,6 +3,7 @@
 #include "combat_test_support.hpp"
 
 #include "combat/combat_world.hpp"
+#include "combat/room_bounds.hpp"
 
 #include <array>
 #include <cstddef>
@@ -88,8 +89,7 @@ bool same_packet(const DamagePacket& left, const DamagePacket& right) noexcept {
 bool same_projectile(
     const ProjectileSnapshot& left, const ProjectileSnapshot& right) noexcept {
     return left.active == right.active && left.generation == right.generation
-        && left.owner.index == right.owner.index
-        && left.owner.generation == right.owner.generation
+        && left.owner_ordinal == right.owner_ordinal
         && same_vec(left.position, right.position)
         && same_vec(left.velocity, right.velocity)
         && left.lifetime_ticks == right.lifetime_ticks
@@ -100,8 +100,7 @@ bool same_projectile(
 bool same_hazard(
     const HazardSnapshot& left, const HazardSnapshot& right) noexcept {
     return left.active == right.active && left.generation == right.generation
-        && left.owner.index == right.owner.index
-        && left.owner.generation == right.owner.generation
+        && left.owner_ordinal == right.owner_ordinal
         && left.source == right.source
         && left.kind == right.kind && same_vec(left.center, right.center)
         && left.radius == right.radius
@@ -155,9 +154,9 @@ arpg::test::Failure multishot_spawns_four_fanned_projectiles() noexcept {
     const CombatSnapshot snapshot = world.snapshot();
     ARPG_REQUIRE(snapshot.projectile_count == 4U);
     ARPG_REQUIRE(snapshot.projectiles[0].damage.amount[
-        arpg::modifiers::damage_index(arpg::modifiers::DamageType::lightning)] == 20);
+        arpg::modifiers::damage_index(arpg::modifiers::DamageType::lightning)] == 6);
     ARPG_REQUIRE(snapshot.projectiles[1].damage.amount[
-        arpg::modifiers::damage_index(arpg::modifiers::DamageType::lightning)] == 20);
+        arpg::modifiers::damage_index(arpg::modifiers::DamageType::lightning)] == 6);
     ARPG_REQUIRE(snapshot.projectiles[0].velocity.y
                  != snapshot.projectiles[1].velocity.y);
     return {};
@@ -199,7 +198,8 @@ arpg::test::Failure chain_projectile_end_paths_warn_once_without_recursion() noe
     };
     constexpr std::array<EndCase, 3> kEndCases{{
         {{0.0F, 0.0F, 0.0F}, {}, 30U},       // hit player
-        {{12.1F, 0.0F, 0.0F}, {}, 30U},      // leave room bounds
+        {{room_bounds::max_x + 0.1F, 0.0F, 0.0F}, {}, 30U},
+                                                   // leave room bounds
         {{8.0F, 0.0F, 0.0F}, {}, 1U},        // expire
     }};
 
@@ -377,7 +377,7 @@ arpg::test::Failure death_blast_cleans_owner_transients_and_persists() noexcept 
     while (const auto event = world.try_pop_event()) {
         if (event->kind == CombatEventKind::affix_death_warning) {
             ++death_warning_count;
-            ARPG_REQUIRE(event->target_index == 0U);
+            ARPG_REQUIRE(event->target_ordinal == 0U);
         }
         if (event->kind == CombatEventKind::defeated) {
             ++defeat_count;
@@ -467,12 +467,14 @@ arpg::test::Failure full_hazard_pool_cleans_owner_when_death_blast_creation_fail
 arpg::test::Failure blink_assault_warns_then_clamps_and_empowers() noexcept {
     CombatWorld world{affixed_encounter(
         MonsterId::chaos_chaser, MonsterAffixId::blink_assault,
-        MonsterAffixTier::m3, Vec3{11.9F, 0.0F, 0.0F})};
+        MonsterAffixTier::m3,
+        Vec3{room_bounds::max_x - 0.1F, 0.0F, 0.0F})};
     arpg::test::tick_n(world, 240);
     const CombatSnapshot warning = world.snapshot();
     ARPG_REQUIRE(warning.monsters[0].affix_warning == MonsterAffixWarning::blink);
     arpg::test::tick_n(world, 30);
-    ARPG_REQUIRE(world.snapshot().monsters[0].position.x <= 12.0F);
+    ARPG_REQUIRE(world.snapshot().monsters[0].position.x
+        <= room_bounds::max_x);
     return {};
 }
 
@@ -480,7 +482,7 @@ arpg::test::Failure blink_warning_pauses_ai_then_real_hit_consumes_frenzied_empo
     CombatWorld world{dual_affixed_encounter(
         MonsterId::chaos_chaser, MonsterAffixId::blink_assault,
         MonsterAffixTier::m3, MonsterAffixId::frenzy, MonsterAffixTier::m3,
-        Vec3{11.9F, 0.0F, 0.0F})};
+        Vec3{room_bounds::max_x - 0.1F, 0.0F, 0.0F})};
     arpg::test::tick_n(world, 240);
     const MonsterSnapshot warning = world.snapshot().monsters[0];
     const int hp_before_warning = world.snapshot().player.hp;
@@ -511,7 +513,7 @@ arpg::test::Failure blink_warning_pauses_ai_then_real_hit_consumes_frenzied_empo
     }
     const CombatSnapshot after_hit = world.snapshot();
     ARPG_REQUIRE(actual_hit);
-    ARPG_REQUIRE(after_hit.player.hp == hp_before_warning - 100);
+    ARPG_REQUIRE(after_hit.player.hp == hp_before_warning - 31);
     ARPG_REQUIRE(!after_hit.monsters[0].blink_empowered);
     return {};
 }
@@ -520,7 +522,7 @@ arpg::test::Failure tiered_multishot_and_burning_values_are_frozen() noexcept {
     constexpr MonsterAffixTier kTiers[] = {
         MonsterAffixTier::m1, MonsterAffixTier::m2, MonsterAffixTier::m3};
     constexpr std::size_t kProjectileCounts[] = {2U, 3U, 4U};
-    constexpr int kProjectileDamage[] = {30, 24, 20};
+    constexpr int kProjectileDamage[] = {9, 7, 6};
     constexpr int kBurnIntervals[] = {180, 150, 120};
     constexpr float kBurnRadii[] = {0.75F, 0.90F, 1.05F};
     constexpr int kBurnDamage[] = {25, 35, 45};
@@ -563,7 +565,8 @@ arpg::test::Failure tiered_blink_cooldowns_and_warnings_are_frozen() noexcept {
     for (std::size_t index = 0U; index < 3U; ++index) {
         CombatWorld world{affixed_encounter(
             MonsterId::chaos_chaser, MonsterAffixId::blink_assault,
-            kTiers[index], Vec3{11.9F, 0.0F, 0.0F})};
+            kTiers[index],
+            Vec3{room_bounds::max_x - 0.1F, 0.0F, 0.0F})};
         arpg::test::tick_n(world, kCooldowns[index]);
         const auto warning = world.snapshot().monsters[0];
         ARPG_REQUIRE(warning.affix_warning == MonsterAffixWarning::blink);
@@ -572,8 +575,8 @@ arpg::test::Failure tiered_blink_cooldowns_and_warnings_are_frozen() noexcept {
         const auto blinked = world.snapshot().monsters[0];
         ARPG_REQUIRE(blinked.affix_warning == MonsterAffixWarning::none);
         ARPG_REQUIRE(blinked.blink_empowered);
-        ARPG_REQUIRE(blinked.position.x >= -12.0F);
-        ARPG_REQUIRE(blinked.position.x <= 12.0F);
+        ARPG_REQUIRE(blinked.position.x >= room_bounds::min_x);
+        ARPG_REQUIRE(blinked.position.x <= room_bounds::max_x);
     }
     return {};
 }

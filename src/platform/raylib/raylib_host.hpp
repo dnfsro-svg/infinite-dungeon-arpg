@@ -22,6 +22,7 @@ class SettingsStore;
 
 namespace arpg::platform {
 
+struct HostLaunchOptions;
 struct DeathInputGate;
 struct FrameKeyState;
 struct PhysicalKeySnapshot;
@@ -89,6 +90,7 @@ enum class Stage11DLootValidationScenario : std::uint8_t {
 enum class Stage17SkillStonesValidationScenario : std::uint8_t {
     none,
     production_sequence,
+    storm_sequence,
     restarted_loadout,
 };
 
@@ -167,6 +169,7 @@ struct RaylibHostConfig final {
     // concurrent formal runs from the legacy executable-directory capture.
     std::optional<std::filesystem::path> screenshot_directory{};
     std::optional<std::uint64_t> new_run_seed{};
+    bool continue_pending_death_on_launch{};
     bool validation_capture{};
     std::uint32_t validation_exit_after_presented_frames{};
     Stage10ValidationScenario stage10_validation{
@@ -188,13 +191,18 @@ struct RaylibHostConfig final {
     bool validation_request_screenshot{};
     bool stage12_material_showcase{};
     bool stage12_material_showcase_hide_monsters{};
+    bool stage12_material_showcase_hide_items{};
     bool stage12_material_background_only{};
+    bool stage12_material_icons_only{};
     Stage12UiShowcase stage12_ui_showcase{Stage12UiShowcase::none};
     std::optional<dungeon::DungeonElement> stage12_material_showcase_ecology{};
     std::optional<std::filesystem::path>
         stage12_material_baseline_capture_file{};
     Stage12MaterialRuntimeStatus* stage12_material_runtime_status{};
 };
+
+[[nodiscard]] RaylibHostConfig make_production_host_config(
+    HostLaunchOptions options);
 
 struct HostFrameGateResult final {
     bool forward_gameplay{};

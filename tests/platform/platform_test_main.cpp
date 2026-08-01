@@ -19,6 +19,7 @@ arpg::test::TestSuite active_skill_view_suite() noexcept;
 arpg::test::TestSuite active_skill_asset_suite() noexcept;
 arpg::test::TestSuite active_skill_loadout_view_suite() noexcept;
 arpg::test::TestSuite dungeon_view_math_suite() noexcept;
+arpg::test::TestSuite task6_exit_unlock_view_suite() noexcept;
 arpg::test::TestSuite passive_tree_view_suite() noexcept;
 arpg::test::TestSuite host_launch_options_suite() noexcept;
 arpg::test::TestSuite dungeon_runtime_suite() noexcept;
@@ -29,6 +30,8 @@ arpg::test::TestSuite pause_menu_state_suite() noexcept;
 arpg::test::TestSuite pause_menu_view_suite() noexcept;
 arpg::test::TestSuite window_settings_suite() noexcept;
 arpg::test::TestSuite pause_host_gate_suite() noexcept;
+arpg::test::TestSuite host_settings_runtime_suite() noexcept;
+arpg::test::TestSuite host_window_lifetime_suite() noexcept;
 arpg::test::TestSuite control_hints_suite() noexcept;
 arpg::test::TestSuite hud_view_model_suite() noexcept;
 arpg::test::TestSuite hud_notice_state_suite() noexcept;
@@ -76,10 +79,13 @@ int main() {
         active_skill_asset_suite(),
         active_skill_loadout_view_suite(),
         dungeon_view_math_suite(),
+        task6_exit_unlock_view_suite(),
         passive_tree_view_suite(),
         host_launch_options_suite(),
         dungeon_runtime_suite(),
         pause_host_gate_suite(),
+        host_settings_runtime_suite(),
+        host_window_lifetime_suite(),
         inventory_view_math_suite(),
         death_input_gate_suite(),
         death_overlay_view_suite(),
@@ -109,6 +115,6 @@ int main() {
         stage12_material_render_suite(),
     };
 
-    return arpg::test::run_suites(suites, 473,
-        "HUD and UI material slice contract");
+    return arpg::test::run_suites(suites, 514,
+        "host settings runtime contract");
 }

@@ -21,6 +21,104 @@ if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) {
 }
 $markerTime = (Get-Item -LiteralPath $marker).LastWriteTimeUtc
 
+function Read-EvidenceFields([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "missing summary evidence: $Path"
+    }
+    if ((Get-Item -LiteralPath $Path).LastWriteTimeUtc -le $markerTime) {
+        throw "summary evidence is not newer than run marker: $Path"
+    }
+    $result = @{}
+    foreach ($line in @(Get-Content -LiteralPath $Path -Encoding UTF8)) {
+        if (-not $line.Contains('=')) { throw "malformed summary line: $line" }
+        $pair = $line -split '=', 2
+        if ($result.ContainsKey($pair[0])) {
+            throw "duplicate summary field: $($pair[0])"
+        }
+        $result[$pair[0]] = $pair[1]
+    }
+    return $result
+}
+
+function Assert-EvidenceFields([hashtable]$Fields, $Expected) {
+    foreach ($key in $Expected.Keys) {
+        if (-not $Fields.ContainsKey($key)) { throw "missing summary field: $key" }
+        if ($Expected[$key] -eq '<positive>') {
+            [uint64]$value = 0
+            if (-not [uint64]::TryParse($Fields[$key], [ref]$value) -or
+                    $value -eq 0) {
+                throw "summary field is not positive: $key=$($Fields[$key])"
+            }
+        } elseif ($Fields[$key] -cne $Expected[$key]) {
+            throw "summary field rejected: $key=$($Fields[$key])"
+        }
+    }
+}
+
+$productionFields = Read-EvidenceFields (Join-Path $run 'production-summary.txt')
+Assert-EvidenceFields $productionFields ([ordered]@{
+    scenario = 'production_sequence'
+    result = 'pass'
+    draw_accepted = '1'
+    draw_windup_captured = '1'
+    draw_frame_peak = '35'
+    draw_hit_count = '2'
+    storm_accepted = '0'
+    storm_strike_hit_count = '0'
+    storm_finisher_hit_count = '0'
+    draw_renderer_samples = '<positive>'
+    draw_material_frame_drawn = '1'
+    draw_base_player_drawn = '0'
+    draw_procedural_main_visual_peak = '0'
+    draw_renderer_status_valid = '1'
+    public_input_path = '1'
+    production_transactions = '1'
+    production_inventory_closed = '1'
+    production_cooldown_wait_started = '1'
+    production_cooldown_start_ticks = '<positive>'
+    production_cooldown_wait_ticks = '<positive>'
+    production_cooldowns_zero_before_shutdown = '1'
+    clean_shutdown_exact_ready = '1'
+})
+$stormFields = Read-EvidenceFields (Join-Path $run 'storm-summary.txt')
+Assert-EvidenceFields $stormFields ([ordered]@{
+    scenario = 'storm_sequence'
+    result = 'pass'
+    draw_accepted = '1'
+    draw_hit_count = '2'
+    storm_prelude_draw_hit_count = '2'
+    storm_accepted = '1'
+    storm_strike_hit_count = '3'
+    storm_finisher_hit_count = '0'
+    storm_strike_count = '12'
+    storm_sword_peak = '24'
+    storm_invulnerable_seen = '1'
+    storm_finisher_phase_seen = '1'
+    storm_aerial_captured = '1'
+    active_skill_atlases_ready = '1'
+    storm_renderer_samples = '<positive>'
+    storm_material_frame_drawn = '1'
+    storm_base_player_drawn = '0'
+    storm_procedural_main_visual_peak = '0'
+    storm_renderer_status_valid = '1'
+    renderer_status_failure_latched = '0'
+    storm_center_locked = '1'
+    storm_isolation_invalidated = '0'
+    storm_player_moved = '1'
+    public_input_path = '1'
+    production_transactions = '0'
+    clean_shutdown_exact_ready = '1'
+})
+$restartFields = Read-EvidenceFields (Join-Path $run 'restart-summary.txt')
+Assert-EvidenceFields $restartFields ([ordered]@{
+    scenario = 'restarted_loadout'
+    result = 'pass'
+    initial_slots = 'none,draw_slash,none,none,storm_swords'
+    restart_persisted = '1'
+    restart_cooldowns_zero = '1'
+    clean_shutdown_exact_ready = '1'
+})
+
 $images = @(
     '01-new-default-1280x720.png',
     '02-draw-slash-windup-1280x720.png',
@@ -91,7 +189,7 @@ $expected = [ordered]@{
     window = '1280x720'
     fixture_path = 'production-raylib-host'
     showcase_capture_count = '0'
-    save_version = '8'
+    save_version = '9'
     initial_slots = 'draw_slash,storm_swords,none,none,none'
     final_slots = 'none,draw_slash,none,none,storm_swords'
     restarted_slots = 'none,draw_slash,none,none,storm_swords'
@@ -106,7 +204,7 @@ $expected = [ordered]@{
     draw_slash_frame_zero = 'true'
     draw_slash_frame_last = 'true'
     draw_slash_hit_count = '2'
-    storm_strike_hit_count = '5'
+    storm_strike_hit_count = '3'
     storm_finisher_hit_count = '0'
     storm_strike_count = '12'
     storm_sword_peak = '24'
@@ -117,7 +215,7 @@ $expected = [ordered]@{
     storm_finisher_phase_seen = 'true'
     storm_aerial_captured = 'true'
     active_skill_atlases_ready = 'true'
-    renderer_status_source = 'production-summary.txt'
+    renderer_status_source = 'production-summary.txt,storm-summary.txt'
     draw_renderer_samples = '<positive>'
     draw_material_frame_drawn = '1'
     draw_base_player_drawn = '0'
@@ -133,6 +231,11 @@ $expected = [ordered]@{
     loadout_transactions = 'remove1,equip5,swap2_5'
     restart_persisted = 'true'
     cooldown_persisted = 'false'
+    production_inventory_closed = 'true'
+    production_cooldown_start_ticks = '<positive>'
+    production_cooldown_wait_ticks = '<positive>'
+    cooldown_naturally_elapsed = 'true'
+    clean_shutdown_exact_ready = 'true'
     public_input_path = 'true'
     production_transactions = 'true'
 }

@@ -3,6 +3,7 @@
 #include "combat/room_bounds.hpp"
 #include "core/deterministic_rng.hpp"
 #include "dungeon/dungeon_checkpoint.hpp"
+#include "dungeon/encounter_director.hpp"
 #include "dungeon/dungeon_rules.hpp"
 
 #include <algorithm>
@@ -123,9 +124,8 @@ struct WaveBuilder final {
                         || !counts.fits(*monster, encounter_budget, config)) {
                     continue;
                 }
-                const std::uint64_t weight = monster->preferred_ecology
-                        == static_cast<std::uint8_t>(ecology)
-                    ? config.matching_ecology_weight : config.off_ecology_weight;
+                const std::uint64_t weight = ecology_monster_weight(
+                    *monster, ecology, config);
                 if (weight == 0U || total_weight >
                         (std::numeric_limits<std::uint64_t>::max)() - weight) {
                     continue;

@@ -1,10 +1,14 @@
 #pragma once
 
 #include "combat/active_skill_runtime.hpp"
+#include "combat/combat_defeat_ledger.hpp"
 #include "combat/combat_types.hpp"
 #include "combat/input_buffer.hpp"
 #include "combat/monster_pool.hpp"
 #include "combat/player_damage_history.hpp"
+#include "combat/room_monster_field.hpp"
+#include "combat/room_obstacle_runtime.hpp"
+#include "combat/room_combat_checkpoint.hpp"
 #include "core/deterministic_rng.hpp"
 #include "modifiers/effect_set.hpp"
 #include "core/bounded_queue.hpp"
@@ -13,6 +17,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <memory>
 
 namespace arpg::test {
 struct DungeonSessionTestAccess;
@@ -37,6 +42,10 @@ class CombatWorld final {
 public:
     explicit CombatWorld(CombatLabConfig config = {}) noexcept;
     explicit CombatWorld(CombatEncounterConfig config) noexcept;
+    CombatWorld(
+        CombatEncounterConfig config,
+        std::unique_ptr<RoomMonsterField> monster_field,
+        RoomObstaclePlanView obstacle_plan) noexcept;
 
     [[nodiscard]] bool queue_action(Action action) noexcept;
     [[nodiscard]] SkillCastResult request_active_skill(
@@ -44,7 +53,10 @@ public:
     void tick(MovementInput movement) noexcept;
     void reset() noexcept;
     void apply_player_build(PlayerCombatBuild build) noexcept;
+    void clear_buffered_input() noexcept;
     void restore_player_resources(int hp, int barrier) noexcept;
+    [[nodiscard]] int restore_player_health_percent(
+        std::uint16_t maximum_health_basis_points) noexcept;
     void clear_abyss_rule_preserving_resources() noexcept;
     [[nodiscard]] bool load_wave(
         const EncounterWave& wave,
@@ -56,9 +68,27 @@ public:
     [[nodiscard]] std::size_t active_projectile_count() const noexcept;
     [[nodiscard]] CombatSnapshot snapshot() const noexcept;
     [[nodiscard]] std::optional<CombatEvent> try_pop_event() noexcept;
+    [[nodiscard]] std::optional<CombatDefeatRecord>
+    try_pop_defeat_record() noexcept;
+    [[nodiscard]] CombatFault fault() const noexcept;
+    [[nodiscard]] RoomMonsterField* room_monster_field() noexcept;
+    [[nodiscard]] const RoomMonsterField* room_monster_field() const noexcept;
+    [[nodiscard]] const RoomObstacleRuntime* room_obstacles() const noexcept;
     [[nodiscard]] bool player_defeated() const noexcept;
     [[nodiscard]] const std::optional<CombatDeathSnapshot>&
     death_snapshot() const noexcept;
+    [[nodiscard]] bool capture_room_checkpoint(
+        RoomCombatCheckpoint& out) const noexcept;
+    [[nodiscard]] bool capture_room_checkpoint_post_mutation(
+        RoomCombatCheckpoint& out, const PlayerCombatBuild* player_build,
+        std::uint8_t health_potion_count,
+        std::uint16_t health_potion_restore_bp,
+        bool clear_abyss_rule) const noexcept;
+    [[nodiscard]] bool restore_room_checkpoint(
+        const RoomCombatCheckpoint& checkpoint) noexcept;
+    void align_checkpoint_restore_authority_from(
+        const CombatWorld& source) noexcept;
+    void adopt_restored_state(CombatWorld&& source) noexcept;
 
 private:
     struct PlayerRuntime final {
@@ -91,7 +121,7 @@ private:
         std::uint16_t recovery_ticks{};
         bool connected{};
         bool impact_event_emitted{};
-        std::array<bool, kMonsterCapacity> hit_targets{};
+        MonsterOrdinalSet hit_targets{};
     };
 
     void simulate_player(MovementInput movement) noexcept;
@@ -109,7 +139,7 @@ private:
     [[nodiscard]] bool resolve_player_attack_hit(
         std::size_t index,
         const PlayerAttackHitSpec& spec,
-        std::array<bool, kMonsterCapacity>& hit_latch) noexcept;
+        MonsterOrdinalSet& hit_latch) noexcept;
     void simulate_target(std::size_t index) noexcept;
     void simulate_monster(std::size_t slot) noexcept;
     void simulate_projectiles() noexcept;
@@ -145,9 +175,16 @@ private:
         bool trigger_chain = true,
         PlayerDamageSourceKind source_kind =
             PlayerDamageSourceKind::monster_attack) noexcept;
+    bool apply_monster_ordinal_hit(
+        MonsterOrdinal ordinal,
+        DamagePacket packet,
+        Vec3 source_position,
+        FeedbackLevel feedback,
+        bool trigger_chain,
+        PlayerDamageSourceKind source_kind) noexcept;
     void tick_player_status() noexcept;
     [[nodiscard]] bool spawn_projectile(
-        MonsterHandle owner,
+        MonsterOrdinal owner_ordinal,
         Vec3 position,
         Vec3 velocity,
         std::uint16_t lifetime_ticks,
@@ -156,7 +193,7 @@ private:
         bool trigger_chain_on_end = false,
         MonsterAffixSet owner_affixes = {}) noexcept;
     [[nodiscard]] bool spawn_projectile(
-        MonsterHandle owner,
+        MonsterOrdinal owner_ordinal,
         Vec3 position,
         Vec3 velocity,
         std::uint16_t lifetime_ticks,
@@ -165,7 +202,7 @@ private:
         bool trigger_chain_on_end = false,
         MonsterAffixSet owner_affixes = {}) noexcept;
     [[nodiscard]] bool spawn_hazard(
-        MonsterHandle owner,
+        MonsterOrdinal owner_ordinal,
         HazardKind kind,
         Vec3 center,
         float radius,
@@ -175,7 +212,7 @@ private:
         DamagePacket damage,
         bool persists_after_owner_death = false) noexcept;
     [[nodiscard]] bool spawn_hazard(
-        MonsterHandle owner,
+        MonsterOrdinal owner_ordinal,
         HazardKind kind,
         Vec3 center,
         float radius,
@@ -198,10 +235,18 @@ private:
     void remove_environment_hazards() noexcept;
     void tick_active_affixes(std::size_t slot, MonsterRuntime& monster) noexcept;
     [[nodiscard]] bool trigger_chain_lightning(
-        MonsterHandle owner, MonsterAffixSet affixes, Vec3 center) noexcept;
-    void remove_owned_projectiles(MonsterHandle owner) noexcept;
-    void remove_owned_hazards(MonsterHandle owner) noexcept;
+        MonsterOrdinal owner_ordinal,
+        MonsterAffixSet affixes,
+        Vec3 center) noexcept;
+    void remove_owned_projectiles(MonsterOrdinal owner_ordinal) noexcept;
+    void remove_owned_hazards(MonsterOrdinal owner_ordinal) noexcept;
     void emit_event(const CombatEvent& event) noexcept;
+    [[nodiscard]] MonsterRuntime* active_monster_by_ordinal(
+        MonsterOrdinal ordinal) noexcept;
+    [[nodiscard]] const MonsterRuntime* active_monster_by_ordinal(
+        MonsterOrdinal ordinal) const noexcept;
+    [[nodiscard]] bool monster_ordinal_alive(
+        MonsterOrdinal ordinal) const noexcept;
     void initialize_runtime() noexcept;
 
     void initialize_player() noexcept;
@@ -234,6 +279,8 @@ private:
     bool legacy_mode_{true};
     PlayerRuntime player_{};
     MonsterPool monsters_{};
+    std::unique_ptr<RoomMonsterField> room_monster_field_{};
+    std::unique_ptr<RoomObstacleRuntime> room_obstacles_{};
     ProjectilePool projectiles_{};
     HazardPool hazards_{};
     AbyssEnvironmentRuntime abyss_environment_{};
@@ -241,14 +288,8 @@ private:
     ActiveSkillRuntime active_skill_{};
     std::array<FireRoomCrateSnapshot, kFireRoomCrateCapacity> fire_crates_{};
     InputBuffer input_buffer_{};
-    struct EffectOwner final {
-        std::size_t monster_slot{};
-        std::uint16_t generation{};
-        modifiers::EffectSet effects{};
-        bool occupied{};
-    };
-    std::array<EffectOwner, 8> effect_owners_{};
-    core::BoundedQueue<CombatEvent, 64> events_{};
+    CombatDefeatLedger defeat_ledger_{};
+    core::BoundedQueue<CombatEvent, kCombatEventCapacity> events_{};
     std::uint64_t tick_{};
     std::uint32_t event_overflow_count_{};
     std::uint32_t projectile_saturation_count_{};
@@ -258,6 +299,7 @@ private:
     core::DeterministicRng evasion_rng_{0};
     PlayerDamageHistory player_damage_history_{};
     std::optional<CombatDeathSnapshot> death_snapshot_{};
+    CombatFault fault_{CombatFault::none};
 };
 
 }  // namespace arpg::combat

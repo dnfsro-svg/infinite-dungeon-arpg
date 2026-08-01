@@ -79,7 +79,7 @@ arpg::test::Failure shooter_creates_deterministic_projectile() noexcept {
     ARPG_REQUIRE(first_snapshot.projectile_count == 1U);
     ARPG_REQUIRE(second_snapshot.projectile_count == 1U);
     ARPG_REQUIRE(first_snapshot.projectiles[0].active);
-    ARPG_REQUIRE(first_snapshot.projectiles[0].owner.index == 0U);
+    ARPG_REQUIRE(first_snapshot.projectiles[0].owner_ordinal == 0U);
     ARPG_REQUIRE(first_snapshot.projectiles[0].position.x
                  == second_snapshot.projectiles[0].position.x);
     ARPG_REQUIRE(first_snapshot.projectiles[0].velocity.x
@@ -146,8 +146,9 @@ arpg::test::Failure support_without_ally_repositions_and_short_cooldown() noexce
 arpg::test::Failure projectile_saturation_is_reported_without_overwrite() noexcept {
     CombatEncounterConfig config = ranged_encounter(
         MonsterId::lightning_shooter, 4.5F);
-    config.wave.spawn_count = static_cast<std::uint8_t>(kMonsterCapacity);
-    for (std::size_t index = 0; index < kMonsterCapacity; ++index) {
+    config.wave.spawn_count = static_cast<std::uint8_t>(
+        kEncounterSpawnCapacity);
+    for (std::size_t index = 0; index < kEncounterSpawnCapacity; ++index) {
         config.wave.spawns[index] = MonsterSpawnSpec{
             MonsterId::lightning_shooter, Vec3{4.5F, 0.0F, 0.0F}};
     }

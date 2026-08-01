@@ -152,7 +152,7 @@ arpg::test::Failure hit_event_keeps_packet_total_when_monster_shield_absorbs() n
         break;
     }
     ARPG_REQUIRE(saw_hit);
-    ARPG_REQUIRE(world.snapshot().monsters[0].hp == 689);
+    ARPG_REQUIRE(world.snapshot().monsters[0].hp == 304);
     ARPG_REQUIRE(world.snapshot().monsters[0].shield == 0);
     return {};
 }
@@ -392,7 +392,7 @@ arpg::test::Failure weapon_physical_is_applied_by_real_melee_hit() noexcept {
     arpg::test::drain_events(world);
     ARPG_REQUIRE(world.queue_action(Action::light));
     arpg::test::tick_n(world, 8);
-    ARPG_REQUIRE(world.snapshot().monsters[0].hp == 182);
+    ARPG_REQUIRE(world.snapshot().monsters[0].hp == 42);
     bool saw_weapon_hit = false;
     while (const auto event = world.try_pop_event()) {
         if (event->kind == CombatEventKind::hit) {

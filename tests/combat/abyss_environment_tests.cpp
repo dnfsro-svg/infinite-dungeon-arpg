@@ -89,8 +89,7 @@ arpg::test::Failure chaos_region_exists_when_challenge_begins() noexcept {
     const HazardSnapshot* hazard = find_environment_hazard(
         state, HazardKind::chaos_expansion);
     ARPG_REQUIRE(hazard != nullptr);
-    ARPG_REQUIRE(hazard->owner.index == 0xFFFFU);
-    ARPG_REQUIRE(hazard->owner.generation == 0U);
+    ARPG_REQUIRE(hazard->owner_ordinal == kInvalidMonsterOrdinal);
     ARPG_REQUIRE(hazard->center.x == 0.0F);
     ARPG_REQUIRE(hazard->center.y == 0.0F);
     ARPG_REQUIRE(hazard->radius == 1.0F);
@@ -227,7 +226,7 @@ arpg::test::Failure environment_uses_ground_plane_circle() noexcept {
 arpg::test::Failure hazard_pool_rejects_invalid_source_enum() noexcept {
     HazardPool pool{};
     const auto handle = pool.spawn(
-        static_cast<HazardSource>(0xFFU), MonsterHandle{},
+        static_cast<HazardSource>(0xFFU), kInvalidMonsterOrdinal,
         HazardKind::native, Vec3{}, 1.0F, 0U, 1U, 1U,
         DamagePacket{1}, false);
     ARPG_REQUIRE(!handle.has_value());

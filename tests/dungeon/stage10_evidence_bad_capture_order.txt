@@ -1,6 +1,23 @@
-void capture_after_presented_frame(const char* path) noexcept { export_screenshot(path); }
-capture_after_presented_frame("fake.png");
-EndDrawing();
-queue_action(Action::light);
-request_descent(true);
-reset_current_room();
+void stage10_capture_driver() {
+    host_validation::stage10_validation_input(*session,
+        current, config, stage10_validation_state);
+    const bool captured_stage10_target = host_validation::stage10_validation_reached(
+        current, config, stage10_validation_state);
+    ++stage10_validation_state.chaos_presented_frames;
+    static_cast<void>(present_frame_and_maybe_capture(nullptr));
+    static_cast<void>(present_frame_and_maybe_capture(nullptr));
+    const bool captured_stage10_frame = captured_stage10_target && capture_succeeded;
+    stage10_validation_captured = stage10_validation_captured
+        || captured_stage10_frame;
+}
+[[nodiscard]] bool present_frame_and_maybe_capture(const char* path) noexcept {
+    Image image = LoadImageFromScreen();
+    EndDrawing();
+    if (path == nullptr) return true;
+    if (image.data == nullptr) return false;
+    const bool exported = ExportImage(image, path);
+    UnloadImage(image);
+    return exported;
+}
+const bool capture_succeeded = present_frame_and_maybe_capture(
+    capture_path.has_value() ? capture_path->c_str() : nullptr);

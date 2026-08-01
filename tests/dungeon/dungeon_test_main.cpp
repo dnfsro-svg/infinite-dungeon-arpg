@@ -8,6 +8,9 @@
 #endif
 
 arpg::test::TestSuite room_generation_suite() noexcept;
+arpg::test::TestSuite room_affix_suite() noexcept;
+arpg::test::TestSuite room_population_suite() noexcept;
+arpg::test::TestSuite room_environment_suite() noexcept;
 arpg::test::TestSuite death_checkpoint_suite() noexcept;
 arpg::test::TestSuite dungeon_death_lifecycle_suite() noexcept;
 arpg::test::TestSuite dungeon_death_stress_suite() noexcept;
@@ -25,6 +28,8 @@ arpg::test::TestSuite dungeon_skill_cast_suite() noexcept;
 arpg::test::TestSuite dungeon_equipment_stress_suite() noexcept;
 arpg::test::TestSuite dungeon_loot_drop_suite() noexcept;
 arpg::test::TestSuite dungeon_material_loot_suite() noexcept;
+arpg::test::TestSuite dungeon_health_potion_suite() noexcept;
+arpg::test::TestSuite dungeon_exit_unlock_suite() noexcept;
 arpg::test::TestSuite dungeon_transaction_suite() noexcept;
 arpg::test::TestSuite dungeon_abyss_reward_suite() noexcept;
 arpg::test::TestSuite dungeon_abyss_stress_suite() noexcept;
@@ -35,6 +40,36 @@ arpg::test::TestSuite dungeon_affix_reward_suite() noexcept;
 arpg::test::TestSuite dungeon_affix_stress_suite() noexcept;
 
 namespace {
+
+bool task4_population_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_TASK4_POPULATION_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
+bool task4_compatibility_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_TASK4_COMPATIBILITY_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
+bool task4_migration_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_TASK4_MIGRATION_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
 
 bool stage9_affix_stress_only() noexcept {
     char* value = nullptr;
@@ -116,11 +151,31 @@ bool stage16_crafting_transaction_only() noexcept {
     return enabled;
 }
 
+bool health_potion_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_HEALTH_POTION_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
 bool stage17_skill_loadout_only() noexcept {
     char* value = nullptr;
     std::size_t length = 0U;
     const errno_t error = _dupenv_s(&value, &length,
         "ARPG_STAGE17_SKILL_LOADOUT_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
+bool task6_exit_unlock_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_TASK6_EXIT_UNLOCK_ONLY");
     const bool enabled = error == 0 && value != nullptr;
     std::free(value);
     return enabled;
@@ -139,6 +194,9 @@ int main() {
         _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 #endif
     const arpg::test::TestSuite suites[] = {
+        room_affix_suite(),
+        room_population_suite(),
+        room_environment_suite(),
         room_generation_suite(),
         death_checkpoint_suite(),
         dungeon_death_lifecycle_suite(),
@@ -156,6 +214,8 @@ int main() {
         dungeon_equipment_stress_suite(),
         dungeon_loot_drop_suite(),
         dungeon_material_loot_suite(),
+        dungeon_health_potion_suite(),
+        dungeon_exit_unlock_suite(),
         dungeon_transaction_suite(),
         dungeon_abyss_reward_suite(),
         dungeon_abyss_stress_suite(),
@@ -165,6 +225,35 @@ int main() {
         dungeon_affix_reward_suite(),
         dungeon_affix_stress_suite(),
     };
+
+    if (task4_population_only()) {
+        const arpg::test::TestSuite population_only[] = {
+            dungeon_wave_suite(),
+        };
+        return arpg::test::run_suites(
+            population_only, 12, "task 4 room population lifecycle");
+    }
+
+    if (task4_compatibility_only()) {
+        const arpg::test::TestSuite compatibility_only[] = {
+            dungeon_lifecycle_suite(),
+            dungeon_navigation_suite(),
+            dungeon_stress_suite(),
+        };
+        return arpg::test::run_suites(
+            compatibility_only, 42, "task 4 compatibility regression");
+    }
+
+    if (task4_migration_only()) {
+        const arpg::test::TestSuite migration_only[] = {
+            dungeon_loot_drop_suite(),
+            dungeon_transaction_suite(),
+            dungeon_progression_reward_suite(),
+            dungeon_affix_stress_suite(),
+        };
+        return arpg::test::run_suites(
+            migration_only, 41, "task 4 legacy fixture migration");
+    }
 
     if (stage8_equipment_stress_only()) {
         const arpg::test::TestSuite stress_only[] = {
@@ -231,6 +320,14 @@ int main() {
             "stage 16 task 7 crafting and reinforcement transactions");
     }
 
+    if (health_potion_only()) {
+        const arpg::test::TestSuite potion_only[] = {
+            dungeon_health_potion_suite(),
+        };
+        return arpg::test::run_suites(potion_only, 19,
+            "task 6 health potion atomic auto-use");
+    }
+
     if (stage17_skill_loadout_only()) {
         const arpg::test::TestSuite loadout_only[] = {
             dungeon_skill_loadout_transaction_suite(),
@@ -239,6 +336,14 @@ int main() {
             "stage 17 task 3 skill loadout transactions");
     }
 
-    return arpg::test::run_suites(suites, 287,
+    if (task6_exit_unlock_only()) {
+        const arpg::test::TestSuite unlock_only[] = {
+            dungeon_exit_unlock_suite(),
+        };
+        return arpg::test::run_suites(unlock_only, 14,
+            "task 6 quarter kill exit unlock");
+    }
+
+    return arpg::test::run_suites(suites, 344,
         "stage 18 dungeon queries");
 }

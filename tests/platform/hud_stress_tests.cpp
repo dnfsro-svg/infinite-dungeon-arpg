@@ -158,7 +158,7 @@ void initialize_scenarios() noexcept {
     g_scenarios[2].alternate = g_scenarios[2].current;
     g_scenarios[2].last_event.kind = combat::CombatEventKind::hit;
     g_scenarios[2].last_event.tick = 123U;
-    g_scenarios[2].last_event.target_index = 3U;
+    g_scenarios[2].last_event.target_ordinal = 3U;
     g_scenarios[2].last_event.hit_count = 2U;
     g_scenarios[2].has_last_event = true;
     g_scenarios[2].cjk_font_ready = true;
@@ -306,7 +306,7 @@ struct ExerciseResult final {
             && debug.has_last_event
             && debug.last_event.kind == combat::CombatEventKind::hit
             && debug.last_event.tick == 123U
-            && debug.last_event.target_index == 3U
+            && debug.last_event.target_ordinal == 3U
             && debug.cjk_font_ready;
     }
 
@@ -336,7 +336,7 @@ struct ExerciseResult final {
     fold_output(output_checksum, debug.binding_revision);
     fold_output(output_checksum, static_cast<std::uint8_t>(debug.last_event.kind));
     fold_output(output_checksum, debug.last_event.tick);
-    fold_output(output_checksum, debug.last_event.target_index);
+    fold_output(output_checksum, debug.last_event.target_ordinal);
     fold_output(output_checksum, debug.last_event.hit_count);
     fold_output(output_checksum, debug.has_last_event);
     fold_output(output_checksum, debug.cjk_font_ready);

@@ -163,7 +163,7 @@ std::optional<std::uint64_t> frozen_existing_stream_fingerprint(
 
 bool replay_keeps_existing_items_stable() noexcept {
     constexpr std::uint64_t kFrozenTask1RoomEquipmentAndAbyss =
-        15972885342817959559ULL;
+        10882612280735857555ULL;
     const auto baseline = frozen_existing_stream_fingerprint(false);
     const auto interleaved = frozen_existing_stream_fingerprint(true);
     std::cout << "frozen_existing_stream=" << baseline.value_or(0U) << '\n';

@@ -43,7 +43,7 @@ public:
     [[nodiscard]] float shake_amplitude() const noexcept;
     [[nodiscard]] CameraOffset camera_offset() const noexcept;
     [[nodiscard]] float target_flash_seconds(
-        std::size_t target_index) const noexcept;
+        combat::MonsterOrdinal target_ordinal) const noexcept;
     [[nodiscard]] float player_hit_indicator_seconds() const noexcept;
     [[nodiscard]] combat::Vec3 player_hit_source() const noexcept;
     [[nodiscard]] const std::array<VisualEffect, kCapacity>& effects()
@@ -51,7 +51,7 @@ public:
 
 private:
     std::array<VisualEffect, kCapacity> effects_{};
-    std::array<float, combat::kMonsterCapacity> flash_seconds_{};
+    std::array<float, limits::kRoomMonsterCapacity> flash_seconds_{};
     float shake_amplitude_{};
     float shake_time_{};
     float shake_phase_{};

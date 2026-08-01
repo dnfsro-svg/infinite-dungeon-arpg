@@ -55,8 +55,14 @@ bool commit_abyss_start(arpg::dungeon::DungeonSession& session) noexcept {
                 != arpg::dungeon::PendingSaveKind::abyss_start) return false;
     session.resolve_pending_save({arpg::dungeon::SaveDisposition::committed,
         pending->expected_generation, pending->next_state});
-    return session.snapshot().phase == arpg::dungeon::RoomPhase::locked
-        && session.snapshot().combat.has_value();
+    const auto state = session.snapshot();
+    const auto population = session.try_pop_event();
+    return state.phase == arpg::dungeon::RoomPhase::locked
+        && state.combat.has_value()
+        && population.has_value()
+        && population->kind
+            == arpg::dungeon::DungeonEventKind::population_generated
+        && !session.try_pop_event().has_value();
 }
 
 arpg::dungeon::DungeonRunState lifecycle_state_for_rule(
@@ -80,9 +86,15 @@ bool drive_to_abyss_clear_pending(
         const auto state = session.snapshot();
         if (state.phase == arpg::dungeon::RoomPhase::committing) {
             const auto pending = session.pending_save();
-            return pending.has_value()
-                && pending->kind
-                    == arpg::dungeon::PendingSaveKind::abyss_clear;
+            if (!pending.has_value()) return false;
+            if (pending->kind
+                    == arpg::dungeon::PendingSaveKind::room_unlock) {
+                if (!arpg::test::commit_pending(session)) return false;
+                arpg::test::drain_all_events(session, events);
+                continue;
+            }
+            return pending->kind
+                == arpg::dungeon::PendingSaveKind::abyss_clear;
         }
         if (state.phase == arpg::dungeon::RoomPhase::combat) {
             arpg::test::force_defeat_current_wave(session);
@@ -96,6 +108,7 @@ bool drive_to_abyss_clear_pending(
 bool drive_to_final_abyss_wave(
     arpg::dungeon::DungeonSession& session) noexcept {
     arpg::test::EventSummary ignored{};
+    arpg::test::drain_all_events(session, ignored);
     if (session.snapshot().phase == arpg::dungeon::RoomPhase::locked) {
         session.tick({});
         arpg::test::drain_all_events(session, ignored);
@@ -165,7 +178,7 @@ arpg::test::Failure abyss_clear_is_atomic_and_restores_life_resources() noexcept
     ARPG_REQUIRE(frozen.phase == dungeon::RoomPhase::committing);
     ARPG_REQUIRE(frozen.pending_save_kind == dungeon::PendingSaveKind::abyss_clear);
     ARPG_REQUIRE(frozen.has_hole);
-    ARPG_REQUIRE(all_exits_are(frozen, false));
+    ARPG_REQUIRE(all_exits_are(frozen, true));
     ARPG_REQUIRE(!session.request_descent(true));
     ARPG_REQUIRE(!session.queue_action(combat::Action::light));
     ARPG_REQUIRE(pending.has_value());
@@ -186,7 +199,7 @@ arpg::test::Failure abyss_clear_is_atomic_and_restores_life_resources() noexcept
     ARPG_REQUIRE(pending->next_state.item_ownership.items.size()
         == stable_before.item_ownership.items.size());
     ARPG_REQUIRE(events.room_cleared_count == 0U);
-    ARPG_REQUIRE(events.exits_opened_count == 0U);
+    ARPG_REQUIRE(events.exits_opened_count == 1U);
     ARPG_REQUIRE(test::stable_state(session).progression.experience
         == stable_before.progression.experience);
     ARPG_REQUIRE(frozen.pending_room_experience > 0U);
@@ -231,9 +244,12 @@ arpg::test::Failure abyss_clear_is_atomic_and_restores_life_resources() noexcept
     ARPG_REQUIRE(events.exits_opened_count == 1U);
     ARPG_REQUIRE(events.dungeon_count >= 2U);
     ARPG_REQUIRE(events.dungeon_kinds[events.dungeon_count - 2U]
-        == dungeon::DungeonEventKind::room_cleared);
-    ARPG_REQUIRE(events.dungeon_kinds[events.dungeon_count - 1U]
         == dungeon::DungeonEventKind::exits_opened);
+    ARPG_REQUIRE(events.dungeon_kinds[events.dungeon_count - 1U]
+        == dungeon::DungeonEventKind::room_cleared);
+    ARPG_REQUIRE(cleared.diagnostics.event_overflow_count == 0U);
+    ARPG_REQUIRE(cleared.diagnostics.combat_relay_overflow_count == 0U);
+    ARPG_REQUIRE(cleared.combat->diagnostics.event_overflow_count == 0U);
     session.tick({});
     if (session.snapshot().phase == dungeon::RoomPhase::committing) {
         ARPG_REQUIRE(session.pending_save()->kind
@@ -265,9 +281,10 @@ arpg::test::Failure abyss_clear_removes_environment_hazard_after_commit() noexce
     return {};
 }
 
-arpg::test::Failure abyss_clear_requires_two_reserved_event_slots() noexcept {
+arpg::test::Failure
+abyss_unlock_and_clear_each_require_one_reserved_event_slot() noexcept {
     using namespace arpg;
-    for (const std::size_t free_slots : {std::size_t{0U}, std::size_t{1U}}) {
+    for (const bool unlock_committed : {false, true}) {
         dungeon::DungeonSession session{{}, lifecycle_state_for_rule(
             abyss::AbyssRuleId::chaos_expansion)};
         ARPG_REQUIRE(commit_abyss_start(session));
@@ -276,9 +293,21 @@ arpg::test::Failure abyss_clear_requires_two_reserved_event_slots() noexcept {
         const auto before = session.snapshot();
         ARPG_REQUIRE(environment_hazard_count(*before.combat) > 0U);
         test::force_defeat_current_wave(session);
+        if (unlock_committed) {
+            session.tick({});
+            ARPG_REQUIRE(session.snapshot().phase
+                == dungeon::RoomPhase::committing);
+            ARPG_REQUIRE(session.pending_save().has_value());
+            ARPG_REQUIRE(session.pending_save()->kind
+                == dungeon::PendingSaveKind::room_unlock);
+            ARPG_REQUIRE(test::commit_pending(session));
+            test::EventSummary ignored{};
+            test::drain_all_events(session, ignored);
+            ARPG_REQUIRE(ignored.exits_opened_count == 1U);
+        }
         ARPG_REQUIRE(test::fill_dungeon_events(session,
-            dungeon::DungeonSession::kDungeonEventCapacity - free_slots)
-            == dungeon::DungeonSession::kDungeonEventCapacity - free_slots);
+            dungeon::DungeonSession::kDungeonEventCapacity)
+            == dungeon::DungeonSession::kDungeonEventCapacity);
 
         session.tick({});
         const auto faulted = session.snapshot();
@@ -295,12 +324,13 @@ arpg::test::Failure abyss_clear_requires_two_reserved_event_slots() noexcept {
             == environment_hazard_count(*before.combat));
         ARPG_REQUIRE(test::DungeonSessionTestAccess::active_abyss_config(session)
             ->rule == abyss::AbyssRuleId::chaos_expansion);
-        ARPG_REQUIRE(all_exits_are(faulted, false));
+        ARPG_REQUIRE(all_exits_are(faulted, unlock_committed));
     }
     return {};
 }
 
-arpg::test::Failure abyss_clear_exactly_two_slots_publish_both_events() noexcept {
+arpg::test::Failure
+abyss_unlock_and_clear_exactly_two_slots_publish_ordered_events() noexcept {
     using namespace arpg;
     dungeon::DungeonSession session{{}, lifecycle_state_for_rule(
         abyss::AbyssRuleId::chaos_expansion)};
@@ -315,11 +345,16 @@ arpg::test::Failure abyss_clear_exactly_two_slots_publish_both_events() noexcept
 
     session.tick({});
     ARPG_REQUIRE(session.snapshot().phase == dungeon::RoomPhase::committing);
-    const auto pending = session.pending_save();
-    ARPG_REQUIRE(pending.has_value());
-    ARPG_REQUIRE(pending->kind == dungeon::PendingSaveKind::abyss_clear);
-    session.resolve_pending_save({dungeon::SaveDisposition::committed,
-        pending->expected_generation, pending->next_state});
+    ARPG_REQUIRE(session.pending_save().has_value());
+    ARPG_REQUIRE(session.pending_save()->kind
+        == dungeon::PendingSaveKind::room_unlock);
+    ARPG_REQUIRE(test::commit_pending(session));
+    session.tick({});
+    ARPG_REQUIRE(session.snapshot().phase == dungeon::RoomPhase::committing);
+    ARPG_REQUIRE(session.pending_save().has_value());
+    ARPG_REQUIRE(session.pending_save()->kind
+        == dungeon::PendingSaveKind::abyss_clear);
+    ARPG_REQUIRE(test::commit_pending(session));
 
     const auto cleared = session.snapshot();
     ARPG_REQUIRE(cleared.phase == dungeon::RoomPhase::cleared);
@@ -331,9 +366,9 @@ arpg::test::Failure abyss_clear_exactly_two_slots_publish_both_events() noexcept
     ARPG_REQUIRE(events.dungeon_count
         == dungeon::DungeonSession::kDungeonEventCapacity);
     ARPG_REQUIRE(events.dungeon_kinds[events.dungeon_count - 2U]
-        == dungeon::DungeonEventKind::room_cleared);
-    ARPG_REQUIRE(events.dungeon_kinds[events.dungeon_count - 1U]
         == dungeon::DungeonEventKind::exits_opened);
+    ARPG_REQUIRE(events.dungeon_kinds[events.dungeon_count - 1U]
+        == dungeon::DungeonEventKind::room_cleared);
     return {};
 }
 
@@ -356,6 +391,8 @@ arpg::test::Failure abyss_reset_queues_fail_and_rejects_reentry() noexcept {
     ARPG_REQUIRE(pending->next_state.abyss.lifecycle
         == abyss::AbyssLifecycle::failed);
     ARPG_REQUIRE(pending->next_state.last_abyss_resolution.valid);
+    ARPG_REQUIRE(pending->next_state.last_abyss_resolution.lifecycle
+        == abyss::AbyssLifecycle::failed);
     ARPG_REQUIRE(pending->next_state.last_abyss_resolution.room_seed
         == before.room_seed);
     ARPG_REQUIRE(pending->next_state.last_abyss_resolution.rule
@@ -416,9 +453,16 @@ arpg::test::Failure abyss_fail_commit_rebuilds_same_normal_room() noexcept {
     ARPG_REQUIRE(!after.is_abyss);
     ARPG_REQUIRE(test::DungeonSessionTestAccess::stable_state(session)
         .abyss.lifecycle == abyss::AbyssLifecycle::failed);
-    const auto expected = dungeon::build_encounter_plan(after.room_seed,
-        after.depth, after.ecology, dungeon::DungeonRules{}.encounter);
-    ARPG_REQUIRE(after.encounter.total_budget == expected.plan.total_budget);
+    ARPG_REQUIRE(after.initial_monster_count >= 300U);
+    ARPG_REQUIRE(after.initial_monster_count <= 750U);
+    ARPG_REQUIRE(after.initial_monster_count
+        == after.combat->total_living_monsters);
+    ARPG_REQUIRE(after.defeated_monster_count == 0U);
+    ARPG_REQUIRE(after.remaining_targets == after.initial_monster_count);
+    ARPG_REQUIRE(after.monster_generator_version != 0U);
+    ARPG_REQUIRE(after.monster_blueprint_hash != 0U);
+    ARPG_REQUIRE(after.environment_generator_version != 0U);
+    ARPG_REQUIRE(after.environment_blueprint_hash != 0U);
     return {};
 }
 
@@ -487,7 +531,8 @@ arpg::test::Failure abyss_player_defeat_does_not_depend_on_event_delivery() noex
     }
     while (session.try_pop_combat_event().has_value()) {
     }
-    test::DungeonSessionTestAccess::fill_current_combat_events(session, 62U);
+    test::DungeonSessionTestAccess::fill_current_combat_events(
+        session, combat::kCombatEventCapacity - 2U);
     test::DungeonSessionTestAccess::damage_current_player(
         session, session.snapshot().combat->player.max_hp);
     ARPG_REQUIRE(session.snapshot().combat->player.hp == 0);
@@ -570,8 +615,15 @@ arpg::test::Failure deep_abyss_snapshot_uses_expanded_budget_legality() noexcept
     dungeon::DungeonSession session{{}, state};
     ARPG_REQUIRE(commit_abyss_start(session));
     const auto snapshot = session.snapshot();
-    ARPG_REQUIRE(snapshot.encounter.total_budget
-        > dungeon::DungeonRules{}.encounter.max_budget);
+    ARPG_REQUIRE(snapshot.initial_monster_count >= 450U);
+    ARPG_REQUIRE(snapshot.initial_monster_count <= 1125U);
+    ARPG_REQUIRE(snapshot.initial_monster_count
+        == snapshot.combat->total_living_monsters);
+    ARPG_REQUIRE(snapshot.remaining_targets == snapshot.initial_monster_count);
+    ARPG_REQUIRE(snapshot.monster_generator_version != 0U);
+    ARPG_REQUIRE(snapshot.monster_blueprint_hash != 0U);
+    ARPG_REQUIRE(snapshot.environment_generator_version != 0U);
+    ARPG_REQUIRE(snapshot.environment_blueprint_hash != 0U);
     ARPG_REQUIRE(snapshot.encounter.plan_valid);
     return {};
 }
@@ -587,8 +639,18 @@ arpg::test::Failure construction_and_first_tick_are_staged() noexcept {
     ARPG_REQUIRE(constructed.combat->tick == 0U);
     ARPG_REQUIRE(constructed.remaining_targets > 0U);
     ARPG_REQUIRE(constructed.remaining_targets
-        == constructed.combat->monster_count);
+        == constructed.initial_monster_count);
+    ARPG_REQUIRE(constructed.remaining_targets
+        == constructed.combat->total_living_monsters);
+    ARPG_REQUIRE(constructed.defeated_monster_count == 0U);
     ARPG_REQUIRE(all_exits_are(constructed, false));
+
+    const auto generated = session.try_pop_event();
+    ARPG_REQUIRE(generated.has_value());
+    ARPG_REQUIRE(generated->kind
+        == dungeon::DungeonEventKind::population_generated);
+    ARPG_REQUIRE(generated->session_tick == 0U);
+    ARPG_REQUIRE(!session.try_pop_event().has_value());
 
     session.tick(combat::MovementInput{});
     const dungeon::DungeonSnapshot started = session.snapshot();
@@ -630,7 +692,12 @@ arpg::test::Failure closed_doors_ignore_pre_clear_contact() noexcept {
         ARPG_REQUIRE(state.phase == dungeon::RoomPhase::combat);
         ARPG_REQUIRE(state.room_index == 0U);
         ARPG_REQUIRE(state.remaining_targets > 0U);
-        ARPG_REQUIRE(state.remaining_targets == state.combat->monster_count);
+        ARPG_REQUIRE(state.remaining_targets
+            == state.combat->total_living_monsters);
+        ARPG_REQUIRE(state.combat->monster_count
+            <= combat::room_spatial::maximum_streaming_monsters);
+        ARPG_REQUIRE(state.combat->monster_count
+            < state.remaining_targets);
         ARPG_REQUIRE(all_exits_are(state, false));
         ARPG_REQUIRE(state.diagnostics.rejected_exit_count == 0U);
     }
@@ -641,7 +708,7 @@ arpg::test::Failure real_combat_clears_once_without_respawn() noexcept {
     using namespace arpg;
     dungeon::DungeonSession session;
     test::EventSummary events;
-    const std::uint8_t initial_targets = session.snapshot().remaining_targets;
+    const std::uint32_t initial_targets = session.snapshot().remaining_targets;
 
     session.tick(combat::MovementInput{});
     test::drain_all_events(session, events);
@@ -653,12 +720,12 @@ arpg::test::Failure real_combat_clears_once_without_respawn() noexcept {
     ARPG_REQUIRE(all_exits_are(cleared, true));
     ARPG_REQUIRE(events.room_cleared_count == 1U);
     ARPG_REQUIRE(events.exits_opened_count == 1U);
-    ARPG_REQUIRE(events.defeated_count == initial_targets);
+    ARPG_REQUIRE(cleared.defeated_monster_count == initial_targets);
     ARPG_REQUIRE(events.dungeon_count >= 2U);
     ARPG_REQUIRE(events.dungeon_kinds[events.dungeon_count - 2U]
-        == dungeon::DungeonEventKind::room_cleared);
-    ARPG_REQUIRE(events.dungeon_kinds[events.dungeon_count - 1U]
         == dungeon::DungeonEventKind::exits_opened);
+    ARPG_REQUIRE(events.dungeon_kinds[events.dungeon_count - 1U]
+        == dungeon::DungeonEventKind::room_cleared);
 
     const std::uint64_t cleared_session_tick = cleared.session_tick;
     const std::uint64_t combat_tick = cleared.combat->tick;
@@ -714,7 +781,10 @@ arpg::test::Failure real_combat_clears_once_without_respawn() noexcept {
     ARPG_REQUIRE(all_exits_are(stable, true));
     ARPG_REQUIRE(events.room_cleared_count == 1U);
     ARPG_REQUIRE(events.exits_opened_count == 1U);
-    ARPG_REQUIRE(events.defeated_count == initial_targets);
+    ARPG_REQUIRE(stable.defeated_monster_count == initial_targets);
+    ARPG_REQUIRE(stable.diagnostics.event_overflow_count == 0U);
+    ARPG_REQUIRE(stable.diagnostics.combat_relay_overflow_count == 0U);
+    ARPG_REQUIRE(stable.combat->diagnostics.event_overflow_count == 0U);
     return {};
 }
 
@@ -742,13 +812,19 @@ arpg::test::Failure reset_reconstructs_same_room_and_clears_queues() noexcept {
     ARPG_REQUIRE(reset.combat.has_value());
     ARPG_REQUIRE(reset.combat->tick == 0U);
     ARPG_REQUIRE(reset.remaining_targets > 0U);
-    ARPG_REQUIRE(reset.remaining_targets == reset.combat->monster_count);
+    ARPG_REQUIRE(reset.remaining_targets == reset.initial_monster_count);
+    ARPG_REQUIRE(reset.remaining_targets
+        == reset.combat->total_living_monsters);
     ARPG_REQUIRE(all_exits_are(reset, false));
     ARPG_REQUIRE(reset.diagnostics.event_overflow_count
         == before.diagnostics.event_overflow_count);
     ARPG_REQUIRE(reset.diagnostics.combat_relay_overflow_count
         == before.diagnostics.combat_relay_overflow_count);
 
+    const auto population_event = session.try_pop_event();
+    ARPG_REQUIRE(population_event.has_value());
+    ARPG_REQUIRE(population_event->kind
+        == dungeon::DungeonEventKind::population_generated);
     const auto reset_event = session.try_pop_event();
     ARPG_REQUIRE(reset_event.has_value());
     ARPG_REQUIRE(reset_event->kind == dungeon::DungeonEventKind::room_reset);
@@ -760,30 +836,46 @@ arpg::test::Failure reset_reconstructs_same_room_and_clears_queues() noexcept {
 arpg::test::Failure combat_events_relay_in_source_order() noexcept {
     using namespace arpg;
     dungeon::DungeonSession session;
-    test::EventSummary relayed;
-    const std::uint8_t initial_targets = session.snapshot().remaining_targets;
+    const std::uint32_t initial_targets = session.snapshot().remaining_targets;
 
     session.tick(combat::MovementInput{});
     test::EventSummary dungeon_events;
     test::drain_all_events(session, dungeon_events);
 
-    test::force_defeat_current_wave(session);
+    std::array<combat::MonsterOrdinal, 2U> expected_ordinals{};
+    std::size_t expected_count = 0U;
+    for (const auto& monster : session.snapshot().combat->monsters) {
+        if (!monster.active || monster.hp <= 0) continue;
+        expected_ordinals[expected_count++] = monster.monster_ordinal;
+        if (expected_count == expected_ordinals.size()) break;
+    }
+    ARPG_REQUIRE(expected_count == expected_ordinals.size());
+    ARPG_REQUIRE(test::defeat_next_live_monster(session));
+    ARPG_REQUIRE(test::defeat_next_live_monster(session));
     session.tick(combat::MovementInput{});
-    test::drain_all_events(session, relayed);
-
-    ARPG_REQUIRE(relayed.combat_count == initial_targets);
-    ARPG_REQUIRE(relayed.defeated_count == initial_targets);
-    ARPG_REQUIRE(relayed.room_cleared_count == 1U);
-    ARPG_REQUIRE(relayed.exits_opened_count == 1U);
+    std::array<combat::MonsterOrdinal, 2U> defeated_ordinals{};
+    std::size_t defeated_count = 0U;
+    while (const auto event = session.try_pop_combat_event()) {
+        if (event->kind != combat::CombatEventKind::defeated) continue;
+        ARPG_REQUIRE(defeated_count < defeated_ordinals.size());
+        defeated_ordinals[defeated_count++] = event->target_ordinal;
+    }
+    ARPG_REQUIRE(defeated_count == defeated_ordinals.size());
+    ARPG_REQUIRE(defeated_ordinals == expected_ordinals);
     const dungeon::DungeonSnapshot state = session.snapshot();
+    ARPG_REQUIRE(state.phase == dungeon::RoomPhase::combat);
+    ARPG_REQUIRE(state.defeated_monster_count == 2U);
+    ARPG_REQUIRE(state.remaining_targets == initial_targets - 2U);
     ARPG_REQUIRE(state.diagnostics.combat_relay_overflow_count == 0U);
     ARPG_REQUIRE(state.diagnostics.event_overflow_count == 0U);
     return {};
 }
 
 constexpr arpg::test::TestCase kCases[] = {
-    {"abyss clear requires two reserved event slots", &abyss_clear_requires_two_reserved_event_slots},
-    {"abyss clear exactly two slots publish both events", &abyss_clear_exactly_two_slots_publish_both_events},
+    {"abyss unlock and clear each require one reserved event slot",
+     &abyss_unlock_and_clear_each_require_one_reserved_event_slot},
+    {"abyss unlock and clear exactly two slots publish ordered events",
+     &abyss_unlock_and_clear_exactly_two_slots_publish_ordered_events},
     {"abyss clear is atomic and restores life resources", &abyss_clear_is_atomic_and_restores_life_resources},
     {"abyss clear removes environment hazard after commit", &abyss_clear_removes_environment_hazard_after_commit},
     {"abyss reset queues fail and rejects reentry", &abyss_reset_queues_fail_and_rejects_reentry},

@@ -9,7 +9,7 @@
 
 namespace arpg::persistence::detail {
 
-namespace checkpoint = arpg::dungeon::checkpoint;
+namespace checkpoint = arpg::checkpoint;
 
 enum class SlotFileState : std::uint8_t { missing, valid, invalid, unavailable };
 
@@ -17,6 +17,9 @@ struct SlotInfo final {
     SlotFileState state{SlotFileState::missing};
     SaveError error{SaveError::none};
     checkpoint::DungeonRunState checkpoint{};
+    std::vector<std::uint8_t> encoded_bytes{};
+    std::uint64_t persistence_revision{};
+    bool v9{};
     bool migrated{};
 };
 
@@ -44,6 +47,7 @@ const std::filesystem::path& slot_name(SaveSlot slot);
 const std::filesystem::path& temp_name(SaveSlot slot);
 bool same_state(const checkpoint::DungeonRunState& lhs,
     const checkpoint::DungeonRunState& rhs) noexcept;
+bool same_slot_checkpoint(const SlotInfo& lhs, const SlotInfo& rhs) noexcept;
 SlotInfo read_slot(const std::filesystem::path& path);
 bool hook_failed(const SaveStoreConfig& config, SaveFaultPoint point) noexcept;
 ScanResult scan_directory(const SaveStoreConfig& config, bool final_scan) noexcept;

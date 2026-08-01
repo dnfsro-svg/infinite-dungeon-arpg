@@ -238,8 +238,8 @@ arpg::test::Failure two_wave_trace_rolls_each_ordinal_once() noexcept {
         ARPG_REQUIRE(ground.position.z == 0.0F);
     }
 
-    ARPG_REQUIRE(arpg::test::relay_defeated(
-        session, 0U, 0U, {999.0F, 999.0F, 999.0F}));
+    ARPG_REQUIRE(arpg::test::relay_visual_defeated(
+        session, 0U, {999.0F, 999.0F, 999.0F}));
     ARPG_REQUIRE(session.try_pop_combat_event().has_value());
     ARPG_REQUIRE(session.snapshot().ground_item_count == expected_count);
     return {};
@@ -647,7 +647,9 @@ arpg::test::Failure miss_is_rolled_once_until_room_reset() noexcept {
     }
     ARPG_REQUIRE(hit_seed != 0U);
     arpg::test::set_current_room_seed(session, hit_seed);
-    ARPG_REQUIRE(inject_drop(session, miss, {10.0F, 20.0F, 30.0F}));
+    ARPG_REQUIRE(arpg::test::relay_visual_defeated(
+        session, miss, {10.0F, 20.0F, 30.0F}));
+    static_cast<void>(session.try_pop_combat_event());
     ARPG_REQUIRE(session.snapshot().ground_item_count == 0U);
     static_cast<void>(session.reset_current_room());
     ARPG_REQUIRE(inject_drop(session, miss, {10.0F, 20.0F, 30.0F}));

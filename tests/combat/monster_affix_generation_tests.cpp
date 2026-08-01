@@ -209,7 +209,7 @@ arpg::test::Failure abyss_supplement_enforces_depth_minimums_and_preserves_prefi
         std::uint8_t minimum{};
     };
     constexpr std::array<Case, 6> kCases{{
-        {1U, 1U}, {19U, 1U}, {20U, 2U},
+        {4U, 1U}, {19U, 1U}, {20U, 2U},
         {39U, 2U}, {40U, 3U}, {(std::numeric_limits<std::uint64_t>::max)(), 3U},
     }};
 
@@ -292,9 +292,36 @@ arpg::test::Failure abyss_supplement_allocates_nothing() noexcept {
     return {};
 }
 
+arpg::test::Failure first_three_depths_are_affix_free_in_normal_and_abyss_rooms() noexcept {
+    MonsterAffixSet nonempty{};
+    nonempty.values[0] = {MonsterAffixId::mighty, MonsterAffixTier::m1};
+    nonempty.count = 1U;
+    for (std::uint64_t depth = 1U; depth <= 3U; ++depth) {
+        for (std::uint8_t raw = 0U;
+             raw < static_cast<std::uint8_t>(MonsterId::count); ++raw) {
+            const MonsterDefinition* monster = monster_definition(static_cast<MonsterId>(raw));
+            ARPG_REQUIRE(monster != nullptr);
+            for (std::uint64_t seed = 0U; seed < 256U; ++seed) {
+                const auto normal = generate_monster_affixes(seed, depth, 1U, raw, *monster);
+                ARPG_REQUIRE(normal.has_value());
+                ARPG_REQUIRE(normal->count == 0U);
+                const auto abyss = supplement_abyss_affixes(seed, depth, 1U, raw,
+                    *monster, *normal);
+                ARPG_REQUIRE(abyss.has_value());
+                ARPG_REQUIRE(abyss->count == 0U);
+            }
+            const auto cleared = supplement_abyss_affixes(7U, depth, 0U, raw,
+                *monster, nonempty);
+            ARPG_REQUIRE(cleared.has_value());
+            ARPG_REQUIRE(cleared->count == 0U);
+        }
+    }
+    return {};
+}
+
 arpg::test::Failure depth_bands_match_frozen_weights() noexcept {
     ARPG_REQUIRE((affix_count_weights(3U)
-        == std::array<std::uint16_t, 4>{{80U, 20U, 0U, 0U}}));
+        == std::array<std::uint16_t, 4>{{100U, 0U, 0U, 0U}}));
     ARPG_REQUIRE((affix_count_weights(4U)
         == std::array<std::uint16_t, 4>{{55U, 38U, 7U, 0U}}));
     ARPG_REQUIRE((affix_count_weights(9U)
@@ -528,6 +555,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"abyss supplement insufficient candidates fail",
         &abyss_supplement_fails_when_compatible_candidates_run_out},
     {"abyss supplement no allocations", &abyss_supplement_allocates_nothing},
+    {"first three depths are affix free in normal and abyss rooms",
+        &first_three_depths_are_affix_free_in_normal_and_abyss_rooms},
     {"frozen depth bands", &depth_bands_match_frozen_weights},
     {"deterministic unique generation and score",
         &generation_is_deterministic_unique_and_scored},

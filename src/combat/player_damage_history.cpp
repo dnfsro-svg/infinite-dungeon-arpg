@@ -1,5 +1,7 @@
 #include "combat/player_damage_history.hpp"
 
+#include "checkpoint/room_combat_checkpoint.hpp"
+
 #include <limits>
 
 namespace arpg::combat {
@@ -52,6 +54,50 @@ PlayerDamageHistory::totals() const noexcept {
         }
     }
     return result;
+}
+
+void PlayerDamageHistory::capture_checkpoint(
+    checkpoint::PlayerDamageHistoryCheckpoint& out) const noexcept {
+    static_assert(kPlayerDamageHistoryTicks
+        == checkpoint::kPlayerDamageHistoryTicks);
+    static_assert(modifiers::kDamageTypeCount
+        == checkpoint::kDamageTypeCount);
+    out.buckets = buckets_;
+    out.active_tick = active_tick_;
+    out.initialized = initialized_;
+}
+
+bool PlayerDamageHistory::restore_checkpoint(
+    const checkpoint::PlayerDamageHistoryCheckpoint& checkpoint) noexcept {
+    if (!checkpoint.initialized) {
+        if (checkpoint.active_tick != 0U) return false;
+        for (const auto& bucket : checkpoint.buckets) {
+            for (const std::uint64_t value : bucket) {
+                if (value != 0U) return false;
+            }
+        }
+    } else {
+        std::array<std::uint64_t, modifiers::kDamageTypeCount> totals{};
+        const auto maximum = (std::numeric_limits<std::uint64_t>::max)();
+        for (const auto& bucket : checkpoint.buckets) {
+            for (std::size_t index = 0U; index < bucket.size(); ++index) {
+                if (totals[index] > maximum - bucket[index]) return false;
+                totals[index] += bucket[index];
+            }
+        }
+    }
+    buckets_ = checkpoint.buckets;
+    active_tick_ = checkpoint.active_tick;
+    initialized_ = checkpoint.initialized;
+    return true;
+}
+
+std::uint64_t PlayerDamageHistory::active_tick() const noexcept {
+    return active_tick_;
+}
+
+bool PlayerDamageHistory::initialized() const noexcept {
+    return initialized_;
 }
 
 }  // namespace arpg::combat

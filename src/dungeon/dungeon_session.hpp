@@ -11,8 +11,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <array>
+#include <memory>
 #include <optional>
 #include <utility>
+
+namespace arpg::checkpoint {
+struct SaveCheckpointSlot;
+}
 
 namespace arpg::test {
 struct DungeonSessionTestAccess;
@@ -84,7 +89,8 @@ private:
 class DungeonSession final {
 public:
     static constexpr std::size_t kDungeonEventCapacity = 32;
-    static constexpr std::size_t kCombatRelayCapacity = 64;
+    static constexpr std::size_t kCombatRelayCapacity =
+        combat::kCombatEventCapacity;
 
     explicit DungeonSession(DungeonSessionConfig config = {}) noexcept;
     explicit DungeonSession(
@@ -144,6 +150,14 @@ public:
     [[nodiscard]] RequestResult reset_current_room() noexcept;
     [[nodiscard]] RoomPhase phase() const noexcept;
     [[nodiscard]] DungeonSnapshot snapshot() const noexcept;
+    void snapshot(DungeonSnapshot& destination) const noexcept;
+    [[nodiscard]] bool capture_save_checkpoint(
+        ::arpg::checkpoint::SaveCheckpointSlot& destination,
+        std::uint64_t persistence_revision,
+        const DungeonRunState* durable_override = nullptr) const noexcept;
+    void clear_buffered_gameplay_input() noexcept;
+    [[nodiscard]] bool restore_room_progress_checkpoint(
+        const ::arpg::checkpoint::SaveCheckpointSlot& source) noexcept;
     [[nodiscard]] std::optional<DungeonEvent> try_pop_event() noexcept;
     [[nodiscard]] std::optional<combat::CombatEvent>
     try_pop_combat_event() noexcept;
@@ -151,6 +165,9 @@ public:
 private:
     friend struct ::arpg::test::DungeonSessionTestAccess;
     friend struct ::arpg::test::DungeonDeathStressFixture;
+    [[nodiscard]] bool restore_room_progress_checkpoint_in_place(
+        const ::arpg::checkpoint::SaveCheckpointSlot& source) noexcept;
+    void adopt_restored_session(DungeonSession&& source) noexcept;
     enum class PlayerBuildStatus : std::uint8_t {
         valid,
         invalid_state,
@@ -177,10 +194,16 @@ private:
     void rebuild_committed_abyss_rewards() noexcept;
     void attempt_abyss_reward_materialization() noexcept;
     void construct_normal_room() noexcept;
+    void construct_started_abyss_room() noexcept;
+    [[nodiscard]] bool stage_current_room_population(
+        combat::CombatEncounterConfig config) noexcept;
+    [[nodiscard]] bool activate_staged_room_population(
+        bool publish_population_event = true) noexcept;
+    void clear_staged_room_population() noexcept;
     void reset_to_normal_room(bool clear_queues) noexcept;
     [[nodiscard]] bool prepare_abyss_start() noexcept;
     [[nodiscard]] RequestResult prepare_abyss_failure() noexcept;
-    void start_next_wave() noexcept;
+    void relay_combat_defeats() noexcept;
     void relay_combat_events() noexcept;
     void handle_player_defeat() noexcept;
     [[nodiscard]] bool prepare_death_retreat() noexcept;
@@ -202,9 +225,15 @@ private:
         GroundMaterialSource source,
         combat::Vec3 position,
         items::MaterialId material) noexcept;
+    [[nodiscard]] bool place_ground_health_potion(
+        std::uint16_t spawn_ordinal, combat::Vec3 position) noexcept;
+    [[nodiscard]] bool has_claimable_health_potion() const noexcept;
+    [[nodiscard]] bool append_clear_health_potion_claims(
+        PendingSave& pending) noexcept;
     [[nodiscard]] bool materialize_abyss_clear_materials() noexcept;
     void vacuum_room_materials() noexcept;
     [[nodiscard]] bool has_ground_materials() const noexcept;
+    void prepare_room_unlock() noexcept;
     void prepare_room_clear() noexcept;
     void publish_room_clear() noexcept;
     void settle_room_experience() noexcept;
@@ -236,6 +265,13 @@ private:
         skills::ActiveSkillId skill,
         std::uint8_t left,
         std::uint8_t right) noexcept;
+    [[nodiscard]] RequestResult request_health_potion_pickup(
+        std::uint16_t spawn_ordinal) noexcept;
+    [[nodiscard]] bool health_potion_abyss_clear_retry_gate_active()
+        const noexcept;
+    [[nodiscard]] bool pending_health_potion_cache_consistent() const noexcept;
+    void apply_committed_health_potions(
+        const PendingHealthPotionClaim& claim, bool room_clear) noexcept;
     [[nodiscard]] PlayerBuildResult build_for(
         const checkpoint::DungeonRunState& state,
         const items::EquipmentState* equipment_override = nullptr) const noexcept;
@@ -246,7 +282,7 @@ private:
     [[nodiscard]] bool pending_death_cache_consistent() const noexcept;
     [[nodiscard]] bool pending_material_cache_consistent() const noexcept;
     void commit_pending_save(const PendingSaveResult& result) noexcept;
-    [[nodiscard]] DungeonSnapshot build_dungeon_snapshot() const noexcept;
+    void build_dungeon_snapshot(DungeonSnapshot& destination) const noexcept;
     void enter_fault(DungeonFault fault) noexcept;
     void emit_committed(
         const checkpoint::RoomDescriptor& previous_room,
@@ -257,7 +293,7 @@ private:
         const DungeonRunState* destination = nullptr,
         TransitionKind transition = TransitionKind::none,
         ExitDirection direction = ExitDirection::none) noexcept;
-    [[nodiscard]] std::uint8_t remaining_targets() const noexcept;
+    [[nodiscard]] std::uint32_t remaining_targets() const noexcept;
 
     DungeonRules rules_{};
     DungeonRunState stable_state_{};
@@ -265,19 +301,30 @@ private:
     mutable DungeonRunState death_validation_scratch_{};
     std::optional<combat::PlayerCombatBuild> pending_item_build_{};
     std::optional<combat::CombatEncounterConfig> pending_abyss_combat_{};
+    std::optional<combat::CombatEncounterConfig> staged_room_combat_{};
+    std::unique_ptr<combat::RoomMonsterField> staged_room_monster_field_{};
+    std::unique_ptr<combat::RoomEnvironmentBlueprint>
+        staged_room_environment_{};
+    RoomProgressState staged_room_progress_{};
     std::optional<PendingAbyssReward> pending_abyss_reward_{};
     AbyssExitConfirmation abyss_exit_confirmation_{};
+    std::unique_ptr<combat::RoomEnvironmentBlueprint> room_environment_{};
     std::optional<combat::CombatWorld> combat_{};
     std::array<GroundItem, kGroundDropCapacity> ground_items_{};
     std::array<std::uint64_t, 3> rolled_drop_bits_{};
     std::array<GroundMaterial, kGroundMaterialCapacity> ground_materials_{};
     std::array<std::uint64_t, kMaterialDropBitWordCount>
         rolled_material_bits_{};
+    std::array<GroundHealthPotion, kGroundHealthPotionCapacity>
+        ground_health_potions_{};
+    HealthPotionPickupReceipt health_potion_pickup_receipt_{};
+    bool retry_health_potion_abyss_clear_before_combat_{};
     MaterialPickupReceipt material_pickup_receipt_{};
     ReinforcementReceipt reinforcement_receipt_{};
     RoomEncounterPlan encounter_plan_{};
     std::uint8_t wave_index_{};
     std::uint16_t wave_delay_ticks_{};
+    RoomProgressState room_progress_{};
     core::BoundedQueue<DungeonEvent, kDungeonEventCapacity> events_{};
     core::BoundedQueue<combat::CombatEvent, kCombatRelayCapacity>
         combat_events_{};

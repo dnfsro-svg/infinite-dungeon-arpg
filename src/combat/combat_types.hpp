@@ -7,6 +7,7 @@
 
 #include "abyss/abyss_types.hpp"
 #include "combat/monster_affix_types.hpp"
+#include "core/gameplay_limits.hpp"
 #include "modifiers/damage_types.hpp"
 #include "modifiers/player_modifier_values.hpp"
 #include "skills/active_skill_types.hpp"
@@ -233,17 +234,46 @@ struct MonsterDefinition final {
     return (definition.tags & static_cast<std::uint16_t>(value)) != 0U;
 }
 
-inline constexpr std::size_t kMonsterCapacity = 96;
-inline constexpr std::size_t kProjectileCapacity = 384;
-inline constexpr std::size_t kHazardCapacity = 96;
+inline constexpr std::size_t kMonsterCapacity =
+    limits::kActiveMonsterCapacity;
+inline constexpr std::size_t kProjectileCapacity =
+    limits::kProjectileCapacity;
+inline constexpr std::size_t kHazardCapacity = limits::kHazardCapacity;
+inline constexpr std::size_t kCombatEventCapacity =
+    limits::kCombatEventCapacity;
+inline constexpr std::size_t kDefeatLedgerCapacity =
+    limits::kDefeatLedgerCapacity;
 inline constexpr std::size_t kEncounterWaveCapacity = 2;
-inline constexpr std::size_t kEncounterSpawnCapacity = 96;
+// Legacy wave planning remains capped at 96 until Task 2 replaces it with
+// the room-owned 1,152-entry blueprint.
+inline constexpr std::size_t kEncounterSpawnCapacity = 96U;
+
+using MonsterOrdinal = std::uint16_t;
+inline constexpr MonsterOrdinal kInvalidMonsterOrdinal = 0xFFFFU;
+inline constexpr std::size_t kMonsterOrdinalWordCount =
+    (limits::kRoomMonsterCapacity + 63U) / 64U;
+
+struct MonsterOrdinalSet final {
+    std::array<std::uint64_t, kMonsterOrdinalWordCount> words{};
+
+    void clear() noexcept { words.fill(0U); }
+    [[nodiscard]] bool contains(MonsterOrdinal ordinal) const noexcept {
+        if (ordinal >= limits::kRoomMonsterCapacity) return false;
+        return (words[ordinal / 64U] & (std::uint64_t{1U}
+            << (ordinal % 64U))) != 0U;
+    }
+    [[nodiscard]] bool insert(MonsterOrdinal ordinal) noexcept {
+        if (ordinal >= limits::kRoomMonsterCapacity) return false;
+        words[ordinal / 64U] |= std::uint64_t{1U} << (ordinal % 64U);
+        return true;
+    }
+};
 
 struct MonsterSpawnSpec final {
     MonsterId id{MonsterId::chaos_chaser};
     Vec3 position{};
     MonsterAffixSet affixes{};
-    std::uint16_t spawn_ordinal{};
+    MonsterOrdinal spawn_ordinal{};
 };
 
 enum class MonsterAffixWarning : std::uint8_t {
@@ -281,7 +311,7 @@ struct ProjectileHandle final {
 struct ProjectileRuntime final {
     bool active{};
     std::uint16_t generation{};
-    MonsterHandle owner{};
+    MonsterOrdinal owner_ordinal{kInvalidMonsterOrdinal};
     Vec3 position{};
     Vec3 velocity{};
     std::uint16_t lifetime_ticks{};
@@ -294,7 +324,7 @@ struct ProjectileRuntime final {
 struct HazardRuntime final {
     bool active{};
     std::uint16_t generation{};
-    MonsterHandle owner{};
+    MonsterOrdinal owner_ordinal{kInvalidMonsterOrdinal};
     HazardSource source{HazardSource::monster};
     HazardKind kind{HazardKind::native};
     Vec3 center{};
@@ -346,9 +376,17 @@ enum class CombatEventKind : std::uint8_t {
     affix_death_warning,
 };
 
+enum class CombatFault : std::uint8_t {
+    none,
+    invalid_monster_plan,
+    monster_residency_capacity,
+    defeat_ledger_overflow,
+    invalid_obstacle_plan,
+};
+
 struct DefeatPayload final {
     MonsterId monster_id{MonsterId::count};
-    std::uint16_t spawn_ordinal{};
+    MonsterOrdinal spawn_ordinal{};
     std::uint16_t affix_score{};
     bool reward_eligible{};
 };
@@ -360,7 +398,7 @@ struct CombatEvent final {
     skills::ActiveSkillId skill{skills::ActiveSkillId::none};
     std::uint8_t strike_index{};
     bool finisher{};
-    std::uint8_t target_index{0xFF};
+    MonsterOrdinal target_ordinal{kInvalidMonsterOrdinal};
     std::uint8_t hit_count{};
     FeedbackLevel feedback{};
     Vec3 position{};
@@ -496,6 +534,7 @@ struct PlayerSnapshot final {
 struct MonsterSnapshot final {
     bool active{};
     std::uint16_t generation{};
+    MonsterOrdinal monster_ordinal{kInvalidMonsterOrdinal};
     MonsterId id{MonsterId::chaos_chaser};
     MonsterAffixSet affixes{};
     std::uint16_t spawn_ordinal{};
@@ -527,7 +566,7 @@ struct MonsterSnapshot final {
 struct ProjectileSnapshot final {
     bool active{};
     std::uint16_t generation{};
-    MonsterHandle owner{};
+    MonsterOrdinal owner_ordinal{kInvalidMonsterOrdinal};
     Vec3 position{};
     Vec3 velocity{};
     std::uint16_t lifetime_ticks{};
@@ -539,7 +578,7 @@ struct ProjectileSnapshot final {
 struct HazardSnapshot final {
     bool active{};
     std::uint16_t generation{};
-    MonsterHandle owner{};
+    MonsterOrdinal owner_ordinal{kInvalidMonsterOrdinal};
     HazardSource source{HazardSource::monster};
     HazardKind kind{HazardKind::native};
     Vec3 center{};
@@ -589,7 +628,9 @@ struct CombatSnapshot final {
     ActiveSkillSnapshot active_skill{};
     std::array<std::uint16_t, skills::kActiveSkillCount> skill_cooldowns{};
     std::array<MonsterSnapshot, kMonsterCapacity> monsters{};
-    std::size_t monster_count{};
+    std::uint16_t monster_count{};
+    std::uint32_t total_living_monsters{};
+    std::uint32_t defeated_monsters{};
     std::array<ProjectileSnapshot, kProjectileCapacity> projectiles{};
     std::size_t projectile_count{};
     std::array<HazardSnapshot, kHazardCapacity> hazards{};

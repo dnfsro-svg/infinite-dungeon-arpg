@@ -3,6 +3,9 @@
 #include "combat_test_support.hpp"
 #include "combat/combat_world.hpp"
 #include "combat/fire_room_obstacle.hpp"
+#include "combat/room_bounds.hpp"
+#include "combat/room_spatial_grid.hpp"
+#include "core/gameplay_limits.hpp"
 
 #include "abyss/abyss_rules.hpp"
 
@@ -14,6 +17,74 @@ namespace {
 using namespace arpg::combat;
 
 constexpr double kFloatTolerance = 1.0e-4;
+
+arpg::test::Failure hundredfold_room_geometry_and_limits_are_exact() noexcept {
+    static_assert(arpg::limits::kRoomMonsterCapacity == 1152U);
+    static_assert(arpg::limits::kActiveMonsterCapacity == 128U);
+    static_assert(arpg::limits::kProjectileCapacity == 512U);
+    static_assert(arpg::limits::kHazardCapacity == 128U);
+    static_assert(arpg::limits::kCombatEventCapacity == 512U);
+    static_assert(arpg::limits::kDefeatLedgerCapacity == 128U);
+    static_assert(arpg::limits::kRoomEquipmentClaimWords == 18U);
+    static_assert(arpg::limits::kRoomSecondaryClaimWords == 37U);
+    ARPG_REQUIRE(arpg::test::near(
+        room_bounds::width, 162.48077393, kFloatTolerance));
+    ARPG_REQUIRE(arpg::test::near(
+        room_bounds::depth, 162.48077393, kFloatTolerance));
+    ARPG_REQUIRE(arpg::test::near(
+        room_bounds::width * room_bounds::depth, 26400.0, 0.01));
+    ARPG_REQUIRE(arpg::test::near(room_bounds::min_x, room_bounds::min_y));
+    ARPG_REQUIRE(arpg::test::near(room_bounds::max_x, room_bounds::max_y));
+    return {};
+}
+
+arpg::test::Failure spatial_grid_bounds_streaming_regions() noexcept {
+    static_assert(room_spatial::columns == 20U);
+    static_assert(room_spatial::rows == 20U);
+    static_assert(room_spatial::maximum_monsters_per_cell == 3U);
+    static_assert(room_spatial::maximum_view_width == 32.0F);
+    static_assert(room_spatial::maximum_view_depth == 11.0F);
+    static_assert(room_spatial::maximum_streaming_columns == 7U);
+    static_assert(room_spatial::maximum_streaming_rows == 5U);
+    static_assert(room_spatial::maximum_streaming_monsters == 105U);
+    ARPG_REQUIRE(arpg::test::near(
+        room_spatial::cell_width, room_bounds::width / 20.0F,
+        kFloatTolerance));
+    ARPG_REQUIRE(arpg::test::near(
+        room_spatial::cell_depth, room_bounds::depth / 20.0F,
+        kFloatTolerance));
+
+    const RoomStreamingRegion center = make_room_streaming_region({});
+    ARPG_REQUIRE(center.first_column <= 7U);
+    ARPG_REQUIRE(center.first_column + center.column_count >= 13U);
+    ARPG_REQUIRE(center.first_row <= 8U);
+    ARPG_REQUIRE(center.first_row + center.row_count >= 12U);
+    ARPG_REQUIRE(center.column_count <= 7U);
+    ARPG_REQUIRE(center.row_count <= 5U);
+    ARPG_REQUIRE(center.first_column + center.column_count
+        <= room_spatial::columns);
+    ARPG_REQUIRE(center.first_row + center.row_count
+        <= room_spatial::rows);
+
+    const RoomStreamingRegion minimum = make_room_streaming_region(
+        {room_bounds::min_x, room_bounds::min_y, 0.0F});
+    ARPG_REQUIRE(minimum.first_column == 0U);
+    ARPG_REQUIRE(minimum.first_row == 0U);
+    ARPG_REQUIRE(minimum.column_count == 5U);
+    ARPG_REQUIRE(minimum.row_count == 3U);
+
+    const RoomStreamingRegion maximum = make_room_streaming_region(
+        {room_bounds::max_x, room_bounds::max_y, 0.0F});
+    ARPG_REQUIRE(maximum.first_column + maximum.column_count
+        == room_spatial::columns);
+    ARPG_REQUIRE(maximum.first_row + maximum.row_count
+        == room_spatial::rows);
+    ARPG_REQUIRE(maximum.first_column == 15U);
+    ARPG_REQUIRE(maximum.first_row == 17U);
+    ARPG_REQUIRE(maximum.column_count == 5U);
+    ARPG_REQUIRE(maximum.row_count == 3U);
+    return {};
+}
 
 arpg::test::Failure ground_motion_is_fixed_and_diagonal_is_normalized() noexcept {
     CombatWorld right_world;
@@ -54,20 +125,23 @@ arpg::test::Failure room_clamps_facing_and_reset_are_stable() noexcept {
     config.dummy_spawns[0] = Vec3{2.0F, -1.0F, 0.0F};
     CombatWorld world{config};
 
-    for (int tick = 0; tick < 200; ++tick) {
+    for (int tick = 0; tick < 2000; ++tick) {
         world.tick(MovementInput{1, 1});
     }
     CombatSnapshot snapshot = world.snapshot();
-    ARPG_REQUIRE(arpg::test::near(snapshot.player.position.x, 12.0));
-    ARPG_REQUIRE(arpg::test::near(snapshot.player.position.y, 5.5));
+    ARPG_REQUIRE(arpg::test::near(
+        snapshot.player.position.x, room_bounds::max_x));
+    ARPG_REQUIRE(arpg::test::near(
+        snapshot.player.position.y, room_bounds::max_y));
 
-    for (int tick = 0; tick < 400; ++tick) {
+    for (int tick = 0; tick < 4000; ++tick) {
         world.tick(MovementInput{-1, -1});
     }
     world.tick(MovementInput{0, 1});
     snapshot = world.snapshot();
-    ARPG_REQUIRE(arpg::test::near(snapshot.player.position.x, -12.0));
-    ARPG_REQUIRE(snapshot.player.position.y > -5.5F);
+    ARPG_REQUIRE(arpg::test::near(
+        snapshot.player.position.x, room_bounds::min_x));
+    ARPG_REQUIRE(snapshot.player.position.y > room_bounds::min_y);
     ARPG_REQUIRE(snapshot.player.facing == Facing::left);
 
     for (int action = 0; action < 32; ++action) {
@@ -142,7 +216,7 @@ arpg::test::Failure jump_arc_has_deterministic_apex_and_one_landing_tick() noexc
     while (const auto event = world.try_pop_event()) {
         if (event->kind == CombatEventKind::landing) {
             ++landing_events;
-            ARPG_REQUIRE(event->target_index == 0xFF);
+            ARPG_REQUIRE(event->target_ordinal == kInvalidMonsterOrdinal);
             ARPG_REQUIRE(arpg::test::near(event->position.z, 0.0));
             ARPG_REQUIRE(event->tick + 1 == landing_snapshot_tick);
         }
@@ -276,6 +350,10 @@ arpg::test::Failure active_skill_movement_does_not_enter_fire_brazier() noexcept
 }
 
 constexpr arpg::test::TestCase kCases[] = {
+    {"hundredfold room geometry and limits",
+     &hundredfold_room_geometry_and_limits_are_exact},
+    {"spatial grid bounds streaming regions",
+     &spatial_grid_bounds_streaming_regions},
     {"fixed ground motion and normalized diagonal",
      &ground_motion_is_fixed_and_diagonal_is_normalized},
     {"room clamps, facing, and reset", &room_clamps_facing_and_reset_are_stable},

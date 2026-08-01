@@ -79,7 +79,7 @@ bool CombatWorld::spawn_environment_hazard(
     DamagePacket damage,
     std::uint16_t environment_damage_bp,
     modifiers::DamageType environment_damage_type) noexcept {
-    constexpr MonsterHandle kNoMonsterOwner{};
+    constexpr MonsterOrdinal kNoMonsterOwner = kInvalidMonsterOrdinal;
     if (!hazards_.spawn(HazardSource::abyss_environment, kNoMonsterOwner,
                         kind, center, radius, telegraph_ticks, active_ticks,
                         damage_interval_ticks, damage, true,

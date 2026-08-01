@@ -44,7 +44,7 @@ struct AffixDepthBand final {
 };
 
 constexpr std::array<AffixDepthBand, 5> kAffixDepthBands{{
-    {3U, {{80U, 20U, 0U, 0U}}, {{100U, 0U, 0U}}},
+    {3U, {{100U, 0U, 0U, 0U}}, {{100U, 0U, 0U}}},
     {9U, {{55U, 38U, 7U, 0U}}, {{80U, 20U, 0U}}},
     {19U, {{30U, 45U, 20U, 5U}}, {{50U, 40U, 10U}}},
     {39U, {{15U, 35U, 35U, 15U}}, {{25U, 50U, 25U}}},
@@ -56,6 +56,14 @@ constexpr std::uint64_t kAffixCountDomain = 0x41464658434E5431ULL;
 constexpr std::uint64_t kAffixSelectionDomain = 0x4146465853454C31ULL;
 constexpr std::uint64_t kAffixTierDomain = 0x4146465854494552ULL;
 constexpr std::uint64_t kAffixContextDomain = 0x4146465843545831ULL;
+constexpr std::uint64_t kOrdinalAffixContextDomain =
+    0x414646584F524431ULL;
+constexpr std::uint64_t kOrdinalAffixDepthDomain =
+    0x4146465844455031ULL;
+constexpr std::uint64_t kOrdinalAffixVersionDomain =
+    0x4146465856455231ULL;
+constexpr std::uint64_t kOrdinalAffixSpawnDomain =
+    0x4146465853504E31ULL;
 constexpr std::uint64_t kAbyssAffixSelectionDomain =
     0x41425953454C3031ULL;
 constexpr std::uint64_t kAbyssAffixTierDomain = 0x4142595449455231ULL;
@@ -196,6 +204,131 @@ template <std::size_t N>
     return true;
 }
 
+[[nodiscard]] std::uint64_t derive_ordinal_affix_field(
+    std::uint64_t root_seed,
+    std::uint64_t domain,
+    std::uint64_t value) noexcept {
+    auto domain_stream = core::DeterministicRng::derive_stream(
+        root_seed, domain);
+    return core::DeterministicRng::derive_stream(
+        domain_stream.next_u64(), value).next_u64();
+}
+
+[[nodiscard]] std::uint64_t ordinal_affix_context_seed(
+    std::uint64_t room_seed,
+    std::uint64_t depth,
+    std::uint32_t generator_version,
+    std::uint16_t spawn_ordinal) noexcept {
+    auto context = core::DeterministicRng::derive_stream(
+        room_seed, kOrdinalAffixContextDomain);
+    std::uint64_t seed = context.next_u64();
+    seed = derive_ordinal_affix_field(
+        seed, kOrdinalAffixDepthDomain, depth);
+    seed = derive_ordinal_affix_field(seed, kOrdinalAffixVersionDomain,
+        static_cast<std::uint64_t>(generator_version));
+    return derive_ordinal_affix_field(seed, kOrdinalAffixSpawnDomain,
+        static_cast<std::uint64_t>(spawn_ordinal));
+}
+
+[[nodiscard]] std::optional<MonsterAffixSet>
+generate_affixes_from_context(
+    std::uint64_t seed,
+    std::uint64_t depth,
+    const MonsterDefinition& monster,
+    const MonsterAffixCatalog& catalog) noexcept {
+    auto count_rng = core::DeterministicRng::derive_stream(seed,
+        kAffixCountDomain);
+    const std::size_t target_count = weighted_index(count_rng,
+        affix_count_weights(depth));
+    if (target_count > 3U) return std::nullopt;
+
+    MonsterAffixSet result{};
+    const auto tier_weights = affix_tier_weights(depth);
+    for (std::size_t output_index = 0U; output_index < target_count;
+         ++output_index) {
+        std::array<Candidate, static_cast<std::size_t>(MonsterAffixId::count)>
+            candidates{};
+        const std::size_t candidate_count = collect_candidates(monster, result,
+            catalog, candidates);
+        if (candidate_count == 0U) return std::nullopt;
+        std::array<std::uint16_t,
+            static_cast<std::size_t>(MonsterAffixId::count)> weights{};
+        for (std::size_t index = 0U; index < candidate_count; ++index) {
+            weights[index] = candidates[index].definition->weight;
+        }
+        const std::uint64_t selection_total = total_weight(weights.data(),
+            candidate_count);
+        if (selection_total == 0U) return std::nullopt;
+        auto selection_rng = affix_output_rng(seed, kAffixSelectionDomain,
+            output_index);
+        std::uint64_t cursor = selection_rng.next_bounded(selection_total)
+            .value_or(selection_total);
+        std::size_t selected_index = 0U;
+        for (; selected_index < candidate_count; ++selected_index) {
+            if (cursor < weights[selected_index]) break;
+            cursor -= weights[selected_index];
+        }
+        if (selected_index >= candidate_count) return std::nullopt;
+        auto tier_rng = affix_output_rng(seed, kAffixTierDomain, output_index);
+        const std::size_t tier_index = weighted_index(tier_rng, tier_weights);
+        if (tier_index >= tier_weights.size()) return std::nullopt;
+        result.values[result.count++] = {
+            candidates[selected_index].definition->id,
+            static_cast<MonsterAffixTier>(tier_index),
+        };
+    }
+    return result;
+}
+
+[[nodiscard]] std::optional<MonsterAffixSet>
+supplement_abyss_affixes_from_context(
+    std::uint64_t seed,
+    std::uint64_t depth,
+    const MonsterDefinition& monster,
+    MonsterAffixSet normal,
+    const MonsterAffixCatalog& catalog) noexcept {
+    if (depth <= 3U) return MonsterAffixSet{};
+    const std::uint8_t target_count = abyss::minimum_abyss_affixes(depth);
+    if (normal.count >= target_count) return normal;
+
+    const auto tier_weights = affix_tier_weights(depth);
+    for (std::size_t output_index = normal.count;
+         output_index < target_count; ++output_index) {
+        std::array<Candidate, static_cast<std::size_t>(MonsterAffixId::count)>
+            candidates{};
+        const std::size_t candidate_count = collect_candidates(monster, normal,
+            catalog, candidates);
+        if (candidate_count == 0U) return std::nullopt;
+        std::array<std::uint16_t,
+            static_cast<std::size_t>(MonsterAffixId::count)> weights{};
+        for (std::size_t index = 0U; index < candidate_count; ++index) {
+            weights[index] = candidates[index].definition->weight;
+        }
+        const std::uint64_t selection_total = total_weight(weights.data(),
+            candidate_count);
+        if (selection_total == 0U) return std::nullopt;
+        auto selection_rng = affix_output_rng(seed,
+            kAbyssAffixSelectionDomain, output_index);
+        std::uint64_t cursor = selection_rng.next_bounded(selection_total)
+            .value_or(selection_total);
+        std::size_t selected_index = 0U;
+        for (; selected_index < candidate_count; ++selected_index) {
+            if (cursor < weights[selected_index]) break;
+            cursor -= weights[selected_index];
+        }
+        if (selected_index >= candidate_count) return std::nullopt;
+        auto tier_rng = affix_output_rng(seed, kAbyssAffixTierDomain,
+            output_index);
+        const std::size_t tier_index = weighted_index(tier_rng, tier_weights);
+        if (tier_index >= tier_weights.size()) return std::nullopt;
+        normal.values[normal.count++] = {
+            candidates[selected_index].definition->id,
+            static_cast<MonsterAffixTier>(tier_index),
+        };
+    }
+    return normal;
+}
+
 }  // namespace
 
 std::array<std::uint16_t, 4> affix_count_weights(
@@ -244,6 +377,44 @@ std::optional<MonsterAffixSet> supplement_abyss_affixes(
         wave_index, spawn_index, monster, normal, monster_affix_catalog());
 }
 
+std::optional<MonsterAffixSet> generate_monster_affixes_for_ordinal(
+    std::uint64_t room_seed,
+    std::uint64_t depth,
+    std::uint32_t generator_version,
+    std::uint16_t spawn_ordinal,
+    const MonsterDefinition& monster) noexcept {
+    const MonsterAffixCatalog& catalog = monster_affix_catalog();
+    const MonsterDefinition* const canonical = monster_definition(monster.id);
+    if (generator_version == 0U
+            || !detail::monster_affix_catalog_valid(catalog)
+            || canonical == nullptr || canonical->tags != monster.tags) {
+        return std::nullopt;
+    }
+    return generate_affixes_from_context(ordinal_affix_context_seed(
+        room_seed, depth, generator_version, spawn_ordinal), depth,
+        monster, catalog);
+}
+
+std::optional<MonsterAffixSet> supplement_abyss_affixes_for_ordinal(
+    std::uint64_t room_seed,
+    std::uint64_t depth,
+    std::uint32_t generator_version,
+    std::uint16_t spawn_ordinal,
+    const MonsterDefinition& monster,
+    MonsterAffixSet normal) noexcept {
+    const MonsterAffixCatalog& catalog = monster_affix_catalog();
+    const MonsterDefinition* const canonical = monster_definition(monster.id);
+    if (generator_version == 0U
+            || !detail::monster_affix_catalog_valid(catalog)
+            || canonical == nullptr || canonical->tags != monster.tags
+            || !affix_set_valid_for_monster(normal, monster, catalog)) {
+        return std::nullopt;
+    }
+    return supplement_abyss_affixes_from_context(ordinal_affix_context_seed(
+        room_seed, depth, generator_version, spawn_ordinal), depth,
+        monster, normal, catalog);
+}
+
 namespace detail {
 
 std::optional<MonsterAffixSet> generate_monster_affixes_with_catalog(
@@ -260,46 +431,7 @@ std::optional<MonsterAffixSet> generate_monster_affixes_with_catalog(
     }
     const std::uint64_t seed = monster_affix_context_seed(room_seed, depth,
         wave_index, spawn_index);
-    auto count_rng = core::DeterministicRng::derive_stream(seed,
-        kAffixCountDomain);
-    const std::size_t target_count = weighted_index(count_rng,
-        affix_count_weights(depth));
-    if (target_count > 3U) return std::nullopt;
-
-    MonsterAffixSet result{};
-    const auto tier_weights = affix_tier_weights(depth);
-    for (std::size_t output_index = 0U; output_index < target_count;
-         ++output_index) {
-        std::array<Candidate, static_cast<std::size_t>(MonsterAffixId::count)>
-            candidates{};
-        const std::size_t candidate_count = collect_candidates(monster, result,
-            catalog, candidates);
-        if (candidate_count == 0U) return std::nullopt;
-        std::array<std::uint16_t,
-            static_cast<std::size_t>(MonsterAffixId::count)> weights{};
-        for (std::size_t index = 0U; index < candidate_count; ++index) {
-            weights[index] = candidates[index].definition->weight;
-        }
-        const std::uint64_t selection_total = total_weight(weights.data(),
-            candidate_count);
-        if (selection_total == 0U) return std::nullopt;
-        auto selection_rng = affix_output_rng(seed, kAffixSelectionDomain,
-            output_index);
-        std::uint64_t cursor = selection_rng.next_bounded(selection_total)
-            .value_or(selection_total);
-        std::size_t selected_index = 0U;
-        for (; selected_index < candidate_count; ++selected_index) {
-            if (cursor < weights[selected_index]) break;
-            cursor -= weights[selected_index];
-        }
-        if (selected_index >= candidate_count) return std::nullopt;
-        auto tier_rng = affix_output_rng(seed, kAffixTierDomain, output_index);
-        const std::size_t tier_index = weighted_index(tier_rng, tier_weights);
-        if (tier_index >= tier_weights.size()) return std::nullopt;
-        result.values[result.count++] = {candidates[selected_index].definition->id,
-            static_cast<MonsterAffixTier>(tier_index)};
-    }
-    return result;
+    return generate_affixes_from_context(seed, depth, monster, catalog);
 }
 
 std::optional<MonsterAffixSet> supplement_abyss_affixes_with_catalog(
@@ -316,47 +448,10 @@ std::optional<MonsterAffixSet> supplement_abyss_affixes_with_catalog(
             || !affix_set_valid_for_monster(normal, monster, catalog)) {
         return std::nullopt;
     }
-    const std::uint8_t target_count = abyss::minimum_abyss_affixes(depth);
-    if (normal.count >= target_count) return normal;
-
     const std::uint64_t seed = monster_affix_context_seed(room_seed, depth,
         wave_index, spawn_index);
-    const auto tier_weights = affix_tier_weights(depth);
-    for (std::size_t output_index = normal.count;
-         output_index < target_count; ++output_index) {
-        std::array<Candidate, static_cast<std::size_t>(MonsterAffixId::count)>
-            candidates{};
-        const std::size_t candidate_count = collect_candidates(monster, normal,
-            catalog, candidates);
-        if (candidate_count == 0U) return std::nullopt;
-        std::array<std::uint16_t,
-            static_cast<std::size_t>(MonsterAffixId::count)> weights{};
-        for (std::size_t index = 0U; index < candidate_count; ++index) {
-            weights[index] = candidates[index].definition->weight;
-        }
-        const std::uint64_t selection_total = total_weight(weights.data(),
-            candidate_count);
-        if (selection_total == 0U) return std::nullopt;
-        auto selection_rng = affix_output_rng(seed,
-            kAbyssAffixSelectionDomain, output_index);
-        std::uint64_t cursor = selection_rng.next_bounded(selection_total)
-            .value_or(selection_total);
-        std::size_t selected_index = 0U;
-        for (; selected_index < candidate_count; ++selected_index) {
-            if (cursor < weights[selected_index]) break;
-            cursor -= weights[selected_index];
-        }
-        if (selected_index >= candidate_count) return std::nullopt;
-        auto tier_rng = affix_output_rng(seed, kAbyssAffixTierDomain,
-            output_index);
-        const std::size_t tier_index = weighted_index(tier_rng, tier_weights);
-        if (tier_index >= tier_weights.size()) return std::nullopt;
-        normal.values[normal.count++] = {
-            candidates[selected_index].definition->id,
-            static_cast<MonsterAffixTier>(tier_index),
-        };
-    }
-    return normal;
+    return supplement_abyss_affixes_from_context(
+        seed, depth, monster, normal, catalog);
 }
 
 std::uint16_t monster_affix_danger_score_with_catalog(
@@ -421,6 +516,15 @@ std::uint64_t monster_affix_context_seed(
     std::uint8_t wave_index, std::uint8_t spawn_index) noexcept {
     return detail::monster_affix_context_seed(room_seed, depth, wave_index,
         spawn_index);
+}
+
+std::uint64_t monster_affix_ordinal_context_seed(
+    std::uint64_t room_seed,
+    std::uint64_t depth,
+    std::uint32_t generator_version,
+    std::uint16_t spawn_ordinal) noexcept {
+    return ordinal_affix_context_seed(
+        room_seed, depth, generator_version, spawn_ordinal);
 }
 
 std::uint64_t monster_affix_count_seed(

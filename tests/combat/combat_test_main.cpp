@@ -2,6 +2,10 @@
 
 #include <cstdlib>
 
+#if defined(_WIN32) && defined(_DEBUG)
+#include <crtdbg.h>
+#endif
+
 arpg::test::TestSuite active_skill_timeline_suite() noexcept;
 arpg::test::TestSuite attack_catalog_suite() noexcept;
 arpg::test::TestSuite abyss_environment_suite() noexcept;
@@ -23,11 +27,14 @@ arpg::test::TestSuite monster_melee_suite() noexcept;
 arpg::test::TestSuite monster_ranged_suite() noexcept;
 arpg::test::TestSuite monster_special_suite() noexcept;
 arpg::test::TestSuite monster_pool_suite() noexcept;
+arpg::test::TestSuite monster_residency_suite() noexcept;
 arpg::test::TestSuite player_health_suite() noexcept;
 arpg::test::TestSuite player_build_suite() noexcept;
 arpg::test::TestSuite player_damage_history_suite() noexcept;
 arpg::test::TestSuite player_death_snapshot_suite() noexcept;
 arpg::test::TestSuite player_defense_suite() noexcept;
+arpg::test::TestSuite room_obstacle_runtime_suite() noexcept;
+arpg::test::TestSuite room_combat_checkpoint_suite() noexcept;
 arpg::test::TestSuite storm_swords_skill_suite() noexcept;
 
 namespace {
@@ -77,6 +84,15 @@ bool storm_swords_only_enabled() noexcept {
 }  // namespace
 
 int main() {
+#if defined(_WIN32) && defined(_DEBUG)
+    _set_error_mode(_OUT_TO_STDERR);
+    _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+    _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+    _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+    _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+    _set_abort_behavior(_WRITE_ABORT_MSG,
+        _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#endif
     if (active_skill_timeline_only_enabled()) {
         const arpg::test::TestSuite active_skill_timeline_suites[] = {
             active_skill_timeline_suite(),
@@ -123,13 +139,16 @@ int main() {
         monster_ranged_suite(),
         monster_special_suite(),
         monster_pool_suite(),
+        monster_residency_suite(),
         player_health_suite(),
         player_build_suite(),
         player_damage_history_suite(),
         player_death_snapshot_suite(),
         player_defense_suite(),
+        room_obstacle_runtime_suite(),
+        room_combat_checkpoint_suite(),
         storm_swords_skill_suite(),
     };
 
-    return arpg::test::run_suites(suites, 241, "stage 18 combat queries");
+    return arpg::test::run_suites(suites, 286, "checkpoint v9 combat");
 }

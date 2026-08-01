@@ -20,11 +20,18 @@ bool equipped(const items::EquipmentState& equipment,
 }  // namespace
 
 DungeonSnapshot DungeonSession::snapshot() const noexcept {
-    return build_dungeon_snapshot();
+    DungeonSnapshot result{};
+    build_dungeon_snapshot(result);
+    return result;
 }
 
-DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
-    DungeonSnapshot result{};
+void DungeonSession::snapshot(DungeonSnapshot& destination) const noexcept {
+    build_dungeon_snapshot(destination);
+}
+
+void DungeonSession::build_dungeon_snapshot(
+    DungeonSnapshot& result) const noexcept {
+    result = {};
     result.session_tick = session_tick_;
     result.root_seed = stable_state_.root_seed;
     result.commit_generation = stable_state_.commit_generation;
@@ -72,22 +79,29 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
             !death_saving && death_continue_failed_,
         });
     }
-    bool exits_open = phase_ == RoomPhase::cleared
-        || phase_ == RoomPhase::awaiting_exit;
-    if (!exits_open && phase_ == RoomPhase::committing
-            && pending_save_.has_value()
-            && pending_save_->kind != PendingSaveKind::abyss_clear) {
-        exits_open = pending_save_->resume_phase == RoomPhase::cleared
-            || pending_save_->resume_phase == RoomPhase::awaiting_exit;
-    }
-    result.exits_open.fill(exits_open);
+    result.exits_unlocked = room_progress_.exits_unlocked;
+    result.exits_open.fill(result.exits_unlocked);
     result.abyss_doors = visible_death == nullptr
         ? preview_abyss_doors(stable_state_.current_room)
         : std::array<bool, 4>{};
-    result.wave_index = wave_index_;
-    result.wave_count = encounter_plan_.wave_count;
-    result.wave_delay_ticks = wave_delay_ticks_;
+    result.wave_index = 0U;
+    result.wave_count = room_progress_.initial_monster_count == 0U ? 0U : 1U;
+    result.wave_delay_ticks = 0U;
+    result.initial_monster_count = room_progress_.initial_monster_count;
+    result.defeated_monster_count = room_progress_.defeated_monster_count;
     result.remaining_targets = remaining_targets();
+    const combat::RoomMonsterField* monster_field = combat_.has_value()
+        ? combat_->room_monster_field() : nullptr;
+    if (monster_field != nullptr) {
+        result.monster_generator_version =
+            monster_field->plan().generator_version;
+        result.monster_blueprint_hash = monster_field->plan().blueprint_hash;
+    }
+    if (room_environment_ != nullptr) {
+        result.environment_generator_version =
+            room_environment_->generator_version;
+        result.environment_blueprint_hash = room_environment_->blueprint_hash;
+    }
     result.entry_side = stable_state_.current_room.entry;
     result.last_exit = last_exit_;
     result.last_transition = stable_state_.last_transition;
@@ -107,7 +121,8 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
         abyss_exit_confirmation_.direction;
     result.has_pending_transition = pending_save_.has_value()
         && (pending_save_->kind == PendingSaveKind::transition
-            || pending_save_->kind == PendingSaveKind::abyss_abandon);
+            || pending_save_->kind == PendingSaveKind::abyss_abandon
+            || pending_save_->kind == PendingSaveKind::abyss_early_exit);
     result.passive_tree = stable_state_.passive_tree;
     result.skill_loadout = stable_state_.skill_loadout;
     result.passive_save_pending = pending_save_.has_value()
@@ -144,6 +159,16 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
         packed.position = ground.position;
         packed.material = ground.material;
     }
+    for (const GroundHealthPotion& ground : ground_health_potions_) {
+        if (!ground.active) continue;
+        GroundHealthPotionSnapshot& packed =
+            result.ground_health_potions[
+                result.ground_health_potion_count++];
+        packed.spawn_ordinal = ground.spawn_ordinal;
+        packed.claim_ordinal = ground.claim_ordinal;
+        packed.position = ground.position;
+    }
+    result.health_potion_pickup_receipt = health_potion_pickup_receipt_;
     result.material_pickup_receipt = material_pickup_receipt_;
     result.reinforcement_receipt = reinforcement_receipt_;
     if (pending_save_.has_value()) {
@@ -157,30 +182,25 @@ DungeonSnapshot DungeonSession::build_dungeon_snapshot() const noexcept {
             result.pending_material_pickup_ordinal =
                 pending_save_->pickup_ordinal;
         }
+        if (pending_save_->kind == PendingSaveKind::health_potion_pickup) {
+            result.pending_health_potion_spawn_ordinal =
+                pending_save_->pickup_ordinal;
+        }
     }
     if (combat_.has_value()) {
         result.combat.emplace(combat_->snapshot());
     }
-    result.encounter.total_budget = encounter_plan_.total_budget;
-    if (stable_state_.current_room.is_abyss) {
-        const auto legality = abyss_encounter_legality_config(rules_.encounter);
-        result.encounter.plan_valid = legality.has_value()
-            && encounter_plan_legal(encounter_plan_, *legality);
-    } else {
-        result.encounter.plan_valid = encounter_plan_legal(
-            encounter_plan_, rules_.encounter);
-    }
-    if (wave_index_ < encounter_plan_.wave_count) {
-        const auto& wave = encounter_plan_.waves[wave_index_];
-        result.encounter.current_wave_budget = wave.spent_budget;
-        result.encounter.current_wave_spawn_count = wave.spawn_count;
-    }
+    result.encounter.plan_valid = monster_field != nullptr
+        && room_environment_ != nullptr
+        && result.monster_generator_version != 0U
+        && result.monster_blueprint_hash != 0U
+        && result.environment_generator_version != 0U
+        && result.environment_blueprint_hash != 0U;
     result.diagnostics = diagnostics_;
     result.progression = room_progression_;
     result.pending_room_experience = pending_room_experience_;
     result.last_room_experience = last_room_experience_;
     result.last_levels_gained = last_levels_gained_;
-    return result;
 }
 
 }  // namespace arpg::dungeon

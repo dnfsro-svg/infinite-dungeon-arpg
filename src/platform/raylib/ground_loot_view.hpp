@@ -21,6 +21,23 @@ struct LootLabelRect final {
     float height{};
 };
 
+inline constexpr std::size_t kLootLabelObstacleCapacity = 1U
+    + combat::kMonsterCapacity + dungeon::kGroundDropCapacity
+    + dungeon::kGroundMaterialCapacity
+    + dungeon::kGroundHealthPotionCapacity;
+static_assert(kLootLabelObstacleCapacity == 913U);
+
+struct LootLabelObstacleSet final {
+    std::array<LootLabelRect, kLootLabelObstacleCapacity> rects{};
+    std::size_t count{};
+
+    [[nodiscard]] bool append(LootLabelRect rect) noexcept {
+        if (count == rects.size()) return false;
+        rects[count++] = rect;
+        return true;
+    }
+};
+
 struct GroundLootLabel final {
     std::uint16_t ordinal{};
     float anchor_x{};
@@ -39,6 +56,7 @@ struct GroundLootViewDiagnostics final {
     std::uint32_t text_truncation_count{};
     std::uint32_t overlap_adjustment_count{};
     std::uint32_t capacity_saturation_count{};
+    std::uint32_t label_drop_count{};
 };
 
 struct GroundLootView final {
@@ -61,5 +79,11 @@ struct GroundLootView final {
     settings::LootFilterMode mode,
     float width,
     float height) noexcept;
+[[nodiscard]] GroundLootView build_ground_loot_view(
+    const dungeon::DungeonSnapshot& snapshot,
+    settings::LootFilterMode mode,
+    float width,
+    float height,
+    LootLabelObstacleSet& obstacles) noexcept;
 
 }  // namespace arpg::platform

@@ -8,13 +8,14 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <vector>
 
 namespace {
 
 std::string read_project_source(const char* relative_path) {
     const std::filesystem::path path =
         std::filesystem::path{ARPG_PROJECT_SOURCE_DIR} / relative_path;
-    std::ifstream input{path, std::ios::binary};
+    std::ifstream input{path};
     return {std::istreambuf_iterator<char>{input},
         std::istreambuf_iterator<char>{}};
 }
@@ -43,6 +44,265 @@ std::size_t occurrence_count(const std::string& source,
         position += std::char_traits<char>::length(token);
     }
     return count;
+}
+
+std::string cpp_code_only(std::string source) {
+    std::size_t write{};
+    for (std::size_t read = 0U; read < source.size(); ++read) {
+        if (source[read] == '\\' && read + 1U < source.size()) {
+            if (source[read + 1U] == '\n') {
+                ++read;
+                continue;
+            }
+            if (source[read + 1U] == '\r' && read + 2U < source.size()
+                    && source[read + 2U] == '\n') {
+                read += 2U;
+                continue;
+            }
+        }
+        source[write++] = source[read];
+    }
+    source.resize(write);
+
+    enum class State { code, line_comment, block_comment, string, character,
+        raw_string };
+    State state = State::code;
+    bool escaped = false;
+    std::string raw_closer{};
+    const auto blank = [&source](std::size_t index) noexcept {
+        if (source[index] != '\r' && source[index] != '\n') source[index] = ' ';
+    };
+    for (std::size_t index = 0U; index < source.size(); ++index) {
+        const char current = source[index];
+        const char next = index + 1U < source.size() ? source[index + 1U] : '\0';
+        if (state == State::code) {
+            if (current == '/' && next == '/') {
+                blank(index);
+                blank(++index);
+                state = State::line_comment;
+            } else if (current == '/' && next == '*') {
+                blank(index);
+                blank(++index);
+                state = State::block_comment;
+            } else if (current == 'R' && next == '"') {
+                const std::size_t delimiter_end = source.find('(', index + 2U);
+                if (delimiter_end != std::string::npos
+                        && delimiter_end - index <= 18U) {
+                    raw_closer = ")" + source.substr(
+                        index + 2U, delimiter_end - index - 2U) + '"';
+                    for (; index <= delimiter_end; ++index) blank(index);
+                    --index;
+                    state = State::raw_string;
+                }
+            } else if (current == '"' || current == '\'') {
+                state = current == '"' ? State::string : State::character;
+                escaped = false;
+                blank(index);
+            }
+        } else if (state == State::line_comment) {
+            blank(index);
+            if (current == '\n' || (current == '\r' && next != '\n')) {
+                state = State::code;
+            }
+        } else if (state == State::block_comment) {
+            blank(index);
+            if (current == '*' && next == '/') {
+                blank(++index);
+                state = State::code;
+            }
+        } else if (state == State::raw_string) {
+            if (source.compare(index, raw_closer.size(), raw_closer) == 0) {
+                for (std::size_t offset = 0U; offset < raw_closer.size(); ++offset) {
+                    blank(index + offset);
+                }
+                index += raw_closer.size() - 1U;
+                state = State::code;
+            } else {
+                blank(index);
+            }
+        } else {
+            const bool closes = !escaped
+                && ((state == State::string && current == '"')
+                    || (state == State::character && current == '\''));
+            if (!escaped && current == '\\') escaped = true;
+            else escaped = false;
+            blank(index);
+            if (closes) state = State::code;
+        }
+    }
+
+    struct ConditionalFrame {
+        bool parent_active{};
+        bool guaranteed_match{};
+    };
+    std::vector<ConditionalFrame> conditionals{};
+    bool active = true;
+    const auto blank_range = [&source](std::size_t begin,
+                                 std::size_t end) noexcept {
+        for (std::size_t index = begin; index < end; ++index) {
+            if (source[index] != '\r' && source[index] != '\n') {
+                source[index] = ' ';
+            }
+        }
+    };
+    const auto trim = [](std::string value) {
+        const std::size_t begin = value.find_first_not_of(" \t\r");
+        if (begin == std::string::npos) return std::string{};
+        const std::size_t end = value.find_last_not_of(" \t\r");
+        return value.substr(begin, end - begin + 1U);
+    };
+    enum class ConditionKnowledge { always_false, unknown, always_true };
+    const auto classify_condition = [&trim](std::string condition) {
+        condition = trim(condition);
+        while (condition.size() >= 2U && condition.front() == '('
+                && condition.back() == ')') {
+            condition = trim(condition.substr(1U, condition.size() - 2U));
+        }
+        if (condition == "0" || condition == "false") {
+            return ConditionKnowledge::always_false;
+        }
+        if (condition == "1" || condition == "true") {
+            return ConditionKnowledge::always_true;
+        }
+        return ConditionKnowledge::unknown;
+    };
+    for (std::size_t line_begin = 0U; line_begin < source.size();) {
+        const std::size_t newline = source.find('\n', line_begin);
+        const std::size_t line_end = newline == std::string::npos
+            ? source.size() : newline;
+        const std::string line = source.substr(line_begin, line_end - line_begin);
+        const std::size_t first = line.find_first_not_of(" \t\r");
+        const bool directive = first != std::string::npos && line[first] == '#';
+        if (directive) {
+            const std::string text = trim(line.substr(first + 1U));
+            const std::size_t keyword_end = text.find_first_not_of(
+                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_");
+            const std::string keyword = text.substr(0U, keyword_end);
+            const std::string argument = keyword_end == std::string::npos
+                ? std::string{} : trim(text.substr(keyword_end));
+            if (keyword == "if") {
+                const bool parent_active = active;
+                const ConditionKnowledge condition = classify_condition(argument);
+                conditionals.push_back({parent_active,
+                    condition == ConditionKnowledge::always_true});
+                active = parent_active
+                    && condition != ConditionKnowledge::always_false;
+            } else if (keyword == "ifdef" || keyword == "ifndef") {
+                conditionals.push_back({active, false});
+            } else if (keyword == "elif" && !conditionals.empty()) {
+                ConditionalFrame& frame = conditionals.back();
+                const ConditionKnowledge condition = classify_condition(argument);
+                active = frame.parent_active && !frame.guaranteed_match
+                    && condition != ConditionKnowledge::always_false;
+                frame.guaranteed_match = frame.guaranteed_match
+                    || condition == ConditionKnowledge::always_true;
+            } else if (keyword == "else" && !conditionals.empty()) {
+                ConditionalFrame& frame = conditionals.back();
+                active = frame.parent_active && !frame.guaranteed_match;
+                frame.guaranteed_match = true;
+            } else if (keyword == "endif" && !conditionals.empty()) {
+                active = conditionals.back().parent_active;
+                conditionals.pop_back();
+            }
+            blank_range(line_begin, line_end);
+        } else if (!active) {
+            blank_range(line_begin, line_end);
+        }
+        line_begin = newline == std::string::npos ? source.size() : newline + 1U;
+    }
+    return source;
+}
+
+arpg::test::Failure cpp_code_only_rejects_non_code_decoys() noexcept {
+    const std::string fixture =
+        "int real_code_marker = 1;\n"
+        "// ordinary_comment_decoy\n"
+        "/* block_comment_decoy */\n"
+        "const char* label = \"string_literal_decoy\";\n"
+        "const char* raw = R\"tag(raw_string_decoy)tag\";\n"
+        "// continued_lf_comment \\\n"
+        "continued_lf_decoy\n"
+        "// continued_crlf_comment \\\r\n"
+        "continued_crlf_decoy\r\n"
+        "/\\\n"
+        "/ split_line_comment_lf_decoy\n"
+        "int real_after_split_line_lf_marker = 8;\n"
+        "/\\\r\n"
+        "/ split_line_comment_crlf_decoy\r\n"
+        "int real_after_split_line_crlf_marker = 9;\r\n"
+        "/\\\n"
+        "* split_block_comment_lf_decoy */\n"
+        "int real_after_split_block_lf_marker = 10;\n"
+        "/\\\r\n"
+        "* split_block_comment_crlf_decoy */\r\n"
+        "int real_after_split_block_crlf_marker = 11;\r\n"
+        "#if 0\n"
+        "inactive_zero_decoy\n"
+        "#if 1\n"
+        "nested_inactive_decoy\n"
+        "#endif\n"
+        "#else\n"
+        "int real_zero_else_marker = 2;\n"
+        "#endif\n"
+        "#if false\n"
+        "inactive_false_decoy\n"
+        "#if 0\n"
+        "nested_false_decoy\n"
+        "#else\n"
+        "nested_else_still_inactive_decoy\n"
+        "#endif\n"
+        "#else\n"
+        "int real_false_else_marker = 3;\n"
+        "#endif\n"
+        "#if true\n"
+        "int real_true_marker = 4;\n"
+        "#else\n"
+        "inactive_true_else_decoy\n"
+        "#endif\n"
+        "#\\\n"
+        "if 0\n"
+        "lf_spliced_directive_decoy\n"
+        "#\\\n"
+        "endif\n"
+        "int real_after_lf_splice_marker = 5;\n"
+        "#\\\r\n"
+        "if 0\r\n"
+        "crlf_spliced_directive_decoy\r\n"
+        "#\\\r\n"
+        "endif\r\n"
+        "int real_after_crlf_splice_marker = 6;\r\n"
+        "#if(0)\n"
+        "compact_if_decoy\n"
+        "#endif\n"
+        "int real_after_compact_if_marker = 7;\n";
+    const std::string code = cpp_code_only(fixture);
+    for (const char* real : {"real_code_marker", "real_zero_else_marker",
+             "real_false_else_marker", "real_true_marker",
+             "real_after_lf_splice_marker",
+             "real_after_crlf_splice_marker",
+             "real_after_compact_if_marker",
+             "real_after_split_line_lf_marker",
+             "real_after_split_line_crlf_marker",
+             "real_after_split_block_lf_marker",
+             "real_after_split_block_crlf_marker",
+             "const char* label"}) {
+        ARPG_REQUIRE(code.find(real) != std::string::npos);
+    }
+    for (const char* decoy : {"ordinary_comment_decoy",
+             "block_comment_decoy", "string_literal_decoy",
+             "raw_string_decoy", "continued_lf_decoy",
+             "continued_crlf_decoy", "inactive_zero_decoy",
+             "nested_inactive_decoy", "inactive_false_decoy",
+             "nested_false_decoy", "nested_else_still_inactive_decoy",
+             "inactive_true_else_decoy", "lf_spliced_directive_decoy",
+             "crlf_spliced_directive_decoy", "compact_if_decoy",
+             "split_line_comment_lf_decoy",
+             "split_line_comment_crlf_decoy",
+             "split_block_comment_lf_decoy",
+             "split_block_comment_crlf_decoy"}) {
+        ARPG_REQUIRE(code.find(decoy) == std::string::npos);
+    }
+    return {};
 }
 
 arpg::test::Failure environment_renderer_uses_independent_native_paths() noexcept {
@@ -231,29 +491,113 @@ arpg::test::Failure environment_falls_back_atomically_when_a_required_frame_is_m
 }
 
 arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noexcept {
+    const arpg::test::Failure scanner_failure =
+        cpp_code_only_rejects_non_code_decoys();
+    if (scanner_failure.expression != nullptr) return scanner_failure;
     const std::string host_header = read_project_source(
         "src/platform/raylib/raylib_host.hpp");
     const std::string host = read_project_source(
         "src/platform/raylib/raylib_host.cpp");
+    const std::string stage17_runtime = read_project_source(
+        "src/platform/raylib/host_validation_stage17_runtime.cpp");
+    const std::string stage10_11 = read_project_source(
+        "src/platform/raylib/host_validation_stage10_11.cpp");
     const std::string renderer_header = read_project_source(
         "src/platform/raylib/combat_renderer.hpp");
     const std::string renderer = read_project_source(
         "src/platform/raylib/room_renderer.cpp");
+    const std::string material_pack = read_project_source(
+        "src/platform/raylib/material_pack.cpp");
     const std::string platform_cmake = read_project_source(
         "tests/platform/CMakeLists.txt");
+    const std::string formal = read_project_source(
+        "tests/platform/stage12_material_formal_game_validation.cpp");
+    const std::string validator = read_project_source(
+        "tests/platform/stage12_material_validator.ps1");
+    const std::string validator_self_test = read_project_source(
+        "tests/platform/stage12_material_validator_self_test.ps1");
     ARPG_REQUIRE(!host_header.empty());
     ARPG_REQUIRE(!host.empty());
+    ARPG_REQUIRE(!stage17_runtime.empty());
+    ARPG_REQUIRE(!stage10_11.empty());
     ARPG_REQUIRE(!renderer_header.empty());
     ARPG_REQUIRE(!renderer.empty());
+    ARPG_REQUIRE(!material_pack.empty());
     ARPG_REQUIRE(!platform_cmake.empty());
+    ARPG_REQUIRE(!formal.empty());
+    ARPG_REQUIRE(!validator.empty());
+    ARPG_REQUIRE(!validator_self_test.empty());
+
+    const std::string host_code = cpp_code_only(host);
+    const std::string stage17_runtime_code = cpp_code_only(stage17_runtime);
+    for (const char* stage12_host_only : {
+             "void apply_stage12_material_showcase(",
+             "const bool stage12_item_baseline_frame =",
+             "config.stage12_material_background_only",
+             "config.stage12_material_icons_only",
+             "config.stage12_material_baseline_capture_file"}) {
+        ARPG_REQUIRE(host_code.find(stage12_host_only) != std::string::npos);
+        ARPG_REQUIRE(stage17_runtime_code.find(stage12_host_only)
+            == std::string::npos);
+    }
+
+    const std::size_t stage10_input = stage10_11.find(
+        "combat::MovementInput stage10_validation_input");
+    ARPG_REQUIRE(stage10_input != std::string::npos);
+    const std::string stage10_input_block = braced_block_after(
+        stage10_11, stage10_input);
+    ARPG_REQUIRE(!stage10_input_block.empty());
+    for (const char* validation_only : {
+             "scenario == Stage10ValidationScenario::abyss_hole_descent",
+             "session.request_active_skill_slot(1U)",
+             "session.request_active_skill_slot(0U)",
+             "combat::kStormCenterForward", "combat::kDrawSlashRange"}) {
+        ARPG_REQUIRE(stage10_input_block.find(validation_only)
+            != std::string::npos);
+    }
+    ARPG_REQUIRE(occurrence_count(stage10_input_block,
+        "request_active_skill_slot") == 2U);
+    ARPG_REQUIRE(occurrence_count(stage10_11,
+        "request_active_skill_slot")
+        == occurrence_count(stage10_input_block,
+            "request_active_skill_slot"));
 
     ARPG_REQUIRE(platform_cmake.find(
         "target_link_options(arpg_stage12_material_formal PRIVATE /STACK:2097152)")
         != std::string::npos);
     ARPG_REQUIRE(occurrence_count(platform_cmake, "/STACK:2097152") == 1U);
 
+    const std::size_t material_draw = material_pack.find(
+        "void draw_material(");
+    ARPG_REQUIRE(material_draw != std::string::npos);
+    const std::string material_draw_block = braced_block_after(
+        material_pack, material_draw);
+    const std::size_t begin_shader = material_draw_block.find(
+        "BeginShaderMode(");
+    const std::size_t set_texture = material_draw_block.find(
+        "SetShaderValueTexture(");
+    const std::size_t set_value_1 = material_draw_block.find(
+        "SetShaderValue(", set_texture);
+    const std::size_t set_value_2 = material_draw_block.find(
+        "SetShaderValue(", set_value_1 + 1U);
+    const std::size_t set_value_3 = material_draw_block.find(
+        "SetShaderValue(", set_value_2 + 1U);
+    const std::size_t draw_texture = material_draw_block.find(
+        "DrawTexturePro(");
+    const std::size_t end_shader = material_draw_block.find("EndShaderMode(");
+    ARPG_REQUIRE(begin_shader < set_texture);
+    ARPG_REQUIRE(set_texture < set_value_1);
+    ARPG_REQUIRE(set_value_1 < set_value_2);
+    ARPG_REQUIRE(set_value_2 < set_value_3);
+    ARPG_REQUIRE(set_value_3 < draw_texture);
+    ARPG_REQUIRE(draw_texture < end_shader);
+
     ARPG_REQUIRE(host_header.find(
         "bool stage12_material_background_only{};") != std::string::npos);
+    ARPG_REQUIRE(host_header.find(
+        "bool stage12_material_icons_only{};") != std::string::npos);
+    ARPG_REQUIRE(host_header.find(
+        "bool stage12_material_showcase_hide_items{};") != std::string::npos);
     for (const char* field : {"hud_ecology", "room_background_ecology",
              "room_background_atlas", "room_background_resident",
              "room_background_drawn", "room_background_source_width",
@@ -262,6 +606,8 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
     }
     ARPG_REQUIRE(renderer_header.find(
         "draw_room_background_only") != std::string::npos);
+    ARPG_REQUIRE(renderer_header.find(
+        "draw_ground_loot_icons_only") != std::string::npos);
 
     const std::size_t background_only = renderer.find(
         "CombatRenderer::draw_room_background_only");
@@ -283,6 +629,22 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
         ARPG_REQUIRE(background_only_block.find(forbidden) == std::string::npos);
     }
 
+    const std::size_t icons_only = renderer.find(
+        "CombatRenderer::draw_ground_loot_icons_only");
+    ARPG_REQUIRE(icons_only != std::string::npos);
+    const std::string icons_only_block = braced_block_after(renderer, icons_only);
+    for (const char* required : {"build_ground_loot_view(",
+             "draw_room_background_only(", "draw_ground_materials(",
+             "draw_ground_items("}) {
+        ARPG_REQUIRE(icons_only_block.find(required) != std::string::npos);
+    }
+    for (const char* forbidden : {"draw_room(", "draw_actors(", "draw_hud(",
+             "draw_abyss(", "draw_environment_hazards(",
+             "draw_environment_room_props(", "draw_fire_room_props(",
+             "draw_doors(", "draw_hole("}) {
+        ARPG_REQUIRE(icons_only_block.find(forbidden) == std::string::npos);
+    }
+
     const std::size_t host_background_draw = host.find(
         "renderer.draw_room_background_only(");
     ARPG_REQUIRE(host_background_draw != std::string::npos);
@@ -302,6 +664,114 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
     ARPG_REQUIRE(runtime_status != std::string::npos);
     ARPG_REQUIRE(host_background_draw < normal_draw);
     ARPG_REQUIRE(normal_draw < runtime_status);
+    const std::size_t host_icons_draw = host.find(
+        "renderer.draw_ground_loot_icons_only(", host_background_draw);
+    ARPG_REQUIRE(host_icons_draw != std::string::npos);
+    ARPG_REQUIRE(host_background_draw < host_icons_draw);
+    ARPG_REQUIRE(host_icons_draw < normal_draw);
+
+    for (const char* required : {"items-icons-1280x720.png",
+             "items-icons-baseline-1280x720.png",
+             "config.stage12_material_icons_only = icons_only;",
+             "bool icons_only = false,\n"
+             "    std::uint32_t fixed_steps_per_frame = 0U,\n"
+             "    bool hide_showcase_items = false)",
+             "== platform::Stage11CHudValidationScenario::none\n"
+             "        ? fixed_steps_per_frame : 8U;",
+             "lightning_runtime.lightning_shooter_draw.frame_index == 2U"}) {
+        ARPG_REQUIRE(formal.find(required) != std::string::npos);
+    }
+    for (const char* required : {"lightning-monsters-isolated-1280x720.png",
+             "lightning-background-isolated-1280x720.png",
+             "config.stage12_material_showcase_hide_items = hide_showcase_items;"}) {
+        ARPG_REQUIRE(formal.find(required) != std::string::npos);
+    }
+    ARPG_REQUIRE(host.find(
+        "(config.stage12_material_showcase\n"
+        "                            && config.validation_capture_file.has_value())")
+        != std::string::npos);
+    ARPG_REQUIRE(host.find(
+        "items::ItemRarity::rare, items::ItemRarity::magic,\n"
+        "            items::ItemRarity::normal, items::ItemRarity::normal,")
+        != std::string::npos);
+    ARPG_REQUIRE(validator.find(
+        "Measure-ItemCapture $itemIconScreenshot $itemIconBaselineScreenshot 'isolated'")
+        != std::string::npos);
+    ARPG_REQUIRE(validator.find(
+        "Measure-ItemCapture $itemScreenshot $itemBaselineScreenshot 'legacy'")
+        != std::string::npos);
+    ARPG_REQUIRE(validator.find("$brightChroma -ge 600")
+        != std::string::npos);
+    ARPG_REQUIRE(validator.find("$authoredOverrides")
+        == std::string::npos);
+    ARPG_REQUIRE(validator.find("$darkAuthoredRegions")
+        == std::string::npos);
+    for (const char* strict_threshold : {
+             "$minimumChanged = 190; $minimumLargest = 185",
+             "$minimumChanged = 180; $minimumLargest = 170",
+             "$minimumChanged = 210; $minimumLargest = 210",
+             "$minimumChanged = 200; $minimumLargest = 200",
+             "$minimumBrightChroma = 100; $minimumAnyChroma = 115",
+             "$minimumBrightChroma = 6; $minimumAnyChroma = 16",
+             "$minimumBrightChroma = 24; $minimumAnyChroma = 40",
+             "$minimumBrightChroma = 80; $minimumAnyChroma = 110"}) {
+        ARPG_REQUIRE(validator.find(strict_threshold) != std::string::npos);
+    }
+    const std::size_t item_measure = validator.find(
+        "function Measure-ItemCapture");
+    ARPG_REQUIRE(item_measure != std::string::npos);
+    const std::string item_measure_block = braced_block_after(
+        validator, item_measure);
+    const std::size_t changed_mask = item_measure_block.find(
+        "if ($difference -ge 36)");
+    ARPG_REQUIRE(changed_mask != std::string::npos);
+    const std::string changed_mask_block = braced_block_after(
+        item_measure_block, changed_mask);
+    for (const char* changed_only : {"++$brightChroma", "++$anyChroma",
+             "$colors.Add("}) {
+        ARPG_REQUIRE(changed_mask_block.find(changed_only)
+            != std::string::npos);
+        ARPG_REQUIRE(occurrence_count(item_measure_block, changed_only)
+            == occurrence_count(changed_mask_block, changed_only));
+    }
+    ARPG_REQUIRE(item_measure_block.find("$colors.Count -lt")
+        == std::string::npos);
+    const std::size_t atlas_measure = validator.find(
+        "function Measure-ItemAtlasPalette");
+    ARPG_REQUIRE(atlas_measure != std::string::npos);
+    const std::string atlas_measure_block = braced_block_after(
+        validator, atlas_measure);
+    for (const char* atlas_contract : {
+             "$minimumAlpha = 96", "$minimumPalette = 45",
+             "$paletteOverrides = @{ 12 = 45; 18 = 72; 21 = 72; 22 = 64 }",
+             "New-Object 'bool[,]'", "HashSet[int]", "-shr 4",
+             "if ($component -gt $largest)",
+             "if ($largest -eq 0 -or $largestPalette -lt $requiredPalette)"}) {
+        ARPG_REQUIRE(atlas_measure_block.find(atlas_contract)
+            != std::string::npos);
+    }
+    ARPG_REQUIRE(validator.find(
+        "Measure-ItemAtlasPalette $publishedItemsAtlas")
+        != std::string::npos);
+    ARPG_REQUIRE(validator_self_test.find("$mutations.Count -ne 80")
+        != std::string::npos);
+    ARPG_REQUIRE(validator_self_test.find(
+        "'partial-material10-degradation' 636 562 8 8")
+        != std::string::npos);
+    for (const char* mutation : {"aliased-item-icon-evidence",
+             "missing-equipment-weapon-roi", "missing-material6-roi",
+             "missing-material9-roi", "aliased-lightning-isolated-evidence",
+             "lightning-shooter-horizontal-strip",
+             "lightning-shooter-grayscale",
+             "partial-material6-degradation",
+             "partial-material9-degradation",
+             "partial-material10-degradation",
+             "collapsed-item-atlas-material0-palette",
+             "collapsed-item-atlas-material6-palette",
+             "collapsed-item-atlas-material9-palette",
+             "collapsed-item-atlas-material10-palette"}) {
+        ARPG_REQUIRE(validator_self_test.find(mutation) != std::string::npos);
+    }
 
     const std::size_t normal_hud_observe = host.find(
         "renderer.observe_presented_hud_frame(hud_presented_frame,");
@@ -331,8 +801,9 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
     }
 
     const std::size_t init_background_recovery = host.find(
-        "if (config.stage12_material_background_only");
-    const std::size_t init_window = host.find("InitWindow(");
+        "if ((config.stage12_material_background_only");
+    const std::size_t init_window = host.find(
+        "window.initialize(config, committed_settings)");
     ARPG_REQUIRE(init_background_recovery != std::string::npos);
     ARPG_REQUIRE(init_window != std::string::npos);
     ARPG_REQUIRE(init_background_recovery < init_window);
@@ -353,10 +824,12 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
     ARPG_REQUIRE(recovery_ui != std::string::npos);
     const std::string recovery_ui_block = braced_block_after(host, recovery_ui);
     const std::size_t recovery_background_guard = recovery_ui_block.find(
-        "if (config.stage12_material_background_only)");
+        "if (config.stage12_material_background_only");
     const std::size_t recovery_draw = recovery_ui_block.find(
         "draw_recovery_screen(");
     ARPG_REQUIRE(recovery_background_guard != std::string::npos);
+    ARPG_REQUIRE(recovery_ui_block.find("config.stage12_material_icons_only",
+        recovery_background_guard) != std::string::npos);
     ARPG_REQUIRE(recovery_draw != std::string::npos);
     ARPG_REQUIRE(recovery_background_guard < recovery_draw);
     return {};

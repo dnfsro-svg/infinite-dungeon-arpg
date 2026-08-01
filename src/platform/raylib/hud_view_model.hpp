@@ -51,7 +51,7 @@ struct RoomHudModel final {
     HudText96 movement{};
     std::array<HudText96, 3U> controls{};
     bool abyss{};
-    std::uint8_t remaining_targets{};
+    std::uint32_t remaining_targets{};
 };
 
 struct NavigationHudModel final {
@@ -121,7 +121,7 @@ private:
         dungeon::RoomPhase phase{dungeon::RoomPhase::locked};
         std::uint8_t wave_index{};
         std::uint8_t wave_count{};
-        std::uint8_t remaining_targets{};
+        std::uint32_t remaining_targets{};
         abyss::AbyssDanger abyss_danger{abyss::AbyssDanger::low};
         abyss::AbyssRuleId abyss_rule{abyss::AbyssRuleId::none};
         std::uint8_t abyss_pending_rewards{};

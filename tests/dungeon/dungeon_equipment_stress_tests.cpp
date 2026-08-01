@@ -4,8 +4,10 @@
 #include "dungeon_test_support.hpp"
 
 #include "dungeon/dungeon_progression.hpp"
+#include "dungeon/room_progress_checkpoint.hpp"
 #include "items/item_catalog.hpp"
 #include "persistence/checkpoint_codec.hpp"
+#include "persistence/room_progress_codec.hpp"
 
 #include <algorithm>
 #include <array>
@@ -14,6 +16,7 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <new>
 #include <utility>
 #include <vector>
 
@@ -36,6 +39,7 @@ constexpr std::size_t kRestartInterval = 37U;
 
 enum class MismatchField : std::uint8_t {
     none,
+    room_phase,
     room_seed,
     generation,
     item_count,
@@ -109,6 +113,8 @@ bool same_item_bytes(
 
 Comparison compare_sessions(
     const DungeonSession& left, const DungeonSession& right) noexcept {
+    if (left.phase() != right.phase())
+        return {MismatchField::room_phase, 0U};
     const auto& left_state = arpg::test::stable_state(left);
     const auto& right_state = arpg::test::stable_state(right);
     if (left_state.current_room.seed != right_state.current_room.seed)
@@ -168,7 +174,7 @@ bool commit_pending(DungeonSession& session) noexcept {
     const auto* const pending = session.pending_save_view();
     if (pending == nullptr) return false;
     session.resolve_pending_save({SaveDisposition::committed,
-        pending->expected_generation, pending->next_state});
+        pending->expected_generation, pending->next_state, pending->kind});
     return session.snapshot().phase != RoomPhase::faulted;
 }
 
@@ -216,9 +222,24 @@ PickupAttempt pickup_one(DungeonSession& session,
     const std::uint64_t original_item_id = ground.item.id;
     const auto original_position = ground.position;
     const auto original_source = ground.source;
-    arpg::test::set_player_position(session, ground.position);
-    session.request_nearby_pickups(ground.position, policy);
-    const auto pending = session.pending_save_view();
+    constexpr std::size_t kSecondaryPickupLimit =
+        arpg::dungeon::kGroundHealthPotionCapacity
+        + arpg::dungeon::kGroundMaterialCapacity;
+    for (std::size_t consumed = 0U;
+            consumed <= kSecondaryPickupLimit; ++consumed) {
+        arpg::test::set_player_position(session, original_position);
+        session.request_nearby_pickups(ground.position, policy);
+        const auto* const secondary = session.pending_save_view();
+        if (secondary == nullptr
+                || (secondary->kind
+                        != arpg::dungeon::PendingSaveKind::health_potion_pickup
+                    && secondary->kind
+                        != arpg::dungeon::PendingSaveKind::material_pickup)) {
+            break;
+        }
+        if (!commit_pending(session)) return PickupAttempt::failed;
+    }
+    const auto* const pending = session.pending_save_view();
     if (pending == nullptr) {
         const GroundItem& retained = arpg::test::ground_items(session)[ordinal];
         return retained.active && retained.drop_ordinal == ordinal
@@ -405,14 +426,56 @@ bool transition_room(
 bool restart_right_session(
     std::unique_ptr<DungeonSession>& right,
     const DungeonRules& rules) noexcept {
-    const auto encoded = arpg::persistence::encode_checkpoint(
-        arpg::test::stable_state(*right));
-    if (!encoded.has_value()) return false;
-    const auto decoded = arpg::persistence::decode_checkpoint(
-        encoded->data(), encoded->size());
-    if (decoded.error != arpg::persistence::CodecError::none) return false;
-    right = std::make_unique<DungeonSession>(rules, decoded.state);
-    return right->snapshot().phase == RoomPhase::locked;
+    if (right->snapshot().phase != RoomPhase::combat) return false;
+    using arpg::dungeon::checkpoint::SaveCheckpointSlot;
+    std::unique_ptr<SaveCheckpointSlot> saved{
+        new (std::nothrow) SaveCheckpointSlot{}};
+    std::unique_ptr<SaveCheckpointSlot> decoded{
+        new (std::nothrow) SaveCheckpointSlot{}};
+    std::unique_ptr<std::uint8_t[]> bytes{
+        new (std::nothrow) std::uint8_t[
+            arpg::persistence::kMaximumEncodedCheckpointBytes]};
+    if (saved == nullptr || decoded == nullptr || bytes == nullptr) return false;
+    try {
+        const std::size_t item_count = right->item_state().items.size();
+        saved->state.item_ownership.items.reserve(item_count);
+        decoded->state.item_ownership.items.reserve(item_count);
+    } catch (...) {
+        return false;
+    }
+
+    const std::uint64_t revision = right->snapshot().commit_generation;
+    if (!right->capture_save_checkpoint(*saved, revision)) return false;
+    std::size_t written{};
+    if (arpg::persistence::encode_checkpoint_v9_into(*saved, bytes.get(),
+            arpg::persistence::kMaximumEncodedCheckpointBytes, written)
+            != arpg::persistence::CodecError::none) {
+        return false;
+    }
+    bool migrated = true;
+    if (arpg::persistence::decode_checkpoint_v9_into(bytes.get(), written,
+            *decoded, migrated) != arpg::persistence::CodecError::none
+            || migrated
+            || !arpg::dungeon::same_run_state(saved->state, decoded->state)
+            || !arpg::dungeon::checkpoint::same_room_progress_checkpoint(
+                saved->room_progress, decoded->room_progress)) {
+        return false;
+    }
+
+    saved.reset();
+    bytes.reset();
+    std::unique_ptr<DungeonSession> restored;
+    try {
+        restored = std::make_unique<DungeonSession>(rules, decoded->state);
+    } catch (...) {
+        return false;
+    }
+    if (!restored->restore_room_progress_checkpoint(*decoded)
+            || restored->snapshot().phase != RoomPhase::combat) {
+        return false;
+    }
+    right = std::move(restored);
+    return true;
 }
 
 TraceResult run_trace(std::size_t room_count, bool perturb_pickup_order) {
@@ -493,6 +556,8 @@ TraceResult run_trace(std::size_t room_count, bool perturb_pickup_order) {
             const PickupAttempt expected = left_eligible
                 ? PickupAttempt::picked : PickupAttempt::retained;
             if (left_attempt != expected || right_attempt != expected) {
+                result.mismatch_room = room;
+                result.mismatch_step = step;
                 result.abort_point = "pickup_attempt";
                 return result;
             }
@@ -545,6 +610,17 @@ TraceResult run_trace(std::size_t room_count, bool perturb_pickup_order) {
             return result;
 
         if ((room + 1U) % kRestartInterval == 0U) {
+            left->tick({});
+            right->tick({});
+            drain_observable_events(*left);
+            drain_observable_events(*right);
+            if (left->snapshot().phase != RoomPhase::combat
+                    || right->snapshot().phase != RoomPhase::combat
+                    || !record_comparison(
+                        result, *left, *right, room, step++)) {
+                result.abort_point = "restart_boundary";
+                return result;
+            }
             if (!restart_right_session(right, rules)) {
                 result.abort_point = "restart_right_session";
                 return result;
@@ -561,6 +637,7 @@ TraceResult run_trace(std::size_t room_count, bool perturb_pickup_order) {
 const char* mismatch_name(MismatchField field) noexcept {
     switch (field) {
     case MismatchField::none: return "none";
+    case MismatchField::room_phase: return "room_phase";
     case MismatchField::room_seed: return "room_seed";
     case MismatchField::generation: return "generation";
     case MismatchField::item_count: return "item_count";

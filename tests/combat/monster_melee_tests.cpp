@@ -301,21 +301,21 @@ arpg::test::Failure abyss_bulwark_adds_to_stage9_profile() noexcept {
     const MonsterAffixProfile armored_profile =
         arpg::test::CombatWorldTestAccess::monster_affix_profile(armored, 0U);
     ARPG_REQUIRE(armored_profile.armor_rating == 1007);
-    ARPG_REQUIRE(armored.snapshot().monsters[0].max_shield == 168);
-    ARPG_REQUIRE(armored.snapshot().monsters[0].shield == 78);
+    ARPG_REQUIRE(armored.snapshot().monsters[0].max_shield == 126);
+    ARPG_REQUIRE(armored.snapshot().monsters[0].shield == 36);
 
     config.wave.spawns[0].affixes = one_affix(
         MonsterAffixId::mighty, MonsterAffixTier::m3);
     CombatWorld mighty{config};
-    ARPG_REQUIRE(mighty.snapshot().monsters[0].max_hp == 520);
-    ARPG_REQUIRE(mighty.snapshot().monsters[0].max_shield == 246);
-    ARPG_REQUIRE(mighty.snapshot().monsters[0].shield == 156);
+    ARPG_REQUIRE(mighty.snapshot().monsters[0].max_hp == 240);
+    ARPG_REQUIRE(mighty.snapshot().monsters[0].max_shield == 162);
+    ARPG_REQUIRE(mighty.snapshot().monsters[0].shield == 72);
 
     config.wave.spawns[0].affixes = one_affix(
         MonsterAffixId::shielding, MonsterAffixTier::m2);
     CombatWorld shielding{config};
-    ARPG_REQUIRE(shielding.snapshot().monsters[0].max_shield == 169);
-    ARPG_REQUIRE(shielding.snapshot().monsters[0].shield == 78);
+    ARPG_REQUIRE(shielding.snapshot().monsters[0].max_shield == 78);
+    ARPG_REQUIRE(shielding.snapshot().monsters[0].shield == 36);
 
     config.wave.spawns[0].affixes = {};
     CombatWorld zero_armor{config};
@@ -333,7 +333,7 @@ arpg::test::Failure abyss_fury_scales_contact_once() noexcept {
     arpg::test::CombatWorldTestAccess::arm_monster_active_attack(contact, 0U);
     const int contact_before = contact.snapshot().player.hp;
     arpg::test::CombatWorldTestAccess::simulate_monster(contact, 0U);
-    ARPG_REQUIRE(contact_before - contact.snapshot().player.hp == 65);
+    ARPG_REQUIRE(contact_before - contact.snapshot().player.hp == 20);
     return {};
 }
 
@@ -348,7 +348,7 @@ arpg::test::Failure abyss_fury_scales_projectile_once() noexcept {
     ARPG_REQUIRE(shooter.snapshot().projectile_count == 1U);
     ARPG_REQUIRE(shooter.snapshot().projectiles[0].damage.amount[
         arpg::modifiers::damage_index(
-            arpg::modifiers::DamageType::lightning)] == 40);
+            arpg::modifiers::DamageType::lightning)] == 12);
     return {};
 }
 
@@ -362,7 +362,7 @@ arpg::test::Failure abyss_fury_scales_hazard_once() noexcept {
     ARPG_REQUIRE(hazard_world.snapshot().hazard_count == 1U);
     ARPG_REQUIRE(hazard_world.snapshot().hazards[0].damage.amount[
         arpg::modifiers::damage_index(
-            arpg::modifiers::DamageType::chaos)] == 50);
+            arpg::modifiers::DamageType::chaos)] == 15);
     return {};
 }
 
@@ -395,7 +395,7 @@ arpg::test::Failure abyss_fury_composes_with_frenzy_once() noexcept {
         composed_damage, 0U);
     const int composed_before = composed_damage.snapshot().player.hp;
     arpg::test::CombatWorldTestAccess::simulate_monster(composed_damage, 0U);
-    ARPG_REQUIRE(composed_before - composed_damage.snapshot().player.hp == 97);
+    ARPG_REQUIRE(composed_before - composed_damage.snapshot().player.hp == 30);
     ARPG_REQUIRE(has_abyss_phase_timing(frenzy, 7U, 4U, 9U, 21U));
     return {};
 }
@@ -415,7 +415,7 @@ arpg::test::Failure abyss_fury_scales_final_chilling_contact_and_projectile() no
         contact_world, 0U);
     const int contact_before = contact_world.snapshot().player.hp;
     arpg::test::CombatWorldTestAccess::simulate_monster(contact_world, 0U);
-    ARPG_REQUIRE(contact_before - contact_world.snapshot().player.hp == 91);
+    ARPG_REQUIRE(contact_before - contact_world.snapshot().player.hp == 27);
 
     CombatEncounterConfig projectile = encounter_for(
         MonsterId::lightning_shooter, 0.0F);
@@ -429,10 +429,10 @@ arpg::test::Failure abyss_fury_scales_final_chilling_contact_and_projectile() no
     ARPG_REQUIRE(projectile_world.snapshot().projectile_count == 1U);
     ARPG_REQUIRE(projectile_world.snapshot().projectiles[0].damage.amount[
         arpg::modifiers::damage_index(
-            arpg::modifiers::DamageType::lightning)] == 40);
+            arpg::modifiers::DamageType::lightning)] == 12);
     const int projectile_before = projectile_world.snapshot().player.hp;
     projectile_world.tick({});
-    ARPG_REQUIRE(projectile_before - projectile_world.snapshot().player.hp == 66);
+    ARPG_REQUIRE(projectile_before - projectile_world.snapshot().player.hp == 19);
     return {};
 }
 

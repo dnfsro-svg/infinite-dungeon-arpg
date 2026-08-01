@@ -7,10 +7,13 @@
 
 arpg::test::TestSuite checkpoint_codec_suite() noexcept;
 arpg::test::TestSuite checkpoint_v8_skill_loadout_suite() noexcept;
+arpg::test::TestSuite checkpoint_v9_suite() noexcept;
+arpg::test::TestSuite checkpoint_v9_unlock_suite() noexcept;
 arpg::test::TestSuite death_checkpoint_codec_suite() noexcept;
 arpg::test::TestSuite passive_tree_checkpoint_suite() noexcept;
 arpg::test::TestSuite save_store_suite() noexcept;
 arpg::test::TestSuite save_store_fault_suite() noexcept;
+arpg::test::TestSuite save_commit_worker_suite() noexcept;
 arpg::test::TestSuite dungeon_save_integration_suite() noexcept;
 
 int main() {
@@ -30,8 +33,11 @@ int main() {
         passive_tree_checkpoint_suite(),
         save_store_suite(),
         save_store_fault_suite(),
+        save_commit_worker_suite(),
         dungeon_save_integration_suite(),
+        checkpoint_v9_suite(),
+        checkpoint_v9_unlock_suite(),
     };
 
-    return arpg::test::run_suites(suites, 94, "stage 17 task 2 persistence");
+    return arpg::test::run_suites(suites, 106, "checkpoint v9 persistence");
 }

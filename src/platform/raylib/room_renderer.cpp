@@ -328,92 +328,86 @@ void draw_ground_item_shape(items::ItemSlot slot, Vector2 center,
     }
 }
 
-const dungeon::GroundItemSnapshot* ground_item_with_ordinal(
-    const dungeon::DungeonSnapshot& snapshot,
-    std::uint16_t ordinal) noexcept {
+void draw_ground_items(const dungeon::DungeonSnapshot& snapshot,
+    settings::LootFilterMode mode,
+    const MaterialPack& material_pack, float width, float height) noexcept {
     const std::size_t count = (std::min)(
         static_cast<std::size_t>(snapshot.ground_item_count),
         snapshot.ground_items.size());
     for (std::size_t index = 0U; index < count; ++index) {
-        if (snapshot.ground_items[index].ordinal == ordinal) {
-            return &snapshot.ground_items[index];
-        }
-    }
-    return nullptr;
-}
-
-void draw_ground_items(const dungeon::DungeonSnapshot& snapshot,
-    const GroundLootView& ground_loot,
-    const MaterialPack& material_pack, float width, float height) noexcept {
-    for (std::size_t index = 0U; index < ground_loot.count; ++index) {
-        const dungeon::GroundItemSnapshot* const item =
-            ground_item_with_ordinal(snapshot,
-                ground_loot.labels[index].ordinal);
-        if (item == nullptr) continue;
+        const dungeon::GroundItemSnapshot& item = snapshot.ground_items[index];
+        if (!ground_loot_visible(item, mode)) continue;
         const RenderProjection projected = project_render_world(
-            item->position.x, item->position.y, item->position.z,
+            item.position.x, item.position.y, item.position.z,
             width, height);
         const Vector2 center{projected.x,
             projected.ground_y - 13.0F * projected.scale};
-        const Color color = ground_item_color(item->rarity);
+        const Color color = ground_item_color(item.rarity);
         DrawEllipse(static_cast<int>(projected.x),
             static_cast<int>(projected.ground_y + 2.0F),
             17.0F * projected.scale, 6.0F * projected.scale,
             Fade(color, 0.24F));
-        const GroundLootLabel& label = ground_loot.labels[index];
-        const bool rarity_drawn = material_pack.draw(label.rarity_sprite, center,
-            false, 0.34F * projected.scale);
-        const bool item_drawn = material_pack.draw(label.item_sprite, center,
+        const bool rarity_drawn = material_pack.draw(
+            ground_loot_rarity_sprite(item.rarity,
+                item.source == dungeon::GroundItemSource::abyss_chest),
+            center, false, 0.34F * projected.scale);
+        const bool item_drawn = material_pack.draw(
+            ground_loot_item_sprite(item.slot), center,
             false, 0.25F * projected.scale);
         if (!rarity_drawn || !item_drawn) {
-            draw_ground_item_shape(item->slot, center, projected.scale, color);
+            draw_ground_item_shape(item.slot, center, projected.scale, color);
         }
     }
 }
 
-const dungeon::GroundMaterialSnapshot* ground_material_with_ordinal(
-    const dungeon::DungeonSnapshot& snapshot, std::uint16_t ordinal) noexcept {
-    const std::size_t count = (std::min)(
-        static_cast<std::size_t>(snapshot.ground_material_count),
-        snapshot.ground_materials.size());
-    for (std::size_t index = 0U; index < count; ++index) {
-        if (snapshot.ground_materials[index].ordinal == ordinal) {
-            return &snapshot.ground_materials[index];
-        }
+void draw_secondary_loot_icon(combat::Vec3 position, Rgba8 rgba,
+    MaterialSpriteId sprite, bool emphasized,
+    const MaterialPack& material_pack, float width, float height) noexcept {
+    const RenderProjection projected = project_render_world(
+        position.x, position.y, position.z, width, height);
+    const Color color{rgba.r, rgba.g, rgba.b, rgba.a};
+    const float radius = (emphasized ? 9.0F : 6.0F) * projected.scale;
+    const Vector2 center{projected.x, projected.ground_y - radius};
+    DrawEllipse(static_cast<int>(projected.x),
+        static_cast<int>(projected.ground_y + 1.0F), radius * 1.6F,
+        radius * 0.45F, Fade(color, 0.28F));
+    if (emphasized) {
+        DrawLineEx({center.x, center.y + radius},
+            {center.x, center.y - 36.0F * projected.scale},
+            2.0F * projected.scale, Fade(color, 0.65F));
+        DrawCircleLines(static_cast<int>(center.x), static_cast<int>(center.y),
+            radius * 1.55F, Fade(color, 0.78F));
     }
-    return nullptr;
+    if (!material_pack.draw(sprite, center, false,
+            (emphasized ? 0.24F : 0.20F) * projected.scale)) {
+        DrawCircleV(center, radius, color);
+    }
+    DrawCircleLines(static_cast<int>(center.x), static_cast<int>(center.y),
+        radius, RAYWHITE);
 }
 
 void draw_ground_materials(const dungeon::DungeonSnapshot& snapshot,
-    const MaterialLootView& view, const MaterialPack& material_pack,
-    float width, float height) noexcept {
-    for (std::size_t index = 0U; index < view.count; ++index) {
-        const MaterialLootLabel& label = view.labels[index];
-        const auto* material = ground_material_with_ordinal(snapshot, label.ordinal);
-        if (material == nullptr) continue;
-        const RenderProjection projected = project_render_world(
-            material->position.x, material->position.y, material->position.z,
-            width, height);
-        const Color color{label.text_color.r, label.text_color.g,
-            label.text_color.b, label.text_color.a};
-        const float radius = (label.emphasized ? 9.0F : 6.0F) * projected.scale;
-        const Vector2 center{projected.x, projected.ground_y - radius};
-        DrawEllipse(static_cast<int>(projected.x),
-            static_cast<int>(projected.ground_y + 1.0F), radius * 1.6F,
-            radius * 0.45F, Fade(color, 0.28F));
-        if (label.emphasized) {
-            DrawLineEx({center.x, center.y + radius},
-                {center.x, center.y - 36.0F * projected.scale},
-                2.0F * projected.scale, Fade(color, 0.65F));
-            DrawCircleLines(static_cast<int>(center.x), static_cast<int>(center.y),
-                radius * 1.55F, Fade(color, 0.78F));
-        }
-        if (!material_pack.draw(label.sprite, center, false,
-                (label.emphasized ? 0.24F : 0.20F) * projected.scale)) {
-            DrawCircleV(center, radius, color);
-        }
-        DrawCircleLines(static_cast<int>(center.x), static_cast<int>(center.y),
-            radius, RAYWHITE);
+    const MaterialPack& material_pack, float width, float height) noexcept {
+    const std::size_t material_count = (std::min)(
+        static_cast<std::size_t>(snapshot.ground_material_count),
+        snapshot.ground_materials.size());
+    for (std::size_t index = 0U; index < material_count; ++index) {
+        const dungeon::GroundMaterialSnapshot& material =
+            snapshot.ground_materials[index];
+        if (items::material_definition(material.material) == nullptr) continue;
+        draw_secondary_loot_icon(material.position,
+            material_color(material.material),
+            material_loot_sprite(material.material),
+            material_is_emphasized(material.material),
+            material_pack, width, height);
+    }
+    const std::size_t potion_count = (std::min)(
+        static_cast<std::size_t>(snapshot.ground_health_potion_count),
+        snapshot.ground_health_potions.size());
+    for (std::size_t index = 0U; index < potion_count; ++index) {
+        draw_secondary_loot_icon(snapshot.ground_health_potions[index].position,
+            {255U, 48U, 48U, 255U}, MaterialSpriteId::health_potion, true,
+            material_pack, width, height);
     }
 }
 
@@ -504,10 +498,31 @@ RoomBackgroundDrawRuntimeStatus CombatRenderer::draw_room_background_only(
     return room_background_draw_status_;
 }
 
+GroundLootView CombatRenderer::draw_ground_loot_icons_only(
+    const dungeon::DungeonSnapshot& snapshot) noexcept {
+    const float width = static_cast<float>(GetScreenWidth());
+    const float height = static_cast<float>(GetScreenHeight());
+    const GroundLootView ground_loot = build_ground_loot_view(
+        snapshot, loot_filter_mode_, width, height);
+
+    Camera2D world_camera{};
+    world_camera.zoom = 1.0F;
+    BeginMode2D(world_camera);
+    static_cast<void>(draw_room_background_only(snapshot.ecology));
+    static_cast<void>(material_pack_.synchronize_residency(
+        make_material_residency_request(snapshot)));
+    draw_ground_materials(snapshot, material_pack_, width, height);
+    draw_ground_items(snapshot, loot_filter_mode_, material_pack_, width, height);
+    EndMode2D();
+    return ground_loot;
+}
+
 void CombatRenderer::draw_room(
     const dungeon::DungeonSnapshot& current,
     const GroundLootView& ground_loot,
     const MaterialLootView& material_loot) noexcept {
+    static_cast<void>(ground_loot);
+    static_cast<void>(material_loot);
     const float width = static_cast<float>(GetScreenWidth());
     const float height = static_cast<float>(GetScreenHeight());
     room_background_draw_status_ = room_background_status(
@@ -520,8 +535,6 @@ void CombatRenderer::draw_room(
     }
     draw_abyss(current, static_cast<float>(GetTime()));
     draw_environment_hazards(current, width, height);
-    draw_ground_materials(current, material_loot, material_pack_, width, height);
-    draw_ground_items(current, ground_loot, material_pack_, width, height);
     if (current.ecology == dungeon::DungeonElement::fire) {
         draw_fire_room_props(material_pack_, current, width, height);
     } else {
@@ -531,6 +544,8 @@ void CombatRenderer::draw_room(
     draw_doors(current, width, height, material_pack_, hud_renderer_.hud_font(),
         hud_renderer_.font_ready());
     draw_hole(current, material_pack_);
+    draw_ground_materials(current, material_pack_, width, height);
+    draw_ground_items(current, loot_filter_mode_, material_pack_, width, height);
 }
 
 }  // namespace arpg::platform

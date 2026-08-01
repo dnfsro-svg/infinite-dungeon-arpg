@@ -7,6 +7,7 @@
 #include "abyss/abyss_rules.hpp"
 
 #include <cstddef>
+#include <cstdint>
 
 namespace {
 
@@ -106,7 +107,8 @@ arpg::test::Failure player_defeat_latch_survives_event_overflow() noexcept {
     config.wave = {};
     CombatWorld world{config};
     drain_events(world);
-    arpg::test::CombatWorldTestAccess::fill_event_queue(world, 62U);
+    arpg::test::CombatWorldTestAccess::fill_event_queue(
+        world, kCombatEventCapacity - 2U);
     arpg::test::CombatWorldTestAccess::apply_damage(
         world, world.snapshot().player.max_hp,
         Vec3{1.0F, 0.0F, 0.0F}, FeedbackLevel::heavy);
@@ -249,6 +251,47 @@ arpg::test::Failure life_sacrifice_maps_ratio_and_clear_does_not_refill() noexce
     return {};
 }
 
+arpg::test::Failure percent_health_restore_uses_actual_max_and_bypasses_abyss_multiplier() noexcept {
+    CombatEncounterConfig config = single_chaser_encounter();
+    config.player_build.values.max_health = 10000;  // actual max becomes 1001
+    CombatWorld world{config};
+    arpg::test::CombatWorldTestAccess::set_player_resources(world, 500, 0);
+    ARPG_REQUIRE(world.restore_player_health_percent(2500U) == 251);
+    ARPG_REQUIRE(world.snapshot().player.hp == 751);
+    arpg::test::CombatWorldTestAccess::set_player_resources(world, 900, 0);
+    ARPG_REQUIRE(world.restore_player_health_percent(2500U) == 101);
+    ARPG_REQUIRE(world.snapshot().player.hp == 1001);
+    ARPG_REQUIRE(world.restore_player_health_percent(2500U) == 0);
+
+    config = single_chaser_encounter();
+    config.abyss = arpg::abyss::combat_config_for(
+        arpg::abyss::AbyssRuleId::exhausted_recovery);
+    CombatWorld abyss{config};
+    arpg::test::CombatWorldTestAccess::set_player_resources(abyss, 600, 0);
+    ARPG_REQUIRE(abyss.restore_player_health_percent(2500U) == 250);
+    ARPG_REQUIRE(abyss.snapshot().player.hp == 850);
+    ARPG_REQUIRE(abyss.restore_player_health_percent(0U) == 0);
+    return {};
+}
+
+arpg::test::Failure percent_health_restore_never_revives_defeated_player() noexcept {
+    CombatEncounterConfig config = single_chaser_encounter();
+    config.wave = {};
+    CombatWorld world{config};
+    arpg::test::CombatWorldTestAccess::apply_damage(world,
+        world.snapshot().player.max_hp, Vec3{}, FeedbackLevel::heavy);
+    const auto death = world.death_snapshot();
+    ARPG_REQUIRE(death.has_value());
+    const std::uint64_t death_tick = death->tick;
+    const std::uint64_t final_damage = death->final_damage;
+    ARPG_REQUIRE(world.restore_player_health_percent(2500U) == 0);
+    ARPG_REQUIRE(world.snapshot().player.hp == 0);
+    ARPG_REQUIRE(world.death_snapshot().has_value());
+    ARPG_REQUIRE(world.death_snapshot()->tick == death_tick);
+    ARPG_REQUIRE(world.death_snapshot()->final_damage == final_damage);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"damage reaches zero", &player_damage_reaches_zero},
     {"accepted hit payload and hurt event", &accepted_hit_emits_payload_and_hurt_started},
@@ -263,6 +306,10 @@ constexpr arpg::test::TestCase kCases[] = {
      &exhausted_recovery_scales_explicit_and_wave_restore},
     {"life sacrifice ratio and clear",
      &life_sacrifice_maps_ratio_and_clear_does_not_refill},
+    {"percent health restore uses actual max and bypasses abyss multiplier",
+     &percent_health_restore_uses_actual_max_and_bypasses_abyss_multiplier},
+    {"percent health restore never revives defeated player",
+     &percent_health_restore_never_revives_defeated_player},
 };
 
 }  // namespace

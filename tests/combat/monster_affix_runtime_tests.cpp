@@ -272,7 +272,7 @@ arpg::test::Failure frozen_catalog_projects_static_affix_values() noexcept {
 
     const MonsterAffixProfile mighty = evaluate_monster_affixes(
         *bulwark, one_affix(MonsterAffixId::mighty, MonsterAffixTier::m3));
-    ARPG_REQUIRE(mighty.max_hp == 1400);
+    ARPG_REQUIRE(mighty.max_hp == 630);
     ARPG_REQUIRE(mighty.horizontal_impulse_bp == 5500);
 
     const MonsterAffixProfile frenzy = evaluate_monster_affixes(
@@ -291,7 +291,7 @@ arpg::test::Failure frozen_catalog_projects_static_affix_values() noexcept {
 
     const MonsterAffixProfile shielding = evaluate_monster_affixes(
         *bulwark, one_affix(MonsterAffixId::shielding, MonsterAffixTier::m2));
-    ARPG_REQUIRE(shielding.max_shield == 245);
+    ARPG_REQUIRE(shielding.max_shield == 110);
     ARPG_REQUIRE(shielding.shield_recharge_delay_ticks == 150U);
     return {};
 }
@@ -310,7 +310,7 @@ arpg::test::Failure spawn_spec_is_copied_to_runtime_and_snapshot() noexcept {
     ARPG_REQUIRE(runtime != nullptr);
     ARPG_REQUIRE(runtime->affixes == spec.affixes);
     ARPG_REQUIRE(runtime->spawn_ordinal == 97U);
-    ARPG_REQUIRE(runtime->affix_profile.max_hp == 1400);
+    ARPG_REQUIRE(runtime->affix_profile.max_hp == 630);
     ARPG_REQUIRE(runtime->affix_warning == MonsterAffixWarning::none);
     ARPG_REQUIRE(runtime->affix_warning_ticks == 0U);
 
@@ -326,7 +326,7 @@ arpg::test::Failure spawn_spec_is_copied_to_runtime_and_snapshot() noexcept {
     ARPG_REQUIRE(snapshot.monsters[0].spawn_ordinal == 97U);
     ARPG_REQUIRE(snapshot.monsters[0].affix_warning == MonsterAffixWarning::none);
     ARPG_REQUIRE(snapshot.monsters[0].affix_warning_ticks == 0U);
-    ARPG_REQUIRE(snapshot.monsters[0].max_hp == 1400);
+    ARPG_REQUIRE(snapshot.monsters[0].max_hp == 630);
     return {};
 }
 
@@ -336,7 +336,7 @@ arpg::test::Failure chilling_direct_hit_adds_water_damage_and_slows_movement() n
         MonsterId::chaos_chaser, 0.90F)};
     const int maximum_hp = world.snapshot().player.max_hp;
     ARPG_REQUIRE(wait_for_player_hit(world, 30));
-    ARPG_REQUIRE(world.snapshot().player.hp == maximum_hp - 61);
+    ARPG_REQUIRE(world.snapshot().player.hp == maximum_hp - 19);
     ARPG_REQUIRE(world.snapshot().player.slow_bp == 3500);
     ARPG_REQUIRE(world.snapshot().player.slow_ticks == 120U);
 
@@ -372,7 +372,7 @@ arpg::test::Failure corrosion_dot_bypasses_evasion_and_uses_chaos_reduction() no
         MonsterId::chaos_chaser, 0.90F)};
     const int maximum_hp = world.snapshot().player.max_hp;
     ARPG_REQUIRE(wait_for_player_hit(world, 30));
-    ARPG_REQUIRE(world.snapshot().player.hp == maximum_hp - 45);
+    ARPG_REQUIRE(world.snapshot().player.hp == maximum_hp - 14);
     ARPG_REQUIRE(world.snapshot().player.corrosion_damage_per_second == 45);
     ARPG_REQUIRE(world.snapshot().player.corrosion_ticks == 240U);
 
@@ -382,7 +382,7 @@ arpg::test::Failure corrosion_dot_bypasses_evasion_and_uses_chaos_reduction() no
         arpg::modifiers::element_index(arpg::modifiers::DamageType::chaos)] = 5000;
     world.apply_player_build(protected_build);
     arpg::test::tick_n(world, 60);
-    ARPG_REQUIRE(world.snapshot().player.hp == maximum_hp - 68);
+    ARPG_REQUIRE(world.snapshot().player.hp == maximum_hp - 37);
 
     CombatWorld refresh{dual_affixed_encounter(
         MonsterAffixId::chaos_corrosion, MonsterAffixTier::m1,

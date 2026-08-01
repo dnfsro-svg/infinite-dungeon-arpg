@@ -30,11 +30,8 @@ foreach(SOURCE_FILE IN LISTS SOURCE_FILES)
         string(TOLOWER "${SOURCE_LINE}" SOURCE_LINE_LOWER)
         if(SOURCE_LINE_LOWER MATCHES
                 "^[ \\t]*#[ \\t]*include[ \\t]*[<\"]dungeon[/\\\\][^>\"]+[>\"]")
-            if(NOT SOURCE_LINE_LOWER MATCHES
-                    "^[ \\t]*#[ \\t]*include[ \\t]*[<\"]dungeon[/\\\\]dungeon_checkpoint\\.hpp[>\"]")
-                message(FATAL_ERROR
-                    "${SOURCE_LABEL} file includes a forbidden Dungeon header: ${SOURCE_FILE}: ${SOURCE_LINE}")
-            endif()
+            message(FATAL_ERROR
+                "${SOURCE_LABEL} file includes a forbidden Dungeon header: ${SOURCE_FILE}: ${SOURCE_LINE}")
         endif()
         if(SOURCE_LINE_LOWER MATCHES
                 "^[ \\t]*#[ \\t]*include[ \\t]*[<\"]combat[/\\\\][^>\"]+[>\"]")

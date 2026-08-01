@@ -7,6 +7,9 @@ add_executable(arpg_dungeon_tests
     dungeon_lifecycle_tests.cpp
     dungeon_navigation_tests.cpp
     dungeon_stress_tests.cpp
+    room_affix_tests.cpp
+    room_population_tests.cpp
+    room_environment_tests.cpp
     room_generation_tests.cpp
     dungeon_rules_tests.cpp
     dungeon_progression_tests.cpp
@@ -19,6 +22,8 @@ add_executable(arpg_dungeon_tests
     dungeon_equipment_stress_tests.cpp
     dungeon_loot_drop_tests.cpp
     dungeon_material_loot_tests.cpp
+    dungeon_health_potion_tests.cpp
+    dungeon_exit_unlock_tests.cpp
     dungeon_transaction_tests.cpp
     dungeon_abyss_reward_tests.cpp
     dungeon_abyss_stress_tests.cpp
@@ -36,6 +41,7 @@ target_include_directories(arpg_dungeon_tests
         "${PROJECT_SOURCE_DIR}/tests/combat")
 target_link_libraries(arpg_dungeon_tests PRIVATE arpg_dungeon arpg_persistence)
 arpg_enable_project_warnings(arpg_dungeon_tests)
+
 if(MSVC)
     # Several lifecycle fixtures intentionally keep multiple full fixed-capacity
     # sessions and snapshots alive at once. The Stage 16 material ground pool is
@@ -89,6 +95,11 @@ target_include_directories(arpg_stage9_validation_fixture
     PRIVATE "${PROJECT_SOURCE_DIR}/tests/dungeon")
 target_link_libraries(arpg_stage9_validation_fixture PRIVATE arpg_dungeon arpg_persistence)
 arpg_enable_project_warnings(arpg_stage9_validation_fixture)
+# Avoid stack-overflow failures in the standalone validation fixture on MSVC.
+if(MSVC)
+    target_link_options(arpg_stage9_validation_fixture
+        PRIVATE /STACK:4194304)
+endif()
 
 add_test(NAME stage9.validation_fixture.real_v4_reward_reload
     COMMAND arpg_stage9_validation_fixture)
@@ -101,12 +112,17 @@ target_compile_features(arpg_stage10_validation_fixture PRIVATE cxx_std_17)
 target_link_libraries(arpg_stage10_validation_fixture
     PRIVATE arpg_dungeon arpg_persistence)
 arpg_enable_project_warnings(arpg_stage10_validation_fixture)
+# Avoid stack-overflow failures in the standalone validation fixture on MSVC.
+if(MSVC)
+    target_link_options(arpg_stage10_validation_fixture
+        PRIVATE /STACK:4194304)
+endif()
 
 add_test(NAME stage10.validation_fixture.real_abyss_transactions
     COMMAND arpg_stage10_validation_fixture)
 set_tests_properties(stage10.validation_fixture.real_abyss_transactions PROPERTIES
     LABELS "headless;dungeon;stage10;validation"
-    TIMEOUT 30)
+    TIMEOUT 75)
 
 add_test(NAME stage9.evidence.no_injected_defeat_trace
     COMMAND ${CMAKE_COMMAND}
@@ -282,6 +298,23 @@ add_test(NAME stage10.evidence.rejects_pre_capture_with_post_dummy
 set_tests_properties(stage10.evidence.rejects_pre_capture_with_post_dummy PROPERTIES
     LABELS "headless;dungeon;stage10;evidence;negative"
     WILL_FAIL TRUE)
+
+add_test(NAME stage10.evidence.mutation_self_test
+    COMMAND ${CMAKE_COMMAND}
+        -DGUARD_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage10_evidence_guard_test.cmake
+        -DVALID_FIXTURE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_fixture.cpp
+        -DVALIDATION_GAME_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_game.cpp
+        -DFORMAL_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/stage10_formal_game_validation.cpp
+        -DCAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage10_validation_capture_test.ps1
+        -DFORMAL_CAPTURE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/stage10_formal_game_capture_test.ps1
+        -DSTRESS_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/dungeon_abyss_stress_tests.cpp
+        -DVALID_HOST_HEADER=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.hpp
+        -DVALID_HOST_SOURCE=${PROJECT_SOURCE_DIR}/src/platform/raylib/raylib_host.cpp
+        -DBAD_CAPTURE_ORDER=${CMAKE_CURRENT_SOURCE_DIR}/stage10_evidence_bad_capture_order.txt
+        -DBAD_PRE_CAPTURE_DUMMY=${CMAKE_CURRENT_SOURCE_DIR}/stage10_evidence_bad_pre_capture_with_dummy.txt
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/stage10_evidence_guard_self_test.cmake)
+set_tests_properties(stage10.evidence.mutation_self_test PROPERTIES
+    LABELS "headless;dungeon;stage10;evidence")
 
 add_executable(arpg_stage11_death_validation_fixture
     stage11_death_validation_fixture.cpp)

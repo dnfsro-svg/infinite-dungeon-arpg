@@ -1,8 +1,10 @@
 #pragma once
 
 #include "combat/combat_types.hpp"
+#include "core/gameplay_limits.hpp"
 #include "dungeon/dungeon_checkpoint.hpp"
 #include "dungeon/dungeon_rules.hpp"
+#include "dungeon/health_potion_loot.hpp"
 #include "dungeon/material_loot.hpp"
 
 #include <array>
@@ -46,6 +48,7 @@ enum class RequestResult : std::uint8_t {
 
 enum class DungeonEventKind : std::uint8_t {
     room_entered,
+    population_generated,
     combat_started,
     room_cleared,
     exits_opened,
@@ -94,6 +97,7 @@ struct DungeonDiagnostics final {
     std::uint32_t material_ground_saturation_count{};
     DungeonFault fault{DungeonFault::none};
     bool room_index_overflow{};
+    std::uint32_t health_potion_ground_saturation_count{};
 };
 
 struct DungeonEncounterDiagnostics final {
@@ -102,6 +106,24 @@ struct DungeonEncounterDiagnostics final {
     std::uint8_t current_wave_spawn_count{};
     bool plan_valid{};
 };
+
+[[nodiscard]] constexpr std::uint32_t required_kills(
+    std::uint32_t initial_monsters) noexcept {
+    return (initial_monsters + 3U) / 4U;
+}
+
+struct RoomProgressState final {
+    std::uint32_t initial_monster_count{};
+    std::uint32_t defeated_monster_count{};
+    std::uint32_t required_kills{};
+    bool exits_unlocked{};
+    bool full_clear{};
+    std::array<std::uint64_t, limits::kRoomEquipmentClaimWords>
+        defeated_monster_bits{};
+};
+
+static_assert(limits::kRoomEquipmentClaimWords * 64U
+    >= limits::kRoomMonsterCapacity);
 
 struct DungeonSessionConfig final {
     std::uint64_t root_seed{0x6D30305F5241594CULL};
@@ -116,6 +138,7 @@ struct RoomDescriptor final {
 };
 
 inline constexpr std::size_t kGroundDropCapacity = 192U;
+static_assert(kGroundHealthPotionCapacity == kGroundDropCapacity);
 inline constexpr float kPickupRadius = 1.5F;
 
 enum class GroundItemSource : std::uint8_t {
@@ -190,12 +213,19 @@ struct DungeonSnapshot final {
     std::array<std::uint32_t, 4> biases{};
     RoomPhase phase{RoomPhase::locked};
     bool has_active_room{};
+    bool exits_unlocked{};
     std::array<bool, 4> exits_open{};
     std::array<bool, 4> abyss_doors{};
     std::uint8_t wave_index{};
     std::uint8_t wave_count{};
     std::uint16_t wave_delay_ticks{};
-    std::uint8_t remaining_targets{};
+    std::uint32_t initial_monster_count{};
+    std::uint32_t defeated_monster_count{};
+    std::uint32_t remaining_targets{};
+    std::uint32_t monster_generator_version{};
+    std::uint64_t monster_blueprint_hash{};
+    std::uint32_t environment_generator_version{};
+    std::uint64_t environment_blueprint_hash{};
     EntrySide entry_side{EntrySide::initial};
     ExitDirection last_exit{ExitDirection::none};
     TransitionKind last_transition{TransitionKind::none};
@@ -235,6 +265,11 @@ struct DungeonSnapshot final {
     std::uint64_t pending_room_experience{};
     std::uint64_t last_room_experience{};
     std::uint8_t last_levels_gained{};
+    std::uint16_t ground_health_potion_count{};
+    std::array<GroundHealthPotionSnapshot, kGroundHealthPotionCapacity>
+        ground_health_potions{};
+    HealthPotionPickupReceipt health_potion_pickup_receipt{};
+    std::optional<std::uint16_t> pending_health_potion_spawn_ordinal{};
 };
 
 struct PendingTransition final {
@@ -263,6 +298,9 @@ enum class PendingSaveKind : std::uint8_t {
     abyss_abandon,
     death_retreat,
     death_continue,
+    health_potion_pickup,
+    room_unlock,
+    abyss_early_exit,
 };
 
 struct PendingSave final {
@@ -275,6 +313,7 @@ struct PendingSave final {
     std::uint16_t pickup_ordinal{0xFFFFU};
     std::optional<combat::CombatDeathSnapshot> death_snapshot{};
     std::optional<ReinforcementReceipt> reinforcement_receipt{};
+    std::optional<PendingHealthPotionClaim> health_potion_claim{};
 };
 
 struct PendingSaveResult final {

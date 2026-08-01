@@ -5,12 +5,14 @@
 #include "combat/monster_catalog.hpp"
 #include "combat/monster_affix_catalog.hpp"
 #include "combat/monster_affix_generation.hpp"
+#include "combat/room_bounds.hpp"
 #include "dungeon/dungeon_checkpoint.hpp"
 #include "dungeon/encounter_director.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 namespace {
 
@@ -109,8 +111,10 @@ bool test_encounter_plan_legal(
             ranged_count += test_has_tag(*definition, MonsterTag::ranged);
             support_count += test_has_tag(*definition, MonsterTag::support);
             hazard_count += test_has_tag(*definition, MonsterTag::ground_hazard);
-            if (spawn.position.x < -8.0F || spawn.position.x > 8.0F
-                    || spawn.position.y < -3.5F || spawn.position.y > 3.5F
+            if (spawn.position.x < arpg::combat::room_bounds::min_x
+                    || spawn.position.x > arpg::combat::room_bounds::max_x
+                    || spawn.position.y < arpg::combat::room_bounds::min_y
+                    || spawn.position.y > arpg::combat::room_bounds::max_y
                     || spawn.position.z != 0.0F) {
                 return false;
             }
@@ -250,10 +254,12 @@ arpg::test::Failure encounter_plan_is_deterministic_and_legal() noexcept {
             const auto& actual = wave.spawns[spawn_index];
             const auto& expected = kStage8BaseTrace[wave_index * 2U + spawn_index];
             ARPG_REQUIRE(actual.id == expected.id);
-            ARPG_REQUIRE(arpg::test::near(actual.position.x, expected.x,
-                0.002));
-            ARPG_REQUIRE(arpg::test::near(actual.position.y, expected.y,
-                0.002));
+            const float legacy_x = actual.position.x * 12.0F
+                / arpg::combat::room_bounds::half_extent;
+            const float legacy_y = actual.position.y * 5.5F
+                / arpg::combat::room_bounds::half_extent;
+            ARPG_REQUIRE(arpg::test::near(legacy_x, expected.x, 0.002));
+            ARPG_REQUIRE(arpg::test::near(legacy_y, expected.y, 0.002));
             ARPG_REQUIRE(actual.position.z == 0.0F);
         }
     }
@@ -471,6 +477,64 @@ arpg::test::Failure fallback_config_keeps_a_direct_target() noexcept {
     return {};
 }
 
+arpg::test::Failure ordinal_affix_contexts_are_stable_and_do_not_truncate()
+    noexcept {
+    constexpr std::uint64_t room_seed = 1U;
+    constexpr std::uint64_t depth = 40U;
+    constexpr std::uint32_t generator_version = 1U;
+    constexpr std::array<std::uint16_t, 4U> ordinals{{
+        0U, 256U, 100U, 1124U}};
+    const auto* monster = arpg::combat::monster_definition(
+        MonsterId::chaos_chaser);
+    ARPG_REQUIRE(monster != nullptr);
+
+    std::array<std::uint64_t, ordinals.size()> contexts{};
+    for (std::size_t index = 0U; index < ordinals.size(); ++index) {
+        contexts[index] =
+            arpg::combat::test_support::monster_affix_ordinal_context_seed(
+                room_seed, depth, generator_version, ordinals[index]);
+        ARPG_REQUIRE(contexts[index]
+            == arpg::combat::test_support::monster_affix_ordinal_context_seed(
+                room_seed, depth, generator_version, ordinals[index]));
+
+        const auto normal = arpg::combat::generate_monster_affixes_for_ordinal(
+            room_seed, depth, generator_version, ordinals[index], *monster);
+        const auto repeated =
+            arpg::combat::generate_monster_affixes_for_ordinal(
+                room_seed, depth, generator_version, ordinals[index],
+                *monster);
+        ARPG_REQUIRE(normal.has_value());
+        ARPG_REQUIRE(repeated.has_value());
+        ARPG_REQUIRE(*normal == *repeated);
+        ARPG_REQUIRE(!arpg::combat::generate_monster_affixes_for_ordinal(
+            room_seed, depth, 0U, ordinals[index], *monster).has_value());
+
+        const auto abyss =
+            arpg::combat::supplement_abyss_affixes_for_ordinal(
+                room_seed, depth, generator_version, ordinals[index],
+                *monster, *normal);
+        const auto repeated_abyss =
+            arpg::combat::supplement_abyss_affixes_for_ordinal(
+                room_seed, depth, generator_version, ordinals[index],
+                *monster, *normal);
+        ARPG_REQUIRE(abyss.has_value());
+        ARPG_REQUIRE(repeated_abyss.has_value());
+        ARPG_REQUIRE(*abyss == *repeated_abyss);
+        ARPG_REQUIRE(abyss->count == 3U);
+        for (std::size_t affix = 0U; affix < normal->count; ++affix) {
+            ARPG_REQUIRE(abyss->values[affix]
+                == normal->values[affix]);
+        }
+        ARPG_REQUIRE(!arpg::combat::supplement_abyss_affixes_for_ordinal(
+            room_seed, depth, 0U, ordinals[index], *monster,
+            *normal).has_value());
+    }
+
+    ARPG_REQUIRE(contexts[0] != contexts[1]);
+    ARPG_REQUIRE(contexts[2] != contexts[3]);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"abyss budget scales and max is legal",
         &abyss_budget_is_ceil_three_halves_and_scaled_max_is_legal},
@@ -492,6 +556,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"indivisible small two-wave config is rejected", &indivisible_small_two_wave_config_is_rejected},
     {"large base with low threshold is accepted", &large_base_with_low_threshold_is_accepted},
     {"fallback keeps a direct target", &fallback_config_keeps_a_direct_target},
+    {"ordinal affix contexts are stable and do not truncate",
+        &ordinal_affix_contexts_are_stable_and_do_not_truncate},
 };
 
 }  // namespace

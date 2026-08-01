@@ -5,6 +5,7 @@
 #include "modifiers/modifier_types.hpp"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string_view>
@@ -70,6 +71,10 @@ inline constexpr std::uint16_t kAffixValueRollMaximumBp = 11000U;
 [[nodiscard]] bool validate_item(const ItemInstance& item) noexcept;
 [[nodiscard]] OwnershipValidationResult validate_ownership_detailed(
     const ItemOwnershipState& state) noexcept;
+[[nodiscard]] OwnershipValidationResult validate_ownership_with_scratch(
+    const ItemOwnershipState& state,
+    std::uint8_t* scratch,
+    std::size_t scratch_size) noexcept;
 [[nodiscard]] bool validate_ownership(const ItemOwnershipState& state) noexcept;
 
 }  // namespace arpg::items

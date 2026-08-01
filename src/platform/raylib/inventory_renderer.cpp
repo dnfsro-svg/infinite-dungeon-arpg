@@ -588,7 +588,7 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
     if (!left_pressed && !right_pressed) return false;
     const Vector2 mouse = input.mouse_position;
     const bool requests_enabled = !snapshot.pending_save_kind.has_value()
-        && runtime.state() == DungeonRuntimeState::running;
+        && runtime.authority_requests_enabled();
     const ActiveSkillLoadoutLayout skill_layout = active_skill_loadout_layout(
         GetScreenWidth(), GetScreenHeight());
     if (left_pressed && contains(skill_layout.equipment_page_button, mouse)) {
@@ -631,18 +631,12 @@ bool InventoryRenderer::process_input(DungeonRuntime& runtime,
             break;
         }
         if (request != dungeon::RequestResult::accepted) return false;
-        const std::uint64_t generation_before = snapshot.commit_generation;
+        // Selection is presentation-only. Advance it when authority accepts
+        // the exact request so asynchronous persistence cannot strand the UI
+        // on the pre-request selection while the mutation is pending.
+        advance_active_skill_loadout_selection(
+            active_skill_selection_, *command);
         runtime.service_pending_save();
-        const dungeon::DungeonSnapshot after = session.snapshot();
-        if (after.commit_generation != generation_before) {
-            if (command->kind == ActiveSkillLoadoutActionKind::equip) {
-                active_skill_selection_.selected_slot = command->slot;
-                active_skill_selection_.selected_inventory =
-                    skills::ActiveSkillId::none;
-            } else if (command->kind == ActiveSkillLoadoutActionKind::swap) {
-                active_skill_selection_.selected_slot = command->other_slot;
-            }
-        }
         return true;
     }
     if (material_bag_.reinforcement_confirmation_item().has_value()) {

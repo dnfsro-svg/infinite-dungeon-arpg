@@ -2,6 +2,7 @@
 
 #include "combat/combat_types.hpp"
 #include "combat/monster_affix_runtime.hpp"
+#include "modifiers/effect_set.hpp"
 
 #include <array>
 #include <cstddef>
@@ -20,6 +21,7 @@ class CombatWorld;
 struct MonsterRuntime final {
     bool active{};
     std::uint16_t generation{};
+    MonsterOrdinal monster_ordinal{kInvalidMonsterOrdinal};
     MonsterId id{MonsterId::chaos_chaser};
     MonsterAffixSet affixes{};
     std::uint16_t spawn_ordinal{};
@@ -55,6 +57,8 @@ struct MonsterRuntime final {
     Vec3 attack_vector{};
     MonsterAffixWarning affix_warning{MonsterAffixWarning::none};
     std::uint16_t affix_warning_ticks{};
+    modifiers::EffectSet effects{};
+    bool effects_touched{};
 };
 
 class MonsterPool final {
@@ -88,7 +92,7 @@ class ProjectilePool final {
 public:
     void clear() noexcept;
     [[nodiscard]] std::optional<ProjectileHandle> spawn(
-        MonsterHandle owner,
+        MonsterOrdinal owner_ordinal,
         Vec3 position,
         Vec3 velocity,
         std::uint16_t lifetime_ticks,
@@ -97,7 +101,7 @@ public:
         bool trigger_chain_on_end = false,
         MonsterAffixSet owner_affixes = {}) noexcept;
     [[nodiscard]] std::optional<ProjectileHandle> spawn(
-        MonsterHandle owner,
+        MonsterOrdinal owner_ordinal,
         Vec3 position,
         Vec3 velocity,
         std::uint16_t lifetime_ticks,
@@ -132,7 +136,7 @@ public:
     void clear() noexcept;
     [[nodiscard]] std::optional<HazardHandle> spawn(
         HazardSource source,
-        MonsterHandle owner,
+        MonsterOrdinal owner_ordinal,
         HazardKind kind,
         Vec3 center,
         float radius,
@@ -145,7 +149,7 @@ public:
         modifiers::DamageType environment_damage_type =
             modifiers::DamageType::physical) noexcept;
     [[nodiscard]] std::optional<HazardHandle> spawn(
-        MonsterHandle owner,
+        MonsterOrdinal owner_ordinal,
         HazardKind kind,
         Vec3 center,
         float radius,
@@ -155,7 +159,7 @@ public:
         DamagePacket damage,
         bool persists_after_owner_death = false) noexcept;
     [[nodiscard]] std::optional<HazardHandle> spawn(
-        MonsterHandle owner,
+        MonsterOrdinal owner_ordinal,
         HazardKind kind,
         Vec3 center,
         float radius,

@@ -3,6 +3,7 @@
 #include "abyss/abyss_rules.hpp"
 #include "dungeon/abyss_checkpoint_migration.hpp"
 #include "persistence/checkpoint_codec.hpp"
+#include "persistence/room_progress_codec.hpp"
 #include "items/item_catalog.hpp"
 #include "items/item_types.hpp"
 #include "v5_golden_fixture.hpp"
@@ -14,6 +15,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <new>
 #include <vector>
 
@@ -70,9 +72,22 @@ void operator delete[](void* memory, std::size_t) noexcept {
     std::free(memory);
 }
 
+namespace arpg::test {
+
+void set_persistence_allocation_failure_countdown(
+    const int successful_allocations) noexcept {
+    gAllocationsBeforeFailure = successful_allocations;
+}
+
+bool persistence_allocation_failure_is_armed() noexcept {
+    return gAllocationsBeforeFailure >= 0;
+}
+
+}  // namespace arpg::test
+
 namespace {
 
-namespace checkpoint = arpg::dungeon::checkpoint;
+namespace checkpoint = arpg::checkpoint;
 namespace abyss = arpg::abyss;
 namespace dungeon = arpg::dungeon;
 namespace persistence = arpg::persistence;
@@ -1355,6 +1370,11 @@ checkpoint::DungeonRunState make_owned_fixture() {
 }
 
 arpg::test::Failure v5_length_count_crc_and_capacity_are_bounded() noexcept {
+    struct ResetAllocationFailure final {
+        ~ResetAllocationFailure() noexcept {
+            gAllocationsBeforeFailure = -1;
+        }
+    } reset_allocation_failure;
     const auto encoded = persistence::encode_checkpoint(make_owned_fixture());
     ARPG_REQUIRE(encoded.has_value());
 
@@ -1403,6 +1423,43 @@ arpg::test::Failure v5_length_count_crc_and_capacity_are_bounded() noexcept {
     const auto maximum_encoded = persistence::encode_checkpoint(maximum);
     ARPG_REQUIRE(maximum_encoded.has_value());
     ARPG_REQUIRE(maximum_encoded->size() == 4195028U);
+    std::vector<std::uint8_t> caller_buffer(maximum_encoded->size());
+    std::size_t caller_written{};
+    gAllocationsBeforeFailure = 0;
+    ARPG_REQUIRE(persistence::encode_checkpoint_into(maximum,
+        caller_buffer.data(), caller_buffer.size(), caller_written)
+        == persistence::CodecError::none);
+    ARPG_REQUIRE(caller_written == maximum_encoded->size());
+    ARPG_REQUIRE(gAllocationsBeforeFailure == 0);
+    ARPG_REQUIRE(persistence::verify_checkpoint_v8_readback_fields(
+        caller_buffer.data(), caller_written, maximum)
+        == persistence::CodecError::none);
+    ARPG_REQUIRE(gAllocationsBeforeFailure == 0);
+    gAllocationsBeforeFailure = -1;
+
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> maximum_v9{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    ARPG_REQUIRE(maximum_v9 != nullptr);
+    maximum_v9->persistence_revision = 1U;
+    maximum_v9->state = maximum;
+    std::vector<std::uint8_t> v9_bytes(
+        persistence::kMaximumEncodedCheckpointBytes);
+    std::size_t v9_written{};
+    gAllocationsBeforeFailure = 0;
+    ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(*maximum_v9,
+        v9_bytes.data(), v9_bytes.size(), v9_written)
+        == persistence::CodecError::none);
+    ARPG_REQUIRE(persistence::verify_checkpoint_v9_readback(
+        v9_bytes.data(), v9_written, *maximum_v9,
+        v9_bytes.data(), v9_written) == persistence::CodecError::none);
+    ARPG_REQUIRE(gAllocationsBeforeFailure == 0);
+    gAllocationsBeforeFailure = -1;
+    maximum_v9->state.root_seed ^= 1U;
+    ARPG_REQUIRE(persistence::verify_checkpoint_v9_readback(
+        v9_bytes.data(), v9_written, *maximum_v9,
+        v9_bytes.data(), v9_written) == persistence::CodecError::invalid_state);
+    maximum_v9->state.root_seed ^= 1U;
+
     const auto maximum_decoded = persistence::decode_checkpoint(
         maximum_encoded->data(), maximum_encoded->size());
     ARPG_REQUIRE(maximum_decoded.error == persistence::CodecError::none);

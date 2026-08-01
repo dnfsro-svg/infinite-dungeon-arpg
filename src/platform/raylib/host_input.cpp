@@ -4,6 +4,7 @@
 #include "stable_key_raylib.hpp"
 
 #include <array>
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 
@@ -90,6 +91,8 @@ PhysicalKeySnapshot sample_physical_keys() noexcept {
         &default_mouse_position,
         &default_mouse_wheel,
         &default_focus_lost,
+        [](void*) noexcept { return IsMouseButtonDown(MOUSE_BUTTON_LEFT); },
+        [](void*) noexcept { return IsMouseButtonDown(MOUSE_BUTTON_RIGHT); },
     };
     return sample_physical_keys(source);
 }
@@ -114,11 +117,17 @@ PhysicalKeySnapshot sample_physical_keys(
             index < snapshot.active_skill_slots.size(); ++index) {
         snapshot.active_skill_slots[index] = source.pressed(
             source.context, kActiveSkillKeys[index]);
+        snapshot.active_skill_slots_down[index] = source.down(
+            source.context, kActiveSkillKeys[index]);
     }
     snapshot.mouse_left = source.mouse_left_pressed != nullptr
         && source.mouse_left_pressed(source.context);
     snapshot.mouse_right = source.mouse_right_pressed != nullptr
         && source.mouse_right_pressed(source.context);
+    snapshot.mouse_left_down = source.mouse_left_down != nullptr
+        ? source.mouse_left_down(source.context) : snapshot.mouse_left;
+    snapshot.mouse_right_down = source.mouse_right_down != nullptr
+        ? source.mouse_right_down(source.context) : snapshot.mouse_right;
     if (source.mouse_position != nullptr) {
         snapshot.mouse_position = source.mouse_position(source.context);
     }
@@ -128,6 +137,23 @@ PhysicalKeySnapshot sample_physical_keys(
     snapshot.focus_lost = source.focus_lost != nullptr
         && source.focus_lost(source.context);
     return snapshot;
+}
+
+bool gameplay_controls_physically_released(
+    const PhysicalKeySnapshot& snapshot) noexcept {
+    return std::none_of(snapshot.down.begin(), snapshot.down.end(),
+               [](const bool down) noexcept { return down; })
+        && std::none_of(snapshot.pressed.begin(), snapshot.pressed.end(),
+            [](const bool pressed) noexcept { return pressed; })
+        && std::none_of(snapshot.active_skill_slots_down.begin(),
+            snapshot.active_skill_slots_down.end(),
+            [](const bool down) noexcept { return down; })
+        && std::none_of(snapshot.active_skill_slots.begin(),
+            snapshot.active_skill_slots.end(),
+            [](const bool pressed) noexcept { return pressed; })
+        && !snapshot.mouse_left_down && !snapshot.mouse_right_down
+        && !snapshot.mouse_left && !snapshot.mouse_right
+        && !snapshot.focus_lost;
 }
 
 HostFrameInput map_host_frame_input(

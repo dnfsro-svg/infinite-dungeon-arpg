@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 
 #include "combat_renderer.hpp"
+#include "combat_view_math.hpp"
 #include "control_hints.hpp"
 #include "debug_overlay_renderer.hpp"
 #include "dungeon_runtime.hpp"
@@ -160,7 +161,7 @@ arpg::test::Failure debug_diagnostics_plan_carries_all_f1_only_counters() noexce
     value.combat->diagnostics.hazard_invalid_owner_count = 8U;
     arpg::combat::CombatEvent event{};
     event.kind = arpg::combat::CombatEventKind::hit;
-    event.target_index = 5U;
+    event.target_ordinal = 5U;
     platform::HudBuildDiagnostics hud{};
     hud.clamped_values = 1U;
     hud.truncated_texts = 2U;
@@ -183,7 +184,7 @@ arpg::test::Failure debug_diagnostics_plan_carries_all_f1_only_counters() noexce
     ARPG_REQUIRE(plan.notice_drops == 10U);
     ARPG_REQUIRE(plan.binding_revision == 99U);
     ARPG_REQUIRE(plan.has_last_event);
-    ARPG_REQUIRE(plan.last_event.target_index == 5U);
+    ARPG_REQUIRE(plan.last_event.target_ordinal == 5U);
     ARPG_REQUIRE(plan.cjk_font_ready);
     return {};
 }
@@ -324,14 +325,28 @@ arpg::test::Failure static_text_cache_rebuilds_only_changed_fragments() noexcept
 
 arpg::test::Failure ground_loot_render_plan_reuses_one_view_and_orders_stages()
     noexcept {
-    dungeon::DungeonSnapshot value = snapshot();
+    dungeon::DungeonSnapshot previous = snapshot();
+    previous.combat.emplace();
+    previous.combat->player.position = {8.0F, 0.0F, 0.0F};
+    previous.combat->monsters[0].active = true;
+    previous.combat->monsters[0].generation = 5U;
+    previous.combat->monsters[0].position = {-4.0F, 0.0F, 0.0F};
+    previous.combat->monster_count = 1U;
+    dungeon::DungeonSnapshot value = previous;
+    value.combat->monsters[0].position = {4.0F, 0.0F, 0.0F};
     value.ground_items[0] = ground_item(30U, items::ItemRarity::rare);
     value.ground_items[1] = ground_item(10U, items::ItemRarity::normal);
     value.ground_items[2] = ground_item(20U, items::ItemRarity::magic);
     value.ground_item_count = 3U;
+    value.ground_material_count = 1U;
+    value.ground_materials[0] = {40U,
+        dungeon::GroundMaterialSource::monster_common,
+        {0.0F, 0.0F, 0.0F}, items::MaterialId::chaos};
+    constexpr platform::CameraOffset kCameraOffset{11.0F, -7.0F};
 
     const platform::CombatRenderPlan plan = platform::make_combat_render_plan(
-        value, settings::LootFilterMode::magic_or_better, 1280.0F, 720.0F);
+        previous, value, 0.5F, kCameraOffset,
+        settings::LootFilterMode::magic_or_better, 1280.0F, 720.0F);
     const platform::GroundLootView& room_stage_view = plan.ground_loot;
     const platform::GroundLootView& label_stage_view = plan.ground_loot;
 
@@ -341,6 +356,24 @@ arpg::test::Failure ground_loot_render_plan_reuses_one_view_and_orders_stages()
     ARPG_REQUIRE(plan.ground_loot.count == 2U);
     ARPG_REQUIRE(plan.ground_loot.labels[0].ordinal == 20U);
     ARPG_REQUIRE(plan.ground_loot.labels[1].ordinal == 30U);
+    ARPG_REQUIRE(plan.material_loot.count == 1U);
+    const platform::ScreenProjection actor_projection =
+        platform::project_combat_position({0.0F, 0.0F, 0.0F},
+            1280.0F, 720.0F);
+    const platform::LootLabelRect actor_rect{
+        actor_projection.x - 75.0F * actor_projection.scale + kCameraOffset.x,
+        actor_projection.y - 119.0F * actor_projection.scale + kCameraOffset.y,
+        150.0F * actor_projection.scale,
+        133.0F * actor_projection.scale};
+    for (std::size_t index = 0U; index < plan.ground_loot.count; ++index) {
+        ARPG_REQUIRE(!platform::loot_label_rects_overlap(
+            plan.ground_loot.labels[index].rect, actor_rect));
+        ARPG_REQUIRE(!platform::loot_label_rects_overlap(
+            plan.ground_loot.labels[index].rect,
+            plan.material_loot.labels[0].rect));
+    }
+    ARPG_REQUIRE(!platform::loot_label_rects_overlap(
+        plan.material_loot.labels[0].rect, actor_rect));
     ARPG_REQUIRE(plan.stage_count == 4U);
     ARPG_REQUIRE(plan.stages[0] == platform::CombatRenderStage::room);
     ARPG_REQUIRE(plan.stages[1] == platform::CombatRenderStage::actors);

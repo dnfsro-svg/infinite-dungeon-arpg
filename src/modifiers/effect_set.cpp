@@ -6,6 +6,40 @@ namespace arpg::modifiers {
 
 namespace {
 
+bool same_modifier(const Modifier& left, const Modifier& right) noexcept {
+    return left.id == right.id && left.stat == right.stat
+        && left.operation == right.operation && left.value == right.value
+        && left.required_tags == right.required_tags
+        && left.forbidden_tags == right.forbidden_tags
+        && left.required_conditions == right.required_conditions
+        && left.priority == right.priority
+        && left.conversion_target == right.conversion_target;
+}
+
+bool same_template(const EffectCommandTemplate& left,
+    const EffectCommandTemplate& right) noexcept {
+    return left.kind == right.kind && left.value == right.value;
+}
+
+bool same_command(const EffectCommand& left,
+    const EffectCommand& right) noexcept {
+    return left.kind == right.kind && left.value == right.value
+        && left.effect_id == right.effect_id;
+}
+
+bool canonical_none(const EffectCommandTemplate& value) noexcept {
+    return value.kind == EffectCommandKind::none && value.value == 0;
+}
+
+bool canonical_none(const EffectCommand& value) noexcept {
+    return value.kind == EffectCommandKind::none && value.value == 0
+        && value.effect_id == 0U;
+}
+
+bool canonical_modifier(const Modifier& value) noexcept {
+    return same_modifier(value, Modifier{});
+}
+
 template <typename Effects>
 auto find_effect(Effects& effects, EffectId id) noexcept
     -> decltype(&effects[0]) {
@@ -141,6 +175,135 @@ std::size_t EffectSet::queued_command_count() const noexcept {
 
 const EffectDiagnostics& EffectSet::diagnostics() const noexcept {
     return diagnostics_;
+}
+
+bool EffectSet::same_state(const EffectSet& other) const noexcept {
+    for (std::size_t index = 0U; index < effects_.size(); ++index) {
+        const ActiveEffect& left = effects_[index];
+        const ActiveEffect& right = other.effects_[index];
+        if (left.id != right.id
+            || left.remaining_ticks != right.remaining_ticks
+            || left.stacks != right.stacks
+            || left.max_stacks != right.max_stacks
+            || left.refresh_rule != right.refresh_rule
+            || left.strength != right.strength
+            || !same_modifier(left.modifier, right.modifier)
+            || left.has_modifier != right.has_modifier
+            || !same_template(left.on_expire, right.on_expire)
+            || left.occupied != right.occupied) {
+            return false;
+        }
+    }
+    if (command_count_ != other.command_count_) return false;
+    for (std::size_t index = 0U; index < command_count_; ++index) {
+        const EffectCommand& left =
+            commands_[(command_head_ + index) % command_capacity()];
+        const EffectCommand& right = other.commands_[
+            (other.command_head_ + index) % command_capacity()];
+        if (!same_command(left, right)) {
+            return false;
+        }
+    }
+    return diagnostics_.effect_overflows
+            == other.diagnostics_.effect_overflows
+        && diagnostics_.command_overflows
+            == other.diagnostics_.command_overflows;
+}
+
+void EffectSet::capture_checkpoint(EffectSetCheckpoint& out) const noexcept {
+    out = {};
+    for (std::size_t index = 0U; index < effects_.size(); ++index) {
+        const ActiveEffect& source = effects_[index];
+        out.effects[index] = {
+            source.id, source.remaining_ticks, source.stacks,
+            source.max_stacks, source.refresh_rule, source.strength,
+            source.modifier, source.has_modifier, source.on_expire,
+            source.occupied,
+        };
+        if (!source.occupied) out.effects[index] = {};
+        else {
+            if (!source.has_modifier) out.effects[index].modifier = {};
+            if (source.on_expire.kind == EffectCommandKind::none) {
+                out.effects[index].on_expire = {};
+            }
+        }
+    }
+    for (std::size_t index = 0U; index < command_count_; ++index) {
+        out.commands[index] =
+            commands_[(command_head_ + index) % command_capacity()];
+    }
+    out.command_head = 0U;
+    out.command_count = static_cast<std::uint8_t>(command_count_);
+    out.diagnostics = diagnostics_;
+}
+
+bool EffectSet::restore_checkpoint(
+    const EffectSetCheckpoint& checkpoint) noexcept {
+    if (checkpoint.command_head != 0U
+            || checkpoint.command_count > command_capacity()) {
+        return false;
+    }
+    for (std::size_t index = 0U; index < checkpoint.effects.size(); ++index) {
+        const ActiveEffectCheckpoint& effect = checkpoint.effects[index];
+        if (!effect.occupied) {
+            if (effect.id != 0U || effect.remaining_ticks != 0
+                    || effect.stacks != 0U || effect.max_stacks != 0U
+                    || effect.refresh_rule != RefreshRule::reject
+                    || effect.strength != 0 || !canonical_modifier(effect.modifier)
+                    || effect.has_modifier || !canonical_none(effect.on_expire)) {
+                return false;
+            }
+            continue;
+        }
+        if (effect.id == 0U || effect.remaining_ticks <= 0
+                || effect.stacks == 0U || effect.max_stacks == 0U
+                || effect.stacks > effect.max_stacks
+                || effect.refresh_rule > RefreshRule::replace_weaker
+                || effect.on_expire.kind > EffectCommandKind::clear_shield
+                || (effect.on_expire.kind == EffectCommandKind::none
+                    && !canonical_none(effect.on_expire))
+                || (!effect.has_modifier
+                    && !canonical_modifier(effect.modifier))
+                || (effect.has_modifier
+                    && (effect.modifier.stat >= StatId::count
+                        || effect.modifier.operation
+                            > ModifierOperation::conversion
+                        || effect.modifier.conversion_target
+                            >= StatId::count))) {
+            return false;
+        }
+        for (std::size_t other = 0U; other < index; ++other) {
+            if (checkpoint.effects[other].occupied
+                    && checkpoint.effects[other].id == effect.id) {
+                return false;
+            }
+        }
+    }
+    for (std::size_t index = 0U; index < checkpoint.commands.size(); ++index) {
+        const EffectCommand& command = checkpoint.commands[index];
+        if (command.kind > EffectCommandKind::clear_shield) return false;
+        if (index < checkpoint.command_count) {
+            if (command.kind == EffectCommandKind::none
+                    || command.effect_id == 0U) return false;
+        } else if (!canonical_none(command)) return false;
+    }
+
+    std::array<ActiveEffect, kCapacity> effects{};
+    for (std::size_t index = 0U; index < effects.size(); ++index) {
+        const ActiveEffectCheckpoint& source = checkpoint.effects[index];
+        effects[index] = {
+            source.id, source.remaining_ticks, source.stacks,
+            source.max_stacks, source.refresh_rule, source.strength,
+            source.modifier, source.has_modifier, source.on_expire,
+            source.occupied,
+        };
+    }
+    effects_ = effects;
+    commands_ = checkpoint.commands;
+    command_head_ = 0U;
+    command_count_ = checkpoint.command_count;
+    diagnostics_ = checkpoint.diagnostics;
+    return true;
 }
 
 std::size_t EffectSet::copy_modifiers(

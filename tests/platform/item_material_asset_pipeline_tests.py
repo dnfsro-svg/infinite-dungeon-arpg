@@ -97,6 +97,20 @@ class ItemMaterialAssetPipelineTests(unittest.TestCase):
             self.assertGreaterEqual(BUILDER.outline_contrast_score(icon), 0.18,
                                     name)
 
+    def test_health_potion_source_and_atlas_cell_are_high_resolution_red_glass(self) -> None:
+        source = Image.open(BUILDER.HEALTH_POTION_SOURCE).convert("RGBA")
+        self.assertGreaterEqual(source.width, 1024)
+        self.assertGreaterEqual(source.height, 1024)
+        icon = BUILDER.crop_cell(
+            Image.open(ROOT / "assets/stage12/items_ui.png").convert("RGBA"),
+            BUILDER.ICON_CELLS["health_potion"])
+        visible = [pixel for pixel in icon.get_flattened_data() if pixel[3] >= 96]
+        self.assertGreater(len(visible), 1500)
+        self.assertGreater(sum(red > green * 1.35 and red > blue * 1.15
+                               for red, green, blue, _ in visible),
+                           len(visible) * 0.28)
+        self.assertGreaterEqual(BUILDER.outline_contrast_score(icon), 0.18)
+
     def test_cells_have_clean_transparent_backgrounds_and_one_main_subject(self) -> None:
         atlas = Image.open(ROOT / "assets" / "stage12" / "items_ui.png").convert("RGBA")
         transparent_ratios = []

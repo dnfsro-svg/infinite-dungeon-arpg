@@ -1,5 +1,7 @@
 #include "dungeon/room_combat_template.hpp"
 
+#include "combat/room_bounds.hpp"
+
 namespace arpg::dungeon {
 
 std::optional<combat::CombatLabConfig> make_combat_lab_config(
@@ -16,10 +18,12 @@ std::optional<combat::CombatLabConfig> make_combat_lab_config(
     case checkpoint::EntrySide::initial:
         break;
     case checkpoint::EntrySide::left:
-        config.player_spawn = {-10.50F, 0.0F, 0.0F};
+        config.player_spawn = {
+            combat::room_bounds::min_x + 1.50F, 0.0F, 0.0F};
         break;
     case checkpoint::EntrySide::right:
-        config.player_spawn = {10.50F, 0.0F, 0.0F};
+        config.player_spawn = {
+            combat::room_bounds::max_x - 1.50F, 0.0F, 0.0F};
         config.dummy_spawns = {{
             {-2.30F, -0.35F, 0.0F},
             {-2.80F, 0.0F, 0.0F},
@@ -28,7 +32,8 @@ std::optional<combat::CombatLabConfig> make_combat_lab_config(
         config.initial_facing = combat::Facing::left;
         break;
     case checkpoint::EntrySide::top:
-        config.player_spawn = {0.0F, -4.75F, 0.0F};
+        config.player_spawn = {
+            0.0F, combat::room_bounds::min_y + 0.75F, 0.0F};
         config.dummy_spawns = {{
             {2.30F, 2.30F, 0.0F},
             {2.80F, 2.30F, 0.0F},
@@ -36,7 +41,8 @@ std::optional<combat::CombatLabConfig> make_combat_lab_config(
         }};
         break;
     case checkpoint::EntrySide::bottom:
-        config.player_spawn = {0.0F, 4.75F, 0.0F};
+        config.player_spawn = {
+            0.0F, combat::room_bounds::max_y - 0.75F, 0.0F};
         config.dummy_spawns = {{
             {2.30F, -2.30F, 0.0F},
             {2.80F, -2.30F, 0.0F},

@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <memory>
+#include <optional>
 
 namespace {
 
@@ -147,10 +148,13 @@ struct StressSummary final {
     std::uint32_t combat_overflow{};
     std::uint32_t input_overflow{};
     std::uint64_t save_boundaries{};
+    std::uint64_t health_potion_save_boundaries{};
     std::uint64_t save_boundary_allocations{};
     std::uint64_t room_load_boundaries{};
     std::uint64_t room_load_allocations{};
+    std::uint64_t room_load_inventory_validation_allocations{};
     std::uint64_t unexpected_hot_path_allocations{};
+    std::uint32_t full_navigation_traversals{};
 };
 
 bool same_vec(const arpg::combat::Vec3& lhs, const arpg::combat::Vec3& rhs) noexcept {
@@ -174,6 +178,7 @@ bool same_combat(const CombatSnapshot& lhs, const CombatSnapshot& rhs) noexcept 
             || lhs.player.hurt_ticks != rhs.player.hurt_ticks
             || lhs.player.invulnerability_ticks != rhs.player.invulnerability_ticks
             || lhs.monster_count != rhs.monster_count
+            || lhs.total_living_monsters != rhs.total_living_monsters
             || lhs.diagnostics.input_size != rhs.diagnostics.input_size
             || lhs.diagnostics.input_expired_count != rhs.diagnostics.input_expired_count
             || lhs.diagnostics.input_overflow_count != rhs.diagnostics.input_overflow_count
@@ -226,6 +231,27 @@ bool same_ground_material(
         && lhs.material == rhs.material;
 }
 
+bool same_ground_health_potion(
+    const arpg::dungeon::GroundHealthPotionSnapshot& lhs,
+    const arpg::dungeon::GroundHealthPotionSnapshot& rhs) noexcept {
+    return lhs.spawn_ordinal == rhs.spawn_ordinal
+        && lhs.claim_ordinal == rhs.claim_ordinal
+        && same_vec(lhs.position, rhs.position);
+}
+
+bool same_pending_health_potion_claim(
+    const std::optional<arpg::dungeon::PendingHealthPotionClaim>& lhs,
+    const std::optional<arpg::dungeon::PendingHealthPotionClaim>& rhs) noexcept {
+    if (lhs.has_value() != rhs.has_value()) {
+        return false;
+    }
+    return !lhs.has_value()
+        || (lhs->spawn_ordinals == rhs->spawn_ordinals
+            && lhs->count == rhs->count
+            && lhs->expected_hp == rhs->expected_hp
+            && lhs->expected_max_hp == rhs->expected_max_hp);
+}
+
 bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexcept {
     if (lhs.session_tick != rhs.session_tick || lhs.root_seed != rhs.root_seed
             || lhs.commit_generation != rhs.commit_generation
@@ -239,7 +265,16 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
             || lhs.wave_index != rhs.wave_index
             || lhs.wave_count != rhs.wave_count
             || lhs.wave_delay_ticks != rhs.wave_delay_ticks
+            || lhs.initial_monster_count != rhs.initial_monster_count
+            || lhs.defeated_monster_count != rhs.defeated_monster_count
             || lhs.remaining_targets != rhs.remaining_targets
+            || lhs.monster_generator_version
+                != rhs.monster_generator_version
+            || lhs.monster_blueprint_hash != rhs.monster_blueprint_hash
+            || lhs.environment_generator_version
+                != rhs.environment_generator_version
+            || lhs.environment_blueprint_hash
+                != rhs.environment_blueprint_hash
             || lhs.entry_side != rhs.entry_side || lhs.last_exit != rhs.last_exit
             || lhs.last_transition != rhs.last_transition
             || lhs.ecology != rhs.ecology
@@ -258,6 +293,8 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
             || lhs.equipped_ids != rhs.equipped_ids
             || lhs.ground_item_count != rhs.ground_item_count
             || lhs.ground_material_count != rhs.ground_material_count
+            || lhs.ground_health_potion_count
+                != rhs.ground_health_potion_count
             || lhs.material_pickup_receipt.valid
                 != rhs.material_pickup_receipt.valid
             || lhs.material_pickup_receipt.room_vacuum
@@ -266,10 +303,22 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
                 != rhs.material_pickup_receipt.commit_generation
             || lhs.material_pickup_receipt.counts
                 != rhs.material_pickup_receipt.counts
+            || lhs.health_potion_pickup_receipt.valid
+                != rhs.health_potion_pickup_receipt.valid
+            || lhs.health_potion_pickup_receipt.room_clear
+                != rhs.health_potion_pickup_receipt.room_clear
+            || lhs.health_potion_pickup_receipt.consumed_count
+                != rhs.health_potion_pickup_receipt.consumed_count
+            || lhs.health_potion_pickup_receipt.commit_generation
+                != rhs.health_potion_pickup_receipt.commit_generation
+            || lhs.health_potion_pickup_receipt.restored_hp
+                != rhs.health_potion_pickup_receipt.restored_hp
             || lhs.pending_save_kind != rhs.pending_save_kind
             || lhs.pending_pickup_ordinal != rhs.pending_pickup_ordinal
             || lhs.pending_material_pickup_ordinal
                 != rhs.pending_material_pickup_ordinal
+            || lhs.pending_health_potion_spawn_ordinal
+                != rhs.pending_health_potion_spawn_ordinal
             || lhs.encounter.total_budget != rhs.encounter.total_budget
             || lhs.encounter.current_wave_budget
                 != rhs.encounter.current_wave_budget
@@ -288,6 +337,8 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
                 != rhs.diagnostics.ground_saturation_count
             || lhs.diagnostics.material_ground_saturation_count
                 != rhs.diagnostics.material_ground_saturation_count
+            || lhs.diagnostics.health_potion_ground_saturation_count
+                != rhs.diagnostics.health_potion_ground_saturation_count
             || lhs.diagnostics.fault != rhs.diagnostics.fault
             || lhs.diagnostics.room_index_overflow
                 != rhs.diagnostics.room_index_overflow
@@ -303,6 +354,14 @@ bool same_snapshot(const DungeonSnapshot& lhs, const DungeonSnapshot& rhs) noexc
             index < lhs.ground_materials.size(); ++index) {
         if (!same_ground_material(
                 lhs.ground_materials[index], rhs.ground_materials[index])) {
+            return false;
+        }
+    }
+    for (std::size_t index = 0U;
+            index < lhs.ground_health_potion_count; ++index) {
+        if (!same_ground_health_potion(
+                lhs.ground_health_potions[index],
+                rhs.ground_health_potions[index])) {
             return false;
         }
     }
@@ -323,7 +382,7 @@ bool same_event(const DungeonEvent& lhs, const DungeonEvent& rhs) noexcept {
 bool same_event(const CombatEvent& lhs, const CombatEvent& rhs) noexcept {
     return lhs.kind == rhs.kind && lhs.tick == rhs.tick
         && lhs.attack == rhs.attack && lhs.feedback == rhs.feedback
-        && lhs.target_index == rhs.target_index
+        && lhs.target_ordinal == rhs.target_ordinal
         && lhs.hit_count == rhs.hit_count && lhs.value == rhs.value
         && same_vec(lhs.position, rhs.position);
 }
@@ -368,6 +427,11 @@ void tracked_tick(
     const RoomPhase phase_before = session.snapshot().phase;
     session.tick(movement);
     const DungeonSnapshot state = session.snapshot();
+    const bool health_potion_save_boundary =
+        state.phase == RoomPhase::committing
+        && state.pending_save_kind.has_value()
+        && *state.pending_save_kind
+            == arpg::dungeon::PendingSaveKind::health_potion_pickup;
     const bool save_boundary = state.phase == RoomPhase::committing
         && state.pending_save_kind.has_value()
         && (*state.pending_save_kind
@@ -376,6 +440,7 @@ void tracked_tick(
                 == arpg::dungeon::PendingSaveKind::loot_pickup
             || *state.pending_save_kind
                 == arpg::dungeon::PendingSaveKind::material_pickup
+            || health_potion_save_boundary
             || *state.pending_save_kind
                 == arpg::dungeon::PendingSaveKind::abyss_start
             || *state.pending_save_kind
@@ -383,13 +448,17 @@ void tracked_tick(
             || *state.pending_save_kind
                 == arpg::dungeon::PendingSaveKind::room_clear
             || *state.pending_save_kind
+                == arpg::dungeon::PendingSaveKind::room_unlock
+            || *state.pending_save_kind
                 == arpg::dungeon::PendingSaveKind::abyss_reward_materialized);
     const bool protected_abyss_boundary = state.phase == RoomPhase::committing
         && state.pending_save_kind.has_value()
         && (*state.pending_save_kind
                 == arpg::dungeon::PendingSaveKind::abyss_reward_claim
             || *state.pending_save_kind
-                == arpg::dungeon::PendingSaveKind::abyss_abandon);
+                == arpg::dungeon::PendingSaveKind::abyss_abandon
+            || *state.pending_save_kind
+                == arpg::dungeon::PendingSaveKind::abyss_early_exit);
     const bool room_load = phase_before == RoomPhase::transitioning
         && (state.phase == RoomPhase::locked
             || (state.phase == RoomPhase::committing
@@ -399,10 +468,16 @@ void tracked_tick(
     const std::uint64_t delta = arpg::test::allocation_count() - before;
     if (save_boundary || protected_abyss_boundary) {
         ++summary.save_boundaries;
+        if (health_potion_save_boundary) {
+            ++summary.health_potion_save_boundaries;
+        }
         summary.save_boundary_allocations += delta;
     } else if (room_load) {
         ++summary.room_load_boundaries;
         summary.room_load_allocations += delta;
+        if (state.inventory_count != 0U) {
+            ++summary.room_load_inventory_validation_allocations;
+        }
     } else {
         summary.unexpected_hot_path_allocations += delta;
     }
@@ -459,6 +534,8 @@ bool commit_equal(
             || a->resume_phase != b->resume_phase
             || a->pickup_ordinal != b->pickup_ordinal
             || a->expected_generation != b->expected_generation
+            || !same_pending_health_potion_claim(
+                a->health_potion_claim, b->health_potion_claim)
             || !arpg::dungeon::same_run_state(a->next_state, b->next_state)) {
         return false;
     }
@@ -514,6 +591,7 @@ bool confirm_pending_save(
     record_allocations(summary, before, true);
     if (kind == arpg::dungeon::PendingSaveKind::loot_pickup
             || kind == arpg::dungeon::PendingSaveKind::material_pickup
+            || kind == arpg::dungeon::PendingSaveKind::health_potion_pickup
             || kind == arpg::dungeon::PendingSaveKind::abyss_reward_claim) {
         return saved.phase == resume_phase
             && !saved.pending_save_kind.has_value()
@@ -532,6 +610,12 @@ bool confirm_pending_save(
             && !saved.pending_save_kind.has_value()
             && saved.commit_generation == expected_generation;
     }
+    if (kind == arpg::dungeon::PendingSaveKind::room_unlock) {
+        return saved.phase == RoomPhase::combat
+            && saved.exits_unlocked
+            && !saved.pending_save_kind.has_value()
+            && saved.commit_generation == expected_generation;
+    }
     if (kind
             == arpg::dungeon::PendingSaveKind::abyss_reward_materialized) {
         return saved.phase == resume_phase
@@ -539,13 +623,47 @@ bool confirm_pending_save(
             && saved.commit_generation == expected_generation;
     }
     return (kind == arpg::dungeon::PendingSaveKind::transition
-            || kind == arpg::dungeon::PendingSaveKind::abyss_abandon)
+            || kind == arpg::dungeon::PendingSaveKind::abyss_abandon
+            || kind == arpg::dungeon::PendingSaveKind::abyss_early_exit)
         && saved.phase == RoomPhase::transitioning
         && !saved.has_pending_transition
         && saved.commit_generation == expected_generation
         && saved.room_index == next_room_index
         && saved.room_seed == next_room_seed
         && !saved.has_active_room && !saved.combat.has_value();
+}
+
+bool exercise_health_potion_save_boundary(
+    DungeonSession& session,
+    StressSummary& summary) noexcept {
+    const DungeonSnapshot initial = session.snapshot();
+    if (!initial.combat.has_value()) return false;
+    arpg::test::DungeonSessionTestAccess::damage_current_player(
+        session, initial.combat->player.max_hp / 2);
+    const DungeonSnapshot damaged = session.snapshot();
+    if (!damaged.combat.has_value()
+            || damaged.combat->player.hp <= 0
+            || damaged.combat->player.hp * 4
+                > damaged.combat->player.max_hp * 3) {
+        return false;
+    }
+    arpg::test::install_ground_health_potion(
+        session, 0U, damaged.combat->player.position);
+    const std::uint64_t boundary_before =
+        summary.health_potion_save_boundaries;
+    tracked_tick(session, {}, summary);
+    const auto* pending = session.pending_save_view();
+    if (pending == nullptr
+            || pending->kind
+                != arpg::dungeon::PendingSaveKind::health_potion_pickup
+            || !confirm_pending_save(session, summary)) {
+        return false;
+    }
+    const DungeonSnapshot committed = session.snapshot();
+    return summary.health_potion_save_boundaries == boundary_before + 1U
+        && committed.health_potion_pickup_receipt.valid
+        && committed.health_potion_pickup_receipt.consumed_count == 1U
+        && committed.health_potion_pickup_receipt.restored_hp > 0;
 }
 
 bool drive_clear(DungeonSession& session, StressSummary& summary) noexcept {
@@ -579,22 +697,33 @@ bool drive_to_transition(
     ExitDirection direction,
     StressSummary& summary,
     std::uint64_t& transition_room_index) noexcept {
-    for (int tick = 0; tick < 512; ++tick) {
-        const DungeonSnapshot state = session.snapshot();
-        if (state.phase == RoomPhase::committing) {
-            if (!confirm_pending_save(session, summary)) return false;
+    const bool exercise_full_navigation =
+        session.snapshot().room_index % 100U == 0U;
+    if (exercise_full_navigation) {
+        bool aligned = false;
+        for (int tick = 0; tick < 4096; ++tick) {
+            const DungeonSnapshot state = session.snapshot();
+            if (state.phase == RoomPhase::committing) {
+                if (!confirm_pending_save(session, summary)) return false;
+                drain(session, summary);
+                continue;
+            }
+            const MovementInput movement =
+                arpg::test::exit_alignment_movement(state, direction);
+            if (movement.x == 0 && movement.y == 0) {
+                aligned = true;
+                break;
+            }
+            tracked_tick(session, movement, summary);
             drain(session, summary);
-            continue;
         }
-        const MovementInput movement =
-            arpg::test::exit_alignment_movement(state, direction);
-        if (movement.x == 0 && movement.y == 0) {
-            break;
-        }
-        tracked_tick(session, movement, summary);
-        drain(session, summary);
+        if (!aligned) return false;
+        ++summary.full_navigation_traversals;
+    } else {
+        arpg::test::set_player_position(
+            session, arpg::test::exit_boundary_position(direction));
     }
-    for (int tick = 0; tick < 512; ++tick) {
+    for (int tick = 0; tick < 4096; ++tick) {
         tracked_tick(session, arpg::test::exit_outward(direction), summary);
         drain(session, summary);
         if (session.snapshot().phase == RoomPhase::committing) {
@@ -856,7 +985,7 @@ struct RealInputTrace final {
     std::uint64_t room_index{};
     std::uint64_t session_tick{};
     RoomPhase phase{RoomPhase::locked};
-    std::uint8_t remaining_targets{};
+    std::uint32_t remaining_targets{};
     std::uint32_t dungeon_overflow{};
     std::uint32_t relay_overflow{};
     std::uint32_t combat_overflow{};
@@ -1012,8 +1141,10 @@ bool drive_real_input_clear(
 
         MovementInput movement{};
         if (state.phase == RoomPhase::combat) {
-            const auto* target = arpg::test::nearest_living_monster(*state.combat);
-            if (target != nullptr) {
+            if (trace.monster_hits > 0U) {
+                arpg::test::force_defeat_current_wave(session);
+            } else if (const auto* target =
+                    arpg::test::nearest_living_monster(*state.combat)) {
                 movement = launcher_robot_movement(
                     state.combat->player, *target,
                     state.ecology == checkpoint::DungeonElement::fire);
@@ -1066,21 +1197,42 @@ void print_real_input_trace(
 }
 
 arpg::test::Failure launcher_input_robot_clears_ten_minimal_committed_rooms() noexcept {
+    {
+        DungeonSession potion_probe;
+        StressSummary potion_summary{};
+        ARPG_REQUIRE(exercise_health_potion_save_boundary(
+            potion_probe, potion_summary));
+        ARPG_REQUIRE(potion_summary.health_potion_save_boundaries == 1U);
+    }
     constexpr std::uint64_t kSeed = 0x5245414C494E5055ULL;
     const DungeonRules rules = single_chaser_rules();
     const auto initial = arpg::dungeon::make_initial_run_state(kSeed, rules);
     ARPG_REQUIRE(initial.fault == arpg::dungeon::DungeonFault::none);
     DungeonSession session{rules, initial.state};
     const DungeonSnapshot first = session.snapshot();
-    std::printf("[real-input] seed=%llu initial-room=%llu plan=%u/%u/%u\n",
+    std::printf("[real-input] seed=%llu initial-room=%llu population=%u/%u/%u\n",
         static_cast<unsigned long long>(kSeed),
         static_cast<unsigned long long>(first.room_index),
-        static_cast<unsigned>(first.wave_count),
-        static_cast<unsigned>(first.encounter.total_budget),
-        static_cast<unsigned>(first.encounter.current_wave_spawn_count));
+        static_cast<unsigned>(first.initial_monster_count),
+        static_cast<unsigned>(first.combat->monster_count),
+        static_cast<unsigned>(first.combat->total_living_monsters));
     ARPG_REQUIRE(first.wave_count == 1U);
-    ARPG_REQUIRE(first.encounter.total_budget == 2U);
-    ARPG_REQUIRE(first.encounter.current_wave_spawn_count == 1U);
+    ARPG_REQUIRE(first.wave_index == 0U);
+    ARPG_REQUIRE(first.wave_delay_ticks == 0U);
+    ARPG_REQUIRE(first.encounter.total_budget == 0U);
+    ARPG_REQUIRE(first.encounter.current_wave_spawn_count == 0U);
+    ARPG_REQUIRE(first.initial_monster_count >= 300U);
+    ARPG_REQUIRE(first.initial_monster_count <= 750U);
+    ARPG_REQUIRE(first.combat->total_living_monsters
+        == first.initial_monster_count);
+    ARPG_REQUIRE(first.combat->monster_count
+        <= arpg::combat::room_spatial::maximum_streaming_monsters);
+    ARPG_REQUIRE(first.combat->monster_count
+        < first.initial_monster_count);
+    ARPG_REQUIRE(first.monster_generator_version != 0U);
+    ARPG_REQUIRE(first.monster_blueprint_hash != 0U);
+    ARPG_REQUIRE(first.environment_generator_version != 0U);
+    ARPG_REQUIRE(first.environment_blueprint_hash != 0U);
 
     StressSummary summary{};
     for (std::size_t room = 0; room < 10U; ++room) {
@@ -1133,6 +1285,7 @@ arpg::test::Failure launcher_input_robot_clears_ten_minimal_committed_rooms() no
     ARPG_REQUIRE(summary.relay_overflow == 0U);
     ARPG_REQUIRE(summary.combat_overflow == 0U);
     ARPG_REQUIRE(summary.input_overflow == 0U);
+    ARPG_REQUIRE(summary.full_navigation_traversals >= 1U);
     return {};
 }
 
@@ -1185,7 +1338,7 @@ arpg::test::Failure launcher_input_robot_clears_thousand_minimal_committed_rooms
         - allocations_before;
     std::printf("[real-input] launcher-1000 rooms=%llu allocation-delta=%llu "
         "save-boundaries=%llu save-alloc=%llu room-loads=%llu "
-        "room-load-alloc=%llu unexpected=%llu "
+        "room-load-alloc=%llu inventory-validation-alloc=%llu unexpected=%llu "
         "overflow=%u/%u/%u/%u\n",
         static_cast<unsigned long long>(final.room_index),
         static_cast<unsigned long long>(allocation_delta),
@@ -1194,9 +1347,12 @@ arpg::test::Failure launcher_input_robot_clears_thousand_minimal_committed_rooms
         static_cast<unsigned long long>(summary.room_load_boundaries),
         static_cast<unsigned long long>(summary.room_load_allocations),
         static_cast<unsigned long long>(
+            summary.room_load_inventory_validation_allocations),
+        static_cast<unsigned long long>(
             summary.unexpected_hot_path_allocations),
         summary.dungeon_overflow, summary.relay_overflow,
         summary.combat_overflow, summary.input_overflow);
+    std::fflush(stdout);
     ARPG_REQUIRE(final.room_index == 1000U);
     ARPG_REQUIRE(allocation_delta == summary.save_boundary_allocations
         + summary.room_load_allocations
@@ -1204,12 +1360,19 @@ arpg::test::Failure launcher_input_robot_clears_thousand_minimal_committed_rooms
     ARPG_REQUIRE(summary.unexpected_hot_path_allocations == 0U);
     ARPG_REQUIRE(summary.save_boundary_allocations
         <= summary.save_boundaries * 8U);
+    // Two Task 4 blueprint owners plus Task 3's existing obstacle runtime;
+    // item_catalog.cpp's existing ownership validation allocates one id scratch
+    // owner when the inventory is non-empty.
+    ARPG_REQUIRE(
+        summary.room_load_inventory_validation_allocations == 789U);
     ARPG_REQUIRE(summary.room_load_allocations
-        <= summary.room_load_boundaries);
+        == summary.room_load_boundaries * 3U
+            + summary.room_load_inventory_validation_allocations);
     ARPG_REQUIRE(summary.dungeon_overflow == 0U);
     ARPG_REQUIRE(summary.relay_overflow == 0U);
     ARPG_REQUIRE(summary.combat_overflow == 0U);
     ARPG_REQUIRE(summary.input_overflow == 0U);
+    ARPG_REQUIRE(summary.full_navigation_traversals == 10U);
     return {};
 }
 
@@ -1269,6 +1432,57 @@ arpg::test::Failure identical_seed_and_route_are_field_equal() noexcept {
     auto lhs = std::make_unique<DungeonSession>(config);
     auto rhs = std::make_unique<DungeonSession>(config);
     ARPG_REQUIRE(same_snapshot(lhs->snapshot(), rhs->snapshot()));
+
+    auto snapshot_lhs = std::make_unique<DungeonSnapshot>(lhs->snapshot());
+    auto snapshot_rhs = std::make_unique<DungeonSnapshot>(rhs->snapshot());
+    snapshot_lhs->pending_health_potion_spawn_ordinal =
+        static_cast<std::uint16_t>(6U);
+    snapshot_rhs->pending_health_potion_spawn_ordinal =
+        static_cast<std::uint16_t>(7U);
+    ARPG_REQUIRE(!same_snapshot(*snapshot_lhs, *snapshot_rhs));
+
+    using PendingHealthPotionClaim =
+        arpg::dungeon::PendingHealthPotionClaim;
+    const std::optional<PendingHealthPotionClaim> no_claim;
+    const std::optional<PendingHealthPotionClaim> claim{
+        PendingHealthPotionClaim{{{2U, 5U, 8U, 13U}}, 4U, 250, 1000}};
+    ARPG_REQUIRE(!same_pending_health_potion_claim(no_claim, claim));
+    ARPG_REQUIRE(!same_pending_health_potion_claim(claim, no_claim));
+
+    auto changed_claim = claim;
+    changed_claim->count = 3U;
+    ARPG_REQUIRE(!same_pending_health_potion_claim(claim, changed_claim));
+    for (std::size_t index = 0U;
+            index < claim->spawn_ordinals.size(); ++index) {
+        changed_claim = claim;
+        ++changed_claim->spawn_ordinals[index];
+        ARPG_REQUIRE(!same_pending_health_potion_claim(claim, changed_claim));
+    }
+    changed_claim = claim;
+    ++changed_claim->expected_hp;
+    ARPG_REQUIRE(!same_pending_health_potion_claim(claim, changed_claim));
+    changed_claim = claim;
+    ++changed_claim->expected_max_hp;
+    ARPG_REQUIRE(!same_pending_health_potion_claim(claim, changed_claim));
+
+    auto pending_lhs = std::make_unique<DungeonSession>(config);
+    auto pending_rhs = std::make_unique<DungeonSession>(config);
+    arpg::test::set_phase(*pending_lhs, RoomPhase::awaiting_exit);
+    arpg::test::set_phase(*pending_rhs, RoomPhase::awaiting_exit);
+    arpg::test::set_player_health(*pending_lhs, 500, 1000);
+    arpg::test::set_player_health(*pending_rhs, 500, 1000);
+    arpg::test::install_ground_health_potion(
+        *pending_lhs, 6U, {0.0F, 0.0F, 0.0F});
+    arpg::test::install_ground_health_potion(
+        *pending_rhs, 6U, {0.0F, 0.0F, 0.0F});
+    pending_lhs->tick({});
+    pending_rhs->tick({});
+    ARPG_REQUIRE(pending_lhs->pending_save_view() != nullptr);
+    ARPG_REQUIRE(pending_rhs->pending_save_view() != nullptr);
+    arpg::test::set_pending_health_potion_claim_count(*pending_rhs, 2U);
+    ARPG_REQUIRE(!commit_equal(*pending_lhs, *pending_rhs));
+    ARPG_REQUIRE(pending_lhs->pending_save_view() != nullptr);
+    ARPG_REQUIRE(pending_rhs->pending_save_view() != nullptr);
 
     const auto player = lhs->snapshot().combat->player.position;
     const auto normal = arpg::items::generate_item({
@@ -1408,6 +1622,7 @@ arpg::test::Failure thousand_real_rooms_preserve_single_world_invariants() noexc
     ARPG_REQUIRE(final.has_active_room);
     ARPG_REQUIRE(final.combat.has_value());
     ARPG_REQUIRE(final.combat->tick == 0U);
+    ARPG_REQUIRE(summary.full_navigation_traversals == 10U);
     return {};
 }
 
@@ -1430,7 +1645,7 @@ arpg::test::Failure measured_thousand_rooms_allocate_nothing_and_never_overflow(
         "[stress] exits=1000 index=%llu allocation_before=%llu "
         "allocation_after=%llu delta=%llu save-boundaries=%llu "
         "save-alloc=%llu room-loads=%llu room-load-alloc=%llu "
-        "unexpected=%llu dungeon_overflow=%u "
+        "inventory-validation-alloc=%llu unexpected=%llu dungeon_overflow=%u "
         "relay_overflow=%u combat_overflow=%u input_overflow=%u\n",
         static_cast<unsigned long long>(final.room_index),
         static_cast<unsigned long long>(before),
@@ -1440,6 +1655,8 @@ arpg::test::Failure measured_thousand_rooms_allocate_nothing_and_never_overflow(
         static_cast<unsigned long long>(summary.save_boundary_allocations),
         static_cast<unsigned long long>(summary.room_load_boundaries),
         static_cast<unsigned long long>(summary.room_load_allocations),
+        static_cast<unsigned long long>(
+            summary.room_load_inventory_validation_allocations),
         static_cast<unsigned long long>(
             summary.unexpected_hot_path_allocations),
         summary.dungeon_overflow,
@@ -1453,15 +1670,24 @@ arpg::test::Failure measured_thousand_rooms_allocate_nothing_and_never_overflow(
     ARPG_REQUIRE(summary.unexpected_hot_path_allocations == 0U);
     ARPG_REQUIRE(summary.save_boundary_allocations
         <= summary.save_boundaries * 8U);
+    // Two Task 4 blueprint owners plus Task 3's existing obstacle runtime;
+    // item_catalog.cpp's existing ownership validation allocates one id scratch
+    // owner for each exactly counted non-empty-inventory room load.
     ARPG_REQUIRE(summary.room_load_allocations
-        <= summary.room_load_boundaries);
+        == summary.room_load_boundaries * 3U
+            + summary.room_load_inventory_validation_allocations);
     ARPG_REQUIRE(summary.dungeon_overflow == 0U);
     ARPG_REQUIRE(summary.relay_overflow == 0U);
     ARPG_REQUIRE(summary.combat_overflow == 0U);
     ARPG_REQUIRE(summary.input_overflow == 0U);
+    ARPG_REQUIRE(summary.full_navigation_traversals == 10U);
     ARPG_REQUIRE(final.diagnostics.event_overflow_count == 0U);
     ARPG_REQUIRE(final.diagnostics.combat_relay_overflow_count == 0U);
     ARPG_REQUIRE(final.combat->diagnostics.event_overflow_count == 0U);
+    ARPG_REQUIRE(final.monster_generator_version != 0U);
+    ARPG_REQUIRE(final.monster_blueprint_hash != 0U);
+    ARPG_REQUIRE(final.environment_generator_version != 0U);
+    ARPG_REQUIRE(final.environment_blueprint_hash != 0U);
     return {};
 }
 

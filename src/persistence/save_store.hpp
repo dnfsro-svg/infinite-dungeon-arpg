@@ -1,6 +1,6 @@
 #pragma once
 
-#include "dungeon/dungeon_checkpoint.hpp"
+#include "checkpoint/dungeon_run_state.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -28,6 +28,9 @@ enum class SaveError : std::uint8_t {
     read_failed,
     write_failed,
     flush_failed,
+    close_failed,
+    cleanup_failed,
+    readback_failed,
     publish_failed,
     final_scan_failed,
     conflicting_slots,
@@ -43,7 +46,11 @@ enum class SaveFaultPoint : std::uint8_t {
     after_publish,
     final_scan_a,
     final_scan_b,
-    before_archive
+    temp_flush,
+    temp_close,
+    temp_readback,
+    before_archive,
+    worker_start
 };
 
 using SaveFaultHook = bool (*)(SaveFaultPoint point, void* context) noexcept;
@@ -63,14 +70,14 @@ struct SaveLoadResult final {
     SaveSlot active_slot{SaveSlot::none};
     bool recovered{};
     bool migrated{};
-    dungeon::checkpoint::DungeonRunState checkpoint{};
+    checkpoint::DungeonRunState checkpoint{};
 };
 
 struct SaveCommitResult final {
     SaveCommitState state{SaveCommitState::indeterminate};
     SaveError error{SaveError::none};
     SaveSlot active_slot{SaveSlot::none};
-    dungeon::checkpoint::DungeonRunState verified_state{};
+    checkpoint::DungeonRunState verified_state{};
 };
 
 class SaveStore final {
@@ -80,10 +87,10 @@ public:
     [[nodiscard]] SaveLoadResult load() noexcept;
 
     [[nodiscard]] SaveCommitResult commit(
-        const dungeon::checkpoint::DungeonRunState& expected) noexcept;
+        const checkpoint::DungeonRunState& expected) noexcept;
 
     [[nodiscard]] SaveLoadResult archive_invalid_and_create(
-        const dungeon::checkpoint::DungeonRunState& initial) noexcept;
+        const checkpoint::DungeonRunState& initial) noexcept;
 
 private:
     SaveStoreConfig config_{};

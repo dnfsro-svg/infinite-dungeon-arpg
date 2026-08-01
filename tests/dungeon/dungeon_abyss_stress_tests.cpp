@@ -319,7 +319,9 @@ ResolutionTrace production_resolution(
     }
 
     arpg::test::fill_ground_pool(session, ground_prototype());
-    arpg::test::set_player_position(session, {12.0F, 0.0F, 0.0F});
+    arpg::test::set_player_position(session,
+        arpg::test::exit_boundary_position(
+            arpg::dungeon::ExitDirection::right));
     session.tick({1, 0});
     const auto warned = session.snapshot();
     bool warning_event = false;
@@ -469,7 +471,7 @@ arpg::combat::CombatEncounterConfig extreme_config() noexcept {
     config.abyss = arpg::abyss::combat_config_for(
         arpg::abyss::AbyssRuleId::chaos_expansion);
     config.wave.spawn_count = static_cast<std::uint8_t>(
-        arpg::combat::kMonsterCapacity);
+        arpg::combat::kEncounterSpawnCapacity);
     for (std::size_t index = 0U; index < config.wave.spawn_count; ++index) {
         config.wave.spawns[index] = {
             arpg::combat::MonsterId::lightning_shooter,
@@ -533,7 +535,7 @@ arpg::test::Failure thousand_room_abyss_trace_matches_golden_and_reload() noexce
     constexpr std::array<std::uint32_t, 4> kGoldenHits{{9U, 11U, 9U, 7U}};
     ARPG_REQUIRE(first->door_trials == kGoldenTrials);
     ARPG_REQUIRE(first->door_hits == kGoldenHits);
-    ARPG_REQUIRE(first->hash == 0xe102b17e6423351bULL);
+    ARPG_REQUIRE(first->hash == 0x6a71272c3cf8d8b8ULL);
     return {};
 }
 
@@ -546,7 +548,7 @@ arpg::test::Failure extreme_abyss_pools_run_600_ticks_without_allocation() noexc
     ARPG_REQUIRE(world != nullptr);
     const auto initial_world = world->snapshot();
     ARPG_REQUIRE(initial_world.monster_count
-        == arpg::combat::kMonsterCapacity);
+        == arpg::combat::kEncounterSpawnCapacity);
     const arpg::combat::MonsterHandle owner{
         0U, initial_world.monsters[0].generation};
     arpg::test::CombatWorldTestAccess::fill_projectiles(*world, owner);
@@ -556,7 +558,7 @@ arpg::test::Failure extreme_abyss_pools_run_600_ticks_without_allocation() noexc
     const auto saturated = session.snapshot();
     ARPG_REQUIRE(saturated.combat.has_value());
     ARPG_REQUIRE(saturated.combat->monster_count
-        == arpg::combat::kMonsterCapacity);
+        == arpg::combat::kEncounterSpawnCapacity);
     ARPG_REQUIRE(saturated.combat->projectile_count
         == arpg::combat::kProjectileCapacity);
     ARPG_REQUIRE(saturated.combat->hazard_count

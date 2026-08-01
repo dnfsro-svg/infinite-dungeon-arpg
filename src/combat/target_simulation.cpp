@@ -140,7 +140,7 @@ void CombatWorld::respawn_dummy(std::size_t index) noexcept {
     CombatEvent respawned{};
     respawned.kind = CombatEventKind::respawned;
     respawned.tick = tick_;
-    respawned.target_index = static_cast<std::uint8_t>(index);
+    respawned.target_ordinal = dummy.monster_ordinal;
     respawned.position = dummy.position;
     emit_event(respawned);
 }
@@ -207,7 +207,7 @@ void CombatWorld::simulate_target(std::size_t index) noexcept {
             CombatEvent landing{};
             landing.kind = CombatEventKind::landing;
             landing.tick = tick_;
-            landing.target_index = static_cast<std::uint8_t>(index);
+            landing.target_ordinal = dummy.monster_ordinal;
             landing.position = dummy.position;
             emit_event(landing);
         }
