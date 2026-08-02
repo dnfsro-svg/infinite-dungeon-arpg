@@ -24,6 +24,12 @@
 
 namespace {
 
+// The pending-reward path clears the 25% ordinary-room gate and all 450
+// monsters in the 100x room before it can capture the first reward commit.
+// Keep headroom for render/simulation scheduling; the scenario exits as soon
+// as the required reward state is presented, so this is only a safety ceiling.
+constexpr std::uint32_t kPendingRewardMaximumFrames = 4096U;
+
 struct SelectedRun final {
     std::uint64_t root{};
     std::uint64_t target_seed{};
@@ -331,7 +337,8 @@ int main(int argc, char** argv) {
     if (!prepare_save(reward_directory, rewards->root, true, true)
             || !run_scenario(reward_directory, *rewards,
                 arpg::platform::Stage10ValidationScenario::pending_reward,
-                root_directory / "06-pending-reward.png")
+                root_directory / "06-pending-reward.png",
+                kPendingRewardMaximumFrames)
             || !valid_cleared_reward_save(
                 reward_directory, rewards->target_seed)) {
         return 15;

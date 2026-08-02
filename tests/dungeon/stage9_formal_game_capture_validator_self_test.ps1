@@ -125,8 +125,9 @@ if (-not (Test-Path -LiteralPath $ReferenceImage -PathType Leaf)) {
 }
 New-Item -ItemType Directory -Path $MutationRoot -Force | Out-Null
 Add-Type -AssemblyName System.Drawing
-$background = [System.Drawing.Color]::FromArgb(17, 18, 19)
+$background = [System.Drawing.Color]::FromArgb(41, 43, 44)
 $clearEdge = [System.Drawing.Color]::FromArgb(13, 17, 27)
+$wrongMaterial = [System.Drawing.Color]::FromArgb(255, 0, 255)
 
 Invoke-Stage9Validator -Path $ReferenceImage
 
@@ -154,6 +155,18 @@ try {
     $missingBackgroundBitmap.Dispose()
 }
 Invoke-Stage9Validator -Path $missingBackgroundAnchor `
+    -ExpectedFailure 'background mismatch'
+
+$wrongBackgroundAnchor = Join-Path $MutationRoot 'wrong-background-anchor.png'
+$wrongBackgroundBitmap = [System.Drawing.Bitmap]::new($ReferenceImage)
+try {
+    $wrongBackgroundBitmap.SetPixel(8, 8, $wrongMaterial)
+    $wrongBackgroundBitmap.Save(
+        $wrongBackgroundAnchor, [System.Drawing.Imaging.ImageFormat]::Png)
+} finally {
+    $wrongBackgroundBitmap.Dispose()
+}
+Invoke-Stage9Validator -Path $wrongBackgroundAnchor `
     -ExpectedFailure 'background mismatch'
 
 $wrongSize = Join-Path $MutationRoot 'wrong-size.png'
@@ -289,4 +302,4 @@ try {
     }
 }
 
-Write-Output 'stage9_formal_capture_validator_self_test=PASS rejected_mutations=8 accepted_edge_variants=1 infrastructure_probes=2'
+Write-Output 'stage9_formal_capture_validator_self_test=PASS rejected_mutations=9 accepted_edge_variants=1 infrastructure_probes=2'

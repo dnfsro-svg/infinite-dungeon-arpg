@@ -15,14 +15,13 @@ function Test-Stage9FormalCapture {
         if ($image.Width -ne 1280 -or $image.Height -ne 720) {
             throw "Stage9 formal capture rejects unexpected size: $($image.Width)x$($image.Height)"
         }
-        # The material quad covers the viewport, but Intel OpenGL 3.3 can leave
-        # a few outer-edge fragments at the production clear color.  The
-        # large-room follow camera changes which authored texel reaches a fixed
-        # screen coordinate, so require material coverage here without freezing
-        # one camera-specific texel value.
+        # Avoid the Intel OpenGL outer-edge raster variance, while freezing an
+        # interior texel that the deterministic large-room camera maps from the
+        # authored fire-room atlas.  This rejects clear-color and wrong-material
+        # substitutions without depending on triangle-edge coverage.
         $backgroundAnchor = $image.GetPixel(8, 8)
-        if ($backgroundAnchor.R -eq 13 -and $backgroundAnchor.G -eq 17 -and
-                $backgroundAnchor.B -eq 27) {
+        if ($backgroundAnchor.R -ne 41 -or $backgroundAnchor.G -ne 43 -or
+                $backgroundAnchor.B -ne 44) {
             throw "Stage9 formal capture rejects submitted background mismatch: $backgroundAnchor"
         }
 
