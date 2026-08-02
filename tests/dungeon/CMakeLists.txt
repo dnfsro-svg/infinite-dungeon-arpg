@@ -29,6 +29,7 @@ add_executable(arpg_dungeon_tests
     dungeon_transaction_tests.cpp
     dungeon_abyss_reward_tests.cpp
     dungeon_abyss_stress_tests.cpp
+    large_room_end_to_end_tests.cpp
     encounter_director_tests.cpp
     dungeon_wave_tests.cpp)
 target_sources(arpg_dungeon_tests PRIVATE
@@ -52,6 +53,12 @@ if(MSVC)
 endif()
 
 add_test(NAME dungeon.units COMMAND arpg_dungeon_tests)
+
+add_test(NAME task11.large_room.dungeon COMMAND arpg_dungeon_tests)
+set_tests_properties(task11.large_room.dungeon PROPERTIES
+    ENVIRONMENT "ARPG_TASK11_LARGE_ROOM_ONLY=1"
+    LABELS "headless;dungeon;task11;validation"
+    TIMEOUT 300)
 
 add_test(NAME stage16.material_loot.units COMMAND arpg_dungeon_tests)
 set_tests_properties(stage16.material_loot.units PROPERTIES

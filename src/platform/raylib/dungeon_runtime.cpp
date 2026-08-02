@@ -251,6 +251,13 @@ bool DungeonRuntime::initialize() noexcept {
             }
             ++checkpoint.commit_generation;
             rewrite = true;
+        } else if (save_storage_->loaded_migrated()
+                && save_storage_->loaded_format()
+                    < persistence::kLatestCheckpointFormatVersion) {
+            // V9 already contains current durable authority. Advance only
+            // the outer revision and rewrite immediately so a zero-tick exit
+            // cannot leave an old format active after successful startup.
+            rewrite = true;
         } else if (save_storage_->loaded_migrated()) {
             progress_dirty_ = true;
         }

@@ -694,8 +694,45 @@ bool DungeonSession::capture_save_checkpoint(
         packed.position = checkpoint_position(potion.position);
         packed.material = items::MaterialId::count;
     }
+    const bool preserve_room_experience = durable_override == nullptr
+        || (post_mutation && pending_save_preserves_room_experience());
+    room.pending_room_experience = preserve_room_experience
+            && !full_clear_pending
+            && room.lifecycle == checkpoint::RoomProgressLifecycle::active
+        ? pending_room_experience_ : 0U;
     return checkpoint::valid_room_progress_checkpoint_structural(
         room, destination.state);
+}
+
+bool DungeonSession::pending_save_preserves_room_experience()
+    const noexcept {
+    if (!pending_save_.has_value()) return false;
+    switch (pending_save_->kind) {
+    case PendingSaveKind::loot_pickup:
+    case PendingSaveKind::material_pickup:
+    case PendingSaveKind::equipment:
+    case PendingSaveKind::craft:
+    case PendingSaveKind::recipe:
+    case PendingSaveKind::reinforcement:
+    case PendingSaveKind::skill_loadout:
+    case PendingSaveKind::health_potion_pickup:
+    case PendingSaveKind::room_unlock:
+        return true;
+    case PendingSaveKind::transition:
+    case PendingSaveKind::passive_tree:
+    case PendingSaveKind::room_clear:
+    case PendingSaveKind::abyss_start:
+    case PendingSaveKind::abyss_fail:
+    case PendingSaveKind::abyss_clear:
+    case PendingSaveKind::abyss_reward_materialized:
+    case PendingSaveKind::abyss_reward_claim:
+    case PendingSaveKind::abyss_abandon:
+    case PendingSaveKind::death_retreat:
+    case PendingSaveKind::death_continue:
+    case PendingSaveKind::abyss_early_exit:
+        return false;
+    }
+    return false;
 }
 
 void DungeonSession::clear_buffered_gameplay_input() noexcept {
@@ -765,6 +802,8 @@ void DungeonSession::adopt_restored_session(DungeonSession&& source) noexcept {
     rolled_drop_bits_ = source.rolled_drop_bits_;
     rolled_material_bits_ = source.rolled_material_bits_;
     room_progress_ = source.room_progress_;
+    room_progression_ = source.room_progression_;
+    pending_room_experience_ = source.pending_room_experience_;
     phase_ = source.phase_;
 }
 
@@ -897,6 +936,7 @@ bool DungeonSession::restore_room_progress_checkpoint_in_place(
     if (!room_drop_state_.reset(field->plan())) return false;
     rolled_drop_bits_ = {};
     rolled_material_bits_ = {};
+    pending_room_experience_ = room.pending_room_experience;
     for (std::uint16_t index = 0U;
             index < room.equipment_ground_count; ++index) {
         const auto& packed = room.equipment_ground[index];

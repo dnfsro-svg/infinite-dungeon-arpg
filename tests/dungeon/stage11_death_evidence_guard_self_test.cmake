@@ -408,8 +408,8 @@ expect_fixture_token_rejection(missing_submit "worker_->submit("
     "submit[ \\t\\r\\n]*\\(")
 expect_fixture_token_rejection(missing_completion "try_take_completion"
     "try_take_completion")
-expect_fixture_token_rejection(missing_envelope "inspect_checkpoint_v9_envelope"
-    "inspect_checkpoint_v9_envelope")
+expect_fixture_token_rejection(missing_envelope "inspect_checkpoint_latest_envelope"
+    "inspect_checkpoint_latest_envelope")
 expect_fixture_token_rejection(missing_loaded_checkpoint "loaded_checkpoint"
     "loaded_checkpoint")
 expect_fixture_token_rejection(missing_restore "restore_room_progress_checkpoint"
@@ -421,12 +421,12 @@ expect_fixture_token_rejection(missing_worker_stop "stop_and_join"
 expect_fixture_token_rejection(missing_room_compare
     "same_room_progress_checkpoint" "same_room_progress_checkpoint")
 expect_fixture_relocation_rejection(comment_only_envelope
-    "inspect_checkpoint_v9_envelope"
-    "// inspect_checkpoint_v9_envelope" "inspect_checkpoint_v9_envelope")
+    "inspect_checkpoint_latest_envelope"
+    "// inspect_checkpoint_latest_envelope" "inspect_checkpoint_latest_envelope")
 expect_fixture_relocation_rejection(inactive_envelope
-    "inspect_checkpoint_v9_envelope"
-    "#if 0\nvoid inactive_fixture_decoy() { inspect_checkpoint_v9_envelope; }\n#endif"
-    "inspect_checkpoint_v9_envelope")
+    "inspect_checkpoint_latest_envelope"
+    "#if 0\nvoid inactive_fixture_decoy() { inspect_checkpoint_latest_envelope; }\n#endif"
+    "inspect_checkpoint_latest_envelope")
 
 # Preserve all legacy injection and capture-order coverage against the new
 # owner reference rather than borrowing the still-RED production Host.

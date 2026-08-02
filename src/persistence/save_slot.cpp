@@ -207,13 +207,24 @@ SlotInfo read_slot(const std::filesystem::path& path) {
     }
     constexpr std::array<std::uint8_t, 8U> kV9Magic{{
         'A', 'R', 'P', 'G', 'S', 'V', '9', '\0'}};
-    if (bytes.size() >= kV9Magic.size()
-            && std::equal(kV9Magic.begin(), kV9Magic.end(), bytes.begin())) {
+    constexpr std::array<std::uint8_t, 8U> kV10Magic{{
+        'A', 'R', 'P', 'G', 'S', 'V', '1', '0'}};
+    const bool is_v9 = bytes.size() >= kV9Magic.size()
+        && std::equal(kV9Magic.begin(), kV9Magic.end(), bytes.begin());
+    const bool is_v10 = bytes.size() >= kV10Magic.size()
+        && std::equal(kV10Magic.begin(), kV10Magic.end(), bytes.begin());
+    if (is_v9 || is_v10) {
         std::unique_ptr<checkpoint::SaveCheckpointSlot> decoded{
             new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
         bool migrated{};
-        if (decoded == nullptr || decode_checkpoint_v9_into(bytes.data(),
-                bytes.size(), *decoded, migrated) != CodecError::none
+        const CodecError decode_error = decoded == nullptr
+            ? CodecError::allocation_failure
+            : is_v10
+                ? decode_checkpoint_v10_into(bytes.data(), bytes.size(),
+                    *decoded, migrated)
+                : decode_checkpoint_v9_into(bytes.data(), bytes.size(),
+                    *decoded, migrated);
+        if (decode_error != CodecError::none
                 || migrated) {
             info.state = SlotFileState::invalid;
             info.error = SaveError::read_failed;

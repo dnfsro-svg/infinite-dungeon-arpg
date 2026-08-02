@@ -661,6 +661,70 @@ test::Failure task5_v9_secondary_ordinals_migrate_to_canonical_once() noexcept {
     return {};
 }
 
+test::Failure v10_round_trip_preserves_pending_room_experience() noexcept {
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> source{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> decoded{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<std::uint8_t[]> bytes{
+        new (std::nothrow) std::uint8_t[
+            persistence::kMaximumEncodedCheckpointBytes]};
+    ARPG_REQUIRE(source != nullptr && decoded != nullptr && bytes != nullptr);
+    ARPG_REQUIRE(make_fixture(*source));
+
+    source->room_progress.pending_room_experience = 0x1122334455667788ULL;
+    std::size_t written{};
+    ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(*source,
+        bytes.get(), persistence::kMaximumEncodedCheckpointBytes, written)
+        == persistence::CodecError::invalid_state);
+    ARPG_REQUIRE(persistence::encode_checkpoint_v10_into(*source,
+        bytes.get(), persistence::kMaximumEncodedCheckpointBytes, written)
+        == persistence::CodecError::none);
+    ARPG_REQUIRE(written <= persistence::kMaximumEncodedCheckpointBytes);
+    ARPG_REQUIRE(std::equal(bytes.get(), bytes.get() + 8U,
+        std::array<std::uint8_t, 8U>{
+            {'A','R','P','G','S','V','1','0'}}.begin()));
+    bool migrated = true;
+    ARPG_REQUIRE(persistence::decode_checkpoint_v10_into(
+        bytes.get(), written, *decoded, migrated)
+        == persistence::CodecError::none);
+    ARPG_REQUIRE(!migrated);
+    ARPG_REQUIRE(decoded->room_progress.pending_room_experience
+        == source->room_progress.pending_room_experience);
+    ARPG_REQUIRE(checkpoint::same_room_progress_checkpoint(
+        source->room_progress, decoded->room_progress));
+    ARPG_REQUIRE(persistence::verify_checkpoint_v10_readback(
+        bytes.get(), written, *source, bytes.get(), written)
+        == persistence::CodecError::none);
+
+    ++source->room_progress.pending_room_experience;
+    ARPG_REQUIRE(persistence::verify_checkpoint_v10_readback(
+        bytes.get(), written, *source, bytes.get(), written)
+        == persistence::CodecError::invalid_state);
+    --source->room_progress.pending_room_experience;
+
+    bytes[written - 1U] ^= 0x80U;
+    ARPG_REQUIRE(persistence::decode_checkpoint_v10_into(
+        bytes.get(), written, *decoded, migrated)
+        == persistence::CodecError::bad_crc);
+    bytes[written - 1U] ^= 0x80U;
+    ARPG_REQUIRE(persistence::decode_checkpoint_v10_into(
+        bytes.get(), written - 1U, *decoded, migrated)
+        == persistence::CodecError::bad_payload_length);
+
+    source->room_progress.pending_room_experience = 0U;
+    ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(*source,
+        bytes.get(), persistence::kMaximumEncodedCheckpointBytes, written)
+        == persistence::CodecError::none);
+    migrated = false;
+    ARPG_REQUIRE(persistence::decode_checkpoint_v10_into(
+        bytes.get(), written, *decoded, migrated)
+        == persistence::CodecError::none);
+    ARPG_REQUIRE(migrated);
+    ARPG_REQUIRE(decoded->room_progress.pending_room_experience == 0U);
+    return {};
+}
+
 test::Failure unmarked_task5_common_ordinal_uses_spawn_position() noexcept {
     std::unique_ptr<checkpoint::SaveCheckpointSlot> source{
         new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
@@ -1021,7 +1085,7 @@ test::Failure v9_rejects_crc_and_length_corruption() noexcept {
     return {};
 }
 
-test::Failure v9_partial_unlock_round_trip_restores_combat() noexcept {
+test::Failure v10_partial_unlock_round_trip_restores_combat() noexcept {
     dungeon::DungeonRules rules{};
     const auto initial = dungeon::make_initial_run_state(0x25100CULL, rules);
     ARPG_REQUIRE(initial.fault == dungeon::DungeonFault::none);
@@ -1059,19 +1123,22 @@ test::Failure v9_partial_unlock_round_trip_restores_combat() noexcept {
     ARPG_REQUIRE(saved->room_progress.exits_unlocked);
     ARPG_REQUIRE(!saved->room_progress.full_clear);
     std::size_t written{};
-    ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(*saved, bytes.get(),
+    ARPG_REQUIRE(saved->room_progress.pending_room_experience != 0U);
+    ARPG_REQUIRE(persistence::encode_checkpoint_v10_into(*saved, bytes.get(),
         persistence::kMaximumEncodedCheckpointBytes, written)
         == persistence::CodecError::none);
-    ARPG_REQUIRE(persistence::verify_checkpoint_v9_readback(
+    ARPG_REQUIRE(persistence::verify_checkpoint_v10_readback(
         bytes.get(), written, *saved, bytes.get(), written)
         == persistence::CodecError::none);
     bool migrated = true;
-    ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
+    ARPG_REQUIRE(persistence::decode_checkpoint_v10_into(
         bytes.get(), written, *decoded, migrated)
         == persistence::CodecError::none);
     ARPG_REQUIRE(!migrated);
     ARPG_REQUIRE(decoded->room_progress.exits_unlocked);
     ARPG_REQUIRE(!decoded->room_progress.full_clear);
+    ARPG_REQUIRE(decoded->room_progress.pending_room_experience
+        == saved->room_progress.pending_room_experience);
 
     dungeon::DungeonSession reloaded{rules, decoded->state};
     test::set_player_health(reloaded, 1000000, 1000000);
@@ -1859,6 +1926,8 @@ test::Failure structural_validation_rejects_identity_and_order_faults() noexcept
 
 constexpr test::TestCase kCases[] = {
     {"v9 maximum room round trip", &v9_round_trip_preserves_large_room_fields},
+    {"v10 pending room experience round trip",
+        &v10_round_trip_preserves_pending_room_experience},
     {"task5 v9 secondary ordinal migration",
         &task5_v9_secondary_ordinals_migrate_to_canonical_once},
     {"unmarked task5 common ordinal uses spawn position",
@@ -1880,8 +1949,8 @@ constexpr test::TestCase kCases[] = {
 };
 
 constexpr test::TestCase kUnlockCases[] = {
-    {"v9 partial unlock round trip restores combat",
-        &v9_partial_unlock_round_trip_restores_combat},
+    {"v10 partial unlock round trip restores combat",
+        &v10_partial_unlock_round_trip_restores_combat},
     {"v9 started abyss early exit to normal round trip",
         &v9_started_abyss_early_exit_to_normal_round_trip},
     {"v9 started abyss early exit to abyss round trip",

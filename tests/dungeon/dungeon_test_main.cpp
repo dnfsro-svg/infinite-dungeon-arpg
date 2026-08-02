@@ -40,8 +40,19 @@ arpg::test::TestSuite dungeon_wave_suite() noexcept;
 arpg::test::TestSuite dungeon_progression_reward_suite() noexcept;
 arpg::test::TestSuite dungeon_affix_reward_suite() noexcept;
 arpg::test::TestSuite dungeon_affix_stress_suite() noexcept;
+arpg::test::TestSuite large_room_end_to_end_suite() noexcept;
 
 namespace {
+
+bool task11_large_room_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_TASK11_LARGE_ROOM_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
 
 bool task9_environment_render_only() noexcept {
     char* value = nullptr;
@@ -258,7 +269,16 @@ int main() {
         dungeon_progression_reward_suite(),
         dungeon_affix_reward_suite(),
         dungeon_affix_stress_suite(),
+        large_room_end_to_end_suite(),
     };
+
+    if (task11_large_room_only()) {
+        const arpg::test::TestSuite task11_only[] = {
+            large_room_end_to_end_suite(),
+        };
+        return arpg::test::run_suites(task11_only, 4,
+            "task 11 large room end to end validation");
+    }
 
     if (task9_environment_render_only()) {
         const arpg::test::TestSuite task9_only[] = {
@@ -403,6 +423,6 @@ int main() {
             "task 7 authoritative room drops");
     }
 
-    return arpg::test::run_suites(suites, 359,
+    return arpg::test::run_suites(suites, 363,
         "stage 18 dungeon queries");
 }

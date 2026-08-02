@@ -59,6 +59,7 @@ struct RoomProgressCheckpoint final {
     bool exits_unlocked{};
     bool full_clear{};
     bool reward_committed{};
+    std::uint64_t pending_room_experience{};
     std::array<std::uint64_t, limits::kRoomEquipmentClaimWords>
         defeat_bits{};
     std::array<std::uint64_t, limits::kRoomEquipmentClaimWords>

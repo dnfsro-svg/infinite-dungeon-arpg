@@ -508,6 +508,7 @@ damage_history_totals(
         && room.generated_monsters == 0U && room.defeated_monsters == 0U
         && room.required_kills == 0U && !room.exits_unlocked
         && !room.full_clear && !room.reward_committed
+        && room.pending_room_experience == 0U
         && popcount(room.defeat_bits) == 0U
         && popcount(room.equipment_claim_bits) == 0U
         && popcount(room.secondary_claim_bits) == 0U
@@ -917,6 +918,7 @@ void clear_room_progress_checkpoint(RoomProgressCheckpoint& out) noexcept {
     out.exits_unlocked = false;
     out.full_clear = false;
     out.reward_committed = false;
+    out.pending_room_experience = 0U;
     out.defeat_bits = {};
     out.equipment_claim_bits = {};
     out.secondary_claim_bits = {};
@@ -1105,6 +1107,9 @@ bool valid_room_progress_checkpoint_structural(
             || (room.full_clear
                 && room.defeated_monsters != room.generated_monsters)
             || (room.reward_committed && !room.full_clear)
+            || (room.pending_room_experience != 0U
+                && (room.lifecycle != RoomProgressLifecycle::active
+                    || room.full_clear || room.reward_committed))
             || room.equipment_ground_count > room.equipment_ground.size()
             || room.secondary_ground_count > room.secondary_ground.size()
             || (room.lifecycle == RoomProgressLifecycle::death_pending)
@@ -1269,6 +1274,8 @@ bool same_room_progress_checkpoint(const RoomProgressCheckpoint& left,
             || left.exits_unlocked != right.exits_unlocked
             || left.full_clear != right.full_clear
             || left.reward_committed != right.reward_committed
+            || left.pending_room_experience
+                != right.pending_room_experience
             || left.defeat_bits != right.defeat_bits
             || left.equipment_claim_bits != right.equipment_claim_bits
             || left.secondary_claim_bits != right.secondary_claim_bits

@@ -59,10 +59,23 @@ struct SaveCommitSubmission final {
     std::uint8_t reclaimed_slot{0xFFU};
 };
 
+// Per-commit wall-time observations from the production V10 persistence path.
+// These fields never participate in save authority, codec bytes, or commit
+// decisions; callers may use them only as bounded-cost evidence.
+struct SaveCommitCost final {
+    std::uint64_t encode_ns{};
+    std::uint64_t durable_write_ns{};
+    std::uint64_t file_readback_ns{};
+    std::size_t encoded_bytes{};
+    std::uint16_t write_operations{};
+    std::uint16_t readback_operations{};
+};
+
 struct SaveCommitExactResult final {
     SaveCommitState state{SaveCommitState::indeterminate};
     SaveError error{SaveError::none};
     SaveSlot active_slot{SaveSlot::none};
+    SaveCommitCost cost{};
 };
 
 struct SaveCommitCompletion final {

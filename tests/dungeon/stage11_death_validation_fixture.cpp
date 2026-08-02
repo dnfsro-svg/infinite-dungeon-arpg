@@ -159,7 +159,7 @@ public:
                 || storage_->load_state()
                     != persistence::SaveLoadState::ready
                 || storage_->loaded_format()
-                    != persistence::kCheckpointFormatVersionV9
+                    != persistence::kLatestCheckpointFormatVersion
                 || storage_->loaded_migrated()
                 || storage_->loaded_slot() != last_active_slot_) {
             return {};
@@ -226,7 +226,7 @@ private:
             std::istreambuf_iterator<char>{}};
         if (bytes.empty()) return {};
         std::uint64_t actual_revision{};
-        return persistence::inspect_checkpoint_v9_envelope(
+        return persistence::inspect_checkpoint_latest_envelope(
             bytes.data(), bytes.size(), actual_revision)
                 == persistence::CodecError::none
             && actual_revision == expected_revision;

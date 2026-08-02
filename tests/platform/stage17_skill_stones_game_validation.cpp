@@ -276,7 +276,7 @@ struct PureTimelineEvidence final {
     const PureTimelineEvidence& timeline,
     const std::map<std::string, std::string>& production,
     const std::map<std::string, std::string>& storm) {
-    static_assert(persistence::kCheckpointFormatVersionV9 == 9U);
+    static_assert(persistence::kLatestCheckpointFormatVersion == 10U);
     if (!timeline.valid()) return false;
     std::ofstream stream(run / "stage17-skill-stones-state.txt",
         std::ios::out | std::ios::trunc | std::ios::binary);
@@ -286,7 +286,7 @@ struct PureTimelineEvidence final {
            << "window=1280x720\n"
            << "fixture_path=production-raylib-host\n"
            << "showcase_capture_count=0\n"
-           << "save_version=" << persistence::kCheckpointFormatVersionV9 << "\n"
+           << "save_version=" << persistence::kLatestCheckpointFormatVersion << "\n"
            << "initial_slots=draw_slash,storm_swords,none,none,none\n"
            << "final_slots=none,draw_slash,none,none,storm_swords\n"
            << "restarted_slots=none,draw_slash,none,none,storm_swords\n"

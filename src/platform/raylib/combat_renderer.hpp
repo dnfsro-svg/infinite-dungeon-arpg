@@ -65,6 +65,10 @@ struct RoomBackgroundDrawRuntimeStatus final {
 [[nodiscard]] MaterialEcology material_ecology(
     dungeon::DungeonElement ecology) noexcept;
 
+[[nodiscard]] MaterialResidencyRequest world_material_residency_request(
+    const dungeon::DungeonRenderSnapshot& world,
+    const skills::SkillLoadoutState& skill_loadout) noexcept;
+
 [[nodiscard]] CombatRenderPlan make_combat_render_plan(
     const dungeon::DungeonSnapshot& previous,
     const dungeon::DungeonRenderSnapshot& current,

@@ -47,6 +47,7 @@ if(TARGET arpg_raylib)
         fire_room_material_slice_tests.cpp
         ecology_material_coverage_tests.cpp
         room_background_render_plan_tests.cpp
+        large_room_render_plan_tests.cpp
         stage12_environment_render_tests.cpp
         stage12_actor_render_tests.cpp
         stage12_material_render_tests.cpp)
@@ -68,6 +69,12 @@ if(TARGET arpg_raylib)
     add_test(NAME platform.units COMMAND arpg_platform_tests)
     set_tests_properties(
         platform.units PROPERTIES LABELS "headless;platform")
+
+    add_test(NAME task11.large_room.platform COMMAND arpg_platform_tests)
+    set_tests_properties(task11.large_room.platform PROPERTIES
+        ENVIRONMENT "ARPG_TASK11_LARGE_ROOM_ONLY=1"
+        LABELS "headless;platform;task11;validation"
+        TIMEOUT 120)
 
     add_test(NAME platform.ui_dpi_manifest
         COMMAND "${CMAKE_COMMAND}"

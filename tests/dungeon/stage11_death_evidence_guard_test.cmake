@@ -345,7 +345,7 @@ stage11_unconditional_cpp_surface(
 foreach(required_fixture "SaveCommitStorage" "SaveCommitWorker"
         "acquire_capture_slot" "capture_save_checkpoint"
         "submit[ \\t\\r\\n]*\\(" "try_take_completion"
-        "inspect_checkpoint_v9_envelope" "loaded_checkpoint"
+        "inspect_checkpoint_latest_envelope" "loaded_checkpoint"
         "loaded_format" "loaded_migrated" "loaded_slot"
         "same_run_state" "same_room_progress_checkpoint"
         "restore_room_progress_checkpoint" "release_loaded_checkpoints"

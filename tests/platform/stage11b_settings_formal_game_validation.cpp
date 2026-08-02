@@ -77,7 +77,7 @@ struct FileFingerprint final {
         && fingerprint_file(directory / "run_b.sav").valid;
 }
 
-[[nodiscard]] bool valid_v9_character_slot(
+[[nodiscard]] bool valid_current_character_slot(
     const std::filesystem::path& path, std::uint64_t& revision) {
     std::ifstream stream(path, std::ios::binary | std::ios::ate);
     if (!stream) return false;
@@ -88,7 +88,7 @@ struct FileFingerprint final {
     stream.seekg(0, std::ios::beg);
     stream.read(reinterpret_cast<char*>(bytes.data()),
         static_cast<std::streamsize>(bytes.size()));
-    return stream && persistence::inspect_checkpoint_v9_envelope(
+    return stream && persistence::inspect_checkpoint_latest_envelope(
         bytes.data(), bytes.size(), revision) == persistence::CodecError::none
         && revision != 0U;
 }
@@ -289,11 +289,12 @@ int main(int argc, char** argv) {
 
     std::uint64_t final_run_a_revision{};
     std::uint64_t final_run_b_revision{};
-    const bool final_run_a_v9_valid = valid_v9_character_slot(
+    const bool final_run_a_checkpoint_valid = valid_current_character_slot(
         saves / "run_a.sav", final_run_a_revision);
-    const bool final_run_b_v9_valid = valid_v9_character_slot(
+    const bool final_run_b_checkpoint_valid = valid_current_character_slot(
         saves / "run_b.sav", final_run_b_revision);
-    ok = ok && final_run_a_v9_valid && final_run_b_v9_valid;
+    ok = ok && final_run_a_checkpoint_valid
+        && final_run_b_checkpoint_valid;
     std::ofstream report(root / "stage11b-settings-evidence.txt", std::ios::trunc);
     report << "character_hash_scope=settings_transaction\n"
            << "run_a_hash_before=" << run_a_before.hash << '\n'
@@ -304,8 +305,10 @@ int main(int argc, char** argv) {
            << "run_a_size_after=" << run_a_after.size << '\n'
            << "run_b_size_before=" << run_b_before.size << '\n'
            << "run_b_size_after=" << run_b_after.size << '\n'
-           << "final_run_a_v9_valid=" << (final_run_a_v9_valid ? 1 : 0) << '\n'
-           << "final_run_b_v9_valid=" << (final_run_b_v9_valid ? 1 : 0) << '\n'
+           << "final_run_a_checkpoint_valid="
+           << (final_run_a_checkpoint_valid ? 1 : 0) << '\n'
+           << "final_run_b_checkpoint_valid="
+           << (final_run_b_checkpoint_valid ? 1 : 0) << '\n'
            << "final_run_a_revision=" << final_run_a_revision << '\n'
            << "final_run_b_revision=" << final_run_b_revision << '\n'
            << "rebound_old_attack=" << value_or_empty(rebound, "old_attack_count") << '\n'

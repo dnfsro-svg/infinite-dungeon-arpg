@@ -158,7 +158,7 @@ void require_world_monster_atlas(MaterialResidencyRequest& request,
     }
 }
 
-MaterialResidencyRequest world_material_residency_request(
+MaterialResidencyRequest world_material_residency_request_impl(
     const dungeon::DungeonRenderSnapshot& world,
     const skills::SkillLoadoutState& skill_loadout) noexcept {
     MaterialResidencyRequest request = base_material_residency_request();
@@ -182,6 +182,12 @@ MaterialResidencyRequest world_material_residency_request(
 }
 
 }  // namespace
+
+MaterialResidencyRequest world_material_residency_request(
+    const dungeon::DungeonRenderSnapshot& world,
+    const skills::SkillLoadoutState& skill_loadout) noexcept {
+    return world_material_residency_request_impl(world, skill_loadout);
+}
 
 MaterialEcology material_ecology(
     dungeon::DungeonElement ecology) noexcept {

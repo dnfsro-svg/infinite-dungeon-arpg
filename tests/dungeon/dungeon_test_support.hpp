@@ -283,7 +283,10 @@ struct DungeonSessionTestAccess final {
     }
     static std::optional<combat::CombatEvent> defeat_room_monster_by_ordinal(
         dungeon::DungeonSession& session,
-        combat::MonsterOrdinal ordinal) noexcept {
+        combat::MonsterOrdinal ordinal,
+        combat::CombatEvent* observed_events = nullptr,
+        std::size_t observed_capacity = 0U,
+        std::size_t* observed_count = nullptr) noexcept {
         if (session.phase_ != dungeon::RoomPhase::combat
                 || !session.combat_.has_value()) {
             return std::nullopt;
@@ -345,7 +348,16 @@ struct DungeonSessionTestAccess final {
 
         std::optional<combat::CombatEvent> defeated{};
         bool invalid_event = false;
+        std::size_t event_count{};
         while (const auto event = session.combat_events_.try_pop()) {
+            if (observed_events != nullptr) {
+                if (event_count >= observed_capacity) {
+                    invalid_event = true;
+                } else {
+                    observed_events[event_count] = *event;
+                }
+                ++event_count;
+            }
             if (event->kind == combat::CombatEventKind::defeated) {
                 if (defeated.has_value() || event->target_ordinal != ordinal) {
                     invalid_event = true;
@@ -376,6 +388,7 @@ struct DungeonSessionTestAccess final {
                 || !defeated->reward_eligible) {
             return std::nullopt;
         }
+        if (observed_count != nullptr) *observed_count = event_count;
         return defeated;
     }
     static bool append_defeat_record(
@@ -1077,6 +1090,16 @@ inline void clear_ground_item(
     dungeon::DungeonSession& session,
     std::uint16_t ordinal) noexcept {
     DungeonSessionTestAccess::clear_ground_item(session, ordinal);
+}
+
+inline std::optional<combat::CombatEvent> defeat_room_monster_by_ordinal(
+    dungeon::DungeonSession& session,
+    combat::MonsterOrdinal ordinal,
+    combat::CombatEvent* observed_events,
+    std::size_t observed_capacity,
+    std::size_t& observed_count) noexcept {
+    return DungeonSessionTestAccess::defeat_room_monster_by_ordinal(
+        session, ordinal, observed_events, observed_capacity, &observed_count);
 }
 
 inline void clear_room_drop_spatial_index(

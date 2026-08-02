@@ -293,6 +293,8 @@ private:
     [[nodiscard]] bool pending_abyss_claim_cache_consistent() const noexcept;
     [[nodiscard]] bool pending_death_cache_consistent() const noexcept;
     [[nodiscard]] bool pending_material_cache_consistent() const noexcept;
+    [[nodiscard]] bool pending_save_preserves_room_experience()
+        const noexcept;
     void commit_pending_save(const PendingSaveResult& result) noexcept;
     void build_dungeon_snapshot(DungeonSnapshot& destination) const noexcept;
     void enter_fault(DungeonFault fault) noexcept;

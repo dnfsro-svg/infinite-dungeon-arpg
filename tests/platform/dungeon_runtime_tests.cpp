@@ -370,7 +370,7 @@ bool write_save(const std::filesystem::path& path,
     return out.good();
 }
 
-bool decode_active_v9(const TempDirectory& directory,
+bool decode_active_checkpoint(const TempDirectory& directory,
     persistence::SaveSlot slot,
     checkpoint::SaveCheckpointSlot& out) noexcept {
     const char* const name = slot == persistence::SaveSlot::a
@@ -390,10 +390,52 @@ bool decode_active_v9(const TempDirectory& directory,
     input.read(reinterpret_cast<char*>(bytes.data()), end);
     bool migrated{};
     return input.good()
-        && persistence::decode_checkpoint_v9_into(
+        && persistence::decode_checkpoint_v10_into(
             bytes.data(), bytes.size(), out, migrated)
                 == persistence::CodecError::none
         && !migrated;
+}
+
+arpg::test::Failure canonical_v9_load_rewrites_v10_before_session() noexcept {
+    TempDirectory directory;
+    dungeon::DungeonRules rules{};
+    const auto initial = dungeon::make_initial_run_state(0x510ULL, rules);
+    ARPG_REQUIRE(initial.fault == dungeon::DungeonFault::none);
+    dungeon::DungeonSession source{rules, initial.state};
+    source.tick({});
+
+    auto slot = std::make_unique<checkpoint::SaveCheckpointSlot>();
+    std::vector<std::uint8_t> bytes(
+        persistence::kMaximumEncodedCheckpointBytes);
+    ARPG_REQUIRE(slot != nullptr);
+    ARPG_REQUIRE(source.capture_save_checkpoint(*slot, 17U));
+    ARPG_REQUIRE(slot->room_progress.pending_room_experience == 0U);
+    std::size_t written{};
+    ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(*slot,
+        bytes.data(), bytes.size(), written) == persistence::CodecError::none);
+    bytes.resize(written);
+    ARPG_REQUIRE(write_save(directory.path / "run_a.sav", bytes));
+
+    platform::DungeonRuntime runtime(config_for(directory, 0xBADU));
+    ARPG_REQUIRE(runtime.initialize());
+    const auto upgraded = read_active_bytes(
+        directory, runtime.render_status().active_slot);
+    ARPG_REQUIRE(upgraded.size() >= 12U);
+    ARPG_REQUIRE(std::equal(upgraded.begin(), upgraded.begin() + 8U,
+        std::array<std::uint8_t, 8U>{
+            {'A','R','P','G','S','V','1','0'}}.begin()));
+    auto decoded = std::make_unique<checkpoint::SaveCheckpointSlot>();
+    ARPG_REQUIRE(decoded != nullptr);
+    bool migrated = true;
+    ARPG_REQUIRE(persistence::decode_checkpoint_v10_into(upgraded.data(),
+        upgraded.size(), *decoded, migrated) == persistence::CodecError::none);
+    ARPG_REQUIRE(!migrated);
+    ARPG_REQUIRE(decoded->persistence_revision == 18U);
+    ARPG_REQUIRE(decoded->room_progress.pending_room_experience == 0U);
+    ARPG_REQUIRE(runtime.session() != nullptr);
+    ARPG_REQUIRE(runtime.session()->snapshot().room_index
+        == decoded->state.current_room.index);
+    return {};
 }
 
 bool same_room_descriptor(
@@ -1761,7 +1803,7 @@ arpg::test::Failure runtime_echoes_death_pending_kind() noexcept {
 
         auto decoded = std::make_unique<
             checkpoint::SaveCheckpointSlot>();
-        ARPG_REQUIRE(decode_active_v9(
+        ARPG_REQUIRE(decode_active_checkpoint(
             directory, runtime.render_status().active_slot, *decoded));
         ARPG_REQUIRE(decoded->room_progress.lifecycle
             == checkpoint::RoomProgressLifecycle::death_pending);
@@ -1995,7 +2037,7 @@ arpg::test::Failure v6_pending_death_load_preserves_generation_and_target() noex
 
             auto exact = std::make_unique<
                 checkpoint::SaveCheckpointSlot>();
-            ARPG_REQUIRE(decode_active_v9(directory,
+            ARPG_REQUIRE(decode_active_checkpoint(directory,
                 source->render_status().active_slot, *exact));
             ARPG_REQUIRE(dungeon::same_run_state(exact->state, expected));
             ARPG_REQUIRE(exact->state.last_abyss_resolution.lifecycle
@@ -2373,7 +2415,7 @@ arpg::test::Failure death_pending_clean_shutdown_reuses_durable_exact_save()
                 runtime));
 
         auto exact = std::make_unique<checkpoint::SaveCheckpointSlot>();
-        ARPG_REQUIRE(decode_active_v9(
+        ARPG_REQUIRE(decode_active_checkpoint(
             directory, runtime.render_status().active_slot, *exact));
         ARPG_REQUIRE(exact->persistence_revision == durable_death_revision);
         ARPG_REQUIRE(exact->state.death.lifecycle
@@ -2394,7 +2436,7 @@ arpg::test::Failure death_pending_clean_shutdown_reuses_durable_exact_save()
     ARPG_REQUIRE(loaded.death.has_value());
     ARPG_REQUIRE(loaded.death->can_continue);
     auto exact = std::make_unique<checkpoint::SaveCheckpointSlot>();
-    ARPG_REQUIRE(decode_active_v9(
+    ARPG_REQUIRE(decode_active_checkpoint(
         directory, resumed.render_status().active_slot, *exact));
     ARPG_REQUIRE(exact->persistence_revision == durable_death_revision);
     ARPG_REQUIRE(exact->state.death.lifecycle
@@ -2513,7 +2555,7 @@ arpg::test::Failure health_potion_exact_persists_post_heal_room_state()
 
     auto decoded = std::make_unique<
         checkpoint::SaveCheckpointSlot>();
-    ARPG_REQUIRE(decode_active_v9(
+    ARPG_REQUIRE(decode_active_checkpoint(
         directory, runtime->render_status().active_slot, *decoded));
     ARPG_REQUIRE(decoded->room_progress.combat.player.hp
         == healed.combat->player.hp);
@@ -2554,7 +2596,7 @@ arpg::test::Failure normal_full_clear_is_exact_and_reloads_awaiting_exit()
 
     auto decoded = std::make_unique<
         checkpoint::SaveCheckpointSlot>();
-    ARPG_REQUIRE(decode_active_v9(
+    ARPG_REQUIRE(decode_active_checkpoint(
         directory, runtime->render_status().active_slot, *decoded));
     ARPG_REQUIRE(decoded->room_progress.lifecycle
         == checkpoint::RoomProgressLifecycle::active);
@@ -2586,7 +2628,7 @@ arpg::test::Failure abyss_full_clear_persists_cleared_environment_and_reload()
 
     auto decoded = std::make_unique<
         checkpoint::SaveCheckpointSlot>();
-    ARPG_REQUIRE(decode_active_v9(
+    ARPG_REQUIRE(decode_active_checkpoint(
         directory, runtime->render_status().active_slot, *decoded));
     ARPG_REQUIRE(decoded->state.abyss.lifecycle
         == arpg::abyss::AbyssLifecycle::cleared);
@@ -2712,8 +2754,18 @@ constexpr arpg::test::TestCase kCases[] = {
         &render_snapshot_has_one_stable_heap_slot},
 };
 
+constexpr arpg::test::TestCase kV10MigrationCases[] = {
+    {"canonical v9 load rewrites v10 before session",
+        &canonical_v9_load_rewrites_v10_before_session},
+};
+
 }  // namespace
 
 arpg::test::TestSuite dungeon_runtime_suite() noexcept {
     return arpg::test::make_suite("dungeon_runtime", kCases);
+}
+
+arpg::test::TestSuite dungeon_runtime_v10_migration_suite() noexcept {
+    return arpg::test::make_suite(
+        "dungeon_runtime_v10_migration", kV10MigrationCases);
 }

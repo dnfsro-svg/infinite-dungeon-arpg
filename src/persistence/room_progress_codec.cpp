@@ -17,8 +17,10 @@ namespace {
 
 namespace checkpoint = arpg::checkpoint;
 
-constexpr std::array<std::uint8_t, 8U> kMagic{{
+constexpr std::array<std::uint8_t, 8U> kMagicV9{{
     'A', 'R', 'P', 'G', 'S', 'V', '9', '\0'}};
+constexpr std::array<std::uint8_t, 8U> kMagicV10{{
+    'A', 'R', 'P', 'G', 'S', 'V', '1', '0'}};
 constexpr std::size_t kHeaderSize = 32U;
 
 class Writer final {
@@ -1170,7 +1172,7 @@ CodecError inspect_checkpoint_v9_envelope(const std::uint8_t* const bytes,
     if (size > kMaximumEncodedCheckpointBytes) {
         return CodecError::bad_payload_length;
     }
-    if (!std::equal(kMagic.begin(), kMagic.end(), bytes)) {
+    if (!std::equal(kMagicV9.begin(), kMagicV9.end(), bytes)) {
         return CodecError::bad_magic;
     }
     Reader header{bytes, size, 8U};
@@ -1197,6 +1199,50 @@ CodecError inspect_checkpoint_v9_envelope(const std::uint8_t* const bytes,
     return CodecError::none;
 }
 
+CodecError inspect_checkpoint_v10_envelope(const std::uint8_t* const bytes,
+    const std::size_t size, std::uint64_t& revision) noexcept {
+    revision = 0U;
+    if (bytes == nullptr || size < kHeaderSize) return CodecError::wrong_size;
+    if (size > kMaximumEncodedCheckpointBytes) {
+        return CodecError::bad_payload_length;
+    }
+    if (!std::equal(kMagicV10.begin(), kMagicV10.end(), bytes)) {
+        return CodecError::bad_magic;
+    }
+    Reader header{bytes, size, 8U};
+    std::uint32_t format{};
+    std::uint32_t rules{};
+    std::uint64_t parsed_revision{};
+    std::uint32_t payload_size{};
+    std::uint32_t expected_crc{};
+    if (!header.u32(format) || !header.u32(rules)
+            || !header.u64(parsed_revision) || !header.u32(payload_size)
+            || !header.u32(expected_crc)) {
+        return CodecError::wrong_size;
+    }
+    if (format != kCheckpointFormatVersionV10) {
+        return CodecError::unsupported_format;
+    }
+    if (rules != kCheckpointRulesVersion) return CodecError::unsupported_rules;
+    if (parsed_revision == 0U
+            || static_cast<std::size_t>(payload_size) != size - kHeaderSize) {
+        return CodecError::bad_payload_length;
+    }
+    if (expected_crc != crc(bytes, payload_size)) return CodecError::bad_crc;
+    revision = parsed_revision;
+    return CodecError::none;
+}
+
+CodecError inspect_checkpoint_latest_envelope(
+    const std::uint8_t* const bytes, const std::size_t size,
+    std::uint64_t& revision) noexcept {
+    if (bytes != nullptr && size >= kMagicV10.size()
+            && std::equal(kMagicV10.begin(), kMagicV10.end(), bytes)) {
+        return inspect_checkpoint_v10_envelope(bytes, size, revision);
+    }
+    return inspect_checkpoint_v9_envelope(bytes, size, revision);
+}
+
 CodecError encode_checkpoint_v9_into(
     const checkpoint::SaveCheckpointSlot& source,
     std::uint8_t* bytes,
@@ -1206,12 +1252,13 @@ CodecError encode_checkpoint_v9_into(
     if (bytes == nullptr || capacity < kHeaderSize
             || capacity > kMaximumEncodedCheckpointBytes
             || source.persistence_revision == 0U
+            || source.room_progress.pending_room_experience != 0U
             || !checkpoint::valid_room_progress_checkpoint_structural(
                 source.room_progress, source.state)) {
         return CodecError::invalid_state;
     }
     std::fill(bytes, bytes + capacity, std::uint8_t{0U});
-    std::copy(kMagic.begin(), kMagic.end(), bytes);
+    std::copy(kMagicV9.begin(), kMagicV9.end(), bytes);
     Writer header{bytes, capacity, 8U};
     if (!header.u32(kCheckpointFormatVersionV9)
             || !header.u32(kCheckpointRulesVersion)
@@ -1252,6 +1299,63 @@ CodecError encode_checkpoint_v9_into(
     return CodecError::none;
 }
 
+CodecError encode_checkpoint_v10_into(
+    const checkpoint::SaveCheckpointSlot& source,
+    std::uint8_t* bytes,
+    std::size_t capacity,
+    std::size_t& written) noexcept {
+    written = 0U;
+    if (bytes == nullptr || capacity < kHeaderSize
+            || capacity > kMaximumEncodedCheckpointBytes
+            || source.persistence_revision == 0U
+            || !checkpoint::valid_room_progress_checkpoint_structural(
+                source.room_progress, source.state)) {
+        return CodecError::invalid_state;
+    }
+    std::fill(bytes, bytes + capacity, std::uint8_t{0U});
+    std::copy(kMagicV10.begin(), kMagicV10.end(), bytes);
+    Writer header{bytes, capacity, 8U};
+    if (!header.u32(kCheckpointFormatVersionV10)
+            || !header.u32(kCheckpointRulesVersion)
+            || !header.u64(source.persistence_revision)
+            || !header.u32(0U) || !header.u32(0U)) {
+        return CodecError::wrong_size;
+    }
+    Writer payload{bytes, capacity, kHeaderSize};
+    if (!payload.u32(0U)) return CodecError::wrong_size;
+    std::size_t durable_size{};
+    const CodecError durable_error = encode_checkpoint_v9_durable_into(
+        source.state,
+        payload.current(), capacity - payload.offset(), durable_size);
+    if (durable_error != CodecError::none) return durable_error;
+    if (durable_size > (std::numeric_limits<std::uint32_t>::max)()
+            || !payload.skip(durable_size)
+            || !write_room_progress(payload, source.room_progress)
+            || !payload.u8(static_cast<std::uint8_t>(
+                source.state.last_abyss_resolution.lifecycle))
+            || !payload.u8(kV9CanonicalSecondaryOrdinalMarker)
+            || !payload.u64(
+                source.room_progress.pending_room_experience)) {
+        return CodecError::wrong_size;
+    }
+    Writer durable_length{bytes, capacity, kHeaderSize};
+    if (!durable_length.u32(static_cast<std::uint32_t>(durable_size))) {
+        return CodecError::wrong_size;
+    }
+    const std::size_t payload_size = payload.offset() - kHeaderSize;
+    if (payload_size > (std::numeric_limits<std::uint32_t>::max)()
+            || payload.offset() > kMaximumEncodedCheckpointBytes) {
+        return CodecError::bad_payload_length;
+    }
+    Writer lengths{bytes, capacity, 24U};
+    if (!lengths.u32(static_cast<std::uint32_t>(payload_size))
+            || !lengths.u32(0U)) return CodecError::wrong_size;
+    Writer checksum{bytes, capacity, 28U};
+    if (!checksum.u32(crc(bytes, payload_size))) return CodecError::wrong_size;
+    written = payload.offset();
+    return CodecError::none;
+}
+
 CodecError decode_checkpoint_v9_into_scratch(
     const std::uint8_t* bytes,
     std::size_t size,
@@ -1259,7 +1363,7 @@ CodecError decode_checkpoint_v9_into_scratch(
     bool& migrated) noexcept {
     migrated = false;
     if (bytes == nullptr || size < kHeaderSize) return CodecError::wrong_size;
-    if (!std::equal(kMagic.begin(), kMagic.end(), bytes)) {
+    if (!std::equal(kMagicV9.begin(), kMagicV9.end(), bytes)) {
         DecodeResult legacy = decode_checkpoint(bytes, size);
         if (legacy.error != CodecError::none) return legacy.error;
         checkpoint::clear_save_checkpoint_slot(destination);
@@ -1368,6 +1472,92 @@ CodecError decode_checkpoint_v9_into_scratch(
     return CodecError::none;
 }
 
+CodecError decode_checkpoint_v10_into_scratch(
+    const std::uint8_t* bytes,
+    const std::size_t size,
+    checkpoint::SaveCheckpointSlot& destination,
+    bool& migrated) noexcept {
+    migrated = false;
+    if (bytes == nullptr || size < kHeaderSize) return CodecError::wrong_size;
+    if (!std::equal(kMagicV10.begin(), kMagicV10.end(), bytes)) {
+        bool older_migrated{};
+        const CodecError older = decode_checkpoint_v9_into_scratch(
+            bytes, size, destination, older_migrated);
+        if (older == CodecError::none) migrated = true;
+        return older;
+    }
+    if (size > kMaximumEncodedCheckpointBytes) {
+        return CodecError::bad_payload_length;
+    }
+    Reader header{bytes, size, 8U};
+    std::uint32_t format{};
+    std::uint32_t rules{};
+    std::uint64_t revision{};
+    std::uint32_t payload_size{};
+    std::uint32_t expected_crc{};
+    if (!header.u32(format) || !header.u32(rules) || !header.u64(revision)
+            || !header.u32(payload_size) || !header.u32(expected_crc)) {
+        return CodecError::wrong_size;
+    }
+    if (format != kCheckpointFormatVersionV10) {
+        return CodecError::unsupported_format;
+    }
+    if (rules != kCheckpointRulesVersion) return CodecError::unsupported_rules;
+    if (revision == 0U || payload_size > kMaximumEncodedCheckpointBytes
+            || static_cast<std::size_t>(payload_size) != size - kHeaderSize) {
+        return CodecError::bad_payload_length;
+    }
+    if (expected_crc != crc(bytes, payload_size)) return CodecError::bad_crc;
+
+    Reader payload{bytes, size, kHeaderSize};
+    std::uint32_t durable_size{};
+    if (!payload.u32(durable_size) || durable_size > payload_size
+            || durable_size > size - payload.offset()) {
+        return CodecError::bad_payload_length;
+    }
+    const DecodeResult durable = decode_checkpoint(
+        payload.current(), durable_size);
+    if (durable.error != CodecError::none) return durable.error;
+    checkpoint::clear_save_checkpoint_slot(destination);
+    try {
+        destination.state = durable.state;
+    } catch (...) {
+        return CodecError::allocation_failure;
+    }
+    destination.persistence_revision = revision;
+    if (!payload.skip(durable_size)
+            || !read_room_progress(payload, destination.room_progress)
+            || size - payload.offset()
+                != 2U + sizeof(std::uint64_t)) {
+        return CodecError::bad_payload_length;
+    }
+    std::uint8_t resolution_lifecycle{};
+    std::uint8_t secondary_marker{};
+    if (!payload.u8(resolution_lifecycle)
+            || !payload.u8(secondary_marker)
+            || !payload.u64(
+                destination.room_progress.pending_room_experience)
+            || payload.offset() != size) {
+        return CodecError::bad_payload_length;
+    }
+    if ((resolution_lifecycle
+                != static_cast<std::uint8_t>(abyss::AbyssLifecycle::none)
+            && resolution_lifecycle
+                != static_cast<std::uint8_t>(abyss::AbyssLifecycle::failed))
+            || secondary_marker != kV9CanonicalSecondaryOrdinalMarker) {
+        return CodecError::invalid_enum;
+    }
+    destination.state.last_abyss_resolution.lifecycle =
+        static_cast<abyss::AbyssLifecycle>(resolution_lifecycle);
+    if (!valid_resolution_lifecycle_extension(
+            destination.state.last_abyss_resolution)
+            || !checkpoint::valid_room_progress_checkpoint_structural(
+                destination.room_progress, destination.state)) {
+        return CodecError::invalid_state;
+    }
+    return CodecError::none;
+}
+
 namespace {
 
 void publish_room_combat_checkpoint(
@@ -1406,6 +1596,8 @@ void publish_room_progress_checkpoint(
     destination.exits_unlocked = source.exits_unlocked;
     destination.full_clear = source.full_clear;
     destination.reward_committed = source.reward_committed;
+    destination.pending_room_experience =
+        source.pending_room_experience;
     destination.defeat_bits = source.defeat_bits;
     destination.equipment_claim_bits = source.equipment_claim_bits;
     destination.secondary_claim_bits = source.secondary_claim_bits;
@@ -1454,6 +1646,39 @@ CodecError decode_checkpoint_v9_into(
     return CodecError::none;
 }
 
+CodecError decode_checkpoint_v10_into(
+    const std::uint8_t* bytes,
+    const std::size_t size,
+    checkpoint::SaveCheckpointSlot& destination,
+    bool& migrated) noexcept {
+    migrated = false;
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> scratch{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    if (scratch == nullptr) return CodecError::allocation_failure;
+    try {
+        scratch->state.item_ownership.items.reserve(
+            kMaximumCheckpointItemCount);
+    } catch (...) {
+        return CodecError::allocation_failure;
+    }
+    bool decoded_migrated{};
+    const CodecError decoded = decode_checkpoint_v10_into_scratch(
+        bytes, size, *scratch, decoded_migrated);
+    if (decoded != CodecError::none) return decoded;
+    try {
+        destination.state.item_ownership.items.reserve(
+            scratch->state.item_ownership.items.size());
+        destination.state = scratch->state;
+    } catch (...) {
+        return CodecError::allocation_failure;
+    }
+    destination.persistence_revision = scratch->persistence_revision;
+    publish_room_progress_checkpoint(
+        destination.room_progress, scratch->room_progress);
+    migrated = decoded_migrated;
+    return CodecError::none;
+}
+
 CodecError verify_checkpoint_v9_readback(
     const std::uint8_t* const bytes,
     const std::size_t size,
@@ -1463,8 +1688,9 @@ CodecError verify_checkpoint_v9_readback(
     if (bytes == nullptr || canonical_bytes == nullptr || size != canonical_size
             || size < kHeaderSize || size > kMaximumEncodedCheckpointBytes
             || !std::equal(bytes, bytes + size, canonical_bytes)
-            || !std::equal(kMagic.begin(), kMagic.end(), bytes)
+            || !std::equal(kMagicV9.begin(), kMagicV9.end(), bytes)
             || expected.persistence_revision == 0U
+            || expected.room_progress.pending_room_experience != 0U
               || !checkpoint::valid_room_progress_checkpoint_structural(
                   expected.room_progress, expected.state)) {
         return CodecError::invalid_state;
@@ -1544,6 +1770,114 @@ CodecError verify_checkpoint_v9_readback(
         return CodecError::bad_payload_length;
     }
     return CodecError::none;
+}
+
+CodecError verify_checkpoint_v10_readback(
+    const std::uint8_t* const bytes,
+    const std::size_t size,
+    const checkpoint::SaveCheckpointSlot& expected,
+    const std::uint8_t* const canonical_bytes,
+    const std::size_t canonical_size) noexcept {
+    if (bytes == nullptr || canonical_bytes == nullptr || size != canonical_size
+            || size < kHeaderSize || size > kMaximumEncodedCheckpointBytes
+            || !std::equal(bytes, bytes + size, canonical_bytes)
+            || !std::equal(kMagicV10.begin(), kMagicV10.end(), bytes)
+            || expected.persistence_revision == 0U
+            || !checkpoint::valid_room_progress_checkpoint_structural(
+                expected.room_progress, expected.state)) {
+        return CodecError::invalid_state;
+    }
+    Reader header{bytes, size, 8U};
+    std::uint32_t format{};
+    std::uint32_t rules{};
+    std::uint64_t revision{};
+    std::uint32_t payload_size{};
+    std::uint32_t expected_crc{};
+    if (!header.u32(format) || !header.u32(rules) || !header.u64(revision)
+            || !header.u32(payload_size) || !header.u32(expected_crc)
+            || format != kCheckpointFormatVersionV10
+            || rules != kCheckpointRulesVersion
+            || revision != expected.persistence_revision
+            || static_cast<std::size_t>(payload_size) != size - kHeaderSize
+            || expected_crc != crc(bytes, payload_size)) {
+        return CodecError::invalid_state;
+    }
+    Reader payload{bytes, size, kHeaderSize};
+    std::uint32_t durable_size{};
+    if (!payload.u32(durable_size) || durable_size < kCheckpointHeaderSize
+            || durable_size > size - payload.offset()) {
+        return CodecError::bad_payload_length;
+    }
+    const std::uint8_t* const durable = payload.current();
+    constexpr std::array<std::uint8_t, 8U> kV8Magic{{
+        'A', 'R', 'P', 'G', 'S', 'V', '8', '\0'}};
+    if (durable == nullptr
+            || !std::equal(kV8Magic.begin(), kV8Magic.end(), durable)) {
+        return CodecError::bad_magic;
+    }
+    Reader durable_header{durable, durable_size, 8U};
+    std::uint32_t durable_format{};
+    std::uint32_t durable_rules{};
+    std::uint64_t generation{};
+    std::uint32_t durable_payload_size{};
+    std::uint32_t durable_crc{};
+    if (!durable_header.u32(durable_format)
+            || !durable_header.u32(durable_rules)
+            || !durable_header.u64(generation)
+            || !durable_header.u32(durable_payload_size)
+            || !durable_header.u32(durable_crc)
+            || durable_format != kCheckpointFormatVersion
+            || durable_rules != kCheckpointRulesVersion
+            || generation != expected.state.commit_generation
+            || static_cast<std::size_t>(durable_payload_size)
+                != durable_size - kCheckpointHeaderSize) {
+        return CodecError::invalid_state;
+    }
+    const std::uint32_t inner_header_crc = crc32_update(0U, durable + 8U, 20U);
+    if (durable_crc != crc32_update(inner_header_crc,
+            durable + kCheckpointHeaderSize, durable_payload_size)) {
+        return CodecError::bad_crc;
+    }
+    if (verify_checkpoint_v9_durable_readback_fields(
+            durable, durable_size, expected.state) != CodecError::none) {
+        return CodecError::invalid_state;
+    }
+    if (!payload.skip(durable_size) || payload.offset() >= size) {
+        return CodecError::bad_payload_length;
+    }
+    ComparingReader room_fields{bytes, size, payload.offset()};
+    if (!write_room_progress(room_fields, expected.room_progress)) {
+        return CodecError::invalid_state;
+    }
+    const std::size_t extension_size = size - room_fields.offset();
+    if (extension_size != 2U + sizeof(std::uint64_t)) {
+        return CodecError::bad_payload_length;
+    }
+    ComparingReader extension{bytes, size, room_fields.offset()};
+    if (!extension.u8(static_cast<std::uint8_t>(
+            expected.state.last_abyss_resolution.lifecycle))
+            || !extension.u8(kV9CanonicalSecondaryOrdinalMarker)
+            || !extension.u64(
+                expected.room_progress.pending_room_experience)
+            || extension.offset() != size) {
+        return CodecError::invalid_state;
+    }
+    return CodecError::none;
+}
+
+CodecError verify_checkpoint_latest_readback(
+    const std::uint8_t* const bytes,
+    const std::size_t size,
+    const checkpoint::SaveCheckpointSlot& expected,
+    const std::uint8_t* const canonical_bytes,
+    const std::size_t canonical_size) noexcept {
+    if (bytes != nullptr && size >= kMagicV10.size()
+            && std::equal(kMagicV10.begin(), kMagicV10.end(), bytes)) {
+        return verify_checkpoint_v10_readback(bytes, size, expected,
+            canonical_bytes, canonical_size);
+    }
+    return verify_checkpoint_v9_readback(bytes, size, expected,
+        canonical_bytes, canonical_size);
 }
 
 }  // namespace arpg::persistence

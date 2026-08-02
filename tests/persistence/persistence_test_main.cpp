@@ -39,5 +39,5 @@ int main() {
         checkpoint_v9_unlock_suite(),
     };
 
-    return arpg::test::run_suites(suites, 115, "checkpoint v9 persistence");
+    return arpg::test::run_suites(suites, 117, "checkpoint persistence");
 }
