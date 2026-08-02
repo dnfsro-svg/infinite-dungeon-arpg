@@ -414,6 +414,24 @@ arpg::test::Failure atlas_region_draw_forwards_exact_destination() noexcept {
         &source, sizeof(Rectangle)) == 0);
     ARPG_REQUIRE(std::memcmp(&fake.drawn_quads[1U],
         &quad, sizeof(quad)) == 0);
+    const arpg::platform::MaterialScreenQuad subpixel_quad{
+        {0.0F, 0.0F}, {0.0F, 0.001F},
+        {0.001F, 0.001F}, {0.001F, 0.0F}};
+    ARPG_REQUIRE(pack.draw_frame_quad(
+        MaterialAtlasId::water_room_background, source, subpixel_quad));
+    const arpg::platform::MaterialScreenQuad zero_area_quad{
+        {0.0F, 0.0F}, {1.0F, 1.0F}, {2.0F, 2.0F}, {1.0F, 1.0F}};
+    ARPG_REQUIRE(!pack.draw_frame_quad(
+        MaterialAtlasId::water_room_background, source, zero_area_quad));
+    const arpg::platform::MaterialScreenQuad concave_quad{
+        {0.0F, 0.0F}, {1.0F, 5.0F}, {2.0F, 2.0F}, {4.0F, 1.0F}};
+    ARPG_REQUIRE(!pack.draw_frame_quad(
+        MaterialAtlasId::water_room_background, source, concave_quad));
+    const arpg::platform::MaterialScreenQuad bow_tie_quad{
+        {0.0F, 0.0F}, {0.0F, 1.0F}, {4.0F, 5.0F}, {1.0F, 4.0F}};
+    ARPG_REQUIRE(!pack.draw_frame_quad(
+        MaterialAtlasId::water_room_background, source, bow_tie_quad));
+    ARPG_REQUIRE(fake.draw_count == 3U);
     pack.unload();
     g_fake_material_textures = nullptr;
     return {};

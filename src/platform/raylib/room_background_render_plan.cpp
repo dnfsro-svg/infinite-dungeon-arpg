@@ -123,19 +123,13 @@ ProjectedRoomBackgroundWorldTile project_room_background_world_tile(
     const RenderProjection front_right = project_render_world(
         bounds.maximum.x, bounds.maximum.y, 0.0F,
         camera, viewport_width, viewport_height);
-    const auto finite_point = [](Vector2 point) noexcept {
-        return std::isfinite(point.x) && std::isfinite(point.y);
-    };
     result.destination = {
         {back_left.x, back_left.ground_y},
         {front_left.x, front_left.ground_y},
         {front_right.x, front_right.ground_y},
         {back_right.x, back_right.ground_y},
     };
-    if (!finite_point(result.destination.top_left)
-            || !finite_point(result.destination.bottom_left)
-            || !finite_point(result.destination.bottom_right)
-            || !finite_point(result.destination.top_right)
+    if (!valid_material_screen_quad_geometry(result.destination)
             || result.destination.top_right.x
                 <= result.destination.top_left.x
             || result.destination.bottom_right.x

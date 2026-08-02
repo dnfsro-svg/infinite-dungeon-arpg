@@ -959,9 +959,6 @@ bool MaterialPack::draw_frame_to(MaterialAtlasId atlas,
 
 bool MaterialPack::draw_frame_quad(MaterialAtlasId atlas,
     Rectangle source, MaterialScreenQuad destination, Color tint) const noexcept {
-    const auto finite_point = [](Vector2 point) noexcept {
-        return std::isfinite(point.x) && std::isfinite(point.y);
-    };
     if (!is_known_atlas(atlas) || !state_.available(atlas)
             || !valid_texture_api(texture_api_)
             || texture_api_.draw_material_quad == nullptr
@@ -969,10 +966,7 @@ bool MaterialPack::draw_frame_quad(MaterialAtlasId atlas,
             || !std::isfinite(source.width) || !std::isfinite(source.height)
             || source.x < 0.0F || source.y < 0.0F
             || source.width <= 0.0F || source.height <= 0.0F
-            || !finite_point(destination.top_left)
-            || !finite_point(destination.bottom_left)
-            || !finite_point(destination.bottom_right)
-            || !finite_point(destination.top_right)
+            || !valid_material_screen_quad_geometry(destination)
             || destination.top_right.x <= destination.top_left.x
             || destination.bottom_right.x <= destination.bottom_left.x
             || destination.bottom_left.y <= destination.top_left.y

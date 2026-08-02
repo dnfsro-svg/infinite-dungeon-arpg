@@ -2,8 +2,11 @@
 
 #include <raylib.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstddef>
+#include <limits>
 
 namespace arpg::platform {
 
@@ -13,6 +16,50 @@ struct MaterialScreenQuad final {
     Vector2 bottom_right{};
     Vector2 top_right{};
 };
+
+[[nodiscard]] inline bool valid_material_screen_quad_geometry(
+    MaterialScreenQuad quad) noexcept {
+    const Vector2 points[] = {
+        quad.top_left, quad.bottom_left, quad.bottom_right, quad.top_right};
+    double maximum_edge_component = 0.0;
+    for (std::size_t index{}; index < 4U; ++index) {
+        const Vector2 point = points[index];
+        const Vector2 next = points[(index + 1U) % 4U];
+        if (!std::isfinite(point.x) || !std::isfinite(point.y)) return false;
+        maximum_edge_component = std::max(maximum_edge_component,
+            std::abs(static_cast<double>(next.x)
+                - static_cast<double>(point.x)));
+        maximum_edge_component = std::max(maximum_edge_component,
+            std::abs(static_cast<double>(next.y)
+                - static_cast<double>(point.y)));
+    }
+    const double tolerance = static_cast<double>(
+        std::numeric_limits<float>::epsilon())
+        * maximum_edge_component * maximum_edge_component * 16.0;
+    const auto orientation = [](Vector2 first, Vector2 second,
+                                 Vector2 third) noexcept {
+        const double first_x = static_cast<double>(second.x)
+            - static_cast<double>(first.x);
+        const double first_y = static_cast<double>(second.y)
+            - static_cast<double>(first.y);
+        const double second_x = static_cast<double>(third.x)
+            - static_cast<double>(first.x);
+        const double second_y = static_cast<double>(third.y)
+            - static_cast<double>(first.y);
+        return first_x * second_y - first_y * second_x;
+    };
+    const double first = orientation(points[0U], points[1U], points[2U]);
+    if (std::abs(first) <= tolerance) return false;
+    const bool positive = first > 0.0;
+    for (std::size_t index = 1U; index < 4U; ++index) {
+        const double cross = orientation(points[index],
+            points[(index + 1U) % 4U], points[(index + 2U) % 4U]);
+        if (std::abs(cross) <= tolerance || (cross > 0.0) != positive) {
+            return false;
+        }
+    }
+    return true;
+}
 
 enum class MaterialAtlasId : std::uint8_t {
     environment,
