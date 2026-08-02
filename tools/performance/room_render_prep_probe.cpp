@@ -206,6 +206,33 @@ template <typename PropLayout>
     return hash;
 }
 
+template <typename PropLayout>
+[[nodiscard]] std::uint64_t variant_layout_signature(
+    const PropLayout& props,
+    const arpg::platform::CombatRenderPlan& combat) noexcept {
+    std::uint64_t hash = actual_prop_signature(props);
+    const std::size_t equipment_limit = (std::min)(
+        combat.ground_loot.count, combat.ground_loot.labels.size());
+    for (std::size_t index{}; index < equipment_limit; ++index) {
+        const auto& label = combat.ground_loot.labels[index];
+        hash = mix_float(hash, label.anchor_x);
+        hash = mix_float(hash, label.anchor_y);
+        hash = mix_rect(hash, label.rect);
+        hash = mix_color(hash, label.text_color);
+        hash = mix_color(hash, label.border_color);
+    }
+    const std::size_t secondary_limit = (std::min)(
+        combat.material_loot.count, combat.material_loot.labels.size());
+    for (std::size_t index{}; index < secondary_limit; ++index) {
+        const auto& label = combat.material_loot.labels[index];
+        hash = mix_float(hash, label.anchor_x);
+        hash = mix_float(hash, label.anchor_y);
+        hash = mix_rect(hash, label.rect);
+        hash = mix_color(hash, label.text_color);
+    }
+    return hash;
+}
+
 [[nodiscard]] std::uint64_t stable_output_signature(
     const arpg::combat::CombatSnapshot& visible_combat,
     const arpg::platform::CombatRenderPlan& combat,
@@ -246,11 +273,6 @@ template <typename PropLayout>
         hash = mix(hash, static_cast<std::uint64_t>(label.item_sprite));
         hash = mix(hash, static_cast<std::uint64_t>(label.rarity_sprite));
         hash = mix(hash, label.abyss ? 1U : 0U);
-        hash = mix_float(hash, label.anchor_x);
-        hash = mix_float(hash, label.anchor_y);
-        hash = mix_rect(hash, label.rect);
-        hash = mix_color(hash, label.text_color);
-        hash = mix_color(hash, label.border_color);
         hash = mix_bytes(hash, label.text);
     }
 
@@ -262,10 +284,6 @@ template <typename PropLayout>
         hash = mix(hash, label.ordinal);
         hash = mix(hash, static_cast<std::uint64_t>(label.sprite));
         hash = mix(hash, label.emphasized ? 1U : 0U);
-        hash = mix_float(hash, label.anchor_x);
-        hash = mix_float(hash, label.anchor_y);
-        hash = mix_rect(hash, label.rect);
-        hash = mix_color(hash, label.text_color);
         hash = mix_bytes(hash, label.text);
     }
     return hash;
@@ -649,7 +667,7 @@ make_maximum_production_session() noexcept {
             arpg::platform::environment_prop_definition(props.props[index].sprite);
         result.valid = result.valid && definition != nullptr;
         if (definition == nullptr) continue;
-        const Rectangle projected =
+        const auto projected =
             arpg::platform::project_environment_prop_bounds(
                 *definition, props.props[index],
                 kViewportWidth, kViewportHeight);
@@ -696,7 +714,7 @@ make_maximum_production_session() noexcept {
     result.visible_density_signature = density_signature(result);
     result.visible_signature = stable_output_signature(
         visible_combat, combat, props.count);
-    result.variant_output_signature = actual_prop_signature(props);
+    result.variant_output_signature = variant_layout_signature(props, combat);
     result.checksum = mix(result.checksum, result.visible_signature);
     result.checksum = mix(result.checksum, result.variant_output_signature);
     result.checksum = mix(result.checksum, result.production_signature);
