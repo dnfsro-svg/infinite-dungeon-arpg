@@ -1016,7 +1016,6 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 audio.shutdown();
                 renderer.shutdown_resources();
                 pause_menu_renderer.shutdown();
-                window.close();
                 return HostExitCode::save_initialization_failed;
             }
             if (config.stage12_material_showcase) {
