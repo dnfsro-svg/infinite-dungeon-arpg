@@ -87,7 +87,7 @@ function Invoke-ProbeRun {
     Invoke-Native -FilePath $Executable -WorkingDirectory (Split-Path $Executable) `
         -Arguments @('--output', $RunDirectory, '--label', $Label,
             '--revision', $Revision, '--frames', "$Frames",
-            '--warmup', "$WarmupFrames", '--cpu', "$LogicalCpu")
+            '--warmup', "$WarmupFrames", '--cpu', "$LogicalCpu") | Out-Host
     $summaryPath = Join-Path $RunDirectory 'summary.json'
     $rawPath = Join-Path $RunDirectory 'samples.csv'
     if (-not (Test-Path -LiteralPath $summaryPath -PathType Leaf) -or
