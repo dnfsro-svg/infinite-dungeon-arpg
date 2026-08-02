@@ -779,6 +779,25 @@ arpg::test::Failure capacity_proof_breaks_publish_hard_fault_and_empty_output()
     const auto count_failure = require_hard_fault(*invalid_count);
     if (count_failure.expression != nullptr) return count_failure;
 
+    auto in_bounds_gap = std::make_unique<RoomEnvironmentBlueprint>();
+    std::memcpy(in_bounds_gap.get(), base.get(), sizeof(*base));
+    in_bounds_gap->cell_offsets[0U] = 1U;
+    in_bounds_gap->cell_counts[0U] = 2U;
+    const auto gap_failure = require_hard_fault(*in_bounds_gap);
+    if (gap_failure.expression != nullptr) return gap_failure;
+
+    auto wrong_home_cell = std::make_unique<RoomEnvironmentBlueprint>();
+    std::memcpy(wrong_home_cell.get(), base.get(), sizeof(*base));
+    wrong_home_cell->records[1U].home_cell = 1U;
+    const auto home_cell_failure = require_hard_fault(*wrong_home_cell);
+    if (home_cell_failure.expression != nullptr) return home_cell_failure;
+
+    auto wrong_ordinal = std::make_unique<RoomEnvironmentBlueprint>();
+    std::memcpy(wrong_ordinal.get(), base.get(), sizeof(*base));
+    wrong_ordinal->records[1U].ordinal = 9U;
+    const auto ordinal_failure = require_hard_fault(*wrong_ordinal);
+    if (ordinal_failure.expression != nullptr) return ordinal_failure;
+
     arpg::dungeon::VisibleEnvironmentSet span_output{};
     const Aabb over_span{{arpg::combat::room_bounds::min_x,
                              arpg::combat::room_bounds::min_y, -1.0F},

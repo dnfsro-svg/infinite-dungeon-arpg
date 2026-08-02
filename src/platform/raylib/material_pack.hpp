@@ -28,6 +28,9 @@ struct MaterialTextureApi final {
     void (*draw_material)(Texture2D color, Texture2D material,
         Rectangle source, Rectangle destination, Vector2 origin,
         float rotation, Color tint, MaterialCompositeParameters parameters){};
+    void (*draw_material_quad)(Texture2D color, Texture2D material,
+        Rectangle source, MaterialScreenQuad destination, Color tint,
+        MaterialCompositeParameters parameters){};
 };
 
 class MaterialPackState final {
@@ -93,6 +96,9 @@ public:
     [[nodiscard]] bool draw_frame_to(
         MaterialAtlasId atlas, Rectangle source, Rectangle destination,
         Color tint = WHITE) const noexcept;
+    [[nodiscard]] bool draw_frame_quad(
+        MaterialAtlasId atlas, Rectangle source,
+        MaterialScreenQuad destination, Color tint = WHITE) const noexcept;
 
 private:
     MaterialTextureApi texture_api_{};

@@ -148,8 +148,9 @@ bool append_environment_prop(EnvironmentPropLayout& layout,
 EnvironmentPropDrawStyle environment_prop_draw_style(
     const EnvironmentPropPlacement& placement) noexcept {
     EnvironmentPropDrawStyle style{};
-    style.rotation_degrees = static_cast<float>(
-        placement.quarter_turns % 4U) * 90.0F;
+    // quarter_turns is a sealed world-space orientation used by placement and
+    // collision. Environment art is authored as an upright 2.5D billboard, so
+    // rotating the screen quad would lay torches, banners, and obelisks flat.
     if (placement.visual_state
             == EnvironmentPropVisualState::broken_obstacle) {
         style.tint = Color{113U, 97U, 83U, 211U};

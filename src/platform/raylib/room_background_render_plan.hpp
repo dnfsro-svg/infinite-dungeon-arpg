@@ -42,7 +42,7 @@ struct RoomBackgroundWorldTilePlan final {
 };
 
 struct ProjectedRoomBackgroundWorldTile final {
-    Rectangle destination{};
+    MaterialScreenQuad destination{};
     bool valid{};
 };
 

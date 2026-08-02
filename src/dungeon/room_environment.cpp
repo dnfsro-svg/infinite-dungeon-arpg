@@ -675,8 +675,26 @@ VisibleEnvironmentQueryResult query_visible_environment_bounded(
                 + column;
             const std::size_t begin = blueprint.cell_offsets[cell];
             const std::size_t count = blueprint.cell_counts[cell];
+            if (count > 3U || begin > blueprint.record_count
+                    || count > blueprint.record_count - begin) {
+                output = {};
+                return {VisibleEnvironmentQueryStatus::hard_fault,
+                    DungeonFault::environment_capacity};
+            }
             const std::size_t end = begin + count;
-            if (count > 3U || begin > end || end > blueprint.record_count
+            bool broken_previous_span = begin != 0U;
+            if (cell != 0U) {
+                const std::size_t previous_begin =
+                    blueprint.cell_offsets[cell - 1U];
+                const std::size_t previous_count =
+                    blueprint.cell_counts[cell - 1U];
+                broken_previous_span = previous_count > 3U
+                    || previous_begin > blueprint.record_count
+                    || previous_count
+                        > blueprint.record_count - previous_begin
+                    || previous_begin + previous_count != begin;
+            }
+            if (broken_previous_span
                     || blueprint.cell_offsets[cell + 1U] != end
                     || output.candidates_examined + count
                         > kEnvironmentQueryCandidateCapacity) {
@@ -687,11 +705,12 @@ VisibleEnvironmentQueryResult query_visible_environment_bounded(
             for (std::size_t index = begin; index < end; ++index) {
                 const RoomEnvironmentRecord& record = blueprint.records[index];
                 ++output.candidates_examined;
-                if (record.home_cell != cell
-                        || !environment_record_visible(
-                            world_bounds, record)) {
-                    continue;
+                if (record.home_cell != cell || record.ordinal != index) {
+                    output = {};
+                    return {VisibleEnvironmentQueryStatus::hard_fault,
+                        DungeonFault::environment_capacity};
                 }
+                if (!environment_record_visible(world_bounds, record)) continue;
                 if (output.count >= output_capacity) {
                     output = {};
                     return {VisibleEnvironmentQueryStatus::hard_fault,

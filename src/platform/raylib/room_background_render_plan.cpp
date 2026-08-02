@@ -123,19 +123,30 @@ ProjectedRoomBackgroundWorldTile project_room_background_world_tile(
     const RenderProjection front_right = project_render_world(
         bounds.maximum.x, bounds.maximum.y, 0.0F,
         camera, viewport_width, viewport_height);
-    const float left = (std::min)({back_left.x, back_right.x,
-        front_left.x, front_right.x});
-    const float right = (std::max)({back_left.x, back_right.x,
-        front_left.x, front_right.x});
-    const float top = (std::min)(back_left.ground_y, front_left.ground_y);
-    const float tile_height = std::fabs(
-        front_left.ground_y - back_left.ground_y);
-    if (!std::isfinite(left) || !std::isfinite(right)
-            || !std::isfinite(top) || !std::isfinite(tile_height)
-            || right <= left || tile_height <= 0.0F) {
+    const auto finite_point = [](Vector2 point) noexcept {
+        return std::isfinite(point.x) && std::isfinite(point.y);
+    };
+    result.destination = {
+        {back_left.x, back_left.ground_y},
+        {front_left.x, front_left.ground_y},
+        {front_right.x, front_right.ground_y},
+        {back_right.x, back_right.ground_y},
+    };
+    if (!finite_point(result.destination.top_left)
+            || !finite_point(result.destination.bottom_left)
+            || !finite_point(result.destination.bottom_right)
+            || !finite_point(result.destination.top_right)
+            || result.destination.top_right.x
+                <= result.destination.top_left.x
+            || result.destination.bottom_right.x
+                <= result.destination.bottom_left.x
+            || result.destination.bottom_left.y
+                <= result.destination.top_left.y
+            || result.destination.bottom_right.y
+                <= result.destination.top_right.y) {
+        result.destination = {};
         return result;
     }
-    result.destination = {left, top, right - left, tile_height};
     result.valid = true;
     return result;
 }

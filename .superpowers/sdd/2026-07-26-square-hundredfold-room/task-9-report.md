@@ -46,3 +46,13 @@ Task 9 已实现确定性的世界空间房间渲染：背景按相机可见范�
 - 构建与测试始终串行 `-j1`；一次 detached 基线编译的单个 `cl.exe` 私有内存达到约 `12.9 GB`，已立即终止，系统可用内存从 `0.56 GB` 恢复到约 `5.7 GB`，未再次运行该高成本基线。
 - 本任务未修改玩法规则、掉落 bucket 容量模型、V9 wire 格式或 main 工作树的用户未提交内容。
 - 自动测试证明数据与渲染计划契约；最终全屏画面与操作手感仍需 Windows 游戏窗口验收。
+
+## 独立审查修复
+
+首轮独立审查报告 `P0=0 / P1=3 / P2=0`，三项均已按 RED/GREEN 闭环：
+
+- visible query 现在校验当前 span 与前一 span 连续、首 offset、record home cell 与 ordinal；任何损坏都发布 canonical empty `environment_capacity` hard fault，不再静默漏记录。
+- 背景块不再把透视四角包成相互重叠的轴对齐矩形；相邻块共享同一组投影顶点，通过 `MaterialScreenQuad` 进入原材质 shader。
+- `quarter_turns` 保持为密封的世界布局/碰撞朝向；直立 2.5D billboard 不再执行屏幕平面 90/180/270 度旋转。
+
+修复前定向测试稳定复现 `19` 项中 `1` 失败、`57` 项中 `2` 失败；修复后为 dungeon `19/19`、platform `57/57`。

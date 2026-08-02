@@ -383,7 +383,7 @@ arpg::test::Failure environment_renderer_uses_independent_native_paths() noexcep
         != std::string::npos);
     ARPG_REQUIRE(draw_environment_block.find(
         "project_room_background_world_tile") != std::string::npos);
-    ARPG_REQUIRE(draw_environment_block.find("draw_frame_to(")
+    ARPG_REQUIRE(draw_environment_block.find("draw_frame_quad(")
         != std::string::npos);
     ARPG_REQUIRE(draw_environment_block.find("plan.source")
         == std::string::npos);
@@ -681,8 +681,13 @@ arpg::test::Failure obstacle_layout_preserves_world_aabb_and_broken_identity()
         == arpg::platform::EnvironmentPropVisualState::intact_obstacle);
     ARPG_REQUIRE(intact.props[1U].visual_state
         == arpg::platform::EnvironmentPropVisualState::intact_obstacle);
-    ARPG_REQUIRE(arpg::platform::environment_prop_draw_style(
-        intact.props[0U]).rotation_degrees == 90.0F);
+    for (std::uint8_t quarter_turns = 0U; quarter_turns < 4U;
+            ++quarter_turns) {
+        auto billboard = intact.props[0U];
+        billboard.quarter_turns = quarter_turns;
+        ARPG_REQUIRE(arpg::platform::environment_prop_draw_style(
+            billboard).rotation_degrees == 0.0F);
+    }
 
     world.environment_obstacles[1U].hp = 0U;
     world.environment_obstacles[1U].broken_tick = 91U;
@@ -705,7 +710,7 @@ arpg::test::Failure obstacle_layout_preserves_world_aabb_and_broken_identity()
         == arpg::platform::EnvironmentPropVisualState::broken_obstacle);
     const auto broken_style = arpg::platform::environment_prop_draw_style(
         broken.props[1U]);
-    ARPG_REQUIRE(broken_style.rotation_degrees == 270.0F);
+    ARPG_REQUIRE(broken_style.rotation_degrees == 0.0F);
     ARPG_REQUIRE(broken_style.draw_break_marker);
     ARPG_REQUIRE(broken_style.tint.r != 255U
         || broken_style.tint.g != 255U
@@ -942,30 +947,55 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
         != std::string::npos);
     ARPG_REQUIRE(occurrence_count(platform_cmake, "/STACK:2097152") == 1U);
 
+    const std::size_t material_composite = material_pack.find(
+        "void begin_material_composite(");
+    ARPG_REQUIRE(material_composite != std::string::npos);
+    const std::string material_composite_block = braced_block_after(
+        material_pack, material_composite);
+    const std::size_t begin_shader = material_composite_block.find(
+        "BeginShaderMode(");
+    const std::size_t set_texture = material_composite_block.find(
+        "SetShaderValueTexture(");
+    const std::size_t set_value_1 = material_composite_block.find(
+        "SetShaderValue(", set_texture);
+    const std::size_t set_value_2 = material_composite_block.find(
+        "SetShaderValue(", set_value_1 + 1U);
+    const std::size_t set_value_3 = material_composite_block.find(
+        "SetShaderValue(", set_value_2 + 1U);
+    ARPG_REQUIRE(begin_shader < set_texture);
+    ARPG_REQUIRE(set_texture < set_value_1);
+    ARPG_REQUIRE(set_value_1 < set_value_2);
+    ARPG_REQUIRE(set_value_2 < set_value_3);
+
     const std::size_t material_draw = material_pack.find(
         "void draw_material(");
     ARPG_REQUIRE(material_draw != std::string::npos);
     const std::string material_draw_block = braced_block_after(
         material_pack, material_draw);
-    const std::size_t begin_shader = material_draw_block.find(
-        "BeginShaderMode(");
-    const std::size_t set_texture = material_draw_block.find(
-        "SetShaderValueTexture(");
-    const std::size_t set_value_1 = material_draw_block.find(
-        "SetShaderValue(", set_texture);
-    const std::size_t set_value_2 = material_draw_block.find(
-        "SetShaderValue(", set_value_1 + 1U);
-    const std::size_t set_value_3 = material_draw_block.find(
-        "SetShaderValue(", set_value_2 + 1U);
+    const std::size_t begin_composite = material_draw_block.find(
+        "begin_material_composite(");
     const std::size_t draw_texture = material_draw_block.find(
         "DrawTexturePro(");
     const std::size_t end_shader = material_draw_block.find("EndShaderMode(");
-    ARPG_REQUIRE(begin_shader < set_texture);
-    ARPG_REQUIRE(set_texture < set_value_1);
-    ARPG_REQUIRE(set_value_1 < set_value_2);
-    ARPG_REQUIRE(set_value_2 < set_value_3);
-    ARPG_REQUIRE(set_value_3 < draw_texture);
+    ARPG_REQUIRE(begin_composite < draw_texture);
     ARPG_REQUIRE(draw_texture < end_shader);
+
+    const std::size_t material_quad = material_pack.find(
+        "void draw_material_quad(");
+    ARPG_REQUIRE(material_quad != std::string::npos);
+    const std::string material_quad_block = braced_block_after(
+        material_pack, material_quad);
+    const std::size_t quad_begin_composite = material_quad_block.find(
+        "begin_material_composite(");
+    const std::size_t quad_texture = material_quad_block.find("rlSetTexture(");
+    const std::size_t quad_begin = material_quad_block.find("rlBegin(");
+    const std::size_t quad_end = material_quad_block.find("rlEnd(");
+    const std::size_t quad_end_shader = material_quad_block.find(
+        "EndShaderMode(");
+    ARPG_REQUIRE(quad_begin_composite < quad_texture);
+    ARPG_REQUIRE(quad_texture < quad_begin);
+    ARPG_REQUIRE(quad_begin < quad_end);
+    ARPG_REQUIRE(quad_end < quad_end_shader);
 
     ARPG_REQUIRE(host_header.find(
         "bool stage12_material_background_only{};") != std::string::npos);

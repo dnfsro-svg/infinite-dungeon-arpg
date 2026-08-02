@@ -7,6 +7,13 @@
 
 namespace arpg::platform {
 
+struct MaterialScreenQuad final {
+    Vector2 top_left{};
+    Vector2 bottom_left{};
+    Vector2 bottom_right{};
+    Vector2 top_right{};
+};
+
 enum class MaterialAtlasId : std::uint8_t {
     environment,
     actors,

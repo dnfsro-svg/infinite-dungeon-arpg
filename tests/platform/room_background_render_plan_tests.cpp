@@ -270,8 +270,34 @@ arpg::test::Failure world_tile_projection_uses_the_shared_camera_geometry()
     const auto projected = arpg::platform::project_room_background_world_tile(
         plan.tiles[0U], camera, 1920.0F, 1080.0F);
     ARPG_REQUIRE(projected.valid);
-    ARPG_REQUIRE(projected.destination.width > 0.0F);
-    ARPG_REQUIRE(projected.destination.height > 0.0F);
+    ARPG_REQUIRE(projected.destination.top_right.x
+        > projected.destination.top_left.x);
+    ARPG_REQUIRE(projected.destination.bottom_right.x
+        > projected.destination.bottom_left.x);
+    ARPG_REQUIRE(projected.destination.bottom_left.y
+        > projected.destination.top_left.y);
+
+    bool compared_adjacent_tiles = false;
+    for (std::size_t index = 1U; index < plan.count; ++index) {
+        if (plan.tiles[index].row != plan.tiles[index - 1U].row) continue;
+        compared_adjacent_tiles = true;
+        const auto left = arpg::platform::project_room_background_world_tile(
+            plan.tiles[index - 1U], camera, 1920.0F, 1080.0F);
+        const auto right = arpg::platform::project_room_background_world_tile(
+            plan.tiles[index], camera, 1920.0F, 1080.0F);
+        ARPG_REQUIRE(left.valid && right.valid);
+        ARPG_REQUIRE(plan.tiles[index].column
+            == plan.tiles[index - 1U].column + 1U);
+        ARPG_REQUIRE(arpg::test::near(left.destination.top_right.x,
+            right.destination.top_left.x));
+        ARPG_REQUIRE(arpg::test::near(left.destination.top_right.y,
+            right.destination.top_left.y));
+        ARPG_REQUIRE(arpg::test::near(left.destination.bottom_right.x,
+            right.destination.bottom_left.x));
+        ARPG_REQUIRE(arpg::test::near(left.destination.bottom_right.y,
+            right.destination.bottom_left.y));
+    }
+    ARPG_REQUIRE(compared_adjacent_tiles);
 
     const auto& bounds = plan.tiles[0U].world_bounds;
     const auto back_left = arpg::platform::project_render_world(
@@ -286,17 +312,22 @@ arpg::test::Failure world_tile_projection_uses_the_shared_camera_geometry()
     const auto front_right = arpg::platform::project_render_world(
         bounds.maximum.x, bounds.maximum.y, 0.0F,
         camera, 1920.0F, 1080.0F);
-    const float expected_left = (std::min)({back_left.x, back_right.x,
-        front_left.x, front_right.x});
-    const float expected_right = (std::max)({back_left.x, back_right.x,
-        front_left.x, front_right.x});
-    ARPG_REQUIRE(arpg::test::near(projected.destination.x, expected_left));
-    ARPG_REQUIRE(arpg::test::near(projected.destination.width,
-        expected_right - expected_left));
-    ARPG_REQUIRE(arpg::test::near(projected.destination.y,
-        (std::min)(back_left.ground_y, front_left.ground_y)));
-    ARPG_REQUIRE(arpg::test::near(projected.destination.height,
-        std::fabs(front_left.ground_y - back_left.ground_y)));
+    ARPG_REQUIRE(arpg::test::near(
+        projected.destination.top_left.x, back_left.x));
+    ARPG_REQUIRE(arpg::test::near(
+        projected.destination.top_left.y, back_left.ground_y));
+    ARPG_REQUIRE(arpg::test::near(
+        projected.destination.top_right.x, back_right.x));
+    ARPG_REQUIRE(arpg::test::near(
+        projected.destination.top_right.y, back_right.ground_y));
+    ARPG_REQUIRE(arpg::test::near(
+        projected.destination.bottom_left.x, front_left.x));
+    ARPG_REQUIRE(arpg::test::near(
+        projected.destination.bottom_left.y, front_left.ground_y));
+    ARPG_REQUIRE(arpg::test::near(
+        projected.destination.bottom_right.x, front_right.x));
+    ARPG_REQUIRE(arpg::test::near(
+        projected.destination.bottom_right.y, front_right.ground_y));
 
     arpg::platform::CombatCameraView moved = camera;
     moved.center.x += 16.0F;
@@ -304,7 +335,8 @@ arpg::test::Failure world_tile_projection_uses_the_shared_camera_geometry()
         arpg::platform::project_room_background_world_tile(
             plan.tiles[0U], moved, 1920.0F, 1080.0F);
     ARPG_REQUIRE(moved_projection.valid);
-    ARPG_REQUIRE(moved_projection.destination.x != projected.destination.x);
+    ARPG_REQUIRE(moved_projection.destination.top_left.x
+        != projected.destination.top_left.x);
     ARPG_REQUIRE(same_tile(plan.tiles[0U],
         plan.tiles[0U].row, plan.tiles[0U].column));
     return {};

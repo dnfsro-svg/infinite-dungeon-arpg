@@ -85,7 +85,7 @@ bool draw_environment_room(const MaterialPack& material_pack,
         if (!projected_tiles[index].valid) return false;
     }
     for (std::size_t index{}; index < plan.count; ++index) {
-        if (!material_pack.draw_frame_to(plan.atlas,
+        if (!material_pack.draw_frame_quad(plan.atlas,
                 plan.tiles[index].source,
                 projected_tiles[index].destination)) return false;
     }

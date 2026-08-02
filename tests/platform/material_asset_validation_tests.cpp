@@ -47,6 +47,8 @@ struct FakeMaterialTextures final {
     std::array<unsigned int, kDrawCapacity> drawn_material_ids{};
     std::array<Rectangle, kDrawCapacity> drawn_sources{};
     std::array<Rectangle, kDrawCapacity> drawn_destinations{};
+    std::array<arpg::platform::MaterialScreenQuad,
+        kDrawCapacity> drawn_quads{};
     std::array<float, kDrawCapacity> drawn_rotations{};
     std::array<Color, kDrawCapacity> drawn_tints{};
     std::array<MaterialCompositeParameters, kDrawCapacity> composites{};
@@ -138,10 +140,25 @@ void fake_draw_material(Texture2D color, Texture2D material,
     g_fake_material_textures->composites[index] = parameters;
 }
 
+void fake_draw_material_quad(Texture2D color, Texture2D material,
+    Rectangle source, arpg::platform::MaterialScreenQuad destination,
+    Color tint, MaterialCompositeParameters parameters) noexcept {
+    if (g_fake_material_textures == nullptr
+        || g_fake_material_textures->draw_count
+            >= g_fake_material_textures->drawn_color_ids.size()) return;
+    const std::size_t index = g_fake_material_textures->draw_count++;
+    g_fake_material_textures->drawn_color_ids[index] = color.id;
+    g_fake_material_textures->drawn_material_ids[index] = material.id;
+    g_fake_material_textures->drawn_sources[index] = source;
+    g_fake_material_textures->drawn_quads[index] = destination;
+    g_fake_material_textures->drawn_tints[index] = tint;
+    g_fake_material_textures->composites[index] = parameters;
+}
+
 arpg::platform::MaterialTextureApi fake_material_texture_api() noexcept {
     return {&fake_load_texture, &fake_texture_valid, &fake_unload_texture,
         &fake_initialize_material_pipeline, &fake_shutdown_material_pipeline,
-        &fake_draw_material};
+        &fake_draw_material, &fake_draw_material_quad};
 }
 
 std::size_t atlas_count_for_ecology(MaterialEcology ecology) noexcept {
@@ -387,6 +404,16 @@ arpg::test::Failure atlas_region_draw_forwards_exact_destination() noexcept {
         &source, sizeof(Rectangle)) == 0);
     ARPG_REQUIRE(std::memcmp(&fake.drawn_destinations[0U],
         &destination, sizeof(Rectangle)) == 0);
+    const arpg::platform::MaterialScreenQuad quad{
+        {-25.0F, 31.0F}, {-40.0F, 391.0F},
+        {640.0F, 391.0F}, {615.0F, 31.0F}};
+    ARPG_REQUIRE(pack.draw_frame_quad(
+        MaterialAtlasId::water_room_background, source, quad));
+    ARPG_REQUIRE(fake.draw_count == 2U);
+    ARPG_REQUIRE(std::memcmp(&fake.drawn_sources[1U],
+        &source, sizeof(Rectangle)) == 0);
+    ARPG_REQUIRE(std::memcmp(&fake.drawn_quads[1U],
+        &quad, sizeof(quad)) == 0);
     pack.unload();
     g_fake_material_textures = nullptr;
     return {};

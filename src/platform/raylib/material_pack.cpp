@@ -3,6 +3,7 @@
 #include "material_asset_validation.hpp"
 
 #include <raylib.h>
+#include <rlgl.h>
 
 #include <algorithm>
 #include <array>
@@ -260,10 +261,8 @@ void shutdown_material_pipeline() noexcept {
     g_material_shader = {};
 }
 
-void draw_material(Texture2D color, Texture2D material, Rectangle source,
-    Rectangle destination, Vector2 origin, float rotation, Color tint,
+void begin_material_composite(Texture2D material,
     MaterialCompositeParameters parameters) noexcept {
-    if (!g_material_shader.ready) return;
     const float channel_strengths[3]{parameters.roughness_strength,
         parameters.emissive_strength, parameters.metalness_strength};
     const float channel_map[3]{
@@ -286,14 +285,50 @@ void draw_material(Texture2D color, Texture2D material, Rectangle source,
     SetShaderValue(g_material_shader.shader,
         g_material_shader.emissive_tint_location, emissive_tint,
         SHADER_UNIFORM_VEC3);
+}
+
+void draw_material(Texture2D color, Texture2D material, Rectangle source,
+    Rectangle destination, Vector2 origin, float rotation, Color tint,
+    MaterialCompositeParameters parameters) noexcept {
+    if (!g_material_shader.ready) return;
+    begin_material_composite(material, parameters);
     DrawTexturePro(color, source, destination, origin, rotation, tint);
+    EndShaderMode();
+}
+
+void draw_material_quad(Texture2D color, Texture2D material, Rectangle source,
+    MaterialScreenQuad destination, Color tint,
+    MaterialCompositeParameters parameters) noexcept {
+    if (!g_material_shader.ready || color.id == 0U
+            || color.width <= 0 || color.height <= 0) return;
+    const float texture_width = static_cast<float>(color.width);
+    const float texture_height = static_cast<float>(color.height);
+    const float left = source.x / texture_width;
+    const float right = (source.x + source.width) / texture_width;
+    const float top = source.y / texture_height;
+    const float bottom = (source.y + source.height) / texture_height;
+    begin_material_composite(material, parameters);
+    rlSetTexture(color.id);
+    rlBegin(RL_QUADS);
+    rlColor4ub(tint.r, tint.g, tint.b, tint.a);
+    rlNormal3f(0.0F, 0.0F, 1.0F);
+    rlTexCoord2f(left, top);
+    rlVertex2f(destination.top_left.x, destination.top_left.y);
+    rlTexCoord2f(left, bottom);
+    rlVertex2f(destination.bottom_left.x, destination.bottom_left.y);
+    rlTexCoord2f(right, bottom);
+    rlVertex2f(destination.bottom_right.x, destination.bottom_right.y);
+    rlTexCoord2f(right, top);
+    rlVertex2f(destination.top_right.x, destination.top_right.y);
+    rlEnd();
+    rlSetTexture(0U);
     EndShaderMode();
 }
 
 [[nodiscard]] MaterialTextureApi default_material_texture_api() noexcept {
     return {&LoadTexture, &IsTextureValid, &UnloadTexture,
         &initialize_material_pipeline, &shutdown_material_pipeline,
-        &draw_material};
+        &draw_material, &draw_material_quad};
 }
 
 [[nodiscard]] constexpr bool ecology_is_valid(
@@ -919,6 +954,48 @@ bool MaterialPack::draw_frame_to(MaterialAtlasId atlas,
     }
     texture_api_.draw_material(color_texture, material_texture, source,
         destination, {0.0F, 0.0F}, 0.0F, tint, {});
+    return true;
+}
+
+bool MaterialPack::draw_frame_quad(MaterialAtlasId atlas,
+    Rectangle source, MaterialScreenQuad destination, Color tint) const noexcept {
+    const auto finite_point = [](Vector2 point) noexcept {
+        return std::isfinite(point.x) && std::isfinite(point.y);
+    };
+    if (!is_known_atlas(atlas) || !state_.available(atlas)
+            || !valid_texture_api(texture_api_)
+            || texture_api_.draw_material_quad == nullptr
+            || !std::isfinite(source.x) || !std::isfinite(source.y)
+            || !std::isfinite(source.width) || !std::isfinite(source.height)
+            || source.x < 0.0F || source.y < 0.0F
+            || source.width <= 0.0F || source.height <= 0.0F
+            || !finite_point(destination.top_left)
+            || !finite_point(destination.bottom_left)
+            || !finite_point(destination.bottom_right)
+            || !finite_point(destination.top_right)
+            || destination.top_right.x <= destination.top_left.x
+            || destination.bottom_right.x <= destination.bottom_left.x
+            || destination.bottom_left.y <= destination.top_left.y
+            || destination.bottom_right.y <= destination.top_right.y) {
+        return false;
+    }
+    const std::size_t index = atlas_index(atlas);
+    const Texture2D& color_texture = color_textures_[index];
+    const Texture2D& material_texture = material_textures_[index];
+    if (!texture_api_.valid(color_texture)
+            || !texture_api_.valid(material_texture)
+            || source.x + source.width
+                > static_cast<float>(color_texture.width)
+            || source.y + source.height
+                > static_cast<float>(color_texture.height)
+            || source.x + source.width
+                > static_cast<float>(material_texture.width)
+            || source.y + source.height
+                > static_cast<float>(material_texture.height)) {
+        return false;
+    }
+    texture_api_.draw_material_quad(color_texture, material_texture, source,
+        destination, tint, {});
     return true;
 }
 
