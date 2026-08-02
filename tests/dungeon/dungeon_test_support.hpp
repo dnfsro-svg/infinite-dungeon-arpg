@@ -61,7 +61,7 @@ struct DungeonSessionTestAccess final {
         return field != nullptr
             && &field->active_pool() == &world.monsters_;
     }
-    static void seed_checkpoint_unowned_runtime_state(
+    static void seed_checkpoint_restore_probe_state(
         dungeon::DungeonSession& session) noexcept {
         session.session_tick_ = 73U;
         session.diagnostics_.rejected_exit_count = 5U;
