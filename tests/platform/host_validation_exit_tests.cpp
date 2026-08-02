@@ -242,6 +242,60 @@ stage10_exit_confirmation_routes_right_away_from_center_rewards() noexcept {
 }
 
 arpg::test::Failure
+stage10_exit_confirmation_blocked_join_recovers_farther_outward() noexcept {
+    struct Case final {
+        float player_x{};
+        std::uint8_t blocked_column{};
+        std::uint8_t recovered_column{};
+        int expected_x{};
+    };
+    constexpr std::array<Case, 2U> cases{{
+        {3.0F, 11U, 12U, 1},
+        {-3.0F, 9U, 8U, -1},
+    }};
+    for (const Case& current : cases) {
+        dungeon::DungeonSession session{};
+        dungeon::DungeonSnapshot snapshot{};
+        snapshot.phase = dungeon::RoomPhase::awaiting_exit;
+        snapshot.is_abyss = true;
+        snapshot.combat.emplace();
+        snapshot.combat->player.hp = 100;
+        snapshot.combat->player.position = {current.player_x, 0.0F, 0.0F};
+        platform::RaylibHostConfig config{};
+        config.stage10_validation =
+            platform::Stage10ValidationScenario::exit_confirmation;
+        validation::Stage10ValidationState state{};
+        state.entered_abyss = true;
+        state.sweep_grid.phase =
+            validation::Stage10GridRoutePhase::join_near_x;
+        state.sweep_grid.boundary_column = current.blocked_column;
+        state.sweep_grid.pending_movement_progress_check = true;
+        state.sweep_grid.previous_position = snapshot.combat->player.position;
+
+        const auto movement = validation::stage10_validation_input(
+            session, snapshot, config, state);
+        ARPG_REQUIRE(movement.x == current.expected_x);
+        ARPG_REQUIRE(movement.y == 0);
+        ARPG_REQUIRE(
+            state.sweep_grid.boundary_column == current.recovered_column);
+        ARPG_REQUIRE(state.sweep_grid.phase
+            == validation::Stage10GridRoutePhase::join_far_x);
+
+        const auto repeated = validation::stage10_validation_input(
+            session, snapshot, config, state);
+        ARPG_REQUIRE(repeated.x == current.expected_x);
+        ARPG_REQUIRE(repeated.y == 0);
+        const auto twice_recovered = static_cast<std::uint8_t>(
+            current.recovered_column + current.expected_x);
+        ARPG_REQUIRE(
+            state.sweep_grid.boundary_column == twice_recovered);
+        ARPG_REQUIRE(state.sweep_grid.phase
+            == validation::Stage10GridRoutePhase::join_far_x);
+    }
+    return {};
+}
+
+arpg::test::Failure
 stage10_exit_confirmation_reaches_warning_without_claiming_center_rewards()
     noexcept {
     const dungeon::DungeonRunState initial = exit_confirmation_abyss_state();
@@ -1188,6 +1242,8 @@ arpg::test::TestSuite host_validation_exit_suite() noexcept {
             &stage10_exit_confirmation_routes_left_away_from_center_rewards},
         {"stage10_exit_confirmation_routes_right_away_from_center_rewards",
             &stage10_exit_confirmation_routes_right_away_from_center_rewards},
+        {"stage10_exit_confirmation_blocked_join_recovers_farther_outward",
+            &stage10_exit_confirmation_blocked_join_recovers_farther_outward},
         {"stage10_exit_confirmation_reaches_warning_without_claiming_center_rewards",
             &stage10_exit_confirmation_reaches_warning_without_claiming_center_rewards},
         {"stage11_uses_unlocked_exit_during_combat",

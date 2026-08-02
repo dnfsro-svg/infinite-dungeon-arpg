@@ -212,6 +212,26 @@ std::uint8_t outward_grid_boundary_column(
     return static_cast<std::uint8_t>(column);
 }
 
+bool recover_farther_outward_grid_boundary(Stage10GridRouteState& route,
+    dungeon::ExitDirection direction, std::uint8_t blocked_column) noexcept {
+    if (++route.route_rejoins > kGridRouteMaximumRejoins) return false;
+    constexpr std::uint8_t center = static_cast<std::uint8_t>(
+        combat::room_spatial::columns / 2U);
+    if (direction == dungeon::ExitDirection::right) {
+        if (blocked_column >= combat::room_spatial::columns) return false;
+        route.boundary_column = (std::max)(
+            static_cast<std::uint8_t>(blocked_column + 1U),
+            static_cast<std::uint8_t>(center + 1U));
+    } else {
+        if (blocked_column == 0U) return false;
+        route.boundary_column = (std::min)(
+            static_cast<std::uint8_t>(blocked_column - 1U),
+            static_cast<std::uint8_t>(center - 1U));
+    }
+    route.phase = Stage10GridRoutePhase::join_far_x;
+    return true;
+}
+
 std::uint8_t alternate_grid_boundary_column(
     float player_x, std::uint8_t blocked_column) noexcept {
     const float grid_x = std::clamp(
@@ -333,9 +353,21 @@ combat::MovementInput stage10_exit_route_movement(
     dungeon::ExitDirection direction,
     Stage10ValidationState& state,
     bool avoid_center_rewards = false) noexcept {
-    if (settle_grid_route_movement(
-            state.sweep_grid, combat_state.player.position)
-            == GridRouteProgress::unreachable) {
+    const Stage10GridRoutePhase blocked_phase = state.sweep_grid.phase;
+    const std::uint8_t blocked_column = state.sweep_grid.boundary_column;
+    GridRouteProgress progress = settle_grid_route_movement(
+        state.sweep_grid, combat_state.player.position);
+    if (avoid_center_rewards
+            && (blocked_phase == Stage10GridRoutePhase::join_near_x
+                || blocked_phase == Stage10GridRoutePhase::join_far_x)
+            && (progress == GridRouteProgress::recovered
+                || progress == GridRouteProgress::unreachable)) {
+        progress = recover_farther_outward_grid_boundary(
+            state.sweep_grid, direction, blocked_column)
+            ? GridRouteProgress::recovered
+            : GridRouteProgress::unreachable;
+    }
+    if (progress == GridRouteProgress::unreachable) {
         state.sweep_grid = {};
     }
     if (avoid_center_rewards
