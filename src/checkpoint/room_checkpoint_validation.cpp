@@ -2,10 +2,12 @@
 
 #include "checkpoint/room_checkpoint_schema.hpp"
 
+#include "abyss/abyss_rewards.hpp"
 #include "items/item_catalog.hpp"
 #include "modifiers/effect_set.hpp"
 #include "skills/active_skill_catalog.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -61,6 +63,50 @@ template <std::size_t Count>
         if (values[index] != 0U) return false;
     }
     return true;
+}
+
+template <std::size_t Count>
+[[nodiscard]] bool no_bits_in_range(
+    const std::array<std::uint64_t, Count>& values,
+    const std::uint32_t begin, const std::uint32_t end) noexcept {
+    const std::uint32_t capacity = static_cast<std::uint32_t>(Count * 64U);
+    const std::uint32_t clamped_end = (std::min)(end, capacity);
+    for (std::uint32_t ordinal = begin;
+            ordinal < clamped_end; ++ordinal) {
+        if ((values[ordinal / 64U]
+                & (std::uint64_t{1U} << (ordinal % 64U))) != 0U) {
+            return false;
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] bool valid_secondary_claim_domain(
+    const std::array<std::uint64_t, limits::kRoomSecondaryClaimWords>& bits,
+    const std::uint32_t generated_monsters) noexcept {
+    const std::uint32_t ordinary_end = generated_monsters * 2U;
+    constexpr std::uint32_t kReserveEnd =
+        kAbyssSecondaryOrdinalBegin + 16U;
+    return no_bits_in_range(bits, ordinary_end,
+            kAbyssSecondaryOrdinalBegin)
+        && no_bits_at_or_above(bits, kReserveEnd);
+}
+
+template <std::size_t Count>
+[[nodiscard]] std::uint32_t count_bits_in_range(
+    const std::array<std::uint64_t, Count>& values,
+    const std::uint32_t begin, const std::uint32_t end) noexcept {
+    std::uint32_t result{};
+    const std::uint32_t capacity = static_cast<std::uint32_t>(Count * 64U);
+    const std::uint32_t clamped_end = (std::min)(end, capacity);
+    for (std::uint32_t ordinal = begin;
+            ordinal < clamped_end; ++ordinal) {
+        if ((values[ordinal / 64U]
+                & (std::uint64_t{1U} << (ordinal % 64U))) != 0U) {
+            ++result;
+        }
+    }
+    return result;
 }
 
 [[nodiscard]] bool bit_is_set(
@@ -604,6 +650,51 @@ damage_history_totals(
     return visible_rewards == expected_visible;
 }
 
+[[nodiscard]] bool valid_reserve_drop_ownership(
+    const RoomProgressCheckpoint& room,
+    const DungeonRunState& state) noexcept {
+    constexpr std::uint32_t kReserveCapacity = 16U;
+    constexpr std::uint32_t kAbyssSecondaryOrdinalEnd =
+        kAbyssSecondaryOrdinalBegin + kReserveCapacity;
+    const bool cleared = state.abyss.lifecycle
+        == abyss::AbyssLifecycle::cleared;
+    const std::uint32_t equipment_reserve_claims = count_bits_in_range(
+        room.equipment_claim_bits, room.generated_monsters,
+        limits::kRoomMonsterCapacity);
+    const std::uint32_t durable_equipment_claims =
+        popcount(static_cast<std::uint64_t>(state.abyss.claimed_mask));
+    if (equipment_reserve_claims != 0U
+            && (!cleared
+                || equipment_reserve_claims > durable_equipment_claims)) {
+        return false;
+    }
+
+    const std::uint32_t material_reserve_claims = count_bits_in_range(
+        room.secondary_claim_bits, kAbyssSecondaryOrdinalBegin,
+        kAbyssSecondaryOrdinalEnd);
+    std::uint32_t visible_material_reserves{};
+    constexpr std::uint8_t kAbyssMaterialSource = 2U;
+    for (std::uint16_t index = 0U;
+            index < room.secondary_ground_count; ++index) {
+        const SecondaryGroundCheckpoint& ground = room.secondary_ground[index];
+        if (ground.tag == SecondaryGroundTag::material
+                && ground.source == kAbyssMaterialSource) {
+            ++visible_material_reserves;
+        }
+    }
+    const std::uint32_t material_reserves = material_reserve_claims
+        + visible_material_reserves;
+    if (material_reserves != 0U && !cleared) return false;
+    const std::uint32_t expected_material_reserves = cleared
+        ? abyss::reward_profile_for(state.abyss.danger, 1U).item_count : 0U;
+    if (material_reserves > expected_material_reserves) return false;
+
+    const std::uint32_t generated_equipment_reserves =
+        popcount(static_cast<std::uint64_t>(state.abyss.generated_mask));
+    return generated_equipment_reserves + material_reserves
+        <= kReserveCapacity;
+}
+
 [[nodiscard]] bool valid_player(
     const PlayerCombatCheckpoint& player) noexcept {
     if (!valid_position(player.position) || !finite(player.velocity)
@@ -1007,8 +1098,8 @@ bool valid_room_progress_checkpoint_structural(
             || popcount(room.defeat_bits) != room.defeated_monsters
             || !no_bits_at_or_above(
                 room.defeat_bits, room.generated_monsters)
-            || !no_bits_at_or_above(
-                room.equipment_claim_bits, room.generated_monsters)
+            || !valid_secondary_claim_domain(
+                room.secondary_claim_bits, room.generated_monsters)
             || (room.exits_unlocked
                 && room.defeated_monsters < room.required_kills)
             || (room.full_clear
@@ -1048,14 +1139,25 @@ bool valid_room_progress_checkpoint_structural(
     for (std::uint16_t index = 0U;
             index < room.equipment_ground_count; ++index) {
         const EquipmentGroundCheckpoint& ground = room.equipment_ground[index];
-        if (ground.ordinal >= room.generated_monsters
+        constexpr std::uint8_t kMonsterDropSource = 0U;
+        constexpr std::uint8_t kAbyssChestSource = 1U;
+        if (ground.ordinal >= limits::kRoomMonsterCapacity
+                || ground.source > kAbyssChestSource
+                || (ground.source == kMonsterDropSource
+                    && ground.ordinal >= room.generated_monsters)
                 || (index != 0U && ground.ordinal <= previous_equipment)
                 || bit_is_set(room.equipment_claim_bits, ground.ordinal)
                 || !finite(ground.position)
                 || !items::validate_item(ground.item)) return false;
         previous_equipment = ground.ordinal;
     }
+    constexpr std::uint8_t kMonsterCommonSource = 0U;
+    constexpr std::uint8_t kMonsterCouponSource = 1U;
     constexpr std::uint8_t kAbyssMaterialSource = 2U;
+    const std::uint32_t ordinary_secondary_end =
+        room.generated_monsters * 2U;
+    constexpr std::uint16_t kAbyssSecondaryOrdinalEnd =
+        kAbyssSecondaryOrdinalBegin + 16U;
     std::uint16_t previous_secondary{};
     for (std::uint16_t index = 0U;
             index < room.secondary_ground_count; ++index) {
@@ -1070,21 +1172,28 @@ bool valid_room_progress_checkpoint_structural(
                 || (ground.tag == SecondaryGroundTag::material
                     && (ground.material >= items::MaterialId::count
                         || ground.source > kAbyssMaterialSource
-                        || (ground.ordinal >= kAbyssSecondaryOrdinalBegin)
-                            != (ground.source == kAbyssMaterialSource)
-                        || (ground.ordinal < kAbyssSecondaryOrdinalBegin
-                            && ((ground.ordinal & 1U) != 0U
-                                || ground.ordinal
-                                    >= kOrdinarySecondaryOrdinalEnd))))
+                        || !((ground.source == kMonsterCommonSource
+                                && ground.ordinal < ordinary_secondary_end
+                                && (ground.ordinal & 1U) == 0U)
+                            || (ground.source == kMonsterCouponSource
+                                && ground.ordinal < ordinary_secondary_end
+                                && (ground.ordinal & 1U) != 0U)
+                            || (ground.source == kAbyssMaterialSource
+                                && ground.ordinal
+                                    >= kAbyssSecondaryOrdinalBegin
+                                && ground.ordinal
+                                    < kAbyssSecondaryOrdinalEnd))))
                 || (ground.tag == SecondaryGroundTag::health_potion
                     && (ground.material != items::MaterialId::count
-                        || ground.ordinal >= kAbyssSecondaryOrdinalBegin
+                        || ground.source != kMonsterCommonSource
+                        || ground.ordinal >= ordinary_secondary_end
                         || (ground.ordinal & 1U) == 0U))) {
             return false;
         }
         previous_secondary = ground.ordinal;
     }
-    return valid_abyss_reward_ground_ownership(room, state);
+    return valid_abyss_reward_ground_ownership(room, state)
+        && valid_reserve_drop_ownership(room, state);
 }
 
 bool same_room_combat_checkpoint(const RoomCombatCheckpoint& left,

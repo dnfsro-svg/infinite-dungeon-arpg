@@ -8,6 +8,7 @@
 #include "dungeon/death_checkpoint.hpp"
 #include "dungeon/dungeon_progression.hpp"
 #include "dungeon/room_generation.hpp"
+#include "dungeon/room_affix.hpp"
 #include "dungeon/dungeon_session.hpp"
 #include "persistence/room_progress_codec.hpp"
 
@@ -305,7 +306,33 @@ bool make_fixture(checkpoint::SaveCheckpointSlot& slot) noexcept {
     set_first_defeated_after_live(room, 288U);
     std::unique_ptr<combat::CombatWorld> world{
         new (std::nothrow) combat::CombatWorld{}};
-    return world != nullptr && world->capture_room_checkpoint(room.combat);
+    if (world == nullptr || !world->capture_room_checkpoint(room.combat)) {
+        return false;
+    }
+    room.equipment_ground_count = 1U;
+    room.equipment_ground[0U].ordinal = 1124U;
+    room.equipment_ground[0U].source = 0U;
+    room.equipment_ground[0U].reward_ordinal = 0xFFU;
+    room.equipment_ground[0U].item = normal_item(1125U);
+    room.secondary_ground_count = 3U;
+    room.secondary_ground[0U].tag =
+        checkpoint::SecondaryGroundTag::health_potion;
+    room.secondary_ground[0U].ordinal = 2247U;
+    room.secondary_ground[0U].source = 0U;
+    room.secondary_ground[0U].material = items::MaterialId::count;
+    room.secondary_ground[1U].tag =
+        checkpoint::SecondaryGroundTag::material;
+    room.secondary_ground[1U].ordinal = 2248U;
+    room.secondary_ground[1U].source = 0U;
+    room.secondary_ground[1U].material =
+        items::MaterialId::reinforcement_stone;
+    room.secondary_ground[2U].tag =
+        checkpoint::SecondaryGroundTag::material;
+    room.secondary_ground[2U].ordinal = 2249U;
+    room.secondary_ground[2U].source = 1U;
+    room.secondary_ground[2U].material =
+        items::MaterialId::reinforcement_stone;
+    return true;
 }
 
 bool make_cleared_abyss_fixture(
@@ -326,6 +353,8 @@ bool make_cleared_abyss_fixture(
     room.defeat_bits = {};
     room.defeat_bits[0U] = 0x07U;
     room.combat.monster_count = 0U;
+    room.equipment_ground_count = 0U;
+    room.secondary_ground_count = 0U;
     room.equipment_ground[0U].ordinal = 0U;
     room.equipment_ground[0U].source = 1U;
     room.equipment_ground[0U].reward_ordinal = 0U;
@@ -481,6 +510,13 @@ test::Failure v9_round_trip_preserves_large_room_fields() noexcept {
     ARPG_REQUIRE(decoded->room_progress.exits_unlocked);
     ARPG_REQUIRE(decoded->room_progress.monster_blueprint_hash != 0U);
     ARPG_REQUIRE(decoded->room_progress.environment_blueprint_hash != 0U);
+    ARPG_REQUIRE(decoded->room_progress.equipment_ground_count == 1U);
+    ARPG_REQUIRE(decoded->room_progress.equipment_ground[0U].ordinal == 1124U);
+    ARPG_REQUIRE(decoded->room_progress.secondary_ground_count == 3U);
+    ARPG_REQUIRE(decoded->room_progress.secondary_ground[0U].ordinal == 2247U);
+    ARPG_REQUIRE(decoded->room_progress.secondary_ground[1U].ordinal == 2248U);
+    ARPG_REQUIRE(decoded->room_progress.secondary_ground[2U].ordinal == 2249U);
+    ARPG_REQUIRE(decoded->room_progress.secondary_ground[2U].source == 1U);
     decoded->room_progress.combat.player.velocity.x = -0.0F;
     ARPG_REQUIRE(!checkpoint::same_room_progress_checkpoint(
         source->room_progress, decoded->room_progress));
@@ -602,6 +638,253 @@ test::Failure v9_partial_unlock_round_trip_restores_combat() noexcept {
     ARPG_REQUIRE(restored.exits_unlocked);
     ARPG_REQUIRE(restored.remaining_targets > 0U);
     for (const bool open : restored.exits_open) ARPG_REQUIRE(open);
+    return {};
+}
+
+std::unique_ptr<dungeon::DungeonSession>
+make_maximum_population_session() noexcept {
+    dungeon::DungeonRules rules{};
+    auto initial = dungeon::make_initial_run_state(0xD20F1152ULL, rules);
+    if (initial.fault != dungeon::DungeonFault::none) return nullptr;
+    bool found = false;
+    for (std::uint64_t seed = 1U; seed < 100000U; ++seed) {
+        const auto selected = abyss::select_abyss_rule(seed, 40U);
+        if (!abyss::is_abyss_roll(seed) || !selected.has_value()
+                || dungeon::roll_room_density(seed, true).total_count
+                    != 1125U) {
+            continue;
+        }
+        initial.state.current_room.seed = seed;
+        initial.state.current_room.depth = 40U;
+        initial.state.current_room.entry = dungeon::EntrySide::left;
+        initial.state.current_room.ecology = dungeon::DungeonElement::chaos;
+        initial.state.current_room.has_hole = true;
+        initial.state.current_room.is_abyss = true;
+        initial.state.last_transition = dungeon::TransitionKind::door;
+        initial.state.last_direction = dungeon::ExitDirection::right;
+        initial.state.abyss.lifecycle = abyss::AbyssLifecycle::available;
+        initial.state.abyss.danger = selected->danger;
+        initial.state.abyss.rule = selected->rule;
+        initial.state.abyss.rules_version = selected->rules_version;
+        found = true;
+        break;
+    }
+    if (!found) return nullptr;
+    std::unique_ptr<dungeon::DungeonSession> session{
+        new (std::nothrow) dungeon::DungeonSession{rules, initial.state}};
+    if (session == nullptr || session->pending_save_view() == nullptr
+            || session->pending_save_view()->kind
+                != dungeon::PendingSaveKind::abyss_start
+            || !test::commit_pending(*session)) {
+        return nullptr;
+    }
+    session->tick({});
+    if (session->snapshot().initial_monster_count != 1125U
+            || session->phase() == dungeon::RoomPhase::faulted) {
+        return nullptr;
+    }
+    return session;
+}
+
+std::unique_ptr<dungeon::DungeonSession> restore_session_from(
+    const checkpoint::SaveCheckpointSlot& slot) noexcept {
+    std::unique_ptr<dungeon::DungeonSession> restored{
+        new (std::nothrow) dungeon::DungeonSession{
+            dungeon::DungeonRules{}, slot.state}};
+    if (restored == nullptr
+            || !restored->restore_room_progress_checkpoint(slot)) {
+        return nullptr;
+    }
+    return restored;
+}
+
+test::Failure high_ordinal_session_v9_round_trip_and_claims_are_exact()
+    noexcept {
+    constexpr std::array<std::uint16_t, 4U> kOrdinals{{
+        191U, 192U, 511U, 1124U}};
+    auto session = make_maximum_population_session();
+    ARPG_REQUIRE(session != nullptr);
+    const combat::RoomMonsterPlan* const plan =
+        test::DungeonSessionTestAccess::room_monster_plan(*session);
+    ARPG_REQUIRE(plan != nullptr && plan->monster_count == 1125U);
+    for (const std::uint16_t ordinal : kOrdinals) {
+        items::ItemInstance item = normal_item(
+            static_cast<std::uint64_t>(ordinal) + 1000U);
+        item.item_level = 40U;
+        test::DungeonSessionTestAccess::install_ground_item(
+            *session, ordinal, item, plan->monsters[ordinal].initial_position);
+        ARPG_REQUIRE(test::DungeonSessionTestAccess::ground_items(
+            *session)[ordinal].active);
+    }
+    const combat::Vec3 last_position =
+        plan->monsters[1124U].initial_position;
+    test::DungeonSessionTestAccess::install_ground_material(*session, 2248U,
+        items::MaterialId::reinforcement_stone, last_position,
+        dungeon::GroundMaterialSource::monster_common);
+    test::DungeonSessionTestAccess::install_ground_material(*session, 2249U,
+        items::MaterialId::coupon_6, last_position,
+        dungeon::GroundMaterialSource::monster_coupon);
+    ARPG_REQUIRE(test::DungeonSessionTestAccess::ground_materials(
+        *session)[2248U].active);
+    ARPG_REQUIRE(test::DungeonSessionTestAccess::ground_materials(
+        *session)[2249U].active);
+
+    const std::unique_ptr<checkpoint::SaveCheckpointSlot> saved{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    const std::unique_ptr<checkpoint::SaveCheckpointSlot> decoded{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    const std::unique_ptr<std::uint8_t[]> bytes{
+        new (std::nothrow) std::uint8_t[
+            persistence::kMaximumEncodedCheckpointBytes]};
+    ARPG_REQUIRE(saved != nullptr && decoded != nullptr && bytes != nullptr);
+    saved->state.item_ownership.items.reserve(kOrdinals.size());
+    ARPG_REQUIRE(session->capture_save_checkpoint(*saved, 71U));
+    std::size_t written{};
+    ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(*saved, bytes.get(),
+        persistence::kMaximumEncodedCheckpointBytes, written)
+        == persistence::CodecError::none);
+    bool migrated = true;
+    ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(bytes.get(), written,
+        *decoded, migrated) == persistence::CodecError::none);
+    ARPG_REQUIRE(!migrated);
+
+    auto not_committed = restore_session_from(*decoded);
+    ARPG_REQUIRE(not_committed != nullptr);
+    test::set_player_position(*not_committed,
+        test::DungeonSessionTestAccess::ground_items(
+            *not_committed)[1124U].position);
+    ARPG_REQUIRE(not_committed->request_pickup(1124U)
+        == dungeon::RequestResult::accepted);
+    const dungeon::PendingSave* pending =
+        not_committed->pending_save_view();
+    ARPG_REQUIRE(pending != nullptr);
+    not_committed->resolve_pending_save({
+        dungeon::SaveDisposition::not_committed,
+        pending->expected_generation, pending->next_state, pending->kind});
+    ARPG_REQUIRE(test::DungeonSessionTestAccess::ground_items(
+        *not_committed)[1124U].active);
+    ARPG_REQUIRE(not_committed->item_state().items.empty());
+
+    auto indeterminate = restore_session_from(*decoded);
+    ARPG_REQUIRE(indeterminate != nullptr);
+    test::set_player_position(*indeterminate,
+        test::DungeonSessionTestAccess::ground_items(
+            *indeterminate)[511U].position);
+    ARPG_REQUIRE(indeterminate->request_pickup(511U)
+        == dungeon::RequestResult::accepted);
+    indeterminate->resolve_pending_save({
+        dungeon::SaveDisposition::indeterminate, 0U, {}});
+    ARPG_REQUIRE(indeterminate->phase() == dungeon::RoomPhase::faulted);
+    ARPG_REQUIRE(test::DungeonSessionTestAccess::ground_items(
+        *indeterminate)[511U].active);
+    ARPG_REQUIRE(indeterminate->item_state().items.empty());
+
+    auto claimed = restore_session_from(*decoded);
+    ARPG_REQUIRE(claimed != nullptr);
+    for (const std::uint16_t ordinal : kOrdinals) {
+        test::set_player_position(*claimed,
+            test::DungeonSessionTestAccess::ground_items(
+                *claimed)[ordinal].position);
+        ARPG_REQUIRE(claimed->request_pickup(ordinal)
+            == dungeon::RequestResult::accepted);
+        ARPG_REQUIRE(test::commit_pending(*claimed));
+        ARPG_REQUIRE(claimed->phase() != dungeon::RoomPhase::faulted);
+        ARPG_REQUIRE(claimed->request_pickup(ordinal)
+            == dungeon::RequestResult::rejected);
+    }
+    for (const std::uint16_t ordinal : {std::uint16_t{2248U},
+             std::uint16_t{2249U}}) {
+        test::set_player_position(*claimed,
+            test::DungeonSessionTestAccess::ground_materials(
+                *claimed)[ordinal].position);
+        ARPG_REQUIRE(claimed->request_material_pickup(ordinal)
+            == dungeon::RequestResult::accepted);
+        ARPG_REQUIRE(test::commit_pending(*claimed));
+        ARPG_REQUIRE(claimed->request_material_pickup(ordinal)
+            == dungeon::RequestResult::rejected);
+    }
+    ARPG_REQUIRE(claimed->item_state().items.size() == kOrdinals.size());
+    ARPG_REQUIRE(claimed->item_state().materials[
+        items::material_index(items::MaterialId::reinforcement_stone)] == 1U);
+    ARPG_REQUIRE(claimed->item_state().materials[
+        items::material_index(items::MaterialId::coupon_6)] == 1U);
+
+    ARPG_REQUIRE(claimed->capture_save_checkpoint(*saved, 72U));
+    ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(*saved, bytes.get(),
+        persistence::kMaximumEncodedCheckpointBytes, written)
+        == persistence::CodecError::none);
+    ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(bytes.get(), written,
+        *decoded, migrated) == persistence::CodecError::none);
+    auto claimed_reload = restore_session_from(*decoded);
+    ARPG_REQUIRE(claimed_reload != nullptr);
+    for (const std::uint16_t ordinal : kOrdinals) {
+        ARPG_REQUIRE(!test::DungeonSessionTestAccess::ground_items(
+            *claimed_reload)[ordinal].active);
+        ARPG_REQUIRE(claimed_reload->request_pickup(ordinal)
+            == dungeon::RequestResult::rejected);
+    }
+    ARPG_REQUIRE(!test::DungeonSessionTestAccess::ground_materials(
+        *claimed_reload)[2248U].active);
+    ARPG_REQUIRE(!test::DungeonSessionTestAccess::ground_materials(
+        *claimed_reload)[2249U].active);
+    return {};
+}
+
+test::Failure v8_load_starts_fresh_room_drop_authority() noexcept {
+    dungeon::DungeonRules rules{};
+    auto initial = dungeon::make_initial_run_state(0xB8F2E5AULL, rules);
+    ARPG_REQUIRE(initial.fault == dungeon::DungeonFault::none);
+    initial.state.item_ownership.items.push_back(normal_item(1U));
+    initial.state.item_ownership.next_item_sequence = 2U;
+    initial.state.item_ownership.claimed_drop_bits = {{
+        0xFFFFFFFFFFFFFFFFULL, 0x8000000000000001ULL, 0x55AAULL}};
+    initial.state.item_ownership.material_claimed_drop_bits[0U] =
+        0xFFFFFFFFFFFFFFFFULL;
+    initial.state.item_ownership.material_claimed_drop_bits[6U] = 0xA55AU;
+
+    const std::unique_ptr<std::uint8_t[]> bytes{
+        new (std::nothrow) std::uint8_t[
+            persistence::kMaximumEncodedCheckpointBytes]};
+    ARPG_REQUIRE(bytes != nullptr);
+    std::size_t written{};
+    ARPG_REQUIRE(persistence::encode_checkpoint_into(initial.state,
+        bytes.get(), persistence::kMaximumEncodedCheckpointBytes, written)
+        == persistence::CodecError::none);
+    const persistence::DecodeResult decoded =
+        persistence::decode_checkpoint(bytes.get(), written);
+    ARPG_REQUIRE(decoded.error == persistence::CodecError::none);
+    ARPG_REQUIRE(decoded.state.item_ownership.items.size() == 1U);
+    ARPG_REQUIRE(decoded.state.item_ownership.claimed_drop_bits
+        == initial.state.item_ownership.claimed_drop_bits);
+
+    const std::unique_ptr<checkpoint::SaveCheckpointSlot> migrated{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    ARPG_REQUIRE(migrated != nullptr);
+    bool was_migrated = false;
+    ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(bytes.get(), written,
+        *migrated, was_migrated) == persistence::CodecError::none);
+    ARPG_REQUIRE(was_migrated);
+    ARPG_REQUIRE(migrated->state.item_ownership.items.size() == 1U);
+    ARPG_REQUIRE(migrated->state.item_ownership.claimed_drop_bits
+        == decltype(migrated->state.item_ownership.claimed_drop_bits){});
+    ARPG_REQUIRE(migrated->state.item_ownership.material_claimed_drop_bits
+        == decltype(
+            migrated->state.item_ownership.material_claimed_drop_bits){});
+
+    dungeon::DungeonSession migrated_session{rules, migrated->state};
+    ARPG_REQUIRE(migrated_session.item_state().items.size() == 1U);
+    const std::unique_ptr<checkpoint::SaveCheckpointSlot> fresh{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    ARPG_REQUIRE(fresh != nullptr);
+    fresh->state.item_ownership.items.reserve(
+        migrated_session.item_state().items.size());
+    ARPG_REQUIRE(migrated_session.capture_save_checkpoint(*fresh, 1U));
+    ARPG_REQUIRE(fresh->room_progress.equipment_claim_bits
+        == decltype(fresh->room_progress.equipment_claim_bits){});
+    ARPG_REQUIRE(fresh->room_progress.secondary_claim_bits
+        == decltype(fresh->room_progress.secondary_claim_bits){});
+    ARPG_REQUIRE(fresh->room_progress.equipment_ground_count == 0U);
+    ARPG_REQUIRE(fresh->room_progress.secondary_ground_count == 0U);
     return {};
 }
 
@@ -1001,11 +1284,132 @@ test::Failure structural_validation_rejects_identity_and_order_faults() noexcept
     abyss_slot->room_progress.equipment_ground[0U].source = 0U;
     ARPG_REQUIRE(!checkpoint::valid_room_progress_checkpoint_structural(
         abyss_slot->room_progress, abyss_slot->state));
+
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> domain_slot{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    ARPG_REQUIRE(domain_slot != nullptr);
+    ARPG_REQUIRE(make_fixture(*domain_slot));
+    auto& domain_room = domain_slot->room_progress;
+    domain_room.generated_monsters = 1125U;
+    domain_room.required_kills = checkpoint::required_kills(1125U);
+    ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
+        domain_room, domain_slot->state));
+    domain_room.secondary_claim_bits[2250U / 64U] |=
+        std::uint64_t{1U} << (2250U % 64U);
+    ARPG_REQUIRE(!checkpoint::valid_room_progress_checkpoint_structural(
+        domain_room, domain_slot->state));
+    domain_room.secondary_claim_bits[2250U / 64U] = 0U;
+    domain_room.secondary_claim_bits[2304U / 64U] |=
+        std::uint64_t{1U} << (2304U % 64U);
+    ARPG_REQUIRE(!checkpoint::valid_room_progress_checkpoint_structural(
+        domain_room, domain_slot->state));
+    domain_room.secondary_claim_bits[2304U / 64U] = 0U;
+    domain_room.secondary_claim_bits[2320U / 64U] |=
+        std::uint64_t{1U} << (2320U % 64U);
+    ARPG_REQUIRE(!checkpoint::valid_room_progress_checkpoint_structural(
+        domain_room, domain_slot->state));
+    domain_room.secondary_claim_bits[2320U / 64U] = 0U;
+    domain_room.secondary_ground[2U].source = 0U;
+    ARPG_REQUIRE(!checkpoint::valid_room_progress_checkpoint_structural(
+        domain_room, domain_slot->state));
+    domain_room.secondary_ground[2U].source = 1U;
+    domain_room.secondary_ground[3U] = {};
+    domain_room.secondary_ground[3U].tag =
+        checkpoint::SecondaryGroundTag::material;
+    domain_room.secondary_ground[3U].ordinal = 2250U;
+    domain_room.secondary_ground[3U].source = 0U;
+    domain_room.secondary_ground[3U].material =
+        items::MaterialId::reinforcement_stone;
+    domain_room.secondary_ground_count = 4U;
+    ARPG_REQUIRE(!checkpoint::valid_room_progress_checkpoint_structural(
+        domain_room, domain_slot->state));
+    domain_room.secondary_ground[3U].ordinal = 2319U;
+    domain_room.secondary_ground[3U].source = 2U;
+    ARPG_REQUIRE(!checkpoint::valid_room_progress_checkpoint_structural(
+        domain_room, domain_slot->state));
+    domain_room.secondary_ground[3U].ordinal = 2320U;
+    ARPG_REQUIRE(!checkpoint::valid_room_progress_checkpoint_structural(
+        domain_room, domain_slot->state));
+    domain_room.secondary_ground_count = 3U;
+    domain_room.equipment_claim_bits[1125U / 64U] |=
+        std::uint64_t{1U} << (1125U % 64U);
+    ARPG_REQUIRE(!checkpoint::valid_room_progress_checkpoint_structural(
+        domain_room, domain_slot->state));
+
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> reserve_slot{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    ARPG_REQUIRE(reserve_slot != nullptr);
+    ARPG_REQUIRE(make_fixture(*reserve_slot));
+    auto& reserve_state = reserve_slot->state;
+    auto& reserve_room = reserve_slot->room_progress;
+    reserve_state.current_room.is_abyss = true;
+    reserve_state.abyss.lifecycle = abyss::AbyssLifecycle::cleared;
+    reserve_state.abyss.rule = abyss::AbyssRuleId::swift_pursuit;
+    reserve_state.abyss.reward_total = 3U;
+    reserve_state.abyss.generated_mask = 0x07U;
+    reserve_room.generated_monsters = 1125U;
+    reserve_room.defeated_monsters = 1125U;
+    reserve_room.required_kills = checkpoint::required_kills(1125U);
+    reserve_room.exits_unlocked = true;
+    reserve_room.full_clear = true;
+    reserve_room.reward_committed = true;
+    reserve_room.defeat_bits = {};
+    for (std::uint16_t ordinal = 0U; ordinal < 1125U; ++ordinal) {
+        reserve_room.defeat_bits[ordinal / 64U] |=
+            std::uint64_t{1U} << (ordinal % 64U);
+        auto& ground = reserve_room.equipment_ground[ordinal];
+        ground.ordinal = ordinal;
+        ground.source = 0U;
+        ground.reward_ordinal = 0xFFU;
+        ground.item = normal_item(static_cast<std::uint64_t>(ordinal) + 1U);
+    }
+    reserve_room.combat.monster_count = 0U;
+    for (std::uint16_t reward = 0U; reward < 3U; ++reward) {
+        const std::uint16_t ordinal = static_cast<std::uint16_t>(1125U + reward);
+        auto& ground = reserve_room.equipment_ground[ordinal];
+        ground.ordinal = ordinal;
+        ground.source = 1U;
+        ground.reward_ordinal = static_cast<std::uint8_t>(reward);
+        ground.item = normal_item(static_cast<std::uint64_t>(ordinal) + 1U);
+    }
+    reserve_room.equipment_ground_count = 1128U;
+    ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
+        reserve_room, reserve_state));
+    reserve_room.equipment_ground_count = 1127U;
+    reserve_state.abyss.claimed_mask = 0x04U;
+    reserve_room.equipment_claim_bits[1151U / 64U] |=
+        std::uint64_t{1U} << (1151U % 64U);
+    ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
+        reserve_room, reserve_state));
+    reserve_room.equipment_claim_bits[1150U / 64U] |=
+        std::uint64_t{1U} << (1150U % 64U);
+    ARPG_REQUIRE(!checkpoint::valid_room_progress_checkpoint_structural(
+        reserve_room, reserve_state));
+    reserve_room.equipment_claim_bits[1150U / 64U] &=
+        ~(std::uint64_t{1U} << (1150U % 64U));
+    reserve_room.secondary_ground[3U] = {};
+    reserve_room.secondary_ground[3U].tag =
+        checkpoint::SecondaryGroundTag::material;
+    reserve_room.secondary_ground[3U].ordinal = 2304U;
+    reserve_room.secondary_ground[3U].source = 2U;
+    reserve_room.secondary_ground[3U].material =
+        items::MaterialId::reinforcement_stone;
+    reserve_room.secondary_ground_count = 4U;
+    ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
+        reserve_room, reserve_state));
+    reserve_room.secondary_claim_bits[2305U / 64U] |=
+        std::uint64_t{1U} << (2305U % 64U);
+    ARPG_REQUIRE(!checkpoint::valid_room_progress_checkpoint_structural(
+        reserve_room, reserve_state));
     return {};
 }
 
 constexpr test::TestCase kCases[] = {
     {"v9 maximum room round trip", &v9_round_trip_preserves_large_room_fields},
+    {"high ordinal session v9 round trip and exact claims",
+        &high_ordinal_session_v9_round_trip_and_claims_are_exact},
+    {"v8 load starts fresh room drop authority",
+        &v8_load_starts_fresh_room_drop_authority},
     {"v9 corruption", &v9_rejects_crc_and_length_corruption},
     {"v9 structural validation", &structural_validation_rejects_identity_and_order_faults},
 };

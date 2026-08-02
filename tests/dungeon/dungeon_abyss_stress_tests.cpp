@@ -567,7 +567,8 @@ arpg::test::Failure extreme_abyss_pools_run_600_ticks_without_allocation() noexc
     for (const auto& ground : arpg::test::ground_items(session)) {
         ground_count += ground.active;
     }
-    ARPG_REQUIRE(ground_count == arpg::dungeon::kGroundDropCapacity);
+    ARPG_REQUIRE(ground_count
+        == arpg::dungeon::kAuthoritativeEquipmentDropCapacity);
 
     const std::uint32_t projectile_saturation_before =
         saturated.combat->diagnostics.projectile_saturation_count;
@@ -605,13 +606,15 @@ arpg::test::Failure extreme_abyss_pools_run_600_ticks_without_allocation() noexc
     for (const auto& ground : ground_after) {
         ground_count += ground.active;
     }
-    ARPG_REQUIRE(ground_count == arpg::dungeon::kGroundDropCapacity);
+    ARPG_REQUIRE(ground_count
+        == arpg::dungeon::kAuthoritativeEquipmentDropCapacity);
     ARPG_REQUIRE(after.abyss_pending_rewards == 3U);
     std::printf("[stage10-abyss-stress] ticks=600 allocations=%llu "
         "pools=%zu/%zu/%zu/%zu saturation=%u/%u/%u\n",
         static_cast<unsigned long long>(allocations),
-        after.combat->monster_count, after.combat->projectile_count,
-        after.combat->hazard_count, ground_count,
+        static_cast<std::size_t>(after.combat->monster_count),
+        static_cast<std::size_t>(after.combat->projectile_count),
+        static_cast<std::size_t>(after.combat->hazard_count), ground_count,
         after.combat->diagnostics.projectile_saturation_count,
         after.combat->diagnostics.hazard_saturation_count,
         after.diagnostics.ground_saturation_count);

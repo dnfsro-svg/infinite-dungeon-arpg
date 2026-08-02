@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dungeon/dungeon_progression.hpp"
+#include "dungeon/dungeon_render_snapshot.hpp"
 #include "dungeon/dungeon_session.hpp"
 #include "dungeon_view_math.hpp"
 #include "persistence/save_store.hpp"
@@ -71,6 +72,10 @@ public:
     [[nodiscard]] DungeonRuntimeState state() const noexcept;
     [[nodiscard]] dungeon::DungeonSession* session() noexcept;
     [[nodiscard]] const dungeon::DungeonSession* session() const noexcept;
+    [[nodiscard]] dungeon::DungeonRenderSnapshot*
+        render_snapshot_storage() noexcept;
+    [[nodiscard]] const dungeon::DungeonRenderSnapshot*
+        render_snapshot_storage() const noexcept;
     [[nodiscard]] dungeon::RequestResult request_pickup(
         std::uint16_t drop_ordinal) noexcept;
     [[nodiscard]] dungeon::RequestResult request_equip(
@@ -121,6 +126,7 @@ private:
     std::unique_ptr<persistence::SaveCommitStorage> save_storage_{};
     std::unique_ptr<persistence::SaveCommitWorker> save_worker_{};
     std::unique_ptr<dungeon::DungeonSession> session_{};
+    std::unique_ptr<dungeon::DungeonRenderSnapshot> render_snapshot_{};
     struct ExactFlight final {
         bool active{};
         std::uint64_t revision{};

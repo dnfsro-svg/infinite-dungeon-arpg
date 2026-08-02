@@ -496,7 +496,7 @@ bool pickup_vacuum_death_reload_and_saturation() noexcept {
     auto vacuum_state = arpg::test::DungeonSessionTestAccess::stable_state(*session);
     auto vacuum = std::make_unique<dungeon::DungeonSession>(
         dungeon::DungeonRules{}, vacuum_state);
-    arpg::test::install_ground_material(*vacuum, 6U, items::MaterialId::coupon_6,
+    arpg::test::install_ground_material(*vacuum, 7U, items::MaterialId::coupon_6,
         player, dungeon::GroundMaterialSource::monster_coupon);
     arpg::test::set_phase(*vacuum, dungeon::RoomPhase::combat);
     arpg::test::prepare_room_clear(*vacuum);

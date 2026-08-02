@@ -2,7 +2,9 @@
 
 #include "core/bounded_queue.hpp"
 #include "dungeon/encounter_director.hpp"
+#include "dungeon/dungeon_render_snapshot.hpp"
 #include "dungeon/dungeon_types.hpp"
+#include "dungeon/room_drop_state.hpp"
 #include "items/item_crafting.hpp"
 #include "progression/progression_rules.hpp"
 
@@ -13,6 +15,7 @@
 #include <array>
 #include <memory>
 #include <optional>
+#include <type_traits>
 #include <utility>
 
 namespace arpg::checkpoint {
@@ -34,7 +37,8 @@ namespace arpg::dungeon {
     std::uint64_t base_experience, std::uint16_t score) noexcept;
 [[nodiscard]] bool item_id_in_use(
     const items::ItemOwnershipState& ownership,
-    const std::array<GroundItem, kGroundDropCapacity>& ground_items,
+    const std::array<GroundItem,
+        kAuthoritativeEquipmentDropCapacity>& ground_items,
     std::uint64_t item_id,
     std::uint16_t ignored_ground_index = 0xFFFFU) noexcept;
 
@@ -96,6 +100,10 @@ public:
     explicit DungeonSession(
         DungeonRules rules,
         DungeonRunState stable_state) noexcept;
+    DungeonSession(const DungeonSession&) = delete;
+    DungeonSession& operator=(const DungeonSession&) = delete;
+    DungeonSession(DungeonSession&&) = delete;
+    DungeonSession& operator=(DungeonSession&&) = delete;
     [[nodiscard]] bool queue_action(combat::Action action) noexcept;
     [[nodiscard]] combat::SkillCastResult request_active_skill_slot(
         std::uint8_t slot) noexcept;
@@ -151,6 +159,9 @@ public:
     [[nodiscard]] RoomPhase phase() const noexcept;
     [[nodiscard]] DungeonSnapshot snapshot() const noexcept;
     void snapshot(DungeonSnapshot& destination) const noexcept;
+    [[nodiscard]] bool write_render_snapshot(
+        const WorldViewQuery& query,
+        DungeonRenderSnapshot& destination) const noexcept;
     [[nodiscard]] bool capture_save_checkpoint(
         ::arpg::checkpoint::SaveCheckpointSlot& destination,
         std::uint64_t persistence_revision,
@@ -199,6 +210,7 @@ private:
         combat::CombatEncounterConfig config) noexcept;
     [[nodiscard]] bool activate_staged_room_population(
         bool publish_population_event = true) noexcept;
+    void advance_room_instance_generation() noexcept;
     void clear_staged_room_population() noexcept;
     void reset_to_normal_room(bool clear_queues) noexcept;
     [[nodiscard]] bool prepare_abyss_start() noexcept;
@@ -310,13 +322,17 @@ private:
     AbyssExitConfirmation abyss_exit_confirmation_{};
     std::unique_ptr<combat::RoomEnvironmentBlueprint> room_environment_{};
     std::optional<combat::CombatWorld> combat_{};
-    std::array<GroundItem, kGroundDropCapacity> ground_items_{};
-    std::array<std::uint64_t, 3> rolled_drop_bits_{};
-    std::array<GroundMaterial, kGroundMaterialCapacity> ground_materials_{};
-    std::array<std::uint64_t, kMaterialDropBitWordCount>
+    RoomDropState room_drop_state_{};
+    std::array<GroundItem, kAuthoritativeEquipmentDropCapacity>&
+        ground_items_{room_drop_state_.equipment()};
+    std::array<std::uint64_t, limits::kRoomEquipmentClaimWords>
+        rolled_drop_bits_{};
+    std::array<GroundMaterial, kAuthoritativeSecondaryDropCapacity>&
+        ground_materials_{room_drop_state_.materials()};
+    std::array<std::uint64_t, limits::kRoomSecondaryClaimWords>
         rolled_material_bits_{};
-    std::array<GroundHealthPotion, kGroundHealthPotionCapacity>
-        ground_health_potions_{};
+    std::array<GroundHealthPotion, kAuthoritativeHealthPotionCapacity>&
+        ground_health_potions_{room_drop_state_.health_potions()};
     HealthPotionPickupReceipt health_potion_pickup_receipt_{};
     bool retry_health_potion_abyss_clear_before_combat_{};
     MaterialPickupReceipt material_pickup_receipt_{};
@@ -331,6 +347,7 @@ private:
     RoomPhase phase_{RoomPhase::locked};
     ExitDirection last_exit_{ExitDirection::none};
     std::uint64_t session_tick_{};
+    std::uint64_t room_instance_generation_{};
     DungeonDiagnostics diagnostics_{};
     progression::ProgressionRules progression_rules_{
         progression::default_progression_rules()};
@@ -343,5 +360,8 @@ private:
     passives::PassiveTreeError last_passive_tree_error_{
         passives::PassiveTreeError::none};
 };
+
+static_assert(!std::is_copy_constructible_v<DungeonSession>);
+static_assert(!std::is_move_constructible_v<DungeonSession>);
 
 }  // namespace arpg::dungeon

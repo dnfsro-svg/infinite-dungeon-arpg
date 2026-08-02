@@ -1,6 +1,7 @@
 #include "allocation_probe.hpp"
 #include "test_framework.hpp"
 
+#include "combat_view_math.hpp"
 #include "ground_loot_view.hpp"
 #include "material_manifest.hpp"
 
@@ -115,6 +116,28 @@ arpg::test::Failure builder_filters_and_orders_by_stable_ordinal() noexcept {
         settings::LootFilterMode::rare_only, 1280.0F, 720.0F);
     ARPG_REQUIRE(rare.count == 1U);
     ARPG_REQUIRE(rare.labels[0].ordinal == 30U);
+    return {};
+}
+
+arpg::test::Failure camera_aware_builder_uses_the_frame_projection() noexcept {
+    dungeon::DungeonRenderSnapshot snapshot{};
+    constexpr arpg::combat::Vec3 kPosition{31.0F, -8.0F, 0.75F};
+    snapshot.equipment[snapshot.equipment_count++] = ground_item(
+        7U, items::ItemRarity::rare, 1U,
+        dungeon::GroundItemSource::monster_drop, kPosition);
+    const platform::CombatCameraView camera =
+        platform::make_combat_camera_view(
+            {27.0F, -11.0F, 0.0F}, 1280.0F, 720.0F);
+    const platform::ScreenProjection expected =
+        platform::project_combat_position(
+            kPosition, camera, 1280.0F, 720.0F);
+
+    const platform::GroundLootView view = platform::build_ground_loot_view(
+        snapshot, settings::LootFilterMode::show_all,
+        camera, 1280.0F, 720.0F);
+    ARPG_REQUIRE(view.count == 1U);
+    ARPG_REQUIRE(view.labels[0].anchor_x == expected.x);
+    ARPG_REQUIRE(view.labels[0].anchor_y == expected.y);
     return {};
 }
 
@@ -390,6 +413,7 @@ arpg::test::Failure equipment_slots_and_rarities_have_unique_layered_resources()
 constexpr arpg::test::TestCase kCases[] = {
     {"three visibility modes and abyss", &visibility_covers_three_modes_and_abyss_bypass},
     {"filter and stable ordinal order", &builder_filters_and_orders_by_stable_ordinal},
+    {"camera-aware anchor projection", &camera_aware_builder_uses_the_frame_projection},
     {"catalog Chinese text and invalid fallback", &text_uses_catalog_chinese_rarity_ilvl_and_fallback},
     {"rarity palette and abyss marker", &rarity_palette_and_abyss_marker_are_stable},
     {"overlap resolves upward stably", &overlapping_anchors_resolve_upward_deterministically},

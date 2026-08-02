@@ -1,6 +1,7 @@
 #pragma once
 
 #include "control_hints.hpp"
+#include "dungeon/room_affix.hpp"
 #include "dungeon/dungeon_types.hpp"
 #include "dungeon_runtime.hpp"
 #include "hud_color.hpp"
@@ -48,10 +49,21 @@ struct PlayerHudModel final {
 struct RoomHudModel final {
     HudText96 objective{};
     HudText96 secondary{};
+    HudText96 density_text{};
+    HudText96 progress_text{};
+    HudText96 remaining_text{};
+    HudText96 exit_text{};
     HudText96 movement{};
     std::array<HudText96, 3U> controls{};
     bool abyss{};
+    dungeon::RoomPhase phase{dungeon::RoomPhase::locked};
+    dungeon::RoomDensityAffix density_affix{
+        dungeon::RoomDensityAffix::crowded};
+    std::uint32_t initial_monster_count{};
+    std::uint32_t defeated_monster_count{};
+    std::uint32_t required_kills{};
     std::uint32_t remaining_targets{};
+    bool exits_unlocked{};
 };
 
 struct NavigationHudModel final {
@@ -119,9 +131,13 @@ private:
     struct ObjectiveKey final {
         bool is_abyss{};
         dungeon::RoomPhase phase{dungeon::RoomPhase::locked};
+        std::uint64_t room_seed{};
         std::uint8_t wave_index{};
         std::uint8_t wave_count{};
+        std::uint32_t initial_monster_count{};
+        std::uint32_t defeated_monster_count{};
         std::uint32_t remaining_targets{};
+        bool exits_unlocked{};
         abyss::AbyssDanger abyss_danger{abyss::AbyssDanger::low};
         abyss::AbyssRuleId abyss_rule{abyss::AbyssRuleId::none};
         std::uint8_t abyss_pending_rewards{};

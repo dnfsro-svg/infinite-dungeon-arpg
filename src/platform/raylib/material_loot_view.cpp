@@ -1,5 +1,6 @@
 #include "material_loot_view.hpp"
 
+#include "combat/room_bounds.hpp"
 #include "combat_view_math.hpp"
 
 #include <algorithm>
@@ -451,18 +452,82 @@ MaterialSpriteId material_loot_sprite(items::MaterialId id) noexcept {
 
 namespace {
 
+[[nodiscard]] std::size_t material_source_count(
+    const dungeon::DungeonSnapshot& snapshot) noexcept {
+    return snapshot.ground_material_count;
+}
+
+[[nodiscard]] std::size_t material_source_count(
+    const dungeon::DungeonRenderSnapshot& snapshot) noexcept {
+    return snapshot.material_count;
+}
+
+[[nodiscard]] const dungeon::GroundMaterialSnapshot& material_at(
+    const dungeon::DungeonSnapshot& snapshot, std::size_t index) noexcept {
+    return snapshot.ground_materials[index];
+}
+
+[[nodiscard]] const dungeon::GroundMaterialSnapshot& material_at(
+    const dungeon::DungeonRenderSnapshot& snapshot,
+    std::size_t index) noexcept {
+    return snapshot.materials[index];
+}
+
+[[nodiscard]] std::size_t material_capacity(
+    const dungeon::DungeonSnapshot& snapshot) noexcept {
+    return snapshot.ground_materials.size();
+}
+
+[[nodiscard]] std::size_t material_capacity(
+    const dungeon::DungeonRenderSnapshot& snapshot) noexcept {
+    return snapshot.materials.size();
+}
+
+[[nodiscard]] std::size_t potion_count_of(
+    const dungeon::DungeonSnapshot& snapshot) noexcept {
+    return snapshot.ground_health_potion_count;
+}
+
+[[nodiscard]] std::size_t potion_count_of(
+    const dungeon::DungeonRenderSnapshot& snapshot) noexcept {
+    return snapshot.health_potion_count;
+}
+
+[[nodiscard]] const dungeon::GroundHealthPotionSnapshot& potion_at(
+    const dungeon::DungeonSnapshot& snapshot, std::size_t index) noexcept {
+    return snapshot.ground_health_potions[index];
+}
+
+[[nodiscard]] const dungeon::GroundHealthPotionSnapshot& potion_at(
+    const dungeon::DungeonRenderSnapshot& snapshot,
+    std::size_t index) noexcept {
+    return snapshot.health_potions[index];
+}
+
+[[nodiscard]] std::size_t potion_capacity(
+    const dungeon::DungeonSnapshot& snapshot) noexcept {
+    return snapshot.ground_health_potions.size();
+}
+
+[[nodiscard]] std::size_t potion_capacity(
+    const dungeon::DungeonRenderSnapshot& snapshot) noexcept {
+    return snapshot.health_potions.size();
+}
+
+template <typename Snapshot>
 MaterialLootView build_material_loot_view_internal(
-    const dungeon::DungeonSnapshot& snapshot, float width, float height,
+    const Snapshot& snapshot,
+    const CombatCameraView& camera, float width, float height,
     MaterialLootPlacementDiagnostics* diagnostics,
     LootLabelObstacleSet& obstacles) noexcept {
     MaterialLootView view{};
     const std::size_t source_count = (std::min)(
-        static_cast<std::size_t>(snapshot.ground_material_count),
-        snapshot.ground_materials.size());
+        material_source_count(snapshot), material_capacity(snapshot));
     view.capacity_saturation_count = static_cast<std::uint32_t>(
-        static_cast<std::size_t>(snapshot.ground_material_count) - source_count);
+        material_source_count(snapshot) - source_count);
     for (std::size_t index = 0U; index < source_count; ++index) {
-        const dungeon::GroundMaterialSnapshot& material = snapshot.ground_materials[index];
+        const dungeon::GroundMaterialSnapshot& material =
+            material_at(snapshot, index);
         if (items::material_definition(material.material) == nullptr) {
             ++view.invalid_material_count;
             continue;
@@ -472,7 +537,7 @@ MaterialLootView build_material_loot_view_internal(
             continue;
         }
         const ScreenProjection projection = project_combat_position(
-            material.position, width, height);
+            material.position, camera, width, height);
         MaterialLootLabel label{};
         label.kind = SecondaryLootKind::material;
         label.ordinal = material.ordinal;
@@ -488,20 +553,19 @@ MaterialLootView build_material_loot_view_internal(
         insert_label(view, label);
     }
     const std::size_t potion_source_count = (std::min)(
-        static_cast<std::size_t>(snapshot.ground_health_potion_count),
-        snapshot.ground_health_potions.size());
+        potion_count_of(snapshot),
+        potion_capacity(snapshot));
     view.capacity_saturation_count += static_cast<std::uint32_t>(
-        static_cast<std::size_t>(snapshot.ground_health_potion_count)
-        - potion_source_count);
+        potion_count_of(snapshot) - potion_source_count);
     for (std::size_t index = 0U; index < potion_source_count; ++index) {
         if (view.count == view.labels.size()) {
             ++view.capacity_saturation_count;
             continue;
         }
         const dungeon::GroundHealthPotionSnapshot& potion =
-            snapshot.ground_health_potions[index];
+            potion_at(snapshot, index);
         const ScreenProjection projection = project_combat_position(
-            potion.position, width, height);
+            potion.position, camera, width, height);
         MaterialLootLabel label{};
         label.kind = SecondaryLootKind::health_potion;
         label.ordinal = potion.claim_ordinal;
@@ -523,17 +587,50 @@ MaterialLootView build_material_loot_view_internal(
 }  // namespace
 
 MaterialLootView build_material_loot_view(
-    const dungeon::DungeonSnapshot& snapshot, float width, float height) noexcept {
+    const dungeon::DungeonRenderSnapshot& snapshot,
+    const CombatCameraView& camera, float width, float height) noexcept {
     LootLabelObstacleSet obstacles{};
     return build_material_loot_view_internal(
-        snapshot, width, height, nullptr, obstacles);
+        snapshot, camera, width, height, nullptr, obstacles);
+}
+
+MaterialLootView build_material_loot_view(
+    const dungeon::DungeonRenderSnapshot& snapshot,
+    const CombatCameraView& camera, float width, float height,
+    LootLabelObstacleSet& obstacles) noexcept {
+    return build_material_loot_view_internal(
+        snapshot, camera, width, height, nullptr, obstacles);
+}
+
+MaterialLootView build_material_loot_view(
+    const dungeon::DungeonSnapshot& snapshot,
+    const CombatCameraView& camera, float width, float height) noexcept {
+    LootLabelObstacleSet obstacles{};
+    return build_material_loot_view_internal(
+        snapshot, camera, width, height, nullptr, obstacles);
+}
+
+MaterialLootView build_material_loot_view(
+    const dungeon::DungeonSnapshot& snapshot,
+    const CombatCameraView& camera, float width, float height,
+    LootLabelObstacleSet& obstacles) noexcept {
+    return build_material_loot_view_internal(
+        snapshot, camera, width, height, nullptr, obstacles);
+}
+
+MaterialLootView build_material_loot_view(
+    const dungeon::DungeonSnapshot& snapshot, float width, float height) noexcept {
+    LootLabelObstacleSet obstacles{};
+    return build_material_loot_view(snapshot, width, height, obstacles);
 }
 
 MaterialLootView build_material_loot_view(
     const dungeon::DungeonSnapshot& snapshot, float width, float height,
     LootLabelObstacleSet& obstacles) noexcept {
+    const CombatCameraView full_room_camera{
+        {}, combat::room_bounds::width, combat::room_bounds::depth};
     return build_material_loot_view_internal(
-        snapshot, width, height, nullptr, obstacles);
+        snapshot, full_room_camera, width, height, nullptr, obstacles);
 }
 
 MaterialLootView build_material_loot_view_with_diagnostics(
@@ -541,8 +638,10 @@ MaterialLootView build_material_loot_view_with_diagnostics(
     MaterialLootPlacementDiagnostics& diagnostics) noexcept {
     diagnostics = {};
     LootLabelObstacleSet obstacles{};
+    const CombatCameraView full_room_camera{
+        {}, combat::room_bounds::width, combat::room_bounds::depth};
     return build_material_loot_view_internal(
-        snapshot, width, height, &diagnostics, obstacles);
+        snapshot, full_room_camera, width, height, &diagnostics, obstacles);
 }
 
 MaterialLootView build_material_loot_view_with_diagnostics(
@@ -550,8 +649,10 @@ MaterialLootView build_material_loot_view_with_diagnostics(
     MaterialLootPlacementDiagnostics& diagnostics,
     LootLabelObstacleSet& obstacles) noexcept {
     diagnostics = {};
+    const CombatCameraView full_room_camera{
+        {}, combat::room_bounds::width, combat::room_bounds::depth};
     return build_material_loot_view_internal(
-        snapshot, width, height, &diagnostics, obstacles);
+        snapshot, full_room_camera, width, height, &diagnostics, obstacles);
 }
 
 void MaterialPickupFeedbackState::update(float frame_seconds,

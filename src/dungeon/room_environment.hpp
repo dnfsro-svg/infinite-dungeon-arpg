@@ -5,6 +5,8 @@
 #include "dungeon/dungeon_checkpoint.hpp"
 #include "dungeon/dungeon_rules.hpp"
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 
 namespace arpg::dungeon {
@@ -15,6 +17,23 @@ inline constexpr std::uint32_t kRoomEnvironmentGeneratorVersion = 1U;
 struct RoomEnvironmentBuildResult final {
     DungeonFault fault{DungeonFault::none};
 };
+
+inline constexpr std::size_t kVisibleEnvironmentCapacity = 128U;
+inline constexpr std::size_t kEnvironmentQueryCandidateCapacity = 105U;
+
+struct VisibleEnvironmentSet final {
+    std::array<combat::RoomEnvironmentRecord, kVisibleEnvironmentCapacity>
+        records{};
+    std::uint16_t count{};
+    std::uint16_t candidates_examined{};
+};
+
+[[nodiscard]] bool write_visible_environment(
+    const combat::RoomEnvironmentBlueprint& blueprint,
+    const combat::Aabb& world_bounds,
+    VisibleEnvironmentSet& output) noexcept;
+
+static_assert(kEnvironmentQueryCandidateCapacity == 7U * 5U * 3U);
 
 [[nodiscard]] RoomEnvironmentBuildResult build_room_environment(
     const checkpoint::RoomDescriptor& room,

@@ -894,42 +894,6 @@ bool read_room_progress(Reader& reader,
     return crc32_update(value, bytes + kHeaderSize, payload_size);
 }
 
-[[nodiscard]] bool legacy_claim_adapter_matches(
-    const checkpoint::SaveCheckpointSlot& slot) noexcept {
-    for (std::size_t index = 0U;
-            index < slot.room_progress.equipment_claim_bits.size(); ++index) {
-        const std::uint64_t expected =
-            index < slot.state.item_ownership.claimed_drop_bits.size()
-            ? slot.state.item_ownership.claimed_drop_bits[index] : 0U;
-        if (slot.room_progress.equipment_claim_bits[index] != expected) {
-            return false;
-        }
-    }
-    std::array<std::uint64_t, limits::kRoomSecondaryClaimWords> expected{};
-    const auto set_expected = [&expected](const std::uint16_t ordinal) noexcept {
-        if (ordinal < expected.size() * 64U) {
-            expected[ordinal / 64U] |=
-                std::uint64_t{1U} << (ordinal % 64U);
-        }
-    };
-    for (std::uint16_t ordinal = 0U;
-            ordinal < slot.state.item_ownership
-                .material_claimed_drop_bits.size() * 64U; ++ordinal) {
-        const auto& durable =
-            slot.state.item_ownership.material_claimed_drop_bits;
-        if ((durable[ordinal / 64U]
-                & (std::uint64_t{1U} << (ordinal % 64U))) == 0U) {
-            continue;
-        }
-        set_expected(checkpoint::checkpoint_material_ordinal(ordinal));
-        if ((ordinal & 1U) != 0U
-                && ordinal < checkpoint::kHealthPotionGroundCapacity * 2U) {
-            set_expected(ordinal);
-        }
-    }
-    return slot.room_progress.secondary_claim_bits == expected;
-}
-
 [[nodiscard]] bool valid_resolution_lifecycle_extension(
     const checkpoint::LastAbyssResolution& value) noexcept {
     if (value.lifecycle == abyss::AbyssLifecycle::none) return true;
@@ -1016,8 +980,7 @@ CodecError encode_checkpoint_v9_into(
             || capacity > kMaximumEncodedCheckpointBytes
             || source.persistence_revision == 0U
             || !checkpoint::valid_room_progress_checkpoint_structural(
-                source.room_progress, source.state)
-            || !legacy_claim_adapter_matches(source)) {
+                source.room_progress, source.state)) {
         return CodecError::invalid_state;
     }
     std::fill(bytes, bytes + capacity, std::uint8_t{0U});
@@ -1153,9 +1116,8 @@ CodecError decode_checkpoint_v9_into_scratch(
             destination.state.last_abyss_resolution)) {
         return CodecError::invalid_state;
     }
-    if (!checkpoint::valid_room_progress_checkpoint_structural(
-            destination.room_progress, destination.state)
-            || !legacy_claim_adapter_matches(destination)) {
+      if (!checkpoint::valid_room_progress_checkpoint_structural(
+              destination.room_progress, destination.state)) {
         return CodecError::invalid_state;
     }
     return CodecError::none;
@@ -1258,9 +1220,8 @@ CodecError verify_checkpoint_v9_readback(
             || !std::equal(bytes, bytes + size, canonical_bytes)
             || !std::equal(kMagic.begin(), kMagic.end(), bytes)
             || expected.persistence_revision == 0U
-            || !checkpoint::valid_room_progress_checkpoint_structural(
-                expected.room_progress, expected.state)
-            || !legacy_claim_adapter_matches(expected)) {
+              || !checkpoint::valid_room_progress_checkpoint_structural(
+                  expected.room_progress, expected.state)) {
         return CodecError::invalid_state;
     }
     Reader header{bytes, size, 8U};

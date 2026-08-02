@@ -462,6 +462,27 @@ arpg::test::Failure pickup_save_outcomes_are_atomic() noexcept {
         == arpg::dungeon::DungeonFault::save_commit_indeterminate);
     ARPG_REQUIRE(indeterminate.snapshot().ground_item_count == 1U);
     ARPG_REQUIRE(indeterminate.item_state().items.empty());
+
+    DungeonSession corrupted{DungeonRules{}, state};
+    ARPG_REQUIRE(inject_drop(corrupted, ordinal, player));
+    ARPG_REQUIRE(corrupted.request_pickup(ordinal)
+        == arpg::dungeon::RequestResult::accepted);
+    const auto committed = *corrupted.pending_save();
+    const DungeonRunState stable_before = arpg::test::stable_state(corrupted);
+    arpg::test::clear_room_drop_spatial_index(corrupted);
+    corrupted.resolve_pending_save({
+        arpg::dungeon::SaveDisposition::committed,
+        committed.expected_generation,
+        committed.next_state,
+    });
+    ARPG_REQUIRE(corrupted.snapshot().phase
+        == arpg::dungeon::RoomPhase::faulted);
+    ARPG_REQUIRE(corrupted.snapshot().diagnostics.fault
+        == arpg::dungeon::DungeonFault::save_receipt_mismatch);
+    ARPG_REQUIRE(corrupted.snapshot().ground_item_count == 1U);
+    ARPG_REQUIRE(corrupted.item_state().items.empty());
+    ARPG_REQUIRE(arpg::dungeon::same_run_state(
+        arpg::test::stable_state(corrupted), stable_before));
     return {};
 }
 

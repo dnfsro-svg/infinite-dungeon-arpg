@@ -2,6 +2,7 @@
 
 #include "combat_feedback.hpp"
 #include "combat_renderer.hpp"
+#include "combat_view_math.hpp"
 #include "combat/active_skill_runtime.hpp"
 #include "combat/fire_room_obstacle.hpp"
 #include "combat/room_bounds.hpp"
@@ -327,6 +328,33 @@ void apply_stage12_material_showcase(dungeon::DungeonSnapshot& snapshot,
     }
 }
 
+void apply_stage12_material_showcase_world(
+    const dungeon::DungeonSnapshot& showcase,
+    dungeon::DungeonRenderSnapshot& world) noexcept {
+    world.ecology = showcase.ecology;
+    world.has_combat = showcase.combat.has_value();
+    if (showcase.combat.has_value()) {
+        world.combat = *showcase.combat;
+    } else {
+        world.combat = {};
+    }
+    world.equipment_count = static_cast<std::uint16_t>((std::min)(
+        static_cast<std::size_t>(showcase.ground_item_count),
+        world.equipment.size()));
+    std::copy_n(showcase.ground_items.begin(), world.equipment_count,
+        world.equipment.begin());
+    world.material_count = static_cast<std::uint16_t>((std::min)(
+        static_cast<std::size_t>(showcase.ground_material_count),
+        world.materials.size()));
+    std::copy_n(showcase.ground_materials.begin(), world.material_count,
+        world.materials.begin());
+    world.health_potion_count = static_cast<std::uint16_t>((std::min)(
+        static_cast<std::size_t>(showcase.ground_health_potion_count),
+        world.health_potions.size()));
+    std::copy_n(showcase.ground_health_potions.begin(),
+        world.health_potion_count, world.health_potions.begin());
+}
+
 }  // namespace
 
 dungeon::AutoPickupPolicy loot_pickup_policy(
@@ -401,6 +429,11 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 && runtime.state() == DungeonRuntimeState::recovery_required) {
             TraceLog(LOG_ERROR,
                 "Stage 12 background-only capture refused a recovery save");
+            return HostExitCode::save_initialization_failed;
+        }
+        dungeon::DungeonRenderSnapshot* const render_world =
+            runtime.render_snapshot_storage();
+        if (render_world == nullptr) {
             return HostExitCode::save_initialization_failed;
         }
 
@@ -485,6 +518,7 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             exit_requested = true;
         };
         std::uint32_t presented_frame_count = 0U;
+        std::uint64_t camera_version = 0U;
         unsigned validation_capture_tick = 0U;
         unsigned validation_capture_count = 0U;
         const std::string validation_capture_prefix = config.validation_capture
@@ -968,6 +1002,38 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 renderer_loot_filter_mode(
                     pause_menu.screen, live_settings, pause_menu.draft);
             renderer.set_loot_filter_mode(presented_loot_filter);
+            const float screen_width = static_cast<float>(GetScreenWidth());
+            const float screen_height = static_cast<float>(GetScreenHeight());
+            const bool interpolate_camera = can_interpolate_room(
+                previous, current);
+            combat::Vec3 current_player{};
+            if (current.combat.has_value()) {
+                current_player = current.combat->player.position;
+            }
+            const combat::Vec3 previous_player = interpolate_camera
+                ? previous.combat->player.position : current_player;
+            const combat::Vec3 interpolated_player =
+                interpolate_combat_position(previous_player, current_player,
+                    static_cast<float>(frame.interpolation_alpha));
+            const CombatCameraView frame_camera = make_combat_camera_view(
+                interpolated_player, screen_width, screen_height);
+            camera_version = camera_version
+                    == (std::numeric_limits<std::uint64_t>::max)()
+                ? 1U : camera_version + 1U;
+            const dungeon::WorldViewQuery world_query = make_world_view_query(
+                frame_camera, screen_width, screen_height, camera_version);
+            if (!session->write_render_snapshot(world_query, *render_world)) {
+                TraceLog(LOG_ERROR, "failed to publish bounded render snapshot");
+                audio.shutdown();
+                renderer.shutdown_resources();
+                pause_menu_renderer.shutdown();
+                window.close();
+                return HostExitCode::save_initialization_failed;
+            }
+            if (config.stage12_material_showcase) {
+                apply_stage12_material_showcase_world(
+                    presented_snapshot, *render_world);
+            }
             BeginDrawing();
             ClearBackground(Color{13, 17, 27, 255});
             reset_ui_text_bounds_audit();
@@ -979,10 +1045,11 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 }
                 if (config.stage12_material_icons_only) {
                     return renderer.draw_ground_loot_icons_only(
-                        presented_snapshot);
+                        presented_snapshot, frame_camera);
                 }
                 return renderer.draw(
-                    previous, presented_snapshot, runtime.render_status(),
+                    previous, presented_snapshot, *render_world, frame_camera,
+                    runtime.render_status(),
                     static_cast<float>(frame.interpolation_alpha), draw_debug,
                     feedback, audio_ready);
             }();

@@ -325,6 +325,34 @@ void clear_environment(RoomEnvironmentBlueprint& environment) noexcept {
         row * combat::room_spatial::columns + column);
 }
 
+[[nodiscard]] std::size_t cell_axis(float coordinate, float minimum,
+    float cell_size, std::size_t cell_count) noexcept {
+    if (!std::isfinite(coordinate)) return 0U;
+    const float normalized = (coordinate - minimum) / cell_size;
+    if (normalized <= 0.0F) return 0U;
+    if (normalized >= static_cast<float>(cell_count)) return cell_count - 1U;
+    return static_cast<std::size_t>(normalized);
+}
+
+[[nodiscard]] bool environment_record_visible(const Aabb& bounds,
+    const RoomEnvironmentRecord& record) noexcept {
+    if (record.obstacle.kind != combat::RoomObstacleKind::none) {
+        const Aabb& obstacle = record.obstacle.bounds;
+        return obstacle.minimum.x <= bounds.maximum.x
+            && obstacle.maximum.x >= bounds.minimum.x
+            && obstacle.minimum.y <= bounds.maximum.y
+            && obstacle.maximum.y >= bounds.minimum.y
+            && obstacle.minimum.z <= bounds.maximum.z
+            && obstacle.maximum.z >= bounds.minimum.z;
+    }
+    return record.anchor.x >= bounds.minimum.x
+        && record.anchor.x <= bounds.maximum.x
+        && record.anchor.y >= bounds.minimum.y
+        && record.anchor.y <= bounds.maximum.y
+        && record.anchor.z >= bounds.minimum.z
+        && record.anchor.z <= bounds.maximum.z;
+}
+
 [[nodiscard]] bool aabb_within_cell(
     const Aabb& bounds, std::size_t cell) noexcept {
     const std::size_t column = cell % combat::room_spatial::columns;
@@ -577,6 +605,75 @@ void hash_aabb(std::uint64_t& hash, const Aabb& bounds) noexcept {
 }
 
 }  // namespace
+
+bool write_visible_environment(const RoomEnvironmentBlueprint& blueprint,
+    const Aabb& world_bounds, VisibleEnvironmentSet& output) noexcept {
+    output = {};
+    if (!finite(world_bounds)
+            || world_bounds.minimum.x > world_bounds.maximum.x
+            || world_bounds.minimum.y > world_bounds.maximum.y
+            || world_bounds.minimum.z > world_bounds.maximum.z
+            || blueprint.record_count > blueprint.records.size()) {
+        return false;
+    }
+
+    const std::size_t visible_first_column = cell_axis(
+        world_bounds.minimum.x, combat::room_bounds::min_x,
+        combat::room_spatial::cell_width, combat::room_spatial::columns);
+    const std::size_t visible_last_column = cell_axis(
+        world_bounds.maximum.x, combat::room_bounds::min_x,
+        combat::room_spatial::cell_width, combat::room_spatial::columns);
+    const std::size_t visible_first_row = cell_axis(
+        world_bounds.minimum.y, combat::room_bounds::min_y,
+        combat::room_spatial::cell_depth, combat::room_spatial::rows);
+    const std::size_t visible_last_row = cell_axis(
+        world_bounds.maximum.y, combat::room_bounds::min_y,
+        combat::room_spatial::cell_depth, combat::room_spatial::rows);
+    const std::size_t first_column = visible_first_column == 0U
+        ? 0U : visible_first_column - 1U;
+    const std::size_t last_column = (std::min)(
+        visible_last_column + 1U, combat::room_spatial::columns - 1U);
+    const std::size_t first_row = visible_first_row == 0U
+        ? 0U : visible_first_row - 1U;
+    const std::size_t last_row = (std::min)(
+        visible_last_row + 1U, combat::room_spatial::rows - 1U);
+    if (last_column - first_column + 1U > 7U
+            || last_row - first_row + 1U > 5U) {
+        return false;
+    }
+
+    for (std::size_t row = first_row; row <= last_row; ++row) {
+        for (std::size_t column = first_column;
+                column <= last_column; ++column) {
+            const std::size_t cell = row * combat::room_spatial::columns
+                + column;
+            const std::size_t begin = blueprint.cell_offsets[cell];
+            const std::size_t count = blueprint.cell_counts[cell];
+            const std::size_t end = begin + count;
+            if (count > 3U || begin > end || end > blueprint.record_count
+                    || output.candidates_examined + count
+                        > kEnvironmentQueryCandidateCapacity) {
+                output = {};
+                return false;
+            }
+            for (std::size_t index = begin; index < end; ++index) {
+                const RoomEnvironmentRecord& record = blueprint.records[index];
+                ++output.candidates_examined;
+                if (record.home_cell != cell
+                        || !environment_record_visible(
+                            world_bounds, record)) {
+                    continue;
+                }
+                if (output.count >= output.records.size()) {
+                    output = {};
+                    return false;
+                }
+                output.records[output.count++] = record;
+            }
+        }
+    }
+    return true;
+}
 
 RoomEnvironmentBuildResult build_room_environment(
     const checkpoint::RoomDescriptor& room,

@@ -3,6 +3,7 @@
 #include "hud_view_model.hpp"
 #include "hud_notice_state.hpp"
 #include "hud_palette.hpp"
+#include "dungeon/room_affix.hpp"
 
 #include <cstring>
 #include <limits>
@@ -151,6 +152,70 @@ arpg::test::Failure objective_uses_chinese_target_text() noexcept {
 
     ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), u8"目标") != nullptr);
     ARPG_REQUIRE(std::strstr(output.room.objective.bytes.data(), "5") != nullptr);
+    return {};
+}
+
+arpg::test::Failure large_room_progression_uses_explicit_chinese_fields() noexcept {
+    std::uint64_t horde_seed{};
+    for (std::uint64_t candidate = 1U; candidate != 10000U; ++candidate) {
+        if (dungeon::roll_room_density(candidate, true).affix
+                == dungeon::RoomDensityAffix::horde) {
+            horde_seed = candidate;
+            break;
+        }
+    }
+    ARPG_REQUIRE(horde_seed != 0U);
+
+    dungeon::DungeonSnapshot snapshot = normal_snapshot();
+    snapshot.room_seed = horde_seed;
+    snapshot.is_abyss = true;
+    snapshot.phase = dungeon::RoomPhase::combat;
+    snapshot.initial_monster_count = 1125U;
+    snapshot.defeated_monster_count = 281U;
+    snapshot.remaining_targets = 844U;
+    snapshot.exits_unlocked = false;
+    platform::HudViewModel output{};
+    platform::build_hud_view_model(output, snapshot, {}, default_hints());
+
+    ARPG_REQUIRE(std::strcmp(output.room.density_text.bytes.data(),
+        u8"怪群规模：兽潮") == 0);
+    ARPG_REQUIRE(std::strcmp(output.room.progress_text.bytes.data(),
+        u8"消灭 281/282（总计 1125）") == 0);
+    ARPG_REQUIRE(std::strcmp(output.room.remaining_text.bytes.data(),
+        u8"剩余 844") == 0);
+    ARPG_REQUIRE(std::strcmp(output.room.exit_text.bytes.data(),
+        u8"出口尚未开放") == 0);
+    ARPG_REQUIRE(output.room.density_affix
+        == dungeon::RoomDensityAffix::horde);
+    ARPG_REQUIRE(output.room.required_kills == 282U);
+    ARPG_REQUIRE(output.diagnostics.truncated_texts == 0U);
+    return {};
+}
+
+arpg::test::Failure exit_copy_distinguishes_threshold_full_clear_and_abyss_warning() noexcept {
+    dungeon::DungeonSnapshot snapshot = normal_snapshot();
+    snapshot.phase = dungeon::RoomPhase::combat;
+    snapshot.initial_monster_count = 1125U;
+    snapshot.defeated_monster_count = 282U;
+    snapshot.remaining_targets = 843U;
+    snapshot.exits_unlocked = true;
+    platform::HudViewModel output{};
+
+    platform::build_hud_view_model(output, snapshot, {}, default_hints());
+    ARPG_REQUIRE(std::strcmp(output.room.exit_text.bytes.data(),
+        u8"出口已开放，战斗仍可继续") == 0);
+
+    snapshot.is_abyss = true;
+    platform::build_hud_view_model(output, snapshot, {}, default_hints());
+    ARPG_REQUIRE(std::strcmp(output.room.exit_text.bytes.data(),
+        u8"出口已开放，离开将放弃剩余奖励") == 0);
+
+    snapshot.phase = dungeon::RoomPhase::awaiting_exit;
+    snapshot.defeated_monster_count = 1125U;
+    snapshot.remaining_targets = 0U;
+    platform::build_hud_view_model(output, snapshot, {}, default_hints());
+    ARPG_REQUIRE(std::strcmp(output.room.exit_text.bytes.data(),
+        u8"出口已开放") == 0);
     return {};
 }
 
@@ -418,6 +483,10 @@ constexpr arpg::test::TestCase kCases[] = {
     {"status tag capacity", &active_statuses_project_in_fixed_priority_order},
     {"uint32 navigation biases", &navigation_preserves_all_uint32_biases},
     {"Chinese objective text", &objective_uses_chinese_target_text},
+    {"large room explicit progression text",
+        &large_room_progression_uses_explicit_chinese_fields},
+    {"large room exit copy",
+        &exit_copy_distinguishes_threshold_full_clear_and_abyss_warning},
     {"complete movement objective hint",
         &objective_preserves_the_complete_movement_hint},
     {"non-terminated hint buffers", &non_terminated_hint_buffers_are_bounded_and_terminated},

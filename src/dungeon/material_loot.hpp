@@ -27,6 +27,14 @@ static_assert(kCheckpointOrdinarySecondaryOrdinalEnd
 static_assert(kCheckpointAbyssSecondaryOrdinalBegin
     == ::arpg::checkpoint::kAbyssSecondaryOrdinalBegin);
 
+[[nodiscard]] constexpr bool legacy_secondary_claim_representable(
+    const std::uint16_t ordinal) noexcept {
+    return ordinal < kGroundMaterialCapacity;
+}
+
+static_assert(legacy_secondary_claim_representable(399U));
+static_assert(!legacy_secondary_claim_representable(400U));
+
 [[nodiscard]] constexpr std::uint16_t checkpoint_material_ordinal(
     const std::uint16_t material_ordinal) noexcept {
     return ::arpg::checkpoint::checkpoint_material_ordinal(material_ordinal);

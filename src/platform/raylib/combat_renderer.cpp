@@ -11,20 +11,12 @@
 namespace arpg::platform {
 namespace {
 
-combat::Vec3 interpolate_position(combat::Vec3 from, combat::Vec3 to,
-    float amount) noexcept {
-    return {
-        from.x + (to.x - from.x) * amount,
-        from.y + (to.y - from.y) * amount,
-        from.z + (to.z - from.z) * amount,
-    };
-}
-
 void append_actor_obstacle(LootLabelObstacleSet& obstacles,
-    combat::Vec3 position, CameraOffset camera_offset,
+    combat::Vec3 position, const CombatCameraView& camera,
+    CameraOffset camera_offset,
     float width, float height) noexcept {
     const ScreenProjection projected = project_combat_position(
-        position, width, height);
+        position, camera, width, height);
     static_cast<void>(obstacles.append({
         projected.x - 75.0F * projected.scale + camera_offset.x,
         projected.y - 119.0F * projected.scale + camera_offset.y,
@@ -36,7 +28,8 @@ void append_actor_obstacle(LootLabelObstacleSet& obstacles,
 LootLabelObstacleSet actor_label_obstacles(
     const dungeon::DungeonSnapshot& previous,
     const dungeon::DungeonSnapshot& current,
-    float interpolation_alpha, CameraOffset camera_offset,
+    float interpolation_alpha, const CombatCameraView& camera,
+    CameraOffset camera_offset,
     float width, float height) noexcept {
     LootLabelObstacleSet obstacles{};
     if (!current.combat.has_value()) return obstacles;
@@ -45,9 +38,12 @@ LootLabelObstacleSet actor_label_obstacles(
     const combat::CombatSnapshot& previous_combat =
         can_interpolate_room(previous, current)
         ? *previous.combat : current_combat;
-    append_actor_obstacle(obstacles, current_combat.player.position,
-        camera_offset, width, height);
     const float alpha = std::clamp(interpolation_alpha, 0.0F, 1.0F);
+    const combat::Vec3 player_position = interpolate_combat_position(
+        previous_combat.player.position,
+        current_combat.player.position, alpha);
+    append_actor_obstacle(obstacles, player_position,
+        camera, camera_offset, width, height);
     for (std::size_t index = 0U;
          index < current_combat.monster_count; ++index) {
         const combat::MonsterSnapshot& monster =
@@ -58,13 +54,131 @@ LootLabelObstacleSet actor_label_obstacles(
             previous_combat.monsters[index];
         if (monster.monster_ordinal == previous_monster.monster_ordinal
                 && previous_monster.active) {
-            position = interpolate_position(
+            position = interpolate_combat_position(
                 previous_monster.position, monster.position, alpha);
         }
         append_actor_obstacle(
-            obstacles, position, camera_offset, width, height);
+            obstacles, position, camera, camera_offset, width, height);
     }
     return obstacles;
+}
+
+LootLabelObstacleSet actor_label_obstacles(
+    const dungeon::DungeonSnapshot& previous,
+    const dungeon::DungeonRenderSnapshot& current,
+    bool interpolate_previous,
+    float interpolation_alpha, const CombatCameraView& camera,
+    CameraOffset camera_offset,
+    float width, float height) noexcept {
+    LootLabelObstacleSet obstacles{};
+    if (!current.has_combat) return obstacles;
+
+    const combat::CombatSnapshot& current_combat = current.combat;
+    const combat::CombatSnapshot& previous_combat = interpolate_previous
+            && previous.combat.has_value()
+        ? *previous.combat : current_combat;
+    const float alpha = std::clamp(interpolation_alpha, 0.0F, 1.0F);
+    const combat::Vec3 player_position = interpolate_combat_position(
+        previous_combat.player.position,
+        current_combat.player.position, alpha);
+    append_actor_obstacle(obstacles, player_position,
+        camera, camera_offset, width, height);
+    for (std::size_t index = 0U;
+         index < current_combat.monster_count; ++index) {
+        const combat::MonsterSnapshot& monster =
+            current_combat.monsters[index];
+        if (!monster.active) continue;
+        combat::Vec3 position = monster.position;
+        const combat::MonsterSnapshot& previous_monster =
+            previous_combat.monsters[index];
+        if (interpolate_previous
+                && monster.monster_ordinal
+                    == previous_monster.monster_ordinal
+                && previous_monster.active) {
+            position = interpolate_combat_position(
+                previous_monster.position, monster.position, alpha);
+        }
+        append_actor_obstacle(
+            obstacles, position, camera, camera_offset, width, height);
+    }
+    return obstacles;
+}
+
+void require_world_room_atlases(MaterialResidencyRequest& request,
+    dungeon::DungeonElement ecology) noexcept {
+    switch (ecology) {
+    case dungeon::DungeonElement::fire:
+        request.require(MaterialAtlasId::fire_environment);
+        request.require(MaterialAtlasId::fire_room_background);
+        break;
+    case dungeon::DungeonElement::water:
+        request.require(MaterialAtlasId::water_environment);
+        request.require(MaterialAtlasId::water_room_background);
+        break;
+    case dungeon::DungeonElement::lightning:
+        request.require(MaterialAtlasId::lightning_environment);
+        request.require(MaterialAtlasId::lightning_room_background);
+        break;
+    case dungeon::DungeonElement::chaos:
+        request.require(MaterialAtlasId::chaos_environment);
+        request.require(MaterialAtlasId::chaos_room_background);
+        break;
+    }
+}
+
+void require_world_monster_atlas(MaterialResidencyRequest& request,
+    combat::MonsterId id) noexcept {
+    switch (id) {
+    case combat::MonsterId::fire_bomber:
+        request.require(MaterialAtlasId::fire_bomber);
+        break;
+    case combat::MonsterId::fire_charger:
+        request.require(MaterialAtlasId::fire_charger);
+        break;
+    case combat::MonsterId::water_bulwark:
+        request.require(MaterialAtlasId::water_bulwark);
+        break;
+    case combat::MonsterId::water_support:
+        request.require(MaterialAtlasId::water_support);
+        break;
+    case combat::MonsterId::lightning_shooter:
+        request.require(MaterialAtlasId::lightning_shooter);
+        break;
+    case combat::MonsterId::lightning_dasher:
+        request.require(MaterialAtlasId::lightning_dasher);
+        break;
+    case combat::MonsterId::chaos_chaser:
+        request.require(MaterialAtlasId::chaos_chaser);
+        break;
+    case combat::MonsterId::chaos_hazard:
+        request.require(MaterialAtlasId::chaos_hazard);
+        break;
+    case combat::MonsterId::count:
+        break;
+    }
+}
+
+MaterialResidencyRequest world_material_residency_request(
+    const dungeon::DungeonRenderSnapshot& world,
+    const skills::SkillLoadoutState& skill_loadout) noexcept {
+    MaterialResidencyRequest request = base_material_residency_request();
+    for (const skills::ActiveSkillSlot& slot : skill_loadout.slots) {
+        if (slot.active != skills::ActiveSkillId::none) {
+            request.require(active_skill_material_atlas(slot.active));
+        }
+    }
+    if (world.has_active_room) {
+        require_world_room_atlases(request, world.ecology);
+    }
+    if (!world.has_combat) return request;
+    const std::size_t monster_count = (std::min)(
+        static_cast<std::size_t>(world.combat.monster_count),
+        world.combat.monsters.size());
+    for (std::size_t index = 0U; index < monster_count; ++index) {
+        const combat::MonsterSnapshot& monster = world.combat.monsters[index];
+        if (monster.active) require_world_monster_atlas(request, monster.id);
+    }
+    return request;
 }
 
 }  // namespace
@@ -81,29 +195,23 @@ MaterialEcology material_ecology(
 }
 
 CombatRenderPlan make_combat_render_plan(
-    const dungeon::DungeonSnapshot& snapshot,
-    settings::LootFilterMode mode,
-    float width,
-    float height) noexcept {
-    return make_combat_render_plan(
-        snapshot, snapshot, 1.0F, {}, mode, width, height);
-}
-
-CombatRenderPlan make_combat_render_plan(
     const dungeon::DungeonSnapshot& previous,
-    const dungeon::DungeonSnapshot& current,
+    const dungeon::DungeonRenderSnapshot& current,
+    bool interpolate_previous,
     float interpolation_alpha,
+    const CombatCameraView& camera,
     CameraOffset camera_offset,
     settings::LootFilterMode mode,
     float width,
     float height) noexcept {
     CombatRenderPlan plan{};
     LootLabelObstacleSet obstacles = actor_label_obstacles(previous, current,
-        interpolation_alpha, camera_offset, width, height);
+        interpolate_previous, interpolation_alpha, camera, camera_offset,
+        width, height);
     plan.ground_loot = build_ground_loot_view(
-        current, mode, width, height, obstacles);
+        current, mode, camera, width, height, obstacles);
     plan.material_loot = build_material_loot_view(
-        current, width, height, obstacles);
+        current, camera, width, height, obstacles);
     plan.stages = {{
         CombatRenderStage::room,
         CombatRenderStage::actors,
@@ -324,7 +432,9 @@ bool CombatRenderer::hud_font_ready() const noexcept {
 
 GroundLootView CombatRenderer::draw(
     const dungeon::DungeonSnapshot& previous,
-    const dungeon::DungeonSnapshot& current,
+    const dungeon::DungeonSnapshot& current_hud,
+    const dungeon::DungeonRenderSnapshot& world,
+    const CombatCameraView& camera,
     const DungeonRenderStatus& runtime_status,
     float interpolation_alpha,
     bool draw_debug,
@@ -332,12 +442,12 @@ GroundLootView CombatRenderer::draw(
     bool audio_ready) noexcept {
     active_skill_draw_status_ = {};
     static_cast<void>(material_pack_.synchronize_residency(
-        make_material_residency_request(current)));
-    transition_ = transition_after_room_phase(transition_, current.phase);
+        world_material_residency_request(world, current_hud.skill_loadout)));
+    transition_ = transition_after_room_phase(transition_, world.phase);
 
     ActiveSkillEffectPlan active_skill_plan{};
-    if (current.combat.has_value()) {
-        const combat::CombatSnapshot& combat = *current.combat;
+    if (world.has_combat) {
+        const combat::CombatSnapshot& combat = world.combat;
         const skills::ActiveSkillId active_id = combat.active_skill.id;
         const bool material_ready = active_id != skills::ActiveSkillId::none
             && material_pack_.available(active_skill_material_atlas(active_id));
@@ -345,13 +455,26 @@ GroundLootView CombatRenderer::draw(
             has_last_event_ ? &last_event_ : nullptr, material_ready);
     }
 
-    const CameraOffset camera_offset = feedback.camera_offset();
     const float clamped_interpolation_alpha = std::clamp(
         interpolation_alpha, 0.0F, 1.0F);
+    const float width = static_cast<float>(GetScreenWidth());
+    const float height = static_cast<float>(GetScreenHeight());
+    const bool interpolate_previous = can_interpolate_room(
+        previous, current_hud) && world.has_combat;
+    combat::Vec3 interpolated_player{};
+    if (world.has_combat) {
+        const combat::Vec3 current_player = world.combat.player.position;
+        const combat::Vec3 previous_player = interpolate_previous
+            ? previous.combat->player.position
+            : current_player;
+        interpolated_player = interpolate_combat_position(
+            previous_player, current_player, clamped_interpolation_alpha);
+    }
+    const CameraOffset camera_offset = feedback.camera_offset();
     const CombatRenderPlan render_plan = make_combat_render_plan(
-        previous, current, clamped_interpolation_alpha, camera_offset,
-        loot_filter_mode_, static_cast<float>(GetScreenWidth()),
-        static_cast<float>(GetScreenHeight()));
+        previous, world, interpolate_previous,
+        clamped_interpolation_alpha, camera,
+        camera_offset, loot_filter_mode_, width, height);
 
     Camera2D world_camera{};
     world_camera.offset = {camera_offset.x, camera_offset.y};
@@ -366,20 +489,23 @@ GroundLootView CombatRenderer::draw(
         }
         switch (stage) {
         case CombatRenderStage::room:
-            draw_room(current, render_plan.ground_loot, render_plan.material_loot);
+            draw_room(world, render_plan.ground_loot,
+                render_plan.material_loot, camera);
+            draw_abyss_overlay(current_hud);
             break;
         case CombatRenderStage::actors:
             active_skill_draw_status_.base_player_drawn = draw_actors(
-                previous, current, active_skill_plan,
+                previous, world, active_skill_plan, camera,
+                interpolated_player,
+                interpolate_previous,
                 clamped_interpolation_alpha,
                 draw_debug, feedback);
-            if (current.combat.has_value()) {
+            if (world.has_combat) {
                 const bool base_player_drawn =
                     active_skill_draw_status_.base_player_drawn;
                 active_skill_draw_status_ = active_skill_renderer_.draw_world(
-                    active_skill_plan,
-                    material_pack_, static_cast<float>(GetScreenWidth()),
-                    static_cast<float>(GetScreenHeight()));
+                    active_skill_plan, material_pack_,
+                    camera, width, height);
                 active_skill_draw_status_.base_player_drawn =
                     base_player_drawn;
             }
@@ -401,10 +527,12 @@ GroundLootView CombatRenderer::draw(
 
     if (draw_debug) {
         const DebugOverlayDiagnosticsPlan diagnostics =
-            make_debug_overlay_diagnostics_plan(current, hud_model_.diagnostics,
+            make_debug_overlay_diagnostics_plan(current_hud,
+                hud_model_.diagnostics,
                 hud_notices_.dropped_count(), hud_binding_revision_, last_event_,
                 has_last_event_, hud_renderer_.font_ready());
-        debug_overlay_.draw(current, runtime_status, feedback, audio_ready, diagnostics);
+        debug_overlay_.draw(current_hud, runtime_status, feedback,
+            audio_ready, diagnostics);
     }
 
     const float overlay_alpha = transition_overlay_alpha(transition_.seconds_left);
@@ -412,7 +540,7 @@ GroundLootView CombatRenderer::draw(
         DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
             Fade(BLACK, overlay_alpha));
     }
-    death_overlay_.draw(current, material_pack_);
+    death_overlay_.draw(current_hud, material_pack_);
     return render_plan.ground_loot;
 }
 

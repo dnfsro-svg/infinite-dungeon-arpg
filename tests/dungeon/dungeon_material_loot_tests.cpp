@@ -2,12 +2,14 @@
 
 #include "dungeon/material_loot.hpp"
 #include "dungeon/dungeon_progression.hpp"
+#include "dungeon/room_progress_checkpoint.hpp"
 #include "dungeon_test_support.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 
 namespace {
 
@@ -224,12 +226,53 @@ arpg::test::Failure material_pickup_is_atomic_and_claim_survives_reload()
     return {};
 }
 
+arpg::test::Failure expanded_room_material_pickup_uses_v9_claim_authority()
+    noexcept {
+    constexpr std::uint16_t kSpawnOrdinal = 200U;
+    constexpr std::uint16_t kMaterialOrdinal = kSpawnOrdinal * 2U;
+    DungeonRunState state = material_state(45U, kSpawnOrdinal, 27U);
+    ARPG_REQUIRE(state.current_room.seed != 0U);
+    DungeonSession session{DungeonRules{}, state};
+    const auto player = session.snapshot().combat->player.position;
+    ARPG_REQUIRE(relay_material(
+        session, kSpawnOrdinal, 27U, player));
+    ARPG_REQUIRE(session.request_material_pickup(kMaterialOrdinal)
+        == arpg::dungeon::RequestResult::accepted);
+    const arpg::dungeon::PendingSave* const pending =
+        session.pending_save_view();
+    ARPG_REQUIRE(pending != nullptr);
+    for (const std::uint64_t word : pending->next_state.item_ownership
+             .material_claimed_drop_bits) {
+        ARPG_REQUIRE(word == 0U);
+    }
+
+    std::unique_ptr<arpg::checkpoint::SaveCheckpointSlot> saved{
+        new (std::nothrow) arpg::checkpoint::SaveCheckpointSlot{}};
+    ARPG_REQUIRE(saved != nullptr);
+    ARPG_REQUIRE(session.capture_save_checkpoint(
+        *saved, 81U, &pending->next_state));
+    ARPG_REQUIRE((saved->room_progress.secondary_claim_bits[
+            kMaterialOrdinal / 64U]
+        & (std::uint64_t{1U} << (kMaterialOrdinal % 64U))) != 0U);
+
+    DungeonSession reloaded{DungeonRules{}, saved->state};
+    ARPG_REQUIRE(reloaded.restore_room_progress_checkpoint(*saved));
+    ARPG_REQUIRE(!arpg::test::DungeonSessionTestAccess::ground_materials(
+        reloaded)[kMaterialOrdinal].active);
+    return {};
+}
+
 arpg::test::Failure proximity_pickup_requires_combat_and_nearby_range()
     noexcept {
     constexpr std::uint16_t kSpawnOrdinal = 8U;
     DungeonRunState state = material_state(45U, kSpawnOrdinal, 27U);
     DungeonSession session{DungeonRules{}, state};
-    const auto player = session.snapshot().combat->player.position;
+    const arpg::combat::RoomMonsterPlan* const plan =
+        arpg::test::room_monster_plan(session);
+    ARPG_REQUIRE(plan != nullptr);
+    ARPG_REQUIRE(kSpawnOrdinal < plan->monster_count);
+    const auto player = plan->monsters[kSpawnOrdinal].initial_position;
+    arpg::test::set_player_position(session, player);
     ARPG_REQUIRE(relay_material(session, kSpawnOrdinal, 27U, player));
     arpg::test::clear_all_ground_items(session);
     session.request_nearby_pickups(player);
@@ -319,6 +362,22 @@ arpg::test::Failure room_clear_save_failure_retries_vacuum_after_unlock()
         ARPG_REQUIRE(open);
     }
 
+    const auto ground_before =
+        arpg::test::DungeonSessionTestAccess::ground_materials(session);
+    const auto material_counts_before = session.item_state().materials;
+    std::array<std::uint64_t, arpg::items::kMaterialCount>
+        vacuumed_material_counts{};
+    std::uint16_t ground_count_before = 0U;
+    for (const auto& ground : ground_before) {
+        if (!ground.active) continue;
+        const std::size_t material_index =
+            arpg::items::material_index(ground.material);
+        ARPG_REQUIRE(material_index < vacuumed_material_counts.size());
+        ++vacuumed_material_counts[material_index];
+        ++ground_count_before;
+    }
+    ARPG_REQUIRE(ground_count_before != 0U);
+
     session.tick({});
     ARPG_REQUIRE(session.pending_save().has_value());
     const auto first = *session.pending_save();
@@ -334,7 +393,19 @@ arpg::test::Failure room_clear_save_failure_retries_vacuum_after_unlock()
         first.next_state,
         first.kind,
     });
-    ARPG_REQUIRE(session.snapshot().ground_material_count == 1U);
+    const auto& ground_after_rollback =
+        arpg::test::DungeonSessionTestAccess::ground_materials(session);
+    for (std::size_t index = 0U; index < ground_before.size(); ++index) {
+        const auto& before = ground_before[index];
+        const auto& after = ground_after_rollback[index];
+        ARPG_REQUIRE(after.active == before.active);
+        ARPG_REQUIRE(after.ordinal == before.ordinal);
+        ARPG_REQUIRE(after.source == before.source);
+        ARPG_REQUIRE(after.position.x == before.position.x);
+        ARPG_REQUIRE(after.position.y == before.position.y);
+        ARPG_REQUIRE(after.position.z == before.position.z);
+        ARPG_REQUIRE(after.material == before.material);
+    }
     for (const bool open : session.snapshot().exits_open) {
         ARPG_REQUIRE(open);
     }
@@ -353,8 +424,12 @@ arpg::test::Failure room_clear_save_failure_retries_vacuum_after_unlock()
 
     ARPG_REQUIRE(resolve_committed(session));
     ARPG_REQUIRE(session.snapshot().ground_material_count == 0U);
-    ARPG_REQUIRE(session.item_state().materials[
-        arpg::items::material_index(MaterialId::chaos)] == 1U);
+    for (std::size_t index = 0U;
+            index < vacuumed_material_counts.size(); ++index) {
+        ARPG_REQUIRE(session.item_state().materials[index]
+            == material_counts_before[index]
+                + vacuumed_material_counts[index]);
+    }
     for (const bool open : session.snapshot().exits_open) {
         ARPG_REQUIRE(open);
     }
@@ -373,24 +448,38 @@ arpg::test::Failure abyss_clear_adds_one_two_or_three_materials() noexcept {
         arpg::test::set_phase(session, arpg::dungeon::RoomPhase::combat);
         arpg::test::set_started_abyss_room(session, danger);
         arpg::test::prepare_room_clear(session);
-        const auto pending = *session.pending_save();
-        ARPG_REQUIRE(pending.kind
+        const arpg::dungeon::PendingSave* const pending =
+            session.pending_save_view();
+        ARPG_REQUIRE(pending != nullptr);
+        ARPG_REQUIRE(pending->kind
             == arpg::dungeon::PendingSaveKind::abyss_clear);
         std::uint64_t total = 0U;
         for (const std::uint64_t count :
-                pending.next_state.item_ownership.materials) {
+                pending->next_state.item_ownership.materials) {
             total += count;
         }
         ARPG_REQUIRE(total
             == arpg::dungeon::abyss_material_reward_count(danger));
+        ARPG_REQUIRE(pending->next_state.item_ownership
+            .material_claimed_drop_bits
+            == state.item_ownership.material_claimed_drop_bits);
+        std::unique_ptr<arpg::checkpoint::SaveCheckpointSlot> saved{
+            new (std::nothrow) arpg::checkpoint::SaveCheckpointSlot{}};
+        ARPG_REQUIRE(saved != nullptr);
+        ARPG_REQUIRE(session.capture_save_checkpoint(
+            *saved, 82U, &pending->next_state));
         for (std::uint8_t index = 0U;
                 index < arpg::dungeon::abyss_material_reward_count(danger);
                 ++index) {
-            const std::uint16_t ordinal = static_cast<std::uint16_t>(
+            const std::uint16_t material_ordinal = static_cast<std::uint16_t>(
                 arpg::dungeon::kAbyssMaterialOrdinalBegin + index);
-            ARPG_REQUIRE((pending.next_state.item_ownership
-                .material_claimed_drop_bits[ordinal / 64U]
-                & (std::uint64_t{1U} << (ordinal % 64U))) != 0U);
+            const std::uint16_t canonical =
+                arpg::dungeon::checkpoint_material_ordinal(material_ordinal);
+            ARPG_REQUIRE(!arpg::dungeon::legacy_secondary_claim_representable(
+                canonical));
+            ARPG_REQUIRE((saved->room_progress.secondary_claim_bits[
+                    canonical / 64U]
+                & (std::uint64_t{1U} << (canonical % 64U))) != 0U);
         }
     }
     return {};
@@ -440,6 +529,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &monster_materials_use_independent_fixed_ordinals},
     {"material pickup atomic and reload safe",
         &material_pickup_is_atomic_and_claim_survives_reload},
+    {"expanded room material pickup uses v9 claim authority",
+        &expanded_room_material_pickup_uses_v9_claim_authority},
     {"material proximity requires combat and range",
         &proximity_pickup_requires_combat_and_nearby_range},
     {"room clear vacuum atomic", &room_clear_vacuum_is_one_atomic_save},

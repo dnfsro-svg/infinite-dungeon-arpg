@@ -66,19 +66,15 @@ struct RoomBackgroundDrawRuntimeStatus final {
     dungeon::DungeonElement ecology) noexcept;
 
 [[nodiscard]] CombatRenderPlan make_combat_render_plan(
-    const dungeon::DungeonSnapshot& snapshot,
-    settings::LootFilterMode mode,
-    float width,
-    float height) noexcept;
-[[nodiscard]] CombatRenderPlan make_combat_render_plan(
     const dungeon::DungeonSnapshot& previous,
-    const dungeon::DungeonSnapshot& current,
+    const dungeon::DungeonRenderSnapshot& current,
+    bool interpolate_previous,
     float interpolation_alpha,
+    const CombatCameraView& camera,
     CameraOffset camera_offset,
     settings::LootFilterMode mode,
     float width,
     float height) noexcept;
-
 [[nodiscard]] std::optional<std::size_t> hud_presented_frame_index(
     HudPresentedFrame) noexcept;
 
@@ -114,7 +110,8 @@ public:
     [[nodiscard]] RoomBackgroundDrawRuntimeStatus draw_room_background_only(
         dungeon::DungeonElement ecology) noexcept;
     [[nodiscard]] GroundLootView draw_ground_loot_icons_only(
-        const dungeon::DungeonSnapshot& snapshot) noexcept;
+        const dungeon::DungeonSnapshot& snapshot,
+        const CombatCameraView& camera) noexcept;
     [[nodiscard]] RoomBackgroundDrawRuntimeStatus room_background_draw_status()
         const noexcept;
     [[nodiscard]] ActiveSkillDrawRuntimeStatus active_skill_draw_status()
@@ -153,7 +150,9 @@ public:
     [[nodiscard]] bool hud_font_ready() const noexcept;
     [[nodiscard]] GroundLootView draw(
         const dungeon::DungeonSnapshot& previous,
-        const dungeon::DungeonSnapshot& current,
+        const dungeon::DungeonSnapshot& current_hud,
+        const dungeon::DungeonRenderSnapshot& world,
+        const CombatCameraView& camera,
         const DungeonRenderStatus& runtime_status,
         float interpolation_alpha,
         bool draw_debug,
@@ -162,17 +161,23 @@ public:
 
 private:
     void draw_room(
-        const dungeon::DungeonSnapshot& current,
+        const dungeon::DungeonRenderSnapshot& current,
         const GroundLootView& ground_loot,
-        const MaterialLootView& material_loot) noexcept;
+        const MaterialLootView& material_loot,
+        const CombatCameraView& camera) noexcept;
     [[nodiscard]] bool draw_actors(
         const dungeon::DungeonSnapshot& previous,
-        const dungeon::DungeonSnapshot& current,
+        const dungeon::DungeonRenderSnapshot& current,
         const ActiveSkillEffectPlan& active_skill_plan,
+        const CombatCameraView& camera,
+        combat::Vec3 interpolated_player,
+        bool interpolate_previous,
         float interpolation_alpha,
         bool draw_debug,
         const CombatFeedback& feedback) noexcept;
     void draw_hud() const noexcept;
+    void draw_abyss_overlay(
+        const dungeon::DungeonSnapshot& current) const noexcept;
     void draw_abyss_hud(
         const dungeon::DungeonSnapshot& current,
         float x,
@@ -180,6 +185,7 @@ private:
         int line_step) const noexcept;
     void draw_debug_world_volumes(
         const combat::CombatSnapshot& snapshot,
+        const CombatCameraView& camera,
         float width,
         float height) const noexcept;
     combat::CombatEvent last_event_{};

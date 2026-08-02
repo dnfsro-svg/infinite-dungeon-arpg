@@ -27,6 +27,23 @@ struct RenderLayout final {
     float world_x,
     float world_y,
     float world_z,
+    CombatCameraView view,
+    float viewport_width,
+    float viewport_height) noexcept {
+    const ScreenProjection projected = project_combat_position(
+        {world_x, world_y, world_z}, view, viewport_width, viewport_height);
+    return {
+        projected.x,
+        projected.y,
+        projected.ground_y,
+        projected.scale,
+    };
+}
+
+[[nodiscard]] inline RenderProjection project_render_world(
+    float world_x,
+    float world_y,
+    float world_z,
     float viewport_width,
     float viewport_height) noexcept {
     const ScreenProjection projected = project_combat_position(

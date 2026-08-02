@@ -2,6 +2,7 @@
 
 #include "chaos_room_material_slice.hpp"
 #include "dungeon_view_math.hpp"
+#include "fire_room_material_slice.hpp"
 #include "lightning_room_material_slice.hpp"
 #include "render_layout.hpp"
 #include "water_room_material_slice.hpp"
@@ -15,12 +16,10 @@ namespace arpg::platform {
 namespace {
 
 constexpr float kFrameWidth = 256.0F;
-constexpr float kSafeInset = 8.25F;
-constexpr float kExclusionGap = 0.25F;
-constexpr std::size_t kCenterPlacementIndex = 4U;
-constexpr std::array<Vector2, 5> kNormalizedFootPositions{{
-    {0.12F, 0.34F}, {0.88F, 0.34F}, {0.18F, 0.78F},
-    {0.82F, 0.78F}, {0.50F, 0.82F},
+constexpr std::array<combat::Vec3, 5> kLegacyWorldFootPositions{{
+    {-8.5F, -3.4F, 0.0F}, {8.5F, -3.4F, 0.0F},
+    {-8.1F, 3.0F, 0.0F}, {7.0F, 3.0F, 0.0F},
+    {-5.0F, 4.2F, 0.0F},
 }};
 
 template <std::size_t Size>
@@ -33,161 +32,113 @@ const EnvironmentPropDefinition* find_definition(
     return nullptr;
 }
 
-EnvironmentPropPlacement clamped_placement(MaterialSpriteId sprite,
-    Vector2 normalized_position, bool flip_x, float width, float height) noexcept {
-    const EnvironmentPropDefinition* const definition =
-        environment_prop_definition(sprite);
-    if (definition == nullptr || width <= 0.0F || height <= 0.0F) return {};
-    EnvironmentPropPlacement placement{
-        sprite, normalized_position, flip_x, definition->recommended_scale};
-    float foot_x = normalized_position.x * width;
-    float foot_y = normalized_position.y * height;
-    const float hud_height = std::max(72.0F, 0.12F * height);
-    const float right = width - kSafeInset;
-    const float bottom = height - hud_height - kSafeInset;
-    const float alpha_x = flip_x
-        ? kFrameWidth - definition->alpha_bounds.x
-            - definition->alpha_bounds.width
-        : definition->alpha_bounds.x;
-    const float left_offset =
-        (alpha_x - definition->foot_anchor.x) * placement.scale;
-    const float right_offset = left_offset
-        + definition->alpha_bounds.width * placement.scale;
-    const float top_offset = (definition->alpha_bounds.y
-        - definition->foot_anchor.y) * placement.scale;
-    const float bottom_offset = top_offset
-        + definition->alpha_bounds.height * placement.scale;
-    foot_x = std::clamp(foot_x, kSafeInset - left_offset,
-        right - right_offset);
-    foot_y = std::clamp(foot_y, kSafeInset - top_offset,
-        bottom - bottom_offset);
-    placement.normalized_foot_position = {foot_x / width, foot_y / height};
-    return placement;
-}
-
-float intersection_area(Rectangle left, Rectangle right) noexcept {
-    const float width = std::max(0.0F,
-        std::min(left.x + left.width, right.x + right.width)
-            - std::max(left.x, right.x));
-    const float height = std::max(0.0F,
-        std::min(left.y + left.height, right.y + right.height)
-            - std::max(left.y, right.y));
-    return width * height;
-}
-
-bool placement_is_safe(const EnvironmentPropLayout& layout,
-    std::size_t placement_index, const EnvironmentPropPlacement& candidate,
-    Rectangle hole_bounds, float width, float height) noexcept {
-    const EnvironmentPropDefinition* const definition =
-        environment_prop_definition(candidate.sprite);
-    if (definition == nullptr) return false;
-    const Rectangle candidate_bounds = project_environment_prop_bounds(
-        *definition, candidate, width, height);
-    const float bottom = height - std::max(72.0F, 0.12F * height)
-        - kSafeInset;
-    if (candidate_bounds.x < kSafeInset
-        || candidate_bounds.y < kSafeInset
-        || candidate_bounds.x + candidate_bounds.width > width - kSafeInset
-        || candidate_bounds.y + candidate_bounds.height > bottom
-        || intersection_area(candidate_bounds, hole_bounds) > 0.0F) {
-        return false;
-    }
-    for (std::size_t index{}; index < layout.count; ++index) {
-        if (index == placement_index) continue;
-        const EnvironmentPropDefinition* const other_definition =
-            environment_prop_definition(layout.props[index].sprite);
-        if (other_definition == nullptr) return false;
-        const Rectangle other_bounds = project_environment_prop_bounds(
-            *other_definition, layout.props[index], width, height);
-        const float smaller_area = std::min(
-            candidate_bounds.width * candidate_bounds.height,
-            other_bounds.width * other_bounds.height);
-        if (intersection_area(candidate_bounds, other_bounds)
-            > smaller_area * 0.15F) {
-            return false;
+MaterialSpriteId room_prop_sprite(dungeon::DungeonElement ecology,
+    combat::RoomPropKind prop) noexcept {
+    using combat::RoomPropKind;
+    if (ecology == dungeon::DungeonElement::fire) {
+        const FireRoomMaterialSlice& slice = fire_room_material_slice();
+        switch (prop) {
+        case RoomPropKind::torch:
+            return slice.props[static_cast<std::size_t>(
+                FireRoomPropId::torch)].sprite;
+        case RoomPropKind::banner:
+            return slice.props[static_cast<std::size_t>(
+                FireRoomPropId::banner)].sprite;
+        case RoomPropKind::weapon_rack:
+            return slice.props[static_cast<std::size_t>(
+                FireRoomPropId::weapon_rack)].sprite;
+        case RoomPropKind::bone_pile:
+            return slice.props[static_cast<std::size_t>(
+                FireRoomPropId::bone_pile)].sprite;
+        case RoomPropKind::crate:
+            return slice.props[static_cast<std::size_t>(
+                FireRoomPropId::breakable_crate)].sprite;
+        case RoomPropKind::brazier:
+            return slice.props[static_cast<std::size_t>(
+                FireRoomPropId::solid_brazier)].sprite;
+        default: return MaterialSpriteId::missing;
         }
     }
-    return true;
+    if (ecology == dungeon::DungeonElement::water) {
+        const auto& props = water_room_material_slice().props;
+        switch (prop) {
+        case RoomPropKind::lantern:
+            return props[static_cast<std::size_t>(
+                WaterRoomPropId::lantern)].sprite;
+        case RoomPropKind::coral:
+        case RoomPropKind::crate:
+            return props[static_cast<std::size_t>(
+                WaterRoomPropId::coral)].sprite;
+        case RoomPropKind::grate:
+            return props[static_cast<std::size_t>(
+                WaterRoomPropId::grate)].sprite;
+        default: return MaterialSpriteId::missing;
+        }
+    }
+    if (ecology == dungeon::DungeonElement::lightning) {
+        const auto& props = lightning_room_material_slice().props;
+        switch (prop) {
+        case RoomPropKind::arc_lamp:
+            return props[static_cast<std::size_t>(
+                LightningRoomPropId::arc_lamp)].sprite;
+        case RoomPropKind::capacitor_bank:
+        case RoomPropKind::crate:
+            return props[static_cast<std::size_t>(
+                LightningRoomPropId::capacitor_bank)].sprite;
+        case RoomPropKind::grounding_rod:
+            return props[static_cast<std::size_t>(
+                LightningRoomPropId::grounding_rod)].sprite;
+        default: return MaterialSpriteId::missing;
+        }
+    }
+    if (ecology == dungeon::DungeonElement::chaos) {
+        const auto& props = chaos_room_material_slice().props;
+        switch (prop) {
+        case RoomPropKind::rift_lantern:
+            return props[static_cast<std::size_t>(
+                ChaosRoomPropId::rift_lantern)].sprite;
+        case RoomPropKind::anomaly_condenser:
+        case RoomPropKind::crate:
+            return props[static_cast<std::size_t>(
+                ChaosRoomPropId::anomaly_condenser)].sprite;
+        case RoomPropKind::warning_obelisk:
+            return props[static_cast<std::size_t>(
+                ChaosRoomPropId::warning_obelisk)].sprite;
+        default: return MaterialSpriteId::missing;
+        }
+    }
+    return MaterialSpriteId::missing;
 }
 
-void exclude_gameplay_hole(EnvironmentPropLayout& layout,
-    dungeon::DungeonElement ecology, float width, float height) noexcept {
-    if (layout.count <= kCenterPlacementIndex
-        || width <= 0.0F || height <= 0.0F) {
+float authored_prop_scale(MaterialSpriteId sprite) noexcept {
+    if (sprite == MaterialSpriteId::missing) return 0.0F;
+    if (const EnvironmentPropDefinition* const definition =
+            environment_prop_definition(sprite)) {
+        return definition->recommended_scale;
+    }
+    return 0.72F;
+}
+
+void append_environment_prop(EnvironmentPropLayout& layout,
+    dungeon::DungeonElement ecology,
+    const combat::RoomEnvironmentRecord& record) noexcept {
+    const MaterialSpriteId sprite = room_prop_sprite(ecology, record.prop);
+    if (sprite == MaterialSpriteId::missing
+            || layout.count == layout.props.size()) {
         return;
     }
-    MaterialSpriteId hole_sprite = MaterialSpriteId::missing;
-    if (ecology == dungeon::DungeonElement::water) {
-        hole_sprite = water_room_material_slice()
-            .props[static_cast<std::size_t>(WaterRoomPropId::hole)].sprite;
-    } else if (ecology == dungeon::DungeonElement::lightning) {
-        hole_sprite = lightning_room_material_slice()
-            .props[static_cast<std::size_t>(LightningRoomPropId::hole)].sprite;
-    } else if (ecology == dungeon::DungeonElement::chaos) {
-        hole_sprite = chaos_room_material_slice()
-            .props[static_cast<std::size_t>(ChaosRoomPropId::hole)].sprite;
-    }
-    const EnvironmentPropDefinition* const hole_definition =
-        environment_prop_definition(hole_sprite);
-    const EnvironmentPropDefinition* const center_definition =
-        environment_prop_definition(
-            layout.props[kCenterPlacementIndex].sprite);
-    if (hole_definition == nullptr || center_definition == nullptr) return;
-
-    const RenderProjection hole_projection = project_render_world(
-        kHoleCenter.x, kHoleCenter.y, kHoleCenter.z, width, height);
-    const EnvironmentPropPlacement hole_placement{
-        hole_sprite,
-        {hole_projection.x / width, hole_projection.ground_y / height},
-        false,
-        kEnvironmentGameplayHoleScale * hole_projection.scale,
+    const float authored_scale = authored_prop_scale(sprite);
+    const float blueprint_scale = static_cast<float>(record.scale_bp)
+        / 10000.0F;
+    layout.props[layout.count++] = {
+        sprite,
+        record.anchor,
+        record.mirror_x,
+        authored_scale * blueprint_scale,
+        record.ordinal,
+        record.quarter_turns,
+        record.obstacle.kind,
     };
-    const Rectangle hole_bounds = project_environment_prop_bounds(
-        *hole_definition, hole_placement, width, height);
-    const Rectangle center_bounds = project_environment_prop_bounds(
-        *center_definition, layout.props[kCenterPlacementIndex], width, height);
-    if (intersection_area(center_bounds, hole_bounds) <= 0.0F) return;
-
-    struct Translation final {
-        float x{};
-        float y{};
-        float distance{};
-    };
-    std::array<Translation, 4> translations{{
-        {hole_bounds.x - (center_bounds.x + center_bounds.width)
-                - kExclusionGap,
-            0.0F, 0.0F},
-        {hole_bounds.x + hole_bounds.width - center_bounds.x
-                + kExclusionGap,
-            0.0F, 0.0F},
-        {0.0F,
-            hole_bounds.y - (center_bounds.y + center_bounds.height)
-                - kExclusionGap,
-            0.0F},
-        {0.0F,
-            hole_bounds.y + hole_bounds.height - center_bounds.y
-                + kExclusionGap,
-            0.0F},
-    }};
-    for (auto& translation : translations) {
-        translation.distance = std::fabs(translation.x)
-            + std::fabs(translation.y);
-    }
-    std::sort(translations.begin(), translations.end(),
-        [](const Translation& left, const Translation& right) noexcept {
-            return left.distance < right.distance;
-        });
-    for (const Translation translation : translations) {
-        EnvironmentPropPlacement candidate =
-            layout.props[kCenterPlacementIndex];
-        candidate.normalized_foot_position.x += translation.x / width;
-        candidate.normalized_foot_position.y += translation.y / height;
-        if (placement_is_safe(layout, kCenterPlacementIndex, candidate,
-                hole_bounds, width, height)) {
-            layout.props[kCenterPlacementIndex] = candidate;
-            return;
-        }
-    }
 }
 
 }  // namespace
@@ -209,23 +160,88 @@ Rectangle project_environment_prop_bounds(
     const EnvironmentPropDefinition& definition,
     const EnvironmentPropPlacement& placement,
     float width, float height) noexcept {
+    const CombatCameraView camera = make_combat_camera_view(
+        {}, width, height);
+    return project_environment_prop_bounds(
+        definition, placement, camera, width, height);
+}
+
+ProjectedEnvironmentProp project_environment_prop(
+    const EnvironmentPropPlacement& placement,
+    const CombatCameraView& camera,
+    float width, float height) noexcept {
+    const RenderProjection projected = project_render_world(
+        placement.world_foot_position.x,
+        placement.world_foot_position.y,
+        placement.world_foot_position.z,
+        camera, width, height);
+    return {{projected.x, projected.ground_y},
+        placement.scale * projected.scale};
+}
+
+Rectangle project_environment_prop_bounds(
+    const EnvironmentPropDefinition& definition,
+    const EnvironmentPropPlacement& placement,
+    const CombatCameraView& camera,
+    float width, float height) noexcept {
+    const ProjectedEnvironmentProp projected = project_environment_prop(
+        placement, camera, width, height);
     const float alpha_x = placement.flip_x
         ? kFrameWidth - definition.alpha_bounds.x
             - definition.alpha_bounds.width
         : definition.alpha_bounds.x;
     return {
-        placement.normalized_foot_position.x * width
-            + (alpha_x - definition.foot_anchor.x) * placement.scale,
-        placement.normalized_foot_position.y * height
+        projected.foot_position.x
+            + (alpha_x - definition.foot_anchor.x) * projected.scale,
+        projected.foot_position.y
             + (definition.alpha_bounds.y - definition.foot_anchor.y)
-                * placement.scale,
-        definition.alpha_bounds.width * placement.scale,
-        definition.alpha_bounds.height * placement.scale,
+                * projected.scale,
+        definition.alpha_bounds.width * projected.scale,
+        definition.alpha_bounds.height * projected.scale,
     };
 }
 
 EnvironmentPropLayout environment_prop_layout(
+    const dungeon::DungeonRenderSnapshot& world) noexcept {
+    EnvironmentPropLayout layout{};
+    const std::size_t count = (std::min)(
+        static_cast<std::size_t>(world.environment.count),
+        world.environment.records.size());
+    for (std::size_t index = 0U; index < count; ++index) {
+        const combat::RoomEnvironmentRecord& record =
+            world.environment.records[index];
+        if (record.obstacle.kind != combat::RoomObstacleKind::none) {
+            const dungeon::EnvironmentObstacleRenderSnapshot& obstacle =
+                world.environment_obstacles[index];
+            if (!obstacle.present || obstacle.ordinal != record.ordinal
+                    || obstacle.kind != record.obstacle.kind
+                    || (obstacle.kind == combat::RoomObstacleKind::breakable
+                        && !obstacle.intact)) {
+                continue;
+            }
+        }
+        append_environment_prop(layout, world.ecology, record);
+    }
+    return layout;
+}
+
+EnvironmentPropLayout environment_prop_layout(
+    dungeon::DungeonElement ecology,
+    const dungeon::VisibleEnvironmentSet& visible) noexcept {
+    EnvironmentPropLayout layout{};
+    const std::size_t count = (std::min)(
+        static_cast<std::size_t>(visible.count), visible.records.size());
+    for (std::size_t index = 0U; index < count; ++index) {
+        const combat::RoomEnvironmentRecord& record = visible.records[index];
+        append_environment_prop(layout, ecology, record);
+    }
+    return layout;
+}
+
+EnvironmentPropLayout environment_prop_layout(
     dungeon::DungeonElement ecology, float width, float height) noexcept {
+    static_cast<void>(width);
+    static_cast<void>(height);
     std::array<MaterialSpriteId, 5> sprites{};
     std::array<bool, 5> flips{};
     if (ecology == dungeon::DungeonElement::water) {
@@ -263,10 +279,13 @@ EnvironmentPropLayout environment_prop_layout(
     EnvironmentPropLayout layout{};
     layout.count = sprites.size();
     for (std::size_t index{}; index < layout.count; ++index) {
-        layout.props[index] = clamped_placement(sprites[index],
-            kNormalizedFootPositions[index], flips[index], width, height);
+        const EnvironmentPropDefinition* const definition =
+            environment_prop_definition(sprites[index]);
+        if (definition == nullptr) return {};
+        layout.props[index] = {
+            sprites[index], kLegacyWorldFootPositions[index], flips[index],
+            definition->recommended_scale};
     }
-    exclude_gameplay_hole(layout, ecology, width, height);
     return layout;
 }
 

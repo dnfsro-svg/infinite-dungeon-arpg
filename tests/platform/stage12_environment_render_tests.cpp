@@ -2,6 +2,7 @@
 
 #include "environment_render_plan.hpp"
 #include "combat_view_math.hpp"
+#include "environment_prop_layout.hpp"
 #include "material_pack.hpp"
 #include "raylib_host.hpp"
 
@@ -47,6 +48,34 @@ std::size_t occurrence_count(const std::string& source,
         position += std::char_traits<char>::length(token);
     }
     return count;
+}
+
+bool every_call_contains(const std::string& source,
+    const char* callee, const char* required,
+    std::size_t& call_count) noexcept {
+    const std::string token = std::string{callee} + "(";
+    std::size_t position{};
+    while ((position = source.find(token, position)) != std::string::npos) {
+        const std::size_t opening = position + token.size() - 1U;
+        std::size_t depth{};
+        std::size_t closing = std::string::npos;
+        for (std::size_t index = opening; index < source.size(); ++index) {
+            if (source[index] == '(') {
+                ++depth;
+            } else if (source[index] == ')' && --depth == 0U) {
+                closing = index;
+                break;
+            }
+        }
+        if (closing == std::string::npos
+            || source.substr(opening, closing - opening + 1U).find(required)
+                == std::string::npos) {
+            return false;
+        }
+        ++call_count;
+        position = closing + 1U;
+    }
+    return true;
 }
 
 arpg::test::Failure material_showcase_layout_tracks_room_bounds() noexcept {
@@ -394,12 +423,14 @@ arpg::test::Failure environment_renderer_uses_independent_native_paths() noexcep
     ARPG_REQUIRE(door_call.find(
         "draw_material_background") == std::string::npos);
     ARPG_REQUIRE(draw_room_block.find(
-        "draw_hole(current, material_pack_)")
+        "draw_hole(current, material_pack_, camera)")
         != std::string::npos);
     ARPG_REQUIRE(occurrence_count(draw_room_block,
-        "draw_fire_room_props(") == 1U);
+        "draw_fire_room_props(") == 0U);
     ARPG_REQUIRE(occurrence_count(draw_room_block,
         "draw_environment_room_props(") == 1U);
+    ARPG_REQUIRE(draw_room_block.find("material_pack_, current, camera")
+        != std::string::npos);
     for (const char* old_loop : {"draw_water_room_props(",
              "draw_lightning_room_props(", "draw_chaos_room_props("}) {
         ARPG_REQUIRE(renderer.find(old_loop) == std::string::npos);
@@ -412,6 +443,8 @@ arpg::test::Failure environment_renderer_uses_independent_native_paths() noexcep
     ARPG_REQUIRE(occurrence_count(shared_props_block, "for (") == 1U);
     ARPG_REQUIRE(shared_props_block.find(
         "environment_prop_layout(") != std::string::npos);
+    ARPG_REQUIRE(shared_props_block.find(
+        "project_environment_prop(") != std::string::npos);
     ARPG_REQUIRE(shared_props_block.find(
         "DrawRectangleLinesEx(bounds, 2.0F, Color{35, 48, 62, 72})")
         != std::string::npos);
@@ -451,6 +484,127 @@ arpg::test::Failure environment_renderer_uses_independent_native_paths() noexcep
         ARPG_REQUIRE(!source.empty());
         ARPG_REQUIRE(source.find(".json") == std::string::npos);
     }
+    return {};
+}
+
+arpg::test::Failure world_renderers_share_one_immutable_camera() noexcept {
+    constexpr std::array<const char*, 7U> kWorldSources{{
+        "src/platform/raylib/combat_renderer.cpp",
+        "src/platform/raylib/actor_renderer.cpp",
+        "src/platform/raylib/active_skill_renderer.cpp",
+        "src/platform/raylib/debug_renderer.cpp",
+        "src/platform/raylib/ground_loot_view.cpp",
+        "src/platform/raylib/material_loot_view.cpp",
+        "src/platform/raylib/room_renderer.cpp",
+    }};
+    constexpr std::array<const char*, 4U> kProjectionFunctions{{
+        "project_combat_position",
+        "project_projectile_position",
+        "project_hazard_center",
+        "project_render_world",
+    }};
+    std::size_t projection_call_count{};
+    for (const char* path : kWorldSources) {
+        const std::string code = cpp_code_only(read_project_source(path));
+        ARPG_REQUIRE(!code.empty());
+        for (const char* projection : kProjectionFunctions) {
+            ARPG_REQUIRE(every_call_contains(
+                code, projection, "camera", projection_call_count));
+        }
+    }
+    ARPG_REQUIRE(projection_call_count >= 20U);
+
+    const std::string renderer = cpp_code_only(read_project_source(
+        "src/platform/raylib/combat_renderer.cpp"));
+    const std::size_t draw_marker = renderer.find("CombatRenderer::draw(");
+    ARPG_REQUIRE(draw_marker != std::string::npos);
+    const std::size_t draw_opening = renderer.find('{', draw_marker);
+    ARPG_REQUIRE(draw_opening != std::string::npos);
+    const std::string draw_signature = renderer.substr(
+        draw_marker, draw_opening - draw_marker);
+    ARPG_REQUIRE(draw_signature.find("const CombatCameraView& camera")
+        != std::string::npos);
+    ARPG_REQUIRE(draw_signature.find(
+        "const dungeon::DungeonRenderSnapshot& world")
+        != std::string::npos);
+    const std::string draw = braced_block_after(renderer, draw_marker);
+    ARPG_REQUIRE(occurrence_count(draw, "make_combat_camera_view(") == 0U);
+    for (const char* consumer : {
+             "make_combat_render_plan", "draw_room", "draw_actors", "draw_world"}) {
+        std::size_t consumer_count{};
+        ARPG_REQUIRE(every_call_contains(
+            draw, consumer, "camera", consumer_count));
+        ARPG_REQUIRE(consumer_count == 1U);
+    }
+    for (const char* world_consumer : {
+             "make_combat_render_plan", "draw_room", "draw_actors"}) {
+        std::size_t consumer_count{};
+        ARPG_REQUIRE(every_call_contains(
+            draw, world_consumer, "world", consumer_count));
+        ARPG_REQUIRE(consumer_count == 1U);
+    }
+    ARPG_REQUIRE(draw.find("draw_room(current_hud") == std::string::npos);
+    ARPG_REQUIRE(draw.find("draw_actors(previous, current_hud")
+        == std::string::npos);
+
+    const std::string props = cpp_code_only(read_project_source(
+        "src/platform/raylib/environment_prop_layout.cpp"));
+    ARPG_REQUIRE(props.find("normalized") == std::string::npos);
+    ARPG_REQUIRE(props.find("record.anchor") != std::string::npos);
+    ARPG_REQUIRE(props.find("environment_obstacles[index]")
+        != std::string::npos);
+    return {};
+}
+
+arpg::test::Failure environment_props_keep_world_anchors_when_camera_moves()
+    noexcept {
+    arpg::dungeon::VisibleEnvironmentSet visible{};
+    visible.count = 1U;
+    visible.records[0].ordinal = 17U;
+    visible.records[0].prop = arpg::combat::RoomPropKind::torch;
+    visible.records[0].anchor = {7.0F, 2.0F, 0.0F};
+    visible.records[0].scale_bp = 10000U;
+    arpg::dungeon::DungeonRenderSnapshot world{};
+    world.ecology = arpg::dungeon::DungeonElement::fire;
+    world.environment = visible;
+    const arpg::platform::EnvironmentPropLayout layout =
+        arpg::platform::environment_prop_layout(world);
+    ARPG_REQUIRE(layout.count == 1U);
+    ARPG_REQUIRE(layout.props[0].ordinal == 17U);
+    ARPG_REQUIRE(layout.props[0].world_foot_position.x == 7.0F);
+    ARPG_REQUIRE(layout.props[0].world_foot_position.y == 2.0F);
+
+    const arpg::platform::CombatCameraView first_camera =
+        arpg::platform::make_combat_camera_view(
+            {0.0F, 0.0F, 0.0F}, 1920.0F, 1080.0F);
+    const arpg::platform::CombatCameraView moved_camera =
+        arpg::platform::make_combat_camera_view(
+            {10.0F, 0.0F, 0.0F}, 1920.0F, 1080.0F);
+    const arpg::platform::ProjectedEnvironmentProp first =
+        arpg::platform::project_environment_prop(
+            layout.props[0], first_camera, 1920.0F, 1080.0F);
+    const arpg::platform::ProjectedEnvironmentProp moved =
+        arpg::platform::project_environment_prop(
+            layout.props[0], moved_camera, 1920.0F, 1080.0F);
+    ARPG_REQUIRE(first.foot_position.x != moved.foot_position.x);
+    ARPG_REQUIRE(layout.props[0].world_foot_position.x == 7.0F);
+    ARPG_REQUIRE(layout.props[0].world_foot_position.y == 2.0F);
+
+    world.environment.count = 2U;
+    world.environment.records[1].ordinal = 23U;
+    world.environment.records[1].prop = arpg::combat::RoomPropKind::crate;
+    world.environment.records[1].anchor = {8.0F, 2.0F, 0.0F};
+    world.environment.records[1].scale_bp = 10000U;
+    world.environment.records[1].obstacle.kind =
+        arpg::combat::RoomObstacleKind::breakable;
+    world.environment_obstacles[1].present = true;
+    world.environment_obstacles[1].ordinal = 23U;
+    world.environment_obstacles[1].kind =
+        arpg::combat::RoomObstacleKind::breakable;
+    world.environment_obstacles[1].intact = false;
+    ARPG_REQUIRE(arpg::platform::environment_prop_layout(world).count == 1U);
+    world.environment_obstacles[1].intact = true;
+    ARPG_REQUIRE(arpg::platform::environment_prop_layout(world).count == 2U);
     return {};
 }
 
@@ -647,7 +801,11 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
     const std::string background_only_block = braced_block_after(
         renderer, background_only);
     ARPG_REQUIRE(background_only_block.find(
-        "material_pack_.load(material_ecology(ecology))") != std::string::npos);
+        "material_pack_.synchronize_residency(") != std::string::npos);
+    ARPG_REQUIRE(background_only_block.find(
+        "room_background_residency_request(ecology)") != std::string::npos);
+    ARPG_REQUIRE(background_only_block.find("material_pack_.load(")
+        == std::string::npos);
     ARPG_REQUIRE(background_only_block.find(
         "draw_environment_room(material_pack_, ecology)") != std::string::npos);
     ARPG_REQUIRE(background_only_block.find("draw_graybox_room(ecology)")
@@ -665,6 +823,8 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
         "CombatRenderer::draw_ground_loot_icons_only");
     ARPG_REQUIRE(icons_only != std::string::npos);
     const std::string icons_only_block = braced_block_after(renderer, icons_only);
+    ARPG_REQUIRE(icons_only_block.find("make_combat_camera_view(")
+        == std::string::npos);
     for (const char* required : {"build_ground_loot_view(",
              "draw_room_background_only(", "draw_ground_materials(",
              "draw_ground_items("}) {
@@ -701,6 +861,13 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
     ARPG_REQUIRE(host_icons_draw != std::string::npos);
     ARPG_REQUIRE(host_background_draw < host_icons_draw);
     ARPG_REQUIRE(host_icons_draw < normal_draw);
+    const std::size_t host_icons_gate = host.rfind(
+        "if (config.stage12_material_icons_only)", host_icons_draw);
+    ARPG_REQUIRE(host_icons_gate != std::string::npos);
+    const std::string host_icons_block = braced_block_after(
+        host, host_icons_gate);
+    ARPG_REQUIRE(host_icons_block.find(
+        "presented_snapshot, frame_camera") != std::string::npos);
 
     for (const char* required : {"items-icons-1280x720.png",
              "items-icons-baseline-1280x720.png",
@@ -872,6 +1039,10 @@ constexpr arpg::test::TestCase kCases[] = {
         &material_showcase_layout_tracks_room_bounds},
     {"uses independent native background prop and hole paths",
         &environment_renderer_uses_independent_native_paths},
+    {"world renderers share one immutable camera",
+        &world_renderers_share_one_immutable_camera},
+    {"environment props keep immutable world anchors",
+        &environment_props_keep_world_anchors_when_camera_moves},
     {"falls back atomically when a required frame is missing",
         &environment_falls_back_atomically_when_a_required_frame_is_missing},
     {"directional door atlas leaves room background independent",

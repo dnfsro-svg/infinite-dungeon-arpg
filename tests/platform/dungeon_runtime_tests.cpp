@@ -102,6 +102,41 @@ items::ItemInstance normal_item(std::uint64_t id,
     return item;
 }
 
+struct InstalledPickupGround final {
+    bool valid{};
+    std::uint16_t ordinal{0xFFFFU};
+};
+
+InstalledPickupGround install_pickup_ground_at_active_spawn(
+    platform::DungeonRuntime& runtime,
+    const dungeon::DungeonSnapshot& snapshot,
+    const items::ItemInstance& item,
+    const std::uint16_t excluded_ordinal = 0xFFFFU) noexcept {
+    dungeon::DungeonSession* const session = runtime.session();
+    if (session == nullptr || !snapshot.combat.has_value()) return {};
+    for (std::uint16_t index = 0U;
+            index < snapshot.combat->monster_count; ++index) {
+        const combat::MonsterSnapshot& monster =
+            snapshot.combat->monsters[index];
+        if (!monster.active || monster.spawn_ordinal == excluded_ordinal) {
+            continue;
+        }
+        const std::uint16_t ordinal = monster.spawn_ordinal;
+        if (!arpg::test::install_authoritative_ground_item(
+                *session, ordinal, item, monster.position)) {
+            continue;
+        }
+        const auto& ground = arpg::test::ground_items(*session)[ordinal];
+        if (!ground.active || ground.drop_ordinal != ordinal
+                || ground.item.id != item.id) {
+            return {};
+        }
+        arpg::test::set_player_position(*session, monster.position);
+        return {true, ordinal};
+    }
+    return {};
+}
+
 struct TempDirectory final {
     std::filesystem::path path{};
 
@@ -130,6 +165,7 @@ struct FaultContext final {
 struct GroundReplacementContext final {
     dungeon::DungeonSession* session{};
     items::ItemInstance replacement{};
+    std::uint16_t ordinal{0xFFFFU};
     bool armed{};
     bool invoked{};
 };
@@ -989,8 +1025,10 @@ bool install_pickup_if_needed(platform::DungeonRuntime& runtime,
     if (kind != ItemRequestKind::pickup) return true;
     const auto snapshot = runtime.session()->snapshot();
     if (!snapshot.combat.has_value()) return false;
-    arpg::test::install_ground_item(*runtime.session(), 0U,
-        normal_item(401U, 2U), snapshot.combat->player.position);
+    if (!arpg::test::install_authoritative_ground_item(*runtime.session(), 0U,
+            normal_item(401U, 2U), snapshot.combat->player.position)) {
+        return false;
+    }
     return runtime.session()->snapshot().ground_item_count == 1U;
 }
 
@@ -1010,9 +1048,10 @@ bool replace_ground_before_publish(persistence::SaveFaultPoint point,
     auto* const context = static_cast<GroundReplacementContext*>(opaque);
     if (context != nullptr && context->armed && context->session != nullptr
             && point == persistence::SaveFaultPoint::before_publish) {
-        arpg::test::install_ground_item(*context->session, 0U,
-            context->replacement, {0.0F, 0.0F, 0.0F});
-        context->invoked = true;
+        context->invoked =
+            arpg::test::replace_indexed_ground_item_for_fault(
+                *context->session, context->ordinal,
+                context->replacement);
     }
     return false;
 }
@@ -1069,8 +1108,10 @@ arpg::test::Failure fixed_tick_forwards_pickup_policy_and_defaults_show_all() no
     ARPG_REQUIRE(filtered.initialize());
     const auto filtered_before = filtered.session()->snapshot();
     ARPG_REQUIRE(filtered_before.combat.has_value());
-    arpg::test::install_ground_item(*filtered.session(), 0U,
-        normal_item(0xF117E201U), filtered_before.combat->player.position);
+    const InstalledPickupGround filtered_ground =
+        install_pickup_ground_at_active_spawn(
+            filtered, filtered_before, normal_item(0xF117E201U));
+    ARPG_REQUIRE(filtered_ground.valid);
 
     filtered.fixed_tick({}, {items::ItemRarity::rare});
 
@@ -1083,8 +1124,10 @@ arpg::test::Failure fixed_tick_forwards_pickup_policy_and_defaults_show_all() no
     ARPG_REQUIRE(default_runtime.initialize());
     const auto default_before = default_runtime.session()->snapshot();
     ARPG_REQUIRE(default_before.combat.has_value());
-    arpg::test::install_ground_item(*default_runtime.session(), 0U,
-        normal_item(0xDEF401701U), default_before.combat->player.position);
+    const InstalledPickupGround default_ground =
+        install_pickup_ground_at_active_spawn(
+            default_runtime, default_before, normal_item(0xDEF401701U));
+    ARPG_REQUIRE(default_ground.valid);
 
     default_runtime.fixed_tick({});
     settle_runtime_save(default_runtime);
@@ -1102,8 +1145,9 @@ arpg::test::Failure synchronous_pickup_publishes_exact_committed_receipt()
     const auto before = runtime.session()->snapshot();
     ARPG_REQUIRE(before.combat.has_value());
     const items::ItemInstance item = normal_item(0x51A7E1101U, 3U);
-    arpg::test::install_ground_item(*runtime.session(), 0U, item,
-        before.combat->player.position);
+    const InstalledPickupGround ground =
+        install_pickup_ground_at_active_spawn(runtime, before, item);
+    ARPG_REQUIRE(ground.valid);
 
     runtime.fixed_tick({});
     settle_runtime_save(runtime);
@@ -1165,8 +1209,9 @@ arpg::test::Failure failed_and_nonpickup_saves_do_not_replace_receipt()
     const auto start = runtime.session()->snapshot();
     ARPG_REQUIRE(start.combat.has_value());
     const items::ItemInstance first = normal_item(0xFA17E1101U, 2U);
-    arpg::test::install_ground_item(*runtime.session(), 0U, first,
-        start.combat->player.position);
+    const InstalledPickupGround first_ground =
+        install_pickup_ground_at_active_spawn(runtime, start, first);
+    ARPG_REQUIRE(first_ground.valid);
     runtime.fixed_tick({});
     settle_runtime_save(runtime);
     const auto confirmed = runtime.render_status().loot_pickup;
@@ -1185,9 +1230,12 @@ arpg::test::Failure failed_and_nonpickup_saves_do_not_replace_receipt()
     const auto positioned = runtime.session()->snapshot();
     ARPG_REQUIRE(positioned.combat.has_value());
     const items::ItemInstance second = normal_item(0xFA17E1102U, 1U);
-    arpg::test::install_ground_item(*runtime.session(), 0U, second,
-        positioned.combat->player.position);
-    ARPG_REQUIRE(runtime.request_pickup(0U) == dungeon::RequestResult::accepted);
+    const InstalledPickupGround second_ground =
+        install_pickup_ground_at_active_spawn(
+            runtime, positioned, second, first_ground.ordinal);
+    ARPG_REQUIRE(second_ground.valid);
+    ARPG_REQUIRE(runtime.request_pickup(second_ground.ordinal)
+        == dungeon::RequestResult::accepted);
     fault.enabled = true;
     settle_runtime_save(runtime);
     ARPG_REQUIRE(runtime.render_status().indicator == platform::SaveIndicator::error);
@@ -1206,8 +1254,10 @@ arpg::test::Failure wrong_pending_ordinal_fault_does_not_publish_receipt()
     ARPG_REQUIRE(runtime.initialize());
     auto before = runtime.session()->snapshot();
     ARPG_REQUIRE(before.combat.has_value());
-    arpg::test::install_ground_item(*runtime.session(), 0U,
-        normal_item(0xBAD0D100U), before.combat->player.position);
+    const InstalledPickupGround first_ground =
+        install_pickup_ground_at_active_spawn(
+            runtime, before, normal_item(0xBAD0D100U));
+    ARPG_REQUIRE(first_ground.valid);
     runtime.fixed_tick({});
     settle_runtime_save(runtime);
     const auto confirmed = runtime.render_status().loot_pickup;
@@ -1216,11 +1266,15 @@ arpg::test::Failure wrong_pending_ordinal_fault_does_not_publish_receipt()
 
     before = runtime.session()->snapshot();
     ARPG_REQUIRE(before.combat.has_value());
-    arpg::test::install_ground_item(*runtime.session(), 0U,
-        normal_item(0xBAD0D101U), before.combat->player.position);
-    ARPG_REQUIRE(runtime.request_pickup(0U) == dungeon::RequestResult::accepted);
+    const InstalledPickupGround second_ground =
+        install_pickup_ground_at_active_spawn(
+            runtime, before, normal_item(0xBAD0D101U),
+            first_ground.ordinal);
+    ARPG_REQUIRE(second_ground.valid);
+    ARPG_REQUIRE(runtime.request_pickup(second_ground.ordinal)
+        == dungeon::RequestResult::accepted);
     arpg::test::DungeonSessionTestAccess::set_pending_pickup_ordinal(
-        *runtime.session(), 191U);
+        *runtime.session(), 0xFFFFU);
 
     settle_runtime_save(runtime);
 
@@ -1243,8 +1297,10 @@ arpg::test::Failure replaced_pickup_ordinal_does_not_publish_receipt()
     replacement.session = runtime.session();
     auto before = runtime.session()->snapshot();
     ARPG_REQUIRE(before.combat.has_value());
-    arpg::test::install_ground_item(*runtime.session(), 0U,
-        normal_item(0xA17E2200U), before.combat->player.position);
+    const InstalledPickupGround first_ground =
+        install_pickup_ground_at_active_spawn(
+            runtime, before, normal_item(0xA17E2200U));
+    ARPG_REQUIRE(first_ground.valid);
     runtime.fixed_tick({});
     settle_runtime_save(runtime);
     const auto confirmed = runtime.render_status().loot_pickup;
@@ -1253,9 +1309,14 @@ arpg::test::Failure replaced_pickup_ordinal_does_not_publish_receipt()
 
     before = runtime.session()->snapshot();
     ARPG_REQUIRE(before.combat.has_value());
-    arpg::test::install_ground_item(*runtime.session(), 0U,
-        normal_item(0xA17E2201U), before.combat->player.position);
-    ARPG_REQUIRE(runtime.request_pickup(0U) == dungeon::RequestResult::accepted);
+    const InstalledPickupGround second_ground =
+        install_pickup_ground_at_active_spawn(
+            runtime, before, normal_item(0xA17E2201U),
+            first_ground.ordinal);
+    ARPG_REQUIRE(second_ground.valid);
+    replacement.ordinal = second_ground.ordinal;
+    ARPG_REQUIRE(runtime.request_pickup(second_ground.ordinal)
+        == dungeon::RequestResult::accepted);
     replacement.armed = true;
 
     settle_runtime_save(runtime);
@@ -1266,7 +1327,7 @@ arpg::test::Failure replaced_pickup_ordinal_does_not_publish_receipt()
     ARPG_REQUIRE(same_receipt(runtime.render_status().loot_pickup, confirmed));
     const auto after = runtime.session()->snapshot();
     ARPG_REQUIRE(after.ground_item_count == 1U);
-    ARPG_REQUIRE(after.ground_items[0].ordinal == 0U);
+    ARPG_REQUIRE(after.ground_items[0].ordinal == replacement.ordinal);
     ARPG_REQUIRE(after.ground_items[0].item_id == replacement.replacement.id);
     return {};
 }
@@ -1286,8 +1347,10 @@ arpg::test::Failure failed_pickup_retry_publishes_one_presented_hud_notice()
     renderer.observe_presented_hud_frame(platform::HudPresentedFrame::normal,
         previous, previous, runtime.render_status(), hints, 0.0F, false);
     ARPG_REQUIRE(previous.combat.has_value());
-    arpg::test::install_ground_item(*runtime.session(), 0U,
-        normal_item(0xFEED77101U), previous.combat->player.position);
+    const InstalledPickupGround ground =
+        install_pickup_ground_at_active_spawn(
+            runtime, previous, normal_item(0xFEED77101U));
+    ARPG_REQUIRE(ground.valid);
 
     fault.enabled = true;
     runtime.fixed_tick({});
@@ -2543,6 +2606,40 @@ arpg::test::Failure abyss_full_clear_persists_cleared_environment_and_reload()
     return {};
 }
 
+arpg::test::Failure render_snapshot_has_one_stable_heap_slot() noexcept {
+    static_assert(sizeof(platform::DungeonRuntime)
+        < sizeof(dungeon::DungeonRenderSnapshot));
+    TempDirectory failed_directory;
+    platform::DungeonRuntime failed(config_for(failed_directory, 0xC4A001U));
+    {
+        arpg::test::ScopedAllocationFailure fail_first_allocation{0U};
+        ARPG_REQUIRE(!failed.initialize());
+    }
+    ARPG_REQUIRE(failed.state() == platform::DungeonRuntimeState::faulted);
+    ARPG_REQUIRE(failed.render_snapshot_storage() == nullptr);
+
+    TempDirectory directory;
+    platform::DungeonRuntime runtime(config_for(directory, 0xC4A002U));
+    ARPG_REQUIRE(runtime.initialize());
+    dungeon::DungeonRenderSnapshot* const storage =
+        runtime.render_snapshot_storage();
+    ARPG_REQUIRE(storage != nullptr);
+    ARPG_REQUIRE(runtime.session() != nullptr);
+    const auto current = std::make_unique<dungeon::DungeonSnapshot>(
+        runtime.session()->snapshot());
+    ARPG_REQUIRE(current != nullptr && current->combat.has_value());
+    const combat::Vec3 player = current->combat->player.position;
+    const dungeon::WorldViewQuery query{
+        {{player.x - 12.0F, player.y - 5.5F, -1.0F},
+            {player.x + 12.0F, player.y + 5.5F, 32.0F}},
+        1920, 1080, 1U};
+    ARPG_REQUIRE(runtime.session()->write_render_snapshot(query, *storage));
+    ARPG_REQUIRE(storage->query.camera_version == 1U);
+    runtime.fixed_tick({});
+    ARPG_REQUIRE(runtime.render_snapshot_storage() == storage);
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"load available keeps start as second transaction", &load_available_keeps_start_as_second_transaction},
     {"service available start creates started combat", &servicing_available_start_creates_started_combat},
@@ -2611,6 +2708,8 @@ constexpr arpg::test::TestCase kCases[] = {
         &normal_full_clear_is_exact_and_reloads_awaiting_exit},
     {"abyss full clear persists cleared environment",
         &abyss_full_clear_persists_cleared_environment_and_reload},
+    {"render snapshot uses one stable heap slot",
+        &render_snapshot_has_one_stable_heap_slot},
 };
 
 }  // namespace

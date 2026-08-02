@@ -11,6 +11,8 @@ arpg::test::TestSuite room_generation_suite() noexcept;
 arpg::test::TestSuite room_affix_suite() noexcept;
 arpg::test::TestSuite room_population_suite() noexcept;
 arpg::test::TestSuite room_environment_suite() noexcept;
+arpg::test::TestSuite room_drop_state_suite() noexcept;
+arpg::test::TestSuite dungeon_render_snapshot_suite() noexcept;
 arpg::test::TestSuite death_checkpoint_suite() noexcept;
 arpg::test::TestSuite dungeon_death_lifecycle_suite() noexcept;
 arpg::test::TestSuite dungeon_death_stress_suite() noexcept;
@@ -181,6 +183,26 @@ bool task6_exit_unlock_only() noexcept {
     return enabled;
 }
 
+bool task7_drop_view_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_TASK7_DROP_VIEW_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
+bool task7_drop_state_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_TASK7_DROP_STATE_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
 }  // namespace
 
 int main() {
@@ -197,6 +219,8 @@ int main() {
         room_affix_suite(),
         room_population_suite(),
         room_environment_suite(),
+        room_drop_state_suite(),
+        dungeon_render_snapshot_suite(),
         room_generation_suite(),
         death_checkpoint_suite(),
         dungeon_death_lifecycle_suite(),
@@ -308,7 +332,7 @@ int main() {
         const arpg::test::TestSuite material_only[] = {
             dungeon_material_loot_suite(),
         };
-        return arpg::test::run_suites(material_only, 12,
+        return arpg::test::run_suites(material_only, 13,
             "stage 16 task 4 material loot");
     }
 
@@ -344,6 +368,22 @@ int main() {
             "task 6 quarter kill exit unlock");
     }
 
-    return arpg::test::run_suites(suites, 344,
+    if (task7_drop_view_only()) {
+        const arpg::test::TestSuite drop_view_only[] = {
+            room_drop_state_suite(),
+            dungeon_render_snapshot_suite(),
+        };
+        return arpg::test::run_suites(drop_view_only, 8,
+            "task 7 bounded drop and environment views");
+    }
+    if (task7_drop_state_only()) {
+        const arpg::test::TestSuite drop_state_only[] = {
+            room_drop_state_suite(),
+        };
+        return arpg::test::run_suites(drop_state_only, 5,
+            "task 7 authoritative room drops");
+    }
+
+    return arpg::test::run_suites(suites, 353,
         "stage 18 dungeon queries");
 }

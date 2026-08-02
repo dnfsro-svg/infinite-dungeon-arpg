@@ -364,7 +364,7 @@ arpg::test::Failure neutral_checkpoint_slot_captures_and_restores_normal_room()
     const auto player = session.snapshot().combat->player.position;
     constexpr std::uint64_t kItemId = 0xC0FFEEU;
     constexpr std::uint16_t kItemOrdinal = 5U;
-    constexpr std::uint16_t kMaterialOrdinal = 7U;
+    constexpr std::uint16_t kMaterialOrdinal = 6U;
     constexpr std::uint16_t kPotionSpawn = 8U;
     const auto item = normal_item(kItemId);
     ARPG_REQUIRE(arpg::items::validate_item(item));
@@ -401,7 +401,7 @@ arpg::test::Failure neutral_checkpoint_slot_captures_and_restores_normal_room()
     ARPG_REQUIRE(saved->room_progress.secondary_ground[0U].tag
         == arpg::checkpoint::SecondaryGroundTag::material);
     ARPG_REQUIRE(saved->room_progress.secondary_ground[0U].ordinal
-        == arpg::checkpoint::checkpoint_material_ordinal(kMaterialOrdinal));
+        == kMaterialOrdinal);
     ARPG_REQUIRE(saved->room_progress.secondary_ground[1U].tag
         == arpg::checkpoint::SecondaryGroundTag::health_potion);
     ARPG_REQUIRE(saved->room_progress.secondary_ground[1U].ordinal
@@ -582,7 +582,7 @@ arpg::test::Failure normal_early_exit_commits_monster_xp_and_claimed_loot_only()
     ARPG_REQUIRE(commit_current(session));
     ARPG_REQUIRE(contains_item(session.item_state(), kClaimedItemId));
 
-    constexpr std::uint16_t kUnpickedMaterialOrdinal = 191U;
+    constexpr std::uint16_t kUnpickedMaterialOrdinal = 190U;
     arpg::test::install_ground_material(session, kUnpickedMaterialOrdinal,
         arpg::items::MaterialId::reinforcement_stone, player);
     const auto materials_before = session.item_state().materials;

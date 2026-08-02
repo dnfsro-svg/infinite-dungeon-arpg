@@ -73,13 +73,72 @@ HudPaletteId element_color(dungeon::DungeonElement ecology) noexcept {
     return HudPaletteId::chaos;
 }
 
+const char* density_name(dungeon::RoomDensityAffix affix) noexcept {
+    switch (affix) {
+    case dungeon::RoomDensityAffix::crowded: return u8"拥挤";
+    case dungeon::RoomDensityAffix::dense: return u8"密集";
+    case dungeon::RoomDensityAffix::horde: return u8"兽潮";
+    case dungeon::RoomDensityAffix::count: break;
+    }
+    return u8"未知";
+}
+
+[[nodiscard]] bool room_is_fully_cleared(
+    const dungeon::DungeonSnapshot& snapshot) noexcept {
+    return snapshot.phase == dungeon::RoomPhase::cleared
+        || snapshot.phase == dungeon::RoomPhase::awaiting_exit
+        || (snapshot.initial_monster_count != 0U
+            && snapshot.remaining_targets == 0U
+            && snapshot.defeated_monster_count
+                >= snapshot.initial_monster_count);
+}
+
+void build_large_room_status(RoomHudModel& room,
+    HudBuildDiagnostics& diagnostics,
+    const dungeon::DungeonSnapshot& snapshot) noexcept {
+    const dungeon::RoomDensityRoll density = dungeon::roll_room_density(
+        snapshot.room_seed, snapshot.is_abyss);
+    room.phase = snapshot.phase;
+    room.density_affix = density.affix;
+    room.initial_monster_count = snapshot.initial_monster_count;
+    room.defeated_monster_count = snapshot.defeated_monster_count;
+    room.required_kills = dungeon::required_kills(
+        snapshot.initial_monster_count);
+    room.remaining_targets = snapshot.remaining_targets;
+    room.exits_unlocked = snapshot.exits_unlocked;
+
+    format_text(room.density_text, diagnostics, u8"怪群规模：%s",
+        density_name(room.density_affix));
+    format_text(room.progress_text, diagnostics,
+        u8"消灭 %u/%u（总计 %u）",
+        static_cast<unsigned>(room.defeated_monster_count),
+        static_cast<unsigned>(room.required_kills),
+        static_cast<unsigned>(room.initial_monster_count));
+    format_text(room.remaining_text, diagnostics, u8"剩余 %u",
+        static_cast<unsigned>(room.remaining_targets));
+
+    if (room_is_fully_cleared(snapshot)) {
+        format_text(room.exit_text, diagnostics, u8"出口已开放");
+    } else if (!snapshot.exits_unlocked) {
+        format_text(room.exit_text, diagnostics, u8"出口尚未开放");
+    } else if (snapshot.is_abyss) {
+        format_text(room.exit_text, diagnostics,
+            u8"出口已开放，离开将放弃剩余奖励");
+    } else {
+        format_text(room.exit_text, diagnostics,
+            u8"出口已开放，战斗仍可继续");
+    }
+}
+
 void build_room_objective(RoomHudModel& room,
     HudBuildDiagnostics& diagnostics,
     const dungeon::DungeonSnapshot& snapshot) noexcept {
+    build_large_room_status(room, diagnostics, snapshot);
     const AbyssHudValues abyss = abyss_hud_values(snapshot);
     if (abyss.visible) {
-        format_text(room.objective, diagnostics, u8"深渊 %s · %s",
-            abyss.danger_label, abyss.rule_label);
+        format_text(room.objective, diagnostics, u8"深渊 %s · %s · %s",
+            abyss.danger_label, abyss.rule_label,
+            density_name(room.density_affix));
         format_text(room.secondary, diagnostics, u8"待领奖励 %u · 未领取 %u",
             static_cast<unsigned>(abyss.pending_rewards),
             static_cast<unsigned>(abyss.unpicked_rewards));
@@ -273,9 +332,13 @@ void HudViewModelProjector::build(HudViewModel& output,
     const ObjectiveKey objective_key{
         snapshot.is_abyss,
         snapshot.phase,
+        snapshot.room_seed,
         snapshot.wave_index,
         snapshot.wave_count,
+        snapshot.initial_monster_count,
+        snapshot.defeated_monster_count,
         snapshot.remaining_targets,
+        snapshot.exits_unlocked,
         snapshot.abyss_danger,
         snapshot.abyss_rule,
         snapshot.abyss_pending_rewards,
@@ -284,9 +347,15 @@ void HudViewModelProjector::build(HudViewModel& output,
     const bool objective_changed = !objective_ready_
         || objective_key_.is_abyss != objective_key.is_abyss
         || objective_key_.phase != objective_key.phase
+        || objective_key_.room_seed != objective_key.room_seed
         || objective_key_.wave_index != objective_key.wave_index
         || objective_key_.wave_count != objective_key.wave_count
+        || objective_key_.initial_monster_count
+            != objective_key.initial_monster_count
+        || objective_key_.defeated_monster_count
+            != objective_key.defeated_monster_count
         || objective_key_.remaining_targets != objective_key.remaining_targets
+        || objective_key_.exits_unlocked != objective_key.exits_unlocked
         || objective_key_.abyss_danger != objective_key.abyss_danger
         || objective_key_.abyss_rule != objective_key.abyss_rule
         || objective_key_.abyss_pending_rewards
@@ -305,7 +374,6 @@ void HudViewModelProjector::build(HudViewModel& output,
     }
     output.room = cached_objective_;
     output.room.abyss = snapshot.is_abyss;
-    output.room.remaining_targets = snapshot.remaining_targets;
     output.diagnostics.truncated_texts += cached_objective_truncations_;
 
     if (!control_hints_ready_

@@ -33,6 +33,7 @@
 #include <iostream>
 #include <initializer_list>
 #include <memory>
+#include <new>
 #include <numeric>
 #include <sstream>
 #include <string>
@@ -926,6 +927,56 @@ void equip_skill(dungeon::DungeonSnapshot& snapshot,
             <= static_cast<float>(resolution.height) - hud_reserve;
 }
 
+bool write_integration_render_snapshot(
+    const dungeon::DungeonSnapshot& snapshot,
+    const IntegrationResolution& resolution,
+    platform::CombatCameraView& camera,
+    dungeon::DungeonRenderSnapshot& world) noexcept {
+    world = {};
+    camera = {{}, arpg::combat::room_bounds::width,
+        arpg::combat::room_bounds::depth};
+    world.query = platform::make_world_view_query(camera,
+        static_cast<float>(resolution.width),
+        static_cast<float>(resolution.height), 1U);
+    world.phase = snapshot.phase;
+    world.ecology = snapshot.ecology;
+    world.has_active_room = snapshot.has_active_room;
+    world.has_combat = snapshot.combat.has_value();
+    if (snapshot.combat.has_value()) world.combat = *snapshot.combat;
+    world.equipment_count = static_cast<std::uint16_t>((std::min)(
+        static_cast<std::size_t>(snapshot.ground_item_count),
+        world.equipment.size()));
+    std::copy_n(snapshot.ground_items.begin(), world.equipment_count,
+        world.equipment.begin());
+    world.material_count = static_cast<std::uint16_t>((std::min)(
+        static_cast<std::size_t>(snapshot.ground_material_count),
+        world.materials.size()));
+    std::copy_n(snapshot.ground_materials.begin(), world.material_count,
+        world.materials.begin());
+    world.health_potion_count = static_cast<std::uint16_t>((std::min)(
+        static_cast<std::size_t>(snapshot.ground_health_potion_count),
+        world.health_potions.size()));
+    std::copy_n(snapshot.ground_health_potions.begin(),
+        world.health_potion_count, world.health_potions.begin());
+    constexpr std::array<combat::Vec3, 4U> kDoorPositions{{
+        {0.0F, combat::room_bounds::min_y, 0.0F},
+        {0.0F, combat::room_bounds::max_y, 0.0F},
+        {combat::room_bounds::min_x, 0.0F, 0.0F},
+        {combat::room_bounds::max_x, 0.0F, 0.0F},
+    }};
+    constexpr std::array<dungeon::ExitDirection, 4U> kDoorDirections{{
+        dungeon::ExitDirection::up, dungeon::ExitDirection::down,
+        dungeon::ExitDirection::left, dungeon::ExitDirection::right,
+    }};
+    for (std::size_t index{}; index < world.doors.size(); ++index) {
+        world.doors[index] = {kDoorPositions[index], kDoorDirections[index],
+            snapshot.exits_unlocked, snapshot.abyss_doors[index]};
+    }
+    world.hole = {{0.0F, 3.5F, 0.0F}, snapshot.has_hole,
+        snapshot.exits_unlocked};
+    return true;
+}
+
 [[nodiscard]] IntegrationFrameObservation present_integration_frame(
     platform::CombatRenderer& renderer,
     const dungeon::DungeonSnapshot& snapshot,
@@ -976,12 +1027,21 @@ void equip_skill(dungeon::DungeonSnapshot& snapshot,
             : platform::HudPresentedFrame::normal,
         snapshot, snapshot, runtime_status, control_hints, 1.0F / 60.0F, false);
 
+    const std::unique_ptr<dungeon::DungeonRenderSnapshot> world{
+        new (std::nothrow) dungeon::DungeonRenderSnapshot{}};
+    platform::CombatCameraView camera{};
+    if (world == nullptr || !write_integration_render_snapshot(
+            snapshot, resolution, camera, *world)) {
+        observation.screenshot_ok = false;
+        return observation;
+    }
+
     const auto started = std::chrono::steady_clock::now();
     BeginDrawing();
     ClearBackground(Color{13, 17, 27, 255});
     platform::CombatFeedback feedback{};
-    static_cast<void>(renderer.draw(snapshot, snapshot, runtime_status,
-        0.0F, false, feedback, false));
+    static_cast<void>(renderer.draw(snapshot, snapshot, *world, camera,
+        runtime_status, 0.0F, false, feedback, false));
     observation.skill_draw = renderer.active_skill_draw_status();
     const Color expected_sentinel = integration_scene_sentinel(
         mode, tick, resolution);

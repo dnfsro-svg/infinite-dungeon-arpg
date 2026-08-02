@@ -10,6 +10,8 @@ add_executable(arpg_dungeon_tests
     room_affix_tests.cpp
     room_population_tests.cpp
     room_environment_tests.cpp
+    room_drop_state_tests.cpp
+    dungeon_render_snapshot_tests.cpp
     room_generation_tests.cpp
     dungeon_rules_tests.cpp
     dungeon_progression_tests.cpp

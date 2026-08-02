@@ -4,6 +4,7 @@
 #include "combat/combat_types.hpp"
 #include "hud_palette.hpp"
 #include "hud_renderer.hpp"
+#include "ui_text_contrast.hpp"
 
 #include <array>
 #include <cstring>
@@ -405,6 +406,44 @@ arpg::test::Failure hud_text_style_keeps_key_labels_readable_at_720p() noexcept 
     return {};
 }
 
+arpg::test::Failure large_room_hud_rows_are_opaque_and_non_overlapping_at_supported_resolutions() noexcept {
+    constexpr std::array<std::array<int, 2>, 3U> kViewports{{
+        {{1024, 576}}, {{1280, 720}}, {{1920, 1080}},
+    }};
+    const platform::UiTextContrastStyle contrast =
+        platform::ui_text_contrast_style();
+    const platform::HudPalette palette = platform::hud_palette();
+    ARPG_REQUIRE(contrast.primary.a == 255U);
+    ARPG_REQUIRE(contrast.secondary.a == 255U);
+    ARPG_REQUIRE(contrast.warning.a == 255U);
+    ARPG_REQUIRE(palette.text.a == 255U);
+    ARPG_REQUIRE(palette.chaos.a == 255U);
+
+    for (const auto viewport : kViewports) {
+        const platform::HudLayout layout = platform::make_hud_layout(
+            viewport[0], viewport[1], false);
+        const platform::HudTextSafeLayout safe =
+            platform::make_hud_text_safe_layout(layout);
+        const std::array<platform::HudRect, 6U> rows{{
+            safe.objective_title,
+            safe.objective_hint,
+            safe.objective_movement,
+            safe.objective_controls[0],
+            safe.objective_controls[1],
+            safe.objective_controls[2],
+        }};
+        ARPG_REQUIRE(layout.objective_panel.width >= 704.0F * layout.scale);
+        for (std::size_t first{}; first < rows.size(); ++first) {
+            ARPG_REQUIRE(rect_inside(rows[first], layout.objective_panel));
+            for (std::size_t second = first + 1U; second < rows.size(); ++second) {
+                ARPG_REQUIRE(!platform::hud_rects_overlap(
+                    rows[first], rows[second]));
+            }
+        }
+    }
+    return {};
+}
+
 constexpr arpg::test::TestCase kCases[] = {
     {"health first", &health_is_always_the_first_visible_player_bar},
     {"conditional barrier", &barrier_bar_is_visible_only_with_a_positive_maximum},
@@ -419,6 +458,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"navigation colors use shared palette", &navigation_element_colors_use_the_authoritative_hud_palette},
     {"navigation maximum text fit", &maximum_navigation_text_has_a_measured_bounded_draw_plan},
     {"HUD key labels remain readable at 720p", &hud_text_style_keeps_key_labels_readable_at_720p},
+    {"large room HUD resolution matrix",
+        &large_room_hud_rows_are_opaque_and_non_overlapping_at_supported_resolutions},
 };
 
 }  // namespace

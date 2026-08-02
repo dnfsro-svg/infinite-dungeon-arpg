@@ -180,6 +180,7 @@ bool DungeonRuntime::initialize() noexcept {
     save_worker_.reset();
     save_storage_.reset();
     session_.reset();
+    render_snapshot_.reset();
     status_ = {};
     exact_flight_ = {};
     authority_revision_ = 0U;
@@ -192,6 +193,13 @@ bool DungeonRuntime::initialize() noexcept {
     gameplay_rearm_required_ = false;
     clean_shutdown_state_ = CleanShutdownState::idle;
     if (dungeon::validate_rules(config_.rules) != dungeon::DungeonFault::none) {
+        state_ = DungeonRuntimeState::faulted;
+        return false;
+    }
+
+    render_snapshot_.reset(
+        new (std::nothrow) dungeon::DungeonRenderSnapshot{});
+    if (render_snapshot_ == nullptr) {
         state_ = DungeonRuntimeState::faulted;
         return false;
     }
@@ -444,6 +452,16 @@ dungeon::DungeonSession* DungeonRuntime::session() noexcept {
 
 const dungeon::DungeonSession* DungeonRuntime::session() const noexcept {
     return session_.get();
+}
+
+dungeon::DungeonRenderSnapshot*
+DungeonRuntime::render_snapshot_storage() noexcept {
+    return render_snapshot_.get();
+}
+
+const dungeon::DungeonRenderSnapshot*
+DungeonRuntime::render_snapshot_storage() const noexcept {
+    return render_snapshot_.get();
 }
 
 dungeon::RequestResult DungeonRuntime::request_pickup(

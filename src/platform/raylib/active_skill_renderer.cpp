@@ -6,6 +6,7 @@
 #include "ui_typography.hpp"
 
 #include "combat/active_skill_runtime.hpp"
+#include "combat/room_bounds.hpp"
 #include "combat_view_math.hpp"
 #include "skills/active_skill_catalog.hpp"
 #include "ui_material.hpp"
@@ -50,10 +51,11 @@ void draw_skill_text(Font font, const char* text,
 }
 
 [[nodiscard]] bool draw_draw_slash(const DrawSlashVisualPlan& plan,
+    const CombatCameraView& camera,
     float width, float height) noexcept {
     if (!plan.visible) return false;
     const ScreenProjection projected = project_combat_position(
-        plan.center, width, height);
+        plan.center, camera, width, height);
     constexpr std::size_t kArcSegments = 14U;
     std::array<Vector2, kArcSegments + 2U> fan{};
     const float direction = plan.facing == combat::Facing::left ? -1.0F : 1.0F;
@@ -142,10 +144,11 @@ void draw_sword(Vector2 center, float angle, float scale,
 }
 
 [[nodiscard]] bool draw_storm_swords(const StormSwordsVisualPlan& plan,
+    const CombatCameraView& camera,
     float width, float height) noexcept {
     if (!plan.visible && !plan.finisher_visible) return false;
     const ScreenProjection projected = project_combat_position(
-        plan.center, width, height);
+        plan.center, camera, width, height);
     bool drawn = false;
     if (plan.visible) {
         for (std::size_t index = 0U; index < plan.sword_count; ++index) {
@@ -181,7 +184,9 @@ void draw_sword(Vector2 center, float angle, float scale,
 
 [[nodiscard]] bool draw_material_active_skill(
     const ActiveSkillEffectPlan& plan,
-    const MaterialPack& material_pack, float width, float height) noexcept {
+    const MaterialPack& material_pack,
+    const CombatCameraView& camera,
+    float width, float height) noexcept {
     skills::ActiveSkillId id = skills::ActiveSkillId::none;
     if (plan.atlas == MaterialAtlasId::skill_draw_slash) {
         id = skills::ActiveSkillId::draw_slash;
@@ -191,7 +196,7 @@ void draw_sword(Vector2 center, float angle, float scale,
     const auto frame = active_skill_atlas_frame(id, plan.atlas_frame);
     if (!frame.has_value()) return false;
     const ScreenProjection player = project_combat_position(
-        plan.player_position, width, height);
+        plan.player_position, camera, width, height);
     const bool flip_x = id == skills::ActiveSkillId::draw_slash
         && plan.draw_slash.facing == combat::Facing::left;
     const float scale = player.scale
@@ -310,6 +315,7 @@ ActiveSkillEffectPlan make_active_skill_effect_plan(
 ActiveSkillDrawRuntimeStatus ActiveSkillRenderer::draw_world(
     const ActiveSkillEffectPlan& plan,
     const MaterialPack& material_pack,
+    const CombatCameraView& camera,
     float width, float height) const noexcept {
     ActiveSkillDrawRuntimeStatus status{};
     status.mode = plan.mode;
@@ -317,12 +323,12 @@ ActiveSkillDrawRuntimeStatus ActiveSkillRenderer::draw_world(
     status.atlas_frame = plan.atlas_frame;
     if (plan.mode == ActiveSkillVisualMode::material) {
         status.material_frame_drawn = draw_material_active_skill(
-            plan, material_pack, width, height);
+            plan, material_pack, camera, width, height);
     } else if (plan.mode == ActiveSkillVisualMode::procedural_fallback) {
-        if (draw_draw_slash(plan.draw_slash, width, height)) {
+        if (draw_draw_slash(plan.draw_slash, camera, width, height)) {
             ++status.procedural_main_visual_count;
         }
-        if (draw_storm_swords(plan.storm_swords, width, height)) {
+        if (draw_storm_swords(plan.storm_swords, camera, width, height)) {
             ++status.procedural_main_visual_count;
         }
     }
@@ -331,6 +337,16 @@ ActiveSkillDrawRuntimeStatus ActiveSkillRenderer::draw_world(
             Fade(Color{220, 244, 255, 255}, plan.screen_flash_alpha));
     }
     return status;
+}
+
+ActiveSkillDrawRuntimeStatus ActiveSkillRenderer::draw_world(
+    const ActiveSkillEffectPlan& plan,
+    const MaterialPack& material_pack,
+    float width, float height) const noexcept {
+    const CombatCameraView full_room_camera{
+        {}, combat::room_bounds::width, combat::room_bounds::depth};
+    return draw_world(
+        plan, material_pack, full_room_camera, width, height);
 }
 
 bool ActiveSkillRenderer::assets_ready() const noexcept {

@@ -1,5 +1,6 @@
 #include "ground_loot_view.hpp"
 
+#include "combat/room_bounds.hpp"
 #include "combat_view_math.hpp"
 #include "items/item_catalog.hpp"
 
@@ -240,17 +241,74 @@ MaterialSpriteId ground_loot_rarity_sprite(
 }
 
 GroundLootView build_ground_loot_view(
-    const dungeon::DungeonSnapshot& snapshot,
+    const dungeon::DungeonRenderSnapshot& snapshot,
     settings::LootFilterMode mode,
+    const CombatCameraView& camera,
     float width,
     float height) noexcept {
     LootLabelObstacleSet obstacles{};
-    return build_ground_loot_view(snapshot, mode, width, height, obstacles);
+    return build_ground_loot_view(
+        snapshot, mode, camera, width, height, obstacles);
+}
+
+GroundLootView build_ground_loot_view(
+    const dungeon::DungeonRenderSnapshot& snapshot,
+    settings::LootFilterMode mode,
+    const CombatCameraView& camera,
+    float width,
+    float height,
+    LootLabelObstacleSet& obstacles) noexcept {
+    GroundLootView view{};
+    const std::size_t source_count = (std::min)(
+        static_cast<std::size_t>(snapshot.equipment_count),
+        snapshot.equipment.size());
+    view.diagnostics.capacity_saturation_count =
+        static_cast<std::uint32_t>(snapshot.equipment_count - source_count);
+
+    for (std::size_t index = 0U; index < source_count; ++index) {
+        const dungeon::GroundItemSnapshot& item = snapshot.equipment[index];
+        if (!ground_loot_visible(item, mode)) continue;
+        if (view.count == view.labels.size()) {
+            ++view.diagnostics.capacity_saturation_count;
+            continue;
+        }
+
+        GroundLootLabel label{};
+        label.ordinal = item.ordinal;
+        label.abyss = item.source == dungeon::GroundItemSource::abyss_chest;
+        label.text_color = rarity_color(item.rarity);
+        label.border_color = label.abyss
+            ? kAbyssBorderColor : label.text_color;
+        label.item_sprite = ground_loot_item_sprite(item.slot);
+        label.rarity_sprite = ground_loot_rarity_sprite(
+            item.rarity, label.abyss);
+        const ScreenProjection projection =
+            project_combat_position(item.position, camera, width, height);
+        label.anchor_x = projection.x;
+        label.anchor_y = projection.y;
+        format_label_text(label, item, view.diagnostics);
+        insert_by_ordinal(view, label);
+    }
+
+    layout_labels(view, width, height, obstacles);
+    return view;
 }
 
 GroundLootView build_ground_loot_view(
     const dungeon::DungeonSnapshot& snapshot,
     settings::LootFilterMode mode,
+    const CombatCameraView& camera,
+    float width,
+    float height) noexcept {
+    LootLabelObstacleSet obstacles{};
+    return build_ground_loot_view(
+        snapshot, mode, camera, width, height, obstacles);
+}
+
+GroundLootView build_ground_loot_view(
+    const dungeon::DungeonSnapshot& snapshot,
+    settings::LootFilterMode mode,
+    const CombatCameraView& camera,
     float width,
     float height,
     LootLabelObstacleSet& obstacles) noexcept {
@@ -279,7 +337,7 @@ GroundLootView build_ground_loot_view(
         label.rarity_sprite = ground_loot_rarity_sprite(
             item.rarity, label.abyss);
         const ScreenProjection projection =
-            project_combat_position(item.position, width, height);
+            project_combat_position(item.position, camera, width, height);
         label.anchor_x = projection.x;
         label.anchor_y = projection.y;
         format_label_text(label, item, view.diagnostics);
@@ -288,6 +346,28 @@ GroundLootView build_ground_loot_view(
 
     layout_labels(view, width, height, obstacles);
     return view;
+}
+
+GroundLootView build_ground_loot_view(
+    const dungeon::DungeonSnapshot& snapshot,
+    settings::LootFilterMode mode,
+    float width,
+    float height) noexcept {
+    LootLabelObstacleSet obstacles{};
+    return build_ground_loot_view(
+        snapshot, mode, width, height, obstacles);
+}
+
+GroundLootView build_ground_loot_view(
+    const dungeon::DungeonSnapshot& snapshot,
+    settings::LootFilterMode mode,
+    float width,
+    float height,
+    LootLabelObstacleSet& obstacles) noexcept {
+    const CombatCameraView full_room_camera{
+        {}, combat::room_bounds::width, combat::room_bounds::depth};
+    return build_ground_loot_view(
+        snapshot, mode, full_room_camera, width, height, obstacles);
 }
 
 }  // namespace arpg::platform

@@ -104,6 +104,29 @@ arpg::test::Failure material_view_ignores_equipment_filter_and_orders_ordinals()
     return {};
 }
 
+arpg::test::Failure camera_aware_material_view_uses_the_frame_projection() noexcept {
+    dungeon::DungeonRenderSnapshot snapshot{};
+    constexpr arpg::combat::Vec3 kPosition{42.0F, 17.0F, 0.5F};
+    snapshot.material_count = 1U;
+    snapshot.materials[0] = {8U,
+        dungeon::GroundMaterialSource::monster_common,
+        kPosition, items::MaterialId::chaos};
+    const platform::CombatCameraView camera =
+        platform::make_combat_camera_view(
+            {39.0F, 14.0F, 0.0F}, 1920.0F, 1080.0F);
+    const platform::ScreenProjection expected =
+        platform::project_combat_position(
+            kPosition, camera, 1920.0F, 1080.0F);
+
+    const platform::MaterialLootView view =
+        platform::build_material_loot_view(
+            snapshot, camera, 1920.0F, 1080.0F);
+    ARPG_REQUIRE(view.count == 1U);
+    ARPG_REQUIRE(view.labels[0].anchor_x == expected.x);
+    ARPG_REQUIRE(view.labels[0].anchor_y == expected.y);
+    return {};
+}
+
 arpg::test::Failure pickup_feedback_aggregates_counts_by_material() noexcept {
     platform::MaterialPickupFeedbackState feedback{};
     dungeon::DungeonSnapshot snapshot{};
@@ -310,7 +333,9 @@ arpg::test::Failure overlapping_secondary_loot_labels_are_resolved() noexcept {
         "void draw_secondary_loot_icon", draw_ground_items);
     const std::string equipment_drawer = renderer.substr(
         draw_ground_items, draw_secondary - draw_ground_items);
-    ARPG_REQUIRE(equipment_drawer.find("snapshot.ground_item_count")
+    ARPG_REQUIRE(equipment_drawer.find("items.count")
+        != std::string::npos);
+    ARPG_REQUIRE(equipment_drawer.find("items.data[index]")
         != std::string::npos);
     ARPG_REQUIRE(equipment_drawer.find("ground_loot_visible(item, mode)")
         != std::string::npos);
@@ -716,6 +741,7 @@ arpg::test::Failure continuous_feedback_receipts_are_consumed_before_publish() n
 constexpr arpg::test::TestCase kCases[] = {
     {"Chinese labels and emphasis", &labels_and_emphasis_are_player_facing},
     {"material view ignores equipment filter", &material_view_ignores_equipment_filter_and_orders_ordinals},
+    {"camera-aware material anchor", &camera_aware_material_view_uses_the_frame_projection},
     {"pickup feedback aggregates material counts", &pickup_feedback_aggregates_counts_by_material},
     {"every material uses a unique resource", &every_material_has_a_unique_authored_resource},
     {"health potion uses dedicated sprite and pure-red label", &health_potion_uses_dedicated_sprite_and_pure_red_label},

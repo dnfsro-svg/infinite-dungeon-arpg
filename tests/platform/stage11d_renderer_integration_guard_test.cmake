@@ -459,6 +459,13 @@ if(_ground_begin EQUAL -1)
     message(FATAL_ERROR
         "Stage11D host cannot bind the presented GroundLootView")
 endif()
+stage11d_count_token("${_run_normalized}"
+    "renderer.draw_ground_loot_icons_only(presented_snapshot,frame_camera)"
+    _icons_only_frame_camera_count)
+if(NOT _icons_only_frame_camera_count EQUAL 1)
+    message(FATAL_ERROR
+        "Stage11D icons-only host path must reuse the single presented-frame camera")
+endif()
 string(SUBSTRING "${_run_normalized}" ${_ground_begin} -1 _presented_surface)
 set(_ground_direct_anchor
     "constGroundLootViewground_loot_view=[&]()noexcept")
@@ -632,8 +639,9 @@ stage11d_reject_consumer_rebuild("${_hud_source}" "HUD")
 
 # The room renderer intentionally keeps a label-free icon path for frame-start
 # capture. Permit only that fixed shape: one canonical visibility predicate in
-# draw_ground_items, one builder in draw_ground_loot_icons_only, and the same
-# renderer-owned filter mode at both room call sites.
+# the shared GroundItemRange renderer, one builder in
+# draw_ground_loot_icons_only, and the same renderer-owned filter mode and
+# frame camera at both room call sites.
 string(FIND "${_room_source}" "void draw_ground_items(" _room_items_start)
 string(FIND "${_room_source}" "void draw_secondary_loot_icon(" _room_items_end)
 string(FIND "${_room_source}"
@@ -663,6 +671,15 @@ string(REGEX REPLACE "[ \t\r\n]+" "" _icons_only_normalized
 string(REGEX REPLACE "[ \t\r\n]+" "" _draw_room_normalized
     "${_draw_room_source}")
 
+string(FIND "${_icons_only_normalized}"
+    "draw_ground_loot_icons_only(constdungeon::DungeonSnapshot&snapshot,constCombatCameraView&camera)noexcept{"
+    _icons_only_camera_parameter)
+if(_icons_only_camera_parameter EQUAL -1 OR
+   _icons_only_normalized MATCHES "make_combat_camera_view[(]")
+    message(FATAL_ERROR
+        "Stage11D icons-only path must consume, not reconstruct, the presented-frame camera")
+endif()
+
 string(REGEX MATCHALL "ground_loot_visible[ \t\r\n]*\\("
     _room_predicate_calls "${_room_source}")
 list(LENGTH _room_predicate_calls _room_predicate_count)
@@ -686,7 +703,7 @@ if(NOT _room_builder_count EQUAL 1)
         "Stage11D room builder must appear exactly once; found ${_room_builder_count}")
 endif()
 string(REGEX MATCHALL
-    "build_ground_loot_view\\(snapshot,loot_filter_mode_,width,height\\)"
+    "build_ground_loot_view\\(snapshot,loot_filter_mode_,camera,width,height\\)"
     _icons_only_builder_calls "${_icons_only_normalized}")
 list(LENGTH _icons_only_builder_calls _icons_only_builder_count)
 if(NOT _icons_only_builder_count EQUAL 1)
@@ -695,7 +712,7 @@ if(NOT _icons_only_builder_count EQUAL 1)
 endif()
 
 string(REGEX MATCHALL
-    "draw_ground_items\\(snapshot,loot_filter_mode_,material_pack_,width,height\\)"
+    "draw_ground_items\\(ground_item_range\\(snapshot\\),loot_filter_mode_,material_pack_,camera,width,height\\)"
     _icons_only_draw_calls "${_icons_only_normalized}")
 list(LENGTH _icons_only_draw_calls _icons_only_draw_count)
 if(NOT _icons_only_draw_count EQUAL 1)
@@ -703,7 +720,7 @@ if(NOT _icons_only_draw_count EQUAL 1)
         "Stage11D icons-only draw must use the renderer loot filter mode exactly once")
 endif()
 string(REGEX MATCHALL
-    "draw_ground_items\\(current,loot_filter_mode_,material_pack_,width,height\\)"
+    "draw_ground_items\\(ground_item_range\\(current\\),loot_filter_mode_,material_pack_,camera,width,height\\)"
     _production_room_draw_calls "${_draw_room_normalized}")
 list(LENGTH _production_room_draw_calls _production_room_draw_count)
 if(NOT _production_room_draw_count EQUAL 1)

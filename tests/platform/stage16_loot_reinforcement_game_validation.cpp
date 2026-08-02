@@ -1,4 +1,5 @@
 #include "combat_renderer.hpp"
+#include "combat_view_math.hpp"
 #include "control_hints.hpp"
 #include "dungeon_test_support.hpp"
 #include "combat/active_skill_runtime.hpp"
@@ -255,14 +256,23 @@ bool render_world_capture(const std::filesystem::path& run,
     if (!room->initialize_resources() || runtime.session() == nullptr) return false;
     const auto current = std::make_unique<dungeon::DungeonSnapshot>(
         runtime.session()->snapshot());
+    dungeon::DungeonRenderSnapshot* const world =
+        runtime.render_snapshot_storage();
+    if (world == nullptr || !current->combat.has_value()) return false;
+    const platform::CombatCameraView camera =
+        platform::make_combat_camera_view(
+            current->combat->player.position, 1280.0F, 720.0F);
+    const dungeon::WorldViewQuery query = platform::make_world_view_query(
+        camera, 1280.0F, 720.0F, 1U);
+    if (!runtime.session()->write_render_snapshot(query, *world)) return false;
     const platform::CombatFeedback feedback{};
     const platform::ControlHints hints{};
     room->observe_presented_hud_frame(platform::HudPresentedFrame::normal,
         *current, *current, runtime.render_status(), hints, 1.0F / 60.0F, false);
     BeginDrawing();
     ClearBackground(BLACK);
-    static_cast<void>(room->draw(*current, *current, runtime.render_status(), 1.0F,
-        false, feedback, false));
+    static_cast<void>(room->draw(*current, *current, *world, camera,
+        runtime.render_status(), 1.0F, false, feedback, false));
     const auto image = run / name;
     const bool exported = export_flushed_frame(image);
     EndDrawing();
@@ -607,14 +617,23 @@ bool render_inventory_capture(const std::filesystem::path& run,
     if (!room->initialize_resources() || runtime.session() == nullptr) return false;
     const auto current = std::make_unique<dungeon::DungeonSnapshot>(
         runtime.session()->snapshot());
+    dungeon::DungeonRenderSnapshot* const world =
+        runtime.render_snapshot_storage();
+    if (world == nullptr || !current->combat.has_value()) return false;
+    const platform::CombatCameraView camera =
+        platform::make_combat_camera_view(
+            current->combat->player.position, 1280.0F, 720.0F);
+    const dungeon::WorldViewQuery query = platform::make_world_view_query(
+        camera, 1280.0F, 720.0F, 2U);
+    if (!runtime.session()->write_render_snapshot(query, *world)) return false;
     const platform::CombatFeedback feedback{};
     const platform::ControlHints hints{};
     room->observe_presented_hud_frame(platform::HudPresentedFrame::normal,
         *current, *current, runtime.render_status(), hints, 1.0F / 60.0F, false);
     BeginDrawing();
     ClearBackground(BLACK);
-    static_cast<void>(room->draw(*current, *current, runtime.render_status(), 1.0F,
-        false, feedback, false));
+    static_cast<void>(room->draw(*current, *current, *world, camera,
+        runtime.render_status(), 1.0F, false, feedback, false));
     inventory.draw(*runtime.session(), *current, runtime.render_status(),
         room->material_pack(), room->hud_font(), room->hud_font_ready());
     const auto image = run / name;

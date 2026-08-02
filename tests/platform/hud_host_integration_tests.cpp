@@ -334,18 +334,25 @@ arpg::test::Failure ground_loot_render_plan_reuses_one_view_and_orders_stages()
     previous.combat->monster_count = 1U;
     dungeon::DungeonSnapshot value = previous;
     value.combat->monsters[0].position = {4.0F, 0.0F, 0.0F};
-    value.ground_items[0] = ground_item(30U, items::ItemRarity::rare);
-    value.ground_items[1] = ground_item(10U, items::ItemRarity::normal);
-    value.ground_items[2] = ground_item(20U, items::ItemRarity::magic);
-    value.ground_item_count = 3U;
-    value.ground_material_count = 1U;
-    value.ground_materials[0] = {40U,
+    dungeon::DungeonRenderSnapshot world{};
+    world.has_active_room = true;
+    world.has_combat = true;
+    world.combat = *value.combat;
+    world.equipment[0] = ground_item(30U, items::ItemRarity::rare);
+    world.equipment[1] = ground_item(10U, items::ItemRarity::normal);
+    world.equipment[2] = ground_item(20U, items::ItemRarity::magic);
+    world.equipment_count = 3U;
+    world.material_count = 1U;
+    world.materials[0] = {40U,
         dungeon::GroundMaterialSource::monster_common,
         {0.0F, 0.0F, 0.0F}, items::MaterialId::chaos};
     constexpr platform::CameraOffset kCameraOffset{11.0F, -7.0F};
+    const platform::CombatCameraView camera =
+        platform::make_combat_camera_view(
+            {8.0F, 0.0F, 0.0F}, 1280.0F, 720.0F);
 
     const platform::CombatRenderPlan plan = platform::make_combat_render_plan(
-        previous, value, 0.5F, kCameraOffset,
+        previous, world, true, 0.5F, camera, kCameraOffset,
         settings::LootFilterMode::magic_or_better, 1280.0F, 720.0F);
     const platform::GroundLootView& room_stage_view = plan.ground_loot;
     const platform::GroundLootView& label_stage_view = plan.ground_loot;
@@ -359,7 +366,11 @@ arpg::test::Failure ground_loot_render_plan_reuses_one_view_and_orders_stages()
     ARPG_REQUIRE(plan.material_loot.count == 1U);
     const platform::ScreenProjection actor_projection =
         platform::project_combat_position({0.0F, 0.0F, 0.0F},
-            1280.0F, 720.0F);
+            camera, 1280.0F, 720.0F);
+    ARPG_REQUIRE(plan.ground_loot.labels[0].anchor_x == actor_projection.x);
+    ARPG_REQUIRE(plan.ground_loot.labels[0].anchor_y == actor_projection.y);
+    ARPG_REQUIRE(plan.material_loot.labels[0].anchor_x == actor_projection.x);
+    ARPG_REQUIRE(plan.material_loot.labels[0].anchor_y == actor_projection.y);
     const platform::LootLabelRect actor_rect{
         actor_projection.x - 75.0F * actor_projection.scale + kCameraOffset.x,
         actor_projection.y - 119.0F * actor_projection.scale + kCameraOffset.y,

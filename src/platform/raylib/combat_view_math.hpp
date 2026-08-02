@@ -2,6 +2,7 @@
 
 #include "combat/combat_types.hpp"
 #include "combat/monster_affix_catalog.hpp"
+#include "dungeon/dungeon_render_snapshot.hpp"
 #include "dungeon_view_math.hpp"
 
 #include <array>
@@ -14,6 +15,12 @@ struct ScreenProjection final {
     float y{};
     float ground_y{};
     float scale{};
+};
+
+struct CombatCameraView final {
+    combat::Vec3 center{};
+    float visible_width{24.0F};
+    float visible_depth{11.0F};
 };
 
 struct ActorDrawItem final {
@@ -73,6 +80,28 @@ struct AffixOutline final {
     std::uint8_t alpha{255U};
 };
 
+[[nodiscard]] CombatCameraView make_combat_camera_view(
+    combat::Vec3 interpolated_player,
+    float width,
+    float height) noexcept;
+
+[[nodiscard]] dungeon::WorldViewQuery make_world_view_query(
+    CombatCameraView camera,
+    float width,
+    float height,
+    std::uint64_t camera_version) noexcept;
+
+[[nodiscard]] combat::Vec3 interpolate_combat_position(
+    combat::Vec3 from,
+    combat::Vec3 to,
+    float interpolation_alpha) noexcept;
+
+[[nodiscard]] ScreenProjection project_combat_position(
+    combat::Vec3 position,
+    CombatCameraView view,
+    float width,
+    float height) noexcept;
+
 [[nodiscard]] ScreenProjection project_combat_position(
     combat::Vec3 position,
     float width,
@@ -111,6 +140,16 @@ void sort_actor_draw_items(
 [[nodiscard]] Rgba8 hazard_color(combat::HazardKind kind) noexcept;
 [[nodiscard]] ScreenProjection project_projectile_position(
     const combat::ProjectileSnapshot& projectile,
+    CombatCameraView view,
+    float width,
+    float height) noexcept;
+[[nodiscard]] ScreenProjection project_projectile_position(
+    const combat::ProjectileSnapshot& projectile,
+    float width,
+    float height) noexcept;
+[[nodiscard]] ScreenProjection project_hazard_center(
+    const combat::HazardSnapshot& hazard,
+    CombatCameraView view,
     float width,
     float height) noexcept;
 [[nodiscard]] ScreenProjection project_hazard_center(
