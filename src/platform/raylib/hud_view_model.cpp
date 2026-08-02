@@ -1,5 +1,8 @@
 #include "hud_view_model.hpp"
 
+#include "combat/room_spatial_grid.hpp"
+#include "dungeon/dungeon_render_snapshot.hpp"
+#include "dungeon/room_drop_spatial_index.hpp"
 #include "dungeon_view_math.hpp"
 #include "hud_notice_state.hpp"
 #include "progression/progression_rules.hpp"
@@ -326,7 +329,8 @@ void increment_saturating(std::uint64_t& value) noexcept {
 void HudViewModelProjector::build(HudViewModel& output,
     const dungeon::DungeonSnapshot& snapshot,
     const DungeonRenderStatus& runtime_status,
-    const ControlHints& hints) noexcept {
+    const ControlHints& hints,
+    const dungeon::DungeonRenderSnapshot* presented_world) noexcept {
     output = {};
 
     const ObjectiveKey objective_key{
@@ -393,6 +397,32 @@ void HudViewModelProjector::build(HudViewModel& output,
     output.diagnostics.truncated_texts += cached_control_hint_truncations_;
     output.room.movement = cached_movement_hint_;
     output.room.controls = cached_control_hint_lines_;
+    if (presented_world != nullptr) {
+        output.room.visible_set.available = true;
+        output.room.visible_set.camera_version =
+            presented_world->query.camera_version;
+        output.room.visible_set.residents = presented_world->has_combat
+            ? presented_world->combat.monster_count : 0U;
+        output.room.visible_set.environment = presented_world->environment.count;
+        output.room.visible_set.environment_candidates_examined =
+            presented_world->environment.candidates_examined;
+        output.room.visible_set.drops = static_cast<std::uint16_t>(
+            presented_world->equipment_count + presented_world->material_count
+            + presented_world->health_potion_count);
+        output.room.visible_set.drop_candidates_examined =
+            presented_world->drop_candidates_examined;
+        format_text(output.room.visible_set.text, output.diagnostics,
+            u8"可见：怪 %u/%u 环境 %u/%u 掉落 %u/%u",
+            static_cast<unsigned int>(output.room.visible_set.residents),
+            static_cast<unsigned int>(
+                combat::room_spatial::maximum_streaming_monsters),
+            static_cast<unsigned int>(output.room.visible_set.environment),
+            static_cast<unsigned int>(
+                dungeon::kEnvironmentQueryCandidateCapacity),
+            static_cast<unsigned int>(output.room.visible_set.drops),
+            static_cast<unsigned int>(
+                dungeon::kRoomDropQueryCandidateCapacity));
+    }
     if (!output.room.abyss) {
         format_text(output.room.secondary, output.diagnostics,
             u8"待结算经验 +%llu",

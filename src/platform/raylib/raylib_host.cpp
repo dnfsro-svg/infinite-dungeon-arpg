@@ -987,17 +987,6 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
             const dungeon::DungeonSnapshot& presented_hud_current =
                 config.stage12_material_showcase ? presented_snapshot : current;
 
-            // Observe after all possible fixed-step changes and before every
-            // presented frame, including death/recovery-owned overlay frames.
-            const HudPresentedFrame hud_presented_frame = current.death.has_value()
-                ? HudPresentedFrame::death_overlay : HudPresentedFrame::normal;
-            renderer.observe_presented_hud_frame(hud_presented_frame,
-                presented_hud_previous, presented_hud_current,
-                runtime.render_status(), control_hints,
-                frame_seconds, pause_blocks_gameplay);
-            validation_runtime->observe_hud(
-                current, renderer.hud_model(), renderer.hud_notice_view(),
-                draw_debug, GetScreenWidth(), GetScreenHeight());
             const settings::LootFilterMode presented_loot_filter =
                 renderer_loot_filter_mode(
                     pause_menu.screen, live_settings, pause_menu.draft);
@@ -1034,6 +1023,18 @@ HostExitCode run_raylib_host(const RaylibHostConfig& config) noexcept {
                 apply_stage12_material_showcase_world(
                     presented_snapshot, *render_world);
             }
+            // The presented HUD consumes this exact bounded world snapshot;
+            // publish it after all fixed-step and showcase transformations,
+            // and before the frame is drawn.
+            const HudPresentedFrame hud_presented_frame = current.death.has_value()
+                ? HudPresentedFrame::death_overlay : HudPresentedFrame::normal;
+            renderer.observe_presented_hud_frame(hud_presented_frame,
+                presented_hud_previous, presented_hud_current,
+                runtime.render_status(), control_hints,
+                frame_seconds, pause_blocks_gameplay, render_world);
+            validation_runtime->observe_hud(
+                current, renderer.hud_model(), renderer.hud_notice_view(),
+                draw_debug, GetScreenWidth(), GetScreenHeight());
             BeginDrawing();
             ClearBackground(Color{13, 17, 27, 255});
             reset_ui_text_bounds_audit();

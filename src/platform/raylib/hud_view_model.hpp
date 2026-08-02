@@ -9,6 +9,10 @@
 #include <array>
 #include <cstdint>
 
+namespace arpg::dungeon {
+struct DungeonRenderSnapshot;
+}
+
 namespace arpg::platform {
 
 enum class HudStatusTagKind : std::uint8_t { slow, corrosion, invulnerable };
@@ -46,6 +50,17 @@ struct PlayerHudModel final {
     std::uint8_t status_tag_count{};
 };
 
+struct HudVisibleSetModel final {
+    HudText96 text{};
+    std::uint64_t camera_version{};
+    std::uint16_t residents{};
+    std::uint16_t environment{};
+    std::uint16_t drops{};
+    std::uint16_t environment_candidates_examined{};
+    std::uint16_t drop_candidates_examined{};
+    bool available{};
+};
+
 struct RoomHudModel final {
     HudText96 objective{};
     HudText96 secondary{};
@@ -55,6 +70,7 @@ struct RoomHudModel final {
     HudText96 exit_text{};
     HudText96 movement{};
     std::array<HudText96, 3U> controls{};
+    HudVisibleSetModel visible_set{};
     bool abyss{};
     dungeon::RoomPhase phase{dungeon::RoomPhase::locked};
     dungeon::RoomDensityAffix density_affix{
@@ -123,7 +139,9 @@ public:
     void build(HudViewModel& output,
         const dungeon::DungeonSnapshot& snapshot,
         const DungeonRenderStatus& runtime_status,
-        const ControlHints& hints) noexcept;
+        const ControlHints& hints,
+        const dungeon::DungeonRenderSnapshot* presented_world = nullptr)
+        noexcept;
     [[nodiscard]] HudStaticFormattingDiagnostics
         static_formatting_diagnostics() const noexcept;
 

@@ -979,11 +979,29 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
     const std::size_t showcase_transform = host.rfind(
         "apply_stage12_material_showcase(presented_snapshot,",
         normal_hud_observe);
+    const std::size_t bounded_world_publish = host.rfind(
+        "session->write_render_snapshot(world_query, *render_world)",
+        normal_hud_observe);
+    const std::size_t showcase_world_transform = host.rfind(
+        "apply_stage12_material_showcase_world(", normal_hud_observe);
+    const std::size_t same_world_argument = host.find(
+        "frame_seconds, pause_blocks_gameplay, render_world);",
+        normal_hud_observe);
+    const std::size_t begin_drawing = host.find(
+        "BeginDrawing();", normal_hud_observe);
     ARPG_REQUIRE(normal_hud_observe != std::string::npos);
     ARPG_REQUIRE(showcase_snapshot != std::string::npos);
     ARPG_REQUIRE(showcase_transform != std::string::npos);
     ARPG_REQUIRE(showcase_snapshot < showcase_transform);
     ARPG_REQUIRE(showcase_transform < normal_hud_observe);
+    ARPG_REQUIRE(bounded_world_publish != std::string::npos);
+    ARPG_REQUIRE(showcase_world_transform != std::string::npos);
+    ARPG_REQUIRE(same_world_argument != std::string::npos);
+    ARPG_REQUIRE(begin_drawing != std::string::npos);
+    ARPG_REQUIRE(bounded_world_publish < showcase_world_transform);
+    ARPG_REQUIRE(showcase_world_transform < normal_hud_observe);
+    ARPG_REQUIRE(normal_hud_observe < same_world_argument);
+    ARPG_REQUIRE(same_world_argument < begin_drawing);
     ARPG_REQUIRE(host.find(
         "material_status.hud_ecology = "
         "renderer.hud_model().navigation.ecology;") != std::string::npos);

@@ -342,7 +342,8 @@ void CombatRenderer::observe_hud(
     const DungeonRenderStatus& runtime_status,
     const ControlHints& control_hints,
     float frame_seconds,
-    bool paused) noexcept {
+    bool paused,
+    const dungeon::DungeonRenderSnapshot* presented_world) noexcept {
     const LootPickupFeedback pickup_feedback =
         loot_pickup_feedback_.observe(runtime_status);
     if (pickup_feedback.ready) {
@@ -360,7 +361,8 @@ void CombatRenderer::observe_hud(
         runtime_status.recovery_required);
     hud_notices_.update(frame_seconds, paused);
     HudViewModel model{};
-    hud_projector_.build(model, current, runtime_status, control_hints);
+    hud_projector_.build(
+        model, current, runtime_status, control_hints, presented_world);
     attach_notice_view(model, hud_notices_.view());
     hud_model_ = model;
     const std::array<std::uint16_t, skills::kActiveSkillCount> cooldowns =
@@ -383,10 +385,12 @@ void CombatRenderer::observe_presented_hud_frame(
     const DungeonRenderStatus& runtime_status,
     const ControlHints& control_hints,
     float frame_seconds,
-    bool paused) noexcept {
+    bool paused,
+    const dungeon::DungeonRenderSnapshot* presented_world) noexcept {
     const auto index = hud_presented_frame_index(frame);
     if (!index.has_value()) return;
-    observe_hud(previous, current, runtime_status, control_hints, frame_seconds, paused);
+    observe_hud(previous, current, runtime_status, control_hints, frame_seconds,
+        paused, presented_world);
     ++hud_presented_frame_counts_[*index];
 }
 

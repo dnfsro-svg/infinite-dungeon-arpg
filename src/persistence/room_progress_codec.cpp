@@ -894,6 +894,75 @@ bool read_room_progress(Reader& reader,
     return crc32_update(value, bytes + kHeaderSize, payload_size);
 }
 
+template <std::size_t Size>
+void set_bit(std::array<std::uint64_t, Size>& bits,
+    const std::uint16_t ordinal) noexcept {
+    bits[ordinal / 64U] |= std::uint64_t{1U} << (ordinal % 64U);
+}
+
+[[nodiscard]] bool migrate_task5_secondary_ordinals(
+    checkpoint::SaveCheckpointSlot& slot) noexcept {
+    auto& room = slot.room_progress;
+    std::array<std::uint64_t, limits::kRoomSecondaryClaimWords>
+        expected_task5_claims{};
+    std::array<std::uint64_t, limits::kRoomSecondaryClaimWords>
+        canonical_claims{};
+    const auto& durable_claims =
+        slot.state.item_ownership.material_claimed_drop_bits;
+    for (std::uint16_t ordinal = 0U;
+            ordinal < durable_claims.size() * 64U; ++ordinal) {
+        if ((durable_claims[ordinal / 64U]
+                & (std::uint64_t{1U} << (ordinal % 64U))) == 0U) {
+            continue;
+        }
+        const std::uint16_t task5_ordinal =
+            checkpoint::checkpoint_material_ordinal(ordinal);
+        set_bit(expected_task5_claims, task5_ordinal);
+        if ((ordinal & 1U) != 0U
+                && ordinal < checkpoint::kHealthPotionGroundCapacity * 2U) {
+            set_bit(expected_task5_claims, ordinal);
+        }
+        set_bit(canonical_claims,
+            ordinal >= checkpoint::kAbyssMaterialOrdinalBegin
+                ? task5_ordinal : ordinal);
+    }
+    if (room.secondary_claim_bits != expected_task5_claims) return false;
+
+    for (std::uint16_t index = 0U;
+            index < room.secondary_ground_count; ++index) {
+        auto& ground = room.secondary_ground[index];
+        if (ground.tag != checkpoint::SecondaryGroundTag::material) continue;
+        if (ground.source <= 1U) {
+            if (ground.ordinal >= checkpoint::kOrdinarySecondaryOrdinalEnd
+                    || (ground.ordinal & 1U) != 0U) {
+                return false;
+            }
+            const std::uint16_t canonical = static_cast<std::uint16_t>(
+                ground.ordinal / 2U);
+            if ((ground.source == 0U && (canonical & 1U) != 0U)
+                    || (ground.source == 1U && (canonical & 1U) == 0U)) {
+                return false;
+            }
+            ground.ordinal = canonical;
+        }
+    }
+    std::sort(room.secondary_ground.begin(),
+        room.secondary_ground.begin() + room.secondary_ground_count,
+        [](const checkpoint::SecondaryGroundCheckpoint& left,
+            const checkpoint::SecondaryGroundCheckpoint& right) noexcept {
+            return left.ordinal < right.ordinal;
+        });
+    for (std::uint16_t index = 1U;
+            index < room.secondary_ground_count; ++index) {
+        if (room.secondary_ground[index - 1U].ordinal
+                == room.secondary_ground[index].ordinal) {
+            return false;
+        }
+    }
+    room.secondary_claim_bits = canonical_claims;
+    return true;
+}
+
 [[nodiscard]] bool valid_resolution_lifecycle_extension(
     const checkpoint::LastAbyssResolution& value) noexcept {
     if (value.lifecycle == abyss::AbyssLifecycle::none) return true;
@@ -1003,7 +1072,8 @@ CodecError encode_checkpoint_v9_into(
             || !payload.skip(durable_size)
             || !write_room_progress(payload, source.room_progress)
             || !payload.u8(static_cast<std::uint8_t>(
-                source.state.last_abyss_resolution.lifecycle))) {
+                source.state.last_abyss_resolution.lifecycle))
+            || !payload.u8(kV9CanonicalSecondaryOrdinalMarker)) {
         return CodecError::wrong_size;
     }
     Writer durable_length{bytes, capacity, kHeaderSize};
@@ -1090,13 +1160,14 @@ CodecError decode_checkpoint_v9_into_scratch(
         return CodecError::bad_payload_length;
     }
     const std::size_t extension_size = size - payload.offset();
-    if (extension_size > 1U) return CodecError::bad_payload_length;
+    if (extension_size > 2U) return CodecError::bad_payload_length;
+    bool canonical_secondary_ordinals = false;
     if (extension_size == 0U
             && legacy_v9_abyss_death_requires_failed_resolution(
                 destination.state)) {
         destination.state.last_abyss_resolution.lifecycle =
             abyss::AbyssLifecycle::failed;
-    } else if (extension_size == 1U) {
+    } else if (extension_size >= 1U) {
         std::uint8_t resolution_lifecycle{};
         if (!payload.u8(resolution_lifecycle)) {
             return CodecError::bad_payload_length;
@@ -1111,13 +1182,29 @@ CodecError decode_checkpoint_v9_into_scratch(
         }
         destination.state.last_abyss_resolution.lifecycle =
             static_cast<abyss::AbyssLifecycle>(resolution_lifecycle);
+        if (extension_size == 2U) {
+            std::uint8_t secondary_marker{};
+            if (!payload.u8(secondary_marker)) {
+                return CodecError::bad_payload_length;
+            }
+            if (secondary_marker != kV9CanonicalSecondaryOrdinalMarker) {
+                return CodecError::invalid_enum;
+            }
+            canonical_secondary_ordinals = true;
+        }
     }
     if (!valid_resolution_lifecycle_extension(
             destination.state.last_abyss_resolution)) {
         return CodecError::invalid_state;
     }
-      if (!checkpoint::valid_room_progress_checkpoint_structural(
-              destination.room_progress, destination.state)) {
+    if (!canonical_secondary_ordinals) {
+        if (!migrate_task5_secondary_ordinals(destination)) {
+            return CodecError::invalid_state;
+        }
+        migrated = true;
+    }
+    if (!checkpoint::valid_room_progress_checkpoint_structural(
+            destination.room_progress, destination.state)) {
         return CodecError::invalid_state;
     }
     return CodecError::none;
@@ -1287,15 +1374,11 @@ CodecError verify_checkpoint_v9_readback(
         return CodecError::invalid_state;
     }
     const std::size_t extension_size = size - room_fields.offset();
-    if (extension_size == 0U) {
-        if (expected.state.last_abyss_resolution.lifecycle
-                != abyss::AbyssLifecycle::none) {
-            return CodecError::invalid_state;
-        }
-    } else if (extension_size == 1U) {
+    if (extension_size == 2U) {
         ComparingReader extension{bytes, size, room_fields.offset()};
         if (!extension.u8(static_cast<std::uint8_t>(
                 expected.state.last_abyss_resolution.lifecycle))
+                || !extension.u8(kV9CanonicalSecondaryOrdinalMarker)
                 || extension.offset() != size) {
             return CodecError::invalid_state;
         }

@@ -127,7 +127,9 @@ public:
         const DungeonRenderStatus& runtime_status,
         const ControlHints& control_hints,
         float frame_seconds,
-        bool paused) noexcept;
+        bool paused,
+        const dungeon::DungeonRenderSnapshot* presented_world = nullptr)
+        noexcept;
     void observe_presented_hud_frame(
         HudPresentedFrame,
         const dungeon::DungeonSnapshot& previous,
@@ -135,7 +137,9 @@ public:
         const DungeonRenderStatus& runtime_status,
         const ControlHints& control_hints,
         float frame_seconds,
-        bool paused) noexcept;
+        bool paused,
+        const dungeon::DungeonRenderSnapshot* presented_world = nullptr)
+        noexcept;
     [[nodiscard]] const HudViewModel& hud_model() const noexcept;
     [[nodiscard]] HudNoticeView hud_notice_view() const noexcept;
     [[nodiscard]] std::uint64_t hud_binding_revision() const noexcept;

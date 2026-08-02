@@ -13,7 +13,7 @@ constexpr float kLogicalMargin = 16.0F;
 constexpr float kPlayerWidth = 420.0F;
 constexpr float kPlayerHeight = 144.0F;
 constexpr float kObjectiveWidth = 704.0F;
-constexpr float kObjectiveHeight = 142.0F;
+constexpr float kObjectiveHeight = 164.0F;
 constexpr float kNavigationWidth = 270.0F;
 constexpr float kNavigationHeight = 160.0F;
 constexpr float kPrimaryNoticeWidth = 600.0F;
@@ -23,11 +23,11 @@ constexpr float kNoticeGap = 6.0F;
 constexpr float kAbyssConfirmationHeight = 56.0F;
 constexpr float kAbyssConfirmationGap = 8.0F;
 constexpr float kCombatExclusionX = 360.0F;
-constexpr float kCombatExclusionY = 164.0F;
+constexpr float kCombatExclusionY = 186.0F;
 constexpr float kCombatExclusionWidth = 560.0F;
 constexpr float kCombatExclusionHeight = 310.0F;
 constexpr float kDebugWidth = 300.0F;
-constexpr float kDebugY = 172.0F;
+constexpr float kDebugY = 186.0F;
 constexpr float kDebugHeight = 228.0F;
 
 [[nodiscard]] HudRect scaled_rect(float origin_x,
@@ -132,6 +132,8 @@ HudTextSafeLayout make_hud_text_safe_layout(
         text.objective_controls[index] = inset(layout.objective_panel, 18.0F,
             74.0F + static_cast<float>(index) * 22.0F, 21.0F);
     }
+    text.objective_diagnostics = inset(
+        layout.objective_panel, 18.0F, 140.0F, 21.0F);
     text.navigation_title = inset(layout.navigation_panel, 18.0F, 7.0F, 28.0F);
     text.navigation_ecology = inset(
         layout.navigation_panel, 18.0F, 36.0F, 26.0F);

@@ -254,6 +254,9 @@ arpg::test::Failure objective_navigation_and_context_plans_stay_in_their_layout_
     static_cast<void>(std::snprintf(room.controls[2].bytes.data(),
         room.controls[2].bytes.size(),
         "F1 Debug  F12 Screenshot  Esc Pause"));
+    static_cast<void>(std::snprintf(room.visible_set.text.bytes.data(),
+        room.visible_set.text.bytes.size(),
+        u8"可见：怪 105/105 环境 73/105 掉落 53/331"));
     platform::NavigationHudModel navigation{};
     static_cast<void>(std::snprintf(navigation.primary.bytes.data(), navigation.primary.bytes.size(),
         u8"深度 1 · 层房间 2"));
@@ -277,25 +280,29 @@ arpg::test::Failure objective_navigation_and_context_plans_stay_in_their_layout_
     ARPG_REQUIRE(objective.controls[0].bytes == room.controls[0].bytes);
     ARPG_REQUIRE(objective.controls[1].bytes == room.controls[1].bytes);
     ARPG_REQUIRE(objective.controls[2].bytes == room.controls[2].bytes);
+    ARPG_REQUIRE(objective.diagnostics.bytes
+        == room.visible_set.text.bytes);
     ARPG_REQUIRE(rect_inside(objective.bounds, layout.objective_panel));
 
     const platform::HudTextSafeLayout safe =
         platform::make_hud_text_safe_layout(layout);
     const platform::HudReadabilityStyle style =
         platform::hud_readability_style();
-    const std::array<platform::HudText96, 5U> complete_secondary_lines{{
+    const std::array<platform::HudText96, 6U> complete_secondary_lines{{
         objective.secondary,
         objective.movement,
         objective.controls[0],
         objective.controls[1],
         objective.controls[2],
+        objective.diagnostics,
     }};
-    const std::array<platform::HudRect, 5U> complete_secondary_bounds{{
+    const std::array<platform::HudRect, 6U> complete_secondary_bounds{{
         safe.objective_hint,
         safe.objective_movement,
         safe.objective_controls[0],
         safe.objective_controls[1],
         safe.objective_controls[2],
+        safe.objective_diagnostics,
     }};
     const float preferred = style.objective_secondary_font_size * layout.scale;
     for (std::size_t index{}; index < complete_secondary_lines.size(); ++index) {
@@ -424,13 +431,14 @@ arpg::test::Failure large_room_hud_rows_are_opaque_and_non_overlapping_at_suppor
             viewport[0], viewport[1], false);
         const platform::HudTextSafeLayout safe =
             platform::make_hud_text_safe_layout(layout);
-        const std::array<platform::HudRect, 6U> rows{{
+        const std::array<platform::HudRect, 7U> rows{{
             safe.objective_title,
             safe.objective_hint,
             safe.objective_movement,
             safe.objective_controls[0],
             safe.objective_controls[1],
             safe.objective_controls[2],
+            safe.objective_diagnostics,
         }};
         ARPG_REQUIRE(layout.objective_panel.width >= 704.0F * layout.scale);
         for (std::size_t first{}; first < rows.size(); ++first) {

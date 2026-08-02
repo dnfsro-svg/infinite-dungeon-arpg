@@ -11,6 +11,7 @@ namespace arpg::persistence {
 inline constexpr std::size_t kMaximumEncodedCheckpointBytes =
     8U * 1024U * 1024U;
 inline constexpr std::uint32_t kCheckpointFormatVersionV9 = 9U;
+inline constexpr std::uint8_t kV9CanonicalSecondaryOrdinalMarker = 0xC9U;
 
 // Exact worst-case size derived from the field-wise V9 schema. Counted records
 // use their declared fixed capacities; the embedded durable image uses the V8
@@ -79,7 +80,7 @@ inline constexpr std::size_t kV8MaximumEncodedBytes =
     kV8BaseEncodedCheckpointSize
         + kMaximumCheckpointItemCount * kV7ItemRecordSize;
 inline constexpr std::size_t kV9MaximumEncodedBytes =
-    32U + 4U + kV8MaximumEncodedBytes + kV9MaximumRoomProgressBytes + 1U;
+    32U + 4U + kV8MaximumEncodedBytes + kV9MaximumRoomProgressBytes + 2U;
 static_assert(kV9MaximumEncodedBytes <= kMaximumEncodedCheckpointBytes);
 
 [[nodiscard]] CodecError encode_checkpoint_v9_into(

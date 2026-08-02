@@ -1,5 +1,7 @@
 #include "test_framework.hpp"
 
+#include "allocation_probe.hpp"
+#include "dungeon/dungeon_render_snapshot.hpp"
 #include "hud_view_model.hpp"
 #include "hud_notice_state.hpp"
 #include "hud_palette.hpp"
@@ -189,6 +191,51 @@ arpg::test::Failure large_room_progression_uses_explicit_chinese_fields() noexce
         == dungeon::RoomDensityAffix::horde);
     ARPG_REQUIRE(output.room.required_kills == 282U);
     ARPG_REQUIRE(output.diagnostics.truncated_texts == 0U);
+    return {};
+}
+
+arpg::test::Failure visible_set_diagnostics_use_the_same_presented_frame()
+    noexcept {
+    dungeon::DungeonSnapshot snapshot = normal_snapshot();
+    dungeon::DungeonRenderSnapshot first{};
+    first.query.camera_version = 700U;
+    first.has_combat = true;
+    first.combat.monster_count = 3U;
+    first.environment.count = 4U;
+    first.environment.candidates_examined = 5U;
+    first.equipment_count = 6U;
+    first.material_count = 7U;
+    first.health_potion_count = 8U;
+    first.drop_candidates_examined = 9U;
+
+    dungeon::DungeonRenderSnapshot presented{};
+    presented.query.camera_version = 701U;
+    presented.has_combat = true;
+    presented.combat.monster_count = 105U;
+    presented.environment.count = 73U;
+    presented.environment.candidates_examined = 105U;
+    presented.equipment_count = 19U;
+    presented.material_count = 23U;
+    presented.health_potion_count = 11U;
+    presented.drop_candidates_examined = 331U;
+
+    platform::HudViewModelProjector projector{};
+    platform::HudViewModel output{};
+    projector.build(output, snapshot, {}, default_hints(), &first);
+    const std::uint64_t allocations_before = arpg::test::allocation_count();
+    projector.build(output, snapshot, {}, default_hints(), &presented);
+    ARPG_REQUIRE(arpg::test::allocation_count() == allocations_before);
+    ARPG_REQUIRE(output.room.visible_set.available);
+    ARPG_REQUIRE(output.room.visible_set.camera_version == 701U);
+    ARPG_REQUIRE(output.room.visible_set.residents == 105U);
+    ARPG_REQUIRE(output.room.visible_set.environment == 73U);
+    ARPG_REQUIRE(output.room.visible_set.drops == 53U);
+    ARPG_REQUIRE(output.room.visible_set.environment_candidates_examined
+        == 105U);
+    ARPG_REQUIRE(output.room.visible_set.drop_candidates_examined == 331U);
+    ARPG_REQUIRE(std::strcmp(output.room.visible_set.text.bytes.data(),
+        u8"可见：怪 105/105 环境 73/105 掉落 53/331") == 0);
+    ARPG_REQUIRE(!output.room.visible_set.text.truncated);
     return {};
 }
 
@@ -485,6 +532,8 @@ constexpr arpg::test::TestCase kCases[] = {
     {"Chinese objective text", &objective_uses_chinese_target_text},
     {"large room explicit progression text",
         &large_room_progression_uses_explicit_chinese_fields},
+    {"same-frame visible set diagnostics",
+        &visible_set_diagnostics_use_the_same_presented_frame},
     {"large room exit copy",
         &exit_copy_distinguishes_threshold_full_clear_and_abyss_warning},
     {"complete movement objective hint",

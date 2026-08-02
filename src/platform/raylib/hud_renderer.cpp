@@ -195,6 +195,7 @@ ObjectivePanelPlan make_objective_panel_plan(const RoomHudModel& room,
     plan.secondary = room.secondary;
     plan.movement = room.movement;
     plan.controls = room.controls;
+    plan.diagnostics = room.visible_set.text;
     return plan;
 }
 
@@ -744,6 +745,11 @@ void HudRenderer::draw(const HudViewModel& view,
                 ui_text_contrast_style().primary,
                 UiTextAuditRole::hud_objective, layout.scale);
         }
+        draw_panel_text(draw_font, text_layout.objective_diagnostics,
+            objective.diagnostics,
+            style.objective_secondary_font_size * layout.scale,
+            ui_text_contrast_style().secondary,
+            UiTextAuditRole::hud_objective, layout.scale);
     }
     if (navigation.visible) {
         const Rectangle bounds{navigation.bounds.x, navigation.bounds.y,

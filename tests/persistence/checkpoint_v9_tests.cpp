@@ -16,6 +16,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <type_traits>
 
@@ -169,6 +170,12 @@ std::uint32_t read_u32(const std::uint8_t* bytes,
         | (static_cast<std::uint32_t>(bytes[offset + 3U]) << 24U);
 }
 
+void write_u16(std::uint8_t* bytes, const std::size_t offset,
+    const std::uint16_t value) noexcept {
+    bytes[offset] = static_cast<std::uint8_t>(value);
+    bytes[offset + 1U] = static_cast<std::uint8_t>(value >> 8U);
+}
+
 void write_u32(std::uint8_t* bytes, const std::size_t offset,
     const std::uint32_t value) noexcept {
     for (std::size_t index = 0U; index < sizeof(value); ++index) {
@@ -187,6 +194,25 @@ void refresh_v9_envelope(std::uint8_t* bytes,
     checksum = persistence::crc32_update(checksum,
         bytes + persistence::kCheckpointHeaderSize, payload_size);
     write_u32(bytes, 28U, checksum);
+}
+
+bool rewrite_coupon_record_as_task5_wire(std::uint8_t* const bytes,
+    const std::size_t size,
+    const checkpoint::SecondaryGroundCheckpoint& record,
+    const std::uint16_t task5_ordinal) noexcept {
+    std::array<std::uint8_t, persistence::kV9SecondaryGroundBytes> needle{};
+    needle[0U] = static_cast<std::uint8_t>(record.tag);
+    write_u16(needle.data(), 1U, record.ordinal);
+    needle[3U] = record.source;
+    std::memcpy(needle.data() + 4U, &record.position,
+        sizeof(record.position));
+    needle.back() = static_cast<std::uint8_t>(record.material);
+    const auto found = std::search(bytes + persistence::kCheckpointHeaderSize,
+        bytes + size, needle.begin(), needle.end());
+    if (found == bytes + size) return false;
+    write_u16(found, 1U, task5_ordinal);
+    found[3U] = 1U;
+    return true;
 }
 
 bool ten_thousand_tick_reload_trace_matches() noexcept {
@@ -335,6 +361,12 @@ bool make_fixture(checkpoint::SaveCheckpointSlot& slot) noexcept {
     return true;
 }
 
+void clear_secondary_progress(checkpoint::SaveCheckpointSlot& slot) noexcept {
+    slot.state.item_ownership.material_claimed_drop_bits = {};
+    slot.room_progress.secondary_claim_bits = {};
+    slot.room_progress.secondary_ground_count = 0U;
+}
+
 bool make_cleared_abyss_fixture(
     checkpoint::SaveCheckpointSlot& slot) noexcept {
     if (!make_fixture(slot)) return false;
@@ -466,12 +498,14 @@ bool encode_legacy_v9_without_lifecycle(
     if (persistence::encode_checkpoint_v9_into(
             source, bytes, capacity, written)
             != persistence::CodecError::none
-            || written <= persistence::kCheckpointHeaderSize
-            || bytes[written - 1U] != static_cast<std::uint8_t>(
-                source.state.last_abyss_resolution.lifecycle)) {
+            || written <= persistence::kCheckpointHeaderSize + 1U
+            || bytes[written - 2U] != static_cast<std::uint8_t>(
+                source.state.last_abyss_resolution.lifecycle)
+            || bytes[written - 1U]
+                != persistence::kV9CanonicalSecondaryOrdinalMarker) {
         return false;
     }
-    --written;
+    written -= 2U;
     refresh_v9_envelope(bytes, written);
     return true;
 }
@@ -544,6 +578,211 @@ test::Failure v9_round_trip_preserves_large_room_fields() noexcept {
         == persistence::CodecError::invalid_state);
     source->room_progress.combat.player.position.x -= 0.25F;
     ARPG_REQUIRE(ten_thousand_tick_reload_trace_matches());
+    return {};
+}
+
+test::Failure task5_v9_secondary_ordinals_migrate_to_canonical_once() noexcept {
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> source{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> decoded{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<std::uint8_t[]> bytes{
+        new (std::nothrow) std::uint8_t[
+            persistence::kMaximumEncodedCheckpointBytes]};
+    ARPG_REQUIRE(source != nullptr && decoded != nullptr && bytes != nullptr);
+    ARPG_REQUIRE(make_fixture(*source));
+    clear_secondary_progress(*source);
+
+    auto& state = source->state;
+    auto& room = source->room_progress;
+    room.secondary_claim_bits = {};
+    room.secondary_claim_bits[0U] = (std::uint64_t{1U} << 13U)
+        | (std::uint64_t{1U} << 20U)
+        | (std::uint64_t{1U} << 26U);
+    state.item_ownership.material_claimed_drop_bits = {};
+    state.item_ownership.material_claimed_drop_bits[0U] =
+        (std::uint64_t{1U} << 10U) | (std::uint64_t{1U} << 13U);
+
+    room.secondary_ground_count = 2U;
+    room.secondary_ground[0U] = {};
+    room.secondary_ground[0U].tag =
+        checkpoint::SecondaryGroundTag::material;
+    room.secondary_ground[0U].ordinal = 8U;
+    room.secondary_ground[0U].source = 0U;
+    room.secondary_ground[0U].position = {12.25F, -7.5F, 0.0F};
+    room.secondary_ground[0U].material =
+        items::MaterialId::reinforcement_stone;
+    room.secondary_ground[1U] = {};
+    room.secondary_ground[1U].tag =
+        checkpoint::SecondaryGroundTag::material;
+    room.secondary_ground[1U].ordinal = 14U;
+    room.secondary_ground[1U].source = 0U;
+    room.secondary_ground[1U].position = {-19.75F, 6.125F, 0.0F};
+    room.secondary_ground[1U].material = items::MaterialId::coupon_6;
+    ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
+        room, state));
+
+    std::size_t written{};
+    ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(*source,
+        bytes.get(), persistence::kMaximumEncodedCheckpointBytes, written)
+        == persistence::CodecError::none);
+    const auto coupon_record = room.secondary_ground[1U];
+    ARPG_REQUIRE(rewrite_coupon_record_as_task5_wire(
+        bytes.get(), written, coupon_record, 14U));
+    if (bytes[written - 1U]
+            == persistence::kV9CanonicalSecondaryOrdinalMarker) {
+        --written;
+    }
+    refresh_v9_envelope(bytes.get(), written);
+
+    bool migrated = false;
+    ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
+        bytes.get(), written, *decoded, migrated)
+        == persistence::CodecError::none);
+    ARPG_REQUIRE(migrated);
+    const auto& restored = decoded->room_progress;
+    ARPG_REQUIRE(restored.secondary_ground_count == 2U);
+    ARPG_REQUIRE(restored.secondary_ground[0U].ordinal == 4U);
+    ARPG_REQUIRE(restored.secondary_ground[0U].source == 0U);
+    ARPG_REQUIRE(restored.secondary_ground[1U].ordinal == 7U);
+    ARPG_REQUIRE(restored.secondary_ground[1U].source == 1U);
+    ARPG_REQUIRE((restored.secondary_claim_bits[0U]
+        & (std::uint64_t{1U} << 10U)) != 0U);
+    ARPG_REQUIRE((restored.secondary_claim_bits[0U]
+        & (std::uint64_t{1U} << 13U)) != 0U);
+    ARPG_REQUIRE((restored.secondary_claim_bits[0U]
+        & (std::uint64_t{1U} << 20U)) == 0U);
+    ARPG_REQUIRE((restored.secondary_claim_bits[0U]
+        & (std::uint64_t{1U} << 26U)) == 0U);
+    ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
+        restored, decoded->state));
+    return {};
+}
+
+test::Failure maximum_legal_v9_ground_and_claim_payloads_round_trip() noexcept {
+    constexpr std::uint16_t kMaximumEquipmentRecords = 1152U;
+    constexpr std::uint16_t kMaximumSecondaryRecords = 2304U;
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> source{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> decoded{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<std::uint8_t[]> bytes{
+        new (std::nothrow) std::uint8_t[
+            persistence::kMaximumEncodedCheckpointBytes]};
+    ARPG_REQUIRE(source != nullptr && decoded != nullptr && bytes != nullptr);
+    ARPG_REQUIRE(make_fixture(*source));
+    auto& room = source->room_progress;
+    room.equipment_claim_bits = {};
+    room.secondary_claim_bits = {};
+    source->state.item_ownership.claimed_drop_bits = {};
+    source->state.item_ownership.material_claimed_drop_bits = {};
+
+    room.equipment_ground_count = kMaximumEquipmentRecords;
+    for (std::uint16_t ordinal = 0U;
+            ordinal < kMaximumEquipmentRecords; ++ordinal) {
+        auto& ground = room.equipment_ground[ordinal];
+        ground = {};
+        ground.ordinal = ordinal;
+        ground.source = 0U;
+        ground.reward_ordinal = 0xFFU;
+        ground.position = {
+            static_cast<float>(static_cast<int>(ordinal % 161U) - 80),
+            static_cast<float>(static_cast<int>((ordinal / 7U) % 161U) - 80),
+            0.0F};
+        ground.item = normal_item(0x100000U + ordinal);
+    }
+    room.secondary_ground_count = kMaximumSecondaryRecords;
+    for (std::uint16_t ordinal = 0U;
+            ordinal < kMaximumSecondaryRecords; ++ordinal) {
+        auto& ground = room.secondary_ground[ordinal];
+        ground = {};
+        ground.ordinal = ordinal;
+        ground.position = {
+            static_cast<float>(static_cast<int>(ordinal % 161U) - 80),
+            static_cast<float>(static_cast<int>((ordinal / 11U) % 161U) - 80),
+            0.0F};
+        if ((ordinal & 1U) == 0U) {
+            ground.tag = checkpoint::SecondaryGroundTag::material;
+            ground.source = 0U;
+            ground.material = items::MaterialId::reinforcement_stone;
+        } else if ((ordinal & 2U) == 0U) {
+            ground.tag = checkpoint::SecondaryGroundTag::material;
+            ground.source = 1U;
+            ground.material = items::MaterialId::coupon_6;
+        } else {
+            ground.tag = checkpoint::SecondaryGroundTag::health_potion;
+            ground.source = 0U;
+            ground.material = items::MaterialId::count;
+        }
+    }
+    ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
+        room, source->state));
+
+    std::size_t maximum_record_bytes{};
+    ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(*source,
+        bytes.get(), persistence::kMaximumEncodedCheckpointBytes,
+        maximum_record_bytes) == persistence::CodecError::none);
+    ARPG_REQUIRE(maximum_record_bytes
+        < persistence::kMaximumEncodedCheckpointBytes);
+    ARPG_REQUIRE(maximum_record_bytes <= persistence::kV9MaximumEncodedBytes);
+    bool migrated = true;
+    ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(bytes.get(),
+        maximum_record_bytes, *decoded, migrated)
+        == persistence::CodecError::none);
+    ARPG_REQUIRE(!migrated);
+    ARPG_REQUIRE(checkpoint::same_room_progress_checkpoint(
+        room, decoded->room_progress));
+    ARPG_REQUIRE(decoded->room_progress.equipment_ground_count
+        == kMaximumEquipmentRecords);
+    ARPG_REQUIRE(decoded->room_progress.secondary_ground_count
+        == kMaximumSecondaryRecords);
+    for (std::uint16_t ordinal = 0U;
+            ordinal < kMaximumEquipmentRecords; ++ordinal) {
+        const auto& expected = room.equipment_ground[ordinal];
+        const auto& actual = decoded->room_progress.equipment_ground[ordinal];
+        ARPG_REQUIRE(actual.ordinal == expected.ordinal);
+        ARPG_REQUIRE(actual.source == expected.source);
+        ARPG_REQUIRE(actual.reward_ordinal == expected.reward_ordinal);
+        ARPG_REQUIRE(same_vec(actual.position, expected.position));
+        ARPG_REQUIRE(actual.item.id == expected.item.id);
+        ARPG_REQUIRE(actual.item.base_id == expected.item.base_id);
+        ARPG_REQUIRE(actual.item.rarity == expected.item.rarity);
+        ARPG_REQUIRE(actual.item.item_level == expected.item.item_level);
+        ARPG_REQUIRE(actual.item.required_level == expected.item.required_level);
+    }
+    for (std::uint16_t ordinal = 0U;
+            ordinal < kMaximumSecondaryRecords; ++ordinal) {
+        const auto& expected = room.secondary_ground[ordinal];
+        const auto& actual = decoded->room_progress.secondary_ground[ordinal];
+        ARPG_REQUIRE(actual.tag == expected.tag);
+        ARPG_REQUIRE(actual.ordinal == expected.ordinal);
+        ARPG_REQUIRE(actual.source == expected.source);
+        ARPG_REQUIRE(same_vec(actual.position, expected.position));
+        ARPG_REQUIRE(actual.material == expected.material);
+    }
+
+    room.equipment_ground_count = 0U;
+    room.secondary_ground_count = 0U;
+    room.equipment_claim_bits.fill((std::numeric_limits<std::uint64_t>::max)());
+    room.secondary_claim_bits.fill((std::numeric_limits<std::uint64_t>::max)());
+    room.secondary_claim_bits.back() = 0U;
+    ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
+        room, source->state));
+    std::size_t maximum_claim_bytes{};
+    ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(*source,
+        bytes.get(), persistence::kMaximumEncodedCheckpointBytes,
+        maximum_claim_bytes) == persistence::CodecError::none);
+    migrated = true;
+    ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(bytes.get(),
+        maximum_claim_bytes, *decoded, migrated)
+        == persistence::CodecError::none);
+    ARPG_REQUIRE(!migrated);
+    ARPG_REQUIRE(decoded->room_progress.equipment_claim_bits
+        == room.equipment_claim_bits);
+    ARPG_REQUIRE(decoded->room_progress.secondary_claim_bits
+        == room.secondary_claim_bits);
+    ARPG_REQUIRE(decoded->room_progress.equipment_ground_count == 0U);
+    ARPG_REQUIRE(decoded->room_progress.secondary_ground_count == 0U);
     return {};
 }
 
@@ -898,6 +1137,7 @@ test::Failure v9_resolution_lifecycle_tail_is_backward_compatible() noexcept {
             persistence::kMaximumEncodedCheckpointBytes]};
     ARPG_REQUIRE(source != nullptr && decoded != nullptr && bytes != nullptr);
     ARPG_REQUIRE(make_fixture(*source));
+    clear_secondary_progress(*source);
 
     std::size_t written{};
     const auto encode = [&]() noexcept {
@@ -905,8 +1145,10 @@ test::Failure v9_resolution_lifecycle_tail_is_backward_compatible() noexcept {
             persistence::kMaximumEncodedCheckpointBytes, written);
     };
     ARPG_REQUIRE(encode() == persistence::CodecError::none);
-    ARPG_REQUIRE(bytes[written - 1U]
+    ARPG_REQUIRE(bytes[written - 2U]
         == static_cast<std::uint8_t>(abyss::AbyssLifecycle::none));
+    ARPG_REQUIRE(bytes[written - 1U]
+        == persistence::kV9CanonicalSecondaryOrdinalMarker);
 
     const std::size_t old_v9_size = written - 1U;
     refresh_v9_envelope(bytes.get(), old_v9_size);
@@ -914,15 +1156,15 @@ test::Failure v9_resolution_lifecycle_tail_is_backward_compatible() noexcept {
     ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
         bytes.get(), old_v9_size, *decoded, migrated)
         == persistence::CodecError::none);
-    ARPG_REQUIRE(!migrated);
+    ARPG_REQUIRE(migrated);
     ARPG_REQUIRE(decoded->state.last_abyss_resolution.lifecycle
         == abyss::AbyssLifecycle::none);
     ARPG_REQUIRE(persistence::verify_checkpoint_v9_readback(
         bytes.get(), old_v9_size, *source, bytes.get(), old_v9_size)
-        == persistence::CodecError::none);
+        == persistence::CodecError::bad_payload_length);
 
     ARPG_REQUIRE(encode() == persistence::CodecError::none);
-    const std::size_t truncated_size = written - 2U;
+    const std::size_t truncated_size = written - 3U;
     refresh_v9_envelope(bytes.get(), truncated_size);
     ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
         bytes.get(), truncated_size, *decoded, migrated)
@@ -954,6 +1196,7 @@ test::Failure v9_legacy_abyss_death_restores_and_rewrites_failed() noexcept {
             persistence::kMaximumEncodedCheckpointBytes]};
     ARPG_REQUIRE(source != nullptr && decoded != nullptr && bytes != nullptr);
     ARPG_REQUIRE(make_pending_death_fixture(*source, true));
+    clear_secondary_progress(*source);
 
     const auto historical_resolution = source->state.last_abyss_resolution;
     std::size_t old_v9_size{};
@@ -964,7 +1207,7 @@ test::Failure v9_legacy_abyss_death_restores_and_rewrites_failed() noexcept {
     ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
         bytes.get(), old_v9_size, *decoded, migrated)
         == persistence::CodecError::none);
-    ARPG_REQUIRE(!migrated);
+    ARPG_REQUIRE(migrated);
     dungeon::DungeonSession restored{dungeon::DungeonRules{}, decoded->state};
     const auto restored_snapshot = restored.snapshot();
     if (decoded->state.last_abyss_resolution.lifecycle
@@ -985,12 +1228,15 @@ test::Failure v9_legacy_abyss_death_restores_and_rewrites_failed() noexcept {
     ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(
         *decoded, bytes.get(), persistence::kMaximumEncodedCheckpointBytes,
         rewritten_size) == persistence::CodecError::none);
-    ARPG_REQUIRE(rewritten_size == old_v9_size + 1U);
-    ARPG_REQUIRE(bytes[rewritten_size - 1U] == static_cast<std::uint8_t>(
+    ARPG_REQUIRE(rewritten_size == old_v9_size + 2U);
+    ARPG_REQUIRE(bytes[rewritten_size - 2U] == static_cast<std::uint8_t>(
         abyss::AbyssLifecycle::failed));
+    ARPG_REQUIRE(bytes[rewritten_size - 1U]
+        == persistence::kV9CanonicalSecondaryOrdinalMarker);
 
     checkpoint::clear_save_checkpoint_slot(*source);
     ARPG_REQUIRE(make_fixture(*source));
+    clear_secondary_progress(*source);
     source->state.last_abyss_resolution = historical_resolution;
     source->state.last_abyss_resolution.lifecycle =
         abyss::AbyssLifecycle::none;
@@ -1000,11 +1246,12 @@ test::Failure v9_legacy_abyss_death_restores_and_rewrites_failed() noexcept {
     ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
         bytes.get(), old_v9_size, *decoded, migrated)
         == persistence::CodecError::none);
-    ARPG_REQUIRE(!migrated);
+    ARPG_REQUIRE(migrated);
     ARPG_REQUIRE(decoded->state.last_abyss_resolution.lifecycle
         == abyss::AbyssLifecycle::none);
 
     ARPG_REQUIRE(make_pending_death_fixture(*source, false, true));
+    clear_secondary_progress(*source);
     ARPG_REQUIRE(source->state.last_abyss_resolution.lifecycle
         == abyss::AbyssLifecycle::none);
     ARPG_REQUIRE(encode_legacy_v9_without_lifecycle(
@@ -1013,7 +1260,7 @@ test::Failure v9_legacy_abyss_death_restores_and_rewrites_failed() noexcept {
     ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
         bytes.get(), old_v9_size, *decoded, migrated)
         == persistence::CodecError::none);
-    ARPG_REQUIRE(!migrated);
+    ARPG_REQUIRE(migrated);
     ARPG_REQUIRE(decoded->state.last_abyss_resolution.lifecycle
         == abyss::AbyssLifecycle::none);
     dungeon::DungeonSession ordinary_restored{
@@ -1119,8 +1366,10 @@ test::Failure v9_started_abyss_early_exit_round_trip(
     ARPG_REQUIRE(public_v8.error == persistence::CodecError::none);
     ARPG_REQUIRE(public_v8.state.last_abyss_resolution.lifecycle
         == abyss::AbyssLifecycle::none);
-    ARPG_REQUIRE(bytes[written - 1U]
+    ARPG_REQUIRE(bytes[written - 2U]
         == static_cast<std::uint8_t>(abyss::AbyssLifecycle::failed));
+    ARPG_REQUIRE(bytes[written - 1U]
+        == persistence::kV9CanonicalSecondaryOrdinalMarker);
     ARPG_REQUIRE(persistence::verify_checkpoint_v9_readback(
         bytes.get(), written, *saved, bytes.get(), written)
         == persistence::CodecError::none);
@@ -1406,6 +1655,10 @@ test::Failure structural_validation_rejects_identity_and_order_faults() noexcept
 
 constexpr test::TestCase kCases[] = {
     {"v9 maximum room round trip", &v9_round_trip_preserves_large_room_fields},
+    {"task5 v9 secondary ordinal migration",
+        &task5_v9_secondary_ordinals_migrate_to_canonical_once},
+    {"maximum legal v9 ground and claim payload round trip",
+        &maximum_legal_v9_ground_and_claim_payloads_round_trip},
     {"high ordinal session v9 round trip and exact claims",
         &high_ordinal_session_v9_round_trip_and_claims_are_exact},
     {"v8 load starts fresh room drop authority",
