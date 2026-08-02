@@ -92,13 +92,19 @@ bool DungeonSession::write_render_snapshot(const WorldViewQuery& query,
     output.ecology = stable_state_.current_room.ecology;
     output.has_active_room = combat_.has_value();
     output.has_combat = combat_.has_value();
+    output.exits_unlocked = room_progress_.exits_unlocked;
+    output.full_clear = room_progress_.full_clear;
     if (combat_.has_value()) output.combat = combat_->snapshot();
 
-    if (room_environment_ != nullptr
-            && !write_visible_environment(
-                *room_environment_, query.world_bounds,
-                output.environment)) {
-        return false;
+    output.environment_query = {
+        VisibleEnvironmentQueryStatus::ok, DungeonFault::none};
+    if (room_environment_ != nullptr) {
+        output.environment_query = query_visible_environment(
+            *room_environment_, query.world_bounds, output.environment);
+        if (output.environment_query.status
+                != VisibleEnvironmentQueryStatus::ok) {
+            return false;
+        }
     }
     if (output.environment.count != 0U) {
         const combat::RoomObstacleRuntime* const obstacles =

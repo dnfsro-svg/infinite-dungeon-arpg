@@ -67,15 +67,29 @@ void draw_graybox_room(dungeon::DungeonElement ecology) noexcept {
 }
 
 bool draw_environment_room(const MaterialPack& material_pack,
-    dungeon::DungeonElement ecology) noexcept {
+    dungeon::DungeonElement ecology,
+    const CombatCameraView& camera) noexcept {
     const float width = static_cast<float>(GetScreenWidth());
     const float height = static_cast<float>(GetScreenHeight());
     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
         Color{9, 12, 20, 255});
-    const RoomBackgroundRenderPlan plan = room_background_render_plan(ecology);
-    return material_pack.draw_frame(plan.atlas, plan.source,
-        {1280.0F, 1440.0F}, {width * 0.5F, height}, false,
-        room_background_scale(width, height));
+    const RoomBackgroundWorldTilePlan plan =
+        room_background_world_tile_plan(ecology, camera);
+    if (!plan.valid || plan.count == 0U
+            || !material_pack.available(plan.atlas)) return false;
+    std::array<ProjectedRoomBackgroundWorldTile,
+        kRoomBackgroundWorldTileCapacity> projected_tiles{};
+    for (std::size_t index{}; index < plan.count; ++index) {
+        projected_tiles[index] = project_room_background_world_tile(
+            plan.tiles[index], camera, width, height);
+        if (!projected_tiles[index].valid) return false;
+    }
+    for (std::size_t index{}; index < plan.count; ++index) {
+        if (!material_pack.draw_frame_to(plan.atlas,
+                plan.tiles[index].source,
+                projected_tiles[index].destination)) return false;
+    }
+    return true;
 }
 
 void draw_environment_room_props(const MaterialPack& material_pack,
@@ -83,18 +97,39 @@ void draw_environment_room_props(const MaterialPack& material_pack,
     const CombatCameraView& camera,
     float width, float height) noexcept {
     const EnvironmentPropLayout layout = environment_prop_layout(world);
+    if (layout.status != EnvironmentPropLayoutStatus::ok) return;
     for (std::size_t index{}; index < layout.count; ++index) {
         const EnvironmentPropPlacement& placement = layout.props[index];
         const ProjectedEnvironmentProp projected = project_environment_prop(
             placement, camera, width, height);
-        if (!material_pack.draw(placement.sprite, projected.foot_position,
-                placement.flip_x, projected.scale)) {
+        const EnvironmentPropDrawStyle style =
+            environment_prop_draw_style(placement);
+        if (!material_pack.draw_transformed(placement.sprite,
+                projected.foot_position, placement.flip_x, projected.scale,
+                style.rotation_degrees, style.tint)) {
             const EnvironmentPropDefinition* const definition =
                 environment_prop_definition(placement.sprite);
-            if (definition == nullptr) continue;
-            const Rectangle bounds = project_environment_prop_bounds(
-                *definition, placement, camera, width, height);
-            DrawRectangleLinesEx(bounds, 2.0F, Color{35, 48, 62, 72});
+            if (definition != nullptr) {
+                const Rectangle bounds = project_environment_prop_bounds(
+                    *definition, placement, camera, width, height);
+                DrawRectangleLinesEx(bounds, 2.0F, Color{35, 48, 62, 72});
+            }
+        }
+        if (style.draw_break_marker) {
+            const float half = 11.0F * projected.scale;
+            const float thickness = (std::max)(1.0F,
+                2.0F * projected.scale);
+            const Color marker{255U, 181U, 92U, 224U};
+            DrawLineEx({projected.foot_position.x - half,
+                    projected.foot_position.y - half},
+                {projected.foot_position.x + half,
+                    projected.foot_position.y + half},
+                thickness, marker);
+            DrawLineEx({projected.foot_position.x - half,
+                    projected.foot_position.y + half},
+                {projected.foot_position.x + half,
+                    projected.foot_position.y - half},
+                thickness, marker);
         }
     }
 }
@@ -117,7 +152,7 @@ void draw_doors(const dungeon::DungeonRenderSnapshot& snapshot,
     float width, float height, const MaterialPack& material_pack, Font hud_font,
     bool hud_font_ready) noexcept {
     const DoorVisualMode mode = door_visual_mode(snapshot.phase,
-        snapshot.has_active_room, snapshot.doors[0].open);
+        snapshot.has_active_room, snapshot.exits_unlocked);
     if (mode == DoorVisualMode::hidden) {
         return;
     }
@@ -127,7 +162,7 @@ void draw_doors(const dungeon::DungeonRenderSnapshot& snapshot,
             door.position.x, door.position.y, door.position.z,
             camera, width, height);
         const DoorRenderDecision visual = door_render_decision(
-            mode, door.direction);
+            mode, door.direction, snapshot.full_clear);
         const Color body_tint{visual.body_tint.r, visual.body_tint.g,
             visual.body_tint.b, visual.body_tint.a};
         const Color text_color{visual.text.r, visual.text.g, visual.text.b, visual.text.a};
@@ -166,6 +201,15 @@ void draw_doors(const dungeon::DungeonRenderSnapshot& snapshot,
                 {frame.x + frame.width - 5.0F * projected.scale,
                     frame.y + frame.height},
                 2.0F * projected.scale, edge);
+        }
+        if (visual.draw_full_clear_decoration) {
+            const Color clear_glow = Fade(text_color, 0.82F);
+            DrawCircleLines(static_cast<int>(std::round(projected.x)),
+                static_cast<int>(std::round(frame.y + frame.height * 0.46F)),
+                13.0F * projected.scale, clear_glow);
+            DrawCircleV({projected.x,
+                frame.y + frame.height * 0.46F},
+                3.0F * projected.scale, clear_glow);
         }
         if (door.abyss) {
             const Vector2 marker{
@@ -453,7 +497,7 @@ HoleVisualMode render_hole_visual_mode(
     case dungeon::RoomPhase::combat:
     case dungeon::RoomPhase::cleared:
     case dungeon::RoomPhase::awaiting_exit:
-        return snapshot.hole.open
+        return snapshot.exits_unlocked
             ? HoleVisualMode::ready : HoleVisualMode::sealed;
     case dungeon::RoomPhase::committing:
         return HoleVisualMode::busy;
@@ -472,22 +516,25 @@ void draw_hole(const dungeon::DungeonRenderSnapshot& snapshot,
     if (hole == HoleVisualMode::hidden) {
         return;
     }
-    const RenderProjection projected = project_render_world(
-        snapshot.hole.position.x, snapshot.hole.position.y,
-        snapshot.hole.position.z, camera,
+    const HoleProjectedGeometry geometry = project_hole_geometry(
+        snapshot.hole.position, camera,
         static_cast<float>(GetScreenWidth()),
         static_cast<float>(GetScreenHeight()));
-    const int x = static_cast<int>(projected.x);
-    const int y = static_cast<int>(projected.ground_y);
+    const int x = static_cast<int>(geometry.center.x);
+    const int y = static_cast<int>(geometry.center.y);
     Color color{43, 25, 55, 255};
     if (hole == HoleVisualMode::ready) color = Color{230, 79, 186, 255};
     else if (hole == HoleVisualMode::busy) color = Color{255, 194, 74, 255};
     if (!material_pack.draw(hole_sprite(snapshot.ecology),
-            {projected.x, projected.ground_y}, false,
-            kEnvironmentGameplayHoleScale * projected.scale)) {
-        DrawEllipse(x, y, 74.0F, 25.0F, Color{5, 2, 9, 235});
+            geometry.center, false,
+            kEnvironmentGameplayHoleScale
+                * geometry.radius_x / 74.0F)) {
+        DrawEllipse(static_cast<int>(geometry.center.x),
+            static_cast<int>(geometry.center.y),
+            geometry.radius_x, geometry.radius_y, Color{5, 2, 9, 235});
     }
-    DrawEllipseLines(x, y, 74.0F, 25.0F, color);
+    DrawEllipseLinesV(geometry.center,
+        geometry.radius_x, geometry.radius_y, color);
     const char* label = hole == HoleVisualMode::sealed ? "SEALED"
         : hole == HoleVisualMode::ready ? "READY"
         : hole == HoleVisualMode::busy ? "SAVING" : "FAULTED";
@@ -552,8 +599,12 @@ RoomBackgroundDrawRuntimeStatus CombatRenderer::draw_room_background_only(
     static_cast<void>(material_pack_.synchronize_residency(
         room_background_residency_request(ecology)));
     room_background_draw_status_ = room_background_status(material_pack_, ecology);
+    const float width = static_cast<float>(GetScreenWidth());
+    const float height = static_cast<float>(GetScreenHeight());
+    const CombatCameraView camera = make_combat_camera_view(
+        {}, width, height);
     room_background_draw_status_.drawn = room_background_draw_status_.resident
-        && draw_environment_room(material_pack_, ecology);
+        && draw_environment_room(material_pack_, ecology, camera);
     if (!room_background_draw_status_.drawn) {
         draw_graybox_room(ecology);
     }
@@ -594,7 +645,7 @@ void CombatRenderer::draw_room(
     room_background_draw_status_ = room_background_status(
         material_pack_, current.ecology);
     const bool draw_material_background = room_background_draw_status_.resident
-        && draw_environment_room(material_pack_, current.ecology);
+        && draw_environment_room(material_pack_, current.ecology, camera);
     room_background_draw_status_.drawn = draw_material_background;
     if (!draw_material_background) {
         draw_graybox_room(current.ecology);

@@ -606,15 +606,40 @@ void hash_aabb(std::uint64_t& hash, const Aabb& bounds) noexcept {
 
 }  // namespace
 
-bool write_visible_environment(const RoomEnvironmentBlueprint& blueprint,
-    const Aabb& world_bounds, VisibleEnvironmentSet& output) noexcept {
+namespace {
+
+[[nodiscard]] bool visible_record_precedes(
+    const RoomEnvironmentRecord& left,
+    const RoomEnvironmentRecord& right) noexcept {
+    if (left.home_cell != right.home_cell) {
+        return left.home_cell < right.home_cell;
+    }
+    if (left.obstacle.kind != right.obstacle.kind) {
+        return static_cast<std::uint8_t>(left.obstacle.kind)
+            < static_cast<std::uint8_t>(right.obstacle.kind);
+    }
+    return left.ordinal < right.ordinal;
+}
+
+VisibleEnvironmentQueryResult query_visible_environment_bounded(
+    const RoomEnvironmentBlueprint& blueprint,
+    const Aabb& world_bounds, std::size_t output_capacity,
+    VisibleEnvironmentSet& output) noexcept {
     output = {};
     if (!finite(world_bounds)
             || world_bounds.minimum.x > world_bounds.maximum.x
             || world_bounds.minimum.y > world_bounds.maximum.y
-            || world_bounds.minimum.z > world_bounds.maximum.z
-            || blueprint.record_count > blueprint.records.size()) {
-        return false;
+            || world_bounds.minimum.z > world_bounds.maximum.z) {
+        return {VisibleEnvironmentQueryStatus::invalid_query,
+            DungeonFault::none};
+    }
+    if (blueprint.record_count > blueprint.records.size()) {
+        return {VisibleEnvironmentQueryStatus::hard_fault,
+            DungeonFault::environment_capacity};
+    }
+    if (output_capacity > output.records.size()) {
+        return {VisibleEnvironmentQueryStatus::hard_fault,
+            DungeonFault::environment_capacity};
     }
 
     const std::size_t visible_first_column = cell_axis(
@@ -639,7 +664,8 @@ bool write_visible_environment(const RoomEnvironmentBlueprint& blueprint,
         visible_last_row + 1U, combat::room_spatial::rows - 1U);
     if (last_column - first_column + 1U > 7U
             || last_row - first_row + 1U > 5U) {
-        return false;
+        return {VisibleEnvironmentQueryStatus::hard_fault,
+            DungeonFault::environment_capacity};
     }
 
     for (std::size_t row = first_row; row <= last_row; ++row) {
@@ -651,10 +677,12 @@ bool write_visible_environment(const RoomEnvironmentBlueprint& blueprint,
             const std::size_t count = blueprint.cell_counts[cell];
             const std::size_t end = begin + count;
             if (count > 3U || begin > end || end > blueprint.record_count
+                    || blueprint.cell_offsets[cell + 1U] != end
                     || output.candidates_examined + count
                         > kEnvironmentQueryCandidateCapacity) {
                 output = {};
-                return false;
+                return {VisibleEnvironmentQueryStatus::hard_fault,
+                    DungeonFault::environment_capacity};
             }
             for (std::size_t index = begin; index < end; ++index) {
                 const RoomEnvironmentRecord& record = blueprint.records[index];
@@ -664,15 +692,41 @@ bool write_visible_environment(const RoomEnvironmentBlueprint& blueprint,
                             world_bounds, record)) {
                     continue;
                 }
-                if (output.count >= output.records.size()) {
+                if (output.count >= output_capacity) {
                     output = {};
-                    return false;
+                    return {VisibleEnvironmentQueryStatus::hard_fault,
+                        DungeonFault::environment_capacity};
                 }
                 output.records[output.count++] = record;
             }
         }
     }
-    return true;
+    for (std::size_t index = 1U; index < output.count; ++index) {
+        const RoomEnvironmentRecord value = output.records[index];
+        std::size_t insertion = index;
+        while (insertion != 0U && visible_record_precedes(
+                value, output.records[insertion - 1U])) {
+            output.records[insertion] = output.records[insertion - 1U];
+            --insertion;
+        }
+        output.records[insertion] = value;
+    }
+    return {VisibleEnvironmentQueryStatus::ok, DungeonFault::none};
+}
+
+}  // namespace
+
+VisibleEnvironmentQueryResult query_visible_environment(
+    const RoomEnvironmentBlueprint& blueprint,
+    const Aabb& world_bounds, VisibleEnvironmentSet& output) noexcept {
+    return query_visible_environment_bounded(blueprint, world_bounds,
+        output.records.size(), output);
+}
+
+bool write_visible_environment(const RoomEnvironmentBlueprint& blueprint,
+    const Aabb& world_bounds, VisibleEnvironmentSet& output) noexcept {
+    return query_visible_environment(blueprint, world_bounds, output).status
+        == VisibleEnvironmentQueryStatus::ok;
 }
 
 RoomEnvironmentBuildResult build_room_environment(
@@ -758,6 +812,16 @@ bool room_environment_legal(
 }
 
 namespace test_support {
+
+VisibleEnvironmentQueryResult
+query_visible_environment_with_output_capacity(
+    const RoomEnvironmentBlueprint& blueprint,
+    const Aabb& world_bounds,
+    std::size_t output_capacity,
+    VisibleEnvironmentSet& output) noexcept {
+    return query_visible_environment_bounded(
+        blueprint, world_bounds, output_capacity, output);
+}
 
 RoomEnvironmentBuildResult build_room_environment_with_record_count(
     const checkpoint::RoomDescriptor& room,

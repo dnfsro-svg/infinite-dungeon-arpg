@@ -10,6 +10,7 @@
 #include "abyss/abyss_rules.hpp"
 #include "items/item_generation.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -28,6 +29,11 @@ using arpg::dungeon::GroundItemSource;
 using arpg::dungeon::PendingSaveKind;
 using arpg::dungeon::RoomPhase;
 using arpg::dungeon::SaveDisposition;
+
+constexpr std::uint16_t kSyntheticFreeSlot = static_cast<std::uint16_t>(
+    arpg::dungeon::kAuthoritativeEquipmentDropCapacity - 1U);
+constexpr std::uint16_t kSecondSyntheticFreeSlot =
+    static_cast<std::uint16_t>(kSyntheticFreeSlot - 1U);
 
 arpg::dungeon::DungeonRunState cleared_abyss_state(
     AbyssDanger wanted,
@@ -151,10 +157,11 @@ void attempt_exit(DungeonSession& session,
     arpg::test::DungeonSessionTestAccess::attempt_exit(session, direction);
 }
 
-void fill_ground_pool(DungeonSession& session,
+void fill_synthetic_raw_ground_capacity(DungeonSession& session,
     std::uint16_t except = 0xFFFFU) noexcept {
     for (std::uint16_t index = 0U;
-         index < arpg::dungeon::kGroundDropCapacity; ++index) {
+         index < arpg::dungeon::kAuthoritativeEquipmentDropCapacity;
+         ++index) {
         if (index == except) continue;
         arpg::test::install_ground_item(session, index,
             normal_item(0x100000U + index), {9.0F, 4.0F, 0.0F});
@@ -277,14 +284,18 @@ arpg::test::Failure cleared_abyss_starts_hidden_reward_transaction() noexcept {
 
 arpg::test::Failure partial_pool_uses_actual_free_ground_index() noexcept {
     DungeonSession session{DungeonRules{}, cleared_abyss_state(AbyssDanger::low)};
-    fill_ground_pool(session, 17U);
+    fill_synthetic_raw_ground_capacity(session, kSyntheticFreeSlot);
     session.tick({});
     ARPG_REQUIRE(session.pending_save().has_value());
-    ARPG_REQUIRE(session.snapshot().ground_item_count == 191U);
+    ARPG_REQUIRE(std::count_if(
+        arpg::test::ground_items(session).begin(),
+        arpg::test::ground_items(session).end(),
+        [](const GroundItem& ground) { return ground.active; })
+        == arpg::dungeon::kAuthoritativeEquipmentDropCapacity - 1U);
     ARPG_REQUIRE(commit_pending(session));
     const GroundItem* reward = abyss_ground(session, 0U);
     ARPG_REQUIRE(reward != nullptr);
-    ARPG_REQUIRE(reward->drop_ordinal == 17U);
+    ARPG_REQUIRE(reward->drop_ordinal == kSyntheticFreeSlot);
     ARPG_REQUIRE(reward->source == GroundItemSource::abyss_chest);
     ARPG_REQUIRE(reward->abyss_reward_ordinal == 0U);
     return {};
@@ -293,17 +304,18 @@ arpg::test::Failure partial_pool_uses_actual_free_ground_index() noexcept {
 arpg::test::Failure full_pool_waits_without_advancing_then_continues() noexcept {
     DungeonSession session{
         DungeonRules{}, cleared_abyss_state(AbyssDanger::medium)};
-    fill_ground_pool(session);
+    fill_synthetic_raw_ground_capacity(session);
     session.tick({});
     ARPG_REQUIRE(!session.pending_save().has_value());
     ARPG_REQUIRE(arpg::test::stable_state(session).abyss.generated_mask == 0U);
     ARPG_REQUIRE(arpg::test::stable_state(session).abyss.reward_revision == 0U);
 
-    arpg::test::clear_ground_item(session, 42U);
+    arpg::test::clear_ground_item(session, kSyntheticFreeSlot);
     session.tick({});
     ARPG_REQUIRE(session.pending_save().has_value());
     ARPG_REQUIRE(commit_pending(session));
-    ARPG_REQUIRE(abyss_ground(session, 0U)->drop_ordinal == 42U);
+    ARPG_REQUIRE(abyss_ground(session, 0U)->drop_ordinal
+        == kSyntheticFreeSlot);
     set_player_position(session, abyss_ground(session, 0U)->position);
     session.tick({});
     ARPG_REQUIRE(session.pending_save().has_value());
@@ -312,7 +324,7 @@ arpg::test::Failure full_pool_waits_without_advancing_then_continues() noexcept 
     ARPG_REQUIRE(commit_pending(session));
     ARPG_REQUIRE(arpg::test::stable_state(session).abyss.generated_mask == 1U);
 
-    arpg::test::clear_ground_item(session, 41U);
+    arpg::test::clear_ground_item(session, kSecondSyntheticFreeSlot);
     session.tick({});
     ARPG_REQUIRE(session.pending_save().has_value());
     ARPG_REQUIRE(session.pending_save()->next_state.abyss.generated_mask == 3U);
@@ -437,10 +449,10 @@ arpg::test::Failure retry_content_is_independent_of_pool_and_runtime_state() noe
     DungeonRunState state = cleared_abyss_state(AbyssDanger::low, 35U);
     state.item_ownership.next_item_sequence = 9001U;
     DungeonSession delayed{DungeonRules{}, state};
-    fill_ground_pool(delayed);
+    fill_synthetic_raw_ground_capacity(delayed);
     delayed.tick({});
     ARPG_REQUIRE(!delayed.pending_save().has_value());
-    arpg::test::clear_ground_item(delayed, 77U);
+    arpg::test::clear_ground_item(delayed, kSyntheticFreeSlot);
     delayed.tick({});
     ARPG_REQUIRE(commit_pending(delayed));
 
@@ -758,7 +770,7 @@ arpg::test::Failure generated_unrebuilt_reward_still_counts_and_warns() noexcept
     const GroundItem* reward = abyss_ground(session, 0U);
     ARPG_REQUIRE(reward != nullptr);
     arpg::test::clear_ground_item(session, reward->drop_ordinal);
-    fill_ground_pool(session);
+    fill_synthetic_raw_ground_capacity(session);
     arpg::test::set_phase(session, RoomPhase::awaiting_exit);
     set_player_position(session,
         arpg::test::exit_boundary_position(ExitDirection::left));
@@ -939,7 +951,7 @@ arpg::test::Failure abyss_door_abandon_counts_only_ungenerated_rewards() noexcep
     const GroundItem* generated = abyss_ground(session, 0U);
     ARPG_REQUIRE(generated != nullptr);
     const std::uint16_t generated_ground_ordinal = generated->drop_ordinal;
-    fill_ground_pool(session, generated_ground_ordinal);
+    fill_synthetic_raw_ground_capacity(session, generated_ground_ordinal);
     set_player_position(session,
         arpg::test::exit_boundary_position(ExitDirection::left));
 
@@ -1166,17 +1178,18 @@ arpg::test::Failure committed_reward_waits_for_reload_pool_space() noexcept {
     const GroundItem* initial = abyss_ground(session, 0U);
     ARPG_REQUIRE(initial != nullptr);
     arpg::test::clear_ground_item(session, initial->drop_ordinal);
-    fill_ground_pool(session);
+    fill_synthetic_raw_ground_capacity(session);
     session.tick({});
     ARPG_REQUIRE(abyss_ground(session, 0U) == nullptr);
     ARPG_REQUIRE(arpg::test::stable_state(session).abyss.generated_mask == 1U);
     ARPG_REQUIRE(arpg::test::stable_state(session).abyss.reward_revision == 1U);
     ARPG_REQUIRE(!session.pending_save().has_value());
 
-    arpg::test::clear_ground_item(session, 88U);
+    arpg::test::clear_ground_item(session, kSyntheticFreeSlot);
     session.tick({});
     ARPG_REQUIRE(abyss_ground(session, 0U) != nullptr);
-    ARPG_REQUIRE(abyss_ground(session, 0U)->drop_ordinal == 88U);
+    ARPG_REQUIRE(abyss_ground(session, 0U)->drop_ordinal
+        == kSyntheticFreeSlot);
     set_player_position(session, abyss_ground(session, 0U)->position);
     session.tick({});
     ARPG_REQUIRE(session.pending_save().has_value());

@@ -2,12 +2,15 @@
 
 #include "environment_render_plan.hpp"
 #include "combat_view_math.hpp"
+#include "combat_renderer.hpp"
 #include "environment_prop_layout.hpp"
 #include "material_pack.hpp"
 #include "raylib_host.hpp"
+#include "render_layout.hpp"
 
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -370,16 +373,20 @@ arpg::test::Failure environment_renderer_uses_independent_native_paths() noexcep
     const std::string renderer = read_project_source(
         "src/platform/raylib/room_renderer.cpp");
     ARPG_REQUIRE(!renderer.empty());
-    ARPG_REQUIRE(renderer.find("room_background_scale(width, height)")
-        != std::string::npos);
     const std::size_t draw_environment = renderer.find(
         "bool draw_environment_room");
     ARPG_REQUIRE(draw_environment != std::string::npos);
     const std::string draw_environment_block = braced_block_after(
         renderer, draw_environment);
     ARPG_REQUIRE(draw_environment_block.find(
-        "draw_frame(plan.atlas, plan.source") != std::string::npos);
-    ARPG_REQUIRE(occurrence_count(draw_environment_block, "draw_frame(") == 1U);
+        "room_background_world_tile_plan(ecology, camera)")
+        != std::string::npos);
+    ARPG_REQUIRE(draw_environment_block.find(
+        "project_room_background_world_tile") != std::string::npos);
+    ARPG_REQUIRE(draw_environment_block.find("draw_frame_to(")
+        != std::string::npos);
+    ARPG_REQUIRE(draw_environment_block.find("plan.source")
+        == std::string::npos);
     for (const char* legacy_atlas : {"MaterialAtlasId::environment",
              "MaterialAtlasId::fire_environment",
              "MaterialAtlasId::water_environment",
@@ -407,7 +414,7 @@ arpg::test::Failure environment_renderer_uses_independent_native_paths() noexcep
     ARPG_REQUIRE(draw_room_block.find("can_draw_room_environment(current,")
         == std::string::npos);
     ARPG_REQUIRE(draw_room_block.find(
-        "&& draw_environment_room(material_pack_, current.ecology)")
+        "&& draw_environment_room(material_pack_, current.ecology, camera")
         != std::string::npos);
     const std::size_t graybox_gate = draw_room_block.find(
         "if (!draw_material_background)");
@@ -446,6 +453,12 @@ arpg::test::Failure environment_renderer_uses_independent_native_paths() noexcep
     ARPG_REQUIRE(shared_props_block.find(
         "project_environment_prop(") != std::string::npos);
     ARPG_REQUIRE(shared_props_block.find(
+        "environment_prop_draw_style(") != std::string::npos);
+    ARPG_REQUIRE(shared_props_block.find("draw_transformed(")
+        != std::string::npos);
+    ARPG_REQUIRE(shared_props_block.find("draw_break_marker")
+        != std::string::npos);
+    ARPG_REQUIRE(shared_props_block.find(
         "DrawRectangleLinesEx(bounds, 2.0F, Color{35, 48, 62, 72})")
         != std::string::npos);
     const std::size_t draw_hole = renderer.find("void draw_hole");
@@ -455,7 +468,17 @@ arpg::test::Failure environment_renderer_uses_independent_native_paths() noexcep
         "if (!material_pack.draw(hole_sprite(snapshot.ecology)")
         != std::string::npos);
     ARPG_REQUIRE(draw_hole_block.find("DrawEllipse(x, y")
+        == std::string::npos);
+    ARPG_REQUIRE(draw_hole_block.find("project_hole_geometry(")
         != std::string::npos);
+
+    const std::string render_code = cpp_code_only(renderer);
+    const std::string material_code = cpp_code_only(read_project_source(
+        "src/platform/raylib/material_pack.cpp"));
+    for (const char* forbidden : {"RenderTexture", "LoadRenderTexture"}) {
+        ARPG_REQUIRE(render_code.find(forbidden) == std::string::npos);
+        ARPG_REQUIRE(material_code.find(forbidden) == std::string::npos);
+    }
 
     constexpr std::array<const char*, 8> legacy_plan_sources{{
         "src/platform/raylib/material_animation.hpp",
@@ -597,14 +620,180 @@ arpg::test::Failure environment_props_keep_world_anchors_when_camera_moves()
     world.environment.records[1].scale_bp = 10000U;
     world.environment.records[1].obstacle.kind =
         arpg::combat::RoomObstacleKind::breakable;
+    world.environment.records[1].obstacle.max_hp = 10U;
     world.environment_obstacles[1].present = true;
     world.environment_obstacles[1].ordinal = 23U;
     world.environment_obstacles[1].kind =
         arpg::combat::RoomObstacleKind::breakable;
+    world.environment_obstacles[1].max_hp = 10U;
     world.environment_obstacles[1].intact = false;
-    ARPG_REQUIRE(arpg::platform::environment_prop_layout(world).count == 1U);
+    const auto broken = arpg::platform::environment_prop_layout(world);
+    ARPG_REQUIRE(broken.count == 2U);
+    ARPG_REQUIRE(broken.props[1U].visual_state
+        == arpg::platform::EnvironmentPropVisualState::broken_obstacle);
+    world.environment_obstacles[1].hp = 10U;
     world.environment_obstacles[1].intact = true;
-    ARPG_REQUIRE(arpg::platform::environment_prop_layout(world).count == 2U);
+    const auto intact = arpg::platform::environment_prop_layout(world);
+    ARPG_REQUIRE(intact.count == 2U);
+    ARPG_REQUIRE(intact.props[1U].visual_state
+        == arpg::platform::EnvironmentPropVisualState::intact_obstacle);
+    return {};
+}
+
+arpg::test::Failure obstacle_layout_preserves_world_aabb_and_broken_identity()
+    noexcept {
+    arpg::dungeon::DungeonRenderSnapshot world{};
+    world.ecology = arpg::dungeon::DungeonElement::fire;
+    world.environment.count = 2U;
+    auto& solid = world.environment.records[0U];
+    solid.ordinal = 7U;
+    solid.home_cell = 42U;
+    solid.prop = arpg::combat::RoomPropKind::brazier;
+    solid.anchor = {-7.0F, 3.0F, 0.0F};
+    solid.scale_bp = 10000U;
+    solid.quarter_turns = 1U;
+    solid.obstacle.kind = arpg::combat::RoomObstacleKind::solid;
+    solid.obstacle.bounds = {{-8.0F, 2.0F, 0.0F}, {-6.0F, 4.0F, 2.0F}};
+    auto& breakable = world.environment.records[1U];
+    breakable.ordinal = 11U;
+    breakable.home_cell = 43U;
+    breakable.prop = arpg::combat::RoomPropKind::crate;
+    breakable.anchor = {7.0F, 3.0F, 0.0F};
+    breakable.scale_bp = 10000U;
+    breakable.quarter_turns = 3U;
+    breakable.obstacle.kind = arpg::combat::RoomObstacleKind::breakable;
+    breakable.obstacle.max_hp = 25U;
+    breakable.obstacle.bounds = {{6.0F, 2.0F, 0.0F}, {8.0F, 4.0F, 2.0F}};
+    world.environment_obstacles[0U] = {7U,
+        arpg::combat::RoomObstacleKind::solid, 0U, 0U, 0U, true, true};
+    world.environment_obstacles[1U] = {11U,
+        arpg::combat::RoomObstacleKind::breakable, 25U, 25U, 0U, true, true};
+
+    const auto intact = arpg::platform::environment_prop_layout(world);
+    ARPG_REQUIRE(intact.status
+        == arpg::platform::EnvironmentPropLayoutStatus::ok);
+    ARPG_REQUIRE(intact.count == 2U);
+    ARPG_REQUIRE(std::memcmp(&intact.props[0U].world_obstacle_bounds,
+        &solid.obstacle.bounds, sizeof(arpg::combat::Aabb)) == 0);
+    ARPG_REQUIRE(std::memcmp(&intact.props[1U].world_obstacle_bounds,
+        &breakable.obstacle.bounds, sizeof(arpg::combat::Aabb)) == 0);
+    ARPG_REQUIRE(intact.props[0U].visual_state
+        == arpg::platform::EnvironmentPropVisualState::intact_obstacle);
+    ARPG_REQUIRE(intact.props[1U].visual_state
+        == arpg::platform::EnvironmentPropVisualState::intact_obstacle);
+    ARPG_REQUIRE(arpg::platform::environment_prop_draw_style(
+        intact.props[0U]).rotation_degrees == 90.0F);
+
+    world.environment_obstacles[1U].hp = 0U;
+    world.environment_obstacles[1U].broken_tick = 91U;
+    world.environment_obstacles[1U].intact = false;
+    const auto broken = arpg::platform::environment_prop_layout(world);
+    ARPG_REQUIRE(broken.status
+        == arpg::platform::EnvironmentPropLayoutStatus::ok);
+    ARPG_REQUIRE(broken.count == intact.count);
+    ARPG_REQUIRE(broken.props[1U].ordinal == intact.props[1U].ordinal);
+    ARPG_REQUIRE(broken.props[1U].obstacle_kind
+        == intact.props[1U].obstacle_kind);
+    ARPG_REQUIRE(std::memcmp(&broken.props[1U].world_obstacle_bounds,
+        &intact.props[1U].world_obstacle_bounds,
+        sizeof(arpg::combat::Aabb)) == 0);
+    ARPG_REQUIRE(broken.props[1U].world_foot_position.x
+        == intact.props[1U].world_foot_position.x);
+    ARPG_REQUIRE(broken.props[1U].world_foot_position.y
+        == intact.props[1U].world_foot_position.y);
+    ARPG_REQUIRE(broken.props[1U].visual_state
+        == arpg::platform::EnvironmentPropVisualState::broken_obstacle);
+    const auto broken_style = arpg::platform::environment_prop_draw_style(
+        broken.props[1U]);
+    ARPG_REQUIRE(broken_style.rotation_degrees == 270.0F);
+    ARPG_REQUIRE(broken_style.draw_break_marker);
+    ARPG_REQUIRE(broken_style.tint.r != 255U
+        || broken_style.tint.g != 255U
+        || broken_style.tint.b != 255U);
+    return {};
+}
+
+arpg::test::Failure invalid_visible_capacity_and_obstacle_state_fail_empty()
+    noexcept {
+    arpg::dungeon::VisibleEnvironmentSet overflow{};
+    overflow.count = static_cast<std::uint16_t>(overflow.records.size() + 1U);
+    const auto visible_failure = arpg::platform::environment_prop_layout(
+        arpg::dungeon::DungeonElement::fire, overflow);
+    ARPG_REQUIRE(visible_failure.status
+        == arpg::platform::EnvironmentPropLayoutStatus::capacity_fault);
+    ARPG_REQUIRE(visible_failure.count == 0U);
+
+    arpg::dungeon::DungeonRenderSnapshot world{};
+    world.ecology = arpg::dungeon::DungeonElement::fire;
+    world.environment.count = static_cast<std::uint16_t>(
+        world.environment.records.size() + 1U);
+    const auto world_capacity_failure =
+        arpg::platform::environment_prop_layout(world);
+    ARPG_REQUIRE(world_capacity_failure.status
+        == arpg::platform::EnvironmentPropLayoutStatus::capacity_fault);
+    ARPG_REQUIRE(world_capacity_failure.count == 0U);
+
+    world.environment.count = 1U;
+    world.environment.records[0U].ordinal = 5U;
+    world.environment.records[0U].prop = arpg::combat::RoomPropKind::crate;
+    world.environment.records[0U].scale_bp = 10000U;
+    world.environment.records[0U].obstacle.kind =
+        arpg::combat::RoomObstacleKind::breakable;
+    world.environment.records[0U].obstacle.max_hp = 10U;
+    const auto missing_runtime = arpg::platform::environment_prop_layout(world);
+    ARPG_REQUIRE(missing_runtime.status
+        == arpg::platform::EnvironmentPropLayoutStatus::invalid_obstacle_state);
+    ARPG_REQUIRE(missing_runtime.count == 0U);
+    return {};
+}
+
+arpg::test::Failure early_unlock_omits_full_clear_only_door_decoration()
+    noexcept {
+    const auto early = arpg::platform::door_render_decision(
+        arpg::platform::DoorVisualMode::open,
+        arpg::dungeon::ExitDirection::right, false);
+    const auto cleared = arpg::platform::door_render_decision(
+        arpg::platform::DoorVisualMode::open,
+        arpg::dungeon::ExitDirection::right, true);
+    ARPG_REQUIRE(early.sprite
+        == arpg::platform::MaterialSpriteId::environment_door_chaos);
+    ARPG_REQUIRE(cleared.sprite == early.sprite);
+    ARPG_REQUIRE(!early.draw_full_clear_decoration);
+    ARPG_REQUIRE(cleared.draw_full_clear_decoration);
+    ARPG_REQUIRE(early.body_tint.r != 255U || early.body_tint.g != 0U
+        || early.body_tint.b != 0U);
+    return {};
+}
+
+arpg::test::Failure hole_fallback_geometry_scales_with_camera_projection()
+    noexcept {
+    const arpg::combat::Vec3 hole{0.0F, 3.5F, 0.0F};
+    const arpg::platform::CombatCameraView near_camera{
+        {0.0F, -20.0F, 0.0F}, 24.0F, 11.0F};
+    const arpg::platform::CombatCameraView far_camera{
+        {0.0F, 20.0F, 0.0F}, 24.0F, 11.0F};
+    const auto near_geometry = arpg::platform::project_hole_geometry(
+        hole, near_camera, 1920.0F, 1080.0F);
+    const auto far_geometry = arpg::platform::project_hole_geometry(
+        hole, far_camera, 1920.0F, 1080.0F);
+    const auto near_projection = arpg::platform::project_render_world(
+        hole.x, hole.y, hole.z, near_camera, 1920.0F, 1080.0F);
+    const auto far_projection = arpg::platform::project_render_world(
+        hole.x, hole.y, hole.z, far_camera, 1920.0F, 1080.0F);
+    ARPG_REQUIRE(arpg::test::near(
+        near_geometry.radius_x, 74.0F * near_projection.scale));
+    ARPG_REQUIRE(arpg::test::near(
+        near_geometry.radius_y, 25.0F * near_projection.scale));
+    ARPG_REQUIRE(arpg::test::near(
+        near_geometry.outline_thickness, 2.0F * near_projection.scale));
+    ARPG_REQUIRE(arpg::test::near(
+        far_geometry.radius_x, 74.0F * far_projection.scale));
+    ARPG_REQUIRE(near_geometry.radius_x > far_geometry.radius_x);
+    ARPG_REQUIRE(near_geometry.center.x == near_projection.x);
+    ARPG_REQUIRE(near_geometry.center.y == near_projection.ground_y);
+    ARPG_REQUIRE(arpg::platform::player_in_hole_range(
+        {3.0F, 3.5F, 0.0F}, hole,
+        arpg::platform::kHoleInteractionRadius));
     return {};
 }
 
@@ -807,7 +996,8 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
     ARPG_REQUIRE(background_only_block.find("material_pack_.load(")
         == std::string::npos);
     ARPG_REQUIRE(background_only_block.find(
-        "draw_environment_room(material_pack_, ecology)") != std::string::npos);
+        "draw_environment_room(material_pack_, ecology, camera)")
+        != std::string::npos);
     ARPG_REQUIRE(background_only_block.find("draw_graybox_room(ecology)")
         != std::string::npos);
     for (const char* forbidden : {"draw_room(", "draw_actors(", "draw_hud(",
@@ -1061,6 +1251,14 @@ constexpr arpg::test::TestCase kCases[] = {
         &world_renderers_share_one_immutable_camera},
     {"environment props keep immutable world anchors",
         &environment_props_keep_world_anchors_when_camera_moves},
+    {"obstacle layout preserves AABB and broken identity",
+        &obstacle_layout_preserves_world_aabb_and_broken_identity},
+    {"invalid visible capacity and obstacle state fail empty",
+        &invalid_visible_capacity_and_obstacle_state_fail_empty},
+    {"early unlock omits full clear door decoration",
+        &early_unlock_omits_full_clear_only_door_decoration},
+    {"hole fallback geometry follows camera scale",
+        &hole_fallback_geometry_scales_with_camera_projection},
     {"falls back atomically when a required frame is missing",
         &environment_falls_back_atomically_when_a_required_frame_is_missing},
     {"directional door atlas leaves room background independent",

@@ -1,5 +1,7 @@
 #include "test_framework.hpp"
 
+#include <cstdlib>
+
 #if defined(_WIN32) && defined(_DEBUG)
 #include <crtdbg.h>
 #include <cstdlib>
@@ -55,6 +57,20 @@ arpg::test::TestSuite stage12_environment_render_suite() noexcept;
 arpg::test::TestSuite stage12_actor_render_suite() noexcept;
 arpg::test::TestSuite stage12_material_render_suite() noexcept;
 
+namespace {
+
+bool task9_environment_render_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_TASK9_ENVIRONMENT_RENDER_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
+}  // namespace
+
 int main() {
 #if defined(_WIN32) && defined(_DEBUG)
     _set_error_mode(_OUT_TO_STDERR);
@@ -65,6 +81,16 @@ int main() {
     _set_abort_behavior(_WRITE_ABORT_MSG,
         _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 #endif
+    if (task9_environment_render_only()) {
+        const arpg::test::TestSuite task9_only[] = {
+            material_asset_validation_suite(),
+            room_background_render_plan_suite(),
+            stage12_environment_render_suite(),
+        };
+        return arpg::test::run_suites(task9_only, 57,
+            "task 9 deterministic world environment render");
+    }
+
     const arpg::test::TestSuite suites[] = {
         combat_view_math_suite(),
         monster_view_suite(),
@@ -117,6 +143,6 @@ int main() {
         stage12_material_render_suite(),
     };
 
-    return arpg::test::run_suites(suites, 565,
+    return arpg::test::run_suites(suites, 574,
         "host settings runtime contract");
 }

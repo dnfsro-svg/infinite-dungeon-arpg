@@ -84,11 +84,26 @@ struct DoorRenderDecision final {
     Rgba8 body_tint{};
     Rgba8 text{};
     bool draw_lock_marker{};
+    bool draw_full_clear_decoration{};
 };
 
 [[nodiscard]] DoorRenderDecision door_render_decision(
     DoorVisualMode mode,
-    dungeon::ExitDirection direction) noexcept;
+    dungeon::ExitDirection direction,
+    bool full_clear = false) noexcept;
+
+struct HoleProjectedGeometry final {
+    Vector2 center{};
+    float radius_x{};
+    float radius_y{};
+    float outline_thickness{};
+};
+
+[[nodiscard]] HoleProjectedGeometry project_hole_geometry(
+    combat::Vec3 world_position,
+    const CombatCameraView& camera,
+    float width,
+    float height) noexcept;
 
 class CombatRenderer final {
 public:

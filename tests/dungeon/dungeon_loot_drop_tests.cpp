@@ -9,6 +9,7 @@
 #include "items/item_generation.hpp"
 #include "allocation_probe.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -20,6 +21,41 @@ using arpg::core::DeterministicRng;
 using arpg::dungeon::DungeonRules;
 using arpg::dungeon::DungeonRunState;
 using arpg::dungeon::DungeonSession;
+
+template <std::size_t Count>
+std::array<std::uint16_t, Count> monster_ordinals_covering(
+    DungeonSession& session, const arpg::combat::Vec3 position) noexcept {
+    std::array<std::uint16_t, Count> result{};
+    result.fill(0xFFFFU);
+    auto* const world = arpg::test::mutable_combat_world(session);
+    auto* const field = world == nullptr
+        ? nullptr : world->room_monster_field();
+    if (field == nullptr) return result;
+    std::size_t written = 0U;
+    for (std::uint16_t ordinal = 0U;
+            ordinal < field->plan().monster_count && written < Count;
+            ++ordinal) {
+        arpg::combat::Vec3 clamped = position;
+        if (field->clamp_to_home_leash(ordinal, clamped)
+                && clamped.x == position.x && clamped.y == position.y) {
+            result[written++] = ordinal;
+        }
+    }
+    return result;
+}
+
+std::optional<arpg::combat::Vec3> legal_drop_position(
+    DungeonSession& session, const std::uint16_t ordinal,
+    arpg::combat::Vec3 preferred) noexcept {
+    auto* const world = arpg::test::mutable_combat_world(session);
+    auto* const field = world == nullptr
+        ? nullptr : world->room_monster_field();
+    if (field == nullptr
+            || !field->clamp_to_home_leash(ordinal, preferred)) {
+        return std::nullopt;
+    }
+    return preferred;
+}
 
 constexpr std::uint64_t kDropChanceDomain = 0x44524F505F43484EULL;
 constexpr std::uint64_t kDropSlotDomain = 0x44524F505F534C54ULL;
@@ -257,12 +293,15 @@ arpg::test::Failure nearby_tick_prepares_atomic_pickup() noexcept {
     ARPG_REQUIRE(before.phase == arpg::dungeon::RoomPhase::locked);
     ARPG_REQUIRE(!before.pending_pickup_ordinal.has_value());
     ARPG_REQUIRE(before.combat.has_value());
-    const auto player = before.combat->player.position;
+    const auto player = legal_drop_position(
+        session, ordinal, before.combat->player.position);
+    ARPG_REQUIRE(player.has_value());
+    arpg::test::set_player_position(session, *player);
     ARPG_REQUIRE(arpg::test::relay_defeated(
         session,
         static_cast<std::uint8_t>(ordinal / 96U),
         static_cast<std::uint8_t>(ordinal % 96U),
-        player));
+        *player));
     ARPG_REQUIRE(session.try_pop_combat_event().has_value());
     ARPG_REQUIRE(session.snapshot().ground_item_count == 1U);
 
@@ -295,10 +334,12 @@ arpg::test::Failure auto_pickup_precedes_same_tick_exit_request() noexcept {
     DungeonSession session{DungeonRules{}, state};
     const arpg::combat::Vec3 doorway{
         arpg::combat::room_bounds::max_x, 0.0F, 0.0F};
+    const auto ordinals = monster_ordinals_covering<2U>(session, doorway);
+    ARPG_REQUIRE(ordinals[1] != 0xFFFFU);
     arpg::test::set_player_position(session, doorway);
     arpg::test::set_phase(session, arpg::dungeon::RoomPhase::awaiting_exit);
-    constexpr std::uint16_t kNormalOrdinal = 3U;
-    constexpr std::uint16_t kMagicOrdinal = 7U;
+    const std::uint16_t kNormalOrdinal = ordinals[0];
+    const std::uint16_t kMagicOrdinal = ordinals[1];
     arpg::test::install_ground_item(session, kNormalOrdinal,
         item_with_rarity(0xA001U, arpg::items::ItemRarity::normal), doorway);
     arpg::test::install_ground_item(session, kMagicOrdinal,
@@ -340,21 +381,29 @@ arpg::test::Failure explicit_pickup_uses_inclusive_xy_radius() noexcept {
 
 arpg::test::Failure nearby_pickup_chooses_lowest_ordinal_only() noexcept {
     const DungeonRunState state = trace_state();
-    const std::uint16_t first = first_drop_ordinal(state);
-    const std::uint16_t second = second_drop_ordinal(state);
-    ARPG_REQUIRE(first < second && second < 192U);
     DungeonSession session{DungeonRules{}, state};
     const auto player = session.snapshot().combat->player.position;
-    ARPG_REQUIRE(inject_drop(session, second, player));
-    ARPG_REQUIRE(inject_drop(session, first, player));
+    const auto ordinals = monster_ordinals_covering<3U>(session, player);
+    ARPG_REQUIRE(ordinals[2] != 0xFFFFU);
+    const std::uint16_t first = ordinals[0];
+    const std::uint16_t second = ordinals[1];
+    ARPG_REQUIRE(first < second);
+    const auto first_item = item_with_rarity(
+        0xA101U, arpg::items::ItemRarity::normal);
+    const auto second_item = item_with_rarity(
+        0xA102U, arpg::items::ItemRarity::normal);
+    arpg::test::install_ground_item(
+        session, second, second_item, player);
+    arpg::test::install_ground_item(
+        session, first, first_item, player);
     session.request_nearby_pickups(player);
     ARPG_REQUIRE(session.pending_save().has_value());
     ARPG_REQUIRE(session.pending_save()->pickup_ordinal == first);
     ARPG_REQUIRE(session.snapshot().ground_item_count == 2U);
 
-    constexpr std::uint16_t kNormalOrdinal = 4U;
-    constexpr std::uint16_t kMagicOrdinal = 5U;
-    constexpr std::uint16_t kRareOrdinal = 6U;
+    const std::uint16_t kNormalOrdinal = ordinals[0];
+    const std::uint16_t kMagicOrdinal = ordinals[1];
+    const std::uint16_t kRareOrdinal = ordinals[2];
     const auto normal = item_with_rarity(
         0xB001U, arpg::items::ItemRarity::normal);
     const auto magic = item_with_rarity(

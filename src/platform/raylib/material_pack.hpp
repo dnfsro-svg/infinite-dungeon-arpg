@@ -71,6 +71,10 @@ public:
     [[nodiscard]] bool draw(
         MaterialSpriteId id, Vector2 foot_position, bool flip_x,
         float scale = 1.0F, Color tint = WHITE) const noexcept;
+    [[nodiscard]] bool draw_transformed(
+        MaterialSpriteId id, Vector2 foot_position, bool flip_x,
+        float scale, float rotation_degrees,
+        Color tint = WHITE) const noexcept;
     [[nodiscard]] bool draw_to(MaterialSpriteId id, Rectangle destination,
         Color tint = WHITE) const noexcept;
     [[nodiscard]] bool draw_nine_slice(MaterialSpriteId id,
@@ -85,6 +89,9 @@ public:
     [[nodiscard]] bool draw_frame(
         MaterialAtlasId atlas, Rectangle source, Vector2 foot_anchor,
         Vector2 foot_position, bool flip_x, float scale = 1.0F,
+        Color tint = WHITE) const noexcept;
+    [[nodiscard]] bool draw_frame_to(
+        MaterialAtlasId atlas, Rectangle source, Rectangle destination,
         Color tint = WHITE) const noexcept;
 
 private:

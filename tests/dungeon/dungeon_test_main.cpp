@@ -43,6 +43,16 @@ arpg::test::TestSuite dungeon_affix_stress_suite() noexcept;
 
 namespace {
 
+bool task9_environment_render_only() noexcept {
+    char* value = nullptr;
+    std::size_t length = 0U;
+    const errno_t error = _dupenv_s(&value, &length,
+        "ARPG_TASK9_ENVIRONMENT_RENDER_ONLY");
+    const bool enabled = error == 0 && value != nullptr;
+    std::free(value);
+    return enabled;
+}
+
 bool task4_population_only() noexcept {
     char* value = nullptr;
     std::size_t length = 0U;
@@ -250,6 +260,15 @@ int main() {
         dungeon_affix_stress_suite(),
     };
 
+    if (task9_environment_render_only()) {
+        const arpg::test::TestSuite task9_only[] = {
+            room_environment_suite(),
+            dungeon_render_snapshot_suite(),
+        };
+        return arpg::test::run_suites(task9_only, 19,
+            "task 9 deterministic world environment query");
+    }
+
     if (task4_population_only()) {
         const arpg::test::TestSuite population_only[] = {
             dungeon_wave_suite(),
@@ -384,6 +403,6 @@ int main() {
             "task 7 authoritative room drops");
     }
 
-    return arpg::test::run_suites(suites, 353,
+    return arpg::test::run_suites(suites, 359,
         "stage 18 dungeon queries");
 }

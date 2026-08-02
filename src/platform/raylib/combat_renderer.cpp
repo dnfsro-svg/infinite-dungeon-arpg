@@ -298,7 +298,8 @@ ActiveSkillDrawRuntimeStatus CombatRenderer::active_skill_draw_status()
 
 DoorRenderDecision door_render_decision(
     DoorVisualMode mode,
-    dungeon::ExitDirection direction) noexcept {
+    dungeon::ExitDirection direction,
+    bool full_clear) noexcept {
     const DoorTheme theme = door_theme(direction);
     return {
         select_door_sprite(theme.element),
@@ -308,7 +309,21 @@ DoorRenderDecision door_render_decision(
             : Rgba8{255U, 255U, 255U, 255U},
         theme.frame,
         mode == DoorVisualMode::closed,
+        full_clear && mode == DoorVisualMode::open,
     };
+}
+
+HoleProjectedGeometry project_hole_geometry(
+    combat::Vec3 world_position,
+    const CombatCameraView& camera,
+    float width,
+    float height) noexcept {
+    const ScreenProjection projected = project_combat_position(
+        world_position, camera, width, height);
+    return {{projected.x, projected.ground_y},
+        74.0F * projected.scale,
+        25.0F * projected.scale,
+        2.0F * projected.scale};
 }
 
 void CombatRenderer::consume_event(const combat::CombatEvent& event) noexcept {

@@ -23,6 +23,12 @@ struct EnvironmentPropDefinition final {
     float recommended_scale{1.0F};
 };
 
+enum class EnvironmentPropVisualState : std::uint8_t {
+    decoration,
+    intact_obstacle,
+    broken_obstacle,
+};
+
 struct EnvironmentPropPlacement final {
     MaterialSpriteId sprite{MaterialSpriteId::missing};
     combat::Vec3 world_foot_position{};
@@ -31,13 +37,32 @@ struct EnvironmentPropPlacement final {
     std::uint16_t ordinal{};
     std::uint8_t quarter_turns{};
     combat::RoomObstacleKind obstacle_kind{combat::RoomObstacleKind::none};
+    combat::Aabb world_obstacle_bounds{};
+    EnvironmentPropVisualState visual_state{
+        EnvironmentPropVisualState::decoration};
+};
+
+enum class EnvironmentPropLayoutStatus : std::uint8_t {
+    ok,
+    capacity_fault,
+    invalid_obstacle_state,
+};
+
+struct EnvironmentPropDrawStyle final {
+    float rotation_degrees{};
+    Color tint{WHITE};
+    bool draw_break_marker{};
 };
 
 struct EnvironmentPropLayout final {
     std::array<EnvironmentPropPlacement,
-        dungeon::kVisibleEnvironmentCapacity> props{};
+    dungeon::kVisibleEnvironmentCapacity> props{};
     std::size_t count{};
+    EnvironmentPropLayoutStatus status{EnvironmentPropLayoutStatus::ok};
 };
+
+[[nodiscard]] EnvironmentPropDrawStyle environment_prop_draw_style(
+    const EnvironmentPropPlacement& placement) noexcept;
 
 [[nodiscard]] EnvironmentPropLayout environment_prop_layout(
     const dungeon::DungeonRenderSnapshot& world) noexcept;

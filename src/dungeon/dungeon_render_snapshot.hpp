@@ -50,7 +50,10 @@ struct DungeonRenderSnapshot final {
     DungeonElement ecology{DungeonElement::fire};
     bool has_active_room{};
     bool has_combat{};
+    bool exits_unlocked{};
+    bool full_clear{};
     combat::CombatSnapshot combat{};
+    VisibleEnvironmentQueryResult environment_query{};
     VisibleEnvironmentSet environment{};
     // Index-aligned with environment.records. Decorations have present=false.
     std::array<EnvironmentObstacleRenderSnapshot,

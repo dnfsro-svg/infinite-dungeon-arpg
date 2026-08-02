@@ -119,14 +119,13 @@ float authored_prop_scale(MaterialSpriteId sprite) noexcept {
     return 0.72F;
 }
 
-void append_environment_prop(EnvironmentPropLayout& layout,
+bool append_environment_prop(EnvironmentPropLayout& layout,
     dungeon::DungeonElement ecology,
-    const combat::RoomEnvironmentRecord& record) noexcept {
+    const combat::RoomEnvironmentRecord& record,
+    EnvironmentPropVisualState visual_state) noexcept {
     const MaterialSpriteId sprite = room_prop_sprite(ecology, record.prop);
-    if (sprite == MaterialSpriteId::missing
-            || layout.count == layout.props.size()) {
-        return;
-    }
+    if (sprite == MaterialSpriteId::missing) return true;
+    if (layout.count >= layout.props.size()) return false;
     const float authored_scale = authored_prop_scale(sprite);
     const float blueprint_scale = static_cast<float>(record.scale_bp)
         / 10000.0F;
@@ -138,10 +137,26 @@ void append_environment_prop(EnvironmentPropLayout& layout,
         record.ordinal,
         record.quarter_turns,
         record.obstacle.kind,
+        record.obstacle.bounds,
+        visual_state,
     };
+    return true;
 }
 
 }  // namespace
+
+EnvironmentPropDrawStyle environment_prop_draw_style(
+    const EnvironmentPropPlacement& placement) noexcept {
+    EnvironmentPropDrawStyle style{};
+    style.rotation_degrees = static_cast<float>(
+        placement.quarter_turns % 4U) * 90.0F;
+    if (placement.visual_state
+            == EnvironmentPropVisualState::broken_obstacle) {
+        style.tint = Color{113U, 97U, 83U, 211U};
+        style.draw_break_marker = true;
+    }
+    return style;
+}
 
 const EnvironmentPropDefinition* environment_prop_definition(
     MaterialSpriteId sprite) noexcept {
@@ -204,23 +219,41 @@ Rectangle project_environment_prop_bounds(
 EnvironmentPropLayout environment_prop_layout(
     const dungeon::DungeonRenderSnapshot& world) noexcept {
     EnvironmentPropLayout layout{};
-    const std::size_t count = (std::min)(
-        static_cast<std::size_t>(world.environment.count),
-        world.environment.records.size());
+    static_assert(dungeon::kVisibleEnvironmentCapacity
+        <= std::tuple_size_v<decltype(layout.props)>);
+    if (world.environment.count > world.environment.records.size()) {
+        layout.status = EnvironmentPropLayoutStatus::capacity_fault;
+        return layout;
+    }
+    const std::size_t count = world.environment.count;
     for (std::size_t index = 0U; index < count; ++index) {
         const combat::RoomEnvironmentRecord& record =
             world.environment.records[index];
+        EnvironmentPropVisualState visual_state =
+            EnvironmentPropVisualState::decoration;
         if (record.obstacle.kind != combat::RoomObstacleKind::none) {
             const dungeon::EnvironmentObstacleRenderSnapshot& obstacle =
                 world.environment_obstacles[index];
             if (!obstacle.present || obstacle.ordinal != record.ordinal
                     || obstacle.kind != record.obstacle.kind
+                    || obstacle.max_hp != record.obstacle.max_hp
+                    || obstacle.hp > obstacle.max_hp
+                    || (obstacle.kind == combat::RoomObstacleKind::solid
+                        && !obstacle.intact)
                     || (obstacle.kind == combat::RoomObstacleKind::breakable
-                        && !obstacle.intact)) {
-                continue;
+                        && obstacle.intact && obstacle.hp == 0U)) {
+                return EnvironmentPropLayout{{}, 0U,
+                    EnvironmentPropLayoutStatus::invalid_obstacle_state};
             }
+            visual_state = obstacle.intact
+                ? EnvironmentPropVisualState::intact_obstacle
+                : EnvironmentPropVisualState::broken_obstacle;
         }
-        append_environment_prop(layout, world.ecology, record);
+        if (!append_environment_prop(
+                layout, world.ecology, record, visual_state)) {
+            return EnvironmentPropLayout{{}, 0U,
+                EnvironmentPropLayoutStatus::capacity_fault};
+        }
     }
     return layout;
 }
@@ -229,11 +262,21 @@ EnvironmentPropLayout environment_prop_layout(
     dungeon::DungeonElement ecology,
     const dungeon::VisibleEnvironmentSet& visible) noexcept {
     EnvironmentPropLayout layout{};
-    const std::size_t count = (std::min)(
-        static_cast<std::size_t>(visible.count), visible.records.size());
+    if (visible.count > visible.records.size()) {
+        layout.status = EnvironmentPropLayoutStatus::capacity_fault;
+        return layout;
+    }
+    const std::size_t count = visible.count;
     for (std::size_t index = 0U; index < count; ++index) {
         const combat::RoomEnvironmentRecord& record = visible.records[index];
-        append_environment_prop(layout, ecology, record);
+        const EnvironmentPropVisualState visual_state =
+            record.obstacle.kind == combat::RoomObstacleKind::none
+            ? EnvironmentPropVisualState::decoration
+            : EnvironmentPropVisualState::intact_obstacle;
+        if (!append_environment_prop(layout, ecology, record, visual_state)) {
+            return EnvironmentPropLayout{{}, 0U,
+                EnvironmentPropLayoutStatus::capacity_fault};
+        }
     }
     return layout;
 }
@@ -277,12 +320,11 @@ EnvironmentPropLayout environment_prop_layout(
     }
 
     EnvironmentPropLayout layout{};
-    layout.count = sprites.size();
-    for (std::size_t index{}; index < layout.count; ++index) {
+    for (std::size_t index{}; index < sprites.size(); ++index) {
         const EnvironmentPropDefinition* const definition =
             environment_prop_definition(sprites[index]);
         if (definition == nullptr) return {};
-        layout.props[index] = {
+        layout.props[layout.count++] = {
             sprites[index], kLegacyWorldFootPositions[index], flips[index],
             definition->recommended_scale};
     }

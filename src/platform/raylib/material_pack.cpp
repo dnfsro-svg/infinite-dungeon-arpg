@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdio>
 #include <limits>
 
@@ -599,6 +600,32 @@ bool MaterialPack::draw(MaterialSpriteId id, Vector2 foot_position,
     return true;
 }
 
+bool MaterialPack::draw_transformed(MaterialSpriteId id,
+    Vector2 foot_position, bool flip_x, float scale,
+    float rotation_degrees, Color tint) const noexcept {
+    if (!can_draw(id) || scale <= 0.0F
+            || !std::isfinite(rotation_degrees)) return false;
+
+    const MaterialManifestDefinition manifest = default_material_manifest();
+    const MaterialFrameDefinition* const frame = find_frame(manifest, id);
+    if (frame == nullptr || !state_.available(frame->atlas)) return false;
+    const std::size_t index = atlas_index(frame->atlas);
+    Rectangle source = frame->source;
+    if (flip_x) {
+        source.x += source.width;
+        source.width = -source.width;
+    }
+    const Rectangle destination{foot_position.x, foot_position.y,
+        frame->source.width * scale, frame->source.height * scale};
+    const Vector2 origin{
+        frame->foot_anchor.x * scale, frame->foot_anchor.y * scale};
+    texture_api_.draw_material(color_textures_[index],
+        material_textures_[index], source, destination, origin,
+        rotation_degrees, tint, {});
+    ++sprite_draw_counts_[static_cast<std::size_t>(id)];
+    return true;
+}
+
 bool MaterialPack::draw_to(MaterialSpriteId id, Rectangle destination,
     Color tint) const noexcept {
     if (!can_draw(id) || destination.width <= 0.0F
@@ -856,6 +883,40 @@ bool MaterialPack::draw_frame(MaterialAtlasId atlas, Rectangle source,
         foot_position.y - foot_anchor.y * scale,
         source.width < 0.0F ? -source.width * scale : source.width * scale,
         source.height * scale};
+    texture_api_.draw_material(color_texture, material_texture, source,
+        destination, {0.0F, 0.0F}, 0.0F, tint, {});
+    return true;
+}
+
+bool MaterialPack::draw_frame_to(MaterialAtlasId atlas,
+    Rectangle source, Rectangle destination, Color tint) const noexcept {
+    if (!is_known_atlas(atlas) || !state_.available(atlas)
+            || !valid_texture_api(texture_api_)
+            || !std::isfinite(source.x) || !std::isfinite(source.y)
+            || !std::isfinite(source.width) || !std::isfinite(source.height)
+            || !std::isfinite(destination.x) || !std::isfinite(destination.y)
+            || !std::isfinite(destination.width)
+            || !std::isfinite(destination.height)
+            || source.x < 0.0F || source.y < 0.0F
+            || source.width <= 0.0F || source.height <= 0.0F
+            || destination.width <= 0.0F || destination.height <= 0.0F) {
+        return false;
+    }
+    const std::size_t index = atlas_index(atlas);
+    const Texture2D& color_texture = color_textures_[index];
+    const Texture2D& material_texture = material_textures_[index];
+    if (!texture_api_.valid(color_texture)
+            || !texture_api_.valid(material_texture)
+            || source.x + source.width
+                > static_cast<float>(color_texture.width)
+            || source.y + source.height
+                > static_cast<float>(color_texture.height)
+            || source.x + source.width
+                > static_cast<float>(material_texture.width)
+            || source.y + source.height
+                > static_cast<float>(material_texture.height)) {
+        return false;
+    }
     texture_api_.draw_material(color_texture, material_texture, source,
         destination, {0.0F, 0.0F}, 0.0F, tint, {});
     return true;

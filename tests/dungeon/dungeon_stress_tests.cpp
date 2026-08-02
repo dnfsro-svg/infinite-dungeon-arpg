@@ -1360,11 +1360,11 @@ arpg::test::Failure launcher_input_robot_clears_thousand_minimal_committed_rooms
     ARPG_REQUIRE(summary.unexpected_hot_path_allocations == 0U);
     ARPG_REQUIRE(summary.save_boundary_allocations
         <= summary.save_boundaries * 8U);
-    // Two Task 4 blueprint owners plus Task 3's existing obstacle runtime;
-    // item_catalog.cpp's existing ownership validation allocates one id scratch
-    // owner when the inventory is non-empty.
+    // Task 7 keeps monster drops authoritative across the expanded room and
+    // auto-picks eligible items during this deterministic trace. Inventory
+    // validation therefore owns one id scratch allocation on 967 reloads.
     ARPG_REQUIRE(
-        summary.room_load_inventory_validation_allocations == 789U);
+        summary.room_load_inventory_validation_allocations == 967U);
     ARPG_REQUIRE(summary.room_load_allocations
         == summary.room_load_boundaries * 3U
             + summary.room_load_inventory_validation_allocations);
@@ -1501,8 +1501,25 @@ arpg::test::Failure identical_seed_and_route_are_field_equal() noexcept {
     });
     ARPG_REQUIRE(normal.has_value());
     ARPG_REQUIRE(rare.has_value());
-    constexpr std::uint16_t kNormalOrdinal = 2U;
-    constexpr std::uint16_t kRareOrdinal = 9U;
+    std::array<std::uint16_t, 2U> nearby_ordinals{{0xFFFFU, 0xFFFFU}};
+    auto* const world = arpg::test::mutable_combat_world(*lhs);
+    auto* const field = world == nullptr
+        ? nullptr : world->room_monster_field();
+    ARPG_REQUIRE(field != nullptr);
+    std::size_t nearby_count = 0U;
+    for (std::uint16_t ordinal = 0U;
+            ordinal < field->plan().monster_count
+                && nearby_count < nearby_ordinals.size();
+            ++ordinal) {
+        arpg::combat::Vec3 clamped = player;
+        if (field->clamp_to_home_leash(ordinal, clamped)
+                && clamped.x == player.x && clamped.y == player.y) {
+            nearby_ordinals[nearby_count++] = ordinal;
+        }
+    }
+    ARPG_REQUIRE(nearby_count == nearby_ordinals.size());
+    const std::uint16_t kNormalOrdinal = nearby_ordinals[0];
+    const std::uint16_t kRareOrdinal = nearby_ordinals[1];
     arpg::test::install_ground_item(
         *lhs, kNormalOrdinal, *normal, player);
     arpg::test::install_ground_item(
