@@ -231,14 +231,14 @@ $sortedRatios = @($ratios | Sort-Object)
 $medianRatio = [double]$sortedRatios[1]
 $maximumRatio = [double](($ratios | Measure-Object -Maximum).Maximum)
 $ratioSpread = [double]$sortedRatios[2] - [double]$sortedRatios[0]
-$visibleSignatures = @(
+$visibleSignatures = @(@(
     $runs.baseline.visible_signature
     $runs.current.visible_signature
-) | Select-Object -Unique
-$visibleDensitySignatures = @(
+) | Select-Object -Unique)
+$visibleDensitySignatures = @(@(
     $runs.baseline.visible_density_signature
     $runs.current.visible_density_signature
-) | Select-Object -Unique
+) | Select-Object -Unique)
 $validFlags = @($runs.baseline.valid) + @($runs.current.valid)
 $allValid = $validFlags -notcontains $false
 $currentProductionPopulations = @(
