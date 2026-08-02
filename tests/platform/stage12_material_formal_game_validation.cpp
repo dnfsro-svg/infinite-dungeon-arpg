@@ -786,6 +786,59 @@ template <std::size_t Size>
     return snapshot;
 }
 
+void write_integration_environment(dungeon::DungeonElement ecology,
+    dungeon::VisibleEnvironmentSet& visible) noexcept {
+    constexpr std::array<combat::Vec3, 5U> kAnchors{{
+        {-8.5F, -3.4F, 0.0F}, {8.5F, -3.4F, 0.0F},
+        {-8.1F, 3.0F, 0.0F}, {7.0F, 3.0F, 0.0F},
+        {-5.0F, 4.2F, 0.0F},
+    }};
+    std::array<combat::RoomPropKind, 5U> props{};
+    switch (ecology) {
+    case dungeon::DungeonElement::fire:
+        props = {{combat::RoomPropKind::torch,
+            combat::RoomPropKind::banner,
+            combat::RoomPropKind::weapon_rack,
+            combat::RoomPropKind::bone_pile,
+            combat::RoomPropKind::crate}};
+        break;
+    case dungeon::DungeonElement::water:
+        props = {{combat::RoomPropKind::lantern,
+            combat::RoomPropKind::coral,
+            combat::RoomPropKind::grate,
+            combat::RoomPropKind::coral,
+            combat::RoomPropKind::lantern}};
+        break;
+    case dungeon::DungeonElement::lightning:
+        props = {{combat::RoomPropKind::arc_lamp,
+            combat::RoomPropKind::capacitor_bank,
+            combat::RoomPropKind::grounding_rod,
+            combat::RoomPropKind::capacitor_bank,
+            combat::RoomPropKind::arc_lamp}};
+        break;
+    case dungeon::DungeonElement::chaos:
+        props = {{combat::RoomPropKind::rift_lantern,
+            combat::RoomPropKind::anomaly_condenser,
+            combat::RoomPropKind::warning_obelisk,
+            combat::RoomPropKind::anomaly_condenser,
+            combat::RoomPropKind::rift_lantern}};
+        break;
+    }
+
+    visible = {};
+    visible.count = static_cast<std::uint16_t>(props.size());
+    visible.candidates_examined = visible.count;
+    for (std::size_t index{}; index < props.size(); ++index) {
+        combat::RoomEnvironmentRecord& record = visible.records[index];
+        record.ordinal = static_cast<std::uint16_t>(index);
+        record.home_cell = static_cast<std::uint16_t>(index);
+        record.prop = props[index];
+        record.anchor = kAnchors[index];
+        record.scale_bp = 10'000U;
+        record.mirror_x = index == 3U;
+    }
+}
+
 void set_monster(combat::MonsterSnapshot& monster, combat::MonsterId id,
     combat::Vec3 position, std::uint16_t ordinal) noexcept {
     monster = {};
@@ -933,8 +986,9 @@ bool write_integration_render_snapshot(
     platform::CombatCameraView& camera,
     dungeon::DungeonRenderSnapshot& world) noexcept {
     world = {};
-    camera = {{}, arpg::combat::room_bounds::width,
-        arpg::combat::room_bounds::depth};
+    camera = platform::make_combat_camera_view({},
+        static_cast<float>(resolution.width),
+        static_cast<float>(resolution.height));
     world.query = platform::make_world_view_query(camera,
         static_cast<float>(resolution.width),
         static_cast<float>(resolution.height), 1U);
@@ -943,6 +997,10 @@ bool write_integration_render_snapshot(
     world.has_active_room = snapshot.has_active_room;
     world.has_combat = snapshot.combat.has_value();
     if (snapshot.combat.has_value()) world.combat = *snapshot.combat;
+    world.environment_query = {
+        dungeon::VisibleEnvironmentQueryStatus::ok,
+        dungeon::DungeonFault::none};
+    write_integration_environment(snapshot.ecology, world.environment);
     world.equipment_count = static_cast<std::uint16_t>((std::min)(
         static_cast<std::size_t>(snapshot.ground_item_count),
         world.equipment.size()));
@@ -1340,10 +1398,11 @@ bool write_integration_render_snapshot(
                 dungeon::DungeonElement::lightning,
                 dungeon::DungeonElement::chaos}) {
             dungeon::DungeonSnapshot environment = integration_snapshot(ecology);
+            dungeon::VisibleEnvironmentSet visible_environment{};
+            write_integration_environment(ecology, visible_environment);
             const platform::EnvironmentPropLayout layout =
                 platform::environment_prop_layout(ecology,
-                    static_cast<float>(resolution.width),
-                    static_cast<float>(resolution.height));
+                    visible_environment);
             std::array<std::uint64_t, 9> before{};
             for (std::size_t index{}; index < layout.count; ++index) {
                 before[index] = renderer.material_sprite_draw_count(

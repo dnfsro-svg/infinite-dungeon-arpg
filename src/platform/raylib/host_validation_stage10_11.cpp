@@ -212,9 +212,33 @@ std::uint8_t outward_grid_boundary_column(
     return static_cast<std::uint8_t>(column);
 }
 
-bool recover_farther_outward_grid_boundary(Stage10GridRouteState& route,
+bool grid_boundary_avoids_center_rewards(
+    std::uint8_t column, dungeon::ExitDirection direction) noexcept {
+    constexpr std::uint8_t center = static_cast<std::uint8_t>(
+        combat::room_spatial::columns / 2U);
+    if (direction == dungeon::ExitDirection::right) return column > center;
+    if (direction == dungeon::ExitDirection::left) return column < center;
+    return false;
+}
+
+std::uint8_t outwardmost_blocked_grid_boundary(float player_x,
     dungeon::ExitDirection direction, std::uint8_t blocked_column) noexcept {
-    if (++route.route_rejoins > kGridRouteMaximumRejoins) return false;
+    const std::uint8_t initial = outward_grid_boundary_column(
+        player_x, direction);
+    return direction == dungeon::ExitDirection::right
+        ? (std::max)(blocked_column, initial)
+        : (std::min)(blocked_column, initial);
+}
+
+bool recover_farther_outward_grid_boundary(Stage10GridRouteState& route,
+    dungeon::ExitDirection direction, std::uint8_t blocked_column,
+    bool progress_already_counted = false) noexcept {
+    if ((!progress_already_counted
+                && ++route.route_rejoins > kGridRouteMaximumRejoins)
+            || (progress_already_counted
+                && route.route_rejoins > kGridRouteMaximumRejoins)) {
+        return false;
+    }
     constexpr std::uint8_t center = static_cast<std::uint8_t>(
         combat::room_spatial::columns / 2U);
     if (direction == dungeon::ExitDirection::right) {
@@ -357,13 +381,26 @@ combat::MovementInput stage10_exit_route_movement(
     const std::uint8_t blocked_column = state.sweep_grid.boundary_column;
     GridRouteProgress progress = settle_grid_route_movement(
         state.sweep_grid, combat_state.player.position);
+    const bool blocked_near_join = blocked_phase
+        == Stage10GridRoutePhase::join_near_x;
+    const bool blocked_far_join = blocked_phase
+        == Stage10GridRoutePhase::join_far_x;
+    const bool blocked_route = blocked_phase == Stage10GridRoutePhase::route;
+    const bool safe_same_cell_escape = blocked_near_join
+        && progress == GridRouteProgress::recovered
+        && grid_boundary_avoids_center_rewards(
+            state.sweep_grid.boundary_column, direction);
     if (avoid_center_rewards
-            && (blocked_phase == Stage10GridRoutePhase::join_near_x
-                || blocked_phase == Stage10GridRoutePhase::join_far_x)
+            && !safe_same_cell_escape
+            && (blocked_near_join || blocked_far_join || blocked_route)
             && (progress == GridRouteProgress::recovered
                 || progress == GridRouteProgress::unreachable)) {
+        const std::uint8_t recovery_column = blocked_far_join
+            ? outwardmost_blocked_grid_boundary(
+                combat_state.player.position.x, direction, blocked_column)
+            : blocked_column;
         progress = recover_farther_outward_grid_boundary(
-            state.sweep_grid, direction, blocked_column)
+            state.sweep_grid, direction, recovery_column, blocked_route)
             ? GridRouteProgress::recovered
             : GridRouteProgress::unreachable;
     }

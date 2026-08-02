@@ -144,6 +144,8 @@ if(TARGET arpg_raylib)
         PRIVATE arpg_raylib)
     if(MSVC)
         target_compile_options(arpg_stage16_loot_reinforcement_game_validation PRIVATE /utf-8)
+        target_link_options(arpg_stage16_loot_reinforcement_game_validation
+            PRIVATE /STACK:4194304)
     endif()
     arpg_enable_project_warnings(arpg_stage16_loot_reinforcement_game_validation)
     add_custom_command(TARGET arpg_stage16_loot_reinforcement_game_validation POST_BUILD
