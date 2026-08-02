@@ -2,7 +2,7 @@
 
 ## 范围
 
-本记录覆盖 Task 11 的可自动验证基线。自动化只证明无窗口的功能、确定性、固定容量和热路径分配约束；真实全屏画面与 Release 性能数据必须由 Windows 本机验收产生，不能由单元测试替代。
+本记录覆盖 Task 11 的可自动验证基线。自动化只证明无窗口的功能、确定性、固定容量和热路径分配约束；真实全屏画面仍必须由 Windows 本机验收，不能由单元测试替代。Release 性能数据已在 Windows 本机按下述隔离 A/B 流程产生。
 
 ## 自动化基线
 
@@ -59,11 +59,22 @@ ctest --test-dir out/build/windows-msvc-debug -R '^(stage11b\.settings_formal|st
 - 普通 300 与深渊 1125 蓝图房间的实际画面与操作手感。
 - 25% 提前出口后继续战斗、完全清场、死亡/继续、保存/重载。
 - 环境道具不存在静止屏幕空间表现。
-- Release 同可见密度、至少 10,000 帧旧房间/新房间 CPU active time 对比。
-- 可见集准备 P99 相对回归不超过 10%。
-- worker 的 V10 编码、实际 A/B 写盘与读回成本测量；Windows Release 探针已接入真实深渊 1125 轨迹，但当前尚未执行，未产生可记录的成本数字或日志。
+- worker 的 V10 编码、实际 A/B 写盘与读回成本测量。
 
 证据目录为 `docs/validation/evidence/square-hundredfold-room/`。只允许写入实际运行生成且可追溯的截图、日志或指标；禁止用占位数据冒充验收证据。
+
+## Release 渲染准备实测
+
+Windows 本机在固定逻辑 CPU 0 上执行了更强的三轮 A/B：每个版本每轮 100,000 个测量帧、4,096 个预热帧，总计 600,000 个 Release 测量帧。基线为 `b91cce1d352f26fc91f08e96e55ca19bacfbf1e3`，当前实现为 `8d0c4961e6e101be6ed271a5ff00d4b9381a1531`。
+
+```powershell
+./scripts/Measure-LargeRoomRelease.ps1 `
+    -Frames 100000 -WarmupFrames 4096 -LogicalCpu 0
+```
+
+正式结果为 `valid=true`、`stable=true`、`passed=true`。三轮 current/baseline P99 比率分别为 `1.0321453584`、`1.0324432937`、`1.0411722728`；中位回归 `3.2443%`，最大回归 `4.1172%`，比率跨度 `0.00903`，每一轮均低于 `1.10`。内容签名 `7062749508906370036` 与密度签名 `15259708679229488818` 跨六次运行一致。当前生产路径明确报告深渊总人口 1125，并在有效视口中处理 53 个可见怪物、48 个环境候选和 66 个非空掉落候选。
+
+通过证据位于 `release-20260802T201000Z/`。Git 收录 compact comparison、六份 per-run summary 和全量证据 SHA-256 manifest；约 123 MB 的逐帧 CSV 与 revision patch 保留在本机同目录，避免把高体积原始采样塞入仓库。失败轮次也保留在本机，没有删除或冒充通过结果。
 
 ### Release worker 成本证据执行方法
 
