@@ -69,7 +69,7 @@ ctest --preset windows-msvc-debug -R '^stage10\.formal_game\.capture_after_prese
 ```
 
 - 退出码：0；最终 Debug 全量中的 CTest 测试时间：10.13s。
-- 真实路径：死亡 `PASS`、R 重置 `PASS`、`started` 重启失败 `PASS`、深渊与下层洞共存并下层 `PASS`。
+- 真实路径：死亡、R 重置、V9 `started` 精确恢复、深渊与下层洞共存并下层；legacy pre-V9 且无 room-progress 的 `started` 存档仍迁移为 failed。
 - 截图目录：`E:\game\.worktrees\stage10-abyss-combat\out\build\windows-msvc-debug\bin\stage10-formal-game-validation`。
 - 护栏：每图必须是刚生成的 1280×720 PNG；按 16 像素步长采样至少 100 个非背景样本，并满足至少 20 种颜色，或满足低色深场景的复合结构判据（至少 8 色、200 次空间转变、亮度范围至少 12000）。独立内容验证器同时证明 19 色结构图被接受、真实背景空白图以非零退出码被拒绝。
 
@@ -91,7 +91,7 @@ ctest --preset windows-msvc-debug -R '^stage10\.formal_game\.capture_after_prese
 
 - `death-reopen.png`：HUD 为 `Depth 1`、`ABYSS NO`。
 - `reset-result.png`：HUD 为 `Depth 1`、`ABYSS NO`。
-- `restart-result.png`：HUD 为 `Depth 1`、`ABYSS NO`。
+- `restart-result.png`：该历史截图来自无 room-progress 的旧式重启路径，HUD 为 `Depth 1`、`ABYSS NO`；当前 V9 formal 改为验证 `ABYSS YES` 且重启前后 durable run state 精确相等。
 - `hole-result.png`：HUD 为 `Depth 2`、`ABYSS NO`。
 
 四张截图均位于被忽略的 `out/manual-qa-20260716`，不提交。路径动作本身由自动化正式 raylib 窗口执行；人工环节是独立复核最终落盘状态和基本输入，不声称人工完整重演死亡、R、started 重启与洞下层四条动作。
@@ -109,7 +109,7 @@ ctest --preset windows-msvc-debug -R '^stage10\.validation_fixture\.real_abyss_t
 | 设计节 | 规格要点 | 自动测试或证据 |
 | --- | --- | --- |
 | §4 稳定生成与门预告 | 四门独立 1%；预告/进入一致；初始/下层排除；旧状态迁移 | `abyss.units` 的 `frozen one percent roll`；`dungeon.units` 的 `preview supports zero through four abyss doors`、`ordinary door preview matches pending target`、`abyss door target persists selected checkpoint`、`initial room rejects a matching legacy roll`、`descent target rejects matching legacy abyss roll`；V5 codec 迁移用例 |
-| §5 生命周期 | available→started→cleared/failed；死亡/R/重启一次机会；比例恢复 | `dungeon_transaction.abyss start *`、`dungeon_lifecycle.abyss fail *`、`abyss clear *`；formal 的 death/reset/restart；`combat.units` 的 `life sacrifice ratio and clear` |
+| §5 生命周期 | available→started→cleared/failed；死亡/R 一次机会；V9 精确恢复 started；legacy pre-V9 无 room-progress 重启失败；比例恢复 | `dungeon_transaction.abyss start *`、`dungeon_lifecycle.abyss fail *`、`abyss clear *`；formal 的 death/reset/V9 resume；`platform.units` 的 legacy restart 迁移与 V9 resume；`combat.units` 的 `life sacrifice ratio and clear` |
 | §6 危险与 9 条规则 | 深度权重边界；9 条固定目录；环境伤害与不可闪避 | `abyss.units` 的 depth 1/9/10/19/20/39/40、三危险可达和三环境完整求值；`combat.units` 的 thunderstorm/hunting/chaos 固定 tick、减伤、容量恢复用例；formal 三环境截图 |
 | §7 强化遭遇 | 预算向上取整 1.5 倍；词缀下限；保留普通前缀；候选不足失败 | `abyss.units` 的 `encounter budget`、`affix minimum`；`combat.units` 的 `abyss supplement depth minimums and prefix`、`stable and satisfied bytes unchanged`、`insufficient candidates fail`、`no allocations` |
 | §8 宝箱奖励 | 1/2/3 件、等级与稀有度、独立序号、自动结算 | `dungeon_abyss_reward.reward profiles levels and ordinals`、`shifted rarity danger ordering`、`stable independent ordinal streams`、`cleared starts hidden transaction`；fixture 固定三奖励 ID |
@@ -126,7 +126,7 @@ ctest --preset windows-msvc-debug -R '^stage10\.validation_fixture\.real_abyss_t
 | --- | --- | --- |
 | 四门固定 1% | PASS | `frozen one percent roll`、0～4 门预告测试；1000 房 `36/4000`，四向 `9/11/9/7` |
 | 启动/失败/清场原子门禁 | PASS | start/fail/clear 的 committed、not committed、indeterminate、receipt/state/generation mismatch 测试 |
-| `started` 重载变为 failed | PASS | formal `restart=PASS`，V5 保留 started 后由 session 原子失败迁移 |
+| `started` 重载分层语义 | PASS | V9 formal 验证同房同 seed、仍为 started，且 durable run state 与重启前精确相等；`platform.units` 的 `load started commits failed before session` 保证 legacy pre-V9 无 room-progress 仍原子迁移为 failed |
 | 深渊与同房下层洞共存 | PASS | `abyss door target can keep its hole`；formal `abyss_hole_descent=PASS` 且重载 depth=2 |
 | 地面池满 | PASS | `full pool waits and continues`、`reload pool space wait`；压力地面饱和 `1→601` 且槽内容不变 |
 | 背包满 | PASS | `abyss claim full oom overflow atomic` 用 65535 件物品验证拒绝领取、地面奖励保留、无 pending save |

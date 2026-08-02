@@ -2274,6 +2274,117 @@ arpg::test::Failure clean_shutdown_commits_latest_authority_and_rearms()
     return {};
 }
 
+arpg::test::Failure death_pending_clean_shutdown_reuses_durable_exact_save()
+    noexcept {
+    TempDirectory directory;
+    const auto config = config_for(directory, 0xD34DC105U);
+    std::uint64_t durable_death_revision{};
+    {
+        platform::DungeonRuntime runtime(config);
+        ARPG_REQUIRE(runtime.initialize());
+        auto* const session = runtime.session();
+        ARPG_REQUIRE(session != nullptr);
+        session->tick({});
+        ARPG_REQUIRE(arpg::test::kill_current_player_through_combat(*session));
+        session->tick({});
+        ARPG_REQUIRE(session->pending_save_view() != nullptr);
+        ARPG_REQUIRE(session->pending_save_view()->kind
+            == dungeon::PendingSaveKind::death_retreat);
+
+        settle_runtime_save(runtime);
+        ARPG_REQUIRE(runtime.state()
+            == platform::DungeonRuntimeState::running);
+        ARPG_REQUIRE(session->pending_save_view() == nullptr);
+        const auto death = session->snapshot();
+        ARPG_REQUIRE(death.phase == dungeon::RoomPhase::death_pending);
+        ARPG_REQUIRE(death.death.has_value());
+        ARPG_REQUIRE(death.death->can_continue);
+        ARPG_REQUIRE(!arpg::test::DungeonRuntimeTestAccess::exact_active(
+            runtime));
+        ARPG_REQUIRE(!arpg::test::DungeonRuntimeTestAccess::background_active(
+            runtime));
+        durable_death_revision =
+            arpg::test::DungeonRuntimeTestAccess::durable_revision(runtime);
+        ARPG_REQUIRE(durable_death_revision
+            == arpg::test::DungeonRuntimeTestAccess::authority_revision(
+                runtime));
+
+        auto exact = std::make_unique<checkpoint::SaveCheckpointSlot>();
+        ARPG_REQUIRE(decode_active_v9(
+            directory, runtime.render_status().active_slot, *exact));
+        ARPG_REQUIRE(exact->persistence_revision == durable_death_revision);
+        ARPG_REQUIRE(exact->state.death.lifecycle
+            == checkpoint::DeathLifecycle::pending_continue);
+        ARPG_REQUIRE(exact->room_progress.lifecycle
+            == checkpoint::RoomProgressLifecycle::death_pending);
+
+        ARPG_REQUIRE(runtime.request_clean_shutdown());
+        settle_clean_shutdown(runtime);
+        ARPG_REQUIRE(runtime.clean_shutdown_state()
+            == platform::CleanShutdownState::ready);
+    }
+
+    platform::DungeonRuntime resumed(config);
+    ARPG_REQUIRE(resumed.initialize());
+    const auto loaded = resumed.session()->snapshot();
+    ARPG_REQUIRE(loaded.phase == dungeon::RoomPhase::death_pending);
+    ARPG_REQUIRE(loaded.death.has_value());
+    ARPG_REQUIRE(loaded.death->can_continue);
+    auto exact = std::make_unique<checkpoint::SaveCheckpointSlot>();
+    ARPG_REQUIRE(decode_active_v9(
+        directory, resumed.render_status().active_slot, *exact));
+    ARPG_REQUIRE(exact->persistence_revision == durable_death_revision);
+    ARPG_REQUIRE(exact->state.death.lifecycle
+        == checkpoint::DeathLifecycle::pending_continue);
+    ARPG_REQUIRE(exact->room_progress.lifecycle
+        == checkpoint::RoomProgressLifecycle::death_pending);
+    return {};
+}
+
+arpg::test::Failure background_durable_shutdown_still_runs_exact_final_scan()
+    noexcept {
+    TempDirectory directory;
+    FaultContext fault{persistence::SaveFaultPoint::final_scan_a, false};
+    auto config = config_for(directory, 0xC105E4U);
+    config.save.fault_hook = &fail_when_enabled;
+    config.save.fault_context = &fault;
+    platform::DungeonRuntime runtime(config);
+    ARPG_REQUIRE(runtime.initialize());
+
+    runtime.fixed_tick({1, 0});
+    ARPG_REQUIRE(arpg::test::DungeonRuntimeTestAccess::authority_revision(
+        runtime) > arpg::test::DungeonRuntimeTestAccess::durable_revision(
+        runtime));
+    arpg::test::DungeonRuntimeTestAccess::force_background_due(runtime);
+    const auto deadline = std::chrono::steady_clock::now()
+        + std::chrono::seconds{10};
+    do {
+        runtime.pump_persistence_frame();
+        if (!arpg::test::DungeonRuntimeTestAccess::background_active(runtime)
+                && arpg::test::DungeonRuntimeTestAccess::durable_revision(
+                    runtime)
+                    == arpg::test::DungeonRuntimeTestAccess::authority_revision(
+                        runtime)) {
+            break;
+        }
+        std::this_thread::yield();
+    } while (std::chrono::steady_clock::now() < deadline);
+    ARPG_REQUIRE(!arpg::test::DungeonRuntimeTestAccess::background_active(
+        runtime));
+    ARPG_REQUIRE(arpg::test::DungeonRuntimeTestAccess::durable_revision(runtime)
+        == arpg::test::DungeonRuntimeTestAccess::authority_revision(runtime));
+
+    fault.enabled = true;
+    ARPG_REQUIRE(runtime.request_clean_shutdown());
+    settle_clean_shutdown(runtime);
+    ARPG_REQUIRE(runtime.clean_shutdown_state()
+        == platform::CleanShutdownState::faulted);
+    ARPG_REQUIRE(runtime.state() == platform::DungeonRuntimeState::faulted);
+    ARPG_REQUIRE(runtime.render_status().error
+        == persistence::SaveError::final_scan_failed);
+    return {};
+}
+
 arpg::test::Failure clean_shutdown_not_committed_cancels_close() noexcept {
     TempDirectory directory;
     FaultContext fault{persistence::SaveFaultPoint::before_publish, false};
@@ -2486,6 +2597,10 @@ constexpr arpg::test::TestCase kCases[] = {
     {"item request fault matrix is atomic and restart consistent", &item_request_fault_matrix_is_atomic_and_restart_consistent},
     {"clean shutdown commits latest authority and rearms",
         &clean_shutdown_commits_latest_authority_and_rearms},
+    {"death pending clean shutdown reuses durable exact save",
+        &death_pending_clean_shutdown_reuses_durable_exact_save},
+    {"background durable shutdown still runs exact final scan",
+        &background_durable_shutdown_still_runs_exact_final_scan},
     {"clean shutdown not committed cancels close",
         &clean_shutdown_not_committed_cancels_close},
     {"clean shutdown indeterminate faults",

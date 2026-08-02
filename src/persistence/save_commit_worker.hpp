@@ -16,6 +16,11 @@ namespace arpg::persistence {
 
 enum class SaveCommitRequestKind : std::uint8_t { background, exact };
 
+enum class SaveCommitPayloadKind : std::uint8_t {
+    captured_checkpoint,
+    verify_durable,
+};
+
 enum class SaveCommitSubmitState : std::uint8_t {
     accepted,
     superseded_background,
@@ -46,6 +51,7 @@ struct SaveCommitCaptureLease final {
     std::uint64_t token{};
     std::uint64_t epoch{};
     SaveCommitRequestKind kind{SaveCommitRequestKind::background};
+    SaveCommitPayloadKind payload{SaveCommitPayloadKind::captured_checkpoint};
 };
 
 struct SaveCommitSubmission final {
@@ -80,6 +86,7 @@ struct SaveCommitJobSlot final {
     std::uint64_t revision{};
     std::uint64_t intent{};
     SaveCommitRequestKind kind{SaveCommitRequestKind::background};
+    SaveCommitPayloadKind payload{SaveCommitPayloadKind::captured_checkpoint};
 };
 
 class SaveCommitStorage final {
@@ -156,7 +163,9 @@ public:
     [[nodiscard]] SaveCommitCaptureLease acquire_capture_slot(
         std::uint64_t revision,
         SaveCommitRequestKind kind,
-        std::uint64_t intent = 0U) noexcept;
+        std::uint64_t intent = 0U,
+        SaveCommitPayloadKind payload =
+            SaveCommitPayloadKind::captured_checkpoint) noexcept;
     [[nodiscard]] SaveCommitJobSlot* capture_job(
         const SaveCommitCaptureLease& lease) noexcept;
     [[nodiscard]] SaveCommitSubmission submit(

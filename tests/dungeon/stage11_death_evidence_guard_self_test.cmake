@@ -1,5 +1,10 @@
 include("${CMAKE_CURRENT_LIST_DIR}/evidence_source_scan.cmake")
 
+string(RANDOM LENGTH 16 ALPHABET 0123456789abcdef stage11_self_test_run_id)
+set(stage11_self_test_scratch
+    "${CMAKE_CURRENT_BINARY_DIR}/stage11-self-test-${stage11_self_test_run_id}")
+file(MAKE_DIRECTORY "${stage11_self_test_scratch}")
+
 foreach(required GUARD_SCRIPT VALID_FIXTURE VALID_FORMAL VALID_CAPTURE
         VALID_HOST_HEADER VALID_HOST_SOURCE BAD_TEST_ACCESS BAD_CAPTURE_ORDER)
     if(NOT DEFINED ${required})
@@ -71,6 +76,42 @@ function(expect_guard_acceptance name fixture host runtime)
     endif()
 endfunction()
 
+function(expect_fixture_token_rejection name source_token expected_token)
+    file(READ "${VALID_FIXTURE}" mutated_fixture_source)
+    string(REPLACE "${source_token}" "" mutated_fixture_source
+        "${mutated_fixture_source}")
+    file(READ "${VALID_FIXTURE}" original_fixture_source)
+    if(mutated_fixture_source STREQUAL original_fixture_source)
+        message(FATAL_ERROR "${name}: fixture mutation anchor was not found")
+    endif()
+    set(mutation_file
+        "${stage11_self_test_scratch}/stage11_fixture_${name}.cpp")
+    file(WRITE "${mutation_file}" "${mutated_fixture_source}")
+    expect_guard_rejection("${name}" "${mutation_file}"
+        "${reference_host_file}" "${reference_runtime_file}"
+        "Fixture lacks production API: ${expected_token}")
+    file(REMOVE "${mutation_file}")
+endfunction()
+
+function(expect_fixture_relocation_rejection
+        name source_token relocation expected_token)
+    file(READ "${VALID_FIXTURE}" mutated_fixture_source)
+    string(REPLACE "${source_token}" "" mutated_fixture_source
+        "${mutated_fixture_source}")
+    file(READ "${VALID_FIXTURE}" original_fixture_source)
+    if(mutated_fixture_source STREQUAL original_fixture_source)
+        message(FATAL_ERROR "${name}: fixture relocation anchor was not found")
+    endif()
+    string(APPEND mutated_fixture_source "\n${relocation}\n")
+    set(mutation_file
+        "${stage11_self_test_scratch}/stage11_fixture_${name}.cpp")
+    file(WRITE "${mutation_file}" "${mutated_fixture_source}")
+    expect_guard_rejection("${name}" "${mutation_file}"
+        "${reference_host_file}" "${reference_runtime_file}"
+        "Fixture lacks production API: ${expected_token}")
+    file(REMOVE "${mutation_file}")
+endfunction()
+
 function(expect_host_replacement_rejection name old_fragment new_fragment expected)
     string(REPLACE "${old_fragment}" "${new_fragment}" mutated_source
         "${reference_host_source}")
@@ -78,7 +119,7 @@ function(expect_host_replacement_rejection name old_fragment new_fragment expect
         message(FATAL_ERROR "${name}: Host mutation anchor was not found")
     endif()
     set(mutation_file
-        "${CMAKE_CURRENT_BINARY_DIR}/stage11_host_${name}.cpp")
+        "${stage11_self_test_scratch}/stage11_host_${name}.cpp")
     file(WRITE "${mutation_file}" "${mutated_source}")
     expect_guard_rejection("${name}" "${VALID_FIXTURE}" "${mutation_file}"
         "${reference_runtime_file}" "${expected}")
@@ -92,10 +133,47 @@ function(expect_runtime_replacement_rejection name old_fragment new_fragment exp
         message(FATAL_ERROR "${name}: runtime mutation anchor was not found")
     endif()
     set(mutation_file
-        "${CMAKE_CURRENT_BINARY_DIR}/stage11_runtime_${name}.cpp")
+        "${stage11_self_test_scratch}/stage11_runtime_${name}.cpp")
     file(WRITE "${mutation_file}" "${mutated_source}")
     expect_guard_rejection("${name}" "${VALID_FIXTURE}"
         "${reference_host_file}" "${mutation_file}" "${expected}")
+    file(REMOVE "${mutation_file}")
+endfunction()
+
+function(expect_capture_replacement_rejection name old_fragment new_fragment)
+    file(READ "${VALID_CAPTURE}" mutated_capture_source)
+    string(REPLACE "${old_fragment}" "${new_fragment}" mutated_capture_source
+        "${mutated_capture_source}")
+    file(READ "${VALID_CAPTURE}" original_capture_source)
+    if(mutated_capture_source STREQUAL original_capture_source)
+        message(FATAL_ERROR "${name}: capture mutation anchor was not found")
+    endif()
+    set(mutation_file
+        "${stage11_self_test_scratch}/stage11_capture_${name}.ps1")
+    file(WRITE "${mutation_file}" "${mutated_capture_source}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}"
+            -DFIXTURE_SOURCE=${VALID_FIXTURE}
+            -DFORMAL_SOURCE=${VALID_FORMAL}
+            -DCAPTURE_SCRIPT=${mutation_file}
+            -DHOST_HEADER=${VALID_HOST_HEADER}
+            -DHOST_SOURCE=${reference_host_file}
+            -DRUNTIME_SOURCE=${reference_runtime_file}
+            -DSTAGE_SOURCE=${reference_stage_file}
+            -P ${GUARD_SCRIPT}
+        RESULT_VARIABLE result
+        OUTPUT_VARIABLE output
+        ERROR_VARIABLE error)
+    set(combined "${output}\n${error}")
+    if(result EQUAL 0)
+        message(FATAL_ERROR "${name}: weakened capture baseline was accepted")
+    endif()
+    string(FIND "${combined}" "Capture validator lacks" reason_index)
+    if(reason_index EQUAL -1)
+        message(FATAL_ERROR
+            "${name}: wrong capture rejection reason: ${combined}")
+    endif()
+    stage11_record_mutation()
     file(REMOVE "${mutation_file}")
 endfunction()
 
@@ -104,12 +182,16 @@ bool HostValidationRuntime::should_continue_death(
     const dungeon::DungeonSnapshot& snapshot) const noexcept {
     const bool pending = snapshot.death.has_value()
         && snapshot.death->can_continue && !snapshot.death->saving;
+    const bool stage10_validation_continue =
+        impl_->config->stage10_validation
+            == Stage10ValidationScenario::player_death;
     const auto scenario = impl_->config->stage11_validation;
-    const bool validation_continue =
+    const bool stage11_validation_continue =
         scenario == Stage11ValidationScenario::deep_continue
         || scenario == Stage11ValidationScenario::floor_one_continue;
-    return pending && validation_continue
-        && !impl_->states.stage11.continue_requested;
+    return pending && (stage10_validation_continue
+        || (stage11_validation_continue
+            && !impl_->states.stage11.continue_requested));
 }
 ]=])
 set(expected_observe_death_continue_result [=[
@@ -189,7 +271,7 @@ string(CONCAT reference_runtime_source
     "${expected_observe_presented_frame}\n"
     "}  // namespace arpg::platform\n")
 set(reference_runtime_file
-    "${CMAKE_CURRENT_BINARY_DIR}/stage11_reference_runtime.cpp")
+    "${stage11_self_test_scratch}/stage11_reference_runtime.cpp")
 file(WRITE "${reference_runtime_file}" "${reference_runtime_source}")
 
 # The mutation inventory exercises the guard itself, so use a compact Stage
@@ -201,12 +283,21 @@ combat::MovementInput stage11_validation_input(
     const dungeon::DungeonSnapshot& snapshot,
     const RaylibHostConfig& config,
     Stage11ValidationState& state) noexcept {
-    static_cast<void>(snapshot);
     static_cast<void>(config);
-    static_cast<void>(state);
-    session.request_descent(true);
-    session.queue_action(combat::Action::light);
-    return {};
+    const bool drive_to_depth = true;
+    if (drive_to_depth && snapshot.exits_unlocked && snapshot.has_hole
+            && snapshot.phase == dungeon::RoomPhase::combat) {
+        settle_grid_route_movement(state.sweep_grid,
+            snapshot.combat->player.position);
+        const auto movement = grid_route_movement(
+            snapshot.combat->player.position, kHoleCenter, state.sweep_grid);
+        if (can_prompt_descent(snapshot, snapshot.combat->player.position)) {
+            static_cast<void>(session.request_descent(true));
+        }
+        return movement;
+    }
+    return stage10_validation_input(
+        session, snapshot, config, state.combat_driver);
 }
 
 bool stage11_validation_reached(
@@ -220,7 +311,7 @@ bool stage11_validation_reached(
 }
 ]=])
 set(reference_stage_file
-    "${CMAKE_CURRENT_BINARY_DIR}/stage11_reference_stage.cpp")
+    "${stage11_self_test_scratch}/stage11_reference_stage.cpp")
 file(WRITE "${reference_stage_file}" "${reference_stage_source}")
 
 set(reference_continue_decision [=[
@@ -305,11 +396,37 @@ HostExitCode run_raylib_host() noexcept {
 }
 ]=])
 set(reference_host_file
-    "${CMAKE_CURRENT_BINARY_DIR}/stage11_reference_host.cpp")
+    "${stage11_self_test_scratch}/stage11_reference_host.cpp")
 file(WRITE "${reference_host_file}" "${reference_host_source}")
 
 expect_guard_acceptance(reference_owner_contract "${VALID_FIXTURE}"
     "${reference_host_file}" "${reference_runtime_file}")
+
+expect_fixture_token_rejection(missing_storage "SaveCommitStorage"
+    "SaveCommitStorage")
+expect_fixture_token_rejection(missing_submit "worker_->submit("
+    "submit[ \\t\\r\\n]*\\(")
+expect_fixture_token_rejection(missing_completion "try_take_completion"
+    "try_take_completion")
+expect_fixture_token_rejection(missing_envelope "inspect_checkpoint_v9_envelope"
+    "inspect_checkpoint_v9_envelope")
+expect_fixture_token_rejection(missing_loaded_checkpoint "loaded_checkpoint"
+    "loaded_checkpoint")
+expect_fixture_token_rejection(missing_restore "restore_room_progress_checkpoint"
+    "restore_room_progress_checkpoint")
+expect_fixture_token_rejection(missing_release "release_loaded_checkpoints"
+    "release_loaded_checkpoints")
+expect_fixture_token_rejection(missing_worker_stop "stop_and_join"
+    "stop_and_join")
+expect_fixture_token_rejection(missing_room_compare
+    "same_room_progress_checkpoint" "same_room_progress_checkpoint")
+expect_fixture_relocation_rejection(comment_only_envelope
+    "inspect_checkpoint_v9_envelope"
+    "// inspect_checkpoint_v9_envelope" "inspect_checkpoint_v9_envelope")
+expect_fixture_relocation_rejection(inactive_envelope
+    "inspect_checkpoint_v9_envelope"
+    "#if 0\nvoid inactive_fixture_decoy() { inspect_checkpoint_v9_envelope; }\n#endif"
+    "inspect_checkpoint_v9_envelope")
 
 # Preserve all legacy injection and capture-order coverage against the new
 # owner reference rather than borrowing the still-RED production Host.
@@ -334,7 +451,7 @@ set(public_index 0)
 foreach(public_mutation IN LISTS public_mutations)
     math(EXPR public_index "${public_index} + 1")
     set(mutation_file
-        "${CMAKE_CURRENT_BINARY_DIR}/stage11_bad_public_death_${public_index}.txt")
+        "${stage11_self_test_scratch}/stage11_bad_public_death_${public_index}.txt")
     file(WRITE "${mutation_file}" "${public_mutation}\n")
     expect_guard_rejection("public_death_${public_index}" "${mutation_file}"
         "${reference_host_file}" "${reference_runtime_file}"
@@ -344,7 +461,7 @@ endforeach()
 
 file(READ "${VALID_FIXTURE}" valid_fixture_source)
 set(read_only_file
-    "${CMAKE_CURRENT_BINARY_DIR}/stage11_read_only_death_comparisons.txt")
+    "${stage11_self_test_scratch}/stage11_read_only_death_comparisons.txt")
 file(WRITE "${read_only_file}" "${valid_fixture_source}\n"
     "// checkpoint.death == expected_death\n"
     "// checkpoint.death != other_death\n"
@@ -412,7 +529,7 @@ string(REPLACE "${expected_should_continue_death}" ""
 string(APPEND should_cross_scope_source
     "\n${expected_should_continue_death}\n")
 set(should_cross_scope_file
-    "${CMAKE_CURRENT_BINARY_DIR}/stage11_runtime_should_cross_scope.cpp")
+    "${stage11_self_test_scratch}/stage11_runtime_should_cross_scope.cpp")
 file(WRITE "${should_cross_scope_file}" "${should_cross_scope_source}")
 expect_guard_rejection(should_cross_scope_override "${VALID_FIXTURE}"
     "${reference_host_file}" "${should_cross_scope_file}"
@@ -511,7 +628,7 @@ string(REPLACE "${stage11_presentation_branch}" ""
 string(APPEND stage11_presentation_cross_scope_source
     "\nvoid stage11_presentation_cross_scope_decoy() {\n${stage11_presentation_branch}}\n")
 set(stage11_presentation_cross_scope_file
-    "${CMAKE_CURRENT_BINARY_DIR}/stage11_runtime_presentation_cross_scope.cpp")
+    "${stage11_self_test_scratch}/stage11_runtime_presentation_cross_scope.cpp")
 file(WRITE "${stage11_presentation_cross_scope_file}"
     "${stage11_presentation_cross_scope_source}")
 expect_guard_rejection(presentation_cross_scope_decoy "${VALID_FIXTURE}"
@@ -541,7 +658,7 @@ string(REPLACE "HostExitCode run_raylib_host() noexcept {"
     "void forged_decision() {\n${reference_continue_decision}\n}\n\nHostExitCode run_raylib_host() noexcept {"
     decision_cross_scope_source "${decision_cross_scope_source}")
 set(decision_cross_scope_file
-    "${CMAKE_CURRENT_BINARY_DIR}/stage11_decision_cross_scope.cpp")
+    "${stage11_self_test_scratch}/stage11_decision_cross_scope.cpp")
 file(WRITE "${decision_cross_scope_file}" "${decision_cross_scope_source}")
 expect_guard_rejection(decision_cross_scope_decoy "${VALID_FIXTURE}"
     "${decision_cross_scope_file}" "${reference_runtime_file}"
@@ -562,7 +679,7 @@ string(REPLACE
     "        validation_runtime->observe_death_continue_result(\n            death_continue_result);\n        death_continue_result = runtime.request_death_continue();"
     observer_before_request_source "${observer_before_request_source}")
 set(observer_before_request_file
-    "${CMAKE_CURRENT_BINARY_DIR}/stage11_observer_before_request.cpp")
+    "${stage11_self_test_scratch}/stage11_observer_before_request.cpp")
 file(WRITE "${observer_before_request_file}" "${observer_before_request_source}")
 expect_guard_rejection(observer_before_request "${VALID_FIXTURE}"
     "${observer_before_request_file}" "${reference_runtime_file}"
@@ -576,7 +693,7 @@ string(REPLACE "            previous = current;"
     "            validation_runtime->observe_death_continue_result(\n                death_continue_result);\n            previous = current;"
     observer_before_snapshot_source "${observer_before_snapshot_source}")
 set(observer_before_snapshot_file
-    "${CMAKE_CURRENT_BINARY_DIR}/stage11_observer_before_snapshot.cpp")
+    "${stage11_self_test_scratch}/stage11_observer_before_snapshot.cpp")
 file(WRITE "${observer_before_snapshot_file}" "${observer_before_snapshot_source}")
 expect_guard_rejection(observer_before_snapshot "${VALID_FIXTURE}"
     "${observer_before_snapshot_file}" "${reference_runtime_file}"
@@ -637,7 +754,7 @@ function(expect_stage_route_rejection name token inject_brace_noise decoy_kind)
     endif()
     string(REPLACE "${stage11_input}" "${mutated_input}" mutated_source
         "${stage_source}")
-    set(mutation_file "${CMAKE_CURRENT_BINARY_DIR}/stage11_${name}.cpp")
+    set(mutation_file "${stage11_self_test_scratch}/stage11_${name}.cpp")
     file(WRITE "${mutation_file}" "${mutated_source}")
     expect_guard_rejection("${name}" "${VALID_FIXTURE}"
         "${reference_host_file}" "${reference_runtime_file}"
@@ -646,27 +763,66 @@ function(expect_stage_route_rejection name token inject_brace_noise decoy_kind)
 endfunction()
 
 expect_stage_route_rejection(missing_descent "session.request_descent(true)" FALSE none)
-expect_stage_route_rejection(missing_queue_action
-    "session.queue_action(combat::Action::light)" FALSE none)
+expect_stage_route_rejection(missing_survival_driver
+    "stage10_validation_input(" FALSE none)
 expect_stage_route_rejection(missing_descent_with_brace_noise
     "session.request_descent(true)" TRUE none)
-expect_stage_route_rejection(missing_queue_action_with_brace_noise
-    "session.queue_action(combat::Action::light)" TRUE none)
+expect_stage_route_rejection(missing_survival_driver_with_brace_noise
+    "stage10_validation_input(" TRUE none)
 expect_stage_route_rejection(missing_descent_with_continued_line_comment
     "session.request_descent(true)" FALSE continued_line)
-expect_stage_route_rejection(missing_queue_with_continued_line_comment
-    "session.queue_action(combat::Action::light)" FALSE continued_line)
+expect_stage_route_rejection(missing_survival_with_continued_line_comment
+    "stage10_validation_input(" FALSE continued_line)
 expect_stage_route_rejection(missing_descent_with_spliced_slashes
     "session.request_descent(true)" FALSE spliced_slashes)
-expect_stage_route_rejection(missing_queue_with_spliced_slashes
-    "session.queue_action(combat::Action::light)" FALSE spliced_slashes)
+expect_stage_route_rejection(missing_survival_with_spliced_slashes
+    "stage10_validation_input(" FALSE spliced_slashes)
+
+set(relocated_early_descent_source "${reference_stage_source}")
+string(REPLACE
+    "            static_cast<void>(session.request_descent(true));\n"
+    ""
+    relocated_early_descent_source "${relocated_early_descent_source}")
+string(REPLACE
+    "    return stage10_validation_input("
+    "    session.request_descent(true);\n    return stage10_validation_input("
+    relocated_early_descent_source "${relocated_early_descent_source}")
+if(relocated_early_descent_source STREQUAL reference_stage_source)
+    message(FATAL_ERROR
+        "relocated_early_descent: mutation anchor was not found")
+endif()
+set(relocated_early_descent_file
+    "${stage11_self_test_scratch}/stage11_relocated_early_descent.cpp")
+file(WRITE "${relocated_early_descent_file}"
+    "${relocated_early_descent_source}")
+expect_guard_rejection(relocated_early_descent "${VALID_FIXTURE}"
+    "${reference_host_file}" "${reference_runtime_file}"
+    "Stage 11 early hole route lacks production descent"
+    "${relocated_early_descent_file}")
+file(REMOVE "${relocated_early_descent_file}")
+
+expect_capture_replacement_rejection(capture_dark_floor
+    "\$panelDark -lt 500" "\$panelDark -lt 0")
+expect_capture_replacement_rejection(capture_accent_floor
+    "\$panelAccent -lt 15" "\$panelAccent -lt 0")
+expect_capture_replacement_rejection(capture_authored_floor
+    "\$panelAuthored -lt 3000" "\$panelAuthored -lt 0")
+expect_capture_replacement_rejection(capture_panel_left
+    "\$panelLeft = 152" "\$panelLeft = 120")
+expect_capture_replacement_rejection(capture_panel_top
+    "\$panelTop = 80" "\$panelTop = 48")
+expect_capture_replacement_rejection(capture_panel_right
+    "\$panelRightExclusive = 1128" "\$panelRightExclusive = 1160")
+expect_capture_replacement_rejection(capture_panel_bottom
+    "\$panelBottomExclusive = 644" "\$panelBottomExclusive = 672")
 
 get_property(final_mutation_count GLOBAL PROPERTY STAGE11_MUTATION_COUNT)
-if(NOT final_mutation_count EQUAL 66)
+if(NOT final_mutation_count EQUAL 85)
     message(FATAL_ERROR
-        "Stage 11 guard mutation inventory drifted: expected 66, got ${final_mutation_count}")
+        "Stage 11 guard mutation inventory drifted: expected 85, got ${final_mutation_count}")
 endif()
 file(REMOVE "${reference_host_file}" "${reference_runtime_file}"
     "${reference_stage_file}")
+file(REMOVE_RECURSE "${stage11_self_test_scratch}")
 message(STATUS
     "Stage 11 guard mutation self-test passed (${final_mutation_count} mutations)")

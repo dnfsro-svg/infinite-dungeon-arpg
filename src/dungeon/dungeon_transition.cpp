@@ -5,6 +5,7 @@
 #include "core/deterministic_rng.hpp"
 #include "dungeon/abyss_reward.hpp"
 #include "dungeon/dungeon_progression.hpp"
+#include "dungeon/reinforcement_roll.hpp"
 #include "items/item_catalog.hpp"
 #include "items/item_crafting.hpp"
 #include "items/item_generation.hpp"
@@ -58,20 +59,6 @@ bool contains_id(
     const std::array<std::uint64_t, 3>& ids,
     std::uint64_t id) noexcept {
     return ids[0] == id || ids[1] == id || ids[2] == id;
-}
-
-bool reinforcement_succeeds(std::uint64_t root_seed,
-    std::uint64_t item_id,
-    std::uint32_t current,
-    std::uint64_t nonce,
-    std::uint16_t chance_bp) noexcept {
-    const std::uint64_t stream = kReinforcementDomain
-        ^ item_id
-        ^ (static_cast<std::uint64_t>(current) << 32U)
-        ^ nonce;
-    core::DeterministicRng rng = core::DeterministicRng::derive_stream(
-        root_seed, stream);
-    return rng.next_bounded(10000U).value_or(9999U) < chance_bp;
 }
 
 template <std::size_t Size>
@@ -136,6 +123,20 @@ std::uint8_t popcount8(std::uint8_t value) noexcept {
 }
 
 }  // namespace
+
+bool reinforcement_succeeds(std::uint64_t root_seed,
+    std::uint64_t item_id,
+    std::uint32_t current,
+    std::uint64_t nonce,
+    std::uint16_t chance_bp) noexcept {
+    const std::uint64_t stream = kReinforcementDomain
+        ^ item_id
+        ^ (static_cast<std::uint64_t>(current) << 32U)
+        ^ nonce;
+    core::DeterministicRng rng = core::DeterministicRng::derive_stream(
+        root_seed, stream);
+    return rng.next_bounded(10000U).value_or(9999U) < chance_bp;
+}
 
 bool DungeonSession::request_descent(bool player_in_range) noexcept {
     if (health_potion_abyss_clear_retry_gate_active()) return false;

@@ -15,9 +15,14 @@ function Test-Stage9FormalCapture {
         if ($image.Width -ne 1280 -or $image.Height -ne 720) {
             throw "Stage9 formal capture rejects unexpected size: $($image.Width)x$($image.Height)"
         }
-        $corner = $image.GetPixel(0, 0)
-        if ($corner.R -ne 17 -or $corner.G -ne 18 -or $corner.B -ne 19) {
-            throw "Stage9 formal capture rejects submitted background mismatch: $corner"
+        # The material quad covers the viewport, but Intel OpenGL 3.3 can leave
+        # a few outer-edge fragments to the production clear color.  Sample an
+        # authored interior texel so the contract measures material residency
+        # instead of implementation-defined triangle-edge rasterization.
+        $backgroundAnchor = $image.GetPixel(8, 8)
+        if ($backgroundAnchor.R -ne 17 -or $backgroundAnchor.G -ne 18 -or
+                $backgroundAnchor.B -ne 19) {
+            throw "Stage9 formal capture rejects submitted background mismatch: $backgroundAnchor"
         }
 
         # These whole-frame metrics are intentionally independent of any Stage11-C

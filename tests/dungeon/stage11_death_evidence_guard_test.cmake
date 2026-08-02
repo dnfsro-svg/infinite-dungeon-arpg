@@ -294,9 +294,11 @@ function(stage11_extract_token_block SOURCE TOKEN LABEL OUT_BLOCK)
     set("${OUT_BLOCK}" "${block}" PARENT_SCOPE)
 endfunction()
 
-evidence_extract_cpp_function_block("${stage_source_text}"
+stage11_unconditional_cpp_surface(
+    "${stage_source_text}" stage_source_active stage_source_lexical)
+evidence_extract_cpp_function_block("${stage_source_active}"
     "combat::MovementInput stage11_validation_input(" stage11_input_block)
-evidence_extract_cpp_function_block("${stage_source_text}"
+evidence_extract_cpp_function_block("${stage_source_active}"
     "bool stage11_validation_reached(" stage11_reached_block)
 
 set(public_death_mutation_scan "${all_evidence}")
@@ -338,9 +340,18 @@ foreach(forbidden "DungeonSessionTestAccess" "CombatWorldTestAccess"
     endif()
 endforeach()
 
-foreach(required_fixture "SaveStore" "session.tick" "pending_save_view"
-        "request_death_continue" "store.commit" "store.load")
-    if(NOT fixture_source MATCHES "${required_fixture}")
+stage11_unconditional_cpp_surface(
+    "${fixture_source}" fixture_active fixture_lexical)
+foreach(required_fixture "SaveCommitStorage" "SaveCommitWorker"
+        "acquire_capture_slot" "capture_save_checkpoint"
+        "submit[ \\t\\r\\n]*\\(" "try_take_completion"
+        "inspect_checkpoint_v9_envelope" "loaded_checkpoint"
+        "loaded_format" "loaded_migrated" "loaded_slot"
+        "same_run_state" "same_room_progress_checkpoint"
+        "restore_room_progress_checkpoint" "release_loaded_checkpoints"
+        "stop_and_join" "sleep_for" "session.tick" "pending_save_view"
+        "request_death_continue" "fresh_scan_and_restart")
+    if(NOT fixture_active MATCHES "${required_fixture}")
         message(FATAL_ERROR "Fixture lacks production API: ${required_fixture}")
     endif()
 endforeach()
@@ -351,7 +362,16 @@ if(NOT formal_source MATCHES "run_raylib_host"
     message(FATAL_ERROR "Formal Stage 11 executable lacks real host/save/summary evidence")
 endif()
 foreach(required_script "LastWriteTimeUtc" "System.Drawing" "GetPixel"
-        "nonBackground" "Get-PanelHash" "formal-path-summary.txt")
+        "nonBackground" "Get-PanelHash" "formal-path-summary.txt"
+        "panelDark[ \t]*-lt[ \t]*500"
+        "panelAccent[ \t]*-lt[ \t]*15"
+        "panelAuthored[ \t]*-lt[ \t]*3000"
+        "greenDelta[ \t]*-ge[ \t]*8"
+        "blueDelta[ \t]*-ge[ \t]*8"
+        "panelLeft[ \t]*=[ \t]*152"
+        "panelTop[ \t]*=[ \t]*80"
+        "panelRightExclusive[ \t]*=[ \t]*1128"
+        "panelBottomExclusive[ \t]*=[ \t]*644")
     if(NOT capture_script MATCHES "${required_script}")
         message(FATAL_ERROR "Capture validator lacks ${required_script}")
     endif()
@@ -378,7 +398,7 @@ endif()
 
 foreach(required_stage11_input_token
         "session.request_descent(true)"
-        "session.queue_action(combat::Action::light)")
+        "stage10_validation_input(")
     string(FIND "${stage11_input_block}" "${required_stage11_input_token}"
         required_stage11_index)
     if(required_stage11_index EQUAL -1)
@@ -386,6 +406,29 @@ foreach(required_stage11_input_token
             "Stage 11 validation input lacks production route: ${required_stage11_input_token}")
     endif()
 endforeach()
+set(stage11_early_hole_token
+    "if (drive_to_depth && snapshot.exits_unlocked && snapshot.has_hole")
+stage11_extract_token_block("${stage11_input_block}"
+    "${stage11_early_hole_token}"
+    "Stage 11 early hole route is missing" stage11_early_hole_block)
+foreach(required_early_hole_token
+        "settle_grid_route_movement"
+        "grid_route_movement"
+        "can_prompt_descent"
+        "session.request_descent(true)")
+    string(FIND "${stage11_early_hole_block}"
+        "${required_early_hole_token}" required_early_hole_index)
+    if(required_early_hole_index EQUAL -1)
+        message(FATAL_ERROR
+            "Stage 11 early hole route lacks production descent: ${required_early_hole_token}")
+    endif()
+endforeach()
+stage11_count_literal("${stage11_early_hole_block}"
+    "session.request_descent(true)" early_hole_descent_count)
+if(NOT early_hole_descent_count EQUAL 1)
+    message(FATAL_ERROR
+        "Stage 11 early hole route lacks production descent: request count ${early_hole_descent_count}")
+endif()
 foreach(required_stage11_reached_token
         "Stage11ValidationScenario::deep_continue"
         "state.continue_requested && state.saw_depth_two")
@@ -396,7 +439,11 @@ foreach(required_stage11_reached_token
             "Stage 11 validation completion lacks production predicate: ${required_stage11_reached_token}")
     endif()
 endforeach()
-if(NOT stage_header_text MATCHES "struct Stage11ValidationState final")
+if(NOT stage_header_text MATCHES "struct Stage11ValidationState final"
+        OR NOT stage_header_text MATCHES
+            "Stage10GridRouteState[ \t\r\n]+sweep_grid"
+        OR NOT stage_header_text MATCHES
+            "Stage10ValidationState[ \t\r\n]+combat_driver")
     message(FATAL_ERROR "Stage 11 validation state definition is missing")
 endif()
 
@@ -408,12 +455,16 @@ bool HostValidationRuntime::should_continue_death(
     const dungeon::DungeonSnapshot& snapshot) const noexcept {
     const bool pending = snapshot.death.has_value()
         && snapshot.death->can_continue && !snapshot.death->saving;
+    const bool stage10_validation_continue =
+        impl_->config->stage10_validation
+            == Stage10ValidationScenario::player_death;
     const auto scenario = impl_->config->stage11_validation;
-    const bool validation_continue =
+    const bool stage11_validation_continue =
         scenario == Stage11ValidationScenario::deep_continue
         || scenario == Stage11ValidationScenario::floor_one_continue;
-    return pending && validation_continue
-        && !impl_->states.stage11.continue_requested;
+    return pending && (stage10_validation_continue
+        || (stage11_validation_continue
+            && !impl_->states.stage11.continue_requested));
 }
 ]=])
 stage11_require_exact_runtime_definition(

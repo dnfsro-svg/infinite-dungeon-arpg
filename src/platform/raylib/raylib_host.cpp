@@ -251,8 +251,8 @@ void apply_stage12_material_showcase(dungeon::DungeonSnapshot& snapshot,
                 ? dungeon::GroundItemSource::abyss_chest
                 : dungeon::GroundItemSource::monster_drop;
             item.abyss_reward_ordinal = index == 3U ? 0U : 0xFFU;
-            item.position = {-5.0F + static_cast<float>(index) * 2.0F,
-                -3.2F, 0.0F};
+            item.position = stage12_material_showcase_position(
+                -5.0F + static_cast<float>(index) * 2.0F, -3.2F);
             item.item_id = index + 1U;
             item.base_id = static_cast<std::uint8_t>(index + 1U);
             item.item_level = 60U;
@@ -270,9 +270,9 @@ void apply_stage12_material_showcase(dungeon::DungeonSnapshot& snapshot,
                     static_cast<items::MaterialId>(index))
                 ? dungeon::GroundMaterialSource::monster_coupon
                 : dungeon::GroundMaterialSource::monster_common;
-            material.position = {
+            material.position = stage12_material_showcase_position(
                 -4.5F + static_cast<float>(index % 7U) * 1.5F,
-                2.0F + static_cast<float>(index / 7U) * 1.6F, 0.0F};
+                2.0F + static_cast<float>(index / 7U) * 1.6F);
             material.material = static_cast<items::MaterialId>(index);
         }
     }
@@ -283,9 +283,22 @@ void apply_stage12_material_showcase(dungeon::DungeonSnapshot& snapshot,
         combat::MonsterId::chaos_chaser, combat::MonsterId::chaos_hazard,
     }};
     constexpr std::array<combat::Vec3, 8> positions{{
-        {-4.0F, -2.0F, 0.0F}, {-1.3F, -2.0F, 0.0F}, {1.3F, -2.0F, 0.0F},
-        {4.0F, -2.0F, 0.0F}, {-4.0F, 1.5F, 0.0F}, {-1.3F, 1.5F, 0.0F},
-        {1.3F, 1.5F, 0.0F}, {4.0F, 1.5F, 0.0F},
+        {combat::room_bounds::max_x * kStage12MaterialShowcaseColumnFractions[0],
+            -2.0F, 0.0F},
+        {combat::room_bounds::max_x * kStage12MaterialShowcaseColumnFractions[1],
+            -2.0F, 0.0F},
+        {combat::room_bounds::max_x * kStage12MaterialShowcaseColumnFractions[2],
+            -2.0F, 0.0F},
+        {combat::room_bounds::max_x * kStage12MaterialShowcaseColumnFractions[3],
+            -2.0F, 0.0F},
+        {combat::room_bounds::max_x * kStage12MaterialShowcaseColumnFractions[0],
+            1.5F, 0.0F},
+        {combat::room_bounds::max_x * kStage12MaterialShowcaseColumnFractions[1],
+            1.5F, 0.0F},
+        {combat::room_bounds::max_x * kStage12MaterialShowcaseColumnFractions[2],
+            1.5F, 0.0F},
+        {combat::room_bounds::max_x * kStage12MaterialShowcaseColumnFractions[3],
+            1.5F, 0.0F},
     }};
     auto& combat_snapshot = *snapshot.combat;
     if (hide_monsters) {

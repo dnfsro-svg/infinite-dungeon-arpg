@@ -597,7 +597,9 @@ void DungeonRuntime::pump_persistence_frame() noexcept {
         if (!exact_flight_.active) submit_pending_exact();
         if (!exact_flight_.active
                 && session_->pending_save_view() == nullptr) {
-            submit_shutdown_exact();
+            if (!background_flight_.active) {
+                submit_shutdown_exact();
+            }
         }
         poll_save_completion();
         return;
@@ -693,8 +695,13 @@ void DungeonRuntime::submit_shutdown_exact() noexcept {
     }
     constexpr std::uint64_t kShutdownIntent =
         (std::numeric_limits<std::uint64_t>::max)();
+    const bool verify_durable = durable_revision_ == authority_revision_
+        && !progress_dirty_;
     const auto lease = save_worker_->acquire_capture_slot(revision,
-        persistence::SaveCommitRequestKind::exact, kShutdownIntent);
+        persistence::SaveCommitRequestKind::exact, kShutdownIntent,
+        verify_durable
+            ? persistence::SaveCommitPayloadKind::verify_durable
+            : persistence::SaveCommitPayloadKind::captured_checkpoint);
     if (lease.state == persistence::SaveCommitSubmitState::stopped) {
         fault_persistence_runtime(persistence::SaveError::write_failed);
         return;
@@ -706,14 +713,17 @@ void DungeonRuntime::submit_shutdown_exact() noexcept {
             == persistence::SaveCommitSubmitState::superseded_background) {
         background_flight_ = {};
     }
-    persistence::SaveCommitJobSlot* const job =
-        save_worker_->capture_job(lease);
     session_->clear_buffered_gameplay_input();
-    if (job == nullptr || !session_->capture_save_checkpoint(
-            job->checkpoint, revision)) {
-        save_worker_->cancel_capture(lease);
-        fault_persistence_runtime(persistence::SaveError::invalid_checkpoint);
-        return;
+    if (!verify_durable) {
+        persistence::SaveCommitJobSlot* const job =
+            save_worker_->capture_job(lease);
+        if (job == nullptr || !session_->capture_save_checkpoint(
+                job->checkpoint, revision)) {
+            save_worker_->cancel_capture(lease);
+            fault_persistence_runtime(
+                persistence::SaveError::invalid_checkpoint);
+            return;
+        }
     }
     const persistence::SaveCommitSubmitState submitted =
         save_worker_->submit(lease).state;

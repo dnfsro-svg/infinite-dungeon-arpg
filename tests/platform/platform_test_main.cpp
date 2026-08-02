@@ -13,6 +13,7 @@ arpg::test::TestSuite audio_routing_suite() noexcept;
 arpg::test::TestSuite audio_scene_suite() noexcept;
 arpg::test::TestSuite stage15_audio_pack_suite() noexcept;
 arpg::test::TestSuite host_input_suite() noexcept;
+arpg::test::TestSuite host_validation_exit_suite() noexcept;
 arpg::test::TestSuite active_skill_input_suite() noexcept;
 arpg::test::TestSuite raylib_input_suite() noexcept;
 arpg::test::TestSuite active_skill_view_suite() noexcept;
@@ -73,6 +74,7 @@ int main() {
         audio_scene_suite(),
         stage15_audio_pack_suite(),
         host_input_suite(),
+        host_validation_exit_suite(),
         active_skill_input_suite(),
         raylib_input_suite(),
         active_skill_view_suite(),
@@ -115,6 +117,6 @@ int main() {
         stage12_material_render_suite(),
     };
 
-    return arpg::test::run_suites(suites, 514,
+    return arpg::test::run_suites(suites, 549,
         "host settings runtime contract");
 }

@@ -139,6 +139,85 @@ bool fail_single_worker_point(persistence::SaveFaultPoint point,
     return fault != nullptr && point == fault->point;
 }
 
+test::Failure worker_verify_durable_is_exact_same_revision_only() noexcept {
+    TempDirectory directory{};
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> durable{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    ARPG_REQUIRE(durable != nullptr);
+    ARPG_REQUIRE(fixture(*durable, 41U));
+    ARPG_REQUIRE(write_v9(directory.path / "run_a.sav", *durable));
+    std::unique_ptr<persistence::SaveCommitStorage> storage{
+        new (std::nothrow) persistence::SaveCommitStorage{}};
+    ARPG_REQUIRE(storage != nullptr);
+    ARPG_REQUIRE(storage->initialize({directory.path}));
+    storage->release_loaded_checkpoints();
+    persistence::SaveCommitWorker worker{*storage};
+    ARPG_REQUIRE(worker.start());
+
+    const auto verified = worker.acquire_capture_slot(41U,
+        persistence::SaveCommitRequestKind::exact, 411U,
+        persistence::SaveCommitPayloadKind::verify_durable);
+    ARPG_REQUIRE(verified.state
+        == persistence::SaveCommitSubmitState::accepted);
+    ARPG_REQUIRE(worker.submit(verified).state
+        == persistence::SaveCommitSubmitState::accepted);
+    persistence::SaveCommitCompletion verified_completion{};
+    ARPG_REQUIRE(wait_completion(worker, verified_completion));
+    ARPG_REQUIRE(verified_completion.kind
+        == persistence::SaveCommitRequestKind::exact);
+    ARPG_REQUIRE(verified_completion.result.state
+        == persistence::SaveCommitState::committed);
+
+    const auto non_exact = worker.acquire_capture_slot(41U,
+        persistence::SaveCommitRequestKind::background, 412U,
+        persistence::SaveCommitPayloadKind::verify_durable);
+    ARPG_REQUIRE(non_exact.state
+        == persistence::SaveCommitSubmitState::busy);
+
+    const auto wrong_revision = worker.acquire_capture_slot(42U,
+        persistence::SaveCommitRequestKind::exact, 413U,
+        persistence::SaveCommitPayloadKind::verify_durable);
+    ARPG_REQUIRE(wrong_revision.state
+        == persistence::SaveCommitSubmitState::accepted);
+    ARPG_REQUIRE(worker.submit(wrong_revision).state
+        == persistence::SaveCommitSubmitState::accepted);
+    persistence::SaveCommitCompletion wrong_completion{};
+    ARPG_REQUIRE(wait_completion(worker, wrong_completion));
+    ARPG_REQUIRE(wrong_completion.result.state
+        == persistence::SaveCommitState::not_committed);
+    ARPG_REQUIRE(wrong_completion.result.error
+        == persistence::SaveError::invalid_checkpoint);
+    worker.stop_and_join();
+
+    TempDirectory scan_directory{};
+    ARPG_REQUIRE(write_v9(scan_directory.path / "run_a.sav", *durable));
+    SingleFaultHook scan_fault{persistence::SaveFaultPoint::final_scan_a};
+    persistence::SaveStoreConfig scan_config{scan_directory.path};
+    scan_config.fault_hook = &fail_single_worker_point;
+    scan_config.fault_context = &scan_fault;
+    std::unique_ptr<persistence::SaveCommitStorage> scan_storage{
+        new (std::nothrow) persistence::SaveCommitStorage{}};
+    ARPG_REQUIRE(scan_storage != nullptr);
+    ARPG_REQUIRE(scan_storage->initialize(scan_config));
+    scan_storage->release_loaded_checkpoints();
+    persistence::SaveCommitWorker scan_worker{*scan_storage};
+    ARPG_REQUIRE(scan_worker.start());
+    const auto scan = scan_worker.acquire_capture_slot(41U,
+        persistence::SaveCommitRequestKind::exact, 414U,
+        persistence::SaveCommitPayloadKind::verify_durable);
+    ARPG_REQUIRE(scan.state == persistence::SaveCommitSubmitState::accepted);
+    ARPG_REQUIRE(scan_worker.submit(scan).state
+        == persistence::SaveCommitSubmitState::accepted);
+    persistence::SaveCommitCompletion scan_completion{};
+    ARPG_REQUIRE(wait_completion(scan_worker, scan_completion));
+    ARPG_REQUIRE(scan_completion.result.state
+        == persistence::SaveCommitState::indeterminate);
+    ARPG_REQUIRE(scan_completion.result.error
+        == persistence::SaveError::final_scan_failed);
+    scan_worker.stop_and_join();
+    return {};
+}
+
 test::Failure worker_commits_v9_and_readback_verifies_exact_bytes() noexcept {
     TempDirectory directory{};
     std::unique_ptr<persistence::SaveCommitStorage> storage{
@@ -721,6 +800,8 @@ test::Failure equal_revision_conflict_archives_both_slots() noexcept {
 }
 
 constexpr test::TestCase kCases[] = {
+    {"worker verify durable exact same revision only",
+        &worker_verify_durable_is_exact_same_revision_only},
     {"worker exact v9 commit", &worker_commits_v9_and_readback_verifies_exact_bytes},
     {"worker pending coalescing", &one_pending_slot_coalesces_background_for_exact},
     {"worker equal revision conflict archive",

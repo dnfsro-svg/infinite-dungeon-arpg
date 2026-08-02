@@ -1,5 +1,6 @@
 #pragma once
 
+#include "combat/room_bounds.hpp"
 #include "core/fixed_step.hpp"
 #include "dungeon/dungeon_types.hpp"
 #include "material_asset_types.hpp"
@@ -21,6 +22,23 @@ class SettingsStore;
 }
 
 namespace arpg::platform {
+
+inline constexpr std::array<float, 4> kStage12MaterialShowcaseColumnFractions{{
+    -0.42F, -0.14F, 0.14F, 0.42F,
+}};
+
+[[nodiscard]] constexpr combat::Vec3 stage12_material_showcase_position(
+    float legacy_x, float legacy_y) noexcept {
+    constexpr float kLegacyHalfWidth = 12.0F;
+    constexpr float kLegacyMinY = -5.5F;
+    constexpr float kLegacyDepth = 11.0F;
+    return {
+        combat::room_bounds::max_x * legacy_x / kLegacyHalfWidth,
+        combat::room_bounds::min_y + combat::room_bounds::depth
+            * (legacy_y - kLegacyMinY) / kLegacyDepth,
+        0.0F,
+    };
+}
 
 struct HostLaunchOptions;
 struct DeathInputGate;

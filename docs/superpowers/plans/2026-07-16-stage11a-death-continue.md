@@ -968,7 +968,7 @@ git commit -m "test: stress death continue determinism"
 
 **Step 1: 先写 headless 正式 fixture**
 
-fixture 只使用生产 API，验证：普通死亡、pending death 重启、深层 E 继续、第一层 E 继续、深渊死亡。它必须通过 Combat 真实命中、`DungeonSession::tick()`、`pending_save_view()`、`SaveStore::commit()` 和 `request_death_continue()`，不得直接写 Session 私有成员或伪造 death snapshot。
+fixture 只使用生产 API，验证：普通死亡、pending death 重启、深层 E 继续、第一层 E 继续、深渊死亡。它必须通过 Combat 真实命中、`DungeonSession::tick()`、`pending_save_view()`、`SaveCommitStorage` / `SaveCommitWorker`、`capture_save_checkpoint()`、`submit()` / `try_take_completion()`、fresh A/B `loaded_checkpoint()` / `restore_room_progress_checkpoint()` 和 `request_death_continue()`，不得直接写 Session 私有成员、伪造 death snapshot，或把 `persistence_revision` 当作 gameplay `commit_generation` receipt。
 
 Run:
 
@@ -1008,7 +1008,7 @@ guard 拒绝：
 
 - `DungeonSessionTestAccess`、`CombatWorldTestAccess`、`force_defeat`、`stable_state_`、`phase_=`、直接 death checkpoint 注入。
 - 在 `EndDrawing` 前截图，或新增额外 `LoadImageFromScreen` / `ExportImage`。
-- fixture 不含真实 `SaveStore`、`session.tick`、`pending_save_view`、`request_death_continue` 和重启 load。
+- fixture 不含真实 V9 `SaveCommitStorage` / `SaveCommitWorker`、`session.tick`、`pending_save_view`、completion identity、fresh A/B `loaded_checkpoint` / room restore、`request_death_continue` 和重启 load。
 - formal host 不含真实 `queue_action` / movement / runtime save service。
 
 同时用两个 `WILL_FAIL TRUE` bad fixtures 证明守卫能拒绝私有注入和 pre-present capture。

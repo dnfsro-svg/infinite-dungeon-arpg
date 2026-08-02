@@ -389,7 +389,8 @@ function(stage10_extract_between SOURCE BEGIN_TOKEN END_TOKEN OUT_CROP)
 endfunction()
 
 foreach(required FIXTURE_SOURCE VALIDATION_GAME_SOURCE FORMAL_SOURCE
-        CAPTURE_SCRIPT FORMAL_CAPTURE_SCRIPT STRESS_SOURCE HOST_HEADER HOST_SOURCE)
+        CAPTURE_SCRIPT FORMAL_CAPTURE_SCRIPT STRESS_SOURCE
+        VALIDATION_BUILD_SOURCE HOST_HEADER HOST_SOURCE)
     if(NOT DEFINED ${required})
         message(FATAL_ERROR "Stage 10 evidence guard missing ${required}")
     endif()
@@ -401,6 +402,7 @@ file(READ "${FORMAL_SOURCE}" formal_source)
 file(READ "${CAPTURE_SCRIPT}" capture_script)
 file(READ "${FORMAL_CAPTURE_SCRIPT}" formal_capture_script)
 file(READ "${STRESS_SOURCE}" stress_source)
+file(READ "${VALIDATION_BUILD_SOURCE}" validation_build_source)
 file(READ "${HOST_HEADER}" host_header)
 file(READ "${HOST_SOURCE}" host_source)
 get_filename_component(host_directory "${HOST_HEADER}" DIRECTORY)
@@ -430,7 +432,7 @@ endif()
 file(READ "${stage_source}" stage_source_text)
 file(READ "${stage_header}" stage_header_text)
 file(READ "${host_validation_runtime_source}" host_validation_runtime_text)
-set(formal_evidence "${fixture_source}\n${validation_game_source}\n${formal_source}\n${capture_script}\n${formal_capture_script}\n${host_header}\n${host_source}\n${host_validation_runtime_text}\n${stage_source_text}")
+set(formal_evidence "${fixture_source}\n${validation_game_source}\n${formal_source}\n${validation_build_source}\n${capture_script}\n${formal_capture_script}\n${host_header}\n${host_source}\n${host_validation_runtime_text}\n${stage_source_text}")
 
 evidence_extract_cpp_function_block("${stage_source_text}"
     "combat::MovementInput stage10_validation_input(" stage10_input_block)
@@ -446,9 +448,9 @@ foreach(forbidden
         "set_phase\\("
         "stable_state_"
         "phase_[ \\t]*="
-        "generated_mask[ \\t]*="
-        "claimed_mask[ \\t]*="
-        "abandoned_mask[ \\t]*=")
+        "generated_mask[ \\t]*=[^=]"
+        "claimed_mask[ \\t]*=[^=]"
+        "abandoned_mask[ \\t]*=[^=]")
     if(formal_evidence MATCHES "${forbidden}")
         message(FATAL_ERROR "Forbidden Stage 10 evidence injection: ${forbidden}")
     endif()
@@ -592,9 +594,12 @@ stage10_require_depth("T7C Stage10 generic completion decision"
     "${stage10_present_block}" "decision.generic_capture_complete =" 1)
 set(stage10_chaos_branch [=[
 if (impl_->config->stage10_validation
-        == Stage10ValidationScenario::chaos_expansion
-    && stage10_target_visible) {
-    ++impl_->states.stage10.chaos_presented_frames;
+        == Stage10ValidationScenario::chaos_expansion) {
+    if (stage10_target_visible) {
+        ++impl_->states.stage10.chaos_presented_frames;
+    } else {
+        impl_->states.stage10.chaos_presented_frames = 0U;
+    }
 }
 const bool stage10_reached = stage10_target_visible
     && (impl_->config->stage10_validation

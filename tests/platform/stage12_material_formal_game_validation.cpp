@@ -810,7 +810,8 @@ void equip_skill(dungeon::DungeonSnapshot& snapshot,
     snapshot.combat->active_skill = {};
     snapshot.combat->active_skill.id = skill;
     snapshot.combat->active_skill.elapsed_ticks = tick;
-    snapshot.combat->active_skill.locked_center = {0.5F, 0.0F, 0.0F};
+    snapshot.combat->active_skill.locked_center =
+        platform::stage12_material_showcase_position(0.5F, 0.0F);
     snapshot.combat->active_skill.phase = skill == skills::ActiveSkillId::draw_slash
         ? combat::ActiveSkillPhase::startup
         : combat::ActiveSkillPhase::strikes;
@@ -2283,10 +2284,16 @@ int main(int argc, char** argv) {
         && lightning_runtime.lightning_shooter_resident
         && lightning_runtime.lightning_dasher_resident;
     const PixelRoi lightning_shooter_roi = lightning_material_frame_roi(
-        combat::MonsterId::lightning_shooter, {-4.0F, 1.5F, 0.0F},
+        combat::MonsterId::lightning_shooter,
+        {combat::room_bounds::max_x
+                * platform::kStage12MaterialShowcaseColumnFractions[0],
+            1.5F, 0.0F},
         lightning_runtime.lightning_shooter_draw.frame_index);
     const PixelRoi lightning_dasher_roi = lightning_material_frame_roi(
-        combat::MonsterId::lightning_dasher, {-1.3F, 1.5F, 0.0F},
+        combat::MonsterId::lightning_dasher,
+        {combat::room_bounds::max_x
+                * platform::kStage12MaterialShowcaseColumnFractions[1],
+            1.5F, 0.0F},
         lightning_runtime.lightning_dasher_draw.frame_index);
     const bool lightning_rois_ok = lightning_shooter_roi.valid()
         && lightning_dasher_roi.valid()
@@ -2604,6 +2611,8 @@ int main(int argc, char** argv) {
            << "lightning_dasher_roi=" << lightning_dasher_roi.x << ','
            << lightning_dasher_roi.y << ',' << lightning_dasher_roi.width
            << ',' << lightning_dasher_roi.height << '\n'
+           << "lightning_roi_isolation="
+           << (lightning_rois_ok ? "pass" : "fail") << '\n'
            << "lightning_dasher_drawn=" << (lightning_runtime.lightning_dasher_draw.drawn ? "pass" : "fail") << '\n'
            << "chaos_showcase_pair_residency=" << (chaos_showcase_pair_residency_ok ? "pass" : "fail") << '\n'
            << "chaos_environment_pair=" << (chaos_runtime.chaos_environment_resident ? "resident" : "missing") << '\n'

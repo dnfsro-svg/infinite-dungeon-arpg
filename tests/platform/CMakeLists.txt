@@ -3,6 +3,7 @@ if(TARGET arpg_raylib)
         ../core/allocation_probe.cpp
         platform_test_main.cpp
         host_input_tests.cpp
+        host_validation_exit_tests.cpp
         active_skill_input_tests.cpp
         raylib_input_tests.cpp
         active_skill_view_tests.cpp
@@ -238,7 +239,7 @@ if(TARGET arpg_raylib)
         COMMAND "$<TARGET_FILE:arpg_stage12_material_formal>"
             "${CMAKE_CURRENT_BINARY_DIR}/stage12 material evidence")
     set_tests_properties(stage12.material_formal
-        PROPERTIES LABELS "platform;raylib;stage12" TIMEOUT 300
+        PROPERTIES LABELS "platform;raylib;stage12" TIMEOUT 600
             FIXTURES_SETUP stage12_material_evidence RUN_SERIAL TRUE)
     add_test(
         NAME stage12.material_evidence_validator

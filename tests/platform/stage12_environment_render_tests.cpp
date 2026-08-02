@@ -1,9 +1,12 @@
 #include "test_framework.hpp"
 
 #include "environment_render_plan.hpp"
+#include "combat_view_math.hpp"
 #include "material_pack.hpp"
+#include "raylib_host.hpp"
 
 #include <array>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -44,6 +47,35 @@ std::size_t occurrence_count(const std::string& source,
         position += std::char_traits<char>::length(token);
     }
     return count;
+}
+
+arpg::test::Failure material_showcase_layout_tracks_room_bounds() noexcept {
+    const arpg::combat::Vec3 item =
+        arpg::platform::stage12_material_showcase_position(-5.0F, -3.2F);
+    const arpg::platform::ScreenProjection item_projection =
+        arpg::platform::project_combat_position(item, 1280.0F, 720.0F);
+    const float item_center_y = item_projection.ground_y
+        - 13.0F * item_projection.scale;
+    ARPG_REQUIRE(std::fabs(item_projection.x - 453.0F) < 1.0F);
+    ARPG_REQUIRE(std::fabs(item_center_y - 339.0F) < 1.0F);
+
+    const arpg::combat::Vec3 material =
+        arpg::platform::stage12_material_showcase_position(-4.5F, 2.0F);
+    const arpg::platform::ScreenProjection material_projection =
+        arpg::platform::project_combat_position(material, 1280.0F, 720.0F);
+    const float material_center_y = material_projection.ground_y
+        - 6.0F * material_projection.scale;
+    ARPG_REQUIRE(std::fabs(material_projection.x - 440.0F) < 1.0F);
+    ARPG_REQUIRE(std::fabs(material_center_y - 514.0F) < 1.0F);
+
+    const arpg::combat::Vec3 skill_center =
+        arpg::platform::stage12_material_showcase_position(0.5F, 0.0F);
+    const arpg::platform::ScreenProjection skill_projection =
+        arpg::platform::project_combat_position(
+            skill_center, 1280.0F, 720.0F);
+    ARPG_REQUIRE(std::fabs(skill_projection.x - 661.0F) < 1.0F);
+    ARPG_REQUIRE(std::fabs(skill_projection.ground_y - 454.0F) < 1.0F);
+    return {};
 }
 
 std::string cpp_code_only(std::string source) {
@@ -836,6 +868,8 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
 }
 
 constexpr arpg::test::TestCase kCases[] = {
+    {"material showcase layout tracks room bounds",
+        &material_showcase_layout_tracks_room_bounds},
     {"uses independent native background prop and hole paths",
         &environment_renderer_uses_independent_native_paths},
     {"falls back atomically when a required frame is missing",

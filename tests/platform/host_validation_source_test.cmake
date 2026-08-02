@@ -1421,12 +1421,16 @@ bool HostValidationRuntime::should_continue_death(
     const dungeon::DungeonSnapshot& snapshot) const noexcept {
     const bool pending = snapshot.death.has_value()
         && snapshot.death->can_continue && !snapshot.death->saving;
+    const bool stage10_validation_continue =
+        impl_->config->stage10_validation
+            == Stage10ValidationScenario::player_death;
     const auto scenario = impl_->config->stage11_validation;
-    const bool validation_continue =
+    const bool stage11_validation_continue =
         scenario == Stage11ValidationScenario::deep_continue
         || scenario == Stage11ValidationScenario::floor_one_continue;
-    return pending && validation_continue
-        && !impl_->states.stage11.continue_requested;
+    return pending && (stage10_validation_continue
+        || (stage11_validation_continue
+            && !impl_->states.stage11.continue_requested));
 }
 ]=])
 set(_fixed_step_movement_contract [=[

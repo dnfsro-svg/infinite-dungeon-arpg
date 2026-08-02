@@ -518,12 +518,15 @@ bool SaveCommitWorker::start() noexcept {
 
 SaveCommitCaptureLease SaveCommitWorker::acquire_capture_slot(
     const std::uint64_t revision, const SaveCommitRequestKind kind,
-    const std::uint64_t intent) noexcept {
+    const std::uint64_t intent,
+    const SaveCommitPayloadKind payload) noexcept {
     std::lock_guard<std::mutex> lock{mutex_};
     if (!started_ || stopping_) {
         return {SaveCommitSubmitState::stopped};
     }
-    if (revision == 0U) return {};
+    if (revision == 0U
+            || (payload == SaveCommitPayloadKind::verify_durable
+                && kind != SaveCommitRequestKind::exact)) return {};
     SaveCommitSubmitState acquisition = SaveCommitSubmitState::accepted;
     std::uint8_t slot = kNoSlot;
     for (std::uint8_t index = 0U; index < kSlotCount; ++index) {
@@ -550,7 +553,9 @@ SaveCommitCaptureLease SaveCommitWorker::acquire_capture_slot(
     job.revision = revision;
     job.intent = intent;
     job.kind = kind;
-    return {acquisition, slot, revision, intent, token, epoch_, kind};
+    job.payload = payload;
+    return {acquisition, slot, revision, intent, token, epoch_, kind,
+        payload};
 }
 
 SaveCommitJobSlot* SaveCommitWorker::capture_job(
@@ -577,8 +582,11 @@ SaveCommitSubmission SaveCommitWorker::submit(
             || storage_->jobs_[lease.job_slot].revision != lease.revision
             || storage_->jobs_[lease.job_slot].intent != lease.intent
             || storage_->jobs_[lease.job_slot].kind != lease.kind
-            || storage_->jobs_[lease.job_slot].checkpoint.persistence_revision
-                != lease.revision
+            || storage_->jobs_[lease.job_slot].payload != lease.payload
+            || (lease.payload
+                    == SaveCommitPayloadKind::captured_checkpoint
+                && storage_->jobs_[lease.job_slot]
+                    .checkpoint.persistence_revision != lease.revision)
             || queued_slot_ != kNoSlot) {
         return {SaveCommitSubmitState::busy};
     }
@@ -779,16 +787,25 @@ SaveCommitExactResult SaveCommitWorker::commit(
         return true;
     };
     if (job.revision == highest_revision) {
+        std::uint64_t verified_revision{};
+        const bool payload_verified = job.payload
+                == SaveCommitPayloadKind::verify_durable
+            ? inspect_checkpoint_v9_envelope(
+                storage_->buffers_[active].data(),
+                storage_->disk_sizes_[active], verified_revision)
+                    == CodecError::none
+                && verified_revision == job.revision
+            : verify_checkpoint_v9_readback(
+                storage_->buffers_[active].data(),
+                storage_->disk_sizes_[active], job.checkpoint,
+                storage_->buffers_[active].data(),
+                storage_->disk_sizes_[active]) == CodecError::none;
         if (job.kind != SaveCommitRequestKind::exact
                 || !disk_matches_cache(0U, false)
                 || !disk_matches_cache(1U, false)
                 || storage_->disk_formats_[active]
                     != kCheckpointFormatVersionV9
-                || verify_checkpoint_v9_readback(
-                    storage_->buffers_[active].data(),
-                    storage_->disk_sizes_[active], job.checkpoint,
-                    storage_->buffers_[active].data(),
-                    storage_->disk_sizes_[active]) != CodecError::none) {
+                || !payload_verified) {
             result.error = SaveError::invalid_checkpoint;
             return result;
         }
@@ -801,6 +818,10 @@ SaveCommitExactResult SaveCommitWorker::commit(
         }
         result.state = SaveCommitState::committed;
         result.error = SaveError::none;
+        return result;
+    }
+    if (job.payload == SaveCommitPayloadKind::verify_durable) {
+        result.error = SaveError::invalid_checkpoint;
         return result;
     }
     const std::size_t target = 1U - active;
