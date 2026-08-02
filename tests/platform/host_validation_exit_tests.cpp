@@ -109,6 +109,55 @@ arpg::test::Failure stage10_unlocked_exit_pushes_outward_at_door() noexcept {
     return {};
 }
 
+arpg::test::Failure stage10_exit_confirmation_joins_grid_before_door()
+    noexcept {
+    dungeon::DungeonSession session{};
+    dungeon::DungeonSnapshot snapshot{};
+    snapshot.phase = dungeon::RoomPhase::awaiting_exit;
+    snapshot.is_abyss = true;
+    snapshot.combat.emplace();
+    snapshot.combat->player.hp = 100;
+    snapshot.combat->player.position = {3.0F, 0.0F, 0.0F};
+    platform::RaylibHostConfig config{};
+    config.stage10_validation =
+        platform::Stage10ValidationScenario::exit_confirmation;
+    validation::Stage10ValidationState state{};
+    state.entered_abyss = true;
+
+    const auto movement = validation::stage10_validation_input(
+        session, snapshot, config, state);
+    ARPG_REQUIRE(movement.x == -1);
+    ARPG_REQUIRE(movement.y == 0);
+    ARPG_REQUIRE(state.sweep_grid.phase
+        == validation::Stage10GridRoutePhase::join_near_x);
+    ARPG_REQUIRE(state.sweep_grid.pending_movement_progress_check);
+    return {};
+}
+
+arpg::test::Failure stage10_exit_confirmation_routes_left_of_rewards()
+    noexcept {
+    dungeon::DungeonSession session{};
+    dungeon::DungeonSnapshot snapshot{};
+    snapshot.phase = dungeon::RoomPhase::awaiting_exit;
+    snapshot.is_abyss = true;
+    snapshot.combat.emplace();
+    snapshot.combat->player.hp = 100;
+    snapshot.combat->player.position = {
+        arpg::combat::room_bounds::min_x, 0.0F, 0.0F};
+    platform::RaylibHostConfig config{};
+    config.stage10_validation =
+        platform::Stage10ValidationScenario::exit_confirmation;
+    validation::Stage10ValidationState state{};
+    state.entered_abyss = true;
+    state.sweep_grid.phase = validation::Stage10GridRoutePhase::route;
+
+    const auto movement = validation::stage10_validation_input(
+        session, snapshot, config, state);
+    ARPG_REQUIRE(movement.x == -1);
+    ARPG_REQUIRE(movement.y == 0);
+    return {};
+}
+
 arpg::test::Failure stage11_uses_unlocked_exit_during_combat() noexcept {
     dungeon::DungeonSession session{};
     dungeon::DungeonSnapshot snapshot = unlocked_combat_snapshot();
@@ -1007,6 +1056,10 @@ arpg::test::TestSuite host_validation_exit_suite() noexcept {
             &stage10_unlocked_exit_joins_grid_before_door},
         {"stage10_unlocked_exit_pushes_outward_at_door",
             &stage10_unlocked_exit_pushes_outward_at_door},
+        {"stage10_exit_confirmation_joins_grid_before_door",
+            &stage10_exit_confirmation_joins_grid_before_door},
+        {"stage10_exit_confirmation_routes_left_of_rewards",
+            &stage10_exit_confirmation_routes_left_of_rewards},
         {"stage11_uses_unlocked_exit_during_combat",
             &stage11_uses_unlocked_exit_during_combat},
         {"stage11_deep_unlocked_combat_routes_to_hole",

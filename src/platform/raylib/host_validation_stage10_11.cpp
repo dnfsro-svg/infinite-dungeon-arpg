@@ -315,6 +315,29 @@ bool controllable_movement_snapshot(
         && combat.diagnostics.input_size == 0U;
 }
 
+combat::MovementInput stage10_exit_route_movement(
+    const combat::CombatSnapshot& combat_state,
+    dungeon::ExitDirection direction,
+    Stage10ValidationState& state) noexcept {
+    if (settle_grid_route_movement(
+            state.sweep_grid, combat_state.player.position)
+            == GridRouteProgress::unreachable) {
+        state.sweep_grid = {};
+    }
+    const combat::MovementInput movement = grid_route_movement(
+        combat_state.player.position,
+        validation_door_position(direction), state.sweep_grid);
+    if (movement.x == 0 && movement.y == 0) {
+        return validation_exit_movement(
+            combat_state.player.position, direction);
+    }
+    if (controllable_movement_snapshot(combat_state)) {
+        state.sweep_grid.pending_movement_progress_check = true;
+        state.sweep_grid.previous_position = combat_state.player.position;
+    }
+    return movement;
+}
+
 }  // namespace
 
 bool stage10_validation_abyss_skills_enabled(
@@ -361,24 +384,8 @@ combat::MovementInput stage10_validation_input(
             }
             const auto& combat_state = *snapshot.combat;
             const auto direction = validation_direction(config);
-            if (settle_grid_route_movement(
-                    state.sweep_grid, combat_state.player.position)
-                    == GridRouteProgress::unreachable) {
-                state.sweep_grid = {};
-            }
-            const combat::MovementInput movement = grid_route_movement(
-                combat_state.player.position,
-                validation_door_position(direction), state.sweep_grid);
-            if (movement.x == 0 && movement.y == 0) {
-                return validation_exit_movement(
-                    combat_state.player.position, direction);
-            }
-            if (controllable_movement_snapshot(combat_state)) {
-                state.sweep_grid.pending_movement_progress_check = true;
-                state.sweep_grid.previous_position =
-                    combat_state.player.position;
-            }
-            return movement;
+            return stage10_exit_route_movement(
+                combat_state, direction, state);
         }
         const bool full_clear_driver = !snapshot.is_abyss
             || stage10_validation_abyss_skills_enabled(scenario);
@@ -646,8 +653,8 @@ combat::MovementInput stage10_validation_input(
     if (scenario == Stage10ValidationScenario::exit_confirmation) {
         return snapshot.abyss_exit_confirmation_armed
             ? combat::MovementInput{}
-            : validation_exit_movement(snapshot.combat->player.position,
-                dungeon::ExitDirection::right);
+            : stage10_exit_route_movement(*snapshot.combat,
+                dungeon::ExitDirection::left, state);
     }
     if (scenario == Stage10ValidationScenario::abyss_hole_descent) {
         state.descent_warning_seen = state.descent_warning_seen
