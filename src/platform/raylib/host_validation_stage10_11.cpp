@@ -199,6 +199,19 @@ std::uint8_t nearest_grid_boundary_column(float player_x) noexcept {
     return static_cast<std::uint8_t>(std::floor(grid_x + 0.5F));
 }
 
+std::uint8_t outward_grid_boundary_column(
+    float player_x, dungeon::ExitDirection direction) noexcept {
+    const float grid_x = std::clamp(
+        (player_x - combat::room_bounds::min_x)
+            / combat::room_spatial::cell_width,
+        0.0F, static_cast<float>(combat::room_spatial::columns));
+    constexpr std::size_t center = combat::room_spatial::columns / 2U;
+    const auto column = direction == dungeon::ExitDirection::right
+        ? (std::max)(static_cast<std::size_t>(std::ceil(grid_x)), center + 1U)
+        : (std::min)(static_cast<std::size_t>(std::floor(grid_x)), center - 1U);
+    return static_cast<std::uint8_t>(column);
+}
+
 std::uint8_t alternate_grid_boundary_column(
     float player_x, std::uint8_t blocked_column) noexcept {
     const float grid_x = std::clamp(
@@ -318,11 +331,18 @@ bool controllable_movement_snapshot(
 combat::MovementInput stage10_exit_route_movement(
     const combat::CombatSnapshot& combat_state,
     dungeon::ExitDirection direction,
-    Stage10ValidationState& state) noexcept {
+    Stage10ValidationState& state,
+    bool avoid_center_rewards = false) noexcept {
     if (settle_grid_route_movement(
             state.sweep_grid, combat_state.player.position)
             == GridRouteProgress::unreachable) {
         state.sweep_grid = {};
+    }
+    if (avoid_center_rewards
+            && state.sweep_grid.phase == Stage10GridRoutePhase::need_join) {
+        state.sweep_grid.boundary_column = outward_grid_boundary_column(
+            combat_state.player.position.x, direction);
+        state.sweep_grid.phase = Stage10GridRoutePhase::join_near_x;
     }
     const combat::MovementInput movement = grid_route_movement(
         combat_state.player.position,
@@ -651,10 +671,13 @@ combat::MovementInput stage10_validation_input(
             validation_direction(config));
     }
     if (scenario == Stage10ValidationScenario::exit_confirmation) {
-        return snapshot.abyss_exit_confirmation_armed
-            ? combat::MovementInput{}
-            : stage10_exit_route_movement(*snapshot.combat,
-                dungeon::ExitDirection::left, state);
+        if (snapshot.abyss_exit_confirmation_armed) return {};
+        const dungeon::ExitDirection direction =
+            snapshot.combat->player.position.x < 0.0F
+            ? dungeon::ExitDirection::left
+            : dungeon::ExitDirection::right;
+        return stage10_exit_route_movement(
+            *snapshot.combat, direction, state, true);
     }
     if (scenario == Stage10ValidationScenario::abyss_hole_descent) {
         state.descent_warning_seen = state.descent_warning_seen
