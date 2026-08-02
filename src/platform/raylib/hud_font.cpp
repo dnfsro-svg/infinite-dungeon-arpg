@@ -49,6 +49,7 @@ void add_large_room_hud_codepoints(DeathOverlayFontPlan& plan) noexcept {
         0x5C1A, 0x5F00, 0x653E, 0xFF0C, 0x6218, 0x6597,
         0x4ECD, 0x53EF, 0x7EE7, 0x7EED, 0x79BB, 0x5C06,
         0x5F03, 0x5269, 0x4F59, 0x5956, 0x52B1,
+        0x89C1, 0x6389, 0x843D,
     };
     for (const int codepoint : kCodepoints) {
         add_hud_codepoint(plan, codepoint);
@@ -84,6 +85,7 @@ HudFontPlan hud_font_plan() noexcept {
         u8"消灭（总计）剩余",
         u8"出口尚未开放，战斗仍可继续",
         u8"离开将放弃剩余奖励",
+        u8"可见：怪 105/105 环境 73/105 掉落 53/331",
     };
     plan.covers_required_text = true;
     for (const char* text : kRequiredText) {

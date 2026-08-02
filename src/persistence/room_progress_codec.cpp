@@ -900,6 +900,116 @@ void set_bit(std::array<std::uint64_t, Size>& bits,
     bits[ordinal / 64U] |= std::uint64_t{1U} << (ordinal % 64U);
 }
 
+template <std::size_t Size>
+[[nodiscard]] bool bit_is_set(
+    const std::array<std::uint64_t, Size>& bits,
+    const std::uint16_t ordinal) noexcept {
+    return ordinal < bits.size() * 64U
+        && (bits[ordinal / 64U]
+            & (std::uint64_t{1U} << (ordinal % 64U))) != 0U;
+}
+
+[[nodiscard]] bool same_checkpoint_position(
+    const checkpoint::CheckpointVec3& left,
+    const checkpoint::CheckpointVec3& right) noexcept {
+    std::array<std::uint32_t, 3U> left_bits{};
+    std::array<std::uint32_t, 3U> right_bits{};
+    static_assert(sizeof(left_bits) == sizeof(left));
+    std::memcpy(left_bits.data(), &left, sizeof(left));
+    std::memcpy(right_bits.data(), &right, sizeof(right));
+    return left_bits == right_bits;
+}
+
+enum class SecondaryOrdinalSemantics : std::uint8_t {
+    unknown,
+    task5,
+    canonical,
+};
+
+[[nodiscard]] bool add_secondary_ordinal_evidence(
+    SecondaryOrdinalSemantics& semantics,
+    const SecondaryOrdinalSemantics evidence) noexcept {
+    if (evidence == SecondaryOrdinalSemantics::unknown) return true;
+    if (semantics == SecondaryOrdinalSemantics::unknown) {
+        semantics = evidence;
+        return true;
+    }
+    return semantics == evidence;
+}
+
+[[nodiscard]] bool spawn_has_exact_drop_position(
+    const checkpoint::RoomProgressCheckpoint& room,
+    const std::uint16_t spawn,
+    const checkpoint::CheckpointVec3& position,
+    const SecondaryOrdinalSemantics semantics) noexcept {
+    if (spawn >= room.generated_monsters) return false;
+    for (std::uint16_t index = 0U;
+            index < room.combat.monster_count; ++index) {
+        const auto& monster = room.combat.monsters[index];
+        if (monster.ordinal == spawn
+                && same_checkpoint_position(monster.position, position)) {
+            return true;
+        }
+    }
+    for (std::uint16_t index = 0U;
+            index < room.equipment_ground_count; ++index) {
+        const auto& equipment = room.equipment_ground[index];
+        if (equipment.source == 0U && equipment.ordinal == spawn
+                && same_checkpoint_position(equipment.position, position)) {
+            return true;
+        }
+    }
+    const std::uint16_t potion_ordinal =
+        checkpoint::health_potion_claim_ordinal(spawn);
+    const std::uint16_t coupon_ordinal =
+        semantics == SecondaryOrdinalSemantics::task5
+        ? static_cast<std::uint16_t>(potion_ordinal * 2U)
+        : potion_ordinal;
+    for (std::uint16_t index = 0U;
+            index < room.secondary_ground_count; ++index) {
+        const auto& secondary = room.secondary_ground[index];
+        if (same_checkpoint_position(secondary.position, position)
+                && ((secondary.tag
+                        == checkpoint::SecondaryGroundTag::health_potion
+                        && secondary.ordinal == potion_ordinal)
+                    || (secondary.tag
+                        == checkpoint::SecondaryGroundTag::material
+                        && secondary.source == 1U
+                        && secondary.ordinal == coupon_ordinal))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+[[nodiscard]] SecondaryOrdinalSemantics
+ambiguous_common_ordinal_position_evidence(
+    const checkpoint::RoomProgressCheckpoint& room,
+    const checkpoint::SecondaryGroundCheckpoint& ground) noexcept {
+    const std::uint16_t task5_spawn = static_cast<std::uint16_t>(
+        ground.ordinal / 4U);
+    const std::uint16_t canonical_spawn = static_cast<std::uint16_t>(
+        ground.ordinal / 2U);
+    const bool task5_position = spawn_has_exact_drop_position(
+        room, task5_spawn, ground.position,
+        SecondaryOrdinalSemantics::task5);
+    const bool canonical_position = spawn_has_exact_drop_position(
+        room, canonical_spawn, ground.position,
+        SecondaryOrdinalSemantics::canonical);
+    if (task5_position != canonical_position) {
+        return task5_position ? SecondaryOrdinalSemantics::task5
+                              : SecondaryOrdinalSemantics::canonical;
+    }
+    const bool task5_defeated = bit_is_set(room.defeat_bits, task5_spawn);
+    const bool canonical_defeated =
+        bit_is_set(room.defeat_bits, canonical_spawn);
+    if (task5_defeated != canonical_defeated) {
+        return task5_defeated ? SecondaryOrdinalSemantics::task5
+                              : SecondaryOrdinalSemantics::canonical;
+    }
+    return SecondaryOrdinalSemantics::unknown;
+}
+
 [[nodiscard]] bool migrate_task5_secondary_ordinals(
     checkpoint::SaveCheckpointSlot& slot) noexcept {
     auto& room = slot.room_progress;
@@ -926,24 +1036,72 @@ void set_bit(std::array<std::uint64_t, Size>& bits,
             ordinal >= checkpoint::kAbyssMaterialOrdinalBegin
                 ? task5_ordinal : ordinal);
     }
-    if (room.secondary_claim_bits != expected_task5_claims) return false;
+    const bool claims_match_task5 =
+        room.secondary_claim_bits == expected_task5_claims;
+    const bool claims_match_canonical =
+        room.secondary_claim_bits == canonical_claims;
+    if (!claims_match_task5 && !claims_match_canonical) return false;
+
+    SecondaryOrdinalSemantics semantics = SecondaryOrdinalSemantics::unknown;
+    if (claims_match_task5 != claims_match_canonical
+            && !add_secondary_ordinal_evidence(semantics,
+                claims_match_task5 ? SecondaryOrdinalSemantics::task5
+                                   : SecondaryOrdinalSemantics::canonical)) {
+        return false;
+    }
+
+    bool has_semantic_sensitive_ground = false;
+    for (std::uint16_t index = 0U;
+            index < room.secondary_ground_count; ++index) {
+        const auto& ground = room.secondary_ground[index];
+        if (ground.tag != checkpoint::SecondaryGroundTag::material) continue;
+        if (ground.source == 2U) continue;
+        if (ground.source > 1U) return false;
+
+        const std::uint32_t ordinary_end = room.generated_monsters * 2U;
+        const bool canonical_possible = ground.ordinal < ordinary_end
+            && ((ground.source == 0U && (ground.ordinal & 1U) == 0U)
+                || (ground.source == 1U && (ground.ordinal & 1U) != 0U));
+        const std::uint16_t task5_canonical =
+            static_cast<std::uint16_t>(ground.ordinal / 2U);
+        const bool task5_possible =
+            ground.ordinal < checkpoint::kOrdinarySecondaryOrdinalEnd
+            && task5_canonical < ordinary_end
+            && ((ground.source == 0U && (task5_canonical & 1U) == 0U)
+                || (ground.source == 1U
+                    && (task5_canonical & 1U) != 0U));
+        if (!canonical_possible && !task5_possible) return false;
+        if (canonical_possible != task5_possible) {
+            if (!add_secondary_ordinal_evidence(semantics,
+                    canonical_possible
+                        ? SecondaryOrdinalSemantics::canonical
+                        : SecondaryOrdinalSemantics::task5)) {
+                return false;
+            }
+            continue;
+        }
+        if (ground.ordinal != 0U) {
+            has_semantic_sensitive_ground = true;
+            if (!add_secondary_ordinal_evidence(semantics,
+                    ambiguous_common_ordinal_position_evidence(
+                        room, ground))) {
+                return false;
+            }
+        }
+    }
+
+    if (semantics == SecondaryOrdinalSemantics::unknown) {
+        if (has_semantic_sensitive_ground) return false;
+        semantics = SecondaryOrdinalSemantics::canonical;
+    }
+    if (semantics == SecondaryOrdinalSemantics::canonical) return true;
 
     for (std::uint16_t index = 0U;
             index < room.secondary_ground_count; ++index) {
         auto& ground = room.secondary_ground[index];
-        if (ground.tag != checkpoint::SecondaryGroundTag::material) continue;
-        if (ground.source <= 1U) {
-            if (ground.ordinal >= checkpoint::kOrdinarySecondaryOrdinalEnd
-                    || (ground.ordinal & 1U) != 0U) {
-                return false;
-            }
-            const std::uint16_t canonical = static_cast<std::uint16_t>(
-                ground.ordinal / 2U);
-            if ((ground.source == 0U && (canonical & 1U) != 0U)
-                    || (ground.source == 1U && (canonical & 1U) == 0U)) {
-                return false;
-            }
-            ground.ordinal = canonical;
+        if (ground.tag == checkpoint::SecondaryGroundTag::material
+                && ground.source <= 1U) {
+            ground.ordinal = static_cast<std::uint16_t>(ground.ordinal / 2U);
         }
     }
     std::sort(room.secondary_ground.begin(),

@@ -14,17 +14,17 @@ set(SCENARIOS
     death_pending
     cleared_abyss_rewards)
 
-# Frozen from the pre-refactor V9 encoder at commit 5ba484f.
+# Frozen after the canonical secondary-ordinal marker became part of V9.
 set(EXPECTED_canonical_none
-    "13822|f3b1558d2808508b2a9ec044a39809b2ba98eae42adb209a14a947bfaebcc1a6")
+    "13823|bdba4164210dad98123380edee8484ace2d1e48ee73d48613607a0a2305f8227")
 set(EXPECTED_active_normal
-    "16825|5551d2b0bd82b76bb87031f5281389f557acd010ab3200bc94426df78aab177e")
+    "16826|2304bcb1264f5ab1ffdf5e546096da82cdedf112dff326b1b3b1992b7f7a0615")
 set(EXPECTED_started_abyss
-    "16825|6ef9aa75b25c0db2a35d3ffd7a9e41a2d12f10e4511a2496826100f16931d62d")
+    "16826|c62b3f2ca64869200d8bec6ecbf2a4a376c84eb783c0c7d229daf147cce76395")
 set(EXPECTED_death_pending
-    "16868|b40b01a2a57e8755f80bd374d631e0a4280bc0bc26c4e4ed08d49e28aab4b934")
+    "16869|62d396810971eb2ad30bffd92a4c5ed0612e1be9ecc759bf844b56e376d45ca7")
 set(EXPECTED_cleared_abyss_rewards
-    "13902|3c70cf7631087f983f6e7ff82a62781ed6f7ab64131477e28f71111ef4e21ef3")
+    "13903|275f3f016084cfada53247ccc610666646b4d7dd7d188ceda34fe79bb6d3efa4")
 
 set(FAILURES "")
 foreach(SCENARIO IN LISTS SCENARIOS)

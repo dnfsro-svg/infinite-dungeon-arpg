@@ -607,9 +607,11 @@ test::Failure task5_v9_secondary_ordinals_migrate_to_canonical_once() noexcept {
     room.secondary_ground[0U] = {};
     room.secondary_ground[0U].tag =
         checkpoint::SecondaryGroundTag::material;
-    room.secondary_ground[0U].ordinal = 8U;
+    ARPG_REQUIRE(room.combat.monster_count >= 3U);
+    ARPG_REQUIRE(room.combat.monsters[1U].ordinal == 1U);
+    room.secondary_ground[0U].ordinal = 4U;
     room.secondary_ground[0U].source = 0U;
-    room.secondary_ground[0U].position = {12.25F, -7.5F, 0.0F};
+    room.secondary_ground[0U].position = room.combat.monsters[1U].position;
     room.secondary_ground[0U].material =
         items::MaterialId::reinforcement_stone;
     room.secondary_ground[1U] = {};
@@ -642,7 +644,7 @@ test::Failure task5_v9_secondary_ordinals_migrate_to_canonical_once() noexcept {
     ARPG_REQUIRE(migrated);
     const auto& restored = decoded->room_progress;
     ARPG_REQUIRE(restored.secondary_ground_count == 2U);
-    ARPG_REQUIRE(restored.secondary_ground[0U].ordinal == 4U);
+    ARPG_REQUIRE(restored.secondary_ground[0U].ordinal == 2U);
     ARPG_REQUIRE(restored.secondary_ground[0U].source == 0U);
     ARPG_REQUIRE(restored.secondary_ground[1U].ordinal == 7U);
     ARPG_REQUIRE(restored.secondary_ground[1U].source == 1U);
@@ -656,6 +658,208 @@ test::Failure task5_v9_secondary_ordinals_migrate_to_canonical_once() noexcept {
         & (std::uint64_t{1U} << 26U)) == 0U);
     ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
         restored, decoded->state));
+    return {};
+}
+
+test::Failure unmarked_task5_common_ordinal_uses_spawn_position() noexcept {
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> source{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> decoded{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<std::uint8_t[]> bytes{
+        new (std::nothrow) std::uint8_t[
+            persistence::kMaximumEncodedCheckpointBytes]};
+    ARPG_REQUIRE(source != nullptr && decoded != nullptr && bytes != nullptr);
+    ARPG_REQUIRE(make_fixture(*source));
+    clear_secondary_progress(*source);
+
+    auto& room = source->room_progress;
+    ARPG_REQUIRE(room.combat.monster_count >= 3U);
+    ARPG_REQUIRE(room.combat.monsters[1U].ordinal == 1U);
+    room.secondary_ground_count = 1U;
+    room.secondary_ground[0U] = {};
+    room.secondary_ground[0U].tag =
+        checkpoint::SecondaryGroundTag::material;
+    room.secondary_ground[0U].ordinal = 4U;
+    room.secondary_ground[0U].source = 0U;
+    room.secondary_ground[0U].position = room.combat.monsters[1U].position;
+    room.secondary_ground[0U].material =
+        items::MaterialId::reinforcement_stone;
+    ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
+        room, source->state));
+
+    std::size_t written{};
+    ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(*source,
+        bytes.get(), persistence::kMaximumEncodedCheckpointBytes, written)
+        == persistence::CodecError::none);
+    ARPG_REQUIRE(bytes[written - 1U]
+        == persistence::kV9CanonicalSecondaryOrdinalMarker);
+    --written;
+    refresh_v9_envelope(bytes.get(), written);
+
+    bool migrated = false;
+    ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
+        bytes.get(), written, *decoded, migrated)
+        == persistence::CodecError::none);
+    ARPG_REQUIRE(migrated);
+    ARPG_REQUIRE(decoded->room_progress.secondary_ground_count == 1U);
+    ARPG_REQUIRE(decoded->room_progress.secondary_ground[0U].ordinal == 2U);
+    ARPG_REQUIRE(decoded->room_progress.secondary_ground[0U].source == 0U);
+    return {};
+}
+
+test::Failure unmarked_canonical_v9_common_ordinal_uses_spawn_position()
+    noexcept {
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> source{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> decoded{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<std::uint8_t[]> bytes{
+        new (std::nothrow) std::uint8_t[
+            persistence::kMaximumEncodedCheckpointBytes]};
+    std::unique_ptr<std::uint8_t[]> rewritten{
+        new (std::nothrow) std::uint8_t[
+            persistence::kMaximumEncodedCheckpointBytes]};
+    ARPG_REQUIRE(source != nullptr && decoded != nullptr && bytes != nullptr
+        && rewritten != nullptr);
+    ARPG_REQUIRE(make_fixture(*source));
+    clear_secondary_progress(*source);
+
+    auto& room = source->room_progress;
+    ARPG_REQUIRE(room.combat.monster_count >= 3U);
+    ARPG_REQUIRE(room.combat.monsters[2U].ordinal == 2U);
+    room.secondary_ground_count = 1U;
+    room.secondary_ground[0U] = {};
+    room.secondary_ground[0U].tag =
+        checkpoint::SecondaryGroundTag::material;
+    room.secondary_ground[0U].ordinal = 4U;
+    room.secondary_ground[0U].source = 0U;
+    room.secondary_ground[0U].position = room.combat.monsters[2U].position;
+    room.secondary_ground[0U].material =
+        items::MaterialId::reinforcement_stone;
+    ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
+        room, source->state));
+
+    std::size_t written{};
+    ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(*source,
+        bytes.get(), persistence::kMaximumEncodedCheckpointBytes, written)
+        == persistence::CodecError::none);
+    ARPG_REQUIRE(bytes[written - 1U]
+        == persistence::kV9CanonicalSecondaryOrdinalMarker);
+    --written;
+    refresh_v9_envelope(bytes.get(), written);
+
+    bool migrated = false;
+    ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
+        bytes.get(), written, *decoded, migrated)
+        == persistence::CodecError::none);
+    ARPG_REQUIRE(migrated);
+    ARPG_REQUIRE(decoded->room_progress.secondary_ground_count == 1U);
+    ARPG_REQUIRE(decoded->room_progress.secondary_ground[0U].ordinal == 4U);
+    ARPG_REQUIRE(decoded->room_progress.secondary_ground[0U].source == 0U);
+
+    std::size_t rewritten_size{};
+    ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(*decoded,
+        rewritten.get(), persistence::kMaximumEncodedCheckpointBytes,
+        rewritten_size) == persistence::CodecError::none);
+    ARPG_REQUIRE(rewritten[rewritten_size - 1U]
+        == persistence::kV9CanonicalSecondaryOrdinalMarker);
+    return {};
+}
+
+test::Failure unmarked_v9_rejects_ambiguous_common_ordinal_position()
+    noexcept {
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> source{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> decoded{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<std::uint8_t[]> bytes{
+        new (std::nothrow) std::uint8_t[
+            persistence::kMaximumEncodedCheckpointBytes]};
+    ARPG_REQUIRE(source != nullptr && decoded != nullptr && bytes != nullptr);
+    ARPG_REQUIRE(make_fixture(*source));
+    clear_secondary_progress(*source);
+
+    auto& room = source->room_progress;
+    ARPG_REQUIRE(room.combat.monster_count >= 3U);
+    room.combat.monsters[2U].position = room.combat.monsters[1U].position;
+    room.secondary_ground_count = 1U;
+    room.secondary_ground[0U] = {};
+    room.secondary_ground[0U].tag =
+        checkpoint::SecondaryGroundTag::material;
+    room.secondary_ground[0U].ordinal = 4U;
+    room.secondary_ground[0U].source = 0U;
+    room.secondary_ground[0U].position = room.combat.monsters[1U].position;
+    room.secondary_ground[0U].material =
+        items::MaterialId::reinforcement_stone;
+    ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
+        room, source->state));
+
+    std::size_t written{};
+    ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(*source,
+        bytes.get(), persistence::kMaximumEncodedCheckpointBytes, written)
+        == persistence::CodecError::none);
+    ARPG_REQUIRE(bytes[written - 1U]
+        == persistence::kV9CanonicalSecondaryOrdinalMarker);
+    --written;
+    refresh_v9_envelope(bytes.get(), written);
+
+    bool migrated = false;
+    ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
+        bytes.get(), written, *decoded, migrated)
+        == persistence::CodecError::invalid_state);
+    return {};
+}
+
+test::Failure unmarked_v9_rejects_mixed_secondary_ordinal_semantics()
+    noexcept {
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> source{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<checkpoint::SaveCheckpointSlot> decoded{
+        new (std::nothrow) checkpoint::SaveCheckpointSlot{}};
+    std::unique_ptr<std::uint8_t[]> bytes{
+        new (std::nothrow) std::uint8_t[
+            persistence::kMaximumEncodedCheckpointBytes]};
+    ARPG_REQUIRE(source != nullptr && decoded != nullptr && bytes != nullptr);
+    ARPG_REQUIRE(make_fixture(*source));
+    clear_secondary_progress(*source);
+
+    auto& room = source->room_progress;
+    ARPG_REQUIRE(room.combat.monster_count >= 3U);
+    room.secondary_ground_count = 2U;
+    room.secondary_ground[0U] = {};
+    room.secondary_ground[0U].tag =
+        checkpoint::SecondaryGroundTag::material;
+    room.secondary_ground[0U].ordinal = 4U;
+    room.secondary_ground[0U].source = 0U;
+    room.secondary_ground[0U].position = room.combat.monsters[2U].position;
+    room.secondary_ground[0U].material =
+        items::MaterialId::reinforcement_stone;
+    room.secondary_ground[1U] = {};
+    room.secondary_ground[1U].tag =
+        checkpoint::SecondaryGroundTag::material;
+    room.secondary_ground[1U].ordinal = 5U;
+    room.secondary_ground[1U].source = 1U;
+    room.secondary_ground[1U].position = room.combat.monsters[1U].position;
+    room.secondary_ground[1U].material = items::MaterialId::coupon_6;
+    ARPG_REQUIRE(checkpoint::valid_room_progress_checkpoint_structural(
+        room, source->state));
+
+    std::size_t written{};
+    ARPG_REQUIRE(persistence::encode_checkpoint_v9_into(*source,
+        bytes.get(), persistence::kMaximumEncodedCheckpointBytes, written)
+        == persistence::CodecError::none);
+    ARPG_REQUIRE(rewrite_coupon_record_as_task5_wire(
+        bytes.get(), written, room.secondary_ground[1U], 6U));
+    ARPG_REQUIRE(bytes[written - 1U]
+        == persistence::kV9CanonicalSecondaryOrdinalMarker);
+    --written;
+    refresh_v9_envelope(bytes.get(), written);
+
+    bool migrated = false;
+    ARPG_REQUIRE(persistence::decode_checkpoint_v9_into(
+        bytes.get(), written, *decoded, migrated)
+        == persistence::CodecError::invalid_state);
     return {};
 }
 
@@ -1657,6 +1861,14 @@ constexpr test::TestCase kCases[] = {
     {"v9 maximum room round trip", &v9_round_trip_preserves_large_room_fields},
     {"task5 v9 secondary ordinal migration",
         &task5_v9_secondary_ordinals_migrate_to_canonical_once},
+    {"unmarked task5 common ordinal uses spawn position",
+        &unmarked_task5_common_ordinal_uses_spawn_position},
+    {"unmarked canonical v9 common ordinal uses spawn position",
+        &unmarked_canonical_v9_common_ordinal_uses_spawn_position},
+    {"unmarked v9 rejects ambiguous common ordinal position",
+        &unmarked_v9_rejects_ambiguous_common_ordinal_position},
+    {"unmarked v9 rejects mixed secondary ordinal semantics",
+        &unmarked_v9_rejects_mixed_secondary_ordinal_semantics},
     {"maximum legal v9 ground and claim payload round trip",
         &maximum_legal_v9_ground_and_claim_payloads_round_trip},
     {"high ordinal session v9 round trip and exact claims",
