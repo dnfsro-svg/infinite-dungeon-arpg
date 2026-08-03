@@ -10,8 +10,11 @@
 #include "dungeon/room_generation.hpp"
 #include "combat/room_bounds.hpp"
 #include "dungeon_view_math.hpp"
+#include "host_input.hpp"
 #include "host_validation.hpp"
 #include "host_validation_stage10_11.hpp"
+#include "host_validation_stage11c.hpp"
+#include "host_validation_stage11d.hpp"
 #include "platform/settings/settings_store.hpp"
 #include "raylib_host.hpp"
 #include "../dungeon/dungeon_test_support.hpp"
@@ -1430,6 +1433,354 @@ arpg::test::Failure abyss_skill_whitelist_only_contains_clear_scenarios()
     return {};
 }
 
+arpg::test::Failure stage11c_full_clear_skips_frame_combat_injection()
+    noexcept {
+    dungeon::DungeonSnapshot snapshot = combat_with_target(false);
+    snapshot.combat->player.position = {0.0F, 0.0F, 0.0F};
+    snapshot.combat->player.facing = arpg::combat::Facing::left;
+    snapshot.combat->monsters[0].position = {-1.0F, 0.62F, 0.0F};
+    snapshot.combat->skill_cooldowns[0] = 1U;
+    snapshot.combat->skill_cooldowns[1] = 1U;
+    platform::RaylibHostConfig config{};
+    config.stage11c_hud_validation =
+        platform::Stage11CHudValidationScenario::cleared_exit;
+    validation::Stage11CHudValidationState state{};
+    const auto settings = arpg::settings::default_settings();
+
+    const auto keys = validation::inject_stage11c_physical_edges(
+        {}, config, settings, snapshot, state);
+    const auto input = platform::map_host_frame_input(settings, keys);
+
+    ARPG_REQUIRE(input.movement.x == 0);
+    ARPG_REQUIRE(input.movement.y == 0);
+    ARPG_REQUIRE(!input.combat_actions[0]);
+    ARPG_REQUIRE(!input.combat_actions[1]);
+    ARPG_REQUIRE(!input.active_skill_slots[0]);
+    ARPG_REQUIRE(!input.active_skill_slots[1]);
+
+    snapshot.phase = dungeon::RoomPhase::awaiting_exit;
+    config.stage11c_hud_validation =
+        platform::Stage11CHudValidationScenario::abyss_abandon;
+    const auto exit_keys = validation::inject_stage11c_physical_edges(
+        {}, config, settings, snapshot, state);
+    const auto exit_input = platform::map_host_frame_input(
+        settings, exit_keys);
+    ARPG_REQUIRE(exit_input.movement.x == 0);
+    ARPG_REQUIRE(exit_input.movement.y == 0);
+    return {};
+}
+
+arpg::test::Failure stage11c_full_clear_fixed_steps_ignore_early_exit()
+    noexcept {
+    dungeon::DungeonSnapshot snapshot = combat_with_target(false);
+    snapshot.exits_unlocked = true;
+    snapshot.combat->player.position = {};
+    snapshot.combat->monsters[0].position = {-50.0F, 0.0F, 0.0F};
+    platform::RaylibHostConfig config = right_abyss_door_config();
+    config.stage11c_hud_validation =
+        platform::Stage11CHudValidationScenario::cleared_exit;
+    const auto runtime = platform::HostValidationRuntime::create(
+        config, arpg::settings::SettingsLoadStatus::loaded);
+    dungeon::DungeonSession session{};
+
+    ARPG_REQUIRE(runtime != nullptr);
+    const auto movement = runtime->fixed_step_movement(session, snapshot, {});
+    ARPG_REQUIRE(movement.x == -1);
+    ARPG_REQUIRE(movement.y == 0);
+    return {};
+}
+
+arpg::test::Failure stage11c_full_clear_awaiting_exit_joins_grid_before_door()
+    noexcept {
+    dungeon::DungeonSession session{};
+    dungeon::DungeonSnapshot snapshot = unlocked_combat_snapshot();
+    snapshot.phase = dungeon::RoomPhase::awaiting_exit;
+    snapshot.remaining_targets = 0U;
+    snapshot.combat->player.hp = 100;
+    snapshot.combat->player.position = {3.0F, 0.0F, 0.0F};
+    platform::RaylibHostConfig config{};
+    config.validation_abyss_direction = static_cast<std::uint8_t>(
+        dungeon::ExitDirection::up);
+    config.stage11c_hud_validation =
+        platform::Stage11CHudValidationScenario::abyss_abandon;
+    const auto runtime = platform::HostValidationRuntime::create(
+        config, arpg::settings::SettingsLoadStatus::loaded);
+
+    ARPG_REQUIRE(runtime != nullptr);
+    const auto movement = runtime->fixed_step_movement(
+        session, snapshot, {});
+
+    ARPG_REQUIRE(movement.x == -1);
+    ARPG_REQUIRE(movement.y == 0);
+
+    snapshot.is_abyss = true;
+    snapshot.abyss_exit_confirmation_armed = true;
+    const auto armed = runtime->fixed_step_movement(
+        session, snapshot, {1, 1});
+    ARPG_REQUIRE(armed.x == 0);
+    ARPG_REQUIRE(armed.y == 0);
+
+    platform::RaylibHostConfig cleared_config{};
+    cleared_config.stage11c_hud_validation =
+        platform::Stage11CHudValidationScenario::cleared_exit;
+    const auto cleared_runtime = platform::HostValidationRuntime::create(
+        cleared_config, arpg::settings::SettingsLoadStatus::loaded);
+    snapshot.is_abyss = false;
+    snapshot.abyss_exit_confirmation_armed = false;
+    ARPG_REQUIRE(cleared_runtime != nullptr);
+    const auto preserved = cleared_runtime->fixed_step_movement(
+        session, snapshot, {1, 1});
+    ARPG_REQUIRE(preserved.x == 1);
+    ARPG_REQUIRE(preserved.y == 1);
+    return {};
+}
+
+arpg::test::Failure stage11c_full_clear_reacquires_after_failed_local_detour()
+    noexcept {
+    dungeon::DungeonSession session{};
+    dungeon::DungeonSnapshot snapshot = combat_with_target(false);
+    snapshot.remaining_targets = 2U;
+    auto& alternate = snapshot.combat->monsters[1U];
+    alternate.active = true;
+    alternate.hp = 100;
+    alternate.max_hp = 100;
+    alternate.monster_ordinal = 8U;
+    alternate.position = {-40.0F, 0.0F, 0.0F};
+    snapshot.combat->monster_count = 2U;
+    platform::RaylibHostConfig config{};
+    config.stage11c_hud_validation =
+        platform::Stage11CHudValidationScenario::abyss_abandon;
+    validation::Stage10ValidationState state{};
+    state.sweep_escape = true;
+    state.stalled_target_ordinal = 7U;
+
+    static_cast<void>(validation::stage10_validation_input(
+        session, snapshot, config, state));
+
+    ARPG_REQUIRE(!state.sweep_escape);
+    ARPG_REQUIRE(state.ranged_target_ordinal == 8U);
+
+    validation::Stage10ValidationState lane_recovery{};
+    lane_recovery.sweep_escape = true;
+    lane_recovery.recover_until_light_lane = true;
+    lane_recovery.stalled_target_ordinal = 7U;
+    alternate.position = {-40.0F, 40.0F, 0.0F};
+
+    const auto recovery_movement = validation::stage10_validation_input(
+        session, snapshot, config, lane_recovery);
+
+    ARPG_REQUIRE(lane_recovery.sweep_escape);
+    ARPG_REQUIRE(lane_recovery.recover_until_light_lane);
+    ARPG_REQUIRE(lane_recovery.ranged_target_ordinal
+        == arpg::combat::kInvalidMonsterOrdinal);
+    ARPG_REQUIRE(recovery_movement.x != 0 || recovery_movement.y != 0);
+
+    validation::Stage10ValidationState reached_waypoint{};
+    reached_waypoint.melee_chain = true;
+    reached_waypoint.sweep_escape = true;
+    reached_waypoint.recover_until_light_lane = true;
+    reached_waypoint.stalled_target_ordinal =
+        arpg::combat::kInvalidMonsterOrdinal;
+    snapshot.combat->player.position = {
+        arpg::combat::room_bounds::min_x,
+        arpg::combat::room_bounds::min_y
+            + 0.5F * arpg::combat::room_spatial::cell_depth,
+        0.0F,
+    };
+    snapshot.combat->monsters[0U].position = {-40.0F, 40.0F, 0.0F};
+    alternate.position = {-30.0F, 40.0F, 0.0F};
+
+    static_cast<void>(validation::stage10_validation_input(
+        session, snapshot, config, reached_waypoint));
+
+    ARPG_REQUIRE(!reached_waypoint.sweep_escape);
+    ARPG_REQUIRE(!reached_waypoint.recover_until_light_lane);
+    ARPG_REQUIRE(reached_waypoint.ranged_target_ordinal
+        != arpg::combat::kInvalidMonsterOrdinal);
+    return {};
+}
+
+arpg::test::Failure
+stage11d_priority_target_waits_for_confirmed_death_before_advancing()
+    noexcept {
+    dungeon::DungeonSnapshot snapshot = combat_with_target(false);
+    snapshot.initial_monster_count = 300U;
+    snapshot.defeated_monster_count = 0U;
+    snapshot.remaining_targets = 300U;
+    auto& first = snapshot.combat->monsters[0U];
+    first.spawn_ordinal = 124U;
+    auto& second = snapshot.combat->monsters[1U];
+    second.active = true;
+    second.hp = 100;
+    second.max_hp = 100;
+    second.spawn_ordinal = 125U;
+    auto& streamed_lower = snapshot.combat->monsters[2U];
+    streamed_lower.active = true;
+    streamed_lower.hp = 100;
+    streamed_lower.max_hp = 100;
+    streamed_lower.spawn_ordinal = 6U;
+    snapshot.combat->monster_count = 3U;
+    validation::Stage11DLootValidationState state{};
+
+    ARPG_REQUIRE(validation::stage11d_priority_monster_ordinal(
+        snapshot, state) == 6U);
+    streamed_lower.active = false;
+    snapshot.defeated_monster_count = 1U;
+    ARPG_REQUIRE(validation::stage11d_priority_monster_ordinal(
+        snapshot, state) == arpg::combat::kInvalidMonsterOrdinal);
+    ARPG_REQUIRE(state.target_ordinal == 6U);
+
+    snapshot.ground_item_count = 1U;
+    snapshot.ground_items[0U].ordinal = 6U;
+    snapshot.ground_items[0U].source = dungeon::GroundItemSource::monster_drop;
+    ARPG_REQUIRE(validation::stage11d_priority_monster_ordinal(
+        snapshot, state) == 124U);
+    snapshot.ground_item_count = 0U;
+
+    streamed_lower.active = true;
+    ARPG_REQUIRE(validation::stage11d_priority_monster_ordinal(
+        snapshot, state) == 124U);
+
+    first.active = false;
+    snapshot.defeated_monster_count = 2U;
+    ARPG_REQUIRE(validation::stage11d_priority_monster_ordinal(
+        snapshot, state) == arpg::combat::kInvalidMonsterOrdinal);
+    ARPG_REQUIRE(state.target_ordinal == 124U);
+    first.active = true;
+    first.hp = 0;
+    ARPG_REQUIRE(validation::stage11d_priority_monster_ordinal(
+        snapshot, state) == 125U);
+
+    second.active = false;
+    ARPG_REQUIRE(validation::stage11d_priority_monster_ordinal(
+        snapshot, state) == arpg::combat::kInvalidMonsterOrdinal);
+    ARPG_REQUIRE(state.target_ordinal == 125U);
+    second.active = true;
+    second.hp = 0;
+
+    snapshot.defeated_monster_count = 3U;
+    auto& later = snapshot.combat->monsters[3U];
+    later.active = true;
+    later.hp = 100;
+    later.max_hp = 100;
+    later.spawn_ordinal = 137U;
+    snapshot.combat->monster_count = 4U;
+    ARPG_REQUIRE(validation::stage11d_priority_monster_ordinal(
+        snapshot, state) == 137U);
+
+    later.active = false;
+    snapshot.defeated_monster_count = 4U;
+    ARPG_REQUIRE(validation::stage11d_priority_monster_ordinal(
+        snapshot, state) == arpg::combat::kInvalidMonsterOrdinal);
+    ARPG_REQUIRE(state.target_ordinal == 137U);
+    return {};
+}
+
+arpg::test::Failure stage11d_rearm_suspends_physical_injection() noexcept {
+    dungeon::DungeonSnapshot snapshot = combat_with_target(true);
+    snapshot.combat->player.position = {};
+    snapshot.combat->player.facing = arpg::combat::Facing::right;
+    snapshot.combat->monsters[0U].position = {1.0F, 0.0F, 0.0F};
+    platform::RaylibHostConfig config{};
+    config.stage11d_loot_validation =
+        platform::Stage11DLootValidationScenario::rare_only_abyss;
+    const auto runtime = platform::HostValidationRuntime::create(
+        config, arpg::settings::SettingsLoadStatus::loaded);
+    const auto settings = arpg::settings::default_settings();
+
+    ARPG_REQUIRE(runtime != nullptr);
+    const auto keys = runtime->inject_physical_edges(
+        {}, settings, snapshot, true);
+    const auto input = platform::map_host_frame_input(settings, keys);
+
+    ARPG_REQUIRE(input.movement.x == 0);
+    ARPG_REQUIRE(input.movement.y == 0);
+    ARPG_REQUIRE(!input.combat_actions[0]);
+    ARPG_REQUIRE(!input.combat_actions[1]);
+    ARPG_REQUIRE(!input.combat_actions[2]);
+    for (const bool skill : input.active_skill_slots) {
+        ARPG_REQUIRE(!skill);
+    }
+    return {};
+}
+
+arpg::test::Failure
+stage11d_near_behind_target_turns_before_attacking() noexcept {
+    dungeon::DungeonSnapshot snapshot = combat_with_target(true);
+    snapshot.combat->player.position = {};
+    snapshot.combat->player.facing = arpg::combat::Facing::right;
+    snapshot.combat->monsters[0U].position = {-0.10F, 0.0F, 0.0F};
+    platform::RaylibHostConfig config{};
+    config.stage11d_loot_validation =
+        platform::Stage11DLootValidationScenario::rare_only_abyss;
+    validation::Stage11DLootValidationState state{};
+    const auto settings = arpg::settings::default_settings();
+
+    const auto keys = validation::inject_stage11d_physical_edges(
+        {}, config, settings, snapshot, state);
+    const auto input = platform::map_host_frame_input(settings, keys);
+
+    ARPG_REQUIRE(input.movement.x == -1);
+    ARPG_REQUIRE(input.movement.y == 0);
+    ARPG_REQUIRE(!input.combat_actions[0]);
+    ARPG_REQUIRE(!input.combat_actions[1]);
+    ARPG_REQUIRE(!input.combat_actions[2]);
+    for (const bool skill : input.active_skill_slots) {
+        ARPG_REQUIRE(!skill);
+    }
+    return {};
+}
+
+arpg::test::Failure
+stage11d_streaming_gap_uses_physical_grid_sweep() noexcept {
+    dungeon::DungeonSnapshot snapshot = combat_with_target(true);
+    snapshot.combat->player.position = {};
+    snapshot.combat->monsters[0U].active = false;
+    snapshot.combat->monster_count = 0U;
+    snapshot.remaining_targets = 1U;
+    platform::RaylibHostConfig config{};
+    config.stage11d_loot_validation =
+        platform::Stage11DLootValidationScenario::rare_only_abyss;
+    validation::Stage11DLootValidationState state{};
+    const auto settings = arpg::settings::default_settings();
+
+    const auto keys = validation::inject_stage11d_physical_edges(
+        {}, config, settings, snapshot, state);
+    const auto input = platform::map_host_frame_input(settings, keys);
+
+    ARPG_REQUIRE(input.movement.x != 0 || input.movement.y != 0);
+    ARPG_REQUIRE(!input.combat_actions[0]);
+    ARPG_REQUIRE(!input.combat_actions[1]);
+    ARPG_REQUIRE(!input.combat_actions[2]);
+    return {};
+}
+
+arpg::test::Failure
+stage11d_rare_abyss_area_skill_uses_physical_slot() noexcept {
+    dungeon::DungeonSnapshot snapshot = combat_with_target(true);
+    snapshot.combat->player.position = {};
+    snapshot.combat->player.facing = arpg::combat::Facing::right;
+    snapshot.combat->monsters[0U].position = {3.5F, 0.0F, 0.0F};
+    snapshot.combat->skill_cooldowns[0U] = 1U;
+    snapshot.combat->skill_cooldowns[1U] = 0U;
+    platform::RaylibHostConfig config{};
+    config.stage11d_loot_validation =
+        platform::Stage11DLootValidationScenario::rare_only_abyss;
+    validation::Stage11DLootValidationState state{};
+    const auto settings = arpg::settings::default_settings();
+
+    const auto keys = validation::inject_stage11d_physical_edges(
+        {}, config, settings, snapshot, state);
+    const auto input = platform::map_host_frame_input(settings, keys);
+
+    ARPG_REQUIRE(input.active_skill_slots[1U]);
+    ARPG_REQUIRE(!input.active_skill_slots[0U]);
+    ARPG_REQUIRE(!input.combat_actions[0]);
+    ARPG_REQUIRE(!input.combat_actions[1]);
+    ARPG_REQUIRE(!input.combat_actions[2]);
+    return {};
+}
+
 }  // namespace
 
 arpg::test::TestSuite host_validation_exit_suite() noexcept {
@@ -1518,6 +1869,24 @@ arpg::test::TestSuite host_validation_exit_suite() noexcept {
             &hole_driver_defeats_last_target_before_routing_to_hole},
         {"abyss_skill_whitelist_only_contains_clear_scenarios",
             &abyss_skill_whitelist_only_contains_clear_scenarios},
+        {"stage11c_full_clear_skips_frame_combat_injection",
+            &stage11c_full_clear_skips_frame_combat_injection},
+        {"stage11c_full_clear_fixed_steps_ignore_early_exit",
+            &stage11c_full_clear_fixed_steps_ignore_early_exit},
+        {"stage11c_full_clear_awaiting_exit_joins_grid_before_door",
+            &stage11c_full_clear_awaiting_exit_joins_grid_before_door},
+        {"stage11c_full_clear_reacquires_after_failed_local_detour",
+            &stage11c_full_clear_reacquires_after_failed_local_detour},
+        {"stage11d_priority_target_waits_for_confirmed_death_before_advancing",
+            &stage11d_priority_target_waits_for_confirmed_death_before_advancing},
+        {"stage11d_rearm_suspends_physical_injection",
+            &stage11d_rearm_suspends_physical_injection},
+        {"stage11d_near_behind_target_turns_before_attacking",
+            &stage11d_near_behind_target_turns_before_attacking},
+        {"stage11d_streaming_gap_uses_physical_grid_sweep",
+            &stage11d_streaming_gap_uses_physical_grid_sweep},
+        {"stage11d_rare_abyss_area_skill_uses_physical_slot",
+            &stage11d_rare_abyss_area_skill_uses_physical_slot},
     };
     return arpg::test::make_suite("host_validation_exit", tests);
 }
