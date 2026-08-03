@@ -1,8 +1,6 @@
 #include "host_validation_stage11c.hpp"
 
-#include "combat/active_skill_runtime.hpp"
 #include "combat/combat_types.hpp"
-#include "combat/room_bounds.hpp"
 #include "dungeon/dungeon_types.hpp"
 #include "host_input.hpp"
 #include "host_validation_input.hpp"
@@ -11,8 +9,6 @@
 
 #include <raylib.h>
 
-#include <algorithm>
-#include <cmath>
 #include <fstream>
 
 namespace arpg::platform::host_validation {
@@ -93,81 +89,15 @@ void stage11c_observe_movement_progress(
     state.movement_was_requested = false;
 }
 
-[[nodiscard]] bool stage11c_inject_area_skill(
-    PhysicalKeySnapshot& snapshot,
-    const combat::CombatSnapshot& combat_snapshot) noexcept {
-    if (!stage11c_player_controllable(combat_snapshot)) return false;
-    const combat::PlayerSnapshot& player = combat_snapshot.player;
-    const float facing = player.facing == combat::Facing::right ? 1.0F : -1.0F;
-    const float storm_x = player.position.x
-        + facing * combat::kStormCenterForward;
-    bool storm_target = false;
-    bool draw_target = false;
-    for (const combat::MonsterSnapshot& monster : combat_snapshot.monsters) {
-        if (!monster.active || monster.hp <= 0) continue;
-        const float storm_dx = monster.position.x - storm_x;
-        const float storm_dy = monster.position.y - player.position.y;
-        storm_target = storm_target
-            || storm_dx * storm_dx + storm_dy * storm_dy
-                <= combat::kStormStrikeRadius * combat::kStormStrikeRadius;
-        const float forward =
-            (monster.position.x - player.position.x) * facing;
-        const float half_width = forward >= 0.0F
-                && forward <= combat::kDrawSlashRange
-            ? combat::kDrawSlashHalfWidthAtEnd
-                * (forward / combat::kDrawSlashRange)
-            : -1.0F;
-        draw_target = draw_target || (half_width >= 0.0F
-            && std::fabs(monster.position.y - player.position.y)
-                <= half_width);
-    }
-    if (storm_target && combat_snapshot.skill_cooldowns[1U] == 0U) {
-        snapshot.active_skill_slots[1U] = true;
-        return true;
-    }
-    if (draw_target && combat_snapshot.skill_cooldowns[0U] == 0U) {
-        snapshot.active_skill_slots[0U] = true;
-        return true;
-    }
-    return false;
-}
-
-[[nodiscard]] combat::Vec3 stage11c_ranged_stance(
-    const combat::CombatSnapshot& combat_snapshot,
-    const combat::MonsterSnapshot& target) noexcept {
-    constexpr float room_center_x =
-        (combat::room_bounds::min_x + combat::room_bounds::max_x) * 0.5F;
-    const combat::Facing facing = target.position.x >= room_center_x
-        ? combat::Facing::right : combat::Facing::left;
-    const float direction = facing == combat::Facing::right ? 1.0F : -1.0F;
-    return {
-        std::clamp(target.position.x
-                - direction * combat::kDrawSlashRange,
-            combat::room_bounds::min_x + 0.5F,
-            combat::room_bounds::max_x - 0.5F),
-        std::clamp(target.position.y,
-            combat::room_bounds::min_y
-                + combat::kDrawSlashHalfWidthAtEnd,
-            combat::room_bounds::max_y
-                - combat::kDrawSlashHalfWidthAtEnd),
-        combat_snapshot.player.position.z,
-    };
-}
-
-[[nodiscard]] bool stage11c_nearby_threat(
-    const combat::CombatSnapshot& combat_snapshot) noexcept {
-    for (const combat::MonsterSnapshot& monster : combat_snapshot.monsters) {
-        if (!monster.active || monster.hp <= 0) continue;
-        const float dx = monster.position.x
-            - combat_snapshot.player.position.x;
-        const float dy = monster.position.y
-            - combat_snapshot.player.position.y;
-        if (dx * dx + dy * dy <= 2.6F * 2.6F) return true;
-    }
-    return false;
-}
-
 }  // namespace
+
+bool stage11c_uses_full_clear_driver(
+    Stage11CHudValidationScenario scenario) noexcept {
+    using Scenario = Stage11CHudValidationScenario;
+    return scenario == Scenario::cleared_exit
+        || scenario == Scenario::abyss_abandon
+        || scenario == Scenario::level_up_points;
+}
 
 PhysicalKeySnapshot inject_stage11c_physical_edges(
     PhysicalKeySnapshot snapshot, const RaylibHostConfig& config,
@@ -183,52 +113,25 @@ PhysicalKeySnapshot inject_stage11c_physical_edges(
         } else if (current.combat.has_value()) {
             const combat::CombatSnapshot& combat_snapshot = *current.combat;
             stage11c_observe_movement_progress(combat_snapshot, state);
+            if (stage11c_uses_full_clear_driver(
+                    config.stage11c_hud_validation)) {
+                return snapshot;
+            }
             if (current.phase == dungeon::RoomPhase::combat) {
                 const combat::MonsterSnapshot* const target =
                     nearest_living_monster(combat_snapshot);
                 if (target != nullptr) {
-                    const bool clears_room = config.stage11c_hud_validation
-                            == Scenario::cleared_exit
-                        || config.stage11c_hud_validation
-                            == Scenario::level_up_points
-                        || config.stage11c_hud_validation
-                            == Scenario::abyss_abandon;
-                    combat::Vec3 destination = target->position;
-                    if (clears_room) {
-                        destination = stage11c_ranged_stance(
-                            combat_snapshot, *target);
-                    }
                     const combat::MovementInput movement =
                         stage11c_recovery_movement(
                             validation_movement_toward(
-                                combat_snapshot.player.position, destination),
+                                combat_snapshot.player.position,
+                                target->position),
                             state);
                     inject_validation_movement(
                         snapshot, settings_data, movement);
                     state.movement_was_requested =
                         movement.x != 0 || movement.y != 0;
-                    const bool skill_requested = clears_room
-                        && stage11c_inject_area_skill(
-                            snapshot, combat_snapshot);
-                    if (clears_room && !skill_requested
-                            && stage11c_player_controllable(combat_snapshot)
-                            && combat_snapshot.player.position.z <= 0.01F
-                            && stage11c_nearby_threat(combat_snapshot)) {
-                        inject_validation_action(snapshot, settings_data,
-                            settings::SettingAction::jump, true);
-                    } else if (clears_room && !skill_requested
-                            && validation_attack_lane(combat_snapshot, *target)) {
-                        inject_validation_action(snapshot, settings_data,
-                            settings::SettingAction::light_attack, true);
-                    }
                 }
-            } else if (config.stage11c_hud_validation == Scenario::abyss_abandon
-                    && current.phase == dungeon::RoomPhase::awaiting_exit) {
-                const dungeon::ExitDirection direction = current.is_abyss
-                    ? dungeon::ExitDirection::right : validation_direction(config);
-                inject_validation_movement(snapshot, settings_data,
-                    validation_exit_movement(
-                        combat_snapshot.player.position, direction));
             }
         }
     }
