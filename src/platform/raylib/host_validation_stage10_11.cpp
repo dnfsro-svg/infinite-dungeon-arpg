@@ -7,6 +7,7 @@
 #include "dungeon/dungeon_session.hpp"
 #include "dungeon_view_math.hpp"
 #include "host_validation_navigation.hpp"
+#include "host_validation_stage11c.hpp"
 #include "raylib_host.hpp"
 
 #include <algorithm>
@@ -444,6 +445,8 @@ combat::MovementInput stage10_validation_input(
     const RaylibHostConfig& config,
     Stage10ValidationState& state) noexcept {
     const Stage10ValidationScenario scenario = config.stage10_validation;
+    const bool force_full_clear = stage11c_uses_full_clear_driver(
+        config.stage11c_hud_validation);
     const bool entering_abyss = !state.entered_abyss && snapshot.is_abyss;
     state.entered_abyss = state.entered_abyss || snapshot.is_abyss;
     if (entering_abyss) {
@@ -467,7 +470,8 @@ combat::MovementInput stage10_validation_input(
             && snapshot.is_abyss) return {};
     if (!snapshot.combat.has_value()) return {};
     if (snapshot.phase == dungeon::RoomPhase::combat) {
-        if (!snapshot.is_abyss && snapshot.exits_unlocked) {
+        if (!force_full_clear && !snapshot.is_abyss
+                && snapshot.exits_unlocked) {
             if (!state.normal_exit_started) {
                 release_stage10_ranged_target(state);
                 state.normal_exit_started = true;
@@ -477,7 +481,7 @@ combat::MovementInput stage10_validation_input(
             return stage10_exit_route_movement(
                 combat_state, direction, state);
         }
-        const bool full_clear_driver = !snapshot.is_abyss
+        const bool full_clear_driver = force_full_clear || !snapshot.is_abyss
             || stage10_validation_abyss_skills_enabled(scenario);
         const bool recover_navigation = full_clear_driver;
         const auto& combat_state = *snapshot.combat;
@@ -532,7 +536,8 @@ combat::MovementInput stage10_validation_input(
                 state.recovery_target = {};
                 state.recovery_target_valid = false;
                 if (state.recover_until_light_lane
-                        && snapshot.remaining_targets == 1U
+                        && (snapshot.remaining_targets == 1U
+                            || force_full_clear)
                         && !local_recovery
                         && !attack_lane_recovered) {
                     state.sweep_waypoint = static_cast<std::uint8_t>(
@@ -564,6 +569,14 @@ combat::MovementInput stage10_validation_input(
                     }
                 }
             }
+        }
+        if (force_full_clear && state.sweep_escape
+                && !state.recovery_target_valid
+                && !state.recover_until_light_lane
+                && state.stalled_target_ordinal
+                    != combat::kInvalidMonsterOrdinal) {
+            state.sweep_escape = false;
+            state.sweep_grid = {};
         }
         const bool retry_released_sole_target =
             snapshot.remaining_targets == 1U
@@ -677,7 +690,8 @@ combat::MovementInput stage10_validation_input(
             && player.active_attack == combat::AttackId::none
             && snapshot.combat->active_skill.id == skills::ActiveSkillId::none
             && snapshot.combat->diagnostics.input_size == 0U;
-        const bool skill_ready = action_ready && (!snapshot.is_abyss
+        const bool skill_ready = action_ready && (force_full_clear
+            || !snapshot.is_abyss
             || stage10_validation_abyss_skills_enabled(scenario));
         bool action_requested = false;
         bool skill_accepted = false;
@@ -739,8 +753,22 @@ combat::MovementInput stage10_validation_input(
     }
     if (snapshot.phase != dungeon::RoomPhase::awaiting_exit) return {};
     if (!snapshot.is_abyss) {
+        if (force_full_clear) {
+            if (!state.normal_exit_started) {
+                release_stage10_ranged_target(state);
+                state.normal_exit_started = true;
+            }
+            return stage10_exit_route_movement(*snapshot.combat,
+                validation_direction(config), state);
+        }
         return validation_exit_movement(snapshot.combat->player.position,
             validation_direction(config));
+    }
+    if (config.stage11c_hud_validation
+            == Stage11CHudValidationScenario::abyss_abandon) {
+        if (snapshot.abyss_exit_confirmation_armed) return {};
+        return stage10_exit_route_movement(*snapshot.combat,
+            dungeon::ExitDirection::right, state, true);
     }
     if (scenario == Stage10ValidationScenario::exit_confirmation) {
         if (snapshot.abyss_exit_confirmation_armed) return {};

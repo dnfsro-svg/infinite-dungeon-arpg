@@ -115,6 +115,18 @@ combat::MovementInput HostValidationRuntime::fixed_step_movement(
         return host_validation::stage10_validation_input(
             session, snapshot, *impl_->config, impl_->states.stage10);
     }
+    const bool stage11c_full_clear_combat =
+        snapshot.phase == dungeon::RoomPhase::combat
+        && host_validation::stage11c_uses_full_clear_driver(
+            impl_->config->stage11c_hud_validation);
+    const bool stage11c_abyss_exit =
+        snapshot.phase == dungeon::RoomPhase::awaiting_exit
+        && impl_->config->stage11c_hud_validation
+            == Stage11CHudValidationScenario::abyss_abandon;
+    if (stage11c_full_clear_combat || stage11c_abyss_exit) {
+        return host_validation::stage10_validation_input(
+            session, snapshot, *impl_->config, impl_->states.stage10);
+    }
     return production_input;
 }
 
