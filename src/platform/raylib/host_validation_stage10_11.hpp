@@ -57,6 +57,14 @@ struct Stage10ValidationState final {
     std::uint32_t chaos_presented_frames{};
 };
 
+struct Stage10RangedValidationPlan final {
+    combat::MonsterOrdinal target_ordinal{
+        combat::kInvalidMonsterOrdinal};
+    combat::MovementInput movement{};
+    bool stance_reached{};
+    bool facing_target{};
+};
+
 struct Stage11ValidationState final {
     bool entered_abyss{};
     bool saw_depth_two{};
@@ -68,6 +76,13 @@ struct Stage11ValidationState final {
 
 [[nodiscard]] bool stage10_validation_abyss_skills_enabled(
     Stage10ValidationScenario) noexcept;
+[[nodiscard]] combat::MovementInput stage10_validation_sweep_movement(
+    const combat::CombatSnapshot&, Stage10GridRouteState&,
+    std::uint8_t&) noexcept;
+[[nodiscard]] Stage10RangedValidationPlan stage10_validation_ranged_plan(
+    const combat::CombatSnapshot&, Stage10ValidationState&) noexcept;
+void stage10_validation_release_ranged_target(
+    Stage10ValidationState&) noexcept;
 
 [[nodiscard]] combat::MovementInput stage10_validation_input(
     dungeon::DungeonSession&, const dungeon::DungeonSnapshot&,
