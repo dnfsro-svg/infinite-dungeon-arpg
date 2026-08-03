@@ -7,6 +7,7 @@
 #include "dungeon/dungeon_session.hpp"
 #include "dungeon_view_math.hpp"
 #include "host_validation_navigation.hpp"
+#include "host_validation_stage11c.hpp"
 #include "raylib_host.hpp"
 
 #include <algorithm>
@@ -438,12 +439,133 @@ bool stage10_validation_abyss_skills_enabled(
         || scenario == Stage10ValidationScenario::abyss_hole_descent;
 }
 
+combat::MovementInput stage10_validation_sweep_movement(
+    const combat::CombatSnapshot& combat_state,
+    Stage10GridRouteState& route,
+    std::uint8_t& waypoint) noexcept {
+    if (settle_grid_route_movement(route, combat_state.player.position)
+            == GridRouteProgress::unreachable) {
+        route = {};
+        waypoint = static_cast<std::uint8_t>(
+            (waypoint + 1U) % kStage10SweepWaypointCount);
+    }
+    combat::Vec3 target = stage10_sweep_waypoint(waypoint);
+    if (stage10_route_target_reached(
+            combat_state.player.position, target)) {
+        route = {};
+        waypoint = static_cast<std::uint8_t>(
+            (waypoint + 1U) % kStage10SweepWaypointCount);
+        target = stage10_sweep_waypoint(waypoint);
+    }
+    const combat::MovementInput movement = grid_route_movement(
+        combat_state.player.position, target, route);
+    if (controllable_movement_snapshot(combat_state)
+            && (movement.x != 0 || movement.y != 0)) {
+        route.pending_movement_progress_check = true;
+        route.previous_position = combat_state.player.position;
+    }
+    return movement;
+}
+
+Stage10RangedValidationPlan stage10_validation_ranged_plan(
+    const combat::CombatSnapshot& combat_state,
+    Stage10ValidationState& state) noexcept {
+    Stage10RangedValidationPlan plan{};
+    const auto& player = combat_state.player;
+    if (state.pending_stance_progress_check) {
+        state.pending_stance_progress_check = false;
+        if (squared_xy_distance(
+                player.position, state.previous_close_position) == 0.0F) {
+            const combat::Vec3 recovery_target = state.ranged_stance;
+            state.stalled_target_ordinal = state.ranged_target_ordinal;
+            release_stage10_ranged_target(state);
+            state.recovery_target = recovery_target;
+            state.recovery_target_valid = true;
+            state.sweep_escape = true;
+        }
+    }
+    if (state.sweep_escape) {
+        const GridRouteProgress progress = settle_grid_route_movement(
+            state.sweep_grid, player.position);
+        const bool local_recovery = state.recovery_target_valid;
+        const combat::Vec3 recovery_target = local_recovery
+            ? state.recovery_target
+            : stage10_sweep_waypoint(state.sweep_waypoint);
+        if (stage10_route_target_reached(
+                player.position, recovery_target)) {
+            state.stalled_target_ordinal = combat::kInvalidMonsterOrdinal;
+            state.recovery_target = {};
+            state.recovery_target_valid = false;
+            state.sweep_escape = false;
+            state.sweep_grid = {};
+        } else if (progress == GridRouteProgress::unreachable) {
+            state.sweep_grid = {};
+            if (local_recovery) {
+                state.recovery_target = {};
+                state.recovery_target_valid = false;
+            } else {
+                state.sweep_waypoint = static_cast<std::uint8_t>(
+                    (state.sweep_waypoint + 1U)
+                        % kStage10SweepWaypointCount);
+                state.stalled_target_ordinal =
+                    combat::kInvalidMonsterOrdinal;
+                state.sweep_escape = false;
+            }
+        }
+        if (state.sweep_escape) {
+            plan.movement = stage10_sweep_movement(
+                player.position, state);
+            if (controllable_movement_snapshot(combat_state)
+                    && (plan.movement.x != 0 || plan.movement.y != 0)) {
+                state.sweep_grid.pending_movement_progress_check = true;
+                state.sweep_grid.previous_position = player.position;
+            }
+            return plan;
+        }
+    }
+    const combat::MonsterSnapshot* target = stage10_ranged_target(
+        combat_state, state);
+    if (target == nullptr) return plan;
+
+    plan.target_ordinal = target->monster_ordinal;
+    plan.movement = stage10_ranged_movement(combat_state, state);
+    plan.stance_reached = stage10_stance_reached(
+        player.position, state);
+    if (!plan.stance_reached) {
+        if (controllable_movement_snapshot(combat_state)
+                && (plan.movement.x != 0 || plan.movement.y != 0)) {
+            state.pending_stance_progress_check = true;
+            state.previous_close_position = player.position;
+        }
+        return plan;
+    }
+
+    plan.movement = {};
+    plan.facing_target = player.facing == state.ranged_facing;
+    if (!plan.facing_target) {
+        plan.movement.x = state.ranged_facing == combat::Facing::right
+            ? 1 : -1;
+        return plan;
+    }
+    state.stance_reached = true;
+    return plan;
+}
+
+void stage10_validation_release_ranged_target(
+    Stage10ValidationState& state) noexcept {
+    release_stage10_ranged_target(state);
+    state.stalled_target_ordinal = combat::kInvalidMonsterOrdinal;
+    state.sweep_escape = false;
+}
+
 combat::MovementInput stage10_validation_input(
     dungeon::DungeonSession& session,
     const dungeon::DungeonSnapshot& snapshot,
     const RaylibHostConfig& config,
     Stage10ValidationState& state) noexcept {
     const Stage10ValidationScenario scenario = config.stage10_validation;
+    const bool force_full_clear = stage11c_uses_full_clear_driver(
+        config.stage11c_hud_validation);
     const bool entering_abyss = !state.entered_abyss && snapshot.is_abyss;
     state.entered_abyss = state.entered_abyss || snapshot.is_abyss;
     if (entering_abyss) {
@@ -467,7 +589,8 @@ combat::MovementInput stage10_validation_input(
             && snapshot.is_abyss) return {};
     if (!snapshot.combat.has_value()) return {};
     if (snapshot.phase == dungeon::RoomPhase::combat) {
-        if (!snapshot.is_abyss && snapshot.exits_unlocked) {
+        if (!force_full_clear && !snapshot.is_abyss
+                && snapshot.exits_unlocked) {
             if (!state.normal_exit_started) {
                 release_stage10_ranged_target(state);
                 state.normal_exit_started = true;
@@ -477,7 +600,7 @@ combat::MovementInput stage10_validation_input(
             return stage10_exit_route_movement(
                 combat_state, direction, state);
         }
-        const bool full_clear_driver = !snapshot.is_abyss
+        const bool full_clear_driver = force_full_clear || !snapshot.is_abyss
             || stage10_validation_abyss_skills_enabled(scenario);
         const bool recover_navigation = full_clear_driver;
         const auto& combat_state = *snapshot.combat;
@@ -532,7 +655,8 @@ combat::MovementInput stage10_validation_input(
                 state.recovery_target = {};
                 state.recovery_target_valid = false;
                 if (state.recover_until_light_lane
-                        && snapshot.remaining_targets == 1U
+                        && (snapshot.remaining_targets == 1U
+                            || force_full_clear)
                         && !local_recovery
                         && !attack_lane_recovered) {
                     state.sweep_waypoint = static_cast<std::uint8_t>(
@@ -564,6 +688,14 @@ combat::MovementInput stage10_validation_input(
                     }
                 }
             }
+        }
+        if (force_full_clear && state.sweep_escape
+                && !state.recovery_target_valid
+                && !state.recover_until_light_lane
+                && state.stalled_target_ordinal
+                    != combat::kInvalidMonsterOrdinal) {
+            state.sweep_escape = false;
+            state.sweep_grid = {};
         }
         const bool retry_released_sole_target =
             snapshot.remaining_targets == 1U
@@ -677,7 +809,8 @@ combat::MovementInput stage10_validation_input(
             && player.active_attack == combat::AttackId::none
             && snapshot.combat->active_skill.id == skills::ActiveSkillId::none
             && snapshot.combat->diagnostics.input_size == 0U;
-        const bool skill_ready = action_ready && (!snapshot.is_abyss
+        const bool skill_ready = action_ready && (force_full_clear
+            || !snapshot.is_abyss
             || stage10_validation_abyss_skills_enabled(scenario));
         bool action_requested = false;
         bool skill_accepted = false;
@@ -739,8 +872,22 @@ combat::MovementInput stage10_validation_input(
     }
     if (snapshot.phase != dungeon::RoomPhase::awaiting_exit) return {};
     if (!snapshot.is_abyss) {
+        if (force_full_clear) {
+            if (!state.normal_exit_started) {
+                release_stage10_ranged_target(state);
+                state.normal_exit_started = true;
+            }
+            return stage10_exit_route_movement(*snapshot.combat,
+                validation_direction(config), state);
+        }
         return validation_exit_movement(snapshot.combat->player.position,
             validation_direction(config));
+    }
+    if (config.stage11c_hud_validation
+            == Stage11CHudValidationScenario::abyss_abandon) {
+        if (snapshot.abyss_exit_confirmation_armed) return {};
+        return stage10_exit_route_movement(*snapshot.combat,
+            dungeon::ExitDirection::right, state, true);
     }
     if (scenario == Stage10ValidationScenario::exit_confirmation) {
         if (snapshot.abyss_exit_confirmation_armed) return {};
