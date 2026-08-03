@@ -5,6 +5,7 @@ endif()
 include("${CMAKE_CURRENT_LIST_DIR}/../dungeon/evidence_source_scan.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/cmake_source_registration_scan.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/cpp_source_lexer.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/host_validation_success_tail_guard.cmake")
 
 # The shared lexer performs translation phase 2 first, so LF/CRLF spliced
 # directives are logical lines before this conservative unconditional policy.
@@ -235,6 +236,8 @@ string(SUBSTRING "${_host_active_text}" ${_runtime_candidate} -1
     _host_runtime_candidate)
 evidence_extract_cpp_function_block("${_host_runtime_candidate}"
     "HostExitCode run_raylib_host(" _host_runtime)
+evidence_cpp_direct_execution_surface_in_sanitized(
+    "${_host_runtime}" _host_runtime_direct)
 set(_sanitized "${_host_runtime}")
 
 set(_input_header
@@ -1938,45 +1941,25 @@ function(task7c_assert_sequence_contract)
             "write_stage11c_hud_validation_summary("
             "write_stage11d_loot_validation_summary("
             "write_stage17_validation_summary(")
-        string(FIND "${_host_runtime}" "${_task7c_old_summary}"
+        string(FIND "${_host_runtime_direct}" "${_task7c_old_summary}"
             _task7c_old_summary_position)
         if(NOT _task7c_old_summary_position EQUAL -1)
             message(FATAL_ERROR
                 "Host validation Task 7C Host retains direct summary ownership: ${_task7c_old_summary}")
         endif()
     endforeach()
-    task7b_count_token("${_host_runtime}"
+    task7b_count_token("${_host_runtime_direct}"
         "validation_runtime->write_summaries("
         _task7c_host_summary_count)
     if(NOT _task7c_host_summary_count EQUAL 1)
         message(FATAL_ERROR
-            "Host validation Task 7C summary facade must occur exactly once")
+            "T7C-M25 Host validation Task 7C summary facade must occur exactly once")
     endif()
-    string(FIND "${_host_runtime}"
-        "validation_runtime->write_summaries("
-        _task7c_host_summary_position)
-    cpp_token_brace_depth("${_host_runtime}"
-        ${_task7c_host_summary_position} _task7c_host_summary_depth)
-    string(FIND "${_host_runtime}" "audio.shutdown();"
-        _task7c_audio_shutdown_position)
-    string(FIND "${_host_runtime}" "renderer.shutdown_resources();"
-        _task7c_renderer_shutdown_position)
-    string(FIND "${_host_runtime}" "pause_menu_renderer.shutdown();"
-        _task7c_pause_shutdown_position)
-    string(FIND "${_host_runtime}" "window.close();"
-        _task7c_window_shutdown_position)
-    if(NOT _task7c_host_summary_depth EQUAL 2
-            OR NOT _loop_end LESS _task7c_host_summary_position
-            OR NOT _task7c_host_summary_position LESS
-                _task7c_audio_shutdown_position
-            OR NOT _task7c_audio_shutdown_position LESS
-                _task7c_renderer_shutdown_position
-            OR NOT _task7c_renderer_shutdown_position LESS
-                _task7c_pause_shutdown_position
-            OR NOT _task7c_pause_shutdown_position LESS
-                _task7c_window_shutdown_position)
+    evidence_host_success_tail_is_canonical("${_host_runtime}"
+        _task7c_success_tail_valid _task7c_success_tail_reason)
+    if(NOT _task7c_success_tail_valid)
         message(FATAL_ERROR
-            "T7C-M25 summary facade must run after the loop and before resource shutdown")
+            "T7C-M25 summary facade must own the canonical success tail: ${_task7c_success_tail_reason}")
     endif()
 endfunction()
 
@@ -2035,8 +2018,7 @@ task7b_count_token("${_host_runtime}" "${_task9_renderer_cleanup}"
 task7b_count_token("${_host_runtime_normalized}"
     "${_task9_renderer_allocation_anchor}"
     _task9_renderer_allocation_anchor_count)
-evidence_cpp_direct_execution_surface_in_sanitized(
-    "${_host_runtime}" _task9_host_direct)
+set(_task9_host_direct "${_host_runtime_direct}")
 evidence_renderer_allocation_boundary_is_valid(
     "${_task9_host_direct}" _task9_renderer_allocation_boundary_valid)
 if(_task9_window_owner_position EQUAL -1
@@ -2629,7 +2611,7 @@ assert_one_normalized_match("fixed-step snapshot producer-to-observer binding"
 assert_direct_exact_call_count("real renderer draw return statement"
     "${_ground_loot_draw_normalized}"
     "renderer[.]draw\\("
-    "([;{}])[ ]*return[ ]+renderer[.]draw\\([ ]*previous,[ ]*presented_snapshot,[ ]*runtime[.]render_status\\([ ]*\\),[ ]*static_cast<float>\\([ ]*frame[.]interpolation_alpha[ ]*\\),[ ]*draw_debug,[ ]*feedback,[ ]*audio_ready[ ]*\\)[ ]*;"
+    "([;{}])[ ]*return[ ]+renderer[.]draw\\([ ]*previous,[ ]*presented_snapshot,[ ]*[*]render_world,[ ]*frame_camera,[ ]*runtime[.]render_status\\([ ]*\\),[ ]*static_cast<float>\\([ ]*frame[.]interpolation_alpha[ ]*\\),[ ]*draw_debug,[ ]*feedback,[ ]*audio_ready[ ]*\\)[ ]*;"
     1)
 
 string(FIND "${_host_loop}" "validation_runtime->observe_inventory("

@@ -8,6 +8,72 @@ set(_guard "${SOURCE_ROOT}/tests/platform/host_validation_sequence_guard_test.cm
 set(_source_guard "${SOURCE_ROOT}/tests/platform/host_validation_source_test.cmake")
 file(MAKE_DIRECTORY "${GUARD_TEST_ROOT}")
 
+if(DEFINED TASK7C_REVIEW_MUTATION
+        AND (TASK7C_REVIEW_MUTATION STREQUAL dead_shutdown_decoy
+            OR TASK7C_REVIEW_MUTATION STREQUAL conditional_shutdown_decoy))
+    file(READ "${SOURCE_ROOT}/src/platform/raylib/raylib_host.cpp"
+        _task7c_review_host)
+    set(_task7c_review_original "${_task7c_review_host}")
+    set(_task7c_shutdown_chain [=[        validation_runtime->write_summaries(
+            runtime.clean_shutdown_state(), pause_menu);
+        audio.shutdown();
+        renderer.shutdown_resources();
+        pause_menu_renderer.shutdown();
+        window.close();]=])
+    set(_task7c_dead_shutdown_chain [=[        validation_runtime->write_summaries(
+            runtime.clean_shutdown_state(), pause_menu);
+        if (false) {
+            audio.shutdown();
+            renderer.shutdown_resources();
+            pause_menu_renderer.shutdown();
+            window.close();
+        }]=])
+    set(_task7c_conditional_shutdown_chain [=[        validation_runtime->write_summaries(
+            runtime.clean_shutdown_state(), pause_menu);
+        if (config.fullscreen) {
+            audio.shutdown();
+            renderer.shutdown_resources();
+            pause_menu_renderer.shutdown();
+            window.close();
+        }]=])
+    if(TASK7C_REVIEW_MUTATION STREQUAL dead_shutdown_decoy)
+        set(_task7c_review_replacement "${_task7c_dead_shutdown_chain}")
+        set(_task7c_review_label "dead shutdown decoy")
+    else()
+        set(_task7c_review_replacement
+            "${_task7c_conditional_shutdown_chain}")
+        set(_task7c_review_label "conditional shutdown decoy")
+    endif()
+    string(REPLACE "${_task7c_shutdown_chain}"
+        "${_task7c_review_replacement}" _task7c_review_host
+        "${_task7c_review_host}")
+    if(_task7c_review_host STREQUAL _task7c_review_original)
+        message(FATAL_ERROR
+            "Task 7C ${_task7c_review_label} review mutation anchor is missing")
+    endif()
+    set(_task7c_review_path
+        "${GUARD_TEST_ROOT}/task7c-${TASK7C_REVIEW_MUTATION}.cpp")
+    file(WRITE "${_task7c_review_path}" "${_task7c_review_host}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
+            "-DHOST_OVERRIDE=${_task7c_review_path}" -P "${_guard}"
+        RESULT_VARIABLE _task7c_review_result
+        OUTPUT_VARIABLE _task7c_review_stdout
+        ERROR_VARIABLE _task7c_review_stderr)
+    if(_task7c_review_result EQUAL 0)
+        message(FATAL_ERROR
+            "Host validation sequence guard accepted Task 7C ${_task7c_review_label}")
+    endif()
+    if(NOT "${_task7c_review_stdout}${_task7c_review_stderr}" MATCHES
+            "T7C-M25")
+        message(FATAL_ERROR
+            "Task 7C ${_task7c_review_label} failed for wrong reason: ${_task7c_review_stdout}${_task7c_review_stderr}")
+    endif()
+    message(STATUS
+        "Task 7C ${_task7c_review_label} was rejected for the intended reason")
+    return()
+endif()
+
 if(DEFINED TASK9_REVIEW_MUTATION
         AND TASK9_REVIEW_MUTATION STREQUAL cmake_extra_lifecycle_allow)
     execute_process(
@@ -547,7 +613,7 @@ if(_outside_result EQUAL 0)
     message(FATAL_ERROR "Host validation sequence guard accepted out-of-loop input decoy")
 endif()
 if(NOT "${_outside_stdout}${_outside_stderr}" MATCHES
-        "missing input injection chain token")
+        "direct host scope")
     message(FATAL_ERROR "out-of-loop input decoy failed for wrong reason: ${_outside_stdout}${_outside_stderr}")
 endif()
 
@@ -623,6 +689,40 @@ function(arpg_expect_task7c_sequence_rejection
         string(REPLACE "        audio.shutdown();"
             "        audio.shutdown();\n        validation_runtime->write_summaries(\n            runtime.clean_shutdown_state(), pause_menu);"
             _mutated "${_mutated}")
+    elseif(MUTATION STREQUAL "m25_dead_shutdown_decoy")
+        set(_shutdown_chain [=[        validation_runtime->write_summaries(
+            runtime.clean_shutdown_state(), pause_menu);
+        audio.shutdown();
+        renderer.shutdown_resources();
+        pause_menu_renderer.shutdown();
+        window.close();]=])
+        set(_dead_shutdown_chain [=[        validation_runtime->write_summaries(
+            runtime.clean_shutdown_state(), pause_menu);
+        if (false) {
+            audio.shutdown();
+            renderer.shutdown_resources();
+            pause_menu_renderer.shutdown();
+            window.close();
+        }]=])
+        string(REPLACE "${_shutdown_chain}" "${_dead_shutdown_chain}"
+            _mutated "${_mutated}")
+    elseif(MUTATION STREQUAL "m25_conditional_shutdown_decoy")
+        set(_shutdown_chain [=[        validation_runtime->write_summaries(
+            runtime.clean_shutdown_state(), pause_menu);
+        audio.shutdown();
+        renderer.shutdown_resources();
+        pause_menu_renderer.shutdown();
+        window.close();]=])
+        set(_conditional_shutdown_chain [=[        validation_runtime->write_summaries(
+            runtime.clean_shutdown_state(), pause_menu);
+        if (config.fullscreen) {
+            audio.shutdown();
+            renderer.shutdown_resources();
+            pause_menu_renderer.shutdown();
+            window.close();
+        }]=])
+        string(REPLACE "${_shutdown_chain}" "${_conditional_shutdown_chain}"
+            _mutated "${_mutated}")
     else()
         message(FATAL_ERROR "Unknown Task 7C sequence mutation: ${MUTATION}")
     endif()
@@ -650,7 +750,7 @@ function(arpg_expect_task7c_sequence_rejection
     endif()
 endfunction()
 
-# Task 7C assigns exactly these eight concrete cases to the central sequence
+# Task 7C assigns exactly these ten concrete cases to the central sequence
 # self-test. Other Task 7C mutation variants remain with their Stage owners.
 arpg_expect_task7c_sequence_rejection(m11_before_renderer host
     m11_before_renderer
@@ -675,6 +775,12 @@ arpg_expect_task7c_sequence_rejection(m25_reorder_summaries runtime
     "T7C-M25")
 arpg_expect_task7c_sequence_rejection(m25_post_shutdown host
     m25_post_shutdown
+    "T7C-M25")
+arpg_expect_task7c_sequence_rejection(m25_dead_shutdown_decoy host
+    m25_dead_shutdown_decoy
+    "T7C-M25")
+arpg_expect_task7c_sequence_rejection(m25_conditional_shutdown_decoy host
+    m25_conditional_shutdown_decoy
     "T7C-M25")
 
 function(arpg_expect_task9_host_cleanup_rejection NAME MUTATION)
@@ -775,8 +881,7 @@ execute_process(
 if(_summary_result EQUAL 0)
     message(FATAL_ERROR "Host validation sequence guard accepted lambda summary decoy")
 endif()
-if(NOT "${_summary_stdout}${_summary_stderr}" MATCHES
-        "T7C-M25 summary facade must run after the loop and before resource shutdown")
+if(NOT "${_summary_stdout}${_summary_stderr}" MATCHES "T7C-M25")
     message(FATAL_ERROR "lambda summary decoy failed for wrong reason: ${_summary_stdout}${_summary_stderr}")
 endif()
 
