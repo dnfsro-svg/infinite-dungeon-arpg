@@ -32,6 +32,62 @@ bool stage11d_has_three_ordinary_rarities(
     return normal && magic && rare;
 }
 
+std::uint16_t stage11d_priority_monster_ordinal(
+    const dungeon::DungeonSnapshot& snapshot,
+    Stage11DLootValidationState& state) noexcept {
+    if (!snapshot.combat.has_value()) {
+        return combat::kInvalidMonsterOrdinal;
+    }
+    const auto& combat_snapshot = *snapshot.combat;
+    if (state.target_ordinal != combat::kInvalidMonsterOrdinal) {
+        bool target_alive = false;
+        bool target_defeated = false;
+        for (std::size_t index = 0U;
+             index < combat_snapshot.monster_count; ++index) {
+            const auto& monster = combat_snapshot.monsters[index];
+            if (monster.spawn_ordinal != state.target_ordinal) continue;
+            target_alive = monster.active && monster.hp > 0;
+            target_defeated = monster.hp <= 0
+                || monster.reaction == combat::ReactionState::defeated
+                || monster.ai_phase == combat::MonsterAiPhase::defeated;
+            break;
+        }
+        bool target_drop_observed = false;
+        for (std::size_t index = 0U; index < snapshot.ground_item_count;
+             ++index) {
+            const auto& item = snapshot.ground_items[index];
+            if (item.source == dungeon::GroundItemSource::monster_drop
+                    && item.ordinal == state.target_ordinal) {
+                target_drop_observed = true;
+                break;
+            }
+        }
+        if (target_alive) return state.target_ordinal;
+        if (!target_defeated && !target_drop_observed) {
+            return combat::kInvalidMonsterOrdinal;
+        }
+    }
+    std::uint16_t selected = combat::kInvalidMonsterOrdinal;
+    for (std::size_t index = 0U;
+         index < combat_snapshot.monster_count; ++index) {
+        const auto& monster = combat_snapshot.monsters[index];
+        if (!monster.active || monster.hp <= 0
+                || (state.target_ordinal
+                        != combat::kInvalidMonsterOrdinal
+                    && monster.spawn_ordinal <= state.target_ordinal)) {
+            continue;
+        }
+        if (selected == combat::kInvalidMonsterOrdinal
+                || monster.spawn_ordinal < selected) {
+            selected = monster.spawn_ordinal;
+        }
+    }
+    if (selected != combat::kInvalidMonsterOrdinal) {
+        state.target_ordinal = selected;
+    }
+    return selected;
+}
+
 namespace {
 
 [[nodiscard]] const dungeon::GroundItemSnapshot* stage11d_nearest_ground(
@@ -54,21 +110,19 @@ namespace {
 }
 
 [[nodiscard]] const combat::MonsterSnapshot* stage11d_priority_monster(
-    const combat::CombatSnapshot& snapshot) noexcept {
-    const combat::MonsterSnapshot* best = nullptr;
-    for (std::size_t index = 0U; index < snapshot.monster_count; ++index) {
-        const auto& monster = snapshot.monsters[index];
-        if (!monster.active || monster.hp <= 0) continue;
-        const bool bomber = monster.id == combat::MonsterId::fire_bomber;
-        const bool best_bomber = best != nullptr
-            && best->id == combat::MonsterId::fire_bomber;
-        if (best == nullptr || (bomber && !best_bomber)
-                || (bomber == best_bomber
-                    && monster.spawn_ordinal < best->spawn_ordinal)) {
-            best = &monster;
-        }
+    const dungeon::DungeonSnapshot& snapshot,
+    Stage11DLootValidationState& state) noexcept {
+    const std::uint16_t ordinal = stage11d_priority_monster_ordinal(
+        snapshot, state);
+    if (ordinal == combat::kInvalidMonsterOrdinal
+            || !snapshot.combat.has_value()) return nullptr;
+    for (std::size_t index = 0U;
+         index < snapshot.combat->monster_count; ++index) {
+        const auto& monster = snapshot.combat->monsters[index];
+        if (monster.active && monster.hp > 0
+                && monster.spawn_ordinal == ordinal) return &monster;
     }
-    return best;
+    return nullptr;
 }
 
 [[nodiscard]] bool stage11d_attack_lane(
@@ -83,6 +137,54 @@ namespace {
     const float distance_x = std::fabs(x);
     return facing && distance_x >= minimum_x && distance_x <= maximum_x
         && std::fabs(y) <= 0.55F;
+}
+
+[[nodiscard]] bool inject_stage11d_rare_abyss_area_skill(
+    PhysicalKeySnapshot& snapshot,
+    const combat::CombatSnapshot& combat_state) noexcept {
+    const auto& player = combat_state.player;
+    if (player.hp <= 0 || player.hurt_ticks != 0U
+            || player.hit_stop_ticks != 0U
+            || player.active_attack != combat::AttackId::none
+            || combat_state.active_skill.id != skills::ActiveSkillId::none
+            || combat_state.diagnostics.input_size != 0U) {
+        return false;
+    }
+    const float facing = player.facing == combat::Facing::right
+        ? 1.0F : -1.0F;
+    const float storm_center_x = player.position.x
+        + facing * combat::kStormCenterForward;
+    bool storm_target = false;
+    bool draw_target = false;
+    for (std::size_t index = 0U;
+         index < combat_state.monster_count; ++index) {
+        const auto& monster = combat_state.monsters[index];
+        if (!monster.active || monster.hp <= 0) continue;
+        const float storm_x = monster.position.x - storm_center_x;
+        const float storm_y = monster.position.y - player.position.y;
+        storm_target = storm_target
+            || storm_x * storm_x + storm_y * storm_y
+                <= combat::kStormStrikeRadius * combat::kStormStrikeRadius;
+        const float forward =
+            (monster.position.x - player.position.x) * facing;
+        const float half_width = forward >= 0.0F
+                && forward <= combat::kDrawSlashRange
+            ? combat::kDrawSlashHalfWidthAtEnd
+                * (forward / combat::kDrawSlashRange)
+            : -1.0F;
+        draw_target = draw_target || (half_width >= 0.0F
+            && std::fabs(monster.position.y - player.position.y)
+                <= half_width);
+    }
+    if (storm_target && combat_state.skill_cooldowns[1U] == 0U) {
+        snapshot.active_skill_slots[1U] = true;
+        return true;
+    }
+    if (draw_target && combat_state.skill_cooldowns[0U] == 0U) {
+        snapshot.active_skill_slots[0U] = true;
+        return true;
+    }
+    return false;
 }
 }  // namespace
 // STAGE11D_LOOT_VALIDATION_SEAM_END selectors
@@ -198,7 +300,7 @@ PhysicalKeySnapshot inject_stage11d_physical_edges(
     Stage11DLootValidationState& state) noexcept {
     using Scenario = Stage11DLootValidationScenario;
     if (config.stage11d_loot_validation == Scenario::none
-            || snapshot.focus_lost) {
+            || snapshot.focus_lost || state.suspend_injection) {
         return snapshot;
     }
     ++state.injected_frames;
@@ -259,18 +361,41 @@ PhysicalKeySnapshot inject_stage11d_physical_edges(
         == Scenario::rare_only_abyss;
     const auto* target = aggressive_abyss
         ? nearest_living_monster(*current.combat)
-        : stage11d_priority_monster(*current.combat);
-    if (target == nullptr) return snapshot;
+        : stage11d_priority_monster(current, state);
+    if (target == nullptr) {
+        if (aggressive_abyss && current.remaining_targets != 0U) {
+            const combat::MovementInput movement =
+                stage10_validation_sweep_movement(
+                    *current.combat, state.sweep_grid,
+                    state.sweep_waypoint);
+            inject_validation_movement(snapshot, settings_data, movement);
+        }
+        return snapshot;
+    }
     state.target_ordinal = target->spawn_ordinal;
     if (aggressive_abyss) {
+        const float target_x = target->position.x - player.position.x;
+        const bool facing_target = target_x == 0.0F
+            || (target_x > 0.0F
+                && player.facing == combat::Facing::right)
+            || (target_x < 0.0F
+                && player.facing == combat::Facing::left);
         combat::MovementInput movement = validation_movement_toward(
             player.position, target->position);
+        if (!facing_target && movement.x == 0) {
+            movement.x = target_x > 0.0F ? 1 : -1;
+        }
         if (current.ecology
                 == dungeon::checkpoint::DungeonElement::fire) {
             movement = validation_route_fire_movement(
                 player.position, target->position, movement);
         }
         inject_validation_movement(snapshot, settings_data, movement);
+        if (!facing_target) return snapshot;
+        if (inject_stage11d_rare_abyss_area_skill(
+                snapshot, *current.combat)) {
+            return snapshot;
+        }
         if (player.hurt_ticks == 0U
                 && current.combat->diagnostics.input_size == 0U
                 && validation_attack_lane(*current.combat, *target)) {

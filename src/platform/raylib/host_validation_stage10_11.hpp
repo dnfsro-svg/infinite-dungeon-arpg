@@ -68,6 +68,9 @@ struct Stage11ValidationState final {
 
 [[nodiscard]] bool stage10_validation_abyss_skills_enabled(
     Stage10ValidationScenario) noexcept;
+[[nodiscard]] combat::MovementInput stage10_validation_sweep_movement(
+    const combat::CombatSnapshot&, Stage10GridRouteState&,
+    std::uint8_t&) noexcept;
 
 [[nodiscard]] combat::MovementInput stage10_validation_input(
     dungeon::DungeonSession&, const dungeon::DungeonSnapshot&,
