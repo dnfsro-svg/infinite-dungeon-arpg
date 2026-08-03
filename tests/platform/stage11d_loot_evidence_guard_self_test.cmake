@@ -761,22 +761,23 @@ file(WRITE "${_path}" "${_task5b_report_summary_forward}")
 expect_rejected("report summary forward declaration decoy" REPORT "${_path}"
     "missing report summary writer definition")
 
-set(_task5b_affix_payload
-    "            state.monster_affix_danger[ordinal] =\n                combat::monster_affix_danger_score(monster.affixes);")
-string(REPLACE "${_task5b_affix_payload}" "            static_cast<void>(ordinal);"
+set(_task5b_damage_payload
+    "                state.monster_damage_observed = true;")
+string(REPLACE "${_task5b_damage_payload}"
+    "                state.monster_damage_observed = false;"
     _task5b_report_payload_removed "${_task5b_report_text}")
 if(_task5b_report_payload_removed STREQUAL _task5b_report_text)
     message(FATAL_ERROR "Task5B report payload mutation made no change")
 endif()
 set(_task5b_report_close "}  // namespace arpg::platform::host_validation")
 set(_task5b_cross_function
-    "void task5b_report_payload_decoy() {\n    ${_task5b_affix_payload}\n}\n\n${_task5b_report_close}")
+    "void task5b_report_payload_decoy() {\n    ${_task5b_damage_payload}\n}\n\n${_task5b_report_close}")
 string(REPLACE "${_task5b_report_close}" "${_task5b_cross_function}"
     _task5b_report_payload_cross_function "${_task5b_report_payload_removed}")
 set(_path "${GUARD_TEST_ROOT}/report-payload-cross-function-decoy.cpp")
 file(WRITE "${_path}" "${_task5b_report_payload_cross_function}")
 expect_rejected("report semantic payload cross function decoy" REPORT "${_path}"
-    "missing report evaluator semantic: state.monster_affix_danger")
+    "missing report evaluator semantic: state.monster_damage_observed")
 
 if(DEFINED TASK5B_TARGETED_ONLY AND TASK5B_TARGETED_ONLY)
     message(STATUS
@@ -1516,6 +1517,47 @@ expect_rejected("draw-external render plan" RENDERER "${_path}"
     "rejected a draw-external renderer plan")
 
 file(READ "${_validator}" _validator_text)
+
+file(READ "${_report}" _task9_report_text)
+set(_task9_player_damage_observation
+    "state.player_damage_observed = state.player_damage_observed\n        || (state.player_hp > 0 && state.player_hp < state.player_max_hp);")
+string(REPLACE "${_task9_player_damage_observation}"
+    "state.player_damage_observed = false;"
+    _task9_player_damage_removed "${_task9_report_text}")
+if(_task9_player_damage_removed STREQUAL _task9_report_text)
+    message(FATAL_ERROR "player-damage observation mutation anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/player-damage-observation-removed.cpp")
+file(WRITE "${_path}" "${_task9_player_damage_removed}")
+expect_rejected("player damage observation cannot be removed" REPORT "${_path}"
+    "requires live player damage observation")
+
+set(_task9_rarity_tuple_check
+    "Require ($values.observed_normal -eq $manifest.ordinary_normal_tuple -and\n        $values.observed_magic -eq $manifest.ordinary_magic_tuple -and\n        $values.observed_rare -eq $manifest.ordinary_rare_tuple)\n        \"production rarity tuples drifted: $name\"")
+string(REPLACE "${_task9_rarity_tuple_check}"
+    "Require ($values.observed_normal -eq $manifest.ordinary_normal_tuple)\n        \"production rarity tuples drifted: $name\""
+    _task9_rarity_tuple_weakened "${_validator_text}")
+if(_task9_rarity_tuple_weakened STREQUAL _validator_text)
+    message(FATAL_ERROR "rarity-tuple mutation anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/rarity-tuples-weakened.ps1")
+file(WRITE "${_path}" "${_task9_rarity_tuple_weakened}")
+expect_rejected("per-rarity tuple check cannot be weakened" VALIDATOR "${_path}"
+    "requires exact per-rarity tuples")
+
+set(_task9_pickup_conservation_check
+    "Require -Condition ((Compare-Object $expectedPickupSnapshot $pickupSnapshot).Count -eq 0) -Message 'pickup remaining ground IDs do not conserve the exact original set'")
+string(REPLACE "${_task9_pickup_conservation_check}"
+    "Require -Condition ($pickupSnapshot.Count -eq 2) -Message 'pickup remaining ground IDs do not conserve the exact original set'"
+    _task9_pickup_conservation_weakened "${_validator_text}")
+if(_task9_pickup_conservation_weakened STREQUAL _validator_text)
+    message(FATAL_ERROR "pickup-conservation mutation anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/pickup-conservation-weakened.ps1")
+file(WRITE "${_path}" "${_task9_pickup_conservation_weakened}")
+expect_rejected("pickup conservation cannot be reduced to a count" VALIDATOR "${_path}"
+    "requires exact pickup conservation")
+
 set(_mutated "${_validator_text}")
 string(REPLACE "LastWriteTimeUtc" "CreationTimeUtc" _mutated "${_mutated}")
 if(_mutated STREQUAL _validator_text)

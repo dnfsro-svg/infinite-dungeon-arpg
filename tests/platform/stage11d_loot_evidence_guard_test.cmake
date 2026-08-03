@@ -731,9 +731,13 @@ foreach(_required IN ITEMS
         "struct Stage11DLootValidationState final"
         "std::array<std::uint64_t, dungeon::kGroundDropCapacity> snapshot_item_ids{};"
         "std::array<std::uint64_t, dungeon::kGroundDropCapacity> inventory_item_ids{};"
-        "std::array<std::int32_t, 3> last_monster_hp{};"
-        "std::array<std::uint16_t, 3> monster_affix_danger{};"
-        "std::array<std::uint32_t, 3> defeat_distance_milli{};"
+        "std::array<std::uint32_t, 3> observed_drop_distance_milli{};"
+        "std::uint32_t initial_monster_count{};"
+        "std::uint32_t max_remaining_targets{};"
+        "std::uint32_t max_defeated_monsters{};"
+        "std::uint32_t monster_generator_version{};"
+        "std::uint64_t monster_blueprint_hash{};"
+        "bool monster_damage_observed{};"
         "std::uint64_t pickup_commit_generation{};"
         "bool abyss_claim_requested{};" "bool abyss_claimed{};"
         "PhysicalKeySnapshot inject_stage11d_physical_edges("
@@ -1248,9 +1252,10 @@ foreach(_required IN ITEMS
     endif()
 endforeach()
 foreach(_required IN ITEMS
-        "state.monster_affix_danger[ordinal] ="
-        "state.monster_ai_phase[ordinal] ="
-        "state.defeat_player_hp[ordinal] = snapshot.combat->player.hp;"
+        "state.max_defeated_monsters ="
+        "state.monster_blueprint_hash = snapshot.monster_blueprint_hash;"
+        "state.monster_damage_observed = true;"
+        "state.observed_drop_distance_milli[distance_index] ="
         "state.pickup_commit_generation = status.loot_pickup.commit_generation;")
     string(FIND "${_report_target_function}" "${_required}" _found)
     if(_found EQUAL -1)
@@ -1317,10 +1322,21 @@ foreach(_required IN ITEMS
         "platform::run_raylib_host(config)" "persistence::SaveStore"
         "settings::SettingsStore" "settings_store.save("
         "present_frame_and_maybe_capture" "stage11d_record_semantics"
-        "renderer.draw(" "pickup_commit_generation" "defeat_distance_milli")
+        "renderer.draw(" "pickup_commit_generation" "drop_distance_milli"
+        "build_room_monster_plan(" "kRoomMonsterGeneratorVersion"
+        "monster_blueprint_hash" "ordinary_generator_version"
+        "ordinary_initial_residents"
+        "ordinary_drop_ordinals" "ordinary_drop_item_ids")
     string(FIND "${_combined}" "${_required}" _found)
     if(_found EQUAL -1)
         message(FATAL_ERROR "Stage11D loot evidence guard missing production token: ${_required}")
+    endif()
+endforeach()
+foreach(_forbidden IN ITEMS "build_encounter_plan(" "--search-ordinary")
+    string(FIND "${_formal_text}" "${_forbidden}" _found)
+    if(NOT _found EQUAL -1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard rejected obsolete fixture token: ${_forbidden}")
     endif()
 endforeach()
 
@@ -1801,11 +1817,83 @@ foreach(_required IN ITEMS
         "\$feature = Measure-Region \$bitmap"
         "snapshot_ids" "inventory_ids" "hidden-item semantics mismatch"
         "abyss_claimed" "pickup_commit_generation" "preview_visible_count"
+        "ordinary_blueprint_hash" "progress_defeated"
+        "monster_damage_observed" "drop_distance_milli"
+        "ordinary production kill progress is invalid"
         "pickup notice region is blank" "result -eq 'pass'")
     string(FIND "${_validator_text}" "${_required}" _found)
     if(_found EQUAL -1)
         message(FATAL_ERROR "Stage11D loot evidence validator missing semantic check: ${_required}")
     endif()
 endforeach()
+
+arpg_sanitize_cpp_source("${_stage_header_text}" _stage11d_header_code)
+foreach(_required IN ITEMS
+        "std::int32_t player_max_hp{};"
+        "bool player_damage_observed{};")
+    stage11d_count_raw_token("${_stage11d_header_code}" "${_required}"
+        _stage11d_player_state_count)
+    if(NOT _stage11d_player_state_count EQUAL 1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard requires live player damage observation")
+    endif()
+endforeach()
+evidence_extract_cpp_function_block("${_report_text}"
+    "bool stage11d_target_visible(" _stage11d_target_visible_function)
+string(REGEX REPLACE "[ \t\r\n]+" ""
+    _stage11d_target_visible_normalized
+    "${_stage11d_target_visible_function}")
+string(FIND "${_stage11d_target_visible_normalized}"
+    "state.player_damage_observed=state.player_damage_observed||(state.player_hp>0&&state.player_hp<state.player_max_hp);"
+    _stage11d_player_damage_observation)
+if(_stage11d_player_damage_observation EQUAL -1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard requires live player damage observation")
+endif()
+evidence_extract_cpp_function_block("${_report_text}"
+    "void write_stage11d_loot_validation_summary(" _stage11d_summary_function)
+string(REGEX REPLACE "[ \t\r\n]+" "" _stage11d_summary_normalized
+    "${_stage11d_summary_function}")
+foreach(_required IN ITEMS "state.player_max_hp" "state.player_damage_observed")
+    stage11d_count_raw_token("${_stage11d_summary_normalized}" "${_required}"
+        _stage11d_summary_player_count)
+    if(NOT _stage11d_summary_player_count EQUAL 1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard requires live player damage observation")
+    endif()
+endforeach()
+
+string(REGEX REPLACE "#[^\r\n]*" "" _stage11d_validator_code
+    "${_validator_text}")
+string(REGEX REPLACE "[ \t\r\n]+" "" _stage11d_validator_normalized
+    "${_stage11d_validator_code}")
+foreach(_required IN ITEMS
+        "$values.player_damage_observed-eq'1'"
+        "[int]$values.progress_hp-gt0"
+        "[int]$values.progress_hp-le[int]$values.progress_max_hp")
+    stage11d_count_raw_token("${_stage11d_validator_normalized}"
+        "${_required}" _stage11d_player_validator_count)
+    if(NOT _stage11d_player_validator_count EQUAL 1)
+        message(FATAL_ERROR
+            "Stage11D loot evidence guard requires live player damage observation")
+    endif()
+endforeach()
+set(_stage11d_rarity_tuple_check
+    "Require($values.observed_normal-eq$manifest.ordinary_normal_tuple-and$values.observed_magic-eq$manifest.ordinary_magic_tuple-and$values.observed_rare-eq$manifest.ordinary_rare_tuple)")
+stage11d_count_raw_token("${_stage11d_validator_normalized}"
+    "${_stage11d_rarity_tuple_check}" _stage11d_rarity_tuple_count)
+if(NOT _stage11d_rarity_tuple_count EQUAL 1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard requires exact per-rarity tuples")
+endif()
+set(_stage11d_pickup_conservation_check
+    "Require-Condition((Compare-Object$expectedPickupSnapshot$pickupSnapshot).Count-eq0)-Message'pickupremaininggroundIDsdonotconservetheexactoriginalset'")
+stage11d_count_raw_token("${_stage11d_validator_normalized}"
+    "${_stage11d_pickup_conservation_check}"
+    _stage11d_pickup_conservation_count)
+if(NOT _stage11d_pickup_conservation_count EQUAL 1)
+    message(FATAL_ERROR
+        "Stage11D loot evidence guard requires exact pickup conservation")
+endif()
 
 message(STATUS "Stage11D loot formal evidence guard passed")

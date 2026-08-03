@@ -32,6 +32,51 @@ bool stage11d_has_three_ordinary_rarities(
     return normal && magic && rare;
 }
 
+std::uint16_t stage11d_priority_monster_ordinal(
+    const dungeon::DungeonSnapshot& snapshot,
+    Stage11DLootValidationState& state) noexcept {
+    if (!snapshot.combat.has_value()) {
+        return combat::kInvalidMonsterOrdinal;
+    }
+    const auto& combat_snapshot = *snapshot.combat;
+    if (state.target_ordinal != combat::kInvalidMonsterOrdinal) {
+        for (std::size_t index = 0U;
+             index < combat_snapshot.monster_count; ++index) {
+            const auto& monster = combat_snapshot.monsters[index];
+            if (monster.active && monster.hp > 0
+                    && monster.spawn_ordinal == state.target_ordinal) {
+                state.target_defeated_count =
+                    snapshot.defeated_monster_count;
+                return state.target_ordinal;
+            }
+        }
+        if (snapshot.defeated_monster_count
+                <= state.target_defeated_count) {
+            return combat::kInvalidMonsterOrdinal;
+        }
+    }
+    std::uint16_t selected = combat::kInvalidMonsterOrdinal;
+    for (std::size_t index = 0U;
+         index < combat_snapshot.monster_count; ++index) {
+        const auto& monster = combat_snapshot.monsters[index];
+        if (!monster.active || monster.hp <= 0
+                || (state.target_ordinal
+                        != combat::kInvalidMonsterOrdinal
+                    && monster.spawn_ordinal <= state.target_ordinal)) {
+            continue;
+        }
+        if (selected == combat::kInvalidMonsterOrdinal
+                || monster.spawn_ordinal < selected) {
+            selected = monster.spawn_ordinal;
+        }
+    }
+    if (selected != combat::kInvalidMonsterOrdinal) {
+        state.target_ordinal = selected;
+        state.target_defeated_count = snapshot.defeated_monster_count;
+    }
+    return selected;
+}
+
 namespace {
 
 [[nodiscard]] const dungeon::GroundItemSnapshot* stage11d_nearest_ground(
@@ -54,21 +99,19 @@ namespace {
 }
 
 [[nodiscard]] const combat::MonsterSnapshot* stage11d_priority_monster(
-    const combat::CombatSnapshot& snapshot) noexcept {
-    const combat::MonsterSnapshot* best = nullptr;
-    for (std::size_t index = 0U; index < snapshot.monster_count; ++index) {
-        const auto& monster = snapshot.monsters[index];
-        if (!monster.active || monster.hp <= 0) continue;
-        const bool bomber = monster.id == combat::MonsterId::fire_bomber;
-        const bool best_bomber = best != nullptr
-            && best->id == combat::MonsterId::fire_bomber;
-        if (best == nullptr || (bomber && !best_bomber)
-                || (bomber == best_bomber
-                    && monster.spawn_ordinal < best->spawn_ordinal)) {
-            best = &monster;
-        }
+    const dungeon::DungeonSnapshot& snapshot,
+    Stage11DLootValidationState& state) noexcept {
+    const std::uint16_t ordinal = stage11d_priority_monster_ordinal(
+        snapshot, state);
+    if (ordinal == combat::kInvalidMonsterOrdinal
+            || !snapshot.combat.has_value()) return nullptr;
+    for (std::size_t index = 0U;
+         index < snapshot.combat->monster_count; ++index) {
+        const auto& monster = snapshot.combat->monsters[index];
+        if (monster.active && monster.hp > 0
+                && monster.spawn_ordinal == ordinal) return &monster;
     }
-    return best;
+    return nullptr;
 }
 
 [[nodiscard]] bool stage11d_attack_lane(
@@ -259,7 +302,7 @@ PhysicalKeySnapshot inject_stage11d_physical_edges(
         == Scenario::rare_only_abyss;
     const auto* target = aggressive_abyss
         ? nearest_living_monster(*current.combat)
-        : stage11d_priority_monster(*current.combat);
+        : stage11d_priority_monster(current, state);
     if (target == nullptr) return snapshot;
     state.target_ordinal = target->spawn_ordinal;
     if (aggressive_abyss) {
