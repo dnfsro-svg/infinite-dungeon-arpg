@@ -74,6 +74,7 @@ PhysicalKeySnapshot HostValidationRuntime::inject_physical_edges(
         host_validation::inject_stage11c_physical_edges(
             stage11b_physical_keys, *impl_->config, input_settings,
             dungeon_snapshot, impl_->states.stage11c);
+    impl_->states.stage11d.suspend_injection = gameplay_rearm_required;
     const PhysicalKeySnapshot stage11d_physical_keys =
         host_validation::inject_stage11d_physical_edges(
             stage11c_physical_keys, *impl_->config, input_settings,
@@ -112,6 +113,18 @@ combat::MovementInput HostValidationRuntime::fixed_step_movement(
     }
     if (impl_->config->stage10_validation
             != Stage10ValidationScenario::none) {
+        return host_validation::stage10_validation_input(
+            session, snapshot, *impl_->config, impl_->states.stage10);
+    }
+    const bool stage11c_full_clear_combat =
+        snapshot.phase == dungeon::RoomPhase::combat
+        && host_validation::stage11c_uses_full_clear_driver(
+            impl_->config->stage11c_hud_validation);
+    const bool stage11c_abyss_exit =
+        snapshot.phase == dungeon::RoomPhase::awaiting_exit
+        && impl_->config->stage11c_hud_validation
+            == Stage11CHudValidationScenario::abyss_abandon;
+    if (stage11c_full_clear_combat || stage11c_abyss_exit) {
         return host_validation::stage10_validation_input(
             session, snapshot, *impl_->config, impl_->states.stage10);
     }
