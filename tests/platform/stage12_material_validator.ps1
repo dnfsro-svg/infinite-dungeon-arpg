@@ -911,14 +911,20 @@ function Measure-LightningCapture([string]$Path, [string]$BackgroundPath,
             $mask = New-Object 'bool[,]' $region.Width, $region.Height
             [int]$changed = 0
             [int]$brightChroma = 0
+            [int]$relativeChroma = 0
             $regionColors = [System.Collections.Generic.HashSet[int]]::new()
             for ($y = $region.Y; $y -lt $region.Y + $region.Height; ++$y) {
                 for ($x = $region.X; $x -lt $region.X + $region.Width; ++$x) {
                     $pixel = $isolatedBitmap.GetPixel($x, $y)
                     $base = $isolatedBackground.GetPixel($x, $y)
-                    $difference = [Math]::Abs([int]$pixel.R - [int]$base.R) +
-                        [Math]::Abs([int]$pixel.G - [int]$base.G) +
-                        [Math]::Abs([int]$pixel.B - [int]$base.B)
+                    $redDifference = [Math]::Abs(
+                        [int]$pixel.R - [int]$base.R)
+                    $greenDifference = [Math]::Abs(
+                        [int]$pixel.G - [int]$base.G)
+                    $blueDifference = [Math]::Abs(
+                        [int]$pixel.B - [int]$base.B)
+                    $difference = $redDifference + $greenDifference +
+                        $blueDifference
                     if ($difference -ge 72) {
                         $localMaskX = $x - $region.X
                         $localMaskY = $y - $region.Y
@@ -931,6 +937,14 @@ function Measure-LightningCapture([string]$Path, [string]$BackgroundPath,
                         if ($maximum -gt 125 -and
                                 $maximum - $minimum -gt 35) {
                             ++$brightChroma
+                        }
+                        $differenceMaximum = [Math]::Max($redDifference,
+                            [Math]::Max($greenDifference, $blueDifference))
+                        $differenceMinimum = [Math]::Min($redDifference,
+                            [Math]::Min($greenDifference, $blueDifference))
+                        if ($differenceMaximum -gt 35 -and
+                                $differenceMaximum - $differenceMinimum -gt 35) {
+                            ++$relativeChroma
                         }
                         [void]$regionColors.Add(
                             (((([int]$pixel.R) -shr 4) -shl 8) -bor
@@ -983,8 +997,9 @@ function Measure-LightningCapture([string]$Path, [string]$BackgroundPath,
             $structureValid = $changed -ge 500 -and $largest -ge 180
             if ($region.Name -eq 'lightning_shooter') {
                 # The authored frame is a near-square lightning construct.
-                # Prove its isolated contour and palette without accepting a
-                # long HUD/loot-label strip as the monster silhouette.
+                # Prove its isolated contour and background-independent palette
+                # without accepting a long HUD/loot-label strip as the monster
+                # silhouette.
                 $extentValid = $largestWidth * 20 -ge $region.Width * 13 -and
                     $largestWidth * 20 -le $region.Width * 19 -and
                     $largestHeight * 20 -ge $region.Height * 13 -and
@@ -993,11 +1008,11 @@ function Measure-LightningCapture([string]$Path, [string]$BackgroundPath,
                     $largestWidth * 5 -ge $largestHeight * 4 -and
                     $largestWidth * 4 -le $largestHeight * 5
                 $structureValid = $changed -ge 1300 -and
-                    $largest -ge 900 -and $brightChroma -ge 600 -and
+                    $largest -ge 900 -and $relativeChroma -ge 800 -and
                     $regionColors.Count -ge 120
             }
             if (-not $structureValid -or -not $extentValid) {
-                throw "lightning capture lacks monster-vs-background contour: $($region.Name) changed=$changed largest=$largest extent=${largestWidth}x${largestHeight} bright=$brightChroma colors=$($regionColors.Count)"
+                throw "lightning capture lacks monster-vs-background contour: $($region.Name) changed=$changed largest=$largest extent=${largestWidth}x${largestHeight} bright=$brightChroma relative=$relativeChroma colors=$($regionColors.Count)"
             }
         }
     } finally {

@@ -583,8 +583,11 @@ PixelRoi lightning_material_frame_roi(combat::MonsterId monster,
     if (clip == nullptr) return {};
     const auto frame = platform::monster_animation_frame(*clip, frame_index);
     if (!frame.has_value()) return {};
+    const platform::CombatCameraView camera =
+        platform::make_combat_camera_view({}, 1280.0F, 720.0F);
     const platform::ScreenProjection projected =
-        platform::project_combat_position(position, 1280.0F, 720.0F);
+        platform::project_combat_position(
+            position, camera, 1280.0F, 720.0F);
     const float scale = platform::monster_material_draw_scale(
         frame->atlas, projected.scale);
     constexpr float kEvidencePadding = 12.0F;
@@ -612,10 +615,13 @@ PixelRoi active_skill_material_frame_roi(skills::ActiveSkillId skill,
     const IntegrationResolution& resolution) noexcept {
     const auto frame = platform::active_skill_atlas_frame(skill, frame_index);
     if (!frame.has_value()) return {};
+    const float width = static_cast<float>(resolution.width);
+    const float height = static_cast<float>(resolution.height);
+    const platform::CombatCameraView camera =
+        platform::make_combat_camera_view({}, width, height);
     const platform::ScreenProjection projected =
-        platform::project_combat_position(player_position,
-            static_cast<float>(resolution.width),
-            static_cast<float>(resolution.height));
+        platform::project_combat_position(
+            player_position, camera, width, height);
     const float scale = projected.scale
         * (skill == skills::ActiveSkillId::draw_slash ? 0.72F : 0.70F);
     const float padding = 8.0F * projected.scale;
@@ -638,10 +644,13 @@ PixelRoi active_skill_material_frame_roi(skills::ActiveSkillId skill,
 PixelRoi draw_slash_procedural_roi(combat::Vec3 effect_center,
     combat::Facing facing,
     const IntegrationResolution& resolution) noexcept {
+    const float width = static_cast<float>(resolution.width);
+    const float height = static_cast<float>(resolution.height);
+    const platform::CombatCameraView camera =
+        platform::make_combat_camera_view({}, width, height);
     const platform::ScreenProjection projected =
-        platform::project_combat_position(effect_center,
-            static_cast<float>(resolution.width),
-            static_cast<float>(resolution.height));
+        platform::project_combat_position(
+            effect_center, camera, width, height);
     const float origin_x = projected.x;
     const float origin_y = projected.ground_y - 42.0F * projected.scale;
     const float radius = 250.0F * projected.scale;
@@ -2404,15 +2413,11 @@ int main(int argc, char** argv) {
         && lightning_runtime.lightning_dasher_resident;
     const PixelRoi lightning_shooter_roi = lightning_material_frame_roi(
         combat::MonsterId::lightning_shooter,
-        {combat::room_bounds::max_x
-                * platform::kStage12MaterialShowcaseColumnFractions[0],
-            1.5F, 0.0F},
+        platform::stage12_material_showcase_column_position(0U, 1.5F),
         lightning_runtime.lightning_shooter_draw.frame_index);
     const PixelRoi lightning_dasher_roi = lightning_material_frame_roi(
         combat::MonsterId::lightning_dasher,
-        {combat::room_bounds::max_x
-                * platform::kStage12MaterialShowcaseColumnFractions[1],
-            1.5F, 0.0F},
+        platform::stage12_material_showcase_column_position(1U, 1.5F),
         lightning_runtime.lightning_dasher_draw.frame_index);
     const bool lightning_rois_ok = lightning_shooter_roi.valid()
         && lightning_dasher_roi.valid()

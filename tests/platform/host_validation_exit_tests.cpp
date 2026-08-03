@@ -1033,6 +1033,31 @@ arpg::test::Failure ranged_driver_releases_stale_geometry() noexcept {
     return {};
 }
 
+arpg::test::Failure
+ranged_driver_continues_past_legacy_sparse_sweep_limit() noexcept {
+    dungeon::DungeonSession session{};
+    dungeon::DungeonSnapshot snapshot = combat_with_target(true);
+    snapshot.combat->player.position = {-80.0F, 0.0F, 0.0F};
+    platform::RaylibHostConfig config{};
+    config.stage10_validation =
+        platform::Stage10ValidationScenario::pending_reward;
+    validation::Stage10ValidationState state{};
+    state.entered_abyss = true;
+    snapshot.remaining_targets = 2U;
+    state.sweep_escape = true;
+    state.sweep_waypoint = 9U;
+    state.sweep_grid.phase = validation::Stage10GridRoutePhase::route;
+    state.sweep_grid.route_rejoins = 4U;
+    state.sweep_grid.pending_movement_progress_check = true;
+    state.sweep_grid.previous_position = snapshot.combat->player.position;
+
+    static_cast<void>(validation::stage10_validation_input(
+        session, snapshot, config, state));
+
+    ARPG_REQUIRE(state.sweep_waypoint == 10U);
+    return {};
+}
+
 arpg::test::Failure ranged_driver_hands_off_to_light_melee() noexcept {
     dungeon::DungeonSession session{};
     dungeon::DungeonSnapshot snapshot = combat_with_target(false);
@@ -1467,6 +1492,8 @@ arpg::test::TestSuite host_validation_exit_suite() noexcept {
             &ranged_driver_keeps_stalled_lease_until_local_detour},
         {"ranged_driver_releases_stale_geometry",
             &ranged_driver_releases_stale_geometry},
+        {"ranged_driver_continues_past_legacy_sparse_sweep_limit",
+            &ranged_driver_continues_past_legacy_sparse_sweep_limit},
         {"ranged_driver_hands_off_to_light_melee",
             &ranged_driver_hands_off_to_light_melee},
         {"melee_chain_prioritizes_existing_light_lane",

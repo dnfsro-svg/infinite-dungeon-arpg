@@ -23,21 +23,19 @@ class SettingsStore;
 
 namespace arpg::platform {
 
-inline constexpr std::array<float, 4> kStage12MaterialShowcaseColumnFractions{{
-    -0.42F, -0.14F, 0.14F, 0.42F,
+inline constexpr std::array<float, 4> kStage12MaterialShowcaseColumns{{
+    -4.0F, -1.3F, 1.3F, 4.0F,
 }};
 
 [[nodiscard]] constexpr combat::Vec3 stage12_material_showcase_position(
     float legacy_x, float legacy_y) noexcept {
-    constexpr float kLegacyHalfWidth = 12.0F;
-    constexpr float kLegacyMinY = -5.5F;
-    constexpr float kLegacyDepth = 11.0F;
-    return {
-        combat::room_bounds::max_x * legacy_x / kLegacyHalfWidth,
-        combat::room_bounds::min_y + combat::room_bounds::depth
-            * (legacy_y - kLegacyMinY) / kLegacyDepth,
-        0.0F,
-    };
+    return {legacy_x, legacy_y, 0.0F};
+}
+
+[[nodiscard]] constexpr combat::Vec3 stage12_material_showcase_column_position(
+    std::size_t column, float y) noexcept {
+    return stage12_material_showcase_position(
+        kStage12MaterialShowcaseColumns[column], y);
 }
 
 struct HostLaunchOptions;

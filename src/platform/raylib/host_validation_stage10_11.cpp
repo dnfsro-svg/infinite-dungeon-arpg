@@ -326,14 +326,16 @@ GridRouteProgress settle_grid_route_movement(
     return GridRouteProgress::unreachable;
 }
 
+constexpr std::size_t kStage10SweepWaypointCount =
+    combat::room_spatial::rows * 2U;
+
 combat::Vec3 stage10_sweep_waypoint(std::size_t index) noexcept {
-    constexpr std::array<std::uint8_t, 5> rows{{2U, 6U, 10U, 14U, 18U}};
-    const std::size_t row = index / 2U;
+    const std::size_t row = (index / 2U) % combat::room_spatial::rows;
     const bool left = index % 4U == 0U || index % 4U == 3U;
     return {
         left ? combat::room_bounds::min_x : combat::room_bounds::max_x,
         combat::room_bounds::min_y
-            + static_cast<float>(rows[row])
+            + (static_cast<float>(row) + 0.5F)
                 * combat::room_spatial::cell_depth,
         0.0F,
     };
@@ -347,7 +349,6 @@ bool stage10_route_target_reached(
 
 combat::MovementInput stage10_sweep_movement(
     combat::Vec3 player, Stage10ValidationState& state) noexcept {
-    constexpr std::size_t waypoint_count = 10U;
     const combat::Vec3 target = state.recovery_target_valid
         ? state.recovery_target
         : stage10_sweep_waypoint(state.sweep_waypoint);
@@ -357,7 +358,7 @@ combat::MovementInput stage10_sweep_movement(
     state.sweep_grid.route_rejoins = 0U;
     if (state.recovery_target_valid) return {};
     state.sweep_waypoint = static_cast<std::uint8_t>(
-        (state.sweep_waypoint + 1U) % waypoint_count);
+        (state.sweep_waypoint + 1U) % kStage10SweepWaypointCount);
     return grid_route_movement(
         player, stage10_sweep_waypoint(state.sweep_waypoint), state.sweep_grid);
 }
@@ -535,7 +536,8 @@ combat::MovementInput stage10_validation_input(
                         && !local_recovery
                         && !attack_lane_recovered) {
                     state.sweep_waypoint = static_cast<std::uint8_t>(
-                        (state.sweep_waypoint + 1U) % 10U);
+                        (state.sweep_waypoint + 1U)
+                            % kStage10SweepWaypointCount);
                     state.recover_until_light_lane = false;
                     state.sweep_escape = false;
                 } else if (!state.recover_until_light_lane) {
@@ -551,7 +553,8 @@ combat::MovementInput stage10_validation_input(
                     }
                 } else {
                     state.sweep_waypoint = static_cast<std::uint8_t>(
-                        (state.sweep_waypoint + 1U) % 10U);
+                        (state.sweep_waypoint + 1U)
+                            % kStage10SweepWaypointCount);
                     if (state.recover_until_light_lane
                             && snapshot.remaining_targets == 1U) {
                         state.stalled_target_ordinal =

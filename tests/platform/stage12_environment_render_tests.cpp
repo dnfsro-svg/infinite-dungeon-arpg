@@ -81,11 +81,14 @@ bool every_call_contains(const std::string& source,
     return true;
 }
 
-arpg::test::Failure material_showcase_layout_tracks_room_bounds() noexcept {
+arpg::test::Failure material_showcase_layout_tracks_follow_camera() noexcept {
+    const arpg::platform::CombatCameraView camera =
+        arpg::platform::make_combat_camera_view({}, 1280.0F, 720.0F);
     const arpg::combat::Vec3 item =
         arpg::platform::stage12_material_showcase_position(-5.0F, -3.2F);
     const arpg::platform::ScreenProjection item_projection =
-        arpg::platform::project_combat_position(item, 1280.0F, 720.0F);
+        arpg::platform::project_combat_position(
+            item, camera, 1280.0F, 720.0F);
     const float item_center_y = item_projection.ground_y
         - 13.0F * item_projection.scale;
     ARPG_REQUIRE(std::fabs(item_projection.x - 453.0F) < 1.0F);
@@ -94,7 +97,8 @@ arpg::test::Failure material_showcase_layout_tracks_room_bounds() noexcept {
     const arpg::combat::Vec3 material =
         arpg::platform::stage12_material_showcase_position(-4.5F, 2.0F);
     const arpg::platform::ScreenProjection material_projection =
-        arpg::platform::project_combat_position(material, 1280.0F, 720.0F);
+        arpg::platform::project_combat_position(
+            material, camera, 1280.0F, 720.0F);
     const float material_center_y = material_projection.ground_y
         - 6.0F * material_projection.scale;
     ARPG_REQUIRE(std::fabs(material_projection.x - 440.0F) < 1.0F);
@@ -104,9 +108,23 @@ arpg::test::Failure material_showcase_layout_tracks_room_bounds() noexcept {
         arpg::platform::stage12_material_showcase_position(0.5F, 0.0F);
     const arpg::platform::ScreenProjection skill_projection =
         arpg::platform::project_combat_position(
-            skill_center, 1280.0F, 720.0F);
+            skill_center, camera, 1280.0F, 720.0F);
     ARPG_REQUIRE(std::fabs(skill_projection.x - 661.0F) < 1.0F);
     ARPG_REQUIRE(std::fabs(skill_projection.ground_y - 454.0F) < 1.0F);
+
+    constexpr std::array<float, 4U> expected_monster_x{{
+        465.0F, 583.0F, 697.0F, 815.0F,
+    }};
+    for (std::size_t column{}; column < expected_monster_x.size(); ++column) {
+        const arpg::combat::Vec3 monster =
+            arpg::platform::stage12_material_showcase_column_position(
+                column, 1.5F);
+        const arpg::platform::ScreenProjection monster_projection =
+            arpg::platform::project_combat_position(
+                monster, camera, 1280.0F, 720.0F);
+        ARPG_REQUIRE(std::fabs(
+            monster_projection.x - expected_monster_x[column]) < 2.0F);
+    }
     return {};
 }
 
@@ -1119,7 +1137,7 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
     ARPG_REQUIRE(validator.find(
         "Measure-ItemCapture $itemScreenshot $itemBaselineScreenshot 'legacy'")
         != std::string::npos);
-    ARPG_REQUIRE(validator.find("$brightChroma -ge 600")
+    ARPG_REQUIRE(validator.find("$relativeChroma -ge 800")
         != std::string::npos);
     ARPG_REQUIRE(validator.find("$authoredOverrides")
         == std::string::npos);
@@ -1273,8 +1291,8 @@ arpg::test::Failure formal_background_only_path_reuses_the_production_draw() noe
 }
 
 constexpr arpg::test::TestCase kCases[] = {
-    {"material showcase layout tracks room bounds",
-        &material_showcase_layout_tracks_room_bounds},
+    {"material showcase layout tracks follow camera",
+        &material_showcase_layout_tracks_follow_camera},
     {"uses independent native background prop and hole paths",
         &environment_renderer_uses_independent_native_paths},
     {"world renderers share one immutable camera",
