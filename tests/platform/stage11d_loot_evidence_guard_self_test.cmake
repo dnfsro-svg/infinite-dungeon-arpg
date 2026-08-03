@@ -64,6 +64,23 @@ function(expect_rejected NAME OVERRIDE PATH EXPECTED_REASON)
         if(_targeted_index EQUAL -1)
             return()
         endif()
+    elseif(DEFINED TASK9_TARGETED_ONLY AND TASK9_TARGETED_ONLY)
+        set(_targeted_names
+            "second render plan"
+            "draw-external render plan"
+            "diagnostic monster damage cannot be required"
+            "tuple assignment cannot move into a here string"
+            "tuple assertion cannot move into an uncalled function"
+            "pickup derivation cannot move into a here string"
+            "pickup conservation cannot move into a false branch"
+            "fixture prefix length cannot become a required kill count"
+            "player damage observation cannot be removed"
+            "per-rarity tuple check cannot be weakened"
+            "pickup conservation cannot be reduced to a count")
+        list(FIND _targeted_names "${NAME}" _targeted_index)
+        if(_targeted_index EQUAL -1)
+            return()
+        endif()
     endif()
     set(_guard_options "")
     if(EXPECTED_REASON MATCHES "^T7C-M2(4|5)")
@@ -761,22 +778,23 @@ file(WRITE "${_path}" "${_task5b_report_summary_forward}")
 expect_rejected("report summary forward declaration decoy" REPORT "${_path}"
     "missing report summary writer definition")
 
-set(_task5b_affix_payload
-    "            state.monster_affix_danger[ordinal] =\n                combat::monster_affix_danger_score(monster.affixes);")
-string(REPLACE "${_task5b_affix_payload}" "            static_cast<void>(ordinal);"
+set(_task5b_damage_payload
+    "                state.monster_damage_observed = true;")
+string(REPLACE "${_task5b_damage_payload}"
+    "                state.monster_damage_observed = false;"
     _task5b_report_payload_removed "${_task5b_report_text}")
 if(_task5b_report_payload_removed STREQUAL _task5b_report_text)
     message(FATAL_ERROR "Task5B report payload mutation made no change")
 endif()
 set(_task5b_report_close "}  // namespace arpg::platform::host_validation")
 set(_task5b_cross_function
-    "void task5b_report_payload_decoy() {\n    ${_task5b_affix_payload}\n}\n\n${_task5b_report_close}")
+    "void task5b_report_payload_decoy() {\n    ${_task5b_damage_payload}\n}\n\n${_task5b_report_close}")
 string(REPLACE "${_task5b_report_close}" "${_task5b_cross_function}"
     _task5b_report_payload_cross_function "${_task5b_report_payload_removed}")
 set(_path "${GUARD_TEST_ROOT}/report-payload-cross-function-decoy.cpp")
 file(WRITE "${_path}" "${_task5b_report_payload_cross_function}")
 expect_rejected("report semantic payload cross function decoy" REPORT "${_path}"
-    "missing report evaluator semantic: state.monster_affix_danger")
+    "missing report evaluator semantic: state.monster_damage_observed")
 
 if(DEFINED TASK5B_TARGETED_ONLY AND TASK5B_TARGETED_ONLY)
     message(STATUS
@@ -785,6 +803,10 @@ if(DEFINED TASK5B_TARGETED_ONLY AND TASK5B_TARGETED_ONLY)
 endif()
 
 function(expect_guard_accepted NAME GUARD OVERRIDE PATH)
+    if(DEFINED TASK9_TARGETED_ONLY AND TASK9_TARGETED_ONLY
+            AND NOT NAME STREQUAL "Stage11D renderer harmless definition decoy")
+        return()
+    endif()
     execute_process(COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
         "-D${OVERRIDE}_OVERRIDE=${PATH}" -P "${GUARD}"
         RESULT_VARIABLE _result OUTPUT_VARIABLE _output ERROR_VARIABLE _error)
@@ -795,6 +817,9 @@ function(expect_guard_accepted NAME GUARD OVERRIDE PATH)
 endfunction()
 
 function(expect_sequence_rejected NAME PATH EXPECTED_REASON)
+    if(DEFINED TASK9_TARGETED_ONLY AND TASK9_TARGETED_ONLY)
+        return()
+    endif()
     execute_process(COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${SOURCE_ROOT}"
         "-DHOST_OVERRIDE=${PATH}" -P "${_sequence_guard}"
         RESULT_VARIABLE _result OUTPUT_VARIABLE _output ERROR_VARIABLE _error)
@@ -1482,6 +1507,19 @@ expect_rejected("pre-EndDrawing capture" HOST "${_path}"
     "rejected pre-EndDrawing capture")
 
 file(READ "${_renderer}" _renderer_text)
+set(_renderer_definition_decoy
+    "// CombatRenderPlan make_combat_render_plan( is a harmless signature decoy.\n")
+string(REPLACE "#include \"combat_renderer.hpp\""
+    "#include \"combat_renderer.hpp\"\n${_renderer_definition_decoy}"
+    _renderer_harmless_definition_decoy "${_renderer_text}")
+if(_renderer_harmless_definition_decoy STREQUAL _renderer_text)
+    message(FATAL_ERROR "renderer harmless definition decoy anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/renderer-harmless-definition-decoy.cpp")
+file(WRITE "${_path}" "${_renderer_harmless_definition_decoy}")
+expect_guard_accepted("Stage11D renderer harmless definition decoy"
+    "${_guard}" RENDERER "${_path}")
+
 set(_site "const CombatRenderPlan render_plan = make_combat_render_plan(")
 string(FIND "${_renderer_text}" "${_site}" _site_index)
 if(_site_index EQUAL -1)
@@ -1496,7 +1534,7 @@ endif()
 set(_path "${GUARD_TEST_ROOT}/second-render-plan.cpp")
 file(WRITE "${_path}" "${_mutated}")
 expect_rejected("second render plan" RENDERER "${_path}"
-    "requires the one production renderer plan")
+    "requires exactly one renderer plan in CombatRenderer::draw")
 
 set(_draw_site "GroundLootView CombatRenderer::draw(")
 string(FIND "${_renderer_text}" "${_draw_site}" _draw_site_index)
@@ -1513,9 +1551,138 @@ endif()
 set(_path "${GUARD_TEST_ROOT}/draw-external-plan.cpp")
 file(WRITE "${_path}" "${_mutated}")
 expect_rejected("draw-external render plan" RENDERER "${_path}"
-    "rejected a draw-external renderer plan")
+    "rejected renderer plan outside CombatRenderer::draw")
 
 file(READ "${_validator}" _validator_text)
+
+set(_task9_player_damage_condition "$values.player_damage_observed -eq '1' -and")
+string(REPLACE "${_task9_player_damage_condition}"
+    "$values.player_damage_observed -eq '1' -and\n        $values.monster_damage_observed -eq '1' -and"
+    _task9_monster_damage_required "${_validator_text}")
+if(_task9_monster_damage_required STREQUAL _validator_text)
+    message(FATAL_ERROR "diagnostic monster-damage mutation anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/diagnostic-monster-damage-required.ps1")
+file(WRITE "${_path}" "${_task9_monster_damage_required}")
+expect_rejected("diagnostic monster damage cannot be required" VALIDATOR "${_path}"
+    "forbids diagnostic monster damage as a formal requirement")
+
+set(_task9_tuple_assignment_start "$ordinaryTupleChecks = @(")
+set(_task9_tuple_assignment_end
+    ")\nRequire (-not ($ordinaryTupleChecks -contains $false))")
+string(REPLACE "${_task9_tuple_assignment_start}"
+    "@'\n${_task9_tuple_assignment_start}"
+    _task9_tuple_here_string "${_validator_text}")
+string(REPLACE "${_task9_tuple_assignment_end}"
+    ")\n'@\nRequire (-not ($ordinaryTupleChecks -contains $false))"
+    _task9_tuple_here_string "${_task9_tuple_here_string}")
+if(_task9_tuple_here_string STREQUAL _validator_text)
+    message(FATAL_ERROR "tuple here-string mutation anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/tuple-assignment-here-string.ps1")
+file(WRITE "${_path}" "${_task9_tuple_here_string}")
+expect_rejected("tuple assignment cannot move into a here string" VALIDATOR "${_path}"
+    "requires real top-level per-rarity tuple assignment")
+
+set(_task9_tuple_top_level
+    "Require (-not ($ordinaryTupleChecks -contains $false)) 'production rarity tuples drifted'")
+set(_task9_tuple_function
+    "function Test-Stage11DTupleRelocation {\n    ${_task9_tuple_top_level}\n}")
+string(REPLACE "${_task9_tuple_top_level}" "${_task9_tuple_function}"
+    _task9_tuple_relocated "${_validator_text}")
+if(_task9_tuple_relocated STREQUAL _validator_text)
+    message(FATAL_ERROR "tuple relocation mutation anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/tuple-relocated-function.ps1")
+file(WRITE "${_path}" "${_task9_tuple_relocated}")
+expect_rejected("tuple assertion cannot move into an uncalled function" VALIDATOR "${_path}"
+    "requires exact per-rarity tuples in a top-level executable Require command")
+
+set(_task9_pickup_derivation
+    "$expectedPickupSnapshot = @($ordinaryIds | Where-Object { $_ -ne $pickup.pickup_item_id })")
+string(REPLACE "${_task9_pickup_derivation}"
+    "@'\n${_task9_pickup_derivation}\n'@"
+    _task9_pickup_here_string "${_validator_text}")
+if(_task9_pickup_here_string STREQUAL _validator_text)
+    message(FATAL_ERROR "pickup here-string mutation anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/pickup-derivation-here-string.ps1")
+file(WRITE "${_path}" "${_task9_pickup_here_string}")
+expect_rejected("pickup derivation cannot move into a here string" VALIDATOR "${_path}"
+    "requires real top-level pickup conservation derivation")
+
+set(_task9_pickup_top_level
+    "Require -Condition ((Compare-Object $expectedPickupSnapshot $pickupSnapshot).Count -eq 0) -Message 'pickup remaining ground IDs do not conserve the exact original set'")
+set(_task9_pickup_false_branch
+    "if ($false) {\n    ${_task9_pickup_top_level}\n}")
+string(REPLACE "${_task9_pickup_top_level}" "${_task9_pickup_false_branch}"
+    _task9_pickup_relocated "${_validator_text}")
+if(_task9_pickup_relocated STREQUAL _validator_text)
+    message(FATAL_ERROR "pickup relocation mutation anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/pickup-relocated-false-branch.ps1")
+file(WRITE "${_path}" "${_task9_pickup_relocated}")
+expect_rejected("pickup conservation cannot move into a false branch" VALIDATOR "${_path}"
+    "requires exact pickup conservation in a top-level executable Require command")
+
+set(_task9_actual_drop_count "$defeated -ge 3")
+string(REPLACE "${_task9_actual_drop_count}"
+    "$defeated -ge [uint32]$manifest.ordinary_prefix_kills"
+    _task9_prefix_kills_required "${_validator_text}")
+if(_task9_prefix_kills_required STREQUAL _validator_text)
+    message(FATAL_ERROR "actual-drop-count mutation anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/prefix-kills-required.ps1")
+file(WRITE "${_path}" "${_task9_prefix_kills_required}")
+expect_rejected("fixture prefix length cannot become a required kill count" VALIDATOR "${_path}"
+    "forbids fixture prefix length as a formal kill requirement")
+
+file(READ "${_report}" _task9_report_text)
+set(_task9_player_damage_observation
+    "state.player_damage_observed = state.player_damage_observed\n        || (state.player_hp > 0 && state.player_hp < state.player_max_hp);")
+string(REPLACE "${_task9_player_damage_observation}"
+    "state.player_damage_observed = false;"
+    _task9_player_damage_removed "${_task9_report_text}")
+if(_task9_player_damage_removed STREQUAL _task9_report_text)
+    message(FATAL_ERROR "player-damage observation mutation anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/player-damage-observation-removed.cpp")
+file(WRITE "${_path}" "${_task9_player_damage_removed}")
+expect_rejected("player damage observation cannot be removed" REPORT "${_path}"
+    "requires live player damage observation")
+
+set(_task9_rarity_tuple_check
+    "Require (-not ($ordinaryTupleChecks -contains $false)) 'production rarity tuples drifted'")
+string(REPLACE "${_task9_rarity_tuple_check}"
+    "Require ($true) 'production rarity tuples drifted'"
+    _task9_rarity_tuple_weakened "${_validator_text}")
+if(_task9_rarity_tuple_weakened STREQUAL _validator_text)
+    message(FATAL_ERROR "rarity-tuple mutation anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/rarity-tuples-weakened.ps1")
+file(WRITE "${_path}" "${_task9_rarity_tuple_weakened}")
+expect_rejected("per-rarity tuple check cannot be weakened" VALIDATOR "${_path}"
+    "requires exact per-rarity tuples")
+
+set(_task9_pickup_conservation_check
+    "Require -Condition ((Compare-Object $expectedPickupSnapshot $pickupSnapshot).Count -eq 0) -Message 'pickup remaining ground IDs do not conserve the exact original set'")
+string(REPLACE "${_task9_pickup_conservation_check}"
+    "Require -Condition ($pickupSnapshot.Count -eq 2) -Message 'pickup remaining ground IDs do not conserve the exact original set'"
+    _task9_pickup_conservation_weakened "${_validator_text}")
+if(_task9_pickup_conservation_weakened STREQUAL _validator_text)
+    message(FATAL_ERROR "pickup-conservation mutation anchor disappeared")
+endif()
+set(_path "${GUARD_TEST_ROOT}/pickup-conservation-weakened.ps1")
+file(WRITE "${_path}" "${_task9_pickup_conservation_weakened}")
+expect_rejected("pickup conservation cannot be reduced to a count" VALIDATOR "${_path}"
+    "requires exact pickup conservation")
+
+if(DEFINED TASK9_TARGETED_ONLY AND TASK9_TARGETED_ONLY)
+    message(STATUS
+        "Stage11D Task9 targeted evidence guard passed: bad_mutations=11")
+    return()
+endif()
+
 set(_mutated "${_validator_text}")
 string(REPLACE "LastWriteTimeUtc" "CreationTimeUtc" _mutated "${_mutated}")
 if(_mutated STREQUAL _validator_text)
