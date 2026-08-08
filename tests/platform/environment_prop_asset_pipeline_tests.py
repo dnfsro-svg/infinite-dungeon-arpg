@@ -179,29 +179,41 @@ class EnvironmentPropAssetPipelineTests(unittest.TestCase):
                                 assets / f"{ecology}_environment_material.png"))
             for output in outputs:
                 shutil.copy2(ROOT / "assets/stage12" / output.name, output)
-            shutil.copy2(ROOT / "assets/stage12/fire_environment.png",
-                         assets / "fire_environment.png")
             source_root = ROOT / "art_source" / "stage12"
+            target = root / "art_source" / "stage12"
             for ecology in ECOLOGIES:
-                target = root / "art_source" / "stage12"
                 (target / "backgrounds" / ecology).mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source_root / f"{ecology}-environment-concept-v1.png",
                              target / f"{ecology}-environment-concept-v1.png")
                 shutil.copy2(source_root / "backgrounds" / ecology / f"{ecology}-wall-tile-v1.png",
                              target / "backgrounds" / ecology / f"{ecology}-wall-tile-v1.png")
-                with Image.open(assets / f"{ecology}_environment.png").convert("RGBA") as image:
-                    image.paste((17, 19, 23, 255), (512, 0, 768, 256))
-                    image.save(assets / f"{ecology}_environment.png")
             shutil.copy2(source_root / "door-concept-v1.png", target / "door-concept-v1.png")
             shutil.copy2(source_root / "abyss-hole-concept-v1.png", target / "abyss-hole-concept-v1.png")
+            color_path = assets / "element_doors.png"
+            material_path = assets / "element_doors_material.png"
+            expected_color_bytes = color_path.read_bytes()
+            expected_color_hash = sha256(color_path)
+            wrong_color = Image.new("RGBA", (1024, 256), (1, 2, 3, 255))
+            wrong_material = Image.new("RGBA", (1024, 256), (4, 5, 6, 255))
+            wrong_color.save(color_path)
+            wrong_material.save(material_path)
             report_path = assets / "environment-props-build.json"
             report = json.loads(report_path.read_text(encoding="utf-8"))
-            report["element_doors"]["rgba_sha256"] = "0" * 64
+            report["element_doors"]["rgba_sha256"] = hashlib.sha256(
+                wrong_color.tobytes()).hexdigest()
             report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n",
                                    encoding="utf-8")
             result = subprocess.run([sys.executable, str(BUILDER), "--root", str(root)],
                                     cwd=root, text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(color_path.read_bytes(), expected_color_bytes)
+            self.assertEqual(sha256(color_path), expected_color_hash)
+            with Image.open(color_path).convert("RGBA") as color, \
+                    Image.open(material_path).convert("RGBA") as material:
+                self.assertEqual(color.getpixel((0, 0)), (0, 0, 0, 0))
+                self.assertNotEqual(color.getpixel((0, 0)), (1, 2, 3, 255))
+                self.assertEqual(color.getchannel("A").tobytes(),
+                                 material.getchannel("A").tobytes())
             rebuilt = json.loads(report_path.read_text(encoding="utf-8"))
             self.assertEqual(rebuilt["schema_version"], 2)
             self.assertEqual(rebuilt["sources"], {
