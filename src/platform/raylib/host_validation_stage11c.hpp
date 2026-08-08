@@ -40,6 +40,8 @@ struct Stage11CHudValidationState final {
     bool captured{};
 };
 
+[[nodiscard]] bool stage11c_uses_full_clear_driver(
+    Stage11CHudValidationScenario) noexcept;
 [[nodiscard]] PhysicalKeySnapshot inject_stage11c_physical_edges(
     PhysicalKeySnapshot, const RaylibHostConfig&,
     const settings::SettingsData&, const dungeon::DungeonSnapshot&,

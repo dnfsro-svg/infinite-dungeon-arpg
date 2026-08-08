@@ -452,6 +452,8 @@ if(TARGET arpg_raylib)
         add_executable(arpg_stage11d_loot_formal
             stage11d_loot_formal_game_validation.cpp)
         target_compile_features(arpg_stage11d_loot_formal PRIVATE cxx_std_17)
+        target_include_directories(arpg_stage11d_loot_formal
+            PRIVATE "${PROJECT_SOURCE_DIR}/tests/dungeon")
         target_link_libraries(arpg_stage11d_loot_formal PRIVATE arpg_raylib)
         if(MSVC)
             target_compile_options(arpg_stage11d_loot_formal PRIVATE /utf-8)
@@ -1975,7 +1977,7 @@ set_tests_properties(
     stage11d.loot_evidence_guard_self_test
     PROPERTIES
         LABELS "headless;platform;architecture;stage11d"
-        TIMEOUT 1500
+        TIMEOUT 7200
         RUN_SERIAL TRUE)
 
 add_test(

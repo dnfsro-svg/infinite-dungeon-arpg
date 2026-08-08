@@ -52,9 +52,21 @@ struct Stage10ValidationState final {
     bool sweep_escape{};
     bool pending_stance_progress_check{};
     bool pending_close_progress_check{};
+    bool pending_facing_progress_check{};
     float previous_stance_distance_squared{};
     combat::Vec3 previous_close_position{};
+    combat::Vec3 previous_facing_position{};
     std::uint32_t chaos_presented_frames{};
+};
+
+struct Stage10RangedValidationPlan final {
+    combat::MonsterOrdinal target_ordinal{
+        combat::kInvalidMonsterOrdinal};
+    combat::MovementInput movement{};
+    combat::Vec3 movement_target{};
+    bool movement_target_valid{};
+    bool stance_reached{};
+    bool facing_target{};
 };
 
 struct Stage11ValidationState final {
@@ -68,6 +80,15 @@ struct Stage11ValidationState final {
 
 [[nodiscard]] bool stage10_validation_abyss_skills_enabled(
     Stage10ValidationScenario) noexcept;
+[[nodiscard]] combat::MovementInput stage10_validation_sweep_movement(
+    const combat::CombatSnapshot&, Stage10GridRouteState&,
+    std::uint8_t&) noexcept;
+[[nodiscard]] combat::Vec3 stage10_validation_sweep_waypoint(
+    std::uint8_t) noexcept;
+[[nodiscard]] Stage10RangedValidationPlan stage10_validation_ranged_plan(
+    const combat::CombatSnapshot&, Stage10ValidationState&) noexcept;
+void stage10_validation_release_ranged_target(
+    Stage10ValidationState&) noexcept;
 
 [[nodiscard]] combat::MovementInput stage10_validation_input(
     dungeon::DungeonSession&, const dungeon::DungeonSnapshot&,

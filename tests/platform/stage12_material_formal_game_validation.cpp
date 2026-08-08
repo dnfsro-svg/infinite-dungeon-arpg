@@ -622,8 +622,8 @@ PixelRoi active_skill_material_frame_roi(skills::ActiveSkillId skill,
     const platform::ScreenProjection projected =
         platform::project_combat_position(
             player_position, camera, width, height);
-    const float scale = projected.scale
-        * (skill == skills::ActiveSkillId::draw_slash ? 0.72F : 0.70F);
+    const float scale = platform::active_skill_material_draw_scale(
+        skill, projected.scale);
     const float padding = 8.0F * projected.scale;
     const float left = projected.x - frame->foot_anchor.x * scale - padding;
     const float top = projected.ground_y
