@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import shutil
@@ -60,6 +61,27 @@ def alpha_components(image: Image.Image, threshold: int = 8) -> list[int]:
 
 
 class EnvironmentPropAssetPipelineTests(unittest.TestCase):
+    def test_keyed_sources_produce_shared_isolated_element_variants(self) -> None:
+        spec = importlib.util.spec_from_file_location("environment_prop_builder", BUILDER)
+        assert spec is not None
+        assert spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        door = module._keyed_subject(ROOT / "art_source/stage12/door-concept-v1.png")
+        hole = module._keyed_subject(ROOT / "art_source/stage12/abyss-hole-concept-v1.png")
+        for subject in (door, hole):
+            alpha = subject.getchannel("A")
+            self.assertEqual(alpha.getpixel((0, 0)), 0)
+            bbox = alpha.getbbox()
+            self.assertIsNotNone(bbox)
+            assert bbox is not None
+            self.assertLess(sum(value > 8 for value in alpha.get_flattened_data()) * 100,
+                            (bbox[2] - bbox[0]) * (bbox[3] - bbox[1]) * 95)
+        variants = [module._element_variant(door, name)
+                    for name in ("fire", "water", "lightning", "chaos")]
+        self.assertEqual(len({image.getchannel("A").tobytes() for image in variants}), 1)
+        self.assertEqual(len({image.convert("RGB").tobytes() for image in variants}), 4)
+
     def test_chaos_wall_cell_preserves_complete_authored_tile_coverage(self) -> None:
         color_path = ROOT / "assets/stage12/chaos_environment.png"
         with Image.open(color_path).convert("RGBA") as atlas:
