@@ -48,6 +48,20 @@ arpg::test::Failure active_skill_visual_frames_reach_complete_material_timelines
     for (std::size_t frame = 20U; frame < 24U; ++frame) {
         ARPG_REQUIRE(storm_frames[frame]);
     }
+    ARPG_REQUIRE(platform::active_skill_visual_frame_index(
+        skills::ActiveSkillId::storm_swords, 71U) == 7U);
+    ARPG_REQUIRE(platform::active_skill_visual_frame_index(
+        skills::ActiveSkillId::storm_swords, 72U) == 8U);
+    ARPG_REQUIRE(platform::active_skill_visual_frame_index(
+        skills::ActiveSkillId::storm_swords, 323U) == 15U);
+    ARPG_REQUIRE(platform::active_skill_visual_frame_index(
+        skills::ActiveSkillId::storm_swords, 324U) == 16U);
+    ARPG_REQUIRE(platform::active_skill_visual_frame_index(
+        skills::ActiveSkillId::storm_swords, 341U) == 19U);
+    ARPG_REQUIRE(platform::active_skill_visual_frame_index(
+        skills::ActiveSkillId::storm_swords, 342U) == 20U);
+    ARPG_REQUIRE(platform::active_skill_visual_frame_index(
+        skills::ActiveSkillId::storm_swords, 359U) == 23U);
     return {};
 }
 
@@ -272,7 +286,7 @@ arpg::test::Failure storm_finisher_persists_from_snapshot_without_hit_event()
     platform::ActiveSkillEffectPlan plan =
         platform::make_active_skill_effect_plan(snapshot, nullptr, false);
     ARPG_REQUIRE(plan.storm_swords.finisher_visible);
-    ARPG_REQUIRE(plan.atlas_frame == 20U);
+    ARPG_REQUIRE(plan.atlas_frame == 16U);
     ARPG_REQUIRE(plan.screen_flash_alpha > 0.0F);
 
     snapshot.active_skill.phase = combat::ActiveSkillPhase::recovery;

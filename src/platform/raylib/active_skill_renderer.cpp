@@ -224,13 +224,13 @@ std::size_t active_skill_visual_frame_index(
     if (id != skills::ActiveSkillId::storm_swords) return 0U;
     std::size_t frame{};
     if (elapsed_ticks < 72U) {
-        frame = ticks * 5U / 72U;
+        frame = ticks * 8U / 72U;
     } else if (elapsed_ticks < 324U) {
-        frame = 5U + (ticks - 72U) * 15U / 252U;
+        frame = 8U + (ticks - 72U) * 8U / 252U;
     } else if (elapsed_ticks < 342U) {
-        frame = 20U + (ticks - 324U) * 2U / 18U;
+        frame = 16U + (ticks - 324U) * 4U / 18U;
     } else {
-        frame = 22U + (ticks - 342U) * 2U / 18U;
+        frame = 20U + (ticks - 342U) * 4U / 18U;
     }
     return (std::min<std::size_t>)(23U, frame);
 }
