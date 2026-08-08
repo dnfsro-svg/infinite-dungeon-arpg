@@ -61,6 +61,24 @@ def alpha_components(image: Image.Image, threshold: int = 8) -> list[int]:
 
 
 class EnvironmentPropAssetPipelineTests(unittest.TestCase):
+    def assert_isolated_silhouette(self, cell: Image.Image, margin: int) -> None:
+        alpha = cell.getchannel("A")
+        bbox = alpha.getbbox()
+        self.assertIsNotNone(bbox, "isolated cell is empty")
+        assert bbox is not None
+        left, top, right, bottom = bbox
+        width = right - left
+        height = bottom - top
+        self.assertGreaterEqual(min(left, top, cell.width - right, cell.height - bottom), margin)
+        opaque = sum(value > 8 for value in alpha.get_flattened_data())
+        self.assertLess(opaque / (width * height), 0.88)
+        rows = sum(sum(alpha.getpixel((x, y)) > 8 for x in range(left, right)) * 100 > width * 95
+                   for y in range(top, bottom))
+        columns = sum(sum(alpha.getpixel((x, y)) > 8 for y in range(top, bottom)) * 100 > height * 95
+                      for x in range(left, right))
+        self.assertLessEqual(rows * 100, height * 25)
+        self.assertLessEqual(columns * 100, width * 25)
+
     def test_keyed_sources_produce_shared_isolated_element_variants(self) -> None:
         spec = importlib.util.spec_from_file_location("environment_prop_builder", BUILDER)
         assert spec is not None
@@ -91,7 +109,7 @@ class EnvironmentPropAssetPipelineTests(unittest.TestCase):
         self.assertGreaterEqual(bbox[2] - bbox[0], 224)
         self.assertGreaterEqual(bbox[3] - bbox[1], 224)
 
-    def test_bootstrap_doors_read_old_ecology_atlas_cells(self) -> None:
+    def test_ecology_door_cells_do_not_change_keyed_source_output(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             assets = root / "assets" / "stage12"
@@ -110,25 +128,27 @@ class EnvironmentPropAssetPipelineTests(unittest.TestCase):
                 rect = (768, 0, 1024, 256) if ecology == "fire" else (512, 0, 768, 256)
                 atlas.paste(color, rect)
                 atlas.save(assets / f"{ecology}_environment.png")
-                # Old code re-crops these concept files instead of the atlas.
-                Image.new("RGBA", (1254, 1254), (255, 0, 255, 255)).save(
-                    sources / f"{ecology}-environment-concept-v1.png")
+            shutil.copy2(ROOT / "art_source/stage12/door-concept-v1.png",
+                         sources / "door-concept-v1.png")
             source = ROOT / "tools" / "build_environment_props.py"
-            result = subprocess.run(
-                [sys.executable, "-c", (
+            command = [sys.executable, "-c", (
                     "import importlib.util, pathlib; "
                     f"spec=importlib.util.spec_from_file_location('builder', r'{source}'); "
                     "module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); "
                     f"image, _ = module.build_element_doors(pathlib.Path(r'{root}')); "
-                    f"image.save(pathlib.Path(r'{root}') / 'doors.png')")],
-                text=True, capture_output=True)
+                    f"image.save(pathlib.Path(r'{root}') / 'doors.png')")]
+            result = subprocess.run(command, text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr)
-            with Image.open(root / "doors.png").convert("RGBA") as doors:
-                for index, ecology in enumerate(("water", "lightning", "chaos"), 1):
-                    cell = doors.crop((index * 256, 0, (index + 1) * 256, 256))
-                    pixels = [pixel for pixel in cell.get_flattened_data() if pixel[3] > 128]
-                    self.assertTrue(pixels)
-                    self.assertEqual(max(set(pixels), key=pixels.count), colors[ecology])
+            first = sha256(root / "doors.png")
+            for ecology, color in colors.items():
+                path = assets / f"{ecology}_environment.png"
+                with Image.open(path).convert("RGBA") as atlas:
+                    rect = (768, 0, 1024, 256) if ecology == "fire" else (512, 0, 768, 256)
+                    atlas.paste(tuple(reversed(color[:3])) + (255,), rect)
+                    atlas.save(path)
+            result = subprocess.run(command, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(sha256(root / "doors.png"), first)
 
     def test_forced_staged_validation_failure_leaves_destinations_unchanged(self) -> None:
         outputs = [
@@ -147,7 +167,7 @@ class EnvironmentPropAssetPipelineTests(unittest.TestCase):
         self.assertIn("forced staged validation failure", result.stderr)
         self.assertEqual({path: sha256(path) for path in outputs}, before)
 
-    def test_invalid_published_door_hash_fails_closed_without_reusing_wall_cells(self) -> None:
+    def test_old_report_cannot_freeze_published_incorrect_frames(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             assets = root / "assets" / "stage12"
@@ -172,17 +192,22 @@ class EnvironmentPropAssetPipelineTests(unittest.TestCase):
                 with Image.open(assets / f"{ecology}_environment.png").convert("RGBA") as image:
                     image.paste((17, 19, 23, 255), (512, 0, 768, 256))
                     image.save(assets / f"{ecology}_environment.png")
+            shutil.copy2(source_root / "door-concept-v1.png", target / "door-concept-v1.png")
+            shutil.copy2(source_root / "abyss-hole-concept-v1.png", target / "abyss-hole-concept-v1.png")
             report_path = assets / "environment-props-build.json"
             report = json.loads(report_path.read_text(encoding="utf-8"))
             report["element_doors"]["rgba_sha256"] = "0" * 64
             report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n",
                                    encoding="utf-8")
-            before = {path: sha256(path) for path in outputs}
             result = subprocess.run([sys.executable, str(BUILDER), "--root", str(root)],
                                     cwd=root, text=True, capture_output=True)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("published element doors validation failed", result.stderr)
-            self.assertEqual({path: sha256(path) for path in outputs}, before)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            rebuilt = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(rebuilt["schema_version"], 2)
+            self.assertEqual(rebuilt["sources"], {
+                "door-concept-v1.png": sha256(target / "door-concept-v1.png"),
+                "abyss-hole-concept-v1.png": sha256(target / "abyss-hole-concept-v1.png"),
+            })
 
     def test_builder_repeat_generation_is_byte_for_byte_stable(self) -> None:
         self.assertTrue(BUILDER.is_file(), "shared environment prop builder is missing")
@@ -222,17 +247,17 @@ class EnvironmentPropAssetPipelineTests(unittest.TestCase):
                 for cell in range(4)
             ]
             for tile in door_cells:
-                bbox = tile.getchannel("A").getbbox()
-                self.assertIsNotNone(bbox)
-                assert bbox is not None
-                self.assertGreaterEqual(
-                    min(bbox[0], bbox[1], 256 - bbox[2], 256 - bbox[3]), 12)
+                self.assert_isolated_silhouette(tile, 12)
             self.assertEqual(len({cell.tobytes() for cell in door_cells}), 4)
 
     def test_ecology_prop_manifest_matches_isolated_outputs(self) -> None:
         self.assertTrue(REPORT.is_file(), REPORT)
         manifest = json.loads(REPORT.read_text(encoding="utf-8"))
-        self.assertEqual(manifest["schema_version"], 1)
+        self.assertEqual(manifest["schema_version"], 2)
+        self.assertEqual(manifest["sources"], {
+            "door-concept-v1.png": sha256(ROOT / "art_source/stage12/door-concept-v1.png"),
+            "abyss-hole-concept-v1.png": sha256(ROOT / "art_source/stage12/abyss-hole-concept-v1.png"),
+        })
         self.assertEqual(set(manifest["ecologies"]), set(ECOLOGIES))
         for ecology in ECOLOGIES:
             color_path = ROOT / f"assets/stage12/{ecology}_environment.png"
@@ -258,6 +283,8 @@ class EnvironmentPropAssetPipelineTests(unittest.TestCase):
                         min(bbox[0], bbox[1], 256 - bbox[2], 256 - bbox[3]), 8)
                     self.assertEqual(cell.getchannel("A").tobytes(),
                                      material_cell.getchannel("A").tobytes())
+                    if name == "hole":
+                        self.assert_isolated_silhouette(cell, 8)
                     components = alpha_components(cell)
                     self.assertTrue(components)
                     if len(components) > 1:
