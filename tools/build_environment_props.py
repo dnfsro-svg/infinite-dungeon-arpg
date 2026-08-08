@@ -248,69 +248,16 @@ def _rgba_hash(image: Image.Image) -> str:
     return hashlib.sha256(image.convert("RGBA").tobytes()).hexdigest()
 
 
-def _canonical_element_doors(root: Path) -> Image.Image | None:
-    assets = root / "assets" / "stage12"
-    report_path = assets / "environment-props-build.json"
-    color_path = assets / "element_doors.png"
-    material_path = assets / "element_doors_material.png"
-    # Legacy atlas bootstrap is legal only for a root with no published report.
-    if not report_path.exists():
-        return None
-    try:
-        if not report_path.is_file() or not color_path.is_file() or not material_path.is_file():
-            raise RuntimeError("published report or public door files are missing")
-        report = json.loads(report_path.read_text(encoding="utf-8"))
-        if (report.get("schema_version") != 1
-                or set(report.get("ecologies", {})) != set(ECOLOGIES)):
-            raise RuntimeError("published report schema is invalid")
-        expected_hash = report["element_doors"]["rgba_sha256"]
-        if not isinstance(expected_hash, str) or len(expected_hash) != 64:
-            raise RuntimeError("published public door hash is invalid")
-        color = Image.open(color_path).convert("RGBA")
-        material = Image.open(material_path).convert("RGBA")
-    except (OSError, KeyError, TypeError, json.JSONDecodeError, RuntimeError) as error:
-        raise RuntimeError(f"published element doors validation failed: {error}") from error
-    if (color.size != (1024, 256) or material.size != color.size
-            or color.getchannel("A").tobytes() != material.getchannel("A").tobytes()
-            or material.tobytes() != _material_map(color).tobytes()
-            or _rgba_hash(color) != expected_hash):
-        raise RuntimeError("published element doors validation failed")
-    return color.copy()
+def _file_hash(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def build_element_doors(root: Path) -> tuple[Image.Image, Image.Image]:
-    canonical = _canonical_element_doors(root)
-    if canonical is not None:
-        return canonical, _material_map(canonical)
     output = Image.new("RGBA", (CELL * 4, CELL))
-    sources = (("fire", root / "assets" / "stage12" / "fire_environment.png",
-                (768, 0, 1024, 256)),
-               ("water", root / "assets" / "stage12" / "water_environment.png",
-                (512, 0, 768, 256)),
-               ("lightning", root / "assets" / "stage12" / "lightning_environment.png",
-                (512, 0, 768, 256)),
-               ("chaos", root / "assets" / "stage12" / "chaos_environment.png",
-                (512, 0, 768, 256)))
-    assets = root / "assets" / "stage12"
-    # Capture every legacy source before callers can replace an ecology atlas.
-    captured = [(name, Image.open(path).convert("RGBA").crop(box))
-                for name, path, box in sources]
-    for index, (name, source) in enumerate(captured):
-        if max(source.size) > CELL:
-            scale = CELL / max(source.size)
-            source = source.resize((round(source.width * scale), round(source.height * scale)),
-                                   Image.Resampling.LANCZOS)
-        components = _components(source.getchannel("A"))
-        if not components:
-            raise RuntimeError(f"{name}: door source is empty")
-        alpha = Image.new("L", source.size)
-        for point in components[0]: alpha.putpixel(point, source.getchannel("A").getpixel(point))
-        source.putalpha(alpha)
-        bbox = alpha.getbbox()
-        assert bbox is not None
-        source = source.crop((max(0, bbox[0] - 12), max(0, bbox[1] - 12),
-                              min(CELL, bbox[2] + 12), min(CELL, bbox[3] + 12)))
-        output.alpha_composite(_fit_to_cell(source, 12, 244), (index * CELL, 0))
+    subject = _keyed_subject(root / "art_source" / "stage12" / "door-concept-v1.png")
+    for index, ecology in enumerate(("fire", *ECOLOGIES)):
+        output.alpha_composite(_fit_to_cell(_element_variant(subject, ecology), 12, 244),
+                               (index * CELL, 0))
     return output, _material_map(output)
 
 
@@ -324,12 +271,14 @@ def build_ecology_environment(ecology: str, root: Path) -> tuple[Image.Image, Im
     atlas.alpha_composite(room, (0, 0))
     objects: dict[str, dict] = {}
     wall = Image.open(source_root / "backgrounds" / ecology / f"{ecology}-wall-tile-v1.png").convert("RGBA")
-    object_sources = {"wall": wall}
-    object_sources.update({name: concept.crop(box) for name, box in CONCEPT_CROPS[ecology].items()})
+    hole = _element_variant(_keyed_subject(source_root / "abyss-hole-concept-v1.png"), ecology)
+    object_sources = {"wall": wall, "hole": hole}
+    object_sources.update({name: concept.crop(box) for name, box in CONCEPT_CROPS[ecology].items()
+                           if name != "hole"})
     for name, position in LAYOUT.items():
         # A wall tile is authored as a complete opaque background surface;
         # unlike isolated concept props it must not be reduced to one fragment.
-        isolated = (object_sources[name] if name == "wall"
+        isolated = (object_sources[name] if name in {"wall", "hole"}
                     else _retain_subject(object_sources[name], 8, keep_small=False))
         cell = _fit_to_cell(isolated, 8, 244)
         atlas.alpha_composite(cell, position)
@@ -360,7 +309,13 @@ def _validate_staged_outputs(staged: dict[Path, Path]) -> None:
         if color.size != (768, 768) or color.getchannel("A").tobytes() != material.getchannel("A").tobytes():
             raise RuntimeError(f"{ecology}: color/material validation failed")
     report = json.loads(staged[assets / "environment-props-build.json"].read_text(encoding="utf-8"))
-    if report.get("schema_version") != 1 or set(report.get("ecologies", {})) != set(ECOLOGIES):
+    source_root = assets.parent.parent / "art_source" / "stage12"
+    expected_sources = {
+        "door-concept-v1.png": _file_hash(source_root / "door-concept-v1.png"),
+        "abyss-hole-concept-v1.png": _file_hash(source_root / "abyss-hole-concept-v1.png"),
+    }
+    if (report.get("schema_version") != 2 or set(report.get("ecologies", {})) != set(ECOLOGIES)
+            or report.get("sources") != expected_sources):
         raise RuntimeError("environment props report schema validation failed")
     if report.get("element_doors", {}).get("rgba_sha256") != _rgba_hash(image(assets / "element_doors.png")):
         raise RuntimeError("element doors hash validation failed")
@@ -402,8 +357,13 @@ def main() -> None:
     door_color, door_material = build_element_doors(root)
     staged: list[tuple[Path, Image.Image]] = [(assets / "element_doors.png", door_color),
                                                 (assets / "element_doors_material.png", door_material)]
-    report = {"schema_version": 1, "element_doors": {"rgba_sha256": _rgba_hash(door_color)},
-              "ecologies": {}}
+    source_root = root / "art_source" / "stage12"
+    report = {"schema_version": 2,
+              "sources": {
+                  "door-concept-v1.png": _file_hash(source_root / "door-concept-v1.png"),
+                  "abyss-hole-concept-v1.png": _file_hash(source_root / "abyss-hole-concept-v1.png"),
+              },
+              "element_doors": {"rgba_sha256": _rgba_hash(door_color)}, "ecologies": {}}
     for ecology in ECOLOGIES:
         color, material, record = build_ecology_environment(ecology, root)
         staged.extend(((assets / f"{ecology}_environment.png", color),

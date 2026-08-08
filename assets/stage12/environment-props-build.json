@@ -4,9 +4,9 @@
       "objects": {
         "hole": {
           "alpha_bbox": [
-            53,
-            46,
-            203,
+            10,
+            105,
+            246,
             244
           ],
           "foot_anchor": [
@@ -98,13 +98,13 @@
       "objects": {
         "hole": {
           "alpha_bbox": [
-            14,
-            8,
-            241,
+            10,
+            105,
+            246,
             244
           ],
           "foot_anchor": [
-            127,
+            128,
             244
           ],
           "source_rect": [
@@ -192,13 +192,13 @@
       "objects": {
         "hole": {
           "alpha_bbox": [
-            13,
-            119,
+            10,
+            105,
             246,
             244
           ],
           "foot_anchor": [
-            129,
+            128,
             244
           ],
           "source_rect": [
@@ -284,7 +284,11 @@
     }
   },
   "element_doors": {
-    "rgba_sha256": "d280b4cd1f6dc621ed16ad395656e71b571e58e8a7cfd75f12eda73d3c84124a"
+    "rgba_sha256": "e44f109db018e4178e797ea2455149bde156083893a4e099cbe4ac07ea809b7d"
   },
-  "schema_version": 1
+  "schema_version": 2,
+  "sources": {
+    "abyss-hole-concept-v1.png": "724c76b60ba683982823d86996fd9bcd6eceb3321a55a52da1c85392f3d0bc37",
+    "door-concept-v1.png": "35ed6447c5de901d01dca83e78cb7cc36d86b1182d7ee8e4b1bc19f32b4dcc32"
+  }
 }
