@@ -10,10 +10,16 @@ from collections import deque
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-from PIL import Image, ImageChops, ImageEnhance, ImageFilter
+from PIL import Image, ImageChops, ImageEnhance, ImageFilter, ImageOps
 
 
 ECOLOGIES = ("water", "lightning", "chaos")
+ELEMENT_PALETTES = {
+    "fire": ((52, 14, 8), (255, 120, 36)),
+    "water": ((7, 28, 58), (58, 196, 255)),
+    "lightning": ((38, 32, 5), (255, 226, 72)),
+    "chaos": ((35, 8, 52), (208, 72, 255)),
+}
 CELL = 256
 LAYOUT = {
     "wall": (512, 0),
@@ -107,6 +113,51 @@ def _background_to_alpha(image: Image.Image) -> Image.Image:
         alpha.putpixel(point, 0)
     image.putalpha(alpha)
     return image
+
+
+def _keyed_subject(path: Path) -> Image.Image:
+    """Extract the largest subject from a source keyed by its top-left RGB."""
+    with Image.open(path) as source:
+        image = source.convert("RGBA")
+    key = image.convert("RGB").getpixel((0, 0))
+    alpha = image.getchannel("A").copy()
+    pixels = image.load()
+    alpha_pixels = alpha.load()
+    transparent_distance = 12 ** 2
+    opaque_distance = 96 ** 2
+    for y in range(image.height):
+        for x in range(image.width):
+            red, green, blue, _ = pixels[x, y]
+            distance = ((red - key[0]) ** 2 + (green - key[1]) ** 2 +
+                        (blue - key[2]) ** 2)
+            if distance <= transparent_distance:
+                alpha_pixels[x, y] = 0
+            elif distance < opaque_distance:
+                alpha_pixels[x, y] = (alpha_pixels[x, y] *
+                                      (distance - transparent_distance) //
+                                      (opaque_distance - transparent_distance))
+    components = _components(alpha)
+    if not components:
+        raise RuntimeError("keyed source has no foreground component")
+    retained = Image.new("L", image.size)
+    retained_pixels = retained.load()
+    for point in components[0]:
+        retained_pixels[point[0], point[1]] = alpha_pixels[point[0], point[1]]
+    retained = retained.filter(ImageFilter.GaussianBlur(2))
+    bbox = retained.getbbox()
+    if bbox is None:
+        raise RuntimeError("foreground disappeared during keyed alpha cleanup")
+    image.putalpha(retained)
+    return image.crop((max(0, bbox[0] - 8), max(0, bbox[1] - 8),
+                       min(image.width, bbox[2] + 8), min(image.height, bbox[3] + 8)))
+
+
+def _element_variant(subject: Image.Image, element: str) -> Image.Image:
+    """Apply a deterministic element palette without changing subject alpha."""
+    dark, light = ELEMENT_PALETTES[element]
+    color = ImageOps.colorize(subject.convert("L"), dark, light).convert("RGBA")
+    color.putalpha(subject.getchannel("A"))
+    return color
 
 
 def _retain_subject(image: Image.Image, pad: int, keep_small: bool) -> Image.Image:
